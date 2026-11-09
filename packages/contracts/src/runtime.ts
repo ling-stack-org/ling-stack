@@ -364,7 +364,7 @@ export interface RuntimeEvent {
   readonly data: unknown;
 }
 
-export type RuntimeSemaphoreResourceType = "provider" | "channel_parallel" | "runner" | "media_provider";
+export type RuntimeSemaphoreResourceType = "provider" | "channel_parallel" | "runner" | "media_provider" | "workflow_resource";
 
 export type RuntimeSemaphoreSlotStatus = "active" | "released" | "expired";
 
@@ -390,6 +390,18 @@ export interface RuntimeSemaphoreSlot {
 export interface RuntimeResponse {
   readonly cwd: string;
   readonly runtime: RuntimeInstance;
+  /** Trusted Host startup policy; read-only to workspace clients. */
+  readonly concurrency: RuntimeConcurrencyPolicySnapshot;
+}
+
+export interface RuntimeConcurrencyPolicySnapshot {
+  readonly enabled: boolean;
+  readonly maxConcurrentRuns: number;
+  readonly maxReadOnlyRuns: number;
+  readonly maxWorkspaceWriteRuns: number;
+  readonly maxRunsPerProvider: number;
+  readonly maxRunsPerRunner: number;
+  readonly isolatedWriteMaxConcurrentSteps: number;
 }
 
 export interface RuntimeDiagnosticsResponse {

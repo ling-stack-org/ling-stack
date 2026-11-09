@@ -33,6 +33,7 @@ import type { NativeRestrictedCommandRuntime } from "../../runtime/sandbox/restr
 import { NodeCommandInputPreparationError } from "../../runtime/sandbox/node-command-inputs.js";
 import { createRestrictedCommandDispatch } from "./restricted-command-dispatch.js";
 import { workflowOperationEffectRejection } from "./workflow-operation-effect-gate.js";
+import { workflowSafetyEffectRejection } from "./workflow-safety.js";
 import { validateWorkflowOperationRunContext } from "./workflow-operation-snapshot.js";
 import { createStreamCapture, createSyntheticStreamCapture, toStreamSummary, type StreamCaptureSnapshot } from "./unified-exec-output.js";
 import type { HostCommandOperation } from "../../runtime/host-operation-effects.js";
@@ -74,8 +75,9 @@ export async function executeUnifiedBashTool(input: {
         status: "failed",
       });
     }
-    const rejection = validateWorkflowOperationRunContext(input).status === "legacy"
-      ? undefined : workflowOperationEffectRejection(input);
+    const rejection = workflowSafetyEffectRejection({ ...input, request: { ...input.request, toolName: "bash" } })
+      ?? (validateWorkflowOperationRunContext(input).status === "legacy"
+        ? undefined : workflowOperationEffectRejection(input));
     if (rejection) return createUnifiedExecDeniedResult({ toolCallId: input.request.toolCallId,
       approvalId: input.approvalId, reason: rejection.code + ": " + rejection.reason });
     let restrictedDispatch: ReturnType<typeof createRestrictedCommandDispatch>;

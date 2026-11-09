@@ -10,6 +10,7 @@ import type {
   Channel,
   ChannelBrief,
   ChannelWorkflow,
+  ChannelWorkflowOrchestrationRequest,
   ChannelWorkflowStep,
   ChannelWorkflowStepStartMode,
   ChannelWorkflowStepStartResponse,
@@ -46,7 +47,7 @@ export function publishChannelWorkflowStepStartResponse(
 
 export interface ChannelWorkflowController {
   readonly startAutoplanWorkflow: () => Promise<void>;
-  readonly orchestrateWorkflowAction: (workflow: ChannelWorkflow) => Promise<void>;
+  readonly orchestrateWorkflowAction: (workflow: ChannelWorkflow, request?: ChannelWorkflowOrchestrationRequest) => Promise<void>;
   readonly cancelWorkflowAction: (workflow: ChannelWorkflow) => Promise<void>;
   readonly retryWorkflowStepAction: (step: ChannelWorkflowStep) => Promise<void>;
   readonly startWorkflowStepAction: (step: ChannelWorkflowStep, mode: ChannelWorkflowStepStartMode) => Promise<void>;
@@ -83,7 +84,7 @@ export function useChannelWorkflowController(input: {
   readonly refreshRuntimeState: (cwd: string) => Promise<void>;
   readonly emitDomainEvent: (event: DomainEvent) => Promise<void>;
 }): ChannelWorkflowController {
-  async function orchestrateWorkflowById(workflowId: string, channelId?: string): Promise<void> {
+  async function orchestrateWorkflowById(workflowId: string, channelId?: string, request?: ChannelWorkflowOrchestrationRequest): Promise<void> {
     const workspaceCwd = input.form.cwd.trim();
     if (!workspaceCwd) {
       input.reportWorkflowError(workflowId, "本地工作区未就绪", "validation");
@@ -93,7 +94,7 @@ export function useChannelWorkflowController(input: {
     input.setOrchestratingWorkflowId(workflowId);
     try {
       input.clearWorkflowError(workflowId);
-      const result = await input.orchestrateChannelWorkflow(workspaceCwd, workflowId);
+      const result = await input.orchestrateChannelWorkflow(workspaceCwd, workflowId, request);
       input.setChannelWorkflows((current) => [result.workflow, ...current.filter((item) => item.id !== result.workflow.id)]);
       const workflowStep = "workflowStep" in result ? result.workflowStep : undefined;
       if (workflowStep) {
@@ -155,8 +156,8 @@ export function useChannelWorkflowController(input: {
     }
   }
 
-  async function orchestrateWorkflowAction(workflow: ChannelWorkflow): Promise<void> {
-    await orchestrateWorkflowById(workflow.id, workflow.channelId);
+  async function orchestrateWorkflowAction(workflow: ChannelWorkflow, request?: ChannelWorkflowOrchestrationRequest): Promise<void> {
+    await orchestrateWorkflowById(workflow.id, workflow.channelId, request);
   }
 
   async function cancelWorkflowAction(workflow: ChannelWorkflow): Promise<void> {

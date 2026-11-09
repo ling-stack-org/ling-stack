@@ -13,6 +13,7 @@ import {
   resolveStoragePaths,
   type RunStore,
 } from "@ling-stack/core";
+import { createHostRunCapacityStore, createRuntimeHostCapacityStoreBinding } from "@ling-stack/core/runtime-host-capacity-store-bridge";
 import { createPiRunner, getPiRunnerExtension } from "@ling-stack/runner-pi";
 import { NotificationHub } from "./features/notifications/hub.js";
 import { ImDestinationRegistry } from "./features/im-destinations/registry.js";
@@ -44,6 +45,8 @@ import { ChannelTurnDispatchWorkerRegistry } from "./features/channels/channel-t
 import { createChannelTurnDispatchExecutor } from "./features/channels/channel-turn-dispatch-executor.js";
 import { maybeScheduleRunTerminalReport } from "./features/channels/terminal-report-coordinator.js";
 import { reconcileAllContinuityWorkflows } from "./features/channels/workflow-reconciliation.js";
+import { configureWorkflowIsolationLifecycle } from "./features/channels/workflow-isolation-lifecycle.js";
+import { recoverWorkflowIsolationsAtStartup } from "./features/channels/workflow-isolation-recovery.js";
 import {
   maybeQueueGoalContinuation,
   maybeStartNextRunInterventionContinuation,
@@ -63,6 +66,8 @@ import { recoverApprovalPostCommitStore } from "./features/runs/approval-postcom
 import { runApprovalPostCommitEffects } from "./features/runs/approval-postcommit-effects.js";
 import { syncWorkflowApprovalDecision } from "./features/channels/orchestrator.js";
 import { DaemonRunnerRecoveryCoordinator } from "./features/harness/continuations/daemon-recovery-coordinator.js";
+import { createRuntimeHostCapacityAdmission, notifyRuntimeRunHostCapacityReleased, RuntimeRunQueueCoordinator,
+  type RuntimeHostCapacityAdmission } from "./runtime/run-queue.js";
 import { reconcileHarnessToolExecutionsAtStartup } from "./features/harness/tool-execution/recovery.js";
 import { RunEvaluationSchedulerRegistry } from "./features/harness/evaluations/scheduler.js";
 import { RunEvaluationTaskWorkerComposition } from "./features/harness/evaluations/task-worker-composition.js";
@@ -76,6 +81,7 @@ import {
   createDetachedRunExecutionSink,
   executeDelegatedRunRequest,
   executeExistingRunContinuation,
+  executeQueuedRunRequest,
   executeUserInputContinuation,
 } from "./features/runs/orchestrator.js";
 import { syncLingThreadForTerminalRun } from "./features/runs/threads.js";
@@ -276,6 +282,39 @@ export function createDaemonServer(
     ?? createCompositeSecretResolver({ keychainResolver: externalSecretStore });
   const secretResolver = withEngineSecretResolver(engineSecretStore, baseSecretResolver);
   const defaultStoragePaths = resolveStoragePaths(resolvedConfig.defaultWorkspaceCwd);
+  // One daemon owns one installation-global Host budget. Workspace Stores only
+  // receive the opaque binding below; they never open or choose this authority.
+  const hostRunCapacity = createHostRunCapacityStore({
+    globalDatabasePath: defaultStoragePaths.user.globalDatabasePath,
+  });
+  let hostRunCapacityClosed = false;
+  const closeHostRunCapacity = (): void => {
+    if (hostRunCapacityClosed) return;
+    hostRunCapacityClosed = true;
+    hostRunCapacity.close();
+  };
+  const runtimeHostCapacities = new WeakMap<RunStore, RuntimeHostCapacityAdmission>();
+  const hostCapacityForStore = (store: RunStore): RuntimeHostCapacityAdmission => {
+    const capacity = runtimeHostCapacities.get(store);
+    if (!capacity) throw new Error("runtime_host_capacity.store_unbound");
+    return capacity;
+  };
+  let constructedStoreRegistry: RunStoreRegistry | undefined;
+  try {
+  if (resolvedConfig.concurrency.enabled) {
+    const currentPolicy = hostRunCapacity.getPolicy();
+    const installed = hostRunCapacity.installPolicy({
+      // Startup is an installation policy claim: an existing different limit
+      // must not be silently rewritten by a second daemon.
+      expectedRevision: currentPolicy?.maxConcurrentRuns === resolvedConfig.concurrency.maxConcurrentRuns
+        ? currentPolicy.revision : 0,
+      maxConcurrentRuns: resolvedConfig.concurrency.maxConcurrentRuns,
+      installedAt: new Date().toISOString(),
+    });
+    if (installed.status === "changed") {
+      throw new Error("runtime_host_capacity.policy_changed");
+    }
+  }
   const engineManagement = new EngineManagementFeature({
     userPaths: defaultStoragePaths.user,
     runnerRegistry,
@@ -338,6 +377,7 @@ export function createDaemonServer(
   let approvalRecoveryTimer: ReturnType<typeof setInterval> | undefined;
   let approvalAutoReviewRecoveryCoordinator: ApprovalAutoReviewRecoveryCoordinator | undefined;
   let daemonRunnerRecoveryCoordinator: DaemonRunnerRecoveryCoordinator | undefined;
+  let runtimeRunQueueCoordinator: RuntimeRunQueueCoordinator | undefined;
   let runEvaluationScheduler: RunEvaluationSchedulerRegistry | undefined;
   let harnessShuttingDown = false;
   const harnessProjectionStores = new Set<RunStore>();
@@ -377,7 +417,9 @@ export function createDaemonServer(
     }, event.now);
   }, dependencies.officeLocalNativeArtifact
     ? { officeLocalNativeArtifact: dependencies.officeLocalNativeArtifact }
-    : undefined);
+    : undefined, resolvedConfig.concurrency.enabled
+      ? hostCapacityForStore
+      : undefined);
   let workspaceCustodyReady = false;
   let delegationRuntimeRegistry: DelegationRuntimeRegistry | undefined;
   const pendingDelegationStores = new Map<RunStore, OriginalDelegationLifecycle>();
@@ -392,6 +434,20 @@ export function createDaemonServer(
     const recoveryNow = new Date().toISOString();
     store.recoverStaleRuns(recoveryNow);
     store.recoverStaleChannelWorkflows(recoveryNow);
+    configureWorkflowIsolationLifecycle(store, {
+      trackCompletion: completion => activeRuns.trackCompletion(completion),
+      isShuttingDown: () => activeRuns.isShuttingDown(),
+      onSettled: ({ workflowId, operationKey }) => {
+        const workflow = store.getChannelWorkflow(workflowId);
+        if (!workflow) return;
+        appendControlPlaneEvent(store, controlPlaneEvents, {
+          workspaceId: workflow.workspaceId, cwd: store.paths.cwd,
+          domain: "runs", entityType: "channel_workflow", entityId: workflowId,
+          action: "channel_workflow.isolation_settled",
+          data: { channelId: workflow.channelId, workflowId, operationKey },
+        });
+      },
+    });
     dependencies.initializeBundledSkills?.(store);
     flushSkillDefinitionRevisionNotices(store, controlPlaneEvents, cwd);
     // A process may have crossed the shell side-effect boundary before the
@@ -421,17 +477,18 @@ export function createDaemonServer(
     approvalResumeCoordinator?.registerStore(store);
     approvalAutoReviewRecoveryCoordinator?.registerStore(store);
     daemonRunnerRecoveryCoordinator?.registerStore(store);
+    runtimeRunQueueCoordinator?.registerStore(store);
     if (originalDelegationStores.has(store)) delegationRuntimeRegistry?.recoverStore(store);
     runEvaluationTaskWorkers.registerStore(cwd, store);
     runEvaluationScheduler?.registerStore(store);
     startupOptionalWarmups?.start(cwd, store);
-    reconcileAllContinuityWorkflows(store, { cause: "startup" });
-    if (resolvedConfig.channels.terminalReports === true) {
-      const terminalReportRecovery = recoverTerminalReports(store).catch(() => {
-        console.warn("terminal_report_recovery_failed: conflicting sources remain recoverable");
-      });
-      activeRuns.trackCompletion(terminalReportRecovery);
-    }
+    const workflowRecovery = recoverWorkflowIsolationsAtStartup(store).then(async () => {
+      reconcileAllContinuityWorkflows(store, { cause: "startup" });
+      if (resolvedConfig.channels.terminalReports === true) await recoverTerminalReports(store);
+    }).catch(() => {
+      console.warn("workflow_recovery_incomplete: unverified effects and publications remain recoverable");
+    });
+    activeRuns.trackCompletion(workflowRecovery);
     harnessProjectionStores.add(store);
     reconcileHarnessProjections(store);
     if (channelTurnDispatchReady) channelTurnDispatchWorker?.start(store);
@@ -447,6 +504,13 @@ export function createDaemonServer(
   };
   const storeRegistry = new RunStoreRegistry(
     dependencies.storeFactory ?? createOriginalOfficeDirectoryStoreFactory(runtimeSupervisor, { runnerRegistry, secretResolver,
+      ...(resolvedConfig.concurrency.enabled ? { createRuntimeHostCapacity: () => {
+        const capacity = createRuntimeHostCapacityStoreBinding();
+        return { binding: capacity.binding, bindStore: (store: RunStore) => {
+          runtimeHostCapacities.set(store, createRuntimeHostCapacityAdmission({ host: hostRunCapacity, workspace: capacity.workspace,
+            onReleased: () => notifyRuntimeRunHostCapacityReleased(store) }));
+        } };
+      } } : {}),
       onDelegationStore: (store, lifecycle) => {
         originalDelegationStores.add(store);
         if (delegationRuntimeRegistry) delegationRuntimeRegistry.registerStore(store, lifecycle);
@@ -462,10 +526,12 @@ export function createDaemonServer(
       runtimeSupervisor.getRuntime(cwd, store);
     },
     onStoreInitialized: (cwd, store) => {
+      dependencies.onStoreInitialized?.(cwd, store);
       pendingOwnedStores.set(store, cwd);
       if (workspaceCustodyReady) initializeOwnedStore(cwd, store);
     },
   });
+  constructedStoreRegistry = storeRegistry;
   runEvaluationScheduler = new RunEvaluationSchedulerRegistry({
     enabled: resolvedConfig.harness.evaluations.mode !== "off",
   });
@@ -723,7 +789,7 @@ export function createDaemonServer(
     runnerRegistry,
     controlPlaneEvents,
     afterRunTerminal: afterChannelRunTerminal,
-    executeExistingRunContinuation: ({ cwd, runId, approvalId, preparedExecution }) =>
+    executeExistingRunContinuation: ({ cwd, runId, approvalId, preparedExecution, hostCapacity }) =>
       executeExistingRunContinuation(
         {
           cwd,
@@ -731,6 +797,7 @@ export function createDaemonServer(
           origin: "approval_resume",
           idempotencyDiscriminator: approvalId,
           preparedExecution,
+          hostCapacity,
         },
         createDetachedRunExecutionSink(),
         runnerRegistry,
@@ -782,6 +849,14 @@ export function createDaemonServer(
         },
       ),
   });
+  runtimeRunQueueCoordinator = new RuntimeRunQueueCoordinator({
+    runtimeSupervisor, activeRuns,
+    execute: ({ store, claim, executionOptions }) => executeQueuedRunRequest({ store, claim },
+      createDetachedRunExecutionSink(), runnerRegistry, storeRegistry, activeRuns, runtimeSupervisor,
+      secretResolver, mcpBroker, { controlPlaneEvents, startupState, computerUsePreviews, hostCapabilityBridge,
+        enableUserInputPause: true, afterRunTerminal: afterChannelRunTerminal, ...executionOptions }),
+  });
+  for (const store of approvalRecoveryStores) runtimeRunQueueCoordinator.registerStore(store);
   channelTurnDispatchWorker = new ChannelTurnDispatchWorkerRegistry(
     runtimeSupervisor,
     createChannelTurnDispatchExecutor(channelTurnDispatchOptions),
@@ -952,6 +1027,7 @@ export function createDaemonServer(
       await engineManagement.close();
       runtimeSupervisor.releaseAll();
       storeRegistry.closeAll();
+      closeHostRunCapacity();
       harnessProjectionStores.clear();
     },
   });
@@ -959,6 +1035,7 @@ export function createDaemonServer(
     domain: "continuation", enabled: true,
     stopAdmission: () => {
       daemonRunnerRecoveryCoordinator.beginShutdown();
+      runtimeRunQueueCoordinator?.beginShutdown();
       userInputDeliveryWorker.beginShutdown();
       approvalAutoReviewRecoveryCoordinator?.beginShutdown();
       channelTurnDispatchWorker.beginShutdown();
@@ -973,6 +1050,7 @@ export function createDaemonServer(
     settle: () => settleHarnessLifetimes([
       channelTurnDispatchWorker.close(), userInputDeliveryWorker.close(),
       daemonRunnerRecoveryCoordinator.waitForIdle(),
+      runtimeRunQueueCoordinator?.waitForIdle() ?? Promise.resolve(),
       approvalAutoReviewRecoveryCoordinator?.waitForIdle() ?? Promise.resolve(),
       automationSchedulers.waitForIdle(), backgroundSchedulers.waitForIdle(),
       providerStartupRefresh.waitForIdle(), harnessProjectionReconciler.waitForIdle(),
@@ -1102,6 +1180,7 @@ export function createDaemonServer(
         runEvaluationScheduler.registerStore(storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd));
         daemonRunnerRecoveryCoordinator.registerStore(storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd));
         daemonRunnerRecoveryCoordinator.start();
+        runtimeRunQueueCoordinator?.start();
         userInputDeliveryWorker.start();
         // Ephemeral control-plane servers are used by tests and embedded fixtures.
         // They must never claim the installation-global Remote Gateway listener.
@@ -1209,6 +1288,30 @@ export function createDaemonServer(
     },
   };
   return daemon;
+  } catch (error) {
+    let cleanupError: unknown;
+    const errorCode = error && typeof error === "object" && "code" in error
+      ? (error as { readonly code?: unknown }).code
+      : undefined;
+    if (errorCode !== "runtime_already_running") {
+      try {
+        constructedStoreRegistry?.closeAll();
+      } catch (storeCleanupError) {
+        cleanupError = storeCleanupError;
+      }
+    }
+    try {
+      closeHostRunCapacity();
+    } catch (hostCleanupError) {
+      cleanupError = cleanupError === undefined
+        ? hostCleanupError
+        : new AggregateError([cleanupError, hostCleanupError], "daemon_constructor_cleanup_failed");
+    }
+    if (cleanupError !== undefined) {
+      throw new AggregateError([error, cleanupError], "daemon_constructor_cleanup_incomplete", { cause: error });
+    }
+    throw error;
+  }
 }
 
 /** Await every actual tail even if another tail fails; keep the original errors for Host diagnosis. */

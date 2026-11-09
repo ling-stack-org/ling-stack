@@ -1,19 +1,22 @@
-import { CheckSquare, GitBranch, Handshake, ListChecks, MessageSquareText, Play, Workflow } from "lucide-react";
+import { CheckSquare, GitBranch, Handshake, ListChecks, MessageSquareText, Network, Play, Workflow } from "lucide-react";
 import type { ConversationProtocolAction, ConversationTimelineProtocolEventItem } from "@ling-stack/conversation-ui-core";
 import { useI18n } from "../../../i18n.js";
 import { CodeBlock } from "../blocks/CodeBlock.js";
 import { TimelineFactRow } from "./TimelineFactRow.js";
 import { TextDetail, detailExists } from "./timeline-renderer-details.js";
 import { ConversationTimelineProtocolActions } from "./ConversationTimelineProtocolActions.js";
+import { isWorkflowIsolationTimelineItem } from "../../../lib/workflow-isolation-evidence.js";
 
 export function ConversationTimelineProtocolRenderer({
   item,
   depth,
   onInvokeProtocolAction,
+  renderProtocolDetail,
 }: {
   readonly item: ConversationTimelineProtocolEventItem;
   readonly depth: 0 | 1;
   readonly onInvokeProtocolAction?: (item: ConversationTimelineProtocolEventItem, action: ConversationProtocolAction) => void | Promise<void>;
+  readonly renderProtocolDetail?: (item: ConversationTimelineProtocolEventItem) => React.ReactNode;
 }): React.JSX.Element {
   const { t } = useI18n();
   if (item.blockedExplanation) {
@@ -21,18 +24,25 @@ export function ConversationTimelineProtocolRenderer({
       icon={<ProtocolIcon kind={item.protocolKind} />} defaultExpanded={false}
       detail={<BlockedExplanationDetail explanation={item.blockedExplanation} />} />;
   }
-  const hasActions = Boolean(onInvokeProtocolAction && item.availableActions?.length);
+  const surfaceDetail = renderProtocolDetail?.(item);
+  const inlineGraph = item.protocolKind === "workflow" && Boolean(surfaceDetail);
+  const workflowProtocol = item.protocolKind === "workflow" || item.protocolKind === "workflow-step";
+  const actionItem = workflowProtocol ? { ...item, availableActions: item.availableActions?.filter(action => action !== "open_source" && action !== "open_details") } : item;
+  const hasActions = Boolean(onInvokeProtocolAction && actionItem.availableActions?.length);
   return (
     <TimelineFactRow
       item={item}
       depth={depth}
-      title={item.title}
-      meta={item.meta}
-      icon={<ProtocolIcon kind={item.protocolKind} />}
-      detail={detailExists(item) || hasActions ? (
+      title={inlineGraph ? `${t("Graph")} · ${item.title}` : item.title}
+      meta={inlineGraph ? null : item.meta}
+      compact={inlineGraph || isWorkflowIsolationTimelineItem(item)}
+      defaultExpanded={inlineGraph ? false : undefined}
+      icon={inlineGraph ? <Network size={14} aria-hidden="true" /> : <ProtocolIcon kind={item.protocolKind} />}
+      detail={detailExists(item) || hasActions || surfaceDetail ? (
         <>
-          {detailExists(item) ? <TextDetail text={item.description ?? item.detailLines?.map((line) => line.text).join("\n")} /> : null}
-          <ConversationTimelineProtocolActions item={item} onInvoke={onInvokeProtocolAction} />
+          {!inlineGraph && detailExists(item) ? <TextDetail text={item.description ?? item.detailLines?.map((line) => line.text).join("\n")} /> : null}
+          <ConversationTimelineProtocolActions item={actionItem} onInvoke={onInvokeProtocolAction} />
+          {surfaceDetail}
         </>
       ) : undefined}
     />

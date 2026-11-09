@@ -2,6 +2,7 @@ import { recallMemory } from "../memory/recall-service.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   DEFAULT_WORKSPACE_ID,
+  createSqliteWorkflowUserCreationStore,
   effectiveWorkflowPreGate,
   inspectWorkflowPreApproval,
   type ApprovalRequest,
@@ -21,6 +22,7 @@ import {
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
+import { loadWorkspaceRuntimeSettings } from "../../runtime/runner-settings.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
@@ -83,6 +85,9 @@ import { mergeWorkflowApprovalProfiles } from "./workflow-step-run-policy.js";
 import { preflightWorkflowParticipantProvider } from "./workflow-participant-provider.js";
 import { createWorkflowPreApprovalExecutionPermit, prepareWorkflowPreApproval,
   workflowPreApprovalStartOverrideError } from "./workflow-pre-approval.js";
+import { createWorkflowSafetyAdmission, freezeWorkflowSafetyPlan, workflowSafetySnapshot, type WorkflowSafetySnapshotV1 } from "../runs/workflow-safety.js";
+import { assertWorkflowTemplateCompilationCurrent } from "./workflow-template-compilation.js";
+import { assertWorkflowIsolationSelectionReady, type WorkflowIsolationHost } from "./workflow-isolation-selection.js";
 export { completeWorkflowIfStepsFinished } from "./workflow-completion.js";
 
 const WORKFLOW_STEP_RESOURCE_LEASE_TTL_MS = 6 * 60 * 60 * 1000;
@@ -102,6 +107,9 @@ export interface WorkflowStepRunRequest {
   /** Internal-only Host execution bindings for workflow-owned operations. */
   readonly executionOperationBindings?: readonly ChannelIntentExecutionOperationV1[];
   readonly workflowOperationExecution?: WorkflowOperationExecutionSnapshot;
+  readonly workflowSafetySnapshot?: WorkflowSafetySnapshotV1;
+  /** Host-frozen scope identity; public step-start input cannot select or replace it. */
+  readonly workflowIsolationPlan?: { readonly planId: string; readonly planDigest: string };
   readonly requestedSkillId?: string;
   readonly skipProviderPreflight?: boolean;
   readonly skipMemoryRecall?: boolean;
@@ -168,6 +176,7 @@ export async function handleChannelWorkflowsCollection(
     return;
   }
 
+  let registryCompilation = false;
   try {
     const store = storeRegistry.getStore(cwd);
     if (!store.getChannel(channelId)) {
@@ -190,7 +199,10 @@ export async function handleChannelWorkflowsCollection(
       const body = await readJsonBody(request, config.maxBodyBytes);
       if (isWorkflowTemplateCompileRequest(body)) {
         const input = parseWorkflowTemplateCompileRequest(body, channelId);
-        const compiled = compileWorkflowTemplate(store, input, new Date().toISOString(), runnerRegistry);
+        registryCompilation = input.customTemplateId !== undefined;
+        const now = new Date().toISOString();
+        const compiled = createSqliteWorkflowUserCreationStore(store).create({ channelId, now,
+          compile: () => compileWorkflowTemplate(store, input, now, runnerRegistry) });
         writeJson(response, 201, compiled);
         return;
       }
@@ -201,7 +213,10 @@ export async function handleChannelWorkflowsCollection(
     }
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel workflows` });
   } catch (error) {
-    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+    // Existing inline and built-in compilation callers retain their error contract.
+    const registryError = registryCompilation && error instanceof HttpError ? error : undefined;
+    writeJson(response, registryError?.statusCode ?? 400,
+      { error: registryError?.code ?? "bad_request", message: error instanceof Error ? error.message : String(error) });
   }
 }
 
@@ -591,6 +606,8 @@ export async function handleChannelWorkflowStepStartRoute(
   validateRunRequest: ValidateWorkflowStepRunRequest,
   startRun: StartWorkflowStepRun,
   secretResolver?: SecretResolver,
+  runnerRegistry?: RunnerRegistry,
+  isolationHost?: WorkflowIsolationHost,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -606,9 +623,11 @@ export async function handleChannelWorkflowStepStartRoute(
       writeJson(response, 404, { error: "workflow_step_not_found", message: `Channel workflow step not found: ${workflowStepId}` });
       return;
     }
-    await handleChannelWorkflowStepStart(request, response, config, storeRegistry, cwd, existing.id, validateRunRequest, startRun, secretResolver);
+    await handleChannelWorkflowStepStart(request, response, config, storeRegistry, cwd, existing.id, validateRunRequest, startRun, secretResolver, runnerRegistry, isolationHost);
   } catch (error) {
-    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+      error: error instanceof HttpError ? error.code : "bad_request", message: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 
@@ -622,6 +641,8 @@ async function handleChannelWorkflowStepStart(
   validateRunRequest: ValidateWorkflowStepRunRequest,
   startRun: StartWorkflowStepRun,
   secretResolver?: SecretResolver,
+  runnerRegistry?: RunnerRegistry,
+  isolationHost?: WorkflowIsolationHost,
 ): Promise<void> {
   if (request.method !== "POST") {
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for workflow step start` });
@@ -631,7 +652,7 @@ async function handleChannelWorkflowStepStart(
   const store = storeRegistry.getStore(cwd);
   const body = await readJsonBody(request, config.maxBodyBytes);
   const input = parseChannelWorkflowStepStartRequest(body);
-  const started = await prepareWorkflowStepStart(store, workflowStepId, input, cwd, validateRunRequest, secretResolver);
+  const started = await prepareWorkflowStepStart(store, workflowStepId, input, cwd, validateRunRequest, secretResolver, runnerRegistry, isolationHost);
   if (started.kind === "waiting_for_approval") {
     writeJson(response, 200, {
       status: "waiting_for_approval",
@@ -700,6 +721,8 @@ export async function prepareWorkflowStepStart(
   cwd: string,
   validateRunRequest: ValidateWorkflowStepRunRequest,
   secretResolver?: SecretResolver,
+  runnerRegistry?: RunnerRegistry,
+  isolationHost?: WorkflowIsolationHost,
 ): Promise<PreparedWorkflowStepStart> {
   let step = store.getChannelWorkflowStep(workflowStepId);
   if (!step) {
@@ -713,12 +736,41 @@ export async function prepareWorkflowStepStart(
   if (!channel) {
     return { kind: "error", statusCode: 404, code: "channel_not_found", message: `Channel not found: ${step.channelId}` };
   }
+  try {
+    assertWorkflowTemplateCompilationCurrent(store, step);
+    if (step.metadata?.templateCompilationPin && runnerRegistry) {
+      const settings = loadWorkspaceRuntimeSettings(store, runnerRegistry);
+      runnerRegistry.resolve({ requestedRunnerId: step.metadata.requestedRunnerId,
+        allowedRunnerIds: settings.allowedRunnerIds, allowFallback: false, tools: step.metadata.requiredTools });
+    }
+    if (step.metadata?.templateCompilationPin && (input.assigneeTeammateId && input.assigneeTeammateId !== step.toParticipantId
+      || input.providerPresetId && input.providerPresetId !== step.metadata.providerPresetId
+      || input.runnerId && input.runnerId !== step.metadata.requestedRunnerId || input.taskPrompt && input.taskPrompt !== step.prompt)) {
+      throw new HttpError(409, "workflow_template_compilation_stale", "Frozen template inputs cannot be overridden; explicitly compile another workflow.");
+    }
+  } catch (error) {
+    return { kind: "error", statusCode: error instanceof HttpError ? error.statusCode : 409,
+      code: "workflow_template_compilation_stale", message: error instanceof Error ? error.message : "Template compilation cannot be verified." };
+  }
+  assertWorkflowIsolationSelectionReady(store, workflow.id, runnerRegistry, isolationHost);
   const planModeBlocker = getWorkflowPlanModeBlocker(store, workflow);
   if (planModeBlocker) {
     return { kind: "error", statusCode: 409, code: "plan_mode_workflow_blocked", message: planModeBlocker };
   }
 
   const now = new Date().toISOString();
+  if (input.mode === "create_and_run_task" && step.metadata?.sideEffectClass) {
+    const execution = assertChannelWorkspaceReady(channel, cwd);
+    if (!execution.ok) return { kind: "error", statusCode: 409, code: "workflow_safety_mismatch", message: execution.message };
+    try {
+      step = freezeWorkflowSafetyPlan({ store, step, workspaceCwd: cwd,
+        executionCwd: step.metadata?.isolationScopePlan ? step.metadata.safetyPlan?.executionRoot ?? execution.executionCwd : execution.executionCwd,
+        runnerId: input.runnerId ?? step.metadata?.requestedRunnerId ?? step.metadata?.safetyPlan?.runnerId, runnerRegistry });
+    } catch (error) {
+      return { kind: "error", statusCode: error instanceof HttpError ? error.statusCode : 409,
+        code: error instanceof HttpError ? error.code : "workflow_safety_mismatch", message: error instanceof Error ? error.message : String(error) };
+    }
+  }
   const initialPreApproval = inspectWorkflowPreApproval(store, step, now);
   const overrideError = workflowPreApprovalStartOverrideError(step, channel, input, initialPreApproval);
   if (overrideError) return overrideError;
@@ -804,7 +856,8 @@ export async function prepareWorkflowStepStart(
   if (!workspace.ok) {
     return block(workspace.message);
   }
-  const runnerId = input.runnerId ?? (preApprovalEvidence.status === "approved" ? step.metadata?.requestedRunnerId : undefined);
+  const runnerId = input.runnerId ?? step.metadata?.safetyPlan?.runnerId
+    ?? (preApprovalEvidence.status === "approved" || step.metadata?.templateCompilationPin ? step.metadata?.requestedRunnerId : undefined);
   const taskTitle = input.taskTitle ?? step.title;
   const requestedAssigneeTeammateId = input.assigneeTeammateId ?? step.toParticipantId;
   const runTools = workflowStepRunTools(step.metadata?.requiredTools);
@@ -929,7 +982,7 @@ export async function prepareWorkflowStepStart(
   }
   const runRequestBase: WorkflowStepRunRequest = {
     workspaceCwd: cwd,
-    cwd: workspace.executionCwd,
+    cwd: step.metadata?.safetyPlan?.executionRoot ?? workspace.executionCwd,
     providerPresetId,
     providerBinding,
     runnerId,
@@ -939,6 +992,9 @@ export async function prepareWorkflowStepStart(
     delegatedRequirement: step.metadata?.delegatedRequirement,
     executionOperationBindings: workflowStepExecutionOperationBindings(step),
     workflowOperationExecution: createWorkflowOperationExecutionSnapshot(step),
+    workflowSafetySnapshot: workflowSafetySnapshot(step.metadata?.safetyPlan),
+    workflowIsolationPlan: step.metadata?.isolationScopePlan,
+    requestedSkillId: step.metadata?.skillId,
     skipProviderPreflight: input.skipProviderPreflight ?? false,
     skipMemoryRecall: true,
     preselectedMemoryUse: renderedMemory.memoryIds.length > 0
@@ -983,9 +1039,16 @@ export async function prepareWorkflowStepStart(
     }
   }
 
+  let admission: ReturnType<typeof createWorkflowSafetyAdmission>;
+  try {
+    admission = input.mode === "create_and_run_task" ? createWorkflowSafetyAdmission(store, step, runRequestBase) : undefined;
+  } catch (error) {
+    return fail(409, "workflow_safety_mismatch", error instanceof Error ? error.message : String(error));
+  }
   const begun = store.beginChannelWorkflowStepStart({
     workflowStepId: step.id, expected: step, leaseId: lease.id, now: new Date().toISOString(),
     executionPermit,
+    admission,
     createTaskOnly: input.mode === "create_task",
     fanInContextReviews: fanInContext.reviews,
     task: {

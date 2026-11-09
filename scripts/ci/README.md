@@ -70,10 +70,12 @@ a requested package via `--if-present`.
 - Other packages and Web checks: one Linux matrix entry only when at least one
   such package is selected, excluding core and daemon because their complete
   discovery runs in their own entries.
-- Daemon: six `macos-26` shards, up to four concurrent file workers per shard;
-  each worker processes its files serially. The Kimi Host read/terminal and
-  delegation production-tool-surface files run serially in an exclusive phase
-  before other files on their assigned runner.
+- Daemon: six `macos-26` shards, two serial file workers per shard. The Kimi Host
+  read/terminal and delegation production-tool-surface files run serially in an
+  exclusive phase before other files on their assigned runner. The six-shard
+  split keeps first runs bounded before the default-branch timing cache has
+  measurements for newly added daemon files; it does not reduce file discovery,
+  per-file watchdogs or platform coverage.
 - Linux restricted-command contracts and real macOS native smoke remain separate
   mandatory lanes. No daemon files have been moved to Linux or removed.
 - Framework assurance: complete non-documentation runs add an Ubuntu / Node
@@ -98,15 +100,26 @@ and each file process runs with `--test-concurrency=1`.
 An assertion failure does not suppress later files. A file exceeding five
 minutes fails and its group is terminated; it is not retried or forced green.
 The known high-cost daemon integration fixture,
-`test/recovery-discovery-fair-scan.test.mjs`, has an explicit ten-minute
-watchdog because hosted macOS runs crossed five minutes while continuing to
-make progress. This exception is file-scoped; every other daemon file keeps
-the five-minute bound. Channel discussion, intent, workflow and workspace
-tests are separate files in the ordinary parallel queue, each with the default
-five-minute watchdog; their shared support fixture is not a test entrypoint.
+`test/recovery-discovery-fair-scan.test.mjs`, and the workflow integration
+fixtures `test/workflow-candidate-validation.test.mjs`,
+`test/workflow-conflict-recovery.test.mjs`,
+`test/workflow-integration-candidate.test.mjs`,
+`test/workflow-isolated-parallel-integration.test.mjs`,
+`test/workflow-merge-approval.test.mjs`,
+`test/workflow-worktree-cleanup.test.mjs`, and
+`test/workflow-worktree-cleanup-store.test.mjs` have explicit ten-minute watchdogs
+because hosted runners crossed five minutes while continuing to make progress.
+`test/workflow-merge-apply.test.mjs` has a fifteen-minute watchdog because its
+serial native Git scenarios can exceed ten minutes on hosted runners while
+continuing to make progress.
+These exceptions are file-scoped; every other daemon file keeps the five-minute
+bound. Channel discussion, intent, workflow and workspace tests are separate
+files in the ordinary parallel queue, each with the default five-minute
+watchdog; their shared support fixture is not a test entrypoint.
 SIGTERM gets up to five seconds before SIGKILL. Cancellation stops new work.
-The core queue has a 20-minute deadline and daemon has a 30-minute deadline,
-leaving setup and artifact upload time within their unchanged job caps.
+The core queue has a 30-minute deadline and daemon has a 30-minute deadline,
+leaving setup and artifact upload time within the 35-minute core and 40-minute
+daemon job caps.
 Existing per-test assertion and timeout contracts still apply.
 
 Detached/reparented leak cleanup uses per-file ownership tags and sampled process
@@ -229,7 +242,7 @@ node scripts/ci/test-shard-plan.mjs \
 On the suite's required platform, run a shard with that immutable plan:
 
 ```sh
-node scripts/ci/daemon-test-shard.mjs --shard=0 --shard-count=6 --concurrency=4 \
+node scripts/ci/daemon-test-shard.mjs --shard=0 --shard-count=6 --concurrency=2 \
   --plan=.codex-artifacts/ci/test-plan.json \
   --report=.codex-artifacts/ci/reports/daemon-0.json
 ```

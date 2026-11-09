@@ -713,7 +713,7 @@ export function parseChannelHandoffRoute(pathname: string): { readonly handoffId
 export function parseChannelWorkflowRoute(
   pathname: string,
 ):
-  | { readonly kind: "workflow"; readonly workflowId: string; readonly action?: "orchestrate" | "cancel" | "evidence" | "collaboration-card" | "workspace-changes" | "workspace-changes-undo" | "workspace-changes-reapply" }
+  | { readonly kind: "workflow"; readonly workflowId: string; readonly action?: "orchestrate" | "cancel" | "evidence" | "conflict-recovery" | "collaboration-card" | "workspace-changes" | "workspace-changes-undo" | "workspace-changes-reapply" }
   | { readonly kind: "steps"; readonly workflowId: string }
   | { readonly kind: "workflow-step"; readonly workflowStepId: string; readonly action?: "start" | "retry" | "evidence" }
   | undefined {
@@ -723,6 +723,9 @@ export function parseChannelWorkflowRoute(
   }
   if (segments.length === 3 && segments[0] === "workflows" && segments[2] === "orchestrate") {
     return { kind: "workflow", workflowId: segments[1], action: "orchestrate" };
+  }
+  if (segments.length === 3 && segments[0] === "workflows" && segments[2] === "conflict-recovery") {
+    return { kind: "workflow", workflowId: segments[1], action: "conflict-recovery" };
   }
   if (segments.length === 3 && segments[0] === "workflows" && segments[2] === "cancel") {
     return { kind: "workflow", workflowId: segments[1], action: "cancel" };

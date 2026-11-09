@@ -2,6 +2,7 @@ import type { ChannelSessionPage, ChannelSessionSummary, CreateChannelSessionInp
 import type { MemoryWikiStore } from "./memory-wiki-types.js";
 import type { MemoryDerivativeStore } from "./memory-derivative-types.js";
 import type { LearningReviewStore } from "./learning-review-types.js";
+import type { RuntimeRunQueueStore } from "./runtime-run-queue-types.js";
 import { randomUUID } from "node:crypto";
 import type { ApplyProposedPlanArtifactActionInput, ProposedPlanArtifactActionResult } from "./proposed-plan-mutation.js";
 import type { NativeExecutionStore } from "./native-execution-types.js";
@@ -1570,7 +1571,7 @@ export interface ClaimSnapshotRestoreFenceInput {
   readonly now: string;
 }
 
-export interface RunStore extends MemoryWikiStore, MemoryDerivativeStore, LearningReviewStore, NativeExecutionStore, HarnessProjectionStore, HarnessArtifactRetentionStore, DelegationQueryStore, HarnessDiagnosticsStore, RunEvaluationTaskStore, RunEvaluationQaStore, RunEvaluationHumanStore, RunEvaluationHumanReadStore {
+export interface RunStore extends MemoryWikiStore, MemoryDerivativeStore, LearningReviewStore, RuntimeRunQueueStore, NativeExecutionStore, HarnessProjectionStore, HarnessArtifactRetentionStore, DelegationQueryStore, HarnessDiagnosticsStore, RunEvaluationTaskStore, RunEvaluationQaStore, RunEvaluationHumanStore, RunEvaluationHumanReadStore {
   getDelegationCompletionEvidence(input: GetDelegationCompletionEvidenceInput): DelegationCompletionEvidenceV1;
   listApprovalPostCommitEffects(options?: {
     readonly approvalId?: string;
@@ -2015,7 +2016,10 @@ export interface RunStore extends MemoryWikiStore, MemoryDerivativeStore, Learni
   appendRuntimeDiagnosticEvent(input: import("./runtime-supervisor-types.js").AppendRuntimeDiagnosticEventInput): RuntimeEvent;
   listRuntimeEvents(workUnitId: string, options?: ListRuntimeEventsOptions): RuntimeEvent[];
   recordRuntimeHeartbeat(input: RecordRuntimeHeartbeatInput): RuntimeHeartbeat;
+  getRuntimeConcurrencyPolicy(workspaceId: string): import("./runtime-concurrency-policy.js").RuntimeConcurrencyPolicy | undefined;
+  installRuntimeConcurrencyPolicy(input: import("./runtime-concurrency-policy.js").InstallRuntimeConcurrencyPolicyInput): import("./runtime-concurrency-policy.js").InstallRuntimeConcurrencyPolicyResult;
   acquireRuntimeSemaphoreSlot(input: AcquireRuntimeSemaphoreSlotInput): RuntimeSemaphoreSlot | undefined;
+  acquireRuntimeSemaphoreSlots(inputs: readonly AcquireRuntimeSemaphoreSlotInput[]): import("./runtime-supervisor-types.js").AcquireRuntimeSemaphoreSlotsResult;
   renewRuntimeSemaphoreSlotsForAttempt(fence: RuntimeAttemptFenceV1, renewal: RuntimeResourceRenewal): number;
   releaseRuntimeSemaphoreSlotsForAttempt(fence: RuntimeAttemptFenceV1, releasedAt: string, releaseReason: string): number;
   expireRuntimeSemaphoreSlots(now: string): number;
@@ -2457,6 +2461,10 @@ export interface RunStore extends MemoryWikiStore, MemoryDerivativeStore, Learni
   requestChannelWorkflowStepPreApproval(input: import("./workflow-pre-gate.js").WorkflowStepPreApprovalInput): import("./workflow-pre-gate.js").WorkflowStepPreApprovalResult;
   resolveChannelWorkflowStepPreApproval(input: import("./workflow-pre-gate.js").WorkflowStepPreApprovalResolveInput): import("./workflow-pre-gate.js").WorkflowStepPreApprovalResult;
   beginChannelWorkflowStepStart(input: import("./workflow-step-start-owner.js").BeginChannelWorkflowStepStartInput): import("./workflow-step-start-owner.js").BeginChannelWorkflowStepStartResult;
+  getChannelWorkflowStepStartAdmission(...args: Parameters<import("./workflow-step-admission.js").WorkflowStepAdmissionStore["getChannelWorkflowStepStartAdmission"]>): import("./workflow-step-admission.js").WorkflowStepStartAdmission | undefined;
+  transferChannelWorkflowStepStartAdmission(input: import("./workflow-step-admission.js").TransferChannelWorkflowStepStartAdmissionInput): import("./workflow-step-admission.js").TransferChannelWorkflowStepStartAdmissionResult;
+  resumeChannelWorkflowStepStartAdmission(input: import("./workflow-step-admission.js").ResumeChannelWorkflowStepStartAdmissionInput): import("./workflow-step-admission.js").ResumeChannelWorkflowStepStartAdmissionResult;
+  releaseChannelWorkflowStepStartAdmission(input: import("./workflow-step-admission.js").ReleaseChannelWorkflowStepStartAdmissionInput): import("./workflow-step-admission.js").ReleaseChannelWorkflowStepStartAdmissionResult;
   commitChannelWorkflowStepRunReady(input: import("./workflow-step-start-owner.js").WorkflowStepStartCommitInput): import("./workflow-step-start-owner.js").WorkflowStepStartCommitResult;
   settleChannelWorkflowStepStartFailure(input: import("./workflow-step-start-owner.js").WorkflowStepStartFailureInput): import("./workflow-step-start-owner.js").WorkflowStepStartCommitResult;
   commitChannelWorkflowStepPostApproval(input: import("./workflow-step-start-owner.js").WorkflowStepPostApprovalInput): import("./workflow-step-start-owner.js").WorkflowStepPostApprovalResult;
@@ -2836,6 +2844,9 @@ export type RunExecutionStoreFacet = RunStoreFacet<
 >;
 
 export type RuntimeSupervisorStoreFacet = RunStoreFacet<
+  | "getRuntimeConcurrencyPolicy"
+  | "hasRuntimeRunQueueCustody"
+  | "installRuntimeConcurrencyPolicy"
   | "hasPendingRunTerminalIntent"
   | "hasPendingRunSuspension"
   | "createWorkUnit"
@@ -2855,6 +2866,7 @@ export type RuntimeSupervisorStoreFacet = RunStoreFacet<
   | "listRuntimeEvents"
   | "recordRuntimeHeartbeat"
   | "acquireRuntimeSemaphoreSlot"
+  | "acquireRuntimeSemaphoreSlots"
   | "renewRuntimeSemaphoreSlotsForAttempt"
   | "releaseRuntimeSemaphoreSlotsForAttempt"
   | "expireRuntimeSemaphoreSlots"

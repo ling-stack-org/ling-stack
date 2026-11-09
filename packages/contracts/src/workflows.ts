@@ -8,6 +8,8 @@ import type { ResponseLanguagePreference } from "./settings.js";
 import type { RunTool } from "./shared.js";
 import type { WorkflowParticipantProviderBindingV1 } from "./conversation-model-binding.js";
 import type { Task } from "./tasks.js";
+import type { WorkflowStepParallelPolicy, WorkflowStepSideEffectClass } from "./workflow-safety.js";
+import type { WorkflowTemplatePin, WorkflowTemplateRegistryEntry, WorkflowTemplateVersion } from "./workflow-template-registry.js";
 import type {
   ChannelIntentExecutionPlanV1,
   ConversationContextProjectionMetadata,
@@ -239,6 +241,14 @@ export function workflowGraphFingerprintV1(graph: WorkflowGraph): string {
       requiredTools: [...(node.requiredTools ?? [])].sort(),
       branchGroupId: node.branchGroupId,
       joinGroupId: node.joinGroupId,
+      sideEffectClass: node.sideEffectClass,
+      parallelPolicy: node.parallelPolicy === undefined ? undefined : {
+        autoParallel: node.parallelPolicy.autoParallel,
+        maxParallelSiblings: node.parallelPolicy.maxParallelSiblings,
+        resourceKeys: node.parallelPolicy.resourceKeys === undefined ? undefined : [...node.parallelPolicy.resourceKeys].sort(),
+        requiresArtifactOnly: node.parallelPolicy.requiresArtifactOnly,
+        cancelSiblingsOnFailure: node.parallelPolicy.cancelSiblingsOnFailure,
+      },
     })).sort((left, right) => left.id.localeCompare(right.id)),
     edges: [...graph.edges].map((edge) => ({
       id: edge.id,
@@ -853,10 +863,13 @@ export interface WorkflowCompletionGateV1 {
 }
 
 export interface ChannelWorkflowStepMetadata {
+  readonly sideEffectClass?: WorkflowStepSideEffectClass;
+  readonly parallelPolicy?: WorkflowStepParallelPolicy;
   readonly participantAuthority?: WorkflowParticipantAuthorityV1;
   readonly providerBinding?: WorkflowParticipantProviderBindingV1;
   readonly workflowTemplateId?: string;
   readonly templateVersion?: string;
+  readonly templateCompilationPin?: WorkflowTemplateCompilationStepPinV1;
   readonly templateStepId?: string;
   readonly graphId?: string;
   readonly graphNodeId?: string;
@@ -934,6 +947,8 @@ export interface WorkflowGraphNode {
   readonly kind: WorkflowGraphNodeKind;
   readonly name: string;
   readonly prompt: string;
+  readonly sideEffectClass?: WorkflowStepSideEffectClass;
+  readonly parallelPolicy?: WorkflowStepParallelPolicy;
   readonly teammateTemplateId?: string;
   readonly teammateId?: string;
   readonly councilSlotKey?: string;
@@ -963,6 +978,7 @@ export interface WorkflowGraph {
 }
 
 export interface ChannelWorkflowMetadata {
+  readonly templateCompilation?: WorkflowTemplateCompilationV1;
   readonly workflowGraphId?: string;
   readonly workflowGraphSchemaVersion?: number;
   readonly workflowGraphArtifactId?: string;
@@ -1133,6 +1149,7 @@ export interface WorkflowEvidenceStep {
 
 export interface WorkflowEvidenceResponse {
   readonly workflow: ChannelWorkflow;
+  readonly isolation?: import("./workflow-isolation-evidence.js").WorkflowIsolationEvidenceV1;
   readonly steps: readonly WorkflowEvidenceStep[];
   readonly selectorDecisions: readonly WorkflowSelectorDecision[];
   readonly handoffIntents: readonly WorkflowHandoffIntent[];
@@ -1220,6 +1237,20 @@ export interface ChannelCollaborationCardListResponse {
   readonly cards: readonly CollaborationTaskCardModel[];
 }
 
+export interface ChannelWorkflowOrchestrationRequest {
+  readonly executionProfile?: "pi_host_isolated_files_v1";
+}
+
+export function parseChannelWorkflowOrchestrationRequest(value: unknown): ChannelWorkflowOrchestrationRequest {
+  if (value === undefined) return {};
+  if (!value || typeof value !== "object" || Array.isArray(value)
+    || Object.keys(value).some(key => key !== "executionProfile")
+    || "executionProfile" in value && value.executionProfile !== "pi_host_isolated_files_v1") {
+    throw new Error("Workflow orchestration accepts only the explicit pi_host_isolated_files_v1 execution profile.");
+  }
+  return value as ChannelWorkflowOrchestrationRequest;
+}
+
 export interface CreateChannelWorkflowRequest {
   readonly sourceHandoffId?: string;
   readonly title: string;
@@ -1251,6 +1282,8 @@ export interface CreateChannelWorkflowFromCustomTemplateRequest {
 
 export interface CreateChannelWorkflowFromCustomTemplateIdRequest {
   readonly customTemplateId: string;
+  readonly customTemplateVersion: string;
+  readonly customTemplateDigest: string;
   readonly title?: string;
   readonly objective: string;
   readonly createdBy?: string;
@@ -1287,10 +1320,89 @@ export interface CustomWorkflowTemplate {
   readonly steps: readonly CustomWorkflowTemplateStep[];
 }
 
+/** Frozen compiler input and resolved references. Never an independent execution permit. */
+export interface WorkflowTemplateCompilationV1 {
+  readonly schemaVersion: 1;
+  readonly source: "inline" | "registry";
+  readonly templatePin: WorkflowTemplatePin;
+  readonly template: CustomWorkflowTemplate;
+  readonly objective: string;
+  readonly steps: readonly WorkflowTemplateResolvedStepV1[];
+  readonly graphFingerprint: string;
+}
+
+export interface WorkflowTemplateResolvedStepV1 {
+  readonly templateStepId: string;
+  readonly title: string;
+  readonly prompt: string;
+  readonly autoStart: boolean;
+  readonly policy: WorkflowStepPolicy;
+  readonly gates?: readonly WorkflowStepGate[];
+  readonly toParticipantId: string;
+  readonly toParticipantLabel: string;
+  readonly participantDigest: string;
+  readonly skillId?: string;
+  readonly skillDigest?: string;
+  readonly runnerId: string;
+  readonly providerPresetId?: string;
+  readonly providerDigest?: string;
+  readonly requiredTools: readonly RunTool[];
+  readonly dependsOn: readonly string[];
+  readonly sideEffectClass?: WorkflowStepSideEffectClass;
+  readonly parallelPolicy?: WorkflowStepParallelPolicy;
+}
+
+export interface WorkflowTemplateCompilationStepPinV1 extends WorkflowTemplatePin {
+  readonly graphFingerprint: string;
+}
+
+export interface WorkflowTemplatePreviewRequest {
+  readonly channelId: string;
+  readonly objective: string;
+  readonly customTemplate?: CustomWorkflowTemplate;
+  readonly customTemplateId?: string;
+  readonly customTemplateVersion?: string;
+  readonly customTemplateDigest?: string;
+  readonly autoStart?: boolean;
+  readonly confirmUnsafeAutoStart?: boolean;
+}
+
+export interface WorkflowTemplatePreviewResponse {
+  readonly templatePin: WorkflowTemplatePin;
+  readonly graphFingerprint: string;
+  readonly steps: readonly WorkflowTemplateResolvedStepV1[];
+}
+
+export interface WorkflowTemplateListResponse {
+  readonly cwd: string;
+  readonly templates: readonly WorkflowTemplateRegistryEntry[];
+}
+
+export interface WorkflowTemplateVersionResponse {
+  readonly entry: WorkflowTemplateRegistryEntry;
+  readonly version: WorkflowTemplateVersion;
+}
+
+export interface WorkflowTemplateSaveRequest {
+  readonly id: string;
+  readonly version: string;
+  readonly template: CustomWorkflowTemplate;
+  readonly expectedRevision: number;
+}
+
+export type WorkflowTemplateReviewRequest = { readonly expectedRevision: number } & (
+  | { readonly reviewStatus: "published"; readonly version: string; readonly digest: string }
+  | { readonly reviewStatus: "draft" | "disabled" | "archived"; readonly version?: never; readonly digest?: never }
+);
+
+export interface WorkflowTemplateReviewResponse { readonly entry: WorkflowTemplateRegistryEntry }
+
 export interface CustomWorkflowTemplateStep {
   readonly id: string;
   readonly name: string;
   readonly prompt: string;
+  readonly sideEffectClass?: WorkflowStepSideEffectClass;
+  readonly parallelPolicy?: WorkflowStepParallelPolicy;
   readonly teammateTemplateId?: string;
   readonly teammateId?: string;
   readonly councilSlotKey?: string;
@@ -1571,7 +1683,12 @@ export type ChannelSmartSchedulingReasonCode =
   | "approval_pending"
   | "unknown_tools_serial"
   | "side_effectful_step_serial"
-  | "read_only_parallel_allowed";
+  | "safety_opt_in_required"
+  | "host_parallel_capability_unavailable"
+  | "active_step_safety_unverified"
+  | "resource_conflict"
+  | "read_only_parallel_allowed"
+  | "isolated_files_parallel_allowed";
 
 export interface ChannelSmartSchedulingDecision {
   readonly schedulingMode: "smart";

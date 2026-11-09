@@ -78,7 +78,10 @@ async function fixture(t) {
     semaphores: store.listRuntimeSemaphoreSlots({ workUnitId: workUnit.id }) });
   const originalSource = sourceSnapshot();
   let semaphoreCalls = 0;
-  store.acquireRuntimeSemaphoreSlot = () => { semaphoreCalls += 1; throw new Error("normal quota forbidden"); };
+  store.acquireRuntimeSemaphoreSlots = store.acquireRuntimeSemaphoreSlot = () => {
+    semaphoreCalls += 1;
+    throw new Error("normal quota forbidden");
+  };
   verifySource = () => {
     // Reopen rather than reading a deliberately closed fixture connection.
     const check = open();

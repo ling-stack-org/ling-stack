@@ -17,6 +17,8 @@ import { assertOrdinaryProgressRecoveryModelContext } from "./ordinary-progress-
 import { bindPiProviderInvocationResolution, createPiProviderInvocation } from "./provider-invocation.js";
 import { bindPiProviderBudgetResolution, createPiProviderBudgetInvocation } from "./provider-budget.js";
 import { readDelegationInstructionDirective } from "./delegation-instruction.js";
+import { assertHostReadonlyToolSurface } from "./extensions/host-readonly.js";
+import { withHostIsolatedFilesToolSurface } from "./extensions/host-isolated-files.js";
 
 /** Internal latch only. The public yielded outcome requires an idle SDK first. */
 class PendingUserInputYield extends Error {
@@ -67,6 +69,8 @@ export function createPiTaskBoundary(options: PiRunnerRunOptions, readTaskContex
   readonly sessionId: string;
   readonly preparedInput: PiRunnerPreparedInput;
 } | undefined, readBoundaryModelView?: () => readonly unknown[] | undefined) {
+  options = withHostIsolatedFilesToolSurface(options);
+  assertHostReadonlyToolSurface(options);
   const stop = new AbortController();
   const signal = options.signal ? AbortSignal.any([options.signal, stop.signal]) : stop.signal;
   let failure: Error | undefined;
@@ -106,12 +110,45 @@ export function createPiTaskBoundary(options: PiRunnerRunOptions, readTaskContex
   const guardedOptions: PiRunnerRunOptions = {
     ...options,
     signal,
-    ...(options.onToolBefore ? { onToolBefore: guard(options.onToolBefore) } : {}),
+    ...(options.onToolBefore ? { onToolBefore: options.isolatedToolsProfile ? async request => {
+      try {
+        assertOpen();
+        const decision = await options.onToolBefore!(request);
+        assertOpen();
+        if (!decision || typeof decision.allowed !== "boolean") throw new Error("workflow_isolated_tool_before_result_invalid");
+        return decision;
+      } catch (error) {
+        return latchFailure(error);
+      }
+    } : guard(options.onToolBefore) } : {}),
     ...(options.onApprovalRequired ? { onApprovalRequired: guard(options.onApprovalRequired) } : {}),
     ...(options.onPermissionRequired ? { onPermissionRequired: guard(options.onPermissionRequired) } : {}),
     ...(options.onToolHydrationRequest ? { onToolHydrationRequest: guard(options.onToolHydrationRequest) } : {}),
     ...(options.onMcpToolCall ? { onMcpToolCall: guard(options.onMcpToolCall) } : {}),
     ...(options.onHostCapabilityCall ? { onHostCapabilityCall: guard(options.onHostCapabilityCall) } : {}),
+    ...(options.onReadonlyToolCall ? { onReadonlyToolCall: async request => {
+      try {
+        assertOpen();
+        const result = await options.onReadonlyToolCall!({ ...request,
+          signal: request.signal ? AbortSignal.any([signal, request.signal]) : signal });
+        assertOpen();
+        return result;
+      } catch (error) {
+        return latchFailure(error);
+      }
+    } } : {}),
+    ...(options.onIsolatedToolCall ? { onIsolatedToolCall: async request => {
+      try {
+        assertOpen();
+        const result = await options.onIsolatedToolCall!({ ...request,
+          signal: request.signal ? AbortSignal.any([signal, request.signal]) : signal });
+        assertOpen();
+        if (!result || !Array.isArray(result.content)) throw new Error("workflow_isolated_host_result_missing");
+        return result;
+      } catch (error) {
+        return latchFailure(error);
+      }
+    } } : {}),
     ...(options.onMediaGenerationToolCall ? { onMediaGenerationToolCall: guard(options.onMediaGenerationToolCall) } : {}),
     ...(options.onDelegationToolCall ? { onDelegationToolCall: async request => {
       try {

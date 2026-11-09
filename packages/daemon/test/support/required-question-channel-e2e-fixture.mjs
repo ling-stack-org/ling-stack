@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -35,7 +35,8 @@ const REQUIRED_QUESTION = Object.freeze({
 });
 
 export async function createRequiredQuestionChannelFixture(t, options = {}) {
-  const cwd = options.cwd ?? await mkdtemp(join(tmpdir(), "ling-required-question-channel-"));
+  // SSE subscriptions and durable Run events must use the same canonical root.
+  const cwd = await realpath(options.cwd ?? await mkdtemp(join(tmpdir(), "ling-required-question-channel-")));
   const ownsCwd = options.cwd === undefined;
   await writeFile(join(cwd, QUESTION_PATH), "question-participant-proof\n", "utf8");
   await writeFile(join(cwd, BARRIER_PATH), "barrier-participant-proof\n", "utf8");
@@ -324,6 +325,10 @@ export async function createRequiredQuestionChannelFixture(t, options = {}) {
     async postParallelWorkflow() {
       assert.equal(options.parallelWorkflow, true, "parallel graph must be selected before starting the fixture");
       assert.equal(state.created, undefined, "the fixture owns exactly one accepted workflow");
+      const readonlySafety = {
+        sideEffectClass: "analysis_readonly",
+        parallelPolicy: { autoParallel: true, maxParallelSiblings: 2, resourceKeys: [] },
+      };
       const created = await postJson(`${url}/channels/${encodeURIComponent(channel.id)}/workflows?cwd=${encodeURIComponent(cwd)}`, {
         title: "Required question explicit parallel fan-in",
         objective: "After the entry read, Engineer asks its required scope question and reads its proof; QA independently reads its proof. Both required siblings must finish.",
@@ -337,12 +342,15 @@ export async function createRequiredQuestionChannelFixture(t, options = {}) {
           maxParallelSteps: 2,
           nodes: [
             { id: "entry", kind: "step", name: "Read the shared entry", teammateId: ENTRY_PARTICIPANT_ID,
+              ...readonlySafety,
               prompt: `Read ${ENTRY_PATH}, then finish so Engineer and QA can run independently.`,
               requiredTools: ["read"], autoStart: true, providerPresetId: provider.id },
             { id: "engineer", kind: "step", name: "Required Engineer question and read", teammateId: QUESTION_PARTICIPANT_ID,
+              ...readonlySafety,
               prompt: `Ask the required scope question, then read ${QUESTION_PATH} after the answer.`,
               requiredTools: ["read"], autoStart: true, providerPresetId: provider.id },
             { id: "qa", kind: "step", name: "Independent QA read", teammateId: BARRIER_PARTICIPANT_ID,
+              ...readonlySafety,
               prompt: `Independently read ${BARRIER_PATH}, then finish. Do not wait for Engineer's answer.`,
               requiredTools: ["read"], autoStart: true, providerPresetId: provider.id },
           ],

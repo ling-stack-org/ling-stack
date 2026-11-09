@@ -1,5 +1,8 @@
 import type { SQLOutputValue } from "node:sqlite";
 import { isWorkflowStepStartOwnerV1 } from "../../workflow-step-start-owner.js";
+import { isWorkflowStepSafetyPlanV1 } from "../../workflow-safety-plan.js";
+import { workflowIsolationIdentity } from "../../workflow-isolation.js";
+import { parseWorkflowTemplateCompilation, parseWorkflowTemplateCompilationPin } from "../../workflow-template-compilation.js";
 import {
   isWorkflowParticipantAuthorityV1,
   isWorkflowParticipantProviderBindingV1,
@@ -9,11 +12,14 @@ import {
   isDelegatedOutcomeV1,
   isRequiredParticipantManifestV1,
   isWorkflowCompletionGateV1,
+  parseWorkflowStepExecutionSafety,
+  WorkflowSafetyValidationError,
   type WorkflowParticipantAuthorityV1,
 } from "@ling-stack/contracts";
 import { isSupportedLocale } from "@ling-stack/localization";
 import type { RunTool } from "../../approval-policy.js";
 import type { SkillApprovalProfile } from "../../skill-types.js";
+import type { WorkflowGraph } from "../../workflow-graph-types.js";
 import {
   channelWorkflowStepStatuses,
   type ChannelExecutionProposalStepSource,
@@ -49,6 +55,40 @@ import {
   readNumber,
   readString,
 } from "./helpers.js";
+
+export function normalizeChannelWorkflowStepMetadata(
+  metadata: ChannelWorkflowStepMetadata | undefined,
+): ChannelWorkflowStepMetadata | undefined {
+  if (metadata === undefined) return undefined;
+  if (metadata.safetyPlan !== undefined && !isWorkflowStepSafetyPlanV1(metadata.safetyPlan)) {
+    throw new WorkflowSafetyValidationError("Workflow safety plan is malformed");
+  }
+  if (metadata.templateCompilationPin !== undefined) parseWorkflowTemplateCompilationPin(metadata.templateCompilationPin);
+  return { ...metadata, ...parseWorkflowStepExecutionSafety(metadata),
+    ...(metadata.isolationScopePlan === undefined ? {} : { isolationScopePlan: parseWorkflowIsolationScopePin(metadata.isolationScopePlan) }) };
+}
+
+function parseWorkflowIsolationScopePin(value: unknown): NonNullable<ChannelWorkflowStepMetadata["isolationScopePlan"]> {
+  const pin = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+  if (!pin || !workflowIsolationIdentity(pin.planId) || typeof pin.planDigest !== "string"
+    || !/^wip1_[a-f0-9]{64}$/u.test(pin.planDigest)) throw new Error("workflow_isolation.scope_pin_invalid");
+  return { planId: pin.planId, planDigest: pin.planDigest };
+}
+
+export function normalizeChannelWorkflowMetadata(
+  metadata: ChannelWorkflowMetadata | undefined,
+): ChannelWorkflowMetadata | undefined {
+  if (metadata?.templateCompilation !== undefined) parseWorkflowTemplateCompilation(metadata.templateCompilation);
+  if (metadata?.workflowGraph === undefined) return metadata;
+  return { ...metadata, workflowGraph: normalizeWorkflowGraphExecutionSafety(metadata.workflowGraph) };
+}
+
+function normalizeWorkflowGraphExecutionSafety(graph: WorkflowGraph): WorkflowGraph {
+  return {
+    ...graph,
+    nodes: graph.nodes.map((node) => ({ ...node, ...parseWorkflowStepExecutionSafety(node) })),
+  };
+}
 
 export function mapWorkflowHandoffIntent(row: Record<string, SQLOutputValue>): WorkflowHandoffIntent {
   return omitUndefined({
@@ -213,11 +253,19 @@ function parseOptionalChannelWorkflowStepMetadata(value: string | undefined): Ch
     return undefined;
   }
   const record = parsed as Record<string, unknown>;
+  if (record.safetyPlan !== undefined && !isWorkflowStepSafetyPlanV1(record.safetyPlan)) {
+    throw new WorkflowSafetyValidationError("Persisted workflow safety plan is malformed");
+  }
   return omitUndefined({
+    // Invalid persisted declarations must not become legacy data eligible for safety defaults.
+    ...parseWorkflowStepExecutionSafety(record),
+    safetyPlan: record.safetyPlan as ChannelWorkflowStepMetadata["safetyPlan"],
+    isolationScopePlan: record.isolationScopePlan === undefined ? undefined : parseWorkflowIsolationScopePin(record.isolationScopePlan),
     startOwner: isWorkflowStepStartOwnerV1(record.startOwner) ? record.startOwner : undefined,
     providerBinding: parseOptionalWorkflowParticipantProviderBinding(record.providerBinding),
     workflowTemplateId: readOptionalStringValue(record.workflowTemplateId),
     templateVersion: readOptionalStringValue(record.templateVersion),
+    templateCompilationPin: record.templateCompilationPin === undefined ? undefined : parseWorkflowTemplateCompilationPin(record.templateCompilationPin),
     templateStepId: readOptionalStringValue(record.templateStepId),
     graphId: readOptionalStringValue(record.graphId),
     graphNodeId: readOptionalStringValue(record.graphNodeId),
@@ -330,6 +378,7 @@ function parseOptionalChannelWorkflowMetadata(value: string | undefined): Channe
   }
   const record = parsed as Record<string, unknown>;
   return omitUndefined({
+    templateCompilation: record.templateCompilation === undefined ? undefined : parseWorkflowTemplateCompilation(record.templateCompilation),
     workflowGraphId: readOptionalStringValue(record.workflowGraphId),
     workflowGraphSchemaVersion: readOptionalPositiveIntegerValue(record.workflowGraphSchemaVersion),
     workflowGraphArtifactId: readOptionalStringValue(record.workflowGraphArtifactId),
@@ -363,7 +412,7 @@ function parseOptionalWorkflowGraphValue(value: unknown): ChannelWorkflowMetadat
   if (record.schemaVersion !== 1 || typeof record.id !== "string" || typeof record.name !== "string"
     || typeof record.entryNodeId !== "string" || !Array.isArray(record.nodes) || !Array.isArray(record.edges)
     || !record.termination || typeof record.termination !== "object" || Array.isArray(record.termination)) return undefined;
-  return normalizeRunnerIdsInSnapshot(value) as NonNullable<ChannelWorkflowMetadata["workflowGraph"]>;
+  return normalizeWorkflowGraphExecutionSafety(normalizeRunnerIdsInSnapshot(value) as WorkflowGraph);
 }
 
 function isStringArray(value: unknown): value is string[] {

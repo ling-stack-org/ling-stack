@@ -430,7 +430,7 @@ jobs:
     needs: [scope, build]
     if: ${{ !cancelled() && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.unit-selected == 'true' && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.scope.outputs.unit-matrix) }}
@@ -485,7 +485,7 @@ jobs:
         run: >-
           node scripts/ci/node-test-shard.mjs --suite=core
           --shard=${{ matrix.shard }} --shard-count=4 --concurrency=2
-          --shard-timeout-ms=1200000
+          --shard-timeout-ms=1800000
           --plan=.codex-artifacts/ci/test-plan.json
           --report=.codex-artifacts/ci/reports/core-${{ matrix.shard }}.json
 
@@ -570,7 +570,7 @@ jobs:
         # Every file owns its home/workspace and process group. Short native
         # lifecycle fixtures still finish exclusively before parallel workers.
         run: >-
-          node scripts/ci/daemon-test-shard.mjs --shard=${{ matrix.shard }} --shard-count=6 --concurrency=4
+          node scripts/ci/daemon-test-shard.mjs --shard=${{ matrix.shard }} --shard-count=6 --concurrency=2
           --plan=.codex-artifacts/ci/test-plan.json
           --report=.codex-artifacts/ci/reports/daemon-${{ matrix.shard }}.json
 

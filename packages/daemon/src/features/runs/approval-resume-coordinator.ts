@@ -4,6 +4,7 @@ import {
   getRunSummaryPath,
   toRuntimeAttemptFence,
   type ApprovalRequest,
+  type HostOperationSource,
   type LingApprovalCheckpoint,
   type RunEventEnvelope,
   type RunEventDataByType,
@@ -13,10 +14,13 @@ import {
   type WorkUnit,
   type WorkUnitAttempt,
 } from "@ling-stack/core";
+import type { RuntimeHostCapacityDispatchReference } from "@ling-stack/core/runtime-host-capacity-store-bridge";
 import type { PiRunnerApprovalRequest, PiRunnerToolHandledResult } from "@ling-stack/runner-pi";
 import type { ActiveRunRegistry } from "../../runtime/active-runs.js";
 import { resolveRunnerResumeCapabilities, type RunnerRegistry } from "../../runtime/runners.js";
 import type { RuntimeSupervisor } from "../../runtime/supervisor.js";
+import type { RuntimeHostCapacityAdmission } from "../../runtime/run-queue.js";
+import { AttemptHostOperationTracker } from "../../runtime/attempt-host-operation-tracker.js";
 import type { ControlPlaneEventHub } from "../control-plane/events.js";
 import { finalizeOrchestratedWorkflowStepRun } from "../channels/orchestrator.js";
 import { appendApprovalDecisionEvent, workflowExactCommandBindingRejection } from "./approvals.js";
@@ -61,6 +65,7 @@ export class ApprovalResumeCoordinator {
     readonly runtimeSupervisor: RuntimeSupervisor;
     readonly activeRuns: ActiveRunRegistry;
     readonly runnerRegistry: RunnerRegistry;
+    readonly hostCapacity?: RuntimeHostCapacityAdmission;
     readonly controlPlaneEvents?: ControlPlaneEventHub;
     readonly afterRunTerminal?: (run: RunSession) => void | Promise<void>;
     readonly executeExistingRunContinuation?: (input: {
@@ -68,8 +73,17 @@ export class ApprovalResumeCoordinator {
       readonly runId: string;
       readonly approvalId: string;
       readonly preparedExecution: PreparedRunnerContinuationExecution;
+      readonly hostCapacity?: RuntimeHostCapacityDispatchReference;
     }) => Promise<string | undefined>;
   }) {}
+
+  private hostCapacityFor(store: RunStore): RuntimeHostCapacityAdmission | undefined {
+    return this.options.hostCapacity ?? this.options.runtimeSupervisor.getHostCapacityAdmission?.(store);
+  }
+
+  private hostCapacityRequiredFor(store: RunStore): boolean {
+    return Boolean(this.hostCapacityFor(store)) || this.options.runtimeSupervisor.getConcurrencyPolicy?.().enabled === true;
+  }
 
   registerStore(store: RunStore): void {
     for (const status of ["approved", "resume_pending", "denied"] as const) {
@@ -190,10 +204,20 @@ export class ApprovalResumeCoordinator {
     if (this.harnessDispatches.has(input.approval.runId)) {
       return { status: "already_active", runId: input.approval.runId, attemptId: checkpoint.runnerResumeHandle?.attemptId };
     }
+    const admission = this.hostCapacityFor(input.store);
+    const hostCapacityRequired = this.hostCapacityRequiredFor(input.store);
+    if (hostCapacityRequired && !admission) {
+      return { status: "blocked", runId: input.approval.runId, reason: "approval_resume_host_capacity_unavailable" };
+    }
     const validated = validateResumeBasis(input.store, input.approval, checkpoint);
     if (!validated.ok) {
-      this.failResume(input.store, checkpoint, validated.reason);
+      if (!hostCapacityRequired || checkpoint.status !== "resume_pending") {
+        this.failResume(input.store, checkpoint, validated.reason);
+      }
       return { status: "blocked", runId: input.approval.runId, reason: validated.reason };
+    }
+    if (checkpoint.status === "resume_pending" && hostCapacityRequired) {
+      return this.recoverResumePending(input.store, input.approval, checkpoint, validated);
     }
     try {
       ensureApprovedRunEvent(input.store, input.approval);
@@ -226,12 +250,33 @@ export class ApprovalResumeCoordinator {
     }
     const now = new Date().toISOString();
     const runtime = this.options.runtimeSupervisor.getRuntime(input.store.paths.cwd, input.store);
+    let hostCapacity: RuntimeHostCapacityDispatchReference | undefined;
+    if (admission) {
+      this.releaseStoppedHostCapacity(input.store, { runId: run.id, ...toRuntimeAttemptFence(priorAttempt) }, workUnit.workspaceId);
+      try {
+        const reserved = admission.reserveApprovalResumePending({
+          workspaceId: workUnit.workspaceId,
+          checkpointId: checkpoint.id,
+          expectedCheckpointRevision: checkpoint.revision,
+          expectedActiveAttemptId: priorAttempt.id,
+          runtimeInstanceId: runtime.runtimeInstanceId,
+          now,
+        });
+        if (reserved.status !== "reserved" && reserved.status !== "duplicate") {
+          return { status: "blocked", runId: run.id, reason: `approval_resume_host_capacity_${reserved.status}` };
+        }
+        hostCapacity = reserved.reference;
+      } catch {
+        return { status: "blocked", runId: run.id, reason: "approval_resume_host_capacity_unavailable" };
+      }
+    }
     let harnessPlan: ExistingRunContinuationPlan | undefined;
     if (readHarnessContinuationEnforced(run.requestSnapshot)) {
       const policySnapshot = readStoredEffectivePolicySnapshot(run.requestSnapshot);
       const execution = readStoredRunnerExecution(run);
       if (!runner || !policySnapshot || !execution) {
         const reason = "approval_resume_harness_source_incomplete";
+        this.releaseNoDispatchHostCapacity(input.store, workUnit.workspaceId, hostCapacity);
         this.failResume(input.store, checkpoint, reason);
         return { status: "blocked", runId: run.id, reason };
       }
@@ -253,12 +298,15 @@ export class ApprovalResumeCoordinator {
         });
       } catch (error) {
         const reason = `approval_resume_harness_prepare_failed:${formatError(error)}`;
+        this.releaseNoDispatchHostCapacity(input.store, workUnit.workspaceId, hostCapacity);
         this.failResume(input.store, checkpoint, reason);
         return { status: "blocked", runId: run.id, reason };
       }
     }
     const attemptId = harnessPlan?.preparation.targetAttempt.id ?? createWorkUnitAttemptId();
-    const claim = input.store.commitApprovalResumeClaim({
+    let claim: ReturnType<RunStore["commitApprovalResumeClaim"]>;
+    try {
+      claim = input.store.commitApprovalResumeClaim({
       checkpointId: checkpoint.id,
       expectedCheckpointStatus: "approved",
       expectedCheckpointRevision: checkpoint.revision,
@@ -294,9 +342,15 @@ export class ApprovalResumeCoordinator {
         },
       },
       mode: "activate_waiting",
+      hostCapacity,
       now,
-    });
+      });
+    } catch {
+      this.releaseUnclaimedHostCapacity(input.store, checkpoint, workUnit, hostCapacity);
+      return { status: "blocked", runId: run.id, reason: "approval_resume_claim_unavailable" };
+    }
     if (!claim.ok) {
+      this.releaseUnclaimedHostCapacity(input.store, checkpoint, workUnit, hostCapacity);
       return { status: "blocked", runId: run.id, reason: claim.code };
     }
     let harnessExecution: PreparedRunnerContinuationExecution | undefined;
@@ -310,12 +364,13 @@ export class ApprovalResumeCoordinator {
         });
       } catch (error) {
         const reason = `approval_resume_harness_start_failed:${formatError(error)}`;
+        this.releaseNoDispatchHostCapacity(input.store, workUnit.workspaceId, hostCapacity);
         this.failResume(input.store, claim.checkpoint, reason);
         return { status: "blocked", runId: run.id, reason };
       }
-      return this.startClaimedHarnessAttempt(input.store, input.approval, claim, harnessExecution);
+      return this.startClaimedHarnessAttempt(input.store, input.approval, claim, harnessExecution, hostCapacity);
     }
-    return this.startClaimedBashAttempt(input.store, input.approval, claim, harnessExecution);
+    return this.startClaimedBashAttempt(input.store, input.approval, claim, hostCapacity);
   }
 
   private recoverResumePending(
@@ -326,6 +381,21 @@ export class ApprovalResumeCoordinator {
   ): ApprovalResumeStartResult {
     const { run, workUnit, priorAttempt } = validated;
     const boundAttemptId = checkpoint.runnerResumeHandle?.attemptId;
+    if (this.hostCapacityRequiredFor(store)) {
+      const boundAttempt = boundAttemptId ? store.getWorkUnitAttempt(boundAttemptId) : undefined;
+      if (!boundAttempt) {
+        return { status: "blocked", runId: run.id, reason: "approval_resume_host_intent_missing" };
+      }
+      try {
+        const observed = this.hostCapacityFor(store)?.getAttemptReference({ workspaceId: workUnit.workspaceId,
+          source: { runId: run.id, ...toRuntimeAttemptFence(boundAttempt) } });
+        // Neither a persisted gate nor a missing SDK ACK grants redispatch authority.
+        return { status: "blocked", runId: run.id, reason: !observed ? "approval_resume_host_intent_missing"
+          : observed.dispatched ? "approval_resume_dispatch_unconfirmed" : "approval_resume_host_recovery_pending" };
+      } catch {
+        return { status: "blocked", runId: run.id, reason: "approval_resume_host_capacity_unavailable" };
+      }
+    }
     if (!boundAttemptId) {
       const reason = "approval_resume_handle_missing";
       this.failResume(store, checkpoint, reason);
@@ -484,10 +554,12 @@ export class ApprovalResumeCoordinator {
     approval: ApprovalRequest,
     claim: Extract<ReturnType<RunStore["commitApprovalResumeClaim"]>, { ok: true }>,
     execution: PreparedRunnerContinuationExecution,
+    hostCapacity?: RuntimeHostCapacityDispatchReference,
   ): ApprovalResumeStartResult {
     for (const event of claim.controlPlaneEvents) this.options.controlPlaneEvents?.publish(event);
     if (!this.options.executeExistingRunContinuation) {
       const reason = "approval_resume_harness_dispatch_unavailable";
+      this.releaseNoDispatchHostCapacity(store, claim.workUnit.workspaceId, hostCapacity);
       this.failResume(store, claim.checkpoint, reason);
       return { status: "blocked", runId: claim.run.id, reason };
     }
@@ -502,16 +574,22 @@ export class ApprovalResumeCoordinator {
         runId: claim.run.id,
         approvalId: approval.id,
         preparedExecution: execution,
+        hostCapacity,
       });
     } catch (error) {
       this.harnessDispatches.delete(claim.run.id);
       const reason = `approval_resume_harness_dispatch_failed:${formatError(error)}`;
+      if (!this.mayFailUndispatchedHostAttempt(store, claim, hostCapacity)) {
+        return { status: "blocked", runId: claim.run.id, reason: "approval_resume_dispatch_unconfirmed" };
+      }
       this.failResume(store, claim.checkpoint, reason);
       return { status: "blocked", runId: claim.run.id, reason };
     }
     const settled = completion.then((runId) => {
       if (runId !== claim.run.id) {
-        this.failResume(store, claim.checkpoint, "approval_resume_harness_dispatch_failed");
+        if (this.mayFailUndispatchedHostAttempt(store, claim, hostCapacity)) {
+          this.failResume(store, claim.checkpoint, "approval_resume_harness_dispatch_failed");
+        }
         return;
       }
       const currentUnit = store.getWorkUnit(claim.workUnit.id);
@@ -521,9 +599,13 @@ export class ApprovalResumeCoordinator {
       // outcome; a second approval/question yield remains non-terminal.
       this.finalizeTerminalWorkflow(store, claim.run.id, new Date().toISOString());
     }, (error) => {
-      this.failResume(store, claim.checkpoint, `approval_resume_harness_dispatch_failed:${formatError(error)}`);
+      if (this.mayFailUndispatchedHostAttempt(store, claim, hostCapacity)) {
+        this.failResume(store, claim.checkpoint, `approval_resume_harness_dispatch_failed:${formatError(error)}`);
+      }
     }).finally(() => {
       this.harnessDispatches.delete(claim.run.id);
+      if (hostCapacity) this.releaseStoppedHostCapacity(store,
+        { runId: claim.run.id, ...toRuntimeAttemptFence(claim.attempt) }, claim.workUnit.workspaceId, hostCapacity);
     });
     this.options.activeRuns.trackCompletion(settled);
     return { status: "started", runId: claim.run.id, attemptId: claim.attempt.id };
@@ -533,11 +615,14 @@ export class ApprovalResumeCoordinator {
     store: RunStore,
     approval: ApprovalRequest,
     claim: Extract<ReturnType<RunStore["commitApprovalResumeClaim"]>, { ok: true }>,
-    harnessExecution?: PreparedRunnerContinuationExecution,
+    hostCapacity?: RuntimeHostCapacityDispatchReference,
   ): ApprovalResumeStartResult {
     for (const event of claim.controlPlaneEvents) this.options.controlPlaneEvents?.publish(event);
     const abortController = new AbortController();
-    const completion = Promise.resolve().then(() => this.executeBashResume({
+    const source = { runId: claim.run.id, ...toRuntimeAttemptFence(claim.attempt) };
+    const toolCallIds: string[] = [];
+    let hostCompletion: ReturnType<RunStore["trackHostAttemptCompletion"]> | undefined;
+    const lifetime = Promise.resolve().then(() => this.executeBashResume({
       store,
       approval,
       checkpoint: claim.checkpoint,
@@ -545,9 +630,26 @@ export class ApprovalResumeCoordinator {
       workUnit: claim.workUnit,
       attempt: claim.attempt,
       abortController,
-      harnessExecution,
-    })).finally(() => {
-      if (this.options.activeRuns.get(claim.run.id)?.attemptId === claim.attempt.id) this.options.activeRuns.delete(claim.run.id);
+      hostCapacity,
+      onHostDispatch: () => {
+        hostCompletion = store.trackHostAttemptCompletion(source, lifetime, () => toolCallIds.length ? [...toolCallIds] : true);
+        void hostCompletion.catch(() => undefined);
+      },
+      onHostToolStart: toolCallId => { toolCallIds.push(toolCallId); },
+    }));
+    const completion = lifetime.finally(async () => {
+      try {
+        if (hostCompletion) {
+          const fact = await hostCompletion;
+          if (fact.effectCoverage) this.releaseStoppedHostCapacity(store, source, claim.workUnit.workspaceId, hostCapacity);
+        } else {
+          this.releaseNoDispatchHostCapacity(store, claim.workUnit.workspaceId, hostCapacity);
+        }
+      } catch {
+        console.warn("approval_resume_host_completion_unavailable: durable drain remains unverified");
+      } finally {
+        if (this.options.activeRuns.get(claim.run.id)?.attemptId === claim.attempt.id) this.options.activeRuns.delete(claim.run.id);
+      }
     });
     this.options.activeRuns.add(claim.run.id, {
       abortController,
@@ -571,6 +673,9 @@ export class ApprovalResumeCoordinator {
     readonly attempt: WorkUnitAttempt;
     readonly abortController: AbortController;
     readonly harnessExecution?: PreparedRunnerContinuationExecution;
+    readonly hostCapacity?: RuntimeHostCapacityDispatchReference;
+    readonly onHostDispatch?: () => void;
+    readonly onHostToolStart?: (toolCallId: string) => void;
   }): Promise<void> {
     const payload = input.approval.payload;
     if (payload.type !== "bash") return;
@@ -642,6 +747,39 @@ export class ApprovalResumeCoordinator {
       if (input.abortController.signal.aborted) {
         throw input.abortController.signal.reason ?? new Error("approval_resume_suspended_before_tool_start");
       }
+      let hostOperation: ReturnType<AttemptHostOperationTracker["commandOperation"]> | undefined;
+      if (input.hostCapacity) {
+        let consumed: boolean;
+        try {
+          consumed = this.hostCapacityFor(input.store)?.consumeDispatch({ workspaceId: input.workUnit.workspaceId,
+            source: { runId: input.run.id, ...sourceFence }, reference: input.hostCapacity, now: new Date().toISOString() }) === true;
+        } catch {
+          // A gate transaction with an unknown outcome cannot authorize an effect.
+          if (this.releaseNoDispatchHostCapacity(input.store, input.workUnit.workspaceId, input.hostCapacity)) {
+            this.failResume(input.store, input.checkpoint, "approval_resume_host_gate_unavailable");
+          }
+          return;
+        }
+        if (!consumed) {
+          if (this.releaseNoDispatchHostCapacity(input.store, input.workUnit.workspaceId, input.hostCapacity)) {
+            this.failResume(input.store, input.checkpoint, "approval_resume_host_gate_rejected");
+          }
+          return;
+        }
+        input.onHostDispatch?.();
+        const startedAt = new Date().toISOString();
+        const started = input.store.updateWorkUnitAttemptStatus({ ...sourceFence, status: "started",
+          now: startedAt, startedAt, lastHeartbeatAt: startedAt, errorCode: null, errorMessage: null });
+        if (!started || started.status !== "started") throw new Error("approval_resume_attempt_start_failed");
+        input.store.appendRuntimeEvent({ ...sourceFence, type: "work_unit_started", actor: "system", ts: startedAt,
+          data: { reason: "approval_resume", approvalId: input.approval.id,
+            priorAttemptId: input.checkpoint.resumeBasis?.priorAttemptId,
+            resumeBasisFingerprint: input.checkpoint.resumeBasis?.fingerprint } });
+        const tracker = new AttemptHostOperationTracker({ store: input.store, source: { runId: input.run.id, ...sourceFence } });
+        this.options.activeRuns.registerAttemptExecutors(tracker.executorGroup);
+        hostOperation = tracker.commandOperation(tracker.beginHostCall("command", request.toolCallId));
+        input.onHostToolStart?.(request.toolCallId);
+      }
       append("tool_start", {
         type: "tool_start",
         toolCallId: request.toolCallId,
@@ -660,6 +798,7 @@ export class ApprovalResumeCoordinator {
         approvalId: input.approval.id,
         appendAndMaybeStream: (type, data) => append(type, data),
         signal: input.abortController.signal,
+        hostOperation,
       });
       append("tool_end", {
         type: "tool_end",
@@ -874,6 +1013,59 @@ export class ApprovalResumeCoordinator {
     for (const event of terminal.controlPlaneEvents) this.options.controlPlaneEvents?.publish(event);
     syncLingThreadForTerminalRun(store, lineage.run.id, now);
     void this.reconcileTerminalRun(store, lineage.run.id, now).catch(() => undefined);
+  }
+
+  private releaseNoDispatchHostCapacity(store: RunStore, workspaceId: string, reference?: RuntimeHostCapacityDispatchReference): boolean {
+    if (!reference) return true;
+    try {
+      return this.hostCapacityFor(store)?.releaseNoDispatch({ workspaceId, intentId: reference.intentId,
+        now: new Date().toISOString() }) === true;
+    } catch {
+      console.warn("approval_resume_host_release_unavailable: reservation remains retained");
+      return false;
+    }
+  }
+
+  private releaseUnclaimedHostCapacity(store: RunStore, checkpoint: LingApprovalCheckpoint, workUnit: WorkUnit,
+    reference?: RuntimeHostCapacityDispatchReference): void {
+    if (!reference) return;
+    const current = store.getApprovalCheckpoint(checkpoint.id);
+    if (current?.status === "approved" && current.revision === checkpoint.revision
+      && store.getWorkUnit(workUnit.id)?.activeAttemptId === workUnit.activeAttemptId) {
+      this.releaseNoDispatchHostCapacity(store, workUnit.workspaceId, reference);
+    }
+  }
+
+  private mayFailUndispatchedHostAttempt(store: RunStore,
+    claim: Extract<ReturnType<RunStore["commitApprovalResumeClaim"]>, { ok: true }>,
+    reference?: RuntimeHostCapacityDispatchReference): boolean {
+    if (!reference) return true;
+    try {
+      const observed = this.hostCapacityFor(store)?.getAttemptReference({ workspaceId: claim.workUnit.workspaceId,
+        source: { runId: claim.run.id, ...toRuntimeAttemptFence(claim.attempt) } });
+      if (!observed || observed.dispatched || observed.reference.intentId !== reference.intentId
+        || observed.reference.dispatchToken !== reference.dispatchToken) return false;
+      return this.releaseNoDispatchHostCapacity(store, claim.workUnit.workspaceId, reference);
+    } catch {
+      return false;
+    }
+  }
+
+  private releaseStoppedHostCapacity(store: RunStore, source: HostOperationSource, workspaceId: string,
+    reference?: RuntimeHostCapacityDispatchReference): void {
+    const admission = this.hostCapacityFor(store);
+    if (!admission) return;
+    try {
+      const completion = store.getHostAttemptCompletion(source);
+      if (!completion?.drainedAt || !completion.effectCoverage) return;
+      const observed = admission.getAttemptReference({ workspaceId, source });
+      if (!observed?.dispatched || reference && (observed.reference.intentId !== reference.intentId
+        || observed.reference.dispatchToken !== reference.dispatchToken)) return;
+      store.releaseHostAttemptResources(source, new Date().toISOString());
+      admission.releaseStopped({ workspaceId, source, intentId: observed.reference.intentId, now: new Date().toISOString() });
+    } catch {
+      console.warn("approval_resume_host_release_unavailable: stopped proof remains unverified");
+    }
   }
 
   private async reconcileTerminalRun(store: RunStore, runId: string, now: string): Promise<void> {

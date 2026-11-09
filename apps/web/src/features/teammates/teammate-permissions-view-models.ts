@@ -40,6 +40,7 @@ const actionLabelKeys: Readonly<Record<ApprovalActionType, string>> = {
   credential_change: "Change credentials",
   provider_change: "Change model provider",
   workflow_step: "Run workflow steps",
+  workflow_merge: "Apply workflow candidate",
   mcp_tool_call: "Call MCP tools",
   host_capability: "Call Host capabilities",
   runtime_permission_request: "Request runtime permissions",

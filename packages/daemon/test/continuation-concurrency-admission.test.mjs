@@ -512,3 +512,47 @@ test("A21 admission keeps provider semaphore limits and releases only its own le
   assert.deepEqual(f.store.listRuntimeSemaphoreSlots().filter((slot) => slot.status === "active").map((slot) => slot.id).sort(), blockers.sort());
   assert.equal(f.store.listResourceLeases().filter((lease) => lease.status === "active").length, 0);
 });
+
+for (const resourceType of ["runner", "channel_parallel"]) {
+  test(`Run semaphore group rolls back without acquisition history when ${resourceType} is full`, async t => {
+    const f = await createContinuationConcurrencyFixture(t), prepared = prepareRunConcurrency(f.input);
+    const resourceKey = resourceType === "runner" ? "pi" : prepared.channel.id;
+    const limit = resourceType === "runner" ? 4 : prepared.channel.runtimePolicy.maxConcurrentRuns;
+    const blockers = [];
+    for (let index = 0; index < limit; index++) {
+      const unit = f.store.createWorkUnit({ workspaceId: DEFAULT_WORKSPACE_ID, kind: "task_run", ownerType: "task",
+        ownerId: `batch-blocker-${index}`, runnerId: "pi", idempotencyKey: `batch-blocker-${index}`,
+        request: {}, createdByActor: "system", now: f.now });
+      const attempt = f.store.createWorkUnitAttempt({ workUnitId: unit.id, attemptNumber: 1,
+        runtimeInstanceId: `batch-blocker-runtime-${index}`, runnerId: "pi", now: f.now });
+      const slot = f.store.acquireRuntimeSemaphoreSlot({ workspaceId: DEFAULT_WORKSPACE_ID, resourceType, resourceKey, limit,
+        ownerType: "work_unit_attempt", ownerId: attempt.id, ...toRuntimeAttemptFence(attempt),
+        acquiredAt: f.now, expiresAt: new Date(Date.parse(f.now) + 60_000).toISOString() });
+      assert.ok(slot);
+      blockers.push(slot.id);
+    }
+    assert.throws(() => acquireRunRuntimeSemaphores({ store: f.store, workUnit: f.input.workUnit,
+      attempt: f.input.attempt, channel: prepared.channel, providerKey: "batch-provider", runnerId: "pi", now: f.now }),
+    error => error.code === "runtime_semaphore_conflict" && error.message.includes(`${resourceType}:${resourceKey}`));
+    assert.equal(f.store.listRuntimeSemaphoreSlots({ ownerId: f.input.attempt.id }).length, 0);
+    assert.equal(f.store.listRuntimeEvents(f.input.workUnit.id).filter(event => event.type === "semaphore_acquired").length, 0);
+    assert.deepEqual(f.store.listRuntimeSemaphoreSlots({ status: "active" }).map(slot => slot.id).sort(), blockers.sort());
+    assert.equal(f.store.listResourceLeases({ attemptId: f.input.attempt.id, status: "active" }).length, 0);
+  });
+}
+
+test("duplicate ordinary Run admission preserves the original complete resource group and audit", async t => {
+  const f = await createContinuationConcurrencyFixture(t), prepared = prepareRunConcurrency(f.input);
+  const input = { store: f.store, workUnit: f.input.workUnit, attempt: f.input.attempt,
+    channel: prepared.channel, providerKey: "batch-provider", runnerId: "pi", now: f.now };
+  acquireRunRuntimeSemaphores(input);
+  const slots = f.store.listRuntimeSemaphoreSlots({ ownerId: f.input.attempt.id });
+  const events = f.store.listRuntimeEvents(f.input.workUnit.id).filter(event => event.type === "semaphore_acquired");
+  const leases = f.store.listResourceLeases({ attemptId: f.input.attempt.id, status: "active" });
+  assert.equal(slots.length, 3);
+  assert.equal(events.length, 3);
+  assert.throws(() => acquireRunRuntimeSemaphores(input), error => error.code === "runtime_semaphore_owner_changed");
+  assert.deepEqual(f.store.listRuntimeSemaphoreSlots({ ownerId: f.input.attempt.id }), slots);
+  assert.deepEqual(f.store.listRuntimeEvents(f.input.workUnit.id).filter(event => event.type === "semaphore_acquired"), events);
+  assert.deepEqual(f.store.listResourceLeases({ attemptId: f.input.attempt.id, status: "active" }), leases);
+});

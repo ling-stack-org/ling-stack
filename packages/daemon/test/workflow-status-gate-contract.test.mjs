@@ -19,6 +19,7 @@ import {
   compileWorkflowTemplate, parseWorkflowTemplateCompileRequest,
 } from "../dist/features/channels/workflow-templates.js";
 import { createDetachedRunExecutionSink, executeRunRequest } from "../dist/features/runs/orchestrator.js";
+import { freezeWorkflowSafetyPlan, workflowSafetySnapshot } from "../dist/features/runs/workflow-safety.js";
 import { ActiveRunRegistry } from "../dist/runtime/active-runs.js";
 import { createRunnerRegistry } from "../dist/runtime/runners.js";
 import { RunStoreRegistry } from "../dist/runtime/store-registry.js";
@@ -198,7 +199,9 @@ for (const kind of ["graph", "custom"]) {
 
 /** Real Host execution; the fixture runner actually reads the owned local file. */
 async function successfulGeneration(f, compiled) {
-  const now = new Date().toISOString(), step = compiled.workflowSteps[0];
+  const now = new Date().toISOString();
+  const step = freezeWorkflowSafetyPlan({ store: f.store, step: compiled.workflowSteps[0],
+    workspaceCwd: f.cwd, executionCwd: f.cwd, runnerId: "runner_fixture" });
   assert.equal(f.store.transitionChannelWorkflowStatus({ workflowId: compiled.workflow.id, expectedStatus: "ready",
     event: "start", actor: "system", now }).ok, true);
   const lease = f.store.acquireResourceLease({ workspaceId: DEFAULT_WORKSPACE_ID, resourceType: "workflow_step", resourceKey: step.id,
@@ -222,6 +225,7 @@ async function successfulGeneration(f, compiled) {
     } } }]);
   const runId = await executeRunRequest({ cwd: f.cwd, workspaceCwd: f.cwd, channelId: f.channel.id,
     teammateId: participantId, workflowStepId: step.id, workflowStartOwner: begun.owner, task: begun.task,
+    runnerId: "runner_fixture", workflowSafetySnapshot: workflowSafetySnapshot(step.metadata.safetyPlan),
     tools: ["read"], workspaceAccessMode: "read_only", authorizationMode: "always",
     provider: { provider: "fixture", model: "fixture", api: "openai-completions", baseUrl: "https://b008.invalid/v1", apiKey: "fixture-no-network" },
     idempotencyKey: "b008-run", createdByActor: "local-user" }, createDetachedRunExecutionSink(), runners,

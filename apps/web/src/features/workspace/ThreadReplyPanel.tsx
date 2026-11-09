@@ -2,8 +2,10 @@ import { ArrowDown, CircleAlert, Copy, Loader2, Pencil, Reply, Send, X } from "l
 import { projectTopicReplyTimeline } from "./topic-reply-timeline.js";
 import { useI18n } from "../../i18n.js";
 import { buildSurfaceTimelineSnapshot } from "../../domains/conversations/timeline-snapshot.js";
+import { mountConversationRunFeedbackTimeline } from "../../domains/conversations/ConversationRunFeedbackTimeline.js";
+import type { TimelineRunLifecycle } from "@ling-stack/conversation-ui-core";
 import { filterUsedMemoryEventsByResponse, UsedMemorySummary } from "../../shared/components/index.js";
-import { ConversationReplacementRetry, ConversationTimelineFeed, InlineMessageEditor, MessageActionBar, MessageRow, mountConversationTimeline } from "../../shared/conversation/index.js";
+import { ConversationReplacementRetry, ConversationTimelineFeed, InlineMessageEditor, MessageActionBar, MessageRow } from "../../shared/conversation/index.js";
 import { useConversationReadingViewport } from "../../shared/conversation/blocks/use-conversation-reading-viewport.js";
 import { conversationReadingScope } from "../../shared/conversation/view-store/conversation-reading-storage.js";
 import { IconButton, Textarea } from "../../shared/ui/index.js";
@@ -20,6 +22,7 @@ export function ThreadReplyPanel({
   userInputs,
   reasoningSummaries,
   contextCompactions,
+  runLifecycles,
   teammates,
   memoryById,
   usedMemoryEvents,
@@ -52,6 +55,7 @@ export function ThreadReplyPanel({
   readonly userInputs: readonly UserInputTranscriptItemV1[];
   readonly reasoningSummaries: readonly ConversationReasoningSummaryRecord[];
   readonly contextCompactions?: readonly import("../../types.js").ConversationContextCompactionRecord[];
+  readonly runLifecycles?: ReadonlyMap<string, TimelineRunLifecycle>;
   readonly teammates: readonly ChannelMention[];
   readonly memoryById: ReadonlyMap<string, MemoryObject>;
   readonly usedMemoryEvents: readonly UsedMemoryEvent[];
@@ -94,12 +98,13 @@ export function ThreadReplyPanel({
     contentKey: timelineItems.map(item => item.id).join("|"),
     readingScopeKey,
   });
-  const timelineNode = mountConversationTimeline({
+  const timelineNode = mountConversationRunFeedbackTimeline({
     snapshot: buildSurfaceTimelineSnapshot({
       surface: "topic_reply",
       threadId,
       anchorItemId: rootMessage.threadAnchorItemId ?? rootMessage.id,
       items: timelineItems,
+      runLifecycles,
       canonicalRevision: timelineItems.reduce((max, item) => Math.max(max, item.revision), 0),
     }),
     depth: 0,

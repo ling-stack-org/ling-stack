@@ -207,7 +207,7 @@ export interface WorkspaceActions {
   readonly updateSelectedChannelCouncilPolicy: (input: UpdateChannelCouncilPolicyRequest, channelId?: string) => Promise<void>;
   readonly refreshChannelMessageRouteDecisions: (channelId?: string) => Promise<void>;
   readonly refreshChannelIntentDecisions: (channelId?: string) => Promise<void>;
-  readonly refreshChannelProtocol: (channelId?: string) => Promise<void>;
+  readonly refreshChannelProtocol: (channelId?: string, options?: ChannelProtocolRefreshOptions) => Promise<void>;
   readonly refreshUsedMemoryAudit: (cwd?: string) => Promise<void>;
   readonly resetSelectedChannelActivity: () => void;
   readonly resetForCwd: (cwd: string) => void;
@@ -215,6 +215,10 @@ export interface WorkspaceActions {
 
 export interface ChannelMessageRefreshOptions {
   readonly silent?: boolean;
+}
+
+export interface ChannelProtocolRefreshOptions {
+  readonly throwOnError?: boolean;
 }
 
 export type WorkspaceController = DomainController<WorkspaceState, WorkspaceActions>;
@@ -1128,7 +1132,10 @@ export function useWorkspaceDomain(input: {
   }
 
 
-  async function refreshChannelProtocol(channelId = selectedChannelId): Promise<void> {
+  async function refreshChannelProtocol(
+    channelId = selectedChannelId,
+    options?: ChannelProtocolRefreshOptions,
+  ): Promise<void> {
     const cwd = input.cwd.trim();
     const read = beginChannelPanelRead(`protocol:${cwd}:${channelId}`, cwd, channelId);
     if (!read.isCurrent()) return;
@@ -1164,6 +1171,7 @@ export function useWorkspaceDomain(input: {
       read.publish(setChannelWorkflowSteps, current => mergeWorkflowStepReadModels(current, workflowSteps));
     } catch (caught) {
       read.report("protocol", caught);
+      if (options?.throwOnError) throw caught;
     } finally {
       read.publish(setChannelProtocolLoading, false);
     }

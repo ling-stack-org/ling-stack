@@ -1,4 +1,5 @@
-import { inspectWorkflowPreApproval, type ApprovalPostCommitEffectKind, type ApprovalRequest, type RunStore } from "@ling-stack/core";
+import { createSqliteWorkflowMergeApplyStore, inspectWorkflowPreApproval,
+  type ApprovalPostCommitEffectKind, type ApprovalRequest, type RunStore } from "@ling-stack/core";
 import { terminalReportsEnabledForStore } from "../channels/terminal-report-coordinator.js";
 import { approvalDecisionEventType, resolveApprovalDecisionRunId } from "./approval-decision-projection.js";
 
@@ -47,6 +48,19 @@ export function hasApprovalDecisionEvent(store: RunStore, approval: ApprovalRequ
 }
 
 function verifyApprovalOwnerEvidence(store: RunStore, approval: ApprovalRequest): ApprovalPostCommitEvidence {
+  if (approval.actionType === "workflow_merge" || approval.payload.type === "workflow_merge") {
+    try {
+      const read = createSqliteWorkflowMergeApplyStore(store).inspectApplication({ approvalId: approval.id, now: new Date().toISOString() });
+      if (read.status === "blocked") return blocked(read.code ?? "approval_workflow_merge_blocked");
+      if (read.status === "invalid") return blocked(read.code);
+      if (read.status === "effect_unknown") return unknown("approval_workflow_merge_effect_unknown");
+      if (read.status === "applied") return applied("approval_workflow_merge_applied");
+      if (read.status === "not_applied" || read.status === "not_started" && approval.status !== "approved" && approval.status !== "pending")
+        return applied("approval_workflow_merge_not_applied_settled");
+      // Consent is not an applied receipt. A synchronous scanner never launches the Git effect.
+      return pending("approval_workflow_merge_not_applied");
+    } catch { return blocked("approval_workflow_merge_evidence_unverified"); }
+  }
   if (approval.externalWorkActionId) return verifyExternalWorkEvidence(store, approval);
   if (approval.mediaJobId) return verifyMediaEvidence(store, approval);
 

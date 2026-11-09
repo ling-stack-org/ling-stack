@@ -1,5 +1,6 @@
 import { channelActivityItemBelongsToSession, type ChannelSessionActivityScope } from "./channel-session-activity-scope.js";
 import { channelSessionWorkOwnership } from "./channel-session-work-ownership.js";
+import { useChannelWorkflowComposerController } from "./useChannelWorkflowComposerController.js";
 import { isChannelSessionDraft } from "../../app/channel-session-state.js";
 import { useWorkSummaryContext } from "./work-summary/WorkSummaryProvider.js";
 import { useChannelPanelNavigation } from "./useChannelPanelNavigation.js";
@@ -143,6 +144,9 @@ import {
 } from "./ChannelProgressPanels.js";
 import { useChannelProgressSummary } from "./ChannelProgressSummary.js";
 import { useChannelPlanHistory } from "./useChannelPlanHistory.js";
+import { useWorkflowIsolationEvidence } from "./useWorkflowIsolationEvidence.js";
+import { useWorkflowConflictRecovery } from "./useWorkflowConflictRecovery.js";
+import { WorkflowConflictRecoveryDialog } from "./WorkflowConflictRecoveryDialog.js";
 import {
   ChannelInspector,
   type ChannelInspectorMode,
@@ -262,6 +266,7 @@ function terminalReportResultItemId(report: TerminalReportDto): string {
 export function WorkspaceClientView({
   cwd,
   daemonHealthy,
+  workflowObservationReady,
   channelAutoRouteEnabled,
   providerLabel,
   userProfile,
@@ -728,6 +733,17 @@ export function WorkspaceClientView({
     () => channelTerminalReportItemRevisionSignature(channelConversationItems, selectedChannelId),
     [channelConversationItems, selectedChannelId],
   );
+  const workflowIsolationEvidenceByWorkflowId = useWorkflowIsolationEvidence({
+    cwd, channelId: selectedChannelId, enabled: daemonHealthy === true,
+    workflows: selectedChannelWorkflows, steps: selectedChannelWorkflowSteps,
+    refreshSignature: [channelCollaborationCardRefreshSignature, committedTerminalReportItemRevisionSignature].join("\n"),
+    refreshToken: channelConversationRefreshToken,
+  });
+  const workflowConflictRecovery = useWorkflowConflictRecovery({
+    cwd, channelId: selectedChannelId, threadId: channelSessionThreadId, enabled: daemonHealthy === true,
+    workflows: selectedChannelWorkflows, observations: workflowIsolationEvidenceByWorkflowId,
+    onChanged: () => { onRefreshChannelProtocol(); onRefreshChannelMessages(); },
+  });
   useEffect(() => {
     const workspaceCwd = cwd.trim();
     if (!workspaceCwd || !selectedChannelId) {
@@ -868,7 +884,8 @@ export function WorkspaceClientView({
     const cells = new Map<string, WorkflowProgressModel>();
     for (const workflow of channelWorkflows.filter((item) => item.channelId === selectedChannelId)) {
       const steps = channelWorkflowSteps.filter((step) => step.workflowId === workflow.id);
-      if (steps.length === 0) {
+      const isolationEvidence = workflowIsolationEvidenceByWorkflowId.get(workflow.id);
+      if (steps.length === 0 && !isolationEvidence?.expected && isolationEvidence?.status !== "error") {
         continue;
       }
       cells.set(workflow.id, buildWorkflowProgressModel({
@@ -882,10 +899,11 @@ export function WorkspaceClientView({
         t,
         artifactHref: (artifact) => artifactContentUrl(artifact.id, cwd),
         terminalReport: terminalReportByWorkflowId.get(workflow.id),
+        isolationEvidence,
       }));
     }
     return cells;
-  }, [approvals, channelArtifactsByRun, channelContextSegmentIdByItemId, channelExecutionActions, channelRuns, channelWorkflowSteps, channelWorkflows, cwd, selectedChannelId, t, terminalReportByWorkflowId]);
+  }, [approvals, channelArtifactsByRun, channelContextSegmentIdByItemId, channelExecutionActions, channelRuns, channelWorkflowSteps, channelWorkflows, cwd, selectedChannelId, t, terminalReportByWorkflowId, workflowIsolationEvidenceByWorkflowId]);
   const localCollaborationTaskCardByWorkflowId = useMemo(() => {
     const cards = new Map<string, CollaborationTaskCardModel>();
     for (const workflow of channelWorkflows.filter((item) => item.channelId === selectedChannelId)) {
@@ -1833,6 +1851,13 @@ export function WorkspaceClientView({
     item: ConversationTimelineProtocolEventItem | ConversationTimelineApprovalItem,
     action: ConversationProtocolAction,
   ): Promise<void> {
+    if (action === "recover_workflow_conflict") {
+      const workflowId = item.sourceRefs.find(ref => ref.kind === "workflow")?.id;
+      const round = item.sourceRefs.find(ref => ref.kind === "workflow_integration_round")?.id;
+      const separator = round?.lastIndexOf(":") ?? -1;
+      if (workflowId && round && separator > 0) await workflowConflictRecovery.open(workflowId, round.slice(0, separator), Number(round.slice(separator + 1)), item.revision);
+      return;
+    }
     const sourceRef = item.sourceRefs.find((ref) => ref.kind.startsWith("channel_"));
     const sourceKind = sourceRef?.kind.slice("channel_".length);
     const sourceId = sourceRef?.id;
@@ -1869,9 +1894,11 @@ export function WorkspaceClientView({
       if (summary) await onCreateTaskFromContextSummary(summary);
       return;
     }
-    if (action === "advance_workflow" && sourceKind === "workflow" && sourceId) {
+    if ((action === "advance_workflow" || action === "start_isolated_workflow") && sourceKind === "workflow" && sourceId) {
       const workflow = channelWorkflows.find((candidate) => candidate.id === sourceId);
-      if (workflow) await onOrchestrateWorkflow(workflow);
+      if (workflow) await onOrchestrateWorkflow(workflow, action === "start_isolated_workflow"
+        ? { executionProfile: "pi_host_isolated_files_v1" }
+        : undefined);
       return;
     }
     if (action === "cancel_workflow" && sourceKind === "workflow" && sourceId) {
@@ -2775,11 +2802,35 @@ export function WorkspaceClientView({
   });
   const sessionReadOnly = Boolean(channelSession?.archivedAt || selectedChannel?.status === "archived");
   const [sessionRestore, setSessionRestore] = useState<{ id?: string; busy?: boolean; error?: string }>({});
+  const workflowComposer = useChannelWorkflowComposerController({
+    ownerKey: channelComposerOwnerKey,
+    enabled: !sessionReadOnly && daemonHealthy === true && workflowObservationReady === true && !channelProtocolLoading
+      && !selectedExecutionProposal,
+    advanceAllowed: !channelPlanModeActive,
+    pendingWorkflowId: orchestratingWorkflowId, pendingStepId: runningWorkflowStepId,
+    workflows: selectedChannelWorkflows, steps: selectedChannelWorkflowSteps, runs: channelRuns,
+    workflowIds: sessionWorkOwnership.workflowIds, activeRunId: activeConversationTarget?.activeReply.runId,
+    pendingApproval: pendingChannelApprovals.length > 0, observations: workflowIsolationEvidenceByWorkflowId,
+    onOrchestrate: onOrchestrateWorkflow, onRetry: onRetryWorkflowStep, onCancel: onCancelWorkflow,
+    onRecoverConflict: workflowConflictRecovery.open,
+    onError: (message) => showComposerFeedback("error", message),
+  });
+  const workflowSubmitIntent = composerHasSendableContent ? undefined : workflowComposer.control?.intent;
+  const workflowComposerUnavailable = daemonHealthy !== true || workflowObservationReady !== true || channelProtocolLoading
+    || channelPlanModeActive && workflowSubmitIntent !== "stop" || workflowComposer.busy;
+  const workflowControlError = workflowComposer.control ? workflowErrors[workflowComposer.control.workflow.id]
+    || selectedChannelWorkflowSteps.filter(step => step.workflowId === workflowComposer.control?.workflow.id)
+      .map(step => workflowErrors[step.id]).find(Boolean) : undefined;
+  const workflowFeedback = workflowControlError && !selectedChannelWorkflowSteps.some(step => step.workflowId === workflowComposer.control?.workflow.id
+    && (step.blocker === workflowControlError || step.resultSummary === workflowControlError))
+    ? { id: -1, tone: "error" as const, message: workflowControlError } : undefined;
   const channelComposerSubmitDisabled = sessionReadOnly || [...(channelSessionDraft?.title.trim() ?? "")].length > 120 || (composerHasSendableContent
-    ? !selectedChannelId || composerBusy || assetOperationPending || Boolean(runGuidanceSubmitting)
-    : !selectedChannelId || !activeConversationTarget || isCancellingRun);
+    ? !selectedChannelId || composerBusy || assetOperationPending || Boolean(runGuidanceSubmitting) || workflowComposer.busy
+    : !selectedChannelId || (workflowSubmitIntent ? workflowComposerUnavailable : !activeConversationTarget || isCancellingRun));
   const composerSessionCommandActive = composerSlashIntent.kind === "session_command";
-  const channelComposerSubmitLabel = activeConversationTarget && !composerHasSendableContent
+  const channelComposerSubmitLabel = workflowSubmitIntent === "start" ? t("Start")
+    : workflowSubmitIntent === "continue" ? t("Continue")
+    : (workflowSubmitIntent === "stop" || activeConversationTarget) && !composerHasSendableContent
     ? t("Stop reply")
     : composerSessionCommandActive
       ? sendState === "sending" ? t("Applying command...") : t("Apply command")
@@ -2787,9 +2838,17 @@ export function WorkspaceClientView({
       ? sendState === "sending" ? t("Creating task...") : t("Create task")
       : sendState === "sending" ? t("Sending...") : t("Send");
   const composerShortcutTitle = t("Enter sends. Shift+Enter inserts a newline. Esc closes menus.");
-  const channelComposerSubmitTitle = activeConversationTarget && !composerHasSendableContent
+  const channelComposerSubmitTitle = !composerHasSendableContent
     ? channelComposerSubmitLabel
     : t("{action} (Enter)", { action: channelComposerSubmitLabel });
+  function submitChannelComposer(): void {
+    if (channelComposerSubmitDisabled) return;
+    if (workflowSubmitIntent) {
+      void workflowComposer.submit();
+      return;
+    }
+    handleChannelComposerSubmit();
+  }
   const composerDropZoneStyle = {
     "--composer-input-min-height": `${composerInputMinHeight}px`,
   } as CSSProperties;
@@ -2873,6 +2932,8 @@ export function WorkspaceClientView({
   }
 
   const messageRenderers = createChannelMessageRenderers({
+    daemonHealthy,
+    workflowObservationReady,
     isDefaultChannelSession: channelSession?.isDefault,
     runLifecycles: runById,
     contextSegmentIdByItemId: channelContextSegmentIdByItemId,
@@ -2974,7 +3035,7 @@ export function WorkspaceClientView({
       composerBusy={composerBusy}
       composerDragActive={composerDragActive}
       composerDropZoneStyle={composerDropZoneStyle}
-      composerFeedback={composerFeedback}
+      composerFeedback={workflowFeedback ?? composerFeedback}
       composerHasSendableContent={composerHasSendableContent}
       composerShortcutTitle={composerShortcutTitle}
       composerSlashCommandActive={composerSlashCommandActive}
@@ -3016,6 +3077,10 @@ export function WorkspaceClientView({
       submitDisabled={channelComposerSubmitDisabled}
       submitLabel={channelComposerSubmitLabel}
       submitTitle={channelComposerSubmitTitle}
+      submitIntent={workflowSubmitIntent}
+      submitBusy={!composerHasSendableContent && (workflowComposer.busy || isCancellingRun)}
+      onStartIsolatedWorkflow={workflowComposer.control?.canStartIsolated && !composerHasSendableContent && !workflowComposerUnavailable
+        ? () => { void workflowComposer.submit(true); } : undefined}
       value={messageDraft}
       onAttachFiles={attachFiles}
       onCommitMention={commitMention}
@@ -3066,7 +3131,7 @@ export function WorkspaceClientView({
       onRetrySend={() => {
         void sendMessage();
       }}
-      onSubmit={handleChannelComposerSubmit}
+      onSubmit={submitChannelComposer}
     />
   );
   const channelComposerNode = sessionReadOnly ? channelComposer : inlineApprovalViews.length > 0 ? (
@@ -3791,6 +3856,7 @@ export function WorkspaceClientView({
         </section>
       ) : null}
 
+      {workflowConflictRecovery.session ? <WorkflowConflictRecoveryDialog controller={workflowConflictRecovery} /> : null}
       <ChannelWorkspaceOverlays
         rename={channelRenameOpen ? {
           value: channelRenameName, currentName: selectedChannel?.name ?? "", saving: channelRenameSaving,
@@ -3951,6 +4017,7 @@ export function WorkspaceClientView({
             userInputs: threadReplyController.userInputs,
             reasoningSummaries: threadReplyController.reasoningSummaries,
             contextCompactions: threadReplyController.contextCompactions,
+            runLifecycles: runById,
             teammates: teammateOptions,
             memoryById,
             usedMemoryEvents,

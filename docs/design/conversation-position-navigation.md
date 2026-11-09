@@ -27,6 +27,12 @@ most 45% of the feed height. Long rails scroll independently and render a bounde
 marker window. Small panes and
 short conversations use the ordinary transcript scroll controls.
 
+The positioning frame spans the message area of the active conversation pane, not
+the centered text column. The rail stays at the pane's inline-start edge while the
+transcript and composer retain their shared centered width. A visible rail reserves
+space in the transcript so markers do not cover message content in narrower panes.
+Channel thread panels and conversation docks remain outside that positioning frame.
+
 ## Ownership and navigation
 
 - The index is rebuilt from the owning surface's already-scoped `TimelineSnapshot`.

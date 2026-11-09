@@ -1,6 +1,7 @@
 import { systemEndpoints, type SystemEndpoints } from "./endpoints/system.js";
 import { automationEndpoints, type AutomationEndpoints } from "./endpoints/automation.js";
 import { skillEndpoints, type SkillEndpoints } from "./endpoints/skills.js";
+import { workflowTemplateEndpoints, type WorkflowTemplateEndpoints } from "./endpoints/workflow-templates.js";
 import { governanceNotificationEndpoints, type GovernanceNotificationEndpoints } from "./endpoints/governance-notifications.js";
 import { aiCouncilEndpoints, type AiCouncilEndpoints } from "./endpoints/ai-councils.js";
 import { conversationEndpoints, type ConversationEndpoints } from "./endpoints/conversations.js";
@@ -24,6 +25,7 @@ export interface LingDaemonClient extends
   SystemEndpoints,
   AutomationEndpoints,
   SkillEndpoints,
+  WorkflowTemplateEndpoints,
   GovernanceNotificationEndpoints,
   AiCouncilEndpoints,
   ConversationEndpoints,
@@ -47,6 +49,7 @@ Object.assign(
   systemEndpoints,
   automationEndpoints,
   skillEndpoints,
+  workflowTemplateEndpoints,
   governanceNotificationEndpoints,
   aiCouncilEndpoints,
   conversationEndpoints,

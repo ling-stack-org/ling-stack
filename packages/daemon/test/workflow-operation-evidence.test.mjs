@@ -1404,6 +1404,70 @@ test("approval wait and resume update the workflow source turn immediately", asy
   }
 });
 
+for (const cycle of [
+  { name: "approval", pauseEvent: "approval_requested", pauseStatus: "waiting_for_approval", resumeEvent: "approval_approved" },
+  { name: "blocked restart", pauseEvent: "step_blocked", pauseStatus: "blocked", resumeEvent: "start" },
+]) {
+  test(`repeated workflow ${cycle.name} cycles preserve source turn transitions`, async () => {
+    const cwd = await mkdtemp(resolve(tmpdir(), "ling-workflow-source-turn-cycles-"));
+    const store = createSqliteRunStore(cwd);
+    try {
+      const now = "2026-11-03T07:00:00.000Z";
+      const channel = store.createChannel({ name: "Repeated source turn transitions", boundPath: cwd }, now);
+      const source = appendChannelItemFixture(store, {
+        channelId: channel.id, authorType: "local-user", body: "Run gated work",
+      }, now);
+      const workflow = store.createChannelWorkflow({
+        channelId: channel.id,
+        title: "Repeated gated work",
+        objective: "Run gated work",
+        status: "running",
+        createdBy: "ling_agent",
+        metadata: { sourceTurnId: source.turnId },
+      }, now);
+      const events = () => store.listStateTransitionEvents({ entityType: "turn", entityId: source.turnId });
+      const initialEventCount = events().length;
+      const sync = (status, eventCount) => {
+        syncWorkflowSourceTurnProgress(store, store.getChannelWorkflow(workflow.id), now);
+        assert.equal(store.getLingTurn(source.turnId).status, status);
+        const first = events();
+        assert.equal(first.length, eventCount);
+        syncWorkflowSourceTurnProgress(store, store.getChannelWorkflow(workflow.id), now);
+        assert.deepEqual(events(), first);
+      };
+      sync("running", initialEventCount + 1);
+
+      // A fixed clock also rules out using timestamps to identify distinct cycles.
+      for (let index = 0; index < 4; index += 1) {
+        const paused = store.transitionChannelWorkflowStatus({
+          workflowId: workflow.id, expectedStatus: "running", event: cycle.pauseEvent, actor: "system", now,
+        });
+        assert.equal(paused.ok, true, JSON.stringify(paused));
+        if (cycle.pauseStatus === "blocked") {
+          const blocked = store.transitionLingTurnStatus({
+            turnId: source.turnId, expectedStatus: "running", event: "block", actor: "system", now,
+          });
+          assert.equal(blocked.ok, true, JSON.stringify(blocked));
+        }
+        sync(cycle.pauseStatus, initialEventCount + 2 + index * 2);
+
+        const resumed = store.transitionChannelWorkflowStatus({
+          workflowId: workflow.id, expectedStatus: cycle.pauseStatus, event: cycle.resumeEvent, actor: "system", now,
+        });
+        assert.equal(resumed.ok, true, JSON.stringify(resumed));
+        sync("running", initialEventCount + 3 + index * 2);
+      }
+      assert.equal(store.getChannelWorkflow(workflow.id).status, "running");
+      assert.equal(events().filter(event => event.event === cycle.resumeEvent).length,
+        cycle.resumeEvent === "start" ? 5 : 4);
+      assert.equal(events().filter(event => event.toStatus === cycle.pauseStatus).length, 4);
+    } finally {
+      store.close();
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+}
+
 test("post-step approval cannot replace missing required operation evidence", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-workflow-post-approval-operation-evidence-"));
   const store = createSqliteRunStore(cwd);

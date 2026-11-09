@@ -17,9 +17,16 @@ export type ApprovalActionType =
   | "credential_change"
   | "provider_change"
   | "workflow_step"
+  | "workflow_merge"
   | "mcp_tool_call"
   | "host_capability"
   | "runtime_permission_request";
+
+export const approvalActionTypes: readonly ApprovalActionType[] = [
+  "read", "grep", "find", "ls", "write", "edit", "bash", "git_commit", "git_push", "external_send",
+  "deploy", "media_cost", "credential_change", "provider_change", "workflow_step", "workflow_merge",
+  "mcp_tool_call", "host_capability", "runtime_permission_request",
+];
 
 export type ApprovalRisk = "low" | "medium" | "high" | "critical";
 

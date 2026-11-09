@@ -41,6 +41,7 @@ export interface ConversationTimelineRenderContext {
     action: ConversationProtocolAction,
   ) => void | Promise<void>;
   readonly renderMessageChrome?: (item: Extract<ConversationTimelineItem, { kind: "userMessage" | "agentMessage" }>, body: ReactNode, presentation: ConversationTimelineMessagePresentation) => ReactNode;
+  readonly renderProtocolDetail?: (item: Extract<ConversationTimelineItem, { kind: "protocolEvent" }>) => ReactNode;
   readonly messagePresentation?: ConversationTimelineMessagePresentation;
   readonly hasResponseNarration?: boolean;
   readonly renderSubAgent: (item: ConversationTimelineSubAgentItem) => ReactNode;
@@ -158,7 +159,7 @@ function renderDiagnosticItem(item: ConversationTimelineItem, context: Conversat
 
 function renderProtocolEventItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
   return item.kind === "protocolEvent"
-    ? <ConversationTimelineProtocolRenderer key={item.id} item={item} onInvokeProtocolAction={context.onInvokeProtocolAction} depth={context.depth} />
+    ? <ConversationTimelineProtocolRenderer key={item.id} item={item} onInvokeProtocolAction={context.onInvokeProtocolAction} renderProtocolDetail={context.renderProtocolDetail} depth={context.depth} />
     : null;
 }
 

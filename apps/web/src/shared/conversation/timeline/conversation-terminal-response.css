@@ -14,16 +14,17 @@
 }
 
 .conversation-timeline-response-footer {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--ling-space-1);
   min-width: 0;
   margin-top: 10px;
 }
 
-.conversation-timeline-response-footer > .message-action-bar {
-  justify-self: start;
-}
-
 .conversation-timeline-response-footer:hover .message-action-bar-hover-focus,
 .conversation-timeline-response-footer:focus-within .message-action-bar-hover-focus,
+.conversation-timeline-response-footer:has(.learning-review-action[data-state="open"]) .message-action-bar-hover-focus,
 [data-conversation-response-active="true"] .conversation-timeline-response-footer .message-action-bar-hover-focus {
   opacity: 1;
   pointer-events: auto;

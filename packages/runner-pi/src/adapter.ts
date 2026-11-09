@@ -11,6 +11,8 @@ import { fetchProvider } from "./provider-http.js";
 import { createPiSessionStopper, createPiTaskBoundary } from "./task-boundary.js";
 import { assertUserInputExecutionHandler } from "./extensions/user-input.js";
 import { assertDelegationExecutionHandler } from "./extensions/delegation.js";
+import { assertHostReadonlyToolSurface } from "./extensions/host-readonly.js";
+import { withHostIsolatedFilesToolSurface } from "./extensions/host-isolated-files.js";
 import { PiRunnerYielded } from "./task-yield.js";
 import { PiRunnerSuspended } from "./runtime-suspension.js";
 import { createPiToolBoundaryObservation } from "./tool-boundary-observation.js";
@@ -25,6 +27,7 @@ import { resolvePiProviderRequestAuth } from "./provider-request-auth.js";
 export class PiRunnerAdapter {
   /** Assemble exact SDK input without executing, emitting Run events, or persisting a session. */
   async prepareTaskInput(options: PiRunnerRunOptions): Promise<PiRunnerPreparedInput> {
+    options = withHostIsolatedFilesToolSurface(options);
     const session = await createInitializedPiSession(options, (runtime) => {
       this.registerCustomProviderIfNeeded(runtime, options.provider);
       const noModelRequest = (): never => { throw new Error("Model execution is forbidden during input preparation"); };
@@ -41,6 +44,8 @@ export class PiRunnerAdapter {
 
   /** Resolves only on completion; typed yield/suspension outcomes require SDK stop and idle. */
   async runTask(options: PiRunnerRunOptions): Promise<PiRunnerResult> {
+    options = withHostIsolatedFilesToolSurface(options);
+    assertHostReadonlyToolSurface(options);
     assertUserInputExecutionHandler(options);
     assertDelegationExecutionHandler(options);
     if (options.ordinaryProgressRecovery !== undefined) {
@@ -64,14 +69,20 @@ export class PiRunnerAdapter {
     const builtinReads = new Set((options.tools ?? DEFAULT_TOOLS)
       .filter(name => ["read", "grep", "find", "ls"].includes(name) && !replacedToolNames.has(name)));
     const toolObservation = options.onToolBoundaryObservation && options.runId && options.runnerAttemptId
-      ? createPiToolBoundaryObservation(options.runId, options.runnerAttemptId) : undefined;
+      ? createPiToolBoundaryObservation(options.runId, options.runnerAttemptId, options.isolatedToolsProfile) : undefined;
     if (toolObservation) {
       options.onToolBoundaryObservation!(toolObservation.receipt);
       const onToolBefore = options.onToolBefore;
+      const onIsolatedToolCall = options.onIsolatedToolCall;
       options = { ...options, onToolBefore: request => {
         toolObservation.enter(request.toolCallId, request.toolName);
         return onToolBefore?.(request) ?? { allowed: true };
-      } };
+      }, ...(options.isolatedToolsProfile === "host_isolated_files_v1" && onIsolatedToolCall ? {
+        onIsolatedToolCall: request => {
+          toolObservation.dispatchIsolatedHostTool(request.toolCallId, request.toolName);
+          return onIsolatedToolCall(request);
+        },
+      } : {}) };
     }
     const inputReceiver = createPiPreparedInputReceiver(options);
     if (inputReceiver) options = { ...options, preparedInput: inputReceiver.preparedInput };

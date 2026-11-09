@@ -16,6 +16,8 @@ import { useSkillLibraryDataController } from "./useSkillLibraryDataController.j
 import { isEvolvedSkillEntry } from "./skill-editor-utils.js";
 import { LearningReviewDisclosure } from "../../shared/components/learning/LearningReviewPanel.js";
 import { useSharedSkillSourcesController } from "./useSharedSkillSourcesController.js";
+import { useWorkflowTemplateAuthoringController } from "./workflow-template-authoring-controller.js";
+import { WorkflowTemplateDiscardDialog, WorkflowTemplatesSection } from "./WorkflowTemplatesSection.js";
 
 export function SkillLibrarySettingsPanel({
   cwd,
@@ -69,6 +71,10 @@ export function SkillLibrarySettingsPanel({
       showToast({ message: t("Selected skill sources published. Teammate bindings and runtime injection are unchanged."), scope: "skill:shared-source", tone: "success" });
     },
   });
+  const workflowTemplates = useWorkflowTemplateAuthoringController({
+    cwd, active: data.activeSubsection === "workflow-templates", refreshToken, t,
+    onSuccess: (message) => showToast({ message, scope: "workflow-template:authoring", tone: "success" }),
+  });
 
   const commonRegistryProps = {
     skills: data.skills,
@@ -111,7 +117,7 @@ export function SkillLibrarySettingsPanel({
         localCount={sharedSources.response ? sharedSources.actionableCount : undefined}
         evolutionCount={data.evolutionCount}
         builtinCount={data.ownershipPartition.builtin.length}
-        onSectionChange={data.changeSection}
+        onSectionChange={(section) => workflowTemplates.requestLeave(() => data.changeSection(section))}
       />
 
       {data.loadError ? <InlineFeedback tone="danger">{data.loadError}</InlineFeedback> : null}
@@ -136,6 +142,8 @@ export function SkillLibrarySettingsPanel({
         />
       ) : data.activeSubsection === "local" ? (
         <SharedSkillSourcesSection controller={sharedSources} t={t} />
+      ) : data.activeSubsection === "workflow-templates" ? (
+        <WorkflowTemplatesSection controller={workflowTemplates} channels={data.channels} teammates={data.teammates} t={t} />
       ) : (
         <SkillLibraryRegistrySection
           {...commonRegistryProps}
@@ -189,6 +197,7 @@ export function SkillLibrarySettingsPanel({
         onConfirm={() => void actions.confirmDeleteSkill()}
         t={t}
       />
+      <WorkflowTemplateDiscardDialog controller={workflowTemplates} t={t} />
     </section>
   );
 }

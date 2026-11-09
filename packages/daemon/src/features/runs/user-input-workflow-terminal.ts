@@ -7,6 +7,7 @@ import {
 } from "../channels/channel-turn-dispatch-executor.js";
 import { orchestrateChannelWorkflow } from "../channels/orchestrator.js";
 import { resolveProviderForRun } from "./providers.js";
+import { createWorkflowParallelCapabilityResolver } from "./workflow-safety.js";
 
 export function createUserInputWorkflowTerminalHook(options: ChannelTurnDispatchExecutorOptions) {
   return async (terminalRun: RunSession): Promise<void> => {
@@ -25,6 +26,13 @@ export function createUserInputWorkflowTerminalHook(options: ChannelTurnDispatch
       || !workflow || workflow.status !== "running") return;
     await orchestrateChannelWorkflow({ store, cwd: store.paths.cwd, workflowId: workflow.id,
       secretResolver: options.secretResolver,
+      resolveParallelCapability: createWorkflowParallelCapabilityResolver(options.runnerRegistry,
+        { toolBrokerMode: () => options.runtimeSupervisor.getHarnessFeatures().toolBroker.mode }),
+      runnerRegistry: options.runnerRegistry,
+      isolationHost: { enabled: () => options.runtimeSupervisor.getChannelFeatures().workflowIsolatedFiles === true,
+        toolBrokerMode: () => options.runtimeSupervisor.getHarnessFeatures().toolBroker.mode,
+        maxConcurrentSteps: () => options.runtimeSupervisor.getConcurrencyPolicy().enabled
+          ? options.runtimeSupervisor.getConcurrencyPolicy().isolatedWriteMaxConcurrentSteps : 2 },
       validateRunRequest: request => resolveProviderForRun(store, request, options.secretResolver),
       startRun: createStartOrchestratedRun(options, store, store.paths.cwd) });
   };

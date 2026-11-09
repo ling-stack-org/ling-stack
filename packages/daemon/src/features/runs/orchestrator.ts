@@ -11,6 +11,7 @@ import {
   type DelegationPreparedExecution,
   type RootRunSuspensionActivationRecord,
   createRuntimeResourceRenewal,
+  createSqliteWorkflowIsolationStore,
   DEFAULT_WORKSPACE_ID,
   isExternalExecutionEngineId,
   isApprovalResumeBasisV1,
@@ -42,6 +43,7 @@ import {
   type RunTool,
   type RunnerRequestSource,
   type RuntimeInstance,
+  type RuntimeRunQueueClaim,
   type SecretResolver,
   type SkillApprovalProfile,
   type SkillSourceRuntimeContext,
@@ -50,6 +52,7 @@ import {
   type WorkUnitAttempt,
   type WorkUnitKind,
   toRuntimeAttemptFence,
+  workflowIsolationDigest,
 } from "@ling-stack/core";
 import type {
   PiRunnerApprovedToolContinuation,
@@ -70,7 +73,18 @@ import {
 } from "@ling-stack/contracts";
 import { createWorkflowOperationExecutionSnapshot } from "./workflow-operation-snapshot.js";
 import { workflowOperationEffectRejection } from "./workflow-operation-effect-gate.js";
-import { captureWorkflowStartOwner, commitWorkflowStartReady, assertWorkflowRunAdmission } from "./workflow-step-start-admission.js";
+import { assertWorkflowSafetyAttempt, assertWorkflowSafetyRequest, assertWorkflowSafetyRunner,
+  restrictWorkflowSafetyTools, workflowSafetyEffectRejection } from "./workflow-safety.js";
+import { executeWorkflowReadonlyTool } from "./workflow-readonly-executor.js";
+import { executeWorkflowIsolatedTool } from "./workflow-isolated-executor.js";
+import { prepareWorkflowIsolatedExecution, type WorkflowIsolatedExecution } from "./workflow-isolation-execution.js";
+import { assertWorkflowIsolatedExecutionAuthority } from "./workflow-isolation-file-authority.js";
+import { reconcileWorkflowParallelParentFences } from "../channels/workflow-isolation-parent-fence.js";
+import { assertWorkflowRepositoryRunAllowed } from "../workspaces/workflow-repository-fence.js";
+import { readWorkflowIsolationWorktreeScope } from "../channels/workflow-isolation-planning.js";
+import { settleWorkflowIsolatedResult } from "../channels/workflow-isolated-result.js";
+import { captureWorkflowStartOwner, commitWorkflowStartReady, assertWorkflowRunAdmission,
+  failUndispatchedWorkflowStart, resumeWorkflowStartAdmission } from "./workflow-step-start-admission.js";
 import { failUnlinkedPreparationThread } from "./preparation-thread-failure.js";
 import type { McpBroker } from "../../context.js";
 import { HttpError } from "../../errors.js";
@@ -83,8 +97,10 @@ import { createRunExecutionSupervision } from "../../runtime/run-execution-super
 import { scopeUserInputLocalWriters } from "./user-input-local-writer-scope.js";
 import { loadWorkspaceRuntimeSettings } from "../../runtime/runner-settings.js";
 import { DEFAULT_RUNNER_ID, UnsupportedRunnerError, type RunnerRegistry, type RunnerResolution } from "../../runtime/runners.js";
+import { assertWorkflowIsolationSelectionReady } from "../channels/workflow-isolation-selection.js";
 import { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { RuntimeSupervisor } from "../../runtime/supervisor.js";
+import { notifyRuntimeRunQueued, notifyRuntimeRunResourcesReleased } from "../../runtime/run-queue.js";
 import { checkPlatformNativeSandboxBackend } from "../../runtime/sandbox/platform-native.js";
 import { ensureStartupReadyForRun } from "../../startup/run-gate.js";
 import { ensureWorkspaceStateWritableForRun } from "../../startup/workspace-state-gate.js";
@@ -123,6 +139,8 @@ import {
   DuplicateRunRequestError,
   QueueableRunConflictError,
   acquireRunRuntimeSemaphores,
+  buildRunLeaseInputs,
+  buildRunSemaphoreInputs,
   claimPreparedRunTask,
   prepareRunConcurrency,
   recoverPreparedRunConcurrency,
@@ -176,6 +194,7 @@ import {
 } from "./prepared-runner-input.js";
 import {
   rebuildExistingRunRequest,
+  rebuildQueuedRunRequest,
   readStoredEffectivePolicySnapshot,
   readStoredRunnerExecution,
 } from "./existing-run-request.js";
@@ -238,9 +257,11 @@ interface ExistingRunContinuationExecutionOptions {
   readonly origin: RunnerContinuationOrigin;
   readonly idempotencyDiscriminator: string;
   readonly preparedExecution?: PreparedRunnerContinuationExecution;
+  readonly hostCapacity?: import("@ling-stack/core/runtime-host-capacity-store-bridge").RuntimeHostCapacityDispatchReference;
 }
 import { isNativeApprovalEvent } from "./native-approval-events.js";
 import type { NativeRunDispatcher } from "./native-run-dispatcher.js";
+import type { RuntimeHostCapacityAdmission } from "../../runtime/run-queue.js";
 
 interface UserInputContinuationExecutionOptions {
   readonly threadId: string;
@@ -275,6 +296,13 @@ export interface ExecuteRunRequestOptions {
   readonly userInputContinuation?: UserInputContinuationExecutionOptions;
   /** Original composition-owned capability; public request DTOs can never select or forge this path. */
   readonly delegatedExecution?: OriginalDelegatedExecutionEntry;
+  /** Trusted first-dispatch custody, separate from successor/continuation execution. */
+  readonly queuedRun?: RuntimeRunQueueClaim;
+  /** Trusted Host receipt consumed by the queue's atomic dispatch gate. */
+  readonly queuedHostCapacity?: import("@ling-stack/core/runtime-host-capacity-store-bridge").RuntimeHostCapacityDispatchReference;
+  /** Trusted Host gate for an initial workflow start; never selected by public Run input. */
+  readonly workflowHostCapacityAdmission?: RuntimeHostCapacityAdmission;
+  readonly hostCapacityAdmission?: RuntimeHostCapacityAdmission;
   /** Trusted process-local scheduling signal emitted only after the durable Pi receiver ACK. */
   readonly onUserInputReceiverAccepted?: (input: UserInputReceiverAccepted) => void;
   readonly nativeRunDispatcher?: NativeRunDispatcher;
@@ -361,6 +389,7 @@ export function executeExistingRunContinuation(
     readonly origin: ExistingRunContinuationExecutionOptions["origin"];
     readonly idempotencyDiscriminator: string;
     readonly preparedExecution?: PreparedRunnerContinuationExecution;
+    readonly hostCapacity?: import("@ling-stack/core/runtime-host-capacity-store-bridge").RuntimeHostCapacityDispatchReference;
   },
   sink: RunExecutionSink,
   runnerRegistry: RunnerRegistry,
@@ -411,11 +440,48 @@ export function executeExistingRunContinuation(
         origin: input.origin,
         idempotencyDiscriminator: input.idempotencyDiscriminator,
         preparedExecution: input.preparedExecution,
+        hostCapacity: input.hostCapacity,
       },
     },
   ));
   activeRuns.trackCompletion(completion);
   return completion;
+}
+
+function assertQueuedRunParticipantCurrent(store: RunStore, teammateId: string | undefined): void {
+  if (!teammateId) return;
+  const teammate = store.getAiTeammate(teammateId);
+  if (!teammate || teammate.status !== "active" || teammate.hidden) {
+    throw new HttpError(409, "runtime_run_queue_participant_unavailable", "Queued Run participant is no longer active and visible.");
+  }
+}
+
+export function executeQueuedRunRequest(
+  input: { readonly store: RunStore; readonly claim: RuntimeRunQueueClaim },
+  sink: RunExecutionSink,
+  runnerRegistry: RunnerRegistry,
+  storeRegistry: RunStoreRegistry,
+  activeRuns: ActiveRunRegistry,
+  runtimeSupervisor: RuntimeSupervisor,
+  secretResolver: SecretResolver,
+  mcpBroker: McpBroker,
+  options: ExecuteRunRequestOptions = {},
+): Promise<string | undefined> {
+  let request: RunRequest;
+  try {
+    const run = input.store.getRun(input.claim.runId);
+    const entry = input.store.getRuntimeRunQueueEntry(input.claim.runId);
+    if (!run || !entry || entry.dispatchedAt || !isDeepStrictEqual(entry.claim, input.claim)
+      || !input.store.hasRuntimeRunQueueCustody(run.id)
+      || storeRegistry.getStore(input.store.paths.cwd) !== input.store) throw new Error("Queued Run claim changed.");
+    request = rebuildQueuedRunRequest(run);
+  } catch (error) {
+    writeRunPreparationFailure(sink, 409, { error: "runtime_run_queue_source_changed",
+      message: error instanceof Error ? error.message : String(error) });
+    return Promise.resolve(undefined);
+  }
+  return executeRunRequest(request, sink, runnerRegistry, storeRegistry, activeRuns,
+    runtimeSupervisor, secretResolver, mcpBroker, { ...options, queuedRun: input.claim });
 }
 
 /** Execute the one durable successor selected by the Host delivery worker. */
@@ -472,6 +538,7 @@ async function executeAdmittedRunRequest(
   let resolvedProvider: PiRunnerProviderConfig | undefined;
   let runnerResolution: RunnerResolution | undefined;
   let sandboxBinding: PiRunnerSandboxBinding | undefined;
+  let isolatedExecution: WorkflowIsolatedExecution | undefined;
   let runtimeSettings: WorkspaceRuntimeSettings | undefined;
   let runtimeTools: readonly RunTool[] | undefined;
   let mcpTools: readonly PiRunnerMcpToolDefinition[] = [];
@@ -514,6 +581,11 @@ async function executeAdmittedRunRequest(
     return result.kind === "not_settled" ? { kind: "blocked", code: "checkpoint.missing" } : result;
   };
   const existingContinuation = options.existingRunContinuation;
+  let queuedClaim = options.queuedRun;
+  let queuePendingRun = Boolean(queuedClaim);
+  let queueDispatchCommitted = false;
+  let queuedHostCapacityReference = options.queuedHostCapacity;
+  let queuedHostCapacityOwned = false;
   const userInputContinuation = options.userInputContinuation;
   let userInputClaim = userInputContinuation?.claim;
   let userInputSeed: UserInputContinuationSeed | undefined;
@@ -521,6 +593,13 @@ async function executeAdmittedRunRequest(
   let userInputPrepared: UserInputPreparedExecution | undefined;
   let userInputBinding: UserInputContinuationBinding | undefined;
   let workflowStartOwner: import("@ling-stack/core").WorkflowStepStartOwnerV1 | undefined;
+  let workflowHostCapacityReference: import("@ling-stack/core/runtime-host-capacity-store-bridge").RuntimeHostCapacityDispatchReference | undefined;
+  let workflowHostCapacitySource: import("@ling-stack/core").HostOperationSource | undefined;
+  let workflowHostCapacityDispatched = false;
+  let hostCapacityAdmission = options.hostCapacityAdmission;
+  let workflowHostCapacityAdmission = options.workflowHostCapacityAdmission;
+  let continuationHostCapacityReference = existingContinuation?.hostCapacity ?? userInputContinuation?.binding?.hostCapacity;
+  let continuationHostCapacityDispatched = false;
   let lifecycleTimeMs = Number.NEGATIVE_INFINITY;
   const raiseLifecycleTimeFloor = (timestamp: string): void => {
     lifecycleTimeMs = Math.max(lifecycleTimeMs, Date.parse(timestamp));
@@ -532,10 +611,10 @@ async function executeAdmittedRunRequest(
   const executionNow = (): string => userInputContinuation ? lifecycleNow() : new Date().toISOString();
   // Required-input checkpoints need durable effect receipts. An internal opt-in
   // cannot turn an off/shadow Broker into an enforced execution path.
-  const userInputAvailable = (): boolean => !delegatedExecution && options.enableUserInputPause === true
+  const userInputAvailable = (): boolean => !delegatedExecution && !runRequest.workflowIsolationPlan && options.enableUserInputPause === true
     && Boolean(turn?.sourceItemId) && durableRunRequest.harnessFeatureSnapshot?.toolBroker === "enforce";
   try {
-    if ([existingContinuation, userInputContinuation, options.delegatedExecution].filter(Boolean).length > 1) {
+    if ([existingContinuation, userInputContinuation, options.delegatedExecution, queuedClaim].filter(Boolean).length > 1) {
       throw new HttpError(409, "continuation_identity_conflict", "A Run cannot use two continuation owners.");
     }
     workspaceCwd = runRequest.workspaceCwd ?? runRequest.cwd;
@@ -548,6 +627,31 @@ async function executeAdmittedRunRequest(
       secretResolver,
     });
     store = storeRegistry.getStore(workspaceCwd);
+    hostCapacityAdmission ??= runtimeSupervisor.getHostCapacityAdmission(store);
+    workflowHostCapacityAdmission ??= hostCapacityAdmission;
+    if (queuedClaim) {
+      const entry = store.getRuntimeRunQueueEntry(queuedClaim.runId);
+      if (!entry || entry.dispatchedAt || !isDeepStrictEqual(entry.claim, queuedClaim)
+        || !store.hasRuntimeRunQueueCustody(queuedClaim.runId)) {
+        throw new HttpError(409, "runtime_run_queue_claim_changed", "Queued Run claim is no longer current.");
+      }
+      run = store.getRun(queuedClaim.runId);
+      workUnit = store.getWorkUnit(queuedClaim.sourceFence.workUnitId);
+      attempt = store.getWorkUnitAttempt(queuedClaim.sourceFence.attemptId);
+      thread = run?.threadId ? store.getLingThread(run.threadId) : undefined;
+      turn = run ? store.getLingTurnForRun(run.id) : undefined;
+      if (!run || !workUnit || !attempt || !thread || !turn) {
+        throw new HttpError(409, "runtime_run_queue_source_changed", "Queued Run lineage is incomplete.");
+      }
+      storeRegistry.rememberRun(run.id, store);
+    }
+    const selectedWorkflowStep = runRequest.workflowStepId ? store.getChannelWorkflowStep(runRequest.workflowStepId) : undefined;
+    if (selectedWorkflowStep) assertWorkflowIsolationSelectionReady(store, selectedWorkflowStep.workflowId, runnerRegistry, {
+      enabled: () => runtimeSupervisor.getChannelFeatures().workflowIsolatedFiles === true,
+      toolBrokerMode: () => runtimeSupervisor.getHarnessFeatures().toolBroker.mode,
+      maxConcurrentSteps: () => runtimeSupervisor.getConcurrencyPolicy().enabled
+        ? runtimeSupervisor.getConcurrencyPolicy().isolatedWriteMaxConcurrentSteps : 2,
+    });
     if (options.delegatedExecution) {
       delegatedExecution = readOriginalDelegatedExecutionEntry(options.delegatedExecution, store);
       const expected = delegatedExecution.buildRequest();
@@ -572,7 +676,7 @@ async function executeAdmittedRunRequest(
       }
       storeRegistry.rememberRun(run.id, store);
     }
-    if (!delegatedExecution && !existingContinuation && !userInputContinuation && runRequest.normalConversationPreparedRequestRef) {
+    if (!delegatedExecution && !existingContinuation && !userInputContinuation && !queuedClaim && runRequest.normalConversationPreparedRequestRef) {
       const existing = findExistingIdempotentRunRequest(store, runRequest);
       if (existing?.linkedRunId) throw new DuplicateRunRequestError(existing.linkedRunId);
       if (existing) throw new HttpError(409, "duplicate_work_unit", `Duplicate work unit request: ${existing.id}`);
@@ -651,10 +755,24 @@ async function executeAdmittedRunRequest(
         continuationExecution = existingContinuation.preparedExecution;
         attempt = activeAttempt;
       }
+      if (hostCapacityAdmission) {
+        const observed = hostCapacityAdmission.getAttemptReference({ workspaceId: workUnit.workspaceId,
+          source: { runId: run.id, ...toRuntimeAttemptFence(activeAttempt ?? sourceAttempt) } });
+        if (observed?.dispatched) {
+          const stopped = !existingContinuation.preparedExecution && hostCapacityAdmission.releaseStopped({
+            workspaceId: workUnit.workspaceId, source: { runId: run.id, ...toRuntimeAttemptFence(sourceAttempt) },
+            intentId: observed.reference.intentId, now: executionNow() });
+          if (!stopped) {
+            writeRunPreparationFailure(sink, 409, { error: "runtime_host_capacity_stop_unverified",
+              message: "The original Host dispatch remains owned; its gate cannot be reused." });
+            return undefined;
+          }
+        }
+      }
     }
-    let preparedExecution = delegatedExecution || existingContinuation || userInputContinuation ? undefined : readNormalConversationPreparedExecution(store, runRequest);
-    const existingRunnerExecution = (existingContinuation || userInputBinding || delegatedExecution?.prepared) && run ? readStoredRunnerExecution(run) : undefined;
-    if ((existingContinuation || userInputBinding || delegatedExecution?.prepared) && !existingRunnerExecution) {
+    let preparedExecution = delegatedExecution || existingContinuation || userInputContinuation || queuedClaim ? undefined : readNormalConversationPreparedExecution(store, runRequest);
+    const existingRunnerExecution = (existingContinuation || userInputBinding || delegatedExecution?.prepared || queuedClaim) && run ? readStoredRunnerExecution(run) : undefined;
+    if ((existingContinuation || userInputBinding || delegatedExecution?.prepared || queuedClaim) && !existingRunnerExecution) {
       throw new HttpError(409, "continuation_source_incomplete", "Existing Run has no valid frozen Runner execution input.");
     }
     const userInputSourceExecution = userInputSeed && userInputSourceRun
@@ -670,6 +788,14 @@ async function executeAdmittedRunRequest(
       : runRequest;
     assertFullAccessPermissionConfirmed(policyRequest);
     if (!delegatedExecution) validateWorkflowStepOwner(store, runRequest);
+    const workflowSafetyPlan = assertWorkflowSafetyRequest(store, runRequest);
+    const isolatedFiles = workflowSafetyPlan?.profile === "pi_host_isolated_files_v1";
+    if (isolatedFiles && (delegatedExecution || existingContinuation || userInputContinuation || runRequest.parentRunId
+      || resolveHarnessContinuationOrigin(runRequest) || runRequest.normalConversationPreparedRequestRef
+      || runRequest.normalConversationPreparedExecutionRef)) {
+      throw new HttpError(409, "workflow_isolation_continuation_unavailable",
+        "This isolated-files profile requires an original workflow Attempt; recovery cannot re-prompt or borrow another binding.");
+    }
     workflowStartOwner = delegatedExecution ? undefined : userInputBinding?.workflowStartOwner ?? captureWorkflowStartOwner(
         store,
         runRequest,
@@ -738,7 +864,7 @@ async function executeAdmittedRunRequest(
       : skillTeammate?.runnerId ? "teammate_default" : "workspace_default";
     runnerResolution = runnerRegistry.resolve({
       requestedRunnerId: frozenExecution?.runnerId ?? runRequest.runnerId ?? skillTeammate?.runnerId ?? runtimeSettings.defaultRunnerId,
-      ...(frozenExecution ? { allowFallback: false } : {}),
+      ...(frozenExecution || selectedWorkflowStep?.metadata?.templateCompilationPin ? { allowFallback: false } : {}),
       defaultRunnerId: runtimeSettings.defaultRunnerId,
       allowedRunnerIds: runtimeSettings.allowedRunnerIds,
       requestSource: runnerRequestSource,
@@ -750,6 +876,8 @@ async function executeAdmittedRunRequest(
     if (runRequest.workflowOperationExecution && !(runnerResolution.runner.adapter instanceof PiRunnerAdapter)) {
       throw new HttpError(409, "operation_binding_runner_gate_unavailable", "This runner has no verified universal typed tool-before gate.");
     }
+    assertWorkflowSafetyRunner(store, runRequest, { adapter: runnerResolution.runner.adapter,
+      runnerId: runnerResolution.effectiveRunnerId, tools: runtimeTools });
     const channelForPolicy = runRequest.task.channelId ? store.getChannel(runRequest.task.channelId) : undefined;
     const channelWorkspaceSnapshot = channelForPolicy
       ? createChannelWorkspaceSnapshot(channelForPolicy, workspaceCwd)
@@ -759,7 +887,8 @@ async function executeAdmittedRunRequest(
       unifiedExec: runtimeSupervisor.getRuntimeToolFeatures().unifiedExec === true,
       shellSnapshot: runtimeSupervisor.getRuntimeToolFeatures().shellSnapshot === true,
     };
-    const selectedHostCapabilityTools = selectHostCapabilityToolsForRun(runRequest);
+    const selectedHostCapabilityTools = isolatedFiles || workflowSafetyPlan?.profile === "pi_host_readonly_v1"
+      ? [] : selectHostCapabilityToolsForRun(runRequest);
     const assertHostCapabilitiesCurrent = (): void => {
       if (selectedHostCapabilityTools.some((tool) => options.hostCapabilityBridge?.hasCapability(tool.capabilityId) !== true)) {
         throw new HttpError(409, "host_capability_desktop_required", "The selected Host capability is not currently available from Ling Desktop.");
@@ -789,10 +918,10 @@ async function executeAdmittedRunRequest(
       hostCapabilityTools: selectedHostCapabilityTools,
     };
     resolvedSecretValues = [resolvedProvider.apiKey];
-    runId = delegatedExecution?.claimed.run.id ?? existingContinuation?.runId ?? userInputSeed?.successorRunId ?? createRunId();
+    runId = queuedClaim?.runId ?? delegatedExecution?.claimed.run.id ?? existingContinuation?.runId ?? userInputSeed?.successorRunId ?? createRunId();
     createdAt = userInputContinuation ? lifecycleNow() : new Date().toISOString();
     const idempotencyKey = runRequest.idempotencyKey ?? `run:${runId}`;
-    if (!delegatedExecution && !existingContinuation && !userInputContinuation) {
+    if (!delegatedExecution && !existingContinuation && !userInputContinuation && !queuedClaim) {
       thread = ensureLingThreadForRun(store, runRequest, createdAt);
       turn = ensureLingTurnForRun(store, thread, runRequest, createdAt);
     }
@@ -802,6 +931,10 @@ async function executeAdmittedRunRequest(
     const harnessFeatureSnapshot = runRequest.harnessFeatureSnapshot ?? createHarnessFeatureSnapshot({
       harness: runtimeSupervisor.getHarnessFeatures(),
     });
+    if (isolatedFiles && (harnessFeatureSnapshot.toolBroker !== "enforce"
+      || runtimeSupervisor.getHarnessFeatures().toolBroker.mode !== "enforce")) {
+      throw new HttpError(409, "workflow_isolation_broker_required", "Isolated writes require the enforced Host Tool Broker.");
+    }
     const harnessContinuationOrigin = resolveHarnessContinuationOrigin(runRequest);
     durableRunRequest = {
       ...runRequest,
@@ -812,11 +945,11 @@ async function executeAdmittedRunRequest(
       harnessFeatureSnapshot,
       harnessContinuationOrigin,
     };
-    const workUnitOwner = (delegatedExecution || existingContinuation || userInputContinuation) && workUnit
+    const workUnitOwner = (delegatedExecution || existingContinuation || userInputContinuation || queuedClaim) && workUnit
       ? { kind: workUnit.kind, ownerType: workUnit.ownerType, ownerId: workUnit.ownerId }
       : resolveRunWorkUnitOwner(thread, runRequest, turn.id);
     // Definitions belong to initial model input; executable handlers require the real Run below.
-    const mediaGenerationEligible = delegatedExecution ? false : frozenExecution
+    const mediaGenerationEligible = delegatedExecution || isolatedFiles || workflowSafetyPlan?.profile === "pi_host_readonly_v1" ? false : frozenExecution
       ? frozenExecution.input.initialToolSurface?.mediaGeneration === true
       : isConversationMediaGenerationEligible({
           createdByActor: runRequest.createdByActor,
@@ -828,7 +961,7 @@ async function executeAdmittedRunRequest(
       runnerResolution.runner.toolHydration.conformance === "verified";
     dynamicDelegationRegistry = runnerResolution.runner.adapter instanceof PiRunnerAdapter
       ? readOriginalDelegationRuntimeRegistry(runtimeSupervisor) : undefined;
-    const delegationToolSurfaceEnabled = runnerResolution.runner.adapter instanceof PiRunnerAdapter
+    const delegationToolSurfaceEnabled = !isolatedFiles && runnerResolution.runner.adapter instanceof PiRunnerAdapter
       && dynamicDelegationRegistry?.isSelectedWorkflow({ store, workflowStepId: runRequest.workflowStepId,
         channelId: runRequest.task.channelId }) === true;
     runnerRequest = { ...runnerRequest, mediaGenerationTools: currentMediaTools,
@@ -836,6 +969,20 @@ async function executeAdmittedRunRequest(
         userInput: userInputAvailable(),
         nativeFileCreate: workflowOperationUsesNativeFileCreate(runRequest),
         delegation: delegationToolSurfaceEnabled } };
+    runnerRequest = restrictWorkflowSafetyTools(runnerRequest, workflowSafetyPlan);
+    if (workflowSafetyPlan?.profile === "pi_host_readonly_v1") {
+      // SDK preparation may inspect schemas, but it has no execution authority.
+      runnerRequest = { ...runnerRequest, onReadonlyToolCall: () => {
+        throw new HttpError(409, "workflow_safety_not_admitted", "Read tools cannot execute during preparation.");
+      }, onToolBefore: () => ({ allowed: false, code: "workflow_safety_not_admitted",
+        reason: "Tools cannot execute during preparation." }) };
+    }
+    if (isolatedFiles) {
+      runnerRequest = { ...runnerRequest, onIsolatedToolCall: () => {
+        throw new HttpError(409, "workflow_safety_not_admitted", "Isolated tools cannot execute during preparation.");
+      }, onToolBefore: () => ({ allowed: false, code: "workflow_safety_not_admitted",
+        reason: "Tools cannot execute during preparation." }) };
+    }
     if (!frozenExecution && runnerResolution.runner.adapter instanceof PiRunnerAdapter) {
       runnerRequest = withGstackHostContext(runnerRequest, selectedSkillSourceContext);
     }
@@ -849,6 +996,7 @@ async function executeAdmittedRunRequest(
     const assertPreparationCurrent = (): void => {
       if (activeRuns.isShuttingDown()) throw new HttpError(503, "runtime_shutting_down", "Runtime is shutting down.");
       assertHostCapabilitiesCurrent();
+      assertWorkflowSafetyRequest(runStore, runRequest);
       if (!frozenExecution) assertPreselectedMemoryCurrent(runStore, runRequest);
       delegatedExecution?.assertCurrent();
     };
@@ -862,13 +1010,13 @@ async function executeAdmittedRunRequest(
         now: lifecycleNow,
         assertCurrent: assertPreparationCurrent,
       });
-    } else if (!delegatedExecution && !existingContinuation && !userInputContinuation) {
+    } else if (!isolatedFiles && !delegatedExecution && !existingContinuation && !userInputContinuation && !queuedClaim) {
       preparedExecution = await prepareNormalConversationExecution({ store, request: runRequest,
         runnerId: runnerResolution.effectiveRunnerId, adapter: runnerResolution.runner.adapter, options: runnerRequest,
         usedMemory, skillSourceContext: selectedSkillSourceContext, skillDefinitionSnapshot: selectedSkillDefinitionSnapshot, assertCurrent: assertPreparationCurrent });
     }
     let executionInput = userInputPrepared?.execution ?? existingRunnerExecution ?? preparedExecution?.payload;
-    if (!existingContinuation && !userInputContinuation && !executionInput && runnerResolution.runner.adapter instanceof PiRunnerAdapter) {
+    if (!isolatedFiles && !existingContinuation && !userInputContinuation && !executionInput && runnerResolution.runner.adapter instanceof PiRunnerAdapter) {
       // All Pi surfaces retain the actual SDK input, not an approximation rebuilt
       // from requestSnapshot after a question or restart. Normal first-writer input is reused.
       const preparedInput = await runnerResolution.runner.adapter.prepareTaskInput(runnerRequest);
@@ -880,7 +1028,7 @@ async function executeAdmittedRunRequest(
     const refreshPreparedExecution = (): void => {
       if (!executionInput) return;
       // Recheck after awaiting SDK preparation. A snapshot never authorizes a revoked provider/tool.
-      if (delegatedExecution || existingContinuation || userInputContinuation) {
+      if (delegatedExecution || existingContinuation || userInputContinuation || queuedClaim) {
         assertPreparedRunnerMemoryCurrent(runStore, runRequest, executionInput);
       } else {
         assertPreparedExecutionMemoryCurrent(runStore, runRequest, executionInput);
@@ -894,19 +1042,22 @@ async function executeAdmittedRunRequest(
       runnerResolution = runnerRegistry.resolve({ requestedRunnerId: executionInput.runnerId, allowFallback: false,
         allowedRunnerIds: loadWorkspaceRuntimeSettings(runStore, runnerRegistry).allowedRunnerIds, providerApi: resolvedProvider.api,
         tools: executionInput.input.tools, requestSource: runnerRequestSource });
+      assertWorkflowSafetyRunner(runStore, runRequest, { adapter: runnerResolution.runner.adapter,
+        runnerId: runnerResolution.effectiveRunnerId, tools: executionInput.input.tools });
       dynamicDelegationRegistry = runnerResolution.runner.adapter instanceof PiRunnerAdapter
         ? readOriginalDelegationRuntimeRegistry(runtimeSupervisor) : undefined;
-      const currentDelegationToolSurfaceEnabled = runnerResolution.runner.adapter instanceof PiRunnerAdapter
+      const currentDelegationToolSurfaceEnabled = !isolatedFiles && runnerResolution.runner.adapter instanceof PiRunnerAdapter
         && dynamicDelegationRegistry?.isSelectedWorkflow({ store: runStore,
           workflowStepId: runRequest.workflowStepId, channelId: runRequest.task.channelId }) === true;
-      runnerRequest = restoreNormalConversationExecutionOptions(executionInput, { ...runnerRequest,
+      runnerRequest = restoreNormalConversationExecutionOptions(executionInput, restrictWorkflowSafetyTools({ ...runnerRequest,
         initialToolSurface: { mediaGeneration: mediaGenerationEligible,
           toolHydration: runnerResolution.runner.toolHydration?.mode === "daemon_hydrated" && runnerResolution.runner.toolHydration.conformance === "verified",
           userInput: userInputAvailable(),
           nativeFileCreate: workflowOperationUsesNativeFileCreate(runRequest),
           delegation: currentDelegationToolSurfaceEnabled },
         provider: resolvedProvider, mcpTools: currentMcp, mediaGenerationTools: mediaGenerationEligible
-          ? createConversationMediaGenerationToolDefinitions(listConversationMediaGenerationTargets(runStore, secretResolver)) : [] });
+          ? createConversationMediaGenerationToolDefinitions(listConversationMediaGenerationTargets(runStore, secretResolver)) : [] }, workflowSafetyPlan));
+      runnerRequest = restrictWorkflowSafetyTools(runnerRequest, workflowSafetyPlan);
       runtimeTools = executionInput.input.tools;
       mcpTools = runnerRequest.mcpTools ?? [];
       const names = new Set(mcpTools.map((tool) => tool.registeredName));
@@ -921,7 +1072,7 @@ async function executeAdmittedRunRequest(
       assertPreparationCurrent();
     };
     refreshPreparedExecution();
-    const existingWorkUnit = !delegatedExecution && !existingContinuation && !userInputContinuation && runRequest.idempotencyKey
+    const existingWorkUnit = !delegatedExecution && !existingContinuation && !userInputContinuation && !queuedClaim && runRequest.idempotencyKey
       ? store.findWorkUnitByIdempotency({
           kind: workUnitOwner.kind,
           ownerType: workUnitOwner.ownerType,
@@ -955,9 +1106,10 @@ async function executeAdmittedRunRequest(
     }
     const currentChannelForPolicy = runRequest.task.channelId ? store.getChannel(runRequest.task.channelId) : undefined;
     const sessionPolicy = resolveSessionRunPolicy({ workspacePolicy: store.getApprovalPolicy(),
-      authorizationMode: policyRequest.authorizationMode, workspaceAccessMode: policyRequest.workspaceAccessMode,
+      authorizationMode: policyRequest.authorizationMode, workspaceAccessMode: workflowSafetyPlan?.profile === "pi_host_readonly_v1"
+        ? "read_only" : policyRequest.workspaceAccessMode,
       permissionPreset: policyRequest.permissionPreset, permissionMode: policyRequest.permissionMode,
-      channelBoundPath: currentChannelForPolicy?.boundPath || runRequest.cwd, approvalProfile: runtimeApprovalProfile });
+      channelBoundPath: isolatedFiles ? runRequest.cwd : currentChannelForPolicy?.boundPath || runRequest.cwd, approvalProfile: runtimeApprovalProfile });
     approvalPolicy = sessionPolicy.approvalPolicy;
     effectivePolicySnapshot = applyConversationModeToEffectiveRunPolicySnapshot(sessionPolicy.snapshot,
       store.getLingThread(thread.id)?.conversationMode.mode ?? thread.conversationMode.mode);
@@ -1059,6 +1211,11 @@ async function executeAdmittedRunRequest(
           ordinaryProgressRecoveryModelView = progress.modelView;
           ordinaryProgressRecoveryWitness = progress.witness;
         }
+      }
+    } else if (queuedClaim) {
+      const frozenPolicy = readStoredEffectivePolicySnapshot(run?.requestSnapshot);
+      if (!frozenPolicy || !isDeepStrictEqual(effectivePolicySnapshot, frozenPolicy)) {
+        throw new HttpError(409, "runtime_run_queue_policy_changed", "Queued Run policy no longer matches current authority.");
       }
     } else if (!delegatedExecution && !userInputContinuation) {
       workUnit = store.createWorkUnit({
@@ -1328,11 +1485,20 @@ async function executeAdmittedRunRequest(
           throw new HttpError(409, "user_input_execution_preparation_missing", "Answer execution preparation is missing.");
         }
         const admissionAt = lifecycleNow();
+        if (hostCapacityAdmission) {
+          const reserved = hostCapacityAdmission.reserveUserInputContinuation({ workspaceId: workUnit.workspaceId,
+            ...claim, executionRef: userInputPrepared.ref, runtimeInstanceId: runtime.runtimeInstanceId, now: admissionAt });
+          if (reserved.status !== "reserved" && reserved.status !== "duplicate") {
+            throw new HttpError(409, `runtime_host_capacity_${reserved.status}`, "Answer continuation is waiting for Host capacity.");
+          }
+          continuationHostCapacityReference = reserved.reference;
+        }
         userInputBinding = store.admitUserInputContinuation({ ...claim,
           executionRef: userInputPrepared.ref,
           runtimeInstanceId: runtime.runtimeInstanceId,
           effectivePolicySnapshot,
           workflowStartOwner,
+          hostCapacity: continuationHostCapacityReference,
         }, admissionAt);
         raiseLifecycleTimeFloor(userInputBinding.createdAt);
         createdAt = userInputBinding.createdAt;
@@ -1349,6 +1515,10 @@ async function executeAdmittedRunRequest(
         throw new HttpError(409, "continuation_source_incomplete", "Admitted answer continuation is incomplete.");
       }
       storeRegistry.rememberRun(run.id, store);
+    } else if (queuedClaim) {
+      if (!executionInput || !run || !workUnit || !attempt || queuedClaim.runtimeInstanceId !== runtime.runtimeInstanceId) {
+        throw new HttpError(409, "runtime_run_queue_claim_changed", "Queued Run executor no longer owns this preparation.");
+      }
     } else if (continuationEnforced) {
       const sourceRun = runRequest.parentRunId ? store.getRun(runRequest.parentRunId) : undefined;
       const sourceWorkUnit = sourceRun?.workUnitId ? store.getWorkUnit(sourceRun.workUnitId) : undefined;
@@ -1396,7 +1566,79 @@ async function executeAdmittedRunRequest(
     }
     const providerConcurrencyKey = runRequest.providerPresetId
       ?? `${resolvedProvider.provider}:${resolvedProvider.model}`;
-    if (delegatedExecution) {
+    const queueEligible = !delegatedExecution && !existingContinuation && !userInputContinuation && !continuationEnforced
+      && !runRequest.workflowStepId && !runRequest.parentRunId && !runRequest.interventionId && !runRequest.continuationReason
+      && runRequest.createdByActor !== "automation" && thread.kind !== "automation"
+      && ["task_run", "conversation_run", "teammate_direct_reply"].includes(workUnit.kind)
+      && runnerResolution.runner.adapter instanceof PiRunnerAdapter && Array.isArray(executionInput?.input.tools)
+      && Boolean(runRequest.providerPresetId || !resolvedProvider.apiKey && !Object.keys(resolvedProvider.headers ?? {}).length);
+    if (!queuedClaim && queueEligible && store.getRuntimeConcurrencyPolicy(workUnit.workspaceId)?.enabled) {
+      run = persistRun();
+      const enqueued = store.enqueueRuntimeRun({ runId, sourceFence: toRuntimeAttemptFence(attempt),
+        reason: "runtime_semaphore_conflict", now: createdAt });
+      if (enqueued.status === "changed") throw new HttpError(409, "runtime_run_queue_source_changed", "Run could not enter the durable queue.");
+      queuePendingRun = true;
+      const selected = store.claimNextRuntimeRun({ workspaceId: workUnit.workspaceId, runtimeInstanceId: runtime.runtimeInstanceId,
+        ownerId: `run-request:${runId}`, leaseMs: 30_000, now: executionNow(), runId });
+      if (selected.status === "claimed") {
+        queuedClaim = selected.claim;
+        if (hostCapacityAdmission && !queuedHostCapacityReference) {
+          const reserved = hostCapacityAdmission.reserve({
+            workspaceId: selected.entry.workspaceId,
+            source: { runId, ...toRuntimeAttemptFence(attempt) },
+            now: executionNow(),
+          });
+          if (reserved.status === "full" || reserved.status === "unconfigured") {
+            throw new QueueableRunConflictError("runtime_semaphore_conflict", "Run is waiting for Host capacity.");
+          }
+          if (reserved.status !== "reserved" && reserved.status !== "duplicate") {
+            throw new HttpError(409, "runtime_host_capacity_changed", "Host capacity changed while admitting the queued Run.");
+          }
+          queuedHostCapacityReference = reserved.reference;
+          queuedHostCapacityOwned = true;
+        }
+      } else throw new QueueableRunConflictError("runtime_semaphore_conflict", "Run is waiting for fair resource admission.");
+    }
+    if (hostCapacityAdmission && !queuedClaim && !delegatedExecution && !userInputContinuation
+      && (!runRequest.workflowStepId || existingContinuation || continuationEnforced)
+      && !continuationHostCapacityReference) {
+      if (!(runnerResolution.runner.adapter instanceof PiRunnerAdapter) || existingContinuation?.origin === "approval_resume") {
+        throw new HttpError(409, "runtime_host_capacity_execution_unsupported", "Execution has no verified Host capacity owner.");
+      }
+      run ??= persistRun(continuationContext);
+      const reserved = hostCapacityAdmission.reserveExecution({ workspaceId: workUnit.workspaceId,
+        source: { runId: run.id, ...toRuntimeAttemptFence(attempt) }, now: executionNow() });
+      if (reserved.status === "full" && continuationExecution) {
+        throw new QueueableRunConflictError("runtime_semaphore_conflict", "Continuation is waiting for Host capacity.");
+      }
+      if (reserved.status !== "reserved" && reserved.status !== "duplicate") {
+        throw new HttpError(409, `runtime_host_capacity_${reserved.status}`, "Execution is waiting for Host capacity.");
+      }
+      continuationHostCapacityReference = reserved.reference;
+    }
+    if (queuedClaim) {
+      assertQueuedRunParticipantCurrent(store, runRequest.teammateId);
+      assertWorkflowRepositoryRunAllowed(store, runRequest);
+      const channel = runRequest.task.channelId ? store.getChannel(runRequest.task.channelId) : undefined;
+      const task = store.getTask(runRequest.task.id);
+      const now = executionNow();
+      const admitted = store.dispatchRuntimeQueuedRun({ claim: queuedClaim, now,
+        ...(queuedHostCapacityReference ? { hostCapacity: queuedHostCapacityReference } : {}),
+        leases: buildRunLeaseInputs({ runId, workUnit, attempt, runRequest: { ...runRequest, tools: runtimeTools },
+          channel, taskId: task?.id, now }),
+        semaphores: buildRunSemaphoreInputs({ workUnit, attempt, channel, providerKey: providerConcurrencyKey,
+          runnerId: runnerResolution.effectiveRunnerId, now }) });
+      if (admitted.status === "changed") throw new HttpError(409, "runtime_run_queue_claim_changed", "Queued Run admission changed.");
+      if (admitted.status === "busy") throw new QueueableRunConflictError(admitted.reason, "Run is waiting for execution resources.", channel, task);
+      queueDispatchCommitted = true;
+      preparedConcurrency = { channel, task: task ? store.getTask(task.id) : undefined, taskExists: Boolean(task), leases: admitted.leases };
+      appendWorkUnitTransitionControlPlaneEvent(store, options.controlPlaneEvents, workspaceCwd,
+        workUnit.id, "queued", "claimed", runId, now);
+      for (const slot of admitted.semaphores) store.appendRuntimeEvent({ ...toRuntimeAttemptFence(attempt),
+        type: "semaphore_acquired", actor: "system", ts: now, data: { id: slot.id,
+          resourceType: slot.resourceType, resourceKey: slot.resourceKey,
+          limit: slot.resourceType === "channel_parallel" ? channel!.runtimePolicy.maxConcurrentRuns : 4 } });
+    } else if (delegatedExecution) {
       const channel = runRequest.task.channelId ? store.getChannel(runRequest.task.channelId) : undefined;
       if (runRequest.task.channelId && !channel || channel && channel.status !== "active") {
         throw new HttpError(409, "delegation.channel_unavailable", "Delegated channel is no longer active.");
@@ -1427,25 +1669,27 @@ async function executeAdmittedRunRequest(
     } else {
       preparedConcurrency = prepareRunConcurrency({
         store,
-        runRequest,
+        runRequest: { ...runRequest, tools: runtimeTools },
         runId,
         workUnit,
         attempt,
         existingContinuationId: existingContinuation ? continuationExecution?.continuation.id : undefined,
         now: createdAt,
       });
-      acquireRunRuntimeSemaphores({
+      const reservation = runRequest.workflowStepId && workflowStartOwner
+        ? store.getChannelWorkflowStepStartAdmission(runRequest.workflowStepId, workflowStartOwner) : undefined;
+      if (!reservation) acquireRunRuntimeSemaphores({
         store,
         workUnit,
         attempt,
         channel: preparedConcurrency.channel,
-        channelParallelLimit: runRequest.channelParallelLimit,
+        channelParallelLimit: workflowSafetyPlan?.profile === "serial_v1" ? 1 : runRequest.channelParallelLimit,
         providerKey: providerConcurrencyKey,
         runnerId: runnerResolution.effectiveRunnerId,
         now: createdAt,
       });
     }
-    if (!delegatedExecution && !userInputContinuation && (!existingContinuation
+    if (!queuedClaim && !delegatedExecution && !userInputContinuation && (!existingContinuation
       || existingContinuation.origin === "runner_retry"
       || existingContinuation.origin === "manual_resume"
       || existingContinuation.origin === "queued_followup"
@@ -1496,7 +1740,7 @@ async function executeAdmittedRunRequest(
       appendWorkUnitTransitionControlPlaneEvent(store, options.controlPlaneEvents, workspaceCwd,
         workUnit.id, "queued", "claimed", runId, createdAt);
     } else if (currentWorkUnitBeforeClaim.status !== "running"
-      && !((delegatedExecution || userInputContinuation) && currentWorkUnitBeforeClaim.status === "claimed"
+      && !((delegatedExecution || userInputContinuation || queuedClaim) && currentWorkUnitBeforeClaim.status === "claimed"
         && currentWorkUnitBeforeClaim.activeAttemptId === attempt.id)) {
       throw new HttpError(409, "continuation_activation_state_invalid",
         `Existing Run WorkUnit is ${currentWorkUnitBeforeClaim.status}; expected queued or running.`);
@@ -1513,6 +1757,55 @@ async function executeAdmittedRunRequest(
       run ??= persistRun(continuationContext);
     }
     if (!run) throw new HttpError(409, "delegation.lineage_invalid", "Existing child Run disappeared before dispatch.");
+    if (workflowHostCapacityAdmission && attempt.effectiveRunnerId === "pi"
+      && workflowStartOwner?.phase === "preparing"
+      && runRequest.workflowStepId && !delegatedExecution && !existingContinuation && !userInputContinuation && !queuedClaim) {
+      const source = { runId: run.id, ...toRuntimeAttemptFence(attempt) };
+      const admission = workflowHostCapacityAdmission.reserveWorkflowStart({
+        workspaceId: workUnit.workspaceId,
+        source,
+        now: createdAt,
+      });
+      if (admission.status === "full" || admission.status === "unconfigured") {
+        throw new HttpError(admission.status === "unconfigured" ? 503 : 409,
+          `runtime_host_capacity_${admission.status}`, "Workflow start Host capacity is unavailable.");
+      }
+      if (admission.status !== "reserved" && admission.status !== "duplicate") {
+        throw new HttpError(409, "runtime_host_capacity_changed", "Workflow start Host admission changed before dispatch.");
+      }
+      workflowHostCapacityReference = admission.reference;
+      workflowHostCapacitySource = source;
+    }
+    if (isolatedFiles) {
+      const pin = runRequest.workflowIsolationPlan;
+      if (!pin || !workflowStartOwner || !(runnerResolution.runner.adapter instanceof PiRunnerAdapter)) {
+        throw new HttpError(409, "workflow_isolation_binding_missing", "The Host isolation plan, owner and Pi adapter are required.");
+      }
+      const isolation = createSqliteWorkflowIsolationStore(store);
+      const scope = await readWorkflowIsolationWorktreeScope(store, pin);
+      assertPreparationCurrent();
+      const adapter = runnerResolution.runner.adapter;
+      const selectedRunnerId = runnerResolution.effectiveRunnerId;
+      const fence = toRuntimeAttemptFence(attempt);
+      isolatedExecution = await prepareWorkflowIsolatedExecution({ store, isolation, scope,
+        binding: { bindingId: workflowIsolationDigest({ runId: run.id, ...fence }, "wib_"),
+          planId: pin.planId, planDigest: pin.planDigest, startOwner: workflowStartOwner, runId: run.id, fence },
+        assertCurrent: assertPreparationCurrent,
+        prepareInput: async () => {
+          const preparedInput = await adapter.prepareTaskInput(runnerRequest);
+          assertPreparationCurrent();
+          executionInput = capturePreparedRunnerInput({ runnerId: selectedRunnerId, options: runnerRequest,
+            preparedInput, usedMemory, skillSourceContext: selectedSkillSourceContext,
+            skillDefinitionSnapshot: selectedSkillDefinitionSnapshot });
+          return { ...executionInput };
+        },
+      });
+      refreshPreparedExecution();
+      run = store.getRun(run.id);
+      workUnit = store.getWorkUnit(workUnit.id);
+      if (!run || !workUnit || !executionInput) throw new HttpError(409, "workflow_isolation_preparation_missing",
+        "The isolated SDK input was not durably sealed for both Run and WorkUnit.");
+    }
     if (delegatedExecution) {
       const admission = admitOriginalDelegatedChild({ store, claimed: delegatedExecution.claimed,
         originalProvider: resolvedProvider, effectivePolicySnapshot, runtimeTools: runnerRequest.tools,
@@ -1531,7 +1824,7 @@ async function executeAdmittedRunRequest(
       }
       delegatedExecution.assertCurrent();
     }
-    if (runtimeSupervisor.getHarnessFeatures().delegations.mode !== "off" && !run.parentRunId) {
+    if (!isolatedFiles && runtimeSupervisor.getHarnessFeatures().delegations.mode !== "off" && !run.parentRunId) {
       workflowDelegationRootAdmissionPending = Boolean(run.workflowStepId && !userInputContinuation);
       if (!workflowDelegationRootAdmissionPending) {
         const delegationRoot = admitOriginalDelegationRoot({ store, run, attempt, originalProvider: resolvedProvider,
@@ -1599,7 +1892,7 @@ async function executeAdmittedRunRequest(
         };
       }
     }
-    if (!delegatedExecution && !existingContinuation && usedMemory && usedMemory.memoryIds.length > 0) {
+    if (!options.queuedRun && !delegatedExecution && !existingContinuation && usedMemory && usedMemory.memoryIds.length > 0) {
       store.recordUsedMemoryEvent(
         {
           memoryIds: usedMemory.memoryIds,
@@ -1615,7 +1908,7 @@ async function executeAdmittedRunRequest(
         createdAt,
       );
     }
-    if (!delegatedExecution && !existingContinuation) {
+    if (!options.queuedRun && !delegatedExecution && !existingContinuation) {
       const runCreatedData = {
         taskId: run.taskId,
         workUnitId: workUnit.id,
@@ -1673,7 +1966,15 @@ async function executeAdmittedRunRequest(
       appendRunCreatedControlPlaneEvent(store, options.controlPlaneEvents, workspaceCwd, run, createdAt,
         userInputBinding ? `user-input-run-created:${userInputBinding.deliveryId}:${run.id}` : undefined);
     }
-    if (run && !delegatedExecution && !userInputContinuation) commitWorkflowStartReady(store, runRequest, run.id, workflowStartOwner);
+    if (run && existingContinuation && continuationExecution) {
+      resumeWorkflowStartAdmission(store, runRequest, run.id, workflowStartOwner, continuationExecution, executionNow());
+    }
+    if (run && !delegatedExecution && !userInputContinuation) {
+      commitWorkflowStartReady(store, runRequest, run.id, workflowStartOwner, {
+        ...(workflowHostCapacityReference ? { hostCapacity: workflowHostCapacityReference } : {}),
+      });
+      workflowHostCapacityDispatched = Boolean(workflowHostCapacityReference);
+    }
     if (workflowDelegationRootAdmissionPending && run && attempt && resolvedProvider && effectivePolicySnapshot) {
       const delegationRoot = admitOriginalDelegationRoot({ store, run: store.getRun(run.id) ?? run, attempt,
         originalProvider: resolvedProvider, effectivePolicySnapshot, runtimeTools: runnerRequest.tools,
@@ -1684,6 +1985,39 @@ async function executeAdmittedRunRequest(
       workflowDelegationRootAdmissionPending = false;
     }
   } catch (error) {
+    if (queuePendingRun && !queueDispatchCommitted && store) {
+      const now = executionNow();
+      const queueReason = error instanceof QueueableRunConflictError ? error.code : "runtime_semaphore_conflict";
+      if (queuedClaim) store.deferRuntimeQueuedRun({ claim: queuedClaim, reason: queueReason, now,
+        retryAt: new Date(Date.parse(now) + (error instanceof QueueableRunConflictError ? 1_000 : 30_000)).toISOString() });
+      if (options.queuedRun) {
+        writeRunPreparationFailure(sink, error instanceof HttpError ? error.statusCode : 409, {
+          error: error instanceof HttpError ? error.code : "runtime_run_queue_preparation_deferred",
+          message: error instanceof Error ? error.message : String(error) });
+        return undefined;
+      }
+      if (run && workUnit && attempt && resolvedProvider) {
+        if (queuedHostCapacityOwned && queuedHostCapacityReference) {
+          try {
+            hostCapacityAdmission?.releaseNoDispatch({ workspaceId: workUnit.workspaceId,
+              intentId: queuedHostCapacityReference.intentId, now });
+          } catch {
+            console.warn("runtime_host_capacity_queue_no_dispatch_release_incomplete: reservation remains recoverable");
+          }
+        }
+        createQueuedRunForConflict({ store, storeRegistry, runRequest: durableRunRequest, runId,
+          workspaceCwd, workUnit, attempt, provider: resolvedProvider, thread, turn,
+          queuedAt: now, reason: queueReason, message: "Run is waiting for execution resources.", existingRun: run });
+        notifyRuntimeRunQueued(store, run.id, options);
+        notifyRunReady(options.onRunReady, run.id);
+        sink.writeReady({ ok: true, runId: run.id, workUnitId: workUnit.id, sourceFence: toRuntimeAttemptFence(attempt),
+          queued: true, queueReason });
+        sink.end();
+        return run.id;
+      }
+      writeRunPreparationFailure(sink, 409, { error: "runtime_run_queue_claim_changed", message: "Queued Run custody was retained." });
+      return undefined;
+    }
     if (rootSuspensionActivation) {
       // Activation consumed the old receipt exactly once. A failed preflight
       // neither proves execution/drain nor creates a schedulable dispatch grant.
@@ -1715,6 +2049,10 @@ async function executeAdmittedRunRequest(
       if (!recoverable && userInputBinding && store) {
         failUserInputAnswerStartup(store, userInputBinding, userInputClaim!,
           failureCode, failureMessage, lifecycleNow());
+      }
+      if ((!userInputBinding || !recoverable) && continuationHostCapacityReference && hostCapacityAdmission && workUnit) {
+        hostCapacityAdmission.releaseNoDispatch({ workspaceId: workUnit.workspaceId,
+          intentId: continuationHostCapacityReference.intentId, now: lifecycleNow() });
       }
       writeRunPreparationFailure(sink, error instanceof HttpError ? error.statusCode : 503, {
         error: failureCode,
@@ -1797,7 +2135,11 @@ async function executeAdmittedRunRequest(
       if (continuationExecution) {
         continuationExecution = deferPreparedRunnerContinuation(store, continuationExecution, queuedAt);
       }
-      try { commitWorkflowStartReady(store, runRequest, run.id, workflowStartOwner); }
+      // An already linked workflow stays linked while its durable continuation
+      // waits for capacity. Ready cannot transfer the source's released slots.
+      const admission = runRequest.workflowStepId && workflowStartOwner
+        ? store.getChannelWorkflowStepStartAdmission(runRequest.workflowStepId, workflowStartOwner) : undefined;
+      try { if (!admission) commitWorkflowStartReady(store, runRequest, run.id, workflowStartOwner); }
       catch (ownerError) { writeRunPreparationFailure(sink, 409, { error: "workflow_start_owner_stale", message: String(ownerError) }); return undefined; }
       sink.writeReady({
         ok: true,
@@ -1848,6 +2190,7 @@ async function executeAdmittedRunRequest(
       });
       appendRunCreatedControlPlaneEvent(store, options.controlPlaneEvents, workspaceCwd || run.cwd, run, queuedAt);
       sink.end();
+      if (store.getRuntimeRunQueueEntry(run.id)) notifyRuntimeRunQueued(store, run.id, options);
       return run.id;
     }
     if (existingContinuation?.origin === "approval_resume"
@@ -1931,9 +2274,8 @@ async function executeAdmittedRunRequest(
       });
       return undefined;
     }
-    if (preparedConcurrency.leases.length > 0 && store && attempt) {
-      const now = executionNow();
-      store.releaseResourceLeasesForAttempt(toRuntimeAttemptFence(attempt), now, "run-prepare-failed");
+    if (store && attempt) {
+      releasePreparedRunResources(store, attempt, executionNow(), "run-prepare-failed");
     }
     if (store && workUnit && !isTerminalWorkUnitStatus(store.getWorkUnit(workUnit.id)?.status ?? workUnit.status)) {
       const now = executionNow();
@@ -1992,12 +2334,43 @@ async function executeAdmittedRunRequest(
       sink.end();
       return error.runId;
     }
+    if (workflowHostCapacityReference && !workflowHostCapacityDispatched && workflowHostCapacitySource && store) {
+      let hostReleased = false;
+      try {
+        hostReleased = workflowHostCapacityAdmission?.releaseNoDispatch({
+          workspaceId: workUnit?.workspaceId ?? DEFAULT_WORKSPACE_ID,
+          intentId: workflowHostCapacityReference.intentId,
+          now: executionNow(),
+        }) === true;
+      } catch {
+        console.warn("runtime_host_capacity_workflow_no_dispatch_release_incomplete: reservation remains recoverable");
+      }
+      if (hostReleased && store && !existingContinuation) {
+        failUndispatchedWorkflowStart({ store, request: runRequest, owner: workflowStartOwner, run, attempt,
+          reason: error instanceof Error ? error.message : String(error), now: executionNow() });
+      }
+    } else if (store && !existingContinuation && !workflowHostCapacityReference) {
+      failUndispatchedWorkflowStart({ store, request: runRequest, owner: workflowStartOwner, run, attempt,
+        reason: error instanceof Error ? error.message : String(error), now: executionNow() });
+    }
     const statusCode = error instanceof HttpError ? error.statusCode : error instanceof UnsupportedRunnerError ? 400 : 500;
     writeRunPreparationFailure(sink, statusCode, {
       error: error instanceof HttpError ? error.code : error instanceof UnsupportedRunnerError ? error.code : "run_storage_unavailable",
       message: error instanceof Error ? error.message : String(error),
     });
     return undefined;
+  } finally {
+    if (store && workUnit && attempt && continuationHostCapacityReference && !continuationHostCapacityDispatched) {
+      const current = store.getWorkUnitAttempt(attempt.id);
+      if (current && !current.startedAt && ["failed", "cancelled"].includes(current.status)) {
+        try {
+          hostCapacityAdmission?.releaseNoDispatch({ workspaceId: workUnit.workspaceId,
+            intentId: continuationHostCapacityReference.intentId, now: executionNow() });
+        } catch {
+          console.warn("runtime_host_capacity_no_dispatch_release_incomplete: reservation remains recoverable");
+        }
+      }
+    }
   }
 
   if (!store || !run || !workUnit || !attempt || !runtime || !runnerResolution || !thread
@@ -2026,8 +2399,24 @@ async function executeAdmittedRunRequest(
   const suspensionSource = suspensionOrder.capture(store, { runId: run.id, ...runnerCallbackFence });
   const assertCurrentRunAdmission = (): void => {
     abortController.signal.throwIfAborted();
+    if (queuedClaim) {
+      assertQueuedRunParticipantCurrent(store, run.teammateId);
+      const entry = store.getRuntimeRunQueueEntry(run.id);
+      if (!queueDispatchCommitted || !entry?.dispatchedAt || !entry.claim
+        || entry.revision !== queuedClaim.revision + 1
+        || !isDeepStrictEqual(entry.claim, { ...queuedClaim, revision: entry.revision })
+        || !store.hasRuntimeRunQueueCustody(run.id)
+        || runtimeSupervisor.getRuntime(workspaceCwd, store).runtimeInstanceId !== queuedClaim.runtimeInstanceId) {
+        throw new HttpError(409, "runtime_run_queue_execution_changed", "Queued Run dispatch custody is no longer current.");
+      }
+    }
     if (delegatedExecution) delegatedExecution.assertCurrent();
     else assertWorkflowRunAdmission(store, run, workflowStartOwner, abortController.signal);
+    assertWorkflowSafetyAttempt({ store, run, sourceFence: runnerCallbackFence });
+    if (isolatedExecution) {
+      assertWorkflowIsolatedExecutionAuthority({ store, run, sourceFence: runnerCallbackFence,
+        bindingId: isolatedExecution.binding.bindingId, now: executionNow() });
+    }
   };
   let resolveRunCompletion: (() => void) | undefined;
   const runCompletion = new Promise<void>((resolve) => {
@@ -2484,7 +2873,7 @@ async function executeAdmittedRunRequest(
         // Core's own begin-stop may have changed a child to cancelling. Do not
         // reuse its live dispatch gate, or remove the abort guard to bypass it.
         abortController.signal.throwIfAborted();
-        if (runtimeSupervisor.getRuntime(workspaceCwd, store).runtimeInstanceId !== attempt.runtimeInstanceId
+        if (runtimeSupervisor.getRuntime(workspaceCwd, store).runtimeInstanceId !== (queuedClaim?.runtimeInstanceId ?? attempt.runtimeInstanceId)
           || !store.isCurrentRunExecutionOwner(run.id, runnerCallbackFence, true)) {
           throw new RunGracefulSuspensionBlocked("suspension.source_stale");
         }
@@ -2743,18 +3132,34 @@ async function executeAdmittedRunRequest(
         () => {
           if (!hostToolBoundaryEntered && isPiToolFreeCompletion(toolBoundaryObservation, run.id, attempt.id)) return true;
           const sdkTools = readPiCompletedTools(toolBoundaryObservation, run.id, attempt.id);
-          const settledBuiltinReads = readPiCompletedBuiltinReads(toolBoundaryObservation, run.id, attempt.id);
-          if (hostBoundaryUnverified || !sdkTools || !settledBuiltinReads) return false;
-          const settledDelegationCalls = sdkTools.filter(tool => (DELEGATION_TOOL_NAMES as readonly string[]).includes(tool.toolName))
+          const effectTools = isolatedExecution
+            ? readPiCompletedTools(toolBoundaryObservation, run.id, attempt.id, "isolated_host_effects") : sdkTools;
+          const builtinReads = readPiCompletedBuiltinReads(toolBoundaryObservation, run.id, attempt.id);
+          if (hostBoundaryUnverified || !sdkTools || !effectTools || !builtinReads) return false;
+          // Only this frozen Host-only profile can prove a schema/gate refusal
+          // never reached any producer. Every dispatched effect still needs Core receipts.
+          const effectIds = new Set(effectTools.map(tool => tool.toolCallId));
+          const undispatchedIsolatedCalls = isolatedExecution ? sdkTools.filter(tool => !effectIds.has(tool.toolCallId)) : [];
+          const notDispatched = new Set(undispatchedIsolatedCalls.map(tool => tool.toolCallId));
+          const toolCallIds = [...new Set([...sdkTools.map(tool => tool.toolCallId), ...hostToolCalls])];
+          const settledBuiltinReads = builtinReads;
+          const settledDelegationCalls = sdkTools.filter(tool => !notDispatched.has(tool.toolCallId)
+            && (DELEGATION_TOOL_NAMES as readonly string[]).includes(tool.toolName))
             .map(tool => ({ toolCallId: tool.toolCallId,
               toolName: tool.toolName as (typeof DELEGATION_TOOL_NAMES)[number] }));
-          const toolCallIds = [...new Set([...sdkTools.map(tool => tool.toolCallId), ...hostToolCalls])];
           const delegationIds = new Set(settledDelegationCalls.map(call => call.toolCallId));
           if (!hostOperationTracker && toolCallIds.some(id => !delegationIds.has(id)
-            && !settledBuiltinReads.some(read => read.toolCallId === id))) return false;
+            && !notDispatched.has(id) && !settledBuiltinReads.some(read => read.toolCallId === id))) return false;
           return { schemaVersion: 1, toolCallIds, settledBuiltinReads,
-            ...(settledDelegationCalls.length ? { settledDelegationCalls } : {}) };
-        }, () => activeRuns.retireDurablyDrainedAttempt(capturedWriters.source));
+            ...(settledDelegationCalls.length ? { settledDelegationCalls } : {}),
+            ...(undispatchedIsolatedCalls.length ? { undispatchedIsolatedCalls } : {}) };
+        }, () => {
+          const capacity = hostCapacityAdmission ?? options.workflowHostCapacityAdmission;
+          const held = capacity?.getAttemptReference({ workspaceId: workUnit.workspaceId, source: capturedWriters.source });
+          if (held?.dispatched) capacity?.releaseStopped({ workspaceId: workUnit.workspaceId,
+            source: capturedWriters.source, intentId: held.reference.intentId, now: executionNow() });
+          activeRuns.retireDurablyDrainedAttempt(capturedWriters.source);
+        });
       activeRuns.trackAttemptCompletion(capturedWriters.source, durableAttemptCompletion);
       if (dynamicDelegationRegistry) {
         const originalRegistry = dynamicDelegationRegistry;
@@ -2788,6 +3193,14 @@ async function executeAdmittedRunRequest(
     if (!approvalPolicy) {
       throw new Error("Run approval policy was not initialized.");
     }
+    assertCurrentRunAdmission();
+    if (!userInputBinding && continuationHostCapacityReference && hostCapacityAdmission) {
+      if (!hostCapacityAdmission.consumeDispatch({ workspaceId: workUnit.workspaceId,
+        source: { runId: run.id, ...runnerCallbackFence }, reference: continuationHostCapacityReference, now: executionNow() })) {
+        throw new HttpError(409, "runtime_host_capacity_changed", "Continuation Host dispatch permission is no longer current.");
+      }
+      continuationHostCapacityDispatched = true;
+    }
     if (!delegatedExecution && !userInputBinding && !rootSuspensionActivation) startObservedRuntime(executionNow(), false);
     // Complete Host start bookkeeping so shutdown has a legal fenced failure
     // transition, then reject before any Runner or approval tool is invoked.
@@ -2795,6 +3208,7 @@ async function executeAdmittedRunRequest(
     abortController.signal.throwIfAborted();
     const runApprovalHandler = createRunApprovalHandler({
       recordCompactionBoundaryEvidence: hostCompactionEnabled,
+      workflowIsolationBindingId: isolatedExecution?.binding.bindingId,
       restrictedCommandRuntime: runtimeSupervisor.getRestrictedCommandRuntime(),
       store,
       run,
@@ -2878,7 +3292,7 @@ async function executeAdmittedRunRequest(
       : undefined;
     const boundRunnerRequest: PiRunnerRunOptions = {
       ...runnerRequest,
-      ...(runnerResolution.runner.adapter instanceof PiRunnerAdapter && runtimeSupervisor.getHarnessFeatures().delegations.mode !== "off"
+      ...(!isolatedExecution && runnerResolution.runner.adapter instanceof PiRunnerAdapter && runtimeSupervisor.getHarnessFeatures().delegations.mode !== "off"
         && (!run.parentRunId || delegatedExecution) ? { providerBudget: bindOriginalDelegationProviderBudget({ store, run, attempt, originalProvider: activeProvider }) } : {}),
       ...(delegationRunnerToolHandler ? { onDelegationToolCall: delegationRunnerToolHandler } : {}),
       ...(runnerResolution.runner.adapter instanceof PiRunnerAdapter
@@ -2905,12 +3319,26 @@ async function executeAdmittedRunRequest(
         ? { ordinaryProgressRecovery: { schemaVersion: 1 as const, modelView: ordinaryProgressRecoveryModelView } }
         : {}),
       sandbox: sandboxBinding,
+      ...(runnerRequest.readonlyToolsProfile ? { onReadonlyToolCall: (request) =>
+        executeWorkflowReadonlyTool({ root: run.cwd, request, assertCurrent: assertCurrentRunAdmission }) } : {}),
+      ...(isolatedExecution ? { onIsolatedToolCall: async (request) => {
+        assertCurrentRunAdmission();
+        if (request.toolName !== "write" && request.toolName !== "edit") {
+          return executeWorkflowIsolatedTool({ root: run.cwd, request, assertCurrent: assertCurrentRunAdmission });
+        }
+        const decision = await runApprovalHandler?.({ ...request, task: runnerRequest.task });
+        if (decision?.handledResult) return decision.handledResult;
+        if (decision?.approved) throw new HttpError(409, "workflow_isolation_host_result_missing",
+          "An approval cannot authorize a native file-tool fallback in isolated execution.");
+        return { isError: true, content: [{ type: "text" as const, text: decision?.reason ?? "The isolated file write was not approved." }] };
+      } } : {}),
       onToolBefore: (request) => {
         try { assertCurrentRunAdmission(); }
         catch (error) { return { allowed: false, code: delegatedExecution ? "delegation.source_attempt_stale" : "workflow_start_owner_stale",
           reason: error instanceof Error ? error.message : "Execution no longer owns this task and source." }; }
-        const rejection = delegatedExecution ? undefined : workflowOperationEffectRejection({ store, run, request,
-          restrictedCommandRuntime: runtimeSupervisor.getRestrictedCommandRuntime() });
+        const rejection = workflowSafetyEffectRejection({ store, run, request })
+          ?? (delegatedExecution ? undefined : workflowOperationEffectRejection({ store, run, request,
+          restrictedCommandRuntime: runtimeSupervisor.getRestrictedCommandRuntime() }));
         if (rejection) return { allowed: false, code: rejection.code, reason: rejection.reason };
         if (runnerRequest.hostCapabilityTools?.some((tool) => tool.name === request.toolName)) {
           const hostRejection = hostCapabilityAuthority?.check({ ...request, task: runnerRequest.task });
@@ -2940,7 +3368,7 @@ async function executeAdmittedRunRequest(
         }
         return runApprovalHandler(request);
       },
-      onPermissionRequired: createRunPermissionRequestHandler({
+      onPermissionRequired: isolatedExecution ? undefined : createRunPermissionRequestHandler({
         store,
         run,
         approvalPolicy,
@@ -3140,7 +3568,11 @@ async function executeAdmittedRunRequest(
     const executableRunnerRequest = delegatedExecution
       ? delegatedExecution.dispatchAuthority.withReceiver({ store, child: delegatedExecution.claimed,
           prepared: delegatedPreparation!, adapter: runnerResolution.runner.adapter, options: continuationRunnerRequest,
-          now: executionNow, onAccepted: (reference, acceptedAt) => {
+          now: executionNow, beforeAccepted: acceptedAt => {
+            // Legacy delegated executions may not have a Host receipt. Only
+            // receipt-backed executions participate in the Host dispatch gate.
+            if (delegatedExecution?.hostCapacity) delegatedExecution.consumeDispatchGate(acceptedAt);
+          }, onAccepted: (reference, acceptedAt) => {
             verifyDelegatedRecovery();
             delegatedExecution!.commitStart(reference, acceptedAt);
             delegatedAckCommitted = true;
@@ -3175,6 +3607,7 @@ async function executeAdmittedRunRequest(
           options: continuationRunnerRequest,
           now: lifecycleNow,
           onAccepted: (acceptedAt) => {
+            continuationHostCapacityDispatched = Boolean(userInputBinding?.hostCapacity);
             startObservedRuntime(acceptedAt, true);
             flushPendingUserInputRunnerEvents();
             try {
@@ -3862,6 +4295,10 @@ async function executeAdmittedRunRequest(
         const releaseAt = executionNow();
         store.releaseResourceLeasesForAttempt(toRuntimeAttemptFence(attempt), releaseAt, "run-finished");
         store.releaseRuntimeSemaphoreSlotsForAttempt(toRuntimeAttemptFence(attempt), releaseAt, "run-finished");
+        if (continuationHostCapacityReference && !continuationHostCapacityDispatched) {
+          hostCapacityAdmission?.releaseNoDispatch({ workspaceId: workUnit.workspaceId,
+            intentId: continuationHostCapacityReference.intentId, now: releaseAt });
+        }
       }
       if (activeRuns.get(run.id)?.attemptId === attempt.id) activeRuns.delete(run.id);
       try {
@@ -3878,6 +4315,8 @@ async function executeAdmittedRunRequest(
           await durableAttemptCompletion;
           delegatedExecution.commitInterrupted(executionNow());
         } else if (yieldedWait) {
+          resolveRunCompletion?.();
+          await durableAttemptCompletion;
           await options.afterRunYielded?.(terminalRun ?? run, yieldedWait);
         } else if (dynamicDelegationRegistry && store.hasPendingRunTerminalIntent({ runId: run.id, ...runnerCallbackFence })) {
           // A fast stop still uses the same durable finalizer as a delayed
@@ -3896,6 +4335,9 @@ async function executeAdmittedRunRequest(
           // lifetime and finish durable cleanup before admitting another Run.
           resolveRunCompletion?.();
           await durableAttemptCompletion;
+          if (isolatedExecution && (terminalRun.status === "succeeded" || terminalRun.status === "failed")) {
+            await settleWorkflowIsolatedResult({ store, writer: isolatedExecution.writer, now: executionNow });
+          }
           // Atomic Host result production follows the original lifetime and
           // exact-usage settlement. Narrative text and the Run status alone
           // never satisfy a required dynamic participant.
@@ -3903,7 +4345,23 @@ async function executeAdmittedRunRequest(
           if (userInputBinding) {
             finalizeUserInputAnswerWorkflow(store, userInputBinding, terminalRun, terminalRun.endedAt ?? executionNow());
           }
-          await options.afterRunTerminal?.(terminalRun);
+          try { await options.afterRunTerminal?.(terminalRun); }
+          finally {
+            if (workflowHostCapacityReference && workflowHostCapacityDispatched && workflowHostCapacitySource
+              && workflowHostCapacityAdmission) {
+              try {
+                workflowHostCapacityAdmission.releaseStopped({
+                  workspaceId: workUnit.workspaceId,
+                  source: workflowHostCapacitySource,
+                  intentId: workflowHostCapacityReference.intentId,
+                  now: executionNow(),
+                });
+              } catch {
+                console.warn("runtime_host_capacity_workflow_stopped_release_incomplete: release remains recoverable");
+              }
+            }
+            if (isolatedExecution) reconcileWorkflowParallelParentFences(store, isolatedExecution.plan.workflowId, executionNow());
+          }
         }
         suspensionOrder.finish(suspensionSource);
       } catch (finalizationError) {
@@ -3911,6 +4369,7 @@ async function executeAdmittedRunRequest(
         throw finalizationError;
       } finally {
         resolveRunCompletion?.();
+        notifyRuntimeRunResourcesReleased(store);
       }
     }
   }
@@ -4293,6 +4752,7 @@ function findRunnerTerminalFailure(events: readonly PiRunnerEvent[]): string | u
 }
 
 export function validateWorkflowStepOwner(store: RunStore, runRequest: RunRequest): void {
+  assertWorkflowSafetyRequest(store, runRequest);
   if (!runRequest.workflowStepId) {
     if (runRequest.workflowOperationExecution !== undefined) {
       throw new HttpError(409, "operation_binding_snapshot_invalid", "Typed execution requires a workflow step owner.");

@@ -16,6 +16,7 @@ import {
   type WorkflowStepStartOwnerV1,
 } from "@ling-stack/core";
 import { HttpError } from "../../errors.js";
+import type { RunnerRegistry } from "../../runtime/runners.js";
 import { assertNoUnsafeRequiredPause } from "../runs/user-input-cancellation-guard.js";
 import { isRecord } from "../../shared/validation.js";
 import type { ValidateWorkflowStepRunRequest, WorkflowStepRunRequest } from "./workflows.js";
@@ -38,23 +39,34 @@ import {
 } from "./agent-context-consistency.js";
 import { ensureDeterministicWorkflowSelectorDecision } from "./workflow-selector.js";
 import { verifyWorkflowStepExecutionOperations } from "./workflow-operation-evidence.js";
+import { reconcileWorkflowIsolatedResults, workflowIsolatedResultBlocker } from "./workflow-isolated-result.js";
+import { reconcileWorkflowIntegrations } from "./workflow-integration-coordinator.js";
+import { waitForWorkflowIsolationIdle } from "./workflow-isolation-lifecycle.js";
+import { cleanupWorkflowWorktrees } from "./workflow-worktree-cleanup.js";
+import { reconcileWorkflowParallelParentFences } from "./workflow-isolation-parent-fence.js";
+import { assertWorkflowIsolationSelectionIntegrity, type WorkflowIsolationHost } from "./workflow-isolation-selection.js";
 import { finalizeDelegatedWorkflowStepFromCanonicalState } from "./workflow-step-finalizer.js";
 import { preserveMarkdownLayout } from "./markdown-text.js";
 import { reconcileWorkflowFromCanonicalState } from "./workflow-reconciliation.js";
 import { syncWorkflowSourceTurnProgress } from "./workflow-source-turn.js";
 import {
   resolveSmartSchedulingDecision,
+  isIndependentWorkflowPreApprovalWait,
   withSmartSchedulingReason,
+  type ResolveWorkflowParallelCapability,
   type SmartSchedulingDecision,
 } from "./smart-scheduler.js";
 
 export interface OrchestrateWorkflowInput {
   readonly store: RunStore;
   readonly secretResolver?: SecretResolver;
+  readonly runnerRegistry?: RunnerRegistry;
   readonly cwd: string;
   readonly workflowId: string;
   readonly validateRunRequest: ValidateWorkflowStepRunRequest;
   readonly startRun: StartOrchestratedWorkflowStepRun;
+  readonly resolveParallelCapability?: ResolveWorkflowParallelCapability;
+  readonly isolationHost?: WorkflowIsolationHost;
 }
 
 export type StartOrchestratedWorkflowStepRun = (input: {
@@ -119,6 +131,8 @@ export interface CancelWorkflowResult {
 export interface RetryWorkflowStepInput {
   readonly store: RunStore;
   readonly secretResolver?: SecretResolver;
+  readonly runnerRegistry?: RunnerRegistry;
+  readonly isolationHost?: WorkflowIsolationHost;
   readonly cwd: string;
   readonly workflowStepId: string;
   readonly validateRunRequest: ValidateWorkflowStepRunRequest;
@@ -137,52 +151,75 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
   if (!workflow) {
     throw new HttpError(404, "workflow_not_found", `Channel workflow not found: ${input.workflowId}`);
   }
+  assertWorkflowIsolationSelectionIntegrity(input.store, workflow.id, input.isolationHost);
   syncWorkflowSourceTurnProgress(input.store, workflow, new Date().toISOString());
   const planModeBlocker = getWorkflowPlanModeBlocker(input.store, workflow);
   if (planModeBlocker) {
     throw new HttpError(409, "plan_mode_workflow_blocked", planModeBlocker);
   }
+  await reconcileWorkflowIsolatedResults(input.store, workflow.id);
+  let integrations = await reconcileWorkflowIntegrations(input.store, workflow.id);
+  const integrationFailure = (): WorkflowOrchestrationResult | undefined => {
+    const failure = integrations.find(result => ["blocked", "failed", "conflicted"].includes(result.status));
+    return failure ? { status: failure.status === "failed" ? "failed" : "blocked",
+      workflow: input.store.getChannelWorkflow(workflow.id) ?? workflow,
+      blocker: failure.code ?? "workflow_integration.coordination_unverified" } : undefined;
+  };
+  const beforeFailure = integrationFailure();
+  if (beforeFailure) return beforeFailure;
   const reconciled = reconcileWorkflowStepRuns(input.store, workflow.id);
+  if (integrations.some(result => result.status === "waiting")) {
+    integrations = await reconcileWorkflowIntegrations(input.store, workflow.id);
+    const afterFailure = integrationFailure();
+    if (afterFailure) return afterFailure;
+    completeWorkflowIfStepsFinished(input.store, workflow.id, new Date().toISOString());
+    const completed = input.store.getChannelWorkflow(workflow.id);
+    if (completed?.status === "succeeded") {
+      await cleanupWorkflowWorktrees(input.store, workflow.id);
+      maybeCreateWorkflowTerminalCoordinatorReply(input.store, workflow.id);
+      return { status: "completed", workflow: completed };
+    }
+  }
   if (reconciled.status === "completed") {
+    await cleanupWorkflowWorktrees(input.store, workflow.id);
+    maybeCreateWorkflowTerminalCoordinatorReply(input.store, workflow.id);
     return { status: "completed", workflow: reconciled.workflow };
   }
   if (reconciled.status === "blocked") {
     return reconciled;
   }
-  if (reconciled.status === "waiting_for_approval" || reconciled.status === "failed") {
+  if (reconciled.status === "failed" || reconciled.status === "waiting_for_approval"
+    && !isIndependentWorkflowPreApprovalWait(input.store, reconciled.workflowStep)) {
     return reconciled;
   }
   const currentWorkflow = input.store.getChannelWorkflow(workflow.id) ?? workflow;
   const steps = input.store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true });
-  const activeStepCount = countActiveWorkflowSteps(steps);
-  const approvedGatedSteps = steps.filter((step) => isApprovedPreStartStep(input.store, step));
-  const eligibleSteps = [
-    ...approvedGatedSteps,
-    ...steps.filter((step) => step.status === "queued" && isWorkflowStepEligible(step, steps)),
-  ].sort(compareWorkflowStepForScheduling);
-  const schedulingDecision = resolveSmartSchedulingDecision({
+  const eligibleSteps = eligibleWorkflowSteps(input.store, steps);
+  const resolveDecision = (currentSteps: readonly ChannelWorkflowStep[], candidates: readonly ChannelWorkflowStep[],
+    preparedRequest?: WorkflowStepRunRequest): SmartSchedulingDecision => resolveSmartSchedulingDecision({
     store: input.store,
     channel: input.store.getChannel(currentWorkflow.channelId),
-    workflow: currentWorkflow,
-    steps,
-    eligibleSteps,
-    activeStepCount,
+    workflow: input.store.getChannelWorkflow(workflow.id) ?? currentWorkflow,
+    steps: currentSteps,
+    eligibleSteps: candidates,
+    preparedStartOwner: preparedRequest?.workflowStartOwner,
+    resolveParallelCapability: input.resolveParallelCapability && (context => input.resolveParallelCapability!({ ...context,
+      ...(preparedRequest?.workflowStepId === context.step.id ? { runRequest: preparedRequest } : {}) })),
   });
-  const parallelStartBudget = schedulingDecision.parallelLimit;
-  const startBudget = schedulingDecision.runnableStepIds.length;
-  if (parallelStartBudget <= 1 && approvedGatedSteps.length === 0 && steps.some((step) => step.status === "claimed" || step.status === "running" || step.status === "waiting_for_approval")) {
-    return { status: "idle", workflow: currentWorkflow, reason: "Workflow already has an active step.", schedulingDecision };
-  }
-  if (eligibleSteps.length === 0 || startBudget <= 0) {
+  const schedulingDecision = resolveDecision(steps, eligibleSteps);
+  if (schedulingDecision.runnableStepIds.length === 0 && schedulingDecision.approvalStepIds.length === 0) {
+    if (reconciled.status === "waiting_for_approval") return { ...reconciled, schedulingDecision };
     completeWorkflowIfStepsFinished(input.store, workflow.id, new Date().toISOString());
     const latest = input.store.getChannelWorkflow(workflow.id) ?? currentWorkflow;
     if (latest.status === "succeeded") {
+      await cleanupWorkflowWorktrees(input.store, workflow.id);
+      maybeCreateWorkflowTerminalCoordinatorReply(input.store, workflow.id);
       return { status: "completed", workflow: latest, schedulingDecision };
     }
     return {
       status: "idle",
       workflow: latest,
-      reason: startBudget <= 0 ? "Workflow smart scheduling budget is exhausted." : "No eligible queued workflow step.",
+      reason: eligibleSteps.length === 0 ? "No eligible queued workflow step." : "Workflow smart scheduling budget is exhausted.",
       schedulingDecision,
     };
   }
@@ -190,20 +227,25 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
   const startedSteps: WorkflowOrchestrationStartedStep[] = [];
   const waitingApprovals: Array<{ readonly workflowStep: ChannelWorkflowStep; readonly approval: ApprovalRequest }> = [];
   const blockedResults: Array<Extract<WorkflowOrchestrationResult, { status: "blocked" }>> = [];
+  const visited = new Set<string>();
+  if (reconciled.status === "waiting_for_approval") {
+    waitingApprovals.push({ workflowStep: reconciled.workflowStep, approval: reconciled.approval });
+  }
 
-  for (const candidate of eligibleSteps) {
-    if (startedSteps.length + waitingApprovals.length >= startBudget) {
-      break;
-    }
-    let latestCandidate = input.store.getChannelWorkflowStep(candidate.id) ?? candidate;
-    if (latestCandidate.metadata?.autoStart === false) {
-      continue;
-    }
+  while (true) {
+    // Preparation and dispatch both await. Never spend an earlier tick's stale budget or tool evidence.
+    const currentSteps = input.store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true });
+    const currentEligible = eligibleWorkflowSteps(input.store, currentSteps).filter(step => !visited.has(step.id));
+    const decision = resolveDecision(currentSteps, currentEligible);
+    const selectedIds = new Set([...decision.runnableStepIds, ...decision.approvalStepIds]);
+    let latestCandidate = currentEligible.find(step => selectedIds.has(step.id));
+    if (!latestCandidate) break;
+    visited.add(latestCandidate.id);
     latestCandidate = ensureDeterministicWorkflowSelectorDecision({
       store: input.store,
       workflow: input.store.getChannelWorkflow(workflow.id) ?? currentWorkflow,
       selectedStep: latestCandidate,
-      eligibleSteps,
+      eligibleSteps: currentEligible,
       now: new Date().toISOString(),
     }).workflowStep;
     const started = await prepareWorkflowStepStart(
@@ -219,13 +261,14 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
       input.cwd,
       input.validateRunRequest,
       input.secretResolver,
+      input.runnerRegistry,
+      input.isolationHost,
     );
     if (started.kind === "waiting_for_approval") {
       waitingApprovals.push({
         workflowStep: input.store.getChannelWorkflowStep(latestCandidate.id) ?? latestCandidate,
         approval: started.approval,
       });
-      if (parallelStartBudget <= 1) break;
       continue;
     }
     if (started.kind === "blocked") {
@@ -252,6 +295,18 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
       ...started.runRequest,
       requestedSkillId: latestCandidate.metadata?.skillId,
     };
+    const dispatchSteps = input.store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true });
+    const dispatchStep = dispatchSteps.find(step => step.id === latestCandidate.id);
+    const owner = started.runRequest.workflowStartOwner;
+    const ownership = dispatchStep && classifyWorkflowStepStartOwner(input.store, dispatchStep, new Date().toISOString());
+    if (!dispatchStep || !owner || ownership?.status !== "preparing" || !workflowStepStartOwnerMatches(ownership.owner, owner)
+      || !isWorkflowStepEligible(dispatchStep, dispatchSteps)
+      || !resolveDecision(dispatchSteps.filter(step => step.id !== dispatchStep.id), [dispatchStep], runRequest)
+        .runnableStepIds.includes(dispatchStep.id)) {
+      blockedResults.push(blockWorkflowStepRunStartFailure(input.store, started.workflowId, latestCandidate.id,
+        started.task.id, owner, "Workflow scheduling authority changed during preparation; retry required."));
+      continue;
+    }
     const runId = await input.startRun({
       workflow: input.store.getChannelWorkflow(started.workflowId) ?? currentWorkflow,
       workflowStep: input.store.getChannelWorkflowStep(latestCandidate.id) ?? latestCandidate,
@@ -304,7 +359,7 @@ export function syncWorkflowApprovalDecision(
   approval: ApprovalRequest,
   now = new Date().toISOString(),
 ): WorkflowApprovalDecisionSyncResult {
-  if (!approval.workflowStepId) {
+  if (!approval.workflowStepId || approval.actionType === "workflow_merge" || approval.payload.type === "workflow_merge") {
     return { status: "not_workflow_approval" };
   }
   const step = store.getChannelWorkflowStep(approval.workflowStepId);
@@ -443,7 +498,7 @@ function reconcileLegacyWorkflowApprovalDecision(
     : { status: "blocked", workflow: latestWorkflow, workflowStep: latestStep, blocker: latestStep.blocker ?? reason };
 }
 
-export function cancelChannelWorkflow(input: CancelWorkflowInput): CancelWorkflowResult {
+export async function cancelChannelWorkflow(input: CancelWorkflowInput): Promise<CancelWorkflowResult> {
   const workflow = input.store.getChannelWorkflow(input.workflowId);
   if (!workflow) {
     throw new HttpError(404, "workflow_not_found", `Channel workflow not found: ${input.workflowId}`);
@@ -454,6 +509,8 @@ export function cancelChannelWorkflow(input: CancelWorkflowInput): CancelWorkflo
     // the durable status transition and terminal-report publication. Re-run
     // the publication coordinator so a cancelled source turn/thread cannot
     // remain open merely because the first request returned early.
+    await waitForWorkflowIsolationIdle(input.store, workflow.id);
+    reconcileWorkflowParallelParentFences(input.store, workflow.id);
     syncWorkflowSourceTurnProgress(input.store, workflow, now);
     maybeCreateWorkflowTerminalCoordinatorReply(input.store, workflow.id, { now });
     return {
@@ -535,6 +592,8 @@ export function cancelChannelWorkflow(input: CancelWorkflowInput): CancelWorkflo
   // Cancellation is a terminal workflow outcome too. Route it through the
   // same durable publication coordinator as success/failure so the source
   // turn/thread cannot remain open after the user has cancelled the work.
+  await waitForWorkflowIsolationIdle(input.store, workflow.id);
+  reconcileWorkflowParallelParentFences(input.store, workflow.id);
   const terminalWorkflow = input.store.getChannelWorkflow(workflow.id) ?? latestWorkflow;
   if (isTerminalWorkflowStatus(terminalWorkflow.status)) {
     syncWorkflowSourceTurnProgress(input.store, terminalWorkflow, now);
@@ -595,6 +654,8 @@ export async function retryChannelWorkflowStep(input: RetryWorkflowStepInput): P
     input.cwd,
     input.validateRunRequest,
     input.secretResolver,
+    input.runnerRegistry,
+    input.isolationHost,
   );
   if (started.kind === "waiting_for_approval") {
     return {
@@ -680,6 +741,12 @@ export function finalizeOrchestratedWorkflowStepRun(
   const currentRun = store.getRun(run.id);
   if (!currentRun || !["succeeded", "failed", "cancelled"].includes(currentRun.status)) return step;
   run = currentRun;
+  const isolatedResultBlocker = run.status === "succeeded" ? workflowIsolatedResultBlocker(store, run, now) : undefined;
+  if (isolatedResultBlocker) {
+    applyWorkflowStepFailurePolicy({ store, workflow, step, policy: "block_for_user", actor: "system",
+      reason: isolatedResultBlocker, blocker: isolatedResultBlocker, now, taskId, runId: run.id });
+    return store.getChannelWorkflowStep(workflowStepId);
+  }
   if (workflow.metadata?.requiredParticipantManifest) {
     const canonicalRun = step.runId ? store.getRun(step.runId) : undefined;
     if (!canonicalRun || (canonicalRun.status !== "succeeded" && canonicalRun.status !== "failed" && canonicalRun.status !== "cancelled")) {
@@ -1090,12 +1157,13 @@ function isApprovedPreStartStep(store: RunStore, step: ChannelWorkflowStep): boo
     && approval.payload.workflowId === step.workflowId && approval.payload.workflowStepId === step.id;
 }
 
-function reconcileWorkflowStepRuns(store: RunStore, workflowId: string): WorkflowOrchestrationResult | { readonly status: "open" } {
+export function reconcileWorkflowStepRuns(store: RunStore, workflowId: string): WorkflowOrchestrationResult | { readonly status: "open" } {
   const steps = store.listChannelWorkflowSteps({ workflowId, complete: true });
   const workflow = store.getChannelWorkflow(workflowId);
   if (!workflow) {
     throw new HttpError(404, "workflow_not_found", `Channel workflow not found: ${workflowId}`);
   }
+  let preApprovalWait: Extract<WorkflowOrchestrationResult, { status: "waiting_for_approval" }> | undefined;
   for (const step of steps) {
     if (isApprovedPreStartStep(store, step)) continue;
     if (step.status === "running" && step.metadata?.preStepApprovalId && !step.taskId && !step.runId) {
@@ -1125,7 +1193,9 @@ function reconcileWorkflowStepRuns(store: RunStore, workflowId: string): Workflo
     }
     if (step.status === "running") {
       const now = new Date().toISOString();
-      const ownership = classifyWorkflowStepStartOwner(store, step, now);
+      const linkedRun = step.runId ? store.getRun(step.runId) : undefined;
+      const terminalRun = linkedRun && ["succeeded", "failed", "cancelled"].includes(linkedRun.status);
+      const ownership = classifyWorkflowStepStartOwner(store, step, now, { requireActiveLease: !terminalRun });
       if (ownership.status === "preparing") continue;
       if (ownership.status === "invalid") {
         const owner = step.metadata?.startOwner;
@@ -1153,7 +1223,7 @@ function reconcileWorkflowStepRuns(store: RunStore, workflowId: string): Workflo
       const approval = store.getApprovalRequest(step.metadata.preStepApprovalId);
       if (!approval || approval.status === "pending") {
         if (approval) {
-          return { status: "waiting_for_approval", workflow, workflowStep: step, approval };
+          preApprovalWait ??= { status: "waiting_for_approval", workflow, workflowStep: step, approval };
         }
         continue;
       }
@@ -1200,7 +1270,7 @@ function reconcileWorkflowStepRuns(store: RunStore, workflowId: string): Workflo
   if (blocked) {
     return { status: "blocked", workflow: latest, workflowStep: blocked, blocker: blocked.blocker ?? "Workflow step is blocked." };
   }
-  return { status: "open" };
+  return preApprovalWait ?? { status: "open" };
 }
 
 function maybeRequestPreStepApproval(
@@ -1706,11 +1776,10 @@ function isWorkflowStepEligible(step: ChannelWorkflowStep, steps: readonly Chann
   return dependencies.every((dependency) => dependency.status === "succeeded" || dependency.status === "skipped");
 }
 
-function countActiveWorkflowSteps(steps: readonly ChannelWorkflowStep[]): number {
-  return steps.filter((step) =>
-    step.status === "claimed" ||
-    step.status === "running" && (Boolean(step.runId) || Boolean(step.taskId))
-  ).length;
+function eligibleWorkflowSteps(store: RunStore, steps: readonly ChannelWorkflowStep[]): ChannelWorkflowStep[] {
+  return steps.filter(step => step.metadata?.autoStart !== false
+    && (step.status === "queued" || isApprovedPreStartStep(store, step))
+    && isWorkflowStepEligible(step, steps)).sort(compareWorkflowStepForScheduling);
 }
 
 function compareWorkflowStepForScheduling(left: ChannelWorkflowStep, right: ChannelWorkflowStep): number {
@@ -1718,11 +1787,7 @@ function compareWorkflowStepForScheduling(left: ChannelWorkflowStep, right: Chan
   if (positionDelta !== 0) {
     return positionDelta;
   }
-  const branchDelta = (left.metadata?.branchGroupId ?? "").localeCompare(right.metadata?.branchGroupId ?? "");
-  if (branchDelta !== 0) {
-    return branchDelta;
-  }
-  return left.id.localeCompare(right.id);
+  return left.id < right.id ? -1 : left.id === right.id ? 0 : 1;
 }
 
 function blockWorkflowStepRunStartFailure(
@@ -1731,9 +1796,9 @@ function blockWorkflowStepRunStartFailure(
   workflowStepId: string,
   taskId: string,
   owner?: WorkflowStepStartOwnerV1,
+  blocker = "Run did not start.",
 ): Extract<WorkflowOrchestrationResult, { status: "blocked" }> {
   const now = new Date().toISOString();
-  const blocker = "Run did not start.";
   const step = store.getChannelWorkflowStep(workflowStepId);
   if (owner) store.settleChannelWorkflowStepStartFailure({ workflowStepId, owner, leaseId: owner.leaseId, blocker, now });
   const workflow = store.getChannelWorkflow(workflowId);

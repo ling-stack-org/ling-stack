@@ -243,6 +243,22 @@ test("channel root/panels/sidebar/memory reads do not start while the same owned
   assert.deepEqual(f.calls, []);
 });
 
+for (const failedRead of ["getChannelBrief", "listChannelWorkflows", "listChannelWorkflowSteps"]) {
+  test(`strict protocol refresh preserves ${failedRead} failure without changing default callers`, async t => {
+    const f = await fixture(t, "workspace"), failure = new Error(`${failedRead} offline`);
+    f.io(name => {
+      if (name === failedRead) return Promise.reject(failure);
+      if (failedRead === "listChannelWorkflowSteps" && name === "listChannelWorkflows") return { workflows: [{ id: "workflow-r02" }] };
+      return undefined;
+    });
+    await assert.rejects(f.render().actions.refreshChannelProtocol("channel", { throwOnError: true }), caught => caught === failure);
+    assert.equal(f.render().state.channelProtocolLoading, false);
+    await f.render().actions.refreshChannelProtocol("channel");
+    assert.equal(f.render().state.channelProtocolLoading, false);
+    assert.equal(f.feedback.at(-1)?.message, failure.message);
+  });
+}
+
 for (const threadId of [undefined, "branch"]) {
   test(`late ${threadId ?? "root"} transcript and paging cannot cross pause/resume epochs`, async t => {
     const f = await fixture(t, "workspace");

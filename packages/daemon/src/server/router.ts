@@ -260,6 +260,7 @@ import { handleHostCapabilityBridgeRoute } from "../features/runs/host-capabilit
 import { handleToolLoadRequestsCollection, handleToolSurfacesCollection } from "../features/runs/tool-surfaces.js";
 import { handleTraceItem, handleTracesCollection } from "../features/runs/traces-routes.js";
 import { resolveProviderForRun } from "../features/runs/providers.js";
+import { createWorkflowParallelCapabilityResolver } from "../features/runs/workflow-safety.js";
 import { handleGetWorkspaceChanges } from "../features/previews/workspace-changes.js";
 import {
   handleGetWorkspaceFileContent,
@@ -281,6 +282,7 @@ import {
 import { handleWorkspaceSnapshotRoute, parseWorkspaceSnapshotRoute } from "../features/runs/workspace-snapshot-routes.js";
 import { handleEffectiveConfig, handleWorkspaceSettings } from "../features/settings/routes.js";
 import { handleSkillRoute } from "../features/skills/routes.js";
+import { handleWorkflowTemplateRoute } from "../features/channels/workflow-template-routes.js";
 import { handleTaskItem, handleTaskRun, handleTasksCollection } from "../features/tasks/routes.js";
 import { materializeTaskAttachmentsForPrompt } from "../features/tasks/task-attachments.js";
 import {
@@ -374,6 +376,10 @@ import {
 import { RunControlService } from "../run-control.js";
 import { allowLocalServiceRequest, allowLocalWorkspaceRequest } from "../shared/local-workspace-access.js";
 import { setCorsHeaders, writeJson } from "../shared/response.js";
+import { readOptionalJsonBody } from "../shared/request.js";
+import { parseChannelWorkflowOrchestrationRequest } from "@ling-stack/contracts";
+import { selectWorkflowIsolatedExecution, type WorkflowIsolationHost } from "../features/channels/workflow-isolation-selection.js";
+import { handleWorkflowConflictRecovery } from "../features/channels/workflow-conflict-recovery-route.js";
 import { handleStartupStatus } from "../startup/routes.js";
 import { handleDiagnosticsDoctor, handleDiagnosticsLogs } from "../features/diagnostics/routes.js";
 import { handleNotifications } from "../features/notifications/routes.js";
@@ -1387,6 +1393,12 @@ export async function routeRequest(
     return;
   }
 
+  if (url.pathname === "/workflow-templates" || url.pathname.startsWith("/workflow-templates/")) {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) return;
+    await handleWorkflowTemplateRoute({ request, response, url, config, storeRegistry, runnerRegistry });
+    return;
+  }
+
   const skillRoute = parseSkillRoute(url.pathname);
   if (skillRoute?.kind === "skill" && (skillRoute.action === "revision-undo"
     || (skillRoute.action === "revisions" && request.method === "GET"))) {
@@ -1886,6 +1898,12 @@ export async function routeRequest(
     }
   };
 
+  const workflowIsolationHost: WorkflowIsolationHost = {
+    enabled: () => runtimeSupervisor.getChannelFeatures().workflowIsolatedFiles === true,
+    toolBrokerMode: () => runtimeSupervisor.getHarnessFeatures().toolBroker.mode,
+    maxConcurrentSteps: () => runtimeSupervisor.getConcurrencyPolicy().enabled
+      ? runtimeSupervisor.getConcurrencyPolicy().isolatedWriteMaxConcurrentSteps : 2,
+  };
   const createStartOrchestratedRun = (store: RunStore, cwd: string): StartOrchestratedWorkflowStepRun => {
     const startOrchestratedRun: StartOrchestratedWorkflowStepRun = ({ workflow, workflowStep, taskId, runRequest }) =>
       new Promise((resolve) => {
@@ -1918,6 +1936,10 @@ export async function routeRequest(
                 await orchestrateChannelWorkflow({
                   store,
                   secretResolver,
+                  resolveParallelCapability: createWorkflowParallelCapabilityResolver(runnerRegistry,
+                    { toolBrokerMode: () => runtimeSupervisor.getHarnessFeatures().toolBroker.mode }),
+                  runnerRegistry,
+                  isolationHost: workflowIsolationHost,
                   cwd,
                   workflowId: workflow.id,
                   validateRunRequest: (candidateRunRequest) => {
@@ -1959,6 +1981,10 @@ export async function routeRequest(
     const orchestration = await orchestrateChannelWorkflow({
       store: input.store,
       secretResolver,
+      resolveParallelCapability: createWorkflowParallelCapabilityResolver(runnerRegistry,
+        { toolBrokerMode: () => runtimeSupervisor.getHarnessFeatures().toolBroker.mode }),
+      runnerRegistry,
+      isolationHost: workflowIsolationHost,
       cwd: input.cwd,
       workflowId: confirmed.workflow.id,
       validateRunRequest: (candidateRunRequest) => {
@@ -2113,6 +2139,11 @@ export async function routeRequest(
   const workflowRoute = parseChannelWorkflowRoute(url.pathname);
   if (workflowRoute) {
     if (workflowRoute.kind === "workflow") {
+      if (workflowRoute.action === "conflict-recovery") {
+        await handleWorkflowConflictRecovery({ request, response, url, config, storeRegistry, runnerRegistry,
+          workflowId: workflowRoute.workflowId, host: workflowIsolationHost });
+        return;
+      }
       if (workflowRoute.action === "workspace-changes" || workflowRoute.action === "workspace-changes-undo" || workflowRoute.action === "workspace-changes-reapply") {
         const expectedMethod = workflowRoute.action === "workspace-changes" ? "GET" : "POST";
         if (request.method !== expectedMethod) {
@@ -2146,11 +2177,18 @@ export async function routeRequest(
           return;
         }
         try {
+          const input = parseChannelWorkflowOrchestrationRequest(await readOptionalJsonBody(request, config.maxBodyBytes));
           const store = storeRegistry.getStore(cwd);
+          if (input.executionProfile) await selectWorkflowIsolatedExecution({ store, workflowId: workflowRoute.workflowId,
+            runnerRegistry, host: workflowIsolationHost });
           const startOrchestratedRun = createStartOrchestratedRun(store, cwd);
           const result = await orchestrateChannelWorkflow({
             store,
             secretResolver,
+            resolveParallelCapability: createWorkflowParallelCapabilityResolver(runnerRegistry,
+              { toolBrokerMode: () => runtimeSupervisor.getHarnessFeatures().toolBroker.mode }),
+            runnerRegistry,
+            isolationHost: workflowIsolationHost,
             cwd,
             workflowId: workflowRoute.workflowId,
             validateRunRequest: (candidateRunRequest) => {
@@ -2179,7 +2217,7 @@ export async function routeRequest(
         }
         try {
           const store = storeRegistry.getStore(cwd);
-          const result = cancelChannelWorkflow({
+          const result = await cancelChannelWorkflow({
             store,
             workflowId: workflowRoute.workflowId,
             cancelRun: (run) => {
@@ -2240,6 +2278,8 @@ export async function routeRequest(
         const result = await retryChannelWorkflowStep({
           store,
           secretResolver,
+          runnerRegistry,
+          isolationHost: workflowIsolationHost,
           cwd,
           workflowStepId: workflowRoute.workflowStepId,
           validateRunRequest: (candidateRunRequest) => {
@@ -2299,6 +2339,8 @@ export async function routeRequest(
             },
           ),
         secretResolver,
+        runnerRegistry,
+        workflowIsolationHost,
       );
       return;
     }

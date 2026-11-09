@@ -72,6 +72,9 @@ export async function createCodesignHostSimulation(t, { electron = true, reviewe
   const preloadedModulePaths = ["electron-node-resources.js", "macos-native-command.js", "macos-sandbox-backend.js", "protected-host-bootstrap-domain.js",
     "protected-host-stage-paths.js"];
   await Promise.all(preloadedModulePaths.map(path => import(moduleUrl("runtime/sandbox/" + path))));
+  const preloadedFeaturePaths = ["features/runs/workflow-operation-snapshot.js",
+    "features/channels/channel-command-input-policy.js"];
+  await Promise.all(preloadedFeaturePaths.map(path => import(moduleUrl(path))));
   const originalHash = crypto.createHash;
   // Preload the real, query-isolated compiled source files. An original
   // readFileSync passthrough would still call our mocked openSync internally.
@@ -86,7 +89,8 @@ export async function createCodesignHostSimulation(t, { electron = true, reviewe
   const resolutionPaths = new Set([...loaderBytes.keys(), ...[...preloadedModulePaths,
     "macos-seatbelt-profile.js", "protected-host-domain-paths.js", "protected-host-actor-domain.js",
     "protected-host-original-entry-manifest.js", "protected-host-office-directory-window.js"]
-    .map(path => join(dist, "runtime/sandbox", path)), join(dist, "features/office-documents/office-local-native-runtime.js")]);
+    .map(path => join(dist, "runtime/sandbox", path)), ...preloadedFeaturePaths.map(path => join(dist, path)),
+    join(dist, "features/office-documents/office-local-native-runtime.js")]);
   const coreUrl = import.meta.resolve("@ling-stack/core");
   // The ESM loader has its own captured readFileSync, which still enters openSync.
   // Supply exact existing dist bytes through the supported loader hook instead

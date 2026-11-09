@@ -79,7 +79,7 @@ export type RuntimeEventType =
   | "stale_runner_completion_ignored"
   | "diagnostic_stuck_detected";
 
-export type RuntimeSemaphoreResourceType = "provider" | "channel_parallel" | "runner" | "media_provider";
+export type RuntimeSemaphoreResourceType = "provider" | "channel_parallel" | "runner" | "media_provider" | "workflow_resource";
 
 export type RuntimeSemaphoreSlotStatus = "active" | "released" | "expired";
 
@@ -378,6 +378,11 @@ export interface AcquireRuntimeSemaphoreSlotInput extends RuntimeAttemptFenceV1 
   readonly acquiredAt: string;
   readonly expiresAt: string;
 }
+
+export type AcquireRuntimeSemaphoreSlotsResult =
+  | { readonly status: "acquired"; readonly slots: readonly RuntimeSemaphoreSlot[] }
+  | { readonly status: "full"; readonly resourceType: RuntimeSemaphoreResourceType; readonly resourceKey: string }
+  | { readonly status: "changed" };
 
 export interface ListRuntimeSemaphoreSlotsOptions {
   readonly status?: RuntimeSemaphoreSlotStatus;

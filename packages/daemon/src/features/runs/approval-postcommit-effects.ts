@@ -88,7 +88,8 @@ export function reconcileApprovalPostCommitEffects(input: {
       deferred = true;
       return false;
     }
-    if (kind === "owner" && approval.payload.type === "workflow_step") {
+    if (kind === "owner" && (approval.payload.type === "workflow_step" || approval.payload.type === "workflow_merge"
+      || approval.actionType === "workflow_merge")) {
       const existingEvidence = verifyApprovalPostCommitEvidence(store, approval, kind);
       if (existingEvidence.status === "applied") {
         try {

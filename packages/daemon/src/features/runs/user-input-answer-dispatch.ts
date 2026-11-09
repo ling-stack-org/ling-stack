@@ -38,12 +38,13 @@ export function admitUserInputAnswerDispatch(input: {
   readonly runtimeInstanceId: string;
   readonly policy: EffectiveRunPolicySnapshot;
   readonly workflowStartOwner?: import("@ling-stack/core").WorkflowStepStartOwnerV1;
+  readonly hostCapacity?: import("@ling-stack/core").RuntimeHostCapacityDispatchReference;
   readonly now: string;
 }) {
   const { store, dispatch } = input;
   const binding = store.admitUserInputContinuation({ ...dispatch.claim, executionRef: input.prepared.ref,
     runtimeInstanceId: input.runtimeInstanceId, effectivePolicySnapshot: input.policy,
-    workflowStartOwner: input.workflowStartOwner }, input.now);
+    workflowStartOwner: input.workflowStartOwner, hostCapacity: input.hostCapacity }, input.now);
   const run = store.getRun(binding.runId), workUnit = store.getWorkUnit(binding.fence.workUnitId);
   const attempt = store.getWorkUnitAttempt(binding.fence.attemptId);
   if (!run || !workUnit || !attempt || !binding.effectivePolicySnapshot

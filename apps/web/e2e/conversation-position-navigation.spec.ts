@@ -2,6 +2,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import type { ReadingHarness } from "./support/p2-reading-harness";
 import { mockDaemon } from "./support/mock-daemon";
 import { createBaseState, createChatProvider, createMockTeammate, cwd } from "./support/mock-state";
+import { expectRailAtSurfaceEdge } from "./support/conversation-position-assertions";
 
 const railSelector = ".conversation-position-rail";
 const previewSelector = ".conversation-position-rail__preview";
@@ -52,6 +53,7 @@ for (const theme of ["light", "dark"] as const) {
     const errors: string[] = [];
     page.on("pageerror", error => errors.push(error.message));
     const feed = await mountNormal(page, 36);
+    await expectRailAtSurfaceEdge(feed);
     await jumpFirst(page);
     await settle(feed);
     const rail = page.locator(railSelector);
@@ -239,6 +241,7 @@ test("private conversation uses the selected teammate and local profile", async 
   await page.getByRole("complementary", { name: /Sidebar display/ }).getByRole("button", { name: "Ling Reader", exact: true }).click();
   const feed = page.getByLabel("Private message feed", { exact: true });
   await expect(page.locator(railSelector)).toBeVisible();
+  await expectRailAtSurfaceEdge(feed);
   await jumpFirst(page);
   await settle(feed);
   const rail = page.locator(railSelector);
@@ -281,6 +284,7 @@ test("channel navigation resolves the original sender identity", async ({ page }
   const feed = page.getByLabel("Channel message feed", { exact: true });
   const rail = page.locator(railSelector);
   await expect(rail).toBeVisible();
+  await expectRailAtSurfaceEdge(feed);
   await jumpFirst(page);
   await settle(feed);
   const avatarSources: string[] = [];

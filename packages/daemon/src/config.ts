@@ -2,6 +2,11 @@ import { resolve as resolvePath } from "node:path";
 import { delegationBudget, resolveDelegationPriceForBudget,
   type LingSandboxPolicyProfileId, type DelegationTokenPriceSnapshot } from "@ling-stack/core";
 import type { DelegationBudgetV1 } from "@ling-stack/contracts";
+import {
+  resolveRuntimeConcurrencyPolicy,
+  type RuntimeConcurrencyFeatureConfig,
+  type ResolvedRuntimeConcurrencyPolicy,
+} from "./runtime/concurrency-policy.js";
 import type { RestrictedCommandRuntimeConfig } from "./runtime/sandbox/restricted-command-runtime.js";
 
 export interface DaemonConfig {
@@ -14,6 +19,8 @@ export interface DaemonConfig {
   readonly runners?: RunnerFeatureConfig;
   readonly sandbox?: SandboxFeatureConfig;
   readonly runtimeTools?: RuntimeToolFeatureConfig;
+  /** Trusted Host startup limits; never read from workspace/runtime HTTP settings. */
+  readonly concurrency?: RuntimeConcurrencyFeatureConfig;
   readonly transports?: TransportFeatureConfig;
   readonly channels?: ChannelFeatureConfig;
   readonly cuaDriver?: CuaDriverFeatureConfig;
@@ -80,6 +87,8 @@ export interface ChannelFeatureConfig {
   readonly intentSelector?: boolean;
   readonly teamObserverBus?: boolean;
   readonly terminalReports?: boolean;
+  /** Host opt-in for explicitly selected Pi isolated-file workflows; never a workspace setting. */
+  readonly workflowIsolatedFiles?: boolean;
 }
 
 export interface RuntimeToolFeatureConfig {
@@ -174,6 +183,7 @@ export interface ResolvedDaemonConfig {
   readonly runners: RunnerFeatureConfig;
   readonly sandbox: SandboxFeatureConfig;
   readonly runtimeTools: RuntimeToolFeatureConfig;
+  readonly concurrency: ResolvedRuntimeConcurrencyPolicy;
   readonly transports: Required<TransportFeatureConfig>;
   readonly channels: ChannelFeatureConfig;
   readonly cuaDriver: {
@@ -233,6 +243,7 @@ export function resolveConfig(config: DaemonConfig): ResolvedDaemonConfig {
       shellSnapshot: config.runtimeTools?.shellSnapshot ??
         readBooleanEnv(process.env.LING_STACK_RUNTIME_SHELL_SNAPSHOT, false),
     },
+    concurrency: resolveRuntimeConcurrencyPolicy(config.concurrency),
     transports: {
       providerWebSocketFallback: config.transports?.providerWebSocketFallback ??
         readBooleanEnv(process.env.LING_STACK_PROVIDER_WS_FALLBACK, true),
@@ -244,6 +255,8 @@ export function resolveConfig(config: DaemonConfig): ResolvedDaemonConfig {
       intentSelector: config.channels?.intentSelector ?? readBooleanEnv(process.env.LING_STACK_CHANNEL_INTENT_SELECTOR, true),
       teamObserverBus: config.channels?.teamObserverBus ?? readBooleanEnv(process.env.LING_STACK_CHANNEL_TEAM_OBSERVER_BUS, false),
       terminalReports: config.channels?.terminalReports ?? readBooleanEnv(process.env.LING_STACK_CHANNEL_TERMINAL_REPORTS, true),
+      workflowIsolatedFiles: config.channels?.workflowIsolatedFiles
+        ?? readBooleanEnv(process.env.LING_STACK_CHANNEL_WORKFLOW_ISOLATED_FILES, false),
     },
     cuaDriver: {
       bundledEmbedded: {

@@ -1845,6 +1845,9 @@ export function AppShell(): React.JSX.Element {
     refreshChannelRunArtifacts,
     refreshChannelExecutionActions,
     refreshChannelActivity,
+    refreshSelectedChannelProtocol: () => selectedChannelId
+      ? refreshChannelProtocol(selectedChannelId, { throwOnError: true })
+      : Promise.resolve(),
     refreshSelectedChannelConversation: () => selectedChannelId
       ? refreshChannelMessages(selectedChannelId, selectedChannelMessageThreadId)
       : Promise.resolve(),
@@ -2211,7 +2214,7 @@ export function AppShell(): React.JSX.Element {
     };
   }
 
-  async function refreshChannelActivity(): Promise<void> {
+  async function refreshChannelActivity(options?: { readonly throwOnError?: boolean }): Promise<void> {
     if (daemonObservationRef.current.paused) throw new DaemonObservationDeferredError();
     const channelId = selectedChannelId;
     if (!channelId) {
@@ -2227,7 +2230,7 @@ export function AppShell(): React.JSX.Element {
         refreshChannelFiles(channelId),
         refreshChannelRunArtifacts(form.cwd.trim(), channelId, channelRunsForArtifacts),
         refreshChannelExecutionActions(form.cwd.trim(), channelId, channelRunsForArtifacts),
-        refreshChannelProtocol(channelId),
+        refreshChannelProtocol(channelId, options),
         refreshChannelGovernanceNotifications(channelId),
         refreshSelectedChannelCouncil(channelId),
         refreshRuns(),
@@ -2236,7 +2239,8 @@ export function AppShell(): React.JSX.Element {
         refreshUsedMemoryAudit(),
       ]);
       await refreshChannelActivityTransitions(form.cwd.trim(), channelId, channelRunsForArtifacts);
-    } catch {
+    } catch (caught) {
+      if (options?.throwOnError) throw caught;
       // Each child refresh keeps its failure with its own channel or domain owner.
     }
   }
@@ -2680,6 +2684,7 @@ export function AppShell(): React.JSX.Element {
                 <WorkspaceClientView
             cwd={form.cwd}
             daemonHealthy={daemonHealthy}
+            workflowObservationReady={controlPlaneInvalidation.observationReady}
             channelAutoRouteEnabled={daemonFeatures.channels.autoRoute}
             providerLabel={`${form.provider}/${form.model}`}
             userProfile={userProfile}

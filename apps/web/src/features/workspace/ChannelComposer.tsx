@@ -15,6 +15,7 @@ import {
   CircleAlert,
   ClipboardList,
   FileText,
+  GitBranch,
   ListChecks,
   Loader2,
   Pause,
@@ -122,6 +123,9 @@ interface ChannelComposerProps {
   readonly submitDisabled: boolean;
   readonly submitLabel: string;
   readonly submitTitle: string;
+  readonly submitIntent?: "send" | "stop" | "start" | "continue";
+  readonly submitBusy?: boolean;
+  readonly onStartIsolatedWorkflow?: () => void;
   readonly value: string;
   readonly onAttachFiles: (files: FileList | readonly File[]) => void | Promise<void>;
   readonly onCommitMention: (option: ChannelMention) => void;
@@ -245,6 +249,9 @@ export function ChannelComposer({
   submitDisabled,
   submitLabel,
   submitTitle,
+  submitIntent,
+  submitBusy = false,
+  onStartIsolatedWorkflow,
   value,
   workspaceCwd,
 }: ChannelComposerProps): React.JSX.Element {
@@ -572,6 +579,14 @@ export function ChannelComposer({
                     <strong>{t("Goal")}</strong>
                   </span>
                 </button>
+                {onStartIsolatedWorkflow ? <button className="composer-add-menu-row" type="button" role="menuitem"
+                  disabled={submitDisabled || submitBusy} onClick={() => {
+                    setAddMenuOpen(false);
+                    onStartIsolatedWorkflow();
+                  }}>
+                  <GitBranch size={15} />
+                  <span><strong>{t("Start isolated branches (candidate only)")}</strong></span>
+                </button> : null}
               </div>
             ) : null}
           </div>
@@ -655,7 +670,10 @@ export function ChannelComposer({
           aria-label={submitLabel}
           title={submitTitle}
         >
-          {replyTargetActive
+          {submitBusy ? <Loader2 className="spin" size={15} />
+            : submitIntent === "start" || submitIntent === "continue" ? <Play size={15} />
+            : submitIntent === "stop" ? <Square size={15} />
+            : replyTargetActive
             ? composerHasSendableContent
               ? sendState === "sending" ? <Loader2 className="spin" size={15} /> : <Send size={15} />
               : isCancellingRun ? <Loader2 className="spin" size={15} /> : <Square size={15} />
