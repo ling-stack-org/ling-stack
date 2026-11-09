@@ -19,10 +19,12 @@ export function recoverHostCapacityReservations(input: {
   let afterReservationId: string | undefined;
   let observed = 0;
   let released = 0;
+  const workspaceKey = input.admission.getWorkspaceKey(input.workspaceId);
   do {
     const page = input.host.listHeld(afterReservationId ? { afterReservationId } : undefined);
     for (const reservation of page.reservations) {
-      if (reservation.intent.canonicalCwd !== workspace.canonicalCwd
+      if (reservation.intent.workspaceKey !== workspaceKey
+        || reservation.intent.canonicalCwd !== workspace.canonicalCwd
         || reservation.intent.databasePath !== input.store.paths.databasePath) continue;
       const record = observeReservation({ workspaceId: input.workspaceId,
         intentId: reservation.intent.intentId, now: input.now });

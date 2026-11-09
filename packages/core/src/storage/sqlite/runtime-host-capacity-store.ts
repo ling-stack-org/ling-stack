@@ -74,6 +74,11 @@ export class SqliteRuntimeHostCapacityStore {
     this.assertIdentity();
   }
 
+  getWorkspaceKey(): string {
+    this.assertIdentity();
+    return this.identity.workspaceKey;
+  }
+
   assertOutsideTransaction(): void {
     if (this.context.database.isTransaction === true) throw new Error("runtime_host_capacity.nested_handoff");
     if (this.context.database.isTransaction === false) return;

@@ -7,6 +7,7 @@ import type { RuntimeHostCapacityAdmission } from "../dist/runtime/run-queue.js"
 
 const workspace = {
   workspaceId: "workspace_path_identity",
+  workspaceKey: "workspace-key",
   canonicalCwd: "/recovery/workspace",
   databasePath: "/recovery/workspace/.ling-stack/ling-stack.sqlite",
 };
@@ -31,6 +32,7 @@ function fixture(options: { runStatus: string; unitStatus: string; held?: readon
     reservations: afterReservationId ? [] : held,
   }) } as unknown as HostRunCapacityStore;
   const admission = {
+    getWorkspaceKey: () => workspace.workspaceKey,
     observeReservation: ({ workspaceId, intentId }: { workspaceId: string; intentId: string }) => {
       observedWorkspaceIds.push(workspaceId);
       observed.push(intentId);
@@ -64,7 +66,8 @@ test("startup observation releases a proven pre-dispatch terminal owner", () => 
 
 test("startup recovery ignores another workspace and already dispatched receipts", () => {
   const f = fixture({ runStatus: "cancelled", unitStatus: "cancelled", held: [
-    reservation("foreign", { canonicalCwd: "/other", databasePath: "/other/db" }),
+    reservation("foreign", { workspaceKey: "other-workspace-key" }),
+    reservation("unrelated", { canonicalCwd: "/other", databasePath: "/other/db" }),
     reservation("dispatched"),
   ], dispatchedIds: ["dispatched"] });
   assert.deepEqual(recoverHostCapacityReservations({ ...f, workspaceId: domainWorkspaceId, now: "2026-11-09T00:00:01.000Z" }), { observed: 1, released: 0 });
