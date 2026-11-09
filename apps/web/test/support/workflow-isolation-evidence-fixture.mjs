@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { registerHooks } from "node:module";
 import { fileURLToPath } from "node:url";
+import { jsonStringLiteralForGeneratedSource } from "./generated-source.mjs";
 
 registerHooks({ resolve(specifier, context, next) {
   if (/^\.{1,2}\//u.test(specifier) && specifier.endsWith(".js") && context.parentURL?.startsWith("file:")) {
@@ -43,11 +44,11 @@ export function progressInput(overrides = {}) {
 export const hookTransforms = {
   "features/workspace/useWorkflowIsolationEvidence.ts": [
     { anchor: 'import { useEffect, useMemo, useRef, useState } from "react";',
-      replace: key => `const { useEffect, useMemo, useRef, useState } = globalThis[${JSON.stringify(key)}].ports.hooks;` },
+      replace: key => `const { useEffect, useMemo, useRef, useState } = globalThis[${jsonStringLiteralForGeneratedSource(key)}].ports.hooks;` },
     { anchor: 'import { getChannelWorkflowEvidence } from "../../api/channels.js";',
-      replace: key => `const getChannelWorkflowEvidence = (...args) => globalThis[${JSON.stringify(key)}].ports.request(...args);` },
+      replace: key => `const getChannelWorkflowEvidence = (...args) => globalThis[${jsonStringLiteralForGeneratedSource(key)}].ports.request(...args);` },
     { anchor: 'import { isDaemonObservationPausedForWorkspace, useDaemonObservation } from "../../shared/conversation/observation/daemon-observation.js";',
       replace: key => `import { isDaemonObservationPausedForWorkspace } from "../../shared/conversation/observation/daemon-observation.js";
-        const useDaemonObservation = () => globalThis[${JSON.stringify(key)}].ports.observation;` },
+        const useDaemonObservation = () => globalThis[${jsonStringLiteralForGeneratedSource(key)}].ports.observation;` },
   ],
 };

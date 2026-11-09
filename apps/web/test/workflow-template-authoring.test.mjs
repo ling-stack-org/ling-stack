@@ -3,6 +3,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { catalogConsumerHarness } from "./support/catalog-consumer-harness.mjs";
 import { catalogHookPort } from "./support/catalog-hook-port.mjs";
+import { jsonStringLiteralForGeneratedSource } from "./support/generated-source.mjs";
 
 const modelPath = "features/settings/workflow-template-authoring-model.ts";
 const controllerPath = "features/settings/workflow-template-authoring-controller.ts";
@@ -10,7 +11,7 @@ const registrySource = fileURLToPath(new URL("../../../packages/contracts/src/wo
 const modelTransform = { anchor: '} from "@ling-stack/contracts";', replace: () => `} from ${JSON.stringify(registrySource)};` };
 const modelExports = ["newWorkflowTemplateSession", "workflowTemplateSessionFromVersion", "importedWorkflowTemplateSession", "workflowTemplateDraftDirty",
   "validateWorkflowTemplateDraft", "newWorkflowTemplateStep", "removeWorkflowTemplateStep", "replaceWorkflowTemplateStep",
-  "workflowTemplateDependencyWouldCycle", "setWorkflowTemplateMember", "setWorkflowTemplateParallelPolicy",
+  "workflowTemplateDependencyWouldCycle", "setWorkflowTemplateMember", "setWorkflowTemplateParallelPolicy", "workflowTemplateHasExplicitAutoStart",
   "workflowTemplateCreateRequest", "workflowTemplatePublishedPin", "workflowTemplatePreviewKey", "workflowTemplateIsConflict"];
 const apiNames = ["getWorkflowTemplateVersion", "listWorkflowTemplates", "previewWorkflowTemplate", "saveWorkflowTemplateVersion", "setWorkflowTemplateReviewStatus"];
 const policy = { onRunFailed: "block_for_user", onRunCancelled: "cancel_workflow", onApprovalDenied: "block_for_user", retryable: true };
@@ -150,11 +151,11 @@ async function controllerHarness(t, { status = "draft", overrides = {}, active =
       [modelPath]: [modelTransform],
       [controllerPath]: [
         { anchor: 'import { useCallback, useEffect, useMemo, useRef, useState } from "react";',
-          replace: key => `const { useCallback, useEffect, useMemo, useRef, useState } = globalThis[${JSON.stringify(key)}].ports.hooks;` },
+          replace: key => `const { useCallback, useEffect, useMemo, useRef, useState } = globalThis[${jsonStringLiteralForGeneratedSource(key)}].ports.hooks;` },
         { anchor: 'import { createChannelWorkflowFromTemplate } from "../../api/channels.js";',
-          replace: key => `const createChannelWorkflowFromTemplate = (...args) => globalThis[${JSON.stringify(key)}].ports.api.createChannelWorkflowFromTemplate(...args);` },
+          replace: key => `const createChannelWorkflowFromTemplate = (...args) => globalThis[${jsonStringLiteralForGeneratedSource(key)}].ports.api.createChannelWorkflowFromTemplate(...args);` },
         { anchor: `import {\n${apiNames.map(name => `  ${name},`).join("\n")}\n} from "../../api/workflow-templates.js";`,
-          replace: key => apiNames.map(name => `const ${name} = (...args) => globalThis[${JSON.stringify(key)}].ports.api.${name}(...args);`).join("\n") },
+          replace: key => apiNames.map(name => `const ${name} = (...args) => globalThis[${jsonStringLiteralForGeneratedSource(key)}].ports.api.${name}(...args);`).join("\n") },
       ],
     },
   });

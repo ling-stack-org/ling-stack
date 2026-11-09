@@ -15,6 +15,7 @@ import {
   validateWorkflowTemplateDraft,
   workflowTemplateCreateRequest,
   workflowTemplateDraftDirty,
+  workflowTemplateHasExplicitAutoStart,
   workflowTemplateIsConflict,
   workflowTemplatePreviewKey,
   workflowTemplatePublishedPin,
@@ -274,6 +275,7 @@ export function useWorkflowTemplateAuthoringController({
         channelId, objective: objective.trim(),
         ...(pin ? { customTemplateId: pin.id, customTemplateVersion: pin.version, customTemplateDigest: pin.digest }
           : { customTemplate: checked.template }),
+        ...(workflowTemplateHasExplicitAutoStart(checked.template) ? { confirmUnsafeAutoStart: true } : {}),
       });
       if (current(operation) && previewKeyRef.current === key) setPreview({ key, result });
     } catch (caught) { report(operation, caught); }

@@ -162,6 +162,10 @@ export function workflowTemplatePublishedPin(session: WorkflowTemplateEditorSess
   return sameWorkflowTemplatePin(entry.publishedVersion, savedVersion) ? entry.publishedVersion : undefined;
 }
 
+export function workflowTemplateHasExplicitAutoStart(template: CustomWorkflowTemplate): boolean {
+  return template.autoStartDefault === true || template.steps.some((step) => step.autoStart === true);
+}
+
 export function workflowTemplateCreateRequest(
   session: WorkflowTemplateEditorSession,
   channelId: string,
@@ -173,15 +177,18 @@ export function workflowTemplateCreateRequest(
   readonly customTemplateVersion: string;
   readonly customTemplateDigest: string;
   readonly autoStart: false;
+  readonly confirmUnsafeAutoStart?: true;
 } | undefined {
   const pin = workflowTemplatePublishedPin(session);
+  const checked = validateWorkflowTemplateDraft(session.draft);
   if (!pin || !channelId || !objective.trim() || !preview
-    || !validateWorkflowTemplateDraft(session.draft).template
+    || !checked.template
     || preview.key !== workflowTemplatePreviewKey(session, channelId, objective)
     || !sameWorkflowTemplatePin(pin, preview.result.templatePin)) return undefined;
   return {
     objective: objective.trim(), customTemplateId: pin.id,
     customTemplateVersion: pin.version, customTemplateDigest: pin.digest, autoStart: false,
+    ...(workflowTemplateHasExplicitAutoStart(checked.template) ? { confirmUnsafeAutoStart: true } : {}),
   };
 }
 

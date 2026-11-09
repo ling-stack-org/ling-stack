@@ -42,9 +42,9 @@ export function WorkflowTemplateStepEditor({ step, steps, index, teammates, disa
         <Field label={t("Step name")} required>
           <Input value={step.name} maxLength={256} disabled={disabled} onChange={(event) => onChange({ ...step, name: event.currentTarget.value })} />
         </Field>
-        <Field label={t("Member")}>
+        <Field label={t("Member")} required>
           <Select value={member} disabled={disabled} onChange={(event) => onChange(setWorkflowTemplateMember(step, event.currentTarget.value))}>
-            <option value="">{t("Channel default")}</option>
+            <option value="" disabled>{t("Select teammate")}</option>
             {member && !knownMember ? <option value={member}>{step.teammateTemplateId ?? step.councilSlotKey ?? t("Unavailable member: {id}", { id: step.teammateId ?? "" })}</option> : null}
             {teammates.map((teammate) => <option key={teammate.id} value={`teammate:${teammate.id}`} disabled={teammate.status !== "active" || teammate.hidden}>{teammate.displayName}</option>)}
           </Select>

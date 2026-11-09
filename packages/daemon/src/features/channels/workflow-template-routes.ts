@@ -40,7 +40,7 @@ export async function handleWorkflowTemplateRoute(input: {
     if (url.pathname === "/workflow-templates/preview") {
       if (request.method !== "POST") methodNotAllowed();
       const body = await readJsonBody(request, input.config.maxBodyBytes);
-      knownFields(body, ["channelId", "objective", "customTemplate", "customTemplateId", "customTemplateVersion", "customTemplateDigest"]);
+      knownFields(body, ["channelId", "objective", "customTemplate", "customTemplateId", "customTemplateVersion", "customTemplateDigest", "autoStart", "confirmUnsafeAutoStart"]);
       const parsed = parseWorkflowTemplateCompileRequest(body, readString(body, "channelId"));
       writeJson(response, 200, previewWorkflowTemplate(store, parsed, input.runnerRegistry));
       return;

@@ -1363,6 +1363,8 @@ export interface WorkflowTemplatePreviewRequest {
   readonly customTemplateId?: string;
   readonly customTemplateVersion?: string;
   readonly customTemplateDigest?: string;
+  readonly autoStart?: boolean;
+  readonly confirmUnsafeAutoStart?: boolean;
 }
 
 export interface WorkflowTemplatePreviewResponse {
