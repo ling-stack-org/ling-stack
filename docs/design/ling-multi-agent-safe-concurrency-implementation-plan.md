@@ -6,7 +6,7 @@ Web 冲突修复、共享 UI、语言目录和夹具另有增量回归与真实�
 不覆盖其后新增的源码。Daemon 独立 dependency-security lane 已通过；真实 Provider、
 packaged、跨平台与 review/CI/merge 尚未完成，不满足发布门禁。
 Owner：Ling maintainers。
-最后核对：2026-11-08。
+最后核对：2026-11-10。
 文档类型：implementation plan；完成后将长期规则归入 owning contracts，不保留完成日志。
 权威设计：[总体设计](multi-agent-app-detailed-design.md)、
 [安全并发详细设计](ling-multi-agent-safe-concurrency-detailed-design.md)。
@@ -634,6 +634,13 @@ terminal/drain 及资源释放；普通 writer 拒绝和 Host 策略关闭边界
 本地受控 Provider transport，不等于外部真实 Provider、packaged、跨平台或 review/CI/merge
 发布门禁已通过。
 
+2026-11-10，本地收口回归：Core 并发/Host/queue/迁移/恢复定向集合 875 项通过；Daemon
+并发策略、Host composition、queue、审批恢复、Graph 和 isolated workflow 定向集合 320 项
+通过；Web 全部单元回归 1323 项、Contracts 全部回归 151 项通过。Core、Daemon、Web 的
+类型检查通过，Daemon/Web 生产构建、Web lint、i18n 和 Markdown link check 通过，且
+`git diff --check` 无输出。Core/Daemon 本次是受影响范围的定向集合，不替代全仓测试、真实
+外部 Provider、packaged、跨平台或 review/CI/merge 验收。
+
 ### 代码责任与实现约束
 
 - B1：daemon `config.ts` 与专用 `runtime/concurrency-policy.ts` 捕获可信启动值；
@@ -675,3 +682,22 @@ terminal/drain 及资源释放；普通 writer 拒绝和 Host 策略关闭边界
 默认仍维持二档；3/4 只作为可信 Host 的显式配置能力，不能据此宣称真实 Provider、
 packaged 或跨平台联合验收已完成。目标保持进行中，不能因为文档或受控测试完成就标记
 整体完成。
+
+## 13. 完整目标收口清单
+
+这是本计划的整体完成标准，不把“代码已接线”提前写成“已发布”：
+
+1. **执行安全**：workflow/template、普通 Run、dynamic delegation、approval resume 和
+   continuation 都经过同一套 Host 权限、分类、资源、Provider/Runner 与 Attempt fence；
+   不能由提示词、工具名称、客户端字段或关闭开关伪造只读或停止证据。
+2. **并发与恢复**：workspace 预算、Host 总池、持久队列、公平性、跨 Store/process 争用、
+   cancel/restart/unknown/降额和容量释放都可重开收敛；容量不足不产生半组资源或重复派发。
+3. **隔离交付**：写入分支使用独立 worktree，结果按固定基线和顺序集成；candidate、
+   approval、冲突、clean-target apply、TerminalReport 和 cleanup 均保留证据，用户 WIP 不被覆盖。
+4. **会话体验**：普通文本流保持主展示；单 Agent 不显示 Graph；并行/多 Agent 才显示
+   会话内折叠 Graph；失败、审批、重试、继续、取消和冲突修复留在原会话处理入口。
+5. **模板和复盘**：模板 registry/authoring 只生成冻结版本；Experience review 只生成
+   候选并要求原有审核流程，不自动授予运行权限或发布变更。
+6. **发布门禁**：选定 workflow/executor/platform 的真实 Provider、桌面包、平台行为、
+   review、CI 和 merge 证据全部通过后，才可开启对应写并发。当前分支已完成代码和受控
+   本地验证，仍保持普通 workspace-write 并发关闭。

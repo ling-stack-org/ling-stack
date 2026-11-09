@@ -6,7 +6,7 @@
 增量验收及 Daemon 独立 dependency-security lane 通过；真实 Provider、packaged、跨平台
 和 review/CI/merge 门禁仍开放，不是发布完成声明。
 Owner：Ling maintainers。
-最后核对：2026-11-08，基于 PR #614 合并后的 `main`。
+最后核对：2026-11-10，基于 PR #614 合并后的 `main`。
 文档类型：Reference / Explanation。
 权威边界：[Multi-Agent App Detailed Design](multi-agent-app-detailed-design.md)
 继续拥有总体产品设计；本文细化安全并发、隔离执行与合并协议。
@@ -25,6 +25,26 @@ Owner：Ling maintainers。
 3. 并行 workflow 的重启、取消、冲突和审批验收。
 4. 自定义模板 registry 与 authoring UI。
 5. workflow graph 可视化。
+
+完整目标是把这五个产品阶段和 B1-B5 的 Host 并发预算收口在同一条 Ling 执行路径中：
+
+```text
+用户消息
+  -> 冻结 workflow/template、依赖与副作用计划
+  -> Host 准入、workspace/Host 持久容量与公平排队
+  -> Run / WorkUnit / fenced Attempt
+  -> 受限的只读或 isolated worktree 分支
+  -> branch evidence、确定性 fan-in 与检查
+  -> 审批后的 candidate-only 或目标 apply
+  -> TerminalReport 回到原会话
+  -> 可选的 Experience review candidate
+```
+
+单步骤和同一 Agent 的串行链继续使用普通文本会话流；只有真实的多参与者或可验证的
+并行依赖才显示折叠 Graph。Graph 只读，不承载执行权限、详情面板或第二套控制；失败、
+审批、继续/重试、取消、冲突修复和未确认副作用继续由会话已有事实流与 Composer 承接。
+Experience review 只从已结算 Run 提取有界证据并生成候选，不能自行修改记忆、技能、权限
+或 workflow。最终发布还需要真实 Provider、packaged、平台、review/CI/merge 门禁。
 
 不新增 `Super-agent` 产品、第二套 orchestrator、Run 状态机或审批系统。
 不把通用模型评分、模型路由优化、requirement shaping 扩展和自动发布并入本轮。
