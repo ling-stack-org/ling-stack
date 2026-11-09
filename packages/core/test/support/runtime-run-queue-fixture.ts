@@ -27,6 +27,8 @@ type PrepareOptions = {
   requestOverrides?: Record<string, unknown>;
   runOverrides?: Partial<Parameters<Store["createRun"]>[0]>;
 };
+type NativeBinding = { readonly kind: "native_profile"; readonly engineId: string; readonly profileId: string;
+  readonly profileRevision: number; readonly nativeModelId?: string };
 
 const executionTables = ["tasks", "run_sessions", "run_events", "work_units", "work_unit_attempts", "runtime_events",
   "runtime_heartbeats", "resource_leases", "runtime_semaphore_slots", "state_transition_events", "runner_continuations"];
@@ -103,20 +105,29 @@ export async function runtimeRunQueueFixture(t: TestContext,
     const execution = { schemaVersion: 1, runnerId: "pi", toolHydrationEnabled: false,
       input: { cwd, task: taskInput, provider, tools: [...tools], systemPrompt: prepared.systemPrompt },
       preparedInput: { ...prepared, fingerprint: hash(prepared) } };
+    const requestedBinding = requestOverrides.executionBinding;
+    const nativeBinding = requestedBinding && typeof requestedBinding === "object" && !Array.isArray(requestedBinding)
+      && (requestedBinding as { kind?: unknown }).kind === "native_profile"
+      ? requestedBinding as NativeBinding : undefined;
+    const effectiveRunnerId = nativeBinding?.engineId ?? "pi";
     const request = { cwd, workspaceCwd: cwd, executionCwd: cwd, task: taskInput, tools: [...tools], runnerId: "pi",
       providerPresetId: preset.id, provider, authorizationMode: "always", workspaceAccessMode: "full_access",
       permissionMode: policy.mode, effectivePolicySnapshot: policy, runnerExecutionInput: execution,
       ...(teammateId ? { teammateId } : {}),
-      ...(thread ? { threadId: thread.id } : {}), ...requestOverrides };
+      ...(thread ? { threadId: thread.id } : {}), ...requestOverrides,
+      ...(nativeBinding ? { runnerId: effectiveRunnerId } : {}) };
     const unit = store.createWorkUnit({ id: `queue-unit-${name}`, workspaceId, kind,
       ownerType: kind === "conversation_run" ? "conversation" : "task", ownerId: thread?.id ?? task.id,
-      taskId: task.id, channelId: channel?.id, teammateId, runnerId: "pi", effectiveRunnerId: "pi", providerPresetId: preset.id,
+      taskId: task.id, channelId: channel?.id, teammateId, runnerId: effectiveRunnerId, effectiveRunnerId,
+      providerPresetId: nativeBinding ? undefined : preset.id,
       idempotencyKey: `queue-unit-${name}`, createdByActor: "system", request, now: at(2) });
     const attempt = store.createWorkUnitAttempt({ id: `queue-attempt-${name}`, workUnitId: unit.id, attemptNumber: 1,
-      runtimeInstanceId: sourceRuntimeId, runnerId: "pi", effectiveRunnerId: "pi", providerPresetId: preset.id, now: at(2) });
+      runtimeInstanceId: sourceRuntimeId, runnerId: effectiveRunnerId, effectiveRunnerId,
+      providerPresetId: nativeBinding ? undefined : preset.id, now: at(2) });
     const run = store.createRun({ id: `queue-run-${name}`, cwd, taskId: task.id, channelId: channel?.id,
-      threadId: thread?.id, teammateId, workUnitId: unit.id, providerPresetId: preset.id, providerName: provider.provider,
-      providerModel: provider.model, taskSnapshot: taskInput, providerSnapshot: { providerPresetId: preset.id, ...provider },
+      threadId: thread?.id, teammateId, workUnitId: unit.id, providerPresetId: nativeBinding ? undefined : preset.id,
+      providerName: nativeBinding?.engineId ?? provider.provider, providerModel: nativeBinding?.nativeModelId ?? provider.model,
+      taskSnapshot: taskInput, providerSnapshot: nativeBinding ? nativeBinding : { providerPresetId: preset.id, ...provider },
       requestSnapshot: request, createdAt: at(2), ...runOverrides });
     store.linkRunToWorkUnit(run.id, unit.id, at(2));
     const storedRun = store.getRun(run.id), storedUnit = store.getWorkUnit(unit.id);
@@ -128,7 +139,7 @@ export async function runtimeRunQueueFixture(t: TestContext,
     assert.equal(current.attempt.status, "created");
     assert.deepEqual(current.run.requestSnapshot.runnerExecutionInput, current.unit.request.runnerExecutionInput);
     assert.deepEqual(current.run.requestSnapshot.effectivePolicySnapshot, current.unit.request.effectivePolicySnapshot);
-    assert.ok(Array.isArray(current.run.requestSnapshot.runnerExecutionInput.input.tools));
+    assert.ok(nativeBinding || Array.isArray(current.run.requestSnapshot.runnerExecutionInput.input.tools));
     return current;
   };
   type Prepared = ReturnType<typeof prepare>;
@@ -158,7 +169,12 @@ export async function runtimeRunQueueFixture(t: TestContext,
     const expiresAt = new Date(Date.parse(now) + 6 * 60 * 60 * 1_000).toISOString();
     const base = { workspaceId, ...current.fence, acquiredAt: now, expiresAt };
     const leases: CreateResourceLeaseInput[] = [{ ...base, ownerType: "run", ownerId: run.id, resourceType: "task", resourceKey: run.taskId }];
-    if (request.runnerExecutionInput.input.tools.some(tool => ["write", "edit", "bash"].includes(tool))) {
+    const executionBinding = (request as { readonly executionBinding?: unknown }).executionBinding;
+    const nativeBinding = executionBinding && typeof executionBinding === "object" && !Array.isArray(executionBinding)
+      && (executionBinding as { kind?: unknown }).kind === "native_profile"
+      ? executionBinding as NativeBinding : undefined;
+    const executionTools = nativeBinding ? request.tools : request.runnerExecutionInput.input.tools;
+    if (executionTools.some(tool => ["write", "edit", "bash"].includes(tool))) {
       const scope = channel?.runtimePolicy.writeLockScope ?? "boundPath";
       const resourceType = scope === "workspace" || scope === "channel" && !channel ? "workspace"
         : scope === "channel" ? "channel" : "bound_path";
@@ -166,8 +182,10 @@ export async function runtimeRunQueueFixture(t: TestContext,
       leases.push({ ...base, ownerType: "run", ownerId: run.id, resourceType, resourceKey });
     }
     const entries: Pick<AcquireRuntimeSemaphoreSlotInput, "resourceType" | "resourceKey" | "limit">[] = [
-      { resourceType: "provider", resourceKey: run.providerPresetId ?? `${run.providerName}:${run.providerModel}`, limit: 4 },
-      { resourceType: "runner", resourceKey: current.attempt.effectiveRunnerId, limit: 4 },
+      { resourceType: "provider", resourceKey: nativeBinding
+        ? `native:${nativeBinding.profileId}:${nativeBinding.profileRevision}`
+        : run.providerPresetId ?? `${run.providerName}:${run.providerModel}`, limit: 4 },
+      { resourceType: "runner", resourceKey: nativeBinding?.engineId ?? current.attempt.effectiveRunnerId, limit: 4 },
       ...(channel ? [{ resourceType: "channel_parallel", resourceKey: channel.id,
         limit: Math.max(channel.runtimePolicy.maxConcurrentRuns, 1) } as const] : [])];
     const semaphores: AcquireRuntimeSemaphoreSlotInput[] = entries.map(entry =>

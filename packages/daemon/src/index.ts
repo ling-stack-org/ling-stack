@@ -34,6 +34,7 @@ import {
 } from "./config.js";
 import type { DaemonContext, DaemonDependencies, RunnerAdapter } from "./context.js";
 import { AutomationSchedulerRegistry } from "./features/automations/scheduler.js";
+import { reconcileAutomationRunForTerminal } from "./features/automations/run.js";
 import { ExternalWorkBackgroundSchedulerRegistry } from "./features/external-work/background-scheduler.js";
 import { appendControlPlaneEvent, ControlPlaneEventHub } from "./features/control-plane/events.js";
 import {
@@ -707,6 +708,11 @@ export function createDaemonServer(
     const store = storeRegistry.findStoreForRun(sourceRunId, terminalRun.cwd)
       ?? storeRegistry.findStoreForRun(terminalRun.id, terminalRun.cwd);
     if (!store) return;
+    try {
+      reconcileAutomationRunForTerminal(store, terminalRun);
+    } catch {
+      console.warn("automation_run_reconciliation_failed: terminal automation state remains recoverable");
+    }
     try {
       reconcileTeammateDirectRun(store, terminalRun, controlPlaneEvents);
     } catch {

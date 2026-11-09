@@ -570,7 +570,7 @@ test("duplicate registration does not reset occupied preparation slots", async t
   assert.equal(queue.pending.length, 1);
 });
 
-test("queued notification retains copied hooks but replaces the original ready callback", async t => {
+test("queued notification retains copied hooks and forwards the original ready callback", async t => {
   const queue = scriptedStore("retained", 1);
   const f = fixture(t, [queue]);
   const originalReady = t.mock.fn(), terminal = t.mock.fn();
@@ -588,7 +588,7 @@ test("queued notification retains copied hooks but replaces the original ready c
   assert.notEqual(passed.onRunReady, originalReady);
   ready(f.executions[0]);
   await nextTurn();
-  assert.equal(originalReady.mock.calls.length, 0);
+  assert.equal(originalReady.mock.calls.length, 1, "the original owner observes the queued Run when it is dispatched");
   f.executions[0].completion.resolve();
   await f.coordinator.waitForIdle();
   assert.equal(terminal.mock.calls.length, 0, "only the executor owns terminal hook invocation");

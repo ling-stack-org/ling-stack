@@ -25,6 +25,11 @@ import type { RuntimeHostCapacityJournal } from "../../runtime-host-capacity-sto
 
 type Ports = WorkflowStepStartReadStore & Pick<RunStore, "createTask" | "transitionTaskStatus" | "recordStateTransitionEvent" | "releaseResourceLease" | "listChannelWorkflowSteps" | "getWorkUnit" | "getWorkUnitAttempt" | "getApprovalRequest" | "getChannelWorkflowStepStartAdmission" | "createApprovalRequest">;
 
+function isNativeProfileBinding(value: unknown): boolean {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    && (value as { readonly kind?: unknown }).kind === "native_profile";
+}
+
 /** Synchronous SQLite transactions only. No provider, permission or filesystem await under lock. */
 export class SqliteChannelWorkflowStartStore {
   constructor(private readonly context: SqliteStoreContext, private readonly ports: Ports,
@@ -157,7 +162,10 @@ export class SqliteChannelWorkflowStartStore {
       if (task.currentRunId || this.context.database.prepare("SELECT id FROM run_sessions WHERE task_id=? AND id<>? LIMIT 1").get(task.id, run.id)) {
         return { status: "stale", code: "workflow_start_task_run_stale" };
       }
-      const requiresHostCapacity = this.hostCapacityJournal && attempt.effectiveRunnerId === "pi";
+      const executionBinding = run.requestSnapshot && typeof run.requestSnapshot === "object" && !Array.isArray(run.requestSnapshot)
+        ? (run.requestSnapshot as { readonly executionBinding?: unknown }).executionBinding : undefined;
+      const requiresHostCapacity = this.hostCapacityJournal
+        && (attempt.effectiveRunnerId === "pi" || isNativeProfileBinding(executionBinding));
       if (requiresHostCapacity && !input.hostCapacity) {
         return { status: "invalid", code: "runtime_host_capacity_dispatch_changed" };
       }

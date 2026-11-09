@@ -36,6 +36,96 @@ test("an exact first Pi source prepares one frozen durable intent and reopens wi
   assert.deepEqual(host.host.counts(), { held: 0, released: 0, total: 0 });
 });
 
+test("a native profile uses its frozen provider and engine slots for Host admission", async t => {
+  const host = hostCapacityFixture(t), f = await hostCapacityWorkspace(t, host), current = f.prepare("native-admission", {
+    requestOverrides: { executionBinding: { kind: "native_profile", engineId: "kimi-acp", profileId: "fixture", profileRevision: 3 } },
+  });
+  const prepared = f.journal.prepareExecution({ source: f.source(current), now: f.at(3) });
+  assert.ok(prepared.status === "prepared" || prepared.status === "duplicate", JSON.stringify(prepared));
+  const reserved = f.bridge.reserveExecution({ source: f.source(current), now: f.at(4) });
+  assert.ok(reserved.status === "reserved" || reserved.status === "duplicate", JSON.stringify(reserved));
+  assert.equal(reserved.record.intent.authorityDigest, prepared.record.intent.authorityDigest);
+  assert.equal(f.localAdmission(current, reserved.record), true);
+  assert.equal(f.journal.getIntent(reserved.record.intent.intentId)?.dispatchedAt, f.at(4));
+  assert.deepEqual(f.rows("runtime_semaphore_slots").map(row => [row.resource_type, row.resource_key]), [
+    ["provider", "native:fixture:3"], ["runner", "kimi-acp"], ["channel_parallel", f.channel.id],
+  ]);
+});
+
+test("a native Host reservation can be revoked before dispatch without starting the Attempt", async t => {
+  const host = hostCapacityFixture(t), f = await hostCapacityWorkspace(t, host), current = f.prepare("native-no-dispatch", {
+    requestOverrides: { executionBinding: { kind: "native_profile", engineId: "kimi-acp", profileId: "fixture", profileRevision: 1 } },
+  });
+  const reserved = f.bridge.reserveExecution({ source: f.source(current), now: f.at(3) });
+  assert.ok(reserved.status === "reserved" || reserved.status === "duplicate", JSON.stringify(reserved));
+  assert.equal(f.journal.prepareNoDispatchRelease({ intentId: reserved.record.intent.intentId, now: f.at(4) }).status, "prepared");
+  assert.equal(f.bridge.flushRelease(reserved.record.intent.intentId, f.at(5)), true);
+  assert.deepEqual(host.host.counts(), { held: 0, released: 1, total: 1 });
+  assert.equal(f.journal.getIntent(reserved.record.intent.intentId)?.dispatchedAt, undefined);
+});
+
+test("a native manual resume reuses Host capacity only with the same thread and profile", async t => {
+  const host = hostCapacityFixture(t), f = await hostCapacityWorkspace(t, host);
+  const parent = f.prepare("native-parent", {
+    kind: "conversation_run",
+    requestOverrides: { executionBinding: { kind: "native_profile", engineId: "kimi-acp", profileId: "fixture", profileRevision: 3 } },
+  });
+  const child = f.prepare("native-manual-resume", {
+    kind: "conversation_run", thread: parent.thread!,
+    requestOverrides: {
+      executionBinding: { kind: "native_profile", engineId: "kimi-acp", profileId: "fixture", profileRevision: 3 },
+      parentRunId: parent.run.id, continuationReason: "manual_resume",
+    },
+    runOverrides: { parentRunId: parent.run.id, continuationReason: "manual_resume" },
+  });
+  const prepared = f.journal.prepareExecution({ source: f.source(child), now: f.at(3) });
+  assert.ok(prepared.status === "prepared" || prepared.status === "duplicate", JSON.stringify(prepared));
+  const reserved = f.bridge.reserveExecution({ source: f.source(child), now: f.at(4) });
+  assert.ok(reserved.status === "reserved" || reserved.status === "duplicate", JSON.stringify(reserved));
+
+  const wrongProfile = f.prepare("native-manual-resume-wrong-profile", {
+    kind: "conversation_run", thread: parent.thread!,
+    requestOverrides: {
+      executionBinding: { kind: "native_profile", engineId: "kimi-acp", profileId: "fixture", profileRevision: 4 },
+      parentRunId: parent.run.id, continuationReason: "manual_resume",
+    },
+    runOverrides: { parentRunId: parent.run.id, continuationReason: "manual_resume" },
+  });
+  assert.equal(f.journal.prepareExecution({ source: f.source(wrongProfile), now: f.at(5) }).status, "changed");
+});
+
+test("a native intervention continuation requires its exact source and active intervention", async t => {
+  const host = hostCapacityFixture(t), f = await hostCapacityWorkspace(t, host);
+  const parent = f.prepare("native-intervention-parent", {
+    kind: "conversation_run",
+    requestOverrides: { executionBinding: { kind: "native_profile", engineId: "kimi-acp", profileId: "fixture", profileRevision: 3 } },
+  });
+  const intervention = f.store.createRunIntervention({ sourceRunId: parent.run.id, sourceWorkUnitId: parent.unit.id,
+    sourceAttemptId: parent.attempt.id, mode: "queue_followup", instruction: "Continue", idempotencyKey: "native-followup" }, f.at(3));
+  assert.equal(f.store.updateRunInterventionStatus({ interventionId: intervention.id, expectedStatuses: ["queued"],
+    status: "starting_continuation", startedAt: f.at(3), now: f.at(3) } )?.status, "starting_continuation");
+  const child = f.prepare("native-intervention-child", {
+    kind: "conversation_run", thread: parent.thread!,
+    requestOverrides: {
+      executionBinding: { kind: "native_profile", engineId: "kimi-acp", profileId: "fixture", profileRevision: 3 },
+      parentRunId: parent.run.id, interventionId: intervention.id, continuationReason: "queue_followup",
+    },
+    runOverrides: { parentRunId: parent.run.id, interventionId: intervention.id, continuationReason: "queue_followup" },
+  });
+  const prepared = f.journal.prepareExecution({ source: f.source(child), now: f.at(4) });
+  assert.ok(prepared.status === "prepared" || prepared.status === "duplicate", JSON.stringify(prepared));
+
+  const wrongMode = f.prepare("native-intervention-wrong-mode", {
+    kind: "conversation_run", thread: parent.thread!,
+    requestOverrides: {
+      executionBinding: { kind: "native_profile", engineId: "kimi-acp", profileId: "fixture", profileRevision: 3 },
+      parentRunId: parent.run.id, interventionId: intervention.id, continuationReason: "interrupt_redirect",
+    },
+    runOverrides: { parentRunId: parent.run.id, interventionId: intervention.id, continuationReason: "interrupt_redirect" },
+  });
+  assert.equal(f.journal.prepareExecution({ source: f.source(wrongMode), now: f.at(5) }).status, "changed");
+});
+
 test("a retry before the durable intent creation time never creates an unattachable Host reservation", async t => {
   const host = hostCapacityFixture(t), f = await hostCapacityWorkspace(t, host), current = f.prepare("clock-regression");
   const record = f.intent(current), before = f.journalSnapshot();

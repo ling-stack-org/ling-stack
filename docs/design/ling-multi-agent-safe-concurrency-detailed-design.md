@@ -471,18 +471,22 @@ authority，构造失败也会关闭 Host store。注入的外部 `storeFactory`
 因此不获得这条 Host authority。
 
 workspace 统一容量准入已覆盖 workflow preparing/transfer、dynamic delegation、approval
-resume 和 continuation，并由 Core/Daemon 定向回归覆盖；installation-global Host 的生产
-composition 仍以首次普通 Pi queue 为完整接线边界。native、automation、legacy owner 以及
-真实 Provider、packaged、跨平台的完整联合验收仍需继续，不能把当前实现称为整体发布完成。
+resume、continuation、native 和 automation，并由 Core/Daemon 定向回归覆盖。automation
+首次 Run 进入同一持久 queue 时保留原始 ready/terminal hook，Host 满额只保持 queued，
+释放后复用原 Run/Attempt 继续执行；heartbeat/native 仍必须通过各自的 execution binding
+与 continuation contract。legacy owner、真实 Provider、packaged、跨平台及所有执行链的
+完整联合验收仍需继续，不能把当前实现称为整体发布完成。
 
 冻结的 participant 身份不替代当前可用性：Core 最终准入事务与 daemon SDK 前复核均要求
 原 teammate 存在、active 且 visible。检查独立于 skill 和 memory 选择；停用、暂停或隐藏
 时不消费 gate、不取得资源，也不自动更换 teammate。恢复可用后仍以原 Run/Attempt
 身份重新仲裁，失效候选的退避不阻塞独立组。
 
-首次队列仅接受原始 Pi 执行、明确冻结的 tools 数组，以及 preset 或不含 secret 的匿名
-inline Provider。workflow、dynamic delegation、continuation、native 和 automation 保留
-各自 owning contract，不回填旧 queued Run 的恢复权限。准备 claim 的 TTL 不占执行槽
+首次队列的基础准入仍只接受原始 Pi 执行、明确冻结的 tools 数组，以及 preset 或不含
+secret 的匿名 inline Provider；workflow、dynamic delegation、continuation、native 和
+automation 通过各自 owning contract 进入统一 Host/queue 边界，不回填旧 queued Run 的
+恢复权限。automation 的 scheduler actor、heartbeat binding 和 terminal reconciliation
+必须由 owning contract 提供，不能由 queue 根据公开请求推断。准备 claim 的 TTL 不占执行槽
 或写锁；跨组持久轮转、组内 FIFO，失效组头退避且不阻塞其他组。协调器的准备上限以四个
 位置为公平性下限，并在可信 `RuntimeSupervisor.getConcurrencyPolicy().maxConcurrentRuns`
 更大时随配置提高；`onRunReady` 归还准备位，完整执行 Promise 仍被 shutdown/drain 跟踪；该值

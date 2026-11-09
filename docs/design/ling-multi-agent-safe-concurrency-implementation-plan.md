@@ -4,7 +4,8 @@
 构建、冻结输入下的完整相关 package 回归与受控 Provider 的真实 daemon 浏览器链路通过。
 Web 冲突修复、共享 UI、语言目录和夹具另有增量回归与真实浏览器验收；完整冻结回归
 不覆盖其后新增的源码。Daemon 独立 dependency-security lane 已通过；真实 Provider、
-packaged、跨平台与 review/CI/merge 尚未完成，不满足发布门禁。
+packaged、跨平台与 review/CI/merge 尚未完成，不满足发布门禁。B3.3 的 native/automation
+接缝代码已接入统一 Host/queue 路径并有受控 daemon 回归；这不等于所有执行链的联合发布验收。
 Owner：Ling maintainers。
 最后核对：2026-11-10。
 文档类型：implementation plan；完成后将长期规则归入 owning contracts，不保留完成日志。
@@ -526,8 +527,9 @@ coordinator。正常时间与 claim/resource TTL 过期后均保留原 fence、�
 不重派、不建 successor，独立组的两轮实际准入仍因原占位而排队。这不是完整 daemon
 server 启动或真实 Provider 验收，也不覆盖尚未接线的跨 workspace Host 总池。
 
-首次队列仅覆盖普通首次 Pi、明确 tools 数组、preset 或无 secret 匿名 inline；不覆盖
-workflow/delegation/continuation/native/automation。生产 daemon 注册与启动 coordinator，
+首次队列的基础准入仅覆盖普通首次 Pi、明确 tools 数组、preset 或无 secret 匿名 inline；
+workflow/delegation/continuation/native/automation 由各自 owning contract 接入同一 coordinator
+与 Host authority，不把公开 queue 请求当作这些路径的恢复凭证。生产 daemon 注册与启动 coordinator，
 入队/资源实际释放唤醒、周期 tick 兜底，shutdown 先停准备再等待完整执行。每 Store 至少
 保留 4 个 preparing 位，可信总容量更大时随配置提高；它们在 `onRunReady` 后归还，不是
 执行并发上限。
@@ -553,9 +555,11 @@ B3 必须在同用户存储根的全局数据库中建立 Host 总池，不把 w
 用户存储的 `global.sqlite` 安装 Host policy，queue claim 会执行 Host reserve/receipt，
 再由原子 dispatch gate 消费；已有 Host intent 时省略引用也拒绝。整组资源、Task/WorkUnit
 认领和两道 dispatch gate 原子提交。workspace 的 workflow、delegation、approval/continuation
-等容量接缝已有 Core/Daemon 定向回归；installation-global Host 的完整生产接线仍以首次
-普通 Pi queue 为边界，native/automation、legacy owner、真实 Provider、packaged 和跨平台
-联合验收未完成，不能宣称整体已达到发布门禁。
+等容量接缝已有 Core/Daemon 定向回归；native dispatcher 现在按 native profile 或 workflow
+start owner 选择对应 Host reservation，手动 resume 与 intervention continuation 复用绑定的
+engine/profile，automation 首次 Run 可在 Host 满额时 durable queue，scheduler actor、
+heartbeat execution binding 和 terminal 状态由 owning contract 保留。legacy owner、真实
+Provider、packaged 和跨平台联合验收未完成，不能宣称整体已达到发布门禁。
 
 Core 构造私有 binding 将可信 composition 的 workspace journal accessor 与公开 Store
 分离。构造失败或关闭即撤销 accessor、facade 与提取的方法；每个真实 workspace 与
@@ -640,6 +644,14 @@ terminal/drain 及资源释放；普通 writer 拒绝和 Host 策略关闭边界
 类型检查通过，Daemon/Web 生产构建、Web lint、i18n 和 Markdown link check 通过，且
 `git diff --check` 无输出。Core/Daemon 本次是受影响范围的定向集合，不替代全仓测试、真实
 外部 Provider、packaged、跨平台或 review/CI/merge 验收。
+
+同日 B3.3 执行链增量：Daemon `build` 与测试类型检查通过；`runtime-run-queue` coordinator、
+queue integration/recovery、native workflow Host capacity 和 automation heartbeat 相关回归通过。
+新增 TypeScript daemon fixture 以真实 daemon composition、唯一 installation-global Host SQLite、
+Host 最大并发 1 和受控 Pi SDK transport 验证两条不同 automation：第一条持有 Host reservation
+时第二条保持 durable `queued`，不进入 runner；第一条 terminal/drain 后第二条被唤醒并以原
+Run/Attempt 完成，WorkUnit actor 为 `scheduler`，AutomationRun 的 started/completed 状态与实际
+执行一致。该证据不覆盖外部 Provider、packaged、跨平台或完整 native/automation 故障矩阵。
 
 ### 代码责任与实现约束
 

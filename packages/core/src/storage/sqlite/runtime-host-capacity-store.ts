@@ -24,6 +24,11 @@ import { isRuntimeHostCapacityPausedStopProof, readRuntimeHostCapacityPausedStop
 type Ports = Pick<RunStore, "getRun" | "getTask" | "getChannel" | "getHostAttemptCompletion"
   | "releaseResourceLeasesForAttempt" | "releaseRuntimeSemaphoreSlotsForAttempt"> & HostCapacityContinuationPorts;
 type Row = Record<string, SQLOutputValue>;
+type LocalExecutionAdmission = Readonly<{
+  readonly providerKey: string;
+  readonly runnerKey: string;
+  readonly tools: readonly string[];
+}>;
 const hash = (value: unknown): string => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const sourceFields = ["runId", "workUnitId", "attemptId", "runtimeInstanceId", "fencingToken"] as const;
 const ownerKey = (source: HostOperationSource): string => hash(sourceFields.map(key => source[key]));
@@ -36,6 +41,11 @@ function isTimestamp(value: unknown): value is string {
 }
 function object(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+function jsonObject(value: unknown): Record<string, unknown> | undefined {
+  if (typeof value !== "string") return undefined;
+  try { return object(JSON.parse(value)); }
+  catch { return undefined; }
 }
 function text(value: unknown): asserts value is string {
   if (typeof value !== "string" || !value.trim() || /[\x00-\x1f\x7f]/u.test(value))
@@ -189,7 +199,7 @@ export class SqliteRuntimeHostCapacityStore {
     validateSource(input.source); timestamp(input.now);
     return this.write<PrepareRuntimeHostCapacityAttemptResult>(() => {
       const source = this.readSource(input.source);
-      if (!source || !(execution ? this.isOrdinaryPiSource(source) : this.isFirstPiSource(source))
+      if (!source || !(execution ? this.isOrdinaryExecutionSource(source) : this.isFirstPiSource(source))
         || !this.isPrestart(source, "attempt") || this.hasDispatchFacts(input.source))
         return { status: "changed" };
       const authorityDigest = this.authorityDigest(source);
@@ -586,7 +596,8 @@ export class SqliteRuntimeHostCapacityStore {
   }
 
   private isWorkflowStartSource(row: Row): boolean {
-    return row.runner_id === "pi" && row.attempt_number === 1 && typeof row.workflow_step_id === "string"
+    return (row.runner_id === "pi" || Boolean(this.nativeExecutionAdmission(row))) && row.attempt_number === 1
+      && typeof row.workflow_step_id === "string"
       && row.workflow_step_id.length > 0 && row.parent_run_id === null && row.continuation_reason === null
       && row.intervention_id === null && row.owner_type !== "delegation_step"
       && ["task_run", "conversation_run", "teammate_direct_reply"].includes(String(row.kind));
@@ -599,7 +610,7 @@ export class SqliteRuntimeHostCapacityStore {
   }
 
   private isDispatchableSource(row: Row, ownerKind: RuntimeHostCapacityIntentRecord["intent"]["ownerKind"]): boolean {
-    return ownerKind === "attempt" ? this.isOrdinaryPiSource(row, false)
+    return ownerKind === "attempt" ? this.isOrdinaryExecutionSource(row, false)
       : ownerKind === "workflow_start" ? this.isWorkflowStartSource(row)
         : ownerKind === "delegation_spawn" ? this.isDelegationSpawnSource(row)
           : ownerKind === "user_input_continuation" ? row.runner_id === "pi" && row.continuation_reason === "user_input_answer"
@@ -610,7 +621,7 @@ export class SqliteRuntimeHostCapacityStore {
     const resumingDelegation = ownerKind === "delegation_spawn" && row.step_state === "resuming";
     return row.attempt_status === "created" && row.attempt_started_at === null && row.attempt_ended_at === null
       && row.abort_requested_at === null && row.active_attempt_id === row.attempt_id
-      && (ownerKind !== "attempt" || this.isOrdinaryPiSource(row))
+      && (ownerKind !== "attempt" || this.isOrdinaryExecutionSource(row))
       && (ownerKind === "approval_resume_pending" ? row.unit_status === "running" && row.run_status === "running" : resumingDelegation
         ? row.unit_status === "claimed" && row.run_status === "running"
         : ["queued", "claimed"].includes(String(row.unit_status))
@@ -630,6 +641,68 @@ export class SqliteRuntimeHostCapacityStore {
       && (this.isFirstPiSource(row) || row.kind === "channel_ai_reply" && row.attempt_number === 1
         && row.workflow_step_id === null && row.parent_run_id === null && row.continuation_reason === null
         || this.hasOrdinaryContinuation(row, pendingOnly));
+  }
+
+  /** Native runs use the durable binding as their execution authority, not Pi's prepared input. */
+  private nativeExecutionAdmission(row: Row): LocalExecutionAdmission | undefined {
+    return this.nativeExecutionAdmissionForRequest(jsonObject(row.request_snapshot_json), row.runner_id);
+  }
+
+  private nativeExecutionAdmissionForRun(run: NonNullable<ReturnType<RunStore["getRun"]>>): LocalExecutionAdmission | undefined {
+    const request = object(run.requestSnapshot);
+    return this.nativeExecutionAdmissionForRequest(request, request?.runnerId);
+  }
+
+  private nativeExecutionAdmissionForRequest(request: Record<string, unknown> | undefined,
+    runnerId: unknown): LocalExecutionAdmission | undefined {
+    const binding = object(request?.executionBinding);
+    const engineId = binding?.engineId, profileId = binding?.profileId, profileRevision = binding?.profileRevision;
+    const tools = request?.tools;
+    if (binding?.kind !== "native_profile" || typeof engineId !== "string" || !engineId.trim()
+      || /[\x00-\x1f\x7f]/u.test(engineId) || typeof profileId !== "string" || !profileId.trim()
+      || /[\x00-\x1f\x7f]/u.test(profileId) || typeof profileRevision !== "number"
+      || !Number.isSafeInteger(profileRevision) || profileRevision < 1 || runnerId !== engineId
+      || !Array.isArray(tools) || tools.some(tool => typeof tool !== "string" || !tool.trim() || /[\x00-\x1f\x7f]/u.test(tool))) {
+      return undefined;
+    }
+    return Object.freeze({ providerKey: `native:${profileId}:${profileRevision}`, runnerKey: engineId,
+      tools: Object.freeze([...tools]) });
+  }
+
+  private isFirstNativeSource(row: Row): boolean {
+    return row.attempt_number === 1 && row.parent_run_id === null && row.continuation_reason === null
+      && row.intervention_id === null && row.owner_type !== "delegation_step"
+      && ["task_run", "conversation_run", "teammate_direct_reply", "channel_ai_reply"].includes(String(row.kind))
+      && Boolean(this.nativeExecutionAdmission(row));
+  }
+
+  private isNativeContinuationSource(row: Row): boolean {
+    const reason = row.continuation_reason;
+    if (!["manual_resume", "queue_followup", "interrupt_redirect"].includes(String(reason))
+      || typeof row.parent_run_id !== "string" || !row.parent_run_id || row.parent_run_id === row.run_id
+      || row.intervention_id !== null && typeof row.intervention_id !== "string") return false;
+    const child = this.ports.getRun(String(row.run_id));
+    const parent = this.ports.getRun(row.parent_run_id);
+    if (!child || !parent || !child.threadId || child.threadId !== parent.threadId) return false;
+    const childAdmission = this.nativeExecutionAdmission(row);
+    const parentAdmission = this.nativeExecutionAdmissionForRun(parent);
+    if (!childAdmission || !parentAdmission || childAdmission.runnerKey !== parentAdmission.runnerKey
+      || childAdmission.providerKey !== parentAdmission.providerKey) return false;
+    if (reason === "manual_resume") return row.intervention_id === null;
+    if (typeof row.intervention_id !== "string" || !row.intervention_id) return false;
+    const intervention = this.ports.getRunIntervention(row.intervention_id);
+    if (!intervention || intervention.sourceRunId !== parent.id || intervention.mode !== reason
+      || !["starting_continuation", "started"].includes(intervention.status)
+      || intervention.sourceWorkUnitId !== undefined && intervention.sourceWorkUnitId !== parent.workUnitId
+      || intervention.continuationRunId !== undefined && intervention.continuationRunId !== child.id
+      || intervention.continuationWorkUnitId !== undefined && intervention.continuationWorkUnitId !== row.work_unit_id
+      || intervention.status === "started" && intervention.continuationRunId !== child.id) return false;
+    return true;
+  }
+
+  private isOrdinaryExecutionSource(row: Row, pendingOnly = true): boolean {
+    return this.isOrdinaryPiSource(row, pendingOnly) || this.isFirstNativeSource(row)
+      || this.isNativeContinuationSource(row);
   }
 
   private authorityDigest(row: Row, workflowStart = false): string {
@@ -705,7 +778,10 @@ export class SqliteRuntimeHostCapacityStore {
 
   private hasCompleteLocalAdmission(source: HostOperationSource, now: string,
     ownerKind: RuntimeHostCapacityIntentRecord["intent"]["ownerKind"] = "attempt"): boolean {
-    if (ownerKind === "workflow_start" || ownerKind === "user_input_continuation") {
+    const sourceRow = this.readSource(source);
+    if (ownerKind === "workflow_start" || ownerKind === "user_input_continuation"
+      || ownerKind === "attempt" && sourceRow !== undefined && sourceRow.workflow_step_id !== null
+      && this.isFirstNativeSource(sourceRow)) {
       const transferred = this.context.database.prepare(`SELECT admission.task_id FROM workflow_step_admissions AS admission
         JOIN run_sessions AS run ON run.workflow_step_id=admission.workflow_step_id
           AND run.id=? AND run.work_unit_id=?
@@ -720,16 +796,20 @@ export class SqliteRuntimeHostCapacityStore {
     }
     const run = this.ports.getRun(source.runId);
     if (!run) return false;
-    const request = run.requestSnapshot as { runnerExecutionInput?: { runnerId?: string; input?: { tools?: unknown } } };
+    const request = run.requestSnapshot as { runnerExecutionInput?: { runnerId?: string; input?: { tools?: unknown } }; tools?: unknown };
     const execution = request?.runnerExecutionInput, tools = execution?.input?.tools;
+    const native = sourceRow ? this.nativeExecutionAdmission(sourceRow) : undefined;
     const localBash = ownerKind === "approval_resume_pending"
       && (run.requestSnapshot as { harnessFeatureSnapshot?: { continuations?: string } })?.harnessFeatureSnapshot?.continuations !== "enforce";
-    if (!localBash && (execution?.runnerId !== "pi" || !Array.isArray(tools) || tools.some(tool => typeof tool !== "string"))) return false;
+    const effectiveTools = native?.tools ?? (Array.isArray(tools) ? tools : undefined);
+    if (!localBash && !native && (execution?.runnerId !== "pi" || !effectiveTools
+      || effectiveTools.some(tool => typeof tool !== "string"))) return false;
+    if (!effectiveTools || effectiveTools.some(tool => typeof tool !== "string")) return false;
     const channel = run.channelId ? this.ports.getChannel(run.channelId) : undefined;
     if (run.channelId && (!channel || channel.status !== "active")) return false;
     const leases = new Map<string, string>();
     if (ownerKind !== "delegation_spawn" && this.ports.getTask(run.taskId)) leases.set("task", run.taskId);
-    if (localBash || (tools as readonly string[]).some(tool => ["write", "edit", "bash"].includes(tool))) {
+    if (localBash || effectiveTools.some(tool => ["write", "edit", "bash"].includes(tool))) {
       const scope = channel?.runtimePolicy.writeLockScope ?? "boundPath";
       if (scope === "workspace" || scope === "channel" && !channel) leases.set("workspace", this.identity.workspaceId);
       else if (scope === "channel" && channel) leases.set("channel", channel.id);
@@ -739,7 +819,8 @@ export class SqliteRuntimeHostCapacityStore {
       }
     }
     const slots = new Map<string, string>([["provider", localBash ? "approval-resume-local-bash"
-      : run.providerPresetId ?? `${run.providerName}:${run.providerModel}`], ["runner", "pi"]]);
+      : native?.providerKey ?? run.providerPresetId ?? `${run.providerName}:${run.providerModel}`],
+      ["runner", native?.runnerKey ?? "pi"]]);
     if (channel && ownerKind !== "delegation_spawn") slots.set("channel_parallel", channel.id);
     const matches = (table: string, expected: ReadonlyMap<string, string>, ownerType: string, ownerId: string): boolean => {
       const rows = this.context.database.prepare(`SELECT * FROM ${table} WHERE attempt_id=? AND status='active'`).all(source.attemptId);

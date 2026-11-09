@@ -7,7 +7,7 @@ import type { RuntimeHostCapacityApprovalResumePendingInput, RuntimeHostCapacity
   RuntimeHostCapacityUserInputPendingInput } from "../../runtime-host-capacity-types.js";
 import type { UserInputContinuationExecutionPlan } from "../../user-input-host-continuation-types.js";
 
-export type HostCapacityContinuationPorts = Pick<RunStore, "getApprovalCheckpoint" | "getApprovalRequest" | "getRun"
+export type HostCapacityContinuationPorts = Pick<RunStore, "getApprovalCheckpoint" | "getApprovalRequest" | "getRun" | "getRunIntervention"
   | "getWorkUnit" | "getWorkUnitAttempt" | "getUserInputContinuationSeed" | "getUserInputContinuationPreparation"
   | "getUserInputContinuationBinding" | "getUserInputDelivery" | "getUserInputWait">;
 type Authority = { readonly ownerKey: string; readonly authorityDigest: string };

@@ -186,6 +186,7 @@ async function executeNativeRunRequest(
   let hostCapacityAdmission: import("../../runtime/run-queue.js").RuntimeHostCapacityAdmission | undefined;
   let hostCapacityReference: import("@ling-stack/core/runtime-host-capacity-store-bridge").RuntimeHostCapacityDispatchReference | undefined;
   let hostCapacityDispatched = false;
+  let workflowHostCapacity = false;
   let runId = "";
   let createdAt = "";
   let workflowStartOwner: WorkflowStepStartOwnerV1 | undefined;
@@ -298,7 +299,7 @@ async function executeNativeRunRequest(
       requestedRunnerId: binding.engineId,
       effectiveRunnerId: binding.engineId,
       idempotencyKey,
-      createdByActor: "user",
+      createdByActor: runRequest.createdByActor === "automation" ? "scheduler" : "user",
       linkedMessageId: runRequest.linkedMessageId,
       request: {
         ...durableRunRequest,
@@ -346,16 +347,24 @@ async function executeNativeRunRequest(
       runId, workspaceCwd, workUnit, attempt, thread, turn, runtimeSettings,
       effectivePolicySnapshot, channelWorkspaceSnapshot, runnerResolution, createdAt });
     if (hostCapacityAdmission) {
-      const reserved = hostCapacityAdmission.reserveExecution({ workspaceId: workUnit.workspaceId,
-        source: { runId: run.id, ...toRuntimeAttemptFence(attempt) }, now: createdAt });
+      const source = { runId: run.id, ...toRuntimeAttemptFence(attempt) };
+      // A native workflow start owns the Host start gate even when an older
+      // workflow step has no local safety admission record. The Core ready
+      // transaction still requires that gate for every native binding.
+      workflowHostCapacity = Boolean(runRequest.workflowStepId && workflowStartOwner?.phase === "preparing");
+      const reserved = workflowHostCapacity
+        ? hostCapacityAdmission.reserveWorkflowStart({ workspaceId: workUnit.workspaceId, source, now: createdAt })
+        : hostCapacityAdmission.reserveExecution({ workspaceId: workUnit.workspaceId, source, now: createdAt });
       if (reserved.status !== "reserved" && reserved.status !== "duplicate") {
         throw new HttpError(409, `runtime_host_capacity_${reserved.status}`,
-          "Native execution is waiting for Host capacity.");
+          workflowHostCapacity ? "Native workflow start is waiting for Host capacity." : "Native execution is waiting for Host capacity.");
       }
       hostCapacityReference = reserved.reference;
     }
     appendRunCreatedControlPlaneEvent(store, dependencies.controlPlaneEvents, workspaceCwd, run, createdAt);
-    commitWorkflowStartReady(store, runRequest, run.id, workflowStartOwner);
+    commitWorkflowStartReady(store, runRequest, run.id, workflowStartOwner,
+      workflowHostCapacity && hostCapacityReference ? { hostCapacity: hostCapacityReference } : undefined);
+    if (workflowHostCapacity && hostCapacityReference) hostCapacityDispatched = true;
   } catch (error) {
     if (error instanceof QueueableRunConflictError && store && workUnit && attempt && runnerResolution
       && runtimeSettings && effectivePolicySnapshot && thread && turn) {
@@ -369,7 +378,7 @@ async function executeNativeRunRequest(
         sink.writeError(statusCode(ownerError), { error: errorCode(ownerError), message: String(ownerError) });
         return undefined;
       }
-      notifyRunReady(input.executionOptions.onRunReady, run.id);
+      notifyRunReady(input.executionOptions.onRunReady, run.id, { queued: true });
       sink.writeReady({ ok: true, runId: run.id, workUnitId: workUnit.id, queued: true, queueReason: error.code });
       appendRunCreatedControlPlaneEvent(store, dependencies.controlPlaneEvents, workspaceCwd, run, queuedAt);
       sink.end();
@@ -499,8 +508,10 @@ async function executeNativeRunRequest(
     };
     assertCurrentAuthority();
     const onDispatchAccepted = (acceptedAt: string): void => {
-      if (!hostCapacityAdmission || !hostCapacityReference) return;
-      if (hostCapacityDispatched) throw new Error("Native Host dispatch was acknowledged more than once.");
+      // Workflow starts consume their durable Host gate while the workflow
+      // owner is linked. The native target still reports its process-level
+      // acceptance, but that callback must not consume the same receipt twice.
+      if (!hostCapacityAdmission || !hostCapacityReference || hostCapacityDispatched) return;
       if (!hostCapacityAdmission.consumeDispatch({ workspaceId: workUnit!.workspaceId,
         source, reference: hostCapacityReference, now: acceptedAt })) {
         throw new HttpError(409, "runtime_host_capacity_changed",

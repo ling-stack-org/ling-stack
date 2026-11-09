@@ -853,8 +853,8 @@ export async function routeRequest(
             secretResolver,
             mcpBroker,
             {
-              onRunReady: (runId) => {
-                hooks.onRunReady?.(runId);
+              onRunReady: (runId, info) => {
+                hooks.onRunReady?.(runId, info);
                 onRunReady(runId);
               },
               afterRunTerminal: async (terminalRun) => {
