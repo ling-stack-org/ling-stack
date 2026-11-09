@@ -24,16 +24,22 @@ function deferred() {
 }
 
 // Finite selections exercise scheduling, without emulating SQLite admission or a Provider.
-function scriptedStore(label: string, count = 0, workspaceId = DEFAULT_WORKSPACE_ID) {
+function scriptedStore(label: string, count = 0, workspaceId = DEFAULT_WORKSPACE_ID,
+  additionalWorkspaces: readonly { readonly workspaceId: string; readonly count: number }[] = []) {
   const pending = Array.from({ length: count }, (_, index) => `${label}-${index + 1}`);
+  const pendingByWorkspace = new Map<string, string[]>([[workspaceId, pending]]);
+  for (const additional of additionalWorkspaces) {
+    pendingByWorkspace.set(additional.workspaceId,
+      Array.from({ length: additional.count }, (_, index) => `${label}-${additional.workspaceId}-${index + 1}`));
+  }
   const claimInputs: ClaimInput[] = [], claimed: Claimed[] = [], deferrals: Deferral[] = [];
   const revisions = new Map<string, number>();
   const store = {
     paths: { cwd: `/queue-coordinator/${label}`, identity: { workspaceId } },
-    listWorkspaceIds() { return [workspaceId]; },
+    listWorkspaceIds() { return [...pendingByWorkspace.keys()]; },
     claimNextRuntimeRun(input: ClaimInput): ReturnType<RunStore["claimNextRuntimeRun"]> {
       claimInputs.push(input);
-      const runId = pending.shift();
+      const runId = pendingByWorkspace.get(input.workspaceId)?.shift();
       if (!runId) return { status: "empty" };
       const revision = (revisions.get(runId) ?? 1) + 1;
       revisions.set(runId, revision);
@@ -41,7 +47,7 @@ function scriptedStore(label: string, count = 0, workspaceId = DEFAULT_WORKSPACE
         runtimeInstanceId: `accepted-${label}`, fencingToken: `fence-${runId}` });
       const claim = Object.freeze({ runId, revision, sourceFence, ownerId: input.ownerId,
         token: `claim-${runId}-${revision}`, runtimeInstanceId: input.runtimeInstanceId });
-      const entry: RuntimeRunQueueEntry = { sequence: claimed.length + 1, runId, workspaceId, sourceFence,
+      const entry: RuntimeRunQueueEntry = { sequence: claimed.length + 1, runId, workspaceId: input.workspaceId, sourceFence,
         snapshotDigest: "a".repeat(64), groupKey: label, queuedAt: input.now,
         reason: claimed.length % 2 ? "resource_conflict" : "runtime_semaphore_conflict",
         revision: claim.revision, lastSelected: claimed.length + 1, claim,
@@ -54,7 +60,7 @@ function scriptedStore(label: string, count = 0, workspaceId = DEFAULT_WORKSPACE
     getRun(runId: string) { return { id: runId, status: "succeeded" as const }; },
   };
   // The coordinator reads only cwd, claims, deferrals and the terminal Run status.
-  return { store: store as unknown as RunStore, pending, claimInputs, claimed, deferrals };
+  return { store: store as unknown as RunStore, pending, pendingByWorkspace, claimInputs, claimed, deferrals };
 }
 
 function fixture(t: TestContext, stores: ReturnType<typeof scriptedStore>[] = [],
@@ -169,6 +175,38 @@ test("Host capacity full defers a claim without starting execution", async t => 
   assert.equal(f.executions.length, 0);
   assert.equal(queue.deferrals.length, 1);
   assert.equal(queue.deferrals[0]!.reason, "runtime_semaphore_conflict");
+});
+
+test("workspace scans rotate before the global claim-attempt bound", async t => {
+  const laterWorkspaceId = "workspace_later";
+  const queue = scriptedStore("workspace-fairness", 20, DEFAULT_WORKSPACE_ID,
+    [{ workspaceId: laterWorkspaceId, count: 20 }]);
+  const reserve = t.mock.fn<HostCapacity["reserve"]>(() => ({ status: "full" }));
+  const f = fixture(t, [queue], { maxConcurrentRuns: 32, hostCapacity: {
+    reserve,
+    reserveExecution: t.mock.fn<HostCapacity["reserveExecution"]>(() => ({ status: "changed" })),
+    reserveApprovalResumePending: t.mock.fn<HostCapacity["reserveApprovalResumePending"]>(() => ({ status: "changed" })),
+    reserveUserInputContinuation: t.mock.fn<HostCapacity["reserveUserInputContinuation"]>(() => ({ status: "changed" })),
+    getAttemptReference: t.mock.fn<HostCapacity["getAttemptReference"]>(() => undefined),
+    consumeDispatch: t.mock.fn<HostCapacity["consumeDispatch"]>(() => false),
+    reserveWorkflowStart: t.mock.fn<HostCapacity["reserveWorkflowStart"]>(() => ({ status: "changed" })),
+    reserveDelegationSpawn: t.mock.fn<HostCapacity["reserveDelegationSpawn"]>(() => ({ status: "changed" })),
+    reserveDelegationPending: t.mock.fn<HostCapacity["reserveDelegationPending"]>(() => ({ status: "changed" })),
+    releaseNoDispatch: t.mock.fn<HostCapacity["releaseNoDispatch"]>(() => true),
+    releaseStopped: t.mock.fn<HostCapacity["releaseStopped"]>(() => true),
+  } });
+  f.coordinator.start();
+  await nextTurn();
+  assert.equal(f.executions.length, 0);
+  assert.equal(queue.claimed.length, 16);
+  assert.deepEqual(queue.claimed.map(item => item.entry.workspaceId), [
+    DEFAULT_WORKSPACE_ID, laterWorkspaceId, DEFAULT_WORKSPACE_ID, laterWorkspaceId,
+    DEFAULT_WORKSPACE_ID, laterWorkspaceId, DEFAULT_WORKSPACE_ID, laterWorkspaceId,
+    DEFAULT_WORKSPACE_ID, laterWorkspaceId, DEFAULT_WORKSPACE_ID, laterWorkspaceId,
+    DEFAULT_WORKSPACE_ID, laterWorkspaceId, DEFAULT_WORKSPACE_ID, laterWorkspaceId,
+  ]);
+  assert.equal(queue.deferrals.length, 16);
+  assert.equal(reserve.mock.calls.length, 16);
 });
 
 test("claims use the registered Store workspace identity", async t => {
