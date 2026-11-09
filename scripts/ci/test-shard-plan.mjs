@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 export const testSuites = {
   core: { packageName: "@ling-stack/core", cwd: join(root, "packages/core"), platform: "linux", shardCount: 4, concurrency: 2, excluded: [], exclusive: [] },
-  daemon: { packageName: "@ling-stack/daemon", cwd: join(root, "packages/daemon"), platform: "darwin", shardCount: 6, concurrency: 2,
+  daemon: { packageName: "@ling-stack/daemon", cwd: join(root, "packages/daemon"), platform: "darwin", shardCount: 6, concurrency: 4,
     excluded: ["dependency-security.test.mjs"],
     // Keep explicit hosted-runner allowances for high-cost workflow fixtures.
     // Split channel files use the ordinary five-minute watchdog and workers.

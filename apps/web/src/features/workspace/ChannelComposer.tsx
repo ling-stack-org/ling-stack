@@ -4,7 +4,7 @@ import type {
   KeyboardEvent as ReactKeyboardEvent,
   PointerEvent as ReactPointerEvent,
   ReactNode,
-  Ref,
+  RefObject,
 } from "react";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import {
@@ -54,6 +54,7 @@ import type {
   LingThreadGoal,
   PermissionPreset,
 } from "../../types.js";
+import { DesktopDictationButton } from "./DesktopDictationButton.js";
 import {
   ChannelComposerFeedback,
   type ChannelComposerInlineFeedback,
@@ -72,6 +73,7 @@ export interface ActiveMentionPicker {
 }
 
 interface ChannelComposerProps {
+  readonly workspaceCwd: string;
   readonly statusNode: ReactNode;
   readonly runtimeMetrics?: ConversationRuntimeMetrics;
   readonly guidanceModeActive: boolean;
@@ -87,7 +89,7 @@ interface ChannelComposerProps {
   readonly executableSlashCommandId: string | undefined;
   readonly dropZoneClassName?: string;
   readonly inputParts: TokenizedComposerInputProps["parts"];
-  readonly inputRef: Ref<TokenizedComposerInputHandle>;
+  readonly inputRef: RefObject<TokenizedComposerInputHandle | null>;
   readonly isCancellingRun: boolean;
   readonly mentionActiveIndex: number;
   readonly mentionPicker: ActiveMentionPicker | undefined;
@@ -251,6 +253,7 @@ export function ChannelComposer({
   submitBusy = false,
   onStartIsolatedWorkflow,
   value,
+  workspaceCwd,
 }: ChannelComposerProps): React.JSX.Element {
   const { t, locale } = useI18n();
   const [addMenuOpen, setAddMenuOpen] = useState(false);
@@ -266,6 +269,20 @@ export function ChannelComposer({
   const goalContinueDisabled = goalBusy || goalPaused;
   const goalStatusLabel = goal ? t(`goal.status.${goal.status}`) : "";
   const composerRootRef = useRef<HTMLElement>(null);
+
+  function insertDictationText(text: string): void {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    const start = inputRef.current?.readSelectionStart() ?? value.length;
+    const end = inputRef.current?.readSelectionEnd() ?? start;
+    const prefix = value.slice(0, start);
+    const suffix = value.slice(end);
+    const separator = prefix && !/\s$/u.test(prefix) && !/^\s/u.test(trimmed) ? " " : "";
+    const next = `${prefix}${separator}${trimmed}${suffix}`;
+    const caret = prefix.length + separator.length + trimmed.length;
+    onInputChange(next, caret);
+    inputRef.current?.focusAt(caret);
+  }
 
   useLayoutEffect(() => {
     const root = composerRootRef.current;
@@ -576,6 +593,11 @@ export function ChannelComposer({
           <button className="icon-button composer-tool-button" type="button" onClick={onInsertMentionTrigger} disabled={!selectedChannelId || composerBusy} aria-label={t("Mention teammate")} title={t("Mention teammate")}>
             <AtSign size={16} />
           </button>
+          <DesktopDictationButton
+            cwd={workspaceCwd}
+            disabled={!selectedChannelId || composerBusy}
+            onInsertText={insertDictationText}
+          />
           <ConversationPermissionControl
             authorizationMode={authorizationMode}
             permissionPreset={permissionPreset}

@@ -212,6 +212,7 @@ import {
   handleProviderItem,
   handleProviderModelImport,
   handleProviderModelsProbe,
+  handleTranscription,
   handleProvidersCollection,
   handleSecretStatus,
 } from "../features/providers/routes.js";
@@ -778,6 +779,12 @@ export async function routeRequest(
 
   if (url.pathname === "/providers") {
     await handleProvidersCollection(request, response, config, storeRegistry, secretResolver, controlPlaneEvents);
+    return;
+  }
+
+  if (url.pathname === "/transcribe") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) return;
+    await handleTranscription(request, response, config, storeRegistry, secretResolver);
     return;
   }
 

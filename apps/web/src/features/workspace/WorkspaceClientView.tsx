@@ -3027,6 +3027,7 @@ export function WorkspaceClientView({
     {sessionRestore.id === channelSession?.id && sessionRestore.error ? <span role="alert">{sessionRestore.error}</span> : null}
   </InlineFeedback> : (
     <ChannelComposer
+      workspaceCwd={cwd}
       statusNode={channelActiveStatusStrip}
       runtimeMetrics={channelRuntimeMetrics}
       guidanceModeActive={guidanceModeActive}

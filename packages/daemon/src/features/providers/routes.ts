@@ -19,9 +19,15 @@ import { HttpError } from "../../errors.js";
 import type { ControlPlaneEventHub } from "../control-plane/events.js";
 import { appendControlPlaneEvent } from "../control-plane/events.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
-import { readJsonBody, readOptionalJsonBody } from "../../shared/request.js";
+import { readJsonBody, readOptionalJsonBody, readRequestBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import { listProviderModels } from "./models.js";
+import {
+  ProviderSecretMaterializationError,
+  applyProviderAuthHeaders,
+  materializeProviderSecrets,
+} from "./secret-materializer.js";
+import { transcribeOpenAICompatibleAudio, TranscriptionProviderError } from "./transcription.js";
 import { checkProviderPreset } from "./preflight.js";
 import { publishProviderCheckResult } from "./check-publication.js";
 import type { ProviderImportPreflightService } from "./import-preflight.js";
@@ -62,6 +68,127 @@ export function handleSecretStatus(response: ServerResponse, url: URL, secretRes
   }
   const status = secretResolver.status(ref, purpose);
   writeJson(response, 200, { status });
+}
+
+const MAX_TRANSCRIPTION_BODY_BYTES = 25 * 1024 * 1024;
+const MAX_TRANSCRIPTION_REQUEST_BYTES = 40 * 1024 * 1024;
+
+export async function handleTranscription(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  secretResolver: SecretResolver,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+  if (request.method !== "POST") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /transcribe` });
+    return;
+  }
+
+  try {
+    const form = await readMultipartFormData(request, Math.min(config.maxBodyBytes, MAX_TRANSCRIPTION_REQUEST_BYTES));
+    const file = form.get("file") ?? form.get("audio");
+    if (!(file instanceof Blob) || file.size === 0) {
+      throw new HttpError(400, "bad_request", "A non-empty audio file is required.");
+    }
+    if (file.size > MAX_TRANSCRIPTION_BODY_BYTES) {
+      throw new HttpError(413, "payload_too_large", "Audio recording exceeds the 25 MiB limit.");
+    }
+
+    const store = storeRegistry.getStore(cwd);
+    const requestedProviderId = formText(form, "providerPresetId");
+    const provider = resolveTranscriptionProvider(store.listProviderPresets(), requestedProviderId);
+    if (!provider) {
+      throw new HttpError(400, "asr_provider_missing", "No enabled provider with the asr capability is configured.");
+    }
+    if (provider.api !== "openai-completions") {
+      throw new HttpError(400, "unsupported_capability", "The selected ASR provider must use the OpenAI-compatible protocol.");
+    }
+
+    let materialized;
+    try {
+      materialized = materializeProviderSecrets({ store, preset: provider, secretResolver });
+    } catch (error) {
+      if (error instanceof ProviderSecretMaterializationError) {
+        throw new HttpError(400, error.code, error.message);
+      }
+      throw error;
+    }
+
+    const text = await transcribeOpenAICompatibleAudio({
+      provider,
+      audio: file,
+      filename: fileName(file),
+      headers: applyProviderAuthHeaders({ ...materialized.headers }, provider, materialized.apiKeySecret.value),
+      redactionValues: materialized.redactionValues,
+      language: formText(form, "language"),
+      prompt: formText(form, "prompt"),
+    });
+    writeJson(response, 200, { text, providerId: provider.id, model: provider.model });
+  } catch (error) {
+    if (error instanceof HttpError) {
+      writeJson(response, error.statusCode, { error: error.code, message: error.message });
+      return;
+    }
+    if (error instanceof TranscriptionProviderError) {
+      writeJson(response, error.statusCode, { error: error.code, message: error.message });
+      return;
+    }
+    writeJson(response, 400, {
+      error: "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function readMultipartFormData(request: IncomingMessage, maxBytes: number): Promise<FormData> {
+  const contentType = request.headers["content-type"];
+  if (typeof contentType !== "string" || !contentType.toLowerCase().startsWith("multipart/form-data")) {
+    throw new HttpError(415, "unsupported_media_type", "Transcription requests must use multipart/form-data.");
+  }
+  let body: Buffer;
+  try {
+    body = await readRequestBody(request, maxBytes);
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Request body exceeds")) {
+      throw new HttpError(413, "payload_too_large", `Transcription request exceeds the ${Math.round(maxBytes / (1024 * 1024))} MiB limit.`);
+    }
+    throw error;
+  }
+  try {
+    return await new Response(body as unknown as BodyInit, { headers: { "content-type": contentType } }).formData();
+  } catch {
+    throw new HttpError(400, "bad_request", "Transcription multipart form data is invalid.");
+  }
+}
+
+function resolveTranscriptionProvider(providers: readonly ProviderPreset[], providerId: string | undefined): ProviderPreset | undefined {
+  if (providerId) {
+    const provider = providers.find((candidate) => candidate.id === providerId);
+    if (!provider || !provider.enabled || !provider.capabilities.includes("asr")) {
+      throw new HttpError(400, "asr_provider_unavailable", "The requested ASR provider is disabled or does not expose asr capability.");
+    }
+    return provider;
+  }
+  return [...providers]
+    .filter((provider) => provider.enabled && provider.capabilities.includes("asr"))
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id))[0];
+}
+
+function formText(form: FormData, name: string): string | undefined {
+  const value = form.get(name);
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function fileName(file: Blob): string {
+  const candidate = (file as Blob & { readonly name?: unknown }).name;
+  return typeof candidate === "string" && candidate.trim() ? candidate.trim() : "recording.webm";
 }
 
 export async function handleProvidersCollection(

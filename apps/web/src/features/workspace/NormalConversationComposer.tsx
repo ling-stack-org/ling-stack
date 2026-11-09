@@ -1,4 +1,4 @@
-import { type DragEvent, type KeyboardEvent, type ReactNode, type Ref, useRef } from "react";
+import { type DragEvent, type KeyboardEvent, type ReactNode, type RefObject, useRef } from "react";
 import { ArrowUp, CircleAlert, FileText, Mic, MicOff, Plus, RotateCcw, SlidersHorizontal, Square } from "lucide-react";
 import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
 import type { ConversationRuntimeMetrics } from "@ling-stack/contracts";
@@ -18,6 +18,7 @@ import {
   StatusIndicator,
 } from "../../shared/ui/index.js";
 import { ComposerPendingAssetStrip, type ActiveSlashCommandPicker, type PendingAttachmentItem } from "../../shared/components/index.js";
+import { DesktopDictationButton } from "./DesktopDictationButton.js";
 import { useVoiceDictation } from "../../shared/conversation/use-voice-dictation.js";
 import { appendDictation, voiceErrorMessage } from "../../shared/conversation/voice-dictation-machine.js";
 import type { AuthorizationMode, ConversationAttachment, PermissionPreset, ProviderThinkingMode } from "../../types.js";
@@ -26,9 +27,10 @@ import { ConversationModelControl } from "./ConversationModelControl.js";
 import type { ConversationHomeModelOption } from "./normal-conversation-types.js";
 
 export interface NormalConversationComposerProps {
+  readonly workspaceCwd: string;
   readonly draft: string;
   readonly runtimeMetrics?: ConversationRuntimeMetrics;
-  readonly inputRef: Ref<TokenizedComposerInputHandle>;
+  readonly inputRef: RefObject<TokenizedComposerInputHandle | null>;
   readonly inputParts: TokenizedComposerInputProps["parts"];
   readonly slashPicker?: ActiveSlashCommandPicker;
   readonly slashOptions: readonly ComposerSlashCommandOption[];
@@ -119,6 +121,7 @@ export function NormalConversationComposer({
   slashOptions,
   slashPicker,
   stopping,
+  workspaceCwd,
 }: NormalConversationComposerProps): React.JSX.Element {
   const { t, locale } = useI18n();
   const activeProviderPresetId = selectedProviderPresetId || defaultProviderPresetId;
@@ -136,6 +139,7 @@ export function NormalConversationComposer({
     },
   });
   const dictating = voice.status === "recording";
+  const desktopHosted = typeof window !== "undefined" && Boolean(window.lingDesktop);
 
   const configurationLocked = sendBusy || activeRun || !scopeReady;
   const attachmentsLocked = sendBusy || !scopeReady;
@@ -143,6 +147,20 @@ export function NormalConversationComposer({
   const actionLabel = stopAvailable ? (stopping ? t("Stopping") : t("Stop")) : recoveringSubmission ? t("Retry") : t("Send");
   const actionLoading = stopping || sendBusy;
   const ActionIcon = stopAvailable ? Square : recoveringSubmission ? RotateCcw : ArrowUp;
+
+  function insertDictationText(text: string): void {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    const start = inputRef.current?.readSelectionStart() ?? draft.length;
+    const end = inputRef.current?.readSelectionEnd() ?? start;
+    const prefix = draft.slice(0, start);
+    const suffix = draft.slice(end);
+    const separator = prefix && !/\s$/u.test(prefix) && !/^\s/u.test(trimmed) ? " " : "";
+    const next = `${prefix}${separator}${trimmed}${suffix}`;
+    const caret = prefix.length + separator.length + trimmed.length;
+    onDraftChange(next, caret);
+    inputRef.current?.focusAt(caret);
+  }
 
   return (
     <ConversationComposerShell
@@ -253,7 +271,13 @@ export function NormalConversationComposer({
               }}
             />
           </label>
-          {voice.supported ? (
+          {desktopHosted ? (
+            <DesktopDictationButton
+              cwd={workspaceCwd}
+              disabled={configurationLocked}
+              onInsertText={insertDictationText}
+            />
+          ) : voice.supported ? (
             <button
               type="button"
               className={dictating ? "icon-button composer-tool-button composer-dictate-button dictating" : "icon-button composer-tool-button composer-dictate-button"}

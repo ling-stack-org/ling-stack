@@ -1,23 +1,13 @@
 import type { IncomingMessage } from "node:http";
 
 export async function readJsonBody(request: IncomingMessage, maxBytes: number): Promise<unknown> {
-  const chunks: Buffer[] = [];
-  let totalBytes = 0;
+  const body = await readRequestBody(request, maxBytes);
 
-  for await (const chunk of request) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    totalBytes += buffer.byteLength;
-    if (totalBytes > maxBytes) {
-      throw new Error(`Request body exceeds ${maxBytes} bytes`);
-    }
-    chunks.push(buffer);
-  }
-
-  if (chunks.length === 0) {
+  if (body.byteLength === 0) {
     throw new Error("Request body is required");
   }
 
-  const text = Buffer.concat(chunks).toString("utf8");
+  const text = body.toString("utf8");
   try {
     return JSON.parse(text) as unknown;
   } catch {
@@ -26,23 +16,13 @@ export async function readJsonBody(request: IncomingMessage, maxBytes: number): 
 }
 
 export async function readOptionalJsonBody(request: IncomingMessage, maxBytes: number): Promise<unknown | undefined> {
-  const chunks: Buffer[] = [];
-  let totalBytes = 0;
+  const body = await readRequestBody(request, maxBytes);
 
-  for await (const chunk of request) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    totalBytes += buffer.byteLength;
-    if (totalBytes > maxBytes) {
-      throw new Error(`Request body exceeds ${maxBytes} bytes`);
-    }
-    chunks.push(buffer);
-  }
-
-  if (chunks.length === 0) {
+  if (body.byteLength === 0) {
     return undefined;
   }
 
-  const text = Buffer.concat(chunks).toString("utf8").trim();
+  const text = body.toString("utf8").trim();
   if (!text) {
     return undefined;
   }
@@ -51,6 +31,20 @@ export async function readOptionalJsonBody(request: IncomingMessage, maxBytes: n
   } catch {
     throw new Error("Request body must be valid JSON");
   }
+}
+
+export async function readRequestBody(request: IncomingMessage, maxBytes: number): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+  for await (const chunk of request) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    totalBytes += buffer.byteLength;
+    if (totalBytes > maxBytes) {
+      throw new Error(`Request body exceeds ${maxBytes} bytes`);
+    }
+    chunks.push(buffer);
+  }
+  return Buffer.concat(chunks);
 }
 
 export function readOptionalIntegerQuery(url: URL, key: string, minValue: number): number | undefined {

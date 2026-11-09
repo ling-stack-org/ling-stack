@@ -2,13 +2,16 @@ import { execFileSync } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 
 function ps(args) {
-  try {
-    return execFileSync("ps", args, { encoding: "utf8", timeout: 5000, maxBuffer: 32 * 1024 * 1024,
-      env: { ...process.env, LC_ALL: "C" }, stdio: ["ignore", "pipe", "pipe"] });
-  } catch {
-    // ps environment output can contain credentials. Never attach it to errors.
-    throw new Error("Unable to inspect CI-owned test processes");
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      return execFileSync("ps", args, { encoding: "utf8", timeout: 5000, maxBuffer: 32 * 1024 * 1024,
+        env: { ...process.env, LC_ALL: "C" }, stdio: ["ignore", "pipe", "pipe"] });
+    } catch {
+      // Hosted runners can briefly reject a process-table read during churn.
+      // Keep the error sanitized and fail closed after one retry.
+    }
   }
+  throw new Error("Unable to inspect CI-owned test processes");
 }
 
 function processTable() {
