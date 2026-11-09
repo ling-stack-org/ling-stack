@@ -107,7 +107,8 @@ fixtures `test/workflow-candidate-validation.test.mjs`,
 `test/workflow-isolated-parallel-integration.test.mjs`,
 `test/workflow-merge-approval.test.mjs`,
 `test/workflow-merge-apply.test.mjs`, and
-`test/workflow-worktree-cleanup.test.mjs` have explicit ten-minute watchdogs
+`test/workflow-worktree-cleanup.test.mjs`, and
+`test/workflow-worktree-cleanup-store.test.mjs` have explicit ten-minute watchdogs
 because hosted runners crossed five minutes while continuing to make progress.
 These exceptions are file-scoped; every other daemon file keeps the five-minute
 bound. Channel discussion, intent, workflow and workspace tests are separate
