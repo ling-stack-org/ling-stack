@@ -173,7 +173,7 @@ test("Host capacity full defers a claim without starting execution", async t => 
   const queue = scriptedStore("host-full", 1);
   const reserve = t.mock.fn<HostCapacity["reserve"]>(() => ({ status: "full" }));
   const f = fixture(t, [queue], { hostCapacity: {
-    getWorkspaceKey: () => "workspace-key",
+    getWorkspaceIdentity: () => ({ workspaceKey: "workspace-key", canonicalCwd: "/workspace", databasePath: "/workspace/db", databaseFileIdentity: "1:2", workspaceId: "workspace" }),
     reserve,
     reserveExecution: t.mock.fn<HostCapacity["reserveExecution"]>(() => ({ status: "changed" })),
     reserveApprovalResumePending: t.mock.fn<HostCapacity["reserveApprovalResumePending"]>(() => ({ status: "changed" })),
@@ -202,7 +202,7 @@ test("workspace scans rotate before the global claim-attempt bound", async t => 
     [{ workspaceId: laterWorkspaceId, count: 20 }]);
   const reserve = t.mock.fn<HostCapacity["reserve"]>(() => ({ status: "full" }));
   const f = fixture(t, [queue], { maxConcurrentRuns: 32, hostCapacity: {
-    getWorkspaceKey: () => "workspace-key",
+    getWorkspaceIdentity: () => ({ workspaceKey: "workspace-key", canonicalCwd: "/workspace", databasePath: "/workspace/db", databaseFileIdentity: "1:2", workspaceId: "workspace" }),
     reserve,
     reserveExecution: t.mock.fn<HostCapacity["reserveExecution"]>(() => ({ status: "changed" })),
     reserveApprovalResumePending: t.mock.fn<HostCapacity["reserveApprovalResumePending"]>(() => ({ status: "changed" })),
@@ -244,7 +244,7 @@ test("a queued Host receipt reaches execution and is released only when dispatch
   const releaseNoDispatch = t.mock.fn(() => true);
   const reference = { intentId: "intent-host-receipt", dispatchToken: "token-host-receipt" };
   const f = fixture(t, [queue], { hostCapacity: {
-    getWorkspaceKey: () => "workspace-key",
+    getWorkspaceIdentity: () => ({ workspaceKey: "workspace-key", canonicalCwd: "/workspace", databasePath: "/workspace/db", databaseFileIdentity: "1:2", workspaceId: "workspace" }),
     reserve: t.mock.fn(() => ({ status: "reserved", reference })),
     reserveExecution: t.mock.fn<HostCapacity["reserveExecution"]>(() => ({ status: "changed" })),
     reserveApprovalResumePending: t.mock.fn<HostCapacity["reserveApprovalResumePending"]>(() => ({ status: "changed" })),

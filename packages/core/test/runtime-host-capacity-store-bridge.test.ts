@@ -15,7 +15,7 @@ import { testDatabase } from "./support/sqlite-test-database.ts";
 
 type Binding = ReturnType<typeof createRuntimeHostCapacityStoreBinding>;
 const denied = (operation: () => unknown) => assert.throws(operation, { message: "runtime_host_capacity.binding_invalid" });
-const methods = ["getWorkspaceKey", "assertOutsideTransaction", "prepareAttempt", "prepareExecution", "prepareWorkflowStart", "prepareDelegationSpawn",
+const methods = ["getWorkspaceIdentity", "assertOutsideTransaction", "prepareAttempt", "prepareExecution", "prepareWorkflowStart", "prepareDelegationSpawn",
   "prepareDelegationPending", "prepareApprovalResumePending", "prepareUserInputContinuation", "getIntent", "getAttemptIntent", "attachReservation",
   "consumeDispatchGateWithinTransaction", "consumeDispatchGate", "bindDelegationSourceWithinTransaction",
   "bindApprovalResumeSourceWithinTransaction", "bindUserInputSourceWithinTransaction",
@@ -55,7 +55,7 @@ test("the opaque constructor handle cannot produce a journal before Store initia
   denied(() => capacity.workspace(DEFAULT_WORKSPACE_ID));
   const f = await bindingFixture(t, capacity);
   assert.equal(capacity.workspace(f.queue.workspaceId), f.journal);
-  assert.match(f.journal.getWorkspaceKey(), /^[0-9a-f]{64}$/u);
+  assert.match(f.journal.getWorkspaceIdentity().workspaceKey, /^[0-9a-f]{64}$/u);
   assert.equal(f.journal.getIntent("missing"), undefined);
   assert.ok(Object.isFrozen(f.journal));
   assert.deepEqual(Object.keys(f.journal).sort(), [...methods].sort());

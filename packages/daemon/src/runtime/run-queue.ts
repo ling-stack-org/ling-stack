@@ -15,7 +15,7 @@ interface StoreQueueSignals {
   retain(runId: string, options: ExecuteRunRequestOptions): void;
 }
 export interface RuntimeHostCapacityAdmission {
-  readonly getWorkspaceKey: (workspaceId: string) => string;
+  readonly getWorkspaceIdentity: (workspaceId: string) => ReturnType<RuntimeHostCapacityJournal["getWorkspaceIdentity"]>;
   readonly observeReservation?: (input: { readonly workspaceId: string; readonly intentId: string; readonly now: string }) =>
     ReturnType<RuntimeHostCapacityBridge["observeReservation"]>;
   reserveExecution(input: { readonly workspaceId: string; readonly source: HostOperationSource; readonly now: string }):
@@ -64,8 +64,8 @@ export function createRuntimeHostCapacityAdmission(input: {
     return { status: result.status === "retained" ? "changed" as const : result.status };
   };
   return {
-    getWorkspaceKey(workspaceId) {
-      return input.workspace(workspaceId).getWorkspaceKey();
+    getWorkspaceIdentity(workspaceId) {
+      return input.workspace(workspaceId).getWorkspaceIdentity();
     },
     observeReservation({ workspaceId, intentId, now }) {
       return new RuntimeHostCapacityBridge(input.workspace(workspaceId), input.host).observeReservation(intentId, now);

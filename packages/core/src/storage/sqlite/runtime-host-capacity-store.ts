@@ -74,9 +74,9 @@ export class SqliteRuntimeHostCapacityStore {
     this.assertIdentity();
   }
 
-  getWorkspaceKey(): string {
+  getWorkspaceIdentity(): HostRunCapacityWorkspaceIdentitySnapshot {
     this.assertIdentity();
-    return this.identity.workspaceKey;
+    return this.identity;
   }
 
   assertOutsideTransaction(): void {

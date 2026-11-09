@@ -32,7 +32,7 @@ function fixture(options: { runStatus: string; unitStatus: string; held?: readon
     reservations: afterReservationId ? [] : held,
   }) } as unknown as HostRunCapacityStore;
   const admission = {
-    getWorkspaceKey: () => workspace.workspaceKey,
+    getWorkspaceIdentity: () => workspace,
     observeReservation: ({ workspaceId, intentId }: { workspaceId: string; intentId: string }) => {
       observedWorkspaceIds.push(workspaceId);
       observed.push(intentId);
