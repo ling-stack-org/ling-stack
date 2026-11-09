@@ -431,7 +431,7 @@ export function createDaemonServer(
   const initializeOwnedStore = (cwd: string, store: RunStore): void => {
     if (harnessShuttingDown) throw new Error("runtime_shutting_down");
     if (initializedOwnedStores.has(store)) return;
-    const runtime = runtimeSupervisor.getRuntime(cwd, store);
+    runtimeSupervisor.getRuntime(cwd, store);
     const recoveryNow = new Date().toISOString();
     store.recoverStaleRuns(recoveryNow);
     store.recoverStaleChannelWorkflows(recoveryNow);
@@ -439,10 +439,16 @@ export function createDaemonServer(
       const capacity = runtimeHostCapacities.get(store);
       if (capacity) {
         try {
-          const recovery = recoverHostCapacityReservations({ store, workspaceId: runtime.workspaceId,
-            host: hostRunCapacity, admission: capacity, now: recoveryNow });
-          if (recovery.observed || recovery.released) {
-            console.info(`runtime_host_capacity_startup_recovery: observed=${recovery.observed} released=${recovery.released}`);
+          let observed = 0, released = 0;
+          for (const workspaceId of store.listWorkspaceIds()) {
+            runtimeSupervisor.getRuntimeForWorkspace(cwd, store, workspaceId);
+            const recovery = recoverHostCapacityReservations({ store, workspaceId,
+              host: hostRunCapacity, admission: capacity, now: recoveryNow });
+            observed += recovery.observed;
+            released += recovery.released;
+          }
+          if (observed || released) {
+            console.info(`runtime_host_capacity_startup_recovery: observed=${observed} released=${released}`);
           }
         } catch {
           console.warn("runtime_host_capacity_startup_recovery_incomplete: held reservations remain recoverable");

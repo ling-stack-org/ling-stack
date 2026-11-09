@@ -366,6 +366,38 @@ test("capacity queue wakes on actual Pi drain, reuses Attempt 1 and the frozen p
   assert.equal(f.store.listEvents(second.runId).filter(event => event.type === "run_created").length, 1);
 });
 
+test("capacity queue claims a persisted non-default business workspace", { timeout: 30_000 }, async t => {
+  const f = await fixture(t, { startQueue: false });
+  const holder = await f.dispatch("Default workspace holder");
+  await until(() => f.calls.length === 1, "default workspace entered the SDK transport", f.describe);
+  const pending = await f.dispatch("Non-default workspace queue");
+  assert.equal(pending.ready.queued, true);
+  await pending.completion;
+
+  const foreignWorkspaceId = "workspace_non_default_queue";
+  const now = new Date().toISOString();
+  testDatabase(f.store).prepare(`INSERT INTO workspaces (id,name,default_provider_preset_id,created_at,updated_at)
+    VALUES (?,?,?,?,?)`).run(foreignWorkspaceId, "Non-default queue workspace", null, now, now);
+  const source = f.source(pending.runId), entry = f.store.getRuntimeRunQueueEntry(pending.runId)!;
+  testDatabase(f.store).prepare("UPDATE work_units SET workspace_id=? WHERE id=?")
+    .run(foreignWorkspaceId, source.unit.id);
+  testDatabase(f.store).prepare("UPDATE runtime_run_queue SET workspace_id=? WHERE run_id=?")
+    .run(foreignWorkspaceId, pending.runId);
+  assert.equal(entry.workspaceId, "workspace_default");
+  assert.ok(f.store.listWorkspaceIds().includes(foreignWorkspaceId));
+
+  f.queue.start();
+  f.release(0);
+  await holder.completion;
+  await until(() => f.calls.filter(call => call.runId === pending.runId).length === 1,
+    "non-default workspace queue entered the SDK transport", f.describe);
+  assert.equal(f.store.getRuntimeConcurrencyPolicy(foreignWorkspaceId)?.runtimeInstanceId,
+    f.supervisor.getRuntime(f.cwd, f.store).runtimeInstanceId);
+  f.release(1);
+  await until(() => f.store.getRun(pending.runId)!.status === "succeeded", "non-default queued run completed", f.describe);
+  assert.equal(f.errors.length, 0, JSON.stringify(f.errors));
+});
+
 test("never-dispatched queue survives Store recovery and executes its original Attempt under the next runtime", { timeout: 30_000 }, async t => {
   const f = await fixture(t, { startQueue: false });
   const first = await f.dispatch("Before restart");

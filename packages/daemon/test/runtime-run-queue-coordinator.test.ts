@@ -30,6 +30,7 @@ function scriptedStore(label: string, count = 0, workspaceId = DEFAULT_WORKSPACE
   const revisions = new Map<string, number>();
   const store = {
     paths: { cwd: `/queue-coordinator/${label}`, identity: { workspaceId } },
+    listWorkspaceIds() { return [workspaceId]; },
     claimNextRuntimeRun(input: ClaimInput): ReturnType<RunStore["claimNextRuntimeRun"]> {
       claimInputs.push(input);
       const runId = pending.shift();
@@ -71,6 +72,11 @@ function fixture(t: TestContext, stores: ReturnType<typeof scriptedStore>[] = []
         assert.equal(cwd, store.paths.cwd);
         runtimeCalls.push({ cwd, store });
         return { workspaceId: store.paths.identity.workspaceId, runtimeInstanceId: `runtime:${cwd}` };
+      },
+      getRuntimeForWorkspace(cwd: string, store: RunStore, requestedWorkspaceId: string) {
+        assert.equal(cwd, store.paths.cwd);
+        runtimeCalls.push({ cwd, store });
+        return { workspaceId: requestedWorkspaceId, runtimeInstanceId: `runtime:${cwd}` };
       },
       getConcurrencyPolicy() {
         return { maxConcurrentRuns };

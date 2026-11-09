@@ -245,80 +245,89 @@ export class RuntimeRunQueueCoordinator {
       // starve another; the policy still raises the bound for larger budgets.
       const preparingLimit = Math.max(MINIMUM_QUEUE_PREPARATIONS,
         this.options.runtimeSupervisor.getConcurrencyPolicy().maxConcurrentRuns);
-      for (let visited = 0; visited < 16 && preparing.size < preparingLimit && !this.closed; visited++) {
-        const selected = store.claimNextRuntimeRun({ workspaceId: runtime.workspaceId,
-          runtimeInstanceId: runtime.runtimeInstanceId, ownerId: this.ownerId, leaseMs: 30_000, now: new Date().toISOString(),
-          ...(ignoreRetryAt ? { ignoreRetryAt: true } : {}) });
-        if (selected.status !== "claimed") break;
-        const { claim } = selected;
-        const now = new Date().toISOString();
-        const hostCapacity = capacity?.reserve({
-          workspaceId: selected.entry.workspaceId,
-          source: { runId: claim.runId, ...claim.sourceFence },
-          now,
-        });
-        if (hostCapacity?.status === "full" || hostCapacity?.status === "unconfigured") {
-          store.deferRuntimeQueuedRun({ claim, reason: "runtime_semaphore_conflict", now,
-            retryAt: new Date(Date.parse(now) + (hostCapacity.status === "full" ? 1_000 : 30_000)).toISOString() });
-          continue;
-        }
-        if (hostCapacity?.status === "changed") {
-          store.deferRuntimeQueuedRun({ claim, reason: selected.entry.reason, now,
-            retryAt: new Date(Date.parse(now) + 1_000).toISOString() });
-          continue;
-        }
-        // A reclaimed Run can still have an unfinished preparation from an earlier claim.
-        const preparation = Symbol(claim.runId);
-        preparing.add(preparation);
-        const prepared = (): void => {
-          if (preparing.delete(preparation)) this.wakeStore(store);
-        };
-        const reservedHostCapacity = hostCapacity?.status === "reserved" || hostCapacity?.status === "duplicate"
-          ? hostCapacity : undefined;
-        const completion = Promise.resolve().then(() => {
-          if (this.closed || this.options.activeRuns.isShuttingDown()) return;
-          return this.options.execute({ store, claim, executionOptions: {
-            ...this.retainedOptions.get(store)?.get(claim.runId), onRunReady: prepared,
-            ...(reservedHostCapacity ? { queuedHostCapacity: reservedHostCapacity.reference } : {}),
-            ...(reservedHostCapacity && capacity ? {
-              afterRunTerminal: async (terminalRun) => {
-                try { await this.retainedOptions.get(store)?.get(claim.runId)?.afterRunTerminal?.(terminalRun); }
-                finally {
-                  capacity.releaseStopped({ workspaceId: selected.entry.workspaceId,
-                  source: { runId: claim.runId, ...claim.sourceFence }, intentId: reservedHostCapacity.reference.intentId,
-                    now: new Date().toISOString() });
-                }
-              },
-            } : {}),
-          } });
-        }).catch(() => {
-          console.warn("runtime_run_queue_preparation_incomplete: no dispatch permission is reissued");
-        }).finally(() => {
-          try {
-            const now = new Date().toISOString();
-            if (reservedHostCapacity) {
-              try {
-                capacity?.releaseNoDispatch({ workspaceId: selected.entry.workspaceId,
-                  intentId: reservedHostCapacity.reference.intentId, now });
-              } catch {
-                console.warn("runtime_run_queue_host_release_incomplete: reservation remains recoverable");
-              }
-            }
+      let visited = 0;
+      for (const workspaceId of store.listWorkspaceIds()) {
+        if (preparing.size >= preparingLimit || this.closed || visited >= 16) break;
+        const workspaceRuntime = workspaceId === runtime.workspaceId ? runtime
+          : this.options.runtimeSupervisor.getRuntimeForWorkspace(store.paths.cwd, store, workspaceId);
+        for (let workspaceVisited = 0;
+          workspaceVisited < 16 && visited < 16 && preparing.size < preparingLimit && !this.closed;
+          workspaceVisited++) {
+          const selected = store.claimNextRuntimeRun({ workspaceId,
+            runtimeInstanceId: workspaceRuntime.runtimeInstanceId, ownerId: this.ownerId, leaseMs: 30_000, now: new Date().toISOString(),
+            ...(ignoreRetryAt ? { ignoreRetryAt: true } : {}) });
+          if (selected.status !== "claimed") break;
+          visited += 1;
+          const { claim } = selected;
+          const now = new Date().toISOString();
+          const hostCapacity = capacity?.reserve({
+            workspaceId: selected.entry.workspaceId,
+            source: { runId: claim.runId, ...claim.sourceFence },
+            now,
+          });
+          if (hostCapacity?.status === "full" || hostCapacity?.status === "unconfigured") {
+            store.deferRuntimeQueuedRun({ claim, reason: "runtime_semaphore_conflict", now,
+              retryAt: new Date(Date.parse(now) + (hostCapacity.status === "full" ? 1_000 : 30_000)).toISOString() });
+            continue;
+          }
+          if (hostCapacity?.status === "changed") {
             store.deferRuntimeQueuedRun({ claim, reason: selected.entry.reason, now,
               retryAt: new Date(Date.parse(now) + 1_000).toISOString() });
-            const run = store.getRun(claim.runId);
-            if (!run || !["queued", "running", "waiting_for_approval"].includes(run.status)) {
-              this.retainedOptions.get(store)?.delete(claim.runId);
-            }
-          } catch {
-            console.warn("runtime_run_queue_cleanup_incomplete: execution custody was retained");
-          } finally {
-            prepared();
-            this.inFlight.delete(completion);
-            this.wakeStore(store);
+            continue;
           }
-        });
-        this.inFlight.add(completion);
+          // A reclaimed Run can still have an unfinished preparation from an earlier claim.
+          const preparation = Symbol(claim.runId);
+          preparing.add(preparation);
+          const prepared = (): void => {
+            if (preparing.delete(preparation)) this.wakeStore(store);
+          };
+          const reservedHostCapacity = hostCapacity?.status === "reserved" || hostCapacity?.status === "duplicate"
+            ? hostCapacity : undefined;
+          const completion = Promise.resolve().then(() => {
+            if (this.closed || this.options.activeRuns.isShuttingDown()) return;
+            return this.options.execute({ store, claim, executionOptions: {
+              ...this.retainedOptions.get(store)?.get(claim.runId), onRunReady: prepared,
+              ...(reservedHostCapacity ? { queuedHostCapacity: reservedHostCapacity.reference } : {}),
+              ...(reservedHostCapacity && capacity ? {
+                afterRunTerminal: async (terminalRun) => {
+                  try { await this.retainedOptions.get(store)?.get(claim.runId)?.afterRunTerminal?.(terminalRun); }
+                  finally {
+                    capacity.releaseStopped({ workspaceId: selected.entry.workspaceId,
+                    source: { runId: claim.runId, ...claim.sourceFence }, intentId: reservedHostCapacity.reference.intentId,
+                      now: new Date().toISOString() });
+                  }
+                },
+              } : {}),
+            } });
+          }).catch(() => {
+            console.warn("runtime_run_queue_preparation_incomplete: no dispatch permission is reissued");
+          }).finally(() => {
+            try {
+              const now = new Date().toISOString();
+              if (reservedHostCapacity) {
+                try {
+                  capacity?.releaseNoDispatch({ workspaceId: selected.entry.workspaceId,
+                    intentId: reservedHostCapacity.reference.intentId, now });
+                } catch {
+                  console.warn("runtime_run_queue_host_release_incomplete: reservation remains recoverable");
+                }
+              }
+              store.deferRuntimeQueuedRun({ claim, reason: selected.entry.reason, now,
+                retryAt: new Date(Date.parse(now) + 1_000).toISOString() });
+              const run = store.getRun(claim.runId);
+              if (!run || !["queued", "running", "waiting_for_approval"].includes(run.status)) {
+                this.retainedOptions.get(store)?.delete(claim.runId);
+              }
+            } catch {
+              console.warn("runtime_run_queue_cleanup_incomplete: execution custody was retained");
+            } finally {
+              prepared();
+              this.inFlight.delete(completion);
+              this.wakeStore(store);
+            }
+          });
+          this.inFlight.add(completion);
+        }
       }
     } finally { this.scanning.delete(store); }
   }
