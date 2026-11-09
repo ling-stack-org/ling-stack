@@ -49,10 +49,11 @@ test("split channel suites are discovered once with ordinary parallel workers an
   for (const file of ["test/recovery-discovery-fair-scan.test.mjs", "test/workflow-candidate-validation.test.mjs",
     "test/workflow-conflict-recovery.test.mjs", "test/workflow-integration-candidate.test.mjs",
     "test/workflow-isolated-parallel-integration.test.mjs", "test/workflow-merge-approval.test.mjs",
-    "test/workflow-merge-apply.test.mjs", "test/workflow-worktree-cleanup.test.mjs",
+    "test/workflow-worktree-cleanup.test.mjs",
     "test/workflow-worktree-cleanup-store.test.mjs"]) {
     assert.equal(testSuites.daemon.fileTimeouts[file], 600_000);
   }
+  assert.equal(testSuites.daemon.fileTimeouts["test/workflow-merge-apply.test.mjs"], 900_000);
 });
 
 test("measured durations balance placement deterministically without changing coverage", () => {

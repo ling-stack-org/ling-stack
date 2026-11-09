@@ -17,7 +17,7 @@ export const testSuites = {
       "test/workflow-integration-candidate.test.mjs": 600_000,
       "test/workflow-isolated-parallel-integration.test.mjs": 600_000,
       "test/workflow-merge-approval.test.mjs": 600_000,
-      "test/workflow-merge-apply.test.mjs": 600_000,
+      "test/workflow-merge-apply.test.mjs": 900_000,
       "test/workflow-worktree-cleanup.test.mjs": 600_000,
       "test/workflow-worktree-cleanup-store.test.mjs": 600_000,
     },

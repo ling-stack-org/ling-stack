@@ -106,10 +106,12 @@ fixtures `test/workflow-candidate-validation.test.mjs`,
 `test/workflow-integration-candidate.test.mjs`,
 `test/workflow-isolated-parallel-integration.test.mjs`,
 `test/workflow-merge-approval.test.mjs`,
-`test/workflow-merge-apply.test.mjs`, and
 `test/workflow-worktree-cleanup.test.mjs`, and
 `test/workflow-worktree-cleanup-store.test.mjs` have explicit ten-minute watchdogs
 because hosted runners crossed five minutes while continuing to make progress.
+`test/workflow-merge-apply.test.mjs` has a fifteen-minute watchdog because its
+serial native Git scenarios can exceed ten minutes on hosted runners while
+continuing to make progress.
 These exceptions are file-scoped; every other daemon file keeps the five-minute
 bound. Channel discussion, intent, workflow and workspace tests are separate
 files in the ordinary parallel queue, each with the default five-minute
