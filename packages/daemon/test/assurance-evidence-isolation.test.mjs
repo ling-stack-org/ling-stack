@@ -86,4 +86,10 @@ test("assurance endpoint keeps candidate, approval and apply states distinct", n
   assert.equal(evidence.isolation.round?.phase, "applied");
   assert.deepEqual(evidence.isolation.blockers, [], JSON.stringify(evidence.isolation));
   assert.equal(evidence.isolation.status, "verified");
+  assert.equal(evidence.lifecycle.status, "drained");
+  assert.equal(evidence.lifecycle.stop.reusable, true);
+  assert.equal(evidence.execution.effectStatus, "confirmed");
+  assert.equal(evidence.admission.status, "blocked");
+  assert.ok(evidence.admission.blockers.includes("workflow_admission.tool_broker_enforce_required"));
+  assert.ok(evidence.admission.blockers.includes("workflow_admission.execution_binding_invalid"));
 });

@@ -113,7 +113,8 @@ function buildEvidence(store: RunStore, activeRuns: ActiveRunRegistry, runId: st
   const completion = buildCompletion(completionEvidence);
   const budget = projectDelegationBudgetEvidence(completionEvidence, run.id);
   const isolation = buildIsolation(store, run, attempt, observedAt);
-  const admission = buildAdmission(run, isolation);
+  const lifecycle = buildLifecycle(workUnit, attempts, stop.attempts);
+  const admission = buildAdmission(run, isolation, lifecycle, effectStatus);
   return {
     schemaVersion: 1,
     kind: "live_execution_evidence",
@@ -140,7 +141,7 @@ function buildEvidence(store: RunStore, activeRuns: ActiveRunRegistry, runId: st
       attempt: { revision: runtimeEvents.filter(event => event.attemptId === attempt.id).at(-1)?.seq ?? 0, sha256: recordDigest(attempt) },
     },
     artifacts,
-    lifecycle: buildLifecycle(workUnit, attempts, stop.attempts),
+    lifecycle,
     completion,
     budget,
     isolation,
@@ -548,7 +549,12 @@ function buildIsolation(store: RunStore, run: RunSession, attempt: WorkUnitAttem
   }
 }
 
-function buildAdmission(run: RunSession, isolation: FrameworkAssuranceIsolationEvidence): FrameworkAssuranceAdmissionEvidence {
+export function buildAdmission(
+  run: RunSession,
+  isolation: FrameworkAssuranceIsolationEvidence,
+  lifecycle: FrameworkAssuranceLifecycleEvidence,
+  effectStatus: FrameworkAssuranceEffectStatus,
+): FrameworkAssuranceAdmissionEvidence {
   if (isolation.status === "not_applicable") return {
     status: "not_applicable", profile: null,
     safetyPlan: { present: false, valid: false, digest: null },
@@ -563,6 +569,14 @@ function buildAdmission(run: RunSession, isolation: FrameworkAssuranceIsolationE
   if (mode !== "enforce") blockers.push("workflow_admission.tool_broker_enforce_required");
   if (isolation.binding.status !== "current" || !isolation.binding.matchesCurrentFence) blockers.push("workflow_admission.execution_binding_invalid");
   if (isolation.status !== "verified") blockers.push("workflow_admission.isolation_not_verified");
+  if (lifecycle.status !== "drained") blockers.push("workflow_admission.lifecycle_not_drained");
+  if (!lifecycle.stop.allAttemptsTerminal) {
+    blockers.push("workflow_admission.attempt_not_terminal");
+  }
+  if (lifecycle.stop.localExecution !== "drained") blockers.push("workflow_admission.local_execution_not_drained");
+  if (lifecycle.stop.effects !== "settled" || effectStatus !== "confirmed" || !lifecycle.stop.reusable) {
+    blockers.push("workflow_admission.execution_effects_unconfirmed");
+  }
   const unique = [...new Set(blockers)];
   return {
     status: unique.length === 0 ? "verified" : isolation.status === "unavailable" ? "unavailable" : "blocked",
