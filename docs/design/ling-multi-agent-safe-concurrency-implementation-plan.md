@@ -12,7 +12,8 @@ Owner：Ling maintainers。
 完整目标总入口：[Ling 多 Agent 完整目标设计](ling-multi-agent-complete-target.md)。
 权威设计：[总体设计](multi-agent-app-detailed-design.md)、
 [安全并发详细设计](ling-multi-agent-safe-concurrency-detailed-design.md)。
-基线：PR #614 已于 2026-11-02 合并；从更新后的 `origin/main` 开发，不从旧 Harness 分支接续。
+基线：PR #614 已于 2026-11-02 合并，完整交付 PR #662 已于 2026-11-09 合并；当前基线为
+`origin/main@841dab4d`，从更新后的 `origin/main` 开发，不从旧 Harness 分支接续。
 Code/test anchors：各阶段表格列出的模块与测试；尚未接入实际执行链的组件不算阶段交付。
 
 ## 1. 交付目标与边界
