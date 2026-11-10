@@ -272,9 +272,10 @@ const TEAMMATE_DIRECT_SYSTEM_PURPOSE_MIGRATION_VERSION = 134;
 const TEAMMATE_DIRECT_SYSTEM_PURPOSE_MIGRATION_NAME = "add_teammate_direct_system_purpose";
 const CHANNEL_EXECUTION_PROPOSAL_CAS_MIGRATION_VERSION = 138;
 const CHANNEL_EXECUTION_PROPOSAL_CAS_MIGRATION_NAME = "add_channel_execution_proposal_cas";
-// Keep companion storage on its own monotonic version so existing databases
-// cannot mistake an unrelated migration record for these tables.
-const COMPANIONS_MIGRATION_VERSION = 139;
+// Version 139 is retained by the historical delegation marker. Version 140 is
+// owned by run compaction checkpoints; keep companion storage on the next
+// available database-global version before the 144+ migration family.
+const COMPANIONS_MIGRATION_VERSION = 141;
 const COMPANIONS_MIGRATION_NAME = "create_companions";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
