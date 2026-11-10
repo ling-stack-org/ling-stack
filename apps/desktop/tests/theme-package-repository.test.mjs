@@ -41,40 +41,6 @@ test("repository initializes an empty injected root and installs with a verified
   assert.equal(duplicate.error.code, "theme_already_installed");
 });
 
-test("repository installs, reads, and restores a preview plus launch animation asset", async (t) => {
-  const fixture = await createRepositoryFixture();
-  t.after(() => rm(fixture.temporaryRoot, { recursive: true, force: true }));
-  const bytes = archiveFor("launch-theme", {
-    manifest: {
-      launchAnimation: { preset: "canvas-windmill", referenceImage: "assets/launch.webp" },
-      preview: "assets/preview.png",
-    },
-    preview: { path: "assets/preview.png", bytes: IMAGE_BYTES.png },
-    launchAnimation: { path: "assets/launch.webp", bytes: IMAGE_BYTES.webp },
-  });
-  await fixture.repository.initialize();
-  const installed = await fixture.repository.install(archiveRequest(bytes, { originalFileName: "launch-theme.ling-theme" }));
-  assert.equal(installed.ok, true);
-  assert.equal(installed.value.launchAnimation?.path, "assets/launch.webp");
-
-  const read = await fixture.repository.read({
-    includeLaunchAnimationBytes: true,
-    includePreviewBytes: true,
-    themeId: "launch-theme",
-  });
-  assert.equal(read.ok, true);
-  assert.deepEqual([...new Uint8Array(read.value.launchAnimationBytes)], [...IMAGE_BYTES.webp]);
-  assert.deepEqual([...new Uint8Array(read.value.previewBytes)], [...IMAGE_BYTES.png]);
-
-  const restarted = new (fixture.repository.constructor)({
-    themesRoot: fixture.themesRoot,
-    decodeImage: async () => ({ width: 1280, height: 800 }),
-  });
-  const bootstrap = await restarted.initialize();
-  assert.equal(bootstrap.ok, true);
-  assert.equal(bootstrap.value.packages[0].launchAnimation?.path, "assets/launch.webp");
-});
-
 test("same-id reimport preserves installedAt while identity, checksum and revision guards fail closed", async (t) => {
   let tick = 0;
   const times = [

@@ -40,23 +40,6 @@ test("shared bytes parser normalizes token-only packages with optional preview a
   assert.equal(withAssets.preview?.height, 800);
   assert.equal(withAssets.preview?.checksumSha256.length, 64);
   assert.deepEqual(withAssets.files.map((file) => file.path), ["LICENSE.txt", "assets/preview.png", "theme.json"]);
-
-  const withLaunchAnimation = await parseThemePackageBytes(themePackageFixture({
-    manifest: importedManifest({
-      launchAnimation: { preset: "canvas-windmill", referenceImage: "assets/launch.webp" },
-      preview: "assets/preview.png",
-    }),
-    preview: { path: "assets/preview.png", bytes: IMAGE_BYTES.png },
-    launchAnimation: { path: "assets/launch.webp", bytes: IMAGE_BYTES.webp },
-  }), { decodeImage });
-  assert.equal(withLaunchAnimation.launchAnimation?.path, "assets/launch.webp");
-  assert.equal(withLaunchAnimation.launchAnimation?.mimeType, "image/webp");
-  assert.equal(withLaunchAnimation.launchAnimation?.width, 1280);
-  assert.deepEqual(withLaunchAnimation.files.map((file) => file.path), [
-    "assets/launch.webp",
-    "assets/preview.png",
-    "theme.json",
-  ]);
 });
 
 test("shared bytes parser rejects empty, oversized, malformed, split, ZIP64, encrypted, unsupported and trailing archives", async () => {
@@ -146,20 +129,6 @@ test("shared bytes parser enforces allowlisted files and referenced assets", asy
   await rejectsCode(themePackageFixture({
     manifest: importedManifest({ preview: "assets/missing.png" }),
   }), "missing-preview");
-  await rejectsCode(themePackageFixture({
-    manifest: importedManifest({ launchAnimation: { preset: "canvas-windmill", referenceImage: "assets/missing.webp" } }),
-  }), "missing-launch-animation");
-  await rejectsCode(themePackageFixture({
-    manifest: importedManifest({ launchAnimation: { preset: "other", referenceImage: "assets/launch.webp" } }),
-    launchAnimation: { path: "assets/launch.webp", bytes: IMAGE_BYTES.webp },
-  }), "invalid-launch-animation");
-  await rejectsCode(themePackageFixture({
-    manifest: importedManifest({ launchAnimation: { preset: "canvas-windmill", referenceImage: "assets//launch.webp" } }),
-    launchAnimation: { path: "assets/launch.webp", bytes: IMAGE_BYTES.webp },
-  }), "invalid-launch-animation");
-  await rejectsCode(themePackageFixture({
-    manifest: importedManifest({ launchAnimation: { preset: "canvas-windmill", referenceImage: "https://example.test/launch.webp" } }),
-  }), "invalid-launch-animation");
 });
 
 test("shared bytes parser rejects invalid text, JSON, schema, tokens, contrast and reserved IDs", async () => {

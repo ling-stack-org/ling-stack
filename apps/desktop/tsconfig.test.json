@@ -1,6 +1,7 @@
 {
   "extends": "./tsconfig.renderer.json",
   "compilerOptions": {
+    "allowJs": true,
     "allowImportingTsExtensions": true,
     "noEmit": true,
     "types": ["node", "vite/client"]
