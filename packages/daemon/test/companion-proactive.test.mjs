@@ -23,7 +23,7 @@ test("Companion proactive trigger reuses the bound provider and deduplicates ret
     providerId: "local-openai-compatible",
     model: "local-companion-model",
     api: "openai-completions",
-    baseUrl: "http://127.0.0.1:19001/v1",
+    baseUrl: "https://companion-provider.example.invalid/v1",
     capabilities: ["chat"],
     input: ["text"],
     authHeader: false,
