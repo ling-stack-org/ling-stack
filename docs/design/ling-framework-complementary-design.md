@@ -207,7 +207,7 @@ F1 只验证这些任务的元数据、注入补丁可应用性和 synthetic 控
 | macOS native boundary | `packages/daemon/src/runtime/sandbox/native-process-launch.ts`、`packages/daemon/test/native-process-boundary.test.mjs`；本地验证覆盖 workspace/private-state、Kimi metadata、relay 与进程回收 |
 | 本轮离线实现与回归 | `scripts/framework-assurance/manifest.mjs`、`preflight.mjs`、`grader.mjs`、`evidence.mjs`、`report.mjs`、`output.mjs`、`index.mjs`、`offline.test.mjs`、`cli.test.mjs` |
 | F3-A fixture 证据适配 | `scripts/framework-assurance/execution-evidence.mjs`、`execution-evidence.test.mjs`、`fixtures/framework-assurance/execution-evidence/` |
-| F4-01 只读诊断报告 | `scripts/framework-assurance/diagnostics.mjs`、`diagnostics.test.mjs`；消费既有 `getWorkUnitHarnessDiagnostics` |
+| F4-01 只读诊断报告 | `scripts/framework-assurance/diagnostics.mjs`、`diagnostics.test.mjs`；通过 `readHarnessDiagnosticsReportFromClient` 组合既有 `LingDaemonClient.getWorkUnitHarnessDiagnostics` |
 | 本轮真实包消费与回归 | `scripts/framework-assurance/sdk-consumer.mjs`、`sdk-consumer.test.mjs`、`fixtures/framework-assurance/sdk-consumer/` |
 | 冻结校准输入 | `fixtures/framework-assurance/suites/framework-v5.json` 及 cases/controls 引用；历史 v3/v4 结果不改写 |
 
