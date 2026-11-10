@@ -46,6 +46,7 @@ import { useArchivedSettingsController } from "./useArchivedSettingsController.j
 import { ComputerControlSettingsPage } from "./computer-control/ComputerControlSettingsPage.js";
 import { MobileAccessSettingsPage } from "./mobile-access/MobileAccessSettingsPage.js";
 import { ExecutionEnginesSettingsPage } from "./execution-engines/ExecutionEnginesSettingsPage.js";
+import { CompanionSettingsPage } from "../companions/CompanionSettingsPage.js";
 
 export type { SettingsSectionId } from "./settings-shell-model.js";
 
@@ -108,6 +109,7 @@ export function SettingsPage({
   onOpenProviders,
   onOpenTeammates,
   onOpenCouncils,
+  onOpenCompanionMini,
   workspaceToolDetail,
   workspaceToolView,
   runDiagnosticsRunId,
@@ -181,6 +183,7 @@ export function SettingsPage({
   readonly onOpenProviders: () => void;
   readonly onOpenTeammates: () => void;
   readonly onOpenCouncils: () => void;
+  readonly onOpenCompanionMini: () => void;
   readonly workspaceToolDetail?: ReactNode;
   readonly workspaceToolView?: SettingsWorkspaceToolView;
   readonly runDiagnosticsRunId?: string;
@@ -338,6 +341,10 @@ export function SettingsPage({
         {visibleActiveSection === "mobile-access" && !workspaceToolDetailOpen ? <MobileAccessSettingsPage /> : null}
 
         {visibleActiveSection === "execution-engines" && !workspaceToolDetailOpen ? <ExecutionEnginesSettingsPage cwd={cwd} /> : null}
+
+        {visibleActiveSection === "companion" && !workspaceToolDetailOpen ? (
+          <CompanionSettingsPage cwd={cwd} onOpenMini={onOpenCompanionMini} />
+        ) : null}
 
         {visibleActiveSection === "approval-strategy" && !workspaceToolDetailOpen ? (
           <ExecutionPermissionsSettingsPanel

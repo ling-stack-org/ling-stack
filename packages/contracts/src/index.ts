@@ -70,6 +70,7 @@ export type * from "./skills.js";
 export type * from "./official-skill-source.js";
 export type * from "./governance-notifications.js";
 export type * from "./teammates.js";
+export type * from "./companions.js";
 export type * from "./ai-councils.js";
 export type * from "./settings.js";
 export type * from "./workspace-directory.js";

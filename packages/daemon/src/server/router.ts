@@ -294,6 +294,11 @@ import {
   handleTeammateDirectRuntime,
 } from "../features/teammates/direct-controls.js";
 import { handleTeammateDirectLinkPreviews } from "../features/teammates/direct-link-previews.js";
+import { handleCompanionItem, handleCompanionsCollection } from "../features/companions/routes.js";
+import {
+  handleCompanionMessageStream,
+  handleCompanionMessagesCollection,
+} from "../features/companions/dialogue.js";
 import { handleTeammateDirectMessagesCollection, handleTeammateDirectMessageStream, handleTeammateDirectThread } from "../features/teammates/direct-messages.js";
 import { createAiTeammateDirectReply } from "../features/teammates/direct-replies.js";
 import { ensureDirectWorkspaceReady, handleTeammateDirectWorkspace } from "../features/teammates/direct-workspace.js";
@@ -345,6 +350,7 @@ import {
   parseChannelHandoffRoute,
   parseChannelLinkPreviewRoute,
   parseChannelRoute,
+  parseCompanionRoute,
   parseChannelWorkflowRoute,
   parseWorkflowHandoffIntentRoute,
   parseWorkflowSelectorDecisionRoute,
@@ -429,6 +435,8 @@ export async function routeRequest(
     workspaceFileCapabilities,
     notificationHub,
     imDestinations,
+    companionReplyService,
+    companionSchedulers,
   } = context;
   setCorsHeaders(response);
 
@@ -769,6 +777,11 @@ export async function routeRequest(
 
   if (url.pathname === "/teammates") {
     await handleTeammatesCollection(request, response, config, storeRegistry, secretResolver);
+    return;
+  }
+
+  if (url.pathname === "/companions") {
+    await handleCompanionsCollection(request, response, config, storeRegistry);
     return;
   }
 
@@ -2589,6 +2602,43 @@ export async function routeRequest(
       return;
     }
     await handleChannelExecutionProposalItem(request, response, config, storeRegistry, channelProposalRoute.proposalId);
+    return;
+  }
+
+  const companionRoute = parseCompanionRoute(url.pathname);
+  if (companionRoute) {
+    if (companionRoute.action === "messages") {
+      await handleCompanionMessagesCollection(
+        request,
+        response,
+        config,
+        storeRegistry,
+        companionRoute.companionId,
+        companionReplyService.createReply,
+      );
+      return;
+    }
+    if (companionRoute.action === "messages-stream") {
+      await handleCompanionMessageStream(
+        request,
+        response,
+        config,
+        storeRegistry,
+        companionRoute.companionId,
+        companionReplyService.createReply,
+        activeDirectReplies,
+      );
+      return;
+    }
+    await handleCompanionItem(
+      request,
+      response,
+      config,
+      storeRegistry,
+      companionRoute.companionId,
+      companionRoute.action,
+      companionSchedulers,
+    );
     return;
   }
 
