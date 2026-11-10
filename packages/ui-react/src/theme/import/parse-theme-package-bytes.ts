@@ -82,10 +82,18 @@ export async function parseThemePackageBytes(
   if (manifest.preview && (!previewPath || !previewPath.startsWith("assets/"))) {
     throw packageIssue("invalid-preview", "preview", "Theme preview must reference a canonical asset path.");
   }
-  const launchAnimationPath = manifest.launchAnimation?.referenceImage
-    ? normalizeThemePackagePath(manifest.launchAnimation.referenceImage)
+  const launchAnimationReferenceImage = manifest.launchAnimation?.referenceImage;
+  const launchAnimationPath = launchAnimationReferenceImage
+    ? normalizeThemePackagePath(launchAnimationReferenceImage)
     : undefined;
-  if (manifest.launchAnimation?.referenceImage && (!launchAnimationPath || !launchAnimationPath.startsWith("assets/"))) {
+  if (
+    launchAnimationReferenceImage
+    && (
+      !launchAnimationPath
+      || launchAnimationPath !== launchAnimationReferenceImage
+      || !launchAnimationPath.startsWith("assets/")
+    )
+  ) {
     throw packageIssue("invalid-launch-animation", "launchAnimation.referenceImage", "Launch animation reference image must reference a canonical asset path.");
   }
   if (previewPath && launchAnimationPath && previewPath === launchAnimationPath) {
