@@ -638,12 +638,14 @@ terminal/drain 及资源释放；普通 writer 拒绝和 Host 策略关闭边界
 本地受控 Provider transport，不等于外部真实 Provider、packaged、跨平台或 review/CI/merge
 发布门禁已通过。
 
-2026-11-10，本地收口回归：Core 并发/Host/queue/迁移/恢复定向集合 875 项通过；Daemon
-并发策略、Host composition、queue、审批恢复、Graph 和 isolated workflow 定向集合 320 项
-通过；Web 全部单元回归 1323 项、Contracts 全部回归 151 项通过。Core、Daemon、Web 的
-类型检查通过，Daemon/Web 生产构建、Web lint、i18n 和 Markdown link check 通过，且
-`git diff --check` 无输出。Core/Daemon 本次是受影响范围的定向集合，不替代全仓测试、真实
-外部 Provider、packaged、跨平台或 review/CI/merge 验收。
+2026-11-10，本地收口回归：Core `test:ci` 全量 6607 项通过、0 项失败；受影响的 Core
+并发/Host/queue/隔离/模板定向集合 270 项通过，Daemon 并发策略、Host composition、queue、
+审批恢复、Graph 和 isolated workflow 定向集合 275 项通过。Web 全部单元回归 1323 项、
+Conversation UI Core 207 项、Contracts 151 项、API client 137 项、Localization 24 项通过。
+Core、Daemon、Web 类型检查通过，Core/Daemon 构建、Web 生产构建、Web lint、i18n 和 Markdown
+link check 通过，且 `git diff --check` 无输出。Daemon 全量 `test:ci` 曾启动但因包含大量与本
+目标无关的全仓边界测试而中止，不能计为通过。以上本地证据不替代真实外部 Provider、packaged、
+跨平台或 review/CI/merge 验收。
 
 同日 B3.3 执行链增量：Daemon `build` 与测试类型检查通过；`runtime-run-queue` coordinator、
 queue integration/recovery、native workflow Host capacity 和 automation heartbeat 相关回归通过。
