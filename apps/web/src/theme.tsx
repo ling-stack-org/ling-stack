@@ -407,7 +407,11 @@ export function ThemeProvider({ children }: { readonly children: ReactNode }): R
   }, [applyTarget, resolved.themeId, selection, systemScheme, themePackageRepairs]);
 
   const readThemePackage = useCallback(async (themeId: string): Promise<StoredWebThemePackage | undefined> => {
-    const result = await repositoryRef.current!.read({ includePreviewBytes: true, themeId });
+    const result = await repositoryRef.current!.read({
+      includeLaunchAnimationBytes: true,
+      includePreviewBytes: true,
+      themeId,
+    });
     return storedPackageFromRepositoryRead(requireThemePackageResult(result));
   }, []);
 

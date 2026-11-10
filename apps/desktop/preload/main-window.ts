@@ -52,6 +52,9 @@ const capabilities: LingDesktopCapabilities = {
       {
         themeId: request.themeId,
         includePreviewBytes: request.includePreviewBytes,
+        ...(request.includeLaunchAnimationBytes !== undefined
+          ? { includeLaunchAnimationBytes: request.includeLaunchAnimationBytes }
+          : {}),
       },
     ),
     install: (request) => ipcRenderer.invoke(
