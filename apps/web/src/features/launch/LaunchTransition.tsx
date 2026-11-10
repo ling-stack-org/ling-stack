@@ -29,11 +29,21 @@ export function LaunchTransition({
   }, [onFinished]);
 
   useLayoutEffect(() => {
-    const root = document.getElementById("root");
-    if (!visible || !root) return undefined;
-    const previousInert = root.inert;
-    root.inert = true;
-    return () => { root.inert = previousInert; };
+    if (!visible) return undefined;
+    const roots = ["root", "ling-ui-overlay-root"]
+      .map((id) => document.getElementById(id))
+      .filter((root): root is HTMLElement => root !== null)
+      .map((root) => ({ root, previousInert: root.inert }));
+    for (const { root } of roots) root.inert = true;
+    const blockKeyboard = (event: KeyboardEvent): void => {
+      event.stopImmediatePropagation();
+      if (!event.metaKey && !event.ctrlKey) event.preventDefault();
+    };
+    window.addEventListener("keydown", blockKeyboard, true);
+    return () => {
+      window.removeEventListener("keydown", blockKeyboard, true);
+      for (const { root, previousInert } of roots) root.inert = previousInert;
+    };
   }, [visible]);
 
   useEffect(() => {
