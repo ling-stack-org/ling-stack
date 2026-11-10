@@ -6,6 +6,13 @@ open-source baseline onward.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and future
 release versions will follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-11-11
+
+### Added
+
+- **Ling opens with a windmill animation** that gathers and releases petals before fading into the workspace. Reduced motion skips the long animation, and Canvas initialization failure opens the workspace directly.
+- Theme packages can supply a PNG or WebP windmill image for the startup animation on Web and Desktop. Imported images are validated, restored across restarts, and removed with their theme.
+
 ## [0.2.3] - 2026-11-09
 
 ### Changed

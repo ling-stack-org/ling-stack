@@ -7,7 +7,7 @@ import { LingThemePackageError } from "@ling-stack/ui-react/theme";
 
 export type WebThemePreviewMimeType = LingThemeImageMimeType;
 
-export interface ParsedWebThemePreview {
+export interface ParsedWebThemeAsset {
   readonly blob: Blob;
   readonly byteLength: number;
   readonly checksumSha256: string;
@@ -17,12 +17,16 @@ export interface ParsedWebThemePreview {
   readonly width: number;
 }
 
+export type ParsedWebThemePreview = ParsedWebThemeAsset;
+export type ParsedWebThemeLaunchAnimation = ParsedWebThemeAsset;
+
 export interface ParsedWebThemePackage {
   readonly archiveBytes: Uint8Array;
   readonly licenseText?: string;
   readonly manifest: LingThemePackManifest;
   readonly originalFileName: string;
   readonly packageChecksumSha256: string;
+  readonly launchAnimation?: ParsedWebThemeLaunchAnimation;
   readonly preview?: ParsedWebThemePreview;
   readonly warnings: readonly LingThemePackageIssue[];
 }
