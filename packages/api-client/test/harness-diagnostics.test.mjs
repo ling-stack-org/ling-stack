@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { LingDaemonClient, LingDaemonError } from "../dist/index.js";
+import { readHarnessDiagnosticsReportFromClient } from "../../../scripts/framework-assurance/diagnostics.mjs";
 
 const cursor = { runId: "run:a", workUnitId: "unit / 中文", createdAt: "2026-10-09T00:00:00.000Z", kind: "tool_execution", id: "tool \"1\"" };
 
@@ -49,4 +50,60 @@ test("read-only diagnostic transport does not attach the computer-use authorizat
   await client.getWorkUnitHarnessDiagnostics("/repo", "unit", { cursor });
   assert.ok(!JSON.stringify(request).includes("TOKEN_SENTINEL"));
   assert.equal(request.init.method, "GET");
+});
+
+test("framework-assurance read-only report composes with the real LingDaemonClient endpoint", async () => {
+  const cwd = "/workspace/assurance";
+  const workUnitId = "work-unit-assurance-001";
+  const runId = "run-assurance-001";
+  const observedAt = "2026-11-10T08:00:00.000Z";
+  const calls = [];
+  const body = {
+    schemaVersion: 1,
+    cwd,
+    workUnitId,
+    runId,
+    status: "available",
+    observedAt,
+    items: [],
+    projectionCheckpoints: ["continuation", "tool_execution", "evaluation", "delegation"].map(domain => ({
+      domain,
+      generation: 1,
+      sourceEpoch: 1,
+      builtEpoch: 1,
+      state: "ready",
+      rowCount: 0,
+      isCurrent: true,
+      updatedAt: observedAt,
+    })),
+  };
+  const client = new LingDaemonClient({
+    baseUrl: "http://daemon.test",
+    computerUseRouteToken: "TOKEN_SENTINEL",
+    fetch: async (input, init) => {
+      calls.push({ url: new URL(String(input)), init });
+      return Response.json(body);
+    },
+  });
+
+  const report = await readHarnessDiagnosticsReportFromClient({
+    client,
+    cwd,
+    workUnitId,
+    runId,
+    limit: 100,
+  });
+
+  assert.equal(report.status, "available");
+  assert.equal(report.pageCount, 1);
+  assert.equal(report.items.length, 0);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url.pathname, `/work-units/${workUnitId}/harness`);
+  assert.equal(calls[0].url.searchParams.get("cwd"), cwd);
+  assert.equal(calls[0].url.searchParams.get("limit"), "100");
+  assert.equal(calls[0].url.searchParams.get("cursor"), null);
+  assert.equal(calls[0].init.method, "GET");
+  assert.equal(calls[0].init.body, undefined);
+  assert.ok(!JSON.stringify(calls).includes("TOKEN_SENTINEL"));
+  assert.ok(!JSON.stringify(report).includes(cwd));
 });

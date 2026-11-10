@@ -153,7 +153,7 @@ Code and test anchors: sections 7 and 9; no live task or GUI acceptance claimed
 - **改动**：本计划只读适配脚本和对应测试。首轮不改诊断生产者，不新建 UI 或 endpoint。
 - **实施**：正确处理冷工作区、缺 Run/lineage、分页与时间标记，关联同一身份的报告。
 - **验收**：A16；读取不能创建 Store、触发 supervisor / reconcile / retry / dispatch；无敏感字段泄露。
-- **本批结果**：`diagnostics.mjs` 通过注入的 `getWorkUnitHarnessDiagnostics` 逐页消费，保留页级 `observedAt`、cursor 和 checkpoint，输出 workspace 哈希并关联同一 Run/WorkUnit 的 F3 observation；冷工作区和断链状态转为脱敏报告状态。未改 daemon、Store、API endpoint 或 UI。
+- **本批结果**：`diagnostics.mjs` 由 `readHarnessDiagnosticsReportFromClient` 组合真实 `LingDaemonClient.getWorkUnitHarnessDiagnostics`，再逐页消费并保留页级 `observedAt`、cursor 和 checkpoint，输出 workspace 哈希并关联同一 Run/WorkUnit 的 F3 observation；冷工作区和断链状态转为脱敏报告状态。底层回调保留为纯测试边界；未改 daemon、Store、API endpoint 或 UI。
 
 ### F3-B 准入清单
 
@@ -445,3 +445,11 @@ Common checks 的失败已定位到全历史 Gitleaks：1438 个提交、3833874
 | assurance 全套 | `node --test scripts/framework-assurance/*.test.mjs`：94/94 通过；`preflight` 与 `calibrate` 成功；本地缺失 `tar` 时临时复用既有只读 node_modules 后重跑，链接已清理 |
 | 运行边界 | 未启动真实 Run、Provider、模型、付费任务、daemon 或 Store；未修改 F3-B/F5、daemon、SQLite、API endpoint、UI 或另一会话 worktree |
 | 当前未完成 | F3-B 真实串行/并发执行证据、F5 节点重跑实现仍未启动；本批不创建 rerun API 或生产执行接线 |
+
+### F4-01 客户端组合收口（2026-11-10）
+
+| 项目 | 已确认结果 |
+| --- | --- |
+| 组合入口 | `readHarnessDiagnosticsReportFromClient` 将 `LingDaemonClient.getWorkUnitHarnessDiagnostics` 接入既有只读分页报告适配器 |
+| 真实客户端回归 | `packages/api-client/test/harness-diagnostics.test.mjs` 使用真实 `LingDaemonClient`，验证 GET、cwd/WorkUnit scope、分页参数、无 body 和不携带 Computer Use token |
+| 生产范围 | 未改 daemon、Store、诊断 endpoint、数据库、UI 或执行入口；未启动真实 Run、Provider、模型或付费任务 |
