@@ -17,6 +17,7 @@ import { approvalResumeCapacityAuthority, userInputCapacityAuthority, continuati
   type HostCapacityContinuationPorts } from "./runtime-host-capacity-continuations.js";
 import { readNumber, readString, rollbackOwnedSqliteTransaction } from "./helpers.js";
 import type { SqliteStoreContext } from "./store-context.js";
+import { withSqliteSnapshotParentTransaction } from "./read-snapshot.js";
 import { assertUserInputDurableQuiescence } from "./user-input-durable-quiescence.js";
 import { readHostOperationBlockers } from "./host-operation-journal-store.js";
 import { isRuntimeHostCapacityPausedStopProof, readRuntimeHostCapacityPausedStopProof } from "./runtime-host-capacity-stop-proof.js";
@@ -613,8 +614,10 @@ export class SqliteRuntimeHostCapacityStore {
     return ownerKind === "attempt" ? this.isOrdinaryExecutionSource(row, false)
       : ownerKind === "workflow_start" ? this.isWorkflowStartSource(row)
         : ownerKind === "delegation_spawn" ? this.isDelegationSpawnSource(row)
-          : ownerKind === "user_input_continuation" ? row.runner_id === "pi" && row.continuation_reason === "user_input_answer"
-            : ownerKind === "approval_resume_pending" ? row.runner_id === "pi" && Number(row.attempt_number) >= 2 : false;
+          : ownerKind === "user_input_continuation" ? this.isSupportedContinuationSource(row)
+            && row.continuation_reason === "user_input_answer"
+            : ownerKind === "approval_resume_pending" ? this.isSupportedContinuationSource(row)
+              && Number(row.attempt_number) >= 2 : false;
   }
 
   private isPrestart(row: Row, ownerKind: RuntimeHostCapacityIntentRecord["intent"]["ownerKind"] = "attempt"): boolean {
@@ -670,10 +673,14 @@ export class SqliteRuntimeHostCapacityStore {
   }
 
   private isFirstNativeSource(row: Row): boolean {
-    return row.attempt_number === 1 && row.parent_run_id === null && row.continuation_reason === null
+    return row.attempt_number === 1 && row.workflow_step_id === null && row.parent_run_id === null && row.continuation_reason === null
       && row.intervention_id === null && row.owner_type !== "delegation_step"
       && ["task_run", "conversation_run", "teammate_direct_reply", "channel_ai_reply"].includes(String(row.kind))
       && Boolean(this.nativeExecutionAdmission(row));
+  }
+
+  private isSupportedContinuationSource(row: Row): boolean {
+    return row.runner_id === "pi" || Boolean(this.nativeExecutionAdmission(row));
   }
 
   private isNativeContinuationSource(row: Row): boolean {
@@ -799,7 +806,7 @@ export class SqliteRuntimeHostCapacityStore {
     const request = run.requestSnapshot as { runnerExecutionInput?: { runnerId?: string; input?: { tools?: unknown } }; tools?: unknown };
     const execution = request?.runnerExecutionInput, tools = execution?.input?.tools;
     const native = sourceRow ? this.nativeExecutionAdmission(sourceRow) : undefined;
-    const localBash = ownerKind === "approval_resume_pending"
+    const localBash = ownerKind === "approval_resume_pending" && !native
       && (run.requestSnapshot as { harnessFeatureSnapshot?: { continuations?: string } })?.harnessFeatureSnapshot?.continuations !== "enforce";
     const effectiveTools = native?.tools ?? (Array.isArray(tools) ? tools : undefined);
     if (!localBash && !native && (execution?.runnerId !== "pi" || !effectiveTools
@@ -845,7 +852,7 @@ export class SqliteRuntimeHostCapacityStore {
     this.context.database.exec("BEGIN IMMEDIATE");
     try {
       this.assertIdentity();
-      const result = operation();
+      const result = withSqliteSnapshotParentTransaction(this.context.database, operation);
       const commit = typeof result === "boolean" ? result : (result as { status?: string }).status !== "changed";
       this.context.database.exec(commit ? "COMMIT" : "ROLLBACK");
       return result;

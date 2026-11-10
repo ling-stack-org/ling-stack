@@ -655,6 +655,15 @@ Host 最大并发 1 和受控 Pi SDK transport 验证两条不同 automation：�
 Run/Attempt 完成，WorkUnit actor 为 `scheduler`，AutomationRun 的 started/completed 状态与实际
 执行一致。该证据不覆盖外部 Provider、packaged、跨平台或完整 native/automation 故障矩阵。
 
+同日 Host continuation 接缝增量：Core 受影响的 Host、审批、workflow admission、native
+continuation、migration 和 queue 集合 267 项通过；Daemon 容量、队列、审批恢复、native
+workflow、automation、continuation 和 user-input 集合 170 项通过。native profile 的审批恢复、
+user-input Store reopen 和 workflow-start 现在复用匹配的 native Provider/Runner capacity，
+workflow step 不会同时创建普通 `attempt` 与 `workflow_start` 两种 Host intent；嵌套 authority
+读取在已有 SQLite writer transaction 中保持同一快照。Daemon typecheck/build、Markdown link
+check 和 `git diff --check` 通过。该增量结果更新了受影响代码的当前验证状态；此前完整回归数字
+不因本次增量自动扩展，真实 Provider、packaged、跨平台和 review/CI/merge 发布门禁仍未完成。
+
 ### 代码责任与实现约束
 
 - B1：daemon `config.ts` 与专用 `runtime/concurrency-policy.ts` 捕获可信启动值；

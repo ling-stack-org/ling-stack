@@ -8,13 +8,15 @@ import { hostCapacityFixture } from "./support/runtime-host-capacity-fixture.ts"
 import { runtimeRunQueueFixture } from "./support/runtime-run-queue-fixture.ts";
 import { testDatabase } from "./support/sqlite-test-database.ts";
 
-async function fixture(t: TestContext) {
+async function fixture(t: TestContext, { native = false }: { native?: boolean } = {}) {
   let bound: SqliteRunStore | undefined;
   t.after(() => { if (bound && testDatabase(bound).isOpen) bound.close(); });
   const host = hostCapacityFixture(t), queue = await runtimeRunQueueFixture(t, { clockStart: Date.now() - 30_000 });
   const capacity = createRuntimeHostCapacityStoreBinding();
   const store = bound = new SqliteRunStore({ cwd: queue.cwd, paths: queue.paths, runtimeHostCapacityBinding: capacity.binding });
-  const current = queue.prepare("approval", { tools: ["bash"] });
+  const current = queue.prepare("approval", { tools: ["bash"], ...(native ? {
+    requestOverrides: { executionBinding: { kind: "native_profile", engineId: "kimi-acp", profileId: "fixture", profileRevision: 2 } },
+  } : {}) });
   const now = queue.at(3), { run, unit, attempt, fence } = current;
   assert.ok(store.transitionTaskStatus({ taskId: run.taskId, expectedStatus: "todo", event: "claim", actor: "system", now }).ok);
   assert.ok(store.transitionTaskStatus({ taskId: run.taskId, expectedStatus: "claimed", event: "start_run", actor: "system", currentRunId: run.id, now }).ok);
@@ -44,7 +46,8 @@ async function fixture(t: TestContext) {
     expectedCheckpointRevision: checkpoint.revision, approvalId: approval.id, runId: run.id, workUnitId: unit.id,
     expectedActiveAttemptId: attempt.id, attemptToLoseId: attempt.id,
     replacementAttempt: { id: "approval-resumed-attempt", workUnitId: unit.id, attemptNumber: 2,
-      runtimeInstanceId: pending.runtimeInstanceId, runnerId: "pi", effectiveRunnerId: "pi", providerPresetId: attempt.providerPresetId, now: queue.at(5) },
+      runtimeInstanceId: pending.runtimeInstanceId, runnerId: native ? "kimi-acp" : "pi",
+      effectiveRunnerId: native ? "kimi-acp" : "pi", providerPresetId: attempt.providerPresetId, now: queue.at(5) },
     runnerResumeHandle: { kind: "ling_continuation" as const, runId: run.id, attemptId: "approval-resumed-attempt", verified: true },
     mode: "activate_waiting" as const, now: queue.at(5) };
   const reserve = (): RuntimeHostCapacityDispatchReference => {
@@ -90,6 +93,33 @@ test("approval claim binds the exact created Attempt after checkpoint and Run ac
   assert.deepEqual(record?.source, { runId: result.run.id, ...toRuntimeAttemptFence(result.attempt) });
   assert.equal(record?.dispatchedAt, undefined);
   assert.equal(f.host.host.counts().held, 1);
+});
+
+test("native profile approval resume binds and consumes the matching Host dispatch gate", async t => {
+  const f = await fixture(t, { native: true }), hostCapacity = f.reserve();
+  const result = f.store.commitApprovalResumeClaim({ ...f.claim, hostCapacity });
+  assert.ok(result.ok, JSON.stringify(result));
+  const resumed = { ...f.current, run: result.run, unit: result.workUnit, attempt: result.attempt,
+    fence: toRuntimeAttemptFence(result.attempt) } as Parameters<typeof f.queue.resources>[0];
+  const group = f.queue.resources(resumed, f.queue.at(6));
+  for (const lease of group.leases) assert.ok(f.store.acquireResourceLease(lease));
+  const acquired = f.store.acquireRuntimeSemaphoreSlots(group.semaphores);
+  assert.equal(acquired.status, "acquired", JSON.stringify({ group, acquired,
+    rows: f.queue.rows("runtime_semaphore_slots") }));
+  const db = testDatabase(f.store);
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    assert.equal(f.journal.consumeDispatchGateWithinTransaction({ intentId: hostCapacity.intentId,
+      token: hostCapacity.dispatchToken, source: { runId: result.run.id, ...toRuntimeAttemptFence(result.attempt) }, now: f.queue.at(6) }), true);
+    db.exec("COMMIT");
+  } catch (error) {
+    if (db.isTransaction) db.exec("ROLLBACK");
+    throw error;
+  }
+  assert.equal(f.journal.getIntent(hostCapacity.intentId)?.dispatchedAt, f.queue.at(6));
+  assert.deepEqual(f.queue.rows("runtime_semaphore_slots").map(row => [row.resource_type, row.resource_key]), [
+    ["provider", "native:fixture:2"], ["runner", "kimi-acp"], ["channel_parallel", f.current.channel.id],
+  ]);
 });
 
 for (const fault of ["token", "runtime", "checkpoint-cas", "source-cas"] as const) {
