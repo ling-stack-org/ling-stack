@@ -2,7 +2,7 @@
 
 Status: reference contract with active safe-concurrency follow-up
 Owner: Ling maintainers
-Last verified: 2026-11-10 (local implementation, targeted regression and production builds; release gates remain open)
+Last verified: 2026-11-10 (local implementation, targeted regression, real-provider smoke and production builds; release gates remain open)
 Code anchors: daemon workflow compiler, smart scheduler and orchestrator listed below
 
 ## Purpose
@@ -95,7 +95,9 @@ Local acceptance and remaining gates:
   regressions, builds and Web lint pass. Unchanged-input shards are reused only after
   digest/preimage verification; existing platform/native/fixture skips remain explicit;
 - recorded local regression covers real Git/SQLite and macOS real Pi SDK/Host with a
-  credential-free scripted loopback Provider. Production-build live
+  credential-free scripted loopback Provider. One separate local real-provider smoke also
+  completed provider check, a real Run, durable events and daemon restart readback; it does not
+  represent every Provider or a packaged release. Production-build live
   browser E2E passed four local daemon/HTTP/SSE scenarios: cancel/offline reconnect/reload/
   Host drain/same-scenario restart, merge-approval UI/apply/TerminalReport/reload, explicit
   public candidate-only selection with unchanged target and desktop/narrow-width

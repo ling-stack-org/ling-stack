@@ -1,9 +1,9 @@
 # Ling 多 Agent 安全并发实施计划
 
 状态：P1/P2 执行路径、P3 本地联合可靠性、P4 模板创作、P5 graph、B4 受控档位验收和 B5 Host 策略回读均已有本地实现；
-构建、冻结输入下的完整相关 package 回归与受控 Provider 的真实 daemon 浏览器链路通过。
+构建、冻结输入下的完整相关 package 回归、受控 Provider 的真实 daemon 浏览器链路和一次本机真实 Provider smoke 通过。
 Web 冲突修复、共享 UI、语言目录和夹具另有增量回归与真实浏览器验收；完整冻结回归
-不覆盖其后新增的源码。Daemon 独立 dependency-security lane 已通过；真实 Provider、
+不覆盖其后新增的源码。Daemon 独立 dependency-security lane 已通过；其他 Provider、
 packaged、跨平台与 review/CI/merge 尚未完成，不满足发布门禁。B3.3 的 native/automation
 接缝代码已接入统一 Host/queue 路径并有受控 daemon 回归；这不等于所有执行链的联合发布验收。
 Owner：Ling maintainers。

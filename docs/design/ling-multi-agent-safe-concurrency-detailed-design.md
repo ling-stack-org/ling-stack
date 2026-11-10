@@ -1,10 +1,10 @@
 # Ling 多 Agent 安全并发详细设计
 
-状态：P1-P5 均已有本地实现，受控 Provider 的真实 daemon/Web 联合链路和 Host 2/3/4 档位
+状态：P1-P5 均已有本地实现，受控 Provider 的真实 daemon/Web 联合链路、Host 2/3/4 档位和一次本机真实 Provider smoke
 已验证；安全并发 B1-B3 已接线并通过 Core/Daemon 定向回归，B5 已接入 Host 策略的客户端只读回读。
-冻结输入的完整相关回归、后续 Web 冲突修复
-增量验收及 Daemon 独立 dependency-security lane 通过；真实 Provider、packaged、跨平台
-和 review/CI/merge 门禁仍开放，不是发布完成声明。
+冻结输入的完整相关回归、后续 Web 冲突修复增量验收及 Daemon 独立 dependency-security lane 通过。
+本机真实 Provider smoke 覆盖 provider check、真实 Run、持久事件、token usage 和 daemon 重启后的回读；它不替代其他 Provider、packaged、跨平台
+和 review/CI/merge 门禁，因此当前仍不是发布完成声明。
 Owner：Ling maintainers。
 最后核对：2026-11-10，基于 PR #614 合并后的 `main`。
 文档类型：Reference / Explanation。
