@@ -2,7 +2,7 @@
 
 Status: current planning index
 Owner: repository maintainers
-Last verified: 2026-11-03 (safe-concurrency frozen-input regression and local production-build live acceptance; release gates open); 2026-10-31 (Memory and Skill Learning closure); 2026-10-27 (external shared skill-source decision row); 2026-10-19 (Native Execution Engines row); 2026-10-17 (P2 and bundled GStack rows); other work retains its owning plan's verification date
+Last verified: 2026-11-10 (safe-concurrency complete-target local verification and controlled browser acceptance; release gates open); 2026-10-31 (Memory and Skill Learning closure); 2026-10-27 (external shared skill-source decision row); 2026-10-19 (Native Execution Engines row); 2026-10-17 (P2 and bundled GStack rows); other work retains its owning plan's verification date
 Document type: governance index
 
 ## Purpose
