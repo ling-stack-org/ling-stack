@@ -653,12 +653,13 @@ terminal/drain 及资源释放；普通 writer 拒绝和 Host 策略关闭边界
 本地受控 Provider transport，不等于外部真实 Provider、packaged、跨平台或 review/CI/merge
 发布门禁已通过。
 
-2026-11-10，本地收口回归：Core `test:ci` 全量 6607 项通过、0 项失败；受影响的 Core
+2026-11-10，本地收口回归：Core `test:ci` 全量 6610 项通过、0 项失败；受影响的 Core
 并发/Host/queue/隔离/模板定向集合 270 项通过，Daemon 并发策略、Host composition、queue、
 审批恢复、Graph 和 isolated workflow 定向集合 275 项通过。Web 全部单元回归 1323 项、
 Conversation UI Core 207 项、Contracts 151 项、API client 137 项、Localization 24 项通过。
 Core、Daemon、Web 类型检查通过，Core/Daemon 构建、Web 生产构建、Web lint、i18n 和 Markdown
-link check 通过，且 `git diff --check` 无输出。Daemon 全量 `test:ci` 曾启动但因包含大量与本
+link check 通过，且 `git diff --check` 无输出；随后根 `pnpm typecheck` 和 `pnpm build` 也通过，
+其中 Desktop 为 development bundle。Daemon 全量 `test:ci` 曾启动但因包含大量与本
 目标无关的全仓边界测试而中止，不能计为通过。以上本地证据不替代真实外部 Provider、packaged、
 跨平台或 review/CI/merge 验收。
 
