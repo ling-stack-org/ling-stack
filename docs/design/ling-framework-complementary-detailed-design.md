@@ -1,11 +1,11 @@
 # Ling 框架补强详细设计
 
-Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A fixture evidence adapter and F4-01 read-only diagnostics report implemented on an independent branch; F3-B live execution and F5 rerun remain design contracts
+Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A fixture evidence adapter, F4-01 read-only diagnostics report, and F3-B read-only admission evidence projection implemented on the current assurance branch; F3-B real trial and F5 rerun remain blocked/design contracts
 Owner: Ling framework maintainers; evaluation and SDK implementation owners
-Last verified: 2026-11-09
+Last verified: 2026-11-10
 Document type: reference / technical design
 Canonical replacement: none; does not replace existing evaluation, runtime, or API contracts
-Code and test anchors: section 12 and the implementation record; offline, fixture evidence, and read-only diagnostics acceptance only
+Code and test anchors: section 12 and the implementation record; live evidence is read-only and not assessed, with no real task or GUI acceptance
 
 上层边界见[总体设计](ling-framework-complementary-design.md)，执行顺序见[实现计划书](ling-framework-complementary-implementation-plan.md)。
 
@@ -14,11 +14,12 @@ Code and test anchors: section 12 and the implementation record; offline, fixtur
 本文区分四类内容：
 
 - **现有合同**：已在核查基线中存在的函数、字段与行为。
-- **已实现私有格式**：F1 task/suite、offline observation 与报告、F2 consumer 报告、F3-A fixture 执行证据与 F4-01 只读诊断报告，只用于本工具链；不是新增 daemon 公共 API。
-- **拟新增接入合同**：F3-B 真实执行证据接线与 F5 节点重跑，尚无运行实现。
+- **已实现私有格式**：F1 task/suite、offline observation 与报告、F2 consumer 报告、F3-A fixture 执行证据与 F4-01 只读诊断报告，只用于本工具链。
+- **已实现只读接入合同**：F3-B 的 Daemon `FrameworkAssuranceEvidenceResponse`、API client 读取和 framework-assurance 关联适配；它提供准入证据，不授予真实执行许可。
+- **仍拟新增接入合同**：F3-B 的真实 Provider/evaluation 完整闭环与 F5 节点重跑，尚无完整运行验收。
 - **未来约束**：节点级重跑的设计要求，没有授权本轮修改执行链路。
 
-所有新格式采用 `schemaVersion: 1`。F1、F3-A 和 F4-01 由显式解析器拒绝未知 schema、未知字段和不合法枚举；F3-B/F5 接入遵循相同原则。F3-A/F4-01 格式是本工具链私有报告，不是新增 daemon DTO。
+所有新格式采用 `schemaVersion: 1`。F1、F3-A 和 F4-01 由显式解析器拒绝未知 schema、未知字段和不合法枚举；F3-B 的 Host 响应和 live consumer 也遵循相同原则。F3-A/F4-01 格式是本工具链私有报告，F3-B 的只读响应是明确的 contracts DTO。
 
 首批不新增持久化表、不更改 Run/Attempt 状态机，不把任务元数据塞进已有规则 case。
 
@@ -31,7 +32,7 @@ scripts/framework-assurance/
   preflight.mjs            # 纯离线预检与校准编排
   grader.mjs               # 源码加载两个既有 Core 纯函数模块
   evidence.mjs             # 离线观察格式
-  execution-evidence.mjs   # F3-A fixture 证据与可信绑定适配
+  execution-evidence.mjs   # F3-A fixture 与 F3-B live evidence 适配
   diagnostics.mjs          # F4-01 只读诊断分页报告
   report.mjs               # JSON/Markdown 报告与可比性检查
   output.mjs               # 外部目录校验与不覆盖式原子发布
@@ -186,7 +187,7 @@ assertions
 | 资源观察 | 已知调用和用量、未知项、来源、币种，分别区分任务和 grader |
 | 证据类型 | `synthetic_control`、`fixture_replay`、`live_execution`，不可互相冒充 |
 
-本批将这些字段收敛为 `scripts/framework-assurance/execution-evidence.mjs` 的 fixture 格式，并以独立 `trusted-binding` 作为可信侧输入。它不修改既有数据库 DTO，也不从候选证据推导可信绑定；真实 Host 读取和封存接口仍留给 F3-B 前的独立任务。若无法通过现有公开内部接口取得必要关联，不直接访问其他模块私有 SQLite 表。
+本批将这些字段收敛为 `scripts/framework-assurance/execution-evidence.mjs` 的 fixture 格式，并以独立 `trusted-binding` 作为可信侧输入。当前增量增加了 Daemon 的只读 Host 投影和 API client 关联适配；它仍不执行 Store 初始化、recovery、Run 派发或 evaluation 判分，也不从候选证据推导可信绑定。真实 Provider、evaluation 封存和完整试点验收仍留给 F3-B 后续阶段。若无法通过现有公开内部接口取得必要关联，不直接访问其他模块私有 SQLite 表。
 
 ### 5.3 可信验证边界
 
@@ -211,18 +212,30 @@ assertions
 
 映射源任务状态、evaluation 状态和客观结果时分别保留。现有 evaluation 的 `completed` 只说明判定过程结束，不自动代表 verdict 成功。
 
+### 5.5 F3-B 准入证据前置实现
+
+当前实现把真实 Host 证据接入限定为只读观察边界：
+
+- Daemon 提供 `GET /runs/:id/assurance-evidence`。路由只能解析已初始化的 workspace Store；冷工作区返回不可用，不创建 Store、不触发 recovery、不重派 Run。
+- 响应固定为 `FrameworkAssuranceEvidenceResponse`，包含 Run/WorkUnit/Attempt/fence lineage、三组 snapshot digest、已封存 artifact digest、Attempt 历史与停止状态、delegation completion、预算 reservation/charge，以及 isolated workflow 的 safety plan、execution binding、integration round、effect/receipt、branch result、candidate、approval 和 apply 投影。
+- `admission` 是由 Host 投影重新计算的 fail-closed 结果。缺少 `pi_host_isolated_files_v1`、Tool Broker `enforce`、当前 fence binding、完整 round 或确认停止时，只记录 blocker，不产生执行授权。
+- `collectLiveExecutionEvidence()` 通过 `LingDaemonClient` 读取该响应，再与冻结任务身份、source commit 和 input digest 关联，输出 `live_execution` / `not_assessed`。离线 CLI 默认仍拒绝 live evidence；只有显式的 live consumer 适配路径才能读取该类型。
+- 响应不包含 task input、claim token、resume handle、sealed artifact body 或 evaluation grade。预算未知、effect 未确认、snapshot 变化和 lineage 不一致均不能升级为通过。
+
+该接入已在临时 SQLite/Git/HTTP fixture 上验证 endpoint、生命周期、预算、隔离、candidate/approval/apply 和敏感字段边界；它不等于真实 Provider、生产 daemon、packaged、跨平台或完整 evaluation 验收。
+
 ## 6. 结果格式与比较
 
 ### 6.1 已实现离线观察文件
 
-F1 仅接受 `synthetic_control` 与声明为 `fixture_replay` 的离线数据，显式拒绝 `live_execution`。`fixture_replay` 是输入标签，不是可信 Host 认证；不能凭调用者填写的 pass 字段取得真实执行验收。F3 将另加来源权威与封存验证，不放宽当前限制。
+离线 CLI 仍仅接受 `synthetic_control` 与声明为 `fixture_replay` 的离线数据，显式拒绝 `live_execution`。`fixture_replay` 是输入标签，不是可信 Host 认证；不能凭调用者填写的 pass 字段取得真实执行验收。F3-B 的 live consumer 只读取 Host 投影并输出 `not_assessed`，不改变离线报告的默认限制。
 
 | 字段 | 合同 |
 | --- | --- |
 | `schemaVersion` / `observationId` / `invocationId` / `caseId` | 固定版本、观察身份、独立调用身份与控制身份；同一调用重复导出不增样本 |
 | `taskIdentity` / `inputDigests` | 完整冻结引用，不能只写任务展示名 |
 | `sourceCommit` / `comparison` | 完整源码 commit；实际 model/reasoning/executionStrategy/node/platform/arch，离线模型与推理均为 `none` |
-| `evidenceKind` | 当前只允许合成校准与 fixture 重放；真实执行不是本格式已支持能力 |
+| `evidenceKind` | 离线报告只允许合成校准与 fixture 重放；live consumer 单独输出 `live_execution`，且不自动判定成功 |
 | `executionStatus` | 归一化观察状态：`not_started / running / completed / failed / cancelled / timed_out / unknown` |
 | `assessment` | 新报告的 `pass / fail / not_assessed / invalid_evidence`；不是替换现有数据库枚举 |
 | `stopReason` / `effectStatus` | 保留停止原因；副作用为 `none / confirmed / unknown`，不能从文本猜测 |
@@ -400,7 +413,8 @@ extension manifest 与 plugin-package manifest 的版本校验不是同一套规
 | --- | --- | --- |
 | 三个具体校准任务与冻结规则 | F1-01 已关闭 | 源码分析/故障注入标签明确；候选修复行为验证仍待 F3 |
 | 消费矩阵的实际工具链与依赖预置 | F2-01 已有 macOS arm64 本地及 Linux x64 托管消费格 | Windows SDK 及其他工具链仍未验证；安装器 job 不替代 SDK 消费 |
-| 正常 Run 证据内部读取及封存接口 | F3-01 | 只做 fixture，不执行真实适配 |
+| F3-B 只读 Host 证据投影及客户端关联 | F3-B 准入前置已实现 | 只读读取已初始化 Store；不包含 evaluation grade，不授予真实执行许可 |
+| 正常 Run 真实 evidence 封存与 evaluation 关联 | F3-B 真实试点前 | 缺失时阻断真实任务，不降级为 fixture 或模型自报 |
 | 对应执行 profile 的安全/恢复验收 | F3-B 启动前 | 阻断该能力的真实任务，不阻断离线和 SDK |
 | 付费总额与 Provider 选择 | 每次真实试点前 | 不产生任何模型请求 |
 | 公开包稳定窗口和版本发布策略 | 对外宣称稳定前 | 可以内部验证，不能扩大支持承诺 |
@@ -416,3 +430,4 @@ extension manifest 与 plugin-package manifest 的版本校验不是同一套规
 - 现有构建/测试调度：`scripts/ci/run-packages.mjs`；实施时按同一基线先构建再测试，不重复使用来源不明的 dist。
 - macOS native boundary：`packages/daemon/src/runtime/sandbox/native-process-launch.ts` 与 `packages/daemon/test/native-process-boundary.test.mjs`；私有状态规则、合法 workspace 写入、Kimi metadata、relay 和进程回收分别保留独立边界。
 - 新工具：`scripts/framework-assurance/`；冻结输入：`fixtures/framework-assurance/`；实现测试：`offline.test.mjs`、`cli.test.mjs`、`sdk-consumer.test.mjs`、`execution-evidence.test.mjs` 与 `diagnostics.test.mjs`，均位于新工具目录。
+- F3-B 只读接入：`packages/contracts/src/framework-assurance.ts`、`packages/daemon/src/features/runs/assurance-evidence.ts`、`packages/daemon/src/server/routes.ts`、`packages/api-client/src/endpoints/runs.ts`；回归为 `packages/daemon/test/assurance-evidence-api.test.mjs`、`assurance-evidence-isolation.test.mjs`、`assurance-evidence-budget.test.ts` 和 API client 的 `harness-diagnostics.test.mjs`。

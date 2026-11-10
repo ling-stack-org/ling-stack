@@ -34,6 +34,49 @@ test("initial read and explicit refresh omit cursor and let the Host own the def
   assert.equal(calls[1].searchParams.get("limit"), "500");
 });
 
+test("live assurance evidence uses a read-only encoded Run endpoint", async () => {
+  const calls = [];
+  const body = {
+    schemaVersion: 1,
+    kind: "live_execution_evidence",
+    comparison: { model: "fixture-model", reasoning: "none", executionStrategy: "pi", node: "22.22.1", platform: "darwin", arch: "arm64" },
+    execution: {
+      runId: "run/live",
+      workUnitId: "unit-live",
+      attemptId: "attempt-live",
+      runtimeInstanceId: "runtime-live",
+      fencingToken: "fence-live",
+      runStatus: "succeeded",
+      workUnitStatus: "succeeded",
+      attemptStatus: "succeeded",
+      claimStatus: "terminal_retained",
+      effectStatus: "confirmed",
+    },
+    snapshots: {
+      run: { revision: 1, sha256: "a".repeat(64) },
+      workUnit: { revision: 2, sha256: "b".repeat(64) },
+      attempt: { revision: 3, sha256: "c".repeat(64) },
+    },
+    artifacts: [{ role: "json-0", artifactId: "artifact-live", contentSha256: "d".repeat(64) }],
+    observedAt: "2026-11-10T08:00:00.000Z",
+    limitations: ["read_only_host_projection"],
+  };
+  const client = new LingDaemonClient({
+    baseUrl: "http://daemon.test",
+    computerUseRouteToken: "TOKEN_SENTINEL",
+    fetch: async (input, init) => {
+      calls.push({ url: new URL(String(input)), init });
+      return Response.json(body);
+    },
+  });
+  assert.deepEqual(await client.getRunAssuranceEvidence("run/live", "/workspace/assurance"), body);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url.pathname, "/runs/run%2Flive/assurance-evidence");
+  assert.equal(calls[0].url.searchParams.get("cwd"), "/workspace/assurance");
+  assert.equal(calls[0].init.method, "GET");
+  assert.ok(!JSON.stringify(calls).includes("TOKEN_SENTINEL"));
+});
+
 test("structured cold-workspace and invalid-cursor failures stay visible to the safe UI adapter", async () => {
   for (const [status, code] of [[503, "harness_workspace_uninitialized"], [400, "harness_diagnostics_invalid_query"], [500, "harness_diagnostics_unavailable"]]) {
     const client = new LingDaemonClient({ fetch: async () => Response.json({ error: code, message: "SECRET_SENTINEL" }, { status }) });
