@@ -702,6 +702,16 @@ Experience review 集合共 300 项通过，0 fail、0 skipped。该集合验证
 SQLite/Pi/Host 生命周期；它不改变真实 Provider 组合、packaged、Windows/Linux 和远端
 review/CI/merge 的门禁状态。
 
+同日当前工作树最终定向重跑（`e91fe606`，基于 `origin/main@841dab4d`）：Core 容量、队列、
+恢复、取消、重试、隔离、结果封存、迁移和模板集合 1663/1663 通过，Daemon Host/queue、
+恢复、隔离 Git、candidate/apply、Graph、模板和 Experience review 集合 916/916 通过；两者
+均为 0 fail、0 skipped。Web 会话、Graph、隔离 workflow、冲突恢复、模板和经验入口集合
+299/299 通过，`conversation-ui-core` 108/108、`conversation-ui-react` 23/23 通过。
+Web typecheck、测试/e2e typecheck、生产构建和 lint 通过。生产构建预览上的真实 macOS
+daemon/HTTP/SSE/Pi/SQLite/Git Playwright 场景 4/4 通过：断线重连与取消后重启、候选审批
+应用、公开 candidate-only、模板保存/发布/预览后显式启动。该重跑仍只证明本机受控链路；
+真实外部 Provider 组合、packaged/cross-platform、远端 review/CI/merge 继续保持开放。
+
 ### 代码责任与实现约束
 
 - B1：daemon `config.ts` 与专用 `runtime/concurrency-policy.ts` 捕获可信启动值；
