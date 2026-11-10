@@ -1,13 +1,14 @@
 # Ling 多 Agent 安全并发详细设计
 
-状态：P1-P5 均已有本地实现，受控 Provider 的真实 daemon/Web 联合链路和 Host 2/3/4 档位
+状态：P1-P5 均已有本地实现，受控 Provider 的真实 daemon/Web 联合链路、Host 2/3/4 档位和一次本机真实 Provider smoke
 已验证；安全并发 B1-B3 已接线并通过 Core/Daemon 定向回归，B5 已接入 Host 策略的客户端只读回读。
-冻结输入的完整相关回归、后续 Web 冲突修复
-增量验收及 Daemon 独立 dependency-security lane 通过；真实 Provider、packaged、跨平台
-和 review/CI/merge 门禁仍开放，不是发布完成声明。
+冻结输入的完整相关回归、后续 Web 冲突修复增量验收及 Daemon 独立 dependency-security lane 通过。
+本机真实 Provider smoke 覆盖 provider check、真实 Run、持久事件、token usage 和 daemon 重启后的回读；它不替代其他 Provider、packaged、跨平台
+和 review/CI/merge 门禁，因此当前仍不是发布完成声明。
 Owner：Ling maintainers。
-最后核对：2026-11-10，基于 PR #614 合并后的 `main`。
+最后核对：2026-11-10，基于 PR #662 合并后的 `origin/main@841dab4d`。
 文档类型：Reference / Explanation。
+完整目标总入口：[Ling 多 Agent 完整目标设计](ling-multi-agent-complete-target.md)。
 权威边界：[Multi-Agent App Detailed Design](multi-agent-app-detailed-design.md)
 继续拥有总体产品设计；本文细化安全并发、隔离执行与合并协议。
 交付顺序与完成标准：[实施计划](ling-multi-agent-safe-concurrency-implementation-plan.md)。
@@ -502,6 +503,28 @@ automation 通过各自 owning contract 进入统一 Host/queue 边界，不回�
 spawn 前同时检查祖先占用、子执行可用容量和等待链；无法完成准入则返回稳定的暂时容量
 不足结果，不创建等待父任务退出才能运行的子执行。后续只有实际 runner yield/ACK/drain
 协议可证明停用时，才允许交还执行槽；恢复父任务前重新取得容量，原写锁不因此失效。
+
+### 5.9.1 生产执行入口审计矩阵
+
+所有纳入本目标的执行入口都必须落到下面的 owner 和生命周期。调用方可以选择入口，不能
+选择绕过 Host 的派发凭证；Web、SSE 和 Composer 只观察这些事实。
+
+| 执行入口 | 生产 owner | 准入与派发边界 | 释放与未知结果 | 主要代码/验收锚点 |
+| --- | --- | --- | --- | --- |
+| 普通会话、任务、私聊、远程回复 | `executeRunRequest` | `reserveExecution`，按当前 Attempt/fence 消费 dispatch gate；队列满额时进入持久 Run queue | `observeHostAttemptCompletion` 在 Runner、工具和 effect drain 后释放；未知 ACK 保留 reservation | `features/runs/orchestrator.ts`、`runtime-run-queue*.test.ts` |
+| 首次 queued Run | `RuntimeRunQueueCoordinator` | durable claim → Host reservation → workspace receipt → queued dispatch gate → 原 Attempt | claim/ACK 不确定时不重派；no-dispatch 只释放未派发 reservation | `runtime/run-queue.ts`、`runtime-run-queue-recovery.test.ts` |
+| workflow step / isolated sibling | channel workflow dispatcher | `reserveWorkflowStart` 与 frozen start owner、scope plan、worktree 和 parent fence 一起校验 | branch terminal、effect receipt、fan-in 和物理 drain 完成后释放；candidate/apply 另有审批 lease | `channel-turn-dispatch-executor.ts`、`workflow-isolated-parallel-integration.test.mjs` |
+| dynamic delegation child | delegation runtime registry | `reserveDelegationPending` 或 `reserveDelegationSpawn`；父/祖先预算和 child fence 同时检查 | child completion barrier、terminal intent 和原执行 drain 共同决定释放；未知 child 不重放 | `harness/delegations/runtime-registry.ts`、delegation capacity tests |
+| approval resume | `ApprovalResumeCoordinator` | approved checkpoint 先 `reserveApprovalResumePending`，再把精确 reference 交给 continuation | SDK 前 gate 失败只形成 resume failure；已消费 gate 等原 executor/effect observation 收敛 | `features/runs/approval-resume-coordinator.ts`、approval recovery tests |
+| user-input continuation | `UserInputDeliveryWorker` + `executeUserInputContinuation` | delivery claim、prepared execution、source fence 和 `reserveUserInputContinuation` 原子绑定 | receiver ACK 未确认时保留 binding；成功/失败由原 continuation terminal 事实收口 | `user-input-answer-dispatch.ts`、continuation admission tests |
+| native profile | `NativeRunDispatcher` + target adapter | target 必须声明 `dispatch_ack_v1`；reserve 后由 target 的 `onDispatchAccepted` 消费 gate | 原生 journal、submission inventory 和本地 lifetime drain 后才 `releaseStopped`；缺证据 fail closed | `native-run-dispatcher.ts`、`native-workflow-host-capacity-integration.test.ts` |
+| automation / heartbeat | automation scheduler + `executeRunRequest` | scheduler actor、idempotency key、heartbeat execution binding 和统一 Host/queue | `afterRunTerminal` 更新 AutomationRun；原 Run/Attempt 继续执行，不创建重复 successor | `automations/run.ts`、`automation-host-capacity-queue.test.ts` |
+| Experience review | learning coordinator | 这是已结算 Run 的观察作业，使用独立 `learning_review` WorkUnit 和自身预算，不取得 workspace write 权限 | source/evidence/policy 复核失败只保留 review job；候选必须进入既有人工 review，不能自动发布 | `features/learning/`、`learning-reviews.test.mjs`、[learning review runtime](learning-review-runtime.md) |
+
+当前实现审计结论：前八类执行入口已接入统一 Host/queue 接缝，并有 Core/Daemon 定向回归；
+第九类按独立观察作业契约运行。受控 Pi/Host、SQLite/Git、生产 Web 和本机真实 Provider
+smoke 已覆盖相应链路。其他真实 Provider、packaged、Windows/Linux 及远端 review/CI/merge
+仍是发布门禁，不能由这张矩阵代替。
 
 ### 5.10 扩容门禁与会话呈现
 
