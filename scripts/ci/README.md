@@ -70,14 +70,16 @@ a requested package via `--if-present`.
 - Other packages and Web checks: one Linux matrix entry only when at least one
   such package is selected, excluding core and daemon because their complete
   discovery runs in their own entries.
-- Daemon: six `macos-26` shards, two serial file workers per shard. The Kimi Host
+- Daemon: six stable `macos-15` shards, two serial file workers per shard. The Kimi Host
   read/terminal and delegation production-tool-surface files run serially in an
   exclusive phase before other files on their assigned runner. The six-shard
   split keeps first runs bounded before the default-branch timing cache has
   measurements for newly added daemon files; it does not reduce file discovery,
   per-file watchdogs or platform coverage.
-- Linux restricted-command contracts and real macOS native smoke remain separate
-  mandatory lanes. No daemon files have been moved to Linux or removed.
+- Linux restricted-command contracts and the real `macos-26` native smoke remain
+  separate mandatory lanes. No daemon files have been moved to Linux or removed;
+  the macOS 26 requirement is isolated to the platform-specific smoke so normal
+  PR daemon regressions do not wait behind the scarce macOS 26 pool.
 - Framework assurance: complete non-documentation runs add an Ubuntu / Node
   22.22.1 lane for the zero-model offline tests, frozen controls and real external
   SDK consumer. It checks out complete history and owns fresh serial builds and

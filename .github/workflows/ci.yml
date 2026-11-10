@@ -512,8 +512,10 @@ jobs:
     needs: [scope, build]
     if: ${{ !cancelled() && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.daemon == 'true' && needs.build.result == 'success' }}
     # Full discovery is unchanged: original Darwin-only positive cases must
-    # execute on the real Host, not skip or weaken the production platform gate.
-    runs-on: macos-26
+    # execute on a real hosted macOS Host. Keep the six-shard regression lane
+    # on the stable macOS 15 pool; the macOS 26 platform gate remains covered
+    # by the separate restricted-command smoke below.
+    runs-on: macos-15
     # File/shard watchdogs report failures before this final infrastructure cap.
     timeout-minutes: 40
     strategy:
