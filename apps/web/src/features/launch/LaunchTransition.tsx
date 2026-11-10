@@ -1,5 +1,5 @@
 import { createPortal } from "react-dom";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   createLaunchAnimation,
   LAUNCH_ANIMATION_FADE_DURATION,
@@ -28,21 +28,37 @@ export function LaunchTransition({
     onFinishedRef.current = onFinished;
   }, [onFinished]);
 
+  useLayoutEffect(() => {
+    const root = document.getElementById("root");
+    if (!visible || !root) return undefined;
+    const previousInert = root.inert;
+    root.inert = true;
+    return () => { root.inert = previousInert; };
+  }, [visible]);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return undefined;
 
     let fadeTimer: number | undefined;
-    const controller = createLaunchAnimation(canvas, {
-      ...(referenceImageUrl !== undefined ? { referenceImageUrl } : {}),
-      onComplete: () => {
-        setExiting(true);
-        fadeTimer = window.setTimeout(() => {
-          setVisible(false);
-          onFinishedRef.current?.();
-        }, LAUNCH_ANIMATION_FADE_DURATION);
-      },
-    });
+    let controller: LaunchAnimationController;
+    try {
+      controller = createLaunchAnimation(canvas, {
+        ...(referenceImageUrl !== undefined ? { referenceImageUrl } : {}),
+        onComplete: () => {
+          setExiting(true);
+          fadeTimer = window.setTimeout(() => {
+            setVisible(false);
+            onFinishedRef.current?.();
+          }, LAUNCH_ANIMATION_FADE_DURATION);
+        },
+      });
+    } catch (error) {
+      console.warn("Launch animation could not start.", error);
+      setVisible(false);
+      onFinishedRef.current?.();
+      return undefined;
+    }
     controllerRef.current = controller;
 
     return () => {

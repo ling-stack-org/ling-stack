@@ -5,7 +5,7 @@
   overflow: hidden;
   background: #fff;
   opacity: 1;
-  pointer-events: none;
+  pointer-events: auto;
   transition: opacity 420ms ease;
 }
 
