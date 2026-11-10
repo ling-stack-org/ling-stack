@@ -7,13 +7,28 @@ import type { RuntimeHostCapacityApprovalResumePendingInput, RuntimeHostCapacity
   RuntimeHostCapacityUserInputPendingInput } from "../../runtime-host-capacity-types.js";
 import type { UserInputContinuationExecutionPlan } from "../../user-input-host-continuation-types.js";
 
-export type HostCapacityContinuationPorts = Pick<RunStore, "getApprovalCheckpoint" | "getApprovalRequest" | "getRun"
+export type HostCapacityContinuationPorts = Pick<RunStore, "getApprovalCheckpoint" | "getApprovalRequest" | "getRun" | "getRunIntervention"
   | "getWorkUnit" | "getWorkUnitAttempt" | "getUserInputContinuationSeed" | "getUserInputContinuationPreparation"
   | "getUserInputContinuationBinding" | "getUserInputDelivery" | "getUserInputWait">;
 type Authority = { readonly ownerKey: string; readonly authorityDigest: string };
 const hash = (value: unknown): string => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const text = (value: unknown): value is string => typeof value === "string" && !!value.trim() && !/[\x00-\x1f\x7f]/u.test(value);
 const revision = (value: unknown): value is number => typeof value === "number" && Number.isSafeInteger(value) && value >= 1;
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+}
+
+/** Native continuations use the immutable request binding as their runner authority. */
+function nativeProfileRunner(value: unknown): string | undefined {
+  const request = record(value), binding = record(request?.executionBinding), engineId = binding?.engineId;
+  return binding?.kind === "native_profile" && text(engineId) && request?.runnerId === engineId
+    && text(binding.profileId) && revision(binding.profileRevision) ? engineId : undefined;
+}
+
+function supportedContinuationRunner(run: { readonly requestSnapshot: unknown }, runnerId: unknown): boolean {
+  return runnerId === "pi" || nativeProfileRunner(run.requestSnapshot) === runnerId;
+}
 
 export function approvalResumeCapacityAuthority(ports: HostCapacityContinuationPorts, workspaceId: string,
   input: RuntimeHostCapacityApprovalResumePendingInput, source?: HostOperationSource): Authority | undefined {
@@ -30,7 +45,7 @@ export function approvalResumeCapacityAuthority(ports: HostCapacityContinuationP
       toolCallId: approval.toolCallId, sideEffect: approval.payload })
     || !run || !unit || !prior || unit.workspaceId !== workspaceId || run.workUnitId !== unit.id
     || unit.linkedRunId !== run.id || prior.workUnitId !== unit.id
-    || (prior.effectiveRunnerId ?? prior.runnerId) !== "pi") return undefined;
+    || !supportedContinuationRunner(run, prior.effectiveRunnerId ?? prior.runnerId)) return undefined;
   if (source) {
     if (checkpoint.status !== "resume_pending" || checkpoint.revision !== input.expectedCheckpointRevision + 1
       || checkpoint.runnerResumeHandle?.attemptId !== source.attemptId || source.runtimeInstanceId !== input.runtimeInstanceId
@@ -54,7 +69,8 @@ export function userInputCapacityAuthority(ports: HostCapacityContinuationPorts,
   const delivery = ports.getUserInputDelivery(input.threadId, input.deliveryId);
   const wait = seed && ports.getUserInputWait(input.threadId, seed.request.requestId);
   const plan = prepared?.payload as UserInputContinuationExecutionPlan | undefined;
-  if (!seed || !prepared || !delivery || !wait || seed.source.workspaceId !== workspaceId || plan?.runnerId !== "pi"
+  if (!seed || !prepared || !delivery || !wait || !plan || seed.source.workspaceId !== workspaceId
+    || !supportedContinuationRunner({ requestSnapshot: plan.requestSnapshot }, plan.runnerId)
     || !isDeepStrictEqual(input.executionRef, { id: prepared.id, fingerprint: prepared.fingerprint })
     || prepared.createdAt > input.now || delivery.status !== "claimed" || !delivery.claim
     || delivery.claim.expiresAt <= input.now) return undefined;

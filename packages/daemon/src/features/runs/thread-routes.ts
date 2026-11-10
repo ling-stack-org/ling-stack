@@ -41,7 +41,7 @@ import {
   type UpdateProposedPlanArtifactInput,
 } from "@ling-stack/core";
 import type { PiRunnerProviderConfig } from "@ling-stack/runner-pi";
-import { isConversationContextProjectionMetadata } from "@ling-stack/contracts";
+import { isConversationContextProjectionMetadata, isExternalExecutionEngineId, parseExecutionBindingRequest } from "@ling-stack/contracts";
 import { HttpError } from "../../errors.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readOptionalIntegerQuery, readOptionalJsonBody } from "../../shared/request.js";
@@ -1604,12 +1604,20 @@ function buildLingThreadResumeContext(input: {
     readSnapshotString(taskSnapshot, "prompt") ??
     readSnapshotString(isRecord(requestSnapshot.task) ? requestSnapshot.task : {}, "prompt") ??
     "";
+  const executionBinding = requestSnapshot.executionBinding === undefined
+    ? undefined : parseExecutionBindingRequest(requestSnapshot.executionBinding);
+  if (!executionBinding && (isExternalExecutionEngineId(readSnapshotString(requestSnapshot, "runnerId"))
+    || isExternalExecutionEngineId(sourceRun.providerName))) {
+    throw new HttpError(409, "legacy_runner_migration_required",
+      "The source run has no native profile binding; select and validate a profile before resuming.");
+  }
+  const native = executionBinding?.kind === "native_profile";
   const providerPresetId = readSnapshotString(requestSnapshot, "providerPresetId") ?? sourceRun.providerPresetId;
   const inlineProvider = providerPresetId
     ? undefined
     : isRecord(requestSnapshot.provider) ? requestSnapshot.provider as unknown as PiRunnerProviderConfig
     : isRecord(sourceRun.providerSnapshot) ? sourceRun.providerSnapshot as unknown as PiRunnerProviderConfig : undefined;
-  if (!providerPresetId && !inlineProvider) {
+  if (!executionBinding && !providerPresetId && !inlineProvider) {
     throw new HttpError(400, "resume_snapshot_unavailable", "Cannot resume thread because the source run has no reusable provider snapshot.");
   }
   const context = buildResumeContextPreview({
@@ -1633,14 +1641,16 @@ function buildLingThreadResumeContext(input: {
   const runRequest: RunRequest = {
       workspaceCwd: readSnapshotString(requestSnapshot, "workspaceCwd") ?? sourceRun.cwd,
       cwd: readSnapshotString(requestSnapshot, "cwd") ?? sourceRun.cwd,
-      providerPresetId,
-      provider: inlineProvider,
+      executionBinding,
+      providerPresetId: native ? undefined : executionBinding?.kind === "pi_provider"
+        ? executionBinding.providerPresetId : providerPresetId,
+      provider: executionBinding ? undefined : inlineProvider,
       threadId: normalInput ? thread.id : undefined,
       turnId: normalInput?.turn.id,
       sourceMessageId: normalInput?.turn.sourceItemId,
       createdByActor: normalInput ? "local-user" : undefined,
       teammateId: readSnapshotString(requestSnapshot, "teammateId") ?? sourceRun.teammateId,
-      runnerId: normalizeRunnerId(readSnapshotString(requestSnapshot, "runnerId")),
+      runnerId: native ? executionBinding.engineId : normalizeRunnerId(readSnapshotString(requestSnapshot, "runnerId")),
       requestedSkillId: readSnapshotString(requestSnapshot, "requestedSkillId") ?? sourceRun.selectedSkillId,
       skipProviderPreflight: readSnapshotBoolean(requestSnapshot, "skipProviderPreflight") ?? false,
       idempotencyKey: normalInput?.idempotencyKey ?? idempotencyKey,

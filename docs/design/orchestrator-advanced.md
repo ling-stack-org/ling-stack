@@ -2,7 +2,7 @@
 
 Status: reference contract with active safe-concurrency follow-up
 Owner: Ling maintainers
-Last verified: 2026-11-03 (frozen-input regression and local production-build live acceptance; release gates remain open)
+Last verified: 2026-11-10 (local implementation, targeted regression and production builds; release gates remain open)
 Code anchors: daemon workflow compiler, smart scheduler and orchestrator listed below
 
 ## Purpose
@@ -19,13 +19,26 @@ Current source boundary:
 - downstream steps start on explicit orchestrator ticks.
 
 Basic smart branch scheduling and inline custom-template compilation already exist.
-The delivery stages are:
+The product delivery stages are:
 
 1. explicit side-effect classes, Host enforcement and safe parallel admission;
 2. step-level isolated worktree execution and merge;
 3. combined restart, cancellation, conflict and approval acceptance;
 4. stored custom-template registry and authoring UI;
 5. workflow graph visualization.
+
+The complete implementation target also includes the cross-cutting Host budget track:
+
+6. B1 trusted Host concurrency policy and strict configuration parsing;
+7. B2 one durable workspace budget shared by ordinary Runs, workflow steps,
+   delegations, approval resumes and continuations;
+8. B3 installation-wide Host capacity with durable cross-workspace handoff;
+9. B4 controlled isolated-write capacity at 2, 3 and 4 siblings;
+10. B5 read-only policy visibility in the existing execution-engine settings surface.
+
+Experience review is a separate observation path connected to the same settled Run. It may
+produce a bounded candidate for memory, a channel method or a skill revision, but it never
+changes workflow authority, grants a tool, publishes a skill or applies a candidate by itself.
 
 These should not change the default serial behavior for unsafe work. The canonical
 side-effect and UI rules live in
@@ -61,12 +74,16 @@ Implemented locally in the current branch, not a release-acceptance claim:
   are connected through the scheduler and normal Run/effect paths;
 - P2 isolated execution, sealed branch results, deterministic integration, single-use
   approved target apply and owned-worktree cleanup are connected. Public selection stays
-  off by default, macOS/Pi Host/enforced Tool Broker only, with fixed concurrency two and
-  `candidate_only`; ordinary workflow write parallelism remains closed;
+  off by default, macOS/Pi Host/enforced Tool Broker only, with default concurrency two and
+  `candidate_only`; trusted Host configuration may freeze three or four siblings for a new
+  round, while ordinary workflow write parallelism remains closed;
 - P4 versioned registry lookup, frozen compilation and existing Skill Library authoring
   UI are locally committed. Saving or previewing a template does not start execution;
 - P5 shared graph read model and same-turn graph/list UI are implemented locally.
   The graph is read-only and adds no execution authority.
+- B1-B5 Host policy, workspace/Host capacity handoff, first-Pi queue integration,
+  controlled 2/3/4 isolated-write selection and settings readback are implemented locally;
+  the public isolated entry remains conservative and ordinary workspace writes remain serial.
 - explicit text-conflict recovery has HTTP/API-client and Web dialog support. Discovery
   is read-only; planning and starting a generation-one successor are separate commands.
   Retired predecessor evidence remains available and cannot regain execution authority.
@@ -112,6 +129,35 @@ discovery before explicit retry. A ready successor is not execution or target-ap
 
 Tool-list inference alone is not an artifact-only enforcement contract. No verified
 artifact-only executor is available, so QA does not gain automatic parallel admission.
+
+## Complete Target and Release Boundary
+
+The full target is one Ling-owned execution path:
+
+```text
+user turn
+  -> frozen workflow/template and safety plan
+  -> trusted Host admission and durable capacity
+  -> Run / WorkUnit / fenced Attempt
+  -> optional isolated sibling worktrees
+  -> branch evidence and deterministic fan-in
+  -> approval-gated candidate or target apply
+  -> TerminalReport and the same conversation turn
+  -> optional Experience review candidate
+```
+
+The target is complete in code when every execution entry uses the same ownership, capacity,
+approval, cancellation, recovery and evidence contracts; the Web keeps ordinary text flowing;
+Graph is an inline, folded, read-only view only for actual collaboration or accepted parallel
+dependencies; failures, approvals, retries and recovery actions remain on the conversation's
+existing controls; and Experience review remains candidate-only until the user reviews it.
+
+The target is release-complete only after the selected workflow/executor combinations have
+real Provider, packaged desktop and platform acceptance, plus review, CI and merge gates.
+Local fixtures, controlled Provider transport, TypeScript checks and production builds prove
+the implementation boundary but do not replace those gates. Until then, Host keeps ordinary
+workspace-write parallelism closed and exposes only the explicitly selected candidate-only
+profile.
 
 ## Non-Goals
 

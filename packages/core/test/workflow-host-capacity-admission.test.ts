@@ -5,6 +5,7 @@ import { createRuntimeHostCapacityStoreBinding, HostRunCapacityStore, RuntimeHos
 import type { HostOperationSource, RuntimeHostCapacityIntentRecord } from "../dist/runtime-host-capacity-store-bridge.js";
 import type { RuntimeAttemptFenceV1, WorkflowStepStartCommitInput } from "../dist/index.js";
 import { workflowAdmissionFixture } from "./support/workflow-step-admission-fixture.mjs";
+import { testDatabase } from "./support/sqlite-test-database.ts";
 
 type Prepared = { run: { id: string }; fence: RuntimeAttemptFenceV1 };
 type WorkflowFixture = Awaited<ReturnType<typeof workflowFixture>>;
@@ -54,6 +55,25 @@ test("workflow start Host reservation requires the preparing workflow owner", as
   assert.ok(result.status === "reserved" || result.status === "duplicate", JSON.stringify(result));
   assert.equal(result.record.intent.ownerKind, "workflow_start");
   assert.equal(heldCount(host), 1);
+});
+
+test("a native workflow step enters the workflow-start gate without also preparing an ordinary attempt", async t => {
+  const { f, journal } = await workflowFixture(t);
+  const scope = f.scope("native-workflow-owner");
+  const generation = f.begin(scope);
+  const prepared = f.prepare(scope, generation, "native", { runnerId: "kimi-acp" });
+  const nativeRequest = { cwd: f.cwd, workflowStartOwner: generation.owner, runnerId: "kimi-acp", tools: ["read"],
+    executionBinding: { kind: "native_profile", engineId: "kimi-acp", profileId: "fixture", profileRevision: 2 } };
+  const db = testDatabase(f.store);
+  db.prepare("UPDATE run_sessions SET request_snapshot_json=? WHERE id=?").run(JSON.stringify(nativeRequest), prepared.run.id);
+  db.prepare("UPDATE work_units SET runner_id=?,effective_runner_id=? WHERE id=?").run("kimi-acp", "kimi-acp", prepared.unit.id);
+  db.prepare("UPDATE work_unit_attempts SET runner_id=?,effective_runner_id=? WHERE id=?")
+    .run("kimi-acp", "kimi-acp", prepared.attempt.id);
+  const preparedSource = source(prepared);
+  assert.deepEqual(journal.prepareAttempt({ source: preparedSource, now: f.at(4) }), { status: "changed" });
+  const result = journal.prepareWorkflowStart({ source: preparedSource, now: f.at(4) });
+  assert.ok(result.status === "prepared" || result.status === "duplicate", JSON.stringify(result));
+  assert.equal(result.record.intent.ownerKind, "workflow_start");
 });
 
 test("workflow ready rolls back admission and Task links when the Host dispatch token is invalid", async t => {

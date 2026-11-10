@@ -189,7 +189,7 @@ export class RuntimeRunQueueCoordinator {
     this.retainedOptions.set(store, retained);
     this.preparing.set(store, new Set());
     signals.set(store, { wake: () => this.wakeStore(store), hostCapacityReleased: () => this.wakeAllStores(true), retain: (runId, options) => {
-      retained.set(runId, { ...options, onRunReady: undefined });
+      retained.set(runId, { ...options });
     } });
     this.wakeStore(store);
   }
@@ -311,10 +311,15 @@ export class RuntimeRunQueueCoordinator {
         };
         const reservedHostCapacity = hostCapacity?.status === "reserved" || hostCapacity?.status === "duplicate"
           ? hostCapacity : undefined;
+        const retainedOptions = this.retainedOptions.get(store)?.get(claim.runId);
         const completion = Promise.resolve().then(() => {
           if (this.closed || this.options.activeRuns.isShuttingDown()) return;
           return this.options.execute({ store, claim, executionOptions: {
-            ...this.retainedOptions.get(store)?.get(claim.runId), onRunReady: prepared,
+            ...retainedOptions,
+            onRunReady: (runId, info) => {
+              try { retainedOptions?.onRunReady?.(runId, info); }
+              finally { prepared(); }
+            },
             ...(reservedHostCapacity ? { queuedHostCapacity: reservedHostCapacity.reference } : {}),
             ...(reservedHostCapacity && capacity ? {
               afterRunTerminal: async (terminalRun) => {

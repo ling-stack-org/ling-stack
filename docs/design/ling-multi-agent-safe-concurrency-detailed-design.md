@@ -6,7 +6,7 @@
 增量验收及 Daemon 独立 dependency-security lane 通过；真实 Provider、packaged、跨平台
 和 review/CI/merge 门禁仍开放，不是发布完成声明。
 Owner：Ling maintainers。
-最后核对：2026-11-08，基于 PR #614 合并后的 `main`。
+最后核对：2026-11-10，基于 PR #614 合并后的 `main`。
 文档类型：Reference / Explanation。
 权威边界：[Multi-Agent App Detailed Design](multi-agent-app-detailed-design.md)
 继续拥有总体产品设计；本文细化安全并发、隔离执行与合并协议。
@@ -25,6 +25,26 @@ Owner：Ling maintainers。
 3. 并行 workflow 的重启、取消、冲突和审批验收。
 4. 自定义模板 registry 与 authoring UI。
 5. workflow graph 可视化。
+
+完整目标是把这五个产品阶段和 B1-B5 的 Host 并发预算收口在同一条 Ling 执行路径中：
+
+```text
+用户消息
+  -> 冻结 workflow/template、依赖与副作用计划
+  -> Host 准入、workspace/Host 持久容量与公平排队
+  -> Run / WorkUnit / fenced Attempt
+  -> 受限的只读或 isolated worktree 分支
+  -> branch evidence、确定性 fan-in 与检查
+  -> 审批后的 candidate-only 或目标 apply
+  -> TerminalReport 回到原会话
+  -> 可选的 Experience review candidate
+```
+
+单步骤和同一 Agent 的串行链继续使用普通文本会话流；只有真实的多参与者或可验证的
+并行依赖才显示折叠 Graph。Graph 只读，不承载执行权限、详情面板或第二套控制；失败、
+审批、继续/重试、取消、冲突修复和未确认副作用继续由会话已有事实流与 Composer 承接。
+Experience review 只从已结算 Run 提取有界证据并生成候选，不能自行修改记忆、技能、权限
+或 workflow。最终发布还需要真实 Provider、packaged、平台、review/CI/merge 门禁。
 
 不新增 `Super-agent` 产品、第二套 orchestrator、Run 状态机或审批系统。
 不把通用模型评分、模型路由优化、requirement shaping 扩展和自动发布并入本轮。
@@ -451,18 +471,22 @@ authority，构造失败也会关闭 Host store。注入的外部 `storeFactory`
 因此不获得这条 Host authority。
 
 workspace 统一容量准入已覆盖 workflow preparing/transfer、dynamic delegation、approval
-resume 和 continuation，并由 Core/Daemon 定向回归覆盖；installation-global Host 的生产
-composition 仍以首次普通 Pi queue 为完整接线边界。native、automation、legacy owner 以及
-真实 Provider、packaged、跨平台的完整联合验收仍需继续，不能把当前实现称为整体发布完成。
+resume、continuation、native 和 automation，并由 Core/Daemon 定向回归覆盖。automation
+首次 Run 进入同一持久 queue 时保留原始 ready/terminal hook，Host 满额只保持 queued，
+释放后复用原 Run/Attempt 继续执行；heartbeat/native 仍必须通过各自的 execution binding
+与 continuation contract。legacy owner、真实 Provider、packaged、跨平台及所有执行链的
+完整联合验收仍需继续，不能把当前实现称为整体发布完成。
 
 冻结的 participant 身份不替代当前可用性：Core 最终准入事务与 daemon SDK 前复核均要求
 原 teammate 存在、active 且 visible。检查独立于 skill 和 memory 选择；停用、暂停或隐藏
 时不消费 gate、不取得资源，也不自动更换 teammate。恢复可用后仍以原 Run/Attempt
 身份重新仲裁，失效候选的退避不阻塞独立组。
 
-首次队列仅接受原始 Pi 执行、明确冻结的 tools 数组，以及 preset 或不含 secret 的匿名
-inline Provider。workflow、dynamic delegation、continuation、native 和 automation 保留
-各自 owning contract，不回填旧 queued Run 的恢复权限。准备 claim 的 TTL 不占执行槽
+首次队列的基础准入仍只接受原始 Pi 执行、明确冻结的 tools 数组，以及 preset 或不含
+secret 的匿名 inline Provider；workflow、dynamic delegation、continuation、native 和
+automation 通过各自 owning contract 进入统一 Host/queue 边界，不回填旧 queued Run 的
+恢复权限。automation 的 scheduler actor、heartbeat binding 和 terminal reconciliation
+必须由 owning contract 提供，不能由 queue 根据公开请求推断。准备 claim 的 TTL 不占执行槽
 或写锁；跨组持久轮转、组内 FIFO，失效组头退避且不阻塞其他组。协调器的准备上限以四个
 位置为公平性下限，并在可信 `RuntimeSupervisor.getConcurrencyPolicy().maxConcurrentRuns`
 更大时随配置提高；`onRunReady` 归还准备位，完整执行 Promise 仍被 shutdown/drain 跟踪；该值

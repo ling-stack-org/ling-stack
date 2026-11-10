@@ -161,6 +161,7 @@ import { findExistingIdempotentRunRequest } from "./existing-idempotent-run.js";
 import type { RunRequest } from "./schemas.js";
 import { appendFailureEvent, writeTerminalSummary } from "./terminal.js";
 import { notifyRunReady } from "./run-ready.js";
+import type { RunReadyInfo } from "./run-ready.js";
 import {
   createConversationMediaGenerationToolDefinitions,
   createConversationMediaGenerationToolHandler,
@@ -280,7 +281,7 @@ export interface ExecuteRunRequestOptions {
   /** Private diagnostic facts only; never selected from public Run request input. */
   readonly onProviderInvocationFailure?: ProviderInvocationFailureSink;
   readonly providerInvocationOrigin?: ProviderInvocationOrigin;
-  readonly onRunReady?: (runId: string) => void;
+  readonly onRunReady?: (runId: string, info?: RunReadyInfo) => void;
   readonly afterRunTerminal?: (run: RunSession) => void | Promise<void>;
   /** Runs after a durable user-input yield, never for ordinary terminal completion. */
   readonly afterRunYielded?: (run: RunSession, wait: CommitUserInputYieldResult["wait"]) => void | Promise<void>;
@@ -1232,7 +1233,7 @@ async function executeAdmittedRunRequest(
         effectiveRunnerId: runnerResolution.effectiveRunnerId,
         fallbackReason: runnerResolution.fallbackReason,
         idempotencyKey,
-        createdByActor: "user",
+        createdByActor: runRequest.createdByActor === "automation" ? "scheduler" : "user",
         linkedMessageId: runRequest.linkedMessageId,
         request: {
           ...durableRunRequest,
@@ -1568,7 +1569,6 @@ async function executeAdmittedRunRequest(
       ?? `${resolvedProvider.provider}:${resolvedProvider.model}`;
     const queueEligible = !delegatedExecution && !existingContinuation && !userInputContinuation && !continuationEnforced
       && !runRequest.workflowStepId && !runRequest.parentRunId && !runRequest.interventionId && !runRequest.continuationReason
-      && runRequest.createdByActor !== "automation" && thread.kind !== "automation"
       && ["task_run", "conversation_run", "teammate_direct_reply"].includes(workUnit.kind)
       && runnerResolution.runner.adapter instanceof PiRunnerAdapter && Array.isArray(executionInput?.input.tools)
       && Boolean(runRequest.providerPresetId || !resolvedProvider.apiKey && !Object.keys(resolvedProvider.headers ?? {}).length);
@@ -1608,7 +1608,7 @@ async function executeAdmittedRunRequest(
       run ??= persistRun(continuationContext);
       const reserved = hostCapacityAdmission.reserveExecution({ workspaceId: workUnit.workspaceId,
         source: { runId: run.id, ...toRuntimeAttemptFence(attempt) }, now: executionNow() });
-      if (reserved.status === "full" && continuationExecution) {
+      if (reserved.status === "full" && (continuationExecution || queueEligible)) {
         throw new QueueableRunConflictError("runtime_semaphore_conflict", "Continuation is waiting for Host capacity.");
       }
       if (reserved.status !== "reserved" && reserved.status !== "duplicate") {
@@ -2009,7 +2009,7 @@ async function executeAdmittedRunRequest(
           workspaceCwd, workUnit, attempt, provider: resolvedProvider, thread, turn,
           queuedAt: now, reason: queueReason, message: "Run is waiting for execution resources.", existingRun: run });
         notifyRuntimeRunQueued(store, run.id, options);
-        notifyRunReady(options.onRunReady, run.id);
+        notifyRunReady(options.onRunReady, run.id, { queued: true });
         sink.writeReady({ ok: true, runId: run.id, workUnitId: workUnit.id, sourceFence: toRuntimeAttemptFence(attempt),
           queued: true, queueReason });
         sink.end();
@@ -2179,7 +2179,7 @@ async function executeAdmittedRunRequest(
       }
       try { commitWorkflowStartReady(store, runRequest, run.id, workflowStartOwner, { claimQueuedTask: true }); }
       catch (ownerError) { writeRunPreparationFailure(sink, 409, { error: "workflow_start_owner_stale", message: String(ownerError) }); return undefined; }
-      notifyRunReady(options.onRunReady, run.id);
+      notifyRunReady(options.onRunReady, run.id, { queued: true });
       sink.writeReady({
         ok: true,
         runId: run.id,

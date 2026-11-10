@@ -175,7 +175,9 @@ test("native journal drain and effect coverage release a dispatched terminal sou
   const host = hostCapacityFixture(t), f = await hostCapacityWorkspace(t, host), current = f.prepare("native-stop", {
     requestOverrides: { executionBinding: { kind: "native_profile", engineId: "kimi-acp", profileId: "fixture", profileRevision: 1 } },
   });
-  const record = f.reserve(current), execution = f.begin(current, record, {
+  const reserved = f.bridge.reserveExecution({ source: f.source(current), now: f.at(3) });
+  assert.ok(reserved.status === "reserved" || reserved.status === "duplicate", JSON.stringify(reserved));
+  const record = reserved.record, execution = f.begin(current, record, {
     coverage: { schemaVersion: 1, kind: "native_journal_v1", submissionIds: [] },
   });
   execution.lifetime.resolve();
