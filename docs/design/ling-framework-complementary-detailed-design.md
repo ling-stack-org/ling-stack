@@ -331,7 +331,7 @@ extension manifest 与 plugin-package manifest 的版本校验不是同一套规
 
 ## 8. F4 只读诊断
 
-现有入口：`getWorkUnitHarnessDiagnostics(cwd, workUnitId, query)` 对应 `GET /work-units/:id/harness`。cwd 必填，limit 当前为 1 至 500，cursor 受 Run/WorkUnit 范围约束。F4-01 的 `diagnostics.mjs` 只通过这个回调逐页读取，并输出 workspace 摘要哈希、页级时间标记、allowlist 诊断记录和同一 Run/WorkUnit 的 F3 observation 关联。
+现有入口：`LingDaemonClient.getWorkUnitHarnessDiagnostics(cwd, workUnitId, query)` 对应 `GET /work-units/:id/harness`。cwd 必填，limit 当前为 1 至 500，cursor 受 Run/WorkUnit 范围约束。F4-01 由 `readHarnessDiagnosticsReportFromClient` 将这个真实客户端入口接入 `readHarnessDiagnosticsReport`，逐页读取并输出 workspace 摘要哈希、页级时间标记、allowlist 诊断记录和同一 Run/WorkUnit 的 F3 observation 关联。底层回调仍保留为纯适配边界，便于验证报告逻辑而不创建客户端或执行状态。
 
 | 条件 | 消费方行为 |
 | --- | --- |
