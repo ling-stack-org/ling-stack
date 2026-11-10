@@ -1,0 +1,45 @@
+{
+  "compilerOptions": {
+    "allowSyntheticDefaultImports": true,
+    "jsx": "react-jsx",
+    "lib": ["DOM", "DOM.Iterable", "ES2022", "ESNext.Disposable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noEmit": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "target": "ES2022",
+    "types": ["node", "vite/client"]
+  },
+  "files": [
+    "e2e/app.spec.ts",
+    "e2e/channel-image-preview.spec.ts",
+    "e2e/channel-work-cell.spec.ts",
+    "e2e/computer-control.spec.ts",
+    "e2e/conversation-activity-categories.spec.ts",
+    "e2e/conversation-host-status-report.spec.ts",
+    "e2e/conversation-image-preview.spec.ts",
+    "e2e/conversation-terminal-response-actions.spec.ts",
+    "e2e/conversation-transcript-color-hierarchy.spec.ts",
+    "e2e/conversation-turn-change-review.spec.ts",
+    "e2e/ui2-conversation-message-transcript-ownership.spec.ts",
+    "e2e/ui2-conversation-work-cell-activity.spec.ts",
+    "e2e/ui2-conversation-work-cell-shell-artifacts.spec.ts"
+  ],
+  "include": [
+    "src/desktop-capabilities.d.ts",
+    "src/qrcode.d.ts",
+    "e2e/support/conversation-run-feedback-harness.tsx",
+    "e2e/support/workflow-graph-harness.tsx",
+    "e2e/conversation-tool-evidence-presentation.spec.ts",
+    "e2e/dark-mode.spec.ts",
+    "e2e/desktop-computer-use-bridge.spec.ts",
+    "e2e/full-window-background.spec.ts",
+    "e2e/gen-ui-interactive-artifact.spec.ts",
+    "e2e/local-file-preview.spec.ts",
+    "e2e/macos-titlebar.spec.ts",
+    "e2e/ui2-desktop-theme-package-persistence.spec.ts",
+    "e2e/ui2-settings-interface-preferences.spec.ts",
+    "e2e/workspace.spec.ts"
+  ]
+}

@@ -18,6 +18,7 @@ import type {
 } from "../../types.js";
 import { RunApprovalSection } from "./RunApprovalSection.js";
 import { RunArtifactSection } from "./RunArtifactSection.js";
+import { LearningReviewDisclosure } from "../../shared/components/learning/LearningReviewPanel.js";
 import { RunDetailHeader } from "./RunDetailHeader.js";
 import { RunEvidenceSection } from "./RunEvidenceSection.js";
 import { RunGuidancePanel } from "./RunGuidancePanel.js";
@@ -108,10 +109,11 @@ export function RunDetailPanel({
           />
           <RunApprovalSection approvals={approvals} onResolve={onResolveApproval} resolvingApprovals={resolvingApprovals} />
           <RunArtifactSection artifacts={artifacts} cwd={cwd} events={events} run={run} />
+          {["succeeded", "failed", "cancelled"].includes(run.status) ? <LearningReviewDisclosure cwd={cwd} runId={run.id} /> : null}
           <RunEvidenceSection approvals={approvals} artifacts={artifacts} assistantText={assistantText} cwd={cwd} events={events} memoryById={memoryById} run={run} usedMemoryEvents={usedMemoryEvents} />
           <RunGuidancePanel canRedirect={runCanBeStopped(run)} cwd={cwd} onRefreshRun={onRefresh} run={run} />
           <RunThreadContinuationSection cwd={cwd} isRunning={isRunning} onRefresh={onRefresh} run={run} turnContext={turnContext} />
-          <RunTechnicalDetails events={events} leases={runLeases} run={run} transitions={transitions} workUnitDetail={workUnitDetail} />
+          <RunTechnicalDetails events={events} leases={runLeases} run={run} transitions={transitions} workUnitDetail={workUnitDetail} workspaceCwd={workspaceCwd} />
         </div>
       )}
     </section>

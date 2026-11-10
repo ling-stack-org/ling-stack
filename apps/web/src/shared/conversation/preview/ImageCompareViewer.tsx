@@ -7,11 +7,12 @@ import { notifyConversationDeferredContentReady } from "../blocks/deferred-rende
 export interface ImageCompareViewerProps {
   readonly current: PreviewImageCompareSource;
   readonly compare?: PreviewImageCompare;
+  readonly onImageError?: () => void;
 }
 
 const compareModes: readonly PreviewImageCompareMode[] = ["single", "side_by_side", "slider", "diff_overlay"];
 
-export function ImageCompareViewer({ current, compare }: ImageCompareViewerProps): React.JSX.Element {
+export function ImageCompareViewer({ current, compare, onImageError }: ImageCompareViewerProps): React.JSX.Element {
   const { t } = useI18n();
   const availableModes = compare ? compareModes : (["single"] as const);
   const defaultMode = compare?.defaultMode && compareModes.includes(compare.defaultMode)
@@ -42,16 +43,16 @@ export function ImageCompareViewer({ current, compare }: ImageCompareViewerProps
       </div>
 
       {activeMode === "single" || !before ? (
-        <ImageFrame image={current} label={current.label} />
+        <ImageFrame image={current} label={current.label} onImageError={onImageError} />
       ) : activeMode === "side_by_side" ? (
         <div className="image-compare-side-by-side">
-          <ImageFrame image={before} label={t("Before")} />
-          <ImageFrame image={after} label={t("After")} />
+          <ImageFrame image={before} label={t("Before")} onImageError={onImageError} />
+          <ImageFrame image={after} label={t("After")} onImageError={onImageError} />
         </div>
       ) : activeMode === "slider" ? (
         <div className="image-compare-slider">
           <div className="image-compare-slider-stage">
-            <img src={before.imageUrl} alt={before.label} loading="lazy" decoding="async" onLoad={(event) => notifyConversationDeferredContentReady(event.currentTarget)} />
+            <img src={before.imageUrl} alt={before.label} loading="lazy" decoding="async" onLoad={(event) => notifyConversationDeferredContentReady(event.currentTarget)} onError={onImageError} />
             <img
               className="image-compare-slider-after"
               src={after.imageUrl}
@@ -59,6 +60,7 @@ export function ImageCompareViewer({ current, compare }: ImageCompareViewerProps
               loading="lazy"
               decoding="async"
               onLoad={(event) => notifyConversationDeferredContentReady(event.currentTarget)}
+              onError={onImageError}
               style={{ clipPath: `inset(0 0 0 ${sliderClip})` }}
             />
             <span className="image-compare-slider-handle" style={{ left: sliderClip }} aria-hidden="true" />
@@ -77,18 +79,18 @@ export function ImageCompareViewer({ current, compare }: ImageCompareViewerProps
         </div>
       ) : (
         <div className="image-compare-diff-overlay">
-          <img src={before.imageUrl} alt={before.label} loading="lazy" decoding="async" onLoad={(event) => notifyConversationDeferredContentReady(event.currentTarget)} />
-          <img src={after.imageUrl} alt={after.label} loading="lazy" decoding="async" onLoad={(event) => notifyConversationDeferredContentReady(event.currentTarget)} />
+          <img src={before.imageUrl} alt={before.label} loading="lazy" decoding="async" onLoad={(event) => notifyConversationDeferredContentReady(event.currentTarget)} onError={onImageError} />
+          <img src={after.imageUrl} alt={after.label} loading="lazy" decoding="async" onLoad={(event) => notifyConversationDeferredContentReady(event.currentTarget)} onError={onImageError} />
         </div>
       )}
     </div>
   );
 }
 
-function ImageFrame({ image, label }: { readonly image: PreviewImageCompareSource; readonly label: string }): React.JSX.Element {
+function ImageFrame({ image, label, onImageError }: { readonly image: PreviewImageCompareSource; readonly label: string; readonly onImageError?: () => void }): React.JSX.Element {
   return (
     <figure className="image-compare-frame">
-      <img src={image.imageUrl} alt={image.label} loading="lazy" decoding="async" onLoad={(event) => notifyConversationDeferredContentReady(event.currentTarget)} />
+      <img src={image.imageUrl} alt={image.label} loading="lazy" decoding="async" onLoad={(event) => notifyConversationDeferredContentReady(event.currentTarget)} onError={onImageError} />
       <figcaption>{label}</figcaption>
     </figure>
   );

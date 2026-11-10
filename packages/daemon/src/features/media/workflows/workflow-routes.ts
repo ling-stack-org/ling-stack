@@ -29,6 +29,10 @@ import {
   parseMediaWorkflowInputFields,
   parseMediaWorkflowOutputRules,
 } from "./workflow-request-parsers.js";
+import {
+  LEGACY_MEDIA_PROTOCOL_REMOVED_CODE,
+  MEDIA_PROTOCOL_UNPREPARED_CODE,
+} from "./media-protocol-contract.js";
 
 export type MediaWorkflowRoute =
   | { readonly resource: "connection"; readonly id: string; readonly action?: "check" }
@@ -185,8 +189,14 @@ async function handleConnectionItem(input: RouteContext & { readonly route: Medi
   if (input.route.resource !== "connection") return;
   if (input.route.action === "check") {
     if (input.request.method !== "POST") return methodNotAllowed(input.response, input.request.method, "/media-workflow-connections/:id/check");
-    const checked = await checkMediaWorkflowConnection({ store, connection, secretResolver: input.secretResolver, now: now() });
-    writeJson(input.response, 200, { connection: publicMediaWorkflowConnection(checked, input.secretResolver) });
+    const checked = await checkMediaWorkflowConnection({ store, connectionId: connection.id, secretResolver: input.secretResolver, now: now() });
+    if (checked.status === "stale") {
+      writeJson(input.response, 409, { error: "media_workflow_check_result_stale", reason: checked.reason,
+        message: "Connection check result was superseded. Check the current connection again.",
+        ...(checked.connection ? { connection: publicMediaWorkflowConnection(checked.connection, input.secretResolver) } : {}) });
+      return;
+    }
+    writeJson(input.response, 200, { connection: publicMediaWorkflowConnection(checked.connection, input.secretResolver) });
     return;
   }
   if (input.request.method === "GET") {
@@ -251,6 +261,7 @@ async function handleWorkflowItem(
       store,
       definition,
       version,
+      connection: requireConnection(store, definition.connectionId),
       inputValues: readOptionalObject(body, "inputValues") ?? {},
       now: now(),
     });
@@ -346,7 +357,14 @@ function methodNotAllowed(response: ServerResponse, method: string | undefined, 
 }
 
 function writeWorkflowError(response: ServerResponse, error: unknown): void {
-  writeJson(response, 400, { error: "media_workflow_error", message: error instanceof Error ? error.message : String(error) });
+  const candidate = typeof error === "object" && error !== null && "code" in error
+    && typeof (error as { readonly code?: unknown }).code === "string"
+    ? (error as { readonly code: string }).code
+    : undefined;
+  const code = candidate === LEGACY_MEDIA_PROTOCOL_REMOVED_CODE || candidate === MEDIA_PROTOCOL_UNPREPARED_CODE
+    ? candidate
+    : "media_workflow_error";
+  writeJson(response, 400, { error: code, message: error instanceof Error ? error.message : String(error) });
 }
 
 function now(): string {

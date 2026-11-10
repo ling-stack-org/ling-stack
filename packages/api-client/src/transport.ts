@@ -1,4 +1,4 @@
-import { LingDaemonError } from "./errors.js";
+import { LingDaemonError, LingDaemonTransportError } from "./errors.js";
 
 export interface LingDaemonClientOptions {
   readonly baseUrl?: string;
@@ -34,6 +34,7 @@ export interface LingDaemonEndpointContext {
     body?: unknown,
     headers?: HeadersInit,
   ): Promise<T>;
+  _requestMultipart<T>(method: string, path: string, query: Query, body: FormData): Promise<T>;
   _url(path: string, query?: Query): string;
 }
 
@@ -45,6 +46,11 @@ export type PublicEndpointGroup<T> = {
 
 export function daemonBaseUrlFromEnv(env: Record<string, string | undefined> = {}): string {
   return env.VITE_LING_STACK_DAEMON_URL?.replace(/\/$/, "") ?? "http://127.0.0.1:17891";
+}
+
+function isAbortError(cause: unknown): boolean {
+  return typeof cause === "object" && cause !== null
+    && "name" in cause && (cause as { readonly name?: unknown }).name === "AbortError";
 }
 
 export class LingDaemonTransport implements LingDaemonEndpointContext {
@@ -67,8 +73,13 @@ export class LingDaemonTransport implements LingDaemonEndpointContext {
   }
 
   /** @internal Endpoint modules use this to preserve fetch binding semantics. */
-  _fetch(input: FetchInput, init?: FetchInit): Promise<Response> {
-    return this.fetchImpl(input, init);
+  async _fetch(input: FetchInput, init?: FetchInit): Promise<Response> {
+    try {
+      return await this.fetchImpl(input, init);
+    } catch (cause) {
+      if (isAbortError(cause)) throw cause;
+      throw new LingDaemonTransportError("fetch", cause);
+    }
   }
 
   /** @internal */
@@ -103,7 +114,7 @@ export class LingDaemonTransport implements LingDaemonEndpointContext {
       init.headers = { "Content-Type": "application/json" };
       init.body = JSON.stringify(body);
     }
-    const response = await this.fetchImpl(this._url(path, query), init);
+    const response = await this._fetch(this._url(path, query), init);
     if (!response.ok) {
       const error = await readErrorDetails(response);
       throw new LingDaemonError(error.message, response.status, response.statusText, error.code);
@@ -135,13 +146,26 @@ export class LingDaemonTransport implements LingDaemonEndpointContext {
       };
       init.body = JSON.stringify(body);
     }
-    const response = await this.fetchImpl(this._url(path, query), init);
+    const response = await this._fetch(this._url(path, query), init);
     if (!response.ok) {
       const error = await readErrorDetails(response);
       throw new LingDaemonError(error.message, response.status, response.statusText, error.code);
     }
     if (method === "DELETE") {
       return undefined as T;
+    }
+    return (await response.json()) as T;
+  }
+
+  /** @internal Multipart endpoints deliberately let fetch set the boundary header. */
+  async _requestMultipart<T>(method: string, path: string, query: Query = {}, body: FormData): Promise<T> {
+    const response = await this._fetch(this._url(path, query), {
+      method,
+      body,
+    });
+    if (!response.ok) {
+      const error = await readErrorDetails(response);
+      throw new LingDaemonError(error.message, response.status, response.statusText, error.code);
     }
     return (await response.json()) as T;
   }

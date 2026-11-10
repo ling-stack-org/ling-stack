@@ -9,6 +9,7 @@ export interface ChannelGuidanceTarget {
 export function deriveChannelReplyGuidanceTargets(input: {
   readonly channelId: string;
   readonly conversationLineThreadId?: string;
+  readonly conversationRunIds?: ReadonlySet<string>;
   readonly channelMessages: readonly ChannelMessage[];
   readonly runs: readonly RunSession[];
   readonly workUnits: readonly WorkUnit[];
@@ -91,12 +92,15 @@ function activeReplyBelongsToConversationLine(
   input: {
     readonly channelId: string;
     readonly conversationLineThreadId?: string;
+    readonly conversationRunIds?: ReadonlySet<string>;
   },
   channelMessageById: ReadonlyMap<string, ChannelMessage>,
 ): boolean {
-  if (reply.channelId !== input.channelId || !activeReplyStatus(reply.status) || !reply.sourceMessageId) {
+  if (reply.channelId !== input.channelId || !activeReplyStatus(reply.status)) {
     return false;
   }
+  if (input.conversationRunIds?.has(reply.runId)) return true;
+  if (!reply.sourceMessageId) return false;
   const sourceMessage = channelMessageById.get(reply.sourceMessageId);
   if (!sourceMessage || sourceMessage.channelId !== input.channelId) {
     return false;

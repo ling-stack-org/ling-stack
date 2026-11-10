@@ -1,18 +1,24 @@
 import { realpathSync } from "node:fs";
 import { isAbsolute, relative, resolve as resolvePath } from "node:path";
 import type { RunArtifact, RunStore } from "@ling-stack/core";
+import { MediaLocalExecutionRegistry } from "./media-local-executions.js";
 
 export type RunStoreFactory = (cwd: string) => RunStore;
 
 export interface RunStoreRegistryOptions {
+  /** Synchronous ownership admission, before either registry recovery mutates the Store. */
+  readonly beforeRecovery?: (cwd: string, store: RunStore) => void;
   readonly onStoreInitialized?: (cwd: string, store: RunStore) => void | Promise<void>;
   readonly trustedWorkspaceRoots?: readonly string[];
+  readonly recoverOnOpen?: boolean;
 }
 
 export class RunStoreRegistry {
+  readonly mediaLocalExecutions = new MediaLocalExecutionRegistry();
   private readonly storesByCwd = new Map<string, RunStore>();
   private readonly storesByRunId = new Map<string, RunStore>();
   private readonly trustedWorkspaceRoots = new Set<string>();
+  private closed = false;
 
   constructor(
     private readonly storeFactory: RunStoreFactory,
@@ -24,18 +30,43 @@ export class RunStoreRegistry {
   }
 
   getStore(cwd: string): RunStore {
-    const existing = this.storesByCwd.get(cwd);
+    if (this.closed) throw new Error("Run Store registry is closed; no new or retained Store access is permitted.");
+    // Deduplicate live ownership without rewriting existing storage paths or workspace history.
+    const key = normalizeWorkspaceRoot(cwd);
+    const existing = this.storesByCwd.get(key);
     if (existing) {
       return existing;
     }
 
     const store = this.storeFactory(cwd);
-    const now = new Date().toISOString();
-    store.recoverStaleRuns(now);
-    store.recoverStaleChannelWorkflows(now);
-    this.storesByCwd.set(cwd, store);
-    void Promise.resolve(this.options.onStoreInitialized?.(cwd, store)).catch(() => undefined);
+    try {
+      this.options.beforeRecovery?.(cwd, store);
+      if (this.options.recoverOnOpen !== false) {
+        const now = new Date().toISOString();
+        store.recoverStaleRuns(now);
+        store.recoverStaleChannelWorkflows(now);
+      }
+      this.storesByCwd.set(key, store);
+      void Promise.resolve(this.options.onStoreInitialized?.(cwd, store)).catch(() => undefined);
+    } catch (error) {
+      if (this.storesByCwd.get(key) === store) this.storesByCwd.delete(key);
+      for (const [runId, rememberedStore] of this.storesByRunId) {
+        if (rememberedStore === store) this.storesByRunId.delete(runId);
+      }
+      try {
+        store.close();
+      } catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], "run_store_initialization_failed_cleanup_incomplete", { cause: error });
+      }
+      throw error;
+    }
     return store;
+  }
+
+  /** Observation only: never constructs a Store, reconciles state or dispatches recovery. */
+  getInitializedStore(cwd: string): RunStore | undefined {
+    if (this.closed) throw new Error("Run Store registry is closed; observation is unavailable.");
+    return this.storesByCwd.get(normalizeWorkspaceRoot(cwd));
   }
 
   rememberRun(runId: string, store: RunStore): void {
@@ -128,6 +159,32 @@ export class RunStoreRegistry {
   }
 
   findStoreForArtifact(artifactId: string, cwd?: string): { readonly store: RunStore; readonly artifact: RunArtifact } | undefined {
+    // An explicit workspace is an authorization boundary, not merely a lookup
+    // hint. Never let an already-open sibling store satisfy that request.
+    if (cwd) {
+      const requested = normalizeWorkspaceRoot(cwd);
+      const candidateStores = [...this.storesByCwd.values()].filter((store) =>
+        isPathInsideRoot(normalizeWorkspaceRoot(store.paths.cwd), requested));
+      for (const store of candidateStores) {
+        const artifact = store.getArtifact(artifactId);
+        if (!artifact) continue;
+        if (artifact.runId) this.rememberRun(artifact.runId, store);
+        return { store, artifact };
+      }
+      for (const root of this.knownTrustedWorkspaceRoots()) {
+        if (!isPathInsideRoot(normalizeWorkspaceRoot(root), requested)) continue;
+        const store = this.getStore(root);
+        const artifact = store.getArtifact(artifactId);
+        if (!artifact) continue;
+        if (artifact.runId) this.rememberRun(artifact.runId, store);
+        return { store, artifact };
+      }
+      const store = this.getStore(cwd);
+      const artifact = store.getArtifact(artifactId);
+      if (!artifact) return undefined;
+      if (artifact.runId) this.rememberRun(artifact.runId, store);
+      return { store, artifact };
+    }
     for (const store of this.storesByCwd.values()) {
       const artifact = store.getArtifact(artifactId);
       if (artifact) {
@@ -164,6 +221,12 @@ export class RunStoreRegistry {
   }
 
   closeAll(): void {
+    this.mediaLocalExecutions.beginShutdown();
+    const media = this.mediaLocalExecutions.getSnapshot();
+    if (media.pendingReservations !== 0 || media.executions.some(execution => execution.phase !== "completed")) {
+      throw new Error("Media local executions must drain before closing Run Stores.");
+    }
+    this.closed = true;
     for (const store of this.storesByCwd.values()) {
       store.close();
     }

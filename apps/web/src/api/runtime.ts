@@ -1,4 +1,8 @@
 import type {
+  ConversationExecutionSelectionQuery,
+  ConversationExecutionSelectionResponse,
+  HarnessDiagnosticQueryV1,
+  ExecutionCancellationRequest,
   ListResourceLeasesRequest,
   ResourceLeaseListResponse,
   RunnerListResponse,
@@ -11,12 +15,13 @@ import type {
   StateTransitionListResponse,
   WorkUnitDetailResponse,
   WorkUnitEventsResponse,
+  WorkUnitHarnessDiagnosticsResponse,
   WorkUnitKind,
   WorkUnitListResponse,
   WorkUnitMutationResponse,
   WorkUnitStatus,
   WorkspaceRuntimeSettingsPatch,
-} from "../types.js";
+} from "@ling-stack/contracts";
 import { daemonClient } from "./client.js";
 
 export async function listStateTransitions(
@@ -80,12 +85,16 @@ export async function getWorkUnit(cwd: string, workUnitId: string): Promise<Work
   return daemonClient.getWorkUnit(cwd, workUnitId);
 }
 
+export async function getWorkUnitHarnessDiagnostics(cwd: string, workUnitId: string, query: HarnessDiagnosticQueryV1 = {}): Promise<WorkUnitHarnessDiagnosticsResponse> {
+  return daemonClient.getWorkUnitHarnessDiagnostics(cwd, workUnitId, query);
+}
+
 export async function getWorkUnitEvents(cwd: string, workUnitId: string, afterSeq?: number): Promise<WorkUnitEventsResponse> {
   return daemonClient.getWorkUnitEvents(cwd, workUnitId, afterSeq);
 }
 
-export async function cancelWorkUnit(cwd: string, workUnitId: string): Promise<WorkUnitMutationResponse> {
-  return daemonClient.cancelWorkUnit(cwd, workUnitId);
+export async function cancelWorkUnit(cwd: string, workUnitId: string, input: ExecutionCancellationRequest = {}): Promise<WorkUnitMutationResponse> {
+  return daemonClient.cancelWorkUnit(cwd, workUnitId, input);
 }
 
 export async function retryWorkUnit(cwd: string, workUnitId: string): Promise<WorkUnitMutationResponse> {
@@ -94,4 +103,8 @@ export async function retryWorkUnit(cwd: string, workUnitId: string): Promise<Wo
 
 export async function reconcileWorkUnit(cwd: string, workUnitId: string): Promise<WorkUnitMutationResponse> {
   return daemonClient.reconcileWorkUnit(cwd, workUnitId);
+}
+
+export async function getConversationExecutionSelection(cwd: string, query: ConversationExecutionSelectionQuery = {}): Promise<ConversationExecutionSelectionResponse> {
+  return daemonClient.getConversationExecutionSelection(cwd, query);
 }

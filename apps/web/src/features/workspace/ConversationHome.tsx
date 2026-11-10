@@ -1,3 +1,4 @@
+import { useNativeConversationSelection } from "./useNativeConversationSelection.js";
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
 import {
@@ -7,7 +8,7 @@ import {
   SquareTerminal,
 } from "lucide-react";
 import { useI18n } from "../../i18n.js";
-import type { ConversationAttachment, PermissionConfirmation, PermissionPreset, ProviderThinkingMode } from "../../types.js";
+import type { AuthorizationMode, ConversationAttachment, PermissionConfirmation, PermissionPreset, ProviderThinkingMode, ReasoningSummaryMode } from "../../types.js";
 import {
   filterSlashCommandPickerOptions,
   composerWorkspaceFileParts,
@@ -35,7 +36,7 @@ import {
   buildNormalConversationDockViewModel,
   runTaskSnapshotTitle,
 } from "./normal-conversation-dock-projections.js";
-import { normalConversationThinkingOptions } from "./normal-conversation-composer-options.js";
+import { normalConversationDefaultThinkingLevel, normalConversationThinkingLabel, normalConversationThinkingOptions } from "./normal-conversation-composer-options.js";
 import {
   createConversationHomeMessageId,
   upsertConversationHomeMessage,
@@ -54,6 +55,7 @@ import { useNormalConversationOperationOwner } from "./useNormalConversationOper
 import { useChannelPlanHistory } from "./useChannelPlanHistory.js";
 import { useWorkspaceTerminalSession } from "./WorkspaceTerminalPanel.js";
 import { submitNormalConversationGuidance } from "./normal-conversation-guidance-controller.js";
+import { hasPendingNormalGuidance } from "./normal-conversation-guidance.js";
 import { createNormalConversationMessageEditController } from "./normal-conversation-message-edit-controller.js";
 import { useNormalConversationDropController } from "./useNormalConversationDropController.js";
 
@@ -67,6 +69,7 @@ export type {
   ConversationHomeSendInput,
 } from "./normal-conversation-types.js";
 export function ConversationHome({
+  userProfile,
   conversationTitle = "",
   initialDraft = "",
   initialMessages = [],
@@ -74,17 +77,21 @@ export function ConversationHome({
   initialProjectLabel = "",
   initialProviderPresetId = "",
   initialThinkingLevel = "off",
+  initialReasoningSummary = "auto",
   initialAuthorizationMode,
   initialWorkspaceAccessMode,
+  defaultWorkspaceAccessMode = "workspace_write",
   initialPermissionMode,
   initialPermissionPreset,
   detailContext,
+  runtimeMetrics,
   conversationIdentity,
   defaultProviderLabel,
   defaultProviderPresetId,
-  modelOptions,
+  modelOptions: piModelOptions,
   slashCommands,
   workspaceCwd,
+  executionSelectionRevision,
   conversationErrorMessage = "",
   sending = false,
   activeRun,
@@ -110,6 +117,12 @@ export function ConversationHome({
   const [slashActiveIndex, setSlashActiveIndex] = useState(0);
   const [selectedProviderPresetId, setSelectedProviderPresetId] = useState(initialProviderPresetId.trim());
   const [selectedThinkingLevel, setSelectedThinkingLevel] = useState<ProviderThinkingMode>(initialThinkingLevel);
+  const [selectedReasoningSummary, setSelectedReasoningSummary] = useState<ReasoningSummaryMode>(initialReasoningSummary);
+  const [selectedAuthorizationMode, setSelectedAuthorizationMode] = useState<AuthorizationMode>(() => resolveAuthorizationMode(
+    initialAuthorizationMode,
+    initialPermissionMode,
+    initialPermissionPreset,
+  ));
   const [selectedPermissionPreset, setSelectedPermissionPreset] = useState<PermissionPreset>(() => permissionPresetForWorkspaceAccessMode(resolveWorkspaceAccessMode(
     initialWorkspaceAccessMode,
     initialPermissionMode,
@@ -139,8 +152,10 @@ export function ConversationHome({
   const replacementRetryingMessageId = replacementRetryOperation.activeValue;
   const composerInputRef = useRef<TokenizedComposerInputHandle | null>(null);
   const permissionSelectionBoundThreadRef = useRef("");
+  const permissionBeforeFullAccessRef = useRef<PermissionPreset | undefined>(undefined);
+  const permissionSelectionSequenceRef = useRef(0);
   const sendBusy = sending || localSending || guidanceOperation.busy;
-  const composerBusy = sendBusy;
+  const composerBusy = sendBusy || !conversationIdentityController.ready;
   const activeReply = sendLifecycle.activeReplies[0] ?? (activeRun && activeReplyStatus(activeRun.status) ? {
     runId: activeRun.id,
     sourceRunId: activeRun.parentRunId ?? activeRun.id,
@@ -151,6 +166,7 @@ export function ConversationHome({
     createdAt: activeRun.createdAt,
     updatedAt: activeRun.updatedAt,
   } : undefined);
+  const guidancePending = hasPendingNormalGuidance(workspaceCwd, detailContext?.threadId);
   const attachmentController = useNormalConversationAttachmentController({
     composerBusy,
     ownerKey: conversationIdentityController.ownerKey,
@@ -161,8 +177,9 @@ export function ConversationHome({
     translate: t,
   });
   const { pendingAttachments, readyAttachmentIds } = attachmentController;
+  const recoveryDraftRef = useRef<{ threadId: string; draft: string; attachments: typeof pendingAttachments } | undefined>(undefined);
   const composerDropController = useNormalConversationDropController({
-    blocked: sendBusy,
+    blocked: composerBusy,
     resetKey: conversationIdentityController.ownerKey,
     onFiles: attachmentController.attachFiles,
   });
@@ -198,9 +215,16 @@ export function ConversationHome({
     () => filterSlashCommandPickerOptions(slashCommands, slashPicker),
     [slashCommands, slashPicker],
   );
-  const activeProviderPresetId = selectedProviderPresetId || defaultProviderPresetId;
+  const selectionAccessMode = workspaceAccessModeForPermissionPreset(selectedPermissionPreset);
+  const selectionLegacyPermission = authorizationAndAccessToLegacyPermission(selectedAuthorizationMode, selectionAccessMode);
+  const nativeSelection = useNativeConversationSelection(workspaceCwd, { threadId: detailContext?.threadId,
+    projectPath: project.projectPath, authorizationMode: selectedAuthorizationMode, workspaceAccessMode: selectionAccessMode,
+    ...selectionLegacyPermission }, t("Native execution is blocked. Review the engine configuration and execution verification."), executionSelectionRevision);
+  const modelOptions = nativeSelection.option ? [nativeSelection.option, ...piModelOptions] : piModelOptions;
+  const effectiveDefaultModelId = nativeSelection.defaultId ?? defaultProviderPresetId;
+  const activeProviderPresetId = selectedProviderPresetId || effectiveDefaultModelId;
   const activeModelOption = modelOptions.find((option) => option.id === activeProviderPresetId);
-  const activeModelReady = Boolean(activeModelOption?.runnable ?? activeModelOption?.enabled);
+  const activeModelReady = (!nativeSelection.pending || Boolean(selectedProviderPresetId)) && Boolean(activeModelOption?.runnable ?? activeModelOption?.enabled);
   const thinkingMenuOptions = useMemo(
     () => normalConversationThinkingOptions(activeModelOption?.thinkingModes ?? []),
     [activeModelOption?.thinkingModes],
@@ -290,8 +314,9 @@ export function ConversationHome({
       : undefined;
   const messageEditController = createNormalConversationMessageEditController({
     workspaceCwd,
+    detailContext,
     threadId: detailContext?.threadId,
-    providerPresetId: activeProviderPresetId,
+    providerPresetId: activeModelOption?.executionBinding ? undefined : activeProviderPresetId,
     permissionPreset: selectedPermissionPreset,
     identityController: conversationIdentityController,
     editOperation: editSaveOperation,
@@ -323,21 +348,36 @@ export function ConversationHome({
   const composerInputParts = useMemo(
     () => parseComposerInputParts(draft, {
       cwd: project.projectPath,
+      deferTrailingAtomicTokens: true,
+      slashCommands,
+    }),
+    [draft, project.projectPath, slashCommands],
+  );
+  const composerSubmissionInputParts = useMemo(
+    () => parseComposerInputParts(draft, {
+      cwd: project.projectPath,
       slashCommands,
     }),
     [draft, project.projectPath, slashCommands],
   );
   const composerFileRefs = useMemo(
-    () => composerWorkspaceFileParts(composerInputParts).map((part) => ({
+    () => composerWorkspaceFileParts(composerSubmissionInputParts).map((part) => ({
       path: part.path,
       ...(part.line !== undefined ? { line: part.line } : {}),
-      source: "composer" as const,
+      source: "inferred_text" as const,
     })),
-    [composerInputParts],
+    [composerSubmissionInputParts],
   );
 
   useEffect(() => {
-    setDraft(initialDraft);
+    const recovery = recoveryDraftRef.current;
+    if (recovery?.threadId === conversationIdentityController.identity) {
+      setDraft(recovery.draft);
+      attachmentController.restoreForIdentity(recovery.attachments, conversationIdentityController.capture());
+      recoveryDraftRef.current = undefined;
+    } else {
+      setDraft(initialDraft);
+    }
   }, [conversationIdentityController.ownerKey, initialDraft]);
 
   useEffect(() => {
@@ -366,19 +406,27 @@ export function ConversationHome({
   useEffect(() => {
     setSelectedProviderPresetId(initialProviderPresetId.trim());
     setSelectedThinkingLevel(initialThinkingLevel);
-  }, [conversationIdentityController.ownerKey, initialProviderPresetId, initialThinkingLevel]);
+    setSelectedReasoningSummary(initialReasoningSummary);
+  }, [conversationIdentityController.ownerKey, initialProviderPresetId, initialReasoningSummary, initialThinkingLevel]);
 
   useEffect(() => {
     if (permissionSelectionBoundThreadRef.current === conversationIdentityController.identity) {
       return;
     }
     permissionSelectionBoundThreadRef.current = "";
+    permissionBeforeFullAccessRef.current = undefined;
+    permissionSelectionSequenceRef.current += 1;
+    setSelectedAuthorizationMode(resolveAuthorizationMode(
+      initialAuthorizationMode,
+      initialPermissionMode,
+      initialPermissionPreset,
+    ));
     setSelectedPermissionPreset(permissionPresetForWorkspaceAccessMode(resolveWorkspaceAccessMode(
       initialWorkspaceAccessMode,
       initialPermissionMode,
       initialPermissionPreset,
     )));
-  }, [conversationIdentityController.ownerKey, initialPermissionMode, initialPermissionPreset, initialWorkspaceAccessMode]);
+  }, [conversationIdentityController.ownerKey, initialAuthorizationMode, initialPermissionMode, initialPermissionPreset, initialWorkspaceAccessMode]);
 
   useEffect(() => {
     if (!thinkingEnabled) {
@@ -386,7 +434,7 @@ export function ConversationHome({
       return;
     }
     if (!thinkingMenuOptions.includes(selectedThinkingLevel)) {
-      setSelectedThinkingLevel("off");
+      setSelectedThinkingLevel(normalConversationDefaultThinkingLevel(thinkingMenuOptions));
     }
   }, [selectedThinkingLevel, thinkingEnabled, thinkingMenuOptions]);
 
@@ -400,27 +448,26 @@ export function ConversationHome({
 
   async function submitDraft(): Promise<void> {
     const trimmedDraft = draft.trim();
-    if (!trimmedDraft && readyAttachmentIds.length === 0 && composerFileRefs.length === 0) {
+    if (!guidancePending && !trimmedDraft && readyAttachmentIds.length === 0 && composerFileRefs.length === 0) {
       actionFeedback.report("validation", t("Type a message before sending."));
       return;
     }
-    if (pendingAttachments.some((item) => item.state === "uploading")) {
+    if (pendingAttachments.some((item) => item.state !== "ready")) {
       actionFeedback.report("validation", t("Wait for attachments to finish uploading."));
       return;
     }
     if (composerBusy) {
       return;
     }
-    if (activeReply) {
+    if (activeReply || hasPendingNormalGuidance(workspaceCwd, detailContext?.threadId)) {
       await submitRunGuidance(trimmedDraft);
       return;
     }
     const providerPresetId = activeProviderPresetId.trim();
-    if (!providerPresetId || !activeModelReady) {
+    if ((!providerPresetId && !activeModelOption?.executionBinding) || !activeModelReady) {
       actionFeedback.report("validation", activeModelOption?.blocker || t("Please configure a chat model before sending."));
       return;
     }
-    const authorizationMode = resolveAuthorizationMode(initialAuthorizationMode, initialPermissionMode, initialPermissionPreset);
     const workspaceAccessMode = workspaceAccessModeForPermissionPreset(selectedPermissionPreset);
     let permissionConfirmation: PermissionConfirmation | undefined;
     if (workspaceAccessMode === "full_access") {
@@ -429,7 +476,7 @@ export function ConversationHome({
         return;
       }
     }
-    const legacyPermission = authorizationAndAccessToLegacyPermission(authorizationMode, workspaceAccessMode);
+    const legacyPermission = authorizationAndAccessToLegacyPermission(selectedAuthorizationMode, workspaceAccessMode);
     const now = new Date().toISOString();
     const pendingUserMessage: ConversationHomeMessage = {
       id: createConversationHomeMessageId(),
@@ -448,6 +495,8 @@ export function ConversationHome({
     const readyAttachmentIdsSnapshot = readyAttachmentIds;
     const commitGuard = conversationIdentityController.createCommitGuard();
     let sendBound = false;
+    let submissionUnknown = false;
+    let recoveryOnly = false;
     const onThreadBound = (threadId: string): void => {
       permissionSelectionBoundThreadRef.current = threadId;
       onFullAccessConversationBound?.(threadId);
@@ -476,11 +525,12 @@ export function ConversationHome({
         fileRefs: composerFileRefs,
         project: project.projectPath ? project : {},
         model: {
-          providerPresetId,
+          ...(activeModelOption?.executionBinding ? { executionBinding: activeModelOption.executionBinding } : { providerPresetId }),
           ...(thinkingEnabled && selectedThinkingLevel !== "off" ? { thinkingLevel: selectedThinkingLevel } : {}),
+          reasoningSummary: selectedReasoningSummary,
         },
         authorization: {
-          authorizationMode,
+          authorizationMode: selectedAuthorizationMode,
           workspaceAccessMode,
           permissionMode: legacyPermission.permissionMode,
           permissionPreset: legacyPermission.permissionPreset,
@@ -496,27 +546,49 @@ export function ConversationHome({
         },
         failMessage: (message) => {
           if (!shouldCommit()) return;
+          // Once the server has accepted the turn, its typed assistant/evidence
+          // projection owns the failure. Keep composer feedback for transport
+          // failures that happen before a durable message exists only.
+          if (sendBound) return;
           actionFeedback.report("stream", message);
-          setMessages((current) => upsertConversationHomeMessage(current, {
-            id: `conversation-error:${pendingUserMessage.id}`,
-            role: "assistant",
-            authorLabel: "Ling Agent",
-            content: message,
-            status: "failed",
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          }));
         },
         onThreadBound,
         shouldCommit,
         onMessageAccepted: () => {
           sendLifecycle.accept(sendOperation);
         },
+        onSubmissionUnknown: (onlyQueries) => {
+          submissionUnknown = true;
+          recoveryOnly = Boolean(onlyQueries);
+          if (shouldCommit()) actionFeedback.report("stream", t("Pending confirmation"));
+        },
+        onSubmissionRecovered: (threadId, originalBody) => {
+          if (!shouldCommit(threadId)) return;
+          recoveryOnly = true;
+          const retainedDraft = trimmedDraft === originalBody.trim() && !pendingAttachmentsSnapshot.length ? "" : trimmedDraft;
+          recoveryDraftRef.current = { threadId, draft: retainedDraft, attachments: pendingAttachmentsSnapshot };
+          setMessages(current => current.filter(item => item.id !== pendingUserMessage.id));
+          setDraft(retainedDraft);
+          attachmentController.restoreForIdentity(pendingAttachmentsSnapshot, operationIdentity);
+        },
         onReplyLinked: (target) => {
           sendLifecycle.accept(sendOperation);
           sendLifecycle.link(sendOperation, target);
         },
       });
+      if (submissionUnknown) {
+        sendLifecycle.defer(sendOperation);
+        if (recoveryOnly && shouldCommit()) {
+          setMessages(current => current.filter(item => item.id !== pendingUserMessage.id));
+          setDraft(trimmedDraft);
+          attachmentController.restoreForIdentity(pendingAttachmentsSnapshot, operationIdentity);
+        }
+        return;
+      }
+      if (recoveryOnly) {
+        sendLifecycle.defer(sendOperation);
+        return;
+      }
       if (sendBound) {
         attachmentController.markSendBound(pendingAttachmentsSnapshot);
       } else if (commitGuard()) {
@@ -541,29 +613,28 @@ export function ConversationHome({
   }
 
   async function submitRunGuidance(body: string): Promise<void> {
-    try {
-      await submitNormalConversationGuidance({
-        activeReply,
-        threadId: detailContext?.threadId,
-        workspaceCwd,
-        body,
-        fileRefs: composerFileRefs,
-        notReadyMessage: t("This conversation is not ready for another message yet."),
-        attachmentController,
-        identityController: conversationIdentityController,
-        operationOwner: guidanceOperation,
-        actionFeedback,
-        onAccepted: (message) => {
-          setMessages((current) => upsertConversationHomeMessage(current, message));
-          setDraft("");
-          setSlashPicker(undefined);
-          setSlashActiveIndex(0);
-        },
-        refresh: refreshConversationSurface,
-      });
-    } catch {
-      setDraft(body);
-    }
+    await submitNormalConversationGuidance({
+      activeReply,
+      threadId: detailContext?.threadId,
+      workspaceCwd,
+      body,
+      fileRefs: composerFileRefs,
+      notReadyMessage: t("This conversation is not ready for another message yet."),
+      attachmentController,
+      identityController: conversationIdentityController,
+      operationOwner: guidanceOperation,
+      actionFeedback,
+      onAccepted: (message) => {
+        setMessages((current) => upsertConversationHomeMessage(current, message));
+        setDraft(current => current.trim() === body ? "" : current);
+        setSlashPicker(undefined);
+        setSlashActiveIndex(0);
+      },
+      onRecovered: clearDraft => {
+        if (clearDraft) setDraft(current => current.trim() === body ? "" : current);
+      },
+      refresh: refreshConversationSurface,
+    });
   }
 
   function handleComposerKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
@@ -641,8 +712,16 @@ export function ConversationHome({
       return;
     }
     setSelectedProviderPresetId(option.id);
-    setSelectedThinkingLevel("off");
+    const supported = normalConversationThinkingOptions(option.thinkingModes ?? []);
+    const nextLevel = supported.includes(selectedThinkingLevel)
+      ? selectedThinkingLevel : normalConversationDefaultThinkingLevel(supported);
+    setSelectedThinkingLevel(nextLevel);
     actionFeedback.clear("validation");
+    if (nextLevel !== selectedThinkingLevel) {
+      actionFeedback.report("validation", t("Reasoning level changed to {level} because the selected model does not support {previous}.", {
+        level: normalConversationThinkingLabel(nextLevel, t), previous: normalConversationThinkingLabel(selectedThinkingLevel, t),
+      }));
+    }
   }
 
   function selectThinkingLevel(level: ProviderThinkingMode): void {
@@ -655,6 +734,8 @@ export function ConversationHome({
 
   const composerNode = (
     <NormalConversationComposer
+      workspaceCwd={workspaceCwd}
+      runtimeMetrics={runtimeMetrics}
       draft={draft}
       inputRef={composerInputRef}
       inputParts={composerInputParts}
@@ -662,19 +743,23 @@ export function ConversationHome({
       slashOptions={slashCommandPickerOptions}
       slashActiveIndex={slashActiveIndex}
       pendingAttachments={pendingAttachments}
+      authorizationMode={selectedAuthorizationMode}
       permissionPreset={selectedPermissionPreset}
       fullAccessConfirmed={fullAccessConfirmed}
       modelOptions={modelOptions}
       selectedProviderPresetId={selectedProviderPresetId}
-      defaultProviderPresetId={defaultProviderPresetId}
+      defaultProviderPresetId={effectiveDefaultModelId}
       defaultProviderLabel={defaultProviderLabel}
       selectedThinkingLevel={selectedThinkingLevel}
       sendBusy={sendBusy}
+      scopeReady={conversationIdentityController.ready}
+      recoveringSubmission={guidancePending}
       activeRun={Boolean(activeReply)}
       stopping={stopping}
-      canSend={(Boolean(activeReply) || activeModelReady) && Boolean(draft.trim() || readyAttachmentIds.length > 0 || composerFileRefs.length > 0)}
+      canSend={!pendingAttachments.some(item => item.state !== "ready") && (guidancePending || (Boolean(activeReply) || activeModelReady) && Boolean(draft.trim() || readyAttachmentIds.length > 0 || composerFileRefs.length > 0))}
       notice={conversationErrorMessage || actionFeedback.message}
       dragActive={composerDropController.active}
+      dropFeedback={composerDropController.feedback}
       onDraftChange={(value, caret) => {
         setDraft(value);
         actionFeedback.clear("validation");
@@ -690,14 +775,64 @@ export function ConversationHome({
       onDrop={composerDropController.onDrop}
       onOpenModelWorkbench={onOpenModelWorkbench}
       onRemoveAttachment={attachmentController.removeAttachment}
-      onPermissionPresetChange={(preset) => {
-        if (preset !== "full_access" || !onConfirmFullAccessSelection) {
-          setSelectedPermissionPreset(preset);
+      onRetryAttachment={attachmentController.retryAttachment}
+      attachmentCleanupFailures={attachmentController.cleanupFailures}
+      onRetryAttachmentCleanup={attachmentController.retryCleanup}
+      onAuthorizationModeChange={(mode) => {
+        const selectionSequence = ++permissionSelectionSequenceRef.current;
+        if (mode !== "always") {
+          if (selectedAuthorizationMode === "always" && selectedPermissionPreset === "full_access") {
+            setSelectedPermissionPreset(permissionBeforeFullAccessRef.current ?? permissionPresetForWorkspaceAccessMode(defaultWorkspaceAccessMode));
+          }
+          permissionBeforeFullAccessRef.current = undefined;
+          setSelectedAuthorizationMode(mode);
           return;
         }
-        void onConfirmFullAccessSelection().then((confirmation) => {
-          if (confirmation) setSelectedPermissionPreset(preset);
-        });
+        if (!onConfirmFullAccessSelection) {
+          actionFeedback.report("validation", t("Use full access for this conversation after explicit confirmation."));
+          return;
+        }
+        const selectionIdentity = conversationIdentityController.capture();
+        void onConfirmFullAccessSelection()
+          .then((confirmation) => {
+            if (!confirmation || selectionSequence !== permissionSelectionSequenceRef.current || !conversationIdentityController.isCurrent(selectionIdentity)) return;
+            if (selectedAuthorizationMode !== "always" || selectedPermissionPreset !== "full_access") {
+              permissionBeforeFullAccessRef.current = selectedPermissionPreset;
+            }
+            setSelectedAuthorizationMode("always");
+            setSelectedPermissionPreset("full_access");
+          })
+          .catch((error: unknown) => {
+            if (selectionSequence !== permissionSelectionSequenceRef.current || !conversationIdentityController.isCurrent(selectionIdentity)) return;
+            actionFeedback.report("validation", error instanceof Error ? error.message : String(error));
+          });
+      }}
+      onPermissionPresetChange={(preset) => {
+        if (preset === "full_access") {
+          if (!onConfirmFullAccessSelection) {
+            actionFeedback.report("validation", t("Use full access for this conversation after explicit confirmation."));
+            return;
+          }
+          const selectionSequence = ++permissionSelectionSequenceRef.current;
+          const selectionIdentity = conversationIdentityController.capture();
+          void onConfirmFullAccessSelection()
+            .then((confirmation) => {
+              if (!confirmation || selectionSequence !== permissionSelectionSequenceRef.current || !conversationIdentityController.isCurrent(selectionIdentity)) return;
+              if (selectedAuthorizationMode !== "always" || selectedPermissionPreset !== "full_access") {
+                permissionBeforeFullAccessRef.current = selectedPermissionPreset;
+              }
+              setSelectedAuthorizationMode("always");
+              setSelectedPermissionPreset("full_access");
+            })
+            .catch((error: unknown) => {
+              if (selectionSequence !== permissionSelectionSequenceRef.current || !conversationIdentityController.isCurrent(selectionIdentity)) return;
+              actionFeedback.report("validation", error instanceof Error ? error.message : String(error));
+            });
+          return;
+        }
+        permissionBeforeFullAccessRef.current = undefined;
+        setSelectedPermissionPreset(preset);
+        setSelectedAuthorizationMode(preset === "read_only" ? "ask" : "smart");
       }}
       onModelChange={selectModel}
       onThinkingLevelChange={selectThinkingLevel}
@@ -721,6 +856,7 @@ export function ConversationHome({
     return (
       <>
         <NormalConversationPage
+        onOpenSummaryChanges={(reviewCwd) => openConversationReview({ cwd: reviewCwd, baseline: "head" })}
         summaryOpen={conversationSummaryOpen}
         onCloseSummary={() => setConversationSummaryOpen(false)}
         summaryDockMotion={conversationSummaryDockMotion}
@@ -731,10 +867,10 @@ export function ConversationHome({
           searchOpen: normalConversationHeader.searchOpen,
           searchQuery: messageSearchQuery,
           searchTriggerRef: normalConversationHeader.searchTriggerRef,
-          summaryActive: conversationSummaryOpen,
           terminalActive: conversationTerminalOpen,
           terminalDisabled: !workspaceCwd.trim(),
-          detailsActive: conversationDockOpen,
+          detailsActive: conversationDockController.expanded,
+          detailsDisabled: !conversationDockController.available,
           onClearSearch: normalConversationHeader.clearSearch,
           onCloseSearch: () => normalConversationHeader.closeSearch(true),
           onSearchQueryChange: setMessageSearchQuery,
@@ -751,6 +887,7 @@ export function ConversationHome({
             setConversationTerminalOpen((current) => !current);
           },
           onToggleDetails: () => {
+            if (!conversationDockController.available) return;
             if (conversationDockOpen) conversationDockController.close();
             setConversationDockOpen((current) => !current);
           },
@@ -758,6 +895,7 @@ export function ConversationHome({
         feedProps={{
           messages,
           visibleMessages,
+          userProfile,
           runById,
           detailContext,
           composerGateApprovals: inlineApprovalViews,

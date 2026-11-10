@@ -7,3 +7,4 @@ export { defaultMediaVendorAdapterDefinitions } from "./media-vendor-definitions
 export { getBuiltinProviderExtension, listBuiltinProviderExtensions } from "./media-vendor-metadata.js";
 export { createMediaVendorRequestPlan } from "./media-vendor-plan.js";
 export { createDisabledMediaVendorTransport, createLiveMediaVendorTransport, resolveMediaVendorTransportGateConfig } from "./media-vendor-transport.js";
+export { decodeSeedanceTaskStatusResponse, createSeedanceStatusEndpoint } from "./vendors/seedance-task-status.js";

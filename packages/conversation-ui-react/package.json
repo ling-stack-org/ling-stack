@@ -12,6 +12,9 @@
     "./styles.css": "./dist/styles/index.css"
   },
   "scripts": {
+    "build:ci": "tsc -p tsconfig.json && node scripts/copy-styles.mjs",
+    "typecheck:ci": "tsc -p tsconfig.json --noEmit",
+    "test:ci": "node --test test/*.test.mjs",
     "build": "tsc -p tsconfig.json && node scripts/copy-styles.mjs",
     "typecheck": "corepack pnpm --filter @ling-stack/ui-react build && corepack pnpm --filter @ling-stack/conversation-ui-core build && tsc -p tsconfig.json --noEmit",
     "lint": "echo \"lint not configured yet\"",
@@ -19,9 +22,10 @@
   },
   "dependencies": {
     "@ling-stack/conversation-ui-core": "workspace:*",
+    "@ling-stack/contracts": "workspace:*",
     "@ling-stack/ui-react": "workspace:*",
-    "katex": "^0.18.1",
-    "lucide-react": "^1.29.0",
+    "katex": "^0.19.0",
+    "lucide-react": "1.65.0",
     "mermaid": "^11.12.0",
     "type-fest": "^5.8.0"
   },
@@ -32,6 +36,8 @@
   "devDependencies": {
     "@types/katex": "^0.16.7",
     "@types/react": "^19.2.18",
-    "@types/react-dom": "^19.2.4"
+    "@types/react-dom": "^19.2.4",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
   }
 }

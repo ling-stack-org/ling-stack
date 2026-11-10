@@ -1,0 +1,277 @@
+/*
+ * Ling Core IP —— three-layer Logo spirit.
+ * The rendered character owns ceramic/glass material; live nodes own motion.
+ * State colors stay semantic so the character remains integrated with the UI.
+ */
+
+.ling-core-mark {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.ling-core-mark-artwork {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  transform-origin: 50% 76%;
+  user-select: none;
+  -webkit-user-drag: none;
+  filter: drop-shadow(0 8px 13px var(--ling-bg-overlay));
+}
+
+.ling-core-mark-aura {
+  position: absolute;
+  top: 12%;
+  left: 50%;
+  width: 78%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(circle, color-mix(in srgb, var(--ling-text-link) 30%, transparent) 0%, transparent 72%);
+  transform: translateX(-50%);
+  opacity: 0.34;
+}
+
+.ling-core-mark-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.ling-core-mark-orb-core {
+  stroke: var(--ling-bg-app);
+  stroke-width: 1.4;
+}
+
+.ling-core-mark-orb-a .ling-core-mark-orb-core {
+  fill: var(--ling-text-link);
+}
+
+.ling-core-mark-orb-b .ling-core-mark-orb-core {
+  fill: var(--ling-border-focus);
+}
+
+.ling-core-mark-orb-c .ling-core-mark-orb-core {
+  fill: var(--ling-text-link);
+}
+
+.ling-core-mark-orb-a {
+  --ling-orb-start-x: 0px;
+  --ling-orb-start-y: 48px;
+  --ling-orb-delay: 220ms;
+}
+
+.ling-core-mark-orb-b {
+  --ling-orb-start-x: -44px;
+  --ling-orb-start-y: 28px;
+  --ling-orb-delay: 620ms;
+}
+
+.ling-core-mark-orb-c {
+  --ling-orb-start-x: 44px;
+  --ling-orb-start-y: 28px;
+  --ling-orb-delay: 1020ms;
+}
+
+.ling-core-mark[data-state="blocked"] .ling-core-mark-artwork {
+  filter: grayscale(0.75) drop-shadow(0 8px 13px var(--ling-bg-overlay));
+  opacity: 0.58;
+}
+
+.ling-core-mark[data-state="blocked"] .ling-core-mark-orbs {
+  opacity: 0.58;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ling-core-mark-artwork {
+    animation:
+      ling-core-mark-artwork-emerge 1500ms var(--ling-ease-enter) 120ms both,
+      ling-core-mark-artwork-breathe var(--ling-motion-ambient-breath) var(--ling-ease-standard) 1620ms infinite alternate;
+  }
+
+  .ling-core-mark-aura {
+    animation: ling-core-mark-aura-breathe var(--ling-motion-ambient-breath) var(--ling-ease-standard) infinite alternate;
+  }
+
+  .ling-core-mark-orb {
+    transform-box: view-box;
+    animation: ling-core-mark-orb-emerge 1050ms var(--ling-ease-enter) var(--ling-orb-delay) both;
+  }
+
+  .ling-core-mark-orb-core {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: ling-core-mark-orb-drift var(--ling-motion-ambient-drift) var(--ling-ease-standard) infinite alternate;
+  }
+
+  .ling-core-mark-orb-b .ling-core-mark-orb-core {
+    animation-delay: calc(var(--ling-motion-ambient-drift) * -0.22);
+  }
+
+  .ling-core-mark-orb-c .ling-core-mark-orb-core {
+    animation-delay: calc(var(--ling-motion-ambient-drift) * -0.47);
+    animation-direction: alternate-reverse;
+  }
+
+  .ling-core-mark[data-state="thinking"] .ling-core-mark-artwork {
+    animation-name: ling-core-mark-artwork-think;
+    animation-duration: var(--ling-motion-ambient-breath);
+    animation-timing-function: var(--ling-ease-standard);
+    animation-iteration-count: infinite;
+    animation-direction: alternate;
+  }
+
+  .ling-core-mark[data-state="receiving"] .ling-core-mark-orb-a {
+    animation: ling-core-mark-orb-receive var(--ling-motion-attention) var(--ling-ease-standard) 1;
+  }
+
+  .ling-core-mark[data-state="completed"] .ling-core-mark-orb-core {
+    animation: ling-core-mark-orb-complete var(--ling-motion-attention) var(--ling-ease-standard) 1;
+  }
+
+  .ling-core-mark[data-state="completed"] .ling-core-mark-orb-b .ling-core-mark-orb-core {
+    animation-delay: 70ms;
+  }
+
+  .ling-core-mark[data-state="completed"] .ling-core-mark-orb-c .ling-core-mark-orb-core {
+    animation-delay: 140ms;
+  }
+
+  .ling-core-mark[data-state="blocked"] .ling-core-mark-artwork,
+  .ling-core-mark[data-state="blocked"] .ling-core-mark-orb,
+  .ling-core-mark[data-state="blocked"] .ling-core-mark-orb-core,
+  .ling-core-mark[data-state="blocked"] .ling-core-mark-aura {
+    animation: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ling-core-mark-aura {
+    opacity: 0.26;
+  }
+}
+
+@media (forced-colors: active) {
+  .ling-core-mark-artwork {
+    filter: grayscale(1);
+  }
+
+  .ling-core-mark-orb-core {
+    fill: CanvasText;
+    stroke: Canvas;
+  }
+
+  .ling-core-mark-aura {
+    display: none;
+  }
+}
+
+@keyframes ling-core-mark-artwork-emerge {
+  0% {
+    opacity: 0.25;
+    transform: translateY(14px) scale(0.84);
+  }
+
+  62% {
+    opacity: 1;
+    transform: translateY(-1px) scale(1.02);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes ling-core-mark-artwork-breathe {
+  from {
+    transform: translateY(0) scale(1);
+  }
+
+  to {
+    transform: translateY(-1.4px) scale(1.008, 1.012);
+  }
+}
+
+@keyframes ling-core-mark-artwork-think {
+  from {
+    transform: translateY(0) rotate(-0.4deg) scale(1);
+  }
+
+  to {
+    transform: translateY(-1.6px) rotate(0.4deg) scale(1.008, 1.012);
+  }
+}
+
+@keyframes ling-core-mark-aura-breathe {
+  from {
+    opacity: 0.24;
+    transform: translateX(-50%) scale(0.94);
+  }
+
+  to {
+    opacity: 0.48;
+    transform: translateX(-50%) scale(1.06);
+  }
+}
+
+@keyframes ling-core-mark-orb-emerge {
+  0% {
+    opacity: 0;
+    transform: translate(var(--ling-orb-start-x), var(--ling-orb-start-y)) scale(0.12);
+  }
+
+  38% {
+    opacity: 1;
+    transform: translate(calc(var(--ling-orb-start-x) * 0.22), calc(var(--ling-orb-start-y) * 0.18)) scale(1.16);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translate(0, 0) scale(1);
+  }
+}
+
+@keyframes ling-core-mark-orb-drift {
+  from {
+    transform: translate(0, 0);
+  }
+
+  to {
+    transform: translate(1.1px, -1.8px);
+  }
+}
+
+@keyframes ling-core-mark-orb-receive {
+  0% {
+    transform: translate(0, 0);
+  }
+
+  46% {
+    transform: translate(0, 9px) scale(1.18);
+  }
+
+  100% {
+    transform: translate(0, 0);
+  }
+}
+
+@keyframes ling-core-mark-orb-complete {
+  0%,
+  100% {
+    opacity: 0.9;
+    transform: scale(1);
+  }
+
+  48% {
+    opacity: 1;
+    transform: scale(1.42);
+  }
+}

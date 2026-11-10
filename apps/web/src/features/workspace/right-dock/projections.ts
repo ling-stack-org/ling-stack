@@ -551,6 +551,8 @@ export function reviewNeedsAction(item: DockReviewItem): boolean {
 
 export function runStatusLabel(status: RunSession["status"], t: Translate): string {
   switch (status) {
+    case "yielded":
+      return t("Execution yielded");
     case "queued":
       return t("Queued");
     case "running":

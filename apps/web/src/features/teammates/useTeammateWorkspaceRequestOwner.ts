@@ -24,6 +24,7 @@ export type TeammateWorkspaceRequestAction =
   | "older-messages"
   | "runtime"
   | "send"
+  | "stop"
   | "terminal-reports"
   | "workspace";
 

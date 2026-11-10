@@ -1,32 +1,128 @@
+.conversation-composer-frame {
+  display: grid;
+  min-width: 0;
+  width: 100%;
+  gap: 8px;
+}
+
+.conversation-bottom-status-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  min-width: 0;
+  padding: 0 8px;
+  color: var(--ling-text-muted);
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+  text-align: center;
+}
+
+.conversation-bottom-status-group {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.conversation-bottom-status-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.conversation-bottom-status-trigger:hover,
+.conversation-bottom-status-trigger:focus-visible {
+  color: var(--ling-text-default);
+}
+
+.conversation-bottom-status-trigger:focus-visible {
+  outline: 2px solid var(--ling-border-focus);
+  outline-offset: 3px;
+  border-radius: 3px;
+}
+
+.conversation-bottom-status-detail {
+  position: absolute;
+  z-index: 20;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  display: grid;
+  width: max-content;
+  min-width: 160px;
+  max-width: min(260px, calc(100vw - 32px));
+  gap: 4px;
+  padding: 10px 12px;
+  transform: translateX(-50%);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  color: var(--ling-text-default);
+  background: var(--ling-bg-elevated);
+  box-shadow: var(--ling-shadow-medium);
+  text-align: left;
+  pointer-events: none;
+}
+
+.conversation-bottom-status-meter {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: conic-gradient(var(--ling-border-focus) var(--conversation-context-progress), var(--ling-border-default) 0);
+  mask: radial-gradient(farthest-side, transparent 55%, var(--ling-text-default) 60%);
+}
+
 .conversation-composer {
+  position: relative;
   box-sizing: border-box;
   display: grid;
   gap: var(--ling-space-3);
   min-width: 0;
   padding: var(--ling-space-4);
   overflow: visible;
-  border: 1px solid var(--ling-border-default);
-  border-radius: var(--ling-radius-lg);
+  border: 1px solid var(--ling-composer-border);
+  border-radius: var(--ling-composer-radius);
   color: var(--ling-text-default);
   background: var(--ling-bg-composer);
-  box-shadow: var(--ling-shadow-medium);
+  background-image: var(--ling-composer-finish);
+  box-shadow: var(--ling-composer-shadow);
   transition:
     border-color var(--ling-motion-fast) var(--ling-ease-standard),
     box-shadow var(--ling-motion-fast) var(--ling-ease-standard);
 }
 
+.conversation-composer::before {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--ling-composer-decoration);
+  content: "";
+  pointer-events: none;
+}
+
+.conversation-composer:focus-within::before {
+  background: var(--ling-composer-focus-decoration);
+}
+
 .conversation-composer:focus-within {
   border-color: var(--ling-border-focus);
-  box-shadow:
-    inset 0 0 0 1px var(--ling-border-focus),
-    var(--ling-shadow-medium);
+  box-shadow: var(--ling-composer-focus-shadow);
 }
 
 .conversation-composer-density-floating {
   padding: 0;
-  border: 0;
-  background: transparent;
-  box-shadow: none;
 }
 
 .conversation-composer-input-zone,
@@ -35,6 +131,12 @@
 }
 
 .conversation-composer-toolbar {
+  box-sizing: border-box;
+  padding: var(--ling-composer-toolbar-padding);
+  border-top: 1px solid var(--ling-composer-toolbar-border);
+  border-radius: max(0px, calc(var(--ling-composer-radius) - 5px));
+  background: var(--ling-composer-toolbar-bg);
+  background-image: var(--ling-composer-toolbar-finish);
   display: flex;
   min-height: var(--ling-control-sm);
   align-items: center;
@@ -117,7 +219,7 @@
   padding: 7px 8px 2px;
   overflow: auto;
   border: 0;
-  border-radius: var(--ling-radius-md);
+  border-radius: var(--ling-control-radius);
   color: var(--ling-text-default);
   background: transparent;
   box-shadow: none;
@@ -234,5 +336,23 @@
 @media (prefers-reduced-motion: reduce) {
   .conversation-composer {
     transition-duration: var(--ling-motion-instant);
+  }
+}
+
+@media (forced-colors: active) {
+  .conversation-composer {
+    border-color: CanvasText;
+    color: CanvasText;
+    background: Canvas;
+    box-shadow: none;
+  }
+
+  .conversation-composer:focus-within {
+    outline: 2px solid Highlight;
+    outline-offset: 2px;
+  }
+
+  .conversation-composer::before {
+    display: none;
   }
 }

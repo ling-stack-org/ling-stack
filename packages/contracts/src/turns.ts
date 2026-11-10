@@ -12,6 +12,7 @@ export type LingTurnStatus =
   | "open"
   | "running"
   | "waiting_for_approval"
+  | "waiting_for_input"
   | "blocked"
   | "succeeded"
   | "failed"

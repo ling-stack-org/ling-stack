@@ -3,13 +3,13 @@ import test from "node:test";
 import {
   conversationActionAllowedByPolicy,
   findLatestEditableConversationMessage,
-  getConversationSurfacePolicy,
+  getConversationInteractionPolicy,
   getTerminalReportProjectionPolicy,
-  mergeConversationSurfacePolicy,
+  mergeConversationInteractionPolicy,
 } from "../dist/index.js";
 
 test("private chat policy blocks channel-only controls", () => {
-  const policy = getConversationSurfacePolicy("teammate_direct");
+  const policy = getConversationInteractionPolicy("teammate_direct");
 
   assert.equal(conversationActionAllowedByPolicy("copy", policy), true);
   assert.equal(conversationActionAllowedByPolicy("like", policy), true);
@@ -20,46 +20,44 @@ test("private chat policy blocks channel-only controls", () => {
   assert.equal(conversationActionAllowedByPolicy("fork", policy), false);
   assert.equal(policy.allowToolExecution, true);
   assert.equal(policy.showTerminalReportParticipants, false);
-  assert.equal(policy.allowTeammateMentions, false);
-  assert.equal(policy.allowMultiTeammateActivity, false);
+  assert.equal(policy.allowMentions, false);
+  assert.equal(policy.allowMultiAgent, false);
 });
 
 test("channel policies allow topic reply and teammate collaboration", () => {
   for (const surface of ["channel_root", "channel_branch"]) {
-    const policy = getConversationSurfacePolicy(surface);
+    const policy = getConversationInteractionPolicy(surface);
 
     assert.equal(conversationActionAllowedByPolicy("reply_topic", policy), true);
     assert.equal(conversationActionAllowedByPolicy("edit_latest", policy), true);
     assert.equal(conversationActionAllowedByPolicy("fork", policy), true);
-    assert.equal(policy.allowTeammateMentions, true);
-    assert.equal(policy.allowMultiTeammateActivity, true);
+    assert.equal(policy.allowMentions, true);
+    assert.equal(policy.allowMultiAgent, true);
     assert.equal(policy.showTerminalReportParticipants, true);
   }
 });
 
-test("normal conversations keep compact evidence but no channel controls", () => {
-  const policy = getConversationSurfacePolicy("normal_conversation");
+test("normal conversations keep shared transcript controls but no channel controls", () => {
+  const policy = getConversationInteractionPolicy("normal_conversation");
 
-  assert.equal(policy.evidenceMode, "compact");
-  assert.equal(policy.workCellMode, "compact");
   assert.equal(conversationActionAllowedByPolicy("reply_topic", policy), false);
   assert.equal(conversationActionAllowedByPolicy("edit_latest", policy), true);
   assert.equal(conversationActionAllowedByPolicy("fork", policy), true);
-  assert.equal(policy.showChannelRoster, false);
+  assert.equal(policy.showRoster, false);
   assert.equal(policy.showUserAvatar, false);
   assert.equal(policy.showAgentAvatar, false);
   assert.equal(policy.showTerminalReportParticipants, false);
 });
 
 test("policy overrides cannot drift the surface identity", () => {
-  const policy = mergeConversationSurfacePolicy("run_thread", {
+  const policy = mergeConversationInteractionPolicy("run_thread", {
     surface: "channel_root",
     allowRetry: false,
   });
 
   assert.equal(policy.surface, "run_thread");
   assert.equal(policy.allowRetry, false);
-  assert.equal(policy.evidenceMode, "rich");
+  assert.equal(policy.modelControl, "readonly");
 });
 
 test("latest edit selection is scoped and never falls back behind a read-only latest prompt", () => {

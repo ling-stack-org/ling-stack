@@ -422,13 +422,12 @@ async function routeChannelMemberships(
 }
 
 async function openChannels(page: Page, targetTeammateName: string = teammateName, chinese = false): Promise<Locator> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: targetTeammateName }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: targetTeammateName }).click();
   const header = page.locator("[data-ui2-teammate-chat-header]");
   await expect(header).toBeVisible();
   const dockLabel = chinese ? "私聊工作区面板" : "Private chat workspace dock";
-  if (await page.getByLabel(dockLabel).count() === 0) {
-    await header.getByRole("button", { name: chinese ? "显示详情" : "Show details" }).click();
-  }
+  const showDetails = header.getByRole("button", { name: chinese ? "显示详情" : "Show details" });
+  if (await showDetails.isVisible()) await showDetails.click();
   await page.getByLabel(dockLabel).getByRole("button", { name: chinese ? "设置" : "Settings" }).click();
   const settingsSections = page.getByLabel(chinese ? "设置分组" : "Settings sections");
   const channelsNavigation = settingsSections.getByRole("button", {

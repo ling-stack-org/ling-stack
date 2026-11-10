@@ -1,3 +1,5 @@
+import type { LearningReviewCreateRequest, LearningReviewPolicyUpdateRequest, LearningReviewPolicyResponse,
+  LearningReviewJobResponse, LearningReviewListResponse } from "@ling-stack/contracts";
 import type {
   CandidateGenerationDecisionAction,
   CandidateGenerationDecisionListResponse,
@@ -47,6 +49,13 @@ import type {
   SkillRevisionPreviewResponse,
   SkillRevisionPublishRequest,
   SkillRevisionPublishResponse,
+  SkillDefinitionHistoryResponse,
+  SkillDefinitionUndoRequest,
+  SkillDefinitionUndoResponse,
+  SharedSkillSourcePublishRequest,
+  SharedSkillSourcePublishResponse,
+  SharedSkillSourceScanRequest,
+  SharedSkillSourceScanResponse,
   SkillSourceHealthResponse,
   SkillSourceArtifactListResponse,
   SkillSourceSnapshotArchiveResponse,
@@ -69,6 +78,25 @@ import type {
 import type { LingDaemonEndpointContext, PublicEndpointGroup } from "../transport.js";
 
 export const skillEndpoints = {
+  async getLearningReviewPolicy(this: LingDaemonEndpointContext, cwd: string): Promise<LearningReviewPolicyResponse> {
+    return this._get("/skills/learning-policy", { cwd });
+  },
+  async updateLearningReviewPolicy(this: LingDaemonEndpointContext, cwd: string, input: LearningReviewPolicyUpdateRequest): Promise<LearningReviewPolicyResponse> {
+    return this._put("/skills/learning-policy", { cwd }, input);
+  },
+  async createLearningReview(this: LingDaemonEndpointContext, cwd: string, input: LearningReviewCreateRequest): Promise<LearningReviewJobResponse> {
+    return this._post("/skills/learning-reviews", { cwd }, input);
+  },
+  async listLearningReviews(this: LingDaemonEndpointContext, cwd: string, runId?: string, decisionId?: string): Promise<LearningReviewListResponse> {
+    return this._get("/skills/learning-reviews", { cwd, runId, decisionId });
+  },
+  async getLearningReview(this: LingDaemonEndpointContext, cwd: string, jobId: string): Promise<LearningReviewJobResponse> {
+    return this._get(`/skills/learning-reviews/${encodeURIComponent(jobId)}`, { cwd });
+  },
+  async cancelLearningReview(this: LingDaemonEndpointContext, cwd: string, jobId: string): Promise<LearningReviewJobResponse> {
+    return this._post(`/skills/learning-reviews/${encodeURIComponent(jobId)}/cancel`, { cwd }, {});
+  },
+
   async getOfficialSkillSourceStatus(this: LingDaemonEndpointContext, cwd: string): Promise<OfficialSkillSourceStatusResponse> {
     return this._get("/skills/sync/gstack/status", { cwd });
   },
@@ -165,6 +193,22 @@ export const skillEndpoints = {
 
   async publishGstackSkillSourceSync(this: LingDaemonEndpointContext, cwd: string, input: SkillSourceSyncPublishRequest): Promise<SkillSourceSyncPublishResponse> {
     return this._post("/skills/sync/gstack/publish", { cwd }, input);
+  },
+
+  async previewSharedSkillSources(
+    this: LingDaemonEndpointContext,
+    cwd: string,
+    input: SharedSkillSourceScanRequest = {},
+  ): Promise<SharedSkillSourceScanResponse> {
+    return this._post("/skills/sync/shared/preview", { cwd }, input);
+  },
+
+  async publishSharedSkillSources(
+    this: LingDaemonEndpointContext,
+    cwd: string,
+    input: SharedSkillSourcePublishRequest,
+  ): Promise<SharedSkillSourcePublishResponse> {
+    return this._post("/skills/sync/shared/publish", { cwd }, input);
   },
 
   async listSkillUsageEvents(
@@ -396,6 +440,15 @@ export const skillEndpoints = {
     input: SkillRevisionPublishRequest,
   ): Promise<SkillRevisionPublishResponse> {
     return this._post(`/skills/${encodeURIComponent(skillId)}/revisions`, { cwd }, input);
+  },
+
+  async getSkillDefinitionHistory(this: LingDaemonEndpointContext, cwd: string, skillId: string): Promise<SkillDefinitionHistoryResponse> {
+    return this._get(`/skills/${encodeURIComponent(skillId)}/revisions`, { cwd });
+  },
+
+  async undoSkillDefinitionRevision(this: LingDaemonEndpointContext, cwd: string, skillId: string,
+    input: SkillDefinitionUndoRequest): Promise<SkillDefinitionUndoResponse> {
+    return this._post(`/skills/${encodeURIComponent(skillId)}/revision-undo`, { cwd }, input);
   },
 
   async getSkillImportDraft(this: LingDaemonEndpointContext, cwd: string, draftId: string): Promise<SkillImportDraftResponse> {

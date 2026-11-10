@@ -20,6 +20,8 @@ import type { LingThread } from "./threads.js";
 import type { LingTurn } from "./turns.js";
 import type { ChannelWorkflow, ChannelWorkflowOrchestrationResponse, ChannelWorkflowStep } from "./workflows.js";
 import type { ConversationGeneratedMedia } from "./media.js";
+import type { UserInputTranscriptItemV1 } from "./user-input-transcript.js";
+import type { ConversationContextCompactionRecord, ConversationReasoningSummaryRecord } from "./conversations.js";
 
 export type ChannelConversationThread = LingThread & LingThreadContinuityV2 & {
   readonly nextItemSequence: number;
@@ -54,11 +56,20 @@ export interface ChannelConversationItemDecoration {
 }
 
 export interface ChannelConversationItemPageResponse {
+  /** Whole-conversation metrics; stable regardless of which item page was requested. */
+  readonly runtimeMetrics?: import("./conversation-runtime-metrics.js").ConversationRuntimeMetrics;
   readonly cwd: string;
   readonly channelId: string;
   readonly thread: ChannelConversationThread;
   readonly turns: readonly LingTurn[];
   readonly items: readonly ConversationItemV1[];
+  /** Effective Context assignments for Turns represented on this page. */
+  readonly turnContextAssignments: readonly TurnContextAssignment[];
+  /** Hydration for visible question/answer anchors on this page only. */
+  readonly userInputs: readonly UserInputTranscriptItemV1[];
+  /** Provider-safe summaries for Run events anchored inside this page. */
+  readonly reasoningSummaries: readonly ConversationReasoningSummaryRecord[];
+  readonly contextCompactions?: readonly ConversationContextCompactionRecord[];
   readonly decorations: readonly ChannelConversationItemDecoration[];
   readonly generatedMedia: readonly ConversationGeneratedMedia[];
   readonly hasMore: boolean;

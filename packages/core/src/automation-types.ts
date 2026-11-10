@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { RunTool } from "./approval-policy.js";
 import type { SessionPermissionMode } from "./session-permissions.js";
 import type { SkillApprovalProfile } from "./skill-types.js";
+import type { LingThread } from "./run-types.js";
 
 export type AutomationStatus = "enabled" | "disabled" | "paused" | "archived" | "error";
 export type AutomationKind = "daily_brief" | "weekly_review" | "project_monitor" | "custom_prompt";
@@ -75,6 +76,7 @@ export interface AutomationPromptTemplate {
   readonly systemPurpose?: string;
   readonly promptMarkdown: string;
   readonly contextSelectors: readonly AutomationContextSelector[];
+  /** Optional positive safe-integer cap on whole items; omitted retains selector limits. */
   readonly maxContextItems?: number;
 }
 
@@ -162,6 +164,7 @@ export interface AutomationDraft {
   readonly description?: string;
   readonly kind?: AutomationKind;
   readonly trigger?: AutomationTrigger;
+  readonly rrule?: string;
   readonly target?: AutomationTarget;
   readonly promptTemplate?: AutomationPromptTemplate;
   readonly executionPolicy?: AutomationExecutionPolicy;
@@ -176,6 +179,12 @@ export interface AutomationDraft {
   readonly discardedAt?: string;
 }
 
+/** A confirmation owns its thread, definition and immutable draft association together. */
+export type AutomationDraftConfirmationResult =
+  | { readonly outcome: "created" | "already_confirmed"; readonly draft: AutomationDraft; readonly automation: AutomationDefinition; readonly thread: LingThread }
+  | { readonly outcome: "not_ready" | "changed" | "source_identity_conflict" | "confirmed_state_invalid"; readonly draft: AutomationDraft }
+  | { readonly outcome: "not_found" };
+
 export interface CreateAutomationDraftInput {
   readonly id?: string;
   readonly source: AutomationDraftSource;
@@ -186,6 +195,7 @@ export interface CreateAutomationDraftInput {
   readonly description?: string;
   readonly kind?: AutomationKind;
   readonly trigger?: AutomationTrigger;
+  readonly rrule?: string;
   readonly target?: AutomationTarget;
   readonly promptTemplate?: AutomationPromptTemplate;
   readonly executionPolicy?: AutomationExecutionPolicy;
@@ -200,6 +210,7 @@ export interface UpdateAutomationDraftInput {
   readonly description?: string | null;
   readonly kind?: AutomationKind | null;
   readonly trigger?: AutomationTrigger | null;
+  readonly rrule?: string | null;
   readonly target?: AutomationTarget | null;
   readonly promptTemplate?: AutomationPromptTemplate | null;
   readonly executionPolicy?: AutomationExecutionPolicy | null;

@@ -18,7 +18,7 @@ test("sqlite terminal report migration creates the table and remains idempotent"
       assert.ok(database.prepare("SELECT version FROM schema_migrations WHERE version = 94 AND name = 'create_ling_terminal_reports'").get());
       const columns = database.prepare("PRAGMA table_info(ling_terminal_reports)").all().map((row) => row.name);
       assert.ok(columns.includes("evidence_snapshot_json"));
-      assert.ok(columns.includes("published_message_id"));
+      assert.ok(columns.includes("result_item_id"));
       assert.ok(columns.includes("committed_at"));
       const indexes = database.prepare("PRAGMA index_list(ling_terminal_reports)").all().map((row) => row.name);
       assert.ok(indexes.includes("idx_ling_terminal_reports_channel_thread"));

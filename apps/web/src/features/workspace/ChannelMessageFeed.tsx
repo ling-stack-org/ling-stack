@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -11,18 +12,20 @@ import {
   type RefObject,
   type UIEvent,
 } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
 import type { ChannelActivityItem } from "../../lib/channel-activity.js";
 import type { ConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
 import type {
   ConversationTurnViewModel,
 } from "../../lib/conversation-turn-projector.js";
 import {
-  ConversationVirtualFeed,
-  ConversationViewProvider,
+  ConversationTimelineFeed,
   transcriptBlockViewKey,
+  type ConversationTimelineDisclosureIntent,
   type ConversationViewRetainKeys,
 } from "../../shared/conversation/index.js";
+import { conversationMeasurementScrollEvent, restoreConversationReadingAnchor } from "../../shared/conversation/blocks/conversation-reading-anchor.js";
+import { conversationReadingStorage } from "../../shared/conversation/view-store/conversation-reading-storage.js";
+import type { ConversationTimelineItemLocator } from "../../shared/conversation/timeline/ConversationTimeline.js";
 import type {
   Channel,
   ChannelMention,
@@ -54,16 +57,23 @@ export interface PendingChannelSendPreview {
 }
 
 interface MessageFeedAnchorSnapshot {
-  readonly itemId: string;
+  readonly rowKey: string;
+  readonly parentSubAgentId?: string;
   readonly offsetTop: number;
 }
 
 interface OlderLoadAnchorSnapshot {
-  readonly anchorId: string;
+  readonly anchor?: MessageFeedAnchorSnapshot;
   readonly anchorOffset: number;
+  readonly previousScrollHeight: number;
 }
 
+const conversationFocusBlockSelector =
+  '[data-conversation-focus-block="true"][data-conversation-row-key]';
+
 interface UseChannelMessageFeedInput {
+  readonly readingScopeKey?: string;
+  readonly itemLocatorRef?: RefObject<ConversationTimelineItemLocator | null>;
   readonly items: readonly ChannelMessageFeedItem[];
   readonly conversationWorkCellByWorkflowId: ReadonlyMap<string, ConversationWorkCellViewModel>;
   readonly conversationWorkCellByThreadId: ReadonlyMap<string, ConversationWorkCellViewModel>;
@@ -81,18 +91,19 @@ interface UseChannelMessageFeedInput {
 export interface ChannelMessageFeedState {
   readonly scrollRef: RefObject<HTMLDivElement | null>;
   readonly latestButtonVisible: boolean;
-  readonly totalSize: number;
-  readonly virtualRows: ReturnType<ReturnType<typeof useVirtualizer>["getVirtualItems"]>;
   readonly viewRetainKeys: ConversationViewRetainKeys;
-  readonly measureElement: (node: HTMLDivElement | null) => void;
   readonly reset: () => void;
+  readonly switchConversation: (ownerKey: string) => void;
   readonly scrollToLatest: () => void;
   readonly onScroll: (event: UIEvent<HTMLDivElement>) => void;
   readonly onUserScrollIntent: () => void;
+  readonly onDisclosureIntent: (intent: ConversationTimelineDisclosureIntent) => void;
+  readonly onLocateIntent: () => void;
 }
 
 interface ChannelMessageFeedProps {
   readonly surfaceId: string;
+  readonly readingScopeKey?: string;
   readonly state: ChannelMessageFeedState;
   readonly ariaLabel: string;
   readonly loading: boolean;
@@ -101,8 +112,8 @@ interface ChannelMessageFeedProps {
   readonly emptyIcon?: ReactNode;
   readonly emptyLabel: string;
   readonly title?: string;
-  readonly items: readonly ChannelMessageFeedItem[];
-  readonly renderItem: (feedItem: ChannelMessageFeedItem, index: number) => ReactNode;
+  /** The single Timeline root owned by the channel surface. */
+  readonly unifiedTimelineNode: ReactNode;
   readonly onKeyDown?: KeyboardEventHandler<HTMLDivElement>;
   readonly onPointerDown?: PointerEventHandler<HTMLDivElement>;
   readonly onPointerMove?: PointerEventHandler<HTMLDivElement>;
@@ -114,6 +125,8 @@ interface ChannelMessageFeedProps {
 }
 
 export function useChannelMessageFeed({
+  readingScopeKey,
+  itemLocatorRef,
   canLoadOlder,
   conversationWorkCellByThreadId,
   conversationWorkCellByWorkflowId,
@@ -128,6 +141,8 @@ export function useChannelMessageFeed({
   tailDependencyKey,
 }: UseChannelMessageFeedInput): ChannelMessageFeedState {
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const conversationOwnerRef = useRef("");
+  const conversationAnchorsRef = useRef(new Map<string, { anchor?: MessageFeedAnchorSnapshot; pinned: boolean }>());
   const pinnedToLatestRef = useRef(true);
   const autoFollowUntilRef = useRef(0);
   const userScrollIntentRef = useRef(false);
@@ -137,21 +152,27 @@ export function useChannelMessageFeed({
   const olderLoadSnapshotRef = useRef<OlderLoadAnchorSnapshot | undefined>(undefined);
   const initialLatestPendingRef = useRef(true);
   const pinnedFollowFrameRef = useRef<number | undefined>(undefined);
+  const layoutFrameRef = useRef<number | undefined>(undefined);
+  const layoutSizeRef = useRef<{ height: number; viewport: number } | undefined>(undefined);
+  const measurementScrollTopRef = useRef<number | undefined>(undefined);
   const [latestButtonVisible, setLatestButtonVisible] = useState(false);
   const [resetRevision, setResetRevision] = useState(0);
+  const activeReadingScopeRef = useRef<string | undefined>(undefined);
+  const savedAnchorPendingRef = useRef<MessageFeedAnchorSnapshot | undefined>(undefined);
+  const requestedReadingPageRef = useRef<string | undefined>(undefined);
+  const persistTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const persistReading = useCallback(() => {
+    if (activeReadingScopeRef.current !== readingScopeKey || savedAnchorPendingRef.current) return;
+    conversationReadingStorage.writeViewport(readingScopeKey, {
+      following: pinnedToLatestRef.current,
+      ...(visibleAnchorRef.current ? { anchor: visibleAnchorRef.current } : {}),
+    });
+  }, [readingScopeKey]);
+  const schedulePersist = useCallback(() => {
+    if (persistTimerRef.current !== undefined) clearTimeout(persistTimerRef.current);
+    persistTimerRef.current = setTimeout(() => { persistTimerRef.current = undefined; persistReading(); }, 150);
+  }, [persistReading]);
 
-  const virtualizer = useVirtualizer({
-    count: items.length,
-    getScrollElement: () => scrollRef.current,
-    estimateSize: (index) => items[index]?.kind === "older-loader" ? 48 : 128,
-    measureElement: measureChannelMessageFeedRow,
-    overscan: 10,
-    paddingEnd: 38,
-    getItemKey: (index) => items[index]?.renderKey ?? items[index]?.id ?? index,
-    useFlushSync: false,
-  });
-  const virtualRows = virtualizer.getVirtualItems();
-  const totalSize = virtualizer.getTotalSize();
   const renderSignature = useMemo(
     () => items.map((item) => channelMessageFeedItemRenderSignature(item)).join("\n"),
     [items],
@@ -171,11 +192,12 @@ export function useChannelMessageFeed({
       return undefined;
     }
     const feedRect = feed.getBoundingClientRect();
-    const candidateRows = Array.from(feed.querySelectorAll<HTMLElement>("[data-feed-item-id]"))
-      .filter((element) => element.dataset.feedItemKind !== "older-loader");
+    const candidateRows = Array.from(
+      feed.querySelectorAll<HTMLElement>(conversationFocusBlockSelector),
+    );
     for (const row of candidateRows) {
-      const itemId = row.dataset.feedItemId;
-      if (!itemId) {
+      const rowKey = row.dataset.conversationRowKey;
+      if (!rowKey) {
         continue;
       }
       const rowRect = row.getBoundingClientRect();
@@ -183,7 +205,10 @@ export function useChannelMessageFeed({
         continue;
       }
       return {
-        itemId,
+        rowKey,
+        ...(row.dataset.conversationParentSubAgentId
+          ? { parentSubAgentId: row.dataset.conversationParentSubAgentId }
+          : {}),
         offsetTop: rowRect.top - feedRect.top,
       };
     }
@@ -197,15 +222,57 @@ export function useChannelMessageFeed({
     }
   }, [readVisibleAnchor]);
 
+  const onDisclosureIntent = useCallback((intent: ConversationTimelineDisclosureIntent): void => {
+    const feed = scrollRef.current;
+    if (!feed) return;
+    savedAnchorPendingRef.current = undefined;
+    measurementScrollTopRef.current = undefined;
+    const row = Array.from(feed.querySelectorAll<HTMLElement>(conversationFocusBlockSelector))
+      .find((element) => element.dataset.conversationRowKey === intent.rowKey);
+    if (row) {
+      visibleAnchorRef.current = {
+        rowKey: intent.rowKey,
+        offsetTop: row.getBoundingClientRect().top - feed.getBoundingClientRect().top,
+      };
+    }
+    autoFollowUntilRef.current = 0;
+    pinnedToLatestRef.current = false;
+    userScrollIntentRef.current = true;
+    userScrollRenderSignatureRef.current = renderSignature;
+    schedulePersist();
+  }, [renderSignature, schedulePersist]);
+
+  const onLocateIntent = useCallback((): void => {
+    savedAnchorPendingRef.current = undefined;
+    measurementScrollTopRef.current = undefined;
+    autoFollowUntilRef.current = 0;
+    pinnedToLatestRef.current = false;
+    initialLatestPendingRef.current = false;
+    userScrollIntentRef.current = true;
+    userScrollRenderSignatureRef.current = renderSignature;
+    visibleAnchorRef.current = undefined;
+    if (pinnedFollowFrameRef.current !== undefined) {
+      globalThis.cancelAnimationFrame(pinnedFollowFrameRef.current);
+      pinnedFollowFrameRef.current = undefined;
+    }
+  }, [renderSignature]);
+
   const restoreVisibleAnchor = useCallback((): void => {
+    if (savedAnchorPendingRef.current) return;
     const feed = scrollRef.current;
     const anchor = visibleAnchorRef.current;
     if (!feed || !anchor) {
       rememberVisibleAnchor();
       return;
     }
-    const row = Array.from(feed.querySelectorAll<HTMLElement>("[data-feed-item-id]"))
-      .find((element) => element.dataset.feedItemId === anchor.itemId);
+    const rows = Array.from(feed.querySelectorAll<HTMLElement>(conversationFocusBlockSelector));
+    const row = rows.find((element) => element.dataset.conversationRowKey === anchor.rowKey)
+      ?? (anchor.parentSubAgentId
+        ? rows.find((element) =>
+            element.dataset.feedItemId === anchor.parentSubAgentId
+            && element.dataset.conversationTimelineDepth === "0"
+          )
+        : undefined);
     if (!row) {
       rememberVisibleAnchor();
       return;
@@ -220,6 +287,7 @@ export function useChannelMessageFeed({
   }, [rememberVisibleAnchor]);
 
   const reset = useCallback((): void => {
+    persistReading();
     const feed = scrollRef.current;
     if (feed) {
       feed.scrollLeft = 0;
@@ -231,9 +299,46 @@ export function useChannelMessageFeed({
     olderLoadSnapshotRef.current = undefined;
     initialLatestPendingRef.current = true;
     visibleAnchorRef.current = undefined;
+    layoutSizeRef.current = undefined;
+    measurementScrollTopRef.current = undefined;
+    const saved = conversationReadingStorage.read(readingScopeKey)?.viewport;
+    activeReadingScopeRef.current = readingScopeKey;
+    savedAnchorPendingRef.current = saved && !saved.following ? saved.anchor : undefined;
+    requestedReadingPageRef.current = undefined;
+    if (savedAnchorPendingRef.current) {
+      pinnedToLatestRef.current = false;
+      initialLatestPendingRef.current = false;
+      visibleAnchorRef.current = savedAnchorPendingRef.current;
+    }
     setLatestButtonVisible(false);
     setResetRevision((revision) => revision + 1);
-  }, []);
+  }, [persistReading, readingScopeKey]);
+
+  useLayoutEffect(() => {
+    reset();
+    globalThis.addEventListener?.("pagehide", persistReading);
+    return () => {
+      persistReading();
+      globalThis.removeEventListener?.("pagehide", persistReading);
+      if (persistTimerRef.current !== undefined) clearTimeout(persistTimerRef.current);
+      persistTimerRef.current = undefined;
+    };
+  }, [reset, persistReading]);
+
+  const switchConversation = useCallback((ownerKey: string): void => {
+    const previous = conversationOwnerRef.current;
+    if (previous === ownerKey) return;
+    if (previous) conversationAnchorsRef.current.set(previous, { anchor: visibleAnchorRef.current, pinned: pinnedToLatestRef.current });
+    conversationOwnerRef.current = ownerKey;
+    reset();
+    const saved = conversationAnchorsRef.current.get(ownerKey);
+    if (saved) {
+      visibleAnchorRef.current = saved.anchor;
+      pinnedToLatestRef.current = saved.pinned;
+      initialLatestPendingRef.current = saved.pinned;
+      setLatestButtonVisible(!saved.pinned);
+    }
+  }, [reset]);
 
   const scrollToLatest = useCallback((): void => {
     const feed = scrollRef.current;
@@ -241,17 +346,17 @@ export function useChannelMessageFeed({
       return;
     }
     autoFollowUntilRef.current = Date.now() + 1_000;
+    measurementScrollTopRef.current = undefined;
     userScrollIntentRef.current = false;
     userScrollRenderSignatureRef.current = "";
     feed.scrollLeft = 0;
-    if (items.length > 0) {
-      virtualizer.scrollToIndex(items.length - 1, { align: "end" });
-    }
     feed.scrollTop = feed.scrollHeight;
     pinnedToLatestRef.current = true;
+    savedAnchorPendingRef.current = undefined;
     visibleAnchorRef.current = undefined;
     setLatestButtonVisible(false);
-  }, [items.length, virtualizer]);
+    schedulePersist();
+  }, [schedulePersist]);
 
   const schedulePinnedFollow = useCallback((): void => {
     const feed = scrollRef.current;
@@ -271,9 +376,6 @@ export function useChannelMessageFeed({
       if (!currentFeed || (!forceCurrentInitialLatest && !pinnedToLatestRef.current)) {
         pinnedFollowFrameRef.current = undefined;
         return;
-      }
-      if (items.length > 0) {
-        virtualizer.scrollToIndex(items.length - 1, { align: "end" });
       }
       const finishFollow = (): void => {
         pinnedFollowFrameRef.current = undefined;
@@ -297,10 +399,12 @@ export function useChannelMessageFeed({
         finishFollow();
       }
     });
-  }, [items.length, loading, protocolLoading, virtualizer]);
+  }, [items.length, loading, protocolLoading]);
 
   const onUserScrollIntent = useCallback((): void => {
+    savedAnchorPendingRef.current = undefined;
     const feed = scrollRef.current;
+    measurementScrollTopRef.current = undefined;
     autoFollowUntilRef.current = 0;
     userScrollIntentRef.current = true;
     userScrollRenderSignatureRef.current = renderSignature;
@@ -308,6 +412,7 @@ export function useChannelMessageFeed({
       pinnedToLatestRef.current = false;
       return;
     }
+    layoutSizeRef.current = { height: feed.scrollHeight, viewport: feed.clientHeight };
     const pinnedToLatest = channelMessageFeedIsPinnedToLatest(feed);
     pinnedToLatestRef.current = pinnedToLatest;
     if (pinnedToLatest) {
@@ -318,11 +423,43 @@ export function useChannelMessageFeed({
     setLatestButtonVisible(!pinnedToLatest && feed.scrollHeight > feed.clientHeight);
   }, [rememberVisibleAnchor, renderSignature]);
 
+  const requestOlderIfNeeded = useCallback((feed: HTMLDivElement): void => {
+    if (feed.scrollTop > 80) {
+      olderLoadArmedRef.current = true;
+      return;
+    }
+    if (
+      !canLoadOlder ||
+      loading ||
+      loadingOlder ||
+      protocolLoading ||
+      initialLatestPendingRef.current ||
+      pinnedToLatestRef.current ||
+      !olderLoadArmedRef.current ||
+      olderLoadSnapshotRef.current
+    ) {
+      return;
+    }
+    olderLoadSnapshotRef.current = {
+      anchor: readVisibleAnchor(),
+      anchorOffset: feed.scrollTop,
+      previousScrollHeight: feed.scrollHeight,
+    };
+    olderLoadArmedRef.current = false;
+    void onLoadOlder();
+  }, [canLoadOlder, loading, loadingOlder, onLoadOlder, protocolLoading, readVisibleAnchor]);
+
   const updateScrollPositionState = useCallback((): void => {
+    if (savedAnchorPendingRef.current) return;
     const feed = scrollRef.current;
     if (!feed) {
       return;
     }
+    const previousSize = layoutSizeRef.current;
+    const layoutChanged = previousSize && (previousSize.height !== feed.scrollHeight || previousSize.viewport !== feed.clientHeight);
+    // ResizeObserver reconciles layout movement before a scroll event can replace the anchor.
+    if (layoutChanged && visibleAnchorRef.current && !pinnedToLatestRef.current) return;
+    layoutSizeRef.current = { height: feed.scrollHeight, viewport: feed.clientHeight };
     const maxScrollTop = feed.scrollHeight - feed.clientHeight;
     const pinnedToLatest = channelMessageFeedIsPinnedToLatest(feed);
     const latestItem = items.at(-1);
@@ -342,9 +479,6 @@ export function useChannelMessageFeed({
       !userScrollIntentRef.current &&
       pinnedToLatestRef.current &&
       (loading || protocolLoading || Date.now() < autoFollowUntilRef.current || latestItemPending);
-    if (feed.scrollTop > 80) {
-      olderLoadArmedRef.current = true;
-    }
     if (preserveAutoFollow) {
       pinnedToLatestRef.current = true;
       setLatestButtonVisible(false);
@@ -361,20 +495,65 @@ export function useChannelMessageFeed({
       const nextVisible = !pinnedToLatest && maxScrollTop > 0;
       return visible === nextVisible ? visible : nextVisible;
     });
-  }, [items, loading, protocolLoading, rememberVisibleAnchor, renderSignature]);
+    requestOlderIfNeeded(feed);
+  }, [items, loading, protocolLoading, rememberVisibleAnchor, renderSignature, requestOlderIfNeeded]);
 
-  const onScroll = useCallback((_event: UIEvent<HTMLDivElement>): void => {
+  const onScroll = useCallback((): void => {
+    const feed = scrollRef.current;
+    if (feed && measurementScrollTopRef.current !== undefined
+      && Math.abs(feed.scrollTop - measurementScrollTopRef.current) <= 1) return;
+    measurementScrollTopRef.current = undefined;
     updateScrollPositionState();
-  }, [updateScrollPositionState]);
+    schedulePersist();
+  }, [updateScrollPositionState, schedulePersist]);
+
+  useEffect(() => {
+    const anchor = savedAnchorPendingRef.current;
+    const feed = scrollRef.current;
+    if (!anchor || !feed || loading || protocolLoading || loadingOlder || !items.length) return;
+    let current = true;
+    const finish = () => {
+      if (!current || savedAnchorPendingRef.current !== anchor || activeReadingScopeRef.current !== readingScopeKey) return;
+      if (!restoreConversationReadingAnchor(feed, anchor)) return;
+      visibleAnchorRef.current = anchor;
+      savedAnchorPendingRef.current = undefined;
+      layoutSizeRef.current = { height: feed.scrollHeight, viewport: feed.clientHeight };
+      measurementScrollTopRef.current = feed.scrollTop;
+      setLatestButtonVisible(!channelMessageFeedIsPinnedToLatest(feed));
+    };
+    if (restoreConversationReadingAnchor(feed, anchor)) finish();
+    else if (itemLocatorRef?.current) {
+      void itemLocatorRef.current.revealReadingAnchor(anchor, finish).then(result => {
+        if (!current || savedAnchorPendingRef.current !== anchor || result !== "not_found") return;
+        if (canLoadOlder) {
+          if (requestedReadingPageRef.current !== renderSignature) {
+            requestedReadingPageRef.current = renderSignature;
+            void onLoadOlder();
+          }
+        } else scrollToLatest();
+      }).catch(() => { /* A failed optional locate leaves explicit navigation available. */ });
+    }
+    return () => { current = false; };
+  }, [readingScopeKey, itemLocatorRef, loading, protocolLoading, loadingOlder, items.length, renderSignature, canLoadOlder, onLoadOlder, scrollToLatest]);
 
   useEffect(() => {
     const feed = scrollRef.current;
     if (!feed) {
       return undefined;
     }
-    feed.addEventListener("scroll", updateScrollPositionState, { passive: true });
-    return () => feed.removeEventListener("scroll", updateScrollPositionState);
-  }, [updateScrollPositionState]);
+    const onMeasurementScroll = (event: Event) => {
+      const top = (event as CustomEvent<number>).detail;
+      if (Number.isFinite(top)) {
+        measurementScrollTopRef.current = Math.max(0, Math.min(top, feed.scrollHeight - feed.clientHeight));
+      }
+    };
+    feed.addEventListener(conversationMeasurementScrollEvent, onMeasurementScroll);
+    feed.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      feed.removeEventListener(conversationMeasurementScrollEvent, onMeasurementScroll);
+      feed.removeEventListener("scroll", onScroll);
+    };
+  }, [onScroll]);
 
   useEffect(() => {
     const feed = scrollRef.current;
@@ -382,16 +561,26 @@ export function useChannelMessageFeed({
       return undefined;
     }
     const observer = new ResizeObserver(() => {
-      schedulePinnedFollow();
-      updateScrollPositionState();
+      if (layoutFrameRef.current !== undefined) return;
+      layoutFrameRef.current = globalThis.requestAnimationFrame(() => {
+        layoutFrameRef.current = undefined;
+        layoutSizeRef.current = { height: feed.scrollHeight, viewport: feed.clientHeight };
+        if (pinnedToLatestRef.current) schedulePinnedFollow();
+        else if (!olderLoadSnapshotRef.current && Date.now() >= (restoreBlockedUntilRef.current ?? 0)) restoreVisibleAnchor();
+        updateScrollPositionState();
+      });
     });
     observer.observe(feed);
-    const virtualizerElement = feed.querySelector<HTMLElement>(".message-feed-virtualizer");
-    if (virtualizerElement) {
-      observer.observe(virtualizerElement);
+    const timelineElement = feed.querySelector<HTMLElement>('[data-conversation-timeline="true"]');
+    if (timelineElement) {
+      observer.observe(timelineElement);
     }
-    return () => observer.disconnect();
-  }, [schedulePinnedFollow, updateScrollPositionState]);
+    return () => {
+      observer.disconnect();
+      if (layoutFrameRef.current !== undefined) globalThis.cancelAnimationFrame(layoutFrameRef.current);
+      layoutFrameRef.current = undefined;
+    };
+  }, [renderSignature, restoreBlockedUntilRef, restoreVisibleAnchor, schedulePinnedFollow, updateScrollPositionState]);
 
   useEffect(() => () => {
     if (pinnedFollowFrameRef.current !== undefined) {
@@ -399,52 +588,6 @@ export function useChannelMessageFeed({
       pinnedFollowFrameRef.current = undefined;
     }
   }, []);
-
-  const firstVirtualIndex = virtualRows[0]?.index ?? -1;
-  useEffect(() => {
-    if (
-      firstVirtualIndex !== 0 ||
-      !canLoadOlder ||
-      loading ||
-      loadingOlder ||
-      protocolLoading ||
-      pinnedToLatestRef.current ||
-      !olderLoadArmedRef.current ||
-      olderLoadSnapshotRef.current
-    ) {
-      return;
-    }
-    const feed = scrollRef.current;
-    if (feed) {
-      const anchorRow = virtualRows.find((virtualRow) => channelMessageFeedItemCanAnchor(items[virtualRow.index]));
-      const anchorItem = anchorRow ? items[anchorRow.index] : undefined;
-      if (anchorRow && channelMessageFeedItemCanAnchor(anchorItem)) {
-        olderLoadSnapshotRef.current = {
-          anchorId: anchorItem.id,
-          anchorOffset: anchorRow.start - feed.scrollTop,
-        };
-      } else {
-        const fallbackAnchor = items.find(channelMessageFeedItemCanAnchor);
-        if (fallbackAnchor) {
-          olderLoadSnapshotRef.current = {
-            anchorId: fallbackAnchor.id,
-            anchorOffset: 48,
-          };
-        }
-      }
-    }
-    olderLoadArmedRef.current = false;
-    void onLoadOlder();
-  }, [
-    canLoadOlder,
-    firstVirtualIndex,
-    items,
-    loading,
-    loadingOlder,
-    onLoadOlder,
-    protocolLoading,
-    virtualRows,
-  ]);
 
   useEffect(() => {
     if (loadingOlder) {
@@ -455,12 +598,6 @@ export function useChannelMessageFeed({
     if (!snapshot || !feed) {
       return;
     }
-    const anchorIndex = items.findIndex((item) => item.id === snapshot.anchorId);
-    if (anchorIndex < 0) {
-      olderLoadSnapshotRef.current = undefined;
-      return;
-    }
-    virtualizer.scrollToIndex(anchorIndex, { align: "start" });
     const frameIds: number[] = [];
     const finishRestore = (): void => {
       olderLoadSnapshotRef.current = undefined;
@@ -468,18 +605,22 @@ export function useChannelMessageFeed({
       setLatestButtonVisible(feed.scrollHeight > feed.clientHeight);
     };
     const scheduleRestore = (attempt: number): void => {
-      virtualizer.scrollToIndex(anchorIndex, { align: "start" });
       const frameId = globalThis.requestAnimationFrame(() => {
-        const anchorElement = Array.from(feed.querySelectorAll<HTMLElement>("[data-feed-item-id]"))
-          .find((element) => element.dataset.feedItemId === snapshot.anchorId);
+        if (attempt === 0) {
+          feed.scrollTop = Math.max(0, feed.scrollHeight - snapshot.previousScrollHeight + snapshot.anchorOffset);
+        }
+        const anchorElement = snapshot.anchor
+          ? Array.from(feed.querySelectorAll<HTMLElement>(conversationFocusBlockSelector))
+              .find((element) => element.dataset.conversationRowKey === snapshot.anchor?.rowKey)
+          : undefined;
         if (anchorElement) {
           const feedTop = feed.getBoundingClientRect().top;
           const anchorTop = anchorElement.getBoundingClientRect().top;
-          feed.scrollTop += anchorTop - feedTop - snapshot.anchorOffset;
+          feed.scrollTop += anchorTop - feedTop - (snapshot.anchor?.offsetTop ?? snapshot.anchorOffset);
           finishRestore();
           return;
         }
-        if (attempt < 8) {
+        if (snapshot.anchor && attempt < 8) {
           scheduleRestore(attempt + 1);
           return;
         }
@@ -491,7 +632,7 @@ export function useChannelMessageFeed({
     return () => {
       frameIds.forEach((frameId) => globalThis.cancelAnimationFrame(frameId));
     };
-  }, [items, loadingOlder, virtualizer]);
+  }, [loadingOlder, renderSignature]);
 
   useEffect(() => {
     if (loading || protocolLoading || !pinnedToLatestRef.current) {
@@ -508,7 +649,6 @@ export function useChannelMessageFeed({
     resetRevision,
     schedulePinnedFollow,
     tailDependencyKey,
-    totalSize,
   ]);
 
   useEffect(() => {
@@ -534,20 +674,19 @@ export function useChannelMessageFeed({
     renderSignature,
     restoreBlockedUntilRef,
     restoreVisibleAnchor,
-    totalSize,
   ]);
 
   return {
     scrollRef,
+    switchConversation,
     latestButtonVisible,
-    totalSize,
-    virtualRows,
     viewRetainKeys,
-    measureElement: virtualizer.measureElement,
     reset,
     scrollToLatest,
     onScroll,
     onUserScrollIntent,
+    onDisclosureIntent,
+    onLocateIntent,
   };
 }
 
@@ -556,20 +695,11 @@ function channelMessageFeedIsPinnedToLatest(feed: HTMLDivElement): boolean {
   return maxScrollTop <= 0 || maxScrollTop - feed.scrollTop <= 24;
 }
 
-function measureChannelMessageFeedRow(
-  element: HTMLDivElement,
-  entry: ResizeObserverEntry | undefined,
-): number {
-  const borderBox = entry?.borderBoxSize[0];
-  return Math.ceil(borderBox?.blockSize ?? element.getBoundingClientRect().height);
-}
-
 export function ChannelMessageFeed({
   ariaLabel,
   empty,
   emptyIcon,
   emptyLabel,
-  items,
   latestButtonNode,
   loading,
   loadingLabel,
@@ -579,43 +709,39 @@ export function ChannelMessageFeed({
   onPointerDown,
   onPointerMove,
   onPointerUp,
-  renderItem,
   state,
   statusNode,
   surfaceId,
+  readingScopeKey,
   title,
+  unifiedTimelineNode,
 }: ChannelMessageFeedProps): React.JSX.Element {
   return (
-    <ConversationViewProvider surfaceId={surfaceId}>
-      <ConversationVirtualFeed
-        scrollRef={state.scrollRef}
-        ariaLabel={ariaLabel}
-        loading={loading}
-        empty={empty}
-        loadingLabel={loadingLabel}
-        emptyIcon={emptyIcon}
-        emptyLabel={emptyLabel}
-        title={title}
-        totalSize={state.totalSize}
-        virtualRows={state.virtualRows}
-        items={items}
-        getItemId={(feedItem) => feedItem.id}
-        getItemKind={(feedItem) => feedItem.kind}
-        renderItem={renderItem}
-        measureElement={state.measureElement}
-        viewStateRetainKeys={state.viewRetainKeys}
-        onScroll={state.onScroll}
-        onUserScrollIntent={state.onUserScrollIntent}
-        onKeyDown={onKeyDown}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerCancel}
-        onContextMenu={onContextMenu}
-        statusNode={statusNode}
-        latestButtonNode={latestButtonNode}
-      />
-    </ConversationViewProvider>
+    <ConversationTimelineFeed
+      surfaceId={surfaceId}
+      readingScopeKey={readingScopeKey}
+      scrollRef={state.scrollRef}
+      ariaLabel={ariaLabel}
+      timelineId="channel-timeline-root"
+      timelineNode={unifiedTimelineNode}
+      loading={loading}
+      empty={empty}
+      emptyFeedClassName="message-feed-empty"
+      loadingLabel={loadingLabel}
+      emptyIcon={emptyIcon}
+      emptyLabel={emptyLabel}
+      title={title}
+      onScroll={state.onScroll}
+      onUserScrollIntent={state.onUserScrollIntent}
+      onKeyDown={onKeyDown}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={onPointerCancel}
+      onContextMenu={onContextMenu}
+      statusNode={statusNode}
+      latestButtonNode={latestButtonNode}
+    />
   );
 }
 
@@ -712,10 +838,6 @@ export function conversationTurnRenderSignature(turn: ConversationTurnViewModel)
     ].join(":")),
     ...turn.coordinatorTerminalMessages.map((message) => `${message.id}:${message.status}:${message.updatedAt}:${message.body}`),
   ].join("|");
-}
-
-function channelMessageFeedItemCanAnchor(item: ChannelMessageFeedItem | undefined): item is Extract<ChannelMessageFeedItem, { readonly kind: "activity" | "turn" }> {
-  return item?.kind === "activity" || item?.kind === "turn";
 }
 
 function channelMessageFeedItemIsPending(item: ChannelMessageFeedItem | undefined): boolean {

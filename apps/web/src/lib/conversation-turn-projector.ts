@@ -85,7 +85,9 @@ export interface BuildConversationTurnProjectionInput {
   readonly operationCellByWorkflowId: ReadonlyMap<string, ConversationWorkCellViewModel>;
   readonly operationCellByThreadId: ReadonlyMap<string, ConversationWorkCellViewModel>;
   readonly lingAgentAuthorId: string;
-  readonly terminalReportMessageIds?: ReadonlySet<string>;
+  readonly terminalReportResultItemIds?: ReadonlySet<string>;
+  /** Same Host-evidence visibility decision used by the standalone activity feed. */
+  readonly silentChannelReplyRunIds?: ReadonlySet<string>;
 }
 
 export function buildConversationTurnProjection(input: BuildConversationTurnProjectionInput): ConversationTurnProjection {
@@ -96,6 +98,7 @@ export function buildConversationTurnProjection(input: BuildConversationTurnProj
   const itemsByTurnId = groupBy(conversationItems.filter((item) => Boolean(item.turnId)), (item) => item.turnId ?? "");
   const itemsByThreadId = groupBy(conversationItems, (item) => item.threadId);
   const messagesByTurnId = groupBy(channelMessages.filter((message) => Boolean(message.turnId)), (message) => message.turnId ?? "");
+  const messagesByThreadId = groupBy(channelMessages.filter((message) => Boolean(message.threadId)), (message) => message.threadId ?? "");
   const legacyChildMessagesBySourceItemId = groupBy(
     channelMessages.filter((message) => !message.turnId && Boolean(message.threadId)),
     (message) => message.threadId ?? "",
@@ -132,16 +135,17 @@ export function buildConversationTurnProjection(input: BuildConversationTurnProj
       runsById,
       operationCellByWorkflowId: input.operationCellByWorkflowId,
       operationCellByThreadId: input.operationCellByThreadId,
+      silentChannelReplyRunIds: input.silentChannelReplyRunIds,
     });
     const childMessages = uniqueMessages([
       ...(sourceMessage.turnId ? messagesByTurnId.get(sourceMessage.turnId) ?? [] : []),
       ...(legacyChildMessagesBySourceItemId.get(sourceMessage.id) ?? []),
+      ...threadMessagesForSource(sourceMessage, messagesByThreadId),
     ])
       .filter((message) => message.id !== sourceMessage.id)
       .sort(compareByCreatedAtThenId);
     const allCoordinatorMessages = childMessages.filter((message) => isLingAgentMessage(message, input.lingAgentAuthorId));
-    const coordinatorMessages = allCoordinatorMessages.filter((message) => !input.terminalReportMessageIds?.has(message.id));
-    const { startMessages, terminalMessages } = splitCoordinatorMessages(coordinatorMessages, operation?.cell);
+    const coordinatorMessages = allCoordinatorMessages.filter((message) => !input.terminalReportResultItemIds?.has(message.id));
     const turnId = `conversation-turn:${sourceMessage.id}`;
     const turnConversationItems = conversationItemsForSource({
       sourceMessage,
@@ -149,6 +153,10 @@ export function buildConversationTurnProjection(input: BuildConversationTurnProj
       itemsByThreadId,
       rootMessages,
     });
+    const narrationItemIds = new Set(turnConversationItems
+      .filter((item) => item.kind === "assistant_message" && item.payload.presentationRole === "narration")
+      .map((item) => item.id));
+    const { startMessages, terminalMessages } = splitCoordinatorMessages(coordinatorMessages, operation?.cell, narrationItemIds);
     const blocks = buildTranscriptBlocks({
       turnId,
       proposals,
@@ -212,7 +220,48 @@ export function buildConversationTurnProjection(input: BuildConversationTurnProj
 }
 
 function isRootUserMessage(message: ChannelMessage): boolean {
-  return message.authorType === "local-user" && message.kind === "message" && (Boolean(message.turnId) || !message.threadId);
+  // A channel-root user message may carry the channel discussion thread id.
+  // Treat every local message as a turn root and let threadMessagesForSource
+  // assign same-thread coordinator replies to the nearest preceding request.
+  // The previous `!message.threadId` guard left those replies in the activity
+  // feed, where the internal workflow prompt was rendered as user-facing text.
+  return message.authorType === "local-user" && message.kind === "message";
+}
+
+function threadMessagesForSource(
+  sourceMessage: ChannelMessage,
+  messagesByThreadId: ReadonlyMap<string, readonly ChannelMessage[]>,
+): readonly ChannelMessage[] {
+  // A canonical item without a turn id has no reliable parent relation. Do
+  // not infer ownership from adjacency alone: an unrelated assistant message
+  // in the same channel-root thread must remain a standalone activity row.
+  const sourceTurnId = sourceMessage.turnId?.trim();
+  if (!sourceTurnId) {
+    return [];
+  }
+  const threadId = sourceMessage.threadId?.trim();
+  if (!threadId) {
+    return [];
+  }
+  const threadMessages = messagesByThreadId.get(threadId);
+  if (!threadMessages || threadMessages.length === 0) {
+    return [];
+  }
+  const ordered = [...threadMessages].sort(compareByCreatedAtThenId);
+  const sourceIndex = ordered.findIndex((message) => message.id === sourceMessage.id);
+  if (sourceIndex < 0) {
+    return [];
+  }
+  const result: ChannelMessage[] = [];
+  for (const message of ordered.slice(sourceIndex + 1)) {
+    if (message.authorType === "local-user" && message.kind === "message") {
+      break;
+    }
+    if (message.turnId === sourceTurnId) {
+      result.push(message);
+    }
+  }
+  return result;
 }
 
 function uniqueMessages(messages: readonly ChannelMessage[]): readonly ChannelMessage[] {
@@ -232,6 +281,7 @@ function findTurnOperation(input: {
   readonly runsById: ReadonlyMap<string, RunSession>;
   readonly operationCellByWorkflowId: ReadonlyMap<string, ConversationWorkCellViewModel>;
   readonly operationCellByThreadId: ReadonlyMap<string, ConversationWorkCellViewModel>;
+  readonly silentChannelReplyRunIds?: ReadonlySet<string>;
 }): { readonly cell: ConversationWorkCellViewModel; readonly ref: ConversationTurnOperationRef } | undefined {
   const workflowIds = uniqueStrings([
     ...input.proposals.map((proposal) => proposal.linkedWorkflowId).filter(isString),
@@ -254,14 +304,28 @@ function findTurnOperation(input: {
     }
   }
 
-  const linkedRunIds = input.proposals.map((proposal) => proposal.linkedRunId).filter(isString);
+  // The canonical channel message projection carries the turn's active/last
+  // run directly. Prefer that lineage when a turn has no proposal/workflow
+  // wrapper (for example a direct teammate reply or a resumed run). The
+  // operation still resolves through the thread-scoped WorkCell map, so this
+  // does not bypass the existing attempt/participant ownership checks.
+  const linkedRunIds = uniqueStrings([
+    ...(input.sourceMessage.linkedRunId ? [input.sourceMessage.linkedRunId] : []),
+    ...input.proposals.map((proposal) => proposal.linkedRunId).filter(isString),
+  ]);
   for (const runId of linkedRunIds) {
+    if (input.silentChannelReplyRunIds?.has(runId)) {
+      continue;
+    }
     const threadId = input.runsById.get(runId)?.threadId;
     if (!threadId) {
       continue;
     }
     const cell = input.operationCellByThreadId.get(threadId);
-    if (cell) {
+    // The map is thread-scoped and may already contain another turn's cell.
+    // A shared thread alone cannot transfer that execution to this request.
+    if (cell && cell.runIds.includes(runId) &&
+      (!input.sourceMessage.turnId || !cell.turnId || input.sourceMessage.turnId === cell.turnId)) {
       return { cell, ref: { kind: "run_thread", threadId } };
     }
   }
@@ -272,25 +336,20 @@ function findTurnOperation(input: {
 function splitCoordinatorMessages(
   messages: readonly ChannelMessage[],
   operationCell: ConversationWorkCellViewModel | undefined,
+  narrationItemIds: ReadonlySet<string>,
 ): { readonly startMessages: readonly ChannelMessage[]; readonly terminalMessages: readonly ChannelMessage[] } {
   if (messages.length === 0) {
     return { startMessages: [], terminalMessages: [] };
   }
 
-  if (operationCell && isTerminalOperationStatus(operationCell.status)) {
-    if (messages.length > 1) {
-      return {
-        startMessages: messages.slice(0, -1),
-        terminalMessages: messages.slice(-1),
-      };
-    }
-    return { startMessages: [], terminalMessages: messages };
-  }
-
-  if (operationCell && messages.length > 1) {
-    return {
-      startMessages: messages.slice(0, -1),
-      terminalMessages: messages.slice(-1),
+  if (operationCell && (isTerminalOperationStatus(operationCell.status) || messages.length > 1)) {
+    // A durable Host narration role survives workflow completion. Keep the
+    // existing fallback only among other coordinator messages; text never grants
+    // a startup acknowledgement ownership of the terminal result slot.
+    const terminalMessage = messages.filter((message) => !narrationItemIds.has(message.id)).at(-1);
+    if (terminalMessage) return {
+      startMessages: messages.filter((message) => message.id !== terminalMessage.id),
+      terminalMessages: [terminalMessage],
     };
   }
 
@@ -398,6 +457,8 @@ function buildConversationItemBlocks(
 ): readonly ConversationItemBlock[] {
   return items
     .filter((item) => item.kind !== "user_message" && item.kind !== "assistant_message")
+    // U1 anchors are not generic successful operations. U4 supplies the shared domain renderer.
+    .filter((item) => item.kind !== "user_input_request" && item.kind !== "user_input_answer")
     .filter((item) => !conversationItemCoveredByOperation(item, operation))
     .sort((left, right) => left.sequence - right.sequence || left.id.localeCompare(right.id))
     .map((item) => {
@@ -467,6 +528,9 @@ function conversationItemCoveredByOperation(
 
 function conversationItemDisplay(item: ConversationItemV1): { readonly title: string; readonly meta?: string; readonly detail?: string } {
   switch (item.kind) {
+    case "user_input_request":
+    case "user_input_answer":
+      throw new Error("User-input anchors require domain projection");
     case "tool_call":
       return { title: item.payload.title ?? item.payload.toolName, meta: item.payload.toolName, detail: item.payload.inputSummary };
     case "tool_result":
@@ -481,6 +545,8 @@ function conversationItemDisplay(item: ConversationItemV1): { readonly title: st
       return { title: item.payload.title, meta: item.payload.state, detail: item.payload.summary };
     case "artifact_ref":
       return { title: item.payload.title ?? item.payload.artifactId, meta: item.payload.artifactKind ?? "Artifact" };
+    case "terminal_report":
+      return { title: item.payload.outcomeStatus, meta: `generation ${item.payload.generation}`, detail: item.payload.evidenceFingerprint };
     case "system_event":
       return { title: item.payload.summary, meta: item.payload.eventType };
     case "user_message":

@@ -1,14 +1,17 @@
-import { memoryEligibilityForView } from "./memory.js";
+import { memoryEligibilityForView, type MemoryContextConsumerScope } from "./memory.js";
 import type { ChannelContextDroppedReason, ChannelContextSource, ChannelContextViewKind } from "./types.js";
 
 export function sourceDropReasonForView(
   source: ChannelContextSource,
   viewKind: ChannelContextViewKind,
   consumerTeammateId?: string,
+  consumerScope?: MemoryContextConsumerScope,
 ): ChannelContextDroppedReason | undefined {
-  const memoryEligibility = memoryEligibilityForView(source, viewKind, consumerTeammateId);
-  if (memoryEligibility?.mode === "excluded") {
-    return memoryEligibility.droppedReason;
+  const memoryEligibility = memoryEligibilityForView(source, viewKind, consumerTeammateId, consumerScope);
+  if (memoryEligibility) {
+    // Memory owns its scoped eligibility; the generic private-message rule must not
+    // reclassify an admitted shared workspace/channel record as a teammate private chat.
+    return memoryEligibility.mode === "excluded" ? memoryEligibility.droppedReason : undefined;
   }
 
   if (source.sensitivity === "secret_adjacent" && viewKind !== "evidence_inspect_view") {

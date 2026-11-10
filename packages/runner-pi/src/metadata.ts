@@ -34,6 +34,7 @@ export function getPiRunnerExtension(): RunnerExtensionMetadata<"bash"> {
       "turn_end",
       "assistant_text_delta",
       "assistant_thinking_delta",
+      "assistant_reasoning_summary",
       "tool_start",
       "tool_update",
       "tool_end",

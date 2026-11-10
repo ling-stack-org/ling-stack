@@ -23,6 +23,7 @@ import type {
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { writeJson } from "../../shared/response.js";
 import { isRecord } from "../../shared/validation.js";
+import { buildWorkspaceChangeReview } from "./workspace-change-review.js";
 import {
   assertNoInternalPatchPaths,
   assertNoSymlinkEscapes,
@@ -424,6 +425,7 @@ export async function buildTurnWorkspaceChangesResponse(
   const context = buildTurnRecoveryContext(store, turn, runs);
   const steps = context.steps;
   const plans = steps.map((step) => step.plan);
+  const review = buildWorkspaceChangeReview(store, { scope: { kind: "turn", id: turn.id }, runs, workspaceId: turn.workspaceId, threadId: turn.threadId, turnId: turn.id });
   const ownerRun = runs.at(-1);
   let workspaceCwd: string;
   try {
@@ -438,6 +440,7 @@ export async function buildTurnWorkspaceChangesResponse(
       summary: summarizePatchPlans(plans),
       provenanceComplete: context.provenanceComplete,
       updatedAt: turn.updatedAt,
+      review,
     } as const;
     return {
       ...base,
@@ -464,6 +467,7 @@ export async function buildTurnWorkspaceChangesResponse(
     ...(checkpoint ? { checkpointId: checkpoint.id } : {}),
     provenanceComplete: context.provenanceComplete,
     updatedAt: observation.updatedAt ?? durableRecovery?.updatedAt ?? turn.updatedAt,
+    review,
   } as const;
   if (runs.length === 0) return { ...base, state: "unavailable", canUndo: false, canReapply: false, provenanceComplete: false, unavailableReason: "No Runs are linked to this Turn." };
   if (!context.provenanceComplete) return { ...base, state: "unavailable", canUndo: false, canReapply: false, unavailableReason: "Undo unavailable: durable workspace provenance is incomplete." };
@@ -672,6 +676,7 @@ export async function buildRunWorkspaceChangesResponse(
     files: patchSet.files,
     summary: patchSet.summary,
     updatedAt,
+    review: buildWorkspaceChangeReview(store, { scope: { kind: "run", id: run.id }, runs: [run], threadId: run.threadId }),
   } as const;
 
   if (!isTerminalRun(run)) {

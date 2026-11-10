@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { Play } from "lucide-react";
 import { useI18n } from "../../i18n.js";
+import { providerCompactModelLabel } from "../../lib/providers.js";
 import {
   Button,
   Dialog,
@@ -19,12 +20,14 @@ export function ProjectRunReviewDialog({
   review,
   onClose,
   onConfirm,
+  onRestoreFocus,
   isSubmitting,
 }: {
   readonly failure?: MediaProductionFailure;
   readonly review: ProjectRunReview;
   readonly onClose: () => void;
   readonly onConfirm: () => Promise<void>;
+  readonly onRestoreFocus: () => void;
   readonly isSubmitting: boolean;
 }): React.JSX.Element {
   const { t } = useI18n();
@@ -53,6 +56,10 @@ export function ProjectRunReviewDialog({
         overlayClassName="project-run-review-overlay"
         size="md"
         data-media-production-dialog="project-run-review"
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          onRestoreFocus();
+        }}
       >
         <DialogHeader
           closeLabel={t("Close")}
@@ -76,7 +83,7 @@ export function ProjectRunReviewDialog({
                   <li key={item.sceneId}>
                     <span>{String(item.sortOrder + 1).padStart(2, "0")}</span>
                     <strong title={item.sceneTitle}>{item.sceneTitle}</strong>
-                    <small>{item.workflow?.definition.name ?? item.provider?.displayName ?? t("Default video model")}</small>
+                    <small>{item.workflow?.definition.name ?? (item.provider ? providerCompactModelLabel(item.provider) : t("Default video model"))}</small>
                   </li>
                 ))}
               </ol>

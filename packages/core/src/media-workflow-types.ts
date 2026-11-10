@@ -47,6 +47,34 @@ export interface MediaWorkflowConnection {
   readonly updatedAt: string;
 }
 
+/** Host-only authority; credentials and their proofs never enter this record. */
+export interface MediaWorkflowConnectionCheckState {
+  readonly connection: MediaWorkflowConnection;
+  readonly configRevision: number;
+  readonly requestRevision: number;
+  readonly publishedRevision: number;
+}
+
+export interface MediaWorkflowConnectionCheckTicket {
+  readonly connectionId: string;
+  readonly configRevision: number;
+  readonly requestRevision: number;
+}
+
+export interface MediaWorkflowConnectionCheckAdmission {
+  readonly connection: MediaWorkflowConnection;
+  readonly ticket: MediaWorkflowConnectionCheckTicket;
+}
+
+export type MediaWorkflowConnectionCheckStaleReason =
+  | "deleted" | "config_changed" | "superseded" | "already_published"
+  | "credential_changed" | "credential_unavailable";
+
+export type MediaWorkflowConnectionCheckPublication =
+  | { readonly status: "published"; readonly connection: MediaWorkflowConnection }
+  | { readonly status: "stale"; readonly reason: MediaWorkflowConnectionCheckStaleReason;
+      readonly connection?: MediaWorkflowConnection };
+
 export interface MediaWorkflowInputField {
   readonly id: string;
   readonly label: string;

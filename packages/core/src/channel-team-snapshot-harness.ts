@@ -111,7 +111,7 @@ function inferRiskReview(input: string): Parameters<typeof buildChannelTeamRiskR
       },
     };
   }
-  if (/(delete|drop|remove).*(production|database|db)|rm\s+-rf|reset\s+--hard/.test(lower)) {
+  if (hasDestructiveTargetSequence(lower) || /rm\s+-rf|reset\s+--hard/.test(lower)) {
     return {
       actionType: "bash",
       risk: "critical",
@@ -127,6 +127,18 @@ function inferRiskReview(input: string): Parameters<typeof buildChannelTeamRiskR
     actionType: "read",
     risk: "low",
   };
+}
+
+function hasDestructiveTargetSequence(value: string): boolean {
+  for (const action of ["delete", "drop", "remove"] as const) {
+    const actionIndex = value.indexOf(action);
+    if (actionIndex === -1) continue;
+    const targetStart = actionIndex + action.length;
+    if (["production", "database", "db"].some((target) => value.indexOf(target, targetStart) !== -1)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function diffValue(path: string, before: unknown, after: unknown): readonly ChannelTeamSnapshotDiffEntry[] {

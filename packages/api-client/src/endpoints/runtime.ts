@@ -1,4 +1,8 @@
 import type {
+  ConversationExecutionSelectionQuery,
+  ConversationExecutionSelectionResponse,
+  HarnessDiagnosticQueryV1,
+  ExecutionCancellationRequest,
   RunnerListResponse,
   RunnerReadinessResponse,
   RuntimeExtensionListResponse,
@@ -8,6 +12,7 @@ import type {
   RuntimeSettingsResponse,
   WorkUnitDetailResponse,
   WorkUnitEventsResponse,
+  WorkUnitHarnessDiagnosticsResponse,
   WorkUnitKind,
   WorkUnitListResponse,
   WorkUnitMutationResponse,
@@ -17,6 +22,9 @@ import type {
 import type { LingDaemonEndpointContext, PublicEndpointGroup } from "../transport.js";
 
 export const runtimeEndpoints = {
+  async getConversationExecutionSelection(this: LingDaemonEndpointContext, cwd: string, query: ConversationExecutionSelectionQuery = {}): Promise<ConversationExecutionSelectionResponse> {
+    return this._get("/runtime/conversation-execution", { cwd, ...query });
+  },
   async getRuntime(this: LingDaemonEndpointContext, cwd: string): Promise<RuntimeResponse> {
       return this._get("/runtime", { cwd });
     },
@@ -85,12 +93,20 @@ export const runtimeEndpoints = {
       return this._get(`/work-units/${encodeURIComponent(workUnitId)}`, { cwd });
     },
 
+  async getWorkUnitHarnessDiagnostics(this: LingDaemonEndpointContext, cwd: string, workUnitId: string, query: HarnessDiagnosticQueryV1 = {}): Promise<WorkUnitHarnessDiagnosticsResponse> {
+      return this._get(`/work-units/${encodeURIComponent(workUnitId)}/harness`, {
+        cwd,
+        limit: query.limit,
+        cursor: query.cursor ? JSON.stringify(query.cursor) : undefined,
+      });
+    },
+
   async getWorkUnitEvents(this: LingDaemonEndpointContext, cwd: string, workUnitId: string, afterSeq?: number): Promise<WorkUnitEventsResponse> {
       return this._get(`/work-units/${encodeURIComponent(workUnitId)}/events`, { cwd, afterSeq });
     },
 
-  async cancelWorkUnit(this: LingDaemonEndpointContext, cwd: string, workUnitId: string): Promise<WorkUnitMutationResponse> {
-      return this._post(`/work-units/${encodeURIComponent(workUnitId)}/cancel`, { cwd });
+  async cancelWorkUnit(this: LingDaemonEndpointContext, cwd: string, workUnitId: string, input: ExecutionCancellationRequest = {}): Promise<WorkUnitMutationResponse> {
+      return this._post(`/work-units/${encodeURIComponent(workUnitId)}/cancel`, { cwd }, input);
     },
 
   async retryWorkUnit(this: LingDaemonEndpointContext, cwd: string, workUnitId: string): Promise<WorkUnitMutationResponse> {

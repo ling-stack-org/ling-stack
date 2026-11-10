@@ -15,7 +15,9 @@ import type {
   EffectiveConfigSource,
   EffectiveConfigValue,
 } from "@ling-stack/contracts";
+import { isSupportedLocale } from "@ling-stack/localization";
 import type { RunnerRegistry } from "../../runtime/runners.js";
+import { assertPermissionContractVersion } from "../../shared/permission-contract.js";
 import {
   loadWorkspaceRuntimeSettingsWithSources,
   normalizeUserRuntimeDefaults,
@@ -25,9 +27,10 @@ import {
 
 interface UserSettingsLayer {
   readonly theme?: "light" | "dark" | "system";
-  readonly locale?: string;
+  readonly locale?: WorkspaceSettings["locale"];
   readonly responseLanguage?: WorkspaceSettings["responseLanguage"];
   readonly lingConversationTone?: WorkspaceSettings["lingConversationTone"];
+  readonly defaultReasoningSummary?: WorkspaceSettings["defaultReasoningSummary"];
 }
 
 interface UserConfigLayer {
@@ -135,6 +138,16 @@ export async function buildEffectiveConfigResponse(input: {
         paths.user.settingsPath,
         DEFAULT_LING_CONVERSATION_TONE,
       ),
+      reasoningSummary: effectiveValue(
+        workspaceSettings.defaultReasoningSummary,
+        "workspace",
+        paths.workspace.databasePath,
+        "defaultReasoningSummary",
+        userSettings?.defaultReasoningSummary,
+        "user",
+        paths.user.settingsPath,
+        "auto",
+      ),
       skillGovernancePolicy: effectiveValue(
         workspaceSettings.skillGovernancePolicy,
         "workspace",
@@ -165,12 +178,15 @@ export function parseWorkspaceSettingsUpdate(value: unknown): UpdateWorkspaceSet
     throw new Error("Workspace settings update must be a JSON object");
   }
   const record = value as Record<string, unknown>;
+  assertPermissionContractVersion(record);
   return {
+    ...(record.schemaVersion === 2 ? { schemaVersion: 2 as const } : {}),
     workspaceCwd: readNullableString(record.workspaceCwd, "workspaceCwd"),
     theme: readNullableTheme(record.theme),
-    locale: readNullableString(record.locale, "locale"),
+    locale: readNullableLocale(record.locale),
     responseLanguage: readNullableResponseLanguagePreference(record.responseLanguage),
     lingConversationTone: readNullableLingConversationTone(record.lingConversationTone),
+    defaultReasoningSummary: readNullableReasoningSummaryMode(record.defaultReasoningSummary),
     defaultProviderPresetId: readNullableString(record.defaultProviderPresetId, "defaultProviderPresetId"),
     mediaGenerationDefaults: readNullableMediaGenerationDefaults(record.mediaGenerationDefaults),
     defaultAuthorizationMode: readNullableAuthorizationMode(record.defaultAuthorizationMode),
@@ -275,15 +291,16 @@ async function readUserSettingsLayer(path: string, diagnostics: EffectiveConfigD
   }
   const result: {
     theme?: "light" | "dark" | "system";
-    locale?: string;
+    locale?: WorkspaceSettings["locale"];
     responseLanguage?: WorkspaceSettings["responseLanguage"];
     lingConversationTone?: WorkspaceSettings["lingConversationTone"];
+    defaultReasoningSummary?: WorkspaceSettings["defaultReasoningSummary"];
   } = {};
   const theme = readOptionalTheme(record.theme, path, diagnostics);
   if (theme) {
     result.theme = theme;
   }
-  const locale = readOptionalNonEmptyString(record.locale, "locale", path, diagnostics, "user_settings_invalid_locale");
+  const locale = readOptionalLocale(record.locale, path, diagnostics);
   if (locale) {
     result.locale = locale;
   }
@@ -294,6 +311,10 @@ async function readUserSettingsLayer(path: string, diagnostics: EffectiveConfigD
   const lingConversationTone = readOptionalLingConversationTone(record.lingConversationTone, path, diagnostics);
   if (lingConversationTone) {
     result.lingConversationTone = lingConversationTone;
+  }
+  const defaultReasoningSummary = readOptionalReasoningSummaryMode(record.defaultReasoningSummary, path, diagnostics);
+  if (defaultReasoningSummary) {
+    result.defaultReasoningSummary = defaultReasoningSummary;
   }
   return Object.keys(result).length > 0 ? result : {};
 }
@@ -370,8 +391,18 @@ function readNullableResponseLanguagePreference(value: unknown): UpdateWorkspace
   if (value === null) {
     return null;
   }
-  if (value !== "follow_user" && value !== "zh-CN" && value !== "en-US") {
-    throw new Error("responseLanguage must be follow_user, zh-CN, en-US, or null");
+  if (value !== "follow_user" && !isSupportedLocale(value)) {
+    throw new Error("responseLanguage must be follow_user, a supported locale, or null");
+  }
+  return value;
+}
+
+function readNullableLocale(value: unknown): UpdateWorkspaceSettingsInput["locale"] {
+  if (value === undefined || value === null) {
+    return value;
+  }
+  if (!isSupportedLocale(value)) {
+    throw new Error("locale must be a supported locale or null");
   }
   return value;
 }
@@ -385,6 +416,16 @@ function readNullableLingConversationTone(value: unknown): UpdateWorkspaceSettin
   }
   if (value !== "friendly" && value !== "pragmatic" && value !== "none") {
     throw new Error("lingConversationTone must be friendly, pragmatic, none, or null");
+  }
+  return value;
+}
+
+function readNullableReasoningSummaryMode(value: unknown): UpdateWorkspaceSettingsInput["defaultReasoningSummary"] {
+  if (value === undefined || value === null) {
+    return value;
+  }
+  if (value !== "auto" && value !== "concise" && value !== "detailed" && value !== "none") {
+    throw new Error("defaultReasoningSummary must be auto, concise, detailed, none, or null");
   }
   return value;
 }
@@ -530,13 +571,29 @@ function readOptionalResponseLanguage(value: unknown, path: string, diagnostics:
   if (value === undefined) {
     return undefined;
   }
-  if (value === "follow_user" || value === "zh-CN" || value === "en-US") {
+  if (value === "follow_user" || isSupportedLocale(value)) {
     return value;
   }
   diagnostics.push({
     level: "warning",
     code: "user_settings_invalid_response_language",
-    message: "responseLanguage must be follow_user, zh-CN, or en-US.",
+    message: "responseLanguage must be follow_user or a supported locale.",
+    path,
+  });
+  return undefined;
+}
+
+function readOptionalLocale(value: unknown, path: string, diagnostics: EffectiveConfigDiagnostic[]): WorkspaceSettings["locale"] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (isSupportedLocale(value)) {
+    return value;
+  }
+  diagnostics.push({
+    level: "warning",
+    code: "user_settings_invalid_locale",
+    message: "locale must be a supported locale.",
     path,
   });
   return undefined;
@@ -553,6 +610,26 @@ function readOptionalLingConversationTone(value: unknown, path: string, diagnost
     level: "warning",
     code: "user_settings_invalid_ling_conversation_tone",
     message: "lingConversationTone must be friendly, pragmatic, or none.",
+    path,
+  });
+  return undefined;
+}
+
+function readOptionalReasoningSummaryMode(
+  value: unknown,
+  path: string,
+  diagnostics: EffectiveConfigDiagnostic[],
+): WorkspaceSettings["defaultReasoningSummary"] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === "auto" || value === "concise" || value === "detailed" || value === "none") {
+    return value;
+  }
+  diagnostics.push({
+    level: "warning",
+    code: "user_settings_invalid_reasoning_summary",
+    message: "defaultReasoningSummary must be auto, concise, detailed, or none.",
     path,
   });
   return undefined;

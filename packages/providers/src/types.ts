@@ -1,3 +1,5 @@
+import type { MediaRemoteTerminalObservation } from "@ling-stack/contracts";
+
 export type ProviderCapability =
   | "chat"
   | "tool_call"
@@ -117,6 +119,8 @@ export interface MediaExecutionResult {
   readonly artifacts: readonly MediaExecutionArtifact[];
   readonly errorCode?: MediaAdapterErrorCode;
   readonly errorMessage?: string;
+  /** Protocol observation only, never a Host settlement or safe-stop receipt. */
+  readonly terminalObservation?: MediaRemoteTerminalObservation;
 }
 
 export interface MediaExecutionHandle {
@@ -131,8 +135,10 @@ export type MediaExecutionSubmission =
 
 export type MediaExecutionPollResult =
   | { readonly status: "pending" }
-  | { readonly status: "succeeded"; readonly recovery: Record<string, unknown> }
-  | { readonly status: "failed"; readonly errorCode?: MediaAdapterErrorCode; readonly errorMessage: string };
+  | { readonly status: "succeeded"; readonly recovery: Record<string, unknown>;
+      readonly terminalObservation?: MediaRemoteTerminalObservation }
+  | { readonly status: "failed"; readonly errorCode?: MediaAdapterErrorCode; readonly errorMessage: string;
+      readonly terminalObservation?: MediaRemoteTerminalObservation };
 
 export interface MediaAdapter {
   readonly id: string;
@@ -201,6 +207,7 @@ export interface MediaVendorTransportResult {
   readonly artifacts?: readonly MediaExecutionArtifact[];
   readonly errorCode?: MediaAdapterErrorCode;
   readonly errorMessage?: string;
+  readonly terminalObservation?: MediaRemoteTerminalObservation;
 }
 
 export interface MediaVendorTransport {

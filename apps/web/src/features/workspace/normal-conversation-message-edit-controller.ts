@@ -5,6 +5,8 @@ import type { useNormalConversationActionFeedback } from "./useNormalConversatio
 import type { useNormalConversationIdentityController } from "./useNormalConversationIdentityController.js";
 import type { useNormalConversationOperationOwner } from "./useNormalConversationOperationOwner.js";
 import type { ConversationHomeMessage } from "./normal-conversation-types.js";
+import type { ConversationHomeDetailContext } from "./normal-conversation-types.js";
+import { resolveConversationReplacementProvider } from "./native-conversation-selection.js";
 
 type ActionFeedback = ReturnType<typeof useNormalConversationActionFeedback>;
 type IdentityController = ReturnType<typeof useNormalConversationIdentityController>;
@@ -13,7 +15,8 @@ type StringOperationOwner = ReturnType<typeof useNormalConversationOperationOwne
 export function createNormalConversationMessageEditController(input: {
   readonly workspaceCwd: string;
   readonly threadId?: string;
-  readonly providerPresetId: string;
+  readonly providerPresetId?: string;
+  readonly detailContext?: ConversationHomeDetailContext;
   readonly permissionPreset: PermissionPreset;
   readonly identityController: IdentityController;
   readonly editOperation: StringOperationOwner;
@@ -85,7 +88,7 @@ export function createNormalConversationMessageEditController(input: {
 }
 
 function revisionRequest(
-  input: { readonly providerPresetId: string; readonly permissionPreset: PermissionPreset },
+  input: { readonly providerPresetId?: string; readonly permissionPreset: PermissionPreset; readonly detailContext?: ConversationHomeDetailContext },
   message: ConversationHomeMessage,
   threadId: string,
   body: string,
@@ -98,7 +101,7 @@ function revisionRequest(
     expectedRevision: message.revision ?? 1,
     body,
     attachmentIds: (message.attachments ?? []).map((attachment) => attachment.id),
-    providerPresetId: input.providerPresetId,
+    providerPresetId: resolveConversationReplacementProvider(message, input.detailContext, input.providerPresetId),
     permissionPreset: input.permissionPreset,
     idempotencyKey,
   };

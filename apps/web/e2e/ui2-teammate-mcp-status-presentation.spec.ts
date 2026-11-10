@@ -137,7 +137,7 @@ test("save failure remains productized and a stale save cannot notify the next t
 
   await save.click();
   await expect(save).toBeDisabled();
-  await page.getByLabel("Ling Stack navigation").getByRole("button", {
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", {
     name: "Next Teammate",
     exact: true,
   }).click();
@@ -244,7 +244,7 @@ async function installStatusFixture(page: Page, fixture: StatusFixture): Promise
 }
 
 async function openExternalTools(page: Page): Promise<Locator> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", {
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", {
     name: "External Tool Status Teammate",
     exact: true,
   }).click();

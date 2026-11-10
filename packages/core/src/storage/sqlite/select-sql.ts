@@ -255,7 +255,7 @@ export function terminalReportSelectSql(whereClause: string): string {
       prompt_version,
       attempt_count,
       validation_codes_json,
-      published_message_id,
+      result_item_id,
       error_code,
       created_at,
       updated_at,
@@ -729,6 +729,7 @@ export function skillSourceSnapshotSelectSql(whereClause: string): string {
       upstream_name,
       upstream_version,
       upstream_skill_path,
+      bundle_update_mode,
       source_checksum,
       raw_skill_markdown,
       raw_skill_markdown_artifact_id,
@@ -964,6 +965,7 @@ export function teammateDirectMessageSelectSql(whereClause: string): string {
       teammate_id,
       author_type,
       author_id,
+      system_purpose,
       body,
       attachment_ids_json,
       link_preview_ids_json,
@@ -1011,6 +1013,7 @@ export function teammateDirectReplyInterventionSelectSql(whereClause: string): s
       thread_id,
       source_message_id,
       source_work_unit_id,
+      source_attempt_id,
       mode,
       status,
       instruction,
@@ -1110,6 +1113,7 @@ export function channelExecutionProposalSelectSql(whereClause: string): string {
   return `
     SELECT
       id,
+      revision,
       workspace_id,
       channel_id,
       source_item_id AS source_message_id,
@@ -1129,6 +1133,8 @@ export function channelExecutionProposalSelectSql(whereClause: string): string {
       linked_workflow_id,
       error_message,
       blocker_json,
+      confirmation_claim_id,
+      confirmation_claim_expires_at,
       created_at,
       updated_at
     FROM channel_execution_proposals
@@ -1545,8 +1551,31 @@ export function approvalRequestSelectSql(whereClause: string): string {
       expires_at,
       resolved_at,
       resolved_by,
-      decision_reason
+      decision_reason,
+      available_decisions_json,
+      proposed_command_rule_json,
+      decision_kind,
+      decision_rule_id
     FROM approval_requests
+    ${whereClause}
+  `;
+}
+
+export function approvalCommandRuleSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      tool_name,
+      rule_version,
+      prefix_tokens_json,
+      display,
+      fingerprint,
+      source_approval_id,
+      created_by,
+      created_at,
+      revoked_at
+    FROM approval_command_rules
     ${whereClause}
   `;
 }

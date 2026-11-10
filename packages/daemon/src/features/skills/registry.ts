@@ -1,7 +1,9 @@
 import {
   DEFAULT_WORKSPACE_ID,
   GSTACK_DEFAULT_SKILL_PACK_ID,
+  GSTACK_DEFAULT_UPSTREAM_VERSION,
   listDefaultSkills,
+  resolveEffectiveSkillRegistryEntries,
   type ReplaceTeammateSkillBindingInput,
   type SkillDefinition,
   type SkillRegistryEntry,
@@ -26,7 +28,7 @@ export function listEffectiveSkillRegistryEntries(store: EffectiveSkillRegistryS
     workspaceId: DEFAULT_WORKSPACE_ID,
     packId: GSTACK_DEFAULT_SKILL_PACK_ID,
     source: "builtin",
-    version: "builtin",
+    version: GSTACK_DEFAULT_UPSTREAM_VERSION,
     definition,
     visibility: {
       workspaceVisible: true,
@@ -36,14 +38,10 @@ export function listEffectiveSkillRegistryEntries(store: EffectiveSkillRegistryS
     createdAt: builtInTimestamp,
     updatedAt: builtInTimestamp,
   }));
-  const customEntries = store.listSkillRegistryEntries();
-  const seen = new Set<string>();
-  return [...builtInEntries, ...customEntries].filter((entry) => {
-    if (seen.has(entry.id)) {
-      return false;
-    }
-    seen.add(entry.id);
-    return true;
+  return resolveEffectiveSkillRegistryEntries({
+    builtinEntries: builtInEntries,
+    persistedEntries: store.listSkillRegistryEntries({ includeArchived: true, includeDisabled: true }),
+    sourceSnapshots: store.listSkillSourceSnapshots({ reviewStatus: "published" }),
   });
 }
 

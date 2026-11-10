@@ -24,11 +24,15 @@ test("MJ-01-reach-empty: production entry, initial loading, empty repair", async
   await initPage(page, "en-US", "ling-light", { width: 1440, height: 960 });
   const state = createMediaEmptyFixture();
   const control = createMediaRouteControl();
-  control.listDelayMs = 350;
+  let releaseList!: () => void;
+  control.listGate = new Promise<void>((resolve) => {
+    releaseList = resolve;
+  });
   await prepare(page, state, control, false);
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Media Production" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Media Production" }).click();
   await page.getByRole("radio", { name: "Generation tasks" }).click();
   await expect(page.locator('[data-media-jobs-list-state="loading"]')).toBeVisible();
+  releaseList();
   await expect(page.locator('[data-media-jobs-list-state="empty"]')).toBeVisible();
   await expect(page.locator("[data-media-jobs-header]").getByRole("button", { name: "Configure generation model" })).toBeVisible();
   await captureLedger(page, "1440x960-ling-light-empty-model-repair.png", "media_empty_no_model", "LIST/CREATE/REPAIR", "Configure generation model");

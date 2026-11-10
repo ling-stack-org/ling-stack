@@ -6,19 +6,35 @@ import type {
   ConversationUserMessagePayloadV1,
 } from "@ling-stack/contracts";
 import type { LingTurnKind } from "./run-types.js";
+import type { WorkflowStepStartOwnerV1 } from "./workflow-step-start-owner.js";
 
 export interface AppendConversationUserTurnInput {
   readonly itemId?: string;
   readonly turnId?: string;
-  readonly channelId: string;
+  /** Optional scope assertion. Channel turns still require their real channel id. */
+  readonly channelId?: string;
   readonly threadId: string;
+  /** Optional owner assertion; the persisted Turn always inherits its Thread owner. */
+  readonly teammateId?: string;
   readonly turnKind?: LingTurnKind;
   readonly title: string;
   readonly userInstruction: string;
   readonly actorId?: string;
+  /** System-dispatched input must not be relabelled as a local user action. */
+  readonly actorType?: "local_user" | "system";
+  /** Host-only generation assertion; verified under the canonical input transaction. */
+  readonly workflowStepStart?: {
+    readonly workflowId: string;
+    readonly workflowStepId: string;
+    readonly taskId: string;
+    readonly owner: WorkflowStepStartOwnerV1;
+    readonly parentRunId?: string;
+  };
   readonly payload: ConversationUserMessagePayloadV1;
   readonly domainRefs?: readonly ConversationDomainRef[];
   readonly sourceTurnId?: string;
+  /** Existing intervention lineage, preserved by atomic input creation and replay. */
+  readonly interventionId?: string;
   readonly supersedesItemId?: string;
   readonly idempotencyKey: string;
   readonly dispatch?: {

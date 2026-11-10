@@ -7,6 +7,7 @@ import {
 } from "../src/domains/conversations/conversation-error-owner";
 import { mockDaemon } from "./support/mock-daemon";
 import { triggerFocusRevalidation } from "./support/focus-revalidation";
+import { mockUnknownSubmissionReceipt } from "./support/unknown-submission-receipt";
 import {
   createBaseState,
   createChatProvider,
@@ -23,24 +24,32 @@ const conversationHomeSourcePath = fileURLToPath(new URL(
   "../src/features/workspace/ConversationHome.tsx",
   import.meta.url,
 ));
+const transcriptAdapterSourcePath = fileURLToPath(new URL(
+  "../src/features/workspace/normal-conversation-transcript-message.ts",
+  import.meta.url,
+));
 
 const alpha = { id: "thread_error_owner_alpha", title: "Error owner Alpha" } as const;
 const beta = { id: "thread_error_owner_beta", title: "Error owner Beta" } as const;
 
 test("T13-P.9EF.B Conversation releases the generic AppShell error contract", async () => {
-  const [appShellSource, domainSource, conversationHomeSource] = await Promise.all([
+  const [appShellSource, domainSource, conversationHomeSource, transcriptAdapterSource] = await Promise.all([
     readFile(appShellSourcePath, "utf8"),
     readFile(conversationDomainSourcePath, "utf8"),
     readFile(conversationHomeSourcePath, "utf8"),
+    readFile(transcriptAdapterSourcePath, "utf8"),
   ]);
 
   expect(domainSource).not.toContain("setErrorMessage");
   expect(readHookCall(appShellSource, "useConversationDomain")).not.toContain("setErrorMessage");
   expect(domainSource).toContain("useConversationErrorOwner");
+  expect(domainSource).toContain("shouldReportConversationStreamError");
+  expect(domainSource).toContain("hasAssistantReply: Boolean(event.assistantMessage)");
   expect(domainSource).toContain('surface: "thread"');
   expect(domainSource).toContain('scope: "stream"');
   expect(conversationHomeSource).toContain("shouldCommit");
   expect(conversationHomeSource).toContain("useNormalConversationActionFeedback");
+  expect(transcriptAdapterSource).toContain("errorMessage: message.errorMessage");
 });
 
 test("T13-P.9EF.B Conversation owner isolates identity, scope, stale operations, and unrelated success", () => {
@@ -123,7 +132,7 @@ test("T13-P.9EF.B a late select response cannot replace the later selected threa
   }, { times: 1 });
 
   await page.goto("/");
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await conversationRow(navigation, alpha.title).click();
   await alphaRequestStarted.promise;
   await conversationRow(navigation, beta.title).click();
@@ -140,7 +149,7 @@ test("T13-P.9EF.B refresh failure stays with its thread and survives unrelated s
   const state = createConversationErrorState();
   await mockDaemon(page, state);
   await page.goto("/");
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await openConversation(navigation, page, beta);
 
   const failureMessage = "Beta refresh remains owned by Beta.";
@@ -153,8 +162,8 @@ test("T13-P.9EF.B refresh failure stays with its thread and survives unrelated s
   await triggerFocusRevalidation(page);
   await expect(page.getByLabel("Conversation page").getByRole("alert")).toContainText(failureMessage);
 
-  await navigation.getByRole("button").filter({ hasText: "Engineering" }).first().click();
-  await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
+  await navigation.getByRole("button", { name: "Engineering", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Engineering / Engineering conversation", level: 1, exact: true })).toBeVisible();
   await expect(page.getByText(failureMessage, { exact: true })).toHaveCount(0);
 
   await openConversation(navigation, page, beta);
@@ -165,8 +174,9 @@ test("T13-P.9EF.B a late stream failure remains with Alpha and cannot mutate Bet
   await prepareSurface(page);
   const state = createConversationErrorState();
   await mockDaemon(page, state);
+  await mockUnknownSubmissionReceipt(page);
   await page.goto("/");
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await openConversation(navigation, page, alpha);
 
   const streamStarted = createDeferred<void>();
@@ -180,7 +190,8 @@ test("T13-P.9EF.B a late stream failure remains with Alpha and cannot mutate Bet
     streamStarted.resolve();
     await releaseStream.promise;
     await route.fulfill({
-      status: 503,
+      // Proven rejection owns a send error; an unknown 5xx must not permit replay.
+      status: 400,
       json: { error: "late_alpha_stream_failed", message: failureMessage },
     });
   }, { times: 1 });
@@ -205,7 +216,18 @@ test("T13-P.9EF.B a late stream failure remains with Alpha and cannot mutate Bet
 function createConversationErrorState(): MockState {
   const state = createBaseState({ approvalStatus: "pending" });
   const providerId = "provider_conversation_error_owner";
-  state.providers = [createChatProvider({ id: providerId, displayName: "Conversation Relay", model: "gpt-5.5" })];
+  state.providers = [createChatProvider({
+    id: providerId,
+    displayName: "Conversation Relay",
+    model: "gpt-5.5",
+    lastCheck: {
+      ok: true,
+      code: "ready",
+      message: "Provider is reachable and accepted the configured model.",
+      checkedAt: "2026-07-27T00:00:00.000Z",
+    },
+  })];
+  state.workspaceSettings.defaultProviderPresetId = providerId;
   installConversation(state, alpha, providerId, "2026-07-27T01:00:00.000Z");
   installConversation(state, beta, providerId, "2026-07-27T02:00:00.000Z");
   return state;

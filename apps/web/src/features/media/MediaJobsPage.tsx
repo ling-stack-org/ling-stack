@@ -1,12 +1,8 @@
 import { Button, InlineFeedback } from "../../shared/ui/index.js";
-import type { ApprovalRequest, MediaJob, MediaJobFormState, MediaOperation, ProviderPreset, RunArtifact } from "../../types.js";
+import type { ApprovalRequest, MediaOperation, ProviderPreset } from "../../types.js";
 import {
-  readMediaJobsDomainBridge,
-  type MediaJobArtifactState,
-  type MediaJobArtifactsCompatMap,
   type MediaJobsDomainActions,
   type MediaJobsDomainState,
-  type MediaMutationResult,
 } from "../../domains/media/media-domain-types.js";
 import { useI18n } from "../../i18n.js";
 import { MediaJobCreateDialog } from "./MediaJobCreateDialog.js";
@@ -20,37 +16,23 @@ import { useMediaJobsPageController } from "./useMediaJobsPageController.js";
 export interface MediaJobsPageProps {
   readonly cwd: string;
   readonly providers: readonly ProviderPreset[];
-  readonly jobs: readonly MediaJob[];
-  readonly artifactsByJob: MediaJobArtifactsCompatMap;
-  readonly form: MediaJobFormState;
-  readonly selectedJobId: string;
-  readonly isLoading: boolean;
-  readonly runningJobId: string;
+  readonly domainState: MediaJobsDomainState;
+  readonly domainActions: MediaJobsDomainActions;
   readonly approvals?: readonly ApprovalRequest[];
-  readonly onFormChange: (form: MediaJobFormState) => void;
-  readonly onRefresh: () => void | Promise<void>;
-  readonly onCreate: () => void | Promise<void | MediaMutationResult>;
-  readonly onSelectJob: (jobId: string) => void;
-  readonly onRun: (jobId: string) => void | Promise<void | MediaMutationResult>;
   readonly onOpenProviders: () => void;
   readonly onOpenProviderRepair?: (providerPresetId: string | undefined, operation: MediaOperation) => void;
   readonly onOpenApproval?: (approvalId: string) => void;
   readonly onRefreshApprovals?: () => Promise<void>;
   readonly jobContext?: MediaJobDisplayContextMap;
   readonly hostActions?: MediaJobHostActions;
-  readonly domainState?: MediaJobsDomainState;
-  readonly domainActions?: MediaJobsDomainActions;
 }
 
 export function MediaJobsPage(props: MediaJobsPageProps): React.JSX.Element {
   const { t } = useI18n();
-  const bridge = readMediaJobsDomainBridge(props.artifactsByJob);
-  const state = props.domainState ?? bridge?.state ?? legacyState(props);
-  const actions = props.domainActions ?? bridge?.actions ?? legacyActions(props);
   const controller = useMediaJobsPageController({
     cwd: props.cwd,
-    state,
-    actions,
+    state: props.domainState,
+    actions: props.domainActions,
     providers: props.providers,
     approvals: props.approvals ?? [],
     jobContext: props.jobContext ?? {},
@@ -62,7 +44,7 @@ export function MediaJobsPage(props: MediaJobsPageProps): React.JSX.Element {
     },
     onOpenProviders: props.onOpenProviders,
   });
-  const initialLoading = state.loadPhase === "initial";
+  const initialLoading = props.domainState.loadPhase === "initial";
   return (
     <section className="media-jobs-page" aria-labelledby="media-jobs-title" data-media-jobs-surface>
       <MediaJobsHeader
@@ -87,7 +69,7 @@ export function MediaJobsPage(props: MediaJobsPageProps): React.JSX.Element {
             cwd={props.cwd}
             projections={controller.visibleProjections}
             rows={controller.rows}
-            selectedJobId={state.selectedMediaJobId}
+            selectedJobId={props.domainState.selectedMediaJobId}
             statusFilter={controller.statusFilter}
             initialLoading={initialLoading}
             loadFailed={Boolean(controller.loadError)}
@@ -110,8 +92,8 @@ export function MediaJobsPage(props: MediaJobsPageProps): React.JSX.Element {
       </div>
       <MediaJobCreateDialog
         open={controller.createOpen}
-        busy={state.createPhase === "submitting"}
-        form={state.form}
+        busy={props.domainState.createPhase === "submitting"}
+        form={props.domainState.form}
         errors={controller.formErrors}
         providers={controller.generationProviders}
         serverError={Boolean(controller.createError)}
@@ -123,26 +105,4 @@ export function MediaJobsPage(props: MediaJobsPageProps): React.JSX.Element {
       />
     </section>
   );
-}
-
-function legacyState(props: MediaJobsPageProps): MediaJobsDomainState {
-  const artifactsByJob = Object.fromEntries(Object.entries(props.artifactsByJob).map(([jobId, artifacts]) => [jobId, {
-    signature: artifacts.map((item) => item.id).join("\u001f"), phase: "ready", artifacts,
-  } satisfies MediaJobArtifactState]));
-  return {
-    mediaJobs: props.jobs, artifactsByJob, loadPhase: props.isLoading ? (props.jobs.length ? "refreshing" : "initial") : "idle",
-    createPhase: "idle", runningJobIds: new Set(props.runningJobId ? [props.runningJobId] : []),
-    selectedMediaJobId: props.selectedJobId, form: props.form, errors: [],
-  };
-}
-
-function legacyActions(props: MediaJobsPageProps): MediaJobsDomainActions {
-  return {
-    setMediaJobForm: (value) => props.onFormChange(typeof value === "function" ? value(props.form) : value),
-    setSelectedMediaJobId: (value) => props.onSelectJob(typeof value === "function" ? value(props.selectedJobId) : value),
-    refreshMediaJobs: async () => { await props.onRefresh(); },
-    createMediaJobFromForm: async () => { const result = await props.onCreate(); return result && typeof result === "object" ? result : { ok: false }; },
-    executeMediaJob: async (jobId) => { const result = await props.onRun(jobId); return result && typeof result === "object" ? result : { ok: false, jobId }; },
-    retryMediaJobArtifacts: async () => undefined, clearMediaError: () => undefined, resetForCwd: () => undefined,
-  };
 }

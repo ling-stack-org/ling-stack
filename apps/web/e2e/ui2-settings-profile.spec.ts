@@ -332,7 +332,7 @@ test("Settings Profile keeps load failure inside its content owner", async ({ pa
 });
 
 async function openSettingsProfile(page: Page): Promise<void> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: "User profile", exact: true }).click();
 }
 

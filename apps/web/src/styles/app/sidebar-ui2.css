@@ -139,19 +139,24 @@
   transform: translateY(-50%);
 }
 
-.channel-left-drawer .sidebar-row-shell[data-sidebar-row-status="waiting"] .sidebar-row-main {
-  padding-right: 82px;
+.channel-left-drawer .sidebar-row-shell[data-sidebar-row-status="waiting"] {
+  grid-template-columns: minmax(0, 1fr) auto;
 }
 
 .channel-left-drawer .sidebar-row-shell[data-sidebar-row-status="waiting"] > .sidebar-row-status {
-  right: 10px;
+  position: static;
   width: auto;
-  max-width: 72px;
+  max-width: 144px;
+  margin-right: 8px;
+  transform: none;
 }
 
 .channel-left-drawer .sidebar-row-shell[data-sidebar-row-status="waiting"] .sidebar-object-status {
   width: auto;
-  height: 20px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--ling-status-success-bg);
   color: var(--ling-status-success);
   font-weight: 650;
 }

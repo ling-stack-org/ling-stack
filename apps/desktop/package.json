@@ -1,20 +1,22 @@
 {
   "name": "@ling-stack/desktop",
-  "version": "0.1.2-alpha.1",
+  "version": "0.2.3",
   "description": "Ling Stack desktop shell with shared Web UI and Computer Use picture-in-picture.",
   "license": "MIT",
   "author": "Ling Stack contributors",
   "type": "module",
   "private": true,
-  "main": "./dist/main/main.js",
+  "main": "./dist/main/entry.js",
   "scripts": {
-    "build": "corepack pnpm build:office-driver && corepack pnpm --filter @ling-stack/browser-host build && corepack pnpm --filter @ling-stack/chrome-extension build && corepack pnpm --filter @ling-stack/web build && corepack pnpm --filter @ling-stack/daemon build && tsc -p tsconfig.main.json && esbuild preload/main-window.ts preload/computer-use-preview.ts --bundle --platform=node --format=cjs --external:electron --outdir=dist/preload --out-extension:.js=.cjs && esbuild ../../packages/daemon/dist/cli.js --bundle --platform=node --format=esm --banner:js=\"import { createRequire as __lingCreateRequire } from 'node:module'; const require = __lingCreateRequire(import.meta.url);\" --outfile=dist/daemon/cli.mjs && vite build --config vite.config.ts",
+    "generate:icons": "node scripts/generate-brand-icons.mjs",
+    "build": "corepack pnpm build:office-driver && corepack pnpm --filter @ling-stack/browser-host build && corepack pnpm --filter @ling-stack/chrome-extension build && corepack pnpm --filter @ling-stack/web build && corepack pnpm --filter @ling-stack/daemon build && tsc -p tsconfig.main.json && esbuild preload/main-window.ts preload/computer-use-preview.ts --bundle --platform=node --format=cjs --external:electron --outdir=dist/preload --out-extension:.js=.cjs && corepack pnpm build:engine-secret-worker && node scripts/build-packaged-daemon.mjs && node scripts/stage-development-bundled-plugins.mjs && vite build --config vite.config.ts",
     "build:office-driver": "node scripts/build-office-driver.mjs",
-    "typecheck": "corepack pnpm --filter @ling-stack/browser-host build && corepack pnpm --filter @ling-stack/ui-react build && corepack pnpm --filter @ling-stack/api-client build && tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
+    "typecheck:ci": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit && tsc -p tsconfig.renderer.json --noEmit && tsc -p tsconfig.test.json",
+    "typecheck": "corepack pnpm --filter @ling-stack/localization build && corepack pnpm --filter @ling-stack/browser-host build && corepack pnpm --filter @ling-stack/ui-react build && corepack pnpm --filter @ling-stack/api-client build && corepack pnpm typecheck:ci",
     "dev": "corepack pnpm build && electron .",
     "start": "electron .",
     "lint": "echo \"lint not configured yet\"",
-    "test": "corepack pnpm build && node --test tests/*.test.mjs && playwright test --config tests/playwright.renderer.config.mjs && playwright test tests/computer-use-preview-a11y.spec.mjs --workers=1 --reporter=line --output=test-results/computer-use-preview-a11y",
+    "test": "corepack pnpm build && node --test tests/*.test.mjs tests/*.test.ts && playwright test --config tests/playwright.renderer.config.mjs && playwright test tests/computer-use-preview-a11y.spec.mjs --workers=1 --reporter=line --output=test-results/computer-use-preview-a11y",
     "test:renderer": "vite build --config vite.config.ts && playwright test --config tests/playwright.renderer.config.mjs && playwright test tests/computer-use-preview-a11y.spec.mjs --workers=1 --reporter=line --output=test-results/computer-use-preview-a11y",
     "test:renderer:a11y": "vite build --config vite.config.ts && playwright test tests/computer-use-preview-a11y.spec.mjs --workers=1 --reporter=line --output=test-results/computer-use-preview-a11y",
     "performance:computer-use": "corepack pnpm build && node --expose-gc tests/computer-use-performance-harness.mjs",
@@ -22,8 +24,10 @@
     "smoke:computer-use": "corepack pnpm build && node tests/run-computer-use-smoke.mjs",
     "smoke:computer-use:real": "corepack pnpm build && node tests/run-computer-use-smoke.mjs --real",
     "smoke:continuity:mac": "node tests/run-packaged-continuity-smoke.mjs",
+    "accept:packaged-language-parity": "node tests/run-packaged-language-parity.mjs",
     "smoke:computer-use:windows-provider": "corepack pnpm build && node tests/run-windows-provider-smoke.mjs",
     "smoke:chrome-extension:real": "corepack pnpm --filter @ling-stack/browser-host build && corepack pnpm --filter @ling-stack/browser-host build:native && corepack pnpm --filter @ling-stack/chrome-extension build && corepack pnpm --filter @ling-stack/daemon build && node tests/chrome-extension-real-smoke.mjs",
+    "verify:packaged-language-parity": "node tests/packaged-language-parity.mjs",
     "verify:release-schemas": "node tests/validate-release-evidence-schemas.mjs",
     "verify:windows-provider": "node tests/verify-windows-cua-driver-provider.mjs",
     "produce:windows-acceptance-handoff": "node tests/produce-windows-acceptance-handoff.mjs",
@@ -34,6 +38,7 @@
     "test:cua-driver-package-staging": "node --test tests/cua-driver-package-staging.test.mjs",
     "test:signing-feasibility": "node --test tests/cua-driver-signing-feasibility.test.mjs",
     "build:locked-control-helper:mac": "node scripts/build-locked-control-native-helper.mjs --platform=darwin",
+    "build:human-evaluation-helper:mac": "node scripts/build-human-evaluation-helper.mjs",
     "build:locked-control-probe:mac": "node scripts/build-locked-control-darwin-probe.mjs",
     "probe:locked-control:mac": "node scripts/run-locked-control-darwin-probe.mjs",
     "build:locked-control-helper:win": "powershell -ExecutionPolicy Bypass -File scripts/build-locked-control-native-helper.ps1",
@@ -41,48 +46,57 @@
     "package:signing-feasibility": "node tests/run-cua-driver-signing-builder-fixture.mjs",
     "screenshots:update:computer-use": "corepack pnpm build && electron tests/screenshot-app --update",
     "screenshots:verify:computer-use": "corepack pnpm build && electron tests/screenshot-app",
-    "package:mac": "corepack pnpm --filter @ling-stack/browser-host build:native && corepack pnpm build && node scripts/cua-driver-electron-package.mjs --platform darwin -- --mac dmg zip --arm64",
-    "package:win": "corepack pnpm --filter @ling-stack/browser-host build:native && corepack pnpm build && node scripts/cua-driver-electron-package.mjs --platform win32-x64 -- --win nsis --x64"
+    "build:restricted-command-helper:mac": "node scripts/build-restricted-command-helper.mjs --platform darwin",
+    "package:mac": "corepack pnpm --filter @ling-stack/browser-host build:native && corepack pnpm build && node scripts/package-macos-with-office.mjs",
+    "package:win": "corepack pnpm --filter @ling-stack/browser-host build:native && corepack pnpm --filter @ling-stack/daemon build:engine-supervisor && corepack pnpm build && node scripts/cua-driver-electron-package.mjs --platform win32-x64 -- --win nsis --x64",
+    "build:engine-secret-worker": "esbuild ../../packages/daemon/dist/features/execution-engines/engine-secret-worker.js --bundle --platform=node --format=esm --external:@napi-rs/keyring --outfile=dist/daemon/engine-secret-worker.js"
   },
   "dependencies": {
     "@ling-stack/browser-host": "workspace:*",
-    "@napi-rs/canvas": "1.0.7",
+    "@napi-rs/canvas": "1.1.0",
     "@ling-stack/api-client": "workspace:*",
     "@ling-stack/contracts": "workspace:*",
+    "@ling-stack/localization": "workspace:*",
     "@ling-stack/ui-react": "workspace:*",
-    "lucide-react": "^1.29.0",
-    "mammoth": "1.12.1",
+    "lucide-react": "1.65.0",
+    "mammoth": "1.13.0",
     "pdf-parse": "2.4.5",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "@napi-rs/keyring": "2.1.2",
+    "@ling-stack/core": "workspace:*"
   },
   "devDependencies": {
-    "@electron/asar": "4.3.0",
-    "@electron/osx-sign": "2.7.0",
+    "@electron/asar": "4.3.1",
+    "@electron/osx-sign": "2.7.2",
     "@fontsource-variable/inter": "5.3.0",
-    "@playwright/test": "^1.55.0",
+    "@playwright/test": "1.64.1",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "ajv": "8.20.0",
     "ajv-formats": "3.0.1",
-    "electron": "^43.1.1",
-    "electron-builder": "^26.15.3",
+    "electron": "45.2.1",
+    "electron-builder": "26.18.0",
     "esbuild": "^0.28.1",
-    "resedit": "3.0.2",
+    "resedit": "3.1.0",
     "vite": "^8.2.1"
   },
   "build": {
     "appId": "com.lingstack.desktop",
     "productName": "Ling Stack",
     "afterPack": "./scripts/cua-driver-signing/after-pack.mjs",
-    "afterSign": "./scripts/cua-driver-signing/after-sign.mjs",
+    "afterSign": "./scripts/after-sign.mjs",
     "artifactBuildCompleted": "./scripts/cua-driver-signing/artifact-build-completed.mjs",
     "directories": {
       "output": "release"
     },
     "files": [
       "dist/**/*",
+      "!dist/daemon/bundled{,/**/*}",
       "package.json",
+      "!dist/distribution{,/**/*}",
+      "!dist/office-local{,/**/*}",
+      "!dist/.office-local-next-*{,/**/*}",
       "!**/node_modules/@ling-stack/browser-host/dist/native{,/**/*}",
       "!**/node_modules/@ling-stack/browser-host/native{,/**/*}",
       "!**/node_modules/@ling-stack/browser-host/scripts{,/**/*}",
@@ -91,6 +105,10 @@
       "!**/node_modules/@ling-stack/browser-host/tsconfig.json"
     ],
     "extraResources": [
+      {
+        "from": "dist/distribution",
+        "to": "distribution"
+      },
       {
         "from": "../web/dist",
         "to": "web"
@@ -136,18 +154,65 @@
           "ling-browser-host.exe",
           "build-metadata.json"
         ]
+      },
+      {
+        "from": "../../packages/daemon/dist/native/image-sanitizer",
+        "to": "image-sanitizer",
+        "filter": [
+          "ling-image-sanitizer",
+          "ling-image-sanitizer.exe",
+          "build-metadata.json",
+          "THIRD_PARTY_LICENSES.txt"
+        ]
       }
     ],
     "mac": {
       "category": "public.app-category.developer-tools",
       "icon": "build/icon.icns",
       "artifactName": "Ling-Stack-${version}-macos-${arch}.${ext}",
+      "extraResources": [
+        {
+          "from": "dist/human-evaluation",
+          "to": "human-evaluation",
+          "filter": [
+            "ling-human-evaluation-helper"
+          ]
+        },
+        {
+          "from": "dist/office-local",
+          "to": "office-local",
+          "filter": [
+            "office-local.node",
+            "build-manifest.json",
+            "source/**/*"
+          ]
+        },
+        {
+          "from": "dist/restricted-command",
+          "to": "restricted-command",
+          "filter": [
+            "ling-sandbox-runner",
+            "manifest.json",
+            "licenses/**/*"
+          ]
+        }
+      ],
       "target": [
         "dmg",
         "zip"
       ]
     },
     "win": {
+      "extraResources": [
+        {
+          "from": "../../packages/daemon/dist/native/engine-supervisor",
+          "to": "engine-supervisor",
+          "filter": [
+            "ling-engine-supervisor.exe",
+            "build-metadata.json"
+          ]
+        }
+      ],
       "icon": "build/icon.ico",
       "artifactName": "Ling-Stack-${version}-windows-${arch}-setup.${ext}",
       "requestedExecutionLevel": "asInvoker",
@@ -160,6 +225,9 @@
       "perMachine": false,
       "packElevateHelper": false,
       "include": "build/installer.nsh"
-    }
+    },
+    "asarUnpack": [
+      "**/node_modules/@napi-rs/keyring*/**/*.node"
+    ]
   }
 }

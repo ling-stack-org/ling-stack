@@ -2,6 +2,17 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { buildChannelTeamRiskReviewDecision } from "../dist/index.js";
 
+for (const resource of [
+  { kind: "network", access: "connect" },
+  { kind: "filesystem", access: "write", target: { kind: "path", path: "/workspace/output" } },
+  { kind: "filesystem", access: "read", target: { kind: "path", path: "/workspace/input" } },
+]) test(`native turn ${resource.access} uses the existing permission risk review`, () => {
+  const decision = buildChannelTeamRiskReviewDecision({ actionType: "runtime_permission_request", risk: "medium",
+    payload: { type: "native_permission_request", version: 1, scope: "turn", cwd: "/workspace", reason: "Fixture", resources: [resource] } });
+  assert.equal(decision.status, resource.access === "read" ? "not_required" : "required");
+  assert.deepEqual(decision.triggerCodes, resource.access === "read" ? [] : ["runtime_permission_expansion"]);
+});
+
 test("channel team risk review is not required for ordinary medium-risk file edits", () => {
   const decision = buildChannelTeamRiskReviewDecision({
     actionType: "edit",

@@ -5,7 +5,6 @@ import {
   type PermissionConfirmation,
   type PermissionPreset,
   type RunTool,
-  type RunSession,
   type RunStore,
   type SecretResolver,
   type SkillOptimizationMode,
@@ -18,6 +17,7 @@ import { renderChannelContextView } from "../channels/context-processing/render.
 import { createProviderBackedImageVisionSummarizer } from "../channels/materialization/provider-vision.js";
 import type { LingImageVisionSummarizer } from "../channels/materialization/registry.js";
 import { renderUsedMemoryPromptForView } from "../memory/prompt.js";
+import { recallMemory } from "../memory/recall-service.js";
 import type { RunExecutionSink } from "../runs/orchestrator.js";
 import type { RunRequest } from "../runs/schemas.js";
 import {
@@ -42,8 +42,10 @@ import {
   buildConversationSupersessionProjection,
   filterSupersededTeammateDirectMessages,
 } from "../conversations/supersession-projection.js";
-import { runHasConversationGeneratedMedia } from "../media/conversation-projection.js";
-import { inferUserLanguage } from "../channels/response-language.js";
+import { responseLanguageInstruction } from "../channels/response-language.js";
+import { assertTeammateDirectMessageScope } from "./direct-run-owner.js";
+import { settleTeammateDirectMessage, updateUndispatchedTeammateDirectMessage,
+  type DirectMessageLifecycleSettlement } from "./direct-message-lifecycle.js";
 
 export type StartTeammateDirectRun = (runRequest: RunRequest, sink: RunExecutionSink) => Promise<string | undefined>;
 
@@ -80,9 +82,14 @@ export async function createAiTeammateDirectReply(input: {
   }) => void;
   readonly stream?: TeammateDirectReplyStream;
 }): Promise<TeammateDirectMessage> {
+  assertTeammateDirectMessageScope({ ...input, messages: [] });
   if (input.replyMessageId) {
     const existing = input.store.getTeammateDirectMessage(input.replyMessageId);
     if (existing) {
+      assertTeammateDirectMessageScope({ ...input, messages: [existing] });
+      if (existing.authorType !== "ai-teammate") {
+        throw new Error("Teammate direct reply author mismatch");
+      }
       return existing;
     }
   }
@@ -92,6 +99,7 @@ export async function createAiTeammateDirectReply(input: {
     requestedProviderPresetId: input.providerPresetId,
     workspaceDefaultProviderPresetId: input.store.getWorkspaceSettings().defaultProviderPresetId,
   });
+  const responseLanguagePreference = input.store.getWorkspaceSettings().responseLanguage ?? "follow_user";
   const now = new Date().toISOString();
   const pending = input.store.createTeammateDirectMessage(
     {
@@ -109,13 +117,13 @@ export async function createAiTeammateDirectReply(input: {
 
   const blockedReason = directExecutionBlockedReason(input.teammate, providerPresetId, input.workspace);
   if (blockedReason) {
-    const blocked = finishDirectMessage(input.store, pending.id, {
+    const settlement = finishUndispatchedDirectMessage(input.store, pending, {
       body: `AI teammate is blocked: ${blockedReason}`,
       status: "blocked",
       errorMessage: blockedReason,
     });
-    input.stream?.onBlocked(blocked);
-    return blocked;
+    if (settlement.terminal && !input.signal?.aborted) input.stream?.onBlocked(settlement.message);
+    return settlement.message;
   }
 
   const recentMessages = filterSupersededTeammateDirectMessages(
@@ -138,6 +146,7 @@ export async function createAiTeammateDirectReply(input: {
   });
   const privateAttachmentsById = new Map(privateAttachments.map((attachment) => [attachment.id, attachment]));
   const webProgressEvents: WebEvidenceProgressEvent[] = [];
+  let projection: ReturnType<typeof createTeammateDirectRunProjection> | undefined;
 
   try {
     const imageVisionSummarizer = input.imageVisionSummarizer ?? createProviderBackedImageVisionSummarizer({
@@ -153,7 +162,7 @@ export async function createAiTeammateDirectReply(input: {
       now,
       imageVisionSummarizer,
     });
-    const memoryRecall = input.store.recallMemory({
+    const memoryRecall = await recallMemory(input.store, {
       teammateId: input.teammate.id,
       intent: "private-chat",
       query: input.sourceMessage.body,
@@ -199,6 +208,7 @@ export async function createAiTeammateDirectReply(input: {
       });
     const systemPrompt = [
       buildDirectSystemPrompt(input.teammate, renderedMemory.prompt, input.continuationReason),
+      responseLanguageInstruction(responseLanguagePreference),
       input.systemPromptAppend,
     ].filter((line): line is string => Boolean(line?.trim())).join("\n");
     const execution = resolveTeammateDirectExecutionContext({
@@ -215,15 +225,20 @@ export async function createAiTeammateDirectReply(input: {
       workspaceAccessMode: input.workspaceAccessMode,
       permissionPreset: input.permissionPreset,
       permissionConfirmation: input.permissionConfirmation,
+      responseLanguage: responseLanguagePreference === "follow_user" ? undefined : responseLanguagePreference,
       requestedSkillId: input.requestedSkillId,
       skillOptimizationMode: input.skillOptimizationMode,
       continuationReason: input.continuationReason,
       toolsOverride: input.toolsOverride,
       idempotencyKeyOverride: input.idempotencyKeyOverride,
     });
-    const projection = createTeammateDirectRunProjection({
+    projection = createTeammateDirectRunProjection({
       store: input.store,
       pendingMessageId: pending.id,
+      scope: {
+        teammateId: input.teammate.id, directThreadId: input.thread.id,
+        canonicalThreadId: execution.thread.id, turnId: execution.runRequest.turnId,
+      },
       signal: input.signal,
       stream: input.stream,
       onRunLinked: ({ runId, workUnitId, attemptId }) => {
@@ -247,23 +262,22 @@ export async function createAiTeammateDirectReply(input: {
 
     const startedRunId = await input.startRun(execution.runRequest, projection.sink);
     const runId = startedRunId ?? projection.runId();
-    const run = runId ? input.store.getRun(runId) : undefined;
     const current = input.store.getTeammateDirectMessage(pending.id);
     if (current?.status === "cancelled") {
       return current;
     }
-    const reply = finishProjectedRun(
-      input.store,
-      pending.id,
-      run,
-      projection.text(),
-      projection.error(),
-      input.sourceMessage.body,
-    );
-    if (reply.status === "ready") {
-      input.stream?.onDone(reply);
-    } else {
-      input.stream?.onBlocked(reply);
+    const settlement = runId
+      ? settleTeammateDirectMessage(input.store, current ?? pending, {
+          runId, sourceFence: projection.fence(), requireSourceFence: true,
+        })
+      : finishUndispatchedDirectMessage(input.store, current ?? pending, {
+          body: `AI teammate is blocked: ${projection.error() || "Private execution failed."}`,
+          status: "blocked", errorMessage: projection.error() || "Private execution failed.",
+        });
+    const reply = settlement.message;
+    if (settlement.terminal && !input.signal?.aborted) {
+      if (reply.status === "ready") input.stream?.onDone(reply);
+      else if (["failed", "blocked", "cancelled"].includes(reply.status)) input.stream?.onBlocked(reply);
     }
     if (renderedMemory.memoryIds.length > 0) {
       input.store.recordUsedMemoryEvent(
@@ -285,13 +299,24 @@ export async function createAiTeammateDirectReply(input: {
       return current;
     }
     const message = error instanceof Error ? error.message : String(error);
-    const blocked = finishDirectMessage(input.store, pending.id, {
+    // A settled transport or Runner is not permission to replace a committed logical wait.
+    if (current?.linkedRunId) {
+      const settlement = settleTeammateDirectMessage(input.store, current, {
+        runId: current.linkedRunId, sourceFence: projection?.fence(), requireSourceFence: true,
+      });
+      if (settlement.terminal && !input.signal?.aborted) {
+        if (settlement.message.status === "ready") input.stream?.onDone(settlement.message);
+        else input.stream?.onBlocked(settlement.message);
+      }
+      return settlement.message;
+    }
+    const settlement = finishUndispatchedDirectMessage(input.store, current ?? pending, {
       body: `AI teammate is blocked: ${message}`,
       status: "blocked",
       errorMessage: message,
     });
-    input.stream?.onBlocked(blocked);
-    return blocked;
+    if (settlement.terminal && !input.signal?.aborted) input.stream?.onBlocked(settlement.message);
+    return settlement.message;
   }
 }
 
@@ -336,74 +361,19 @@ function buildDirectSystemPrompt(
   ].filter((line): line is string => Boolean(line)).join("\n");
 }
 
-function finishProjectedRun(
+function finishUndispatchedDirectMessage(
   store: RunStore,
-  messageId: string,
-  run: RunSession | undefined,
-  streamedText: string,
-  projectionError: string | undefined,
-  sourceText: string,
-): TeammateDirectMessage {
-  const text = streamedText.trim();
-  if (run?.status === "succeeded") {
-    const hasGeneratedMedia = runHasConversationGeneratedMedia(store, run.id);
-    if (!text && !hasGeneratedMedia) {
-      const message = inferUserLanguage(sourceText) === "zh-CN"
-        ? "模型没有返回可显示内容，请重试或切换模型。"
-        : "The model returned no displayable content. Retry or choose another model.";
-      return finishDirectMessage(store, messageId, {
-        body: message,
-        status: "failed",
-        errorMessage: message,
-        linkedRunId: run.id,
-      });
-    }
-    return finishDirectMessage(store, messageId, {
-      body: text,
-      status: "ready",
-      errorMessage: null,
-      linkedRunId: run.id,
-    });
-  }
-  if (run?.status === "cancelled") {
-    return finishDirectMessage(store, messageId, {
-      body: text || "Reply stopped",
-      status: "cancelled",
-      errorMessage: "Reply stopped",
-      linkedRunId: run.id,
-    });
-  }
-  const message = projectionError || run?.errorMessage || "Private execution failed.";
-  return finishDirectMessage(store, messageId, {
-    body: text || `AI teammate is blocked: ${message}`,
-    status: run ? "failed" : "blocked",
-    errorMessage: message,
-    linkedRunId: run?.id,
-  });
-}
-
-function finishDirectMessage(
-  store: RunStore,
-  messageId: string,
+  message: TeammateDirectMessage,
   input: {
     readonly body: string;
     readonly status: TeammateDirectMessage["status"];
     readonly errorMessage?: string | null;
     readonly linkedRunId?: string;
   },
-): TeammateDirectMessage {
-  return (
-    store.updateTeammateDirectMessageRuntime(
-      messageId,
-      {
-        body: input.body,
-        status: input.status,
-        errorMessage: input.errorMessage ?? null,
-        linkedRunId: input.linkedRunId,
-      },
-      new Date().toISOString(),
-    ) ?? store.getTeammateDirectMessage(messageId)!
-  );
+): DirectMessageLifecycleSettlement {
+  const updated = updateUndispatchedTeammateDirectMessage(store, message, { ...input, errorMessage: input.errorMessage ?? null });
+  return { message: updated ?? store.getTeammateDirectMessage(message.id) ?? message,
+    terminal: updated?.status === "blocked" };
 }
 
 function updateDirectWebEvidenceProgress(
@@ -413,14 +383,13 @@ function updateDirectWebEvidenceProgress(
   stream: TeammateDirectReplyStream | undefined,
   progress: WebEvidenceProgressEvent,
 ): void {
-  const updated = store.updateTeammateDirectMessageRuntime(
-    pending.id,
+  const updated = updateUndispatchedTeammateDirectMessage(
+    store, pending,
     {
       body: renderWebEvidenceProgressPendingBody(progress, sourceMessage.body),
       status: "pending",
       errorMessage: null,
     },
-    new Date().toISOString(),
   );
   if (updated) {
     stream?.onDelta(updated, "");

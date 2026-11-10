@@ -1,4 +1,5 @@
 import { Clock3, Database, SquareTerminal, Workflow } from "lucide-react";
+import { useState } from "react";
 import { useI18n } from "../../i18n.js";
 import { formatEventData, formatEventPreview, readDataBoolean, readDataField, readDataString, readDeepDataPreview, readDeepDataScalarString, summarizeUnifiedExecResultFromData, truncatePreview } from "../../lib/data.js";
 import { formatDateTime } from "../../lib/formatting.js";
@@ -8,15 +9,18 @@ import { MetaRow } from "../../shared/components/index.js";
 import { DataRow, EmptyState, InspectorSection, StatusIndicator } from "../../shared/ui/index.js";
 import type { ResourceLease, RunEventEnvelope, RunSession, StateTransitionEvent, WorkUnitDetailResponse } from "../../types.js";
 import { EventRow } from "./EventRow.js";
+import { RunHarnessDiagnostics } from "./RunHarnessDiagnostics.js";
 
-export function RunTechnicalDetails({ run, events, leases, transitions, workUnitDetail }: {
+export function RunTechnicalDetails({ run, events, leases, transitions, workUnitDetail, workspaceCwd }: {
   readonly run: RunSession;
   readonly events: readonly RunEventEnvelope[];
   readonly leases: readonly ResourceLease[];
   readonly transitions: readonly StateTransitionEvent[];
   readonly workUnitDetail: WorkUnitDetailResponse | undefined;
+  readonly workspaceCwd: string;
 }): React.JSX.Element {
   const { t } = useI18n();
+  const [debugOpen, setDebugOpen] = useState(false);
   const toolEvents = events.filter((event) => event.type.startsWith("tool_"));
   const permissionMode = readSessionPermissionModeFromSnapshot(run.requestSnapshot);
   const permissionPreset = readPermissionPresetFromSnapshot(run.requestSnapshot) ?? inferPermissionPreset(permissionMode);
@@ -24,8 +28,9 @@ export function RunTechnicalDetails({ run, events, leases, transitions, workUnit
   const runner = readRunnerResolution(run, workUnitDetail?.workUnit);
   const terminal = [...events].reverse().find((event) => ["result", "run_error", "run_cancelled", "run_end"].includes(event.type));
   return (
-    <InspectorSection className="debug-details" summary={t("{count} events", { count: events.length })} title={t("Debug details")}>
+    <InspectorSection className="debug-details" onToggle={(event) => setDebugOpen(event.currentTarget.open)} summary={t("{count} events", { count: events.length })} title={t("Debug details")}>
       <div className="runs-section-stack">
+        <RunHarnessDiagnostics cwd={workspaceCwd} enabled={debugOpen} runId={run.id} workUnitId={run.workUnitId} workUnitDetail={workUnitDetail} />
         <section className="runs-subsection runtime-audit-block">
           <h3><Workflow size={15} />{t("State machine")} <small>{t("{count} transitions", { count: transitions.length })}</small></h3>
           <div className="runs-summary-grid">

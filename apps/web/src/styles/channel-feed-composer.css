@@ -1,7 +1,7 @@
 .activity-chat-layout {
   display: grid;
   flex: 1 1 auto;
-  width: min(var(--channel-conversation-width), calc(100% - 48px));
+  width: 100%;
   min-width: 0;
   min-height: 0;
   height: 100%;
@@ -31,11 +31,14 @@
   display: flex;
   flex: 1 1 auto;
   min-height: 0;
+  justify-content: center;
 }
 
 .activity-shell .message-feed {
+  box-sizing: border-box;
   display: flex;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
+  width: min(var(--channel-conversation-width), calc(100% - 48px));
   height: 100%;
   min-height: 0;
   max-height: none;
@@ -51,7 +54,7 @@
 }
 
 .activity-shell .message-feed:focus-visible {
-  outline: 2px solid var(--conversation-focus-ring);
+  outline: 2px solid var(--ling-border-focus);
   outline-offset: -2px;
 }
 
@@ -65,33 +68,9 @@
   height: 0;
 }
 
-.message-feed-virtualizer {
-  position: relative;
-  flex: 0 0 auto;
-  width: 100%;
-}
-
-.message-feed-virtual-row {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  padding: 0 0 12px;
-  will-change: transform;
-}
-
-.message-feed-virtual-row:has(.workspace-file-open-popover) {
-  z-index: 20;
-}
-
-.message-feed-virtual-row:focus {
-  outline: none;
-}
-
-.message-feed-virtual-row:focus-visible {
-  border-radius: 8px;
-  outline: 2px solid var(--conversation-focus-ring);
-  outline-offset: 2px;
+.activity-shell [data-conversation-timeline="true"][data-conversation-timeline-depth="0"] {
+  box-sizing: border-box;
+  padding-block-end: 38px;
 }
 
 .message-feed-loader-row {
@@ -172,6 +151,13 @@
 .message-feed-latest-button.ling-ui-button:focus-visible {
   border-color: var(--ling-border-strong);
   background: var(--ling-bg-panel);
+}
+
+/* Leave the center of factual rows available for disclosure clicks. */
+.activity-shell .message-feed-latest-button.ling-ui-button {
+  left: auto;
+  right: 12px;
+  transform: none;
 }
 
 .channel-feed-status-stack,
@@ -536,11 +522,11 @@
   display: grid;
   width: min(280px, calc(100vw - 32px));
   padding: var(--ling-space-3);
-  border: 1px solid var(--ling-border-default);
-  border-radius: var(--ling-radius-md);
+  border: 1px solid var(--ling-overlay-border);
+  border-radius: var(--ling-overlay-radius);
   color: var(--ling-text-default);
-  background: var(--ling-bg-elevated);
-  box-shadow: var(--ling-shadow-overlay);
+  background: var(--ling-overlay-bg);
+  box-shadow: var(--ling-overlay-shadow);
 }
 
 [data-conversation-composer][data-surface="channel"] .composer-add-menu-row {
@@ -635,25 +621,20 @@
   }
 }
 
-.activity-shell [data-conversation-composer][data-surface="channel"] {
-  position: relative;
+.activity-shell [data-conversation-composer-frame="channel"] {
   flex: 0 0 auto;
   align-self: center;
   width: min(var(--channel-conversation-width), calc(100% - 48px));
   margin-bottom: 14px;
 }
 
-.activity-chat-main > [data-conversation-composer][data-surface="channel"] {
-  width: 100%;
+.activity-shell [data-conversation-composer][data-surface="channel"] {
+  position: relative;
 }
 
 [data-conversation-composer][data-surface="channel"] {
   gap: 6px;
   padding: 8px;
-  border-color: var(--ling-border-default);
-  border-radius: var(--ling-radius-lg);
-  background: var(--ling-bg-composer);
-  box-shadow: var(--ling-shadow-medium);
 }
 
 .channel-guidance-target-selector {
@@ -681,13 +662,6 @@
     grid-template-columns: minmax(0, 1fr);
     gap: 6px;
   }
-}
-
-[data-conversation-composer][data-surface="channel"]:focus-within {
-  border-color: var(--ling-border-focus);
-  box-shadow:
-    inset 0 0 0 1px var(--ling-border-focus),
-    var(--ling-shadow-medium);
 }
 
 [data-conversation-composer][data-surface="channel"] .conversation-composer-toolbar {
@@ -736,7 +710,7 @@
   height: 32px;
   min-height: 32px;
   padding: 0;
-  border-radius: var(--ling-radius-md);
+  border-radius: var(--ling-control-radius);
 }
 
 @media (max-width: 760px) {

@@ -4,6 +4,32 @@ export type ConversationPermissionPreset =
   | "full_access"
   | "custom";
 
+export type ConversationAuthorizationMode = "ask" | "smart" | "always";
+
+export interface ConversationAuthorizationModeOption {
+  readonly mode: ConversationAuthorizationMode;
+  readonly label: string;
+  readonly description: string;
+}
+
+export const defaultConversationAuthorizationModeOptions: readonly ConversationAuthorizationModeOption[] = [
+  {
+    mode: "ask",
+    label: "Request approval",
+    description: "Ask before operations that require approval.",
+  },
+  {
+    mode: "smart",
+    label: "Help me approve",
+    description: "Use a locked-down reviewer for approval requests and ask you when review is inconclusive.",
+  },
+  {
+    mode: "always",
+    label: "Always authorize",
+    description: "Automatically authorize operations allowed by the selected sandbox and safety policy.",
+  },
+] as const;
+
 export interface ConversationPermissionPresetOption {
   readonly preset: ConversationPermissionPreset;
   readonly label: string;

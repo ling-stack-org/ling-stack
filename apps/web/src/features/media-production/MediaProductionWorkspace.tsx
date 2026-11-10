@@ -21,6 +21,10 @@ import { SceneDeleteDialog } from "./SceneDeleteDialog.js";
 import { SceneResultPreviewDialog } from "./SceneResultPreviewDialog.js";
 import { deriveProjectRunReview, deriveSceneReadiness } from "./media-production-view-models.js";
 import { useI18n } from "../../i18n.js";
+import {
+  DesktopTitlebarSurface,
+  useDesktopTitlebarPlacement,
+} from "../../app/DesktopTitlebarSurface.js";
 import { useLingToast } from "../../shared/ui/index.js";
 import { useMediaWorkflowController } from "./workflows/use-media-workflow-controller.js";
 import { MediaWorkflowLibraryDialog } from "./workflows/MediaWorkflowLibraryDialog.js";
@@ -45,6 +49,7 @@ export function MediaProductionWorkspace({
   jobsPanel,
 }: MediaProductionPageProps): React.JSX.Element {
   const { t } = useI18n();
+  const titlebarPlacement = useDesktopTitlebarPlacement();
   const { showToast } = useLingToast();
   const [view, setView] = useState<MediaProductionView>("studio");
   const [leftDockOpen, setLeftDockOpen] = useState(readLeftDockPreference);
@@ -256,15 +261,14 @@ export function MediaProductionWorkspace({
     if (isOverlayBusy(overlay, state.busy, workflowController.state.busyAction)) return;
     const closingOverlay = overlay;
     setOverlay({ kind: "none" });
-    if (closingOverlay.kind === "run-project") {
-      restoreOverlayTriggerFocus(closingOverlay.trigger, ".media-production-primary-action");
-    } else if (closingOverlay.kind === "preview") {
+    if (closingOverlay.kind === "preview") {
       restoreOverlayTriggerFocus(closingOverlay.trigger, ".storyboard-scene-preview");
     }
   }
 
   return (
-    <div className={`media-production-page canvas-first ${view === "jobs" ? "showing-jobs" : "showing-studio"}`}>
+    <div className={`media-production-page canvas-first titlebar-${titlebarPlacement} ${view === "jobs" ? "showing-jobs" : "showing-studio"}`}>
+      <DesktopTitlebarSurface>
       <MediaProductionCanvasToolbar
         projectName={project?.mediaProject.name}
         sceneCount={project?.scenes.length ?? 0}
@@ -277,6 +281,7 @@ export function MediaProductionWorkspace({
         onRunProject={() => project && setOverlay({ kind: "run-project", projectId: project.mediaProject.id, trigger: activeElement() })}
         onConfigureVideoModel={onConfigureVideoModel}
       />
+      </DesktopTitlebarSurface>
 
       {view === "jobs" ? <div className="media-production-jobs-view">{jobsPanel({
         jobContext: jobHostBridge.context,
@@ -373,11 +378,11 @@ export function MediaProductionWorkspace({
           failure={selectMediaProductionFailure(state.failures, ["project-run"], project.mediaProject.id)}
           isSubmitting={state.busy.projectRunId === project.mediaProject.id}
           onClose={closeOverlay}
+          onRestoreFocus={() => restoreOverlayTriggerFocus(overlay.trigger, ".media-production-primary-action")}
           onConfirm={async () => {
             const outcome = await actions.runProject(projectRunReview.ready.map((item) => item.sceneId));
             if (outcome.ok) {
               setOverlay({ kind: "none" });
-              restoreOverlayTriggerFocus(overlay.trigger, ".media-production-primary-action");
             }
           }}
         />

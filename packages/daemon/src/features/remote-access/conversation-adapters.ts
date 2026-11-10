@@ -14,7 +14,7 @@ import type {
   RemoteConversationMessageV1,
   RemoteConversationSummaryV1,
 } from "@ling-stack/contracts";
-import { listChannelBranchRootThreadIds } from "../channels/conversation-surface.js";
+import { findChannelDefaultConversationThread } from "../channels/conversation-thread-resolution.js";
 import { listChannelMessageViewsPage } from "../channels/conversation-item-messages.js";
 import {
   buildConversationSupersessionProjection,
@@ -110,13 +110,14 @@ export class ChannelRemoteConversationAdapter extends BaseRemoteConversationAdap
 
   open(conversationId: string, olderPageCursor: string | undefined, now: string): RemoteConversationPage {
     const channel = this.requireChannel(conversationId);
-    const page = listChannelMessageViewsPage({
+    const root = this.defaultThread(channel.id);
+    const page = root ? listChannelMessageViewsPage({
       store: this.options.store,
       channelId: channel.id,
-      excludeThreadIds: listChannelBranchRootThreadIds(this.options.store, channel.id),
+      threadId: root.id,
       ...(olderPageCursor ? { beforeMessageId: olderPageCursor } : {}),
       limit: 100,
-    });
+    }) : { messages: [], hasMore: false, nextBeforeMessageId: undefined };
     const visible = filterSupersededChannelMessages(page.messages, buildConversationSupersessionProjection(this.options.store, {
       surfaces: ["channel_root", "channel_branch", "topic_reply"],
       ownerId: channel.id,
@@ -135,13 +136,20 @@ export class ChannelRemoteConversationAdapter extends BaseRemoteConversationAdap
     if (!channel || channel.workspaceId !== this.options.workspaceId) {
       return false;
     }
-    return listChannelMessageViewsPage({ store: this.options.store, channelId: channel.id, limit: 100 }).messages
+    const root = this.defaultThread(channel.id);
+    if (!root) return false;
+    return listChannelMessageViewsPage({ store: this.options.store, channelId: channel.id, threadId: root.id, limit: 100 }).messages
       .some((message) => message.authorType !== "local-user" && message.status === "pending");
+  }
+
+  private defaultThread(channelId: string): LingThread | undefined {
+    return findChannelDefaultConversationThread(this.options.store, channelId);
   }
 
   private projectSummary(channel: Channel, now: string): RemoteConversationSummaryV1 {
     const readState = this.readState(channel.id, now);
-    const latest = listChannelMessageViewsPage({ store: this.options.store, channelId: channel.id, limit: 1 }).messages.at(-1);
+    const root = this.defaultThread(channel.id);
+    const latest = root ? listChannelMessageViewsPage({ store: this.options.store, channelId: channel.id, threadId: root.id, limit: 1 }).messages.at(-1) : undefined;
     return {
       workspaceId: this.options.workspaceId,
       conversationId: channel.id,
@@ -327,7 +335,9 @@ export class TeammateDirectRemoteConversationAdapter extends BaseRemoteConversat
       surfaces: ["teammate_direct"],
       ownerId: thread.teammateId,
       laneId: thread.id,
-    })).map((message) => projectTeammateDirectMessageRevisionMetadata(this.options.store, message));
+    }))
+      .filter(teammateDirectMessageIsPublicTranscript)
+      .map((message) => projectTeammateDirectMessageRevisionMetadata(this.options.store, message));
     const messages = visible.map((message) => this.projectMessage(message, now));
     return {
       summary: this.projectSummary(thread, now),
@@ -350,11 +360,7 @@ export class TeammateDirectRemoteConversationAdapter extends BaseRemoteConversat
   private projectSummary(thread: TeammateDirectThread, now: string): RemoteConversationSummaryV1 {
     const teammate = this.options.store.getAiTeammate(thread.teammateId);
     const readState = this.readState(thread.id, now);
-    const latest = this.options.store.listTeammateDirectMessagesPage({
-      teammateId: thread.teammateId,
-      threadId: thread.id,
-      limit: 1,
-    }).messages.at(-1);
+    const latest = findLatestPublicTeammateDirectMessage(this.options.store, thread);
     const label = teammate?.displayName ?? thread.title;
     return {
       workspaceId: this.options.workspaceId,
@@ -411,6 +417,29 @@ export class TeammateDirectRemoteConversationAdapter extends BaseRemoteConversat
     }
     return thread;
   }
+}
+
+function teammateDirectMessageIsPublicTranscript(message: TeammateDirectMessage): boolean {
+  return message.authorType !== "system" || message.systemPurpose === "governance_notification";
+}
+
+function findLatestPublicTeammateDirectMessage(
+  store: Pick<RunStore, "listTeammateDirectMessagesPage">,
+  thread: TeammateDirectThread,
+): TeammateDirectMessage | undefined {
+  let beforeMessageId: string | undefined;
+  do {
+    const page = store.listTeammateDirectMessagesPage({
+      teammateId: thread.teammateId,
+      threadId: thread.id,
+      ...(beforeMessageId ? { beforeMessageId } : {}),
+      limit: 500,
+    });
+    const latest = [...page.messages].reverse().find(teammateDirectMessageIsPublicTranscript);
+    if (latest) return latest;
+    beforeMessageId = page.hasMore ? page.nextBeforeMessageId : undefined;
+  } while (beforeMessageId);
+  return undefined;
 }
 
 function projectStoredMessageStatus(

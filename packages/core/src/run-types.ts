@@ -1,6 +1,16 @@
+import type { ChannelSessionPage, ChannelSessionSummary, CreateChannelSessionInput, ListChannelSessionsOptions, UpdateChannelSessionRequest } from "./channel-session-types.js";
+import type { MemoryWikiStore } from "./memory-wiki-types.js";
+import type { MemoryDerivativeStore } from "./memory-derivative-types.js";
+import type { LearningReviewStore } from "./learning-review-types.js";
+import type { RuntimeRunQueueStore } from "./runtime-run-queue-types.js";
 import { randomUUID } from "node:crypto";
+import type { ApplyProposedPlanArtifactActionInput, ProposedPlanArtifactActionResult } from "./proposed-plan-mutation.js";
+import type { NativeExecutionStore } from "./native-execution-types.js";
+import type { HarnessArtifactRetentionStore, HarnessProjectionStore } from "./harness/reliability.js";
+import type { DelegationCompletionEvidenceV1, GetDelegationCompletionEvidenceInput } from "./delegation-completion-evidence.js";
 import type {
   ConversationItemV1,
+  ConversationWorkspaceFileRefSourceV1,
   CompactionCheckpoint,
   CreateCompactionCheckpointInput,
   CreatePostCompactionUndoRecordInput,
@@ -13,6 +23,8 @@ import type {
   RunEventDataByType as ContractRunEventDataByType,
   RunEventEnvelope as ContractRunEventEnvelope,
   RunEventType as ContractRunEventType,
+  ExecutionActionDiagnostic,
+  HostOpenLocalTargetReceiptV1,
   PostCompactionUndoRecord,
   UpdatePostCompactionUndoRecordInput,
   WorkspaceMutationRecord,
@@ -34,9 +46,67 @@ import type {
   CreateSnapshotRestoreConfirmationInput,
   SnapshotRestoreConfirmation,
   ListSnapshotRestoreRequestsOptions,
+  RunnerContinuationV1,
+  HarnessToolExecutionV1,
+  RunEvaluationGradeV1,
+  RunEvaluationV1,
+  CreateRunCompactionCheckpointInput,
+  ListRunCompactionCheckpointsOptions,
+  RunCompactionCheckpointV1,
+  TransitionRunCompactionCheckpointInput,
 } from "@ling-stack/contracts";
 import type {
+  ClaimRunnerContinuationInput,
+  DeferRunnerContinuationInput,
+  FinishRunnerContinuationInput,
+  ListClaimableRunnerContinuationsInput,
+  PrepareContinuationInput,
+  PreparedContinuation,
+  ReprepareContinuationInput,
+  RunnerContinuationMutationResult,
+  StartRunnerContinuationInput,
+} from "./harness/continuations.js";
+import type { DelegationQueryStore, HarnessDiagnosticsStore } from "./harness/store-ports.js";
+import type { RunEvaluationTaskStore } from "./harness/evaluation-tasks.js";
+import type { RunEvaluationQaStore } from "./harness/evaluation-qa.js";
+import type { RunEvaluationHumanStore } from "./harness/human-evaluation.js";
+import type { RunEvaluationHumanReadStore } from "./harness/human-evaluation-read.js";
+import type {
+  AvailabilityIncidentCandidatePage,
+  CreateProviderRuntimeAvailabilityIncidentInput,
+  ListAvailabilityIncidentCandidatesOptions,
+} from "./provider-runtime-availability-types.js";
+import type {
+  ClaimHarnessToolExecutionInput,
+  FailApprovedHarnessToolExecutionInput,
+  FinishHarnessToolExecutionInput,
+  HarnessToolExecutionMutationResult,
+  HarnessToolExecutionRecoveryPage,
+  PrepareHarnessToolExecutionInput,
+  PreparedHarnessToolExecution,
+  ReconcileAbandonedHarnessToolExecutionsInput,
+  ReconcileAbandonedHarnessToolExecutionsPageInput,
+  ResolveHarnessToolApprovalInput,
+  StartHarnessToolExecutionInput,
+} from "./harness/tool-executions.js";
+import type {
+  AppendRunEvaluationGradeInput,
+  AppendRunEvaluationGradeResult,
+  ClaimRunEvaluationInput,
+  CompleteRunEvaluationInput,
+  CompleteRunEvaluationResult,
+  EnqueuedRunEvaluation,
+  EnqueueRunEvaluationInput,
+  FailRunEvaluationInput,
+  ListClaimableRunEvaluationsInput,
+  ListRunEvaluationsInput,
+  RequeueRunEvaluationInput,
+  RunEvaluationMutationResult,
+  StartRunEvaluationInput,
+} from "./harness/evaluations.js";
+import type {
   ApprovalActionType,
+  ApprovalCommandRule,
   ApprovalRequest,
   ApprovalRisk,
   CreateApprovalRequestInput,
@@ -80,6 +150,7 @@ import type {
   ProviderPresetInput,
   ProviderPresetUpdateInput,
 } from "./provider-types.js";
+import type { ProviderCheckPublicationStore } from "./provider-check-publication-types.js";
 import type { LingStackRuntimePaths } from "./runtime-paths.js";
 import type {
   OfficialSkillSourceSubscription,
@@ -109,6 +180,11 @@ import type {
   CreateMediaWorkflowVersionInput,
   ListMediaWorkflowDefinitionsOptions,
   MediaWorkflowConnection,
+  MediaWorkflowConnectionCheckAdmission,
+  MediaWorkflowConnectionCheckPublication,
+  MediaWorkflowConnectionCheckState,
+  MediaWorkflowConnectionCheckTicket,
+  MediaWorkflowConnectionHealth,
   MediaWorkflowDefinition,
   MediaWorkflowVersion,
   UpdateMediaWorkflowConnectionInput,
@@ -203,6 +279,7 @@ import type {
   ChannelContextSummary,
   ChannelDecision,
   ChannelExecutionProposal,
+  ChannelExecutionProposalClaimResult,
   ChannelWorkflow,
   ChannelWorkflowStep,
   ChannelHandoff,
@@ -221,12 +298,16 @@ import type {
   CreateChannelPlaybookCandidateInput,
   CreateChannelContextSummaryInput,
   CreateChannelDecisionInput,
+  CreateOrReuseSupersedingChannelDecisionResult,
+  CreateSupersedingChannelDecisionInput,
   CreateChannelExecutionProposalInput,
   CreateChannelMessageRouteDecisionInput,
   CreateWorkflowHandoffIntentInput,
   CreateWorkflowSelectorDecisionInput,
   CreateChannelWorkflowInput,
   CreateChannelWorkflowStepInput,
+  CreateOrReuseChannelHandoffWorkflowInput,
+  CreateOrReuseChannelHandoffWorkflowResult,
   CreateChannelHandoffInput,
   CreateChannelInput,
   CreateChannelIntentDecisionInput,
@@ -272,6 +353,7 @@ import type {
   ReplaceTeammateChannelMembershipInput,
   ReplaceTeammateMemoryScopeInput,
   ReplaceTeammateSkillBindingInput,
+  RejectActiveChannelDecisionInput,
   Task,
   TaskUpdateInput,
   TeammateChannelMembership,
@@ -340,6 +422,7 @@ import type {
   RuntimeEvent,
   RuntimeHeartbeat,
   RuntimeAttemptFenceV1,
+  RuntimeResourceRenewal,
   RuntimeSemaphoreSlot,
   TerminalAttemptStatus,
   TerminalRuntimeEventType,
@@ -348,6 +431,7 @@ import type {
   WorkUnitStatus,
 } from "./runtime-supervisor-types.js";
 import type {
+  CommitExternalWorkActionTransitionInput,
   CreateExternalWorkActionInput,
   CreateExternalWorkCiTriageInput,
   CreateExternalWorkWorkflowInput,
@@ -384,12 +468,16 @@ import type {
   CreateSkillRegressionRunInput,
   CreateSkillSourceArtifactInput,
   CreateSkillSourceSnapshotInput,
+  PublishSkillSourceBatchInput,
+  PublishedSkillSourceBatch,
   ListSkillCompiledRuntimeViewOptions,
   ListSkillRegressionRunsOptions,
   ListSkillSourceArtifactOptions,
   ListSkillRegistryOptions,
   ListSkillSourceSnapshotOptions,
   PublishSkillRevisionDraftInput,
+  SkillDefinitionRevision,
+  SkillDefinitionUndoRequest,
   SkillCompiledRuntimeViewRecord,
   SkillHardDeleteResult,
   SkillImportDraft,
@@ -438,6 +526,12 @@ import type {
   TeammateMcpBinding,
   UpdateMcpServerInput,
 } from "./mcp-types.js";
+import type {
+  CommitMcpMetadataResult,
+  CommitMcpMetadataResultInput,
+  McpMetadataRequestKind,
+  McpMetadataRequestTicket,
+} from "./mcp-metadata-types.js";
 import type {
   CommitCuaDriverActivationInput,
   CommitCuaDriverActivationResult,
@@ -501,6 +595,7 @@ import type {
 } from "./plugin-manager-types.js";
 import type {
   AutomationDraft,
+  AutomationDraftConfirmationResult,
   AutomationDefinition,
   AutomationRun,
   CreateAutomationDefinitionInput,
@@ -514,7 +609,7 @@ import type {
   UpdateAutomationRunInput,
 } from "./automation-types.js";
 
-export type RunStatus = "queued" | "running" | "waiting_for_approval" | "succeeded" | "failed" | "cancelled";
+export type RunStatus = "queued" | "running" | "waiting_for_approval" | "yielded" | "succeeded" | "failed" | "cancelled";
 
 export function createLingThreadId(): string {
   return `thread_${randomUUID()}`;
@@ -546,6 +641,7 @@ export type LingTurnStatus =
   | "open"
   | "running"
   | "waiting_for_approval"
+  | "waiting_for_input"
   | "blocked"
   | "succeeded"
   | "failed"
@@ -614,6 +710,12 @@ export interface ListLingTurnsOptions {
   readonly threadId: string;
   readonly limit?: number;
   readonly beforeUpdatedAt?: string;
+  /** Exclusive (selected timestamp, binary id) seek within one thread/read snapshot. */
+  readonly beforeTurnId?: string;
+  /** Defaults to updatedAt; creation order is used for budgeted historical folds. */
+  readonly orderBy?: "updatedAt" | "createdAt";
+  /** Strict creation-time scope, independent of the exclusive page cursor. */
+  readonly createdBefore?: string;
 }
 
 export interface LinkRunToLingTurnInput {
@@ -643,7 +745,7 @@ export type RunEventEmitter = <K extends RunEventType>(
 
 export const runInterventionModes = ["queue_followup", "interrupt_redirect"] as const;
 export type RunInterventionMode = (typeof runInterventionModes)[number];
-export const runContinuationReasons = [...runInterventionModes, "manual_resume"] as const;
+export const runContinuationReasons = [...runInterventionModes, "manual_resume", "user_input_answer"] as const;
 export type RunContinuationReason = (typeof runContinuationReasons)[number];
 
 export const runInterventionStatuses = [
@@ -666,7 +768,7 @@ export const lingThreadKinds = [
   "conversation",
 ] as const;
 export type LingThreadKind = (typeof lingThreadKinds)[number];
-export type LingThreadStatus = "open" | "running" | "waiting_for_approval" | "blocked" | "succeeded" | "failed" | "cancelled" | "archived";
+export type LingThreadStatus = "open" | "running" | "waiting_for_approval" | "waiting_for_input" | "blocked" | "succeeded" | "failed" | "cancelled" | "archived";
 export type LingThreadArchivedFilter = "exclude" | "include" | "only";
 export const conversationModeKinds = ["default", "plan"] as const;
 export type ConversationModeKind = (typeof conversationModeKinds)[number];
@@ -814,6 +916,7 @@ export interface UpdateLingThreadGoalInput {
 
 export interface ProposedPlanArtifact {
   readonly id: string;
+  readonly revision: number;
   readonly workspaceId: string;
   readonly threadId: string;
   readonly channelId?: string;
@@ -846,6 +949,7 @@ export interface ProposedPlanArtifact {
 
 export interface CreateProposedPlanArtifactInput {
   readonly id?: string;
+  readonly expectedRevision?: number;
   readonly threadId: string;
   readonly channelId?: string;
   readonly goalId?: string;
@@ -873,6 +977,9 @@ export interface CreateProposedPlanArtifactInput {
 }
 
 export interface UpdateProposedPlanArtifactInput {
+  readonly expectedRevision?: number;
+  /** Host-owned scope expectation; this is not a request to move the plan. */
+  readonly expectedThreadId?: string;
   readonly channelId?: string | null;
   readonly goalId?: string | null;
   readonly sourceAgentId?: string | null;
@@ -1008,7 +1115,7 @@ export interface SearchLingThreadsResult {
   readonly matches: readonly LingThreadSearchMatch[];
 }
 
-export type ExecutionActionType = ApprovalActionType;
+export type ExecutionActionType = ApprovalActionType | "runtime_diagnostic";
 
 export type ExecutionScope =
   | "read_only"
@@ -1043,8 +1150,17 @@ export interface ExecutionActionTargetRef {
     | "external_work_action"
     | "file"
     | "command"
-    | "mcp_tool";
+    | "mcp_tool"
+    | "host_capability";
   readonly id?: string;
+  readonly label?: string;
+  readonly path?: string;
+}
+
+/** Stable lineage references consumed by transcript projections and inspectors. */
+export interface ExecutionActionSourceRef {
+  readonly kind: string;
+  readonly id: string;
   readonly label?: string;
   readonly path?: string;
 }
@@ -1079,13 +1195,38 @@ export interface ExecutionActionCommandEvidence {
   readonly resultArtifactId?: string;
 }
 
+/** Bounded display evidence derived from accepted read-only tool events. */
+export interface ExecutionActionToolEvidence {
+  readonly toolName: string;
+  readonly inputSummary: string;
+  readonly outputText?: string;
+  readonly outputTruncated: boolean;
+  readonly latestEventSeq: number;
+}
+
+export interface ExecutionActionRuntimeDiagnostic {
+  readonly code: "execution_loop_detected";
+  readonly loopKind: "exact_repeat" | "repeated_update" | "cycle" | "no_progress_budget";
+  readonly repeatedCount: number;
+  readonly noProgressActionCount: number;
+  readonly cycleLength?: number;
+  readonly fingerprint: string;
+  readonly retryable: false;
+}
+
 export interface ExecutionAction {
   readonly id: string;
+  /** Monotonic event/approval revision for in-place transcript replacement. */
+  readonly revision: number;
+  /** Accepted tool_start sequence; unlike revision, this never moves on update. */
+  readonly sourceEventSequence?: number;
   readonly workspaceId: string;
   readonly threadId?: string;
   readonly runId?: string;
   readonly attemptId?: string;
   readonly workUnitId?: string;
+  readonly participantId?: string;
+  readonly workflowStepId?: string;
   readonly approvalId?: string;
   readonly toolCallId?: string;
   readonly actionType: ExecutionActionType;
@@ -1096,10 +1237,16 @@ export interface ExecutionAction {
   readonly targetRefs: readonly ExecutionActionTargetRef[];
   readonly previewArtifactIds: readonly string[];
   readonly resultArtifactIds: readonly string[];
+  readonly sourceRefs: readonly ExecutionActionSourceRef[];
+  readonly diagnostics?: readonly ExecutionActionDiagnostic[];
   readonly scopes?: readonly ExecutionScope[];
   readonly scopeSummary?: string;
   readonly policySnapshot?: unknown;
   readonly commandEvidence?: ExecutionActionCommandEvidence;
+  readonly toolEvidence?: ExecutionActionToolEvidence;
+  readonly runtimeDiagnostic?: ExecutionActionRuntimeDiagnostic;
+  /** Original-call Host launch evidence, not proof of window visibility. */
+  readonly hostOpenReceipt?: HostOpenLocalTargetReceiptV1;
   readonly createdAt: string;
   readonly updatedAt?: string;
   readonly resolvedAt?: string;
@@ -1229,6 +1376,7 @@ export interface RunInterventionLinkPreviewPayload {
 export interface RunInterventionWorkspaceFilePayload {
   readonly path: string;
   readonly label?: string;
+  readonly source?: ConversationWorkspaceFileRefSourceV1;
   readonly rootRelation: "inside_workspace" | "outside_workspace" | "unknown";
   readonly kind: "file" | "directory" | "glob" | "unknown";
   readonly materializationStatus: RunInterventionMaterializationStatus;
@@ -1251,9 +1399,12 @@ export interface CreateRunInterventionInput {
 
 export interface ListRunInterventionsOptions {
   readonly sourceRunId?: string;
+  readonly idempotencyKey?: string;
   readonly sourceMessageIds?: readonly string[];
   readonly status?: RunInterventionStatus;
   readonly mode?: RunInterventionMode;
+  readonly hasContinuation?: boolean;
+  readonly newestFirst?: boolean;
   readonly limit?: number;
 }
 
@@ -1322,6 +1473,8 @@ export interface RunArtifact {
   readonly contentType?: string;
   readonly sizeBytes?: number;
   readonly sealedPayload?: unknown;
+  /** Present only after Host-authorized body GC; contentSha256 remains unchanged. */
+  readonly sealedPayloadState?: "pruned";
   readonly contentSha256?: string;
   readonly createdAt: string;
 }
@@ -1411,7 +1564,116 @@ export interface ControlPlaneReplayWindowResult {
   readonly events: readonly ControlPlaneEvent[];
 }
 
-export interface RunStore {
+export interface ClaimSnapshotRestoreFenceInput {
+  readonly requestId: string;
+  readonly expectedState: "requested" | "validating";
+  readonly expectedRequestFencingEpoch: number;
+  readonly now: string;
+}
+
+export interface RunStore extends MemoryWikiStore, MemoryDerivativeStore, LearningReviewStore, RuntimeRunQueueStore, NativeExecutionStore, HarnessProjectionStore, HarnessArtifactRetentionStore, DelegationQueryStore, HarnessDiagnosticsStore, RunEvaluationTaskStore, RunEvaluationQaStore, RunEvaluationHumanStore, RunEvaluationHumanReadStore {
+  getDelegationCompletionEvidence(input: GetDelegationCompletionEvidenceInput): DelegationCompletionEvidenceV1;
+  listApprovalPostCommitEffects(options?: {
+    readonly approvalId?: string;
+    readonly status?: import("./approval-postcommit-types.js").ApprovalPostCommitEffectStatus;
+    readonly after?: { readonly createdAt: string; readonly approvalId: string; readonly effectKind: import("./approval-postcommit-types.js").ApprovalPostCommitEffectKind };
+    readonly limit?: number;
+  }): import("./approval-postcommit-types.js").ApprovalPostCommitEffect[];
+  claimApprovalPostCommitEffect(approvalId: string, effectKind: import("./approval-postcommit-types.js").ApprovalPostCommitEffectKind, input: {
+    readonly token: string; readonly claimExpiresAt: string;
+  }, now: string): import("./approval-postcommit-types.js").ApprovalPostCommitEffect | undefined;
+  settleApprovalPostCommitEffect(approvalId: string, effectKind: import("./approval-postcommit-types.js").ApprovalPostCommitEffectKind, input: {
+    readonly token: string;
+    readonly status: "completed" | "pending" | "blocked" | "effect_unknown";
+    readonly errorCode?: string;
+  }, now: string): import("./approval-postcommit-types.js").ApprovalPostCommitEffect | undefined;
+  recoverExpiredApprovalPostCommitClaim(approvalId: string, effectKind: import("./approval-postcommit-types.js").ApprovalPostCommitEffectKind, input: {
+    readonly expectedRevision: number;
+    readonly status: "pending" | "completed" | "blocked" | "effect_unknown";
+    readonly errorCode: string;
+  }, now: string): import("./approval-postcommit-types.js").ApprovalPostCommitEffect | undefined;
+  quarantineMediaApprovalSubmission(approvalId: string, mediaJobId: string, now: string): import("./approval-postcommit-types.js").ApprovalPostCommitEffect | undefined;
+  prepareHostCommandExecution(input: import("./host-command-journal-types.js").PrepareHostCommandExecutionInput): import("./host-command-journal-types.js").HostCommandExecutionTicket;
+  /** Optional synchronous read-only denial gate runs under the writer lock before claiming the launch. */
+  launchHostCommandExecution<T>(ticket: import("./host-command-journal-types.js").HostCommandExecutionTicket, launch: () => T,
+    assertMayLaunch?: () => void): T;
+  /** Exact command + attempt operation launch, under one writer transaction. Neither ID is replay authority. */
+  launchTrackedHostCommandExecution<T>(operation: import("./host-operation-journal-types.js").HostOperationTicket,
+    command: import("./host-command-journal-types.js").HostCommandExecutionTicket, launch: () => T, assertMayLaunch?: () => void): T;
+  settleHostCommandExecution(ticket: import("./host-command-journal-types.js").HostCommandExecutionTicket, input: import("./host-command-journal-types.js").HostCommandSettlementInput): Extract<RunEventEnvelope, { readonly type: "host_command_settled" }>;
+  listHostCommandWriteBlockers(cwd: string): import("@ling-stack/contracts").HostCommandWriteBlockerV1[];
+  admitHostOperation(input: import("./host-operation-journal-types.js").AdmitHostOperationInput): import("./host-operation-journal-types.js").HostOperationTicket;
+  trackHostAttemptCompletion(source: import("./host-operation-journal-types.js").HostOperationSource,
+    lifetime: Promise<unknown>, verifyEffectCoverage?: () => import("./host-attempt-completion-types.js").HostAttemptEffectObservation): Promise<import("./host-attempt-completion-types.js").HostAttemptCompletionRecord>;
+  getHostAttemptCompletion(source: import("./host-operation-journal-types.js").HostOperationSource): import("./host-attempt-completion-types.js").HostAttemptCompletionRecord | undefined;
+  releaseHostAttemptResources(source: import("./host-operation-journal-types.js").HostOperationSource, releasedAt: string): void;
+  sealHostCompactionResourceBoundary(input: import("./host-compaction-resource-types.js").SealHostCompactionResourceBoundaryInput): string | undefined;
+  bindHostOperationEvidence(ticket: import("./host-operation-journal-types.js").HostOperationTicket, evidence: import("./host-operation-journal-types.js").HostOperationEvidenceRef): import("./host-operation-journal-types.js").HostOperationRecord;
+  launchHostOperation<T>(ticket: import("./host-operation-journal-types.js").HostOperationTicket, launch: () => T): T;
+  continueHostOperationEffect<T>(ticket: import("./host-operation-journal-types.js").HostOperationTicket, effect: () => T, mode?: "forward" | "cleanup"): T;
+  settleHostOperation(ticket: import("./host-operation-journal-types.js").HostOperationTicket, input: import("./host-operation-journal-types.js").HostOperationSettlementInput): import("./host-operation-journal-types.js").HostOperationRecord;
+  /** Safe rows are independently reverified against their exact domain evidence on every read. */
+  getHostOperation(operationId: string): import("./host-operation-journal-types.js").HostOperationRecord | undefined;
+  listHostOperationBlockers(source: import("./host-operation-journal-types.js").HostOperationSource, stoppedAt?: string): import("./host-operation-journal-types.js").HostOperationRecord[];
+  prepareHostOfficeLocalExecution(parent: import("./host-operation-journal-types.js").HostOperationTicket,
+    producer: import("./host-operation-journal-types.js").HostOperationTicket,
+    input: import("./host-office-local-types.js").PrepareHostOfficeLocalInput): import("./host-office-local-types.js").HostOfficeLocalTicket;
+  /** Original-owner admission before retaining any fixed writer read-only native resources. */
+  beginHostOfficeLocalWriterObservation(ticket: import("./host-office-local-types.js").HostOfficeLocalTicket): void;
+  prepareHostOfficeLocalEffect(ticket: import("./host-office-local-types.js").HostOfficeLocalTicket,
+    input: import("./host-office-local-types.js").PrepareHostOfficeLocalEffect): import("./host-office-local-types.js").HostOfficeLocalEffectRecord;
+  launchHostOfficeLocalEffect<T>(ticket: import("./host-office-local-types.js").HostOfficeLocalTicket, effectId: string, effect: () => T): T;
+  recordHostOfficeLocalObservation(ticket: import("./host-office-local-types.js").HostOfficeLocalTicket,
+    effectId: string, artifactId: string): import("./host-office-local-types.js").HostOfficeLocalEffectRecord;
+  getHostOfficeLocalExecution(executionId: string): import("./host-office-local-types.js").HostOfficeLocalExecutionRecord | undefined;
+  listHostOfficeLocalEffects(executionId: string): import("./host-office-local-types.js").HostOfficeLocalEffectRecord[];
+  sealHostOfficeLocalTerminal(ticket: import("./host-office-local-types.js").HostOfficeLocalTicket,
+    input: import("./host-office-local-terminal-types.js").SealHostOfficeLocalTerminalInput): import("./host-office-local-terminal-types.js").HostOfficeLocalTerminalRecord;
+  getHostOfficeLocalTerminal(executionId: string): import("./host-office-local-terminal-types.js").HostOfficeLocalTerminalRecord | undefined;
+  /** Original live-ticket no-start history; this read never issues an execution capability. */
+  getHostOfficeLocalNoStartReceipt(executionId: string): import("./host-office-local-no-start-types.js").HostOfficeLocalNoStartReceipt | undefined;
+  settleHostOfficeLocalExecution(ticket: import("./host-office-local-types.js").HostOfficeLocalTicket,
+    input?: import("./host-office-local-types.js").SettleHostOfficeLocalInput): import("./host-office-local-types.js").HostOfficeLocalSettlement;
+  /** Protocol-v2 facts use the same original live journal pair; no public-safe receipt is issued yet. */
+  prepareHostOfficeLocalDirectoryExecutionV2(parent: import("./host-operation-journal-types.js").HostOperationTicket,
+    producer: import("./host-operation-journal-types.js").HostOperationTicket,
+    input: import("./host-office-local-types.js").PrepareHostOfficeLocalInput): import("./host-office-local-types.js").HostOfficeLocalTicket;
+  /** Original constructor-bound Host custody; never a DTO/callback registration or a safe receipt. */
+  bindHostOfficeLocalDirectoryScopeAuthorityV2(ticket: import("./host-office-local-types.js").HostOfficeLocalTicket,
+    authority: import("./original-office-host-bridge.js").OriginalOfficeDirectoryAuthorityV2): void;
+  closeHostOfficeLocalDirectoryWindowV2(ticket: import("./host-office-local-types.js").HostOfficeLocalTicket): import("./host-office-local-directory-v2-types.js").HostOfficeLocalDirectoryCloseClaimV2;
+  settleHostOfficeLocalDirectoryExecutionV2(ticket: import("./host-office-local-types.js").HostOfficeLocalTicket): import("./host-office-local-directory-v2-types.js").HostOfficeLocalDirectoryCommittedPairV2;
+  prepareHostOfficeLocalDirectoryEffectV2(ticket: import("./host-office-local-types.js").HostOfficeLocalTicket,
+    input: import("./host-office-local-directory-v2-types.js").PrepareHostOfficeLocalDirectoryEffectV2): import("./host-office-local-directory-v2-types.js").HostOfficeLocalDirectoryEffectRecordV2;
+  launchHostOfficeLocalDirectoryEffectV2<T>(ticket: import("./host-office-local-types.js").HostOfficeLocalTicket, effectId: string, effect: () => T): T;
+  recordHostOfficeLocalDirectoryObservationV2(ticket: import("./host-office-local-types.js").HostOfficeLocalTicket,
+    effectId: string, artifactId: string): import("./host-office-local-directory-v2-types.js").HostOfficeLocalDirectoryEffectRecordV2;
+  getHostOfficeLocalDirectoryExecutionV2(executionId: string): import("./host-office-local-directory-v2-types.js").HostOfficeLocalDirectoryExecutionRecordV2 | undefined;
+  listHostOfficeLocalDirectoryEffectsV2(executionId: string): import("./host-office-local-directory-v2-types.js").HostOfficeLocalDirectoryEffectRecordV2[];
+  sealHostOfficeLocalDirectoryTerminalV2(ticket: import("./host-office-local-types.js").HostOfficeLocalTicket,
+    input: import("./host-office-local-terminal-types.js").SealHostOfficeLocalTerminalInput): import("./host-office-local-directory-v2-terminal-types.js").HostOfficeLocalDirectoryTerminalRecordV2;
+  getHostOfficeLocalDirectoryTerminalV2(executionId: string): import("./host-office-local-directory-v2-terminal-types.js").HostOfficeLocalDirectoryTerminalRecordV2 | undefined;
+  prepareHostMediaExecution(parent: import("./host-operation-journal-types.js").HostOperationTicket,
+    transport: import("./host-operation-journal-types.js").HostOperationTicket,
+    input: import("./host-media-operation-types.js").PrepareHostMediaExecutionInput): import("./host-media-operation-types.js").HostMediaExecutionTicket;
+  bindHostMediaChildExecution(ticket: import("./host-media-operation-types.js").HostMediaExecutionTicket,
+    child: RuntimeAttemptFenceV1): import("./host-media-operation-types.js").HostMediaExecutionRecord;
+  prepareHostMediaEffect(ticket: import("./host-media-operation-types.js").HostMediaExecutionTicket,
+    input: import("./host-media-operation-types.js").PrepareHostMediaEffectInput): import("./host-media-operation-types.js").HostMediaEffectRecord;
+  launchHostMediaEffect<T>(ticket: import("./host-media-operation-types.js").HostMediaExecutionTicket, effectId: string, send: () => T): T;
+  getHostMediaExecution(executionId: string): import("./host-media-operation-types.js").HostMediaExecutionRecord | undefined;
+  listHostMediaEffects(executionId: string): import("./host-media-operation-types.js").HostMediaEffectRecord[];
+  recordHostMediaResponse(ticket: import("./host-media-operation-types.js").HostMediaExecutionTicket, effectId: string, artifactId: string): import("./host-media-operation-types.js").HostMediaExecutionRecord;
+  recordHostMediaSubmission(ticket: import("./host-media-operation-types.js").HostMediaExecutionTicket, artifactId: string): import("./host-media-operation-types.js").HostMediaExecutionRecord;
+  recordHostMediaSubmissionAndExecutionHandle(ticket: import("./host-media-operation-types.js").HostMediaExecutionTicket,
+    submissionArtifactId: string, projection: import("./host-media-receipt-types.js").HostMediaSubmissionExecutionProjection): import("./host-media-operation-types.js").HostMediaExecutionRecord;
+  recordHostMediaTerminal(ticket: import("./host-media-operation-types.js").HostMediaExecutionTicket, artifactId: string): import("./host-media-operation-types.js").HostMediaExecutionRecord;
+  recordHostMediaArtifactManifest(ticket: import("./host-media-operation-types.js").HostMediaExecutionTicket, artifactId: string): import("./host-media-operation-types.js").HostMediaExecutionRecord;
+  finalizeHostMediaExecution(ticket: import("./host-media-operation-types.js").HostMediaExecutionTicket, artifactId: string): import("./host-media-operation-types.js").HostMediaExecutionRecord;
+  recordHostMediaEffectNoStart(ticket: import("./host-media-operation-types.js").HostMediaExecutionTicket, effectId: string, artifactId: string): import("./host-media-operation-types.js").HostMediaExecutionRecord;
+  listWorkSummaryPullRequests(): import("@ling-stack/contracts").WorkSummaryPullRequestBinding[];
+  attachWorkSummaryPullRequest(url: string, now: string): void;
+  detachWorkSummaryPullRequest(url: string): void;
   readonly paths: LingStackRuntimePaths;
   commitRemoteConversationSend(input: CommitRemoteConversationSendInput, now: string): CommitRemoteConversationSendResult;
   getRemoteCommandReceipt(commandId: string): RemoteCommandReceipt | undefined;
@@ -1449,6 +1711,8 @@ export interface RunStore {
   hardDeleteLingThread(threadId: string, input: HardDeleteLingThreadInput, now: string): HardDeleteLingThreadResult | undefined;
   findLingThreadByOwner(input: {
     readonly kind: LingThreadKind;
+    readonly surfaceKind?: LingThread["surfaceKind"];
+    readonly anchorItemId?: string;
     readonly taskId?: string;
     readonly workflowStepId?: string;
     readonly externalWorkId?: string;
@@ -1469,6 +1733,7 @@ export interface RunStore {
   listProposedPlanArtifacts(options: ListProposedPlanArtifactsOptions): ProposedPlanArtifact[];
   upsertProposedPlanArtifact(input: CreateProposedPlanArtifactInput, now: string): ProposedPlanArtifact;
   updateProposedPlanArtifact(planId: string, input: UpdateProposedPlanArtifactInput, now: string): ProposedPlanArtifact | undefined;
+  applyProposedPlanArtifactAction(planId: string, input: ApplyProposedPlanArtifactActionInput, now: string): ProposedPlanArtifactActionResult;
   rebuildLingThreadMetadata(threadId: string, now: string): LingThread | undefined;
   rebuildLingThreadMetadataForRun(runId: string, now: string): LingThread | undefined;
   createLingTurn(input: CreateLingTurnInput, now: string): LingTurn;
@@ -1494,9 +1759,6 @@ export interface RunStore {
   commitTerminalReportPublication(
     input: import("./terminal-report-publication-types.js").CommitTerminalReportPublicationInput,
   ): import("./terminal-report-publication-types.js").CommitTerminalReportPublicationResult;
-  commitLegacyWorkflowPublication(
-    input: import("./terminal-report-publication-types.js").CommitLegacyWorkflowPublicationInput,
-  ): import("./terminal-report-publication-types.js").CommitLegacyWorkflowPublicationResult;
   failTerminalReport(input: FailLingTerminalReportInput): LingTerminalReportRecord;
   createRun(input: CreateRunInput): RunSession;
   markRunStarted(runId: string, startedAt: string): void;
@@ -1505,7 +1767,25 @@ export interface RunStore {
   markRunSucceeded(runId: string, endedAt: string, summaryPath?: string): void;
   markRunFailed(runId: string, endedAt: string, errorMessage: string, summaryPath?: string): void;
   markRunCancelled(runId: string, endedAt: string, summaryPath?: string): void;
-  appendEvent<K extends RunEventType>(runId: string, type: K, data: RunEventDataByType[K]): Extract<RunEventEnvelope, { readonly type: K }>;
+  appendEvent<K extends RunEventType>(runId: string, type: K, data: RunEventDataByType[K], now?: string): Extract<RunEventEnvelope, { readonly type: K }>;
+  /** Approval decisions use a stable Host idempotency identity, not a check-then-append projection. */
+  appendApprovalDecisionEvent(
+    runId: string,
+    approvalId: string,
+    type: Extract<RunEventType, "approval_approved" | "approval_denied" | "approval_expired" | "approval_cancelled">,
+    data: RunEventDataByType[Extract<RunEventType, "approval_approved" | "approval_denied" | "approval_expired" | "approval_cancelled">],
+    now?: string,
+  ): Extract<RunEventEnvelope, { readonly type: "approval_approved" | "approval_denied" | "approval_expired" | "approval_cancelled" }>;
+  /** Runner callbacks must supply the Host identity captured before dispatch. */
+  appendExecutionEvent<K extends RunEventType>(runId: string, sourceFence: RuntimeAttemptFenceV1, type: K,
+    data: RunEventDataByType[K], now?: string): Extract<RunEventEnvelope, { readonly type: K }>;
+  isCurrentRunExecutionOwner(runId: string, sourceFence: RuntimeAttemptFenceV1, allowCleanup?: boolean): boolean;
+  /** Read-only veto for ordinary startup recovery. Not authority to resume or terminalize. */
+  hasPendingRunTerminalIntent(source: import("./host-operation-journal-types.js").HostOperationSource): boolean;
+  /** Read-only startup veto. Requested/sealed is not evidence of physical stop or permission to resume. */
+  hasPendingRunSuspension(source: import("./host-operation-journal-types.js").HostOperationSource): boolean;
+  transitionRunExecutionStatus(input: Parameters<RunStore["transitionRunStatus"]>[0] & { readonly sourceFence: RuntimeAttemptFenceV1 }): TransitionResult<RunStatus>;
+  appendIgnoredRunnerCompletionEvent(runId: string, data: RunEventDataByType["stale_runner_completion_ignored"], now?: string): Extract<RunEventEnvelope, { readonly type: "stale_runner_completion_ignored" }>;
   appendControlPlaneEvent(input: AppendControlPlaneEventInput, now: string): ControlPlaneEvent;
   getControlPlaneEventByIdempotency(workspaceId: string, idempotencyKey: string): ControlPlaneEvent | undefined;
   listControlPlaneEvents(options: ListControlPlaneEventsOptions): ControlPlaneEvent[];
@@ -1525,6 +1805,8 @@ export interface RunStore {
   listReliabilityIncidents(options?: ListReliabilityIncidentsOptions): ReliabilityIncident[];
   createAvailabilityIncident(input: CreateAvailabilityIncidentInput, now: string): AvailabilityIncident;
   listAvailabilityIncidents(options?: ListAvailabilityIncidentsOptions): AvailabilityIncident[];
+  createProviderRuntimeAvailabilityIncident(input: CreateProviderRuntimeAvailabilityIncidentInput, now: string): AvailabilityIncident;
+  listAvailabilityIncidentCandidates(options: ListAvailabilityIncidentCandidatesOptions): AvailabilityIncidentCandidatePage;
   createChannelTeamPattern(input: CreateChannelTeamPatternInput, now: string): ChannelTeamPattern;
   getChannelTeamPattern(id: string): ChannelTeamPattern | undefined;
   listChannelTeamPatterns(options: ListChannelTeamPatternsOptions): ChannelTeamPattern[];
@@ -1542,16 +1824,30 @@ export interface RunStore {
   listSkillRegressionRuns(options?: ListSkillRegressionRunsOptions): SkillRegressionRun[];
   getRun(runId: string): RunSession | undefined;
   listRuns(options?: ListRunsOptions): RunSession[];
+  /** Complete execution-admission scopes, never a paginated history projection. */
+  listActiveRunScopes(): Pick<RunSession, "id" | "cwd">[];
   listEvents(runId: string, options?: ListRunEventsOptions): RunEventEnvelope[];
+  getLatestRunCompactionStart(runId: string): Extract<RunEventEnvelope, { readonly type: "context_compaction_start" }> | undefined;
   countEvents(runId: string): number;
+  /** Synchronous, read-only database snapshot. Callbacks must not perform I/O or return a Promise. */
+  readSnapshot<T>(read: () => T): T;
   createWorkspaceMutationRecord(input: CreateWorkspaceMutationRecordInput): WorkspaceMutationRecord;
   createWorkspaceMutationRecords(inputs: readonly CreateWorkspaceMutationRecordInput[]): WorkspaceMutationRecord[];
   getWorkspaceMutationRecord(id: string): WorkspaceMutationRecord | undefined;
   listWorkspaceMutationRecords(options?: ListWorkspaceMutationRecordsOptions): WorkspaceMutationRecord[];
   getLatestWorkspaceProvenanceWatermark(workspaceId?: string): string;
+  commitRunProgressCheckpoint(input: import("./run-progress-checkpoint-types.js").CommitRunProgressCheckpointInput): import("./run-progress-checkpoint-types.js").CommitRunProgressCheckpointResult;
+  listPendingDelegationInstructionIds(input: import("./run-progress-checkpoint-types.js").ListPendingDelegationInstructionsInput): readonly string[];
+  readRunProgressCheckpointForRecovery(input: import("./run-progress-checkpoint-types.js").ReadRunProgressCheckpointForRecoveryInput): import("./run-progress-checkpoint-types.js").ReadRunProgressCheckpointForRecoveryResult;
+  readRunCompactionSuspensionWitness(input: import("./run-suspension-types.js").ReadRunCompactionSuspensionWitnessInput): import("./run-suspension-types.js").ReadRunCompactionSuspensionWitnessResult;
   createCompactionCheckpoint(input: CreateCompactionCheckpointInput): CompactionCheckpoint;
   getCompactionCheckpoint(id: string): CompactionCheckpoint | undefined;
   listCompactionCheckpoints(options?: ListCompactionCheckpointsOptions): CompactionCheckpoint[];
+  createRunCompactionCheckpoint(input: CreateRunCompactionCheckpointInput): RunCompactionCheckpointV1;
+  getRunCompactionCheckpoint(id: string): RunCompactionCheckpointV1 | undefined;
+  getLatestRunCompactionCheckpoint(runId: string): RunCompactionCheckpointV1 | undefined;
+  listRunCompactionCheckpoints(options?: ListRunCompactionCheckpointsOptions): RunCompactionCheckpointV1[];
+  transitionRunCompactionCheckpoint(input: TransitionRunCompactionCheckpointInput): RunCompactionCheckpointV1 | undefined;
   createPostCompactionUndoRecord(input: CreatePostCompactionUndoRecordInput): PostCompactionUndoRecord;
   getPostCompactionUndoRecord(id: string): PostCompactionUndoRecord | undefined;
   listPostCompactionUndoRecords(options?: ListPostCompactionUndoRecordsOptions): PostCompactionUndoRecord[];
@@ -1577,9 +1873,11 @@ export interface RunStore {
   createSnapshotRestoreJournalEntries(inputs: readonly CreateSnapshotRestoreJournalEntryInput[]): SnapshotRestoreJournalEntry[];
   listSnapshotRestoreJournalEntries(options: ListSnapshotRestoreJournalOptions): SnapshotRestoreJournalEntry[];
   updateSnapshotRestoreJournalEntry(input: UpdateSnapshotRestoreJournalEntryInput): SnapshotRestoreJournalEntry | undefined;
+  /** Atomically bind a restore request and its workspace lease; no partial claim is published. */
+  claimSnapshotRestoreFence(input: ClaimSnapshotRestoreFenceInput): number | undefined;
   acquireWorkspaceSnapshotFence(workspaceId: string, ownerRequestId: string, now: string): number;
   getWorkspaceSnapshotFence(workspaceId: string): { readonly epoch: number; readonly ownerRequestId?: string };
-  releaseWorkspaceSnapshotFence(workspaceId: string, ownerRequestId: string, now: string): boolean;
+  releaseWorkspaceSnapshotFence(workspaceId: string, ownerRequestId: string, now: string, expectedEpoch?: number): boolean;
   expireWorkspaceSnapshotManifest(id: string, now: string): WorkspaceSnapshotManifest | undefined;
   deleteWorkspaceSnapshotManifest(id: string): boolean;
   deleteWorkspaceSnapshotBlob(sha256: string): boolean;
@@ -1594,6 +1892,13 @@ export interface RunStore {
   cancelRunIntervention(interventionId: string, now: string, reason?: string): RunIntervention | undefined;
   createWorkUnit(input: CreateWorkUnitInput): WorkUnit;
   getWorkUnit(workUnitId: string): WorkUnit | undefined;
+  /** Host-only synchronous cancellation; never grants an execution or replay capability. */
+  withCancellationFence<T>(input: {
+    readonly runId?: string;
+    readonly workUnitId?: string;
+    readonly expectedAttemptId?: string | null;
+    readonly expectedRunId?: string | null;
+  }, mutate: (target: { readonly run?: RunSession; readonly workUnit?: WorkUnit }) => T): T;
   listWorkUnits(options?: ListWorkUnitsOptions): WorkUnit[];
   findWorkUnitByIdempotency(input: {
     readonly kind: WorkUnit["kind"];
@@ -1632,6 +1937,52 @@ export interface RunStore {
   createWorkUnitAttempt(input: CreateWorkUnitAttemptInput): WorkUnitAttempt;
   getWorkUnitAttempt(attemptId: string): WorkUnitAttempt | undefined;
   listWorkUnitAttempts(workUnitId: string): WorkUnitAttempt[];
+  getRunnerContinuation(id: string): RunnerContinuationV1 | undefined;
+  findRunnerContinuationByIdempotencyKey(idempotencyKey: string): RunnerContinuationV1 | undefined;
+  listClaimableRunnerContinuations(input: ListClaimableRunnerContinuationsInput): readonly RunnerContinuationV1[];
+  prepareContinuationAndAttempt(input: PrepareContinuationInput): PreparedContinuation;
+  commitExistingRunContinuation(
+    input: import("./harness/continuations.js").CommitExistingRunContinuationInput,
+  ): import("./harness/continuations.js").CommitExistingRunContinuationResult;
+  commitExistingRunContinuationPreparationFailure(
+    input: import("./harness/continuations.js").CommitExistingRunContinuationPreparationFailureInput,
+  ): import("./harness/continuations.js").CommitExistingRunContinuationPreparationFailureResult;
+  commitStaleRunRecoveryFailure(
+    input: import("./harness/continuations.js").CommitStaleRunRecoveryFailureInput,
+  ): import("./harness/continuations.js").CommitStaleRunRecoveryFailureResult;
+  reprepareContinuationAndAttempt(input: ReprepareContinuationInput): PreparedContinuation;
+  deferRunnerContinuation(input: DeferRunnerContinuationInput): RunnerContinuationMutationResult;
+  claimRunnerContinuation(input: ClaimRunnerContinuationInput): RunnerContinuationMutationResult;
+  startRunnerContinuation(input: StartRunnerContinuationInput): RunnerContinuationMutationResult;
+  finishRunnerContinuation(input: FinishRunnerContinuationInput): RunnerContinuationMutationResult;
+  getHarnessToolExecution(id: string): HarnessToolExecutionV1 | undefined;
+  findHarnessToolExecution(attemptId: string, toolCallId: string): HarnessToolExecutionV1 | undefined;
+  listHarnessToolExecutions(runId: string): readonly HarnessToolExecutionV1[];
+  prepareHarnessToolExecution(input: PrepareHarnessToolExecutionInput): PreparedHarnessToolExecution;
+  resolveHarnessToolApproval(input: ResolveHarnessToolApprovalInput): HarnessToolExecutionMutationResult;
+  claimHarnessToolExecution(input: ClaimHarnessToolExecutionInput): HarnessToolExecutionMutationResult;
+  startHarnessToolExecution(input: StartHarnessToolExecutionInput): HarnessToolExecutionMutationResult;
+  finishHarnessToolExecution(input: FinishHarnessToolExecutionInput): HarnessToolExecutionMutationResult;
+  failApprovedHarnessToolExecution(input: FailApprovedHarnessToolExecutionInput): HarnessToolExecutionMutationResult;
+  reconcileAbandonedHarnessToolExecutions(
+    input: ReconcileAbandonedHarnessToolExecutionsInput,
+  ): readonly HarnessToolExecutionV1[];
+  reconcileAbandonedHarnessToolExecutionsPage(
+    input: ReconcileAbandonedHarnessToolExecutionsPageInput,
+  ): HarnessToolExecutionRecoveryPage;
+  getRunEvaluation(id: string): RunEvaluationV1 | undefined;
+  getRunEvaluationGrade(id: string): RunEvaluationGradeV1 | undefined;
+  findRunEvaluationByIdempotencyKey(idempotencyKey: string): RunEvaluationV1 | undefined;
+  listRunEvaluations(input?: ListRunEvaluationsInput): readonly RunEvaluationV1[];
+  listClaimableRunEvaluations(input: ListClaimableRunEvaluationsInput): readonly RunEvaluationV1[];
+  listRunEvaluationGrades(evaluationId: string): readonly RunEvaluationGradeV1[];
+  enqueueRunEvaluation(input: EnqueueRunEvaluationInput): EnqueuedRunEvaluation;
+  claimRunEvaluation(input: ClaimRunEvaluationInput): RunEvaluationMutationResult;
+  startRunEvaluation(input: StartRunEvaluationInput): RunEvaluationMutationResult;
+  requeueRunEvaluation(input: RequeueRunEvaluationInput): RunEvaluationMutationResult;
+  failRunEvaluation(input: FailRunEvaluationInput): RunEvaluationMutationResult;
+  completeRunEvaluation(input: CompleteRunEvaluationInput): CompleteRunEvaluationResult;
+  appendRunEvaluationGrade(input: AppendRunEvaluationGradeInput): AppendRunEvaluationGradeResult;
   updateWorkUnitAttemptStatus(input: {
     readonly attemptId: string;
     readonly workUnitId: string;
@@ -1665,8 +2016,11 @@ export interface RunStore {
   appendRuntimeDiagnosticEvent(input: import("./runtime-supervisor-types.js").AppendRuntimeDiagnosticEventInput): RuntimeEvent;
   listRuntimeEvents(workUnitId: string, options?: ListRuntimeEventsOptions): RuntimeEvent[];
   recordRuntimeHeartbeat(input: RecordRuntimeHeartbeatInput): RuntimeHeartbeat;
+  getRuntimeConcurrencyPolicy(workspaceId: string): import("./runtime-concurrency-policy.js").RuntimeConcurrencyPolicy | undefined;
+  installRuntimeConcurrencyPolicy(input: import("./runtime-concurrency-policy.js").InstallRuntimeConcurrencyPolicyInput): import("./runtime-concurrency-policy.js").InstallRuntimeConcurrencyPolicyResult;
   acquireRuntimeSemaphoreSlot(input: AcquireRuntimeSemaphoreSlotInput): RuntimeSemaphoreSlot | undefined;
-  renewRuntimeSemaphoreSlotsForAttempt(fence: RuntimeAttemptFenceV1, renewedAt: string): number;
+  acquireRuntimeSemaphoreSlots(inputs: readonly AcquireRuntimeSemaphoreSlotInput[]): import("./runtime-supervisor-types.js").AcquireRuntimeSemaphoreSlotsResult;
+  renewRuntimeSemaphoreSlotsForAttempt(fence: RuntimeAttemptFenceV1, renewal: RuntimeResourceRenewal): number;
   releaseRuntimeSemaphoreSlotsForAttempt(fence: RuntimeAttemptFenceV1, releasedAt: string, releaseReason: string): number;
   expireRuntimeSemaphoreSlots(now: string): number;
   listRuntimeSemaphoreSlots(options?: ListRuntimeSemaphoreSlotsOptions): RuntimeSemaphoreSlot[];
@@ -1704,21 +2058,28 @@ export interface RunStore {
     readonly idempotencyKey?: string;
     readonly now: string;
     readonly startedAt?: string;
-    readonly endedAt?: string;
-    readonly summaryPath?: string;
+    readonly endedAt?: string | null;
+    readonly summaryPath?: string | null;
     readonly errorMessage?: string | null;
   }): TransitionResult<RunStatus>;
   acquireResourceLease(input: CreateResourceLeaseInput): ResourceLease | undefined;
-  renewResourceLeasesForAttempt(fence: RuntimeAttemptFenceV1, renewedAt: string): number;
+  renewResourceLeasesForAttempt(fence: RuntimeAttemptFenceV1, renewal: RuntimeResourceRenewal): number;
   releaseResourceLeasesForAttempt(fence: RuntimeAttemptFenceV1, releasedAt: string, releaseReason: string): number;
   releaseResourceLeasesForOwner(ownerType: ResourceLeaseOwnerLevelType, ownerId: string, releasedAt: string): number;
+  releaseResourceLease(id: string, ownerType: ResourceLeaseOwnerLevelType, ownerId: string, releasedAt: string): number;
   expireResourceLeases(now: string): number;
   listResourceLeases(options?: ListResourceLeasesOptions): ResourceLease[];
   getBlockingResourceLease(resourceType: ResourceLease["resourceType"], resourceKey: string): ResourceLease | undefined;
   getUserProfile(now: string): UserProfile;
   updateUserProfile(input: UpdateUserProfileInput, now: string): UserProfile;
   getWorkspaceSettings(): WorkspaceSettings;
+  listWorkspaceIds(): readonly string[];
   updateWorkspaceSettings(input: UpdateWorkspaceSettingsInput, now: string): WorkspaceSettings;
+  createChannelSession(input: CreateChannelSessionInput, now: string): { session: ChannelSessionSummary; idempotentReplay: boolean };
+  repairChannelSessionDirectory(channelId: string, branchId: string, now: string): ChannelSessionSummary;
+  getChannelSession(channelId: string, threadId: string): ChannelSessionSummary | undefined;
+  listChannelSessions(channelId: string, options?: ListChannelSessionsOptions): ChannelSessionPage;
+  updateChannelSession(channelId: string, threadId: string, input: UpdateChannelSessionRequest, now: string): ChannelSessionSummary;
   createChannel(input: CreateChannelInput, now: string): Channel;
   getChannel(id: string): Channel | undefined;
   listChannels(options?: ListChannelsOptions): Channel[];
@@ -1737,6 +2098,8 @@ export interface RunStore {
   createAiTeammate(input: CreateAiTeammateInput, now: string): AiTeammate;
   getAiTeammate(id: string): AiTeammate | undefined;
   listAiTeammates(options?: ListAiTeammatesOptions): AiTeammate[];
+  /** Read-only snapshot; safe within an existing admission transaction. */
+  readAiTeammates(options?: ListAiTeammatesOptions): AiTeammate[];
   updateAiTeammate(id: string, input: AiTeammateUpdateInput, now: string): AiTeammate | undefined;
   disableAiTeammate(id: string, now: string): AiTeammate | undefined;
   hardDeleteAiTeammate(id: string, input: HardDeleteAiTeammateInput, now: string): HardDeleteAiTeammateResult | undefined;
@@ -1791,6 +2154,8 @@ export interface RunStore {
   listMemoryPromotionInbox(options?: ListMemoryPromotionInboxOptions): MemoryPromotionInboxItem[];
   applyMemoryReviewAction(input: ApplyMemoryReviewActionInput, now: string): { readonly memory: MemoryObject; readonly action: MemoryReviewActionRecord };
   recallMemory(input: MemoryRecallRequest): MemoryRecallResult;
+  /** Recheck selected IDs with recall's current scope/health predicate; never re-rank or return bodies. */
+  getEligibleMemoryIdsForRecall(input: MemoryRecallRequest, memoryIds: readonly string[]): readonly string[];
   recordUsedMemoryEvent(input: CreateUsedMemoryEventInput, now: string): UsedMemoryEvent;
   listUsedMemoryEvents(options?: ListUsedMemoryEventsOptions): UsedMemoryEvent[];
   upsertGovernanceNotification(input: CreateGovernanceNotificationInput, now: string): UpsertGovernanceNotificationResult;
@@ -1808,6 +2173,16 @@ export interface RunStore {
   listTeammateDirectMessagesPage(options: ListTeammateDirectMessagesOptions): TeammateDirectMessageListPage;
   getTeammateDirectMessage(id: string): TeammateDirectMessage | undefined;
   createTeammateDirectMessage(input: CreateTeammateDirectMessageInput, now: string): TeammateDirectMessage;
+  getTeammateDirectMessageRuntimeObservation(
+    scope: import("./teammate-direct-message-runtime-types.js").TeammateDirectMessageRuntimeScope,
+  ): import("./teammate-direct-message-runtime-types.js").TeammateDirectMessageRuntimeObservation | undefined;
+  commitTeammateDirectMessageRuntime(
+    input: import("./teammate-direct-message-runtime-types.js").CommitTeammateDirectMessageRuntimeInput,
+    now: string,
+  ): import("./teammate-direct-message-runtime-types.js").CommitTeammateDirectMessageRuntimeResult;
+  acceptTeammateDirectMessage(input: CreateTeammateDirectMessageInput & { readonly idempotencyKey: string; readonly requestFingerprint: string },
+    now: string): { readonly message: TeammateDirectMessage; readonly created: boolean };
+  getTeammateDirectMessageByIdempotencyKey(teammateId: string, key: string): TeammateDirectMessage | undefined;
   updateTeammateDirectMessageRuntime(
     id: string,
     input: {
@@ -1832,7 +2207,50 @@ export interface RunStore {
   listTeammatePrivateAttachments(options: ListTeammatePrivateAttachmentsOptions): TeammatePrivateAttachment[];
   deleteTeammatePrivateAttachment(id: string): boolean;
   appendConversationItem(input: AppendConversationItem, now: string): ConversationItemV1;
+  publishNormalRunNarration(runId: string, now: string): import("./normal-run-narration-types.js").PublishNormalRunNarrationResult;
+  createNormalConversationFork(input: import("./normal-conversation-fork-types.js").CreateNormalConversationFork,
+    capture: import("./normal-conversation-fork-types.js").CaptureNormalConversationFork, now: string): import("./normal-conversation-fork-types.js").CreateNormalConversationForkResult;
+  getNormalConversationForkSeed(childThreadId: string): import("./normal-conversation-fork-types.js").NormalConversationForkSeed | undefined;
+  listUnpublishedNormalNarrationRunIds(afterRunId: string, limit: number): string[];
+  createUserInputRequest(input: import("./user-input-store-types.js").CreateUserInputRequest, now: string): import("./user-input-store-types.js").CreateUserInputRequestResult;
+  getUserInputRequest(threadId: string, requestId: string): import("./user-input-store-types.js").UserInputRequest | undefined;
+  readUserInputTranscript(input: import("./user-input-store-types.js").ReadUserInputTranscript): readonly import("@ling-stack/contracts").UserInputTranscriptItemV1[];
+  findRequiredUserInputForAttempt(input: import("./user-input-store-types.js").FindRequiredUserInputForAttempt): import("./user-input-store-types.js").UserInputRequest | undefined;
+  submitUserInputAnswer(input: import("./user-input-store-types.js").SubmitUserInputAnswer, now: string): import("./user-input-store-types.js").UserInputAnswerReceipt;
+  cancelUserInputRequest(input: import("./user-input-store-types.js").CancelUserInputRequest, now: string): import("./user-input-store-types.js").UserInputRequest;
+  listPendingUserInputDeliveries(options: import("./user-input-store-types.js").ListPendingUserInputDeliveries): readonly import("./user-input-store-types.js").PendingUserInputDelivery[];
+  commitUserInputYield(input: import("./user-input-wait-types.js").CommitUserInputYield, now: string): import("./user-input-wait-types.js").CommitUserInputYieldResult;
+  getUserInputWait(threadId: string, requestId: string): import("./user-input-wait-types.js").UserInputWait | undefined;
+  getUserInputDelivery(threadId: string, deliveryId: string): import("./user-input-delivery-types.js").UserInputDelivery | undefined;
+  getUserInputContinuationSeed(threadId: string, deliveryId: string): import("./user-input-continuation-types.js").UserInputContinuationSeed | undefined;
+  listDueUserInputDeliveries(input: import("./user-input-delivery-types.js").ListDueUserInputDeliveries, now: string): readonly import("./user-input-delivery-types.js").UserInputDelivery[];
+  listUserInputDispatchCandidates(input: import("./user-input-delivery-types.js").ListUserInputDispatchCandidates, now: string): readonly import("./user-input-delivery-types.js").UserInputDispatchCandidate[];
+  claimUserInputDelivery(input: import("./user-input-delivery-types.js").ClaimUserInputDelivery, now: string): import("./user-input-delivery-types.js").UserInputDelivery | null;
+  retryUserInputDelivery(input: import("./user-input-delivery-types.js").RetryUserInputDelivery, now: string): import("./user-input-delivery-types.js").UserInputDelivery;
+  saveUserInputContinuationPreparation(input: import("./user-input-host-continuation-types.js").SaveUserInputContinuationPreparation, now: string): { readonly snapshot: import("./user-input-host-continuation-types.js").UserInputContinuationPreparation; readonly idempotentReplay: boolean };
+  getUserInputContinuationPreparation(threadId: string, deliveryId: string, stage: import("./user-input-host-continuation-types.js").UserInputPreparationStage): import("./user-input-host-continuation-types.js").UserInputContinuationPreparation | undefined;
+  admitUserInputContinuation(input: import("./user-input-host-continuation-types.js").AdmitUserInputContinuation, now: string): import("./user-input-host-continuation-types.js").UserInputContinuationBinding;
+  getUserInputContinuationBinding(threadId: string, deliveryId: string): import("./user-input-host-continuation-types.js").UserInputContinuationBinding | undefined;
+  acknowledgeUserInputContinuation(input: import("./user-input-host-continuation-types.js").AcknowledgeUserInputContinuation, now: string): { readonly receipt: import("./user-input-host-continuation-types.js").UserInputContinuationReceipt; readonly replayed: boolean };
+  getUserInputContinuationReceipt(threadId: string, deliveryId: string): import("./user-input-host-continuation-types.js").UserInputContinuationReceipt | undefined;
+  failUserInputContinuationStartup(input: import("./user-input-host-continuation-types.js").FailUserInputContinuationStartup, now: string): boolean;
+  claimUserInputContinuationRecovery(input: import("./user-input-host-continuation-types.js").ClaimUserInputContinuationRecovery, now: string): import("./user-input-host-continuation-types.js").ClaimUserInputContinuationRecoveryResult;
+  renewUserInputContinuationLease(input: import("./user-input-host-continuation-types.js").RenewUserInputContinuationLease, now: string): import("./user-input-host-continuation-types.js").RenewUserInputContinuationLeaseResult;
+  deferUserInputContinuationRecovery(input: import("./user-input-host-continuation-types.js").DeferUserInputContinuationRecovery, now: string): boolean;
+  recoverUserInputContinuationPrestart(input: import("./user-input-host-continuation-types.js").RecoverUserInputContinuationPrestart): import("./user-input-host-continuation-types.js").RecoverUserInputContinuationPrestartResult;
+  publishUserInputContinuationRunCreated(input: import("./user-input-host-continuation-types.js").PublishUserInputContinuationRunCreated, now: string): import("./user-input-host-continuation-types.js").PublishUserInputContinuationRunCreatedResult;
+  cancelUserInputWait(input: import("./user-input-wait-types.js").CancelUserInputWait, now: string): import("./user-input-wait-types.js").CancelUserInputWaitResult;
   appendConversationUserTurn(input: AppendConversationUserTurnInput, now: string): AppendConversationUserTurnResult;
+  appendConversationUserTurnWithAcceptedSnapshot(
+    input: import("./conversation-accepted-input-types.js").AppendConversationAcceptedInput,
+    capture: import("./conversation-accepted-input-types.js").CaptureConversationAcceptedInput,
+    now: string,
+  ): import("./conversation-accepted-input-types.js").AppendConversationAcceptedInputResult;
+  getConversationAcceptedInputSnapshot(sourceItemId: string): import("./conversation-accepted-input-types.js").ConversationAcceptedInputSnapshot | undefined;
+  appendTeammateDirectUserTurnWithInputSnapshot(input: import("./teammate-direct-input-types.js").AppendTeammateDirectInput, now: string): import("./teammate-direct-input-types.js").AppendTeammateDirectInputResult;
+  getTeammateDirectInputSnapshot(sourceItemId: string, teammateId: string): import("./teammate-direct-input-types.js").TeammateDirectInputSnapshot | undefined;
+  saveConversationPreparedInput(input: import("./conversation-prepared-input-types.js").SaveConversationPreparedInput, now: string): import("./conversation-prepared-input-types.js").SaveConversationPreparedInputResult;
+  getConversationPreparedInput(sourceItemId: string, stage: import("./conversation-prepared-input-types.js").ConversationPreparedInputStage): import("./conversation-prepared-input-types.js").ConversationPreparedInputSnapshot | undefined;
   getConversationItem(id: string): ConversationItemV1 | undefined;
   getEffectiveConversationItem(id: string): ConversationItemV1 | undefined;
   getConversationItemByIdempotencyKey(threadId: string, idempotencyKey: string): ConversationItemV1 | undefined;
@@ -1896,10 +2314,21 @@ export interface RunStore {
   createChannelIntentDecision(input: CreateChannelIntentDecisionInput, now: string): ChannelIntentDecision;
   getChannelIntentDecision(id: string): ChannelIntentDecision | undefined;
   listChannelIntentDecisions(options?: ListChannelIntentDecisionsOptions): ChannelIntentDecision[];
+  getChannelPendingOperationResolution(pendingDecisionId: string): import("./channel-pending-operation.js").ChannelPendingOperationResolution | undefined;
+  getChannelPendingAuthorityVersions(input: import("./channel-pending-operation.js").GetChannelPendingAuthorityVersionsInput): import("./channel-pending-operation.js").ChannelPendingAuthorityVersions;
+  /** One synchronous Host transaction for resolution, proposal and decision; no OS effects. */
+  resolveChannelPendingOperation(input: import("./channel-pending-operation.js").ResolveChannelPendingOperationInput,
+    publish: () => ChannelIntentDecision, now: string): import("./channel-pending-operation.js").ChannelPendingOperationResolved;
   createChannelExecutionProposal(input: CreateChannelExecutionProposalInput, now: string): ChannelExecutionProposal;
   getChannelExecutionProposal(id: string): ChannelExecutionProposal | undefined;
   listChannelExecutionProposals(options: ListChannelExecutionProposalsOptions): ChannelExecutionProposal[];
   updateChannelExecutionProposal(id: string, input: UpdateChannelExecutionProposalInput, now: string): ChannelExecutionProposal | undefined;
+  claimChannelExecutionProposal(
+    id: string,
+    claimId: string,
+    now: string,
+    claimExpiresAt: string,
+  ): ChannelExecutionProposalClaimResult;
   createChannelAttachment(input: CreateChannelAttachmentInput): ChannelAttachment;
   getChannelAttachment(id: string): ChannelAttachment | undefined;
   listChannelAttachments(options: ListChannelAttachmentsOptions): ChannelAttachment[];
@@ -1919,9 +2348,18 @@ export interface RunStore {
   getChannelBrief(channelId: string): ChannelBrief | undefined;
   updateChannelBrief(channelId: string, input: UpdateChannelBriefInput, now: string): ChannelBrief;
   createChannelDecision(input: CreateChannelDecisionInput, now: string): ChannelDecision;
+  createOrReuseSupersedingChannelDecision(
+    input: CreateSupersedingChannelDecisionInput,
+    now: string,
+  ): CreateOrReuseSupersedingChannelDecisionResult;
   getChannelDecision(id: string): ChannelDecision | undefined;
   listChannelDecisions(options: ListChannelDecisionsOptions): ChannelDecision[];
   updateChannelDecision(id: string, input: UpdateChannelDecisionInput, now: string): ChannelDecision | undefined;
+  rejectActiveChannelDecision(
+    id: string,
+    input: RejectActiveChannelDecisionInput,
+    now: string,
+  ): ChannelDecision | undefined;
   createChannelHandoff(input: CreateChannelHandoffInput, now: string): ChannelHandoff;
   getChannelHandoff(id: string): ChannelHandoff | undefined;
   listChannelHandoffs(options: ListChannelHandoffsOptions): ChannelHandoff[];
@@ -1968,8 +2406,13 @@ export interface RunStore {
     input: UpdateChannelPlaybookCandidateInput,
     now: string,
   ): ChannelPlaybookCandidate | undefined;
+  createOrReuseChannelHandoffWorkflow(
+    input: CreateOrReuseChannelHandoffWorkflowInput,
+    now: string,
+  ): CreateOrReuseChannelHandoffWorkflowResult;
   createChannelWorkflow(input: CreateChannelWorkflowInput, now: string): ChannelWorkflow;
   getChannelWorkflow(id: string): ChannelWorkflow | undefined;
+  getChannelWorkflowForHandoff(channelId: string, sourceHandoffId: string): ChannelWorkflow | undefined;
   listChannelWorkflows(options: ListChannelWorkflowsOptions): ChannelWorkflow[];
   updateChannelWorkflow(id: string, input: UpdateChannelWorkflowInput, now: string): ChannelWorkflow | undefined;
   transitionChannelWorkflowStatus(input: {
@@ -1988,6 +2431,8 @@ export interface RunStore {
   }): TransitionResult<ChannelWorkflow["status"]>;
   commitChannelWorkflowStepFinalization(input: {
     readonly workflowStepId: string;
+    readonly expectedTaskId?: string;
+    readonly expectedStartOwner?: import("./workflow-step-start-owner.js").WorkflowStepStartOwnerV1;
     readonly expectedStatus: "running" | "waiting_for_approval";
     readonly expectedUpdatedAt: string;
     readonly expectedRun:
@@ -2014,12 +2459,24 @@ export interface RunStore {
     readonly idempotencyKey: string;
     readonly now: string;
   }): TransitionResult<ChannelWorkflowStep["status"]>;
+  requestChannelWorkflowStepPreApproval(input: import("./workflow-pre-gate.js").WorkflowStepPreApprovalInput): import("./workflow-pre-gate.js").WorkflowStepPreApprovalResult;
+  resolveChannelWorkflowStepPreApproval(input: import("./workflow-pre-gate.js").WorkflowStepPreApprovalResolveInput): import("./workflow-pre-gate.js").WorkflowStepPreApprovalResult;
+  beginChannelWorkflowStepStart(input: import("./workflow-step-start-owner.js").BeginChannelWorkflowStepStartInput): import("./workflow-step-start-owner.js").BeginChannelWorkflowStepStartResult;
+  getChannelWorkflowStepStartAdmission(...args: Parameters<import("./workflow-step-admission.js").WorkflowStepAdmissionStore["getChannelWorkflowStepStartAdmission"]>): import("./workflow-step-admission.js").WorkflowStepStartAdmission | undefined;
+  transferChannelWorkflowStepStartAdmission(input: import("./workflow-step-admission.js").TransferChannelWorkflowStepStartAdmissionInput): import("./workflow-step-admission.js").TransferChannelWorkflowStepStartAdmissionResult;
+  resumeChannelWorkflowStepStartAdmission(input: import("./workflow-step-admission.js").ResumeChannelWorkflowStepStartAdmissionInput): import("./workflow-step-admission.js").ResumeChannelWorkflowStepStartAdmissionResult;
+  releaseChannelWorkflowStepStartAdmission(input: import("./workflow-step-admission.js").ReleaseChannelWorkflowStepStartAdmissionInput): import("./workflow-step-admission.js").ReleaseChannelWorkflowStepStartAdmissionResult;
+  commitChannelWorkflowStepRunReady(input: import("./workflow-step-start-owner.js").WorkflowStepStartCommitInput): import("./workflow-step-start-owner.js").WorkflowStepStartCommitResult;
+  settleChannelWorkflowStepStartFailure(input: import("./workflow-step-start-owner.js").WorkflowStepStartFailureInput): import("./workflow-step-start-owner.js").WorkflowStepStartCommitResult;
+  commitChannelWorkflowStepPostApproval(input: import("./workflow-step-start-owner.js").WorkflowStepPostApprovalInput): import("./workflow-step-start-owner.js").WorkflowStepPostApprovalResult;
+  commitChannelWorkflowStepPostApprovalResolved(input: import("./workflow-step-start-owner.js").WorkflowStepPostApprovalResolvedInput): import("./workflow-step-start-owner.js").WorkflowStepStartCommitResult;
   createChannelWorkflowStep(input: CreateChannelWorkflowStepInput, now: string): ChannelWorkflowStep;
   getChannelWorkflowStep(id: string): ChannelWorkflowStep | undefined;
   listChannelWorkflowSteps(options: ListChannelWorkflowStepsOptions): ChannelWorkflowStep[];
   updateChannelWorkflowStep(id: string, input: UpdateChannelWorkflowStepInput, now: string): ChannelWorkflowStep | undefined;
   transitionChannelWorkflowStepStatus(input: {
     readonly workflowStepId: string;
+    readonly expectedStartOwner?: import("./workflow-step-start-owner.js").WorkflowStepStartOwnerV1;
     readonly expectedStatus?: ChannelWorkflowStep["status"];
     readonly event: WorkflowStepTransitionEvent;
     readonly actor: StateTransitionActor;
@@ -2036,6 +2493,10 @@ export interface RunStore {
   listProviderPresets(options?: ListProviderPresetsOptions): ProviderPreset[];
   updateProviderPreset(id: string, input: ProviderPresetUpdateInput, now: string): ProviderPreset | undefined;
   recordProviderCheckResult(id: string, result: ProviderCheckResult): ProviderPreset | undefined;
+  getProviderConfigurationSnapshot: ProviderCheckPublicationStore["getProviderConfigurationSnapshot"];
+  getProviderCheckAuthority: ProviderCheckPublicationStore["getProviderCheckAuthority"];
+  beginProviderCheckRequest: ProviderCheckPublicationStore["beginProviderCheckRequest"];
+  commitProviderCheckResult: ProviderCheckPublicationStore["commitProviderCheckResult"];
   deleteProviderPreset(id: string): boolean;
   setProviderSecret(providerId: string, secretValue: string, now: string): void;
   getProviderSecret(providerId: string): string | undefined;
@@ -2075,6 +2536,9 @@ export interface RunStore {
   deleteMediaJobExecutionHandle(mediaJobId: string): boolean;
   createMediaWorkflowConnection(input: CreateMediaWorkflowConnectionInput, now: string): MediaWorkflowConnection;
   getMediaWorkflowConnection(id: string): MediaWorkflowConnection | undefined;
+  getMediaWorkflowConnectionCheckState(id: string): MediaWorkflowConnectionCheckState | undefined;
+  beginMediaWorkflowConnectionCheck(id: string): MediaWorkflowConnectionCheckAdmission | undefined;
+  commitMediaWorkflowConnectionCheck(ticket: MediaWorkflowConnectionCheckTicket, health: MediaWorkflowConnectionHealth, now: string): MediaWorkflowConnectionCheckPublication;
   listMediaWorkflowConnections(): MediaWorkflowConnection[];
   updateMediaWorkflowConnection(id: string, input: UpdateMediaWorkflowConnectionInput, now: string): MediaWorkflowConnection | undefined;
   deleteMediaWorkflowConnection(id: string): boolean;
@@ -2088,12 +2552,22 @@ export interface RunStore {
   listMediaWorkflowVersions(workflowDefinitionId: string): MediaWorkflowVersion[];
   setMediaWorkflowVersionTestJob(id: string, mediaJobId: string): MediaWorkflowVersion | undefined;
   createApprovalRequest(input: CreateApprovalRequestInput, now: string): ApprovalRequest;
+  /** Runner-originated approval creation checks the captured identity in the actual SQLite write. */
+  createExecutionApprovalRequest(input: CreateApprovalRequestInput & { readonly runId: string }, sourceFence: RuntimeAttemptFenceV1, now: string): ApprovalRequest;
   getApprovalRequest(id: string): ApprovalRequest | undefined;
   listApprovalRequests(options?: ListApprovalRequestsOptions): ApprovalRequest[];
   approveApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined;
+  resolveApprovalBySystemReviewer(
+    input: import("./approval-types.js").ResolveApprovalBySystemReviewerInput,
+    now: string,
+  ): import("./approval-types.js").ResolveApprovalBySystemReviewerResult;
+  isRecoverableApprovalReviewOwner(approvalId: string, sourceFence: RuntimeAttemptFenceV1): boolean;
   denyApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined;
   expireApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined;
   cancelApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined;
+  listApprovalCommandRules(options?: { readonly includeRevoked?: boolean }): ApprovalCommandRule[];
+  findMatchingApprovalCommandRule(toolName: "bash", argv: readonly string[], cwd?: string): ApprovalCommandRule | undefined;
+  revokeApprovalCommandRule(id: string, now: string): ApprovalCommandRule | undefined;
   createApprovalCheckpoint(input: CreateApprovalCheckpointInput, now: string): LingApprovalCheckpoint;
   getApprovalCheckpoint(id: string): LingApprovalCheckpoint | undefined;
   getApprovalCheckpointForApproval(approvalId: string): LingApprovalCheckpoint | undefined;
@@ -2117,6 +2591,7 @@ export interface RunStore {
   listExternalWorkActions(options?: ListExternalWorkActionsOptions): ExternalWorkAction[];
   countExternalWorkActions(options?: Omit<ListExternalWorkActionsOptions, "limit">): number;
   updateExternalWorkAction(id: string, input: UpdateExternalWorkActionInput, now: string): ExternalWorkAction | undefined;
+  commitExternalWorkActionTransition(input: CommitExternalWorkActionTransitionInput, now: string, createEvidence?: (action: ExternalWorkAction) => readonly string[]): ExternalWorkAction | undefined;
   createExternalWorkCiTriage(input: CreateExternalWorkCiTriageInput, now: string): ExternalWorkCiTriageRecord;
   getExternalWorkCiTriage(id: string): ExternalWorkCiTriageRecord | undefined;
   getExternalWorkCiTriageByFailureKey(sourceKind: ExternalWorkCiTriageRecord["sourceKind"], failureKey: string): ExternalWorkCiTriageRecord | undefined;
@@ -2144,6 +2619,8 @@ export interface RunStore {
   createMcpServer(input: CreateMcpServerInput, now: string): McpServer;
   getMcpServer(id: string): McpServer | undefined;
   getMcpAuthorityRevision(serverId: string): McpAuthorityRevision | undefined;
+  beginMcpMetadataRequest(serverId: string, kind: McpMetadataRequestKind): McpMetadataRequestTicket | undefined;
+  commitMcpMetadataResult(input: CommitMcpMetadataResultInput): CommitMcpMetadataResult;
   listMcpServers(options?: ListMcpServersOptions): McpServer[];
   updateMcpServer(id: string, input: UpdateMcpServerInput, now: string): McpServer | undefined;
   updateMcpServerStatus(id: string, status: McpServerStatus, now: string): McpServer | undefined;
@@ -2188,7 +2665,7 @@ export interface RunStore {
   listAutomationDrafts(options?: ListAutomationDraftsOptions): AutomationDraft[];
   updateAutomationDraft(draftId: string, input: UpdateAutomationDraftInput, now: string): AutomationDraft | undefined;
   discardAutomationDraft(draftId: string, now: string): AutomationDraft | undefined;
-  confirmAutomationDraft(draftId: string, automationId: string, now: string): AutomationDraft | undefined;
+  confirmAutomationDraft(expectedDraft: AutomationDraft, now: string): AutomationDraftConfirmationResult;
   createAutomationRun(input: CreateAutomationRunInput, now: string): AutomationRun;
   getAutomationRun(automationRunId: string): AutomationRun | undefined;
   findAutomationRunByIdempotencyKey(idempotencyKey: string): AutomationRun | undefined;
@@ -2221,6 +2698,7 @@ export interface RunStore {
   getSkillSourceSnapshot(skillId: string, options?: Pick<ListSkillSourceSnapshotOptions, "reviewStatus" | "includeArchived">): SkillSourceSnapshot | undefined;
   getSkillSourceSnapshotById(id: string): SkillSourceSnapshot | undefined;
   upsertSkillSourceSnapshot(input: CreateSkillSourceSnapshotInput, now: string): SkillSourceSnapshot;
+  publishSkillSourceBatch(input: PublishSkillSourceBatchInput, now: string): PublishedSkillSourceBatch;
   archiveSkillSourceSnapshot(skillId: string, now: string): SkillSourceSnapshot | undefined;
   rollbackSkillSourceSnapshot(snapshotId: string, now: string): SkillSourceSnapshot | undefined;
   getOfficialSkillSourceSubscription(): OfficialSkillSourceSubscription | undefined;
@@ -2241,6 +2719,12 @@ export interface RunStore {
   getSkillImportDraft(id: string): SkillImportDraft | undefined;
   publishSkillImportDraft(id: string, now: string): SkillRegistryEntry[];
   publishSkillRevisionDraft(input: PublishSkillRevisionDraftInput, now: string): SkillRegistryEntry;
+  listSkillDefinitionRevisions(skillId: string, limit?: number): SkillDefinitionRevision[];
+  drainSkillDefinitionRevisionNotices(cwd: string, now: string, limit?: number): ControlPlaneEvent[];
+  getSkillDefinitionRevision(skillId: string, revisionId?: string): SkillDefinitionRevision | undefined;
+  undoSkillDefinitionRevision(skillId: string, input: SkillDefinitionUndoRequest, now: string): {
+    readonly skill: SkillRegistryEntry; readonly revision: SkillDefinitionRevision; readonly reused: boolean;
+  };
   archiveSkillRegistryEntry(id: string, now: string): SkillRegistryEntry | undefined;
   hardDeleteSkillRegistryEntry(id: string): SkillHardDeleteResult;
   createSkillCandidate(input: CreateSkillCandidateInput, now: string): SkillCandidate;
@@ -2253,6 +2737,8 @@ export interface RunStore {
   ): { readonly candidate: SkillCandidate; readonly action: SkillCandidateReviewRecord };
   markSkillCandidatePublished(candidateId: string, now: string): SkillCandidate;
   createProcedureObservation(input: CreateProcedureObservationInput, now: string): ProcedureObservation;
+  getProcedureObservationByJobKey(jobKey: string, workspaceId?: string): ProcedureObservation | undefined;
+  withProcedureObservationJobTransaction<T>(mutate: (events: Pick<RunStore, "appendControlPlaneEvent">) => T): T;
   listProcedureObservations(options?: ListProcedureObservationsOptions): ProcedureObservation[];
   listProcedureObservationClusters(options?: ListProcedureObservationClustersOptions): ProcedureObservationCluster[];
   getProcedureObservationCluster(id: string, workspaceId?: string): ProcedureObservationCluster | undefined;
@@ -2267,6 +2753,14 @@ export interface RunStore {
 export type RunStoreFacet<K extends keyof RunStore> = Pick<RunStore, K>;
 
 export type RunStorePathsFacet = RunStoreFacet<"paths">;
+
+/** Host-only provenance projection, separate from public historical incident DTOs. */
+export type AvailabilityIncidentStoreFacet = RunStoreFacet<
+  | "createAvailabilityIncident"
+  | "listAvailabilityIncidents"
+  | "createProviderRuntimeAvailabilityIncident"
+  | "listAvailabilityIncidentCandidates"
+>;
 
 export type RemoteAccessStoreFacet = RunStoreFacet<
   | "commitRemoteConversationSend"
@@ -2312,7 +2806,6 @@ export type TerminalReportStoreFacet = RunStoreFacet<
   | "commitTerminalReport"
   | "markTerminalReportPublished"
   | "commitTerminalReportPublication"
-  | "commitLegacyWorkflowPublication"
   | "failTerminalReport"
 >;
 
@@ -2325,6 +2818,8 @@ export type RunExecutionStoreFacet = RunStoreFacet<
   | "markRunFailed"
   | "markRunCancelled"
   | "appendEvent"
+  | "appendExecutionEvent"
+  | "isCurrentRunExecutionOwner"
   | "appendControlPlaneEvent"
   | "getControlPlaneEventByIdempotency"
   | "listControlPlaneEvents"
@@ -2350,6 +2845,11 @@ export type RunExecutionStoreFacet = RunStoreFacet<
 >;
 
 export type RuntimeSupervisorStoreFacet = RunStoreFacet<
+  | "getRuntimeConcurrencyPolicy"
+  | "hasRuntimeRunQueueCustody"
+  | "installRuntimeConcurrencyPolicy"
+  | "hasPendingRunTerminalIntent"
+  | "hasPendingRunSuspension"
   | "createWorkUnit"
   | "getWorkUnit"
   | "listWorkUnits"
@@ -2367,6 +2867,7 @@ export type RuntimeSupervisorStoreFacet = RunStoreFacet<
   | "listRuntimeEvents"
   | "recordRuntimeHeartbeat"
   | "acquireRuntimeSemaphoreSlot"
+  | "acquireRuntimeSemaphoreSlots"
   | "renewRuntimeSemaphoreSlotsForAttempt"
   | "releaseRuntimeSemaphoreSlotsForAttempt"
   | "expireRuntimeSemaphoreSlots"
@@ -2382,9 +2883,12 @@ export type RuntimeSupervisorStoreFacet = RunStoreFacet<
   | "renewResourceLeasesForAttempt"
   | "releaseResourceLeasesForAttempt"
   | "releaseResourceLeasesForOwner"
+  | "releaseResourceLease"
   | "expireResourceLeases"
   | "listResourceLeases"
   | "getBlockingResourceLease"
+  | "getUserInputContinuationBinding"
+  | "failUserInputContinuationStartup"
 >;
 
 export type WorkspaceStoreFacet = RunStoreFacet<
@@ -2413,6 +2917,7 @@ export type TeammateStoreFacet = RunStoreFacet<
   | "createAiTeammate"
   | "getAiTeammate"
   | "listAiTeammates"
+  | "readAiTeammates"
   | "updateAiTeammate"
   | "disableAiTeammate"
   | "hardDeleteAiTeammate"
@@ -2429,6 +2934,10 @@ export type TeammateStoreFacet = RunStoreFacet<
   | "listTeammateDirectMessagesPage"
   | "getTeammateDirectMessage"
   | "createTeammateDirectMessage"
+  | "getTeammateDirectMessageRuntimeObservation"
+  | "commitTeammateDirectMessageRuntime"
+  | "acceptTeammateDirectMessage"
+  | "getTeammateDirectMessageByIdempotencyKey"
   | "updateTeammateDirectMessageRuntime"
   | "createTeammateDirectLinkPreview"
   | "getTeammateDirectLinkPreview"
@@ -2521,6 +3030,7 @@ export type ChannelStoreFacet = RunStoreFacet<
   | "getChannelExecutionProposal"
   | "listChannelExecutionProposals"
   | "updateChannelExecutionProposal"
+  | "claimChannelExecutionProposal"
   | "createChannelAttachment"
   | "getChannelAttachment"
   | "listChannelAttachments"
@@ -2535,6 +3045,7 @@ export type ChannelStoreFacet = RunStoreFacet<
   | "getChannelBrief"
   | "updateChannelBrief"
   | "createChannelDecision"
+  | "createOrReuseSupersedingChannelDecision"
   | "getChannelDecision"
   | "listChannelDecisions"
   | "updateChannelDecision"
@@ -2561,8 +3072,10 @@ export type ChannelStoreFacet = RunStoreFacet<
   | "getChannelCollaborationProtocolDraft"
   | "listChannelCollaborationProtocolDrafts"
   | "updateChannelCollaborationProtocolDraft"
+  | "createOrReuseChannelHandoffWorkflow"
   | "createChannelWorkflow"
   | "getChannelWorkflow"
+  | "getChannelWorkflowForHandoff"
   | "listChannelWorkflows"
   | "updateChannelWorkflow"
   | "transitionChannelWorkflowStatus"
@@ -2576,6 +3089,7 @@ export type ChannelStoreFacet = RunStoreFacet<
 export type ProviderStoreFacet = RunStoreFacet<
   | "createProviderPreset"
   | "getProviderPreset"
+  | "getProviderConfigurationSnapshot"
   | "listProviderPresets"
   | "updateProviderPreset"
   | "recordProviderCheckResult"
@@ -2619,12 +3133,18 @@ export type MediaStoreFacet = RunStoreFacet<
 
 export type ApprovalStoreFacet = RunStoreFacet<
   | "createApprovalRequest"
+  | "createExecutionApprovalRequest"
   | "getApprovalRequest"
   | "listApprovalRequests"
   | "approveApprovalRequest"
+  | "resolveApprovalBySystemReviewer"
+  | "isRecoverableApprovalReviewOwner"
   | "denyApprovalRequest"
   | "expireApprovalRequest"
   | "cancelApprovalRequest"
+  | "listApprovalCommandRules"
+  | "findMatchingApprovalCommandRule"
+  | "revokeApprovalCommandRule"
   | "getApprovalPolicy"
   | "updateApprovalPolicy"
 >;
@@ -2643,6 +3163,7 @@ export type ExternalWorkStoreFacet = RunStoreFacet<
   | "listExternalWorkActions"
   | "countExternalWorkActions"
   | "updateExternalWorkAction"
+  | "commitExternalWorkActionTransition"
   | "createExternalWorkCiTriage"
   | "getExternalWorkCiTriage"
   | "getExternalWorkCiTriageByFailureKey"
@@ -2667,6 +3188,8 @@ export type WorkItemStoreFacet = RunStoreFacet<
   | "completeWorkItem"
   | "failWorkItem"
 >;
+
+export type McpMetadataStoreFacet = RunStoreFacet<"beginMcpMetadataRequest" | "commitMcpMetadataResult">;
 
 export type McpStoreFacet = RunStoreFacet<
   | "createMcpServer"
@@ -2752,6 +3275,7 @@ export type SkillRegistryStoreFacet = RunStoreFacet<
   | "getSkillSourceSnapshot"
   | "getSkillSourceSnapshotById"
   | "upsertSkillSourceSnapshot"
+  | "publishSkillSourceBatch"
   | "archiveSkillSourceSnapshot"
   | "rollbackSkillSourceSnapshot"
   | "getOfficialSkillSourceSubscription"
@@ -2772,6 +3296,10 @@ export type SkillRegistryStoreFacet = RunStoreFacet<
   | "getSkillImportDraft"
   | "publishSkillImportDraft"
   | "publishSkillRevisionDraft"
+  | "listSkillDefinitionRevisions"
+  | "drainSkillDefinitionRevisionNotices"
+  | "getSkillDefinitionRevision"
+  | "undoSkillDefinitionRevision"
   | "archiveSkillRegistryEntry"
   | "hardDeleteSkillRegistryEntry"
 >;
@@ -2787,6 +3315,8 @@ export type SkillCandidateStoreFacet = RunStoreFacet<
 
 export type ProcedureObservationStoreFacet = RunStoreFacet<
   | "createProcedureObservation"
+  | "getProcedureObservationByJobKey"
+  | "withProcedureObservationJobTransaction"
   | "listProcedureObservations"
   | "createCandidateGenerationDecision"
   | "listCandidateGenerationDecisions"

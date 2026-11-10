@@ -79,7 +79,8 @@ export async function installRunsThreadsFixture(page: Page, state: MockState): P
 }
 
 export async function openMainRunHistory(page: Page, taskTitle?: string): Promise<void> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: /Settings|设置/ }).click();
+  const sidebar = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/ });
+  await sidebar.getByRole("button", { name: /Settings|设置/ }).click();
   await openPendingStartupDiagnostics(page);
   await page.getByRole("button", { name: /Open Run Diagnostics|打开运行诊断/ }).click();
   const diagnostics = page.locator(".settings-run-diagnostics-panel");
@@ -91,7 +92,8 @@ export async function openMainRunHistory(page: Page, taskTitle?: string): Promis
 }
 
 export async function openThreadsPage(page: Page): Promise<void> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: /Automations|自动化/ }).click();
+  const sidebar = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/ });
+  await sidebar.getByRole("button", { name: /Automations|自动化/ }).click();
   await page.locator('[data-automation-id="automation_ui2_threads_entry"]')
     .getByRole("button", { name: /Thread|会话/, exact: true })
     .click();

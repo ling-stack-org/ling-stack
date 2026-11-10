@@ -3,7 +3,7 @@ import { createMediaJob, listMediaJobArtifacts, listMediaJobs, runMediaJob } fro
 import type { DomainController, DomainError } from "../../app/domain-controller.js";
 import { canUseGenerationProviderForOperation } from "../../lib/providers.js";
 import { useLatestKeyedRequestGuard, useLatestRequestGuard } from "../../lib/use-latest-request.js";
-import type { ApprovalRequest, MediaJob, MediaJobFormState, ProviderPreset } from "../../types.js";
+import type { ApprovalRequest, MediaJob, MediaJobFormState, ProviderPreset, RunArtifact } from "../../types.js";
 import {
   artifactStateError,
   artifactStateReady,
@@ -13,9 +13,7 @@ import {
   reconcileMediaJobArtifactStates,
 } from "./media-domain-artifacts.js";
 import {
-  attachMediaJobsDomainBridge,
   type MediaJobArtifactState,
-  type MediaJobArtifactsCompatMap,
   type MediaJobsDomainActions,
   type MediaJobsDomainState,
   type MediaJobsRefreshReason,
@@ -36,21 +34,13 @@ export const defaultMediaJobForm: MediaJobFormState = {
   watermark: "",
   imageUrl: "",
   maskUrl: "",
-  inputText: "",
 };
 
 export interface MediaState extends MediaJobsDomainState {
-  readonly mediaJobArtifacts: MediaJobArtifactsCompatMap;
-  readonly mediaJobsLoading: boolean;
-  readonly runningMediaJobId: string;
-  readonly mediaJobForm: MediaJobFormState;
+  readonly mediaJobArtifacts: Readonly<Record<string, readonly RunArtifact[]>>;
 }
 
-export interface MediaActions extends MediaJobsDomainActions {
-  readonly saveMediaJob: () => Promise<MediaMutationResult>;
-}
-
-export type MediaController = DomainController<MediaState, MediaActions>;
+export type MediaController = DomainController<MediaState, MediaJobsDomainActions>;
 
 export function useMediaDomain(input: {
   readonly cwd: string;
@@ -340,8 +330,8 @@ export function useMediaDomain(input: {
     resetForCwd,
   };
   const mediaJobArtifacts = useMemo(
-    () => attachMediaJobsDomainBridge(artifactsByJob, { state: domainState, actions: domainActions }),
-    [artifactsByJob, createPhase, errors, loadPhase, mediaJobForm, mediaJobs, runningJobIds, selectedMediaJobId],
+    () => Object.fromEntries(Object.entries(artifactsByJob).map(([jobId, state]) => [jobId, state.artifacts])),
+    [artifactsByJob],
   );
   const latestError = errors.at(-1);
   const domainError: DomainError | undefined = latestError ? {
@@ -353,11 +343,8 @@ export function useMediaDomain(input: {
     state: {
       ...domainState,
       mediaJobArtifacts,
-      mediaJobsLoading: loadPhase !== "idle",
-      runningMediaJobId: runningJobIds.values().next().value ?? "",
-      mediaJobForm,
     },
-    actions: { ...domainActions, saveMediaJob: createMediaJobFromForm },
+    actions: domainActions,
     refresh: () => refreshMediaJobs(),
     isLoading: loadPhase !== "idle",
     error: domainError,

@@ -14,6 +14,7 @@ export interface NormalConversationHeaderProps {
   readonly terminalActive: boolean;
   readonly terminalDisabled: boolean;
   readonly detailsActive: boolean;
+  readonly detailsDisabled?: boolean;
   readonly summaryNode?: ReactNode;
   readonly onClearSearch: () => void;
   readonly onCloseSearch: () => void;
@@ -35,6 +36,7 @@ export function NormalConversationHeader({
   terminalActive,
   terminalDisabled,
   detailsActive,
+  detailsDisabled,
   summaryNode,
   onClearSearch,
   onCloseSearch,
@@ -81,6 +83,7 @@ export function NormalConversationHeader({
         terminalDisabled={terminalDisabled}
         terminalLabel={t("Terminal")}
         detailsActive={detailsActive}
+        detailsDisabled={detailsDisabled}
         detailsLabel={detailsActive ? t("Hide details") : t("Show details")}
         onToggleSearch={onToggleSearch}
         onToggleSummary={onToggleSummary}

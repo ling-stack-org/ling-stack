@@ -172,6 +172,7 @@ function runStatusToAuthorityStatus(status: RunSession["status"]): AuthorityLedg
       return "revoked";
     case "running":
     case "waiting_for_approval":
+    case "yielded":
     case "succeeded":
     case "failed":
       return "granted";

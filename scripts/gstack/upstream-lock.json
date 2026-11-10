@@ -1,0 +1,20 @@
+{
+  "repository": "https://github.com/garrytan/gstack",
+  "revision": "47d639abffa882b8cbb641d7d1dedf08ecada9ec",
+  "version": "1.91.101.0",
+  "packageVersion": "1.91.101",
+  "minimumBunVersion": "1.4.2",
+  "skillIds": [
+    "autoplan", "benchmark", "benchmark-models", "browse", "canary", "careful",
+    "claude-code", "codex", "context-restore", "context-save", "cso",
+    "design-consultation", "design-html", "design-review", "design-shotgun",
+    "deslop-shared-libs", "devex-review", "diagram", "document-generate",
+    "document-release", "eval-plan", "freeze", "gstack-upgrade", "guard", "health",
+    "investigate", "ios-clean", "ios-design-review", "ios-fix", "ios-qa", "ios-sync",
+    "land-and-deploy", "landing-report", "learn", "make-pdf", "office-hours",
+    "open-gstack-browser", "pair-agent", "plan-ceo-review", "plan-design-review",
+    "plan-devex-review", "plan-eng-review", "plan-tune", "qa", "qa-only", "retro",
+    "review", "scrape", "setup-browser-cookies", "setup-deploy", "setup-gbrain",
+    "ship", "skillify", "spec", "sync-gbrain", "test-audit", "unfreeze"
+  ]
+}

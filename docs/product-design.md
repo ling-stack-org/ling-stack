@@ -129,6 +129,23 @@ v0.1 should prove local usefulness:
 
 The provider configuration step should be demoable through Model Workbench, not only through daemon API examples. A custom domestic or OpenAI-compatible endpoint should be able to move from setup hint to provider check to task run and back to repair/rerun if the provider fails.
 
+## Themeable UI
+
+Theme adaptation is part of every new module and shared component, not a separate
+wallpaper task. Shared components own structure, interaction and default appearance;
+official themes override approved appearance parameters; feature pages own layout.
+Components must expose reusable semantic appearance parameters with safe defaults,
+so existing and future themes can style them without page-specific overrides.
+
+Themes may change colors, borders, corner radii, local shadows and approved materials.
+Control heights, hit areas, typography, layout, icons, Logo and business behavior stay
+stable. Background policy and reading protection are shared across modules.
+
+New UI designs must declare component reuse, token ownership, surface/background policy
+and theme/state acceptance. Start with the [Design System](design/ling-design-system.md)
+and [Shared Component Theme Contract](design/component-theme-presentation.md), which
+owns the authoring rules for new themes, components and modules.
+
 ## Non-Goals For v0.1
 
 - Full Slack/Feishu/DingTalk/WeCom integration.

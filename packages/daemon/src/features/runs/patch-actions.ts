@@ -1,5 +1,20 @@
-import { createHash } from "node:crypto";
-import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  closeSync,
+  existsSync,
+  fchmodSync,
+  fsyncSync,
+  linkSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, isAbsolute, relative, resolve as resolvePath } from "node:path";
 import {
   APPLY_PATCH_FORMAT,
@@ -18,6 +33,8 @@ import {
 } from "@ling-stack/core";
 import type { PiRunnerApprovalRequest, PiRunnerToolHandledResult } from "@ling-stack/runner-pi";
 import { isRecord } from "../../shared/validation.js";
+import { captureWorkspaceReviewSnapshot, type WorkspaceReviewSnapshot } from "./workspace-review-snapshot.js";
+import type { HostFileMutationEffectGuard } from "../../runtime/host-operation-effects.js";
 
 export interface PatchApprovalMetadata {
   readonly patchText: string;
@@ -34,11 +51,14 @@ export interface PatchActionDraft {
 export interface PatchActionApplyOutput {
   readonly handledResult: PiRunnerToolHandledResult;
   readonly resultArtifactContent: string;
+  readonly evidenceArtifactIds: readonly string[];
+  readonly outcome: "applied" | "not_applied" | "rolled_back" | "diverged";
 }
 
 export interface PatchProvenanceInput {
   readonly store: RunStore;
   readonly run: RunSession;
+  readonly executionId?: string;
   readonly toolCallId?: string;
   readonly approvalId?: string;
 }
@@ -49,7 +69,7 @@ export function createPatchApprovalMetadata(request: PiRunnerApprovalRequest): P
     return undefined;
   }
   const parsed = parseApplyPatch(patchText);
-  assertNoInternalPatchPaths(parsed.operations.map((operation) => operation.path));
+  assertNoInternalPatchPaths(parsed.operations.map((operation) => operation.path), request.cwd);
   return {
     patchText,
     payload: createPatchApprovalPayload({
@@ -69,7 +89,7 @@ export function createPatchActionDraft(input: {
 }): PatchActionDraft {
   const parsed = parseApplyPatch(input.patchText);
   const touchedPaths = parsed.operations.map((operation) => operation.path);
-  assertNoInternalPatchPaths(touchedPaths);
+  assertNoInternalPatchPaths(touchedPaths, input.request.cwd);
   assertPatchPathsWithinAllowedWritePaths(touchedPaths, input.request.cwd, input.allowedWritePaths);
   assertNoSymlinkEscapes(touchedPaths, input.request.cwd, input.allowedWritePaths);
   const plan = planApplyPatch({
@@ -102,22 +122,60 @@ export async function applyPatchActionDraft(input: {
   readonly allowedWritePaths: readonly string[];
   readonly previewArtifactIds?: readonly string[];
   readonly provenance?: PatchProvenanceInput;
+  readonly signal?: AbortSignal;
+  readonly requireExistingParentsForAdds?: boolean;
+  readonly effectGuard?: HostFileMutationEffectGuard;
 }): Promise<PatchActionApplyOutput> {
   const before = new Map(input.draft.plan.touchedPaths.map((path) => [path, readWorkspaceTextFile(input.cwd, path)] as const));
   const provenanceArtifacts = input.provenance
-    ? createPatchProvenanceArtifacts(input.provenance.store, input.provenance.run, input.draft.plan, new Date().toISOString())
+    ? createPatchProvenanceArtifacts(input.provenance, input.draft.plan, new Date().toISOString(), await captureWorkspaceReviewSnapshot(input.draft.plan, before))
     : undefined;
-  let patchApplied = false;
+  const evidenceArtifactIds = [
+    ...input.previewArtifactIds ?? [],
+    ...(provenanceArtifacts
+      ? [provenanceArtifacts.forwardPatchArtifactId, provenanceArtifacts.inversePatchArtifactId]
+      : []),
+  ];
+  const appliedPaths: string[] = [];
   try {
+    throwIfAborted(input.signal);
+    assertNoInternalPatchPaths(input.draft.plan.touchedPaths, input.cwd);
     assertPatchPathsWithinAllowedWritePaths(input.draft.plan.touchedPaths, input.cwd, input.allowedWritePaths);
     assertNoSymlinkEscapes(input.draft.plan.touchedPaths, input.cwd, input.allowedWritePaths);
+    const operations = new Map(input.draft.plan.operations.map((operation) => [operation.path, operation] as const));
     const result = await applyPatchPlan({
       plan: input.draft.plan,
       readFile: (path) => readWorkspaceTextFile(input.cwd, path),
-      writeFile: (path, content) => atomicWriteWorkspaceTextFile(input.cwd, path, content),
-      deleteFile: (path) => deleteWorkspaceFile(input.cwd, path),
+      writeFile: (path, content) => {
+        throwIfAborted(input.signal);
+        assertMutationPathCurrent(path, input.cwd, input.allowedWritePaths);
+        const effect = (): void => {
+          const operation = operations.get(path);
+          if (operation?.kind === "add") {
+            atomicCreateWorkspaceTextFile(input.cwd, path, content, input.requireExistingParentsForAdds === true);
+          } else {
+            atomicWriteWorkspaceTextFile(input.cwd, path, content);
+          }
+          // Retain the physical write even if the journal COMMIT then throws.
+          appliedPaths.push(path);
+        };
+        if (input.effectGuard) input.effectGuard.launch(effect);
+        else effect();
+        throwIfAborted(input.signal);
+      },
+      deleteFile: (path) => {
+        throwIfAborted(input.signal);
+        assertMutationPathCurrent(path, input.cwd, input.allowedWritePaths);
+        const effect = (): void => {
+          deleteWorkspaceFile(input.cwd, path);
+          appliedPaths.push(path);
+        };
+        if (input.effectGuard) input.effectGuard.launch(effect);
+        else effect();
+        throwIfAborted(input.signal);
+      },
     });
-    patchApplied = true;
+    throwIfAborted(input.signal);
     if (input.provenance && provenanceArtifacts) {
       const after = new Map(input.draft.plan.touchedPaths.map((path) => [path, readWorkspaceTextFile(input.cwd, path)] as const));
       recordPatchProvenance({
@@ -156,67 +214,86 @@ export async function applyPatchActionDraft(input: {
         },
       },
       resultArtifactContent,
+      evidenceArtifactIds,
+      outcome: "applied",
     };
   } catch (error) {
-    if (patchApplied && input.provenance) {
+    let rollbackError: unknown;
+    if (appliedPaths.length > 0) {
       try {
-        await applyPatchPlan({
-          plan: invertPatchPlan(input.draft.plan),
-          readFile: (path) => readWorkspaceTextFile(input.cwd, path),
-          writeFile: (path, content) => atomicWriteWorkspaceTextFile(input.cwd, path, content),
-          deleteFile: (path) => deleteWorkspaceFile(input.cwd, path),
+        rollbackAppliedPaths({
+          cwd: input.cwd,
+          allowedWritePaths: input.allowedWritePaths,
+          plan: input.draft.plan,
+          before,
+          appliedPaths,
+          effectGuard: input.effectGuard,
         });
-      } catch (rollbackError) {
-        const original = error instanceof Error ? error.message : String(error);
-        const rollback = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
-        error = new ApplyPatchError(`Patch applied without durable provenance and rollback failed: ${original}; ${rollback}`);
+      } catch (caught) {
+        rollbackError = caught;
       }
     }
-    const message = error instanceof Error ? error.message : String(error);
+    const originalMessage = error instanceof Error ? error.message : String(error);
+    const code = rollbackError ? "tool.unknown_side_effect_outcome" : fileMutationFailureCode(error);
+    const message = rollbackError
+      ? `Patch outcome diverged after a failed rollback: ${originalMessage}; rollback: ${rollbackError instanceof Error ? rollbackError.message : String(rollbackError)}`
+      : code ? `${code}: ${originalMessage}` : originalMessage;
+    const outcome = rollbackError ? "diverged" : appliedPaths.length > 0 ? "rolled_back" : "not_applied";
+    const cancelled = input.signal?.aborted === true || isAbortError(error);
+    const status = rollbackError ? "unknown_outcome" : cancelled ? "cancelled" : error instanceof ApplyPatchError ? "conflict" : "failed";
     const resultArtifactContent = `${JSON.stringify({
-      status: error instanceof ApplyPatchError ? "conflict" : "failed",
+      status,
+      outcome,
       format: APPLY_PATCH_FORMAT,
       touchedPaths: input.draft.plan.touchedPaths,
       summary: input.draft.plan.summary,
       rawPatchSha256: input.draft.plan.rawPatchSha256,
       previewArtifactIds: input.previewArtifactIds ?? [],
       error: message,
+      cancelled,
+      ...(code ? { code } : {}),
     }, null, 2)}\n`;
     return {
       handledResult: {
         content: [{ type: "text", text: message }],
         details: {
-          status: error instanceof ApplyPatchError ? "conflict" : "failed",
+          status,
+          outcome,
           format: APPLY_PATCH_FORMAT,
           touchedPaths: input.draft.plan.touchedPaths,
           summary: input.draft.plan.summary,
           error: message,
+          cancelled,
+          ...(code ? { code } : {}),
         },
         isError: true,
       },
       resultArtifactContent,
+      evidenceArtifactIds,
+      outcome,
     };
   }
 }
 
 function createPatchProvenanceArtifacts(
-  store: RunStore,
-  run: RunSession,
+  input: PatchProvenanceInput,
   plan: PatchPlan,
   now: string,
+  workspaceReviewSnapshot: WorkspaceReviewSnapshot,
 ): { readonly forwardPatchArtifactId: string; readonly inversePatchArtifactId: string } {
-  const basePath = `.ling-stack/provenance/${run.id}/${plan.rawPatchSha256}`;
-  const forward = store.createArtifact({
-    runId: run.id,
+  const identity = input.executionId ?? plan.rawPatchSha256;
+  const basePath = `.ling-stack/provenance/${input.run.id}/${identity}`;
+  const forward = input.store.createArtifact({
+    runId: input.run.id,
     type: "json",
     path: `${basePath}/forward-plan.json`,
     title: "Workspace forward patch plan",
     contentType: "application/json",
-    sealedPayload: plan,
+    sealedPayload: { ...plan, workspaceReviewSnapshot },
     createdAt: now,
   });
-  const inverse = store.createArtifact({
-    runId: run.id,
+  const inverse = input.store.createArtifact({
+    runId: input.run.id,
     type: "json",
     path: `${basePath}/inverse-plan.json`,
     title: "Workspace inverse patch plan",
@@ -368,9 +445,15 @@ function summarizeParsedOperations(operations: readonly PatchOperation[]): Patch
   };
 }
 
-export function assertNoInternalPatchPaths(paths: readonly string[]): void {
+export function assertNoInternalPatchPaths(paths: readonly string[], cwd?: string): void {
   for (const path of paths) {
-    if (path === ".ling-stack" || path.startsWith(".ling-stack/")) {
+    const normalized = path.replaceAll("\\", "/");
+    const relativeInternal = normalized === ".ling-stack" || normalized.startsWith(".ling-stack/");
+    const absoluteInternal = cwd ? isPathInside(resolvePath(cwd, path), resolvePath(cwd, ".ling-stack")) : false;
+    const resolvedInternal = cwd
+      ? isPathInside(resolveThroughExistingAncestor(resolvePath(cwd, path)), resolveThroughExistingAncestor(resolvePath(cwd, ".ling-stack")))
+      : false;
+    if (relativeInternal || absoluteInternal || resolvedInternal) {
       throw new ApplyPatchError("Patches may not modify .ling-stack internal state.", { path });
     }
   }
@@ -434,10 +517,56 @@ export function readWorkspaceTextFile(cwd: string, path: string): string | undef
 export function atomicWriteWorkspaceTextFile(cwd: string, path: string, content: string): void {
   const absolutePath = resolvePath(cwd, path);
   const dir = dirname(absolutePath);
-  mkdirSync(dir, { recursive: true });
-  const tempPath = resolvePath(dir, `.ling-stack-patch-${process.pid}-${Date.now()}.tmp`);
-  writeFileSync(tempPath, content, "utf8");
-  renameSync(tempPath, absolutePath);
+  const target = lstatSync(absolutePath);
+  if (!target.isFile() || target.isSymbolicLink()) {
+    throw new ApplyPatchError(`Patch target is not a regular file: ${path}`, { path });
+  }
+  const targetMode = target.mode & 0o777;
+  const tempPath = resolvePath(dir, `.ling-stack-patch-${process.pid}-${randomUUID()}.tmp`);
+  let descriptor: number | undefined;
+  try {
+    descriptor = openSync(tempPath, "wx", 0o600);
+    writeFileSync(descriptor, content, "utf8");
+    fchmodSync(descriptor, targetMode);
+    fsyncSync(descriptor);
+    closeSync(descriptor);
+    descriptor = undefined;
+    renameSync(tempPath, absolutePath);
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+    if (existsSync(tempPath)) rmSync(tempPath, { force: true });
+  }
+}
+
+export function atomicCreateWorkspaceTextFile(
+  cwd: string,
+  path: string,
+  content: string,
+  requireExistingParent: boolean,
+): void {
+  const absolutePath = resolvePath(cwd, path);
+  const dir = dirname(absolutePath);
+  if (requireExistingParent) {
+    const parent = lstatSync(dir);
+    if (!parent.isDirectory() || parent.isSymbolicLink()) {
+      throw new ApplyPatchError(`Patch add requires an existing regular parent directory: ${path}`, { path });
+    }
+  } else {
+    mkdirSync(dir, { recursive: true });
+  }
+  const tempPath = resolvePath(dir, `.ling-stack-create-${process.pid}-${randomUUID()}.tmp`);
+  let descriptor: number | undefined;
+  try {
+    descriptor = openSync(tempPath, "wx", 0o666);
+    writeFileSync(descriptor, content, "utf8");
+    fsyncSync(descriptor);
+    closeSync(descriptor);
+    descriptor = undefined;
+    linkSync(tempPath, absolutePath);
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+    if (existsSync(tempPath)) unlinkSync(tempPath);
+  }
 }
 
 export function deleteWorkspaceFile(cwd: string, path: string): void {
@@ -462,6 +591,72 @@ function isAbsolutePathWithinAllowedWritePaths(absolutePath: string, cwd: string
     const realRelativePath = relative(realScopePath, realAbsolutePath);
     return realRelativePath === "" || (!realRelativePath.startsWith("..") && !isAbsolute(realRelativePath));
   });
+}
+
+function assertMutationPathCurrent(path: string, cwd: string, allowedWritePaths: readonly string[]): void {
+  assertNoInternalPatchPaths([path], cwd);
+  assertPatchPathsWithinAllowedWritePaths([path], cwd, allowedWritePaths);
+  assertNoSymlinkEscapes([path], cwd, allowedWritePaths);
+}
+
+function rollbackAppliedPaths(input: {
+  readonly cwd: string;
+  readonly allowedWritePaths: readonly string[];
+  readonly plan: PatchPlan;
+  readonly before: ReadonlyMap<string, string | undefined>;
+  readonly appliedPaths: readonly string[];
+  readonly effectGuard?: HostFileMutationEffectGuard;
+}): void {
+  const operations = new Map(input.plan.operations.map((operation) => [operation.path, operation] as const));
+  const paths = [...new Set(input.appliedPaths)].reverse();
+  for (const path of paths) {
+    assertMutationPathCurrent(path, input.cwd, input.allowedWritePaths);
+    const operation = operations.get(path);
+    if (!operation) throw new ApplyPatchError(`Rollback plan is missing path: ${path}`, { path });
+    const current = readWorkspaceTextFile(input.cwd, path);
+    const currentSha256 = current === undefined ? undefined : createHash("sha256").update(current, "utf8").digest("hex");
+    if (currentSha256 !== operation.newSha256) {
+      throw new ApplyPatchError(`Rollback refused because ${path} changed after the patch effect.`, { path });
+    }
+    const effect = (): void => {
+      const previous = input.before.get(path);
+      if (previous === undefined) {
+        if (current !== undefined) deleteWorkspaceFile(input.cwd, path);
+      } else {
+        // Delete operations leave no target for atomicWriteWorkspaceTextFile's
+        // mode-preserving lstat. Recreate the original file atomically first;
+        // existing targets still use the mode-preserving replacement path.
+        if (current === undefined) atomicCreateWorkspaceTextFile(input.cwd, path, previous, true);
+        else atomicWriteWorkspaceTextFile(input.cwd, path, previous);
+      }
+    };
+    if (input.effectGuard) input.effectGuard.cleanup(effect);
+    else effect();
+  }
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (!signal?.aborted) return;
+  if (signal.reason instanceof Error) throw signal.reason;
+  const error = new Error("File mutation cancelled.");
+  error.name = "AbortError";
+  throw error;
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
+function fileMutationFailureCode(error: unknown): string | undefined {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code;
+  if (code === "EEXIST") return "operation_binding_create_target_exists";
+  if (code === "ENOENT") return "operation_binding_parent_missing";
+  return undefined;
+}
+
+function isPathInside(candidate: string, scope: string): boolean {
+  const rel = relative(scope, candidate);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
 function resolveThroughExistingAncestor(absolutePath: string): string {

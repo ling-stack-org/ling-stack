@@ -7,6 +7,7 @@ test("styles expose independent themes, stable hit areas, and approved motion", 
   const foundations = await readFile(new URL("../dist/styles/foundation-tokens.css", import.meta.url), "utf8");
   const themes = await readFile(new URL("../dist/styles/themes/built-in-themes.css", import.meta.url), "utf8");
   const buttons = await readFile(new URL("../dist/styles/controls/button.css", import.meta.url), "utf8");
+  const splitButtons = await readFile(new URL("../dist/styles/controls/split-button.css", import.meta.url), "utf8");
   const icons = await readFile(new URL("../dist/styles/controls/icon.css", import.meta.url), "utf8");
   const forms = await readFile(new URL("../dist/styles/controls/form-controls.css", import.meta.url), "utf8");
   const switches = await readFile(new URL("../dist/styles/controls/switch.css", import.meta.url), "utf8");
@@ -33,6 +34,10 @@ test("styles expose independent themes, stable hit areas, and approved motion", 
   assert.match(buttons, /data-icon-only="true"[^}]*gap:\s*0/su);
   assert.match(buttons, /data-icon-only="true"[^}]*width:\s*var\(--ling-control-sm\);[^}]*min-width:\s*var\(--ling-control-sm\)/su);
   assert.match(buttons, /data-icon-only="true"\] \.ling-ui-button-label[^}]*display:\s*none/su);
+  assert.match(index, /controls\/split-button\.css/u);
+  assert.match(splitButtons, /height:\s*var\(--ling-split-button-height\)/u);
+  assert.match(splitButtons, /overflow:\s*hidden/u);
+  assert.match(splitButtons, /> \.ling-ui-button[^}]*height:\s*100%;[^}]*border:\s*0;[^}]*border-radius:\s*0;[^}]*box-shadow:\s*none/su);
   assert.match(index, /controls\/icon\.css/u);
   assert.match(icons, /\.ling-ui-icon\s*\{[^}]*color:\s*currentColor;[^}]*stroke:\s*currentColor;/su);
   assert.match(icons, /data-size="xs"[^}]*--ling-icon-size:\s*14px;[^}]*--ling-icon-stroke-width:\s*2;/su);
@@ -131,4 +136,33 @@ test("continuous loading motion uses shared semantic duration tokens", async () 
     /prefers-reduced-motion:\s*reduce[\s\S]*\.ling-ui-skeleton\s*\{[^}]*animation:\s*none;[^}]*background:\s*var\(--ling-bg-subtle\);/u,
   );
   assert.doesNotMatch(continuousOwners, /\b(?:900|1400|1800)ms\b/u);
+});
+
+test("Ling Core IP mark uses ambient motion tokens and stays static for reduced motion", async () => {
+  const index = await readFile(new URL("../dist/styles/index.css", import.meta.url), "utf8");
+  const foundations = await readFile(new URL("../dist/styles/foundation-tokens.css", import.meta.url), "utf8");
+  const mark = await readFile(new URL("../dist/styles/brand/ling-core-mark.css", import.meta.url), "utf8");
+
+  assert.match(index, /brand\/ling-core-mark\.css/u);
+  assert.match(foundations, /--ling-motion-ambient-breath:\s*5200ms/u);
+  assert.match(foundations, /--ling-motion-ambient-drift:\s*8400ms/u);
+  assert.match(mark, /prefers-reduced-motion:\s*no-preference/u);
+  assert.match(mark, /prefers-reduced-motion:\s*reduce/u);
+  assert.match(mark, /forced-colors:\s*active/u);
+  assert.match(mark, /--ling-orb-delay:\s*220ms/u);
+  assert.match(mark, /--ling-orb-delay:\s*1020ms/u);
+  assert.match(
+    mark,
+    /ling-core-mark-artwork-breathe\s+var\(--ling-motion-ambient-breath\)\s+var\(--ling-ease-standard\)[^;]*infinite\s+alternate/u,
+  );
+  assert.match(
+    mark,
+    /data-state="thinking"[^\n]*\s*\.ling-core-mark-artwork\s*\{[^}]*animation-name:\s*ling-core-mark-artwork-think/su,
+  );
+  assert.match(
+    mark,
+    /data-state="blocked"[^\n]*\s*\.ling-core-mark-orb,[\s\S]*?animation:\s*none;/u,
+  );
+  assert.doesNotMatch(mark, /#[0-9a-f]{3,8}\b|\b(?:rgb|hsl)a?\(/iu);
+  assert.doesNotMatch(mark, /animation:\s*[^;]*\ball\b/u);
 });

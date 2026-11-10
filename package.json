@@ -1,7 +1,7 @@
 {
   "name": "ling-stack",
   "private": true,
-  "version": "0.1.2-alpha.1",
+  "version": "0.2.3",
   "description": "Multilingual local-first AI teammate workspace with first-class domestic AI providers, GPT, Claude, and OpenAI-compatible relays.",
   "license": "MIT",
   "type": "module",
@@ -11,12 +11,22 @@
     "packages/*"
   ],
   "scripts": {
+    "gstack:managed": "node scripts/gstack/run-managed.mjs",
     "build": "corepack pnpm --workspace-concurrency=1 -r build",
     "check:docs": "node scripts/check-markdown-links.mjs",
+    "assurance:offline": "node scripts/framework-assurance/index.mjs calibrate",
+    "assurance:sdk": "node scripts/framework-assurance/index.mjs sdk-consumer",
+    "test:assurance": "node --test scripts/framework-assurance/*.test.mjs",
+    "check:i18n": "corepack pnpm --filter @ling-stack/localization test && corepack pnpm --filter @ling-stack/web check:i18n",
+    "i18n:import-legacy": "corepack pnpm --filter @ling-stack/localization catalog:import-legacy",
+    "i18n:translate": "corepack pnpm --filter @ling-stack/localization catalog:translate --",
+    "i18n:check": "corepack pnpm --filter @ling-stack/localization catalog:check",
+    "i18n:compile": "corepack pnpm --filter @ling-stack/localization catalog:compile",
     "check:licenses": "node scripts/check-license-policy.mjs",
     "check:public": "node scripts/check-public-repo-safety.mjs",
-    "check:dependency-security": "corepack pnpm --filter @ling-stack/mobile exec node --test test/dependency-security-patches.test.mjs && corepack pnpm --filter @ling-stack/daemon exec node --test test/dependency-security.test.mjs",
-    "typecheck": "corepack pnpm --workspace-concurrency=1 -r typecheck",
+    "check:dependency-security": "corepack pnpm --filter @ling-stack/mobile exec node --test test/dependency-security-patches.test.mjs test/dependency-security-tooling.test.mjs && corepack pnpm --filter @ling-stack/daemon exec node --test test/dependency-security.test.mjs && node --test scripts/dependency-security-regressions.test.mjs scripts/dependency-security-minimatch.test.mjs scripts/dependency-security-glob.test.mjs",
+    "typecheck": "corepack pnpm typecheck:ci-tests && corepack pnpm --workspace-concurrency=1 -r typecheck",
+    "typecheck:ci-tests": "tsc -p scripts/ci/tsconfig.test.json",
     "ling": "node packages/cli/dist/index.js",
     "local:restart": "node packages/cli/dist/index.js restart",
     "lint": "corepack pnpm -r lint",
@@ -24,6 +34,8 @@
   },
   "devDependencies": {
     "@types/node": "^26.1.2",
+    "acorn": "8.19.0",
+    "tar": "7.5.22",
     "typescript": "^7.0.2"
   },
   "keywords": [
@@ -38,29 +50,51 @@
     "glm"
   ],
   "engines": {
-    "node": ">=22.15"
+    "node": ">=22.22.1"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
-      "esbuild"
+      "esbuild",
+      "http-cache-semantics",
+      "image-size"
     ],
     "overrides": {
-      "brace-expansion@>=1.0.0 <1.1.17": "1.1.18",
-      "brace-expansion@>=2.0.0 <2.1.3": "2.1.4",
-      "brace-expansion@5.0.6": "5.0.9",
-      "fast-uri@>=3.0.0 <3.1.4": "3.1.5",
-      "hono@>=4.0.0 <4.12.34": "4.12.34",
-      "ip-address@>=10.0.0 <=10.3.0": "10.3.1",
-      "js-yaml@>=4.0.0 <4.3.1": "4.3.1",
+      "@radix-ui/react-dismissable-layer@1.1.19": "1.1.20",
+      "brace-expansion@>=1.0.0 <1.1.21": "1.1.21",
+      "brace-expansion@>=2.0.0 <2.1.7": "2.1.7",
+      "brace-expansion@>=5.0.0 <5.0.12": "5.0.12",
+      "glob@11.1.0": "14.0.2",
+      "glob@13.0.6": "14.0.2",
+      "body-parser@>=2.0.0 <2.4.0": "2.4.0",
+      "dompurify@>=3.0.0 <3.4.17": "3.4.17",
+      "fast-uri@>=3.0.0 <3.1.9": "3.1.9",
+      "hono@>=4.0.0 <4.13.11": "4.13.11",
+      "http-cache-semantics@>=4.0.0 <4.3.0": "4.3.0",
+      "ip-address@>=10.0.0 <10.7.4": "10.7.4",
+      "js-yaml@>=4.0.0 <4.3.2": "4.3.2",
       "postcss@>=8.0.0 <=8.5.17": "8.5.25",
       "protobufjs@>=7.5.0 <7.6.5": "7.6.5",
       "tar@>=7.0.0 <=7.5.20": "7.5.22",
-      "undici@>=7.0.0 <7.29.0": "7.29.0",
+      "node-gyp>undici@>=6.0.0 <6.29.1": "6.29.1",
+      "@electron/get>undici@>=7.0.0 <7.30.1": "7.30.1",
       "uuid@7.0.3": "11.1.1",
-      "officeparser>pdfjs-dist": "6.2.108"
+      "image-size@1.2.1": "2.0.4",
+      "officeparser>pdfjs-dist": "6.2.108",
+      "@earendil-works/pi-coding-agent>undici@>=8.0.0 <8.12.2": "8.12.2",
+      "katex@>=0.11.0 <0.18.2": "0.19.0",
+      "exceljs>unzipper": "0.11.2",
+      "minimatch@9.0.9": "11.0.1",
+      "minimatch@10.2.6": "11.0.1",
+      "zod@3.25.76": "4.6.7"
     },
     "patchedDependencies": {
-      "image-size@1.2.1": "patches/image-size@1.2.1.patch"
+      "http-cache-semantics@4.3.0": "patches/http-cache-semantics@4.3.0.patch",
+      "braces@3.0.3": "patches/braces@3.0.3.patch",
+      "@expo/mcp-tunnel@0.2.4": "patches/@expo__mcp-tunnel@0.2.4.patch",
+      "sprintf-js@1.0.3": "patches/sprintf-js@1.0.3.patch",
+      "sprintf-js@1.1.3": "patches/sprintf-js@1.1.3.patch",
+      "image-size@2.0.4": "patches/image-size@2.0.4.patch",
+      "@earendil-works/pi-coding-agent@1.4.0": "patches/@earendil-works__pi-coding-agent@1.4.0.patch"
     }
   }
 }

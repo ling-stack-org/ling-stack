@@ -211,7 +211,7 @@ test("Run Diagnostics distinguishes no-runs from a persistent folded load failur
   await diagnostics.getByText("Error details", { exact: true }).click();
   await expect(diagnostics.getByText("Synthetic run list failure", { exact: true })).toBeVisible();
   await expect(page.getByLabel("Settings sections")).toBeVisible();
-  await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
+  await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })).toHaveCount(0);
   await expectNoHorizontalOverflow(diagnostics);
   await expectNoPageOverflow(page);
   await captureEvidence(page, "1280x800-ling-dark-run-diagnostics-error-details.png");
@@ -239,7 +239,7 @@ async function prepareSurface(
 }
 
 async function openStartupDiagnostics(page: Page): Promise<Locator> {
-  await page.getByLabel(/Ling Stack navigation/).getByRole("button", { name: /Settings|设置/ }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: /Settings|设置/ }).click();
   return openPendingStartupDiagnostics(page);
 }
 
@@ -248,7 +248,7 @@ async function openRunDiagnostics(page: Page): Promise<Locator> {
   const panel = page.locator("[data-ui2-settings-run-diagnostics]");
   await expect(panel).toBeVisible();
   await expect(page.getByLabel(/Settings sections|设置分组/)).toBeVisible();
-  await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
+  await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })).toHaveCount(0);
   return panel;
 }
 

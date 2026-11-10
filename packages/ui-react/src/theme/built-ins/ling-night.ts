@@ -1,0 +1,72 @@
+import type { LingThemePackManifest } from "../types.js";
+
+export const lingNightTheme: LingThemePackManifest = Object.freeze({
+  schemaVersion: 1,
+  id: "ling-night",
+  name: "Ling Night",
+  familyId: "ling-scenes",
+  description: "A complete valley-overlook mecha scene with warm graphite surfaces, sunset copper controls, and clear reading panels.",
+  author: "Ling Stack",
+  license: "MIT",
+  colorScheme: "dark",
+  source: "built-in",
+  tokens: {
+    background: {
+      app: "#1e1c20",
+      panel: "#29262a",
+      elevated: "#343036",
+      subtle: "#3b353c",
+      pressed: "#484048",
+      overlay: "rgb(0 0 0 / 60%)",
+      code: "#211f23",
+      sidebar: "#262328",
+      composer: "#29262a",
+    },
+    text: {
+      strong: "#f7f0e9",
+      default: "#e4dad6",
+      muted: "#c1b5b2",
+      soft: "#b5aaac",
+      inverse: "#241a16",
+      link: "#eac19f",
+    },
+    border: {
+      default: "#534951",
+      strong: "#8c7b85",
+      focus: "#e7b38b",
+    },
+    action: {
+      accent: "#e7b38b",
+      accentHover: "#f3c7a2",
+      accentPressed: "#c98e66",
+      accentForeground: "#241a16",
+      selection: "#514039",
+    },
+    status: {
+      success: { foreground: "#82c99b", background: "#172b22", border: "#315842" },
+      warning: { foreground: "#dfba68", background: "#2c2617", border: "#5c4e2a" },
+      danger: { foreground: "#e58c87", background: "#2c1d20", border: "#61383d" },
+      info: { foreground: "#91bdea", background: "#182737", border: "#38536f" },
+    },
+    shadow: {
+      low: "0 1px 2px rgb(0 0 0 / 30%)",
+      medium: "0 8px 22px rgb(0 0 0 / 38%)",
+      overlay: "0 12px 32px rgb(0 0 0 / 44%)",
+    },
+    native: {
+      selection: "#514039",
+      scrollbar: "#71646c",
+      scrollbarHover: "#9b8893",
+    },
+  },
+  desktop: {
+    windowBackground: "#1e1c20",
+    sidebarMaterial: "sidebar",
+    overlayMaterial: "popover",
+    titlebarForeground: "#f7f0e9",
+    shadowStrength: 0.5,
+    blurStrength: 0,
+  },
+  presentation: { profileId: "ling-illustrated", artworkIntensity: "balanced", decorationSet: "none" },
+  scene: { id: "midnight-aurora", mascot: false, corners: false },
+} satisfies LingThemePackManifest);

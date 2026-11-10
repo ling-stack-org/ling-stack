@@ -330,7 +330,7 @@ async function preparePage(
 }
 
 async function openInterfacePreferences(page: Page, locale: "en-US" | "zh-CN" = "en-US"): Promise<Locator> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: locale === "zh-CN" ? "设置" : "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: locale === "zh-CN" ? "设置" : "Settings" }).click();
   await page.getByLabel(locale === "zh-CN" ? "设置分组" : "Settings sections")
     .getByRole("button", { name: locale === "zh-CN" ? "界面偏好" : "Interface preferences" })
     .click();

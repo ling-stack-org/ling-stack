@@ -1,19 +1,51 @@
 import { resolve as resolvePath } from "node:path";
-import type { LingSandboxPolicyProfileId } from "@ling-stack/core";
+import { delegationBudget, resolveDelegationPriceForBudget,
+  type LingSandboxPolicyProfileId, type DelegationTokenPriceSnapshot } from "@ling-stack/core";
+import type { DelegationBudgetV1 } from "@ling-stack/contracts";
+import {
+  resolveRuntimeConcurrencyPolicy,
+  type RuntimeConcurrencyFeatureConfig,
+  type ResolvedRuntimeConcurrencyPolicy,
+} from "./runtime/concurrency-policy.js";
+import type { RestrictedCommandRuntimeConfig } from "./runtime/sandbox/restricted-command-runtime.js";
 
 export interface DaemonConfig {
   readonly host?: string;
   readonly port?: number;
   readonly maxBodyBytes?: number;
   readonly defaultWorkspaceCwd?: string;
+  /** Bearer token required on every request when bound to a non-loopback host. */
+  readonly authToken?: string;
   readonly runners?: RunnerFeatureConfig;
   readonly sandbox?: SandboxFeatureConfig;
   readonly runtimeTools?: RuntimeToolFeatureConfig;
+  /** Trusted Host startup limits; never read from workspace/runtime HTTP settings. */
+  readonly concurrency?: RuntimeConcurrencyFeatureConfig;
   readonly transports?: TransportFeatureConfig;
   readonly channels?: ChannelFeatureConfig;
   readonly cuaDriver?: CuaDriverFeatureConfig;
   readonly remoteAccess?: RemoteAccessFeatureConfig;
   readonly workspaceSnapshots?: WorkspaceSnapshotFeatureConfig;
+  readonly harness?: HarnessFeatureConfig;
+}
+
+export interface HarnessFeatureConfig {
+  readonly continuations?: { readonly mode?: "off" | "shadow" | "enforce" };
+  readonly toolBroker?: { readonly mode?: "off" | "shadow" | "enforce" };
+  readonly evaluations?: {
+    readonly mode?: "off" | "shadow" | "enforce";
+    readonly modelGate?: "shadow" | "enforce";
+  };
+  readonly delegations?: {
+    readonly mode?: "off" | "shadow" | "enforce";
+    readonly maxDepth?: number;
+    /** Explicit Host-selected accepted workflows. Model request metadata cannot opt in. */
+    readonly selectedWorkflowIds?: readonly string[];
+    /** Trusted Host startup configuration; never read from a Goal or model request. */
+    readonly rootBudget?: DelegationBudgetV1;
+    readonly currency?: string;
+    readonly prices?: readonly DelegationTokenPriceSnapshot[];
+  };
 }
 
 export interface WorkspaceSnapshotFeatureConfig {
@@ -55,6 +87,8 @@ export interface ChannelFeatureConfig {
   readonly intentSelector?: boolean;
   readonly teamObserverBus?: boolean;
   readonly terminalReports?: boolean;
+  /** Host opt-in for explicitly selected Pi isolated-file workflows; never a workspace setting. */
+  readonly workflowIsolatedFiles?: boolean;
 }
 
 export interface RuntimeToolFeatureConfig {
@@ -75,6 +109,8 @@ export interface RunnerFeatureConfig {
 }
 
 export interface SandboxFeatureConfig {
+  /** Supplied only by the trusted Host bootstrap, never by workspace/runtime HTTP settings. */
+  readonly restrictedCommands?: RestrictedCommandRuntimeConfig;
   readonly platformNative?: PlatformNativeSandboxFeatureConfig;
   readonly docker?: DockerSandboxFeatureConfig;
 }
@@ -126,26 +162,28 @@ export interface CodexAppServerRunnerConfig {
   readonly enabled?: boolean;
   readonly baseUrl?: string;
   readonly launchMode?: "external";
+  /** Legacy test flags are parsed for compatibility but never authorize external execution. */
   readonly readinessPassed?: boolean;
-  readonly conformancePassed?: boolean;
 }
 
 export interface OpenClawAcpRunnerConfig {
   readonly enabled?: boolean;
   readonly endpoint?: string;
   readonly workspaceMode?: "bound_path";
+  /** Legacy test flags are parsed for compatibility but never authorize external execution. */
   readonly readinessPassed?: boolean;
-  readonly conformancePassed?: boolean;
 }
 
 export interface ResolvedDaemonConfig {
   readonly host: string;
   readonly port: number;
   readonly maxBodyBytes: number;
+  readonly authToken: string | undefined;
   readonly defaultWorkspaceCwd: string;
   readonly runners: RunnerFeatureConfig;
   readonly sandbox: SandboxFeatureConfig;
   readonly runtimeTools: RuntimeToolFeatureConfig;
+  readonly concurrency: ResolvedRuntimeConcurrencyPolicy;
   readonly transports: Required<TransportFeatureConfig>;
   readonly channels: ChannelFeatureConfig;
   readonly cuaDriver: {
@@ -163,6 +201,22 @@ export interface ResolvedDaemonConfig {
     readonly managementAllowedOrigins: readonly string[];
   };
   readonly workspaceSnapshots: Required<WorkspaceSnapshotFeatureConfig>;
+  readonly harness: {
+    readonly continuations: { readonly mode: "off" | "shadow" | "enforce" };
+    readonly toolBroker: { readonly mode: "off" | "shadow" | "enforce" };
+    readonly evaluations: {
+      readonly mode: "off" | "shadow" | "enforce";
+      readonly modelGate: "shadow" | "enforce";
+    };
+    readonly delegations: {
+      readonly mode: "off" | "shadow" | "enforce";
+      readonly maxDepth: number;
+      readonly selectedWorkflowIds: readonly string[];
+      readonly rootBudget?: DelegationBudgetV1;
+      readonly currency?: string;
+      readonly prices?: readonly DelegationTokenPriceSnapshot[];
+    };
+  };
 }
 
 export const defaultDaemonConfig: DaemonConfig = {
@@ -177,6 +231,7 @@ export function resolveConfig(config: DaemonConfig): ResolvedDaemonConfig {
     host: config.host ?? "127.0.0.1",
     port,
     maxBodyBytes: config.maxBodyBytes ?? 1024 * 1024,
+    authToken: config.authToken ?? process.env.LING_STACK_AUTH_TOKEN ?? undefined,
     defaultWorkspaceCwd: resolvePath(config.defaultWorkspaceCwd ?? process.env.LING_STACK_DEFAULT_WORKSPACE_CWD ?? process.cwd()),
     runners: config.runners ?? {},
     sandbox: config.sandbox ?? {},
@@ -184,10 +239,11 @@ export function resolveConfig(config: DaemonConfig): ResolvedDaemonConfig {
       requestPermissions: config.runtimeTools?.requestPermissions ??
         readBooleanEnv(process.env.LING_STACK_RUNTIME_REQUEST_PERMISSIONS, false),
       unifiedExec: config.runtimeTools?.unifiedExec ??
-        readBooleanEnv(process.env.LING_STACK_RUNTIME_UNIFIED_EXEC, false),
+        readBooleanEnv(process.env.LING_STACK_RUNTIME_UNIFIED_EXEC, true),
       shellSnapshot: config.runtimeTools?.shellSnapshot ??
         readBooleanEnv(process.env.LING_STACK_RUNTIME_SHELL_SNAPSHOT, false),
     },
+    concurrency: resolveRuntimeConcurrencyPolicy(config.concurrency),
     transports: {
       providerWebSocketFallback: config.transports?.providerWebSocketFallback ??
         readBooleanEnv(process.env.LING_STACK_PROVIDER_WS_FALLBACK, true),
@@ -199,6 +255,8 @@ export function resolveConfig(config: DaemonConfig): ResolvedDaemonConfig {
       intentSelector: config.channels?.intentSelector ?? readBooleanEnv(process.env.LING_STACK_CHANNEL_INTENT_SELECTOR, true),
       teamObserverBus: config.channels?.teamObserverBus ?? readBooleanEnv(process.env.LING_STACK_CHANNEL_TEAM_OBSERVER_BUS, false),
       terminalReports: config.channels?.terminalReports ?? readBooleanEnv(process.env.LING_STACK_CHANNEL_TERMINAL_REPORTS, true),
+      workflowIsolatedFiles: config.channels?.workflowIsolatedFiles
+        ?? readBooleanEnv(process.env.LING_STACK_CHANNEL_WORKFLOW_ISOLATED_FILES, false),
     },
     cuaDriver: {
       bundledEmbedded: {
@@ -233,7 +291,89 @@ export function resolveConfig(config: DaemonConfig): ResolvedDaemonConfig {
       maxSnapshots: boundedPositive(config.workspaceSnapshots?.maxSnapshots, 8, 8),
       retentionDays: boundedPositive(config.workspaceSnapshots?.retentionDays, 30, 3650),
     },
+    harness: {
+      continuations: {
+        mode: resolveHarnessMode(config.harness?.continuations?.mode, process.env.LING_STACK_HARNESS_CONTINUATIONS_MODE),
+      },
+      toolBroker: {
+        mode: resolveHarnessMode(config.harness?.toolBroker?.mode, process.env.LING_STACK_HARNESS_TOOL_BROKER_MODE),
+      },
+      evaluations: {
+        mode: resolveHarnessMode(config.harness?.evaluations?.mode, process.env.LING_STACK_HARNESS_EVALUATIONS_MODE),
+        modelGate: resolveHarnessModelGate(config.harness?.evaluations?.modelGate, process.env.LING_STACK_HARNESS_EVALUATION_MODEL_GATE),
+      },
+      delegations: {
+        mode: resolveHarnessMode(config.harness?.delegations?.mode, process.env.LING_STACK_HARNESS_DELEGATIONS_MODE),
+        selectedWorkflowIds: captureDelegationWorkflowIds(config.harness?.delegations?.selectedWorkflowIds),
+        maxDepth: resolveHarnessDelegationMaxDepth(
+          config.harness?.delegations?.maxDepth,
+          process.env.LING_STACK_HARNESS_DELEGATION_MAX_DEPTH,
+        ),
+        ...captureDelegationBudgetConfiguration(config.harness?.delegations),
+      },
+    },
   };
+}
+
+function captureDelegationWorkflowIds(input: readonly string[] | undefined): readonly string[] {
+  if (input === undefined) return Object.freeze([]);
+  if (!Array.isArray(input) || input.length > 100 || input.some(id => typeof id !== "string" ||
+    !/^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,255}$/.test(id)) || new Set(input).size !== input.length) {
+    throw new Error("delegation.workflow_selection_invalid");
+  }
+  return Object.freeze([...input]);
+}
+
+/** Capture startup values by value. An absent price is not a guessed free rate. */
+function captureDelegationBudgetConfiguration(input: HarnessFeatureConfig["delegations"]): {
+  readonly rootBudget?: DelegationBudgetV1;
+  readonly currency?: string;
+  readonly prices?: readonly DelegationTokenPriceSnapshot[];
+} {
+  const rootBudget = input?.rootBudget === undefined ? undefined : delegationBudget(input.rootBudget);
+  const currency = input?.currency;
+  if (currency !== undefined && (typeof currency !== "string" || !/^[A-Z]{3}$/u.test(currency))) {
+    throw new Error("delegation.invalid_currency");
+  }
+  const source = input?.prices;
+  if (source !== undefined && (!Array.isArray(source) || source.length > 1000)) throw new Error("delegation.price_registry_invalid");
+  const seen = new Set<string>();
+  const prices = source?.map(entry => {
+    const price = resolveDelegationPriceForBudget({ currency: entry.currency, scope: entry.scope, price: entry })!;
+    const key = JSON.stringify([price.currency, price.scope]);
+    if (seen.has(key)) throw new Error("delegation.price_registry_scope_duplicate");
+    seen.add(key);
+    return price;
+  });
+  return Object.freeze({ ...(rootBudget ? { rootBudget } : {}), ...(currency ? { currency } : {}),
+    ...(prices ? { prices: Object.freeze(prices) } : {}) });
+}
+
+function resolveHarnessMode(
+  explicit: "off" | "shadow" | "enforce" | undefined,
+  environment: string | undefined,
+): "off" | "shadow" | "enforce" {
+  const candidate: unknown = explicit ?? environment;
+  return candidate === "shadow" || candidate === "enforce" ? candidate : "off";
+}
+
+function resolveHarnessModelGate(
+  explicit: "shadow" | "enforce" | undefined,
+  environment: string | undefined,
+): "shadow" | "enforce" {
+  const candidate: unknown = explicit ?? environment;
+  return candidate === "enforce" ? "enforce" : "shadow";
+}
+
+function resolveHarnessDelegationMaxDepth(explicit: number | undefined, environment: string | undefined): number {
+  if (explicit !== undefined) {
+    return boundedPositive(explicit, 4, 16);
+  }
+  if (environment === undefined) {
+    return 4;
+  }
+  const parsed = Number(environment);
+  return boundedPositive(parsed, 4, 16);
 }
 
 function boundedPositive(value: number | undefined, fallback: number, hardMax: number): number {

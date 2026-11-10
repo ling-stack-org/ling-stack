@@ -75,6 +75,70 @@ test("provider preflight accepts OpenAI-compatible text block responses", async 
   }
 });
 
+test("provider preflight rejects ASR capabilities on unsupported protocols", async () => {
+  const result = await checkProviderPreset({}, {
+    id: "provider_asr_responses",
+    kind: "openai-compatible",
+    displayName: "Responses ASR provider",
+    providerId: "responses-asr",
+    model: "audio-model",
+    api: "openai-responses",
+    baseUrl: "https://example.test/v1",
+    authHeader: false,
+    capabilities: ["asr"],
+    enabled: true,
+    createdAt: "2026-08-05T00:00:00.000Z",
+    updatedAt: "2026-08-05T00:00:00.000Z",
+  }, emptySecretResolver());
+
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "unsupported_capability");
+  assert.match(result.message, /OpenAI-compatible completions/u);
+});
+
+test("provider preflight allows a cold compatible relay up to thirty seconds", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalTimeout = AbortSignal.timeout;
+  let observedTimeoutMs;
+  let observedDispatcher;
+  AbortSignal.timeout = (timeoutMs) => {
+    observedTimeoutMs = timeoutMs;
+    return new AbortController().signal;
+  };
+  globalThis.fetch = async (_input, init) => {
+    observedDispatcher = init?.dispatcher;
+    return new Response(JSON.stringify({
+    choices: [{ message: { role: "assistant", content: "OK" }, finish_reason: "stop" }],
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  try {
+    const result = await checkProviderPreset({}, {
+      id: "provider_cold_relay",
+      kind: "openai-compatible",
+      displayName: "Cold compatible relay",
+      providerId: "cold-relay",
+      model: "cold-model",
+      api: "openai-completions",
+      baseUrl: "https://example.test/v1",
+      authHeader: false,
+      capabilities: ["chat"],
+      enabled: true,
+      createdAt: "2026-09-02T00:00:00.000Z",
+      updatedAt: "2026-09-02T00:00:00.000Z",
+    }, emptySecretResolver());
+
+    assert.equal(result.ok, true);
+    assert.equal(observedTimeoutMs, 30_000);
+    const optionsSymbol = observedDispatcher
+      ? Object.getOwnPropertySymbols(observedDispatcher).find((symbol) => String(symbol) === "Symbol(options)")
+      : undefined;
+    assert.equal(observedDispatcher?.[optionsSymbol]?.connect?.timeout, 30_000);
+  } finally {
+    globalThis.fetch = originalFetch;
+    AbortSignal.timeout = originalTimeout;
+  }
+});
+
 function emptySecretResolver() {
   return {
     resolve: (ref) => ({ ref, configured: false }),

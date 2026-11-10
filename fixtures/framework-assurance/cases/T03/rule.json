@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "kind": "deterministic_json_rule",
+  "graderId": "ling-assurance-t03",
+  "graderVersion": "1",
+  "failureSeverity": "error",
+  "assertions": [
+    {
+      "type": "deep_equal"
+    }
+  ]
+}

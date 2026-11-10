@@ -1,6 +1,7 @@
 import type { McpServerTransport } from "@ling-stack/core";
 import { isRecord, readOptionalObject, readOptionalString, readString } from "../../shared/validation.js";
 import { parseMcpServerCreateRequest } from "../mcp/schemas.js";
+import { pluginImportSources, type PluginImportSource } from "./import/sources.js";
 
 export function parseManagedPluginCreateRequest(value: unknown): {
   readonly displayName: string;
@@ -95,5 +96,40 @@ export function parseManagedPluginUninstallRequest(value: unknown): { readonly r
   }
   return {
     reason: readOptionalString(value, "reason"),
+  };
+}
+
+export function parsePluginImportPreviewRequest(value: unknown): { readonly source: PluginImportSource } {
+  if (!isRecord(value)) {
+    throw new Error("Plugin import preview request body must be an object.");
+  }
+  const source = readString(value, "source");
+  if (!(pluginImportSources as readonly string[]).includes(source)) {
+    throw new Error(`Plugin import source must be one of: ${pluginImportSources.join(", ")}`);
+  }
+  return { source: source as PluginImportSource };
+}
+
+export function parsePluginImportApplyRequest(value: unknown): {
+  readonly source: PluginImportSource;
+  readonly names: readonly string[];
+} {
+  if (!isRecord(value)) {
+    throw new Error("Plugin import apply request body must be an object.");
+  }
+  const source = readString(value, "source");
+  if (!(pluginImportSources as readonly string[]).includes(source)) {
+    throw new Error(`Plugin import source must be one of: ${pluginImportSources.join(", ")}`);
+  }
+  const rawNames = value.names;
+  if (!Array.isArray(rawNames) || rawNames.length === 0 || rawNames.some((name) => typeof name !== "string" || name.trim().length === 0)) {
+    throw new Error("Plugin import apply request must select at least one candidate name.");
+  }
+  if (rawNames.length > 200) {
+    throw new Error("Plugin import apply request must select at most 200 candidates.");
+  }
+  return {
+    source: source as PluginImportSource,
+    names: rawNames.map((name) => (name as string).trim()),
   };
 }

@@ -17,6 +17,18 @@ import {
 import {
   parseChannelTeamEvidenceSourceRefs,
 } from "./channel-team-evidence-mappers.js";
+import type {
+  AvailabilityIncidentCandidatePage,
+  CreateProviderRuntimeAvailabilityIncidentInput,
+  ListAvailabilityIncidentCandidatesOptions,
+  ProviderRuntimeAvailabilityIncidentSource,
+} from "../../provider-runtime-availability-types.js";
+import {
+  assertGenericAvailabilityIncidentInput,
+  readAvailabilityIncidentRuntimeSource,
+  readRuntimePublicationInput,
+} from "./availability-incident-source.js";
+import { SqliteAvailabilityIncidentProvenanceStore } from "./availability-incident-provenance-store.js";
 import {
   parseJsonObject,
   readBoolean,
@@ -28,7 +40,11 @@ import { channelTeamIncidentSelectSql } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
 
 export class SqliteChannelTeamLifecycleStore {
-  constructor(private readonly context: SqliteStoreContext) {}
+  private readonly availabilityProvenance: SqliteAvailabilityIncidentProvenanceStore;
+
+  constructor(private readonly context: SqliteStoreContext) {
+    this.availabilityProvenance = new SqliteAvailabilityIncidentProvenanceStore(context);
+  }
 
   createReliabilityIncident(input: CreateReliabilityIncidentInput, now: string): ReliabilityIncident {
     validateReliabilityIncident(input);
@@ -71,6 +87,30 @@ export class SqliteChannelTeamLifecycleStore {
   }
 
   createAvailabilityIncident(input: CreateAvailabilityIncidentInput, now: string): AvailabilityIncident {
+    assertGenericAvailabilityIncidentInput(input);
+    return this.createAvailabilityIncidentRecord(input, now, "generic");
+  }
+
+  createProviderRuntimeAvailabilityIncident(input: CreateProviderRuntimeAvailabilityIncidentInput, now: string): AvailabilityIncident {
+    const publication = readRuntimePublicationInput(input);
+    const source = readAvailabilityIncidentRuntimeSource(publication.source, {
+      providerPresetId: publication.incident.providerPresetId,
+      observedAt: publication.incident.observedAt ?? now,
+      modelSignature: publication.incident.modelSignature,
+    });
+    return this.createAvailabilityIncidentRecord(publication.incident, now, "provider_runtime", source);
+  }
+
+  listAvailabilityIncidentCandidates(options: ListAvailabilityIncidentCandidatesOptions): AvailabilityIncidentCandidatePage {
+    return this.availabilityProvenance.listCandidates(options, mapAvailabilityIncident);
+  }
+
+  private createAvailabilityIncidentRecord(
+    input: CreateAvailabilityIncidentInput,
+    now: string,
+    provenance: "generic" | "provider_runtime",
+    source?: ProviderRuntimeAvailabilityIncidentSource,
+  ): AvailabilityIncident {
     validateAvailabilityIncident(input);
     const observedAt = input.observedAt ?? now;
     const incident: AvailabilityIncident = {
@@ -87,7 +127,7 @@ export class SqliteChannelTeamLifecycleStore {
       updatedAt: now,
       expiresAt: input.expiresAt ?? undefined,
     };
-    this.insertIncident({
+    this.availabilityProvenance.publish(incident, provenance, source, () => this.insertIncident({
       id: incident.id,
       incidentType: "availability",
       agentId: incident.agentId,
@@ -105,7 +145,7 @@ export class SqliteChannelTeamLifecycleStore {
       expiresAt: incident.expiresAt,
       createdAt: now,
       updatedAt: incident.updatedAt ?? now,
-    });
+    }));
     return incident;
   }
 

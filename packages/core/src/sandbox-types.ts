@@ -1,4 +1,5 @@
 import { isSupportedSecretRef } from "./secrets.js";
+import { trimBoundaryCharacters } from "./string-boundaries.js";
 
 export type LingSandboxBackendKind = "local_unix" | "platform_native" | "docker" | "hosted" | "external";
 
@@ -260,7 +261,7 @@ function isInsideRoot(candidate: string, root: string): boolean {
 }
 
 function stripTrailingSlash(path: string): string {
-  return path.replace(/\/+$/, "");
+  return trimBoundaryCharacters(path, "/", "end");
 }
 
 function looksSecretLikeName(name: string): boolean {

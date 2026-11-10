@@ -2,6 +2,7 @@ import type { StatusTone } from "../../shared/ui/index.js";
 import type { ChannelWorkflow, ChannelWorkflowStep, RunStatus } from "../../types.js";
 
 export type ChannelWorkflowStatusLabelKey =
+  | "Waiting for input"
   | "Draft"
   | "Ready"
   | "Running"
@@ -12,6 +13,7 @@ export type ChannelWorkflowStatusLabelKey =
   | "Cancelled";
 
 export type ChannelWorkflowStepStatusLabelKey =
+  | "Waiting for input"
   | "Queued"
   | "Claimed"
   | "Running"
@@ -23,6 +25,7 @@ export type ChannelWorkflowStepStatusLabelKey =
   | "Cancelled";
 
 export type ChannelWorkflowRunStatusLabelKey =
+  | "Execution yielded"
   | "Queued"
   | "Running"
   | "Waiting for approval"
@@ -38,6 +41,7 @@ export interface ChannelWorkflowStatusPresentation<StatusId extends string, Labe
 }
 
 const WORKFLOW_STATUS_PRESENTATION = {
+  waiting_for_input: { id: "waiting_for_input", labelKey: "Waiting for input", tone: "neutral" },
   draft: { id: "draft", labelKey: "Draft", tone: "neutral" },
   ready: { id: "ready", labelKey: "Ready", tone: "info" },
   running: { id: "running", labelKey: "Running", tone: "info" },
@@ -49,6 +53,7 @@ const WORKFLOW_STATUS_PRESENTATION = {
 } satisfies Record<ChannelWorkflow["status"], ChannelWorkflowStatusPresentation<ChannelWorkflow["status"], ChannelWorkflowStatusLabelKey>>;
 
 const WORKFLOW_STEP_STATUS_PRESENTATION = {
+  waiting_for_input: { id: "waiting_for_input", labelKey: "Waiting for input", tone: "neutral" },
   queued: { id: "queued", labelKey: "Queued", tone: "info" },
   claimed: { id: "claimed", labelKey: "Claimed", tone: "info" },
   running: { id: "running", labelKey: "Running", tone: "info" },
@@ -61,6 +66,7 @@ const WORKFLOW_STEP_STATUS_PRESENTATION = {
 } satisfies Record<ChannelWorkflowStep["status"], ChannelWorkflowStatusPresentation<ChannelWorkflowStep["status"], ChannelWorkflowStepStatusLabelKey>>;
 
 const RUN_STATUS_PRESENTATION = {
+  yielded: { id: "yielded", labelKey: "Execution yielded", tone: "neutral" },
   queued: { id: "queued", labelKey: "Queued", tone: "info" },
   running: { id: "running", labelKey: "Running", tone: "info" },
   waiting_for_approval: { id: "waiting_for_approval", labelKey: "Waiting for approval", tone: "warning" },
@@ -94,6 +100,7 @@ export function channelWorkflowRunStatusPresentation(status: string | undefined)
     case "queued":
     case "running":
     case "waiting_for_approval":
+    case "yielded":
     case "succeeded":
     case "failed":
     case "cancelled":

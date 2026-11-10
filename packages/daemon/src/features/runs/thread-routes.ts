@@ -2,8 +2,13 @@ import { createHash, randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   conversationModeKinds,
+  isAuthorizationMode,
+  isWorkspaceAccessMode,
   lingThreadKinds,
+  normalizeRunnerId,
   permissionPresets,
+  ProposedPlanMutationError,
+  redactSecrets,
   sessionPermissionModes,
   type ConversationModeKind,
   type GoalEvidenceRef,
@@ -13,6 +18,7 @@ import {
   type CreateProposedPlanArtifactInput,
   type LingApprovalCheckpoint,
   type LingThread,
+  type LingThreadSearchMatch,
   type LingThreadArchivedFilter,
   type LingThreadGoalStatus,
   type LingThreadGoalCompletionActor,
@@ -35,7 +41,7 @@ import {
   type UpdateProposedPlanArtifactInput,
 } from "@ling-stack/core";
 import type { PiRunnerProviderConfig } from "@ling-stack/runner-pi";
-import { createWorkflowParticipantAuthorityV1, isConversationContextProjectionMetadata } from "@ling-stack/contracts";
+import { isConversationContextProjectionMetadata, isExternalExecutionEngineId, parseExecutionBindingRequest } from "@ling-stack/contracts";
 import { HttpError } from "../../errors.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readOptionalIntegerQuery, readOptionalJsonBody } from "../../shared/request.js";
@@ -47,6 +53,21 @@ import { listExecutionActions } from "./execution-actions.js";
 import { hydrateProposedPlanSourceState, hydrateProposedPlanSourceStates } from "./proposed-plan-source-state.js";
 import { handleLingThreadHardDelete } from "./thread-hard-delete-route.js";
 import type { RunRequest } from "./schemas.js";
+import { prepareNormalConversationInput } from "../conversations/normal-conversation-input.js";
+import { saveNormalConversationPreparedRequest } from "../conversations/normal-conversation-prepared-request.js";
+import { renderNormalConversationRunPrompt } from "../conversations/normal-conversation-context.js";
+import { createNormalConversationThreadFork, prepareNormalConversationForkRun } from "../conversations/normal-conversation-fork.js";
+import {
+  isWorkflowExecutionThread,
+  isPrivateWorkflowTurn,
+  isWorkflowRunSession,
+  privateWorkflowInput,
+  projectPublicConversationItem,
+  projectPublicLingThread,
+  projectPublicLingTurn,
+  projectPublicRunSession,
+} from "./public-execution-snapshots.js";
+import { projectPublicRunEventEnvelope, toPublicArtifactMetadata } from "./public-artifacts.js";
 
 export type LingThreadRoute =
   | { readonly kind: "detail"; readonly threadId: string }
@@ -171,20 +192,48 @@ export async function handleLingThreadsCollection(
     };
     if (searchQuery) {
       const result = store.searchLingThreads({ ...listOptions, q: searchQuery });
+      const matches = result.matches.filter((match) => isPublicThreadSearchMatch(store, match));
+      const matchedThreadIds = new Set(matches.map((match) => match.threadId));
       writeJson(response, 200, {
         cwd,
-        threads: result.threads,
-        matches: result.matches,
+        threads: result.threads
+          .filter((thread) => matchedThreadIds.has(thread.id))
+          .map((thread) => projectPublicLingThread(thread)),
+        matches,
       });
       return;
     }
+    const threads = store.listLingThreads(listOptions).filter((thread) =>
+      // A newly created channel owns an empty default conversation. Keep that
+      // placeholder in the channel session directory, but omit it from the
+      // generic thread list until it has durable activity.
+      !(thread.surfaceKind === "channel_root" && thread.nextItemSequence === 1 && !thread.lastRunId)
+    );
     writeJson(response, 200, {
       cwd,
-      threads: store.listLingThreads(listOptions),
+      threads: threads.map((thread) => projectPublicLingThread(thread)),
     });
   } catch (error) {
     writeLingThreadRouteError(response, error);
   }
+}
+
+function isPublicThreadSearchMatch(store: RunStore, match: LingThreadSearchMatch): boolean {
+  const thread = store.getLingThread(match.threadId);
+  if (!thread) return false;
+  if (match.turnId) {
+    const turn = store.getLingTurn(match.turnId);
+    if (turn && isPrivateWorkflowTurn(turn, thread)) return false;
+  }
+  if (match.runId) {
+    const run = store.getRun(match.runId);
+    if (run && isWorkflowRunSession(run, store)) return false;
+  }
+  if (isWorkflowExecutionThread(thread) &&
+      (match.field === "thread_objective" || match.field === "turn_instruction" || match.field === "task_prompt" || match.field === "metadata_summary")) {
+    return false;
+  }
+  return true;
 }
 
 export function handleLingThreadItem(
@@ -251,7 +300,7 @@ export function handleLingThreadItem(
     return;
   }
 
-  writeJson(response, 200, { cwd, thread });
+  writeJson(response, 200, { cwd, thread: projectPublicLingThread(thread) });
 }
 
 async function handleLingThreadMode(
@@ -449,9 +498,8 @@ async function handleLingThreadProposedPlans(
         return;
       }
       const body = await readOptionalJsonBody(request, maxBodyBytes);
-      const actionInput = parseProposedPlanActionBody(body);
-      const plan = upsertProposedPlanForAction(store, threadId, planId, actionInput.plan, new Date().toISOString());
-      const result = applyProposedPlanAction(store, thread, plan, action, actionInput, new Date().toISOString());
+      const actionInput = parseProposedPlanActionBody(body, threadId);
+      const result = store.applyProposedPlanArtifactAction(planId, { ...actionInput, threadId, action }, new Date().toISOString());
       writeJson(response, 200, {
         cwd,
         threadId,
@@ -502,22 +550,24 @@ async function handleLingThreadProposedPlans(
         writeJson(response, 404, { error: "proposed_plan_not_found", message: `Proposed plan not found: ${planId}` });
         return;
       }
-      assertProposedPlanDirectMutationAllowed(existing);
       const plan = store.upsertProposedPlanArtifact({ ...parsePutProposedPlanArtifactBody(body, threadId), id: planId }, new Date().toISOString());
       writeJson(response, existing ? 200 : 201, { cwd, threadId, plan: hydrateProposedPlanSourceState(store, plan) });
       return;
     }
     if (request.method === "PATCH") {
+      const body = await readOptionalJsonBody(request, maxBodyBytes);
       const existing = store.getProposedPlanArtifact(planId);
       if (!existing || existing.threadId !== threadId) {
         writeJson(response, 404, { error: "proposed_plan_not_found", message: `Proposed plan not found: ${planId}` });
         return;
       }
-      const body = await readOptionalJsonBody(request, maxBodyBytes);
       const patch = parsePatchProposedPlanArtifactBody(body);
-      assertProposedPlanDirectMutationAllowed(existing, patch);
-      const plan = store.updateProposedPlanArtifact(planId, patch, new Date().toISOString());
-      writeJson(response, 200, { cwd, threadId, plan: hydrateProposedPlanSourceState(store, plan ?? existing) });
+      const plan = store.updateProposedPlanArtifact(planId, { ...patch, expectedThreadId: threadId }, new Date().toISOString());
+      if (!plan) {
+        writeJson(response, 404, { error: "proposed_plan_not_found", message: `Proposed plan not found: ${planId}` });
+        return;
+      }
+      writeJson(response, 200, { cwd, threadId, plan: hydrateProposedPlanSourceState(store, plan) });
       return;
     }
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for proposed plan items` });
@@ -556,7 +606,7 @@ async function handleLingThreadTurns(
       writeJson(response, 201, {
         cwd,
         threadId,
-        turn,
+        turn: projectPublicLingTurn(turn, thread),
         runLinks: store.listLingTurnRuns(turn.id),
       });
       return;
@@ -570,7 +620,7 @@ async function handleLingThreadTurns(
     writeJson(response, 200, {
       cwd,
       threadId,
-      turns,
+      turns: turns.map((turn) => projectPublicLingTurn(turn, thread)),
       runLinks: turns.flatMap((turn) => store.listLingTurnRuns(turn.id)),
     });
   } catch (error) {
@@ -603,11 +653,11 @@ async function handleLingThreadResumePreview(
       return;
     }
     const body = await readOptionalJsonBody(request, options?.maxBodyBytes ?? 1024 * 1024);
-    const resume = buildLingThreadResumeContext({ store, thread, body, mode: "preview" });
+    const resume = buildLingThreadResumeContext({ store, thread, body, mode: "preview", publicProjection: true });
     writeJson(response, 200, {
       cwd,
-      thread,
-      sourceRun: resume.sourceRun,
+      thread: projectPublicLingThread(thread),
+      sourceRun: projectPublicRunSession(resume.sourceRun, store),
       context: resume.context,
     });
   } catch (error) {
@@ -616,8 +666,9 @@ async function handleLingThreadResumePreview(
 }
 
 function writeLingThreadRouteError(response: ServerResponse, error: unknown): void {
-  writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
-    error: error instanceof HttpError ? error.code : "bad_request",
+  const known = error instanceof HttpError || error instanceof ProposedPlanMutationError;
+  writeJson(response, known ? error.statusCode : 400, {
+    error: known ? error.code : "bad_request",
     message: error instanceof Error ? error.message : String(error),
   });
 }
@@ -783,10 +834,10 @@ async function handleLingThreadFork(
     const fork = createLingThreadFork({ store, sourceThread, body, now: new Date().toISOString() });
     writeJson(response, fork.created ? 201 : 200, {
       cwd,
-      sourceThread: store.getLingThread(sourceThread.id) ?? sourceThread,
-      sourceTurn: fork.sourceTurn,
-      sourceRun: fork.sourceRun,
-      childThread: fork.childThread,
+      sourceThread: projectPublicLingThread(store.getLingThread(sourceThread.id) ?? sourceThread),
+      sourceTurn: fork.sourceTurn ? projectPublicLingTurn(fork.sourceTurn, sourceThread) : undefined,
+      sourceRun: fork.sourceRun ? projectPublicRunSession(fork.sourceRun, store) : undefined,
+      childThread: projectPublicLingThread(fork.childThread),
       lineage: {
         parentThreadId: sourceThread.id,
         parentTurnId: fork.sourceTurn?.id,
@@ -836,11 +887,12 @@ async function handleLingThreadForkRun(
       const startError = serializeForkRunStartError(error);
       writeJson(response, 500, {
         cwd,
-        sourceThread: store.getLingThread(sourceThread.id) ?? sourceThread,
-        sourceTurn: forkRun.sourceTurn,
-        sourceRun: forkRun.sourceRun,
-        childThread: store.getLingThread(forkRun.childThread.id) ?? forkRun.childThread,
-        childTurn: store.getLingTurn(forkRun.childTurn.id) ?? forkRun.childTurn,
+        sourceThread: projectPublicLingThread(store.getLingThread(sourceThread.id) ?? sourceThread),
+        sourceTurn: forkRun.sourceTurn ? projectPublicLingTurn(forkRun.sourceTurn, sourceThread) : undefined,
+        sourceRun: forkRun.sourceRun ? projectPublicRunSession(forkRun.sourceRun, store) : undefined,
+        childThread: projectPublicLingThread(store.getLingThread(forkRun.childThread.id) ?? forkRun.childThread),
+        childTurn: projectPublicLingTurn(store.getLingTurn(forkRun.childTurn.id) ?? forkRun.childTurn,
+          store.getLingThread(forkRun.childThread.id) ?? forkRun.childThread),
         status: "run_failed",
         error: startError,
       });
@@ -849,11 +901,12 @@ async function handleLingThreadForkRun(
     if (!runId) {
       writeJson(response, 500, {
         cwd,
-        sourceThread: store.getLingThread(sourceThread.id) ?? sourceThread,
-        sourceTurn: forkRun.sourceTurn,
-        sourceRun: forkRun.sourceRun,
-        childThread: store.getLingThread(forkRun.childThread.id) ?? forkRun.childThread,
-        childTurn: store.getLingTurn(forkRun.childTurn.id) ?? forkRun.childTurn,
+        sourceThread: projectPublicLingThread(store.getLingThread(sourceThread.id) ?? sourceThread),
+        sourceTurn: forkRun.sourceTurn ? projectPublicLingTurn(forkRun.sourceTurn, sourceThread) : undefined,
+        sourceRun: forkRun.sourceRun ? projectPublicRunSession(forkRun.sourceRun, store) : undefined,
+        childThread: projectPublicLingThread(store.getLingThread(forkRun.childThread.id) ?? forkRun.childThread),
+        childTurn: projectPublicLingTurn(store.getLingTurn(forkRun.childTurn.id) ?? forkRun.childTurn,
+          store.getLingThread(forkRun.childThread.id) ?? forkRun.childThread),
         status: "run_failed",
         error: {
           code: "fork_run_start_failed",
@@ -864,12 +917,13 @@ async function handleLingThreadForkRun(
     }
     writeJson(response, 202, {
       cwd,
-      sourceThread: store.getLingThread(sourceThread.id) ?? sourceThread,
-      sourceTurn: forkRun.sourceTurn,
-      sourceRun: forkRun.sourceRun,
-      childThread: store.getLingThread(forkRun.childThread.id) ?? forkRun.childThread,
-      childTurn: store.getLingTurn(forkRun.childTurn.id) ?? forkRun.childTurn,
-      childRun: store.getRun(runId),
+      sourceThread: projectPublicLingThread(store.getLingThread(sourceThread.id) ?? sourceThread),
+      sourceTurn: forkRun.sourceTurn ? projectPublicLingTurn(forkRun.sourceTurn, sourceThread) : undefined,
+      sourceRun: forkRun.sourceRun ? projectPublicRunSession(forkRun.sourceRun, store) : undefined,
+      childThread: projectPublicLingThread(store.getLingThread(forkRun.childThread.id) ?? forkRun.childThread),
+      childTurn: projectPublicLingTurn(store.getLingTurn(forkRun.childTurn.id) ?? forkRun.childTurn,
+        store.getLingThread(forkRun.childThread.id) ?? forkRun.childThread),
+      childRun: projectPublicRunSession(store.getRun(runId), store),
       runId,
       status: "run_started",
     });
@@ -915,8 +969,8 @@ async function handleLingThreadResume(
     }
     writeJson(response, 202, {
       cwd,
-      thread: store.getLingThread(thread.id) ?? thread,
-      sourceRun: resume.sourceRun,
+      thread: projectPublicLingThread(store.getLingThread(thread.id) ?? thread),
+      sourceRun: projectPublicRunSession(resume.sourceRun, store),
       runId,
       continuationReason: "manual_resume",
     });
@@ -937,6 +991,8 @@ function createLingThreadFork(input: {
   readonly created: boolean;
 } {
   const { store, sourceThread, body, now } = input;
+  if (sourceThread.kind === "conversation") return createNormalConversationThreadFork({ ...input,
+    resolveAnchor: () => resolveThreadForkAnchor(store, sourceThread, body) });
   if (sourceThread.status === "archived" || sourceThread.archivedAt) {
     throw new HttpError(409, "source_thread_archived", `Cannot fork archived thread: ${sourceThread.id}`);
   }
@@ -1096,7 +1152,7 @@ function createLingThreadForkRunRequest(input: {
   if (!userIdempotencyKey) {
     throw new HttpError(400, "fork_run_idempotency_required", "Fork-and-run requires an idempotency key.");
   }
-  const anchor = resolveThreadForkAnchor(store, sourceThread, body);
+  const anchor = sourceThread.kind === "conversation" ? {} : resolveThreadForkAnchor(store, sourceThread, body);
   const operationKey = buildForkRunOperationKey({
     sourceThreadId: sourceThread.id,
     sourceTurnId: anchor.sourceTurn?.id,
@@ -1112,6 +1168,12 @@ function createLingThreadForkRunRequest(input: {
     },
     now,
   });
+  if (sourceThread.kind === "conversation") {
+    const prepared = prepareNormalConversationForkRun({ store, fork, instruction, operationKey, now,
+      buildRequest: childTurn => buildForkRunRunRequest({ cwd, sourceThread, sourceRun: fork.sourceRun,
+        childThread: fork.childThread, childTurn, body, instruction, operationKey }) });
+    return { sourceTurn: fork.sourceTurn, sourceRun: fork.sourceRun, childThread: fork.childThread, ...prepared };
+  }
   const childTurn = createOrReuseForkRunChildTurn({
     store,
     childThread: fork.childThread,
@@ -1200,7 +1262,7 @@ function buildForkRunRunRequest(input: {
   if (!providerPresetId && !inlineProvider) {
     throw new HttpError(400, "fork_run_snapshot_unavailable", "Cannot fork and run because no reusable provider snapshot or providerPresetId is available.");
   }
-  const requestedRunnerId = readOptionalString(input.body, "runnerId")?.trim();
+  const requestedRunnerId = normalizeRunnerId(readOptionalString(input.body, "runnerId")?.trim());
   const taskId = deterministicForkRunTaskId(input.operationKey);
   return {
     workspaceCwd: readSnapshotString(requestSnapshot, "workspaceCwd") ?? sourceRun?.cwd ?? input.cwd,
@@ -1211,7 +1273,7 @@ function buildForkRunRunRequest(input: {
     workflowStepId: input.childThread.workflowStepId ?? sourceRun?.workflowStepId,
     threadId: input.childThread.id,
     turnId: input.childTurn.id,
-    runnerId: requestedRunnerId || readSnapshotString(requestSnapshot, "runnerId"),
+    runnerId: requestedRunnerId || normalizeRunnerId(readSnapshotString(requestSnapshot, "runnerId")),
     requestedSkillId: readSnapshotString(requestSnapshot, "requestedSkillId") ?? sourceRun?.selectedSkillId,
     skipProviderPreflight: readSnapshotBoolean(requestSnapshot, "skipProviderPreflight") ?? false,
     idempotencyKey: input.operationKey,
@@ -1229,12 +1291,16 @@ function buildForkRunRunRequest(input: {
     approvalProfile: isRecord(requestSnapshot.approvalProfile) ? requestSnapshot.approvalProfile as unknown as SkillApprovalProfile : undefined,
     permissionPreset: readSnapshotPermissionPreset(requestSnapshot, "permissionPreset"),
     permissionMode: readSnapshotSessionPermissionMode(requestSnapshot, "permissionMode"),
+    authorizationMode: readSnapshotAuthorizationMode(requestSnapshot),
+    workspaceAccessMode: readSnapshotWorkspaceAccessMode(requestSnapshot),
     permissionConfirmation: readSnapshotPermissionConfirmation(requestSnapshot, "permissionConfirmation"),
     thinkingLevel: readSnapshotThinkingLevel(requestSnapshot, "thinkingLevel"),
+    reasoningSummary: readSnapshotReasoningSummary(requestSnapshot, "reasoningSummary"),
     systemPrompt: readSnapshotString(requestSnapshot, "systemPrompt"),
     appendSystemPrompt: readSnapshotStringArray(requestSnapshot, "appendSystemPrompt"),
     agentDir: readSnapshotString(requestSnapshot, "agentDir"),
-    contextProjection: readSnapshotContextProjection(requestSnapshot),
+    // A cross-thread fork must not masquerade as its parent's local context source.
+    contextProjection: input.childThread.kind === "conversation" ? undefined : readSnapshotContextProjection(requestSnapshot),
   };
 }
 
@@ -1404,10 +1470,10 @@ function buildLingThreadEvidence(store: RunStore, cwd: string, thread: LingThrea
       approvalIds.add(approval.id);
     }
     return {
-      run,
-      events: store.listEvents(run.id, { limit: 1000 }),
+      run: projectPublicRunSession(run, store),
+      events: store.listEvents(run.id, { limit: 1000 }).map(projectPublicRunEventEnvelope),
       approvals,
-      artifacts: store.listArtifacts(run.id),
+      artifacts: store.listArtifacts(run.id).map(toPublicArtifactMetadata),
       runtimeEvents: run.workUnitId ? store.listRuntimeEvents(run.workUnitId, { limit: 1000 }) : [],
     };
   });
@@ -1417,7 +1483,7 @@ function buildLingThreadEvidence(store: RunStore, cwd: string, thread: LingThrea
   const transitions = collectThreadStateTransitions(store, thread, runs, approvalIds);
   return {
     cwd,
-    thread,
+    thread: projectPublicLingThread(thread),
     generatedAt: new Date().toISOString(),
     runs: evidenceRuns,
     actions,
@@ -1495,8 +1561,12 @@ function buildLingThreadResumeContext(input: {
   readonly thread: LingThread;
   readonly body: unknown;
   readonly mode: "preview" | "execute";
+  readonly publicProjection?: boolean;
 }): { readonly sourceRun: RunSession; readonly context: ResumeContextPreview; readonly runRequest: RunRequest } {
   const { store, thread, body } = input;
+  if (input.mode === "execute" && isWorkflowExecutionThread(thread)) {
+    throw new HttpError(409, "workflow_step_resume_required", "Workflow steps must be resumed by their owning workflow controller.");
+  }
   const anchor = resolveThreadResumeAnchor(store, thread, body);
   const warnings: string[] = [...anchor.warnings];
   const activeRun = thread.activeRunId ? store.getRun(thread.activeRunId) : undefined;
@@ -1517,6 +1587,8 @@ function buildLingThreadResumeContext(input: {
   }
   const sourceRun = anchor.sourceRun;
   const requestSnapshot = isRecord(sourceRun.requestSnapshot) ? sourceRun.requestSnapshot : {};
+  const authorizationMode = readSnapshotAuthorizationMode(requestSnapshot);
+  const workspaceAccessMode = readSnapshotWorkspaceAccessMode(requestSnapshot);
   const taskSnapshot = isRecord(sourceRun.taskSnapshot) ? sourceRun.taskSnapshot : {};
   const instruction = isRecord(body)
     ? readOptionalString(body, "instruction")?.trim() || "Resume this Ling thread from durable evidence."
@@ -1532,11 +1604,20 @@ function buildLingThreadResumeContext(input: {
     readSnapshotString(taskSnapshot, "prompt") ??
     readSnapshotString(isRecord(requestSnapshot.task) ? requestSnapshot.task : {}, "prompt") ??
     "";
+  const executionBinding = requestSnapshot.executionBinding === undefined
+    ? undefined : parseExecutionBindingRequest(requestSnapshot.executionBinding);
+  if (!executionBinding && (isExternalExecutionEngineId(readSnapshotString(requestSnapshot, "runnerId"))
+    || isExternalExecutionEngineId(sourceRun.providerName))) {
+    throw new HttpError(409, "legacy_runner_migration_required",
+      "The source run has no native profile binding; select and validate a profile before resuming.");
+  }
+  const native = executionBinding?.kind === "native_profile";
   const providerPresetId = readSnapshotString(requestSnapshot, "providerPresetId") ?? sourceRun.providerPresetId;
   const inlineProvider = providerPresetId
     ? undefined
-    : isRecord(requestSnapshot.provider) ? requestSnapshot.provider as unknown as PiRunnerProviderConfig : undefined;
-  if (!providerPresetId && !inlineProvider) {
+    : isRecord(requestSnapshot.provider) ? requestSnapshot.provider as unknown as PiRunnerProviderConfig
+    : isRecord(sourceRun.providerSnapshot) ? sourceRun.providerSnapshot as unknown as PiRunnerProviderConfig : undefined;
+  if (!executionBinding && !providerPresetId && !inlineProvider) {
     throw new HttpError(400, "resume_snapshot_unavailable", "Cannot resume thread because the source run has no reusable provider snapshot.");
   }
   const context = buildResumeContextPreview({
@@ -1549,24 +1630,39 @@ function buildLingThreadResumeContext(input: {
     instruction,
     includeArtifacts: isRecord(body) ? readOptionalBoolean(body, "includeArtifacts") ?? false : false,
     warnings,
+    publicProjection: input.publicProjection,
   });
-  return {
-    sourceRun,
-    context,
-    runRequest: {
+  const normalInput = input.mode === "execute" && thread.kind === "conversation" && !thread.channelId
+    ? prepareNormalConversationInput({ store, thread, message: instruction, title: `Resume: ${thread.title}`,
+        attachmentIds: [], fileRefs: [], sourceTurnId: anchor.sourceTurn?.id ?? store.getLingTurnForRun(sourceRun.id)?.id,
+        turnKind: "manual_followup", idempotencyKey, now: new Date().toISOString() })
+    : undefined;
+  if (normalInput?.replayRequest) return { sourceRun, context, runRequest: normalInput.replayRequest };
+  const runRequest: RunRequest = {
       workspaceCwd: readSnapshotString(requestSnapshot, "workspaceCwd") ?? sourceRun.cwd,
       cwd: readSnapshotString(requestSnapshot, "cwd") ?? sourceRun.cwd,
-      providerPresetId,
-      provider: inlineProvider,
+      executionBinding,
+      providerPresetId: native ? undefined : executionBinding?.kind === "pi_provider"
+        ? executionBinding.providerPresetId : providerPresetId,
+      provider: executionBinding ? undefined : inlineProvider,
+      threadId: normalInput ? thread.id : undefined,
+      turnId: normalInput?.turn.id,
+      sourceMessageId: normalInput?.turn.sourceItemId,
+      createdByActor: normalInput ? "local-user" : undefined,
       teammateId: readSnapshotString(requestSnapshot, "teammateId") ?? sourceRun.teammateId,
-      runnerId: readSnapshotString(requestSnapshot, "runnerId"),
+      runnerId: native ? executionBinding.engineId : normalizeRunnerId(readSnapshotString(requestSnapshot, "runnerId")),
       requestedSkillId: readSnapshotString(requestSnapshot, "requestedSkillId") ?? sourceRun.selectedSkillId,
       skipProviderPreflight: readSnapshotBoolean(requestSnapshot, "skipProviderPreflight") ?? false,
-      idempotencyKey,
+      idempotencyKey: normalInput?.idempotencyKey ?? idempotencyKey,
       task: {
         id: `manual_resume_${randomUUID()}`,
-        title: `Resume: ${thread.title}`,
-        prompt: context.contextText,
+        title: normalInput ? redactSecrets(`Resume: ${thread.title}`) as string : `Resume: ${thread.title}`,
+        prompt: normalInput ? renderNormalConversationRunPrompt(normalInput.context, [instruction,
+          `Resume source Run: ${sourceRun.id}`,
+          `Artifact ids: ${context.includedArtifactIds.join(", ") || "none"}`,
+          `Pending action ids: ${context.pendingActionIds.join(", ") || "none"}`,
+          "This is a new continuation. Re-check external state before repeating side effects; no additional permissions are granted.",
+        ].join("\n\n")) : context.contextText,
         channelId:
           thread.channelId ??
           readSnapshotString(taskSnapshot, "channelId") ??
@@ -1577,16 +1673,22 @@ function buildLingThreadResumeContext(input: {
       approvalProfile: isRecord(requestSnapshot.approvalProfile) ? requestSnapshot.approvalProfile as unknown as SkillApprovalProfile : undefined,
       permissionPreset: readSnapshotPermissionPreset(requestSnapshot, "permissionPreset"),
       permissionMode: readSnapshotSessionPermissionMode(requestSnapshot, "permissionMode"),
+      authorizationMode,
+      workspaceAccessMode,
       permissionConfirmation: readSnapshotPermissionConfirmation(requestSnapshot, "permissionConfirmation"),
       thinkingLevel: readSnapshotThinkingLevel(requestSnapshot, "thinkingLevel"),
+      reasoningSummary: readSnapshotReasoningSummary(requestSnapshot, "reasoningSummary"),
       systemPrompt: readSnapshotString(requestSnapshot, "systemPrompt"),
       appendSystemPrompt: readSnapshotStringArray(requestSnapshot, "appendSystemPrompt"),
       agentDir: readSnapshotString(requestSnapshot, "agentDir"),
-      contextProjection: readSnapshotContextProjection(requestSnapshot),
+      contextProjection: normalInput?.context.projection ?? (thread.kind === "conversation" ? undefined : readSnapshotContextProjection(requestSnapshot)),
+      normalConversationContext: normalInput?.context,
+      normalConversationAcceptedSnapshotId: normalInput?.acceptedSnapshotId,
       parentRunId: sourceRun.id,
       continuationReason: "manual_resume",
-    },
   };
+  return { sourceRun, context, runRequest: normalInput
+    ? saveNormalConversationPreparedRequest(store, runRequest, new Date().toISOString()) : runRequest };
 }
 
 function resolveThreadResumeAnchor(store: RunStore, thread: LingThread, body: unknown): ThreadResumeAnchor {
@@ -1670,9 +1772,12 @@ function buildResumeContextPreview(input: {
   readonly instruction: string;
   readonly includeArtifacts: boolean;
   readonly warnings: readonly string[];
+  readonly publicProjection?: boolean;
 }): ResumeContextPreview {
   const scope = resolveResumeContextScope(input.store, input.thread, input.sourceTurn, input.sourceRun);
-  const runs = scope.runs;
+  const runs = input.publicProjection
+    ? scope.runs.map((run) => projectPublicRunSession(run, input.store))
+    : scope.runs;
   const events = runs.flatMap((run) => input.store.listEvents(run.id, { limit: 1000 }));
   const approvals = uniqueById(runs.flatMap((run) => input.store.listApprovalRequests({ runId: run.id, limit: 500 })));
   const artifacts = input.includeArtifacts ? runs.flatMap((run) => input.store.listArtifacts(run.id)) : [];
@@ -1704,13 +1809,19 @@ function buildResumeContextPreview(input: {
     ...context,
     contextText: renderResumeContextText({
       ...context,
-      thread: input.thread,
-      sourceRun: input.sourceRun,
+      thread: input.publicProjection ? projectPublicLingThread(input.thread) : input.thread,
+      sourceRun: input.publicProjection ? projectPublicRunSession(input.sourceRun, input.store) : input.sourceRun,
       originalTitle: input.originalTitle,
-      originalPrompt: input.originalPrompt,
+      originalPrompt: input.publicProjection && isWorkflowExecutionThread(input.thread)
+        ? privateWorkflowInput
+        : input.originalPrompt,
       runs,
-      sourceTurn: input.sourceTurn,
-      priorTurns: scope.priorTurns,
+      sourceTurn: input.publicProjection && input.sourceTurn
+        ? projectPublicLingTurn(input.sourceTurn, input.thread)
+        : input.sourceTurn,
+      priorTurns: input.publicProjection
+        ? scope.priorTurns?.map((turn) => projectPublicLingTurn(turn, input.thread))
+        : scope.priorTurns,
       approvals,
       actions,
     }),
@@ -1956,6 +2067,22 @@ function readSnapshotPermissionPreset(record: Record<string, unknown>, key: stri
     : undefined;
 }
 
+/** Reject malformed stored selections before a continuation accepts a new user input. */
+function readSnapshotAuthorizationMode(record: Record<string, unknown>): RunRequest["authorizationMode"] {
+  const value = record.authorizationMode;
+  if (value === undefined) return undefined;
+  if (typeof value === "string" && isAuthorizationMode(value)) return value;
+  throw new HttpError(400, "bad_request", "authorizationMode in the source run snapshot is invalid.");
+}
+
+/** Missing axes retain their existing contract; a present invalid value cannot become a default. */
+function readSnapshotWorkspaceAccessMode(record: Record<string, unknown>): RunRequest["workspaceAccessMode"] {
+  const value = record.workspaceAccessMode;
+  if (value === undefined) return undefined;
+  if (typeof value === "string" && isWorkspaceAccessMode(value)) return value;
+  throw new HttpError(400, "bad_request", "workspaceAccessMode in the source run snapshot is invalid.");
+}
+
 function readSnapshotPermissionConfirmation(record: Record<string, unknown>, key: string): PermissionConfirmation | undefined {
   const value = record[key];
   if (!isRecord(value)) {
@@ -1974,8 +2101,15 @@ function readSnapshotPermissionConfirmation(record: Record<string, unknown>, key
 
 function readSnapshotThinkingLevel(record: Record<string, unknown>, key: string): RunRequest["thinkingLevel"] {
   const value = record[key];
-  return typeof value === "string" && ["off", "minimal", "low", "medium", "high", "xhigh"].includes(value)
+  return typeof value === "string" && ["off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"].includes(value)
     ? value as RunRequest["thinkingLevel"]
+    : undefined;
+}
+
+function readSnapshotReasoningSummary(record: Record<string, unknown>, key: string): RunRequest["reasoningSummary"] {
+  const value = record[key];
+  return typeof value === "string" && ["auto", "concise", "detailed", "none"].includes(value)
+    ? value as RunRequest["reasoningSummary"]
     : undefined;
 }
 
@@ -2128,6 +2262,7 @@ const goalUsageSources = [
 
 interface ProposedPlanActionInput {
   readonly plan?: CreateProposedPlanArtifactInput;
+  readonly expectedRevision?: number;
   readonly createdBy?: string;
   readonly toParticipantId?: string;
   readonly toParticipantLabel?: string;
@@ -2159,6 +2294,7 @@ function parsePutProposedPlanArtifactBody(value: unknown, threadId: string): Cre
   }
   return {
     id: readOptionalString(value, "id")?.trim(),
+    expectedRevision: readProposedPlanExpectedRevision(value),
     threadId,
     channelId: readNullableStringField(value, "channelId") ?? undefined,
     goalId: readNullableStringField(value, "goalId") ?? undefined,
@@ -2192,6 +2328,7 @@ function parsePatchProposedPlanArtifactBody(value: unknown): UpdateProposedPlanA
     throw new HttpError(400, "proposed_plan_body_required", "Proposed plan bodyMarkdown cannot be empty.");
   }
   return {
+    expectedRevision: readProposedPlanExpectedRevision(value),
     channelId: readNullableStringField(value, "channelId"),
     goalId: readNullableStringField(value, "goalId"),
     sourceAgentId: readNullableStringField(value, "sourceAgentId"),
@@ -2218,16 +2355,19 @@ function parsePatchProposedPlanArtifactBody(value: unknown): UpdateProposedPlanA
   };
 }
 
-function parseProposedPlanActionBody(value: unknown): ProposedPlanActionInput {
+function parseProposedPlanActionBody(value: unknown, threadId: string): ProposedPlanActionInput {
   if (value === undefined || value === null) {
     return {};
   }
   if (!isRecord(value)) {
     throw new HttpError(400, "bad_request", "Proposed plan action request must be a JSON object.");
   }
-  const plan = isRecord(value.plan) ? parsePutProposedPlanArtifactBody(value.plan, readThreadIdForActionPlan(value.plan)) : undefined;
+  const plan = isRecord(value.plan)
+    ? parsePutProposedPlanArtifactBody(value.plan, readOptionalString(value.plan, "threadId")?.trim() || threadId)
+    : undefined;
   return {
     plan,
+    expectedRevision: readProposedPlanExpectedRevision(value),
     createdBy: readOptionalString(value, "createdBy")?.trim() || undefined,
     toParticipantId: readOptionalString(value, "toParticipantId")?.trim() || undefined,
     toParticipantLabel: readOptionalString(value, "toParticipantLabel")?.trim() || undefined,
@@ -2235,11 +2375,6 @@ function parseProposedPlanActionBody(value: unknown): ProposedPlanActionInput {
     workflowSteps: readOptionalWorkflowSteps(value, "workflowSteps"),
     workflowStepPreviews: readOptionalWorkflowStepPreviews(value, "workflowStepPreviews"),
   };
-}
-
-function readThreadIdForActionPlan(value: Record<string, unknown>): string {
-  const threadId = readOptionalString(value, "threadId")?.trim();
-  return threadId || "__route_thread__";
 }
 
 function readOptionalProposedPlanStatus(record: Record<string, unknown>): ProposedPlanArtifactStatus | undefined {
@@ -2253,190 +2388,13 @@ function readOptionalProposedPlanStatus(record: Record<string, unknown>): Propos
   return status as ProposedPlanArtifactStatus;
 }
 
-function upsertProposedPlanForAction(
-  store: RunStore,
-  threadId: string,
-  planId: string,
-  input: CreateProposedPlanArtifactInput | undefined,
-  now: string,
-): ProposedPlanArtifact {
-  const existing = store.getProposedPlanArtifact(planId);
-  if (existing && existing.threadId !== threadId) {
-    throw new HttpError(404, "proposed_plan_not_found", `Proposed plan not found: ${planId}`);
+function readProposedPlanExpectedRevision(record: Record<string, unknown>): number | undefined {
+  const value = record.expectedRevision;
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) {
+    throw new HttpError(400, "bad_proposed_plan_revision", "expectedRevision must be a positive safe integer.");
   }
-  if (input) {
-    return store.upsertProposedPlanArtifact({ ...input, id: planId, threadId }, now);
-  }
-  if (!existing) {
-    throw new HttpError(404, "proposed_plan_not_found", `Proposed plan not found: ${planId}`);
-  }
-  return existing;
-}
-
-function assertProposedPlanDirectMutationAllowed(
-  existing: ProposedPlanArtifact | undefined,
-  input?: UpdateProposedPlanArtifactInput,
-): void {
-  if (!existing || existing.status !== "accepted") {
-    return;
-  }
-  const mutatesAcceptedContent = input === undefined ||
-    input.title !== undefined ||
-    input.bodyMarkdown !== undefined ||
-    (input.status !== undefined && input.status !== "accepted");
-  if (mutatesAcceptedContent) {
-    throw new HttpError(
-      409,
-      "accepted_plan_immutable",
-      "Accepted proposed plans are immutable. Create a refined plan version instead of overwriting the accepted record.",
-    );
-  }
-}
-
-function applyProposedPlanAction(
-  store: RunStore,
-  thread: LingThread,
-  plan: ProposedPlanArtifact,
-  action: "accept" | "refine" | "save" | "convert-workflow" | "archive",
-  input: ProposedPlanActionInput,
-  now: string,
-): {
-  readonly plan: ProposedPlanArtifact;
-  readonly taskId?: string;
-  readonly workflowId?: string;
-  readonly workflowStepId?: string;
-  readonly runId?: string;
-} {
-  if (action === "save") {
-    return { plan: requireUpdatedProposedPlan(store, plan.id, { savedAt: now }, now) };
-  }
-  if (action === "archive") {
-    return { plan: requireUpdatedProposedPlan(store, plan.id, { status: "archived", archivedAt: now }, now) };
-  }
-  if (action === "refine") {
-    return { plan: requireUpdatedProposedPlan(store, plan.id, { status: "draft" }, now) };
-  }
-  if (action === "accept") {
-    if (!thread.channelId) {
-      throw new HttpError(409, "proposed_plan_channel_required", "Accepting a proposed plan requires a channel thread.");
-    }
-    if (plan.acceptedTaskId) {
-      return { plan, taskId: plan.acceptedTaskId, runId: plan.acceptedRunId };
-    }
-    const task = store.createTask(
-      {
-        channelId: thread.channelId,
-        title: `Implement accepted plan: ${plan.title}`,
-        prompt: [
-          `Implement accepted plan: ${plan.title}`,
-          "",
-          plan.bodyMarkdown,
-          "",
-          `Source proposed plan: ${plan.id}`,
-          plan.sourceMessageId ? `Source message: ${plan.sourceMessageId}` : "",
-        ].filter(Boolean).join("\n"),
-        requestedSkillId: "plan-acceptance",
-      },
-      now,
-    );
-    return {
-      plan: requireUpdatedProposedPlan(store, plan.id, {
-        status: "accepted",
-        acceptedAt: now,
-        acceptedTaskId: task.id,
-      }, now),
-      taskId: task.id,
-    };
-  }
-  if (!thread.channelId) {
-    throw new HttpError(409, "proposed_plan_channel_required", "Converting a proposed plan requires a channel thread.");
-  }
-  if (plan.acceptedWorkflowId) {
-    return {
-      plan,
-      workflowId: plan.acceptedWorkflowId,
-      workflowStepId: plan.acceptedWorkflowStepId,
-      runId: plan.acceptedRunId,
-    };
-  }
-  const createdBy = input.createdBy || "local-user";
-  const workflowTitle = input.workflowTitle || plan.title;
-  const workflowSteps = input.workflowSteps && input.workflowSteps.length > 0
-    ? input.workflowSteps
-    : input.workflowStepPreviews && input.workflowStepPreviews.length > 0
-      ? input.workflowStepPreviews.map((preview) => preview.title)
-      : [plan.bodyMarkdown];
-  const workflowStepPreviews = workflowSteps.map((step, index) => ({
-    title: step,
-    ownerId: input.workflowStepPreviews?.[index]?.ownerId || input.toParticipantId,
-    ownerLabel: input.workflowStepPreviews?.[index]?.ownerLabel || input.toParticipantLabel,
-    ownerConfidence: input.workflowStepPreviews?.[index]?.ownerConfidence,
-    ownerReason: input.workflowStepPreviews?.[index]?.ownerReason,
-    sourceSignals: input.workflowStepPreviews?.[index]?.sourceSignals,
-  }));
-  const workflow = store.createChannelWorkflow(
-    {
-      channelId: thread.channelId,
-      title: workflowTitle,
-      objective: workflowSteps.join("\n"),
-      status: "draft",
-      createdBy,
-      metadata: {
-        sourceMessageId: plan.sourceMessageId,
-      },
-    },
-    now,
-  );
-  const workflowStepRecords = workflowStepPreviews.map((stepPreview) => store.createChannelWorkflowStep(
-    {
-      workflowId: workflow.id,
-      title: workflowSteps.length > 1 ? stepPreview.title : `Implement ${workflowTitle}`,
-      prompt: [
-        stepPreview.title,
-        "",
-        `Source proposed plan: ${plan.id}`,
-        plan.sourceMessageId ? `Source message: ${plan.sourceMessageId}` : "",
-      ].filter(Boolean).join("\n"),
-      toParticipantId: stepPreview.ownerId || "local-user",
-      toParticipantLabel: stepPreview.ownerLabel || "Unassigned",
-      participantAuthority: createWorkflowParticipantAuthorityV1({
-        kind: "workflow_definition",
-        origin: "proposed_plan",
-        participantId: stepPreview.ownerId || "local-user",
-        sourceId: plan.id,
-      }),
-      status: "queued",
-      metadata: {
-        sourceMessageId: plan.sourceMessageId,
-      },
-    },
-    now,
-  ));
-  const firstWorkflowStep = workflowStepRecords[0];
-  return {
-    plan: requireUpdatedProposedPlan(store, plan.id, {
-      status: "accepted",
-      acceptedAt: plan.acceptedAt ?? now,
-      convertedAt: now,
-      acceptedWorkflowId: workflow.id,
-      acceptedWorkflowStepId: firstWorkflowStep?.id,
-    }, now),
-    workflowId: workflow.id,
-    workflowStepId: firstWorkflowStep?.id,
-  };
-}
-
-function requireUpdatedProposedPlan(
-  store: RunStore,
-  planId: string,
-  input: UpdateProposedPlanArtifactInput,
-  now: string,
-): ProposedPlanArtifact {
-  const plan = store.updateProposedPlanArtifact(planId, input, now);
-  if (!plan) {
-    throw new HttpError(404, "proposed_plan_not_found", `Proposed plan not found: ${planId}`);
-  }
-  return plan;
+  return value;
 }
 
 function readOptionalGoalNumber(

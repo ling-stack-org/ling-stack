@@ -1,4 +1,5 @@
 import { mkdir, readFile } from "node:fs/promises";
+import { isAbsolute } from "node:path";
 import { expect, type Locator, type Page, type Request, type Route } from "@playwright/test";
 import {
   buildEffectiveTeammateSkills,
@@ -9,9 +10,14 @@ import {
 } from "@ling-stack/core";
 import { gstackDefaultSkillPack } from "@ling-stack/core/builtin-skill-packs";
 import type { MemoryObject } from "@ling-stack/core";
-import type { ConversationGeneratedMedia, LingApprovalCheckpoint, LingThreadGoal, LingTraceDetailResponse, LingTraceSpan, LingTraceStatus, ProposedPlanArtifact, RunnerListItem, StartupStatusResponse, UserProfile, WorkflowHandoffIntent, WorkspaceGitStatus, WorkspaceRuntimeSettings } from "@ling-stack/contracts";
+import type { ConversationExecutionSelectionResponse, ConversationGeneratedMedia, ConversationItemV1, ConversationReasoningSummaryRecord, ConversationRuntimeMetrics, LingApprovalCheckpoint, LingThreadGoal, LingTraceDetailResponse, LingTraceSpan, LingTraceStatus, ManagedPluginSetupView, PreviewContentResponse, ProposedPlanArtifact, RunnerListItem, StartupStatusResponse, UserProfile, WorkflowHandoffIntent, WorkspaceGitStatus, WorkspaceRuntimeSettings, WorkUnitDetailResponse } from "@ling-stack/contracts";
+import { isSupportedLocale, type SupportedLocale } from "@ling-stack/localization";
 
-export const cwd = "/tmp/ling-stack-workspace";
+const configuredWorkspaceCwd = process.env.LING_PLAYWRIGHT_WORKSPACE_CWD;
+if (configuredWorkspaceCwd !== undefined && !isAbsolute(configuredWorkspaceCwd)) {
+  throw new Error("LING_PLAYWRIGHT_WORKSPACE_CWD must be an absolute path");
+}
+export const cwd = configuredWorkspaceCwd ?? "/tmp/ling-stack-workspace";
 export const defaultRuntimePolicy = {
   maxConcurrentRuns: 1,
   schedulingMode: "smart",
@@ -50,6 +56,8 @@ const defaultOfficialSkillSourceStatus = {
   },
 };
 
+const mockChannelSessionRequests = new WeakMap<MockState, Map<string, { payload: string; threadId: string }>>();
+
 const mockCreateAiCouncilRequestKeys = new Set(["displayName", "description", "routingPolicy", "members", "pinned"]);
 const mockCreateAiCouncilRoutingPolicyKeys = new Set(["defaultMode", "maxActiveMembers", "notes"]);
 const mockCloneAiCouncilRequestKeys = new Set(["displayName", "description", "pinned"]);
@@ -57,6 +65,7 @@ const mockUpdateAiCouncilRequestKeys = new Set(["displayName", "description", "s
 const mockReplaceAiCouncilMemberKeys = new Set(["teammateId", "slotKey", "label", "position", "enabled"]);
 
 export interface MockState {
+  runtimeMetricsFixture?: ConversationRuntimeMetrics;
   providers: unknown[];
   providerSecrets: Record<string, string>;
   managedPlugins: MockManagedPlugin[];
@@ -70,6 +79,10 @@ export interface MockState {
   channelWorkspaceGitStatusByChannel: Record<string, WorkspaceGitStatus | MockWorkspaceGitStatusFailure>;
   channelMessages: unknown[];
   channelConversationItemExtras?: unknown[];
+  conversationItems?: ConversationItemV1[];
+  userInputs?: import("@ling-stack/contracts").UserInputTranscriptItemV1[];
+  conversationReasoningSummaries?: ConversationReasoningSummaryRecord[];
+  conversationContextSnapshotsByThreadId?: Record<string, unknown[]>;
   channelMessageRouteDecisions: unknown[];
   channelIntentDecisions: unknown[];
   channelTurnContexts: Record<string, Record<string, unknown>>;
@@ -90,6 +103,9 @@ export interface MockState {
   channelContextSummaries: unknown[];
   channelWorkflows: unknown[];
   channelWorkflowSteps: unknown[];
+  failNextWorkflowOrchestrate?: { readonly error: string; readonly message: string; readonly status?: number; readonly delayMs?: number };
+  failNextWorkflowCancel?: { readonly error: string; readonly message: string; readonly status?: number };
+  failNextWorkflowStepRetry?: { readonly error: string; readonly message: string; readonly status?: number };
   channelProtocolDrafts: unknown[];
   channelPlaybookCandidates: unknown[];
   channelTeamExpertsByTurn: Record<string, unknown>;
@@ -127,7 +143,6 @@ export interface MockState {
   memoryMarkdownImportCalls: MockMemoryMarkdownImportCall[];
   teammateDirectThreads: Record<string, unknown>;
   teammateDirectMessages: unknown[];
-  lastTeammateDirectMessageRequest?: Record<string, unknown>;
   teammateDirectInterventions: MockTeammateDirectIntervention[];
   teammateDirectLinkPreviews: unknown[];
   teammatePrivateAttachments: unknown[];
@@ -153,6 +168,7 @@ export interface MockState {
   channelAiReplyBody?: string;
   keepChannelAiReplyPending?: boolean;
   failNextChannelMessage?: boolean;
+  failNextChannelMessageStatus?: number;
   lastChannelTurnRequest?: Record<string, unknown>;
   lastTeammateDirectMessageRequest?: Record<string, unknown>;
   lastConversationMessageEditRequest?: Record<string, unknown>;
@@ -161,9 +177,17 @@ export interface MockState {
   failNextTaskCreate?: boolean;
   linkPreviewDelayMs?: number;
   approvals: MockApproval[];
+  approvalCommandRules: MockApprovalCommandRule[];
+  approvalDecisionRequests: Array<{
+    readonly approvalId: string;
+    readonly action: "approve" | "deny";
+    readonly body: Record<string, unknown>;
+  }>;
   approvalCheckpoints: LingApprovalCheckpoint[];
   approvalPolicy: MockApprovalPolicy;
   approvalQueryCount?: number;
+  loseNextApprovalDecisionResponse?: boolean;
+  emptyNextApprovalDecisionResponse?: boolean;
   approvalPolicyQueryCount?: number;
   lastApprovalPolicyPatch?: Record<string, unknown>;
   externalWorkActions: MockExternalWorkAction[];
@@ -198,6 +222,7 @@ export interface MockState {
   runtimeSemaphoreSlots: MockRuntimeSemaphoreSlot[];
   runtimeEventsByWorkUnit: Record<string, MockRuntimeEvent[]>;
   workUnitAttemptsByWorkUnit: Record<string, MockWorkUnitAttempt[]>;
+  workUnitStopEvidenceByWorkUnit?: Record<string, WorkUnitDetailResponse["stopEvidence"]>;
   resourceLeases: unknown[];
   stateTransitions: unknown[];
   artifactsByRun: Record<string, MockArtifact[]>;
@@ -207,7 +232,13 @@ export interface MockState {
   proposedPlans: ProposedPlanArtifact[];
   turns: MockLingTurn[];
   turnRunLinks: MockLingTurnRun[];
+  conversationSupersessionTombstonesByThreadId: Record<string, {
+    readonly turnIds: string[];
+    readonly runIds: string[];
+    readonly responseMessageIds: string[];
+  }>;
   failThreadTurnsForThreadIds: string[];
+  failNextWorkspaceSettingsPatch?: { readonly error: string; readonly message: string; readonly status?: number };
   executionActions: MockExecutionAction[];
   userProfile: UserProfile;
   workspaceSettings: Record<string, unknown>;
@@ -248,7 +279,7 @@ export interface MockLingThread {
   pinnedAt?: string;
   archivedAt?: string;
   archivedReason?: string;
-  surfaceKind?: "channel_root" | "topic" | "branch" | "direct" | "work";
+  surfaceKind?: "channel_root" | "channel_session" | "topic" | "branch" | "direct" | "work";
   relationKind?: "root" | "topic" | "branch";
   anchorItemId?: string;
   forkContextSnapshotId?: string;
@@ -302,6 +333,7 @@ export interface MockRun {
   cwd: string;
   taskId: string;
   channelId?: string;
+  workflowStepId?: string;
   teammateId?: string;
   providerPresetId?: string;
   providerName: string;
@@ -326,11 +358,15 @@ export interface MockRun {
 
 export interface MockExecutionAction {
   id: string;
+  revision?: number;
+  sourceEventSequence?: number;
   workspaceId: string;
   threadId?: string;
   runId?: string;
   attemptId?: string;
   workUnitId?: string;
+  participantId?: string;
+  workflowStepId?: string;
   approvalId?: string;
   toolCallId?: string;
   actionType: string;
@@ -338,10 +374,28 @@ export interface MockExecutionAction {
   status: string;
   title: string;
   summary: string;
+  scopeSummary?: string;
   targetRefs: Array<{ type: string; id?: string; label?: string; path?: string }>;
   previewArtifactIds: string[];
   resultArtifactIds: string[];
+  sourceRefs?: Array<{ kind: string; id: string; label?: string; path?: string; visibility?: string }>;
   policySnapshot?: unknown;
+  toolEvidence?: {
+    toolName: string;
+    inputSummary: string;
+    outputText?: string;
+    outputTruncated: boolean;
+    latestEventSeq: number;
+  };
+  runtimeDiagnostic?: {
+    code: "execution_loop_detected";
+    loopKind: "exact_repeat" | "repeated_update" | "cycle" | "no_progress_budget";
+    repeatedCount: number;
+    noProgressActionCount: number;
+    cycleLength?: number;
+    fingerprint: string;
+    retryable: false;
+  };
   commandEvidence?: {
     command: string;
     cwd?: string;
@@ -388,6 +442,8 @@ export interface MockRunIntervention {
   status: "queued" | "cancelling_source" | "starting_continuation" | "started" | "failed" | "cancelled";
   instruction: string;
   messagePayload?: {
+    sourceMessageId?: string;
+    targetTeammateId?: string;
     body: string;
     attachmentIds: string[];
     linkPreviewIds: string[];
@@ -467,6 +523,29 @@ export interface MockApproval {
   resolvedAt?: string;
   resolvedBy?: "local-user";
   decisionReason?: string;
+  availableDecisions?: Array<"approve_once" | "approve_command_rule" | "deny">;
+  proposedCommandRule?: {
+    prefix: string[];
+    display: string;
+    fingerprint: string;
+    version: 1;
+  };
+  decisionKind?: "approve_once" | "approve_command_rule" | "deny";
+  decisionRuleId?: string;
+}
+
+export interface MockApprovalCommandRule {
+  id: string;
+  workspaceId: string;
+  toolName: "bash";
+  prefix: string[];
+  display: string;
+  fingerprint: string;
+  version: 1;
+  sourceApprovalId?: string;
+  createdBy: "local-user";
+  createdAt: string;
+  revokedAt?: string;
 }
 
 export interface MockApprovalPolicy {
@@ -711,29 +790,7 @@ export interface MockManagedPlugin {
   }>;
   package?: MockManagedPluginPackage;
   runtimePreview?: MockManagedPluginRuntimePreview;
-  setup?: {
-    kind: "local_binary";
-    state: "detected" | "missing" | "unsupported" | "connected" | "ready";
-    checkedAt: string;
-    schemaVersion?: 2;
-    distribution?: "bundled_embedded" | "external_local";
-    platform?: "darwin" | "win32" | "unsupported";
-    providerState?: "included" | "desktop_unavailable" | "permission_required" | "interactive_session_required" | "platform_unavailable" | "ready" | "incompatible" | "corrupt" | "external_missing" | "external_detected" | "external_connected" | "unsupported";
-    requestedEnabled?: boolean;
-    effectiveEnabled?: boolean;
-    integrityCoverage?: "standard" | "uiaccess";
-    limitations?: Array<"elevated_pixel_input" | "uwp_send_input">;
-    providerVersion?: string;
-    providerDistributionRevision?: string;
-    providerDisplayVersion?: string;
-    integrity?: "verified" | "failed" | "unknown";
-    detectedCommand?: string;
-    guide?: {
-      documentationUrl: string;
-      installCommand: string;
-      supportsCustomCommand: boolean;
-    };
-  };
+  setup?: ManagedPluginSetupView;
   events?: MockManagedPluginEvent[];
   disabledReason?: string;
   actions: {
@@ -845,6 +902,7 @@ export interface MockWorkUnitAttempt {
   workUnitId: string;
   attemptNumber: number;
   runtimeInstanceId: string;
+  fencingToken?: string;
   runnerId?: string;
   providerPresetId?: string;
   status: string;
@@ -1088,7 +1146,7 @@ async function clickVisibleNewTask(page: Page): Promise<boolean> {
 }
 
 export async function openChannelSidePanel(page: Page, name: "Settings"): Promise<void> {
-  const expectedLabels = [name];
+  const expectedLabels: readonly string[] = [name];
   const panel = page.locator(".channel-side-panel");
   const panelVisible = (await panel.count()) > 0 && await panel.isVisible().catch(() => false);
   const panelLabel = panelVisible ? await panel.getAttribute("aria-label") : "";
@@ -1118,14 +1176,17 @@ export async function openEngineeringChannel(page: Page): Promise<void> {
   if (await channelMessageFeed.isVisible().catch(() => false)) {
     return;
   }
-  const navigation = page.getByLabel("Ling Stack navigation");
-  const engineeringChannel = navigation.getByRole("button", { name: "Engineering" }).first();
-  if (!(await engineeringChannel.isVisible().catch(() => false))) {
-    const showNavigation = navigation.getByRole("button", { name: /Show navigation|显示导航/ });
-    if (await showNavigation.isVisible().catch(() => false)) {
-      await showNavigation.click();
-    }
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
+  const showNavigation = page.getByRole("button", { name: /Show navigation|显示导航/ });
+  await expect.poll(async () => (
+    await navigation.isVisible().catch(() => false)
+    || await showNavigation.isVisible().catch(() => false)
+  )).toBe(true);
+  if (!(await navigation.isVisible().catch(() => false))) {
+    await showNavigation.click();
   }
+  await expect(navigation).toBeVisible();
+  const engineeringChannel = navigation.getByRole("button", { name: "Engineering", exact: true }).first();
   await expect(engineeringChannel).toBeVisible();
   await engineeringChannel.click();
   await expect(channelMessageFeed).toBeVisible();
@@ -1174,6 +1235,7 @@ export async function readHorizontalOverflow(page: Page, selector: string): Prom
 export function createBaseState(options: { approvalStatus: "pending" | "expired" }): MockState {
   const run: MockRun = {
     id: "run_failed",
+    threadId: "thread_channel_channel_engineering",
     status: "failed",
     cwd,
     taskId: "task_inspect",
@@ -1215,6 +1277,7 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
     channelWorkspaceGitStatusByChannel: {},
     channelMessages: [],
     channelConversationItemExtras: [],
+    conversationContextSnapshotsByThreadId: {},
     channelMessageRouteDecisions: [],
     channelIntentDecisions: [],
     channelTurnContexts: {},
@@ -1297,6 +1360,8 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
         decisionReason: options.approvalStatus === "expired" ? "Approval request expired before a decision was received." : undefined,
       },
     ],
+    approvalCommandRules: [],
+    approvalDecisionRequests: [],
     approvalCheckpoints: [],
     approvalPolicy: {
       workspaceId: "workspace_default",
@@ -1416,6 +1481,7 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
     proposedPlans: [],
     turns: [],
     turnRunLinks: [],
+    conversationSupersessionTombstonesByThreadId: {},
     failThreadTurnsForThreadIds: [],
     executionActions: [],
     userProfile: {
@@ -1901,7 +1967,7 @@ function safeMockTraceIdFragment(value: string): string {
   return value.replace(/[^A-Za-z0-9_-]/g, "_");
 }
 
-function normalizeMockTraceStatus(status: string): Exclude<LingTraceStatus, "skipped"> {
+function normalizeMockTraceStatus(status: string): Exclude<LingTraceStatus, "skipped" | "waiting_for_input"> {
   if (status === "queued" || status === "running" || status === "waiting_for_approval" || status === "succeeded" || status === "failed" || status === "cancelled") {
     return status;
   }
@@ -2944,7 +3010,7 @@ export function createMockSkillHealthReport(state: MockState, limit = 100): Reco
     isRecord(item) &&
     (item.reviewStatus === "builtin" || item.reviewStatus === "published")
   );
-  const openCandidates = state.skillCandidates.filter((item) =>
+  const openCandidates = state.skillCandidates.filter((item): item is Record<string, unknown> =>
     isRecord(item) &&
     (item.status === "pending" || item.status === "needs_edit" || item.status === "approved_for_draft")
   );
@@ -3248,7 +3314,7 @@ export function buildMockEffectiveSkills(state: MockState, teammateId: string): 
   }
   const bindings = state.teammateSkillBindings.filter((item) => isRecord(item) && item.teammateId === teammateId);
   const definitions = state.skillRegistryEntries
-    .filter((item) =>
+    .filter((item): item is Record<string, unknown> & { definition: Record<string, unknown> } =>
       isRecord(item) &&
       (item.reviewStatus === "builtin" || item.reviewStatus === "published") &&
       isRecord(item.definition)
@@ -3670,10 +3736,16 @@ export function createMockRuntime() {
 }
 
 export function createMockWorkUnitDetail(state: MockState, workUnit: MockWorkUnit) {
+  const attempts = (state.workUnitAttemptsByWorkUnit[workUnit.id] ?? []).map(attempt => ({ ...attempt, fencingToken: attempt.fencingToken ?? "1" }));
   return {
     cwd,
     workUnit,
-    attempts: state.workUnitAttemptsByWorkUnit[workUnit.id] ?? [],
+    attempts,
+    // Controlled default: terminal fixtures also finish their simulated Host. Tests can hold either fact independently.
+    stopEvidence: state.workUnitStopEvidenceByWorkUnit?.[workUnit.id] ?? { schemaVersion: 1, workUnitId: workUnit.id,
+      attempts: attempts.map(attempt => ({ attemptId: attempt.id, runtimeInstanceId: attempt.runtimeInstanceId,
+        fencingToken: attempt.fencingToken, localExecution: ["cancelled", "failed", "succeeded", "yielded", "lost"].includes(attempt.status)
+          ? "drained" : "draining", effects: "settled" })) },
     events: state.runtimeEventsByWorkUnit[workUnit.id] ?? [],
     leases: state.resourceLeases.filter((lease) => isRecord(lease) && lease.workUnitId === workUnit.id),
     semaphoreSlots: state.runtimeSemaphoreSlots.filter((slot) => slot.workUnitId === workUnit.id),
@@ -4444,7 +4516,7 @@ export function createMockPluginHealth(
   pluginId: string,
   status: string,
   message: string,
-): MockManagedPlugin["health"] {
+): NonNullable<MockManagedPlugin["health"]> {
   return {
     pluginId,
     checkedAt: "2026-06-06T00:30:00.000Z",
@@ -5385,6 +5457,7 @@ function mockChannelConversationThread(state: MockState, channelId: string, requ
       existing.nextItemSequence ??= 1;
       return existing;
     }
+    if (requestedThreadId === `thread_channel_${channelId}`) return ensureMockChannelRootThread(state, channelId);
     throw new Error(`Mock conversation thread not found: ${requestedThreadId}`);
   }
   return ensureMockChannelRootThread(state, channelId);
@@ -5622,8 +5695,8 @@ function readChannelAutoReplyMode(value: unknown): string {
   return value === "default_teammate" || value === "auto_route" ? value : "mentions_only";
 }
 
-function readChannelResponseLanguage(value: unknown): "workspace" | "follow_user" | "zh-CN" | "en-US" | undefined {
-  return value === "workspace" || value === "follow_user" || value === "zh-CN" || value === "en-US" ? value : undefined;
+function readChannelResponseLanguage(value: unknown): "workspace" | "follow_user" | SupportedLocale | undefined {
+  return value === "workspace" || value === "follow_user" || isSupportedLocale(value) ? value : undefined;
 }
 
 export function createMockTeammate(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -5642,8 +5715,6 @@ export function createMockTeammate(overrides: Record<string, unknown> = {}): Rec
     displayName: "Ling Engineer",
     description: "Owns scoped implementation in the Engineering channel.",
     avatarTone: "teal",
-    modelBindingMode,
-    providerPresetId,
     systemPrompt: "You are the Engineering AI teammate.",
     appendSystemPrompt: [],
     allowedTools: ["read", "grep", "find", "ls"],
@@ -5820,7 +5891,7 @@ function buildMockAiCouncilHealthReport(
     }
     const councilId = council.id;
     const members = state.aiCouncilMembers
-      .filter((item) => isRecord(item) && item.councilId === councilId)
+      .filter((item): item is Record<string, unknown> => isRecord(item) && item.councilId === councilId)
       .sort((left, right) => Number(left.position ?? 0) - Number(right.position ?? 0));
     totalMembers += members.length;
     const councilDisplayName = typeof council.displayName === "string" ? council.displayName : councilId;
@@ -6135,7 +6206,7 @@ function buildMockEffectiveChannelCouncil(state: MockState, channelId: string): 
     .map((council) => {
       const councilId = String(council.id);
       const members = state.aiCouncilMembers
-        .filter((item) => isRecord(item) && item.councilId === councilId)
+        .filter((item): item is Record<string, unknown> => isRecord(item) && item.councilId === councilId)
         .sort((left, right) => Number(left.position ?? 0) - Number(right.position ?? 0))
         .map((member) => {
           const teammateId = typeof member.teammateId === "string" ? member.teammateId : "";
@@ -6577,10 +6648,10 @@ function mockRecentWorkflowFileTarget(state: MockState, channelId: string, fileN
   const wanted = fileName.toLowerCase();
   const texts = [
     ...state.channelExecutionProposals
-      .filter((proposal) => isRecord(proposal) && proposal.channelId === channelId)
+      .filter((proposal): proposal is Record<string, unknown> => isRecord(proposal) && proposal.channelId === channelId)
       .flatMap((proposal) => [proposal.title, proposal.prompt, proposal.riskSummary].filter((value): value is string => typeof value === "string")),
     ...state.channelWorkflowSteps
-      .filter((step) => isRecord(step) && step.channelId === channelId)
+      .filter((step): step is Record<string, unknown> => isRecord(step) && step.channelId === channelId)
       .flatMap((step) => [step.title, step.prompt, step.resultSummary].filter((value): value is string => typeof value === "string")),
   ];
   for (const text of texts) {
@@ -6947,6 +7018,7 @@ async function handleMockConversationMessageEdit(
   const interruptedRunIds: string[] = [];
   let supersededTurnId: string | undefined;
   let replacementTurnId: string | undefined;
+  let supersessionThreadId: string | undefined;
   let replayedSupersessionId: string | undefined;
   let idempotentReplay = false;
 
@@ -6962,6 +7034,7 @@ async function handleMockConversationMessageEdit(
       return;
     }
     supersededTurnId = originalTurn.id;
+    supersessionThreadId = thread.id;
     originalTurn.status = "superseded";
     originalTurn.updatedAt = now;
     supersededResponseMessageIds.push(`conversation-assistant:${originalTurn.id}`);
@@ -7059,6 +7132,7 @@ async function handleMockConversationMessageEdit(
     const currentThreadId = typeof currentEntry?.item.threadId === "string"
       ? currentEntry.item.threadId
       : ensureMockChannelRootThread(state, ownerId).id;
+    supersessionThreadId = currentThreadId;
     for (let index = 0; index < state.channelMessages.length; index += 1) {
       const candidate = state.channelMessages[index];
       const matchesSupersededReply = isRecord(candidate) && candidate.authorType === "ai-teammate" && candidate.status !== "superseded" && (
@@ -7100,6 +7174,8 @@ async function handleMockConversationMessageEdit(
       await route.fulfill({ status: 404, json: { error: "message_not_found", message: "Private message not found." } });
       return;
     }
+    supersessionThreadId = state.threads.find((candidate) =>
+      candidate.kind === "teammate_direct" && candidate.teammateId === ownerId)?.id;
     const pendingReplacement = isRecord(current.pendingReplacement) && current.pendingReplacement.idempotencyKey === idempotencyKey
       ? current.pendingReplacement
       : undefined;
@@ -7152,6 +7228,19 @@ async function handleMockConversationMessageEdit(
     return;
   }
 
+  if (!idempotentReplay && supersessionThreadId) {
+    const tombstones = state.conversationSupersessionTombstonesByThreadId[supersessionThreadId] ?? {
+      turnIds: [],
+      runIds: [],
+      responseMessageIds: [],
+    };
+    state.conversationSupersessionTombstonesByThreadId[supersessionThreadId] = {
+      turnIds: [...new Set([...tombstones.turnIds, ...(supersededTurnId ? [supersededTurnId] : [])])].sort(),
+      runIds: [...new Set([...tombstones.runIds, ...interruptedRunIds])].sort(),
+      responseMessageIds: [...new Set([...tombstones.responseMessageIds, ...supersededResponseMessageIds])].sort(),
+    };
+  }
+
   await route.fulfill({
     json: {
       message: revision,
@@ -7167,7 +7256,7 @@ async function handleMockConversationMessageEdit(
   });
 }
 
-function buildMockConversationDetail(state: MockState, cwd: string, thread: MockLingThread): Record<string, unknown> {
+export function buildMockConversationDetail(state: MockState, cwd: string, thread: MockLingThread): Record<string, unknown> {
   const turns = state.turns
     .filter((turn) => turn.threadId === thread.id && turn.status !== "superseded")
     .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
@@ -7184,6 +7273,11 @@ function buildMockConversationDetail(state: MockState, cwd: string, thread: Mock
   });
   const runIds = new Set(runs.map((run) => run.id));
   const interventions = state.runInterventions.filter((intervention) => runIds.has(intervention.sourceRunId));
+  const approvals = state.approvals.filter((approval) => approval.runId && runIds.has(approval.runId));
+  const approvalIds = new Set(approvals.map((approval) => approval.id));
+  const approvalCheckpoints = state.approvalCheckpoints.filter((checkpoint) =>
+    approvalIds.has(checkpoint.approvalId) || Boolean(checkpoint.runId && runIds.has(checkpoint.runId))
+  );
   const turnMessageIds = new Set(turnMessages.map((message) => message.id));
   const guidanceMessages = interventions.flatMap((intervention) => {
     const id = `conversation-user:intervention:${intervention.id}`;
@@ -7194,7 +7288,7 @@ function buildMockConversationDetail(state: MockState, cwd: string, thread: Mock
       id,
       role: "user",
       content: intervention.messagePayload?.body || intervention.instruction,
-      attachments: state.conversationAttachments.filter((attachment) => intervention.messagePayload?.attachmentIds.includes(attachment.id)),
+      attachments: state.conversationAttachments.filter((attachment) => isRecord(attachment) && typeof attachment.id === "string" && intervention.messagePayload?.attachmentIds.includes(attachment.id)),
       fileRefs: (intervention.messagePayload?.fileRefs ?? []).map((fileRef) => ({
         path: fileRef.path,
         ...(fileRef.label ? { label: fileRef.label } : {}),
@@ -7209,6 +7303,122 @@ function buildMockConversationDetail(state: MockState, cwd: string, thread: Mock
   });
   const messages = [...turnMessages, ...guidanceMessages]
     .sort((left, right) => String(left.createdAt).localeCompare(String(right.createdAt)) || String(left.id).localeCompare(String(right.id)));
+  const conversationItems = messages.map((message, index) => {
+    const role = readString(message, "role");
+    const status = readString(message, "status");
+    const turnId = readOptionalString(message, "turnId");
+    const runId = readOptionalString(message, "runId");
+    const createdAt = readString(message, "createdAt") || thread.createdAt;
+    const updatedAt = readString(message, "updatedAt") || createdAt;
+    const committed = status !== "pending" && status !== "running";
+    const domainRefs = [
+      ...(turnId ? [{ type: "turn", id: turnId }] : []),
+      ...(runId ? [{ type: "run", id: runId }] : []),
+    ];
+    if (role === "assistant") {
+      return {
+        schemaVersion: 1,
+        id: readString(message, "id"),
+        workspaceId: thread.workspaceId,
+        threadId: thread.id,
+        ...(turnId ? { turnId } : {}),
+        sequence: index + 1,
+        kind: "assistant_message",
+        status: committed ? status === "failed" || status === "cancelled" ? "failed" : "committed" : "pending",
+        actorType: "ling_agent",
+        actorId: readOptionalString(message, "authorId") ?? "ling_agent",
+        visibility: "thread_participants",
+        payload: {
+          body: readString(message, "content"),
+          format: "markdown",
+          streaming: !committed,
+          deliveryStatus: status === "failed" || status === "cancelled" ? "failed" : committed ? "ready" : "pending",
+          presentationRole: "reply_result",
+        },
+        domainRefs,
+        revision: 1,
+        createdAt,
+        updatedAt,
+        ...(committed ? { committedAt: updatedAt } : {}),
+      };
+    }
+    return {
+      schemaVersion: 1,
+      id: readString(message, "id"),
+      workspaceId: thread.workspaceId,
+      threadId: thread.id,
+      ...(turnId ? { turnId } : {}),
+      sequence: index + 1,
+      kind: "user_message",
+      status: committed ? status === "failed" || status === "cancelled" ? "failed" : "committed" : "pending",
+      actorType: "local_user",
+      visibility: "thread_participants",
+      payload: {
+        body: readString(message, "content"),
+        format: "plain_text",
+        mentions: [],
+        attachmentIds: Array.isArray(message.attachments)
+          ? message.attachments.flatMap((attachment) => isRecord(attachment) && typeof attachment.id === "string" ? [attachment.id] : [])
+          : [],
+        linkPreviewIds: [],
+        fileRefs: Array.isArray(message.fileRefs) ? message.fileRefs : [],
+      },
+      domainRefs,
+      revision: 1,
+      createdAt,
+      updatedAt,
+      ...(committed ? { committedAt: updatedAt } : {}),
+    };
+  });
+  const terminalReportItems = state.terminalReports
+    .filter((report): report is Record<string, unknown> => isRecord(report) && report.threadId === thread.id)
+    .flatMap((report, index) => {
+      const reportId = readString(report, "id");
+      const resultItemId = readString(report, "resultItemId") || (reportId ? `result_terminal_report:${reportId}` : "");
+      const generation = typeof report.generation === "number" ? report.generation : 1;
+      const source = isRecord(report.source) ? report.source : undefined;
+      const sourceKind = readString(source, "kind");
+      const sourceId = readString(source, "id");
+      const evidenceFingerprint = readString(report, "evidenceFingerprint");
+      const outcome = isRecord(report.outcome) ? report.outcome : undefined;
+      const outcomeStatus = readString(outcome, "status");
+      if (!reportId || !resultItemId || !sourceKind || !sourceId || !evidenceFingerprint || !outcomeStatus) {
+        return [];
+      }
+      const reportCreatedAt = readString(report, "createdAt") || thread.updatedAt;
+      const reportCommittedAt = readString(report, "committedAt") || reportCreatedAt;
+      return [{
+        schemaVersion: 1,
+        id: resultItemId,
+        workspaceId: thread.workspaceId,
+        threadId: thread.id,
+        ...(readString(report, "turnId") ? { turnId: readString(report, "turnId") } : {}),
+        sequence: messages.length + index + 1,
+        kind: "terminal_report",
+        status: "committed",
+        actorType: "host",
+        visibility: "thread_participants",
+        payload: {
+          reportId,
+          generation,
+          sourceKind,
+          sourceId,
+          evidenceFingerprint,
+          outcomeStatus,
+        },
+        domainRefs: [
+          { type: "terminal_report", id: reportId },
+          { type: sourceKind, id: sourceId },
+        ],
+        revision: 1,
+        createdAt: reportCreatedAt,
+        updatedAt: reportCommittedAt,
+        committedAt: reportCommittedAt,
+      }];
+    });
+  const allConversationItems = [...conversationItems, ...terminalReportItems,
+    ...(state.conversationItems ?? []).filter(item => item.threadId === thread.id && item.workspaceId === thread.workspaceId
+      && (item.kind === "user_input_request" || item.kind === "user_input_answer"))];
   const latestRun = runs[runs.length - 1];
   const requestSnapshot = isRecord(latestRun?.requestSnapshot) ? latestRun.requestSnapshot : {};
   const latestProjectPath = latestRun?.cwd && latestRun.cwd !== cwd ? latestRun.cwd : undefined;
@@ -7216,11 +7426,34 @@ function buildMockConversationDetail(state: MockState, cwd: string, thread: Mock
     cwd,
     thread,
     turns,
+    runtimeMetrics: state.runtimeMetricsFixture,
+    conversationItems: allConversationItems,
+    userInputs: (state.userInputs ?? []).filter(record => allConversationItems.some(item => item.id === record.itemId)),
+    supersessionTombstones: state.conversationSupersessionTombstonesByThreadId[thread.id] ?? {
+      turnIds: [],
+      runIds: [],
+      responseMessageIds: [],
+    },
+    contextSnapshots: state.conversationContextSnapshotsByThreadId?.[thread.id] ?? [],
+    runLinks,
     runs,
-    executionActions: state.executionActions.filter((action) => action.threadId === thread.id || runs.some((run) => run.id === action.runId)),
-    approvals: state.approvals.filter((approval) => approval.runId && runIds.has(approval.runId)),
+    reasoningSummaries: (state.conversationReasoningSummaries ?? []).filter((summary) =>
+      summary.threadId === thread.id && runIds.has(summary.runId)
+    ),
+    executionActions: state.executionActions
+      .filter((action) => action.threadId === thread.id || runs.some((run) => run.id === action.runId))
+      .map((action) => ({
+        ...action,
+        // Keep the mock detail response aligned with the ExecutionAction
+        // contract consumed by the canonical transcript adapter.
+        revision: action.revision ?? 1,
+        sourceRefs: action.sourceRefs ?? [],
+      })),
+    approvals,
+    approvalCheckpoints,
     interventions,
     terminalReports: state.terminalReports.filter((report) => isRecord(report) && report.threadId === thread.id),
+    artifacts: runs.flatMap((run) => state.artifactsByRun[run.id] ?? []),
     messages,
     generatedMedia: mockConversationGeneratedMediaForRunIds(state, runIds),
     defaults: {
@@ -7405,6 +7638,153 @@ function buildEmptyMockTeamMetrics(channelId: string): Record<string, unknown> {
   };
 }
 
+interface MockWorkspaceFileCapabilityGrant {
+  readonly capabilityTarget: "open_file" | "open_diff" | "open_artifact";
+  readonly refId: string;
+  readonly displayPath: string;
+  readonly scope: {
+    readonly workspaceId: string;
+    readonly threadId: string;
+    readonly runId: string;
+    readonly actionId: string;
+    readonly participantId: string;
+    readonly workflowStepId?: string;
+  };
+}
+
+function issueMockWorkspaceFileCapability(
+  state: MockState,
+  input: unknown,
+): { readonly status: number; readonly body: Record<string, unknown> } {
+  if (!isRecord(input) || !isRecord(input.scope)) {
+    return { status: 400, body: { error: "bad_request", message: "Capability scope is required." } };
+  }
+  const capabilityTarget = readString(input, "capabilityTarget");
+  const refId = readString(input, "refId");
+  const requestedCwd = readString(input, "cwd");
+  const workflowStepId = readOptionalString(input.scope, "workflowStepId");
+  const scope = {
+    workspaceId: readString(input.scope, "workspaceId"),
+    threadId: readString(input.scope, "threadId"),
+    runId: readString(input.scope, "runId"),
+    actionId: readString(input.scope, "actionId"),
+    participantId: readString(input.scope, "participantId"),
+    ...(workflowStepId ? { workflowStepId } : {}),
+  };
+  if (requestedCwd !== cwd || !refId || !scope.workspaceId || !scope.threadId || !scope.runId || !scope.actionId || !scope.participantId ||
+    (capabilityTarget !== "open_file" && capabilityTarget !== "open_diff" && capabilityTarget !== "open_artifact")) {
+    return { status: 400, body: { error: "bad_request", message: "Capability request is incomplete." } };
+  }
+  const action = state.executionActions.find((candidate) => candidate.id === scope.actionId);
+  if (!action || action.workspaceId !== scope.workspaceId || action.threadId !== scope.threadId || action.runId !== scope.runId ||
+    action.participantId !== scope.participantId || (action.workflowStepId ?? undefined) !== scope.workflowStepId) {
+    return { status: 403, body: { error: "scope_mismatch", message: "Capability action scope is invalid." } };
+  }
+  const artifact = Object.values(state.artifactsByRun).flat().find((candidate) => candidate.id === refId);
+  const artifactOwned = Boolean(artifact && (action.previewArtifactIds.includes(refId) || action.resultArtifactIds.includes(refId)));
+  const target = action.targetRefs.find((candidate) => candidate.id === refId || candidate.path === refId || candidate.label === refId);
+  const source = action.sourceRefs?.find((candidate) => candidate.id === refId || candidate.path === refId);
+  if (!artifactOwned && !target && !source) {
+    return { status: 403, body: { error: "missing_context_source", message: "Capability ref is not owned by the action." } };
+  }
+  if (capabilityTarget === "open_diff" && artifact && artifact.type !== "diff") {
+    return { status: 403, body: { error: "missing_context_source", message: "Capability ref is not diff evidence." } };
+  }
+  const displayPath = artifact?.path ?? target?.path ?? source?.path ?? refId;
+  const grant: MockWorkspaceFileCapabilityGrant = {
+    capabilityTarget,
+    refId,
+    displayPath,
+    scope,
+  };
+  const capabilityId = `wscap_mock_${Buffer.from(JSON.stringify(grant), "utf8").toString("base64url")}`;
+  return {
+    status: 200,
+    body: {
+      cwd: requestedCwd,
+      capability: {
+        capabilityId,
+        capabilityTarget,
+        refId,
+        displayPath,
+        scope,
+        issuedAt: "2026-07-23T09:10:01.000Z",
+        expiresAt: "2099-07-23T09:15:01.000Z",
+        daemonEpoch: "mock-daemon-epoch",
+      },
+    },
+  };
+}
+
+function previewMockWorkspaceFileCapability(
+  state: MockState,
+  input: unknown,
+): { readonly status: number; readonly body: Record<string, unknown> } {
+  if (!isRecord(input) || !isRecord(input.scope)) {
+    return { status: 400, body: { error: "bad_request", message: "Capability preview scope is required." } };
+  }
+  const capabilityId = readString(input, "capabilityId");
+  if (!capabilityId.startsWith("wscap_mock_")) {
+    return { status: 403, body: { error: "workspace_file_capability_invalid", message: "Capability is invalid." } };
+  }
+  let grant: MockWorkspaceFileCapabilityGrant;
+  try {
+    grant = JSON.parse(Buffer.from(capabilityId.slice("wscap_mock_".length), "base64url").toString("utf8")) as MockWorkspaceFileCapabilityGrant;
+  } catch {
+    return { status: 403, body: { error: "workspace_file_capability_invalid", message: "Capability is invalid." } };
+  }
+  const workflowStepId = readOptionalString(input.scope, "workflowStepId");
+  const requestedScope = {
+    workspaceId: readString(input.scope, "workspaceId"),
+    threadId: readString(input.scope, "threadId"),
+    runId: readString(input.scope, "runId"),
+    actionId: readString(input.scope, "actionId"),
+    participantId: readString(input.scope, "participantId"),
+    ...(workflowStepId ? { workflowStepId } : {}),
+  };
+  if (JSON.stringify(requestedScope) !== JSON.stringify(grant.scope)) {
+    return { status: 403, body: { error: "scope_mismatch", message: "Capability scope does not match." } };
+  }
+  const action = state.executionActions.find((candidate) => candidate.id === grant.scope.actionId);
+  const artifact = Object.values(state.artifactsByRun).flat().find((candidate) => candidate.id === grant.refId);
+  if (!action || !artifact || (!action.previewArtifactIds.includes(artifact.id) && !action.resultArtifactIds.includes(artifact.id))) {
+    return { status: 403, body: { error: "missing_context_source", message: "Capability evidence is no longer available." } };
+  }
+  const previewKind = artifact.type === "diff" ? "diff" : artifact.type === "json" ? "json" : artifact.type === "log" ? "log" : "plain_text";
+  return {
+    status: 200,
+    body: {
+      ref: {
+        id: artifact.id,
+        source: "artifact",
+        scope: "run",
+        label: artifact.title ?? artifact.path,
+        displayPath: artifact.path,
+        contentType: artifact.contentType,
+        sizeBytes: artifact.sizeBytes,
+        previewable: true,
+      },
+      kind: previewKind,
+      text: artifact.contentText ?? "",
+      truncated: false,
+      sizeBytes: artifact.sizeBytes,
+      redactionNotes: [],
+    },
+  };
+}
+
+function mockProviderModelDiscoveryMetadata(stale = false): Record<string, unknown> {
+  return {
+    fetchedAt: "2026-09-22T03:00:00.000Z",
+    catalog: {
+      source: "models.dev",
+      version: "models.dev:test1234",
+      updatedAt: stale ? "2026-01-01" : "2026-09-21",
+      stale,
+    },
+  };
+}
+
 export async function mockDaemon(
   page: Page,
   state: MockState,
@@ -7414,6 +7794,7 @@ export async function mockDaemon(
     readonly templates?: readonly unknown[];
     readonly providerModelsUnsupported?: boolean;
     readonly providerModels?: readonly unknown[];
+    readonly providerModelCatalogStale?: boolean;
     readonly providerCheckModelUnsupportedProviderIds?: readonly string[];
     readonly failTeammateAvatarUploads?: boolean;
     readonly failTeammateAvatarDeletes?: boolean;
@@ -7436,17 +7817,24 @@ export async function mockDaemon(
   } = {},
 ): Promise<void> {
   await mkdir(cwd, { recursive: true });
-  await page.addInitScript((firstRunPreference) => {
+  for (const unit of state.workUnits) {
+    if (!unit.activeAttemptId || state.workUnitAttemptsByWorkUnit[unit.id] !== undefined) continue;
+    state.workUnitAttemptsByWorkUnit[unit.id] = [{ id: unit.activeAttemptId, workUnitId: unit.id,
+      attemptNumber: unit.attemptCount, runtimeInstanceId: "mock-runtime", runnerId: "runner_pi",
+      status: ["cancelled", "failed", "succeeded"].includes(unit.status) ? unit.status : "started",
+      createdAt: unit.createdAt, startedAt: unit.startedAt }];
+  }
+  await page.addInitScript(({ firstRunPreference, workspaceIdentity }) => {
     Object.defineProperty(window, "WebSocket", { value: undefined, configurable: true });
     if (firstRunPreference === "completed") {
       localStorage.setItem("ling-first-run:v1", JSON.stringify({
         version: 1,
         status: "completed",
-        workspaceIdentity: "/tmp/ling-stack-workspace",
+        workspaceIdentity,
         updatedAt: "2026-07-30T00:00:00.000Z",
       }));
     }
-  }, options.firstRunPreference ?? "completed");
+  }, { firstRunPreference: options.firstRunPreference ?? "completed", workspaceIdentity: cwd });
   await page.route("http://127.0.0.1:17891/**", async (route) => {
     await handleDaemonRoute(route, state, options);
   });
@@ -7461,6 +7849,7 @@ export async function handleDaemonRoute(
     readonly templates?: readonly unknown[];
     readonly providerModelsUnsupported?: boolean;
     readonly providerModels?: readonly unknown[];
+    readonly providerModelCatalogStale?: boolean;
     readonly providerCheckModelUnsupportedProviderIds?: readonly string[];
     readonly failTeammateAvatarUploads?: boolean;
     readonly failTeammateAvatarDeletes?: boolean;
@@ -7549,6 +7938,88 @@ export async function handleDaemonRoute(
     });
     return;
   }
+  if (request.method() === "GET" && path === "/notifications/preferences") {
+    await route.fulfill({
+      json: {
+        schemaVersion: 1,
+        preferences: {
+          schemaVersion: 1,
+          globalEnabled: true,
+          events: {
+            automation_run_finished: "failures",
+            automation_run_failed: "all",
+            approval_required: "all",
+          },
+        },
+      },
+    });
+    return;
+  }
+  if (request.method() === "PATCH" && path === "/notifications/preferences") {
+    await route.fulfill({
+      json: {
+        schemaVersion: 1,
+        preferences: {
+          schemaVersion: 1,
+          globalEnabled: true,
+          events: {
+            automation_run_finished: "failures",
+            automation_run_failed: "all",
+            approval_required: "all",
+          },
+        },
+      },
+    });
+    return;
+  }
+  if (request.method() === "GET" && (path === "/notifications" || path === "/notifications/stream")) {
+    await route.fulfill({
+      json: {
+        schemaVersion: 1,
+        notifications: [
+          {
+            id: "notification-1",
+            kind: "automation_run_failed",
+            title: "Automation run failed",
+            body: "Daily brief could not start.",
+            createdAt: "2026-10-26T00:00:00.000Z",
+            automationId: "automation_daily_brief",
+            cwd,
+          },
+        ],
+        nextSince: "notification-1",
+      },
+    });
+    return;
+  }
+  if (request.method() === "GET" && path === "/diagnostics/doctor") {
+    await route.fulfill({
+      json: {
+        doctorVersion: 1,
+        cwd,
+        overallStatus: "ok",
+        checks: [
+          { id: "workspace_store", category: "workspace", status: "ok", summary: "Workspace run store opened", details: `cwd: ${cwd}` },
+          { id: "startup_phases", category: "startup", status: "ok", summary: "Startup state: ready" },
+          { id: "log_file", category: "logs", status: "ok", summary: "Daemon log file readable" },
+          { id: "feature_flags", category: "config", status: "ok", summary: "Feature configuration loaded" },
+        ],
+        generatedAt: "2026-10-26T00:00:00.000Z",
+      },
+    });
+    return;
+  }
+  if (request.method() === "GET" && path === "/diagnostics/logs") {
+    await route.fulfill({
+      json: {
+        logVersion: 1,
+        logPath: "/tmp/ling/daemon.log",
+        truncated: false,
+        lines: ["2026-10-26T00:00:00.000Z info daemon listening on 127.0.0.1:17891"],
+      },
+    });
+    return;
+  }
   if (request.method() === "GET" && path === "/provider-templates") {
     await route.fulfill({ json: { templates: options.templates ?? [] } });
     return;
@@ -7556,6 +8027,25 @@ export async function handleDaemonRoute(
   if (request.method() === "GET" && path === "/workspace-settings") {
     state.workspaceSettings = normalizeWorkspaceSettings(state.workspaceSettings);
     await route.fulfill({ json: { cwd, settings: state.workspaceSettings } });
+    return;
+  }
+  if (request.method() === "GET" && path === "/workspace/work-summary") {
+    await route.fulfill({ json: {
+      cwd, sessions: [], workspaces: [], pullRequests: [], truncated: false,
+      checkedAt: "2026-10-29T00:00:00.000Z",
+    } });
+    return;
+  }
+  if (request.method() === "POST" && path === "/workspace-files/capabilities") {
+    const body = await request.postDataJSON() as unknown;
+    const issued = issueMockWorkspaceFileCapability(state, body);
+    await route.fulfill({ status: issued.status, json: issued.body });
+    return;
+  }
+  if (request.method() === "POST" && path === "/workspace-files/preview") {
+    const body = await request.postDataJSON() as unknown;
+    const preview = previewMockWorkspaceFileCapability(state, body);
+    await route.fulfill({ status: preview.status, json: preview.body });
     return;
   }
   if (request.method() === "GET" && path === "/media-generation-targets") {
@@ -7678,6 +8168,15 @@ export async function handleDaemonRoute(
   }
   if (request.method() === "PATCH" && path === "/workspace-settings") {
     const body = await request.postDataJSON() as Record<string, unknown>;
+    if (state.failNextWorkspaceSettingsPatch) {
+      const failure = state.failNextWorkspaceSettingsPatch;
+      state.failNextWorkspaceSettingsPatch = undefined;
+      await route.fulfill({
+        status: failure.status ?? 500,
+        json: { error: failure.error, message: failure.message },
+      });
+      return;
+    }
     const nextSettings = { ...state.workspaceSettings };
     for (const key of ["workspaceCwd", "theme", "locale", "responseLanguage", "lingConversationTone", "defaultProviderPresetId", "defaultAuthorizationMode", "defaultWorkspaceAccessMode", "defaultPermissionMode", "defaultPermissionPreset", "channelNotifications", "channelActivityViews", "skillGovernancePolicy", "mediaGenerationDefaults"] as const) {
       if (body[key] === null) {
@@ -7735,7 +8234,7 @@ export async function handleDaemonRoute(
       readonly handle?: unknown;
       readonly avatarDataUrl?: unknown;
     };
-    const nextProfile: UserProfile = {
+    const nextProfile = {
       ...state.userProfile,
       displayName: typeof body.displayName === "string" && body.displayName.trim() ? body.displayName.trim() : state.userProfile.displayName,
       updatedAt: "2026-05-25T00:18:00.000Z",
@@ -7863,11 +8362,37 @@ export async function handleDaemonRoute(
         readiness: {
           runnerId,
           featureFlagEnabled: runner.status === "enabled",
-          conformancePassed: runner.readiness.status === "ready",
+          toolExecutionConformance: {
+            status: runner.readiness.status === "ready" ? "verified" : "blocked",
+            adapterRevision: `${runnerId}:mock-adapter-v1`,
+            receiptAdapterRevision: `${runnerId}:mock-adapter-v1`,
+            curatedTools: runner.supportedTools ?? [],
+            toolSideEffects: Object.fromEntries((runner.supportedTools ?? []).map((tool) => [tool, "workspace_read"])),
+            allowedSideEffects: ["workspace_read"],
+            nativeSideEffectMode: "disabled",
+            toolSurfaceCurated: true,
+            approvalBridgeVerified: false,
+            sandboxBindingVerified: false,
+            evidenceCommitVerified: true,
+            abortPropagationVerified: true,
+            attemptFencingVerified: true,
+            workspaceBoundaryVerified: true,
+            artifactImportVerified: true,
+          },
           ...runner.readiness,
         },
       },
     });
+    return;
+  }
+  if (request.method() === "GET" && path === "/runtime/conversation-execution") {
+    const requestedCwd = url.searchParams.get("cwd") ?? cwd;
+    const { defaultRunnerId, defaultExecutionBinding } = state.runtimeSettings;
+    // Synthetic settings alone cannot certify native execution readiness.
+    const selection: ConversationExecutionSelectionResponse = defaultRunnerId === "pi" && !defaultExecutionBinding
+      ? { cwd: requestedCwd, defaultRunnerId, status: "not_selected" }
+      : { cwd: requestedCwd, defaultRunnerId, status: "blocked", executionBinding: defaultExecutionBinding, reason: "native_execution_unavailable" };
+    await route.fulfill({ json: selection });
     return;
   }
   if (request.method() === "GET" && path === "/runtime/settings") {
@@ -9379,7 +9904,7 @@ export async function handleDaemonRoute(
         updatedAt: "2026-06-20T00:02:00.000Z",
       });
       const clonedMembers = state.aiCouncilMembers
-        .filter((item) => isRecord(item) && item.councilId === councilId && item.teammateId !== "ling_agent")
+        .filter((item): item is Record<string, unknown> => isRecord(item) && item.councilId === councilId && item.teammateId !== "ling_agent")
         .map((member) => ({
           ...member,
           councilId: clonedCouncilId,
@@ -9423,7 +9948,7 @@ export async function handleDaemonRoute(
     }
     if (isMembersRoute && request.method() === "GET") {
       const members = state.aiCouncilMembers
-        .filter((item) => isRecord(item) && item.councilId === councilId)
+        .filter((item): item is Record<string, unknown> => isRecord(item) && item.councilId === councilId)
         .sort((left, right) => Number(left.position ?? 0) - Number(right.position ?? 0));
       await route.fulfill({ json: { cwd, councilId, members } });
       return;
@@ -9439,7 +9964,7 @@ export async function handleDaemonRoute(
       state.aiCouncilMembers = state.aiCouncilMembers.filter((item) => !isRecord(item) || item.councilId !== councilId);
       state.aiCouncilMembers.push(...normalizeMockAiCouncilMembers(councilId, inputMembers));
       const members = state.aiCouncilMembers
-        .filter((item) => isRecord(item) && item.councilId === councilId)
+        .filter((item): item is Record<string, unknown> => isRecord(item) && item.councilId === councilId)
         .sort((left, right) => Number(left.position ?? 0) - Number(right.position ?? 0));
       await route.fulfill({ json: { cwd, councilId, members } });
       return;
@@ -9674,7 +10199,7 @@ export async function handleDaemonRoute(
       }
       const body = await request.postDataJSON() as Record<string, unknown>;
       const bindings = Array.isArray(body.bindings) ? body.bindings : [];
-      const existingBindings = state.teammateSkillBindings.filter((item) => isRecord(item) && item.teammateId === teammateId);
+      const existingBindings = state.teammateSkillBindings.filter((item): item is Record<string, unknown> => isRecord(item) && item.teammateId === teammateId);
       const existingSkillIds = new Set(existingBindings.map((binding) => String(binding.skillId)));
       const knownSkillIds = new Set(state.skillRegistryEntries.flatMap((entry) =>
         isRecord(entry) && typeof entry.id === "string" && (entry.reviewStatus === "builtin" || entry.reviewStatus === "published")
@@ -10016,7 +10541,7 @@ export async function handleDaemonRoute(
     }
     if ((action === "direct-thread" || action === "direct-messages") && request.method() === "GET") {
       const thread = getOrCreateMockTeammateThread(state, teammateId, teammate);
-      const messages = state.teammateDirectMessages.filter((item) =>
+      const messages = state.teammateDirectMessages.filter((item): item is Record<string, unknown> =>
         isRecord(item) && item.teammateId === teammateId && item.threadId === thread.id && item.status !== "superseded"
       );
       const url = new URL(request.url());
@@ -10039,6 +10564,8 @@ export async function handleDaemonRoute(
             teammateId,
             thread,
             messages: pageMessages,
+            runtimeMetrics: state.runtimeMetricsFixture,
+            timeline: buildMockTeammateDirectTimeline(state, teammateId),
             generatedMedia: mockConversationGeneratedMediaForRunIds(
               state,
               pageMessages.flatMap((message) => typeof message.linkedRunId === "string" ? [message.linkedRunId] : []),
@@ -10056,13 +10583,14 @@ export async function handleDaemonRoute(
     }
     if (action === "direct-interventions") {
       const thread = getOrCreateMockTeammateThread(state, teammateId, teammate);
+      const threadId = typeof thread.id === "string" ? thread.id : `tdthread_${teammateId}`;
       if (request.method() === "GET") {
         await route.fulfill({
           json: {
             cwd,
             teammateId,
             thread,
-            interventions: listOpenMockTeammateDirectInterventions(state, teammateId, thread.id),
+            interventions: listOpenMockTeammateDirectInterventions(state, teammateId, threadId),
           },
         });
         return;
@@ -10095,7 +10623,7 @@ export async function handleDaemonRoute(
           id: `tdint_${state.teammateDirectInterventions.length + 1}`,
           workspaceId: "workspace_default",
           teammateId,
-          threadId: thread.id,
+          threadId,
           sourceMessageId: runtime.activeReply.sourceMessageId,
           sourceWorkUnitId: runtime.activeReply.workUnitId,
           mode,
@@ -10264,7 +10792,7 @@ export async function handleDaemonRoute(
     }
     if (action === "activity" && request.method() === "GET") {
       const directItems = state.teammateDirectMessages
-        .filter((item) => isRecord(item) && item.teammateId === teammateId)
+        .filter((item): item is Record<string, unknown> => isRecord(item) && item.teammateId === teammateId)
         .map((item) => ({
           id: `direct-message:${item.id}`,
           kind: "direct-message",
@@ -10275,7 +10803,7 @@ export async function handleDaemonRoute(
           sourceId: item.id,
         }));
       const taskItems = state.tasks
-        .filter((task) => isRecord(task) && task.assigneeTeammateId === teammateId)
+        .filter((task): task is Record<string, unknown> => isRecord(task) && task.assigneeTeammateId === teammateId)
         .map((task) => ({
           id: `task:${task.id}`,
           kind: "task",
@@ -10310,7 +10838,7 @@ export async function handleDaemonRoute(
       updatedAt: "2026-06-04T00:31:00.000Z",
     } satisfies MockTeammateDirectIntervention;
     state.teammateDirectInterventions[interventionIndex] = intervention;
-    const thread = state.teammateDirectThreads[intervention.teammateId] ?? getOrCreateMockTeammateThread(state, intervention.teammateId, {});
+    const thread = getOrCreateMockTeammateThread(state, intervention.teammateId, {});
     await route.fulfill({
       json: {
         cwd,
@@ -10334,7 +10862,7 @@ export async function handleDaemonRoute(
       await route.fulfill({ status: 409, json: { error: "direct_intervention_not_queued", message: "Only queued guidance can run now." } });
       return;
     }
-    const thread = state.teammateDirectThreads[current.teammateId] ?? getOrCreateMockTeammateThread(state, current.teammateId, {});
+    const thread = getOrCreateMockTeammateThread(state, current.teammateId, {});
     const activeWorkUnitIndex = state.workUnits.findIndex((unit) =>
       unit.kind === "teammate_direct_reply" &&
       (unit.teammateId === current.teammateId || unit.ownerId === current.teammateId) &&
@@ -10409,6 +10937,8 @@ export async function handleDaemonRoute(
       updatedAt: "2026-06-04T00:32:00.000Z",
     };
     state.workUnits[workUnitIndex] = workUnit;
+    state.workUnitAttemptsByWorkUnit[workUnitId] = (state.workUnitAttemptsByWorkUnit[workUnitId] ?? [])
+      .map(attempt => ({ ...attempt, status: "cancelled", endedAt: workUnit.endedAt }));
     const messageId = workUnit.linkedMessageId;
     const messageIndex = state.teammateDirectMessages.findIndex((message) => isRecord(message) && message.id === messageId);
     const message = messageIndex >= 0 && isRecord(state.teammateDirectMessages[messageIndex])
@@ -10467,6 +10997,7 @@ export async function handleDaemonRoute(
       await route.fulfill({
         json: {
           source: "https://api.example.com/v1/models",
+          ...mockProviderModelDiscoveryMetadata(options.providerModelCatalogStale),
           models: options.providerModels,
         },
       });
@@ -10477,6 +11008,7 @@ export async function handleDaemonRoute(
       await route.fulfill({
         json: {
           source: "https://ark.cn-beijing.volces.com/api/v3/models",
+          ...mockProviderModelDiscoveryMetadata(options.providerModelCatalogStale),
           models: [
             { id: "doubao-seedream-5-0-260128", ownedBy: "volcengine" },
             { id: "doubao-seedance-1-0-pro-250528", ownedBy: "volcengine" },
@@ -10490,6 +11022,7 @@ export async function handleDaemonRoute(
       await route.fulfill({
         json: {
           source: "https://ark.cn-beijing.volces.com/api/v3/models",
+          ...mockProviderModelDiscoveryMetadata(options.providerModelCatalogStale),
           models: [
             { id: "doubao-seedream-5-0-260128", ownedBy: "volcengine" },
             { id: "doubao-seedream-5-0-turbo-260128", ownedBy: "volcengine" },
@@ -10504,6 +11037,7 @@ export async function handleDaemonRoute(
       await route.fulfill({
         json: {
           source: "https://ark.cn-beijing.volces.com/api/v3/models",
+          ...mockProviderModelDiscoveryMetadata(options.providerModelCatalogStale),
           models: [
             { id: "doubao-seedream-5-0-260128", ownedBy: "volcengine" },
             { id: "doubao-seedance-1-0-pro-250528", ownedBy: "volcengine" },
@@ -10520,6 +11054,7 @@ export async function handleDaemonRoute(
     await route.fulfill({
       json: {
         source: "https://api.example.com/v1/models",
+        ...mockProviderModelDiscoveryMetadata(options.providerModelCatalogStale),
         models: [
           { id: "cliproxy-gpt-4o", ownedBy: "cliproxy" },
           { id: "gpt-image-2", ownedBy: "openai", api: "media-job", input: ["text", "image"], capabilities: ["image_generate"], capabilitySource: "upstream", capabilityConfidence: "known" },
@@ -10729,7 +11264,7 @@ export async function handleDaemonRoute(
     );
     const channelIds = new Set(channels.filter(isRecord).map((channel) => channel.id).filter((id): id is string => typeof id === "string"));
     const branches = state.channelBranches
-      .filter((branch) =>
+      .filter((branch): branch is Record<string, unknown> =>
         isRecord(branch) &&
         channelIds.has(typeof branch.channelId === "string" ? branch.channelId : "") &&
         (archived ? branch.status === "archived" : branch.status !== "archived")
@@ -11061,6 +11596,84 @@ export async function handleDaemonRoute(
     await route.fulfill({ json: { cwd, channelId, metrics } });
     return;
   }
+  const channelSessionsMatch = /^\/channels\/([^/]+)\/sessions(?:\/([^/]+))?$/.exec(path);
+  if (channelSessionsMatch) {
+    const channelId = decodeURIComponent(channelSessionsMatch[1]);
+    const threadId = channelSessionsMatch[2] ? decodeURIComponent(channelSessionsMatch[2]) : "";
+    const channel = state.channels.find(item => isRecord(item) && item.id === channelId);
+    if (!isRecord(channel)) { await route.fulfill({ status: 404, json: { error: "channel_not_found" } }); return; }
+    const root = ensureMockChannelRootThread(state, channelId);
+    const branches = state.channelBranches.filter((item): item is Record<string, unknown> => isRecord(item) && item.channelId === channelId)
+      .map(branch => ensureMockChannelBranchRootThread(state, channel, branch));
+    const summary = (thread: MockLingThread, branch?: Record<string, unknown>) => {
+      const entries = mockChannelConversationEntries(state, channelId).filter(entry => entry.item.threadId === thread.id);
+      const itemIds = new Set(entries.map(entry => entry.item.id));
+      const turnIds = new Set(entries.map(entry => entry.turn.id));
+      const workflows = state.channelWorkflows.filter((workflow) => isRecord(workflow) && workflow.channelId === channelId && isRecord(workflow.metadata)
+        && (itemIds.has(workflow.metadata.sourceMessageId) || turnIds.has(String(workflow.metadata.sourceTurnId))));
+      const workflowIds = new Set(workflows.map(workflow => isRecord(workflow) ? workflow.id : ""));
+      const stepIds = new Set(state.channelWorkflowSteps.filter(step => isRecord(step) && workflowIds.has(step.workflowId)).map(step => isRecord(step) ? step.id : ""));
+      const ownedRuns = state.runs.filter(run => (!run.channelId || run.channelId === channelId) && (run.threadId === thread.id || stepIds.has(run.workflowStepId)));
+      const runIds = new Set(ownedRuns.map(run => run.id));
+      const activeRunIds = ownedRuns.filter(run => ["queued", "running", "waiting_for_approval", "paused"].includes(run.status)).map(run => run.id);
+      const pendingApprovalIds = [...new Set(state.approvals.filter(approval => isRecord(approval) && approval.status === "pending"
+        && (!approval.channelId || approval.channelId === channelId) && (runIds.has(String(approval.runId)) || stepIds.has(approval.workflowStepId))).map(approval => isRecord(approval) ? approval.id : ""))];
+      const runtimeState = pendingApprovalIds.length ? "waiting" : activeRunIds.length ? "running" : "idle";
+      return {
+      id: thread.id, channelId, title: thread.title, isDefault: thread.id === root.id,
+      surfaceKind: thread.surfaceKind, createdAt: thread.createdAt, activityAt: thread.createdAt,
+      ...(branch ? { legacyBranchId: branch.id } : {}),
+      ...(thread.archivedAt ? { archivedAt: thread.archivedAt } : {}),
+      latestNotificationRevision: state.channelMessages.filter(item => isRecord(item) && item.threadId === thread.id && item.kind === "ai_reply").length,
+      pendingApprovalCount: pendingApprovalIds.length, runtimeState, activeRunIds, pendingApprovalIds,
+    }; };
+    const all = [summary(root), ...branches.map(branch => summary(state.threads.find(thread => thread.id === branch.rootThreadId)!, branch))];
+    if (request.method() === "GET" && !threadId) {
+      const archived = url.searchParams.get("archived") === "true";
+      const q = (url.searchParams.get("q") ?? "").toLowerCase();
+      const limit = Number(url.searchParams.get("limit") ?? 50);
+      const offset = Number(url.searchParams.get("cursor") ?? 0);
+      const matches = all.filter(item => !item.isDefault && Boolean(item.archivedAt) === archived && item.title.toLowerCase().includes(q));
+      await route.fulfill({ json: { cwd, channelId, defaultSession: all[0], sessions: matches.slice(offset, offset + limit),
+        ...(offset + limit < matches.length ? { nextCursor: String(offset + limit) } : {}), diagnostics: [],
+        notificationWatermarks: all.filter(item => !item.archivedAt).map(item => ({ id: item.id, latestNotificationRevision: item.latestNotificationRevision })),
+        aggregate: { pendingApprovalCount: all.reduce((count, item) => count + item.pendingApprovalCount, 0),
+          runningCount: all.filter(item => item.runtimeState === "running").length,
+          waitingCount: all.filter(item => item.runtimeState === "waiting").length, failedCount: 0 } } }); return;
+    }
+    if (request.method() === "POST" && !threadId) {
+      const body = await request.postDataJSON() as Record<string, unknown>;
+      const key = String(body.idempotencyKey ?? "");
+      const requestMap = mockChannelSessionRequests.get(state) ?? new Map(); mockChannelSessionRequests.set(state, requestMap);
+      const prior = requestMap.get(`${channelId}:${key}`);
+      if (prior) {
+        if (prior.payload !== JSON.stringify(body)) { await route.fulfill({ status: 409, json: { error: "session_creation_conflict" } }); return; }
+        await route.fulfill({ json: { session: all.find(item => item.id === prior.threadId), idempotentReplay: true } }); return;
+      }
+      const branch = createChannelBranchFromBody({ name: typeof body.title === "string" ? body.title : "New conversation" }, `channel_branch_${state.channelBranches.length + 1}`, channelId);
+      ensureMockChannelBranchRootThread(state, channel, branch);
+      const thread = state.threads.find(thread => thread.id === branch.rootThreadId)!;
+      thread.surfaceKind = "channel_session"; thread.relationKind = "root"; delete thread.parentThreadId;
+      state.channelBranches.unshift(branch);
+      requestMap.set(`${channelId}:${key}`, { payload: JSON.stringify(body), threadId: thread.id });
+      await route.fulfill({ status: 201, json: { session: summary(thread, branch), idempotentReplay: false } }); return;
+    }
+    const session = all.find(item => item.id === threadId);
+    if (!session) { await route.fulfill({ status: 404, json: { error: "channel_session_not_found" } }); return; }
+    if (request.method() === "GET") { await route.fulfill({ json: { session } }); return; }
+    if (request.method() === "PATCH") {
+      const body = await request.postDataJSON() as Record<string, unknown>;
+      if (session.isDefault && body.archived === true) { await route.fulfill({ status: 409, json: { error: "default_session_required" } }); return; }
+      const thread = state.threads.find(thread => thread.id === threadId)!;
+      const branch = branches.find(branch => branch.rootThreadId === threadId);
+      if (typeof body.title === "string") { thread.title = body.title; if (branch) branch.name = body.title; }
+      if (typeof body.archived === "boolean") {
+        thread.archivedAt = body.archived ? new Date().toISOString() : undefined;
+        if (branch) { branch.status = body.archived ? "archived" : "active"; branch.archivedAt = thread.archivedAt; }
+      }
+      await route.fulfill({ json: { session: summary(thread, branch) } }); return;
+    }
+  }
   const channelBranchesMatch = /^\/channels\/([^/]+)\/branches(?:\/([^/]+))?$/.exec(path);
   if (channelBranchesMatch) {
     const channelId = decodeURIComponent(channelBranchesMatch[1]);
@@ -11073,7 +11686,7 @@ export async function handleDaemonRoute(
     if (request.method() === "GET" && !branchId) {
       const archived = url.searchParams.get("archived") === "true";
       const branches = state.channelBranches
-        .filter((branch) =>
+        .filter((branch): branch is Record<string, unknown> =>
           isRecord(branch) &&
           branch.channelId === channelId &&
           (archived ? branch.status === "archived" : branch.status !== "archived")
@@ -11206,7 +11819,7 @@ export async function handleDaemonRoute(
     }
     if (state.failNextChannelMessage) {
       state.failNextChannelMessage = false;
-      await route.fulfill({ status: 500, json: { error: "mock_send_failed", message: "Mock message send failed." } });
+      await route.fulfill({ status: state.failNextChannelMessageStatus ?? 500, json: { error: "mock_send_failed", message: "Mock message send failed." } });
       return;
     }
     const conversationThread = mockChannelTurnThread(state, channelId, body);
@@ -11234,7 +11847,7 @@ export async function handleDaemonRoute(
       updatedAt: "2026-05-25T00:18:00.000Z",
     };
     state.channelMessages.push(message);
-    const aiMentions = message.mentions.filter((mention) => isRecord(mention) && mention.kind === "ai-teammate");
+    const aiMentions = message.mentions.filter((mention): mention is Record<string, unknown> => isRecord(mention) && mention.kind === "ai-teammate");
     const requestedTeammateId = aiMentions.length > 1
       ? "ling_agent"
       : aiMentions.length === 1 && typeof aiMentions[0]?.id === "string"
@@ -11253,7 +11866,7 @@ export async function handleDaemonRoute(
     ));
     if (activeTargetRun && (message.body.trim() || message.attachmentIds.length > 0 || message.linkPreviewIds.length > 0 || message.fileRefs.length > 0)) {
       const sourceRunId = activeTargetRun.parentRunId ?? activeTargetRun.id;
-      const intervention = {
+      const intervention: MockRunIntervention = {
         id: `intervention_${state.runInterventions.length + 1}`,
         workspaceId: "workspace_default",
         sourceRunId,
@@ -11451,10 +12064,10 @@ export async function handleDaemonRoute(
     }));
     const pendingReplyById = state.pendingChannelAiReplies ?? {};
     for (const message of state.channelMessages) {
-      if (!isRecord(message) || message.status !== "pending") {
+      if (!isRecord(message) || message.status !== "pending" || typeof message.id !== "string") {
         continue;
       }
-      const readyBody = typeof message.id === "string" ? pendingReplyById[message.id] : undefined;
+      const readyBody = pendingReplyById[message.id];
       if (readyBody) {
         message.body = readyBody;
         message.status = "ready";
@@ -11503,6 +12116,12 @@ export async function handleDaemonRoute(
         thread,
         turns: [...turnById.values()],
         items: pageItems,
+        runtimeMetrics: state.runtimeMetricsFixture,
+        turnContextAssignments: [...turnById.keys()].flatMap((turnId) => {
+          const context = state.channelTurnContexts[turnId];
+          return isRecord(context) && isRecord(context.assignment) ? [context.assignment] : [];
+        }),
+        userInputs: state.userInputs?.filter(record => pageItems.some(item => item.id === record.itemId)),
         decorations: mockChannelConversationDecorations(pageEntries),
         generatedMedia: mockConversationGeneratedMediaForRunIds(
           state,
@@ -11688,7 +12307,7 @@ export async function handleDaemonRoute(
     }
     if (state.failNextChannelMessage) {
       state.failNextChannelMessage = false;
-      await route.fulfill({ status: 500, json: { error: "mock_send_failed", message: "Mock message send failed." } });
+      await route.fulfill({ status: state.failNextChannelMessageStatus ?? 500, json: { error: "mock_send_failed", message: "Mock message send failed." } });
       return;
     }
     const conversationThread = mockChannelTurnThread(state, channelId, body);
@@ -12178,11 +12797,15 @@ export async function handleDaemonRoute(
       return;
     }
     const body = await request.postDataJSON() as Record<string, unknown>;
+    const sourceRun = state.runs.find(run => run.id === handoff.sourceRunId)
+      ?? state.runs.find(run => handoff.sourceTaskId && run.taskId === handoff.sourceTaskId);
+    const sourceMessageId = handoff.sourceMessageId ?? (isRecord(sourceRun?.requestSnapshot) ? sourceRun.requestSnapshot.sourceMessageId : undefined);
     const workflow = {
       id: `workflow_${state.channelWorkflows.length + 1}`,
       workspaceId: "workspace_default",
       channelId: handoff.channelId,
       sourceHandoffId: handoff.id,
+      metadata: sourceMessageId ? { sourceMessageId } : undefined,
       title: typeof body.title === "string" ? body.title : `${String(handoff.reason ?? "Handoff")} workflow`,
       objective: typeof body.objective === "string" ? body.objective : String(handoff.expectedOutput ?? handoff.reason ?? ""),
       status: "draft",
@@ -12196,6 +12819,7 @@ export async function handleDaemonRoute(
       channelId: handoff.channelId,
       workflowId: workflow.id,
       sourceHandoffId: handoff.id,
+      metadata: sourceMessageId ? { sourceMessageId } : undefined,
       contextSummaryId: typeof body.contextSummaryId === "string" ? body.contextSummaryId : undefined,
       position: 1,
       title: typeof handoff.reason === "string" ? handoff.reason : "Complete handoff",
@@ -12220,7 +12844,7 @@ export async function handleDaemonRoute(
     const channelId = decodeURIComponent(channelCollaborationCardsMatch[1]);
     const limit = Number(url.searchParams.get("limit") ?? 100);
     const cards = state.channelWorkflows
-      .filter((workflow) => isRecord(workflow) && workflow.channelId === channelId)
+      .filter((workflow): workflow is Record<string, unknown> => isRecord(workflow) && workflow.channelId === channelId)
       .map((workflow) => buildMockCollaborationTaskCard(state, workflow))
       .filter((card): card is Record<string, unknown> => Boolean(card))
       .slice(0, Number.isFinite(limit) && limit > 0 ? limit : 100);
@@ -12263,6 +12887,116 @@ export async function handleDaemonRoute(
       return;
     }
     await route.fulfill({ json: { cwd, workflowId, card: buildMockCollaborationTaskCard(state, workflow) } });
+    return;
+  }
+  const workflowOrchestrateMatch = /^\/workflows\/([^/]+)\/orchestrate$/.exec(path);
+  if (workflowOrchestrateMatch && request.method() === "POST") {
+    if (state.failNextWorkflowOrchestrate) {
+      const failure = state.failNextWorkflowOrchestrate;
+      state.failNextWorkflowOrchestrate = undefined;
+      if (failure.delayMs) {
+        await new Promise((resolve) => setTimeout(resolve, failure.delayMs));
+      }
+      await route.fulfill({ status: failure.status ?? 409, json: { error: failure.error, message: failure.message } });
+      return;
+    }
+    const workflowId = decodeURIComponent(workflowOrchestrateMatch[1]);
+    const workflowIndex = state.channelWorkflows.findIndex((item) => isRecord(item) && item.id === workflowId);
+    if (workflowIndex === -1 || !isRecord(state.channelWorkflows[workflowIndex])) {
+      await route.fulfill({ status: 404, json: { error: "workflow_not_found", message: `Workflow not found: ${workflowId}` } });
+      return;
+    }
+    const workflow = state.channelWorkflows[workflowIndex] as Record<string, unknown>;
+    const workflowStepIndex = state.channelWorkflowSteps.findIndex((step) =>
+      isRecord(step) && step.workflowId === workflowId && step.status === "queued"
+    );
+    if (workflowStepIndex === -1) {
+      const blockedStep = state.channelWorkflowSteps.find((step) =>
+        isRecord(step) && step.workflowId === workflowId && step.status === "blocked"
+      );
+      if (isRecord(blockedStep)) {
+        await route.fulfill({
+          json: {
+            status: "blocked",
+            workflow,
+            workflowStep: blockedStep,
+            blocker: typeof blockedStep.blocker === "string" ? blockedStep.blocker : "Workflow step is blocked.",
+          },
+        });
+        return;
+      }
+      const activeStep = state.channelWorkflowSteps.find((step) =>
+        isRecord(step) && step.workflowId === workflowId && ["claimed", "running", "waiting_for_approval"].includes(String(step.status))
+      );
+      if (isRecord(activeStep)) {
+        await route.fulfill({ json: { status: "idle", workflow, reason: "Workflow already has an active step." } });
+        return;
+      }
+      const updatedWorkflow = { ...workflow, status: "succeeded", updatedAt: "2026-05-25T00:38:00.000Z" };
+      state.channelWorkflows[workflowIndex] = updatedWorkflow;
+      await route.fulfill({ json: { status: "completed", workflow: updatedWorkflow } });
+      return;
+    }
+    const workflowStep = state.channelWorkflowSteps[workflowStepIndex] as Record<string, unknown>;
+    const updatedWorkflowStep = {
+      ...workflowStep,
+      status: "running",
+      blocker: undefined,
+      updatedAt: "2026-05-25T00:38:00.000Z",
+    };
+    const updatedWorkflow = { ...workflow, status: "running", updatedAt: "2026-05-25T00:38:00.000Z" };
+    state.channelWorkflowSteps[workflowStepIndex] = updatedWorkflowStep;
+    state.channelWorkflows[workflowIndex] = updatedWorkflow;
+    await route.fulfill({
+      json: {
+        status: "started",
+        workflow: updatedWorkflow,
+        workflowStep: updatedWorkflowStep,
+        taskId: `task_${String(workflowStep.id ?? workflowStepIndex + 1)}`,
+      },
+    });
+    return;
+  }
+  const workflowCancelMatch = /^\/workflows\/([^/]+)\/cancel$/.exec(path);
+  if (workflowCancelMatch && request.method() === "POST") {
+    if (state.failNextWorkflowCancel) {
+      const failure = state.failNextWorkflowCancel;
+      state.failNextWorkflowCancel = undefined;
+      await route.fulfill({ status: failure.status ?? 409, json: { error: failure.error, message: failure.message } });
+      return;
+    }
+    const workflowId = decodeURIComponent(workflowCancelMatch[1]);
+    const workflowIndex = state.channelWorkflows.findIndex((item) => isRecord(item) && item.id === workflowId);
+    if (workflowIndex === -1 || !isRecord(state.channelWorkflows[workflowIndex])) {
+      await route.fulfill({ status: 404, json: { error: "workflow_not_found", message: `Workflow not found: ${workflowId}` } });
+      return;
+    }
+    const workflow = state.channelWorkflows[workflowIndex] as Record<string, unknown>;
+    const terminalWorkflowStatuses = new Set(["succeeded", "failed", "cancelled"]);
+    if (terminalWorkflowStatuses.has(String(workflow.status)) && workflow.status !== "cancelled") {
+      await route.fulfill({ status: 409, json: { error: "workflow_not_cancellable", message: `Workflow ${workflowId} is already ${String(workflow.status)}.` } });
+      return;
+    }
+    const updatedWorkflow = { ...workflow, status: "cancelled", updatedAt: "2026-05-25T00:39:00.000Z" };
+    const terminalStepStatuses = new Set(["succeeded", "failed", "skipped", "cancelled"]);
+    const updatedSteps = state.channelWorkflowSteps
+      .filter((step): step is Record<string, unknown> => isRecord(step) && step.workflowId === workflowId)
+      .map((step) => terminalStepStatuses.has(String(step.status))
+        ? step
+        : { ...step, status: "cancelled", updatedAt: "2026-05-25T00:39:00.000Z" });
+    const updatedStepById = new Map(updatedSteps.map((step) => [String(step.id), step]));
+    state.channelWorkflowSteps = state.channelWorkflowSteps.map((step) =>
+      isRecord(step) && updatedStepById.has(String(step.id)) ? (updatedStepById.get(String(step.id)) ?? step) : step
+    );
+    state.channelWorkflows[workflowIndex] = updatedWorkflow;
+    await route.fulfill({
+      json: {
+        workflow: updatedWorkflow,
+        workflowSteps: updatedSteps,
+        cancelledRunIds: [],
+        cancelledApprovalIds: [],
+      },
+    });
     return;
   }
   const workflowMatch = /^\/workflows\/([^/]+)$/.exec(path);
@@ -12382,11 +13116,60 @@ export async function handleDaemonRoute(
     await route.fulfill({ json: { workflowStep: updatedStep, task } });
     return;
   }
+  const workflowStepRetryMatch = /^\/workflow-steps\/([^/]+)\/retry$/.exec(path);
+  if (workflowStepRetryMatch && request.method() === "POST") {
+    if (state.failNextWorkflowStepRetry) {
+      const failure = state.failNextWorkflowStepRetry;
+      state.failNextWorkflowStepRetry = undefined;
+      await route.fulfill({ status: failure.status ?? 409, json: { error: failure.error, message: failure.message } });
+      return;
+    }
+    const stepId = decodeURIComponent(workflowStepRetryMatch[1]);
+    const stepIndex = state.channelWorkflowSteps.findIndex((step) => isRecord(step) && step.id === stepId);
+    if (stepIndex === -1 || !isRecord(state.channelWorkflowSteps[stepIndex])) {
+      await route.fulfill({ status: 404, json: { error: "workflow_step_not_found", message: `Workflow step not found: ${stepId}` } });
+      return;
+    }
+    const step = state.channelWorkflowSteps[stepIndex] as Record<string, unknown>;
+    if (step.status !== "blocked") {
+      await route.fulfill({ status: 409, json: { error: "workflow_step_not_retryable", message: `Workflow step ${stepId} is ${String(step.status)}; only blocked steps can be retried.` } });
+      return;
+    }
+    const workflowIndex = state.channelWorkflows.findIndex((workflow) => isRecord(workflow) && workflow.id === step.workflowId);
+    if (workflowIndex === -1 || !isRecord(state.channelWorkflows[workflowIndex])) {
+      await route.fulfill({ status: 404, json: { error: "workflow_not_found", message: `Workflow not found: ${String(step.workflowId)}` } });
+      return;
+    }
+    const workflow = state.channelWorkflows[workflowIndex] as Record<string, unknown>;
+    if (["succeeded", "failed", "cancelled"].includes(String(workflow.status))) {
+      await route.fulfill({ status: 409, json: { error: "workflow_terminal", message: `Workflow ${String(workflow.id)} is already ${String(workflow.status)}.` } });
+      return;
+    }
+    const updatedStep = {
+      ...step,
+      status: "running",
+      blocker: undefined,
+      resultSummary: undefined,
+      updatedAt: "2026-05-25T00:40:00.000Z",
+    };
+    const updatedWorkflow = { ...workflow, status: "running", updatedAt: "2026-05-25T00:40:00.000Z" };
+    state.channelWorkflowSteps[stepIndex] = updatedStep;
+    state.channelWorkflows[workflowIndex] = updatedWorkflow;
+    await route.fulfill({
+      json: {
+        status: "started",
+        workflow: updatedWorkflow,
+        workflowStep: updatedStep,
+        taskId: `task_retry_${stepId}`,
+      },
+    });
+    return;
+  }
   const workflowStepMatch = /^\/workflow-steps\/([^/]+)$/.exec(path);
   if (workflowStepMatch && request.method() === "PATCH") {
     const stepId = decodeURIComponent(workflowStepMatch[1]);
     const body = await request.postDataJSON() as Record<string, unknown>;
-    let updated;
+    let updated: Record<string, unknown> | undefined;
     state.channelWorkflowSteps = state.channelWorkflowSteps.map((step) => {
       if (isRecord(step) && step.id === stepId) {
         updated = { ...step, ...body, updatedAt: "2026-05-25T00:37:00.000Z" };
@@ -12395,7 +13178,7 @@ export async function handleDaemonRoute(
       return step;
     });
     const workflow = isRecord(updated)
-      ? state.channelWorkflows.find((item) => isRecord(item) && item.id === updated.workflowId)
+      ? state.channelWorkflows.find((item) => isRecord(item) && item.id === updated?.workflowId)
       : undefined;
     await route.fulfill({ status: updated ? 200 : 404, json: updated ? { workflowStep: updated, workflow } : { error: "workflow_step_not_found" } });
     return;
@@ -12453,7 +13236,7 @@ export async function handleDaemonRoute(
   const attachmentContentMatch = /^\/attachments\/([^/]+)\/content$/.exec(path);
   if (attachmentContentMatch && request.method() === "GET") {
     const attachmentId = decodeURIComponent(attachmentContentMatch[1]);
-    const privateAttachment = state.teammatePrivateAttachments.find((attachment) => isRecord(attachment) && attachment.id === attachmentId);
+    const privateAttachment = state.teammatePrivateAttachments.find((attachment): attachment is Record<string, unknown> => isRecord(attachment) && attachment.id === attachmentId);
     if (privateAttachment || attachmentId.startsWith("tpatt_")) {
       if (!privateAttachment) {
         await route.fulfill({ status: 404, json: { error: "attachment_not_found" } });
@@ -12659,6 +13442,8 @@ export async function handleDaemonRoute(
       const now = "2026-05-25T00:31:00.000Z";
       const updated = { ...workUnit, status: nextStatus, updatedAt: now, endedAt: action === "retry" ? undefined : now };
       state.workUnits = state.workUnits.map((unit) => unit.id === workUnitId ? updated : unit);
+      if (action === "cancel") state.workUnitAttemptsByWorkUnit[workUnitId] = (state.workUnitAttemptsByWorkUnit[workUnitId] ?? [])
+        .map(attempt => ({ ...attempt, status: "cancelled", endedAt: now }));
       if (action === "cancel" && workUnit.linkedRunId) {
         state.runs = state.runs.map((run) =>
           run.id === workUnit.linkedRunId
@@ -12777,8 +13562,10 @@ export async function handleDaemonRoute(
       await route.fulfill({ status: 400, json: { error: "provider_not_found", message: "No available chat model is configured." } });
       return;
     }
-    const now = new Date(Date.UTC(2026, 4, 25, 1, state.turns.length, 0)).toISOString();
     const requestedThreadId = typeof body.threadId === "string" ? body.threadId : "";
+    const latestTurnTime = state.turns.filter((turn) => turn.threadId === requestedThreadId)
+      .reduce((latest, turn) => Math.max(latest, Date.parse(turn.createdAt) || 0), 0);
+    const now = new Date(Math.max(Date.UTC(2026, 4, 25, 1, state.turns.length, 0), latestTurnTime + 1_000)).toISOString();
     let thread = requestedThreadId ? state.threads.find((item) => item.id === requestedThreadId && item.kind === "conversation") : undefined;
     const conversationTitle = summarizeMockConversationTitle(message || conversationAttachments.map((attachment) => String(attachment.fileName ?? "attachment")).join(", "));
     if (!thread) {
@@ -12840,7 +13627,7 @@ export async function handleDaemonRoute(
       updatedAt: now,
       endedAt: now,
     };
-    const responseLanguage = body.responseLanguage === "zh-CN" || body.responseLanguage === "en-US"
+    const responseLanguage = isSupportedLocale(body.responseLanguage)
       ? body.responseLanguage
       : /[\u3400-\u9fff]/u.test(message) ? "zh-CN" : "en-US";
     const attachmentSummary = conversationAttachments.length > 0
@@ -13228,6 +14015,9 @@ export async function handleDaemonRoute(
           tokenBudget: typeof body.tokenBudget === "number" ? body.tokenBudget : undefined,
           tokensUsed: 0,
           timeUsedSeconds: 0,
+          continuationDepth: 0,
+          noEvidenceContinuationCount: 0,
+          sameBlockerCount: 0,
           createdAt: now,
           updatedAt: now,
           completionEvidenceRefs: [],
@@ -13243,7 +14033,9 @@ export async function handleDaemonRoute(
           return;
         }
         const body = readMockPostData(request);
-        const status = typeof body.status === "string" ? body.status : existing.status;
+        const status = body.status === "active" || body.status === "paused" || body.status === "blocked" || body.status === "usage_limited" || body.status === "budget_limited" || body.status === "complete" || body.status === "cleared" || body.status === "replaced"
+          ? body.status
+          : existing.status;
         if (status === "complete") {
           await route.fulfill({ status: 400, json: { error: "goal_complete_action_required" } });
           return;
@@ -13255,7 +14047,7 @@ export async function handleDaemonRoute(
           status,
           tokenBudget: body.tokenBudget === null ? undefined : typeof body.tokenBudget === "number" ? body.tokenBudget : existing.tokenBudget,
           updatedAt: now,
-          completedAt: status === "complete" ? now : existing.completedAt,
+          completedAt: existing.completedAt,
           clearedAt: status === "cleared" ? now : existing.clearedAt,
           lastRunId: body.lastRunId === null ? undefined : typeof body.lastRunId === "string" ? body.lastRunId : existing.lastRunId,
           blockedReason: body.blockedReason === null ? undefined : typeof body.blockedReason === "string" ? body.blockedReason : existing.blockedReason,
@@ -13805,6 +14597,13 @@ export async function handleDaemonRoute(
     });
     return;
   }
+  const approvalDetailMatch = /^\/approvals\/([^/]+)$/.exec(path);
+  if (request.method() === "GET" && approvalDetailMatch) {
+    const approval = state.approvals.find(item => item.id === decodeURIComponent(approvalDetailMatch[1]));
+    await route.fulfill(approval ? { json: { approval } }
+      : { status: 404, json: { error: "approval_not_found", message: "Approval request not found." } });
+    return;
+  }
   if (request.method() === "GET" && path === "/approvals") {
     state.approvalQueryCount = (state.approvalQueryCount ?? 0) + 1;
     const runId = url.searchParams.get("runId");
@@ -13813,6 +14612,34 @@ export async function handleDaemonRoute(
       (!runId || approval.runId === runId) && (!mediaJobId || approval.mediaJobId === mediaJobId)
     );
     await route.fulfill({ json: { cwd, approvals } });
+    return;
+  }
+  if (request.method() === "GET" && path === "/approval-command-rules") {
+    await route.fulfill({
+      json: {
+        cwd,
+        rules: state.approvalCommandRules.filter((rule) => !rule.revokedAt),
+      },
+    });
+    return;
+  }
+  const approvalCommandRuleMatch = /^\/approval-command-rules\/([^/]+)$/.exec(path);
+  if (request.method() === "DELETE" && approvalCommandRuleMatch) {
+    const ruleId = decodeURIComponent(approvalCommandRuleMatch[1]);
+    const ruleIndex = state.approvalCommandRules.findIndex((rule) => rule.id === ruleId && !rule.revokedAt);
+    if (ruleIndex < 0) {
+      await route.fulfill({
+        status: 404,
+        json: { error: "approval_command_rule_not_found", message: "Active approval command rule not found." },
+      });
+      return;
+    }
+    const revokedRule = {
+      ...state.approvalCommandRules[ruleIndex],
+      revokedAt: "2026-07-20T02:00:04.000Z",
+    };
+    state.approvalCommandRules[ruleIndex] = revokedRule;
+    await route.fulfill({ json: { rule: revokedRule } });
     return;
   }
   if (request.method() === "GET" && path === "/execution-actions") {
@@ -15098,7 +15925,7 @@ export async function handleDaemonRoute(
       return;
     }
     const image = artifact.type === "image" || artifact.contentType?.startsWith("image/");
-    const compare = image && artifact.compareBeforeImageUrl && artifact.compareAfterImageUrl
+    const compare: PreviewContentResponse["compare"] = image && artifact.compareBeforeImageUrl && artifact.compareAfterImageUrl
       ? {
           before: {
             label: artifact.compareBeforeLabel ?? "Before",
@@ -15123,14 +15950,14 @@ export async function handleDaemonRoute(
           sizeBytes: artifact.sizeBytes,
           previewable: true,
         },
-        kind: image ? "image" : artifact.type === "diff" ? "diff" : artifact.type === "json" ? "json" : "plain_text",
+        kind: image ? "image" : artifact.type === "diff" ? "diff" : artifact.type === "json" ? "json" : artifact.type === "markdown" ? "markdown_text" : artifact.type === "log" ? "log" : "plain_text",
         text: image ? undefined : artifact.contentText ?? `${artifact.title ?? artifact.path ?? artifact.id}\n`,
         imageUrl: image ? `/artifacts/${encodeURIComponent(artifact.id)}/content?cwd=${encodeURIComponent(cwd)}` : undefined,
         compare,
         truncated: false,
         sizeBytes: artifact.sizeBytes,
         redactionNotes: [],
-      },
+      } satisfies PreviewContentResponse,
     });
     return;
   }
@@ -15149,10 +15976,55 @@ export async function handleDaemonRoute(
       await route.fulfill({ status: 400, json: { error: "approval_not_pending", message: "Approval request is not pending." } });
       return;
     }
+    let body: Record<string, unknown> = {};
+    try {
+      const parsed = request.postDataJSON();
+      body = isRecord(parsed) ? parsed : {};
+    } catch {
+      body = {};
+    }
+    state.approvalDecisionRequests.push({
+      approvalId: approval.id,
+      action: approvalDecisionMatch[2] as "approve" | "deny",
+      body,
+    });
+    const decisionKind = approvalDecisionMatch[2] === "deny"
+      ? "deny"
+      : body.decisionKind === "approve_command_rule" ? "approve_command_rule" : "approve_once";
+    if (decisionKind === "approve_command_rule") {
+      const proposal = approval.proposedCommandRule;
+      if (!proposal || body.proposedRuleFingerprint !== proposal.fingerprint) {
+        await route.fulfill({
+          status: 409,
+          json: { error: "approval_command_rule_fingerprint_mismatch", message: "Approval command rule fingerprint does not match the pending proposal." },
+        });
+        return;
+      }
+      const existingIndex = state.approvalCommandRules.findIndex((rule) => rule.fingerprint === proposal.fingerprint);
+      const rule: MockApprovalCommandRule = {
+        id: existingIndex >= 0 ? state.approvalCommandRules[existingIndex].id : `approval_command_rule_${state.approvalCommandRules.length + 1}`,
+        workspaceId: "workspace_default",
+        toolName: "bash",
+        prefix: [...proposal.prefix],
+        display: proposal.display,
+        fingerprint: proposal.fingerprint,
+        version: proposal.version,
+        sourceApprovalId: approval.id,
+        createdBy: "local-user",
+        createdAt: "2026-07-20T02:00:02.000Z",
+      };
+      if (existingIndex >= 0) {
+        state.approvalCommandRules[existingIndex] = rule;
+      } else {
+        state.approvalCommandRules.push(rule);
+      }
+      approval.decisionRuleId = rule.id;
+    }
     approval.status = approvalDecisionMatch[2] === "approve" ? "approved" : "denied";
     approval.resolvedAt = "2026-05-22T00:02:00.000Z";
     approval.resolvedBy = "local-user";
-    approval.decisionReason = "Resolved from Playwright";
+    approval.decisionKind = decisionKind;
+    approval.decisionReason = typeof body.reason === "string" ? body.reason : "Resolved from Playwright";
     if (approval.mediaJobId && approval.actionType === "media_cost") {
       const mediaJob = state.mediaJobs.find((item) => item.id === approval.mediaJobId);
       if (mediaJob) {
@@ -15172,6 +16044,16 @@ export async function handleDaemonRoute(
       }
     }
     const mediaJob = approval.mediaJobId ? state.mediaJobs.find((item) => item.id === approval.mediaJobId) : undefined;
+    if (state.loseNextApprovalDecisionResponse) {
+      state.loseNextApprovalDecisionResponse = false;
+      await route.abort("connectionclosed");
+      return;
+    }
+    if (state.emptyNextApprovalDecisionResponse) {
+      state.emptyNextApprovalDecisionResponse = false;
+      await route.fulfill({ json: {} });
+      return;
+    }
     await route.fulfill({ json: { approval, ...(mediaJob ? { mediaJob } : {}) } });
     return;
   }
@@ -15419,11 +16301,27 @@ export function getOrCreateMockTeammateThread(
   return thread;
 }
 
+/** Private details use the explicit fixture source graph, never generated message anchors. */
+function buildMockTeammateDirectTimeline(state: MockState, teammateId: string): Record<string, unknown> | undefined {
+  const thread = state.threads.find((candidate) => candidate.kind === "teammate_direct" && candidate.teammateId === teammateId);
+  if (!thread) return undefined;
+  const detail = buildMockConversationDetail(state, cwd, thread);
+  return {
+    ...detail,
+    messages: [],
+    // Keep rejecting legacy raw mock statuses even though canonical V1 excludes them.
+    conversationItems: (state.conversationItems ?? []).filter((item) => item.threadId === thread.id && item.workspaceId === thread.workspaceId && (item.status as string) !== "superseded"),
+    plans: [],
+    contextSummaries: [],
+    compactionCheckpoints: [],
+  };
+}
+
 export function buildMockTeammateDirectRuntime(
   state: MockState,
   teammateId: string,
   thread: Record<string, unknown>,
-): Record<string, unknown> {
+) {
   const threadId = typeof thread.id === "string" ? thread.id : `tdthread_${teammateId}`;
   const activeWorkUnit = state.workUnits.find((unit) =>
     unit.kind === "teammate_direct_reply" &&
@@ -15479,7 +16377,7 @@ export function listOpenMockTeammateDirectInterventions(
 function buildMockWorkflowEvidence(state: MockState, workflow: Record<string, unknown>): Record<string, unknown> {
   const workflowId = readString(workflow, "id");
   const steps = state.channelWorkflowSteps
-    .filter((step) => isRecord(step) && step.workflowId === workflowId)
+    .filter((step): step is Record<string, unknown> => isRecord(step) && step.workflowId === workflowId)
     .sort((left, right) => readNumber(left, "position") - readNumber(right, "position") || readString(left, "createdAt").localeCompare(readString(right, "createdAt")));
   const stepRunIds = new Set(steps.map((step) => readString(step, "runId")).filter(Boolean));
   const artifacts = Object.entries(state.artifactsByRun)
@@ -15619,7 +16517,7 @@ function buildMockCollaborationTaskCard(state: MockState, workflow: Record<strin
     return undefined;
   }
   const steps = state.channelWorkflowSteps
-    .filter((step) => isRecord(step) && step.workflowId === workflowId)
+    .filter((step): step is Record<string, unknown> => isRecord(step) && step.workflowId === workflowId)
     .sort((left, right) => readNumber(left, "position") - readNumber(right, "position") || readString(left, "createdAt").localeCompare(readString(right, "createdAt")));
   if (steps.length === 0) {
     return undefined;
@@ -16251,7 +17149,7 @@ function readOptionalMockWorkflowStepPreviews(
         ownerLabel: readOptionalMockString(item, "ownerLabel"),
       };
     })
-    .filter((item): item is { readonly title: string; readonly ownerId?: string; readonly ownerLabel?: string } => Boolean(item));
+    .filter((item): item is NonNullable<typeof item> => Boolean(item));
   return previews.length > 0 ? previews : undefined;
 }
 
@@ -16268,7 +17166,7 @@ function readMockPostData(request: Request): Record<string, unknown> {
   }
 }
 
-function mockMediaProjectDetail(state: MockDaemonState, mediaProject: MockMediaProject): {
+function mockMediaProjectDetail(state: MockState, mediaProject: MockMediaProject): {
   readonly mediaProject: MockMediaProject;
   readonly assets: readonly MockMediaProjectAsset[];
   readonly scenes: ReadonlyArray<MockMediaScene & { readonly videoImageInputs: NonNullable<MockMediaScene["videoImageInputs"]> }>;

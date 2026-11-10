@@ -32,13 +32,68 @@ export function composerGateApprovalPresentationForWorkCell(
   model: ConversationOperationCellViewModel,
   presentations: ReadonlyMap<string, ComposerGateApprovalPresentation>,
 ): ComposerGateApprovalPresentation | undefined {
-  for (const runId of model.runIds) {
-    const presentation = presentations.get(runId);
+  return composerGateApprovalPresentationForRunIds(
+    [...model.runIds, model.anchorRunId],
+    presentations,
+  );
+}
+
+/**
+ * Resolve the first pending composer approval owned by a set of durable Runs.
+ * Workflow projections may span several participant Runs, while a normal or
+ * private turn usually has one. Keeping the lookup at the Run boundary lets
+ * every surface use the same ownership rule without consulting a WorkCell.
+ */
+export function composerGateApprovalPresentationForRunIds(
+  runIds: readonly (string | undefined)[],
+  presentations: ReadonlyMap<string, ComposerGateApprovalPresentation>,
+): ComposerGateApprovalPresentation | undefined {
+  for (const runId of runIds) {
+    const normalizedRunId = runId?.trim();
+    if (!normalizedRunId) {
+      continue;
+    }
+    const presentation = presentations.get(normalizedRunId);
     if (presentation) {
       return presentation;
     }
   }
-  return presentations.get(model.anchorRunId);
+  return undefined;
+}
+
+/**
+ * Resolve the composer-owned approval directly from the durable Run owner.
+ *
+ * Timeline renderers and surface adapters should not need a WorkCell merely to
+ * decide whether the Composer must show an approval gate. The Run id is the
+ * canonical ownership boundary; WorkCell lookup remains an input adapter for
+ * legacy evidence only.
+ */
+export function composerGateApprovalPresentationForRunId(
+  runId: string | undefined,
+  presentations: ReadonlyMap<string, ComposerGateApprovalPresentation>,
+): ComposerGateApprovalPresentation | undefined {
+  const normalizedRunId = runId?.trim();
+  return normalizedRunId ? presentations.get(normalizedRunId) : undefined;
+}
+
+// The dialog queue and the legacy composer gate use the same durable
+// approval-to-run projection. Keep the dialog vocabulary as a named adapter so
+// the queue can evolve independently without duplicating ownership logic.
+export type DialogOwnedApprovalPresentation = ComposerGateApprovalPresentation;
+
+export function buildDialogOwnedApprovalPresentationByRunId(
+  approvals: readonly InlineApprovalView[],
+  t: Translate,
+): ReadonlyMap<string, DialogOwnedApprovalPresentation> {
+  return buildComposerGateApprovalPresentationByRunId(approvals, t);
+}
+
+export function dialogOwnedApprovalPresentationForWorkCell(
+  model: ConversationOperationCellViewModel,
+  presentations: ReadonlyMap<string, DialogOwnedApprovalPresentation>,
+): DialogOwnedApprovalPresentation | undefined {
+  return composerGateApprovalPresentationForWorkCell(model, presentations);
 }
 
 export function runtimeApprovalActionSentence(

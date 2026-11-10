@@ -21,7 +21,7 @@ test("AppShell returns from Settings to the exact view and selected channel with
 
   const root = page.locator("html");
   const shell = page.locator("main.app-shell");
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await shell.evaluate((element) => element.setAttribute("data-ui2-shell-state-marker", "preserved"));
   await expect(root).toHaveAttribute("data-ui-surface", "home");
 
@@ -37,14 +37,15 @@ test("AppShell returns from Settings to the exact view and selected channel with
   await expect(navigation.getByRole("button", { name: "Work Board" })).toHaveCount(0);
   await expect(navigation.locator(".primary-nav [aria-current='page']")).toHaveCount(0);
 
-  await navigation.getByRole("button", { name: "Engineering" }).click();
+  await navigation.getByRole("button", { name: "Engineering", exact: true }).click();
   await expect(page.getByLabel("Channel composer")).toBeVisible();
   await expect(root).toHaveAttribute("data-ui-surface", "channel");
   await navigation.getByRole("button", { name: "Settings" }).click();
   await expect(root).toHaveAttribute("data-ui-surface", "settings");
   await page.getByRole("button", { name: "Back to app" }).click();
   await expect(page.getByLabel("Channel composer")).toBeVisible();
-  await expect(navigation.getByRole("button", { name: "Engineering" })).toHaveAttribute("aria-current", "page");
+  await expect(navigation.locator(".channel-contains-selection").getByRole("button", { name: "Engineering", exact: true })).toBeVisible();
+  await expect(navigation.locator('[data-session-default="true"] .sidebar-branch-row')).toHaveAttribute("aria-current", "page");
   await expect(root).toHaveAttribute("data-ui-surface", "channel");
   await expect(shell).toHaveAttribute("data-ui2-shell-state-marker", "preserved");
   await expectNoPageOverflow(page);
@@ -60,7 +61,7 @@ test("AppShell keeps one fixed theme while route presentation surfaces change", 
 
   const root = page.locator("html");
   const shell = page.locator("main.app-shell");
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await shell.evaluate((element) => element.setAttribute("data-ui2-route-marker", "preserved"));
   await expect(root).toHaveAttribute("data-ui-theme", "ling-dark");
   await expect(root).toHaveAttribute("data-theme-selection", "fixed");
@@ -104,7 +105,7 @@ test("persistent Sidebar does not project conversation detail loading while navi
   });
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   const recentSection = navigation.locator('[data-sidebar-section="recent"]');
   const recentStatus = recentSection.locator(".sidebar-section-status");
   const recentConversation = navigation.getByRole("button", { name: "Open recent conversation 1" });
@@ -139,7 +140,8 @@ test("persistent Sidebar stays stable across every visible main navigation targe
   await page.goto("/");
 
   const root = page.locator("html");
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
+  await expect(navigation.getByRole("button", { name: "Open recent conversation 1" })).toBeVisible();
   const initialGeometry = await readSidebarGeometry(navigation);
   await startSidebarStabilityRecorder(page);
 
@@ -150,13 +152,13 @@ test("persistent Sidebar stays stable across every visible main navigation targe
     await expect(root).toHaveAttribute("data-ui-surface", "management");
     await navigation.getByRole("button", { name: "Automations" }).click();
     await expect(root).toHaveAttribute("data-ui-surface", "management");
-    await navigation.getByRole("button", { name: "Engineering" }).click();
+    await navigation.getByRole("button", { name: "Engineering", exact: true }).click();
     await expect(root).toHaveAttribute("data-ui-surface", "channel");
     await navigation.getByRole("button", { name: "Designer", exact: true }).click();
     await expect(root).toHaveAttribute("data-ui-surface", "conversation");
     await navigation.getByRole("button", { name: "Open recent conversation 1" }).click();
     await expect(navigation.getByRole("button", { name: "Open recent conversation 1" })).toHaveAttribute("aria-current", "page");
-    await navigation.getByRole("button", { name: "New conversation" }).click();
+    await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
     await expect(root).toHaveAttribute("data-ui-surface", "home");
   }
 
@@ -233,7 +235,7 @@ async function expectNoPageOverflow(page: Page): Promise<void> {
 
 async function startSidebarStabilityRecorder(page: Page): Promise<void> {
   await page.evaluate(() => {
-    const root = document.querySelector<HTMLElement>('[aria-label="Ling Stack navigation"]');
+    const root = document.querySelector<HTMLElement>("aside.left-nav");
     if (!root) throw new Error("Sidebar navigation is unavailable");
     const sections = new Map(
       [...root.querySelectorAll<HTMLElement>("[data-sidebar-section]")]
@@ -258,7 +260,7 @@ async function startSidebarStabilityRecorder(page: Page): Promise<void> {
       sections,
     };
     const record = (): void => {
-      const currentRoot = document.querySelector<HTMLElement>('[aria-label="Ling Stack navigation"]');
+      const currentRoot = document.querySelector<HTMLElement>("aside.left-nav");
       if (currentRoot !== snapshot.root) snapshot.rootReplaced = true;
       for (const [id, section] of snapshot.sections) {
         const currentSection = currentRoot?.querySelector<HTMLElement>(`[data-sidebar-section="${id}"]`);

@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import type { HostCapabilityCallV1, NativePermissionRequestPayload, RuntimeAttemptFenceV1 } from "@ling-stack/contracts";
+export type { NativePermissionRequestPayload, NativePermissionResource, NativePermissionTarget } from "@ling-stack/contracts";
 import type { ApplyPatchFormat, PatchPlan, PatchSummary } from "./patch/index.js";
 import type { RunTool } from "./approval-policy.js";
 import type { UnifiedExecEnvironmentSummary } from "./exec/unified-exec-types.js";
@@ -19,12 +21,42 @@ export type ApprovalActionType =
   | "credential_change"
   | "provider_change"
   | "workflow_step"
+  | "workflow_merge"
   | "mcp_tool_call"
+  | "host_capability"
   | "runtime_permission_request";
 
 export type ApprovalRisk = "low" | "medium" | "high" | "critical";
 
 export type ApprovalStatus = "pending" | "approved" | "denied" | "expired" | "cancelled";
+
+export const approvalDecisionKinds = ["approve_once", "approve_command_rule", "approve_permission_scope", "deny"] as const;
+export type ApprovalDecisionKind = (typeof approvalDecisionKinds)[number];
+
+export type SystemReviewerApprovalDecision = "approve" | "deny";
+
+/** Runtime authority must be an exact primitive verdict, never a coercible value. */
+export function isSystemReviewerApprovalDecision(value: unknown): value is SystemReviewerApprovalDecision {
+  return value === "approve" || value === "deny";
+}
+
+export interface ApprovalCommandRuleProposal {
+  readonly prefix: readonly string[];
+  readonly display: string;
+  readonly fingerprint: string;
+  readonly version: 1;
+  readonly cwd?: string;
+}
+
+export interface ApprovalCommandRule extends ApprovalCommandRuleProposal {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly toolName: "bash";
+  readonly sourceApprovalId?: string;
+  readonly createdBy: "local-user";
+  readonly createdAt: string;
+  readonly revokedAt?: string;
+}
 
 export type RuntimePermissionRequestKind =
   | "core_tool"
@@ -114,6 +146,7 @@ export type MediaCostApprovalPayload =
     };
 
 export type ApprovalPayload =
+  | ({ readonly type: "host_capability"; readonly cwd: string } & HostCapabilityCallV1)
   | {
       readonly type: "file_write";
       readonly path: string;
@@ -173,6 +206,7 @@ export type ApprovalPayload =
       readonly environment?: string;
     }
   | MediaCostApprovalPayload
+  | import("./workflow-merge-types.js").WorkflowMergeApprovalPayloadV1
   | {
       readonly type: "provider_change";
       readonly providerPresetId: string;
@@ -181,6 +215,8 @@ export type ApprovalPayload =
   | {
       readonly type: "workflow_step";
       readonly gateStage?: "pre" | "post";
+      /** Host-frozen start-cycle authority; never supplied by a workflow client. */
+      readonly preGateBasis?: import("./workflow-pre-gate.js").WorkflowPreGateBasisV1;
       readonly workflowId: string;
       readonly workflowStepId: string;
       readonly templateStepId?: string;
@@ -199,7 +235,8 @@ export type ApprovalPayload =
       readonly target: unknown;
       readonly preview: string;
     }
-  | RuntimePermissionRequestPayload;
+  | RuntimePermissionRequestPayload
+  | NativePermissionRequestPayload;
 
 export interface ApprovalRequest {
   readonly id: string;
@@ -219,8 +256,12 @@ export interface ApprovalRequest {
   readonly createdAt: string;
   readonly expiresAt?: string;
   readonly resolvedAt?: string;
-  readonly resolvedBy?: "local-user";
+  readonly resolvedBy?: "local-user" | "system-reviewer";
   readonly decisionReason?: string;
+  readonly availableDecisions?: readonly ApprovalDecisionKind[];
+  readonly proposedCommandRule?: ApprovalCommandRuleProposal;
+  readonly decisionKind?: ApprovalDecisionKind;
+  readonly decisionRuleId?: string;
 }
 
 export interface CreateApprovalRequestInput {
@@ -238,12 +279,56 @@ export interface CreateApprovalRequestInput {
   readonly payload: ApprovalPayload;
   readonly expiresAt?: string;
   readonly extraSecrets?: readonly (string | undefined)[];
+  readonly availableDecisions?: readonly ApprovalDecisionKind[];
+  readonly proposedCommandRule?: ApprovalCommandRuleProposal;
 }
 
 export interface ResolveApprovalRequestInput {
   readonly reason?: string;
-  readonly resolvedBy?: "local-user";
+  readonly resolvedBy?: "local-user" | "system-reviewer";
+  readonly decisionKind?: Exclude<ApprovalDecisionKind, "deny">;
+  readonly proposedRuleFingerprint?: string;
+  /** Captured pre-execution cleanup authority; rechecked inside the denied/cancelled UPDATE. */
+  readonly executionCleanup?: {
+    readonly runId: string;
+    readonly approvalCreatedAt: string;
+    readonly toolCallId: string;
+    readonly sourceFence: RuntimeAttemptFenceV1;
+  };
 }
+
+/**
+ * Immutable authority captured before an isolated reviewer starts. The Store
+ * rechecks every field in the same SQLite mutation that records the verdict.
+ */
+export interface ResolveApprovalBySystemReviewerInput {
+  readonly approvalId: string;
+  readonly approvalCreatedAt: string;
+  readonly runId: string;
+  readonly toolCallId: string;
+  readonly sideEffectFingerprint: string;
+  readonly workspacePolicyUpdatedAt: string;
+  readonly sourceFence: RuntimeAttemptFenceV1;
+  /** Recovery is allowed only for the exact startup-suspended approval wait. */
+  readonly sourceAuthority?: "active_execution" | "recoverable_suspension";
+  readonly decision: SystemReviewerApprovalDecision;
+  readonly reason: string;
+}
+
+export type ResolveApprovalBySystemReviewerResult =
+  | { readonly ok: true; readonly approval: ApprovalRequest }
+  | {
+      readonly ok: false;
+      readonly code:
+        | "approval_invalid_decision"
+        | "approval_not_found"
+        | "approval_not_pending"
+        | "approval_system_reviewer_disallowed"
+        | "approval_identity_changed"
+        | "approval_effect_changed"
+        | "approval_policy_changed"
+        | "approval_execution_stale";
+    };
 
 export interface ListApprovalRequestsOptions {
   readonly status?: ApprovalStatus;
@@ -277,10 +362,16 @@ export const approvalActionTypes: readonly ApprovalActionType[] = [
   "credential_change",
   "provider_change",
   "workflow_step",
+  "workflow_merge",
   "mcp_tool_call",
+  "host_capability",
   "runtime_permission_request",
 ];
 
 export function createApprovalRequestId(): string {
   return `approval_${randomUUID()}`;
+}
+
+export function createApprovalCommandRuleId(): string {
+  return `approval_rule_${randomUUID()}`;
 }

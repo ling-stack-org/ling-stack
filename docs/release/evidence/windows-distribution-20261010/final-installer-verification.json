@@ -1,0 +1,14 @@
+{
+  "result": "PASS",
+  "runtimeSourceSha": "f0a632b1bd5bd09b12778cbd7da3d26c354b832f",
+  "packagingRevision": "notices-r1",
+  "installerFilename": "Ling-Stack-0.1.2-alpha.1-windows-x64-f0a632b-notices-r1-setup.exe",
+  "installerSizeBytes": 248975701,
+  "installerSha256": "69cf35afc819d06e63d68a78e4630233d0faee70465bcc02fdd8333ca217e6b2",
+  "originalRuntimeFilesVerified": 762,
+  "embeddedDistributionFilesVerified": 586,
+  "method": "Listed bounded final NSIS/embedded archive members, extracted the actual payload, and verified every original runtime and distribution material digest",
+  "newFunctionalAcceptance": "NOT_RUN; original runtime bytes retained",
+  "verifiedUtc": "2026-10-10T04:59:49.561Z",
+  "embeddedChecksumManifestVerified": true
+}

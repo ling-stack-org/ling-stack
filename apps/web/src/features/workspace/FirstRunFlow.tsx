@@ -11,7 +11,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { useI18n, type Translate } from "../../i18n.js";
-import { canUseProviderForRun, providerPreflightReady, providerRunPreflightBlocker } from "../../lib/providers.js";
+import { canUseProviderForRun, providerCompactModelLabel, providerPreflightReady, providerRunPreflightBlocker } from "../../lib/providers.js";
 import { buildRunRepairHint, displayLinkedRunStatus, readTaskTitle } from "../../lib/run-evidence.js";
 import type { Channel, ProviderPreset, RunSession, Task, TaskRunActionState } from "../../types.js";
 
@@ -284,7 +284,7 @@ function buildFirstRunProviderStep(
   return {
     id: "provider",
     label: t("Model Workbench"),
-    detail: t("{providerName} is preflight-ready.", { providerName: readyProvider.displayName }),
+    detail: t("{providerName} is preflight-ready.", { providerName: providerCompactModelLabel(readyProvider) }),
     status: "ready",
   };
 }
@@ -350,7 +350,7 @@ function buildFirstRunChannelProviderStep(
   return {
     id: "channel-provider",
     label: t("Ling Agent model"),
-    detail: readyProvider ? t("Use {providerName} for Ling Agent in this channel.", { providerName: readyProvider.displayName }) : t("Repair a model before assigning Ling Agent."),
+    detail: readyProvider ? t("Use {providerName} for Ling Agent in this channel.", { providerName: providerCompactModelLabel(readyProvider) }) : t("Repair a model before assigning Ling Agent."),
     status: "attention",
     actionLabel: t("Set Ling Agent model"),
     onAction: readyProvider ? () => onSetChannelProvider(channel.id, readyProvider.id) : undefined,

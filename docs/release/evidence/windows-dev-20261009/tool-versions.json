@@ -1,0 +1,21 @@
+{
+  "os": {
+    "Caption": "Microsoft Windows 11 专业工作站版",
+    "Version": "10.0.26200",
+    "OSArchitecture": "64 位"
+  },
+  "git": "git version 2.55.0.windows.3",
+  "node": "22.22.1",
+  "nodePlatform": "win32:x64",
+  "pnpm": "10.0.0",
+  "corepack": "0.34.6",
+  "rustToolchain": "1.97.1-x86_64-pc-windows-msvc",
+  "cargo": "cargo 1.97.1 (c980f4866 2026-06-30)",
+  "dotnetSdk": "8.0.424",
+  "visualStudioBuildTools": "17.14.36",
+  "msvc": "14.44.35207",
+  "compilerFileVersion": "19.44.35228.0",
+  "windowsSdk": "10.0.26100.0",
+  "packagedElectron": "44.5.1",
+  "packagedNode": "24.21.0"
+}

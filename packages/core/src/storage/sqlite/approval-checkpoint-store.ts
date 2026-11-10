@@ -153,11 +153,15 @@ export class SqliteApprovalCheckpointStore {
       clauses.push("workflow_step_id = ?");
       params.push(options.workflowStepId);
     }
+    if (options.before) {
+      clauses.push("(created_at < ? OR (created_at = ? AND id < ?))");
+      params.push(options.before.createdAt, options.before.createdAt, options.before.id);
+    }
     const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
     params.push(limit);
     const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
     return this.context.database
-      .prepare(`${approvalCheckpointSelectSql(whereClause)} ORDER BY created_at DESC LIMIT ?`)
+      .prepare(`${approvalCheckpointSelectSql(whereClause)} ORDER BY created_at DESC, id DESC LIMIT ?`)
       .all(...params)
       .map(mapApprovalCheckpoint);
   }

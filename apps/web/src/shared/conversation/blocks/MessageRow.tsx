@@ -1,4 +1,3 @@
-import { Loader2 } from "lucide-react";
 import {
   MessageRow as SharedMessageRow,
   type MessageRowAuthorType,
@@ -20,18 +19,20 @@ export function MessageRow({
   bodyNode,
   ...props
 }: MessageRowProps): React.JSX.Element {
-  const resolvedBodyNode = bodyNode ?? (body ? (
-    <div className={bodyStreaming ? "message-body-shell message-body-with-spinner" : "message-body-shell"}>
-      {bodyStreaming ? <Loader2 className="message-pending-spinner spin" size={13} /> : null}
-      <MessageBodyRenderer
-        text={body}
-        cwd={bodyCwd}
-        compact={bodyCompact}
-        streaming={bodyStreaming}
-        onOpenLocalFile={bodyOnOpenLocalFile}
-      />
+  const generatedBodyNode = body ? (
+    <MessageBodyRenderer
+      text={body}
+      cwd={bodyCwd}
+      compact={bodyCompact}
+      streaming={bodyStreaming}
+      onOpenLocalFile={bodyOnOpenLocalFile}
+    />
+  ) : null;
+  const resolvedBodyNode = bodyNode && !bodyStreaming ? bodyNode : (bodyNode ?? generatedBodyNode) ? (
+    <div className="message-body-shell">
+      {bodyNode ?? generatedBodyNode}
     </div>
-  ) : null);
+  ) : null;
 
   return (
     <SharedMessageRow

@@ -1,17 +1,14 @@
-import { mkdir, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { expect, test, type Page } from "@playwright/test";
 import { mockDaemon } from "./support/mock-daemon";
 import { createBaseState, isRecord } from "./support/mock-state";
 import { openEngineeringChannel } from "./support/test-helpers";
+import { mockUnknownSubmissionReceipt } from "./support/unknown-submission-receipt";
 
 const appShellSourcePath = fileURLToPath(new URL("../src/app/AppShell.tsx", import.meta.url));
 const workspaceClientSourcePath = fileURLToPath(new URL(
   "../src/features/workspace/WorkspaceClientView.tsx",
-  import.meta.url,
-));
-const evidenceDirectory = fileURLToPath(new URL(
-  "../../../docs/design/ui2.0升级/evidence/conversations/channel-error-ownership/",
   import.meta.url,
 ));
 const channelOwnerSourcePaths = [
@@ -54,14 +51,211 @@ test("T13-P.9D Channel removes the generic AppShell error owner", async () => {
   expect(workspaceClientSource).not.toMatch(
     /\{errorMessage \? \(\s*<div className="inline-error">[\s\S]*?\{errorMessage\}[\s\S]*?<\/div>\s*\) : null\}/u,
   );
+  expect(channelOwnerSources[0]).toContain("channelStreamErrorOwner");
+  expect(channelOwnerSources[0]).toContain("errorOwner: channelStreamErrorOwner");
+  expect(channelOwnerSources[0]).toContain("hasAssistantReply: receivedAiReply");
+});
+
+test("T13-P.9D a provider failure stays on its channel reply", async ({ page }) => {
+  const signals = collectBrowserSignals(page);
+  await prepareSurface(page, { height: 960, theme: "light", width: 1440 });
+  const state = createBaseState({ approvalStatus: "expired" });
+  await mockDaemon(page, state);
+
+  const failureMessage = "Provider message ended with an error.";
+  let injectRefreshFailure = false;
+  let refreshFailureInjected = false;
+  await page.route(/\/channels\/channel_engineering\/turns\/stream(?:\?.*)?$/u, async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.fallback();
+      return;
+    }
+    const requestBody = await route.request().postDataJSON() as Record<string, unknown>;
+    const channelId = "channel_engineering";
+    const threadId = "thread_channel_channel_engineering";
+    const turnId = "turn_channel_provider_failure";
+    const createdAt = "2026-10-26T00:20:00.000Z";
+    const userItemId = "message_channel_provider_failure";
+    const replyItemId = "reply_channel_provider_failure";
+    const body = typeof requestBody.body === "string" ? requestBody.body : "";
+    const thread = {
+      id: threadId,
+      workspaceId: "workspace_default",
+      kind: "channel_discussion",
+      channelId,
+      title: "Engineering conversation",
+      objective: "Root conversation for Engineering.",
+      status: "open",
+      conversationMode: { mode: "default" },
+      surfaceKind: "channel_root",
+      relationKind: "root",
+      nextItemSequence: 3,
+      createdAt,
+      updatedAt: createdAt,
+    };
+    const turn = {
+      id: turnId,
+      workspaceId: "workspace_default",
+      threadId,
+      kind: "manual_followup",
+      status: "failed",
+      title: body,
+      userInstruction: body,
+      channelId,
+      sourceItemId: userItemId,
+      createdByActor: "local-user",
+      createdAt,
+      updatedAt: createdAt,
+      completedAt: createdAt,
+    };
+    const userItem = {
+      schemaVersion: 1,
+      id: userItemId,
+      workspaceId: "workspace_default",
+      channelId,
+      threadId,
+      turnId,
+      sequence: 1,
+      kind: "user_message",
+      status: "committed",
+      actorType: "local_user",
+      actorId: "local-user",
+      visibility: "channel",
+      payload: {
+        body,
+        format: "plain_text",
+        mentions: [],
+        attachmentIds: [],
+        linkPreviewIds: [],
+        fileRefs: [],
+      },
+      domainRefs: [],
+      revision: 1,
+      createdAt,
+      updatedAt: createdAt,
+      committedAt: createdAt,
+    };
+    const failedReply = {
+      schemaVersion: 1,
+      id: replyItemId,
+      workspaceId: "workspace_default",
+      channelId,
+      threadId,
+      turnId,
+      sequence: 2,
+      kind: "assistant_message",
+      status: "failed",
+      actorType: "teammate",
+      actorId: "ling_agent",
+      visibility: "channel",
+      payload: {
+        body: `AI teammate is blocked: ${failureMessage}`,
+        format: "markdown",
+        streaming: false,
+        deliveryStatus: "failed",
+        errorMessage: failureMessage,
+      },
+      domainRefs: [{ type: "conversation_item", id: userItemId }],
+      revision: 1,
+      createdAt,
+      updatedAt: createdAt,
+      committedAt: createdAt,
+    };
+    state.channelMessages.push(
+      {
+        id: userItemId,
+        workspaceId: "workspace_default",
+        channelId,
+        threadId,
+        kind: "message",
+        intent: "discuss",
+        authorType: "local-user",
+        authorId: "local-user",
+        body,
+        mentions: [],
+        attachmentIds: [],
+        linkPreviewIds: [],
+        fileRefs: [],
+        status: "ready",
+        createdAt,
+        updatedAt: createdAt,
+      },
+      {
+        id: replyItemId,
+        workspaceId: "workspace_default",
+        channelId,
+        threadId,
+        sourceItemId: userItemId,
+        kind: "ai_reply",
+        intent: "discuss",
+        authorType: "ai-teammate",
+        authorId: "ling_agent",
+        body: `AI teammate is blocked: ${failureMessage}`,
+        mentions: [],
+        attachmentIds: [],
+        linkPreviewIds: [],
+        fileRefs: [],
+        status: "failed",
+        errorMessage: failureMessage,
+        createdAt,
+        updatedAt: createdAt,
+      },
+    );
+    const events = [
+      { event: "ready", data: { thread, turn: { ...turn, status: "running" }, userItem, decorations: [] } },
+      {
+        event: "error",
+        data: {
+          thread,
+          turn,
+          userItem,
+          assistantItems: [failedReply],
+          decorations: [],
+          error: failureMessage,
+        },
+      },
+    ];
+    injectRefreshFailure = true;
+    await route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body: events.map((event) => `event: ${event.event}\ndata: ${JSON.stringify(event.data)}\n\n`).join(""),
+    });
+  });
+  await page.route(/\/channels\/channel_engineering\/items(?:\?.*)?$/u, async (route) => {
+    if (route.request().method() === "GET" && injectRefreshFailure && !refreshFailureInjected) {
+      refreshFailureInjected = true;
+      await route.fulfill({ status: 503, json: { error: "refresh_failed", message: "Reply refresh failed." } });
+      return;
+    }
+    await route.fallback();
+  });
+
+  await page.goto("/");
+  await openEngineeringChannel(page);
+  const composer = page.getByLabel("Channel composer");
+  await channelComposerTextbox(composer).fill("Trigger provider failure");
+  await composer.getByRole("button", { name: "Send", exact: true }).click();
+
+  const feed = page.getByLabel("Channel message feed");
+  await expect(feed.getByText("AI teammate is blocked: Provider message ended with an error.", { exact: true })).toBeVisible();
+  // The typed error is already narrated by the failed reply body, so the
+  // shared message projector suppresses a second inline copy as well.
+  await expect(feed.locator(".channel-message-error")).toHaveCount(0);
+  await expect(feed.getByText(failureMessage, { exact: true })).toHaveCount(0);
+  await expect(composer.locator(".channel-composer-feedback-stack")).toHaveCount(0);
+  await expect(page.locator(".task-workbench-window > .inline-error")).toHaveCount(0);
+  await expect(page.locator('[data-ling-overlay="toast"][data-tone="error"]').filter({ hasText: /Provider message ended with an error|Reply refresh failed/u })).toHaveCount(0);
+  expectBrowserSignals(signals, 503);
 });
 
 test("T13-P.9D a late Engineering send failure cannot leak into Research", async ({ page }) => {
   const signals = collectBrowserSignals(page);
   await prepareSurface(page, { height: 960, theme: "light", width: 1440 });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   addResearchChannel(state);
   await mockDaemon(page, state);
+  await mockUnknownSubmissionReceipt(page);
 
   const requestStarted = createDeferred<void>();
   const releaseFailure = createDeferred<void>();
@@ -74,7 +268,8 @@ test("T13-P.9D a late Engineering send failure cannot leak into Research", async
     requestStarted.resolve();
     await releaseFailure.promise;
     await route.fulfill({
-      status: 503,
+      // This case requires proven rejection; 5xx plus an unknown receipt is query-only recovery.
+      status: 400,
       json: { error: "late_engineering_send_failed", message: failureMessage },
     });
   });
@@ -89,12 +284,12 @@ test("T13-P.9D a late Engineering send failure cannot leak into Research", async
   await engineeringComposer.getByRole("button", { name: "Send", exact: true }).click();
   await requestStarted.promise;
 
-  const navigation = page.getByLabel("Ling Stack navigation");
-  await navigation.getByRole("button").filter({ hasText: "Research" }).first().click();
-  await expect(page.getByRole("heading", { name: "Research", level: 1 })).toBeVisible();
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
+  await navigation.getByRole("button", { name: "Research", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Research / Research conversation", level: 1, exact: true })).toBeVisible();
 
   const failedResponse = page.waitForResponse((response) =>
-    response.status() === 503 &&
+    response.status() === 400 &&
     /\/channels\/channel_engineering\/turns\/stream(?:\?.*)?$/u.test(response.url())
   );
   releaseFailure.resolve();
@@ -109,8 +304,8 @@ test("T13-P.9D a late Engineering send failure cannot leak into Research", async
   await expect(page.getByText(failureMessage, { exact: true })).toHaveCount(0);
   await captureEvidence(page, "1440x960-ling-light-research-clean-after-late-failure.png");
 
-  await navigation.getByRole("button").filter({ hasText: "Engineering" }).first().click();
-  await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
+  await navigation.getByRole("button", { name: "Engineering", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Engineering / Engineering conversation", level: 1, exact: true })).toBeVisible();
 
   const restoredComposer = page.getByLabel("Channel composer");
   const ownedFailure = restoredComposer.locator(".composer-status-row.failed");
@@ -121,7 +316,7 @@ test("T13-P.9D a late Engineering send failure cannot leak into Research", async
   await expect(page.locator('[data-ling-overlay="toast"]').filter({ hasText: failureMessage })).toHaveCount(0);
   await expectNoDocumentOverflow(page);
   await captureEvidence(page, "1440x960-ling-light-engineering-composer-failure.png");
-  expectBrowserSignals(signals, 503);
+  expectBrowserSignals(signals, 400);
 });
 
 test("T13-P.9D channel rename failure remains inside its owning Dialog", async ({ page }) => {
@@ -162,9 +357,9 @@ test("T13-P.9D channel rename failure remains inside its owning Dialog", async (
 
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
-  const navigation = page.getByLabel("Ling Stack navigation");
-  await navigation.getByRole("button").filter({ hasText: "Research" }).first().click();
-  await expect(page.getByRole("heading", { name: "Research", level: 1 })).toBeVisible();
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
+  await navigation.getByRole("button", { name: "Research", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Research / Research conversation", level: 1, exact: true })).toBeVisible();
   await expect(page.getByText(failureMessage, { exact: true })).toHaveCount(0);
   await expectNoDocumentOverflow(page);
   expectBrowserSignals(signals, 503);
@@ -234,12 +429,11 @@ async function prepareSurface(
 
 async function captureEvidence(page: Page, filename: string): Promise<void> {
   if (process.env.LING_CAPTURE_UI2_EVIDENCE !== "1") return;
-  await mkdir(evidenceDirectory, { recursive: true });
   await page.screenshot({
     animations: "disabled",
     caret: "hide",
     fullPage: false,
-    path: `${evidenceDirectory}${filename}`,
+    path: test.info().outputPath(filename),
   });
 }
 

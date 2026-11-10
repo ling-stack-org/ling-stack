@@ -444,7 +444,7 @@ async function prepareSurface(
 }
 
 async function openMcpSettings(page: Page, sectionName: RegExp = /MCP tool servers/): Promise<Locator> {
-  await page.getByLabel(/Ling Stack navigation/).getByRole("button", { name: /Settings|设置/ }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: /Settings|设置/ }).click();
   await page.getByLabel(/Settings sections|设置分组/).getByRole("button", { name: sectionName }).click();
   const panel = page.locator("[data-ui2-mcp-tools]");
   await expect(panel).toBeVisible();

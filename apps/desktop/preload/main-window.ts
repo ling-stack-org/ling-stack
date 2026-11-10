@@ -1,4 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
+import { createLocalFileCapabilities } from "../shared/local-file-activation.js";
+import { readDesktopLocalServiceRequest } from "../shared/local-service-capabilities.js";
+import type { ExternalExecutionEngineId } from "@ling-stack/contracts";
 import type {
   ComputerUseHostLayout,
   ComputerUsePipDeckOwner,
@@ -7,9 +10,11 @@ import type {
   ComputerUsePreviewSummary,
   ComputerControlPermissionKind,
   DesktopNavigationIntent,
+  DesktopDaemonStatus,
+  DesktopWindowState,
   LingDesktopCapabilities,
 } from "../shared/desktop-capabilities.js";
-import { isDesktopNavigationIntent } from "../shared/desktop-capabilities.js";
+import { isDesktopNavigationIntent, isDesktopDaemonStatus } from "../shared/desktop-capabilities.js";
 import type {
   DesktopThemePackageArchiveRequest,
   DesktopThemePackageDeleteRequest,
@@ -18,8 +23,10 @@ import type {
 import {
   DESKTOP_IPC_CHANNELS,
   DESKTOP_THEME_PACKAGE_IPC_CHANNELS,
+  DESKTOP_HUMAN_EVALUATION_IPC_CHANNELS,
 } from "../shared/ipc-channels.js";
 import { parseDesktopThemePackageFirstPaintArgument } from "../shared/theme-package-first-paint.js";
+import { BACKGROUND_CHANNELS } from "../shared/background-capabilities.js";
 import { desktopPlatform } from "../main/platform.js";
 import { subscribeWithInitialRead } from "../shared/initial-state-subscription.js";
 
@@ -30,10 +37,34 @@ const themePackageFirstPaint = parseDesktopThemePackageFirstPaintArgument(proces
 const computerControlPlatform = process.argv
   .find((argument) => argument.startsWith("--ling-computer-control-platform="))
   ?.slice("--ling-computer-control-platform=".length);
+const platform = desktopPlatform();
 
 const capabilities: LingDesktopCapabilities = {
-  platform: desktopPlatform(),
+  platform,
   daemonBaseUrl,
+  backgrounds: {
+    read: () => ipcRenderer.invoke(BACKGROUND_CHANNELS.read),
+    prepare: request => ipcRenderer.invoke(BACKGROUND_CHANNELS.prepare, request),
+    release: requestId => ipcRenderer.invoke(BACKGROUND_CHANNELS.release, requestId),
+    commit: request => ipcRenderer.invoke(BACKGROUND_CHANNELS.commit, request),
+  },
+  localServices: {
+    request: async (request) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.localServiceRequest, readDesktopLocalServiceRequest(request)),
+  },
+  ...(platform === "macos" ? {
+    humanEvaluation: {
+      // Main is the authoritative exact-payload parser; no auth flags are added here.
+      submit: (request: import("../shared/human-evaluation-capabilities.js").DesktopHumanEvaluationRequest) =>
+        ipcRenderer.invoke(DESKTOP_HUMAN_EVALUATION_IPC_CHANNELS.submit, request),
+      cancel: (requestId: string) => ipcRenderer.invoke(DESKTOP_HUMAN_EVALUATION_IPC_CHANNELS.cancel, requestId),
+      inspect: (request: import("../shared/human-evaluation-capabilities.js").DesktopHumanEvaluationInspectRequest) =>
+        ipcRenderer.invoke(DESKTOP_HUMAN_EVALUATION_IPC_CHANNELS.inspect, request),
+      list: (request: import("../shared/human-evaluation-capabilities.js").DesktopHumanEvaluationListRequest) =>
+        ipcRenderer.invoke(DESKTOP_HUMAN_EVALUATION_IPC_CHANNELS.list, request),
+      generateReport: (request: import("../shared/human-evaluation-capabilities.js").DesktopHumanEvaluationReportRef) =>
+        ipcRenderer.invoke(DESKTOP_HUMAN_EVALUATION_IPC_CHANNELS.generateReport, request),
+    },
+  } : {}),
   appearance: {
     reportTheme: (theme) => {
       ipcRenderer.send(DESKTOP_IPC_CHANNELS.desktopThemeReport, theme);
@@ -74,6 +105,30 @@ const capabilities: LingDesktopCapabilities = {
       { themeId: request.themeId },
     ),
   },
+  ...(platform === "windows"
+    ? {
+        windowControls: {
+          getState: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.windowStateGet),
+          minimize: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.windowMinimize),
+          toggleMaximize: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.windowToggleMaximize),
+          close: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.windowClose),
+          onStateChanged: (listener: (state: DesktopWindowState) => void) => {
+            return subscribeWithInitialRead<DesktopWindowState>({
+              read: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.windowStateGet),
+              subscribe: (onState) => {
+                const wrapped = (
+                  _event: Electron.IpcRendererEvent,
+                  state: DesktopWindowState,
+                ): void => onState(state);
+                ipcRenderer.on(DESKTOP_IPC_CHANNELS.windowStateChanged, wrapped);
+                return () => ipcRenderer.off(DESKTOP_IPC_CHANNELS.windowStateChanged, wrapped);
+              },
+              onValue: listener,
+            });
+          },
+        },
+      }
+    : {}),
   navigation: {
     acknowledgeIntent: (requestId: number) =>
       ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.navigationIntentAck, requestId),
@@ -103,6 +158,20 @@ const capabilities: LingDesktopCapabilities = {
   daemon: {
     getStatus: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.daemonStatus),
     restart: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.daemonRestart),
+    onStatusChanged: listener => subscribeWithInitialRead<DesktopDaemonStatus | undefined>({
+      read: async () => {
+        const status: unknown = await ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.daemonStatus);
+        return isDesktopDaemonStatus(status) && status.baseUrl === daemonBaseUrl ? status : undefined;
+      },
+      subscribe: onStatus => {
+        const wrapped = (_event: Electron.IpcRendererEvent, status: unknown): void => {
+          if (isDesktopDaemonStatus(status) && status.baseUrl === daemonBaseUrl) onStatus(status);
+        };
+        ipcRenderer.on(DESKTOP_IPC_CHANNELS.daemonStatus, wrapped);
+        return () => { ipcRenderer.off(DESKTOP_IPC_CHANNELS.daemonStatus, wrapped); };
+      },
+      onValue: status => { if (status) listener(status); },
+    }),
   },
   mobileAccess: {
     status: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.mobileAccessStatus),
@@ -112,6 +181,21 @@ const capabilities: LingDesktopCapabilities = {
     confirmPairing: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.mobileAccessPairingConfirm),
     rejectPairing: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.mobileAccessPairingReject),
     revoke: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.mobileAccessRevoke),
+  },
+  executionEngines: {
+    discover: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.executionEnginesDiscover),
+    install: (engineId: ExternalExecutionEngineId) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.executionEnginesInstall, engineId),
+    installStatus: (engineId: ExternalExecutionEngineId) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.executionEnginesInstallStatus, engineId),
+    listProfiles: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.executionEnginesList),
+    getProfile: (engineId) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.executionEngineProfileGet, engineId),
+    saveProfile: (engineId, request) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.executionEngineProfileSave, engineId, request),
+    saveProfileWithSecret: (engineId, request) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.executionEngineProfileSecretSave, engineId, request),
+    disconnectProfile: (engineId, revision) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.executionEngineProfileDisconnect, engineId, revision),
+    probeProfile: (engineId, revision) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.executionEngineProfileProbe, engineId, revision),
+    probeConnection: (engineId, revision) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.executionEngineConnectionProbe, engineId, revision),
+    startLogin: (engineId, revision, method) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.executionEngineLoginStart, engineId, revision, method),
+    getLogin: (engineId, operationId) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.executionEngineLoginGet, engineId, operationId),
+    cancelLogin: (engineId, operationId) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.executionEngineLoginCancel, engineId, operationId),
   },
   ...(computerControlPlatform === "macos" || computerControlPlatform === "windows"
     ? {
@@ -173,7 +257,10 @@ const capabilities: LingDesktopCapabilities = {
   },
 };
 
-contextBridge.exposeInMainWorld("lingDesktop", capabilities);
+contextBridge.exposeInMainWorld("lingDesktop", {
+  ...capabilities,
+  localFiles: createLocalFileCapabilities((channel, request) => ipcRenderer.invoke(channel, request), globalThis.document),
+});
 
 function cloneArchiveRequest(
   request: DesktopThemePackageArchiveRequest,

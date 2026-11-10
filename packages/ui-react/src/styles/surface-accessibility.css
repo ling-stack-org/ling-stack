@@ -1,0 +1,23 @@
+/* Decorative materials never replace system colors or accessibility surfaces. */
+@media (forced-colors: active) {
+  :root,
+  [data-ui-theme] {
+    --ling-control-finish: none;
+    --ling-action-finish: none;
+    --ling-composer-finish: none;
+    --ling-composer-decoration: none;
+    --ling-composer-focus-decoration: none;
+    --ling-composer-toolbar-finish: none;
+    --ling-navigation-selected-finish: none;
+    --ling-navigation-selected-shadow: none;
+    --ling-shortcut-finish: none;
+    --ling-card-finish: none;
+    --ling-table-header-shadow: none;
+    --ling-overlay-finish: none;
+    --ling-overlay-heading-shadow: none;
+    --ling-empty-icon-shadow: none;
+    --ling-message-own-shadow: none;
+    --ling-code-heading-shadow: none;
+    --ling-menu-selected-shadow: none;
+  }
+}

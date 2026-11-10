@@ -16,6 +16,7 @@ import {
   legacyPermissionFromAuthorizationAndAccess,
   permissionModeForPreset,
   permissionPresetRequiresConfirmation,
+  resolveStoragePaths,
   resolveSessionRunPolicy,
   workspaceAccessModeRequiresConfirmation,
 } from "../dist/index.js";
@@ -30,6 +31,340 @@ test("sqlite store creates the default approval policy", async () => {
     assert.deepEqual(policy.toolDecisions, defaultApprovalToolDecisions);
     assert.deepEqual(policy.allowedWritePaths, defaultAllowedWritePaths);
     assert.equal(policy.createdAt, policy.updatedAt);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("approval decision and per-owner post-commit work survive reopening the store", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-approval-postcommit-"));
+  const now = "2026-09-25T01:00:00.000Z";
+  let store = createSqliteRunStore(cwd);
+  try {
+    store.createRun({
+      id: "run_postcommit",
+      cwd,
+      taskId: "task_postcommit",
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: { id: "task_postcommit", title: "Post-commit recovery" },
+      providerSnapshot: { provider: "test-provider", model: "test-model" },
+      requestSnapshot: { cwd },
+      createdAt: now,
+    });
+    const approval = store.createApprovalRequest({
+      runId: "run_postcommit",
+      taskId: "task_postcommit",
+      actionType: "bash",
+      risk: "medium",
+      title: "Approve shell command",
+      description: "echo once",
+      payload: { type: "bash", cwd, command: "echo once", riskFlags: [] },
+    }, now);
+    store.approveApprovalRequest(approval.id, { decisionKind: "approve_once" }, "2026-09-25T01:01:00.000Z");
+    store.close();
+    store = createSqliteRunStore(cwd);
+    assert.equal(store.getApprovalRequest(approval.id)?.status, "approved");
+    assert.deepEqual(store.listApprovalPostCommitEffects({ approvalId: approval.id }).map(({ effectKind, status }) => [effectKind, status]), [
+      ["decision_event", "pending"],
+      ["owner", "pending"],
+      ["control_plane_event", "pending"],
+    ]);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("post-commit ledger repairs a colliding legacy migration version", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-approval-postcommit-collision-"));
+  let store = createSqliteRunStore(cwd);
+  try {
+    const databasePath = store.paths.databasePath;
+    store.close();
+    const database = new DatabaseSync(databasePath);
+    try {
+      database.exec("DROP TABLE approval_postcommit_effects;");
+      database.exec("DELETE FROM schema_migrations WHERE version = 144;");
+      database.exec(`
+        INSERT INTO schema_migrations (version, name, applied_at)
+        VALUES (139, 'create_delegation_tree', '2026-09-25T00:00:00.000Z');
+      `);
+    } finally {
+      database.close();
+    }
+
+    store = createSqliteRunStore(cwd);
+    const repaired = new DatabaseSync(databasePath, { readOnly: true });
+    try {
+      assert.ok(repaired.prepare(`
+        SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'approval_postcommit_effects'
+      `).get());
+      assert.equal(repaired.prepare("SELECT name FROM schema_migrations WHERE version = 144").get()?.name,
+        "create_approval_postcommit_effects");
+    } finally {
+      repaired.close();
+    }
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("post-commit ledger failure rolls back the approval decision and retry creates one effect per kind", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-approval-ledger-rollback-"));
+  const now = "2026-09-25T02:00:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  try {
+    store.createRun({ id: "run_ledger_fault", cwd, taskId: "task_ledger_fault", providerName: "test-provider",
+      providerModel: "test-model", taskSnapshot: { id: "task_ledger_fault", title: "Fault" },
+      providerSnapshot: { provider: "test-provider", model: "test-model" }, requestSnapshot: { cwd }, createdAt: now });
+    const approval = store.createApprovalRequest({ runId: "run_ledger_fault", taskId: "task_ledger_fault",
+      actionType: "bash", risk: "medium", title: "Approve", description: "echo",
+      payload: { type: "bash", cwd, command: "echo", riskFlags: [] } }, now);
+    const database = new DatabaseSync(store.paths.databasePath);
+    try {
+      database.exec(`CREATE TRIGGER fail_approval_postcommit BEFORE INSERT ON approval_postcommit_effects
+        BEGIN SELECT RAISE(ABORT, 'injected postcommit ledger failure'); END`);
+      assert.throws(() => store.approveApprovalRequest(approval.id, { decisionKind: "approve_once" }, now), /injected postcommit ledger failure/);
+      assert.equal(store.getApprovalRequest(approval.id)?.status, "pending");
+      assert.deepEqual(store.listApprovalPostCommitEffects({ approvalId: approval.id }), []);
+      database.exec("DROP TRIGGER fail_approval_postcommit");
+    } finally {
+      database.close();
+    }
+    store.approveApprovalRequest(approval.id, { decisionKind: "approve_once" }, now);
+    const effects = store.listApprovalPostCommitEffects({ approvalId: approval.id });
+    assert.equal(effects.length, 3);
+    const first = store.claimApprovalPostCommitEffect(approval.id, "owner", {
+      token: "owner-claim-1", claimExpiresAt: "2026-09-25T02:01:00.000Z",
+    }, now);
+    assert.equal(first?.status, "claimed");
+    assert.equal(store.claimApprovalPostCommitEffect(approval.id, "owner", {
+      token: "owner-claim-2", claimExpiresAt: "2026-09-25T02:01:00.000Z",
+    }, now), undefined);
+    assert.equal(store.settleApprovalPostCommitEffect(approval.id, "owner", {
+      token: "owner-claim-2", status: "completed",
+    }, now), undefined);
+    assert.equal(store.settleApprovalPostCommitEffect(approval.id, "owner", {
+      token: "owner-claim-1", status: "completed",
+    }, now)?.status, "completed");
+    const eventClaim = store.claimApprovalPostCommitEffect(approval.id, "decision_event", {
+      token: "event-claim", claimExpiresAt: "2026-09-25T02:01:00.000Z",
+    }, now);
+    assert.ok(eventClaim);
+    assert.equal(store.recoverExpiredApprovalPostCommitClaim(approval.id, "decision_event", {
+      expectedRevision: eventClaim.revision,
+      status: "pending",
+      errorCode: "event_evidence_missing",
+    }, "2026-09-25T02:01:00.000Z"), undefined, "the lease is still held at its deadline");
+    assert.equal(store.recoverExpiredApprovalPostCommitClaim(approval.id, "decision_event", {
+      expectedRevision: eventClaim.revision,
+      status: "pending",
+      errorCode: "event_evidence_missing",
+    }, "2026-09-25T02:01:01.000Z")?.status, "pending");
+    assert.equal(store.recoverExpiredApprovalPostCommitClaim(approval.id, "decision_event", {
+      expectedRevision: eventClaim.revision,
+      status: "pending",
+      errorCode: "event_evidence_missing",
+    }, "2026-09-25T02:01:02.000Z"), undefined, "a stale revision cannot overwrite recovery");
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("post-commit recovery scans past 500 effects with equal timestamps", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-approval-effects-page-"));
+  const now = "2026-09-25T04:00:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  try {
+    store.createRun({ id: "run_effect_page", cwd, taskId: "task_effect_page", providerName: "test-provider",
+      providerModel: "test-model", taskSnapshot: { id: "task_effect_page", title: "Effects page" },
+      providerSnapshot: { provider: "test-provider", model: "test-model" }, requestSnapshot: { cwd }, createdAt: now });
+    for (let index = 0; index < 167; index += 1) {
+      const approval = store.createApprovalRequest({ runId: "run_effect_page", taskId: "task_effect_page",
+        actionType: "bash", risk: "medium", title: `Approval ${index}`, description: "echo",
+        payload: { type: "bash", cwd, command: "echo", riskFlags: [] } }, now);
+      store.approveApprovalRequest(approval.id, { decisionKind: "approve_once" }, now);
+    }
+    const first = store.listApprovalPostCommitEffects({ status: "pending", limit: 500 });
+    assert.equal(first.length, 500);
+    const last = first.at(-1);
+    const second = store.listApprovalPostCommitEffects({ status: "pending", limit: 500,
+      after: { createdAt: last.createdAt, approvalId: last.approvalId, effectKind: last.effectKind } });
+    assert.equal(second.length, 1);
+    assert.equal(new Set([...first, ...second].map((effect) => `${effect.approvalId}:${effect.effectKind}`)).size, 501);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("sqlite approval requests persist command-rule proposals without saving a rule for allow once", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-core-command-rule-once-"));
+  const now = "2026-08-28T01:00:00.000Z";
+  let store = createSqliteRunStore(cwd);
+  try {
+    store.createRun({
+      id: "run_command_rule_once",
+      cwd,
+      taskId: "task_command_rule_once",
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: { id: "task_command_rule_once", title: "Command rule once" },
+      providerSnapshot: { provider: "test-provider", model: "test-model" },
+      requestSnapshot: { cwd },
+      createdAt: now,
+    });
+    const proposedCommandRule = {
+      prefix: ["whois"],
+      display: "whois",
+      fingerprint: "command_rule_v1_whois",
+      version: 1,
+    };
+    const approval = store.createApprovalRequest({
+      runId: "run_command_rule_once",
+      taskId: "task_command_rule_once",
+      actionType: "bash",
+      risk: "medium",
+      title: "Approve shell command",
+      description: "whois example.com",
+      payload: { type: "bash", cwd, command: "whois example.com", riskFlags: [] },
+      availableDecisions: ["approve_once", "approve_command_rule", "deny"],
+      proposedCommandRule,
+    }, now);
+
+    assert.deepEqual(approval.availableDecisions, ["approve_once", "approve_command_rule", "deny"]);
+    assert.deepEqual(approval.proposedCommandRule, proposedCommandRule);
+    const approved = store.approveApprovalRequest(approval.id, { decisionKind: "approve_once" }, "2026-08-28T01:01:00.000Z");
+    assert.equal(approved?.decisionKind, "approve_once");
+    assert.deepEqual(store.listApprovalCommandRules(), []);
+
+    store.close();
+    store = createSqliteRunStore(cwd);
+    assert.deepEqual(store.getApprovalRequest(approval.id)?.proposedCommandRule, proposedCommandRule);
+    assert.equal(store.getApprovalRequest(approval.id)?.decisionKind, "approve_once");
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("sqlite approval resolution atomically saves, matches, and revokes a workspace command rule", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-core-command-rule-save-"));
+  const now = "2026-08-28T02:00:00.000Z";
+  let store = createSqliteRunStore(cwd);
+  try {
+    store.createRun({
+      id: "run_command_rule_save",
+      cwd,
+      taskId: "task_command_rule_save",
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: { id: "task_command_rule_save", title: "Command rule save" },
+      providerSnapshot: { provider: "test-provider", model: "test-model" },
+      requestSnapshot: { cwd },
+      createdAt: now,
+    });
+    const proposedCommandRule = {
+      prefix: ["whois"],
+      display: "whois",
+      fingerprint: "command_rule_v1_whois",
+      version: 1,
+    };
+    const approval = store.createApprovalRequest({
+      runId: "run_command_rule_save",
+      taskId: "task_command_rule_save",
+      actionType: "bash",
+      risk: "medium",
+      title: "Approve shell command",
+      description: "whois example.com",
+      payload: { type: "bash", cwd, command: "whois example.com", riskFlags: [] },
+      availableDecisions: ["approve_once", "approve_command_rule", "deny"],
+      proposedCommandRule,
+    }, now);
+
+    assert.throws(() => store.approveApprovalRequest(approval.id, {
+      decisionKind: "approve_command_rule",
+      proposedRuleFingerprint: "stale-fingerprint",
+    }, "2026-08-28T02:00:30.000Z"), /unavailable or stale/);
+    assert.equal(store.getApprovalRequest(approval.id)?.status, "pending");
+    assert.deepEqual(store.listApprovalCommandRules(), []);
+
+    const approved = store.approveApprovalRequest(approval.id, {
+      decisionKind: "approve_command_rule",
+      proposedRuleFingerprint: proposedCommandRule.fingerprint,
+    }, "2026-08-28T02:01:00.000Z");
+    assert.equal(approved?.status, "approved");
+    assert.equal(approved?.decisionKind, "approve_command_rule");
+    assert.ok(approved?.decisionRuleId);
+
+    const [rule] = store.listApprovalCommandRules();
+    assert.equal(rule.id, approved.decisionRuleId);
+    assert.deepEqual(rule.prefix, ["whois"]);
+    assert.equal(rule.revokedAt, undefined);
+    assert.equal(store.findMatchingApprovalCommandRule("bash", ["whois", "example.net"])?.id, rule.id);
+    assert.equal(store.findMatchingApprovalCommandRule("bash", ["dig", "example.net"]), undefined);
+
+    store.close();
+    store = createSqliteRunStore(cwd);
+    assert.equal(store.findMatchingApprovalCommandRule("bash", ["whois", "example.org"])?.id, rule.id);
+    const database = new DatabaseSync(store.paths.databasePath, { readOnly: true });
+    try {
+      assert.equal(
+        database.prepare("SELECT name FROM schema_migrations WHERE version = 126").get()?.name,
+        "create_approval_command_rules",
+      );
+      assert.equal(
+        database.prepare("SELECT name FROM schema_migrations WHERE version = 115").get()?.name,
+        "materialize_channel_delegated_step_requirements",
+      );
+    } finally {
+      database.close();
+    }
+
+    assert.throws(() => store.approveApprovalRequest(approval.id, {
+      decisionKind: "approve_command_rule",
+      proposedRuleFingerprint: proposedCommandRule.fingerprint,
+    }, "2026-08-28T02:02:00.000Z"), /not pending/);
+
+    const revoked = store.revokeApprovalCommandRule(rule.id, "2026-08-28T02:03:00.000Z");
+    assert.equal(revoked?.revokedAt, "2026-08-28T02:03:00.000Z");
+    assert.equal(store.findMatchingApprovalCommandRule("bash", ["whois", "example.net"]), undefined);
+
+    store.createRun({
+      id: "run_command_rule_restore",
+      cwd,
+      taskId: "task_command_rule_restore",
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: { id: "task_command_rule_restore", title: "Command rule restore" },
+      providerSnapshot: { provider: "test-provider", model: "test-model" },
+      requestSnapshot: { cwd },
+      createdAt: "2026-08-28T02:04:00.000Z",
+    });
+    const restoreApproval = store.createApprovalRequest({
+      runId: "run_command_rule_restore",
+      taskId: "task_command_rule_restore",
+      actionType: "bash",
+      risk: "medium",
+      title: "Approve shell command again",
+      description: "whois example.org",
+      payload: { type: "bash", cwd, command: "whois example.org", riskFlags: [] },
+      availableDecisions: ["approve_once", "approve_command_rule", "deny"],
+      proposedCommandRule,
+    }, "2026-08-28T02:04:00.000Z");
+    const restoredApproval = store.approveApprovalRequest(restoreApproval.id, {
+      decisionKind: "approve_command_rule",
+      proposedRuleFingerprint: proposedCommandRule.fingerprint,
+    }, "2026-08-28T02:05:00.000Z");
+    const [restoredRule] = store.listApprovalCommandRules();
+    assert.equal(restoredApproval?.decisionRuleId, rule.id);
+    assert.equal(restoredRule.id, rule.id);
+    assert.equal(restoredRule.sourceApprovalId, restoreApproval.id);
+    assert.equal(restoredRule.revokedAt, undefined);
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });
@@ -540,7 +875,7 @@ test("sqlite store atomically claims pending interventions beyond the first hist
   }
 });
 
-test("sqlite store loads only the latest completed intervention replies before the current item", async () => {
+for (const sameTimestamp of [false, true]) test(`sqlite store loads only the latest completed intervention replies before the current item (${sameTimestamp ? "same timestamp" : "distinct timestamps"})`, async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-core-run-intervention-replies-"));
   const store = createSqliteRunStore(cwd);
   try {
@@ -560,7 +895,7 @@ test("sqlite store loads only the latest completed intervention replies before t
 
     const replyIds = [];
     for (let index = 0; index < 8; index += 1) {
-      const timestamp = new Date(Date.parse("2026-08-08T00:00:00.000Z") + index * 1_000).toISOString();
+      const timestamp = new Date(Date.parse("2026-08-08T00:00:00.000Z") + (sameTimestamp ? 0 : index * 1_000)).toISOString();
       const reply = appendChannelItemFixture(store, {
         channelId: channel.id,
         kind: "ai_reply",
@@ -586,6 +921,7 @@ test("sqlite store loads only the latest completed intervention replies before t
         now: timestamp,
       });
       const intervention = store.createRunIntervention({
+        id: `rint_reply_${8 - index}`,
         sourceRunId: "run_reply_context_source",
         mode: "queue_followup",
         instruction: `guidance ${index}`,
@@ -603,11 +939,12 @@ test("sqlite store loads only the latest completed intervention replies before t
       replyIds.push(reply.id);
     }
     const current = store.createRunIntervention({
+      id: "rint_reply_0_current",
       sourceRunId: "run_reply_context_source",
       mode: "queue_followup",
       instruction: "current guidance",
       idempotencyKey: "reply-context-current",
-    }, "2026-08-08T00:00:09.000Z");
+    }, sameTimestamp ? "2026-08-08T00:00:00.000Z" : "2026-08-08T00:00:09.000Z");
 
     assert.deepEqual(
       store.listPriorRunInterventionReplyMessages({
@@ -825,6 +1162,37 @@ test("sqlite store expires pending approval requests", async () => {
   }
 });
 
+test("terminal Run cannot approve a stale pending request or persist its command rule", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-stale-run-approval-"));
+  const store = createSqliteRunStore(cwd);
+  const now = "2026-09-28T12:00:00.000Z";
+  try {
+    store.createRun({ id: "run_stale_approval", cwd, taskId: "task_stale_approval",
+      providerName: "test", providerModel: "test",
+      taskSnapshot: { id: "task_stale_approval", title: "Stale approval" },
+      providerSnapshot: {}, requestSnapshot: {}, createdAt: now });
+    store.markRunStarted("run_stale_approval", now);
+    const proposal = { prefix: ["python3", "-m", "unittest"], display: "python3 -m unittest",
+      fingerprint: "command_rule_v1_stale_test", version: 1 };
+    const input = { runId: "run_stale_approval", taskId: "task_stale_approval",
+      actionType: "bash", risk: "medium", title: "Run tests", description: "Run unit tests",
+      payload: { type: "bash", cwd, command: "python3 -m unittest", riskFlags: [] },
+      availableDecisions: ["approve_once", "approve_command_rule", "deny"], proposedCommandRule: proposal };
+    const once = store.createApprovalRequest(input, now);
+    const rule = store.createApprovalRequest(input, now);
+    store.markRunFailed("run_stale_approval", "2026-09-28T12:01:00.000Z", "Prior approval expired.");
+    assert.throws(() => store.approveApprovalRequest(once.id, { decisionKind: "approve_once" }, now), /execution no longer active/);
+    assert.throws(() => store.approveApprovalRequest(rule.id, { decisionKind: "approve_command_rule",
+      proposedRuleFingerprint: proposal.fingerprint }, now), /execution no longer active/);
+    assert.equal(store.getApprovalRequest(once.id)?.status, "pending");
+    assert.equal(store.getApprovalRequest(rule.id)?.status, "pending");
+    assert.deepEqual(store.listApprovalCommandRules(), []);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("sqlite store creates approval checkpoints and syncs approval lifecycle", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-core-approval-checkpoints-"));
   const now = "2026-06-19T00:00:00.000Z";
@@ -903,6 +1271,9 @@ test("sqlite store creates approval checkpoints and syncs approval lifecycle", a
       const resolved = store[entry.method](approval.id, { reason: entry.reason }, entry.resolvedAt);
       assert.ok(resolved);
       assert.equal(resolved.status, entry.expectedStatus);
+      if (entry.expectedStatus === "expired" || entry.expectedStatus === "cancelled") {
+        assert.equal(resolved.resolvedBy, undefined, "system lifecycle resolution must not impersonate a user");
+      }
 
       const synced = store.getApprovalCheckpointForApproval(approval.id);
       assert.ok(synced);
@@ -911,6 +1282,150 @@ test("sqlite store creates approval checkpoints and syncs approval lifecycle", a
       assert.equal(synced.updatedAt, entry.resolvedAt);
       assert.deepEqual(store.listApprovalCheckpoints({ status: entry.expectedStatus }).map((item) => item.approvalId), [approval.id]);
     }
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("approval resolution rolls back the decision when checkpoint persistence fails", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-core-approval-atomic-resolution-"));
+  const now = "2026-06-19T00:00:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  try {
+    store.createRun({
+      id: "run_approval_atomic_resolution",
+      cwd,
+      taskId: "task_approval_atomic_resolution",
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: { id: "task_approval_atomic_resolution", title: "Atomic approval resolution" },
+      providerSnapshot: { provider: "test-provider", model: "test-model" },
+      requestSnapshot: { cwd },
+      createdAt: now,
+    });
+    const cases = ["approveApprovalRequest", "denyApprovalRequest", "expireApprovalRequest", "cancelApprovalRequest"];
+    for (const [index, method] of cases.entries()) {
+      const approval = store.createApprovalRequest({
+        runId: "run_approval_atomic_resolution",
+        taskId: "task_approval_atomic_resolution",
+        toolCallId: `tool_atomic_${index}`,
+        actionType: "bash",
+        risk: "medium",
+        title: "Atomic decision",
+        description: "echo safe",
+        payload: { type: "bash", cwd, command: "echo safe", riskFlags: [] },
+      }, now);
+      const database = new DatabaseSync(store.paths.databasePath);
+      try {
+        database.exec(`CREATE TRIGGER fail_checkpoint_resolution BEFORE UPDATE ON approval_checkpoints
+          BEGIN SELECT RAISE(ABORT, 'injected_checkpoint_failure'); END`);
+      } finally {
+        database.close();
+      }
+      assert.throws(() => store[method](approval.id, { reason: "testing rollback" }, now), /injected_checkpoint_failure/);
+      assert.equal(store.getApprovalRequest(approval.id)?.status, "pending", `${method} must not leave a half-committed decision`);
+      assert.equal(store.getApprovalCheckpointForApproval(approval.id)?.status, "pending");
+      const cleanup = new DatabaseSync(store.paths.databasePath);
+      try {
+        cleanup.exec("DROP TRIGGER fail_checkpoint_resolution");
+      } finally {
+        cleanup.close();
+      }
+      assert.ok(store[method](approval.id, { reason: "retry after recovery" }, now));
+    }
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("approval creation rolls back the request when checkpoint persistence fails", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-core-approval-atomic-creation-"));
+  const now = "2026-06-19T00:00:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  try {
+    store.createRun({
+      id: "run_approval_atomic_creation",
+      cwd,
+      taskId: "task_approval_atomic_creation",
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: { id: "task_approval_atomic_creation", title: "Atomic approval creation" },
+      providerSnapshot: { provider: "test-provider", model: "test-model" },
+      requestSnapshot: { cwd },
+      createdAt: now,
+    });
+    const input = {
+      runId: "run_approval_atomic_creation",
+      taskId: "task_approval_atomic_creation",
+      toolCallId: "tool_atomic_creation",
+      actionType: "bash",
+      risk: "medium",
+      title: "Atomic creation",
+      description: "echo safe",
+      payload: { type: "bash", cwd, command: "echo safe", riskFlags: [] },
+    };
+    const database = new DatabaseSync(store.paths.databasePath);
+    try {
+      database.exec(`CREATE TRIGGER fail_checkpoint_creation BEFORE INSERT ON approval_checkpoints
+        BEGIN SELECT RAISE(ABORT, 'injected_checkpoint_creation_failure'); END`);
+    } finally {
+      database.close();
+    }
+    assert.throws(() => store.createApprovalRequest(input, now), /injected_checkpoint_creation_failure/);
+    assert.equal(store.listApprovalRequests({ runId: input.runId, complete: true }).length, 0,
+      "an uncheckpointed approval must not become visible or block a run");
+    const cleanup = new DatabaseSync(store.paths.databasePath);
+    try {
+      cleanup.exec("DROP TRIGGER fail_checkpoint_creation");
+    } finally {
+      cleanup.close();
+    }
+    const approval = store.createApprovalRequest(input, now);
+    assert.equal(store.getApprovalCheckpointForApproval(approval.id)?.status, "pending");
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("approval checkpoint recovery scans stable pages even when creation timestamps tie", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-core-approval-checkpoint-pages-"));
+  const now = "2026-06-19T00:00:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  try {
+    store.createRun({
+      id: "run_approval_checkpoint_pages",
+      cwd,
+      taskId: "task_approval_checkpoint_pages",
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: { id: "task_approval_checkpoint_pages", title: "Checkpoint pages" },
+      providerSnapshot: { provider: "test-provider", model: "test-model" },
+      requestSnapshot: { cwd },
+      createdAt: now,
+    });
+    const approvalIds = [];
+    for (let index = 0; index < 3; index += 1) {
+      approvalIds.push(store.createApprovalRequest({
+        runId: "run_approval_checkpoint_pages",
+        taskId: "task_approval_checkpoint_pages",
+        toolCallId: `tool_page_${index}`,
+        actionType: "bash",
+        risk: "medium",
+        title: `Page ${index}`,
+        description: "echo safe",
+        payload: { type: "bash", cwd, command: "echo safe", riskFlags: [] },
+      }, now).id);
+    }
+    const first = store.listApprovalCheckpoints({ status: "pending", limit: 2 });
+    const last = first.at(-1);
+    const second = store.listApprovalCheckpoints({ status: "pending", limit: 2,
+      before: { createdAt: last.createdAt, id: last.id } });
+    assert.equal(first.length, 2);
+    assert.equal(second.length, 1);
+    assert.deepEqual(new Set([...first, ...second].map((checkpoint) => checkpoint.approvalId)), new Set(approvalIds));
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });
@@ -1111,6 +1626,58 @@ test("approval resume claim atomically binds the replacement Attempt and observe
   }
 });
 
+test("approval resume claim releases source capacity after a validated approved handoff", async () => {
+  const fixture = await createApprovalResumeClaimFixture("approved-live-handoff");
+  try {
+    acquireApprovalResumeRuntimeResources(fixture, {
+      run: fixture.run,
+      workUnit: fixture.workUnit,
+      attempt: fixture.priorAttempt,
+    }, "2026-08-16T01:00:30.000Z");
+    void fixture.store.trackHostAttemptCompletion({ runId: fixture.run.id, ...fixture.priorFence }, new Promise(() => {}));
+
+    const claimed = fixture.store.commitApprovalResumeClaim(fixture.claim);
+
+    assert.equal(claimed.ok, true);
+    assert.equal(fixture.store.getHostAttemptCompletion({ runId: fixture.run.id, ...fixture.priorFence })?.drainedAt, undefined);
+    assert.equal(fixture.store.listResourceLeases({ attemptId: fixture.priorAttempt.id, status: "active" }).length, 0);
+    assert.equal(fixture.store.listResourceLeases({ attemptId: fixture.priorAttempt.id, status: "released" }).length, 1);
+    assert.equal(fixture.store.listRuntimeSemaphoreSlots({ ownerId: fixture.priorAttempt.id, status: "active" }).length, 0);
+    assert.equal(fixture.store.listRuntimeSemaphoreSlots({ ownerId: fixture.priorAttempt.id, status: "released" }).length, 1);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("approval resume claim preserves source capacity while a Host operation remains unresolved", async () => {
+  const fixture = await createApprovalResumeClaimFixture("approved-blocked-handoff");
+  try {
+    acquireApprovalResumeRuntimeResources(fixture, {
+      run: fixture.run,
+      workUnit: fixture.workUnit,
+      attempt: fixture.priorAttempt,
+    }, "2026-08-16T01:00:30.000Z");
+    const source = { runId: fixture.run.id, ...fixture.priorFence };
+    void fixture.store.trackHostAttemptCompletion(source, new Promise(() => {}));
+    fixture.store.admitHostOperation({
+      operationId: "operation-approved-blocked-handoff",
+      source,
+      kind: "command",
+      toolCallId: fixture.approval.toolCallId,
+      admittedAt: "2026-08-16T01:00:40.000Z",
+    });
+
+    const claimed = fixture.store.commitApprovalResumeClaim(fixture.claim);
+
+    assert.equal(claimed.ok, true);
+    assert.equal(fixture.store.listHostOperationBlockers(source, fixture.claim.now).length, 1);
+    assert.equal(fixture.store.listResourceLeases({ attemptId: fixture.priorAttempt.id, status: "active" }).length, 1);
+    assert.equal(fixture.store.listRuntimeSemaphoreSlots({ ownerId: fixture.priorAttempt.id, status: "active" }).length, 1);
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("approval resume claim rolls back every durable write boundary", async (t) => {
   const faults = [
     {
@@ -1192,6 +1759,124 @@ test("approval resume claim rolls back every durable write boundary", async (t) 
         await fixture.close();
       }
     });
+  }
+});
+
+test("approval resume claim atomically prepares the Harness continuation and Attempt", async () => {
+  const fixture = await createApprovalResumeClaimFixture("harness-atomic");
+  try {
+    const attemptId = "attempt_resume_claim_harness_atomic_2";
+    const artifact = fixture.store.createArtifact({
+      id: "artifact_resume_claim_harness_atomic",
+      runId: fixture.run.id,
+      type: "json",
+      path: `${fixture.run.id}/continuation.json`,
+      contentType: "application/vnd.ling.runner-continuation-replay+json",
+      sealedPayload: { schemaVersion: 1, runId: fixture.run.id },
+      createdAt: fixture.claim.now,
+    });
+    const { replacementAttempt: _replacementAttempt, ...claimBase } = fixture.claim;
+    const claim = {
+      ...claimBase,
+      continuationPreparation: {
+        runId: fixture.run.id,
+        workUnitId: fixture.workUnit.id,
+        sourceFence: fixture.priorFence,
+        expectedTargetAttemptId: fixture.priorAttempt.id,
+        origin: "approval_resume",
+        strategy: "deterministic_replay",
+        runnerId: "pi",
+        runnerCapabilityRevision: "pi:test",
+        contextViewId: fixture.run.contextViewId,
+        contextSnapshotArtifactId: artifact.id,
+        idempotencyKey: `runner-continuation:${fixture.run.id}:${fixture.priorAttempt.id}:approval_resume:0:${fixture.approval.id}`,
+        generation: 0,
+        targetAttempt: {
+          id: attemptId,
+          runtimeInstanceId: "runtime_after_restart",
+          runnerId: "pi",
+          effectiveRunnerId: "pi",
+        },
+        now: fixture.claim.now,
+      },
+      runnerResumeHandle: { ...fixture.claim.runnerResumeHandle, attemptId },
+    };
+    const result = fixture.store.commitApprovalResumeClaim(claim);
+    assert.equal(result.ok, true);
+    assert.equal(result.attempt.id, attemptId);
+    assert.equal(result.attempt.status, "created");
+    assert.equal(result.runnerContinuation?.state, "prepared");
+    assert.equal(result.runnerContinuation?.targetAttemptId, attemptId);
+    assert.equal(result.workUnit.activeAttemptId, attemptId);
+    assert.equal(result.checkpoint.status, "resume_pending");
+    assert.equal(
+      fixture.store.listRuntimeEvents(fixture.workUnit.id, { limit: 100 }).some((event) =>
+        event.type === "work_unit_started" && event.attemptId === attemptId),
+      false,
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("approval resume rolls back Harness continuation preparation with the checkpoint CAS", async () => {
+  const fixture = await createApprovalResumeClaimFixture("harness-rollback");
+  try {
+    const attemptId = "attempt_resume_claim_harness_rollback_2";
+    const artifact = fixture.store.createArtifact({
+      id: "artifact_resume_claim_harness_rollback",
+      runId: fixture.run.id,
+      type: "json",
+      path: `${fixture.run.id}/continuation.json`,
+      contentType: "application/vnd.ling.runner-continuation-replay+json",
+      sealedPayload: { schemaVersion: 1, runId: fixture.run.id },
+      createdAt: fixture.claim.now,
+    });
+    const { replacementAttempt: _replacementAttempt, ...claimBase } = fixture.claim;
+    const idempotencyKey = `runner-continuation:${fixture.run.id}:${fixture.priorAttempt.id}:approval_resume:0:${fixture.approval.id}`;
+    const claim = {
+      ...claimBase,
+      continuationPreparation: {
+        runId: fixture.run.id,
+        workUnitId: fixture.workUnit.id,
+        sourceFence: fixture.priorFence,
+        expectedTargetAttemptId: fixture.priorAttempt.id,
+        origin: "approval_resume",
+        strategy: "deterministic_replay",
+        runnerId: "pi",
+        runnerCapabilityRevision: "pi:test",
+        contextViewId: fixture.run.contextViewId,
+        contextSnapshotArtifactId: artifact.id,
+        idempotencyKey,
+        generation: 0,
+        targetAttempt: {
+          id: attemptId,
+          runtimeInstanceId: "runtime_after_restart",
+          runnerId: "pi",
+          effectiveRunnerId: "pi",
+        },
+        now: fixture.claim.now,
+      },
+      runnerResumeHandle: { ...fixture.claim.runnerResumeHandle, attemptId },
+    };
+    const database = new DatabaseSync(fixture.store.paths.databasePath);
+    try {
+      database.exec(`
+        CREATE TRIGGER fail_harness_resume_checkpoint AFTER UPDATE OF status ON approval_checkpoints
+        WHEN NEW.id = '${fixture.checkpoint.id}' AND NEW.status = 'resume_pending'
+        BEGIN SELECT RAISE(ABORT, 'harness resume checkpoint fault'); END
+      `);
+    } finally {
+      database.close();
+    }
+    assert.throws(() => fixture.store.commitApprovalResumeClaim(claim), /harness resume checkpoint fault/u);
+    assert.equal(fixture.store.findRunnerContinuationByIdempotencyKey(idempotencyKey), undefined);
+    assert.equal(fixture.store.getWorkUnitAttempt(attemptId), undefined);
+    assert.equal(fixture.store.getWorkUnitAttempt(fixture.priorAttempt.id)?.status, "waiting_for_approval");
+    assert.equal(fixture.store.getWorkUnit(fixture.workUnit.id)?.activeAttemptId, fixture.priorAttempt.id);
+    assert.equal(fixture.store.getApprovalCheckpoint(fixture.checkpoint.id)?.status, "approved");
+  } finally {
+    await fixture.close();
   }
 });
 
@@ -1489,6 +2174,88 @@ test("approval resume terminal settlement atomically closes checkpoint, runtime,
   }
 });
 
+test("B006 Task savepoint composes with actual approval terminal commit and later rollback", async t => {
+  for (const fault of [false, true]) {
+    await t.test(fault ? "later control-plane INSERT rolls back the real approval transaction" : "Task RELEASE does not commit the real approval transaction", async t => {
+      const fixture = await createApprovalResumeClaimFixture(`b006-task-ledger-${fault ? "rollback" : "commit"}`, { isolatedStorage: true });
+      let observer, reopened, patch;
+      try {
+        assert.ok(fixture.store.paths.databasePath.startsWith(`${fixture.cwd}/`), "all new B006 approval facts stay inside this owned fixture");
+        const claim = fixture.store.commitApprovalResumeClaim(fixture.claim);
+        assert.equal(claim.ok, true);
+        acquireApprovalResumeRuntimeResources(fixture, claim);
+        observer = createSqliteRunStore(fixture.cwd, fixture.store.paths);
+        const facts = reader => ({
+          task: reader.getTask(fixture.task.id),
+          taskEvents: reader.listStateTransitionEvents({ entityType: "task", entityId: fixture.task.id }),
+          checkpoint: reader.getApprovalCheckpoint(claim.checkpoint.id),
+          run: reader.getRun(claim.run.id),
+          unit: reader.getWorkUnit(claim.workUnit.id),
+          attempt: reader.getWorkUnitAttempt(claim.attempt.id),
+          runtimeEvents: reader.listRuntimeEvents(claim.workUnit.id, { limit: 100 }),
+          controlPlaneEvents: reader.listControlPlaneEvents({ workspaceId: "workspace_default", limit: 100 }),
+          leases: reader.listResourceLeases({ ownerType: "run", ownerId: claim.run.id }),
+          slots: reader.listRuntimeSemaphoreSlots({ ownerId: claim.attempt.id }),
+        });
+        const before = facts(observer), boundaries = [];
+        if (fault) fixture.store.database.exec(`CREATE TRIGGER b006_approval_later_fault AFTER INSERT ON control_plane_events
+          WHEN NEW.idempotency_key LIKE 'approval-resume-terminal:%'
+          BEGIN SELECT RAISE(ABORT, 'B006 approval later INSERT failure'); END`);
+        const originalTransition = fixture.store.transitionTaskStatus;
+        patch = t.mock.method(fixture.store, "transitionTaskStatus", function (input) {
+          const result = originalTransition.call(this, input);
+          if (input.taskId === fixture.task.id) boundaries.push({ result, writer: facts(this), peer: facts(observer) });
+          return result;
+        });
+        const terminalInput = { kind: "verified_lineage", checkpointId: claim.checkpoint.id,
+          expectedCheckpointStatus: "resume_pending", expectedCheckpointRevision: claim.checkpoint.revision,
+          approvalId: fixture.claim.approvalId, runId: claim.run.id, expectedRunStatus: "running",
+          workUnitId: claim.workUnit.id, expectedWorkUnitStatus: "running", attemptId: claim.attempt.id,
+          status: "succeeded", attemptStatus: "succeeded", checkpointStatus: "resumed",
+          now: "2026-08-16T01:04:00.000Z" };
+        let result, error;
+        try { result = fixture.store.commitApprovalResumeTerminal(terminalInput); }
+        catch (caught) { error = caught; }
+        assert.equal(boundaries.length, 1, "the actual approval owner must reach the real nested Task method");
+        const boundary = boundaries[0];
+        assert.equal(boundary.result.ok, true);
+        assert.equal(boundary.writer.task.status, "done");
+        assert.equal(boundary.writer.taskEvents.length, before.taskEvents.length + 1);
+        assert.deepEqual(boundary.peer, before, "Task's local RELEASE must never commit checkpoint/runtime/capacity owned by approval");
+        if (fault) {
+          assert.equal(result, undefined);
+          assert.match(error?.message ?? "", /B006 approval later INSERT failure/u);
+          assert.deepEqual(facts(fixture.store), before);
+          assert.deepEqual(facts(observer), before, "a later failure rolls back the complete real approval transaction");
+          fixture.store.database.exec("DROP TRIGGER b006_approval_later_fault");
+          patch.mock.restore(); patch = undefined;
+          const retried = fixture.store.commitApprovalResumeTerminal(terminalInput);
+          assert.equal(retried.ok, true, "same valid approval terminal claim remains retryable after rollback");
+        } else {
+          assert.equal(error, undefined);
+          assert.equal(result?.ok, true);
+        }
+        const after = facts(observer);
+        assert.equal(after.task.status, "done");
+        assert.equal(after.taskEvents.length, before.taskEvents.length + 1);
+        assert.equal(after.checkpoint.status, "resumed");
+        assert.equal(after.run.status, "succeeded");
+        assert.equal(after.unit.status, "succeeded");
+        assert.equal(after.attempt.status, "succeeded");
+        assert.equal(after.leases.filter(value => value.status === "active").length, 0);
+        assert.equal(after.slots.filter(value => value.status === "active").length, 0);
+        reopened = createSqliteRunStore(fixture.cwd, fixture.store.paths);
+        assert.deepEqual(facts(reopened), after);
+      } finally {
+        patch?.mock.restore();
+        if (reopened?.database.isOpen) reopened.close();
+        if (observer?.database.isOpen) observer.close();
+        await fixture.close();
+      }
+    });
+  }
+});
+
 test("approval resume terminal blocker preserves the detailed checkpoint failure reason", async () => {
   const fixture = await createApprovalResumeClaimFixture("terminal-detailed-blocker");
   try {
@@ -1738,7 +2505,7 @@ function assertApprovalResumeConnectionReusable(fixture, suffix) {
   assert.equal(event.entityId, fixture.claim.approvalId);
 }
 
-function acquireApprovalResumeRuntimeResources(fixture, claim) {
+function acquireApprovalResumeRuntimeResources(fixture, claim, acquiredAt = "2026-08-16T01:02:10.000Z") {
   assert.ok(fixture.store.acquireResourceLease({
     workspaceId: "workspace_default",
     resourceType: "bound_path",
@@ -1749,7 +2516,7 @@ function acquireApprovalResumeRuntimeResources(fixture, claim) {
     attemptId: claim.attempt.id,
     runtimeInstanceId: claim.attempt.runtimeInstanceId,
     fencingToken: claim.attempt.fencingToken,
-    acquiredAt: "2026-08-16T01:02:10.000Z",
+    acquiredAt,
     expiresAt: "2026-08-16T02:02:10.000Z",
   }));
   assert.ok(fixture.store.acquireRuntimeSemaphoreSlot({
@@ -1763,7 +2530,7 @@ function acquireApprovalResumeRuntimeResources(fixture, claim) {
     attemptId: claim.attempt.id,
     runtimeInstanceId: claim.attempt.runtimeInstanceId,
     fencingToken: claim.attempt.fencingToken,
-    acquiredAt: "2026-08-16T01:02:10.000Z",
+    acquiredAt,
     expiresAt: "2026-08-16T02:02:10.000Z",
   }));
 }
@@ -1823,7 +2590,10 @@ function approvalResumeSuspensionFaults() {
 
 async function createApprovalResumeClaimFixture(suffix, options = {}) {
   const cwd = await mkdtemp(resolve(tmpdir(), `ling-stack-core-approval-resume-claim-${suffix}-`));
-  const store = createSqliteRunStore(cwd);
+  const paths = options.isolatedStorage ? resolveStoragePaths(cwd, {
+    homeDir: resolve(cwd, "owned-home"), env: {}, workspaceStateLocation: "repo-local",
+  }).workspace : undefined;
+  const store = createSqliteRunStore(cwd, paths);
   const now = "2026-08-16T01:00:00.000Z";
   const channel = store.createChannel({ name: `Approval resume ${suffix}`, boundPath: cwd }, now);
   const task = store.createTask({
@@ -1841,6 +2611,8 @@ async function createApprovalResumeClaimFixture(suffix, options = {}) {
     taskSnapshot: task,
     providerSnapshot: { provider: "test-provider", model: "test-model" },
     requestSnapshot: { cwd },
+    contextViewId: `context_resume_claim_${suffix}`,
+    contextViewCreatedAt: now,
     createdAt: now,
   });
   assert.equal(store.transitionTaskStatus({
@@ -1974,6 +2746,9 @@ async function createApprovalResumeClaimFixture(suffix, options = {}) {
     task: store.getTask(task.id),
     workUnit: store.getWorkUnit(workUnit.id),
     priorAttempt: store.getWorkUnitAttempt(priorAttempt.id),
+    priorFence,
+    approval,
+    sideEffect,
     checkpoint,
     claim,
     async close() {
@@ -1982,6 +2757,240 @@ async function createApprovalResumeClaimFixture(suffix, options = {}) {
     },
   };
 }
+
+test("system reviewer approval resolution is fenced by approval, policy, effect, and active Attempt", async () => {
+  const approvedFixture = await createApprovalResumeClaimFixture("system-reviewer-approved", { approve: false });
+  try {
+    const { store, approval, sideEffect, priorFence, run } = approvedFixture;
+    const result = store.resolveApprovalBySystemReviewer({
+      approvalId: approval.id,
+      approvalCreatedAt: approval.createdAt,
+      runId: run.id,
+      toolCallId: approval.toolCallId,
+      sideEffectFingerprint: approvalSideEffectFingerprintV1({
+        actionType: approval.actionType,
+        toolCallId: approval.toolCallId,
+        sideEffect,
+      }),
+      workspacePolicyUpdatedAt: store.getApprovalPolicy().updatedAt,
+      sourceFence: priorFence,
+      decision: "approve",
+      reason: "System reviewer found the scoped command safe.",
+    }, "2026-08-16T01:00:30.000Z");
+    assert.equal(result.ok, true);
+    assert.equal(result.approval.status, "approved");
+    assert.equal(result.approval.resolvedBy, "system-reviewer");
+    assert.equal(result.approval.decisionKind, "approve_once");
+    assert.equal(store.getApprovalCheckpointForApproval(approval.id)?.status, "approved");
+  } finally {
+    await approvedFixture.close();
+  }
+
+  const staleFixture = await createApprovalResumeClaimFixture("system-reviewer-stale", { approve: false });
+  try {
+    const { store, approval, sideEffect, priorFence, run } = staleFixture;
+    const base = {
+      approvalId: approval.id,
+      approvalCreatedAt: approval.createdAt,
+      runId: run.id,
+      toolCallId: approval.toolCallId,
+      sideEffectFingerprint: approvalSideEffectFingerprintV1({
+        actionType: approval.actionType,
+        toolCallId: approval.toolCallId,
+        sideEffect,
+      }),
+      workspacePolicyUpdatedAt: store.getApprovalPolicy().updatedAt,
+      sourceFence: priorFence,
+      decision: "deny",
+      reason: "System reviewer denied the command.",
+    };
+    assert.deepEqual(store.resolveApprovalBySystemReviewer({
+      ...base,
+      sideEffectFingerprint: "stale-effect",
+    }, "2026-08-16T01:00:10.000Z"), { ok: false, code: "approval_effect_changed" });
+    assert.deepEqual(store.resolveApprovalBySystemReviewer({
+      ...base,
+      sourceFence: { ...priorFence, fencingToken: "999999" },
+    }, "2026-08-16T01:00:20.000Z"), { ok: false, code: "approval_execution_stale" });
+    store.updateApprovalPolicy({ allowedWritePaths: [".", "docs"] }, "2026-08-16T01:00:25.000Z");
+    assert.deepEqual(store.resolveApprovalBySystemReviewer(base, "2026-08-16T01:00:30.000Z"), {
+      ok: false,
+      code: "approval_policy_changed",
+    });
+    assert.equal(store.getApprovalRequest(approval.id)?.status, "pending");
+    store.approveApprovalRequest(approval.id, { reason: "Human won the race." }, "2026-08-16T01:00:40.000Z");
+    assert.deepEqual(store.resolveApprovalBySystemReviewer({
+      ...base,
+      workspacePolicyUpdatedAt: store.getApprovalPolicy().updatedAt,
+    }, "2026-08-16T01:00:50.000Z"), { ok: false, code: "approval_not_pending" });
+    assert.equal(store.getApprovalRequest(approval.id)?.resolvedBy, "local-user");
+  } finally {
+    await staleFixture.close();
+  }
+});
+
+test("system reviewer may recover only an exact startup-suspended pending approval wait", async () => {
+  const fixture = await createApprovalResumeClaimFixture("system-reviewer-recovery", { approve: false });
+  try {
+    const { store, approval, sideEffect, priorFence, run, priorAttempt } = fixture;
+    const lostAt = "2026-08-16T01:00:10.000Z";
+    store.updateWorkUnitAttemptStatus({
+      ...priorFence,
+      status: "lost",
+      now: lostAt,
+      endedAt: lostAt,
+      errorCode: "runtime_suspend",
+      errorMessage: "runtime-startup-recoverable-approval",
+    });
+    assert.equal(store.isRecoverableApprovalReviewOwner(approval.id, priorFence), true);
+    const base = {
+      approvalId: approval.id,
+      approvalCreatedAt: approval.createdAt,
+      runId: run.id,
+      toolCallId: approval.toolCallId,
+      sideEffectFingerprint: approvalSideEffectFingerprintV1({
+        actionType: approval.actionType,
+        toolCallId: approval.toolCallId,
+        sideEffect,
+      }),
+      workspacePolicyUpdatedAt: store.getApprovalPolicy().updatedAt,
+      sourceFence: priorFence,
+      decision: "approve",
+      reason: "Recovered reviewer approved the immutable action.",
+    };
+    assert.deepEqual(store.resolveApprovalBySystemReviewer(base, "2026-08-16T01:00:20.000Z"), {
+      ok: false,
+      code: "approval_execution_stale",
+    });
+    const recovered = store.resolveApprovalBySystemReviewer({
+      ...base,
+      sourceAuthority: "recoverable_suspension",
+    }, "2026-08-16T01:00:30.000Z");
+    assert.equal(recovered.ok, true);
+    assert.equal(recovered.approval.resolvedBy, "system-reviewer");
+
+    assert.equal(store.isRecoverableApprovalReviewOwner(approval.id, priorFence), false);
+    assert.equal(store.getWorkUnitAttempt(priorAttempt.id)?.status, "lost");
+  } finally {
+    await fixture.close();
+  }
+
+  const wrongLoss = await createApprovalResumeClaimFixture("system-reviewer-non-recoverable", { approve: false });
+  try {
+    const lostAt = "2026-08-16T01:00:10.000Z";
+    wrongLoss.store.updateWorkUnitAttemptStatus({
+      ...wrongLoss.priorFence,
+      status: "lost",
+      now: lostAt,
+      endedAt: lostAt,
+      errorCode: "runner_crash",
+      errorMessage: "untrusted loss",
+    });
+    assert.equal(wrongLoss.store.isRecoverableApprovalReviewOwner(wrongLoss.approval.id, wrongLoss.priorFence), false);
+  } finally {
+    await wrongLoss.close();
+  }
+});
+
+for (const [label, decision] of [
+  ["approve-array", ["approve"]], ["deny-array", ["deny"]], ["manual-array", ["manual"]],
+  ["nested-array", [["approve"]]], ["manual-string", "manual"], ["unknown-string", "allow"],
+  ["boxed-string", new String("approve")], ["coercible-object", { toString: () => "deny" }],
+  ["plain-object", { decision: "approve" }], ["null", null], ["undefined", undefined],
+  ["boolean", true], ["number", 1],
+]) {
+  test(`A22 system reviewer Store rejects ${label} without mutating durable approval or checkpoint`, async () => {
+    const fixture = await createApprovalResumeClaimFixture(`invalid-review-${label}`, { approve: false });
+    try {
+      const { store, approval, sideEffect, priorFence, run, workUnit, priorAttempt, checkpoint } = fixture;
+      const beforeApproval = store.getApprovalRequest(approval.id);
+      const beforeCheckpoint = store.getApprovalCheckpoint(checkpoint.id);
+      const beforeRun = store.getRun(run.id);
+      const beforeUnit = store.getWorkUnit(workUnit.id);
+      const beforeAttempt = store.getWorkUnitAttempt(priorAttempt.id);
+      assert.deepEqual(store.resolveApprovalBySystemReviewer({
+        approvalId: approval.id,
+        approvalCreatedAt: approval.createdAt,
+        runId: run.id,
+        toolCallId: approval.toolCallId,
+        sideEffectFingerprint: approvalSideEffectFingerprintV1({ actionType: approval.actionType, toolCallId: approval.toolCallId, sideEffect }),
+        workspacePolicyUpdatedAt: store.getApprovalPolicy().updatedAt,
+        sourceFence: priorFence,
+        decision,
+        reason: "Malformed value is not a deny verdict.",
+      }, "2026-08-16T01:00:30.000Z"), { ok: false, code: "approval_invalid_decision" });
+      assert.deepEqual(store.getApprovalRequest(approval.id), beforeApproval);
+      assert.deepEqual(store.getApprovalCheckpoint(checkpoint.id), beforeCheckpoint);
+      assert.deepEqual(store.getRun(run.id), beforeRun);
+      assert.deepEqual(store.getWorkUnit(workUnit.id), beforeUnit);
+      assert.deepEqual(store.getWorkUnitAttempt(priorAttempt.id), beforeAttempt);
+      assert.equal(store.listEvents(run.id, { limit: 1_000 }).some(event => event.type === "approval_denied"), false);
+    } finally {
+      await fixture.close();
+    }
+  });
+}
+
+test("recovered system reviewer denial atomically closes the waiting run, work unit, and task", async () => {
+  const fixture = await createApprovalResumeClaimFixture("system-reviewer-recovered-denial", { approve: false });
+  try {
+    const { store, approval, sideEffect, priorFence, run, workUnit, priorAttempt, checkpoint, task } = fixture;
+    const lostAt = "2026-08-16T01:00:10.000Z";
+    store.updateWorkUnitAttemptStatus({
+      ...priorFence,
+      status: "lost",
+      now: lostAt,
+      endedAt: lostAt,
+      errorCode: "runtime_suspend",
+      errorMessage: "runtime-startup-recoverable-approval",
+    });
+    const resolved = store.resolveApprovalBySystemReviewer({
+      approvalId: approval.id,
+      approvalCreatedAt: approval.createdAt,
+      runId: run.id,
+      toolCallId: approval.toolCallId,
+      sideEffectFingerprint: approvalSideEffectFingerprintV1({
+        actionType: approval.actionType,
+        toolCallId: approval.toolCallId,
+        sideEffect,
+      }),
+      workspacePolicyUpdatedAt: store.getApprovalPolicy().updatedAt,
+      sourceFence: priorFence,
+      sourceAuthority: "recoverable_suspension",
+      decision: "deny",
+      reason: "Recovered reviewer rejected the action.",
+    }, "2026-08-16T01:00:20.000Z");
+    assert.equal(resolved.ok, true);
+    const deniedCheckpoint = store.getApprovalCheckpoint(checkpoint.id);
+    assert.equal(deniedCheckpoint?.status, "denied");
+    assert.equal(store.getApprovalRequest(approval.id)?.resolvedBy, "system-reviewer");
+    assert.equal(store.getRun(run.id)?.status, "waiting_for_approval");
+    assert.equal(store.getWorkUnit(workUnit.id)?.status, "waiting_for_approval");
+    assert.equal(store.getWorkUnitAttempt(priorAttempt.id)?.status, "lost");
+    assert.equal(store.getTask(task.id)?.status, "running");
+
+    const terminal = store.commitApprovalResumeTerminal({
+      kind: "suspended_approval_denied",
+      checkpointId: checkpoint.id,
+      expectedCheckpointRevision: deniedCheckpoint.revision,
+      approvalId: approval.id,
+      runId: run.id,
+      workUnitId: workUnit.id,
+      attemptId: priorAttempt.id,
+      reason: "Recovered reviewer rejected the action.",
+      now: "2026-08-16T01:00:30.000Z",
+    });
+    assert.equal(terminal.ok, true);
+    assert.equal(terminal.kind, "suspended_approval_denied");
+    assert.equal(store.getRun(run.id)?.status, "failed");
+    assert.equal(store.getWorkUnit(workUnit.id)?.status, "failed");
+    assert.equal(store.getWorkUnitAttempt(priorAttempt.id)?.status, "lost");
+    assert.equal(store.getTask(task.id)?.status, "failed");
+    assert.equal(store.getApprovalCheckpoint(checkpoint.id)?.status, "denied");
+  } finally {
+    await fixture.close();
+  }
+});
 
 test("sqlite store creates and resolves media approval requests", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-core-media-approval-"));

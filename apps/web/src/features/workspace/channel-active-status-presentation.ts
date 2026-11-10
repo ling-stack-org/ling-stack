@@ -9,6 +9,7 @@ export type ChannelActiveStatusInput =
 export interface ChannelActiveStatusPresentation {
   readonly labelKey:
     | "Blocked"
+    | "Execution yielded"
     | "Cancelled"
     | "Failed"
     | "Queued"
@@ -22,6 +23,7 @@ const RUN_STATUS_PRESENTATION: Record<RunStatus, ChannelActiveStatusPresentation
   queued: { labelKey: "Queued", tone: "info" },
   running: { labelKey: "Running", tone: "info" },
   waiting_for_approval: { labelKey: "Waiting for approval", tone: "warning" },
+  yielded: { labelKey: "Execution yielded", tone: "neutral" },
   succeeded: { labelKey: "Succeeded", tone: "success" },
   failed: { labelKey: "Failed", tone: "danger" },
   cancelled: { labelKey: "Cancelled", tone: "neutral" },

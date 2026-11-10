@@ -1,5 +1,6 @@
 import { Maximize2, X } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
+import { Dialog, DialogClose, DialogContent, DialogTrigger } from "@ling-stack/ui-react";
 import { CopyActionButton } from "../feedback/CopyActionButton.js";
 
 const MAX_MERMAID_SOURCE_CHARACTERS = 40_000;
@@ -16,17 +17,34 @@ interface MermaidRenderState {
   readonly error: string;
 }
 
+export interface MermaidBlockLabels {
+  readonly expand: string;
+  readonly copy: string;
+  readonly copied: string;
+  readonly unavailable: string;
+  readonly title: string;
+  readonly close: string;
+}
+
+const defaultMermaidLabels: MermaidBlockLabels = {
+  expand: "Expand diagram", copy: "Copy Mermaid source", copied: "Copied", unavailable: "Diagram preview unavailable",
+  title: "Diagram", close: "Close diagram",
+};
+
 export function MermaidBlock({
   source,
   complete,
   onDeferredContentReady,
+  labels = defaultMermaidLabels,
 }: {
   readonly source: string;
   readonly complete: boolean;
   readonly onDeferredContentReady?: (target: Element | null) => void;
+  readonly labels?: MermaidBlockLabels;
 }): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
   const renderGenerationRef = useRef(0);
   const instanceId = useId().replace(/[^A-Za-z0-9_-]/g, "");
   const titleId = `ling-mermaid-title-${instanceId}`;
@@ -67,20 +85,6 @@ export function MermaidBlock({
     media.addEventListener?.("change", handleChange);
     return () => media.removeEventListener?.("change", handleChange);
   }, []);
-
-  useEffect(() => {
-    if (!expanded) {
-      return undefined;
-    }
-    const handleKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") {
-        setExpanded(false);
-      }
-    };
-    globalThis.addEventListener?.("keydown", handleKeyDown);
-    globalThis.requestAnimationFrame?.(() => closeButtonRef.current?.focus());
-    return () => globalThis.removeEventListener?.("keydown", handleKeyDown);
-  }, [expanded]);
 
   useEffect(() => {
     if (!complete || !visible || renderState.key === renderKey) {
@@ -130,9 +134,10 @@ export function MermaidBlock({
   }, [complete, instanceId, onDeferredContentReady, renderKey, renderState.key, source, theme, visible]);
 
   return (
-    <>
+    <Dialog open={expanded} onOpenChange={setExpanded}>
       <figure
         ref={containerRef}
+        tabIndex={-1}
         className="message-mermaid-block"
         data-rich-content="mermaid"
         data-render-status={!complete ? "incomplete" : svg ? "rendered" : error ? "error" : visible ? "rendering" : "deferred"}
@@ -141,43 +146,51 @@ export function MermaidBlock({
           <span>mermaid</span>
           <span className="message-rich-block-actions">
             {svg ? (
-              <button className="message-rich-icon-button" type="button" onClick={() => setExpanded(true)} aria-label="Expand diagram" title="Expand diagram">
-                <Maximize2 size={14} />
-              </button>
+              <DialogTrigger asChild>
+                <button ref={triggerRef} className="message-rich-icon-button" type="button" aria-label={labels.expand} title={labels.expand}>
+                  <Maximize2 size={14} aria-hidden="true" />
+                </button>
+              </DialogTrigger>
             ) : null}
-            <CopyActionButton text={source} label="Copy Mermaid source" className="message-code-copy" />
+            <CopyActionButton text={source} label={labels.copy} copiedLabel={labels.copied} className="message-code-copy" />
           </span>
         </figcaption>
         {svg ? <div className="message-mermaid-canvas" dangerouslySetInnerHTML={{ __html: svg }} /> : (
           <div className="message-rich-source-fallback">
-            {error ? <small role="status">Diagram preview unavailable</small> : null}
+            {error ? <small role="status">{labels.unavailable}</small> : null}
             <pre className={error ? "message-mermaid-source error" : "message-mermaid-source"} title={error || undefined}>
               <code>{source}</code>
             </pre>
           </div>
         )}
       </figure>
-      {expanded && svg ? (
-        <div className="message-rich-dialog-backdrop" role="presentation" onMouseDown={(event) => {
-          if (event.currentTarget === event.target) {
-            setExpanded(false);
-          }
-        }}>
-          <section className="message-rich-dialog" role="dialog" aria-modal="true" aria-labelledby={titleId}>
+      {expanded ? (
+        <DialogContent className="message-rich-dialog" size="lg" aria-labelledby={titleId} aria-describedby={undefined}
+          onOpenAutoFocus={event => {
+            event.preventDefault();
+            closeButtonRef.current?.focus({ preventScroll: true });
+          }}
+          onCloseAutoFocus={event => {
+            event.preventDefault();
+            (triggerRef.current ?? containerRef.current)?.focus({ preventScroll: true });
+          }}>
             <header>
-              <strong id={titleId}>Diagram</strong>
+              <strong id={titleId}>{labels.title}</strong>
               <span className="message-rich-dialog-actions">
-                <CopyActionButton text={source} label="Copy Mermaid source" className="message-code-copy" />
-                <button ref={closeButtonRef} className="message-rich-icon-button" type="button" onClick={() => setExpanded(false)} aria-label="Close diagram" title="Close">
-                  <X size={15} />
-                </button>
+                <CopyActionButton text={source} label={labels.copy} copiedLabel={labels.copied} className="message-code-copy" />
+                <DialogClose asChild>
+                  <button ref={closeButtonRef} className="message-rich-icon-button" type="button" aria-label={labels.close} title={labels.close}>
+                    <X size={15} aria-hidden="true" />
+                  </button>
+                </DialogClose>
               </span>
             </header>
-            <div className="message-mermaid-expanded" dangerouslySetInnerHTML={{ __html: svg }} />
-          </section>
-        </div>
+            {svg ? <div className="message-mermaid-expanded" dangerouslySetInnerHTML={{ __html: svg }} /> : (
+              <pre className="message-mermaid-source"><code>{source}</code></pre>
+            )}
+        </DialogContent>
       ) : null}
-    </>
+    </Dialog>
   );
 }
 

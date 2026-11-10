@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { RuntimeAttemptFenceV1 } from "@ling-stack/contracts";
+import type { RuntimeAttemptFenceV1, WorkspaceRuntimeSettings } from "@ling-stack/contracts";
 
 export type { RuntimeAttemptFenceV1 } from "@ling-stack/contracts";
 
@@ -18,8 +18,10 @@ export interface RuntimeInstance {
 }
 
 export type WorkUnitKind =
+  | "learning_review"
   | "task_run"
   | "conversation_run"
+  | "approval_review"
   | "channel_turn_dispatch"
   | "channel_ai_reply"
   | "channel_terminal_report"
@@ -33,6 +35,7 @@ export type WorkUnitStatus =
   | "claimed"
   | "running"
   | "waiting_for_approval"
+  | "waiting_for_input"
   | "cancelling"
   | "succeeded"
   | "failed"
@@ -44,6 +47,7 @@ export type WorkUnitAttemptStatus =
   | "started"
   | "waiting_for_approval"
   | "cancelling"
+  | "yielded"
   | "succeeded"
   | "failed"
   | "cancelled"
@@ -57,6 +61,7 @@ export type RuntimeEventType =
   | "work_unit_heartbeat"
   | "work_unit_progress"
   | "work_unit_approval_requested"
+  | "work_unit_waiting_for_input"
   | "work_unit_cancelling"
   | "work_unit_succeeded"
   | "work_unit_failed"
@@ -74,7 +79,7 @@ export type RuntimeEventType =
   | "stale_runner_completion_ignored"
   | "diagnostic_stuck_detected";
 
-export type RuntimeSemaphoreResourceType = "provider" | "channel_parallel" | "runner" | "media_provider";
+export type RuntimeSemaphoreResourceType = "provider" | "channel_parallel" | "runner" | "media_provider" | "workflow_resource";
 
 export type RuntimeSemaphoreSlotStatus = "active" | "released" | "expired";
 
@@ -99,7 +104,8 @@ export interface RunnerFallbackReason {
     | "missing_requested_runner"
     | "disabled_requested_runner"
     | "unsupported_provider_api"
-    | "unsupported_tool";
+    | "unsupported_tool"
+    | "runner_tool_conformance_failed";
   readonly message: string;
 }
 
@@ -113,14 +119,7 @@ export type RunnerRequestSource =
   | "run_request"
   | "user_explicit";
 
-export interface WorkspaceRuntimeSettings {
-  readonly workspaceId: string;
-  readonly defaultRunnerId: string;
-  readonly allowedRunnerIds: readonly string[];
-  readonly explicitRunnerFallback: RunnerFallbackPolicy;
-  readonly implicitRunnerFallback: RunnerFallbackPolicy;
-  readonly updatedAt: string;
-}
+export type { WorkspaceRuntimeSettings } from "@ling-stack/contracts";
 
 export interface WorkUnit {
   readonly id: string;
@@ -187,6 +186,12 @@ export interface CreateWorkUnitInput {
   readonly now: string;
 }
 
+/** Discovery position in the descending creation-time, id ordering. */
+export interface WorkUnitDiscoveryCursor {
+  readonly createdAt: string;
+  readonly id: string;
+}
+
 export interface ListWorkUnitsOptions {
   readonly status?: WorkUnitStatus;
   readonly kind?: WorkUnitKind;
@@ -199,6 +204,10 @@ export interface ListWorkUnitsOptions {
   readonly linkedMessageId?: string;
   readonly linkedMediaJobId?: string;
   readonly limit?: number;
+  /** Exclusive discovery position; does not authorize recovery or execution. */
+  readonly after?: WorkUnitDiscoveryCursor;
+  /** Frozen sweep cutoff. Rows created later are discovered by a subsequent sweep. */
+  readonly createdAtOrBefore?: string;
 }
 
 export interface WorkUnitAttempt {
@@ -329,8 +338,15 @@ export interface RuntimeHeartbeat {
 
 export interface RecordRuntimeHeartbeatInput extends RuntimeAttemptFenceV1 {
   readonly ts: string;
+  /** Trusted Host deadline, renewed atomically with the heartbeat. */
+  readonly resourceExpiresAt: string;
   readonly source: RuntimeHeartbeat["source"];
   readonly detail?: unknown;
+}
+
+export interface RuntimeResourceRenewal {
+  readonly renewedAt: string;
+  readonly expiresAt: string;
 }
 
 export interface RuntimeSemaphoreSlot {
@@ -362,6 +378,11 @@ export interface AcquireRuntimeSemaphoreSlotInput extends RuntimeAttemptFenceV1 
   readonly acquiredAt: string;
   readonly expiresAt: string;
 }
+
+export type AcquireRuntimeSemaphoreSlotsResult =
+  | { readonly status: "acquired"; readonly slots: readonly RuntimeSemaphoreSlot[] }
+  | { readonly status: "full"; readonly resourceType: RuntimeSemaphoreResourceType; readonly resourceKey: string }
+  | { readonly status: "changed" };
 
 export interface ListRuntimeSemaphoreSlotsOptions {
   readonly status?: RuntimeSemaphoreSlotStatus;

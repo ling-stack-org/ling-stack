@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import type { DesktopDaemonStatus, LingDesktopCapabilities } from "../../desktop/shared/desktop-capabilities.js";
 import { mockDaemon } from "./support/mock-daemon";
 import { createBaseState, createMockTeammate, cwd, type MockState } from "./support/mock-state";
 
@@ -167,11 +168,27 @@ test.beforeEach(async ({ page }) => {
         };
       },
     };
+    const daemonStatus: DesktopDaemonStatus = {
+      state: "connected",
+      baseUrl: "http://127.0.0.1:17891",
+      ownedByDesktop: true,
+    };
     Object.defineProperty(window, "lingDesktop", {
       configurable: true,
       value: {
         platform: "macos",
-        daemonBaseUrl: "http://127.0.0.1:17891",
+        daemonBaseUrl: daemonStatus.baseUrl,
+        daemon: {
+          getStatus: async () => daemonStatus,
+          restart: async () => daemonStatus,
+          onStatusChanged(listener) {
+            let subscribed = true;
+            queueMicrotask(() => {
+              if (subscribed) listener(daemonStatus);
+            });
+            return () => { subscribed = false; };
+          },
+        },
         appearance: {
           reportTheme(theme: DesktopThemeTestInput) {
             reportedThemes.push(theme);
@@ -244,7 +261,7 @@ test.beforeEach(async ({ page }) => {
             };
           },
         },
-      },
+      } satisfies Pick<LingDesktopCapabilities, "platform" | "daemonBaseUrl" | "daemon"> & Record<string, unknown>,
     });
   });
   const state = createBaseState({ approvalStatus: "pending" });
@@ -261,7 +278,7 @@ test.beforeEach(async ({ page }) => {
   }];
   await mockDaemon(page, state);
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Desktop bridge test" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Desktop bridge test", exact: true }).click();
   await expect.poll(async () => (await desktopControlSnapshot(page)).selectedConversationId).toBeTruthy();
   await expect.poll(async () => (await desktopControlSnapshot(page)).selectedDeckOwner).toEqual({
     surfaceKind: "channel",
@@ -272,7 +289,7 @@ test.beforeEach(async ({ page }) => {
 test("reports initial and runtime locale changes through the narrow Desktop capability", async ({ page }) => {
   await expect.poll(async () => (await desktopControlSnapshot(page)).latestLocale).toBe("en-US");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Interface preferences/ }).click();
   await page.getByLabel("Product language").selectOption("zh-CN");
   await expect.poll(async () => (await desktopControlSnapshot(page)).latestLocale).toBe("zh-CN");
@@ -291,13 +308,13 @@ test("reports resolved theme changes through the narrow Desktop appearance capab
     colorScheme: "light",
     presentationProfileId: "ling-standard",
     variables: {
-      "--ling-bg-app": "#f6f7f8",
-      "--ling-compact-window-bg": "#f6f7f8",
-      "--ling-compact-window-text": "#121417",
+      "--ling-bg-app": "#ffffff",
+      "--ling-compact-window-bg": "#ffffff",
+      "--ling-compact-window-text": "#191c1f",
     },
   });
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Interface preferences/ }).click();
   await page.getByRole("radiogroup", { name: "Theme packs" }).getByRole("radio", { name: /Ling Dark/ }).click();
   await expect.poll(async () => (await desktopControlSnapshot(page)).reportedThemes.at(-1)).toMatchObject({
@@ -305,8 +322,8 @@ test("reports resolved theme changes through the narrow Desktop appearance capab
     colorScheme: "dark",
     presentationProfileId: "ling-standard",
     variables: {
-      "--ling-bg-app": "#111315",
-      "--ling-compact-window-bg": "#111315",
+      "--ling-bg-app": "#1f1f1f",
+      "--ling-compact-window-bg": "#1f1f1f",
       "--ling-compact-window-text": "#f4f5f6",
     },
   });
@@ -317,7 +334,7 @@ test("keeps a session-only auto-show change and warns when Desktop cannot persis
     accepted: true,
     reason: "desktop_preferences_not_persisted",
   }));
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Interface preferences/ }).click();
 
   const toggle = page.getByLabel("Automatically show Computer Use picture-in-picture");
@@ -325,14 +342,14 @@ test("keeps a session-only auto-show change and warns when Desktop cannot persis
   await toggle.uncheck();
 
   await expect(toggle).not.toBeChecked();
-  await expect(page.getByRole("status")).toContainText(
+  await expect(page.getByRole("region", { name: "Desktop", exact: true }).getByRole("status")).toContainText(
     "Changed for this session, but not saved. It may revert after restart.",
   );
 });
 
 test("Open task intent leaves Settings, teammate, or a blank home and selects the requested conversation", async ({ page }) => {
   await expect.poll(async () => (await desktopControlSnapshot(page)).navigationListenerCount).toBe(1);
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
 
   await navigation.getByRole("button", { name: "Settings" }).click();
   await expect(page.getByLabel("Settings sections")).toBeVisible();
@@ -350,7 +367,7 @@ test("Open task intent leaves Settings, teammate, or a blank home and selects th
   await expect(page.locator(".normal-conversation-header")).toBeVisible();
   await expect.poll(async () => (await desktopControlSnapshot(page)).navigationAckCalls).toEqual([1, 2]);
 
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
   await expect(page.getByLabel("Conversation home")).toBeVisible();
   await expect(page.locator(".normal-conversation-header")).toHaveCount(0);
   await emitDesktopNavigationIntent(page, 3, DESKTOP_BRIDGE_THREAD_ID);
@@ -565,6 +582,10 @@ test("reports teammate-direct composer, summary, dock, and terminal obstacles", 
   await expect.poll(async () => (await desktopControlSnapshot(page)).selectedConversationId)
     .toBe(DESKTOP_BRIDGE_TEAMMATE_THREAD_ID);
 
+  const hideNavigation = page.getByRole("button", { name: "Hide navigation" });
+  await hideNavigation.click();
+  await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })).toHaveAttribute("data-sidebar-mode", "compact");
+
   const directComposer = page.locator(
     '[data-surface="teammate_direct"][data-computer-use-obstacle-kind="composer"]',
   );
@@ -576,7 +597,7 @@ test("reports teammate-direct composer, summary, dock, and terminal obstacles", 
   await expect(dock).toHaveAttribute("data-computer-use-obstacle", "true");
   await expect(dock).toHaveAttribute("data-computer-use-obstacle-kind", "right-dock");
 
-  await header.getByRole("button", { name: "Summary" }).click();
+  await header.getByRole("button", { name: "Summary", exact: true }).click();
   const summary = page.locator(".teammate-private-summary-panel");
   await expect(summary).toHaveAttribute("data-computer-use-obstacle", "true");
   await expect(summary).toHaveAttribute("data-computer-use-obstacle-kind", "summary");
@@ -591,7 +612,7 @@ test("reports teammate-direct composer, summary, dock, and terminal obstacles", 
   await expect(terminal).toHaveAttribute("data-computer-use-obstacle", "true");
   await expect(terminal).toHaveAttribute("data-computer-use-obstacle-kind", "terminal");
   await expect(summary).toBeVisible();
-  await expect(header.getByRole("button", { name: "Summary" })).toHaveAttribute("aria-pressed", "true");
+  await expect(header.getByRole("button", { name: "Summary", exact: true })).toHaveAttribute("aria-pressed", "true");
 
   await expect.poll(async () => {
     const layout = (await desktopControlSnapshot(page)).latestHostLayout;
@@ -995,12 +1016,12 @@ async function emitDesktopNavigationIntent(
 }
 
 async function openDesktopBridgeChannel(page: Page): Promise<void> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Desktop bridge test" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Desktop bridge test", exact: true }).click();
   await expect(page.locator(".channel-header")).toBeVisible();
 }
 
 async function openDesktopBridgeNormalConversation(page: Page): Promise<void> {
-  await page.getByLabel("Ling Stack navigation")
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })
     .locator(".sidebar-recent-row")
     .filter({ hasText: "Desktop normal conversation" })
     .click();
@@ -1008,7 +1029,7 @@ async function openDesktopBridgeNormalConversation(page: Page): Promise<void> {
 }
 
 async function openDesktopBridgeTeammate(page: Page): Promise<void> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Desktop Teammate", exact: true }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Desktop Teammate", exact: true }).click();
   await expect(page.locator(".teammate-chat-header")).toBeVisible();
 }
 

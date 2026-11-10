@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
-import { createSqliteRunStore } from "../../core/dist/index.js";
+import { createSqliteRunStore, workflowStepStartAuthorityBasis } from "../../core/dist/index.js";
 import { createRequiredParticipantManifestV1, workflowGraphFingerprintV1 } from "../../contracts/dist/index.js";
 import { reviewWorkflowAgentContextStamp } from "../dist/features/channels/agent-context-consistency.js";
 import { reviewWorkflowFanInContext } from "../dist/features/channels/workflow-fanin.js";
@@ -24,14 +24,15 @@ import {
 import { prepareWorkflowStepStart } from "../dist/features/channels/workflows.js";
 import { finalizeOrchestratedWorkflowStepRun } from "../dist/features/channels/orchestrator.js";
 import { materializeWorkflowDelegatedStepRequirements } from "../dist/features/channels/workflow-step-requirement.js";
+import { preflightWorkflowParticipantProvider } from "../dist/features/channels/workflow-participant-provider.js";
 
 const now = "2026-08-10T01:00:00.000Z";
 
 test("workflow agents share one projection while private role memory stays owner-scoped", async () => {
   const fixture = await createFixture();
   try {
-    const engineer = prepareStep(fixture, fixture.engineerStep.id);
-    const designer = prepareStep(fixture, fixture.designerStep.id);
+    const engineer = await prepareStep(fixture, fixture.engineerStep.id);
+    const designer = await prepareStep(fixture, fixture.designerStep.id);
 
     assert.ok(engineer.runRequest.contextPack.agentContext);
     assert.ok(designer.runRequest.contextPack.agentContext);
@@ -58,11 +59,14 @@ test("workflow agents share one projection while private role memory stays owner
     assert.match(designer.runRequest.task.prompt, /Designer private continuity-agent-memory evidence/u);
     assert.doesNotMatch(designer.runRequest.task.prompt, /Engineer private continuity-agent-memory evidence/u);
     assert.equal(engineer.runRequest.skipMemoryRecall, true);
-    assert.deepEqual(engineer.runRequest.preselectedMemoryUse, {
-      memoryIds: [fixture.engineerMemory.id],
-      recallQuery: `${fixture.workflow.objective}\n${fixture.engineerStep.title}\n${fixture.engineerStep.prompt}`,
-      policyVersion: "ling-memory-v1-lexical+memory_use_isolation_v1",
-    });
+    assert.deepEqual(engineer.runRequest.preselectedMemoryUse.memoryIds, [fixture.engineerMemory.id]);
+    assert.deepEqual(engineer.runRequest.preselectedMemoryUse.recallQuery,
+      `${fixture.workflow.objective}\n${fixture.engineerStep.title}\n${fixture.engineerStep.prompt}`);
+    assert.equal(engineer.runRequest.preselectedMemoryUse.policyVersion,
+      "ling-memory-v1-lexical-v3+memory_use_isolation_v2");
+    assert.deepEqual(engineer.runRequest.preselectedMemoryUse.sourceRevisions.map(({ memoryId }) => memoryId), [fixture.engineerMemory.id]);
+    assert.match(engineer.runRequest.preselectedMemoryUse.sourceRevisions[0].semanticHash, /^sha256:[a-f0-9]{64}$/u);
+    assert.match(engineer.runRequest.preselectedMemoryUse.renderedPrompt, /Engineer private continuity-agent-memory evidence/u);
     assert.equal(engineer.runRequest.contextProjection.projectionVersion, engineer.runRequest.contextPack.agentContext.contextProjection.projectionVersion);
 
     const forgedProjection = {
@@ -225,7 +229,7 @@ test("workflow agents share one projection while private role memory stays owner
 test("fan-in rebases metadata-only stamps and rejects private leaks or relevant stale facts", async () => {
   const fixture = await createFixture();
   try {
-    const prepared = prepareStep(fixture, fixture.engineerStep.id);
+    const prepared = await prepareStep(fixture, fixture.engineerStep.id);
     const currentStamp = prepared.runRequest.contextPack.agentContext;
     assert.ok(currentStamp);
     const metadataOnly = {
@@ -409,7 +413,7 @@ test("fan-in rebases metadata-only stamps and rejects private leaks or relevant 
     const stale = reviewWorkflowFanInContext({ store: fixture.store, workflow: fixture.workflow, step: fanIn });
     assert.equal(stale.reviews[0].status, "rejected_stale");
     assert.match(stale.blocker, /rejected dependency/u);
-    const blockedStart = prepareWorkflowStepStart(
+    const blockedStart = await prepareWorkflowStepStart(
       fixture.store,
       fanIn.id,
       { mode: "create_task" },
@@ -443,7 +447,7 @@ test("fan-in rebases metadata-only stamps and rejects private leaks or relevant 
 test("agent result Items from the consumed source Turn do not invalidate its input context", async () => {
   const fixture = await createFixture();
   try {
-    const prepared = prepareStep(fixture, fixture.engineerStep.id);
+    const prepared = await prepareStep(fixture, fixture.engineerStep.id);
     const consumed = prepared.runRequest.contextPack.agentContext;
     assert.ok(consumed);
 
@@ -496,7 +500,7 @@ test("workflow step input excludes pre-existing coordinator Items from its fresh
       },
     }, "2026-08-10T01:00:20.000Z");
 
-    const prepared = prepareStep(fixture, fixture.engineerStep.id);
+    const prepared = await prepareStep(fixture, fixture.engineerStep.id);
     const consumed = prepared.runRequest.contextPack.agentContext;
     assert.ok(consumed);
     assert.equal(
@@ -517,7 +521,7 @@ test("workflow step input excludes pre-existing coordinator Items from its fresh
 test("sequential dependencies reject stale agent context before entering a downstream prompt", async () => {
   const fixture = await createFixture();
   try {
-    const prepared = prepareStep(fixture, fixture.engineerStep.id);
+    const prepared = await prepareStep(fixture, fixture.engineerStep.id);
     const output = persistWorkflowOutput({
       ...fixture,
       stepId: fixture.engineerStep.id,
@@ -571,7 +575,7 @@ test("sequential dependencies reject stale agent context before entering a downs
     assert.equal(stale.reviews[0].status, "rejected_stale");
     assert.match(stale.blocker, /rejected dependency/u);
 
-    const blockedStart = prepareWorkflowStepStart(
+    const blockedStart = await prepareWorkflowStepStart(
       fixture.store,
       downstream.id,
       { mode: "create_task" },
@@ -591,7 +595,7 @@ test("sequential dependencies reject stale agent context before entering a downs
 test("leaf workflow results fail closed when relevant context changes before commit", async () => {
   const fixture = await createFixture();
   try {
-    const prepared = prepareStep(fixture, fixture.engineerStep.id);
+    const prepared = await prepareStep(fixture, fixture.engineerStep.id);
     const run = fixture.store.createRun({
       id: "run_leaf_stale_context",
       cwd: fixture.cwd,
@@ -606,10 +610,7 @@ test("leaf workflow results fail closed when relevant context changes before com
       requestSnapshot: prepared.runRequest,
       createdAt: "2026-08-10T02:00:00.000Z",
     });
-    fixture.store.updateChannelWorkflowStep(fixture.engineerStep.id, {
-      taskId: prepared.task.id,
-      runId: run.id,
-    }, "2026-08-10T02:00:01.000Z");
+    linkPreparedRun(fixture, prepared, run);
     assert.equal(fixture.store.transitionRunStatus({
       runId: run.id,
       expectedStatus: "queued",
@@ -679,12 +680,14 @@ test("manifest-backed stale context commits a typed delegated blocker", async ()
     const graph = {
       schemaVersion: 1,
       id: "graph_manifest_context_blocker",
+      name: "Manifest context blocker",
       entryNodeId: "engineer",
       nodes: [
         { id: "engineer", kind: "step", name: "Engineer", prompt: "Work", teammateId: "teammate_builtin_engineer" },
         { id: "designer", kind: "step", name: "Designer", prompt: "Review", teammateId: "teammate_builtin_designer" },
       ],
       edges: [],
+      termination: { success: "all_required_succeeded", onFailedRequiredNode: "block_for_user", onApprovalDenied: "block_for_user" },
     };
     const decision = fixture.store.createChannelIntentDecision({
       channelId: fixture.channel.id,
@@ -718,7 +721,7 @@ test("manifest-backed stale context commits a typed delegated blocker", async ()
       manifest: participantManifest,
       now,
     });
-    const prepared = prepareStep(fixture, step.id);
+    const prepared = await prepareStep(fixture, step.id);
     const run = fixture.store.createRun({
       id: "run_manifest_stale_context",
       cwd: fixture.cwd,
@@ -733,7 +736,7 @@ test("manifest-backed stale context commits a typed delegated blocker", async ()
       requestSnapshot: prepared.runRequest,
       createdAt: "2026-08-10T03:00:00.000Z",
     });
-    fixture.store.updateChannelWorkflowStep(step.id, { taskId: prepared.task.id, runId: run.id }, "2026-08-10T03:00:01.000Z");
+    linkPreparedRun(fixture, prepared, run);
     fixture.store.markRunStarted(run.id, "2026-08-10T03:00:02.000Z");
     fixture.store.appendEvent(run.id, "run_created", {
       attemptId: "attempt_manifest_stale_context",
@@ -774,12 +777,16 @@ test("manifest-backed stale context commits a typed delegated blocker", async ()
 async function createFixture() {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-agent-context-consistency-"));
   const store = createSqliteRunStore(cwd);
+  store.updateWorkspaceSettings({ defaultProviderPresetId: "provider_context_fixture" }, now);
   const channel = store.createChannel({
     name: "Agent context consistency",
     status: "active",
     boundPath: cwd,
     allowedTools: ["read"],
   }, now);
+  for (const participantId of ["teammate_builtin_engineer", "teammate_builtin_designer"]) {
+    store.replaceTeammateChannelMemberships(participantId, [{ channelId: channel.id }], now);
+  }
   const sourceMessage = appendChannelItemFixture(store, {
     channelId: channel.id,
     authorType: "local-user",
@@ -821,6 +828,13 @@ async function createFixture() {
 }
 
 function createStep(store, workflowId, sourceMessageId, teammate) {
+  const channel = store.getChannel(store.getChannelWorkflow(workflowId).channelId);
+  const provider = preflightWorkflowParticipantProvider({ store, channel, teammate: store.getAiTeammate(teammate.id),
+    cwd: channel.boundPath, requiredTools: ["read"], validateRunRequest(request) {
+      assert.equal(request.providerPresetId, "provider_context_fixture");
+      assert.equal(request.teammateId, teammate.id);
+    } });
+  assert.equal(provider.kind, "ready", JSON.stringify(provider));
   return store.createChannelWorkflowStep({
     workflowId,
     position: teammate.position,
@@ -831,6 +845,8 @@ function createStep(store, workflowId, sourceMessageId, teammate) {
     metadata: {
       sourceMessageId,
       requiredTools: ["read"],
+      providerPresetId: provider.binding.providerPresetId,
+      providerBinding: provider.binding,
     },
   }, now);
 }
@@ -869,16 +885,50 @@ function projectionFor(item, assignment) {
   };
 }
 
-function prepareStep(fixture, workflowStepId) {
-  const result = prepareWorkflowStepStart(
+async function prepareStep(fixture, workflowStepId) {
+  const step = fixture.store.getChannelWorkflowStep(workflowStepId);
+  assert.ok(workflowStepStartAuthorityBasis(fixture.store, step), JSON.stringify({
+    workflow: fixture.store.getChannelWorkflow(step.workflowId), step,
+  }));
+  const binding = preflightWorkflowParticipantProvider({
+    store: fixture.store,
+    channel: fixture.channel,
+    teammate: fixture.store.getAiTeammate(step.toParticipantId),
+    cwd: fixture.cwd,
+    requiredTools: step.metadata?.requiredTools ?? [],
+    frozenBinding: step.metadata?.providerBinding,
+    validateRunRequest(request) {
+      assert.equal(request.providerPresetId, "provider_context_fixture");
+      assert.equal(request.teammateId, step.toParticipantId);
+    },
+  });
+  assert.equal(binding.kind, "ready", JSON.stringify(binding));
+  const result = await prepareWorkflowStepStart(
     fixture.store,
     workflowStepId,
-    { mode: "create_task" },
+    { mode: "create_and_run_task" },
     fixture.cwd,
     () => {},
   );
-  assert.equal(result.kind, "ready");
+  assert.equal(result.kind, "ready", JSON.stringify(result));
   return result;
+}
+
+/** Use the public Harness and ready producers; a Step Run pointer is not ownership. */
+function linkPreparedRun(fixture, prepared, run) {
+  const timestamp = new Date().toISOString();
+  assert.equal(fixture.store.transitionTaskStatus({ taskId: prepared.task.id, expectedStatus: "todo",
+    event: "claim", actor: "system", now: timestamp }).ok, true);
+  const unit = fixture.store.createWorkUnit({ id: `unit_${run.id}`, workspaceId: "workspace_default", kind: "task_run",
+    ownerType: "run", ownerId: run.id, taskId: prepared.task.id, channelId: fixture.channel.id,
+    teammateId: run.teammateId, runnerId: "pi", effectiveRunnerId: "pi", idempotencyKey: `unit:${run.id}`,
+    createdByActor: "system", request: prepared.runRequest, linkedRunId: run.id, now: timestamp });
+  fixture.store.createWorkUnitAttempt({ id: `attempt_${run.id}`, workUnitId: unit.id, attemptNumber: 1,
+    runtimeInstanceId: "context-fixture", runnerId: "pi", effectiveRunnerId: "pi", now: timestamp });
+  fixture.store.linkRunToWorkUnit(run.id, unit.id, timestamp);
+  assert.deepEqual(fixture.store.commitChannelWorkflowStepRunReady({ workflowStepId: run.workflowStepId,
+    owner: prepared.runRequest.workflowStartOwner, runId: run.id, now: timestamp }), { status: "linked" });
+  assert.equal(fixture.store.getTask(prepared.task.id).currentRunId, run.id);
 }
 
 function persistWorkflowOutput(input) {
@@ -896,6 +946,9 @@ function persistWorkflowOutput(input) {
     requestSnapshot: input.prepared.runRequest,
     createdAt: "2026-08-10T01:01:00.000Z",
   });
+  linkPreparedRun(input, input.prepared, run);
+  input.store.markRunStarted(run.id, "2026-08-10T01:01:01.000Z");
+  input.store.markRunSucceeded(run.id, "2026-08-10T01:01:09.000Z");
   let step = input.store.getChannelWorkflowStep(input.stepId);
   const contextArtifact = createWorkflowStepContextArtifact({
     store: input.store,
@@ -939,6 +992,9 @@ function persistWorkflowOutputWithoutContextArtifact(input) {
     requestSnapshot: input.prepared.runRequest,
     createdAt: "2026-08-10T01:00:31.000Z",
   });
+  linkPreparedRun(input, input.prepared, run);
+  input.store.markRunStarted(run.id, "2026-08-10T01:00:31.100Z");
+  input.store.markRunSucceeded(run.id, "2026-08-10T01:00:31.900Z");
   let step = input.store.updateChannelWorkflowStep(input.stepId, {
     runId: run.id,
     status: "succeeded",

@@ -1,0 +1,72 @@
+import type { LingThemePackManifest } from "../types.js";
+
+export const lingOceanTheme: LingThemePackManifest = Object.freeze({
+  schemaVersion: 1,
+  id: "ling-ocean",
+  name: "Ling Ocean",
+  familyId: "ling-scenes",
+  description: "A summer manga beach with an integrated long-haired woman, seafoam glass, warm-white surfaces and coral controls.",
+  author: "Ling Stack",
+  license: "MIT",
+  colorScheme: "light",
+  source: "built-in",
+  tokens: {
+    background: {
+      app: "#eef8f8",
+      panel: "#fffdf9",
+      elevated: "#ffffff",
+      subtle: "#e7f3f3",
+      pressed: "#d4e9e9",
+      overlay: "rgb(19 57 66 / 32%)",
+      code: "#eff6f5",
+      sidebar: "#e1f1f1",
+      composer: "#fffdf9",
+    },
+    text: {
+      strong: "#193c47",
+      default: "#304f59",
+      muted: "#506c73",
+      soft: "#546e75",
+      inverse: "#ffffff",
+      link: "#176b80",
+    },
+    border: {
+      default: "#cddfe0",
+      strong: "#95b9be",
+      focus: "#b44536",
+    },
+    action: {
+      accent: "#b44536",
+      accentHover: "#9d392e",
+      accentPressed: "#842e26",
+      accentForeground: "#ffffff",
+      selection: "#fce3d9",
+    },
+    status: {
+      success: { foreground: "#267452", background: "#e9f6ef", border: "#aed6c1" },
+      warning: { foreground: "#7f5f12", background: "#fff7df", border: "#e5d18e" },
+      danger: { foreground: "#983b38", background: "#fff0ee", border: "#e4b9b5" },
+      info: { foreground: "#2d6f98", background: "#eaf4fa", border: "#b3d3e5" },
+    },
+    shadow: {
+      low: "0 1px 2px rgb(19 57 66 / 8%)",
+      medium: "0 6px 18px rgb(19 57 66 / 12%)",
+      overlay: "0 12px 32px rgb(19 57 66 / 16%)",
+    },
+    native: {
+      selection: "#fce3d9",
+      scrollbar: "#accdce",
+      scrollbarHover: "#7cabad",
+    },
+  },
+  desktop: {
+    windowBackground: "#eef8f8",
+    sidebarMaterial: "sidebar",
+    overlayMaterial: "popover",
+    titlebarForeground: "#193c47",
+    shadowStrength: 0.22,
+    blurStrength: 0,
+  },
+  presentation: { profileId: "ling-illustrated", artworkIntensity: "balanced", decorationSet: "none" },
+  scene: { id: "ocean-drift", mascot: false, corners: false },
+} satisfies LingThemePackManifest);

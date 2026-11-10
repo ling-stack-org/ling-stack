@@ -1,6 +1,8 @@
 export {
+  ComposerAuthorizationMenu,
   ComposerPermissionMenu,
   ConversationComposerShell,
+  ConversationBottomStatusStrip,
   ConversationEmptyState,
   ConversationFeed,
   ConversationGuidanceStrip,
@@ -26,10 +28,12 @@ export {
   TeammateAvatarStack,
   TokenizedComposerInput,
   ToolPlaceholderPage,
+  type ComposerAuthorizationMenuProps,
   type ComposerPermissionMenuProps,
   type ConversationComposerDensity,
   type ConversationComposerShellProps,
   type ConversationComposerSurface,
+  type ConversationBottomStatusStripProps,
   type ConversationEmptyStateProps,
   type ConversationFeedProps,
   type ConversationGuidanceItem,
@@ -113,6 +117,19 @@ export {
 } from "@ling-stack/conversation-ui-core";
 export { ConversationAttachmentStrip, type ConversationAttachmentChip, type ConversationAttachmentStripProps } from "./preview/ConversationAttachmentStrip.js";
 export { ConversationReferenceStrip, type ConversationReferenceItem } from "./preview/ConversationReferenceStrip.js";
+export {
+  ConversationTimeline,
+  type ConversationTimelineDisclosureIntent,
+  type ConversationTimelineItemLocator,
+  type ConversationTimelineLocateResult,
+  type ConversationTimelineProps,
+} from "./timeline/ConversationTimeline.js";
+export {
+  mountConversationTimeline,
+  type ConversationTimelineMount,
+  type ConversationTimelineMountInput,
+} from "./timeline/mountConversationTimeline.js";
+export { collectConversationTimelineViewRetainKeys } from "./timeline/conversation-timeline-view-retain-keys.js";
 export { isConversationGuidanceQueueVisible } from "./feedback/conversation-guidance-visibility.js";
 export {
   ConversationSendLifecycleStore,
@@ -131,8 +148,9 @@ export { MessageEvidencePanel } from "./blocks/MessageEvidencePanel.js";
 export { MessageRow, type MessageRowAuthorType, type MessageRowProps, type MessageRowTone } from "./blocks/MessageRow.js";
 export { ConversationSummaryRow, type ConversationSummaryMetaItem, type ConversationSummaryRowProps } from "./feedback/ConversationSummaryRow.js";
 export { ConversationReplacementRetry } from "./feedback/ConversationReplacementRetry.js";
-export { ConversationVirtualFeed, type ConversationVirtualFeedProps } from "./blocks/ConversationVirtualFeed.js";
-export { ConversationArtifactStripPanel, ConversationWorkCell, type ConversationWorkCellDetailsState, type ConversationWorkCellProps } from "./blocks/ConversationWorkCell.js";
+export { ConversationTimelineFeed, type ConversationTimelineFeedProps } from "./blocks/ConversationTimelineFeed.js";
+export { ConversationArtifactStripPanel } from "./blocks/ConversationArtifactStripPanel.js";
+export type { ConversationTimelineDetailsState, ConversationTimelineDetailsStatus, ConversationWorkCellDetailsState } from "./blocks/conversation-evidence-details.js";
 export { ConversationGeneratedMediaBlock, type ConversationGeneratedMediaBlockProps } from "./blocks/ConversationGeneratedMediaBlock.js";
 export type { ConversationWorkspaceReviewTarget } from "./blocks/ConversationArtifactStrip.js";
 export { TerminalReportBlock, type TerminalReportFileTarget } from "./blocks/TerminalReportBlock.js";
@@ -161,13 +179,11 @@ export { useConversationSpanView, type ConversationSpanViewState } from "./view-
 export { useConversationViewReconciliation } from "./view-store/use-conversation-view-reconciliation.js";
 export type { ConversationViewRetainKeys } from "./view-store/conversation-view-store.js";
 export {
-  conversationTranscriptFixtures,
   createTranscriptBlockRendererRegistry,
   renderTranscriptBlockFromRegistry,
   type ConversationPreviewTarget,
   type ConversationPreviewTargetKind,
   type ConversationTranscript,
-  type ConversationTranscriptFixture,
   type ConversationTurn,
   type RawDetailRef,
   type TranscriptBlock,
@@ -183,18 +199,18 @@ export {
   type TranscriptExpandedDetail,
 } from "./transcript/index.js";
 export type {
-  ConversationEvidenceMode,
-  ConversationRawDetailMode,
-  ConversationSurfaceKind,
-  ConversationSurfacePolicy,
-  ConversationWorkCellMode,
+  ConversationInteractionPolicy,
+  ConversationInteractionSurfaceKind,
+  ConversationTimelineScope,
+  ConversationTimelineScopeKind,
   TerminalReportArtifactMode,
   TerminalReportProjectionPolicy,
 } from "./tokens/conversation-surface-policy.js";
 export {
-  getConversationSurfacePolicy,
+  getConversationInteractionPolicy,
   getTerminalReportProjectionPolicy,
-  mergeConversationSurfacePolicy,
+  mergeConversationInteractionPolicy,
+  resolveTimelineScope,
 } from "./tokens/conversation-surface-policy.js";
 export type {
   ConversationAction,
@@ -205,3 +221,4 @@ export type {
   ConversationStatus,
   ConversationSurface,
 } from "./tokens/conversation-types.js";
+export { ConversationPermissionControl } from "./ConversationPermissionControl.js";

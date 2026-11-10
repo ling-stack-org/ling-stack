@@ -4,10 +4,12 @@ import type { RunArtifact } from "./artifacts.js";
 import type { ChannelExecutionProposal, ChannelExecutionProposalStepSource, ChannelHandoff } from "./channels.js";
 import type { MemoryObject } from "./memory.js";
 import type { RunSession, RunnerFallbackReason, RunnerRequestSource } from "./runtime.js";
-import type { ResponseLanguage } from "./settings.js";
+import type { ResponseLanguagePreference } from "./settings.js";
 import type { RunTool } from "./shared.js";
 import type { WorkflowParticipantProviderBindingV1 } from "./conversation-model-binding.js";
 import type { Task } from "./tasks.js";
+import type { WorkflowStepParallelPolicy, WorkflowStepSideEffectClass } from "./workflow-safety.js";
+import type { WorkflowTemplatePin, WorkflowTemplateRegistryEntry, WorkflowTemplateVersion } from "./workflow-template-registry.js";
 import type {
   ChannelIntentExecutionPlanV1,
   ConversationContextProjectionMetadata,
@@ -239,6 +241,14 @@ export function workflowGraphFingerprintV1(graph: WorkflowGraph): string {
       requiredTools: [...(node.requiredTools ?? [])].sort(),
       branchGroupId: node.branchGroupId,
       joinGroupId: node.joinGroupId,
+      sideEffectClass: node.sideEffectClass,
+      parallelPolicy: node.parallelPolicy === undefined ? undefined : {
+        autoParallel: node.parallelPolicy.autoParallel,
+        maxParallelSiblings: node.parallelPolicy.maxParallelSiblings,
+        resourceKeys: node.parallelPolicy.resourceKeys === undefined ? undefined : [...node.parallelPolicy.resourceKeys].sort(),
+        requiresArtifactOnly: node.parallelPolicy.requiresArtifactOnly,
+        cancelSiblingsOnFailure: node.parallelPolicy.cancelSiblingsOnFailure,
+      },
     })).sort((left, right) => left.id.localeCompare(right.id)),
     edges: [...graph.edges].map((edge) => ({
       id: edge.id,
@@ -263,6 +273,7 @@ export function delegatedStepRequirementFingerprintV1(
     workflowStepId: value.workflowStepId,
     participantId: value.participantId,
     participantManifestFingerprint: value.participantManifestFingerprint,
+    ...(value.executionPlanFingerprint === undefined ? {} : { executionPlanFingerprint: value.executionPlanFingerprint }),
     expectedOutcome: value.expectedOutcome,
     requiredOperationIds: [...value.requiredOperationIds].sort(),
     requiredDependencyStepIds: [...value.requiredDependencyStepIds].sort(),
@@ -325,13 +336,14 @@ export function isDelegatedStepRequirementV1(value: unknown): value is Delegated
   if (!Object.keys(record).every((key) => [
     "schemaVersion", "workflowId", "workflowStepId", "participantId",
     "participantManifestFingerprint", "expectedOutcome", "requiredOperationIds",
-    "requiredDependencyStepIds", "acceptedEvidenceKinds", "fingerprint",
+    "requiredDependencyStepIds", "acceptedEvidenceKinds", "fingerprint", "executionPlanFingerprint",
   ].includes(key))
     || record.schemaVersion !== 1
     || !isNonEmptyText(record.workflowId)
     || !isNonEmptyText(record.workflowStepId)
     || !isNonEmptyText(record.participantId)
     || !isNonEmptyText(record.participantManifestFingerprint)
+    || (record.executionPlanFingerprint !== undefined && !isNonEmptyText(record.executionPlanFingerprint))
     || !["execution", "verification", "synthesis"].includes(String(record.expectedOutcome))
     || !isUniqueNonEmptyTextArray(record.requiredOperationIds)
     || !isUniqueNonEmptyTextArray(record.requiredDependencyStepIds)
@@ -346,6 +358,7 @@ export function isDelegatedStepRequirementV1(value: unknown): value is Delegated
     workflowStepId: record.workflowStepId,
     participantId: record.participantId,
     participantManifestFingerprint: record.participantManifestFingerprint,
+    ...(record.executionPlanFingerprint === undefined ? {} : { executionPlanFingerprint: record.executionPlanFingerprint as string }),
     expectedOutcome: record.expectedOutcome as DelegatedStepRequirementV1["expectedOutcome"],
     requiredOperationIds: record.requiredOperationIds,
     requiredDependencyStepIds: record.requiredDependencyStepIds,
@@ -364,6 +377,7 @@ export type ChannelWorkflowStatus =
   | "ready"
   | "running"
   | "waiting_for_approval"
+  | "waiting_for_input"
   | "blocked"
   | "succeeded"
   | "failed"
@@ -374,6 +388,7 @@ export type ChannelWorkflowStepStatus =
   | "claimed"
   | "running"
   | "waiting_for_approval"
+  | "waiting_for_input"
   | "blocked"
   | "succeeded"
   | "failed"
@@ -703,6 +718,8 @@ export interface DelegatedStepRequirementV1 {
   readonly workflowStepId: string;
   readonly participantId: string;
   readonly participantManifestFingerprint: string;
+  /** Full typed operation plan, captured in the immutable Run requirement. Omitted only for legacy steps. */
+  readonly executionPlanFingerprint?: string;
   readonly expectedOutcome: "execution" | "verification" | "synthesis";
   readonly requiredOperationIds: readonly string[];
   readonly requiredDependencyStepIds: readonly string[];
@@ -736,6 +753,7 @@ export const delegatedBlockCodeValuesV1 = [
   "workflow_participant_provider_override_forbidden",
   "existing_proposal_participant_lineage_invalid",
   "runtime_interrupted_no_checkpoint",
+  "execution_loop_detected",
   "approval_resume_unsupported",
   "approval_resume_effect_unknown",
   "approval_resume_lineage_invalid",
@@ -845,10 +863,13 @@ export interface WorkflowCompletionGateV1 {
 }
 
 export interface ChannelWorkflowStepMetadata {
+  readonly sideEffectClass?: WorkflowStepSideEffectClass;
+  readonly parallelPolicy?: WorkflowStepParallelPolicy;
   readonly participantAuthority?: WorkflowParticipantAuthorityV1;
   readonly providerBinding?: WorkflowParticipantProviderBindingV1;
   readonly workflowTemplateId?: string;
   readonly templateVersion?: string;
+  readonly templateCompilationPin?: WorkflowTemplateCompilationStepPinV1;
   readonly templateStepId?: string;
   readonly graphId?: string;
   readonly graphNodeId?: string;
@@ -926,6 +947,8 @@ export interface WorkflowGraphNode {
   readonly kind: WorkflowGraphNodeKind;
   readonly name: string;
   readonly prompt: string;
+  readonly sideEffectClass?: WorkflowStepSideEffectClass;
+  readonly parallelPolicy?: WorkflowStepParallelPolicy;
   readonly teammateTemplateId?: string;
   readonly teammateId?: string;
   readonly councilSlotKey?: string;
@@ -955,6 +978,7 @@ export interface WorkflowGraph {
 }
 
 export interface ChannelWorkflowMetadata {
+  readonly templateCompilation?: WorkflowTemplateCompilationV1;
   readonly workflowGraphId?: string;
   readonly workflowGraphSchemaVersion?: number;
   readonly workflowGraphArtifactId?: string;
@@ -968,7 +992,7 @@ export interface ChannelWorkflowMetadata {
   readonly workflowGraphFingerprint?: string;
   readonly requiredParticipantManifest?: RequiredParticipantManifestV1;
   readonly completionGate?: WorkflowCompletionGateV1;
-  readonly responseLanguage?: ResponseLanguage;
+  readonly responseLanguage?: ResponseLanguagePreference;
 }
 
 export type WorkflowStepExecutionVerificationStatusV1 = "pending" | "verified" | "blocked" | "failed";
@@ -1019,6 +1043,20 @@ export interface ChannelWorkflowStep {
   readonly status: ChannelWorkflowStepStatus;
   readonly blocker?: string;
   readonly resultSummary?: string;
+  /** Read-only public Q/A from the selected child Run, not the parent channel's cache. */
+  readonly runUserInputHistory?: import("./user-input-transcript.js").UserInputTranscriptRunHistoryV1 | null;
+  /** Read-only event projection for this step's selected run; never persisted or accepted on writes. */
+  readonly runNarration?: {
+    readonly runId: string;
+    readonly participantId: string;
+    readonly workflowStepId: string;
+    readonly threadId: string;
+    readonly turnId: string;
+    readonly sourceItemId: string;
+    readonly sourceItemSequence: number;
+    readonly attemptId?: string;
+    readonly segments: readonly import("./conversations.js").ConversationNarrationSegment[];
+  } | null;
   readonly metadata?: ChannelWorkflowStepMetadata;
   readonly createdAt: string;
   readonly updatedAt: string;
@@ -1111,6 +1149,7 @@ export interface WorkflowEvidenceStep {
 
 export interface WorkflowEvidenceResponse {
   readonly workflow: ChannelWorkflow;
+  readonly isolation?: import("./workflow-isolation-evidence.js").WorkflowIsolationEvidenceV1;
   readonly steps: readonly WorkflowEvidenceStep[];
   readonly selectorDecisions: readonly WorkflowSelectorDecision[];
   readonly handoffIntents: readonly WorkflowHandoffIntent[];
@@ -1198,6 +1237,20 @@ export interface ChannelCollaborationCardListResponse {
   readonly cards: readonly CollaborationTaskCardModel[];
 }
 
+export interface ChannelWorkflowOrchestrationRequest {
+  readonly executionProfile?: "pi_host_isolated_files_v1";
+}
+
+export function parseChannelWorkflowOrchestrationRequest(value: unknown): ChannelWorkflowOrchestrationRequest {
+  if (value === undefined) return {};
+  if (!value || typeof value !== "object" || Array.isArray(value)
+    || Object.keys(value).some(key => key !== "executionProfile")
+    || "executionProfile" in value && value.executionProfile !== "pi_host_isolated_files_v1") {
+    throw new Error("Workflow orchestration accepts only the explicit pi_host_isolated_files_v1 execution profile.");
+  }
+  return value as ChannelWorkflowOrchestrationRequest;
+}
+
 export interface CreateChannelWorkflowRequest {
   readonly sourceHandoffId?: string;
   readonly title: string;
@@ -1229,6 +1282,8 @@ export interface CreateChannelWorkflowFromCustomTemplateRequest {
 
 export interface CreateChannelWorkflowFromCustomTemplateIdRequest {
   readonly customTemplateId: string;
+  readonly customTemplateVersion: string;
+  readonly customTemplateDigest: string;
   readonly title?: string;
   readonly objective: string;
   readonly createdBy?: string;
@@ -1265,10 +1320,89 @@ export interface CustomWorkflowTemplate {
   readonly steps: readonly CustomWorkflowTemplateStep[];
 }
 
+/** Frozen compiler input and resolved references. Never an independent execution permit. */
+export interface WorkflowTemplateCompilationV1 {
+  readonly schemaVersion: 1;
+  readonly source: "inline" | "registry";
+  readonly templatePin: WorkflowTemplatePin;
+  readonly template: CustomWorkflowTemplate;
+  readonly objective: string;
+  readonly steps: readonly WorkflowTemplateResolvedStepV1[];
+  readonly graphFingerprint: string;
+}
+
+export interface WorkflowTemplateResolvedStepV1 {
+  readonly templateStepId: string;
+  readonly title: string;
+  readonly prompt: string;
+  readonly autoStart: boolean;
+  readonly policy: WorkflowStepPolicy;
+  readonly gates?: readonly WorkflowStepGate[];
+  readonly toParticipantId: string;
+  readonly toParticipantLabel: string;
+  readonly participantDigest: string;
+  readonly skillId?: string;
+  readonly skillDigest?: string;
+  readonly runnerId: string;
+  readonly providerPresetId?: string;
+  readonly providerDigest?: string;
+  readonly requiredTools: readonly RunTool[];
+  readonly dependsOn: readonly string[];
+  readonly sideEffectClass?: WorkflowStepSideEffectClass;
+  readonly parallelPolicy?: WorkflowStepParallelPolicy;
+}
+
+export interface WorkflowTemplateCompilationStepPinV1 extends WorkflowTemplatePin {
+  readonly graphFingerprint: string;
+}
+
+export interface WorkflowTemplatePreviewRequest {
+  readonly channelId: string;
+  readonly objective: string;
+  readonly customTemplate?: CustomWorkflowTemplate;
+  readonly customTemplateId?: string;
+  readonly customTemplateVersion?: string;
+  readonly customTemplateDigest?: string;
+  readonly autoStart?: boolean;
+  readonly confirmUnsafeAutoStart?: boolean;
+}
+
+export interface WorkflowTemplatePreviewResponse {
+  readonly templatePin: WorkflowTemplatePin;
+  readonly graphFingerprint: string;
+  readonly steps: readonly WorkflowTemplateResolvedStepV1[];
+}
+
+export interface WorkflowTemplateListResponse {
+  readonly cwd: string;
+  readonly templates: readonly WorkflowTemplateRegistryEntry[];
+}
+
+export interface WorkflowTemplateVersionResponse {
+  readonly entry: WorkflowTemplateRegistryEntry;
+  readonly version: WorkflowTemplateVersion;
+}
+
+export interface WorkflowTemplateSaveRequest {
+  readonly id: string;
+  readonly version: string;
+  readonly template: CustomWorkflowTemplate;
+  readonly expectedRevision: number;
+}
+
+export type WorkflowTemplateReviewRequest = { readonly expectedRevision: number } & (
+  | { readonly reviewStatus: "published"; readonly version: string; readonly digest: string }
+  | { readonly reviewStatus: "draft" | "disabled" | "archived"; readonly version?: never; readonly digest?: never }
+);
+
+export interface WorkflowTemplateReviewResponse { readonly entry: WorkflowTemplateRegistryEntry }
+
 export interface CustomWorkflowTemplateStep {
   readonly id: string;
   readonly name: string;
   readonly prompt: string;
+  readonly sideEffectClass?: WorkflowStepSideEffectClass;
+  readonly parallelPolicy?: WorkflowStepParallelPolicy;
   readonly teammateTemplateId?: string;
   readonly teammateId?: string;
   readonly councilSlotKey?: string;
@@ -1329,15 +1463,27 @@ export interface UpdateChannelWorkflowStepRequest {
   readonly resultSummary?: string | null;
 }
 
-export interface StartChannelWorkflowStepRequest {
-  readonly mode: ChannelWorkflowStepStartMode;
+interface StartChannelWorkflowStepRequestBase {
   readonly taskTitle?: string;
   readonly taskPrompt?: string;
   readonly providerPresetId?: string;
+  readonly runnerId?: string;
   readonly assigneeTeammateId?: string;
   readonly idempotencyKey?: string;
   readonly skipProviderPreflight?: boolean;
 }
+
+export interface CreateTaskChannelWorkflowStepStartRequest extends StartChannelWorkflowStepRequestBase {
+  readonly mode: "create_task";
+}
+
+export interface CreateAndRunTaskChannelWorkflowStepStartRequest extends StartChannelWorkflowStepRequestBase {
+  readonly mode: "create_and_run_task";
+}
+
+export type StartChannelWorkflowStepRequest =
+  | CreateTaskChannelWorkflowStepStartRequest
+  | CreateAndRunTaskChannelWorkflowStepStartRequest;
 
 export interface ChannelWorkflowListResponse {
   readonly cwd: string;
@@ -1373,12 +1519,154 @@ export interface ChannelWorkflowStepMutationResponse {
   readonly workflow?: ChannelWorkflow;
 }
 
-export interface ChannelWorkflowStepStartResponse {
+export interface ChannelWorkflowStepCreateTaskStartedResponse {
+  readonly status: "started";
+  readonly mode: "create_task";
   readonly workflowStep: ChannelWorkflowStep;
-  readonly workflow?: ChannelWorkflow;
-  readonly task?: Task;
-  readonly run?: RunSession;
-  readonly blocker?: string;
+  readonly workflow: ChannelWorkflow;
+  readonly task: Task;
+}
+
+export interface ChannelWorkflowStepWaitingForApprovalResponse {
+  readonly status: "waiting_for_approval";
+  readonly mode: ChannelWorkflowStepStartMode;
+  readonly workflow: ChannelWorkflow;
+  readonly workflowStep: ChannelWorkflowStep;
+  readonly approval: ApprovalRequest;
+}
+
+export interface ChannelWorkflowStepBlockedResponse {
+  readonly status: "blocked";
+  readonly mode: ChannelWorkflowStepStartMode;
+  readonly workflow: ChannelWorkflow;
+  readonly workflowStep: ChannelWorkflowStep;
+  readonly blocker: string;
+}
+
+export type ChannelWorkflowStepStartAdmissionResponse =
+  | ChannelWorkflowStepWaitingForApprovalResponse
+  | ChannelWorkflowStepBlockedResponse;
+
+export type ChannelWorkflowStepStartResponse =
+  | ChannelWorkflowStepCreateTaskStartedResponse
+  | ChannelWorkflowStepStartAdmissionResponse;
+
+export type ChannelWorkflowStepStartTrustedStep = Pick<
+  ChannelWorkflowStep,
+  "id" | "workflowId" | "channelId" | "title" | "prompt" | "toParticipantId"
+>;
+
+export interface ChannelWorkflowStepStartResponseContext {
+  readonly mode: ChannelWorkflowStepStartMode;
+  readonly workflowId: string;
+  readonly channelId: string;
+  /** Frozen caller-owned definition. Never derive these values from the response. */
+  readonly workflowStep: ChannelWorkflowStepStartTrustedStep;
+  /** Effective values captured by the caller before the request is sent. */
+  readonly taskTitle: string;
+  readonly taskPrompt: string;
+  readonly assigneeTeammateId: string;
+  readonly providerPresetId?: string;
+  readonly runnerId?: string;
+  readonly skipProviderPreflight: boolean;
+}
+
+/** JSON start responses are untrusted until their complete request lineage is checked. */
+export function parseChannelWorkflowStepStartResponse(
+  value: unknown,
+  expected: ChannelWorkflowStepStartResponseContext,
+): ChannelWorkflowStepStartResponse | undefined {
+  const expectedStep = expected.workflowStep;
+  if (expectedStep.workflowId !== expected.workflowId || expectedStep.channelId !== expected.channelId) return undefined;
+  const response = workflowRecord(value);
+  const workflow = workflowRecord(response?.workflow);
+  const workflowStep = workflowRecord(response?.workflowStep);
+  if (!response
+    || response.mode !== expected.mode
+    || !workflow
+    || workflow.id !== expected.workflowId
+    || workflow.channelId !== expected.channelId
+    || !workflowStep
+    || workflowStep.id !== expectedStep.id
+    || workflowStep.workflowId !== expected.workflowId
+    || workflowStep.channelId !== expected.channelId
+    || workflowStep.title !== expectedStep.title
+    || workflowStep.prompt !== expectedStep.prompt
+    || workflowStep.toParticipantId !== expectedStep.toParticipantId) return undefined;
+
+  if (response.status === "started") {
+    const task = workflowRecord(response.task);
+    return expected.mode === "create_task"
+      && task
+      && typeof task.id === "string"
+      && task.id.length > 0
+      && task.channelId === expected.channelId
+      && task.title === expected.taskTitle
+      && task.prompt === expected.taskPrompt
+      && task.assigneeTeammateId === expected.assigneeTeammateId
+      && workflowStep.taskId === task.id
+      && workflowStep.runId === undefined
+      && response.run === undefined
+      ? response as unknown as ChannelWorkflowStepCreateTaskStartedResponse
+      : undefined;
+  }
+
+  if (response.status === "blocked") {
+    return typeof response.blocker === "string" && response.blocker.trim().length > 0
+      ? response as unknown as ChannelWorkflowStepBlockedResponse
+      : undefined;
+  }
+  if (response.status !== "waiting_for_approval") return undefined;
+
+  const approval = workflowRecord(response.approval);
+  const payload = workflowRecord(approval?.payload);
+  const basis = workflowRecord(payload?.preGateBasis);
+  const executionPermit = workflowRecord(basis?.executionPermit);
+  if (!approval
+    || typeof approval.id !== "string"
+    || approval.id.length === 0
+    || approval.workflowStepId !== expectedStep.id
+    || approval.channelId !== expected.channelId
+    || approval.runId !== undefined
+    || approval.taskId !== undefined
+    || approval.actionType !== "workflow_step"
+    || approval.status !== "pending"
+    || !payload
+    || payload.type !== "workflow_step"
+    || payload.gateStage !== "pre"
+    || payload.workflowId !== expected.workflowId
+    || payload.workflowStepId !== expectedStep.id
+    || payload.runId !== undefined
+    || !basis
+    || basis.schemaVersion !== 1
+    || typeof basis.startNonce !== "string"
+    || basis.startNonce.length === 0
+    || typeof basis.authorityBasis !== "string"
+    || !/^wso1_[a-f0-9]{64}$/u.test(basis.authorityBasis)
+    || typeof basis.gateFingerprint !== "string"
+    || !/^wpgate1_[a-f0-9]{64}$/u.test(basis.gateFingerprint)
+    || typeof basis.requestedStatus !== "string"
+    || !["queued", "claimed", "running", "waiting_for_approval", "waiting_for_input", "blocked", "succeeded", "failed", "skipped", "cancelled"].includes(basis.requestedStatus)
+    || typeof basis.fingerprint !== "string"
+    || !/^wpg1_[a-f0-9]{64}$/u.test(basis.fingerprint)
+    || !executionPermit
+    || executionPermit.schemaVersion !== 1
+    || executionPermit.mode !== expected.mode
+    || executionPermit.taskTitle !== expected.taskTitle
+    || executionPermit.taskPrompt !== expected.taskPrompt
+    || executionPermit.providerPresetId !== expected.providerPresetId
+    || executionPermit.runnerId !== expected.runnerId
+    || executionPermit.assigneeTeammateId !== expected.assigneeTeammateId
+    || executionPermit.skipProviderPreflight !== expected.skipProviderPreflight
+    || typeof executionPermit.fingerprint !== "string"
+    || !/^wpgpermit1_[a-f0-9]{64}$/u.test(executionPermit.fingerprint)) return undefined;
+  return response as unknown as ChannelWorkflowStepWaitingForApprovalResponse;
+}
+
+function workflowRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
 }
 
 export type ChannelSmartSchedulingEffectiveMode = "serial" | "parallel";
@@ -1395,7 +1683,12 @@ export type ChannelSmartSchedulingReasonCode =
   | "approval_pending"
   | "unknown_tools_serial"
   | "side_effectful_step_serial"
-  | "read_only_parallel_allowed";
+  | "safety_opt_in_required"
+  | "host_parallel_capability_unavailable"
+  | "active_step_safety_unverified"
+  | "resource_conflict"
+  | "read_only_parallel_allowed"
+  | "isolated_files_parallel_allowed";
 
 export interface ChannelSmartSchedulingDecision {
   readonly schedulingMode: "smart";

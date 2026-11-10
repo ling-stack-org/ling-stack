@@ -65,7 +65,7 @@ const sharedSlotTokens = [
 ] as const;
 
 test("T13-O.31-E canonical Composer source ownership has no legacy or strict blanket writer", async () => {
-  const [sourceFiles, packageShell, packageCss, sharedCss, channelCss, normalCss, teammateCss, styles, strictCss] = await Promise.all([
+  const [sourceFiles, packageShell, packageCss, sharedCss, channelCss, normalCss, teammateCss, styles] = await Promise.all([
     readComposerProductionFiles(),
     readRepositoryFile(packageShellPath),
     readRepositoryFile(packageCssPath),
@@ -74,7 +74,6 @@ test("T13-O.31-E canonical Composer source ownership has no legacy or strict bla
     readRepositoryFile(normalCssPath),
     readRepositoryFile(teammateCssPath),
     readRepositoryFile("apps/web/src/styles.css"),
-    readRepositoryFile("apps/web/src/styles/strict-console.css"),
   ]);
 
   for (const token of packageCompatibilityTokens) {
@@ -140,13 +139,7 @@ test("T13-O.31-E canonical Composer source ownership has no legacy or strict bla
     }
   }
 
-  const strictComposerSelectors = extractCssSelectors(strictCss)
-    .filter((selector) => selector.includes("[data-conversation-composer]"));
-  expect(
-    strictComposerSelectors.every((selector) => selector.includes(":not(")),
-    `strict layer may reference Composer only through exclusions: ${strictComposerSelectors.join(" | ")}`,
-  ).toBe(true);
-  expect(strictCss).not.toMatch(/\.normal-conversation-composer\s+\.tokenized-composer-input/u);
+  expect(styles).not.toMatch(/\.normal-conversation-composer\s+\.tokenized-composer-input/u);
 
   expectImportOrder(styles, [
     "@ling-stack/conversation-ui-react/styles.css",
@@ -155,7 +148,6 @@ test("T13-O.31-E canonical Composer source ownership has no legacy or strict bla
     `./styles/${teammateCssPath.split("/").at(-1)}`,
     `./styles/${normalCssPath.split("/").at(-1)}`,
     `./styles/${channelCssPath.split("/").at(-1)}`,
-    "./styles/strict-console.css",
   ]);
 });
 
@@ -270,7 +262,7 @@ test("T13-O.31-E Dark 1280 Normal keeps slash, permission, reduced motion, long 
   const permissionTrigger = composer.getByRole("button", { name: /Selected permission preset/u });
   await permissionTrigger.click();
   const permissionOverlay = page.locator('[data-ling-overlay="menu"]').filter({
-    has: page.getByRole("menuitemradio", { name: /Read only/u }),
+    has: page.getByRole("menuitemradio", { name: "Request approval", exact: true }),
   });
   await expect(permissionOverlay).toBeVisible();
   await expectRegionWithinViewport(page, permissionOverlay);
@@ -505,12 +497,12 @@ async function prepareSurface(page: Page, options: {
 }
 
 async function openNormalConversation(page: Page, title: string): Promise<void> {
-  await page.getByLabel("Ling Stack navigation").locator(".sidebar-recent-row").filter({ hasText: title }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).locator(".sidebar-recent-row").filter({ hasText: title }).click();
   await expect(page.getByLabel("Conversation page")).toBeVisible();
 }
 
 async function openTeammate(page: Page, displayName: string): Promise<void> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: displayName }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: displayName }).click();
   await expect(page.getByRole("heading", { name: displayName, level: 1 })).toBeVisible();
   await expect(page.getByText("Loading teammate workspace...")).toHaveCount(0, { timeout: 15_000 });
 }

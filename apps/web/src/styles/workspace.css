@@ -24,7 +24,7 @@ p {
 }
 
 h1 {
-  color: var(--text-strong);
+  color: var(--ling-text-strong);
   font-size: 24px;
   line-height: 1.2;
   font-weight: 760;
@@ -32,7 +32,7 @@ h1 {
 
 .workspace-head p {
   margin-top: 6px;
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
   font-size: 13px;
   line-height: 1.5;
 }
@@ -46,30 +46,30 @@ h1 {
 .first-run-flow.ready {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  border-color: var(--success-border);
-  background: var(--success-soft);
+  border-color: var(--ling-status-success-border);
+  background: var(--ling-status-success-bg);
 }
 
 .first-run-flow.active {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  border-color: var(--warning-border);
-  background: var(--warning-soft);
+  border-color: var(--ling-status-warning-border);
+  background: var(--ling-status-warning-bg);
 }
 
 .first-run-flow.active .first-run-copy span {
-  color: var(--warning);
+  color: var(--ling-status-warning);
 }
 
 .first-run-flow.attention {
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  border-color: var(--danger-border);
-  background: var(--danger-soft);
+  border-color: var(--ling-status-danger-border);
+  background: var(--ling-status-danger-bg);
 }
 
 .first-run-flow.attention .first-run-copy span {
-  color: var(--danger);
+  color: var(--ling-status-danger);
 }
 
 .first-run-title {
@@ -90,17 +90,17 @@ h1 {
 
 .first-run-copy span {
   gap: 7px;
-  color: var(--success);
+  color: var(--ling-status-success);
 }
 
 .first-run-copy strong {
-  color: var(--text-strong);
+  color: var(--ling-text-strong);
   font-size: 13px;
 }
 
 .first-run-copy small {
   overflow-wrap: anywhere;
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
   font-size: 12px;
 }
 
@@ -126,35 +126,35 @@ h1 {
   gap: 8px;
   min-height: 104px;
   padding: 10px;
-  border: 1px solid var(--border);
-  background: var(--surface-panel);
+  border: 1px solid var(--ling-border-default);
+  background: var(--ling-bg-panel);
 }
 
 .first-run-step.ready {
-  border-color: var(--success-border);
-  background: var(--success-soft);
+  border-color: var(--ling-status-success-border);
+  background: var(--ling-status-success-bg);
 }
 
 .first-run-step.ready > svg {
-  color: var(--success);
+  color: var(--ling-status-success);
 }
 
 .first-run-step.attention {
-  border-color: var(--danger-border);
-  background: var(--danger-soft);
+  border-color: var(--ling-status-danger-border);
+  background: var(--ling-status-danger-bg);
 }
 
 .first-run-step.attention > svg {
-  color: var(--danger);
+  color: var(--ling-status-danger);
 }
 
 .first-run-step.pending {
-  border-color: var(--warning-border);
-  background: var(--warning-soft);
+  border-color: var(--ling-status-warning-border);
+  background: var(--ling-status-warning-bg);
 }
 
 .first-run-step.pending > svg {
-  color: var(--warning);
+  color: var(--ling-status-warning);
 }
 
 .first-run-step-copy {
@@ -164,13 +164,13 @@ h1 {
 }
 
 .first-run-step-copy strong {
-  color: var(--text-strong);
+  color: var(--ling-text-strong);
   font-size: 12px;
 }
 
 .first-run-step-copy small {
   overflow-wrap: anywhere;
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
   font-size: 12px;
   line-height: 1.35;
 }
@@ -182,8 +182,8 @@ h1 {
 
 .panel,
 .inspector {
-  border: 1px solid var(--border);
-  background: var(--surface-panel);
+  border: 1px solid var(--ling-border-default);
+  background: var(--ling-bg-panel);
 }
 
 .panel {
@@ -209,7 +209,7 @@ h2 {
 }
 
 h3 {
-  color: var(--text-strong);
+  color: var(--ling-text-strong);
   font-size: 12px;
   line-height: 1.2;
   text-transform: uppercase;
@@ -222,7 +222,7 @@ h3 {
 }
 
 .field span {
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
   font-size: 12px;
   font-weight: 650;
 }
@@ -257,14 +257,14 @@ h3 {
 }
 
 .secondary-button {
-  border-color: var(--border);
-  background: var(--surface-panel);
-  color: var(--text);
+  border-color: var(--ling-border-default);
+  background: var(--ling-bg-panel);
+  color: var(--ling-text-default);
 }
 
 .secondary-button.danger {
-  border-color: var(--danger-border);
-  color: var(--danger);
+  border-color: var(--ling-status-danger-border);
+  color: var(--ling-status-danger);
 }
 
 .secondary-button.full {
@@ -293,68 +293,68 @@ h3 {
   align-items: center;
   height: 26px;
   padding: 0 9px;
-  border: 1px solid var(--border);
-  background: var(--surface-subtle);
-  color: var(--text-muted);
+  border: 1px solid var(--ling-border-default);
+  background: var(--ling-bg-subtle);
+  color: var(--ling-text-muted);
   font-size: 12px;
 }
 
 .status-badge.running {
-  border-color: var(--warning-border);
-  background: var(--warning-soft);
-  color: var(--warning);
+  border-color: var(--ling-status-warning-border);
+  background: var(--ling-status-warning-bg);
+  color: var(--ling-status-warning);
 }
 
 .status-badge.queued,
 .status-badge.waiting_for_approval {
-  border-color: var(--warning-border);
-  background: var(--warning-soft);
-  color: var(--warning);
+  border-color: var(--ling-status-warning-border);
+  background: var(--ling-status-warning-bg);
+  color: var(--ling-status-warning);
 }
 
 .status-badge.succeeded {
-  border-color: var(--success-border);
-  background: var(--success-soft);
-  color: var(--success);
+  border-color: var(--ling-status-success-border);
+  background: var(--ling-status-success-bg);
+  color: var(--ling-status-success);
 }
 
 .status-badge.failed {
-  border-color: var(--danger-border);
-  background: var(--danger-soft);
-  color: var(--danger);
+  border-color: var(--ling-status-danger-border);
+  background: var(--ling-status-danger-bg);
+  color: var(--ling-status-danger);
 }
 
 .status-badge.cancelled {
-  border-color: var(--border);
-  background: var(--surface-subtle);
-  color: var(--text-muted);
+  border-color: var(--ling-border-default);
+  background: var(--ling-bg-subtle);
+  color: var(--ling-text-muted);
 }
 
 .status-badge.active,
 .status-badge.run,
 .status-badge.task,
 .status-badge.bound_path {
-  border-color: var(--success-border);
-  background: var(--success-soft);
-  color: var(--success);
+  border-color: var(--ling-status-success-border);
+  background: var(--ling-status-success-bg);
+  color: var(--ling-status-success);
 }
 
 .status-badge.paused,
 .status-badge.channel,
 .status-badge.workspace,
 .status-badge.workflow_step {
-  border-color: var(--warning-border);
-  background: var(--warning-soft);
-  color: var(--warning);
+  border-color: var(--ling-status-warning-border);
+  background: var(--ling-status-warning-bg);
+  color: var(--ling-status-warning);
 }
 
 .status-badge.archived,
 .status-badge.provider,
 .status-badge.media_job,
 .status-badge.approval {
-  border-color: var(--border);
-  background: var(--surface-subtle);
-  color: var(--text-muted);
+  border-color: var(--ling-border-default);
+  background: var(--ling-bg-subtle);
+  color: var(--ling-text-muted);
 }
 
 .inline-error {
@@ -363,15 +363,15 @@ h3 {
   gap: 8px;
   margin-bottom: 12px;
   padding: 10px;
-  background: var(--danger-soft);
-  color: var(--danger);
+  background: var(--ling-status-danger-bg);
+  color: var(--ling-status-danger);
   font-size: 13px;
 }
 
 pre {
   margin: 0;
   overflow: auto;
-  color: var(--text);
+  color: var(--ling-text-default);
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 12px;
   line-height: 1.45;
@@ -383,7 +383,7 @@ pre {
   place-items: center;
   gap: 10px;
   min-height: 280px;
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
   font-size: 13px;
 }
 
@@ -395,8 +395,8 @@ pre {
   display: grid;
   gap: 9px;
   padding: 10px;
-  border: 1px solid var(--border);
-  background: var(--surface-panel);
+  border: 1px solid var(--ling-border-default);
+  background: var(--ling-bg-panel);
 }
 
 .ci-triage-panel.compact {
@@ -428,13 +428,13 @@ pre {
 }
 
 .ci-triage-head strong {
-  color: var(--text-strong);
+  color: var(--ling-text-strong);
   font-size: 13px;
 }
 
 .ci-triage-head small,
 .ci-triage-more {
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
   font-size: 11px;
   font-weight: 700;
 }
@@ -453,8 +453,8 @@ pre {
   display: grid;
   gap: 8px;
   padding: 9px;
-  border: 1px solid var(--border);
-  background: var(--surface-panel-strong);
+  border: 1px solid var(--ling-border-default);
+  background: var(--ling-bg-elevated);
 }
 
 .ci-triage-row.compact {
@@ -473,7 +473,7 @@ pre {
 
 .ci-triage-row-head strong {
   overflow: hidden;
-  color: var(--text-strong);
+  color: var(--ling-text-strong);
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -484,9 +484,9 @@ pre {
   align-items: center;
   min-height: 22px;
   padding: 0 8px;
-  border: 1px solid var(--border);
-  background: var(--surface-subtle);
-  color: var(--text-muted);
+  border: 1px solid var(--ling-border-default);
+  background: var(--ling-bg-subtle);
+  color: var(--ling-text-muted);
   font-size: 11px;
   font-weight: 800;
   white-space: nowrap;
@@ -495,17 +495,17 @@ pre {
 .ci-triage-status.triaged,
 .ci-triage-status.task_created,
 .ci-triage-status.run_requested {
-  border-color: var(--success-border);
-  background: var(--success-soft);
-  color: var(--success);
+  border-color: var(--ling-status-success-border);
+  background: var(--ling-status-success-bg);
+  color: var(--ling-status-success);
 }
 
 .ci-triage-status.blocked,
 .ci-triage-status.stale,
 .ci-triage-status.failed {
-  border-color: var(--danger-border);
-  background: var(--danger-soft);
-  color: var(--danger);
+  border-color: var(--ling-status-danger-border);
+  background: var(--ling-status-danger-bg);
+  color: var(--ling-status-danger);
 }
 
 .ci-triage-meta,
@@ -519,9 +519,9 @@ pre {
 .ci-triage-actions code {
   min-height: 22px;
   padding: 2px 7px;
-  border: 1px solid var(--border);
-  background: var(--surface-subtle);
-  color: var(--text-muted);
+  border: 1px solid var(--ling-border-default);
+  background: var(--ling-bg-subtle);
+  color: var(--ling-text-muted);
   font-size: 11px;
   font-weight: 700;
   overflow-wrap: anywhere;
@@ -539,7 +539,7 @@ pre {
 
 .ci-triage-field span {
   gap: 5px;
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
   font-size: 11px;
   font-weight: 800;
   text-transform: uppercase;
@@ -549,15 +549,15 @@ pre {
 .ci-triage-field p {
   margin: 0;
   overflow-wrap: anywhere;
-  color: var(--text);
+  color: var(--ling-text-default);
   font-size: 12px;
   line-height: 1.45;
 }
 
 .ci-triage-field code {
   padding: 7px;
-  border: 1px solid var(--border);
-  background: var(--surface-subtle);
+  border: 1px solid var(--ling-border-default);
+  background: var(--ling-bg-subtle);
   font-family: "SFMono-Regular", Consolas, monospace;
 }
 
@@ -569,6 +569,6 @@ pre {
 .ci-triage-empty {
   gap: 7px;
   min-height: 54px;
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
   font-size: 12px;
 }

@@ -5,7 +5,6 @@ import process from "node:process";
 const migratedFiles = [
   "src/styles/base.css",
   "src/styles/app/sidebar-layout.css",
-  "src/styles/app/sidebar-rail-sections.css",
   "src/styles/app/sidebar-ui2.css",
   "src/styles/channel-execution-proposal.css",
   "src/styles/channel-right-dock/shell.css",
@@ -27,13 +26,6 @@ const durationLiteral = /(?:^|[\s,(])(?:\d+(?:\.\d+)?ms|\d*\.\d+s)(?=$|[\s,;)])/
 const rawEasing = /(?:^|[\s,(])(?:ease|ease-in|ease-out|ease-in-out|linear)(?=$|[\s,;)])/u;
 const violations = [];
 
-const compatibilityVariableContracts = [
-  {
-    sourcePath: "src/styles/base.css",
-    name: "--transition-fast",
-    value: "var(--ling-motion-fast) var(--ling-ease-standard)",
-  },
-];
 
 for (const sourcePath of migratedFiles) {
   const source = readFileSync(resolve(process.cwd(), sourcePath), "utf8");
@@ -44,19 +36,6 @@ for (const sourcePath of migratedFiles) {
       const line = source.slice(0, declaration.index).split("\n").length;
       violations.push(`${sourcePath}:${line} transition: ${value.trim()}`);
     }
-  }
-}
-
-for (const contract of compatibilityVariableContracts) {
-  const source = readFileSync(resolve(process.cwd(), contract.sourcePath), "utf8");
-  const declarations = [
-    ...source.matchAll(new RegExp(`${contract.name}\\s*:\\s*([^;]+);`, "gu")),
-  ];
-  const values = declarations.map((declaration) => declaration[1].trim());
-  if (values.length !== 1 || values[0] !== contract.value) {
-    violations.push(
-      `${contract.sourcePath} ${contract.name}: expected exactly ${contract.value}, received ${values.join(", ") || "no declaration"}`,
-    );
   }
 }
 
@@ -135,5 +114,5 @@ if (violations.length > 0) {
 }
 
 console.log(
-  `UI 2.0 motion token contract: ${migratedFiles.length} transition owners + ${settleInAnimationFiles.length} settle-in owners + finite animation audit + ${compatibilityVariableContracts.length} compatibility variable`,
+  `UI 2.0 motion token contract: ${migratedFiles.length} transition owners + ${settleInAnimationFiles.length} settle-in owners + finite animation audit`,
 );

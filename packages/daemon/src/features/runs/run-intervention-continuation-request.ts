@@ -1,5 +1,10 @@
 import {
+  isAuthorizationMode,
+  isWorkspaceAccessMode,
   permissionPresets,
+  responseLanguages,
+  redactSecrets,
+  normalizeRunnerId,
   sessionPermissionModes,
   type PermissionConfirmation,
   type PermissionPreset,
@@ -8,23 +13,36 @@ import {
   type RunSession,
   type RunStatus,
   type RunStore,
+  type SecretResolver,
   type RunTool,
   type SessionPermissionMode,
   type SkillApprovalProfile,
 } from "@ling-stack/core";
 import type { PiRunnerProviderConfig } from "@ling-stack/runner-pi";
-import { isConversationContextProjectionMetadata, type ConversationContextProjectionMetadata } from "@ling-stack/contracts";
+import { isConversationContextProjectionMetadata, isExternalExecutionEngineId, parseExecutionBindingRequest, type ConversationContextProjectionMetadata } from "@ling-stack/contracts";
+import { HttpError } from "../../errors.js";
 import { isRecord } from "../../shared/validation.js";
 import { buildChannelReplyContinuationContext } from "../channels/channel-reply-continuation-context.js";
 import type { RunRequest } from "./schemas.js";
+import { prepareNormalConversationInput } from "../conversations/normal-conversation-input.js";
+import { saveNormalConversationPreparedRequest } from "../conversations/normal-conversation-prepared-request.js";
+import { renderNormalConversationRunPrompt } from "../conversations/normal-conversation-context.js";
+import { requireNormalContinuationSource } from "../conversations/normal-conversation-continuation-source.js";
+import { readNativeResponsePreferences } from "../conversations/native-response-preferences.js";
 
 export function buildRunInterventionContinuationRequest(
   store: RunStore,
   sourceRun: RunSession,
   intervention: RunIntervention,
   messageLink: { readonly sourceMessageId?: string; readonly linkedMessageId?: string } = {},
+  secretResolver?: SecretResolver,
 ): RunRequest {
   const snapshot = isRecord(sourceRun.requestSnapshot) ? sourceRun.requestSnapshot : {};
+  const executionBinding = snapshot.executionBinding === undefined ? undefined : parseExecutionBindingRequest(snapshot.executionBinding);
+  if (!executionBinding && (isExternalExecutionEngineId(snapshot.runnerId) || isExternalExecutionEngineId(sourceRun.providerName))) {
+    throw new HttpError(409, "legacy_runner_migration_required", "The source run has no native profile binding; select and validate a profile before continuing.");
+  }
+  const native = executionBinding?.kind === "native_profile";
   const taskSnapshot = isRecord(sourceRun.taskSnapshot) ? sourceRun.taskSnapshot : {};
   const originalTitle = readSnapshotString(taskSnapshot, "title") ?? readSnapshotString(isRecord(snapshot.task) ? snapshot.task : {}, "title") ?? sourceRun.taskId;
   const originalPrompt = readSnapshotString(taskSnapshot, "prompt") ?? readSnapshotString(isRecord(snapshot.task) ? snapshot.task : {}, "prompt") ?? "";
@@ -37,36 +55,57 @@ export function buildRunInterventionContinuationRequest(
   const permissionConfirmation = readSnapshotPermissionConfirmation(snapshot, "permissionConfirmation");
   const requestedSkillId = readSnapshotString(snapshot, "requestedSkillId") ?? sourceRun.selectedSkillId;
   const providerPresetId = readSnapshotString(snapshot, "providerPresetId") ?? sourceRun.providerPresetId;
-  const inlineProvider = providerPresetId ? undefined : isRecord(snapshot.provider) ? snapshot.provider as unknown as PiRunnerProviderConfig : undefined;
+  const inlineProvider = providerPresetId ? undefined : isRecord(snapshot.provider) ? snapshot.provider as unknown as PiRunnerProviderConfig
+    : isRecord(sourceRun.providerSnapshot) ? sourceRun.providerSnapshot as unknown as PiRunnerProviderConfig : undefined;
   const tools = readSnapshotRunTools(snapshot, "tools");
   const appendSystemPrompt = readSnapshotStringArray(snapshot, "appendSystemPrompt");
   const sourceThread = sourceRun.threadId ? store.getLingThread(sourceRun.threadId) : undefined;
   const channelContinuation = messageLink.sourceMessageId && sourceRun.channelId
     ? buildChannelReplyContinuationContext({
         store,
+        secretResolver,
         sourceRun,
         intervention,
         sourceMessageId: messageLink.sourceMessageId,
       })
     : undefined;
   const inheritedSystemPrompt = readSnapshotString(snapshot, "systemPrompt");
+  const normalSource = sourceThread?.kind === "conversation" && !sourceThread.channelId
+    ? requireNormalContinuationSource({ store, thread: sourceThread, sourceRun, intervention }) : undefined;
+  const normalInput = normalSource && sourceThread
+    ? prepareNormalConversationInput({ store, thread: sourceThread, title: `继续自上次运行: ${originalTitle}`,
+        actorType: intervention.requestedBy === "system" ? "system" : "local_user",
+        message: intervention.messagePayload?.body || intervention.instruction,
+        attachmentIds: intervention.messagePayload?.attachmentIds ?? [],
+        fileRefs: (intervention.messagePayload?.fileRefs ?? []).map((ref) => ({ path: ref.path,
+          ...(ref.label ? { label: ref.label } : {}), ...(ref.source ? { source: ref.source } : {}) })),
+        sourceTurnId: normalSource.id,
+        interventionId: intervention.id, turnKind: intervention.mode === "interrupt_redirect" ? "interrupt_redirect" : "queued_followup",
+        idempotencyKey: `run_intervention:${intervention.id}`, now: new Date().toISOString() })
+    : undefined;
+  if (normalInput?.replayRequest) return normalInput.replayRequest;
 
-  return {
+  const request: RunRequest = {
     workspaceCwd: readSnapshotString(snapshot, "workspaceCwd") ?? sourceRun.cwd,
     cwd: readSnapshotString(snapshot, "cwd") ?? sourceRun.cwd,
-    providerPresetId: channelContinuation?.providerPresetId ?? providerPresetId,
-    provider: channelContinuation ? undefined : inlineProvider,
+    executionBinding,
+    providerPresetId: native ? undefined : channelContinuation?.providerPresetId ?? providerPresetId,
+    provider: executionBinding || channelContinuation ? undefined : inlineProvider,
     threadId: channelContinuation?.threadId ?? sourceRun.threadId,
-    turnId: channelContinuation?.turnId,
+    turnId: channelContinuation?.turnId ?? normalInput?.turn.id,
     teammateId: channelContinuation?.targetTeammateId ?? readSnapshotString(snapshot, "teammateId") ?? sourceRun.teammateId,
-    runnerId: channelContinuation?.runnerId ?? readSnapshotString(snapshot, "runnerId"),
+    runnerId: native ? executionBinding.engineId : normalizeRunnerId(channelContinuation?.runnerId ?? readSnapshotString(snapshot, "runnerId")),
     requestedSkillId,
     skipProviderPreflight: readSnapshotBoolean(snapshot, "skipProviderPreflight") ?? false,
-    idempotencyKey: `run_intervention:${intervention.id}`,
+    idempotencyKey: normalInput?.idempotencyKey ?? `run_intervention:${intervention.id}`,
     task: {
       id: `continuation_${intervention.id}`,
-      title: channelContinuation?.title ?? `继续自上次运行: ${originalTitle}`,
-      prompt: channelContinuation?.prompt ?? renderRunInterventionContinuationPrompt({
+      title: channelContinuation?.title ?? (normalInput ? redactSecrets(`继续自上次运行: ${originalTitle}`) as string : `继续自上次运行: ${originalTitle}`),
+      prompt: channelContinuation?.prompt ?? (normalInput
+        ? renderNormalConversationRunPrompt(normalInput.context, [renderRunInterventionPayloadForPrompt(intervention.instruction, intervention.messagePayload),
+            `Continuation of Run ${sourceRun.id} (${intervention.mode}). Re-check external state before repeating side effects; no additional permissions are granted.`].join("\n\n"),
+            intervention.requestedBy === "system" ? "system" : "local_user")
+        : renderRunInterventionContinuationPrompt({
         sourceRun,
         originalTitle,
         originalPrompt,
@@ -74,22 +113,34 @@ export function buildRunInterventionContinuationRequest(
         instruction: intervention.instruction,
         messagePayload: intervention.messagePayload,
         mode: intervention.mode,
-      }),
+      })),
       channelId,
     },
     tools,
     approvalProfile: isRecord(snapshot.approvalProfile) ? snapshot.approvalProfile as unknown as SkillApprovalProfile : undefined,
     permissionPreset,
     permissionMode,
+    authorizationMode: typeof snapshot.authorizationMode === "string" && isAuthorizationMode(snapshot.authorizationMode) ? snapshot.authorizationMode : undefined,
+    workspaceAccessMode: typeof snapshot.workspaceAccessMode === "string" && isWorkspaceAccessMode(snapshot.workspaceAccessMode) ? snapshot.workspaceAccessMode : undefined,
     permissionConfirmation,
     thinkingLevel: readSnapshotThinkingLevel(snapshot, "thinkingLevel"),
+    reasoningSummary: readSnapshotReasoningSummary(snapshot, "reasoningSummary"),
     systemPrompt: channelContinuation?.systemPromptInstruction ?? inheritedSystemPrompt,
     appendSystemPrompt,
-    contextProjection: channelContinuation?.contextProjection ?? readSnapshotContextProjection(snapshot),
+    nativeResponsePreferences: readNativeResponsePreferences(snapshot.nativeResponsePreferences),
+    lingConversationTone: snapshot.lingConversationTone === "friendly" || snapshot.lingConversationTone === "pragmatic"
+      || snapshot.lingConversationTone === "none" ? snapshot.lingConversationTone : undefined,
+    responseLanguage: typeof snapshot.responseLanguage === "string"
+      && responseLanguages.includes(snapshot.responseLanguage as typeof responseLanguages[number])
+      ? snapshot.responseLanguage as typeof responseLanguages[number] : undefined,
+    contextProjection: channelContinuation?.contextProjection ?? normalInput?.context.projection ??
+      (sourceThread?.kind === "conversation" ? undefined : readSnapshotContextProjection(snapshot)),
+    normalConversationContext: normalInput?.context,
+    normalConversationAcceptedSnapshotId: normalInput?.acceptedSnapshotId,
     agentDir: readSnapshotString(snapshot, "agentDir"),
     skipMemoryRecall: channelContinuation ? true : readSnapshotBoolean(snapshot, "skipMemoryRecall"),
     conversationAttachmentIds: intervention.messagePayload?.attachmentIds ?? [],
-    sourceMessageId: messageLink.sourceMessageId ?? (sourceThread?.kind === "conversation"
+    sourceMessageId: normalInput?.turn.sourceItemId ?? messageLink.sourceMessageId ?? (sourceThread?.kind === "conversation"
       ? `conversation-user:intervention:${intervention.id}`
       : undefined),
     linkedMessageId: messageLink.linkedMessageId,
@@ -98,6 +149,7 @@ export function buildRunInterventionContinuationRequest(
     interventionId: intervention.id,
     continuationReason: intervention.mode,
   };
+  return normalInput ? saveNormalConversationPreparedRequest(store, request, new Date().toISOString()) : request;
 }
 
 function readSnapshotContextProjection(snapshot: Record<string, unknown>): ConversationContextProjectionMetadata | undefined {
@@ -185,12 +237,13 @@ function renderRunInterventionLinkPreviewsForPrompt(payload: RunInterventionMess
 }
 
 function renderRunInterventionWorkspaceFileRefsForPrompt(payload: RunInterventionMessagePayload): string | undefined {
-  if (!payload.fileRefs?.length) {
+  const fileRefs = payload.fileRefs?.filter(ref => ref.source !== "inferred_text") ?? [];
+  if (fileRefs.length === 0) {
     return undefined;
   }
   return [
     "Workspace file refs:",
-    ...payload.fileRefs.map((ref, index) => [
+    ...fileRefs.map((ref, index) => [
       `- ${index + 1}. ${ref.label ? `${ref.label}: ` : ""}${ref.path} (${ref.kind}, ${ref.rootRelation}, materialization=${ref.materializationStatus})`,
       ref.blockedReason ? `  statusReason: ${ref.blockedReason}` : undefined,
       ref.previewText ? `  preview:\n${indentPromptBlock(ref.previewText)}` : undefined,
@@ -267,8 +320,17 @@ function readSnapshotThinkingLevel(record: Record<string, unknown>, key: string)
     value === "low" ||
     value === "medium" ||
     value === "high" ||
-    value === "xhigh"
+    value === "xhigh" ||
+    value === "max" ||
+    value === "ultra"
   )
+    ? value
+    : undefined;
+}
+
+function readSnapshotReasoningSummary(record: Record<string, unknown>, key: string): RunRequest["reasoningSummary"] {
+  const value = record[key];
+  return value === "auto" || value === "concise" || value === "detailed" || value === "none"
     ? value
     : undefined;
 }

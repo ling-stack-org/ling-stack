@@ -1,4 +1,5 @@
-import type { McpServerFormState, McpServerMutationRequest } from "../types.js";
+import type { McpServerFormState } from "../types.js";
+import type { McpServerMutationRequest } from "@ling-stack/contracts";
 import { splitShellishArgs } from "./shared.js";
 
 export function mcpServerFormToPayload(form: McpServerFormState): McpServerMutationRequest {

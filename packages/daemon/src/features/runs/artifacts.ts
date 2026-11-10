@@ -1,4 +1,4 @@
-import { mkdirSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { basename, extname, isAbsolute, relative, resolve as resolvePath } from "node:path";
 import {
   redactSecrets,
@@ -11,9 +11,14 @@ import {
 import type { PiRunnerEvent } from "@ling-stack/runner-pi";
 import { isPathInsideRoot, normalizeArtifactPath } from "../../shared/path.js";
 import { isRecord } from "../../shared/validation.js";
+import { formatEditPreview } from "./edit-diff-preview.js";
 
 const MAX_EXTRACTED_ARTIFACT_BYTES = 256 * 1024;
 const MAX_EXTRACTED_ARTIFACTS_PER_TOOL = 6;
+/** Maximum bytes returned by one explicit artifact range read. */
+export const MAX_ARTIFACT_RANGE_BYTES = 1024 * 1024;
+/** Maximum bytes returned by one un-ranged artifact download. Larger files must use ranges. */
+export const MAX_ARTIFACT_TRANSFER_BYTES = 8 * 1024 * 1024;
 
 type RunArtifactStore = RunStorePathsFacet & RunExecutionStoreFacet;
 
@@ -51,11 +56,82 @@ export function resolveArtifactContentPath(store: RunStorePathsFacet, artifact: 
   if (relativePath.startsWith("..") || isAbsolute(relativePath)) {
     throw new Error(`Artifact content path is outside .ling-stack/artifacts: ${artifact.path}`);
   }
-  return absolutePath;
+  const resolvedRoot = realpathSync(artifactRoot);
+  let resolvedContent: string;
+  try {
+    resolvedContent = realpathSync(absolutePath);
+  } catch (error) {
+    // Callers such as artifact recovery probe for a missing file with existsSync.
+    // They must still receive the lexically confined path for that read-only
+    // absence check; actual content reads will fail until a new realpath check.
+    if (isRecord(error) && error.code === "ENOENT") return absolutePath;
+    throw error;
+  }
+  if (!isPathInsideRoot(resolvedRoot, resolvedContent)) {
+    throw new Error(`Artifact content path is outside .ling-stack/artifacts: ${artifact.path}`);
+  }
+  return resolvedContent;
 }
 
 export function inferArtifactContentType(artifact: RunArtifact): string {
   return contentTypeForArtifactType(artifact.type);
+}
+
+export interface ArtifactContentRange {
+  readonly content: Buffer;
+  readonly offset: number;
+  readonly endExclusive: number;
+  readonly sizeBytes: number;
+  readonly partial: boolean;
+}
+
+/**
+ * Read only a bounded byte range from a trusted artifact path. The caller is
+ * responsible for resolving the path beneath the artifact root and for
+ * authorizing the artifact owner before invoking this helper.
+ */
+export function readArtifactContentRange(
+  contentPath: string,
+  offset = 0,
+  limit = MAX_ARTIFACT_RANGE_BYTES,
+): ArtifactContentRange {
+  if (!Number.isSafeInteger(offset) || offset < 0) {
+    throw new Error("Artifact range offset must be a non-negative safe integer.");
+  }
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_ARTIFACT_RANGE_BYTES) {
+    throw new Error(`Artifact range limit must be between 1 and ${MAX_ARTIFACT_RANGE_BYTES}.`);
+  }
+  const stats = statSync(contentPath);
+  if (!stats.isFile()) {
+    throw new Error(`Artifact content is not a file: ${contentPath}`);
+  }
+  const sizeBytes = Number(stats.size);
+  if (offset > sizeBytes || (offset === sizeBytes && sizeBytes > 0)) {
+    throw new Error("Artifact range offset exceeds content size.");
+  }
+  const endExclusive = Math.min(sizeBytes, offset + limit);
+  const content = Buffer.alloc(endExclusive - offset);
+  if (content.byteLength > 0) {
+    const fd = openSync(contentPath, "r");
+    try {
+      let read = 0;
+      while (read < content.byteLength) {
+        const count = readSync(fd, content, read, content.byteLength - read, offset + read);
+        if (count <= 0) break;
+        read += count;
+      }
+      return {
+        content: read === content.byteLength ? content : content.subarray(0, read),
+        offset,
+        endExclusive: offset + read,
+        sizeBytes,
+        partial: offset + read < sizeBytes,
+      };
+    } finally {
+      closeSync(fd);
+    }
+  }
+  return { content, offset, endExclusive, sizeBytes, partial: false };
 }
 
 function extractArtifactCandidates(options: {
@@ -92,7 +168,7 @@ function extractArtifactCandidates(options: {
     }
   }
 
-  if (options.event.toolName === "edit") {
+  if (options.event.toolName === "edit" && !options.event.isError) {
     const edits = readInputArray(options.sourceArgs, "edits");
     const hasDiffOutput = candidates.some((candidate) => candidate.type === "diff");
     if (edits.length > 0 && !hasDiffOutput) {
@@ -406,7 +482,10 @@ function truncateExtractedArtifactContent(content: string): string {
   if (bytes <= MAX_EXTRACTED_ARTIFACT_BYTES) {
     return content;
   }
-  const truncated = Buffer.from(content, "utf8").subarray(0, MAX_EXTRACTED_ARTIFACT_BYTES).toString("utf8");
+  const encoded = Buffer.from(content, "utf8");
+  let end = MAX_EXTRACTED_ARTIFACT_BYTES;
+  while (end > 0 && (encoded[end] & 0xc0) === 0x80) end -= 1;
+  const truncated = encoded.subarray(0, end).toString("utf8");
   return `${truncated}\n\n[truncated from ${bytes} bytes]`;
 }
 
@@ -438,22 +517,6 @@ function contentTypeForArtifactType(type: ArtifactType): string {
     return "video/mp4";
   }
   return "application/octet-stream";
-}
-
-function formatEditPreview(edits: readonly unknown[]): string {
-  if (edits.length === 0) {
-    return "No edit preview was provided.";
-  }
-  return edits
-    .map((edit, index) => {
-      if (!isRecord(edit)) {
-        return `#${index + 1}\n<invalid edit entry>`;
-      }
-      const oldText = readInputString(edit, "oldText", "");
-      const newText = readInputString(edit, "newText", "");
-      return `#${index + 1}\n- ${truncatePreview(oldText, 320)}\n+ ${truncatePreview(newText, 320)}`;
-    })
-    .join("\n\n");
 }
 
 function readInputString(input: unknown, key: string, fallback: string): string {

@@ -13,8 +13,9 @@ import type {
 } from "./channels.js";
 import type { McpToolDefaultApproval } from "./mcp.js";
 import type { RetentionTombstone } from "./retention.js";
-import type { ConversationActiveReplyTarget, WorkUnit } from "./runtime.js";
+import type { ConversationActiveReplyTarget, ExecutionCancellationRequest, WorkUnit } from "./runtime.js";
 import type { ConversationGeneratedMedia } from "./media.js";
+import type { ConversationDetailResponse, ConversationNarrationSegment } from "./conversations.js";
 
 export interface TeammatePersonaDraftRequest {
   readonly content: string;
@@ -254,6 +255,8 @@ export interface TeammateDirectThread {
 
 export type TeammateDirectMessageAuthorType = "local-user" | "ai-teammate" | "system";
 
+export type TeammateDirectMessageSystemPurpose = "governance_notification" | "execution_control";
+
 export type TeammateDirectMessageStatus = "pending" | "ready" | "blocked" | "failed" | "cancelled";
 
 export interface TeammateDirectMessage {
@@ -263,7 +266,11 @@ export interface TeammateDirectMessage {
   readonly teammateId: string;
   readonly authorType: TeammateDirectMessageAuthorType;
   readonly authorId?: string;
+  /** Host-issued purpose for system rows. Unknown system rows are never display authority. */
+  readonly systemPurpose?: TeammateDirectMessageSystemPurpose;
   readonly body: string;
+  /** Host-derived assistant message boundaries; never a second durable history. */
+  readonly narrationSegments?: readonly ConversationNarrationSegment[];
   readonly attachmentIds: readonly string[];
   readonly linkPreviewIds: readonly string[];
   readonly fileRefs: readonly ChannelMessageFileRef[];
@@ -280,6 +287,7 @@ export interface TeammateDirectMessage {
 }
 
 export interface CreateTeammateDirectMessageRequest {
+  readonly idempotencyKey?: string;
   readonly body: string;
   readonly attachmentIds?: readonly string[];
   readonly linkPreviewIds?: readonly string[];
@@ -355,6 +363,7 @@ export interface TeammateDirectReplyIntervention {
   readonly threadId: string;
   readonly sourceMessageId: string;
   readonly sourceWorkUnitId?: string;
+  readonly sourceAttemptId?: string;
   readonly mode: TeammateDirectReplyInterventionMode;
   readonly status: TeammateDirectReplyInterventionStatus;
   readonly instruction: string;
@@ -377,7 +386,7 @@ export interface CreateTeammateDirectReplyInterventionRequest {
   readonly idempotencyKey?: string;
 }
 
-export interface CancelTeammateDirectReplyRequest {
+export interface CancelTeammateDirectReplyRequest extends ExecutionCancellationRequest {
   readonly reason?: string;
 }
 
@@ -407,6 +416,7 @@ export interface TeammateDirectRuntimeResponse {
 
 export interface TeammateDirectInterventionListResponse {
   readonly cwd: string;
+  readonly idempotencyKey?: string;
   readonly teammateId: string;
   readonly thread: TeammateDirectThread;
   readonly interventions: readonly TeammateDirectReplyIntervention[];
@@ -462,6 +472,19 @@ export interface TeammatePrivateAttachmentMutationResponse {
   readonly attachment: TeammatePrivateAttachment;
 }
 
+export interface TeammateDirectMessageSubmissionReceipt {
+  readonly cwd: string;
+  readonly teammateId: string;
+  readonly idempotencyKey: string;
+  readonly status: "accepted" | "unknown";
+  readonly message?: TeammateDirectMessage;
+  readonly aiReply?: TeammateDirectMessage;
+}
+
+export interface TeammateDirectMessageStreamAcceptedEvent {
+  readonly message: TeammateDirectMessage;
+}
+
 export interface TeammateDirectMessageStreamReadyEvent {
   readonly message: TeammateDirectMessage;
   readonly aiReply: TeammateDirectMessage;
@@ -471,6 +494,7 @@ export interface TeammateDirectMessageStreamDeltaEvent {
   readonly messageId: string;
   readonly delta: string;
   readonly body: string;
+  readonly narrationSegments?: readonly ConversationNarrationSegment[];
 }
 
 export interface TeammateDirectMessageStreamRunLinkedEvent {
@@ -502,10 +526,14 @@ export interface TeammateDirectThreadResponse {
 }
 
 export interface TeammateDirectMessageListResponse {
+  /** Whole private-thread runtime metrics, mirroring the canonical timeline. */
+  readonly runtimeMetrics?: import("./conversation-runtime-metrics.js").ConversationRuntimeMetrics;
   readonly cwd: string;
   readonly teammateId: string;
   readonly thread: TeammateDirectThread;
   readonly messages: readonly TeammateDirectMessage[];
+  /** Canonical private facts from the owning LingThread; not the direct-message table. */
+  readonly timeline?: ConversationDetailResponse;
   readonly generatedMedia: readonly ConversationGeneratedMedia[];
   readonly hasMore?: boolean;
   readonly nextBeforeMessageId?: string;

@@ -1,8 +1,10 @@
 import type { SQLOutputValue } from "node:sqlite";
+import { isSupportedLocale } from "@ling-stack/localization";
 import {
   DEFAULT_SKILL_GOVERNANCE_POLICY,
   DEFAULT_WORKSPACE_ID,
   type LingConversationTone,
+  type ReasoningSummaryMode,
   type ResponseLanguagePreference,
   type SkillGovernancePolicy,
   type UpdateWorkspaceSettingsInput,
@@ -46,12 +48,15 @@ export class SqliteWorkspaceSettingsStore {
       locale: nullableUpdate(input.locale, current.locale),
       responseLanguage: nullableUpdate(input.responseLanguage, current.responseLanguage),
       lingConversationTone: nullableUpdate(input.lingConversationTone, current.lingConversationTone),
+      defaultReasoningSummary: nullableUpdate(input.defaultReasoningSummary, current.defaultReasoningSummary),
       defaultProviderPresetId: nullableUpdate(input.defaultProviderPresetId, current.defaultProviderPresetId),
       mediaGenerationDefaults: nullableUpdate(input.mediaGenerationDefaults, current.mediaGenerationDefaults),
       defaultAuthorizationMode: permissionDefaults.authorizationMode,
       defaultWorkspaceAccessMode: permissionDefaults.workspaceAccessMode,
-      defaultPermissionMode: permissionDefaults.permissionMode,
-      defaultPermissionPreset: permissionDefaults.permissionPreset,
+      ...(input.schemaVersion === 2 ? {} : {
+        defaultPermissionMode: permissionDefaults.permissionMode,
+        defaultPermissionPreset: permissionDefaults.permissionPreset,
+      }),
       channelNotifications: nullableUpdate(input.channelNotifications, current.channelNotifications),
       channelActivityViews: nullableUpdate(input.channelActivityViews, current.channelActivityViews),
       skillGovernancePolicy: input.skillGovernancePolicy === undefined
@@ -85,33 +90,48 @@ function createDefaultWorkspaceSettings(now: string): WorkspaceSettings {
 }
 
 function parseOptionalResponseLanguagePreference(value: unknown): ResponseLanguagePreference | undefined {
-  return value === "follow_user" || value === "zh-CN" || value === "en-US" ? value : undefined;
+  return value === "follow_user" || isSupportedLocale(value) ? value : undefined;
 }
 
 function parseOptionalLingConversationTone(value: unknown): LingConversationTone | undefined {
   return value === "friendly" || value === "pragmatic" || value === "none" ? value : undefined;
 }
 
+function parseOptionalReasoningSummaryMode(value: unknown): ReasoningSummaryMode | undefined {
+  return value === "auto" || value === "concise" || value === "detailed" || value === "none"
+    ? value
+    : undefined;
+}
+
 function parseWorkspaceSettings(value: string, updatedAt: string): WorkspaceSettings {
   const parsed = parseJsonObject(value);
-  const defaultPermissionMode = parseOptionalSessionPermissionMode(parsed.defaultPermissionMode) ?? "workspace_write";
-  const defaultPermissionPreset = parseOptionalPermissionPreset(parsed.defaultPermissionPreset) ?? "workspace_collaboration";
-  const legacySelection = authorizationAndAccessFromLegacyPermission(defaultPermissionMode, defaultPermissionPreset);
+  const parsedPermissionMode = parseOptionalSessionPermissionMode(parsed.defaultPermissionMode);
+  const parsedPermissionPreset = parseOptionalPermissionPreset(parsed.defaultPermissionPreset);
+  const legacyPermissionMode = parsedPermissionMode ?? "workspace_write";
+  const legacyPermissionPreset = parsedPermissionPreset ?? "workspace_collaboration";
+  const legacySelection = authorizationAndAccessFromLegacyPermission(legacyPermissionMode, legacyPermissionPreset);
+  const parsedAuthorizationMode = parseOptionalAuthorizationMode(parsed.defaultAuthorizationMode);
+  const parsedWorkspaceAccessMode = parseOptionalWorkspaceAccessMode(parsed.defaultWorkspaceAccessMode);
+  const authorizationMode = parsedAuthorizationMode ?? legacySelection.authorizationMode;
+  const workspaceAccessMode = parsedWorkspaceAccessMode ?? legacySelection.workspaceAccessMode;
+  const legacyProjection = legacyPermissionFromAuthorizationAndAccess(authorizationMode, workspaceAccessMode);
+  const hasCanonicalPermission = parsedAuthorizationMode !== undefined || parsedWorkspaceAccessMode !== undefined;
   const parsedTheme: WorkspaceSettings["theme"] =
     parsed.theme === "light" || parsed.theme === "dark" || parsed.theme === "system" ? parsed.theme : undefined;
   return omitUndefined({
     schemaVersion: 1 as const,
     workspaceCwd: typeof parsed.workspaceCwd === "string" && parsed.workspaceCwd.trim() ? parsed.workspaceCwd : undefined,
     theme: parsedTheme,
-    locale: typeof parsed.locale === "string" && parsed.locale.trim() ? parsed.locale : undefined,
+    locale: isSupportedLocale(parsed.locale) ? parsed.locale : undefined,
     responseLanguage: parseOptionalResponseLanguagePreference(parsed.responseLanguage),
     lingConversationTone: parseOptionalLingConversationTone(parsed.lingConversationTone),
+    defaultReasoningSummary: parseOptionalReasoningSummaryMode(parsed.defaultReasoningSummary),
     defaultProviderPresetId: typeof parsed.defaultProviderPresetId === "string" && parsed.defaultProviderPresetId.trim() ? parsed.defaultProviderPresetId : undefined,
     mediaGenerationDefaults: parseMediaGenerationDefaults(parsed.mediaGenerationDefaults),
-    defaultAuthorizationMode: parseOptionalAuthorizationMode(parsed.defaultAuthorizationMode) ?? legacySelection.authorizationMode,
-    defaultWorkspaceAccessMode: parseOptionalWorkspaceAccessMode(parsed.defaultWorkspaceAccessMode) ?? legacySelection.workspaceAccessMode,
-    defaultPermissionMode,
-    defaultPermissionPreset,
+    defaultAuthorizationMode: authorizationMode,
+    defaultWorkspaceAccessMode: workspaceAccessMode,
+    defaultPermissionMode: hasCanonicalPermission ? legacyProjection.permissionMode : legacyPermissionMode,
+    defaultPermissionPreset: hasCanonicalPermission ? legacyProjection.permissionPreset : legacyPermissionPreset,
     channelNotifications: parseOptionalStringRecord(parsed.channelNotifications),
     channelActivityViews: parseOptionalUnknownRecord(parsed.channelActivityViews),
     skillGovernancePolicy: parseSkillGovernancePolicy(parsed.skillGovernancePolicy) ?? DEFAULT_SKILL_GOVERNANCE_POLICY,

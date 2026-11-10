@@ -53,6 +53,8 @@ export class CuaDriverDesktopBridgeAuthority {
     readonly workspaceCwd: string;
   }) | undefined;
   private currentAvailability: DesktopCuaDriverAvailabilityV1 | undefined;
+  /** Observation fence for this handshake; retirement does not reset it. */
+  private generationHighWater = 0;
 
   constructor(options: CuaDriverDesktopBridgeAuthorityOptions) {
     this.workspaceCwd = options.workspaceCwd;
@@ -64,7 +66,13 @@ export class CuaDriverDesktopBridgeAuthority {
       workspaceCwd: this.workspaceCwd,
       now: options.now,
       scheduleDeadline: options.scheduleDeadline,
-      onReplaced: options.onLeaseReplaced,
+      onReplaced: (previous, next) => {
+        // A successful replacement is installed before this synchronous
+        // observer runs. Fence its generation before projection/retry reads.
+        // A failed install or an old-tuple clear has no accepted next lease.
+        if (next) this.observeGeneration(next);
+        options.onLeaseReplaced?.(previous, next);
+      },
     });
   }
 
@@ -88,6 +96,7 @@ export class CuaDriverDesktopBridgeAuthority {
     this.desktopInstanceEpoch = authority.desktopInstanceEpoch;
     this.currentAuthority = authority;
     this.currentAvailability = undefined;
+    this.generationHighWater = 0;
     this.leaseRegistry.clear();
     return {
       daemonAuthorityEpoch: authority.daemonAuthorityEpoch,
@@ -111,7 +120,11 @@ export class CuaDriverDesktopBridgeAuthority {
     if (!this.isCurrentHandshake(lease)) {
       return { accepted: false, reason: "stale_instance" };
     }
-    return this.leaseRegistry.publish(lease);
+    const result = this.leaseRegistry.publish(lease);
+    // The first successful install has no replacement observer. Recheck the
+    // tuple because a replacement observer can rotate/clear this authority.
+    if (result.accepted && result.lease) this.observeGeneration(result.lease);
+    return result;
   }
 
   revoke(revoke: DesktopCuaDriverLeaseRevokeV1): boolean {
@@ -119,7 +132,12 @@ export class CuaDriverDesktopBridgeAuthority {
   }
 
   getCurrentAvailability(): DesktopCuaDriverAvailabilityV1 | undefined {
-    return this.currentAvailability;
+    const current = this.currentAvailability;
+    return current
+      && this.isCurrentHandshake(current)
+      && current.generation >= this.generationHighWater
+      ? current
+      : undefined;
   }
 
   /**
@@ -136,10 +154,16 @@ export class CuaDriverDesktopBridgeAuthority {
       return { accepted: false, reason: "stale_generation" };
     }
     const currentLease = this.leaseRegistry.getCurrent();
-    if (currentLease && availability.generation < currentLease.generation) {
-      return { accepted: false, reason: "stale_generation", availability: this.currentAvailability };
+    // getCurrent() may synchronously retire an expired lease and forward an
+    // observer; that observer must not let an old tuple/generation back in.
+    const current = this.getCurrentAvailability();
+    if (
+      !this.isCurrentHandshake(availability)
+      || availability.generation < this.generationHighWater
+      || (currentLease && availability.generation < currentLease.generation)
+    ) {
+      return { accepted: false, reason: "stale_generation", availability: current };
     }
-    const current = this.currentAvailability;
     if (current) {
       if (availability.generation < current.generation) {
         return { accepted: false, reason: "stale_generation", availability: current };
@@ -153,6 +177,7 @@ export class CuaDriverDesktopBridgeAuthority {
         return { accepted: false, reason: "stale_sequence", availability: current };
       }
     }
+    this.observeGeneration(availability);
     this.currentAvailability = availability;
     if (currentLease && availability.generation >= currentLease.generation) {
       this.leaseRegistry.clear();
@@ -166,7 +191,14 @@ export class CuaDriverDesktopBridgeAuthority {
     }
     this.currentAuthority = undefined;
     this.currentAvailability = undefined;
+    this.generationHighWater = 0;
     this.leaseRegistry.clear();
+  }
+
+  private observeGeneration(identity: LeaseHandshakeIdentity & { readonly generation: number }): void {
+    if (this.isCurrentHandshake(identity)) {
+      this.generationHighWater = Math.max(this.generationHighWater, identity.generation);
+    }
   }
 }
 

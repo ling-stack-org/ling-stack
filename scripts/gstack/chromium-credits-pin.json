@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "snapshotReceiptChecksum": "sha256:7ea4fafa26816906e2bf256093ad38c50ffb681d01731bca5fe8926c99ccb707",
+  "sourceRevision": "059c884787b1bc15faa5afe5250f7d3a7e0ef64a",
+  "pack": {
+    "path": "chrome-mac/Chromium.app/Contents/Frameworks/Chromium Framework.framework/Versions/151.0.7922.0/Resources/resources.pak",
+    "sizeBytes": 18528780,
+    "checksum": "sha256:7a6bca98ae232138ff20688cab76aead584f7715daf7887eb8649d2b91073d80"
+  },
+  "credits": {
+    "resourceId": 40571,
+    "sizeBytes": 401,
+    "checksum": "sha256:c2a338c4f1f5f5e19d3020a25f8dc47e394ba4fed1ec2d8dc5b2a915170e02bc",
+    "classification": "upstream-sample-placeholder"
+  },
+  "references": [
+    { "path": "tools/grit/grit/format/data_pack.py", "output": "reference-data-pack.py.txt", "checksum": "sha256:ad0ecd576e127b5a07d0ee49741aa1c4d4050c246e7c12b6a00f05f73aa2f914" },
+    { "path": "ui/base/resource/resource_bundle.h", "output": "reference-resource-bundle.h.txt", "checksum": "sha256:4805ee854c65b67e0dffa1bfe8669a0b304ae2652ae8538b1aad4d21048123da" },
+    { "path": "ui/base/resource/resource_bundle.cc", "output": "reference-resource-bundle.cc.txt", "checksum": "sha256:b24eb0f3ff237abc0364feeb2d3e7f1ffbb5d7b2a33a963c2cf45dfb3e9cd2f0" },
+    { "path": "tools/grit/grit/node/base.py", "output": "reference-grit-node-base.py.txt", "checksum": "sha256:31a7b1759e0fd5e240e97eedfe1f8b2396ceb4bdf24414aa20b39255de407bdf" },
+    { "path": "components/resources/about_ui_resources.grdp", "output": "reference-about-ui-resources.grdp.txt", "checksum": "sha256:1de1290adbdd466df040a300249a6985bc103310db7452dfd48c1a174dca9b22" },
+    { "path": "components/resources/sample_credits.html", "output": "reference-sample-credits.html.txt", "checksum": "sha256:c2a338c4f1f5f5e19d3020a25f8dc47e394ba4fed1ec2d8dc5b2a915170e02bc" }
+  ]
+}

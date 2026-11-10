@@ -1,0 +1,10 @@
+diff --git a/packages/core/src/harness/evaluation-json.ts b/packages/core/src/harness/evaluation-json.ts
+--- a/packages/core/src/harness/evaluation-json.ts
++++ b/packages/core/src/harness/evaluation-json.ts
+@@ -49,5 +49,5 @@
+   if (Array.isArray(value)) return value.map(sortRunEvaluationJson);
+   if (isRunEvaluationJsonRecord(value)) {
+-    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, sortRunEvaluationJson(value[key])]));
++    return Object.fromEntries(Object.keys(value).map((key) => [key, sortRunEvaluationJson(value[key])]));
+   }
+   return value;

@@ -184,6 +184,46 @@ Rules:
   not quote private prompt text by default.
 - A source ref can appear in folded evidence without becoming a visible inline citation.
 
+### Privacy lineage enforcement (2026-09-06)
+
+- Host evidence owns both visibility and sensitivity. Validation must compare model
+  refs against the strongest policy for the same `(kind, id)`, including duplicates
+  across evidence sections. A model may further restrict a ref but cannot downgrade
+  `developer_only` to folded/conversation, folded to conversation, or private/secret
+  sensitivity to normal/unspecified. Invalid output follows the existing repair/fallback path.
+- Report DTO adapters preserve the exact policy markers. Normal/private/channel use
+  one shared adapter; the generic Timeline ref type carries these markers through
+  normalization. This does not grant file-opening or other Host capabilities.
+- Post-model Host enrichment carries the complete evidence section's source refs
+  when rebinding participant contributions or artifact references. Retain the model's
+  original refs alongside Host refs until validation: overwriting a weaker model alias
+  would conceal a privacy downgrade. The shared visibility projection then withholds
+  restricted enriched sections; durable evidence and audit content remain unchanged.
+- Before synthesis, filter the model-visible snapshot by the same whole-section
+  principle. Compute restricted identities from all original Host refs before
+  deduplication; remove restricted section bodies as well as links, including mixed
+  refs and public aliases. Preserve the original evidence snapshot and fingerprint
+  for validation, completion decisions, persistence, and audit.
+- The requirement for nonempty verification applies when a successful snapshot has
+  model-visible checks. If all checks were withheld by the strongest Host privacy
+  policy, their omission must not trigger a repair/fallback loop. Outcome compatibility,
+  claimed check evidence, completion gates, and durable checks still use all Host facts.
+- Visibility filtering examines whole sections, not only their links. A section tied
+  to developer-only, secret-adjacent, or unpromoted private/audit evidence must not
+  expose its title, body, command, path, artifact, or copy text. Mixed public/restricted
+  refs remain restricted; a public duplicate cannot launder a restricted identity.
+- A restricted outcome retains only the Host-owned terminal status expressed using
+  existing localized deterministic outcome copy. Its model title/body and corrections
+  are omitted. Filtering does not change outcome status, report generation, fingerprint,
+  required participant evidence, or stored history.
+- Shared Timeline projection, result details, legacy ViewModel adapters still in use,
+  and final-result copy use the same policy. Copy may inspect privacy flags but must
+  never serialize source identity, private labels, hidden content, or raw evidence.
+- Tests must cover Host downgrade rejection, ordinary/private/channel DTO parity,
+  mixed/duplicate refs, every section, visible safe content, and copied content.
+  No new SQLite table or history rewrite is needed. Packaged verification remains a
+  separate gate after source tests; fixture privacy sentinels are not real secrets.
+
 ## TerminalReportEvidenceSnapshot
 
 The evidence snapshot freezes the facts used for one report generation.

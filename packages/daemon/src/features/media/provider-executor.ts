@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   DEFAULT_WORKSPACE_ID,
+  createRuntimeResourceRenewal,
   normalizeProviderPresetForMediaRuntime,
   resolveMediaProviderRuntimeState,
   type MediaJob,
@@ -9,6 +10,7 @@ import {
   type ProviderStoreFacet,
   type RunExecutionStoreFacet,
   type RunStore,
+  type RunArtifact,
   type RunStorePathsFacet,
   type RuntimeSupervisorStoreFacet,
   type SecretResolver,
@@ -20,12 +22,17 @@ import {
   type MediaExecutionHandle,
   type MediaExecutionRequest,
   type MediaExecutionResult,
+  type MediaVendorHttpClient,
 } from "@ling-stack/providers";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
+import { MediaLocalExecutionAdmissionError, type MediaLocalExecutionHandle } from "../../runtime/media-local-executions.js";
+import { assertConversationMediaLocalBinding, isCapturedConversationMediaJob } from "./local-execution-binding.js";
 import { HttpError } from "../../errors.js";
 import { redactTextWithSecrets } from "../../shared/redaction.js";
 import { resolveProviderSecret } from "../providers/secrets.js";
-import { createMediaJobArtifacts, mediaExecutionHasRequiredArtifact } from "./artifact-collector.js";
+import { mediaExecutionHasRequiredArtifact } from "./artifact-collector.js";
+import { collectMediaExecutionArtifacts, prepareProviderMediaReceipt } from "./receipt-execution.js";
+import type { HostMediaReceiptProducer } from "./host-receipt-producer.js";
 import {
   bindMediaExecutionHandleToRuntime,
   findConversationMediaWorkUnit,
@@ -33,17 +40,20 @@ import {
   synchronizeConversationMediaWorkUnitTerminal,
 } from "./conversation-runtime-recovery.js";
 import type { MediaJobExecutionResult, MediaRuntimeHandle, RunMediaJobHooks } from "./executor.js";
+import { restoreOrRecoverMediaRuntimeHandle } from "./runtime-recovery.js";
 import { requiresMediaProductionApproval } from "./media-cost-approval.js";
+import { mediaApprovalRecoveryBlocked } from "./approval-recovery-guard.js";
 import { assertMediaJobProvider, createMediaAdapterForProvider } from "./provider.js";
 import { selectInitialMediaSceneResult } from "./scene-result-selection.js";
 import { materializeMediaJobVideoImageInputs } from "./video-image-materializer.js";
+import { createGuardedMediaHttpTransport } from "./guarded-native-transport.js";
+import { assertMediaJobBusinessActive, cancelledMediaJobResult, settleLocallyCancelledMediaJob,
+  updateActiveMediaJobStatus } from "./scene-cancellation.js";
 
 const POLL_INTERVAL_MS = 2_000;
 const MAX_POLL_ATTEMPTS = 10_800;
 const MEDIA_RUNTIME_SEMAPHORE_TTL_MS = 6 * 60 * 60 * 1000;
 const pendingOperationPrefix = "ling-pending:";
-const scheduled = new Map<string, ReturnType<typeof setTimeout>>();
-const inFlight = new Map<string, Promise<MediaJobExecutionResult>>();
 
 type ProviderExecutionStore =
   MediaStoreFacet &
@@ -59,17 +69,13 @@ export async function runProviderMediaJobExecution(input: {
   readonly mediaJobId: string;
   readonly hooks: RunMediaJobHooks;
   readonly retryTerminal?: boolean;
+  readonly localExecution?: MediaLocalExecutionHandle;
 }): Promise<MediaJobExecutionResult> {
-  const key = `${input.cwd}\u0000${input.mediaJobId}`;
-  const existing = inFlight.get(key);
-  if (existing) return await existing;
-  const execution = runProviderMediaJobExecutionOwner(input);
-  inFlight.set(key, execution);
-  try {
-    return await execution;
-  } finally {
-    if (inFlight.get(key) === execution) inFlight.delete(key);
-  }
+  // Registration precedes Store access and owns the entire async tick,
+  // including artifact collection and its success/failure tail writes.
+  return await input.storeRegistry.mediaLocalExecutions.runTick({
+    cwd: input.cwd, mediaJobId: input.mediaJobId, execution: input.localExecution,
+  }, (localExecution) => runProviderMediaJobExecutionOwner({ ...input, localExecution }));
 }
 
 async function runProviderMediaJobExecutionOwner(input: {
@@ -79,16 +85,25 @@ async function runProviderMediaJobExecutionOwner(input: {
   readonly mediaJobId: string;
   readonly hooks: RunMediaJobHooks;
   readonly retryTerminal?: boolean;
+  readonly localExecution: MediaLocalExecutionHandle;
 }): Promise<MediaJobExecutionResult> {
+  input.storeRegistry.mediaLocalExecutions.assertCompletionAllowed(input.localExecution);
   const store = input.storeRegistry.getStore(input.cwd);
+  assertConversationMediaLocalBinding({ store, mediaJobId: input.mediaJobId,
+    registry: input.storeRegistry.mediaLocalExecutions, localExecution: input.localExecution });
   let job = store.getMediaJob(input.mediaJobId);
   if (!job) return notFound(input.mediaJobId);
+  if (job.status === "cancelled" && (input.retryTerminal || store.getMediaSceneRunByMediaJobId(job.id))) {
+    const cancelled = settleLocallyCancelledMediaJob({ store, registry: input.storeRegistry.mediaLocalExecutions,
+      cwd: input.cwd, mediaJobId: job.id, localExecution: input.localExecution })!;
+    return cancelledMediaJobResult(cancelled, input.retryTerminal);
+  }
   if (job.executionSource.kind !== "provider") {
     return { statusCode: 400, body: { error: "invalid_execution_source", message: "该任务不是模型直接生成任务。" } };
   }
   if (job.status === "succeeded") {
     settleExecutionHandle(store, job.id, "succeeded", "media-job-already-succeeded");
-    clearScheduled(job.id);
+    clearScheduled(input);
     selectInitialMediaSceneResult(store, job.id, now());
     return { statusCode: 200, body: { mediaJob: job, artifacts: [] } };
   }
@@ -99,12 +114,20 @@ async function runProviderMediaJobExecutionOwner(input: {
   let supervised: MediaRuntimeHandle | undefined;
   let handle = store.getMediaJobExecutionHandle(job.id);
   let secretValue: string | undefined;
+  let receipt: HostMediaReceiptProducer | undefined;
+  let persistedArtifacts: readonly RunArtifact[] = [];
+  let admissionFailure: MediaLocalExecutionAdmissionError | undefined;
+  const captureAdmissionFailure = (error: MediaLocalExecutionAdmissionError) => { admissionFailure ??= error; };
+  const assertCompletion = (runtime?: MediaRuntimeHandle) => {
+    if (admissionFailure) throw admissionFailure;
+    assertMediaCompletionAllowed(input, store, runtime);
+  };
   try {
     if (job.status === "waiting_for_approval") {
-      job = store.updateMediaJobStatus(job.id, { status: "queued", errorMessage: null }, now()) ?? job;
+      job = updateActiveMediaJobStatus(store, job.id, { status: "queued", errorMessage: null }, now());
     }
     const terminalStatus = job.status === "failed" || job.status === "cancelled" ? job.status : undefined;
-    const retryingTerminal = terminalStatus !== undefined && input.retryTerminal === true && (!handle || isPendingHandle(handle));
+    const retryingTerminal = terminalStatus === "failed" && input.retryTerminal === true && (!handle || isPendingHandle(handle));
     if (terminalStatus && !retryingTerminal) {
       const child = findConversationMediaWorkUnit(store, job.id);
       const shouldAuditPreSubmissionCancellation = terminalStatus === "cancelled" &&
@@ -113,28 +136,37 @@ async function runProviderMediaJobExecutionOwner(input: {
         // Adopt the queued conversation child below so pre-submission cancellation still records one attempt.
       } else {
         if (terminalStatus === "cancelled" && handle && !isPendingHandle(handle)) {
-          await cancelPersistedProviderOperation(store, job, handle, input.secretResolver);
+          await cancelPersistedProviderOperation(store, job, handle, input.secretResolver, input, captureAdmissionFailure);
+          assertCompletion();
         }
         synchronizeConversationMediaWorkUnitTerminal(store, job.id, terminalStatus, now());
         settleExecutionHandle(store, job.id, terminalStatus, `media-job-already-${terminalStatus}`);
-        clearScheduled(job.id);
+        clearScheduled(input);
         notifyProjection(input, job.id);
         return terminalMediaJobResult(job);
       }
     }
     if (retryingTerminal) {
+      input.storeRegistry.mediaLocalExecutions.assertEffectAllowed(input.localExecution, "forward");
       if (handle && isPendingHandle(handle)) {
         store.deleteMediaJobExecutionHandle(job.id);
         handle = undefined;
       }
-      job = store.updateMediaJobStatus(job.id, { status: "queued", errorMessage: null }, now()) ?? job;
+      const retried = store.updateMediaJobStatus(job.id, { status: "queued", errorMessage: null, expectedStatuses: ["failed"] }, now());
+      if (!retried) throw new MediaLocalExecutionAdmissionError("media_job_terminal", "Media retry lost its terminal status comparison.");
+      job = retried;
       const child = prepareConversationMediaWorkUnitForExplicitRetry(store, job.id, now());
       if (child && child.status !== "queued") {
         throw new Error(`Conversation media work unit could not be retried: ${child.id} (${child.status}).`);
       }
       handle = store.getMediaJobExecutionHandle(job.id);
     }
-    supervised = restoreRuntimeHandle(store, handle) ?? restoreConversationRuntimeHandle(store, job.id) ?? input.hooks.startRuntimeWorkUnit({
+    supervised = restoreOrRecoverMediaRuntimeHandle({
+      store,
+      handle,
+      hooks: input.hooks,
+      reason: "media-provider-daemon-recovery",
+    }) ?? restoreConversationRuntimeHandle(store, job.id) ?? input.hooks.startRuntimeWorkUnit({
       store,
       kind: "media_job",
       ownerType: "media_job",
@@ -144,12 +176,16 @@ async function runProviderMediaJobExecutionOwner(input: {
       idempotencyKey: `media_job:${job.id}:provider:${randomUUID()}`,
       request: { mediaJobId: job.id, providerPresetId: job.providerPresetId, operation: job.operation },
     });
+    input.storeRegistry.mediaLocalExecutions.bindAttempt(input.localExecution,
+      { ...toRuntimeAttemptFence(supervised.attempt),
+        ...(supervised.workUnit.linkedRunId ? { runId: supervised.workUnit.linkedRunId } : {}) });
     if (handle) {
       handle = bindMediaExecutionHandleToRuntime(store, handle, supervised, now());
     }
     if (job.status === "cancelled") {
       if (handle) {
-        await cancelPersistedProviderOperation(store, job, handle, input.secretResolver);
+        await cancelPersistedProviderOperation(store, job, handle, input.secretResolver, input, captureAdmissionFailure);
+        assertCompletion(supervised);
       }
       input.hooks.transitionRuntimeWorkUnitCancelled({
         store,
@@ -157,13 +193,13 @@ async function runProviderMediaJobExecutionOwner(input: {
         attemptId: supervised.attempt.id,
         reason: "媒体任务已取消。",
       });
-      finishExecution(store, job.id, supervised, "cancelled", "media-job-cancelled-before-submission");
+      finishExecution(store, job.id, supervised, "cancelled", "media-job-cancelled-before-submission", input);
       notifyProjection(input, job.id);
       return { statusCode: 200, body: { mediaJob: job, artifacts: [] } };
     }
     if (job.status === "failed" && !retryingTerminal) {
       terminalFailure(store, input.hooks, supervised, "media_job_execution_failed", "媒体任务已经失败，需要用户明确重试。");
-      finishExecution(store, job.id, supervised, "failed", "media-job-already-failed");
+      finishExecution(store, job.id, supervised, "failed", "media-job-already-failed", input);
       notifyProjection(input, job.id);
       return terminalMediaJobResult(job);
     }
@@ -175,15 +211,22 @@ async function runProviderMediaJobExecutionOwner(input: {
     }, input.secretResolver);
     const readiness = resolveLiveMediaExecutionReadiness(store, provider, job.operation, input.secretResolver);
     if (!readiness.ok) {
-      const failed = store.updateMediaJobStatus(job.id, { status: "failed", errorMessage: readiness.message }, now()) ?? job;
+      const failed = updateActiveMediaJobStatus(store, job.id, { status: "failed", errorMessage: readiness.message }, now());
       terminalFailure(store, input.hooks, supervised, readiness.code, readiness.message);
-      finishExecution(store, job.id, supervised, "failed", "media-job-not-runnable");
+      finishExecution(store, job.id, supervised, "failed", "media-job-not-runnable", input);
       notifyProjection(input, job.id);
       return { statusCode: 400, body: { error: readiness.code, message: readiness.message, mediaJob: failed, artifacts: [] } };
     }
     secretValue = provider.apiKeyRef ? resolveProviderSecret(store, provider, input.secretResolver).value : undefined;
-    const adapter = createMediaAdapterForProvider(store, provider, input.secretResolver);
-    handle = handle ?? persistPendingHandle(store, job, adapter, supervised);
+    const adapter = createMediaAdapterForProvider(store, provider, input.secretResolver, {
+      // This is the actual HTTP dispatch after vendor preparation awaits.
+      // Existing GET observation/collection is not new remote production.
+      httpClient: guardedProviderHttpClient(input, captureAdmissionFailure),
+    });
+    receipt = prepareProviderMediaReceipt({ store, job, localExecution: input.localExecution, supervised,
+      provider, adapterId: job.operation === "video_generate" ? "seedance" : adapter.id, secretValues: [secretValue] });
+    handle = handle ?? persistPendingHandle(store, job, adapter, supervised,
+      receipt && job.operation === "video_generate" ? "seedance" : adapter.id);
     if (!ensureSemaphore(store, provider, supervised)) {
       scheduleProviderPoll(input, POLL_INTERVAL_MS);
       return { statusCode: 202, body: { mediaJob: job, pending: true } };
@@ -192,17 +235,27 @@ async function runProviderMediaJobExecutionOwner(input: {
 
     job = job.status === "running"
       ? job
-      : store.updateMediaJobStatus(job.id, { status: "running", errorMessage: null }, now()) ?? job;
+      : updateActiveMediaJobStatus(store, job.id, { status: "running", errorMessage: null }, now());
     notifyProjection(input, job.id);
     const requestJob = job;
     const tick = hasRecoverableLifecycle(adapter)
-      ? await runRecoverableTick(store, job, adapter, () => mediaExecutionRequest(store, requestJob, provider), handle)
+      ? await runRecoverableTick(store, job, adapter, () => mediaExecutionRequest(store, requestJob, provider), handle,
+          () => assertCompletion(supervised), receipt)
       : await runNonRecoverableExecution(store, job, adapter, () => mediaExecutionRequest(store, requestJob, provider), handle);
+    assertCompletion(supervised);
     if (tick.pending) {
       scheduleProviderPoll(input, tick.delayMs);
       return { statusCode: 202, body: { mediaJob: job, pending: true } };
     }
     const execution = tick.execution;
+    const completedAt = now();
+    const collection = collectMediaExecutionArtifacts({ store, job, execution, completedAt, secretValues: [secretValue], receipt });
+    persistedArtifacts = collection.artifacts;
+    if (!collection.error?.unconfirmedWrite) {
+      receipt?.recordCollection(collection, execution.status === "succeeded" && !collection.error
+        && mediaExecutionHasRequiredArtifact(execution.artifacts, job.operation));
+    }
+    if (collection.error) throw collection.error;
     if (execution.status === "failed") {
       throw mediaExecutionError(
         execution.errorCode ?? "media_job_execution_failed",
@@ -215,13 +268,12 @@ async function runProviderMediaJobExecutionOwner(input: {
         "生成供应商没有返回可用的图片或视频结果，请检查模型、权限和返回格式。",
       );
     }
-    const completedAt = now();
-    const artifacts = createMediaJobArtifacts(store, job, execution.artifacts, completedAt, [secretValue]);
-    const succeeded = store.updateMediaJobStatus(job.id, {
+    const artifacts = persistedArtifacts;
+    const succeeded = updateActiveMediaJobStatus(store, job.id, {
       status: "succeeded",
       artifactIds: [...new Set([...job.artifactIds, ...artifacts.map((artifact) => artifact.id)])],
       errorMessage: null,
-    }, completedAt) ?? job;
+    }, completedAt);
     notifyProjection(input, job.id, artifacts.map((artifact) => artifact.id));
     selectInitialMediaSceneResult(store, job.id, completedAt);
     for (const artifact of artifacts) {
@@ -246,22 +298,43 @@ async function runProviderMediaJobExecutionOwner(input: {
       actor: "provider",
       now: completedAt,
     });
-    finishExecution(store, job.id, supervised, "succeeded", "media-job-succeeded");
+    finishExecution(store, job.id, supervised, "succeeded", "media-job-succeeded", input);
     return { statusCode: 200, body: { mediaJob: succeeded, artifacts } };
   } catch (error) {
+    const cancelled = settleLocallyCancelledMediaJob({ store, registry: input.storeRegistry.mediaLocalExecutions,
+      cwd: input.cwd, mediaJobId: job.id, localExecution: input.localExecution });
+    if (cancelled) {
+      // A complete native terminal/EOF is still a fact. This manifest does not
+      // invent remote stop: Core independently requires a real terminal receipt
+      // before whole-operation safety; an ACK-only cancellation stays unknown.
+      if (receipt && persistedArtifacts.length === 0) {
+        try { receipt.recordCollection({ artifacts: [], manifestItems: [] }, false); }
+        catch { /* Unconfirmed receipt finalization remains blocked/unknown. */ }
+      }
+      notifyProjection(input, job.id);
+      return cancelledMediaJobResult(cancelled);
+    }
+    if (error instanceof MediaLocalExecutionAdmissionError) {
+      if (!receipt?.recordNoStartCollection()) throw error;
+      // A proved zero-send closes only this original child. Admission remains
+      // closed; any entered/uncertain request still takes the blocked branch.
+      assertMediaCompletionAllowed(input, store, supervised);
+    } else assertCompletion(supervised);
     const message = redactTextWithSecrets(error instanceof Error ? error.message : String(error), [secretValue]);
     const errorCode = mediaExecutionErrorCode(error, "media_job_execution_failed");
-    const failed = store.updateMediaJobStatus(job.id, { status: "failed", errorMessage: message }, now()) ?? job;
-    notifyProjection(input, job.id);
+    const failed = updateActiveMediaJobStatus(store, job.id, { status: "failed", errorMessage: message,
+      artifactIds: [...new Set([...job.artifactIds, ...persistedArtifacts.map(artifact => artifact.id)])] }, now());
+    notifyProjection(input, job.id, persistedArtifacts.map(artifact => artifact.id));
     if (supervised) {
       terminalFailure(store, input.hooks, supervised, errorCode, message);
-      finishExecution(store, job.id, supervised, "failed", "media-job-failed");
+      finishExecution(store, job.id, supervised, "failed", "media-job-failed", input);
     } else {
       synchronizeConversationMediaWorkUnitTerminal(store, job.id, "failed", now());
       settleExecutionHandle(store, job.id, "failed", "media-job-failed-before-runtime-start");
-      clearScheduled(job.id);
+      clearScheduled(input);
     }
-    return { statusCode: error instanceof HttpError ? error.statusCode : 200, body: { error: errorCode, message, mediaJob: failed } };
+    return { statusCode: error instanceof HttpError ? error.statusCode : 200,
+      body: { error: errorCode, message, mediaJob: failed, artifacts: persistedArtifacts } };
   }
 }
 
@@ -302,7 +375,10 @@ export function resumePendingProviderMediaJobs(input: {
   for (const handle of store.listMediaJobExecutionHandles()) {
     const job = store.getMediaJob(handle.mediaJobId);
     if (job?.executionSource.kind === "provider" && (job.status === "queued" || job.status === "running")) {
-      scheduleProviderPoll({ ...input, mediaJobId: job.id }, Math.max(0, millisecondsUntil(handle.nextPollAt)));
+      if (isCapturedConversationMediaJob(store, job.id)) continue;
+      if (mediaApprovalRecoveryBlocked(store, job.id, handle)) continue;
+      const localExecution = input.storeRegistry.mediaLocalExecutions.getOrStart({ cwd: input.cwd, mediaJobId: job.id });
+      scheduleProviderPoll({ ...input, mediaJobId: job.id, localExecution }, Math.max(0, millisecondsUntil(handle.nextPollAt)));
     }
   }
 }
@@ -317,21 +393,32 @@ async function runRecoverableTick(
   adapter: MediaAdapter & Required<Pick<MediaAdapter, "submit" | "poll" | "collectArtifacts">>,
   createRequest: () => MediaExecutionRequest,
   handle: NonNullable<ReturnType<ProviderExecutionStore["getMediaJobExecutionHandle"]>>,
+  assertCompletionAllowed: () => void,
+  receipt?: HostMediaReceiptProducer,
 ): Promise<{ readonly pending: true; readonly delayMs: number } | { readonly pending: false; readonly execution: MediaExecutionResult }> {
   let current = handle;
   if (isPendingHandle(current)) {
     const submission = await adapter.submit(createRequest());
     if (submission.status === "failed") {
+      assertCompletionAllowed();
       return { pending: false, execution: { status: "failed", artifacts: [], errorCode: submission.errorCode, errorMessage: submission.errorMessage } };
     }
-    current = store.upsertMediaJobExecutionHandle({
+    const nextPollAt = new Date(Date.now() + POLL_INTERVAL_MS).toISOString();
+    if (receipt) {
+      receipt.persistSubmission(submission.handle, nextPollAt);
+      current = store.getMediaJobExecutionHandle(job.id)!;
+      if (!current) throw new Error("media_receipt_submission_handle_missing");
+    } else current = store.upsertMediaJobExecutionHandle({
       mediaJobId: job.id,
       adapterKind: submission.handle.adapterKind,
       externalOperationId: submission.handle.externalOperationId,
       recovery: submission.handle.recovery,
-      nextPollAt: new Date(Date.now() + POLL_INTERVAL_MS).toISOString(),
+      nextPollAt,
       pollAttempts: 0,
     }, now());
+    // A late genuine ACK remains a fact even after local cancellation; only
+    // business admission below decides whether another poll may be scheduled.
+    assertCompletionAllowed();
     return { pending: true, delayMs: POLL_INTERVAL_MS };
   }
   const delay = millisecondsUntil(current.nextPollAt);
@@ -340,6 +427,7 @@ async function runRecoverableTick(
     return { pending: false, execution: { status: "failed", artifacts: [], errorCode: "timeout", errorMessage: "视频生成等待超时，请在生成任务中重试。" } };
   }
   const poll = await adapter.poll(toExecutionHandle(current));
+  assertCompletionAllowed();
   if (poll.status === "pending") {
     store.upsertMediaJobExecutionHandle({
       mediaJobId: job.id,
@@ -352,7 +440,8 @@ async function runRecoverableTick(
     return { pending: true, delayMs: POLL_INTERVAL_MS };
   }
   if (poll.status === "failed") {
-    return { pending: false, execution: { status: "failed", artifacts: [], errorCode: poll.errorCode, errorMessage: poll.errorMessage } };
+    return { pending: false, execution: { status: "failed", artifacts: [], errorCode: poll.errorCode, errorMessage: poll.errorMessage,
+      ...(poll.terminalObservation ? { terminalObservation: poll.terminalObservation } : {}) } };
   }
   current = store.upsertMediaJobExecutionHandle({
     mediaJobId: job.id,
@@ -362,7 +451,9 @@ async function runRecoverableTick(
     nextPollAt: null,
     pollAttempts: current.pollAttempts + 1,
   }, now());
-  return { pending: false, execution: await adapter.collectArtifacts(toExecutionHandle(current)) };
+  // Persist the cache, but use the original observed object for same-instance
+  // business projection. Host receipts are already captured from actual bytes.
+  return { pending: false, execution: await adapter.collectArtifacts({ ...toExecutionHandle(current), recovery: poll.recovery }) };
 }
 
 async function runNonRecoverableExecution(
@@ -393,10 +484,11 @@ function persistPendingHandle(
   job: MediaJob,
   adapter: MediaAdapter,
   supervised: MediaRuntimeHandle,
+  adapterKind = adapter.id,
 ) {
   return store.upsertMediaJobExecutionHandle({
     mediaJobId: job.id,
-    adapterKind: adapter.id,
+    adapterKind,
     externalOperationId: `${pendingOperationPrefix}${job.id}`,
     recovery: { phase: "waiting_for_submission" },
     nextPollAt: new Date().toISOString(),
@@ -439,12 +531,14 @@ function ensureSemaphore(store: ProviderExecutionStore, provider: ProviderPreset
 }
 
 function recordHeartbeat(store: ProviderExecutionStore, supervised: MediaRuntimeHandle, phase: string): void {
+  const ts = now();
   store.recordRuntimeHeartbeat({
     workUnitId: supervised.workUnit.id,
     attemptId: supervised.attempt.id,
     runtimeInstanceId: supervised.attempt.runtimeInstanceId,
     fencingToken: supervised.attempt.fencingToken,
-    ts: now(),
+    ts,
+    resourceExpiresAt: createRuntimeResourceRenewal(ts).expiresAt,
     source: "provider",
     detail: { phase },
   });
@@ -456,12 +550,13 @@ function finishExecution(
   supervised: MediaRuntimeHandle,
   status: "succeeded" | "failed" | "cancelled",
   reason: string,
+  input: Parameters<typeof runProviderMediaJobExecutionOwner>[0],
 ): void {
   const handle = settleExecutionHandle(store, mediaJobId, status, reason);
   if (!handle || handle.attemptId !== supervised.attempt.id) {
     store.releaseRuntimeSemaphoreSlotsForAttempt(toRuntimeAttemptFence(supervised.attempt), now(), reason);
   }
-  clearScheduled(mediaJobId);
+  clearScheduled(input);
 }
 
 function settleExecutionHandle(
@@ -537,23 +632,44 @@ async function cancelPersistedProviderOperation(
   job: MediaJob,
   handle: NonNullable<ReturnType<ProviderExecutionStore["getMediaJobExecutionHandle"]>>,
   secretResolver: SecretResolver,
+  input: Parameters<typeof runProviderMediaJobExecutionOwner>[0],
+  captureAdmissionFailure: (error: MediaLocalExecutionAdmissionError) => void,
 ): Promise<void> {
   if (isPendingHandle(handle) || !job.providerPresetId) return;
   try {
     const provider = store.getProviderPreset(job.providerPresetId);
     if (!provider) return;
-    const adapter = createMediaAdapterForProvider(store, provider, secretResolver);
+    const adapter = createMediaAdapterForProvider(store, provider, secretResolver,
+      { httpClient: guardedProviderHttpClient(input, captureAdmissionFailure) });
     await cancelProviderOperation(adapter, handle);
   } catch {
     // The local cancellation remains authoritative when the original target cannot be reconstructed.
   }
 }
 
-function restoreRuntimeHandle(store: RunStore, handle: ReturnType<RunStore["getMediaJobExecutionHandle"]>): MediaRuntimeHandle | undefined {
-  if (!handle?.workUnitId || !handle.attemptId) return undefined;
-  const workUnit = store.getWorkUnit(handle.workUnitId);
-  const attempt = store.getWorkUnitAttempt(handle.attemptId);
-  return workUnit && attempt ? { workUnit, attempt } : undefined;
+/** Capture the actual network Promise synchronously inside Host effect admission. */
+function guardedProviderHttpClient(input: Parameters<typeof runProviderMediaJobExecutionOwner>[0],
+  captureAdmissionFailure: (error: MediaLocalExecutionAdmissionError) => void): MediaVendorHttpClient {
+  const transport = createGuardedMediaHttpTransport({ registry: input.storeRegistry.mediaLocalExecutions,
+    execution: input.localExecution, captureAdmissionFailure });
+  return (url, init) => transport.fetch(url, init);
+}
+
+/** Local drain permits shutdown tails, but never stale child/parent authority writes. */
+function assertMediaCompletionAllowed(input: Parameters<typeof runProviderMediaJobExecutionOwner>[0],
+  store: ProviderExecutionStore, supervised?: MediaRuntimeHandle): void {
+  input.storeRegistry.mediaLocalExecutions.assertBusinessCompletionAllowed(input.localExecution);
+  assertMediaJobBusinessActive(store, input.mediaJobId);
+  if (!supervised) return;
+  const workUnit = store.getWorkUnit(supervised.workUnit.id);
+  const attempt = store.getWorkUnitAttempt(supervised.attempt.id);
+  if (!workUnit || !attempt || workUnit.activeAttemptId !== supervised.attempt.id
+    || !["claimed", "running"].includes(workUnit.status) || !["created", "started"].includes(attempt.status)
+    || attempt.workUnitId !== supervised.workUnit.id
+    || attempt.runtimeInstanceId !== supervised.attempt.runtimeInstanceId
+    || attempt.fencingToken !== supervised.attempt.fencingToken) {
+    throw new MediaLocalExecutionAdmissionError("child_attempt_obsolete", "Media completion lost its captured child Attempt.");
+  }
 }
 
 function restoreConversationRuntimeHandle(store: RunStore, mediaJobId: string): MediaRuntimeHandle | undefined {
@@ -628,22 +744,13 @@ function isPendingHandle(handle: NonNullable<ReturnType<ProviderExecutionStore["
   return handle.externalOperationId.startsWith(pendingOperationPrefix) && handle.recovery.phase === "waiting_for_submission";
 }
 
-function scheduleProviderPoll(input: Parameters<typeof runProviderMediaJobExecution>[0], delayMs: number): void {
-  clearScheduled(input.mediaJobId);
-  const timer = setTimeout(() => {
-    scheduled.delete(input.mediaJobId);
-    void runProviderMediaJobExecution(input).catch(() => {
-      // The execution owner persists normal failures; this only closes entry-level promise rejection.
-    });
-  }, Math.max(0, delayMs));
-  timer.unref?.();
-  scheduled.set(input.mediaJobId, timer);
+function scheduleProviderPoll(input: Parameters<typeof runProviderMediaJobExecutionOwner>[0], delayMs: number): void {
+  input.storeRegistry.mediaLocalExecutions.schedule(input.localExecution, Math.max(0, delayMs),
+    (localExecution) => runProviderMediaJobExecution({ ...input, localExecution }));
 }
 
-function clearScheduled(mediaJobId: string): void {
-  const timer = scheduled.get(mediaJobId);
-  if (timer) clearTimeout(timer);
-  scheduled.delete(mediaJobId);
+function clearScheduled(input: Parameters<typeof runProviderMediaJobExecutionOwner>[0]): void {
+  input.storeRegistry.mediaLocalExecutions.cancelScheduled(input.localExecution);
 }
 
 function millisecondsUntil(value: string | undefined): number {

@@ -69,7 +69,7 @@ test("stale expected status is rejected before applying a transition", () => {
   });
 });
 
-test("run approval round trip returns to running only after approval", () => {
+test("run approval round trip returns to running after approval", () => {
   const waiting = transitionRun({
     entityId: "run_1",
     currentStatus: "running",
@@ -86,6 +86,45 @@ test("run approval round trip returns to running only after approval", () => {
     actor: "local-user",
   });
   assert.deepEqual(approved, { ok: true, from: "waiting_for_approval", to: "running" });
+});
+
+test("a failed logical run can be explicitly reopened for a fenced retry", () => {
+  const retried = transitionRun({
+    entityId: "run_retry",
+    currentStatus: "failed",
+    expectedStatus: "failed",
+    event: "retry",
+    actor: "local-user",
+  });
+
+  assert.deepEqual(retried, { ok: true, from: "failed", to: "queued" });
+});
+
+test("pre-run preparation failure can close claimed tasks and queued Runs", () => {
+  assert.deepEqual(transitionTask({
+    entityId: "task_prepare_failed",
+    currentStatus: "claimed",
+    expectedStatus: "claimed",
+    event: "run_failed",
+    actor: "system",
+  }), { ok: true, from: "claimed", to: "failed" });
+  assert.deepEqual(transitionRun({
+    entityId: "run_prepare_failed",
+    currentStatus: "queued",
+    expectedStatus: "queued",
+    event: "runner_failed",
+    actor: "system",
+  }), { ok: true, from: "queued", to: "failed" });
+});
+
+test("ending a native human wait is distinct from Pi denial and cannot revive terminal work", () => {
+  for (const transition of [transitionRun, transitionWorkUnit]) {
+    assert.deepEqual(transition({ entityId: "native", currentStatus: "waiting_for_approval", event: "approval_wait_ended", actor: "system" }),
+      { ok: true, from: "waiting_for_approval", to: "running" });
+    assert.deepEqual(transition({ entityId: "pi", currentStatus: "waiting_for_approval", event: "approval_denied", actor: "local-user" }),
+      { ok: true, from: "waiting_for_approval", to: "failed" });
+    assert.equal(transition({ entityId: "terminal", currentStatus: "succeeded", event: "approval_wait_ended", actor: "system" }).ok, false);
+  }
 });
 
 test("approval states are terminal after a decision", () => {
@@ -217,6 +256,15 @@ test("work unit transitions enforce supervisor lifecycle and terminal guards", (
     }),
     { ok: true, from: "cancelled", to: "queued" },
   );
+});
+
+test("execution loop detection enters the normal cancelling fence", () => {
+  assert.deepEqual(transitionWorkUnit({
+    entityId: "wu_loop",
+    currentStatus: "running",
+    event: "execution_loop_detected",
+    actor: "system",
+  }), { ok: true, from: "running", to: "cancelling" });
 });
 
 test("work unit can finish if approval resume event was already consumed", () => {

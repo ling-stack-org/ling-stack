@@ -54,8 +54,9 @@ manifest SHA、扩展 ZIP SHA 与 source commit 一致。macOS 本机结构检�
 私有原生构建不能替代 Developer ID/notarization、Authenticode/SmartScreen 和 clean-host
 安装/升级/卸载验收。
 
-开发阶段仓库为 private，不启用应用自动更新。公开后使用 GitHub Releases；无需改变安装包
-身份，只需在 release workflow 发布现已保留的 updater companion assets。最终用户可见文件：
+源码仓库已公开，当前 Desktop 尚未接入应用自动更新。后续使用 GitHub Releases 作为更新
+通道时，需要完成客户端接入、updater companion assets 发布以及安装、升级和签名验收。
+安装包身份继续保持一致。最终用户可见文件：
 
 ```text
 Ling-Stack-<version>-macos-arm64.dmg
@@ -88,9 +89,21 @@ Windows 发布决策记录显式关闭。
 
 ## 每次提交的本地基线
 
+Desktop 产品语言由
+[Internationalization And Language Parity](../design/internationalization-language-parity.md)
+定义。打包候选必须离线携带注册表声明的全部 55 个产品 locale、英语 fallback 和对应
+catalog source revision，且 Web 主窗口、Computer Use preview 与 Electron 原生恢复文案使用同一注册表。
+仅有 Electron native menu locale 资源不代表 Ling 产品界面已支持该语言。
+
+语言候选需要通过 package verifier，并将 locale registry SHA、catalog source revision、source
+commit 和 app bundle fingerprint 写入验收证据。发布前必须使用 packaged `.app` 逐项切换
+55 个 locale；dev server、源码字典检查或代表语言截图不能替代该门禁。
+
 ```bash
 corepack pnpm --filter @ling-stack/desktop typecheck
 corepack pnpm --filter @ling-stack/desktop build
+corepack pnpm --filter @ling-stack/desktop verify:packaged-language-parity
+corepack pnpm --filter @ling-stack/desktop accept:packaged-language-parity
 corepack pnpm --filter @ling-stack/browser-host test
 corepack pnpm --filter @ling-stack/browser-host build:native
 corepack pnpm --filter @ling-stack/desktop verify:release-schemas
@@ -164,8 +177,9 @@ raw listener residue 均为 **0**。这是当前机器 development runtime 的�
 
 ```bash
 corepack pnpm --filter @ling-stack/desktop package:mac
-hdiutil verify 'apps/desktop/release/Ling-Stack-0.0.0-macos-arm64.dmg'
-unzip -t 'apps/desktop/release/Ling-Stack-0.0.0-macos-arm64.zip'
+desktop_version="$(node -p "require('./apps/desktop/package.json').version")"
+hdiutil verify "apps/desktop/release/Ling-Stack-${desktop_version}-macos-arm64.dmg"
+unzip -t "apps/desktop/release/Ling-Stack-${desktop_version}-macos-arm64.zip"
 ```
 
 unsigned job 必须验证：

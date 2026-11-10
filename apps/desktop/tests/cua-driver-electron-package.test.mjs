@@ -9,6 +9,7 @@ import test from "node:test";
 import {
   prepareCuaDriverElectronPackage,
   runCuaDriverElectronPackageCli,
+  spawnElectronBuilder,
 } from "../scripts/cua-driver-electron-package.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -32,12 +33,36 @@ test("repository declares a package.json workspace root for Electron Builder fal
   assert.deepEqual(rootPackage.workspaces, ["apps/*", "packages/*"]);
 });
 
+test("Builder CLI starts without a PATH shim or shell in a directory with spaces", async () => {
+  const appRoot = await mkdtemp(join(tmpdir(), "ling-builder cli path-"));
+  try {
+    assert.equal(await spawnElectronBuilder({
+      appRoot,
+      args: ["--version"],
+      environment: { ...process.env, PATH: "" },
+    }), 0);
+  } finally {
+    await rm(appRoot, { recursive: true, force: true });
+  }
+});
+
+test("development NSIS CLI starts through private stock tooling without a PATH shim", async () => {
+  assert.equal(await spawnElectronBuilder({
+    appRoot: desktopRoot,
+    args: ["--win", "nsis", "--version"],
+    environment: { ...process.env, PATH: "", LING_CUA_DRIVER_PACKAGE_PROVIDER: "0",
+      LING_CUA_SIGNING_TIER: "unsigned_dev", LING_CUA_DISTRIBUTION_CHANNEL: "development" },
+  }), 0);
+});
+
 test("Electron Builder config keeps external-only provider authority unchanged by default", async () => {
+  const desktopPackage = JSON.parse(await readFile(join(desktopRoot, "package.json"), "utf8"));
   const config = await inspectConfig({
     LING_CUA_DRIVER_PACKAGE_PROVIDER: "0",
   });
-  assert.equal(config.extraResources.length, 9);
+  assert.deepEqual(config.extraResources, desktopPackage.build.extraResources);
   assert.equal(config.extraResources.some((resource) => resource.to === "providers/cua-driver"), false);
+  assert.equal(config.extraResources.some((resource) => resource.from === "dist/distribution" && resource.to === "distribution"), true);
   assert.equal(config.extraResources.some((resource) => resource.to === "browser-extension/ling-for-chrome.zip"), true);
   assert.equal(config.extraResources.some((resource) => resource.to === "office-driver"), true);
   assert.equal(config.extraResources.some((resource) => resource.to === "browser-host"), true);
@@ -47,10 +72,12 @@ test("Electron Builder config keeps external-only provider authority unchanged b
   assert.equal(config.asar, true);
   assert.equal(config.electronFuses.enableEmbeddedAsarIntegrityValidation, true);
   assert.equal(config.electronFuses.onlyLoadAppFromAsar, true);
+  assert.deepEqual(config.nsisPreCompressedFileExtensions, []);
   assert.equal(config.packageAuthority.providerExpected, false);
 });
 
 test("Electron Builder config appends one private provider root and governed signing callbacks", async () => {
+  const desktopPackage = JSON.parse(await readFile(join(desktopRoot, "package.json"), "utf8"));
   const packageRoot = resolve(tmpdir(), "ling-cua-config-provider-root");
   const config = await inspectConfig({
     LING_CUA_DRIVER_PACKAGE_PROVIDER: "1",
@@ -59,10 +86,10 @@ test("Electron Builder config appends one private provider root and governed sig
     LING_CUA_SIGNING_TIER: "test_signed_internal",
     LING_CUA_DISTRIBUTION_CHANNEL: "internal",
   });
-  assert.deepEqual(config.extraResources.at(-1), {
-    from: packageRoot,
-    to: "providers/cua-driver",
-  });
+  assert.deepEqual(config.extraResources, [
+    ...desktopPackage.build.extraResources,
+    { from: packageRoot, to: "providers/cua-driver" },
+  ]);
   assert.equal(config.macSign, "./scripts/cua-driver-signing/electron-builder-mac-sign.mjs");
   assert.equal(config.macHardenedRuntime, true);
   assert.equal(config.winSign, "./scripts/cua-driver-signing/electron-builder-win-sign.mjs");
@@ -466,6 +493,7 @@ async function inspectConfig(overrides) {
       winSign: config.win?.signtoolOptions?.sign ?? null,
       winSignExts: config.win?.signExts ?? [],
       asar: config.asar,
+      nsisPreCompressedFileExtensions: config.nsis?.preCompressedFileExtensions ?? null,
       electronFuses: config.electronFuses,
       packageAuthority: config.extraMetadata?.lingCuaDriverPackageAuthority,
     }));

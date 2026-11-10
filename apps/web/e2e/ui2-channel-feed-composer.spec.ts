@@ -80,7 +80,7 @@ for (const viewport of [
     await expect(composer).toHaveAttribute("data-surface", "channel");
     await expect(composer).toHaveAttribute("data-density", "docked");
     const latestMessage = feed.locator(".channel-message-row").filter({ hasText: "UI 2.0 channel message 32" });
-    await expect(latestMessage).toHaveClass(/message-bubble-chat/);
+    await expect(latestMessage).toHaveClass(/message-bubble-document/);
     await expect(latestMessage).toHaveClass(/message-bubble-own/);
     await expectMessageFrameContained(latestMessage);
 
@@ -119,10 +119,6 @@ for (const viewport of [
     });
     await expect(page.getByRole("button", { name: "Jump to latest message" })).toBeVisible();
     expect(Math.abs(((await composer.boundingBox())?.y ?? 0) - composerY)).toBeLessThanOrEqual(1);
-    await captureEvidence(
-      page,
-      `${viewport.width}x${viewport.height}-ling-${viewport.theme}-channel-feed-composer-base.png`,
-    );
 
     const permissionButton = composer.getByRole("button", { name: /Selected permission preset/ });
     await expectCompactMutedComposerControl(permissionButton);
@@ -158,8 +154,18 @@ test("channel composer keeps failed drafts and uses shared persistent feedback",
   })];
   state.workspaceSettings.defaultProviderPresetId = "provider_ui2_channel_composer_failure";
   state.channels[0].defaultProviderPresetId = "provider_ui2_channel_composer_failure";
-  state.failNextChannelMessage = true;
   await mockDaemon(page, state);
+  let rejectNext = true;
+  await page.route("**/channels/channel_engineering/turns/stream?**", async route => {
+    if (!rejectNext) { await route.fallback(); return; }
+    rejectNext = false;
+    await route.fulfill({ status: 400, contentType: "application/json", body: JSON.stringify({ message: "Controlled input rejection before acceptance" }) });
+  });
+  await page.route("**/conversation-submissions?**", async route => {
+    const url = new URL(route.request().url());
+    await route.fulfill({ contentType: "application/json", body: JSON.stringify({ status: "unknown",
+      cwd: url.searchParams.get("cwd"), idempotencyKey: url.searchParams.get("idempotencyKey") }) });
+  });
   await page.goto("/");
   await openEngineeringChannel(page);
 
@@ -178,7 +184,7 @@ test("channel composer keeps failed drafts and uses shared persistent feedback",
 
   await expect(page.getByLabel("Channel message feed").getByText("Retry this UI 2.0 message")).toBeVisible();
   await expect(input).toHaveAttribute("data-value", "");
-  const success = page.locator('[data-ling-overlay="toast"][data-scope="channel:channel_engineering:composer"]')
+  const success = page.locator('[data-ling-overlay="toast"][data-scope="channel:channel_engineering:session:thread_channel_channel_engineering:composer"]')
     .filter({ hasText: "Message sent" });
   await expect(success).toHaveCount(1);
   await expect(composer.locator('.composer-status-row.success[data-tone="success"]')).toHaveCount(0);
@@ -187,12 +193,6 @@ test("channel composer keeps failed drafts and uses shared persistent feedback",
 });
 
 async function captureEvidence(page: Page, filename: string): Promise<void> {
-  const sessionDirectory = process.env.LING_SESSION_VALIDATION_DIR?.replace(/\/$/u, "");
-  if (sessionDirectory) {
-    await mkdir(sessionDirectory, { recursive: true });
-    await page.screenshot({ animations: "disabled", fullPage: true, path: `${sessionDirectory}/${filename}` });
-    return;
-  }
   if (process.env.LING_CAPTURE_UI2_EVIDENCE !== "1") {
     return;
   }

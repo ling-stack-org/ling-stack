@@ -34,6 +34,15 @@ export function ChannelProtocolResetDialog({
       <DialogContent
         data-ui2-channel-protocol-reset-dialog=""
         size="sm"
+        onKeyDown={(event) => {
+          // Radix installs its document-level Escape listener in an effect. The
+          // dialog can receive focus before that listener is attached, so keep
+          // the focused surface able to dismiss itself in that short window.
+          if (event.key === "Escape" && !busy && !event.defaultPrevented) {
+            event.preventDefault();
+            onOpenChange(false);
+          }
+        }}
         onOpenAutoFocus={(event) => {
           event.preventDefault();
           cancelRef.current?.focus({ preventScroll: true });
@@ -42,6 +51,10 @@ export function ChannelProtocolResetDialog({
           event.preventDefault();
           const target = returnFocusRef.current;
           if (target?.isConnected) target.focus({ preventScroll: true });
+        }}
+        onEscapeKeyDown={(event) => {
+          if (!busy) onOpenChange(false);
+          event.stopPropagation();
         }}
       >
         <DialogHeader closeLabel={t("Close")} title={t("Reset channel protocol?")} />

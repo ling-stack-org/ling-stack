@@ -17,9 +17,12 @@ export function writeSseHead(response: ServerResponse): void {
   response.write(": ling-stack run stream\n\n");
 }
 
-export function writeSse(response: ServerResponse, event: string, data: unknown): void {
-  response.write(`event: ${event}\n`);
-  response.write(`data: ${JSON.stringify(data)}\n\n`);
+export function encodeSseFrame(event: string, data: unknown): string {
+  return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+}
+
+export function writeSse(response: ServerResponse, event: string, data: unknown): boolean {
+  return response.write(encodeSseFrame(event, data));
 }
 
 export function setCorsHeaders(response: ServerResponse): void {

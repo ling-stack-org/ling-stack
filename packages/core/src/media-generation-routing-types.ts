@@ -1,5 +1,6 @@
 import type { MediaJob, MediaOperation } from "./media-types.js";
 import type { WorkUnit } from "./runtime-supervisor-types.js";
+import type { HostOperationSource } from "./host-operation-journal-types.js";
 
 export type MediaGenerationKind = "image" | "video";
 export type ConversationMediaOperation = Extract<MediaOperation, "image_generate" | "video_generate">;
@@ -63,6 +64,12 @@ export interface CreateOrReuseConversationMediaJobInput {
   readonly teammateId?: string;
   readonly idempotencyKey: string;
   readonly toolCallId: string;
+  /** Captured Host lineage is durable metadata, never a reusable execution capability. */
+  readonly executionAdmission?: {
+    readonly schemaVersion: 1;
+    readonly source: HostOperationSource;
+    readonly requestDigest: string;
+  };
   readonly target: ConversationMediaTargetSnapshot;
   readonly mediaJob: {
     readonly providerPresetId?: string;

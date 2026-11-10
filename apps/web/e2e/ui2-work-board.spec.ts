@@ -47,7 +47,6 @@ test.describe("UI2 Work Board", () => {
         "page.css",
         "toolbar.css",
       ]);
-      expect(audit.strictConsoleMatches).toEqual([]);
       expect(audit.computed.page.backgroundColor).toBe(audit.tokens.panelBackground);
       expect(audit.computed.page.color).toBe(audit.tokens.defaultText);
       expect(audit.computed.heading.color).toBe(audit.tokens.strongText);
@@ -62,8 +61,22 @@ test.describe("UI2 Work Board", () => {
 
     await openChannelChatTools(page);
     const channelAudit = await readWorkBoardStyleAudit(page);
-    expect(channelAudit.strictConsoleMatches).toEqual([]);
     expect(channelAudit.focusedMatches.some((rule) => rule.source === "channel.css" && rule.selector.includes(".channel-work-board"))).toBe(true);
+    const channelToolsLayout = await page.locator(".channel-activity-tools").evaluate((tools) => {
+      const toolbar = tools.querySelector<HTMLElement>(".activity-filter-toolbar");
+      const workBoard = tools.querySelector<HTMLElement>(".channel-work-board");
+      const toolbarRect = toolbar?.getBoundingClientRect();
+      const workBoardRect = workBoard?.getBoundingClientRect();
+      const computed = getComputedStyle(tools);
+      return {
+        display: computed.display,
+        rowGap: computed.rowGap,
+        toolbarToBoardGap: toolbarRect && workBoardRect ? workBoardRect.top - toolbarRect.bottom : -1,
+      };
+    });
+    expect(channelToolsLayout.display).toBe("grid");
+    expect(channelToolsLayout.rowGap).toBe("12px");
+    expect(channelToolsLayout.toolbarToBoardGap).toBeGreaterThanOrEqual(11.5);
     await expectNoDocumentOverflow(page);
     expect(errors).toEqual([]);
   });
@@ -529,13 +542,11 @@ async function readWorkBoardStyleAudit(page: Page) {
       await readFile(fileURLToPath(new URL(`../src/styles/work-board/${filename}`, import.meta.url)), "utf8"),
     ]),
   ));
-  const strictConsoleSource = await readFile(fileURLToPath(new URL("../src/styles/strict-console.css", import.meta.url)), "utf8");
 
-  return page.evaluate(({ focusedStyleSources, strictConsoleSource }) => {
+  return page.evaluate(({ focusedStyleSources }) => {
     const roots = Array.from(document.querySelectorAll<HTMLElement>(".work-board-page, .channel-work-board"));
     const elements = roots.flatMap((root) => [root, ...Array.from(root.querySelectorAll<HTMLElement>("*"))]);
     const focusedMatches: Array<{ source: string; selector: string; properties: string[] }> = [];
-    const strictConsoleMatches: Array<{ source: string; selector: string; properties: string[] }> = [];
 
     const visitRules = (rules: CSSRuleList, source: string) => {
       for (const rule of Array.from(rules)) {
@@ -546,7 +557,6 @@ async function readWorkBoardStyleAudit(page: Page) {
           });
           if (!matching) continue;
           const record = { source, selector: rule.selectorText, properties: Array.from(rule.style).sort() };
-          if (source === "strict-console.css") strictConsoleMatches.push(record);
           if (["page.css", "toolbar.css", "list.css", "inspector.css", "channel.css"].includes(source)) focusedMatches.push(record);
           continue;
         }
@@ -558,9 +568,6 @@ async function readWorkBoardStyleAudit(page: Page) {
       sheet.replaceSync(css);
       visitRules(sheet.cssRules, source);
     }
-    const strictConsoleSheet = new CSSStyleSheet();
-    strictConsoleSheet.replaceSync(strictConsoleSource);
-    visitRules(strictConsoleSheet.cssRules, "strict-console.css");
 
     const resolveToken = (token: string, property: "backgroundColor" | "borderColor" | "color") => {
       const probe = document.createElement("span");
@@ -584,7 +591,6 @@ async function readWorkBoardStyleAudit(page: Page) {
       theme: document.documentElement.dataset.theme,
       loadedFocusedStyleSheets: Object.keys(focusedStyleSources).sort(),
       focusedMatches,
-      strictConsoleMatches,
       tokens: {
         panelBackground: resolveToken("--ling-bg-panel", "backgroundColor"),
         subtleBackground: resolveToken("--ling-bg-subtle", "backgroundColor"),
@@ -599,7 +605,7 @@ async function readWorkBoardStyleAudit(page: Page) {
         detailField: computed(".work-board-detail-field"),
       },
     };
-  }, { focusedStyleSources, strictConsoleSource });
+  }, { focusedStyleSources });
 }
 
 async function expectNoDocumentOverflow(page: Page): Promise<void> {

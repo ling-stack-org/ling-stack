@@ -12,6 +12,7 @@ import {
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
+import { MediaLocalExecutionAdmissionError } from "../../runtime/media-local-executions.js";
 import { readJsonBody, readOptionalJsonBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import {
@@ -26,6 +27,7 @@ import {
 } from "../../shared/validation.js";
 import { assertMediaJobProvider } from "./provider.js";
 import { cancelPendingMediaProductionApprovals } from "./media-cost-approval.js";
+import { settleLocallyCancelledMediaJob, updateActiveMediaJobStatus } from "./scene-cancellation.js";
 import { requireConnection, requireDefinition, requireVersion, resolveMediaWorkflowSecret } from "./workflows/workflow-service.js";
 import {
   handleMediaProjectAssetsCollection,
@@ -228,13 +230,29 @@ export function handleMediaSceneRunRoute(
       return;
     }
     if (mediaJob.status === "succeeded" || mediaJob.status === "failed" || mediaJob.status === "cancelled") {
+      // A previous terminal CAS may have committed before a local cleanup write
+      // failed. Preserve 409, but do not strand its exact child or semaphore.
+      if (mediaJob.status === "cancelled" && settleLocallyCancelledMediaJob({
+        store, registry: storeRegistry.mediaLocalExecutions, cwd, mediaJobId: mediaJob.id,
+      })) cancelPendingMediaProductionApprovals(store, mediaJob.id, now());
       throw new HttpError(409, "media_job_not_cancellable", "该场景任务已结束，不能取消。");
     }
     const cancelledAt = now();
-    const cancelled = store.updateMediaJobStatus(mediaJob.id, {
+    let cancelled: ReturnType<typeof updateActiveMediaJobStatus>;
+    try { cancelled = updateActiveMediaJobStatus(store, mediaJob.id, {
       status: "cancelled",
       errorMessage: "已取消场景生成。",
-    }, cancelledAt) ?? mediaJob;
+    }, cancelledAt); }
+    catch (error) {
+      if (!(error instanceof MediaLocalExecutionAdmissionError)) throw error;
+      // A concurrent cancellation winner needs the same idempotent local repair;
+      // the helper is read-only for succeeded/failed and retains entered EOFs.
+      if (settleLocallyCancelledMediaJob({
+        store, registry: storeRegistry.mediaLocalExecutions, cwd, mediaJobId: mediaJob.id,
+      })) cancelPendingMediaProductionApprovals(store, mediaJob.id, now());
+      throw new HttpError(409, "media_job_not_cancellable", "该场景任务已结束，不能取消。");
+    }
+    settleLocallyCancelledMediaJob({ store, registry: storeRegistry.mediaLocalExecutions, cwd, mediaJobId: mediaJob.id });
     cancelPendingMediaProductionApprovals(store, mediaJob.id, cancelledAt);
     writeJson(response, 200, { mediaJob: cancelled, mediaSceneRun: sceneRun });
   } catch (error) {

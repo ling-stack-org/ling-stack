@@ -52,7 +52,7 @@ test("locked-task preference serializes concurrent saves with last invocation wi
   }
 });
 
-test("locked-task daemon client sends only the Desktop bridge payload and validates snapshots", async () => {
+test("locked-task daemon client sends only the Desktop bridge payload and validates snapshots", async (t) => {
   const requests = [];
   const client = createLockedTaskContinuationDaemonClient({
     daemonBaseUrl: "http://127.0.0.1:17891",
@@ -119,6 +119,7 @@ test("locked-task daemon client sends only the Desktop bridge payload and valida
       && error.clientCode === "invalid_response",
   );
 
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const timedOutClient = createLockedTaskContinuationDaemonClient({
     daemonBaseUrl: "http://127.0.0.1:17891",
     bridgeToken: "desktop-token",
@@ -127,7 +128,7 @@ test("locked-task daemon client sends only the Desktop bridge payload and valida
       init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true });
     }),
   });
-  await assert.rejects(
+  const pending = assert.rejects(
     timedOutClient.publish({
       workspaceCwd: "/tmp/workspace",
       desktopInstanceId: "desktop-instance",
@@ -138,4 +139,6 @@ test("locked-task daemon client sends only the Desktop bridge payload and valida
     (error) => error instanceof LockedTaskContinuationDaemonClientError
       && error.clientCode === "request_failed",
   );
+  t.mock.timers.tick(10);
+  await pending;
 });

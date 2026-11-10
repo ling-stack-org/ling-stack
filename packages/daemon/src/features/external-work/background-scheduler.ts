@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
+import "../../runtime/sandbox/core-original-process-bridge.js";
 import {
+  isCoreOriginalLaunchRefusal,
   parseExternalWorkflowMarkdown,
   pollGitHubExternalWork,
   reconcileExternalWork,
@@ -27,6 +29,8 @@ interface ExternalWorkBackgroundSchedulerEntry {
 export class ExternalWorkBackgroundSchedulerRegistry {
   private readonly entriesById = new Map<string, ExternalWorkBackgroundSchedulerEntry>();
   private readonly idsByKey = new Map<string, string>();
+  private readonly inFlight = new Set<Promise<void>>();
+  private stopped = false;
 
   constructor(
     private readonly storeRegistry: RunStoreRegistry,
@@ -39,12 +43,13 @@ export class ExternalWorkBackgroundSchedulerRegistry {
     readonly duplicate: boolean;
     readonly startupReconcile?: ExternalWorkReconcileResponse;
   }> {
+    if (this.stopped) throw new Error("external_work_scheduler_shutdown");
     const prepared = this.prepare(cwd, input);
     const key = this.key(cwd, input.channelId, prepared.workflowFile.path);
     const existingId = this.idsByKey.get(key);
     if (existingId) {
       const existing = this.entriesById.get(existingId);
-      if (existing && existing.scheduler.status === "running") {
+      if (existing && this.isCurrentRunningEntry(existing)) {
         return { scheduler: existing.scheduler, duplicate: true };
       }
     }
@@ -70,13 +75,18 @@ export class ExternalWorkBackgroundSchedulerRegistry {
 
     let startupReconcile: ExternalWorkReconcileResponse | undefined;
     if (prepared.workflowDefinition.config.scheduler.reconcileOnStartup) {
-      startupReconcile = await reconcileExternalWork({
-        store: prepared.store,
-        channelId: input.channelId,
-        workflowDefinition: prepared.workflowDefinition,
-        githubToken: prepared.githubToken,
-        fetch: this.externalWorkFetch,
-      });
+      try {
+        startupReconcile = await reconcileExternalWork({
+          store: prepared.store,
+          channelId: input.channelId,
+          workflowDefinition: prepared.workflowDefinition,
+          githubToken: prepared.githubToken,
+          fetch: this.externalWorkFetch,
+        });
+      } catch (error) {
+        this.failEntry(entry, error, "background_startup_reconcile_failed");
+        throw error;
+      }
       entry.scheduler = {
         ...entry.scheduler,
         lastReconcileAt: new Date().toISOString(),
@@ -84,7 +94,7 @@ export class ExternalWorkBackgroundSchedulerRegistry {
       };
     }
 
-    if (input.runImmediately !== false) {
+    if (this.isCurrentRunningEntry(entry) && input.runImmediately !== false) {
       await this.runTick(entry);
     }
     this.schedule(entry);
@@ -102,50 +112,99 @@ export class ExternalWorkBackgroundSchedulerRegistry {
     if (!entry || entry.scheduler.cwd !== cwd) {
       return undefined;
     }
-    if (entry.timer) {
-      clearTimeout(entry.timer);
-      entry.timer = undefined;
-    }
-    entry.scheduler = {
-      ...entry.scheduler,
-      status: "stopped",
-      stoppedAt: new Date().toISOString(),
-      nextPollAt: undefined,
-    };
-    this.idsByKey.delete(entry.key);
+    this.stopEntry(entry);
     return entry.scheduler;
   }
 
   stopAll(): void {
     for (const entry of this.entriesById.values()) {
-      if (entry.timer) {
-        clearTimeout(entry.timer);
-        entry.timer = undefined;
-      }
-      entry.scheduler = {
-        ...entry.scheduler,
-        status: "stopped",
-        stoppedAt: new Date().toISOString(),
-        nextPollAt: undefined,
-      };
+      this.stopEntry(entry);
     }
-    this.idsByKey.clear();
+  }
+
+  /** Permanent Daemon admission close; stopAll alone remains reusable. */
+  stopAdmission(): void {
+    this.stopped = true;
+    this.stopAll();
+  }
+
+  async waitForIdle(): Promise<void> { while (this.inFlight.size) await Promise.allSettled([...this.inFlight]); }
+
+  private isCurrentRunningEntry(entry: ExternalWorkBackgroundSchedulerEntry): boolean {
+    return this.entriesById.get(entry.scheduler.id) === entry
+      && this.idsByKey.get(entry.key) === entry.scheduler.id
+      && entry.scheduler.status === "running";
+  }
+
+  private clearTimer(entry: ExternalWorkBackgroundSchedulerEntry): void {
+    if (entry.timer) clearTimeout(entry.timer);
+    entry.timer = undefined;
+  }
+
+  private releaseKey(entry: ExternalWorkBackgroundSchedulerEntry): void {
+    if (this.idsByKey.get(entry.key) === entry.scheduler.id) {
+      this.idsByKey.delete(entry.key);
+    }
+  }
+
+  private stopEntry(entry: ExternalWorkBackgroundSchedulerEntry): void {
+    this.clearTimer(entry);
+    entry.scheduler = {
+      ...entry.scheduler,
+      status: "stopped",
+      stoppedAt: entry.scheduler.stoppedAt ?? new Date().toISOString(),
+      nextPollAt: undefined,
+    };
+    this.releaseKey(entry);
+  }
+
+  private failEntry(entry: ExternalWorkBackgroundSchedulerEntry, error: unknown, code: string): void {
+    const current = this.isCurrentRunningEntry(entry);
+    // A late failure remains observable without changing a stopped generation
+    // or releasing the key/timer owned by its successor.
+    entry.scheduler = {
+      ...entry.scheduler,
+      ...(current ? { status: "failed", nextPollAt: undefined } as const : {}),
+      lastErrorCode: code,
+      lastErrorMessage: error instanceof Error ? error.message : String(error),
+    };
+    if (current) {
+      this.clearTimer(entry);
+      this.releaseKey(entry);
+    }
   }
 
   private schedule(entry: ExternalWorkBackgroundSchedulerEntry): void {
-    if (entry.scheduler.status !== "running") {
+    if (!this.isCurrentRunningEntry(entry) || entry.running || entry.timer) {
       return;
     }
     const nextPollAt = new Date(Date.now() + entry.scheduler.pollIntervalMs).toISOString();
     entry.scheduler = { ...entry.scheduler, nextPollAt };
-    entry.timer = setTimeout(() => {
-      void this.runTick(entry).finally(() => this.schedule(entry));
+    const timer = setTimeout(() => {
+      if (entry.timer !== timer || !this.isCurrentRunningEntry(entry)) return;
+      entry.timer = undefined;
+      entry.scheduler = { ...entry.scheduler, nextPollAt: undefined };
+      void this.runTick(entry).then(() => this.schedule(entry)).catch(error => {
+        // Consume unexpected timer failures as well; a failed tick cannot keep
+        // scheduling behind an unhandled rejection or pretend to be running.
+        this.failEntry(entry, error, "background_tick_failed");
+      });
     }, entry.scheduler.pollIntervalMs);
-    entry.timer.unref?.();
+    entry.timer = timer;
+    timer.unref?.();
   }
 
   private async runTick(entry: ExternalWorkBackgroundSchedulerEntry): Promise<void> {
-    if (entry.running || entry.scheduler.status !== "running") {
+    // Register before the first await; stopping a timer is not a lifetime receipt for its poll.
+    let resolveDone!: () => void;
+    const done = new Promise<void>(resolve => { resolveDone = resolve; });
+    this.inFlight.add(done);
+    try { await this.runOwnedTick(entry); }
+    finally { this.inFlight.delete(done); resolveDone(); }
+  }
+
+  private async runOwnedTick(entry: ExternalWorkBackgroundSchedulerEntry): Promise<void> {
+    if (entry.running || !this.isCurrentRunningEntry(entry)) {
       return;
     }
     entry.running = true;
@@ -169,6 +228,15 @@ export class ExternalWorkBackgroundSchedulerRegistry {
         executeHooks: entry.scheduler.executeHooks,
         now,
       });
+      entry.scheduler = {
+        ...entry.scheduler,
+        repository: prepared.workflowDefinition.config.source.repository,
+        pollIntervalMs: prepared.workflowDefinition.config.scheduler.pollIntervalMs,
+        lastPoll: poll,
+      };
+      // Stopping does not revoke a poll already admitted to Core, but it does
+      // prevent that poll from admitting the next remote stage or another tick.
+      if (!this.isCurrentRunningEntry(entry)) return;
       const reconcile = await reconcileExternalWork({
         store: prepared.store,
         channelId: entry.scheduler.channelId,
@@ -179,27 +247,21 @@ export class ExternalWorkBackgroundSchedulerRegistry {
       });
       entry.scheduler = {
         ...entry.scheduler,
-        repository: prepared.workflowDefinition.config.source.repository,
-        pollIntervalMs: prepared.workflowDefinition.config.scheduler.pollIntervalMs,
-        status: "running",
-        tickCount: entry.scheduler.tickCount + 1,
-        lastPollAt: now,
         lastReconcileAt: new Date().toISOString(),
         lastErrorCode: undefined,
         lastErrorMessage: undefined,
-        lastPoll: poll,
         lastReconcile: reconcile,
       };
     } catch (error) {
-      entry.scheduler = {
-        ...entry.scheduler,
-        status: "running",
-        tickCount: entry.scheduler.tickCount + 1,
-        lastPollAt: now,
-        lastErrorCode: "background_tick_failed",
+      const launchRefused = isCoreOriginalLaunchRefusal(error);
+      const code = launchRefused && error instanceof Error ? error.message : "background_tick_failed";
+      if (launchRefused) this.failEntry(entry, error, code);
+      else entry.scheduler = {
+        ...entry.scheduler, lastErrorCode: code,
         lastErrorMessage: error instanceof Error ? error.message : String(error),
       };
     } finally {
+      entry.scheduler = { ...entry.scheduler, tickCount: entry.scheduler.tickCount + 1, lastPollAt: now };
       entry.running = false;
     }
   }

@@ -9,11 +9,11 @@
   gap: 7px;
   max-width: min(360px, calc(100% - 32px));
   padding: 7px 7px 7px 10px;
-  border: 1px solid var(--danger-border);
+  border: 1px solid var(--ling-status-danger-border);
   border-radius: 8px;
-  background: var(--conversation-bg);
-  color: var(--conversation-status-danger);
-  box-shadow: var(--shadow-panel);
+  background: var(--ling-bg-panel);
+  color: var(--ling-status-danger);
+  box-shadow: var(--ling-surface-shadow-shell);
   font-size: 12px;
   font-weight: 700;
   line-height: 16px;
@@ -41,8 +41,8 @@
 
 .conversation-block-feedback .conversation-block-feedback-dismiss:hover,
 .conversation-block-feedback .conversation-block-feedback-dismiss:focus-visible {
-  border-color: var(--danger-border);
-  background: var(--danger-soft);
+  border-color: var(--ling-status-danger-border);
+  background: var(--ling-status-danger-bg);
 }
 
 .conversation-block-action-menu .conversation-block-feedback {

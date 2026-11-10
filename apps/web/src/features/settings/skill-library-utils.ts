@@ -232,7 +232,8 @@ export function skillCandidateGate(candidate: SkillCandidate, t: SettingsTransla
   if (candidate.safetyFindings.some((finding) => finding.severity === "critical")) {
     labels.push(t("Critical safety finding"));
   }
-  const duplicateBlocking = candidate.duplicateAnalysis.decision === "update_existing" ||
+  const reviewedRevision = candidate.proposedAction === "update_existing" && Boolean(candidate.targetSkillId && candidate.definition.skillDefinition);
+  const duplicateBlocking = (candidate.duplicateAnalysis.decision === "update_existing" && !reviewedRevision) ||
     candidate.duplicateAnalysis.decision === "conflict_review" ||
     candidate.duplicateAnalysis.decision === "reject_duplicate";
   if (duplicateBlocking) {

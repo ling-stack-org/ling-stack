@@ -27,16 +27,17 @@ export function TeammateChatHeader({
   searchOpen,
   searchQuery,
   searchTriggerRef,
-  summaryOpen,
   summaryVisible,
   summaryDockOffset,
   summaryDockResizing,
   summaryDockMotion,
   summaryDockState,
   summaryRows,
+  onOpenSummaryChanges,
   terminalOpen,
   terminalDisabled,
   detailsOpen,
+  detailsDisabled,
   moreButtonRef,
   onToggleSearch,
   onCloseSearch,
@@ -58,16 +59,17 @@ export function TeammateChatHeader({
   readonly searchOpen: boolean;
   readonly searchQuery: string;
   readonly searchTriggerRef: Ref<HTMLButtonElement>;
-  readonly summaryOpen: boolean;
   readonly summaryVisible: boolean;
   readonly summaryDockOffset: number;
   readonly summaryDockResizing: boolean;
   readonly summaryDockMotion?: string;
   readonly summaryDockState: "closed" | "opening" | "open" | "closing" | "resizing";
+  readonly onOpenSummaryChanges: (cwd: string) => void;
   readonly summaryRows: readonly ConversationSummaryRow[];
   readonly terminalOpen: boolean;
   readonly terminalDisabled?: boolean;
   readonly detailsOpen: boolean;
+  readonly detailsDisabled?: boolean;
   readonly moreButtonRef: Ref<HTMLButtonElement>;
   readonly onToggleSearch: () => void;
   readonly onCloseSearch: () => void;
@@ -146,13 +148,14 @@ export function TeammateChatHeader({
         searchLabel={t("Search")}
         fileCount={attachmentCount}
         filesLabel={t("{label}: {count}", { label: t("Private attachments"), count: attachmentCount })}
-        summaryActive={summaryOpen}
+        summaryActive={summaryVisible}
         summaryExpanded={summaryVisible}
         summaryLabel={t("Summary")}
         terminalActive={terminalOpen}
         terminalDisabled={terminalDisabled}
         terminalLabel={t("Terminal")}
         detailsActive={detailsOpen}
+        detailsDisabled={detailsDisabled}
         detailsLabel={detailsOpen ? t("Hide details") : t("Show details")}
         onToggleSearch={onToggleSearch}
         onOpenFiles={onOpenAttachments}
@@ -174,6 +177,7 @@ export function TeammateChatHeader({
         title={t("Environment")}
         subtitle={teammate.displayName}
         rows={summaryRows}
+        onOpenChanges={onOpenSummaryChanges}
         className="teammate-chat-summary-popover teammate-private-summary-panel"
         dockOffset={summaryDockOffset}
         dockMotion={summaryDockMotion}

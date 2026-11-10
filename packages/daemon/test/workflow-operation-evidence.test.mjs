@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import {
   approvalSideEffectFingerprintV1,
@@ -18,6 +19,7 @@ import { confirmChannelExecutionProposalWorkflow } from "../dist/features/channe
 import { materializeCommandIntent } from "../dist/features/channels/command-operation-match.js";
 import {
   finalizeOrchestratedWorkflowStepRun,
+  retryChannelWorkflowStep,
   syncWorkflowApprovalDecision,
 } from "../dist/features/channels/orchestrator.js";
 import { verifyWorkflowStepExecutionOperations } from "../dist/features/channels/workflow-operation-evidence.js";
@@ -28,8 +30,8 @@ import {
 } from "../dist/features/channels/workflow-step-packets.js";
 import { evaluateWorkflowCompletion, evaluateWorkflowCompletionGate } from "../dist/features/channels/workflow-completion-gate.js";
 import { materializeWorkflowDelegatedStepRequirements } from "../dist/features/channels/workflow-step-requirement.js";
+import { preflightWorkflowParticipantProvider } from "../dist/features/channels/workflow-participant-provider.js";
 import {
-  blockDelegatedWorkflowStepBeforeRun,
   finalizeDelegatedWorkflowStepFromCanonicalState,
 } from "../dist/features/channels/workflow-step-finalizer.js";
 import { reconcileWorkflowFromCanonicalState } from "../dist/features/channels/workflow-reconciliation.js";
@@ -549,6 +551,7 @@ test("multi-agent completion requires both Engineer write and QA command evidenc
       fixture.store.markRunSucceeded(fixture.engineerRun.id, "2026-08-12T14:00:10.000Z");
       finalizeOrchestratedWorkflowStepRun(fixture.store, fixture.engineerStep.id, fixture.engineerTask.id, fixture.store.getRun(fixture.engineerRun.id), "2026-08-12T14:00:11.000Z");
       assert.equal(fixture.store.getChannelWorkflowStep(fixture.engineerStep.id).status, "succeeded");
+      fixture.startQa("2026-08-12T14:00:12.000Z");
       appendBashAction(fixture.store, fixture.qaRun.id, "node app.js", { exitCode: 0, timedOut: false, cancelled: false });
       fixture.store.markRunSucceeded(fixture.qaRun.id, "2026-08-12T14:00:20.000Z");
       finalizeOrchestratedWorkflowStepRun(fixture.store, fixture.qaStep.id, fixture.qaTask.id, fixture.store.getRun(fixture.qaRun.id), "2026-08-12T14:00:21.000Z");
@@ -565,6 +568,7 @@ test("multi-agent completion requires both Engineer write and QA command evidenc
       appendToolAction(fixture.store, fixture.engineerRun.id, "write_app", "write", { path: "app.js", content: "console.log('ok')" }, false);
       fixture.store.markRunSucceeded(fixture.engineerRun.id, "2026-08-12T14:01:10.000Z");
       finalizeOrchestratedWorkflowStepRun(fixture.store, fixture.engineerStep.id, fixture.engineerTask.id, fixture.store.getRun(fixture.engineerRun.id), "2026-08-12T14:01:11.000Z");
+      fixture.startQa("2026-08-12T14:01:12.000Z");
       fixture.store.markRunSucceeded(fixture.qaRun.id, "2026-08-12T14:01:20.000Z");
       finalizeOrchestratedWorkflowStepRun(fixture.store, fixture.qaStep.id, fixture.qaTask.id, fixture.store.getRun(fixture.qaRun.id), "2026-08-12T14:01:21.000Z");
       assert.equal(fixture.store.getChannelWorkflowStep(fixture.qaStep.id).status, "blocked");
@@ -580,7 +584,12 @@ test("step finalization rejects evidence that is not owned by the current Run", 
     const fixture = await createMultiAgentOperationFixture("foreign-action-evidence");
     try {
       appendToolAction(fixture.store, fixture.engineerRun.id, "write_app", "write", { path: "app.js", content: "ok" }, false);
-      appendToolAction(fixture.store, fixture.qaRun.id, "foreign_action", "write", { path: "foreign.js", content: "foreign" }, false);
+      // A genuinely different Run owns this action; an unmet QA dependency is not started.
+      const foreignTask = fixture.store.createTask({ channelId: fixture.workflow.channelId, title: "Foreign action", prompt: "Foreign action",
+        assigneeTeammateId: fixture.engineerStep.toParticipantId }, "2026-08-12T14:00:01.000Z");
+      const foreignRun = createFixtureRun(fixture.store, fixture.cwd, fixture.workflow.channelId, fixture.engineerStep.id,
+        foreignTask, "run_foreign_action_evidence", "2026-08-12T14:00:01.000Z");
+      appendToolAction(fixture.store, foreignRun.id, "foreign_action", "write", { path: "foreign.js", content: "foreign" }, false);
       fixture.store.markRunSucceeded(fixture.engineerRun.id, "2026-08-12T14:00:10.000Z");
       const originalCommit = fixture.store.commitChannelWorkflowStepFinalization.bind(fixture.store);
       let observed;
@@ -590,10 +599,10 @@ test("step finalization rejects evidence that is not owned by the current Run", 
           lineage: {
             ...input.delegatedOutcome.lineage,
             sourceRefs: input.delegatedOutcome.lineage.sourceRefs.map((ref) => ref.type === "execution_action"
-              ? { ...ref, id: `tool:${fixture.qaRun.id}:foreign_action` }
+              ? { ...ref, id: `tool:${foreignRun.id}:foreign_action` }
               : ref),
           },
-          evidenceRefs: [{ kind: "execution_action", id: `tool:${fixture.qaRun.id}:foreign_action` }],
+          evidenceRefs: [{ kind: "execution_action", id: `tool:${foreignRun.id}:foreign_action` }],
         };
         const basisFingerprint = delegatedStepFinalizationBasisFingerprintV1({
           workflowId: fixture.workflow.id,
@@ -697,15 +706,37 @@ test("step finalization rejects evidence that is not owned by the current Run", 
 test("downstream command evidence cannot bypass missing dependency evidence", async () => {
   const fixture = await createMultiAgentOperationFixture("missing-dependency-evidence");
   try {
-    appendBashAction(fixture.store, fixture.qaRun.id, "node app.js", {
+    const now = "2026-08-12T14:05:00.000Z";
+    const beforeStep = fixture.store.getChannelWorkflowStep(fixture.qaStep.id);
+    const beforeTasks = fixture.store.database.prepare("SELECT COUNT(*) AS count FROM tasks").get().count;
+    const beforeRuns = fixture.store.database.prepare("SELECT COUNT(*) AS count FROM run_sessions").get().count;
+    const lease = fixture.store.acquireResourceLease({ workspaceId: fixture.workflow.workspaceId, resourceType: "workflow_step",
+      resourceKey: beforeStep.id, ownerType: "workflow_step", ownerId: beforeStep.id, acquiredAt: now,
+      expiresAt: "2026-08-12T15:05:00.000Z" });
+    assert.ok(lease);
+    assert.deepEqual(fixture.store.beginChannelWorkflowStepStart({ workflowStepId: beforeStep.id, expected: beforeStep,
+      leaseId: lease.id, task: { channelId: beforeStep.channelId, title: "Premature QA", prompt: "Run node app.js",
+        assigneeTeammateId: beforeStep.toParticipantId }, now }), { status: "invalid", code: "workflow_start_not_permitted" });
+    assert.deepEqual(fixture.store.getChannelWorkflowStep(beforeStep.id), beforeStep);
+    assert.equal(fixture.store.getChannelWorkflowStep(beforeStep.id).taskId, undefined);
+    assert.equal(fixture.store.getChannelWorkflowStep(beforeStep.id).runId, undefined);
+    assert.equal(fixture.store.database.prepare("SELECT COUNT(*) AS count FROM tasks").get().count, beforeTasks);
+    assert.equal(fixture.store.database.prepare("SELECT COUNT(*) AS count FROM run_sessions").get().count, beforeRuns);
+    // Deliberately unowned evidence remains insufficient even if a caller presents it.
+    // This is a bypass attempt, not a legally begun QA execution.
+    const rogueTask = fixture.store.createTask({ channelId: beforeStep.channelId, title: "Unowned QA evidence", prompt: "node app.js",
+      assigneeTeammateId: beforeStep.toParticipantId }, now);
+    const rogueRun = createFixtureRun(fixture.store, fixture.cwd, beforeStep.channelId, beforeStep.id,
+      rogueTask, "run_unowned_downstream_evidence", now);
+    appendBashAction(fixture.store, rogueRun.id, "node app.js", {
       exitCode: 0,
       timedOut: false,
       cancelled: false,
     });
     const verification = verifyWorkflowStepExecutionOperations({
       store: fixture.store,
-      step: fixture.store.getChannelWorkflowStep(fixture.qaStep.id),
-      now: "2026-08-12T14:05:00.000Z",
+      step: { ...beforeStep, runId: rogueRun.id },
+      now,
     });
     assert.equal(verification.status, "blocked");
     assert.equal(
@@ -734,45 +765,10 @@ test("approval restart resume feeds QA evidence through the shared multi-agent c
     assert.notEqual(fixture.store.getChannelWorkflow(fixture.workflow.id).status, "succeeded");
 
     const now = "2026-08-15T02:01:00.000Z";
-    const workUnit = fixture.store.createWorkUnit({
-      workspaceId: "workspace_default",
-      kind: "task_run",
-      ownerType: "run",
-      ownerId: fixture.qaRun.id,
-      channelId: fixture.workflow.channelId,
-      taskId: fixture.qaTask.id,
-      teammateId: fixture.qaStep.toParticipantId,
-      runnerId: "pi",
-      effectiveRunnerId: "pi",
-      idempotencyKey: "qa-approval-resume-work-unit",
-      createdByActor: "system",
-      request: { workflowStepId: fixture.qaStep.id },
-      linkedRunId: fixture.qaRun.id,
-      now,
-    });
-    const attempt = fixture.store.createWorkUnitAttempt({
-      workUnitId: workUnit.id,
-      attemptNumber: 1,
-      runtimeInstanceId: "runtime_before_restart",
-      runnerId: "pi",
-      effectiveRunnerId: "pi",
-      now,
-    });
-    fixture.store.transitionWorkUnitStatus({
-      workUnitId: workUnit.id,
-      expectedStatus: "queued",
-      event: "claim",
-      actor: "system",
-      now,
-      activeAttemptId: attempt.id,
-    });
-    fixture.store.transitionWorkUnitStatus({
-      workUnitId: workUnit.id,
-      expectedStatus: "claimed",
-      event: "runner_started",
-      actor: "runner",
-      now,
-    });
+    fixture.startQa(now);
+    const workUnit = fixture.store.getWorkUnit(fixture.qaRun.workUnitId);
+    const attempt = fixture.store.getWorkUnitAttempt(workUnit.activeAttemptId);
+    assert.ok(attempt);
     fixture.store.transitionWorkUnitStatus({
       workUnitId: workUnit.id,
       expectedStatus: "running",
@@ -781,7 +777,6 @@ test("approval restart resume feeds QA evidence through the shared multi-agent c
       now,
     });
     fixture.store.updateWorkUnitAttemptStatus({ attemptId: attempt.id, status: "waiting_for_approval", now });
-    fixture.store.linkRunToWorkUnit(fixture.qaRun.id, workUnit.id, now);
     fixture.store.transitionRunStatus({
       runId: fixture.qaRun.id,
       expectedStatus: "running",
@@ -792,6 +787,7 @@ test("approval restart resume feeds QA evidence through the shared multi-agent c
     const approval = fixture.store.createApprovalRequest({
       runId: fixture.qaRun.id,
       taskId: fixture.qaTask.id,
+      channelId: fixture.qaRun.channelId,
       toolCallId: "qa_node_after_restart",
       actionType: "bash",
       risk: "medium",
@@ -842,7 +838,8 @@ test("approval restart resume feeds QA evidence through the shared multi-agent c
         list() { return []; },
         resolve() { throw new Error("unused"); },
       },
-      runtimeSupervisor: {
+runtimeSupervisor: {
+        getRestrictedCommandRuntime() { return undefined; },
         getRuntime() {
           return { runtimeInstanceId: "runtime_after_restart" };
         },
@@ -889,46 +886,16 @@ test("approval restart resume feeds QA evidence through the shared multi-agent c
 test("approval resume rejects a command that no longer matches the workflow binding", async () => {
   const fixture = await createMultiAgentOperationFixture("approval-resume-binding-mismatch");
   try {
+    appendToolAction(fixture.store, fixture.engineerRun.id, "write_app", "write", { path: "app.js", content: "ok" }, false);
+    fixture.store.markRunSucceeded(fixture.engineerRun.id, "2026-08-15T02:09:58.000Z");
+    finalizeOrchestratedWorkflowStepRun(fixture.store, fixture.engineerStep.id, fixture.engineerTask.id,
+      fixture.store.getRun(fixture.engineerRun.id), "2026-08-15T02:09:59.000Z");
+    assert.equal(fixture.store.getChannelWorkflowStep(fixture.engineerStep.id).status, "succeeded");
     const now = "2026-08-15T02:10:00.000Z";
-    const workUnit = fixture.store.createWorkUnit({
-      workspaceId: "workspace_default",
-      kind: "task_run",
-      ownerType: "run",
-      ownerId: fixture.qaRun.id,
-      channelId: fixture.workflow.channelId,
-      taskId: fixture.qaTask.id,
-      teammateId: fixture.qaStep.toParticipantId,
-      runnerId: "pi",
-      effectiveRunnerId: "pi",
-      idempotencyKey: "qa-approval-resume-binding-mismatch-work-unit",
-      createdByActor: "system",
-      request: { workflowStepId: fixture.qaStep.id },
-      linkedRunId: fixture.qaRun.id,
-      now,
-    });
-    const attempt = fixture.store.createWorkUnitAttempt({
-      workUnitId: workUnit.id,
-      attemptNumber: 1,
-      runtimeInstanceId: "runtime_before_restart",
-      runnerId: "pi",
-      effectiveRunnerId: "pi",
-      now,
-    });
-    fixture.store.transitionWorkUnitStatus({
-      workUnitId: workUnit.id,
-      expectedStatus: "queued",
-      event: "claim",
-      actor: "system",
-      now,
-      activeAttemptId: attempt.id,
-    });
-    fixture.store.transitionWorkUnitStatus({
-      workUnitId: workUnit.id,
-      expectedStatus: "claimed",
-      event: "runner_started",
-      actor: "runner",
-      now,
-    });
+    fixture.startQa(now);
+    const workUnit = fixture.store.getWorkUnit(fixture.qaRun.workUnitId);
+    const attempt = fixture.store.getWorkUnitAttempt(workUnit.activeAttemptId);
+    assert.ok(attempt);
     fixture.store.transitionWorkUnitStatus({
       workUnitId: workUnit.id,
       expectedStatus: "running",
@@ -937,7 +904,6 @@ test("approval resume rejects a command that no longer matches the workflow bind
       now,
     });
     fixture.store.updateWorkUnitAttemptStatus({ attemptId: attempt.id, status: "waiting_for_approval", now });
-    fixture.store.linkRunToWorkUnit(fixture.qaRun.id, workUnit.id, now);
     fixture.store.transitionRunStatus({
       runId: fixture.qaRun.id,
       expectedStatus: "running",
@@ -948,6 +914,7 @@ test("approval resume rejects a command that no longer matches the workflow bind
     const approval = fixture.store.createApprovalRequest({
       runId: fixture.qaRun.id,
       taskId: fixture.qaTask.id,
+      channelId: fixture.qaRun.channelId,
       toolCallId: "qa_mismatched_resume_command",
       actionType: "bash",
       risk: "medium",
@@ -1003,7 +970,8 @@ test("approval resume rejects a command that no longer matches the workflow bind
         list() { return []; },
         resolve() { throw new Error("unused"); },
       },
-      runtimeSupervisor: {
+runtimeSupervisor: {
+        getRestrictedCommandRuntime() { return undefined; },
         getRuntime() {
           return { runtimeInstanceId: "runtime_after_restart" };
         },
@@ -1115,6 +1083,77 @@ test("approval resume unsupported is a structured delegated blocker, not workflo
   }
 });
 
+test("execution loop blocks the delegated participant, fan-in, and unchanged retry", async () => {
+  const fixture = await createMultiAgentOperationFixture("execution-loop-blocker");
+  try {
+    fixture.store.appendEvent(fixture.engineerRun.id, "loop_detected", {
+      code: "execution_loop_detected",
+      attemptId: `attempt_${fixture.engineerRun.id}`,
+      loopKind: "cycle",
+      observedEventType: "tool_end",
+      observedEventSeq: 6,
+      repeatedCount: 3,
+      noProgressActionCount: 6,
+      cycleLength: 2,
+      fingerprint: "b".repeat(64),
+      message: "Execution stopped after a 2-action cycle repeated 3 times.",
+      retryable: false,
+    });
+    fixture.store.markRunFailed(
+      fixture.engineerRun.id,
+      "2026-08-15T03:10:00.000Z",
+      "execution_loop_detected",
+    );
+
+    finalizeOrchestratedWorkflowStepRun(
+      fixture.store,
+      fixture.engineerStep.id,
+      fixture.engineerTask.id,
+      fixture.store.getRun(fixture.engineerRun.id),
+      "2026-08-15T03:10:01.000Z",
+    );
+
+    const workflow = fixture.store.getChannelWorkflow(fixture.workflow.id);
+    const steps = fixture.store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true });
+    const engineerStep = steps.find((step) => step.id === fixture.engineerStep.id);
+    assert.equal(engineerStep.status, "blocked");
+    assert.equal(engineerStep.metadata.delegatedOutcome.kind, "blocked");
+    assert.equal(engineerStep.metadata.delegatedOutcome.code, "execution_loop_detected");
+    assert.deepEqual(engineerStep.metadata.delegatedOutcome.missingRequirements, ["manual_intervention"]);
+    assert.equal(workflow.status, "blocked");
+
+    const gate = evaluateWorkflowCompletionGate({
+      store: fixture.store,
+      workflow,
+      steps,
+      now: "2026-08-15T03:10:02.000Z",
+    });
+    assert.equal(gate.status, "blocked");
+    assert.equal(
+      gate.participantResults.find((result) => result.participantId === engineerStep.toParticipantId)?.status,
+      "blocked",
+    );
+
+    let startRunCalled = false;
+    await assert.rejects(
+      retryChannelWorkflowStep({
+        store: fixture.store,
+        cwd: fixture.engineerRun.cwd,
+        workflowStepId: engineerStep.id,
+        validateRunRequest: () => undefined,
+        startRun: async () => {
+          startRunCalled = true;
+          return "unexpected-retry-run";
+        },
+      }),
+      (error) => error?.statusCode === 409 && error?.code === "workflow_step_loop_failure_not_retryable",
+    );
+    assert.equal(startRunCalled, false);
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("completion gate blocks a graph branch whose step row is absent", async () => {
   const fixture = await createMultiAgentOperationFixture("missing-graph-step");
   try {
@@ -1155,6 +1194,7 @@ test("synthesis participant completes with a bound output packet but not naked t
   try {
     const now = "2026-08-12T14:20:00.000Z";
     const channel = store.createChannel({ name: "Synthesis packet", boundPath: cwd }, now);
+    const providerBinding = fixtureParticipantBinding(store, channel, cwd, "teammate_builtin_architect", [], now);
     const participantManifest = createRequiredParticipantManifestV1([{
       participantId: "teammate_builtin_architect",
       role: "architect",
@@ -1181,7 +1221,8 @@ test("synthesis participant completes with a bound output packet but not naked t
       id: "graph_synthesis_packet",
       name: "Synthesis",
       entryNodeId: "synthesis",
-      nodes: [{ id: "synthesis", kind: "step", name: "Synthesis", prompt: "Synthesize", teammateId: "teammate_builtin_architect" }],
+      nodes: [{ id: "synthesis", kind: "step", name: "Synthesis", prompt: "Synthesize", teammateId: "teammate_builtin_architect",
+        providerPresetId: providerBinding.providerPresetId, providerBinding }],
       edges: [],
       termination: { success: "all_required_succeeded", onFailedRequiredNode: "block_for_user", onApprovalDenied: "block_for_user" },
     };
@@ -1206,13 +1247,18 @@ test("synthesis participant completes with a bound output packet but not naked t
       prompt: "Synthesize",
       toParticipantId: "teammate_builtin_architect",
       toParticipantLabel: "Architect",
-      status: "succeeded",
-      metadata: { graphId: graph.id, graphNodeId: "synthesis" },
+      status: "queued",
+      metadata: { graphId: graph.id, graphNodeId: "synthesis", providerPresetId: providerBinding.providerPresetId, providerBinding },
     }, now);
     [step] = materializeWorkflowDelegatedStepRequirements({ store, workflow, manifest: participantManifest, now });
-    const task = store.createTask({ channelId: channel.id, title: "Synthesis", prompt: "Synthesize", assigneeTeammateId: "teammate_builtin_architect" }, now);
-    const run = createFixtureRun(store, cwd, channel.id, step.id, task, "run_synthesis_packet", now);
-    step = store.updateChannelWorkflowStep(step.id, { runId: run.id, resultSummary: "Sourced synthesis." }, now);
+    const started = startFixtureStep(store, cwd, step.id, "run_synthesis_packet", now);
+    store.markRunSucceeded(started.run.id, now);
+    const run = store.getRun(started.run.id);
+    assert.equal(store.transitionChannelWorkflowStepStatus({ workflowStepId: step.id, expectedStatus: "running",
+      event: "succeed", actor: "system", now }).ok, false);
+    // Deliberately malformed terminal input verifies that the completion gate is
+    // still defensive even if a caller bypasses the guarded transition API.
+    step = store.updateChannelWorkflowStep(step.id, { status: "succeeded", resultSummary: "Sourced synthesis." }, now);
     let gate = evaluateWorkflowCompletionGate({ store, workflow, steps: [step], now });
     assert.equal(gate.status, "blocked");
     assert.equal(gate.participantResults[0].reasonCode, "required_participant_outcome_missing");
@@ -1283,7 +1329,7 @@ test("startup synthesis finalization prepares one deterministic output packet an
     const firstReport = await processWorkflowTerminalReport(fixture.store, fixture.workflow.id, {
       now: "2026-08-12T14:25:11.500Z",
     });
-    assert.ok(firstReport.record.publishedMessageId);
+    assert.ok(firstReport.record.resultItemId);
     assert.equal(fixture.store.getLingTurn(sourceItem.turnId).status, "succeeded");
 
     const duplicate = reconcileWorkflowFromCanonicalState({
@@ -1299,9 +1345,9 @@ test("startup synthesis finalization prepares one deterministic output packet an
       now: "2026-08-12T14:25:12.500Z",
     });
     assert.equal(duplicateReport.record.id, firstReport.record.id);
-    assert.equal(duplicateReport.record.publishedMessageId, firstReport.record.publishedMessageId);
+    assert.equal(duplicateReport.record.resultItemId, firstReport.record.resultItemId);
     assert.equal(fixture.store.listConversationItemsForTurn({ turnId: sourceItem.turnId })
-      .filter((item) => item.id === firstReport.record.publishedMessageId).length, 1);
+      .filter((item) => item.id === firstReport.record.resultItemId).length, 1);
     assert.equal(fixture.store.listStateTransitionEvents({ entityType: "turn", entityId: sourceItem.turnId })
       .filter((event) => event.toStatus === "succeeded").length, 1);
   } finally {
@@ -1332,7 +1378,7 @@ test("approval wait and resume update the workflow source turn immediately", asy
       prompt: "Run gated step",
       toParticipantId: "teammate_builtin_engineer",
       toParticipantLabel: "Engineer",
-      status: "running",
+      status: "queued",
       metadata: {
         gates: [{
           stage: "post",
@@ -1343,26 +1389,7 @@ test("approval wait and resume update the workflow source turn immediately", asy
         }],
       },
     }, now);
-    const task = store.createTask({ channelId: channel.id, title: "Gated step", prompt: "Run gated step", assigneeTeammateId: "teammate_builtin_engineer" }, now);
-    const run = store.createRun({
-      id: "run_source_turn_approval",
-      cwd,
-      taskId: task.id,
-      channelId: channel.id,
-      workflowStepId: step.id,
-      providerName: "test-provider",
-      providerModel: "test-model",
-      taskSnapshot: { id: task.id, title: task.title },
-      providerSnapshot: { provider: "test-provider", model: "test-model" },
-      requestSnapshot: { cwd },
-      createdAt: now,
-    });
-    store.markRunStarted(run.id, now);
-    store.appendEvent(run.id, "run_created", {
-      attemptId: "attempt_source_turn_approval",
-      workUnitId: "work_unit_source_turn_approval",
-    });
-    store.updateChannelWorkflowStep(step.id, { taskId: task.id, runId: run.id }, now);
+    const { task, run } = startFixtureStep(store, cwd, step.id, "run_source_turn_approval", now);
     store.markRunSucceeded(run.id, "2026-08-12T15:00:10.000Z");
     finalizeOrchestratedWorkflowStepRun(store, step.id, task.id, store.getRun(run.id), "2026-08-12T15:00:11.000Z");
     const waitingStep = store.getChannelWorkflowStep(step.id);
@@ -1377,6 +1404,70 @@ test("approval wait and resume update the workflow source turn immediately", asy
   }
 });
 
+for (const cycle of [
+  { name: "approval", pauseEvent: "approval_requested", pauseStatus: "waiting_for_approval", resumeEvent: "approval_approved" },
+  { name: "blocked restart", pauseEvent: "step_blocked", pauseStatus: "blocked", resumeEvent: "start" },
+]) {
+  test(`repeated workflow ${cycle.name} cycles preserve source turn transitions`, async () => {
+    const cwd = await mkdtemp(resolve(tmpdir(), "ling-workflow-source-turn-cycles-"));
+    const store = createSqliteRunStore(cwd);
+    try {
+      const now = "2026-11-03T07:00:00.000Z";
+      const channel = store.createChannel({ name: "Repeated source turn transitions", boundPath: cwd }, now);
+      const source = appendChannelItemFixture(store, {
+        channelId: channel.id, authorType: "local-user", body: "Run gated work",
+      }, now);
+      const workflow = store.createChannelWorkflow({
+        channelId: channel.id,
+        title: "Repeated gated work",
+        objective: "Run gated work",
+        status: "running",
+        createdBy: "ling_agent",
+        metadata: { sourceTurnId: source.turnId },
+      }, now);
+      const events = () => store.listStateTransitionEvents({ entityType: "turn", entityId: source.turnId });
+      const initialEventCount = events().length;
+      const sync = (status, eventCount) => {
+        syncWorkflowSourceTurnProgress(store, store.getChannelWorkflow(workflow.id), now);
+        assert.equal(store.getLingTurn(source.turnId).status, status);
+        const first = events();
+        assert.equal(first.length, eventCount);
+        syncWorkflowSourceTurnProgress(store, store.getChannelWorkflow(workflow.id), now);
+        assert.deepEqual(events(), first);
+      };
+      sync("running", initialEventCount + 1);
+
+      // A fixed clock also rules out using timestamps to identify distinct cycles.
+      for (let index = 0; index < 4; index += 1) {
+        const paused = store.transitionChannelWorkflowStatus({
+          workflowId: workflow.id, expectedStatus: "running", event: cycle.pauseEvent, actor: "system", now,
+        });
+        assert.equal(paused.ok, true, JSON.stringify(paused));
+        if (cycle.pauseStatus === "blocked") {
+          const blocked = store.transitionLingTurnStatus({
+            turnId: source.turnId, expectedStatus: "running", event: "block", actor: "system", now,
+          });
+          assert.equal(blocked.ok, true, JSON.stringify(blocked));
+        }
+        sync(cycle.pauseStatus, initialEventCount + 2 + index * 2);
+
+        const resumed = store.transitionChannelWorkflowStatus({
+          workflowId: workflow.id, expectedStatus: cycle.pauseStatus, event: cycle.resumeEvent, actor: "system", now,
+        });
+        assert.equal(resumed.ok, true, JSON.stringify(resumed));
+        sync("running", initialEventCount + 3 + index * 2);
+      }
+      assert.equal(store.getChannelWorkflow(workflow.id).status, "running");
+      assert.equal(events().filter(event => event.event === cycle.resumeEvent).length,
+        cycle.resumeEvent === "start" ? 5 : 4);
+      assert.equal(events().filter(event => event.toStatus === cycle.pauseStatus).length, 4);
+    } finally {
+      store.close();
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+}
+
 test("post-step approval cannot replace missing required operation evidence", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-workflow-post-approval-operation-evidence-"));
   const store = createSqliteRunStore(cwd);
@@ -1387,7 +1478,7 @@ test("post-step approval cannot replace missing required operation evidence", as
       channelId: channel.id,
       title: "Run gated command",
       objective: "Run node app.js",
-      status: "waiting_for_approval",
+      status: "ready",
       createdBy: "ling_agent",
     }, now);
     const plan = { operations: [operation("run_command", "run_command", "command", "node app.js")] };
@@ -1397,26 +1488,21 @@ test("post-step approval cannot replace missing required operation evidence", as
       prompt: "Run node app.js",
       toParticipantId: "teammate_builtin_qa",
       toParticipantLabel: "QA",
-      status: "waiting_for_approval",
-      metadata: { executionPlan: plan, executionOperationIds: ["run_command"], activeGateStage: "post" },
+      status: "queued",
+      metadata: { executionPlan: plan, executionOperationIds: ["run_command"] },
     }, now);
-    const task = store.createTask({ channelId: channel.id, title: "Run gated command", prompt: "Run node app.js", assigneeTeammateId: "teammate_builtin_qa" }, now);
-    const run = createFixtureRun(store, cwd, channel.id, step.id, task, "run_post_approval_missing_operation", now);
+    const { run, owner } = startFixtureStep(store, cwd, step.id, "run_post_approval_missing_operation", now);
     store.markRunSucceeded(run.id, "2026-08-12T16:00:10.000Z");
-    const approval = store.createApprovalRequest({
+    const requested = store.commitChannelWorkflowStepPostApproval({
       workflowStepId: step.id,
-      channelId: channel.id,
-      actionType: "workflow_step",
-      risk: "medium",
-      title: "Review command result",
-      description: "Review the completed command.",
-      payload: { type: "workflow_step", gateStage: "post", workflowId: workflow.id, workflowStepId: step.id },
-    }, now);
-    store.updateChannelWorkflowStep(step.id, {
-      taskId: task.id,
-      runId: run.id,
-      metadata: { ...step.metadata, postStepApprovalId: approval.id },
-    }, now);
+      owner, runId: run.id, now: "2026-08-12T16:00:10.500Z",
+      approval: {
+        risk: "medium", title: "Review command result", description: "Review the completed command.",
+        payload: { type: "workflow_step", gateStage: "post", workflowId: workflow.id, workflowStepId: step.id, runId: run.id },
+      },
+    });
+    assert.equal(requested.status, "requested", JSON.stringify(requested));
+    const approval = requested.approval;
     const approved = store.approveApprovalRequest(approval.id, { resolvedBy: "local-user" }, "2026-08-12T16:00:11.000Z");
 
     syncWorkflowApprovalDecision(store, approved, "2026-08-12T16:00:11.000Z");
@@ -1430,6 +1516,57 @@ test("post-step approval cannot replace missing required operation evidence", as
     await rm(cwd, { recursive: true, force: true });
   }
 });
+
+for (const sample of [
+  {
+    name: "assistant message boundaries preserve Markdown",
+    events: [
+      ["assistant_text_delta", { text: "Inspect first." }],
+      ["message_end", { role: "assistant", text: "Inspect first." }],
+      ["assistant_text_delta", { text: "## Result\n\n```js\n" }],
+      ["assistant_text_delta", { text: "console.log('ok');\n```" }],
+      ["message_end", { role: "assistant", text: "## Result\n\n```js\nconsole.log('ok');\n```" }],
+    ],
+    expected: "Inspect first.\n\n## Result\n\n```js\nconsole.log('ok');\n```",
+  },
+  {
+    name: "end-only assistant content is retained",
+    events: [["message_end", { role: "assistant", text: "Completed without text deltas." }]],
+    expected: "Completed without text deltas.",
+  },
+  {
+    name: "narration after the first event page is retained",
+    events: [
+      ["assistant_text_delta", { text: "Before tool work." }],
+      ["message_end", { role: "assistant", text: "Before tool work." }],
+      ...Array.from({ length: 1001 }, () => ["message_end", { role: "toolResult" }]),
+      ["assistant_text_delta", { text: "After tool work." }],
+      ["message_end", { role: "assistant", text: "After tool work." }],
+    ],
+    expected: "Before tool work.\n\nAfter tool work.",
+  },
+]) {
+  test(`delegated result narration: ${sample.name}`, async () => {
+    const fixture = await createMultiAgentOperationFixture("result-narration");
+    try {
+      appendToolAction(fixture.store, fixture.engineerRun.id, "write_app", "write", { path: "app.js", content: "ok" }, false);
+      for (const [type, data] of sample.events) fixture.store.appendEvent(fixture.engineerRun.id, type, data);
+      fixture.store.markRunSucceeded(fixture.engineerRun.id, "2026-08-12T17:00:10.000Z");
+      const result = finalizeDelegatedWorkflowStepFromCanonicalState({
+        store: fixture.store,
+        workflowStepId: fixture.engineerStep.id,
+        cause: "run_terminal",
+        now: "2026-08-12T17:00:11.000Z",
+      });
+      assert.equal(result.status, "finalized");
+      const step = fixture.store.getChannelWorkflowStep(fixture.engineerStep.id);
+      assert.equal(step.status, "succeeded");
+      assert.equal(step.resultSummary, sample.expected);
+    } finally {
+      await fixture.close();
+    }
+  });
+}
 
 test("delegated finalization is idempotent across duplicate callbacks", async () => {
   const fixture = await createMultiAgentOperationFixture("duplicate-callback");
@@ -1533,6 +1670,7 @@ test("completion evaluation rolls back workflow state and event and succeeds on 
           cause: "run_terminal",
           now: "2026-08-12T17:06:11.000Z",
         }).status, "finalized");
+        fixture.startQa("2026-08-12T17:06:11.500Z");
         appendBashAction(fixture.store, fixture.qaRun.id, "node app.js", {
           exitCode: 0,
           timedOut: false,
@@ -1618,24 +1756,29 @@ test("startup reconciliation finalizes terminal delegated Runs with the online r
   try {
     appendToolAction(fixture.store, fixture.engineerRun.id, "write_app", "write", { path: "app.js", content: "console.log('ok')" }, false);
     fixture.store.markRunSucceeded(fixture.engineerRun.id, "2026-08-12T17:10:10.000Z");
+    assert.equal(fixture.store.recoverStaleChannelWorkflows("2026-08-12T17:10:11.000Z"), 0);
+    assert.equal(fixture.store.getChannelWorkflowStep(fixture.engineerStep.id).status, "running");
+    assert.equal(fixture.store.getChannelWorkflowStep(fixture.qaStep.id).status, "queued");
+    const engineerRecovery = reconcileWorkflowFromCanonicalState({ store: fixture.store, workflowId: fixture.workflow.id,
+      cause: "startup", now: "2026-08-12T17:10:12.000Z" });
+    assert.deepEqual(engineerRecovery.finalizedStepIds, [fixture.engineerStep.id]);
+    assert.equal(fixture.store.getChannelWorkflowStep(fixture.engineerStep.id).status, "succeeded");
+    assert.notEqual(fixture.store.getChannelWorkflow(fixture.workflow.id).status, "succeeded");
+    fixture.startQa("2026-08-12T17:10:13.000Z");
     appendBashAction(fixture.store, fixture.qaRun.id, "node app.js", {
       exitCode: 0,
       timedOut: false,
       cancelled: false,
-      startedAt: "2026-08-17T17:10:09.000Z",
-      endedAt: "2026-08-17T17:10:10.000Z",
     });
-    fixture.store.markRunSucceeded(fixture.qaRun.id, "2026-08-12T17:10:11.000Z");
-    assert.equal(fixture.store.recoverStaleChannelWorkflows("2026-08-12T17:10:11.000Z"), 0);
-    assert.equal(fixture.store.getChannelWorkflowStep(fixture.engineerStep.id).status, "running");
+    fixture.store.markRunSucceeded(fixture.qaRun.id, "2026-08-12T17:10:16.000Z");
     assert.equal(fixture.store.getChannelWorkflowStep(fixture.qaStep.id).status, "running");
     const recovered = reconcileWorkflowFromCanonicalState({
       store: fixture.store,
       workflowId: fixture.workflow.id,
       cause: "startup",
-      now: "2026-08-12T17:10:12.000Z",
+      now: "2026-08-12T17:10:17.000Z",
     });
-    assert.deepEqual(recovered.finalizedStepIds, [fixture.engineerStep.id, fixture.qaStep.id]);
+    assert.deepEqual(recovered.finalizedStepIds, [fixture.qaStep.id]);
     assert.equal(fixture.store.getChannelWorkflowStep(fixture.engineerStep.id).status, "succeeded");
     const recoveredQaStep = fixture.store.getChannelWorkflowStep(fixture.qaStep.id);
     assert.equal(recoveredQaStep.status, "succeeded", JSON.stringify(recoveredQaStep.metadata));
@@ -1646,24 +1789,36 @@ test("startup reconciliation finalizes terminal delegated Runs with the online r
   }
 });
 
-test("startup and explicit reconciliation block delegated steps that have no linked Run", async (t) => {
+test("a valid preparing owner waits online and is settled only by scoped startup recovery", async (t) => {
   for (const cause of ["startup", "explicit_reconcile"]) {
     await t.test(cause, async () => {
-      const fixture = await createMultiAgentOperationFixture(`missing-linked-run-${cause}`);
+      const fixture = await createMultiAgentOperationFixture(`missing-linked-run-${cause}`, { engineerPhase: "preparing" });
       try {
-        fixture.store.updateChannelWorkflowStep(fixture.engineerStep.id, { runId: null }, "2026-08-12T17:12:00.000Z");
+        const before = fixture.store.getChannelWorkflowStep(fixture.engineerStep.id);
+        if (cause === "startup") {
+          assert.equal(fixture.store.recoverStaleChannelWorkflows("2026-08-12T17:12:00.000Z"), 1);
+        }
         const reconciled = reconcileWorkflowFromCanonicalState({
           store: fixture.store,
           workflowId: fixture.workflow.id,
           cause,
           now: "2026-08-12T17:12:01.000Z",
         });
-        assert.deepEqual(reconciled.finalizedStepIds, [fixture.engineerStep.id]);
         const step = fixture.store.getChannelWorkflowStep(fixture.engineerStep.id);
-        assert.equal(step.status, "blocked");
-        assert.equal(step.metadata.delegatedOutcome.kind, "blocked");
-        assert.equal(step.metadata.delegatedOutcome.code, "delegated_run_missing");
-        assert.equal(fixture.store.getChannelWorkflow(fixture.workflow.id).status, "blocked");
+        assert.equal(step.runId, undefined);
+        assert.equal(fixture.store.getTask(fixture.engineerTask.id).currentRunId, undefined);
+        if (cause === "startup") {
+          assert.deepEqual(reconciled.finalizedStepIds, [], "Core startup recovery already settled only its captured preparing owner");
+          assert.equal(step.status, "blocked");
+          assert.equal(step.metadata.delegatedOutcome.kind, "blocked");
+          assert.equal(step.metadata.delegatedOutcome.code, "delegated_run_missing");
+          assert.equal(fixture.store.getChannelWorkflow(fixture.workflow.id).status, "blocked");
+        } else {
+          assert.deepEqual(reconciled.finalizedStepIds, []);
+          assert.deepEqual(step, before);
+          assert.equal(step.metadata.startOwner.phase, "preparing");
+          assert.equal(fixture.store.getChannelWorkflow(fixture.workflow.id).status, "running");
+        }
       } finally {
         await fixture.close();
       }
@@ -1671,19 +1826,19 @@ test("startup and explicit reconciliation block delegated steps that have no lin
   }
 });
 
-test("participant preflight blocker atomically replaces workflow_started before a Run exists", async () => {
-  const fixture = await createMultiAgentOperationFixture("participant-preflight-blocker");
+test("participant preflight failure atomically settles its preparing owner before a Run exists", async () => {
+  const fixture = await createMultiAgentOperationFixture("participant-preflight-blocker", {
+    engineerPhase: "preparing", engineerStartedAt: "2026-08-12T17:12:30.000Z" });
   try {
-    fixture.store.updateChannelWorkflowStep(fixture.engineerStep.id, { runId: null }, "2026-08-12T17:12:30.000Z");
-    const result = blockDelegatedWorkflowStepBeforeRun({
-      store: fixture.store,
+    const result = fixture.store.settleChannelWorkflowStepStartFailure({
       workflowStepId: fixture.engineerStep.id,
-      code: "workflow_participant_required_tools_unavailable",
-      reason: "The assigned participant no longer allows write.",
-      missingRequirements: ["tool:write"],
+      owner: fixture.engineerOwner, leaseId: fixture.engineerLease.id,
+      blocker: "The assigned participant no longer allows write.",
+      delegatedBlock: { code: "workflow_participant_required_tools_unavailable",
+        reason: "The assigned participant no longer allows write.", missingRequirements: ["tool:write"] },
       now: "2026-08-12T17:12:31.000Z",
     });
-    assert.equal(result.status, "finalized");
+    assert.equal(result.status, "linked");
     const step = fixture.store.getChannelWorkflowStep(fixture.engineerStep.id);
     assert.equal(step.status, "blocked");
     assert.equal(step.runId, undefined);
@@ -1709,34 +1864,34 @@ test("participant preflight blocker atomically replaces workflow_started before 
       evidenceRefs: [],
     });
     assert.ok(step.metadata.delegatedOutcomeBasisFingerprint);
+    assert.equal(fixture.store.getTask(fixture.engineerTask.id).currentRunId, undefined);
+    assert.equal(fixture.store.listResourceLeases({ resourceType: "workflow_step", resourceKey: step.id })
+      .find((lease) => lease.id === fixture.engineerLease.id).status, "released");
   } finally {
     await fixture.close();
   }
 });
 
-test("no-Run delegated finalization becomes stale when a Run is linked concurrently", async () => {
-  const fixture = await createMultiAgentOperationFixture("missing-linked-run-race");
+test("a captured preparing failure cannot overwrite a concurrently linked ready owner", async () => {
+  const fixture = await createMultiAgentOperationFixture("missing-linked-run-race", {
+    engineerPhase: "preparing", engineerStartedAt: "2026-08-12T17:13:00.000Z" });
   try {
-    fixture.store.updateChannelWorkflowStep(fixture.engineerStep.id, { runId: null }, "2026-08-12T17:13:00.000Z");
-    const outcomeBeforeCommit = fixture.store.getChannelWorkflowStep(fixture.engineerStep.id).metadata.delegatedOutcome;
-    const originalCommit = fixture.store.commitChannelWorkflowStepFinalization.bind(fixture.store);
-    fixture.store.commitChannelWorkflowStepFinalization = (input) => {
-      fixture.store.updateChannelWorkflowStep(fixture.engineerStep.id, {
-        runId: fixture.engineerRun.id,
-      }, "2026-08-12T17:13:01.000Z");
-      return originalCommit(input);
-    };
-    const result = finalizeDelegatedWorkflowStepFromCanonicalState({
-      store: fixture.store,
-      workflowStepId: fixture.engineerStep.id,
-      cause: "explicit_reconcile",
-      now: "2026-08-12T17:13:02.000Z",
-    });
+    const capturedFailure = { workflowStepId: fixture.engineerStep.id, owner: fixture.engineerOwner,
+      leaseId: fixture.engineerLease.id, blocker: "A stale preparation failed", now: "2026-08-12T17:13:02.000Z" };
+    const run = readyFixtureStep(fixture.store, fixture.cwd, fixture.engineerStep.id,
+      { task: fixture.engineerTask, owner: fixture.engineerOwner }, "run_preparing_ready_race", "2026-08-12T17:13:01.000Z");
+    const beforeStep = fixture.store.getChannelWorkflowStep(fixture.engineerStep.id);
+    const beforeTask = fixture.store.getTask(fixture.engineerTask.id);
+    const beforeLeases = fixture.store.listResourceLeases({ resourceType: "workflow_step", resourceKey: beforeStep.id });
+    const result = fixture.store.settleChannelWorkflowStepStartFailure(capturedFailure);
     assert.equal(result.status, "stale");
     const step = fixture.store.getChannelWorkflowStep(fixture.engineerStep.id);
     assert.equal(step.status, "running");
-    assert.equal(step.runId, fixture.engineerRun.id);
-    assert.deepEqual(step.metadata.delegatedOutcome, outcomeBeforeCommit);
+    assert.equal(step.runId, run.id);
+    assert.equal(step.metadata.startOwner.phase, "linked");
+    assert.deepEqual(step, beforeStep);
+    assert.deepEqual(fixture.store.getTask(fixture.engineerTask.id), beforeTask);
+    assert.deepEqual(fixture.store.listResourceLeases({ resourceType: "workflow_step", resourceKey: beforeStep.id }), beforeLeases);
     assert.equal(step.metadata.delegatedOutcomeBasisFingerprint, undefined);
   } finally {
     await fixture.close();
@@ -1837,17 +1992,15 @@ test("a late callback cannot finalize a newer linked retry Run", async () => {
   const fixture = await createMultiAgentOperationFixture("late-callback");
   try {
     appendToolAction(fixture.store, fixture.engineerRun.id, "write_old", "write", { path: "app.js", content: "old" }, false);
-    fixture.store.markRunSucceeded(fixture.engineerRun.id, "2026-08-12T17:20:10.000Z");
-    const retryRun = createFixtureRun(
-      fixture.store,
-      fixture.engineerRun.cwd,
-      fixture.engineerRun.channelId,
-      fixture.engineerStep.id,
-      fixture.engineerTask,
-      "run_multi_engineer_late_callback_retry",
-      "2026-08-12T17:20:11.000Z",
-    );
-    fixture.store.updateChannelWorkflowStep(fixture.engineerStep.id, { runId: retryRun.id }, "2026-08-12T17:20:12.000Z");
+    fixture.store.markRunFailed(fixture.engineerRun.id, "2026-08-12T17:20:10.000Z", "Retryable fixture failure");
+    assert.equal(finalizeDelegatedWorkflowStepFromCanonicalState({ store: fixture.store, workflowStepId: fixture.engineerStep.id,
+      cause: "run_terminal", now: "2026-08-12T17:20:11.000Z" }).status, "finalized");
+    assert.equal(fixture.store.getChannelWorkflowStep(fixture.engineerStep.id).status, "blocked");
+    fixture.store.releaseResourceLease(fixture.engineerLease.id, "workflow_step", fixture.engineerStep.id, "2026-08-12T17:20:11.000Z");
+    const retry = startFixtureStep(fixture.store, fixture.cwd, fixture.engineerStep.id,
+      "run_multi_engineer_late_callback_retry", "2026-08-12T17:20:12.000Z");
+    assert.notEqual(retry.task.id, fixture.engineerTask.id);
+    const before = fixture.store.getChannelWorkflowStep(fixture.engineerStep.id);
     finalizeOrchestratedWorkflowStepRun(
       fixture.store,
       fixture.engineerStep.id,
@@ -1856,29 +2009,145 @@ test("a late callback cannot finalize a newer linked retry Run", async () => {
       "2026-08-12T17:20:13.000Z",
     );
     const step = fixture.store.getChannelWorkflowStep(fixture.engineerStep.id);
-    assert.equal(step.runId, retryRun.id);
+    assert.equal(step.runId, retry.run.id);
+    assert.equal(step.taskId, retry.task.id);
     assert.equal(step.status, "running");
-    assert.equal(step.metadata.delegatedOutcome.kind, "workflow_started");
+    assert.equal(step.metadata.startOwner.phase, "linked");
+    assert.deepEqual(step, before);
   } finally {
     await fixture.close();
   }
 });
 
-test("delegated cancellation preserves cancelled workflow semantics", async () => {
-  const fixture = await createMultiAgentOperationFixture("cancelled-run");
+test("A12 captured delegated B cannot request a post-approval after real reconciliation and C takeover", async () => {
+  const fixture = await createMultiAgentOperationFixture("post-approval-takeover", { engineerPhase: "queued" });
   try {
     const step = fixture.store.getChannelWorkflowStep(fixture.engineerStep.id);
-    fixture.store.updateChannelWorkflowStep(step.id, {
-      metadata: {
-        ...step.metadata,
-        policy: {
-          onRunFailed: "fail_workflow",
-          onRunCancelled: "cancel_workflow",
-          onApprovalDenied: "block_for_user",
-          retryable: false,
-        },
-      },
-    }, "2026-08-12T17:30:01.000Z");
+    fixture.store.updateChannelWorkflowStep(step.id, { metadata: { ...step.metadata,
+      gates: [{ stage: "post", approvalProfile: { mode: "standard", risk: "medium" },
+        title: "Review result", reason: "Review the completed result.", requiredForStatuses: ["succeeded"] }],
+    } }, "2026-08-12T17:24:00.000Z");
+    const generation = startFixtureStep(fixture.store, fixture.cwd, step.id,
+      "run_post_approval_B", "2026-08-12T17:24:01.000Z");
+    // B's model finishes without the required write evidence. A concurrent
+    // canonical reconciliation genuinely blocks it before a fresh C starts.
+    fixture.store.markRunSucceeded(generation.run.id, "2026-08-12T17:24:02.000Z");
+    const commit = fixture.store.commitChannelWorkflowStepPostApproval.bind(fixture.store);
+    let captured;
+    let replacement;
+    let replacementState;
+    fixture.store.commitChannelWorkflowStepPostApproval = (input) => {
+      captured = input;
+      const blocked = finalizeDelegatedWorkflowStepFromCanonicalState({ store: fixture.store,
+        workflowStepId: step.id, cause: "explicit_reconcile", now: "2026-08-12T17:24:03.000Z" });
+      assert.equal(blocked.status, "finalized");
+      assert.equal(fixture.store.getChannelWorkflowStep(step.id).status, "blocked");
+      replacement = startFixtureStep(fixture.store, fixture.cwd, step.id,
+        "run_post_approval_C", "2026-08-12T17:24:04.000Z");
+      replacementState = workflowFinalizerDurableSnapshot(fixture.store);
+      return commit(input);
+    };
+    assert.throws(() => finalizeOrchestratedWorkflowStepRun(fixture.store, step.id, generation.task.id,
+      fixture.store.getRun(generation.run.id), "2026-08-12T17:24:05.000Z"),
+    (error) => error.code === "workflow_post_approval_owner_stale");
+    assert.equal(captured.owner.taskId, generation.task.id);
+    assert.equal(captured.runId, generation.run.id);
+    assert.notEqual(replacement.task.id, generation.task.id);
+    assert.deepEqual(workflowFinalizerDurableSnapshot(fixture.store), replacementState,
+      "rejected B approval must not create an approval, marker, reply or state audit for C");
+    const current = fixture.store.getChannelWorkflowStep(step.id);
+    assert.equal(current.status, "running");
+    assert.equal(current.runId, replacement.run.id);
+    assert.equal(current.metadata.postStepApprovalId, undefined);
+    assert.equal(fixture.store.listResourceLeases({ resourceType: "workflow_step", resourceKey: step.id, limit: 100 })
+      .find((lease) => lease.id === replacement.lease.id).status, "active");
+  } finally { await fixture.close(); }
+});
+
+for (const decision of ["approved", "denied"]) {
+  test(`A12 replayed ${decision} B approval cannot settle C's current post gate`, async () => {
+    const fixture = await createMultiAgentOperationFixture(`post-decision-replay-${decision}`, { engineerPhase: "queued" });
+    const { store } = fixture;
+    try {
+      const step = store.getChannelWorkflowStep(fixture.engineerStep.id);
+      store.updateChannelWorkflowStep(step.id, { metadata: { ...step.metadata,
+        gates: [{ stage: "post", approvalProfile: { mode: "standard", risk: "medium" },
+          title: "Review result", reason: "Review this generation's completed result.", requiredForStatuses: ["succeeded"] }],
+        policy: { onRunFailed: "block_for_user", onRunCancelled: "block_for_user", onApprovalDenied: "block_for_user", retryable: true },
+      } }, "2026-08-12T17:25:00.000Z");
+      const b = startFixtureStep(store, fixture.cwd, step.id, `run_post_replay_B_${decision}`, "2026-08-12T17:25:01.000Z");
+      store.markRunSucceeded(b.run.id, "2026-08-12T17:25:02.000Z");
+      finalizeOrchestratedWorkflowStepRun(store, step.id, b.task.id, store.getRun(b.run.id), "2026-08-12T17:25:03.000Z");
+      const waitingB = store.getChannelWorkflowStep(step.id);
+      assert.equal(waitingB.status, "waiting_for_approval");
+      const oldDecision = store[decision === "approved" ? "approveApprovalRequest" : "denyApprovalRequest"](
+        waitingB.metadata.postStepApprovalId, { resolvedBy: "local-user" }, "2026-08-12T17:25:04.000Z");
+      assert.equal(oldDecision.status, decision);
+      // A lawful reconciliation blocks B: approval cannot manufacture the
+      // missing write evidence, and a denied approval is not successful work.
+      assert.equal(finalizeDelegatedWorkflowStepFromCanonicalState({ store, workflowStepId: step.id,
+        cause: "explicit_reconcile", now: "2026-08-12T17:25:05.000Z" }).status, "finalized");
+      assert.equal(store.getChannelWorkflowStep(step.id).status, "blocked");
+      reconcileWorkflowFromCanonicalState({ store, workflowId: fixture.workflow.id,
+        cause: "explicit_reconcile", now: "2026-08-12T17:25:05.000Z" });
+      assert.equal(store.getChannelWorkflow(fixture.workflow.id).status, "blocked");
+      store.releaseResourceLease(b.lease.id, "workflow_step", step.id, "2026-08-12T17:25:06.000Z");
+
+      const c = startFixtureStep(store, fixture.cwd, step.id, `run_post_replay_C_${decision}`, "2026-08-12T17:25:07.000Z");
+      assert.notEqual(c.task.id, b.task.id);
+      appendToolAction(store, c.run.id, "write_C", "write", { path: "app.js", content: "console.log('C')" }, false);
+      store.markRunSucceeded(c.run.id, "2026-08-12T17:25:08.000Z");
+      finalizeOrchestratedWorkflowStepRun(store, step.id, c.task.id, store.getRun(c.run.id), "2026-08-12T17:25:09.000Z");
+      const waitingC = store.getChannelWorkflowStep(step.id);
+      const cApproval = store.getApprovalRequest(waitingC.metadata.postStepApprovalId);
+      assert.equal(waitingC.status, "waiting_for_approval");
+      assert.equal(store.getChannelWorkflow(fixture.workflow.id).status, "waiting_for_approval");
+      assert.equal(cApproval.status, "pending");
+      assert.equal(cApproval.payload.runId, c.run.id);
+      assert.notEqual(cApproval.id, oldDecision.id);
+      assert.equal(waitingC.metadata.activeGateStage, "post");
+
+      const observer = new DatabaseSync(store.paths.databasePath, { readOnly: true });
+      const snapshot = () => Object.fromEntries(observer.prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+      ).all().map(({ name }) => [name, observer.prepare(`SELECT * FROM "${name.replaceAll('"', '""')}"`).all()
+        .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)))]));
+      try {
+        const before = snapshot();
+        // This is the same exported entry used by durable post-commit effect
+        // recovery. A captured B decision must be a no-op against C's gate.
+        syncWorkflowApprovalDecision(store, oldDecision, "2026-08-12T17:25:10.000Z");
+        assert.deepEqual(snapshot(), before, "old approval replay must not mutate any current-generation durable facts");
+      } finally { observer.close(); }
+      assert.equal(store.getChannelWorkflowStep(step.id).status, "waiting_for_approval");
+      assert.equal(store.getApprovalRequest(cApproval.id).status, "pending");
+
+      const approvedC = store.approveApprovalRequest(cApproval.id, { resolvedBy: "local-user" }, "2026-08-12T17:25:11.000Z");
+      assert.equal(approvedC.status, "approved");
+      syncWorkflowApprovalDecision(store, approvedC, "2026-08-12T17:25:12.000Z");
+      const completedC = store.getChannelWorkflowStep(step.id);
+      assert.equal(completedC.runId, c.run.id);
+      assert.equal(completedC.status, "succeeded");
+      assert.equal(completedC.metadata.delegatedOutcome.kind, "completed");
+      assert.equal(completedC.metadata.activeGateStage, undefined);
+    } finally { await fixture.close(); }
+  });
+}
+
+function workflowFinalizerDurableSnapshot(store) {
+  const database = new DatabaseSync(store.paths.databasePath, { readOnly: true });
+  try {
+    return Object.fromEntries(["channel_workflows", "channel_workflow_steps", "tasks", "run_sessions",
+      "resource_leases", "approval_requests", "artifacts", "conversation_items", "state_transition_events"]
+      .map((table) => [table, database.prepare(`SELECT * FROM ${table} ORDER BY id`).all()]));
+  } finally { database.close(); }
+}
+
+test("delegated cancellation preserves cancelled workflow semantics", async () => {
+  const fixture = await createMultiAgentOperationFixture("cancelled-run", { engineerPolicy: {
+    onRunFailed: "fail_workflow", onRunCancelled: "cancel_workflow", onApprovalDenied: "block_for_user", retryable: false } });
+  try {
+    const step = fixture.store.getChannelWorkflowStep(fixture.engineerStep.id);
     fixture.store.markRunCancelled(fixture.engineerRun.id, "2026-08-12T17:30:10.000Z", "User cancelled.");
     reconcileWorkflowFromCanonicalState({
       store: fixture.store,
@@ -1915,33 +2184,14 @@ async function createOperationFixture(suffix, operations, policy) {
     prompt: "Create and run app.js",
     toParticipantId: "teammate_builtin_engineer",
     toParticipantLabel: "Engineer",
-    status: "running",
+    status: "queued",
     metadata: {
       executionPlan: plan,
       executionOperationIds: operations.map((item) => item.id),
       policy: policy ?? { onRunFailed: "block_for_user", onRunCancelled: "block_for_user", onApprovalDenied: "block_for_user", retryable: true },
     },
   }, now);
-  const task = store.createTask({ channelId: channel.id, title: "Create and run", prompt: "Create and run app.js", assigneeTeammateId: "teammate_builtin_engineer" }, now);
-  const run = store.createRun({
-    id: `run_operation_${suffix}`,
-    cwd,
-    taskId: task.id,
-    channelId: channel.id,
-    workflowStepId: step.id,
-    providerName: "test-provider",
-    providerModel: "test-model",
-    taskSnapshot: { id: task.id, title: task.title },
-    providerSnapshot: { provider: "test-provider", model: "test-model" },
-    requestSnapshot: { cwd },
-    createdAt: now,
-  });
-  store.markRunStarted(run.id, now);
-  store.appendEvent(run.id, "run_created", {
-    attemptId: `attempt_operation_${suffix}`,
-    workUnitId: `work_unit_operation_${suffix}`,
-  });
-  store.updateChannelWorkflowStep(step.id, { taskId: task.id, runId: run.id }, now);
+  const { task, run } = startFixtureStep(store, cwd, step.id, `run_operation_${suffix}`, now);
   return {
     store,
     cwd,
@@ -1989,11 +2239,13 @@ function projectionFor(item, assignment) {
   };
 }
 
-async function createMultiAgentOperationFixture(suffix) {
+async function createMultiAgentOperationFixture(suffix, { engineerPhase = "linked", engineerPolicy, engineerStartedAt } = {}) {
   const cwd = await mkdtemp(resolve(tmpdir(), `ling-workflow-multi-operation-${suffix}-`));
   const store = createSqliteRunStore(cwd);
   const now = "2026-08-12T14:00:00.000Z";
   const channel = store.createChannel({ name: `Multi operation ${suffix}`, boundPath: cwd }, now);
+  const engineerBinding = fixtureParticipantBinding(store, channel, cwd, "teammate_builtin_engineer", ["write"], now);
+  const qaBinding = fixtureParticipantBinding(store, channel, cwd, "teammate_builtin_qa", ["bash"], now);
   const participantManifest = createRequiredParticipantManifestV1([{
     participantId: "teammate_builtin_engineer",
     role: "engineer",
@@ -2035,8 +2287,10 @@ async function createMultiAgentOperationFixture(suffix) {
     name: "Engineer then QA",
     entryNodeId: "engineer",
     nodes: [
-      { id: "engineer", kind: "step", name: "Engineer write", prompt: "Create app.js", teammateId: "teammate_builtin_engineer" },
-      { id: "qa", kind: "step", name: "QA run", prompt: "Run node app.js", teammateId: "teammate_builtin_qa" },
+      { id: "engineer", kind: "step", name: "Engineer write", prompt: "Create app.js", teammateId: "teammate_builtin_engineer",
+        providerPresetId: engineerBinding.providerPresetId, providerBinding: engineerBinding },
+      { id: "qa", kind: "step", name: "QA run", prompt: "Run node app.js", teammateId: "teammate_builtin_qa",
+        providerPresetId: qaBinding.providerPresetId, providerBinding: qaBinding },
     ],
     edges: [{ id: "engineer_to_qa", fromNodeId: "engineer", toNodeId: "qa", condition: { kind: "all_succeeded" } }],
     termination: { success: "all_required_succeeded", onFailedRequiredNode: "block_for_user", onApprovalDenied: "block_for_user" },
@@ -2069,8 +2323,10 @@ async function createMultiAgentOperationFixture(suffix) {
     prompt: "Create app.js",
     toParticipantId: "teammate_builtin_engineer",
     toParticipantLabel: "Engineer",
-    status: "running",
-    metadata: { graphId: graph.id, graphNodeId: "engineer", executionPlan: plan, executionOperationIds: ["create_file"] },
+    status: "queued",
+    metadata: { graphId: graph.id, graphNodeId: "engineer", executionPlan: plan, executionOperationIds: ["create_file"],
+      providerPresetId: engineerBinding.providerPresetId, providerBinding: engineerBinding,
+      ...(engineerPolicy ? { policy: engineerPolicy } : {}) },
   }, now);
   const qaStep = store.createChannelWorkflowStep({
     workflowId: workflow.id,
@@ -2079,8 +2335,9 @@ async function createMultiAgentOperationFixture(suffix) {
     prompt: "Run node app.js",
     toParticipantId: "teammate_builtin_qa",
     toParticipantLabel: "QA",
-    status: "running",
-    metadata: { graphId: graph.id, graphNodeId: "qa", executionPlan: plan, executionOperationIds: ["run_command"], dependsOnStepIds: [engineerStep.id] },
+    status: "queued",
+    metadata: { graphId: graph.id, graphNodeId: "qa", executionPlan: plan, executionOperationIds: ["run_command"], dependsOnStepIds: [engineerStep.id],
+      providerPresetId: qaBinding.providerPresetId, providerBinding: qaBinding },
   }, now);
   const [materializedEngineerStep, materializedQaStep] = materializeWorkflowDelegatedStepRequirements({
     store,
@@ -2088,26 +2345,32 @@ async function createMultiAgentOperationFixture(suffix) {
     manifest: participantManifest,
     now,
   });
-  const engineerTask = store.createTask({ channelId: channel.id, title: "Engineer write", prompt: "Create app.js", assigneeTeammateId: "teammate_builtin_engineer" }, now);
-  const qaTask = store.createTask({ channelId: channel.id, title: "QA run", prompt: "Run node app.js", assigneeTeammateId: "teammate_builtin_qa" }, now);
-  const engineerRun = createFixtureRun(store, cwd, channel.id, engineerStep.id, engineerTask, `run_multi_engineer_${suffix}`, now);
-  const qaRun = createFixtureRun(store, cwd, channel.id, qaStep.id, qaTask, `run_multi_qa_${suffix}`, now);
-  store.updateChannelWorkflowStep(materializedEngineerStep.id, { taskId: engineerTask.id, runId: engineerRun.id }, now);
-  store.updateChannelWorkflowStep(materializedQaStep.id, { taskId: qaTask.id, runId: qaRun.id }, now);
-  return {
+  const engineer = engineerPhase === "queued" ? undefined : startFixtureStep(store, cwd, engineerStep.id,
+    `run_multi_engineer_${suffix}`, engineerStartedAt ?? now, { ready: engineerPhase === "linked" });
+  const fixture = {
     store,
+    cwd,
     workflow,
-    engineerStep: materializedEngineerStep,
+    engineerStep: store.getChannelWorkflowStep(materializedEngineerStep.id),
     qaStep: materializedQaStep,
-    engineerTask,
-    qaTask,
-    engineerRun,
-    qaRun,
+    engineerTask: engineer?.task,
+    engineerRun: engineer?.run,
+    engineerOwner: engineer?.owner,
+    engineerLease: engineer?.lease,
+    startQa(startedAt) {
+      assert.equal(fixture.qaRun, undefined, "QA must have only one fixture-owned start");
+      const qa = startFixtureStep(store, cwd, qaStep.id, `run_multi_qa_${suffix}`, startedAt);
+      fixture.qaStep = store.getChannelWorkflowStep(qaStep.id);
+      fixture.qaTask = qa.task;
+      fixture.qaRun = qa.run;
+      return qa;
+    },
     close: async () => {
       store.close();
       await rm(cwd, { recursive: true, force: true });
     },
   };
+  return fixture;
 }
 
 async function createGenericDelegatedActionFixture(suffix) {
@@ -2115,6 +2378,7 @@ async function createGenericDelegatedActionFixture(suffix) {
   const store = createSqliteRunStore(cwd);
   const now = "2026-08-12T14:05:00.000Z";
   const channel = store.createChannel({ name: "Generic delegated action", boundPath: cwd }, now);
+  const providerBinding = fixtureParticipantBinding(store, channel, cwd, "teammate_builtin_engineer", ["read"], now);
   const participantManifest = createRequiredParticipantManifestV1([{
     participantId: "teammate_builtin_engineer",
     role: "engineer",
@@ -2151,7 +2415,8 @@ async function createGenericDelegatedActionFixture(suffix) {
     id: `graph_generic_action_${suffix}`,
     name: "Generic delegated action",
     entryNodeId: "engineer",
-    nodes: [{ id: "engineer", kind: "step", name: "Inspect", prompt: "Inspect", teammateId: "teammate_builtin_engineer" }],
+    nodes: [{ id: "engineer", kind: "step", name: "Inspect", prompt: "Inspect", teammateId: "teammate_builtin_engineer",
+      providerPresetId: providerBinding.providerPresetId, providerBinding }],
     edges: [],
     termination: { success: "all_required_succeeded", onFailedRequiredNode: "block_for_user", onApprovalDenied: "block_for_user" },
   };
@@ -2176,13 +2441,12 @@ async function createGenericDelegatedActionFixture(suffix) {
     prompt: "Inspect",
     toParticipantId: "teammate_builtin_engineer",
     toParticipantLabel: "Engineer",
-    status: "running",
-    metadata: { graphId: graph.id, graphNodeId: "engineer" },
+    status: "queued",
+    metadata: { graphId: graph.id, graphNodeId: "engineer", providerPresetId: providerBinding.providerPresetId, providerBinding },
   }, now);
   [step] = materializeWorkflowDelegatedStepRequirements({ store, workflow, manifest: participantManifest, now });
-  const task = store.createTask({ channelId: channel.id, title: "Inspect", prompt: "Inspect", assigneeTeammateId: "teammate_builtin_engineer" }, now);
-  const run = createFixtureRun(store, cwd, channel.id, step.id, task, `run_generic_action_${suffix}`, now);
-  step = store.updateChannelWorkflowStep(step.id, { taskId: task.id, runId: run.id }, now);
+  const { task, run } = startFixtureStep(store, cwd, step.id, `run_generic_action_${suffix}`, now);
+  step = store.getChannelWorkflowStep(step.id);
   return {
     store,
     workflow,
@@ -2196,18 +2460,68 @@ async function createGenericDelegatedActionFixture(suffix) {
   };
 }
 
+/** Freeze the real binding producer once, before a start owns its authority basis. */
+function fixtureParticipantBinding(store, channel, cwd, participantId, requiredTools, now) {
+  store.updateWorkspaceSettings({ defaultProviderPresetId: "provider_workspace" }, now);
+  const teammate = store.getAiTeammate(participantId);
+  assert.ok(teammate, "fixture requires a real builtin participant");
+  const preflight = preflightWorkflowParticipantProvider({ store, channel, teammate, cwd, requiredTools,
+    validateRunRequest(request) {
+      assert.equal(request.providerPresetId, "provider_workspace");
+      assert.equal(request.teammateId, participantId);
+      assert.deepEqual(request.tools, requiredTools);
+    } });
+  assert.equal(preflight.kind, "ready", JSON.stringify(preflight));
+  return preflight.binding;
+}
+
+/** Begin owns a fresh Task; ready atomically owns both Task and Step Run links. */
+function startFixtureStep(store, cwd, workflowStepId, runId, now, { ready = true } = {}) {
+  const step = store.getChannelWorkflowStep(workflowStepId);
+  const channel = store.getChannel(step.channelId);
+  const lease = store.acquireResourceLease({ workspaceId: channel.workspaceId, resourceType: "workflow_step",
+    resourceKey: step.id, ownerType: "workflow_step", ownerId: step.id, acquiredAt: now,
+    expiresAt: new Date(Date.parse(now) + 3_600_000).toISOString() });
+  assert.ok(lease);
+  const started = store.beginChannelWorkflowStepStart({ workflowStepId: step.id,
+    expected: { status: step.status, taskId: step.taskId, runId: step.runId, updatedAt: step.updatedAt }, leaseId: lease.id,
+    task: { channelId: channel.id, title: step.title, prompt: step.prompt, assigneeTeammateId: step.toParticipantId }, now });
+  assert.equal(started.status, "begun", JSON.stringify(started));
+  assert.equal(store.getTask(started.task.id).currentRunId, undefined);
+  if (!ready) return { ...started, lease };
+  const run = readyFixtureStep(store, cwd, step.id, started, runId, now);
+  return { ...started, task: store.getTask(started.task.id), run, lease };
+}
+
+function readyFixtureStep(store, cwd, workflowStepId, started, runId, now) {
+  const step = store.getChannelWorkflowStep(workflowStepId);
+  const task = store.getTask(started.task.id);
+  assert.equal(store.transitionTaskStatus({ taskId: task.id, expectedStatus: "todo", event: "claim", actor: "system", now }).ok, true);
+  const run = createFixtureRun(store, cwd, step.channelId, step.id, task, runId, now);
+  assert.equal(store.getTask(task.id).currentRunId, undefined, "only ready may publish the Task Run link");
+  assert.deepEqual(store.commitChannelWorkflowStepRunReady({ workflowStepId: step.id, owner: started.owner, runId: run.id, now }), { status: "linked" });
+  assert.equal(store.getTask(task.id).currentRunId, run.id);
+  assert.equal(store.getChannelWorkflowStep(step.id).metadata.startOwner.phase, "linked");
+  return store.getRun(run.id);
+}
+
 function createFixtureRun(store, cwd, channelId, workflowStepId, task, id, now) {
+  const step = store.getChannelWorkflowStep(workflowStepId);
+  const delegatedRequirement = step?.metadata?.delegatedRequirement;
   const run = store.createRun({
     id,
     cwd,
     taskId: task.id,
     channelId,
     workflowStepId,
+    teammateId: step?.toParticipantId,
+    ...(step?.metadata?.providerPresetId ? { providerPresetId: step.metadata.providerPresetId } : {}),
     providerName: "test-provider",
     providerModel: "test-model",
     taskSnapshot: { id: task.id, title: task.title },
     providerSnapshot: { provider: "test-provider", model: "test-model" },
-    requestSnapshot: { cwd },
+    requestSnapshot: { cwd, ...(delegatedRequirement ? { delegatedRequirement } : {}),
+      ...(step?.metadata?.providerBinding ? { providerBinding: step.metadata.providerBinding } : {}) },
     createdAt: now,
   });
   store.markRunStarted(run.id, now);
@@ -2219,6 +2533,7 @@ function createFixtureRun(store, cwd, channelId, workflowStepId, task, id, now) 
     ownerId: run.id,
     channelId,
     taskId: task.id,
+    teammateId: step?.toParticipantId,
     runnerId: "pi",
     effectiveRunnerId: "pi",
     idempotencyKey: `fixture-work-unit:${id}`,
@@ -2278,6 +2593,7 @@ async function createSynthesisFinalizationFixture(suffix) {
   const store = createSqliteRunStore(cwd);
   const now = "2026-08-12T14:25:00.000Z";
   const channel = store.createChannel({ name: "Synthesis finalization", boundPath: cwd }, now);
+  const providerBinding = fixtureParticipantBinding(store, channel, cwd, "teammate_builtin_architect", [], now);
   const participantManifest = createRequiredParticipantManifestV1([{
     participantId: "teammate_builtin_architect",
     role: "architect",
@@ -2304,7 +2620,8 @@ async function createSynthesisFinalizationFixture(suffix) {
     id: `graph_synthesis_${suffix}`,
     name: "Synthesis",
     entryNodeId: "synthesis",
-    nodes: [{ id: "synthesis", kind: "step", name: "Synthesis", prompt: "Synthesize", teammateId: "teammate_builtin_architect" }],
+    nodes: [{ id: "synthesis", kind: "step", name: "Synthesis", prompt: "Synthesize", teammateId: "teammate_builtin_architect",
+      providerPresetId: providerBinding.providerPresetId, providerBinding }],
     edges: [],
     termination: { success: "all_required_succeeded", onFailedRequiredNode: "block_for_user", onApprovalDenied: "block_for_user" },
   };
@@ -2331,13 +2648,12 @@ async function createSynthesisFinalizationFixture(suffix) {
     prompt: "Synthesize",
     toParticipantId: "teammate_builtin_architect",
     toParticipantLabel: "Architect",
-    status: "running",
-    metadata: { graphId: graph.id, graphNodeId: "synthesis" },
+    status: "queued",
+    metadata: { graphId: graph.id, graphNodeId: "synthesis", providerPresetId: providerBinding.providerPresetId, providerBinding },
   }, now);
   [step] = materializeWorkflowDelegatedStepRequirements({ store, workflow, manifest: participantManifest, now });
-  const task = store.createTask({ channelId: channel.id, title: "Synthesis", prompt: "Synthesize", assigneeTeammateId: "teammate_builtin_architect" }, now);
-  const run = createFixtureRun(store, cwd, channel.id, step.id, task, `run_synthesis_${suffix}`, now);
-  step = store.updateChannelWorkflowStep(step.id, { taskId: task.id, runId: run.id }, now);
+  const { task, run } = startFixtureStep(store, cwd, step.id, `run_synthesis_${suffix}`, now);
+  step = store.getChannelWorkflowStep(step.id);
   return {
     store,
     cwd,
@@ -2393,7 +2709,7 @@ function appendRollbackRecoveryProbe(store, cwd, suffix, now) {
 
 function appendBashAction(store, runId, command, result) {
   const toolCallId = `bash_${command.replaceAll(/\W+/gu, "_")}`;
-  store.appendEvent(runId, "tool_start", { toolCallId, toolName: "bash", args: { command } });
+  const started = store.appendEvent(runId, "tool_start", { toolCallId, toolName: "bash", args: { command } });
   store.appendEvent(runId, "tool_end", {
     toolCallId,
     toolName: "bash",
@@ -2404,8 +2720,8 @@ function appendBashAction(store, runId, command, result) {
           status: result.status ?? (result.exitCode === 0 && !result.timedOut && !result.cancelled ? "succeeded" : "failed"),
           command: { kind: "shell", command, shell: "bash" },
           cwd: "/workspace",
-          startedAt: result.startedAt ?? "2026-08-12T12:00:05.000Z",
-          endedAt: result.endedAt ?? "2026-08-12T12:00:06.000Z",
+          startedAt: result.startedAt ?? started.ts,
+          endedAt: result.endedAt ?? started.ts,
           durationMs: 1000,
           exitCode: result.exitCode,
           timedOut: result.timedOut,

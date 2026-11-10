@@ -14,6 +14,7 @@ import {
 import { normalizeArtifactPath } from "../../shared/path.js";
 import { isRecord } from "../../shared/validation.js";
 import { buildGitCommandPreview } from "./action-classifier.js";
+import { toPublicArtifactMetadata } from "./public-artifacts.js";
 
 type ActionArtifactStore = RunStorePathsFacet & RunExecutionStoreFacet;
 
@@ -56,6 +57,8 @@ export function createExecutionActionResultArtifact(input: {
   readonly contentType: string;
   readonly content: string;
   readonly now: string;
+  /** Host-owned recovery evidence; never emitted in artifact-created metadata. */
+  readonly sealedPayload?: unknown;
 }): RunArtifact {
   return writeActionArtifact({
     store: input.store,
@@ -68,6 +71,7 @@ export function createExecutionActionResultArtifact(input: {
     content: input.content,
     contentType: input.contentType,
     now: input.now,
+    sealedPayload: input.sealedPayload,
   });
 }
 
@@ -101,7 +105,7 @@ export function appendExecutionActionArtifactEvents(input: {
 }): void {
   for (const artifact of input.artifacts) {
     input.appendAndMaybeStream("artifact_created", {
-      artifact,
+      artifact: toPublicArtifactMetadata(artifact),
       artifactId: artifact.id,
       approvalId: input.approval.id,
       toolCallId: input.approval.toolCallId,
@@ -207,6 +211,7 @@ function writeActionArtifact(input: {
   readonly content: string;
   readonly contentType: string;
   readonly now: string;
+  readonly sealedPayload?: unknown;
 }): RunArtifact {
   const relativePath = normalizeArtifactPath(`${input.run.id}/actions/${input.approval.id}/${input.filename}`);
   const absolutePath = resolvePath(input.store.paths.artifactsDir, relativePath);
@@ -225,6 +230,7 @@ function writeActionArtifact(input: {
     contentType: input.contentType,
     sizeBytes: Number(stats.size),
     createdAt: input.now,
+    sealedPayload: input.sealedPayload,
   });
 }
 

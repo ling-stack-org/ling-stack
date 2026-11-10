@@ -4,6 +4,7 @@ import {
   readOnlyRunTools,
   permissionPresets,
   workspaceAccessModes,
+  normalizeRunnerId,
   type AiTeammate,
   type AiTeammateUpdateInput,
   type AuthorizationMode,
@@ -39,6 +40,7 @@ import {
 } from "../channels/schemas.js";
 
 export interface TeammateDirectMessageRequest {
+  readonly idempotencyKey?: string;
   readonly body: string;
   readonly attachmentIds: readonly string[];
   readonly linkPreviewIds: readonly string[];
@@ -78,7 +80,7 @@ export function parseCreateAiTeammateInput(value: unknown): CreateAiTeammateInpu
     avatarImageAttachmentId: readOptionalString(value, "avatarImageAttachmentId"),
     modelBindingMode: "fixed",
     providerPresetId: readOptionalString(value, "providerPresetId"),
-    runnerId: readOptionalString(value, "runnerId"),
+    runnerId: normalizeRunnerId(readOptionalString(value, "runnerId")),
     systemPrompt: readOptionalString(value, "systemPrompt"),
     appendSystemPrompt: readOptionalStringArray(value, "appendSystemPrompt"),
     allowedTools: readOptionalRunTools(value, "allowedTools"),
@@ -95,6 +97,7 @@ export function parseAiTeammateUpdateInput(value: unknown): AiTeammateUpdateInpu
   if (!isRecord(value)) {
     throw new Error("AI teammate update must be a JSON object");
   }
+  const runnerId = readNullableString(value, "runnerId");
   const input: AiTeammateUpdateInput = {
     templateId: readNullableString(value, "templateId"),
     roleKey: readOptionalAiTeammateRoleKey(value, "roleKey"),
@@ -104,7 +107,7 @@ export function parseAiTeammateUpdateInput(value: unknown): AiTeammateUpdateInpu
     avatarImageAttachmentId: readNullableString(value, "avatarImageAttachmentId"),
     modelBindingMode: readOptionalAiTeammateModelBindingMode(value, "modelBindingMode"),
     providerPresetId: readNullableString(value, "providerPresetId"),
-    runnerId: readNullableString(value, "runnerId"),
+    runnerId: runnerId === null ? null : normalizeRunnerId(runnerId),
     systemPrompt: readNullableString(value, "systemPrompt"),
     appendSystemPrompt: readOptionalStringArray(value, "appendSystemPrompt"),
     allowedTools: readOptionalRunTools(value, "allowedTools"),
@@ -239,6 +242,7 @@ export function parseTeammateDirectMessageRequest(value: unknown): TeammateDirec
   const body = readString(value, "body");
   const input: TeammateDirectMessageRequest = {
     body,
+    idempotencyKey: readOptionalString(value, "idempotencyKey"),
     attachmentIds: readOptionalStringArray(value, "attachmentIds") ?? [],
     linkPreviewIds: readOptionalStringArray(value, "linkPreviewIds") ?? [],
     fileRefs: readOptionalChannelMessageFileRefs(value, "fileRefs") ?? [],

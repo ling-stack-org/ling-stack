@@ -20,10 +20,36 @@ import type {
   MemoryReviewMutationResponse,
   UpdateMemoryObjectRequest,
   UsedMemoryListResponse,
+  MemoryObject,
+  MemorySemanticPolicyResponse,
+  MemorySemanticPolicyUpdate,
+  MemoryWikiResponse, MemoryWikiScope, MemoryWikiExportResponse, MemoryWikiHumanBlock,
 } from "@ling-stack/contracts";
 import type { LingDaemonEndpointContext, PublicEndpointGroup } from "../transport.js";
 
 export const memoryEndpoints = {
+  async getMemoryWiki(this: LingDaemonEndpointContext, cwd: string, scope: MemoryWikiScope): Promise<MemoryWikiResponse> {
+    return this._get('/memory/wiki', {cwd, ...scope});
+  },
+  async compileMemoryWiki(this: LingDaemonEndpointContext, cwd: string, scope: MemoryWikiScope): Promise<MemoryWikiResponse> {
+    return this._post('/memory/wiki/compile', {cwd, ...scope});
+  },
+  async exportMemoryWiki(this: LingDaemonEndpointContext, cwd: string, scope: MemoryWikiScope): Promise<MemoryWikiExportResponse> {
+    return this._get('/memory/wiki/export', {cwd, ...scope});
+  },
+  async updateMemoryWikiHumanBlock(this: LingDaemonEndpointContext, cwd: string, scope: MemoryWikiScope,
+    input: {readonly expectedRevision: number; readonly text: string}): Promise<{readonly human: MemoryWikiHumanBlock}> {
+    return this._put('/memory/wiki/human', {cwd, ...scope}, input);
+  },
+  async getMemoryObject(this: LingDaemonEndpointContext, cwd: string, id: string): Promise<{readonly memory: MemoryObject}> {
+    return this._get(`/memory/${encodeURIComponent(id)}`, {cwd});
+  },
+  async getMemorySemanticPolicy(this: LingDaemonEndpointContext, cwd: string): Promise<MemorySemanticPolicyResponse> {
+    return this._get('/memory/semantic-policy', {cwd});
+  },
+  async updateMemorySemanticPolicy(this: LingDaemonEndpointContext, cwd: string, input: MemorySemanticPolicyUpdate): Promise<MemorySemanticPolicyResponse> {
+    return this._put('/memory/semantic-policy', {cwd}, input);
+  },
   async listMemoryObjects(this: LingDaemonEndpointContext,
       cwd: string,
       options: {

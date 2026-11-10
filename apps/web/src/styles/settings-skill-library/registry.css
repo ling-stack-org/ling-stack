@@ -119,18 +119,23 @@
 
 .settings-skill-table th:nth-child(3),
 .settings-skill-table td:nth-child(3) {
-  width: 160px;
+  width: 136px;
 }
 
 .settings-skill-table th:nth-child(4),
 .settings-skill-table td:nth-child(4) {
+  width: 160px;
+}
+
+.settings-skill-table th:nth-child(5),
+.settings-skill-table td:nth-child(5) {
   width: 136px;
 }
 
-.settings-skill-table--user th:nth-child(5),
-.settings-skill-table--user td:nth-child(5),
-.settings-skill-table--evolved th:nth-child(5),
-.settings-skill-table--evolved td:nth-child(5) {
+.settings-skill-table--user th:nth-child(6),
+.settings-skill-table--user td:nth-child(6),
+.settings-skill-table--evolved th:nth-child(6),
+.settings-skill-table--evolved td:nth-child(6) {
   width: 78px;
   padding-inline: var(--ling-space-2) 10px;
   text-align: right;

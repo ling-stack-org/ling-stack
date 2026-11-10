@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { resolve } from "node:path";
+import { relative, resolve } from "node:path";
 import test from "node:test";
 import { createDaemonServer } from "../dist/index.js";
 import {
@@ -113,7 +113,9 @@ test("Computer Use registry exposes one atomic snapshot and replay boundary", as
 });
 
 test("Computer Use sessions canonicalizes a relative workspace cwd", async () => {
-  const cwd = resolve(".");
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-computer-use-relative-cwd-"));
+  const relativeCwd = relative(process.cwd(), cwd);
+  assert.notEqual(relativeCwd, cwd);
   const daemon = createDaemonServer(
     { host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd },
     { computerUseRouteToken: COMPUTER_USE_ROUTE_TOKEN },
@@ -124,7 +126,7 @@ test("Computer Use sessions canonicalizes a relative workspace cwd", async () =>
     const address = daemon.server.address();
     assert.ok(address && typeof address === "object");
     const response = await fetch(
-      `http://127.0.0.1:${address.port}/computer-use/sessions?cwd=.`,
+      `http://127.0.0.1:${address.port}/computer-use/sessions?cwd=${encodeURIComponent(relativeCwd)}`,
       { headers: { "X-Ling-Computer-Use-Token": COMPUTER_USE_ROUTE_TOKEN } },
     );
     assert.equal(response.status, 200);
@@ -133,6 +135,7 @@ test("Computer Use sessions canonicalizes a relative workspace cwd", async () =>
     assert.equal(body.projections[0].sessionId, "session-1");
   } finally {
     await daemon.stop().catch(() => undefined);
+    await rm(cwd, { recursive: true, force: true });
   }
 });
 

@@ -18,8 +18,10 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { DEFAULT_COMPUTER_USE_PREVIEW_LOCALE } from "../../shared/desktop-capabilities.js";
 import {
   createComputerUsePreviewTranslator,
+  loadComputerUsePreviewTranslator,
   normalizeComputerUsePreviewLocale,
 } from "./messages.js";
 import { ComputerUsePageDeck } from "./ComputerUsePageDeck.js";
@@ -44,21 +46,39 @@ export function ComputerUsePreviewApp({
   readonly mediaController: ComputerUsePreviewMediaController;
 }) {
   const state = useSyncExternalStore(controller.subscribe, controller.getState, controller.getState);
-  const { openCommandState, snapshot, stopCommandState } = state;
-  const locale = normalizeComputerUsePreviewLocale(snapshot.locale);
-  const t = useMemo(() => createComputerUsePreviewTranslator(locale), [locale]);
+  const { bridgeAvailable, openCommandState, snapshot, stopCommandState } = state;
+  const targetLabel = snapshot?.targetLabel ?? "Computer Use";
+  const [translation, setTranslation] = useState(() => ({
+    locale: DEFAULT_COMPUTER_USE_PREVIEW_LOCALE,
+    t: createComputerUsePreviewTranslator(DEFAULT_COMPUTER_USE_PREVIEW_LOCALE),
+  }));
+  const locale = translation.locale;
+  const requestedLocale = snapshot ? normalizeComputerUsePreviewLocale(snapshot.locale) : locale;
+  const t = translation.t;
+  useEffect(() => {
+    if (requestedLocale === translation.locale) return;
+    let cancelled = false;
+    void loadComputerUsePreviewTranslator(requestedLocale)
+      .then((nextTranslator) => {
+        if (!cancelled) setTranslation({ locale: requestedLocale, t: nextTranslator });
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [requestedLocale, translation.locale]);
   const viewModel = useMemo(
-    () => createComputerUsePreviewViewModel(snapshot, { openCommandState, stopCommandState }),
-    [openCommandState, snapshot, stopCommandState],
+    () => createComputerUsePreviewViewModel(snapshot, { bridgeAvailable, openCommandState, stopCommandState }, t),
+    [bridgeAvailable, openCommandState, snapshot, stopCommandState, t],
   );
-  const pageDeck = useMemo(() => createComputerUsePipPageDeckViewModel(snapshot), [snapshot]);
+  const pageDeck = useMemo(() => snapshot ? createComputerUsePipPageDeckViewModel(snapshot) : undefined, [snapshot]);
   const thumbnails = useComputerUsePageThumbnails(snapshot);
   const [menuOpen, setMenuOpen] = useState(false);
 
   useLayoutEffect(() => {
     document.documentElement.lang = locale;
-    document.title = t("windowTitle", { target: snapshot.targetLabel, status: viewModel.label });
-  }, [locale, snapshot.targetLabel, t, viewModel.label]);
+    document.title = t("windowTitle", { target: targetLabel, status: viewModel.label });
+  }, [locale, targetLabel, t, viewModel.label]);
 
   useEffect(() => {
     void mediaController.sync(snapshot);
@@ -66,7 +86,7 @@ export function ComputerUsePreviewApp({
 
   useEffect(() => {
     setMenuOpen(false);
-  }, [snapshot.sessionId]);
+  }, [snapshot?.sessionId]);
 
   useEffect(() => {
     const handleWindowBlur = () => controller.reportInteraction("focus", false);
@@ -112,22 +132,22 @@ export function ComputerUsePreviewApp({
           thumbnails={thumbnails}
           t={t}
         >
-          {snapshot.sourceKind === "display_media" ? (
-          <video
-            ref={setVideoElement}
-            aria-label={t("livePreviewLabel")}
-            autoPlay
-            className="preview-video"
-            muted
-            playsInline
-          />
-          ) : <FakePreviewFrame />}
+          {snapshot?.sourceKind === "display_media" ? (
+            <video
+              ref={setVideoElement}
+              aria-label={t("livePreviewLabel")}
+              autoPlay
+              className="preview-video"
+              muted
+              playsInline
+            />
+          ) : snapshot?.sourceKind === "fake" ? <FakePreviewFrame /> : null}
         </ComputerUsePageDeck>
       )}
       controlsVisibility={viewModel.controlsPersistent ? "persistent" : "hover-focus"}
       data-controls={viewModel.controlsPersistent ? "persistent" : "hover"}
       data-menu-open={menuOpen ? "true" : undefined}
-      data-locked-control={snapshot.lockedControl?.phase}
+      data-locked-control={snapshot?.lockedControl?.phase}
       data-open-command={openCommandState}
       data-page-deck={pageDeck?.showChrome ? "visible" : "single"}
       data-page-thumbnail-bytes={thumbnails.bytes}
@@ -144,15 +164,17 @@ export function ComputerUsePreviewApp({
                   invokeAction={invokeAction}
                 />
               ))}
-              <CompactWindowActionMenu
-                actions={menuActions}
-                contentClassName="preview-menu"
-                label={t("morePreviewActionsLabel")}
-                menuLabel={t("previewMenuLabel")}
-                onOpenChange={setMenuOpen}
-                open={menuOpen}
-                triggerClassName="more-button"
-              />
+              {menuActions.length > 0 ? (
+                <CompactWindowActionMenu
+                  actions={menuActions}
+                  contentClassName="preview-menu"
+                  label={t("morePreviewActionsLabel")}
+                  menuLabel={t("previewMenuLabel")}
+                  onOpenChange={setMenuOpen}
+                  open={menuOpen}
+                  triggerClassName="more-button"
+                />
+              ) : null}
             </div>
           )}
           className="preview-header"
@@ -160,14 +182,14 @@ export function ComputerUsePreviewApp({
             <div className="preview-status-indicators">
               <StatusIndicator
                 aria-label={t("previewAccessibleLabel", {
-                  target: snapshot.targetLabel,
+                  target: targetLabel,
                   status: viewModel.label,
                 })}
                 id={PREVIEW_ACCESSIBLE_NAME_ID}
                 label={viewModel.label}
                 tone={viewModel.tone}
               />
-              {snapshot.lockedControl ? (
+              {snapshot?.lockedControl ? (
                 <StatusIndicator
                   label={t(lockedControlMessageKey(snapshot.lockedControl.phase))}
                   tone={snapshot.lockedControl.phase === "active_locked" ? "warning" : "neutral"}
@@ -175,7 +197,7 @@ export function ComputerUsePreviewApp({
               ) : null}
             </div>
           )}
-          title={snapshot.targetLabel}
+          title={targetLabel}
         />
       )}
       aria-labelledby={PREVIEW_ACCESSIBLE_NAME_ID}
@@ -185,7 +207,7 @@ export function ComputerUsePreviewApp({
         }
       }}
       onFocusCapture={() => controller.reportInteraction("focus", true)}
-      label={t("previewLabel", { target: snapshot.targetLabel })}
+      label={t("previewLabel", { target: targetLabel })}
       state={compactWindowState(viewModel.state)}
       status={(() => {
         const issue = viewModel.commandIssue;
@@ -257,7 +279,7 @@ function compactWindowState(state: ComputerUsePreviewVisualState): CompactWindow
   if (state === "live") {
     return "live";
   }
-  if (state === "connecting" || state === "reconnecting" || state === "stopping") {
+  if (state === "waiting" || state === "connecting" || state === "reconnecting" || state === "stopping") {
     return "busy";
   }
   if (state === "completed" || state === "stopped") {

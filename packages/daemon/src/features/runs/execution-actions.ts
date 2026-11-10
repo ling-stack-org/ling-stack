@@ -1,12 +1,14 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   DEFAULT_WORKSPACE_ID,
+  LING_AGENT_ID,
   approvalActionTypes,
   type ApprovalStoreFacet,
-  type ApprovalActionType,
   type ApprovalRequest,
   type ApprovalStatus,
   type ExecutionAction,
+  type ExecutionActionType,
+  type ExecutionActionSourceRef,
   type ExecutionActionStatus,
   type ExecutionActionTargetRef,
   type RunEventEnvelope,
@@ -31,12 +33,19 @@ import {
   deriveExecutionActionCommandEvidence,
   executionActionStatusFromCommandEvidence,
 } from "./execution-action-command-evidence.js";
+import { deriveExecutionActionToolEvidence } from "./execution-action-tool-evidence.js";
+import { executionActionRunTerminalEvent } from "./execution-action-run-terminal.js";
+import {
+  deriveHarnessToolExecutionActionProjection,
+  listHarnessToolExecutionsForProjection,
+} from "./harness-tool-execution-projection.js";
+import { deriveHostOpenReceipt, type HostOpenEvidenceStore } from "./host-open-evidence.js";
 
 export interface ListExecutionActionsOptions {
   readonly runId?: string;
   readonly threadId?: string;
   readonly status?: ExecutionActionStatus;
-  readonly actionType?: ApprovalActionType;
+  readonly actionType?: ExecutionActionType;
   readonly limit?: number;
   /**
    * Read the complete durable action history for a specific Run.
@@ -45,7 +54,7 @@ export interface ListExecutionActionsOptions {
   readonly complete?: boolean;
 }
 
-type ExecutionActionStore = ApprovalStoreFacet & RunExecutionStoreFacet;
+type ExecutionActionStore = ApprovalStoreFacet & RunExecutionStoreFacet & HostOpenEvidenceStore;
 
 export function handleExecutionActionsCollection(
   request: IncomingMessage,
@@ -90,19 +99,17 @@ export function handleExecutionActionsCollection(
 }
 
 export function listExecutionActions(store: ExecutionActionStore, options: ListExecutionActionsOptions = {}): ExecutionAction[] {
-  const approvalStatus = options.status ? approvalStatusFromExecutionActionStatus(options.status) : undefined;
   const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
   const approvals = store.listApprovalRequests({
     runId: options.runId,
-    status: approvalStatus,
     ...(options.complete ? { complete: true } : { limit: options.threadId ? 500 : limit }),
   });
   const approvalActions = approvals
     .map((approval) => approvalToExecutionAction(store, approval))
-    .filter((action) => !options.threadId || action.threadId === options.threadId)
-    .filter((action) => !options.actionType || action.actionType === options.actionType);
+    .filter((action) => !options.threadId || action.threadId === options.threadId);
   const toolActions = listToolActions(store, options, limit);
-  const actions = mergeApprovalToolLifecycles(approvalActions, toolActions);
+  const runtimeDiagnosticActions = listRuntimeDiagnosticActions(store, options, limit);
+  const actions = [...mergeApprovalToolLifecycles(store, approvalActions, toolActions), ...runtimeDiagnosticActions];
   const ordered = actions
     .filter((action) => !options.status || action.status === options.status)
     .filter((action) => !options.actionType || action.actionType === options.actionType)
@@ -124,13 +131,16 @@ function approvalToExecutionAction(store: ExecutionActionStore, approval: Approv
     ? readRunAttemptId(listAllRunEvents(store, approval.runId))
     : undefined;
   const classified = classifyApprovalAction(approval, run);
-  return {
+  return withExecutionActionLineage(store, {
     id: `approval:${approval.id}`,
+    revision: approvalRevision(approval),
     workspaceId: DEFAULT_WORKSPACE_ID,
     threadId: run?.threadId,
     runId: approval.runId,
     attemptId,
     workUnitId: run?.workUnitId,
+    participantId: run?.teammateId ?? LING_AGENT_ID,
+    workflowStepId: approval.workflowStepId ?? run?.workflowStepId,
     approvalId: approval.id,
     toolCallId: approval.toolCallId,
     actionType: classified.actionType,
@@ -145,9 +155,11 @@ function approvalToExecutionAction(store: ExecutionActionStore, approval: Approv
     scopeSummary: classified.scopeSummary,
     policySnapshot: readRunPolicySnapshot(run),
     createdAt: approval.createdAt,
+    updatedAt: approval.resolvedAt ?? approval.createdAt,
     resolvedAt: approval.resolvedAt,
-    completedAt: approval.status === "approved" ? undefined : approval.resolvedAt,
-  };
+    completedAt: approval.status === "approved" || approval.status === "pending" ? undefined : approval.resolvedAt,
+    sourceRefs: [],
+  });
 }
 
 function listToolActions(
@@ -157,6 +169,62 @@ function listToolActions(
 ): ExecutionAction[] {
   const runs = collectRunsForActionReadModel(store, options, limit);
   return runs.flatMap((run) => deriveToolActionsForRun(store, run));
+}
+
+function listRuntimeDiagnosticActions(
+  store: ExecutionActionStore,
+  options: ListExecutionActionsOptions,
+  limit: number,
+): ExecutionAction[] {
+  const runs = collectRunsForActionReadModel(store, options, limit);
+  return runs.flatMap((run) => listAllRunEvents(store, run.id)
+    .filter((event) => event.type === "loop_detected")
+    .flatMap((event) => {
+      if (!isRecord(event.data)
+        || event.data.code !== "execution_loop_detected"
+        || typeof event.data.attemptId !== "string"
+        || typeof event.data.loopKind !== "string"
+        || typeof event.data.repeatedCount !== "number"
+        || typeof event.data.noProgressActionCount !== "number"
+        || typeof event.data.fingerprint !== "string") return [];
+      return [withExecutionActionLineage(store, {
+        id: `runtime-diagnostic:${run.id}:${event.data.attemptId}:${event.id}`,
+        revision: event.seq,
+        sourceEventSequence: event.seq,
+        workspaceId: DEFAULT_WORKSPACE_ID,
+        threadId: run.threadId,
+        runId: run.id,
+        attemptId: event.data.attemptId,
+        workUnitId: run.workUnitId,
+        participantId: run.teammateId ?? LING_AGENT_ID,
+        workflowStepId: run.workflowStepId,
+        actionType: "runtime_diagnostic",
+        risk: "low",
+        status: "failed",
+        title: "Repeated execution stopped",
+        summary: typeof event.data.message === "string" ? event.data.message : "Execution stopped after repeated activity produced no new evidence.",
+        targetRefs: [
+          { type: "run", id: run.id },
+          ...(run.workUnitId ? [{ type: "work_unit" as const, id: run.workUnitId }] : []),
+          ...(run.workflowStepId ? [{ type: "workflow_step" as const, id: run.workflowStepId }] : []),
+        ],
+        previewArtifactIds: [],
+        resultArtifactIds: [],
+        runtimeDiagnostic: {
+          code: "execution_loop_detected",
+          loopKind: event.data.loopKind as NonNullable<ExecutionAction["runtimeDiagnostic"]>["loopKind"],
+          repeatedCount: event.data.repeatedCount,
+          noProgressActionCount: event.data.noProgressActionCount,
+          ...(typeof event.data.cycleLength === "number" ? { cycleLength: event.data.cycleLength } : {}),
+          fingerprint: event.data.fingerprint,
+          retryable: false,
+        },
+        createdAt: event.ts,
+        updatedAt: event.ts,
+        completedAt: event.ts,
+        sourceRefs: [{ kind: "run_event", id: event.id, label: event.type }],
+      })];
+    }));
 }
 
 function collectRunsForActionReadModel(store: ExecutionActionStore, options: ListExecutionActionsOptions, limit: number): RunSession[] {
@@ -177,6 +245,7 @@ function deriveToolActionsForRun(
   run: RunSession,
 ): ExecutionAction[] {
   const events = listAllRunEvents(store, run.id);
+  const harnessExecutions = listHarnessToolExecutionsForProjection(store, run.id);
   const runAttemptId = readRunAttemptId(events);
   const starts = new Map<string, RunEventEnvelope>();
   const ends = new Map<string, RunEventEnvelope>();
@@ -186,22 +255,39 @@ function deriveToolActionsForRun(
       continue;
     }
     if (event.type === "tool_start") {
-      setLatestToolEvent(starts, toolCallId, event);
+      setFirstToolEvent(starts, toolCallId, event);
     } else if (event.type === "tool_end") {
-      setLatestToolEvent(ends, toolCallId, event);
+      setFirstToolEvent(ends, toolCallId, event);
     }
   }
 
-  const toolCallIds = new Set([...starts.keys(), ...ends.keys()]);
+  const toolCallIds = new Set([
+    ...starts.keys(),
+    ...ends.keys(),
+    ...harnessExecutions.map((execution) => execution.toolCallId),
+  ]);
   const actions: ExecutionAction[] = [];
   for (const toolCallId of toolCallIds) {
     const start = starts.get(toolCallId);
-    const end = ends.get(toolCallId);
+    const endCandidate = ends.get(toolCallId);
+    // A terminal event that precedes the accepted start is stale evidence. It
+    // remains available to diagnostics, but cannot close the logical action.
+    const toolEnd = start
+      ? firstToolEndAfterStart(events, toolCallId, start.seq)
+      : endCandidate;
+    const runTerminal = executionActionRunTerminalEvent(run, events, start?.seq ?? 0);
+    const end = toolEnd && (!runTerminal || toolEnd.seq < runTerminal.seq) ? toolEnd : undefined;
+    const interrupted = !end && (run.status === "failed" || run.status === "cancelled");
+    const acceptedEvents = interrupted && runTerminal ? events.filter(event => event.seq <= runTerminal.seq) : events;
     const source = start ?? end;
-    if (!source) {
-      continue;
-    }
-    const toolName = readToolName(source);
+    const eventAttemptId = readToolAttemptId(acceptedEvents, toolCallId) ?? runAttemptId;
+    const harnessProjection = deriveHarnessToolExecutionActionProjection({
+      store,
+      runId: run.id,
+      toolCallId,
+      attemptId: eventAttemptId,
+    });
+    const toolName = (source ? readToolName(source) : undefined) ?? harnessProjection?.execution.toolName;
     if (!toolName) {
       continue;
     }
@@ -214,41 +300,85 @@ function deriveToolActionsForRun(
       isError: readToolEndIsError(end),
     });
     const commandEvidence = toolName === "bash"
-      ? deriveExecutionActionCommandEvidence({ events, toolCallId, start, end })
+      ? deriveExecutionActionCommandEvidence({ events: acceptedEvents, toolCallId, start, end })
       : undefined;
+    const toolEvidence = deriveExecutionActionToolEvidence({ events: acceptedEvents, toolName, toolCallId, cwd: run.cwd, start, end });
+    const hostOpenReceipt = toolName === "host_open_local_target" ? deriveHostOpenReceipt({ store, run, start, end }) : undefined;
+    // A queued request or "opened" text is not a completed Host launch.
+    const hostOpenStatus = toolName === "host_open_local_target" && end ? (hostOpenReceipt ? "succeeded" : "failed") : undefined;
+    const lifecycleSourceRefs = sourceRefsForToolLifecycle(acceptedEvents, toolCallId, start, end);
+    if (interrupted && runTerminal) lifecycleSourceRefs.push({ kind: "run_event", id: runTerminal.id, label: runTerminal.type });
+    const lifecycleDiagnostics = diagnosticsForToolLifecycle(events, toolCallId, start, end ?? (interrupted ? runTerminal : undefined));
     const commandStatus = executionActionStatusFromCommandEvidence(commandEvidence);
-    const latestToolEvent = findLatestToolEvent(events, toolCallId);
-    const attemptId = readToolAttemptId(events, toolCallId) ?? runAttemptId;
-    actions.push({
+    const latestToolEvent = findLatestAcceptedToolEvent(acceptedEvents, toolCallId, start, end);
+    // Audit diagnostics are part of the versioned DTO, but never execution
+    // facts. Rejected events invalidate snapshots without reopening the action.
+    const diagnosticEventIds = new Set(lifecycleDiagnostics.flatMap(diagnostic => diagnostic.sourceRefs.map(ref => ref.id)));
+    const latestDiagnosticSequence = events.reduce((sequence, event) =>
+      diagnosticEventIds.has(event.id) ? Math.max(sequence, event.seq) : sequence, 0);
+    // A terminal Host receipt is pinned to the accepted start/end identity.
+    // Diagnostic updates after that fence cannot reassign its historical owner.
+    const attemptId = harnessProjection?.execution.attemptId ?? hostOpenReceipt?.attemptId ?? eventAttemptId;
+    actions.push(withExecutionActionLineage(store, {
       id: `tool:${run.id}:${toolCallId}`,
+      // Run terminal state is a separate revision input when tool_end is absent.
+      // Otherwise executing/failed snapshots conflict at the same revision and
+      // the canonical union correctly hides the action. A row-only terminal
+      // transition still advances once; it never pretends to be a tool receipt.
+      revision: Math.max(latestToolEvent?.seq ?? 0, latestDiagnosticSequence) + (harnessProjection?.execution.revision ?? 0)
+        + (interrupted ? runTerminal?.seq ?? 1 : 0),
+      ...(source ? { sourceEventSequence: source.seq } : {}),
       workspaceId: DEFAULT_WORKSPACE_ID,
       threadId: run.threadId,
       runId: run.id,
       attemptId,
       workUnitId: run.workUnitId,
+      participantId: run.teammateId ?? LING_AGENT_ID,
+      workflowStepId: run.workflowStepId ?? classified.targetRefs.find((ref) => ref.type === "workflow_step")?.id,
+      approvalId: harnessProjection?.execution.approvalId,
       toolCallId,
       actionType: classified.actionType,
       risk: classified.risk,
-      status: commandStatus ?? fallbackToolActionStatus(run, end),
+      status: harnessProjection?.status ?? hostOpenStatus ?? commandStatus ?? fallbackToolActionStatus(run, end),
       title: classified.title,
-      summary: classified.summary,
+      summary: harnessProjection?.summary ?? classified.summary,
       targetRefs: classified.targetRefs,
       previewArtifactIds: [],
-      resultArtifactIds: artifactIdsForToolCall(events, toolCallId),
+      resultArtifactIds: uniqueIds([
+        ...artifactIdsForToolCall(acceptedEvents, toolCallId),
+        ...(harnessProjection?.resultArtifactIds ?? []),
+      ]),
       scopes: classified.scopes,
       scopeSummary: classified.scopeSummary,
       policySnapshot: readRunPolicySnapshot(run),
       commandEvidence,
-      createdAt: start?.ts ?? end?.ts ?? run.createdAt,
-      updatedAt: latestToolEvent?.ts ?? start?.ts ?? end?.ts ?? run.updatedAt,
-      executedAt: start?.ts,
-      completedAt: end?.ts,
-    });
+      toolEvidence,
+      ...(hostOpenReceipt ? { hostOpenReceipt } : {}),
+      createdAt: [start?.ts, end?.ts, harnessProjection?.execution.createdAt, run.createdAt]
+        .filter((value): value is string => Boolean(value)).sort()[0]!,
+      // Unrelated Run progress cannot change a settled action at the same
+      // revision: snapshot unions must retain real conflicts, not invent them.
+      updatedAt: latestTimestamp(
+        latestToolEvent?.ts,
+        start?.ts,
+        end?.ts,
+        harnessProjection?.execution.updatedAt,
+        interrupted ? runTerminal?.ts ?? run.endedAt ?? run.updatedAt : undefined,
+      ),
+      executedAt: harnessProjection?.execution.executionStartedAt ?? start?.ts,
+      completedAt: harnessProjection?.execution.executionFinishedAt ?? end?.ts,
+      // Keep every accepted lifecycle event reachable from the action. The
+      // first durable tool_end is the terminal fence; later updates/duplicate
+      // ends are stale diagnostics and must not become evidence for this row.
+      sourceRefs: [...lifecycleSourceRefs, ...(harnessProjection?.sourceRefs ?? [])],
+      ...(lifecycleDiagnostics.length > 0 ? { diagnostics: lifecycleDiagnostics } : {}),
+    }));
   }
   return actions;
 }
 
 function mergeApprovalToolLifecycles(
+  store: ExecutionActionStore,
   approvalActions: readonly ExecutionAction[],
   toolActions: readonly ExecutionAction[],
 ): ExecutionAction[] {
@@ -267,14 +397,19 @@ function mergeApprovalToolLifecycles(
     const toolAction = toolActionsByCorrelationKey.get(correlationKey);
     if (!toolAction) return approvalAction;
     const executionStarted = approvalAction.status === "approved";
-    return {
+    return failClosedUnverifiedMutation(withExecutionActionLineage(store, {
       ...approvalAction,
-      ...(executionStarted && toolAction.attemptId
-        ? { attemptId: toolAction.attemptId }
+      ...(executionStarted && toolAction.attemptId ? { attemptId: toolAction.attemptId } : {}),
+      ...(toolAction.sourceEventSequence !== undefined
+        ? { sourceEventSequence: toolAction.sourceEventSequence }
         : {}),
       status: executionStarted ? toolAction.status : approvalAction.status,
       targetRefs: mergeTargetRefs(approvalAction.targetRefs, toolAction.targetRefs),
+      previewArtifactIds: uniqueIds([...approvalAction.previewArtifactIds, ...toolAction.previewArtifactIds]),
+      resultArtifactIds: uniqueIds([...approvalAction.resultArtifactIds, ...toolAction.resultArtifactIds]),
       ...(toolAction.commandEvidence ? { commandEvidence: toolAction.commandEvidence } : {}),
+      ...(toolAction.toolEvidence ? { toolEvidence: toolAction.toolEvidence } : {}),
+      ...(toolAction.hostOpenReceipt ? { hostOpenReceipt: toolAction.hostOpenReceipt } : {}),
       createdAt: earliestTimestamp(approvalAction.createdAt, toolAction.createdAt),
       updatedAt: latestTimestamp(
         approvalAction.updatedAt,
@@ -285,14 +420,22 @@ function mergeApprovalToolLifecycles(
       ),
       ...(executionStarted && toolAction.executedAt ? { executedAt: toolAction.executedAt } : {}),
       completedAt: executionStarted ? toolAction.completedAt : approvalAction.completedAt,
-    } satisfies ExecutionAction;
+      // Approval state and tool events advance in different revision domains.
+      // Addition preserves a monotonic logical action revision without letting
+      // a timestamp-based approval revision hide later tool updates.
+      revision: approvalAction.revision + toolAction.revision,
+      sourceRefs: [...approvalAction.sourceRefs, ...toolAction.sourceRefs],
+      diagnostics: [...(approvalAction.diagnostics ?? []), ...(toolAction.diagnostics ?? [])],
+    } satisfies ExecutionAction));
   });
   return [
     ...mergedApprovals.map(failClosedUnverifiedMutation),
-    ...toolActions.filter((action) => {
-      const correlationKey = executionActionToolCorrelationKey(action);
-      return !correlationKey || !approvalToolCorrelationKeys.has(correlationKey);
-    }).map(failClosedUnverifiedMutation),
+    ...toolActions
+      .filter((action) => {
+        const correlationKey = executionActionToolCorrelationKey(action);
+        return !correlationKey || !approvalToolCorrelationKeys.has(correlationKey);
+      })
+      .map(failClosedUnverifiedMutation),
   ];
 }
 
@@ -303,6 +446,149 @@ function failClosedUnverifiedMutation(action: ExecutionAction): ExecutionAction 
   const hasFileTarget = action.targetRefs.some((ref) =>
     ref.type === "file" && typeof ref.path === "string" && ref.path.trim().length > 0);
   return action.executedAt && hasFileTarget ? action : { ...action, status: "failed" };
+}
+
+function withExecutionActionLineage(store: ExecutionActionStore, action: ExecutionAction): ExecutionAction {
+  const refs: ExecutionActionSourceRef[] = [
+    { kind: "execution_action", id: action.id },
+  ];
+  if (action.runId) refs.push({ kind: "run", id: action.runId });
+  if (action.workUnitId) refs.push({ kind: "work_unit", id: action.workUnitId });
+  if (action.attemptId) refs.push({ kind: "attempt", id: action.attemptId });
+  if (action.participantId) refs.push({ kind: "participant", id: action.participantId });
+  if (action.workflowStepId) refs.push({ kind: "workflow_step", id: action.workflowStepId });
+  if (action.approvalId) refs.push({ kind: "approval", id: action.approvalId });
+  if (action.toolCallId) refs.push({ kind: "tool_call", id: action.toolCallId });
+  for (const artifactId of [...action.previewArtifactIds, ...action.resultArtifactIds]) {
+    if (artifactId.trim()) refs.push({ kind: "artifact", id: artifactId });
+  }
+  for (const target of action.targetRefs) {
+    const id = target.path ?? target.id ?? target.label;
+    if (!id || target.type === "run" || target.type === "work_unit" || target.type === "workflow_step") {
+      continue;
+    }
+    refs.push({
+      kind: target.type,
+      id,
+      ...(target.label ? { label: target.label } : {}),
+      ...(target.path ? { path: target.path } : {}),
+    });
+  }
+  // `sourceRefs` may contain accepted run-event ids or upstream approval
+  // records. Keep them after stable derived refs so existing consumers retain
+  // their deterministic prefix, while the full evidence lineage remains
+  // inspectable from the same action.
+  refs.push(...action.sourceRefs);
+  refs.push(...conversationItemAnchorRefs(store, action));
+  return { ...action, sourceRefs: uniqueExecutionActionSourceRefs(refs) };
+}
+
+interface ConversationAnchorStore {
+  readonly getLingTurnForRun?: (runId: string) => {
+    readonly id: string;
+    readonly threadId: string;
+    readonly sourceItemId?: string;
+  } | undefined;
+  readonly getConversationItem?: (itemId: string) => ConversationAnchorItem | undefined;
+  readonly listConversationItemsForTurn?: (options: { readonly turnId: string }) => readonly ConversationAnchorItem[];
+  readonly getChannelWorkflowStep?: (workflowStepId: string) => {
+    readonly metadata?: { readonly sourceMessageId?: string };
+    readonly workflowId?: string;
+  } | undefined;
+  readonly getChannelWorkflow?: (workflowId: string) => {
+    readonly metadata?: { readonly sourceMessageId?: string };
+  } | undefined;
+}
+
+interface ConversationAnchorItem {
+  readonly id: string;
+  readonly threadId: string;
+  readonly turnId?: string;
+  readonly kind: string;
+  readonly sequence: number;
+  readonly domainRefs?: readonly { readonly type: string; readonly id: string }[];
+}
+
+/**
+ * Resolve the owning ConversationItem without manufacturing one in the read
+ * model. The optional structural methods keep narrow unit-test stores useful;
+ * a real SQLite RunStore implements all three methods.
+ */
+function conversationItemAnchorRefs(
+  store: ExecutionActionStore,
+  action: ExecutionAction,
+): ExecutionActionSourceRef[] {
+  if (!action.runId || !action.threadId) return [];
+  const anchorStore = store as ExecutionActionStore & ConversationAnchorStore;
+  const turn = anchorStore.getLingTurnForRun?.(action.runId);
+  if (!turn || turn.threadId !== action.threadId) return [];
+
+  // Workflow-step runs intentionally live in their own LingThread, while the
+  // user-visible channel message lives in the channel root thread. The
+  // workflow/step metadata carries that root message id; use it as the
+  // authoritative cross-thread anchor for action evidence. This also repairs
+  // already-persisted runs whose child turn was created without sourceItemId.
+  const workflowStep = action.workflowStepId
+    ? anchorStore.getChannelWorkflowStep?.(action.workflowStepId)
+    : undefined;
+  const sourceItemId = turn.sourceItemId ??
+    workflowStep?.metadata?.sourceMessageId ??
+    (workflowStep?.workflowId ? anchorStore.getChannelWorkflow?.(workflowStep.workflowId)?.metadata?.sourceMessageId : undefined);
+  if (sourceItemId) {
+    const source = anchorStore.getConversationItem?.(sourceItemId);
+    if (source && Number.isSafeInteger(source.sequence) && source.sequence >= 0) {
+      return [{
+        kind: "conversation_item",
+        id: source.id,
+        label: `sequence:${source.sequence}`,
+      }];
+    }
+  }
+
+  const candidates: ConversationAnchorItem[] = [];
+  if (turn.sourceItemId) {
+    const source = anchorStore.getConversationItem?.(turn.sourceItemId);
+    if (source) candidates.push(source);
+  }
+  if (anchorStore.listConversationItemsForTurn) {
+    candidates.push(...anchorStore.listConversationItemsForTurn({ turnId: turn.id }));
+  }
+  const item = candidates.find((candidate) =>
+    candidate.threadId === action.threadId &&
+    candidate.turnId === turn.id &&
+    candidate.domainRefs?.some((ref) => ref.type === "run" && ref.id === action.runId),
+  ) ?? candidates.find((candidate) =>
+    candidate.threadId === action.threadId && candidate.turnId === turn.id,
+  );
+  if (!item || !Number.isSafeInteger(item.sequence) || item.sequence < 0) return [];
+  return [{
+    kind: "conversation_item",
+    id: item.id,
+    label: `sequence:${item.sequence}`,
+  }];
+}
+
+function uniqueExecutionActionSourceRefs(refs: readonly ExecutionActionSourceRef[]): ExecutionActionSourceRef[] {
+  const seen = new Set<string>();
+  return refs.filter((ref) => {
+    const key = `${ref.kind}:${ref.id}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function approvalRevision(approval: ApprovalRequest): number {
+  const timestamp = Date.parse(approval.resolvedAt ?? approval.createdAt);
+  const safeTimestamp = Number.isFinite(timestamp) ? Math.max(0, timestamp) : 0;
+  const statusRank: Record<ApprovalStatus, number> = {
+    pending: 0,
+    approved: 1,
+    denied: 2,
+    expired: 3,
+    cancelled: 4,
+  };
+  return (safeTimestamp * 8) + statusRank[approval.status];
 }
 
 function executionActionToolCorrelationKey(action: ExecutionAction): string | undefined {
@@ -320,6 +606,10 @@ function latestTimestamp(...values: readonly (string | undefined)[]): string | u
     if (!value) return latest;
     return !latest || value > latest ? value : latest;
   }, undefined);
+}
+
+function uniqueIds(values: readonly string[]): string[] {
+  return [...new Set(values.filter((value) => value.trim().length > 0))];
 }
 
 function listAllRunEvents(store: ExecutionActionStore, runId: string): RunEventEnvelope[] {
@@ -354,77 +644,137 @@ function fallbackToolActionStatus(
 
 function executionActionsRevision(actions: readonly ExecutionAction[]): string {
   return actions
-    .map((action) => `${action.id}:${action.commandEvidence?.latestEventSeq ?? 0}:${action.updatedAt ?? action.completedAt ?? action.createdAt}`)
+    .map((action) => `${action.id}:${action.revision}:${action.updatedAt ?? action.completedAt ?? action.createdAt}`)
     .sort()
     .join("|");
 }
 
-function findLatestToolEvent(
+function findLatestAcceptedToolEvent(
   events: readonly RunEventEnvelope[],
   toolCallId: string,
+  startEvent: RunEventEnvelope | undefined,
+  terminalEvent: RunEventEnvelope | undefined,
 ): RunEventEnvelope | undefined {
   return events.reduce<RunEventEnvelope | undefined>((latest, event) => {
-    if (readToolCallId(event) !== toolCallId) {
+    if (
+      readToolCallId(event) !== toolCallId ||
+      (startEvent && event.seq < startEvent.seq) ||
+      (terminalEvent && event.seq > terminalEvent.seq)
+    ) {
       return latest;
     }
     return !latest || event.seq > latest.seq ? event : latest;
   }, undefined);
 }
 
-function setLatestToolEvent(
+/**
+ * Return the durable lifecycle events accepted by one logical tool action.
+ * Events are ordered by their persisted sequence rather than transport order.
+ * Once the first tool_end is seen, later updates and duplicate terminal events
+ * are intentionally excluded so replay/reconnect cannot reopen a terminal row.
+ */
+function sourceRefsForToolLifecycle(
+  events: readonly RunEventEnvelope[],
+  toolCallId: string,
+  startEvent: RunEventEnvelope | undefined,
+  terminalEvent: RunEventEnvelope | undefined,
+): ExecutionActionSourceRef[] {
+  const firstStartSeq = startEvent?.seq ?? Number.NEGATIVE_INFINITY;
+  const firstTerminalSeq = terminalEvent?.seq ?? Number.POSITIVE_INFINITY;
+  const accepted = events
+    .filter((event) => {
+      if (readToolCallId(event) !== toolCallId) return false;
+      if (event.type !== "tool_start" && event.type !== "tool_update" && event.type !== "tool_end") return false;
+      // Only the selected lifecycle boundary is accepted into lineage. A
+      // duplicate start/end is still retained by diagnostics, but must not
+      // make an action appear to have two accepted owners after replay.
+      if (event.type === "tool_start" && event.id !== startEvent?.id) return false;
+      if (event.type === "tool_end" && event.id !== terminalEvent?.id) return false;
+      return event.seq >= firstStartSeq && event.seq <= firstTerminalSeq;
+    })
+    .sort((left, right) => left.seq - right.seq || left.id.localeCompare(right.id));
+  let terminalIncluded = false;
+  const refs: ExecutionActionSourceRef[] = [];
+  for (const event of accepted) {
+    if (event.type === "tool_end") {
+      if (terminalIncluded) continue;
+      terminalIncluded = true;
+    }
+    refs.push({ kind: "run_event", id: event.id, label: event.type });
+  }
+  return refs;
+}
+
+function firstToolEndAfterStart(
+  events: readonly RunEventEnvelope[],
+  toolCallId: string,
+  startSeq: number,
+): RunEventEnvelope | undefined {
+  return events.reduce<RunEventEnvelope | undefined>((first, event) => {
+    if (event.type !== "tool_end" || readToolCallId(event) !== toolCallId || event.seq < startSeq) {
+      return first;
+    }
+    return !first || event.seq < first.seq || (event.seq === first.seq && event.id.localeCompare(first.id) < 0)
+      ? event
+      : first;
+  }, undefined);
+}
+
+/** Keep rejected lifecycle events auditable without allowing them to mutate state. */
+function diagnosticsForToolLifecycle(
+  events: readonly RunEventEnvelope[],
+  toolCallId: string,
+  start: RunEventEnvelope | undefined,
+  terminalEvent: RunEventEnvelope | undefined,
+): Array<{ readonly code: "late_event" | "stale_event" | "source_conflict"; readonly message: string; readonly sourceRefs: ExecutionActionSourceRef[] }> {
+  const firstStartSeq = start?.seq ?? Number.NEGATIVE_INFINITY;
+  const firstTerminalSeq = terminalEvent?.seq ?? Number.POSITIVE_INFINITY;
+  const lifecycle = events
+    .filter((event) =>
+      readToolCallId(event) === toolCallId &&
+      (event.type === "tool_start" || event.type === "tool_update" || event.type === "tool_end"),
+    )
+    .sort((left, right) => left.seq - right.seq || left.id.localeCompare(right.id));
+  const diagnostics: Array<{ readonly code: "late_event" | "stale_event" | "source_conflict"; readonly message: string; readonly sourceRefs: ExecutionActionSourceRef[] }> = [];
+  let terminalSeen = false;
+  for (const event of lifecycle) {
+    const eventRef = { kind: "run_event", id: event.id, label: event.type };
+    if (event.type === "tool_start") {
+      if (start && event.id !== start.id) {
+        diagnostics.push({ code: event.seq < firstStartSeq ? "stale_event" : "source_conflict", message: "Duplicate tool_start was not selected for this action.", sourceRefs: [eventRef] });
+      }
+      continue;
+    }
+    if (event.type === "tool_update") {
+      if (event.seq < firstStartSeq) {
+        diagnostics.push({ code: "stale_event", message: "tool_update arrived before the accepted tool_start.", sourceRefs: [eventRef] });
+      } else if (event.seq > firstTerminalSeq || terminalSeen) {
+        diagnostics.push({ code: "late_event", message: "tool_update arrived after the terminal execution boundary.", sourceRefs: [eventRef] });
+      }
+      continue;
+    }
+    if (event.seq < firstStartSeq) {
+      diagnostics.push({ code: "stale_event", message: "tool_end arrived before the accepted tool_start.", sourceRefs: [eventRef] });
+    } else if (event.id !== terminalEvent?.id || terminalSeen) {
+      diagnostics.push({ code: event.seq === firstTerminalSeq ? "source_conflict" : "late_event", message: "A duplicate or late tool_end was not selected for this action.", sourceRefs: [eventRef] });
+    }
+    if (event.id === terminalEvent?.id && event.seq === firstTerminalSeq) terminalSeen = true;
+  }
+  return diagnostics;
+}
+
+function setFirstToolEvent(
   eventsByToolCallId: Map<string, RunEventEnvelope>,
   toolCallId: string,
   event: RunEventEnvelope,
 ): void {
   const current = eventsByToolCallId.get(toolCallId);
-  if (!current || event.seq > current.seq) {
+  // Persisted sequence is the primary order.  A malformed/replayed store may
+  // still expose two lifecycle events with the same sequence; use the stable
+  // event id as a deterministic tie-breaker instead of arrival order.
+  if (!current || event.seq < current.seq || (event.seq === current.seq && event.id.localeCompare(current.id) < 0)) {
     eventsByToolCallId.set(toolCallId, event);
   }
-}
-
-function buildApprovalTargetRefs(approval: ApprovalRequest, run: RunSession | undefined): ExecutionActionTargetRef[] {
-  const refs: ExecutionActionTargetRef[] = [];
-  if (approval.runId) {
-    refs.push({ type: "run", id: approval.runId });
-  }
-  if (run?.workUnitId) {
-    refs.push({ type: "work_unit", id: run.workUnitId });
-  }
-  if (approval.taskId) {
-    refs.push({ type: "task", id: approval.taskId });
-  }
-  if (approval.channelId) {
-    refs.push({ type: "channel", id: approval.channelId });
-  }
-  if (approval.mediaJobId) {
-    refs.push({ type: "media_job", id: approval.mediaJobId });
-  }
-  if (approval.externalWorkActionId) {
-    refs.push({ type: "external_work_action", id: approval.externalWorkActionId });
-  }
-  if (approval.workflowStepId) {
-    refs.push({ type: "workflow_step", id: approval.workflowStepId });
-  }
-  if (approval.payload.type === "workflow_step") {
-    refs.push({ type: "workflow", id: approval.payload.workflowId });
-  }
-  if (approval.payload.type === "file_write" || approval.payload.type === "file_edit") {
-    const paths = approval.payload.touchedPaths && approval.payload.touchedPaths.length > 0
-      ? approval.payload.touchedPaths
-      : [approval.payload.path];
-    for (const path of paths) {
-      if (path.trim() && path !== "<unknown>") {
-        refs.push({ type: "file", path, label: path });
-      }
-    }
-  }
-  if (approval.payload.type === "bash") {
-    refs.push({ type: "command", label: truncateLabel(approval.payload.command) });
-  }
-  if (approval.payload.type === "mcp_tool_call") {
-    refs.push({ type: "mcp_tool", label: approval.payload.toolName });
-  }
-  return refs;
 }
 
 function readRunPolicySnapshot(run: RunSession | undefined): unknown | undefined {
@@ -432,6 +782,48 @@ function readRunPolicySnapshot(run: RunSession | undefined): unknown | undefined
     return undefined;
   }
   return run.requestSnapshot.effectivePolicySnapshot;
+}
+
+function buildApprovalTargetRefs(approval: ApprovalRequest, run: RunSession | undefined): ExecutionActionTargetRef[] {
+  const refs: ExecutionActionTargetRef[] = [];
+  if (approval.runId) refs.push({ type: "run", id: approval.runId });
+  if (run?.workUnitId) refs.push({ type: "work_unit", id: run.workUnitId });
+  if (approval.taskId) refs.push({ type: "task", id: approval.taskId });
+  if (approval.channelId) refs.push({ type: "channel", id: approval.channelId });
+  if (approval.mediaJobId) refs.push({ type: "media_job", id: approval.mediaJobId });
+  if (approval.externalWorkActionId) refs.push({ type: "external_work_action", id: approval.externalWorkActionId });
+  if (approval.workflowStepId) refs.push({ type: "workflow_step", id: approval.workflowStepId });
+  if (approval.payload.type === "workflow_step") refs.push({ type: "workflow", id: approval.payload.workflowId });
+  if (approval.payload.type === "file_write" || approval.payload.type === "file_edit") {
+    const paths = approval.payload.touchedPaths && approval.payload.touchedPaths.length > 0
+      ? approval.payload.touchedPaths
+      : [approval.payload.path];
+    for (const path of paths) {
+      if (path.trim() && path !== "<unknown>") refs.push({ type: "file", path, label: path });
+    }
+  }
+  if (approval.payload.type === "bash") refs.push({ type: "command", label: truncateLabel(approval.payload.command) });
+  if (approval.payload.type === "mcp_tool_call") refs.push({ type: "mcp_tool", label: approval.payload.toolName });
+  return refs;
+}
+
+function mergeTargetRefs(
+  left: readonly ExecutionActionTargetRef[],
+  right: readonly ExecutionActionTargetRef[],
+): ExecutionActionTargetRef[] {
+  const seen = new Set<string>();
+  const refs: ExecutionActionTargetRef[] = [];
+  for (const ref of [...left, ...right]) {
+    const key = `${ref.type}:${ref.id ?? ""}:${ref.path ?? ""}:${ref.label ?? ""}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    refs.push(ref);
+  }
+  return refs;
+}
+
+function executionActionStatusFromApproval(status: ApprovalStatus): ExecutionActionStatus {
+  return status === "pending" ? "waiting_for_approval" : status;
 }
 
 function readToolCallId(event: RunEventEnvelope): string | undefined {
@@ -478,37 +870,6 @@ function readToolEndIsError(event: RunEventEnvelope | undefined): boolean {
   return Boolean(event && isRecord(event.data) && event.data.isError === true);
 }
 
-function mergeTargetRefs(left: readonly ExecutionActionTargetRef[], right: readonly ExecutionActionTargetRef[]): ExecutionActionTargetRef[] {
-  const seen = new Set<string>();
-  const refs: ExecutionActionTargetRef[] = [];
-  for (const ref of [...left, ...right]) {
-    const key = `${ref.type}:${ref.id ?? ""}:${ref.path ?? ""}:${ref.label ?? ""}`;
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    refs.push(ref);
-  }
-  return refs;
-}
-
-function executionActionStatusFromApproval(status: ApprovalStatus): ExecutionActionStatus {
-  if (status === "pending") {
-    return "waiting_for_approval";
-  }
-  return status;
-}
-
-function approvalStatusFromExecutionActionStatus(status: ExecutionActionStatus): ApprovalStatus | undefined {
-  if (status === "waiting_for_approval") {
-    return "pending";
-  }
-  if (status === "approved" || status === "denied" || status === "expired" || status === "cancelled") {
-    return status;
-  }
-  return undefined;
-}
-
 function readOptionalExecutionActionStatusQuery(url: URL): ExecutionActionStatus | undefined {
   const value = url.searchParams.get("status");
   if (value === null) {
@@ -520,15 +881,16 @@ function readOptionalExecutionActionStatusQuery(url: URL): ExecutionActionStatus
   return value;
 }
 
-function readOptionalExecutionActionTypeQuery(url: URL): ApprovalActionType | undefined {
+function readOptionalExecutionActionTypeQuery(url: URL): ExecutionActionType | undefined {
   const value = url.searchParams.get("actionType");
   if (value === null) {
     return undefined;
   }
-  if (!approvalActionTypes.includes(value as ApprovalActionType)) {
-    throw new Error(`actionType must be one of: ${approvalActionTypes.join(", ")}`);
+  const supportedActionTypes = new Set<string>([...approvalActionTypes, "runtime_diagnostic"]);
+  if (!supportedActionTypes.has(value)) {
+    throw new Error(`actionType must be one of: ${[...approvalActionTypes, "runtime_diagnostic"].join(", ")}`);
   }
-  return value as ApprovalActionType;
+  return value as ExecutionActionType;
 }
 
 function isExecutionActionStatus(value: string): value is ExecutionActionStatus {

@@ -50,10 +50,11 @@ Exports：
 - variant、size、tone 使用联合类型并映射到 `data-*`。
 - `className` 只用于布局接入，不提供 unstyled 或绕过主题的 API。
 - 可见文案由 props 提供。
-- Theme 子模块只拥有 Schema、内置 Theme Pack、registry、validation 和 semantic variable 映射，
-  Presentation Profile registry、deterministic Compiler 和 generation contracts，不拥有
-  Web/Desktop 持久化或 provider 调用。
-- Theme Pack 不是 unstyled API；主题只能改变允许的 semantic tokens。
+- Theme 子模块拥有 Schema、内置 Theme Pack、registry、validation、semantic variable 映射与
+  Presentation Profile registry，不拥有 Web/Desktop 持久化或 provider 调用。
+  历史 Compiler 和 generation contracts 保留实现/安全测试，不作为当前产品入口。
+- Theme Pack 不是 unstyled API；主题只能改变允许的 semantic tokens 与应用批准的组件外观参数。
+- 新共享组件必须提供可由主题消费的外观参数和完整默认值，按[组件主题合同](../../component-theme-presentation.md)使用唯一外观入口。Feature 的 className 不能覆盖组件背景、边界、圆角、阴影或焦点。
 - `desktop/` 只包含 browser-safe React 展示组件。它不能导入 Electron、preload API、IPC channel、
   Computer Use contracts、MediaStream controller 或 OS platform 判断。
 - `CurrentSessionCapabilityControl`、`CompactDesktopWindow`、`CompactWindowHeader`、
@@ -70,8 +71,8 @@ typecheck 和 E2E 在编译 Web 前先构建 package。
 ## Test
 
 - SSR 测试标签、ARIA、variant 和 loading 输出。
-- Playwright fixture 测试 Radix 交互、焦点、键盘、`ling-light`、`ling-dark`、
-  自定义 Theme Pack fixture 和 reduced motion。
+- Playwright fixture 测试 Radix 交互、焦点、键盘、全部内置主题与 reduced motion；
+  历史自定义 Theme Pack fixture 只证明兼容/安全边界，不开放产品入口。
 - Theme validator 测试缺失 token、非法 CSS value、reserved ID、未知 schema 和对比度 blocker。
 - Theme Compiler 测试图片分析、token derivation、Profile allowlist、稳定输出和生成内容 guard。
 - import guard 验证 package 不反向依赖应用。

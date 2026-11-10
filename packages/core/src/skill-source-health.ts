@@ -1,4 +1,5 @@
 import { GSTACK_DEFAULT_SKILL_PACK_ID } from "./builtin-skill-packs.js";
+import { parseSkillFrontMatter } from "./skill-source-definition.js";
 import type {
   SkillRegistryEntry,
   SkillSourceContextFindingEvidence,
@@ -341,19 +342,7 @@ function findRoutingDescription(snapshot: SkillSourceSnapshot): string | undefin
 }
 
 function parseFrontMatterDescription(markdown: string): string | undefined {
-  const frontMatter = /^---\n([\s\S]*?)\n---/u.exec(markdown)?.[1];
-  if (!frontMatter) {
-    return undefined;
-  }
-  const singleLine = /^description:\s*["']?(.+?)["']?\s*$/imu.exec(frontMatter)?.[1];
-  if (singleLine && singleLine !== "|" && singleLine !== ">") {
-    return singleLine;
-  }
-  const block = /^description:\s*[|>]\s*\n((?:[ \t]+.+\n?)+)/imu.exec(frontMatter)?.[1];
-  if (block) {
-    return block.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean).join(" ");
-  }
-  return undefined;
+  return parseSkillFrontMatter(markdown).frontMatter.description;
 }
 
 function stripFrontMatter(markdown: string): string {

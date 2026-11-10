@@ -75,6 +75,21 @@ test("run evidence projects to deterministic typed items and replays idempotentl
   assert.ok(first.every((item) => item.domainRefs.some((ref) => ref.type === "run" && ref.id === run.id)));
 });
 
+test("assistant artifacts project into existing timeline references without fake tools or titles", () => {
+  const events = [
+    event(1, "assistant_text_delta", { text: "Attached." }),
+    event(2, "artifact_created", { itemId: "assistant-content-1", role: "assistant", artifactId: "assistant-image", artifact: { type: "image" } }),
+    event(3, "artifact_created", { itemId: "assistant-content-2", role: "assistant", artifactId: "assistant-report", artifact: { type: "file" } }),
+    event(4, "message_end", { role: "assistant", text: "Attached.", contentKinds: ["text", "image", "resource"] }),
+  ];
+  const items = projectRunEventsToConversationItems({ run, turn, events });
+  assert.deepEqual(items.map(item => item.kind), ["assistant_message", "artifact_ref", "artifact_ref"]);
+  assert.deepEqual(items.filter(item => item.kind === "artifact_ref").map(item => item.payload), [
+    { artifactId: "assistant-image", artifactKind: "image" }, { artifactId: "assistant-report", artifactKind: "file" },
+  ]);
+  assert.deepEqual(projectRunEventsToConversationItems({ run, turn, events, existingItems: items }), items);
+});
+
 test("unpaired tool completion remains renderable", () => {
   const items = projectRunEventsToConversationItems({
     run,

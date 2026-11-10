@@ -1,3 +1,4 @@
+import { useWorkSummaryContext } from "./work-summary/WorkSummaryProvider.js";
 import type { ComponentProps, ReactNode } from "react";
 import { ConversationShell } from "../../shared/conversation/index.js";
 import { useI18n } from "../../i18n.js";
@@ -5,14 +6,19 @@ import { NormalConversationFeed } from "./NormalConversationFeed.js";
 import { NormalConversationHeader } from "./NormalConversationHeader.js";
 import { NormalConversationWorkspacePanels } from "./NormalConversationWorkspacePanels.js";
 import { ConversationSummaryPopover } from "./right-dock/index.js";
-import { conversationSummaryGap, useConversationSummaryLayout } from "./conversation-summary-layout.js";
+import { useConversationSummaryLayout } from "./conversation-summary-layout.js";
+import {
+  DesktopTitlebarSurface,
+  useDesktopTitlebarPlacement,
+} from "../../app/DesktopTitlebarSurface.js";
 
 export interface NormalConversationPageProps {
+  readonly onOpenSummaryChanges: (cwd: string) => void;
   readonly summaryOpen: boolean;
   readonly onCloseSummary: () => void;
   readonly summaryDockMotion?: string;
   readonly summaryRows: ComponentProps<typeof ConversationSummaryPopover>["rows"];
-  readonly headerProps: Omit<ComponentProps<typeof NormalConversationHeader>, "summaryNode" | "summaryExpanded">;
+  readonly headerProps: Omit<ComponentProps<typeof NormalConversationHeader>, "summaryNode" | "summaryActive" | "summaryExpanded">;
   readonly feedProps: ComponentProps<typeof NormalConversationFeed>;
   readonly composerNode: ReactNode;
   readonly panelsProps: ComponentProps<typeof NormalConversationWorkspacePanels>;
@@ -20,6 +26,7 @@ export interface NormalConversationPageProps {
 
 export function NormalConversationPage({
   summaryOpen,
+  onOpenSummaryChanges,
   onCloseSummary,
   summaryDockMotion,
   summaryRows,
@@ -29,9 +36,12 @@ export function NormalConversationPage({
   panelsProps,
 }: NormalConversationPageProps): React.JSX.Element {
   const { t } = useI18n();
+  const titlebarPlacement = useDesktopTitlebarPlacement();
   const { dockController, dockViewModel, terminalPresence, terminalResize } = panelsProps;
+  const workSummary = useWorkSummaryContext();
   const summaryLayout = useConversationSummaryLayout({
     requestedOpen: summaryOpen,
+    allowOverlay: Boolean(workSummary),
     containerWidth: dockController.containerWidth,
     dockVisible: dockController.visible,
     dockWidth: dockController.width,
@@ -46,6 +56,7 @@ export function NormalConversationPage({
       }}
       className={[
         "normal-conversation-page",
+        `titlebar-${titlebarPlacement}`,
         `right-dock-motion-${dockController.motionState}`,
         dockController.visible ? "with-right-dock" : "",
         summaryLayout.visible ? "with-conversation-summary" : "",
@@ -59,23 +70,27 @@ export function NormalConversationPage({
       ].filter(Boolean).join(" ")}
       ariaLabel={t("Conversation page")}
       headerNode={(
-        <NormalConversationHeader
-          {...headerProps}
-          summaryExpanded={summaryLayout.visible}
-          summaryNode={(
-            <ConversationSummaryPopover
-              open={summaryLayout.visible}
-              title={t("Environment")}
-              subtitle={dockViewModel.context.workspaceLabel}
-              rows={summaryRows}
-              className="normal-conversation-summary-popover normal-conversation-summary-panel"
-              dockOffset={conversationSummaryGap}
-              dockMotion={summaryDockMotion}
-              motionState={dockController.motionState}
-              onClose={onCloseSummary}
-            />
-          )}
-        />
+        <DesktopTitlebarSurface>
+          <NormalConversationHeader
+            {...headerProps}
+            summaryActive={summaryLayout.visible}
+            summaryExpanded={summaryLayout.visible}
+            summaryNode={(
+              <ConversationSummaryPopover
+                open={summaryLayout.visible}
+                title={t("Environment")}
+                subtitle={dockViewModel.context.workspaceLabel}
+                rows={summaryRows}
+                className="normal-conversation-summary-popover normal-conversation-summary-panel"
+                dockOffset={summaryLayout.dockOffset}
+                dockMotion={summaryDockMotion}
+                motionState={dockController.motionState}
+                onClose={onCloseSummary}
+                onOpenChanges={onOpenSummaryChanges}
+              />
+            )}
+          />
+        </DesktopTitlebarSurface>
       )}
       feedNode={<NormalConversationFeed {...feedProps} />}
       composerNode={(

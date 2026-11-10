@@ -158,16 +158,21 @@ maintain a private dock-offset rule.
 
 - `summaryRequested` records the user's open intent. `summaryVisible` records whether the
   current geometry can render it. Temporary concealment must not clear the intent.
-- Summary has a `280px` panel and a `16px` conversation-side gap. When visible it reserves
+- Summary has a `280px` panel and a `16px` conversation-side gap. When space permits it reserves
   a `296px` layout column between the conversation and the right-dock resize handle.
-- The conversation layout keeps at least `560px` for records and Composer plus the shared
-  `48px` horizontal gutter. Summary is visible only when the root can also hold the
+- The reserved layout keeps at least `560px` for records and Composer plus the shared
+  `48px` horizontal gutter. This layout is used only when the root can also hold the
   current right dock and its `8px` handle.
 - When space is available, feed and Composer occupy the same conversation column and move
   left together. Summary, feed, avatars, Composer, resize handle, and right dock must have
   pairwise non-overlapping rectangles.
-- When space is insufficient, Summary is not rendered and is not interactive. Widening the
-  window, collapsing Sidebar, narrowing or closing Details automatically restores it.
+- The reserved Summary column remains visually continuous with the conversation surface.
+  It must not render as a contrasting full-height sidebar or dock; only the `280px` Summary
+  card carries panel background, border, shadow, and elevated popover treatment.
+- When space is insufficient and Details is visible, Summary is not rendered and is not
+  interactive. Widening the window, collapsing Sidebar, or narrowing Details restores it.
+  With the project work-summary context and no visible Details dock, Summary stays at the
+  right as an overlay and reserves no layout column; closing Details enables this fallback.
 - Availability is computed from the stable root width and target dock reservation, not
   from the already-reflowed conversation child. The threshold uses bounded hysteresis so
   a one-pixel resize cannot create repeated mount/unmount flashing.
@@ -179,6 +184,37 @@ maintain a private dock-offset rule.
 - No implementation may compress the Summary card, reduce the existing icon-button sizes,
   shrink the conversation below its minimum, or introduce document-level horizontal
   scrolling to preserve simultaneous visibility.
+
+### Responsive Right Dock Visibility Contract
+
+Channel, normal conversation, and teammate private chat share one responsive visibility
+projection. Surface CSS must not independently decide whether an already-requested dock is
+present.
+
+- `requestedOpen` records the user's Details intent. `available` is true only when the
+  application viewport is wider than `900px`. `renderedOpen` is
+  `requestedOpen && available`, with the existing short presence window used only for
+  wide-layout enter and exit motion.
+- Above `900px`, the Right Dock remains an inline, horizontally resizable workspace column.
+  Its configured width and `8px` resize handle reserve real grid space.
+- The resize handle owns the single visible divider between conversation content and the
+  Right Dock. A dock mounted beside that handle must not also render its default left border;
+  parallel divider lines are a layout ownership defect.
+- At `900px` and below, the Right Dock is unavailable and fully hidden. It does not become
+  an overlay drawer, does not reserve a grid column, and does not render a resize handle or
+  an invisible interaction region.
+- A breakpoint transition must update layout reservation, dock mounting, resize capability,
+  toolbar active state, and `aria-expanded` from the same shared projection. A surface must
+  never show an active Details control while its dock is absent, or hide the dock while
+  retaining its width as blank space.
+- The Details control is disabled while the dock is unavailable. Existing open intent may be
+  retained so widening the window restores the dock, but unavailable controls must not accept
+  new page requests that appear to open an invisible panel.
+- The shared controller owns the threshold and layout variables. Surface CSS may place the
+  inline frame in its grid, but must not contain separate breakpoint rules that hide only the
+  frame or only the resize handle.
+- At every width, the conversation grid and document remain free of horizontal scrolling.
+  The Right Dock must never degrade into a decorative empty region.
 
 ## External Patterns To Borrow
 
@@ -494,6 +530,10 @@ First version can be a placeholder plus real file references that already exist:
 
 The page should not become a full file explorer in the first slice. A later slice can add
 tree navigation and diff preview if Web and Desktop both need it.
+
+Desktop local-path clicks also reuse the dock detail page for bounded text, image, and
+directory previews, with native file actions. Limits and platform acceptance are defined
+in [Desktop Local File Viewing](conversation-shared-capabilities.md#desktop-local-file-viewing).
 
 ### TerminalPage
 

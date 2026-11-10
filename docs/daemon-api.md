@@ -1,15 +1,20 @@
 # Daemon API
 
-The daemon is the local process that connects the future CLI, web UI, and desktop shell to Ling Stack runners.
+The daemon is the local process that connects the CLI, Web UI, and desktop shell to Ling Stack runners.
 
 ## Start
 
-Current manual foreground start:
+After following the source build prerequisites in [Getting started](getting-started.md),
+start the daemon from the repository root:
 
 ```bash
-corepack pnpm --filter @ling-stack/daemon build
-node packages/daemon/dist/cli.js
+corepack pnpm ling daemon start --foreground
 ```
+
+The CLI also provides `daemon start` (background), `status`, `stop`, `restart`, and
+`logs`, plus read-only `doctor` checks. Direct `node packages/daemon/dist/cli.js`
+startup is available for low-level debugging; it bypasses the CLI lifecycle state
+and log setup, so those files may be absent in doctor output.
 
 Environment variables:
 
@@ -24,9 +29,8 @@ Provider presets can reference secrets from the daemon process environment:
 LOCAL_RELAY_API_KEY=sk-local
 ```
 
-Background daemon lifecycle commands are not part of the current HTTP API contract.
-The P0 design for `ling-stack daemon start`, `status`, `stop`, `restart`, `logs`, and
-read-only doctor checks lives in [Daemon Lifecycle and Doctor P0](design/daemon-lifecycle-p0.md).
+Daemon lifecycle commands are CLI operations rather than HTTP endpoints. Their
+design is described in [Daemon Lifecycle and Doctor P0](design/daemon-lifecycle-p0.md).
 
 ## Health
 
@@ -50,11 +54,15 @@ not expose full startup diagnostics. `readiness` is a lightweight aggregate for 
 default workspace and may be `starting`, `ready`, `degraded`, or `failed`. Clients that
 need phase diagnostics should call `/startup/status`.
 
-The current implementation does not expose lifecycle metadata such as pid, version,
-started time, host, port, state path, or log path. The P0 daemon lifecycle design may
-extend `/health` with those fields after `.ling-stack/daemon/daemon.json` and
-`.ling-stack/logs/daemon.log` exist. Until then, clients must treat those fields as
-optional and unavailable.
+The current HTTP response does not expose lifecycle metadata such as pid, version,
+started time, host, port, state path, or log path. Use `corepack pnpm ling daemon status`
+and `corepack pnpm ling doctor` for lifecycle diagnostics. Clients must not require
+those metadata fields in `/health`.
+
+On hosts without the supported system keychain, `secret_resolver` is reported as
+`degraded` and recommends `env:` secret references. This capability diagnostic is
+separate from `ok: true` process reachability and does not by itself mean that an
+environment-backed provider is unavailable.
 
 ## Startup Readiness
 
@@ -4397,6 +4405,61 @@ Request body is optional:
 
 Approval decisions append `approval_approved`, `approval_denied`, or `approval_expired` to the linked run event log when the run still exists. Listing or fetching approvals lazily normalizes pending requests whose `expiresAt` is already in the past.
 Media cost approvals are owned by `mediaJobId`. Approving a Media Production request dispatches its direct-provider or workflow job; denying it fails the waiting job without contacting the external generation service. Historical approvals remain readable through the same endpoints.
+
+### Transcript workspace-file capabilities
+
+Transcript file, diff, and artifact refs are display-only until the daemon issues a
+short-lived opaque capability from durable action evidence:
+
+```http
+POST /workspace-files/capabilities
+Content-Type: application/json
+```
+
+```json
+{
+  "cwd": "/path/to/project",
+  "capabilityTarget": "open_file",
+  "refId": "/path/to/project/src/parser.ts",
+  "scope": {
+    "workspaceId": "workspace_default",
+    "threadId": "thread_...",
+    "runId": "run_...",
+    "actionId": "tool:run_...:tool_...",
+    "participantId": "participant-engineer"
+  }
+}
+```
+
+The daemon checks the real `LingThread`, linked run and `ExecutionAction`, participant
+ownership, source/target refs, workspace realpath and artifact root before returning a
+capability. Grants are process-local, expire within five minutes, and carry the current
+daemon epoch; a daemon restart invalidates all previously issued grants.
+
+Capability-bound preview uses the same endpoint path with `POST` (the capability and
+scope stay in the body, never in a URL):
+
+```http
+POST /workspace-files/preview
+Content-Type: application/json
+```
+
+```json
+{
+  "cwd": "/path/to/project",
+  "capabilityId": "wscap_...",
+  "scope": { "workspaceId": "workspace_default", "threadId": "thread_...", "runId": "run_...", "actionId": "tool:run_...:tool_...", "participantId": "participant-engineer" },
+  "maxBytes": 65536,
+  "line": 42
+}
+```
+
+`POST /workspace-files/open` accepts the existing user-selected editor target together
+with `capabilityId` and the same scope. Every preview/open rechecks TTL, daemon epoch,
+scope, durable lineage, permission boundary and realpath. Expired, cross-workspace,
+symlink-escaped, or otherwise stale refs return a typed `403` blocker; the untrusted path
+remains copyable and is never downgraded to `file://` navigation. The legacy GET preview
+and path-based open adapter remain available only for unscoped workspace browsing.
 
 ## Current Limits
 

@@ -140,6 +140,7 @@ export function updatePendingAssistantMessage(input: {
       format: item.payload.format,
       streaming: !terminal,
       deliveryStatus: input.status,
+      presentationRole: item.payload.presentationRole,
       ...(input.errorMessage ? { errorMessage: input.errorMessage } : {}),
     },
     status: input.status === "failed" ? "failed" : terminal ? "committed" : "pending",
@@ -181,6 +182,7 @@ export function appendChannelAssistantMessage(input: {
       format: "markdown",
       streaming: true,
       deliveryStatus: "pending",
+      presentationRole: "reply_result",
     },
     domainRefs: [
       { type: "conversation_item", id: sourceItem.id },

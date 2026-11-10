@@ -1,71 +1,68 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { mkdir } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
+import { timelineBatchGroup } from "./support/timeline-batch-group";
+import { expandTimelineProcesses } from "./support/timeline-process";
 import {
   installNormalWorkCellFixture,
   installTeammateWorkCellFixture,
 } from "./support/conversation-work-cell-fixture";
+import { installChannelWorkCellScenario } from "./support/conversation-work-cell-scenario";
 import { mockDaemon } from "./support/mock-daemon";
-import { createBaseState } from "./support/mock-state";
+import { createBaseState, createChatProvider, isRecord } from "./support/mock-state";
 import { openEngineeringChannel } from "./support/test-helpers";
 
-const evidenceDirectory = fileURLToPath(new URL(
-  "../../../docs/design/ui2.0升级/evidence/conversations/shared-conversation-work-cell-shell-artifacts/",
-  import.meta.url,
-));
 
-test("Channel WorkCell keeps artifacts, changed files, references, and hover preview contained", async ({ page }) => {
+test("Channel WorkCell keeps response files, references, and file-path disclosure contained", async ({ page }) => {
   await prepareSurface(page, {
     theme: "dark",
     width: 1280,
     height: 800,
     reducedMotion: true,
-    workCellDemo: true,
   });
   const runtimeErrors = collectRuntimeErrors(page);
   const state = createBaseState({ approvalStatus: "expired" });
+  installChannelWorkCellScenario(state);
+  state.providers = [createChatProvider({
+    lastCheck: { ok: true, message: "Ready", checkedAt: "2026-07-30T00:00:00.000Z" },
+  })];
+  state.workspaceSettings.defaultProviderPresetId = "provider_local";
   await mockDaemon(page, state);
 
   await page.goto("/");
   await openEngineeringChannel(page);
 
   const feed = page.getByLabel("Channel message feed");
-  const transcript = feed
-    .locator('.conversation-turn-assistant-row:has(.conversation-work-cell[data-operation-source="workflow"])')
-    .first();
-  const workCell = transcript.locator('.conversation-work-cell[data-operation-source="workflow"]').first();
-  await expect(workCell).toBeVisible();
-  await expandOperationShell(workCell);
-  await expectShellMotionDisabled(workCell);
+  const timeline = feed.locator('[data-conversation-timeline="true"][data-conversation-timeline-depth="0"]').first();
+  await expect(timeline).toBeVisible();
+  const agentSpans = timeline.locator('[data-conversation-timeline-kind="subAgentActivity"]');
+  await expect(agentSpans).toHaveCount(4);
+  await expect(timeline.locator('[data-conversation-timeline-kind="diagnostic"]')).toHaveCount(0);
+  const terminalReport = timeline.locator('[data-conversation-timeline-kind="terminalReport"]');
+  await expect(terminalReport).toBeVisible();
+  const responseFiles = timeline.locator("[data-conversation-response-files]");
+  await expect(responseFiles).toBeVisible();
+  await expect(responseFiles).toContainText("Edited 3 files");
+  const changedFileReferences = responseFiles.locator(".conversation-timeline-file-ref");
+  const changedFilePaths = [
+    "apps/web/src/shared/conversation/blocks/ConversationWorkCell.tsx",
+    "apps/web/src/styles/components.css",
+    "docs/design/conversation-work-cell-operation-records.md",
+  ];
+  await expect(changedFileReferences).toHaveCount(changedFilePaths.length);
+  for (const [index, path] of changedFilePaths.entries()) {
+    await expect(changedFileReferences.nth(index)).toBeVisible();
+    await expect(changedFileReferences.nth(index)).toHaveAttribute("title", path);
+  }
 
-  const artifactSurface = transcript.locator(".conversation-turn-artifacts");
-  const artifactRows = artifactSurface.locator(".conversation-work-cell-artifact-row");
-  const changedGroup = artifactSurface.locator(".conversation-work-cell-change-group");
-  await expect(artifactSurface).toBeVisible();
-  await expect(artifactRows).toHaveCount(2);
-  await expect(changedGroup).toBeVisible();
-
-  const referenceTrigger = workCell.locator(".conversation-work-cell-evidence-summary");
-  await expect(referenceTrigger).toHaveAttribute("aria-expanded", "false");
-  await referenceTrigger.focus();
-  await referenceTrigger.press("Enter");
-  await expect(referenceTrigger).toHaveAttribute("aria-expanded", "true");
-  await expect(workCell.locator(".conversation-work-cell-evidence-links > *")).not.toHaveCount(0);
-
-  const changedFile = changedGroup.locator(".conversation-work-cell-change-file").first();
-  const changedFileLabel = (await changedFile.locator("code").innerText()).trim();
-  await page.mouse.move(0, 0);
-  await changedFile.hover();
-  const hoverPreview = page.locator(".conversation-artifact-hover-preview");
-  await expect(hoverPreview).toBeVisible({ timeout: 4_000 });
-  await expect(hoverPreview).toContainText(changedFileLabel);
-  await expect(hoverPreview.locator(".conversation-artifact-hover-preview-body")).toBeVisible();
-  await captureEvidence(page, "1280x800-ling-dark-channel-artifact-hover.png");
+  const changedFile = changedFileReferences.first();
+  await captureEvidence(page, "1280x800-ling-dark-channel-terminal-report-file-path.png");
 
   const composer = page.getByRole("textbox", { name: "Message this channel or @ an AI teammate", exact: true });
   await composer.fill("Please inspect apps/web/src/features/workspace/WorkspaceClientView.tsx");
   await page.locator(".channel-composer").getByRole("button", { name: "Send" }).click();
-  await expect.poll(() => state.lastChannelTurnRequest?.fileRefs?.[0]?.path)
+  await expect.poll(() => {
+    const refs = state.lastChannelTurnRequest?.fileRefs;
+    return Array.isArray(refs) && isRecord(refs[0]) ? refs[0].path : undefined;
+  })
     .toBe("apps/web/src/features/workspace/WorkspaceClientView.tsx");
   const references = feed.getByLabel("References").last();
   const fileReference = references.getByRole("button", { name: /WorkspaceClientView\.tsx/u });
@@ -79,12 +76,7 @@ test("Channel WorkCell keeps artifacts, changed files, references, and hover pre
   await fileReference.press("Tab");
   await expect(references.getByRole("tooltip")).toHaveCount(0);
 
-  await expectReducedMotion(page, [
-    workCell,
-    artifactRows.first(),
-    changedGroup,
-    hoverPreview,
-  ]);
+  await expectReducedMotion(page, [timeline, responseFiles, changedFile]);
   await expectDocumentContained(page);
   expect(runtimeErrors).toEqual([]);
 });
@@ -97,18 +89,96 @@ test("Normal conversation renders the shared WorkCell shell without document ove
   await mockDaemon(page, state);
 
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").locator(".sidebar-recent-row").filter({ hasText: title }).click();
+  await openRecentConversation(page, title);
 
   const conversation = page.getByLabel("Conversation page");
-  const workCell = conversation.locator(".conversation-work-cell");
-  await expect(workCell).toBeVisible();
-  await expandOperationShell(workCell);
-  await expect(workCell.locator(".conversation-operation-shell")).toBeVisible();
-  await expect(workCell.locator(".conversation-command-batch")).toHaveCount(1);
-  await expectShellMotionTokens(workCell);
+  const timeline = conversation.locator('[data-conversation-timeline="true"][data-conversation-timeline-depth="0"]').first();
+  await expect(timeline).toBeVisible();
+  await expect(timeline.locator("[data-conversation-process-header]").first()).toBeVisible();
+  await expandTimelineProcesses(timeline);
+  const commandBatch = timeline.locator('[data-conversation-timeline-kind="commandBatch"]');
+  await expect(commandBatch).toHaveCount(1);
   await expectDocumentContained(page);
   await captureEvidence(page, "1440x960-ling-light-normal-work-cell-shell.png");
   expect(runtimeErrors).toEqual([]);
+});
+
+test("Terminal report summaries keep Markdown paragraphs and fenced code", async ({ page }) => {
+  await prepareSurface(page, { theme: "light", width: 1440, height: 960, reducedMotion: true });
+  const runtimeErrors = collectRuntimeErrors(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  const title = installNormalWorkCellFixture(state);
+  if (!state.terminalReports[0]) throw new Error("Normal WorkCell fixture did not create a terminal report.");
+  state.terminalReports = state.terminalReports.map((report, index) => {
+    if (index !== 0) return report;
+    if (!isRecord(report) || !isRecord(report.outcome)) throw new Error("Normal WorkCell fixture needs a report outcome");
+    return {
+      ...report,
+      outcome: {
+        ...report.outcome,
+        summary: "完成说明：\n\n- 已创建文件\n- 已验证内容\n\n```bash\nnode app.js\n```",
+      },
+    };
+  });
+  for (const run of state.runs) {
+    if (run.threadId === "thread_ui2_normal_work_cell") state.eventsByRun[run.id] = [];
+  }
+  await mockDaemon(page, state);
+
+  await page.goto("/");
+  await openRecentConversation(page, title);
+
+  const response = page.getByLabel("Conversation page").locator(".conversation-timeline-terminal-response");
+  await expect(response).toBeVisible();
+  const summary = response.locator(".conversation-timeline-result-summary");
+  await expect(summary).toBeVisible();
+  await expect(summary.locator(".message-body-paragraph")).toHaveCount(3);
+  await expect(summary.locator(".message-body-list")).toHaveCount(1);
+  await expect(summary.locator(".message-code-block")).toHaveCount(1);
+  await expect(summary.locator(".message-code-block")).toContainText("node app.js");
+  expect(runtimeErrors).toEqual([]);
+});
+
+test("WorkCell command evidence preserves multiline output formatting", async ({ page }) => {
+  await prepareSurface(page, { theme: "light", width: 1440, height: 960, reducedMotion: true });
+  const state = createBaseState({ approvalStatus: "expired" });
+  const title = installNormalWorkCellFixture(state);
+  const firstAction = state.executionActions.find((action) => action.id.includes("typecheck"));
+  if (!firstAction?.commandEvidence) throw new Error("Normal WorkCell fixture did not create command evidence.");
+  const commandEvidence = firstAction.commandEvidence;
+  state.executionActions = state.executionActions.map((action) => action.id.includes("typecheck")
+    ? {
+        ...action,
+        commandEvidence: {
+          ...commandEvidence,
+          outputTail: [{
+            ...commandEvidence.outputTail[0],
+            text: "first output line\nsecond output line\nthird output line\n",
+          }],
+          outputLineCount: 3,
+        },
+      }
+    : action);
+  await mockDaemon(page, state);
+
+  await page.goto("/");
+  await openRecentConversation(page, title);
+
+  const timeline = page.getByLabel("Conversation page").locator('[data-conversation-timeline="true"][data-conversation-timeline-depth="0"]').first();
+  await expect(timeline).toBeVisible();
+  await expect(timeline.locator("[data-conversation-process-header]").first()).toBeVisible();
+  await expandTimelineProcesses(timeline);
+  const commandBatch = timeline.locator('[data-conversation-timeline-kind="commandBatch"]');
+  await expect(commandBatch).toHaveCount(1);
+  await commandBatch.locator(".conversation-command-batch-header").click();
+  const commandRow = (await timelineBatchGroup(commandBatch)).locator('[data-conversation-timeline-kind="commandExecution"][data-conversation-timeline-id="action:execution_action_typecheck_normal"]');
+  await expect(commandRow).toHaveCount(1);
+  await commandRow.locator(".conversation-timeline-activity-main").click();
+  const output = commandRow.locator(".conversation-timeline-output");
+  await expect(output).toBeVisible();
+  await expect(output).toHaveCSS("white-space", "pre-wrap");
+  expect(await output.textContent()).toBe("first output line\nsecond output line\nthird output line\n");
+  expect(await output.evaluate((element) => getComputedStyle(element).fontFamily)).toContain("SFMono-Regular");
 });
 
 test("Teammate conversation renders the shared WorkCell shell in reduced motion", async ({ page }) => {
@@ -124,15 +194,16 @@ test("Teammate conversation renders the shared WorkCell shell in reduced motion"
   await mockDaemon(page, state);
 
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: teammate.displayName }).click();
+  await page.getByRole("button", { name: teammate.displayName, exact: true }).click();
 
   const feed = page.getByLabel("Private message feed", { exact: true });
-  const workCell = feed.locator(".conversation-work-cell");
-  await expect(workCell).toBeVisible();
-  await expandOperationShell(workCell);
-  const commandBatch = workCell.locator(".conversation-command-batch");
+  const timeline = feed.locator('[data-conversation-timeline="true"][data-conversation-timeline-depth="0"]').first();
+  await expect(timeline).toBeVisible();
+  await expect(timeline.locator("[data-conversation-process-header]").first()).toBeVisible();
+  await expandTimelineProcesses(timeline);
+  const commandBatch = timeline.locator('[data-conversation-timeline-kind="commandBatch"]');
   await expect(commandBatch).toHaveCount(1);
-  await expectReducedMotion(page, [workCell, commandBatch]);
+  await expectReducedMotion(page, [timeline, commandBatch]);
   await expectDocumentContained(page);
   await captureEvidence(page, "1280x800-ling-dark-teammate-work-cell-shell.png");
   expect(runtimeErrors).toEqual([]);
@@ -143,28 +214,24 @@ async function prepareSurface(page: Page, input: {
   readonly width: number;
   readonly height: number;
   readonly reducedMotion?: boolean;
-  readonly workCellDemo?: boolean;
 }): Promise<void> {
   await page.setViewportSize({ width: input.width, height: input.height });
   await page.emulateMedia({ reducedMotion: input.reducedMotion ? "reduce" : "no-preference" });
-  await page.addInitScript(({ theme, workCellDemo }) => {
+  await page.addInitScript(({ theme }) => {
     const selection = { mode: "fixed", themeId: `ling-${theme}` };
     localStorage.setItem("ling-stack.locale", "en-US");
     localStorage.setItem("ling-stack.themeSelection", JSON.stringify(selection));
     localStorage.setItem("ling-stack.themeBootstrapSelection", JSON.stringify(selection));
     localStorage.setItem("ling-stack.themePreference", theme);
     localStorage.setItem("ling-stack.themeBootstrapPreference", theme);
-    if (workCellDemo) localStorage.setItem("ling-stack.workCellDemo", "true");
-  }, { theme: input.theme, workCellDemo: input.workCellDemo });
+  }, { theme: input.theme });
 }
 
-async function expandOperationShell(workCell: Locator): Promise<void> {
-  const trigger = workCell.locator(".conversation-operation-shell-head");
-  if (await trigger.getAttribute("aria-expanded") === "false") {
-    await trigger.focus();
-    await trigger.press("Enter");
-  }
-  await expect(trigger).toHaveAttribute("aria-expanded", "true");
+async function openRecentConversation(page: Page, title: string): Promise<void> {
+  await page
+    .getByRole("button", { name: /Open recent conversation \d+/u })
+    .filter({ hasText: title })
+    .click();
 }
 
 async function expectReducedMotion(page: Page, locators: readonly Locator[]): Promise<void> {
@@ -179,31 +246,6 @@ async function expectReducedMotion(page: Page, locators: readonly Locator[]): Pr
     }).filter((entry) => entry.name !== "none" && entry.duration !== "0s"));
     expect(activeAnimations).toEqual([]);
   }
-}
-
-async function expectShellMotionDisabled(workCell: Locator): Promise<void> {
-  const transitioning = await workCell.evaluate((root) => [
-    ...root.querySelectorAll<HTMLElement>([
-      ".conversation-operation-shell-toggle svg",
-      ".conversation-work-cell-evidence-summary svg",
-      ".conversation-work-cell-artifact-strip svg",
-      ".conversation-work-cell-change-more svg",
-    ].join(", ")),
-  ].map((element) => getComputedStyle(element).transitionDuration)
-    .filter((duration) => duration.split(",").some((part) => part.trim() !== "0s")));
-  expect(transitioning).toEqual([]);
-}
-
-async function expectShellMotionTokens(workCell: Locator): Promise<void> {
-  const durations = await workCell.evaluate((root) => {
-    const evidenceToggle = root.querySelector<SVGElement>(".conversation-work-cell-evidence-summary svg");
-    return {
-      shellToggle: getComputedStyle(root.querySelector<SVGElement>(".conversation-operation-shell-toggle svg")!).transitionDuration,
-      evidenceToggle: evidenceToggle ? getComputedStyle(evidenceToggle).transitionDuration : null,
-    };
-  });
-  expect(durations.shellToggle).toBe("0.18s");
-  if (durations.evidenceToggle !== null) expect(durations.evidenceToggle).toBe("0.18s");
 }
 
 async function expectDocumentContained(page: Page): Promise<void> {
@@ -225,19 +267,17 @@ function collectRuntimeErrors(page: Page): string[] {
 
 async function captureEvidence(page: Page, filename: string): Promise<void> {
   if (process.env.LING_CAPTURE_UI2_EVIDENCE !== "1") return;
-  await mkdir(evidenceDirectory, { recursive: true });
   await page.screenshot({
     animations: "disabled",
     fullPage: true,
-    path: `${evidenceDirectory}${filename}`,
+    path: test.info().outputPath(filename),
   });
 }
 
 async function captureElementEvidence(locator: Locator, filename: string): Promise<void> {
   if (process.env.LING_CAPTURE_UI2_EVIDENCE !== "1") return;
-  await mkdir(evidenceDirectory, { recursive: true });
   await locator.screenshot({
     animations: "disabled",
-    path: `${evidenceDirectory}${filename}`,
+    path: test.info().outputPath(filename),
   });
 }

@@ -1,12 +1,6 @@
 import { expect, test } from "@playwright/test";
-import { fileURLToPath } from "node:url";
 import { mockDaemon } from "./support/mock-daemon";
 import { createBaseState } from "./support/mock-state";
-
-const evidenceDirectory = fileURLToPath(new URL(
-  "../../../docs/design/ui2.0升级/evidence/features/quick-theme-first-run/",
-  import.meta.url,
-));
 
 const validPng = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
@@ -18,7 +12,7 @@ test("Quick Theme Studio generates and installs a token-only theme without gener
   const state = createBaseState({ approvalStatus: "expired" });
   await mockDaemon(page, state);
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Interface preferences/ }).click();
   await page.getByRole("button", { name: "Create theme" }).click();
 
@@ -40,10 +34,11 @@ test("Quick Theme Studio generates and installs a token-only theme without gener
   await expect(studio.locator("[data-theme-studio-preview-fixture]")).toBeVisible();
   await expect(studio.locator(".ling-ui-theme-studio-preview-artwork")).toHaveCount(0);
   expect(generationRequests).toEqual([]);
-  await page.screenshot({ animations: "disabled", path: `${evidenceDirectory}1440x960-ling-light-quick-theme.png` });
+  await page.screenshot({ animations: "disabled", path: test.info().outputPath("1440x960-ling-light-quick-theme.png") });
 
   await studio.getByRole("button", { name: "Install and use" }).click();
-  await expect(page.getByText("Theme installed and applied")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Notifications" })
+    .getByText("Theme installed and applied", { exact: true })).toBeVisible();
   const stored = await page.evaluate(async () => {
     return await new Promise<{ artwork: unknown; assetCount: number; generationMode: unknown; profileId: unknown }>((resolve, reject) => {
       const request = indexedDB.open("ling-stack-ui2");
@@ -72,7 +67,7 @@ test("Quick Theme Studio generates and installs a token-only theme without gener
   await studio.getByRole("button", { name: "Back to themes" }).click();
   await expect(page.getByRole("button", { name: /quiet-sky/ })).toBeVisible();
   await page.reload();
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Interface preferences/ }).click();
   await page.getByRole("button", { name: "Create theme" }).click();
   await expect(page.getByRole("textbox", { name: "Theme name" })).toHaveValue("quiet-sky");
@@ -86,7 +81,7 @@ test("Quick Theme Studio keeps the canvas readable at 1280x800 in dark mode", as
   state.workspaceSettings.theme = "dark";
   await mockDaemon(page, state);
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Interface preferences/ }).click();
   await page.getByRole("button", { name: "Create theme" }).click();
   const studio = page.locator("[data-ui2-theme-studio]");
@@ -113,5 +108,5 @@ test("Quick Theme Studio keeps the canvas readable at 1280x800 in dark mode", as
   await studio.getByRole("button", { name: "Generate preview" }).click();
   await expect(studio.locator("[data-theme-studio-preview-fixture]")).toBeVisible();
   await expect(page.locator("html")).toHaveAttribute("data-ui-theme", "ling-dark");
-  await page.screenshot({ animations: "disabled", path: `${evidenceDirectory}1280x800-ling-dark-quick-theme.png` });
+  await page.screenshot({ animations: "disabled", path: test.info().outputPath("1280x800-ling-dark-quick-theme.png") });
 });

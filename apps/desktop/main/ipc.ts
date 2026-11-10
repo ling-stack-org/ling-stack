@@ -13,6 +13,7 @@ import {
   type ComputerControlPermissionKind,
   type DesktopRect,
   type DesktopMobileAccessCapabilities,
+  type DesktopWindowState,
 } from "../shared/desktop-capabilities.js";
 import { DESKTOP_IPC_CHANNELS } from "../shared/ipc-channels.js";
 import type { ComputerUsePreviewCoordinator } from "./computer-use/coordinator.js";
@@ -20,6 +21,10 @@ import type { DesktopRuntime } from "./desktop-runtime.js";
 import { DesktopNavigationIntentStore } from "./navigation-intent.js";
 import { DesktopRendererThemeStore } from "./renderer-theme-store.js";
 import { sendToLiveDesktopWindow } from "./safe-window-send.js";
+import { registerExecutionEngineIpc } from "./execution-engines/ipc.js";
+import { createHostExecutionEngineClient } from "./execution-engines/client.js";
+import { registerLocalFileIpc } from "./local-files/ipc.js";
+import { registerLocalServiceIpc } from "./local-services.js";
 
 const MAX_HOST_OBSTACLES = 128;
 const MAX_DESKTOP_COORDINATE = 1_000_000;
@@ -44,11 +49,30 @@ export function registerDesktopIpc(input: {
   readonly navigationIntents?: DesktopNavigationIntentStore;
   readonly themeStore?: DesktopRendererThemeStore;
   readonly mobileAccess?: DesktopMobileAccessCapabilities;
+  readonly executionEngines?: { readonly baseUrl: string; readonly trustedDocumentUrl: string;
+    readonly getAuthority: Parameters<typeof createHostExecutionEngineClient>[1] };
+  readonly windowControlsEnabled?: boolean;
   readonly fixedComputerUseConversationId?: string;
   readonly ipcMainImpl?: Pick<IpcMain, "handle" | "on" | "removeHandler" | "removeAllListeners">;
 }): () => void {
   const desktopIpcMain = input.ipcMainImpl ?? resolveIpcMain();
+  const unregisterExecutionEngines = input.executionEngines ? registerExecutionEngineIpc({
+    ipcMainImpl: desktopIpcMain, getMainWindow: input.getMainWindow,
+    trustedDocumentUrl: input.executionEngines.trustedDocumentUrl,
+    getClient: () => createHostExecutionEngineClient(input.executionEngines!.baseUrl, input.executionEngines!.getAuthority),
+  }) : undefined;
   const navigationIntents = input.navigationIntents ?? new DesktopNavigationIntentStore();
+  const unregisterLocalServices = input.executionEngines ? registerLocalServiceIpc({
+    ipcMainImpl: desktopIpcMain,
+    getMainWindow: input.getMainWindow,
+    trustedDocumentUrl: input.executionEngines.trustedDocumentUrl,
+    baseUrl: input.executionEngines.baseUrl,
+  }) : undefined;
+  const unregisterLocalFiles = input.executionEngines ? registerLocalFileIpc({
+    ipcMainImpl: desktopIpcMain,
+    getMainWindow: input.getMainWindow,
+    trustedDocumentUrl: input.executionEngines.trustedDocumentUrl,
+  }) : undefined;
   const themeStore = input.themeStore ?? new DesktopRendererThemeStore();
   let pendingRendererSelectionObserved = false;
   let pendingRendererSelection: string | undefined;
@@ -62,6 +86,41 @@ export function registerDesktopIpc(input: {
     input.getMainWindow()?.webContents.id === event.sender.id;
   const isPreviewSender = (event: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent): boolean =>
     input.computerUse.ownsPreviewWebContents(event.sender.id);
+  let windowControlOwner: BrowserWindow | undefined;
+  const reportWindowState = (): void => {
+    const state = readWindowState();
+    if (state) {
+      sendToLiveDesktopWindow(
+        input.getMainWindow(),
+        DESKTOP_IPC_CHANNELS.windowStateChanged,
+        state,
+      );
+    }
+  };
+  const ensureWindowControlOwner = (): BrowserWindow | undefined => {
+    const window = input.windowControlsEnabled ? input.getMainWindow() : undefined;
+    if (!window || window.isDestroyed()) return undefined;
+    if (windowControlOwner !== window) {
+      windowControlOwner?.off("maximize", reportWindowState);
+      windowControlOwner?.off("unmaximize", reportWindowState);
+      windowControlOwner?.off("restore", reportWindowState);
+      window.on("maximize", reportWindowState);
+      window.on("unmaximize", reportWindowState);
+      window.on("restore", reportWindowState);
+      windowControlOwner = window;
+    }
+    return window;
+  };
+  const readWindowState = (): DesktopWindowState | undefined => {
+    const window = ensureWindowControlOwner();
+    return window ? { maximized: window.isMaximized() } : undefined;
+  };
+  const readWindowForControl = (
+    event: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent,
+  ): BrowserWindow | undefined => {
+    if (!input.windowControlsEnabled || !isMainWindowSender(event)) return undefined;
+    return ensureWindowControlOwner();
+  };
 
   desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.daemonStatus, async (event) =>
     isMainWindowSender(event) ? input.runtime.status : { state: "disconnected", baseUrl: "", ownedByDesktop: false });
@@ -147,6 +206,30 @@ export function registerDesktopIpc(input: {
     if (isMainWindowSender(event)) {
       themeStore.report(value);
     }
+  });
+  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.windowStateGet, async (event) =>
+    isMainWindowSender(event) ? readWindowState() : undefined);
+  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.windowMinimize, async (event) => {
+    const window = readWindowForControl(event);
+    if (!window) return { accepted: false, reason: "unauthorized_or_unsupported_window_control" };
+    window.minimize();
+    return { accepted: true };
+  });
+  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.windowToggleMaximize, async (event) => {
+    const window = readWindowForControl(event);
+    if (!window) return { accepted: false, reason: "unauthorized_or_unsupported_window_control" };
+    if (window.isMaximized()) {
+      window.unmaximize();
+    } else {
+      window.maximize();
+    }
+    return { accepted: true };
+  });
+  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.windowClose, async (event) => {
+    const window = readWindowForControl(event);
+    if (!window) return { accepted: false, reason: "unauthorized_or_unsupported_window_control" };
+    window.close();
+    return { accepted: true };
   });
   desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.computerUseSummaryGet, async (event) =>
     isMainWindowSender(event) ? input.computerUse.getSummary() : undefined);
@@ -420,8 +503,14 @@ export function registerDesktopIpc(input: {
     );
   });
   return () => {
+    unregisterLocalServices?.();
+    unregisterLocalFiles?.();
+    unregisterExecutionEngines?.();
     unsubscribeStatus();
     unsubscribeNavigationIntents();
+    windowControlOwner?.off("maximize", reportWindowState);
+    windowControlOwner?.off("unmaximize", reportWindowState);
+    windowControlOwner?.off("restore", reportWindowState);
     themeStore.dispose();
     for (const channel of Object.values(DESKTOP_IPC_CHANNELS)) {
       desktopIpcMain.removeHandler(channel);

@@ -35,6 +35,14 @@ test("daemon lifecycle starts, reports status, reads logs, and stops a managed d
     assert.equal(statusBody.daemonUrl, daemonUrl);
     assert.equal(statusBody.health.service, "ling-stack-daemon");
 
+    const doctor = await runDaemonCli(["doctor", "--json"]);
+    assert.equal(doctor.code, 4, doctor.stderr);
+    const checks = new Map(JSON.parse(doctor.stdout).checks.map((check) => [check.id, check]));
+    assert.equal(checks.get("daemon.health")?.status, "ok");
+    assert.equal(checks.get("workspace.sqlite")?.status, "ok");
+    assert.equal(checks.get("skills.registry")?.status, "ok");
+    assert.equal(checks.get("providers.configured")?.status, "fail", "a fresh workspace has no configured provider");
+
     const logs = await runDaemonCli(["daemon", "logs", "--lines", "20"]);
     assert.equal(logs.code, 0, logs.stderr);
     assert.match(logs.stdout, /Ling Stack daemon listening/);

@@ -157,6 +157,29 @@ test("provider capability snapshot uses conservative defaults for unknown compat
   assert.equal(providerCapabilitySourceLabel(snapshot.source), "Conservative");
 });
 
+test("an output-only override does not assert an unknown context window is known", () => {
+  const snapshot = resolveProviderModelCapabilitySnapshot(provider({ maxTokens: 8192 }));
+  assert.equal(snapshot.source, "conservative_default");
+  assert.equal(snapshot.confidence, "conservative");
+  assert.equal(snapshot.contextWindowTokens, 8192);
+  assert.equal(snapshot.maxOutputTokens, 8192);
+});
+
+test("an output-only override retains a matching runtime context downgrade", () => {
+  const snapshot = resolveProviderModelCapabilitySnapshot(provider({ maxTokens: 2048 }), {
+    runtimeObservation: {
+      providerPresetId: "provider_test", providerKind: "openai-compatible",
+      providerApi: "openai-completions", modelId: "custom-model",
+      previousContextWindowTokens: 8192, observedContextWindowTokens: 4096,
+      failureCode: "context_length_error", observedAt: "2026-10-23T00:00:00.000Z",
+    },
+  });
+  assert.equal(snapshot.source, "runtime_observed");
+  assert.equal(snapshot.confidence, "estimated");
+  assert.equal(snapshot.contextWindowTokens, 4096);
+  assert.equal(snapshot.maxOutputTokens, 2048);
+});
+
 test("provider capability snapshot returns explicit non-chat state for media providers", () => {
   const snapshot = resolveProviderModelCapabilitySnapshot(
     provider({
@@ -174,4 +197,14 @@ test("provider capability snapshot returns explicit non-chat state for media pro
   assert.equal(snapshot.contextWindowTokens, undefined);
   assert.equal(snapshot.maxOutputTokens, undefined);
   assert.equal(providerCapabilitySourceLabel(snapshot.source), "Auto");
+});
+
+test("legacy unsafe token overrides cannot become known model capacity or output limits", () => {
+  const snapshot = resolveProviderModelCapabilitySnapshot(provider({
+    contextWindow: Number.MAX_SAFE_INTEGER + 1, maxTokens: Number.MAX_SAFE_INTEGER + 1,
+  }));
+  assert.equal(snapshot.source, "conservative_default");
+  assert.equal(snapshot.confidence, "conservative");
+  assert.equal(snapshot.contextWindowTokens, 8192);
+  assert.equal(snapshot.maxOutputTokens, 1024);
 });

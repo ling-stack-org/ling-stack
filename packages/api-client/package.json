@@ -4,6 +4,9 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -11,6 +14,9 @@
     }
   },
   "scripts": {
+    "build:ci": "tsc -p tsconfig.json",
+    "typecheck:ci": "tsc -p tsconfig.json --noEmit",
+    "test:ci": "node --test test/*.test.mjs",
     "build": "corepack pnpm --filter @ling-stack/contracts build && tsc -p tsconfig.json",
     "typecheck": "corepack pnpm --filter @ling-stack/contracts build && tsc -p tsconfig.json --noEmit",
     "lint": "echo \"lint not configured yet\"",

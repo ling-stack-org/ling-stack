@@ -12,6 +12,7 @@ import type {
   SkillImportDraft,
   SkillRegistryEntry,
   SkillRevisionPreview,
+  SkillCandidate,
 } from "../../types.js";
 import type { SettingsTranslator } from "./skill-library-utils.js";
 import {
@@ -108,6 +109,14 @@ export function useSkillEditorController({
     setOpen(true);
   }
 
+  function openCandidateRevision(candidate: SkillCandidate, entry: SkillRegistryEntry): void {
+    if (candidate.targetSkillId !== entry.id || !candidate.definition.skillDefinition) return;
+    openRevision(entry);
+    const seed = skillEditorSeedFromSkill({ ...entry, definition: candidate.definition.skillDefinition });
+    setFormState(seed.form);
+    setCandidateId(candidate.id);
+  }
+
   function closeImmediately(): void {
     setOpen(false);
     setSkill(undefined);
@@ -178,10 +187,12 @@ export function useSkillEditorController({
       setBusy("saving");
       const response = await publishSkillRevision(cwd.trim(), skill.id, {
         ...request,
+        ...(candidateId ? { sourceCandidateId: candidateId } : {}),
         ...(confirmAuthority ? { confirmAuthorityChanges: true } : {}),
       });
+      const completedCandidateId = candidateId;
       closeImmediately();
-      await onCompleted({ skills: [response.skill], mode: "revision" });
+      await onCompleted({ skills: [response.skill], mode: "revision", candidateId: completedCandidateId || undefined });
       onSuccess(t("Skill updated"));
     } catch (caught) {
       if (caught instanceof LingDaemonError && caught.code === "skill_revision_conflict") {
@@ -260,6 +271,7 @@ export function useSkillEditorController({
     sourceKind: mode === "candidate" || (skill && isEvolvedSkillEntry(skill)) ? "evolved" as const : "user" as const,
     openCreate,
     openCandidate,
+    openCandidateRevision,
     openRevision,
     requestClose,
     discardChanges,

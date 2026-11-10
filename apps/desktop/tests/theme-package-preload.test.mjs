@@ -245,12 +245,76 @@ test("main-window preload exposes Computer Control only for a validated packaged
   }
 });
 
+test("main-window preload exposes typed frame controls only on Windows", async () => {
+  const calls = [];
+  const listeners = new Map();
+  let exposed;
+  const ipcRenderer = {
+    invoke: async (channel) => {
+      calls.push(channel);
+      return channel === DESKTOP_IPC_CHANNELS.windowStateGet
+        ? { maximized: false }
+        : { accepted: true };
+    },
+    send: () => undefined,
+    on: (channel, listener) => listeners.set(channel, listener),
+    off: (channel, listener) => {
+      if (listeners.get(channel) === listener) listeners.delete(channel);
+    },
+  };
+  await executePreload({
+    contextBridge: {
+      exposeInMainWorld: (_name, value) => {
+        exposed = value;
+      },
+    },
+    ipcRenderer,
+  }, undefined, "win32");
+
+  assert.deepEqual(Object.keys(exposed.windowControls).sort(), [
+    "close",
+    "getState",
+    "minimize",
+    "onStateChanged",
+    "toggleMaximize",
+  ]);
+  await exposed.windowControls.getState();
+  await exposed.windowControls.minimize();
+  await exposed.windowControls.toggleMaximize();
+  await exposed.windowControls.close();
+  const states = [];
+  const unsubscribe = exposed.windowControls.onStateChanged((state) => states.push(state));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  listeners.get(DESKTOP_IPC_CHANNELS.windowStateChanged)?.({}, { maximized: true });
+  assert.deepEqual(JSON.parse(JSON.stringify(states)), [{ maximized: false }, { maximized: true }]);
+  unsubscribe();
+  assert.equal(listeners.has(DESKTOP_IPC_CHANNELS.windowStateChanged), false);
+  assert.deepEqual(calls, [
+    DESKTOP_IPC_CHANNELS.windowStateGet,
+    DESKTOP_IPC_CHANNELS.windowMinimize,
+    DESKTOP_IPC_CHANNELS.windowToggleMaximize,
+    DESKTOP_IPC_CHANNELS.windowClose,
+    DESKTOP_IPC_CHANNELS.windowStateGet,
+  ]);
+
+  let macCapabilities;
+  await executePreload({
+    contextBridge: {
+      exposeInMainWorld: (_name, value) => {
+        macCapabilities = value;
+      },
+    },
+    ipcRenderer,
+  }, undefined, "darwin");
+  assert.equal(macCapabilities.windowControls, undefined);
+});
+
 async function executePreload(electronMock, argv = [
   "electron",
   "app",
   "--ling-daemon-base-url=http://127.0.0.1:17891",
   encodeDesktopThemePackageFirstPaintArgument(firstPaintState),
-]) {
+], platform = process.platform) {
   const preloadUrl = new URL("../dist/preload/main-window.cjs", import.meta.url);
   const source = await readFile(preloadUrl, "utf8");
   const preloadPath = fileURLToPath(preloadUrl);
@@ -259,7 +323,9 @@ async function executePreload(electronMock, argv = [
   const processMock = new Proxy(process, {
     get: (target, property, receiver) => property === "argv"
       ? argv
-      : Reflect.get(target, property, receiver),
+      : property === "platform"
+        ? platform
+        : Reflect.get(target, property, receiver),
   });
   const sandbox = {
     Buffer,

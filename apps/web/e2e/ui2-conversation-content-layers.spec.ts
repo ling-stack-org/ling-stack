@@ -187,22 +187,18 @@ test("mixed conversation items keep tool and approval evidence out of prose", as
   await openEngineeringChannel(page);
 
   const feed = page.getByLabel(/Channel message feed|频道消息列表/u);
-  const toolItem = feed.locator('[data-conversation-item-kind="tool_call"]');
-  const approvalItem = feed.locator('[data-conversation-item-kind="approval_request"]');
-  await expect(toolItem).toHaveCount(1);
-  await expect(approvalItem).toHaveCount(1);
-  await expect(feed.locator('[data-conversation-item-kind="tool_result"]')).toHaveCount(1);
-  await expect(feed.locator('[data-conversation-item-kind="approval_decision"]')).toHaveCount(1);
-  await expect(feed.locator('[data-conversation-item-kind="handoff"]')).toHaveCount(1);
-  await expect(feed.locator('[data-conversation-item-kind="operation_state"]')).toHaveCount(1);
-  await expect(feed.locator('[data-conversation-item-kind="artifact_ref"]')).toHaveCount(1);
-  await expect(feed.locator('[data-conversation-item-kind="system_event"]')).toHaveCount(1);
-  await expect(toolItem).toContainText("Read workspace file");
-  await expect(approvalItem).toContainText("Allow workspace read");
-  await expect(feed.locator('[data-conversation-item-kind="tool_result"]')).toContainText("README.md read successfully.");
-  await expect(feed.locator('[data-conversation-item-kind="handoff"]')).toContainText("Engineering follow-up requested.");
-  await expect(feed.locator('[data-conversation-item-kind="artifact_ref"]')).toContainText("README.md");
-  await expect(feed.locator('[data-conversation-item-kind="system_event"]')).toContainText("Context was compacted.");
+  const diagnostics = feed.locator('[data-conversation-timeline-kind="diagnostic"]');
+  await expect(diagnostics).toHaveCount(8);
+  for (const itemId of state.channelConversationItemExtras.map((item) => item.id)) {
+    const item = feed.locator(
+      `[data-conversation-timeline-kind="diagnostic"][data-conversation-timeline-id="item:${itemId}"]`,
+    );
+    await expect(item).toHaveCount(1);
+    await expect(item).toHaveAttribute("data-conversation-source-refs", `conversation_item:${itemId}`);
+    await expect(item).toContainText(/Activity unavailable|活动不可用/u);
+  }
+  await expect(feed.locator('[data-conversation-timeline-kind="mcpToolCall"]')).toHaveCount(0);
+  await expect(feed.locator('[data-conversation-timeline-kind="approval"]')).toHaveCount(0);
   await expect(feed.locator(".conversation-turn-assistant-copy")).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
 });

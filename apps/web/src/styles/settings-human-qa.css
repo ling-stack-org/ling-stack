@@ -1,0 +1,32 @@
+.settings-human-qa {
+  border-top: 1px solid var(--ling-border-default);
+  padding-top: var(--ling-space-5);
+  color: var(--ling-text-default);
+}
+.settings-human-qa > summary { cursor: pointer; font-weight: 600; }
+.settings-human-qa-content,
+.settings-human-qa-item,
+.settings-human-qa-form,
+.settings-human-qa-report { display: grid; min-width: 0; gap: var(--ling-space-4); }
+.settings-human-qa-content { margin-top: var(--ling-space-5); }
+.settings-human-qa-content p { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.settings-human-qa-content h3 { margin: 0; font-size: var(--ling-font-sm); }
+.settings-human-qa-actions { display: flex; flex-wrap: wrap; gap: var(--ling-space-3); }
+.settings-human-qa-layout { display: grid; grid-template-columns: minmax(180px, .4fr) minmax(0, 1fr); gap: var(--ling-space-5); }
+.settings-human-qa-list { display: grid; align-content: start; max-height: min(28rem, 55vh); overflow-y: auto; min-width: 0; }
+.settings-human-qa-list button { justify-content: start; text-align: start; }
+.settings-human-qa-list button[aria-pressed="true"] { background: var(--ling-bg-subtle); }
+.settings-human-qa-list span { display: grid; min-width: 0; overflow-wrap: anywhere; }
+.settings-human-qa-list small { color: var(--ling-text-muted); white-space: normal; }
+.settings-human-qa-item { border-inline-start: 1px solid var(--ling-border-default); padding-inline-start: var(--ling-space-5); }
+.settings-human-qa-history ol { display: grid; gap: var(--ling-space-4); max-height: min(24rem, 45vh); overflow-y: auto; padding-inline-start: var(--ling-space-6); }
+.settings-human-qa-history li { overflow-wrap: anywhere; }
+.settings-human-qa-report { border-top: 1px solid var(--ling-border-default); padding-top: var(--ling-space-4); }
+.settings-human-qa-report dl { display: grid; gap: var(--ling-space-3); margin: 0; }
+.settings-human-qa-report dl > div { display: grid; grid-template-columns: minmax(100px, .3fr) minmax(0, 1fr); gap: var(--ling-space-3); }
+.settings-human-qa-report dt { color: var(--ling-text-muted); }
+.settings-human-qa-report dd { margin: 0; overflow-wrap: anywhere; }
+@media (max-width: 1050px) {
+  .settings-human-qa-layout { grid-template-columns: minmax(0, 1fr); }
+  .settings-human-qa-item { border-inline-start: 0; padding-inline-start: 0; }
+}

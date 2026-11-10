@@ -38,7 +38,17 @@ test("Proposed Plan contains long content and four shared actions at 1440 Light"
   await page.keyboard.press("Tab");
   await page.keyboard.press("Shift+Tab");
   await expect(save).toBeFocused();
-  await expect(save).toHaveCSS("outline-style", "solid");
+  const expectedFocusShadow = await save.evaluate((element) => {
+    const probe = document.createElement("span");
+    probe.style.color = "var(--ling-text-default)";
+    probe.style.boxShadow = "var(--ling-focus-ring), var(--ling-control-shadow)";
+    element.append(probe);
+    const shadow = getComputedStyle(probe).boxShadow;
+    probe.remove();
+    return shadow;
+  });
+  expect(expectedFocusShadow).not.toBe("none");
+  await expect(save).toHaveCSS("box-shadow", expectedFocusShadow);
   await expectContained(card, card.locator(".proposed-plan-body"), card.locator(".proposed-plan-actions"));
   await expectAllPlanCardsContained(page);
   await expectPageContained(page);

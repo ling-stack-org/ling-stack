@@ -1,4 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { timelineBatchGroup } from "./support/timeline-batch-group";
+import { timelineResponseFooter } from "./support/timeline-response-footer";
+import { installEarlyMeasurementScroll } from "./support/early-measurement-scroll";
 import { mockDaemon, type MockExecutionAction } from "./support/mock-daemon";
 import {
   createBaseState,
@@ -88,6 +91,18 @@ async function readComposerGeometry(page: Page, selector: string): Promise<{ bac
   });
 }
 
+async function expectSelectedDefaultChannelConversation(page: Page, channelName: string): Promise<void> {
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
+  const channel = navigation.locator(".sidebar-channel-group").filter({
+    has: page.getByRole("button", { name: channelName, exact: true }),
+  });
+  await expect(channel.locator(".channel-contains-selection")).toHaveCount(1);
+  await expect(channel.locator('.sidebar-branch-row-shell.selected[data-session-default="true"] .sidebar-branch-row'))
+    .toHaveAttribute("aria-current", "page");
+  await expect(navigation.locator(".sidebar-branch-row-shell.selected")).toHaveCount(1);
+  await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: [], selectedRows: [] });
+}
+
 async function expectActionMenuItemAligned(menuItem: Locator, options: { readonly disabled?: boolean } = {}): Promise<void> {
   const alignment = await menuItem.evaluate((element) => {
     const buttonRect = element.getBoundingClientRect();
@@ -140,9 +155,9 @@ test("sidebar selection is exclusive and conversation sections stay below primar
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   const primaryNav = navigation.locator(".primary-nav");
-  const newConversationButton = navigation.getByRole("button", { name: "New conversation" });
+  const newConversationButton = navigation.getByRole("button", { name: "New conversation", exact: true });
   await expect(newConversationButton).toBeVisible();
   const commandButtonWidth = await newConversationButton.evaluate((button) => Math.round(button.getBoundingClientRect().width));
   expect(commandButtonWidth).toBeGreaterThan(100);
@@ -172,8 +187,8 @@ test("sidebar selection is exclusive and conversation sections stay below primar
   await expect(engineerAvatar).toBeVisible();
   await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: [], selectedRows: [] });
 
-  await navigation.getByRole("button", { name: "Engineering" }).click();
-  await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: [], selectedRows: ["Engineering"] });
+  await navigation.getByRole("button", { name: "Engineering", exact: true }).click();
+  await expectSelectedDefaultChannelConversation(page, "Engineering");
   const channelComposer = page.getByLabel("Channel composer");
   await expect(channelComposer).toHaveClass(/conversation-composer/);
   await expect(channelComposer.getByRole("button", { name: /Selected permission preset/ })).toBeVisible();
@@ -185,12 +200,13 @@ test("sidebar selection is exclusive and conversation sections stay below primar
   await expect(navigation).toHaveClass(/channel-left-drawer/);
   await expect(page.locator(".channel-sidebar-toolbar")).toBeHidden();
   await expect(page.locator(".channel-left-drawer .primary-nav")).toHaveCSS("border-bottom-width", "0px");
-  await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: [], selectedRows: ["Engineering"] });
+  await expectSelectedDefaultChannelConversation(page, "Engineering");
 
   await navigation.getByRole("button", { name: "Designer", exact: true }).click();
   await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: [], selectedRows: ["Designer"] });
   const selectedTeammateRow = page.locator('.channel-left-drawer .sidebar-row-shell.selected:has-text("Designer")');
-  await expect(selectedTeammateRow).toHaveCSS("background-color", "rgb(245, 245, 245)");
+  await page.getByRole("heading", { name: "Designer", level: 1 }).hover();
+  await expect(selectedTeammateRow).toHaveCSS("background-color", "rgb(217, 216, 213)");
   expect(await selectedTeammateRow.evaluate((row) => getComputedStyle(row, "::before").content)).toBe("none");
   await expect(page.getByRole("heading", { name: "Designer", level: 1 })).toBeVisible();
 });
@@ -207,7 +223,7 @@ test("app shell keeps offline data visible and reconnects from persistent feedba
   const feedback = page.getByRole("alert").filter({ hasText: "Local service is unavailable" });
   await expect(feedback).toBeVisible();
   await expect(page.locator("html")).toHaveAttribute("data-ui-theme", "ling-dark");
-  await expect(page.getByLabel("Ling Stack navigation")).toBeVisible();
+  await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })).toBeVisible();
   await expect(feedback).toContainText("Some information may be out of date");
   await feedback.getByRole("button", { name: "Reconnect" }).click();
   await expect(feedback).toHaveCount(0);
@@ -227,7 +243,7 @@ test("AI teammate without uploaded avatar uses the default avatar", async ({ pag
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const engineerRow = page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Ling Engineer", exact: true });
+  const engineerRow = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Ling Engineer", exact: true });
   await expect(engineerRow.locator(".teammate-avatar-image-default")).toBeVisible();
   await expect(engineerRow.locator(".avatar-initial")).toHaveCount(0);
 });
@@ -245,15 +261,15 @@ test("sidebar sections collapse locally and keep group action menus", async ({ p
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   const recentConversationRow = navigation.getByRole("button", { name: "No recent conversations" });
-  await expect(navigation.getByRole("button", { name: "Engineering" })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "Engineering", exact: true })).toBeVisible();
   await expect(recentConversationRow).toBeVisible();
 
   await navigation.getByRole("button", { name: "Channels" }).click();
-  await expect(navigation.getByRole("button", { name: "Engineering" })).toHaveCount(0);
+  await expect(navigation.getByRole("button", { name: "Engineering", exact: true })).toHaveCount(0);
   await navigation.getByRole("button", { name: "Channels" }).click();
-  await expect(navigation.getByRole("button", { name: "Engineering" })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "Engineering", exact: true })).toBeVisible();
 
   await navigation.getByRole("button", { name: "AI Teammates" }).click();
   await expect(navigation.getByRole("button", { name: "Designer", exact: true })).toHaveCount(0);
@@ -265,7 +281,7 @@ test("sidebar sections collapse locally and keep group action menus", async ({ p
   await navigation.getByRole("button", { name: "Recent conversations", exact: true }).click();
   await expect(recentConversationRow).toBeVisible();
 
-  await navigation.getByRole("button", { name: "Channel actions" }).click();
+  await navigation.getByRole("button", { name: "Channel actions", exact: true }).click();
   const newChannelMenuItem = page.getByRole("menuitem", { name: "New channel" });
   await expect(newChannelMenuItem).toBeVisible();
   await expectActionMenuItemAligned(newChannelMenuItem);
@@ -291,15 +307,12 @@ test("sidebar archive hides conversations and teammates without deleting data", 
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
-  const channelShell = navigation.locator(".sidebar-channel-group").filter({ hasText: "Engineering" }).locator(".sidebar-row-shell").first();
-  await channelShell.hover();
-  const channelArchiveButton = channelShell.getByRole("button", { name: "Archive channel" });
-  await expect(channelArchiveButton).toBeVisible();
-  await channelArchiveButton.click();
-  await expect(navigation.getByRole("button", { name: "Engineering" })).toHaveCount(0);
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
+  await navigation.getByRole("button", { name: "Channel actions: Engineering", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Archive channel", exact: true }).click();
+  await expect(navigation.getByRole("button", { name: "Engineering", exact: true })).toHaveCount(0);
 
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
   const home = page.getByLabel("Conversation home");
   await home.getByRole("textbox", { name: "Conversation message" }).fill("Archive me");
   await home.getByRole("button", { name: "Send" }).click();
@@ -324,7 +337,7 @@ test("sidebar archive hides conversations and teammates without deleting data", 
   await expect(teammateArchiveButton).toBeVisible();
   await teammateArchiveButton.click();
   await expect(navigation.getByRole("button", { name: "Designer", exact: true })).toHaveCount(0);
-  await expect.poll(() => state.aiTeammates.find((teammate) => teammate.id === "teammate_sidebar_designer")?.hidden).toBe(true);
+  await expect.poll(() => state.aiTeammates.filter(isRecord).find((teammate) => teammate.id === "teammate_sidebar_designer")?.hidden).toBe(true);
 
   await navigation.getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Archived items/ }).click();
@@ -339,7 +352,7 @@ test("sidebar archive hides conversations and teammates without deleting data", 
   await page.locator(".archived-items-settings-panel").getByRole("tab", { name: /AI Teammates/ }).click();
   await expect(archivedList).toContainText("Designer");
   await archivedList.getByRole("button", { name: "Restore" }).click();
-  await expect.poll(() => state.aiTeammates.find((teammate) => teammate.id === "teammate_sidebar_designer")?.hidden).toBe(false);
+  await expect.poll(() => state.aiTeammates.filter(isRecord).find((teammate) => teammate.id === "teammate_sidebar_designer")?.hidden).toBe(false);
   await page.getByRole("button", { name: "Back to app" }).click();
   await expect(navigation.locator(".sidebar-recent-row").filter({ hasText: "Archive me" })).toBeVisible();
   await expect(navigation.getByRole("button", { name: "Designer", exact: true })).toBeVisible();
@@ -354,11 +367,11 @@ test("recent conversations only show records created from the conversation home"
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await expect(navigation.getByRole("button", { name: "No recent conversations" })).toBeVisible();
   await expect(navigation.locator(".sidebar-recent-row")).toHaveCount(0);
 
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
   const home = page.getByLabel("Conversation home");
   const homeComposer = home.locator(".conversation-composer");
   await expect(homeComposer).toHaveClass(/conversation-composer-surface-normal_conversation/);
@@ -377,13 +390,14 @@ test("recent conversations only show records created from the conversation home"
   }).toBe("workspace_write");
   const conversationPage = page.getByLabel("Conversation page");
   await expect(conversationPage).toBeVisible();
-  const conversationToolbar = conversationPage.getByLabel("Conversation workspace toolbar");
+  const conversationToolbar = page.locator("[data-desktop-window-titlebar-surface='true']")
+    .getByLabel("Conversation workspace toolbar");
   await expect(conversationToolbar).toBeVisible();
   await expect(conversationToolbar).toHaveClass(/workspace-top-right-toolbar/);
   await expect(conversationToolbar.locator(".workspace-toolbar-action-label")).toHaveCount(0);
   await expect(conversationToolbar.getByRole("button", { name: "Search" })).toHaveClass(/workspace-toolbar-icon-button/);
   await expect(conversationToolbar.getByRole("button", { name: "Refresh" })).toHaveCount(0);
-  await expect(conversationToolbar.getByRole("button", { name: "Summary" })).toHaveClass(/workspace-toolbar-icon-button/);
+  await expect(conversationToolbar.getByRole("button", { name: "Summary", exact: true })).toHaveClass(/workspace-toolbar-icon-button/);
   await expect(conversationToolbar.getByRole("button", { name: "Terminal" })).toHaveClass(/workspace-toolbar-icon-button/);
   await expect(conversationToolbar.getByRole("button", { name: /^Review/ })).toHaveCount(0);
   await expect(conversationToolbar.getByRole("button", { name: /^Evidence/ })).toHaveCount(0);
@@ -391,9 +405,9 @@ test("recent conversations only show records created from the conversation home"
   const conversationDetailsButtonBox = await conversationToolbar.getByRole("button", { name: "Show details" }).boundingBox();
   expect(conversationDetailsButtonBox?.width ?? 0).toBeGreaterThanOrEqual(32);
   expect(conversationDetailsButtonBox?.height ?? 0).toBeGreaterThanOrEqual(32);
-  await conversationToolbar.getByRole("button", { name: "Summary" }).click();
+  await conversationToolbar.getByRole("button", { name: "Summary", exact: true }).click();
   await expect(page.locator(".normal-conversation-summary-popover")).toContainText("Workspace");
-  await conversationPage.getByRole("button", { name: "Show details" }).click();
+  await conversationToolbar.getByRole("button", { name: "Show details" }).click();
   const conversationDock = page.getByLabel("Conversation workspace dock");
   const conversationSummaryPanel = page.locator(".normal-conversation-summary-panel");
   await expect(conversationSummaryPanel).toBeVisible();
@@ -411,11 +425,11 @@ test("recent conversations only show records created from the conversation home"
     const dockFrameBox = await page.locator(".normal-conversation-right-dock-frame").boundingBox();
     return summaryBox && dockFrameBox ? summaryBox.x + summaryBox.width <= dockFrameBox.x + 1 : false;
   }).toBe(true);
-  await conversationToolbar.getByRole("button", { name: "Summary" }).click();
+  await conversationToolbar.getByRole("button", { name: "Summary", exact: true }).click();
   await expect(conversationPage).toHaveClass(/summary-panel-collapsed/);
   await expect(conversationSummaryPanel).toHaveClass(/is-popover-collapsed/);
   await expect(conversationSummaryPanel).toHaveCount(0);
-  await conversationToolbar.getByRole("button", { name: "Summary" }).click();
+  await conversationToolbar.getByRole("button", { name: "Summary", exact: true }).click();
   await expect(conversationSummaryPanel).toBeVisible();
   await conversationToolbar.getByRole("button", { name: "Hide details" }).click();
   const conversationTopSummary = page.locator(".normal-conversation-summary-popover");
@@ -423,7 +437,7 @@ test("recent conversations only show records created from the conversation home"
   await expect(conversationTopSummary).toHaveAttribute("data-summary-placement-motion", "main->header");
   await expect(conversationDock).toHaveCount(0);
   await expect(conversationTopSummary).toContainText("Workspace");
-  await conversationToolbar.getByRole("button", { name: "Summary" }).click();
+  await conversationToolbar.getByRole("button", { name: "Summary", exact: true }).click();
   await conversationToolbar.getByRole("button", { name: "Terminal" }).click();
   await expect(page.getByLabel("Terminal session")).toBeVisible();
   await page.getByRole("button", { name: "Close terminal panel" }).click();
@@ -435,7 +449,7 @@ test("recent conversations only show records created from the conversation home"
   await expect(conversationPage.locator(".normal-conversation-message-row.ai-teammate")).toHaveCount(1);
   const assistantRow = conversationPage.locator(".normal-conversation-message-row.ai-teammate").first();
   await expect(assistantRow.locator(".conversation-work-cell")).toHaveCount(0);
-  const assistantActions = assistantRow.locator(".normal-conversation-message-actions.message-action-bar");
+  const assistantActions = (await timelineResponseFooter(assistantRow)).locator(".normal-conversation-message-actions.message-action-bar");
   await expect(assistantActions).toHaveCount(1);
   await expect(assistantActions.getByRole("button", { name: "Copy message", exact: true })).toHaveCount(1);
   await expect(assistantActions.getByRole("button", { name: "Like response", exact: true })).toHaveCount(1);
@@ -455,17 +469,188 @@ test("recent conversations only show records created from the conversation home"
   await expect(recentRow).toBeVisible();
   await expect(recentRow).toContainText("Plan launch");
   await expect(navigation.locator(".sidebar-recent-row-shell").first()).toHaveClass(/selected/);
-  await expect(navigation.getByRole("button", { name: "Engineering" })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "Engineering", exact: true })).toBeVisible();
   await expect(navigation.locator('.sidebar-recent-row:has-text("Engineering")')).toHaveCount(0);
   await expect(navigation.locator('.sidebar-recent-row:has-text("Designer")')).toHaveCount(0);
 
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
   await expect(home).toBeVisible();
   await home.getByRole("textbox", { name: "Conversation message" }).fill("Second local conversation");
   await home.getByRole("button", { name: "Send" }).click();
   await expect(page.getByLabel("Conversation page").locator(".normal-conversation-message-row.ai-teammate")).toHaveCount(1);
   await expect(navigation.locator(".sidebar-recent-row").first()).toContainText("Second local conversation");
 });
+
+for (const earlyMeasurement of [false, true]) {
+test(`normal conversation virtualizes a long canonical timeline without adding a nested scroll owner${earlyMeasurement ? " (scroll before measurement commit)" : ""}`, async ({ page }, testInfo) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  const threadId = "thread_normal_virtualized_history";
+  const turnCount = 60;
+  const startedAtMs = Date.parse("2026-09-05T02:00:00.000Z");
+  const isoAt = (index: number): string => new Date(startedAtMs + index * 60_000).toISOString();
+  const turns = Array.from({ length: turnCount }, (_, index) => {
+    const number = index + 1;
+    const timestamp = isoAt(index);
+    return {
+      id: `turn_normal_virtual_${number}`,
+      workspaceId: "workspace_default",
+      threadId,
+      kind: index === 0 ? "initial_request" : "follow_up",
+      status: "succeeded",
+      title: `Normal history user ${number}`,
+      userInstruction: `Normal history user ${number}`,
+      activeRunId: `run_normal_virtual_${number}`,
+      lastRunId: `run_normal_virtual_${number}`,
+      createdByActor: "local-user",
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      completedAt: timestamp,
+    };
+  });
+  const runs = turns.map((turn, index) => ({
+    id: `run_normal_virtual_${index + 1}`,
+    status: "succeeded",
+    cwd,
+    taskId: `task_normal_virtual_${index + 1}`,
+    providerPresetId: "provider_local",
+    providerName: "local-relay",
+    providerModel: "gpt-5.5",
+    taskSnapshot: { id: `task_normal_virtual_${index + 1}`, title: turn.title },
+    providerSnapshot: {},
+    requestSnapshot: {},
+    eventLogPath: `.ling-stack/sessions/run_normal_virtual_${index + 1}.jsonl`,
+    threadId,
+    turnId: turn.id,
+    createdAt: turn.createdAt,
+    startedAt: turn.createdAt,
+    updatedAt: turn.updatedAt,
+    endedAt: turn.updatedAt,
+  }));
+  state.threads = [{
+    id: threadId,
+    workspaceId: "workspace_default",
+    kind: "conversation",
+    title: "Virtualized normal history",
+    objective: "Verify the shared Timeline windows long normal conversations.",
+    status: "succeeded",
+    lastRunId: runs.at(-1)?.id,
+    createdAt: isoAt(0),
+    updatedAt: isoAt(turnCount - 1),
+  }];
+  state.turns = turns;
+  state.turnRunLinks = turns.map((turn, index) => ({
+    turnId: turn.id,
+    runId: runs[index]!.id,
+    attemptNumber: 1,
+    role: "primary",
+    createdAt: turn.createdAt,
+  }));
+  state.runs = [...runs, ...state.runs];
+  for (const [index, run] of runs.entries()) {
+    state.eventsByRun[run.id] = [{
+      id: `event_normal_virtual_${index + 1}`,
+      runId: run.id,
+      seq: 1,
+      ts: run.updatedAt,
+      type: "assistant_text_delta",
+      data: { text: `Normal history assistant ${index + 1}` },
+    }];
+  }
+
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })
+    .locator(".sidebar-recent-row")
+    .filter({ hasText: "Virtualized normal history" })
+    .click();
+
+  const conversationPage = page.getByLabel("Conversation page");
+  const feed = conversationPage.getByLabel("Conversation messages", { exact: true });
+  const timeline = feed.locator('[data-conversation-timeline="true"][data-conversation-timeline-depth="0"]');
+  await expect(timeline).toHaveClass(/virtualized/);
+  await expect(conversationPage.getByText("Normal history assistant 60", { exact: true })).toBeVisible();
+  await expect(conversationPage.getByText("Normal history user 1", { exact: true })).toHaveCount(0);
+
+  const mountedAtBottom = await timeline.locator(".conversation-timeline-virtual-row").count();
+  expect(mountedAtBottom).toBeGreaterThan(0);
+  expect(mountedAtBottom).toBeLessThan(60);
+  const scrollOwners = await conversationPage.evaluate((root) => Array.from(root.querySelectorAll<HTMLElement>("*"))
+    .filter((element) => {
+      const style = getComputedStyle(element);
+      return (style.overflowY === "auto" || style.overflowY === "scroll")
+        && element.scrollHeight > element.clientHeight + 1;
+    })
+    .map((element) => element.className));
+  expect(scrollOwners).toEqual([expect.stringContaining("normal-conversation-feed"), "conversation-position-rail__marks"]);
+  const rail = conversationPage.getByRole("complementary", { name: "Conversation navigation", exact: true });
+  await expect(rail).toBeVisible();
+  expect(await feed.evaluate(element => element.querySelector(".conversation-position-rail"))).toBeNull();
+  await expect(rail.locator(".conversation-position-rail__marks")).toHaveCSS("overflow-y", "auto");
+
+  await feed.evaluate((element) => {
+    element.scrollTop = 0;
+    element.dispatchEvent(new Event("scroll", { bubbles: true }));
+  });
+  await expect(conversationPage.getByText("Normal history user 1", { exact: true })).toBeVisible();
+  await expect(conversationPage.getByText("Normal history assistant 60", { exact: true })).toHaveCount(0);
+  const mountedAtTop = await timeline.locator(".conversation-timeline-virtual-row").count();
+  expect(mountedAtTop).toBeGreaterThan(0);
+  expect(mountedAtTop).toBeLessThan(60);
+
+  await feed.evaluate((element) => {
+    element.scrollTop = Math.round(element.scrollHeight * 0.45);
+    element.dispatchEvent(new Event("scroll", { bubbles: true }));
+  });
+  await expect(page.getByRole("button", { name: "Jump to latest message" })).toBeVisible();
+  const readFirstVisibleAnchor = async (): Promise<{ id: string; offsetTop: number } | undefined> => feed.evaluate((element) => {
+    const feedRect = element.getBoundingClientRect();
+    const row = Array.from(element.querySelectorAll<HTMLElement>(
+      '.conversation-timeline-virtual-row[data-feed-item-id]',
+    )).find((candidate) => {
+      const rect = candidate.getBoundingClientRect();
+      return rect.bottom > feedRect.top + 12 && rect.top < feedRect.bottom - 12;
+    });
+    return row?.dataset.feedItemId
+      ? { id: row.dataset.feedItemId, offsetTop: Math.round(row.getBoundingClientRect().top - feedRect.top) }
+      : undefined;
+  });
+  let anchorBefore = await readFirstVisibleAnchor();
+  await expect.poll(async () => {
+    const next = await readFirstVisibleAnchor();
+    const stable = Boolean(next && anchorBefore && next.id === anchorBefore.id && Math.abs(next.offsetTop - anchorBefore.offsetTop) <= 1);
+    anchorBefore = next;
+    return stable;
+  }).toBe(true);
+  if (!anchorBefore) throw new Error("Normal conversation anchor did not stabilize");
+  if (earlyMeasurement) {
+    await installEarlyMeasurementScroll(feed);
+    await page.screenshot({ path: testInfo.outputPath("reading-before-remeasurement.png") });
+  }
+  const expandedAboveAnchor = await feed.evaluate((element) => {
+    const feedRect = element.getBoundingClientRect();
+    const row = Array.from(element.querySelectorAll<HTMLElement>(".conversation-timeline-virtual-row"))
+      .filter((candidate) => candidate.getBoundingClientRect().bottom <= feedRect.top + 8)
+      .at(-1);
+    if (!row) return false;
+    row.style.paddingBottom = "120px";
+    return true;
+  });
+  expect(expandedAboveAnchor).toBe(true);
+  if (earlyMeasurement) await expect.poll(() => feed.getAttribute("data-test-early-measurement-scrolls")).not.toBe("0");
+  await expect.poll(async () => {
+    const anchorAfter = await readFirstVisibleAnchor();
+    return Boolean(
+      anchorAfter
+      && anchorAfter.id === anchorBefore?.id
+      && Math.abs(anchorAfter.offsetTop - (anchorBefore?.offsetTop ?? 0)) <= 4
+    );
+  }).toBe(true);
+  if (earlyMeasurement) await page.screenshot({ path: testInfo.outputPath("reading-after-remeasurement.png") });
+  await page.getByRole("button", { name: "Jump to latest message" }).click();
+  await expect(conversationPage.getByText("Normal history assistant 60", { exact: true })).toBeVisible();
+});
+}
 
 test("normal conversation queues approvals in its composer gate", async ({ page }) => {
   await useEnglishLocale(page);
@@ -491,7 +676,7 @@ test("normal conversation queues approvals in its composer gate", async ({ page 
     workspaceId: "workspace_default",
     threadId,
     kind: "initial_request",
-    status: "running",
+    status: "waiting_for_approval",
     title: "Normal inline approvals",
     userInstruction: "Run the gated command.",
     activeRunId: runId,
@@ -550,7 +735,7 @@ test("normal conversation queues approvals in its composer gate", async ({ page 
     seq: 1,
     ts: timestamp,
     type: "assistant_text_delta",
-    data: { text: "Waiting for approval." },
+    data: { text: "Waiting for approval.\n\nThen I will run `node --test`." },
   }];
   state.approvals = [
     {
@@ -563,6 +748,31 @@ test("normal conversation queues approvals in its composer gate", async ({ page 
       payload: { type: "bash", command: "echo normal" },
       status: "pending",
       createdAt: timestamp,
+      availableDecisions: ["approve_once", "approve_command_rule", "deny"],
+      proposedCommandRule: {
+        prefix: ["echo"],
+        display: "echo",
+        fingerprint: "fingerprint_echo",
+        version: 1,
+      },
+    },
+    {
+      id: "approval_normal_whois",
+      runId,
+      actionType: "bash",
+      risk: "medium",
+      title: "Approve normal whois command",
+      description: "whois example.com",
+      payload: { type: "bash", command: "whois example.com" },
+      status: "pending",
+      createdAt: "2026-07-20T02:00:00.500Z",
+      availableDecisions: ["approve_once", "approve_command_rule", "deny"],
+      proposedCommandRule: {
+        prefix: ["whois"],
+        display: "whois",
+        fingerprint: "fingerprint_whois",
+        version: 1,
+      },
     },
     {
       id: "approval_normal_edit",
@@ -585,18 +795,19 @@ test("normal conversation queues approvals in its composer gate", async ({ page 
       return;
     }
     approval.status = "denied";
-    approval.resolvedAt = "2026-07-20T02:00:02.000Z";
+    const resolvedAt = "2026-07-20T02:00:02.000Z";
+    approval.resolvedAt = resolvedAt;
     approval.resolvedBy = "local-user";
     setTimeout(() => {
       thread.status = "failed";
       thread.activeRunId = undefined;
-      thread.updatedAt = approval.resolvedAt;
+      thread.updatedAt = resolvedAt;
     }, 150);
     await route.fulfill({ json: { approval } });
   });
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   const recentShell = navigation.locator(".sidebar-recent-row-shell").filter({ hasText: "Normal inline approvals" });
   const recentRow = recentShell.locator(".sidebar-recent-row");
   await expect(recentShell).toContainText("Waiting for approval");
@@ -610,30 +821,95 @@ test("normal conversation queues approvals in its composer gate", async ({ page 
   await expect(gate).not.toContainText("Approve normal shell command");
   await expect(gate).not.toContainText("pending approvals");
   await expect(gate).not.toContainText("Approve normal file edit");
-  const pendingWorkCell = conversation.locator('[data-approval-presentation-owner="composer_gate"]');
-  await expect(pendingWorkCell).toBeVisible();
-  await expect(pendingWorkCell).toContainText("Waiting for approval");
-  await expect(pendingWorkCell).toContainText("Run command: echo normal");
-  await expect(pendingWorkCell).not.toContainText("Approve normal shell command");
-  await expect(pendingWorkCell).not.toContainText("Approve normal file edit");
-  await expect(pendingWorkCell.locator(".conversation-work-cell-evidence-summary")).toHaveCount(0);
-  await expect(pendingWorkCell.locator(".conversation-operation-shell-body")).toHaveCount(0);
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await expect(gate.getByRole("button", { name: "Allow options" })).toBeVisible();
+  const splitButton = gate.locator('[data-ling-split-button="true"]');
+  const splitPrimary = splitButton.getByRole("button", { name: "Allow once" });
+  const splitTrigger = splitButton.getByRole("button", { name: "Allow options" });
+  const splitGeometry = await Promise.all([
+    splitButton.boundingBox(),
+    splitPrimary.boundingBox(),
+    splitTrigger.boundingBox(),
+  ]);
+  expect(splitGeometry.every(Boolean)).toBe(true);
+  expect(splitGeometry[1]!.y).toBe(splitGeometry[2]!.y);
+  expect(splitGeometry[1]!.height).toBe(splitGeometry[2]!.height);
+  expect(splitGeometry[1]!.x + splitGeometry[1]!.width).toBe(splitGeometry[2]!.x);
+  expect(splitGeometry[0]!.height).toBe(splitGeometry[1]!.height + 2);
+  await expect(splitButton).toHaveCSS("overflow", "hidden");
+  await expect(splitPrimary).toHaveCSS("border-radius", "0px");
+  await expect(splitTrigger).toHaveCSS("border-radius", "0px");
+  const pendingMessage = conversation.locator(".normal-conversation-message-row.ai-teammate")
+    .filter({ hasText: "Waiting for approval." });
+  await expect(pendingMessage).toBeVisible();
+  await expect(pendingMessage).not.toHaveClass(/message-bubble-chat-blocked/u);
+  await expect(conversation.locator(".message-bubble-chat-blocked")).toHaveCount(0);
+  await expect(conversation.locator(".normal-conversation-message-row.local-user")).not.toHaveClass(/message-bubble-chat-blocked/u);
+  await expect(conversation.getByText("Run the gated command.", { exact: true })).toHaveCount(1);
+  await expect(conversation.locator(".normal-conversation-message-error")).toHaveCount(0);
+  await expect(pendingMessage.locator(".message-body-paragraph")).toHaveCount(2);
+  await expect(pendingMessage.locator(".message-body-paragraph code")).toHaveText("node --test");
+  await expect(pendingMessage.locator(".normal-conversation-message-actions")).toHaveCount(0);
+  const pendingMessageContent = pendingMessage.locator(":scope > .message-content");
+  await expect(pendingMessageContent).toHaveCSS("padding-top", "0px");
+  await expect(pendingMessageContent).toHaveCSS("padding-left", "0px");
+  const pendingMessageTrailingSpace = await pendingMessageContent.evaluate((content) => {
+    const contentStyle = getComputedStyle(content);
+    const visibleFlowChildren = Array.from(content.children).filter((child) => {
+      const style = getComputedStyle(child);
+      return style.display !== "none"
+        && style.visibility !== "hidden"
+        && Number.parseFloat(style.opacity) > 0
+        && style.position !== "absolute";
+    });
+    const contentRect = content.getBoundingClientRect();
+    const lastVisibleChildRect = visibleFlowChildren.at(-1)?.getBoundingClientRect();
+    return {
+      actual: contentRect.bottom - (lastVisibleChildRect?.bottom ?? contentRect.top),
+      expected: Number.parseFloat(contentStyle.paddingBottom) + Number.parseFloat(contentStyle.borderBottomWidth),
+    };
+  });
+  expect(Math.abs(pendingMessageTrailingSpace.actual - pendingMessageTrailingSpace.expected)).toBeLessThanOrEqual(1);
+  await expect(pendingMessage).toContainText("Waiting for approval.");
+  await expect(conversation.locator('[data-approval-presentation-owner="composer_gate"]')).toHaveCount(0);
+  await expect(conversation.locator(".conversation-work-cell")).toHaveCount(0);
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
   await expect(page.getByLabel("Conversation home")).toBeVisible();
   await recentRow.click();
   await expect(gate).toBeVisible();
 
   await gate.getByRole("button", { name: "Allow once" }).click();
   await expect.poll(() => state.approvals.find((approval) => approval.id === "approval_normal_shell")?.status).toBe("approved");
+  await expect.poll(() => state.approvals.find((approval) => approval.id === "approval_normal_shell")?.decisionKind).toBe("approve_once");
+  expect(state.approvalCommandRules).toHaveLength(0);
+  await expect(gate).toContainText("Run command: whois example.com");
+  await gate.getByRole("button", { name: "Allow options" }).click();
+  const allowSimilarCommand = page.getByRole("menuitem", { name: /Allow similar commands/ });
+  await expect(allowSimilarCommand).toContainText("this workspace");
+  await allowSimilarCommand.click();
+  await expect.poll(() => state.approvals.find((approval) => approval.id === "approval_normal_whois")?.decisionKind).toBe("approve_command_rule");
+  await expect.poll(() => state.approvalCommandRules.find((rule) => !rule.revokedAt)?.display).toBe("whois");
+  expect(state.approvalDecisionRequests.find((request) => request.approvalId === "approval_normal_whois")?.body).toEqual({
+    decisionKind: "approve_command_rule",
+    proposedRuleFingerprint: "fingerprint_whois",
+  });
   await expect(gate).toContainText("Modify file: README.md");
   await expect(gate).not.toContainText("Approve normal file edit");
   await expect(gate).not.toContainText("pending approvals");
+  await expect(gate.getByRole("button", { name: "Allow options" })).toHaveCount(0);
 
   await gate.getByRole("button", { name: "Deny" }).click();
   await expect.poll(() => state.approvals.find((approval) => approval.id === "approval_normal_edit")?.status).toBe("denied");
   await expect(gate).toHaveCount(0);
   await expect(conversation.getByLabel("New conversation composer")).toBeVisible();
   await expect(recentShell).not.toContainText("Waiting for approval");
+
+  await navigation.getByRole("button", { name: "Settings" }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: "Default authorization" }).click();
+  const commandRules = page.getByRole("region", { name: "Terminal command rules" });
+  await expect(commandRules).toContainText("whois");
+  await commandRules.getByRole("button", { name: "Revoke" }).click();
+  await expect(commandRules).toContainText("No saved command rules");
+  await expect.poll(() => state.approvalCommandRules.find((rule) => rule.display === "whois")?.revokedAt).toBeTruthy();
 });
 
 test("teammate private chat resolves its runtime approval through its composer gate", async ({ page }) => {
@@ -651,7 +927,7 @@ test("teammate private chat resolves its runtime approval through its composer g
     ...state.runs[0],
     id: runId,
     channelId: undefined,
-    taskId: undefined,
+    taskId: "task_private_approval",
     teammateId,
     threadId: executionThreadId,
     workUnitId,
@@ -717,32 +993,50 @@ test("teammate private chat resolves its runtime approval through its composer g
     },
   ];
   state.approvals = [{
-    id: "approval_private_edit",
+    id: "approval_private_bash",
     runId,
-    actionType: "edit",
-    risk: "low",
-    title: "Approve private file edit",
-    description: "private-notes.md",
-    payload: { type: "file_edit", path: "private-notes.md" },
+    actionType: "bash",
+    risk: "medium",
+    title: "Approve private command",
+    description: "whois private.example",
+    payload: { type: "bash", command: "whois private.example" },
     status: "pending",
     createdAt: "2026-07-20T03:00:00.000Z",
+    availableDecisions: ["approve_once", "approve_command_rule", "deny"],
+    proposedCommandRule: {
+      prefix: ["whois"],
+      display: "whois",
+      fingerprint: "fingerprint_private_whois",
+      version: 1,
+    },
   }];
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Private Approver" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Private Approver" }).click();
   const gate = page.getByRole("region", { name: "Allow this action?" });
+  const composerOwner = page.locator(".teammate-private-chat > .teammate-private-composer-owner");
+  await expect(composerOwner).toContainText("Allow this action?");
+  const gateBounds = await gate.boundingBox();
+  const feedBounds = await page.locator(".teammate-private-feed-owner").boundingBox();
+  expect(gateBounds).not.toBeNull();
+  expect(feedBounds).not.toBeNull();
+  expect(gateBounds!.x).toBeGreaterThanOrEqual(feedBounds!.x);
+  expect(gateBounds!.x + gateBounds!.width).toBeLessThanOrEqual(feedBounds!.x + feedBounds!.width + 1);
   await expect(page.locator(".teammate-direct-composer")).toHaveCount(0);
-  await expect(gate).toContainText("Modify file: private-notes.md");
-  await expect(gate).not.toContainText("Approve private file edit");
-  const pendingWorkCell = page.locator('.teammate-private-feed-owner [data-approval-presentation-owner="composer_gate"]');
-  await expect(pendingWorkCell).toBeVisible();
-  await expect(pendingWorkCell).toContainText("Waiting for approval");
-  await expect(pendingWorkCell).toContainText("Modify file: private-notes.md");
-  await expect(pendingWorkCell).not.toContainText("Approve private file edit");
-  await expect(pendingWorkCell.locator(".conversation-operation-shell-body")).toHaveCount(0);
-  await gate.getByRole("button", { name: "Deny" }).click();
-  await expect.poll(() => state.approvals[0]?.status).toBe("denied");
+  await expect(gate).toContainText("Run command: whois private.example");
+  await expect(gate).not.toContainText("Approve private command");
+  const pendingMessage = page.locator(".teammate-private-feed-owner .teammate-message-row.ai-teammate")
+    .filter({ hasText: "Waiting for the private approval." });
+  await expect(pendingMessage).toBeVisible();
+  await expect(pendingMessage.locator(".teammate-message-actions")).toHaveCount(0);
+  await expect(pendingMessage).toContainText("Waiting for the private approval.");
+  await expect(page.locator('.teammate-private-feed-owner [data-approval-presentation-owner="composer_gate"]')).toHaveCount(0);
+  await expect(page.locator(".teammate-private-feed-owner .conversation-work-cell")).toHaveCount(0);
+  await gate.getByRole("button", { name: "Allow options" }).click();
+  await page.getByRole("menuitem", { name: /Allow similar commands/ }).click();
+  await expect.poll(() => state.approvals[0]?.decisionKind).toBe("approve_command_rule");
+  await expect.poll(() => state.approvalCommandRules[0]?.display).toBe("whois");
   await expect(gate).toHaveCount(0);
   await expect(page.locator(".teammate-direct-composer")).toBeVisible();
 });
@@ -762,8 +1056,8 @@ test("normal conversation full access confirms before creating the run", async (
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
   const home = page.getByLabel("Conversation home");
   await expect(home.getByRole("button", { name: /Selected permission preset Full access/ })).toBeVisible();
   await home.getByRole("textbox", { name: "Conversation message" }).fill("Inspect trusted files");
@@ -778,7 +1072,7 @@ test("normal conversation full access confirms before creating the run", async (
   await expect(home.getByRole("textbox", { name: "Conversation message" })).toHaveAttribute("data-value", "Inspect trusted files");
 
   await home.getByRole("button", { name: "Send" }).click();
-  await page.getByRole("dialog", { name: "Confirm full access" }).getByRole("button", { name: "Enable full access" }).click();
+  await page.getByRole("dialog", { name: "Confirm full access" }).getByRole("button", { name: "Start with full access" }).click();
   await expect.poll(() => state.runs.length).toBe(1);
   await expect.poll(() => {
     const snapshot = state.runs[0]?.requestSnapshot;
@@ -802,8 +1096,8 @@ test("normal conversation composer sends and replays uploaded attachments", asyn
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
   const home = page.getByLabel("Conversation home");
   const homeComposer = home.locator(".conversation-composer");
   await expect(homeComposer).toHaveClass(/conversation-composer-surface-normal_conversation/);
@@ -824,8 +1118,9 @@ test("normal conversation composer sends and replays uploaded attachments", asyn
   const conversationPage = page.getByLabel("Conversation page");
   await expect(conversationPage).toBeVisible();
   await expect(conversationPage.locator(".conversation-composer")).toHaveClass(/conversation-composer-surface-normal_conversation/);
+  const composerRadius = await conversationPage.evaluate(element => getComputedStyle(element).getPropertyValue("--ling-composer-radius").trim());
   await expect.poll(async () => readComposerGeometry(page, ".normal-conversation-page .conversation-composer")).toEqual(expect.objectContaining({
-    borderRadius: "12px",
+    borderRadius: composerRadius,
     inputHeight: 76,
     padding: "8px",
   }));
@@ -835,8 +1130,10 @@ test("normal conversation composer sends and replays uploaded attachments", asyn
   await expect(messages).toContainText("Review this brief");
   await expect(messages.locator(".conversation-attachment-chip")).toContainText("brief.txt");
   await expect(conversationPage.locator(".composer-preview-strip")).toHaveCount(0);
-  await expect(conversationPage.getByLabel("Conversation workspace toolbar").getByRole("button", { name: /^Files/ })).toHaveCount(0);
-  await conversationPage.getByRole("button", { name: "Show details" }).click();
+  const conversationToolbar = page.locator("[data-desktop-window-titlebar-surface='true']")
+    .getByLabel("Conversation workspace toolbar");
+  await expect(conversationToolbar.getByRole("button", { name: /^Files/ })).toHaveCount(0);
+  await conversationToolbar.getByRole("button", { name: "Show details" }).click();
   const conversationDock = page.getByLabel("Conversation workspace dock");
   await expect(conversationDock).toBeVisible();
   await conversationDock.getByRole("button", { name: "Files" }).click();
@@ -909,17 +1206,19 @@ test("normal conversation renders the shared GFM, Mermaid, and math pipeline", a
 
   await mockDaemon(page, state);
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").locator(".sidebar-recent-row").filter({ hasText: "Shared rich content" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).locator(".sidebar-recent-row").filter({ hasText: "Shared rich content" }).click();
 
   const pageSurface = page.getByLabel("Conversation page");
   const assistantRow = pageSurface.locator(".normal-conversation-message-row.ai-teammate");
   await expect(assistantRow).toHaveCount(1);
   await expect(assistantRow.locator(".teammate-avatar-image, .teammate-avatar-stack")).toHaveCount(0);
   await expectSharedConversationRichBody(assistantRow);
-  await assistantRow.getByRole("button", { name: /ConversationHome\.tsx/ }).click();
-  const filesDock = page.getByLabel("Conversation workspace dock");
-  await expect(filesDock).toBeVisible();
-  await expect(filesDock).toContainText("ConversationHome.tsx");
+  const displayOnlyFileRef = assistantRow.locator("span.message-local-file-link")
+    .filter({ hasText: "ConversationHome.tsx" });
+  await expect(displayOnlyFileRef).toBeVisible();
+  await expect(displayOnlyFileRef).toHaveAttribute("title", "apps/web/src/features/workspace/ConversationHome.tsx#L260");
+  await expect(assistantRow.getByRole("button", { name: /ConversationHome\.tsx/ })).toHaveCount(0);
+  await expect(page.getByLabel("Conversation workspace dock")).toHaveCount(0);
 });
 
 test("latest normal conversation prompt edits in place and hides the superseded response", async ({ page }) => {
@@ -986,7 +1285,7 @@ test("latest normal conversation prompt edits in place and hides the superseded 
 
   await mockDaemon(page, state);
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").locator(".sidebar-recent-row").filter({ hasText: "Editable normal prompt" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).locator(".sidebar-recent-row").filter({ hasText: "Editable normal prompt" }).click();
 
   const conversationPage = page.getByLabel("Conversation page");
   const userRow = conversationPage.locator(".normal-conversation-message-row.local-user");
@@ -1014,7 +1313,7 @@ test("latest normal conversation prompt edits in place and hides the superseded 
   await expect.poll(() => state.lastConversationMessageEditRequest?.expectedRevision).toBe(2);
 });
 
-test("executed normal conversation renders one structured terminal report", async ({ page }) => {
+test("executed normal conversation retains one useful supplemental terminal report", async ({ page }) => {
   const runtimeErrors: string[] = [];
   page.on("console", (message) => {
     if (message.type() === "error") runtimeErrors.push(`${message.text()} @ ${message.location().url || "unknown"}`);
@@ -1075,8 +1374,8 @@ test("executed normal conversation renders one structured terminal report", asyn
     eventLogPath: `.ling-stack/sessions/${runId}.jsonl`,
     threadId,
     turnId,
-    createdAt,
-    startedAt: createdAt,
+    createdAt: "2026-07-11T03:00:30.000Z",
+    startedAt: "2026-07-11T03:00:30.000Z",
     updatedAt: completedAt,
     endedAt: completedAt,
   }, {
@@ -1117,15 +1416,17 @@ test("executed normal conversation renders one structured terminal report", asyn
     createdAt: completedAt,
   }];
   state.executionActions = [
-    mockCommandExecutionAction("normal_typecheck", threadId, runId, "corepack pnpm --filter @ling-stack/web typecheck", "2026-07-13T04:00:10.000Z", 1200),
-    mockCommandExecutionAction("normal_i18n", threadId, runId, "corepack pnpm --filter @ling-stack/web check:i18n", "2026-07-13T04:00:12.000Z", 700),
-    mockCommandExecutionAction("normal_diff", threadId, runId, "git diff --check", "2026-07-13T04:00:14.000Z", 300),
+    mockCommandExecutionAction("normal_typecheck", threadId, runId, "corepack pnpm --filter @ling-stack/web typecheck", "2026-07-11T03:00:40.000Z", 1200),
+    mockCommandExecutionAction("normal_i18n", threadId, runId, "corepack pnpm --filter @ling-stack/web check:i18n", "2026-07-11T03:00:42.000Z", 700),
+    mockCommandExecutionAction("normal_diff", threadId, runId, "git diff --check", "2026-07-11T03:00:44.000Z", 300),
     mockCommandExecutionAction("normal_prior", threadId, priorRunId, "echo prior attempt", "2026-07-11T03:00:10.000Z", 200),
     ...state.executionActions,
   ];
   state.terminalReports = [{
     schemaVersion: 1,
     id: "terminal_report_conversation",
+    generation: 1,
+    resultItemId: "result_terminal_report_conversation",
     workspaceId: "workspace_default",
     threadId,
     turnId,
@@ -1136,7 +1437,13 @@ test("executed normal conversation renders one structured terminal report", asyn
       status: "succeeded",
       title: "结构化终局报告已接入普通会话",
       summary: "执行过程保留在工作记录中，最终结果由 TerminalReport 独立展示。",
-      corrections: [],
+      corrections: [{
+        id: "correction_terminal_report_conversation",
+        originalAssumption: "Only provider narration contains the final file evidence.",
+        correctedFact: "Committed report evidence owns the final file summary.",
+        confidence: "high",
+        sourceRefs: [],
+      }],
       sourceRefs: [{ kind: "turn", id: turnId, visibility: "conversation" }],
     },
     changes: Array.from({ length: 12 }, (_, index) => ({
@@ -1207,6 +1514,24 @@ test("executed normal conversation renders one structured terminal report", asyn
     createdAt: completedAt,
     committedAt: completedAt,
   }];
+  state.conversationContextSnapshotsByThreadId = {
+    ...(state.conversationContextSnapshotsByThreadId ?? {}),
+    [threadId]: [{
+      id: "snapshot_terminal_report_conversation_context",
+      threadId,
+      segmentId: "segment_terminal_report_conversation",
+      projectionVersion: "terminal-report-conversation-v1",
+      throughItemSequence: 3,
+      summaryIds: [],
+      sourceRefs: [
+        { type: "conversation_item", id: `conversation-user:${turnId}` },
+        { type: "conversation_item", id: `conversation-assistant:${turnId}` },
+        { type: "conversation_item", id: "result_terminal_report_conversation" },
+      ],
+      policyVersion: "terminal-report-conversation-v1",
+      createdAt: completedAt,
+    }],
+  };
 
   await mockDaemon(page, state);
   await page.route(/\/workspace-files\/preview(?:\?.*)?$/, async (route) => {
@@ -1231,75 +1556,93 @@ test("executed normal conversation renders one structured terminal report", asyn
       }),
     });
   });
+  await page.route(new RegExp(`/turns/${turnId}/workspace-changes(?:\\?.*)?$`, "u"), async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        cwd,
+        threadId,
+        turnId,
+        runIds: [runId],
+        state: "unavailable",
+        canUndo: false,
+        canReapply: false,
+        files: [],
+        summary: {
+          fileCount: 0,
+          addCount: 0,
+          updateCount: 0,
+          deleteCount: 0,
+          moveCount: 0,
+          addedLines: 0,
+          removedLines: 0,
+        },
+        provenanceComplete: false,
+        unavailableReason: "Recovery evidence is outside this rendering fixture.",
+        updatedAt: completedAt,
+      }),
+    });
+  });
   await page.goto("/");
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await navigation.locator(".sidebar-recent-row").filter({ hasText: "实现结构化终局报告" }).click();
 
-  const assistantRow = page.getByLabel("对话页面").locator(".normal-conversation-message-row.ai-teammate");
+  const conversationPage = page.getByLabel("对话页面");
+  const timeline = conversationPage.locator('[data-conversation-timeline-depth="0"]').first();
+  const assistantRow = conversationPage.locator(".normal-conversation-message-row.ai-teammate");
   await expect(assistantRow).toHaveCount(1);
-  await expect(assistantRow.getByText("旧的执行总结不应和结构化报告重复展示。")).toHaveCount(0);
-  const report = assistantRow.locator(".terminal-report-block");
-  await expect(report).toContainText("结构化终局报告已接入普通会话");
-  await expect.poll(() => report.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
+  // The provider text is narration only. Commands and the committed result
+  // remain sibling typed items in the single canonical Timeline.
+  await expect(assistantRow).toContainText("旧的执行总结不应和结构化报告重复展示。");
+  await expect(assistantRow).not.toContainText("ConversationHome.tsx");
+  await expect(assistantRow.locator(".terminal-report-block")).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
-  await expect(report.locator(".terminal-report-participants")).toHaveCount(0);
-  await expect(report.locator(".terminal-report-summary")).not.toHaveAttribute("aria-expanded");
-  await expect(report.locator(".terminal-report-toggle")).toHaveCount(0);
-  const redundantChangeRow = report.locator(".terminal-report-section.kind-change .terminal-report-row").filter({ has: page.getByRole("button", { name: "ConversationHome-1.tsx" }) });
-  await expect(redundantChangeRow.locator(".terminal-report-row-icon")).toHaveCount(0);
-  await expect(redundantChangeRow.locator(".terminal-report-row-title")).toHaveCount(0);
-  await expect(redundantChangeRow.locator(".terminal-report-row-description")).toHaveCount(0);
-  await expect(report).toContainText("保留有意义的变更说明");
-  await expect(report.locator(".terminal-report-section.kind-change .terminal-report-row-title small")).toHaveCount(0);
-  await expect(report.locator(".terminal-report-section.kind-verification .terminal-report-row-title small")).toHaveCount(0);
-  const reportFileLink = report.locator(".terminal-report-file-reference").first();
-  await expect(reportFileLink).toBeVisible();
-  await expect(reportFileLink).toHaveText("ConversationHome-1.tsx");
-  await expect(reportFileLink.locator('.terminal-report-file-type-icon[data-file-kind="react"]')).toBeVisible();
-  const reportFileColor = await reportFileLink.evaluate((element) => getComputedStyle(element).color);
-  await reportFileLink.hover();
-  await page.waitForTimeout(700);
-  await expect(reportFileLink.getByRole("tooltip")).toHaveCount(0);
-  await page.waitForTimeout(400);
-  await expect(reportFileLink.getByRole("tooltip")).toContainText("apps/web/src/features/workspace/ConversationHome-1.tsx");
-  const reportFileHoverColor = await reportFileLink.evaluate((element) => getComputedStyle(element).color);
-  expect(reportFileHoverColor).not.toBe(reportFileColor);
-  await expect(reportFileLink).toHaveCSS("text-decoration-line", "underline");
-  const reportFileIconColor = await reportFileLink.locator("svg").evaluate((element) => getComputedStyle(element).color);
-  expect(reportFileIconColor).toBe(reportFileHoverColor);
-  const workCell = assistantRow.locator(".conversation-work-cell");
-  await workCell.locator(".conversation-operation-shell-head").click();
-  const commandBatch = workCell.locator(".conversation-command-batch");
+  await timeline.locator('[data-conversation-process-header][aria-expanded="false"]').click();
+  const commandBatch = timeline.locator('[data-conversation-timeline-kind="commandBatch"]');
+  await expect(commandBatch).toHaveCount(1);
   await expect(commandBatch.locator(".conversation-command-batch-header")).toContainText("已运行 3 个命令");
   await commandBatch.locator(".conversation-command-batch-header").click();
-  await expect(commandBatch.locator(".conversation-command-batch-list .conversation-work-cell-row")).toHaveCount(3);
-  await expect(commandBatch).toContainText("git diff --check");
-  await expect(workCell).not.toContainText("echo prior attempt");
-  await expect(workCell.locator(".conversation-work-cell-artifact-row")).toHaveCount(1);
-  await expect(workCell).toContainText("ConversationHome.tsx");
-  await expect(workCell).toContainText("已编辑 2 个文件");
-  await expect.poll(() => workCell.evaluate((element) => ({
-    artifactPaddingLeft: getComputedStyle(element.querySelector(".conversation-work-cell-artifacts") as Element).paddingLeft,
-    artifactThumbWidth: getComputedStyle(element.querySelector(".conversation-work-cell-artifact-row .conversation-work-cell-artifact-thumb") as Element).width,
-    changeFilePaddingLeft: getComputedStyle(element.querySelector(".conversation-work-cell-change-file") as Element).paddingLeft,
-  }))).toEqual({
-    artifactPaddingLeft: "0px",
-    artifactThumbWidth: "30px",
-    changeFilePaddingLeft: "0px",
-  });
-  await expect(workCell.locator(".conversation-work-cell-artifact-row").getByRole("button", { name: "打开方式" })).toBeVisible();
-  await expect(workCell).not.toContainText("Generated file metadata");
-  await expect(workCell).not.toContainText("Action preview");
-  const references = workCell.locator(".conversation-work-cell-evidence-summary");
-  await expect(references).toHaveCount(0);
-  await expect(workCell.locator(".conversation-work-cell-post-report-evidence")).toHaveCount(0);
-  await expect.poll(() => workCell.evaluate((element) => {
-    const childClasses = Array.from(element.children).map((child) => child.className.toString());
-    const operationIndex = childClasses.findIndex((className) => className.includes("conversation-operation-shell"));
-    const reportIndex = childClasses.findIndex((className) => className.includes("terminal-report-block"));
-    const artifactsIndex = childClasses.findIndex((className) => className.includes("conversation-work-cell-artifacts"));
-    return operationIndex < reportIndex && reportIndex < artifactsIndex;
-  })).toBe(true);
+  await expect((await timelineBatchGroup(commandBatch)).locator('[data-conversation-timeline-kind="commandExecution"]')).toHaveCount(3);
+  const typedCommand = (await timelineBatchGroup(commandBatch)).locator('[data-conversation-timeline-kind="commandExecution"]').first();
+  await expect(typedCommand).toContainText("已运行命令 git diff --check");
+  await typedCommand.locator(".conversation-timeline-activity-main").press("Enter");
+  await expect(typedCommand.locator(".conversation-timeline-activity-main strong")).toHaveAttribute("title", "git diff --check");
+  await expect(timeline).not.toContainText("echo prior attempt");
+
+  const terminalResponse = timeline.locator(".conversation-timeline-terminal-response");
+  const terminalReport = terminalResponse.locator('[data-conversation-timeline-kind="terminalReport"]');
+  await expect(terminalResponse).toHaveCount(1);
+  await expect(terminalReport).toHaveCount(1);
+  const reportToggle = terminalReport.locator(".conversation-timeline-activity-main");
+  await expect(reportToggle.locator("strong")).toHaveText("任务已完成。");
+  await expect(reportToggle).toHaveAttribute("aria-expanded", "true");
+  await expect(terminalResponse).not.toContainText("执行详情");
+  await expect(terminalResponse).not.toContainText("结构化终局报告已接入普通会话");
+  await expect(terminalResponse.locator(".conversation-timeline-result-summary")).toHaveCount(0);
+  await expect(terminalResponse).not.toContainText("执行过程保留在工作记录中，最终结果由 TerminalReport 独立展示。");
+  const corrections = terminalReport.locator('[data-terminal-report-section="corrections"]');
+  await expect(corrections).toHaveCount(1);
+  await expect(corrections.locator(".conversation-timeline-terminal-entry-head strong")).toHaveText("Committed report evidence owns the final file summary.");
+  await expect(corrections).toContainText("Previously: Only provider narration contains the final file evidence.");
+  await expect(corrections).toContainText("高置信度");
+  await reportToggle.click();
+  await expect(reportToggle).toHaveAttribute("aria-expanded", "false");
+  await expect(corrections).toHaveCount(0);
+  await expect(reportToggle.locator("strong")).toHaveText("任务已完成。");
+  await reportToggle.click();
+  await expect(reportToggle).toHaveAttribute("aria-expanded", "true");
+  await expect(corrections).toContainText("Committed report evidence owns the final file summary.");
+  await expect(terminalResponse.locator('[data-terminal-report-section="verification"]')).toHaveCount(0);
+  await expect(terminalResponse).not.toContainText("Web typecheck");
+  const responseFiles = timeline.locator("[data-conversation-response-files]");
+  await expect(responseFiles).toHaveCount(1);
+  await expect(responseFiles.locator(".conversation-response-file-link")).toHaveText(["ConversationHome-1.tsx", "ConversationHome-2.tsx"]);
+  await expect(terminalResponse).not.toContainText("ConversationHome-1.tsx");
+  await expect(terminalResponse).not.toContainText("ConversationHome-2.tsx");
+  await expect(terminalResponse).not.toContainText("Generated file metadata");
+  await expect(terminalResponse).not.toContainText("Action preview");
+  await expect(conversationPage.locator(".conversation-work-cell")).toHaveCount(0);
   const feed = page.locator(".normal-conversation-feed");
   const expandedMetrics = await feed.evaluate((element) => ({
     clientHeight: element.clientHeight,
@@ -1315,11 +1658,6 @@ test("executed normal conversation renders one structured terminal report", asyn
     element.scrollTop = 120;
   });
   await expect.poll(() => feed.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
-  await reportFileLink.click();
-  const conversationDock = page.locator(".normal-conversation-right-dock");
-  await expect(conversationDock).toContainText("apps/web/src/features/workspace/ConversationHome-1.tsx");
-  await expect(conversationDock).toContainText("terminalReportWorkspacePreview");
-  await expect(conversationDock.getByRole("button", { name: "打开方式" })).toBeVisible();
   expect(runtimeErrors).toEqual([]);
 });
 
@@ -1424,7 +1762,7 @@ test("persisted normal conversation without work evidence renders only the assis
 
   await mockDaemon(page, state);
   await page.goto("/");
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await navigation.locator(".sidebar-recent-row").filter({ hasText: "欧哈呦" }).click();
 
   const assistantRow = page.getByLabel("对话页面").locator(".normal-conversation-message-row.ai-teammate");
@@ -1438,7 +1776,7 @@ test("conversation home follows user language and shows thinking as off", async 
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await navigation.getByRole("button", { name: "新建对话" }).click();
   const home = page.getByLabel("对话首页");
   await expect(home.getByRole("heading", { name: "Ling Stack，让工作更简单。", level: 1 })).toBeVisible();
@@ -1447,7 +1785,9 @@ test("conversation home follows user language and shows thinking as off", async 
   await expect(home.getByRole("button", { name: "幻灯片" })).toBeVisible();
   await expect(home.getByRole("button", { name: "文档" })).toBeVisible();
   await expect(home.getByRole("button", { name: "表格" })).toBeVisible();
-  await expect(home.getByText("思考关闭")).toBeVisible();
+  const modelTrigger = home.getByRole("button", { name: "已选择模型 gpt-5.5 · 已选择思考模式 关闭", exact: true });
+  await expect(modelTrigger).toBeVisible();
+  await expect(modelTrigger.locator(".conversation-model-trigger-effort")).toHaveText("思考关闭");
   await home.getByRole("textbox", { name: "对话内容" }).fill("你好");
   await home.getByRole("button", { name: "发送" }).click();
   const conversationPage = page.getByLabel("对话页面");
@@ -1473,10 +1813,10 @@ test("conversation home refreshes interface language and theme after workspace s
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await expect(page.locator("html")).toHaveAttribute("lang", "en-US");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
   await expect(page.getByLabel("Conversation home").getByRole("heading", { name: "Ling Stack, make work easier.", level: 1 })).toBeVisible();
 
   state.workspaceSettings = {
@@ -1497,7 +1837,7 @@ test("sidebar text entries route to context-aware inspectors", async ({ page }) 
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   const primaryNav = navigation.locator(".primary-nav");
   await expect(navigation.getByRole("button", { name: "Search or start" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Run", exact: true })).toHaveCount(0);
@@ -1512,13 +1852,13 @@ test("sidebar text entries route to context-aware inspectors", async ({ page }) 
   await expect(primaryNav.getByRole("button", { name: "Plugin Manager" })).toBeVisible();
   await expect(page.getByLabel("Run context")).toHaveCount(0);
 
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
   await expect(page.getByLabel("Conversation home")).toBeVisible();
   await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: [], selectedRows: [] });
 
   await primaryNav.getByRole("button", { name: "Plugin Manager" }).click();
   await expect(page.locator(".plugin-manager-page .settings-plugin-manager")).toBeVisible();
-  await expect(page.getByLabel("Ling Stack navigation")).toBeVisible();
+  await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })).toBeVisible();
 
   await navigation.getByRole("button", { name: "Settings" }).click();
   const settingsSections = page.getByLabel("Settings sections");
@@ -1532,14 +1872,15 @@ test("sidebar text entries route to context-aware inspectors", async ({ page }) 
   await expect(settingsSections.getByRole("button", { name: "AI Councils" })).toHaveCount(0);
   await settingsSections.getByRole("button", { name: "Council Workspace" }).click();
   await expect(settingsSections).toBeVisible();
-  await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
+  await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })).toHaveCount(0);
   await expect(page.locator(".council-workspace-page[aria-label='Council Workspace']")).toBeVisible();
   await expect(settingsSections.getByRole("button", { name: "Council Workspace" })).toHaveClass(/active/);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(settingsSections.getByRole("button", { name: /^User profile$/ })).toBeVisible();
   await expect(settingsSections.getByRole("button", { name: /Interface preferences/ })).toBeVisible();
   await settingsSections.getByRole("button", { name: /^User profile$/ }).click();
-  await expect(page.getByRole("heading", { name: "User profile", level: 1 })).toHaveCount(0);
+  await expect(page.locator("[data-desktop-window-titlebar-surface='true']").getByRole("heading", { name: "User profile", level: 1 })).toBeVisible();
+  await expect(page.locator(".settings-content-stack").getByRole("heading", { name: "User profile", level: 1 })).toHaveCount(0);
   await expect(page.locator('[data-profile-section="identity"]')).toBeVisible();
   await expect(page.getByRole("heading", { name: "Identity information" })).toHaveCount(0);
   await expect(page.getByLabel("Handle")).toHaveCount(0);
@@ -1572,8 +1913,8 @@ test("conversation home uses plus as the single attachment entry and keeps slash
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
 
   const home = page.getByLabel("Conversation home");
   await expect(home).toBeVisible();
@@ -1601,8 +1942,8 @@ test("conversation home sends with workspace cwd without a folder picker", async
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
 
   const home = page.getByLabel("Conversation home");
   await expect(home).toBeVisible();
@@ -1614,7 +1955,6 @@ test("conversation home sends with workspace cwd without a folder picker", async
 
   const recentRow = navigation.locator(".sidebar-recent-row").first();
   await expect(recentRow).toContainText("Project scoped conversation");
-  await expect(recentRow).toContainText("Conversation");
 
   const conversationPage = page.getByLabel("Conversation page");
   await expect(conversationPage).toBeVisible();
@@ -1682,62 +2022,48 @@ test("conversation home model picker uses the model workbench default without ch
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await navigation.getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: "Model Workbench" }).click();
   const defaultUses = page.locator(".provider-default-purpose-bar");
   await defaultUses.getByLabel("Chat model").selectOption("provider_gemini");
   await expect(defaultUses.getByLabel("Chat model")).toHaveValue("provider_gemini");
+  await expect.poll(() => state.workspaceSettings.defaultProviderPresetId).toBe("provider_gemini");
   await expect(page.locator(".provider-row").getByRole("button", { name: /Set default|Current default/ })).toHaveCount(0);
   await page.getByRole("button", { name: "Back to app" }).click();
 
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
   const home = page.getByLabel("Conversation home");
-  await expect(home.getByRole("button", { name: "Selected model gemini-2.5-pro" })).toBeVisible();
-  await expect(home.getByRole("button", { name: "Selected thinking mode Off" })).toBeVisible();
-  await home.getByRole("button", { name: "Selected thinking mode Off" }).click();
-  await expect(page.getByRole("menu", { name: "Thinking mode" }).getByRole("menuitemradio")).toHaveText(["Off", "Minimal", "Low", "Medium", "High", "XHigh"]);
-  await page.keyboard.press("Escape");
-
-  await home.getByRole("button", { name: "Selected model gemini-2.5-pro" }).click();
-  const modelMenu = page.locator(".conversation-model-menu");
-  await expect(modelMenu).toBeVisible();
-  await expect(modelMenu).toHaveAttribute("role", "menu");
+  const modelTrigger = home.getByRole("button", { name: "Selected model gemini-2.5-pro · Selected thinking mode Off", exact: true });
+  await expect(modelTrigger).toBeVisible();
+  await expect(modelTrigger.locator(".conversation-model-trigger-effort")).toHaveText("Thinking off");
+  await modelTrigger.click();
+  const reasoning = page.getByRole("dialog", { name: "Thinking mode" });
+  await expect(reasoning.getByRole("slider")).toHaveAttribute("max", "5");
+  await reasoning.getByRole("button", { name: "Model options" }).click();
+  const modelMenu = page.getByRole("dialog", { name: "Model options" });
   await expect(modelMenu.locator(".conversation-model-option")).toHaveCount(4);
   await expect(modelMenu.locator(".conversation-model-option").first()).toContainText("gemini-2.5-pro");
-  await expect(modelMenu.locator(".conversation-model-option").first()).toContainText("Default");
+  await expect(modelMenu.locator(".conversation-model-default-option")).toContainText("Default");
   await expect(modelMenu).not.toContainText("gpt-image-2");
-  await expect(modelMenu).not.toContainText("gemini/");
-  await expect(modelMenu).not.toContainText("anthropic/");
-
   const modelSearch = modelMenu.getByRole("textbox", { name: "Search models" });
-  await modelSearch.focus();
-  await expect.poll(() => modelMenu.locator(".conversation-model-search").evaluate((searchField) => {
-    const fieldRect = searchField.getBoundingClientRect();
-    const inputRect = searchField.querySelector("input")?.getBoundingClientRect();
-    if (!inputRect) {
-      return false;
-    }
-    return inputRect.left >= fieldRect.left &&
-      inputRect.right <= fieldRect.right &&
-      inputRect.top >= fieldRect.top &&
-      inputRect.bottom <= fieldRect.bottom;
-  })).toBe(true);
+  await expect(modelSearch).toBeFocused();
   await modelSearch.fill("gpt-4o");
   await expect(modelMenu.locator(".conversation-model-option")).toHaveCount(1);
-  await modelMenu.getByRole("menuitemradio", { name: /cliproxy-gpt-4o/ }).click();
+  await modelMenu.getByRole("button", { name: /cliproxy-gpt-4o/ }).click();
   await expect(home.getByRole("button", { name: "Selected model cliproxy-gpt-4o" })).toBeVisible();
-  await expect(home.getByRole("button", { name: /Selected thinking mode/ })).toHaveCount(0);
-
   await home.getByRole("button", { name: "Selected model cliproxy-gpt-4o" }).click();
+  await expect(modelMenu).toBeVisible();
+  await expect(modelMenu.getByRole("slider")).toHaveCount(0);
   await modelSearch.fill("sonnet");
-  await expect(modelMenu.locator(".conversation-model-option")).toHaveCount(1);
-  await expect(modelMenu.locator(".conversation-model-option")).toContainText("claude-sonnet-4");
-  await modelMenu.getByRole("menuitemradio", { name: /claude-sonnet-4/ }).click();
-  await expect(home.getByRole("button", { name: "Selected model claude-sonnet-4" })).toBeVisible();
-  await home.getByRole("button", { name: "Selected thinking mode Off" }).click();
-  await page.getByRole("menu", { name: "Thinking mode" }).getByRole("menuitemradio", { name: "High", exact: true }).click();
-  await expect(home.getByRole("button", { name: "Selected thinking mode High" })).toBeVisible();
+  await modelMenu.getByRole("button", { name: /claude-sonnet-4/ }).click();
+  const sonnet = home.getByRole("button", { name: "Selected model claude-sonnet-4" });
+  await sonnet.click();
+  await reasoning.getByRole("slider").focus();
+  await reasoning.getByRole("slider").press("End");
+  await reasoning.getByRole("slider").press("ArrowLeft");
+  await expect(sonnet).toContainText("High");
+  await page.keyboard.press("Escape");
 
   await home.getByRole("textbox", { name: "Conversation message" }).fill("Use Sonnet for this conversation");
   await home.getByRole("button", { name: "Send" }).click();
@@ -1745,13 +2071,14 @@ test("conversation home model picker uses the model workbench default without ch
   const conversationPage = page.getByLabel("Conversation page");
   await expect(conversationPage).toBeVisible();
 
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
   await expect(home).toBeVisible();
   await expect(home.getByRole("button", { name: "Selected model gemini-2.5-pro" })).toBeVisible();
 
   await navigation.locator(".sidebar-recent-row").filter({ hasText: "Use Sonnet for this conversation" }).click();
   await expect(conversationPage.getByRole("button", { name: "Selected model claude-sonnet-4" })).toBeVisible();
-  await expect(conversationPage.getByRole("button", { name: "Selected thinking mode High" })).toBeVisible();
+  await expect(conversationPage.getByRole("button", { name: "Selected model claude-sonnet-4" })).toContainText("High");
+  await expect.poll(() => state.workspaceSettings.defaultProviderPresetId).toBe("provider_gemini");
 });
 
 test("settings keeps configuration tools embedded while Work Board stays hidden from global navigation", async ({ page }) => {
@@ -1770,7 +2097,7 @@ test("settings keeps configuration tools embedded while Work Board stays hidden 
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await navigation.getByRole("button", { name: "Settings" }).click();
   const settingsSections = page.getByLabel("Settings sections");
   await expect(settingsSections.getByRole("button", { name: "Model Workbench" })).toBeVisible();
@@ -1781,27 +2108,29 @@ test("settings keeps configuration tools embedded while Work Board stays hidden 
 
   await settingsSections.getByRole("button", { name: "Model Workbench" }).click();
   await expect(settingsSections).toBeVisible();
-  await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
+  await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })).toHaveCount(0);
   await expect(settingsSections.getByRole("button", { name: "Model Workbench" })).toHaveClass(/active/);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(page.locator(".provider-workbench[aria-label='Model Workbench']")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Model Workbench", level: 1 })).toHaveCount(0);
+  await expect(page.locator("[data-desktop-window-titlebar-surface='true']").getByRole("heading", { name: "Model Workbench", level: 1 })).toBeVisible();
+  await expect(page.locator(".provider-workbench").getByRole("heading", { name: "Model Workbench", level: 1 })).toHaveCount(0);
   await expect(settingsSections.getByRole("button", { name: "Model Workbench" })).toBeVisible();
   await expect(settingsSections).toBeVisible();
 
   await settingsSections.getByRole("button", { name: "Teammate Management" }).click();
   await expect(settingsSections).toBeVisible();
-  await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
+  await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })).toHaveCount(0);
   await expect(settingsSections.getByRole("button", { name: "Teammate Management" })).toHaveClass(/active/);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(page.getByLabel("Workspace teammates")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "AI Teammates", level: 1 })).toHaveCount(0);
+  await expect(page.locator("[data-desktop-window-titlebar-surface='true']").getByRole("heading", { name: "AI Teammates", level: 1 })).toBeVisible();
+  await expect(page.locator(".settings-content-stack").getByRole("heading", { name: "AI Teammates", level: 1 })).toHaveCount(0);
   await expect(settingsSections.getByRole("button", { name: "Teammate Management" })).toBeVisible();
   await expect(settingsSections).toBeVisible();
 
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await page.getByRole("button", { name: "Back to app" }).click();
   await navigation.getByRole("button", { name: "Plugin Manager" }).click();
-  await expect(page.getByLabel("Ling Stack navigation")).toBeVisible();
+  await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })).toBeVisible();
   await expect(page.locator(".plugin-manager-page")).toBeVisible();
 });

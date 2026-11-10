@@ -1,6 +1,7 @@
 import { Plus } from "lucide-react";
 import { Button } from "../../shared/ui/index.js";
 import type { AutomationPageSummary, AutomationTranslate } from "./automation-view-models.js";
+import { DesktopTitlebarSurface } from "../../app/DesktopTitlebarSurface.js";
 
 export function AutomationWorkbenchHeader({
   disabled,
@@ -14,6 +15,7 @@ export function AutomationWorkbenchHeader({
   readonly onCreate: () => void;
 }): React.JSX.Element {
   return (
+    <DesktopTitlebarSurface>
     <header
       className="automations-inbox-header automation-ui2-header"
       data-desktop-window-drag-region="true"
@@ -38,5 +40,6 @@ export function AutomationWorkbenchHeader({
         </Button>
       </div>
     </header>
+    </DesktopTitlebarSurface>
   );
 }

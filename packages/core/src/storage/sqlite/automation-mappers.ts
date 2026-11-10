@@ -72,6 +72,7 @@ export function mapAutomationDraft(row: Record<string, SQLOutputValue>): Automat
     description: readOptionalStringValue(payload.description),
     kind: readOptionalStringValue(payload.kind) as AutomationKind | undefined,
     trigger: payload.trigger as AutomationTrigger | undefined,
+    rrule: readOptionalStringValue(payload.rrule),
     target: payload.target as AutomationTarget | undefined,
     promptTemplate: payload.promptTemplate as AutomationPromptTemplate | undefined,
     executionPolicy: payload.executionPolicy as AutomationExecutionPolicy | undefined,

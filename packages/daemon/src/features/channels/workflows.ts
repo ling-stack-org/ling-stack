@@ -1,6 +1,11 @@
+import { recallMemory } from "../memory/recall-service.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   DEFAULT_WORKSPACE_ID,
+  createSqliteWorkflowUserCreationStore,
+  effectiveWorkflowPreGate,
+  inspectWorkflowPreApproval,
+  type ApprovalRequest,
   type ChannelWorkflow,
   type ChannelHandoff,
   type ChannelMessage,
@@ -9,12 +14,15 @@ import {
   type ChannelWorkflowStepStatus,
   type RunStore,
   type RunTool,
+  type SecretResolver,
   type SkillApprovalProfile,
   type Task,
+  type WorkflowStepStartOwnerV1,
 } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
+import { loadWorkspaceRuntimeSettings } from "../../runtime/runner-settings.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
@@ -49,16 +57,15 @@ import {
   readOptionalChannelWorkflowStepStatusQuery,
 } from "./schemas.js";
 import { assertChannelWorkspaceReady } from "./workspace.js";
-import { LING_AGENT_EXECUTOR_ID } from "./ling-agent-executor.js";
-import { getChannelMessageView } from "./conversation-item-messages.js";
 import {
   maybeScheduleWorkflowTerminalReport,
   terminalReportsEnabledForStore,
 } from "./terminal-report-coordinator.js";
-import { buildWorkflowEvidence } from "./workflow-evidence.js";
-import { renderUsedMemoryPromptForView } from "../memory/prompt.js";
+import { buildWorkflowEvidence, projectPublicWorkflowEvidence } from "./workflow-evidence.js";
+import { createMemorySourceRevisions, renderUsedMemoryPromptForView } from "../memory/prompt.js";
 import { reviewWorkflowFanInContext } from "./workflow-fanin.js";
 import type { PreselectedMemoryUse } from "../runs/schemas.js";
+import { createWorkflowOperationExecutionSnapshot, type WorkflowOperationExecutionSnapshot } from "../runs/workflow-operation-snapshot.js";
 import type {
   ChannelIntentExecutionOperationV1,
   DelegatedBlockCodeV1,
@@ -67,15 +74,20 @@ import type {
 } from "@ling-stack/contracts";
 import { createWorkflowParticipantAuthorityV1 } from "@ling-stack/contracts";
 import { resolveWorkflowHandoffExecutionContext } from "./workflow-handoffs.js";
-import { evaluateWorkflowCompletion, evaluateWorkflowCompletionGate } from "./workflow-completion-gate.js";
+import { evaluateWorkflowCompletionGate } from "./workflow-completion-gate.js";
 import { completeWorkflowIfStepsFinished } from "./workflow-completion.js";
-import { blockDelegatedWorkflowStepBeforeRun } from "./workflow-step-finalizer.js";
+import { projectWorkflowStepNarration } from "./workflow-step-narration.js";
 import { workflowStepExecutionOperationBindings } from "./workflow-operation-evidence.js";
 import {
   resolveWorkflowParticipantRunProfile,
 } from "./workflow-participant-run-profile.js";
 import { mergeWorkflowApprovalProfiles } from "./workflow-step-run-policy.js";
 import { preflightWorkflowParticipantProvider } from "./workflow-participant-provider.js";
+import { createWorkflowPreApprovalExecutionPermit, prepareWorkflowPreApproval,
+  workflowPreApprovalStartOverrideError } from "./workflow-pre-approval.js";
+import { createWorkflowSafetyAdmission, freezeWorkflowSafetyPlan, workflowSafetySnapshot, type WorkflowSafetySnapshotV1 } from "../runs/workflow-safety.js";
+import { assertWorkflowTemplateCompilationCurrent } from "./workflow-template-compilation.js";
+import { assertWorkflowIsolationSelectionReady, type WorkflowIsolationHost } from "./workflow-isolation-selection.js";
 export { completeWorkflowIfStepsFinished } from "./workflow-completion.js";
 
 const WORKFLOW_STEP_RESOURCE_LEASE_TTL_MS = 6 * 60 * 60 * 1000;
@@ -88,9 +100,16 @@ export interface WorkflowStepRunRequest {
   readonly runnerId?: string;
   readonly teammateId?: string;
   readonly workflowStepId?: string;
+  readonly workflowStartOwner?: WorkflowStepStartOwnerV1;
+  /** Canonical channel message that owns this workflow step's evidence. */
+  readonly sourceMessageId?: string;
   readonly delegatedRequirement?: DelegatedStepRequirementV1;
   /** Internal-only Host execution bindings for workflow-owned operations. */
   readonly executionOperationBindings?: readonly ChannelIntentExecutionOperationV1[];
+  readonly workflowOperationExecution?: WorkflowOperationExecutionSnapshot;
+  readonly workflowSafetySnapshot?: WorkflowSafetySnapshotV1;
+  /** Host-frozen scope identity; public step-start input cannot select or replace it. */
+  readonly workflowIsolationPlan?: { readonly planId: string; readonly planDigest: string };
   readonly requestedSkillId?: string;
   readonly skipProviderPreflight?: boolean;
   readonly skipMemoryRecall?: boolean;
@@ -106,7 +125,7 @@ export interface WorkflowStepRunRequest {
     readonly channelId?: string;
   };
   readonly tools?: readonly RunTool[];
-  readonly thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  readonly thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
   readonly contextPack?: WorkflowStepRunContextPackSnapshot;
   readonly contextProjection?: ContextPack["contextProjection"];
   readonly contextCompactions?: readonly WorkflowStepContextCompactionSummary[];
@@ -157,6 +176,7 @@ export async function handleChannelWorkflowsCollection(
     return;
   }
 
+  let registryCompilation = false;
   try {
     const store = storeRegistry.getStore(cwd);
     if (!store.getChannel(channelId)) {
@@ -179,7 +199,10 @@ export async function handleChannelWorkflowsCollection(
       const body = await readJsonBody(request, config.maxBodyBytes);
       if (isWorkflowTemplateCompileRequest(body)) {
         const input = parseWorkflowTemplateCompileRequest(body, channelId);
-        const compiled = compileWorkflowTemplate(store, input, new Date().toISOString(), runnerRegistry);
+        registryCompilation = input.customTemplateId !== undefined;
+        const now = new Date().toISOString();
+        const compiled = createSqliteWorkflowUserCreationStore(store).create({ channelId, now,
+          compile: () => compileWorkflowTemplate(store, input, now, runnerRegistry) });
         writeJson(response, 201, compiled);
         return;
       }
@@ -190,7 +213,10 @@ export async function handleChannelWorkflowsCollection(
     }
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel workflows` });
   } catch (error) {
-    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+    // Existing inline and built-in compilation callers retain their error contract.
+    const registryError = registryCompilation && error instanceof HttpError ? error : undefined;
+    writeJson(response, registryError?.statusCode ?? 400,
+      { error: registryError?.code ?? "bad_request", message: error instanceof Error ? error.message : String(error) });
   }
 }
 
@@ -259,6 +285,15 @@ export async function handleChannelWorkflowFromHandoff(
     }
     const body = await readJsonBody(request, config.maxBodyBytes);
     const input = parseChannelWorkflowFromHandoffRequest(body);
+    const existingWorkflow = store.getChannelWorkflowForHandoff(handoff.channelId, handoff.id);
+    const existingWorkflowStep = existingWorkflow
+      ? store.listChannelWorkflowSteps({ workflowId: existingWorkflow.id, complete: true })
+        .find((step) => step.sourceHandoffId === handoff.id)
+      : undefined;
+    if (existingWorkflow && existingWorkflowStep) {
+      writeJson(response, 200, { workflow: existingWorkflow, workflowStep: existingWorkflowStep });
+      return;
+    }
     const createdAt = new Date().toISOString();
     const continuityContext = resolveWorkflowHandoffExecutionContext({
       store,
@@ -269,37 +304,37 @@ export async function handleChannelWorkflowFromHandoff(
       throw new Error(`Workflow handoff cannot start: ${continuityContext.blocker}`);
     }
     const sourceItemId = continuityContext.sourceItemId ?? handoff.sourceMessageId;
-    const workflow = store.createChannelWorkflow(
+    const result = store.createOrReuseChannelHandoffWorkflow(
       {
         channelId: handoff.channelId,
         sourceHandoffId: handoff.id,
-        title: input.title ?? `Handoff to ${handoff.toParticipantLabel}`,
-        objective: input.objective ?? (handoff.expectedOutput || handoff.reason || "Complete handoff workflow."),
-        createdBy: input.createdBy,
-        metadata: sourceItemId ? { sourceMessageId: sourceItemId } : undefined,
+        workflow: {
+          title: input.title ?? `Handoff to ${handoff.toParticipantLabel}`,
+          objective: input.objective ?? (handoff.expectedOutput || handoff.reason || "Complete handoff workflow."),
+          createdBy: input.createdBy,
+          metadata: sourceItemId ? { sourceMessageId: sourceItemId } : undefined,
+        },
+        workflowStep: {
+          contextSummaryId: input.contextSummaryId,
+          title: `Complete handoff: ${handoff.expectedOutput || handoff.reason || handoff.toParticipantLabel}`,
+          prompt: formatHandoffStepPrompt(handoff),
+          toParticipantId: handoff.toParticipantId,
+          toParticipantLabel: handoff.toParticipantLabel,
+          participantAuthority: createWorkflowParticipantAuthorityV1({
+            kind: "workflow_definition",
+            origin: "channel_handoff",
+            participantId: handoff.toParticipantId,
+            sourceId: handoff.id,
+          }),
+          metadata: sourceItemId ? { sourceMessageId: sourceItemId } : undefined,
+        },
       },
       createdAt,
     );
-    const workflowStep = store.createChannelWorkflowStep(
-      {
-        workflowId: workflow.id,
-        sourceHandoffId: handoff.id,
-        contextSummaryId: input.contextSummaryId,
-        title: `Complete handoff: ${handoff.expectedOutput || handoff.reason || handoff.toParticipantLabel}`,
-        prompt: formatHandoffStepPrompt(handoff),
-        toParticipantId: handoff.toParticipantId,
-        toParticipantLabel: handoff.toParticipantLabel,
-        participantAuthority: createWorkflowParticipantAuthorityV1({
-          kind: "workflow_definition",
-          origin: "channel_handoff",
-          participantId: handoff.toParticipantId,
-          sourceId: handoff.id,
-        }),
-        metadata: sourceItemId ? { sourceMessageId: sourceItemId } : undefined,
-      },
-      createdAt,
-    );
-    writeJson(response, 201, { workflow, workflowStep });
+    writeJson(response, result.reused ? 200 : 201, {
+      workflow: result.workflow,
+      workflowStep: result.workflowStep,
+    });
   } catch (error) {
     writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
   }
@@ -378,7 +413,7 @@ export async function handleChannelWorkflowStepsCollection(
           workflowId,
           status: readOptionalChannelWorkflowStepStatusQuery(url, "status"),
           limit: readOptionalIntegerQuery(url, "limit", 1),
-        }),
+        }).map(step => projectWorkflowStepNarration(store, step)),
       });
       return;
     }
@@ -417,7 +452,7 @@ export async function handleChannelWorkflowStepItem(
       return;
     }
     if (request.method === "GET") {
-      writeJson(response, 200, { workflowStep: existing });
+      writeJson(response, 200, { workflowStep: projectWorkflowStepNarration(store, existing) });
       return;
     }
     if (request.method !== "PATCH") {
@@ -469,7 +504,7 @@ export async function handleChannelWorkflowEvidence(
   try {
     const store = storeRegistry.getStore(cwd);
     const evidence = buildWorkflowEvidence(store, workflowId);
-    writeJson(response, 200, evidence);
+    writeJson(response, 200, projectPublicWorkflowEvidence(evidence));
   } catch (error) {
     writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
       error: error instanceof HttpError ? error.code : "bad_request",
@@ -537,7 +572,7 @@ export async function handleChannelWorkflowStepEvidence(
     if (!step) {
       throw new HttpError(404, "workflow_step_not_found", `Channel workflow step not found: ${workflowStepId}`);
     }
-    const evidence = buildWorkflowEvidence(store, step.workflowId);
+    const evidence = projectPublicWorkflowEvidence(buildWorkflowEvidence(store, step.workflowId));
     const workflowStep = evidence.steps.find((item) => item.step.id === workflowStepId);
     if (!workflowStep) {
       throw new HttpError(404, "workflow_step_not_found", `Channel workflow step not found: ${workflowStepId}`);
@@ -570,6 +605,9 @@ export async function handleChannelWorkflowStepStartRoute(
   workflowStepId: string,
   validateRunRequest: ValidateWorkflowStepRunRequest,
   startRun: StartWorkflowStepRun,
+  secretResolver?: SecretResolver,
+  runnerRegistry?: RunnerRegistry,
+  isolationHost?: WorkflowIsolationHost,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -585,9 +623,11 @@ export async function handleChannelWorkflowStepStartRoute(
       writeJson(response, 404, { error: "workflow_step_not_found", message: `Channel workflow step not found: ${workflowStepId}` });
       return;
     }
-    await handleChannelWorkflowStepStart(request, response, config, storeRegistry, cwd, existing.id, validateRunRequest, startRun);
+    await handleChannelWorkflowStepStart(request, response, config, storeRegistry, cwd, existing.id, validateRunRequest, startRun, secretResolver, runnerRegistry, isolationHost);
   } catch (error) {
-    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+      error: error instanceof HttpError ? error.code : "bad_request", message: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 
@@ -600,6 +640,9 @@ async function handleChannelWorkflowStepStart(
   workflowStepId: string,
   validateRunRequest: ValidateWorkflowStepRunRequest,
   startRun: StartWorkflowStepRun,
+  secretResolver?: SecretResolver,
+  runnerRegistry?: RunnerRegistry,
+  isolationHost?: WorkflowIsolationHost,
 ): Promise<void> {
   if (request.method !== "POST") {
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for workflow step start` });
@@ -609,9 +652,21 @@ async function handleChannelWorkflowStepStart(
   const store = storeRegistry.getStore(cwd);
   const body = await readJsonBody(request, config.maxBodyBytes);
   const input = parseChannelWorkflowStepStartRequest(body);
-  const started = prepareWorkflowStepStart(store, workflowStepId, input, cwd, validateRunRequest);
+  const started = await prepareWorkflowStepStart(store, workflowStepId, input, cwd, validateRunRequest, secretResolver, runnerRegistry, isolationHost);
+  if (started.kind === "waiting_for_approval") {
+    writeJson(response, 200, {
+      status: "waiting_for_approval",
+      mode: input.mode,
+      workflow: store.getChannelWorkflow(started.workflowId),
+      workflowStep: store.getChannelWorkflowStep(workflowStepId),
+      approval: started.approval,
+    });
+    return;
+  }
   if (started.kind === "blocked") {
     writeJson(response, 200, {
+      status: "blocked",
+      mode: input.mode,
       workflow: store.getChannelWorkflow(started.workflowId),
       workflowStep: store.getChannelWorkflowStep(workflowStepId),
       blocker: started.blocker,
@@ -625,25 +680,17 @@ async function handleChannelWorkflowStepStart(
 
   if (input.mode === "create_task") {
     const finishedAt = new Date().toISOString();
-    const succeeded = store.transitionChannelWorkflowStepStatus({
-      workflowStepId,
-      expectedStatus: "running",
-      event: "succeed",
-      actor: "system",
-      reason: `task:${started.task.id}`,
-      now: finishedAt,
-      taskId: started.task.id,
-      resultSummary: "Task created from workflow step.",
-    });
-    if (!succeeded.ok) {
+    if (store.getChannelWorkflowStep(workflowStepId)?.status !== "succeeded") {
       writeJson(response, 409, {
-        error: succeeded.code,
+        error: "workflow_task_creation_stale",
         message: "An execution-backed workflow step cannot complete by creating a task without verified operation evidence.",
       });
       return;
     }
     completeWorkflowIfStepsFinished(store, started.workflowId, finishedAt);
     writeJson(response, 200, {
+      status: "started",
+      mode: "create_task",
       workflow: store.getChannelWorkflow(started.workflowId),
       workflowStep: store.getChannelWorkflowStep(workflowStepId),
       task: started.task,
@@ -654,44 +701,34 @@ async function handleChannelWorkflowStepStart(
   const runId = await startRun({ runRequest: started.runRequest, response });
   const completedAt = new Date().toISOString();
   if (!runId) {
-    store.transitionChannelWorkflowStepStatus({
-      workflowStepId,
-      expectedStatus: "running",
-      event: "blocked",
-      actor: "system",
-      reason: "Run did not start.",
-      now: completedAt,
-      taskId: started.task.id,
-      blocker: "Run did not start.",
-    });
-    store.transitionChannelWorkflowStatus({
-      workflowId: started.workflowId,
-      event: "step_blocked",
-      actor: "system",
-      reason: "Run did not start.",
-      now: completedAt,
-    });
+    const owner = started.runRequest.workflowStartOwner;
+    if (owner) store.settleChannelWorkflowStepStartFailure({ workflowStepId, owner,
+      leaseId: owner.leaseId, blocker: "Run did not start.", now: completedAt });
     return;
   }
 }
 
 export type PreparedWorkflowStepStart =
   | { readonly kind: "ready"; readonly workflowId: string; readonly task: Task; readonly runRequest: WorkflowStepRunRequest }
+  | { readonly kind: "waiting_for_approval"; readonly workflowId: string; readonly approval: ApprovalRequest }
   | { readonly kind: "blocked"; readonly workflowId: string; readonly blocker: string }
   | { readonly kind: "error"; readonly statusCode: number; readonly code: string; readonly message: string };
 
-export function prepareWorkflowStepStart(
+export async function prepareWorkflowStepStart(
   store: RunStore,
   workflowStepId: string,
   input: ChannelWorkflowStepStartRequest,
   cwd: string,
   validateRunRequest: ValidateWorkflowStepRunRequest,
-): PreparedWorkflowStepStart {
-  const step = store.getChannelWorkflowStep(workflowStepId);
+  secretResolver?: SecretResolver,
+  runnerRegistry?: RunnerRegistry,
+  isolationHost?: WorkflowIsolationHost,
+): Promise<PreparedWorkflowStepStart> {
+  let step = store.getChannelWorkflowStep(workflowStepId);
   if (!step) {
     return { kind: "error", statusCode: 404, code: "workflow_step_not_found", message: `Channel workflow step not found: ${workflowStepId}` };
   }
-  const workflow = store.getChannelWorkflow(step.workflowId);
+  let workflow = store.getChannelWorkflow(step.workflowId);
   if (!workflow) {
     return { kind: "error", statusCode: 404, code: "workflow_not_found", message: `Channel workflow not found: ${step.workflowId}` };
   }
@@ -699,12 +736,75 @@ export function prepareWorkflowStepStart(
   if (!channel) {
     return { kind: "error", statusCode: 404, code: "channel_not_found", message: `Channel not found: ${step.channelId}` };
   }
+  try {
+    assertWorkflowTemplateCompilationCurrent(store, step);
+    if (step.metadata?.templateCompilationPin && runnerRegistry) {
+      const settings = loadWorkspaceRuntimeSettings(store, runnerRegistry);
+      runnerRegistry.resolve({ requestedRunnerId: step.metadata.requestedRunnerId,
+        allowedRunnerIds: settings.allowedRunnerIds, allowFallback: false, tools: step.metadata.requiredTools });
+    }
+    if (step.metadata?.templateCompilationPin && (input.assigneeTeammateId && input.assigneeTeammateId !== step.toParticipantId
+      || input.providerPresetId && input.providerPresetId !== step.metadata.providerPresetId
+      || input.runnerId && input.runnerId !== step.metadata.requestedRunnerId || input.taskPrompt && input.taskPrompt !== step.prompt)) {
+      throw new HttpError(409, "workflow_template_compilation_stale", "Frozen template inputs cannot be overridden; explicitly compile another workflow.");
+    }
+  } catch (error) {
+    return { kind: "error", statusCode: error instanceof HttpError ? error.statusCode : 409,
+      code: "workflow_template_compilation_stale", message: error instanceof Error ? error.message : "Template compilation cannot be verified." };
+  }
+  assertWorkflowIsolationSelectionReady(store, workflow.id, runnerRegistry, isolationHost);
   const planModeBlocker = getWorkflowPlanModeBlocker(store, workflow);
   if (planModeBlocker) {
     return { kind: "error", statusCode: 409, code: "plan_mode_workflow_blocked", message: planModeBlocker };
   }
 
   const now = new Date().toISOString();
+  if (input.mode === "create_and_run_task" && step.metadata?.sideEffectClass) {
+    const execution = assertChannelWorkspaceReady(channel, cwd);
+    if (!execution.ok) return { kind: "error", statusCode: 409, code: "workflow_safety_mismatch", message: execution.message };
+    try {
+      step = freezeWorkflowSafetyPlan({ store, step, workspaceCwd: cwd,
+        executionCwd: step.metadata?.isolationScopePlan ? step.metadata.safetyPlan?.executionRoot ?? execution.executionCwd : execution.executionCwd,
+        runnerId: input.runnerId ?? step.metadata?.requestedRunnerId ?? step.metadata?.safetyPlan?.runnerId, runnerRegistry });
+    } catch (error) {
+      return { kind: "error", statusCode: error instanceof HttpError ? error.statusCode : 409,
+        code: error instanceof HttpError ? error.code : "workflow_safety_mismatch", message: error instanceof Error ? error.message : String(error) };
+    }
+  }
+  const initialPreApproval = inspectWorkflowPreApproval(store, step, now);
+  const overrideError = workflowPreApprovalStartOverrideError(step, channel, input, initialPreApproval);
+  if (overrideError) return overrideError;
+  const executionPermit = createWorkflowPreApprovalExecutionPermit(step, channel, input);
+  // Ungated starts retain their established admission path even when a
+  // manifest-backed step is malformed; the provider preflight below owns the
+  // user-facing blocked result for a missing frozen binding.
+  let preApprovalEvidence = initialPreApproval;
+  if (effectiveWorkflowPreGate(step, step.status, workflow.title)) {
+    const preApproval = prepareWorkflowPreApproval(store, step, executionPermit, now);
+    if (preApproval.kind !== "continue") return preApproval;
+    // Resolving approval may have moved waiting -> running. Use that persisted CAS
+    // basis below, never the pre-resolution snapshot or the request's approved text.
+    const currentStep = store.getChannelWorkflowStep(workflowStepId);
+    const currentWorkflow = currentStep && store.getChannelWorkflow(currentStep.workflowId);
+    if (!currentStep || !currentWorkflow) {
+      return { kind: "error", statusCode: 409, code: "workflow_pre_approval_basis_stale", message: "Workflow changed during pre-approval admission." };
+    }
+    preApprovalEvidence = inspectWorkflowPreApproval(store, currentStep, now, executionPermit);
+    if (preApprovalEvidence.status === "pending") {
+      return { kind: "waiting_for_approval", workflowId: currentWorkflow.id, approval: preApprovalEvidence.approval };
+    }
+    if (preApprovalEvidence.status === "blocked") {
+      return { kind: "blocked", workflowId: currentWorkflow.id,
+        blocker: preApprovalEvidence.approval.decisionReason ?? `Workflow step pre-approval ${preApprovalEvidence.code}.` };
+    }
+    if (preApprovalEvidence.status === "required" || preApprovalEvidence.status === "stale") {
+      return { kind: "error", statusCode: 409,
+        code: preApprovalEvidence.status === "stale" ? preApprovalEvidence.code : "workflow_pre_approval_required",
+        message: "Workflow pre-approval changed before execution preparation. Refresh the workflow and explicitly retry the current definition." };
+    }
+    step = currentStep;
+    workflow = currentWorkflow;
+  }
   store.expireResourceLeases(now);
   const lease = store.acquireResourceLease({
     workspaceId: DEFAULT_WORKSPACE_ID,
@@ -726,7 +826,7 @@ export function prepareWorkflowStepStart(
   }
 
   const fail = (statusCode: number, code: string, message: string): PreparedWorkflowStepStart => {
-    store.releaseResourceLeasesForOwner("workflow_step", step.id, new Date().toISOString());
+    store.releaseResourceLease(lease.id, "workflow_step", step.id, new Date().toISOString());
     return { kind: "error", statusCode, code, message };
   };
   const block = (
@@ -738,68 +838,14 @@ export function prepareWorkflowStepStart(
     },
   ): PreparedWorkflowStepStart => {
     const blockedAt = new Date().toISOString();
-    if (participantProfileBlocker && workflow.metadata?.requiredParticipantManifest) {
-      const finalized = blockDelegatedWorkflowStepBeforeRun({
-        store,
-        workflowStepId: step.id,
-        code: participantProfileBlocker.code,
-        reason: participantProfileBlocker.reason,
-        missingRequirements: participantProfileBlocker.missingRequirements,
-        now: blockedAt,
-      });
-      if (finalized.status !== "finalized" && finalized.status !== "duplicate") {
-        store.releaseResourceLeasesForOwner("workflow_step", step.id, blockedAt);
-        return {
-          kind: "error",
-          statusCode: 409,
-          code: "workflow_step_preflight_stale",
-          message: `Workflow participant preflight could not settle step ${step.id}: ${finalized.status}.`,
-        };
-      }
-      completeWorkflowIfStepsFinished(store, workflow.id, blockedAt);
-      store.releaseResourceLeasesForOwner("workflow_step", step.id, blockedAt);
-      return { kind: "blocked", workflowId: workflow.id, blocker: message };
-    }
-    store.transitionChannelWorkflowStepStatus({
-      workflowStepId: step.id,
-      expectedStatus: "running",
-      event: "blocked",
-      actor: "system",
-      reason: message,
-      now: blockedAt,
-      blocker: message,
-    });
-    store.transitionChannelWorkflowStatus({
-      workflowId: workflow.id,
-      event: "step_blocked",
-      actor: "system",
-      reason: message,
-      now: blockedAt,
-    });
-    store.releaseResourceLeasesForOwner("workflow_step", step.id, blockedAt);
+    const settled = store.settleChannelWorkflowStepStartFailure({ workflowStepId: step.id, expected: step,
+      leaseId: lease.id, blocker: message, delegatedBlock: participantProfileBlocker,
+      fanInContextReviews: fanInContext.reviews, now: blockedAt });
+    if (settled.status === "stale" || settled.status === "invalid") return fail(409, "workflow_step_preflight_stale", message);
     return { kind: "blocked", workflowId: workflow.id, blocker: message };
   };
 
-  const workflowTransition = ensureWorkflowRunning(store, workflow.id, workflow.status, now);
-  if (!workflowTransition.ok) {
-    return fail(409, workflowTransition.code, `Workflow transition failed: ${workflowTransition.code}`);
-  }
-  const latestStep = store.getChannelWorkflowStep(step.id) ?? step;
-  const stepTransition = ensureWorkflowStepRunning(store, step.id, latestStep.status, now);
-  if (!stepTransition.ok) {
-    return fail(409, stepTransition.code, `Workflow step transition failed: ${stepTransition.code}`);
-  }
-
   const fanInContext = reviewWorkflowFanInContext({ store, workflow, step });
-  if (fanInContext.reviews.length > 0) {
-    const persistedStep = store.getChannelWorkflowStep(step.id) ?? step;
-    store.updateChannelWorkflowStep(step.id, {
-      metadata: {
-        ...persistedStep.metadata,
-        fanInContextReviews: fanInContext.reviews,
-      },
-    }, now);
-  }
   if (fanInContext.blocker) {
     return block(fanInContext.blocker);
   }
@@ -810,7 +856,8 @@ export function prepareWorkflowStepStart(
   if (!workspace.ok) {
     return block(workspace.message);
   }
-  const runnerId = input.runnerId;
+  const runnerId = input.runnerId ?? step.metadata?.safetyPlan?.runnerId
+    ?? (preApprovalEvidence.status === "approved" || step.metadata?.templateCompilationPin ? step.metadata?.requestedRunnerId : undefined);
   const taskTitle = input.taskTitle ?? step.title;
   const requestedAssigneeTeammateId = input.assigneeTeammateId ?? step.toParticipantId;
   const runTools = workflowStepRunTools(step.metadata?.requiredTools);
@@ -868,13 +915,13 @@ export function prepareWorkflowStepStart(
   }
   const workflowSteps = store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true });
   const memoryRecallQuery = `${workflow.objective}\n${step.title}\n${input.taskPrompt ?? step.prompt}`;
-  const memoryRecall = store.recallMemory({
+  const memoryRecall = await recallMemory(store, {
     teammateId: assigneeTeammateId,
     channelId: channel.id,
     intent: "task-run",
     query: memoryRecallQuery,
     maxResults: 6,
-  });
+  }, { workflowStepId: step.id });
   const renderedMemory = renderUsedMemoryPromptForView({
     memories: memoryRecall.memories,
     recallPolicyVersion: memoryRecall.policyVersion,
@@ -885,6 +932,7 @@ export function prepareWorkflowStepStart(
   });
   const contextPackInput = {
     store,
+    secretResolver,
     channel,
     workflow,
     step,
@@ -934,20 +982,29 @@ export function prepareWorkflowStepStart(
   }
   const runRequestBase: WorkflowStepRunRequest = {
     workspaceCwd: cwd,
-    cwd: workspace.executionCwd,
+    cwd: step.metadata?.safetyPlan?.executionRoot ?? workspace.executionCwd,
     providerPresetId,
     providerBinding,
     runnerId,
     teammateId: assigneeTeammateId,
     workflowStepId: step.id,
+    sourceMessageId: step.metadata?.sourceMessageId ?? workflow.metadata?.sourceMessageId,
     delegatedRequirement: step.metadata?.delegatedRequirement,
     executionOperationBindings: workflowStepExecutionOperationBindings(step),
+    workflowOperationExecution: createWorkflowOperationExecutionSnapshot(step),
+    workflowSafetySnapshot: workflowSafetySnapshot(step.metadata?.safetyPlan),
+    workflowIsolationPlan: step.metadata?.isolationScopePlan,
+    requestedSkillId: step.metadata?.skillId,
     skipProviderPreflight: input.skipProviderPreflight ?? false,
     skipMemoryRecall: true,
     preselectedMemoryUse: renderedMemory.memoryIds.length > 0
       ? {
           memoryIds: renderedMemory.memoryIds,
+          sourceRevisions: createMemorySourceRevisions(memoryRecall.memories
+            .filter((item) => renderedMemory.memoryIds.includes(item.memory.id))
+            .map((item) => item.memory)),
           recallQuery: memoryRecallQuery,
+          renderedPrompt: renderedMemory.prompt,
           policyVersion: renderedMemory.policyVersion,
         }
       : undefined,
@@ -956,7 +1013,7 @@ export function prepareWorkflowStepStart(
     appendSystemPrompt: participantProfile?.appendSystemPrompt,
     approvalProfile: mergeWorkflowApprovalProfiles(
       participantProfile?.approvalProfile,
-      step.metadata?.approvalGate,
+      preApprovalEvidence.status === "approved" ? preApprovalEvidence.gate.approvalProfile : step.metadata?.approvalGate,
     ),
     task: {
       id: "pending",
@@ -982,23 +1039,34 @@ export function prepareWorkflowStepStart(
     }
   }
 
-  const task = store.createTask(
-    {
+  let admission: ReturnType<typeof createWorkflowSafetyAdmission>;
+  try {
+    admission = input.mode === "create_and_run_task" ? createWorkflowSafetyAdmission(store, step, runRequestBase) : undefined;
+  } catch (error) {
+    return fail(409, "workflow_safety_mismatch", error instanceof Error ? error.message : String(error));
+  }
+  const begun = store.beginChannelWorkflowStepStart({
+    workflowStepId: step.id, expected: step, leaseId: lease.id, now: new Date().toISOString(),
+    executionPermit,
+    admission,
+    createTaskOnly: input.mode === "create_task",
+    fanInContextReviews: fanInContext.reviews,
+    task: {
       channelId: channel.id,
       title: taskTitle,
       prompt: input.taskPrompt ?? step.prompt,
       assigneeTeammateId,
     },
-    new Date().toISOString(),
-  );
-  store.updateChannelWorkflowStep(step.id, { taskId: task.id }, new Date().toISOString());
-
+  });
+  if (begun.status !== "begun") return fail(409, begun.code, "Workflow start ownership changed during preparation.");
+  const task = begun.task;
   return {
     kind: "ready",
     workflowId: workflow.id,
     task,
     runRequest: {
       ...runRequestBase,
+      workflowStartOwner: begun.owner,
       task: {
         id: task.id,
         title: task.title,
@@ -1027,109 +1095,6 @@ function workflowStepRunTools(
     return [];
   }
   return [...new Set(stepRequiredTools)];
-}
-
-function ensureWorkflowRunning(
-  store: RunStore,
-  workflowId: string,
-  status: ChannelWorkflowStatus,
-  now: string,
-): ReturnType<RunStore["transitionChannelWorkflowStatus"]> {
-  if (status === "running") {
-    return { ok: true, from: status, to: status };
-  }
-  if (status === "draft") {
-    const prepared = store.transitionChannelWorkflowStatus({
-      workflowId,
-      expectedStatus: "draft",
-      event: "prepare",
-      actor: "system",
-      now,
-    });
-    if (!prepared.ok) {
-      return prepared;
-    }
-    return store.transitionChannelWorkflowStatus({
-      workflowId,
-      expectedStatus: "ready",
-      event: "start",
-      actor: "system",
-      now,
-    });
-  }
-  if (status === "ready" || status === "blocked") {
-    return store.transitionChannelWorkflowStatus({
-      workflowId,
-      expectedStatus: status,
-      event: "start",
-      actor: "system",
-      now,
-    });
-  }
-  return { ok: false, code: "invalid_transition", currentStatus: status };
-}
-
-function ensureWorkflowStepRunning(
-  store: RunStore,
-  workflowStepId: string,
-  status: ChannelWorkflowStepStatus,
-  now: string,
-): ReturnType<RunStore["transitionChannelWorkflowStepStatus"]> {
-  if (status === "running") {
-    return { ok: true, from: status, to: status };
-  }
-  if (status === "queued") {
-    const claimed = store.transitionChannelWorkflowStepStatus({
-      workflowStepId,
-      expectedStatus: "queued",
-      event: "claim",
-      actor: "system",
-      now,
-    });
-    if (!claimed.ok) {
-      return claimed;
-    }
-    return store.transitionChannelWorkflowStepStatus({
-      workflowStepId,
-      expectedStatus: "claimed",
-      event: "start",
-      actor: "system",
-      now,
-      blocker: null,
-    });
-  }
-  if (status === "blocked") {
-    const resumed = store.transitionChannelWorkflowStepStatus({
-      workflowStepId,
-      expectedStatus: "blocked",
-      event: "resume",
-      actor: "system",
-      now,
-      blocker: null,
-    });
-    if (!resumed.ok) {
-      return resumed;
-    }
-    return store.transitionChannelWorkflowStepStatus({
-      workflowStepId,
-      expectedStatus: "claimed",
-      event: "start",
-      actor: "system",
-      now,
-      blocker: null,
-    });
-  }
-  if (status === "claimed") {
-    return store.transitionChannelWorkflowStepStatus({
-      workflowStepId,
-      expectedStatus: "claimed",
-      event: "start",
-      actor: "system",
-      now,
-      blocker: null,
-    });
-  }
-  return { ok: false, code: "invalid_transition", currentStatus: status };
 }
 
 export function reconcileContinuityWorkflowCompletion(store: RunStore, now = new Date().toISOString()): number {
@@ -1170,120 +1135,12 @@ export function maybeCreateWorkflowTerminalCoordinatorReply(
   if (!workflow || !workflowCoordinatorReplyStatusIsTerminal(workflow.status)) {
     return undefined;
   }
-  if (terminalReportsEnabledForStore(store)) {
-    return maybeScheduleWorkflowTerminalReport(store, workflowId, input);
-  }
-  const sourceMessageId = workflow.metadata?.sourceMessageId;
-  if (!sourceMessageId) {
-    return undefined;
-  }
-  const sourceMessage = getChannelMessageView(store, sourceMessageId);
-  if (!sourceMessage) {
-    return undefined;
-  }
-  const messageId = legacyWorkflowTerminalMessageId(workflow.id);
-  const sourceItem = store.getConversationItem(sourceMessage.id);
-  const sourceTurnId = workflow.metadata?.sourceTurnId;
-  const sourceTurn = sourceTurnId ? store.getLingTurn(sourceTurnId) : undefined;
-  if (!sourceItem || !sourceTurn || sourceItem.turnId !== sourceTurn.id) return undefined;
-  const steps = store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true });
-  const now = input.now ?? new Date().toISOString();
-  const expectedCompletion = workflow.metadata?.requiredParticipantManifest
-    ? evaluateWorkflowCompletion({ store, workflow, steps, now })
-    : undefined;
-  const result = store.commitLegacyWorkflowPublication({
-    expectedWorkflowId: workflow.id,
-    expectedSourceTurn: { id: sourceTurn.id, status: sourceTurn.status, updatedAt: sourceTurn.updatedAt },
-    ...(expectedCompletion ? { expectedCompletion } : {}),
-    publicationItem: {
-      id: messageId,
-      channelId: workflow.channelId,
-      threadId: sourceTurn.threadId,
-      turnId: sourceTurn.id,
-      kind: "assistant_message",
-      status: "committed",
-      actorType: "ling_agent",
-      actorId: LING_AGENT_EXECUTOR_ID,
-      visibility: "channel",
-      payload: { body: workflowTerminalCoordinatorReplyBody(workflow, steps), format: "markdown", streaming: false, deliveryStatus: "ready" },
-      domainRefs: [
-        { type: "workflow", id: workflow.id },
-        { type: "conversation_item", id: sourceMessage.id },
-        { type: "turn", id: sourceTurn.id },
-        ...(input.linkedRunId ? [{ type: "run" as const, id: input.linkedRunId }] : []),
-      ],
-      idempotencyKey: `workflow-terminal:${workflow.id}`,
-    },
-    publicationEventIdempotencyKey: `workflow-terminal:${workflow.id}:published`,
-    now,
-  });
-  if (!result.ok) return undefined;
-  return getChannelMessageView(store, result.item.id);
+  if (!terminalReportsEnabledForStore(store)) return undefined;
+  return maybeScheduleWorkflowTerminalReport(store, workflowId, input);
 }
 
 function workflowCoordinatorReplyStatusIsTerminal(status: ChannelWorkflowStatus): boolean {
   return status === "succeeded" || status === "blocked" || status === "failed" || status === "cancelled";
-}
-
-function legacyWorkflowTerminalMessageId(workflowId: string): string {
-  return `message_workflow_terminal_${workflowId}`;
-}
-
-function workflowTerminalCoordinatorReplyBody(
-  workflow: ChannelWorkflow,
-  steps: readonly ChannelWorkflowStep[],
-): string {
-  const language = workflow.metadata?.responseLanguage === "en-US" ? "en-US" : "zh-CN";
-  const title = workflow.title.trim() || (language === "en-US" ? "this task" : "这次任务");
-  const blocker = workflowTerminalBlocker(workflow, steps, language);
-  const resultSummary = workflowTerminalResultSummary(steps);
-  if (language === "en-US") {
-    if (workflow.status === "succeeded") {
-      return resultSummary ? `Done: "${title}".\nResult: ${resultSummary}` : `Done: "${title}".`;
-    }
-    if (workflow.status === "cancelled") {
-      return `Stopped: "${title}".`;
-    }
-    return `Not completed: "${title}". Reason: ${blocker}.`;
-  }
-  if (workflow.status === "succeeded") {
-    return resultSummary ? `完成：「${title}」。\n结果：${resultSummary}` : `完成：「${title}」。`;
-  }
-  if (workflow.status === "cancelled") {
-    return `已停止：「${title}」。`;
-  }
-  return `未完成：「${title}」。原因：${blocker}。`;
-}
-
-function workflowTerminalResultSummary(steps: readonly ChannelWorkflowStep[]): string | undefined {
-  const summary = [...steps]
-    .reverse()
-    .map((step) => step.resultSummary?.trim())
-    .find((candidate): candidate is string => Boolean(candidate && !isGenericRunSuccessSummary(candidate)));
-  return summary;
-}
-
-function isGenericRunSuccessSummary(summary: string): boolean {
-  return /^(Run succeeded\.?|Task created from workflow step\.)$/iu.test(summary.trim());
-}
-
-function workflowTerminalBlocker(
-  workflow: ChannelWorkflow,
-  steps: readonly ChannelWorkflowStep[],
-  language: "en-US" | "zh-CN",
-): string {
-  const blockedStep = steps.find((step) => step.status === "blocked" || step.status === "failed" || step.status === "cancelled");
-  const blocker = blockedStep?.blocker?.trim();
-  if (blocker) {
-    return blocker;
-  }
-  if (workflow.status === "failed") {
-    return language === "en-US" ? "Workflow failed." : "工作流执行失败。";
-  }
-  if (workflow.status === "blocked") {
-    return language === "en-US" ? "Workflow is blocked." : "工作流已阻塞。";
-  }
-  return language === "en-US" ? "No additional reason was recorded." : "没有记录更多原因。";
 }
 
 function renderWorkflowStepContextPackPrompt(pack: ContextPack): string {

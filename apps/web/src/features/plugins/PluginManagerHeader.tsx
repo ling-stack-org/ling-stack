@@ -1,9 +1,10 @@
-import { Plus, Search, X } from "lucide-react";
+import { ArrowRightLeft, Plus, Search, X } from "lucide-react";
 import { Button, Field, Input, Select } from "../../shared/ui/index.js";
 import type { PluginManagerCopy } from "./plugin-manager-copy.js";
 import type { PluginManagerController } from "./usePluginManagerController.js";
 import type { Translate } from "../../i18n.js";
 import { PluginManagerRefreshFeedback } from "./PluginManagerRefreshFeedback.js";
+import { DesktopTitlebarSurface } from "../../app/DesktopTitlebarSurface.js";
 
 export function PluginManagerHeader({
   controller,
@@ -11,6 +12,7 @@ export function PluginManagerHeader({
   isLoading,
   busyCreating,
   onRefresh,
+  onOpenImport,
   t,
 }: {
   readonly controller: PluginManagerController;
@@ -18,10 +20,12 @@ export function PluginManagerHeader({
   readonly isLoading: boolean;
   readonly busyCreating: boolean;
   readonly onRefresh: () => void;
+  readonly onOpenImport: () => void;
   readonly t: Translate;
 }): React.JSX.Element {
   return (
     <>
+      <DesktopTitlebarSurface>
       <header
         className="plugin-manager-header settings-plugin-manager-head"
         data-desktop-window-drag-region="true"
@@ -37,7 +41,17 @@ export function PluginManagerHeader({
         >
           {t("Add plugin")}
         </Button>
+        <Button
+          className="plugin-import-button"
+          leadingIcon={<ArrowRightLeft aria-hidden="true" />}
+          onClick={onOpenImport}
+          size="md"
+          variant="secondary"
+        >
+          {t("Import")}
+        </Button>
       </header>
+      </DesktopTitlebarSurface>
       <div className="plugin-manager-toolbar" aria-label={t("Plugin Manager")}>
         <Field className="plugin-toolbar-field plugin-toolbar-search" label={copy.searchPlugins}>
           <Input

@@ -1,6 +1,7 @@
 import { Pencil, RefreshCw, RotateCcw, SquareTerminal } from "lucide-react";
+import { canRerunSnapshot } from "../../api/run-request-builders.js";
 import { useI18n } from "../../i18n.js";
-import { buildRuntimeFailureSummary, readRunProviderPresetId } from "../../lib/run-evidence.js";
+import { buildRuntimeFailureSummary } from "../../lib/run-evidence.js";
 import { MetaRow } from "../../shared/components/index.js";
 import { Button, InlineFeedback, StatusIndicator } from "../../shared/ui/index.js";
 import type { RunEventEnvelope, RunSession } from "../../types.js";
@@ -28,7 +29,7 @@ export function RuntimeRunRepairPanel({ run, events, workspaceCwd, isRunning, on
       </div>
       <div className="runs-form-actions">
         <Button disabled={!run.channelId || !run.taskId} leadingIcon={<Pencil size={14} />} onClick={() => onEditTask(run)} size="sm">{t("Edit task")}</Button>
-        <Button disabled={isRunning || !readRunProviderPresetId(run)} leadingIcon={<RotateCcw size={14} />} loading={isRunning} onClick={() => onRerun(run)} size="sm" variant="primary">{t("Rerun snapshot")}</Button>
+        <Button disabled={isRunning || !canRerunSnapshot(run)} leadingIcon={<RotateCcw size={14} />} loading={isRunning} onClick={() => canRerunSnapshot(run) && onRerun(run)} size="sm" variant="primary">{t("Rerun snapshot")}</Button>
         <Button disabled={isRunning} leadingIcon={<RefreshCw size={14} />} onClick={onReload} size="sm">{t("Reload")}</Button>
       </div>
     </InlineFeedback>

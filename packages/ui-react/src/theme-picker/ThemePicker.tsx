@@ -6,9 +6,12 @@ import {
   type CSSProperties,
   type ElementRef,
   type ReactNode,
+  type PointerEvent,
 } from "react";
 import { Spinner } from "../feedback/Spinner.js";
 import { mergeClassNames } from "../shared/merge-class-names.js";
+import { SceneArtwork } from "../theme-scene/SceneArtwork.js";
+import type { LingBuiltInSceneId } from "../theme/types.js";
 
 export interface ThemePickerSwatch {
   readonly accent: string;
@@ -29,6 +32,7 @@ export interface ThemePickerOption {
   readonly disabledReason?: ReactNode;
   readonly id: string;
   readonly name: string;
+  readonly scene?: LingBuiltInSceneId;
   readonly sourceLabel?: ReactNode;
   readonly swatch: ThemePickerSwatch;
 }
@@ -91,12 +95,22 @@ export const ThemePicker = forwardRef<
               className="ling-ui-theme-option"
               data-active={active || undefined}
               data-applying={applying || undefined}
+              data-has-scene={option.scene ? "true" : undefined}
               data-theme-option-id={option.id}
               disabled={option.disabled}
               title={typeof option.disabledReason === "string" ? option.disabledReason : undefined}
               value={option.id}
+              onPointerMove={trackSpotlight}
+              onPointerLeave={(event) => clearSpotlight(event.currentTarget)}
+              onBlur={(event) => clearSpotlight(event.currentTarget)}
             >
-              <ThemeOptionSwatch swatch={option.swatch} />
+              {option.scene ? (
+                <span className="ling-ui-theme-option-scene" aria-hidden="true">
+                  <SceneArtwork compact scene={option.scene} />
+                </span>
+              ) : (
+                <ThemeOptionSwatch swatch={option.swatch} />
+              )}
               <span className="ling-ui-theme-option-body">
                 <span className="ling-ui-theme-option-copy">
                   <strong>{option.name}</strong>
@@ -124,6 +138,22 @@ export const ThemePicker = forwardRef<
     </ToggleGroupPrimitive.Root>
   );
 });
+
+function trackSpotlight(event: PointerEvent<HTMLButtonElement>): void {
+  if (event.currentTarget.disabled || event.pointerType === "touch"
+    || window.matchMedia("(prefers-reduced-motion: reduce), (forced-colors: active)").matches) return;
+  const target = event.currentTarget;
+  const bounds = target.getBoundingClientRect();
+  target.style.setProperty("--ling-spot-x", `${event.clientX - bounds.left}px`);
+  target.style.setProperty("--ling-spot-y", `${event.clientY - bounds.top}px`);
+  target.dataset.spotlight = "true";
+}
+
+function clearSpotlight(target: HTMLButtonElement): void {
+  delete target.dataset.spotlight;
+  target.style.removeProperty("--ling-spot-x");
+  target.style.removeProperty("--ling-spot-y");
+}
 
 function ThemeOptionSwatch({ swatch }: { readonly swatch: ThemePickerSwatch }): React.JSX.Element {
   const style = {

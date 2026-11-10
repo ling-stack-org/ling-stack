@@ -17,13 +17,61 @@ export type ApprovalActionType =
   | "credential_change"
   | "provider_change"
   | "workflow_step"
+  | "workflow_merge"
   | "mcp_tool_call"
+  | "host_capability"
   | "runtime_permission_request";
+
+export const approvalActionTypes: readonly ApprovalActionType[] = [
+  "read", "grep", "find", "ls", "write", "edit", "bash", "git_commit", "git_push", "external_send",
+  "deploy", "media_cost", "credential_change", "provider_change", "workflow_step", "workflow_merge",
+  "mcp_tool_call", "host_capability", "runtime_permission_request",
+];
 
 export type ApprovalRisk = "low" | "medium" | "high" | "critical";
 
 export type ApprovalStatus = "pending" | "approved" | "denied" | "expired" | "cancelled";
 export type LingApprovalCheckpointStatus = ApprovalStatus | "resume_pending" | "resumed" | "resume_failed";
+export type ApprovalDecisionKind = "approve_once" | "approve_command_rule" | "approve_permission_scope" | "deny";
+
+export type NativePermissionTarget =
+  | { readonly kind: "path"; readonly path: string }
+  | { readonly kind: "glob"; readonly pattern: string }
+  | { readonly kind: "special"; readonly name: "root" | "minimal" | "project_roots" | "tmpdir" | "slash_tmp"; readonly subpath?: string };
+
+export type NativePermissionResource =
+  | { readonly kind: "network"; readonly access: "connect" }
+  | { readonly kind: "filesystem"; readonly access: "read" | "write" | "deny"; readonly target: NativePermissionTarget };
+
+/** A normalized proposal, not an engine wire response or a reusable Ling runtime grant. */
+export interface NativePermissionRequestPayload {
+  readonly type: "native_permission_request";
+  readonly version: 1;
+  readonly scope: "turn";
+  readonly cwd: string;
+  readonly reason: string;
+  readonly resources: readonly NativePermissionResource[];
+  readonly fileSystemScanDepth?: number;
+}
+
+export interface ApprovalCommandRuleProposal {
+  readonly prefix: readonly string[];
+  readonly display: string;
+  readonly fingerprint: string;
+  readonly version: 1;
+  /** Original command directory; reuse never authorizes another directory. */
+  readonly cwd?: string;
+}
+
+export interface ApprovalCommandRule extends ApprovalCommandRuleProposal {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly toolName: "bash";
+  readonly sourceApprovalId?: string;
+  readonly createdBy: "local-user";
+  readonly createdAt: string;
+  readonly revokedAt?: string;
+}
 
 export interface RunnerResumeHandle {
   readonly kind: "ling_continuation" | "runner_native";
@@ -33,6 +81,20 @@ export interface RunnerResumeHandle {
   readonly handleRef?: string;
   readonly payload?: Record<string, unknown>;
   readonly verified?: boolean;
+}
+
+export interface ApprovalResumeBasisV1 {
+  readonly schemaVersion: 1;
+  readonly approvalId: string;
+  readonly runId: string;
+  readonly workUnitId: string;
+  readonly priorAttemptId: string;
+  readonly workflowStepId?: string;
+  readonly toolCallId: string;
+  readonly actionType: ApprovalActionType;
+  readonly sideEffectFingerprint: string;
+  readonly delegatedRequirementFingerprint?: string;
+  readonly fingerprint: string;
 }
 
 export interface ApprovalRequest {
@@ -53,8 +115,12 @@ export interface ApprovalRequest {
   readonly createdAt: string;
   readonly expiresAt?: string;
   readonly resolvedAt?: string;
-  readonly resolvedBy?: "local-user";
+  readonly resolvedBy?: "local-user" | "system-reviewer";
   readonly decisionReason?: string;
+  readonly availableDecisions?: readonly ApprovalDecisionKind[];
+  readonly proposedCommandRule?: ApprovalCommandRuleProposal;
+  readonly decisionKind?: ApprovalDecisionKind;
+  readonly decisionRuleId?: string;
 }
 
 export interface LingApprovalCheckpoint {
@@ -75,6 +141,8 @@ export interface LingApprovalCheckpoint {
   readonly sideEffect: unknown;
   readonly previewArtifactIds: readonly string[];
   readonly resultArtifactIds: readonly string[];
+  readonly revision: number;
+  readonly resumeBasis?: ApprovalResumeBasisV1;
   readonly runnerResumeHandle?: RunnerResumeHandle;
   readonly createdAt: string;
   readonly updatedAt: string;
@@ -88,13 +156,45 @@ export interface ApprovalListResponse {
   readonly approvals: readonly ApprovalRequest[];
 }
 
+/** Read-only projection of the existing approval and its durable follow-up work. */
+export interface ApprovalDetailResponse {
+  readonly approval: ApprovalRequest;
+  readonly postCommitEffects?: readonly {
+    readonly approvalId: string;
+    readonly effectKind: "decision_event" | "owner" | "control_plane_event";
+    readonly ownerKind?: "run" | "workflow_step" | "media_job" | "external_work_action";
+    readonly ownerId?: string;
+    readonly status: "pending" | "claimed" | "completed" | "blocked" | "effect_unknown";
+    readonly revision: number;
+    readonly attempts: number;
+    readonly lastErrorCode?: string;
+    readonly updatedAt: string;
+  }[];
+}
+
 export interface ApprovalMutationResponse {
   readonly approval: ApprovalRequest;
   readonly mediaJob?: MediaJob;
+  /** Decision is durable, but a downstream projection needs reconciliation. */
+  readonly postCommit?: {
+    readonly status: "deferred";
+    readonly code: "approval_postcommit_reconciliation_required";
+  };
 }
 
 export interface ResolveApprovalRequest {
   readonly reason?: string;
+  readonly decisionKind?: Exclude<ApprovalDecisionKind, "deny">;
+  readonly proposedRuleFingerprint?: string;
+}
+
+export interface ApprovalCommandRuleListResponse {
+  readonly cwd: string;
+  readonly rules: readonly ApprovalCommandRule[];
+}
+
+export interface ApprovalCommandRuleMutationResponse {
+  readonly rule: ApprovalCommandRule;
 }
 
 export type ApprovalToolDecision = "allow" | "ask" | "deny";

@@ -1,6 +1,19 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { collectLocalFileReferences, parseMessageBody, splitInlineTokens } from "../dist/index.js";
+import { collectLocalFileReferences, parseLocalFileReference, parseMessageBody, splitInlineTokens } from "../dist/index.js";
+
+test("relative file display resolves dot segments without granting outside paths workspace status", () => {
+  const cwd = "/workspace/ling-stack";
+  for (const path of ["docs/public.txt", "./docs/public.txt", "docs/../src/a.ts:12", "."]) {
+    assert.equal(parseLocalFileReference(path, cwd).insideWorkspace, true, path);
+  }
+  for (const path of ["../outside.txt", "docs/../../outside.txt#L7", "..", "~/outside.txt"]) {
+    const reference = parseLocalFileReference(path, cwd);
+    assert.equal(reference.insideWorkspace, false, path);
+    assert.equal(reference.raw, path);
+  }
+  assert.equal(parseLocalFileReference("docs/public.txt").insideWorkspace, false);
+});
 
 test("message body keeps html closing tags as text instead of file chips", () => {
   const tokens = splitInlineTokens("Rich <script>window.__ling_p5_xss = true</script>", "/workspace/ling-stack");
@@ -76,6 +89,33 @@ test("message body renders raw HTML as text and drops unsafe link destinations",
   });
 });
 
+test("message body does not absorb Chinese prose after a bare URL", () => {
+  const blocks = parseMessageBody(
+    "一个网页链接 https://example.com；以及本地文件路径 /workspace/ling-stack/todo.py。",
+    "/workspace/ling-stack",
+  );
+
+  assert.equal(blocks[0]?.kind, "paragraph");
+  assert.deepEqual(blocks[0].inlines.filter((token) => token.kind === "web_link"), [
+    { kind: "web_link", href: "https://example.com", label: "https://example.com" },
+  ]);
+  assert.equal(blocks[0].inlines.filter((token) => token.kind === "text").map((token) => token.text).join(""),
+    "一个网页链接 ；以及本地文件路径 。");
+  assert.equal(blocks[0].inlines.find((token) => token.kind === "local_file")?.reference.displayPath, "todo.py");
+
+  assert.deepEqual(splitInlineTokens("https://example.com。请继续"), [
+    { kind: "web_link", href: "https://example.com", label: "https://example.com" },
+    { kind: "text", text: "。请继续" },
+  ]);
+});
+
+test("message body preserves an explicitly linked internationalized URL", () => {
+  assert.deepEqual(parseMessageBody("[文档](https://example.com/中文)"), [{
+    kind: "paragraph",
+    inlines: [{ kind: "web_link", href: "https://example.com/中文", label: "文档" }],
+  }]);
+});
+
 test("message body preserves mentions and workspace file references inside Markdown", () => {
   const blocks = parseMessageBody(
     "**@QA** inspect [App.tsx](/workspace/ling-stack/apps/web/src/App.tsx#L20)",
@@ -103,4 +143,24 @@ test("message body collects unique file references from nested structured blocks
     "apps/web/src/App.tsx#L10",
     "docs/design/conversation-shared-capabilities.md",
   ]);
+});
+
+test("local Markdown links retain the authored label and paths containing spaces and Chinese", () => {
+  const blocks = parseMessageBody("[下载工程包](</Users/test/光明乳业/delivery/新版 工程.zip>)", "/workspace");
+  const reference = collectLocalFileReferences(blocks)[0];
+  assert.equal(reference.label, "下载工程包");
+  assert.equal(reference.raw, "/Users/test/光明乳业/delivery/新版 工程.zip");
+  assert.equal(reference.insideWorkspace, false);
+  const inline = splitInlineTokens("[source](/workspace/src/main.py:12)", "/workspace").find((token) => token.kind === "local_file");
+  assert.equal(inline.reference.label, "source");
+  assert.equal(inline.reference.location, ":12");
+});
+
+test("message tokenization trims long punctuation runs in linear boundary helpers", () => {
+  const punctuation = "!".repeat(100_000);
+  const tokens = splitInlineTokens(`https://example.com/docs${punctuation} src/index.ts${punctuation}`, "/workspace/ling-stack");
+  const link = tokens.find((token) => token.kind === "web_link");
+  const file = tokens.find((token) => token.kind === "local_file");
+  assert.equal(link?.kind === "web_link" ? link.href : undefined, "https://example.com/docs");
+  assert.equal(file?.kind === "local_file" ? file.reference.displayPath : undefined, "src/index.ts");
 });

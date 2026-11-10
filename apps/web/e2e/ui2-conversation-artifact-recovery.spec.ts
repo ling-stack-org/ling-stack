@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page, type Route } from "@playwright/test";
-import type { RunWorkspaceChangesResponse } from "@ling-stack/contracts";
+import type { TurnWorkspaceChangesResponse } from "@ling-stack/contracts";
 import {
   installChannelWorkCellFixture,
 } from "./support/conversation-work-cell-fixture";
@@ -27,11 +27,11 @@ test("artifact Undo and Reapply use one guarded recovery Dialog and refresh stat
   const mutationGate = new Promise<void>((resolve) => {
     releaseMutation = resolve;
   });
-  await installRecoveryRoute(page, fixture.runId, async (route, action) => {
+  await installRecoveryRoute(page, fixture, async (route, action) => {
     mutationCalls += 1;
     await mutationGate;
     state = action === "undo" ? "undone" : "applied";
-    await route.fulfill({ json: recoveryResponse(fixture.runId, state) });
+    await route.fulfill({ json: recoveryResponse(fixture, state) });
   }, () => state);
 
   await page.goto("/");
@@ -104,7 +104,7 @@ test("artifact recovery failure stays actionable in a dark reduced-motion Dialog
   await mockDaemon(page, fixture.state);
   let state: RecoveryState = "applied";
   let mutationCalls = 0;
-  await installRecoveryRoute(page, fixture.runId, async (route, action) => {
+  await installRecoveryRoute(page, fixture, async (route, action) => {
     mutationCalls += 1;
     if (mutationCalls <= 2) {
       await route.fulfill({
@@ -114,7 +114,7 @@ test("artifact recovery failure stays actionable in a dark reduced-motion Dialog
       return;
     }
     state = action === "undo" ? "undone" : "applied";
-    await route.fulfill({ json: recoveryResponse(fixture.runId, state) });
+    await route.fulfill({ json: recoveryResponse(fixture, state) });
   }, () => state);
 
   await page.goto("/");
@@ -164,15 +164,89 @@ function installRecoveryFixture(state: MockState, suffix: string): {
   readonly runId: string;
   readonly state: MockState;
   readonly threadId: string;
+  readonly turnId: string;
 } {
   const { runId, threadId } = installChannelWorkCellFixture(state, `artifact_recovery_${suffix}`);
+  const turnId = state.turnRunLinks.find((link) => link.runId === runId)?.turnId;
+  if (!turnId) throw new Error(`Recovery fixture must link run ${runId} to a Turn`);
   const createdAt = "2026-07-26T02:00:00.000Z";
   const artifacts: MockArtifact[] = [
     diffArtifact(runId, `artifact_recovery_${suffix}_tsx`, "src/RecoverySurface.tsx", createdAt),
     diffArtifact(runId, `artifact_recovery_${suffix}_css`, "src/recovery-surface.css", createdAt),
   ];
   state.artifactsByRun[runId] = artifacts;
-  return { runId, state, threadId };
+  state.terminalReports = [{
+    schemaVersion: 1,
+    id: `terminal_report_artifact_recovery_${suffix}`,
+    generation: 1,
+    resultItemId: `result_terminal_report:artifact_recovery_${suffix}`,
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    threadId,
+    turnId,
+    source: { kind: "turn", id: turnId },
+    status: "committed",
+    language: "en-US",
+    outcome: {
+      status: "succeeded",
+      title: "Recovery fixture completed",
+      summary: "Workspace changes are available for guarded recovery.",
+      corrections: [],
+      sourceRefs: [{ kind: "run", id: runId, visibility: "conversation" }],
+    },
+    changes: [{
+      id: `change_artifact_recovery_${suffix}`,
+      kind: "code",
+      title: "Edited 2 files",
+      summary: "Updated the recovery surface and its styles.",
+      paths: artifacts.map((artifact) => artifact.path).filter((path): path is string => Boolean(path)),
+      addedLines: 2,
+      deletedLines: 2,
+      sourceRefs: [],
+    }],
+    verification: [],
+    participants: [],
+    artifacts: [],
+    risks: [],
+    references: [],
+    evidenceSnapshotId: `snapshot_artifact_recovery_${suffix}`,
+    evidenceFingerprint: `fingerprint_artifact_recovery_${suffix}`,
+    synthesis: {
+      mode: "deterministic_fallback",
+      promptVersion: "terminal-report-v1",
+      attemptCount: 0,
+      validationCodes: [],
+    },
+    createdAt,
+    committedAt: "2026-07-26T02:01:00.000Z",
+  }];
+  state.channelConversationItemExtras = [...(state.channelConversationItemExtras ?? []), {
+    schemaVersion: 1,
+    id: `result_terminal_report:artifact_recovery_${suffix}`,
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    threadId,
+    turnId,
+    sequence: 2,
+    kind: "terminal_report",
+    status: "committed",
+    actorType: "host",
+    visibility: "channel",
+    payload: {
+      reportId: `terminal_report_artifact_recovery_${suffix}`,
+      generation: 1,
+      sourceKind: "turn",
+      sourceId: turnId,
+      evidenceFingerprint: `fingerprint_artifact_recovery_${suffix}`,
+      outcomeStatus: "succeeded",
+    },
+    domainRefs: [{ type: "terminal_report", id: `terminal_report_artifact_recovery_${suffix}` }, { type: "turn", id: turnId }],
+    revision: 1,
+    createdAt,
+    updatedAt: "2026-07-26T02:01:00.000Z",
+    committedAt: "2026-07-26T02:01:00.000Z",
+  }];
+  return { runId, state, threadId, turnId };
 }
 
 function diffArtifact(runId: string, id: string, path: string, createdAt: string): MockArtifact {
@@ -199,28 +273,34 @@ function diffArtifact(runId: string, id: string, path: string, createdAt: string
 
 async function installRecoveryRoute(
   page: Page,
-  runId: string,
+  fixture: Pick<ReturnType<typeof installRecoveryFixture>, "runId" | "threadId" | "turnId">,
   onMutation: (route: Route, action: "undo" | "reapply") => Promise<void>,
   readState: () => RecoveryState,
 ): Promise<void> {
-  await page.route(new RegExp(`/runs/${runId}/workspace-changes(?:/(undo|reapply))?(?:\\?.*)?$`, "u"), async (route) => {
+  await page.route(new RegExp(`/turns/${fixture.turnId}/workspace-changes(?:/(undo|reapply))?(?:\\?.*)?$`, "u"), async (route) => {
     const path = new URL(route.request().url()).pathname;
     const action = path.endsWith("/undo") ? "undo" : path.endsWith("/reapply") ? "reapply" : undefined;
     if (route.request().method() === "POST" && action) {
       await onMutation(route, action);
       return;
     }
-    await route.fulfill({ json: recoveryResponse(runId, readState()) });
+    await route.fulfill({ json: recoveryResponse(fixture, readState()) });
   });
 }
 
-function recoveryResponse(runId: string, state: RecoveryState): RunWorkspaceChangesResponse {
+function recoveryResponse(
+  fixture: Pick<ReturnType<typeof installRecoveryFixture>, "runId" | "threadId" | "turnId">,
+  state: RecoveryState,
+): TurnWorkspaceChangesResponse {
   return {
     cwd,
-    runId,
+    threadId: fixture.threadId,
+    turnId: fixture.turnId,
+    runIds: [fixture.runId],
     state,
     canUndo: state === "applied",
     canReapply: state === "undone",
+    provenanceComplete: true,
     files: [
       { path: "src/RecoverySurface.tsx", operationCount: 1, additions: 1, deletions: 1 },
       { path: "src/recovery-surface.css", operationCount: 1, additions: 1, deletions: 1 },
@@ -240,17 +320,25 @@ function recoveryResponse(runId: string, state: RecoveryState): RunWorkspaceChan
 
 async function openRecoverySurface(page: Page, threadId: string): Promise<Locator> {
   await openEngineeringChannel(page);
-  const workCell = page.getByLabel("Channel message feed")
-    .locator(`.conversation-work-cell[data-thread-id="${threadId}"]`);
-  await expect(workCell).toBeVisible();
-  const shellToggle = workCell.locator(".conversation-operation-shell-head");
-  if (await shellToggle.getAttribute("aria-expanded") === "false") {
-    await shellToggle.click();
+  const timeline = page.getByLabel("Channel message feed")
+    .locator(`[data-conversation-timeline="true"][data-conversation-thread-id="${threadId}"][data-conversation-timeline-depth="0"]`);
+  await expect(timeline).toBeVisible();
+  const report = timeline.locator('[data-conversation-timeline-kind="terminalReport"]');
+  await expect(report).toBeVisible();
+  await expect(report).toHaveAttribute("data-conversation-turn-id", `turn_ui2_work_cell_${threadId.replace("thread_ui2_work_cell_", "")}`);
+  const reportToggle = report.locator(".conversation-timeline-activity-main");
+  if (await reportToggle.getAttribute("aria-expanded") === "false") {
+    await reportToggle.click();
   }
-  const surface = workCell.locator(".conversation-work-cell-change-group");
+  const surface = report.locator('[data-terminal-report-section="changes"]');
   await expect(surface).toBeVisible();
   await expect(surface).toContainText("Edited 2 files");
-  return surface;
+  await expect(surface.getByTitle("src/RecoverySurface.tsx")).toBeVisible();
+  await expect(surface.getByTitle("src/recovery-surface.css")).toBeVisible();
+  await expect(surface.getByRole("button", { name: "Undo", exact: true })).toHaveCount(0);
+  const recovery = timeline.locator("[data-conversation-response-files]");
+  await expect(recovery.getByRole("button", { name: "Undo", exact: true })).toHaveCount(1);
+  return recovery;
 }
 
 async function prepareSurface(page: Page, input: {

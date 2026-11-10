@@ -18,16 +18,14 @@ import { useI18n } from "../../i18n.js";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import { attachmentCanPreview, loadPreviewContent } from "../../lib/previews.js";
-import { canUseProviderForRun } from "../../lib/providers.js";
+import { canUseProviderForRun, providerCompactModelLabel } from "../../lib/providers.js";
 import { buildRunRepairHint, displayLinkedRunStatus } from "../../lib/run-evidence.js";
 import {
   buildLocalEffectivePolicyPreview,
   formatToolDecisionGroups,
   inferPermissionPreset,
-  permissionModeForPreset,
   permissionPresetDescription,
   permissionPresetLabel,
-  permissionPresetOptions,
   sessionPermissionModeDescription,
   summarizeEffectivePolicySnapshot,
 } from "../../lib/session-permissions.js";
@@ -40,8 +38,6 @@ import {
   EmptyState,
   InlineFeedback,
   InspectorSection,
-  SegmentedControl,
-  SegmentedControlItem,
   StatusIndicator,
 } from "../../shared/ui/index.js";
 import { ApprovalCard } from "../approvals/ApprovalCard.js";
@@ -98,6 +94,7 @@ export function TaskDetailPanel({
   onCheckThenRunTask,
   onRunTask,
   onPermissionModeChange,
+  onOpenSandboxSettings,
   onCancelActiveRun,
   onOpenRun,
   onOpenApprovals,
@@ -137,6 +134,7 @@ export function TaskDetailPanel({
   readonly onCheckThenRunTask: (task: Task) => void;
   readonly onRunTask: (task: Task) => void;
   readonly onPermissionModeChange: (mode: SessionPermissionMode) => void;
+  readonly onOpenSandboxSettings: () => void;
   readonly onCancelActiveRun: (run?: RunSession) => void;
   readonly onOpenRun: (runId: string) => void;
   readonly onOpenApprovals: (runId?: string) => void;
@@ -231,7 +229,7 @@ export function TaskDetailPanel({
 
       <div className="channel-task-meta" aria-label={t("Task context")}>
         <span><Hash size={13} />{taskChannel?.name ?? task.channelId}</span>
-        <span><Command size={13} />{effectiveProvider?.displayName ?? t("No model selected")}</span>
+        <span><Command size={13} />{effectiveProvider ? providerCompactModelLabel(effectiveProvider) : t("No model selected")}</span>
         <span><Clock3 size={13} />{formatDateTime(task.updatedAt)}</span>
         {task.requestedSkillId ? <span><SquareTerminal size={13} />{task.requestedSkillId}</span> : null}
       </div>
@@ -348,19 +346,8 @@ export function TaskDetailPanel({
 
       <InspectorSection title={t("Permissions")} summary={permissionPresetLabel(resolvedPermissionPreset, t)}>
         <div className="channel-task-permission-content">
-          <SegmentedControl
-            aria-label={t("Permission preset")}
-            value={resolvedPermissionPreset}
-            onValueChange={(preset) => onPermissionModeChange(permissionModeForPreset(preset as PermissionPreset))}
-            size="sm"
-          >
-            {permissionPresetOptions.map((preset) => (
-              <SegmentedControlItem key={preset} value={preset} disabled={isRunning || taskActionPending}>
-                {permissionPresetLabel(preset, t)}
-              </SegmentedControlItem>
-            ))}
-          </SegmentedControl>
           <p>{permissionPresetDescription(resolvedPermissionPreset, t)}</p>
+          <Button size="sm" variant="ghost" onClick={onOpenSandboxSettings}>{t("Sandbox settings")}</Button>
           <details className="channel-task-permission-preview">
             <summary>{t("Preview permissions")}</summary>
             <div>

@@ -6,7 +6,76 @@ open-source baseline onward.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and future
 release versions will follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.3] - 2026-11-09
+
+### Changed
+
+- **Daemon CI balances the full Daemon suite across six macOS shards with up to four concurrent isolated file workers per shard** while retaining full coverage and native-platform checks.
+
+## [0.2.2] - 2026-11-03
+
+### Changed
+
+- Pull requests run checks affected by their complete change set, avoiding unrelated
+  test suites while retaining full regression for shared infrastructure and scheduled
+  or manual runs. The CI maintenance guide documents the selection rules.
+- Daemon validation avoids repeated workspace setup and idle file workers without
+  reducing recovery, security or native-platform coverage.
+
+### Fixed
+
+- Selected CI checks fail when skipped or missing, preventing incomplete validation
+  from appearing successful.
+
+## [0.2.1] - 2026-11-02
+
+### Fixed
+
+- Active replies and their Stop controls are available after the workspace first loads, without a manual refresh.
+
+## [0.2.0] - 2026-10-30
+
+### Added
+
+- Conversation side navigation previews each sender's avatar, name and message
+  excerpt, and jumps through loaded history with mouse or keyboard controls.
+- Channels now organize multiple independent conversations. Create, rename, archive
+  and restore conversations while keeping each conversation's history, drafts,
+  running work and approval confirmations separate; the original channel chat
+  remains available as the default conversation.
+
+- Model reasoning controls support distinct `max` and `ultra` levels when the
+  selected model declares them, and explain changes to a supported default when
+  switching models.
+- Unified workspace summaries show sessions, net Git changes, recent commits, and
+  linked pull requests in the existing Summary panel. Change details open in the
+  current conversation's right review drawer.
+
+### Changed
+
+- Conversation activity keeps safe thinking summaries and active commands visible,
+  groups completed operations by category, and folds a finished turn behind its
+  elapsed time while keeping the final answer and files outside the fold.
+- Context compaction shows its running state and result as an independent row
+  across normal conversations, teammate private chats, and channels.
+- Normal conversations now combine model selection and reasoning strength in one
+  compact popover, with three approval shortcuts beside the input. Sandbox and
+  independent authorization defaults remain in Settings.
+- Simplified the public README and added source setup, troubleshooting, and platform
+  development-package instructions with a fresh workspace screenshot.
+
+### Fixed
+
+- Notification, IM, diagnostics and startup services reject untrusted web origins;
+  the desktop accesses these local services through its trusted main window.
+
+- Source setup now documents and checks Rust/Cargo requirements, and doctor suggests
+  the source CLI command when invoked through pnpm.
+- Built-in skills no longer show epoch placeholder dates. Chinese skill metadata,
+  permission menu labels, and the QA role now stay translated.
+- Run history retains its lazy-loaded Web chunk.
+- Desktop packaging now starts the installed Electron Builder CLI directly with Node,
+  avoiding Windows `.cmd` shim execution failures while preserving governed arguments.
 
 ## [0.1.2-alpha.1] - 2026-08-27
 

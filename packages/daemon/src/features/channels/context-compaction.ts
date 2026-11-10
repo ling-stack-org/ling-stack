@@ -70,7 +70,11 @@ export async function compactChannelDiscussionForNoToolsRetry(input: {
   readonly inputBudgetTokens: number;
   readonly now: string;
 }): Promise<ChannelDiscussionCompactionResult> {
-  const result = await coordinateConversationContextSummary({
+  // Preserve the provider's actual positive input capacity. A smaller real
+  // budget is not an invitation to invent capacity; the caller still gates
+  // the rendered retry.
+  const result = Number.isSafeInteger(input.inputBudgetTokens) && input.inputBudgetTokens >= 1
+    ? await coordinateConversationContextSummary({
     store: input.store,
     sourceItemId: input.sourceMessage.id,
     inputBudgetTokens: input.inputBudgetTokens,
@@ -84,8 +88,8 @@ export async function compactChannelDiscussionForNoToolsRetry(input: {
     },
     generate: emergencySummaryDraft,
     now: input.now,
-  });
-  const summary = result.status === "completed" && result.commit.status === "committed"
+  }) : undefined;
+  const summary = result?.status === "completed" && result.commit.status === "committed"
     ? result.commit.summary
     : selectActiveSegmentSummary(input.store, input.sourceMessage.id);
   const sourceMessages = selectChannelSummaryMessages(input.store, input.channel, input.sourceMessage);

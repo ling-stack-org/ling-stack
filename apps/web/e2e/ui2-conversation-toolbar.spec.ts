@@ -23,6 +23,7 @@ for (const fixture of [
       id: "provider_ui2_conversation_toolbar",
       displayName: "Local Relay",
       model: "gpt-5.5",
+      lastCheck: { ok: true, message: "Ready", checkedAt: "2026-07-24T03:00:00.000Z" },
     })];
     state.aiTeammates = [createMockTeammate({
       id: "teammate_ui2_conversation_toolbar",
@@ -36,7 +37,7 @@ for (const fixture of [
     await expectToolbarContract(channelToolbar, ["search", "teammates", "summary", "terminal", "details"]);
     await captureEvidence(page, `${fixture.width}x${fixture.height}-ling-${fixture.theme}-channel-toolbar.png`);
 
-    await page.getByLabel("Ling Stack navigation").getByRole("button", { name: teammateName }).click();
+    await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: teammateName }).click();
     const teammateToolbar = page.getByRole("toolbar", { name: "Private chat actions" });
     await expectToolbarContract(teammateToolbar, ["search", "summary", "terminal", "details"]);
     await teammateToolbar.getByRole("button", { name: "Search" }).hover();
@@ -44,13 +45,13 @@ for (const fixture of [
     await page.mouse.move(0, 0);
     await captureEvidence(page, `${fixture.width}x${fixture.height}-ling-${fixture.theme}-teammate-toolbar.png`);
 
-    await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "New conversation" }).click();
+    await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "New conversation", exact: true }).click();
     const home = page.getByLabel("Conversation home");
     await home.getByRole("textbox", { name: "Conversation message" }).fill("Verify the shared conversation toolbar");
     await home.getByRole("button", { name: "Send" }).click();
     const conversationToolbar = page.getByRole("toolbar", { name: "Conversation workspace toolbar" });
     await expectToolbarContract(conversationToolbar, ["search", "summary", "terminal", "details"]);
-    const summary = conversationToolbar.getByRole("button", { name: "Summary" });
+    const summary = conversationToolbar.getByRole("button", { name: "Summary", exact: true });
     await summary.click();
     await expect(summary).toHaveAttribute("aria-pressed", "true");
     await expect(page.locator(".normal-conversation-summary-popover")).toBeVisible();

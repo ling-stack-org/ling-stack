@@ -8,10 +8,16 @@ import { SkillEvolutionSection } from "./SkillEvolutionSection.js";
 import { SkillImportDialog } from "./SkillImportDialog.js";
 import { SkillLibraryNavigation } from "./SkillLibraryNavigation.js";
 import { SkillLibraryRegistrySection } from "./SkillLibraryRegistrySection.js";
+import { SharedSkillSourcesSection } from "./SharedSkillSourcesSection.js";
 import { useSkillEditorController } from "./useSkillEditorController.js";
 import { useSkillImportController } from "./useSkillImportController.js";
 import { useSkillLibraryActionsController } from "./useSkillLibraryActionsController.js";
 import { useSkillLibraryDataController } from "./useSkillLibraryDataController.js";
+import { isEvolvedSkillEntry } from "./skill-editor-utils.js";
+import { LearningReviewDisclosure } from "../../shared/components/learning/LearningReviewPanel.js";
+import { useSharedSkillSourcesController } from "./useSharedSkillSourcesController.js";
+import { useWorkflowTemplateAuthoringController } from "./workflow-template-authoring-controller.js";
+import { WorkflowTemplateDiscardDialog, WorkflowTemplatesSection } from "./WorkflowTemplatesSection.js";
 
 export function SkillLibrarySettingsPanel({
   cwd,
@@ -40,12 +46,15 @@ export function SkillLibrarySettingsPanel({
     onSuccess: (message) => showToast({ message, scope: "skill:editor", tone: "success" }),
     onCompleted: async ({ skills, candidateId, mode }) => {
       await data.refresh();
-      if (candidateId || mode === "candidate") {
+      if (mode === "revision" && skills[0]) {
+        const evolved = isEvolvedSkillEntry(skills[0]);
+        data.changeSection(evolved ? "evolution" : "mine");
+        if (evolved) data.setEvolutionView("generated");
+        data.setSelectedSkillId(skills[0].id);
+      } else if (candidateId || mode === "candidate") {
         data.changeSection("evolution");
         data.setEvolutionView("generated");
         data.setSelectedSkillId(skills[0]?.id ?? "");
-      } else if (mode === "revision" && skills[0]) {
-        data.setSelectedSkillId(skills[0].id);
       } else {
         data.changeSection("mine");
         data.setSelectedSkillId(skills[0]?.id ?? "");
@@ -53,6 +62,19 @@ export function SkillLibrarySettingsPanel({
     },
   });
   const actions = useSkillLibraryActionsController({ data, editor: skillEditor, showToast, t });
+  const sharedSources = useSharedSkillSourcesController({
+    cwd,
+    active: data.activeSubsection === "local",
+    refreshToken,
+    onPublished: async () => {
+      await data.refresh();
+      showToast({ message: t("Selected skill sources published. Teammate bindings and runtime injection are unchanged."), scope: "skill:shared-source", tone: "success" });
+    },
+  });
+  const workflowTemplates = useWorkflowTemplateAuthoringController({
+    cwd, active: data.activeSubsection === "workflow-templates", refreshToken, t,
+    onSuccess: (message) => showToast({ message, scope: "workflow-template:authoring", tone: "success" }),
+  });
 
   const commonRegistryProps = {
     skills: data.skills,
@@ -77,6 +99,7 @@ export function SkillLibrarySettingsPanel({
     onPreviewOptimization: actions.previewSelectedSkillOptimization,
     onArchiveSource: actions.archiveSourceSnapshot,
     onRollbackSource: actions.rollbackSelectedSkillSource,
+    onDefinitionChanged: async () => { await data.refresh(); },
     t,
   } as const;
 
@@ -91,13 +114,15 @@ export function SkillLibrarySettingsPanel({
       <SkillLibraryNavigation
         activeSection={data.activeSubsection}
         currentUserCount={data.currentUserCount}
+        localCount={sharedSources.response ? sharedSources.actionableCount : undefined}
         evolutionCount={data.evolutionCount}
         builtinCount={data.ownershipPartition.builtin.length}
-        onSectionChange={data.changeSection}
+        onSectionChange={(section) => workflowTemplates.requestLeave(() => data.changeSection(section))}
       />
 
       {data.loadError ? <InlineFeedback tone="danger">{data.loadError}</InlineFeedback> : null}
       {actions.registryError ? <InlineFeedback tone="danger">{actions.registryError}</InlineFeedback> : null}
+      {data.activeSubsection === "evolution" ? <LearningReviewDisclosure cwd={cwd} onReviewCandidate={actions.adoptCandidate} /> : null}
 
       {data.activeSubsection === "evolution" ? (
         <SkillEvolutionSection
@@ -115,6 +140,10 @@ export function SkillLibrarySettingsPanel({
           onCreatePlaybookCandidate={actions.createPlaybookCandidate}
           onReviewPlaybookCandidate={actions.reviewPlaybook}
         />
+      ) : data.activeSubsection === "local" ? (
+        <SharedSkillSourcesSection controller={sharedSources} t={t} />
+      ) : data.activeSubsection === "workflow-templates" ? (
+        <WorkflowTemplatesSection controller={workflowTemplates} channels={data.channels} teammates={data.teammates} t={t} />
       ) : (
         <SkillLibraryRegistrySection
           {...commonRegistryProps}
@@ -146,6 +175,7 @@ export function SkillLibrarySettingsPanel({
         error={skillEditor.error}
         conflict={skillEditor.conflict}
         preview={skillEditor.preview}
+        beforeDefinition={skillEditor.skill?.definition}
         authorityConfirmation={skillEditor.authorityConfirmation}
         discardConfirmation={skillEditor.discardConfirmation}
         onFormChange={skillEditor.setForm}
@@ -167,6 +197,7 @@ export function SkillLibrarySettingsPanel({
         onConfirm={() => void actions.confirmDeleteSkill()}
         t={t}
       />
+      <WorkflowTemplateDiscardDialog controller={workflowTemplates} t={t} />
     </section>
   );
 }

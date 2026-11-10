@@ -1,6 +1,7 @@
-import { lookup } from "node:dns/promises";
 import type { LingInputExtractor } from "../registry.js";
-import { decidePublicLinkMaterializationPolicy, isLocalOrPrivateHost } from "../policy.js";
+import { decidePublicLinkMaterializationPolicy } from "../policy.js";
+import { preparePinnedPublicHttpRequest, PublicHttpError } from "../../../../shared/public-http-transport.js";
+import { decodeHtmlEntitiesOnce, stripUnreadableHtml } from "../../../../shared/html-text.js";
 
 export const linkBodyExtractorV1: LingInputExtractor = {
   id: "link_body_v1",
@@ -112,75 +113,74 @@ export async function fetchPublicLinkBody(
 ): Promise<FetchPublicLinkBodyResult> {
   let currentUrl = initialUrl;
   for (let redirectCount = 0; redirectCount <= options.redirectLimit; redirectCount += 1) {
-    const policy = await safeAssertPublicUrlAllowed(currentUrl, options.resolveHostAddresses);
+    const policy = decidePublicLinkMaterializationPolicy(currentUrl);
     if (!policy.allowed) {
       return {
         allowed: false,
-        reason: policy.reason,
-        message: policy.message,
+        reason: policy.reason ?? "unsafe_url",
+        message: publicLinkPolicyMessage(policy.reason ?? "unsafe_url"),
         policyDecision: { url: currentUrl, reason: policy.reason, redirectCount },
       };
     }
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
     try {
-      const response = await options.fetch(currentUrl, {
+      const prepared = await preparePinnedPublicHttpRequest(currentUrl, {
         redirect: "manual",
-        signal: controller.signal,
         headers: {
           Accept: "text/html,text/plain,application/json",
           "User-Agent": "LingStackMaterialization/0.1",
         },
-      });
-      if (response.status >= 300 && response.status < 400) {
-        const location = response.headers.get("location");
-        if (!location) {
+      }, { timeoutMs: options.timeoutMs, resolveHostAddresses: options.resolveHostAddresses });
+      try {
+        const response = await prepared.fetch(options.fetch);
+        if (response.status >= 300 && response.status < 400) {
+          const location = response.headers.get("location");
+          if (!location) {
+            return {
+              allowed: false,
+              reason: "redirect_missing_location",
+              message: "Redirect response is missing Location.",
+              policyDecision: { url: currentUrl, redirectCount },
+            };
+          }
+          currentUrl = new URL(location, currentUrl).toString();
+          continue;
+        }
+        if (!response.ok) {
           return {
             allowed: false,
-            reason: "redirect_missing_location",
-            message: "Redirect response is missing Location.",
-            policyDecision: { url: currentUrl, redirectCount },
+            reason: "http_error",
+            message: `Link body fetch failed with HTTP ${response.status}.`,
+            policyDecision: { url: currentUrl, status: response.status, redirectCount },
           };
         }
-        currentUrl = new URL(location, currentUrl).toString();
-        continue;
-      }
-      if (!response.ok) {
+        const contentType = (response.headers.get("content-type") ?? "text/plain").toLowerCase();
+        if (!isSupportedLinkBodyContentType(contentType)) {
+          return {
+            allowed: false,
+            reason: "unsupported_content_type",
+            message: `Link body content type is not supported: ${contentType}.`,
+            policyDecision: { url: currentUrl, contentType, redirectCount },
+          };
+        }
+        const read = await readResponseBody(response, options.maxBytes);
         return {
-          allowed: false,
-          reason: "http_error",
-          message: `Link body fetch failed with HTTP ${response.status}.`,
-          policyDecision: { url: currentUrl, status: response.status, redirectCount },
+          allowed: true,
+          finalUrl: currentUrl,
+          contentType,
+          body: read.body,
+          byteCount: read.byteCount,
+          truncated: read.truncated,
+          redirectCount,
         };
-      }
-      const contentType = (response.headers.get("content-type") ?? "text/plain").toLowerCase();
-      if (!isSupportedLinkBodyContentType(contentType)) {
-        return {
-          allowed: false,
-          reason: "unsupported_content_type",
-          message: `Link body content type is not supported: ${contentType}.`,
-          policyDecision: { url: currentUrl, contentType, redirectCount },
-        };
-      }
-      const read = await readResponseBody(response, options.maxBytes);
-      return {
-        allowed: true,
-        finalUrl: currentUrl,
-        contentType,
-        body: read.body,
-        byteCount: read.byteCount,
-        truncated: read.truncated,
-        redirectCount,
-      };
+      } finally { await prepared.dispose(); }
     } catch (error) {
       return {
         allowed: false,
-        reason: error instanceof DOMException && error.name === "AbortError" ? "timeout" : "fetch_failed",
+        reason: error instanceof PublicHttpError ? error.code :
+          error instanceof DOMException && error.name === "AbortError" ? "timeout" : "fetch_failed",
         message: error instanceof Error ? error.message : String(error),
         policyDecision: { url: currentUrl, redirectCount },
       };
-    } finally {
-      clearTimeout(timeout);
     }
   }
   return {
@@ -189,55 +189,6 @@ export async function fetchPublicLinkBody(
     message: "Link body fetch exceeded redirect limit.",
     policyDecision: { url: currentUrl, redirectLimit: options.redirectLimit },
   };
-}
-
-async function safeAssertPublicUrlAllowed(
-  rawUrl: string,
-  resolveHostAddresses: ((hostname: string) => Promise<readonly string[]>) | undefined,
-): Promise<{ readonly allowed: true } | { readonly allowed: false; readonly reason: string; readonly message: string }> {
-  try {
-    return await assertPublicUrlAllowed(rawUrl, resolveHostAddresses);
-  } catch (error) {
-    return {
-      allowed: false,
-      reason: "dns_failed",
-      message: error instanceof Error ? error.message : String(error),
-    };
-  }
-}
-
-async function assertPublicUrlAllowed(
-  rawUrl: string,
-  resolveHostAddresses: ((hostname: string) => Promise<readonly string[]>) | undefined,
-): Promise<{ readonly allowed: true } | { readonly allowed: false; readonly reason: string; readonly message: string }> {
-  const decision = decidePublicLinkMaterializationPolicy(rawUrl);
-  if (!decision.allowed) {
-    return {
-      allowed: false,
-      reason: decision.reason ?? "unsafe_url",
-      message: publicLinkPolicyMessage(decision.reason ?? "unsafe_url"),
-    };
-  }
-  const hostname = new URL(rawUrl).hostname;
-  const addresses = await (resolveHostAddresses ?? defaultResolveHostAddresses)(hostname);
-  if (addresses.length === 0) {
-    return { allowed: false, reason: "dns_failed", message: `Unable to resolve host: ${hostname}.` };
-  }
-  for (const address of addresses) {
-    if (isLocalOrPrivateHost(address)) {
-      return {
-        allowed: false,
-        reason: "local_or_private_host",
-        message: "Link body extraction blocks local or private network targets.",
-      };
-    }
-  }
-  return { allowed: true };
-}
-
-async function defaultResolveHostAddresses(hostname: string): Promise<readonly string[]> {
-  const addresses = await lookup(hostname, { all: true, verbatim: true });
-  return addresses.map((address) => address.address);
 }
 
 async function readResponseBody(response: Response, maxBytes: number): Promise<{
@@ -292,18 +243,7 @@ function isSupportedLinkBodyContentType(contentType: string): boolean {
 }
 
 export function extractReadableHtmlText(html: string): string {
-  const body = /<body\b[^>]*>([\s\S]*?)<\/body>/iu.exec(html)?.[1] ?? html;
-  return normalizeExtractedText(
-    body
-      .replace(/<script\b[\s\S]*?<\/script>/giu, " ")
-      .replace(/<style\b[\s\S]*?<\/style>/giu, " ")
-      .replace(/<noscript\b[\s\S]*?<\/noscript>/giu, " ")
-      .replace(/<svg\b[\s\S]*?<\/svg>/giu, " ")
-      .replace(/<(?:nav|footer|form|aside)\b[\s\S]*?<\/(?:nav|footer|form|aside)>/giu, " ")
-      .replace(/<br\s*\/?>/giu, "\n")
-      .replace(/<\/(?:p|div|section|article|main|h[1-6]|li|tr)>/giu, "\n")
-      .replace(/<[^>]+>/gu, " "),
-  );
+  return normalizeExtractedText(stripUnreadableHtml(html));
 }
 
 export function normalizeExtractedText(value: string): string {
@@ -316,15 +256,7 @@ export function normalizeExtractedText(value: string): string {
 }
 
 function decodeHtmlEntities(value: string): string {
-  return value
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, "\"")
-    .replace(/&#39;/g, "'")
-    .replace(/&#(\d+);/g, (_match, code: string) => String.fromCodePoint(Number.parseInt(code, 10)))
-    .replace(/&#x([0-9a-f]+);/giu, (_match, code: string) => String.fromCodePoint(Number.parseInt(code, 16)));
+  return decodeHtmlEntitiesOnce(value, { numeric: true });
 }
 
 function publicLinkPolicyMessage(reason: string): string {

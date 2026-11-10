@@ -26,15 +26,17 @@ not need a new design document.
 
 Requirements:
 
-- Node.js 22.15 or newer
+- Git and Node.js 22.22.1 or newer
 - Corepack with pnpm 10
+- Rust 1.89 or newer and Cargo, installed with [rustup](https://rustup.rs/), for the
+  daemon's native image sanitizer; CI uses Rust 1.97.1
 
 ```bash
-git clone https://github.com/tianxiaochannel-oss88/ling-stack.git
+git clone https://github.com/ling-stack-org/ling-stack.git
 cd ling-stack
 corepack enable
-corepack pnpm install
-corepack pnpm build
+corepack pnpm install --frozen-lockfile
+corepack pnpm --workspace-concurrency=1 --filter '@ling-stack/cli...' -r build
 ```
 
 Start the daemon and Web UI in separate terminals:
@@ -44,8 +46,16 @@ corepack pnpm ling daemon start --foreground
 corepack pnpm ling ui --foreground --open
 ```
 
-See [Quick Start From Source](README.md#quick-start-from-source) for ports, health
-checks, desktop development, and local data paths.
+This builds the CLI, daemon, Web app, and their workspace dependencies. Run both
+startup commands from the repository root, each in its own terminal. Follow
+[Getting started](docs/getting-started.md) for model setup and a first conversation,
+and [Troubleshooting](docs/troubleshooting.md) for setup errors. Run `ling doctor`
+after configuring and checking a chat model; an unconfigured workspace reports a
+provider failure.
+
+Desktop development has additional platform requirements: Xcode Command Line Tools
+with Swift and `codesign` on macOS, or the .NET 8 SDK on Windows, plus the Electron
+platform binary. See [Desktop development](README.md#desktop-development).
 
 ## Branches And Pull Requests
 
@@ -85,7 +95,64 @@ only when its description is complete and its claimed validation has actually ru
 - Preserve Chinese and English product coverage together.
 - Do not weaken, skip, or delete tests merely to make a contribution pass.
 
+### UI Components, Modules And Themes
+
+- Read the [Design System](docs/design/ling-design-system.md) and
+  [Shared Component Theme Contract](docs/design/component-theme-presentation.md)
+  before adding UI. A new module's design must include its shared components,
+  appearance tokens/defaults, background surface policy and acceptance states.
+- Reuse shared primitives. New shared components provide semantic appearance
+  parameters and usable defaults; themes override parameters, while feature CSS
+  owns layout. Do not branch on a theme ID or overwrite shared component paint.
+- Check all built-in themes for readability and layout, then exercise the affected
+  states and theme switching. Include current screenshots; distinguish token
+  integration, behavior verification and visual approval.
+
+## Testing Policy
+
+### TypeScript By Default
+
+- For JavaScript/TypeScript modules, write new tests and test helpers in TypeScript by
+  default, using `.test.ts` or the owning suite's `.spec.ts` convention. Use `.tsx`
+  when a test needs JSX. Native-language tests should use their own ecosystem's tools.
+- New or migrated TypeScript tests must be discovered by the owning test runner and
+  included in its type-checking configuration. Wire any separate test typecheck into
+  the package's validation commands and relevant CI gates. Renaming a file, transpiling
+  it, or stripping types at runtime does not establish that it was type-checked.
+- When a package currently runs only `.mjs` tests, add the minimal package-local
+  TypeScript execution and typecheck support with its first TypeScript test, preserving
+  existing coverage and test entrypoints. Keep the existing runner where practical;
+  a repository-wide framework replacement is not required.
+- JavaScript exceptions need a concrete runtime, host, or compatibility constraint,
+  explained in the pull request or a short adjacent comment. An existing `.mjs`-only
+  test glob alone is not a reason to keep adding JavaScript tests.
+
+### Incremental Migration
+
+- Existing `.mjs` tests remain valid. Prefer migrating touched tests as their owning
+  module is maintained, with execution and type checking verified together.
+- Keep migrations scoped to the module and behavior being changed. Do not perform
+  unrelated mass renames, lose test discovery, or reduce coverage during migration.
+
+### Behavior And Independent Contracts
+
+- Prefer tests that exercise observable behavior, invariants, and public boundaries.
+  A source keyword or call-name match alone does not prove runtime behavior or call
+  order. Prioritize improving these assertions when maintaining the owning module.
+- Keep source-inspection tests when they independently guard a declared security,
+  architecture, protocol, package, release, or generated-output contract. Make the
+  protected contract clear; static evidence does not replace required runtime or
+  platform acceptance.
+- Consolidate or remove tests only with evidence that they are redundant, obsolete,
+  or ineffective. Explain what each removed test protected, why its removal is safe,
+  and which retained coverage and focused validation support that conclusion.
+- Do not optimize test counts or language percentages by deleting tests. A preference
+  for TypeScript tests is not a reason to rewrite production modules in Rust.
+
 ## Validation
+
+See [CI maintenance](docs/maintenance/ci.md) for the current workflow, test
+execution and dependency-patch maintenance guides.
 
 For documentation-only changes:
 
@@ -104,6 +171,17 @@ corepack pnpm typecheck
 corepack pnpm test
 corepack pnpm build
 ```
+
+These repository-wide commands include Desktop checks, and `test` also includes
+Mobile checks. They require the relevant platform toolchain and test fixtures;
+use package filters for a scoped change and state which checks ran. The default
+Web setup above does not establish that all native or browser test fixtures are
+available. CI selects and builds the affected package graph separately.
+
+See the [CI maintenance guide](docs/maintenance/ci.md) for PR scope, Draft and
+complete quality gates, scheduled validation, CodeQL scanning, and rerun policy,
+and the [CI test execution reference](scripts/ci/README.md) for test execution
+details.
 
 Web changes should also run:
 
@@ -130,6 +208,28 @@ not replace macOS, Windows, signing, accessibility, or clean-machine evidence.
   or secret handling as an incidental part of another change.
 - Use [SECURITY.md](SECURITY.md) for vulnerability reports. Do not disclose sensitive
   findings in public issues or pull requests.
+
+## README Translations
+
+The English [README](README.md) is the content baseline. Translations live at the
+repository root as `README.<locale>.md`, using the client's BCP 47 locale tags, such
+as `README.ja-JP.md` and `README.pt-BR.md`. README coverage is separate from the
+client's interface language coverage; not every supported locale has a README.
+
+- Translate the overview, source setup, support limits, data and permission guidance,
+  and contribution information. Do not publish an English placeholder as a translation.
+- Preserve shell commands, package names, model identifiers, URLs, and relative asset
+  paths. Keep Alpha status, provider charges, and security boundaries accurate.
+- When changing shared instructions or product scope, update the corresponding passages
+  in existing translations. Natural wording may differ, but factual guidance must agree.
+- Keep the same language navigation in every README. Use each language's own name and
+  a relative link; add a link only when the translated file exists.
+- Reuse the real workspace screenshot and identify its interface language. A translated
+  README does not imply that linked guides or screenshots are translated.
+- Native-speaker corrections are welcome. AI-assisted translations still require
+  review; do not claim native-speaker approval or complete language QA without evidence.
+
+Run the documentation-only validation commands above after changing translations.
 
 ## AI-Assisted Contributions
 

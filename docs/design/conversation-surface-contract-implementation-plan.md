@@ -1,8 +1,15 @@
 # Conversation Surface Contract Implementation Plan
 
-Status: active implementation plan
+> **v3.9 authority note (2026-09-01):** transcript item semantics, evidence ownership,
+> renderer sharing, batching, nested Agent presentation, and completion gates are
+> defined by [Conversation Typed Transcript — Detailed Design](conversation-typed-transcript-detailed-design.md)
+> and [Codex-style Typed Transcript Implementation Plan](conversation-codex-style-transcript-implementation-plan.md).
+> This older plan remains useful for shell/composer migration only; it must not create
+> a second transcript renderer or completion summary.
+
+Status: active shell/policy migration plan; transcript cutover delegated to v3.7 plan
 Owner: conversation UI package and product-surface maintainers
-Last verified: 2026-08-07
+Last verified: 2026-09-01
 
 ## Owning Contracts
 
@@ -152,6 +159,27 @@ and consumption work.
 - Verify Git, non-Git, duplicate-workspace, unavailable, light/dark, and horizontal
   overflow states. Final evidence also includes a real message-submission run in the
   in-app browser rather than fixture screenshots only.
+
+## Recent Conversation Failure Acknowledgement Slice
+
+- Keep `failed` and `blocked` on the durable thread and Run records; only the Sidebar
+  attention projection becomes acknowledged.
+- Persist a local watermark keyed by workspace and conversation. Compare it with the
+  thread failure revision so reloads stay quiet while a later failure becomes visible.
+- Acknowledge only after the conversation is actually selected. Failed navigation must
+  leave the red dot visible.
+- Verify initial failure, successful open, reload persistence, later failure reappearance,
+  and preservation of the underlying failed thread state.
+
+## Recent Conversation Single-Line Slice
+
+- Remove redundant conversation-type metadata from the recent-conversation view model and
+  shared object-row markup rather than hiding a second line with CSS.
+- Keep each recent row at `32px`, preserve its icon/title horizontal origin, and assert that
+  both centers differ by no more than one pixel.
+- Keep long-title fading, hover/focus movement, status projection and absolute action overlays
+  unchanged. The shared preview remains viewport-bounded and scrollbar-free; overflowing
+  preview lines move horizontally instead of widening the surface.
 
 ## Remaining Work
 

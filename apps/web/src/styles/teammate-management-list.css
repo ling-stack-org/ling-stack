@@ -16,9 +16,11 @@
   flex-direction: column;
   overflow: hidden;
   padding: var(--ling-space-7);
-  border: 1px solid var(--ling-border-default);
-  border-radius: var(--ling-radius-md);
-  background: var(--ling-bg-panel);
+  border: 1px solid var(--ling-card-border);
+  border-radius: var(--ling-card-radius);
+  background: var(--ling-card-bg);
+  background-image: var(--ling-card-finish);
+  box-shadow: var(--ling-card-shadow);
 }
 
 .teammate-management-list-head {

@@ -169,7 +169,7 @@ async function openExternalTools(page: Page): Promise<Locator> {
 }
 
 async function openToolsAndPermissions(page: Page): Promise<void> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", {
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", {
     exact: true,
     name: "External Tools Teammate",
   }).click();

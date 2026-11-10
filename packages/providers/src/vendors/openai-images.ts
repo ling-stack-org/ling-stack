@@ -10,7 +10,7 @@ import type {
   MediaVendorTransportRequest,
   MediaVendorTransportResult,
 } from "../types.js";
-import { isRecord, removeUndefined } from "../utils.js";
+import { isRecord, removeUndefined, stripTrailingSlashes } from "../utils.js";
 
 const MAX_OPENAI_IMAGE_BYTES = 25 * 1024 * 1024;
 const DEFAULT_OPENAI_IMAGES_TIMEOUT_MS = 180_000;
@@ -19,7 +19,7 @@ export async function executeOpenAIImageGeneration(
   request: MediaVendorTransportRequest,
   options: LiveMediaVendorTransportOptions,
 ): Promise<MediaVendorTransportResult> {
-  const endpoint = `${options.baseUrl?.replace(/\/+$/, "")}/images/generations`;
+  const endpoint = `${stripTrailingSlashes(options.baseUrl)}/images/generations`;
   const payload = buildOpenAIImageGenerationPayload(request.requestPlan);
   const httpClient = options.httpClient ?? defaultMediaVendorHttpClient;
   const abortController = new AbortController();

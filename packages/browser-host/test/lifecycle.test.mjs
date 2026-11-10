@@ -152,6 +152,7 @@ test("Windows runtime descriptor locks the directory, temporary file, and publis
   });
   assert.deepEqual(commands, [
     ["icacls.exe", join(root, "state"), "/inheritance:r", "/grant:r", "ling-test-user:(OI)(CI)F"],
+    ["icacls.exe", `${path}.coordination.sqlite`, "/inheritance:r", "/grant:r", "ling-test-user:F"],
     ["icacls.exe", `${path}.generation-windows.tmp`, "/inheritance:r", "/grant:r", "ling-test-user:F"],
     ["icacls.exe", path, "/inheritance:r", "/grant:r", "ling-test-user:F"],
   ]);

@@ -127,12 +127,17 @@ export class SqliteMediaStore {
   }
 
   updateMediaJobStatus(id: string, input: UpdateMediaJobStatusInput, now: string): MediaJob | undefined {
+    const expected = input.expectedStatuses;
+    if (expected && (expected.length === 0 || expected.some(status =>
+      !["queued", "running", "waiting_for_approval", "succeeded", "failed", "cancelled"].includes(status)))) {
+      throw new Error("Media status comparison requires valid non-empty expected statuses.");
+    }
     const existing = this.getMediaJob(id);
     if (!existing) {
       return undefined;
     }
 
-    this.context.database
+    const result = this.context.database
       .prepare(`
         UPDATE media_jobs
         SET
@@ -140,7 +145,7 @@ export class SqliteMediaStore {
           artifact_ids_json = ?,
           error_message = ?,
           updated_at = ?
-        WHERE id = ?
+        WHERE id = ?${expected ? ` AND status IN (${expected.map(() => "?").join(",")})` : ""}
       `)
       .run(
         input.status,
@@ -148,8 +153,9 @@ export class SqliteMediaStore {
         input.errorMessage === undefined ? existing.errorMessage ?? null : input.errorMessage,
         now,
         id,
+        ...(expected ?? []),
       );
-
+    if (Number(result.changes) === 0) return undefined;
     return this.getMediaJob(id);
   }
 

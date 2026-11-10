@@ -1,5 +1,5 @@
 import type { ExtensionFactory, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { normalizeHandledToolResult } from "../content.js";
+import { createHostToolResultAdapter, type HostToolResultAdapter } from "../host-tool-results.js";
 import type {
   PiRunnerMediaGenerationToolCallRequest,
   PiRunnerMediaGenerationToolDefinition,
@@ -10,11 +10,14 @@ import { isRecord } from "../utils.js";
 
 export function createLingStackMediaGenerationExtension(options: PiRunnerRunOptions): ExtensionFactory {
   return (pi) => {
-    if (!options.runId || !options.onMediaGenerationToolCall) {
+    // Schema preparation precedes Run creation. Actual dispatch below still
+    // requires both a concrete Run owner and the Host handler.
+    if (!(options.initialToolSurface?.mediaGeneration ?? Boolean(options.onMediaGenerationToolCall))) {
       return;
     }
+    const adaptResult = createHostToolResultAdapter(pi);
     for (const definition of dedupeDefinitions(options.mediaGenerationTools ?? [])) {
-      pi.registerTool(createToolDefinition(options, definition));
+      pi.registerTool(createToolDefinition(options, definition, adaptResult));
     }
   };
 }
@@ -22,6 +25,7 @@ export function createLingStackMediaGenerationExtension(options: PiRunnerRunOpti
 function createToolDefinition(
   options: PiRunnerRunOptions,
   definition: PiRunnerMediaGenerationToolDefinition,
+  adaptResult: HostToolResultAdapter,
 ): ToolDefinition {
   const mediaKind = definition.name === "image_generate" ? "image" : "video";
   const targetSummary = definition.targets
@@ -48,7 +52,7 @@ function createToolDefinition(
       signal?.throwIfAborted();
       const result = await options.onMediaGenerationToolCall(request);
       signal?.throwIfAborted();
-      return normalizeHandledToolResult(result);
+      return adaptResult(toolCallId, definition.name, result);
     },
   };
 }

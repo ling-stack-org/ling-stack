@@ -3,6 +3,15 @@
 Status: canonical design patch for the next multi-agent implementation slices.
 
 Date: 2026-06-24
+Owner: Ling maintainers
+Last amended: 2026-11-03 (local safe-concurrency implementation and frozen-input regression; release acceptance remains open)
+
+The active concurrency delivery order is owned by the
+[Ling Multi-Agent Safe Concurrency Implementation Plan](ling-multi-agent-safe-concurrency-implementation-plan.md).
+Its [detailed protocol](ling-multi-agent-safe-concurrency-detailed-design.md) refines this
+document's side-effect, isolated-worktree, merge, approval and recovery boundaries.
+This document remains the overall product contract; requirement-shaping extensions are
+not prerequisites for that concurrency plan.
 
 Related docs:
 
@@ -30,7 +39,9 @@ It settles these design points:
   stores refs, not packet bodies.
 - Safe parallel workflow is allowed only for explicitly safe side-effect classes by
   default.
-- Parallel workspace writes require a future isolated worktree merge protocol.
+- The isolated-worktree protocol is implemented locally, but release acceptance remains
+  open. Ordinary workspace writes remain serial; explicit candidate-only selection is
+  Host-gated.
 - UI should extend `ConversationTurn -> OperationCell / ConversationWorkCell`, not add a
   second workflow page or a raw multi-agent transcript.
 - Conversation UI is adaptive and block-driven, not a fixed template. Requirement
@@ -449,7 +460,10 @@ Default side-effect classification:
 | `release` | deploy, ship, merge, publish, or rollback | no |
 
 No model output may upgrade a step to a safer side-effect class. Template validation or
-deterministic skill metadata must choose the class.
+deterministic skill metadata must choose the class. A declaration is not execution
+enforcement: the Host must bind the effective tool/sandbox capabilities to the step and
+Run snapshot. Artifact-only QA is not implemented merely by adding the metadata. See
+[Host enforcement](ling-multi-agent-safe-concurrency-detailed-design.md#42-host-必须真正限制执行).
 
 ## Safe Parallel Scheduler
 
@@ -507,8 +521,9 @@ implementation succeeded
 ```
 
 `qa` may join this group only when the run request is artifact-only. If QA needs to write
-fixtures, snapshots, generated files, or external state, it becomes `workspace_write` or
-`external_mutation` and must run serially or through future isolated worktrees.
+fixtures, snapshots, or generated files, it becomes `workspace_write` and must run
+serially unless an explicitly accepted isolated-worktree profile covers those effects.
+External state changes remain `external_mutation` and serial.
 
 ### What "Foundation Complete" Means
 
@@ -530,8 +545,25 @@ defaults now."
 
 Parallel workspace writes are not safe until Ling owns a merge protocol.
 
-This protocol is future P2/P3 scope. The current scheduler should reserve interfaces for
-it but keep `workspace_write`, `external_mutation`, and `release` serial by default.
+This protocol is implemented locally, with P2/P3 release acceptance still open in the
+active [implementation plan](ling-multi-agent-safe-concurrency-implementation-plan.md). Its
+[detailed design](ling-multi-agent-safe-concurrency-detailed-design.md) owns the fixed
+base, execution binding, integration journal, approval fingerprint and crash windows.
+Public isolated selection remains off by default and, when explicitly enabled, accepts
+only macOS/Pi/enforced Broker with fixed concurrency two and candidate-only output.
+Keep ordinary `workspace_write` serial until its acceptance gates pass.
+`external_mutation` and `release` remain serial even after local isolated merge
+exists; local filesystem isolation does not isolate external effects.
+
+Complete scoped package regression and the four production-build live-daemon browser
+scenarios pass locally, with the existing platform/native/fixture skips retained.
+Web text-conflict repair has separate incremental regression and live-daemon browser
+acceptance: the user creates a successor plan, then explicitly starts it with independent
+approvals and executions; same-database restart retains the old conflict and new candidate
+without additional Runs or target changes. The earlier frozen-source complete regression
+does not cover those later inputs. The Daemon's separate dependency-security lane passes;
+real-model Provider, packaged/cross-platform and review/CI/merge gates remain open.
+Local controlled-transport acceptance does not authorize ordinary parallel writes.
 
 ### Goal
 
@@ -563,8 +595,8 @@ integration base
 7. Rebase/cherry-pick/apply into an integration branch, never directly into the user's
    dirty workspace.
 8. Run required verification.
-9. If clean, ask for approval before updating the main workspace branch when policy
-   requires it.
+9. If clean, require explicit user approval before updating the target workspace branch
+   in the first delivery. A future persistent merge-approval policy is separate scope.
 10. If conflicted, block with conflict artifacts and user choices.
 
 ### Merge Result Packet
@@ -585,8 +617,9 @@ interface IsolatedWorktreeMergePacket {
 }
 ```
 
-Until this protocol is implemented, any attempt to auto-parallelize `workspace_write`
-should be rejected or downgraded to serial with a visible reason.
+The implemented protocol does not open ordinary `workspace_write` parallelism. An
+explicit candidate-only selection still requires the Host gates; all other attempts
+remain rejected or serial with a visible reason until their acceptance gates pass.
 
 ## UI Projection
 
@@ -861,6 +894,12 @@ Participant selector ownership:
 
 ## Implementation Order
 
+The following is the original app-design decomposition, not the active concurrency
+queue. The post-PR-614 delivery order is safety policy -> isolated worktree merge ->
+combined reliability acceptance -> template registry/authoring -> graph visualization,
+as specified in the [active plan](ling-multi-agent-safe-concurrency-implementation-plan.md).
+Packet and shaping code that already exists must be reused, not rebuilt from this list.
+
 1. Add packet ref and side-effect policy contracts in core/contracts.
 2. Update built-in `autoplan-lite` step metadata with side-effect class and parallel
    policy defaults.
@@ -874,7 +913,8 @@ Participant selector ownership:
 7. Render shaping discussion inside `ConversationTurn` operation cell.
 8. Add inline evidence groups for shaping contributions and packet refs.
 9. Add fan-in diagnostics for missing/bad packets.
-10. Reserve isolated worktree merge protocol fields without enabling write parallel.
+10. Keep the implemented isolated-worktree protocol compatible with packet refs,
+    side-effect classes and scheduler policy; do not enable ordinary write parallelism.
 
 ## Acceptance Criteria
 
@@ -895,8 +935,8 @@ Participant selector ownership:
 - The main conversation exposes packet/evidence detail on demand through inline expansion
   and in-turn previews without becoming a raw transcript.
 - Restart recovery does not duplicate branch starts or auto-start side-effectful work.
-- Future isolated worktree merge can be added without changing packet refs, side-effect
-  class, or scheduler policy shape.
+- The implemented isolated-worktree protocol preserves packet refs, side-effect class,
+  and scheduler policy shape.
 
 ## Resolved Decisions
 
@@ -910,7 +950,8 @@ Participant selector ownership:
 - Use deterministic participant selection in the first phase.
 - Keep model-assisted participant selection behind a future feature flag.
 - Build full parallel metadata now, but default auto-parallel only safe classes.
-- Keep write/external/release steps serial until isolated worktree merge exists.
+- Keep workspace-writing steps serial by default; enable isolated write parallelism only
+  after its merge/recovery/approval gates pass. External mutation and release stay serial.
 - Render multi-agent discussion through existing operation-cell UI.
 - Keep raw audit deeper than the default conversation detail.
 

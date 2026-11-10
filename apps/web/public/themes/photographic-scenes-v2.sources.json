@@ -1,0 +1,119 @@
+{
+  "version": "photographic-scenes-v2",
+  "artwork": "Existing public photographs from Wikimedia Commons; no image generation or compositing",
+  "retrievedAt": "2026-10-27",
+  "processing": "Pillow RGB center crop to 1672x941 16:9, WebP quality 88 method 6; same-source 640x360 thumbnails quality 82; no overlays or generated elements",
+  "designIntent": {
+    "ocean": "Open sky and sea with a low horizon, quiet center, and edge-weighted dock detail inspired by WorkBuddy-style calm workspace wallpapers."
+  },
+  "assets": [
+    {
+      "themeId": "ling-breeze",
+      "source": {
+        "title": "Forest path to the sun.jpg",
+        "page": "https://commons.wikimedia.org/wiki/File:Forest_path_to_the_sun.jpg",
+        "direct": "https://upload.wikimedia.org/wikipedia/commons/e/e4/Forest_path_to_the_sun.jpg",
+        "author": "Drlukitas",
+        "license": "CC BY-SA 4.0",
+        "date": "2020-04-19",
+        "sourceSha256": "bc145456ea6adc089b38fef7cbda06846eb51b088d7a3ebb16d05818bce93115",
+        "sourceSize": [
+          5312,
+          2988
+        ]
+      },
+      "exports": [
+        {
+          "path": "apps/web/public/themes/ling-breeze/forest-morning-v1.webp",
+          "bytes": 691482,
+          "size": [
+            1672,
+            941
+          ],
+          "sha256": "955e36d938670b5cddf59da09cc683f504ed772d8fa19df9fb2650490a28efb6"
+        },
+        {
+          "path": "apps/web/public/themes/ling-breeze/forest-morning-v1-thumb.webp",
+          "bytes": 90694,
+          "size": [
+            640,
+            360
+          ],
+          "sha256": "19c085dc9b05a220fcc41f4e54090b1a90fb489854ed3fe21b0d76f37f337c37"
+        }
+      ]
+    },
+    {
+      "themeId": "ling-ocean",
+      "source": {
+        "title": "Borkum, Reede, Blick auf das Wattenmeer -- 2020 -- 2834.jpg",
+        "page": "https://commons.wikimedia.org/wiki/File:Borkum,_Reede,_Blick_auf_das_Wattenmeer_--_2020_--_2834.jpg",
+        "direct": "https://upload.wikimedia.org/wikipedia/commons/2/26/Borkum%2C_Reede%2C_Blick_auf_das_Wattenmeer_--_2020_--_2834.jpg",
+        "author": "Dietmar Rabich",
+        "license": "CC BY-SA 4.0",
+        "date": "2020-10-07",
+        "sourceSha256": "aa3b98db7da761ac43bbf24c308a8040c6a454793817ecc7181fd32f718931a8",
+        "sourceSize": [
+          6638,
+          4425
+        ]
+      },
+      "exports": [
+        {
+          "path": "apps/web/public/themes/ling-ocean/salt-coast-v1.webp",
+          "bytes": 233178,
+          "size": [
+            1672,
+            941
+          ],
+          "sha256": "32b3d463917bd7fbe0443490cfa03933800caa5e1e87ca409c2f4b3cc720940a"
+        },
+        {
+          "path": "apps/web/public/themes/ling-ocean/salt-coast-v1-thumb.webp",
+          "bytes": 28228,
+          "size": [
+            640,
+            360
+          ],
+          "sha256": "76ce173c063c19bb4fd549bcc0927971070603f2efa3c53031c4ab1a9dfe6f1d"
+        }
+      ]
+    },
+    {
+      "themeId": "ling-night",
+      "source": {
+        "title": "Rainy night in Tallinn.jpg",
+        "page": "https://commons.wikimedia.org/wiki/File:Rainy_night_in_Tallinn.jpg",
+        "direct": "https://upload.wikimedia.org/wikipedia/commons/a/a9/Rainy_night_in_Tallinn.jpg",
+        "author": "Marrik",
+        "license": "CC BY-SA 4.0",
+        "date": "2014-12-18",
+        "sourceSha256": "de346b97a61e75e6105a60dd80451dac8440a6c81d512b9929dcd637e7b67be4",
+        "sourceSize": [
+          1000,
+          666
+        ]
+      },
+      "exports": [
+        {
+          "path": "apps/web/public/themes/ling-night/rain-window-v2.webp",
+          "bytes": 154442,
+          "size": [
+            1672,
+            941
+          ],
+          "sha256": "5f5af7d7ccd8f4f4387e1724e1ba84697bdb582ef217656225136175db5d37d4"
+        },
+        {
+          "path": "apps/web/public/themes/ling-night/rain-window-v2-thumb.webp",
+          "bytes": 30950,
+          "size": [
+            640,
+            360
+          ],
+          "sha256": "68705f660cebcbefc8c67d4b87cc6b39b22cef97147f93a8a03a7bad3b2baa62"
+        }
+      ]
+    }
+  ]
+}

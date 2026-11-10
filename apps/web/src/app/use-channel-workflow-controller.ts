@@ -1,4 +1,5 @@
 import type { Dispatch, SetStateAction } from "react";
+import { parseChannelWorkflowStepStartResponse } from "@ling-stack/contracts";
 import type { RunsActions } from "../domains/runs/use-runs-domain.js";
 import type { useWorkspaceCommandController } from "../domains/workspace/use-workspace-command-controller.js";
 import { providerPreflightReady } from "../lib/providers.js";
@@ -9,8 +10,10 @@ import type {
   Channel,
   ChannelBrief,
   ChannelWorkflow,
+  ChannelWorkflowOrchestrationRequest,
   ChannelWorkflowStep,
   ChannelWorkflowStepStartMode,
+  ChannelWorkflowStepStartResponse,
   ProviderPreset,
   RunFormState,
   Task,
@@ -18,9 +21,33 @@ import type {
 
 type WorkspaceCommands = ReturnType<typeof useWorkspaceCommandController>;
 
+export function publishChannelWorkflowStepStartResponse(
+  response: ChannelWorkflowStepStartResponse,
+  input: {
+    readonly setChannelWorkflows: Dispatch<SetStateAction<readonly ChannelWorkflow[]>>;
+    readonly setChannelWorkflowSteps: Dispatch<SetStateAction<readonly ChannelWorkflowStep[]>>;
+    readonly upsertApprovalRecord: (approval: ApprovalRequest) => void;
+    readonly reportWorkflowError: (identity: string, message: string, scope?: "validation" | "mutation" | "stream") => void;
+  },
+): boolean {
+  input.setChannelWorkflows((current) => current.some((item) => item.id === response.workflow.id)
+    ? current.map((item) => item.id === response.workflow.id ? response.workflow : item)
+    : [response.workflow, ...current]);
+  input.setChannelWorkflowSteps((current) => mergeWorkflowSteps(current, [response.workflowStep]));
+  if (response.status === "waiting_for_approval") {
+    input.upsertApprovalRecord(response.approval);
+    return false;
+  }
+  if (response.status === "blocked") {
+    input.reportWorkflowError(response.workflowStep.id, response.blocker);
+    return false;
+  }
+  return true;
+}
+
 export interface ChannelWorkflowController {
   readonly startAutoplanWorkflow: () => Promise<void>;
-  readonly orchestrateWorkflowAction: (workflow: ChannelWorkflow) => Promise<void>;
+  readonly orchestrateWorkflowAction: (workflow: ChannelWorkflow, request?: ChannelWorkflowOrchestrationRequest) => Promise<void>;
   readonly cancelWorkflowAction: (workflow: ChannelWorkflow) => Promise<void>;
   readonly retryWorkflowStepAction: (step: ChannelWorkflowStep) => Promise<void>;
   readonly startWorkflowStepAction: (step: ChannelWorkflowStep, mode: ChannelWorkflowStepStartMode) => Promise<void>;
@@ -57,7 +84,7 @@ export function useChannelWorkflowController(input: {
   readonly refreshRuntimeState: (cwd: string) => Promise<void>;
   readonly emitDomainEvent: (event: DomainEvent) => Promise<void>;
 }): ChannelWorkflowController {
-  async function orchestrateWorkflowById(workflowId: string, channelId?: string): Promise<void> {
+  async function orchestrateWorkflowById(workflowId: string, channelId?: string, request?: ChannelWorkflowOrchestrationRequest): Promise<void> {
     const workspaceCwd = input.form.cwd.trim();
     if (!workspaceCwd) {
       input.reportWorkflowError(workflowId, "本地工作区未就绪", "validation");
@@ -67,7 +94,7 @@ export function useChannelWorkflowController(input: {
     input.setOrchestratingWorkflowId(workflowId);
     try {
       input.clearWorkflowError(workflowId);
-      const result = await input.orchestrateChannelWorkflow(workspaceCwd, workflowId);
+      const result = await input.orchestrateChannelWorkflow(workspaceCwd, workflowId, request);
       input.setChannelWorkflows((current) => [result.workflow, ...current.filter((item) => item.id !== result.workflow.id)]);
       const workflowStep = "workflowStep" in result ? result.workflowStep : undefined;
       if (workflowStep) {
@@ -129,8 +156,8 @@ export function useChannelWorkflowController(input: {
     }
   }
 
-  async function orchestrateWorkflowAction(workflow: ChannelWorkflow): Promise<void> {
-    await orchestrateWorkflowById(workflow.id, workflow.channelId);
+  async function orchestrateWorkflowAction(workflow: ChannelWorkflow, request?: ChannelWorkflowOrchestrationRequest): Promise<void> {
+    await orchestrateWorkflowById(workflow.id, workflow.channelId, request);
   }
 
   async function cancelWorkflowAction(workflow: ChannelWorkflow): Promise<void> {
@@ -205,44 +232,79 @@ export function useChannelWorkflowController(input: {
     const workflow = input.channelWorkflows.find((item) => item.id === step.workflowId);
     const channel = workflow ? input.channels.find((item) => item.id === workflow.channelId) : input.channels.find((item) => item.id === step.channelId);
     const providerPresetId =
+      step.metadata?.providerBinding?.providerPresetId ||
       input.taskRunProviderId ||
+      step.metadata?.providerPresetId ||
       channel?.defaultProviderPresetId ||
       input.form.providerPresetId ||
       input.providers.find(providerPreflightReady)?.id;
-    const request = {
-      mode,
+    const runnerId = step.metadata?.requestedRunnerId;
+    const requestBasis = {
       providerPresetId,
+      runnerId,
       assigneeTeammateId: step.toParticipantId,
+    };
+    const expectedStart = {
+      workflowId: step.workflowId,
+      channelId: step.channelId,
+      workflowStep: {
+        id: step.id,
+        workflowId: step.workflowId,
+        channelId: step.channelId,
+        title: step.title,
+        prompt: step.prompt,
+        toParticipantId: step.toParticipantId,
+      },
+      taskTitle: step.title,
+      taskPrompt: step.prompt,
+      providerPresetId,
+      runnerId,
+      assigneeTeammateId: step.toParticipantId,
+      skipProviderPreflight: false,
     };
 
     input.setRunningWorkflowStepId(step.id);
     try {
       input.clearWorkflowError(step.id);
       if (mode === "create_task") {
-        const response = await input.startChannelWorkflowStep(workspaceCwd, step.id, request);
-        if (response.workflow) {
-          input.setChannelWorkflows((current) => current.map((item) => item.id === response.workflow?.id ? response.workflow : item));
+        const request = { ...requestBasis, mode: "create_task" as const };
+        const response = await input.startChannelWorkflowStep(workspaceCwd, step.id, request, {
+          ...expectedStart,
+        });
+        publishChannelWorkflowStepStartResponse(response, input);
+        if (response.status !== "started") {
+          await Promise.all([input.refreshTasks(step.channelId), input.refreshChannelProtocol(step.channelId), input.refreshRuntimeState(workspaceCwd)]);
+          return;
         }
-        input.setChannelWorkflowSteps((current) => current.map((item) => item.id === response.workflowStep.id ? response.workflowStep : item));
         const createdTask = response.task;
         if (createdTask) {
           input.setSelectedTaskId(createdTask.id);
           input.setTasks((current) => [createdTask, ...current.filter((item) => item.id !== createdTask.id)]);
         }
-        if (response.blocker) {
-          input.reportWorkflowError(step.id, response.blocker);
-        }
         await Promise.all([input.refreshTasks(step.channelId), input.refreshChannelProtocol(step.channelId), input.refreshRuntimeState(workspaceCwd)]);
         return;
       }
 
+      const request = { ...requestBasis, mode: "create_and_run_task" as const };
       const url = `${input.daemonBaseUrl}/workflow-steps/${encodeURIComponent(step.id)}/start?cwd=${encodeURIComponent(workspaceCwd)}`;
-      await input.streamRunRequest(url, request, workspaceCwd, async () => {
+      const admission = await input.streamRunRequest(url, request, workspaceCwd, async () => {
         await Promise.all([
           input.refreshTasks(step.channelId),
           input.refreshChannelProtocol(step.channelId),
         ]);
-      });
+      }, (value) => {
+        const parsed = parseChannelWorkflowStepStartResponse(value, {
+          ...expectedStart,
+          mode: request.mode,
+        });
+        if (!parsed || parsed.status === "started") {
+          throw new Error("Workflow step start returned an invalid admission response or foreign lineage.");
+        }
+        return parsed;
+      }, { disableRpc: true });
+      if (admission) {
+        publishChannelWorkflowStepStartResponse(admission, input);
+      }
       await Promise.all([input.refreshTasks(step.channelId), input.refreshChannelProtocol(step.channelId), input.refreshRuntimeState(workspaceCwd)]);
     } catch (error) {
       input.reportWorkflowError(step.id, error instanceof Error ? error.message : String(error));
@@ -255,7 +317,7 @@ export function useChannelWorkflowController(input: {
     try {
       input.clearWorkflowError(step.id);
       const response = await input.updateChannelWorkflowStep(input.form.cwd.trim(), step.id, { status });
-      input.setChannelWorkflowSteps((current) => current.map((item) => item.id === response.workflowStep.id ? response.workflowStep : item));
+      input.setChannelWorkflowSteps((current) => mergeWorkflowSteps(current, [response.workflowStep]));
       if (response.workflow) {
         input.setChannelWorkflows((current) => current.map((item) => item.id === response.workflow?.id ? response.workflow : item));
       }

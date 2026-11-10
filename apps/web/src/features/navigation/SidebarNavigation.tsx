@@ -1,3 +1,6 @@
+import { ChannelSessionNavigation } from "./ChannelSessionNavigation.js";
+import type { useChannelSessionsController } from "../../app/use-channel-sessions-controller.js";
+import type { ChannelSessionSummary } from "@ling-stack/contracts";
 import {
   useRef,
   useState,
@@ -9,8 +12,6 @@ import {
   GitBranch,
   Hash,
   MessageSquare,
-  PanelLeftClose,
-  PanelLeftOpen,
   PlugZap,
   Plus,
   Settings,
@@ -18,6 +19,7 @@ import {
 import { useI18n } from "../../i18n.js";
 import { sidebarObjectContextKey, type SidebarObjectContext } from "../../app/sidebar-object-context.js";
 import { Icon, IconButton, InlineFeedback, Input, StatusIndicator } from "../../shared/ui/index.js";
+import { isDaemonObservationPausedForWorkspace, useDaemonObservation } from "../../shared/conversation/observation/daemon-observation.js";
 import {
   channelSidebarTarget,
   teammateSidebarTarget,
@@ -45,7 +47,6 @@ export type SidebarPrimaryStatus = "failed" | "paused" | "running" | "waiting";
 export interface SidebarRecentConversation {
   readonly id: string;
   readonly label: string;
-  readonly meta: string;
   readonly updatedAt: string;
   readonly channelId?: string;
   readonly taskId?: string;
@@ -56,6 +57,10 @@ export function SidebarNavigation({
   activeSidebarTarget,
   channels,
   channelBranches = [],
+  channelSessions,
+  onSelectChannelSession,
+  onNewChannelSession,
+  onChannelAction,
   selectedChannelBranchId = "",
   teammates,
   cwd,
@@ -86,11 +91,13 @@ export function SidebarNavigation({
   onSelectTeammate,
   onSelectRecentConversation,
   channelDrawer = false,
-  channelDrawerOpen = true,
-  onChannelDrawerOpenChange,
 }: {
   readonly activeSidebarTarget: SidebarTarget;
   readonly channels: readonly Channel[];
+  readonly channelSessions?: ReturnType<typeof useChannelSessionsController>;
+  readonly onSelectChannelSession?: (channelId: string, session: ChannelSessionSummary) => void;
+  readonly onNewChannelSession?: (channelId: string) => void;
+  readonly onChannelAction?: (channelId: string, action: "settings" | "rename") => void;
   readonly channelBranches?: readonly ChannelBranch[];
   readonly selectedChannelBranchId?: string;
   readonly teammates: readonly AiTeammate[];
@@ -122,15 +129,15 @@ export function SidebarNavigation({
   readonly onSelectTeammate: (teammateId: string) => void;
   readonly onSelectRecentConversation: (conversation: SidebarRecentConversation) => void;
   readonly channelDrawer?: boolean;
-  readonly channelDrawerOpen?: boolean;
-  readonly onChannelDrawerOpenChange?: (open: boolean) => void;
 }): React.JSX.Element {
   const { t } = useI18n();
+  const observationPaused = isDaemonObservationPausedForWorkspace(useDaemonObservation(), cwd);
   const sidebarStatusLabels = {
     failed: t("Failed"),
     paused: t("Paused"),
     pendingApprovals: (count: number) => t("{count} pending approvals", { count }),
     running: t("Running"),
+    stale: t("Stale snapshot"),
     unread: t("Unread"),
     waiting: t("Waiting for approval"),
   };
@@ -145,7 +152,6 @@ export function SidebarNavigation({
     recent: false,
   });
   const visibleTeammates = teammates.filter((teammate) => !teammate.hidden && teammate.status !== "disabled");
-  const collapsedTooltipsEnabled = channelDrawer && !channelDrawerOpen;
   const branchesByChannel = new Map<string, readonly ChannelBranch[]>();
   for (const channel of channels) {
     branchesByChannel.set(channel.id, channelBranches.filter((branch) => branch.channelId === channel.id && branch.status !== "archived"));
@@ -163,13 +169,6 @@ export function SidebarNavigation({
     }));
   }
 
-  function activateRailSection(sectionId: SidebarSectionId): void {
-    setCollapsedSections((current) => current[sectionId]
-      ? { ...current, [sectionId]: false }
-      : current);
-    onChannelDrawerOpenChange?.(true);
-  }
-
   async function submitBranchDraft(event: FormEvent<HTMLFormElement>, channelId: string): Promise<void> {
     event.preventDefault();
     const name = branchDraftName.trim();
@@ -181,12 +180,10 @@ export function SidebarNavigation({
     setBranchDraftName("");
   }
 
-  const SidebarToggleIcon = channelDrawerOpen ? PanelLeftClose : PanelLeftOpen;
-
   return (
-    <aside className={channelDrawer ? "left-nav channel-left-drawer" : "left-nav"} aria-label="Ling Stack navigation">
+    <aside className={channelDrawer ? "left-nav channel-left-drawer" : "left-nav"} aria-label={t("Sidebar display")}>
       <div className="sidebar-fixed-top">
-        <div className={channelDrawer ? "sidebar-brand-row has-sidebar-switch" : "sidebar-brand-row"}>
+        <div className="sidebar-brand-row">
           <SidebarTooltip label={t("New conversation")}>
             <button
               className="sidebar-command-button sidebar-command-button-top"
@@ -198,14 +195,6 @@ export function SidebarNavigation({
               <span>{t("New conversation")}</span>
             </button>
           </SidebarTooltip>
-          {channelDrawer ? (
-            <IconButton
-              className="channel-sidebar-switch"
-              label={channelDrawerOpen ? t("Hide navigation") : t("Show navigation")}
-              icon={SidebarToggleIcon}
-              onClick={() => onChannelDrawerOpenChange?.(!channelDrawerOpen)}
-            />
-          ) : null}
         </div>
 
         <SidebarPrimaryNavigation
@@ -222,10 +211,6 @@ export function SidebarNavigation({
         stale={stale}
         staleLabel={t("Stale")}
         collapsed={collapsedSections.channels}
-        railActive={activeSidebarTarget.startsWith("channel:")}
-        railCollapsed={collapsedTooltipsEnabled}
-        railIcon={Hash}
-        onRailActivate={activateRailSection}
         onToggleCollapsed={toggleSection}
         menuLabel={t("Channel actions")}
         menuOpen={openSectionMenu === "channels"}
@@ -256,6 +241,16 @@ export function SidebarNavigation({
         ) : (
 	          channels.map((channel) => {
 	            const channelActive = activeSidebarTarget === channelSidebarTarget(channel.id);
+              if (channelSessions && onSelectChannelSession && onNewChannelSession) return <ChannelSessionNavigation
+                key={channel.id} channel={channel} cwd={cwd} active={channelActive}
+                status={renderSidebarNotification(channelNotifications[channel.id], sidebarStatusLabels, observationPaused, t("Conversation waiting"))} controller={channelSessions}
+                statusId={sidebarNotificationId(channelNotifications[channel.id])}
+                onSelectChannel={() => onSelectChannel(channel.id)}
+                onArchiveChannel={onArchiveChannel ? () => void onArchiveChannel(channel.id) : undefined}
+                onSelectSession={session => onSelectChannelSession(channel.id, session)}
+                onNewSession={() => onNewChannelSession(channel.id)}
+                onChannelAction={onChannelAction ? action => onChannelAction(channel.id, action) : undefined}
+              />;
 	            const draftOpen = branchDraftChannelId === channel.id;
 	            const branches = branchesByChannel.get(channel.id) ?? [];
 	            const channelAvatar = channelAvatarMeta(channel);
@@ -267,7 +262,7 @@ export function SidebarNavigation({
 	                  icon={<span className={`sidebar-channel-avatar ${channelAvatar.tone}`} aria-hidden="true">{channelAvatar.label}</span>}
 	                  onSelect={() => onSelectChannel(channel.id)}
 	                  selected={channelActive}
-	                  status={renderSidebarNotification(channelNotifications[channel.id], sidebarStatusLabels)}
+	                  status={renderSidebarNotification(channelNotifications[channel.id], sidebarStatusLabels, observationPaused)}
 		                  statusId={sidebarNotificationId(channelNotifications[channel.id])}
 		                  tooltip={(
 		                    <SidebarObjectPreview
@@ -372,10 +367,6 @@ export function SidebarNavigation({
         stale={stale}
         staleLabel={t("Stale")}
         collapsed={collapsedSections.teammates}
-        railActive={activeSidebarTarget.startsWith("teammate:")}
-        railCollapsed={collapsedTooltipsEnabled}
-        railIcon={Bot}
-        onRailActivate={activateRailSection}
         onToggleCollapsed={toggleSection}
         menuLabel={t("AI teammate actions")}
         menuOpen={openSectionMenu === "teammates"}
@@ -420,7 +411,7 @@ export function SidebarNavigation({
               icon={<TeammateAvatarView teammate={teammate} cwd={cwd} compact />}
               onSelect={() => onSelectTeammate(teammate.id)}
               selected={activeSidebarTarget === teammateSidebarTarget(teammate.id)}
-              status={renderSidebarNotification(teammateNotifications[teammate.id], sidebarStatusLabels)}
+              status={renderSidebarNotification(teammateNotifications[teammate.id], sidebarStatusLabels, observationPaused)}
               statusId={sidebarNotificationId(teammateNotifications[teammate.id])}
               tooltip={(
                 <SidebarObjectPreview
@@ -454,10 +445,6 @@ export function SidebarNavigation({
         stale={stale}
         staleLabel={t("Stale")}
         collapsed={collapsedSections.recent}
-        railActive={activeSidebarTarget === "workspace" && selectedRecentConversationId.length > 0}
-        railCollapsed={collapsedTooltipsEnabled}
-        railIcon={MessageSquare}
-        onRailActivate={activateRailSection}
         onToggleCollapsed={toggleSection}
         menuLabel={t("Recent conversation actions")}
         menuOpen={openSectionMenu === "recent"}
@@ -495,7 +482,6 @@ export function SidebarNavigation({
               key={conversation.id}
               ariaLabel={t("Open recent conversation {index}", { index: index + 1 })}
               buttonClassName="sidebar-recent-row"
-              description={conversation.meta}
               icon={<MessageSquare size={14} />}
               onSelect={() => onSelectRecentConversation(conversation)}
               selected={conversation.id === selectedRecentConversationId}
@@ -508,7 +494,7 @@ export function SidebarNavigation({
               )}
               tooltipClassName="sidebar-object-preview-tooltip"
               status={conversation.primaryStatus
-                ? renderSidebarNotification({ primaryStatus: conversation.primaryStatus }, sidebarStatusLabels)
+                ? renderSidebarNotification({ primaryStatus: conversation.primaryStatus }, sidebarStatusLabels, observationPaused)
                 : undefined}
               statusId={conversation.primaryStatus}
               actions={onArchiveRecentConversation ? (
@@ -569,20 +555,28 @@ function renderSidebarNotification(
     readonly paused: string;
     readonly pendingApprovals: (count: number) => string;
     readonly running: string;
+    readonly stale: string;
     readonly unread: string;
     readonly waiting: string;
   },
+  observationPaused: boolean,
+  waitingWithoutApprovalLabel?: string,
 ): React.JSX.Element | null {
   if (!notification) {
     return null;
   }
 
   if (notification.primaryStatus) {
-    const accessibleLabel = notification.primaryStatus === "waiting" && (notification.count ?? 0) > 0
+    const canonicalLabel = notification.primaryStatus === "waiting" && (notification.count ?? 0) > 0
       ? labels.pendingApprovals(notification.count ?? 0)
-      : labels[notification.primaryStatus];
-    const label = notification.primaryStatus === "waiting" ? labels.waiting : accessibleLabel;
-    const tone = notification.primaryStatus === "failed"
+      : notification.primaryStatus === "waiting"
+        ? waitingWithoutApprovalLabel ?? labels.waiting
+        : labels[notification.primaryStatus];
+    const staleActivity = observationPaused && (notification.primaryStatus === "running" || notification.primaryStatus === "waiting");
+    const accessibleLabel = staleActivity ? `${labels.stale} · ${canonicalLabel}` : canonicalLabel;
+    const label = !staleActivity && notification.primaryStatus === "waiting" && (notification.count ?? 0) > 0
+      ? labels.waiting : accessibleLabel;
+    const tone = staleActivity ? "neutral" : notification.primaryStatus === "failed"
       ? "danger"
       : notification.primaryStatus === "paused"
         ? "neutral"
@@ -594,9 +588,11 @@ function renderSidebarNotification(
         aria-label={accessibleLabel}
         className="sidebar-object-status"
         compact={notification.primaryStatus !== "waiting"}
+        data-daemon-observation={staleActivity ? "paused" : undefined}
         data-sidebar-primary-status={notification.primaryStatus}
         label={label}
         role="status"
+        title={staleActivity ? accessibleLabel : undefined}
         tone={tone}
       />
     );

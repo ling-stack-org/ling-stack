@@ -1,0 +1,272 @@
+import { createHash } from "node:crypto";
+import { isDeepStrictEqual, types } from "node:util";
+import { getCurrentSystemPrompt, getCurrentTools, type Api, type Context, type Model, type Tool, type TranscriptContext } from "@earendil-works/pi-ai";
+import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import type { PiRunnerProviderInvocationContextBudget, PiRunnerRunOptions, PiRunnerTask } from "./types.js";
+import { boundModelToolResults, MODEL_TOOL_CONTEXT_BYTES } from "./model-context-budget.js";
+import { formatTaskPrompt, isRecord } from "./utils.js";
+import { piConversation, piTranscript } from "./session-transcript.js";
+
+type PreparedModel = Pick<Model<Api>, "id" | "provider" | "api" | "baseUrl" | "reasoning" | "input" | "contextWindow" | "maxTokens" | "compat" | "thinkingLevelMap">;
+const PI_MODEL_RUNTIME_OVERHEAD_TOKENS = 512;
+
+/** Immutable model-visible input. Credentials, transport IDs and handlers are excluded. */
+export interface PiRunnerPreparedInput {
+  readonly schemaVersion: 1;
+  readonly boundary: "pi-model-context";
+  readonly taskId: string;
+  readonly systemPrompt: string;
+  readonly userPrompt: string;
+  readonly model: PreparedModel;
+  readonly thinkingLevel: string;
+  readonly tools: readonly Tool[];
+  readonly fingerprint: string;
+}
+
+/** Capture the SDK's actual assembly, not a second approximation of its prompt builder. */
+export function capturePreparedPiInput(session: AgentSession, options: PiRunnerRunOptions): PiRunnerPreparedInput {
+  if (!session.model || !session.isIdle || session.messages.length !== 0) throw new Error("Pi prepared input requires an idle empty session");
+  return capturePreparedPiAssembly(session, options);
+}
+
+function capturePreparedPiAssembly(session: AgentSession, options: PiRunnerRunOptions): PiRunnerPreparedInput {
+  if (!session.model || !session.isIdle) throw new Error("Pi prepared input requires an idle session");
+  const body = json({ schemaVersion: 1, boundary: "pi-model-context", taskId: options.task.id,
+    systemPrompt: session.systemPrompt, userPrompt: formatTaskPrompt(options.task), model: modelDescriptor(session.model),
+    thinkingLevel: session.thinkingLevel, tools: toolDescriptors(session.state.tools) });
+  return readPreparedPiInput({ ...body, fingerprint: hash(body) });
+}
+
+/** Fit the transport-only tool view to the remaining model capacity on every request. */
+export function assertPiModelContextCapacity(model: Model<Api>, input: Context): TranscriptContext {
+  const context = piTranscript(input);
+  // The SDK can report a context-hook failure and continue. Enforce the
+  // projection's fail-closed marker budget again at the provider boundary.
+  const budget = modelInputBudget(model);
+  const projected = boundModelToolResults(context.messages);
+  const inputTokens = (messages: readonly unknown[]): number =>
+    estimatePiModelContextInputTokens(piTranscript({ messages: messages as Context["messages"] }));
+  if (inputTokens(projected.messages) <= budget) {
+    return piTranscript({ messages: projected.messages as Context["messages"] });
+  }
+  if (projected.originalBytes === 0) {
+    throw modelCapacityError(inputTokens(projected.messages), budget);
+  }
+
+  // A fixed tool cap may still exceed a small model's available context. Find
+  // the largest transport-only result view that fits, reserving explicit
+  // omission markers for every result. Invalid marker budgets never pass.
+  let low = 0;
+  let high = Math.min(MODEL_TOOL_CONTEXT_BYTES, projected.modelBytes);
+  let fitting: Context["messages"] | undefined;
+  let minimumInput = inputTokens(projected.messages);
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    let candidate;
+    try {
+      candidate = boundModelToolResults(context.messages, { totalBytes: middle });
+    } catch (error) {
+      if (!(error instanceof Error) || !/marker.*budget/u.test(error.message)) throw error;
+      low = middle + 1;
+      continue;
+    }
+    const estimated = inputTokens(candidate.messages);
+    minimumInput = Math.min(minimumInput, estimated);
+    if (estimated <= budget) {
+      fitting = candidate.messages as Context["messages"];
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
+  }
+  if (!fitting) throw modelCapacityError(minimumInput, budget);
+  return piTranscript({ messages: fitting });
+}
+
+/**
+ * Estimate only the actual projected SDK context. This shares the capacity
+ * gate's estimator; it does not approximate a discussion pack or retain text.
+ * The output reservation is the selected model's conservative maximum, even
+ * when a summary/request asks the transport for fewer output tokens.
+ */
+export function estimatePiModelContextBudget(
+  model: Pick<Model<Api>, "contextWindow" | "maxTokens">,
+  input: Context,
+): PiRunnerProviderInvocationContextBudget {
+  const inputBudgetTokens = modelInputBudget(model);
+  const estimatedInputTokens = estimatePiModelContextInputTokens(piTranscript(input));
+  if (!Number.isSafeInteger(estimatedInputTokens) || estimatedInputTokens < 0) {
+    throw new Error("Pi projected model context estimate is unknown");
+  }
+  return Object.freeze({ schemaVersion: 1, basis: "pi_projected_context_estimate",
+    estimatedInputTokens, contextWindowTokens: model.contextWindow,
+    reservedOutputTokens: model.maxTokens, reservedRuntimeOverheadTokens: PI_MODEL_RUNTIME_OVERHEAD_TOKENS,
+    inputBudgetTokens });
+}
+
+function estimatePiModelContextInputTokens(context: TranscriptContext): number {
+  return estimatePreparedTokens(getCurrentSystemPrompt(context.messages))
+    + estimatePreparedTokens(JSON.stringify(getCurrentTools(context.messages)))
+    + estimatePreparedTokens(JSON.stringify(piConversation(context.messages)));
+}
+
+function modelInputBudget(model: Pick<Model<Api>, "contextWindow" | "maxTokens">): number {
+  const window = model.contextWindow;
+  const output = model.maxTokens;
+  if (!Number.isSafeInteger(window) || window < 1 || !Number.isSafeInteger(output) || output < 1) {
+    throw new Error("Pi prepared input model context capacity is unknown");
+  }
+  const inputBudget = window - output - PI_MODEL_RUNTIME_OVERHEAD_TOKENS;
+  if (inputBudget < 1) throw modelCapacityError(0, inputBudget);
+  return inputBudget;
+}
+
+function modelCapacityError(estimatedInput: number, budget: number): Error {
+  return new Error(`Pi model context exceeds selected model budget (${estimatedInput}/${Math.max(0, budget)} estimated input tokens)`);
+}
+
+function estimatePreparedTokens(text: string): number {
+  let ascii = 0;
+  let nonAscii = 0;
+  for (const character of text) {
+    if (character.charCodeAt(0) <= 0x7f) ascii += 1;
+    else nonAscii += 1;
+  }
+  return Math.ceil(ascii / 3.5 + nonAscii / 1.6);
+}
+
+/** Validate serialized evidence before using it as a comparison baseline. */
+export function readPreparedPiInput(value: unknown): PiRunnerPreparedInput {
+  if (!isRecord(value) || Object.keys(value).sort().join(",") !==
+    ["schemaVersion", "boundary", "taskId", "systemPrompt", "userPrompt", "model", "thinkingLevel", "tools", "fingerprint"].sort().join(",") ||
+    value.schemaVersion !== 1 || value.boundary !== "pi-model-context" ||
+    !["taskId", "systemPrompt", "userPrompt", "thinkingLevel", "fingerprint"].every((key) => typeof value[key] === "string") ||
+    !isRecord(value.model) || typeof value.model.id !== "string" || typeof value.model.provider !== "string" ||
+    Object.keys(value.model).some((key) => !["id", "provider", "api", "baseUrl", "reasoning", "input", "contextWindow", "maxTokens", "compat", "thinkingLevelMap"].includes(key)) ||
+    !Array.isArray(value.tools) || value.tools.some((tool) => !isRecord(tool) || typeof tool.name !== "string" ||
+      typeof tool.description !== "string" || !isRecord(tool.parameters) || Object.keys(tool).some((key) =>
+        !["name", "description", "parameters", "constrainedSampling"].includes(key))) ||
+    new Set(value.tools.map((tool) => tool.name)).size !== value.tools.length) throw new Error("Invalid Pi prepared input");
+  const { fingerprint, ...body } = value;
+  if (fingerprint !== hash(body)) throw new Error("Pi prepared input fingerprint mismatch");
+  return freeze(json(value)) as unknown as PiRunnerPreparedInput;
+}
+
+/** Match decoded model evidence to the Host task without duplicating SDK prompt formatting in consumers. */
+export function assertPreparedPiTaskInput(prepared: PiRunnerPreparedInput, task: PiRunnerTask): void {
+  if (prepared.taskId !== task.id || prepared.userPrompt !== formatTaskPrompt(task)) {
+    throw new Error("Prepared execution task prompt mismatch");
+  }
+}
+
+/** Fail before prompting if initialization cannot reproduce the persisted input. */
+export function assertPreparedPiSession(session: AgentSession, options: PiRunnerRunOptions, assertRestoredView?: () => void): void {
+  assertRestoredView?.();
+  const actual = assertRestoredView === undefined ? capturePreparedPiInput(session, options) : capturePreparedPiAssembly(session, options);
+  if (!options.preparedInput) return;
+  const expected = readPreparedPiInput(options.preparedInput);
+  if (actual.fingerprint !== expected.fingerprint) throw new Error("Pi prepared input changed during session initialization");
+}
+
+/** Pin the SDK source and exact data-only view before Host awaits. */
+export function createRestoredPiSessionViewGuard(session: AgentSession): () => void {
+  const state = session.state;
+  if (types.isProxy(state)) throw new Error("Pi restored recovery view is not data-only");
+  const source = Object.getOwnPropertyDescriptor(state, "messages");
+  if (!source || !source.enumerable || (!("value" in source) && typeof source.get !== "function")) {
+    throw new Error("Pi restored recovery view is not data-only");
+  }
+  const capture = (): readonly unknown[] => {
+    if (session.state !== state) throw new Error("Pi restored recovery view is not data-only");
+    const current = Object.getOwnPropertyDescriptor(state, "messages");
+    // Pi 1.1.0 owns a messages getter. Pin that trusted accessor so a Host
+    // callback cannot replace it with executable data or a changing projection.
+    if (!current || current.get !== source.get || current.set !== source.set
+      || current.enumerable !== source.enumerable || current.configurable !== source.configurable
+      || current.writable !== source.writable || ("value" in current) !== ("value" in source)) {
+      throw new Error("Pi restored recovery view is not data-only");
+    }
+    return captureRestoredMessages("value" in current ? current.value : Reflect.apply(source.get!, state, []));
+  };
+  const baseline = capture();
+  return () => {
+    if (!isDeepStrictEqual(capture(), baseline)) {
+      throw new Error("Pi restored recovery view changed during prepared input acceptance");
+    }
+  };
+}
+
+/** Never invoke message accessors, proxies or serializers while taking a snapshot. */
+function captureRestoredMessages(messages: unknown): readonly unknown[] {
+  if (!Array.isArray(messages)) throw new Error("Pi restored recovery view is not data-only");
+  const ancestors = new Set<object>();
+  let nodes = 0;
+  const capture = (value: unknown, depth: number): unknown => {
+    if (++nodes > 100_000 || depth > 64) throw new Error("Pi restored recovery view is not data-only");
+    if (value === null || value === undefined || typeof value === "string" || typeof value === "boolean") return value;
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value !== "object" || types.isProxy(value) || ancestors.has(value)) throw new Error("Pi restored recovery view is not data-only");
+    const array = Array.isArray(value), prototype = Object.getPrototypeOf(value);
+    if (prototype !== (array ? Array.prototype : Object.prototype) && prototype !== null) throw new Error("Pi restored recovery view is not data-only");
+    const descriptors = Object.getOwnPropertyDescriptors(value), keys = Reflect.ownKeys(descriptors);
+    if (keys.some(key => typeof key !== "string")) throw new Error("Pi restored recovery view is not data-only");
+    ancestors.add(value);
+    try {
+      if (array) {
+        const length = descriptors.length?.value;
+        if (!Number.isSafeInteger(length) || length > 100_000 || keys.length !== length + 1) throw new Error("Pi restored recovery view is not data-only");
+        return Array.from({ length }, (_, index) => {
+          const entry = descriptors[String(index)];
+          if (!entry || !("value" in entry) || !entry.enumerable) throw new Error("Pi restored recovery view is not data-only");
+          return capture(entry.value, depth + 1);
+        });
+      }
+      const result: Record<string, unknown> = {};
+      for (const key of keys as string[]) {
+        const entry = descriptors[key]!;
+        if (!("value" in entry) || !entry.enumerable || key === "toJSON") throw new Error("Pi restored recovery view is not data-only");
+        Object.defineProperty(result, key, { value: capture(entry.value, depth + 1), enumerable: true });
+      }
+      return result;
+    } finally { ancestors.delete(value); }
+  };
+  return capture(messages, 0) as readonly unknown[];
+}
+
+/** The first converted model Context must still match after SDK/extension assembly. */
+export function assertPreparedPiModelContext(
+  prepared: PiRunnerPreparedInput,
+  model: Model<Api>,
+  context: Context,
+  options: { readonly allowRestoredMessages?: boolean } = {},
+): void {
+  const expected = readPreparedPiInput(prepared);
+  const transcript = piTranscript(context);
+  const conversation = piConversation(transcript.messages);
+  const first = conversation[0];
+  const text = first?.role === "user" ? (typeof first.content === "string" ? first.content :
+    first.content.every((block) => block.type === "text") ? first.content.map((block) => block.type === "text" ? block.text : "").join("") : undefined) : undefined;
+  const messagesMatch = options.allowRestoredMessages
+    ? conversation.length > 0
+    : conversation.length === 1 && text === expected.userPrompt;
+  if (!messagesMatch || (!options.allowRestoredMessages && text !== expected.userPrompt) || getCurrentSystemPrompt(transcript.messages) !== expected.systemPrompt ||
+    hash(modelDescriptor(model)) !== hash(expected.model) || hash(toolDescriptors(getCurrentTools(transcript.messages))) !== hash(expected.tools)) {
+    throw new Error("Pi prepared input changed before the first model request");
+  }
+}
+
+function modelDescriptor(model: Model<Api>): PreparedModel {
+  return json({ id: model.id, provider: model.provider, api: model.api, baseUrl: model.baseUrl, reasoning: model.reasoning,
+    input: model.input, contextWindow: model.contextWindow, maxTokens: model.maxTokens, compat: model.compat,
+    thinkingLevelMap: model.thinkingLevelMap });
+}
+function toolDescriptors(tools: readonly Tool[]): Tool[] {
+  return tools.map(({ name, description, parameters, constrainedSampling }) => json({ name, description, parameters,
+    ...(constrainedSampling !== undefined ? { constrainedSampling } : {}) }));
+}
+function json<T>(value: T): T { return JSON.parse(JSON.stringify(value)) as T; }
+function hash(value: unknown): string { return createHash("sha256").update(JSON.stringify(value)).digest("hex"); }
+function freeze<T>(value: T): T {
+  if (value && typeof value === "object") { Object.values(value).forEach(freeze); Object.freeze(value); }
+  return value;
+}

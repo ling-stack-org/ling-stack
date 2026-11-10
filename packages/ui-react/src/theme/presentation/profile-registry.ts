@@ -52,6 +52,18 @@ export class PresentationProfileRegistry {
       });
     }
 
+    if (context.userBackground) {
+      // Keep dense management surfaces opaque. The automation workspace opts
+      // into the ambient scene explicitly because it shares the management
+      // route for data and navigation purposes.
+      const visible = (
+        ["home", "sidebar", "conversation", "channel"].includes(surface)
+        || (surface === "management" && context.ambientWorkspace === true)
+      ) && (context.viewportWidth === undefined || context.viewportWidth >= MINIMUM_PRESENTATION_WIDTH);
+      return Object.freeze({ surfaceRecipe: visible ? "translucent" : policy.surfaceRecipe === "domain" ? "domain" : "solid",
+        artwork: visible ? "ambient" : "off", decorations: false });
+    }
+
     return Object.freeze({
       surfaceRecipe: policy.surfaceRecipe,
       artwork: compact && policy.artwork === "strong" ? "ambient" : policy.artwork,

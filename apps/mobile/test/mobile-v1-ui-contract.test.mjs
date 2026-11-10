@@ -49,11 +49,12 @@ test("Mobile themes are typed app-local UI 2.0 tokens and never import Web CSS",
 });
 
 test("profile surface remains narrow and unpair calls the ordered remote client cleanup", async () => {
-  const [profile, provider, client, storage] = await Promise.all([
+  const [profile, provider, client, storage, cleanup] = await Promise.all([
     source("../src/features/profile/MyScreen.tsx"),
     source("../src/remote/MobileRemoteProvider.tsx"),
     source("../../../packages/remote-client/src/client.ts"),
     source("../src/platform/remote-storage.ts"),
+    source("../src/platform/conversation-draft-cleanup.ts"),
   ]);
   assert.match(profile, />编辑</u);
   assert.match(profile, /跟随系统/u);
@@ -68,7 +69,8 @@ test("profile surface remains narrow and unpair calls the ordered remote client 
   assert.match(provider, /nextState\.connection === "revoked"/u);
   assert.match(provider, /finishRemoteRevocation\(observedWorkspaceBindingId\)/u);
   assert.match(provider, /setPhase\("welcome"\)/u);
-  assert.match(storage, /AsyncStorage\.getAllKeys\(\)/u);
-  assert.match(storage, /key\.startsWith\(prefix\)/u);
-  assert.match(storage, /AsyncStorage\.removeMany\(keys\)/u);
+  assert.match(storage, /removeConversationDraftsFromStorage\(AsyncStorage, workspaceBindingId\)/u);
+  assert.match(cleanup, /storage\.getAllKeys\(\)/u);
+  assert.match(cleanup, /key\.startsWith\(prefix\)/u);
+  assert.match(cleanup, /storage\.multiRemove\(keys\)/u);
 });

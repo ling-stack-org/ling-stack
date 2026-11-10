@@ -102,9 +102,9 @@ test("channel header search keeps the toolbar stable and searches channel activi
 
   await searchButton.click();
   await page.getByRole("textbox", { name: "Search channel activity" }).fill("Release checklist");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Operations" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Operations", exact: true }).click();
   await expect(page.getByRole("textbox", { name: "Search channel activity" })).toHaveCount(0);
-  await expect(page.locator(".channel-title-line h1")).toHaveText("Operations");
+  await expect(page.locator(".channel-title-line h1")).toHaveText("Operations / Operations conversation");
   await expect(page.getByLabel("Channel message feed")).toContainText("No channel messages yet");
   await expectNoDocumentOverflow(page);
 });
@@ -124,7 +124,7 @@ test("channel header refresh and search keep local state and overlays independen
   const header = page.locator(".task-workbench-header");
   const toolbar = page.getByRole("toolbar", { name: "Workspace task toolbar" });
   const searchButton = toolbar.getByRole("button", { name: "Search" });
-  const summaryButton = toolbar.getByRole("button", { name: "Summary" });
+  const summaryButton = toolbar.getByRole("button", { name: "Summary", exact: true });
   const teammateButton = toolbar.getByRole("button", { name: "AI teammate management" });
 
   await summaryButton.click();
@@ -190,8 +190,9 @@ for (const fixture of [
     })];
     await mockDaemon(page, state);
     await page.goto("/");
-    await page.getByLabel("Ling Stack navigation").getByRole("button", {
+    await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", {
       name: "Engineering release coordination and architecture review workspace",
+      exact: true,
     }).click();
 
     const header = page.locator(".task-workbench-header");

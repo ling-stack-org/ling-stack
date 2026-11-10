@@ -80,7 +80,20 @@ test("Native broker projects pause and rejects token or workspace fields", async
   }
 });
 
-async function createFixture() {
+test("Native broker cleans up a failed descriptor publication and can retry", async () => {
+  const fixture = await createFixture({ start: false, blockDescriptorParent: true });
+  try {
+    await assert.rejects(() => fixture.broker.start());
+    assert.equal(fixture.broker.descriptor(), undefined);
+    await rm(fixture.blockedDescriptorParent, { force: true });
+    await fixture.broker.start();
+    assert.equal(typeof fixture.broker.descriptor()?.port, "number");
+  } finally {
+    await fixture.close();
+  }
+});
+
+async function createFixture(options = {}) {
   const cwd = await mkdtemp(join(tmpdir(), "ling-browser-native-broker-"));
   const store = createSqliteRunStore(cwd);
   store.upsertManagedPlugin({
@@ -105,7 +118,9 @@ async function createFixture() {
     token: () => tokens.shift() ?? "fallback",
     commandTimeoutMs: 500,
   });
-  const descriptorPath = join(cwd, "browser-host", "runtime-v1.json");
+  const blockedDescriptorParent = join(cwd, "browser-host");
+  const descriptorPath = join(blockedDescriptorParent, "runtime-v1.json");
+  if (options.blockDescriptorParent) await writeFile(blockedDescriptorParent, "blocked");
   const hostPath = join(cwd, "ling-browser-host");
   await writeFile(hostPath, "test-host");
   const broker = createChromeBrowserNativeBroker({
@@ -115,12 +130,13 @@ async function createFixture() {
     hostPath,
     token: () => "native-startup-token",
   });
-  await broker.start();
+  if (options.start !== false) await broker.start();
   return {
     cwd,
     store,
     controller,
     broker,
+    blockedDescriptorParent,
     close: async () => {
       await broker.close();
       controller.close();

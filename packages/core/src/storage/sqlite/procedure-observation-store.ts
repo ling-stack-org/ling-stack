@@ -30,6 +30,7 @@ import { routeProcedureObservation } from "../../candidate-router.js";
 import { DEFAULT_WORKSPACE_ID } from "../../workspace-types.js";
 import { parseJson, readNullableString, readNumber, readString, stringifyJson } from "./helpers.js";
 import type { SqliteStoreContext } from "./store-context.js";
+import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 
 const procedureObservationSelectSql = `
   SELECT
@@ -77,10 +78,47 @@ const candidateGenerationDecisionSelectSql = `
 `;
 
 export class SqliteProcedureObservationStore {
+  private ownsJobTransaction = false;
   constructor(private readonly context: SqliteStoreContext) {}
 
+  withProcedureObservationJobTransaction<T>(mutate: () => T): T {
+    if (Object.prototype.toString.call(mutate) === "[object AsyncFunction]") {
+      throw new TypeError("Procedure observation commits must be synchronous");
+    }
+    this.context.database.exec("BEGIN IMMEDIATE");
+    this.ownsJobTransaction = true;
+    try {
+      const result = mutate();
+      if (result && (typeof result === "object" || typeof result === "function") && typeof Reflect.get(result, "then") === "function") {
+        void Promise.resolve(result).catch(() => undefined);
+        throw new TypeError("Procedure observation commits must be synchronous");
+      }
+      this.context.database.exec("COMMIT");
+      return result;
+    } catch (error) {
+      rollbackOwnedSqliteTransaction(this.context.database);
+      throw error;
+    } finally {
+      this.ownsJobTransaction = false;
+    }
+  }
+
+  getProcedureObservationByJobKey(jobKey: string, workspaceId = DEFAULT_WORKSPACE_ID): ProcedureObservation | undefined {
+    const row = this.context.database.prepare(`${procedureObservationSelectSql} WHERE workspace_id = ? AND id = (
+      SELECT observation_id FROM procedure_observation_jobs WHERE workspace_id = ? AND job_key = ?
+    )`).get(workspaceId, workspaceId, jobKey);
+    return row ? mapProcedureObservation(row as Record<string, SQLOutputValue>) : undefined;
+  }
+
   createProcedureObservation(input: CreateProcedureObservationInput, now: string): ProcedureObservation {
+    const jobRefs = input.sourceRefs.filter(ref => ref.type === "observation-job");
+    if (jobRefs.length > 1 || jobRefs.some(ref => !ref.id.trim())) throw new Error("Observation requires at most one non-empty source job key");
+    if (jobRefs.length && !this.ownsJobTransaction) {
+      return this.withProcedureObservationJobTransaction(() => this.createProcedureObservation(input, now));
+    }
     const workspaceId = input.workspaceId ?? DEFAULT_WORKSPACE_ID;
+    const existing = jobRefs[0] ? this.getProcedureObservationByJobKey(jobRefs[0].id, workspaceId) : undefined;
+    if (existing) return existing;
     const baseObservation: ProcedureObservation = {
       id: input.id ?? createProcedureObservationId(),
       workspaceId,
@@ -174,6 +212,8 @@ export class SqliteProcedureObservationStore {
         stringifyJson(observation.routeBlockers),
         observation.createdAt,
       );
+    if (jobRefs[0]) this.context.database.prepare(`INSERT INTO procedure_observation_jobs
+      (workspace_id, job_key, observation_id) VALUES (?, ?, ?)`).run(workspaceId, jobRefs[0].id, observation.id);
     return observation;
   }
 

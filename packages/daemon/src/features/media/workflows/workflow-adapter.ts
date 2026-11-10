@@ -14,7 +14,9 @@ import type {
   MediaExecutionSubmission,
 } from "@ling-stack/providers";
 import { ComfyUiClient } from "./comfyui-client.js";
+import type { ComfyUiTerminalObservation } from "./comfyui-terminal-observation.js";
 import { materializeComfyWorkflowGraph } from "./comfyui-graph.js";
+import { assertCurrentMediaWorkflowProtocol } from "./media-protocol-contract.js";
 
 export interface MediaWorkflowExecutionRequest {
   readonly jobId: string;
@@ -45,10 +47,20 @@ export function createComfyUiWorkflowAdapter(input: {
     fetchImpl: input.fetchImpl,
     resolveHostAddresses: input.resolveHostAddresses,
   });
+  // Same-instance business projection, not a restored handle's authority.
+  // The Host retains independently captured transport/terminal lineage.
+  const observedRecoveries = new WeakMap<Record<string, unknown>, {
+    readonly payload: Record<string, unknown>;
+    readonly terminalObservation: ComfyUiTerminalObservation;
+  }>();
   return {
     id: "comfyui",
     async submit(request) {
       try {
+        // The adapter is a new-task boundary. Historical Prompt/History
+        // handles are still accepted by poll/cancel/collection below, but a
+        // fresh submission must never select that protocol.
+        assertCurrentMediaWorkflowProtocol(input.connection);
         const protocolVariant = input.connection.health?.protocolVariant ??
           (input.connection.protocolVariant === "auto" ? (await client.inspect()).protocolVariant : input.connection.protocolVariant);
         const values = await materializeWorkflowArtifactInputs({
@@ -85,38 +97,48 @@ export function createComfyUiWorkflowAdapter(input: {
         return { status: "pending" };
       }
       if (result.status === "failed") {
-        return { status: "failed", errorCode: "provider_internal_error", errorMessage: result.message };
+        return { status: "failed", errorCode: "provider_internal_error", errorMessage: result.message,
+          ...(result.terminalObservation ? { terminalObservation: result.terminalObservation } : {}) };
       }
+      const recovery = { ...handle.recovery, protocolVariant, resultPayload: result.payload };
+      observedRecoveries.set(recovery, { payload: result.payload, terminalObservation: result.terminalObservation });
       return {
         status: "succeeded",
-        recovery: {
-          ...handle.recovery,
-          protocolVariant,
-          resultPayload: result.payload,
-        },
+        terminalObservation: result.terminalObservation,
+        recovery,
       };
     },
     async collectArtifacts(handle) {
       const payload = handle.recovery.resultPayload;
+      const observed = observedRecoveries.get(handle.recovery);
+      const terminalObservation = observed && observed.payload === payload &&
+        observed.terminalObservation.externalOperationId === handle.externalOperationId
+        ? observed.terminalObservation : undefined;
+      const terminal = terminalObservation ? { terminalObservation } : {};
       if (!isRecord(payload)) {
         return { status: "failed", artifacts: [], errorCode: "invalid_request", errorMessage: "ComfyUI 任务缺少结果快照。" };
       }
       const files = client.collectOutputFiles(payload, input.version.outputRules).slice(0, 8);
       if (files.length === 0) {
-        return { status: "failed", artifacts: [], errorCode: "invalid_request", errorMessage: "ComfyUI 没有返回映射的图片或视频结果。" };
+        return { status: "failed", artifacts: [], ...terminal, errorCode: "invalid_request", errorMessage: "ComfyUI 没有返回映射的图片或视频结果。" };
       }
       const artifacts: MediaExecutionArtifact[] = [];
-      for (const file of files) {
-        const downloaded = await client.downloadOutput(file);
-        artifacts.push({
-          type: file.artifactType,
-          title: basename(file.filename),
-          contentBytes: downloaded.bytes,
-          contentType: downloaded.contentType,
-          pathHint: file.filename,
-        });
+      try {
+        for (const file of files) {
+          const downloaded = await client.downloadOutput(file);
+          artifacts.push({
+            type: file.artifactType,
+            title: basename(file.filename),
+            contentBytes: downloaded.bytes,
+            contentType: downloaded.contentType,
+            pathHint: file.filename,
+          });
+        }
+        return { status: "succeeded", artifacts, ...terminal };
+      } catch (error) {
+        return { status: "failed", artifacts, ...terminal, errorCode: "provider_internal_error",
+          errorMessage: error instanceof Error ? error.message : String(error) };
       }
-      return { status: "succeeded", artifacts };
     },
     async cancel(handle) {
       const protocolVariant = readProtocolVariant(handle.recovery.protocolVariant);

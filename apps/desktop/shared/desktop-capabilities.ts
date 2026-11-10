@@ -1,4 +1,26 @@
-import type { ComputerUseRuntimeStatus } from "@ling-stack/contracts";
+import type { ComputerUseRuntimeStatus, EngineDiscoveryReport, ManagedInstallStatus, ExecutionEngineConnectionProbe, ExecutionEngineInstallationProbe, ExecutionEngineLoginMethod, ExecutionEngineLoginOperation, ExecutionEngineProfileListResponse, ExecutionEngineProfileResponse,
+  ExternalExecutionEngineId, SaveExecutionEngineProfileRequest, SaveExecutionEngineSecretRequest } from "@ling-stack/contracts";
+
+export interface DesktopExecutionEngineCapabilities {
+  saveProfileWithSecret(engineId: ExternalExecutionEngineId, request: SaveExecutionEngineSecretRequest): Promise<ExecutionEngineProfileResponse>;
+  listProfiles(): Promise<ExecutionEngineProfileListResponse>;
+  getProfile(engineId: ExternalExecutionEngineId): Promise<ExecutionEngineProfileResponse>;
+  saveProfile(engineId: ExternalExecutionEngineId, input: SaveExecutionEngineProfileRequest): Promise<ExecutionEngineProfileResponse>;
+  disconnectProfile(engineId: ExternalExecutionEngineId, expectedRevision: number): Promise<ExecutionEngineProfileResponse>;
+  probeProfile(engineId: ExternalExecutionEngineId, expectedRevision: number): Promise<ExecutionEngineInstallationProbe>;
+  probeConnection(engineId: ExternalExecutionEngineId, expectedRevision: number): Promise<ExecutionEngineConnectionProbe>;
+  startLogin(engineId: ExternalExecutionEngineId, expectedRevision: number, method: ExecutionEngineLoginMethod): Promise<ExecutionEngineLoginOperation>;
+  getLogin(engineId: ExternalExecutionEngineId, operationId: string): Promise<ExecutionEngineLoginOperation>;
+  cancelLogin(engineId: ExternalExecutionEngineId, operationId: string): Promise<ExecutionEngineLoginOperation>;
+  discover(): Promise<EngineDiscoveryReport>;
+  install(engineId: ExternalExecutionEngineId): Promise<{ readonly install: ManagedInstallStatus }>;
+  installStatus(engineId: ExternalExecutionEngineId): Promise<{ readonly install: ManagedInstallStatus }>;
+}
+import {
+  SUPPORTED_LOCALES,
+  isSupportedLocale,
+  type SupportedLocale,
+} from "@ling-stack/localization";
 import type {
   DesktopRendererThemeInput,
   DesktopRendererThemeSnapshot,
@@ -7,20 +29,18 @@ import type { DesktopThemePackageCapabilities } from "./theme-package-capabiliti
 
 export type DesktopPlatform = "macos" | "windows" | "linux";
 
-export const COMPUTER_USE_PREVIEW_LOCALES = ["en-US", "zh-CN"] as const;
+export const COMPUTER_USE_PREVIEW_LOCALES = SUPPORTED_LOCALES;
 
-export type ComputerUsePreviewLocale = (typeof COMPUTER_USE_PREVIEW_LOCALES)[number];
+export type ComputerUsePreviewLocale = SupportedLocale;
 
 export const DEFAULT_COMPUTER_USE_PREVIEW_LOCALE: ComputerUsePreviewLocale = "en-US";
 
 export function isComputerUsePreviewLocale(value: unknown): value is ComputerUsePreviewLocale {
-  return typeof value === "string" && COMPUTER_USE_PREVIEW_LOCALES.includes(
-    value as ComputerUsePreviewLocale,
-  );
+  return isSupportedLocale(value);
 }
 
 export interface DesktopDaemonStatus {
-  readonly state: "checking" | "starting" | "connected" | "disconnected";
+  readonly state: "checking" | "starting" | "connected" | "disconnected" | "draining" | "blocked";
   readonly baseUrl: string;
   readonly ownedByDesktop: boolean;
   readonly reason?:
@@ -28,8 +48,25 @@ export interface DesktopDaemonStatus {
     | "start_timeout"
     | "child_exited"
     | "resource_missing"
-    | "spawn_failed";
+    | "spawn_failed"
+    | "stop_blocked"
+    | "stop_unconfirmed";
   readonly message?: string;
+}
+
+export function isDesktopDaemonStatus(value: unknown): value is DesktopDaemonStatus {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const status = value as Record<string, unknown>;
+  if (!["checking", "starting", "connected", "disconnected", "draining", "blocked"].includes(String(status.state))
+    || typeof status.baseUrl !== "string" || status.baseUrl.length > 2048
+    || typeof status.ownedByDesktop !== "boolean"
+    || status.message !== undefined && (typeof status.message !== "string" || status.message.length > 2048)) return false;
+  if (status.reason !== undefined && !["bridge_incompatible", "start_timeout", "child_exited", "resource_missing",
+    "spawn_failed", "stop_blocked", "stop_unconfirmed"].includes(String(status.reason))) return false;
+  if (status.state === "draining") return status.ownedByDesktop === true && status.reason === undefined;
+  if (status.state === "blocked") return status.ownedByDesktop === true
+    && (status.reason === "stop_blocked" || status.reason === "stop_unconfirmed");
+  return status.reason !== "stop_blocked" && status.reason !== "stop_unconfirmed";
 }
 
 export interface DesktopMobileAccessStatus {
@@ -158,6 +195,18 @@ export interface DesktopCommandResult {
   readonly reason?: string;
 }
 
+export interface DesktopWindowState {
+  readonly maximized: boolean;
+}
+
+export interface DesktopWindowControlCapabilities {
+  getState(): Promise<DesktopWindowState>;
+  minimize(): Promise<DesktopCommandResult>;
+  toggleMaximize(): Promise<DesktopCommandResult>;
+  close(): Promise<DesktopCommandResult>;
+  onStateChanged(listener: (state: DesktopWindowState) => void): () => void;
+}
+
 export type ComputerControlPermissionKind = "accessibility" | "screen_recording";
 
 export interface LockedTaskContinuationPreferences {
@@ -229,12 +278,18 @@ export interface ComputerUsePreviewPreferences {
 }
 
 export interface LingDesktopCapabilities {
+  readonly localServices?: import("./local-service-capabilities.js").DesktopLocalServiceCapabilities;
+  readonly localFiles?: import("./local-file-capabilities.js").DesktopLocalFileCapabilities;
+  readonly backgrounds?: import("./background-capabilities.js").DesktopBackgroundCapabilities;
+  readonly humanEvaluation?: import("./human-evaluation-capabilities.js").DesktopHumanEvaluationCapabilities;
   readonly platform: DesktopPlatform;
   readonly daemonBaseUrl: string;
   readonly appearance: {
     reportTheme(theme: DesktopRendererThemeInput): void;
   };
   readonly themePackages: DesktopThemePackageCapabilities;
+  /** Present only when the renderer owns the Windows frame controls. */
+  readonly windowControls?: DesktopWindowControlCapabilities;
   readonly navigation: {
     acknowledgeIntent(requestId: number): Promise<DesktopCommandResult>;
     onIntent(listener: (intent: DesktopNavigationIntent) => void): () => void;
@@ -242,8 +297,10 @@ export interface LingDesktopCapabilities {
   readonly daemon: {
     getStatus(): Promise<DesktopDaemonStatus>;
     restart(): Promise<DesktopDaemonStatus>;
+    onStatusChanged(listener: (status: DesktopDaemonStatus) => void): () => void;
   };
   readonly mobileAccess?: DesktopMobileAccessCapabilities;
+  readonly executionEngines?: DesktopExecutionEngineCapabilities;
   /** Present only when this packaged host carries bundled provider authority. */
   readonly computerControl?: ComputerControlDesktopCapability;
   /** Desktop-owned preference, independent from Cua Driver readiness. */

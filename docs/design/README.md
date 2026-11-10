@@ -2,7 +2,7 @@
 
 Status: canonical documentation index
 Owner: repository maintainers
-Last verified: 2026-08-27
+Last verified: 2026-11-02 (safe-concurrency design/plan added; other delivery states retain their owners)
 Document type: governance index
 Code and test anchors: each linked contract owns its anchors
 
@@ -11,32 +11,71 @@ Code and test anchors: each linked contract owns its anchors
 This directory keeps current product contracts, long-lived architecture decisions, and
 security, migration, recovery, API, and release boundaries. Completed implementation
 plans, version-by-version UI history, and screenshot evidence belong in Git history or
-CI/Release artifacts instead of the default documentation tree.
+CI/Release artifacts instead of the default documentation tree. Start with the
+[repository overview](../../README.md) for source setup, and
+[Implementation Status](implementation-status.md) for current delivery boundaries.
+Maintenance-only transition notes are kept in [Development Handoffs](../maintenance/development-handoffs.md).
 
 ## Product And Architecture
 
 - [Implementation Status](implementation-status.md)
+- [Official Scene Theme, Background And Interaction Motion Contract](theme-background-motion-contract.md)
+- [Ling Core IP Design Contract](ling-core-ip-design.md)
+- [Official Scene Theme And Custom Media Background Implementation Plan](full-window-theme-background-implementation-plan.md)
+- [Ling Journey UI Visual Adaptation Implementation Plan](ling-journey-ui-adaptation-implementation-plan.md)
+- [Official Scene Theme And Custom Media Background Acceptance Matrix](full-window-theme-background-acceptance-matrix.md)
+- [Official Scene Theme And Custom Media Background Validation](scene-theme-background-validation.md)
+- [Theme Reading Protection, Playback And Composition Plan](theme-background-hardening-plan.md)
+- [Shared Component Theme Presentation Contract](component-theme-presentation.md)
+- [Shared Component Unification And Three-Theme Refinement Plan](component-theme-presentation-implementation-plan.md)
+- [Shared Component And Theme Validation Evidence](component-theme-presentation-validation.md)
+- [Breeze, Ocean And Night Refinement Directions](scene-theme-refinement-directions.md)
+- [Photographic And Summer Manga Scene Theme Validation](photographic-scene-themes-validation.md)
+- [Full-Window Theme Background Research](full-window-theme-background-research.md)
 - [Product Design](../product-design.md)
 - [Architecture](../architecture.md)
 - [Platform Architecture](platform-architecture.md)
 - [Ling Framework](ling-framework.md)
+- [Ling Framework Complementary Design](ling-framework-complementary-design.md)
+- [Ling Framework Complementary Detailed Design](ling-framework-complementary-detailed-design.md)
+- [Ling Framework Complementary Implementation Plan](ling-framework-complementary-implementation-plan.md)
 - [Contracts And API Client](contracts-api-client.md)
+- [Business Data And API Compatibility Cutover](business-data-api-compatibility-cutover.md)
+- [Business Data And API Compatibility Implementation Plan](business-data-api-compatibility-implementation-plan.md)
+- [Business Compatibility Boundary Hardening](business-compatibility-boundary-hardening.md)
+- [Business Compatibility Boundary Hardening Implementation Plan](business-compatibility-boundary-hardening-implementation-plan.md)
+- [Business Data And API Compatibility Boundaries](business-data-api-compatibility.md)
 - [Daemon API](../daemon-api.md)
 - [Architecture Decision Records](../adr/README.md)
 
 ## Conversations And Channels
 
+- [Conversation Position Navigation](conversation-position-navigation.md)
 - [Conversation Surface Contract](conversation-surface-contract.md)
+- [Conversation Experience And Test-Duration Contract](five-point-optimization-contract.md)
+- [Conversation Experience And Test-Duration Implementation Plan](five-point-optimization-implementation-plan.md)
 - [Conversation Surface Taxonomy](conversation-surface-taxonomy.md)
+- [频道下多会话](channel-sessions-detailed-design.md)
+  （含侧栏与空白会话线框、全部会话目录、状态反馈和迁移边界；[实现计划](channel-sessions-implementation-plan.md)）
 - [Conversation Composer Unification](conversation-composer-unification.md)
 - [Conversation Model Binding And Creation Validation](conversation-model-binding-and-creation-validation.md)
 - [Conversation Full Access Confirmation](conversation-session-full-access-confirmation.md)
 - [Conversation Right Dock Workspace Tools](conversation-right-dock-workspace-tools.md)
+- [Work Summary](../features/work-summary.md)
+- [Project Defect Remediation Contract 2026-09](project-defect-remediation-contract-2026-09.md)
+- [Project Defect Remediation Plan 2026-09](project-defect-remediation-plan-2026-09.md)
 - [Conversation Shared Capabilities](conversation-shared-capabilities.md)
 - [Run Interruption And Continuation](run-interruption-continuation.md)
 - [Channel Context Processing Layer](channel-context-processing-layer.md)
 - [Channel Conversation Continuity v2](channel-conversation-continuity-v2.md)
+- [Channel Environment Information Hierarchy](channel-environment-information-hierarchy.md)
 - [Conversation Activity Summary And Exploration Batching](conversation-activity-summary-and-exploration-batching-detailed-design.md)
+- [Conversation Typed Transcript — Detailed Design](conversation-typed-transcript-detailed-design.md)
+- [Conversation Codex-Parity Visual Specification](conversation-codex-parity-visual-spec.md)
+- [Codex-style Typed Transcript Implementation Plan](conversation-codex-style-transcript-implementation-plan.md)
+- [User Input And Native Sandbox Integration](conversation-user-input-and-sandbox-integration.md)
+- [Platform Native Sandbox V1 Implementation Plan](platform-native-sandbox-v1-implementation-plan.md)
+- [Conversation Right Dock Responsive Visibility Implementation Plan](conversation-right-dock-responsive-visibility-implementation-plan.md)
 - [Channel Execution Completion Implementation Plan](channel-execution-completion-implementation-plan.md)
 - [Post-Compaction Workspace Undo](post-compaction-undo.md)
 - [Post-Compaction Snapshot Restore](post-compaction-snapshot-restore.md)
@@ -44,6 +83,17 @@ CI/Release artifacts instead of the default documentation tree.
 - [Ling Agent Session](ling-agent-session.md)
 - [Ling Agent Terminal Report Protocol](ling-agent-terminal-report-protocol.md)
 - [Thread-First Work History](thread-first-work-history.md)
+
+### Typed Transcript
+
+Read the [data and recovery contract](conversation-typed-transcript-detailed-design.md),
+[visual specification](conversation-codex-parity-visual-spec.md),
+[surface contract](conversation-surface-contract.md), and
+[component design](conversation-codex-parity-component-detailed-design.md) together.
+The [active implementation plan](conversation-codex-style-transcript-implementation-plan.md)
+owns implementation order and acceptance; the
+[maintenance handoff](../maintenance/development-handoffs.md#typed-transcript-handoff)
+retains the detailed implementation brief and historical checkpoint.
 
 ## Teammates, Memory, And Skills
 
@@ -58,13 +108,24 @@ CI/Release artifacts instead of the default documentation tree.
 - [Skill Editing And Revision](skill-editing-and-revision.md)
 - [Skill Library And AI Evolution](skill-library-height-and-ai-evolution-lifecycle.md)
 - [Skill Source Sync](skill-source-sync-simplification-p15.md)
+- [External Agent Skill Discovery And Adoption](external-agent-skill-discovery.md)
+- [External Agent Skill Discovery Implementation Plan](external-agent-skill-discovery-implementation-plan.md)
+- [Bundled GStack Client Contract](gstack-bundled-client-upgrade.md)
+- [Bundled GStack Client Implementation Plan](gstack-bundled-client-upgrade-implementation-plan.md)
+- [Bundled GStack Acceptance Matrix](gstack-bundled-client-acceptance-matrix.md)
 
 ## Runtime, Security, And Storage
 
 - [Approval Policy](approval-policy.md)
+- [Workspace Command Rule Approval Implementation Plan](workspace-command-rule-approval-implementation-plan.md)
 - [Inline Runtime Approval](inline-runtime-approval-detailed-design.md)
 - [State Machines And Recovery](state-machine-recovery.md)
 - [Multi-Channel Concurrency](multi-channel-concurrency.md)
+- [Multi-Agent App Detailed Design](multi-agent-app-detailed-design.md)
+- [Multi-Agent Orchestrator](multi-agent-orchestrator.md)
+- [Orchestrator Advanced](orchestrator-advanced.md)
+- [Ling 多 Agent 安全并发详细设计](ling-multi-agent-safe-concurrency-detailed-design.md)
+- [Ling 多 Agent 安全并发实施计划](ling-multi-agent-safe-concurrency-implementation-plan.md)
 - [Runtime Supervisor](runtime-supervisor.md)
 - [Runtime Control Plane](runtime-control-plane-roadmap.md)
 - [Secrets And Keychain](secrets-keychain.md)
@@ -80,6 +141,8 @@ part of the current product acceptance scope.
 ## Models, Media, And Integrations
 
 - [Provider Presets](provider-presets.md)
+- [P15 Provider Model Catalog And Discovery](provider-model-catalog-and-discovery-p15.md)
+- [P15 Provider Model Catalog And Discovery Implementation Plan](provider-model-catalog-and-discovery-p15-implementation-plan.md)
 - [Provider Generation Runtime](provider-generation-runtime.md)
 - [Video Production Studio](model-workbench-video-production-studio.md)
 - [Media Production Experience](media-production-experience-refinement.md)
@@ -97,6 +160,7 @@ part of the current product acceptance scope.
 
 ## Web, Desktop, And UI 2.0
 
+- [Internationalization And Language Parity](internationalization-language-parity.md)
 - [UI 2.0 Documentation](ui2.0升级/README.md)
 - [UI 2.0 Product Contract](ui2.0升级/00-UI2.0整体升级方案.md)
 - [UI 2.0 Acceptance Contract](ui2.0升级/03-UI2.0验收总规范.md)
@@ -105,6 +169,7 @@ part of the current product acceptance scope.
 - [Data Revalidation And Manual Refresh Policy](data-revalidation-and-manual-refresh-policy.md)
 - [Web Modularization](web-modularization.md)
 - [Web E2E Acceptance Matrix](web-e2e-acceptance-matrix.md)
+- [Codex Window Shell Parity](codex-window-shell-parity.md)
 - [Desktop Shell](desktop-shell.md)
 - [Sidebar, Approval, And Proposal Dialogs Implementation Plan](sidebar-approval-proposal-dialogs-implementation-plan.md)
 - [Desktop Release](../release/desktop.md)

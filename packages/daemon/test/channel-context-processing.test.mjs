@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { workflowGraphFingerprintV1 } from "@ling-stack/contracts";
 import {
   collectActiveWorkSources,
   collectMaterializedInputSources,
@@ -222,6 +223,8 @@ test("channel context message listing scopes topic replies to their source messa
 test("active work collector projects proposals workflows runs and approvals as metadata sources", () => {
   const channel = createChannel();
   const store = {
+    getConversationItem: (id) => id === "msg_current" ? { threadId: "thread_current" } : undefined,
+    getLingTurn: () => undefined,
     listChannelExecutionProposals: () => [{
       id: "proposal_1",
       workspaceId: "workspace_1",
@@ -288,7 +291,7 @@ test("active work collector projects proposals workflows runs and approvals as m
       : [],
   };
 
-  const sources = collectActiveWorkSources({ store, channel });
+  const sources = collectActiveWorkSources({ store, channel, threadId: "thread_current" });
 
   assert.deepEqual(sources.map((source) => source.id), [
     "active_work:proposal:proposal_1",
@@ -630,6 +633,7 @@ test("workflow proposal context view maps supported source refs for shaping evid
       objective: "Implement and verify.",
       status: "running",
       createdBy: "ling_agent",
+      metadata: { sourceMessageId: "msg_previous" },
     }],
     listChannelWorkflowSteps: () => [{
       id: "step_1",
@@ -854,6 +858,123 @@ test("workflow step context names the managed worktree as the authoritative exec
   assert.match(objective.text, /Do not write to the bound parent workspace/u);
 });
 
+test("workflow step projection retains a confirmed objective once without changing frozen step evidence", () => {
+  const input = createGraphStepContextInput();
+  const before = JSON.stringify({ workflow: input.workflow, step: input.step });
+  const view = buildWorkflowStepContextView(input);
+  const rendered = renderChannelContextView(view);
+
+  assert.equal(rendered.split(input.workflow.objective).length - 1, 1);
+  assert.match(rendered, /Current graph node: Independent QA/u);
+  assert.match(rendered, /Assigned teammate: QA/u);
+  assert.match(rendered, /Only create audit\.md; never overwrite an existing file/u);
+  assert.match(rendered, /exact command: node --test constraints-check\.test\.js/u);
+  assert.match(rendered, /workingDirectory.*qinglan-ledger/u);
+  assert.match(rendered, /sourceRefs.*item_confirmed/u);
+  assert.match(rendered, /Acceptance criteria:\n- Independently verify all seven tests/u);
+  assert.match(rendered, /Do not start or approve later workflow nodes/u);
+  assert.deepEqual(view.sections.find(section => section.id === "workflow_current_step").sourceRefIds, [input.step.id]);
+  assert.equal(view.sources.some(source => source.kind === "workflow_step" && source.text.includes(input.step.prompt)), true);
+  assert.equal(JSON.stringify({ workflow: input.workflow, step: input.step }), before);
+  assert.equal(renderChannelContextView(buildWorkflowStepContextView(input)), rendered);
+});
+
+test("workflow step projection fits duplicated context under the unchanged provider budget", () => {
+  const input = createGraphStepContextInput({
+    objective: "全部需求和权限边界必须完整保留。".repeat(240),
+    instruction: "Keep this complete operation constraint, including all source references. ".repeat(120),
+  });
+  const pack = buildWorkflowStepContextPack(input);
+  assert.equal(pack.budget.inputBudgetTokens, 6656);
+  assert.equal(pack.overBudget, false);
+  const rendered = pack.sections.map(section => section.text).join("\n\n");
+  assert.equal(rendered.split(input.workflow.objective).length - 1, 1);
+  assert.ok(rendered.includes(input.instruction));
+
+  const tooLarge = createGraphStepContextInput({ instruction: "nonduplicated mandatory constraint ".repeat(1_000) });
+  const blocked = buildWorkflowStepContextPack(tooLarge);
+  assert.equal(blocked.budget.inputBudgetTokens, 6656);
+  assert.equal(blocked.overBudget, true);
+  assert.ok(blocked.sections.find(section => section.id === "workflow_current_step").text.includes(tooLarge.instruction));
+});
+
+test("workflow step projection preserves overrides, unknown wrappers and unmatched graph evidence", () => {
+  for (const mutate of [
+    input => { input.prompt += "\nAdditional explicit caller instruction."; },
+    input => { input.workflow.metadata.workflowGraphFingerprint = "wgfv1:changed"; },
+    input => { input.step.metadata.graphNodeId = "not-this-node"; },
+    input => { input.step.metadata.graphId = "not-this-graph"; },
+    input => { input.workflow.metadata.workflowGraph.nodes[0].prompt += "\nChanged node-local constraint."; },
+    input => { input.workflow.metadata.workflowGraph.nodes[0].name = "Changed node name"; },
+    input => { input.workflow.metadata.workflowGraph.nodes[0].skillId = "changed_skill"; },
+    input => { input.step.prompt += "\nChanged stored step instruction."; input.prompt = input.step.prompt; },
+    input => { input.workflow.metadata = undefined; },
+    input => { input.prompt = "Manual step that merely mentions Overall scope: without a Host wrapper."; },
+  ]) {
+    const input = createGraphStepContextInput();
+    mutate(input);
+    const view = buildWorkflowStepContextView(input);
+    assert.ok(view.sections.find(section => section.id === "workflow_current_step").text.includes(input.prompt));
+  }
+});
+
+test("workflow step projection removes only the graph wrapper for non-proposal graph nodes", () => {
+  const input = createGraphStepContextInput({ proposal: false });
+  const view = buildWorkflowStepContextView(input);
+  const rendered = renderChannelContextView(view);
+  assert.equal(rendered.split(input.workflow.objective).length - 1, 1);
+  assert.ok(rendered.includes(input.instruction));
+});
+
+test("workflow step projection does not strip objective-like text from a custom node instruction", () => {
+  const objective = "Do not change permissions.";
+  const instruction = `Quoted custom instruction:\nOverall scope:\n${objective}\n\nKeep this quote exactly.`;
+  const input = createGraphStepContextInput({ objective, instruction, proposal: false });
+  const view = buildWorkflowStepContextView(input);
+  assert.ok(view.sections.find(section => section.id === "workflow_current_step").text.includes(instruction));
+});
+
+function createGraphStepContextInput(options = {}) {
+  const objective = options.objective ?? "Complete the independently verified audit without changing the original eight files.";
+  const instruction = options.instruction ?? [
+    "Only create audit.md; never overwrite an existing file.",
+    "exact command: node --test constraints-check.test.js",
+    'binding: {"workingDirectory":"qinglan-ledger","sourceRefs":[{"id":"item_confirmed"}]}',
+    "Acceptance criteria:\n- Independently verify all seven tests",
+  ].join("\n");
+  const proposal = options.proposal !== false;
+  const title = "Verified audit";
+  const node = {
+    id: "qa_node", kind: "step", name: "Independent QA", teammateId: "teammate_qa",
+    prompt: proposal
+      ? `Confirmed proposal:\n${title}\n\nOverall scope:\n${objective}\n\nAssigned teammate: QA\n\n${instruction}`
+      : instruction,
+  };
+  const graph = {
+    schemaVersion: 1, id: proposal ? "proposal_proposal_1" : "custom_graph", name: title,
+    entryNodeId: node.id, nodes: [node], edges: [],
+    termination: { success: "all_required_succeeded", onFailedRequiredNode: "block_for_user", onApprovalDenied: "block_for_user" },
+  };
+  const workflow = createWorkflow({ title, objective, metadata: {
+    workflowGraph: graph, workflowGraphId: graph.id, workflowGraphFingerprint: workflowGraphFingerprintV1(graph),
+    ...(proposal ? { sourceProposalId: "proposal_1" } : {}),
+  } });
+  const step = createWorkflowStep({
+    status: "blocked", title: node.name, toParticipantId: node.teammateId,
+    prompt: [
+      `Workflow objective:\n${objective}`, `Current graph node: ${node.name}`, node.prompt,
+      "Complete this graph node only. Do not start or approve later workflow nodes.",
+      "Return a concise terminal summary and any artifacts or follow-up decisions needed by later nodes.",
+    ].join("\n\n"),
+    metadata: { graphId: graph.id, graphNodeId: node.id },
+  });
+  const channel = createChannel();
+  return {
+    store: createWorkflowStepStore(), channel, workflow, step, prompt: step.prompt, instruction,
+    workflowSteps: [step], protocolSection: createProtocolSection(channel),
+  };
+}
+
 test("selector context view filters private memory and raw evidence sources", () => {
   const view = buildChannelContextView({
     kind: "selector_view",
@@ -924,12 +1045,12 @@ test("memory eligibility keeps channel memory but excludes private and secret me
   assert.deepEqual(memoryEligibilityForView(channelMemory, "ling_agent_channel_view"), {
     mode: "public_quote",
     quotePolicy: "public_ok",
-    policyVersion: "memory_use_isolation_v1",
+    policyVersion: "memory_use_isolation_v2",
   });
   assert.deepEqual(memoryEligibilityForView(influenceOnlyMemory, "ling_agent_channel_view"), {
     mode: "influence_only",
     quotePolicy: "influence_only",
-    policyVersion: "memory_use_isolation_v1",
+    policyVersion: "memory_use_isolation_v2",
   });
 });
 
@@ -971,11 +1092,11 @@ test("memory eligibility allows private memory only for the matching teammate co
   assert.deepEqual(memoryEligibilityForView(privateMemory, "workflow_step_view", "teammate_a"), {
     mode: "influence_only",
     quotePolicy: "influence_only",
-    policyVersion: "memory_use_isolation_v1",
+    policyVersion: "memory_use_isolation_v2",
   });
 });
 
-test("private chat context view keeps private thread sources and explicit task/run refs", () => {
+test("private chat context view keeps private thread sources without importing linked channel task or workflow facts", () => {
   const teammate = createTeammate();
   const thread = createDirectThread({ teammateId: teammate.id });
   const priorMessage = createDirectMessage({
@@ -1026,15 +1147,10 @@ test("private chat context view keeps private thread sources and explicit task/r
     "teammate_profile:teammate_designer",
     "private_message:direct_prior",
     "private_message:direct_latest",
-    "private_ref:task:task_1",
-    "private_ref:run:run_1",
     "memory:private",
   ]);
   assert.deepEqual(view.dropped, [{ sourceId: "recent_message:channel", reason: "scope" }]);
-  assert.ok(view.sourceRefs.some((ref) => ref.type === "task" && ref.id === "task_1"));
-  assert.ok(view.sourceRefs.some((ref) => ref.type === "run" && ref.id === "run_1"));
-  assert.ok(view.sourceRefs.some((ref) => ref.type === "workflow" && ref.id === "workflow_1"));
-  assert.ok(view.sourceRefs.some((ref) => ref.type === "workflow_step" && ref.id === "step_1"));
+  assert.ok(!view.sourceRefs.some((ref) => ["task", "run", "workflow", "workflow_step", "channel"].includes(ref.type)));
 });
 
 test("memory eligibility keeps raw memory out of selector and proposal views", () => {
@@ -1093,7 +1209,7 @@ test("memory eligibility keeps memory inspect-only for evidence inspect views", 
   assert.deepEqual(memoryEligibilityForView(secretMemory, "evidence_inspect_view"), {
     mode: "inspect_only",
     quotePolicy: "inspect_only",
-    policyVersion: "memory_use_isolation_v1",
+    policyVersion: "memory_use_isolation_v2",
   });
 });
 

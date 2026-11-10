@@ -23,14 +23,14 @@
 
 .profile-kicker {
   margin: 0 0 6px;
-  color: var(--text-soft);
+  color: var(--ling-text-soft);
   font-size: 13px;
   font-weight: 650;
 }
 
 .profile-topbar h1 {
   margin: 0;
-  color: var(--text-strong);
+  color: var(--ling-text-strong);
   font-size: 28px;
   line-height: 1.15;
   letter-spacing: 0;
@@ -59,10 +59,10 @@
   aspect-ratio: 1 / 1;
   padding: 0;
   overflow: visible;
-  border: 1px solid var(--border);
+  border: 1px solid var(--ling-border-default);
   border-radius: 999px;
   appearance: none;
-  background: var(--text-strong);
+  background: var(--ling-text-strong);
   color: var(--ling-text-inverse);
   font-size: 34px;
   font-weight: 700;
@@ -71,7 +71,7 @@
 
 .profile-avatar-button.has-avatar {
   background: transparent;
-  color: var(--text-strong);
+  color: var(--ling-text-strong);
 }
 
 .profile-avatar-button img {
@@ -92,11 +92,11 @@
   place-items: center;
   width: 30px;
   height: 30px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--ling-border-default);
   border-radius: 999px;
-  background: var(--surface-panel);
-  box-shadow: 0 0 0 4px var(--app-bg);
-  color: var(--text);
+  background: var(--ling-bg-panel);
+  box-shadow: 0 0 0 4px var(--ling-bg-app);
+  color: var(--ling-text-default);
 }
 
 .profile-identity-form {
@@ -114,7 +114,7 @@
 }
 
 .profile-identity-readonly > span {
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
   font-size: 12px;
   font-weight: 650;
 }
@@ -124,7 +124,7 @@
   min-height: var(--ling-control-md);
   align-items: center;
   overflow: hidden;
-  color: var(--text-strong);
+  color: var(--ling-text-strong);
   font-size: var(--ling-font-sm);
   font-weight: 650;
   line-height: var(--ling-line-sm);
@@ -137,7 +137,7 @@
   justify-content: center;
   gap: 8px;
   margin: 2px 0 0;
-  color: var(--text-soft);
+  color: var(--ling-text-soft);
   font-size: 13px;
 }
 
@@ -145,9 +145,9 @@
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  background: var(--surface-panel);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-lg);
+  background: var(--ling-bg-panel);
 }
 
 .profile-stat {
@@ -156,7 +156,7 @@
   gap: 5px;
   min-width: 0;
   padding: 17px 12px;
-  border-right: 1px solid var(--border);
+  border-right: 1px solid var(--ling-border-default);
   text-align: center;
 }
 
@@ -167,13 +167,13 @@
 .profile-stat strong {
   max-width: 100%;
   overflow-wrap: anywhere;
-  color: var(--text-strong);
+  color: var(--ling-text-strong);
   font-size: 18px;
   font-weight: 650;
 }
 
 .profile-stat span {
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
   font-size: 13px;
   font-weight: 600;
 }
@@ -194,7 +194,7 @@
 .profile-insights h2,
 .profile-top-skills h2 {
   margin: 0;
-  color: var(--text-strong);
+  color: var(--ling-text-strong);
   font-size: 16px;
   line-height: 1.2;
   letter-spacing: 0;
@@ -206,9 +206,9 @@
   gap: 2px;
   min-height: 30px;
   padding: 2px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface-panel-strong);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  background: var(--ling-bg-elevated);
 }
 
 .profile-segmented button {
@@ -216,17 +216,17 @@
   min-height: 24px;
   padding: 0 9px;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--ling-radius-sm);
   background: transparent;
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
   font-size: 12px;
   font-weight: 650;
 }
 
 .profile-segmented button.active,
 .profile-segmented button:hover {
-  background: var(--surface-selected);
-  color: var(--text-strong);
+  background: var(--ling-action-selection);
+  color: var(--ling-text-strong);
 }
 
 .profile-activity-body {
@@ -279,7 +279,7 @@
   grid-template-columns: repeat(53, minmax(12px, 1fr));
   gap: 4px;
   width: 100%;
-  color: var(--text-soft);
+  color: var(--ling-text-soft);
   font-size: 12px;
 }
 
@@ -299,7 +299,7 @@
   grid-template-columns: 28px minmax(0, 1fr) auto;
   gap: 10px;
   min-height: 34px;
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
   font-size: 14px;
 }
 
@@ -310,13 +310,13 @@
   width: 28px;
   height: 28px;
   border: 0;
-  border-radius: var(--radius-md);
-  background: var(--surface-panel-strong);
-  color: var(--text-muted);
+  border-radius: var(--ling-radius-md);
+  background: var(--ling-bg-elevated);
+  color: var(--ling-text-muted);
 }
 
 .profile-insight-row strong {
-  color: var(--text-strong);
+  color: var(--ling-text-strong);
   font-size: 14px;
   font-weight: 650;
 }
@@ -331,14 +331,14 @@
   grid-template-columns: 30px minmax(0, 1fr) auto;
   gap: 10px;
   min-height: 34px;
-  color: var(--text-muted);
+  color: var(--ling-text-muted);
   font-size: 14px;
 }
 
 .profile-skill-row strong {
   min-width: 0;
   overflow: hidden;
-  color: var(--text-strong);
+  color: var(--ling-text-strong);
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -346,7 +346,7 @@
 
 .profile-empty {
   margin: 0;
-  color: var(--text-soft);
+  color: var(--ling-text-soft);
   font-size: 13px;
 }
 
@@ -356,16 +356,16 @@
   justify-self: center;
   max-width: min(520px, 100%);
   padding: 10px 14px;
-  border: 1px solid var(--danger-border);
-  border-radius: var(--radius-lg);
-  background: var(--danger-soft);
-  color: var(--danger);
+  border: 1px solid var(--ling-status-danger-border);
+  border-radius: var(--ling-radius-lg);
+  background: var(--ling-status-danger-bg);
+  color: var(--ling-status-danger);
   font-size: 13px;
   font-weight: 650;
 }
 
 .profile-message.ok {
-  border-color: var(--success-border);
-  background: var(--success-soft);
-  color: var(--success);
+  border-color: var(--ling-status-success-border);
+  background: var(--ling-status-success-bg);
+  color: var(--ling-status-success);
 }

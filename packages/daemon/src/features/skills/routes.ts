@@ -1,9 +1,21 @@
+import { flushSkillDefinitionRevisionNotices } from "./revision-notices.js";
+import {
+  routeFromObservation,
+  processProcedureObservationJob,
+  persistGenerationDecision,
+  generationDecisionActionForRoute,
+  generationReasonForRoute,
+  generationSourceFromObservation,
+  skillCandidateInputFromObservation,
+  withDuplicateAnalysis,
+  skillCandidateHealthInputFromCandidate,
+  appendSkillCandidateChangedEvent,
+} from "./procedure-observation-service.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createHash } from "node:crypto";
-import { copyFile, mkdir, readFile, stat } from "node:fs/promises";
-import { basename, dirname, extname, relative, resolve, sep } from "node:path";
+import { readFile } from "node:fs/promises";
+import { relative, resolve, sep } from "node:path";
 import {
-  analyzeSkillDuplicate,
   buildEffectiveTeammateSkills,
   buildSkillOptimizationPreview,
   buildSkillHealthReport,
@@ -13,21 +25,16 @@ import {
   createProcedureObservationInputFromJob,
   DEFAULT_WORKSPACE_ID,
   previewGstackSkillSourceSync,
+  resolveSharedAgentsSkillSourceRoots,
   resolveSkillSourceRoots,
-  isExplicitObservationJob,
-  procedureObservationHasTerminalStatus,
-  procedureObservationHasJobKey,
+  SHARED_AGENT_SKILL_PACK_ID,
   providerCapabilities,
   readOnlyRunTools,
   routeProcedureObservation,
   riskyRunTools,
   suggestSkillInvocations,
-  type CreateSkillCandidateInput,
   type CreateSkillImportDraftInput,
   type CreateProcedureObservationInput,
-  type CandidateGenerationDecision,
-  type CandidateGenerationDecisionAction,
-  type CandidateGenerationDecisionSource,
   type CandidateRoute,
   type ProviderCapability,
   type ProcedureObservation,
@@ -38,18 +45,17 @@ import {
   type SkillCandidate,
   type SkillCandidateHealthInput,
   type SkillDefinition,
-  type SkillDuplicateAnalysis,
   type SkillImportDraft,
   type SkillImportWarning,
   type SkillPackSource,
   type SkillRegistryEntry,
   type SkillSourceArtifact,
-  type SkillSourceFileRef,
   type SkillSourceScanRoot,
   type SkillSourceSyncPreviewRecord,
   type SkillSourceSyncPreviewReport,
   type SkillSourceSnapshot,
   type SkillSourceWarning,
+  SkillSourcePublicationError,
 } from "@ling-stack/core";
 import type {
   SkillRecordingEligibilityActionHint,
@@ -58,6 +64,7 @@ import type {
 } from "@ling-stack/contracts";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
+import { updateBundledSourceMode } from "./bundled-source-mode.js";
 import type { ControlPlaneEventHub } from "../control-plane/events.js";
 import { appendControlPlaneEvent } from "../control-plane/events.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
@@ -78,6 +85,8 @@ import {
   parseSkillImportDraftOptimizationPreviewRequest,
   parseSkillImportDraftRequest,
   parseSkillOptimizationPreviewRequest,
+  parseSharedSkillSourcePublishRequest,
+  parseSharedSkillSourceScanRequest,
   parseSkillSourceSnapshotRollbackRequest,
   parseSkillSourceSyncPublishRequest,
   parseSkillSourceSyncRequest,
@@ -89,11 +98,13 @@ import {
   readOptionalSkillCandidateStatusQuery,
   readOptionalSkillUsageEventKindQuery,
   type ParsedCreateSkillCandidateRequest,
+  type ParsedSharedSkillSourceScanRequest,
 } from "./schemas.js";
 import { resolveAiTeammateReference } from "../teammates/identity.js";
 import { handleSkillHardDelete } from "./hard-delete-route.js";
 import { handleManagedOfficialSkillSourceRoute, publicSourceState, refreshManagedOfficialGstackSkillSource, saveManagedOfficialGstackSubscription } from "./managed-official-skill-source-route.js";
 import { handleSkillRevisionRoute } from "./revision-routes.js";
+import { prepareSkillSourcePublication } from "./source-publication.js";
 
 export async function handleSkillRoute(
   request: IncomingMessage,
@@ -285,6 +296,51 @@ export async function handleSkillRoute(
         selectedSkillIds: input.selectedSkillIds,
         allowNewSkills: input.allowNewSkills,
         publishArtifacts: input.publishArtifacts,
+        now,
+      });
+      writeJson(response, 200, { cwd, publishedAt: now, preview, skills: result.skills, snapshots: result.snapshots, artifacts: result.artifacts });
+      return;
+    }
+
+    // Shared `.agents/skills` scan: explicitly triggered, auto-detected roots only, and
+    // deliberately separate from the P16 managed official-source endpoints above.
+    if (url.pathname === "/skills/sync/shared/preview") {
+      if (request.method !== "POST") {
+        writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /skills/sync/shared/preview` });
+        return;
+      }
+      const body = await readOptionalJsonBody(request, config.maxBodyBytes);
+      const input = parseSharedSkillSourceScanRequest(body);
+      const scannedAt = new Date().toISOString();
+      const preview = await buildSharedAgentsSkillSourceSyncPreview(cwd, store, input, scannedAt);
+      writeJson(response, 200, { cwd, scannedAt, preview });
+      return;
+    }
+
+    if (url.pathname === "/skills/sync/shared/publish") {
+      if (request.method !== "POST") {
+        writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /skills/sync/shared/publish` });
+        return;
+      }
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const input = parseSharedSkillSourcePublishRequest(body);
+      const now = new Date().toISOString();
+      const preview = await buildSharedAgentsSkillSourceSyncPreview(cwd, store, input, now);
+      const result = await publishGstackSkillSourceSync({
+        store,
+        controlPlaneEvents,
+        cwd,
+        preview,
+        selectedSkillIds: input.selectedSkillIds,
+        allowNewSkills: input.allowNewSkills,
+        publishArtifacts: input.publishArtifacts,
+        enforceAutoSafePolicy: false,
+        pack: {
+          source: "skill-directory",
+          packId: SHARED_AGENT_SKILL_PACK_ID,
+          name: "Shared .agents skills",
+          description: "Skills confirmed from the shared .agents/skills directories.",
+        },
         now,
       });
       writeJson(response, 200, { cwd, publishedAt: now, preview, skills: result.skills, snapshots: result.snapshots, artifacts: result.artifacts });
@@ -692,7 +748,7 @@ export async function handleSkillRoute(
       return;
     }
 
-    if (route.kind === "skill" && (route.action === "revision-preview" || route.action === "revisions")) {
+    if (route.kind === "skill" && (route.action === "revision-preview" || route.action === "revisions" || route.action === "revision-undo")) {
       await handleSkillRevisionRoute({
         request,
         response,
@@ -727,6 +783,10 @@ export async function handleSkillRoute(
         }
         if (candidateBeforePublish && candidateBeforePublish.status !== "approved_for_draft" && candidateBeforePublish.status !== "published") {
           writeJson(response, 409, { error: "skill_candidate_not_publishable", message: `Skill candidate is not ready to publish: ${candidateBeforePublish.status}` });
+          return;
+        }
+        if (candidateBeforePublish?.proposedAction === "update_existing") {
+          writeJson(response, 409, { error: "skill_candidate_requires_revision", message: "Apply this correction through the target skill revision endpoint." });
           return;
         }
         const skills = store.publishSkillImportDraft(route.draftId, now);
@@ -774,7 +834,7 @@ export async function handleSkillRoute(
     }
 
     if (route.kind === "skill" && route.action === "source") {
-      if (request.method !== "GET") {
+      if (request.method !== "GET" && request.method !== "PUT") {
         writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /skills/:id/source` });
         return;
       }
@@ -785,6 +845,13 @@ export async function handleSkillRoute(
       const snapshot = store.getSkillSourceSnapshot(route.skillId);
       if (!snapshot) {
         writeJson(response, 404, { error: "skill_source_snapshot_not_found", message: `Skill source snapshot not found: ${route.skillId}` });
+        return;
+      }
+      if (request.method === "PUT") {
+        const body = await readJsonBody(request, config.maxBodyBytes);
+        const updated = updateBundledSourceMode(store, snapshot, body, new Date().toISOString());
+        appendSkillRegistryChangedEvent(store, controlPlaneEvents, cwd, "source_update_mode", route.skillId);
+        writeJson(response, 200, { cwd, snapshot: updated });
         return;
       }
       writeJson(response, 200, { cwd, snapshot });
@@ -981,6 +1048,10 @@ export async function handleSkillRoute(
           writeJson(response, 404, { error: "skill_candidate_not_found", message: `Skill candidate not found: ${route.candidateId}` });
           return;
         }
+        if (candidate.proposedAction === "update_existing") {
+          writeJson(response, 409, { error: "skill_candidate_requires_revision", message: "Review this correction in the target skill editor." });
+          return;
+        }
         const body = await readOptionalJsonBody(request, config.maxBodyBytes);
         const draftRequest = parseSkillCandidateDraftRequest(body);
         const now = new Date().toISOString();
@@ -1006,6 +1077,9 @@ export async function handleSkillRoute(
       error: error instanceof HttpError ? error.code : "bad_request",
       message: error instanceof Error ? error.message : String(error),
     });
+  } finally {
+    const store = storeRegistry.getInitializedStore(cwd);
+    if (store) flushSkillDefinitionRevisionNotices(store, controlPlaneEvents, cwd);
   }
 }
 
@@ -1038,15 +1112,6 @@ function appendSkillRegistryChangedEvent(
       skillId: entityId === "default" ? undefined : entityId,
     },
   });
-}
-
-function routeFromObservation(observation: ProcedureObservation): CandidateRoute {
-  return {
-    kind: observation.routeKind ?? "reject",
-    reasonCode: observation.routeReasonCode ?? "missing_route",
-    confidence: observation.confidence,
-    blockers: observation.routeBlockers,
-  };
 }
 
 type SkillRouteStore = ReturnType<RunStoreRegistry["getStore"]>;
@@ -1378,6 +1443,8 @@ async function buildGstackSkillSourceSyncPreview(
     roots,
     registrySkills: listEffectiveSkillRegistryEntries(store),
     snapshots: store.listSkillSourceSnapshots({ includeArchived: true }),
+    // Shared-folder snapshots belong to a separate contract and must never surface here.
+    excludedSnapshotPackIds: [SHARED_AGENT_SKILL_PACK_ID],
     includeSkillIds: input.includeSkillIds,
     excludeSkillIds: input.excludeSkillIds,
     generatedAt,
@@ -1394,6 +1461,9 @@ async function buildManagedOfficialGstackSkillSourceSyncPreview(
     roots: [root],
     registrySkills: listEffectiveSkillRegistryEntries(store),
     snapshots: store.listSkillSourceSnapshots({ includeArchived: true }),
+    // The official revision only owns snapshots under its immutable cache checkout.
+    // Shared/legacy snapshots must never turn an official sync into "unavailable".
+    snapshotSourceRoots: [root],
     generatedAt,
   });
   const unavailable = preview.records.filter((record) => record.state === "missing" || record.state === "orphaned");
@@ -1401,6 +1471,30 @@ async function buildManagedOfficialGstackSkillSourceSyncPreview(
     throw new HttpError(409, "gstack_source_sync_unavailable", `Local gstack sources are unavailable: ${unavailable.map((record) => record.skillId).join(", ")}`);
   }
   return preview;
+}
+
+async function buildSharedAgentsSkillSourceSyncPreview(
+  cwd: string,
+  store: SkillRouteStore,
+  input: ParsedSharedSkillSourceScanRequest,
+  generatedAt = new Date().toISOString(),
+): Promise<SkillSourceSyncPreviewReport> {
+  const roots = await resolveSharedAgentsSkillSourceRoots({
+    workspaceRoot: cwd,
+    includeProjectRoot: input.includeProjectRoot,
+    includeUserRoot: input.includeUserRoot,
+  });
+  return previewGstackSkillSourceSync({
+    roots,
+    registrySkills: listEffectiveSkillRegistryEntries(store),
+    snapshots: store.listSkillSourceSnapshots({ includeArchived: true }),
+    snapshotPackIds: [SHARED_AGENT_SKILL_PACK_ID],
+    allowManagedSkillIdMatching: false,
+    includeSkillIds: input.includeSkillIds,
+    excludeSkillIds: input.excludeSkillIds,
+    generatedAt,
+    maxSourceBytes: input.maxSourceBytes,
+  });
 }
 
 async function publishGstackSkillSourceSync(input: {
@@ -1412,16 +1506,40 @@ async function publishGstackSkillSourceSync(input: {
   readonly allowNewSkills: boolean;
   readonly publishArtifacts: boolean;
   readonly trusted?: boolean;
+  /** Explicitly confirmed publishes (shared directories) bypass the auto-safe automation whitelist. */
+  readonly enforceAutoSafePolicy?: boolean;
+  readonly pack?: {
+    readonly source: SkillPackSource;
+    readonly packId: string;
+    readonly name: string;
+    readonly description: string;
+  };
   readonly now: string;
 }): Promise<{ readonly skills: readonly SkillRegistryEntry[]; readonly snapshots: readonly SkillSourceSnapshot[]; readonly artifacts: readonly SkillSourceArtifact[] }> {
+  const pack = input.pack ?? {
+    source: "gstack" as const,
+    packId: "gstack-source-sync",
+    name: "GStack source sync",
+    description: "Source-backed gstack skills published through explicit source sync.",
+  };
   const selectedSkillIds = uniqueStrings(input.selectedSkillIds);
-  const recordsBySkillId = new Map(input.preview.records.map((record) => [record.skillId, record]));
+  const recordsBySkillId = new Map<string, SkillSourceSyncPreviewRecord>();
+  const duplicateSkillIds = new Set<string>();
+  for (const record of input.preview.records) {
+    if (recordsBySkillId.has(record.skillId)) duplicateSkillIds.add(record.skillId);
+    else recordsBySkillId.set(record.skillId, record);
+  }
+  const ambiguousSelections = selectedSkillIds.filter((skillId) => duplicateSkillIds.has(skillId));
+  if (ambiguousSelections.length > 0) {
+    throw new HttpError(409, "skill_source_sync_not_publishable", `Selected records have ambiguous source roots: ${ambiguousSelections.map((skillId) => `${skillId}:blocked`).join(", ")}`);
+  }
   const missingSelections = selectedSkillIds.filter((skillId) => !recordsBySkillId.has(skillId));
   if (missingSelections.length > 0) {
     throw new HttpError(400, "skill_source_sync_selection_not_found", `Selected skill source records were not found: ${missingSelections.join(", ")}`);
   }
   const selectedRecords = selectedSkillIds.map((skillId) => recordsBySkillId.get(skillId)).filter((record): record is SkillSourceSyncPreviewRecord => Boolean(record));
-  const nonPublishable = selectedRecords.filter((record) => record.state === "missing" || record.state === "orphaned" || (!input.trusted && record.state === "blocked"));
+  const nonPublishable = selectedRecords.filter((record) => record.state === "missing" || record.state === "orphaned" ||
+    (!input.trusted && (record.state === "blocked" || (pack.packId === SHARED_AGENT_SKILL_PACK_ID && record.state === "unchanged"))));
   if (nonPublishable.length > 0) {
     throw new HttpError(409, "skill_source_sync_not_publishable", `Selected records are not publishable: ${nonPublishable.map((record) => `${record.skillId}:${record.state}`).join(", ")}`);
   }
@@ -1429,208 +1547,64 @@ async function publishGstackSkillSourceSync(input: {
   if (semanticErrors.length > 0) {
     throw new HttpError(409, "skill_source_sync_semantic_error", `Selected records have semantic error drift: ${semanticErrors.map((record) => record.skillId).join(", ")}`);
   }
+  // Error-severity source warnings (raw secrets, unsafe paths) must block
+  // publication outright: shared publication disables the auto-safe policy,
+  // so this is the only gate that still sees them. Unchanged records write
+  // nothing — referenced-file-only edits leave SKILL.md checksums intact —
+  // so they keep flowing to the explicit unchanged-selection rejection.
+  const errorWarnings = input.trusted
+    ? []
+    : selectedRecords.filter((record) => record.state !== "unchanged"
+      && record.warnings.some((warning) => warning.severity === "error"));
+  if (errorWarnings.length > 0) {
+    throw new HttpError(409, "skill_source_sync_error_warning", `Selected records have error-severity warnings: ${errorWarnings.map((record) => record.skillId).join(", ")}`);
+  }
   const newRecords = selectedRecords.filter((record) => record.state === "new");
   if (newRecords.length > 0 && !input.trusted && !input.allowNewSkills) {
     throw new HttpError(409, "skill_source_sync_new_skills_require_confirmation", `New skills require allowNewSkills=true: ${newRecords.map((record) => record.skillId).join(", ")}`);
   }
   const policy = input.store.getSkillSourceUpgradePolicy(input.now);
-  if (!input.trusted && policy.mode === "auto-safe") {
+  if (!input.trusted && input.enforceAutoSafePolicy !== false && policy.mode === "auto-safe") {
     const unsafe = selectedRecords.filter((record) => !isAutoSafeSkillSourceRecord(record, policy.allowNewSkills, policy.approvedRootIds));
     if (unsafe.length > 0) {
       throw new HttpError(409, "skill_source_sync_auto_safe_rejected", `auto-safe rejected records with unapproved roots, warnings, semantic risk, new skills, or artifact review requirements: ${unsafe.map((record) => record.skillId).join(", ")}`);
     }
   }
 
-  if (newRecords.length > 0) {
-    const draft = input.store.createSkillImportDraft({
-      source: "gstack",
-      packId: "gstack-source-sync",
-      name: "GStack source sync",
-      version: input.preview.upstreamVersions[0],
-      description: "Source-backed gstack skills published through explicit source sync.",
-      definitions: newRecords.map((record) => {
-        if (!record.definitionPreview) {
-          throw new HttpError(409, "skill_source_sync_missing_definition", `No normalized skill definition preview is available for ${record.skillId}.`);
-        }
-        return {
-          definition: record.definitionPreview,
-          visibility: {
-            workspaceVisible: true,
-            promotableToWorkspace: true,
-          },
-        };
-      }),
-    }, input.now);
-    input.store.publishSkillImportDraft(draft.id, input.now);
-  }
-
-  const snapshots: SkillSourceSnapshot[] = [];
-  const artifacts: SkillSourceArtifact[] = [];
-  for (const record of selectedRecords) {
-    if (!record.snapshotPreview) {
-      throw new HttpError(409, "skill_source_sync_missing_snapshot", `No source snapshot preview is available for ${record.skillId}.`);
-    }
-    if (record.state === "unchanged" && record.existingSnapshotId) {
-      const existing = input.store.getSkillSourceSnapshotById(record.existingSnapshotId);
-      if (existing) {
-        snapshots.push(existing);
+  const newSkills: CreateSkillImportDraftInput | undefined = newRecords.length > 0 ? {
+    source: pack.source,
+    packId: pack.packId,
+    name: pack.name,
+    version: input.preview.upstreamVersions[0],
+    description: pack.description,
+    definitions: newRecords.map((record) => {
+      if (!record.definitionPreview) {
+        throw new HttpError(409, "skill_source_sync_missing_definition", `No normalized skill definition preview is available for ${record.skillId}.`);
       }
-      continue;
-    }
-    if (record.existingSnapshotId) {
-      input.store.archiveSkillSourceSnapshot(record.skillId, input.now);
-    }
-    const snapshot = input.store.upsertSkillSourceSnapshot({
-      ...record.snapshotPreview,
-      reviewStatus: "published",
-    }, input.now);
-    snapshots.push(snapshot);
-    if (input.publishArtifacts) {
-      artifacts.push(...await persistSkillSourceArtifactsForRecord(input.store, snapshot, record, input.now));
-      const updatedSnapshot = input.store.getSkillSourceSnapshotById(snapshot.id);
-      if (updatedSnapshot) {
-        snapshots[snapshots.length - 1] = updatedSnapshot;
-      }
-    }
+      return {
+        definition: record.definitionPreview,
+        visibility: {
+          workspaceVisible: true,
+          promotableToWorkspace: true,
+        },
+      };
+    }),
+  } : undefined;
+  const prepared = await prepareSkillSourcePublication(input.store, selectedRecords, input.publishArtifacts);
+  let published;
+  try {
+    published = input.store.publishSkillSourceBatch({ records: prepared.records, newSkills }, input.now);
+  } catch (error) {
+    await prepared.cleanup();
+    if (error instanceof SkillSourcePublicationError) throw new HttpError(409, error.code, error.message);
+    throw error;
   }
+  await prepared.cleanup(new Set(published.snapshots.map(snapshot => snapshot.id)));
 
   const skillsById = new Map(listEffectiveSkillRegistryEntries(input.store).map((skill) => [skill.id, skill]));
   const skills = selectedSkillIds.map((skillId) => skillsById.get(skillId)).filter((skill): skill is SkillRegistryEntry => Boolean(skill));
   appendSkillRegistryChangedEvent(input.store, input.controlPlaneEvents, input.cwd, "source_publish", selectedSkillIds[0] ?? "default");
-  return { skills, snapshots, artifacts };
-}
-
-async function persistSkillSourceArtifactsForRecord(
-  store: SkillRouteStore,
-  snapshot: SkillSourceSnapshot,
-  record: SkillSourceSyncPreviewRecord,
-  now: string,
-): Promise<SkillSourceArtifact[]> {
-  const artifacts: SkillSourceArtifact[] = [];
-  if (!record.sourcePath) {
-    return artifacts;
-  }
-  const skillDirectory = dirname(record.sourcePath);
-  const sourceStats = await stat(record.sourcePath).catch(() => undefined);
-  if (sourceStats?.isFile()) {
-    const skillArtifact = await copySkillSourceArtifact({
-      store,
-      snapshotId: snapshot.id,
-      sourceFilePath: record.sourcePath,
-      sourceRoot: skillDirectory,
-      logicalPath: "SKILL.md",
-      kind: "other",
-      checksum: record.sourceChecksum ?? snapshot.sourceChecksum,
-      sizeBytes: sourceStats.size,
-      reviewStatus: "published",
-      includedInRuntime: false,
-      now,
-    });
-    artifacts.push(skillArtifact);
-    if (record.sourceSizeBytes !== undefined && record.sourceSizeBytes > Buffer.byteLength(snapshot.rawSkillMarkdown, "utf8")) {
-      store.upsertSkillSourceSnapshot({
-        skillId: snapshot.skillId,
-        sourceKind: snapshot.sourceKind,
-        sourcePath: snapshot.sourcePath,
-        upstreamName: snapshot.upstreamName,
-        upstreamVersion: snapshot.upstreamVersion,
-        upstreamSkillPath: snapshot.upstreamSkillPath,
-        sourceChecksum: snapshot.sourceChecksum,
-        rawSkillMarkdown: snapshot.rawSkillMarkdown,
-        rawSkillMarkdownArtifactId: skillArtifact.id,
-        agentMetadata: snapshot.agentMetadata,
-        referencedFiles: snapshot.referencedFiles,
-        warnings: snapshot.warnings,
-        reviewStatus: snapshot.reviewStatus,
-        id: snapshot.id,
-      }, now);
-    }
-  }
-
-  for (const fileRef of record.referencedFiles) {
-    const sourceFilePath = resolve(skillDirectory, fileRef.path);
-    if (!isPathInside(skillDirectory, sourceFilePath)) {
-      continue;
-    }
-    const fileStats = await stat(sourceFilePath).catch(() => undefined);
-    if (!fileStats?.isFile() || !fileRef.checksum || fileRef.sizeBytes === undefined) {
-      continue;
-    }
-    artifacts.push(await copySkillSourceArtifact({
-      store,
-      snapshotId: snapshot.id,
-      sourceFilePath,
-      sourceRoot: skillDirectory,
-      logicalPath: fileRef.path,
-      kind: fileRef.kind,
-      checksum: fileRef.checksum,
-      sizeBytes: fileRef.sizeBytes,
-      reviewStatus: fileRef.kind === "reference" || fileRef.kind === "agent-metadata" ? "published" : "reviewed",
-      includedInRuntime: fileRef.kind === "reference" || fileRef.kind === "agent-metadata",
-      now,
-    }));
-  }
-  return artifacts;
-}
-
-async function copySkillSourceArtifact(input: {
-  readonly store: SkillRouteStore;
-  readonly snapshotId: string;
-  readonly sourceFilePath: string;
-  readonly sourceRoot: string;
-  readonly logicalPath: string;
-  readonly kind: SkillSourceFileRef["kind"];
-  readonly checksum: string;
-  readonly sizeBytes: number;
-  readonly reviewStatus: SkillSourceArtifact["reviewStatus"];
-  readonly includedInRuntime: boolean;
-  readonly now: string;
-}): Promise<SkillSourceArtifact> {
-  const storageRef = skillSourceStorageRef(input.snapshotId, input.logicalPath, input.checksum);
-  const destinationPath = resolve(input.store.paths.artifactsDir, storageRef);
-  if (!isPathInside(input.store.paths.artifactsDir, destinationPath)) {
-    throw new HttpError(500, "skill_source_artifact_path_escape", "Source artifact storage path escaped artifact root.");
-  }
-  if (!isPathInside(input.sourceRoot, input.sourceFilePath)) {
-    throw new HttpError(400, "skill_source_artifact_source_escape", `Source artifact path is outside skill root: ${input.logicalPath}`);
-  }
-  await mkdir(dirname(destinationPath), { recursive: true });
-  await copyFile(input.sourceFilePath, destinationPath);
-  return input.store.upsertSkillSourceArtifact({
-    snapshotId: input.snapshotId,
-    path: input.logicalPath,
-    kind: input.kind,
-    checksum: input.checksum,
-    sizeBytes: input.sizeBytes,
-    storageRef,
-    mediaType: inferSkillSourceArtifactMediaType(input.logicalPath),
-    reviewStatus: input.reviewStatus,
-    includedInRuntime: input.includedInRuntime,
-  }, input.now);
-}
-
-function skillSourceStorageRef(snapshotId: string, logicalPath: string, checksum: string): string {
-  const digest = checksum.replace(/^sha256:/, "").replace(/[^a-fA-F0-9]/g, "").slice(0, 32) || createHash("sha256").update(logicalPath).digest("hex").slice(0, 32);
-  const extension = extname(logicalPath);
-  const base = basename(logicalPath, extension).replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-|-$/g, "") || "source";
-  return ["skill-source", snapshotId, `${digest}-${base}${extension}`].join("/");
-}
-
-function inferSkillSourceArtifactMediaType(path: string): string | undefined {
-  const extension = extname(path).toLowerCase();
-  if (extension === ".md" || extension === ".markdown") {
-    return "text/markdown; charset=utf-8";
-  }
-  if (extension === ".json") {
-    return "application/json; charset=utf-8";
-  }
-  if ([".yaml", ".yml"].includes(extension)) {
-    return "text/yaml; charset=utf-8";
-  }
-  if ([".txt", ".sh", ".ts", ".tsx", ".js", ".jsx", ".py"].includes(extension)) {
-    return "text/plain; charset=utf-8";
-  }
-  return undefined;
+  return { skills, snapshots: published.snapshots, artifacts: published.artifacts };
 }
 
 function parseSkillSourceArtifactContentRoute(pathname: string): { readonly artifactId: string } | undefined {
@@ -1724,582 +1698,6 @@ function hasExplicitSourceRootInputs(input: {
   readonly codexSkillRoots?: readonly string[];
 }): boolean {
   return Boolean(input.skillRoots?.length || input.gstackRepoRoots?.length || input.codexSkillRoots?.length);
-}
-
-interface ProcedureObservationJobRouteResult {
-  readonly statusCode: number;
-  readonly body: Record<string, unknown>;
-}
-
-function processProcedureObservationJob(input: {
-  readonly store: SkillRouteStore;
-  readonly controlPlaneEvents: ControlPlaneEventHub;
-  readonly cwd: string;
-  readonly job: ProcedureObservationJobInput;
-  readonly now: string;
-}): ProcedureObservationJobRouteResult {
-  const { store, controlPlaneEvents, cwd, job, now } = input;
-  const policy = store.getWorkspaceSettings().skillGovernancePolicy;
-  const generationSource = generationSourceFromJob(job);
-  if ((job.source === "manual_recording" || job.signals.includes("user_approved_recording")) && policy.recordingMode !== "user_initiated") {
-    return {
-      statusCode: 409,
-      body: {
-        error: "skill_recording_disabled",
-        message: "Skill recording is disabled by the workspace skill governance policy.",
-      },
-    };
-  }
-
-  const built = createProcedureObservationInputFromJob(job);
-  const existing = store.listProcedureObservations({ limit: 500 })
-    .find((observation) => procedureObservationHasJobKey(observation, built.jobKey));
-  if (existing) {
-    const route = routeFromObservation(existing);
-    const generationDecision = generationDecisionForExistingObservation(
-      store,
-      existing,
-      generationSource,
-      route,
-      now,
-    );
-    return {
-      statusCode: 200,
-      body: {
-        cwd,
-        jobKey: built.jobKey,
-        reusedObservation: true,
-        observation: existing,
-        route,
-        action: "evidence_recorded",
-        generationDecision,
-      },
-    };
-  }
-
-  const observation = store.createProcedureObservation(built.observationInput, now);
-  const route = routeFromObservation(observation);
-  if (route.kind !== "skill") {
-    const generationDecision = persistGenerationDecision(store, {
-      observation,
-      route,
-      source: generationSource,
-      decision: generationDecisionActionForRoute(route),
-      reason: generationReasonForRoute(route),
-      now,
-    });
-    return {
-      statusCode: 202,
-      body: {
-        cwd,
-        jobKey: built.jobKey,
-        reusedObservation: false,
-        observation,
-        route,
-        action: route.blockers.length > 0 ? "blocked" : "routed_elsewhere",
-        generationDecision,
-      },
-    };
-  }
-
-  if (route.blockers.length > 0) {
-    const generationDecision = persistGenerationDecision(store, {
-      observation,
-      route,
-      source: generationSource,
-      decision: "append_evidence",
-      reason: `Skill candidate generation is blocked until gates are complete: ${route.blockers.join(", ")}.`,
-      now,
-    });
-    return {
-      statusCode: 202,
-      body: {
-        cwd,
-        jobKey: built.jobKey,
-        reusedObservation: false,
-        observation,
-        route,
-        action: "blocked",
-        generationDecision,
-      },
-    };
-  }
-
-  const explicitObservationJob = isExplicitObservationJob(job);
-  if (policy.generationMode === "off") {
-    const generationDecision = persistGenerationDecision(store, {
-      observation,
-      route,
-      source: generationSource,
-      decision: "append_evidence",
-      reason: "Workspace skill governance policy is off, so the observation was retained without creating a candidate.",
-      now,
-    });
-    return {
-      statusCode: 202,
-      body: {
-        cwd,
-        jobKey: built.jobKey,
-        reusedObservation: false,
-        observation,
-        route,
-        action: "evidence_recorded",
-        generationDecision,
-      },
-    };
-  }
-
-  if (!explicitObservationJob) {
-    if (policy.generationMode === "approval_only") {
-      const generationDecision = persistGenerationDecision(store, {
-        observation,
-        route,
-        source: generationSource,
-        decision: "append_evidence",
-        reason: "Workspace skill governance policy is approval_only, so unconfirmed post-run observations stay evidence-only.",
-        now,
-      });
-      return {
-        statusCode: 202,
-        body: {
-          cwd,
-          jobKey: built.jobKey,
-          reusedObservation: false,
-          observation,
-          route,
-          action: "evidence_recorded",
-          generationDecision,
-        },
-      };
-    }
-    const postRunGate = postRunCandidateGenerationGate(store, observation, job, route, policy.generationMode);
-    if (postRunGate.ready) {
-      const input = skillCandidateInputFromObservation(observation);
-      const withAnalysis = withDuplicateAnalysis(input, store);
-      if (withAnalysis.duplicateAnalysis.decision !== "no_overlap") {
-        const generationDecision = persistGenerationDecision(store, {
-          observation,
-          route,
-          source: "post_run_terminal",
-          decision: "append_evidence",
-          duplicateAnalysis: withAnalysis.duplicateAnalysis,
-          reason: `Post-run evidence met generation gates, but duplicate analysis returned ${withAnalysis.duplicateAnalysis.decision}.`,
-          now,
-        });
-        return {
-          statusCode: 202,
-          body: {
-            cwd,
-            jobKey: built.jobKey,
-            reusedObservation: false,
-            observation,
-            route,
-            action: "evidence_recorded",
-            duplicateAnalysis: withAnalysis.duplicateAnalysis,
-            generationDecision,
-          },
-        };
-      }
-      const candidate = store.createSkillCandidate(withAnalysis, now);
-      const generationDecision = persistGenerationDecision(store, {
-        observation,
-        route,
-        source: "post_run_terminal",
-        decision: "create_skill_candidate",
-        duplicateAnalysis: candidate.duplicateAnalysis,
-        createdCandidateId: candidate.id,
-        reason: postRunGate.reason,
-        now,
-      });
-      appendSkillCandidateChangedEvent(store, controlPlaneEvents, cwd, "post_run_observation_create", candidate.id, candidate.status);
-      return {
-        statusCode: 201,
-        body: {
-          cwd,
-          jobKey: built.jobKey,
-          reusedObservation: false,
-          observation,
-          route,
-          action: "candidate_created",
-          candidate,
-          duplicateAnalysis: candidate.duplicateAnalysis,
-          generationDecision,
-        },
-      };
-    }
-    const generationDecision = persistGenerationDecision(store, {
-      observation,
-      route,
-      source: generationSource,
-      decision: "append_evidence",
-      reason: postRunGate.reason,
-      now,
-    });
-    return {
-      statusCode: 202,
-      body: {
-        cwd,
-        jobKey: built.jobKey,
-        reusedObservation: false,
-        observation,
-        route,
-        action: "evidence_recorded",
-        generationDecision,
-      },
-    };
-  }
-
-  const candidateInput = skillCandidateInputFromObservation(observation);
-  const withAnalysis = withDuplicateAnalysis(candidateInput, store);
-  if (withAnalysis.duplicateAnalysis.decision !== "no_overlap") {
-    const generationDecision = persistGenerationDecision(store, {
-      observation,
-      route,
-      source: generationSource,
-      decision: "append_evidence",
-      duplicateAnalysis: withAnalysis.duplicateAnalysis,
-      reason: `Duplicate analysis returned ${withAnalysis.duplicateAnalysis.decision}; evidence was retained without creating a new skill candidate.`,
-      now,
-    });
-    return {
-      statusCode: 202,
-      body: {
-        cwd,
-        jobKey: built.jobKey,
-        reusedObservation: false,
-        observation,
-        route,
-        action: "evidence_recorded",
-        duplicateAnalysis: withAnalysis.duplicateAnalysis,
-        generationDecision,
-      },
-    };
-  }
-  const candidate = store.createSkillCandidate(withAnalysis, now);
-  const generationDecision = persistGenerationDecision(store, {
-    observation,
-    route,
-    source: generationSource,
-    decision: "create_skill_candidate",
-    duplicateAnalysis: candidate.duplicateAnalysis,
-    createdCandidateId: candidate.id,
-    reason: "Explicit observation passed routing gates and duplicate analysis, so a pending skill candidate was created.",
-    now,
-  });
-  appendSkillCandidateChangedEvent(store, controlPlaneEvents, cwd, "observation_job_create", candidate.id, candidate.status);
-  return {
-    statusCode: 201,
-    body: {
-      cwd,
-      jobKey: built.jobKey,
-      reusedObservation: false,
-      observation,
-      route,
-      action: "candidate_created",
-      candidate,
-      duplicateAnalysis: candidate.duplicateAnalysis,
-      generationDecision,
-    },
-  };
-}
-
-function generationDecisionForExistingObservation(
-  store: SkillRouteStore,
-  observation: ProcedureObservation,
-  source: CandidateGenerationDecisionSource,
-  route: CandidateRoute,
-  now: string,
-): CandidateGenerationDecision {
-  const [existing] = store.listCandidateGenerationDecisions({
-    observationId: observation.id,
-    limit: 1,
-  });
-  if (existing) {
-    return existing;
-  }
-  return persistGenerationDecision(store, {
-    observation,
-    route,
-    source,
-    decision: "append_evidence",
-    reason: "Reused an existing idempotent observation job; no new candidate generation was attempted.",
-    now,
-  });
-}
-
-function postRunCandidateGenerationGate(
-  store: SkillRouteStore,
-  observation: ProcedureObservation,
-  job: ProcedureObservationJobInput,
-  route: CandidateRoute,
-  generationMode: "semi_auto" | "auto_candidate",
-): { readonly ready: boolean; readonly reason: string } {
-  if (generationSourceFromJob(job) !== "post_run_terminal") {
-    return {
-      ready: false,
-      reason: "Observation job was not explicitly confirmed as a save-as-skill request, so it stays evidence-only.",
-    };
-  }
-  if (job.terminalStatus !== "succeeded") {
-    return {
-      ready: false,
-      reason: `Post-run observation is evidence-only because terminal status is ${job.terminalStatus ?? "missing"}.`,
-    };
-  }
-  if (route.kind !== "skill" || route.blockers.length > 0) {
-    return {
-      ready: false,
-      reason: "Post-run observation did not pass skill routing gates, so it stays evidence-only.",
-    };
-  }
-  const clusterObservations = store.listProcedureObservations({
-    clusterId: observation.clusterId,
-    routeKind: "skill",
-    limit: 500,
-  });
-  const successfulObservations = clusterObservations.filter((item) =>
-    procedureObservationHasTerminalStatus(item, "succeeded")
-  );
-  const requiredSuccessfulObservations = generationMode === "auto_candidate" ? 1 : 2;
-  if (successfulObservations.length < requiredSuccessfulObservations) {
-    return {
-      ready: false,
-      reason: `Post-run observation is evidence-only until at least ${requiredSuccessfulObservations} successful observation${requiredSuccessfulObservations === 1 ? "" : "s"} exist in the same cluster.`,
-    };
-  }
-  const validationSignatures = uniqueStrings(successfulObservations.map(validationSignature));
-  if (validationSignatures.length !== 1) {
-    return {
-      ready: false,
-      reason: "Post-run observation is evidence-only until validation evidence is stable across the cluster.",
-    };
-  }
-  return {
-    ready: true,
-    reason: `Post-run terminal evidence passed ${generationMode} generation gates with ${successfulObservations.length} successful observations and stable validation.`,
-  };
-}
-
-function persistGenerationDecision(
-  store: SkillRouteStore,
-  input: {
-    readonly observation: ProcedureObservation;
-    readonly route: CandidateRoute;
-    readonly source: CandidateGenerationDecisionSource;
-    readonly decision: CandidateGenerationDecisionAction;
-    readonly duplicateAnalysis?: SkillDuplicateAnalysis;
-    readonly createdCandidateId?: string;
-    readonly reason: string;
-    readonly now: string;
-  },
-): CandidateGenerationDecision {
-  return store.createCandidateGenerationDecision({
-    workspaceId: input.observation.workspaceId,
-    observationId: input.observation.id,
-    clusterId: input.observation.clusterId,
-    source: input.source,
-    route: input.route,
-    decision: input.decision,
-    blockers: input.route.blockers,
-    duplicateDecision: input.duplicateAnalysis?.decision,
-    reason: input.reason,
-    createdCandidateId: input.createdCandidateId,
-  }, input.now);
-}
-
-function validationSignature(observation: ProcedureObservation): string {
-  return observation.validationSteps
-    .map((step) => [step.title, step.commandOrCheck ?? "", step.expectedResult ?? ""].join("|").trim().toLowerCase())
-    .sort()
-    .join(";");
-}
-
-function generationSourceFromJob(job: ProcedureObservationJobInput): CandidateGenerationDecisionSource {
-  if (job.source === "manual_recording" || job.signals.includes("user_approved_recording")) {
-    return "approved_recording";
-  }
-  if (job.signals.includes("save_as_skill")) {
-    return "explicit_user_save";
-  }
-  if (job.source === "workflow_step_output" || job.source === "multi_agent_handoff" || job.signals.includes("handoff_stabilized")) {
-    return "workflow_fanin";
-  }
-  if (job.runId || job.terminalStatus) {
-    return "post_run_terminal";
-  }
-  if (job.source === "user_correction" || job.signals.includes("correction_phrase")) {
-    return "correction_health";
-  }
-  if (job.userConfirmed) {
-    return "explicit_user_save";
-  }
-  return "selected_transcript_snippet";
-}
-
-function generationSourceFromObservation(observation: ProcedureObservation): CandidateGenerationDecisionSource {
-  if (observation.source === "manual_recording" || observation.signals.includes("user_approved_recording")) {
-    return "approved_recording";
-  }
-  if (observation.signals.includes("save_as_skill")) {
-    return "explicit_user_save";
-  }
-  if (observation.source === "workflow_step_output" || observation.source === "multi_agent_handoff" || observation.signals.includes("handoff_stabilized")) {
-    return "workflow_fanin";
-  }
-  if (observation.runId) {
-    return "post_run_terminal";
-  }
-  if (observation.source === "user_correction" || observation.signals.includes("correction_phrase")) {
-    return "correction_health";
-  }
-  return "selected_transcript_snippet";
-}
-
-function generationDecisionActionForRoute(route: CandidateRoute): CandidateGenerationDecisionAction {
-  if (route.kind === "approval_policy_review" || route.blockers.includes("permission_expansion")) {
-    return "policy_review";
-  }
-  if (route.kind === "reject") {
-    return "reject";
-  }
-  if (route.blockers.length > 0) {
-    return "append_evidence";
-  }
-  if (route.kind === "channel_protocol") {
-    return "create_channel_protocol_candidate";
-  }
-  if (route.kind === "playbook") {
-    return "create_playbook_candidate";
-  }
-  if (route.kind === "memory") {
-    return "create_memory_candidate";
-  }
-  if (route.kind === "automation") {
-    return "create_automation_candidate";
-  }
-  return "create_skill_candidate";
-}
-
-function generationReasonForRoute(route: CandidateRoute): string {
-  if (route.kind === "approval_policy_review" || route.blockers.includes("permission_expansion")) {
-    return "Observation requested permission or approval expansion, so it was routed to policy review.";
-  }
-  if (route.kind === "reject") {
-    return `Observation was rejected by the router: ${route.reasonCode}.`;
-  }
-  if (route.blockers.length > 0) {
-    return `Observation was routed to ${route.kind} but blocked by: ${route.blockers.join(", ")}.`;
-  }
-  return `Observation was routed to ${route.kind} candidate handling: ${route.reasonCode}.`;
-}
-
-function skillCandidateInputFromObservation(observation: ProcedureObservation): ParsedCreateSkillCandidateRequest {
-  const requiredTools = uniqueStrings(observation.procedureSteps.flatMap((step) => step.requiredTools ?? []));
-  return {
-    origin: observation.source === "manual_recording" ? "recording" : "ling-generated",
-    proposedAction: "create",
-    title: observation.title,
-    summary: observation.summary,
-    definition: {
-      positiveTriggers: observation.positiveTriggers.length > 0 ? observation.positiveTriggers : [observation.normalizedGoal],
-      negativeTriggers: observation.negativeTriggers,
-      procedureSteps: observation.procedureSteps.map((step) => ({
-        title: step.title,
-        instruction: step.instruction,
-        requiredTools: step.requiredTools,
-      })),
-      validationSteps: observation.validationSteps.map((step) => ({
-        title: step.title,
-        commandOrCheck: step.commandOrCheck,
-        expectedResult: step.expectedResult,
-      })),
-      requiredTools: requiredTools.length > 0 ? requiredTools : ["read"],
-      requiredProviderCapabilities: ["chat"],
-    },
-    sourceRefs: observation.sourceRefs,
-    reviewNotes: [`Created from procedure observation ${observation.id}.`],
-  };
-}
-
-function withDuplicateAnalysis(
-  input: ParsedCreateSkillCandidateRequest,
-  store: ReturnType<RunStoreRegistry["getStore"]>,
-): CreateSkillCandidateInput {
-  const duplicateAnalysis = input.duplicateAnalysis ?? analyzeSkillDuplicate({
-    candidate: skillCandidateHealthInputFromCreateRequest(input),
-    activeSkills: listEffectiveSkillRegistryEntries(store),
-    pendingCandidates: store.listSkillCandidates({ limit: 500 }).map(skillCandidateHealthInputFromCandidate),
-  });
-  return {
-    ...input,
-    duplicateAnalysis,
-  };
-}
-
-function skillCandidateHealthInputFromCreateRequest(input: ParsedCreateSkillCandidateRequest): SkillCandidateHealthInput {
-  return {
-    id: input.id ?? "skill_candidate_preview",
-    workspaceId: input.workspaceId ?? DEFAULT_WORKSPACE_ID,
-    origin: input.origin,
-    status: input.status ?? "pending",
-    targetSkillId: input.targetSkillId,
-    title: input.title,
-    summary: input.summary,
-    positiveTriggers: input.definition.positiveTriggers,
-    negativeTriggers: input.definition.negativeTriggers,
-    procedureSteps: input.definition.procedureSteps,
-    validationSteps: input.definition.validationSteps,
-    requiredTools: input.definition.requiredTools,
-    requiredProviderCapabilities: input.definition.requiredProviderCapabilities,
-    createdAt: new Date(0).toISOString(),
-    expiresAt: input.expiresAt,
-    supersededBy: input.supersededBy,
-  };
-}
-
-function skillCandidateHealthInputFromCandidate(candidate: SkillCandidate): SkillCandidateHealthInput {
-  return {
-    id: candidate.id,
-    workspaceId: candidate.workspaceId,
-    origin: candidate.origin,
-    status: candidate.status,
-    targetSkillId: candidate.targetSkillId,
-    title: candidate.title,
-    summary: candidate.summary,
-    positiveTriggers: candidate.definition.positiveTriggers,
-    negativeTriggers: candidate.definition.negativeTriggers,
-    procedureSteps: candidate.definition.procedureSteps,
-    validationSteps: candidate.definition.validationSteps,
-    requiredTools: candidate.definition.requiredTools,
-    requiredProviderCapabilities: candidate.definition.requiredProviderCapabilities,
-    createdAt: candidate.createdAt,
-    updatedAt: candidate.updatedAt,
-    expiresAt: candidate.expiresAt,
-    supersededBy: candidate.supersededBy,
-  };
-}
-
-function appendSkillCandidateChangedEvent(
-  store: ReturnType<RunStoreRegistry["getStore"]>,
-  controlPlaneEvents: ControlPlaneEventHub,
-  cwd: string,
-  changeType: string,
-  candidateId: string,
-  status: string,
-): void {
-  appendControlPlaneEvent(store, controlPlaneEvents, {
-    workspaceId: DEFAULT_WORKSPACE_ID,
-    cwd,
-    domain: "skills",
-    entityType: "candidate",
-    entityId: candidateId,
-    action: "skill.candidate_changed",
-    data: {
-      changeType,
-      candidateId,
-      status,
-    },
-  });
 }
 
 function buildImportDraftContextFindings(input: CreateSkillImportDraftInput, rawContent?: string) {

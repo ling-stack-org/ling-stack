@@ -4,7 +4,14 @@ import type {
   ControlPlaneEventsResponse,
   ControlPlaneSnapshotResponse,
   DaemonHealthResponse,
+  DiagnosticsDoctorResponse,
+  DiagnosticsLogTailResponse,
   EffectiveConfigResponse,
+  NotificationListResponse,
+  NotificationPreferencesResponse,
+  NotificationPreferences,
+  NotificationPreferencesUpdate,
+  HarnessFeatureSnapshotV1,
   UpdateUserProfileRequest,
   UpdateWorkspaceSettingsRequest,
   StartupRefreshResponse,
@@ -68,6 +75,33 @@ export const systemEndpoints = {
 
   async refreshStartupStatus(this: LingDaemonEndpointContext, cwd?: string): Promise<StartupRefreshResponse> {
       return this._post("/startup/refresh", { cwd });
+    },
+
+  async getDiagnosticsDoctor(this: LingDaemonEndpointContext, cwd?: string): Promise<DiagnosticsDoctorResponse> {
+      return this._get("/diagnostics/doctor", { cwd });
+    },
+
+  async getDiagnosticsLogs(this: LingDaemonEndpointContext, lines?: number): Promise<DiagnosticsLogTailResponse> {
+      return this._get("/diagnostics/logs", { lines: lines === undefined ? undefined : String(lines) });
+    },
+
+  async listNotifications(this: LingDaemonEndpointContext, since?: string): Promise<NotificationListResponse> {
+      return this._get("/notifications", { since });
+    },
+
+  async waitForNotifications(this: LingDaemonEndpointContext, since?: string): Promise<NotificationListResponse> {
+      return this._get("/notifications/stream", { since });
+    },
+
+  async getNotificationPreferences(this: LingDaemonEndpointContext): Promise<NotificationPreferencesResponse> {
+      return this._get("/notifications/preferences");
+    },
+
+  async updateNotificationPreferences(
+    this: LingDaemonEndpointContext,
+    input: NotificationPreferencesUpdate,
+  ): Promise<NotificationPreferencesResponse> {
+      return this._patch("/notifications/preferences", undefined, input);
     },
 
   async selectWorkspaceDirectory(this: LingDaemonEndpointContext, cwd: string): Promise<WorkspaceDirectorySelectResponse> {
@@ -138,6 +172,7 @@ function readDaemonFeatureFlags(value: unknown): DaemonHealthResponse["features"
   const features = value as Record<string, unknown>;
   const channels = features.channels;
   const transports = features.transports;
+  const harness = readHarnessFeatureSnapshot(features.harness);
   const channelRecord = typeof channels === "object" && channels !== null && !Array.isArray(channels)
     ? channels as Record<string, unknown>
     : {};
@@ -153,7 +188,46 @@ function readDaemonFeatureFlags(value: unknown): DaemonHealthResponse["features"
       providerWebSocketFallback: transportRecord.providerWebSocketFallback === true,
       localWebSocketRpc: transportRecord.localWebSocketRpc === true,
     },
+    ...(harness ? { harness } : {}),
   };
+}
+
+function readHarnessFeatureSnapshot(value: unknown): HarnessFeatureSnapshotV1 | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const snapshot = value as Record<string, unknown>;
+  const { schemaVersion, continuations, toolBroker, evaluations, evaluationModelGate, delegations, delegationMaxDepth,
+    delegationSelectedWorkflowIds } = snapshot;
+  if (
+    schemaVersion !== 1
+    || !isHarnessMode(continuations)
+    || !isHarnessMode(toolBroker)
+    || !isHarnessMode(evaluations)
+    || (evaluationModelGate !== "shadow" && evaluationModelGate !== "enforce")
+    || !isHarnessMode(delegations)
+    || typeof delegationMaxDepth !== "number"
+    || !Number.isInteger(delegationMaxDepth)
+    || delegationMaxDepth < 1
+    || delegationMaxDepth > 16
+    || !isDelegationWorkflowSelection(delegationSelectedWorkflowIds)
+  ) {
+    return undefined;
+  }
+  return { schemaVersion, continuations, toolBroker, evaluations, evaluationModelGate, delegations, delegationMaxDepth,
+    ...(delegationSelectedWorkflowIds === undefined ? {} : {
+      delegationSelectedWorkflowIds: [...delegationSelectedWorkflowIds],
+    }) };
+}
+
+function isDelegationWorkflowSelection(value: unknown): value is readonly string[] | undefined {
+  return value === undefined || Array.isArray(value) && value.length <= 100
+    && value.every(id => typeof id === "string" && /^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,255}$/u.test(id))
+    && new Set(value).size === value.length;
+}
+
+function isHarnessMode(value: unknown): value is HarnessFeatureSnapshotV1["continuations"] {
+  return value === "off" || value === "shadow" || value === "enforce";
 }
 
 function readStartupReadiness(value: unknown): DaemonHealthResponse["readiness"] {

@@ -103,7 +103,7 @@ internal static class Program
     private static JsonNode? Execute(string method, JsonObject parameters, string idempotencyKey)
     {
         if (method == "driver_status") return DriverStatus();
-        dynamic excel = GetRunningExcel();
+        object excel = GetRunningExcel();
         try
         {
             return method switch

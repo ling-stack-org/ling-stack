@@ -1,12 +1,14 @@
 import { createEditToolDefinition, createWriteToolDefinition, type ExtensionFactory, type ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { normalizeHandledToolResult } from "../content.js";
+import { createHostToolResultAdapter } from "../host-tool-results.js";
 import type { PiRunnerApprovalDecision, PiRunnerRunOptions } from "../types.js";
 import { isRecord } from "../utils.js";
 
 export function createLingStackFileMutationToolExtension(options: PiRunnerRunOptions): ExtensionFactory {
   return (pi) => {
+    const adaptResult = createHostToolResultAdapter(pi);
     const originalEdit = createEditToolDefinition(options.cwd) as ToolDefinition;
     const originalWrite = createWriteToolDefinition(options.cwd) as ToolDefinition;
+    const nativeCreate = options.initialToolSurface?.nativeFileCreate === true;
 
     pi.registerTool({
       name: "edit",
@@ -14,11 +16,16 @@ export function createLingStackFileMutationToolExtension(options: PiRunnerRunOpt
       description: `${originalEdit.description} You may also provide patchText with a Codex-compatible apply-patch envelope for multi-file edits.`,
       parameters: createPatchableEditParameters(originalEdit.parameters),
       async execute(toolCallId, params, signal, onUpdate, ctx) {
+        signal?.throwIfAborted();
         const decision = await requireFileMutationApproval(options, "edit", toolCallId, params);
+        signal?.throwIfAborted();
         if (decision.handledResult) {
-          return normalizeHandledToolResult(decision.handledResult);
+          return adaptResult(toolCallId, "edit", {
+            ...decision.handledResult,
+            isError: !decision.approved || decision.handledResult.isError === true,
+          });
         }
-        return originalEdit.execute(toolCallId, params, signal, onUpdate, ctx);
+        throw new Error("Ling Stack blocked edit: the Host did not return a handled result.");
       },
       renderCall: originalEdit.renderCall,
       renderResult: originalEdit.renderResult,
@@ -28,14 +35,21 @@ export function createLingStackFileMutationToolExtension(options: PiRunnerRunOpt
     pi.registerTool({
       name: "write",
       label: "write",
-      description: `${originalWrite.description} For structured multi-file changes, provide patchText with a Codex-compatible apply-patch envelope.`,
-      parameters: createPatchableWriteParameters(originalWrite.parameters),
+      description: nativeCreate
+        ? "Create exactly one authorized new file using path and content. The Host performs an exclusive create: never overwrite an existing file or create missing parent directories."
+        : `${originalWrite.description} For structured multi-file changes, provide patchText with a Codex-compatible apply-patch envelope.`,
+      parameters: nativeCreate ? createNativeWriteParameters(originalWrite.parameters) : createPatchableWriteParameters(originalWrite.parameters),
       async execute(toolCallId, params, signal, onUpdate, ctx) {
+        signal?.throwIfAborted();
         const decision = await requireFileMutationApproval(options, "write", toolCallId, params);
+        signal?.throwIfAborted();
         if (decision.handledResult) {
-          return normalizeHandledToolResult(decision.handledResult);
+          return adaptResult(toolCallId, "write", {
+            ...decision.handledResult,
+            isError: !decision.approved || decision.handledResult.isError === true,
+          });
         }
-        return originalWrite.execute(toolCallId, params, signal, onUpdate, ctx);
+        throw new Error("Ling Stack blocked write: the Host did not return a handled result.");
       },
       renderCall: originalWrite.renderCall,
       renderResult: originalWrite.renderResult,
@@ -60,7 +74,7 @@ async function requireFileMutationApproval(
     task: options.task,
     cwd: options.cwd,
   });
-  if (!decision.approved) {
+  if (!decision.approved && !decision.handledResult) {
     throw new Error(decision.reason ?? `Ling Stack approval denied ${toolName}.`);
   }
   return decision;
@@ -80,6 +94,12 @@ function createPatchableWriteParameters(original: ToolDefinition["parameters"]):
     { required: ["patchText"] },
     { required: ["patch"] },
   ]);
+}
+
+function createNativeWriteParameters(original: ToolDefinition["parameters"]): ToolDefinition["parameters"] {
+  const properties = isRecord(original) && isRecord(original.properties) ? original.properties : {};
+  return { type: "object", properties: { path: properties.path, content: properties.content },
+    required: ["path", "content"], additionalProperties: false } as ToolDefinition["parameters"];
 }
 
 function mergePatchParameters(

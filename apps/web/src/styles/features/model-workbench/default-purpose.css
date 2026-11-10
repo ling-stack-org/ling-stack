@@ -7,7 +7,7 @@
   flex-wrap: wrap;
   gap: var(--ling-space-3) var(--ling-space-6);
   padding-block: var(--ling-space-2);
-  border-block: 1px solid var(--ling-border-subtle);
+  border-block: 1px solid var(--ling-border-default);
 }
 
 .provider-default-purpose-field {

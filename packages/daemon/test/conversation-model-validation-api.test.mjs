@@ -6,7 +6,8 @@ import { test } from "node:test";
 import { createSqliteRunStore } from "@ling-stack/core";
 import { createDaemonServer } from "../dist/index.js";
 
-test("public channel and teammate creation require a checked chat model", async () => {
+test("public channel and teammate creation require a checked chat model", async (t) => {
+  isolateProviderNetwork(t);
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-conversation-model-create-"));
   const stores = new Map();
   const store = createSqliteRunStore(cwd);
@@ -25,7 +26,7 @@ test("public channel and teammate creation require a checked chat model", async 
     ok: true,
     code: "ready",
     message: "Ready",
-    checkedAt: "2026-07-30T00:00:01.000Z",
+    checkedAt: new Date().toISOString(),
   });
   const uncheckedProvider = store.createProviderPreset({
     kind: "openai-compatible",
@@ -53,7 +54,7 @@ test("public channel and teammate creation require a checked chat model", async 
     assert.equal(unchecked.body.error, "conversation_model_not_ready");
 
     const createdTeammate = await postJsonResult(`${daemon.url}/teammates?cwd=${encodeURIComponent(cwd)}`, teammateInput(readyProvider.id));
-    assert.equal(createdTeammate.status, 201);
+    assert.equal(createdTeammate.status, 201, JSON.stringify(createdTeammate.body));
     assert.equal(createdTeammate.body.teammate.modelBindingMode, "fixed");
     assert.equal(createdTeammate.body.teammate.providerPresetId, readyProvider.id);
 
@@ -101,7 +102,8 @@ test("public channel and teammate creation require a checked chat model", async 
   }
 });
 
-test("only built-in teammates may switch back to workspace default binding", async () => {
+test("only built-in teammates may switch back to workspace default binding", async (t) => {
+  isolateProviderNetwork(t);
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-conversation-model-binding-"));
   const stores = new Map();
   const store = createSqliteRunStore(cwd);
@@ -120,7 +122,7 @@ test("only built-in teammates may switch back to workspace default binding", asy
     ok: true,
     code: "ready",
     message: "Ready",
-    checkedAt: "2026-07-30T00:00:01.000Z",
+    checkedAt: new Date().toISOString(),
   });
   const custom = store.createAiTeammate({
     id: "teammate_custom_model_binding",
@@ -170,6 +172,18 @@ function channelInput(defaultProviderPresetId) {
     },
     ...(defaultProviderPresetId ? { defaultProviderPresetId } : {}),
   };
+}
+
+// This API test controls readiness, not provider networking. An unchecked fixture
+// can be warmed in the background, but must never call an external model endpoint.
+function isolateProviderNetwork(t) {
+  const fetch = globalThis.fetch;
+  t.mock.method(globalThis, "fetch", (input, options) => {
+    const url = new URL(typeof input === "string" || input instanceof URL ? input : input.url);
+    return url.hostname === "127.0.0.1"
+      ? fetch(input, options)
+      : Promise.resolve(new Response("Unchecked fixture provider", { status: 503 }));
+  });
 }
 
 function teammateInput(providerPresetId) {

@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, type SpawnOptions } from "node:child_process";
 import { stat } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -8,6 +8,7 @@ import type {
   WorkspaceTerminalCommandResponse,
   WorkspaceTerminalProfileResponse,
 } from "@ling-stack/contracts";
+import { defineProtectedHostActorEntry } from "../../runtime/sandbox/protected-host-actor-inventory.js";
 
 type SpawnImpl = typeof spawn;
 type StatImpl = typeof stat;
@@ -18,6 +19,10 @@ type HostnameImpl = typeof readHostname;
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_OUTPUT_LIMIT_BYTES = 24_000;
 const MAX_COMMAND_LENGTH = 8_000;
+
+/** Manual raw terminal producer. It is not a sandboxed run/attempt tool and grants no protected-stage proof. */
+export const workspaceTerminalActorEntry = defineProtectedHostActorEntry("workspace_terminal",
+  (command: string, args: readonly string[], options: SpawnOptions) => spawn(command, args, options));
 
 export type WorkspaceTerminalCommandCode =
   | "terminal_command_invalid_directory"
@@ -81,7 +86,6 @@ export async function runWorkspaceTerminalCommand(input: {
   const rawCwd = input.cwd.trim();
   const command = input.command.trim();
   const statImpl = input.statImpl ?? stat;
-  const spawnImpl = input.spawnImpl ?? spawn;
   const now = input.now ?? (() => new Date());
   const idFactory = input.idFactory ?? randomUUID;
   const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -109,12 +113,15 @@ export async function runWorkspaceTerminalCommand(input: {
   const shell = shellCommandForPlatform(input.platform ?? process.platform, command);
   const stdoutBuffer = createOutputBuffer(outputLimitBytes);
   const stderrBuffer = createOutputBuffer(outputLimitBytes);
-  const child = spawnImpl(shell.command, [...shell.args], {
+  const launchOptions: SpawnOptions = {
     cwd: directory,
     env: process.env,
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
-  }) as ChildProcessLike;
+  };
+  const child = (input.spawnImpl
+    ? input.spawnImpl(shell.command, [...shell.args], launchOptions)
+    : workspaceTerminalActorEntry.invoke(undefined, shell.command, shell.args, launchOptions)) as ChildProcessLike;
 
   child.stdout?.on("data", (chunk) => stdoutBuffer.append(chunk));
   child.stderr?.on("data", (chunk) => stderrBuffer.append(chunk));

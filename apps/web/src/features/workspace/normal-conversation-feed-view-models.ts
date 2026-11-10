@@ -1,6 +1,10 @@
-import type { ConversationWorkCellViewModel } from "@ling-stack/conversation-ui-core";
+import {
+  createConversationTimelineMessageItem,
+  projectConversationMessagePresentation,
+  type ConversationTimelineItem,
+} from "@ling-stack/conversation-ui-core";
 import type { Translate } from "../../i18n.js";
-import { buildConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
+import { buildConversationWorkCellViewModel, conversationTimelineItemsForModel } from "../../lib/conversation-work-cell.js";
 import { conversationRunHasVisibleWork } from "../../lib/conversation-runtime-visibility.js";
 import type { MessageRowAuthorType } from "../../shared/conversation/index.js";
 import type { RunSession, TerminalReportDto } from "../../types.js";
@@ -18,8 +22,7 @@ export interface NormalConversationFeedItem {
   readonly body: string;
   readonly bodyStreaming: boolean;
   readonly errorText: string;
-  readonly workCell?: ConversationWorkCellViewModel;
-  readonly workCellCwd: string;
+  readonly timelineItems: readonly ConversationTimelineItem[];
   readonly workspaceMayHaveChanged: boolean;
 }
 
@@ -42,7 +45,10 @@ export function projectNormalConversationFeedItems(input: {
     const runApprovals = linkedRun
       ? input.detailContext?.approvals.filter((approval) => approval.runId === linkedRun.id) ?? []
       : [];
-    const workCell = message.role === "assistant" && message.threadId && linkedRun && conversationRunHasVisibleWork({
+    const typedTimelineItems = linkedRun
+      ? canonicalFactsForMessage(input.detailContext?.timelineProjection?.items ?? [], message, linkedRun.id)
+      : [];
+    const legacyFactsAdapter = message.role === "assistant" && message.threadId && linkedRun && conversationRunHasVisibleWork({
       run: linkedRun,
       approvals: runApprovals,
       executionActions,
@@ -56,10 +62,47 @@ export function projectNormalConversationFeedItems(input: {
       executionActions,
       t: input.t,
       terminalReport,
+      contextSegmentIdByItemId: input.detailContext?.timelineProjection?.contextSegmentIdByItemId,
+      ...(typedTimelineItems.length > 0 ? { typedTimelineItems } : {}),
     }) : undefined;
-    const errorText = normalConversationMessageErrorText(message, linkedRun?.status);
-    const hasStructuredTerminalReport = Boolean(workCell?.terminalReportRows.length);
+    // Only an accepted, published canonical fact can supersede a Host-generated
+    // status placeholder. Unknown provenance and real model segments stay visible.
+    const reportOwnsHostStatus = message.role === "assistant" && message.contentSource === "host_status" &&
+      !message.narrationSegments?.length && (message.status === "failed" || message.status === "cancelled" || message.status === "blocked") &&
+      typedTimelineItems.some((item) => item.kind === "terminalReport" && Boolean(item.reportId && item.resultItemId) &&
+        item.generation > 0 && item.turnId === message.turnId && (!item.runId || item.runId === message.runId) &&
+        (item.status === "failed" || item.status === "cancelled" || item.status === "blocked" || item.status === "partially_succeeded"));
     const bodyStreaming = message.status === "running" || message.status === "pending";
+    const messagePresentation = projectConversationMessagePresentation({
+      content: message.content,
+      errorMessage: message.role === "assistant" ? message.errorMessage : undefined,
+      status: message.role === "assistant" ? message.status : undefined,
+      runtimeFailed: message.role === "assistant" && linkedRun?.status === "failed",
+      streaming: bodyStreaming,
+      streamingPlaceholder: input.t("Ling Agent is thinking..."),
+    });
+    const messageItem = { ...createConversationTimelineMessageItem({
+      id: `message:${message.role === "user" ? "user" : "agent"}:${message.id}`,
+      role: message.role === "user" ? "user" : "agent",
+      markdown: messagePresentation.body,
+      waitingPlaceholder: bodyStreaming && !message.content.trim() && !message.narrationSegments?.length && !message.errorMessage?.trim(),
+      phase: message.role === "assistant" && (message.status === "succeeded" || relatedRun?.status === "succeeded") ? "final" : "commentary",
+      revision: message.revision,
+      threadSequence: 0,
+      turnId: message.turnId,
+      itemId: message.id,
+      status: message.status,
+      fileRefs: message.fileRefs,
+    }), ...(linkedRun ? { runId: linkedRun.id } : {}) };
+    // Canonical typed facts own the normal surface whenever they are present.
+    // The WorkCell path is only a source adapter for optimistic/older detail
+    // responses and is never exposed as a renderer owner.
+    const facts = typedTimelineItems.length > 0
+      ? typedTimelineItems
+      : legacyFactsAdapter
+        ? conversationTimelineItemsForModel(legacyFactsAdapter)
+        : [];
+    const timelineItems = reportOwnsHostStatus ? facts : [messageItem, ...facts];
 
     return {
       message,
@@ -67,15 +110,25 @@ export function projectNormalConversationFeedItems(input: {
       authorName: conversationMessageAuthorName(message, input.t),
       createdAtLabel: formatConversationTimeLabel(message.createdAt),
       className: normalConversationMessageClassName(message),
-      body: errorText || hasStructuredTerminalReport
-        ? ""
-        : message.content || (bodyStreaming ? input.t("Ling Agent is thinking...") : ""),
+      // Real model prose owns narration. A Host fallback is only a status view
+      // until the same owner's canonical final report has arrived.
+      body: reportOwnsHostStatus ? "" : messagePresentation.body,
       bodyStreaming,
-      errorText,
-      workCell,
-      workCellCwd: linkedRun?.cwd ?? input.workspaceCwd.trim(),
+      errorText: reportOwnsHostStatus ? "" : messagePresentation.errorText,
+      timelineItems,
       workspaceMayHaveChanged: runMayHaveWorkspaceChanges(relatedRun),
     };
+  });
+}
+
+function canonicalFactsForMessage(
+  items: readonly ConversationTimelineItem[],
+  message: ConversationHomeMessage,
+  runId: string,
+): readonly ConversationTimelineItem[] {
+  return items.filter((item) => {
+    if (item.kind === "userMessage" || item.kind === "agentMessage") return false;
+    return item.runId === runId || (Boolean(message.turnId) && item.turnId === message.turnId);
   });
 }
 
@@ -83,13 +136,12 @@ export function normalConversationMessageErrorText(
   message: ConversationHomeMessage,
   runStatus?: RunSession["status"],
 ): string {
-  if (message.role === "user") {
-    return "";
-  }
-  if (message.status !== "blocked" && message.status !== "failed" && runStatus !== "failed" && runStatus !== "cancelled") {
-    return "";
-  }
-  return message.content.trim();
+  return message.role === "user" ? "" : projectConversationMessagePresentation({
+    content: message.content,
+    errorMessage: message.errorMessage,
+    status: message.status,
+    runtimeFailed: runStatus === "failed",
+  }).errorText;
 }
 
 export function formatConversationTimeLabel(value: string): string {

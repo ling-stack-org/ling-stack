@@ -3,6 +3,7 @@ import {
   buildSidebarChannelNotifications,
   buildSidebarConversationApprovalCounts,
   buildSidebarTeammateNotifications,
+  conversationThreadHasActiveWork,
   projectSidebarConversationStatus,
 } from "../src/app/sidebar-status-projections.js";
 import {
@@ -46,7 +47,7 @@ test("channel projection exposes one primary state and keeps unread as the fallb
     approvals: [approval("approval_waiting", "task_waiting")],
     channels,
     channelUnreadById: { channel_unread: { unread: true, mentioned: false } },
-    notificationLevels: { channel_unread: "all" },
+    notificationLevels: { channel_running: "all", channel_unread: "all" },
     runs,
     selectedChannelId: "",
     tasks,
@@ -57,6 +58,61 @@ test("channel projection exposes one primary state and keeps unread as the fallb
     channel_failed: { primaryStatus: "failed" },
     channel_running: { primaryStatus: "running" },
     channel_unread: { unread: true },
+  });
+});
+
+test("channel notification levels filter activity and blockers without hiding structural state", () => {
+  const tasks = [
+    task("task_all_running", "channel_all_running", "running"),
+    task("task_mentions_running", "channel_mentions_running", "running"),
+    task("task_mentions_failed", "channel_mentions_failed", "failed"),
+    task("task_muted_failed", "channel_muted_failed", "failed"),
+  ];
+  const runs = [
+    run("run_all_running", "task_all_running", "running", "2026-07-19T00:01:00.000Z"),
+    run("run_mentions_running", "task_mentions_running", "running", "2026-07-19T00:01:00.000Z"),
+    run("run_mentions_failed", "task_mentions_failed", "failed", "2026-07-19T00:01:00.000Z"),
+    run("run_muted_failed", "task_muted_failed", "failed", "2026-07-19T00:01:00.000Z"),
+  ];
+  const channels = [
+    channel("channel_all_running"),
+    channel("channel_mentions_running"),
+    channel("channel_mentions_failed"),
+    channel("channel_mentions_approval"),
+    channel("channel_muted_failed"),
+    channel("channel_muted_regular"),
+    channel("channel_muted_critical"),
+    channel("channel_muted_paused", "paused"),
+  ];
+
+  expect(buildSidebarChannelNotifications({
+    approvals: [
+      { ...approval("approval_mentions", "task_missing"), channelId: "channel_mentions_approval" },
+      { ...approval("approval_muted_regular", "task_missing"), channelId: "channel_muted_regular" },
+      { ...approval("approval_muted_critical", "task_missing"), channelId: "channel_muted_critical", risk: "critical" },
+    ],
+    channels,
+    channelUnreadById: {},
+    notificationLevels: {
+      channel_all_running: "all",
+      channel_mentions_running: "mentions",
+      channel_mentions_failed: "mentions",
+      channel_mentions_approval: "mentions",
+      channel_muted_failed: "muted",
+      channel_muted_regular: "muted",
+      channel_muted_critical: "muted",
+      channel_muted_paused: "muted",
+    },
+    runs,
+    selectedChannelId: "",
+    tasks,
+    workUnits: [],
+  })).toEqual({
+    channel_all_running: { primaryStatus: "running" },
+    channel_mentions_failed: { primaryStatus: "failed" },
+    channel_mentions_approval: { count: 1, primaryStatus: "waiting" },
+    channel_muted_critical: { count: 1, primaryStatus: "waiting" },
+    channel_muted_paused: { primaryStatus: "paused" },
   });
 });
 
@@ -102,6 +158,22 @@ test("conversation projection preserves actionable thread state across refresh",
   expect(projectSidebarConversationStatus("open", true)).toBe("running");
   expect(projectSidebarConversationStatus("succeeded", false)).toBeUndefined();
   expect(projectSidebarConversationStatus("failed", false, true)).toBe("waiting");
+  expect(projectSidebarConversationStatus("failed", false, false, true)).toBeUndefined();
+  expect(projectSidebarConversationStatus("blocked", false, false, true)).toBeUndefined();
+  expect(projectSidebarConversationStatus("running", false, false, true)).toBe("running");
+});
+
+test("conversation activity follows durable thread state and the selected optimistic stream", () => {
+  expect(conversationThreadHasActiveWork({
+    id: "thread_terminal",
+  }, "thread_terminal", false)).toBe(false);
+  expect(conversationThreadHasActiveWork({
+    id: "thread_active",
+    activeRunId: "run_active",
+  }, "thread_other", false)).toBe(true);
+  expect(conversationThreadHasActiveWork({
+    id: "thread_pending",
+  }, "thread_pending", true)).toBe(true);
 });
 
 test("conversation approval ownership follows approval run to its thread", () => {
@@ -127,6 +199,36 @@ test("conversation approval ownership follows approval run to its thread", () =>
     teammates: [teammate("ling_agent")],
     workUnits: [workUnit("work_unit_conversation", "conversation_run", "run_conversation", "ling_agent")],
   })).toEqual({});
+});
+
+test("sidebar pending counts use distinct approval identities across all conversation owners", () => {
+  const channelApproval = { ...approval("approval_channel", "task_channel"), channelId: "channel_1", risk: "critical" as const };
+  const directApproval = { ...approval("approval_direct", "task_missing"), runId: "run_direct" };
+  const conversationApproval = { ...approval("approval_conversation", "task_missing"), runId: "run_conversation" };
+  const runs = [
+    { ...run("run_direct", "task_missing", "waiting_for_approval", "2026-07-19T00:02:00.000Z"), teammateId: "teammate_1", threadId: "thread_direct" },
+    { ...run("run_conversation", "task_missing", "waiting_for_approval", "2026-07-19T00:03:00.000Z"), threadId: "thread_conversation" },
+  ];
+  const approvals = [channelApproval, channelApproval, directApproval, directApproval, conversationApproval, conversationApproval];
+
+  expect(buildSidebarChannelNotifications({
+    approvals,
+    channels: [channel("channel_1")],
+    channelUnreadById: {},
+    notificationLevels: { channel_1: "all" },
+    runs,
+    selectedChannelId: "",
+    tasks: [],
+    workUnits: [],
+  })).toEqual({ channel_1: { count: 1, primaryStatus: "waiting" } });
+  expect(buildSidebarTeammateNotifications({
+    approvals,
+    runs,
+    tasks: [],
+    teammates: [teammate("teammate_1")],
+    workUnits: [],
+  })).toEqual({ teammate_1: { count: 1, primaryStatus: "waiting" } });
+  expect([...buildSidebarConversationApprovalCounts(approvals, runs, [])]).toEqual([["thread_conversation", 1]]);
 });
 
 test("runtime approval ownership follows explicit, run, task, workflow, and payload lineage", () => {

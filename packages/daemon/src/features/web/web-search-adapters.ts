@@ -2,6 +2,7 @@ import {
   normalizeProviderBaseUrlForAdapter,
   type ProviderPreset,
 } from "@ling-stack/core";
+import { decodeHtmlEntitiesOnce } from "../../shared/html-text.js";
 
 const DEFAULT_OPENAI_WEB_SEARCH_MODEL = "gpt-5.5";
 const WEB_SEARCH_MAX_OUTPUT_TOKENS = 900;
@@ -685,15 +686,13 @@ function isPublicHttpUrl(value: string): boolean {
 }
 
 function cleanMarkdownText(value: string): string {
-  return value
+  const cleaned = value
     .replace(/\*\*/gu, "")
     .replace(/!\[[^\]]*\]\([^)]+\)/gu, "")
     .replace(/\[[^\]]*\]\([^)]+\)/gu, "")
-    .replace(/&amp;/gu, "&")
-    .replace(/&quot;/gu, "\"")
-    .replace(/&#39;/gu, "'")
     .replace(/\s+/gu, " ")
     .trim();
+  return decodeHtmlEntitiesOnce(cleaned, { names: ["amp", "quot", "#39"] });
 }
 
 function looksLikeBareHost(value: string): boolean {

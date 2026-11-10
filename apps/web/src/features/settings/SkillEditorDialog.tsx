@@ -8,7 +8,9 @@ import {
   DialogHeader,
   InlineFeedback,
 } from "../../shared/ui/index.js";
-import type { SkillRevisionPreview } from "../../types.js";
+import type { SkillDefinition, SkillRevisionPreview } from "../../types.js";
+import { SkillDefinitionDiff } from "../../shared/components/learning/SkillDefinitionDiff.js";
+import { skillEditableDefinitionFromForm } from "./skill-editor-utils.js";
 import { SkillEditorAdvancedFields } from "./SkillEditorAdvancedFields.js";
 import { SkillEditorCoreFields } from "./SkillEditorCoreFields.js";
 import { SkillEditorFeedback } from "./SkillEditorFeedback.js";
@@ -26,6 +28,7 @@ export function SkillEditorDialog({
   error,
   conflict,
   preview,
+  beforeDefinition,
   authorityConfirmation,
   discardConfirmation,
   onFormChange,
@@ -46,6 +49,7 @@ export function SkillEditorDialog({
   readonly error: string;
   readonly conflict: boolean;
   readonly preview: SkillRevisionPreview | undefined;
+  readonly beforeDefinition?: SkillDefinition;
   readonly authorityConfirmation: boolean;
   readonly discardConfirmation: boolean;
   readonly onFormChange: (form: SkillEditorForm) => void;
@@ -80,6 +84,9 @@ export function SkillEditorDialog({
         />
 
         <DialogBody className="settings-skill-editor-body">
+          {beforeDefinition ? <details><summary>{t("Review changes")}</summary>
+            <SkillDefinitionDiff before={beforeDefinition} after={skillEditableDefinitionFromForm(form)} />
+          </details> : null}
           <SkillEditorCoreFields form={form} busy={Boolean(busy)} onFormChange={onFormChange} t={t} />
           <SkillEditorAdvancedFields form={form} busy={Boolean(busy)} onFormChange={onFormChange} t={t} />
           <SkillEditorFeedback

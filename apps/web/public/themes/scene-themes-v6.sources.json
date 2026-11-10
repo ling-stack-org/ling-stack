@@ -1,0 +1,135 @@
+{
+  "version": "scene-themes-v6",
+  "artwork": "User-provided forest and open-sky illustration, existing summer manga illustration, and user-selected valley-overlook game artwork. No new image generation or composited scene objects.",
+  "retrievedAt": "2026-10-28",
+  "processing": "Breeze uses the exact user-supplied PNG, fully exported as lossless WebP without cropping or upscaling. Ocean and Night source/export records are retained from v5.",
+  "designIntent": {
+    "ocean": "Existing long-haired adult woman in floral swimwear integrated with the beach, ocean and clouds, on the right; seafoam shell, warm-white composer and coral controls. The previous Nami reference is not used.",
+    "night": "User confirmed the mountain valley overlooking scene: mecha on the left, layered valley and clouds on the right. Warm graphite reading panels, copper sunset controls; no independent character layer.",
+    "breeze": "User directly selected this forest illustration: upper-left tree, birds on the right, open blue sky and flowering meadow. Preserve the sage sidebar, milk-white Composer and green controls; no new branding, mascot or layout."
+  },
+  "assets": [
+    {
+      "themeId": "ling-breeze",
+      "source": {
+        "title": "User-provided forest clearing and open sky",
+        "origin": "Direct user attachment, explicitly selected on 2026-10-28",
+        "suppliedFilename": "codex-clipboard-a5a089b6-bc5f-4bfe-b6a4-9f420563fcf3.png",
+        "author": "Not independently established",
+        "license": "User supplied for local theme use; original public redistribution license not established.",
+        "publicationStatus": "Local theme implementation; does not inherit the prior StockCake candidate CC0 or the theme-code MIT license.",
+        "sourceSha256": "ee484d17f5396b033605840aa1fa92015a84282acfdd100c0923bc669e42e576",
+        "sourceBytes": 3772736,
+        "sourceSize": [
+          5708,
+          3212
+        ],
+        "resolutionQualification": "Pixel dimensions of the user-supplied PNG; original creative master resolution not independently verified.",
+        "newImageGenerationInThisChange": false
+      },
+      "exports": [
+        {
+          "path": "apps/web/public/themes/ling-breeze/forest-sky-v3.webp",
+          "bytes": 2003844,
+          "size": [
+            5708,
+            3212
+          ],
+          "sha256": "c2e8aeda80dc002293ebc0d8a48dea2b840bd7a61a5202f5e12fffebcb9272a0"
+        },
+        {
+          "path": "apps/web/public/themes/ling-breeze/forest-sky-v3-thumb.webp",
+          "bytes": 43214,
+          "size": [
+            640,
+            360
+          ],
+          "sha256": "36c6b4a7065c0a52fb8125df8e01e9952617d77a4573f42efc900600417c6cda"
+        }
+      ],
+      "processing": "cwebp -lossless -m 6 source.png -o forest-sky-v3.webp; cwebp -q 90 -m 6 -resize 640 360 forest-sky-v3.webp -o forest-sky-v3-thumb.webp. Whole source image, lossless main export; no crop, upscaling, retouching, compositing or new generation. The 640x360 thumbnail is downsampled from the same source.",
+      "supersededBy": "scene-themes-v7",
+      "removalNote": "2026-10-29: both breeze exports below were deleted from the repository and replaced by apps/web/public/themes/ling-breeze/forest-clearing-v1.webp (see scene-themes-v7.sources.json). Record kept for history; the paths no longer resolve in the working tree."
+    },
+    {
+      "themeId": "ling-ocean",
+      "source": {
+        "title": "Anime Beach Sunset",
+        "page": "https://stockcake.com/i/anime-beach-sunset_4306699_1909957/",
+        "direct": "https://images.stockcake.com/public/8/a/7/8a762f0f-bafb-4d8c-b200-faaef645f976/anime-beach-sunset-stockcake.jpg",
+        "author": "StockCake",
+        "license": "CC0 1.0 / Public Domain (as declared by source)",
+        "licensePage": "https://stockcake.com/info/license",
+        "sourceSha256": "2e382a1439f209cfb45be420ae3961ac23dd6dcdacaf3b982782e6db4125364c",
+        "sourceSize": [
+          1344,
+          768
+        ],
+        "aiGeneratedAtSource": true,
+        "newImageGenerationInThisChange": false
+      },
+      "exports": [
+        {
+          "path": "apps/web/public/themes/ling-ocean/summer-manga-v1.webp",
+          "bytes": 254744,
+          "size": [
+            1344,
+            756
+          ],
+          "sha256": "3659d740d93148726d74b9366ec15b5e773e0cd599de8aad8f4bb67ab9ef91d7"
+        },
+        {
+          "path": "apps/web/public/themes/ling-ocean/summer-manga-v1-thumb.webp",
+          "bytes": 56296,
+          "size": [
+            640,
+            360
+          ],
+          "sha256": "53e0554e3beab7907a1fb3c7959a1e29072361f0aed35003c17e7c5ef93a2e41"
+        }
+      ],
+      "processing": "Native 1344x768 source, crop y=6..762 to 1344x756 without upscaling; main WebP quality 92, thumbnail 640x360 quality 86. Original source is not a 4K image."
+    },
+    {
+      "themeId": "ling-night",
+      "source": {
+        "title": "Titanfall 2 Deluxe Edition valley-overlook promotional artwork",
+        "page": "https://stash.games/games/titanfall-2-deluxe-edition",
+        "direct": "https://images.igdb.com/igdb/image/upload/t_1080p_2x/sc828n.jpg",
+        "host": "IGDB image CDN",
+        "rightsHolder": "Titanfall artwork rights remain with the original rights holders (Respawn Entertainment / Electronic Arts).",
+        "license": "Copyrighted game artwork; public redistribution permission not established.",
+        "publicationStatus": "User-selected local theme implementation only. Public source/binary redistribution clearance remains open.",
+        "sourceSha256": "eed4a0d06d2abf5669eb67678d27f0fafe36963d026b476f7a56d3f2c3dee61a",
+        "sourceBytes": 550448,
+        "sourceSize": [
+          3840,
+          2160
+        ],
+        "resolutionQualification": "Downloaded CDN dimensions, not independently verified native master resolution.",
+        "newImageGenerationInThisChange": false
+      },
+      "exports": [
+        {
+          "path": "apps/web/public/themes/ling-night/valley-overlook-v1.webp",
+          "bytes": 724910,
+          "size": [
+            3840,
+            2160
+          ],
+          "sha256": "0d23b59b7a0c63640bbf193374bb3c6189bd2f267df7a5fbcad9145d9fcf14d4"
+        },
+        {
+          "path": "apps/web/public/themes/ling-night/valley-overlook-v1-thumb.webp",
+          "bytes": 46522,
+          "size": [
+            640,
+            360
+          ],
+          "sha256": "ec71b8d0bd0f4514db034d1713e5d4203b9a11b09a4857d9242b746ea34c5a78"
+        }
+      ],
+      "processing": "cwebp -q 94 -m 6 source.jpg -o valley-overlook-v1.webp; cwebp -q 88 -m 6 -resize 640 360 source.jpg -o valley-overlook-v1-thumb.webp. Whole image, no crop, no upscaling, no overlays."
+    }
+  ]
+}

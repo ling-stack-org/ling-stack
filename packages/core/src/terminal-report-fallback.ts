@@ -10,10 +10,16 @@ import type {
   TerminalReportVerification,
 } from "./terminal-report-types.js";
 import { createTerminalReportId } from "./terminal-report-types.js";
+import { formatSynchronousCatalogMessage } from "@ling-stack/localization";
+import { extractWrappedSection, trimBoundaryCharacters } from "./string-boundaries.js";
 
 export interface BuildDeterministicTerminalReportInput {
   readonly id?: string;
   readonly promptVersion?: string;
+  readonly providerPresetId?: string;
+  readonly model?: string;
+  /** Model calls attempted before falling back; zero when no call was made. */
+  readonly attemptCount?: number;
   readonly validationCodes?: readonly string[];
   readonly createdAt?: string;
   readonly committedAt?: string;
@@ -40,7 +46,9 @@ export function buildDeterministicTerminalReport(
     synthesis: {
       mode: "deterministic_fallback",
       promptVersion: input.promptVersion ?? "terminal-report-fallback-v1",
-      attemptCount: 0,
+      providerPresetId: input.providerPresetId,
+      model: input.model,
+      attemptCount: input.attemptCount ?? 0,
       validationCodes: input.validationCodes ?? [],
     },
     ...buildDeterministicTerminalReportContent(snapshot),
@@ -82,7 +90,7 @@ export function buildDeterministicTerminalReportContent(snapshot: TerminalReport
       displayName: participant.displayName,
       roleKey: participant.roleKey,
       status: participant.status,
-      contribution: participant.contributionSummaries.filter(Boolean).join("; ") || fallbackParticipantContribution(participant.displayName, snapshot.language),
+      contribution: participant.contributionSummaries.filter(Boolean).join("; ") || fallbackParticipantContribution(participant.displayName, participant.status, snapshot.language),
       sourceRefs: participant.sourceRefs,
     })),
     artifacts: snapshot.artifacts.filter(isConversationVisibleArtifact).map((artifact): TerminalReportArtifact => ({
@@ -106,10 +114,14 @@ export function buildDeterministicTerminalReportContent(snapshot: TerminalReport
  */
 function fallbackOutcomeTitle(snapshot: TerminalReportEvidenceSnapshot): string {
   const normalized = snapshot.objective.replace(/\s+/gu, " ").trim();
-  const wrapped = normalized.match(
-    /(?:原始请求|Original request):\s*(.+?)(?=\s+(?:Requested objective\b|No literal file content\b|已物化的执行操作\b|参与者操作归属\b|Permission boundary\b)|$)/iu,
-  )?.[1]?.trim();
-  const candidate = (wrapped || normalized).replace(/^\*+|\*+$/gu, "").trim();
+  const wrapped = extractWrappedSection(normalized, ["原始请求", "Original request"], [
+    "Requested objective",
+    "No literal file content",
+    "已物化的执行操作",
+    "参与者操作归属",
+    "Permission boundary",
+  ], ":", false);
+  const candidate = trimBoundaryCharacters(wrapped || normalized, "*").trim();
   const maxLength = 120;
   return candidate.length > maxLength ? `${candidate.slice(0, maxLength - 1).trimEnd()}…` : candidate;
 }
@@ -127,27 +139,18 @@ function fallbackOutcomeSummary(snapshot: TerminalReportEvidenceSnapshot): strin
   const completed = snapshot.steps.filter((step) => step.status === "succeeded").length;
   const total = snapshot.steps.length;
   const suffix = total > 1
-    ? snapshot.language === "zh-CN" ? `完成 ${completed}/${total} 个步骤。` : `Completed ${completed}/${total} steps.`
+    ? formatSynchronousCatalogMessage(snapshot.language, "terminal_report.outcome.steps", { completed, total })
     : "";
-  if (snapshot.language === "zh-CN") {
-    const lead = snapshot.terminalState === "succeeded" ? "任务已完成。"
-      : snapshot.terminalState === "partially_succeeded" ? "任务已部分完成。"
-        : snapshot.terminalState === "blocked" ? "任务当前受阻。"
-          : snapshot.terminalState === "cancelled" ? "任务已取消。"
-            : "任务执行失败。";
-    return [lead, suffix].filter(Boolean).join(" ");
-  }
-  const lead = snapshot.terminalState === "succeeded" ? "The task completed."
-    : snapshot.terminalState === "partially_succeeded" ? "The task partially completed."
-      : snapshot.terminalState === "blocked" ? "The task is blocked."
-        : snapshot.terminalState === "cancelled" ? "The task was cancelled."
-          : "The task failed.";
+  const lead = formatSynchronousCatalogMessage(
+    snapshot.language,
+    `terminal_report.outcome.${snapshot.terminalState}`,
+  );
   return [lead, suffix].filter(Boolean).join(" ");
 }
 
 function fallbackChanges(snapshot: TerminalReportEvidenceSnapshot): TerminalReportChange[] {
   const artifactsByPath = new Map<string, typeof snapshot.artifacts[number]>();
-  for (const artifact of snapshot.artifacts) {
+  for (const artifact of snapshot.artifacts.filter(isConversationVisibleArtifact)) {
     for (const path of artifact.changedPaths) {
       artifactsByPath.set(path, artifact);
     }
@@ -163,7 +166,7 @@ function fallbackChanges(snapshot: TerminalReportEvidenceSnapshot): TerminalRepo
       id: `change:${index}:${path}`,
       kind: inferChangeKind(path),
       title: path,
-      summary: snapshot.language === "zh-CN" ? `已更新 ${path}` : `Updated ${path}`,
+      summary: formatSynchronousCatalogMessage(snapshot.language, "terminal_report.change.updated", { path }),
       paths: [path],
       addedLines: artifact?.addedLines,
       deletedLines: artifact?.deletedLines,
@@ -181,7 +184,11 @@ function fallbackRisks(snapshot: TerminalReportEvidenceSnapshot): TerminalReport
         id: `check-risk:${check.id}`,
         severity: "warning",
         status: "unverified",
-        summary: check.summary ?? (snapshot.language === "zh-CN" ? `${check.title} 未完成验证。` : `${check.title} was not verified.`),
+        summary: check.summary ?? formatSynchronousCatalogMessage(
+          snapshot.language,
+          "terminal_report.risk.check_unverified",
+          { title: check.title },
+        ),
         sourceRefs: check.sourceRefs,
       });
     }
@@ -201,8 +208,14 @@ function sourceRefsForChangedPath(snapshot: TerminalReportEvidenceSnapshot, path
   ]);
 }
 
-function fallbackParticipantContribution(displayName: string, language: TerminalReportEvidenceSnapshot["language"]): string {
-  return language === "zh-CN" ? `${displayName} 完成了分配的工作。` : `${displayName} completed the assigned work.`;
+function fallbackParticipantContribution(
+  displayName: string,
+  status: TerminalReportParticipant["status"],
+  language: TerminalReportEvidenceSnapshot["language"],
+): string {
+  return status === "completed"
+    ? formatSynchronousCatalogMessage(language, "terminal_report.participant.completed", { displayName })
+    : formatSynchronousCatalogMessage(language, `terminal_report.outcome.${status}`);
 }
 
 function inferChangeKind(path: string): TerminalReportChange["kind"] {

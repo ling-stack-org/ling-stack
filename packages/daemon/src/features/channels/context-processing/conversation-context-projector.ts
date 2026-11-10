@@ -31,6 +31,8 @@ export interface BuildConversationContextProjectionInput {
   readonly view: ConversationContextProjectionView;
   readonly consumerTeammateId?: string;
   readonly maxTailTextChars?: number;
+  /** Host-selected items already visible in this projection; only text-budget trimming is bypassed. */
+  readonly retainItemIds?: readonly string[];
   readonly explicitItemIds?: readonly string[];
   /**
    * Include the other committed Items from the source Turn as explicit context.
@@ -69,10 +71,12 @@ export function buildConversationContextProjection(
   if (!thread || thread.archivedAt || thread.status === "archived") {
     throw new Error(`Conversation projection thread is not active: ${sourceItem.threadId}`);
   }
-  const forkSnapshot = thread.forkContextSnapshotId
+  const normalForkSeed = thread.kind === "conversation" && thread.forkContextSnapshotId
+    ? input.store.getNormalConversationForkSeed(thread.id) : undefined;
+  const forkSnapshot = thread.kind !== "conversation" && thread.forkContextSnapshotId
     ? input.store.getConversationContextSnapshot(thread.forkContextSnapshotId)
     : undefined;
-  if (thread.forkContextSnapshotId && !forkSnapshot) {
+  if (thread.forkContextSnapshotId && !forkSnapshot && !normalForkSeed) {
     throw new Error(`Conversation projection fork snapshot is missing: ${thread.forkContextSnapshotId}`);
   }
   const assignment = input.store.getEffectiveTurnContextAssignment(sourceItem.turnId);
@@ -116,7 +120,8 @@ export function buildConversationContextProjection(
   const explicitItemIds = explicitProjectionItemIds(
     sourceItem,
     assignment,
-    thread.anchorItemId,
+    // Normal inheritance comes exclusively from frozen text, not today's parent anchor.
+    normalForkSeed ? undefined : thread.anchorItemId,
     input.explicitItemIds,
   );
   const explicitItems = explicitItemIds.map((itemId) => {
@@ -124,7 +129,7 @@ export function buildConversationContextProjection(
     if (!item || item.status !== "committed") {
       throw new Error(`Conversation projection source ref is missing or stale: ${itemId}`);
     }
-    if (!canProjectItem(item, input.view, input.consumerTeammateId)) {
+    if (!isConversationContextItemVisible(item, input.view, input.consumerTeammateId)) {
       throw new Error(`Conversation projection source ref is not visible to this consumer: ${itemId}`);
     }
     return item;
@@ -133,7 +138,7 @@ export function buildConversationContextProjection(
     ? []
     : uniqueItems(explicitItems.flatMap((item) =>
       item.turnId ? input.store.listConversationItemsForTurn({ turnId: item.turnId }) : [item]))
-    .filter((item) => canProjectItem(item, input.view, input.consumerTeammateId));
+    .filter((item) => isConversationContextItemVisible(item, input.view, input.consumerTeammateId));
   const explicitTurnItemIds = new Set(explicitTurnItems.map((item) => item.id));
   const inheritedItems = forkSnapshot
     ? forkSnapshot.sourceRefs
@@ -143,28 +148,34 @@ export function buildConversationContextProjection(
           if (!item || item.status !== "committed") {
             throw new Error(`Conversation projection fork item is missing: ${ref.id}`);
           }
-          if (!canProjectItem(item, input.view, input.consumerTeammateId)) {
+          if (!isConversationContextItemVisible(item, input.view, input.consumerTeammateId)) {
             throw new Error(`Conversation projection fork item is not visible to this consumer: ${ref.id}`);
           }
           return item;
         })
     : [];
+  const inheritedItemIds = new Set(inheritedItems.map((item) => item.id));
   const historicalGuidanceItemIds = historicalRunGuidanceItemIds(input.store);
   const visibleItems = uniqueItems([...inheritedItems, ...tail, ...explicitItems, ...explicitTurnItems, sourceItem])
     .filter((item) => item.id === sourceItem.id || !historicalGuidanceItemIds.has(item.id))
-    .filter((item) => canProjectItem(item, input.view, input.consumerTeammateId))
+    .filter((item) => isConversationContextItemVisible(item, input.view, input.consumerTeammateId))
     .filter((item) =>
       item.sequence <= sourceItem.sequence
+      // Sequence counters belong to each Thread. A child at sequence1 must
+      // retain its frozen parent answer at sequence2 (or later).
+      || inheritedItemIds.has(item.id)
       || explicitItemIds.includes(item.id)
       || explicitTurnItemIds.has(item.id));
   const items = trimProjectionItemsByTextBudget(
     visibleItems,
     sourceItem.id,
     input.maxTailTextChars ?? 32_768,
+    input.retainItemIds,
   );
   const visibilityFingerprint = fingerprint({
     scope: projectionVisibilityScope(input.view, input.consumerTeammateId),
-    forkSnapshotId: forkSnapshot?.id ?? null,
+    forkSnapshotId: forkSnapshot?.id ?? normalForkSeed?.id ?? null,
+    ...(normalForkSeed ? { normalForkFingerprint: normalForkSeed.fingerprint } : {}),
     visibleItemScopes: items.map((item) => [item.id, item.visibility, item.visibilityOwnerId ?? null]),
   });
   const sourceRefs = uniqueDomainRefs([
@@ -172,6 +183,7 @@ export function buildConversationContextProjection(
     { type: "turn", id: sourceItem.turnId },
     { type: "conversation_item", id: sourceItem.id },
     ...(forkSnapshot ? [{ type: "context_snapshot" as const, id: forkSnapshot.id }] : []),
+    ...(normalForkSeed ? [{ type: "context_snapshot" as const, id: normalForkSeed.id }] : []),
     ...assignment.evidenceRefs,
     ...summaries.flatMap((summary) => [
       { type: "context_summary" as const, id: summary.id },
@@ -181,6 +193,7 @@ export function buildConversationContextProjection(
     ...items.map((item) => ({ type: "conversation_item" as const, id: item.id })),
   ]);
   const sourceStateFingerprint = fingerprint({
+    ...(normalForkSeed ? { normalForkFingerprint: normalForkSeed.fingerprint } : {}),
     assignment: {
       id: assignment.id,
       revision: assignment.revision,
@@ -316,7 +329,7 @@ function assertProjectionSummarySourceRefsVisible(input: {
       if (!item || item.status !== "committed") {
         throw new Error(`Conversation projection summary source ref is missing or stale: ${ref.type}:${ref.id}`);
       }
-      if (!canProjectItem(item, input.view, input.consumerTeammateId)) {
+      if (!isConversationContextItemVisible(item, input.view, input.consumerTeammateId)) {
         throw new Error(`Conversation projection summary source ref is not visible to this consumer: ${ref.type}:${ref.id}`);
       }
       continue;
@@ -390,7 +403,8 @@ function historicalRunGuidanceItemIds(store: RunStore): ReadonlySet<string> {
   return itemIds;
 }
 
-function canProjectItem(
+/** Visibility only. Callers must separately establish source, owner, segment and budget admission. */
+export function isConversationContextItemVisible(
   item: ConversationItemV1,
   view: ConversationContextProjectionView,
   consumerTeammateId: string | undefined,
@@ -417,6 +431,7 @@ function trimProjectionItemsByTextBudget(
   items: readonly ConversationItemV1[],
   sourceItemId: string,
   maxTextChars: number,
+  retainItemIds: readonly string[] = [],
 ): readonly ConversationItemV1[] {
   const safeMax = Math.min(Math.max(Math.floor(maxTextChars), 1_024), 256_000);
   const selected: ConversationItemV1[] = [];
@@ -431,7 +446,7 @@ function trimProjectionItemsByTextBudget(
   });
   for (const item of [...ordered].reverse()) {
     const size = projectionItemText(item).length;
-    if (item.id !== sourceItemId && selected.length > 0 && used + size > safeMax) continue;
+    if (item.id !== sourceItemId && !retainItemIds.includes(item.id) && selected.length > 0 && used + size > safeMax) continue;
     selected.push(item);
     used += size;
   }
@@ -440,6 +455,10 @@ function trimProjectionItemsByTextBudget(
 
 function projectionItemText(item: ConversationItemV1): string {
   switch (item.kind) {
+    case "user_input_request":
+    case "user_input_answer":
+      // U1 stores references only; U2 must hydrate content under consumer scope.
+      return "[User-input reference only; not answer content, permission or execution evidence.]";
     case "user_message":
     case "assistant_message":
       return item.payload.body;
@@ -457,6 +476,8 @@ function projectionItemText(item: ConversationItemV1): string {
       return item.payload.summary ?? item.payload.title;
     case "artifact_ref":
       return item.payload.title ?? item.payload.artifactId;
+    case "terminal_report":
+      return item.payload.outcomeStatus;
     case "system_event":
       return item.payload.summary;
   }

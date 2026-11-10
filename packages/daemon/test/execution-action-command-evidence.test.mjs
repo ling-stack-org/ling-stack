@@ -4,7 +4,66 @@ import {
   deriveExecutionActionCommandEvidence,
   executionActionStatusFromCommandEvidence,
 } from "../dist/features/runs/execution-action-command-evidence.js";
+import { appendExecutionActionInvalidation } from "../dist/features/runs/execution-action-invalidation.js";
 import { listExecutionActions } from "../dist/features/runs/execution-actions.js";
+
+for (const [label, chunks, expected] of [
+  ["nine newline-terminated updates", Array.from({ length: 9 }, (_, i) => [`line-${i}\n`, "stdout"]), 9],
+  ["one line split over updates", [["hel", "stdout"], ["lo\n", "stdout"]], 1],
+  ["blank lines and an unfinished final line", [["\n\n", "stdout"], ["tail", "stdout"]], 3],
+  ["CRLF split over updates", [["first\r", "stdout"], ["\nsecond\r", "stdout"], ["\n", "stdout"]], 2],
+  ["independent interleaved stream tails", [["out", "stdout"], ["err", "stderr"], ["put\n", "stdout"], ["or\n", "stderr"]], 2],
+  ["empty updates do not add a line", [["", "stdout"], ["", "stderr"]], 0],
+]) {
+  test(`streamed command line count respects ${label}`, () => {
+    const evidence = streamedEvidence(chunks);
+    assert.equal(evidence.outputLineCount, expected);
+    assert.equal(evidence.outputByteCount, chunks.reduce((n, [text]) => n + Buffer.byteLength(text, "utf8"), 0));
+    assert.equal(evidence.completedAt, undefined);
+    assert.equal(evidence.exitCode, undefined);
+  });
+}
+
+for (const separator of ["\n", "\r\n"]) {
+  test(`command tail retains exactly forty complete lines with ${JSON.stringify(separator)} endings`, () => {
+    const lines = Array.from({ length: 60 }, (_, i) => `line-${i}${separator}`);
+    const evidence = streamedEvidence([[lines.join(""), "stdout"]]);
+    assert.equal(evidence.outputLineCount, 60, "the count describes all output, not just its bounded preview");
+    assert.equal(evidence.outputTail.map(chunk => chunk.text).join(""), lines.slice(-40).join(""));
+    assert.equal(evidence.outputTruncated, true);
+  });
+}
+
+test("tail line budget does not count a continued first-chunk line twice", () => {
+  const lines = Array.from({ length: 60 }, (_, i) => `line-${i}\n`);
+  const evidence = streamedEvidence([[lines.slice(0, -1).join("") + "line-", "stdout"], ["59\n", "stdout"]]);
+  assert.equal(evidence.outputLineCount, 60);
+  assert.equal(evidence.outputTail.map(chunk => chunk.text).join(""), lines.slice(-40).join(""));
+});
+
+test("accepted Host completion counts stay authoritative over preview line counts", () => {
+  const start = event(1, "tool_start", { toolCallId: "counts", toolName: "bash", args: { command: "node test" } });
+  const end = event(2, "tool_end", { toolCallId: "counts", toolName: "bash", result: { details: { unifiedExec: {
+    status: "succeeded", cwd: "/repo", command: { command: "node test" }, startedAt: start.ts, endedAt: "2026-07-13T00:00:02.000Z",
+    durationMs: 1000, exitCode: 0, timedOut: false, cancelled: false,
+    stdout: { byteCount: 2000, lineCount: 250, preview: "last line\n", truncated: true },
+    stderr: { byteCount: 100, lineCount: 3, preview: "last warning\n", truncated: true }, artifacts: [],
+  } } } });
+  const evidence = deriveExecutionActionCommandEvidence({ events: [start, end], toolCallId: "counts", start, end });
+  assert.equal(evidence.outputLineCount, 253);
+  assert.equal(evidence.outputByteCount, 2100);
+});
+
+function streamedEvidence(chunks) {
+  const start = event(1, "tool_start", { toolCallId: "line-count", toolName: "bash", args: { command: "node test", cwd: "/repo" } });
+  const updates = chunks.map(([text, stream], i) => event(i + 2, "tool_update", {
+    toolCallId: "line-count", toolName: "bash", partialResult: {
+      toolCallId: "line-count", stream, sequence: i + 1, text, byteCount: Buffer.byteLength(text, "utf8"),
+      redacted: false, truncated: false, ts: start.ts,
+    },
+  }));
+  return deriveExecutionActionCommandEvidence({ events: [start, ...updates], toolCallId: "line-count", start });
+}
 
 test("active command evidence folds tool updates into a bounded redacted tail", () => {
   const start = event(1, "tool_start", {
@@ -104,6 +163,8 @@ test("execution action projection reads command completion after the first event
     taskId: "task-paged",
     threadId: "thread-paged",
     workUnitId: "work-unit-paged",
+    teammateId: "participant-engineer",
+    workflowStepId: "workflow-step-paged",
     cwd: "/repo",
     status: "succeeded",
     createdAt: start.ts,
@@ -125,7 +186,151 @@ test("execution action projection reads command completion after the first event
   assert.equal(actions[0].risk, "low");
   assert.equal(actions[0].commandEvidence.latestEventSeq, 1002);
   assert.equal(actions[0].commandEvidence.exitCode, 0);
+  assert.equal(actions[0].revision, 1002);
+  assert.equal(actions[0].participantId, "participant-engineer");
+  assert.equal(actions[0].workflowStepId, "workflow-step-paged");
+  assert.deepEqual(actions[0].sourceRefs.slice(0, 6), [
+    { kind: "execution_action", id: actions[0].id },
+    { kind: "run", id: runId },
+    { kind: "work_unit", id: "work-unit-paged" },
+    { kind: "participant", id: "participant-engineer" },
+    { kind: "workflow_step", id: "workflow-step-paged" },
+    { kind: "tool_call", id: toolCallId },
+  ]);
+  assert.ok(actions[0].sourceRefs.some((ref) =>
+    ref.kind === "command" && ref.id === "pnpm test" && ref.label === "pnpm test"));
+  assert.ok(actions[0].sourceRefs.some((ref) => ref.kind === "task" && ref.id === "task-paged"));
+  assert.deepEqual(
+    actions[0].sourceRefs.filter((ref) => ref.kind === "run_event").map((ref) => ref.id),
+    ["event-1", "event-1001", "event-1002"],
+  );
   assert.match(actions[0].commandEvidence.outputTail.map((chunk) => chunk.text).join(""), /final output/u);
+});
+
+test("execution action carries a same-thread ConversationItem anchor when the store has one", () => {
+  const runId = "run-conversation-anchor";
+  const toolCallId = "tool-conversation-anchor";
+  const turnId = "turn-conversation-anchor";
+  const item = {
+    id: "conversation-user:turn-conversation-anchor",
+    threadId: "thread-conversation-anchor",
+    turnId,
+    kind: "user_message",
+    sequence: 7,
+    domainRefs: [{ type: "turn", id: turnId }],
+  };
+  const run = {
+    id: runId,
+    taskId: "task-conversation-anchor",
+    threadId: item.threadId,
+    workUnitId: "work-unit-conversation-anchor",
+    teammateId: "participant-engineer",
+    cwd: "/repo",
+    status: "succeeded",
+    createdAt: "2026-07-13T00:00:01.000Z",
+    updatedAt: "2026-07-13T00:00:03.000Z",
+  };
+  const events = [
+    event(1, "run_created", { attemptId: "attempt-conversation-anchor" }, runId),
+    event(2, "tool_start", {
+      toolCallId,
+      toolName: "bash",
+      args: { command: "printf anchored" },
+    }, runId),
+    event(3, "tool_end", {
+      toolCallId,
+      toolName: "bash",
+      isError: false,
+      result: { content: [{ type: "text", text: "anchored\n" }] },
+    }, runId),
+  ];
+  const store = {
+    getRun: (id) => id === runId ? run : undefined,
+    getLingTurnForRun: (id) => id === runId ? {
+      id: turnId,
+      threadId: item.threadId,
+      sourceItemId: item.id,
+    } : undefined,
+    getConversationItem: (id) => id === item.id ? item : undefined,
+    listRuns: () => [run],
+    listApprovalRequests: () => [],
+    listEvents: (id) => id === runId ? events : [],
+  };
+
+  const actions = listExecutionActions(store, { runId, complete: true });
+
+  assert.equal(actions.length, 1);
+  assert.deepEqual(actions[0].sourceRefs.at(-1), {
+    kind: "conversation_item",
+    id: item.id,
+    label: "sequence:7",
+  });
+});
+
+test("workflow-step action carries the channel root ConversationItem anchor across child threads", () => {
+  const runId = "run-workflow-cross-thread-anchor";
+  const toolCallId = "tool-workflow-cross-thread-anchor";
+  const turnId = "turn-workflow-cross-thread-anchor";
+  const workflowStepId = "workflow-step-cross-thread-anchor";
+  const item = {
+    id: "channel-root-item-cross-thread-anchor",
+    threadId: "thread-channel-root-cross-thread-anchor",
+    turnId: "turn-channel-root-cross-thread-anchor",
+    kind: "user_message",
+    sequence: 12,
+    domainRefs: [],
+  };
+  const run = {
+    id: runId,
+    taskId: "task-workflow-cross-thread-anchor",
+    threadId: "thread-workflow-step-cross-thread-anchor",
+    workUnitId: "work-unit-workflow-cross-thread-anchor",
+    teammateId: "participant-qa",
+    workflowStepId,
+    cwd: "/repo",
+    status: "succeeded",
+    createdAt: "2026-07-13T00:00:01.000Z",
+    updatedAt: "2026-07-13T00:00:03.000Z",
+  };
+  const events = [
+    event(1, "run_created", { attemptId: "attempt-workflow-cross-thread-anchor" }, runId),
+    event(2, "tool_start", {
+      toolCallId,
+      toolName: "bash",
+      args: { command: "node verify.js" },
+    }, runId),
+    event(3, "tool_end", {
+      toolCallId,
+      toolName: "bash",
+      isError: false,
+      result: { content: [{ type: "text", text: "ok\n" }] },
+    }, runId),
+  ];
+  const store = {
+    getRun: (id) => id === runId ? run : undefined,
+    getLingTurnForRun: (id) => id === runId ? {
+      id: turnId,
+      threadId: run.threadId,
+      sourceItemId: undefined,
+    } : undefined,
+    getChannelWorkflowStep: (id) => id === workflowStepId ? {
+      workflowId: "workflow-cross-thread-anchor",
+      metadata: { sourceMessageId: item.id },
+    } : undefined,
+    getConversationItem: (id) => id === item.id ? item : undefined,
+    listRuns: () => [run],
+    listApprovalRequests: () => [],
+    listEvents: (id) => id === runId ? events : [],
+  };
+
+  const actions = listExecutionActions(store, { runId, complete: true });
+
+  assert.equal(actions.length, 1);
+  assert.deepEqual(actions[0].sourceRefs.at(-1), {
+    kind: "conversation_item",
+    id: item.id,
+    label: "sequence:12",
+  });
 });
 
 test("execution action identity keeps the tool attempt over the run fallback", () => {
@@ -174,7 +379,9 @@ test("execution action identity keeps the tool attempt over the run fallback", (
   assert.equal(actions.length, 1);
   assert.equal(actions[0].id, `tool:${runId}:${toolCallId}`);
   assert.equal(actions[0].attemptId, "attempt-tool");
+  assert.equal(actions[0].revision, 4);
   assert.equal(actions[0].commandEvidence.latestEventSeq, 4);
+  assert.ok(actions[0].sourceRefs.some((ref) => ref.kind === "attempt" && ref.id === "attempt-tool"));
   assert.equal(actions[0].updatedAt, events[0].ts);
 });
 
@@ -320,7 +527,7 @@ test("incomplete unified exec success does not borrow legacy Pi exit zero", () =
   assert.deepEqual(evidence.outputTail, []);
 });
 
-test("live evidence uses the highest durable event sequence after replay reorders events", () => {
+test("the first durable tool end fences later updates and duplicate terminal events", () => {
   const start = event(1, "tool_start", {
     toolCallId: "tool-reordered",
     toolName: "bash",
@@ -357,11 +564,543 @@ test("live evidence uses the highest durable event sequence after replay reorder
   });
 
   assert.ok(evidence);
-  assert.equal(evidence.latestEventSeq, 5);
-  assert.equal(evidence.outcome, "succeeded");
-  assert.equal(evidence.exitCode, 0);
-  assert.equal(evidence.outputTail[0].text, "latest-end\n");
+  assert.equal(evidence.latestEventSeq, 3);
+  assert.equal(evidence.outcome, "failed");
+  assert.equal(evidence.exitCode, undefined);
+  assert.equal(evidence.outputTail[0].text, "stale-end\n");
 });
+
+test("late lifecycle events remain diagnostics and cannot reopen a terminal action", () => {
+  const start = event(1, "tool_start", {
+    toolCallId: "tool-late-diagnostic",
+    toolName: "bash",
+    args: { command: "printf done" },
+  });
+  const end = event(2, "tool_end", {
+    toolCallId: "tool-late-diagnostic",
+    toolName: "bash",
+    result: { content: [{ type: "text", text: "done\n" }] },
+    isError: false,
+  });
+  const lateUpdate = event(3, "tool_update", {
+    toolCallId: "tool-late-diagnostic",
+    toolName: "bash",
+    partialResult: { content: [{ type: "text", text: "must not appear\n" }] },
+  });
+  const lateEnd = event(4, "tool_end", {
+    toolCallId: "tool-late-diagnostic",
+    toolName: "bash",
+    result: { content: [{ type: "text", text: "late-end\n" }] },
+    isError: true,
+  });
+  const run = {
+    id: "run-late-diagnostic",
+    taskId: "task-late-diagnostic",
+    threadId: "thread-late-diagnostic",
+    cwd: "/repo",
+    status: "succeeded",
+    createdAt: start.ts,
+    updatedAt: end.ts,
+  };
+  const store = {
+    getRun: (id) => id === run.id ? run : undefined,
+    listRuns: () => [run],
+    listApprovalRequests: () => [],
+    listEvents: (id) => id === run.id ? [start, end, lateUpdate, lateEnd] : [],
+  };
+
+  const action = listExecutionActions(store, { runId: run.id, complete: true })[0];
+  assert.equal(action.status, "succeeded");
+  assert.deepEqual(
+    action.sourceRefs.filter((ref) => ref.kind === "run_event").map((ref) => ref.id),
+    [start.id, end.id],
+  );
+  assert.deepEqual(
+    action.diagnostics.map((diagnostic) => [diagnostic.code, diagnostic.sourceRefs[0].id]),
+    [["late_event", lateUpdate.id], ["late_event", lateEnd.id]],
+  );
+});
+
+test("updates persisted before the accepted start are stale, not command output", () => {
+  const staleUpdate = event(1, "tool_update", {
+    toolCallId: "tool-before-start",
+    toolName: "bash",
+    partialResult: { content: [{ type: "text", text: "stale\n" }] },
+  });
+  const start = event(2, "tool_start", {
+    toolCallId: "tool-before-start",
+    toolName: "bash",
+    args: { command: "printf current" },
+  });
+  const evidence = deriveExecutionActionCommandEvidence({
+    events: [staleUpdate, start],
+    toolCallId: "tool-before-start",
+    start,
+  });
+  assert.ok(evidence);
+  assert.deepEqual(evidence.outputTail, []);
+});
+
+test("execution action invalidation publishes every accepted tool revision", () => {
+  const published = [];
+  const persisted = [];
+  const store = {
+    appendControlPlaneEvent(input, now) {
+      const value = { seq: persisted.length + 1, ts: now, ...input, data: input.data ?? {} };
+      persisted.push(value);
+      return value;
+    },
+  };
+  const hub = { publish: (value) => published.push(value) };
+  const update = event(7, "tool_update", {
+    toolCallId: "tool-live-invalidation",
+    toolName: "bash",
+    partialResult: { stream: "stdout", text: "live\n" },
+  }, "run-live-invalidation");
+
+  appendExecutionActionInvalidation({ store, hub, cwd: "/repo", event: update });
+  appendExecutionActionInvalidation({
+    store,
+    hub,
+    cwd: "/repo",
+    event: event(8, "assistant_text_delta", { text: "not an action" }, "run-live-invalidation"),
+  });
+
+  assert.equal(persisted.length, 1);
+  assert.equal(published.length, 1);
+  assert.equal(published[0].domain, "runs");
+  assert.equal(published[0].entityType, "execution_action");
+  assert.equal(published[0].entityId, "tool:run-live-invalidation:tool-live-invalidation");
+  assert.equal(published[0].action, "execution_action.revised");
+  assert.deepEqual(published[0].data, {
+    runId: "run-live-invalidation",
+    toolCallId: "tool-live-invalidation",
+    runEventType: "tool_update",
+    actionRevision: 7,
+  });
+  assert.equal(
+    published[0].idempotencyKey,
+    "execution-action-revision:tool:run-live-invalidation:tool-live-invalidation:7",
+  );
+});
+
+test("approval-only state remains one approval lifecycle without execution evidence", () => {
+  const runId = "run-approval-lineage";
+  const approvalId = "approval-lineage";
+  const run = {
+    id: runId,
+    taskId: "task-approval-lineage",
+    threadId: "thread-approval-lineage",
+    workUnitId: "work-unit-approval-lineage",
+    teammateId: "participant-qa",
+    workflowStepId: "workflow-step-approval-lineage",
+    cwd: "/repo",
+    status: "waiting_for_approval",
+    createdAt: "2026-07-13T00:00:01.000Z",
+    updatedAt: "2026-07-13T00:00:02.000Z",
+  };
+  const baseApproval = {
+    id: approvalId,
+    runId,
+    taskId: run.taskId,
+    workflowStepId: run.workflowStepId,
+    toolCallId: "tool-approval-lineage",
+    actionType: "bash",
+    risk: "medium",
+    title: "Approve focused check",
+    description: "pnpm test --filter parser",
+    payload: { type: "bash", cwd: "/repo", command: "pnpm test --filter parser", riskFlags: [] },
+    createdAt: "2026-07-13T00:00:01.000Z",
+    status: "pending",
+  };
+  const store = {
+    getRun: (id) => id === runId ? run : undefined,
+    listRuns: () => [run],
+    listApprovalRequests: () => [baseApproval],
+    listArtifacts: () => [],
+    listEvents: (id) => id === runId ? [event(1, "run_created", { attemptId: "attempt-approval-lineage" }, runId)] : [],
+  };
+
+  const [pendingAction] = listExecutionActions(store, { runId, complete: true });
+  assert.equal(pendingAction.id, `approval:${approvalId}`);
+  assert.equal(pendingAction.status, "waiting_for_approval");
+  assert.equal(pendingAction.toolCallId, baseApproval.toolCallId);
+  assert.equal(pendingAction.sourceEventSequence, undefined);
+  assert.equal(pendingAction.executedAt, undefined);
+  assert.equal(pendingAction.commandEvidence, undefined);
+  assert.equal(pendingAction.toolEvidence, undefined);
+  assert.equal(pendingAction.sourceRefs.some((ref) => ref.kind === "run_event"), false);
+
+  const [deniedAction] = listExecutionActions({
+    ...store,
+    listApprovalRequests: () => [{ ...baseApproval, status: "denied", resolvedAt: "2026-07-13T00:00:03.000Z" }],
+  }, { runId, complete: true });
+  assert.equal(deniedAction.id, pendingAction.id);
+  assert.equal(deniedAction.status, "denied");
+  assert.equal(deniedAction.sourceEventSequence, undefined);
+  assert.equal(deniedAction.executedAt, undefined);
+  assert.equal(deniedAction.sourceRefs.some((ref) => ref.kind === "run_event"), false);
+});
+
+test("approved tool action keeps approval identity and advances revision for every durable tool update", () => {
+  const runId = "run-approval-tool-revision";
+  const approvalId = "approval-tool-revision";
+  const toolCallId = "tool-approval-tool-revision";
+  const run = {
+    id: runId,
+    taskId: "task-approval-tool-revision",
+    threadId: "thread-approval-tool-revision",
+    cwd: "/repo",
+    status: "running",
+    createdAt: "2026-07-13T00:00:01.000Z",
+    updatedAt: "2026-07-13T00:00:04.000Z",
+  };
+  const approval = {
+    id: approvalId,
+    runId,
+    taskId: run.taskId,
+    toolCallId,
+    actionType: "bash",
+    risk: "medium",
+    title: "Approve focused check",
+    description: "pnpm test",
+    payload: { type: "bash", cwd: "/repo", command: "pnpm test", riskFlags: [] },
+    createdAt: "2026-07-13T00:00:01.000Z",
+    resolvedAt: "2026-07-13T00:00:02.000Z",
+    status: "approved",
+  };
+  const baseEvents = [
+    event(1, "run_created", { attemptId: "attempt-approval-tool-revision" }, runId),
+    event(2, "tool_start", { toolCallId, toolName: "bash", args: { command: "pnpm test", cwd: "/repo" } }, runId),
+  ];
+  const store = {
+    getRun: (id) => id === runId ? run : undefined,
+    listRuns: () => [run],
+    listApprovalRequests: () => [approval],
+    listArtifacts: () => [],
+    listEvents: () => baseEvents,
+  };
+
+  const started = listExecutionActions(store, { runId, complete: true });
+  const updated = listExecutionActions({
+    ...store,
+    listEvents: () => [...baseEvents, event(3, "tool_update", {
+      toolCallId,
+      toolName: "bash",
+      partialResult: {
+        toolCallId,
+        stream: "stdout",
+        sequence: 1,
+        text: "still running\n",
+        byteCount: 14,
+        redacted: false,
+        truncated: false,
+        ts: "2026-07-13T00:00:03.000Z",
+      },
+    }, runId)],
+  }, { runId, complete: true });
+
+  assert.equal(started.length, 1);
+  assert.equal(updated.length, 1);
+  assert.equal(started[0].id, `approval:${approvalId}`);
+  assert.equal(started[0].approvalId, approvalId);
+  assert.equal(started[0].toolCallId, toolCallId);
+  assert.equal(started[0].title, "Approve focused check");
+  assert.equal(started[0].sourceEventSequence, 2);
+  assert.ok(updated[0].revision > started[0].revision);
+  assert.deepEqual(
+    started[0].sourceRefs.filter((ref) => ref.kind === "run_event").map((ref) => ref.id),
+    ["event-2"],
+  );
+  assert.deepEqual(
+    updated[0].sourceRefs.filter((ref) => ref.kind === "run_event").map((ref) => ref.id),
+    ["event-2", "event-3"],
+  );
+  assert.match(updated[0].commandEvidence.outputTail.map((chunk) => chunk.text).join(""), /still running/u);
+});
+
+test("approved command failure remains the same failed approval action with tool evidence", () => {
+  const runId = "run-approved-command-failed";
+  const toolCallId = "tool-approved-command-failed";
+  const approvalId = "approval-approved-command-failed";
+  const start = event(2, "tool_start", {
+    toolCallId,
+    toolName: "bash",
+    args: { command: "git status", cwd: "/not-a-repository" },
+  }, runId);
+  const end = event(3, "tool_end", {
+    toolCallId,
+    toolName: "bash",
+    isError: true,
+    result: {
+      details: {
+        unifiedExec: {
+          status: "failed",
+          cwd: "/not-a-repository",
+          command: { kind: "argv", argv: ["git", "status"] },
+          startedAt: start.ts,
+          endedAt: "2026-07-13T00:00:03.000Z",
+          durationMs: 1000,
+          exitCode: 128,
+          timedOut: false,
+          cancelled: false,
+          stdout: { byteCount: 0, lineCount: 0, preview: "", truncated: false },
+          stderr: { byteCount: 72, lineCount: 1, preview: "fatal: not a git repository (or any of the parent directories): .git\n", truncated: false },
+          artifacts: [],
+        },
+      },
+    },
+  }, runId);
+  const run = {
+    id: runId,
+    taskId: "task-approved-command-failed",
+    threadId: "thread-approved-command-failed",
+    workUnitId: "work-unit-approved-command-failed",
+    teammateId: "ling",
+    cwd: "/not-a-repository",
+    status: "succeeded",
+    createdAt: start.ts,
+    updatedAt: end.ts,
+  };
+  const approval = {
+    id: approvalId,
+    runId,
+    taskId: run.taskId,
+    toolCallId,
+    actionType: "bash",
+    risk: "medium",
+    title: "Allow git status",
+    description: "Run git status",
+    payload: { type: "bash", cwd: run.cwd, command: "git status", riskFlags: [] },
+    createdAt: "2026-07-13T00:00:01.000Z",
+    resolvedAt: "2026-07-13T00:00:01.500Z",
+    status: "approved",
+    decisionKind: "approve_command_rule",
+  };
+  const [action] = listExecutionActions({
+    getRun: (id) => id === runId ? run : undefined,
+    listRuns: () => [run],
+    listApprovalRequests: () => [approval],
+    listArtifacts: () => [],
+    listEvents: () => [event(1, "run_created", { attemptId: "attempt-approved-command-failed" }, runId), start, end],
+  }, { runId, complete: true });
+
+  assert.equal(action.id, `approval:${approvalId}`);
+  assert.equal(action.approvalId, approvalId);
+  assert.equal(action.status, "failed");
+  assert.equal(action.commandEvidence.exitCode, 128);
+  assert.match(action.commandEvidence.outputTail.map((chunk) => chunk.text).join(""), /not a git repository/u);
+  assert.ok(action.sourceRefs.some((ref) => ref.kind === "approval" && ref.id === approvalId));
+});
+
+test("lifecycle evidence excludes events that precede the accepted tool start", () => {
+  const runId = "run-lifecycle-boundary";
+  const toolCallId = "tool-lifecycle-boundary";
+  const events = [
+    event(1, "tool_end", {
+      toolCallId,
+      toolName: "bash",
+      isError: false,
+      result: { content: [{ type: "text", text: "stale end\n" }] },
+    }, runId),
+    event(2, "tool_update", {
+      toolCallId,
+      toolName: "bash",
+      partialResult: { content: [{ type: "text", text: "stale update\n" }] },
+    }, runId),
+    event(3, "tool_start", {
+      toolCallId,
+      toolName: "bash",
+      args: { command: "printf accepted", cwd: "/repo" },
+    }, runId),
+    event(4, "tool_update", {
+      toolCallId,
+      toolName: "bash",
+      partialResult: { content: [{ type: "text", text: "accepted output\n" }] },
+    }, runId),
+    event(5, "tool_end", {
+      toolCallId,
+      toolName: "bash",
+      isError: false,
+      result: { content: [{ type: "text", text: "accepted output\n" }] },
+    }, runId),
+  ];
+  const run = {
+    id: runId,
+    taskId: "task-lifecycle-boundary",
+    threadId: "thread-lifecycle-boundary",
+    cwd: "/repo",
+    status: "succeeded",
+    createdAt: events[2].ts,
+    updatedAt: events[4].ts,
+  };
+  const store = {
+    getRun: (id) => id === runId ? run : undefined,
+    listRuns: () => [run],
+    listApprovalRequests: () => [],
+    listEvents: (id) => id === runId ? events : [],
+  };
+
+  const actions = listExecutionActions(store, { runId, complete: true });
+
+  assert.equal(actions.length, 1);
+  assert.equal(actions[0].status, "succeeded");
+  assert.deepEqual(
+    actions[0].sourceRefs.filter((ref) => ref.kind === "run_event").map((ref) => ref.id),
+    ["event-3", "event-4", "event-5"],
+  );
+  assert.deepEqual(
+    actions[0].diagnostics?.flatMap((diagnostic) => diagnostic.sourceRefs.map((ref) => ref.id)),
+    ["event-1", "event-2"],
+  );
+  assert.match(actions[0].commandEvidence.outputTail.map((chunk) => chunk.text).join(""), /accepted output/u);
+  assert.doesNotMatch(actions[0].commandEvidence.outputTail.map((chunk) => chunk.text).join(""), /stale/u);
+});
+
+test("same-sequence lifecycle events choose a stable id and retain the loser as a conflict", () => {
+  const runId = "run-same-sequence-lifecycle";
+  const toolCallId = "tool-same-sequence-lifecycle";
+  const startB = {
+    ...event(1, "tool_start", {
+      toolCallId,
+      toolName: "bash",
+      args: { command: "printf stable" },
+    }, runId),
+    id: "event-start-b",
+  };
+  const startA = {
+    ...startB,
+    id: "event-start-a",
+  };
+  const end = event(2, "tool_end", {
+    toolCallId,
+    toolName: "bash",
+    isError: false,
+    result: { content: [{ type: "text", text: "stable\n" }] },
+  }, runId);
+  const run = {
+    id: runId,
+    taskId: "task-same-sequence-lifecycle",
+    threadId: "thread-same-sequence-lifecycle",
+    cwd: "/repo",
+    status: "succeeded",
+    createdAt: startA.ts,
+    updatedAt: end.ts,
+  };
+  const store = {
+    getRun: (id) => id === runId ? run : undefined,
+    listRuns: () => [run],
+    listApprovalRequests: () => [],
+    listEvents: (id) => id === runId ? [startB, end, startA] : [],
+  };
+
+  const action = listExecutionActions(store, { runId, complete: true })[0];
+
+  assert.equal(action.status, "succeeded");
+  assert.deepEqual(
+    action.sourceRefs.filter((ref) => ref.kind === "run_event").map((ref) => ref.id),
+    ["event-start-a", end.id],
+  );
+  assert.deepEqual(
+    action.diagnostics?.map((diagnostic) => [diagnostic.code, diagnostic.sourceRefs[0].id]),
+    [["source_conflict", "event-start-b"]],
+  );
+});
+
+for (const status of ["failed", "cancelled"]) {
+  for (const approved of [false, true]) {
+    test(`interrupted run advances ${approved ? "approved" : "bare"} action revision on ${status} without inventing tool completion`, () => {
+      const fixture = interruptedActionFixture(approved);
+      const before = listExecutionActions(fixture.store, { runId: fixture.run.id, complete: true })[0];
+      fixture.run.status = status;
+      const stop = event(5, status === "failed" ? "run_error" : "run_cancelled", { message: "runtime_interrupted_no_checkpoint" }, fixture.run.id);
+      fixture.events.push(stop);
+      fixture.run.updatedAt = fixture.run.endedAt = stop.ts;
+      const after = listExecutionActions(fixture.store, { runId: fixture.run.id, complete: true })[0];
+      assert.equal(before.status, "executing");
+      assert.equal(after.status, status);
+      assert.equal(after.id, before.id);
+      assert.equal(after.attemptId, before.attemptId);
+      assert.equal(after.sourceEventSequence, before.sourceEventSequence);
+      assert.ok(after.revision > before.revision, "terminal Run state must not conflict with the live action at equal revision");
+      assert.ok(after.sourceRefs.some(ref => ref.kind === "run_event" && ref.id === stop.id));
+      assert.equal(after.updatedAt, stop.ts);
+      assert.equal(after.completedAt, undefined, "a terminal Run is not proof the command/process stopped");
+      assert.equal(after.commandEvidence.exitCode, undefined);
+      assert.equal(after.commandEvidence.completedAt, undefined);
+      assert.equal(after.commandEvidence.outputTail.map(chunk => chunk.text).join(""), "line-1\n");
+      assert.equal(fixture.events.some(entry => entry.type === "tool_end"), false);
+      assert.deepEqual(listExecutionActions(fixture.store, { runId: fixture.run.id, complete: true })[0], after);
+    });
+  }
+}
+
+test("interrupted run terminal fence rejects later output and tool_end without rewriting persisted events", () => {
+  const fixture = interruptedActionFixture(true);
+  fixture.run.status = "failed";
+  fixture.events.push(event(5, "run_error", { message: "runtime_interrupted_no_checkpoint" }, fixture.run.id));
+  fixture.run.updatedAt = fixture.run.endedAt = fixture.events.at(-1).ts;
+  const before = listExecutionActions(fixture.store, { runId: fixture.run.id, complete: true })[0];
+  fixture.events.push(event(6, "tool_update", { toolCallId: "tool-interrupted", toolName: "bash", partialResult: {
+    toolCallId: "tool-interrupted", stream: "stdout", sequence: 2, text: "LATE_OUTPUT\n", byteCount: 12,
+    redacted: false, truncated: false, ts: "2026-07-13T00:00:06.000Z",
+  } }, fixture.run.id), event(7, "tool_end", { toolCallId: "tool-interrupted", toolName: "bash", isError: false,
+    result: { content: [{ type: "text", text: "LATE_SUCCESS" }] },
+  }, fixture.run.id));
+  const after = listExecutionActions(fixture.store, { runId: fixture.run.id, complete: true })[0];
+  assert.equal(after.status, "failed");
+  assert.ok(after.revision > before.revision, "new audit diagnostics change the DTO and must invalidate a retained snapshot");
+  assert.deepEqual(after.commandEvidence, before.commandEvidence);
+  assert.deepEqual(after.sourceRefs, before.sourceRefs);
+  assert.deepEqual(after.diagnostics.map(diagnostic => [diagnostic.code, diagnostic.sourceRefs[0].id]),
+    [["late_event", "event-6"], ["late_event", "event-7"]]);
+  assert.equal(fixture.events.length, 6, "late evidence stays in the audit log");
+});
+
+test("interrupted run projection revisions a terminal Run row even if its terminal event is unavailable", () => {
+  const fixture = interruptedActionFixture(false);
+  const before = listExecutionActions(fixture.store, { runId: fixture.run.id, complete: true })[0];
+  fixture.run.status = "failed";
+  fixture.run.updatedAt = fixture.run.endedAt = "2026-07-13T00:00:05.000Z";
+  const after = listExecutionActions(fixture.store, { runId: fixture.run.id, complete: true })[0];
+  assert.equal(after.status, "failed");
+  assert.ok(after.revision > before.revision);
+  assert.equal(after.completedAt, undefined);
+  assert.deepEqual(after.commandEvidence, before.commandEvidence);
+});
+
+test("interrupted run does not revise a tool already settled before the unrelated Run failure", () => {
+  const fixture = interruptedActionFixture(false);
+  fixture.events.push(event(4, "tool_end", { toolCallId: "tool-interrupted", toolName: "bash", isError: false,
+    result: { content: [{ type: "text", text: "finished" }] },
+  }, fixture.run.id));
+  const before = listExecutionActions(fixture.store, { runId: fixture.run.id, complete: true })[0];
+  fixture.run.status = "failed";
+  fixture.events.push(event(5, "run_error", { message: "later model failure" }, fixture.run.id));
+  fixture.run.updatedAt = fixture.run.endedAt = fixture.events.at(-1).ts;
+  const after = listExecutionActions(fixture.store, { runId: fixture.run.id, complete: true })[0];
+  assert.deepEqual(after, before);
+  assert.equal(after.status, "succeeded");
+});
+
+function interruptedActionFixture(approved) {
+  const run = { id: "run-interrupted", taskId: "task-interrupted", threadId: "thread-interrupted", cwd: "/repo",
+    status: "running", createdAt: "2026-07-13T00:00:01.000Z", updatedAt: "2026-07-13T00:00:03.000Z" };
+  const events = [
+    event(1, "run_created", { attemptId: "attempt-interrupted" }, run.id),
+    event(2, "tool_start", { toolCallId: "tool-interrupted", toolName: "bash", args: { command: "node long-task", cwd: "/repo" } }, run.id),
+    event(3, "tool_update", { toolCallId: "tool-interrupted", toolName: "bash", partialResult: {
+      toolCallId: "tool-interrupted", stream: "stdout", sequence: 1, text: "line-1\n", byteCount: 7,
+      redacted: false, truncated: false, ts: "2026-07-13T00:00:03.000Z",
+    } }, run.id),
+  ];
+  const approvals = approved ? [{ id: "approval-interrupted", runId: run.id, taskId: run.taskId,
+    toolCallId: "tool-interrupted", actionType: "bash", risk: "medium", title: "Approve command", description: "node long-task",
+    payload: { type: "bash", cwd: "/repo", command: "node long-task", riskFlags: [] }, status: "approved",
+    createdAt: run.createdAt, resolvedAt: "2026-07-13T00:00:02.000Z" }] : [];
+  return { run, events, store: { getRun: id => id === run.id ? run : undefined, listRuns: () => [run],
+    listApprovalRequests: () => approvals, listArtifacts: () => [], listEvents: () => events } };
+}
 
 function event(seq, type, data, runId = "run-live") {
   return {

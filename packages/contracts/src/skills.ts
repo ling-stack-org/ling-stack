@@ -63,6 +63,8 @@ export type SkillImportWarningSeverity = "info" | "warning" | "error";
 export type SkillSourceKind =
   | "gstack-skill-directory"
   | "codex-skill-directory"
+  | "claude-skill-directory"
+  | "dsh-skill-directory"
   | "workspace-skill-directory"
   | "manual-markdown";
 
@@ -129,7 +131,10 @@ export type SkillSourceWarningCode =
   | "missing_metadata"
   | "drifted_upstream"
   | "missing_upstream"
-  | "orphaned_snapshot";
+  | "orphaned_snapshot"
+  | "skill_id_conflict"
+  | "duplicate_source"
+  | "unsafe_path";
 
 export type SkillSourceSyncRecordState =
   | "attachable"
@@ -617,7 +622,8 @@ export type SkillCandidateSourceRefType =
   | "run-event"
   | "artifact"
   | "import"
-  | "observation-job";
+  | "observation-job"
+  | "learning-review";
 
 export interface SkillCandidateSourceRef {
   readonly type: SkillCandidateSourceRefType;
@@ -806,6 +812,8 @@ export interface ProcedureObservationRequest {
 export type ProcedureObservationJobTerminalStatus = "succeeded" | "failed" | "cancelled";
 
 export interface ProcedureObservationJobRequest {
+  readonly effectiveAttemptId?: string;
+  readonly evidenceVersion?: string;
   readonly id?: string;
   readonly workspaceId?: string;
   readonly source: ProcedureObservationSource;
@@ -1311,6 +1319,39 @@ export interface SkillSourceSyncPublishResponse {
   readonly artifacts: readonly SkillSourceArtifact[];
 }
 
+/**
+ * Explicit user-triggered scan of the shared `.agents/skills` convention directories.
+ * Roots are auto-detected (project workspace and user home); no arbitrary path is accepted.
+ */
+export interface SharedSkillSourceScanRequest {
+  readonly includeProjectRoot?: boolean;
+  readonly includeUserRoot?: boolean;
+  readonly includeSkillIds?: readonly string[];
+  readonly excludeSkillIds?: readonly string[];
+  readonly maxSourceBytes?: number;
+}
+
+export interface SharedSkillSourcePublishRequest extends SharedSkillSourceScanRequest {
+  readonly selectedSkillIds: readonly string[];
+  readonly allowNewSkills?: boolean;
+  readonly publishArtifacts?: boolean;
+}
+
+export interface SharedSkillSourceScanResponse {
+  readonly cwd: string;
+  readonly scannedAt: string;
+  readonly preview: SkillSourceSyncPreviewReport;
+}
+
+export interface SharedSkillSourcePublishResponse {
+  readonly cwd: string;
+  readonly publishedAt: string;
+  readonly preview: SkillSourceSyncPreviewReport;
+  readonly skills: readonly SkillRegistryEntry[];
+  readonly snapshots: readonly SkillSourceSnapshot[];
+  readonly artifacts: readonly SkillSourceArtifact[];
+}
+
 export interface SkillSourceSyncApplySummary {
   readonly synced: number;
   readonly unchanged: number;
@@ -1455,11 +1496,14 @@ export interface SkillRevisionAuthorityDiff {
 
 export interface SkillRevisionPreviewRequest {
   readonly expectedUpdatedAt: string;
+  readonly expectedRevisionId?: string;
   readonly definition: SkillEditableDefinition;
 }
 
 export interface SkillRevisionPublishRequest extends SkillRevisionPreviewRequest {
   readonly confirmAuthorityChanges?: boolean;
+  readonly reason?: string;
+  readonly sourceCandidateId?: string;
 }
 
 export interface SkillRevisionPreview {
@@ -1480,6 +1524,47 @@ export interface SkillRevisionPublishResponse {
   readonly cwd: string;
   readonly draftId: string;
   readonly skill: SkillRegistryEntry;
+  readonly revision?: SkillDefinitionRevision;
+}
+
+export type SkillDefinitionValidationStatus = "not_run" | "schema_checked" | "evidence_checked" | "replayed";
+
+export interface SkillDefinitionRevision {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly skillId: string;
+  readonly revision: number;
+  readonly baseRevisionId?: string;
+  readonly beforeDefinition?: SkillDefinition;
+  readonly afterDefinition: SkillDefinition;
+  readonly kind: "baseline" | "create" | "edit" | "undo";
+  readonly actor: string;
+  readonly reason: string;
+  readonly sourceJobId?: string;
+  readonly sourceCandidateId?: string;
+  readonly validationStatus: SkillDefinitionValidationStatus;
+  readonly undoOfRevisionId?: string;
+  readonly createdAt: string;
+}
+
+export interface SkillDefinitionHistoryResponse {
+  readonly cwd: string;
+  readonly skillId: string;
+  readonly revisions: readonly SkillDefinitionRevision[];
+}
+
+export interface SkillDefinitionUndoRequest {
+  readonly revisionId: string;
+  readonly expectedUpdatedAt: string;
+  readonly reason?: string;
+  readonly confirmAuthorityChanges?: boolean;
+}
+
+export interface SkillDefinitionUndoResponse {
+  readonly cwd: string;
+  readonly skill: SkillRegistryEntry;
+  readonly revision: SkillDefinitionRevision;
+  readonly reused: boolean;
 }
 
 export interface SkillHardDeleteResponse {

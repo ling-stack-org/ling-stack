@@ -40,6 +40,7 @@ import {
 } from "./doctor/checks.js";
 import { CliError, errorMessage } from "./errors.js";
 import { runBrowserHostCommand } from "./browser-host-command.js";
+import { runExecutionEngineCommand } from "./execution-engine-command.js";
 import { generateCompletionScript, supportedCompletionShells, type CompletionShell } from "./completion/scripts.js";
 import { parseRunStreamRecord, type RunEventEnvelope, type RunStreamRecord } from "./run/events.js";
 import { readRunPromptInput } from "./run/input.js";
@@ -66,7 +67,7 @@ const DEFAULT_PORT = "17891";
 const DEFAULT_TOOLS = ["read", "grep", "find", "ls"] as const;
 const VALID_TOOLS: ReadonlySet<string> = new Set(Object.keys(defaultApprovalToolDecisions) as RunTool[]);
 const VALID_POLICY_DECISIONS: ReadonlySet<string> = new Set(approvalToolDecisions);
-const VALID_THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
+const VALID_THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
 const VALID_PROVIDER_KINDS = new Set(["openai", "anthropic", "google", "openai-compatible", "doubao", "deepseek", "minimax", "glm", "jimeng", "seedream", "seedance"]);
 const VALID_PROVIDER_APIS = new Set(["openai-completions", "openai-responses", "openai-codex-responses", "anthropic-messages", "google-generative-ai", "mistral-conversations", "media-job"]);
 const VALID_PROVIDER_TRANSPORTS = new Set(["auto", "websocket", "websocket-cached", "sse"]);
@@ -268,6 +269,8 @@ async function dispatch(parsed: ParsedGlobalArgs): Promise<number> {
   }
 
   switch (command) {
+    case "engine":
+      return await runExecutionEngineCommand(rest, parsed.options);
     case "init":
       return await handleInit(rest, parsed.options);
     case "doctor":
@@ -2198,7 +2201,9 @@ function doctorNextCommands(report: DoctorReport): readonly string[] {
       }
     }
   }
-  return [...commands];
+  return [...commands].map((command) => process.env.npm_lifecycle_event === "ling"
+    ? command.replace(/^ling-stack\b/u, "corepack pnpm ling")
+    : command);
 }
 
 function titleCase(value: string): string {
@@ -3362,10 +3367,183 @@ async function handleRunsCancel(args: readonly string[], options: GlobalOptions)
 
 async function handleAutomations(args: readonly string[], options: GlobalOptions): Promise<number> {
   const [subcommand = "scheduler", ...rest] = args;
+  if (subcommand === "list") {
+    return await handleAutomationsList(rest, options);
+  }
+  if (subcommand === "create") {
+    return await handleAutomationsCreate(rest, options);
+  }
+  if (subcommand === "run") {
+    return await handleAutomationsRun(rest, options);
+  }
+  if (subcommand === "runs") {
+    return await handleAutomationsRuns(rest, options);
+  }
   if (subcommand === "scheduler") {
     return await handleAutomationScheduler(rest, options);
   }
   throw new CliError(2, "unknown_command", `Unknown automations command: ${subcommand}`);
+}
+
+async function handleAutomationsList(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args, {
+    stringFlags: new Set(["status", "kind", "channel", "limit"]),
+    booleanFlags: new Set(["include-archived", "scheduled-only"]),
+  });
+  assertNoPositionals(parsed.positionals, "automations list");
+  const response = await requestJson(options, "GET", "/automations", {
+    cwd: options.cwd,
+    status: getFlag(parsed, "status"),
+    kind: getFlag(parsed, "kind"),
+    channelId: getFlag(parsed, "channel"),
+    limit: getFlag(parsed, "limit"),
+    includeArchived: parsed.booleans.has("include-archived") ? true : undefined,
+    scheduledOnly: parsed.booleans.has("scheduled-only") ? true : undefined,
+  });
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  printAutomationsList(response);
+  return 0;
+}
+
+async function handleAutomationsCreate(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args, {
+    stringFlags: new Set([
+      "title", "channel", "time", "timezone", "weekday", "every-ms", "rrule", "missed-run-policy",
+      "prompt", "target-thread", "status", "cadence",
+    ]),
+    booleanFlags: new Set(["heartbeat"]),
+  });
+  const kind = singlePositional(parsed.positionals, "automations create <daily-brief|weekly-review|custom-prompt>");
+  const title = getFlag(parsed, "title") ?? automationKindTitle(kind);
+  const channelId = getFlag(parsed, "channel");
+  const targetThreadId = getFlag(parsed, "target-thread");
+  const heartbeat = parsed.booleans.has("heartbeat");
+  if (heartbeat && !targetThreadId) {
+    throw new CliError(2, "missing_option", "automations create --heartbeat requires --target-thread <thread-id>.");
+  }
+  const trigger = buildAutomationTriggerFromCli(parsed, kind);
+  const target = targetThreadId
+    ? removeUndefined({ scope: "thread", workspaceId: "workspace_default", channelId, threadId: targetThreadId, cwd: options.cwd })
+    : channelId
+      ? { scope: "channel", workspaceId: "workspace_default", channelId, cwd: options.cwd }
+      : { scope: "workspace", workspaceId: "workspace_default", cwd: options.cwd };
+  const prompt = getFlag(parsed, "prompt");
+  const promptTemplate = prompt === undefined
+    ? undefined
+    : { templateVersion: 1, promptMarkdown: prompt, contextSelectors: [] };
+  const body = removeUndefined({
+    kind: normalizeAutomationKindArg(kind),
+    title,
+    channelId,
+    automationMode: heartbeat ? "heartbeat" : undefined,
+    targetThreadId,
+    target,
+    trigger,
+    rrule: getFlag(parsed, "rrule"),
+    promptTemplate,
+    status: getFlag(parsed, "status"),
+  });
+  const response = await requestJson(options, "POST", "/automations", { cwd: options.cwd }, body);
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  const automation = readField(response, "automation");
+  console.log(`Automation created: ${readString(automation, "id") ?? ""}`);
+  console.log(`Title: ${readString(automation, "title") ?? title}`);
+  console.log(`Status: ${readString(automation, "status") ?? ""}`);
+  console.log(`Target: ${formatAutomationTarget(automation)}`);
+  console.log(`Schedule: ${formatAutomationTrigger(readField(automation, "trigger"), readString(automation, "rrule"))}`);
+  return 0;
+}
+
+async function handleAutomationsRun(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args, { stringFlags: new Set(["idempotency-key"]) });
+  const automationId = singlePositional(parsed.positionals, "automations run <automation-id>");
+  const idempotencyKey = getFlag(parsed, "idempotency-key") ?? `automation:${automationId}:manual:${randomUUID()}`;
+  const response = await requestJson(options, "POST", `/automations/${encodeURIComponent(automationId)}/run`, { cwd: options.cwd }, {
+    triggerType: "manual",
+    idempotencyKey,
+  });
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  const automationRun = readField(response, "automationRun");
+  console.log(`Automation run queued: ${readString(automationRun, "id") ?? ""}`);
+  console.log(`Automation: ${readString(automationRun, "automationId") ?? automationId}`);
+  console.log(`Status: ${readString(automationRun, "status") ?? "queued"}`);
+  console.log(`Idempotency key: ${readString(automationRun, "idempotencyKey") ?? idempotencyKey}`);
+  const runId = readString(automationRun, "runId");
+  if (runId) console.log(`Run: ${runId}`);
+  return 0;
+}
+
+async function handleAutomationsRuns(args: readonly string[], options: GlobalOptions): Promise<number> {
+  const parsed = parseCommandArgs(args, { stringFlags: new Set(["automation", "status", "limit"]) });
+  if (parsed.positionals.length > 1 || (parsed.positionals.length === 1 && parsed.positionals[0] !== "list")) {
+    throw new CliError(2, "bad_usage", "Usage: ling-stack automations runs [list] [--automation <id>] [--status <status>] [--limit <n>]");
+  }
+  const response = await requestJson(options, "GET", "/automation-runs", {
+    cwd: options.cwd,
+    automationId: getFlag(parsed, "automation"),
+    status: getFlag(parsed, "status"),
+    limit: getFlag(parsed, "limit"),
+  });
+  if (options.json) {
+    printJson(response);
+    return 0;
+  }
+  printAutomationRunsList(response);
+  return 0;
+}
+
+function normalizeAutomationKindArg(value: string): "daily_brief" | "weekly_review" | "custom_prompt" {
+  if (value === "daily-brief" || value === "daily_brief") return "daily_brief";
+  if (value === "weekly-review" || value === "weekly_review") return "weekly_review";
+  if (value === "custom-prompt" || value === "custom_prompt") return "custom_prompt";
+  throw new CliError(2, "bad_option", "Automation kind must be daily-brief, weekly-review, or custom-prompt.");
+}
+
+function automationKindTitle(value: string): string {
+  const kind = normalizeAutomationKindArg(value);
+  return kind === "daily_brief" ? "Daily Brief" : kind === "weekly_review" ? "Weekly Review" : "Custom Automation";
+}
+
+function buildAutomationTriggerFromCli(parsed: ParsedCommandArgs, kind: string): Record<string, unknown> {
+  const timezone = getFlag(parsed, "timezone") ?? (Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
+  const missedRunPolicy = getFlag(parsed, "missed-run-policy") ?? "skip";
+  if (missedRunPolicy !== "skip" && missedRunPolicy !== "run_one") {
+    throw new CliError(2, "bad_option", "--missed-run-policy must be skip or run_one.");
+  }
+  const cadence = getFlag(parsed, "cadence") ?? (getFlag(parsed, "every-ms") ? "interval" : getFlag(parsed, "weekday") || normalizeAutomationKindArg(kind) === "weekly_review" ? "weekly" : "daily");
+  if (cadence === "interval") {
+    const everyMs = getFlag(parsed, "every-ms");
+    if (!everyMs || !/^\d+$/.test(everyMs) || Number(everyMs) < 1) {
+      throw new CliError(2, "missing_option", "Interval automations require --every-ms <positive-ms>.");
+    }
+    return { type: "schedule", timezone, schedule: { cadence, everyMs: Number(everyMs) }, missedRunPolicy };
+  }
+  if (cadence === "weekly") {
+    const weekday = parseAutomationWeekday(getFlag(parsed, "weekday") ?? "5");
+    return { type: "schedule", timezone, schedule: { cadence, weekday, timeOfDay: getFlag(parsed, "time") ?? "17:00" }, missedRunPolicy };
+  }
+  if (cadence !== "daily") {
+    throw new CliError(2, "bad_option", "--cadence must be daily, weekly, or interval.");
+  }
+  return { type: "schedule", timezone, schedule: { cadence, timeOfDay: getFlag(parsed, "time") ?? "09:00" }, missedRunPolicy };
+}
+
+function parseAutomationWeekday(raw: string): number {
+  const names = new Map([["sun", 0], ["sunday", 0], ["mon", 1], ["monday", 1], ["tue", 2], ["tuesday", 2], ["wed", 3], ["wednesday", 3], ["thu", 4], ["thursday", 4], ["fri", 5], ["friday", 5], ["sat", 6], ["saturday", 6]]);
+  const value = names.get(raw.toLowerCase()) ?? Number(raw);
+  if (!Number.isInteger(value) || value < 0 || value > 6) {
+    throw new CliError(2, "bad_option", "--weekday must be 0-6 or a weekday name.");
+  }
+  return value;
 }
 
 async function handleAutomationScheduler(args: readonly string[], options: GlobalOptions): Promise<number> {
@@ -7033,6 +7211,69 @@ function printAutomationSchedulerMutation(response: unknown, title: string): voi
   }
 }
 
+function printAutomationsList(response: unknown): void {
+  const automations = readArray(response, "automations");
+  console.log("Automations:");
+  if (automations.length === 0) {
+    console.log("No automations found.");
+    return;
+  }
+  printTable(
+    ["ID", "Title", "Status", "Target", "Schedule", "Next Run", "Last Error"],
+    automations.map((automation) => [
+      truncate(readString(automation, "id") ?? "", 30),
+      truncate(readString(automation, "title") ?? "", 28),
+      readString(automation, "status") ?? "",
+      truncate(formatAutomationTarget(automation), 30),
+      truncate(formatAutomationTrigger(readField(automation, "trigger"), readString(automation, "rrule")), 34),
+      truncate(readString(automation, "nextRunAt") ?? "", 24),
+      truncate(readString(automation, "lastErrorMessage") ?? "", 42),
+    ]),
+  );
+}
+
+function printAutomationRunsList(response: unknown): void {
+  const runs = readArray(response, "automationRuns");
+  console.log("Automation runs:");
+  if (runs.length === 0) {
+    console.log("No automation runs found.");
+    return;
+  }
+  printTable(
+    ["ID", "Automation", "Status", "Trigger", "Fired At", "Scheduled For", "Error"],
+    runs.map((run) => [
+      truncate(readString(run, "id") ?? "", 30),
+      truncate(readString(run, "automationId") ?? "", 28),
+      readString(run, "status") ?? "",
+      readString(run, "triggerType") ?? "",
+      truncate(readString(run, "firedAt") ?? "", 24),
+      truncate(readString(run, "scheduledFor") ?? "", 24),
+      truncate(readString(run, "errorMessage") ?? readString(run, "skipReason") ?? "", 42),
+    ]),
+  );
+}
+
+function formatAutomationTarget(value: unknown): string {
+  const target = readField(value, "target");
+  if (!isRecord(target)) return "unknown";
+  const scope = readString(target, "scope") ?? "unknown";
+  return readString(target, "threadId") ?? readString(target, "channelId") ?? readString(target, "taskId") ?? scope;
+}
+
+function formatAutomationTrigger(trigger: unknown, rrule?: string): string {
+  if (!isRecord(trigger)) return rrule ?? "manual";
+  const type = readString(trigger, "type") ?? "manual";
+  if (type !== "schedule") return type;
+  const timezone = readString(trigger, "timezone") ?? "UTC";
+  const schedule = readField(trigger, "schedule");
+  const scheduleText = isRecord(schedule)
+    ? readString(schedule, "cadence") === "interval"
+      ? `every ${readNumber(schedule, "everyMs") ?? 0}ms`
+      : `${readString(schedule, "cadence") ?? "schedule"} ${readString(schedule, "timeOfDay") ?? ""}`
+    : "schedule";
+  return `${rrule ?? scheduleText} (${timezone})`;
+}
+
 function printAutomationSchedulerList(response: unknown): void {
   const schedulers = readArray(response, "schedulers");
   console.log("Automation schedulers:");
@@ -7452,6 +7693,10 @@ function shellQuote(value: string): string {
 }
 
 function printCommandHelp(command: string, subcommand?: string): void {
+  if (command === "engine") {
+    console.log("Usage: ling engine authorize --origin http://127.0.0.1:5175 --start-daemon [--daemon-url http://127.0.0.1:17891]\nStarts a new foreground daemon. Requires an interactive terminal; never takes over an existing daemon.");
+    return;
+  }
   if (command === "init") {
     printInitHelp();
     return;
@@ -7548,6 +7793,7 @@ Usage:
   ling-stack [global options] daemon stop
   ling-stack [global options] daemon restart
   ling-stack [global options] daemon logs
+  ling-stack [global options] engine authorize --origin <local-web-origin>
   ling-stack [global options] browser-host install
   ling-stack [global options] browser-host status
   ling-stack [global options] browser-host uninstall
@@ -7791,7 +8037,7 @@ Options:
   --prompt-file <path|->       Read prompt text from file or stdin
   --output-last-message <file> Write final assistant message to file
   --tool <name>                Repeatable. Default: read,grep,find,ls
-  --thinking <level>           off|minimal|low|medium|high|xhigh. Default: medium
+  --thinking <level>           off|minimal|low|medium|high|xhigh|max|ultra. Default: medium
   --system-prompt <text>       Override system prompt
   --append-system-prompt <txt> Repeatable appended system prompt
   --agent-dir <path>           Pi agent directory
@@ -7815,13 +8061,20 @@ Behavior:
 
 function printAutomationsHelp(): void {
   console.log(`Usage:
+  ling-stack automations list [--status STATUS] [--kind KIND] [--channel ID]
+  ling-stack automations create <daily-brief|weekly-review|custom-prompt> [options]
+  ling-stack automations run <automation-id> [--idempotency-key KEY]
+  ling-stack automations runs [list] [--automation ID] [--status STATUS] [--limit N]
   ling-stack automations scheduler start
   ling-stack automations scheduler status
   ling-stack automations scheduler stop
 
 Behavior:
-  Controls the explicit process-local automation scheduler for the current workspace.
-  Start registers enabled scheduled automations; status lists in-memory scheduler state; stop clears timers.
+  List, create, run, and inspect durable automations through the daemon API.
+  --json prints only the JSON response on stdout. Human output is a table or summary.
+  Create accepts --title, --channel, --time, --timezone, --weekday, --every-ms,
+  --rrule, --missed-run-policy, --prompt, and --target-thread/--heartbeat.
+  Scheduler commands control the explicit process-local scheduler for the current workspace.
 `);
 }
 

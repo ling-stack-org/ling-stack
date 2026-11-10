@@ -9,7 +9,10 @@ import {
 } from "@ling-stack/core";
 import { HttpError } from "../../errors.js";
 import { listAllExecutionActionsForRun, listExecutionActions } from "../runs/execution-actions.js";
+import { projectPublicRunSession } from "../runs/public-execution-snapshots.js";
+import { toPublicArtifactMetadata } from "../runs/public-artifacts.js";
 import { buildWorkflowContextInspectSummary, type WorkflowContextInspectSummary } from "./context-processing/inspect.js";
+import { buildWorkflowIsolationEvidence } from "./workflow-isolation-evidence.js";
 import {
   readWorkflowStepContextPacketArtifact,
   readWorkflowStepOutputPacketArtifact,
@@ -30,6 +33,7 @@ export interface WorkflowEvidenceDiagnostic {
 
 export interface WorkflowEvidence {
   readonly workflow: ChannelWorkflow;
+  readonly isolation?: ReturnType<typeof buildWorkflowIsolationEvidence>;
   readonly steps: readonly {
     readonly step: ChannelWorkflowStep;
     readonly contextPacket?: ReturnType<typeof readWorkflowStepContextPacketArtifact>;
@@ -52,6 +56,26 @@ export interface WorkflowEvidence {
     readonly sourceWorkflowId: string;
     readonly sourceWorkflowStepIds: readonly string[];
   }[];
+}
+
+/**
+ * Workflow evidence is also exposed through the HTTP read model.  The builder
+ * intentionally keeps the complete stored Run for terminal-report synthesis,
+ * but that object contains the frozen runner input and private Memory prompt.
+ * Project those fields at the public boundary instead of weakening the
+ * durable/recovery snapshot or dropping useful internal evidence.
+ */
+export function projectPublicWorkflowEvidence(evidence: WorkflowEvidence) {
+  return {
+    ...evidence,
+    steps: evidence.steps.map((item) => ({
+      ...item,
+      linkedRun: item.linkedRun ? projectPublicRunSession(item.linkedRun, undefined) : undefined,
+      packetArtifacts: item.packetArtifacts.map(toPublicArtifactMetadata),
+      linkedArtifacts: item.linkedArtifacts.map(toPublicArtifactMetadata),
+    })),
+    artifacts: evidence.artifacts.map(toPublicArtifactMetadata),
+  };
 }
 
 export function buildWorkflowEvidence(store: RunStore, workflowId: string): WorkflowEvidence {
@@ -81,6 +105,7 @@ export function buildWorkflowEvidence(store: RunStore, workflowId: string): Work
   const artifacts = uniqueArtifacts(evidenceSteps.flatMap((step) => [...step.packetArtifacts, ...step.linkedArtifacts]));
   return {
     workflow,
+    isolation: buildWorkflowIsolationEvidence(store, workflowId),
     steps: evidenceSteps,
     selectorDecisions,
     handoffIntents,
@@ -124,18 +149,15 @@ function buildWorkflowEvidenceStep(store: RunStore, step: ChannelWorkflowStep): 
     diagnostics.push({ kind: "failed", severity: "critical", message: step.blocker ?? step.resultSummary ?? "Workflow step failed." });
   }
   const executionVerification = step.metadata?.executionVerification;
-  if (step.metadata?.executionPlan && executionVerification?.status !== "verified") {
-    const missingRequired = step.metadata.executionPlan.operations
-      .filter((operation) => operation.required)
-      .filter((operation) => !executionVerification?.operationResults.some((result) =>
-        result.operationId === operation.id && result.status === "succeeded"));
-    if (missingRequired.length > 0) {
-      diagnostics.push({
-        kind: "operation_unverified",
-        severity: step.status === "succeeded" ? "critical" : "warning",
-        message: `Required operations are not verified: ${missingRequired.map((operation) => operation.id).join(", ")}.`,
-      });
-    }
+  const missingRequiredOperationIds = requiredExecutionOperationIdsForStep(step)
+    .filter((operationId) => !executionVerification?.operationResults.some((result) =>
+      result.operationId === operationId && result.status === "succeeded"));
+  if (missingRequiredOperationIds.length > 0) {
+    diagnostics.push({
+      kind: "operation_unverified",
+      severity: step.status === "succeeded" ? "critical" : "warning",
+      message: `Required operations are not verified: ${missingRequiredOperationIds.join(", ")}.`,
+    });
   }
   return {
     step,
@@ -152,6 +174,24 @@ function buildWorkflowEvidenceStep(store: RunStore, step: ChannelWorkflowStep): 
     linkedArtifacts: linkedRun ? store.listArtifacts(linkedRun.id) : [],
     diagnostics,
   };
+}
+
+function requiredExecutionOperationIdsForStep(step: ChannelWorkflowStep): readonly string[] {
+  const requirement = step.metadata?.delegatedRequirement;
+  if (requirement) {
+    return [...new Set(requirement.requiredOperationIds)];
+  }
+  const plan = step.metadata?.executionPlan;
+  if (!plan) {
+    return [];
+  }
+  const requiredIds = new Set(plan.operations
+    .filter((operation) => operation.required)
+    .map((operation) => operation.id));
+  const ownedIds = step.metadata?.executionOperationIds;
+  return ownedIds === undefined
+    ? [...requiredIds]
+    : [...new Set(ownedIds.filter((operationId) => requiredIds.has(operationId)))];
 }
 
 function collectWorkflowMemoryCandidates(

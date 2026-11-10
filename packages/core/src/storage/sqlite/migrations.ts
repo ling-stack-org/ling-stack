@@ -1,3 +1,6 @@
+import { applyMemoryWikiMigration } from "./memory-wiki-store.js";
+import { applyMemoryDerivativeMigration } from "./memory-derivative-migration.js";
+import { applyLearningReviewMigration } from "./learning-review-migration.js";
 import type { DatabaseSync } from "node:sqlite";
 import { normalizeChannelRuntimePolicy } from "../../workspace-types.js";
 import { stringifyJson } from "./helpers.js";
@@ -9,6 +12,27 @@ import {
 import { applyWorkspaceProvenanceMigration } from "./workspace-provenance-migration.js";
 import { applyPostCompactionUndoMigration } from "./post-compaction-undo-migration.js";
 import { applyWorkspaceSnapshotMigration } from "./workspace-snapshot-migration.js";
+
+import { ensureHostCommandJournalIndex } from "./host-command-journal-migration.js";
+import { applyApprovalPostCommitMigration } from "./approval-postcommit-migration.js";
+import { applyHostOperationJournalMigration } from "./host-operation-journal-migration.js";
+import { applyHostMediaOperationMigration } from "./host-media-operation-migration.js";
+import { applyHostMediaReceiptMigration } from "./host-media-receipt-migration.js";
+import { applyHostOfficeLocalMigration } from "./host-office-local-migration.js";
+import { applyHostOfficeLocalTerminalMigration } from "./host-office-local-terminal-migration.js";
+import { applyHostOfficeLocalJournalMigration } from "./host-office-local-journal-migration.js";
+import { applyHostOfficeLocalNoStartMigration } from "./host-office-local-no-start-migration.js";
+import { applyHostOfficeLocalDirectoryV2Migration } from "./host-office-local-directory-v2-migration.js";
+import { applyHostOfficeLocalDirectoryV2CertificateMigration } from "./host-office-local-directory-v2-certificate-migration.js";
+import { ensureLingTurnCursorIndexes } from "./ling-turn-cursor-indexes.js";
+import { applyProposedPlanRevisionMigration } from "./proposed-plan-revision-migration.js";
+import { applyTeammateDirectSubmissionMigration } from "./teammate-direct-submission-migration.js";
+import { applyHostAttemptCompletionMigration } from "./host-attempt-completion-migration.js";
+import { applyHostAttemptEffectCoverageMigration } from "./host-attempt-effect-coverage-migration.js";
+import { applyTeammateDirectInterventionFenceMigration } from "./teammate-direct-intervention-fence-migration.js";
+import { initializeMemorySearchIndex } from "./memory-search-index.js";
+import { applyProcedureObservationJobMigration } from "./procedure-observation-job-migration.js";
+import { applySkillDefinitionRevisionMigration } from "./skill-definition-revision-migration.js";
 
 export interface SqliteRunStoreMigrationContext {
   readonly database: DatabaseSync;
@@ -236,6 +260,18 @@ const CHROME_BROWSER_CREDENTIALS_MIGRATION_VERSION = 113;
 const CHROME_BROWSER_CREDENTIALS_MIGRATION_NAME = "create_chrome_browser_credentials";
 const MEDIA_PROJECT_ASSETS_MIGRATION_VERSION = 114;
 const MEDIA_PROJECT_ASSETS_MIGRATION_NAME = "create_media_project_assets";
+const APPROVAL_COMMAND_RULES_MIGRATION_VERSION = 126;
+const APPROVAL_COMMAND_RULES_MIGRATION_NAME = "create_approval_command_rules";
+const CODEX_TYPED_TRANSCRIPT_V3_MIGRATION_VERSION = 127;
+const CODEX_TYPED_TRANSCRIPT_V3_MIGRATION_NAME = "codex_typed_transcript_v3_result_items";
+const CHANNEL_HANDOFF_WORKFLOW_IDEMPOTENCY_MIGRATION_VERSION = 128;
+const CHANNEL_HANDOFF_WORKFLOW_IDEMPOTENCY_MIGRATION_NAME = "enforce_channel_handoff_workflow_idempotency";
+const CHANNEL_DECISION_SUPERSESSION_IDEMPOTENCY_MIGRATION_VERSION = 129;
+const CHANNEL_DECISION_SUPERSESSION_IDEMPOTENCY_MIGRATION_NAME = "enforce_channel_decision_supersession_idempotency";
+const TEAMMATE_DIRECT_SYSTEM_PURPOSE_MIGRATION_VERSION = 134;
+const TEAMMATE_DIRECT_SYSTEM_PURPOSE_MIGRATION_NAME = "add_teammate_direct_system_purpose";
+const CHANNEL_EXECUTION_PROPOSAL_CAS_MIGRATION_VERSION = 138;
+const CHANNEL_EXECUTION_PROPOSAL_CAS_MIGRATION_NAME = "add_channel_execution_proposal_cas";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
   database.exec(`
@@ -741,6 +777,7 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
           intent TEXT NOT NULL,
           author_type TEXT NOT NULL,
           author_id TEXT,
+          system_purpose TEXT,
           body TEXT NOT NULL,
           mentions_json TEXT NOT NULL,
           attachment_ids_json TEXT NOT NULL,
@@ -873,6 +910,10 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
 
         CREATE INDEX IF NOT EXISTS idx_channel_decisions_channel_status_created
         ON channel_decisions(channel_id, status, created_at);
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_channel_decisions_supersedes_unique
+        ON channel_decisions(supersedes_decision_id)
+        WHERE supersedes_decision_id IS NOT NULL;
 
         CREATE TABLE IF NOT EXISTS channel_handoffs (
           id TEXT PRIMARY KEY,
@@ -1471,6 +1512,7 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
       database.exec(`
         CREATE TABLE IF NOT EXISTS channel_execution_proposals (
           id TEXT PRIMARY KEY,
+          revision INTEGER NOT NULL DEFAULT 1 CHECK(revision >= 1),
           workspace_id TEXT NOT NULL,
           channel_id TEXT NOT NULL,
           source_message_id TEXT NOT NULL,
@@ -1490,6 +1532,8 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
           linked_workflow_id TEXT,
           error_message TEXT,
           blocker_json TEXT,
+          confirmation_claim_id TEXT,
+          confirmation_claim_expires_at TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
           FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -4419,6 +4463,10 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
         context.recordMigration(SKILL_SOURCE_SNAPSHOTS_MIGRATION_VERSION, SKILL_SOURCE_SNAPSHOTS_MIGRATION_NAME);
       }
     }
+    // Legacy/external snapshots stay unclassified until an explicit migration.
+    if (!context.hasColumn("skill_source_snapshots", "bundle_update_mode")) {
+      database.exec("ALTER TABLE skill_source_snapshots ADD COLUMN bundle_update_mode TEXT CHECK(bundle_update_mode IN ('follow', 'pinned'));");
+    }
     const hasSkillSourceUpgradeLifecycleMigration = context.hasMigration(SKILL_SOURCE_UPGRADE_LIFECYCLE_MIGRATION_VERSION);
     if (
       !hasSkillSourceUpgradeLifecycleMigration ||
@@ -4569,7 +4617,7 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
           prompt_version TEXT,
           attempt_count INTEGER NOT NULL DEFAULT 0,
           validation_codes_json TEXT NOT NULL DEFAULT '[]',
-          published_message_id TEXT,
+          result_item_id TEXT,
           error_code TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
@@ -5648,6 +5696,225 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
     }
   }
 
+  const hasApprovalCommandRulesMigration = context.hasMigration(APPROVAL_COMMAND_RULES_MIGRATION_VERSION);
+  if (
+    !hasApprovalCommandRulesMigration ||
+    !context.hasTable("approval_command_rules") ||
+    !context.hasColumn("approval_requests", "available_decisions_json") ||
+    !context.hasColumn("approval_requests", "proposed_command_rule_json") ||
+    !context.hasColumn("approval_requests", "decision_kind") ||
+    !context.hasColumn("approval_requests", "decision_rule_id")
+  ) {
+    if (!context.hasColumn("approval_requests", "available_decisions_json")) {
+      database.exec("ALTER TABLE approval_requests ADD COLUMN available_decisions_json TEXT NOT NULL DEFAULT '[\"approve_once\",\"deny\"]';");
+    }
+    if (!context.hasColumn("approval_requests", "proposed_command_rule_json")) {
+      database.exec("ALTER TABLE approval_requests ADD COLUMN proposed_command_rule_json TEXT;");
+    }
+    if (!context.hasColumn("approval_requests", "decision_kind")) {
+      database.exec("ALTER TABLE approval_requests ADD COLUMN decision_kind TEXT;");
+    }
+    if (!context.hasColumn("approval_requests", "decision_rule_id")) {
+      database.exec("ALTER TABLE approval_requests ADD COLUMN decision_rule_id TEXT;");
+    }
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS approval_command_rules (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        tool_name TEXT NOT NULL CHECK(tool_name = 'bash'),
+        rule_version INTEGER NOT NULL,
+        prefix_tokens_json TEXT NOT NULL,
+        display TEXT NOT NULL,
+        fingerprint TEXT NOT NULL,
+        source_approval_id TEXT,
+        created_by TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        revoked_at TEXT,
+        UNIQUE(workspace_id, tool_name, fingerprint),
+        FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+        FOREIGN KEY(source_approval_id) REFERENCES approval_requests(id) ON DELETE SET NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_approval_command_rules_active
+      ON approval_command_rules(workspace_id, tool_name, revoked_at, created_at DESC);
+    `);
+    if (!hasApprovalCommandRulesMigration) {
+      context.recordMigration(APPROVAL_COMMAND_RULES_MIGRATION_VERSION, APPROVAL_COMMAND_RULES_MIGRATION_NAME);
+    }
+  }
+
+  const hasCodexTypedTranscriptV3Migration = context.hasMigration(CODEX_TYPED_TRANSCRIPT_V3_MIGRATION_VERSION);
+  if (!hasCodexTypedTranscriptV3Migration || !context.hasColumn("ling_terminal_reports", "result_item_id")) {
+    database.exec("BEGIN IMMEDIATE;");
+    try {
+      if (context.hasTable("ling_terminal_reports") && !context.hasColumn("ling_terminal_reports", "result_item_id")) {
+        if (context.hasColumn("ling_terminal_reports", "published_message_id")) {
+          database.exec("ALTER TABLE ling_terminal_reports RENAME COLUMN published_message_id TO result_item_id;");
+        } else {
+          database.exec("ALTER TABLE ling_terminal_reports ADD COLUMN result_item_id TEXT;");
+        }
+      }
+      database.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_ling_terminal_reports_result_item
+        ON ling_terminal_reports(result_item_id)
+        WHERE result_item_id IS NOT NULL;
+      `);
+      if (context.hasTable("conversation_items")) {
+        // Existing development rows are normalized to the Host-assigned role;
+        // report publications are migrated by their dedicated result anchor.
+        database.exec(`
+          UPDATE conversation_items
+          SET payload_json = json_set(payload_json, '$.presentationRole', 'narration')
+          WHERE kind = 'assistant_message'
+            AND json_extract(payload_json, '$.presentationRole') IS NULL;
+        `);
+      }
+      if (!hasCodexTypedTranscriptV3Migration) {
+        context.recordMigration(CODEX_TYPED_TRANSCRIPT_V3_MIGRATION_VERSION, CODEX_TYPED_TRANSCRIPT_V3_MIGRATION_NAME);
+      }
+      database.exec("COMMIT;");
+    } catch (error) {
+      database.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+
+  if (!context.hasMigration(CHANNEL_HANDOFF_WORKFLOW_IDEMPOTENCY_MIGRATION_VERSION)) {
+    database.exec("BEGIN IMMEDIATE;");
+    try {
+      // First-writer-wins for development databases that already contain the bug.
+      // Later workflow rows stay intact for audit, while their steps retain handoff lineage.
+      database.exec(`
+        WITH ranked_handoff_workflows AS (
+          SELECT
+            id,
+            ROW_NUMBER() OVER (
+              PARTITION BY source_handoff_id
+              ORDER BY created_at ASC, rowid ASC
+            ) AS claim_order
+          FROM channel_workflows
+          WHERE source_handoff_id IS NOT NULL
+        )
+        UPDATE channel_workflows
+        SET source_handoff_id = NULL
+        WHERE id IN (
+          SELECT id
+          FROM ranked_handoff_workflows
+          WHERE claim_order > 1
+        );
+
+        DROP INDEX IF EXISTS idx_channel_workflows_handoff;
+        CREATE UNIQUE INDEX idx_channel_workflows_source_handoff_unique
+        ON channel_workflows(source_handoff_id)
+        WHERE source_handoff_id IS NOT NULL;
+      `);
+      context.recordMigration(
+        CHANNEL_HANDOFF_WORKFLOW_IDEMPOTENCY_MIGRATION_VERSION,
+        CHANNEL_HANDOFF_WORKFLOW_IDEMPOTENCY_MIGRATION_NAME,
+      );
+      database.exec("COMMIT;");
+    } catch (error) {
+      database.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+  database.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_channel_workflows_source_handoff_unique
+    ON channel_workflows(source_handoff_id)
+    WHERE source_handoff_id IS NOT NULL;
+  `);
+
+  if (!context.hasMigration(CHANNEL_DECISION_SUPERSESSION_IDEMPOTENCY_MIGRATION_VERSION)) {
+    database.exec("BEGIN IMMEDIATE;");
+    try {
+      // Preserve the first successor claim. Later duplicate rows remain auditable, but
+      // cannot stay active or retain a claim that would violate the single-successor chain.
+      database.exec(`
+        WITH ranked_decision_successors AS (
+          SELECT
+            id,
+            ROW_NUMBER() OVER (
+              PARTITION BY supersedes_decision_id
+              ORDER BY created_at ASC, rowid ASC
+            ) AS claim_order
+          FROM channel_decisions
+          WHERE supersedes_decision_id IS NOT NULL
+        )
+        UPDATE channel_decisions
+        SET supersedes_decision_id = NULL, status = 'rejected'
+        WHERE id IN (
+          SELECT id
+          FROM ranked_decision_successors
+          WHERE claim_order > 1
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_channel_decisions_supersedes_unique
+        ON channel_decisions(supersedes_decision_id)
+        WHERE supersedes_decision_id IS NOT NULL;
+      `);
+      context.recordMigration(
+        CHANNEL_DECISION_SUPERSESSION_IDEMPOTENCY_MIGRATION_VERSION,
+        CHANNEL_DECISION_SUPERSESSION_IDEMPOTENCY_MIGRATION_NAME,
+      );
+      database.exec("COMMIT;");
+    } catch (error) {
+      database.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+  database.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_channel_decisions_supersedes_unique
+    ON channel_decisions(supersedes_decision_id)
+    WHERE supersedes_decision_id IS NOT NULL;
+  `);
+
+  if (!context.hasMigration(TEAMMATE_DIRECT_SYSTEM_PURPOSE_MIGRATION_VERSION)) {
+    database.exec("BEGIN IMMEDIATE;");
+    try {
+      if (context.hasTable("teammate_direct_messages") && !context.hasColumn("teammate_direct_messages", "system_purpose")) {
+        database.exec("ALTER TABLE teammate_direct_messages ADD COLUMN system_purpose TEXT;");
+      }
+      context.recordMigration(
+        TEAMMATE_DIRECT_SYSTEM_PURPOSE_MIGRATION_VERSION,
+        TEAMMATE_DIRECT_SYSTEM_PURPOSE_MIGRATION_NAME,
+      );
+      database.exec("COMMIT;");
+    } catch (error) {
+      database.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+
+  const hasChannelExecutionProposalCasMigration = context.hasMigration(CHANNEL_EXECUTION_PROPOSAL_CAS_MIGRATION_VERSION);
+  if (
+    !hasChannelExecutionProposalCasMigration
+    || !context.hasColumn("channel_execution_proposals", "revision")
+    || !context.hasColumn("channel_execution_proposals", "confirmation_claim_id")
+    || !context.hasColumn("channel_execution_proposals", "confirmation_claim_expires_at")
+  ) {
+    database.exec("BEGIN IMMEDIATE;");
+    try {
+      if (context.hasTable("channel_execution_proposals")) {
+        if (!context.hasColumn("channel_execution_proposals", "revision")) {
+          database.exec("ALTER TABLE channel_execution_proposals ADD COLUMN revision INTEGER NOT NULL DEFAULT 1 CHECK(revision >= 1);");
+        }
+        if (!context.hasColumn("channel_execution_proposals", "confirmation_claim_id")) {
+          database.exec("ALTER TABLE channel_execution_proposals ADD COLUMN confirmation_claim_id TEXT;");
+        }
+        if (!context.hasColumn("channel_execution_proposals", "confirmation_claim_expires_at")) {
+          database.exec("ALTER TABLE channel_execution_proposals ADD COLUMN confirmation_claim_expires_at TEXT;");
+        }
+      }
+      if (!hasChannelExecutionProposalCasMigration) {
+        context.recordMigration(CHANNEL_EXECUTION_PROPOSAL_CAS_MIGRATION_VERSION, CHANNEL_EXECUTION_PROPOSAL_CAS_MIGRATION_NAME);
+      }
+      database.exec("COMMIT;");
+    } catch (error) {
+      database.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+
   applyRunContextViewLineageMigration({
     database,
     hasMigration: context.hasMigration.bind(context),
@@ -5672,4 +5939,82 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
     hasTable: context.hasTable.bind(context),
     recordMigration: context.recordMigration.bind(context),
   });
+  applyApprovalPostCommitMigration({
+    database,
+    hasMigration: context.hasMigration.bind(context),
+    hasTable: context.hasTable.bind(context),
+    recordMigration: context.recordMigration.bind(context),
+  });
+  ensureHostCommandJournalIndex(database);
+  ensureLingTurnCursorIndexes(database);
+  applyHostOperationJournalMigration({
+    database,
+    hasMigration: context.hasMigration.bind(context),
+    hasTable: context.hasTable.bind(context),
+    recordMigration: context.recordMigration.bind(context),
+  });
+  applyHostMediaOperationMigration({
+    database,
+    hasMigration: context.hasMigration.bind(context),
+    hasTable: context.hasTable.bind(context),
+    recordMigration: context.recordMigration.bind(context),
+  });
+  applyHostMediaReceiptMigration({
+    database,
+    hasMigration: context.hasMigration.bind(context),
+    hasTable: context.hasTable.bind(context),
+    recordMigration: context.recordMigration.bind(context),
+  });
+  applyHostOfficeLocalMigration({
+    database,
+    hasMigration: context.hasMigration.bind(context),
+    hasTable: context.hasTable.bind(context),
+    recordMigration: context.recordMigration.bind(context),
+  });
+  applyHostOfficeLocalTerminalMigration({
+    database,
+    hasMigration: context.hasMigration.bind(context),
+    hasTable: context.hasTable.bind(context),
+    recordMigration: context.recordMigration.bind(context),
+  });
+  applyHostOfficeLocalJournalMigration({
+    database,
+    hasMigration: context.hasMigration.bind(context),
+    hasTable: context.hasTable.bind(context),
+    recordMigration: context.recordMigration.bind(context),
+  });
+  applyHostOfficeLocalNoStartMigration({
+    database,
+    hasMigration: context.hasMigration.bind(context),
+    hasTable: context.hasTable.bind(context),
+    recordMigration: context.recordMigration.bind(context),
+  });
+  applyHostOfficeLocalDirectoryV2Migration({
+    database,
+    hasMigration: context.hasMigration.bind(context),
+    hasTable: context.hasTable.bind(context),
+    recordMigration: context.recordMigration.bind(context),
+  });
+  applyHostOfficeLocalDirectoryV2CertificateMigration({
+    database,
+    hasMigration: context.hasMigration.bind(context),
+    hasTable: context.hasTable.bind(context),
+    recordMigration: context.recordMigration.bind(context),
+  });
+  applyProposedPlanRevisionMigration({
+    database,
+    hasMigration: context.hasMigration.bind(context),
+    hasColumn: context.hasColumn.bind(context),
+    recordMigration: context.recordMigration.bind(context),
+  });
+  applyTeammateDirectSubmissionMigration(context);
+  applyHostAttemptCompletionMigration(context);
+  applyHostAttemptEffectCoverageMigration(context);
+  applyTeammateDirectInterventionFenceMigration(context);
+  initializeMemorySearchIndex(database);
+  applyProcedureObservationJobMigration(context);
+  applySkillDefinitionRevisionMigration(context);
+  applyLearningReviewMigration(context);
+  applyMemoryDerivativeMigration(context);
+  applyMemoryWikiMigration(context);
 }

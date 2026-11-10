@@ -1,11 +1,11 @@
-import type { TextContent } from "@earendil-works/pi-ai";
 import type { ExtensionFactory, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { normalizeMcpToolResultContent } from "../content.js";
-import type { PiRunnerMcpToolCallResult, PiRunnerRunOptions } from "../types.js";
+import { createHostToolResultAdapter } from "../host-tool-results.js";
+import type { PiRunnerRunOptions } from "../types.js";
 import { isRecord } from "../utils.js";
 
 export function createLingStackMcpProxyExtension(options: PiRunnerRunOptions): ExtensionFactory {
   return (pi) => {
+    const adaptResult = createHostToolResultAdapter(pi);
     for (const tool of options.mcpTools ?? []) {
       const definition: ToolDefinition = {
         name: tool.registeredName,
@@ -15,6 +15,7 @@ export function createLingStackMcpProxyExtension(options: PiRunnerRunOptions): E
         parameters: normalizeMcpToolParameters(tool.inputSchema),
         executionMode: tool.sideEffectLevel === "read" ? "parallel" : "sequential",
         execute: async (toolCallId, params, signal) => {
+          signal?.throwIfAborted();
           if (!options.onMcpToolCall) {
             throw new Error(`MCP tool ${tool.rawName} is not connected in this runner.`);
           }
@@ -47,17 +48,14 @@ export function createLingStackMcpProxyExtension(options: PiRunnerRunOptions): E
             signal,
           });
           signal?.throwIfAborted();
-          if (result.isError) {
-            throw new Error(formatMcpToolError(result));
-          }
-          return {
-            content: normalizeMcpToolResultContent(result.content),
+          return adaptResult(toolCallId, tool.registeredName, {
+            ...result,
             details: {
               serverId: tool.serverId,
               rawName: tool.rawName,
               result: result.details,
             },
-          };
+          });
         },
       };
       pi.registerTool(definition);
@@ -74,13 +72,4 @@ function normalizeMcpToolParameters(inputSchema: unknown): ToolDefinition["param
     properties: {},
     required: [],
   } as ToolDefinition["parameters"];
-}
-
-function formatMcpToolError(result: PiRunnerMcpToolCallResult): string {
-  const text = result.content
-    .filter((item): item is TextContent => item.type === "text")
-    .map((item) => item.text)
-    .join("\n")
-    .trim();
-  return text || "MCP tool returned an error.";
 }

@@ -2,7 +2,7 @@
 
 Status: active UI2 component contract
 Owner: conversation UI packages
-Last verified: 2026-08-07
+Last verified: 2026-10-28 (共享外观与阅读表面同步；业务条款保留原所有者)
 Code anchors: `packages/conversation-ui-core/src/`, `packages/conversation-ui-react/src/`
 Test anchors: `packages/conversation-ui-core/test/`, `packages/conversation-ui-react/test/`
 
@@ -11,7 +11,7 @@ Test anchors: `packages/conversation-ui-core/test/`, `packages/conversation-ui-r
 
 ## Messages
 
-- 用户消息使用稳定浅灰气泡；AI 普通回复透明无边框，hover 不改变正文背景。
+- 用户消息颜色与圆角消费 `--ling-message-own-bg` / `--ling-message-radius`；引用与代码消费共享参数。feed、timeline 与对齐轨道透明；场景背景下 AI 正文使用阅读保护表面，hover 不改变正文背景，禁止重建贯穿消息区的中央底板。
 - 警告、阻断、审批和运行卡片持续显示自己的状态表面，不能依赖 hover。
 - 头像与正文按顶部基线对齐；同一角色的普通消息和卡片消息使用同一几何。
 - 消息操作在行 hover、行 focus-within 或按钮键盘焦点时出现，不点亮整条 AI 消息。
@@ -22,6 +22,7 @@ Test anchors: `packages/conversation-ui-core/test/`, `packages/conversation-ui-r
 
 ## Composer
 
+- 首页、普通会话、频道、队友私聊的 Composer 默认与 focus 外观由 `conversation-ui-react/styles/composer/` 唯一拥有，读取 `--ling-composer-*`。页面只负责布局与业务槽位，不能写死圆角、阴影或独立 dark 覆盖；新增会话模块按[组件主题合同](../../component-theme-presentation.md)接入。
 - 输入、附件、发送、停止、权限和模型阻断使用稳定区域；空白占位不得遮挡 transcript。
 - 发送时立即消费已发送的排队引导；队列不等待 Agent 回复完成才移除。
 - 普通消息与频道引导进入同一用户消息语义，不增加特殊标签。

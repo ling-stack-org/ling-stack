@@ -102,7 +102,7 @@ test("Channel Create direct Dialog closes once through Escape and outside click 
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const trigger = page.getByLabel("Ling Stack navigation").getByRole("button", { name: "No channel yet" });
+  const trigger = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "No channel yet" });
   await trigger.click();
   let dialog = page.getByRole("dialog", { name: "New channel" });
   await expectDirectDialogRows(dialog);
@@ -132,7 +132,7 @@ test("Channel Create blocks new users without a runnable model and offers one re
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "No channel yet" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "No channel yet" }).click();
   const dialog = page.getByRole("dialog", { name: "New channel" });
   await expect(dialog.getByRole("combobox", { name: "Ling Agent model" })).toBeDisabled();
   await expect(dialog.getByRole("button", { name: "Create channel" })).toBeDisabled();
@@ -153,7 +153,7 @@ test("Channel Create keeps project, provider, language, payload, and busy dismis
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "No channel yet" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "No channel yet" }).click();
   const dialog = page.getByRole("dialog", { name: "New channel" });
   await dialog.getByLabel("Name").fill("Direct primitives");
   await dialog.getByRole("button", { name: "Project directory" }).click();
@@ -211,7 +211,7 @@ test("Channel Create keeps failures inline and remains dismissible after the req
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const trigger = page.getByLabel("Ling Stack navigation").getByRole("button", { name: "No channel yet" });
+  const trigger = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "No channel yet" });
   await trigger.click();
   const dialog = page.getByRole("dialog", { name: "New channel" });
   await dialog.getByLabel("Name").fill("Failed direct dialog");
@@ -233,7 +233,7 @@ test("Channel Create keeps three-row scroll geometry in dark reduced-motion mode
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const trigger = page.getByLabel("Ling Stack navigation").getByRole("button", { name: "No channel yet" });
+  const trigger = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "No channel yet" });
   await trigger.click();
   const dialog = page.getByRole("dialog", { name: "New channel" });
   await expectDirectDialogRows(dialog);

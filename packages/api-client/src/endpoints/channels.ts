@@ -1,4 +1,9 @@
 import type {
+  ChannelSessionListResponse,
+  ChannelSessionMutationResponse,
+  CreateChannelSessionRequest,
+  UpdateChannelSessionRequest,
+  ListChannelSessionsOptions,
   ChannelAttachmentListResponse,
   ChannelAttachmentMutationResponse,
   ChannelBriefMutationResponse,
@@ -43,6 +48,9 @@ import type {
   ChannelWorkflowCancelResponse,
   ChannelWorkflowMutationResponse,
   ChannelWorkflowOrchestrationResponse,
+  ChannelWorkflowOrchestrationRequest,
+  WorkflowConflictRecoveryRequest,
+  WorkflowConflictRecoveryResponse,
   ChannelWorkflowStatus,
   ChannelWorkflowStepListResponse,
   ChannelWorkflowStepMutationResponse,
@@ -88,6 +96,8 @@ import type {
   CreateChannelWorkflowTemplateCompileRequest,
   CreateChannelWorkflowRequest,
   CreateChannelWorkflowStepRequest,
+  CreateAndRunTaskChannelWorkflowStepStartRequest,
+  CreateTaskChannelWorkflowStepStartRequest,
   CorrectChannelTurnContextRequest,
   CorrectChannelTurnContextResponse,
   ListChannelConversationItemsOptions,
@@ -102,8 +112,9 @@ import type {
   UpdateChannelWorkflowRequest,
   UpdateChannelWorkflowStepRequest,
   UpdateChannelRequest,
-  StartChannelWorkflowStepRequest,
+  ChannelWorkflowStepStartResponseContext,
 } from "@ling-stack/contracts";
+import { parseChannelWorkflowStepStartResponse } from "@ling-stack/contracts";
 import { LingDaemonError } from "../errors.js";
 import { readErrorMessage } from "../transport.js";
 import type { LingDaemonEndpointContext, PublicEndpointGroup } from "../transport.js";
@@ -133,6 +144,26 @@ export const channelEndpoints = {
       return this._patch(`/channels/${encodeURIComponent(channelId)}`, { cwd }, input);
     },
 
+  async listChannelSessions(this: LingDaemonEndpointContext, cwd: string, channelId: string,
+      options: ListChannelSessionsOptions = {}): Promise<ChannelSessionListResponse> {
+      return this._get(`/channels/${encodeURIComponent(channelId)}/sessions`, { cwd, ...options });
+    },
+
+  async createChannelSession(this: LingDaemonEndpointContext, cwd: string, channelId: string,
+      input: CreateChannelSessionRequest): Promise<ChannelSessionMutationResponse> {
+      return this._post(`/channels/${encodeURIComponent(channelId)}/sessions`, { cwd }, input);
+    },
+
+  async getChannelSession(this: LingDaemonEndpointContext, cwd: string, channelId: string,
+      threadId: string): Promise<ChannelSessionMutationResponse> {
+      return this._get(`/channels/${encodeURIComponent(channelId)}/sessions/${encodeURIComponent(threadId)}`, { cwd });
+    },
+
+  async updateChannelSession(this: LingDaemonEndpointContext, cwd: string, channelId: string,
+      threadId: string, input: UpdateChannelSessionRequest): Promise<ChannelSessionMutationResponse> {
+      return this._patch(`/channels/${encodeURIComponent(channelId)}/sessions/${encodeURIComponent(threadId)}`, { cwd }, input);
+    },
+
   async listChannelBranches(this: LingDaemonEndpointContext,
       cwd: string,
       channelId: string,
@@ -156,6 +187,10 @@ export const channelEndpoints = {
       input: UpdateChannelBranchRequest,
     ): Promise<ChannelBranchMutationResponse> {
       return this._patch(`/channels/${encodeURIComponent(channelId)}/branches/${encodeURIComponent(branchId)}`, { cwd }, input);
+    },
+
+  async repairChannelBranch(this: LingDaemonEndpointContext, cwd: string, channelId: string, branchId: string): Promise<ChannelBranchMutationResponse> {
+      return this._post(`/channels/${encodeURIComponent(channelId)}/branches/${encodeURIComponent(branchId)}/repair`, { cwd }, {});
     },
 
   async deleteChannelBranch(this: LingDaemonEndpointContext, cwd: string, channelId: string, branchId: string): Promise<void> {
@@ -770,17 +805,62 @@ export const channelEndpoints = {
   async startChannelWorkflowStep(this: LingDaemonEndpointContext,
       cwd: string,
       workflowStepId: string,
-      input: StartChannelWorkflowStepRequest,
+      input: CreateTaskChannelWorkflowStepStartRequest,
+      expected: Omit<ChannelWorkflowStepStartResponseContext, "mode">,
     ): Promise<ChannelWorkflowStepStartResponse> {
-      return this._post(`/workflow-steps/${encodeURIComponent(workflowStepId)}/start`, { cwd }, input);
+      if ((input as { readonly mode?: unknown }).mode !== "create_task") {
+        throw new TypeError("startChannelWorkflowStep only accepts create_task; use streamChannelWorkflowStep for create_and_run_task.");
+      }
+      if (expected.workflowStep.id !== workflowStepId) {
+        throw new TypeError("Workflow step start path does not match the frozen expected workflow step.");
+      }
+      const value = await this._post<unknown>(`/workflow-steps/${encodeURIComponent(workflowStepId)}/start`, { cwd }, input);
+      const parsed = parseChannelWorkflowStepStartResponse(value, {
+        ...expected,
+        mode: input.mode,
+      });
+      if (!parsed) throw new Error("Workflow step start returned an invalid response or foreign lineage.");
+      return parsed;
+    },
+
+  async streamChannelWorkflowStep(this: LingDaemonEndpointContext,
+      cwd: string,
+      workflowStepId: string,
+      input: CreateAndRunTaskChannelWorkflowStepStartRequest,
+    ): Promise<Response> {
+      if ((input as { readonly mode?: unknown }).mode !== "create_and_run_task") {
+        throw new TypeError("streamChannelWorkflowStep only accepts create_and_run_task; use startChannelWorkflowStep for create_task.");
+      }
+      const response = await this._fetch(this._url(`/workflow-steps/${encodeURIComponent(workflowStepId)}/start`, { cwd }), {
+        method: "POST",
+        headers: {
+          Accept: "text/event-stream",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(input),
+      });
+      if (!response.ok) {
+        throw new LingDaemonError(await readErrorMessage(response), response.status, response.statusText);
+      }
+      return response;
     },
 
   async retryChannelWorkflowStep(this: LingDaemonEndpointContext, cwd: string, workflowStepId: string): Promise<ChannelWorkflowStepRetryResponse> {
       return this._post(`/workflow-steps/${encodeURIComponent(workflowStepId)}/retry`, { cwd }, {});
     },
 
-  async orchestrateChannelWorkflow(this: LingDaemonEndpointContext, cwd: string, workflowId: string): Promise<ChannelWorkflowOrchestrationResponse> {
-      return this._post(`/workflows/${encodeURIComponent(workflowId)}/orchestrate`, { cwd }, {});
+  async orchestrateChannelWorkflow(this: LingDaemonEndpointContext, cwd: string, workflowId: string,
+      input: ChannelWorkflowOrchestrationRequest = {}): Promise<ChannelWorkflowOrchestrationResponse> {
+      return this._post(`/workflows/${encodeURIComponent(workflowId)}/orchestrate`, { cwd }, input);
+    },
+
+  async recoverChannelWorkflowConflict(this: LingDaemonEndpointContext, cwd: string, workflowId: string,
+      input: WorkflowConflictRecoveryRequest): Promise<WorkflowConflictRecoveryResponse> {
+      return this._post(`/workflows/${encodeURIComponent(workflowId)}/conflict-recovery`, { cwd }, input);
+    },
+
+  async getChannelWorkflowConflictRecovery(this: LingDaemonEndpointContext, cwd: string, workflowId: string): Promise<WorkflowConflictRecoveryResponse> {
+      return this._get(`/workflows/${encodeURIComponent(workflowId)}/conflict-recovery`, { cwd });
     },
 
   async listChannelCollaborationCards(this: LingDaemonEndpointContext,

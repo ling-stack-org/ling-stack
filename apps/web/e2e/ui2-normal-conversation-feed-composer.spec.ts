@@ -5,6 +5,7 @@ import { mockDaemon } from "./support/mock-daemon";
 import { expectCompactMutedComposerControl } from "./support/composer-control-assertions";
 import { expectMessageFrameContained } from "./support/message-frame-assertions";
 import { createBaseState, createChatProvider, cwd, type MockState } from "./support/mock-state";
+import { expectRailAtSurfaceEdge } from "./support/conversation-position-assertions";
 
 const evidenceDirectory = fileURLToPath(new URL(
   "../../../docs/design/ui2.0升级/evidence/conversations/normal-conversation-feed-composer/",
@@ -37,12 +38,17 @@ for (const fixture of [
       .last();
     await expect(runningMessage.locator(".conversation-work-cell")).toHaveCount(0);
     await expect(runningMessage).not.toContainText("Working on UI2 feed run 20");
-    await expect(feed.locator('.normal-conversation-message-error[data-tone="danger"]')).toContainText("Provider timed out while generating the response.");
+    const failedMessage = feed
+      .locator('[data-conversation-timeline-kind="agentMessage"][data-conversation-timeline-status="failed"]')
+      .filter({ hasText: "Provider timed out while generating the response." });
+    await expect(failedMessage).toBeVisible();
+    await expect(failedMessage.locator(".normal-conversation-message-error")).toHaveCount(0);
     await expect(feed.locator(".conversation-attachment-chip")).toContainText("release-checklist.pdf");
     await expect(feed.getByRole("button", { name: "Retry response" })).toBeVisible();
     await expect(composer.getByRole("button", { name: "Stop" })).toBeVisible();
 
-    await expectAlignedColumns(feedFrame, composerStack);
+    await expectAlignedColumns(feed, composerStack);
+    await expectRailAtSurfaceEdge(feed);
     await expect.poll(() => feed.evaluate((element) => getComputedStyle(element).overflowY)).toBe("auto");
     await expect.poll(() => feedFrame.evaluate((element) => getComputedStyle(element).overflowY)).toBe("hidden");
     await expect.poll(() => conversation.evaluate((element) => getComputedStyle(element).overflowY)).toBe("hidden");
@@ -63,9 +69,9 @@ for (const fixture of [
 
     const ownMessage = feed.locator(".normal-conversation-message-row.local-user").filter({ hasText: "UI2 history prompt 20" });
     const peerMessage = feed.locator(".normal-conversation-message-row.ai-teammate").last();
-    await expect(ownMessage).toHaveClass(/message-bubble-chat/);
+    await expect(ownMessage).toHaveClass(/message-bubble/);
     await expect(ownMessage).toHaveClass(/message-bubble-own/);
-    await expect(peerMessage).toHaveClass(/message-bubble-chat/);
+    await expect(peerMessage).toHaveClass(/message-bubble/);
     await expect(peerMessage).toHaveClass(/message-bubble-peer/);
     await expect(ownMessage).toHaveAttribute("data-has-avatar", "false");
     await expect(peerMessage).toHaveAttribute("data-has-avatar", "false");
@@ -75,6 +81,7 @@ for (const fixture of [
     await expect(peerMessage.locator(":scope > .message-content > header")).toHaveCSS("clip-path", "inset(50%)");
     await expectMessageFrameContained(ownMessage);
     await expectMessageFrameContained(peerMessage);
+    await expectMessageWidthPolicy(ownMessage, peerMessage);
 
     const composerTheme = await composer.evaluate((element) => {
       const probe = document.createElement("span");
@@ -86,10 +93,12 @@ for (const fixture of [
         actual: getComputedStyle(element).backgroundColor,
         expected,
         borderRadius: getComputedStyle(element).borderRadius,
+        expectedBorderRadius: getComputedStyle(element).getPropertyValue("--ling-composer-radius").trim(),
       };
     });
     expect(composerTheme.actual).toBe(composerTheme.expected);
-    expect(composerTheme.borderRadius).toBe("12px");
+    expect(composerTheme.expectedBorderRadius).not.toBe("");
+    expect(composerTheme.borderRadius).toBe(composerTheme.expectedBorderRadius);
     await expectNoDocumentOverflow(page);
     await captureEvidence(page, `${fixture.width}x${fixture.height}-ling-${fixture.theme}-normal-feed-active-states.png`);
     expect(state.threads.some((thread) => thread.id === threadId)).toBe(true);
@@ -101,6 +110,7 @@ test("normal conversation composer uses Radix menus and preserves draft, upload,
   await prepareSurface(page, "light", 1440, 960);
   const runtimeErrors = collectRuntimeErrors(page);
   const state = createBaseState({ approvalStatus: "expired" });
+  state.workspaceSettings.defaultReasoningSummary = "concise";
   installProviders(state);
   installStableConversationFixture(state);
   state.conversationStreamDelayMs = 650;
@@ -118,45 +128,63 @@ test("normal conversation composer uses Radix menus and preserves draft, upload,
 
   const permissionTrigger = composer.getByRole("button", { name: /Selected permission preset/ });
   await permissionTrigger.click();
-  const permissionMenu = page.locator('[data-ling-overlay="menu"]').filter({ has: page.getByRole("menuitemradio", { name: /Workspace write/ }) });
+  const permissionMenu = page.getByRole("menu").filter({ has: page.getByRole("menuitemradio", { name: "Request approval", exact: true }) });
   await expect(permissionMenu).toBeVisible();
-  await expect(permissionMenu.getByRole("menuitemradio")).toHaveCount(3);
+  await expect(permissionMenu.getByRole("group", { name: "Authorization mode" }).getByRole("menuitemradio")).toHaveCount(3);
+  await expect(permissionMenu.getByRole("menuitemradio")).toHaveText([
+    /Request approval/, /Help me approve/, /Full access/,
+  ]);
+  await expect(permissionMenu.getByRole("menuitemradio", { name: /Read only|Workspace write|Always authorize/ })).toHaveCount(0);
+  await captureEvidence(page, "1440x960-ling-light-normal-composer-approval-menu.png");
+  await permissionMenu.getByRole("menuitemradio", { name: "Request approval", exact: true }).click();
+  await permissionTrigger.click();
+  await expect(permissionMenu.getByRole("menuitemradio", { name: "Request approval", exact: true })).toBeChecked();
   await page.keyboard.press("Escape");
   await expect(permissionMenu).toHaveCount(0);
   await expect(permissionTrigger).toBeFocused();
 
-  const thinkingTrigger = composer.getByRole("button", { name: "Selected thinking mode Off" });
-  await thinkingTrigger.click();
-  const thinkingMenu = page.locator(".conversation-thinking-menu");
-  await expect(thinkingMenu).toHaveAttribute("data-ling-overlay", "menu");
-  await expect(thinkingMenu.getByRole("menuitemradio")).toHaveText(["Off", "Minimal", "Low", "Medium", "High", "XHigh"]);
-  await thinkingMenu.getByRole("menuitemradio", { name: "High", exact: true }).click();
-  const activeThinkingTrigger = composer.getByRole("button", { name: "Selected thinking mode High" });
-  await expect(activeThinkingTrigger).toBeFocused();
-  await expectCompactMutedComposerControl(permissionTrigger);
-  await expectCompactMutedComposerControl(activeThinkingTrigger);
-  const composerControlStyles = await Promise.all([permissionTrigger, activeThinkingTrigger].map((control) => control.evaluate((element) => {
-    const style = getComputedStyle(element);
-    return {
-      color: style.color,
-      fontSize: style.fontSize,
-      fontWeight: style.fontWeight,
-    };
-  })));
-  expect(composerControlStyles[1]).toEqual(composerControlStyles[0]);
-
-  const modelTrigger = composer.getByRole("button", { name: /Selected model gpt-5\.5/ });
+  await expect(composer.getByRole("button", { name: /^(Selected thinking mode|Selected reasoning summary|Selected authorization mode)/ })).toHaveCount(0);
+  const modelTrigger = composer.getByRole("button", { name: "Selected model gpt-5.5" });
+  await expect(modelTrigger).toContainText("Thinking off");
+  await expect(modelTrigger).toHaveAccessibleName("Selected model gpt-5.5 · Selected thinking mode Off");
   await modelTrigger.click();
-  const modelMenu = page.locator(".conversation-model-menu");
-  await expect(modelMenu).toHaveAttribute("data-ling-overlay", "menu");
+  const reasoningPanel = page.getByRole("dialog", { name: "Thinking mode" });
+  const slider = reasoningPanel.getByRole("slider", { name: "Thinking mode" });
+  await expect(reasoningPanel).toHaveAttribute("data-ling-overlay", "popover");
+  await slider.focus();
+  await slider.press("End");
+  await expect(slider).toHaveAttribute("aria-valuetext", "XHigh");
+  await slider.press("ArrowLeft");
+  await expect(slider).toHaveAttribute("aria-valuetext", "High");
+  await expect(modelTrigger).toContainText("High");
+  await expect(modelTrigger).toHaveAccessibleName("Selected model gpt-5.5 · Selected thinking mode High");
+  await expectCompactMutedComposerControl(permissionTrigger);
+  await expectCompactMutedComposerControl(modelTrigger);
+  await captureEvidence(page, "1440x960-ling-light-normal-composer-reasoning.png");
+  await reasoningPanel.getByRole("button", { name: "Model options" }).click();
+  const modelMenu = page.getByRole("dialog", { name: "Model options" });
   const modelSearch = modelMenu.getByRole("textbox", { name: "Search models" });
   await expect(modelSearch).toBeFocused();
   await expectInputContained(modelSearch, modelMenu.locator(".conversation-model-search"));
   await captureEvidence(page, "1440x960-ling-light-normal-composer-model-menu.png");
+  await modelSearch.fill("nothing matches this query");
+  await expect(modelMenu).toContainText("No matching models");
   await modelSearch.fill("sonnet");
-  await expect(modelMenu.getByRole("menuitemradio")).toHaveCount(1);
-  await modelMenu.getByRole("menuitemradio", { name: /claude-sonnet-4/ }).click();
-  await expect(composer.getByRole("button", { name: /Selected model claude-sonnet-4/ })).toBeFocused();
+  await expect(modelMenu.locator(".conversation-model-option")).toHaveCount(1);
+  await modelMenu.getByRole("button", { name: /claude-sonnet-4/ }).click();
+  const sonnetTrigger = composer.getByRole("button", { name: "Selected model claude-sonnet-4" });
+  await expect(sonnetTrigger).toBeFocused();
+  await expect(sonnetTrigger).toContainText("High");
+  await sonnetTrigger.click();
+  await expect(slider).toHaveAttribute("max", "2");
+  await reasoningPanel.getByRole("button", { name: "Reset", exact: true }).click();
+  await expect(slider).toHaveAttribute("aria-valuetext", "Off");
+  await expect(reasoningPanel.getByRole("button", { name: "Reset", exact: true })).toBeDisabled();
+  await slider.focus();
+  await slider.press("End");
+  await expect(slider).toHaveAttribute("aria-valuetext", "High");
+  await page.keyboard.press("Escape");
+  await expect(sonnetTrigger).toBeFocused();
 
   await composer.locator('input[type="file"]').setInputFiles({
     name: "composer-evidence.txt",
@@ -167,7 +195,15 @@ test("normal conversation composer uses Radix menus and preserves draft, upload,
   await expect(pendingAssets).toContainText("composer-evidence.txt");
   await expect(input).toHaveAttribute("data-value", "Keep this draft while menus open");
 
+  const submission = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname.endsWith("/conversations/stream"));
   await composer.getByRole("button", { name: "Send" }).click();
+  expect((await submission).postDataJSON()).toMatchObject({
+    providerPresetId: "provider_ui2_normal_sonnet",
+    thinkingLevel: "high",
+    reasoningSummary: "concise",
+    authorizationMode: "ask",
+    workspaceAccessMode: "workspace_write",
+  });
   const send = composer.getByRole("button", { name: "Send" });
   await expect(send).toBeDisabled();
   await expect(send.locator(".ling-ui-spinner")).toHaveCount(1);
@@ -351,6 +387,298 @@ test("normal conversation unlocks into guidance when the reply run is linked", a
   ))).toBe(1);
 });
 
+test("normal conversation does not reset scroll for same-height stream revisions", async ({ page }) => {
+  await prepareSurface(page, "light", 1440, 800);
+  await page.addInitScript(() => {
+    type ScrollProbe = {
+      scrollToCalls: number;
+      emitChunk?: (content: string, seq: number) => void;
+      finish?: () => void;
+    };
+    const probe: ScrollProbe = { scrollToCalls: 0 };
+    (globalThis as typeof globalThis & { __normalConversationScrollProbe?: ScrollProbe }).__normalConversationScrollProbe = probe;
+    const originalScrollTo = HTMLElement.prototype.scrollTo;
+    HTMLElement.prototype.scrollTo = function scrollTo(...args: Parameters<HTMLElement["scrollTo"]>): void {
+      if (this.classList.contains("normal-conversation-feed")) probe.scrollToCalls += 1;
+      originalScrollTo.apply(this, args);
+    };
+
+    const originalFetch = globalThis.fetch.bind(globalThis);
+    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const request = new Request(input, init);
+      const url = new URL(request.url);
+      if (request.method !== "POST" || !url.pathname.endsWith("/conversations/stream")) {
+        return originalFetch(input, init);
+      }
+      const body = await request.clone().json() as Record<string, unknown>;
+      const threadId = String(body.threadId ?? "thread_ui2_normal_composer_controls");
+      const turnId = "turn_scroll_stability";
+      const runId = "run_scroll_stability";
+      const createdAt = "2026-08-29T05:00:00.000Z";
+      const thread = {
+        id: threadId,
+        workspaceId: "workspace_default",
+        kind: "conversation",
+        title: "UI2 composer controls",
+        status: "open",
+        createdAt,
+        updatedAt: createdAt,
+      };
+      const turn = {
+        id: turnId,
+        workspaceId: "workspace_default",
+        threadId,
+        kind: "manual_followup",
+        status: "running",
+        title: "Scroll stability",
+        userInstruction: String(body.message ?? ""),
+        teammateId: "ling_agent",
+        activeRunId: runId,
+        createdByActor: "local-user",
+        createdAt,
+        updatedAt: createdAt,
+      };
+      const userMessage = {
+        id: "user_scroll_stability",
+        role: "user",
+        content: String(body.message ?? ""),
+        status: "succeeded",
+        threadId,
+        turnId,
+        runId,
+        createdAt,
+        updatedAt: createdAt,
+      };
+      const pendingAssistant = {
+        id: "assistant_scroll_stability",
+        role: "assistant",
+        authorId: "ling_agent",
+        authorLabel: "Ling Agent",
+        content: "A",
+        status: "running",
+        threadId,
+        turnId,
+        runId,
+        createdAt,
+        updatedAt: createdAt,
+      };
+      const run = {
+        id: runId,
+        status: "succeeded",
+        cwd: String(body.projectPath ?? ""),
+        taskId: `conversation:${turnId}`,
+        providerPresetId: String(body.providerPresetId ?? "provider_ui2_normal_primary"),
+        providerName: "local-relay",
+        providerModel: "gpt-5.5",
+        taskSnapshot: {},
+        providerSnapshot: {},
+        requestSnapshot: {},
+        eventLogPath: `.ling-stack/sessions/${runId}.jsonl`,
+        threadId,
+        workUnitId: "wu_scroll_stability",
+        createdAt,
+        startedAt: createdAt,
+        endedAt: createdAt,
+        updatedAt: createdAt,
+      };
+      const encoder = new TextEncoder();
+      let latestAssistant = pendingAssistant;
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          const emit = (event: string, data: unknown): void => {
+            controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+          };
+          emit("ready", { thread, turn, userMessage, assistantMessage: pendingAssistant, runId });
+          probe.emitChunk = (content, seq) => {
+            const updatedAt = `2026-08-29T05:00:0${seq}.000Z`;
+            latestAssistant = { ...pendingAssistant, content, updatedAt };
+            emit("run_event", {
+              threadId,
+              turnId,
+              runId,
+              event: { id: `event_scroll_stability_${seq}`, runId, seq, ts: updatedAt, type: "assistant_text_delta", data: { text: content } },
+              assistantMessage: latestAssistant,
+            });
+          };
+          probe.finish = () => {
+            emit("done", {
+              thread: { ...thread, status: "succeeded" },
+              turn: { ...turn, status: "succeeded" },
+              run,
+              assistantMessage: { ...latestAssistant, status: "succeeded" },
+            });
+            controller.close();
+          };
+        },
+      });
+      return new Response(stream, { status: 200, headers: { "Content-Type": "text/event-stream" } });
+    };
+  });
+
+  const state = createBaseState({ approvalStatus: "expired" });
+  installProviders(state);
+  const threadId = installStableConversationFixture(state);
+  state.eventsByRun.run_ui2_normal_composer_controls = [{
+    ...state.eventsByRun.run_ui2_normal_composer_controls[0],
+    data: { text: Array.from({ length: 80 }, (_, index) => `Existing response line ${index + 1}`).join("\n") },
+  }];
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openConversation(page, "UI2 composer controls");
+
+  const conversation = page.getByLabel("Conversation page");
+  const feed = conversation.getByLabel("Conversation messages", { exact: true });
+  await expect.poll(() => feed.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+  const composer = conversation.getByLabel("New conversation composer");
+  await composer.getByRole("textbox", { name: "Conversation message" }).fill("Keep streaming scroll stable");
+  await composer.getByRole("button", { name: "Send" }).click();
+  await expect.poll(() => page.evaluate(() => Boolean(
+    (globalThis as typeof globalThis & { __normalConversationScrollProbe?: { emitChunk?: unknown } })
+      .__normalConversationScrollProbe?.emitChunk,
+  ))).toBe(true);
+
+  await page.evaluate(() => {
+    const probe = (globalThis as typeof globalThis & {
+      __normalConversationScrollProbe?: { emitChunk?: (content: string, seq: number) => void };
+    }).__normalConversationScrollProbe;
+    probe?.emitChunk?.("AB", 1);
+  });
+  await expect(conversation.getByText("AB", { exact: true })).toBeVisible();
+  await page.waitForTimeout(50);
+  await page.evaluate(() => {
+    const probe = (globalThis as typeof globalThis & {
+      __normalConversationScrollProbe?: { scrollToCalls: number };
+    }).__normalConversationScrollProbe;
+    if (probe) probe.scrollToCalls = 0;
+  });
+
+  for (const [content, seq] of [["ABC", 2], ["ABCD", 3], ["ABCDE", 4]] as const) {
+    await page.evaluate(({ content: nextContent, seq: nextSeq }) => {
+      const probe = (globalThis as typeof globalThis & {
+        __normalConversationScrollProbe?: { emitChunk?: (content: string, seq: number) => void };
+      }).__normalConversationScrollProbe;
+      probe?.emitChunk?.(nextContent, nextSeq);
+    }, { content, seq });
+    await expect(conversation.getByText(content, { exact: true })).toBeVisible();
+    await page.waitForTimeout(50);
+  }
+
+  expect(await page.evaluate(() => (
+    (globalThis as typeof globalThis & { __normalConversationScrollProbe?: { scrollToCalls: number } })
+      .__normalConversationScrollProbe?.scrollToCalls ?? -1
+  ))).toBe(0);
+  const beforeGrowth = await feed.evaluate((element) => element.scrollHeight);
+  const growingContent = Array.from({ length: 30 }, (_, index) => `Stream line ${index + 1}`).join("\n");
+  await page.evaluate((content) => {
+    const probe = (globalThis as typeof globalThis & {
+      __normalConversationScrollProbe?: { emitChunk?: (content: string, seq: number) => void };
+    }).__normalConversationScrollProbe;
+    probe?.emitChunk?.(content, 5);
+  }, growingContent);
+  await expect(conversation.getByText(growingContent, { exact: true })).toBeVisible();
+  await expect.poll(() => feed.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+  await expect.poll(() => feed.evaluate((element) => Math.max(0, element.scrollHeight - element.scrollTop - element.clientHeight))).toBeLessThanOrEqual(2);
+  expect(await feed.evaluate((element) => element.scrollHeight)).toBeGreaterThan(beforeGrowth);
+
+  const latest = conversation.getByRole("button", { name: "Jump to latest message" });
+  await feed.evaluate((element) => {
+    element.scrollTop = 0;
+    element.dispatchEvent(new Event("scroll", { bubbles: true }));
+  });
+  await expect(latest).toBeVisible();
+  const awayContent = Array.from({ length: 60 }, (_, index) => `Away stream line ${index + 1}`).join("\n");
+  await page.evaluate((content) => {
+    const probe = (globalThis as typeof globalThis & {
+      __normalConversationScrollProbe?: { emitChunk?: (content: string, seq: number) => void };
+    }).__normalConversationScrollProbe;
+    probe?.emitChunk?.(content, 6);
+  }, awayContent);
+  await expect(conversation.getByText(awayContent, { exact: true })).toBeVisible();
+  await expect.poll(() => feed.evaluate((element) => element.scrollTop)).toBeLessThanOrEqual(2);
+  await expect(latest).toBeVisible();
+  await expect.poll(() => feed.evaluate((element) => Math.max(0, element.scrollHeight - element.scrollTop - element.clientHeight))).toBeGreaterThan(56);
+  await latest.click();
+  await expect.poll(() => feed.evaluate((element) => Math.max(0, element.scrollHeight - element.scrollTop - element.clientHeight))).toBeLessThanOrEqual(2);
+
+  await page.evaluate(() => {
+    const probe = (globalThis as typeof globalThis & {
+      __normalConversationScrollProbe?: { finish?: () => void };
+    }).__normalConversationScrollProbe;
+    probe?.finish?.();
+  });
+  expect(state.threads.some((thread) => thread.id === threadId)).toBe(true);
+});
+
+test("normal conversation coalesces tail reconciliation per animation frame", async ({ page }) => {
+  await prepareSurface(page, "light", 1440, 800);
+  await page.addInitScript(() => {
+    type ScrollProbe = {
+      rafCalls: number;
+      triggerResize?: () => void;
+    };
+    const probe: ScrollProbe = { rafCalls: 0 };
+    const observers: Array<{ trigger: () => void }> = [];
+    (globalThis as typeof globalThis & { __normalConversationScrollProbe?: ScrollProbe }).__normalConversationScrollProbe = probe;
+
+    const originalRequestAnimationFrame = globalThis.requestAnimationFrame.bind(globalThis);
+    globalThis.requestAnimationFrame = (callback) => {
+      probe.rafCalls += 1;
+      return originalRequestAnimationFrame(callback);
+    };
+
+    class FakeResizeObserver {
+      private readonly callback: ResizeObserverCallback;
+
+      constructor(callback: ResizeObserverCallback) {
+        this.callback = callback;
+        observers.push(this);
+      }
+
+      observe(_target: Element): void {}
+
+      unobserve(_target: Element): void {}
+
+      disconnect(): void {
+        const index = observers.indexOf(this);
+        if (index >= 0) observers.splice(index, 1);
+      }
+
+      trigger(): void {
+        this.callback([], this as unknown as ResizeObserver);
+      }
+    }
+    globalThis.ResizeObserver = FakeResizeObserver as unknown as typeof ResizeObserver;
+    probe.triggerResize = () => observers.slice().forEach((observer) => observer.trigger());
+  });
+
+  const state = createBaseState({ approvalStatus: "expired" });
+  installProviders(state);
+  installStableConversationFixture(state);
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openConversation(page, "UI2 composer controls");
+  await page.waitForTimeout(100);
+  await page.evaluate(() => {
+    const probe = (globalThis as typeof globalThis & {
+      __normalConversationScrollProbe?: { rafCalls: number };
+    }).__normalConversationScrollProbe;
+    if (probe) probe.rafCalls = 0;
+  });
+
+  await page.evaluate(() => {
+    const probe = (globalThis as typeof globalThis & {
+      __normalConversationScrollProbe?: { triggerResize?: () => void };
+    }).__normalConversationScrollProbe;
+    probe?.triggerResize?.();
+    probe?.triggerResize?.();
+    probe?.triggerResize?.();
+  });
+  await expect.poll(() => page.evaluate(() => (
+    (globalThis as typeof globalThis & { __normalConversationScrollProbe?: { rafCalls: number } })
+      .__normalConversationScrollProbe?.rafCalls ?? -1
+  ))).toBe(1);
+});
+
 test("normal conversation replacement retry keeps the original idempotency key", async ({ page }) => {
   await prepareSurface(page, "dark", 1280, 800);
   const state = createBaseState({ approvalStatus: "expired" });
@@ -368,6 +696,60 @@ test("normal conversation replacement retry keeps the original idempotency key",
   await expect(conversation).toContainText("Ling Agent response: UI2 history prompt 17");
 });
 
+test("reasoning slider preserves max and ultra and explains unsupported model switches", async ({ page }) => {
+  await prepareSurface(page, "dark", 1280, 800);
+  const errors = collectRuntimeErrors(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  installProviders(state);
+  installStableConversationFixture(state);
+  state.providers[0] = createChatProvider({ ...state.providers[0], model: "gpt-6.1-sol", api: "openai-responses",
+    thinkingModes: ["low", "medium", "high", "xhigh", "max", "ultra"] });
+  state.providers[1] = createChatProvider({ ...state.providers[1], thinkingModes: ["low", "medium", "high"] });
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openConversation(page, "UI2 composer controls");
+  const composer = page.getByLabel("New conversation composer");
+  const trigger = composer.getByRole("button", { name: /Selected model gpt-6.1-sol/ });
+  await expect(trigger).toContainText("Medium");
+  await trigger.click();
+  const panel = page.getByRole("dialog", { name: "Thinking mode" });
+  const slider = panel.getByRole("slider");
+  await expect(slider).toHaveAttribute("max", "5");
+  await slider.focus();
+  await slider.press("End");
+  await expect(slider).toHaveAttribute("aria-valuetext", "Ultra");
+  await slider.press("ArrowLeft");
+  await expect(slider).toHaveAttribute("aria-valuetext", "Max");
+  await page.screenshot({ path: "/tmp/ling-reasoning-max.png" });
+  await slider.press("End");
+  await page.screenshot({ path: "/tmp/ling-reasoning-ultra.png" });
+  await panel.getByRole("button", { name: "Model options" }).click();
+  await page.getByRole("dialog", { name: "Model options" }).getByRole("button", { name: /claude-sonnet-4/ }).click();
+  await expect(composer).toContainText("Reasoning level changed to Medium");
+  const sonnet = composer.getByRole("button", { name: /Selected model claude-sonnet-4/ });
+  await expect(sonnet).toContainText("Medium");
+  await sonnet.click();
+  await expect(slider).toHaveAttribute("max", "2");
+  await slider.press("End");
+  await expect(slider).toHaveAttribute("aria-valuetext", "High");
+  await panel.getByRole("button", { name: "Reset", exact: true }).click();
+  await expect(slider).toHaveAttribute("aria-valuetext", "Medium");
+  await panel.getByRole("button", { name: "Model options" }).click();
+  await page.getByRole("dialog", { name: "Model options" }).locator(".conversation-model-option").filter({ hasText: "gpt-6.1-sol" }).click();
+  await trigger.click();
+  await slider.press("End");
+  await page.keyboard.press("Escape");
+  await composer.getByRole("textbox").fill("Check the selected effort");
+  const submitted = page.waitForRequest(request => request.method() === "POST" && new URL(request.url()).pathname === "/conversations/stream");
+  await composer.getByRole("button", { name: "Send", exact: true }).click();
+  expect((await submitted).postDataJSON().thinkingLevel).toBe("ultra");
+  await expect(page.getByText("Ling Agent response: Check the selected effort")).toBeVisible();
+  await page.reload();
+  await openConversation(page, "UI2 composer controls");
+  await expect(composer.getByRole("button", { name: /Selected model gpt-6.1-sol/ })).toContainText("Ultra");
+  expect(errors).toEqual([]);
+});
+
 function installProviders(state: MockState): void {
   const lastCheck = {
     ok: true,
@@ -380,7 +762,7 @@ function installProviders(state: MockState): void {
       id: "provider_ui2_normal_primary",
       displayName: "Local Relay",
       model: "gpt-5.5",
-      thinkingModes: ["minimal", "low", "medium", "high", "xhigh"],
+      thinkingModes: ["off", "minimal", "low", "medium", "high", "xhigh"],
       lastCheck,
     }),
     createChatProvider({
@@ -388,7 +770,7 @@ function installProviders(state: MockState): void {
       displayName: "Sonnet",
       providerId: "anthropic",
       model: "claude-sonnet-4",
-      thinkingModes: ["low", "high"],
+      thinkingModes: ["off", "low", "high"],
       lastCheck,
     }),
   ];
@@ -561,7 +943,7 @@ function installStableConversationFixture(state: MockState): string {
 }
 
 async function openConversation(page: Page, title: string): Promise<void> {
-  await page.getByLabel("Ling Stack navigation").locator(".sidebar-recent-row").filter({ hasText: title }).click();
+  await page.getByRole("button", { name: /Open recent conversation \d+/u }).filter({ hasText: title }).click();
   await expect(page.getByLabel("Conversation page")).toBeVisible();
 }
 
@@ -574,9 +956,28 @@ async function expectAlignedColumns(feed: Locator, composer: Locator): Promise<v
   }).toBe(true);
 }
 
+async function expectMessageWidthPolicy(ownMessage: Locator, peerMessage: Locator): Promise<void> {
+  const [ownRow, ownContent, peerRow, peerContent] = await Promise.all([
+    ownMessage.boundingBox(),
+    ownMessage.locator(":scope > .message-content").boundingBox(),
+    peerMessage.boundingBox(),
+    peerMessage.locator(":scope > .message-content").boundingBox(),
+  ]);
+  expect(ownRow).not.toBeNull();
+  expect(ownContent).not.toBeNull();
+  expect(peerRow).not.toBeNull();
+  expect(peerContent).not.toBeNull();
+  expect(ownContent!.width).toBeLessThan(ownRow!.width);
+  expect(Math.abs(peerContent!.width - peerRow!.width)).toBeLessThanOrEqual(1);
+}
+
 async function expectInputContained(input: Locator, field: Locator): Promise<void> {
-  const inputBox = await input.boundingBox();
-  const fieldBox = await field.boundingBox();
+  const handle = await input.elementHandle();
+  // Both rectangles must come from one frame while the menu is animating.
+  const { inputBox, fieldBox } = await field.evaluate((element, input) => ({
+    inputBox: input?.getBoundingClientRect().toJSON(),
+    fieldBox: element.getBoundingClientRect().toJSON(),
+  }), handle);
   expect(inputBox).not.toBeNull();
   expect(fieldBox).not.toBeNull();
   expect(inputBox!.x).toBeGreaterThanOrEqual(fieldBox!.x - 1);

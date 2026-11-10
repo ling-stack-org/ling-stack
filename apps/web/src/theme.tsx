@@ -250,12 +250,12 @@ export function ThemeProvider({ children }: { readonly children: ReactNode }): R
             if ((manifest.source === "local-import" || manifest.source === "local-generated")
               && !descriptors.has(manifest.id)) {
               knownManifests.set(manifest.id, manifest);
-              repairs.push({
-                displayName: manifest.name,
-                issueCode: "legacy_browser_only",
-                kind: "legacy-browser-only",
-                themeId: manifest.id,
-              });
+                repairs.push({
+                  displayName: manifest.name,
+                  issueCode: "legacy_browser_only",
+                  kind: "legacy-browser-only",
+                  themeId: manifest.id,
+                });
             }
           }
         }
@@ -479,7 +479,7 @@ export function ThemeProvider({ children }: { readonly children: ReactNode }): R
     selection,
     resolved,
     repositoryReady,
-    generatedThemePublishingSupported: repositoryRef.current!.kind === "web",
+    generatedThemePublishingSupported: false,
     themes: registryRef.current.list(),
     themePackageRepairs,
     storageWarning,

@@ -1,13 +1,13 @@
 import { CircleAlert, FileText, Plus, Send, SlidersHorizontal, Square } from "lucide-react";
 import { useI18n } from "../../i18n.js";
-import { conversationPermissionPresetMenuOptions } from "../../lib/session-permissions.js";
 import {
   ComposerFileReferenceToken,
   ComposerPendingAssetStrip,
 } from "../../shared/components/index.js";
 import {
-  ComposerPermissionMenu,
+  ConversationPermissionControl,
   ConversationComposerShell,
+  ConversationBottomStatusStrip,
   ConversationGuidanceStrip,
   ConversationStatusStrip,
   isConversationGuidanceQueueVisible,
@@ -25,6 +25,8 @@ import type { TeammatePrivateComposerController } from "./useTeammatePrivateComp
 
 export type TeammatePrivateChatComposerProps = Pick<TeammatePrivateChatSurfaceProps,
   | "composerDragActive"
+  | "composerModelLabel"
+  | "runtimeMetrics"
   | "composerFileReferenceParts"
   | "composerFileReferenceTokens"
   | "composerInputParts"
@@ -47,6 +49,9 @@ export type TeammatePrivateChatComposerProps = Pick<TeammatePrivateChatSurfacePr
   | "onPromoteDirectGuidance"
   | "onRemoveComposerFileReference"
   | "onRemovePendingAttachment"
+  | "onRetryPendingAttachment"
+  | "attachmentCleanupFailures"
+  | "onRetryAttachmentCleanup"
   | "onRemovePendingLinkPreview"
   | "onUploadPrivateFiles"
   | "openDirectInterventions"
@@ -66,6 +71,8 @@ export type TeammatePrivateChatComposerProps = Pick<TeammatePrivateChatSurfacePr
 
 export function TeammatePrivateChatComposer({
   composerDragActive,
+  composerModelLabel,
+  runtimeMetrics,
   composerFileReferenceParts,
   composerFileReferenceTokens,
   composerInputParts,
@@ -89,6 +96,9 @@ export function TeammatePrivateChatComposer({
   onPromoteDirectGuidance,
   onRemoveComposerFileReference,
   onRemovePendingAttachment,
+  onRetryPendingAttachment,
+  attachmentCleanupFailures = [],
+  onRetryAttachmentCleanup,
   onRemovePendingLinkPreview,
   onUploadPrivateFiles,
   openDirectInterventions,
@@ -103,7 +113,7 @@ export function TeammatePrivateChatComposer({
   privateComposerSendingLabel,
   uploadingAttachments,
 }: TeammatePrivateChatComposerProps): React.JSX.Element {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const permissionLocked = privateComposerSending || hasDirectRuntimeActivity || Boolean(directGuidanceSubmitting);
   const visibleDirectInterventions = openDirectInterventions.filter((intervention) =>
     isConversationGuidanceQueueVisible(intervention.status)
@@ -131,8 +141,8 @@ export function TeammatePrivateChatComposer({
       ) : null}
       {directReplyActive || visibleDirectInterventions.length > 0 ? (
         <ConversationGuidanceStrip
-          title={directReplyActive ? t("Replying") : t("Private guidance")}
-          description={directReplyActive ? t("Stop the current reply or queue new guidance.") : t("Guidance is queued.")}
+          title={directGuidanceSubmitting === "stop" ? t("Stopping") : directReplyActive ? t("Replying") : t("Private guidance")}
+          description={directGuidanceSubmitting === "stop" ? undefined : directReplyActive ? t("Stop the current reply or queue new guidance.") : t("Guidance is queued.")}
           submitting={directGuidanceSubmitting}
           stopDisabled={!directReplyActive}
           items={visibleDirectInterventions.map((intervention) => {
@@ -180,11 +190,17 @@ export function TeammatePrivateChatComposer({
         density="docked"
         className="teammate-direct-composer"
         ariaLabel={t("Private chat composer")}
+        bottomStatusNode={<ConversationBottomStatusStrip
+          ariaLabel={t("Conversation status")}
+        translate={t}
+          metrics={runtimeMetrics}
+          locale={locale}
+        />}
         dropZoneClassName={composerDragActive ? "active" : undefined}
         onDragOver={onComposerDragOver}
         onDragLeave={onComposerDragLeave}
         onDrop={onComposerDrop}
-        previewNode={pendingAttachments.length > 0 || pendingDirectLinkPreviews.length > 0 || composerFileReferenceParts.length > 0 ? (
+        previewNode={pendingAttachments.length > 0 || attachmentCleanupFailures.length > 0 || pendingDirectLinkPreviews.length > 0 || composerFileReferenceParts.length > 0 ? (
           <ComposerPendingAssetStrip
             attachments={pendingAttachments}
             leadingItems={composerFileReferenceTokens.map(({ occurrenceIndex, part }, index) => (
@@ -203,6 +219,9 @@ export function TeammatePrivateChatComposer({
               detail: preview.normalizedUrl,
             }))}
             onRemoveAttachment={onRemovePendingAttachment}
+            onRetryAttachment={onRetryPendingAttachment}
+            cleanupFailures={attachmentCleanupFailures}
+            onRetryCleanup={onRetryAttachmentCleanup}
             onRemoveLink={onRemovePendingLinkPreview}
           />
         ) : null}
@@ -261,12 +280,14 @@ export function TeammatePrivateChatComposer({
                 }}
               />
             </label>
-            <ComposerPermissionMenu
-              preset={controller.selectedPermissionPreset}
-              options={conversationPermissionPresetMenuOptions(t, fullAccessConfirmed)}
+            <ConversationPermissionControl
+              authorizationMode={controller.selectedAuthorizationMode}
+              permissionPreset={controller.selectedPermissionPreset}
+              fullAccessConfirmed={fullAccessConfirmed}
               disabled={permissionLocked}
               disabledReason={t("Permission is locked while the private reply is running.")}
-              onPresetChange={controller.handlePermissionPresetChange}
+              onAuthorizationModeChange={controller.handleAuthorizationModeChange}
+              onPermissionPresetChange={controller.handlePermissionPresetChange}
             />
           </>
         )}
@@ -276,6 +297,7 @@ export function TeammatePrivateChatComposer({
             variant="primary"
             icon={SendIcon}
             label={sendLabel}
+            aria-label={sendLabel}
             loading={privateComposerSending}
             loadingLabel={privateComposerSendingLabel}
             onClick={controller.submitComposer}

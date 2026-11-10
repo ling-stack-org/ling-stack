@@ -18,6 +18,7 @@ export function parseApprovalProfileObject(value: Record<string, unknown>, key: 
     "credential_change",
     "provider_change",
     "mcp_tool_call",
+    "host_capability",
   ] as const);
   const risk = readOptionalString(value, "risk");
   if (risk !== undefined && risk !== "low" && risk !== "medium" && risk !== "high" && risk !== "critical") {

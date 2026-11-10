@@ -10,6 +10,7 @@ import {
   projectConversationItemToChannelMessage,
 } from "@ling-stack/core";
 import { createDaemonServer } from "../dist/index.js";
+import { prepareFixtureTaskInput } from "./support/prepared-input-fixture.mjs";
 import {
   createConversationMediaGenerationToolDefinitions,
   createConversationMediaGenerationToolHandler,
@@ -37,13 +38,28 @@ import { createChannelReplyContinuationProjection } from "../dist/features/chann
 import { buildChannelReplyContinuationContext } from "../dist/features/channels/channel-reply-continuation-context.js";
 import { buildRunInterventionContinuationRequest } from "../dist/features/runs/run-intervention-continuation-request.js";
 import { RuntimeSupervisor } from "../dist/runtime/supervisor.js";
+import { MediaLocalExecutionRegistry } from "../dist/runtime/media-local-executions.js";
 import {
+  retryRuntimeWorkUnit,
   startRuntimeWorkUnit,
   transitionWorkUnitCancelled,
   transitionWorkUnitTerminal,
 } from "../dist/runtime/work-units.js";
 
 const now = "2026-08-11T01:00:00.000Z";
+
+function publishReadyWorkflowConnection(store, connectionId, protocolVariant = "jobs_v1") {
+  const admission = store.beginMediaWorkflowConnectionCheck(connectionId);
+  assert.ok(admission);
+  const publication = store.commitMediaWorkflowConnectionCheck(admission.ticket, {
+    ok: true,
+    message: "Test workflow connection is ready.",
+    checkedAt: now,
+    protocolVariant,
+    nodeCount: 2,
+  }, now);
+  assert.equal(publication.status, "published");
+}
 
 test("conversation media maps upstream content policy rejection without exposing provider details", () => {
   assert.equal(conversationMediaFailureCode("content_policy_blocked"), "generation_content_policy_blocked");
@@ -64,6 +80,8 @@ test("tool-only media generation is a successful visible result on every convers
   const store = createSqliteRunStore(cwd);
   const runner = new ToolOnlyMediaRunner();
   const imageServer = await startMockOpenAIImageServer();
+  const continuationLocalExecutions = new MediaLocalExecutionRegistry();
+  const continuationStoreRegistry = { getStore: () => store, mediaLocalExecutions: continuationLocalExecutions };
   let daemon;
   try {
     const { chatProvider, imageProvider } = configureToolOnlyMediaFixture(store, imageServer.url);
@@ -190,7 +208,7 @@ test("tool-only media generation is a successful visible result on every convers
     });
     const continuationMedia = createConversationMediaGenerationToolHandler({
       store,
-      storeRegistry: { getStore: () => store },
+      storeRegistry: continuationStoreRegistry,
       secretResolver: emptySecretResolver,
       runtimeSupervisor: {},
       run: continuationRun,
@@ -204,19 +222,10 @@ test("tool-only media generation is a successful visible result on every convers
       task: { id: continuationRun.taskId, title: "Channel continuation", prompt: "Generate" },
       cwd,
     });
-    const continuationRuntime = new RuntimeSupervisor(runtimeConfig(cwd));
-    try {
-      const execution = await runProviderMediaJobExecution({
-        cwd,
-        storeRegistry: { getStore: () => store },
-        secretResolver: emptySecretResolver,
-        mediaJobId: continuationMedia.details.mediaJobId,
-        hooks: mediaRuntimeHooks(continuationRuntime),
-      });
-      assert.equal(execution.statusCode, 200);
-    } finally {
-      continuationRuntime.releaseAll();
-    }
+    const continuationExecution = await fetch(`${baseUrl}/media-jobs/${encodeURIComponent(continuationMedia.details.mediaJobId)}`
+      + `/run?cwd=${encodeURIComponent(cwd)}`, { method: "POST" });
+    const continuationExecutionBody = await continuationExecution.json();
+    assert.equal(continuationExecution.status, 200, JSON.stringify(continuationExecutionBody));
     store.markRunStarted(continuationRun.id, now);
     store.markRunSucceeded(continuationRun.id, now);
     const continuationRunId = continuationRun.id;
@@ -238,6 +247,8 @@ test("tool-only media generation is a successful visible result on every convers
     assert.equal(JSON.stringify(visibleResults).includes("没有返回可显示内容"), false);
     assert.equal(imageProvider.id, store.getWorkspaceSettings().mediaGenerationDefaults.image.providerPresetId);
   } finally {
+    continuationLocalExecutions.beginShutdown();
+    await continuationLocalExecutions.waitForIdle();
     if (daemon) {
       await daemon.stop();
     } else {
@@ -552,7 +563,7 @@ test("conversation generation handler applies defaults and reuses one durable me
     const launched = [];
     const handler = createConversationMediaGenerationToolHandler({
       store: fixture.store,
-      storeRegistry: { getStore: () => fixture.store },
+      storeRegistry: fixture.storeRegistry,
       secretResolver: fixture.secretResolver,
       runtimeSupervisor: {},
       run,
@@ -621,7 +632,7 @@ test("conversation generation rejects target options that cannot be represented 
     const run = createConversationRun(fixture, "run_unsupported_media_options");
     const handler = createConversationMediaGenerationToolHandler({
       store: fixture.store,
-      storeRegistry: { getStore: () => fixture.store },
+      storeRegistry: fixture.storeRegistry,
       secretResolver: fixture.secretResolver,
       runtimeSupervisor: {},
       run,
@@ -723,7 +734,7 @@ test("conversation media projection covers every status, isolates owners, and ne
     const run = createConversationRun(fixture, "run_projection_matrix");
     const handler = createConversationMediaGenerationToolHandler({
       store: fixture.store,
-      storeRegistry: { getStore: () => fixture.store },
+      storeRegistry: fixture.storeRegistry,
       secretResolver: fixture.secretResolver,
       runtimeSupervisor: {},
       run,
@@ -833,7 +844,7 @@ test("executor adopts the single conversation child work unit and closes it when
     const run = createConversationRun(fixture, "run_target_invalidated");
     const handler = createConversationMediaGenerationToolHandler({
       store: fixture.store,
-      storeRegistry: { getStore: () => fixture.store },
+      storeRegistry: fixture.storeRegistry,
       secretResolver: fixture.secretResolver,
       runtimeSupervisor,
       run,
@@ -855,7 +866,7 @@ test("executor adopts the single conversation child work unit and closes it when
 
     await runProviderMediaJobExecution({
       cwd: fixture.cwd,
-      storeRegistry: { getStore: () => fixture.store },
+      storeRegistry: fixture.storeRegistry,
       secretResolver: fixture.secretResolver,
       mediaJobId,
       hooks: mediaRuntimeHooks(runtimeSupervisor),
@@ -891,7 +902,7 @@ test("background dispatch preserves cancellation before an execution handle exis
     const run = createConversationRun(fixture, "run_cancelled_before_media_dispatch");
     const handler = createConversationMediaGenerationToolHandler({
       store: fixture.store,
-      storeRegistry: { getStore: () => fixture.store },
+      storeRegistry: fixture.storeRegistry,
       secretResolver: fixture.secretResolver,
       runtimeSupervisor,
       run,
@@ -916,7 +927,7 @@ test("background dispatch preserves cancellation before an execution handle exis
 
     const result = await runProviderMediaJobExecution({
       cwd: fixture.cwd,
-      storeRegistry: { getStore: () => fixture.store },
+      storeRegistry: fixture.storeRegistry,
       secretResolver: fixture.secretResolver,
       mediaJobId,
       hooks: mediaRuntimeHooks(runtimeSupervisor),
@@ -942,6 +953,7 @@ test("daemon restart redispatches a queued conversation media job created before
   const fixture = await createFixture();
   let restartedStore;
   let initialStoreClosed = false;
+  const restartedLocalExecutions = new MediaLocalExecutionRegistry();
   try {
     fixture.store.updateWorkspaceSettings({
       mediaGenerationDefaults: {
@@ -961,7 +973,7 @@ test("daemon restart redispatches a queued conversation media job created before
     });
     const handler = createConversationMediaGenerationToolHandler({
       store: fixture.store,
-      storeRegistry: { getStore: () => fixture.store },
+      storeRegistry: fixture.storeRegistry,
       secretResolver: fixture.secretResolver,
       runtimeSupervisor: {},
       run,
@@ -975,6 +987,8 @@ test("daemon restart redispatches a queued conversation media job created before
       task: { id: "conversation_message_media_restart", title: "Generate", prompt: "Draw" },
       cwd: fixture.cwd,
     });
+    fixture.storeRegistry.mediaLocalExecutions.beginShutdown();
+    await fixture.storeRegistry.mediaLocalExecutions.waitForIdle();
     fixture.store.close();
     initialStoreClosed = true;
 
@@ -982,7 +996,7 @@ test("daemon restart redispatches a queued conversation media job created before
     const dispatched = [];
     resumePendingMediaJobExecutions({
       cwd: fixture.cwd,
-      storeRegistry: { getStore: () => restartedStore },
+      storeRegistry: { getStore: () => restartedStore, mediaLocalExecutions: restartedLocalExecutions },
       secretResolver: fixture.secretResolver,
       hooks: {
         startRuntimeWorkUnit() { throw new Error("unexpected runtime start"); },
@@ -993,6 +1007,9 @@ test("daemon restart redispatches a queued conversation media job created before
     });
     assert.deepEqual(dispatched, [accepted.details.mediaJobId]);
   } finally {
+    fixture.storeRegistry.mediaLocalExecutions.beginShutdown();
+    restartedLocalExecutions.beginShutdown();
+    await Promise.all([fixture.storeRegistry.mediaLocalExecutions.waitForIdle(), restartedLocalExecutions.waitForIdle()]);
     if (!initialStoreClosed) fixture.store.close();
     restartedStore?.close();
     await rm(fixture.cwd, { recursive: true, force: true });
@@ -1012,7 +1029,7 @@ test("runtime startup keeps parent completion separate and requeues the same pen
     const run = createConversationRun(fixture, "run_media_parent_completed_before_child");
     const handler = createConversationMediaGenerationToolHandler({
       store: fixture.store,
-      storeRegistry: { getStore: () => fixture.store },
+      storeRegistry: fixture.storeRegistry,
       secretResolver: fixture.secretResolver,
       runtimeSupervisor: firstRuntime,
       run,
@@ -1120,7 +1137,7 @@ test("explicit retry reuses the failed conversation media child work unit", asyn
     const run = createConversationRun(fixture, "run_media_explicit_retry");
     const handler = createConversationMediaGenerationToolHandler({
       store: fixture.store,
-      storeRegistry: { getStore: () => fixture.store },
+      storeRegistry: fixture.storeRegistry,
       secretResolver: fixture.secretResolver,
       runtimeSupervisor,
       run,
@@ -1140,7 +1157,7 @@ test("explicit retry reuses the failed conversation media child work unit", asyn
     fixture.store.updateProviderPreset(fixture.imageProviderId, { enabled: false }, "2026-08-11T01:01:00.000Z");
     await runProviderMediaJobExecution({
       cwd: fixture.cwd,
-      storeRegistry: { getStore: () => fixture.store },
+      storeRegistry: fixture.storeRegistry,
       secretResolver: fixture.secretResolver,
       mediaJobId,
       hooks: mediaRuntimeHooks(runtimeSupervisor),
@@ -1149,7 +1166,7 @@ test("explicit retry reuses the failed conversation media child work unit", asyn
 
     await runProviderMediaJobExecution({
       cwd: fixture.cwd,
-      storeRegistry: { getStore: () => fixture.store },
+      storeRegistry: fixture.storeRegistry,
       secretResolver: fixture.secretResolver,
       mediaJobId,
       hooks: mediaRuntimeHooks(runtimeSupervisor),
@@ -1182,7 +1199,7 @@ test("repeated explicit retry never revives a terminal media job with an externa
     const run = createConversationRun(fixture, "run_media_external_handle_retry_guard");
     const handler = createConversationMediaGenerationToolHandler({
       store: fixture.store,
-      storeRegistry: { getStore: () => fixture.store },
+      storeRegistry: fixture.storeRegistry,
       secretResolver: fixture.secretResolver,
       runtimeSupervisor,
       run,
@@ -1226,7 +1243,7 @@ test("repeated explicit retry never revives a terminal media job with an externa
 
     const retryInput = {
       cwd: fixture.cwd,
-      storeRegistry: { getStore: () => fixture.store },
+      storeRegistry: fixture.storeRegistry,
       secretResolver: fixture.secretResolver,
       mediaJobId,
       hooks: mediaRuntimeHooks(runtimeSupervisor),
@@ -1268,8 +1285,8 @@ test("workflow restart polls the persisted operation with a new attempt and neve
     assert.ok(connection && definition?.currentVersionId);
     fixture.store.updateMediaWorkflowConnection(connection.id, {
       baseUrl: comfy.url,
-      status: "ready",
     }, now);
+    publishReadyWorkflowConnection(fixture.store, connection.id);
     fixture.store.updateWorkspaceSettings({
       mediaGenerationDefaults: {
         video: { kind: "workflow", workflowDefinitionId: fixture.workflowId },
@@ -1278,7 +1295,7 @@ test("workflow restart polls the persisted operation with a new attempt and neve
     const run = createConversationRun(fixture, "run_workflow_restart_poll");
     const handler = createConversationMediaGenerationToolHandler({
       store: fixture.store,
-      storeRegistry: { getStore: () => fixture.store },
+      storeRegistry: fixture.storeRegistry,
       secretResolver: fixture.secretResolver,
       runtimeSupervisor: firstRuntime,
       run,
@@ -1293,6 +1310,7 @@ test("workflow restart polls the persisted operation with a new attempt and neve
       task: { id: run.taskId, title: "Generate", prompt: "Animate" },
       cwd: fixture.cwd,
     });
+    assert.equal(accepted.isError, undefined, JSON.stringify(accepted));
     const mediaJobId = accepted.details.mediaJobId;
     const originalChild = fixture.store.listWorkUnits({ linkedMediaJobId: mediaJobId, limit: 10 })[0];
     const started = startRuntimeWorkUnit({
@@ -1325,7 +1343,7 @@ test("workflow restart polls the persisted operation with a new attempt and neve
     recoverPendingConversationMediaWorkUnits(fixture.store, "2026-08-11T01:02:00.000Z");
     const result = await runWorkflowMediaJobExecution({
       cwd: fixture.cwd,
-      storeRegistry: { getStore: () => fixture.store },
+      storeRegistry: fixture.storeRegistry,
       secretResolver: fixture.secretResolver,
       mediaJobId,
       hooks: mediaRuntimeHooks(restartedRuntime),
@@ -1404,7 +1422,7 @@ test("concurrent provider dispatches share one paid submission and one work unit
     const run = createConversationRun(fixture, "run_concurrent_provider_dispatch");
     const handler = createConversationMediaGenerationToolHandler({
       store: fixture.store,
-      storeRegistry: { getStore: () => fixture.store },
+      storeRegistry: fixture.storeRegistry,
       secretResolver: fixture.secretResolver,
       runtimeSupervisor,
       run,
@@ -1422,7 +1440,7 @@ test("concurrent provider dispatches share one paid submission and one work unit
     const mediaJobId = accepted.details.mediaJobId;
     const runInput = {
       cwd: fixture.cwd,
-      storeRegistry: { getStore: () => fixture.store },
+      storeRegistry: fixture.storeRegistry,
       secretResolver: fixture.secretResolver,
       mediaJobId,
       hooks: mediaRuntimeHooks(runtimeSupervisor),
@@ -1456,9 +1474,9 @@ test("concurrent workflow dispatches share one ComfyUI submission and one work u
     assert.ok(connection && definition);
     fixture.store.updateMediaWorkflowConnection(connection.id, {
       baseUrl: comfy.url,
-      protocolVariant: "prompt_legacy",
-      status: "ready",
+      protocolVariant: "jobs_v1",
     }, now);
+    publishReadyWorkflowConnection(fixture.store, connection.id);
     const version = fixture.store.createMediaWorkflowVersion({
       workflowDefinitionId: definition.id,
       sourceDigest: "digest-concurrent-workflow",
@@ -1490,7 +1508,7 @@ test("concurrent workflow dispatches share one ComfyUI submission and one work u
     const run = createConversationRun(fixture, "run_concurrent_workflow_dispatch");
     const handler = createConversationMediaGenerationToolHandler({
       store: fixture.store,
-      storeRegistry: { getStore: () => fixture.store },
+      storeRegistry: fixture.storeRegistry,
       secretResolver: fixture.secretResolver,
       runtimeSupervisor,
       run,
@@ -1504,11 +1522,11 @@ test("concurrent workflow dispatches share one ComfyUI submission and one work u
       task: { id: run.taskId, title: "Generate", prompt: "Animate" },
       cwd: fixture.cwd,
     });
-    assert.equal(accepted.isError, undefined);
+    assert.equal(accepted.isError, undefined, JSON.stringify(accepted));
     const mediaJobId = accepted.details.mediaJobId;
     const runInput = {
       cwd: fixture.cwd,
-      storeRegistry: { getStore: () => fixture.store },
+      storeRegistry: fixture.storeRegistry,
       secretResolver: fixture.secretResolver,
       mediaJobId,
       hooks: mediaRuntimeHooks(runtimeSupervisor),
@@ -1547,7 +1565,7 @@ test("background dispatch closes the conversation child when execution rejects b
     const run = createConversationRun(fixture, "run_background_dispatch_rejection");
     const handler = createConversationMediaGenerationToolHandler({
       store: fixture.store,
-      storeRegistry: { getStore: () => fixture.store },
+      storeRegistry: fixture.storeRegistry,
       secretResolver: fixture.secretResolver,
       runtimeSupervisor,
       run,
@@ -1581,7 +1599,7 @@ test("background dispatch closes the conversation child when execution rejects b
 
     dispatchMediaJobExecution({
       cwd: fixture.cwd,
-      storeRegistry: { getStore: () => throwingStore },
+      storeRegistry: { getStore: () => throwingStore, mediaLocalExecutions: fixture.storeRegistry.mediaLocalExecutions },
       secretResolver: fixture.secretResolver,
       mediaJobId,
       hooks: mediaRuntimeHooks(runtimeSupervisor),
@@ -1602,6 +1620,8 @@ test("background dispatch closes the conversation child when execution rejects b
 async function createFixture() {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-conversation-media-generation-"));
   const store = createSqliteRunStore(cwd);
+  const mediaLocalExecutions = new MediaLocalExecutionRegistry();
+  const storeRegistry = { getStore: () => store, mediaLocalExecutions };
   const imageProvider = store.createProviderPreset({
     kind: "openai",
     displayName: "Studio Image",
@@ -1626,6 +1646,7 @@ async function createFixture() {
     baseUrl: "http://127.0.0.1:8188",
     authMode: "none",
     networkPolicy: "trusted_private_network",
+    protocolVariant: "jobs_v1",
   }, now);
   store.updateMediaWorkflowConnection(connection.id, { status: "ready" }, now);
   const workflow = store.createMediaWorkflowDefinition({
@@ -1659,10 +1680,13 @@ async function createFixture() {
   return {
     cwd,
     store,
+    storeRegistry,
     secretResolver,
     imageProviderId: imageProvider.id,
     workflowId: workflow.id,
     async close() {
+      mediaLocalExecutions.beginShutdown();
+      await mediaLocalExecutions.waitForIdle();
       store.close();
       await rm(cwd, { recursive: true, force: true });
     },
@@ -1703,6 +1727,7 @@ function runtimeConfig(cwd) {
 }
 
 class MediaToolProbeRunner {
+  prepareTaskInput = prepareFixtureTaskInput;
   runs = [];
 
   async runTask(options) {
@@ -1719,6 +1744,7 @@ class MediaToolProbeRunner {
 function mediaRuntimeHooks(runtimeSupervisor) {
   return {
     startRuntimeWorkUnit: (input) => startRuntimeWorkUnit({ ...input, runtimeSupervisor }),
+    recoverRuntimeWorkUnit: (input) => retryRuntimeWorkUnit({ ...input, runtimeSupervisor }),
     transitionRuntimeWorkUnitTerminal: (input) => transitionWorkUnitTerminal(input.store, {
       workUnitId: input.workUnitId,
       attemptId: input.attemptId,
@@ -1785,6 +1811,7 @@ function configureToolOnlyMediaFixture(store, imageBaseUrl) {
 }
 
 class ToolOnlyMediaRunner {
+  prepareTaskInput = prepareFixtureTaskInput;
   runs = [];
 
   async runTask(options) {
@@ -1990,7 +2017,7 @@ async function startRecoverableComfyUiServer() {
       response.writeHead(200, { "content-type": "application/json" });
       response.end(JSON.stringify({
         prompt_existing: {
-          status: { status_str: "success" },
+          status: { status_str: "success", completed: true },
           outputs: { "2": { videos: [{ filename: "recovered.mp4", type: "output" }] } },
         },
       }));

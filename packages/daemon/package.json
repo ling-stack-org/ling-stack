@@ -8,31 +8,54 @@
     "ling-stack-daemon": "./dist/cli.js"
   },
   "scripts": {
-    "build": "corepack pnpm --filter @ling-stack/contracts build && corepack pnpm --filter @ling-stack/plugin-sdk build && corepack pnpm --filter @ling-stack/browser-host build && corepack pnpm --filter @ling-stack/core build && corepack pnpm --filter @ling-stack/runner-pi build && corepack pnpm --filter @ling-stack/providers build && corepack pnpm --filter @ling-stack/remote-protocol build && tsc -p tsconfig.json",
-    "typecheck": "corepack pnpm --filter @ling-stack/contracts build && corepack pnpm --filter @ling-stack/plugin-sdk build && corepack pnpm --filter @ling-stack/browser-host build && corepack pnpm --filter @ling-stack/core build && corepack pnpm --filter @ling-stack/runner-pi build && corepack pnpm --filter @ling-stack/providers build && corepack pnpm --filter @ling-stack/remote-protocol build && tsc -p tsconfig.json --noEmit",
+    "build:ci": "tsc -p tsconfig.json && node scripts/build-image-sanitizer.mjs",
+    "typecheck:ci": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
+    "test:ci": "node --test --test-concurrency=1 test/*.test.mjs test/*.test.ts",
+    "build": "corepack pnpm --filter @ling-stack/contracts build && corepack pnpm --filter @ling-stack/plugin-sdk build && corepack pnpm --filter @ling-stack/browser-host build && corepack pnpm --filter @ling-stack/core build && corepack pnpm --filter @ling-stack/runner-pi build && corepack pnpm --filter @ling-stack/providers build && corepack pnpm --filter @ling-stack/remote-protocol build && tsc -p tsconfig.json && node scripts/build-image-sanitizer.mjs",
+    "typecheck": "corepack pnpm --filter @ling-stack/contracts build && corepack pnpm --filter @ling-stack/plugin-sdk build && corepack pnpm --filter @ling-stack/browser-host build && corepack pnpm --filter @ling-stack/core build && corepack pnpm --filter @ling-stack/runner-pi build && corepack pnpm --filter @ling-stack/providers build && corepack pnpm --filter @ling-stack/remote-protocol build && corepack pnpm typecheck:ci",
     "lint": "echo \"lint not configured yet\"",
-    "test": "corepack pnpm --filter @ling-stack/contracts build && corepack pnpm --filter @ling-stack/plugin-sdk build && corepack pnpm --filter @ling-stack/browser-host build && corepack pnpm --filter @ling-stack/core build && corepack pnpm --filter @ling-stack/runner-pi build && corepack pnpm --filter @ling-stack/providers build && corepack pnpm --filter @ling-stack/remote-protocol build && tsc -p tsconfig.json && node --test test/*.test.mjs"
+    "test": "corepack pnpm --filter @ling-stack/contracts build && corepack pnpm --filter @ling-stack/plugin-sdk build && corepack pnpm --filter @ling-stack/browser-host build && corepack pnpm --filter @ling-stack/core build && corepack pnpm --filter @ling-stack/runner-pi build && corepack pnpm --filter @ling-stack/providers build && corepack pnpm --filter @ling-stack/remote-protocol build && tsc -p tsconfig.json && node scripts/build-image-sanitizer.mjs && corepack pnpm test:ci",
+    "build:engine-supervisor": "node scripts/build-engine-supervisor.mjs",
+    "build:image-sanitizer": "node scripts/build-image-sanitizer.mjs",
+    "test:image-sanitizer": "cargo test --locked --manifest-path native/image-sanitizer/Cargo.toml -- --test-threads=1"
   },
   "dependencies": {
+    "acorn": "8.19.0",
+    "@agentclientprotocol/sdk": "2.2.0",
+    "@anthropic-ai/sdk": "0.135.0",
     "@ling-stack/browser-host": "workspace:*",
     "@ling-stack/contracts": "workspace:*",
     "@ling-stack/core": "workspace:*",
+    "@ling-stack/localization": "workspace:*",
     "@ling-stack/plugin-sdk": "workspace:*",
     "@ling-stack/providers": "workspace:*",
     "@ling-stack/remote-protocol": "workspace:*",
     "@ling-stack/runner-pi": "workspace:*",
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "@napi-rs/keyring": "2.1.2",
     "@xmldom/xmldom": "0.9.12",
-    "docx": "9.7.1",
-    "jszip": "3.10.1",
-    "officeparser": "7.8.0",
+    "diff": "9.0.0",
+    "docx": "9.15.0",
+    "exceljs": "^4.4.0",
+    "fflate": "^0.8.2",
+    "jszip": "3.10.2",
+    "officeparser": "8.4.1",
     "pdf-parse": "2.4.5",
     "pptxgenjs": "4.0.1",
+    "proper-lockfile": "4.1.2",
+    "shell-quote": "1.12.0",
+    "smol-toml": "1.9.1",
+    "undici": "7.30.1",
+    "yaml": "^2.9.0",
     "ws": "^8.21.0",
-    "xlsx-populate": "1.21.0"
+    "xlsx-populate": "1.21.0",
+    "zod": "4.6.7"
   },
   "devDependencies": {
+    "@babel/parser": "8.0.10",
     "@types/pdf-parse": "1.1.5",
-    "@types/ws": "^8.5.13"
+    "@types/proper-lockfile": "4.1.4",
+    "@types/ws": "^8.5.13",
+    "pngjs": "7.0.0"
   }
 }

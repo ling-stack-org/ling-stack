@@ -12,6 +12,7 @@ import {
   type SecretResolver,
 } from "@ling-stack/core";
 import { toPublicProviderPreset } from "../providers/secrets.js";
+import { effectiveMediaWorkflowProtocol } from "./workflows/media-protocol-contract.js";
 
 const providerOperations = [
   { generationKind: "image", operation: "image_generate" },
@@ -135,7 +136,7 @@ function listWorkflowTargets(store: RunStore, secretResolver: SecretResolver): M
       version,
       connection?.status,
       secretConfigured,
-    );
+    ) ?? workflowProtocolReadiness(connection);
     const supportedKinds = new Set(version.outputRules.map((rule) => rule.artifactType));
     for (const generationKind of ["image", "video"] as const) {
       if (!supportedKinds.has(generationKind)) {
@@ -162,6 +163,17 @@ function listWorkflowTargets(store: RunStore, secretResolver: SecretResolver): M
     }
   }
   return targets;
+}
+
+function workflowProtocolReadiness(
+  connection: ReturnType<RunStore["getMediaWorkflowConnection"]>,
+): string | undefined {
+  if (!connection) return undefined;
+  const protocol = effectiveMediaWorkflowProtocol(connection);
+  if (protocol === "prompt_legacy") {
+    return "The ComfyUI Prompt/History protocol is read-only for historical jobs; switch the connection to Jobs API before creating new media tasks.";
+  }
+  return protocol === "jobs_v1" ? undefined : "The ComfyUI connection has not completed a Jobs API check.";
 }
 
 function workflowBaseReadiness(

@@ -13,11 +13,22 @@ import {
   materializeProviderSecrets,
 } from "../providers/secret-materializer.js";
 import { removeUndefined } from "../../shared/validation.js";
+import { assertInlineProviderCredentialsAvailable } from "./provider-persistence.js";
 import type { RunRequest } from "./schemas.js";
+import {
+  bindResolvedProviderObservationScope,
+  captureProviderConfigurationTicket,
+  providerPresetForConfigurationTicket,
+} from "../providers/runtime-observation-scope.js";
 
-export function resolveProviderForRun(
+type ProviderRunSelection = Pick<
+  RunRequest,
+  "providerPresetId" | "provider" | "skipProviderPreflight"
+>;
+
+export function resolveProviderForRun<T extends ProviderRunSelection>(
   store: ProviderStoreFacet,
-  runRequest: RunRequest,
+  runRequest: T,
   secretResolver: SecretResolver,
   options: { readonly providerWebSocketFallbackEnabled?: boolean } = {},
 ): PiRunnerProviderConfig {
@@ -26,7 +37,10 @@ export function resolveProviderForRun(
   }
 
   if (runRequest.providerPresetId) {
-    const preset = store.getProviderPreset(runRequest.providerPresetId);
+    const ticket = captureProviderConfigurationTicket(store, runRequest.providerPresetId);
+    const preset = ticket
+      ? providerPresetForConfigurationTicket(ticket)
+      : store.getProviderPreset(runRequest.providerPresetId);
     if (!preset) {
       throw new HttpError(404, "provider_not_found", `Provider preset not found: ${runRequest.providerPresetId}`);
     }
@@ -41,7 +55,7 @@ export function resolveProviderForRun(
     }
     assertProviderRunPreflight(store, preset, runRequest.skipProviderPreflight === true, secretResolver);
     const materialized = materializeProviderSecretsForRun(store, preset, secretResolver);
-    return removeUndefined({
+    const provider = removeUndefined({
       provider: preset.providerId,
       model: preset.model,
       displayName: preset.displayName,
@@ -62,12 +76,15 @@ export function resolveProviderForRun(
       maxTokens: preset.maxTokens,
       compat: preset.compat,
     }) as PiRunnerProviderConfig;
+    if (ticket) bindResolvedProviderObservationScope({ store, ticket, provider, materialized, materializedPreset: preset });
+    return provider;
   }
 
   if (!runRequest.provider) {
     throw new HttpError(400, "bad_request", "Either providerPresetId or provider is required");
   }
 
+  assertInlineProviderCredentialsAvailable(runRequest.provider);
   return removeUndefined({
     ...runRequest.provider,
     providerTransport: resolveEffectiveProviderTransport(
@@ -83,6 +100,10 @@ export function resolveProviderRunThinkingLevel(
   requestedLevel: RunRequest["thinkingLevel"],
 ): RunRequest["thinkingLevel"] {
   const level = requestedLevel ?? "medium";
+  if ((level === "max" || level === "ultra") &&
+    (provider.reasoning === false || provider.thinkingLevelMap?.[level] !== level)) {
+    throw new HttpError(400, "unsupported_capability", `Selected model does not support reasoning level ${level}. Refresh its model capabilities or choose a supported level.`);
+  }
   if (provider.reasoning === false) {
     return "off";
   }

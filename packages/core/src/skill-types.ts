@@ -2,6 +2,9 @@ import { randomUUID } from "node:crypto";
 import type { ApprovalActionType, ApprovalRisk } from "./approval-types.js";
 import type { RunTool } from "./approval-policy.js";
 import type { ProviderCapability } from "./provider-types.js";
+import type { WorkflowStepParallelPolicy, WorkflowStepSideEffectClass } from "@ling-stack/contracts";
+export type { SkillDefinitionRevision, SkillDefinitionValidationStatus, SkillDefinitionUndoRequest } from "@ling-stack/contracts";
+export type { WorkflowStepExecutionSafety, WorkflowStepParallelPolicy, WorkflowStepSideEffectClass } from "@ling-stack/contracts";
 
 export type SkillPackSource = "builtin" | "gstack" | "workspace" | "skill-directory" | "agents-md" | "custom";
 export type SkillRegistryReviewStatus = "builtin" | "draft" | "published" | "disabled" | "archived";
@@ -9,6 +12,8 @@ export type SkillImportWarningSeverity = "info" | "warning" | "error";
 export type SkillSourceKind =
   | "gstack-skill-directory"
   | "codex-skill-directory"
+  | "claude-skill-directory"
+  | "dsh-skill-directory"
   | "workspace-skill-directory"
   | "manual-markdown";
 export type SkillSourceSnapshotReviewStatus = "draft" | "reviewed" | "published" | "archived";
@@ -61,7 +66,10 @@ export type SkillSourceWarningCode =
   | "missing_metadata"
   | "drifted_upstream"
   | "missing_upstream"
-  | "orphaned_snapshot";
+  | "orphaned_snapshot"
+  | "skill_id_conflict"
+  | "duplicate_source"
+  | "unsafe_path";
 export type SkillSourceSyncRecordState =
   | "attachable"
   | "unchanged"
@@ -171,6 +179,8 @@ export interface WorkflowStepTemplate {
   readonly skillId: string;
   readonly dependsOn?: readonly string[];
   readonly approvalGate?: SkillApprovalProfile;
+  readonly sideEffectClass?: WorkflowStepSideEffectClass;
+  readonly parallelPolicy?: WorkflowStepParallelPolicy;
 }
 
 export interface WorkflowTemplate {
@@ -420,6 +430,7 @@ export interface SkillSourceSnapshot {
   readonly upstreamName?: string;
   readonly upstreamVersion?: string;
   readonly upstreamSkillPath?: string;
+  readonly bundleUpdateMode?: "follow" | "pinned";
   readonly sourceChecksum: string;
   readonly rawSkillMarkdown: string;
   readonly rawSkillMarkdownArtifactId?: string;
@@ -463,6 +474,7 @@ export interface SkillSourceSyncPreviewRecord {
   readonly definitionPreview?: SkillDefinition;
   readonly snapshotPreview?: CreateSkillSourceSnapshotInput;
   readonly existingSnapshotId?: string;
+  readonly existingSnapshotChecksum?: string;
   readonly diff: readonly SkillSourceSyncDiffItem[];
   readonly semanticProfile?: SkillSourceSemanticProfile;
   readonly semanticDiff: readonly SkillSourceSemanticDiffItem[];
@@ -502,6 +514,30 @@ export interface SkillSourceArtifact {
   readonly includedInRuntime: boolean;
   readonly createdAt: string;
   readonly updatedAt: string;
+}
+
+export interface PublishSkillSourceBatchInput {
+  readonly records: readonly {
+    readonly snapshot: CreateSkillSourceSnapshotInput;
+    readonly expectedSnapshotId?: string;
+    readonly expectedSourceChecksum?: string;
+    readonly requireNoSourceHistory?: boolean;
+    readonly requireBundledFollow?: boolean;
+    readonly artifacts?: readonly CreateSkillSourceArtifactInput[];
+  }[];
+  readonly newSkills?: CreateSkillImportDraftInput;
+}
+
+export interface PublishedSkillSourceBatch {
+  readonly snapshots: readonly SkillSourceSnapshot[];
+  readonly artifacts: readonly SkillSourceArtifact[];
+}
+
+export class SkillSourcePublicationError extends Error {
+  constructor(readonly code: "skill_source_publication_conflict" | "skill_source_publication_invalid", message: string) {
+    super(message);
+    this.name = "SkillSourcePublicationError";
+  }
 }
 
 export interface CreateSkillSourceArtifactInput {
@@ -583,6 +619,12 @@ export interface SkillSourceRuntimeFallbackPlan {
 }
 
 export interface SkillSourceRuntimeContext {
+  readonly resourceBinding?: {
+    readonly manifestChecksum: string;
+    readonly upstreamRevision: string;
+    readonly adaptationRevision: string;
+    readonly sourceChecksum: string;
+  };
   readonly loaded: boolean;
   readonly runtimeViewKind: SkillRuntimeViewKind;
   readonly skillId: string;
@@ -759,6 +801,7 @@ export interface CreateSkillSourceSnapshotInput {
   readonly upstreamName?: string;
   readonly upstreamVersion?: string;
   readonly upstreamSkillPath?: string;
+  readonly bundleUpdateMode?: "follow" | "pinned";
   readonly sourceChecksum: string;
   readonly rawSkillMarkdown: string;
   readonly rawSkillMarkdownArtifactId?: string;
@@ -821,11 +864,20 @@ export interface PublishSkillRevisionDraftInput {
   readonly draftId: string;
   readonly skillId: string;
   readonly expectedUpdatedAt: string;
+  readonly expectedRevisionId?: string;
+  readonly actor?: string;
+  readonly reason?: string;
+  readonly sourceJobId?: string;
+  readonly sourceCandidateId?: string;
+  /** Apply this approved correction atomically with its definition revision. */
+  readonly reviewedCandidateId?: string;
+  readonly validationStatus?: import("@ling-stack/contracts").SkillDefinitionValidationStatus;
 }
 
 export type SkillRevisionStoreErrorCode =
   | "skill_revision_draft_not_found"
   | "skill_revision_invalid"
+  | "skill_revision_confirmation_required"
   | "skill_revision_conflict";
 
 export class SkillRevisionStoreError extends Error {

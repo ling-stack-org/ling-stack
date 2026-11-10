@@ -2,12 +2,13 @@ import { createHash, randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   buildLingToolNamespaceCatalog,
-  toRuntimeAttemptFence,
+  type RuntimeAttemptFenceV1,
   type LingToolDescriptor,
   type LingToolNamespace,
   type LingToolNamespaceCatalog,
   type RunSession,
   type RunStore,
+  type SecretResolver,
 } from "@ling-stack/core";
 import type {
   CreateToolLoadRequest,
@@ -30,7 +31,12 @@ import type { RunnerRegistry } from "../../runtime/runners.js";
 import { readJsonBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import { isRecord, readOptionalString, readString } from "../../shared/validation.js";
-import { estimateTextTokens, resolveProviderContextBudget } from "../channels/context-packs.js";
+import { estimateTextTokens } from "../channels/context-packs.js";
+import type { PiRunnerProviderConfig } from "@ling-stack/runner-pi";
+import type { ProviderRuntimeObservationScope } from "../providers/runtime-observation-scope.js";
+import { resolveRunToolContextBudget } from "./tool-context-budget.js";
+
+import { assertCurrentRunCallbackOwner, captureToolLoadRequestFence, isCurrentRunCallbackOwner } from "./run-callback-ownership.js";
 
 const MAX_MATERIALIZED_TOOL_COUNT = 64;
 
@@ -87,6 +93,7 @@ export async function handleToolLoadRequestsCollection(
   storeRegistry: RunStoreRegistry,
   runnerRegistry: RunnerRegistry,
   runId: string,
+  secretResolver?: SecretResolver,
 ): Promise<void> {
   if (request.method !== "POST") {
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for tool load requests` });
@@ -113,8 +120,10 @@ export async function handleToolLoadRequestsCollection(
     const input = parseCreateToolLoadRequest(await readJsonBody(request, config.maxBodyBytes));
     const result = materializeToolSurface({
       store,
+      secretResolver,
       runnerRegistry,
       run,
+      sourceFence: captureToolLoadRequestFence(store, run),
       request: input,
       now: new Date().toISOString(),
     });
@@ -144,17 +153,32 @@ export async function handleToolLoadRequestsCollection(
 
 export function hydrateRunnerToolSurface(input: {
   readonly store: RunStore;
+  readonly secretResolver?: SecretResolver;
+  readonly actualProvider?: PiRunnerProviderConfig;
+  readonly observationScope?: ProviderRuntimeObservationScope;
   readonly runnerRegistry: RunnerRegistry;
   readonly run: RunSession;
+  readonly sourceFence: RuntimeAttemptFenceV1;
   readonly request: RunnerToolHydrationRequest;
   readonly now?: string;
 }): RunnerToolHydrationResponse {
   const generatedAt = input.now ?? new Date().toISOString();
+  const rejectedOwner = (): RunnerToolHydrationResponse => ({
+    ok: false, code: "tool_materialization_denied", retryable: false, generatedAt,
+    message: "The source execution no longer owns this tool hydration request.",
+    hydration: buildRejectedRunnerHydrationObservability(input.request, "tool_materialization_denied", false, generatedAt),
+  });
+  if (!input.sourceFence || input.request.runId !== input.run.id || input.request.runnerAttemptId !== input.sourceFence.attemptId
+    || !isCurrentRunCallbackOwner(input.store, input.run, input.sourceFence)) return rejectedOwner();
   try {
     const result = materializeToolSurface({
       store: input.store,
+      secretResolver: input.secretResolver,
+      actualProvider: input.actualProvider,
+      observationScope: input.observationScope,
       runnerRegistry: input.runnerRegistry,
       run: input.run,
+      sourceFence: input.sourceFence,
       request: {
         scope: input.request.scope,
         reason: input.request.reason,
@@ -171,11 +195,13 @@ export function hydrateRunnerToolSurface(input: {
       generatedAt,
     };
   } catch (error) {
+    // No rejection progress may be attributed to a newer Attempt either.
+    if (!isCurrentRunCallbackOwner(input.store, input.run, input.sourceFence)) return rejectedOwner();
     if (error instanceof ToolMaterializationBudgetError) {
       const hydration = buildRejectedRunnerHydrationObservability(input.request, "tool_materialization_over_budget", false, generatedAt, {
         budget: error.budget,
       });
-      appendToolHydrationRejectedRuntimeEvent(input.store, input.run, input.request, hydration, generatedAt);
+      appendToolHydrationRejectedRuntimeEvent(input.store, input.run, input.sourceFence, input.request, hydration, generatedAt);
       return {
         ok: false,
         code: "tool_materialization_over_budget",
@@ -188,7 +214,7 @@ export function hydrateRunnerToolSurface(input: {
     }
     if (error instanceof HttpError && isRunnerHydrationRejectionCode(error.code)) {
       const hydration = buildRejectedRunnerHydrationObservability(input.request, error.code, false, generatedAt);
-      appendToolHydrationRejectedRuntimeEvent(input.store, input.run, input.request, hydration, generatedAt);
+      appendToolHydrationRejectedRuntimeEvent(input.store, input.run, input.sourceFence, input.request, hydration, generatedAt);
       return {
         ok: false,
         code: error.code,
@@ -199,7 +225,7 @@ export function hydrateRunnerToolSurface(input: {
       };
     }
     const hydration = buildRejectedRunnerHydrationObservability(input.request, "invalid_hydration_request", false, generatedAt);
-    appendToolHydrationRejectedRuntimeEvent(input.store, input.run, input.request, hydration, generatedAt);
+    appendToolHydrationRejectedRuntimeEvent(input.store, input.run, input.sourceFence, input.request, hydration, generatedAt);
     return {
       ok: false,
       code: "invalid_hydration_request",
@@ -229,8 +255,12 @@ function buildToolCatalog(store: RunStore, runnerRegistry: RunnerRegistry, gener
 
 function materializeToolSurface(input: {
   readonly store: RunStore;
+  readonly secretResolver?: SecretResolver;
+  readonly actualProvider?: PiRunnerProviderConfig;
+  readonly observationScope?: ProviderRuntimeObservationScope;
   readonly runnerRegistry: RunnerRegistry;
   readonly run: RunSession;
+  readonly sourceFence: RuntimeAttemptFenceV1;
   readonly request: CreateToolLoadRequest;
   readonly now: string;
 }): {
@@ -238,12 +268,13 @@ function materializeToolSurface(input: {
   readonly materialization: ToolMaterializationSummary;
   readonly tools: readonly LingToolDescriptor[];
 } {
+  assertCurrentRunCallbackOwner(input.store, input.run, input.sourceFence);
   const catalog = buildToolCatalog(input.store, input.runnerRegistry, input.now);
   const selection = resolveToolLoadScope(catalog, input.request.scope);
-  const budget = buildMaterializationBudget(input.store, input.run, selection.namespace, selection.tools);
+  const budget = buildMaterializationBudget(input, selection.namespace, selection.tools);
   const idempotencyDigest = input.request.idempotencyKey ? hashIdempotencyKey(input.request.idempotencyKey) : undefined;
   const existingMaterialization = idempotencyDigest
-    ? findExistingMaterialization(input.store, input.run.workUnitId, input.run.id, idempotencyDigest, budget)
+    ? findExistingMaterialization(input.store, input.sourceFence, input.run.id, idempotencyDigest, budget)
     : undefined;
   if (!existingMaterialization) {
     assertMaterializationWithinBudget(budget);
@@ -252,8 +283,10 @@ function materializeToolSurface(input: {
     buildMaterializationSummary(input.run.id, selection.namespace, selection.tools, budget, input.now);
 
   if (!existingMaterialization) {
-    appendToolMaterializationRuntimeEvent(input.store, input.run.workUnitId, materialization, selection.tools, input.request, input.now, idempotencyDigest);
+    appendToolMaterializationRuntimeEvent(input.store, input.run, input.sourceFence, materialization, selection.tools, input.request, input.now, idempotencyDigest);
   }
+  // Cached metadata is not permission to return schemas to a caller that lost ownership.
+  assertCurrentRunCallbackOwner(input.store, input.run, input.sourceFence);
 
   return {
     catalog,
@@ -415,13 +448,18 @@ function buildMaterializationSummary(
 }
 
 function buildMaterializationBudget(
-  store: RunStore,
-  run: RunSession,
+  input: {
+    readonly store: RunStore;
+    readonly run: RunSession;
+    readonly secretResolver?: SecretResolver;
+    readonly actualProvider?: PiRunnerProviderConfig;
+    readonly observationScope?: ProviderRuntimeObservationScope;
+    readonly now: string;
+  },
   namespace: LingToolNamespace,
   tools: readonly LingToolDescriptor[],
 ): ToolMaterializationBudget {
-  const providerPreset = run.providerPresetId ? store.getProviderPreset(run.providerPresetId) : undefined;
-  const contextBudget = resolveProviderContextBudget(providerPreset, run.workflowStepId ? "workflow_step" : "channel_reply");
+  const contextBudget = resolveRunToolContextBudget(input);
   const estimatedTokens = estimateMaterializedToolTokens(namespace, tools);
   const overBudgetByTokens = Math.max(0, estimatedTokens - contextBudget.inputBudgetTokens);
   const overBudgetByCount = tools.length > MAX_MATERIALIZED_TOOL_COUNT;
@@ -497,21 +535,15 @@ class ToolMaterializationBudgetError extends Error {
 
 function appendToolMaterializationRuntimeEvent(
   store: RunStore,
-  workUnitId: string | undefined,
+  run: RunSession,
+  sourceFence: RuntimeAttemptFenceV1,
   materialization: ToolMaterializationSummary,
   tools: readonly LingToolDescriptor[],
   input: CreateToolLoadRequest,
   now: string,
   idempotencyDigest: string | undefined,
 ): void {
-  if (!workUnitId) {
-    return;
-  }
-  const workUnit = store.getWorkUnit(workUnitId);
-  if (!workUnit) {
-    return;
-  }
-  const attemptId = workUnit.activeAttemptId ?? store.listWorkUnitAttempts(workUnit.id).at(-1)?.id;
+  assertCurrentRunCallbackOwner(store, run, sourceFence);
   const event = {
     type: "tool_namespace_materialized",
     actor: "system" as const,
@@ -535,29 +567,18 @@ function appendToolMaterializationRuntimeEvent(
       ...(idempotencyDigest ? { idempotencyDigest } : {}),
     },
   } as const;
-  const attempt = attemptId ? store.getWorkUnitAttempt(attemptId) : undefined;
-  if (attempt) {
-    store.appendRuntimeEvent({ ...toRuntimeAttemptFence(attempt), ...event });
-  } else if (!attemptId) {
-    store.appendRuntimeEvent({ workUnitId, ...event });
-  }
+  store.appendRuntimeEvent({ ...sourceFence, ...event });
 }
 
 function appendToolHydrationRejectedRuntimeEvent(
   store: RunStore,
   run: RunSession,
+  sourceFence: RuntimeAttemptFenceV1,
   request: RunnerToolHydrationRequest,
   hydration: RunnerToolHydrationObservability,
   now: string,
 ): void {
-  if (!run.workUnitId) {
-    return;
-  }
-  const workUnit = store.getWorkUnit(run.workUnitId);
-  if (!workUnit) {
-    return;
-  }
-  const attemptId = workUnit.activeAttemptId ?? store.listWorkUnitAttempts(workUnit.id).at(-1)?.id;
+  if (!isCurrentRunCallbackOwner(store, run, sourceFence)) return;
   const event = {
     type: "tool_hydration_rejected",
     actor: "system" as const,
@@ -583,25 +604,23 @@ function appendToolHydrationRejectedRuntimeEvent(
       idempotencyDigest: hashIdempotencyKey(request.idempotencyKey),
     },
   } as const;
-  const attempt = attemptId ? store.getWorkUnitAttempt(attemptId) : undefined;
-  if (attempt) {
-    store.appendRuntimeEvent({ ...toRuntimeAttemptFence(attempt), ...event });
-  } else if (!attemptId) {
-    store.appendRuntimeEvent({ workUnitId: run.workUnitId, ...event });
+  try {
+    store.appendRuntimeEvent({ ...sourceFence, ...event });
+  } catch (error) {
+    if (isCurrentRunCallbackOwner(store, run, sourceFence)) throw error;
   }
 }
 
 function findExistingMaterialization(
   store: RunStore,
-  workUnitId: string | undefined,
+  sourceFence: RuntimeAttemptFenceV1,
   runId: string,
   idempotencyDigest: string,
   fallbackBudget: ToolMaterializationBudget,
 ): ToolMaterializationSummary | undefined {
-  if (!workUnitId) {
-    return undefined;
-  }
-  for (const event of store.listRuntimeEvents(workUnitId, { limit: 1000 })) {
+  for (const event of store.listRuntimeEvents(sourceFence.workUnitId, { limit: 1000 })) {
+    if (event.attemptId !== sourceFence.attemptId || event.runtimeInstanceId !== sourceFence.runtimeInstanceId
+      || event.fencingToken !== sourceFence.fencingToken) continue;
     if (event.type !== "tool_namespace_materialized" || !isRecord(event.data)) {
       continue;
     }

@@ -28,7 +28,7 @@ for (const fixture of [
     });
 
     await page.goto("/");
-    await page.getByLabel("Ling Stack navigation").getByRole("button", { name: /Ling Research Engineer/ }).click();
+    await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: /Ling Research Engineer/ }).click();
 
     const header = page.locator("[data-ui2-teammate-chat-header='true']");
     const identity = header.locator(".teammate-workspace-identity");
@@ -58,18 +58,28 @@ for (const fixture of [
     await expect(teammateSettings).toBeVisible();
     await expect(settingsNavigation).toBeVisible();
     await expect(settingsNavigation.getByRole("button", { name: "Profile", exact: true })).toHaveAttribute("aria-current", "page");
-    await expect(page.getByLabel("Single agent settings").getByRole("heading", { name: "Teammate settings" })).toBeVisible();
+    const settingsHeader = page.getByLabel("Single agent settings");
+    const settingsTitle = settingsHeader.locator(".teammate-settings-header-title");
+    await expect(settingsHeader.getByRole("heading", { name: "Teammate settings" })).toBeVisible();
+    await expect(settingsTitle.locator("small")).toHaveCount(0);
+    await expect(settingsHeader).not.toContainText("Ling Research Engineer");
+    await expect.poll(async () => {
+      const headerBox = await settingsHeader.boundingBox();
+      const titleBox = await settingsTitle.boundingBox();
+      if (!headerBox || !titleBox) return undefined;
+      return Math.round((titleBox.y + titleBox.height / 2) - (headerBox.y + headerBox.height / 2));
+    }).toBe(0);
     await expect(page.locator(".teammate-settings-summary-panel")).toHaveCount(0);
-    await expectChannelStyleSettingsShell(teammateSettings, settingsNavigation);
+    await expectChannelStyleSettingsShell(teammateSettings, settingsNavigation, settingsHeader);
     await captureEvidence(page, `${fixture.width}x${fixture.height}-ling-${fixture.theme}-teammate-settings.png`);
     await page.getByLabel("Single agent settings").getByRole("button", { name: "Back to private chat" }).click();
     await expect(header).toBeVisible();
 
-    await toolbar.getByRole("button", { name: "Summary" }).click();
+    await toolbar.getByRole("button", { name: "Summary", exact: true }).click();
     const summary = page.locator(".teammate-chat-summary-popover");
     await expect(summary).toContainText("Memory");
     await expect(summary).toContainText(/Memory on|Memory preparing/u);
-    await toolbar.getByRole("button", { name: "Summary" }).click();
+    await toolbar.getByRole("button", { name: "Summary", exact: true }).click();
 
     const searchTrigger = toolbar.getByRole("button", { name: "Search" });
     await searchTrigger.click();
@@ -113,19 +123,19 @@ for (const fixture of [
     expect(Math.round((await header.boundingBox())?.height ?? 0)).toBe(48);
 
     await expect(toolbar.getByRole("button", { name: "Refresh" })).toHaveCount(0);
-    await expect(toolbar.getByRole("button", { name: "Summary" })).toBeEnabled();
+    await expect(toolbar.getByRole("button", { name: "Summary", exact: true })).toBeEnabled();
     await expect(feed).toBeVisible();
 
     await searchTrigger.click();
     await header.getByRole("textbox", { name: "Search private messages" }).fill("private-architecture.pdf");
-    await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Review Partner" }).click();
+    await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Review Partner" }).click();
     const reviewPartnerHeader = page.locator("[data-ui2-teammate-chat-header='true']");
     await expect(reviewPartnerHeader).toContainText("Review Partner");
     await expectCompactIdentityActions(reviewPartnerHeader.locator(".teammate-workspace-identity"));
     await expect(page.getByRole("search", { name: "Search private messages" })).toHaveCount(0);
     await expect(page.getByLabel("Private chat actions").getByRole("button", { name: /^Private attachments:/u })).toHaveCount(0);
 
-    await page.getByLabel("Ling Stack navigation").getByRole("button", { name: /Ling Research Engineer/ }).click();
+    await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: /Ling Research Engineer/ }).click();
     const restoredHeader = page.locator("[data-ui2-teammate-chat-header='true']");
     await expect(page.getByText("Loading teammate workspace...")).toHaveCount(0);
     await restoredHeader.getByRole("button", { name: "Search" }).click();
@@ -136,7 +146,8 @@ for (const fixture of [
     await expect(feed).toContainText("private-architecture.pdf");
     await expectSearchContained(restoredHeader.getByRole("search", { name: "Search private messages" }), restoredHeader);
 
-    const headerTheme = await restoredHeader.evaluate((element) => {
+    const titlebarSurface = page.locator("[data-desktop-window-titlebar-surface='true']");
+    const headerTheme = await titlebarSurface.evaluate((element) => {
       const probe = document.createElement("span");
       probe.style.color = getComputedStyle(document.documentElement).getPropertyValue("--ling-bg-panel");
       document.body.append(probe);
@@ -158,7 +169,7 @@ test("private chat more menu renames the teammate and explicitly opens context",
   const teammateId = installTeammateHeaderFixture(state);
   await mockDaemon(page, state);
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: /Ling Research Engineer/ }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: /Ling Research Engineer/ }).click();
 
   const header = page.locator("[data-ui2-teammate-chat-header='true']");
   const more = header.getByRole("button", { name: "More private chat views" });
@@ -198,7 +209,7 @@ test("private chat more menu renames the teammate and explicitly opens context",
   await expect(dialog).toHaveCount(0);
   await expect(more).toBeFocused();
   await expect(header.getByRole("heading", { name: "Renamed Research Partner", level: 1 })).toBeVisible();
-  await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Renamed Research Partner" })).toBeVisible();
+  await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Renamed Research Partner" })).toBeVisible();
   await expect(page.getByText("Teammate renamed", { exact: true })).toBeVisible();
   expect(state.aiTeammates.find((candidate) => candidate.id === teammateId)?.displayName).toBe("Renamed Research Partner");
   await expectNoDocumentOverflow(page);
@@ -212,7 +223,7 @@ test("teammate rename failure keeps the edited name and productized error", asyn
   installTeammateHeaderFixture(state);
   await mockDaemon(page, state, { failTeammateProfileUpdates: true });
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: /Ling Research Engineer/ }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: /Ling Research Engineer/ }).click();
 
   const header = page.locator("[data-ui2-teammate-chat-header='true']");
   await header.getByRole("button", { name: "More private chat views" }).click();
@@ -353,8 +364,12 @@ async function expectCompactIdentityActions(identity: Locator): Promise<void> {
   expect(gap).toBeLessThanOrEqual(8);
 }
 
-async function expectChannelStyleSettingsShell(settings: Locator, navigation: Locator): Promise<void> {
-  const headerBox = await settings.getByLabel("Single agent settings").boundingBox();
+async function expectChannelStyleSettingsShell(
+  settings: Locator,
+  navigation: Locator,
+  header: Locator,
+): Promise<void> {
+  const headerBox = await header.boundingBox();
   const navigationBox = await navigation.boundingBox();
   const content = settings.locator(".teammate-settings-tab-content");
   const contentBox = await content.boundingBox();
@@ -365,7 +380,7 @@ async function expectChannelStyleSettingsShell(settings: Locator, navigation: Lo
   expect(contentBox).not.toBeNull();
   expect(firstTabBox).not.toBeNull();
   expect(lastTabBox).not.toBeNull();
-  expect(Math.round(headerBox!.height)).toBe(58);
+  expect(Math.round(headerBox!.height)).toBe(48);
   expect(Math.abs(firstTabBox!.y - lastTabBox!.y)).toBeLessThanOrEqual(1);
   expect(contentBox!.y).toBeGreaterThanOrEqual(navigationBox!.y + navigationBox!.height - 1);
   await expect(content).toHaveCSS("overflow-y", "auto");

@@ -12,6 +12,7 @@ import {
   isRecord,
 } from "./support/mock-state";
 import { openEngineeringChannel } from "./support/test-helpers";
+import { mockUnknownSubmissionReceipt } from "./support/unknown-submission-receipt";
 import {
   assertUi2P9efObservation,
   captureUi2P9efScenario,
@@ -50,7 +51,7 @@ const scenarios = {
   }),
   conversationAlphaRestored: scenario({
     stableId: "p9ef-conversation-alpha-failure-restored",
-    label: "Alpha failure is restored only when Alpha is reopened",
+    label: "Alpha's unconfirmed submission is restored only when Alpha is reopened",
     functionIds: ["CONV-NORMAL-COMPOSER-001", "FEEDBACK-ALERT-001"],
     fixture: "conversation-alpha-beta-late-stream",
     trigger: {
@@ -59,8 +60,8 @@ const scenarios = {
     },
     owner: { surface: "normal-conversation", scope: "thread-stream", key: "thread_p9ef_alpha" },
     assertions: {
-      visible: ["Alpha failure restored on its owning thread"],
-      absent: ["Beta-owned failure"],
+      visible: ["Pending confirmation restored on its owning thread"],
+      absent: ["Beta-owned failure", "Definitive failure from an unknown receipt"],
     },
     expectedHttpFailures: [http503("POST", "^/conversations/stream(?:\\?.*)?$", 1)],
     overflowOwners: [{ label: "Conversation page", selector: "[aria-label='Conversation page']" }],
@@ -224,7 +225,7 @@ test("P9EF-EVIDENCE-01 Beta remains clean after Alpha fails late", async ({ page
   const gate = deferred();
   await installLateConversationFailure(page, gate, "Late Alpha stream failure.");
   await page.goto("/");
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await openConversation(page, navigation, alpha);
   await sendConversation(page, "Keep this failure with Alpha");
   await gate.started.promise;
@@ -235,20 +236,22 @@ test("P9EF-EVIDENCE-01 Beta remains clean after Alpha fails late", async ({ page
   const betaPage = page.getByLabel("Conversation page");
   await expect(betaPage.getByText("Late Alpha stream failure.", { exact: true })).toHaveCount(0);
   await expect(betaPage.getByLabel("Conversation messages", { exact: true })).not.toContainText("Keep this failure with Alpha");
-  const search = betaPage.getByLabel("Conversation workspace toolbar").getByRole("button", { name: "Search" });
+  const search = page
+    .locator("[data-ui2-normal-conversation-header='true']")
+    .getByRole("button", { name: "Search" });
   await search.focus();
   await expect(search).toBeFocused();
   await finish(page, scenarios.conversationBetaClean, runtime);
 });
 
-test("P9EF-EVIDENCE-02 Alpha failure restores on Alpha only", async ({ page }) => {
+test("P9EF-EVIDENCE-02 Alpha pending confirmation restores on Alpha only", async ({ page }) => {
   const runtime = await begin(page, scenarios.conversationAlphaRestored);
   const state = createConversationState();
   await mockDaemon(page, state);
   const gate = deferred();
   await installLateConversationFailure(page, gate, "Late Alpha stream failure.");
   await page.goto("/");
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await openConversation(page, navigation, alpha);
   await sendConversation(page, "Keep this failure with Alpha");
   await gate.started.promise;
@@ -258,7 +261,8 @@ test("P9EF-EVIDENCE-02 Alpha failure restores on Alpha only", async ({ page }) =
   await response;
   await openConversation(page, navigation, alpha);
   const alphaPage = page.getByLabel("Conversation page");
-  await expect(alphaPage.getByRole("alert")).toContainText("Late Alpha stream failure.");
+  await expect(alphaPage.getByRole("alert")).toContainText("Pending confirmation");
+  await expect(alphaPage.getByText("Late Alpha stream failure.", { exact: true })).toHaveCount(0);
   const composer = alphaPage.getByRole("textbox", { name: "Conversation message" });
   await composer.focus();
   await expect(composer).toBeFocused();
@@ -281,8 +285,8 @@ test("P9EF-EVIDENCE-03 new draft ignores stale upload", async ({ page }) => {
     await route.fallback();
   }, { times: 1 });
   await page.goto("/");
-  const navigation = page.getByLabel("Ling Stack navigation");
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
   let home = page.getByLabel("Conversation home");
   await home.locator('input[type="file"]').setInputFiles({
     name: "stale-draft.txt",
@@ -290,7 +294,7 @@ test("P9EF-EVIDENCE-03 new draft ignores stale upload", async ({ page }) => {
     buffer: Buffer.from("stale draft upload", "utf8"),
   });
   await upload.started.promise;
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
   home = page.getByLabel("Conversation home");
   const response = page.waitForResponse((item) => item.status() === 201 && item.url().includes("/conversations/attachments"));
   upload.release.resolve();
@@ -323,7 +327,7 @@ test("P9EF-EVIDENCE-04 Designer ignores late Engineer snapshot", async ({ page }
   const panel = await openTeammateManagement(page);
   await teammateRow(panel, "Ling Engineer").getByRole("button", { name: "Open chat in app" }).click();
   await gate.started.promise;
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await navigation.getByRole("button").filter({ hasText: "Ling Designer" }).first().click();
   await expect(page.getByRole("heading", { name: "Ling Designer", level: 1 })).toBeVisible();
   await expect(page.getByText("Designer current private message.", { exact: true })).toBeVisible();
@@ -426,7 +430,7 @@ test("P9EF-EVIDENCE-07 Settings error restores after surface return", async ({ p
     });
   });
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   let settings = page.getByLabel("Settings sections");
   await settings.getByRole("button", { name: "Default authorization" }).click();
   await page.getByRole("radiogroup", { name: "Authorization mode" }).getByRole("radio", { name: "Ask first" }).click();
@@ -436,7 +440,7 @@ test("P9EF-EVIDENCE-07 Settings error restores after surface return", async ({ p
   await expect(toast).toBeVisible();
   await settings.getByRole("button", { name: "Back to app" }).click();
   await expect(toast).toHaveCount(0);
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   settings = page.getByLabel("Settings sections");
   await expect(settings).toBeVisible();
   await expect(toast).toContainText("Workspace settings save failed.");
@@ -483,7 +487,7 @@ test("P9EF-EVIDENCE-08 channel teammate failure restores on Engineering", async 
   let manager = await openChannelTeammateManager(page);
   await addTeammate(manager, "teammate_designer");
   await expect(manager.locator('[data-channel-teammate-error="add"]')).toContainText("Designer could not be added to Engineering.");
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await navigation.getByRole("button").filter({ hasText: "Research" }).first().click();
   await expect(page.getByRole("heading", { name: "Research", level: 1 })).toBeVisible();
   manager = await openChannelTeammateManager(page);
@@ -598,6 +602,7 @@ function installConversation(
 }
 
 async function installLateConversationFailure(page: Page, gate: DeferredGate, message: string): Promise<void> {
+  await mockUnknownSubmissionReceipt(page);
   await page.route(/\/conversations\/stream(?:\?.*)?$/u, async (route) => {
     if (route.request().method() !== "POST") {
       await route.fallback();
@@ -659,7 +664,7 @@ function readyProvider(id: string) {
 }
 
 async function openTeammateManagement(page: Page): Promise<Locator> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: "Teammate Management" }).click();
   const panel = page.getByLabel("Workspace teammates");
   await expect(panel).toBeVisible();
@@ -677,8 +682,8 @@ async function runRowMenuAction(page: Page, row: Locator, action: string): Promi
 
 async function openPluginManager(page: Page): Promise<void> {
   await page.goto("/");
-  const navigation = page.getByLabel("Ling Stack navigation");
-  await navigation.getByRole("button", { name: "Engineering" }).click();
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
+  await navigation.getByRole("button", { name: "Engineering", exact: true }).click();
   await navigation.getByRole("button", { name: "Plugin Manager" }).click();
   await expect(page.locator(".settings-plugin-manager .plugin-table-row").first()).toBeVisible();
 }

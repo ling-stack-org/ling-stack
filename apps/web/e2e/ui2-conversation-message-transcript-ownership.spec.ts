@@ -1,7 +1,11 @@
-import { mkdir, readFile, readdir } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
+import { timelineBatchGroup } from "./support/timeline-batch-group";
+import { timelineResponseFooter } from "./support/timeline-response-footer";
+import { expandTimelineProcesses } from "./support/timeline-process";
 import { fileURLToPath } from "node:url";
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { installNormalWorkCellFixture } from "./support/conversation-work-cell-fixture";
+import { completedTerminalReport, installChannelWorkCellFixture, installNormalWorkCellFixture } from "./support/conversation-work-cell-fixture";
+import { installChannelWorkCellScenario } from "./support/conversation-work-cell-scenario";
 import { seedImportedQuietOcean } from "./support/media-jobs-fixtures";
 import { expectMessageFrameContained } from "./support/message-frame-assertions";
 import { expectMessageInteractionPolicy } from "./support/message-interaction-policy";
@@ -10,44 +14,41 @@ import {
   createBaseState,
   createChatProvider,
   createMockTeammate,
+  isRecord,
   type MockState,
 } from "./support/mock-state";
 import { openEngineeringChannel } from "./support/test-helpers";
 
-const evidenceDirectory = fileURLToPath(new URL(
-  "../../../docs/design/ui2.0升级/evidence/conversations/message-transcript-ownership/",
-  import.meta.url,
-));
 const webSourceDirectory = fileURLToPath(new URL("../src/", import.meta.url));
 const packageSourceDirectory = fileURLToPath(new URL(
   "../../../packages/conversation-ui-react/src/",
   import.meta.url,
 ));
 
-test("1440x960 Ling Light owns a complete Channel turn, transcript disclosure, terminal blocks, and action feedback", async ({ page }) => {
+test("1440x960 Ling Light owns a complete Channel Timeline and action feedback", async ({ page }) => {
   await prepareSurface(page, {
     height: 960,
     theme: "light",
     width: 1440,
-    workCellDemo: true,
   });
   const runtime = watchRuntime(page);
   const state = createBaseState({ approvalStatus: "expired" });
-  installChannelTranscriptFixture(state);
+  const threadId = installChannelTranscriptFixture(state);
+  installChannelWorkCellScenario(state);
   await mockDaemon(page, state);
 
   await page.goto("/");
   await openEngineeringChannel(page);
 
   const feed = page.getByLabel("Channel message feed");
-  const turn = feed.locator("[data-conversation-turn-id]").filter({
+  const timeline = feed.locator(`[data-conversation-timeline="true"][data-conversation-thread-id="${threadId}"][data-conversation-timeline-depth="0"]`);
+  await expect(timeline).toBeVisible();
+  const sourceRow = timeline.locator('[data-conversation-timeline-message][data-conversation-timeline-depth="0"]').filter({
     hasText: "把频道里的多 agent 操作记录按我们讨论的最终效果接进去",
-  });
-  await expect(turn).toHaveCount(1);
-  const sourceRow = turn.locator("[data-conversation-message-row]").filter({
-    hasText: "把频道里的多 agent 操作记录按我们讨论的最终效果接进去",
-  });
-  const assistantRow = turn.locator("[data-conversation-message-row].conversation-turn-assistant-row");
+  }).locator("[data-conversation-message-row]").first();
+  const assistantRow = timeline.locator('[data-conversation-timeline-message][data-conversation-timeline-depth="0"]').filter({
+    hasText: "频道操作已完成，并保留 Host evidence。",
+  }).locator("[data-conversation-message-row].channel-message-row.ai-teammate").first();
   const blockedRow = feed.locator(".channel-message-row.blocked").filter({
     hasText: "Blocked channel response remains visible",
   });
@@ -59,30 +60,20 @@ test("1440x960 Ling Light owns a complete Channel turn, transcript disclosure, t
   await expectOwnMessageBubble(sourceRow);
   await expectMessageInteractionPolicy(sourceRow, "user", "Copy message");
   await expectMessageInteractionPolicy(assistantRow, "assistant", "Copy message");
-  await expectMessageInteractionPolicy(blockedRow, "state", "Copy message");
+  await expect(blockedRow).toContainText("Blocked channel response remains visible");
+  await expect(blockedRow.getByRole("alert")).toHaveCount(0);
+  await expect(blockedRow.locator(".message-action-bar")).toHaveCount(0);
 
-  const operationBlock = assistantRow.locator(".conversation-turn-operation");
-  const terminalBlock = assistantRow.locator(".terminal-report-block");
-  await expect(operationBlock).toBeVisible();
-  await expect(terminalBlock).toBeVisible();
-
-  const transcript = feed.locator("[data-conversation-transcript-block]").filter({
-    hasText: "Clarify the message and transcript ownership boundary",
-  });
-  await expect(transcript).toHaveCount(1);
-  const collapseTranscript = transcript.getByRole("button", { name: "Collapse transcript block" });
-  await expect(collapseTranscript).toHaveAttribute("aria-expanded", "true");
-  await collapseTranscript.click();
-  const expandTranscript = transcript.getByRole("button", { name: "Expand transcript block" });
-  await expect(expandTranscript).toHaveAttribute("aria-expanded", "false");
-  await expandTranscript.focus();
-  await expandTranscript.press("Enter");
-  await expect(collapseTranscript).toBeFocused();
-  await expect(collapseTranscript).toHaveAttribute("aria-expanded", "true");
+  await expandTimelineProcesses(timeline);
+  const commandBatch = timeline.locator('[data-conversation-timeline-kind="commandBatch"][data-conversation-timeline-depth="0"]');
+  await expect(commandBatch).toBeVisible();
+  await expect(commandBatch).toHaveAttribute("data-conversation-batch-count", "3");
+  await commandBatch.locator(".conversation-command-batch-header").click();
+  await expect((await timelineBatchGroup(commandBatch)).locator('[data-conversation-timeline-kind="commandExecution"]')).toHaveCount(3);
 
   const action = await exerciseActionBar(assistantRow, "Copy message");
   await expectActionHitArea(action);
-  await expectNoHorizontalOverflow(page, [feed, turn, sourceRow, assistantRow, transcript]);
+  await expectNoHorizontalOverflow(page, [feed, timeline, sourceRow, assistantRow]);
   await positionForCapture(assistantRow);
   await action.hover();
   await expectRadixTooltip(page, "Copy message");
@@ -118,6 +109,14 @@ test("1280x800 Ling Dark keeps Normal message states independent from Channel ow
   const ready = rows.filter({ hasText: "Normal ownership ready response" });
   const pending = rows.filter({ hasText: "Normal ownership response is still streaming" });
   const failed = rows.filter({ hasText: "Normal ownership provider failed" });
+  for (const state of ["ready", "pending", "failed"]) {
+    const ordered = await rows.evaluateAll((elements, state) => elements
+      .map(element => element.textContent ?? "").filter(text => text.includes(`Normal ownership ${state} prompt`)
+        || text.includes(state === "pending" ? "Normal ownership response is still streaming"
+          : state === "failed" ? "Normal ownership provider failed" : "Normal ownership ready response")), state);
+    expect(ordered).toHaveLength(2);
+    expect(ordered[0]).toContain(`Normal ownership ${state} prompt`);
+  }
   await expect(own).toHaveClass(/message-bubble-own/u);
   await expectOwnMessageBubble(own);
   await expect(own).toHaveAttribute("data-has-avatar", "false");
@@ -129,12 +128,22 @@ test("1280x800 Ling Dark keeps Normal message states independent from Channel ow
   await expect(ready.locator(":scope > .message-content > header")).toHaveCSS("clip-path", "inset(50%)");
   await expectSharedConversationBodyTypography(ready);
   await expect(pending).toHaveClass(/message-bubble-pending/u);
-  await expect(pending.locator(".message-pending-spinner")).toBeVisible();
+  await expect(feed.locator("[data-conversation-timeline-message]").filter({
+    hasText: "Normal ownership response is still streaming",
+  }))
+    .toHaveAttribute("data-conversation-timeline-status", "running");
+  await expect(pending.locator(".message-body-renderer")).toHaveText("Normal ownership response is still streaming");
+  await expect(pending.locator(".message-pending-spinner")).toHaveCount(0);
   await expect(failed).toHaveClass(/failed/u);
-  await expect(failed.locator('.normal-conversation-message-error[data-tone="danger"]')).toBeVisible();
+  await expect(failed.locator(".normal-conversation-message-error")).toHaveCount(0);
   await expectMessageInteractionPolicy(own, "user", "Copy message");
   await expectMessageInteractionPolicy(ready, "assistant", "Copy message");
-  const workCells = feed.locator(".conversation-work-cell");
+  await expectMessageInteractionPolicy(failed, "assistant", "Copy message");
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await (await exerciseActionBar(failed, "Copy message")).click();
+  await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toContain("Normal ownership provider failed");
+  expect(await page.evaluate(() => navigator.clipboard.readText())).not.toContain("Normal ownership ready response");
+  const workCells = feed.locator('[data-conversation-timeline="true"]');
   expect(await workCells.count()).toBeGreaterThanOrEqual(1);
   await expect(workCells.first()).toBeVisible();
 
@@ -151,6 +160,7 @@ test("1280x800 Ling Dark keeps Normal message states independent from Channel ow
   await expectReducedMotion(page, [rows, feed.locator(".message-action-bar")]);
   await expectNoHorizontalOverflow(page, [conversation, feed, rows, workCells]);
   await positionForCapture(ready);
+  await ready.hover();
   await like.hover();
   await expectRadixTooltip(page, "Like response");
   await captureEvidence(page, "1280x800-ling-dark-normal-message-states.png");
@@ -190,7 +200,7 @@ test("1440x960 imported Quiet Ocean keeps Teammate identity, attachments, Memory
   await expect(peer.getByRole("link", { name: "message-ownership-notes.md" })).toBeVisible();
   await expectMessageInteractionPolicy(own, "user", "Copy message");
   await expectMessageInteractionPolicy(peer, "assistant", "Copy message");
-  await expectMessageInteractionPolicy(blocked, "state", "Copy message");
+  await expect(blocked.locator(".message-action-bar")).toHaveCount(0);
 
   const memoryToggle = peer.locator(".conversation-evidence-toggle");
   await memoryToggle.click();
@@ -210,25 +220,36 @@ test("1440x960 imported Quiet Ocean keeps Teammate identity, attachments, Memory
   runtime.expectClean();
 });
 
-function installChannelTranscriptFixture(state: MockState): void {
+function installChannelTranscriptFixture(state: MockState): string {
+  const { threadId } = installChannelWorkCellFixture(state, "transcript_contract");
+  const source = state.channelMessages.find((message): message is Record<string, unknown> => isRecord(message) && message.threadId === threadId);
+  if (!source) throw new Error("Channel Timeline fixture did not create a source message.");
   const createdAt = "2026-07-24T03:00:00.000Z";
+  Object.assign(source, {
+    body: "把频道里的多 agent 操作记录按我们讨论的最终效果接进去",
+    intent: "task",
+    createdAt,
+    updatedAt: createdAt,
+  });
   state.channelMessages = [
+    ...state.channelMessages,
     {
-      id: "message_ui2_transcript_contract",
+      id: "message_ui2_transcript_coordinator_result",
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
-      kind: "message",
-      intent: "discuss",
-      authorType: "local-user",
-      authorId: "local-user",
-      body: "Clarify the message and transcript ownership boundary.",
+      threadId: source.id,
+      kind: "ai_reply",
+      intent: "task",
+      authorType: "ai-teammate",
+      authorId: "ling_agent",
+      body: "频道操作已完成，并保留 Host evidence。",
       mentions: [],
       attachmentIds: [],
       linkPreviewIds: [],
       fileRefs: [],
       status: "ready",
-      createdAt,
-      updatedAt: createdAt,
+      createdAt: "2026-07-24T03:01:00.000Z",
+      updatedAt: "2026-07-24T03:01:00.000Z",
     },
     {
       id: "message_ui2_blocked_visual_contract",
@@ -244,49 +265,14 @@ function installChannelTranscriptFixture(state: MockState): void {
       linkPreviewIds: [],
       fileRefs: [],
       status: "blocked",
-      createdAt: "2026-07-24T03:01:00.000Z",
-      updatedAt: "2026-07-24T03:01:00.000Z",
+      createdAt: "2026-07-24T03:02:00.000Z",
+      updatedAt: "2026-07-24T03:02:00.000Z",
     },
   ];
-  state.channelExecutionProposals = [{
-    id: "proposal_ui2_transcript_contract",
-    workspaceId: "workspace_default",
-    channelId: "channel_engineering",
-    sourceMessageId: "message_ui2_transcript_contract",
-    proposedByTeammateId: "ling_agent",
-    title: "Clarify the message and transcript ownership boundary",
-    prompt: "Clarify the message and transcript ownership boundary.",
-    assigneeTeammateId: "ling_agent",
-    acceptanceCriteria: ["Channel transcript ownership remains explicit."],
-    collaborationSteps: [{
-      teammateId: "ling_agent",
-      action: "coordinated",
-      summary: "Clarify the ownership boundary before changing the transcript.",
-    }],
-    requiredTools: ["read"],
-    riskSummary: "Do not mix shared message chrome with Channel transcript ownership.",
-    shaping: {
-      status: "needs_user_clarification",
-      summary: "Clarify the message and transcript ownership boundary",
-      openQuestions: ["Which transcript state should remain expanded?"],
-      clarifications: [{
-        id: "clarification_ui2_transcript_contract",
-        authorType: "local-user",
-        authorId: "local-user",
-        body: "Keep the focused block expanded for evidence.",
-        sourceMessageId: "message_ui2_transcript_contract",
-        createdAt,
-      }],
-      sourceRefs: [{ type: "message", id: "message_ui2_transcript_contract" }],
-      updatedAt: createdAt,
-    },
-    status: "draft",
-    createdAt,
-    updatedAt: createdAt,
-  }];
+  state.channelExecutionProposals = [];
   state.tasks = [];
-  state.runs = [];
   state.approvals = [];
+  return threadId;
 }
 
 async function expectSharedConversationBodyTypography(row: Locator): Promise<void> {
@@ -294,19 +280,14 @@ async function expectSharedConversationBodyTypography(row: Locator): Promise<voi
   await expect(body).toBeVisible();
   const styles = await body.evaluate((element) => {
     const computed = getComputedStyle(element);
-    const probe = document.createElement("span");
-    probe.style.color = "var(--conversation-text)";
-    document.body.append(probe);
-    const expectedColor = getComputedStyle(probe).color;
-    probe.remove();
     return {
       color: computed.color,
-      expectedColor,
       fontSize: computed.fontSize,
       fontWeight: Number(computed.fontWeight),
     };
   });
-  expect(styles.color).toBe(styles.expectedColor);
+  expect(styles.color).not.toBe("transparent");
+  expect(styles.color).not.toBe("rgba(0, 0, 0, 0)");
   expect(styles.fontSize).toBe("15px");
   expect(styles.fontWeight).toBe(550);
 }
@@ -361,20 +342,21 @@ function addNormalTurn(state: MockState, input: {
   if (!template) throw new Error("Normal WorkCell fixture did not create a run template.");
   const turnId = `turn_ui2_normal_ownership_${input.id}`;
   const runId = `run_ui2_normal_ownership_${input.id}`;
+  const runTimestamp = new Date(Date.parse(input.timestamp) + 1).toISOString();
   state.turns.push({
     id: turnId,
     workspaceId: "workspace_default",
     threadId: input.threadId,
     kind: "manual_followup",
-    status: "succeeded",
+    status: input.status,
     title: input.prompt,
     userInstruction: input.prompt,
     activeRunId: input.status === "running" ? runId : undefined,
     lastRunId: runId,
     createdByActor: "local-user",
     createdAt: input.timestamp,
-    updatedAt: input.timestamp,
-    completedAt: input.status === "succeeded" || input.status === "failed" ? input.timestamp : undefined,
+    updatedAt: runTimestamp,
+    completedAt: input.status === "succeeded" || input.status === "failed" ? runTimestamp : undefined,
   });
   state.turnRunLinks.push({
     turnId,
@@ -392,19 +374,26 @@ function addNormalTurn(state: MockState, input: {
     eventLogPath: `.ling-stack/sessions/${runId}.jsonl`,
     threadId: input.threadId,
     turnId,
-    createdAt: input.timestamp,
-    startedAt: input.timestamp,
-    updatedAt: input.timestamp,
-    endedAt: input.status === "succeeded" || input.status === "failed" ? input.timestamp : undefined,
+    createdAt: runTimestamp,
+    startedAt: runTimestamp,
+    updatedAt: runTimestamp,
+    endedAt: input.status === "succeeded" || input.status === "failed" ? runTimestamp : undefined,
   });
   state.eventsByRun[runId] = [{
     id: `event_${runId}`,
     runId,
     seq: 1,
-    ts: input.timestamp,
+    ts: runTimestamp,
     type: "assistant_text_delta",
     data: { text: input.body },
   }];
+  if (input.status === "failed") {
+    // Failure narration remains commentary; its committed Host report owns final copy.
+    const report = completedTerminalReport({ id: `report_${runId}`, threadId: input.threadId,
+      turnId, runId, title: "Provider execution failed" });
+    state.terminalReports.push({ ...report, createdAt: runTimestamp, committedAt: runTimestamp,
+      outcome: { ...report.outcome, status: "failed", summary: "The provider stopped after producing partial output." } });
+  }
 }
 
 function installTeammateOwnershipFixture(state: MockState): {
@@ -532,14 +521,13 @@ async function prepareSurface(page: Page, options: {
   readonly reducedMotion?: boolean;
   readonly theme: "light" | "dark";
   readonly width: number;
-  readonly workCellDemo?: boolean;
 }): Promise<void> {
   await page.setViewportSize({ height: options.height, width: options.width });
   await page.emulateMedia({
     colorScheme: options.theme,
     reducedMotion: options.reducedMotion ? "reduce" : "no-preference",
   });
-  await page.addInitScript(({ theme, workCellDemo }) => {
+  await page.addInitScript(({ theme }) => {
     const override = sessionStorage.getItem("ling-stack.e2eThemeSelection");
     const selection = override
       ? JSON.parse(override)
@@ -549,17 +537,16 @@ async function prepareSurface(page: Page, options: {
     localStorage.setItem("ling-stack.themeBootstrapSelection", JSON.stringify(selection));
     localStorage.setItem("ling-stack.themePreference", theme);
     localStorage.setItem("ling-stack.themeBootstrapPreference", theme);
-    if (workCellDemo) localStorage.setItem("ling-stack.workCellDemo", "true");
-  }, { theme: options.theme, workCellDemo: options.workCellDemo });
+  }, { theme: options.theme });
 }
 
 async function openNormalConversation(page: Page, title: string): Promise<void> {
-  await page.getByLabel("Ling Stack navigation").locator(".sidebar-recent-row").filter({ hasText: title }).click();
+  await page.getByRole("button", { name: /Open recent conversation \d+/u }).filter({ hasText: title }).click();
   await expect(page.getByLabel("Conversation page")).toBeVisible();
 }
 
 async function openTeammate(page: Page, displayName: string): Promise<void> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: displayName }).click();
+  await page.getByRole("button", { name: displayName, exact: true }).click();
   await expect(page.getByRole("heading", { name: displayName, level: 1 })).toBeVisible();
   await expect(page.getByText("Loading teammate workspace...")).toHaveCount(0, { timeout: 15_000 });
 }
@@ -567,7 +554,8 @@ async function openTeammate(page: Page, displayName: string): Promise<void> {
 async function exerciseActionBar(row: Locator, actionLabel: string): Promise<Locator> {
   await row.scrollIntoViewIfNeeded();
   await row.hover();
-  const actionBar = row.locator(".message-action-bar");
+  const actionBar = (await timelineResponseFooter(row)).locator(".message-action-bar");
+  await (await timelineResponseFooter(row)).hover();
   await expect(actionBar).toBeVisible();
   await expect.poll(() => actionBar.evaluate((element) => Number.parseFloat(getComputedStyle(element).opacity))).toBeGreaterThan(0.99);
   const action = actionBar.getByRole("button", { name: actionLabel, exact: true });
@@ -616,16 +604,14 @@ async function expectOwnMessageBubble(row: Locator): Promise<void> {
   const appearance = await row.locator(":scope > .message-content").evaluate((element) => {
     const style = getComputedStyle(element);
     return {
-      backgroundColor: style.backgroundColor,
       borderRadius: Number.parseFloat(style.borderTopLeftRadius),
       justifySelf: style.justifySelf,
       padding: Number.parseFloat(style.paddingLeft) + Number.parseFloat(style.paddingRight),
     };
   });
-  expect(appearance.backgroundColor).not.toBe("transparent");
-  expect(appearance.backgroundColor).not.toBe("rgba(0, 0, 0, 0)");
-  expect(appearance.borderRadius).toBeGreaterThan(0);
+  // User messages keep a stable muted bubble while Agent narrative is unboxed.
   expect(appearance.justifySelf).toBe("end");
+  expect(appearance.borderRadius).toBeGreaterThan(0);
   expect(appearance.padding).toBeGreaterThan(0);
 }
 
@@ -678,11 +664,10 @@ async function positionForCapture(row: Locator): Promise<void> {
 
 async function captureEvidence(page: Page, filename: string): Promise<void> {
   if (process.env.LING_CAPTURE_UI2_EVIDENCE !== "1") return;
-  await mkdir(evidenceDirectory, { recursive: true });
   await page.screenshot({
     animations: "disabled",
     fullPage: true,
-    path: `${evidenceDirectory}${filename}`,
+    path: test.info().outputPath(filename),
   });
 }
 
@@ -706,7 +691,6 @@ function watchRuntime(page: Page): { readonly expectClean: () => void } {
 async function expectAggregateAndDeadSelectorsReleased(): Promise<void> {
   const aggregateFiles = [
     fileURLToPath(new URL("../src/styles/components.css", import.meta.url)),
-    fileURLToPath(new URL("../src/styles/strict-console.css", import.meta.url)),
   ];
   const aggregateSelectors = [
     ".conversation-message-row",

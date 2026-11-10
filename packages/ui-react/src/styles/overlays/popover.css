@@ -7,12 +7,13 @@
   padding: var(--ling-space-3);
   overflow: auto;
   overscroll-behavior: contain;
-  border: 1px solid var(--ling-border-default);
-  border-radius: var(--ling-radius-lg);
+  border: 1px solid var(--ling-overlay-border);
+  border-radius: var(--ling-overlay-radius);
   outline: none;
   color: var(--ling-text-default);
-  background: var(--ling-bg-elevated);
-  box-shadow: var(--ling-shadow-overlay);
+  background: var(--ling-overlay-bg);
+  background-image: var(--ling-overlay-finish);
+  box-shadow: var(--ling-overlay-shadow);
   font-size: var(--ling-font-sm);
   line-height: var(--ling-line-sm);
   letter-spacing: 0;

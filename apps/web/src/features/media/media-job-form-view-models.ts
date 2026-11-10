@@ -44,7 +44,6 @@ export function mediaJobToReusableForm(job: MediaJob, providerAvailable: boolean
     maskUrl: readInput(input, ["maskUrl", "mask_url"]),
     ratio: readInput(input, ["ratio", "aspect_ratio"]) || defaultMediaJobForm.ratio,
     duration: readInput(input, ["duration", "duration_seconds"]) || defaultMediaJobForm.duration,
-    inputText: "",
   };
 }
 

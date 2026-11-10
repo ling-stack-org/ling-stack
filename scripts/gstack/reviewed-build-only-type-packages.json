@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "target": { "platform": "darwin", "arch": "arm64" },
+  "sourceManifestChecksum": "sha256:2921f0cfd111004b078f33b50b91efb053e5d81a661f9fc9473c9ff0e2dcbf8d",
+  "upstreamRevision": "47d639abffa882b8cbb641d7d1dedf08ecada9ec",
+  "sourceFileCount": 3714,
+  "marker": "bun-types",
+  "compilerChecksum": "sha256:35d20dd0263e5c950194434b925454fdfa9ba6e4467da960410fa05b08a7a5b5",
+  "importGraphs": [
+    { "dependencyScope": "client-command-imports", "inputGraphChecksum": "sha256:68bb9ab0c134b6fb5dc16ebf34921c2f1d89698e3930039d5da42c9d5cad962e" },
+    { "dependencyScope": "native-build-imports", "inputGraphChecksum": "sha256:1602c43eed46136ab3dc5f2ceaa0a6b13326063673bf9eaa5a11839ee6825636" },
+    { "dependencyScope": "node-browser-build-imports", "inputGraphChecksum": "sha256:6d600f4e0dadef2065bc4e3f31f25506da0df7e1d80289133a59be76d0446f7a" },
+    { "dependencyScope": "diagram-build-imports", "inputGraphChecksum": "sha256:6c90e83bd0548c8119fcc91ee4b90a8ddbe42769b612527a57d4e9133cfbd3b3" },
+    { "dependencyScope": "security-sidecar-build-imports", "inputGraphChecksum": "sha256:7d7e3260c41a4797187501c4e7ea4819e823296051d99d1362d3354f2b0140ef" }
+  ],
+  "references": [
+    { "path": "runtime/bun.lock", "checksum": "sha256:565c1dbb50a46756cb0414ca35c08b9fe145a3c26cfa80070c42204bfa5a9a44", "classification": "upstream-dependency-metadata" }
+  ],
+  "packages": [
+    {
+      "path": "node_modules/bun-types",
+      "name": "bun-types",
+      "version": "1.4.2",
+      "metadataChecksum": "sha256:3a84571e93b9af8e5503ea535a5deec9b7800513250a16eab43151988f10ba74",
+      "inventoryChecksum": "sha256:3be0dddf601f3d4950e25786649598438db2da24e1404fe87975d44bcee52bcd",
+      "fileCount": 368,
+      "sizeBytes": 2967599
+    }
+  ]
+}

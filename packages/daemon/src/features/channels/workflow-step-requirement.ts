@@ -5,6 +5,7 @@ import type {
 } from "@ling-stack/core";
 import {
   delegatedStepRequirementFingerprintV1,
+  isChannelIntentExecutionPlanV1,
   type DelegatedEvidenceRefKindV1,
   type DelegatedStepRequirementV1,
   type RequiredParticipantManifestV1,
@@ -87,12 +88,18 @@ export function createDelegatedStepRequirement(input: {
   const acceptedEvidenceKinds: readonly DelegatedEvidenceRefKindV1[] = input.participant.expectedOutcome === "synthesis"
     ? ["workflow_output_packet"]
     : ["execution_action"];
+  const plan = input.step.metadata?.executionPlan;
+  const typed = plan?.bindingVersion !== undefined || plan?.operations.some((operation) => operation.binding !== undefined);
+  if (typed && (!isChannelIntentExecutionPlanV1(plan) || plan.bindingVersion !== 1)) {
+    throw new HttpError(409, "operation_binding_fingerprint_invalid", "Cannot materialize a requirement from an invalid typed operation plan.");
+  }
   const value: Omit<DelegatedStepRequirementV1, "fingerprint"> = {
     schemaVersion: 1,
     workflowId: input.workflow.id,
     workflowStepId: input.step.id,
     participantId: input.step.toParticipantId,
     participantManifestFingerprint: input.manifestFingerprint,
+    ...(typed ? { executionPlanFingerprint: plan!.fingerprint } : {}),
     expectedOutcome: input.participant.expectedOutcome,
     requiredOperationIds: [...(input.step.metadata?.executionOperationIds ?? [])].sort(),
     requiredDependencyStepIds: [...(input.step.metadata?.dependsOnStepIds ?? [])].sort(),

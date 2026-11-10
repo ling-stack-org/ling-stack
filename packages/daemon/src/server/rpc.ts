@@ -1,11 +1,13 @@
 import type { Server } from "node:http";
 import type { Duplex } from "node:stream";
-import { DEFAULT_WORKSPACE_ID, redactSecrets, type ControlPlaneDomain, type ControlPlaneEvent, type RunEventEnvelope, type RunSession } from "@ling-stack/core";
+import { DEFAULT_WORKSPACE_ID, type ControlPlaneDomain, type ControlPlaneEvent, type RunEventEnvelope, type RunSession } from "@ling-stack/core";
 import type { ControlPlaneSubscribeResult } from "@ling-stack/contracts";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 import type { DaemonContext } from "../context.js";
+import { daemonRequestIsAuthorized } from "./request-auth.js";
 import { maybeScheduleRunTerminalReport } from "../features/channels/terminal-report-coordinator.js";
 import { ensureRunCancelled } from "../features/runs/cancellation.js";
+import { HttpError } from "../errors.js";
 import {
   CONTROL_PLANE_POLL_DEFAULT_LIMIT,
   CONTROL_PLANE_POLL_MAX_LIMIT,
@@ -23,7 +25,9 @@ import {
 } from "../features/control-plane/processors.js";
 import { executeRunRequest, type RunExecutionSink } from "../features/runs/orchestrator.js";
 import { parseRunRequest } from "../features/runs/schemas.js";
+import { projectPublicRunSession } from "../features/runs/public-execution-snapshots.js";
 import { maybeQueueGoalContinuation, maybeStartNextRunInterventionContinuation } from "../features/runs/interventions.js";
+import { RpcOutboundWriter, type RpcOutboundFrame } from "./rpc-outbound.js";
 
 type JsonRpcId = string | number | null;
 
@@ -39,9 +43,11 @@ interface RpcSubscription {
   readonly cwd: string;
   readonly domains: readonly ControlPlaneDomain[];
   readonly closeHub: () => void;
-  readonly queue: ControlPlaneEvent[];
+  readonly queue: { readonly event: ControlPlaneEvent; readonly frame: RpcOutboundFrame }[];
+  readonly upstreamKey: string;
+  readonly queueKey: string;
+  closed: boolean;
   flushTimer?: NodeJS.Timeout;
-  overLimitFlushes: number;
 }
 
 export interface RpcWebSocketServerHandle {
@@ -58,6 +64,10 @@ export function attachRpcWebSocketServer(server: Server, context: DaemonContext)
     }
     if (!context.config.transports.localWebSocketRpc) {
       rejectUpgrade(socket, 404, "WebSocket RPC transport is disabled");
+      return;
+    }
+    if (!daemonRequestIsAuthorized(context.config.authToken, request.headers.authorization)) {
+      rejectUpgrade(socket, 401, "A valid bearer token is required for WebSocket RPC access.");
       return;
     }
     if (!url.searchParams.get("cwd")) {
@@ -91,25 +101,31 @@ export function attachRpcWebSocketServer(server: Server, context: DaemonContext)
 
 class RpcConnection {
   private readonly subscriptions = new Map<string, RpcSubscription>();
+  private readonly outbound: RpcOutboundWriter;
+  private readonly runCloseListeners = new Set<() => void>();
   private nextSubscriptionId = 1;
   private initialized = false;
   private closed = false;
+  private readonly onMessage = (data: RawData): void => { void this.handleMessage(data); };
+  private readonly onConnectionClose = (): void => this.close();
+  private readonly onConnectionError = (): void => this.close();
 
   constructor(
     private readonly ws: WebSocket,
     private readonly defaultCwd: string,
     private readonly context: DaemonContext,
-  ) {}
+  ) {
+    this.outbound = new RpcOutboundWriter(ws, { onClose: () => this.close() });
+  }
 
   start(): void {
-    this.ws.on("message", (data) => {
-      void this.handleMessage(data);
-    });
-    this.ws.on("close", () => this.close());
-    this.ws.on("error", () => this.close());
+    this.ws.on("message", this.onMessage);
+    this.ws.on("close", this.onConnectionClose);
+    this.ws.on("error", this.onConnectionError);
   }
 
   private async handleMessage(data: RawData): Promise<void> {
+    if (this.closed) return;
     const request = parseJsonRpcRequest(data);
     if (!request) {
       this.sendError(null, -32700, "parse_error", "Request must be a JSON-RPC object.");
@@ -131,8 +147,7 @@ class RpcConnection {
           throw rpcError(-32600, "subscription_response_required", "controlPlane.subscribe requires a request id.");
         }
         const prepared = this.prepareControlPlaneSubscription(request.params);
-        this.send({ jsonrpc: "2.0", id, result: prepared.result });
-        prepared.activate?.();
+        if (this.send({ jsonrpc: "2.0", id, result: prepared.result })) prepared.activate?.();
         return;
       }
       const result = await this.dispatch(request.method, request.params);
@@ -225,18 +240,29 @@ class RpcConnection {
       domains: parsed.domains,
       closeHub: () => hubSubscription?.close(),
       queue: [],
-      overLimitFlushes: 0,
+      upstreamKey: `${subscriptionId}:hub`,
+      queueKey: `${subscriptionId}:queue`,
+      closed: false,
     };
+    // Register before replay can synchronously publish provisional events or close us.
+    this.subscriptions.set(subscriptionId, subscription);
     try {
       hubSubscription = this.context.controlPlaneEvents.subscribeListener({
         workspaceId: DEFAULT_WORKSPACE_ID,
         cwd: parsed.cwd,
         domains: parsed.domains,
         onEvent: (event) => this.enqueueControlPlaneEvent(subscription, event),
+        onPendingChange: (bytes, count) => this.outbound.reserve(subscription.upstreamKey,
+          bytes + count * controlPlaneEnvelopeBytes(subscription.id), count),
+        onOverflow: () => this.outbound.close(1013, "slow_client_disconnect"),
       });
+      if (this.closed || subscription.closed) {
+        hubSubscription.close();
+        throw rpcError(-32000, "connection_closed", "The outbound connection is closed.");
+      }
       const replay = listControlPlaneEventsForResponse(this.context, parsed);
       if (replay.window.disposition === "snapshot_required") {
-        hubSubscription.close();
+        this.closeSubscription(subscription);
         return {
           result: {
             disposition: "snapshot_required",
@@ -244,7 +270,6 @@ class RpcConnection {
           },
         };
       }
-      this.subscriptions.set(subscriptionId, subscription);
       return {
         result: {
           disposition: "complete",
@@ -254,8 +279,7 @@ class RpcConnection {
         activate: () => hubSubscription?.activate(replay.events),
       };
     } catch (error) {
-      hubSubscription?.close();
-      this.subscriptions.delete(subscriptionId);
+      this.closeSubscription(subscription);
       throw error;
     }
   }
@@ -272,14 +296,21 @@ class RpcConnection {
 
   private startRun(params: unknown): unknown {
     const runRequest = parseRunRequest(params);
+    let runCloseListener: (() => void) | undefined;
     const sink = createRpcRunExecutionSink({
       onReady: (data) => this.sendRunNotification({ kind: "ready", data }),
       onEvent: (event, data) => this.sendRunNotification({ kind: "event", event, data }),
       onError: (statusCode, body) => this.sendRunNotification({ kind: "error", statusCode, body }),
-      onEnd: () => this.sendRunNotification({ kind: "end" }),
+      onEnd: () => {
+        if (runCloseListener) this.runCloseListeners.delete(runCloseListener);
+        this.sendRunNotification({ kind: "end" });
+      },
       isClosed: () => this.closed || this.ws.readyState !== WebSocket.OPEN,
       onClose: (listener) => {
-        this.ws.once("close", listener);
+        // Transport detachment suppresses notifications only; it never aborts a Run.
+        runCloseListener = listener;
+        if (this.closed) listener();
+        else this.runCloseListeners.add(listener);
       },
     });
     void executeRunRequest(
@@ -296,6 +327,7 @@ class RpcConnection {
         controlPlaneEvents: this.context.controlPlaneEvents,
         startupState: this.context.startupState,
         computerUsePreviews: this.context.computerUsePreviews,
+        nativeRunDispatcher: this.context.nativeRunDispatcher,
       },
     );
     return { accepted: true };
@@ -311,27 +343,34 @@ class RpcConnection {
       throw rpcError(-32004, "run_not_found", "Run was not found in the active daemon stores.");
     }
     if (run.status === "cancelled") {
-      return { cancelled: true, active: false, run };
+      return { cancelled: true, active: false, run: projectPublicRunSession(run, store) };
     }
     if (run.status === "succeeded" || run.status === "failed") {
       throw rpcError(-32009, "run_not_cancellable", `Run ${runId} is already ${run.status}.`);
     }
     const activeRun = this.context.activeRuns.get(runId);
-    const cancelled = ensureRunCancelled({
-      store,
-      runId,
-      taskId: run.taskId,
-      startedAt: run.startedAt,
-      reason: "user_requested",
-      active: Boolean(activeRun),
-      streamEnvelope: activeRun?.streamEnvelope,
-    });
-    activeRun?.abortController.abort();
+    let cancelled: ReturnType<typeof ensureRunCancelled>;
+    try {
+      cancelled = ensureRunCancelled({
+        store,
+        runId,
+        taskId: run.taskId,
+        startedAt: run.startedAt,
+        reason: "user_requested",
+        active: Boolean(activeRun),
+        streamEnvelope: activeRun?.streamEnvelope,
+      });
+    } catch (error) {
+      if (error instanceof HttpError && error.statusCode === 409) throw rpcError(-32009, error.code, error.message);
+      throw error;
+    }
+    if (!cancelled.inputWait) activeRun?.abortController.abort();
     return {
       cancelled: true,
-      active: Boolean(activeRun),
-      run: store.getRun(runId),
+      active: !cancelled.inputWait && Boolean(activeRun),
+      run: projectPublicRunSession(store.getRun(runId), store),
       event: cancelled.event,
+      ...(cancelled.inputWait ? { inputWait: cancelled.inputWait } : {}),
     };
   }
 
@@ -362,16 +401,29 @@ class RpcConnection {
       controlPlaneEvents: this.context.controlPlaneEvents,
       startupState: this.context.startupState,
       computerUsePreviews: this.context.computerUsePreviews,
+      nativeRunDispatcher: this.context.nativeRunDispatcher,
     });
   }
 
   private enqueueControlPlaneEvent(subscription: RpcSubscription, event: ControlPlaneEvent): void {
-    if (this.closed) {
+    if (this.closed || subscription.closed) {
       return;
     }
-    subscription.queue.push(event);
+    const frame = this.outbound.prepare(controlPlaneNotification(subscription.id, event));
+    if (!frame) return;
+    subscription.queue.push({ event, frame });
     if (subscription.queue.length >= CONTROL_PLANE_SSE_QUEUE_WARNING_THRESHOLD) {
-      coalesceControlPlaneQueue(subscription.queue);
+      const coalesced = coalesceAndSortControlPlaneEvents(subscription.queue.map(pending => pending.event));
+      subscription.queue.length = 0;
+      for (const merged of coalesced) {
+        const mergedFrame = this.outbound.prepare(controlPlaneNotification(subscription.id, merged));
+        if (!mergedFrame) return;
+        subscription.queue.push({ event: merged, frame: mergedFrame });
+      }
+    }
+    if (subscription.queue.length > CONTROL_PLANE_SSE_QUEUE_HARD_LIMIT || !this.reserveSubscriptionQueue(subscription)) {
+      this.outbound.close(1013, "slow_client_disconnect");
+      return;
     }
     if (subscription.flushTimer) {
       return;
@@ -383,43 +435,19 @@ class RpcConnection {
   }
 
   private flushControlPlaneSubscription(subscription: RpcSubscription): void {
-    if (this.closed) {
+    if (this.closed || subscription.closed) {
       return;
     }
-    if (subscription.queue.length > CONTROL_PLANE_SSE_QUEUE_HARD_LIMIT) {
-      coalesceControlPlaneQueue(subscription.queue);
-      subscription.overLimitFlushes += 1;
-      if (subscription.queue.length > CONTROL_PLANE_SSE_QUEUE_HARD_LIMIT && subscription.overLimitFlushes >= 2) {
-        this.send({
-          jsonrpc: "2.0",
-          method: "$/control_plane_event",
-          params: {
-            subscriptionId: subscription.id,
-            slowClientDisconnect: true,
-            reason: "control-plane stream client could not keep up",
-            queued: subscription.queue.length,
-          },
-        });
-        this.ws.close(1013, "slow_client_disconnect");
-        return;
-      }
-    } else {
-      subscription.overLimitFlushes = 0;
+    while (subscription.queue.length > 0 && !this.closed && !subscription.closed) {
+      const pending = subscription.queue.shift()!;
+      // Synchronous ownership transfer: do not count the same frame in both queues.
+      if (!this.reserveSubscriptionQueue(subscription) || !this.outbound.enqueue(pending.frame, subscription.id)) return;
     }
-    while (subscription.queue.length > 0) {
-      const event = subscription.queue.shift();
-      if (!event) {
-        continue;
-      }
-      this.send({
-        jsonrpc: "2.0",
-        method: "$/control_plane_event",
-        params: {
-          subscriptionId: subscription.id,
-          event,
-        },
-      });
-    }
+  }
+
+  private reserveSubscriptionQueue(subscription: RpcSubscription): boolean {
+    return this.outbound.reserve(subscription.queueKey,
+      subscription.queue.reduce((bytes, pending) => bytes + pending.frame.bytes, 0), subscription.queue.length);
   }
 
   private sendRunNotification(params: unknown): void {
@@ -438,11 +466,8 @@ class RpcConnection {
     });
   }
 
-  private send(value: unknown): void {
-    if (this.closed || this.ws.readyState !== WebSocket.OPEN) {
-      return;
-    }
-    this.ws.send(JSON.stringify(redactSecrets(value)));
+  private send(value: unknown): boolean {
+    return !this.closed && this.outbound.send(value);
   }
 
   private close(): void {
@@ -450,16 +475,29 @@ class RpcConnection {
       return;
     }
     this.closed = true;
+    this.ws.off("message", this.onMessage);
+    this.ws.off("close", this.onConnectionClose);
+    this.ws.off("error", this.onConnectionError);
     for (const subscription of [...this.subscriptions.values()]) {
       this.closeSubscription(subscription);
     }
+    for (const listener of this.runCloseListeners) listener();
+    this.runCloseListeners.clear();
+    this.outbound.close();
   }
 
   private closeSubscription(subscription: RpcSubscription): void {
+    if (subscription.closed) return;
+    subscription.closed = true;
     subscription.closeHub();
     if (subscription.flushTimer) {
       clearTimeout(subscription.flushTimer);
     }
+    subscription.flushTimer = undefined;
+    subscription.queue.length = 0;
+    this.outbound.reserve(subscription.upstreamKey, 0, 0);
+    this.outbound.reserve(subscription.queueKey, 0, 0);
+    this.outbound.cancelGroup(subscription.id);
     this.subscriptions.delete(subscription.id);
   }
 }
@@ -485,7 +523,7 @@ function createRpcRunExecutionSink(input: {
 
 function rejectUpgrade(socket: Duplex, statusCode: number, message: string): void {
   socket.write([
-    `HTTP/1.1 ${statusCode} ${statusCode === 400 ? "Bad Request" : "Not Found"}`,
+    `HTTP/1.1 ${statusCode} ${statusCode === 401 ? "Unauthorized" : statusCode === 400 ? "Bad Request" : "Not Found"}`,
     "Connection: close",
     "Content-Type: text/plain; charset=utf-8",
     `Content-Length: ${Buffer.byteLength(message)}`,
@@ -607,8 +645,12 @@ function normalizeRpcError(error: unknown): { readonly jsonRpcCode: number; read
   };
 }
 
-function coalesceControlPlaneQueue(queue: ControlPlaneEvent[]): void {
-  queue.splice(0, queue.length, ...coalesceAndSortControlPlaneEvents(queue));
+function controlPlaneNotification(subscriptionId: string, event: ControlPlaneEvent): unknown {
+  return { jsonrpc: "2.0", method: "$/control_plane_event", params: { subscriptionId, event } };
+}
+
+function controlPlaneEnvelopeBytes(subscriptionId: string): number {
+  return Buffer.byteLength(JSON.stringify({ jsonrpc: "2.0", method: "$/control_plane_event", params: { subscriptionId } }), "utf8") + 16;
 }
 
 function readRunWorkspaceCwd(run: RunSession): string | undefined {

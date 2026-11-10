@@ -25,7 +25,7 @@ test("1440x960 Ling Light keeps all Runtime task-strip heads aligned and token-o
   await expectUsesSemanticToken(
     heads.first().locator("strong"),
     "color",
-    "--text-strong",
+    "--ling-text-strong",
   );
 
   await expectNoHorizontalOverflow(inspector);
@@ -51,12 +51,12 @@ test("1280x800 Ling Dark covers Protocol, Routing, focus containment, long text,
   await expectUsesSemanticToken(
     protocolHeads.first().locator("strong"),
     "color",
-    "--text-strong",
+    "--ling-text-strong",
   );
   await expectUsesSemanticToken(
     protocol.locator(".protocol-row").first(),
     "border-top-color",
-    "--border",
+    "--ling-border-default",
   );
 
   const select = protocol.getByRole("combobox", { name: "AI response language" });
@@ -76,7 +76,7 @@ test("1280x800 Ling Dark covers Protocol, Routing, focus containment, long text,
   await expectUsesSemanticToken(
     routing.locator(".task-strip-head strong"),
     "color",
-    "--text-strong",
+    "--ling-text-strong",
   );
 
   const dock = page.getByRole("complementary", { name: "Channel workspace dock" });
@@ -104,7 +104,7 @@ test("1440x960 imported Quiet Ocean owns Runtime text and boundaries without ove
   await expectUsesSemanticToken(
     heads.first().locator("strong"),
     "color",
-    "--text-strong",
+    "--ling-text-strong",
   );
 
   await openInspectorMode(page, "Protocol");
@@ -112,7 +112,7 @@ test("1440x960 imported Quiet Ocean owns Runtime text and boundaries without ove
   await expectUsesSemanticToken(
     protocol.locator(".protocol-row").first(),
     "border-top-color",
-    "--border",
+    "--ling-border-default",
   );
   await expectNoHorizontalOverflow(protocol);
   await expectNoDocumentOverflow(page);
@@ -182,7 +182,7 @@ async function expectTaskStripHeadContract(heads: Locator, expectedCount: number
 async function expectUsesSemanticToken(
   locator: Locator,
   property: "border-top-color" | "color",
-  token: "--border" | "--text-strong",
+  token: "--ling-border-default" | "--ling-text-strong",
 ): Promise<void> {
   await expect(locator).toBeVisible();
   const result = await locator.evaluate((element, input) => {

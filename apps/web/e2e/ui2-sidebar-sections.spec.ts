@@ -18,7 +18,7 @@ test("Sidebar sections preserve geometry while channels and teammates load", asy
   await delayCollectionReads(page, 2_500);
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   const channelHeaderStatus = navigation.locator('[data-sidebar-section="channels"] .sidebar-section-status');
   const teammateHeaderStatus = navigation.locator('[data-sidebar-section="teammates"] .sidebar-section-status');
   await expect(channelHeaderStatus.getByRole("status", { name: "Loading channels..." })).toHaveCount(0);
@@ -30,7 +30,7 @@ test("Sidebar sections preserve geometry while channels and teammates load", asy
   await expect(navigation.locator(".sidebar-section-skeleton-row")).toHaveCount(5);
   await captureEvidence(page, "1440x960-ling-light-loading.png");
 
-  await expect(navigation.getByRole("button", { name: "Engineering" })).toBeVisible({ timeout: 5_000 });
+  await expect(navigation.getByRole("button", { name: "Engineering", exact: true })).toBeVisible({ timeout: 5_000 });
   await expect(navigation.getByRole("button", { name: "Designer", exact: true })).toBeVisible();
   await expect(navigation.locator(".sidebar-section-skeleton-row")).toHaveCount(0);
   const channelsToggle = navigation.getByRole("button", { name: "Channels" });
@@ -62,15 +62,19 @@ test("Sidebar disclosure supports keyboard, rapid reversal, stale state, and red
   await prepareSurface(page, "dark", 1280, 800);
   await page.emulateMedia({ reducedMotion: "reduce" });
   const state = createBaseState({ approvalStatus: "expired" });
+  state.channels = [];
   state.aiTeammates = [createMockTeammate({ id: "teammate_stale", displayName: "Designer" })];
   await mockDaemon(page, state, { healthResponses: [false, false, false, false] });
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   const channelsToggle = navigation.getByRole("button", { name: "Channels" });
   await expect(navigation.getByRole("status", { name: "Channels: Stale" })).toBeVisible();
   await expect(navigation.getByRole("status", { name: "AI Teammates: Stale" })).toBeVisible();
   await expect(channelsToggle).toHaveAttribute("aria-expanded", "true");
+
+  await expect(navigation.getByRole("button", { name: "No channel yet" })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "Engineering", exact: true })).toHaveCount(0);
 
   const content = navigation.locator('[data-sidebar-section="channels"] [data-ling-collapsible-content]');
   await expect(content).toHaveCSS("animation-duration", "0s");

@@ -66,8 +66,8 @@ test("tool load requests materialize catalog summary without changing execution 
   });
 
   try {
-    const fixture = seedToolSurfaceFixture(store, cwd);
     await daemon.start();
+    const fixture = seedToolSurfaceFixture(store, cwd);
     const baseUrl = serverBaseUrl(daemon);
 
     const response = await postJson(
@@ -138,6 +138,9 @@ test("runner tool hydration returns runner-only tool schemas and bounded runtime
     const run = store.getRun(fixture.runId);
     const response = hydrateRunnerToolSurface({
       store,
+      sourceFence: { workUnitId: fixture.workUnitId, attemptId: fixture.attemptId,
+        runtimeInstanceId: store.getWorkUnitAttempt(fixture.attemptId).runtimeInstanceId,
+        fencingToken: store.getWorkUnitAttempt(fixture.attemptId).fencingToken },
       runnerRegistry: {
         list: () => [{
           id: "pi",
@@ -194,6 +197,9 @@ test("runner tool hydration writes bounded rejection evidence without schemas", 
     const run = store.getRun(fixture.runId);
     const response = hydrateRunnerToolSurface({
       store,
+      sourceFence: { workUnitId: fixture.workUnitId, attemptId: fixture.attemptId,
+        runtimeInstanceId: store.getWorkUnitAttempt(fixture.attemptId).runtimeInstanceId,
+        fencingToken: store.getWorkUnitAttempt(fixture.attemptId).fencingToken },
       runnerRegistry: {
         list: () => [{
           id: "pi",
@@ -250,9 +256,9 @@ test("tool load requests reject over-budget namespace materialization before run
   });
 
   try {
+    await daemon.start();
     const fixture = seedToolSurfaceFixture(store, cwd);
     seedManyToolServer(store, 65);
-    await daemon.start();
     const baseUrl = serverBaseUrl(daemon);
 
     const response = await postJsonResponse(
@@ -275,6 +281,40 @@ test("tool load requests reject over-budget namespace materialization before run
       event.type === "tool_namespace_materialized" || event.type === "tool_hydration_rejected").length, 0);
     const errorJson = JSON.stringify(response.body);
     assert.doesNotMatch(errorJson, /inputSchema|over-budget-secret|load-too-many-tools|schema-secret-marker/);
+  } finally {
+    await daemon.stop();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("tool load requests reject a source whose execution owner was retired during startup recovery", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-tool-load-stale-owner-"));
+  const store = createSqliteRunStore(cwd);
+  const daemon = createDaemonServer({
+    host: "127.0.0.1",
+    port: 0,
+    defaultWorkspaceCwd: cwd,
+  }, {
+    runner: new NoopRunner(),
+    storeFactory: () => store,
+  });
+
+  try {
+    const fixture = seedToolSurfaceFixture(store, cwd);
+    await daemon.start();
+    const response = await postJsonResponse(
+      `${serverBaseUrl(daemon)}/runs/${encodeURIComponent(fixture.runId)}/tool-load-requests?cwd=${encodeURIComponent(cwd)}`,
+      {
+        scope: { kind: "namespace", namespaceId: "mcp:mcp_files" },
+        reason: "must not hydrate after recovery retired the owner",
+        idempotencyKey: "stale-owner-tool-load",
+      },
+    );
+
+    assert.equal(response.status, 409);
+    assert.equal(response.body.error, "tool_materialization_denied");
+    assert.equal(store.listRuntimeEvents(fixture.workUnitId, { limit: 10 }).some((event) =>
+      event.type === "tool_namespace_materialized" || event.type === "tool_hydration_rejected"), false);
   } finally {
     await daemon.stop();
     await rm(cwd, { recursive: true, force: true });
@@ -374,14 +414,18 @@ function seedToolSurfaceFixture(store, cwd) {
     cwd,
     taskId: "task_tool_surface",
     providerPresetId: provider.id,
-    providerName: "test-provider",
-    providerModel: "test-model",
+    providerName: provider.providerId,
+    providerModel: provider.model,
     taskSnapshot: {},
-    providerSnapshot: {},
+    providerSnapshot: {
+      providerPresetId: provider.id, provider: provider.providerId, model: provider.model, api: provider.api,
+      contextWindow: provider.contextWindow, maxTokens: provider.maxTokens,
+    },
     requestSnapshot: {},
     workUnitId: workUnit.id,
     createdAt: "2026-06-19T04:00:04.000Z",
   });
+  store.linkRunToWorkUnit("run_tool_surface", workUnit.id, now);
   return {
     runId: "run_tool_surface",
     workUnitId: workUnit.id,

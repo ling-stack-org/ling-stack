@@ -17,6 +17,14 @@ import {
   type ProviderModelCapabilitySnapshot,
 } from "@ling-stack/core/provider-model-capabilities";
 import { providerWorkbenchReady } from "./provider-workbench-readiness.js";
+import {
+  formatProviderModelRouteLabel,
+  providerCompactModelLabel,
+  providerDisplaySourceLabel,
+} from "./provider-model-labels.js";
+
+export { providerCompactModelLabel, providerDisplaySourceLabel } from "./provider-model-labels.js";
+export { providerFormWithSelectedModel } from "./provider-model-selection.js";
 
 type ProviderTranslate = (key: string, values?: Readonly<Record<string, string | number>>) => string;
 
@@ -286,29 +294,6 @@ function formatSecretHeaderRefsInput(value: string): Record<string, string> | un
   return Object.keys(refs).length > 0 ? refs : undefined;
 }
 
-export function providerFormWithSelectedModel(
-  form: ProviderFormState,
-  model: ProviderModelOption,
-  sourceForm?: ProviderFormState,
-): { readonly form: ProviderFormState; readonly notice?: string } {
-  const baseForm = sourceForm ?? form;
-	  const nextForm = {
-	    ...baseForm,
-	    model: model.id,
-	    api: model.api ?? baseForm.api,
-	    capabilitiesText: model.capabilities?.length ? model.capabilities.join(", ") : baseForm.capabilitiesText,
-	    inputText: model.input?.length ? model.input.join(", ") : baseForm.inputText,
-	    reasoning: model.thinkingModes?.some((mode) => mode !== "off") ?? baseForm.reasoning,
-	    thinkingModes: model.thinkingModes ?? baseForm.thinkingModes,
-	    contextWindow: model.contextWindow ? String(model.contextWindow) : baseForm.contextWindow,
-	    maxTokens: model.maxTokens ? String(model.maxTokens) : baseForm.maxTokens,
-	  };
-  if (sourceForm) {
-    return { form: nextForm };
-  }
-  return { form: nextForm };
-}
-
 export function normalizeProviderModelForImport(
   model: ProviderModelOption,
   form: Pick<ProviderFormState, "api" | "kind" | "providerId" | "capabilitiesText" | "inputText">,
@@ -519,8 +504,9 @@ export function providerModelRouteLabel(
   provider: ProviderPreset,
   templates: readonly ProviderTemplate[] = [],
 ): string {
+  const modelLabel = providerCompactModelLabel(provider);
   const routeLabel = providerRouteShortLabel(provider, templates);
-  return routeLabel ? `${provider.model} · ${routeLabel}` : provider.model;
+  return formatProviderModelRouteLabel(modelLabel, routeLabel);
 }
 
 export function providerRouteShortLabel(
@@ -900,6 +886,9 @@ export function providerModelDiscoveryErrorMessage(error: unknown, t?: ProviderT
   if (normalized.includes("api key missing") || normalized.includes("secret_missing")) {
     return translateProviderText(t, "API key missing. Add an API key before fetching models.");
   }
+  if (normalized.includes("provider_model_connection_changed")) {
+    return translateProviderText(t, "Save the provider connection changes or enter the API key again before fetching models.");
+  }
   if (normalized.includes("auth_failed") || normalized.includes("401") || normalized.includes("403")) {
     return translateProviderText(t, "The API key was rejected. Check the key and account permission, then try again.");
   }
@@ -967,19 +956,6 @@ function providerEndpointHost(value: string): string {
   } catch {
     return "";
   }
-}
-
-function providerDisplaySourceLabel(displayName: string, model: string): string {
-  const trimmedDisplayName = displayName.trim();
-  const trimmedModel = model.trim();
-  if (!trimmedDisplayName || !trimmedModel) {
-    return trimmedDisplayName;
-  }
-  const suffixes = [` · ${trimmedModel}`, ` / ${trimmedModel}`, ` - ${trimmedModel}`];
-  const matchingSuffix = suffixes.find((suffix) => trimmedDisplayName.toLowerCase().endsWith(suffix.toLowerCase()));
-  return matchingSuffix
-    ? trimmedDisplayName.slice(0, -matchingSuffix.length).trim()
-    : trimmedDisplayName;
 }
 
 function translateProviderText(

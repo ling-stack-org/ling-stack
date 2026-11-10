@@ -90,10 +90,10 @@
   max-height: min(720px, calc(100dvh - 86px));
   overflow: auto;
   padding: 14px;
-  border: 1px solid var(--ling-border-default);
-  border-radius: var(--ling-radius-lg);
-  background: var(--ling-bg-panel);
-  box-shadow: var(--ling-shadow-overlay);
+  border: 1px solid var(--ling-overlay-border);
+  border-radius: var(--ling-overlay-radius);
+  background: var(--ling-overlay-bg);
+  box-shadow: var(--ling-overlay-shadow);
   opacity: 1;
   transform: translate3d(0, 0, 0) scale(1);
   transform-origin: top right;

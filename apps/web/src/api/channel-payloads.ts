@@ -1,10 +1,9 @@
 import type {
-  ChannelFormState,
   CreateChannelRequest,
-  TaskEditFormState,
   UpdateChannelRequest,
   UpdateTaskRequest,
-} from "../types.js";
+} from "@ling-stack/contracts";
+import type { ChannelFormState, TaskEditFormState } from "../types.js";
 import { isRunnerTool } from "./shared.js";
 
 export function channelFormToPayload(form: ChannelFormState): CreateChannelRequest {

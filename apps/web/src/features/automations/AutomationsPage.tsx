@@ -27,6 +27,7 @@ import { AutomationListPane } from "./AutomationListPane.js";
 import { AutomationScheduleDialog } from "./AutomationScheduleDialog.js";
 import { AutomationSchedulerSummary } from "./AutomationSchedulerSummary.js";
 import { AutomationWorkbenchHeader } from "./AutomationWorkbenchHeader.js";
+import { useDesktopTitlebarPlacement } from "../../app/DesktopTitlebarSurface.js";
 import { useAutomationsPageController } from "./useAutomationsPageController.js";
 
 export interface AutomationsPageProps {
@@ -75,6 +76,7 @@ export interface AutomationsPageProps {
 }
 
 export function AutomationsPage(props: AutomationsPageProps): React.JSX.Element {
+  const titlebarPlacement = useDesktopTitlebarPlacement();
   const { t } = useI18n();
   const { showToast } = useLingToast();
   const controller = useAutomationsPageController({
@@ -93,6 +95,7 @@ export function AutomationsPage(props: AutomationsPageProps): React.JSX.Element 
   const selectedDraftViewModel = controller.draftViewModels.find((item) => item.draft.id === props.selectedDraftId);
   const selectedAutomationAction = selectedAutomationViewModel ? props.automationActionById[selectedAutomationViewModel.automation.id] : undefined;
   const selectedAutomationError = selectedAutomationViewModel ? props.automationErrorById[selectedAutomationViewModel.automation.id] ?? "" : "";
+  const hasInspector = Boolean(selectedAutomationViewModel || selectedDraftViewModel);
 
   async function runAutomation(automationId: string): Promise<void> {
     if (await props.onRun(automationId)) showToast({ message: t("Automation run"), scope: `automation:run:${automationId}`, tone: "success" });
@@ -135,7 +138,7 @@ export function AutomationsPage(props: AutomationsPageProps): React.JSX.Element 
   }
 
   return (
-    <div className="automations-inbox-page automation-ui2-page" data-automation-ui2-page>
+    <div className={`automations-inbox-page automation-ui2-page titlebar-${titlebarPlacement}`} data-automation-ui2-page>
       <AutomationWorkbenchHeader
         disabled={!props.cwd.trim()}
         summary={controller.summary}
@@ -156,7 +159,7 @@ export function AutomationsPage(props: AutomationsPageProps): React.JSX.Element 
           <Button size="sm" variant="secondary" onClick={() => void props.onRefresh()}>{t("Retry")}</Button>
         </InlineFeedback>
       ) : null}
-      <main className="automation-ui2-main" aria-labelledby="automations-title">
+      <main className={`automation-ui2-main${hasInspector ? " has-inspector" : ""}`} aria-labelledby="automations-title">
         <AutomationListPane
           activeTab={controller.activeTab}
           automationActionById={props.automationActionById}
@@ -193,29 +196,31 @@ export function AutomationsPage(props: AutomationsPageProps): React.JSX.Element 
           onStatusChange={(automationId, status) => void setStatus(automationId, status)}
           onTabChange={controller.setActiveTab}
         />
-        <AutomationExecutionInspector
-          action={selectedAutomationAction}
-          automationViewModel={selectedAutomationViewModel}
-          channels={props.channels}
-          cwd={props.cwd}
-          draftViewModel={selectedDraftViewModel}
-          error={selectedAutomationError}
-          latestRun={controller.selectedLatestRun}
-          preview={selectedAutomationViewModel
-            ? props.previewByAutomationId[selectedAutomationViewModel.automation.id]
-            : selectedDraftViewModel
-              ? props.draftPreviewById[selectedDraftViewModel.draft.id]
-              : undefined}
-          t={t}
-          threads={controller.threads}
-          onOpenRun={props.onOpenRun}
-          onOpenThread={props.onOpenThread}
-          onPreview={(automationId) => void props.onPreview(automationId)}
-          onRepairTarget={(automationId, target) => void props.onSetTarget(automationId, target).then((automation) => {
-            if (automation) showToast({ message: t("Saved"), scope: `automation:target:${automationId}`, tone: "success" });
-          })}
-          onRun={(automationId) => void runAutomation(automationId)}
-        />
+        {hasInspector ? (
+          <AutomationExecutionInspector
+            action={selectedAutomationAction}
+            automationViewModel={selectedAutomationViewModel}
+            channels={props.channels}
+            cwd={props.cwd}
+            draftViewModel={selectedDraftViewModel}
+            error={selectedAutomationError}
+            latestRun={controller.selectedLatestRun}
+            preview={selectedAutomationViewModel
+              ? props.previewByAutomationId[selectedAutomationViewModel.automation.id]
+              : selectedDraftViewModel
+                ? props.draftPreviewById[selectedDraftViewModel.draft.id]
+                : undefined}
+            t={t}
+            threads={controller.threads}
+            onOpenRun={props.onOpenRun}
+            onOpenThread={props.onOpenThread}
+            onPreview={(automationId) => void props.onPreview(automationId)}
+            onRepairTarget={(automationId, target) => void props.onSetTarget(automationId, target).then((automation) => {
+              if (automation) showToast({ message: t("Saved"), scope: `automation:target:${automationId}`, tone: "success" });
+            })}
+            onRun={(automationId) => void runAutomation(automationId)}
+          />
+        ) : null}
       </main>
 
       <AutomationCreateDialog

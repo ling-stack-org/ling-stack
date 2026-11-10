@@ -1,3 +1,4 @@
+import type { ApprovalRequest } from "./approval-types.js";
 import type { ExecutionAction, RunArtifact, RunEventEnvelope, RunIntervention, RunSession } from "./run-types.js";
 import type { RuntimeEvent } from "./runtime-supervisor-types.js";
 import type { StateTransitionEvent } from "./channel-runtime-types.js";
@@ -31,16 +32,24 @@ export type LingTraceStatus =
   | "queued"
   | "running"
   | "waiting_for_approval"
+  | "waiting_for_input"
+  | "yielded"
   | "succeeded"
   | "failed"
   | "cancelled"
   | "skipped";
+
+/** Coverage describes the action projection, never a guarantee of physical process termination. */
+export type LingTraceEvidenceCoverage =
+  | { readonly source: "execution_action"; readonly completeness: "complete" }
+  | { readonly source: "raw_event_fallback"; readonly completeness: "partial" };
 
 export interface LingTraceRefs {
   readonly threadId?: string;
   readonly runId?: string;
   readonly workUnitId?: string;
   readonly attemptId?: string;
+  readonly participantId?: string;
   readonly workflowId?: string;
   readonly workflowStepId?: string;
   readonly approvalId?: string;
@@ -76,6 +85,8 @@ export interface LingTraceSpan {
   readonly endedAt?: string;
   readonly status: LingTraceStatus;
   readonly refs: LingTraceRefs;
+  /** Tool/external-action spans always declare their fact source and coverage. */
+  readonly evidenceCoverage?: LingTraceEvidenceCoverage;
   readonly summary?: string;
   readonly redactedAttributes?: Readonly<Record<string, unknown>>;
 }
@@ -93,6 +104,7 @@ export interface ProjectLingTraceInput {
   readonly runtimeEventsByWorkUnitId?: Readonly<Record<string, readonly RuntimeEvent[]>>;
   readonly artifacts?: readonly RunArtifact[];
   readonly executionActions?: readonly ExecutionAction[];
+  readonly approvals?: readonly ApprovalRequest[];
   readonly transitions?: readonly StateTransitionEvent[];
   readonly interventions?: readonly RunIntervention[];
   readonly generatedAt?: string;

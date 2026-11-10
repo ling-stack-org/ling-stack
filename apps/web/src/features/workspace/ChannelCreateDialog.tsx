@@ -2,6 +2,7 @@ import { Check, ChevronDown, Folder, FolderOpen, Loader2, Plus, Search, UserPlus
 import { useEffect, useMemo, useRef, useState } from "react";
 import { selectWorkspaceDirectory } from "../../api/workspace-directory.js";
 import { useI18n } from "../../i18n.js";
+import { SupportedLocaleOptions } from "../../i18n/SupportedLocaleOptions.js";
 import { canUseConversationProvider, providerPreflightReady } from "../../lib/providers.js";
 import { DialogSection } from "../../shared/components/index.js";
 import {
@@ -211,6 +212,13 @@ export function ChannelCreateDialog({
         className="channel-create-dialog channel-create-dialog-clean"
         overlayClassName="channel-create-overlay"
         size="lg"
+        onKeyDown={(event) => {
+          // Focus can arrive before Radix attaches its document Escape listener.
+          if (event.key === "Escape" && !event.defaultPrevented) {
+            event.preventDefault();
+            requestClose();
+          }
+        }}
         onCloseAutoFocus={(event) => {
           event.preventDefault();
           commitClose();
@@ -388,8 +396,7 @@ export function ChannelCreateDialog({
                   >
                     <option value="workspace">{t("Workspace default")}</option>
                     <option value="follow_user">{t("Follow user message")}</option>
-                    <option value="zh-CN">{t("Chinese")}</option>
-                    <option value="en-US">{t("English")}</option>
+                    <SupportedLocaleOptions />
                   </Select>
                 </label>
                 <ChannelWriteLockField form={form} onChange={updateRuntimeForm} />

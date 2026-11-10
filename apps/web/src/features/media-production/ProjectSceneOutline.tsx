@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { resolveMediaProviderRuntimeState } from "@ling-stack/core/provider-media-normalization";
 import { useI18n } from "../../i18n.js";
+import { providerCompactModelLabel, providerModelRouteLabel } from "../../lib/providers.js";
 import {
   Button,
   Field,
@@ -104,7 +105,7 @@ export function ProjectSceneOutline({
 
   const defaultSourceSummary = project.mediaProject.defaultExecutionMode === "workflow"
     ? defaultWorkflow?.definition.name ?? t("Choose a production workflow")
-    : defaultProvider?.displayName ?? t("Choose per scene");
+    : defaultProvider ? providerCompactModelLabel(defaultProvider) : t("Choose per scene");
   const projectSelectionBusy = busy.projectList;
   const sceneOrderBusy = busy.sceneReorderProjectId === project.mediaProject.id;
 
@@ -176,7 +177,7 @@ export function ProjectSceneOutline({
                     onChange={(event) => void actions.updateProject({ defaultProviderPresetId: event.target.value || null })}
                   >
                     <option value="">{t("Choose per scene")}</option>
-                    {videoProviders.map((provider) => <option key={provider.id} value={provider.id}>{provider.displayName} · {provider.model}</option>)}
+                    {videoProviders.map((provider) => <option key={provider.id} value={provider.id}>{providerModelRouteLabel(provider)}</option>)}
                   </Select>
                 ) : (
                   <Button className="project-outline-configure" leadingIcon={<Settings2 size={15} />} size="sm" variant="secondary" onClick={onConfigureVideoModel}>

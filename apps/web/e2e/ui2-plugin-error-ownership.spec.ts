@@ -89,6 +89,10 @@ test("T13-P.9EF.D Plugin load failure remains on the Plugin page and never reach
   const state = createBaseState({ approvalStatus: "expired" });
   state.managedPlugins = [];
   await mockDaemon(page, state);
+  // Isolate this error-owner check from unrelated seeded automation notifications.
+  await page.route(/\/notifications(?:\/stream)?(?:\?.*)?$/u, async (route) => {
+    await route.fulfill({ json: { schemaVersion: 1, notifications: [], nextSince: null } });
+  });
   await page.route("**/plugins?**", async (route) => {
     if (route.request().method() !== "GET") {
       await route.fallback();
@@ -106,7 +110,7 @@ test("T13-P.9EF.D Plugin load failure remains on the Plugin page and never reach
   await expect(loadFailure).toContainText("Synthetic Plugin catalog failure");
   await expect(page.locator('[data-ling-overlay="toast"][data-tone="error"]')).toHaveCount(0);
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Automations" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Automations" }).click();
   await expect(page.getByText("Synthetic Plugin catalog failure", { exact: true })).toHaveCount(0);
   await expect(page.locator(".settings-plugin-manager")).toHaveCount(0);
 });
@@ -258,8 +262,8 @@ async function preparePage(page: Page): Promise<void> {
 
 async function openPluginManager(page: Page, waitForRows = true): Promise<void> {
   await page.goto("/");
-  const navigation = page.getByLabel("Ling Stack navigation");
-  await navigation.getByRole("button", { name: "Engineering" }).click();
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
+  await navigation.getByRole("button", { name: "Engineering", exact: true }).click();
   await navigation.getByRole("button", { name: "Plugin Manager" }).click();
   await expect(page.locator(".settings-plugin-manager")).toBeVisible();
   if (waitForRows) await expect(page.locator(".plugin-table-row").first()).toBeVisible();

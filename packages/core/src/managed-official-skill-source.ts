@@ -3,6 +3,8 @@ import { mkdir, readFile, realpath, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { SkillSourceScanRoot } from "./skill-types.js";
+import { createCoreOriginalProcessEntry, isCoreOriginalLaunchRefusal } from "./original-host-process-entry.js";
+import { trimBoundaryCharacters } from "./string-boundaries.js";
 
 const execFile = promisify(execFileCallback);
 
@@ -40,15 +42,22 @@ export class ManagedOfficialSkillSourceError extends Error {
   }
 }
 
+const originalOfficialGit = createCoreOriginalProcessEntry("official_skill_git", (input: {
+  readonly args: readonly string[]; readonly cwd?: string;
+}) => execFile("git", ["-c", "core.hooksPath=/dev/null", ...input.args], {
+  ...(input.cwd ? { cwd: input.cwd } : {}), encoding: "utf8",
+}).then(({ stdout }) => stdout.trim()));
+export const CORE_OFFICIAL_SKILL_GIT_ENTRY = originalOfficialGit.entry;
+
 const defaultGit: ManagedOfficialSkillSourceGit = {
   async run(args, options) {
     try {
-      const { stdout } = await execFile("git", ["-c", "core.hooksPath=/dev/null", ...args], {
-        ...(options.cwd ? { cwd: options.cwd } : {}),
-        encoding: "utf8",
-      });
-      return stdout.trim();
+      const record = originalOfficialGit.capture(Object.freeze({
+        args: Object.freeze([...args]), ...(options.cwd ? { cwd: options.cwd } : {}),
+      }));
+      return await CORE_OFFICIAL_SKILL_GIT_ENTRY.invoke(record);
     } catch (error) {
+      if (isCoreOriginalLaunchRefusal(error)) throw error;
       const code = asNodeErrorCode(error);
       throw new ManagedOfficialSkillSourceError(code === "ENOENT" ? "git_unavailable" : "refresh_failed", error);
     }
@@ -171,7 +180,7 @@ async function readGstackVersion(repoRoot: string): Promise<string | undefined> 
 
 function normalizeGithubPath(host: string, pathname: string): string | undefined {
   const normalizedHost = host.trim().toLowerCase();
-  const normalizedPath = pathname.replace(/^\/+|\/+$/g, "").replace(/\.git$/i, "").toLowerCase();
+  const normalizedPath = trimBoundaryCharacters(pathname, "/").replace(/\.git$/i, "").toLowerCase();
   return normalizedHost && normalizedPath ? `${normalizedHost}/${normalizedPath}` : undefined;
 }
 

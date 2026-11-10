@@ -7,6 +7,8 @@ export type {
   ConversationStatus,
   ConversationSurface,
 } from "./conversation-types.js";
+export * from "./workflow-graph-types.js";
+export { projectWorkflowGraph, reconcileWorkflowGraphSelection, workflowGraphLimits, workflowGraphStatus } from "./workflow-graph-model.js";
 export type {
   ConversationAgentActivitySpan,
   ConversationAgentActivitySpanKind,
@@ -25,6 +27,9 @@ export type {
   ConversationOperationKind,
   ConversationOperationExecutionView,
   ConversationOperationSourceRef,
+  ConversationRuntimeDiagnostic,
+  ConversationToolEvidence,
+  ConversationTrustedSourceRef,
   ConversationExplorationBatch,
   ConversationTurnRunRole,
   ConversationWorkCellBranch,
@@ -43,9 +48,118 @@ export type {
 } from "./work-cell-view-model.js";
 export { normalizeConversationOperationCell } from "./work-cell-view-model.js";
 export {
+  isConversationTimelineItem,
+  projectConversationSubAgentActivity,
+  projectConversationTimelineItems,
+} from "./transcript-item.js";
+export type { ActiveRunSnapshot, TimelineSnapshot, TimelineRunLifecycle } from "./timeline-snapshot.js";
+export { createTimelineSnapshot } from "./timeline-snapshot.js";
+export { projectConversationRunNarration, mergeConversationRunNarration } from "./run-narration.js";
+export type { ConversationRunNarrationSegment } from "./run-narration.js";
+export { parseUnverifiedBlockedNarration } from "./blocked-explanation.js";
+export type { ConversationBlockedExplanation, UnverifiedBlockedNarration } from "./blocked-explanation.js";
+export {
+  conversationTimelineRendererKey,
+  fingerprintConversationTimeline,
+} from "./timeline-fingerprint.js";
+export type {
+  ConversationTimelineFingerprint,
+} from "./timeline-fingerprint.js";
+export {
+  createConversationTimelineMessageItem,
+  conversationMessageSourceRefs,
+} from "./message-item.js";
+export type {
+  ConversationTimelineMessageInput,
+  ConversationTimelineFileRefInput,
+} from "./message-item.js";
+export {
+  mergeConversationTimelineItems,
+  normalizeConversationTimelineItems,
+} from "./transcript-projector.js";
+export {
+  mergeCanonicalTranscriptInputs,
+  projectCanonicalConversationTimeline,
+} from "./canonical-transcript-projector.js";
+export type {
+  CanonicalCommandEvidence,
+  CanonicalApprovalRecord,
+  CanonicalArtifactRecord,
+  CanonicalPlanRecord,
+  CanonicalCompactionRecord,
+  CanonicalReasoningSummaryRecord,
+  CanonicalTerminalReportProjection,
+  CanonicalParticipantSpan,
+  CanonicalTurnRunLink,
+  CanonicalConversationItem,
+  CanonicalExecutionAction,
+  CanonicalProjectionSourceRef,
+  CanonicalSourceRef,
+  CanonicalTerminalEvidenceRef,
+  CanonicalTranscriptDiagnostic,
+  CanonicalTranscriptDiagnosticCode,
+  CanonicalTranscriptProjection,
+  CanonicalTranscriptProjectionInput,
+  CanonicalTranscriptScope,
+} from "./canonical-transcript-projector.js";
+export type {
+  ConversationTimelineItem,
+  ConversationTimelineItemBase,
+  ConversationTimelineOperationItemBase,
+  ConversationTimelineOperationPayload,
+  ConversationTimelineItemKind,
+  ConversationTimelineItemStatus,
+  ConversationProtocolAction,
+  ConversationTimelineActivityPayload,
+  ConversationTimelineApprovalItem,
+  ConversationTimelineCommandExecutionItem,
+  ConversationTimelineContextCompactionItem,
+  ConversationTimelineTerminalReportItem,
+  ConversationTimelineTerminalReportArtifact,
+  ConversationTimelineTerminalReportChange,
+  ConversationTimelineTerminalReportCorrection,
+  ConversationTimelineTerminalReportParticipant,
+  ConversationTimelineTerminalReportRisk,
+  ConversationTimelineTerminalReportVerification,
+  ConversationTimelineProtocolEventItem,
+  ConversationTimelineExplorationItem,
+  ConversationTimelineFileChangeItem,
+  ConversationTimelineDiagnosticItem,
+  ConversationTimelineRuntimeDiagnostic,
+  ConversationTimelineImageViewItem,
+  ConversationTimelineMessageItem,
+  ConversationTimelineUserInputItem,
+  ConversationTimelineUserInputRequestItem,
+  ConversationTimelineUserInputAnswerItem,
+  ConversationTimelinePlanItem,
+  ConversationTimelineReasoningItem,
+  ConversationTimelineInput,
+  ConversationTimelineProjectionOptions,
+  ConversationTimelineRowItem,
+  ConversationTimelineToolCallItem,
+  ConversationTimelineBatchItem,
+  ConversationTimelineCommandBatchItem,
+  ConversationTimelineCommandBatchPayload,
+  ConversationTimelineExplorationBatchItem,
+  ConversationTimelineExplorationBatchPayload,
+  ConversationTimelineSubAgentItem,
+} from "./transcript-item.js";
+export { projectCanonicalUserInputTimeline } from "./user-input-timeline.js";
+export {
   isCommandBatchEligible,
   projectConversationCommandBatches,
 } from "./command-batching.js";
+export {
+  batchCanonicalTranscriptItems,
+  expandDisplayBatch,
+  projectDisplayBatches,
+} from "./typed-transcript-batching.js";
+export type {
+  BatchSplitBoundary,
+  BatchSplitReason,
+  DisplayBatchProjection,
+  DisplayProjectionContext,
+} from "./typed-transcript-batching.js";
 export {
   isExplorationBatchEligible,
   projectConversationActivity,
@@ -57,19 +171,21 @@ export type {
   TerminalReportViewModel,
 } from "./terminal-report-view-model.js";
 export { terminalReportToViewModel } from "./terminal-report-view-model.js";
+export { isUserVisibleTerminalReportArtifact, isUserVisibleTerminalReportSourceRef } from "./terminal-report-visibility.js";
+export { terminalReportSourceRefs, projectVisibleTerminalReportContent, visibleTerminalReportTimelineItem } from "./terminal-report-presentation.js";
 export type {
-  ConversationEvidenceMode,
-  ConversationRawDetailMode,
-  ConversationSurfaceKind,
-  ConversationSurfacePolicy,
-  ConversationWorkCellMode,
+  ConversationInteractionPolicy,
+  ConversationInteractionSurfaceKind,
+  ConversationTimelineScope,
+  ConversationTimelineScopeKind,
   MessageActionKind,
   SourceIconKind,
 } from "./surface-policy.js";
 export {
   conversationActionAllowedByPolicy,
-  getConversationSurfacePolicy,
-  mergeConversationSurfacePolicy,
+  getConversationInteractionPolicy,
+  mergeConversationInteractionPolicy,
+  resolveTimelineScope,
 } from "./surface-policy.js";
 export {
   findLatestEditableConversationMessage,
@@ -79,6 +195,11 @@ export type {
   ConversationMessageEditCandidate,
   ConversationMessageEditScope,
 } from "./message-edit-policy.js";
+export { projectConversationMessagePresentation } from "./message-presentation.js";
+export type {
+  ConversationMessagePresentation,
+  ConversationMessagePresentationInput,
+} from "./message-presentation.js";
 export {
   getTerminalReportProjectionPolicy,
 } from "./terminal-report-projection-policy.js";
@@ -124,9 +245,12 @@ export type {
 } from "./message-body.js";
 export {
   conversationPermissionPresetRequiresConfirmation,
+  defaultConversationAuthorizationModeOptions,
   defaultConversationPermissionPresetOptions,
 } from "./permission-policy.js";
 export type {
+  ConversationAuthorizationMode,
+  ConversationAuthorizationModeOption,
   ConversationPermissionPreset,
   ConversationPermissionPresetOption,
 } from "./permission-policy.js";
@@ -160,3 +284,7 @@ export type {
   DockSeverity,
   DockSurfaceKind,
 } from "./dock-types.js";
+export { reconcileCanonicalUserInputs, isUserInputAnchor, userInputTranscriptRevisionSignature } from "./user-input-transcript-snapshot.js";
+export type { CanonicalUserInput, CanonicalUserInputRequest, CanonicalUserInputAnswer, CanonicalUserInputUnavailable, CanonicalUserInputSource, CanonicalUserInputAnswerAuthority, CanonicalUserInputSnapshot } from "./user-input-transcript-snapshot.js";
+export { interleaveUserInputRunTimeline } from "./user-input-event-order.js";
+export { interleaveConversationUserInputRows } from "./conversation-user-input-order.js";

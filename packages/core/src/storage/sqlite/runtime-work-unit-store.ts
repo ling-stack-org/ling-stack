@@ -19,6 +19,7 @@ import {
   type RuntimeEvent,
   type RuntimeHeartbeat,
   type RuntimeAttemptFenceV1,
+  type RuntimeResourceRenewal,
   type WorkUnit,
   type WorkUnitAttempt,
   type WorkUnitStatus,
@@ -30,7 +31,12 @@ import {
   type WorkUnitTransitionEvent,
 } from "../../state-machines.js";
 import { redactSecrets } from "../../redaction.js";
+import { normalizeRunnerIdsInSnapshot } from "../../runner-ids.js";
+import { assertRuntimeResourceRenewal } from "../../runtime-resource-renewal.js";
+import type { CreateOrReuseConversationMediaJobInput } from "../../media-generation-routing-types.js";
+import { redactConversationMediaWorkUnitRequest } from "./conversation-media-execution-admission.js";
 import { readNumber, readString, rollbackOwnedSqliteTransaction, stringifyJson } from "./helpers.js";
+import { assertRecoveryDiscoveryId, assertRecoveryDiscoveryTimestamp } from "./recovery-discovery-validation.js";
 import {
   mapRuntimeEvent,
   mapWorkUnit,
@@ -43,6 +49,9 @@ import {
   workUnitSelectSql,
 } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
+import { ownsCancellationTransaction } from "./cancellation-transaction.js";
+import { rootSuspensionStartAllowsAttempt } from "./run-suspension-start-records.js";
+import { delegatedSuspensionStartAllowsAttempt } from "./run-suspension-delegated-records.js";
 
 export interface SqliteRuntimeWorkUnitStorePorts {
   readonly findStateTransitionByIdempotency: (
@@ -51,8 +60,8 @@ export interface SqliteRuntimeWorkUnitStorePorts {
     idempotencyKey: string,
   ) => StateTransitionEvent | undefined;
   readonly recordStateTransitionEvent: (input: CreateStateTransitionEventInput) => StateTransitionEvent;
-  readonly renewResourceLeasesForAttempt: (fence: RuntimeAttemptFenceV1, renewedAt: string) => number;
-  readonly renewRuntimeSemaphoreSlotsForAttempt: (fence: RuntimeAttemptFenceV1, renewedAt: string) => number;
+  readonly renewResourceLeasesForAttempt: (fence: RuntimeAttemptFenceV1, renewal: RuntimeResourceRenewal) => number;
+  readonly renewRuntimeSemaphoreSlotsForAttempt: (fence: RuntimeAttemptFenceV1, renewal: RuntimeResourceRenewal) => number;
   readonly releaseResourceLeasesForAttempt: (
     fence: RuntimeAttemptFenceV1,
     releasedAt: string,
@@ -71,7 +80,10 @@ export class SqliteRuntimeWorkUnitStore {
     private readonly ports: SqliteRuntimeWorkUnitStorePorts,
   ) {}
 
-  createWorkUnit(input: CreateWorkUnitInput): WorkUnit {
+  createWorkUnit(
+    input: CreateWorkUnitInput,
+    mediaAdmission?: NonNullable<CreateOrReuseConversationMediaJobInput["executionAdmission"]>,
+  ): WorkUnit {
     const id = input.id ?? createWorkUnitId();
     const timeoutPolicy = input.timeoutPolicy ?? defaultRuntimeTimeoutPolicy;
     const status = input.status ?? "queued";
@@ -135,7 +147,9 @@ export class SqliteRuntimeWorkUnitStore {
         null,
         input.createdByClientId ?? null,
         input.createdByActor,
-        stringifyJson(redactSecrets(input.request)),
+        stringifyJson(normalizeRunnerIdsInSnapshot(mediaAdmission
+          ? redactConversationMediaWorkUnitRequest(this.context.database, input, mediaAdmission)
+          : redactSecrets(input.request))),
         stringifyJson(timeoutPolicy),
         input.linkedRunId ?? null,
         input.linkedMessageId ?? null,
@@ -207,6 +221,20 @@ export class SqliteRuntimeWorkUnitStore {
       clauses.push("linked_media_job_id = ?");
       params.push(options.linkedMediaJobId);
     }
+    if (options.createdAtOrBefore !== undefined) {
+      assertRecoveryDiscoveryTimestamp(options.createdAtOrBefore, "creation cutoff");
+      clauses.push("created_at <= ?");
+      params.push(options.createdAtOrBefore);
+    }
+    if (options.after !== undefined) {
+      if (!options.after || typeof options.after !== "object") {
+        throw new Error("Invalid recovery discovery WorkUnit cursor.");
+      }
+      assertRecoveryDiscoveryTimestamp(options.after.createdAt, "cursor creation time");
+      assertRecoveryDiscoveryId(options.after.id);
+      clauses.push("(created_at, id) < (?, ?)");
+      params.push(options.after.createdAt, options.after.id);
+    }
     params.push(limit);
     const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
     return this.context.database
@@ -241,6 +269,19 @@ export class SqliteRuntimeWorkUnitStore {
     if (!workUnit) {
       return { ok: false, code: "stale_transition", currentStatus: input.expectedStatus ?? "cancelled" };
     }
+    // An unacknowledged184 claim must retain its exact target. Clearing or
+    // replacing the pointer would otherwise bypass the replacement guard below.
+    const changesActiveAttempt = input.activeAttemptId !== undefined && input.activeAttemptId !== workUnit.activeAttemptId;
+    if (workUnit.activeAttemptId && (input.event === "runner_started" || changesActiveAttempt)
+      && !rootSuspensionStartAllowsAttempt(this.context.database, workUnit.activeAttemptId)) {
+      return { ok: false, code: "stale_transition", currentStatus: workUnit.status };
+    }
+    // Non186 targets retain the ordinary path; an exact186 target instead
+    // keeps its claimed owner until the original physical SDK ACK commits.
+    if (workUnit.activeAttemptId && (input.event === "runner_started" || changesActiveAttempt)
+      && !delegatedSuspensionStartAllowsAttempt(this.context.database, workUnit.activeAttemptId)) {
+      return { ok: false, code: "stale_transition", currentStatus: workUnit.status };
+    }
     if (input.attemptId) {
       const attempt = this.getWorkUnitAttempt(input.attemptId);
       const mayReconcileLostAttempt = input.terminalAttemptOwnership?.kind === "lost_attempt_reconciliation"
@@ -274,41 +315,48 @@ export class SqliteRuntimeWorkUnitStore {
       return result;
     }
 
-    const update = this.context.database
-      .prepare(`
-        UPDATE work_units
-        SET
-          status = ?,
-          active_attempt_id = ?,
-          updated_at = ?,
-          started_at = ?,
-          ended_at = ?,
-          last_event_at = ?,
-          last_heartbeat_at = ?,
-          error_code = ?,
-          error_message = ?
-        WHERE id = ?
-          AND status = ?
-          AND (? IS NULL OR active_attempt_id = ?)
-      `)
-      .run(
-        result.to,
-        input.activeAttemptId === undefined ? workUnit.activeAttemptId ?? null : input.activeAttemptId,
-        input.now,
-        input.startedAt ?? workUnit.startedAt ?? null,
-        input.endedAt === undefined ? workUnit.endedAt ?? null : input.endedAt,
-        input.lastEventAt ?? workUnit.lastEventAt ?? null,
-        input.lastHeartbeatAt ?? workUnit.lastHeartbeatAt ?? null,
-        input.errorCode === undefined ? workUnit.errorCode ?? null : input.errorCode,
-        input.errorMessage === undefined ? workUnit.errorMessage ?? null : input.errorMessage,
-        input.workUnitId,
-        result.from,
-        input.attemptId ?? null,
-        input.attemptId ?? null,
-      );
-    if (Number(update.changes) === 0) {
-      const current = this.getWorkUnit(input.workUnitId);
-      return { ok: false, code: "stale_transition", currentStatus: current?.status ?? workUnit.status };
+    try {
+      const update = this.context.database
+        .prepare(`
+          UPDATE work_units
+          SET
+            status = ?,
+            active_attempt_id = ?,
+            updated_at = ?,
+            started_at = ?,
+            ended_at = ?,
+            last_event_at = ?,
+            last_heartbeat_at = ?,
+            error_code = ?,
+            error_message = ?
+          WHERE id = ?
+            AND status = ?
+            AND (? IS NULL OR active_attempt_id = ?)
+        `)
+        .run(
+          result.to,
+          input.activeAttemptId === undefined ? workUnit.activeAttemptId ?? null : input.activeAttemptId,
+          input.now,
+          input.startedAt ?? workUnit.startedAt ?? null,
+          input.endedAt === undefined ? workUnit.endedAt ?? null : input.endedAt,
+          input.lastEventAt ?? workUnit.lastEventAt ?? null,
+          input.lastHeartbeatAt ?? workUnit.lastHeartbeatAt ?? null,
+          input.errorCode === undefined ? workUnit.errorCode ?? null : input.errorCode,
+          input.errorMessage === undefined ? workUnit.errorMessage ?? null : input.errorMessage,
+          input.workUnitId,
+          result.from,
+          input.attemptId ?? null,
+          input.attemptId ?? null,
+        );
+      if (Number(update.changes) === 0) {
+        const current = this.getWorkUnit(input.workUnitId);
+        return { ok: false, code: "stale_transition", currentStatus: current?.status ?? workUnit.status };
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message === "channel_session_archived") {
+        return { ok: false, code: "terminal_state", currentStatus: workUnit.status };
+      }
+      throw error;
     }
 
     this.ports.recordStateTransitionEvent({
@@ -348,6 +396,12 @@ export class SqliteRuntimeWorkUnitStore {
     const workUnit = this.getWorkUnit(input.workUnitId);
     if (!workUnit) {
       throw new Error(`Work unit not found: ${input.workUnitId}`);
+    }
+    if (workUnit.activeAttemptId && !rootSuspensionStartAllowsAttempt(this.context.database, workUnit.activeAttemptId)) {
+      throw new Error("root_suspension_start_required");
+    }
+    if (workUnit.activeAttemptId && !delegatedSuspensionStartAllowsAttempt(this.context.database, workUnit.activeAttemptId)) {
+      throw new Error("delegated_suspension_start_required");
     }
     const fencingToken = this.nextAttemptFencingToken(input.workUnitId, input.fencingToken);
 
@@ -489,6 +543,8 @@ export class SqliteRuntimeWorkUnitStore {
     if (!attempt || !this.matchesCurrentAttemptFence(attempt, input)) {
       return undefined;
     }
+    if (input.status === "started" && !rootSuspensionStartAllowsAttempt(this.context.database, attempt.id)) return undefined;
+    if (input.status === "started" && !delegatedSuspensionStartAllowsAttempt(this.context.database, attempt.id)) return undefined;
     const updated = this.context.database
       .prepare(`
         UPDATE work_unit_attempts
@@ -546,7 +602,8 @@ export class SqliteRuntimeWorkUnitStore {
       return false;
     }
 
-    this.context.database.exec("BEGIN IMMEDIATE;");
+    const joinedCancellation = ownsCancellationTransaction(this.context.database);
+    if (!joinedCancellation) this.context.database.exec("BEGIN IMMEDIATE;");
     try {
       const transition = this.transitionWorkUnitStatus({
         ...input,
@@ -557,6 +614,7 @@ export class SqliteRuntimeWorkUnitStore {
         errorMessage: input.errorMessage ?? null,
       });
       if (!transition.ok) {
+        if (joinedCancellation) throw new Error("Cancellation Attempt transition became stale");
         rollbackOwnedSqliteTransaction(this.context.database);
         return false;
       }
@@ -588,10 +646,10 @@ export class SqliteRuntimeWorkUnitStore {
           errorMessage: input.errorMessage,
         },
       });
-      this.context.database.exec("COMMIT;");
+      if (!joinedCancellation) this.context.database.exec("COMMIT;");
       return true;
     } catch (error) {
-      rollbackOwnedSqliteTransaction(this.context.database);
+      if (!joinedCancellation) rollbackOwnedSqliteTransaction(this.context.database);
       throw error;
     }
   }
@@ -652,6 +710,15 @@ export class SqliteRuntimeWorkUnitStore {
     }, true, capability.attemptStatus === "lost");
   }
 
+  findWorkUnitAttemptTerminalAudit(attempt: WorkUnitAttempt): RuntimeEvent | undefined {
+    const row = this.context.database.prepare(`${runtimeEventSelectSql(`
+      WHERE work_unit_id = ? AND attempt_id = ? AND runtime_instance_id = ? AND fencing_token = ?
+        AND type IN ('work_unit_succeeded', 'work_unit_failed', 'work_unit_cancelled', 'work_unit_stale')
+    `)} ORDER BY seq ASC LIMIT 1`)
+      .get(attempt.workUnitId, attempt.id, attempt.runtimeInstanceId, attempt.fencingToken);
+    return row ? mapRuntimeEvent(row as Record<string, SQLOutputValue>) : undefined;
+  }
+
   appendRuntimeDiagnosticEvent(input: AppendRuntimeDiagnosticEventInput): RuntimeEvent {
     const workUnit = this.getWorkUnit(input.workUnitId);
     if (!workUnit) {
@@ -691,7 +758,7 @@ export class SqliteRuntimeWorkUnitStore {
       ts: input.ts,
       type: input.type,
       actor: input.actor,
-      data: redactSecrets(input.data),
+      data: normalizeRunnerIdsInSnapshot(redactSecrets(input.data)),
     };
     const inserted = eventFields.attemptId
       ? this.context.database
@@ -801,6 +868,8 @@ export class SqliteRuntimeWorkUnitStore {
       if (!attempt || !this.matchesCurrentAttemptFence(attempt, input)) {
         throw new Error(`Stale runtime heartbeat fence: ${input.workUnitId}/${input.attemptId}`);
       }
+      const renewal = { renewedAt: input.ts, expiresAt: input.resourceExpiresAt };
+      assertRuntimeResourceRenewal(renewal);
       const heartbeat: RuntimeHeartbeat = {
         id: createRuntimeHeartbeatId(),
         workUnitId: input.workUnitId,
@@ -829,14 +898,14 @@ export class SqliteRuntimeWorkUnitStore {
       const canonicalUpdate = this.context.database
         .prepare(`
           UPDATE work_units
-          SET last_heartbeat_at = ?, updated_at = ?
+          SET last_heartbeat_at = MAX(COALESCE(last_heartbeat_at, ?), ?), updated_at = MAX(updated_at, ?)
           WHERE id = ? AND active_attempt_id = ?
         `)
-        .run(input.ts, input.ts, input.workUnitId, input.attemptId);
+        .run(input.ts, input.ts, input.ts, input.workUnitId, input.attemptId);
       const attemptUpdate = this.context.database
         .prepare(`
           UPDATE work_unit_attempts
-          SET last_heartbeat_at = ?
+          SET last_heartbeat_at = MAX(COALESCE(last_heartbeat_at, ?), ?)
           WHERE id = ?
             AND runtime_instance_id = ?
             AND fencing_token = ?
@@ -847,6 +916,7 @@ export class SqliteRuntimeWorkUnitStore {
         `)
         .run(
           input.ts,
+          input.ts,
           input.attemptId,
           input.runtimeInstanceId,
           input.fencingToken,
@@ -856,8 +926,8 @@ export class SqliteRuntimeWorkUnitStore {
       if (Number(canonicalUpdate.changes) !== 1 || Number(attemptUpdate.changes) !== 1) {
         throw new Error(`Stale runtime heartbeat fence: ${input.workUnitId}/${input.attemptId}`);
       }
-      this.ports.renewResourceLeasesForAttempt(input, input.ts);
-      this.ports.renewRuntimeSemaphoreSlotsForAttempt(input, input.ts);
+      this.ports.renewResourceLeasesForAttempt(input, renewal);
+      this.ports.renewRuntimeSemaphoreSlotsForAttempt(input, renewal);
       this.context.database.exec("COMMIT;");
       return heartbeat;
     } catch (error) {
@@ -906,7 +976,7 @@ export class SqliteRuntimeWorkUnitStore {
 }
 
 function isAttemptTerminal(status: WorkUnitAttempt["status"]): boolean {
-  return status === "succeeded" || status === "failed" || status === "cancelled" || status === "lost";
+  return status === "succeeded" || status === "failed" || status === "cancelled" || status === "lost" || status === "yielded";
 }
 
 function terminalRuntimeEventTypeForAttemptStatus(

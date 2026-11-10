@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { SupportedLocale } from "@ling-stack/localization";
 
 export const terminalReportSchemaVersion = 1 as const;
 
@@ -6,11 +7,12 @@ export type TerminalReportSurface = "normal_conversation" | "channel" | "teammat
 export type TerminalReportSourceKind = "workflow" | "run" | "turn";
 export type TerminalReportOutcomeStatus = "succeeded" | "partially_succeeded" | "blocked" | "failed" | "cancelled";
 export type TerminalReportRecordStatus = "draft" | "validating" | "committed" | "fallback" | "failed";
-export type TerminalReportLanguage = "zh-CN" | "en-US";
+export type TerminalReportLanguage = SupportedLocale;
 export type TerminalReportCheckStatus = "passed" | "failed" | "blocked" | "cancelled" | "skipped" | "not_run" | "unknown";
 export type TerminalReportParticipantStatus = "completed" | "failed" | "blocked" | "cancelled";
 export type TerminalReportRiskSeverity = "info" | "warning" | "critical";
 export type TerminalReportRiskStatus = "unresolved" | "mitigated" | "accepted" | "unverified";
+export type TerminalReportApprovalDecision = "pending" | "approved" | "denied" | "expired" | "cancelled";
 
 export type TerminalReportSourceRefKind =
   | "message"
@@ -31,6 +33,12 @@ export type TerminalReportSourceRefKind =
   | "deployment"
   | "memory"
   | "context_source"
+  | "delegation_step"
+  | "delegation_result"
+  | "delegation_budget_reservation"
+  | "delegation_budget_charge"
+  | "runtime_attempt"
+  | "host_attempt_completion"
   | "external";
 
 export interface TerminalReportSourceRef {
@@ -63,7 +71,27 @@ export interface TerminalReportEvidenceOperation {
   readonly runId?: string;
   readonly teammateId?: string;
   readonly changedPaths: readonly string[];
+  /** Bounded Host command facts, not model narration or proof of tree drain. */
+  readonly commandEvidence?: TerminalReportEvidenceCommand;
   readonly sourceRefs: readonly TerminalReportSourceRef[];
+}
+
+export interface TerminalReportEvidenceCommand {
+  readonly command: string;
+  readonly commandTruncated: boolean;
+  readonly cwd?: string;
+  readonly outcome?: "succeeded" | "failed" | "timed_out" | "cancelled" | "unknown";
+  readonly exitCode?: number;
+  readonly signal?: string;
+  readonly timedOut?: boolean;
+  readonly cancelled?: boolean;
+  readonly durationMs?: number;
+  /** Whitespace-preserving, redacted previews sharing one character budget. */
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly outputTruncated: boolean;
+  /** This projection/chunk reports redaction; false does not certify raw input. */
+  readonly outputRedacted: boolean;
 }
 
 export interface TerminalReportEvidenceCheck {
@@ -127,6 +155,8 @@ export interface TerminalReportEvidenceRisk {
   readonly status: TerminalReportRiskStatus;
   readonly summary: string;
   readonly nextAction?: string;
+  /** Set when the risk is derived from a durable approval decision. */
+  readonly approvalDecision?: TerminalReportApprovalDecision;
   readonly sourceRefs: readonly TerminalReportSourceRef[];
 }
 
@@ -152,6 +182,8 @@ export interface TerminalReportEvidenceSnapshot {
   readonly approvals: readonly TerminalReportEvidenceApproval[];
   readonly risks: readonly TerminalReportEvidenceRisk[];
   readonly references: readonly TerminalReportSourceRef[];
+  /** Host subtree read-set used for synthesis, persisted across restart/recovery. */
+  readonly delegationCompletionFingerprint?: string;
   readonly evidenceFingerprint: string;
   readonly generatedAt: string;
 }
@@ -220,6 +252,8 @@ export interface TerminalReportRisk {
   readonly status: TerminalReportRiskStatus;
   readonly summary: string;
   readonly nextAction?: string;
+  /** Set when the risk is derived from a durable approval decision. */
+  readonly approvalDecision?: TerminalReportApprovalDecision;
   readonly sourceRefs: readonly TerminalReportSourceRef[];
 }
 
@@ -280,7 +314,8 @@ export interface LingTerminalReportRecord {
   readonly promptVersion?: string;
   readonly attemptCount: number;
   readonly validationCodes: readonly string[];
-  readonly publishedMessageId?: string;
+  /** Stable ConversationItem anchor for the committed result. */
+  readonly resultItemId?: string;
   readonly errorCode?: string;
   readonly createdAt: string;
   readonly updatedAt: string;
@@ -300,8 +335,10 @@ export interface ListLingTerminalReportsOptions {
   readonly sourceKind?: TerminalReportSourceKind;
   readonly sourceId?: string;
   readonly status?: TerminalReportRecordStatus;
-  /** Return only the newest committed/fallback revision for each source. */
+  /** Return the newest committed/fallback revision for each source within the selected publication scope. */
   readonly effectiveOnly?: boolean;
+  /** Require a matching committed canonical result Item; does not publish or settle anything. */
+  readonly publishedOnly?: boolean;
   readonly limit?: number;
 }
 

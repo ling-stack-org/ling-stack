@@ -5,6 +5,7 @@ import {
   createChannelPlaybookCandidateFromCluster,
   createChannelProtocolCandidateFromCluster,
   createSkillCandidateDraft,
+  getSkillCandidate,
   hardDeleteSkill,
   listSkills,
   previewSkillOptimization,
@@ -149,7 +150,7 @@ export function useSkillLibraryActionsController({
     setBusyAction(`candidate:${candidateId}:adopt`);
     clearScopedError("review");
     try {
-      const candidate = data.skillCandidates.find((item) => item.id === candidateId);
+      const candidate = data.skillCandidates.find((item) => item.id === candidateId) ?? (await getSkillCandidate(cwd, candidateId)).candidate;
       if (!candidate) throw new Error(t("Skill candidate not found."));
       if (candidate.status !== "approved_for_draft") {
         const review = await reviewSkillCandidate(cwd, candidateId, {
@@ -158,8 +159,14 @@ export function useSkillLibraryActionsController({
         });
         data.setSkillCandidates((current) => current.map((item) => item.id === candidateId ? review.candidate : item));
       }
-      const response = await createSkillCandidateDraft(cwd, candidateId);
-      editor.openCandidate(response.draft, candidateId);
+      if (candidate.proposedAction === "update_existing" && candidate.targetSkillId && candidate.definition.skillDefinition) {
+        const target = data.skills.find(skill => skill.id === candidate.targetSkillId);
+        if (!target) throw new Error(t("Skill candidate not found."));
+        editor.openCandidateRevision(candidate, target);
+      } else {
+        const response = await createSkillCandidateDraft(cwd, candidateId);
+        editor.openCandidate(response.draft, candidateId);
+      }
     } catch (error) {
       setScopedError("review", errorMessage(error));
     } finally {

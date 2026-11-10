@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { SUPPORTED_LOCALES } from "@ling-stack/localization";
 import {
   showIncompatibleDaemonRecoveryDialog,
   showOwnedDaemonStartupFailureDialog,
@@ -59,5 +60,29 @@ test("resource and spawn failures use product copy without private paths or proc
     assert.match(options[0].detail, reason === "resource_missing" ? /installation files/u : /could not launch/u);
     assert.doesNotMatch(options[0].detail, /ENOENT|EACCES|--|\/private\//u);
     assert.deepEqual(options[0].buttons, ["Retry", "Open diagnostics", "Quit"]);
+  }
+});
+
+test("native daemon recovery copy is available for every supported locale", async () => {
+  for (const locale of SUPPORTED_LOCALES) {
+    const options = [];
+    await showOwnedDaemonStartupFailureDialog({
+      locale,
+      prompt: { reason: "start_timeout" },
+      showMessageBox: async (value) => {
+        options.push(value);
+        return { response: 2, checkboxChecked: false };
+      },
+    });
+    assert.equal(options.length, 1, locale);
+    assert.equal(options[0].buttons.length, 3, locale);
+    assert.ok(options[0].title.trim(), locale);
+    assert.ok(options[0].message.trim(), locale);
+    assert.ok(options[0].detail.trim(), locale);
+    assert.doesNotMatch(
+      `${options[0].title} ${options[0].message} ${options[0].detail} ${options[0].buttons.join(" ")}`,
+      /desktop\./u,
+      locale,
+    );
   }
 });

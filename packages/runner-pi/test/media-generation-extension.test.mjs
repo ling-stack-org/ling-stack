@@ -25,7 +25,7 @@ test("media generation extension registers only configured tools and forwards sa
         details: { mediaJobId: "media_job_1", status: "queued" },
       };
     },
-  })({ registerTool: (tool) => registered.push(tool) });
+  })({ on() {}, registerTool: (tool) => registered.push(tool) });
 
   assert.equal(registered.length, 1);
   assert.equal(registered[0].name, "image_generate");
@@ -74,8 +74,20 @@ test("media generation extension omits empty tools and requires a daemon handler
       { name: "image_generate", targets: [] },
       { name: "video_generate", targets: [{ id: "workflow:video", displayName: "Video Flow" }] },
     ],
-  })({ registerTool: (tool) => registered.push(tool) });
+  })({ on() {}, registerTool: (tool) => registered.push(tool) });
   assert.equal(registered.length, 0);
+});
+
+test("media schema may be prepared without a Run but cannot execute without its owner", async () => {
+  const registered = [];
+  let calls = 0;
+  createLingStackMediaGenerationExtension({ ...baseOptions(),
+    mediaGenerationTools: [{ name: "image_generate", targets: [{ id: "fixture", displayName: "Fixture" }] }],
+    onMediaGenerationToolCall: async () => { calls += 1; return { content: [] }; },
+  })({ on() {}, registerTool: (tool) => registered.push(tool) });
+  assert.equal(registered.length, 1);
+  await assert.rejects(registered[0].execute("fixture_call", { prompt: "fixture" }), /not connected for this run/);
+  assert.equal(calls, 0);
 });
 
 test("media generation schema omits options unsupported by every target", () => {
@@ -90,7 +102,7 @@ test("media generation schema omits options unsupported by every target", () => 
     async onMediaGenerationToolCall() {
       return { content: [{ type: "text", text: "accepted" }] };
     },
-  })({ registerTool: (tool) => registered.push(tool) });
+  })({ on() {}, registerTool: (tool) => registered.push(tool) });
 
   assert.equal(registered.length, 1);
   assert.match(registered[0].description, /Prompt-only Video Flow \(workflow:video; prompt\)/);
@@ -111,7 +123,7 @@ test("media generation extension rejects invalid controlled input", async () => 
     async onMediaGenerationToolCall() {
       throw new Error("must not be called");
     },
-  })({ registerTool: (tool) => registered.push(tool) });
+  })({ on() {}, registerTool: (tool) => registered.push(tool) });
 
   await assert.rejects(
     registered[0].execute("tool_invalid", { prompt: "draw", count: 5 }),
@@ -134,7 +146,7 @@ test("media generation extension discards a late result after runner cancellatio
       controller.abort(abortReason);
       return { content: [{ type: "text", text: "late" }] };
     },
-  })({ registerTool: (tool) => registered.push(tool) });
+  })({ on() {}, registerTool: (tool) => registered.push(tool) });
 
   await assert.rejects(
     registered[0].execute("tool_cancelled", { prompt: "animate", durationSeconds: 5 }, controller.signal),

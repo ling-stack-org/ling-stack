@@ -1,5 +1,8 @@
 import type {
+  ApprovalDetailResponse,
   ApprovalListResponse,
+  ApprovalCommandRuleListResponse,
+  ApprovalCommandRuleMutationResponse,
   ApprovalMutationResponse,
   ApprovalPolicyResponse,
   ChromeBrowserPairingStartResponse,
@@ -47,6 +50,10 @@ import type {
   ManagedPluginCreateResponse,
   ManagedPluginDetailResponse,
   ManagedPluginDisableRequest,
+  ManagedPluginImportApplyRequest,
+  ManagedPluginImportApplyResponse,
+  ManagedPluginImportPreviewRequest,
+  ManagedPluginImportPreviewResponse,
   ManagedPluginInstallRequest,
   ManagedPluginInstallResponse,
   ManagedPluginListResponse,
@@ -73,6 +80,7 @@ import type {
   ProviderSecretResponse,
   ProviderTemplateListResponse,
   RunMediaProjectRequest,
+  ResolveApprovalRequest,
   UpdateApprovalPolicyRequest,
   UpdateMediaProjectRequest,
   UpdateMediaSceneRequest,
@@ -182,6 +190,14 @@ export const adminEndpoints = {
       return this._post("/plugins", { cwd }, input);
     },
 
+  async previewManagedPluginImport(this: LingDaemonEndpointContext, cwd: string, input: ManagedPluginImportPreviewRequest): Promise<ManagedPluginImportPreviewResponse> {
+      return this._post("/plugins/import/preview", { cwd }, input);
+    },
+
+  async applyManagedPluginImport(this: LingDaemonEndpointContext, cwd: string, input: ManagedPluginImportApplyRequest): Promise<ManagedPluginImportApplyResponse> {
+      return this._post("/plugins/import/apply", { cwd }, input);
+    },
+
   async getManagedPlugin(this: LingDaemonEndpointContext, cwd: string, pluginId: string): Promise<ManagedPluginDetailResponse> {
       return this._get(`/plugins/${encodeURIComponent(pluginId)}`, { cwd });
     },
@@ -289,12 +305,37 @@ export const adminEndpoints = {
       });
     },
 
-  async approveApproval(this: LingDaemonEndpointContext, cwd: string, approvalId: string, reason?: string): Promise<ApprovalMutationResponse> {
-      return this._post(`/approvals/${encodeURIComponent(approvalId)}/approve`, { cwd }, { reason });
+  async getApproval(this: LingDaemonEndpointContext, cwd: string, approvalId: string): Promise<ApprovalDetailResponse> {
+      return this._get(`/approvals/${encodeURIComponent(approvalId)}`, { cwd });
+    },
+
+  async approveApproval(
+    this: LingDaemonEndpointContext,
+    cwd: string,
+    approvalId: string,
+    input?: string | ResolveApprovalRequest,
+  ): Promise<ApprovalMutationResponse> {
+      return this._post(
+        `/approvals/${encodeURIComponent(approvalId)}/approve`,
+        { cwd },
+        typeof input === "string" ? { reason: input } : (input ?? {}),
+      );
     },
 
   async denyApproval(this: LingDaemonEndpointContext, cwd: string, approvalId: string, reason?: string): Promise<ApprovalMutationResponse> {
       return this._post(`/approvals/${encodeURIComponent(approvalId)}/deny`, { cwd }, { reason });
+    },
+
+  async listApprovalCommandRules(this: LingDaemonEndpointContext, cwd: string): Promise<ApprovalCommandRuleListResponse> {
+      return this._get("/approval-command-rules", { cwd });
+    },
+
+  async revokeApprovalCommandRule(
+    this: LingDaemonEndpointContext,
+    cwd: string,
+    ruleId: string,
+  ): Promise<ApprovalCommandRuleMutationResponse> {
+      return this._delete(`/approval-command-rules/${encodeURIComponent(ruleId)}`, { cwd });
     },
 
   async getApprovalPolicy(this: LingDaemonEndpointContext, cwd: string): Promise<ApprovalPolicyResponse> {

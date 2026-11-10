@@ -1,0 +1,1 @@
+In a future isolated task, apply the frozen injection patch and repair only evaluation-json.ts. Restore recursive lexical key ordering while preserving array order. Trusted example input is {"z":1,"a":2}; array input is [2,1]. Offline calibration does not apply this patch or execute the task.

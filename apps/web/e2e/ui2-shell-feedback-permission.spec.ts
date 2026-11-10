@@ -20,7 +20,7 @@ test("offline feedback preserves the active view and scopes reconnect loading", 
   await page.goto("/");
 
   const shell = page.locator("main.app-shell");
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   const connectionStatus = page.locator(".app-connection-status");
   const feedback = page.getByRole("alert").filter({ hasText: "Local service is unavailable" });
   await expect(feedback).toBeVisible();
@@ -53,8 +53,8 @@ test("full access confirmation preserves draft, focus, and permission evidence",
   await mockDaemon(page, state, { healthResponses: [true] });
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
-  await navigation.getByRole("button", { name: "New conversation" }).click();
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
+  await navigation.getByRole("button", { name: "New conversation", exact: true }).click();
   const home = page.getByLabel("Conversation home");
   await expect(home.getByRole("button", { name: /Selected permission preset Full access/ })).toBeVisible();
   await expect(home.getByRole("button", { name: /Selected model gpt-5\.5/ })).toBeVisible();
@@ -80,7 +80,7 @@ test("full access confirmation preserves draft, focus, and permission evidence",
 
   await send.click();
   dialog = page.locator("#ling-ui-overlay-root").getByRole("dialog", { name: "Confirm full access" });
-  await dialog.getByRole("button", { name: "Enable full access" }).click();
+  await dialog.getByRole("button", { name: "Start with full access" }).click();
   await expect.poll(() => state.runs.length).toBe(1);
   await expect.poll(() => {
     const snapshot = state.runs[0]?.requestSnapshot;
@@ -109,16 +109,16 @@ test("new conversation metadata controls stay quiet and compact without a config
   await page.goto("/");
 
   const home = page.getByLabel("对话首页");
-  const permission = home.locator(".conversation-authorization-trigger");
+  const authorization = home.getByRole("button", { name: "已选择授权模式 帮我审批" });
   const model = home.locator(".conversation-model-trigger");
   const shortcut = home.getByRole("button", { name: "创建 Team" });
-  await expect(permission).toBeVisible();
+  await expect(authorization).toBeVisible();
   await expect(model).toBeVisible();
-  await expect(permission).toContainText("工作区写入");
+  await expect(authorization).toContainText("帮我审批");
   await expect(model).toContainText("未选择聊天模型");
 
   const [permissionStyle, modelStyle, shortcutFontSize] = await Promise.all([
-    quietControlStyle(permission),
+    quietControlStyle(authorization),
     quietControlStyle(model),
     shortcut.evaluate((element) => getComputedStyle(element).fontSize),
   ]);
@@ -138,7 +138,7 @@ function createFullAccessState(): MockState {
     id: "provider_full_access_ui2",
     displayName: "Local Relay",
     model: "gpt-5.5",
-    lastCheck: { ok: true, code: "ready", message: "ready", checkedAt: "2026-08-25T00:00:00.000Z" },
+    lastCheck: { ok: true, code: "ready", message: "ready", checkedAt: "2026-09-27T00:00:00.000Z" },
   })];
   state.workspaceSettings = {
     ...state.workspaceSettings,

@@ -1,0 +1,78 @@
+{
+  "version": "scene-themes-v7",
+  "artwork": "Breeze background regenerated in-house on 2026-10-29 to replace a previously supplied forest illustration whose author and public redistribution license were never established. Ocean (summer-manga-v1) and Night (valley-overlook-v1) are unchanged from v6.",
+  "retrievedAt": "2026-10-29",
+  "processing": "The generated 1672x941 PNG is exported whole to WebP at native pixels (quality 92, no crop, no upscaling, no compositing, no retouching). The 640x360 thumbnail is downsampled from the same generated PNG (quality 88).",
+  "designIntent": {
+    "breeze": "Keep the approved Breeze composition language - upper-left tree, pale empty sky through the center, low wildflower meadow, right-hand sunlit slope - but as original artwork: pale birch trunk with an arcing leaf canopy, a small flock of white birds in the upper-left sky, layered misty fir ridges in the middle distance, a daisy/clover/blue-flower meadow band along the bottom, and a faint trodden path curving to the right. Sage sidebar, milk-white Composer and green controls are unchanged."
+  },
+  "assets": [
+    {
+      "themeId": "ling-breeze",
+      "source": {
+        "title": "Ling Breeze original forest clearing and open sky",
+        "origin": "Generated in this change with the built-in Codex image generation tool. No third-party image was supplied or used as an input or style reference.",
+        "generation": {
+          "tool": "image_gen (built-in Codex image generation)",
+          "model": "service default (not pinned by the tool)",
+          "generatedAt": "2026-10-29",
+          "candidatesGenerated": 2,
+          "selectedCandidate": "First candidate: rolling meadow with a faint trodden path and sun haze at the right edge",
+          "prompt": "Use case: stylized-concept\nAsset type: wide desktop app UI background wallpaper, 16:9 landscape\nPrimary request: an original hand-painted Japanese anime-style watercolor / soft gouache forest clearing background. Bright, airy, calm morning scene. It must look like our own artwork, not a copy of any existing illustration.\nScene: a quiet meadow clearing at the foot of a conifer forest\nComposition: top-left corner has a leafy broadleaf tree branch arcing in with a slim pale birch trunk hugging the far-left edge; the entire middle of the frame (roughly the central 60-70% of width and height) is a very pale, almost empty hazy sky with only faint cloud wisps, kept deliberately low-detail as negative space for UI text; a low band of layered fir-tree ridges and soft blue-green distant hills sits along the lower third; along the bottom edge a wildflower meadow strip with white daisies, tiny blue flowers and clover; a gently rising sunlit grass slope on the right leading to a rounded shrub mass; a small flock of white birds gliding in the upper-left sky.\nLighting/mood: bright hazy morning light, soft backlit glow, gentle sun bloom just off the right edge, serene and optimistic\nColor palette: pale sky blue #eaf6fb, warm cream white #fdfdf7, sage green #7f9d72, deep pine green #2f5744, soft butter yellow highlights\nStyle/medium: soft-edged painted brushwork, flat watercolor washes, no outlines, no line art, subtle paper grain, storybook background-art quality\nConstraints: no people, no text, no letters, no watermark, no signature, no logo; keep the center extremely light and low-contrast so dark UI text stays readable; landscape 16:9\nAvoid: harsh contrast or busy detail in the center, dark vignette, photographic realism, thick outlines, saturated cyan sky\n\nVariation note: gentle rolling meadow with a faint trodden path curving from the bottom-center toward the right slope, sun haze strongest at the right edge.",
+          "promptLocale": "en",
+          "negativeConstraints": [
+            "no people",
+            "no text or letters",
+            "no watermark",
+            "no signature",
+            "no logo",
+            "no harsh centre contrast",
+            "no dark vignette",
+            "no photographic realism",
+            "no thick outlines"
+          ]
+        },
+        "author": "Ling Stack project (original generation)",
+        "license": "Project-owned generated asset, distributed with the theme under the repository license. No third-party authorship, attribution or redistribution obligation identified; unlike the superseded illustration this file does not depend on an unconfirmed external license.",
+        "rightsBasis": "Created inside this change; the generation service output is used as the repository asset without third-party source material.",
+        "sourceSha256": "9edf5873baab38703a37d4571899e40af0e1aaed144cf70c740c17924d239d68",
+        "sourceBytes": 2487981,
+        "sourceSize": [
+          1672,
+          941
+        ],
+        "sourceRetainedAt": "local evidence archive (generated PNG); only the WebP exports ship in the repository",
+        "newImageGenerationInThisChange": true
+      },
+      "exports": [
+        {
+          "path": "apps/web/public/themes/ling-breeze/forest-clearing-v1.webp",
+          "bytes": 317870,
+          "size": [
+            1672,
+            941
+          ],
+          "sha256": "b8591be800abe95ffe15b74ab589cbb13112adbcdf2276cbb522107e294971f7"
+        },
+        {
+          "path": "apps/web/public/themes/ling-breeze/forest-clearing-v1-thumb.webp",
+          "bytes": 51878,
+          "size": [
+            640,
+            360
+          ],
+          "sha256": "b15f5cf8c56abb44e4da92b15b880b37ebf360b682a699fa23bb2cbbce82c6bb"
+        }
+      ],
+      "processing": "cwebp -q 92 -m 6 -metadata none source.png -o forest-clearing-v1.webp; PIL LANCZOS resize to 640x360 then cwebp -q 88 -m 6 -metadata none. Native generated pixels, no upscaling."
+    }
+  ],
+  "supersession": {
+    "supersededExports": [
+      "apps/web/public/themes/ling-breeze/forest-sky-v3.webp",
+      "apps/web/public/themes/ling-breeze/forest-sky-v3-thumb.webp"
+    ],
+    "reason": "The v6 breeze artwork was a user-supplied forest illustration with unestablished authorship and public redistribution license. Both files were deleted from the repository in this change; the v6 record is kept for history.",
+    "unaffected": "ling-ocean and ling-night exports continue to be recorded in scene-themes-v6.sources.json."
+  }
+}

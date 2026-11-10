@@ -11,6 +11,7 @@ export interface ConversationSendLifecycleController extends ConversationSendLif
   readonly accept: (operation: ConversationSendOperation) => boolean;
   readonly link: (operation: ConversationSendOperation, target: ConversationActiveReplyTarget) => boolean;
   readonly settle: (operation: ConversationSendOperation) => boolean;
+  readonly defer: (operation: ConversationSendOperation) => boolean;
   readonly fail: (operation: ConversationSendOperation) => { readonly accepted: boolean; readonly restoreInput: boolean };
 }
 
@@ -36,7 +37,8 @@ export function useConversationSendLifecycle(ownerKey: string): ConversationSend
     commit((store) => store.link(operation, target))
   ), [commit]);
   const settle = useCallback((operation: ConversationSendOperation) => commit((store) => store.settle(operation)), [commit]);
+  const defer = useCallback((operation: ConversationSendOperation) => commit((store) => store.defer(operation)), [commit]);
   const fail = useCallback((operation: ConversationSendOperation) => commit((store) => store.fail(operation)), [commit]);
 
-  return { ...snapshot, begin, accept, link, settle, fail };
+  return { ...snapshot, begin, accept, link, settle, defer, fail };
 }

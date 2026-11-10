@@ -9,12 +9,18 @@ Date: 2026-07-16
 - [Skill Import Productization](skill-import-productization.md)
 - [Skill Library Height And AI Evolution Lifecycle](skill-library-height-and-ai-evolution-lifecycle.md)
 - [Skill Library Ownership Separation](skill-library-ownership-separation.md)
+- [External Agent Skill Discovery And Adoption](external-agent-skill-discovery.md)
 
 ## Summary
 
 Ling supports structured editing for manually created or imported skills and for skills
 published through AI evolution. Editing changes the normalized skill definition stored in
 Ling. It does not reopen, overwrite, or synchronize the original local file.
+
+For user-adopted shared `.agents/skills` entries, the same rule applies in the other
+direction: a later source refresh (an "update available" confirmation) replaces the source
+snapshot and provenance but leaves the edited `SkillDefinition` untouched. Source and
+definition can drift apart by design; the user decides when to reconcile them.
 
 Built-in, managed gstack, workspace-owned, and archived skills remain read-only. Skill
 identity, ownership, source provenance, teammate bindings, candidate lineage, and review
@@ -105,7 +111,6 @@ It must not open a second modal.
 
 ## Non-Goals
 
-- User-visible version history or rollback.
 - Editing built-in, gstack, workspace-owned, or archived skills.
 - Updating the original imported file or source directory.
 - Changing skill ids, ownership, visibility, role affinity, or state effects.
@@ -122,3 +127,42 @@ It must not open a second modal.
 - Stale revisions do not overwrite newer data.
 - The dialog has one internal scroll region and no horizontal overflow at supported desktop
   viewports.
+
+
+## Definition history and undo
+
+`GET /skills/:skillId/revisions` returns immutable definition before/after images,
+monotonic revision ids, actor, reason, validation status and optional learning-job /
+candidate provenance. These records version `definition_json`; source snapshot rollback
+continues to version source bundles independently. Migration 185 captures only a current
+baseline for existing skills, because earlier before-images are unavailable.
+
+Preview and publication accept `expectedRevisionId` in addition to the compatible
+`expectedUpdatedAt`. Both are checked within publication; same-millisecond edits advance
+the timestamp. Manual editor validation is `schema_checked`, not evidence or replay
+validation. `POST /skills/:skillId/revision-undo` requires a revision id and current
+`expectedUpdatedAt`, appends a restoring revision, and preserves identity, source, pack,
+bindings and visibility. Subsequent edits cause a conflict. Repeated undo is idempotent
+and never overwrites later changes. Baseline/create revisions have no before-image;
+new skills use reviewed archival. Authority changes require explicit confirmation.
+
+Definition history and a durable revision-notice outbox commit with the owning source
+update. The daemon transfers notices and acknowledgments atomically into the replayable
+control-plane event stream, then publishes live notifications. Startup and the existing
+recovery sweep retry pending notices; a process failure cannot silently lose the change.
+
+The skill inspector exposes definition history and an explicit restoring-diff confirmation.
+The editor shows before/after changes. A reviewed `update_existing` learning candidate
+opens the original skill in this editor and publishes through the revision endpoint with
+`sourceCandidateId`. The server checks the successful learning job and the definition
+revision captured during extraction; later edits invalidate the candidate even if the
+editor has a fresh timestamp. Definition, history, candidate publication and notice are
+one transaction. Generic candidate import rejects this action, so corrections cannot
+silently become a second skill. Existing identity, ownership and authority are retained.
+
+New prepared executions freeze the effective definition hash and available revision id
+alongside their existing source context and actual Runner input. Run and WorkUnit request
+snapshots retain this provenance. Edits and undo affect later executions; continuations
+keep their frozen text and provenance, while current authority remains subject to the
+existing revocation checks. Legacy prepared payloads without this optional provenance
+remain readable and are not relabeled with a newer definition revision.

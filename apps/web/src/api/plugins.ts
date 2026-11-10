@@ -1,5 +1,9 @@
 import type {
   ChromeBrowserPairingStartResponse,
+  ManagedPluginImportApplyRequest,
+  ManagedPluginImportApplyResponse,
+  ManagedPluginImportPreviewRequest,
+  ManagedPluginImportPreviewResponse,
   ManagedPluginApplyPresetRequest,
   ManagedPluginApplyPresetResponse,
   ManagedPluginCheckResponse,
@@ -19,7 +23,7 @@ import type {
   PluginPackageDetailResponse,
   PluginPackageValidationResponse,
   PluginSourceListResponse,
-} from "../types.js";
+} from "@ling-stack/contracts";
 import { daemonClient } from "./client.js";
 
 export async function listManagedPlugins(cwd: string): Promise<ManagedPluginListResponse> {
@@ -28,6 +32,14 @@ export async function listManagedPlugins(cwd: string): Promise<ManagedPluginList
 
 export async function createManagedPlugin(cwd: string, input: ManagedPluginCreateRequest): Promise<ManagedPluginCreateResponse> {
   return daemonClient.createManagedPlugin(cwd, input);
+}
+
+export async function previewManagedPluginImport(cwd: string, input: ManagedPluginImportPreviewRequest): Promise<ManagedPluginImportPreviewResponse> {
+  return daemonClient.previewManagedPluginImport(cwd, input);
+}
+
+export async function applyManagedPluginImport(cwd: string, input: ManagedPluginImportApplyRequest): Promise<ManagedPluginImportApplyResponse> {
+  return daemonClient.applyManagedPluginImport(cwd, input);
 }
 
 export async function enableManagedPlugin(cwd: string, pluginId: string): Promise<ManagedPluginMutationResponse> {

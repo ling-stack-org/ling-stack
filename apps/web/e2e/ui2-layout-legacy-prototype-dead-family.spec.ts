@@ -163,7 +163,7 @@ test("1280x800 Ling Dark keeps Normal and Teammate command menus and focus conta
 
   const normalPermission = normalComposer.getByRole("button", { name: /Selected permission preset/u });
   await normalPermission.click();
-  const normalMenu = permissionMenu(page);
+  const normalMenu = page.getByRole("menu").filter({ has: page.getByRole("menuitemradio", { name: "Request approval", exact: true }) });
   await expect(normalMenu).toBeVisible();
   await expectOverlayContained(page, normalMenu);
   await page.keyboard.press("Escape");
@@ -212,7 +212,7 @@ test("1440x960 imported Quiet Ocean keeps Channel Create bounded and theme-owned
   await page.goto("/");
   const themeId = await seedImportedQuietOcean(page);
   await page.reload();
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "No channel yet" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "No channel yet" }).click();
 
   const dialog = page.getByRole("dialog", { name: "New channel" });
   await expect(dialog).toBeVisible();
@@ -377,12 +377,12 @@ async function prepareSurface(page: Page, options: {
 }
 
 async function openNormalConversation(page: Page, title: string): Promise<void> {
-  await page.getByLabel("Ling Stack navigation").locator(".sidebar-recent-row").filter({ hasText: title }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).locator(".sidebar-recent-row").filter({ hasText: title }).click();
   await expect(page.getByLabel("Conversation page")).toBeVisible();
 }
 
 async function openTeammate(page: Page, displayName: string): Promise<void> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: displayName }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: displayName }).click();
   await expect(page.getByRole("heading", { name: displayName, level: 1 })).toBeVisible();
   await expect(page.getByText("Loading teammate workspace...")).toHaveCount(0, { timeout: 15_000 });
 }

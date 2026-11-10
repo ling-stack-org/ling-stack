@@ -17,12 +17,16 @@ export interface ProcedureObservationJobInput {
   readonly source: ProcedureObservationSource;
   readonly signals: readonly ProcedureObservationSignal[];
   readonly runId?: string;
+  readonly effectiveAttemptId?: string;
+  readonly evidenceVersion?: string;
   readonly messageId?: string;
   readonly reviewActionId?: string;
   readonly channelId?: string;
   readonly teammateId?: string;
   readonly taskId?: string;
   readonly selectedSkillId?: string;
+  /** Daemon-owned provenance; never accepted from observation HTTP requests. */
+  readonly learningReviewJobId?: string;
   readonly terminalStatus?: ProcedureObservationJobTerminalStatus;
   readonly toolLabels?: readonly string[];
   readonly validationLabels?: readonly string[];
@@ -47,6 +51,7 @@ export type SkillRecordingObservationInput = Omit<
 
 export interface ProcedureObservationJobBuildResult {
   readonly jobKey: string;
+  readonly legacyJobKey?: string;
   readonly observationInput: CreateProcedureObservationInput;
 }
 
@@ -61,6 +66,17 @@ export function createProcedureObservationJobFromRecording(input: SkillRecording
 }
 
 export function createProcedureObservationJobKey(input: ProcedureObservationJobInput): string {
+  const payload = JSON.stringify([
+    "v2", input.workspaceId ?? DEFAULT_WORKSPACE_ID, input.source,
+    input.runId ?? input.messageId ?? input.reviewActionId ?? input.id ?? "manual",
+    input.channelId ?? null, input.teammateId ?? null, input.taskId ?? null,
+    input.effectiveAttemptId ?? null, input.evidenceVersion ?? null,
+    input.destinationHint ?? inferDestinationHint(input), normalizeSignaturePart(input.normalizedGoal),
+  ]);
+  return `observation_job_${createHash("sha256").update(payload).digest("hex").slice(0, 24)}`;
+}
+
+function legacyProcedureObservationJobKey(input: ProcedureObservationJobInput): string {
   const workspaceId = input.workspaceId ?? DEFAULT_WORKSPACE_ID;
   const sourceId = input.runId ?? input.messageId ?? input.reviewActionId ?? input.id ?? "manual";
   const payload = [
@@ -85,6 +101,8 @@ export function createProcedureObservationInputFromJob(input: ProcedureObservati
   const sourceRefs = sourceRefsFromJob(input, jobKey);
   return {
     jobKey,
+    ...(input.effectiveAttemptId === undefined && input.evidenceVersion === undefined
+      ? { legacyJobKey: legacyProcedureObservationJobKey(input) } : {}),
     observationInput: {
       id: input.id,
       workspaceId,
@@ -172,6 +190,7 @@ function sourceRefsFromJob(input: ProcedureObservationJobInput, jobKey: string):
   if (input.reviewActionId) {
     refs.push({ type: "decision", id: input.reviewActionId, label: "Review action" });
   }
+  if (input.learningReviewJobId) refs.push({ type: "learning-review", id: input.learningReviewJobId, label: "Learning review evidence" });
   if (input.selectedSkillId) {
     refs.push({ type: "skill", id: input.selectedSkillId, label: "Selected skill" });
   }

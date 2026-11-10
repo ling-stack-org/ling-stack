@@ -1,0 +1,19 @@
+diff --git a/packages/contracts/src/harness-diagnostics.ts b/packages/contracts/src/harness-diagnostics.ts
+--- a/packages/contracts/src/harness-diagnostics.ts
++++ b/packages/contracts/src/harness-diagnostics.ts
+@@ -138,4 +138,4 @@
+ export interface WorkUnitHarnessDiagnosticsResponse {
+-  readonly schemaVersion: 1;
++  readonly schemaVersion: 2;
+   readonly cwd: string;
+   readonly workUnitId: string;
+diff --git a/packages/api-client/src/endpoints/runtime.ts b/packages/api-client/src/endpoints/runtime.ts
+--- a/packages/api-client/src/endpoints/runtime.ts
++++ b/packages/api-client/src/endpoints/runtime.ts
+@@ -96,5 +96,5 @@
+   async getWorkUnitHarnessDiagnostics(this: LingDaemonEndpointContext, cwd: string, workUnitId: string, query: HarnessDiagnosticQueryV1 = {}): Promise<WorkUnitHarnessDiagnosticsResponse> {
+       return this._get(`/work-units/${encodeURIComponent(workUnitId)}/harness`, {
+-        cwd,
++        cwd: undefined,
+         limit: query.limit,
+         cursor: query.cursor ? JSON.stringify(query.cursor) : undefined,

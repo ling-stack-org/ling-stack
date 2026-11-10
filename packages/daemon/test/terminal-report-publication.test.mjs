@@ -8,6 +8,7 @@ import test from "node:test";
 import {
   buildDeterministicTerminalReport,
   createSqliteRunStore,
+  createSqliteWorkflowIntegrationCoordinatorStore,
   resolveRuntimePaths,
 } from "../../core/dist/index.js";
 import { createRequiredParticipantManifestV1, workflowGraphFingerprintV1 } from "../../contracts/dist/index.js";
@@ -15,13 +16,71 @@ import { collectWorkflowTerminalReportEvidence } from "../dist/features/channels
 import {
   TerminalReportPublicationError,
   publishWorkflowTerminalReport,
-  renderTerminalReportMarkdown,
-  terminalReportMessageId,
+  terminalReportResultItemId,
 } from "../dist/features/channels/terminal-report-publisher.js";
 import { evaluateWorkflowCompletion } from "../dist/features/channels/workflow-completion-gate.js";
 import { materializeWorkflowDelegatedStepRequirements } from "../dist/features/channels/workflow-step-requirement.js";
+import { preflightWorkflowParticipantProvider } from "../dist/features/channels/workflow-participant-provider.js";
 import { reconcileWorkflowFromCanonicalState } from "../dist/features/channels/workflow-reconciliation.js";
 import { createTerminalWorkflowFixture } from "./terminal-report-coordinator-fixture.mjs";
+import { injectUnverifiedRequiredDelegation } from "./support/terminal-report-delegation-injection.mjs";
+
+test("the publication transaction rejects isolation evidence added after report synthesis", async t => {
+  const f = await createManifestPublicationFixture("late-isolation", "succeeded");
+  try {
+    const input = publicationInput(f);
+    const coordinator = createSqliteWorkflowIntegrationCoordinatorStore(f.store);
+    t.mock.method(coordinator, "readPublicationBlocker", () => "workflow_isolation.integration_effect_unconfirmed");
+    assert.deepEqual(f.store.commitTerminalReportPublication(input), { ok: false, code: "stale_completion_basis" });
+    assertNoPublication(f);
+  } finally { await f.close(); }
+});
+
+test("failed publication cannot hide unconfirmed isolation effects behind a stale report", async t => {
+  const f = await createManifestPublicationFixture("failed-late-isolation", "failed");
+  try {
+    const input = publicationInput(f);
+    const coordinator = createSqliteWorkflowIntegrationCoordinatorStore(f.store);
+    t.mock.method(coordinator, "readPublicationBlocker", () => "workflow_isolation.result_effect_unconfirmed");
+    assert.deepEqual(f.store.commitTerminalReportPublication(input), { ok: false, code: "stale_completion_basis" });
+    assertNoPublication(f);
+  } finally { await f.close(); }
+});
+
+test("publication rechecks isolation evidence atomically after the daemon precheck", async t => {
+  const f = await createManifestPublicationFixture("isolation-publication-race", "succeeded");
+  try {
+    const coordinator = createSqliteWorkflowIntegrationCoordinatorStore(f.store);
+    const commit = f.store.commitTerminalReportPublication;
+    t.mock.method(f.store, "commitTerminalReportPublication", function(input) {
+      t.mock.method(coordinator, "readPublicationBlocker", () => "workflow_isolation.integration_effect_unconfirmed");
+      return commit.call(this, input);
+    });
+    assert.throws(() => publishWorkflowTerminalReport({ store: f.store, report: f.report, now: f.publishAt }),
+      error => error instanceof TerminalReportPublicationError && error.code === "stale_completion_basis");
+    assertNoPublication(f);
+  } finally { await f.close(); }
+});
+
+test("workflow without a participant manifest rejects dynamic evidence added after synthesis", async () => {
+  const f = await createManifestPublicationFixture("dynamic-no-manifest", "succeeded");
+  try {
+    const input = publicationInput(f);
+    const metadata = { ...f.store.getChannelWorkflow(f.workflow.id).metadata };
+    delete metadata.requiredParticipantManifest;
+    f.store.updateChannelWorkflow(f.workflow.id, { metadata }, f.publishAt);
+    assert.equal(f.store.getChannelWorkflow(f.workflow.id).metadata.requiredParticipantManifest, undefined);
+    injectUnverifiedRequiredDelegation(f.store, f.run.id, f.publishAt);
+    const evidence = f.store.getDelegationCompletionEvidence({ rootRunIds: [f.run.id] });
+    assert.equal(evidence.steps.length, 1);
+    assert.notEqual(evidence.status, "satisfied");
+    assert.deepEqual(f.store.commitTerminalReportPublication({ ...input, expectedCompletion: undefined }),
+      { ok: false, code: "stale_completion_basis" });
+    assert.throws(() => publishWorkflowTerminalReport({ store: f.store, report: f.report, now: f.publishAt }),
+      error => error instanceof TerminalReportPublicationError && error.code === "stale_completion_basis");
+    assertNoPublication(f);
+  } finally { await f.close(); }
+});
 
 test("terminal report publication uses a deterministic message id across mark-published retries", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-terminal-report-publication-"));
@@ -51,9 +110,14 @@ test("terminal report publication uses a deterministic message id across mark-pu
     });
 
     const message = publishWorkflowTerminalReport({ store, report, now });
-    assert.equal(message?.id, terminalReportMessageId(report.id));
+    assert.equal(message?.id, terminalReportResultItemId(report.id));
     assert.equal(publishWorkflowTerminalReport({ store, report, now: "2026-07-11T05:05:00.000Z" })?.id, message?.id);
-    assert.equal(listChannelItemViewsFixture(store, { channelId: fixture.channel.id, limit: 100 }).filter((item) => item.id === message?.id).length, 1);
+    assert.equal(store.listConversationItemsByChannelPage({
+      channelId: fixture.channel.id,
+      kinds: ["terminal_report"],
+      effectiveOnly: true,
+      limit: 100,
+    }).items.filter((item) => item.id === message?.id).length, 1);
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });
@@ -103,10 +167,111 @@ test("terminal report publication closes the workflow source turn exactly once",
     const closures = store.listStateTransitionEvents({ entityType: "turn", entityId: sourceItem.turnId })
       .filter((event) => event.toStatus === "succeeded");
     assert.equal(closures.length, 1);
-    assert.equal(store.getTerminalReport(report.id).publishedMessageId, message.id);
+    assert.equal(store.getTerminalReport(report.id).resultItemId, message.id);
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+for (const outcome of ["failed", "cancelled"]) {
+  test(`a ${outcome} workflow with succeeded steps publishes a partial report and settles only its source turn once`, async () => {
+    const fixture = await createCompletedStepsPartialPublicationFixture(`partial-${outcome}`, outcome);
+    try {
+      const { store, workflow, sourceTurn, report } = fixture;
+      const otherMessage = appendChannelItemFixture(store, {
+        channelId: fixture.channel.id,
+        authorType: "local-user",
+        body: "A separate source must remain open.",
+      }, "2026-07-11T05:04:01.000Z");
+      const otherItem = store.getConversationItem(otherMessage.id);
+      assert.ok(otherItem?.turnId);
+      assert.notEqual(otherItem.turnId, sourceTurn.id);
+      const captureOtherSource = () => ({
+        turn: store.getLingTurn(otherItem.turnId),
+        items: store.listConversationItemsForTurn({ turnId: otherItem.turnId }),
+        transitions: store.listStateTransitionEvents({ entityType: "turn", entityId: otherItem.turnId }),
+      });
+      const otherSourceBefore = captureOtherSource();
+      assert.equal(otherSourceBefore.turn.status, "open");
+      const stepsBefore = store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true });
+      const runsBefore = stepsBefore.map((step) => store.getRun(step.runId));
+
+      const message = publishWorkflowTerminalReport({ store, report, now: fixture.publishAt });
+      assert.equal(message?.id, terminalReportResultItemId(report.id));
+      const committed = capturePublicationLineage(store, fixture, message.id);
+      assert.equal(committed.item.kind, "terminal_report");
+      assert.equal(committed.item.status, "committed");
+      assert.equal(committed.item.channelId, workflow.channelId);
+      assert.equal(committed.item.threadId, sourceTurn.threadId);
+      assert.equal(committed.item.turnId, sourceTurn.id);
+      assert.equal(committed.item.payload.reportId, report.id);
+      assert.equal(committed.item.payload.outcomeStatus, "partially_succeeded");
+      assert.equal(committed.item.payload.evidenceFingerprint, report.evidenceFingerprint);
+      for (const ref of [
+        { type: "terminal_report", id: report.id },
+        { type: "workflow", id: workflow.id },
+        { type: "conversation_item", id: fixture.sourceItem.id },
+        { type: "turn", id: sourceTurn.id },
+      ]) {
+        assert.ok(committed.item.domainRefs.some((actual) => actual.type === ref.type && actual.id === ref.id));
+      }
+      assert.equal(committed.report.resultItemId, message.id);
+      assert.equal(committed.report.report.outcome.status, "partially_succeeded");
+      assert.equal(committed.turn.status, outcome);
+      assert.equal(committed.turn.completedAt, fixture.publishAt);
+      const settlements = committed.transitions.filter((event) => event.reason?.includes(`published:${message.id}`));
+      assert.equal(settlements.length, 1);
+      assert.equal(settlements[0].event, outcome === "failed" ? "fail" : "cancel");
+      assert.equal(settlements[0].toStatus, outcome);
+      assert.equal(committed.events.length, 1);
+      assert.deepEqual(captureOtherSource(), otherSourceBefore);
+
+      for (const now of ["2026-07-11T05:06:00.000Z", "2026-07-11T05:07:00.000Z"]) {
+        assert.equal(publishWorkflowTerminalReport({ store, report, now })?.id, message.id);
+        assert.deepEqual(capturePublicationLineage(store, fixture, message.id), committed);
+        assert.deepEqual(captureOtherSource(), otherSourceBefore);
+      }
+      assert.deepEqual(store.listConversationItemsByChannelPage({
+        channelId: workflow.channelId,
+        kinds: ["terminal_report"],
+        effectiveOnly: true,
+        limit: 100,
+      }).items.map((item) => item.id), [message.id]);
+      assert.deepEqual(store.getChannelWorkflow(workflow.id), workflow);
+      assert.deepEqual(store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true }), stepsBefore);
+      assert.deepEqual(stepsBefore.map((step) => store.getRun(step.runId)), runsBefore);
+    } finally {
+      await fixture.close();
+    }
+  });
+}
+
+test("a negative partial report atomically rejects a late isolation blocker", async (t) => {
+  const fixture = await createCompletedStepsPartialPublicationFixture("negative-partial-late-isolation", "failed");
+  try {
+    const { store, report } = fixture;
+    const itemId = terminalReportResultItemId(report.id);
+    const before = capturePublicationLineage(store, fixture, itemId);
+    const coordinator = createSqliteWorkflowIntegrationCoordinatorStore(store);
+    const commit = store.commitTerminalReportPublication;
+    let blocker;
+    const commitSpy = t.mock.method(store, "commitTerminalReportPublication", function(input) {
+      blocker = t.mock.method(coordinator, "readPublicationBlocker", () => "workflow_isolation.integration_effect_unconfirmed");
+      return commit.call(this, input);
+    });
+
+    assert.throws(
+      () => publishWorkflowTerminalReport({ store, report, now: fixture.publishAt }),
+      (error) => error instanceof TerminalReportPublicationError && error.code === "stale_completion_basis",
+    );
+    assert.equal(commitSpy.mock.callCount(), 1, "the blocker must be introduced after the daemon precheck");
+    assert.ok(blocker.mock.callCount() > 0, "the real publication transaction must read the late blocker");
+    assertNoPublication(fixture);
+    assert.deepEqual(capturePublicationLineage(store, fixture, itemId), before,
+      "late isolation evidence must leave the Item, report, source Turn, settlement and publication event unchanged");
+  } finally {
+    await fixture.close();
   }
 });
 
@@ -115,7 +280,7 @@ test("atomic publication rolls back every internal write boundary", async (t) =>
     await t.test(boundary, async () => {
       const fixture = await createManifestPublicationFixture(`rollback-${boundary}`, "succeeded");
       try {
-        const messageId = terminalReportMessageId(fixture.report.id);
+        const messageId = terminalReportResultItemId(fixture.report.id);
         const database = new DatabaseSync(resolveRuntimePaths(fixture.cwd).databasePath);
         database.exec(crashTrigger(boundary, messageId, fixture.report.id, fixture.sourceTurn.id));
         database.close();
@@ -124,7 +289,7 @@ test("atomic publication rolls back every internal write boundary", async (t) =>
           /injected_publication_crash/u,
         );
         assert.equal(fixture.store.getConversationItem(messageId), undefined);
-        assert.equal(fixture.store.getTerminalReport(fixture.report.id).publishedMessageId, undefined);
+        assert.equal(fixture.store.getTerminalReport(fixture.report.id).resultItemId, undefined);
         assert.equal(fixture.store.getLingTurn(fixture.sourceTurn.id).status, fixture.sourceTurn.status);
         assert.equal(fixture.store.listStateTransitionEvents({ entityType: "turn", entityId: fixture.sourceTurn.id })
           .some((event) => event.reason?.includes(`published:${messageId}`)), false);
@@ -144,7 +309,7 @@ test("atomic publication rolls back every internal write boundary", async (t) =>
           now: "2026-08-12T20:00:11.000Z",
         });
         assert.equal(recovered?.id, messageId);
-        assert.equal(fixture.store.getTerminalReport(fixture.report.id).publishedMessageId, messageId);
+        assert.equal(fixture.store.getTerminalReport(fixture.report.id).resultItemId, messageId);
         assert.equal(fixture.store.getLingTurn(fixture.sourceTurn.id).status, "succeeded");
         assert.equal(fixture.store.listStateTransitionEvents({ entityType: "turn", entityId: fixture.sourceTurn.id })
           .filter((event) => event.reason?.includes(`published:${messageId}`)).length, 1);
@@ -160,59 +325,6 @@ test("atomic publication rolls back every internal write boundary", async (t) =>
           report: fixture.report,
           now: "2026-08-12T20:00:12.000Z",
         })?.id, messageId);
-      } finally {
-        await fixture.close();
-      }
-    });
-  }
-});
-
-test("legacy workflow publication rolls back every internal write boundary and remains retryable", async (t) => {
-  for (const boundary of ["item", "turn", "turn_event", "publication_event"]) {
-    await t.test(boundary, async () => {
-      const fixture = await createManifestPublicationFixture(`legacy-rollback-${boundary}`, "succeeded");
-      try {
-        const input = legacyPublicationInput(fixture);
-        const messageId = input.publicationItem.id;
-        const database = new DatabaseSync(resolveRuntimePaths(fixture.cwd).databasePath);
-        database.exec(legacyCrashTrigger(boundary, messageId, fixture.workflow.id, fixture.sourceTurn.id));
-        database.close();
-
-        assert.throws(
-          () => fixture.store.commitLegacyWorkflowPublication(input),
-          /injected_legacy_publication_crash/u,
-        );
-        assert.equal(fixture.store.getConversationItem(messageId), undefined);
-        assert.equal(fixture.store.getLingTurn(fixture.sourceTurn.id).status, fixture.sourceTurn.status);
-        assert.equal(fixture.store.listStateTransitionEvents({ entityType: "turn", entityId: fixture.sourceTurn.id })
-          .some((event) => event.reason?.includes(`published:${messageId}`)), false);
-        assert.equal(fixture.store.listControlPlaneEvents({
-          workspaceId: "workspace_default",
-          entityType: "workflow",
-          entityId: fixture.workflow.id,
-          action: "workflow.final_result_published",
-          limit: 10,
-        }).length, 0);
-        appendRollbackRecoveryProbe(fixture.store, fixture.cwd, `legacy-publication-${boundary}`);
-        fixture.store.database.exec(`DROP TRIGGER ${legacyPublicationCrashTriggerName(boundary)};`);
-
-        const recovered = fixture.store.commitLegacyWorkflowPublication(input);
-        assert.equal(recovered.ok, true);
-        assert.equal(recovered.duplicate, false);
-        assert.equal(recovered.item.id, messageId);
-        assert.equal(recovered.sourceTurnStatus, "succeeded");
-        const duplicate = fixture.store.commitLegacyWorkflowPublication(legacyPublicationInput(fixture));
-        assert.equal(duplicate.ok, true);
-        assert.equal(duplicate.duplicate, true);
-        assert.equal(fixture.store.listStateTransitionEvents({ entityType: "turn", entityId: fixture.sourceTurn.id })
-          .filter((event) => event.reason?.includes(`published:${messageId}`)).length, 1);
-        assert.equal(fixture.store.listControlPlaneEvents({
-          workspaceId: "workspace_default",
-          entityType: "workflow",
-          entityId: fixture.workflow.id,
-          action: "workflow.final_result_published",
-          limit: 10,
-        }).length, 1);
       } finally {
         await fixture.close();
       }
@@ -256,6 +368,49 @@ test("atomic publication commits blocked, failed, and cancelled outcomes with on
         await fixture.close();
       }
     });
+  }
+});
+
+test("a verified workflow publishes its conservative partial report after a recovered read failure", async () => {
+  const fixture = await createManifestPublicationFixture("recovered-read-partial", "succeeded", { recoveredReadFailure: true });
+  try {
+    const snapshot = fixture.store.getTerminalReport(fixture.report.id).evidenceSnapshot;
+    assert.equal(fixture.workflow.status, "succeeded");
+    assert.equal(fixture.workflow.metadata.completionGate.status, "verified");
+    assert.equal(snapshot.terminalState, "partially_succeeded");
+    assert.equal(fixture.report.outcome.status, "partially_succeeded");
+    assert.ok(snapshot.operations.some((operation) => operation.kind === "read" && operation.status === "failed"));
+    assert.ok(snapshot.operations.some((operation) => operation.kind === "read" && operation.status === "succeeded"));
+
+    const message = publishWorkflowTerminalReport({ store: fixture.store, report: fixture.report, now: fixture.publishAt });
+    assert.equal(message?.id, terminalReportResultItemId(fixture.report.id));
+    assert.equal(fixture.store.getLingTurn(fixture.sourceTurn.id).status, "succeeded");
+    assert.equal(fixture.store.getTerminalReport(fixture.report.id).resultItemId, message.id);
+    const result = fixture.store.getConversationItem(message.id);
+    assert.equal(result.payload.outcomeStatus, "partially_succeeded");
+    assert.equal(result.payload.evidenceFingerprint, snapshot.evidenceFingerprint);
+    assert.equal(publishWorkflowTerminalReport({ store: fixture.store, report: fixture.report, now: "2026-08-12T20:00:12.000Z" })?.id, message.id);
+    assert.equal(fixture.store.listControlPlaneEvents({
+      workspaceId: "workspace_default", entityType: "terminal_report", entityId: fixture.report.id,
+      action: "terminal_report.published", limit: 10,
+    }).length, 1);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("a partial report never bypasses an unsettled required-participant gate", async () => {
+  const fixture = await createManifestPublicationFixture("partial-pending-gate", "succeeded", { recoveredReadFailure: true });
+  try {
+    const step = fixture.store.listChannelWorkflowSteps({ workflowId: fixture.workflow.id, complete: true })[0];
+    fixture.store.updateChannelWorkflowStep(step.id, { status: "running" }, "2026-08-12T20:00:09.700Z");
+    assert.throws(
+      () => publishWorkflowTerminalReport({ store: fixture.store, report: fixture.report, now: fixture.publishAt }),
+      (error) => error instanceof TerminalReportPublicationError && error.code === "stale_completion_basis",
+    );
+    assertNoPublication(fixture);
+  } finally {
+    await fixture.close();
   }
 });
 
@@ -320,7 +475,7 @@ test("publication rejects stale completion, incompatible outcome, source Turn, a
         () => publishWorkflowTerminalReport({ store: fixture.store, report: fixture.report, now: fixture.publishAt }),
         (error) => error instanceof TerminalReportPublicationError && error.code === "item_conflict",
       );
-      assert.equal(fixture.store.getTerminalReport(fixture.report.id).publishedMessageId, undefined);
+      assert.equal(fixture.store.getTerminalReport(fixture.report.id).resultItemId, undefined);
       assert.equal(fixture.store.getLingTurn(fixture.sourceTurn.id).status, fixture.sourceTurn.status);
     } finally {
       await fixture.close();
@@ -330,13 +485,18 @@ test("publication rejects stale completion, incompatible outcome, source Turn, a
 
 test("restart reuses the complete atomic publication lineage", async () => {
   const fixture = await createManifestPublicationFixture("restart", "succeeded");
-  const message = publishWorkflowTerminalReport({ store: fixture.store, report: fixture.report, now: fixture.publishAt });
+  const message = publishWorkflowTerminalReport({ store: fixture.store, report: fixture.report,
+    linkedRunId: fixture.run.id, now: fixture.publishAt });
+  const committed = capturePublicationLineage(fixture.store, fixture, message.id);
+  assert.deepEqual(committed.item.domainRefs.filter((ref) => ref.type === "run"), [{ type: "run", id: fixture.run.id }]);
   fixture.store.close();
   const reopened = createSqliteRunStore(fixture.cwd);
   try {
     const report = reopened.getTerminalReport(fixture.report.id).report;
     const repeated = publishWorkflowTerminalReport({ store: reopened, report, now: "2026-08-12T20:00:11.000Z" });
     assert.equal(repeated.id, message.id);
+    assert.deepEqual(capturePublicationLineage(reopened, fixture, message.id), committed,
+      "startup replay without a transient Run hint must preserve the first complete publication exactly");
     assert.equal(reopened.listConversationItemsForTurn({ turnId: fixture.sourceTurn.id })
       .filter((item) => item.id === message.id).length, 1);
     assert.equal(reopened.listControlPlaneEvents({
@@ -352,7 +512,125 @@ test("restart reuses the complete atomic publication lineage", async () => {
   }
 });
 
-async function createManifestPublicationFixture(suffix, outcome) {
+test("later participant and retry hints cannot rewrite the first publication's frozen Run references", async (t) => {
+  for (const anchored of [true, false]) {
+    await t.test(anchored ? "first publication has a Run anchor" : "first publication has no Run anchor", async () => {
+      const suffix = anchored ? "frozen-run" : "frozen-no-run";
+      const fixture = await createManifestPublicationFixture(suffix, "succeeded");
+      try {
+        // These are stored Run identities for late callbacks, not additional
+        // workflow evidence. Neither changes the selected step or completion basis.
+        const otherTask = fixture.store.createTask({ channelId: fixture.workflow.channelId,
+          title: "Late participant callback", prompt: "Late participant callback", assigneeTeammateId: "teammate_builtin_qa" }, fixture.publishAt);
+        const otherParticipant = fixture.store.createRun({
+          id: `run_publication_${suffix}_qa_late`, cwd: fixture.cwd, taskId: otherTask.id,
+          channelId: fixture.workflow.channelId, teammateId: "teammate_builtin_qa",
+          providerName: "test-provider", providerModel: "test-model",
+          taskSnapshot: { id: otherTask.id, title: otherTask.title },
+          providerSnapshot: { provider: "test-provider", model: "test-model" },
+          requestSnapshot: { cwd: fixture.cwd }, createdAt: fixture.publishAt,
+        });
+        const laterRetry = fixture.store.createRun({
+          id: `run_publication_${suffix}_retry_late`, cwd: fixture.cwd, taskId: fixture.run.taskId,
+          channelId: fixture.workflow.channelId, teammateId: fixture.run.teammateId,
+          workflowStepId: fixture.run.workflowStepId, parentRunId: fixture.run.id,
+          providerName: "test-provider", providerModel: "test-model",
+          taskSnapshot: fixture.run.taskSnapshot, providerSnapshot: fixture.run.providerSnapshot,
+          requestSnapshot: fixture.run.requestSnapshot, createdAt: fixture.publishAt,
+        });
+        assert.notEqual(otherParticipant.teammateId, fixture.run.teammateId);
+        assert.equal(laterRetry.parentRunId, fixture.run.id);
+        assert.equal(fixture.store.getChannelWorkflowStep(fixture.run.workflowStepId).runId, fixture.run.id);
+        const message = publishWorkflowTerminalReport({ store: fixture.store, report: fixture.report,
+          ...(anchored ? { linkedRunId: fixture.run.id } : {}), now: fixture.publishAt });
+        assert.ok(message);
+        const committed = capturePublicationLineage(fixture.store, fixture, message.id);
+        assert.deepEqual(committed.item.domainRefs.filter((ref) => ref.type === "run"),
+          anchored ? [{ type: "run", id: fixture.run.id }] : []);
+
+        for (const linkedRunId of [undefined, otherParticipant.id, laterRetry.id]) {
+          const repeated = publishWorkflowTerminalReport({ store: fixture.store, report: fixture.report,
+            ...(linkedRunId ? { linkedRunId } : {}), now: "2026-08-12T20:00:12.000Z" });
+          assert.equal(repeated?.id, message.id);
+          assert.deepEqual(capturePublicationLineage(fixture.store, fixture, message.id), committed,
+            "a callback hint cannot change any committed Item, report, Turn settlement or publication event");
+        }
+        assert.equal(committed.events.length, 1);
+        assert.equal(committed.transitions.filter((event) => event.toStatus === "succeeded").length, 1);
+      } finally {
+        await fixture.close();
+      }
+    });
+  }
+});
+
+function capturePublicationLineage(store, fixture, itemId) {
+  return {
+    item: store.getConversationItem(itemId),
+    report: store.getTerminalReport(fixture.report.id),
+    turn: store.getLingTurn(fixture.sourceTurn.id),
+    transitions: store.listStateTransitionEvents({ entityType: "turn", entityId: fixture.sourceTurn.id }),
+    events: store.listControlPlaneEvents({ workspaceId: "workspace_default", entityType: "terminal_report",
+      entityId: fixture.report.id, action: "terminal_report.published", limit: 100 }),
+  };
+}
+
+async function createCompletedStepsPartialPublicationFixture(suffix, outcome) {
+  const cwd = await mkdtemp(resolve(tmpdir(), `ling-terminal-publication-${suffix}-`));
+  const store = createSqliteRunStore(cwd);
+  const close = async () => {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  };
+  try {
+    const fixture = createTerminalWorkflowFixture(store, cwd, suffix);
+    const workflow = store.updateChannelWorkflow(fixture.workflow.id, { status: outcome }, "2026-07-11T05:03:59.000Z");
+    assert.equal(workflow.status, outcome);
+    assert.equal(workflow.metadata.requiredParticipantManifest, undefined);
+    const steps = store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true });
+    assert.equal(steps.length, 2);
+    for (const step of steps) {
+      assert.equal(step.status, "succeeded");
+      assert.equal(store.getRun(step.runId).status, "succeeded");
+    }
+    const sourceItem = store.getConversationItem(fixture.sourceMessage.id);
+    assert.ok(sourceItem?.turnId);
+    const sourceTurn = store.getLingTurn(sourceItem.turnId);
+    assert.equal(sourceTurn.status, "open");
+    const now = "2026-07-11T05:04:00.000Z";
+    const snapshot = collectWorkflowTerminalReportEvidence(store, workflow.id, { generatedAt: now });
+    assert.equal(snapshot.terminalState, "partially_succeeded");
+    const draft = store.createTerminalReportDraft({ id: `terminal_report_${suffix}`, evidenceSnapshot: snapshot }, now);
+    const validating = store.updateTerminalReportDraft({
+      reportId: draft.id,
+      expectedStatus: "draft",
+      expectedEvidenceFingerprint: draft.evidenceFingerprint,
+      status: "validating",
+      now,
+    });
+    const report = buildDeterministicTerminalReport(snapshot, { id: draft.id, committedAt: now });
+    assert.equal(report.status, "fallback");
+    assert.equal(report.outcome.status, "partially_succeeded");
+    store.commitTerminalReport({
+      reportId: draft.id,
+      expectedStatus: "validating",
+      expectedEvidenceFingerprint: validating.evidenceFingerprint,
+      report,
+      synthesisMode: "deterministic_fallback",
+      promptVersion: report.synthesis.promptVersion,
+      attemptCount: 0,
+      now,
+    });
+    assert.equal(store.getTerminalReport(report.id).report.outcome.status, "partially_succeeded");
+    return { ...fixture, cwd, store, workflow, sourceItem, sourceTurn, report,
+      publishAt: "2026-07-11T05:05:00.000Z", close };
+  } catch (error) {
+    await close();
+    throw error;
+  }
+}
+
+async function createManifestPublicationFixture(suffix, outcome, options = {}) {
   const cwd = await mkdtemp(resolve(tmpdir(), `ling-terminal-publication-${suffix}-`));
   const store = createSqliteRunStore(cwd);
   const now = "2026-08-12T20:00:00.000Z";
@@ -365,6 +643,19 @@ async function createManifestPublicationFixture(suffix, outcome) {
   const sourceItem = store.getConversationItem(sourceMessage.id);
   const sourceTurn = store.getLingTurn(sourceItem.turnId);
   store.transitionLingTurnStatus({ turnId: sourceTurn.id, expectedStatus: "open", event: "start", actor: "system", now: "2026-08-12T20:00:01.000Z" });
+  // Freeze the real participant binding before begin captures the authority basis.
+  // Preflight only validates the fixture request; it never starts a provider call.
+  store.updateWorkspaceSettings({ defaultProviderPresetId: "provider_workspace" }, now);
+  const teammate = store.getAiTeammate("teammate_builtin_architect");
+  assert.ok(teammate);
+  const provider = preflightWorkflowParticipantProvider({ store, channel, teammate, cwd, requiredTools: [],
+    validateRunRequest(request) {
+      assert.equal(request.providerPresetId, "provider_workspace");
+      assert.equal(request.teammateId, teammate.id);
+      assert.deepEqual(request.tools, []);
+    } });
+  assert.equal(provider.kind, "ready", JSON.stringify(provider));
+  const providerBinding = provider.binding;
   const participantManifest = createRequiredParticipantManifestV1([{
     participantId: "teammate_builtin_architect",
     role: "architect",
@@ -390,7 +681,8 @@ async function createManifestPublicationFixture(suffix, outcome) {
     id: `graph_publication_${suffix}`,
     name: "Atomic publication",
     entryNodeId: "synthesis",
-    nodes: [{ id: "synthesis", kind: "step", name: "Synthesis", prompt: "Synthesize", teammateId: "teammate_builtin_architect" }],
+    nodes: [{ id: "synthesis", kind: "step", name: "Synthesis", prompt: "Synthesize", teammateId: "teammate_builtin_architect",
+      providerPresetId: providerBinding.providerPresetId, providerBinding }],
     edges: [],
     termination: { success: "all_required_succeeded", onFailedRequiredNode: "block_for_user", onApprovalDenied: "block_for_user" },
   };
@@ -418,11 +710,25 @@ async function createManifestPublicationFixture(suffix, outcome) {
     prompt: "Synthesize",
     toParticipantId: "teammate_builtin_architect",
     toParticipantLabel: "Architect",
-    status: "running",
-    metadata: { graphId: graph.id, graphNodeId: "synthesis" },
+    status: "queued",
+    metadata: { graphId: graph.id, graphNodeId: "synthesis", providerPresetId: providerBinding.providerPresetId, providerBinding,
+      // Policy is semantic start authority and must not be mutated after ready.
+      ...(outcome === "failed" || outcome === "cancelled" ? { policy: {
+        onRunFailed: "fail_workflow", onRunCancelled: outcome === "cancelled" ? "cancel_workflow" : "block_for_user",
+        onApprovalDenied: "block_for_user", retryable: false,
+      } } : {}) },
   }, "2026-08-12T20:00:03.000Z");
   [step] = materializeWorkflowDelegatedStepRequirements({ store, workflow, manifest: participantManifest, now: "2026-08-12T20:00:03.500Z" });
-  const task = store.createTask({ channelId: channel.id, title: "Synthesis", prompt: "Synthesize", assigneeTeammateId: "teammate_builtin_architect" }, "2026-08-12T20:00:04.000Z");
+  const startAt = "2026-08-12T20:00:04.000Z";
+  const lease = store.acquireResourceLease({ workspaceId: channel.workspaceId, resourceType: "workflow_step", resourceKey: step.id,
+    ownerType: "workflow_step", ownerId: step.id, acquiredAt: startAt, expiresAt: "2026-08-12T21:00:04.000Z" });
+  assert.ok(lease);
+  const started = store.beginChannelWorkflowStepStart({ workflowStepId: step.id,
+    expected: { status: step.status, taskId: step.taskId, runId: step.runId, updatedAt: step.updatedAt }, leaseId: lease.id,
+    task: { channelId: channel.id, title: "Synthesis", prompt: "Synthesize", assigneeTeammateId: teammate.id }, now: startAt });
+  assert.equal(started.status, "begun", JSON.stringify(started));
+  const task = started.task;
+  assert.equal(store.transitionTaskStatus({ taskId: task.id, expectedStatus: "todo", event: "claim", actor: "system", now: startAt }).ok, true);
   const run = store.createRun({
     id: `run_publication_${suffix}`,
     cwd,
@@ -430,34 +736,53 @@ async function createManifestPublicationFixture(suffix, outcome) {
     channelId: channel.id,
     teammateId: "teammate_builtin_architect",
     workflowStepId: step.id,
+    providerPresetId: providerBinding.providerPresetId,
     providerName: "test-provider",
     providerModel: "test-model",
     taskSnapshot: { id: task.id, title: task.title },
     providerSnapshot: { provider: "test-provider", model: "test-model" },
-    requestSnapshot: { cwd },
-    createdAt: "2026-08-12T20:00:04.000Z",
+    requestSnapshot: { cwd, providerBinding, delegatedRequirement: step.metadata.delegatedRequirement },
+    createdAt: startAt,
   });
-  store.markRunStarted(run.id, "2026-08-12T20:00:04.000Z");
+  const unit = store.createWorkUnit({ id: `work_unit_publication_${suffix}`, workspaceId: channel.workspaceId, kind: "task_run",
+    ownerType: "run", ownerId: run.id, channelId: channel.id, taskId: task.id, teammateId: teammate.id,
+    runnerId: "pi", effectiveRunnerId: "pi", idempotencyKey: `terminal-publication-unit:${suffix}`,
+    createdByActor: "system", request: { workflowStepId: step.id }, linkedRunId: run.id, now: startAt });
+  const attempt = store.createWorkUnitAttempt({ id: `attempt_publication_${suffix}`, workUnitId: unit.id, attemptNumber: 1,
+    runtimeInstanceId: `terminal-publication-runtime:${suffix}`, runnerId: "pi", effectiveRunnerId: "pi", now: startAt });
+  assert.equal(store.transitionWorkUnitStatus({ workUnitId: unit.id, expectedStatus: "queued", event: "claim", actor: "system",
+    activeAttemptId: attempt.id, now: startAt }).ok, true);
+  assert.equal(store.transitionWorkUnitStatus({ workUnitId: unit.id, expectedStatus: "claimed", event: "runner_started", actor: "runner", now: startAt }).ok, true);
+  store.linkRunToWorkUnit(run.id, unit.id, startAt);
+  assert.equal(store.getTask(task.id).currentRunId, undefined, "only ready may publish the Task Run link");
+  assert.deepEqual(store.commitChannelWorkflowStepRunReady({ workflowStepId: step.id, owner: started.owner, runId: run.id,
+    now: "2026-08-12T20:00:05.000Z" }), { status: "linked" });
+  assert.equal(store.getTask(task.id).currentRunId, run.id);
+  assert.equal(store.getChannelWorkflowStep(step.id).metadata.startOwner.phase, "linked");
+  store.markRunStarted(run.id, startAt);
   store.appendEvent(run.id, "run_created", {
-    attemptId: `attempt_publication_${suffix}`,
-    workUnitId: `work_unit_publication_${suffix}`,
+    attemptId: attempt.id,
+    workUnitId: unit.id,
   });
   store.appendEvent(run.id, "assistant_text_delta", { text: "Synthesis complete." });
-  store.updateChannelWorkflowStep(step.id, { taskId: task.id, runId: run.id }, "2026-08-12T20:00:05.000Z");
+  if (options.recoveredReadFailure) {
+    for (const [callId, path, isError] of [
+      ["read_absolute_path", resolve(cwd, "README.md"), true],
+      ["read_relative_path", "README.md", false],
+    ]) {
+      store.appendEvent(run.id, "tool_start", { toolCallId: callId, toolName: "read", input: { path } });
+      store.appendEvent(run.id, "tool_end", { toolCallId: callId, toolName: "read", input: { path }, isError,
+        result: { content: [{ type: "text", text: isError
+          ? "operation_binding_input_invalid: File path must be canonical and workspace-relative."
+          : "# Actual README content" }] } });
+    }
+  }
   if (outcome === "succeeded") {
     store.markRunSucceeded(run.id, "2026-08-12T20:00:06.000Z");
   } else if (outcome === "cancelled") {
-    store.updateChannelWorkflowStep(step.id, {
-      metadata: { ...store.getChannelWorkflowStep(step.id).metadata, policy: { onRunFailed: "fail_workflow", onRunCancelled: "cancel_workflow", onApprovalDenied: "block_for_user", retryable: false } },
-    }, "2026-08-12T20:00:05.500Z");
     store.markRunCancelled(run.id, "2026-08-12T20:00:06.000Z");
   } else {
     store.markRunFailed(run.id, "2026-08-12T20:00:06.000Z", `${outcome} fixture`);
-    if (outcome === "failed") {
-      store.updateChannelWorkflowStep(step.id, {
-        metadata: { ...store.getChannelWorkflowStep(step.id).metadata, policy: { onRunFailed: "fail_workflow", onRunCancelled: "block_for_user", onApprovalDenied: "block_for_user", retryable: false } },
-      }, "2026-08-12T20:00:05.500Z");
-    }
   }
   reconcileWorkflowFromCanonicalState({ store, workflowId: workflow.id, cause: "run_terminal", now: "2026-08-12T20:00:07.000Z" });
   workflow = store.getChannelWorkflow(workflow.id);
@@ -481,6 +806,7 @@ async function createManifestPublicationFixture(suffix, outcome) {
     cwd,
     store,
     workflow,
+    run,
     sourceItem,
     sourceTurn: store.getLingTurn(sourceTurn.id),
     report,
@@ -496,6 +822,8 @@ async function createManifestPublicationFixture(suffix, outcome) {
 function publicationInput(fixture) {
   const workflow = fixture.store.getChannelWorkflow(fixture.workflow.id);
   const sourceTurn = fixture.store.getLingTurn(fixture.sourceTurn.id);
+  const record = fixture.store.getTerminalReport(fixture.report.id);
+  if (!record) throw new Error(`Terminal report fixture record missing: ${fixture.report.id}`);
   const evaluation = evaluateWorkflowCompletion({
     store: fixture.store,
     workflow,
@@ -510,16 +838,22 @@ function publicationInput(fixture) {
     expectedCompletion: evaluation,
     expectedSourceTurn: { id: sourceTurn.id, status: sourceTurn.status, updatedAt: sourceTurn.updatedAt },
     publicationItem: {
-      id: terminalReportMessageId(fixture.report.id),
+      id: terminalReportResultItemId(fixture.report.id),
       channelId: workflow.channelId,
       threadId: sourceTurn.threadId,
       turnId: sourceTurn.id,
-      kind: "assistant_message",
+      kind: "terminal_report",
       status: "committed",
-      actorType: "ling_agent",
-      actorId: "ling_agent",
+      actorType: "system",
       visibility: "channel",
-      payload: { body: renderTerminalReportMarkdown(fixture.report), format: "markdown", streaming: false, deliveryStatus: "ready" },
+      payload: {
+        reportId: fixture.report.id,
+        generation: record.generation,
+        sourceKind: fixture.report.source.kind,
+        sourceId: fixture.report.source.id,
+        evidenceFingerprint: fixture.report.evidenceFingerprint,
+        outcomeStatus: fixture.report.outcome.status,
+      },
       domainRefs: [
         { type: "terminal_report", id: fixture.report.id },
         { type: "workflow", id: workflow.id },
@@ -529,43 +863,6 @@ function publicationInput(fixture) {
       idempotencyKey: `terminal-report:${fixture.report.id}`,
     },
     publicationEventIdempotencyKey: `terminal-report:${fixture.report.id}:published`,
-    now: fixture.publishAt,
-  };
-}
-
-function legacyPublicationInput(fixture) {
-  const workflow = fixture.store.getChannelWorkflow(fixture.workflow.id);
-  const sourceTurn = fixture.store.getLingTurn(fixture.sourceTurn.id);
-  const evaluation = evaluateWorkflowCompletion({
-    store: fixture.store,
-    workflow,
-    steps: fixture.store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 }),
-    now: fixture.publishAt,
-  });
-  const messageId = `message_workflow_terminal_${workflow.id}`;
-  return {
-    expectedWorkflowId: workflow.id,
-    expectedCompletion: evaluation,
-    expectedSourceTurn: { id: sourceTurn.id, status: sourceTurn.status, updatedAt: sourceTurn.updatedAt },
-    publicationItem: {
-      id: messageId,
-      channelId: workflow.channelId,
-      threadId: sourceTurn.threadId,
-      turnId: sourceTurn.id,
-      kind: "assistant_message",
-      status: "committed",
-      actorType: "ling_agent",
-      actorId: "ling_agent",
-      visibility: "channel",
-      payload: { body: "Workflow completed.", format: "markdown", streaming: false, deliveryStatus: "ready" },
-      domainRefs: [
-        { type: "workflow", id: workflow.id },
-        { type: "conversation_item", id: fixture.sourceItem.id },
-        { type: "turn", id: sourceTurn.id },
-      ],
-      idempotencyKey: `workflow-terminal:${workflow.id}`,
-    },
-    publicationEventIdempotencyKey: `workflow-terminal:${workflow.id}:published`,
     now: fixture.publishAt,
   };
 }
@@ -588,7 +885,7 @@ function projectionFor(item, assignment) {
 function crashTrigger(boundary, messageId, reportId, turnId) {
   const definitions = {
     item: `CREATE TRIGGER crash_publication_item BEFORE INSERT ON conversation_items WHEN NEW.id = '${messageId}' BEGIN SELECT RAISE(ABORT, 'injected_publication_crash'); END;`,
-    report: `CREATE TRIGGER crash_publication_report BEFORE UPDATE OF published_message_id ON ling_terminal_reports WHEN NEW.id = '${reportId}' BEGIN SELECT RAISE(ABORT, 'injected_publication_crash'); END;`,
+    report: `CREATE TRIGGER crash_publication_report BEFORE UPDATE OF result_item_id ON ling_terminal_reports WHEN NEW.id = '${reportId}' BEGIN SELECT RAISE(ABORT, 'injected_publication_crash'); END;`,
     turn: `CREATE TRIGGER crash_publication_turn BEFORE UPDATE OF status ON ling_turns WHEN NEW.id = '${turnId}' BEGIN SELECT RAISE(ABORT, 'injected_publication_crash'); END;`,
     turn_event: `CREATE TRIGGER crash_publication_turn_event BEFORE INSERT ON state_transition_events WHEN NEW.entity_type = 'turn' AND NEW.entity_id = '${turnId}' BEGIN SELECT RAISE(ABORT, 'injected_publication_crash'); END;`,
     publication_event: `CREATE TRIGGER crash_publication_event BEFORE INSERT ON control_plane_events WHEN NEW.entity_type = 'terminal_report' AND NEW.entity_id = '${reportId}' BEGIN SELECT RAISE(ABORT, 'injected_publication_crash'); END;`,
@@ -603,25 +900,6 @@ function publicationCrashTriggerName(boundary) {
     turn: "crash_publication_turn",
     turn_event: "crash_publication_turn_event",
     publication_event: "crash_publication_event",
-  }[boundary];
-}
-
-function legacyCrashTrigger(boundary, messageId, workflowId, turnId) {
-  const definitions = {
-    item: `CREATE TRIGGER crash_legacy_publication_item BEFORE INSERT ON conversation_items WHEN NEW.id = '${messageId}' BEGIN SELECT RAISE(ABORT, 'injected_legacy_publication_crash'); END;`,
-    turn: `CREATE TRIGGER crash_legacy_publication_turn BEFORE UPDATE OF status ON ling_turns WHEN NEW.id = '${turnId}' BEGIN SELECT RAISE(ABORT, 'injected_legacy_publication_crash'); END;`,
-    turn_event: `CREATE TRIGGER crash_legacy_publication_turn_event BEFORE INSERT ON state_transition_events WHEN NEW.entity_type = 'turn' AND NEW.entity_id = '${turnId}' BEGIN SELECT RAISE(ABORT, 'injected_legacy_publication_crash'); END;`,
-    publication_event: `CREATE TRIGGER crash_legacy_publication_event BEFORE INSERT ON control_plane_events WHEN NEW.entity_type = 'workflow' AND NEW.entity_id = '${workflowId}' BEGIN SELECT RAISE(ABORT, 'injected_legacy_publication_crash'); END;`,
-  };
-  return definitions[boundary];
-}
-
-function legacyPublicationCrashTriggerName(boundary) {
-  return {
-    item: "crash_legacy_publication_item",
-    turn: "crash_legacy_publication_turn",
-    turn_event: "crash_legacy_publication_turn_event",
-    publication_event: "crash_legacy_publication_event",
   }[boundary];
 }
 
@@ -640,7 +918,7 @@ function appendRollbackRecoveryProbe(store, cwd, suffix) {
 }
 
 function assertNoPublication(fixture, expectedTurnStatus = fixture.sourceTurn.status) {
-  assert.equal(fixture.store.getConversationItem(terminalReportMessageId(fixture.report.id)), undefined);
-  assert.equal(fixture.store.getTerminalReport(fixture.report.id).publishedMessageId, undefined);
+  assert.equal(fixture.store.getConversationItem(terminalReportResultItemId(fixture.report.id)), undefined);
+  assert.equal(fixture.store.getTerminalReport(fixture.report.id).resultItemId, undefined);
   assert.equal(fixture.store.getLingTurn(fixture.sourceTurn.id).status, expectedTurnStatus);
 }

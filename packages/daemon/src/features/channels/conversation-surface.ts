@@ -2,13 +2,14 @@ import type { ChannelMessage, ChannelStoreFacet } from "@ling-stack/core";
 
 export type ChannelConversationSurface =
   | { readonly kind: "root" }
+  | { readonly kind: "session"; readonly threadId: string }
   | { readonly kind: "branch"; readonly rootThreadId: string }
   | { readonly kind: "topic"; readonly sourceMessageId: string }
   | { readonly kind: "thread"; readonly threadId: string };
 
 export function listChannelBranchRootThreadIds(store: Pick<ChannelStoreFacet, "listLingThreads">, channelId: string): string[] {
   return store.listLingThreads({ channelId, includeArchived: true, limit: 500 })
-    .filter((thread) => thread.surfaceKind === "branch")
+    .filter((thread) => thread.surfaceKind === "branch" || thread.surfaceKind === "channel_session")
     .map((thread) => thread.id);
 }
 
@@ -28,6 +29,9 @@ export function resolveChannelConversationSurface(
   if (thread.surfaceKind === "channel_root") {
     return { kind: "root" };
   }
+  if (thread.surfaceKind === "channel_session") {
+    return { kind: "session", threadId };
+  }
   if (thread.surfaceKind === "branch") {
     return { kind: "branch", rootThreadId: threadId };
   }
@@ -46,6 +50,8 @@ export function resolveChannelConversationLineKey(
   switch (surface.kind) {
     case "root":
       return "root";
+    case "session":
+      return `session:${surface.threadId}`;
     case "branch":
       return `branch:${surface.rootThreadId}`;
     case "topic":

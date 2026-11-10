@@ -57,11 +57,24 @@ export async function handleControlPlaneRoute(
       const domains = parseControlPlaneDomains(url.searchParams.get("domains"));
       const afterSeq = readControlPlaneAfterSeq(url);
       writeControlPlaneSseHead(response);
+      const cleanup = (): void => {
+        request.off("aborted", closeSubscription);
+        request.off("close", closeSubscription);
+        response.off("close", closeSubscription);
+      };
+      let close = (): void => {};
+      let closeRequested = false;
+      const closeSubscription = (): void => { closeRequested = true; cleanup(); close(); };
+      request.on("aborted", closeSubscription);
+      request.on("close", closeSubscription);
+      response.on("close", closeSubscription);
       const subscription = context.controlPlaneEvents.subscribe({
         workspaceId: DEFAULT_WORKSPACE_ID,
         cwd,
         domains,
         response,
+        initialComment: "ling-stack control-plane stream",
+        writerOptions: { onClose: cleanup },
         latestEventSeq: () => latestControlPlaneEventSeq(context, cwd),
         replayWindow: () => listControlPlaneEventsForResponse(context, {
           cwd,
@@ -70,16 +83,18 @@ export async function handleControlPlaneRoute(
           limit: 1_000,
         }),
       });
-      const closeSubscription = (): void => subscription.close();
-      request.on("aborted", closeSubscription);
-      request.on("close", closeSubscription);
-      response.on("close", closeSubscription);
+      close = () => subscription.close();
+      if (closeRequested) subscription.close();
       return true;
     }
 
     writeJson(response, 404, { error: "not_found", message: `No route for ${request.method} ${url.pathname}` });
     return true;
   } catch (error) {
+    if (response.headersSent) {
+      response.destroy();
+      return true;
+    }
     if (error instanceof ControlPlaneBadDomainError) {
       writeJson(response, 400, { error: "bad_domain", message: error.message });
       return true;
@@ -112,5 +127,4 @@ function writeControlPlaneSseHead(response: ServerResponse): void {
     Connection: "keep-alive",
     "X-Accel-Buffering": "no",
   });
-  response.write(": ling-stack control-plane stream\n\n");
 }

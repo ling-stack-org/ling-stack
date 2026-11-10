@@ -1,45 +1,42 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type Ref } from "react";
-import { ArrowUp, Brain, Check, ChevronDown, CircleAlert, FileText, Plus, Search, SlidersHorizontal, Square } from "lucide-react";
+import { type DragEvent, type KeyboardEvent, type ReactNode, type RefObject, useRef } from "react";
+import { ArrowUp, CircleAlert, FileText, Mic, MicOff, Plus, RotateCcw, SlidersHorizontal, Square } from "lucide-react";
 import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
+import type { ConversationRuntimeMetrics } from "@ling-stack/contracts";
 import { useI18n } from "../../i18n.js";
-import { conversationPermissionPresetMenuOptions } from "../../lib/session-permissions.js";
 import {
-  ComposerPermissionMenu,
   ConversationComposerShell,
+  ConversationBottomStatusStrip,
+  ConversationPermissionControl,
   ConversationStatusStrip,
   TokenizedComposerInput,
   type TokenizedComposerInputHandle,
   type TokenizedComposerInputProps,
 } from "../../shared/conversation/index.js";
 import {
-  Button,
   IconButton,
   InlineFeedback,
-  Input,
-  Menu,
-  MenuContent,
-  MenuRadioGroup,
-  MenuRadioItem,
-  MenuTrigger,
   StatusIndicator,
 } from "../../shared/ui/index.js";
 import { ComposerPendingAssetStrip, type ActiveSlashCommandPicker, type PendingAttachmentItem } from "../../shared/components/index.js";
-import type { ConversationAttachment, PermissionPreset, ProviderThinkingMode } from "../../types.js";
-import {
-  normalConversationModelLabel,
-  normalConversationThinkingLabel,
-  normalConversationThinkingOptions,
-} from "./normal-conversation-composer-options.js";
+import { DesktopDictationButton } from "./DesktopDictationButton.js";
+import { useVoiceDictation } from "../../shared/conversation/use-voice-dictation.js";
+import { appendDictation, voiceErrorMessage } from "../../shared/conversation/voice-dictation-machine.js";
+import type { AuthorizationMode, ConversationAttachment, PermissionPreset, ProviderThinkingMode } from "../../types.js";
+import { normalConversationModelLabel } from "./normal-conversation-composer-options.js";
+import { ConversationModelControl } from "./ConversationModelControl.js";
 import type { ConversationHomeModelOption } from "./normal-conversation-types.js";
 
 export interface NormalConversationComposerProps {
+  readonly workspaceCwd: string;
   readonly draft: string;
-  readonly inputRef: Ref<TokenizedComposerInputHandle>;
+  readonly runtimeMetrics?: ConversationRuntimeMetrics;
+  readonly inputRef: RefObject<TokenizedComposerInputHandle | null>;
   readonly inputParts: TokenizedComposerInputProps["parts"];
   readonly slashPicker?: ActiveSlashCommandPicker;
   readonly slashOptions: readonly ComposerSlashCommandOption[];
   readonly slashActiveIndex: number;
   readonly pendingAttachments: readonly PendingAttachmentItem<ConversationAttachment>[];
+  readonly authorizationMode: AuthorizationMode;
   readonly permissionPreset: PermissionPreset;
   readonly fullAccessConfirmed: boolean;
   readonly modelOptions: readonly ConversationHomeModelOption[];
@@ -48,11 +45,14 @@ export interface NormalConversationComposerProps {
   readonly defaultProviderLabel: string;
   readonly selectedThinkingLevel: ProviderThinkingMode;
   readonly sendBusy: boolean;
+  readonly scopeReady?: boolean;
+  readonly recoveringSubmission?: boolean;
   readonly activeRun: boolean;
   readonly stopping: boolean;
   readonly canSend: boolean;
   readonly notice: string;
   readonly dragActive: boolean;
+  readonly dropFeedback?: ReactNode;
   readonly onDraftChange: (value: string, caret: number) => void;
   readonly onComposerKeyDown: (event: KeyboardEvent<HTMLDivElement>) => void;
   readonly onComposerPasteFiles: (files: readonly File[]) => void;
@@ -64,6 +64,10 @@ export interface NormalConversationComposerProps {
   readonly onDrop: (event: DragEvent<HTMLDivElement>) => void;
   readonly onOpenModelWorkbench?: () => void;
   readonly onRemoveAttachment: (localId: string) => void;
+  readonly onRetryAttachment?: (localId: string) => void | Promise<void>;
+  readonly attachmentCleanupFailures?: readonly import("../../shared/components/composer-pending-assets.js").AttachmentCleanupFailure[];
+  readonly onRetryAttachmentCleanup?: (localId: string) => void | Promise<void>;
+  readonly onAuthorizationModeChange: (mode: AuthorizationMode) => void;
   readonly onPermissionPresetChange: (preset: PermissionPreset) => void;
   readonly onModelChange: (option: ConversationHomeModelOption) => void;
   readonly onThinkingLevelChange: (level: ProviderThinkingMode) => void;
@@ -77,11 +81,15 @@ export function NormalConversationComposer({
   defaultProviderLabel,
   defaultProviderPresetId,
   dragActive,
+  dropFeedback,
   draft,
+  runtimeMetrics,
   inputParts,
   inputRef,
   modelOptions,
   notice,
+  onAuthorizationModeChange,
+  onPermissionPresetChange,
   onAttachFiles,
   onDragLeave,
   onDragOver,
@@ -93,89 +101,66 @@ export function NormalConversationComposer({
   onDraftChange,
   onModelChange,
   onOpenModelWorkbench,
-  onPermissionPresetChange,
   onRemoveAttachment,
+  onRetryAttachment,
+  attachmentCleanupFailures = [],
+  onRetryAttachmentCleanup,
   onStop,
   onSubmit,
   onThinkingLevelChange,
   pendingAttachments,
+  authorizationMode,
   permissionPreset,
   fullAccessConfirmed,
   selectedProviderPresetId,
   selectedThinkingLevel,
   sendBusy,
+  scopeReady = true,
+  recoveringSubmission = false,
   slashActiveIndex,
   slashOptions,
   slashPicker,
   stopping,
+  workspaceCwd,
 }: NormalConversationComposerProps): React.JSX.Element {
-  const { t } = useI18n();
-  const [modelMenuOpen, setModelMenuOpen] = useState(false);
-  const [thinkingMenuOpen, setThinkingMenuOpen] = useState(false);
-  const [modelSearch, setModelSearch] = useState("");
-  const modelSearchRef = useRef<HTMLInputElement | null>(null);
+  const { t, locale } = useI18n();
   const activeProviderPresetId = selectedProviderPresetId || defaultProviderPresetId;
   const activeModelOption = modelOptions.find((option) => option.id === activeProviderPresetId);
   const modelReady = Boolean(activeModelOption?.runnable ?? activeModelOption?.enabled);
   const activeModelLabel = activeModelOption ? normalConversationModelLabel(activeModelOption) : defaultProviderLabel;
-  const thinkingOptions = useMemo(
-    () => normalConversationThinkingOptions(activeModelOption?.thinkingModes ?? []),
-    [activeModelOption?.thinkingModes],
-  );
-  const thinkingEnabled = thinkingOptions.length > 0;
-  const activeThinkingLabel = normalConversationThinkingLabel(selectedThinkingLevel, t);
-  const thinkingOff = selectedThinkingLevel === "off";
-  const normalizedModelSearch = modelSearch.trim().toLowerCase();
-  const visibleModelOptions = useMemo(() => {
-    if (!normalizedModelSearch) {
-      return modelOptions;
-    }
-    return modelOptions.filter((option) => [
-      option.displayName,
-      option.label ?? "",
-      option.model,
-      option.providerId ?? "",
-    ].join(" ").toLowerCase().includes(normalizedModelSearch));
-  }, [modelOptions, normalizedModelSearch]);
 
-  useEffect(() => {
-    if (!sendBusy && !activeRun) {
-      return;
-    }
-    setModelMenuOpen(false);
-    setThinkingMenuOpen(false);
-  }, [activeRun, sendBusy]);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const voice = useVoiceDictation({
+    locale,
+    onTranscript: (text) => {
+      const next = appendDictation(draftRef.current, text);
+      onDraftChange(next, next.length);
+    },
+  });
+  const dictating = voice.status === "recording";
+  const desktopHosted = typeof window !== "undefined" && Boolean(window.lingDesktop);
 
-  useEffect(() => {
-    if (!thinkingEnabled && thinkingMenuOpen) {
-      setThinkingMenuOpen(false);
-    }
-  }, [thinkingEnabled, thinkingMenuOpen]);
-
-  useEffect(() => {
-    if (!modelMenuOpen) {
-      return;
-    }
-    const frame = globalThis.requestAnimationFrame(() => modelSearchRef.current?.focus());
-    return () => globalThis.cancelAnimationFrame(frame);
-  }, [modelMenuOpen]);
-
-  function selectModel(option: ConversationHomeModelOption): void {
-    onModelChange(option);
-    setModelMenuOpen(false);
-    setModelSearch("");
-  }
-
-  function selectThinkingLevel(level: ProviderThinkingMode): void {
-    onThinkingLevelChange(level);
-    setThinkingMenuOpen(false);
-  }
-
-  const configurationLocked = sendBusy || activeRun;
+  const configurationLocked = sendBusy || activeRun || !scopeReady;
+  const attachmentsLocked = sendBusy || !scopeReady;
   const stopAvailable = activeRun && !canSend && Boolean(onStop);
-  const actionLabel = stopAvailable ? (stopping ? t("Stopping") : t("Stop")) : t("Send");
+  const actionLabel = stopAvailable ? (stopping ? t("Stopping") : t("Stop")) : recoveringSubmission ? t("Retry") : t("Send");
   const actionLoading = stopping || sendBusy;
-  const ActionIcon = stopAvailable ? Square : ArrowUp;
+  const ActionIcon = stopAvailable ? Square : recoveringSubmission ? RotateCcw : ArrowUp;
+
+  function insertDictationText(text: string): void {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    const start = inputRef.current?.readSelectionStart() ?? draft.length;
+    const end = inputRef.current?.readSelectionEnd() ?? start;
+    const prefix = draft.slice(0, start);
+    const suffix = draft.slice(end);
+    const separator = prefix && !/\s$/u.test(prefix) && !/^\s/u.test(trimmed) ? " " : "";
+    const next = `${prefix}${separator}${trimmed}${suffix}`;
+    const caret = prefix.length + separator.length + trimmed.length;
+    onDraftChange(next, caret);
+    inputRef.current?.focusAt(caret);
+  }
 
   return (
     <ConversationComposerShell
@@ -186,6 +171,12 @@ export function NormalConversationComposer({
       toolbarClassName="conversation-home-toolbar normal-conversation-composer-toolbar"
       leftToolsClassName="conversation-home-tools normal-conversation-composer-tools"
       rightToolsClassName="conversation-home-right-tools normal-conversation-composer-actions"
+      bottomStatusNode={<ConversationBottomStatusStrip
+        ariaLabel={t("Conversation status")}
+        translate={t}
+        metrics={runtimeMetrics}
+        locale={locale}
+      />}
       statusNode={!modelReady && !activeRun ? (
         <ConversationStatusStrip
           className="conversation-composer-status-strip normal-conversation-model-status attention"
@@ -207,9 +198,16 @@ export function NormalConversationComposer({
       onDragLeave={onDragLeave}
       onDrop={onDrop}
       inputNode={(
-        <div className="conversation-home-composer-body normal-conversation-composer-body">
+        <div className="conversation-home-composer-body normal-conversation-composer-body" data-dictating={dictating || undefined}>
+          {dictating ? (
+            <span className="composer-dictating-badge" role="status">
+              <Mic size={12} />
+              {t("Dictating")}{voice.interim ? ` · ${voice.interim}` : "…"}
+            </span>
+          ) : null}
           <TokenizedComposerInput
             ref={inputRef}
+            readOnly={!scopeReady}
             value={draft}
             parts={inputParts}
             onChange={onDraftChange}
@@ -241,19 +239,21 @@ export function NormalConversationComposer({
           )}
         </div>
       ) : null}
-      dropHintNode={dragActive ? (
-        <div className="composer-drop-hint"><FileText size={16} /><span>{t("Drop files to attach")}</span></div>
-      ) : null}
-      previewNode={pendingAttachments.length > 0 ? (
-        <ComposerPendingAssetStrip attachments={pendingAttachments} onRemoveAttachment={onRemoveAttachment} />
+      dropHintNode={(dropFeedback || dragActive) ? <>
+        {dropFeedback}
+        {dragActive ? <div className="composer-drop-hint"><FileText size={16} /><span>{t("Drop files to attach")}</span></div> : null}
+      </> : null}
+      previewNode={pendingAttachments.length > 0 || attachmentCleanupFailures.length > 0 ? (
+        <ComposerPendingAssetStrip attachments={pendingAttachments} onRemoveAttachment={onRemoveAttachment}
+          onRetryAttachment={onRetryAttachment} cleanupFailures={attachmentCleanupFailures} onRetryCleanup={onRetryAttachmentCleanup} />
       ) : null}
       leftToolsNode={(
         <>
           <label
             className="icon-button composer-tool-button composer-attach-button"
             aria-label={t("Attach files")}
-            title={sendBusy ? t("Please wait for the current message to be sent.") : t("Attach files")}
-            aria-disabled={sendBusy}
+            title={!scopeReady ? t("Loading") : sendBusy ? t("Please wait for the current message to be sent.") : t("Attach files")}
+            aria-disabled={attachmentsLocked}
           >
             <Plus size={17} />
             <input
@@ -261,7 +261,7 @@ export function NormalConversationComposer({
               type="file"
               multiple
               hidden
-              disabled={sendBusy}
+              disabled={attachmentsLocked}
               accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.docx,.xlsx,.pptx,.txt,.md,.csv,.json,.log"
               onChange={(event) => {
                 if (event.currentTarget.files) {
@@ -271,125 +271,48 @@ export function NormalConversationComposer({
               }}
             />
           </label>
-          <ComposerPermissionMenu
-            preset={permissionPreset}
-            options={conversationPermissionPresetMenuOptions(t, fullAccessConfirmed)}
+          {desktopHosted ? (
+            <DesktopDictationButton
+              cwd={workspaceCwd}
+              disabled={configurationLocked}
+              onInsertText={insertDictationText}
+            />
+          ) : voice.supported ? (
+            <button
+              type="button"
+              className={dictating ? "icon-button composer-tool-button composer-dictate-button dictating" : "icon-button composer-tool-button composer-dictate-button"}
+              aria-label={dictating ? t("Stop dictation") : t("Dictate message")}
+              aria-pressed={dictating}
+              data-dictating={dictating || undefined}
+              title={dictating ? t("Stop dictation") : t("Dictate message")}
+              disabled={attachmentsLocked && !dictating}
+              onClick={() => voice.toggle()}
+            >
+              {dictating ? <MicOff size={17} /> : <Mic size={17} />}
+            </button>
+          ) : null}
+          <ConversationPermissionControl
+            authorizationMode={authorizationMode}
+            permissionPreset={permissionPreset}
+            fullAccessConfirmed={fullAccessConfirmed}
             disabled={configurationLocked}
-            disabledReason={t("Permission is locked while the current message is running.")}
-            onPresetChange={onPermissionPresetChange}
+            onAuthorizationModeChange={onAuthorizationModeChange}
+            onPermissionPresetChange={onPermissionPresetChange}
           />
         </>
       )}
       rightToolsNode={(
         <>
-          {thinkingEnabled ? (
-            <Menu open={thinkingMenuOpen} onOpenChange={setThinkingMenuOpen}>
-              <MenuTrigger asChild>
-                <Button
-                  className={thinkingOff ? "conversation-thinking-button off" : "conversation-thinking-button active"}
-                  variant="ghost"
-                  size="sm"
-                  leadingIcon={<Brain size={15} />}
-                  trailingIcon={<ChevronDown className={thinkingMenuOpen ? "expanded" : ""} size={13} />}
-                  aria-label={t("Selected thinking mode {label}", { label: activeThinkingLabel })}
-                  title={thinkingOff
-                    ? t("Thinking is off; no thinking level will be sent.")
-                    : t("This thinking level will be sent with the next message.")}
-                  disabled={configurationLocked}
-                >
-                  {thinkingOff ? t("Thinking off") : t("Thinking {label}", { label: activeThinkingLabel })}
-                </Button>
-              </MenuTrigger>
-              <MenuContent
-                className="conversation-thinking-menu"
-                side="top"
-                align="end"
-                sideOffset={8}
-                aria-label={t("Thinking mode")}
-              >
-                <MenuRadioGroup value={selectedThinkingLevel}>
-                  {thinkingOptions.map((level) => {
-                    const selected = level === selectedThinkingLevel;
-                    return (
-                      <MenuRadioItem
-                        key={level}
-                        className={selected ? "conversation-thinking-option selected" : "conversation-thinking-option"}
-                        value={level}
-                        onSelect={(event) => {
-                          event.preventDefault();
-                          selectThinkingLevel(level);
-                        }}
-                      >
-                        <span>{normalConversationThinkingLabel(level, t)}</span>
-                        {selected ? <Check size={14} /> : null}
-                      </MenuRadioItem>
-                    );
-                  })}
-                </MenuRadioGroup>
-              </MenuContent>
-            </Menu>
-          ) : null}
-          <Menu
-            open={modelMenuOpen}
-            onOpenChange={(open) => {
-              setModelMenuOpen(open);
-              if (!open) setModelSearch("");
-            }}
-          >
-            <MenuTrigger asChild>
-              <Button
-                className="conversation-model-trigger"
-                variant="ghost"
-                size="sm"
-                trailingIcon={<ChevronDown className={modelMenuOpen ? "expanded" : ""} size={13} />}
-                aria-label={t("Selected model {label}", { label: activeModelLabel })}
-                disabled={configurationLocked}
-              >
-                {activeModelLabel}
-              </Button>
-            </MenuTrigger>
-            <MenuContent
-              className="conversation-model-menu"
-              side="top"
-              align="end"
-              sideOffset={8}
-              aria-label={t("Model options")}
-            >
-              <Input
-                ref={modelSearchRef}
-                containerClassName="conversation-model-search"
-                size="sm"
-                prefix={<Search size={14} />}
-                value={modelSearch}
-                onChange={(event) => setModelSearch(event.target.value)}
-                onKeyDown={(event) => event.stopPropagation()}
-                placeholder={t("Search models")}
-                aria-label={t("Search models")}
-              />
-              <MenuRadioGroup className="conversation-model-list" value={activeProviderPresetId}>
-                {visibleModelOptions.length > 0 ? visibleModelOptions.map((option) => {
-                  const selected = option.id === activeProviderPresetId;
-                  return (
-                    <MenuRadioItem
-                      key={option.id}
-                      className={selected ? "conversation-model-option selected" : "conversation-model-option"}
-                      value={option.id}
-                      onSelect={(event) => {
-                        event.preventDefault();
-                        selectModel(option);
-                      }}
-                    >
-                      <span className="conversation-model-option-copy"><strong>{normalConversationModelLabel(option)}</strong></span>
-                      {option.id === defaultProviderPresetId ? <span className="conversation-model-default-chip">{t("Default")}</span> : null}
-                      {selected ? <Check size={14} /> : null}
-                    </MenuRadioItem>
-                  );
-                }) : (
-                  <span className="conversation-model-empty">{t("No matching models")}</span>
-                )}
-              </MenuRadioGroup>
-            </MenuContent>
-          </Menu>
+          <ConversationModelControl
+            modelOptions={modelOptions}
+            selectedProviderPresetId={selectedProviderPresetId}
+            defaultProviderPresetId={defaultProviderPresetId}
+            defaultProviderLabel={defaultProviderLabel}
+            thinkingLevel={selectedThinkingLevel}
+            disabled={configurationLocked}
+            onModelChange={onModelChange}
+            onThinkingLevelChange={onThinkingLevelChange}
+          />
           <IconButton
             className="conversation-home-send normal-conversation-send"
             icon={ActionIcon}
@@ -397,7 +320,7 @@ export function NormalConversationComposer({
             tooltip={actionLabel}
             loading={actionLoading}
             loadingLabel={actionLabel}
-            disabled={stopAvailable ? stopping : sendBusy || !canSend}
+            disabled={!scopeReady || (stopAvailable ? stopping : sendBusy || !canSend)}
             onClick={() => {
               if (stopAvailable) {
                 void onStop?.();
@@ -408,9 +331,9 @@ export function NormalConversationComposer({
           />
         </>
       )}
-      feedbackNode={notice ? (
+      feedbackNode={(notice || voice.error) ? (
         <InlineFeedback className="conversation-home-notice normal-conversation-composer-feedback" tone="danger">
-          {notice}
+          {voice.error ? voiceErrorMessage(voice.error, t) : notice}
         </InlineFeedback>
       ) : null}
     />

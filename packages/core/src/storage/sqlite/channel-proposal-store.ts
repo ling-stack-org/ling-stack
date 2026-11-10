@@ -4,12 +4,13 @@ import {
   DEFAULT_WORKSPACE_ID,
   createChannelExecutionProposalId,
   type ChannelExecutionProposal,
+  type ChannelExecutionProposalClaimResult,
   type ChannelRequirementShaping,
   type CreateChannelExecutionProposalInput,
   type ListChannelExecutionProposalsOptions,
   type UpdateChannelExecutionProposalInput,
 } from "../../workspace-types.js";
-import { nullableUpdate, stringifyJson } from "./helpers.js";
+import { nullableUpdate, rollbackOwnedSqliteTransaction, stringifyJson } from "./helpers.js";
 import { mapChannelExecutionProposal } from "./channel-proposal-mappers.js";
 import { channelExecutionProposalSelectSql } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
@@ -36,6 +37,7 @@ export class SqliteChannelProposalStore {
     const shaping = input.shaping ?? defaultChannelRequirementShaping(input, now);
     const proposal: ChannelExecutionProposal = {
       id: createChannelExecutionProposalId(),
+      revision: 1,
       workspaceId: DEFAULT_WORKSPACE_ID,
       channelId: input.channelId,
       sourceMessageId: input.sourceMessageId,
@@ -63,6 +65,7 @@ export class SqliteChannelProposalStore {
       .prepare(`
         INSERT INTO channel_execution_proposals (
           id,
+          revision,
           workspace_id,
           channel_id,
           source_item_id,
@@ -82,12 +85,15 @@ export class SqliteChannelProposalStore {
           linked_workflow_id,
           error_message,
           blocker_json,
+          confirmation_claim_id,
+          confirmation_claim_expires_at,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         proposal.id,
+        proposal.revision,
         proposal.workspaceId,
         proposal.channelId,
         proposal.sourceMessageId,
@@ -107,6 +113,8 @@ export class SqliteChannelProposalStore {
         proposal.linkedWorkflowId ?? null,
         proposal.errorMessage ?? null,
         proposal.blocker ? stringifyJson(proposal.blocker) : null,
+        null,
+        null,
         proposal.createdAt,
         proposal.updatedAt,
       );
@@ -151,10 +159,28 @@ export class SqliteChannelProposalStore {
     if (!existing) {
       return undefined;
     }
+    const expectedRevision = input.expectedRevision ?? existing.revision;
+    if (expectedRevision !== existing.revision) {
+      return undefined;
+    }
+    const claim = this.context.database.prepare(`
+      SELECT confirmation_claim_id, confirmation_claim_expires_at
+      FROM channel_execution_proposals
+      WHERE id = ?
+    `).get(id) as { confirmation_claim_id?: string | null; confirmation_claim_expires_at?: string | null } | undefined;
+    const activeClaim = Boolean(
+      claim?.confirmation_claim_id
+      && claim.confirmation_claim_expires_at
+      && claim.confirmation_claim_expires_at > now,
+    );
+    if (activeClaim && input.confirmationClaimId !== claim?.confirmation_claim_id) {
+      return undefined;
+    }
     const { shaping: existingShaping, ...existingWithoutShaping } = existing;
     const nextShaping = nullableUpdate(input.shaping, existingShaping);
     const next: ChannelExecutionProposal = {
       ...existingWithoutShaping,
+      revision: existing.revision + 1,
       title: input.title ?? existing.title,
       prompt: input.prompt ?? existing.prompt,
       assigneeTeammateId: input.assigneeTeammateId ?? existing.assigneeTeammateId,
@@ -173,7 +199,7 @@ export class SqliteChannelProposalStore {
       updatedAt: now,
     };
 
-    this.context.database
+    const result = this.context.database
       .prepare(`
         UPDATE channel_execution_proposals
         SET
@@ -192,8 +218,15 @@ export class SqliteChannelProposalStore {
           linked_workflow_id = ?,
           error_message = ?,
           blocker_json = ?,
+          confirmation_claim_id = NULL,
+          confirmation_claim_expires_at = NULL,
+          revision = revision + 1,
           updated_at = ?
         WHERE id = ?
+          AND revision = ?
+          ${input.confirmationClaimId
+            ? "AND confirmation_claim_id = ?"
+            : "AND (confirmation_claim_id IS NULL OR confirmation_claim_expires_at IS NULL OR confirmation_claim_expires_at <= ?)"}
       `)
       .run(
         next.title,
@@ -213,9 +246,76 @@ export class SqliteChannelProposalStore {
         next.blocker ? stringifyJson(next.blocker) : null,
         next.updatedAt,
         next.id,
+        expectedRevision,
+        ...(input.confirmationClaimId ? [input.confirmationClaimId] : [now]),
       );
 
+    if (Number(result.changes) !== 1) {
+      return undefined;
+    }
+
     return this.getChannelExecutionProposal(id);
+  }
+
+  claimChannelExecutionProposal(
+    id: string,
+    claimId: string,
+    now: string,
+    claimExpiresAt: string,
+  ): ChannelExecutionProposalClaimResult {
+    if (!claimId.trim()) throw new Error("Channel execution proposal claim id is required.");
+    if (claimExpiresAt <= now) throw new Error("Channel execution proposal claim must expire after now.");
+    this.context.database.exec("BEGIN IMMEDIATE;");
+    try {
+      const current = this.getChannelExecutionProposal(id);
+      if (!current) {
+        this.context.database.exec("COMMIT;");
+        return { kind: "not_found" };
+      }
+      const claim = this.context.database.prepare(`
+        SELECT confirmation_claim_id, confirmation_claim_expires_at
+        FROM channel_execution_proposals
+        WHERE id = ?
+      `).get(id) as { confirmation_claim_id?: string | null; confirmation_claim_expires_at?: string | null } | undefined;
+      if (
+        claim?.confirmation_claim_id
+        && claim.confirmation_claim_expires_at
+        && claim.confirmation_claim_expires_at > now
+      ) {
+        this.context.database.exec("COMMIT;");
+        return { kind: "busy", proposal: current };
+      }
+      const result = this.context.database.prepare(`
+        UPDATE channel_execution_proposals
+        SET revision = revision + 1,
+            confirmation_claim_id = ?,
+            confirmation_claim_expires_at = ?,
+            updated_at = ?
+        WHERE id = ?
+          AND revision = ?
+          AND status IN ('draft', 'blocked', 'run_failed')
+          AND (
+            confirmation_claim_id IS NULL
+            OR confirmation_claim_expires_at IS NULL
+            OR confirmation_claim_expires_at <= ?
+          )
+      `).run(claimId, claimExpiresAt, now, id, current.revision, now);
+      if (Number(result.changes) !== 1) {
+        const latest = this.getChannelExecutionProposal(id);
+        this.context.database.exec("COMMIT;");
+        if (!latest) return { kind: "not_found" };
+        return latest.revision !== current.revision
+          ? { kind: "stale", proposal: latest }
+          : { kind: "busy", proposal: latest };
+      }
+      const claimed = this.getChannelExecutionProposal(id);
+      if (!claimed) throw new Error(`Channel execution proposal disappeared after claim: ${id}`);
+      this.context.database.exec("COMMIT;");
+      return { kind: "claimed", proposal: claimed };
+    } catch (error) {
+      rollbackOwnedSqliteTransaction(this.context.database);
+      throw error;
+    }
   }
 }
 

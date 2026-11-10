@@ -1,4 +1,5 @@
 import type {
+  ExecutionCancellationRequest,
   CreateLingTurnRequest,
   CreateLingThreadRequest,
   CreateToolLoadRequest,
@@ -51,6 +52,8 @@ import type {
   ToolSurfaceResponse,
   RunWorkspaceChangesResponse,
   TurnWorkspaceChangesResponse,
+  UserInputAnswerSubmissionResponseV1,
+  UserInputAnswerSubmissionV1,
 } from "@ling-stack/contracts";
 import type { LingDaemonEndpointContext, PublicEndpointGroup } from "../transport.js";
 
@@ -267,6 +270,20 @@ export const runEndpoints = {
       return this._post(`/threads/${encodeURIComponent(threadId)}/unpin`, { cwd }, input);
     },
 
+  async submitRunUserInputAnswer(
+    this: LingDaemonEndpointContext,
+    cwd: string,
+    threadId: string,
+    requestId: string,
+    input: UserInputAnswerSubmissionV1,
+  ): Promise<UserInputAnswerSubmissionResponseV1> {
+      return this._post(
+        `/threads/${encodeURIComponent(threadId)}/user-input-requests/${encodeURIComponent(requestId)}/answers`,
+        { cwd },
+        input,
+      );
+    },
+
   async getRun(this: LingDaemonEndpointContext, runId: string, cwd?: string): Promise<RunSession> {
       return this._get(`/runs/${encodeURIComponent(runId)}`, { cwd });
     },
@@ -311,12 +328,12 @@ export const runEndpoints = {
       return this._get(`/runs/${encodeURIComponent(runId)}/shell-snapshots/${encodeURIComponent(snapshotId)}`, { cwd });
     },
 
-  async cancelRun(this: LingDaemonEndpointContext, cwd: string, runId: string): Promise<RunCancelResponse> {
-      return this._post(`/runs/${encodeURIComponent(runId)}/cancel`, { cwd });
+  async cancelRun(this: LingDaemonEndpointContext, cwd: string, runId: string, input: ExecutionCancellationRequest = {}): Promise<RunCancelResponse> {
+      return this._post(`/runs/${encodeURIComponent(runId)}/cancel`, { cwd }, input);
     },
 
-  async listRunInterventions(this: LingDaemonEndpointContext, cwd: string, runId: string, limit: number = 100): Promise<RunInterventionListResponse> {
-      return this._get(`/runs/${encodeURIComponent(runId)}/interventions`, { cwd, limit });
+  async listRunInterventions(this: LingDaemonEndpointContext, cwd: string, runId: string, limit: number = 100, idempotencyKey?: string): Promise<RunInterventionListResponse> {
+      return this._get(`/runs/${encodeURIComponent(runId)}/interventions`, { cwd, limit, idempotencyKey });
     },
 
   async createRunIntervention(this: LingDaemonEndpointContext, cwd: string, runId: string, input: CreateRunInterventionRequest): Promise<RunInterventionResponse> {

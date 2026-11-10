@@ -1,7 +1,6 @@
 import type {
   ProviderCheckResult,
   ProviderCapability,
-  ProviderFormState,
   ProviderKeychainSecretConfigureRequest,
   ProviderKeychainSecretDeleteRequest,
   ProviderKeychainSecretResponse,
@@ -12,7 +11,8 @@ import type {
   ProviderMutationResponse,
   ProviderSecretResponse,
   ProviderTemplateListResponse,
-} from "../types.js";
+} from "@ling-stack/contracts";
+import type { ProviderFormState } from "../types.js";
 import { daemonClient } from "./client.js";
 import { parseSecretHeaderRefsText, providerFormToPayload } from "./provider-payloads.js";
 
@@ -64,8 +64,13 @@ export async function checkProviderDraft(cwd: string, form: ProviderFormState): 
   return daemonClient.checkProviderDraft(cwd, providerFormToPayload(form));
 }
 
-export async function listProviderModels(cwd: string, form: ProviderFormState): Promise<ProviderModelListResponse> {
+export async function listProviderModels(
+  cwd: string,
+  form: ProviderFormState,
+  providerPresetId?: string,
+): Promise<ProviderModelListResponse> {
   return daemonClient.listProviderModels(cwd, {
+    providerPresetId,
     kind: form.kind,
     providerId: form.providerId,
     api: form.api,

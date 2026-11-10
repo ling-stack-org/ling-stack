@@ -1,0 +1,16 @@
+{
+  "inventoryValidation": "PASS",
+  "spdxSchema": "SPDX-2.3",
+  "installerPackages": 453,
+  "actualInstallerPlugins": 6,
+  "actualUninstallerPlugins": 4,
+  "exactToolchainPluginMatches": 6,
+  "matchingOriginalSupplierPluginArchives": 3,
+  "stdUtilsCorrespondingSourceRetained": true,
+  "noticeAndSupplierRecordFiles": 12,
+  "unresolvedInstallerReviewQuestions": 3,
+  "publicBinaryDistribution": "NO_GO",
+  "runtimeSourceSha": "f0a632b1bd5bd09b12778cbd7da3d26c354b832f",
+  "installerSha256": "69cf35afc819d06e63d68a78e4630233d0faee70465bcc02fdd8333ca217e6b2",
+  "verifiedUtc": "2026-10-10T06:25:42.312Z"
+}

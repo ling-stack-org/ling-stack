@@ -1,0 +1,49 @@
+import type { HarnessFeatureSnapshotV1 } from "@ling-stack/contracts";
+import type { ResolvedDaemonConfig } from "../../config.js";
+
+export function createHarnessFeatureSnapshot(config: Pick<ResolvedDaemonConfig, "harness">): HarnessFeatureSnapshotV1 {
+  const selected = config.harness.delegations.selectedWorkflowIds ?? [];
+  if (!Array.isArray(selected) || selected.length > 100
+    || selected.some(id => typeof id !== "string" || !/^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,255}$/u.test(id))
+    || new Set(selected).size !== selected.length) {
+    throw Object.assign(new Error("delegation.invalid_workflow_selection"), { code: "delegation.invalid_workflow_selection" });
+  }
+  return {
+    schemaVersion: 1,
+    continuations: config.harness.continuations.mode,
+    toolBroker: config.harness.toolBroker.mode,
+    evaluations: config.harness.evaluations.mode,
+    evaluationModelGate: config.harness.evaluations.modelGate,
+    delegations: config.harness.delegations.mode,
+    delegationMaxDepth: config.harness.delegations.maxDepth,
+    delegationSelectedWorkflowIds: Object.freeze([...selected]),
+  };
+}
+
+export * from "./continuations/native-handle.js";
+export * from "./continuations/coordinator.js";
+export * from "./continuations/daemon-recovery-coordinator.js";
+export * from "./continuations/reconstruction.js";
+export * from "./continuations/replay-package.js";
+export * from "./tool-execution/broker.js";
+export * from "./evaluations/rule-grader.js";
+export * from "./evaluations/scheduler.js";
+export * from "./evaluations/task-worker.js";
+export { createRunEvaluationQaModelConfiguration, runEvaluationQaModelConfigurationFacts,
+  runEvaluationQaModelConfigurationSnapshot } from "./evaluations/qa-model-preparation.js";
+export type { RunEvaluationQaModelConfiguration, RunEvaluationQaModelConfigurationInput,
+  RunEvaluationQaModelConfigurationFacts } from "./evaluations/qa-model-preparation.js";
+export { createRunEvaluationQaModelHostAdapter } from "./evaluations/qa-model-coordinator.js";
+export {
+  reconcileRunEvaluationTasksAtStartup,
+  RunEvaluationTaskWorkerComposition,
+  type RunEvaluationQaTaskWorkerActivation,
+  type RunEvaluationTaskStartupRecoveryResult,
+  type RunEvaluationTaskWorkerCompositionOptions,
+} from "./evaluations/task-worker-composition.js";
+export { createRunEvaluationQaOwnedModelBatch, runEvaluationQaOwnedModelBatchFacts,
+  createRunEvaluationQaProviderCurrentness } from "./evaluations/qa-model-owned-batch.js";
+export type { RunEvaluationQaOwnedModelBatch } from "./evaluations/qa-model-owned-batch.js";
+export { createRunEvaluationQaPilotReview, runEvaluationQaModelPilot } from "./evaluations/qa-model-pilot-runner.js";
+export type { RunEvaluationQaPilotCase, RunEvaluationQaPilotExecution, RunEvaluationQaPilotOptions,
+  RunEvaluationQaPilotResult, RunEvaluationQaPilotReviewV1 } from "./evaluations/qa-model-pilot-runner.js";

@@ -302,7 +302,7 @@ function resolveChannelMessage(store: RunStore, input: EditConversationMessageRe
   const resolvedSurface = resolveChannelConversationSurface(store, channel.id, message);
   const surface = resolvedSurface.kind === "root"
     ? "channel_root"
-    : resolvedSurface.kind === "branch"
+    : resolvedSurface.kind === "branch" || resolvedSurface.kind === "session"
       ? "channel_branch"
       : resolvedSurface.kind === "topic"
         ? "topic_reply"

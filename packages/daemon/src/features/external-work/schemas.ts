@@ -408,6 +408,8 @@ function readOptionalThinkingLevel(record: Record<string, unknown>, key: string)
     "medium",
     "high",
     "xhigh",
+    "max",
+    "ultra",
   ])?.[0];
 }
 

@@ -10,6 +10,7 @@ import type {
   SecretResolver,
 } from "@ling-stack/core";
 import { resolveEffectiveTeammateProviderPresetId } from "@ling-stack/core";
+import { PiRunnerAdapter } from "@ling-stack/runner-pi";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
 import { extractAssistantText } from "../../shared/assistant-text.js";
@@ -17,6 +18,7 @@ import { resolveProviderForRun } from "../runs/providers.js";
 import { resolveAiTeammateReference } from "../teammates/identity.js";
 import { resolveEffectiveChannelCollaborationProtocol } from "./collaboration-protocol.js";
 import { compactChannelDiscussionForNoToolsRetry, isContextLengthError } from "./context-compaction.js";
+import { ChannelModelBudgetError, requireChannelNoToolsBudget } from "./channel-reply-budget-admission.js";
 import {
   buildChannelAutoRouteContextPack,
   buildChannelReplyContextPack,
@@ -32,10 +34,8 @@ import {
 } from "./ling-agent-turn-envelope.js";
 import { resolveChannelConversationSurface } from "./conversation-surface.js";
 import { findChannelAssistantReplyForSource } from "./conversation-item-messages.js";
-import {
-  recordProviderContextLengthObservation,
-  recordProviderRuntimeAvailabilityIncident,
-} from "./provider-runtime-observations.js";
+import { createProviderInvocationObserver } from "../providers/runtime-invocations.js";
+import { recordProviderInvocationFailureObservations } from "../providers/runtime-failure-observations.js";
 
 const ROUTE_CONFIDENCE_THRESHOLD = 0.55;
 
@@ -49,6 +49,7 @@ export interface ChannelMessageRouteInput {
   readonly config: ResolvedDaemonConfig;
   readonly requestedProviderPresetId?: string;
   readonly requestedTeammateId?: string;
+  readonly hostCapabilityAvailable?: (capabilityId: "host.open_local_target") => boolean;
 }
 
 export type ChannelMessageRouteResult =
@@ -339,9 +340,10 @@ function deterministicNoReplyReason(input: ChannelMessageRouteInput): string | u
 
 function defaultLingAgentReplyReason(input: ChannelMessageRouteInput): string {
   const surface = resolveChannelConversationSurface(input.store, input.channel.id, input.sourceMessage);
-  if (surface.kind === "branch") {
-    return "Ling Agent answered a channel branch message.";
+  if (surface.kind === "session") {
+    return "Ling Agent answered a channel conversation message.";
   }
+  if (surface.kind === "branch") return "Ling Agent answered a channel branch message.";
   return "Ling Agent answered a root channel message.";
 }
 
@@ -431,6 +433,7 @@ async function requestModelRoute(input: ChannelMessageRouteInput, candidates: re
   }
   let contextPack = buildChannelAutoRouteContextPack({
     store: input.store,
+    secretResolver: input.secretResolver,
     channel: input.channel,
     sourceMessage: input.sourceMessage,
     turnEnvelope: input.turnEnvelope,
@@ -442,6 +445,8 @@ async function requestModelRoute(input: ChannelMessageRouteInput, candidates: re
   const runnerResolution = input.runnerRegistry.resolve({ tools: [], allowFallback: true });
   const textDeltas: string[] = [];
   const runRouteTask = async (taskPrompt: string) => {
+    requireChannelNoToolsBudget({ budget: contextPack.budget, contextPackOverBudget: contextPack.overBudget,
+      prompt: taskPrompt, systemPrompt: "You are Ling's channel message router. Return strict JSON only." });
     const provider = resolveProviderForRun(input.store, {
       cwd: input.store.paths.cwd,
       workspaceCwd: input.store.paths.cwd,
@@ -465,6 +470,14 @@ async function requestModelRoute(input: ChannelMessageRouteInput, candidates: re
         channelId: input.channel.id,
       },
       provider,
+      ...(runnerResolution.runner.adapter instanceof PiRunnerAdapter
+        ? createProviderInvocationObserver({
+            store: input.store, provider, taskId: input.sourceMessage.id, origin: "route",
+            onFailure: failure => { recordProviderInvocationFailureObservations({
+              store: input.store, secretResolver: input.secretResolver, failure,
+            }); },
+          })
+        : {}),
       tools: [],
       thinkingLevel: "low",
       systemPrompt: "You are Ling's channel message router. Return strict JSON only.",
@@ -479,24 +492,10 @@ async function requestModelRoute(input: ChannelMessageRouteInput, candidates: re
   try {
     result = await runRouteTask(prompt);
   } catch (error) {
-    if (!isContextLengthError(error)) {
+    if (error instanceof ChannelModelBudgetError || !isContextLengthError(error)) {
       throw error;
     }
     const observedAt = new Date().toISOString();
-    const providerPreset = contextPack.providerPresetId ? input.store.getProviderPreset(contextPack.providerPresetId) : undefined;
-    recordProviderContextLengthObservation({
-      providerPreset,
-      contextPack,
-      now: observedAt,
-    });
-    recordProviderRuntimeAvailabilityIncident({
-      store: input.store,
-      providerPreset,
-      providerPresetId: contextPack.providerPresetId,
-      code: "context_length_error",
-      error,
-      now: observedAt,
-    });
     const compaction = await compactChannelDiscussionForNoToolsRetry({
       store: input.store,
       channel: input.channel,
@@ -506,6 +505,7 @@ async function requestModelRoute(input: ChannelMessageRouteInput, candidates: re
     });
     contextPack = buildChannelAutoRouteContextPack({
       store: input.store,
+      secretResolver: input.secretResolver,
       channel: input.channel,
       sourceMessage: input.sourceMessage,
       turnEnvelope: input.turnEnvelope,
@@ -687,6 +687,7 @@ function buildReplyRouteContextPackMetadata(
   const teammate = resolveAiTeammateReference(input.store, draft.teammateId);
   const contextPack = buildChannelReplyContextPack({
     store: input.store,
+    secretResolver: input.secretResolver,
     channel: input.channel,
     sourceMessage: input.sourceMessage,
     turnEnvelope: input.turnEnvelope,

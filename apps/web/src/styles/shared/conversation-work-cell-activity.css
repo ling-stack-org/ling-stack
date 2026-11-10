@@ -33,12 +33,12 @@
   border: 0;
   border-radius: 0;
   background: transparent;
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
   font-size: 12px;
 }
 
 .conversation-work-cell-details-state.failed {
-  color: var(--conversation-status-danger);
+  color: var(--ling-status-danger);
 }
 
 .conversation-work-cell-details-state span {
@@ -55,6 +55,494 @@
   background: transparent;
 }
 
+.conversation-timeline {
+  min-width: 0;
+}
+
+/* Codex-style typed transcript rows: a quiet icon rail and one local disclosure. */
+.conversation-typed-transcript-body {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.conversation-timeline-activity {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  color: var(--ling-text-muted);
+}
+
+.conversation-timeline-activity-main {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto 14px;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+  min-height: 22px;
+  padding: 1px 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.conversation-timeline-activity-main.static {
+  cursor: default;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+}
+
+.conversation-timeline-activity-main > svg,
+.conversation-timeline-activity-brain {
+  width: 14px;
+  height: 14px;
+  color: inherit;
+}
+
+.conversation-timeline-activity-copy {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+}
+
+.conversation-timeline-activity-copy strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ling-text-muted);
+  font-size: 12px;
+  font-weight: 450;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-timeline-activity-copy small,
+.conversation-timeline-activity-status,
+.conversation-timeline-detail-meta {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ling-text-muted);
+  font-size: 11px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-timeline-activity-status {
+  justify-self: end;
+}
+
+.conversation-timeline-activity-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  color: var(--ling-text-muted);
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0;
+  transform: rotate(0deg);
+  transition: opacity var(--ling-motion-fast) var(--ling-ease-standard), transform var(--ling-motion-fast) var(--ling-ease-standard);
+}
+
+.conversation-timeline-activity:hover .conversation-timeline-activity-chevron,
+.conversation-timeline-activity:focus-within .conversation-timeline-activity-chevron,
+.conversation-timeline-activity.expanded .conversation-timeline-activity-chevron {
+  opacity: 1;
+}
+
+.conversation-timeline-activity.expanded .conversation-timeline-activity-chevron {
+  transform: rotate(180deg);
+}
+
+button.conversation-timeline-activity-main:not(:disabled):hover,
+button.conversation-timeline-activity-main:not(:disabled):focus-visible {
+  color: var(--ling-text-strong);
+}
+
+button.conversation-timeline-activity-main:not(:disabled):hover .conversation-timeline-activity-copy strong,
+button.conversation-timeline-activity-main:not(:disabled):focus-visible .conversation-timeline-activity-copy strong {
+  color: var(--ling-text-strong);
+}
+
+.conversation-timeline-activity.status-failed .conversation-timeline-activity-main > svg,
+.conversation-timeline-activity.status-blocked .conversation-timeline-activity-main > svg {
+  color: var(--ling-status-danger);
+}
+
+.conversation-timeline-activity.status-partially_succeeded .conversation-timeline-activity-main > svg {
+  color: var(--ling-status-warning);
+}
+
+.conversation-timeline-activity.kind-approval:is(.status-waiting, .status-pending) .conversation-timeline-activity-main > svg {
+  color: var(--ling-status-warning);
+}
+
+.conversation-timeline-activity-detail {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  margin-left: 23px;
+  padding: 2px 0 3px;
+}
+
+.conversation-timeline-activity-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  padding-top: 2px;
+}
+
+.conversation-timeline-command,
+.conversation-timeline-output {
+  display: block;
+  width: min(720px, 100%);
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  padding: 6px 8px;
+  border: 1px solid var(--ling-border-default);
+  border-radius: 6px;
+  background: var(--ling-bg-code);
+  color: var(--ling-text-default);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.conversation-timeline-output {
+  max-height: min(240px, 35vh);
+  margin: 0;
+}
+
+.conversation-timeline-rich-detail {
+  min-width: 0;
+  color: var(--ling-text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.conversation-timeline-image-preview {
+  display: block;
+  width: min(320px, 100%);
+  padding: 0;
+  border: 1px solid var(--ling-border-default);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--ling-bg-code);
+  cursor: zoom-in;
+}
+
+.conversation-timeline-image-preview img {
+  display: block;
+  width: 100%;
+  max-height: 180px;
+  object-fit: contain;
+}
+
+.conversation-timeline-image-preview-loading {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  color: var(--ling-text-muted);
+}
+
+.conversation-timeline-rich-detail > * {
+  margin: 0;
+}
+
+.conversation-timeline-rich-detail > * + * {
+  margin-top: 5px;
+}
+
+.conversation-timeline-detail-lines {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.conversation-timeline-detail-code {
+  display: block;
+  width: min(720px, 100%);
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 5px 7px;
+  border: 1px solid var(--ling-border-default);
+  border-radius: 6px;
+  background: var(--ling-bg-code);
+  color: var(--ling-text-default);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.conversation-timeline-file-list,
+.conversation-timeline-ref-list {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.conversation-timeline-file-detail,
+.conversation-timeline-change-preview {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.conversation-timeline-change-preview-file {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.conversation-timeline-change-preview-file-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  color: var(--ling-text-muted);
+  font-size: 11px;
+}
+
+.conversation-timeline-change-preview-file-head code {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-timeline-file-ref-icon {
+  flex: 0 0 auto;
+  color: var(--ling-text-muted);
+  font-size: 13px;
+  line-height: 1;
+}
+
+.conversation-timeline-file-ref {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  max-width: 100%;
+  min-width: 0;
+  padding: 1px 0;
+  border: 0;
+  background: transparent;
+  color: var(--ling-text-muted);
+  font-size: 12px;
+  line-height: 18px;
+  text-align: left;
+}
+
+button.conversation-timeline-file-ref {
+  cursor: pointer;
+}
+
+.conversation-timeline-file-ref:hover,
+.conversation-timeline-file-ref:focus-visible {
+  color: var(--ling-text-strong);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.conversation-timeline-file-ref span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-timeline-file-ref small {
+  flex: 0 0 auto;
+  color: var(--ling-text-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+}
+
+.conversation-timeline-plan-steps {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--ling-text-muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.conversation-timeline-plan-steps li[data-step-status="completed"] {
+  color: var(--ling-status-success);
+}
+
+.conversation-timeline-plan-steps li[data-step-status="blocked"] {
+  color: var(--ling-status-danger);
+}
+
+.conversation-timeline-detail-empty {
+  color: var(--ling-text-muted);
+  font-size: 12px;
+}
+
+.conversation-timeline-diagnostic-detail {
+  display: grid;
+  gap: 8px;
+  max-width: min(720px, 100%);
+  color: var(--ling-text-soft);
+  font-size: 12px;
+}
+
+.conversation-timeline-diagnostic-detail p,
+.conversation-timeline-diagnostic-detail dl,
+.conversation-timeline-diagnostic-detail dd {
+  margin: 0;
+}
+
+.conversation-timeline-diagnostic-detail dl {
+  display: grid;
+  gap: 4px;
+}
+
+.conversation-timeline-diagnostic-detail dl > div {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.35fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.conversation-timeline-diagnostic-detail dt,
+.conversation-timeline-diagnostic-detail small {
+  color: var(--ling-text-muted);
+}
+
+.conversation-timeline-diagnostic-detail dd {
+  color: var(--ling-text-strong);
+  overflow-wrap: anywhere;
+}
+
+@media (hover: none) {
+  .conversation-timeline-activity-chevron {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .conversation-timeline-activity.status-running .conversation-timeline-activity-main > svg {
+    animation: none;
+  }
+
+  .conversation-timeline-activity-chevron {
+    transition: none;
+  }
+
+  .conversation-timeline-sub-agent-chevron {
+    transition: none;
+  }
+}
+
+.conversation-timeline-message {
+  min-width: 0;
+  padding: 2px 0;
+}
+
+.conversation-timeline-message.agentMessage p {
+  margin: 0;
+}
+
+.conversation-timeline-sub-agent {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 2px 0 2px 8px;
+  border-left: 1px solid color-mix(in srgb, var(--ling-border-default) 60%, transparent);
+}
+
+.conversation-timeline-sub-agent-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+  min-height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.conversation-timeline-sub-agent-head:disabled {
+  cursor: default;
+}
+
+.conversation-timeline-sub-agent-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  color: inherit;
+}
+
+.conversation-timeline-sub-agent-head strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ling-text-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-timeline-sub-agent-head:not(:disabled):is(:hover, :focus-visible),
+.conversation-timeline-sub-agent-head:not(:disabled):is(:hover, :focus-visible) strong {
+  color: var(--ling-text-strong);
+}
+
+.conversation-timeline-sub-agent-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ling-text-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-timeline-sub-agent-chevron {
+  flex: 0 0 auto;
+  margin-left: auto;
+  transition: transform var(--ling-motion-fast) var(--ling-ease-standard);
+}
+
+.conversation-timeline-sub-agent.expanded .conversation-timeline-sub-agent-chevron {
+  transform: rotate(180deg);
+}
+
+.conversation-timeline-sub-agent-detail {
+  min-width: 0;
+}
+
+.conversation-timeline-sub-agent.lifecycle-blocked,
+.conversation-timeline-sub-agent.lifecycle-errored {
+  border-left-color: var(--ling-status-danger);
+}
+
 .conversation-work-cell-active-stream[data-activity-density="dense"],
 .conversation-work-cell-agent-stream[data-activity-density="dense"] {
   max-height: min(360px, 50vh);
@@ -69,7 +557,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
   font-size: 12px;
 }
 
@@ -129,8 +617,8 @@
   height: 18px;
   border: 0;
   border-radius: 999px;
-  background: var(--conversation-bg-subtle);
-  color: var(--conversation-text);
+  background: var(--ling-bg-subtle);
+  color: var(--ling-text-default);
   font-size: 9px;
   font-weight: 650;
   line-height: 1;
@@ -146,8 +634,8 @@
 }
 
 .conversation-work-cell-agent-avatar > .avatar-initial {
-  background: var(--conversation-bg-subtle);
-  color: var(--conversation-text);
+  background: var(--ling-bg-subtle);
+  color: var(--ling-text-default);
 }
 
 .conversation-work-cell-agent-span-copy {
@@ -164,7 +652,7 @@
   flex: 0 0 auto;
   max-width: 160px;
   overflow: hidden;
-  color: var(--info);
+  color: var(--ling-status-info);
   font-size: 12px;
   line-height: 16px;
   text-overflow: ellipsis;
@@ -175,7 +663,7 @@
   flex: 0 0 auto;
   max-width: 124px;
   overflow: hidden;
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -243,7 +731,7 @@
   justify-content: center;
   width: 16px;
   height: 16px;
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
 }
 
 .conversation-work-cell-row-icon svg {
@@ -255,11 +743,11 @@
 .conversation-work-cell.active[data-work-cell-activity="running"] .conversation-work-cell-evidence-summary span {
   background: linear-gradient(
     90deg,
-    var(--conversation-text-strong) 0%,
-    var(--conversation-text-strong) 45%,
-    var(--conversation-active-shimmer) 50%,
-    var(--conversation-text-strong) 55%,
-    var(--conversation-text-strong) 100%
+    var(--ling-text-strong) 0%,
+    var(--ling-text-strong) 45%,
+    var(--ling-text-muted) 50%,
+    var(--ling-text-strong) 55%,
+    var(--ling-text-strong) 100%
   );
   background-size: 300% 100%;
   -webkit-background-clip: text;
@@ -269,11 +757,11 @@
   animation: conversation-active-shimmer 4600ms linear infinite;
 }
 
-.conversation-work-cell-locate-pulse {
+.conversation-timeline-locate-pulse {
   animation: conversation-locate-pulse var(--ling-motion-attention) var(--ling-ease-standard) 1;
 }
 
-.conversation-work-cell.completed.conversation-work-cell-locate-pulse {
+.conversation-work-cell.completed.conversation-timeline-locate-pulse {
   animation: conversation-locate-pulse var(--ling-motion-attention) var(--ling-ease-standard) 1;
 }
 
@@ -290,7 +778,7 @@
   display: block;
   max-width: 100%;
   overflow: hidden;
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
   font-size: 12px;
   font-weight: 400;
   line-height: 18px;
@@ -310,15 +798,15 @@
 }
 
 .conversation-work-cell-change-stat .add {
-  color: var(--success);
+  color: var(--ling-status-success);
 }
 
 .conversation-work-cell-change-stat .delete {
-  color: var(--danger);
+  color: var(--ling-status-danger);
 }
 
 .conversation-work-cell-row.note .conversation-work-cell-row-copy strong {
-  color: var(--conversation-text);
+  color: var(--ling-text-default);
   font-size: 13px;
   font-weight: 550;
   line-height: 1.52;
@@ -327,24 +815,24 @@
 
 .conversation-work-cell-row-main:hover .conversation-work-cell-row-copy strong,
 .conversation-work-cell-row-main:focus-visible .conversation-work-cell-row-copy strong {
-  color: var(--conversation-text-strong);
+  color: var(--ling-text-strong);
 }
 
 .conversation-work-cell-row-main:hover .conversation-work-cell-row-icon,
 .conversation-work-cell-row-main:focus-visible .conversation-work-cell-row-icon {
-  color: var(--conversation-text-strong);
+  color: var(--ling-text-strong);
 }
 
 .conversation-work-cell-row.note .conversation-work-cell-row-main:hover .conversation-work-cell-row-copy strong,
 .conversation-work-cell-row.note .conversation-work-cell-row-main:focus-visible .conversation-work-cell-row-copy strong {
-  color: var(--conversation-text);
+  color: var(--ling-text-default);
 }
 
 .conversation-work-cell-row-copy small {
   flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
   font-size: 12px;
   line-height: 16px;
   text-overflow: ellipsis;
@@ -356,7 +844,7 @@
   align-items: center;
   justify-content: center;
   width: 16px;
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
   opacity: 0;
   visibility: hidden;
   transition:
@@ -397,10 +885,25 @@
 .conversation-work-cell-row-detail small,
 .conversation-work-cell-group header small,
 .conversation-work-cell-evidence-links small {
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
   font-size: 12px;
   line-height: 1.35;
   overflow-wrap: anywhere;
+}
+
+.conversation-work-cell-rich-description {
+  color: var(--ling-text-muted);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.35;
+}
+
+.conversation-work-cell-rich-description > * {
+  margin: 0;
+}
+
+.conversation-work-cell-rich-description > * + * {
+  margin-top: 5px;
 }
 
 .conversation-work-cell-row-detail code {
@@ -410,10 +913,21 @@
   padding: 0;
   border-radius: 0;
   background: transparent;
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12px;
+}
+
+/* Command output is a real evidence payload. Preserve its line structure;
+ * only the dedicated shell-command label above remains single-line. */
+.conversation-work-cell-row-detail code:not(.conversation-work-cell-shell-command) {
+  display: block;
+  width: 100%;
+  overflow-x: auto;
+  overflow-wrap: anywhere;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  white-space: pre-wrap;
 }
 
 .conversation-work-cell-change-preview {
@@ -422,13 +936,13 @@
   min-width: 0;
   margin-top: 4px;
   overflow: hidden;
-  border: 1px solid var(--conversation-code-border);
+  border: 1px solid var(--ling-border-default);
   border-radius: 6px;
-  background: var(--conversation-code-bg);
+  background: var(--ling-bg-code);
 }
 
 .conversation-work-cell-change-preview-file + .conversation-work-cell-change-preview-file {
-  border-top: 1px solid var(--conversation-code-border);
+  border-top: 1px solid var(--ling-border-default);
 }
 
 .conversation-work-cell-change-preview-file-head {
@@ -438,15 +952,15 @@
   gap: 8px;
   min-width: 0;
   padding: 5px 8px;
-  border-bottom: 1px solid var(--conversation-code-border);
-  color: var(--conversation-code-muted);
+  border-bottom: 1px solid var(--ling-border-default);
+  color: var(--ling-text-muted);
   font-size: 11px;
 }
 
 .conversation-work-cell-change-preview-file-head code {
   min-width: 0;
   overflow: hidden;
-  color: var(--conversation-code-text);
+  color: var(--ling-text-default);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -495,10 +1009,10 @@
   max-width: min(640px, 100%);
   overflow: visible;
   padding: 7px 8px;
-  border: 1px solid var(--conversation-code-border);
+  border: 1px solid var(--ling-border-default);
   border-radius: 8px;
-  background: var(--conversation-code-bg);
-  color: var(--conversation-code-text);
+  background: var(--ling-bg-code);
+  color: var(--ling-text-default);
   font-size: 12px;
   line-height: 1.45;
   overflow-wrap: anywhere;
@@ -512,7 +1026,7 @@
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
-  color: var(--conversation-code-text);
+  color: var(--ling-text-default);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   font-size: 12px;
   line-height: 16px;
@@ -527,9 +1041,10 @@
 
 .conversation-work-cell-row.shell .conversation-work-cell-row-detail code:not(.conversation-work-cell-shell-command) {
   max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-x: auto;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: pre-wrap;
 }
 
 .conversation-work-cell-row.command-execution .conversation-work-cell-row-detail code:not(.conversation-work-cell-shell-command),
@@ -538,7 +1053,7 @@
   width: 100%;
   max-width: min(640px, 100%);
   overflow: visible;
-  color: var(--conversation-code-muted);
+  color: var(--ling-text-muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   line-height: 1.45;
   overflow-wrap: anywhere;
@@ -564,7 +1079,7 @@
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
   font-size: 12px;
   line-height: 18px;
   text-align: left;
@@ -589,7 +1104,7 @@
 
 .conversation-command-batch-header:hover,
 .conversation-command-batch-header:focus-visible {
-  color: var(--conversation-text-strong);
+  color: var(--ling-text-strong);
 }
 
 .conversation-command-batch-toggle {
@@ -649,7 +1164,7 @@
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
   font-size: 12px;
   line-height: 18px;
   text-align: left;
@@ -668,7 +1183,7 @@
 
 .conversation-exploration-batch-header:hover,
 .conversation-exploration-batch-header:focus-visible {
-  color: var(--conversation-text-strong);
+  color: var(--ling-text-strong);
 }
 
 .conversation-exploration-batch-toggle {
@@ -735,7 +1250,7 @@
 }
 
 .conversation-work-cell-group header strong {
-  color: var(--conversation-text-strong);
+  color: var(--ling-text-strong);
   font-size: 12px;
 }
 
@@ -750,13 +1265,13 @@
   border: 0;
   border-radius: 0;
   background: transparent;
-  color: var(--conversation-text-muted);
+  color: var(--ling-text-muted);
   font-size: 12px;
   text-decoration: none;
 }
 
 .conversation-work-cell-evidence-links a:hover {
-  color: var(--conversation-text-strong);
+  color: var(--ling-text-strong);
   background: transparent;
 }
 
@@ -783,9 +1298,14 @@
   }
 }
 
+@keyframes conversation-active-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 @keyframes conversation-locate-pulse {
   0% {
-    background: var(--conversation-locate-pulse-bg);
+    background: var(--ling-text-muted);
   }
 
   100% {
@@ -804,9 +1324,9 @@
   .conversation-work-cell.active[data-work-cell-activity="running"] .conversation-work-cell-evidence-summary span {
     animation: none;
     background: none;
-    color: var(--conversation-text-strong);
+    color: var(--ling-text-strong);
   }
-  .conversation-work-cell-locate-pulse {
+  .conversation-timeline-locate-pulse {
     animation: none;
   }
   .conversation-work-cell-row-toggle,

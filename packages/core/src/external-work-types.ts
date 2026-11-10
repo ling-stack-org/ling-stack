@@ -332,6 +332,22 @@ export interface UpdateExternalWorkActionInput {
   readonly executedAt?: string | null;
 }
 
+/** A captured action state and exact subject lease authorize one synchronous transition. */
+export interface CommitExternalWorkActionTransitionInput {
+  readonly actionId: string;
+  readonly expectedStatus: ExternalWorkActionStatus;
+  readonly expectedExecutionAttemptCount: number;
+  readonly expectedApprovalId: string | null;
+  readonly approvalStatus?: ApprovalRequest["status"];
+  readonly subjectLease?: {
+    readonly id: string;
+    readonly ownerId: string;
+    readonly resourceKey: string;
+  };
+  readonly update: UpdateExternalWorkActionInput;
+  readonly cancelPendingApproval?: { readonly reason: string };
+}
+
 export interface ListExternalWorkActionsOptions {
   readonly externalWorkId?: string;
   readonly channelId?: string;
@@ -514,7 +530,7 @@ export interface ExternalWorkCiTriageRunRequest {
   readonly skipProviderPreflight?: boolean;
   readonly idempotencyKey?: string;
   readonly tools?: readonly RunTool[];
-  readonly thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+  readonly thinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra";
   readonly systemPrompt?: string;
   readonly appendSystemPrompt?: readonly string[];
   readonly agentDir?: string;

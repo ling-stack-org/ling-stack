@@ -1,5 +1,18 @@
 import type { DesktopThemePackageIpcChannelKey } from "./theme-package-capabilities.js";
 
+export const DESKTOP_LOCAL_FILE_IPC_CHANNELS = {
+  inspect: "ling-desktop:local-file:inspect",
+  menu: "ling-desktop:local-file:menu",
+} as const;
+
+export const DESKTOP_HUMAN_EVALUATION_IPC_CHANNELS = {
+  submit: "ling-desktop:human-evaluation:submit",
+  cancel: "ling-desktop:human-evaluation:cancel",
+  inspect: "ling-desktop:human-evaluation:inspect",
+  list: "ling-desktop:human-evaluation:list",
+  generateReport: "ling-desktop:human-evaluation:generate-report",
+} as const;
+
 export const DESKTOP_THEME_PACKAGE_IPC_CHANNELS = {
   themePackagesBootstrap: "ling-desktop:theme-packages:bootstrap",
   themePackagesList: "ling-desktop:theme-packages:list",
@@ -11,6 +24,20 @@ export const DESKTOP_THEME_PACKAGE_IPC_CHANNELS = {
 } as const satisfies Readonly<Record<DesktopThemePackageIpcChannelKey, string>>;
 
 export const DESKTOP_IPC_CHANNELS = {
+  localServiceRequest: "ling-desktop:local-service:request",
+  executionEnginesList: "ling-desktop:execution-engines:list",
+  executionEnginesDiscover: "ling-desktop:execution-engines:discover",
+  executionEnginesInstall: "ling-desktop:execution-engines:install",
+  executionEnginesInstallStatus: "ling-desktop:execution-engines:install-status",
+  executionEngineProfileGet: "ling-desktop:execution-engines:profile-get",
+  executionEngineProfileSave: "ling-desktop:execution-engines:profile-save",
+  executionEngineProfileSecretSave: "ling-desktop:execution-engines:profile-secret-save",
+  executionEngineProfileDisconnect: "ling-desktop:execution-engines:profile-disconnect",
+  executionEngineProfileProbe: "ling-desktop:execution-engines:profile-probe",
+  executionEngineConnectionProbe: "ling-desktop:execution-engines:connection-probe",
+  executionEngineLoginStart: "ling-desktop:execution-engines:login-start",
+  executionEngineLoginGet: "ling-desktop:execution-engines:login-get",
+  executionEngineLoginCancel: "ling-desktop:execution-engines:login-cancel",
   daemonStatus: "ling-desktop:daemon:status",
   daemonRestart: "ling-desktop:daemon:restart",
   mobileAccessStatus: "ling-desktop:mobile-access:status",
@@ -26,6 +53,11 @@ export const DESKTOP_IPC_CHANNELS = {
   desktopThemeReport: "ling-desktop:theme:report",
   desktopThemeSnapshotGet: "ling-desktop:theme:snapshot-get",
   desktopThemeSnapshotChanged: "ling-desktop:theme:snapshot-changed",
+  windowStateGet: "ling-desktop:window:state-get",
+  windowStateChanged: "ling-desktop:window:state-changed",
+  windowMinimize: "ling-desktop:window:minimize",
+  windowToggleMaximize: "ling-desktop:window:toggle-maximize",
+  windowClose: "ling-desktop:window:close",
   ...DESKTOP_THEME_PACKAGE_IPC_CHANNELS,
   computerUseReportLocale: "ling-desktop:computer-use:report-locale",
   computerUseReportSelectedDeckOwner: "ling-desktop:computer-use:report-selected-deck-owner",

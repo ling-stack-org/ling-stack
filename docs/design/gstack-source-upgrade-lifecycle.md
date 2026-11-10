@@ -5,6 +5,14 @@ Date: 2026-06-22
 Scope: first-run source onboarding, upstream drift upgrades, semantic migration
 evidence, artifact-backed skill source storage, and Web/Desktop-neutral APIs
 
+## Related Docs
+
+- [GStack Skill Source Sync](gstack-skill-source-sync.md)
+- [Managed Official Skill Source P16](managed-official-skill-source-p16.md)
+- [External Agent Skill Discovery And Adoption](external-agent-skill-discovery.md) —
+  local shared `.agents/skills` adopts the same explicit-publish principles under a
+  separate contract; it does not extend or relax this gstack lifecycle.
+
 ## Summary
 
 Ling can now store reviewed gstack `SKILL.md` snapshots and load them lazily after

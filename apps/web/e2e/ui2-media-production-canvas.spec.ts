@@ -1,5 +1,6 @@
 import { inflateSync } from "node:zlib";
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { isViteClientTransportError } from "./support/vite-client-console-error";
 import { mockDaemon } from "./support/mock-daemon";
 import { createDefaultProviderTemplates, createMediaProvider } from "./support/mock-state";
 import {
@@ -344,7 +345,7 @@ function installCurrentVideoResult(
 function collectBrowserErrors(page: Page): string[] {
   const errors: string[] = [];
   page.on("console", (message) => {
-    if (message.type() === "error") errors.push(`console:${message.text()}`);
+    if (message.type() === "error" && !isViteClientTransportError(message)) errors.push(`console:${message.text()}`);
   });
   page.on("pageerror", (error) => errors.push(`pageerror:${error.message}`));
   return errors;

@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import type { DesktopDaemonStatus, LingDesktopCapabilities } from "../../desktop/shared/desktop-capabilities.js";
 import {
   createMockBundledEmbeddedCuaPlugin,
   mockDaemon,
@@ -13,6 +14,11 @@ async function installComputerControlBridge(
   await page.addInitScript(({ locale, platform, theme }) => {
     localStorage.setItem("ling-stack.locale", locale ?? "en-US");
     if (theme) localStorage.setItem("ling-stack.themePreference", theme);
+    const daemonStatus: DesktopDaemonStatus = {
+      state: "connected",
+      baseUrl: "http://127.0.0.1:17891",
+      ownedByDesktop: true,
+    };
     Object.defineProperty(window, "lingDesktop", {
       configurable: true,
       value: {
@@ -30,8 +36,15 @@ async function installComputerControlBridge(
           onIntent: () => () => undefined,
         },
         daemon: {
-          getStatus: async () => ({ state: "connected", baseUrl: "http://127.0.0.1:17891", ownedByDesktop: true }),
-          restart: async () => ({ state: "connected", baseUrl: "http://127.0.0.1:17891", ownedByDesktop: true }),
+          getStatus: async () => daemonStatus,
+          restart: async () => daemonStatus,
+          onStatusChanged(listener) {
+            let subscribed = true;
+            queueMicrotask(() => {
+              if (subscribed) listener(daemonStatus);
+            });
+            return () => { subscribed = false; };
+          },
         },
         computerUse: {
           reportLocale() {},
@@ -45,21 +58,22 @@ async function installComputerControlBridge(
           setAutoShow: async () => ({ accepted: true }),
           onSummaryChanged: () => () => undefined,
         },
-      },
+      } satisfies Pick<LingDesktopCapabilities,
+        "platform" | "daemonBaseUrl" | "appearance" | "computerControl" | "navigation" | "daemon" | "computerUse">,
     });
   }, input);
 }
 
 async function openComputerControl(page: Page): Promise<void> {
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: /^(Settings|设置)$/ }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: /^(Settings|设置)$/ }).click();
   await page.getByLabel(/^(Settings sections|设置分组)$/).getByRole("button", { name: /^(Computer Control|电脑控制)$/ }).click();
   await expect(page.locator(".computer-control-settings")).toBeVisible();
 }
 
 async function openPluginManager(page: Page): Promise<void> {
-  const navigation = page.getByLabel("Ling Stack navigation");
-  await navigation.getByRole("button", { name: "Engineering" }).click();
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
+  await navigation.getByRole("button", { name: "Engineering", exact: true }).click();
   await navigation.getByRole("button", { name: /^(Plugin Manager|插件管理)$/ }).click();
   await expect(page.locator(".plugin-manager-page .settings-plugin-manager")).toBeVisible();
 }

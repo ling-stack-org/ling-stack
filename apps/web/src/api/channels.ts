@@ -1,3 +1,4 @@
+import type { ChannelSessionListResponse, ChannelSessionMutationResponse, ListChannelSessionsOptions, CreateChannelSessionRequest, UpdateChannelSessionRequest } from "@ling-stack/contracts";
 import type {
   ChannelBriefMutationResponse,
   ChannelBriefResponse,
@@ -15,7 +16,6 @@ import type {
   ChannelExecutionProposalListResponse,
   ChannelExecutionProposalMutationResponse,
   ChannelExecutionProposalWorkflowConfirmResponse,
-  ChannelFormState,
   ChannelHandoffListResponse,
   ChannelHandoffMutationResponse,
   ChannelLinkPreviewListResponse,
@@ -42,9 +42,11 @@ import type {
   ChannelWorkflowListResponse,
   ChannelWorkflowMutationResponse,
   ChannelWorkflowOrchestrationResponse,
+  ChannelWorkflowOrchestrationRequest,
   ChannelWorkflowStepListResponse,
   ChannelWorkflowStepMutationResponse,
   ChannelWorkflowStepRetryResponse,
+  ChannelWorkflowStepStartResponseContext,
   ChannelWorkflowStepStartResponse,
   ChannelWorkflowTemplateMutationResponse,
   ChannelWorkspaceCreateWorktreeRequest,
@@ -55,6 +57,8 @@ import type {
   ChannelCollaborationCardListResponse,
   WorkflowEvidenceResponse,
   WorkflowCollaborationCardResponse,
+  WorkflowConflictRecoveryRequest,
+  WorkflowConflictRecoveryResponse,
   CreateChannelBranchRequest,
   CreateChannelCollaborationProtocolDraftRequest,
   CreateChannelPlaybookCandidateFromClusterRequest,
@@ -70,10 +74,9 @@ import type {
   CreateChannelWorkflowRequest,
   CreateChannelWorkflowStepRequest,
   CreateChannelWorkflowTemplateCompileRequest,
-  StartChannelWorkflowStepRequest,
+  CreateTaskChannelWorkflowStepStartRequest,
   ListChannelConversationItemsOptions,
   Task,
-  TaskEditFormState,
   TaskListResponse,
   TaskMutationResponse,
   TerminalReportListResponse,
@@ -91,7 +94,8 @@ import type {
   UpdateChannelRequest,
   CorrectChannelTurnContextRequest,
   CorrectChannelTurnContextResponse,
-} from "../types.js";
+} from "@ling-stack/contracts";
+import type { ChannelFormState, TaskEditFormState } from "../types.js";
 import { channelFormToPayload, channelFormToUpdatePayload, taskEditFormToPayload } from "./channel-payloads.js";
 import { daemonClient } from "./client.js";
 
@@ -531,17 +535,28 @@ export async function updateChannelWorkflowStep(
 export async function startChannelWorkflowStep(
   cwd: string,
   workflowStepId: string,
-  input: StartChannelWorkflowStepRequest,
+  input: CreateTaskChannelWorkflowStepStartRequest,
+  expected: Omit<ChannelWorkflowStepStartResponseContext, "mode">,
 ): Promise<ChannelWorkflowStepStartResponse> {
-  return daemonClient.startChannelWorkflowStep(cwd, workflowStepId, input);
+  return daemonClient.startChannelWorkflowStep(cwd, workflowStepId, input, expected);
 }
 
 export async function retryChannelWorkflowStep(cwd: string, workflowStepId: string): Promise<ChannelWorkflowStepRetryResponse> {
   return daemonClient.retryChannelWorkflowStep(cwd, workflowStepId);
 }
 
-export async function orchestrateChannelWorkflow(cwd: string, workflowId: string): Promise<ChannelWorkflowOrchestrationResponse> {
-  return daemonClient.orchestrateChannelWorkflow(cwd, workflowId);
+export async function orchestrateChannelWorkflow(cwd: string, workflowId: string,
+  input: ChannelWorkflowOrchestrationRequest = {}): Promise<ChannelWorkflowOrchestrationResponse> {
+  return daemonClient.orchestrateChannelWorkflow(cwd, workflowId, input);
+}
+
+export async function recoverChannelWorkflowConflict(cwd: string, workflowId: string,
+  input: WorkflowConflictRecoveryRequest): Promise<WorkflowConflictRecoveryResponse> {
+  return daemonClient.recoverChannelWorkflowConflict(cwd, workflowId, input);
+}
+
+export async function getChannelWorkflowConflictRecovery(cwd: string, workflowId: string): Promise<WorkflowConflictRecoveryResponse> {
+  return daemonClient.getChannelWorkflowConflictRecovery(cwd, workflowId);
 }
 
 export async function listChannelCollaborationCards(
@@ -628,4 +643,17 @@ export async function updateTask(cwd: string, taskId: string, form: TaskEditForm
 
 export async function deleteTask(cwd: string, taskId: string): Promise<void> {
   await daemonClient.deleteTask(cwd, taskId);
+}
+
+export function listChannelSessions(cwd: string, channelId: string, options: ListChannelSessionsOptions = {}): Promise<ChannelSessionListResponse> {
+  return daemonClient.listChannelSessions(cwd, channelId, options);
+}
+export function createChannelSession(cwd: string, channelId: string, input: CreateChannelSessionRequest): Promise<ChannelSessionMutationResponse> {
+  return daemonClient.createChannelSession(cwd, channelId, input);
+}
+export function getChannelSession(cwd: string, channelId: string, threadId: string): Promise<ChannelSessionMutationResponse> {
+  return daemonClient.getChannelSession(cwd, channelId, threadId);
+}
+export function updateChannelSession(cwd: string, channelId: string, threadId: string, input: UpdateChannelSessionRequest): Promise<ChannelSessionMutationResponse> {
+  return daemonClient.updateChannelSession(cwd, channelId, threadId, input);
 }

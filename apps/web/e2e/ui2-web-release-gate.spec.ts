@@ -185,7 +185,7 @@ test("WEB-REL-01 Shell representative surface", async ({ page }) => {
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await page.goto("/");
   await expect(page.locator("main.app-shell")).toBeVisible();
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await expect(navigation.getByRole("button", { name: "Inbox" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Work Board" })).toHaveCount(0);
   const action = navigation.getByRole("button", { name: "Plugin Manager" });
@@ -204,7 +204,7 @@ test("WEB-REL-02 Channel representative surface", async ({ page }) => {
   await page.goto("/");
   await openEngineeringChannel(page);
   await expect(page.getByLabel("Channel message feed")).toBeVisible();
-  const summary = page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Summary" });
+  const summary = page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Summary", exact: true });
   await exerciseKeyboardFocus(summary);
   await finishScenario(page, scenarios.channel, runtime);
 });
@@ -215,7 +215,7 @@ test("WEB-REL-03 Normal conversation representative surface", async ({ page }) =
   installNormalConversationFixture(state);
   await mockDaemon(page, state);
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").locator(".sidebar-recent-row").filter({ hasText: "Release readiness conversation" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).locator(".sidebar-recent-row").filter({ hasText: "Release readiness conversation" }).click();
   const header = page.locator("[data-ui2-normal-conversation-header='true']");
   await expect(header).toBeVisible();
   await exerciseKeyboardFocus(header.getByRole("button", { name: "Search" }));
@@ -228,7 +228,7 @@ test("WEB-REL-04 Teammate chat representative surface", async ({ page }) => {
   installTeammateFixture(state);
   await mockDaemon(page, state);
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Release Teammate" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Release Teammate" }).click();
   const header = page.locator("[data-ui2-teammate-chat-header='true']");
   await expect(header).toBeVisible();
   await exerciseKeyboardFocus(header.getByRole("button", { name: "Search" }));
@@ -241,7 +241,7 @@ test("WEB-REL-05 Settings imported-theme representative surface", async ({ page 
   await page.goto("/");
   await seedImportedQuietOcean(page);
   await page.reload();
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: "Interface preferences" }).click();
   const panel = page.locator("[data-ui2-interface-preferences]");
   await expect(panel).toBeVisible();
@@ -263,7 +263,7 @@ test("WEB-REL-06 Model Workbench representative surface", async ({ page }) => {
   })];
   await mockDaemon(page, state, { templates: createDefaultProviderTemplates() });
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: "Model Workbench" }).click();
   const workbench = page.locator(".provider-workbench");
   await expect(workbench.locator(".provider-row")).toHaveCount(1);
@@ -275,8 +275,8 @@ test("WEB-REL-07 Plugin Manager representative surface", async ({ page }) => {
   const runtime = await beginScenario(page, scenarios.pluginManager);
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await page.goto("/");
-  const navigation = page.getByLabel("Ling Stack navigation");
-  await navigation.getByRole("button", { name: "Engineering" }).click();
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
+  await navigation.getByRole("button", { name: "Engineering", exact: true }).click();
   await navigation.getByRole("button", { name: "Plugin Manager" }).click();
   const surface = page.locator(".plugin-manager-page .settings-plugin-manager");
   await expect(surface.locator(".plugin-table-row").first()).toBeVisible();
@@ -290,7 +290,7 @@ test("WEB-REL-08 Automations representative surface", async ({ page }) => {
   await mockDaemon(page, state);
   await installReleaseAutomationApi(page);
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Automations" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Automations" }).click();
   const surface = page.locator("[data-automation-ui2-page]");
   const row = surface.locator('[data-automation-id="automation_release_gate"]');
   await expect(row).toBeVisible();

@@ -12,6 +12,9 @@ Date: 2026-07-11
 - [Skill Source Sync Simplification P15](skill-source-sync-simplification-p15.md)
 - [Managed Official Skill Source P16](managed-official-skill-source-p16.md)
 - [Skill Editing And Revision](skill-editing-and-revision.md)
+- [External Agent Skill Discovery And Adoption](external-agent-skill-discovery.md) —
+  shared `.agents/skills` review surface; published records become user-owned
+  `skill-directory` entries in My Skills.
 
 ## Summary
 
@@ -111,7 +114,9 @@ the conservative empty value.
   archive route.
 - Delete is a direct, confirmed, irreversible action only for manually imported
   `custom`, `skill-directory`, and `agents-md` skills. It is blocked when a skill is
-  still bound to a teammate or referenced by active work.
+  still bound to a teammate or referenced by active work. Shared `.agents/skills` records
+  that the user adopted are user-owned `skill-directory` entries, so the same archive and
+  delete rules apply once they appear in My Skills.
 
 ### Built-in Skills
 

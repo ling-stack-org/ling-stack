@@ -1,4 +1,7 @@
-import type { MemoryStoreFacet } from "@ling-stack/core";
+import { createHash } from "node:crypto";
+import type { MemoryObject, MemoryStoreFacet, RunStore } from "@ling-stack/core";
+import { HttpError } from "../../errors.js";
+import type { MemorySourceRevision, RunRequest } from "../runs/schemas.js";
 import {
   MEMORY_USE_ISOLATION_POLICY_VERSION,
   memoryEligibilityForView,
@@ -8,6 +11,54 @@ import {
 import type { ChannelContextDroppedSource, ChannelContextSource, ChannelContextViewKind } from "../channels/context-processing/types.js";
 
 type RecalledMemoryItems = ReturnType<MemoryStoreFacet["recallMemory"]>["memories"];
+const INFLUENCE_ONLY_QUOTE_POLICY = "Quote policy: influence_only; may guide reasoning, but do not quote or present as public memory.";
+
+/** Bind the exact selected sources, not a new recall or a timestamp-only revision. */
+export function createMemorySourceRevisions(memories: readonly MemoryObject[]): readonly MemorySourceRevision[] {
+  return memories.map(memory => {
+    const { lastUsedAt: _lastUsedAt, ...semantic } = memory;
+    return { memoryId: memory.id,
+      semanticHash: `sha256:${createHash("sha256").update(JSON.stringify(canonicalMemoryValue(semantic))).digest("hex")}` };
+  });
+}
+
+/** First hydration only. Resumes must use their original frozen input contract. */
+export function assertPreselectedMemoryCurrent(store: RunStore, request: RunRequest): void {
+  const selected = request.preselectedMemoryUse;
+  if (!selected) return;
+  const unavailable = (): never => {
+    throw new HttpError(409, "prepared_memory_unavailable", "A prepared Memory source is no longer eligible.");
+  };
+  const ids = selected.memoryIds;
+  const revisions = selected.sourceRevisions;
+  if (!Array.isArray(ids) || ids.length > 20 || ids.some(id => typeof id !== "string" || !id)
+    || new Set(ids).size !== ids.length || !Array.isArray(revisions) || revisions.length !== ids.length
+    || revisions.some(revision => !revision || typeof revision !== "object"
+      || Object.keys(revision).some(key => key !== "memoryId" && key !== "semanticHash")
+      || typeof revision.memoryId !== "string" || !ids.includes(revision.memoryId)
+      || typeof revision.semanticHash !== "string" || !/^sha256:[a-f0-9]{64}$/.test(revision.semanticHash))
+    || new Set(revisions.map(revision => revision.memoryId)).size !== ids.length
+    || (ids.length > 0 ? typeof selected.renderedPrompt !== "string" || !selected.renderedPrompt.trim()
+      : Boolean(selected.renderedPrompt))) unavailable();
+  store.readSnapshot(() => {
+    const eligible = store.getEligibleMemoryIdsForRecall({ teammateId: request.teammateId,
+      channelId: request.task.channelId, taskId: request.task.id, intent: "task-run", query: "" }, ids);
+    if (eligible.length !== ids.length) unavailable();
+    for (const revision of revisions!) {
+      const memory = store.getMemoryObject(revision.memoryId);
+      if (!memory || createMemorySourceRevisions([memory])[0]!.semanticHash !== revision.semanticHash) unavailable();
+    }
+  });
+}
+
+function canonicalMemoryValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalMemoryValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+      .map(([key, item]) => [key, canonicalMemoryValue(item)]));
+  }
+  return value;
+}
 
 export interface RenderUsedMemoryPromptForViewInput {
   readonly memories: RecalledMemoryItems;
@@ -38,6 +89,8 @@ export function renderUsedMemoryPrompt(memories: RecalledMemoryItems): string | 
     return [
       `Memory ${index + 1}: ${item.memory.title}`,
       `Scope: ${item.memory.scopeType}:${item.memory.ownerId}; Source: ${source}; Sensitivity: ${item.memory.sensitivity};${tags}`,
+      ...(item.memory.sensitivity === "private" ? [INFLUENCE_ONLY_QUOTE_POLICY] : []),
+      ...memoryVerificationLines(item),
       item.excerpt,
     ];
   });
@@ -62,8 +115,8 @@ export function renderUsedMemoryPromptForView(input: RenderUsedMemoryPromptForVi
       workspaceId: input.workspaceId,
       channelId: input.channelId,
     });
-    sources.push(source);
-    const eligibility = memoryEligibilityForView(source, input.viewKind, input.consumerTeammateId);
+    const consumerScope = input.workspaceId ? { workspaceId: input.workspaceId, channelId: input.channelId } : undefined;
+    const eligibility = memoryEligibilityForView(source, input.viewKind, input.consumerTeammateId, consumerScope);
     if (!eligibility || eligibility.mode === "excluded") {
       dropped.push({ sourceId: source.id, reason: eligibility?.droppedReason ?? "scope" });
       continue;
@@ -72,6 +125,8 @@ export function renderUsedMemoryPromptForView(input: RenderUsedMemoryPromptForVi
       dropped.push({ sourceId: source.id, reason: "scope" });
       continue;
     }
+    // Rejected bodies must not survive in the caller's context sources or used-memory list.
+    sources.push(source);
     promptItems.push({ item, source, eligibility });
   }
 
@@ -82,6 +137,12 @@ export function renderUsedMemoryPromptForView(input: RenderUsedMemoryPromptForVi
     dropped,
     policyVersion: `${input.recallPolicyVersion}+${MEMORY_USE_ISOLATION_POLICY_VERSION}`,
   };
+}
+
+function memoryVerificationLines(item: RecalledMemoryItems[number]): readonly string[] {
+  return item.memory.verifyBeforeUse
+    ? ["Verification: required. This memory is an unverified lead, not execution evidence. Verify its current source before treating it as a fact or citing it in a result."]
+    : [];
 }
 
 function renderPromptItems(
@@ -100,11 +161,12 @@ function renderPromptItems(
       : "manual";
     const tags = item.memory.tags.length > 0 ? ` tags=${item.memory.tags.join(",")}` : "";
     const quotePolicy = eligibility.quotePolicy === "influence_only"
-      ? "Quote policy: influence_only; may guide reasoning, but do not quote or present as public memory."
+      ? INFLUENCE_ONLY_QUOTE_POLICY
       : `Quote policy: ${eligibility.quotePolicy}.`;
     return [
       `Memory ${index + 1}: ${item.memory.title}`,
       `Scope: ${item.memory.scopeType}:${item.memory.ownerId}; Source: ${source}; Sensitivity: ${item.memory.sensitivity}; ${quotePolicy}${tags}`,
+      ...memoryVerificationLines(item),
       item.excerpt,
     ];
   });

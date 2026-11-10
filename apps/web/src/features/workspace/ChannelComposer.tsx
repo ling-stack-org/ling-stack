@@ -4,7 +4,7 @@ import type {
   KeyboardEvent as ReactKeyboardEvent,
   PointerEvent as ReactPointerEvent,
   ReactNode,
-  Ref,
+  RefObject,
 } from "react";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import {
@@ -15,6 +15,7 @@ import {
   CircleAlert,
   ClipboardList,
   FileText,
+  GitBranch,
   ListChecks,
   Loader2,
   Pause,
@@ -29,7 +30,7 @@ import {
   X,
 } from "lucide-react";
 import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
-import { conversationPermissionPresetMenuOptions } from "../../lib/session-permissions.js";
+import type { ConversationRuntimeMetrics } from "@ling-stack/contracts";
 import { useI18n } from "../../i18n.js";
 import {
   ComposerPendingAssetStrip,
@@ -40,17 +41,20 @@ import {
   type TokenizedComposerInputProps,
 } from "../../shared/components/index.js";
 import {
-  ComposerPermissionMenu,
+  ConversationPermissionControl,
   ConversationComposerShell,
+  ConversationBottomStatusStrip,
   ConversationGuidanceStrip,
   type ConversationGuidanceItem,
 } from "../../shared/conversation/index.js";
 import type {
   ChannelAttachment,
   ChannelMention,
+  AuthorizationMode,
   LingThreadGoal,
   PermissionPreset,
 } from "../../types.js";
+import { DesktopDictationButton } from "./DesktopDictationButton.js";
 import {
   ChannelComposerFeedback,
   type ChannelComposerInlineFeedback,
@@ -69,7 +73,9 @@ export interface ActiveMentionPicker {
 }
 
 interface ChannelComposerProps {
+  readonly workspaceCwd: string;
   readonly statusNode: ReactNode;
+  readonly runtimeMetrics?: ConversationRuntimeMetrics;
   readonly guidanceModeActive: boolean;
   readonly replyTargetActive: boolean;
   readonly composerBusy: boolean;
@@ -83,7 +89,7 @@ interface ChannelComposerProps {
   readonly executableSlashCommandId: string | undefined;
   readonly dropZoneClassName?: string;
   readonly inputParts: TokenizedComposerInputProps["parts"];
-  readonly inputRef: Ref<TokenizedComposerInputHandle>;
+  readonly inputRef: RefObject<TokenizedComposerInputHandle | null>;
   readonly isCancellingRun: boolean;
   readonly mentionActiveIndex: number;
   readonly mentionPicker: ActiveMentionPicker | undefined;
@@ -91,6 +97,7 @@ interface ChannelComposerProps {
   readonly pendingAttachments: readonly PendingAttachmentItem<ChannelAttachment>[];
   readonly pendingMessageAssetsVisible: boolean;
   readonly permissionLocked: boolean;
+  readonly authorizationMode: AuthorizationMode;
   readonly permissionPreset: PermissionPreset;
   readonly fullAccessConfirmed: boolean;
   readonly planModeActive: boolean;
@@ -116,6 +123,9 @@ interface ChannelComposerProps {
   readonly submitDisabled: boolean;
   readonly submitLabel: string;
   readonly submitTitle: string;
+  readonly submitIntent?: "send" | "stop" | "start" | "continue";
+  readonly submitBusy?: boolean;
+  readonly onStartIsolatedWorkflow?: () => void;
   readonly value: string;
   readonly onAttachFiles: (files: FileList | readonly File[]) => void | Promise<void>;
   readonly onCommitMention: (option: ChannelMention) => void;
@@ -129,6 +139,7 @@ interface ChannelComposerProps {
   readonly onInputPasteFiles: (files: readonly File[]) => void;
   readonly onInputSelect: (value: string, caret: number) => void;
   readonly onInsertMentionTrigger: () => void;
+  readonly onAuthorizationModeChange: (mode: AuthorizationMode) => void;
   readonly onPermissionPresetChange: (preset: PermissionPreset) => void;
   readonly onTogglePlanMode: () => void;
   readonly onRevealPlanModeChip: () => void;
@@ -142,6 +153,9 @@ interface ChannelComposerProps {
   readonly onGoalClear: () => void;
   readonly onToggleGoalExpanded: () => void;
   readonly onRemovePendingAttachment: (localId: string) => void;
+  readonly onRetryPendingAttachment?: (localId: string) => void | Promise<void>;
+  readonly attachmentCleanupFailures?: readonly import("../../shared/components/composer-pending-assets.js").AttachmentCleanupFailure[];
+  readonly onRetryAttachmentCleanup?: (localId: string) => void | Promise<void>;
   readonly onResizePointerCancel: (event: ReactPointerEvent<HTMLButtonElement>) => void;
   readonly onResizePointerDown: (event: ReactPointerEvent<HTMLButtonElement>) => void;
   readonly onResizePointerMove: (event: ReactPointerEvent<HTMLButtonElement>) => void;
@@ -167,6 +181,7 @@ export function ChannelComposer({
   mentionActiveIndex,
   mentionPicker,
   mentionPickerOptions,
+  runtimeMetrics,
   onAttachFiles,
   onCommitMention,
   onCommitSlashCommand,
@@ -179,6 +194,7 @@ export function ChannelComposer({
   onInputPasteFiles,
   onInputSelect,
   onInsertMentionTrigger,
+  onAuthorizationModeChange,
   onPermissionPresetChange,
   onTogglePlanMode,
   onRevealPlanModeChip,
@@ -192,6 +208,9 @@ export function ChannelComposer({
   onGoalClear,
   onToggleGoalExpanded,
   onRemovePendingAttachment,
+  onRetryPendingAttachment,
+  attachmentCleanupFailures = [],
+  onRetryAttachmentCleanup,
   onResizePointerCancel,
   onResizePointerDown,
   onResizePointerMove,
@@ -201,6 +220,7 @@ export function ChannelComposer({
   pendingAttachments,
   pendingMessageAssetsVisible,
   permissionLocked,
+  authorizationMode,
   permissionPreset,
   fullAccessConfirmed,
   planModeActive,
@@ -229,9 +249,13 @@ export function ChannelComposer({
   submitDisabled,
   submitLabel,
   submitTitle,
+  submitIntent,
+  submitBusy = false,
+  onStartIsolatedWorkflow,
   value,
+  workspaceCwd,
 }: ChannelComposerProps): React.JSX.Element {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const addMenuRef = useRef<HTMLDivElement | null>(null);
   const fileInputId = useId();
@@ -245,6 +269,20 @@ export function ChannelComposer({
   const goalContinueDisabled = goalBusy || goalPaused;
   const goalStatusLabel = goal ? t(`goal.status.${goal.status}`) : "";
   const composerRootRef = useRef<HTMLElement>(null);
+
+  function insertDictationText(text: string): void {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    const start = inputRef.current?.readSelectionStart() ?? value.length;
+    const end = inputRef.current?.readSelectionEnd() ?? start;
+    const prefix = value.slice(0, start);
+    const suffix = value.slice(end);
+    const separator = prefix && !/\s$/u.test(prefix) && !/^\s/u.test(trimmed) ? " " : "";
+    const next = `${prefix}${separator}${trimmed}${suffix}`;
+    const caret = prefix.length + separator.length + trimmed.length;
+    onInputChange(next, caret);
+    inputRef.current?.focusAt(caret);
+  }
 
   useLayoutEffect(() => {
     const root = composerRootRef.current;
@@ -292,6 +330,12 @@ export function ChannelComposer({
       ariaLabel={t("Channel composer")}
       leftToolsAriaLabel={t("Message tools")}
       statusNode={statusNode}
+      bottomStatusNode={<ConversationBottomStatusStrip
+        ariaLabel={t("Conversation status")}
+        translate={t}
+        metrics={runtimeMetrics}
+        locale={locale}
+      />}
       guidanceNode={(goal || goalLoading || goalError || runGuidanceItems.length > 0 || runGuidanceError || runGuidanceLoading) ? (
         <>
           {goal ? (
@@ -390,8 +434,9 @@ export function ChannelComposer({
           <span aria-hidden="true" />
         </button>
       )}
-      previewNode={pendingMessageAssetsVisible ? (
-        <ComposerPendingAssetStrip attachments={pendingAttachments} onRemoveAttachment={onRemovePendingAttachment} />
+      previewNode={pendingMessageAssetsVisible || attachmentCleanupFailures.length > 0 ? (
+        <ComposerPendingAssetStrip attachments={pendingAttachments} onRemoveAttachment={onRemovePendingAttachment}
+          onRetryAttachment={onRetryPendingAttachment} cleanupFailures={attachmentCleanupFailures} onRetryCleanup={onRetryAttachmentCleanup} />
       ) : null}
       inputNode={(
         <TokenizedComposerInput
@@ -534,18 +579,33 @@ export function ChannelComposer({
                     <strong>{t("Goal")}</strong>
                   </span>
                 </button>
+                {onStartIsolatedWorkflow ? <button className="composer-add-menu-row" type="button" role="menuitem"
+                  disabled={submitDisabled || submitBusy} onClick={() => {
+                    setAddMenuOpen(false);
+                    onStartIsolatedWorkflow();
+                  }}>
+                  <GitBranch size={15} />
+                  <span><strong>{t("Start isolated branches (candidate only)")}</strong></span>
+                </button> : null}
               </div>
             ) : null}
           </div>
           <button className="icon-button composer-tool-button" type="button" onClick={onInsertMentionTrigger} disabled={!selectedChannelId || composerBusy} aria-label={t("Mention teammate")} title={t("Mention teammate")}>
             <AtSign size={16} />
           </button>
-          <ComposerPermissionMenu
-            preset={permissionPreset}
-            options={conversationPermissionPresetMenuOptions(t, fullAccessConfirmed)}
+          <DesktopDictationButton
+            cwd={workspaceCwd}
+            disabled={!selectedChannelId || composerBusy}
+            onInsertText={insertDictationText}
+          />
+          <ConversationPermissionControl
+            authorizationMode={authorizationMode}
+            permissionPreset={permissionPreset}
+            fullAccessConfirmed={fullAccessConfirmed}
             disabled={permissionLocked}
             disabledReason={t("Permission is locked while this channel run or message is active.")}
-            onPresetChange={onPermissionPresetChange}
+            onAuthorizationModeChange={onAuthorizationModeChange}
+            onPermissionPresetChange={onPermissionPresetChange}
           />
           {planModeChipVisible ? (
             <span className={planModeActive ? "conversation-mode-chip plan active" : "conversation-mode-chip plan"}>
@@ -610,7 +670,10 @@ export function ChannelComposer({
           aria-label={submitLabel}
           title={submitTitle}
         >
-          {replyTargetActive
+          {submitBusy ? <Loader2 className="spin" size={15} />
+            : submitIntent === "start" || submitIntent === "continue" ? <Play size={15} />
+            : submitIntent === "stop" ? <Square size={15} />
+            : replyTargetActive
             ? composerHasSendableContent
               ? sendState === "sending" ? <Loader2 className="spin" size={15} /> : <Send size={15} />
               : isCancellingRun ? <Loader2 className="spin" size={15} /> : <Square size={15} />

@@ -43,10 +43,14 @@ import {
   Popover,
   PopoverContent,
   PopoverTrigger,
+  Radio,
   SegmentedControl,
   SegmentedControlItem,
   Select,
   Skeleton,
+  SplitButton,
+  SplitButtonPrimary,
+  SplitButtonTrigger,
   StatusIndicator,
   Switch,
   Tabs,
@@ -143,6 +147,21 @@ test("segmented control keeps exactly one semantic view selection", () => {
   assert.match(html, /data-state="off"/u);
 });
 
+test("radio exposes a native single-choice control with a stable visual owner", () => {
+  const html = renderToStaticMarkup(createElement(Radio, {
+    checked: true,
+    label: "Keep drawing available",
+    name: "drawing",
+    readOnly: true,
+  }));
+
+  assert.match(html, /class="ling-ui-radio"/u);
+  assert.match(html, /type="radio"/u);
+  assert.match(html, /data-ling-control-native="true"/u);
+  assert.match(html, /data-checked="true"/u);
+  assert.match(html, /Keep drawing available/u);
+});
+
 test("theme picker exposes active, selected, applying, and unavailable theme states", () => {
   const swatch = {
     accent: "#111111",
@@ -230,6 +249,25 @@ test("button preserves its label and disables duplicate activation while loading
   assert.match(html, /Loading/u);
   assert.match(html, /data-ling-button-slot="leading"/u);
   assert.match(html, /data-ling-button-slot="label"/u);
+});
+
+test("split button gives both actions one inherited size and one outer control frame", () => {
+  const html = renderToStaticMarkup(createElement(
+    SplitButton,
+    { "aria-label": "Allow options", role: "group", size: "md" },
+    createElement(SplitButtonPrimary, { variant: "primary" }, "Allow once"),
+    createElement(SplitButtonTrigger, {
+      icon: Search,
+      label: "Allow options",
+      variant: "primary",
+    }),
+  ));
+
+  assert.match(html, /data-ling-split-button="true"/u);
+  assert.match(html, /role="group"/u);
+  assert.equal((html.match(/data-size="md"/gu) ?? []).length, 3);
+  assert.match(html, /ling-ui-split-button-primary/u);
+  assert.match(html, /ling-ui-split-button-trigger/u);
 });
 
 test("button asChild composes one interactive element without nested controls", () => {
@@ -570,13 +608,20 @@ test("data display primitives preserve identity, comparison, and inspector seman
     { open: true, summary: "2 files", title: "Evidence" },
     "Inspector content",
   ));
+  const plainInspectorHtml = renderToStaticMarkup(createElement(
+    InspectorSection,
+    { appearance: "plain", title: "Advanced profile" },
+    "Plain inspector content",
+  ));
 
   assert.match(rowHtml, /class="ling-ui-data-row"/u);
   assert.match(rowHtml, /data-selected="true"/u);
   assert.match(tableHtml, /class="ling-ui-table-container"/u);
   assert.match(tableHtml, /scope="col"/u);
-  assert.match(inspectorHtml, /<details open="" class="ling-ui-inspector-section">/u);
+  assert.match(inspectorHtml, /<details open="" class="ling-ui-inspector-section" data-appearance="divided">/u);
   assert.match(inspectorHtml, /Inspector content/u);
+  assert.match(plainInspectorHtml, /data-appearance="plain"/u);
+  assert.match(plainInspectorHtml, /Plain inspector content/u);
 });
 
 test("capability control keeps actions and persistent issues in an anchored owner", () => {

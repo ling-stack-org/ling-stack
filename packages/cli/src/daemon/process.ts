@@ -46,6 +46,7 @@ export async function startBackgroundDaemon(input: BackgroundDaemonStartInput): 
         LING_STACK_HOST: input.host,
         LING_STACK_PORT: String(input.port),
         LING_STACK_DEFAULT_WORKSPACE_CWD: input.cwd,
+        LING_STACK_DAEMON_LOG_PATH: paths.logPath,
       },
       stdio: ["ignore", logFd, logFd],
     });

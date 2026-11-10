@@ -19,6 +19,7 @@ export interface ChannelGuidanceTargetController {
 export function useChannelGuidanceTargetController(input: {
   readonly selectedChannelId: string;
   readonly conversationLineThreadId?: string;
+  readonly conversationRunIds?: ReadonlySet<string>;
   readonly channelMessages: readonly ChannelMessage[];
   readonly channelRuns: readonly RunSession[];
   readonly workUnits: readonly WorkUnit[];
@@ -31,6 +32,7 @@ export function useChannelGuidanceTargetController(input: {
     () => deriveChannelReplyGuidanceTargets({
       channelId: input.selectedChannelId,
       conversationLineThreadId: input.conversationLineThreadId,
+      conversationRunIds: input.conversationRunIds,
       channelMessages: input.channelMessages,
       runs: input.fallbackRun
         ? [input.fallbackRun, ...input.channelRuns.filter((run) => run.id !== input.fallbackRun?.id)]
@@ -39,7 +41,7 @@ export function useChannelGuidanceTargetController(input: {
       transientReplies: input.transientReplies,
       teammateLabel: input.teammateLabel,
     }),
-    [input.channelMessages, input.channelRuns, input.conversationLineThreadId, input.fallbackRun, input.selectedChannelId, input.teammateLabel, input.transientReplies, input.workUnits],
+    [input.channelMessages, input.channelRuns, input.conversationLineThreadId, input.conversationRunIds, input.fallbackRun, input.selectedChannelId, input.teammateLabel, input.transientReplies, input.workUnits],
   );
   const guidanceModeActive = replyTargets.length > 0;
   const targetTeammateId = resolveChannelMessageTargetTeammateId({ mentions: input.messageMentions });

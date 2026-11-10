@@ -14,7 +14,7 @@ import {
 import { createBaseState, createChatProvider, type MockState } from "./support/mock-state";
 import { openPendingInbox } from "./support/pending-primary-navigation";
 
-const evidenceDirectory = fileURLToPath(new URL(
+const evidenceDirectory = process.env.LING_P2_APPROVAL_EVIDENCE_DIR ?? fileURLToPath(new URL(
   "../../../docs/design/ui2.0升级/evidence/features/approvals/",
   import.meta.url,
 ));
@@ -51,6 +51,8 @@ test("APPROVAL-LIST handles 100 rows, keyboard, search, retained refresh failure
   faults.failNextList = true;
   await refreshInbox(surface);
   await expect(surface.getByText("Synthetic approval refresh failure")).toBeVisible();
+  await expect(surface.getByText("Synthetic approval refresh failure")).toHaveCount(1);
+  await expect(surface.getByRole("region", { name: "Decision", exact: true }).getByRole("alert")).toHaveCount(0);
   await expect(list.getByRole("option")).toHaveCount(100);
   await refreshInbox(surface);
   await expect(surface.getByText("Synthetic approval refresh failure")).toHaveCount(0);
@@ -170,6 +172,7 @@ test("Decision failure retains its draft, selection changes reset state, and exp
   faults.failNextDecisionId = "approval_high_b";
   await dialog.getByRole("button", { name: "Approve" }).click();
   await expect(dialog.getByText("Synthetic approval decision failure")).toBeVisible();
+  await expect(surface.locator(".approvals-ui2-page-feedback")).toHaveCount(0);
   await expect(dialog.getByLabel("Decision reason")).toHaveValue("Keep this reason after failure");
   await expect(dialog.getByRole("button", { name: "Retry" })).toBeVisible();
   await captureEvidence(page, "1280x800-ling-dark-decision-failure.png");
@@ -177,10 +180,11 @@ test("Decision failure retains its draft, selection changes reset state, and exp
   await selectApproval(surface, "High risk request A");
   await expect(selectedDetail(surface).getByText("Synthetic approval decision failure")).toHaveCount(0);
   await selectApproval(surface, "High risk request B");
-  await selectedDetail(surface).getByRole("button", { name: "Approve" }).click();
+  await expect(selectedDetail(surface).getByText("Synthetic approval decision failure")).toBeVisible();
+  await selectedDetail(surface).getByRole("button", { name: "Retry" }).click();
   dialog = page.getByRole("dialog", { name: /Decision: High risk request B/ });
   await dialog.getByLabel("Decision reason").fill("Retry only the failed B request");
-  await dialog.getByRole("button", { name: "Approve" }).click();
+  await dialog.getByRole("button", { name: "Retry" }).click();
   await expect(dialog).toHaveCount(0);
 
   await selectApproval(surface, "High risk request A");
@@ -294,6 +298,36 @@ test("A pending external approval becomes executable without executing implicitl
   await runtime.assertClean();
 });
 
+test("a committed approval with deferred reconciliation warns without claiming the decision failed", async ({ page }) => {
+  await prepareSurface(page, "en-US", "light", 1440, 960);
+  const state = createBaseState({ approvalStatus: "expired" });
+  const pending = addExternalActionApproval(state, {
+    actionId: "action_deferred",
+    approvalId: "approval_deferred",
+    status: "waiting_for_approval",
+    approvalStatus: "pending",
+  });
+  const approval = pending.approval;
+  approval.title = "Deferred command";
+  await mockDaemon(page, state);
+  await page.route(/\/approvals\/approval_deferred\/approve(?:\?.*)?$/u, async (route) => {
+    approval.status = "approved";
+    approval.resolvedAt = "2026-07-22T01:30:00.000Z";
+    approval.resolvedBy = "local-user";
+    await route.fulfill({ json: {
+      approval,
+      postCommit: { status: "deferred", code: "approval_postcommit_reconciliation_required" },
+    } });
+  });
+  const surface = await openInbox(page);
+  await selectApproval(surface, approval.title);
+  await selectedDetail(surface).getByRole("button", { name: "Approve" }).click();
+  await expect.poll(() => approval.status).toBe("approved");
+  await expect(page.locator('[data-ling-overlay="toast"][data-scope="approval:approval_deferred:postcommit"]'))
+    .toContainText("Approval was recorded, but execution recovery is pending");
+  await expect(selectedDetail(surface)).not.toContainText("Approval failed");
+});
+
 test("Runtime approval belongs to its channel composer and leaves other conversations usable", async ({ page }) => {
   await prepareSurface(page, "en-US", "light", 1440, 960);
   const state = createBaseState({ approvalStatus: "pending" });
@@ -328,13 +362,13 @@ test("Runtime approval belongs to its channel composer and leaves other conversa
   });
   const runtime = watchRuntime(page);
   await page.goto("/");
-  const navigation = page.getByLabel(/Ling Stack navigation|Ling Stack 导航/);
-  const engineeringButton = navigation.getByRole("button", { name: "Engineering" }).first();
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
+  const engineeringButton = navigation.getByRole("button", { name: "Engineering", exact: true }).first();
   const engineeringRow = navigation.locator(".sidebar-row-shell").filter({ hasText: "Engineering" }).first();
   await expect(engineeringRow).toHaveAttribute("data-sidebar-row-status", "waiting");
-  await expect(engineeringRow).toContainText("Waiting for approval");
+  await expect(engineeringRow.getByRole("status", { name: "3 pending approvals", exact: true })).toHaveText("Waiting for approval");
 
-  await navigation.getByRole("button", { name: "General" }).click();
+  await navigation.getByRole("button", { name: "General", exact: true }).click();
   await expect(page.getByLabel("Channel composer")).toBeVisible();
   await expect(page.getByRole("region", { name: "Allow this action?" })).toHaveCount(0);
   await expect(page.getByRole("dialog", { name: "Allow this action?" })).toHaveCount(0);
@@ -353,7 +387,7 @@ test("Runtime approval belongs to its channel composer and leaves other conversa
   await expect(page.locator(".approval-inline-strip")).toHaveCount(0);
   await captureEvidence(page, "1440x960-ling-light-runtime-approval-composer-gate.png");
 
-  await navigation.getByRole("button", { name: "General" }).click();
+  await navigation.getByRole("button", { name: "General", exact: true }).click();
   await expect(page.getByLabel("Channel composer")).toBeVisible();
   await engineeringButton.click();
   await gate.getByRole("button", { name: "Allow once" }).click();

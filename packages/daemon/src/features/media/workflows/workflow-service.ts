@@ -10,6 +10,8 @@ import type {
 import type { ExternalSecretStore } from "../../../context.js";
 import { ComfyUiClient } from "./comfyui-client.js";
 import { analyzeComfyWorkflowGraph, validateComfyWorkflowMappings } from "./comfyui-graph.js";
+import { assertCurrentMediaWorkflowProtocol } from "./media-protocol-contract.js";
+export { checkMediaWorkflowConnection } from "./workflow-connection-check.js";
 
 export function publicMediaWorkflowConnection(
   connection: MediaWorkflowConnection,
@@ -28,37 +30,6 @@ export function mediaWorkflowDefinitionDetail(store: RunStore, definition: Media
     currentVersion: definition.currentVersionId ? store.getMediaWorkflowVersion(definition.currentVersionId) : undefined,
     versions,
   };
-}
-
-export async function checkMediaWorkflowConnection(input: {
-  readonly store: RunStore;
-  readonly connection: MediaWorkflowConnection;
-  readonly secretResolver: SecretResolver;
-  readonly now: string;
-}): Promise<MediaWorkflowConnection> {
-  try {
-    const client = createClient(input.connection, input.secretResolver);
-    const inspection = await client.inspect();
-    return input.store.updateMediaWorkflowConnection(input.connection.id, {
-      status: "ready",
-      health: {
-        ok: true,
-        message: `连接正常，已读取 ${Object.keys(inspection.objectInfo).length} 种节点。`,
-        checkedAt: input.now,
-        protocolVariant: inspection.protocolVariant,
-        nodeCount: Object.keys(inspection.objectInfo).length,
-      },
-    }, input.now) ?? input.connection;
-  } catch (error) {
-    return input.store.updateMediaWorkflowConnection(input.connection.id, {
-      status: "error",
-      health: {
-        ok: false,
-        message: error instanceof Error ? error.message : String(error),
-        checkedAt: input.now,
-      },
-    }, input.now) ?? input.connection;
-  }
 }
 
 export async function analyzeMediaWorkflowImport(input: {
@@ -128,9 +99,11 @@ export function createMediaWorkflowTestJob(input: {
   readonly store: RunStore;
   readonly definition: MediaWorkflowDefinition;
   readonly version: MediaWorkflowVersion;
+  readonly connection: MediaWorkflowConnection;
   readonly inputValues: Record<string, unknown>;
   readonly now: string;
 }) {
+  assertCurrentMediaWorkflowProtocol(input.connection);
   if (!input.version.validation.ok) {
     throw new Error("工作流结构检查未通过，不能试运行。");
   }

@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { createTwoFilesPatch } from "diff";
 import { closeSync, openSync, readSync, statSync } from "node:fs";
 import { spawn } from "node:child_process";
 import type { ServerResponse } from "node:http";
@@ -6,6 +8,11 @@ import { writeJson } from "../../shared/response.js";
 import { inspectWorkspaceGitStatus } from "../channels/git-status.js";
 import { git } from "../workspaces/managed-worktrees.js";
 import { resolveWorkspaceFileTarget, WorkspaceFileTargetError } from "./workspace-file-preview.js";
+import { defineProtectedHostActorEntry } from "../../runtime/sandbox/protected-host-actor-inventory.js";
+
+/** Original bounded diff producer. Git configuration and process exit do not certify a read-only protection profile. */
+export const WORKSPACE_CHANGES_GIT_ACTOR_ENTRY = defineProtectedHostActorEntry("workspace_changes_git",
+  (cwd: string, args: readonly string[]) => spawn("git", [...args], { cwd, stdio: ["ignore", "pipe", "pipe"] }));
 
 const maxChangedFiles = 160;
 const maxDiffBytesPerFile = 96 * 1024;
@@ -18,7 +25,7 @@ export async function handleGetWorkspaceChanges(response: ServerResponse, url: U
     return;
   }
   try {
-    writeJson(response, 200, await inspectWorkspaceChanges(cwd, new Date().toISOString()));
+    writeJson(response, 200, await inspectWorkspaceChanges(cwd, new Date().toISOString(), url.searchParams.get("baseline") === "head"));
   } catch (error) {
     writeJson(response, 400, {
       error: "workspace_changes_failed",
@@ -27,7 +34,7 @@ export async function handleGetWorkspaceChanges(response: ServerResponse, url: U
   }
 }
 
-export async function inspectWorkspaceChanges(cwd: string, checkedAt: string): Promise<WorkspaceChangesResponse> {
+export async function inspectWorkspaceChanges(cwd: string, checkedAt: string, netFromHead = false): Promise<WorkspaceChangesResponse> {
   const status = await inspectWorkspaceGitStatus(cwd, checkedAt);
   if (status.state !== "dirty") {
     return {
@@ -49,12 +56,14 @@ export async function inspectWorkspaceChanges(cwd: string, checkedAt: string): P
   }
 
   const inspectionRoot = status.repoRoot ?? cwd;
-  const selectedStatusFiles = status.files.slice(0, maxChangedFiles);
-  const files = await mapWithConcurrency(
+  const statusFiles = netFromHead ? [...new Map(status.files.map((file) => [file.path, file])).values()] : status.files;
+  const selectedStatusFiles = statusFiles.slice(0, maxChangedFiles);
+  const inspectedFiles = await mapWithConcurrency(
     selectedStatusFiles,
     changedFileInspectionConcurrency,
-    (file) => inspectChangedFile(inspectionRoot, file),
+    (file) => inspectChangedFile(inspectionRoot, file, netFromHead, Boolean(status.headSha)),
   );
+  const files = netFromHead ? inspectedFiles.filter((file) => file.diff || file.truncated) : inspectedFiles;
   return {
     cwd: status.cwd,
     state: status.state,
@@ -65,16 +74,16 @@ export async function inspectWorkspaceChanges(cwd: string, checkedAt: string): P
     additions: files.reduce((sum, file) => sum + file.additions, 0),
     deletions: files.reduce((sum, file) => sum + file.deletions, 0),
     files,
-    totalFileCount: status.files.length,
-    truncated: selectedStatusFiles.length < status.files.length,
+    totalFileCount: netFromHead ? files.length + Math.max(0, statusFiles.length - selectedStatusFiles.length) : status.files.length,
+    truncated: selectedStatusFiles.length < statusFiles.length || (netFromHead && files.some((file) => file.truncated)),
     checkedAt: status.checkedAt,
   };
 }
 
-async function inspectChangedFile(cwd: string, file: WorkspaceGitStatusFile): Promise<WorkspaceChangeFile> {
-  const inspected = file.untracked
-    ? untrackedFileDiff(cwd, file.path)
-    : await trackedFileDiff(cwd, file);
+async function inspectChangedFile(cwd: string, file: WorkspaceGitStatusFile, netFromHead = false, hasHead = true): Promise<WorkspaceChangeFile> {
+  const inspected = file.untracked || (netFromHead && !hasHead)
+    ? netFromHead && hasHead ? await netUntrackedFileDiff(cwd, file.path) : untrackedFileDiff(cwd, file.path, netFromHead)
+    : await trackedFileDiff(cwd, file, netFromHead);
   const bounded = truncateUtf8(inspected.diff, maxDiffBytesPerFile);
   return {
     path: file.path,
@@ -97,9 +106,38 @@ interface InspectedDiff {
   readonly truncated: boolean;
 }
 
-async function trackedFileDiff(cwd: string, file: WorkspaceGitStatusFile): Promise<InspectedDiff> {
+async function netUntrackedFileDiff(cwd: string, path: string): Promise<InspectedDiff> {
+  const before = await git(cwd, ["show", `HEAD:${path}`]).then((result) => result.stdout).catch((error) => {
+    // Only a missing HEAD path is a new file. Other read failures must remain failures.
+    if (/does not exist in|exists on disk, but not in/.test(String(error))) return undefined;
+    throw error;
+  });
+  if (before === undefined) return untrackedFileDiff(cwd, path, true);
+  const target = resolveWorkspaceFileTarget(cwd, path);
+  const size = statSync(target.contentPath).size;
+  if (size > maxDiffBytesPerFile || Buffer.byteLength(before) > maxDiffBytesPerFile) {
+    return { diff: "", additions: 0, deletions: 0, truncated: true };
+  }
+  const descriptor = openSync(target.contentPath, "r");
+  const content = Buffer.alloc(size);
+  try { readSync(descriptor, content, 0, size, 0); } finally { closeSync(descriptor); }
+  if (content.includes(0) || before.includes("\0")) {
+    const blobSha = (await git(cwd, ["rev-parse", `HEAD:${path}`])).stdout.trim();
+    const contentSha = createHash(blobSha.length === 64 ? "sha256" : "sha1")
+      .update(Buffer.from(`blob ${content.length}\0`)).update(content).digest("hex");
+    return blobSha === contentSha ? emptyDiff()
+      : { diff: `Binary file changed: ${path}`, additions: 0, deletions: 0, truncated: false };
+  }
+  const after = content.toString("utf8");
+  if (before === after) return emptyDiff();
+  const patch = createTwoFilesPatch(`a/${path}`, `b/${path}`, before, after, undefined, undefined, { context: 3, timeout: 100 });
+  if (!patch) return { diff: "", additions: 0, deletions: 0, truncated: true };
+  return { diff: patch, ...diffStats(patch), truncated: false };
+}
+
+async function trackedFileDiff(cwd: string, file: WorkspaceGitStatusFile, netFromHead = false): Promise<InspectedDiff> {
   const paths = file.originalPath ? [file.originalPath, file.path] : [file.path];
-  const modes: readonly (readonly string[])[] = [
+  const modes: readonly (readonly string[])[] = netFromHead ? [["HEAD"]] : [
     ...(file.staged ? [["--cached"]] : []),
     ...(file.unstaged ? [[]] : []),
   ];
@@ -127,7 +165,7 @@ async function trackedDiffLayer(cwd: string, mode: readonly string[], paths: rea
 
 function boundedGitDiff(cwd: string, args: readonly string[]): Promise<{ readonly diff: string; readonly truncated: boolean }> {
   return new Promise((resolve, reject) => {
-    const child = spawn("git", [...args], { cwd, stdio: ["ignore", "pipe", "pipe"] });
+    const child = WORKSPACE_CHANGES_GIT_ACTOR_ENTRY.invoke(undefined, cwd, args);
     const chunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
     let capturedBytes = 0;
@@ -177,13 +215,13 @@ function numstat(value: string): { readonly additions: number; readonly deletion
   return { additions, deletions };
 }
 
-function untrackedFileDiff(cwd: string, path: string): InspectedDiff {
+function untrackedFileDiff(cwd: string, path: string, preserveOpaque = false): InspectedDiff {
   let target: ReturnType<typeof resolveWorkspaceFileTarget>;
   try {
     target = resolveWorkspaceFileTarget(cwd, path);
   } catch (error) {
     if (error instanceof WorkspaceFileTargetError) {
-      return emptyDiff();
+      return { ...emptyDiff(), truncated: preserveOpaque };
     }
     throw error;
   }
@@ -200,7 +238,7 @@ function untrackedFileDiff(cwd: string, path: string): InspectedDiff {
     closeSync(descriptor);
   }
   if (content.includes(0)) {
-    return emptyDiff();
+    return { ...emptyDiff(), diff: `Binary file changed: ${path}` };
   }
   const text = content.toString("utf8");
   const lines = text.replace(/\r\n/gu, "\n").replace(/\r/gu, "\n").split("\n");

@@ -11,12 +11,20 @@ import {
   getBuiltinSkillPack,
   ManagedOfficialSkillSourceError,
   normalizeOfficialGstackOrigin,
+  normalizeGstackSkillId,
   officialGstackSourceScanRoot,
   previewGstackSkillSourceSync,
   refreshManagedOfficialGstackSource,
   resolveLocalGstackSkillSourceRoots,
   resolveSkillSourceRoots,
 } from "../dist/index.js";
+
+test("skill identifiers and MCP claims handle long ambiguous delimiters", () => {
+  assert.equal(normalizeGstackSkillId(`${"/".repeat(100_000)}review${"-".repeat(100_000)}`), "review");
+  const tool = `mcp__server${"_".repeat(100_000)}__tool`;
+  const profile = buildSkillSourceSemanticProfile({ markdown: `Use ${tool} and MCP__Server__Tool, but not mcp____.`, sourceChecksum: "sha256:long" });
+  assert.deepEqual(profile.toolClaims, [tool, "mcp__server__tool"]);
+});
 
 async function withTempDir(prefix, fn) {
   const root = await mkdtemp(resolve(tmpdir(), prefix));
@@ -46,6 +54,22 @@ async function writeSkill(root, directory, skillMarkdown, options = {}) {
   return skillDir;
 }
 
+// Regression: P3-MAIN-MCP-OFFSET — Unicode lowercasing changed original offsets.
+// Found by /qa independent content review on 2026-10-24
+// Report: output/e6-20260928/p3-main-core-provider-delta-review-20261024.md
+test("MCP claims and warning locations survive Unicode prefixes without offset drift", async () => {
+  const markdown = ["---", "name: review", "description: Review source", "---", "İ".repeat(16), "Use MCP__Server__Tool.", "After"].join("\n");
+  assert.deepEqual(buildSkillSourceSemanticProfile({ markdown, sourceChecksum: "sha256:unicode" }).toolClaims, ["mcp__server__tool"]);
+  await withTempDir("ling-stack-mcp-unicode-", async root => {
+    await writeSkill(root, "gstack-review", markdown);
+    const report = await previewGstackSkillSourceSync({
+      roots: [{ rootPath: root, sourceKind: "gstack-skill-directory", upstreamName: "gstack", upstreamVersion: GSTACK_DEFAULT_UPSTREAM_VERSION }],
+      registrySkills: builtinRegistryEntries(), snapshots: [], generatedAt: "2026-06-22T00:00:00.000Z",
+    });
+    assert.equal(report.records[0].warnings.find(warning => warning.code === "unsupported_tool")?.location, "SKILL.md:6");
+  });
+});
+
 function builtinRegistryEntries() {
   const pack = getBuiltinSkillPack(GSTACK_DEFAULT_SKILL_PACK_ID);
   assert.ok(pack);
@@ -65,6 +89,64 @@ function builtinRegistryEntries() {
     updatedAt: "2026-06-22T00:00:00.000Z",
   }));
 }
+
+test("official source previews refresh routing metadata without changing approved authority", async () => {
+  await withTempDir("ling-stack-skill-source-metadata-", async (root) => {
+    await writeSkill(root, "gstack-review", "---\nname: review\ndescription: |\n  Review with the new complete workflow.\n  Keep the complete second routing line.\n---\n# Review\nUse bash and write for this workflow.\n");
+    const existing = builtinRegistryEntries().find((entry) => entry.id === "review");
+    const before = structuredClone(existing);
+    const report = await previewGstackSkillSourceSync({
+      roots: [{ rootPath: root, sourceKind: "gstack-skill-directory", upstreamName: "gstack", upstreamVersion: "1.91.100.0" }],
+      registrySkills: [existing],
+      includeSkillIds: ["review"],
+    });
+    const definition = report.records[0].definitionPreview;
+    assert.equal(definition.name, "review");
+    assert.equal(definition.summary, "Review with the new complete workflow.");
+    assert.deepEqual(definition.promptFragments, ["Review with the new complete workflow.\nKeep the complete second routing line."]);
+    for (const key of ["id", "roleAffinity", "requiredTools", "requiredProviderCapabilities", "approvalProfile", "stateEffects"]) {
+      assert.deepEqual(definition[key], existing.definition[key], key);
+    }
+    assert.deepEqual(existing, before, "preview must not mutate registry state");
+    assert.match(report.records[0].snapshotPreview.rawSkillMarkdown, /Use bash and write/);
+  });
+});
+
+test("source previews do not overwrite custom metadata or treat non-gstack roots as official", async () => {
+  await withTempDir("ling-stack-skill-source-custom-metadata-", async (root) => {
+    await writeSkill(root, "gstack-review", "---\nname: review\ndescription: Upstream routing replacement.\n---\n# Review\n");
+    const builtin = builtinRegistryEntries().find((entry) => entry.id === "review");
+    for (const [entry, kind] of [
+      [{ ...builtin, source: "custom", packId: "user-pack", reviewStatus: "published" }, "gstack-skill-directory"],
+      [builtin, "workspace-skill-directory"],
+      [builtin, "codex-skill-directory"],
+    ]) {
+      const report = await previewGstackSkillSourceSync({
+        roots: [{ rootPath: root, sourceKind: kind }], registrySkills: [entry], includeSkillIds: ["review"],
+      });
+      assert.deepEqual(report.records[0].definitionPreview, entry.definition);
+    }
+  });
+});
+
+test("source preview consistently selects the active published snapshot and does not repeat updates", async () => {
+  await withTempDir("ling-stack-skill-source-active-snapshot-", async (root) => {
+    await writeSkill(root, "gstack-review", "---\nname: review\ndescription: Current review workflow.\n---\n# Current review\n");
+    const roots = [{ rootPath: root, sourceKind: "gstack-skill-directory", upstreamName: "gstack", upstreamVersion: "1.91.100.0" }];
+    const input = { roots, registrySkills: builtinRegistryEntries(), includeSkillIds: ["review"] };
+    const discovered = (await previewGstackSkillSourceSync(input)).records[0];
+    const current = {
+      ...discovered.snapshotPreview, id: "current-source", workspaceId: "workspace_default", reviewStatus: "published",
+      createdAt: "2026-10-14T01:00:00.000Z", updatedAt: "2026-10-14T02:00:00.000Z",
+    };
+    const previous = { ...current, id: "previous-source", sourceChecksum: "sha256:previous", updatedAt: "2026-10-14T01:00:00.000Z" };
+    for (const snapshots of [[current, previous], [previous, current]]) {
+      const record = (await previewGstackSkillSourceSync({ ...input, snapshots })).records[0];
+      assert.equal(record.existingSnapshotId, current.id);
+      assert.equal(record.state, "unchanged");
+    }
+  });
+});
 
 test("gstack source preview maps prefixed upstream skills to existing builtin ids", async () => {
   await withTempDir("ling-stack-skill-source-sync-", async (root) => {
@@ -383,4 +465,28 @@ test("semantic profile flags gate, tool, external, destructive, secret, and refe
   assert.equal(diff.some((item) => item.kind === "destructive_claim_change" && item.severity === "error"), true);
   assert.equal(diff.some((item) => item.kind === "secret_claim_change" && item.severity === "error"), true);
   assert.equal(diff.some((item) => item.kind === "referenced_file_change" && item.severity === "warning"), true);
+});
+
+test("detected claude and dsh skill roots join the candidate list", async () => {
+  await withTempDir("ling-stack-skill-source-claude-dsh-", async (home) => {
+    await mkdir(resolve(home, ".claude", "skills"), { recursive: true });
+    await mkdir(resolve(home, ".dsh", "skills"), { recursive: true });
+    const roots = await resolveSkillSourceRoots({ homeDir: home });
+    const kinds = new Map(roots.map((root) => [root.id, root.sourceKind]));
+    assert.equal(kinds.get("claude-skills"), "claude-skill-directory");
+    assert.equal(kinds.get("dsh-skills"), "dsh-skill-directory");
+  });
+});
+
+test("workspace dsh skill root is detected for project directories", async () => {
+  await withTempDir("ling-stack-skill-source-workspace-dsh-", async (workspace) => {
+    await mkdir(resolve(workspace, ".dsh", "skills"), { recursive: true });
+    const roots = await resolveSkillSourceRoots({
+      homeDir: resolve(workspace, "missing-home"),
+      workspaceRoot: workspace,
+    });
+    const matched = roots.find((root) => root.sourceKind === "dsh-skill-directory");
+    assert.ok(matched);
+    assert.equal(matched.rootPath, resolve(workspace, ".dsh", "skills"));
+  });
 });

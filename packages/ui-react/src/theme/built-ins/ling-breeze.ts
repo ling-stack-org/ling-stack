@@ -1,0 +1,72 @@
+import type { LingThemePackManifest } from "../types.js";
+
+export const lingBreezeTheme: LingThemePackManifest = Object.freeze({
+  schemaVersion: 1,
+  id: "ling-breeze",
+  name: "Ling Breeze",
+  familyId: "ling-scenes",
+  description: "An airy illustrated forest with open blue sky, sage-green navigation, milk-white surfaces and leafy-green controls.",
+  author: "Ling Stack",
+  license: "MIT",
+  colorScheme: "light",
+  source: "built-in",
+  tokens: {
+    background: {
+      app: "#edf8fb",
+      panel: "#fffefb",
+      elevated: "#fbfefb",
+      subtle: "#eaf3e8",
+      pressed: "#d4e5d5",
+      overlay: "rgb(37 75 45 / 30%)",
+      code: "#f0f6ef",
+      sidebar: "#e3eee5",
+      composer: "#fffefb",
+    },
+    text: {
+      strong: "#283f34",
+      default: "#365345",
+      muted: "#536e5e",
+      soft: "#5b7162",
+      inverse: "#ffffff",
+      link: "#2d7040",
+    },
+    border: {
+      default: "#d0dfd0",
+      strong: "#9bb89d",
+      focus: "#347b44",
+    },
+    action: {
+      accent: "#347b44",
+      accentHover: "#286536",
+      accentPressed: "#20562d",
+      accentForeground: "#ffffff",
+      selection: "#c7dfc8",
+    },
+    status: {
+      success: { foreground: "#25744d", background: "#e8f6ec", border: "#aad6ba" },
+      warning: { foreground: "#7f5a10", background: "#fff7df", border: "#e4cf8d" },
+      danger: { foreground: "#963936", background: "#fff0ee", border: "#e3b8b4" },
+      info: { foreground: "#2d6986", background: "#eaf5f8", border: "#b4d6df" },
+    },
+    shadow: {
+      low: "0 1px 2px rgb(37 75 45 / 8%)",
+      medium: "0 6px 18px rgb(37 75 45 / 12%)",
+      overlay: "0 12px 32px rgb(37 75 45 / 16%)",
+    },
+    native: {
+      selection: "#c7dfc8",
+      scrollbar: "#b1c9b5",
+      scrollbarHover: "#7e9f87",
+    },
+  },
+  desktop: {
+    windowBackground: "#edf8fb",
+    sidebarMaterial: "sidebar",
+    overlayMaterial: "popover",
+    titlebarForeground: "#283f34",
+    shadowStrength: 0.22,
+    blurStrength: 0,
+  },
+  presentation: { profileId: "ling-illustrated", artworkIntensity: "balanced", decorationSet: "none" },
+  scene: { id: "forest-breeze", mascot: false, corners: false },
+} satisfies LingThemePackManifest);

@@ -30,6 +30,56 @@ test("daemonBaseUrlFromEnv trims configured URL and falls back to local daemon",
   assert.equal(daemonBaseUrlFromEnv({}), "http://127.0.0.1:17891");
 });
 
+test("builds command-rule approval and management requests", async () => {
+  const mock = createFetchMock([
+    { approval: { id: "approval 1", status: "approved" } },
+    { cwd: "/repo", rules: [] },
+    { rule: { id: "rule 1", revokedAt: "now" } },
+  ]);
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });
+
+  await client.approveApproval("/repo", "approval 1", {
+    decisionKind: "approve_command_rule",
+    proposedRuleFingerprint: "fingerprint-1",
+  });
+  await client.listApprovalCommandRules("/repo");
+  await client.revokeApprovalCommandRule("/repo", "rule 1");
+
+  assert.deepEqual(mock.calls.map((call) => [call.method, call.url]), [
+    ["POST", "http://daemon.test/approvals/approval%201/approve?cwd=%2Frepo"],
+    ["GET", "http://daemon.test/approval-command-rules?cwd=%2Frepo"],
+    ["DELETE", "http://daemon.test/approval-command-rules/rule%201?cwd=%2Frepo"],
+  ]);
+  assert.deepEqual(JSON.parse(mock.calls[0].body), {
+    decisionKind: "approve_command_rule",
+    proposedRuleFingerprint: "fingerprint-1",
+  });
+});
+
+test("builds multipart transcription requests without setting a boundary header", async () => {
+  const mock = createFetchMock({ text: "你好", providerId: "asr-provider", model: "whisper-1" });
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });
+
+  await client.transcribeAudio("/repo path", new Blob(["audio bytes"], { type: "audio/webm" }), {
+    filename: "voice.webm",
+    language: " zh ",
+    prompt: " meeting ",
+    providerPresetId: "asr-provider",
+  });
+
+  assert.equal(mock.calls[0].method, "POST");
+  assert.equal(mock.calls[0].url, "http://daemon.test/transcribe?cwd=%2Frepo+path");
+  assert.equal(mock.calls[0].headers, undefined);
+  assert.ok(mock.calls[0].body instanceof FormData);
+  assert.equal(mock.calls[0].body.get("language"), "zh");
+  assert.equal(mock.calls[0].body.get("prompt"), "meeting");
+  assert.equal(mock.calls[0].body.get("providerPresetId"), "asr-provider");
+  const file = mock.calls[0].body.get("file");
+  assert.ok(file instanceof Blob);
+  assert.equal(file.name, "voice.webm");
+  assert.equal(file.type, "audio/webm");
+});
+
 test("builds workspace review recovery and open-action requests", async () => {
   const mock = createFetchMock([
     { cwd: "/repo", state: "clean", additions: 0, deletions: 0, files: [], checkedAt: "now" },
@@ -73,6 +123,33 @@ test("builds workspace review recovery and open-action requests", async () => {
     client.workspaceFileContentUrl("/repo", "src/a.ts", true),
     "http://daemon.test/workspace-files/content?cwd=%2Frepo&path=src%2Fa.ts&download=1",
   );
+});
+
+test("builds capability-bound transcript file requests without putting the token in the URL", async () => {
+  const mock = createFetchMock([
+    { cwd: "/repo", capability: { capabilityId: "wscap_1" } },
+    { kind: "code", ref: { displayPath: "src/a.ts" }, text: "const value = 1;" },
+  ]);
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });
+  const scope = {
+    workspaceId: "workspace_default",
+    threadId: "thread_1",
+    runId: "run_1",
+    actionId: "tool:run_1:tool_1",
+    participantId: "participant-engineer",
+  };
+  await client.issueWorkspaceFileCapability({ cwd: "/repo", capabilityTarget: "open_file", refId: "/repo/src/a.ts", scope });
+  await client.previewWorkspaceFileCapability({ cwd: "/repo", capabilityId: "wscap_1", scope, maxBytes: 4096, line: 12 });
+  assert.deepEqual(mock.calls.map((call) => [call.method, call.url]), [
+    ["POST", "http://daemon.test/workspace-files/capabilities"],
+    ["POST", "http://daemon.test/workspace-files/preview"],
+  ]);
+  assert.deepEqual(JSON.parse(mock.calls[0].body), {
+    cwd: "/repo", capabilityTarget: "open_file", refId: "/repo/src/a.ts", scope,
+  });
+  assert.deepEqual(JSON.parse(mock.calls[1].body), {
+    cwd: "/repo", capabilityId: "wscap_1", scope, maxBytes: 4096, line: 12,
+  });
 });
 
 test("binds global fetch to globalThis when no custom fetch is provided", async () => {
@@ -647,7 +724,23 @@ test("builds runner list and readiness endpoints", async () => {
         status: "blocked",
         checkedAt: "2026-06-14T00:00:00.000Z",
         featureFlagEnabled: false,
-        conformancePassed: false,
+        toolExecutionConformance: {
+          status: "blocked",
+          adapterRevision: "openclaw-acp:test",
+          receiptAdapterRevision: "openclaw-acp:test",
+          curatedTools: [],
+          toolSideEffects: {},
+          allowedSideEffects: [],
+          nativeSideEffectMode: "unverified",
+          toolSurfaceCurated: false,
+          approvalBridgeVerified: false,
+          sandboxBindingVerified: false,
+          evidenceCommitVerified: false,
+          abortPropagationVerified: false,
+          attemptFencingVerified: false,
+          workspaceBoundaryVerified: false,
+          artifactImportVerified: false,
+        },
         blockingReasons: [],
       },
     },
@@ -1047,7 +1140,29 @@ test("sends provider model import requests", async () => {
 });
 
 test("sends mutation bodies for channel, task, provider, policy, media, and approval requests", async () => {
-  const mock = createFetchMock({ channel: { id: "ch_1" } });
+  const responses = Array.from({ length: 24 }, () => ({ channel: { id: "ch_1" } }));
+  responses[17] = {
+    status: "started",
+    mode: "create_task",
+    workflow: { id: "workflow 1", channelId: "channel 1" },
+    workflowStep: {
+      id: "step 1",
+      workflowId: "workflow 1",
+      channelId: "channel 1",
+      title: "Implement",
+      prompt: "Build the patch",
+      toParticipantId: "engineer",
+      taskId: "task 1",
+    },
+    task: {
+      id: "task 1",
+      channelId: "channel 1",
+      title: "Implement",
+      prompt: "Build the patch",
+      assigneeTeammateId: "engineer",
+    },
+  };
+  const mock = createFetchMock(responses);
   const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });
 
   await client.createChannel("/repo", {
@@ -1088,7 +1203,7 @@ test("sends mutation bodies for channel, task, provider, policy, media, and appr
     decision: "Handoffs stay manual.",
     createdBy: "local-user",
   });
-  await client.updateChannelDecision("/repo", "decision 1", { status: "superseded" });
+  await client.updateChannelDecision("/repo", "decision 1", { status: "rejected" });
   await client.createChannelHandoff("/repo", "channel 1", {
     sourceTaskId: "task 1",
     fromParticipantId: "tian",
@@ -1125,7 +1240,24 @@ test("sends mutation bodies for channel, task, provider, policy, media, and appr
     toParticipantLabel: "Engineer",
   });
   await client.updateChannelWorkflowStep("/repo", "step 1", { status: "skipped", resultSummary: "Not needed" });
-  await client.startChannelWorkflowStep("/repo", "step 1", { mode: "create_task", taskTitle: "Implement" });
+  await client.startChannelWorkflowStep("/repo", "step 1", { mode: "create_task", taskTitle: "Implement" }, {
+    workflowId: "workflow 1",
+    channelId: "channel 1",
+    workflowStep: {
+      id: "step 1",
+      workflowId: "workflow 1",
+      channelId: "channel 1",
+      title: "Implement",
+      prompt: "Build the patch",
+      toParticipantId: "engineer",
+    },
+    taskTitle: "Implement",
+    taskPrompt: "Build the patch",
+    assigneeTeammateId: "engineer",
+    providerPresetId: undefined,
+    runnerId: undefined,
+    skipProviderPreflight: false,
+  });
   await client.updateTask("/repo", "task 1", { title: "T", prompt: "P", status: "review" });
   await client.updateProvider("/repo", "provider 1", {
     kind: "openai-compatible",
@@ -1178,7 +1310,7 @@ test("sends mutation bodies for channel, task, provider, policy, media, and appr
   assert.equal(mock.calls[6].url, "http://daemon.test/channels/channel%201/decisions?cwd=%2Frepo");
   assert.deepEqual(JSON.parse(mock.calls[6].body).sourceMessageId, "msg 1");
   assert.equal(mock.calls[7].url, "http://daemon.test/decisions/decision%201?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[7].body), { status: "superseded" });
+  assert.deepEqual(JSON.parse(mock.calls[7].body), { status: "rejected" });
   assert.equal(mock.calls[8].url, "http://daemon.test/channels/channel%201/handoffs?cwd=%2Frepo");
   assert.deepEqual(JSON.parse(mock.calls[8].body).toParticipantId, "engineer");
   assert.equal(mock.calls[9].url, "http://daemon.test/handoffs/handoff%201?cwd=%2Frepo");
@@ -1207,6 +1339,76 @@ test("sends mutation bodies for channel, task, provider, policy, media, and appr
   assert.deepEqual(JSON.parse(mock.calls[21].body), { providerPresetId: "media", operation: "image_generate", prompt: "draw", input: { size: "1024x1024" } });
   assert.deepEqual(JSON.parse(mock.calls[22].body), { reason: "looks good" });
   assert.deepEqual(JSON.parse(mock.calls[23].body), {});
+});
+
+test("streams create-and-run workflow steps without attempting to parse SSE as JSON", async () => {
+  const calls = [];
+  const client = new LingDaemonClient({
+    baseUrl: "http://daemon.test",
+    fetch: async (url, init = {}) => {
+      calls.push({ url: String(url), ...init });
+      return new Response("event: ready\ndata: {\"runId\":\"run 1\"}\n\n", {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      });
+    },
+  });
+
+  const response = await client.streamChannelWorkflowStep("/repo", "step 1", {
+    mode: "create_and_run_task",
+    providerPresetId: "provider 1",
+    assigneeTeammateId: "engineer",
+  });
+
+  assert.equal(response.headers.get("Content-Type"), "text/event-stream");
+  assert.equal(calls[0].method, "POST");
+  assert.equal(calls[0].url, "http://daemon.test/workflow-steps/step%201/start?cwd=%2Frepo");
+  assert.equal(new Headers(calls[0].headers).get("Accept"), "text/event-stream");
+  assert.deepEqual(JSON.parse(calls[0].body), {
+    mode: "create_and_run_task",
+    providerPresetId: "provider 1",
+    assigneeTeammateId: "engineer",
+  });
+});
+
+test("rejects workflow-step start calls that use the wrong response transport", async () => {
+  const mock = createFetchMock({ ok: true });
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });
+  const expected = {
+    workflowId: "workflow 1",
+    channelId: "channel 1",
+    workflowStep: {
+      id: "step 1",
+      workflowId: "workflow 1",
+      channelId: "channel 1",
+      title: "Implement",
+      prompt: "Build the patch",
+      toParticipantId: "engineer",
+    },
+    taskTitle: "Implement",
+    taskPrompt: "Build the patch",
+    assigneeTeammateId: "engineer",
+    providerPresetId: undefined,
+    runnerId: undefined,
+    skipProviderPreflight: false,
+  };
+
+  await assert.rejects(
+    client.startChannelWorkflowStep("/repo", "step 1", { mode: "create_and_run_task" }, expected),
+    /use streamChannelWorkflowStep/u,
+  );
+  await assert.rejects(
+    client.streamChannelWorkflowStep("/repo", "step 1", { mode: "create_task" }),
+    /use startChannelWorkflowStep/u,
+  );
+  await assert.rejects(
+    client.startChannelWorkflowStep("/repo", "step 1", { mode: "create_task" }, {
+      ...expected,
+      workflowStep: { ...expected.workflowStep, id: "foreign-step" },
+    }),
+    /path does not match/u,
+  );
+  assert.equal(mock.calls.length, 0);
 });
 
 test("uses expected routes for delete, cancel, check, and artifact URLs", async () => {

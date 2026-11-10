@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   cancelWorkUnit,
   getControlPlaneSnapshot,
@@ -27,6 +27,7 @@ import type {
   WorkUnitsDomainSnapshot,
 } from "../../types.js";
 import { readControlPlaneDomainData, workUnitsFromControlPlaneSnapshot } from "../../lib/control-plane.js";
+import { DaemonObservationDeferredError, isDaemonObservationPausedForWorkspace, liveDaemonObservation, shouldDeferDaemonObservationError, type DaemonObservation } from "../../shared/conversation/observation/daemon-observation.js";
 
 export interface RuntimeState {
   readonly stateTransitions: readonly StateTransitionEvent[];
@@ -56,6 +57,7 @@ export type RuntimeController = Omit<DomainController<RuntimeState, RuntimeActio
 
 export function useRuntimeDomain(input: {
   readonly cwd: string;
+  readonly observation?: DaemonObservation;
   readonly onWorkUnitActionComplete?: (workUnitId: string, action: "cancel" | "retry" | "reconcile") => Promise<void> | void;
 }): RuntimeController {
   const [stateTransitions, setStateTransitions] = useState<readonly StateTransitionEvent[]>([]);
@@ -67,6 +69,8 @@ export function useRuntimeDomain(input: {
   const [runtimeActionWorkUnitId, setRuntimeActionWorkUnitId] = useState("");
   const runtimeIdentity = input.cwd.trim() || "workspace:unavailable";
   const errorOwner = useFocusedDomainErrorOwner<"runtime", RuntimeErrorAction>(runtimeIdentity);
+  const observationRef = useRef(input.observation ?? liveDaemonObservation);
+  observationRef.current = input.observation ?? liveDaemonObservation;
 
   function isCurrentRuntimeRequest(
     request: FocusedErrorRequest<"runtime", RuntimeErrorAction>,
@@ -77,6 +81,7 @@ export function useRuntimeDomain(input: {
   }
 
   async function refreshRuntimeState(cwd = input.cwd, sourceRun?: RunSession): Promise<void> {
+    if (errorOwner.identity() !== (cwd.trim() || "workspace:unavailable")) return;
     if (!cwd) {
       setResourceLeases([]);
       setStateTransitions([]);
@@ -87,17 +92,39 @@ export function useRuntimeDomain(input: {
       return;
     }
 
+    const observation = observationRef.current;
+    if (isDaemonObservationPausedForWorkspace(observation, cwd)) return;
     const request = errorOwner.begin("runtime", "runtime-state", "load");
-    errorOwner.clear(request);
-    if (request.identity === (cwd.trim() || "workspace:unavailable")) setRuntimeLoading(true);
-    const snapshotWorkUnits = await getControlPlaneSnapshot(cwd, ["work_units"])
-      .then((snapshot) => readControlPlaneDomainData<WorkUnitsDomainSnapshot>(snapshot, "work_units"))
-      .then((snapshot) => snapshot ? workUnitsFromControlPlaneSnapshot(snapshot) : undefined)
-      .catch(() => undefined);
-    if (snapshotWorkUnits && isCurrentRuntimeRequest(request, cwd)) {
-      setWorkUnits(snapshotWorkUnits);
+    const canCommit = () => isCurrentRuntimeRequest(request, cwd) && observationRef.current.epoch === observation.epoch
+      && observationRef.current.baseUrl === observation.baseUrl && observationRef.current.workspaceCwd === observation.workspaceCwd
+      && !isDaemonObservationPausedForWorkspace(observationRef.current, cwd);
+    const assertReadCurrent = (): void => { if (!canCommit()) throw new DaemonObservationDeferredError(); };
+    let snapshotWorkUnits: readonly WorkUnit[] | undefined;
+    let optionalReadFailed = false;
+    // These endpoints already have fallbacks. Keep those fallbacks without
+    // swallowing real errors or treating a paused transport as a fresh snapshot.
+    function optionalReadFallback<T>(caught: unknown, fallback: T): T {
+      if (caught instanceof DaemonObservationDeferredError || shouldDeferDaemonObservationError(caught, observationRef.current, cwd)) {
+        throw caught instanceof DaemonObservationDeferredError ? caught : new DaemonObservationDeferredError();
+      }
+      optionalReadFailed = true;
+      if (isCurrentRuntimeRequest(request, cwd)) {
+        errorOwner.report(request, { scope: "load", message: domainErrorMessage(caught) });
+      }
+      return fallback;
     }
+    errorOwner.clear(request);
+    if (request.identity === (cwd.trim() || "workspace:unavailable")) setRuntimeLoading(current => canCommit() ? true : current);
     try {
+      snapshotWorkUnits = await getControlPlaneSnapshot(cwd, ["work_units"])
+        .then((snapshot) => readControlPlaneDomainData<WorkUnitsDomainSnapshot>(snapshot, "work_units"))
+        .then((snapshot) => snapshot ? workUnitsFromControlPlaneSnapshot(snapshot) : undefined)
+        .catch((caught: unknown) => optionalReadFallback(caught, undefined));
+      assertReadCurrent();
+      if (snapshotWorkUnits) {
+        const units = snapshotWorkUnits;
+        setWorkUnits(current => canCommit() ? units : current);
+      }
       const transitionRequests = [
         listStateTransitions(cwd, { limit: 30 }).then((response) => response.transitions),
         listStateTransitions(cwd, { entityType: "run", limit: 30 }).then((response) => response.transitions),
@@ -119,30 +146,32 @@ export function useRuntimeDomain(input: {
       const [leasesResponse, transitionResponses, diagnosticsResponse, workUnitsResponse] = await Promise.all([
         listResourceLeases(cwd, { status: "active", limit: 50 }),
         Promise.all(transitionRequests),
-        getRuntimeDiagnostics(cwd).catch(() => undefined),
-        listWorkUnits(cwd, { limit: 100 }).catch(() => ({ cwd, workUnits: snapshotWorkUnits ?? [] })),
+        getRuntimeDiagnostics(cwd).catch((caught: unknown) => optionalReadFallback(caught, undefined)),
+        listWorkUnits(cwd, { limit: 100 }).catch((caught: unknown) => optionalReadFallback(caught, { cwd, workUnits: snapshotWorkUnits ?? [] })),
       ]);
+      assertReadCurrent();
       const uniqueTransitions = new Map<string, StateTransitionEvent>();
       for (const transition of transitionResponses.flat()) {
         uniqueTransitions.set(transition.id, transition);
       }
-      if (isCurrentRuntimeRequest(request, cwd)) {
-        setResourceLeases(diagnosticsResponse?.leases ?? leasesResponse.leases);
-        setRuntimeDiagnostics(diagnosticsResponse);
-        setWorkUnits(workUnitsResponse.workUnits);
-        setStateTransitions([...uniqueTransitions.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)));
-        errorOwner.clear(request);
-      }
+      setResourceLeases(current => canCommit() ? diagnosticsResponse?.leases ?? leasesResponse.leases : current);
+      setRuntimeDiagnostics(current => canCommit() ? diagnosticsResponse : current);
+      setWorkUnits(current => canCommit() ? workUnitsResponse.workUnits : current);
+      setStateTransitions(current => canCommit() ? [...uniqueTransitions.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt)) : current);
+      if (!optionalReadFailed) errorOwner.clear(request);
     } catch (caught) {
+      if (caught instanceof DaemonObservationDeferredError || shouldDeferDaemonObservationError(caught, observationRef.current, cwd)) return;
+      if (canCommit()) {
+        setResourceLeases(current => canCommit() ? [] : current);
+        setStateTransitions(current => canCommit() ? [] : current);
+        setRuntimeDiagnostics(current => canCommit() ? undefined : current);
+        setWorkUnits(current => canCommit() ? snapshotWorkUnits ?? [] : current);
+      }
       if (isCurrentRuntimeRequest(request, cwd)) {
-        setResourceLeases([]);
-        setStateTransitions([]);
-        setRuntimeDiagnostics(undefined);
-        setWorkUnits(snapshotWorkUnits ?? []);
         errorOwner.report(request, { scope: "load", message: domainErrorMessage(caught) });
       }
     } finally {
-      if (isCurrentRuntimeRequest(request, cwd)) setRuntimeLoading(false);
+      if (isCurrentRuntimeRequest(request, cwd)) setRuntimeLoading(current => isCurrentRuntimeRequest(request, cwd) ? false : current);
     }
   }
 

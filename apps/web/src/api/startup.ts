@@ -1,4 +1,4 @@
-import type { StartupRefreshResponse, StartupStatusResponse } from "../types.js";
+import type { StartupRefreshResponse, StartupStatusResponse } from "@ling-stack/contracts";
 import { daemonClient } from "./client.js";
 
 export async function getStartupStatus(cwd: string): Promise<StartupStatusResponse> {

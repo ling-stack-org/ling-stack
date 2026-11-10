@@ -27,7 +27,7 @@ test("UI 2.0 dialog owns dismissal, focus restoration, scrolling, and busy safet
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const trigger = page.getByLabel("Ling Stack navigation").getByRole("button", { name: "No channel yet" });
+  const trigger = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "No channel yet" });
   await trigger.click();
 
   let dialog = page.getByRole("dialog", { name: "New channel" });
@@ -59,7 +59,7 @@ test("UI 2.0 dialog owns dismissal, focus restoration, scrolling, and busy safet
   await expect(dialog).toBeVisible();
 
   await expect(dialog).toHaveCount(0);
-  await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "UI Foundation" })).toBeVisible();
+  await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "UI Foundation" })).toBeVisible();
   expect(runtimeErrors).toEqual([]);
 });
 
@@ -80,7 +80,7 @@ test("UI 2.0 dialog remains bounded and theme-safe at 1280x800 dark", async ({ p
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "No channel yet" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "No channel yet" }).click();
   const dialog = page.getByRole("dialog", { name: "New channel" });
   await expectDialogContract(dialog, page, 1280, 800);
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");

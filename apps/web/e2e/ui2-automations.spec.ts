@@ -30,6 +30,7 @@ test("AUTO-LIST/STATUS/INSPECT handles 100 rows, search, stale refresh, keyboard
   await openAutomations(page);
   const surface = page.locator("[data-automation-ui2-page]");
   await expect(surface.getByRole("tab")).toHaveCount(4);
+  await expect(surface.locator("[data-automation-inspector]")).toHaveCount(0);
   await expect(surface.getByRole("option", { name: "Automation 001" })).toBeVisible();
   const scrollRegion = surface.locator("[data-automation-scroll-region]");
   expect(await scrollRegion.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
@@ -73,24 +74,26 @@ test("AUTO-CREATE uses one keyboard-safe shared dialog and preserves failed manu
   await initializePage(page, "en-US", "light");
   await page.emulateMedia({ reducedMotion: "reduce" });
   const appState = createBaseState({ approvalStatus: "pending" });
-  appState.providers = [createChatProvider({ id: "provider_local", displayName: "Relay", model: "gpt-test" })];
+  appState.providers = [createChatProvider({ id: "provider_local", displayName: "gpt-test · gpt-test", model: "gpt-test" })];
   await mockDaemon(page, appState);
   const fixture = createAutomationFixture();
   await mockAutomationApi(page, fixture, appState);
   const monitor = watchRuntime(page);
 
   await openAutomations(page);
-  const surface = page.locator("[data-automation-ui2-page]");
-  await surface.getByRole("button", { name: "Create automation" }).click();
+  const createAutomationButton = page.getByRole("button", { name: "Create automation" });
+  await createAutomationButton.click();
   let dialog = page.getByRole("dialog", { name: "New automation" });
   await expect(dialog.getByRole("radio")).toHaveCount(3);
   expect(await dialog.evaluate((element) => getComputedStyle(element).animationName)).toBe("none");
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
 
-  await surface.getByRole("button", { name: "Create automation" }).click();
+  await createAutomationButton.click();
   dialog = page.getByRole("dialog", { name: "New automation" });
   await dialog.getByRole("radio", { name: "Manual setup" }).click();
+  await expect(dialog.getByLabel("Model").locator('option[value="provider_local"]')).toHaveText("gpt-test · 127.0.0.1:8317");
+  await expect(dialog).not.toContainText("gpt-test · gpt-test");
   await dialog.getByRole("button", { name: "Create automation" }).click();
   await expect(dialog.getByLabel("Automation name")).toBeFocused();
   await dialog.getByLabel("Automation name").fill("Daily evidence review");
@@ -104,7 +107,7 @@ test("AUTO-CREATE uses one keyboard-safe shared dialog and preserves failed manu
   await dialog.getByRole("button", { name: "Create automation" }).click();
   await expect(dialog).toHaveCount(0);
   await dismissToasts(page);
-  await surface.getByRole("button", { name: "Create automation" }).click();
+  await createAutomationButton.click();
   dialog = page.getByRole("dialog", { name: "New automation" });
 
   await dialog.getByRole("radio", { name: "Use template" }).click();
@@ -248,7 +251,7 @@ test("AUTO-THEME keeps imported Theme Pack ownership on the list and shared crea
   await page.goto("/");
   const themeId = await seedImportedQuietOcean(page);
   await page.reload();
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Automations" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Automations" }).click();
 
   const root = page.locator("html");
   const surface = page.locator("[data-automation-ui2-page]");
@@ -258,7 +261,9 @@ test("AUTO-THEME keeps imported Theme Pack ownership on the list and shared crea
   await assertNoHorizontalOverflow(page, surface);
   await captureEvidence(page, "1440x960-quiet-ocean-list-inspector.png", { width: 1440, height: 960 });
 
-  await surface.getByRole("button", { name: "Create automation" }).click();
+  await page.locator("[data-desktop-window-titlebar-surface='true']")
+    .getByRole("button", { name: "Create automation" })
+    .click();
   const dialog = page.getByRole("dialog", { name: "New automation" });
   await expect(dialog).toBeVisible();
   await expectBackgroundToMatchToken(dialog, "--ling-bg-elevated");
@@ -625,7 +630,7 @@ async function initializePage(page: Page, locale: "en-US" | "zh-CN", theme: "dar
 
 async function openAutomations(page: Page): Promise<void> {
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Automations" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Automations" }).click();
   await expect(page.locator("[data-automation-ui2-page]")).toBeVisible();
 }
 

@@ -1,7 +1,10 @@
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport as McpTransport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { McpServer, McpStreamableHttpTransport, SecretPurpose, SecretResolver, SecretStatus } from "@ling-stack/core";
+import { parseSecretRef } from "@ling-stack/core";
 import type { McpProcessLauncher } from "./stdio-launcher.js";
+import { createHostMcpFetch, type HostMcpOperation } from "./host-operation.js";
+import { createHostMcpStdioTransport } from "./host-stdio-transport.js";
 
 export class McpSecretResolutionError extends Error {
   readonly statuses: readonly SecretStatus[];
@@ -23,6 +26,8 @@ export function createMcpTransport(input: {
   readonly server: McpServer;
   readonly secretResolver: SecretResolver;
   readonly processLauncher: McpProcessLauncher;
+  readonly hostOperation?: HostMcpOperation;
+  readonly signal?: AbortSignal;
 }): ResolvedMcpTransport {
   if (input.server.transport.type === "stdio") {
     const env: Record<string, string> = { ...input.server.transport.env };
@@ -30,13 +35,19 @@ export function createMcpTransport(input: {
     for (const [envName, value] of Object.entries(resolution.values)) {
       env[envName] = value;
     }
-    return {
-      transport: input.processLauncher.createStdioTransport({
+    const launch = {
         command: input.server.transport.command,
         args: input.server.transport.args,
         env,
         cwd: input.server.transport.cwd,
-      }),
+    };
+    return {
+      // Only the fixed native Host adapter receives the original capability.
+      // A caller's processLauncher can never claim tracked effect support.
+      transport: input.hostOperation
+        ? createHostMcpStdioTransport({ launch, operation: input.hostOperation, signal: input.signal,
+          sendTimeoutMs: (input.server.toolTimeoutSec ?? input.server.startupTimeoutSec ?? 30) * 1000 })
+        : input.processLauncher.createStdioTransport(launch),
       secretStatuses: resolution.statuses,
       resolvedSecretValues: Object.values(resolution.values),
     };
@@ -50,6 +61,7 @@ export function createMcpTransport(input: {
   return {
     transport: new StreamableHTTPClientTransport(new URL(httpServer.transport.url), {
       requestInit: { headers },
+      ...(input.hostOperation ? { fetch: createHostMcpFetch(input.hostOperation) } : {}),
     }),
     secretStatuses: statuses,
     resolvedSecretValues: values,
@@ -124,16 +136,21 @@ function resolveSecretRefs(
   const missing: SecretStatus[] = [];
   for (const [name, ref] of Object.entries(refs)) {
     const resolved = secretResolver.resolve(ref, purpose);
-    if (resolved.status) {
-      statuses.push(resolved.status);
-    }
-    if (!resolved.configured || !resolved.value) {
-      if (resolved.status) {
-        missing.push(resolved.status);
-      }
+    const configured = resolved.configured === true && typeof resolved.value === "string" && resolved.value.length > 0;
+    // Diagnostic status is optional; it cannot authorize a missing credential.
+    // Derive absence from the resolution, retaining a truthful status for UI.
+    const status: SecretStatus = {
+      ...(resolved.status ?? { ref, kind: parseSecretRef(ref).kind, configured }),
+      ref,
+      configured,
+      ...(!configured ? { errorCode: resolved.status?.errorCode ?? "secret_missing" } : {}),
+    };
+    statuses.push(status);
+    if (!configured) {
+      missing.push(status);
       continue;
     }
-    values[name] = resolved.value;
+    values[name] = resolved.value!;
   }
   if (missing.length > 0) {
     throw new McpSecretResolutionError(missing);

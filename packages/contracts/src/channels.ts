@@ -457,7 +457,8 @@ export interface ChannelMention {
   readonly kind: "ai-teammate" | "local-user" | "channel";
 }
 
-export type ChannelMessageFileRefSource = "composer" | "explicit_text" | "api";
+/** inferred_text is display-only lexical metadata, not a request to load a file. */
+export type ChannelMessageFileRefSource = "composer" | "explicit_text" | "api" | "inferred_text";
 
 export interface ChannelMessageFileRef {
   readonly path: string;
@@ -665,6 +666,7 @@ export interface ChannelRequirementShaping {
 
 export interface ChannelExecutionProposal {
   readonly id: string;
+  readonly revision: number;
   readonly workspaceId: string;
   readonly channelId: string;
   readonly sourceMessageId: string;
@@ -676,7 +678,7 @@ export interface ChannelExecutionProposal {
   readonly collaborationSteps: readonly ChannelExecutionProposalStep[];
   readonly requiredTools: readonly RunTool[];
   readonly riskSummary?: string;
-  readonly responseLanguage?: ResponseLanguage;
+  readonly responseLanguage?: ResponseLanguagePreference;
   readonly shaping?: ChannelRequirementShaping;
   readonly status: ChannelExecutionProposalStatus;
   readonly linkedTaskId?: string;
@@ -698,11 +700,12 @@ export interface CreateChannelExecutionProposalRequest {
   readonly collaborationSteps?: readonly ChannelExecutionProposalStep[];
   readonly requiredTools?: readonly RunTool[];
   readonly riskSummary?: string;
-  readonly responseLanguage?: ResponseLanguage;
+  readonly responseLanguage?: ResponseLanguagePreference;
   readonly shaping?: ChannelRequirementShaping;
 }
 
 export interface UpdateChannelExecutionProposalRequest {
+  readonly expectedRevision?: number;
   readonly title?: string;
   readonly prompt?: string;
   readonly assigneeTeammateId?: string;
@@ -710,7 +713,7 @@ export interface UpdateChannelExecutionProposalRequest {
   readonly collaborationSteps?: readonly ChannelExecutionProposalStep[];
   readonly requiredTools?: readonly RunTool[];
   readonly riskSummary?: string | null;
-  readonly responseLanguage?: ResponseLanguage | null;
+  readonly responseLanguage?: ResponseLanguagePreference | null;
   readonly shaping?: ChannelRequirementShaping | null;
   readonly status?: ChannelExecutionProposalStatus;
   readonly linkedTaskId?: string | null;
@@ -872,7 +875,8 @@ export interface UpdateChannelDecisionRequest {
   readonly decision?: string;
   readonly rationale?: string;
   readonly alternatives?: readonly string[];
-  readonly status?: ChannelDecisionStatus;
+  /** Item PATCH only supports the terminal reject transition. Supersession uses collection POST. */
+  readonly status?: "rejected";
 }
 
 export interface ChannelDecisionListResponse {

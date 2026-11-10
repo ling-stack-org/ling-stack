@@ -12,6 +12,8 @@ const baseBuild = packageJson.build;
  */
 export default {
   ...baseBuild,
+  // This opt-in fixture validates only CUA signing, not other native package payloads.
+  afterSign: "./scripts/cua-driver-signing/after-sign.mjs",
   directories: {
     ...baseBuild.directories,
     ...(process.env.LING_CUA_FIXTURE_OUTPUT
@@ -37,6 +39,7 @@ export default {
   },
   win: {
     ...baseBuild.win,
+    extraResources: (baseBuild.win.extraResources ?? []).filter(entry => entry.to !== "engine-supervisor"),
     signtoolOptions: {
       sign: "./scripts/cua-driver-signing/electron-builder-win-sign.mjs",
       signingHashAlgorithms: ["sha256"],

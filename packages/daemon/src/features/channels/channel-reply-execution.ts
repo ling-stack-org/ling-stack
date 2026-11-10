@@ -6,6 +6,8 @@ import {
   type LingThread,
   type RunStore,
 } from "@ling-stack/core";
+import { resolveChannelConversationThread } from "./conversation-thread-resolution.js";
+import { HttpError } from "../../errors.js";
 import type { ConversationContextProjectionMetadata } from "@ling-stack/contracts";
 import type { RunRequest } from "../runs/schemas.js";
 
@@ -83,15 +85,11 @@ export function ensureChannelReplyThread(
 ): LingThread {
   if (sourceMessage.threadId) {
     const requested = store.getLingThread(sourceMessage.threadId);
-    if (requested?.kind === "channel_discussion" && requested.channelId === channel.id && requested.status !== "archived") {
+    if (requested?.kind === "channel_discussion" && requested.channelId === channel.id && requested.status !== "archived" && !requested.archivedAt) {
       return requested;
     }
+    throw new HttpError(409, "conversation_thread_unavailable", `Reply source thread is unavailable: ${sourceMessage.threadId}`);
   }
 
-  return store.resolveOrCreateConversationThread({
-    surfaceKind: "channel_root",
-    channelId: channel.id,
-    title: `${channel.name} conversation`,
-    objective: `Root conversation for ${channel.name}.`,
-  }, new Date().toISOString()).thread;
+  return resolveChannelConversationThread({ store, channel, now: new Date().toISOString() });
 }

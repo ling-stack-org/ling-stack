@@ -65,10 +65,15 @@ import {
 import type { DesktopStartupFailurePrompt } from "./startup-failure-recovery.js";
 import { loadOrCreateDesktopBridgeToken } from "./bridge-token.js";
 import { registerDesktopIpc } from "./ipc.js";
+import { createDesktopUpdateNotification } from "./update-notification.js";
 import { registerDesktopThemePackageIpc } from "./theme-packages/theme-package-ipc.js";
+import { createHumanEvaluationDesktopComposition } from "./human-evaluation/composition.js";
 import { DesktopMobileAccessClient } from "./mobile-access/client.js";
 import { OfficeDriverRuntime, resolveOfficeDriverExecutablePath } from "./office-driver/runtime.js";
+import { HostCapabilityRuntime } from "./host-capabilities/runtime.js";
 import { DesktopThemePackageRepository } from "./theme-packages/theme-package-repository.js";
+import { DesktopBackgroundRepository } from "./backgrounds/background-repository.js";
+import { registerBackgroundIpc } from "./backgrounds/background-ipc.js";
 import { DesktopNavigationIntentStore } from "./navigation-intent.js";
 import { openDesktopOwnerWindow } from "./owner-window.js";
 import { DesktopPreferenceStore } from "./preferences.js";
@@ -76,6 +81,7 @@ import { FileLockedTaskContinuationPreferenceStore } from "./locked-task-continu
 import { DesktopRendererThemeStore } from "./renderer-theme-store.js";
 import { resolveDesktopResourcePaths } from "./resource-paths.js";
 import { resolveDesktopResourcesWithStartupRecovery } from "./resource-startup-recovery.js";
+import { installDesktopBrowserHostForLaunch } from "./qa-launch-profile.js";
 import { sendToLiveDesktopWindow } from "./safe-window-send.js";
 import { establishDesktopSingleInstanceAuthority } from "./single-instance.js";
 import {
@@ -85,7 +91,7 @@ import {
   type DesktopStartupOpenAttempt,
 } from "./startup-lifecycle.js";
 import { createMainWindow } from "./window-factory.js";
-import type { DesktopDisplayWorkArea, DesktopRect } from "../shared/desktop-capabilities.js";
+import type { DesktopDaemonStatus, DesktopDisplayWorkArea, DesktopRect } from "../shared/desktop-capabilities.js";
 import { builtInDesktopRendererThemeInput } from "../shared/renderer-theme.js";
 import { createDesktopThemePackageFirstPaintState } from "../shared/theme-package-first-paint.js";
 
@@ -158,12 +164,18 @@ let smokeProjectionSource: "daemon" | "fake" = "fake";
 let desktopBridgeToken: string | undefined;
 let unregisterIpc: (() => void) | undefined;
 let unregisterThemePackageIpc: (() => void) | undefined;
+let unregisterBackgroundIpc: (() => void) | undefined;
+let backgroundRepository: DesktopBackgroundRepository | undefined;
+let humanEvaluation: ReturnType<typeof createHumanEvaluationDesktopComposition> | undefined;
 let unregisterLockedControlPreview: (() => void) | undefined;
 let desktopRuntime: DesktopRuntime | undefined;
 let desktopDaemonAutomaticRecoveryArmed = false;
 let desktopDaemonAutomaticRecoveryUsed = false;
 let officeDriverRuntime: OfficeDriverRuntime | undefined;
+let hostCapabilityRuntime: HostCapabilityRuntime | undefined;
 let computerUse: ComputerUsePreviewCoordinator | undefined;
+// Process-scoped so window recreation keeps the 24-hour throttle and per-release deduplication.
+let desktopUpdateNotification: { check(): Promise<void> } | undefined;
 const desktopNavigationIntents = new DesktopNavigationIntentStore();
 const desktopRendererThemeStore = new DesktopRendererThemeStore(
   builtInDesktopRendererThemeInput(nativeTheme.shouldUseDarkColors ? "dark" : "light"),
@@ -316,8 +328,14 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
     browserHostPath: resources.browserHostPath,
   });
   try {
-    await installBrowserHost({ hostPath: resources.browserHostPath });
-    logStartup("browser_host.registered", { packaged: app.isPackaged });
+    const registration = await installDesktopBrowserHostForLaunch({
+      hostPath: resources.browserHostPath,
+      installBrowserHost,
+    });
+    logStartup(registration === "registered" ? "browser_host.registered" : "browser_host.registration_skipped", {
+      packaged: app.isPackaged,
+      ...(registration === "skipped_owned_qa" ? { reason: "owned_synthetic_qa_profile" } : {}),
+    });
   } catch (error) {
     logStartup("browser_host.registration_unavailable", {
       packaged: app.isPackaged,
@@ -402,8 +420,11 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
           defaultWorkspaceCwd,
           desktopBridgeToken: bridgeToken,
           browserHostPath: resources.browserHostPath,
+          packaged: app.isPackaged,
+          engineSupervisorPath: resources.engineSupervisorPath,
+          imageSanitizerPath: resources.imageSanitizerPath,
           cuaDriverFeatureFlags: featureFlags,
-          ...(smokeHeadless && app.runningUnderARM64Translation ? { startupTimeoutMs: 60_000 } : {}),
+          ...(!app.isPackaged && smokeHeadless && app.runningUnderARM64Translation ? { startupTimeoutMs: 60_000 } : {}),
           onUnexpectedExit: (details) => {
             requestDesktopDaemonRecovery(details);
           },
@@ -423,6 +444,9 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
         ...(platformOwner ? { platformOwner } : {}),
         onDiagnostic: logStartup,
       });
+      // Process-lifetime observer, independent of Renderer IPC teardown. A
+      // refused Host stop retains the bridges but fences their new admission.
+      desktopRuntime.onStatusChanged(pauseDesktopCapabilityNewClaims);
     } catch (error) {
       await platformOwner?.dispose();
       throw error;
@@ -457,6 +481,23 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
   }
   logStartup("daemon.connected", { ownedByDesktop: desktopRuntime.status.ownedByDesktop });
   desktopDaemonAutomaticRecoveryArmed = desktopRuntime.status.ownedByDesktop;
+  if (!hostCapabilityRuntime) {
+    hostCapabilityRuntime = new HostCapabilityRuntime({
+      daemonBaseUrl,
+      bridgeToken,
+      desktopInstanceId: desktopRuntime.desktopInstanceId,
+      onDiagnostic: logStartup,
+    });
+    pauseDesktopCapabilityNewClaims(desktopRuntime.status);
+    await hostCapabilityRuntime.start();
+    logStartup("host_capability.started", { capabilities: ["host.open_local_target"] });
+  }
+  if (!attempt.isCurrent()) {
+    const staleHostCapabilityRuntime = hostCapabilityRuntime;
+    hostCapabilityRuntime = undefined;
+    await staleHostCapabilityRuntime?.stop();
+    return false;
+  }
   if (!officeDriverRuntime) {
     const officeDriverExecutablePath = resolveOfficeDriverExecutablePath({
       appPath: app.getAppPath(),
@@ -472,6 +513,7 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
         recoveryRoot: resolve(app.getPath("userData"), "recovery", "office"),
         onDiagnostic: logStartup,
       });
+      pauseDesktopCapabilityNewClaims(desktopRuntime.status);
       await officeDriverRuntime.start();
       logStartup("office_driver.started", { platform: process.platform });
     }
@@ -581,6 +623,17 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
   }
   const initializedThemePackages = await desktopThemePackageRepository.initialize();
   if (!initializedThemePackages.ok) throw new Error("desktop_theme_packages_initialize_failed");
+  if (!backgroundRepository) {
+    backgroundRepository = new DesktopBackgroundRepository(resolve(app.getPath("userData"), "backgrounds"), resources.imageSanitizerPath);
+    // A damaged optional preference must not prevent the rest of the application starting.
+    await backgroundRepository.initialize().catch(() => logStartup("background.initialize_failed"));
+  }
+  unregisterBackgroundIpc ??= registerBackgroundIpc({ repository: backgroundRepository,
+    getMainWindow: () => mainWindow ?? loadingMainWindow });
+  humanEvaluation ??= createHumanEvaluationDesktopComposition({ daemonBaseUrl, bridgeToken,
+    desktopInstanceId: desktopRuntime.desktopInstanceId, workspaceCwd: defaultWorkspaceCwd,
+    resourcesRoot: resources.resourcesRoot, knownAppUrl: pathToFileURL(resources.webIndexPath).href,
+    packaged: app.isPackaged, getMainWindow: () => mainWindow ?? loadingMainWindow, powerMonitor });
   if (!unregisterThemePackageIpc) {
     unregisterThemePackageIpc = registerDesktopThemePackageIpc({
       repository: desktopThemePackageRepository,
@@ -591,8 +644,14 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
     runtime: desktopRuntime,
     computerUse,
     getMainWindow: () => mainWindow ?? loadingMainWindow,
+    windowControlsEnabled: process.platform === "win32",
     navigationIntents: desktopNavigationIntents,
     themeStore: desktopRendererThemeStore,
+    executionEngines: { baseUrl: daemonBaseUrl, trustedDocumentUrl: pathToFileURL(resources.webIndexPath).href,
+      getAuthority: () => {
+        if (!desktopRuntime) throw new Error("engine_host_authority_unavailable");
+        return desktopRuntime.getExecutionEngineAuthority();
+      } },
     mobileAccess: new DesktopMobileAccessClient({
       daemonBaseUrl,
       desktopBridgeToken: bridgeToken,
@@ -604,7 +663,7 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
   let createdWindow: BrowserWindow | undefined;
   try {
     const loadedWindow = await createMainWindow({
-      backgroundColor: nativeTheme.shouldUseDarkColors ? "#111315" : "#f6f7f8",
+      backgroundColor: nativeTheme.shouldUseDarkColors ? "#1f1f1f" : "#ffffff",
       daemonBaseUrl,
       themePackageFirstPaint: createDesktopThemePackageFirstPaintState(
         initializedThemePackages.value,
@@ -625,6 +684,7 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
           return;
         }
         loadingMainWindow = window;
+        humanEvaluation?.bindOwner(window);
         window.once("closed", () => {
           if (loadingMainWindow === window) {
             loadingMainWindow = undefined;
@@ -672,6 +732,20 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
     throw error;
   }
   logStartup("main_window.loaded");
+  // Check in the background after the owner window is ready; network failures never block startup.
+  if (mainWindow && !mainWindow.isDestroyed() && app.isPackaged && !smokeHeadless) {
+    desktopUpdateNotification ??= createDesktopUpdateNotification({
+      packaged: app.isPackaged && !smokeHeadless,
+      currentVersion: app.getVersion(),
+      locale: app.getLocale(),
+      showMessageBox: (options) => dialog.showMessageBox(options),
+      openExternal: (url) => shell.openExternal(url),
+      onError: (error) => logStartup("desktop.update_check_failed", {
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    });
+    void desktopUpdateNotification.check();
+  }
   if (fakeComputerUseMode || realCaptureSmokeMode || fixedComputerUseConversationId) {
     computerUse.reportSelectedConversation(fixedComputerUseConversationId ?? smokeComputerUseProjection.conversationId);
   }
@@ -750,7 +824,8 @@ function requestDesktopDaemonRecovery(details: {
     signal: details.signal,
   });
   void runtime.ensureStarted().then(
-    (status) => {
+    async (status) => {
+      await restartDesktopCapabilityRuntimes();
       logStartup("daemon.unexpected_exit_recovered", {
         baseUrl: details.baseUrl,
         ownedByDesktop: status.ownedByDesktop,
@@ -763,6 +838,25 @@ function requestDesktopDaemonRecovery(details: {
       });
     },
   );
+}
+
+function pauseDesktopCapabilityNewClaims(status: DesktopDaemonStatus): void {
+  if (!status.ownedByDesktop || (status.state !== "draining" && status.state !== "blocked")) return;
+  hostCapabilityRuntime?.pauseNewClaims();
+  officeDriverRuntime?.pauseNewClaims();
+}
+
+async function restartDesktopCapabilityRuntimes(): Promise<void> {
+  const host = hostCapabilityRuntime;
+  const office = officeDriverRuntime;
+  await Promise.all([
+    host?.restart(),
+    office?.restart(),
+  ]);
+  logStartup("desktop_capabilities.rebound", {
+    hostCapability: Boolean(host),
+    officeDriver: Boolean(office),
+  });
 }
 
 function isLoopbackDaemonUrl(value: string): boolean {
@@ -1925,6 +2019,9 @@ async function waitForSmokeCondition(
 
 async function shutdown(): Promise<void> {
   const activeMainWindowOpen = mainWindowOpenCoordinator.stopAcceptingAndWait();
+  // A refused/unconfirmed Host stop must leave its window, IPC and execution
+  // transports alive. Do not enter best-effort teardown before this barrier.
+  await desktopRuntime?.prepareShutdown();
   let firstCleanupError: unknown;
   let cleanupFailed = false;
   const attemptCleanup = async (cleanup: () => void | Promise<void>): Promise<void> => {
@@ -1954,8 +2051,16 @@ async function shutdown(): Promise<void> {
   await attemptCleanup(() => macosTccRevocationCommandReader?.close());
 
   const activeUnregisterThemePackageIpc = unregisterThemePackageIpc;
+  await attemptCleanup(() => unregisterBackgroundIpc?.());
+  unregisterBackgroundIpc = undefined;
+  backgroundRepository?.dispose();
+  backgroundRepository = undefined;
   unregisterThemePackageIpc = undefined;
   await attemptCleanup(() => activeUnregisterThemePackageIpc?.());
+
+  const activeHumanEvaluation = humanEvaluation;
+  humanEvaluation = undefined;
+  await attemptCleanup(() => activeHumanEvaluation?.dispose());
 
   const activeUnregisterIpc = unregisterIpc;
   unregisterIpc = undefined;
@@ -1991,6 +2096,10 @@ async function shutdown(): Promise<void> {
   const activeOfficeDriverRuntime = officeDriverRuntime;
   officeDriverRuntime = undefined;
   await attemptCleanup(() => activeOfficeDriverRuntime?.stop());
+
+  const activeHostCapabilityRuntime = hostCapabilityRuntime;
+  hostCapabilityRuntime = undefined;
+  await attemptCleanup(() => activeHostCapabilityRuntime?.stop());
 
   const activeDesktopRuntime = desktopRuntime;
   desktopRuntime = undefined;

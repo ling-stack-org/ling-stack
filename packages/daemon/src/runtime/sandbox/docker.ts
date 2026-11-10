@@ -9,8 +9,34 @@ import {
   type LingSandboxReadinessReport,
 } from "@ling-stack/core";
 import type { DockerSandboxFeatureConfig } from "../../config.js";
+import { defineProtectedHostActorEntry, isProtectedHostActorEntryLaunchRefusal } from "./protected-host-actor-inventory.js";
 
 const execFileAsync = promisify(execFile);
+declare const dockerProbeRecordBrand: unique symbol;
+interface DockerProbeRecord { readonly [dockerProbeRecordBrand]: true }
+interface DockerProbeLaunch {
+  readonly file: string;
+  readonly args: readonly string[];
+  consumed: boolean;
+}
+const dockerProbeLaunches = new WeakMap<DockerProbeRecord, DockerProbeLaunch>();
+
+/** Source-owned probe only. Caller argv/flags cannot manufacture an original launch record. */
+export const DOCKER_PROBE_ACTOR_ENTRY = defineProtectedHostActorEntry("docker_probe",
+  (record: DockerProbeRecord) => {
+    const launch = dockerProbeLaunches.get(record);
+    if (!launch?.consumed || !dockerProbeLaunches.delete(record)) throw new Error("docker_probe_record_invalid");
+    return execFileAsync(launch.file, [...launch.args], {
+      timeout: 10_000,
+      maxBuffer: 1024 * 1024,
+      windowsHide: true,
+    });
+  },
+  (record: DockerProbeRecord): void => {
+    const launch = dockerProbeLaunches.get(record);
+    if (!launch || launch.consumed) throw new Error("docker_probe_record_invalid");
+    launch.consumed = true; // A refused record cannot be retried after the protection gate changes.
+  });
 const DEFAULT_DOCKER_BINARY = "docker";
 const DEFAULT_PROFILE_ID = "docker-default";
 const DEFAULT_SANDBOX_WORKSPACE = "/workspace";
@@ -273,17 +299,16 @@ async function safeDockerCommand(
 ): Promise<{ readonly ok: boolean; readonly result?: DockerSandboxCommandResult }> {
   try {
     return { ok: true, result: await runner(file, args) };
-  } catch {
+  } catch (error) {
+    if (runner === runDockerCommand && isProtectedHostActorEntryLaunchRefusal(DOCKER_PROBE_ACTOR_ENTRY, error)) throw error;
     return { ok: false };
   }
 }
 
 async function runDockerCommand(file: string, args: readonly string[]): Promise<DockerSandboxCommandResult> {
-  const result = await execFileAsync(file, [...args], {
-    timeout: 10_000,
-    maxBuffer: 1024 * 1024,
-    windowsHide: true,
-  });
+  const record = Object.freeze({}) as DockerProbeRecord;
+  dockerProbeLaunches.set(record, { file, args: Object.freeze([...args]), consumed: false });
+  const result = await DOCKER_PROBE_ACTOR_ENTRY.invoke(undefined, record);
   return {
     stdout: result.stdout,
     stderr: result.stderr,

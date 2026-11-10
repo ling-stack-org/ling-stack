@@ -1,5 +1,5 @@
 import type { ExtensionFactory, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { normalizeMcpToolResultContent } from "../content.js";
+import { createHostToolResultAdapter, type HostToolResultAdapter } from "../host-tool-results.js";
 import type {
   PiRunnerHydratedToolDescriptor,
   PiRunnerRunOptions,
@@ -13,9 +13,10 @@ export const TOOL_HYDRATION_CALL_TOOL_NAME = "hydrated_tool_call";
 
 export function createLingStackToolHydrationExtension(options: PiRunnerRunOptions): ExtensionFactory {
   return (pi) => {
+    const adaptResult = createHostToolResultAdapter(pi);
     const hydratedToolsById = new Map<string, PiRunnerHydratedToolDescriptor>();
     pi.registerTool(createLoadToolsDefinition(options, hydratedToolsById));
-    pi.registerTool(createHydratedToolCallDefinition(options, hydratedToolsById));
+    pi.registerTool(createHydratedToolCallDefinition(options, hydratedToolsById, adaptResult));
   };
 }
 
@@ -125,6 +126,7 @@ function createLoadToolsDefinition(
 function createHydratedToolCallDefinition(
   options: PiRunnerRunOptions,
   hydratedToolsById: Map<string, PiRunnerHydratedToolDescriptor>,
+  adaptResult: HostToolResultAdapter,
 ): ToolDefinition {
   return {
     name: TOOL_HYDRATION_CALL_TOOL_NAME,
@@ -147,6 +149,7 @@ function createHydratedToolCallDefinition(
     } as ToolDefinition["parameters"],
     executionMode: "sequential",
     execute: async (toolCallId, params, signal) => {
+      signal?.throwIfAborted();
       const toolId = readRequiredString(params, "toolId");
       const input = isRecord(params) && Object.hasOwn(params, "input") ? params.input : undefined;
       const tool = hydratedToolsById.get(toolId);
@@ -191,18 +194,15 @@ function createHydratedToolCallDefinition(
         signal,
       });
       signal?.throwIfAborted();
-      if (result.isError) {
-        throw new Error(formatHydratedMcpToolError(result.content));
-      }
-      return {
-        content: normalizeMcpToolResultContent(result.content),
+      return adaptResult(toolCallId, TOOL_HYDRATION_CALL_TOOL_NAME, {
+        ...result,
         details: {
           serverId,
           rawName: tool.name,
           toolId: tool.id,
           result: result.details,
         },
-      };
+      });
     },
   };
 }
@@ -254,12 +254,4 @@ function readMcpServerId(tool: PiRunnerHydratedToolDescriptor): string {
     return serverId;
   }
   throw new Error(`Hydrated MCP tool id is invalid: ${tool.id}`);
-}
-
-function formatHydratedMcpToolError(content: readonly { readonly type: string; readonly text?: string }[]): string {
-  return content
-    .filter((item): item is { readonly type: "text"; readonly text: string } => item.type === "text" && typeof item.text === "string")
-    .map((item) => item.text)
-    .join("\n")
-    .trim() || "Hydrated MCP tool returned an error.";
 }

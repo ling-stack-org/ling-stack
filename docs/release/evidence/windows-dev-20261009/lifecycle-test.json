@@ -1,0 +1,23 @@
+{
+  "sourceSha": "f0a632b1bd5bd09b12778cbd7da3d26c354b832f",
+  "result": "PASS_FOR_TESTED_SCOPE",
+  "model": "Qwen3 1.7B, local non-thinking test alias",
+  "installation": "PASS",
+  "installedLaunch": "PASS",
+  "realConversation": "PASS",
+  "conversationAnswer": "17 加 25 的结果是 42。",
+  "builtInHeadlessStartupShutdown": "PASS, two iterations",
+  "relaunchPersistence": "PASS",
+  "actualSystemRestart": "PASS",
+  "afterRestartConversation": "19 加 23 的结果是 42。",
+  "uninstall": "PASS",
+  "beforeBootUtc": "2026-10-09T07:30:59.5Z",
+  "afterBootUtc": "2026-10-09T11:10:29.5Z",
+  "completedUtc": "2026-10-09T11:41:31.3352019Z",
+  "coldStartPrerequisite": "Local model weights were loaded before connection check; the cold model connection timed out on a prior attempt.",
+  "normalWindowClose": "NOT_RUN; interactive test processes were force cleaned up.",
+  "guiInteraction": "NOT_RUN",
+  "screenshots": "NOT_RUN",
+  "officeInterop": "NOT_RUN",
+  "computerUse": "NOT_RUN"
+}

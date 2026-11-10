@@ -259,7 +259,7 @@ export interface MemoryListResponse {
   readonly cwd: string;
   readonly memories: readonly MemoryObject[];
   readonly vectorRetrieval: {
-    readonly status: "not_installed";
+    readonly status: "not_installed" | "not_configured" | "rebuilding" | "ready" | "degraded" | "unavailable";
     readonly optional: true;
   };
 }

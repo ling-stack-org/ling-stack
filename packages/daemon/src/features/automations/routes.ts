@@ -6,6 +6,7 @@ import {
   builtinAutomationTemplates,
   defaultDraftExecutionPolicy,
   defaultDraftOutputPolicy,
+  readAutomationContextItemBudget,
   validateAutomationDraft,
   type AutomationDraft,
   type AutomationDraftConfirmInput,
@@ -26,9 +27,12 @@ import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalBooleanQuery, readOptionalIntegerQuery, readOptionalJsonBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import { ensureRunCancelled } from "../runs/cancellation.js";
+import { projectPublicRunSession } from "../runs/public-execution-snapshots.js";
 import type { AutomationSchedulerRegistry } from "./scheduler.js";
 import { buildAutomationContext } from "./context.js";
+import { assertAutomationRecurrence } from "./recurrence.js";
 import { runAutomation, type StartAutomationRunExecution } from "./run.js";
+import type { NotificationHub } from "../notifications/hub.js";
 import {
   parseAutomationRunCancelRequest,
   parseAutomationRunRequest,
@@ -220,32 +224,36 @@ export async function handleAutomationDraftItem(
         return;
       }
       await readOptionalJsonBody(request, config.maxBodyBytes);
-      if (draft.status === "confirmed" && draft.confirmedAutomationId) {
-        const automation = store.getAutomationDefinition(draft.confirmedAutomationId);
-        if (!automation) {
-          writeJson(response, 409, {
-            error: "confirmed_automation_missing",
-            message: `Confirmed automation not found: ${draft.confirmedAutomationId}`,
-          });
-          return;
+      const confirmed = store.confirmAutomationDraft(draft, new Date().toISOString());
+      if (confirmed.outcome === "not_found") {
+        writeJson(response, 404, { error: "automation_draft_not_found", message: "Automation draft no longer exists." });
+      } else if (confirmed.outcome === "created" || confirmed.outcome === "already_confirmed") {
+        let schedulerRefreshPending = false;
+        try {
+          const needsRegistration = confirmed.automation.status === "enabled" && confirmed.automation.trigger.type === "schedule";
+          // A registered item may be executing, with no nextRunAt yet. Do not reset its timer on retries.
+          const registered = confirmed.outcome === "already_confirmed" && needsRegistration
+            && schedulerRegistry.list(cwd).some((state) => state.status === "running"
+              && state.items.some((item) => item.automationId === confirmed.automation.id));
+          if (confirmed.outcome === "created" || (needsRegistration && !registered)) schedulerRegistry.refresh(cwd);
+        } catch {
+          // This is after the durable commit, not a failed confirmation or a reason to create again.
+          schedulerRefreshPending = true;
         }
-        writeJson(response, 200, { cwd, draft, automation, thread: store.getLingThread(automation.threadId) });
-        return;
+        writeJson(response, confirmed.outcome === "created" ? 201 : 200,
+          { cwd, draft: confirmed.draft, automation: confirmed.automation, thread: confirmed.thread,
+            ...(schedulerRefreshPending ? { schedulerRefreshPending: true,
+              schedulerMessage: "Automation confirmation is saved. Scheduler registration is pending; retry confirmation to recover." } : {}) });
+      } else {
+        const errors = {
+          changed: ["automation_draft_changed", "Automation draft changed before confirmation. Review it and confirm again."],
+          not_ready: ["automation_draft_not_ready", "Automation draft is not ready for confirmation."],
+          source_identity_conflict: ["automation_draft_source_conflict", "Automation draft confirmation source is already occupied."],
+          confirmed_state_invalid: ["confirmed_automation_missing", "Confirmed automation or its source thread is unavailable or inconsistent."],
+        } as const;
+        const [error, message] = errors[confirmed.outcome];
+        writeJson(response, 409, { error, message, draft: confirmed.draft });
       }
-      const validated = validateAutomationDraft(draft);
-      if (validated.status !== "ready_for_confirmation") {
-        writeJson(response, 409, {
-          error: "automation_draft_not_ready",
-          message: `Automation draft is not ready for confirmation: ${validated.status}`,
-          draft: validated,
-        });
-        return;
-      }
-      const createInput = automationDraftToCreateRequest(validated);
-      const created = createAutomationDefinitionFromResolvedInput({ store, input: createInput, now: new Date().toISOString() });
-      const confirmed = store.confirmAutomationDraft(validated.id, created.automation.id, new Date().toISOString());
-      schedulerRegistry.refresh(cwd);
-      writeJson(response, 201, { cwd, draft: confirmed ?? validated, automation: created.automation, thread: created.thread });
       return;
     }
   } catch (error) {
@@ -261,6 +269,7 @@ export async function handleAutomationItem(
   route: AutomationRoute,
   startRun: StartAutomationRunExecution,
   schedulerRegistry: AutomationSchedulerRegistry,
+  notificationHub?: NotificationHub,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = requireCwd(url);
@@ -338,8 +347,9 @@ export async function handleAutomationItem(
         storeRegistry,
         request: parseAutomationRunRequest(body),
         startRun,
+        notificationHub,
       });
-      writeJson(response, 202, result);
+      writeJson(response, 202, { ...result, run: projectPublicRunSession(result.run, store) });
       return;
     }
   } catch (error) {
@@ -402,7 +412,7 @@ export async function handleAutomationRunItem(
         automationRun,
         automation: store.getAutomationDefinition(automationRun.automationId),
         thread: store.getLingThread(automationRun.threadId),
-        run: automationRun.runId ? store.getRun(automationRun.runId) : undefined,
+        run: projectPublicRunSession(automationRun.runId ? store.getRun(automationRun.runId) : undefined, store),
       });
       return;
     }
@@ -566,6 +576,7 @@ function createAutomationDraftInputFromRequest(input: {
       description: partial.description ?? template.description,
       kind: partial.kind ?? template.kind,
       trigger: partial.trigger ?? template.defaultTrigger,
+      rrule: partial.rrule ?? undefined,
       target: resolveTarget(input.cwd, channelId, partial.target),
       promptTemplate: partial.promptTemplate ?? template.defaultPromptTemplate,
       executionPolicy: partial.executionPolicy ?? template.defaultExecutionPolicy,
@@ -587,6 +598,7 @@ function createAutomationDraftInputFromRequest(input: {
       description: partial.description ?? "Chat-assisted automation draft. Review before confirming.",
       kind: partial.kind ?? "custom_prompt",
       trigger: partial.trigger ?? inferChatDraftTrigger(prompt),
+      rrule: partial.rrule ?? undefined,
       target: resolveTarget(input.cwd, channelId, partial.target),
       promptTemplate: partial.promptTemplate ?? createChatDraftPromptTemplate(prompt),
       executionPolicy: partial.executionPolicy ?? defaultDraftExecutionPolicy(),
@@ -603,6 +615,7 @@ function createAutomationDraftInputFromRequest(input: {
     description: partial.description,
     kind: partial.kind ?? "custom_prompt",
     trigger: partial.trigger ?? { type: "manual" },
+    rrule: partial.rrule ?? undefined,
     target: partial.target || channelId ? resolveTarget(input.cwd, channelId, partial.target) : undefined,
     promptTemplate: partial.promptTemplate,
     executionPolicy: partial.executionPolicy ?? defaultDraftExecutionPolicy(),
@@ -622,6 +635,7 @@ function automationDraftUpdateInputFromRequest(
     description: partial.description,
     kind: partial.kind,
     trigger: partial.trigger,
+    rrule: partial.rrule,
     target: partial.target,
     promptTemplate: partial.promptTemplate,
     executionPolicy: partial.executionPolicy,
@@ -690,6 +704,10 @@ function createAutomationDefinitionFromResolvedInput(input: {
   if (channelId && !input.store.getChannel(channelId)) {
     throw new HttpError(404, "channel_not_found", `Channel not found: ${channelId}`);
   }
+  // Validate before creating the source thread. Core repeats admission for
+  // direct callers and performs draft confirmation under its transaction.
+  readAutomationContextItemBudget(input.input.promptTemplate.maxContextItems);
+  assertAutomationRecurrence({ ...input.input, createdAt: input.now }, new Date(input.now));
   const thread = input.store.createLingThread(
     {
       kind: "automation",
@@ -740,6 +758,7 @@ function previewAutomationDefinitionFromDraft(draft: AutomationDraft, cwd: strin
     kind: createInput.kind,
     status: "enabled",
     trigger: createInput.trigger,
+    rrule: createInput.rrule,
     cwds: [],
     target: createInput.target ?? resolveTarget(cwd, createInput.channelId, undefined),
     promptTemplate: createInput.promptTemplate,

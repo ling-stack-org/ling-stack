@@ -1,0 +1,36 @@
+{
+  "distributionChannel": "development",
+  "runtimeIdentity": [
+    {
+      "file": "Ling Stack.exe",
+      "sha256": "bd0aed10d7ecbe4643d4974456eddbc41330f8ba9365ad9feb0e30cff016fa66",
+      "unchanged": true
+    },
+    {
+      "file": "resources/app.asar",
+      "sha256": "875715cf56fc6ce30d7d93a429f782f210bcb9f1248c94daa728fe49e856733b",
+      "unchanged": true
+    },
+    {
+      "file": "resources/browser-host/ling-browser-host.exe",
+      "sha256": "39f1c8e9666409c02109213f7c7053792d846a2900ff5e9baa95da22e3562cf2",
+      "unchanged": true
+    },
+    {
+      "file": "resources/office-driver/win32-x64/ling-office-driver.exe",
+      "sha256": "ff8defd092f711ef4fcff5d0baf3495686f38ae6b89524a310eb8becf3d6ec12",
+      "unchanged": true
+    }
+  ],
+  "packagingRevision": "notices-r1",
+  "bundledCuaProvider": false,
+  "noticeManifestSha256": "827d549036bd1ed53e74d70367805d1782b9e62927af728114e078e0d4b05386",
+  "newInstallerSha256": "69cf35afc819d06e63d68a78e4630233d0faee70465bcc02fdd8333ca217e6b2",
+  "signingTier": "unsigned_dev",
+  "electronBuilderVersion": "26.15.3",
+  "originalInstallerSha256": "2bb170ce7bd16032cbba5cbe56ee655fcdaed46c80f9de94f1231ba7a19c50a9",
+  "nodeVersion": "22.22.1",
+  "pnpmVersion": "10.0.0",
+  "method": "Copy original verified win-unpacked runtime, add materials under resources/distribution, run original afterPack checks on the exact prepackaged directory before NSIS artifact creation, then run the original final artifact hook and independently reopen/extract the final EXE.",
+  "runtimeSourceSha": "f0a632b1bd5bd09b12778cbd7da3d26c354b832f"
+}

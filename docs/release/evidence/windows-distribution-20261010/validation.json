@@ -1,0 +1,9 @@
+{
+  "result": "PASS",
+  "schema": "SPDX-2.3",
+  "licenseFileCount": 576,
+  "unresolvedNoticeGaps": 0,
+  "byteVerifiedBundleOutputs": 674,
+  "privacyScan": "PASS",
+  "verifiedUtc": "2026-10-10T04:51:17.412Z"
+}

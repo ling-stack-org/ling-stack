@@ -2,7 +2,6 @@ import { Cpu, Settings2 } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import {
   Button,
-  DataRow,
   EmptyState,
   Field,
   InlineFeedback,
@@ -73,13 +72,6 @@ export function TeammateModelTab({
         </Field>
       )}
 
-      {!viewModel.emptyInventory ? (
-        <div className="teammate-model-summary" aria-label={t("Model summary")}>
-          <ModelSummaryRow label={t("Model ID")} value={viewModel.modelLabel} />
-          <ModelSummaryRow label={t("Model provider")} value={viewModel.providerLabel} />
-        </div>
-      ) : null}
-
       {viewModel.feedback ? (
         <InlineFeedback className="teammate-model-feedback" tone={viewModel.feedback.tone}>
           {viewModel.feedback.detail}
@@ -90,16 +82,5 @@ export function TeammateModelTab({
         <div className="teammate-model-actions">{workbenchAction}</div>
       ) : null}
     </section>
-  );
-}
-
-function ModelSummaryRow({ label, value }: { readonly label: string; readonly value: string }): React.JSX.Element {
-  return (
-    <DataRow
-      compact
-      className="teammate-model-summary-row"
-      identity={<span className="teammate-model-summary-label">{label}</span>}
-      status={<span className="teammate-model-summary-value" title={value}>{value}</span>}
-    />
   );
 }

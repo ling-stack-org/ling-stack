@@ -3,6 +3,7 @@ import { stat } from "node:fs/promises";
 import { basename, isAbsolute, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { WorkspaceDirectorySelectResponse } from "@ling-stack/contracts";
+import { defineProtectedHostActorEntry } from "../../runtime/sandbox/protected-host-actor-inventory.js";
 
 type ExecFileResult = {
   readonly stdout: string;
@@ -271,7 +272,9 @@ function readProcessErrorText(error: unknown): string {
 
 const execFilePromise = promisify(execFile);
 
-const execFileAsync: ExecFileImpl = async (file, args, options = {}) => {
+/** The original manual directory-picker producer; custom test implementations do not acquire its identity. */
+export const workspaceDirectoryPickerActorEntry = defineProtectedHostActorEntry("workspace_directory_picker",
+  async (file: string, args: readonly string[], options: ExecFileOptions = {}): Promise<ExecFileResult> => {
   const result = await execFilePromise(file, [...args], {
     ...options,
     encoding: options.encoding ?? "utf8",
@@ -280,4 +283,6 @@ const execFileAsync: ExecFileImpl = async (file, args, options = {}) => {
     stdout: String(result.stdout),
     stderr: String(result.stderr),
   };
-};
+});
+
+const execFileAsync: ExecFileImpl = (file, args, options) => workspaceDirectoryPickerActorEntry.invoke(undefined, file, args, options);

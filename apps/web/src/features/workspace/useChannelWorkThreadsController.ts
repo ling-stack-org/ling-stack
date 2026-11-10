@@ -361,6 +361,7 @@ function mergeLingThreads(...groups: readonly (readonly LingThread[])[]): readon
 
 function isChannelDiscussionRootThread(thread: LingThread, channelId: string | undefined): boolean {
   return thread.kind === "channel_discussion" &&
+    (!("surfaceKind" in thread) || thread.surfaceKind === "channel_root") &&
     Boolean(channelId) &&
     thread.channelId === channelId &&
     !thread.parentThreadId &&
@@ -441,6 +442,8 @@ function compareRunActivity(left: RunSession, right: RunSession): number {
 }
 
 function lingThreadStatusFromWorkspaceRun(run: RunSession): LingThread["status"] {
+  // Only the Host thread projection can assert a durable input wait.
+  if (run.status === "yielded") return "blocked";
   if (run.status === "queued") {
     return "open";
   }

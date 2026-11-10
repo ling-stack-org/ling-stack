@@ -1,4 +1,5 @@
 import { defaultProviderTemplates, type ProviderTemplate } from "./provider-templates.js";
+import { knownProviderModelThinkingSupport } from "./provider-model-catalog.js";
 import type { ProviderApi, ProviderCapability, ProviderKind, ProviderPreset, ProviderThinkingMode } from "./provider-types.js";
 
 export type ProviderModelCapabilitySource =
@@ -121,14 +122,13 @@ export function resolveProviderModelCapabilitySnapshot(
   const templateMaxOutputTokens = positiveInteger(template?.maxTokens);
   const familyEstimate = providerFamilyEstimate(providerPreset);
 
-  if (userContextWindowTokens || userMaxOutputTokens) {
+  // An output limit says nothing about the model's context capacity. Only an
+  // explicit context override may bypass observed context-window downgrades.
+  if (userContextWindowTokens) {
     return chatSnapshot(providerPreset, {
       source: "user_override",
       confidence: "known",
-      contextWindowTokens:
-        userContextWindowTokens ??
-        templateContextWindowTokens ??
-        familyEstimate.contextWindowTokens,
+      contextWindowTokens: userContextWindowTokens,
       maxOutputTokens:
         userMaxOutputTokens ??
         templateMaxOutputTokens ??
@@ -142,7 +142,7 @@ export function resolveProviderModelCapabilitySnapshot(
       source: "provider_template",
       confidence: "known",
       contextWindowTokens: templateContextWindowTokens ?? familyEstimate.contextWindowTokens,
-      maxOutputTokens: templateMaxOutputTokens ?? familyEstimate.maxOutputTokens,
+      maxOutputTokens: userMaxOutputTokens ?? templateMaxOutputTokens ?? familyEstimate.maxOutputTokens,
       reason: `Matched bundled provider template ${template?.templateId ?? "unknown"}.`,
     }), options.runtimeObservation);
   }
@@ -152,13 +152,16 @@ export function resolveProviderModelCapabilitySnapshot(
       source: "provider_metadata",
       confidence: "estimated",
       contextWindowTokens: familyEstimate.contextWindowTokens,
-      maxOutputTokens: familyEstimate.maxOutputTokens,
+      maxOutputTokens: userMaxOutputTokens ?? familyEstimate.maxOutputTokens,
       reason: "Known provider family without exact model capability metadata.",
     }), options.runtimeObservation);
   }
 
   return applyRuntimeObservation(
-    conservativeSnapshot(providerPreset, "Unknown compatible provider uses conservative defaults."),
+    {
+      ...conservativeSnapshot(providerPreset, "Unknown compatible provider uses conservative context defaults."),
+      maxOutputTokens: userMaxOutputTokens ?? familyEstimate.maxOutputTokens,
+    },
     options.runtimeObservation,
   );
 }
@@ -166,6 +169,10 @@ export function resolveProviderModelCapabilitySnapshot(
 export function resolveProviderModelThinkingModes(input: ProviderModelThinkingModeInput): readonly ProviderThinkingMode[] {
   if (input.api === "media-job") {
     return [];
+  }
+  const knownSupport = knownProviderModelThinkingSupport(input.model, input.api);
+  if (knownSupport && (!input.capabilities?.length || input.capabilities.includes("reasoning"))) {
+    return knownSupport.levels;
   }
   if (input.capabilities?.includes("reasoning")) {
     return FULL_THINKING_MODES;
@@ -195,21 +202,21 @@ function isKnownOpenAiReasoningModel(model: string, kind: ProviderKind, provider
   if (kind !== "openai" && kind !== "openai-compatible" && providerId !== "openai") {
     return false;
   }
-  return /(^|[-_/])(?:gpt-5|o1|o3|o4)(?=$|[-_/.])/u.test(model) || model.includes("codex");
+  return /(^|[-_/])(?:gpt-(?:5|6|daybreak)|o1|o3|o4)(?=$|[-_/.])/u.test(model) || model.includes("codex");
 }
 
 function isKnownAnthropicThinkingModel(model: string, kind: ProviderKind, providerId: string): boolean {
   if (kind !== "anthropic" && kind !== "openai-compatible" && providerId !== "anthropic") {
     return false;
   }
-  return model.includes("claude-3-7") || model.includes("claude-sonnet-4") || model.includes("claude-opus-4") || model.includes("claude-4");
+  return /claude-(?:3-7|4|5|(?:fable|haiku|opus|sonnet)-(?:4|5))(?=$|[-_/.])/u.test(model);
 }
 
 function isKnownGeminiThinkingModel(model: string, kind: ProviderKind, providerId: string): boolean {
   if (kind !== "google" && kind !== "openai-compatible" && providerId !== "google" && providerId !== "gemini") {
     return false;
   }
-  return model.includes("gemini-2.5");
+  return /gemini-(?:2\.5|3|4)(?=$|[-_/.])/u.test(model);
 }
 
 function isKnownDeepSeekReasoningModel(model: string, kind: ProviderKind, providerId: string): boolean {
@@ -349,5 +356,5 @@ function matchingProviderTemplate(
 }
 
 function positiveInteger(value: number | undefined): number | undefined {
-  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
 }

@@ -1,4 +1,7 @@
-import type { ConversationPermissionPresetOption } from "@ling-stack/conversation-ui-core";
+import type {
+  ConversationAuthorizationModeOption,
+  ConversationPermissionPresetOption,
+} from "@ling-stack/conversation-ui-core";
 import type { ApprovalPolicy, ApprovalPolicyFormState, ApprovalToolDecision, AuthorizationMode, EffectiveRunPolicySnapshot, PermissionPreset, SessionPermissionMode, ToolName, WorkspaceAccessMode } from "../types.js";
 import type { Translate } from "../i18n.js";
 import { allTools, riskyTools } from "./tools.js";
@@ -122,6 +125,26 @@ export function conversationPermissionPresetMenuOptions(
         ? t("Edit files inside the current workspace; commands still ask for approval.")
         : t("Access files outside the workspace; confirm once for the current conversation."),
   }));
+}
+
+export function conversationAuthorizationModeMenuOptions(t: Translate): readonly ConversationAuthorizationModeOption[] {
+  return [
+    {
+      mode: "ask",
+      label: t("Request approval"),
+      description: t("Ask before operations that require approval."),
+    },
+    {
+      mode: "smart",
+      label: t("Help me approve"),
+      description: t("Use a locked-down reviewer for approval requests and ask you when review is inconclusive."),
+    },
+    {
+      mode: "always",
+      label: t("Always authorize"),
+      description: t("Automatically authorize operations allowed by the selected sandbox; safety gates still apply."),
+    },
+  ];
 }
 
 export function buildLocalEffectivePolicyPreview(input: {

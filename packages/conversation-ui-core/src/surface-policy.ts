@@ -1,4 +1,10 @@
-export type ConversationSurfaceKind =
+/**
+ * Product surface controls the shell around a transcript. It deliberately
+ * does not select a renderer, change row geometry, hide facts, or decide
+ * completion. Those concerns belong to the canonical projector and the
+ * exhaustive ConversationTimeline registry.
+ */
+export type ConversationInteractionSurfaceKind =
   | "normal_conversation"
   | "channel_root"
   | "channel_branch"
@@ -6,9 +12,45 @@ export type ConversationSurfaceKind =
   | "teammate_direct"
   | "run_thread";
 
-export type ConversationEvidenceMode = "none" | "compact" | "rich";
-export type ConversationWorkCellMode = "none" | "compact" | "rich";
-export type ConversationRawDetailMode = "hidden" | "developer" | "rich";
+export type ConversationTimelineScopeKind =
+  | "normal"
+  | "private"
+  | "channel_root"
+  | "topic"
+  | "branch"
+  | "run_detail"
+  | "child";
+
+export interface ConversationTimelineScope {
+  readonly kind: ConversationTimelineScopeKind;
+  readonly threadId: string;
+  readonly parentThreadId: string | null;
+  readonly anchorItemId: string | null;
+  readonly depth: 0 | 1;
+}
+
+export interface ConversationInteractionPolicy {
+  readonly surface: ConversationInteractionSurfaceKind;
+  readonly allowCopy: boolean;
+  readonly allowFeedback: boolean;
+  readonly allowTopicReply: boolean;
+  readonly allowThreadFork: boolean;
+  readonly allowLatestUserMessageEdit: boolean;
+  readonly allowCreateTask: boolean;
+  readonly allowRetry: boolean;
+  readonly allowToolExecution: boolean;
+  readonly showUserAvatar: boolean;
+  readonly showAgentAvatar: boolean;
+  readonly showRoster: boolean;
+  readonly allowMentions: boolean;
+  readonly allowMultiAgent: boolean;
+  readonly showTerminalReportParticipants: boolean;
+  readonly modelControl: "picker" | "readonly" | "hidden";
+  readonly permissionControl: "editable" | "readonly" | "hidden";
+  readonly allowedDetailTargets: readonly (
+    "open_file" | "open_diff" | "open_artifact" | "open_run"
+  )[];
+}
 
 export type MessageActionKind =
   | "copy"
@@ -35,28 +77,17 @@ export type SourceIconKind =
   | "app"
   | "policy";
 
-export interface ConversationSurfacePolicy {
-  readonly surface: ConversationSurfaceKind;
-  readonly allowCopy: boolean;
-  readonly allowFeedback: boolean;
-  readonly allowTopicReply: boolean;
-  readonly allowThreadFork: boolean;
-  readonly allowLatestUserMessageEdit: boolean;
-  readonly allowCreateTask: boolean;
-  readonly allowRetry: boolean;
-  readonly allowToolExecution: boolean;
-  readonly allowTeammateMentions: boolean;
-  readonly allowMultiTeammateActivity: boolean;
-  readonly showUserAvatar: boolean;
-  readonly showAgentAvatar: boolean;
-  readonly showChannelRoster: boolean;
-  readonly showTerminalReportParticipants: boolean;
-  readonly evidenceMode: ConversationEvidenceMode;
-  readonly workCellMode: ConversationWorkCellMode;
-  readonly rawDetailMode: ConversationRawDetailMode;
-}
+const allDetailTargets: ConversationInteractionPolicy["allowedDetailTargets"] = [
+  "open_file",
+  "open_diff",
+  "open_artifact",
+  "open_run",
+];
 
-const conversationSurfacePolicies: Record<ConversationSurfaceKind, ConversationSurfacePolicy> = {
+const conversationInteractionPolicies: Record<
+  ConversationInteractionSurfaceKind,
+  ConversationInteractionPolicy
+> = {
   normal_conversation: {
     surface: "normal_conversation",
     allowCopy: true,
@@ -67,15 +98,15 @@ const conversationSurfacePolicies: Record<ConversationSurfaceKind, ConversationS
     allowCreateTask: false,
     allowRetry: false,
     allowToolExecution: true,
-    allowTeammateMentions: false,
-    allowMultiTeammateActivity: false,
     showUserAvatar: false,
     showAgentAvatar: false,
-    showChannelRoster: false,
+    showRoster: false,
+    allowMentions: false,
+    allowMultiAgent: false,
     showTerminalReportParticipants: false,
-    evidenceMode: "compact",
-    workCellMode: "compact",
-    rawDetailMode: "developer",
+    modelControl: "picker",
+    permissionControl: "editable",
+    allowedDetailTargets: allDetailTargets,
   },
   channel_root: {
     surface: "channel_root",
@@ -87,15 +118,15 @@ const conversationSurfacePolicies: Record<ConversationSurfaceKind, ConversationS
     allowCreateTask: true,
     allowRetry: false,
     allowToolExecution: true,
-    allowTeammateMentions: true,
-    allowMultiTeammateActivity: true,
     showUserAvatar: true,
     showAgentAvatar: true,
-    showChannelRoster: true,
+    showRoster: true,
+    allowMentions: true,
+    allowMultiAgent: true,
     showTerminalReportParticipants: true,
-    evidenceMode: "compact",
-    workCellMode: "compact",
-    rawDetailMode: "developer",
+    modelControl: "picker",
+    permissionControl: "editable",
+    allowedDetailTargets: allDetailTargets,
   },
   channel_branch: {
     surface: "channel_branch",
@@ -107,15 +138,15 @@ const conversationSurfacePolicies: Record<ConversationSurfaceKind, ConversationS
     allowCreateTask: true,
     allowRetry: false,
     allowToolExecution: true,
-    allowTeammateMentions: true,
-    allowMultiTeammateActivity: true,
     showUserAvatar: true,
     showAgentAvatar: true,
-    showChannelRoster: true,
+    showRoster: true,
+    allowMentions: true,
+    allowMultiAgent: true,
     showTerminalReportParticipants: true,
-    evidenceMode: "compact",
-    workCellMode: "compact",
-    rawDetailMode: "developer",
+    modelControl: "picker",
+    permissionControl: "editable",
+    allowedDetailTargets: allDetailTargets,
   },
   topic_reply: {
     surface: "topic_reply",
@@ -127,15 +158,15 @@ const conversationSurfacePolicies: Record<ConversationSurfaceKind, ConversationS
     allowCreateTask: false,
     allowRetry: false,
     allowToolExecution: false,
-    allowTeammateMentions: false,
-    allowMultiTeammateActivity: false,
     showUserAvatar: true,
     showAgentAvatar: true,
-    showChannelRoster: false,
+    showRoster: false,
+    allowMentions: false,
+    allowMultiAgent: false,
     showTerminalReportParticipants: false,
-    evidenceMode: "compact",
-    workCellMode: "none",
-    rawDetailMode: "hidden",
+    modelControl: "readonly",
+    permissionControl: "readonly",
+    allowedDetailTargets: allDetailTargets,
   },
   teammate_direct: {
     surface: "teammate_direct",
@@ -147,15 +178,15 @@ const conversationSurfacePolicies: Record<ConversationSurfaceKind, ConversationS
     allowCreateTask: true,
     allowRetry: false,
     allowToolExecution: true,
-    allowTeammateMentions: false,
-    allowMultiTeammateActivity: false,
     showUserAvatar: true,
     showAgentAvatar: true,
-    showChannelRoster: false,
+    showRoster: false,
+    allowMentions: false,
+    allowMultiAgent: false,
     showTerminalReportParticipants: false,
-    evidenceMode: "compact",
-    workCellMode: "compact",
-    rawDetailMode: "developer",
+    modelControl: "readonly",
+    permissionControl: "editable",
+    allowedDetailTargets: allDetailTargets,
   },
   run_thread: {
     surface: "run_thread",
@@ -167,36 +198,78 @@ const conversationSurfacePolicies: Record<ConversationSurfaceKind, ConversationS
     allowCreateTask: false,
     allowRetry: true,
     allowToolExecution: true,
-    allowTeammateMentions: false,
-    allowMultiTeammateActivity: false,
     showUserAvatar: false,
     showAgentAvatar: true,
-    showChannelRoster: false,
+    showRoster: false,
+    allowMentions: false,
+    allowMultiAgent: false,
     showTerminalReportParticipants: false,
-    evidenceMode: "rich",
-    workCellMode: "rich",
-    rawDetailMode: "rich",
+    modelControl: "readonly",
+    permissionControl: "readonly",
+    allowedDetailTargets: allDetailTargets,
   },
 };
 
-export function getConversationSurfacePolicy(surface: ConversationSurfaceKind): ConversationSurfacePolicy {
-  return conversationSurfacePolicies[surface];
+export function getConversationInteractionPolicy(
+  surface: ConversationInteractionSurfaceKind,
+): ConversationInteractionPolicy {
+  return conversationInteractionPolicies[surface];
 }
 
-export function mergeConversationSurfacePolicy(
-  surface: ConversationSurfaceKind,
-  override: Partial<ConversationSurfacePolicy> | undefined,
-): ConversationSurfacePolicy {
+export function mergeConversationInteractionPolicy(
+  surface: ConversationInteractionSurfaceKind,
+  override: Partial<ConversationInteractionPolicy> | undefined,
+): ConversationInteractionPolicy {
   return {
-    ...getConversationSurfacePolicy(surface),
+    ...getConversationInteractionPolicy(surface),
     ...override,
     surface,
   };
 }
 
+/**
+ * Pure surface-to-scope mapping. Topology validation happens in the adapter;
+ * this function never invents ids or inspects display text.
+ */
+export function resolveTimelineScope(input: {
+  readonly surface: ConversationInteractionSurfaceKind;
+  readonly threadId: string;
+  readonly parentThreadId: string | null;
+  readonly anchorItemId: string | null;
+  readonly childParticipantId?: string;
+}): ConversationTimelineScope {
+  if (input.childParticipantId) {
+    return {
+      kind: "child",
+      threadId: input.threadId,
+      parentThreadId: input.parentThreadId,
+      anchorItemId: input.anchorItemId,
+      depth: 1,
+    };
+  }
+  const kindBySurface: Record<
+    ConversationInteractionSurfaceKind,
+    Exclude<ConversationTimelineScopeKind, "child">
+  > = {
+    normal_conversation: "normal",
+    teammate_direct: "private",
+    channel_root: "channel_root",
+    topic_reply: "topic",
+    channel_branch: "branch",
+    run_thread: "run_detail",
+  };
+  return {
+    kind: kindBySurface[input.surface],
+    threadId: input.threadId,
+    parentThreadId: input.parentThreadId,
+    anchorItemId: input.anchorItemId,
+    depth: 0,
+  };
+}
+
 export function conversationActionAllowedByPolicy(
   kind: MessageActionKind,
-  policy: ConversationSurfacePolicy,
+  policy: ConversationInteractionPolicy,
 ): boolean {
   switch (kind) {
     case "copy":

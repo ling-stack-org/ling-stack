@@ -2,11 +2,15 @@ name: CI
 
 on:
   pull_request:
-  push:
-    branches:
-      - main
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
+  workflow_dispatch:
+  schedule:
+    # Daily full Linux/macOS regression at 11:17 Asia/Shanghai (03:17 UTC).
+    # Normal PRs retain affected checks and Draft execution policy.
+    - cron: "17 3 * * *"
 
 concurrency:
+  # Label handling lives in full-ci-label.yml so the latest CI run on every head always publishes the required gate.
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
@@ -17,10 +21,22 @@ env:
   CI: "true"
 
 jobs:
-  quality:
-    name: Typecheck, unit tests, and Web build
+  scope:
+    name: Determine CI scope
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 5
+    outputs:
+      execution-tier: ${{ steps.policy.outputs.execution-tier }}
+      mode: ${{ steps.classify.outputs.mode }}
+      packages: ${{ steps.classify.outputs.packages }}
+      test-packages: ${{ steps.classify.outputs.test-packages }}
+      typecheck-packages: ${{ steps.classify.outputs.typecheck-packages }}
+      dependency-policy: ${{ steps.classify.outputs.dependency-policy }}
+      typecheck-selected: ${{ steps.classify.outputs.typecheck-selected }}
+      unit-matrix: ${{ steps.test-plan.outputs.unit-matrix }}
+      unit-selected: ${{ steps.test-plan.outputs.unit-selected }}
+      daemon: ${{ steps.classify.outputs.daemon }}
+      web: ${{ steps.classify.outputs.web }}
     steps:
       - name: Check out repository without retained credentials
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -29,72 +45,872 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
-          node-version: 22.15.0
+          node-version: 22.22.1
 
-      - name: Configure isolated Ling home
+      - name: Select execution tier without narrowing the PR diff
+        id: policy
         shell: bash
-        run: printf 'LING_STACK_HOME=%s/ling-stack-ci-home\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+        run: |
+          set -euo pipefail
+          execution_tier="$(node scripts/ci/execution-policy.mjs --event-file "$GITHUB_EVENT_PATH")"
+          printf 'execution-tier=%s\n' "$execution_tier" >> "$GITHUB_OUTPUT"
+          printf 'CI execution tier: **%s**\n' "$execution_tier" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Classify changed files
+        id: classify
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          FORCE_FULL: ${{ contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            scope_json="$(node scripts/ci/classify-scope.mjs \
+              --event="$GITHUB_EVENT_NAME" \
+              --base="$BASE_SHA" \
+              --head=HEAD \
+              --force-full="$FORCE_FULL")"
+          else
+            scope_json="$(node scripts/ci/classify-scope.mjs --event="$GITHUB_EVENT_NAME")"
+          fi
+          echo "Scope: $scope_json"
+          printf 'Changed-file scope: `%s`\n' "$scope_json" >> "$GITHUB_STEP_SUMMARY"
+          SCOPE_JSON="$scope_json" node --input-type=module <<'NODE' >> "$GITHUB_OUTPUT"
+          const scope = JSON.parse(process.env.SCOPE_JSON);
+          const outputs = {
+            mode: scope.mode,
+            packages: JSON.stringify(scope.packages),
+            "test-packages": JSON.stringify(scope.testPackages),
+            "typecheck-packages": JSON.stringify(scope.typecheckPackages),
+            "dependency-policy": String(scope.dependencyPolicy),
+            "typecheck-selected": String(scope.typecheckPackages.length > 0),
+            daemon: String(scope.daemon),
+            web: String(scope.web),
+          };
+          for (const [key, value] of Object.entries(outputs)) console.log(`${key}=${value}`);
+          NODE
+
+      - name: Restore timing hints once for the entire run
+        if: steps.policy.outputs.execution-tier == 'complete' && steps.classify.outputs.mode != 'docs'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .codex-artifacts/ci/timings.json
+          key: ci-node-timings-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: ci-node-timings-v1-
+
+      - name: Plan complete core and daemon file coverage
+        id: test-plan
+        env:
+          SELECTED_TEST_PACKAGES: ${{ steps.classify.outputs.test-packages }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          unit_matrix="$(node scripts/ci/test-shard-plan.mjs \
+            --packages="$SELECTED_TEST_PACKAGES" \
+            --timings=.codex-artifacts/ci/timings.json \
+            --output=.codex-artifacts/ci/test-plan.json)"
+          printf 'unit-matrix=%s\n' "$unit_matrix" >> "$GITHUB_OUTPUT"
+          UNIT_MATRIX="$unit_matrix" node --input-type=module <<'NODE' >> "$GITHUB_OUTPUT"
+          const matrix = JSON.parse(process.env.UNIT_MATRIX);
+          console.log(`unit-selected=${matrix.include.length > 0}`);
+          NODE
+
+      - name: Publish the immutable test plan for every shard
+        if: steps.policy.outputs.execution-tier == 'complete' && steps.classify.outputs.mode != 'docs'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ci-test-plan
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+          path: .codex-artifacts/ci/test-plan.json
+
+  common-fast:
+    name: Common checks (fast lane)
+    needs: scope
+    runs-on: ubuntu-latest
+    # A policy or ignore-file change forces a complete repository-history
+    # Gitleaks scan. Keep this lane bounded, but allow that audit to finish on
+    # the full monorepo instead of failing at the generic 15-minute job limit.
+    timeout-minutes: 35
+    steps:
+      - name: Check out repository without retained credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22.22.1
+
+      - name: Check Markdown links
+        run: node scripts/check-markdown-links.mjs
+
+      - name: Check public repository safety
+        run: node scripts/check-public-repo-safety.mjs
+
+      - name: Check scanner boundaries, execution policy, classification, and platform CI gates
+        run: node --test scripts/check-public-repo-safety.test.mjs scripts/ci/*.test.mjs scripts/ci/*.test.ts scripts/native-execution-engines/verify-codex.test.mjs
+
+      # Final file scope cannot exclude secrets introduced and later deleted.
+      - name: Scan Git history for secrets
+        if: needs.scope.outputs.execution-tier == 'complete'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          # Scan the immutable PR head so reviewed Gitleaks fingerprints remain
+          # stable; the full reachable history scan is still required.
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Full-history scans can exceed ten minutes on the monorepo. The
+          # job timeout above remains the outer bound.
+          scan_plan="$(node scripts/ci/secret-scan.mjs --event="$GITHUB_EVENT_NAME" --base="$BASE_SHA" --head="$HEAD_SHA")"
+          echo "Secret scan plan: $scan_plan"
+          log_opts="$(SCAN_PLAN="$scan_plan" node --input-type=module -e 'console.log(JSON.parse(process.env.SCAN_PLAN).logOpts)')"
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/repo:ro" \
+            zricethezav/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
+            git --no-banner --no-color --redact=100 \
+            --log-opts="$log_opts" \
+            --config /repo/.gitleaks.toml \
+            --gitleaks-ignore-path /repo/.gitleaksignore \
+            --timeout 1800 \
+            /repo
+
+      - name: Check pull request whitespace
+        if: github.event_name == 'pull_request'
+        run: git diff --check "${{ github.event.pull_request.base.sha }}...HEAD"
+
+      - name: Check pushed or scheduled commit whitespace
+        if: github.event_name != 'pull_request'
+        run: git diff-tree --check --no-commit-id -r HEAD
+
+  dependency-policy:
+    name: Dependency policy and security checks
+    needs: scope
+    if: needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.dependency-policy == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository without retained credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+        with:
+          version: 10.0.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22.22.1
+          cache: pnpm
 
       - name: Install locked dependencies
         shell: bash
         run: |
           set -euo pipefail
           corepack enable
-          corepack pnpm install --frozen-lockfile
+          corepack pnpm install --frozen-lockfile --prefer-offline
 
-      - name: Check Markdown links
-        run: corepack pnpm check:docs
+      - name: Check production dependency update policy
+        run: node --test scripts/production-dependency-policy.test.mjs
 
       - name: Check dependency license policy
         run: corepack pnpm check:licenses
 
-      - name: Check public repository safety
-        run: corepack pnpm check:public
-
       - name: Check patched dependency security regressions
         run: corepack pnpm check:dependency-security
 
-      - name: Scan Git history for secrets
+  framework-assurance:
+    name: Offline assurance and external SDK consumer
+    needs: scope
+    if: needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.mode != 'docs'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out frozen source history without retained credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+        with:
+          version: 10.0.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22.22.1
+          cache: pnpm
+
+      - name: Install locked dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Test offline assurance boundaries
+        run: node --test scripts/framework-assurance/*.test.mjs
+
+      - name: Calibrate frozen offline controls without a Provider
+        run: node scripts/framework-assurance/index.mjs calibrate --output "$RUNNER_TEMP/ling-framework-assurance/offline"
+
+      # This consumer owns fresh producer builds and tarballs; ci-dist is not evidence.
+      - name: Build pack and verify the real SDK outside the checkout
+        run: node scripts/framework-assurance/index.mjs sdk-consumer --output "$RUNNER_TEMP/ling-framework-assurance/sdk"
+
+      - name: Preserve assurance reports and command logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ci-framework-assurance
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            ${{ runner.temp }}/ling-framework-assurance/offline/*.json
+            ${{ runner.temp }}/ling-framework-assurance/offline/*.md
+            ${{ runner.temp }}/ling-framework-assurance/sdk/sdk-consumer.json
+            ${{ runner.temp }}/ling-framework-assurance/sdk/sdk-consumer-*/sdk-consumer-report.json
+            ${{ runner.temp }}/ling-framework-assurance/sdk/sdk-consumer-*/*.log
+
+  build:
+    name: Build selected package graph once
+    needs: scope
+    if: needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.mode != 'docs'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      SELECTED_PACKAGES: ${{ needs.scope.outputs.packages }}
+    steps:
+      - name: Check out repository without retained credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+        with:
+          version: 10.0.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22.22.1
+          cache: pnpm
+
+      - name: Install locked dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Set up the pinned image codec toolchain
+        run: rustup toolchain install 1.97.1 --profile minimal
+
+      - name: Build selected graph without nested package builds
+        env:
+          RUSTUP_TOOLCHAIN: 1.97.1
+        run: node scripts/ci/run-packages.mjs --task=build:ci --packages="$SELECTED_PACKAGES" --closure=true
+
+      - name: Test bounded image codec contracts
+        if: needs.scope.outputs.daemon == 'true'
+        env:
+          RUSTUP_TOOLCHAIN: 1.97.1
+        run: corepack pnpm --filter @ling-stack/daemon test:image-sanitizer
+
+      - name: Check real source daemon lifecycle and fresh-workspace doctor on Linux
+        if: contains(needs.scope.outputs.packages, '"@ling-stack/cli"')
+        working-directory: packages/cli
+        run: node --test test/daemon-lifecycle.test.mjs
+
+      - name: Install browser for production Web smoke
+        if: needs.scope.outputs.web == 'true'
+        working-directory: apps/web
+        run: corepack pnpm exec playwright install --with-deps chromium --only-shell
+
+      - name: Check production Web QA regressions on Linux
+        if: needs.scope.outputs.web == 'true'
+        working-directory: apps/web
+        env:
+          LING_PLAYWRIGHT_PREVIEW: "1"
+          LING_PLAYWRIGHT_REUSE_SERVER: "0"
+          LING_CAPTURE_UI2_EVIDENCE: "1"
         run: >-
-          docker run --rm
-          -v "$GITHUB_WORKSPACE:/repo:ro"
-          zricethezav/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
-          git --no-banner --no-color --redact=100
-          --gitleaks-ignore-path /repo/.gitleaksignore
-          --timeout 600
-          /repo
+          corepack pnpm exec playwright test
+          e2e/ui2-shell-feedback-permission.spec.ts e2e/ui2-settings-skill-library.spec.ts
+          e2e/ui2-teammate-management-skills.spec.ts e2e/ui2-council-members.spec.ts
+          --grep 'without a configured model|full access confirmation|built-in skill timestamps|Chinese built-in skill|Chinese QA member'
+          --reporter=line
+
+      - name: Preserve Linux production Web smoke evidence
+        if: always() && needs.scope.outputs.web == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ci-linux-source-web-smoke
+          if-no-files-found: error
+          retention-days: 7
+          path: apps/web/test-results/**
+
+      - name: Upload reusable build outputs
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ci-dist
+          if-no-files-found: error
+          retention-days: 1
+          path: |
+            packages/*/dist/**
+            apps/web/dist/**
+            apps/chrome-extension/dist/**
+
+  typecheck:
+    name: Typecheck selected packages
+    needs: [scope, build]
+    if: ${{ !cancelled() && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.typecheck-selected == 'true' && needs.build.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SELECTED_PACKAGES: ${{ needs.scope.outputs.typecheck-packages }}
+    steps:
+      - name: Check out repository without retained credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+        with:
+          version: 10.0.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22.22.1
+          cache: pnpm
+
+      - name: Install locked dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Download reusable build outputs
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: ci-dist
+          path: .
+
+      - name: Typecheck selected packages without rebuilding dependencies
+        run: node scripts/ci/run-packages.mjs --task=typecheck:ci --packages="$SELECTED_PACKAGES"
+
+      - name: Typecheck CI tool tests
+        run: corepack pnpm typecheck:ci-tests
+
+  unit-tests:
+    name: Unit tests and Web checks (${{ matrix.suite }} ${{ matrix.shard }})
+    needs: [scope, build]
+    if: ${{ !cancelled() && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.unit-selected == 'true' && needs.build.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.scope.outputs.unit-matrix) }}
+    env:
+      SELECTED_PACKAGES: ${{ needs.scope.outputs.test-packages }}
+      WEB_SELECTED: ${{ needs.scope.outputs.web }}
+    steps:
+      - name: Check out repository without retained credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+        with:
+          version: 10.0.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22.22.1
+          cache: pnpm
+
+      - name: Install locked dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Download reusable build outputs
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: ci-dist
+          path: .
+
+      - name: Download the shared test plan
+        if: matrix.suite == 'core'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: ci-test-plan
+          path: .codex-artifacts/ci
+
+      - name: Run selected unit tests without rebuilding dependencies
+        if: matrix.suite == 'packages'
+        run: node scripts/ci/run-packages.mjs --task=test:ci --packages="$SELECTED_PACKAGES" --exclude='["@ling-stack/daemon","@ling-stack/core"]'
+
+      - name: Run bounded core shard
+        if: matrix.suite == 'core'
+        run: >-
+          node scripts/ci/node-test-shard.mjs --suite=core
+          --shard=${{ matrix.shard }} --shard-count=4 --concurrency=2
+          --shard-timeout-ms=1800000
+          --plan=.codex-artifacts/ci/test-plan.json
+          --report=.codex-artifacts/ci/reports/core-${{ matrix.shard }}.json
+
+      - name: Preserve core file timings and failure logs
+        if: always() && matrix.suite == 'core'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ci-test-report-core-${{ matrix.shard }}
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+          path: .codex-artifacts/ci/reports/**
 
       - name: Check Web architecture and UI rules
+        if: matrix.suite == 'packages' && env.WEB_SELECTED == 'true'
         run: corepack pnpm --filter @ling-stack/web lint
 
       - name: Check translations
+        if: matrix.suite == 'packages' && env.WEB_SELECTED == 'true'
         run: corepack pnpm --filter @ling-stack/web check:i18n
 
-      - name: Typecheck supported source surfaces
+  daemon-tests:
+    name: Daemon tests (shard ${{ matrix.shard }})
+    needs: [scope, build]
+    if: ${{ !cancelled() && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.daemon == 'true' && needs.build.result == 'success' }}
+    # Full discovery is unchanged: original Darwin-only positive cases must
+    # execute on the real Host, not skip or weaken the production platform gate.
+    runs-on: macos-26
+    # File/shard watchdogs report failures before this final infrastructure cap.
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5]
+    steps:
+      - name: Check out repository without retained credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+        with:
+          version: 10.0.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22.22.1
+          cache: pnpm
+
+      - name: Install locked dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Download reusable build outputs
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: ci-dist
+          path: .
+
+      - name: Download the shared test plan
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: ci-test-plan
+          path: .codex-artifacts/ci
+
+      # ci-dist comes from Ubuntu; native codecs must be rebuilt on this macOS host.
+      - name: Build the host image codec
+        env:
+          RUSTUP_TOOLCHAIN: 1.97.1
+        run: |
+          rustup toolchain install 1.97.1 --profile minimal
+          corepack pnpm --filter @ling-stack/daemon build:image-sanitizer
+
+      - name: Run isolated daemon shard
+        # Every file owns its home/workspace and process group. Short native
+        # lifecycle fixtures still finish exclusively before parallel workers.
         run: >-
-          corepack pnpm
-          --workspace-concurrency=1
-          --filter './packages/**'
-          --filter @ling-stack/web
-          --filter @ling-stack/desktop
-          typecheck
+          node scripts/ci/daemon-test-shard.mjs --shard=${{ matrix.shard }} --shard-count=6 --concurrency=2
+          --plan=.codex-artifacts/ci/test-plan.json
+          --report=.codex-artifacts/ci/reports/daemon-${{ matrix.shard }}.json
 
-      - name: Run package and Web unit tests
+      - name: Preserve daemon file timings and failure logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ci-test-report-daemon-${{ matrix.shard }}
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+          path: .codex-artifacts/ci/reports/**
+
+      - name: Collect fixed OS bootstrap source for review only
+        if: always()
+        run: node scripts/ci/macos-bootstrap-diagnostic.mjs > "${{ runner.temp }}/macos-bootstrap-diagnostic.json"
+
+      - name: Preserve bootstrap observation without granting profile support
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ci-macos-bootstrap-shard-${{ matrix.shard }}
+          if-no-files-found: warn
+          retention-days: 1
+          path: ${{ runner.temp }}/macos-bootstrap-diagnostic.json
+
+  daemon-linux-contracts:
+    name: Linux restricted-command fail-closed contracts
+    needs: [scope, build]
+    if: ${{ !cancelled() && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.daemon == 'true' && needs.build.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository without retained credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+        with:
+          version: 10.0.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22.22.1
+          cache: pnpm
+
+      - name: Install locked dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Download reusable build outputs
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: ci-dist
+          path: .
+
+      - name: Require real Linux rejection without effects or raw Host fallback
+        working-directory: packages/daemon
+        run: node --test --test-concurrency=1 test/restricted-command-linux.contract.mjs test/restricted-command-dispatch.test.mjs
+
+  restricted-command-macos:
+    name: Real macOS helper and Seatbelt smoke
+    needs: [scope, build]
+    if: ${{ !cancelled() && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.daemon == 'true' && needs.build.result == 'success' }}
+    # actions/runner-images documents macos-26 as arm64, not the Intel/large image.
+    # This is standalone helper evidence, not reviewed packaged issuer certification.
+    runs-on: macos-26
+    timeout-minutes: 25
+    steps:
+      - name: Check out repository without retained credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+        with:
+          version: 10.0.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22.22.1
+          cache: pnpm
+
+      - name: Install locked dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Download reusable build outputs
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: ci-dist
+          path: .
+
+      - name: Require the actual arm64 macOS Host and fixed Seatbelt backend
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { execFileSync } from 'node:child_process';
+          import { release } from 'node:os';
+          import { readMacosSandboxBackendIdentity } from './packages/daemon/dist/runtime/sandbox/macos-sandbox-backend.js';
+          assert.equal(process.platform, 'darwin');
+          assert.equal(process.arch, 'arm64');
+          const osVersion = execFileSync('/usr/bin/sw_vers', ['-productVersion'], { encoding: 'utf8' }).trim();
+          assert.ok(Number.parseInt(osVersion, 10) >= 26, 'This CI lane requires macOS 26 or newer.');
+          const backend = readMacosSandboxBackendIdentity();
+          assert.equal(backend.kind, 'macos_seatbelt');
+          console.log(JSON.stringify({ platform: process.platform, arch: process.arch, osVersion, kernel: release(), backend: backend.kind }));
+          NODE
+
+      - name: Prepare the pinned native build inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.97.1 --profile minimal --component rustfmt
+          rustup target add --toolchain 1.97.1 aarch64-apple-darwin
+          rustup run 1.97.1 cargo fetch --locked --manifest-path native/sandbox/Cargo.toml
+
+      - name: Build a fresh helper and run real Host and channel isolation smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          # build.mjs exclusively creates --out; never pre-create or reuse it.
+          ling_native_output="$RUNNER_TEMP/ling-native-evidence"
+          node native/sandbox/scripts/build.mjs --target aarch64-apple-darwin --out "$ling_native_output"
+          node native/sandbox/tests/host-input-read-smoke.mjs "$ling_native_output/ling-sandbox-runner"
+          node native/sandbox/tests/restricted-command-dispatch-smoke.mjs "$ling_native_output/ling-sandbox-runner"
+          node packages/daemon/test/restricted-command-launch-unknown.contract.mjs "$ling_native_output/ling-sandbox-runner"
+          node native/sandbox/tests/channel-command-smoke.mjs "$ling_native_output/ling-sandbox-runner"
+
+      - name: Preserve native build diagnostics without certifying the packaged issuer
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ci-restricted-command-native-evidence
+          if-no-files-found: warn
+          retention-days: 1
+          path: |
+            ${{ runner.temp }}/ling-native-evidence/manifest.json
+            ${{ runner.temp }}/ling-native-evidence/logs/**
+
+      - name: Collect fixed OS bootstrap source for review only
+        if: always()
+        run: node scripts/ci/macos-bootstrap-diagnostic.mjs > "${{ runner.temp }}/macos-bootstrap-diagnostic.json"
+
+      - name: Preserve bootstrap observation without granting profile support
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ci-macos-bootstrap-native
+          if-no-files-found: warn
+          retention-days: 1
+          path: ${{ runner.temp }}/macos-bootstrap-diagnostic.json
+
+  quality:
+    name: Typecheck, unit tests, and Web build
+    needs: [scope, common-fast, dependency-policy, framework-assurance, build, typecheck, unit-tests, daemon-tests, daemon-linux-contracts, restricted-command-macos]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out quality policy without retained credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22.22.1
+
+      - name: Require every applicable CI lane to pass
+        env:
+          EXECUTION_TIER: ${{ needs.scope.outputs.execution-tier }}
+          SCOPE_MODE: ${{ needs.scope.outputs.mode }}
+          SCOPE_RESULT: ${{ needs.scope.result }}
+          COMMON_RESULT: ${{ needs.common-fast.result }}
+          DEPENDENCY_RESULT: ${{ needs.dependency-policy.result }}
+          ASSURANCE_RESULT: ${{ needs.framework-assurance.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          TYPECHECK_RESULT: ${{ needs.typecheck.result }}
+          UNIT_RESULT: ${{ needs.unit-tests.result }}
+          DAEMON_RESULT: ${{ needs.daemon-tests.result }}
+          LINUX_CONTRACT_RESULT: ${{ needs.daemon-linux-contracts.result }}
+          MACOS_NATIVE_RESULT: ${{ needs.restricted-command-macos.result }}
+          DAEMON_SELECTED: ${{ needs.scope.outputs.daemon }}
+          DEPENDENCY_SELECTED: ${{ needs.scope.outputs.dependency-policy }}
+          TYPECHECK_SELECTED: ${{ needs.scope.outputs.typecheck-selected }}
+          UNIT_SELECTED: ${{ needs.scope.outputs.unit-selected }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/ci/execution-policy.mjs --check-quality
+
+      - name: Download the shared test plan for coverage verification
+        if: ${{ !cancelled() && needs.scope.result == 'success' && needs.scope.outputs.execution-tier == 'complete' && (needs.scope.outputs.daemon == 'true' || contains(needs.scope.outputs.test-packages, '"@ling-stack/core"')) }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: ci-test-plan
+          path: .codex-artifacts/ci
+
+      - name: Download all shard reports
+        if: ${{ !cancelled() && needs.scope.result == 'success' && needs.scope.outputs.execution-tier == 'complete' && (needs.scope.outputs.daemon == 'true' || contains(needs.scope.outputs.test-packages, '"@ling-stack/core"')) }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          pattern: ci-test-report-*
+          merge-multiple: true
+          path: .codex-artifacts/ci/reports
+
+      - name: Verify every planned file passed exactly once and collect timings
+        id: test-timings
+        if: ${{ !cancelled() && needs.scope.result == 'success' && needs.scope.outputs.execution-tier == 'complete' && (needs.scope.outputs.daemon == 'true' || contains(needs.scope.outputs.test-packages, '"@ling-stack/core"')) }}
         run: >-
-          corepack pnpm
-          --filter './packages/**'
-          --filter @ling-stack/web
-          test
+          node scripts/ci/test-shard-plan.mjs
+          --plan=.codex-artifacts/ci/test-plan.json --reports=.codex-artifacts/ci/reports
+          --output=.codex-artifacts/ci/timings.json
 
-      - name: Build Web product
-        run: corepack pnpm --filter @ling-stack/web build
+      # Timing evidence can survive an unrelated policy failure; the required
+      # gate above still fails the job. Only test-complete default-branch runs
+      # publish hints. PRs consume but cannot replace the shared baseline.
+      - name: Save trusted default-branch test timings
+        if: ${{ !cancelled() && steps.test-timings.outcome == 'success' && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.mode != 'docs' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .codex-artifacts/ci/timings.json
+          key: ci-node-timings-v1-${{ github.run_id }}-${{ github.run_attempt }}
 
-      - name: Check pull request whitespace
-        if: github.event_name == 'pull_request'
-        run: git diff --check "${{ github.event.pull_request.base.sha }}...HEAD"
+  timing-telemetry:
+    name: CI timing telemetry
+    needs: [scope, quality]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    continue-on-error: true
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Check out timing telemetry without retained credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
 
-      - name: Check pushed commit whitespace
-        if: github.event_name == 'push'
-        run: git diff-tree --check --no-commit-id -r HEAD
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22.22.1
+
+      - name: Download available shard reports including failures
+        if: always() && needs.scope.outputs.execution-tier == 'complete' && (needs.scope.outputs.daemon == 'true' || contains(needs.scope.outputs.test-packages, '"@ling-stack/core"'))
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          pattern: ci-test-report-*
+          merge-multiple: true
+          path: .codex-artifacts/ci/reports
+
+      - name: Collect workflow timing metadata
+        if: always()
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -u
+          set +e
+          mkdir -p .codex-artifacts/ci
+          run_status=0
+          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" > .codex-artifacts/ci/telemetry-run.json || run_status=$?
+          if [ "$run_status" -ne 0 ]; then
+            printf '{"telemetry_unavailable":true,"reason":"workflow run API request failed"}\n' > .codex-artifacts/ci/telemetry-run.json
+          fi
+          jobs_status=0
+          gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}/jobs?per_page=100" > .codex-artifacts/ci/telemetry-jobs-pages.json || jobs_status=$?
+          if [ "$jobs_status" -ne 0 ]; then
+            printf '{"telemetry_unavailable":true,"reason":"workflow jobs API request failed"}\n' > .codex-artifacts/ci/telemetry-jobs-pages.json
+          else
+            node --input-type=module <<'NODE'
+          import { readFile, writeFile } from "node:fs/promises";
+          const pages = JSON.parse(await readFile(".codex-artifacts/ci/telemetry-jobs-pages.json", "utf8"));
+          if (!Array.isArray(pages) || pages.some(page => !Array.isArray(page?.jobs))) throw new Error("Invalid jobs API pages");
+          const jobs = pages.flatMap(page => page.jobs);
+          await writeFile(".codex-artifacts/ci/telemetry-jobs.json", `${JSON.stringify({ jobs }, null, 2)}\n`);
+          NODE
+          fi
+          if [ ! -f .codex-artifacts/ci/telemetry-jobs.json ]; then
+            printf '{"jobs":[],"telemetry_unavailable":true}\n' > .codex-artifacts/ci/telemetry-jobs.json
+          fi
+          exit 0
+
+      - name: Render CI timing telemetry
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          node scripts/ci/ci-telemetry.mjs \
+            --run=.codex-artifacts/ci/telemetry-run.json \
+            --jobs=.codex-artifacts/ci/telemetry-jobs.json \
+            --reports-dir=.codex-artifacts/ci/reports \
+            --output=.codex-artifacts/ci/ci-telemetry.json \
+            --summary=.codex-artifacts/ci/ci-telemetry.md
+          telemetry_status=$?
+          if [ "$telemetry_status" -ne 0 ]; then
+            printf '{"version":1,"telemetryUnavailable":true}\n' > .codex-artifacts/ci/ci-telemetry.json
+            printf '## CI timing telemetry\n\nTelemetry was unavailable; this did not affect the quality gate.\n' > .codex-artifacts/ci/ci-telemetry.md
+            echo "Warning: CI timing telemetry was unavailable" >&2
+          fi
+          cat .codex-artifacts/ci/ci-telemetry.md >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+
+      - name: Preserve CI timing telemetry
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ci-telemetry
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            .codex-artifacts/ci/ci-telemetry.json
+            .codex-artifacts/ci/ci-telemetry.md
+            .codex-artifacts/ci/telemetry-run.json
+            .codex-artifacts/ci/telemetry-jobs.json

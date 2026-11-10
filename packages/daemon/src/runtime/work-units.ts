@@ -3,6 +3,7 @@ import {
   type RunnerFallbackReason,
   type RunExecutionStoreFacet,
   type RunStorePathsFacet,
+  type RunStore,
   type RuntimeSupervisorStoreFacet,
   type TerminalAttemptStatus,
   type TerminalRuntimeEventType,
@@ -14,6 +15,7 @@ import {
 } from "@ling-stack/core";
 import { DEFAULT_RUNNER_ID } from "./runners.js";
 import type { RuntimeSupervisor } from "./supervisor.js";
+import { withCancellationFence } from "./cancellation-fence.js";
 
 export { DEFAULT_RUNNER_ID } from "./runners.js";
 
@@ -157,33 +159,137 @@ export function startRuntimeWorkUnit(input: {
       data: { kind: input.kind, ownerType: input.ownerType, ownerId: input.ownerId },
     });
   }
-  const attempt = input.store.createWorkUnitAttempt({
-    workUnitId: workUnit.id,
-    attemptNumber: workUnit.attemptCount + 1,
+  return claimRuntimeWorkUnit({
+    store: input.store,
+    workUnit,
     runtimeInstanceId: runtime.runtimeInstanceId,
-    runnerId: effectiveRunnerId,
-    requestedRunnerId: input.requestedRunnerId,
     effectiveRunnerId,
+    requestedRunnerId: input.requestedRunnerId,
     fallbackReason: input.fallbackReason,
     providerPresetId: input.providerPresetId,
     now,
+    startedData: {
+      linkedMessageId: input.linkedMessageId,
+      linkedMediaJobId: input.linkedMediaJobId,
+      linkedExternalWorkId: input.linkedExternalWorkId,
+    },
+  });
+}
+
+export function retryRuntimeWorkUnit(input: {
+  readonly store: RuntimeWorkUnitStartStore;
+  readonly runtimeSupervisor: RuntimeSupervisor;
+  readonly workUnit: WorkUnit;
+  readonly reason: string;
+  readonly providerPresetId?: string;
+  readonly requestedRunnerId?: string;
+  readonly effectiveRunnerId?: string;
+  readonly fallbackReason?: RunnerFallbackReason;
+}): { readonly workUnit: WorkUnit; readonly attempt: WorkUnitAttempt } | undefined {
+  if (input.workUnit.status !== "stale" && input.workUnit.status !== "cancelled") {
+    return undefined;
+  }
+  const now = new Date().toISOString();
+  const queued = input.store.transitionWorkUnitStatus({
+    workUnitId: input.workUnit.id,
+    expectedStatus: input.workUnit.status,
+    event: "retry",
+    actor: "system",
+    reason: input.reason,
+    idempotencyKey: `runtime-work-unit-retry:${input.workUnit.id}:${input.workUnit.attemptCount + 1}`,
+    now,
+    activeAttemptId: null,
+    endedAt: null,
+    errorCode: null,
+    errorMessage: null,
+  });
+  if (!queued.ok) {
+    return undefined;
+  }
+  input.store.appendRuntimeEvent({
+    workUnitId: input.workUnit.id,
+    type: "work_unit_queued",
+    actor: "system",
+    ts: now,
+    data: { reason: input.reason },
+  });
+  const workUnit = input.store.getWorkUnit(input.workUnit.id);
+  if (!workUnit || workUnit.status !== "queued") {
+    return undefined;
+  }
+  return startQueuedRuntimeWorkUnit({
+    ...input,
+    workUnit,
+    startedData: { reason: input.reason, recovered: true },
+  });
+}
+
+export function startQueuedRuntimeWorkUnit(input: {
+  readonly store: RuntimeWorkUnitStartStore;
+  readonly runtimeSupervisor: RuntimeSupervisor;
+  readonly workUnit: WorkUnit;
+  readonly providerPresetId?: string;
+  readonly requestedRunnerId?: string;
+  readonly effectiveRunnerId?: string;
+  readonly fallbackReason?: RunnerFallbackReason;
+  readonly startedData?: Readonly<Record<string, unknown>>;
+}): { readonly workUnit: WorkUnit; readonly attempt: WorkUnitAttempt } | undefined {
+  if (input.workUnit.status !== "queued") {
+    return undefined;
+  }
+  const now = new Date().toISOString();
+  const runtime = input.runtimeSupervisor.getRuntime(input.store.paths.cwd, input.store);
+  return claimRuntimeWorkUnit({
+    store: input.store,
+    workUnit: input.workUnit,
+    runtimeInstanceId: runtime.runtimeInstanceId,
+    effectiveRunnerId: input.effectiveRunnerId ?? DEFAULT_RUNNER_ID,
+    requestedRunnerId: input.requestedRunnerId,
+    fallbackReason: input.fallbackReason,
+    providerPresetId: input.providerPresetId,
+    now,
+    startedData: input.startedData ?? { recovered: true },
+  });
+}
+
+function claimRuntimeWorkUnit(input: {
+  readonly store: RuntimeWorkUnitStartStore;
+  readonly workUnit: WorkUnit;
+  readonly runtimeInstanceId: string;
+  readonly effectiveRunnerId: string;
+  readonly requestedRunnerId?: string;
+  readonly fallbackReason?: RunnerFallbackReason;
+  readonly providerPresetId?: string;
+  readonly now: string;
+  readonly startedData: Readonly<Record<string, unknown>>;
+}): { readonly workUnit: WorkUnit; readonly attempt: WorkUnitAttempt } {
+  const attempt = input.store.createWorkUnitAttempt({
+    workUnitId: input.workUnit.id,
+    attemptNumber: input.workUnit.attemptCount + 1,
+    runtimeInstanceId: input.runtimeInstanceId,
+    runnerId: input.effectiveRunnerId,
+    requestedRunnerId: input.requestedRunnerId,
+    effectiveRunnerId: input.effectiveRunnerId,
+    fallbackReason: input.fallbackReason,
+    providerPresetId: input.providerPresetId,
+    now: input.now,
   });
   input.store.transitionWorkUnitStatus({
-    workUnitId: workUnit.id,
+    workUnitId: input.workUnit.id,
     expectedStatus: "queued",
     event: "claim",
     actor: "system",
-    now,
+    now: input.now,
     activeAttemptId: attempt.id,
   });
   input.store.transitionWorkUnitStatus({
-    workUnitId: workUnit.id,
+    workUnitId: input.workUnit.id,
     expectedStatus: "claimed",
     event: "runner_started",
     actor: "runner",
-    now,
-    startedAt: now,
-    lastHeartbeatAt: now,
+    now: input.now,
+    startedAt: input.now,
+    lastHeartbeatAt: input.now,
   });
   input.store.updateWorkUnitAttemptStatus({
     attemptId: attempt.id,
@@ -191,32 +297,39 @@ export function startRuntimeWorkUnit(input: {
     runtimeInstanceId: attempt.runtimeInstanceId,
     fencingToken: attempt.fencingToken,
     status: "started",
-    now,
-    startedAt: now,
-    lastHeartbeatAt: now,
+    now: input.now,
+    startedAt: input.now,
+    lastHeartbeatAt: input.now,
   });
   input.store.appendRuntimeEvent({
-    workUnitId: workUnit.id,
+    workUnitId: input.workUnit.id,
     attemptId: attempt.id,
     runtimeInstanceId: attempt.runtimeInstanceId,
     fencingToken: attempt.fencingToken,
     type: "work_unit_started",
     actor: "runner",
-    ts: now,
-    data: {
-      linkedMessageId: input.linkedMessageId,
-      linkedMediaJobId: input.linkedMediaJobId,
-      linkedExternalWorkId: input.linkedExternalWorkId,
-    },
+    ts: input.now,
+    data: input.startedData,
   });
   return {
-    workUnit: input.store.getWorkUnit(workUnit.id) ?? workUnit,
+    workUnit: input.store.getWorkUnit(input.workUnit.id) ?? input.workUnit,
     attempt: input.store.getWorkUnitAttempt(attempt.id) ?? attempt,
   };
 }
 
-export function cancelStandaloneWorkUnit(store: RuntimeWorkUnitStore, workUnit: WorkUnit, reason: string): WorkUnit {
-  const attemptId = workUnit.activeAttemptId ?? store.listWorkUnitAttempts(workUnit.id).at(-1)?.id;
+export function cancelStandaloneWorkUnit(store: RuntimeWorkUnitStore & Pick<RunStore, "withCancellationFence">,
+  workUnit: WorkUnit, reason: string,
+  expected?: { readonly expectedAttemptId?: string | null; readonly expectedRunId?: string | null }): WorkUnit {
+  return withCancellationFence<WorkUnit>(store, { workUnitId: workUnit.id,
+    expectedAttemptId: expected?.expectedAttemptId === undefined ? workUnit.activeAttemptId ?? null : expected.expectedAttemptId,
+    expectedRunId: expected?.expectedRunId === undefined ? workUnit.linkedRunId ?? null : expected.expectedRunId }, ({ workUnit: current }) => {
+    if (!current) throw new Error("Cancellation WorkUnit no longer exists");
+    return cancelCurrentStandaloneWorkUnit(store, current, reason);
+  });
+}
+
+function cancelCurrentStandaloneWorkUnit(store: RuntimeWorkUnitStore, workUnit: WorkUnit, reason: string): WorkUnit {
+  const attemptId = workUnit.activeAttemptId;
   if (attemptId) {
     transitionWorkUnitCancelled(store, workUnit.id, attemptId, reason);
   } else if (!isTerminalWorkUnitStatus(workUnit.status) && workUnit.status !== "stale") {
@@ -241,7 +354,14 @@ export function cancelStandaloneWorkUnit(store: RuntimeWorkUnitStore, workUnit: 
       });
     }
   }
-  releaseWorkUnitRuntimeResources(store, workUnit, new Date().toISOString(), "cancelled");
+  if (attemptId) {
+    const attempt = store.getWorkUnitAttempt(attemptId);
+    if (attempt) {
+      const now = new Date().toISOString();
+      store.releaseRuntimeSemaphoreSlotsForAttempt(toRuntimeAttemptFence(attempt), now, "cancelled");
+      store.releaseResourceLeasesForAttempt(toRuntimeAttemptFence(attempt), now, "cancelled");
+    }
+  }
   return store.getWorkUnit(workUnit.id) ?? workUnit;
 }
 
@@ -286,17 +406,21 @@ export function transitionWorkUnitTerminal(
   });
 }
 
-export function transitionWorkUnitCancelled(store: RuntimeWorkUnitStore, workUnitId: string, attemptId: string, reason: string): void {
+export function transitionWorkUnitCancelled(store: RuntimeWorkUnitStore, workUnitId: string, attemptId: string, reason: string,
+  now = new Date().toISOString()): void {
   const current = store.getWorkUnit(workUnitId);
-  if (!current || isTerminalWorkUnitStatus(current.status) || current.status === "stale") {
+  const attempt = store.getWorkUnitAttempt(attemptId);
+  if (!current || !attempt || attempt.workUnitId !== workUnitId || current.activeAttemptId !== attempt.id
+    || !["created", "started", "waiting_for_approval", "cancelling"].includes(attempt.status)
+    || isTerminalWorkUnitStatus(current.status) || current.status === "stale") {
     return;
   }
-  const now = new Date().toISOString();
   const cancelling =
     current.status === "cancelling"
       ? { ok: true as const, from: current.status, to: current.status }
       : store.transitionWorkUnitStatus({
-          workUnitId,
+          // Fence the first logical mutation, not only the terminal transition below.
+          ...toRuntimeAttemptFence(attempt),
           expectedStatus: current.status,
           event: "cancel",
           actor: "local-user",

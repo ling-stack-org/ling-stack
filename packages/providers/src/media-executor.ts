@@ -24,6 +24,7 @@ export async function executeMediaJob(adapter: MediaAdapter, request: MediaExecu
     return {
       status: "failed",
       artifacts: result.artifacts,
+      ...(result.terminalObservation ? { terminalObservation: result.terminalObservation } : {}),
       errorCode: result.errorCode ?? "provider_internal_error",
       errorMessage: result.errorMessage ?? "Media adapter execution failed.",
     };

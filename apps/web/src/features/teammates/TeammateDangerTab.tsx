@@ -56,7 +56,7 @@ export function TeammateDangerTab({
             </Button>
           </article>
 
-          <article className="teammate-danger-action" data-destructive="true">
+          <article className="teammate-danger-action">
             <span className="teammate-danger-action-copy">
               <strong>{t("Hard delete private data")}</strong>
               <small>{t("Deletes private chat, private attachments, avatar, teammate memory, and private bindings. Channel and run history keep a deleted teammate reference.")}</small>
@@ -71,7 +71,7 @@ export function TeammateDangerTab({
               className="teammate-danger-action-button"
               leadingIcon={<Trash2 aria-hidden="true" />}
               size="sm"
-              variant="danger"
+              variant="secondary"
               onClick={controller.requestHardDelete}
             >
               {t("Hard delete")}

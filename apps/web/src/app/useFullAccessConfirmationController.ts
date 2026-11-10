@@ -21,6 +21,7 @@ export interface FullAccessConfirmationController {
   readonly open: boolean;
   readonly returnFocusTarget: HTMLElement | null;
   readonly request: (scope: FullAccessConfirmationScope) => Promise<PermissionConfirmation | undefined>;
+  readonly confirmExplicitSelection: (scope: FullAccessConfirmationScope) => PermissionConfirmation;
   readonly bind: (source: FullAccessConfirmationScope, target: FullAccessConfirmationScope) => void;
   readonly isConfirmed: (scope: FullAccessConfirmationScope) => boolean;
   readonly cancel: () => void;
@@ -61,11 +62,27 @@ export function useFullAccessConfirmationController(): FullAccessConfirmationCon
     if (confirmed) return Promise.resolve(confirmed);
     if (pendingRef.current) return Promise.resolve(undefined);
     const activeElement = document.activeElement;
-    returnFocusTargetRef.current = activeElement instanceof HTMLElement ? activeElement : null;
+    // A compact menu item unmounts as the confirmation opens. Restore focus to
+    // its persistent trigger instead of remembering the disappearing item.
+    const menuTriggerId = activeElement?.closest('[role="menu"]')?.getAttribute("aria-labelledby");
+    const menuTrigger = menuTriggerId ? document.getElementById(menuTriggerId) : null;
+    returnFocusTargetRef.current = menuTrigger instanceof HTMLElement ? menuTrigger
+      : activeElement instanceof HTMLElement ? activeElement : null;
     return new Promise<PermissionConfirmation | undefined>((resolve) => {
       pendingRef.current = { resolve, scopeKey };
       setOpen(true);
     });
+  }, []);
+
+  const confirmExplicitSelection = useCallback((scope: FullAccessConfirmationScope): PermissionConfirmation => {
+    const scopeKey = fullAccessConfirmationScopeStorageId(scope);
+    const existing = confirmedByScopeRef.current!.get(scopeKey);
+    if (existing) return existing;
+    const confirmation = createFullAccessConfirmation();
+    rememberFullAccessConfirmation(confirmedByScopeRef.current!, scopeKey, confirmation);
+    persistFullAccessConfirmations(storageRef.current, confirmedByScopeRef.current!);
+    setConfirmationRevision((current) => current + 1);
+    return confirmation;
   }, []);
 
   const bind = useCallback((source: FullAccessConfirmationScope, target: FullAccessConfirmationScope): void => {
@@ -91,6 +108,7 @@ export function useFullAccessConfirmationController(): FullAccessConfirmationCon
     open,
     returnFocusTarget: returnFocusTargetRef.current,
     request,
+    confirmExplicitSelection,
     bind,
     isConfirmed,
     cancel: () => settle(false),

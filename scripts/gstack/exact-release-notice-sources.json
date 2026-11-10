@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "reviewScope": "Exact release identity leads only; license texts require separate review.",
+  "entries": [
+    {
+      "name": "browser-split",
+      "version": "0.0.1",
+      "license": "MIT",
+      "repository": "juliangruber/browser-split",
+      "tag": "0.0.1",
+      "revision": "c54802648e908f6b1e3e0ed5b8b9448aa7b0f0fb",
+      "packagePath": "package.json"
+    },
+    {
+      "name": "@excalidraw/excalidraw",
+      "version": "0.18.1",
+      "license": "MIT",
+      "repository": "excalidraw/excalidraw",
+      "tag": "v0.18.1",
+      "revision": "a2ec2889babf7d2295469c6d90ebe77fae57df84",
+      "packagePath": "packages/excalidraw/package.json"
+    },
+    {
+      "name": "onnxruntime-common",
+      "version": "1.24.3",
+      "license": "MIT",
+      "repository": "Microsoft/onnxruntime",
+      "tag": "v1.24.3",
+      "revision": "3a728b75062256951b6e19ce718907cf1a1d4cf0",
+      "packagePath": "js/common/package.json"
+    },
+    {
+      "name": "onnxruntime-node",
+      "version": "1.24.3",
+      "license": "MIT",
+      "repository": "Microsoft/onnxruntime",
+      "tag": "v1.24.3",
+      "revision": "3a728b75062256951b6e19ce718907cf1a1d4cf0",
+      "packagePath": "js/node/package.json"
+    }
+  ]
+}

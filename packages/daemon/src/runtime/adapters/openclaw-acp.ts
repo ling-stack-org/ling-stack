@@ -1,4 +1,5 @@
 import type { RunnerAdapter } from "../../context.js";
+import type { RunnerToolExecutionConformanceV1 } from "../runner-tool-conformance.js";
 import { AcpClient, type AcpClientOptions } from "../acp/client.js";
 import { negotiateAcpCapabilities } from "../acp/capabilities.js";
 import {
@@ -8,7 +9,10 @@ import {
   type ExternalAgentRunResult,
 } from "../external-agent/adapter-runner.js";
 
-export interface OpenClawAcpAdapterOptions extends AcpClientOptions {}
+export interface OpenClawAcpAdapterOptions extends AcpClientOptions {
+  readonly adapterRevision?: string;
+  readonly toolExecutionConformance?: RunnerToolExecutionConformanceV1;
+}
 
 export interface OpenClawAcpReadinessResult {
   readonly ok: boolean;
@@ -23,6 +27,8 @@ export function createOpenClawAcpAdapter(options: OpenClawAcpAdapterOptions): Ru
       return runExternalAgentTask({
         runnerId: "openclaw-acp",
         backend: "openclaw-acp",
+        adapterRevision: options.adapterRevision ?? "ling-acp/0.1:adapter-unverified",
+        toolExecutionConformance: options.toolExecutionConformance,
         options: runOptions,
         extraSecrets: [runOptions.provider.apiKey],
         run: (input, signal) => runOpenClawAcpTask(options, input, signal),

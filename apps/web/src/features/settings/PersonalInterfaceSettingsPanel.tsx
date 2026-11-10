@@ -1,13 +1,13 @@
 import { Languages } from "lucide-react";
-import { useState } from "react";
 import { useI18n, type Locale } from "../../i18n.js";
+import { SupportedLocaleOptions } from "../../i18n/SupportedLocaleOptions.js";
 import type { ResponseLanguagePreference, UserProfile } from "../../types.js";
 import { ProfilePage } from "../profile/ProfilePage.js";
 
 import { Field, Select } from "../../shared/ui/index.js";
 import { DesktopComputerUsePreference } from "./DesktopComputerUsePreference.js";
 import { InterfaceThemeSettings } from "./InterfaceThemeSettings.js";
-import { ThemeStudioSurface } from "./theme-studio/ThemeStudioSurface.js";
+import { InterfaceBackgroundSettings } from "./InterfaceBackgroundSettings.js";
 
 export function PersonalSettingsPanel({
   cwd,
@@ -21,24 +21,22 @@ export function PersonalSettingsPanel({
 
 export function InterfacePreferencesSettingsPanel({
   workspaceResponseLanguage,
+  onProductLanguageChange,
   onWorkspaceResponseLanguageChange,
 }: {
   readonly workspaceResponseLanguage: ResponseLanguagePreference;
+  readonly onProductLanguageChange: (locale: Locale) => Promise<boolean>;
   readonly onWorkspaceResponseLanguageChange: (language: ResponseLanguagePreference) => void;
 }): React.JSX.Element {
-  const { locale, setLocale, t } = useI18n();
-  const [surface, setSurface] = useState<"overview" | "quick-studio">("overview");
-
-  if (surface === "quick-studio") {
-    return <ThemeStudioSurface onBack={() => setSurface("overview")} />;
-  }
+  const { locale, localeLoadError, pendingLocale, t } = useI18n();
 
   return (
     <div
       className="interface-settings-panel"
       data-ui2-interface-preferences
     >
-      <InterfaceThemeSettings onCreateTheme={() => setSurface("quick-studio")} />
+      <InterfaceThemeSettings />
+      <InterfaceBackgroundSettings />
       <DesktopComputerUsePreference />
       <section
         className="settings-interface-section settings-interface-language"
@@ -49,25 +47,30 @@ export function InterfacePreferencesSettingsPanel({
           <h2 id="settings-interface-language-title">{t("Language")}</h2>
         </header>
         <div className="settings-interface-language-grid">
-          <Field label={t("Product language")}>
+          <Field
+            label={t("Product language")}
+            error={localeLoadError ? <span role="alert">{t("settings.language.load_failed")}</span> : undefined}
+          >
             <Select
               aria-label={t("Product language")}
-              value={locale}
-              onChange={(event) => setLocale(event.target.value as Locale)}
+              data-product-language
+              value={pendingLocale ?? locale}
+              disabled={pendingLocale !== undefined}
+              aria-busy={pendingLocale !== undefined}
+              onChange={(event) => void onProductLanguageChange(event.target.value as Locale)}
             >
-              <option value="zh-CN">{t("Chinese")}</option>
-              <option value="en-US">{t("English")}</option>
+              <SupportedLocaleOptions />
             </Select>
           </Field>
           <Field label={t("AI response language")}>
             <Select
               value={workspaceResponseLanguage}
+              data-response-language
               onChange={(event) => onWorkspaceResponseLanguageChange(event.target.value as ResponseLanguagePreference)}
               aria-label={t("AI response language")}
             >
               <option value="follow_user">{t("Follow user message")}</option>
-              <option value="zh-CN">{t("Chinese")}</option>
-              <option value="en-US">{t("English")}</option>
+              <SupportedLocaleOptions />
             </Select>
           </Field>
         </div>

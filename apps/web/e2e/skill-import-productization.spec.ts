@@ -5,7 +5,7 @@ import { createBaseState } from "./support/mock-state";
 async function openSkillLibrary(page: Page): Promise<void> {
   await page.addInitScript(() => localStorage.setItem("ling-stack.locale", "en-US"));
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Skill library/ }).click();
   await expect(page.locator(".settings-skill-library")).toBeVisible();
 }

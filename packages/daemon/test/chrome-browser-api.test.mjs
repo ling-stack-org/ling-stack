@@ -142,6 +142,8 @@ test("built-in Chrome plugin pairs an allowlisted extension and exposes six MCP 
     const runText = await runTextPromise;
     assert.equal(runResponse.ok, true, runText);
     assert.equal(socketCommandCount, 1);
+    assert.equal(runner.primaryRunCount, 1);
+    assert.equal(runner.approvalReviewRunCount, 1);
     assert.equal(runner.chromeToolCount, 6);
     assert.match(runner.chromeResult, /untrusted_web_content/);
     assert.match(runner.chromeResult, /Browser/);
@@ -163,8 +165,27 @@ test("built-in Chrome plugin pairs an allowlisted extension and exposes six MCP 
 class ChromeToolRunner {
   chromeToolCount = 0;
   chromeResult = "";
+  primaryRunCount = 0;
+  approvalReviewRunCount = 0;
 
   async runTask(options) {
+    if (options.task.id.startsWith("approval-review:")) {
+      this.approvalReviewRunCount += 1;
+      assert.deepEqual(options.tools, []);
+      assert.deepEqual(options.mcpTools, []);
+      assert.deepEqual(options.hostCapabilityTools, []);
+      assert.deepEqual(options.mediaGenerationTools, []);
+      return {
+        taskId: options.task.id,
+        events: [],
+        // Keep the smart reviewer on its fail-closed manual path. This test owns
+        // the user approval and only needs to prove that reviewer execution
+        // cannot overwrite the primary run's Chrome tool observations.
+        messages: [{ role: "assistant", content: "done" }],
+      };
+    }
+
+    this.primaryRunCount += 1;
     const definition = options.mcpTools.find((tool) => tool.rawName === "chrome_tabs");
     this.chromeToolCount = options.mcpTools.filter((tool) => tool.serverId === CHROME_BROWSER_MCP_SERVER_ID).length;
     assert.ok(definition);

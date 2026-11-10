@@ -2,6 +2,7 @@ import type { SQLOutputValue } from "node:sqlite";
 import {
   isWorkflowParticipantProviderBlockerV1,
 } from "@ling-stack/contracts";
+import { isSupportedLocale } from "@ling-stack/localization";
 import {
   type ChannelExecutionProposal,
   type ChannelExecutionProposalStepSource,
@@ -9,13 +10,14 @@ import {
   type ChannelProtocolSourceRef,
   type ChannelProtocolSourceRefType,
   type ChannelRequirementShaping,
-  type ResponseLanguage,
+  type ResponseLanguagePreference,
 } from "../../workspace-types.js";
 import {
   isJsonRecord,
   omitUndefined,
   parseJson,
   parseJsonStringArray,
+  readNullableNumber,
   readNullableString,
   readString,
 } from "./helpers.js";
@@ -23,6 +25,7 @@ import {
 export function mapChannelExecutionProposal(row: Record<string, SQLOutputValue>): ChannelExecutionProposal {
   return omitUndefined({
     id: readString(row, "id"),
+    revision: readNullableNumber(row, "revision") ?? 1,
     workspaceId: readString(row, "workspace_id"),
     channelId: readString(row, "channel_id"),
     sourceMessageId: readString(row, "source_message_id"),
@@ -116,8 +119,8 @@ function parseChannelExecutionProposalStepSources(value: unknown): readonly Chan
   return sources.length > 0 ? sources : undefined;
 }
 
-function parseOptionalResponseLanguage(value: unknown): ResponseLanguage | undefined {
-  return value === "zh-CN" || value === "en-US" ? value : undefined;
+function parseOptionalResponseLanguage(value: unknown): ResponseLanguagePreference | undefined {
+  return value === "follow_user" || isSupportedLocale(value) ? value : undefined;
 }
 
 function parseOptionalChannelRequirementShaping(value: string | undefined): ChannelRequirementShaping | undefined {

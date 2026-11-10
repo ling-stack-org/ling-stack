@@ -2,15 +2,20 @@
 
 ## Purpose
 
-This document records the first shared contracts and API client extraction plan.
+This document records the implemented shared contracts/API client extraction and the
+remaining transcript proposal. Source status was checked on 2026-11-02; it is not a
+cross-platform acceptance report.
 
-The Web UI currently owns daemon DTOs in `apps/web/src/types.ts` and daemon fetch logic in
-`apps/web/src/api.ts`. That works for one client, but Web, CLI, Desktop, and future
-constrained mobile surfaces should not each copy semantic wire shapes.
+Shared daemon DTOs now live in `packages/contracts`, and the reusable local client lives
+in `packages/api-client`. `apps/web/src/types.ts` and `apps/web/src/api.ts` are
+compatibility surfaces over shared contracts and domain API modules. Web-only form
+state and stream decoding remain Web-owned.
 
-The first slice is a non-breaking extraction. It should not redesign the daemon API.
+The original slice was a non-breaking extraction, not a daemon API redesign. Desktop
+reuses Web; CLI still has its own request layer. Mobile uses the separate constrained
+Remote Gateway client.
 
-## Goals
+## Original Slice Goals
 
 - Add shared daemon DTOs and status enums.
 - Add one reusable daemon API client.
@@ -21,29 +26,33 @@ The first slice is a non-breaking extraction. It should not redesign the daemon 
   Remote Gateway client.
 - Avoid forcing daemon internals to depend on contracts until the wire shape is stable.
 
-## Target Packages
+## Current Packages
+
+Selected current files (not a complete package inventory):
 
 ```text
 packages/contracts/
   src/
     approvals.ts
     artifacts.ts
+    channel-conversations.ts
     channels.ts
-    conversation-transcript.ts
-    daemon.ts
+    conversation-continuity.ts
+    conversations.ts
     index.ts
     media.ts
     providers.ts
-    runs.ts
-    state-transitions.ts
+    runtime.ts
+    shared.ts
     tasks.ts
 
 packages/api-client/
   src/
     client.ts
+    endpoints/
     errors.ts
     index.ts
-    request-builders.ts
+    transport.ts
 ```
 
 ## Contract Ownership
@@ -58,7 +67,7 @@ Contracts should include daemon wire types:
 - approval and approval policy DTOs,
 - media job DTOs,
 - state transition and resource lease DTOs,
-- conversation transcript DTOs for shared Web/Desktop/CLI rendering,
+- conversation message, continuity, and Channel item/turn DTOs,
 - request payload types for daemon CRUD/mutation calls.
 
 Contracts should not include Web-only UI state:
@@ -75,9 +84,14 @@ Contracts should not include Web-only UI state:
 
 ## Conversation Transcript Contract
 
-The conversation transcript is not Web-only UI state. It is a shared semantic read model
-that lets Web, Desktop, and CLI/TUI clients render the same Ling Agent
-conversation without reimplementing intent routing or workflow/run grouping.
+Shared conversation wire types already exist in `conversations.ts`,
+`conversation-continuity.ts`, and `channel-conversations.ts`. The block-oriented view
+types still live in `apps/web/src/shared/conversation/transcript/types.ts`, with turn
+projection in `apps/web/src/lib/conversation-turn-projector.ts`.
+
+The shared transcript below remains a proposal, not an exported contract. Its goal is
+to let Web, Desktop, and CLI/TUI render the same semantic conversation without
+reimplementing intent routing or workflow/run grouping.
 
 Target file:
 
@@ -229,8 +243,9 @@ The exact TypeScript names can change during implementation, but these invariant
 
 ### Transcript Delta Events
 
-The trusted local API client should eventually expose a stream helper for the transcript
-lifecycle:
+The sequence-aware block-delta stream below is also a proposal. Existing
+`streamConversation()` and `streamChannelTurn()` methods return `Response`; they do not
+provide this `AsyncIterable<ConversationTranscriptEvent>` protocol:
 
 ```ts
 export type ConversationTranscriptEvent =
@@ -249,7 +264,12 @@ chunks that exceed inline limits belong behind raw/detail refs.
 
 ## API Client Shape
 
-Expose one class:
+`LingDaemonClient` is implemented by composing domain endpoint modules over
+`LingDaemonTransport`. The original API sketch below is not the current exported
+signature inventory: in particular, `getChannelTranscript()` and
+`streamChannelTranscript()` remain proposed methods. Current conversation APIs include
+`getConversation()`, `listChannelConversationItems()`, `createChannelTurn()`, and the
+response-returning stream methods described above.
 
 ```ts
 export interface LingDaemonClientOptions {
@@ -314,7 +334,8 @@ export class LingDaemonClient {
 }
 ```
 
-The client should preserve the current Web behavior:
+The implemented client preserves local request behavior; the transcript helper remains
+a target:
 
 - `cwd` remains a query parameter for trusted local clients only. The Mobile Remote Gateway
   maps an opaque approved workspace id to a fixed PC-side path and never accepts remote
@@ -322,15 +343,19 @@ The client should preserve the current Web behavior:
 - error bodies prefer `message`, then `error`, then HTTP status text.
 - `.ling-stack` path errors keep the friendly workspace-path guidance.
 - artifact URLs preserve the optional `cwd`.
-- POST `/runs` streaming remains separate because it uses SSE over `fetch()` response
-  bodies.
+- Run streaming remains Web-owned in `apps/web/src/sse.ts`; it attempts WebSocket RPC
+  when enabled and otherwise uses fetch/SSE. Shared conversation stream methods build
+  requests and return responses; Web still owns SSE decoding.
 - Transcript streaming should be exposed as a shared local client helper once the daemon
   provides the endpoint. Web and Desktop must not each parse raw SSE differently.
 - Mobile uses `@ling-stack/remote-client` and `@ling-stack/remote-protocol` over the
   allowlisted Remote Gateway; it must not instantiate the broad `LingDaemonClient` against
   a remotely reachable URL.
 
-## Migration Order
+## Original Migration Order
+
+The package extraction and Web migration below are implemented. Selected daemon response
+builders now return shared contract types; this does not mean every route has migrated.
 
 1. Add `packages/contracts` with types copied from Web and aligned to core public types.
 2. Add `packages/api-client` with tests using mocked `fetch`.
@@ -352,12 +377,52 @@ The client should preserve the current Web behavior:
   read route and expose `getMcpServerStatus()` instead.
 - `apps/web/src/types.ts` is a compatibility layer: daemon wire types are re-exported
   from `@ling-stack/contracts`, while Web-only form state remains local.
-- `apps/web/src/api.ts` is now a thin wrapper around `LingDaemonClient`; run request
-  builders and SSE streaming remain Web-local for this slice.
-- Daemon route handlers intentionally do not import contracts yet.
-- Conversation transcript contracts are the next extraction target. The current Web
-  projection can remain a prototype, but the stable `ConversationTranscript` wire shape
-  belongs in `packages/contracts`.
+- `apps/web/src/api.ts` is a compatibility barrel over domain API modules under
+  `src/api/`. Those modules use the shared client while retaining Web form adapters and
+  run request builders. `src/sse.ts` owns Web stream decoding and run transport fallback.
+- Selected daemon conversation and Channel response builders explicitly return shared
+  contract types, including `buildConversationDetail()` and
+  `listChannelConversationItems()`.
+- Shared conversation message/item/continuity contracts are implemented. The block-level
+  `ConversationTranscript` wire model and sequence-aware delta protocol above remain
+  proposals; Web still owns its transcript view types and turn projector.
+- CLI migration to `LingDaemonClient` remains open. Mobile deliberately uses
+  `@ling-stack/remote-client`, not the broad local client.
+- Source/test anchors: `packages/api-client/src/client.ts`,
+  `packages/api-client/src/endpoints/conversations.ts`,
+  `packages/api-client/src/endpoints/channels.ts`,
+  `packages/api-client/test/client.test.mjs`,
+  `packages/daemon/src/features/channels/channel-conversation-api.ts`, and
+  `apps/web/e2e/api-adapters.spec.ts`.
+
+## Compatibility Boundary
+
+Compatibility code is removed only when the canonical contract has replaced every
+production caller and a migration has handled persisted records. The current media jobs
+surface meets that bar: `MediaJobsPage` consumes `MediaJobsDomainState` and
+`MediaJobsDomainActions` directly, and `MediaJobFormState` emits only structured `input`
+fields. The former page-prop bridge and the unmounted JSON `inputText` form path are no
+longer part of the Web API boundary.
+
+The following paths remain intentional compatibility boundaries and require a separate
+cutover before removal:
+
+- SQLite continuity imports and migrations, which read old tables once and validate the
+  canonical v2 topology before dropping those tables.
+- `permissionMode`/`permissionPreset` projections alongside
+  `authorizationMode`/`workspaceAccessMode`, because existing workspace settings,
+  snapshots, and clients still carry both shapes.
+- External media protocols such as legacy ComfyUI evidence remain readable because old
+  configuration and completed jobs are historical facts. Persisted runner bindings have
+  a separate versioned cutover (SQLite migration 177): mutable operational rows are
+  canonicalized to `pi`, while immutable Run snapshots retain their original bytes and
+  normalize only at the read projection.
+- The Web DTO re-export layer in `apps/web/src/types.ts` and legacy browser theme storage,
+  until all clients and stored records have completed their versioned migration.
+
+Each future removal must include a versioned data migration or client cutover, a fixture
+for the old shape, a canonical-path test, and an explicit check that no production caller
+still reaches the compatibility branch.
 
 ## Non-Goals
 
@@ -381,7 +446,7 @@ corepack pnpm typecheck
 git diff --check
 ```
 
-API client tests should cover:
+Current API client tests cover:
 
 - URL/query construction for `cwd`, `limit`, `runId`, `mediaJobId`, transition filters,
   and lease filters.
@@ -391,12 +456,16 @@ API client tests should cover:
 - `approve` and `deny` request bodies.
 - `artifactContentUrl`.
 - friendly error mapping.
-- future transcript snapshot and transcript stream helpers, including reconnect behavior
-  and ordered sequence handling.
+
+Future transcript snapshot/stream helpers will need separate reconnect and ordered
+sequence coverage. Existing conversation/Channel request tests do not establish that
+the proposed block-delta protocol is implemented.
 
 ## Assumptions
 
 - Contracts are compile-time TypeScript contracts first.
-- Runtime validation can be added later if daemon/client drift becomes a real problem.
-- Web is the first consumer; Desktop and CLI should migrate to the shared transcript
-  contract once the package is stable.
+- Selected contracts already export runtime guards, including conversation continuity
+  validation. Generic API client JSON responses are still asserted as TypeScript types,
+  not comprehensively validated at runtime.
+- Web is the first local client consumer, and Desktop reuses its build. A shared
+  block-level transcript contract and CLI client migration remain separate work.

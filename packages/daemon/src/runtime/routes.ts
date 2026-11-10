@@ -1,22 +1,23 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type {
   RunnerFallbackPolicy,
-  ResourceLease,
   RunEventEnvelope,
   RunSession,
   RunStore,
   RuntimeExtensionView,
-  RuntimeEvent,
-  RuntimeSemaphoreSlot,
   WorkUnit,
-  WorkUnitAttempt,
   WorkUnitKind,
   WorkUnitStatus,
 } from "@ling-stack/core";
 import { DEFAULT_WORKSPACE_ID } from "@ling-stack/core";
+import { parseExecutionBindingRequest, type ExecutionCancellationRequest, type RunCancelResponse, type WorkUnitDetailResponse } from "@ling-stack/contracts";
+import { readWorkUnitStopEvidence } from "./work-unit-stop-evidence.js";
+import { parseExecutionCancellationRequest } from "../shared/cancellation-request.js";
 import type { LingExtensionMetadata, LingExtensionRegistry } from "@ling-stack/plugin-sdk";
 import type { ResolvedDaemonConfig } from "../config.js";
 import { HttpError } from "../errors.js";
+import { assertNoUnsafeRequiredPause } from "../features/runs/user-input-cancellation-guard.js";
+import { projectPublicRunSession, projectPublicWorkUnit } from "../features/runs/public-execution-snapshots.js";
 import { appendControlPlaneEvent } from "../features/control-plane/events.js";
 import type { ControlPlaneEventHub } from "../features/control-plane/events.js";
 import type { WorkUnitRoute } from "../server/routes.js";
@@ -28,6 +29,7 @@ import {
   listRunnerItems,
   loadWorkspaceRuntimeSettings,
   patchWorkspaceRuntimeSettings,
+  RuntimeSettingsConflictError,
   type WorkspaceRuntimeSettingsPatch,
 } from "./runner-settings.js";
 import {
@@ -37,6 +39,7 @@ import {
 import type { RunnerRegistry } from "./runners.js";
 import type { RunStoreRegistry } from "./store-registry.js";
 import type { RuntimeSupervisor } from "./supervisor.js";
+import { handleWorkUnitHarnessDiagnostics } from "./harness-diagnostics.js";
 import {
   cancelStandaloneWorkUnit,
   isActiveWorkUnitStatus,
@@ -53,8 +56,20 @@ export type RuntimeRunCanceller = (input: {
   readonly startedAt?: string;
   readonly reason: string;
   readonly active: boolean;
+  readonly expectedAttemptId?: string | null;
+  readonly expectedRunId?: string | null;
   readonly streamEnvelope?: (envelope: RunEventEnvelope) => void;
-}) => { readonly event?: RunEventEnvelope };
+}) => { readonly event?: RunEventEnvelope; readonly inputWait?: RunCancelResponse["inputWait"] };
+
+export type RuntimeTaskRunRetrier = (input: {
+  readonly cwd: string;
+  readonly store: RunStore;
+  readonly run: RunSession;
+  readonly workUnit: WorkUnit;
+}) => Promise<
+  | { readonly ok: true; readonly runId: string }
+  | { readonly ok: false; readonly statusCode: number; readonly error: string; readonly message: string }
+>;
 
 export function handleListStateTransitions(response: ServerResponse, url: URL, storeRegistry: RunStoreRegistry): void {
   const cwd = url.searchParams.get("cwd");
@@ -135,6 +150,7 @@ export function handleGetRuntime(
     writeJson(response, 200, {
       cwd: resolved.cwd,
       runtime: runtimeSupervisor.getRuntime(resolved.cwd, resolved.store),
+      concurrency: runtimeSupervisor.getConcurrencyPolicy(),
     });
   } catch (error) {
     writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
@@ -155,9 +171,14 @@ export function handleGetRuntimeSupervisor(
     return;
   }
   try {
+    const diagnostics = runtimeSupervisor.getDiagnostics(resolved.cwd, resolved.store);
     writeJson(response, 200, {
       cwd: resolved.cwd,
-      ...runtimeSupervisor.getDiagnostics(resolved.cwd, resolved.store),
+      ...diagnostics,
+      active: diagnostics.active.map(workUnit => projectPublicWorkUnit(workUnit, resolved.store)),
+      stuck: diagnostics.stuck.map(workUnit => projectPublicWorkUnit(workUnit, resolved.store)),
+      queued: diagnostics.queued.map(workUnit => projectPublicWorkUnit(workUnit, resolved.store)),
+      stale: diagnostics.stale.map(workUnit => projectPublicWorkUnit(workUnit, resolved.store)),
     });
   } catch (error) {
     writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
@@ -172,7 +193,7 @@ export function handleListRuntimeActive(response: ServerResponse, url: URL, stor
   if (!resolved) {
     return;
   }
-  writeJson(response, 200, { cwd: resolved.cwd, workUnits: listActiveWorkUnits(resolved.store) });
+  writeJson(response, 200, { cwd: resolved.cwd, workUnits: listActiveWorkUnits(resolved.store).map((workUnit) => projectPublicWorkUnit(workUnit, resolved.store)) });
 }
 
 export function handleListRuntimeStuck(response: ServerResponse, url: URL, storeRegistry: RunStoreRegistry): void {
@@ -183,7 +204,7 @@ export function handleListRuntimeStuck(response: ServerResponse, url: URL, store
   const now = new Date();
   writeJson(response, 200, {
     cwd: resolved.cwd,
-    workUnits: listActiveWorkUnits(resolved.store).filter((workUnit) => isStuckWorkUnit(workUnit, now)),
+    workUnits: listActiveWorkUnits(resolved.store).filter((workUnit) => isStuckWorkUnit(workUnit, now)).map((workUnit) => projectPublicWorkUnit(workUnit, resolved.store)),
   });
 }
 
@@ -223,7 +244,7 @@ export function handleListWorkUnits(response: ServerResponse, url: URL, storeReg
       channelId: url.searchParams.get("channelId") ?? undefined,
       linkedRunId: url.searchParams.get("linkedRunId") ?? undefined,
       limit: readOptionalIntegerQuery(url, "limit", 1),
-    }),
+    }).map((workUnit) => projectPublicWorkUnit(workUnit, resolved.store)),
   });
 }
 
@@ -339,14 +360,14 @@ export async function handleRuntimeSettings(
     }
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for runtime settings` });
   } catch (error) {
-    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
-      error: error instanceof HttpError ? error.code : "bad_request",
+    writeJson(response, error instanceof RuntimeSettingsConflictError ? 409 : error instanceof HttpError ? error.statusCode : 400, {
+      error: error instanceof RuntimeSettingsConflictError ? "runtime_settings_conflict" : error instanceof HttpError ? error.code : "bad_request",
       message: error instanceof Error ? error.message : String(error),
     });
   }
 }
 
-export function handleWorkUnitRoute(
+export async function handleWorkUnitRoute(
   request: IncomingMessage,
   response: ServerResponse,
   url: URL,
@@ -356,16 +377,48 @@ export function handleWorkUnitRoute(
   route: WorkUnitRoute,
   cancelRun: RuntimeRunCanceller,
   controlPlaneEvents: ControlPlaneEventHub,
-): void {
+  retryTaskRun: RuntimeTaskRunRetrier,
+): Promise<void> {
+  if (route.kind === "harness") {
+    handleWorkUnitHarnessDiagnostics(request, response, url, storeRegistry, route.workUnitId);
+    return;
+  }
   const resolved = getCwdStoreOrWriteError(response, url, storeRegistry);
   if (!resolved) {
     return;
   }
-  runtimeSupervisor.getRuntime(resolved.cwd, resolved.store);
+  let cancellation: ExecutionCancellationRequest = {};
+  if (request.method === "POST" && route.kind === "cancel") {
+    try {
+      cancellation = parseExecutionCancellationRequest(await readOptionalJsonBody(request, 64 * 1024));
+    } catch (error) {
+      writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+      return;
+    }
+  }
   const workUnit = resolved.store.getWorkUnit(route.workUnitId);
   if (!workUnit) {
     writeJson(response, 404, { error: "work_unit_not_found", message: `Work unit not found: ${route.workUnitId}` });
     return;
+  }
+
+  // Reconciliation itself may mark an Attempt lost and release resources.
+  // Check manual mutations before even invoking startup reconciliation.
+  if (request.method === "POST" && (route.kind === "cancel" || route.kind === "reconcile") && workUnit.linkedRunId) {
+    const run = resolved.store.getRun(workUnit.linkedRunId);
+    if (run && !["succeeded", "failed", "cancelled"].includes(run.status)
+      && (route.kind === "reconcile" || run.status !== "yielded")) {
+      try {
+        assertNoUnsafeRequiredPause(resolved.store, run);
+      } catch (error) {
+        if (!(error instanceof HttpError)) throw error;
+        writeJson(response, error.statusCode, { error: error.code, message: error.message });
+        return;
+      }
+    }
+  }
+  if (!(request.method === "POST" && route.kind === "cancel")) {
+    runtimeSupervisor.getRuntime(resolved.cwd, resolved.store);
   }
 
   if (route.kind === "detail") {
@@ -373,7 +426,7 @@ export function handleWorkUnitRoute(
       writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for work unit detail` });
       return;
     }
-    writeJson(response, 200, buildWorkUnitDetailResponse(resolved.cwd, resolved.store, workUnit));
+    writeJson(response, 200, buildWorkUnitDetailResponse(resolved.cwd, resolved.store, workUnit, activeRuns));
     return;
   }
 
@@ -403,24 +456,33 @@ export function handleWorkUnitRoute(
     const previousStatus = workUnit.status;
     const runId = workUnit.linkedRunId;
     const activeRun = runId ? activeRuns.get(runId) : undefined;
-    if (runId) {
-      const run = resolved.store.getRun(runId);
-      if (run) {
-        cancelRun({
-          store: resolved.store,
-          runId,
-          taskId: run.taskId,
-          startedAt: run.startedAt,
-          reason: "work_unit_cancel_requested",
-          active: Boolean(activeRun),
-          streamEnvelope: activeRun?.streamEnvelope,
-        });
+    let logicalWait = false;
+    try {
+      if (runId) {
+        const run = resolved.store.getRun(runId);
+        if (run) {
+          const result = cancelRun({
+            ...cancellation,
+            store: resolved.store,
+            runId,
+            taskId: run.taskId,
+            startedAt: run.startedAt,
+            reason: "work_unit_cancel_requested",
+            active: Boolean(activeRun),
+            streamEnvelope: activeRun?.streamEnvelope,
+          });
+          logicalWait = Boolean(result.inputWait);
+        } else {
+          cancelStandaloneWorkUnit(resolved.store, workUnit, "work_unit_cancel_requested", cancellation);
+        }
+        if (!logicalWait) activeRun?.abortController.abort();
       } else {
-        cancelStandaloneWorkUnit(resolved.store, workUnit, "work_unit_cancel_requested");
+        cancelStandaloneWorkUnit(resolved.store, workUnit, "work_unit_cancel_requested", cancellation);
       }
-      activeRun?.abortController.abort();
-    } else {
-      cancelStandaloneWorkUnit(resolved.store, workUnit, "work_unit_cancel_requested");
+    } catch (error) {
+      if (!(error instanceof HttpError)) throw error;
+      writeJson(response, error.statusCode, { error: error.code, message: error.message });
+      return;
     }
     const latest = resolved.store.getWorkUnit(workUnit.id) ?? workUnit;
     appendWorkUnitTransitionControlPlaneEvent(
@@ -434,7 +496,7 @@ export function handleWorkUnitRoute(
     );
     writeJson(response, 200, {
       cwd: resolved.cwd,
-      workUnit: latest,
+      workUnit: projectPublicWorkUnit(latest, resolved.store),
     });
     return;
   }
@@ -446,7 +508,38 @@ export function handleWorkUnitRoute(
       writeJson(response, 409, {
         error: "terminal_state",
         message: "Cancelled work units cannot be retried from the runtime control plane.",
-        workUnit: current,
+        workUnit: projectPublicWorkUnit(current, resolved.store),
+      });
+      return;
+    }
+    const linkedRun = current.kind === "task_run" && current.linkedRunId
+      ? resolved.store.getRun(current.linkedRunId)
+      : undefined;
+    if (linkedRun && isHarnessContinuationEnforced(linkedRun)) {
+      if (current.status !== "failed" || linkedRun.status !== "failed") {
+        writeJson(response, 409, {
+          error: "continuation_activation_state_stale",
+          message: "Enforced task Run retry requires both the Run and WorkUnit to be failed.",
+          run: projectPublicRunSession(linkedRun, resolved.store),
+          workUnit: projectPublicWorkUnit(current, resolved.store),
+        });
+        return;
+      }
+      const started = await retryTaskRun({ cwd: resolved.cwd, store: resolved.store, run: linkedRun, workUnit: current });
+      if (!started.ok) {
+        writeJson(response, started.statusCode, {
+          error: started.error,
+          message: started.message,
+          run: projectPublicRunSession(resolved.store.getRun(linkedRun.id) ?? linkedRun, resolved.store),
+          workUnit: projectPublicWorkUnit(resolved.store.getWorkUnit(current.id) ?? current, resolved.store),
+        });
+        return;
+      }
+      writeJson(response, 202, {
+        cwd: resolved.cwd,
+        run: projectPublicRunSession(resolved.store.getRun(linkedRun.id) ?? linkedRun, resolved.store),
+        workUnit: projectPublicWorkUnit(resolved.store.getWorkUnit(current.id) ?? current, resolved.store),
+        continuation: { origin: "runner_retry", status: "started", runId: started.runId },
       });
       return;
     }
@@ -463,7 +556,7 @@ export function handleWorkUnitRoute(
       errorMessage: null,
     });
     if (!transition.ok) {
-      writeJson(response, 409, { error: transition.code, message: `Work unit retry failed: ${transition.code}`, workUnit: current });
+      writeJson(response, 409, { error: transition.code, message: `Work unit retry failed: ${transition.code}`, workUnit: projectPublicWorkUnit(current, resolved.store) });
       return;
     }
     const latest = resolved.store.getWorkUnit(current.id) ?? current;
@@ -485,7 +578,7 @@ export function handleWorkUnitRoute(
     });
     writeJson(response, 200, {
       cwd: resolved.cwd,
-      workUnit: latest,
+      workUnit: projectPublicWorkUnit(latest, resolved.store),
       event,
     });
     return;
@@ -507,27 +600,27 @@ export function handleWorkUnitRoute(
   );
   writeJson(response, 200, {
     cwd: resolved.cwd,
-    workUnit: resolved.store.getWorkUnit(reconciled.id) ?? reconciled,
+    workUnit: projectPublicWorkUnit(resolved.store.getWorkUnit(reconciled.id) ?? reconciled, resolved.store),
   });
 }
 
-function buildWorkUnitDetailResponse(cwd: string, store: RunStore, workUnit: WorkUnit): {
-  readonly cwd: string;
-  readonly workUnit: WorkUnit;
-  readonly attempts: readonly WorkUnitAttempt[];
-  readonly events: readonly RuntimeEvent[];
-  readonly leases: readonly ResourceLease[];
-  readonly semaphoreSlots: readonly RuntimeSemaphoreSlot[];
-  readonly run?: RunSession;
-} {
+function isHarnessContinuationEnforced(run: RunSession): boolean {
+  return isRecord(run.requestSnapshot)
+    && isRecord(run.requestSnapshot.harnessFeatureSnapshot)
+    && run.requestSnapshot.harnessFeatureSnapshot.continuations === "enforce";
+}
+
+function buildWorkUnitDetailResponse(cwd: string, store: RunStore, workUnit: WorkUnit, activeRuns: ActiveRunRegistry): WorkUnitDetailResponse {
+  const attempts = store.listWorkUnitAttempts(workUnit.id);
   return removeUndefined({
     cwd,
-    workUnit,
-    attempts: store.listWorkUnitAttempts(workUnit.id),
+    workUnit: projectPublicWorkUnit(workUnit, store),
+    attempts,
+    stopEvidence: readWorkUnitStopEvidence(store, workUnit, attempts, activeRuns),
     events: store.listRuntimeEvents(workUnit.id, { limit: 500 }),
     leases: store.listResourceLeases({ workUnitId: workUnit.id, limit: 500 }),
     semaphoreSlots: store.listRuntimeSemaphoreSlots({ workUnitId: workUnit.id, limit: 500 }),
-    run: workUnit.linkedRunId ? store.getRun(workUnit.linkedRunId) : undefined,
+    run: projectPublicRunSession(workUnit.linkedRunId ? store.getRun(workUnit.linkedRunId) : undefined, store),
   });
 }
 
@@ -588,7 +681,16 @@ function parseWorkspaceRuntimeSettingsPatch(value: unknown): WorkspaceRuntimeSet
   if (!isRecord(value)) {
     throw new Error("Runtime settings patch must be a JSON object");
   }
+  if (value.schemaVersion !== undefined && value.schemaVersion !== 2) throw new Error("schemaVersion must be 2");
+  if (value.confirmNativeMigration !== undefined && typeof value.confirmNativeMigration !== "boolean") {
+    throw new Error("confirmNativeMigration must be a boolean");
+  }
   return removeUndefined({
+    schemaVersion: value.schemaVersion as 2 | undefined,
+    confirmNativeMigration: value.confirmNativeMigration as boolean | undefined,
+    defaultExecutionBinding: value.defaultExecutionBinding === null ? null
+      : value.defaultExecutionBinding === undefined ? undefined : parseExecutionBindingRequest(value.defaultExecutionBinding),
+    expectedUpdatedAt: readOptionalString(value, "expectedUpdatedAt"),
     defaultRunnerId: readOptionalString(value, "defaultRunnerId"),
     allowedRunnerIds: readOptionalStringArray(value, "allowedRunnerIds"),
     explicitRunnerFallback: readOptionalRunnerFallbackPolicy(value, "explicitRunnerFallback"),
@@ -636,8 +738,10 @@ function isWorkUnitStatus(value: string): value is WorkUnitStatus {
 
 function isWorkUnitKind(value: string): value is WorkUnitKind {
   return (
+    value === "learning_review" ||
     value === "task_run" ||
     value === "conversation_run" ||
+    value === "approval_review" ||
     value === "channel_turn_dispatch" ||
     value === "channel_ai_reply" ||
     value === "channel_terminal_report" ||

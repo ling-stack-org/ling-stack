@@ -11,9 +11,9 @@
   min-width: 0;
   gap: var(--ling-space-3);
   padding: var(--ling-space-4);
-  border: 1px solid var(--ling-border-subtle);
+  border: 1px solid var(--ling-border-default);
   border-radius: 6px;
-  background: var(--ling-bg-surface-raised);
+  background: var(--ling-bg-elevated);
 }
 
 .conversation-generated-media.status-succeeded {
@@ -26,12 +26,12 @@
 }
 
 .conversation-generated-media.status-failed {
-  border-color: color-mix(in srgb, var(--ling-status-danger) 38%, var(--ling-border-subtle));
-  background: color-mix(in srgb, var(--ling-status-danger) 5%, var(--ling-bg-surface-raised));
+  border-color: color-mix(in srgb, var(--ling-status-danger) 38%, var(--ling-border-default));
+  background: color-mix(in srgb, var(--ling-status-danger) 5%, var(--ling-bg-elevated));
 }
 
 .conversation-generated-media.status-cancelled {
-  background: var(--ling-bg-surface-muted);
+  background: var(--ling-bg-subtle);
 }
 
 .conversation-generated-media-header {
@@ -122,7 +122,7 @@
   min-width: 0;
   align-items: center;
   padding: 3px;
-  border-radius: var(--ling-radius-control);
+  border-radius: var(--ling-control-radius);
   background: var(--ling-bg-elevated);
   box-shadow: var(--ling-shadow-low);
   color: var(--ling-text-muted);
@@ -149,7 +149,7 @@
   width: 28px;
   height: 28px;
   place-items: center;
-  border-radius: var(--ling-radius-control);
+  border-radius: var(--ling-control-radius);
   color: var(--ling-text-default);
 }
 

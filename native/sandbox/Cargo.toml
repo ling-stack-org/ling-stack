@@ -1,0 +1,27 @@
+[package]
+name = "ling-sandbox-runner"
+version = "0.1.0-dev.0"
+edition = "2024"
+rust-version = "1.97.1"
+license = "MIT"
+publish = false
+description = "Ling-owned native sandbox protocol and platform adapter boundary"
+
+[workspace]
+resolver = "3"
+
+[dependencies]
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+
+[target.'cfg(unix)'.dependencies]
+libc = "=0.2.186"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_System_Diagnostics_ToolHelp"] }
+
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 1
+panic = "abort"

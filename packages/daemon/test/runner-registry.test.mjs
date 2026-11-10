@@ -6,8 +6,21 @@ import {
   DEFAULT_RUNNER_ID,
   LEGACY_PI_RUNNER_ID,
   resolveRunnerResumeCapabilities,
+  resolveRunnerToolExecutionGate,
   UnsupportedRunnerError,
 } from "../dist/index.js";
+
+test("default catalog describes all native choices without granting generic execution", async () => {
+  const registry = createDefaultRunnerRegistry(new RecordingRunner());
+  for (const id of ["codex-app-server", "kimi-acp", "openclaw-acp"]) {
+    const runner = registry.get(id);
+    assert.ok(runner, `${id} must be discoverable`);
+    assert.equal(runner.profileSelection, "supported");
+    assert.equal(runner.status, "disabled", "execution availability belongs to a verified profile and surface");
+    await assert.rejects(runner.adapter.runTask({}), /legacy_runner_migration_required/);
+  }
+  assert.equal(registry.get("claude-agent-sdk").profileSelection, "unsupported");
+});
 
 test("runner registry resolves default pi and legacy pi alias", () => {
   const runner = new RecordingRunner();
@@ -125,8 +138,9 @@ test("default runner registry exposes disabled future adapters and fails closed"
   assert.equal(pi.toolHydration.supportsToolHydration, false);
   assert.equal(pi.toolHydration.conformance, "unverified");
   const codex = runners.find((runner) => runner.id === "codex-app-server");
-  assert.equal(codex.featureFlag, "runners.codexAppServer.enabled");
-  assert.equal(codex.disabledReason, "Feature flag is disabled.");
+  assert.equal(codex.featureFlag, undefined, "retired endpoint flags cannot activate native execution");
+  assert.equal(codex.profileSelection, "supported");
+  assert.match(codex.disabledReason, /legacy_runner_migration_required/);
 
   assert.throws(
     () => registry.resolve({
@@ -166,7 +180,6 @@ test("runner resume capability requires typed metadata, adapter operation, and e
         enabled: true,
         baseUrl: "http://127.0.0.1:12345",
         readinessPassed: true,
-        conformancePassed: true,
       },
     },
   });
@@ -176,8 +189,8 @@ test("runner resume capability requires typed metadata, adapter operation, and e
     nativeResume: false,
     hostApprovalContinuation: ["bash"],
   });
-  assert.equal(codex.capabilities.includes("native_resume"), true);
-  assert.equal(codex.resumeCapabilities.nativeResume, true);
+  assert.equal(codex.capabilities.includes("native_resume"), false);
+  assert.equal(codex.resumeCapabilities.nativeResume, false);
   assert.deepEqual(resolveRunnerResumeCapabilities(codex), {
     nativeResume: false,
     hostApprovalContinuation: [],
@@ -192,8 +205,30 @@ test("runner resume capability requires typed metadata, adapter operation, and e
       async resumeTask() { return { taskId: "task", events: [], messages: [] }; },
     },
     resumeCapabilities: { nativeResume: true, hostApprovalContinuation: [] },
+    nativeResumeConformance: {
+      revision: "native-test:1",
+      readinessPassed: true,
+      conformancePassed: true,
+      abortPropagationVerified: true,
+      approvalBridgeVerified: true,
+    },
   }]).list()[0];
   assert.equal(resolveRunnerResumeCapabilities(native).nativeResume, true);
+
+  const injectedWithoutConformance = {
+    id: "legacy-injected",
+    displayName: "Injected runner",
+    status: "enabled",
+    adapter: {
+      async runTask() { return { taskId: "task", events: [], messages: [] }; },
+      async resumeTask() { return { taskId: "task", events: [], messages: [] }; },
+    },
+    resumeCapabilities: { nativeResume: true, hostApprovalContinuation: ["bash"] },
+  };
+  assert.deepEqual(resolveRunnerResumeCapabilities(injectedWithoutConformance), {
+    nativeResume: false,
+    hostApprovalContinuation: ["bash"],
+  });
 });
 
 test("pi runner exposes daemon-hydrated tools only after the feature and conformance gates pass", () => {
@@ -247,7 +282,7 @@ test("pi runner exposes platform-native sandbox binding only behind an explicit 
   assert.equal(sandboxedPi.capabilities.includes("runtime:platform-native-sandbox"), true);
 });
 
-test("future runner feature flags do not enable adapters without conformance", () => {
+test("future runner feature flags do not enable adapters without readiness", () => {
   const registry = createDefaultRunnerRegistry(new RecordingRunner(), {
     runners: {
       codexAppServer: {
@@ -264,11 +299,11 @@ test("future runner feature flags do not enable adapters without conformance", (
   const codex = runners.find((runner) => runner.id === "codex-app-server");
   const openclaw = runners.find((runner) => runner.id === "openclaw-acp");
   assert.equal(codex.status, "disabled");
-  assert.match(codex.disabledReason, /conformance has not passed/);
-  assert.deepEqual(codex.capabilities.includes("native_resume"), true);
+  assert.match(codex.disabledReason, /legacy_runner_migration_required/);
+  assert.deepEqual(codex.capabilities.includes("native_resume"), false);
   assert.equal(openclaw.status, "disabled");
-  assert.match(openclaw.disabledReason, /conformance has not passed/);
-  assert.deepEqual(openclaw.capabilities.includes("mcp_tools"), true);
+  assert.match(openclaw.disabledReason, /legacy_runner_migration_required/);
+  assert.deepEqual(openclaw.capabilities.includes("mcp_tools"), false);
 
   assert.throws(
     () => registry.resolve({ requestedRunnerId: "codex-app-server", explicitFallbackPolicy: "disabled" }),
@@ -278,18 +313,16 @@ test("future runner feature flags do not enable adapters without conformance", (
   );
 });
 
-test("future runner conformance flag still fails closed until readiness is confirmed", () => {
+test("future runner still fails closed until readiness is confirmed", () => {
   const registry = createDefaultRunnerRegistry(new RecordingRunner(), {
     runners: {
       codexAppServer: {
         enabled: true,
         baseUrl: "http://127.0.0.1:12345",
-        conformancePassed: true,
       },
       openclawAcp: {
         enabled: true,
         endpoint: "http://127.0.0.1:23456",
-        conformancePassed: true,
       },
     },
   });
@@ -297,7 +330,7 @@ test("future runner conformance flag still fails closed until readiness is confi
   for (const runnerId of ["codex-app-server", "openclaw-acp"]) {
     const runner = registry.list().find((item) => item.id === runnerId);
     assert.equal(runner.status, "disabled");
-    assert.match(runner.disabledReason, /readiness has not been confirmed/i);
+    assert.match(runner.disabledReason, /legacy_runner_migration_required/i);
     assert.throws(
       () => registry.resolve({ requestedRunnerId: runnerId, explicitFallbackPolicy: "disabled" }),
       (error) =>
@@ -307,30 +340,33 @@ test("future runner conformance flag still fails closed until readiness is confi
   }
 });
 
-test("future runner adapters become selectable only after all static gates pass", () => {
+test("legacy endpoint adapters remain retired even when all old static flags pass", () => {
   const registry = createDefaultRunnerRegistry(new RecordingRunner(), {
     runners: {
       codexAppServer: {
         enabled: true,
         baseUrl: "http://127.0.0.1:12345",
         readinessPassed: true,
-        conformancePassed: true,
       },
       openclawAcp: {
         enabled: true,
         endpoint: "http://127.0.0.1:23456",
         readinessPassed: true,
-        conformancePassed: true,
       },
     },
   });
 
   for (const runnerId of ["codex-app-server", "openclaw-acp"]) {
     const runner = registry.list().find((item) => item.id === runnerId);
-    assert.equal(runner.status, "enabled");
-    const resolution = registry.resolve({ requestedRunnerId: runnerId, explicitFallbackPolicy: "disabled" });
-    assert.equal(resolution.effectiveRunnerId, runnerId);
-    assert.equal(resolution.runner.adapter, runner.adapter);
+    assert.equal(runner.status, "disabled");
+    assert.match(runner.disabledReason, /legacy_runner_migration_required/);
+    assert.throws(() => registry.resolve({
+      requestedRunnerId: runnerId,
+      explicitFallbackPolicy: "disabled",
+      tools: ["read"],
+    }), (error) => error instanceof UnsupportedRunnerError
+      && error.fallbackReason.code === "disabled_requested_runner");
+    assert.equal(resolveRunnerToolExecutionGate(runner, ["read"]).ok, false);
   }
 });
 
@@ -375,6 +411,102 @@ test("runner registry enforces declared tool and provider conformance", () => {
     (error) => error instanceof UnsupportedRunnerError && error.fallbackReason.code === "unsupported_tool",
   );
 });
+
+test("external runner tools require a revision-bound conformance receipt", () => {
+  const base = {
+    id: "external-test",
+    displayName: "External test",
+    status: "enabled",
+    adapter: new RecordingRunner(),
+    executionBoundary: "external",
+    adapterRevision: "external-test:adapter-v2",
+    supportedTools: ["read"],
+    toolSideEffects: { read: "workspace_read" },
+  };
+  const missingReceipt = createRunnerRegistry([base], "external-test");
+  assert.throws(
+    () => missingReceipt.resolve({ requestedRunnerId: "external-test", tools: ["read"] }),
+    (error) => error instanceof UnsupportedRunnerError &&
+      error.fallbackReason.code === "runner_tool_conformance_failed" &&
+      /tool_surface_not_curated/.test(error.message),
+  );
+
+  const revisionDrift = createRunnerRegistry([{
+    ...base,
+    toolExecutionConformance: readOnlyReceipt("external-test:adapter-v1"),
+  }], "external-test");
+  assert.throws(
+    () => revisionDrift.resolve({ requestedRunnerId: "external-test", tools: ["read"] }),
+    (error) => error instanceof UnsupportedRunnerError &&
+      error.fallbackReason.code === "runner_tool_conformance_failed" &&
+      /revision_mismatch/.test(error.message),
+  );
+});
+
+test("external runner receipts cannot authorize undeclared or side-effectful tools", () => {
+  const registry = createRunnerRegistry([{
+    id: "external-test",
+    displayName: "External test",
+    status: "enabled",
+    adapter: new RecordingRunner(),
+    executionBoundary: "external",
+    adapterRevision: "external-test:adapter-v1",
+    supportedTools: ["read", "write"],
+    toolSideEffects: { read: "workspace_read", write: "workspace_write" },
+    toolExecutionConformance: readOnlyReceipt("external-test:adapter-v1"),
+  }], "external-test");
+
+  assert.equal(registry.resolve({ requestedRunnerId: "external-test", tools: ["read"] }).effectiveRunnerId, "external-test");
+  assert.throws(
+    () => registry.resolve({ requestedRunnerId: "external-test", tools: ["write"] }),
+    (error) => error instanceof UnsupportedRunnerError &&
+      error.fallbackReason.code === "runner_tool_conformance_failed" &&
+      /tool_not_curated|tool_side_effect_not_allowed|native_side_effects_disabled/.test(error.message),
+  );
+});
+
+test("external runner receipts must match the registered side-effect classification", () => {
+  const registry = createRunnerRegistry([{
+    id: "external-test",
+    displayName: "External test",
+    status: "enabled",
+    adapter: new RecordingRunner(),
+    executionBoundary: "external",
+    adapterRevision: "external-test:adapter-v1",
+    supportedTools: ["read"],
+    toolSideEffects: { read: "workspace_read" },
+    toolExecutionConformance: {
+      ...readOnlyReceipt("external-test:adapter-v1"),
+      toolSideEffects: { read: "none" },
+      allowedSideEffects: ["none", "workspace_read"],
+    },
+  }], "external-test");
+
+  assert.throws(
+    () => registry.resolve({ requestedRunnerId: "external-test", tools: ["read"] }),
+    (error) => error instanceof UnsupportedRunnerError &&
+      error.fallbackReason.code === "runner_tool_conformance_failed" &&
+      /tool_side_effect_mismatch/.test(error.message),
+  );
+});
+
+function readOnlyReceipt(adapterRevision) {
+  return {
+    adapterRevision,
+    curatedTools: ["read"],
+    toolSideEffects: { read: "workspace_read" },
+    allowedSideEffects: ["workspace_read"],
+    nativeSideEffectMode: "disabled",
+    toolSurfaceCurated: true,
+    approvalBridgeVerified: false,
+    sandboxBindingVerified: false,
+    evidenceCommitVerified: true,
+    abortPropagationVerified: true,
+    attemptFencingVerified: true,
+    workspaceBoundaryVerified: true,
+    artifactImportVerified: true,
+  };
+}
 
 class RecordingRunner {
   async runTask() {

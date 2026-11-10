@@ -21,7 +21,7 @@ test("channel summary stays visible while the details dock opens", async ({ page
   await openEngineeringChannel(page);
 
   const toolbar = page.getByRole("toolbar", { name: "Workspace task toolbar" });
-  await toolbar.getByRole("button", { name: "Summary" }).click();
+  await toolbar.getByRole("button", { name: "Summary", exact: true }).click();
 
   const summary = page.locator(".channel-progress-popover");
   await expect(summary).toBeVisible();
@@ -46,11 +46,47 @@ test("channel summary stays visible while the details dock opens", async ({ page
   const terminal = page.getByLabel("Terminal session");
   await expect(terminal).toHaveAttribute("data-bottom-panel-motion", /opening|open/);
   await expect(summary).toBeVisible();
-  await expect(toolbar.getByRole("button", { name: "Summary" })).toHaveAttribute("aria-pressed", "true");
+  await expect(toolbar.getByRole("button", { name: "Summary", exact: true })).toHaveAttribute("aria-pressed", "true");
   await expect.poll(async () => terminal.evaluate((element) => getComputedStyle(element).transitionDuration)).toContain("0.24s");
   await terminal.getByRole("button", { name: "Close terminal panel" }).click();
   await expect(terminal).toHaveAttribute("data-bottom-panel-motion", "closing");
   await expect(terminal).toHaveCount(0);
+});
+
+test("channel summary reserve stays visually continuous with the conversation surface", async ({ page }) => {
+  await prepareSurface(page, "dark", 1280, 800);
+  await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  const toolbar = page.getByRole("toolbar", { name: "Workspace task toolbar" });
+  await toolbar.getByRole("button", { name: "Summary", exact: true }).click();
+
+  const appearance = await page.evaluate(() => {
+    const main = document.querySelector<HTMLElement>(".task-workbench-main");
+    const conversation = document.querySelector<HTMLElement>(".channel-chat-panel");
+    const summary = document.querySelector<HTMLElement>(".channel-progress-popover");
+    if (!main || !conversation || !summary) return undefined;
+
+    const mainStyle = getComputedStyle(main);
+    const conversationStyle = getComputedStyle(conversation);
+    const summaryStyle = getComputedStyle(summary);
+    const mainRect = main.getBoundingClientRect();
+    const summaryRect = summary.getBoundingClientRect();
+    return {
+      surfaceBackgroundMatches: mainStyle.backgroundColor === conversationStyle.backgroundColor,
+      summaryPosition: summaryStyle.position,
+      summaryHasOverlayShadow: summaryStyle.boxShadow !== "none",
+      summaryIsCompact: summaryRect.height < mainRect.height,
+    };
+  });
+
+  expect(appearance).toEqual({
+    surfaceBackgroundMatches: true,
+    summaryPosition: "absolute",
+    summaryHasOverlayShadow: true,
+    summaryIsCompact: true,
+  });
 });
 
 test("normal conversation summary uses the channel panel motion", async ({ page }) => {
@@ -68,8 +104,8 @@ test("normal conversation summary uses the channel panel motion", async ({ page 
   await openNormalConversationFixture(page);
 
   const conversation = page.getByLabel("Conversation page");
-  const toolbar = conversation.getByRole("toolbar", { name: "Conversation workspace toolbar" });
-  await toolbar.getByRole("button", { name: "Summary" }).click();
+  const toolbar = page.getByRole("toolbar", { name: "Conversation workspace toolbar" });
+  await toolbar.getByRole("button", { name: "Summary", exact: true }).click();
   await expect(page.locator(".normal-conversation-summary-popover")).toBeVisible();
   await expectOpaque(page.locator(".normal-conversation-summary-popover"));
   await startVisibilitySampler(page, ".normal-conversation-summary-popover, .normal-conversation-summary-panel");
@@ -115,8 +151,8 @@ test("normal conversation summary uses the channel panel motion", async ({ page 
   const maximumDockWidth = await page.evaluate(() => Math.floor(globalThis.innerWidth * 0.5));
   await expect.poll(async () => (await dockFrame.boundingBox())?.width ?? 0).toBeLessThanOrEqual(maximumDockWidth);
   await expect(summary).toBeHidden();
-  await expect(toolbar.getByRole("button", { name: "Summary" })).toHaveAttribute("aria-pressed", "true");
-  await expect(toolbar.getByRole("button", { name: "Summary" })).toHaveAttribute("aria-expanded", "false");
+  await expect(toolbar.getByRole("button", { name: "Summary", exact: true })).not.toHaveAttribute("aria-pressed", "true");
+  await expect(toolbar.getByRole("button", { name: "Summary", exact: true })).toHaveAttribute("aria-expanded", "false");
   await page.mouse.up();
 
   await toolbar.getByRole("button", { name: "Hide details" }).click();
@@ -124,15 +160,15 @@ test("normal conversation summary uses the channel panel motion", async ({ page 
   await expect(summary).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(summary).toHaveCount(0);
-  await expect(toolbar.getByRole("button", { name: "Summary" })).not.toHaveAttribute("aria-pressed", "true");
+  await expect(toolbar.getByRole("button", { name: "Summary", exact: true })).not.toHaveAttribute("aria-pressed", "true");
 
-  await toolbar.getByRole("button", { name: "Summary" }).click();
+  await toolbar.getByRole("button", { name: "Summary", exact: true }).click();
   await expect(summary).toBeVisible();
   await toolbar.getByRole("button", { name: "Terminal" }).click();
   const terminal = page.getByLabel("Terminal session");
   await expect(terminal).toBeVisible();
   await expect(summary).toBeVisible();
-  await expect(toolbar.getByRole("button", { name: "Summary" })).toHaveAttribute("aria-pressed", "true");
+  await expect(toolbar.getByRole("button", { name: "Summary", exact: true })).toHaveAttribute("aria-pressed", "true");
   await expect(terminal).toHaveAttribute("data-bottom-panel-motion", /opening|open/);
   await expect.poll(async () => terminal.evaluate((element) => getComputedStyle(element).transitionDuration)).toContain("0.24s");
   await expect(terminal).toHaveAttribute("data-bottom-panel-motion", "open");
@@ -173,9 +209,9 @@ test("AI teammate summary uses the channel panel motion", async ({ page }) => {
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: teammateName }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: teammateName }).click();
   const toolbar = page.getByRole("toolbar", { name: "Private chat actions" });
-  await toolbar.getByRole("button", { name: "Summary" }).click();
+  await toolbar.getByRole("button", { name: "Summary", exact: true }).click();
   await expect(page.locator(".teammate-chat-summary-popover")).toBeVisible();
   await expectOpaque(page.locator(".teammate-chat-summary-popover"));
   await startVisibilitySampler(page, ".teammate-chat-summary-popover, .teammate-private-summary-panel");
@@ -191,7 +227,7 @@ test("AI teammate summary uses the channel panel motion", async ({ page }) => {
   const terminal = page.getByLabel("Terminal session");
   await expect(terminal).toHaveAttribute("data-bottom-panel-motion", /opening|open/);
   await expect(summary).toBeVisible();
-  await expect(toolbar.getByRole("button", { name: "Summary" })).toHaveAttribute("aria-pressed", "true");
+  await expect(toolbar.getByRole("button", { name: "Summary", exact: true })).toHaveAttribute("aria-pressed", "true");
   await expect.poll(async () => terminal.evaluate((element) => getComputedStyle(element).transitionDuration)).toContain("0.24s");
   await terminal.getByRole("button", { name: "Close terminal panel" }).click();
   await expect(terminal).toHaveAttribute("data-bottom-panel-motion", "closing");
@@ -206,7 +242,7 @@ test("conversation panels remove spatial motion when reduced motion is requested
   await openEngineeringChannel(page);
 
   const toolbar = page.getByRole("toolbar", { name: "Workspace task toolbar" });
-  await toolbar.getByRole("button", { name: "Summary" }).click();
+  await toolbar.getByRole("button", { name: "Summary", exact: true }).click();
   const summary = page.locator(".channel-progress-popover");
   await expect(summary).toBeVisible();
   await toolbar.getByRole("button", { name: "Show details" }).click();
@@ -241,7 +277,7 @@ test("summary intent survives constrained Details geometry and restores when Sid
     page.getByLabel("Channel workspace dock"),
   );
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: teammateName }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: teammateName }).click();
   await expectSummaryConcealAndRestore(
     page,
     page.getByRole("toolbar", { name: "Private chat actions" }),
@@ -256,6 +292,66 @@ test("summary intent survives constrained Details geometry and restores when Sid
     page.locator(".normal-conversation-summary-panel"),
     page.getByLabel("Conversation workspace dock"),
   );
+});
+
+test("right dock hides as one shared state at 900px and restores inline above the breakpoint", async ({ page }) => {
+  const runtimeErrors = collectRuntimeErrors(page);
+  await prepareSurface(page, "light", 1280, 800);
+  const teammateName = "Responsive Dock Engineer";
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.providers = [createChatProvider({
+    id: "provider_ui2_responsive_dock",
+    displayName: "Local Relay",
+    model: "gpt-5.5",
+  })];
+  state.aiTeammates = [createMockTeammate({
+    id: "teammate_ui2_responsive_dock",
+    displayName: teammateName,
+  })];
+  installNormalConversationFixture(state);
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await openEngineeringChannel(page);
+  await expectResponsiveDockProjection({
+    page,
+    toolbar: page.getByRole("toolbar", { name: "Workspace task toolbar" }),
+    root: page.locator(".task-workbench-main"),
+    dock: page.getByLabel("Channel workspace dock"),
+    handle: page.getByRole("separator", { name: "Resize workspace dock" }),
+    dockLayoutVariable: "--channel-right-dock-layout-width",
+    handleLayoutVariable: "--channel-side-panel-layout-handle-width",
+  });
+
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await ensureNavigationExpanded(page);
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: teammateName }).click();
+  await expectResponsiveDockProjection({
+    page,
+    toolbar: page.getByRole("toolbar", { name: "Private chat actions" }),
+    root: page.locator(".teammate-private-chat"),
+    dock: page.getByLabel("Private chat workspace dock"),
+    handle: page.getByRole("separator", { name: "Resize workspace dock" }),
+    dockLayoutVariable: "--workspace-right-dock-layout-width",
+    handleLayoutVariable: "--workspace-right-dock-layout-handle-width",
+  });
+
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await ensureNavigationExpanded(page);
+  await openNormalConversationFixture(page);
+  await expectResponsiveDockProjection({
+    page,
+    toolbar: page.getByRole("toolbar", { name: "Conversation workspace toolbar" }),
+    root: page.locator(".normal-conversation-page"),
+    dock: page.getByLabel("Conversation workspace dock"),
+    handle: page.getByRole("separator", { name: "Resize workspace dock" }),
+    dockLayoutVariable: "--workspace-right-dock-layout-width",
+    handleLayoutVariable: "--workspace-right-dock-layout-handle-width",
+  });
+
+  await page.setViewportSize({ width: 866, height: 994 });
+  await expectNoDocumentOverflow(page);
+  expect(runtimeErrors).toEqual([]);
 });
 
 for (const fixture of [
@@ -292,11 +388,11 @@ for (const fixture of [
       page.locator('[data-conversation-composer][data-surface="channel"]'),
     );
     await captureEvidence(page, evidenceFilename(fixture, "channel-summary-dock"));
-    await channelToolbar.getByRole("button", { name: "Summary" }).click();
+    await channelToolbar.getByRole("button", { name: "Summary", exact: true }).click();
     await openBottomTerminal(page, channelToolbar);
     await captureEvidence(page, evidenceFilename(fixture, "channel-terminal"));
 
-    await page.getByLabel("Ling Stack navigation").getByRole("button", { name: teammateName }).click();
+    await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: teammateName }).click();
     const teammateToolbar = page.getByRole("toolbar", { name: "Private chat actions" });
     await openSummaryAndDock(
       teammateToolbar,
@@ -307,7 +403,7 @@ for (const fixture of [
       page.locator('[data-conversation-composer][data-surface="teammate_direct"]'),
     );
     await captureEvidence(page, evidenceFilename(fixture, "teammate-summary-dock"));
-    await teammateToolbar.getByRole("button", { name: "Summary" }).click();
+    await teammateToolbar.getByRole("button", { name: "Summary", exact: true }).click();
     await openBottomTerminal(page, teammateToolbar);
     await captureEvidence(page, evidenceFilename(fixture, "teammate-terminal"));
 
@@ -322,7 +418,7 @@ for (const fixture of [
       page.locator('[data-conversation-composer][data-surface="normal_conversation"]'),
     );
     await captureEvidence(page, evidenceFilename(fixture, "normal-summary-dock"));
-    await conversationToolbar.getByRole("button", { name: "Summary" }).click();
+    await conversationToolbar.getByRole("button", { name: "Summary", exact: true }).click();
     await openBottomTerminal(page, conversationToolbar);
     await captureEvidence(page, evidenceFilename(fixture, "normal-terminal"));
 
@@ -337,11 +433,17 @@ async function useEnglishLightSurface(page: Page, width = 1440): Promise<void> {
 
 async function openNormalConversationFixture(page: Page): Promise<void> {
   await page
-    .getByLabel("Ling Stack navigation")
+    .getByRole("complementary", { name: /Sidebar display|侧栏显示/u })
     .locator(".sidebar-recent-row")
     .filter({ hasText: normalConversationFixtureTitle })
     .click();
   await expect(page.getByLabel("Conversation page")).toBeVisible();
+}
+
+async function ensureNavigationExpanded(page: Page): Promise<void> {
+  const showNavigation = page.getByRole("button", { name: "Show navigation" });
+  if (await showNavigation.isVisible()) await showNavigation.click();
+  await expect(page.getByRole("button", { name: "Hide navigation" })).toBeVisible();
 }
 
 async function prepareSurface(page: Page, theme: "light" | "dark", width: number, height: number): Promise<void> {
@@ -364,12 +466,16 @@ async function openSummaryAndDock(
   feed?: import("@playwright/test").Locator,
   composer?: import("@playwright/test").Locator,
 ): Promise<void> {
-  await toolbar.getByRole("button", { name: "Summary" }).click();
+  await toolbar.getByRole("button", { name: "Summary", exact: true }).click();
   await expect(summary).toBeVisible();
   await toolbar.getByRole("button", { name: "Show details" }).click();
   await expect(dock).toBeVisible();
-  const summaryButton = toolbar.getByRole("button", { name: "Summary" });
-  await expect(summaryButton).toHaveAttribute("aria-pressed", "true");
+  const summaryButton = toolbar.getByRole("button", { name: "Summary", exact: true });
+  if (summaryWithDock) {
+    await expect(summaryButton).toHaveAttribute("aria-pressed", "true");
+  } else {
+    await expect(summaryButton).not.toHaveAttribute("aria-pressed", "true");
+  }
   await expect(summaryButton).toHaveAttribute("aria-expanded", summaryWithDock ? "true" : "false");
   await expect.poll(async () => dock.evaluate((element) => {
     const rect = element.getBoundingClientRect();
@@ -411,19 +517,61 @@ async function expectConversationSummaryGeometry(
   });
 }
 
+async function expectResponsiveDockProjection(input: {
+  readonly page: Page;
+  readonly toolbar: import("@playwright/test").Locator;
+  readonly root: import("@playwright/test").Locator;
+  readonly dock: import("@playwright/test").Locator;
+  readonly handle: import("@playwright/test").Locator;
+  readonly dockLayoutVariable: string;
+  readonly handleLayoutVariable: string;
+}): Promise<void> {
+  const details = input.toolbar.locator('[data-conversation-action="details"]');
+  await expect(details).toBeEnabled();
+  await details.click();
+  await expect(input.dock).toBeVisible();
+  await expect(input.handle).toBeVisible();
+  await expect(details).toHaveAttribute("aria-expanded", "true");
+  await expect.poll(async () => input.dock.evaluate((element) => getComputedStyle(element).borderLeftWidth)).toBe("0px");
+  await expect.poll(async () => input.handle.evaluate((element) => getComputedStyle(element, "::before").width)).toBe("1px");
+
+  await input.page.setViewportSize({ width: 900, height: 800 });
+  await expect(input.dock).toHaveCount(0);
+  await expect(input.handle).toHaveCount(0);
+  await expect(details).toBeDisabled();
+  await expect(details).toHaveAttribute("aria-expanded", "false");
+  await expect.poll(async () => input.root.evaluate((element, variables) => {
+    const style = getComputedStyle(element);
+    return variables.map((variable) => Number.parseFloat(style.getPropertyValue(variable)) || 0);
+  }, [input.dockLayoutVariable, input.handleLayoutVariable])).toEqual([0, 0]);
+  await expectNoDocumentOverflow(input.page);
+
+  await input.page.setViewportSize({ width: 901, height: 800 });
+  await expect(input.dock).toBeVisible();
+  await expect(input.handle).toBeVisible();
+  await expect(details).toBeEnabled();
+  await expect(details).toHaveAttribute("aria-expanded", "true");
+  await expect.poll(async () => input.root.evaluate((element, variables) => {
+    const style = getComputedStyle(element);
+    const values = variables.map((variable) => Number.parseFloat(style.getPropertyValue(variable)) || 0);
+    return { dockHasWidth: values[0] > 0, handleWidth: values[1] };
+  }, [input.dockLayoutVariable, input.handleLayoutVariable])).toEqual({ dockHasWidth: true, handleWidth: 8 });
+  await expectNoDocumentOverflow(input.page);
+}
+
 async function expectSummaryConcealAndRestore(
   page: Page,
   toolbar: import("@playwright/test").Locator,
   summary: import("@playwright/test").Locator,
   dock: import("@playwright/test").Locator,
 ): Promise<void> {
-  const summaryButton = toolbar.getByRole("button", { name: "Summary" });
+  const summaryButton = toolbar.getByRole("button", { name: "Summary", exact: true });
   await summaryButton.click();
   await expect(summary).toBeVisible();
   await toolbar.getByRole("button", { name: "Show details" }).click();
   await expect(dock).toBeVisible();
   await expect(summary).toBeHidden();
-  await expect(summaryButton).toHaveAttribute("aria-pressed", "true");
+  await expect(summaryButton).not.toHaveAttribute("aria-pressed", "true");
   await expect(summaryButton).toHaveAttribute("aria-expanded", "false");
 
   await page.getByRole("button", { name: "Hide navigation" }).click();
@@ -450,6 +598,10 @@ async function openBottomTerminal(
   await expect(terminal).toBeVisible();
   await expect(terminal).toHaveAttribute("data-bottom-panel-expanded", "true");
   await expect(terminal).toHaveAttribute("data-bottom-panel-motion", "open");
+}
+
+async function expectNoDocumentOverflow(page: Page): Promise<void> {
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 }
 
 function evidenceFilename(

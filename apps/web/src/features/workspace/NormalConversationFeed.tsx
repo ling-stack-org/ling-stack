@@ -1,27 +1,28 @@
-import { useCallback, useLayoutEffect, useMemo, useRef, useState, type UIEvent } from "react";
-import { ArrowDown, Copy, FileText, Pencil, ThumbsDown, ThumbsUp } from "lucide-react";
-import { attachmentContentUrl } from "../../api.js";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { ArrowDown, Copy, FileText, Pencil } from "lucide-react";
+import { attachmentContentUrl, daemonBaseUrl, submitUserInputAnswer } from "../../api.js";
 import { useI18n } from "../../i18n.js";
 import { attachmentCanPreview, loadPreviewContent } from "../../lib/previews.js";
 import type { InlineApprovalView } from "../../lib/inline-approvals.js";
 import {
   buildComposerGateApprovalPresentationByRunId,
-  composerGateApprovalPresentationForWorkCell,
+  composerGateApprovalPresentationForRunId,
   type ComposerGateApprovalPresentation,
 } from "../../lib/runtime-approval-presentation.js";
 import {
   ConversationAttachmentStrip,
   ConversationGeneratedMediaBlock,
-  ConversationFeed,
+  ConversationTimelineFeed,
   ConversationReferenceStrip,
   ConversationReplacementRetry,
-  ConversationWorkCell,
   InlineMessageEditor,
   MessageActionBar,
   MessageRow,
 } from "../../shared/conversation/index.js";
 import { IconButton, InlineFeedback } from "../../shared/ui/index.js";
-import type { ConversationGeneratedMedia, RunSession } from "../../types.js";
+import { UserProfileAvatar } from "../../shared/components/index.js";
+import { TeammateAvatarView } from "../teammates/TeammateAvatarView.js";
+import type { ConversationGeneratedMedia, RunSession, UserProfile } from "../../types.js";
 import type {
   WorkspaceRightDockFileTarget,
   WorkspaceRightDockReviewTarget,
@@ -34,10 +35,21 @@ import type {
   ConversationHomeDetailContext,
   ConversationHomeMessage,
 } from "./normal-conversation-types.js";
-
-const latestThresholdPx = 56;
+import { buildSurfaceTimelineSnapshot } from "../../domains/conversations/timeline-snapshot.js";
+import { mountConversationRunFeedbackTimeline } from "../../domains/conversations/ConversationRunFeedbackTimeline.js";
+import {
+  flattenNormalTimelineItems,
+  maxTimelineRevision,
+  selectNormalTimelineItems,
+} from "./normal-conversation-timeline-items.js";
+import { requestTimelineWorkspaceFileOpen } from "../../shared/conversation/timeline/workspace-file-capability.js";
+import { timelineMessageChromeOwnerIds } from "../../shared/conversation/timeline/timeline-message-chrome-owners.js";
+import { NormalConversationResponseActions } from "./NormalConversationResponseActions.js";
+import { useConversationReadingViewport } from "../../shared/conversation/blocks/use-conversation-reading-viewport.js";
+import { conversationReadingScope } from "../../shared/conversation/view-store/conversation-reading-storage.js";
 
 export interface NormalConversationFeedProps {
+  readonly userProfile?: UserProfile;
   readonly messages: readonly ConversationHomeMessage[];
   readonly visibleMessages: readonly ConversationHomeMessage[];
   readonly runById: ReadonlyMap<string, RunSession>;
@@ -63,6 +75,7 @@ export interface NormalConversationFeedProps {
 }
 
 export function NormalConversationFeed({
+  userProfile,
   detailContext,
   composerGateApprovals,
   editSaving,
@@ -87,11 +100,6 @@ export function NormalConversationFeed({
   workspaceCwd,
 }: NormalConversationFeedProps): React.JSX.Element {
   const { t } = useI18n();
-  const feedRef = useRef<HTMLDivElement | null>(null);
-  const contentResizeFrameRef = useRef<number | undefined>(undefined);
-  const stickToLatestRef = useRef(true);
-  const mountedRef = useRef(false);
-  const [latestButtonVisible, setLatestButtonVisible] = useState(false);
   const [feedbackById, setFeedbackById] = useState<Record<string, "up" | "down">>({});
   const composerGateApprovalByRunId = useMemo(
     () => buildComposerGateApprovalPresentationByRunId(composerGateApprovals, t),
@@ -107,72 +115,79 @@ export function NormalConversationFeed({
     workspaceCwd,
   }), [detailContext, messages, projectPath, runById, t, visibleMessages, workspaceCwd]);
   const generatedMediaByRunId = useMemo(() => groupGeneratedMediaByRunId(generatedMedia), [generatedMedia]);
-  const itemKey = useMemo(
-    () => feedItems.map((item) => `${item.message.id}:${item.message.updatedAt ?? item.message.createdAt}:${item.message.status ?? "ready"}`).join("|"),
+  const timelineSnapshot = useMemo(() => {
+    const canonicalItems = detailContext?.timelineProjection?.items;
+    const items = canonicalItems && canonicalItems.length > 0
+      ? selectNormalTimelineItems(canonicalItems, feedItems)
+      : flattenNormalTimelineItems(feedItems);
+    const activeMessage = feedItems.find((item) => item.bodyStreaming && item.message.runId);
+    const activeRun = activeMessage?.message.runId
+      ? {
+          runId: activeMessage.message.runId,
+          status: "working" as const,
+          workspaceLabel: projectPath?.trim() || workspaceCwd.trim(),
+          cwd: projectPath?.trim() || workspaceCwd.trim(),
+          branch: null,
+          modelLabel: null,
+          sourceRefs: [],
+        }
+      : null;
+    return buildSurfaceTimelineSnapshot({
+      surface: "normal_conversation",
+      threadId: detailContext?.threadId ?? feedItems.find((item) => item.message.threadId)?.message.threadId,
+      items,
+      activeRun,
+      runLifecycles: runById,
+      contextSegmentIdByItemId: detailContext?.timelineProjection?.contextSegmentIdByItemId,
+      canonicalRevision: maxTimelineRevision(items),
+    });
+  }, [detailContext, feedItems, projectPath, runById, workspaceCwd]);
+  const messageChromeOwnerIds = useMemo(
+    () => timelineMessageChromeOwnerIds(timelineSnapshot.items),
+    [timelineSnapshot.items],
+  );
+  const feedItemByMessageId = useMemo(
+    () => new Map(feedItems.flatMap((item) => [
+      [item.message.id, item] as const,
+      ...(item.message.canonicalItemId ? [[item.message.canonicalItemId, item] as const] : []),
+    ])),
+    [feedItems],
+  );
+  const workspaceId = detailContext?.executionActions.find((action) => action.workspaceId.trim())?.workspaceId;
+  const timelineThreadId = detailContext?.threadId ?? feedItems.find((item) => item.message.threadId)?.message.threadId;
+  const readingScopeKey = conversationReadingScope(daemonBaseUrl, projectPath?.trim() || workspaceCwd, "normal", timelineThreadId);
+  const handleOpenTimelineSourceRef = useCallback(async (
+    ref: import("@ling-stack/conversation-ui-core").ConversationOperationSourceRef,
+    item?: import("@ling-stack/conversation-ui-core").ConversationTimelineItem,
+  ): Promise<void> => {
+    if (ref.kind !== "file" && ref.kind !== "path" && ref.kind !== "diff" && ref.kind !== "artifact") {
+      throw new Error("This source is not an openable workspace resource.");
+    }
+    await requestTimelineWorkspaceFileOpen(ref, item, {
+      cwd: projectPath?.trim() || workspaceCwd.trim(),
+      workspaceId,
+      threadId: timelineThreadId,
+    }, onOpenReportFile);
+  }, [onOpenReportFile, projectPath, timelineThreadId, workspaceCwd, workspaceId]);
+  const itemIdentityKey = useMemo(
+    () => feedItems.map((item) => item.message.id).join("|"),
     [feedItems],
   );
 
-  const scrollToLatest = useCallback((behavior: ScrollBehavior = "smooth"): void => {
-    const feed = feedRef.current;
-    if (!feed) {
-      return;
-    }
-    feed.scrollTo({ top: feed.scrollHeight, behavior });
-    stickToLatestRef.current = true;
-    setLatestButtonVisible(false);
-  }, []);
-
-  useLayoutEffect(() => {
-    const feed = feedRef.current;
-    if (!feed) {
-      return;
-    }
-    if (!mountedRef.current || stickToLatestRef.current) {
-      mountedRef.current = true;
-      const frame = globalThis.requestAnimationFrame(() => scrollToLatest("auto"));
-      return () => globalThis.cancelAnimationFrame(frame);
-    }
-    setLatestButtonVisible(distanceFromLatest(feed) > latestThresholdPx);
-  }, [itemKey, scrollToLatest]);
-
-  useLayoutEffect(() => {
-    const feed = feedRef.current;
-    if (!feed || typeof ResizeObserver === "undefined") {
-      return undefined;
-    }
-    const observer = new ResizeObserver(() => {
-      if (contentResizeFrameRef.current !== undefined) {
-        return;
-      }
-      contentResizeFrameRef.current = globalThis.requestAnimationFrame(() => {
-        contentResizeFrameRef.current = undefined;
-        const currentFeed = feedRef.current;
-        if (!currentFeed) {
-          return;
-        }
-        if (stickToLatestRef.current) {
-          currentFeed.scrollTop = currentFeed.scrollHeight;
-          setLatestButtonVisible(false);
-          return;
-        }
-        setLatestButtonVisible(distanceFromLatest(currentFeed) > latestThresholdPx);
-      });
-    });
-    Array.from(feed.children).forEach((child) => observer.observe(child));
-    return () => {
-      observer.disconnect();
-      if (contentResizeFrameRef.current !== undefined) {
-        globalThis.cancelAnimationFrame(contentResizeFrameRef.current);
-        contentResizeFrameRef.current = undefined;
-      }
-    };
-  }, [itemKey]);
-
-  function handleFeedScroll(event: UIEvent<HTMLDivElement>): void {
-    const atLatest = distanceFromLatest(event.currentTarget) <= latestThresholdPx;
-    stickToLatestRef.current = atLatest;
-    setLatestButtonVisible(!atLatest);
-  }
+  const {
+    scrollRef: feedRef,
+    locatorRef: timelineItemLocatorRef,
+    latestButtonVisible,
+    scrollToLatest,
+    pauseAutoFollow: pauseTimelineAutoFollow,
+    onScroll: handleFeedScroll,
+  } = useConversationReadingViewport({
+    scopeKey: timelineSnapshot.scope.threadId,
+    revision: feedItems,
+    contentKey: itemIdentityKey,
+    searchActive,
+    readingScopeKey,
+  });
 
   function toggleFeedback(messageId: string, feedback: "up" | "down"): void {
     setFeedbackById((current) => {
@@ -186,80 +201,122 @@ export function NormalConversationFeed({
   }
 
   return (
-    <div className="normal-conversation-feed-frame">
-      <ConversationFeed
-        rootRef={feedRef}
-        onScroll={handleFeedScroll}
-        className="normal-conversation-feed"
-        ariaLabel={t("Conversation messages")}
-        items={feedItems}
-        emptyLabel={searchActive ? t("No matching conversation messages") : t("No conversation messages yet")}
-        getItemId={(item) => item.message.id}
-        renderItem={(item) => (
-          <NormalConversationMessageRow
-            item={item}
-            composerGateApproval={item.workCell
-              ? composerGateApprovalPresentationForWorkCell(item.workCell, composerGateApprovalByRunId)
-              : undefined}
-            generatedMedia={item.message.runId ? generatedMediaByRunId.get(item.message.runId) ?? [] : []}
-            feedback={feedbackById[item.message.id]}
-            editing={editingMessageId === item.message.id}
-            editSaving={editSaving}
-            editable={item.message.id === latestEditableUserMessageId}
-            replacementRetrying={replacementRetryingMessageId === item.message.id}
-            replacementRetryError={replacementRetryError}
-            projectPath={projectPath}
-            workspaceCwd={workspaceCwd}
-            onCancelEdit={onCancelMessageEdit}
-            onEdit={() => onEditMessage(item.message.id)}
-            onSave={(body) => onSaveMessage(item.message, body)}
-            onRetryReplacement={() => onRetryReplacement(item.message)}
-            onToggleFeedback={(feedback) => toggleFeedback(item.message.id, feedback)}
-            onOpenFiles={onOpenFiles}
-            onOpenReportFile={onOpenReportFile}
-            onOpenReview={onOpenReview}
-            onOpenRun={onOpenRun}
-          />
-        )}
-      />
-      {latestButtonVisible ? (
+    <ConversationTimelineFeed
+      surfaceId={`normal:${timelineSnapshot.scope.threadId}`}
+      readingScopeKey={readingScopeKey}
+      scrollRef={feedRef}
+      frameClassName="normal-conversation-feed-frame"
+      feedClassName="normal-conversation-feed"
+      ariaLabel={t("Conversation messages")}
+      timelineId={`timeline:${timelineSnapshot.scope.threadId}`}
+      empty={feedItems.length === 0}
+      loadingLabel={t("Loading messages...")}
+      emptyLabel={searchActive ? t("No matching conversation messages") : t("No conversation messages yet")}
+      onScroll={handleFeedScroll}
+      onUserScrollIntent={pauseTimelineAutoFollow}
+      timelineNode={(
+        <div className="normal-conversation-timeline-surface" data-conversation-surface-timeline="normal">
+          {mountConversationRunFeedbackTimeline({
+            snapshot: timelineSnapshot,
+            depth: 0,
+            cwd: projectPath?.trim() || workspaceCwd.trim(),
+            loadPreview: loadPreviewContent,
+            onSubmitUserInputAnswer: (command) => submitUserInputAnswer(workspaceCwd.trim(), command),
+            onPositionNavigate: pauseTimelineAutoFollow,
+            positionIdentity: (item) => item.kind === "userMessage" ? {
+              name: userProfile?.displayName.trim() || t("You"),
+              avatar: <UserProfileAvatar profile={userProfile} fallbackLabel={t("You")} />,
+            } : {
+              name: t("Ling Agent"),
+              avatar: <TeammateAvatarView cwd={workspaceCwd} compact teammate={{ displayName: "Ling Agent", kind: "system_teammate", systemRole: "ling_agent" }} />,
+            },
+            virtualScrollRef: feedRef,
+            itemLocatorRef: timelineItemLocatorRef,
+            onDisclosureIntent: pauseTimelineAutoFollow,
+            onOpenSourceRef: handleOpenTimelineSourceRef,
+            onOpenNativeFile: (localFile) => onOpenReportFile({ path: localFile.path, line: localFile.line, localFile }),
+            onOpenReview,
+            renderResponseActions: (response, copyText) => {
+              const messageId = response.message?.logicalMessageId ?? response.message?.itemId;
+              const item = messageId ? feedItemByMessageId.get(messageId) : undefined;
+              if (!item || item.message.role !== "assistant" || !item.message.content) return undefined;
+              return <NormalConversationResponseActions
+                copyText={copyText}
+                feedback={feedbackById[item.message.id]}
+                onToggleFeedback={(value) => toggleFeedback(item.message.id, value)} />;
+            },
+            renderMessageChrome: (messageItem, body) => {
+              const messageId = messageItem.logicalMessageId ?? messageItem.itemId;
+              const item = messageId ? feedItemByMessageId.get(messageId) : undefined;
+              if (!item) return body;
+              return (
+                <NormalConversationMessageRow
+                  item={item}
+                  bodyNodeOverride={body}
+                  ownsMessageChrome={messageChromeOwnerIds.has(messageItem.id)}
+                  composerGateApproval={composerGateApprovalPresentationForRunId(item.message.runId, composerGateApprovalByRunId)}
+                  generatedMedia={item.message.runId ? generatedMediaByRunId.get(item.message.runId) ?? [] : []}
+                  editing={editingMessageId === item.message.id}
+                  editSaving={editSaving}
+                  editable={item.message.id === latestEditableUserMessageId}
+                  replacementRetrying={replacementRetryingMessageId === item.message.id}
+                  replacementRetryError={replacementRetryError}
+                  projectPath={projectPath}
+                  workspaceCwd={workspaceCwd}
+                  onCancelEdit={onCancelMessageEdit}
+                  onEdit={() => onEditMessage(item.message.id)}
+                  onSave={(nextBody) => onSaveMessage(item.message, nextBody)}
+                  onRetryReplacement={() => onRetryReplacement(item.message)}
+                  onOpenFiles={onOpenFiles}
+                  onOpenReview={onOpenReview}
+                  onOpenRun={onOpenRun}
+                />
+              );
+            },
+            ariaLabel: t("Conversation transcript"),
+          }).node}
+        </div>
+      )}
+      latestButtonNode={latestButtonVisible ? (
         <IconButton
-          className="normal-conversation-latest-button"
+          className="message-feed-latest-button normal-conversation-latest-button"
           icon={ArrowDown}
           label={t("Jump to latest message")}
           onClick={() => scrollToLatest()}
         />
       ) : null}
-    </div>
+    />
   );
 }
 
 function NormalConversationMessageRow({
+  bodyNodeOverride,
+  ownsMessageChrome,
   composerGateApproval,
   editSaving,
   editable,
   editing,
-  feedback,
   item,
   generatedMedia,
   onCancelEdit,
   onEdit,
   onOpenFiles,
-  onOpenReportFile,
   onOpenReview,
   onOpenRun,
   onRetryReplacement,
   onSave,
-  onToggleFeedback,
   projectPath,
   replacementRetryError,
   replacementRetrying,
   workspaceCwd,
 }: {
   readonly item: NormalConversationFeedItem;
+  /** Body is supplied by the owning surface Timeline renderer. */
+  readonly bodyNodeOverride: ReactNode;
+  /** Message resources/actions belong to one segment, not each narration row. */
+  readonly ownsMessageChrome: boolean;
   readonly composerGateApproval?: ComposerGateApprovalPresentation;
   readonly generatedMedia: readonly ConversationGeneratedMedia[];
-  readonly feedback?: "up" | "down";
   readonly editing: boolean;
   readonly editSaving: boolean;
   readonly editable: boolean;
@@ -271,25 +328,28 @@ function NormalConversationMessageRow({
   readonly onEdit: () => void;
   readonly onSave: (body: string) => void | Promise<void>;
   readonly onRetryReplacement: () => void | Promise<void>;
-  readonly onToggleFeedback: (feedback: "up" | "down") => void;
   readonly onOpenFiles: () => void;
-  readonly onOpenReportFile: (target: WorkspaceRightDockFileTarget) => void;
   readonly onOpenReview: (target: WorkspaceRightDockReviewTarget) => void;
   readonly onOpenRun?: (runId: string) => void;
 }): React.JSX.Element {
   const { t } = useI18n();
   const { message } = item;
+  const blockedAgentMessage = item.authorType === "ai-teammate"
+    && (Boolean(composerGateApproval) || message.status === "blocked");
+  const actionsReady = message.role !== "assistant"
+    || message.status === "succeeded" || message.status === "failed" || message.status === "cancelled";
   return (
     <MessageRow
       surface="normal_conversation"
       className={item.className}
       authorType={item.authorType}
+      tone={item.authorType === "system" ? "system" : "document"}
       authorName={item.authorName}
       createdAtLabel={item.createdAtLabel}
       statusNode={message.editedAt ? <span className="conversation-message-edited-label">{t("Edited")}</span> : undefined}
       body={item.body}
       bodyCwd={projectPath?.trim() || workspaceCwd.trim()}
-      bodyNode={editing ? (
+      bodyNode={ownsMessageChrome && editing ? (
         <InlineMessageEditor
           initialValue={message.content}
           cwd={projectPath?.trim() || workspaceCwd.trim()}
@@ -301,11 +361,13 @@ function NormalConversationMessageRow({
           onCancel={onCancelEdit}
           onSave={onSave}
         />
-      ) : undefined}
+      ) : bodyNodeOverride}
       bodyCompact
       bodyStreaming={item.bodyStreaming}
-      bodyOnOpenLocalFile={onOpenFiles}
-      attachmentsNode={(message.attachments?.length ?? 0) > 0 || (message.fileRefs?.length ?? 0) > 0 ? (
+      // Model-text paths are display-only. Only typed timeline evidence with
+      // a complete execution lineage may open a workspace file.
+      bodyOnOpenLocalFile={undefined}
+      attachmentsNode={ownsMessageChrome && ((message.attachments?.length ?? 0) > 0 || (message.fileRefs?.length ?? 0) > 0) ? (
         <>
           <ConversationAttachmentStrip
             attachments={(message.attachments ?? []).map((attachment) => ({
@@ -336,31 +398,18 @@ function NormalConversationMessageRow({
               meta: fileRef.line !== undefined ? `${fileRef.path}:${fileRef.line}` : fileRef.path,
               previewTitle: fileRef.label,
               previewText: fileRef.path,
-              onOpen: () => onOpenReportFile({ cwd: workspaceCwd.trim(), path: fileRef.path, line: fileRef.line, label: fileRef.label }),
             }))}
           />
         </>
       ) : null}
-      workCellNode={item.workCell || generatedMedia.length > 0 ? (
+      workCellNode={ownsMessageChrome && generatedMedia.length > 0 ? (
         <>
-          {item.workCell ? (
-            <ConversationWorkCell
-              model={item.workCell}
-              surface="normal_conversation"
-              composerGateApproval={composerGateApproval}
-              cwd={item.workCellCwd}
-              onOpenRun={onOpenRun}
-              onOpenWorkspaceFile={onOpenReportFile}
-              onOpenWorkspaceReview={onOpenReview}
-              loadPreview={loadPreviewContent}
-            />
-          ) : null}
           {message.role === "assistant" ? (
             <ConversationGeneratedMediaBlock items={generatedMedia} cwd={workspaceCwd.trim()} />
           ) : null}
         </>
       ) : null}
-      errorNode={(
+      errorNode={ownsMessageChrome ? (
         <>
           {item.errorText ? (
             <InlineFeedback
@@ -378,12 +427,12 @@ function NormalConversationMessageRow({
             />
           ) : null}
         </>
-      )}
-      actionsNode={message.content && !editing ? (
+      ) : null}
+      actionsNode={message.role === "user" && ownsMessageChrome && actionsReady && message.content && !editing && !blockedAgentMessage ? (
         <MessageActionBar
           surface="normal_conversation"
           className="normal-conversation-message-actions"
-          actions={message.role === "user" ? [
+          actions={[
             {
               id: "copy",
               kind: "copy",
@@ -398,30 +447,6 @@ function NormalConversationMessageRow({
               icon: <Pencil size={14} />,
               onClick: onEdit,
             }] : []),
-          ] : [
-            {
-              id: "copy",
-              kind: "copy",
-              label: t("Copy message"),
-              icon: <Copy size={14} />,
-              copyText: message.content,
-            },
-            {
-              id: "like",
-              kind: "like",
-              label: t("Like response"),
-              icon: <ThumbsUp size={14} />,
-              selected: feedback === "up",
-              onClick: () => onToggleFeedback("up"),
-            },
-            {
-              id: "dislike",
-              kind: "dislike",
-              label: t("Dislike response"),
-              icon: <ThumbsDown size={14} />,
-              selected: feedback === "down",
-              onClick: () => onToggleFeedback("down"),
-            },
           ]}
         />
       ) : null}
@@ -439,9 +464,6 @@ function groupGeneratedMediaByRunId(
   return grouped;
 }
 
-function distanceFromLatest(element: HTMLElement): number {
-  return Math.max(0, element.scrollHeight - element.scrollTop - element.clientHeight);
-}
 
 function formatBytes(value: number): string {
   if (value < 1024) {

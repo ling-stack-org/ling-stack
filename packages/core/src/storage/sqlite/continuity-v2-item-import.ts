@@ -125,6 +125,7 @@ function legacyMessageToItem(
         format: "markdown",
         streaming: deliveryStatus === "pending",
         deliveryStatus,
+        presentationRole: "narration",
         ...(message.errorMessage ? { errorMessage: message.errorMessage } : {}),
       },
       ...(status === "committed" ? { committedAt: message.updatedAt } : {}),

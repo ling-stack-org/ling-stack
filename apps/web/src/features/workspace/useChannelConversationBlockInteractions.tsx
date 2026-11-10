@@ -225,6 +225,9 @@ export function useChannelConversationBlockInteractions({
       return;
     }
     if (event.key === "Enter" && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
+      if (isInteractiveEventTarget(event.target)) {
+        return;
+      }
       const feed = scrollRef.current;
       const focusedBlock = focusedConversationBlock();
       const block = focusedBlock ?? messageFeedFocusableBlocks().find((candidate) => candidate.querySelector(conversationExpandableSelector));
@@ -396,7 +399,9 @@ export function useChannelConversationBlockInteractions({
 
 const conversationExpandableSelectors = [
   ".conversation-work-cell-evidence-summary[aria-expanded='false']",
-  ".conversation-work-cell-row-main[aria-expanded='false']",
+  ".conversation-timeline-activity-main[aria-expanded='false']",
+  ".conversation-command-batch-header[aria-expanded='false']",
+  ".conversation-exploration-batch-header[aria-expanded='false']",
   ".transcript-block-view-head[aria-expanded='false']",
 ] as const;
 const conversationExpandableSelector = conversationExpandableSelectors.join(",");

@@ -8,6 +8,7 @@ import {
   type SecretResolver,
 } from "@ling-stack/core";
 import { executeMediaJob as executeMediaAdapterJob } from "@ling-stack/providers";
+import { fetchProvider } from "@ling-stack/runner-pi";
 import { readLimitedResponseText } from "../../shared/http.js";
 import { validateUrl } from "../../shared/validation.js";
 import { createMediaAdapterForProvider } from "../media/provider.js";
@@ -19,7 +20,11 @@ import {
 } from "./secret-materializer.js";
 import { extractProviderResponseText } from "./response-text.js";
 
-const PROVIDER_CHECK_TIMEOUT_MS = 10_000;
+// Compatible relays may need more than ten seconds to schedule a cold model
+// even though the same endpoint is healthy and accepts the configured model.
+// Keep the preflight bounded, but give it enough time to reflect the runtime
+// path instead of permanently blocking a usable provider in the UI.
+const PROVIDER_CHECK_TIMEOUT_MS = 30_000;
 
 export async function checkProviderPreset(
   store: ProviderStoreFacet,
@@ -50,8 +55,8 @@ export async function checkProviderPreset(
       };
     }
   }
-  if (preset.api !== "media-job" && !preset.capabilities.includes("chat")) {
-    return { ok: false, code: "unsupported_capability", message: "Provider preset cannot run chat tasks.", checkedAt };
+  if (preset.api !== "media-job" && !preset.capabilities.includes("chat") && !preset.capabilities.includes("asr")) {
+    return { ok: false, code: "unsupported_capability", message: "Provider preset must expose chat or asr capability.", checkedAt };
   }
   if (!preset.enabled) {
     return { ok: false, code: "provider_disabled", message: "Provider preset is disabled.", checkedAt };
@@ -59,6 +64,24 @@ export async function checkProviderPreset(
 
   if (preset.api === "media-job") {
     return await checkMediaProviderPreset(store, normalizeProviderPresetForMediaRuntime(preset), checkedAt, secretResolver);
+  }
+
+  if (preset.capabilities.includes("asr") && preset.api !== "openai-completions") {
+    return {
+      ok: false,
+      code: "unsupported_capability",
+      message: "ASR providers must use the OpenAI-compatible completions protocol.",
+      checkedAt,
+    };
+  }
+
+  if (preset.capabilities.includes("asr") && !preset.capabilities.includes("chat")) {
+    return {
+      ok: true,
+      code: "static_check",
+      message: "ASR provider configuration is valid. The check does not send microphone audio.",
+      checkedAt,
+    };
   }
 
   if (preset.api === "openai-codex-responses") {
@@ -180,7 +203,7 @@ async function probeChatProvider(
       secretResolver,
       baseHeaders: { "Content-Type": "application/json" },
     });
-    const response = await fetch(buildProviderCheckUrl(preset), {
+    const response = await fetchProvider(buildProviderCheckUrl(preset), {
       method: "POST",
       headers: applyProviderAuthHeaders(materialized.headers, preset, materialized.apiKeySecret.value),
       body: JSON.stringify(buildProviderCheckBody(preset)),

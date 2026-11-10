@@ -1,3 +1,5 @@
+import { normalizeRunnerId } from "@ling-stack/core";
+
 export function matchSingleSegmentRoute(pathname: string, prefix: string): string | undefined {
   const routePrefix = `${prefix}/`;
   if (!pathname.startsWith(routePrefix)) {
@@ -13,7 +15,7 @@ export function matchSingleSegmentRoute(pathname: string, prefix: string): strin
 export function parseRunnerReadinessRoute(pathname: string): { readonly runnerId: string } | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 3 && segments[0] === "runners" && segments[2] === "readiness") {
-    return { runnerId: segments[1] };
+    return { runnerId: normalizeRunnerId(segments[1]) ?? segments[1] };
   }
   return undefined;
 }
@@ -76,6 +78,15 @@ export function parseRunRoute(
     return { kind: "tool-load-requests", runId: segments[1] };
   }
   return undefined;
+}
+
+export function parseUserInputAnswerSubmissionRoute(
+  pathname: string,
+): { readonly threadId: string; readonly requestId: string } | undefined {
+  const segments = decodeRouteSegments(pathname);
+  if (!segments || segments.length !== 5 || segments[0] !== "threads"
+    || segments[2] !== "user-input-requests" || segments[4] !== "answers") return undefined;
+  return { threadId: segments[1], requestId: segments[3] };
 }
 
 export function parseTurnRoute(
@@ -257,11 +268,14 @@ export function parseLingThreadRoute(
 
 export type SkillRoute =
   | { readonly kind: "draft"; readonly draftId: string; readonly action?: "publish" }
-  | { readonly kind: "skill"; readonly skillId: string; readonly action?: "corrections" | "hard-delete" | "source" | "source-archive" | "source-rollback" | "source-artifacts" | "optimization-preview" | "compiled-views" | "compiled-view-archive" | "revision-preview" | "revisions"; readonly viewId?: string }
+  | { readonly kind: "skill"; readonly skillId: string; readonly action?: "corrections" | "hard-delete" | "source" | "source-archive" | "source-rollback" | "source-artifacts" | "optimization-preview" | "compiled-views" | "compiled-view-archive" | "revision-preview" | "revisions" | "revision-undo"; readonly viewId?: string }
   | { readonly kind: "candidate"; readonly candidateId: string; readonly action?: "review" | "draft" };
 
 export function parseSkillRoute(pathname: string): SkillRoute | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 3 && segments[0] === "skills" && segments[2] === "revision-undo") {
+    return { kind: "skill", skillId: segments[1], action: "revision-undo" };
+  }
   if (segments.length === 2 && segments[0] === "skill-candidates" && segments[1] !== "observe") {
     return { kind: "candidate", candidateId: segments[1] };
   }
@@ -319,6 +333,7 @@ export function parseSkillRoute(pathname: string): SkillRoute | undefined {
 export type WorkUnitRoute =
   | { readonly kind: "detail"; readonly workUnitId: string }
   | { readonly kind: "events"; readonly workUnitId: string }
+  | { readonly kind: "harness"; readonly workUnitId: string }
   | { readonly kind: "cancel"; readonly workUnitId: string }
   | { readonly kind: "retry"; readonly workUnitId: string }
   | { readonly kind: "reconcile"; readonly workUnitId: string };
@@ -333,7 +348,7 @@ export function parseWorkUnitRoute(pathname: string): WorkUnitRoute | undefined 
     return { kind: "detail", workUnitId: segments[1] };
   }
   if (segments.length === 3 && segments[0] === "work-units") {
-    if (segments[2] === "events" || segments[2] === "cancel" || segments[2] === "retry" || segments[2] === "reconcile") {
+    if (segments[2] === "events" || segments[2] === "harness" || segments[2] === "cancel" || segments[2] === "retry" || segments[2] === "reconcile") {
       return { kind: segments[2], workUnitId: segments[1] };
     }
   }
@@ -380,8 +395,10 @@ export function parseChannelRoute(
   pathname: string,
 ): {
   readonly channelId: string;
-  readonly action?: "brief" | "items" | "turns" | "turns-stream" | "turn-context" | "turn-context-correction" | "message-route-decisions" | "intent-decisions" | "proposals" | "attachments" | "link-previews" | "decisions" | "handoffs" | "context-summaries" | "workflows" | "collaboration-cards" | "terminal-reports" | "team-experts" | "team-metrics" | "team-authority-ledger" | "team-patterns" | "team-snapshots" | "team-evaluations" | "workspace" | "protocol" | "playbooks" | "branches" | "council-policy" | "effective-council" | "proposed-plans";
+  readonly action?: "brief" | "items" | "turns" | "turns-stream" | "turn-context" | "turn-context-correction" | "message-route-decisions" | "intent-decisions" | "proposals" | "attachments" | "link-previews" | "decisions" | "handoffs" | "context-summaries" | "workflows" | "collaboration-cards" | "terminal-reports" | "team-experts" | "team-metrics" | "team-authority-ledger" | "team-patterns" | "team-snapshots" | "team-evaluations" | "workspace" | "protocol" | "playbooks" | "branches" | "sessions" | "council-policy" | "effective-council" | "proposed-plans";
   readonly branchId?: string;
+  readonly sessionId?: string;
+  readonly branchAction?: "repair";
   readonly turnId?: string;
   readonly protocolAction?: "revert" | "drafts" | "apply-draft" | "candidates" | "review-candidate" | "candidate-from-cluster" | "canvas";
   readonly protocolDraftId?: string;
@@ -401,6 +418,9 @@ export function parseChannelRoute(
   if (segments.length === 3 && segments[0] === "channels" && segments[2] === "protocol") {
     return { channelId: segments[1], action: "protocol" };
   }
+  if ((segments.length === 3 || segments.length === 4) && segments[0] === "channels" && segments[2] === "sessions") {
+    return { channelId: segments[1], action: "sessions", ...(segments[3] ? { sessionId: segments[3] } : {}) };
+  }
   if (segments.length === 3 && segments[0] === "channels" && segments[2] === "branches") {
     return { channelId: segments[1], action: "branches" };
   }
@@ -418,6 +438,9 @@ export function parseChannelRoute(
   }
   if (segments.length === 6 && segments[0] === "channels" && segments[2] === "turns" && segments[4] === "context" && segments[5] === "corrections") {
     return { channelId: segments[1], action: "turn-context-correction", turnId: segments[3] };
+  }
+  if (segments.length === 5 && segments[0] === "channels" && segments[2] === "branches" && segments[4] === "repair") {
+    return { channelId: segments[1], action: "branches", branchId: segments[3], branchAction: "repair" };
   }
   if (segments.length === 4 && segments[0] === "channels" && segments[2] === "branches") {
     return { channelId: segments[1], action: "branches", branchId: segments[3] };
@@ -690,7 +713,7 @@ export function parseChannelHandoffRoute(pathname: string): { readonly handoffId
 export function parseChannelWorkflowRoute(
   pathname: string,
 ):
-  | { readonly kind: "workflow"; readonly workflowId: string; readonly action?: "orchestrate" | "cancel" | "evidence" | "collaboration-card" | "workspace-changes" | "workspace-changes-undo" | "workspace-changes-reapply" }
+  | { readonly kind: "workflow"; readonly workflowId: string; readonly action?: "orchestrate" | "cancel" | "evidence" | "conflict-recovery" | "collaboration-card" | "workspace-changes" | "workspace-changes-undo" | "workspace-changes-reapply" }
   | { readonly kind: "steps"; readonly workflowId: string }
   | { readonly kind: "workflow-step"; readonly workflowStepId: string; readonly action?: "start" | "retry" | "evidence" }
   | undefined {
@@ -700,6 +723,9 @@ export function parseChannelWorkflowRoute(
   }
   if (segments.length === 3 && segments[0] === "workflows" && segments[2] === "orchestrate") {
     return { kind: "workflow", workflowId: segments[1], action: "orchestrate" };
+  }
+  if (segments.length === 3 && segments[0] === "workflows" && segments[2] === "conflict-recovery") {
+    return { kind: "workflow", workflowId: segments[1], action: "conflict-recovery" };
   }
   if (segments.length === 3 && segments[0] === "workflows" && segments[2] === "cancel") {
     return { kind: "workflow", workflowId: segments[1], action: "cancel" };
@@ -832,6 +858,14 @@ export function parseApprovalRoute(pathname: string): { readonly approvalId: str
   }
   if (segments.length === 3 && segments[0] === "approvals" && (segments[2] === "approve" || segments[2] === "deny")) {
     return { approvalId: segments[1], action: segments[2] };
+  }
+  return undefined;
+}
+
+export function parseApprovalCommandRuleRoute(pathname: string): { readonly ruleId: string } | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 2 && segments[0] === "approval-command-rules") {
+    return { ruleId: segments[1] };
   }
   return undefined;
 }

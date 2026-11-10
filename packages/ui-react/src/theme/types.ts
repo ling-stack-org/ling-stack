@@ -3,6 +3,7 @@ export const LING_THEME_SCHEMA_VERSION = 1 as const;
 export type LingColorScheme = "light" | "dark";
 export type LingThemeSource = "built-in" | "local-import" | "local-generated";
 export type LingResolvedThemeSource = LingThemeSource | "fallback";
+export type LingBuiltInSceneId = "forest-breeze" | "ocean-drift" | "midnight-aurora" | "farbound-journey";
 
 export type LingPresentationProfileId =
   | "ling-standard"
@@ -100,6 +101,12 @@ export interface LingThemeArtwork {
   readonly assets: readonly LingThemeArtworkAsset[];
 }
 
+export interface LingThemeScene {
+  readonly id: LingBuiltInSceneId;
+  readonly mascot: boolean;
+  readonly corners: boolean;
+}
+
 export interface LingThemePresentationSelection {
   readonly profileId: LingPresentationProfileId;
   readonly surfaceIntensity?: "subtle" | "balanced" | "strong";
@@ -137,6 +144,7 @@ export interface LingThemePackManifest {
   readonly desktop?: LingDesktopThemeTokens;
   readonly presentation?: LingThemePresentationSelection;
   readonly artwork?: LingThemeArtwork;
+  readonly scene?: LingThemeScene;
   readonly generation?: LingThemeGenerationMetadata;
   readonly launchAnimation?: LingThemeLaunchAnimation;
   readonly preview?: string;

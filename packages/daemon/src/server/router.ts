@@ -1,8 +1,18 @@
+import { handleChannelSessions, handleChannelSessionDirectoryRepair } from "../features/channels/session-routes.js";
+import { handleMemorySemanticRoute } from "../features/memory/semantic-routes.js";
+import { handleMemoryWikiRoute } from "../features/memory/wiki-routes.js";
+import { handleLearningReviewRoute } from "../features/learning/routes.js";
+import { handleWorkSummary } from "../features/work-summary/routes.js";
+import { handleConversationExecutionSelection } from "../runtime/conversation-execution-route.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { defaultProviderTemplates, executeExternalWorkAction, toRuntimeAttemptFence } from "@ling-stack/core";
 import type { AiTeammate, RunSession, RunStore, TeammateDirectMessage, TeammateDirectThread } from "@ling-stack/core";
 import type { DaemonContext } from "../context.js";
+import { daemonRequestIsAuthorized } from "./request-auth.js";
 import { HttpError } from "../errors.js";
+import { reconcileTeammateDirectRun } from "../features/teammates/direct-message-lifecycle.js";
+import { createHarnessFeatureSnapshot } from "../features/harness/index.js";
+import { runApprovalPostCommitEffects } from "../features/runs/approval-postcommit-effects.js";
 import {
   handleAutomationItem,
   handleAutomationDraftItem,
@@ -155,8 +165,10 @@ import {
   parseGovernanceNotificationRoute,
 } from "../features/governance-notifications/routes.js";
 import { handleConversationAttachmentsCollection, handleConversationDetail, handleConversationStream, startConversationReplacementRun } from "../features/conversations/routes.js";
+import { handleConversationSubmissionReceipt } from "../features/conversations/submission-receipts.js";
 import { startDetachedRunAndResolveReady } from "../features/runs/detached.js";
 import { handleConversationMessageEdit } from "../features/conversations/message-edits.js";
+import { handleUserInputAnswer } from "../features/conversations/user-input-answer-route.js";
 import { dispatchMediaJobExecution, handleRunMediaJob, syncMediaJobForApprovalDecision, type RunMediaJobHooks } from "../features/media/executor.js";
 import { publishConversationMediaProjectionChange } from "../features/media/conversation-events.js";
 import { handleConversationMediaGenerationTargets } from "../features/media/conversation-target-routes.js";
@@ -188,6 +200,7 @@ import {
   handlePluginPackageItem,
   handlePluginSourcesCollection,
   handlePluginsCollection,
+  handlePluginsImport,
 } from "../features/plugins/routes.js";
 import { handleCuaDriverLeaseRoute } from "../features/plugins/cua-driver-lease-routes.js";
 import { handleOfficeDriverRoute } from "../features/office-documents/driver-routes.js";
@@ -199,6 +212,7 @@ import {
   handleProviderItem,
   handleProviderModelImport,
   handleProviderModelsProbe,
+  handleTranscription,
   handleProvidersCollection,
   handleSecretStatus,
 } from "../features/providers/routes.js";
@@ -208,6 +222,7 @@ import { handleExecutionActionsCollection } from "../features/runs/execution-act
 import {
   createDetachedRunExecutionSink,
   createSseRunExecutionSink,
+  executeExistingRunContinuation,
   executeRunRequest,
   type RunExecutionSink,
 } from "../features/runs/orchestrator.js";
@@ -224,10 +239,12 @@ import {
   handleListShellSnapshots,
 } from "../features/runs/shell-snapshots.js";
 import {
+  handleApprovalCommandRuleItem,
+  handleApprovalCommandRulesCollection,
   handleApprovalItem,
   handleApprovalPolicy,
   handleApprovalsCollection,
-  handleCancelRun,
+  handleCancelRunRequest,
   handleGetArtifact,
   handleGetArtifactContent,
   handleGetArtifactPreview,
@@ -237,10 +254,13 @@ import {
   handleListRuns,
   handleRun,
 } from "../features/runs/routes.js";
+import { handleUserInputAnswerSubmission } from "../features/runs/user-input-answer-routes.js";
 import { handleLingThreadItem, handleLingThreadsCollection } from "../features/runs/thread-routes.js";
+import { handleHostCapabilityBridgeRoute } from "../features/runs/host-capability-bridge-routes.js";
 import { handleToolLoadRequestsCollection, handleToolSurfacesCollection } from "../features/runs/tool-surfaces.js";
 import { handleTraceItem, handleTracesCollection } from "../features/runs/traces-routes.js";
 import { resolveProviderForRun } from "../features/runs/providers.js";
+import { createWorkflowParallelCapabilityResolver } from "../features/runs/workflow-safety.js";
 import { handleGetWorkspaceChanges } from "../features/previews/workspace-changes.js";
 import {
   handleGetWorkspaceFileContent,
@@ -248,6 +268,10 @@ import {
   handleGetWorkspaceFileOpenOptions,
   handlePostWorkspaceFileOpen,
 } from "../features/previews/workspace-file-actions.js";
+import {
+  handlePostWorkspaceFileCapabilityIssue,
+  handlePostWorkspaceFileCapabilityPreview,
+} from "../features/previews/workspace-file-capability-routes.js";
 import { handleGetWorkspaceFilePreview } from "../features/previews/workspace-file-preview.js";
 import {
   handleGetRunWorkspaceChanges,
@@ -258,6 +282,7 @@ import {
 import { handleWorkspaceSnapshotRoute, parseWorkspaceSnapshotRoute } from "../features/runs/workspace-snapshot-routes.js";
 import { handleEffectiveConfig, handleWorkspaceSettings } from "../features/settings/routes.js";
 import { handleSkillRoute } from "../features/skills/routes.js";
+import { handleWorkflowTemplateRoute } from "../features/channels/workflow-template-routes.js";
 import { handleTaskItem, handleTaskRun, handleTasksCollection } from "../features/tasks/routes.js";
 import { materializeTaskAttachmentsForPrompt } from "../features/tasks/task-attachments.js";
 import {
@@ -300,6 +325,7 @@ import {
   handleWorkUnitRoute,
 } from "../runtime/routes.js";
 import {
+  retryRuntimeWorkUnit,
   startRuntimeWorkUnit,
   transitionWorkUnitCancelled,
   transitionWorkUnitTerminal,
@@ -308,6 +334,7 @@ import {
   matchSingleSegmentRoute,
   parseRunnerReadinessRoute,
   parseMemoryRoute,
+  parseApprovalCommandRuleRoute,
   parseApprovalRoute,
   parseArtifactRoute,
   parseAiCouncilRoute,
@@ -334,6 +361,7 @@ import {
   parseProviderRoute,
   parseRunInterventionRoute,
   parseRunRoute,
+  parseUserInputAnswerSubmissionRoute,
   parseTurnRoute,
   parseSkillRoute,
   parseTaskRoute,
@@ -346,15 +374,29 @@ import {
   parseWorkUnitRoute,
 } from "./routes.js";
 import { RunControlService } from "../run-control.js";
-import { allowLocalWorkspaceRequest } from "../shared/local-workspace-access.js";
+import { allowLocalServiceRequest, allowLocalWorkspaceRequest } from "../shared/local-workspace-access.js";
 import { setCorsHeaders, writeJson } from "../shared/response.js";
+import { readOptionalJsonBody } from "../shared/request.js";
+import { parseChannelWorkflowOrchestrationRequest } from "@ling-stack/contracts";
+import { selectWorkflowIsolatedExecution, type WorkflowIsolationHost } from "../features/channels/workflow-isolation-selection.js";
+import { handleWorkflowConflictRecovery } from "../features/channels/workflow-conflict-recovery-route.js";
 import { handleStartupStatus } from "../startup/routes.js";
+import { handleDiagnosticsDoctor, handleDiagnosticsLogs } from "../features/diagnostics/routes.js";
+import { handleNotifications } from "../features/notifications/routes.js";
+import { handleImDestinations } from "../features/im-destinations/routes.js";
+import { handleSkillsMarketplaceInspect } from "../features/skills/marketplace-route.js";
+import { handleDeliverablesBuild, handleSpreadsheetPreview } from "../features/deliverables/routes.js";
+import { handleHumanEvaluationDesktopRoute } from "../features/harness/evaluations/human-evaluation-routes.js";
 
 export async function routeRequest(
   request: IncomingMessage,
   response: ServerResponse,
   context: DaemonContext,
 ): Promise<void> {
+  if (await handleHumanEvaluationDesktopRoute(request, response, context)) return;
+  if (await context.engineManagement.handle(request, response)) {
+    return;
+  }
   if (await context.remoteAccess.handleManagementRequest(request, response)) {
     return;
   }
@@ -364,6 +406,7 @@ export async function routeRequest(
     extensionRegistry,
     storeRegistry,
     activeRuns,
+    userInputDeliveryWorker,
     activeDirectReplies,
     channelReplyDispatchCoordinator,
     channelTurnDispatchWorker,
@@ -380,7 +423,12 @@ export async function routeRequest(
     providerStartupRefresh,
     startupState,
     computerUsePreviews,
+    hostCapabilityBridge,
+    nativeRunDispatcher,
     cuaDriverActivationService,
+    workspaceFileCapabilities,
+    notificationHub,
+    imDestinations,
   } = context;
   setCorsHeaders(response);
 
@@ -390,6 +438,18 @@ export async function routeRequest(
     return;
   }
 
+  // Cloud/self-host slice: non-loopback binds require a bearer token on every
+  // request. /health stays open so lifecycle probes keep working.
+  if (config.authToken) {
+    const pathname = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`).pathname;
+    if (pathname !== "/health") {
+      if (!daemonRequestIsAuthorized(config.authToken, request.headers.authorization)) {
+        writeJson(response, 401, { error: "unauthorized", message: "A valid bearer token is required for non-loopback access." });
+        return;
+      }
+    }
+  }
+
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const maybeContinueRunInterventions = async (terminalRun: RunSession): Promise<void> => {
     const sourceRunId = terminalRun.parentRunId ?? terminalRun.id;
@@ -397,6 +457,11 @@ export async function routeRequest(
     const store = storeRegistry.findStoreForRun(sourceRunId, workspaceCwd) ?? storeRegistry.findStoreForRun(terminalRun.id, workspaceCwd);
     if (!store) {
       return;
+    }
+    try {
+      reconcileTeammateDirectRun(store, terminalRun, controlPlaneEvents);
+    } catch {
+      console.warn("teammate_direct_reconciliation_failed: the original reply remains recoverable");
     }
     maybeScheduleRunTerminalReport(store, terminalRun.id, { linkedRunId: terminalRun.id });
     const goalContinuation = maybeQueueGoalContinuation({
@@ -417,8 +482,79 @@ export async function routeRequest(
       controlPlaneEvents,
       startupState,
       computerUsePreviews,
+      nativeRunDispatcher,
     });
   };
+  const retryTaskRun = (input: {
+    readonly cwd: string;
+    readonly store: RunStore;
+    readonly run: RunSession;
+  }): Promise<
+    | { readonly ok: true; readonly runId: string }
+    | { readonly ok: false; readonly statusCode: number; readonly error: string; readonly message: string }
+  > => new Promise((resolveRetry) => {
+    let settled = false;
+    const settle = (result:
+      | { readonly ok: true; readonly runId: string }
+      | { readonly ok: false; readonly statusCode: number; readonly error: string; readonly message: string }): void => {
+      if (settled) return;
+      settled = true;
+      resolveRetry(result);
+    };
+    const detached = createDetachedRunExecutionSink();
+    const sink: RunExecutionSink = {
+      ...detached,
+      writeReady: () => settle({ ok: true, runId: input.run.id }),
+      writeError: (statusCode, body) => {
+        const value = body && typeof body === "object" ? body as Record<string, unknown> : {};
+        settle({
+          ok: false,
+          statusCode,
+          error: typeof value.error === "string" ? value.error : "runner_retry_failed",
+          message: typeof value.message === "string" ? value.message : "Task Run retry failed before Runner dispatch.",
+        });
+      },
+      end: () => settle({
+        ok: false,
+        statusCode: 409,
+        error: "runner_retry_not_started",
+        message: "Task Run retry ended before Runner dispatch.",
+      }),
+    };
+    void executeExistingRunContinuation(
+      {
+        cwd: input.cwd,
+        runId: input.run.id,
+        origin: "runner_retry",
+        idempotencyDiscriminator: `manual-retry:${input.run.id}:${input.run.updatedAt}`,
+      },
+      sink,
+      runnerRegistry,
+      storeRegistry,
+      activeRuns,
+      runtimeSupervisor,
+      secretResolver,
+      mcpBroker,
+      {
+        afterRunTerminal: maybeContinueRunInterventions,
+        controlPlaneEvents,
+        startupState,
+        computerUsePreviews,
+        hostCapabilityBridge,
+      },
+    ).then((runId) => {
+      if (!settled) {
+        settle(runId
+          ? { ok: true, runId }
+          : { ok: false, statusCode: 409, error: "runner_retry_not_started", message: "Task Run retry was not started." });
+      }
+    }, (error) => settle({
+      ok: false,
+      statusCode: 500,
+      error: "runner_retry_failed",
+      message: error instanceof Error ? error.message : String(error),
+    }));
+  });
   const startTeammateDirectRun = async (runRequest: RunRequest, sink: RunExecutionSink): Promise<string | undefined> =>
     executeRunRequest(
       runRequest,
@@ -434,6 +570,7 @@ export async function routeRequest(
         controlPlaneEvents,
         startupState,
         computerUsePreviews,
+        nativeRunDispatcher,
       },
     );
   const directReplyControl = new DirectReplyControlService({
@@ -448,6 +585,7 @@ export async function routeRequest(
 
   const mediaJobHooks: RunMediaJobHooks = {
     startRuntimeWorkUnit: (input) => startRuntimeWorkUnit({ ...input, runtimeSupervisor }),
+    recoverRuntimeWorkUnit: (input) => retryRuntimeWorkUnit({ ...input, runtimeSupervisor }),
     transitionRuntimeWorkUnitTerminal: (input) => {
       transitionWorkUnitTerminal(input.store, {
         workUnitId: input.workUnitId,
@@ -484,6 +622,9 @@ export async function routeRequest(
   if (await handleCuaDriverLeaseRoute(request, response, context)) {
     return;
   }
+  if (await handleHostCapabilityBridgeRoute(request, response, context)) {
+    return;
+  }
   if (await handleOfficeDriverRoute(request, response, context)) {
     return;
   }
@@ -494,6 +635,7 @@ export async function routeRequest(
       defaultWorkspaceCwd: config.defaultWorkspaceCwd,
       readiness: startupState.snapshot(config.defaultWorkspaceCwd)?.state ?? "starting",
       features: {
+        harness: createHarnessFeatureSnapshot(config),
         channels: {
           autoRoute: config.channels.autoRoute === true,
           intentSelector: config.channels.intentSelector === true,
@@ -517,8 +659,55 @@ export async function routeRequest(
     return;
   }
 
+
   if (url.pathname === "/startup/status" || url.pathname === "/startup/refresh") {
+    if (!config.authToken && !allowLocalServiceRequest(request, response)) return;
     await handleStartupStatus(request, response, context);
+    return;
+  }
+
+
+  if (url.pathname === "/diagnostics/doctor") {
+    if (!config.authToken && !allowLocalServiceRequest(request, response)) return;
+    await handleDiagnosticsDoctor(request, response, context);
+    return;
+  }
+
+
+  if (url.pathname === "/diagnostics/logs") {
+    if (!config.authToken && !allowLocalServiceRequest(request, response)) return;
+    await handleDiagnosticsLogs(request, response, context);
+    return;
+  }
+
+
+  if (url.pathname === "/notifications" || url.pathname === "/notifications/preferences" || url.pathname === "/notifications/stream") {
+    if (!config.authToken && !allowLocalServiceRequest(request, response)) return;
+    await handleNotifications(request, response, context);
+    return;
+  }
+
+
+  if (url.pathname === "/im-destinations" || url.pathname.startsWith("/im-destinations/")) {
+    if (!config.authToken && !allowLocalServiceRequest(request, response)) return;
+    await handleImDestinations(request, response, context);
+    return;
+  }
+
+
+  if (url.pathname === "/skills/marketplace/inspect") {
+    if (!config.authToken && !allowLocalServiceRequest(request, response)) return;
+    await handleSkillsMarketplaceInspect(request, response, context);
+    return;
+  }
+
+  if (url.pathname === "/deliverables/build") {
+    await handleDeliverablesBuild(request, response, context);
+    return;
+  }
+
+  if (url.pathname === "/previews/spreadsheet") {
+    await handleSpreadsheetPreview(request, response, context);
     return;
   }
 
@@ -593,6 +782,12 @@ export async function routeRequest(
     return;
   }
 
+  if (url.pathname === "/transcribe") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) return;
+    await handleTranscription(request, response, config, storeRegistry, secretResolver);
+    return;
+  }
+
   if (url.pathname === "/providers/import-models") {
     await handleProviderModelImport(request, response, config, storeRegistry, secretResolver, controlPlaneEvents, providerImportPreflight);
     return;
@@ -658,8 +853,8 @@ export async function routeRequest(
             secretResolver,
             mcpBroker,
             {
-              onRunReady: (runId) => {
-                hooks.onRunReady?.(runId);
+              onRunReady: (runId, info) => {
+                hooks.onRunReady?.(runId, info);
                 onRunReady(runId);
               },
               afterRunTerminal: async (terminalRun) => {
@@ -669,9 +864,11 @@ export async function routeRequest(
               controlPlaneEvents,
               startupState,
               computerUsePreviews,
+              nativeRunDispatcher,
             },
           )),
       automationSchedulers,
+      notificationHub,
     );
     return;
   }
@@ -704,6 +901,20 @@ export async function routeRequest(
 
   if (url.pathname === "/plugins/sources") {
     await handlePluginSourcesCollection(request, response, config);
+    return;
+  }
+
+  if (url.pathname === "/plugins/import/preview" || url.pathname === "/plugins/import/apply") {
+    await handlePluginsImport(
+      request,
+      response,
+      config,
+      storeRegistry,
+      mcpBroker,
+      secretResolver,
+      externalSecretStore,
+      { action: url.pathname === "/plugins/import/apply" ? "apply" : "preview" },
+    );
     return;
   }
 
@@ -803,7 +1014,8 @@ export async function routeRequest(
   }
 
   if (url.pathname === "/external-work/workflow/configure") {
-    await handleExternalWorkWorkflowConfigure(request, response, config, storeRegistry);
+    await handleExternalWorkWorkflowConfigure(request, response, config, storeRegistry,
+      runtimeSupervisor.getExternalWorkflowRequestRuntime());
     return;
   }
 
@@ -878,6 +1090,8 @@ export async function routeRequest(
             controlPlaneEvents,
             startupState,
             computerUsePreviews,
+            hostCapabilityBridge,
+            nativeRunDispatcher,
           },
         );
       },
@@ -946,6 +1160,9 @@ export async function routeRequest(
             errorMessage: input.errorMessage,
           });
         },
+        transitionRuntimeWorkUnitCancelled: (input) => {
+          transitionWorkUnitCancelled(input.store, input.workUnitId, input.attemptId, input.reason);
+        },
         executeExternalWorkAction: async (input) => executeExternalWorkAction(input),
       },
     );
@@ -982,6 +1199,11 @@ export async function routeRequest(
     return;
   }
 
+  if (url.pathname === "/approval-command-rules") {
+    handleApprovalCommandRulesCollection(request, response, url, storeRegistry);
+    return;
+  }
+
   if (url.pathname === "/execution-actions") {
     handleExecutionActionsCollection(request, response, url, storeRegistry);
     return;
@@ -1015,6 +1237,20 @@ export async function routeRequest(
     return;
   }
 
+  if (url.pathname === "/user-input-answers") {
+    await handleUserInputAnswer(request, response, config, storeRegistry, (store) => userInputDeliveryWorker.wake(store));
+    return;
+  }
+
+  if (url.pathname === "/conversation-submissions") {
+    if (request.method !== "GET") {
+      writeJson(response, 405, { error: "method_not_allowed", message: "Submission receipts are read-only" });
+      return;
+    }
+    handleConversationSubmissionReceipt(response, url, storeRegistry);
+    return;
+  }
+
   if (url.pathname === "/conversations/stream") {
     await handleConversationStream(request, response, config, storeRegistry, runnerRegistry, async (runRequest, sink) =>
       await executeRunRequest(
@@ -1031,6 +1267,8 @@ export async function routeRequest(
           controlPlaneEvents,
           startupState,
           computerUsePreviews,
+          hostCapabilityBridge: context.hostCapabilityBridge,
+          nativeRunDispatcher,
         },
       ), imageVisionSummarizer);
     return;
@@ -1070,6 +1308,20 @@ export async function routeRequest(
     return;
   }
 
+  const userInputAnswerRoute = parseUserInputAnswerSubmissionRoute(url.pathname);
+  if (userInputAnswerRoute) {
+    await handleUserInputAnswerSubmission(
+      request,
+      response,
+      url,
+      storeRegistry,
+      config.maxBodyBytes,
+      userInputAnswerRoute,
+      (store) => userInputDeliveryWorker.wake(store),
+    );
+    return;
+  }
+
   const lingThreadRoute = parseLingThreadRoute(url.pathname);
   if (lingThreadRoute) {
     await handleLingThreadItem(request, response, url, storeRegistry, lingThreadRoute, {
@@ -1091,6 +1343,7 @@ export async function routeRequest(
               controlPlaneEvents,
               startupState,
               computerUsePreviews,
+              nativeRunDispatcher,
             },
           )),
       startForkRun: async (runRequest) =>
@@ -1110,6 +1363,7 @@ export async function routeRequest(
               controlPlaneEvents,
               startupState,
               computerUsePreviews,
+              nativeRunDispatcher,
             },
           )),
     });
@@ -1121,7 +1375,35 @@ export async function routeRequest(
     return;
   }
 
+  if (url.pathname === "/memory/semantic-policy") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) return;
+    await handleMemorySemanticRoute({ request, response, url, config, getStore: cwd => storeRegistry.getStore(cwd) });
+    return;
+  }
+  if (url.pathname === "/memory/wiki" || url.pathname.startsWith("/memory/wiki/")) {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) return;
+    await handleMemoryWikiRoute({ request, response, url, config, getStore: cwd => storeRegistry.getStore(cwd) });
+    return;
+  }
+
+  if (url.pathname === "/skills/learning-policy" || url.pathname === "/skills/learning-reviews" || url.pathname.startsWith("/skills/learning-reviews/")) {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) return;
+    await handleLearningReviewRoute({ request, response, url, config, getStore: cwd => storeRegistry.getStore(cwd),
+      coordinator: context.learningReviewCoordinator });
+    return;
+  }
+
+  if (url.pathname === "/workflow-templates" || url.pathname.startsWith("/workflow-templates/")) {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) return;
+    await handleWorkflowTemplateRoute({ request, response, url, config, storeRegistry, runnerRegistry });
+    return;
+  }
+
   const skillRoute = parseSkillRoute(url.pathname);
+  if (skillRoute?.kind === "skill" && (skillRoute.action === "revision-undo"
+    || (skillRoute.action === "revisions" && request.method === "GET"))) {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) return;
+  }
   if (
     url.pathname === "/skills" ||
     url.pathname === "/skills/refresh" ||
@@ -1133,6 +1415,8 @@ export async function routeRequest(
     url.pathname === "/skills/sync/gstack/publish" ||
     url.pathname === "/skills/sync/gstack/refresh" ||
     url.pathname === "/skills/sync/gstack/check-updates" ||
+    url.pathname === "/skills/sync/shared/preview" ||
+    url.pathname === "/skills/sync/shared/publish" ||
     url.pathname === "/skills/source-upgrade-policy" ||
     url.pathname.startsWith("/skills/source-artifacts/") ||
     url.pathname === "/skills/suggestions" ||
@@ -1169,6 +1453,7 @@ export async function routeRequest(
   }
 
   if (url.pathname === "/memory/recall") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) return;
     await handleMemoryRecall(request, response, config, storeRegistry);
     return;
   }
@@ -1253,6 +1538,11 @@ export async function routeRequest(
     return;
   }
 
+  if (request.method === "GET" && url.pathname === "/runtime/conversation-execution") {
+    await handleConversationExecutionSelection(response, url, nativeRunDispatcher);
+    return;
+  }
+
   if (url.pathname === "/runtime/settings") {
     await handleRuntimeSettings(request, response, url, storeRegistry, runnerRegistry, config.maxBodyBytes, controlPlaneEvents);
     return;
@@ -1309,6 +1599,8 @@ export async function routeRequest(
           controlPlaneEvents,
           startupState,
           computerUsePreviews,
+          hostCapabilityBridge: context.hostCapabilityBridge,
+          nativeRunDispatcher,
         },
       ));
     return;
@@ -1320,7 +1612,7 @@ export async function routeRequest(
 
   const runRoute = parseRunRoute(url.pathname);
   if (request.method === "POST" && runRoute?.kind === "cancel") {
-    handleCancelRun(response, url, storeRegistry, activeRuns, runRoute.runId, ensureRunCancelled);
+    await handleCancelRunRequest(request, response, config, url, storeRegistry, activeRuns, runRoute.runId, ensureRunCancelled);
     return;
   }
   if (runRoute?.kind === "interventions") {
@@ -1338,12 +1630,13 @@ export async function routeRequest(
       computerUsePreviews,
       controlPlaneEvents,
       startupState,
+      nativeRunDispatcher,
       runRoute.runId,
     );
     return;
   }
   if (runRoute?.kind === "tool-load-requests") {
-    await handleToolLoadRequestsCollection(request, response, config, url, storeRegistry, runnerRegistry, runRoute.runId);
+    await handleToolLoadRequestsCollection(request, response, config, url, storeRegistry, runnerRegistry, runRoute.runId, secretResolver);
     return;
   }
   if (request.method === "GET" && runRoute?.kind === "run") {
@@ -1427,6 +1720,7 @@ export async function routeRequest(
         computerUsePreviews,
         controlPlaneEvents,
         startupState,
+        nativeRunDispatcher,
         runInterventionRoute.interventionId,
       );
       return;
@@ -1453,7 +1747,8 @@ export async function routeRequest(
 
   const workUnitRoute = parseWorkUnitRoute(url.pathname);
   if (workUnitRoute) {
-    handleWorkUnitRoute(request, response, url, storeRegistry, activeRuns, runtimeSupervisor, workUnitRoute, ensureRunCancelled, controlPlaneEvents);
+    await handleWorkUnitRoute(request, response, url, storeRegistry, activeRuns, runtimeSupervisor, workUnitRoute,
+      ensureRunCancelled, controlPlaneEvents, retryTaskRun);
     return;
   }
 
@@ -1471,6 +1766,18 @@ export async function routeRequest(
       return;
     }
     await handleGetWorkspaceFilePreview(response, url);
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/workspace-files/capabilities") {
+    await handlePostWorkspaceFileCapabilityIssue(request, response, config.maxBodyBytes, storeRegistry, workspaceFileCapabilities);
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/workspace-files/preview") {
+    await handlePostWorkspaceFileCapabilityPreview(request, response, config.maxBodyBytes, storeRegistry, workspaceFileCapabilities);
+    return;
+  }
+  if (url.pathname === "/workspace/work-summary" || url.pathname === "/workspace/work-summary/pull-requests") {
+    await handleWorkSummary(request, response, url, storeRegistry, secretResolver);
     return;
   }
   if (request.method === "GET" && url.pathname === "/workspace/changes") {
@@ -1501,10 +1808,7 @@ export async function routeRequest(
     return;
   }
   if (request.method === "POST" && url.pathname === "/workspace-files/open") {
-    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) {
-      return;
-    }
-    await handlePostWorkspaceFileOpen(request, response, url, config.maxBodyBytes);
+    await handlePostWorkspaceFileOpen(request, response, url, config.maxBodyBytes, storeRegistry, workspaceFileCapabilities);
     return;
   }
   if (request.method === "GET" && url.pathname === "/workspace-files/content") {
@@ -1517,14 +1821,20 @@ export async function routeRequest(
 
   const artifactRoute = parseArtifactRoute(url.pathname);
   if (request.method === "GET" && artifactRoute?.kind === "artifact") {
+    const cwd = request.headers.origin ? url.searchParams.get("cwd") ?? undefined : undefined;
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) return;
     handleGetArtifact(response, url, storeRegistry, artifactRoute.artifactId);
     return;
   }
   if (request.method === "GET" && artifactRoute?.kind === "content") {
+    const cwd = request.headers.origin ? url.searchParams.get("cwd") ?? undefined : undefined;
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) return;
     handleGetArtifactContent(response, url, storeRegistry, artifactRoute.artifactId);
     return;
   }
   if (request.method === "GET" && artifactRoute?.kind === "preview") {
+    const cwd = request.headers.origin ? url.searchParams.get("cwd") ?? undefined : undefined;
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) return;
     handleGetArtifactPreview(response, url, storeRegistry, artifactRoute.artifactId);
     return;
   }
@@ -1588,6 +1898,12 @@ export async function routeRequest(
     }
   };
 
+  const workflowIsolationHost: WorkflowIsolationHost = {
+    enabled: () => runtimeSupervisor.getChannelFeatures().workflowIsolatedFiles === true,
+    toolBrokerMode: () => runtimeSupervisor.getHarnessFeatures().toolBroker.mode,
+    maxConcurrentSteps: () => runtimeSupervisor.getConcurrencyPolicy().enabled
+      ? runtimeSupervisor.getConcurrencyPolicy().isolatedWriteMaxConcurrentSteps : 2,
+  };
   const createStartOrchestratedRun = (store: RunStore, cwd: string): StartOrchestratedWorkflowStepRun => {
     const startOrchestratedRun: StartOrchestratedWorkflowStepRun = ({ workflow, workflowStep, taskId, runRequest }) =>
       new Promise((resolve) => {
@@ -1610,7 +1926,6 @@ export async function routeRequest(
           {
             onRunReady: (runId) => {
               const now = new Date().toISOString();
-              store.updateChannelWorkflowStep(workflowStep.id, { taskId, runId }, now);
               attachWorkflowStepContextArtifact(store, workflowStep.id, runId, runRequest);
               resolveOnce(runId);
             },
@@ -1620,6 +1935,11 @@ export async function routeRequest(
               if (terminalRun.status === "succeeded") {
                 await orchestrateChannelWorkflow({
                   store,
+                  secretResolver,
+                  resolveParallelCapability: createWorkflowParallelCapabilityResolver(runnerRegistry,
+                    { toolBrokerMode: () => runtimeSupervisor.getHarnessFeatures().toolBroker.mode }),
+                  runnerRegistry,
+                  isolationHost: workflowIsolationHost,
                   cwd,
                   workflowId: workflow.id,
                   validateRunRequest: (candidateRunRequest) => {
@@ -1632,6 +1952,9 @@ export async function routeRequest(
             controlPlaneEvents,
             startupState,
             computerUsePreviews,
+            hostCapabilityBridge,
+            nativeRunDispatcher,
+            enableUserInputPause: true,
           },
         ).then(resolveOnce, () => resolveOnce(undefined));
       });
@@ -1644,6 +1967,8 @@ export async function routeRequest(
     readonly proposalId: string;
   }) => {
     const confirmed = confirmChannelExecutionProposalWorkflow({
+      restrictedCommandRuntime: runtimeSupervisor.getRestrictedCommandRuntime(),
+      hostCapabilityAvailable: (capabilityId) => hostCapabilityBridge.hasCapability(capabilityId),
       store: input.store,
       cwd: input.cwd,
       proposalId: input.proposalId,
@@ -1655,6 +1980,11 @@ export async function routeRequest(
     const startOrchestratedRun = createStartOrchestratedRun(input.store, input.cwd);
     const orchestration = await orchestrateChannelWorkflow({
       store: input.store,
+      secretResolver,
+      resolveParallelCapability: createWorkflowParallelCapabilityResolver(runnerRegistry,
+        { toolBrokerMode: () => runtimeSupervisor.getHarnessFeatures().toolBroker.mode }),
+      runnerRegistry,
+      isolationHost: workflowIsolationHost,
       cwd: input.cwd,
       workflowId: confirmed.workflow.id,
       validateRunRequest: (candidateRunRequest) => {
@@ -1685,6 +2015,7 @@ export async function routeRequest(
             thread: editable.thread,
             message: revision.body,
             messageId: revision.messageId,
+            revisionId: revision.id,
             attachmentIds: revision.attachmentIds,
             providerPresetId: editRequest.providerPresetId,
             permissionPreset: editRequest.permissionPreset,
@@ -1808,6 +2139,11 @@ export async function routeRequest(
   const workflowRoute = parseChannelWorkflowRoute(url.pathname);
   if (workflowRoute) {
     if (workflowRoute.kind === "workflow") {
+      if (workflowRoute.action === "conflict-recovery") {
+        await handleWorkflowConflictRecovery({ request, response, url, config, storeRegistry, runnerRegistry,
+          workflowId: workflowRoute.workflowId, host: workflowIsolationHost });
+        return;
+      }
       if (workflowRoute.action === "workspace-changes" || workflowRoute.action === "workspace-changes-undo" || workflowRoute.action === "workspace-changes-reapply") {
         const expectedMethod = workflowRoute.action === "workspace-changes" ? "GET" : "POST";
         if (request.method !== expectedMethod) {
@@ -1841,10 +2177,18 @@ export async function routeRequest(
           return;
         }
         try {
+          const input = parseChannelWorkflowOrchestrationRequest(await readOptionalJsonBody(request, config.maxBodyBytes));
           const store = storeRegistry.getStore(cwd);
+          if (input.executionProfile) await selectWorkflowIsolatedExecution({ store, workflowId: workflowRoute.workflowId,
+            runnerRegistry, host: workflowIsolationHost });
           const startOrchestratedRun = createStartOrchestratedRun(store, cwd);
           const result = await orchestrateChannelWorkflow({
             store,
+            secretResolver,
+            resolveParallelCapability: createWorkflowParallelCapabilityResolver(runnerRegistry,
+              { toolBrokerMode: () => runtimeSupervisor.getHarnessFeatures().toolBroker.mode }),
+            runnerRegistry,
+            isolationHost: workflowIsolationHost,
             cwd,
             workflowId: workflowRoute.workflowId,
             validateRunRequest: (candidateRunRequest) => {
@@ -1873,7 +2217,7 @@ export async function routeRequest(
         }
         try {
           const store = storeRegistry.getStore(cwd);
-          const result = cancelChannelWorkflow({
+          const result = await cancelChannelWorkflow({
             store,
             workflowId: workflowRoute.workflowId,
             cancelRun: (run) => {
@@ -1933,6 +2277,9 @@ export async function routeRequest(
         const startOrchestratedRun = createStartOrchestratedRun(store, cwd);
         const result = await retryChannelWorkflowStep({
           store,
+          secretResolver,
+          runnerRegistry,
+          isolationHost: workflowIsolationHost,
           cwd,
           workflowStepId: workflowRoute.workflowStepId,
           validateRunRequest: (candidateRunRequest) => {
@@ -1973,11 +2320,6 @@ export async function routeRequest(
             {
               onRunReady: (runId) => {
                 const store = storeRegistry.getStore(runRequest.workspaceCwd);
-                store.updateChannelWorkflowStep(
-                  workflowRoute.workflowStepId,
-                  { taskId: runRequest.task.id, runId },
-                  new Date().toISOString(),
-                );
                 attachWorkflowStepContextArtifact(store, workflowRoute.workflowStepId, runId, runRequest);
               },
               afterRunTerminal: async (terminalRun) => {
@@ -1993,8 +2335,12 @@ export async function routeRequest(
               controlPlaneEvents,
               startupState,
               computerUsePreviews,
+              nativeRunDispatcher,
             },
           ),
+        secretResolver,
+        runnerRegistry,
+        workflowIsolationHost,
       );
       return;
     }
@@ -2044,7 +2390,15 @@ export async function routeRequest(
       await handleChannelBrief(request, response, config, storeRegistry, channelRoute.channelId);
       return;
     }
+    if (channelRoute.action === "sessions") {
+      await handleChannelSessions(request, response, config, storeRegistry, channelRoute.channelId, channelRoute.sessionId);
+      return;
+    }
     if (channelRoute.action === "branches") {
+      if (channelRoute.branchId && channelRoute.branchAction === "repair") {
+        await handleChannelSessionDirectoryRepair(request, response, config, storeRegistry, channelRoute.channelId, channelRoute.branchId);
+        return;
+      }
       if (channelRoute.branchId) {
         await handleChannelBranchItem(request, response, config, storeRegistry, channelRoute.channelId, channelRoute.branchId);
         return;
@@ -2156,7 +2510,7 @@ export async function routeRequest(
       return;
     }
     if (channelRoute.action === "team-metrics") {
-      await handleChannelTeamMetricsProjection(request, response, config, storeRegistry, channelRoute.channelId);
+      await handleChannelTeamMetricsProjection(request, response, config, storeRegistry, channelRoute.channelId, secretResolver);
       return;
     }
     if (channelRoute.action === "team-authority-ledger") {
@@ -2168,7 +2522,7 @@ export async function routeRequest(
       return;
     }
     if (channelRoute.action === "team-snapshots") {
-      await handleChannelTeamSnapshots(request, response, config, storeRegistry, channelRoute.channelId);
+      await handleChannelTeamSnapshots(request, response, config, storeRegistry, channelRoute.channelId, secretResolver);
       return;
     }
     if (channelRoute.action === "team-evaluations") {
@@ -2304,8 +2658,11 @@ export async function routeRequest(
           teammate,
           thread,
           sourceMessage,
+          replyMessageId,
           providerPresetId,
           permissionPreset,
+          authorizationMode,
+          workspaceAccessMode,
           permissionConfirmation,
           requestedSkillId,
           skillOptimizationMode,
@@ -2314,7 +2671,7 @@ export async function routeRequest(
           let sourceWorkUnitId: string | undefined;
           const workspace = await ensureDirectWorkspaceReady({ store, thread, workspaceCwd: store.paths.cwd });
           if (!workspace.ok) {
-            return createBlockedTeammateDirectReply(store, teammate, thread, workspace.message);
+            return createBlockedTeammateDirectReply(store, teammate, thread, workspace.message, replyMessageId);
           }
           await providerStartupRefresh.refreshBeforeRun({
             cwd: store.paths.cwd,
@@ -2327,8 +2684,11 @@ export async function routeRequest(
             teammate,
             thread,
             sourceMessage,
+            replyMessageId,
             providerPresetId,
             permissionPreset,
+            authorizationMode,
+            workspaceAccessMode,
             permissionConfirmation,
             requestedSkillId,
             skillOptimizationMode,
@@ -2372,8 +2732,11 @@ export async function routeRequest(
           teammate,
           thread,
           sourceMessage,
+          replyMessageId,
           providerPresetId,
           permissionPreset,
+          authorizationMode,
+          workspaceAccessMode,
           permissionConfirmation,
           requestedSkillId,
           skillOptimizationMode,
@@ -2384,7 +2747,7 @@ export async function routeRequest(
           let sourceWorkUnitId: string | undefined;
           const workspace = await ensureDirectWorkspaceReady({ store, thread, workspaceCwd: store.paths.cwd });
           if (!workspace.ok) {
-            const blocked = createBlockedTeammateDirectReply(store, teammate, thread, workspace.message);
+            const blocked = createBlockedTeammateDirectReply(store, teammate, thread, workspace.message, replyMessageId);
             stream?.onBlocked(blocked);
             return blocked;
           }
@@ -2399,8 +2762,11 @@ export async function routeRequest(
             teammate,
             thread,
             sourceMessage,
+            replyMessageId,
             providerPresetId,
             permissionPreset,
+            authorizationMode,
+            workspaceAccessMode,
             permissionConfirmation,
             requestedSkillId,
             skillOptimizationMode,
@@ -2492,6 +2858,7 @@ export async function routeRequest(
               controlPlaneEvents,
               startupState,
               computerUsePreviews,
+              nativeRunDispatcher,
             },
           );
         },
@@ -2578,18 +2945,48 @@ export async function routeRequest(
   const approvalRoute = parseApprovalRoute(url.pathname);
   if (approvalRoute) {
     await handleApprovalItem(request, response, config, storeRegistry, approvalRoute, controlPlaneEvents, ({ cwd, store, approval, now }) => {
-      context.approvalResumeCoordinator.resumeAfterApproval({ store, approval });
-      syncWorkflowApprovalDecision(store, approval, now);
-      return syncMediaJobForApprovalDecision({
-        cwd,
-        store,
-        storeRegistry,
-        secretResolver,
-        approval,
-        now,
-        hooks: mediaJobHooks,
+      return runApprovalPostCommitEffects({
+        resumeRun: () => {
+          if (!approval.runId) return;
+          // A live owning Runner observes the durable denial itself. Suspended owners
+          // have no callback left, so reuse the coordinator's strict atomic finalizer.
+          if (approval.status === "denied" && activeRuns.get(approval.runId)) return;
+          const result = approval.status === "denied"
+            ? context.approvalResumeCoordinator.finalizeSuspendedApprovalDenial({ store, approval })
+            : context.approvalResumeCoordinator.resumeAfterApproval({ store, approval });
+          if (result.status === "blocked") throw new Error(result.reason);
+          if (result.status === "not_applicable" && approval.runId
+            && store.getRun(approval.runId)?.status === "waiting_for_approval") {
+            throw new Error("approval_run_owner_unreconciled");
+          }
+        },
+        syncWorkflow: () => {
+          // Legacy workflow approvals may retain their original tool payload
+          // (for example `bash`) while workflowStepId remains the durable
+          // owner reference. Reconcile by owner reference instead of
+          // requiring the newer typed payload shape.
+          if (!approval.workflowStepId && approval.payload.type !== "workflow_step") return;
+          const result = syncWorkflowApprovalDecision(store, approval, now);
+          if (result.status === "missing_owner") throw new Error("approval_workflow_owner_missing");
+          if (result.status === "stale_owner") throw new Error("approval_workflow_owner_stale");
+        },
+        syncMedia: () => syncMediaJobForApprovalDecision({
+          cwd,
+          store,
+          storeRegistry,
+          secretResolver,
+          approval,
+          now,
+          hooks: mediaJobHooks,
+        }),
       });
     });
+    return;
+  }
+
+  const approvalCommandRuleRoute = parseApprovalCommandRuleRoute(url.pathname);
+  if (approvalCommandRuleRoute) {
+    handleApprovalCommandRuleItem(request, response, url, storeRegistry, approvalCommandRuleRoute.ruleId);
     return;
   }
 
@@ -2626,9 +3023,11 @@ function createBlockedTeammateDirectReply(
   teammate: AiTeammate,
   thread: TeammateDirectThread,
   reason: string,
+  replyMessageId?: string,
 ): TeammateDirectMessage {
   return store.createTeammateDirectMessage(
     {
+      ...(replyMessageId ? { id: replyMessageId } : {}),
       threadId: thread.id,
       teammateId: teammate.id,
       authorType: "ai-teammate",

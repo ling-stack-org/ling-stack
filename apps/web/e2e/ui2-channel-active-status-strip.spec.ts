@@ -5,7 +5,7 @@ import {
   type ChannelActiveStatusInput,
 } from "../src/features/workspace/channel-active-status-presentation";
 import type { RunStatus } from "../src/types";
-import { mockDaemon, type MockApproval, type MockState } from "./support/mock-daemon";
+import { mockDaemon, type MockState } from "./support/mock-daemon";
 import { createBaseState, createChatProvider, isRecord } from "./support/mock-state";
 import { openEngineeringChannel } from "./support/test-helpers";
 
@@ -30,14 +30,14 @@ test("channel active status keeps the typed product label and tone matrix", asyn
   const componentSource = await readFile(new URL("../src/features/workspace/ChannelActiveStatusIndicator.tsx", import.meta.url), "utf8");
   const presentationSource = await readFile(new URL("../src/features/workspace/channel-active-status-presentation.ts", import.meta.url), "utf8");
   expect(clientSource).not.toContain("StatusBadge");
-  expect(clientSource.match(/<ChannelActiveStatusIndicator/gu)).toHaveLength(3);
+  expect(clientSource.match(/<ChannelActiveStatusIndicator/gu)).toHaveLength(1);
   expect(componentSource).toContain('import { StatusIndicator } from "../../shared/ui/index.js";');
   expect(componentSource).not.toContain("querySelector");
   expect(presentationSource).not.toContain("useI18n");
   expect(presentationSource).not.toContain("JSX");
 });
 
-test("queued active run keeps Open run behavior in light mode", async ({ page }) => {
+test("queued active run does not duplicate lifecycle state in the provider strip", async ({ page }) => {
   await prepareSurface(page, "light", 1440, 960);
   const runtimeErrors = collectRuntimeErrors(page);
   const state = activeRunState("queued", true);
@@ -45,20 +45,12 @@ test("queued active run keeps Open run behavior in light mode", async ({ page })
   await page.goto("/");
   await openEngineeringChannel(page);
 
-  const strip = await expectStatusStrip(page, {
-    kind: "run",
-    label: "Queued",
-    tone: "info",
-    actionCount: 2,
-  });
-  await expect(strip).toContainText("Channel active status presentation remains contained across a deliberately long task title");
-  await strip.getByRole("button", { name: "Open run" }).click();
-  await expect(page.locator("article.task-detail")).toContainText("Channel active status presentation remains contained");
+  await expectRunOutsideProviderStrip(page);
   await expectNoDocumentOverflow(page);
   expect(runtimeErrors).toEqual([]);
 });
 
-test("running active run keeps Stop behavior in dark mode", async ({ page }) => {
+test("running active run does not duplicate lifecycle state in the provider strip", async ({ page }) => {
   await prepareSurface(page, "dark", 1280, 800);
   const runtimeErrors = collectRuntimeErrors(page);
   const state = activeRunState("running", true);
@@ -66,20 +58,13 @@ test("running active run keeps Stop behavior in dark mode", async ({ page }) => 
   await page.goto("/");
   await openEngineeringChannel(page);
 
-  const strip = await expectStatusStrip(page, {
-    kind: "run",
-    label: "Running",
-    tone: "info",
-    actionCount: 2,
-  });
+  await expectRunOutsideProviderStrip(page);
   await expect(page.locator("html")).toHaveAttribute("data-ui-theme", "ling-dark");
-  await strip.getByRole("button", { name: "Stop", exact: true }).click();
-  await expect.poll(() => state.runs.find((run) => run.id === "run_failed")?.status).toBe("cancelled");
   await expectNoDocumentOverflow(page);
   expect(runtimeErrors).toEqual([]);
 });
 
-test("waiting active run renders a product label without snake_case", async ({ page }) => {
+test("waiting active run does not duplicate lifecycle state in the provider strip", async ({ page }) => {
   await prepareSurface(page, "light", 1440, 960);
   const runtimeErrors = collectRuntimeErrors(page);
   const state = activeRunState("waiting_for_approval", false);
@@ -87,18 +72,12 @@ test("waiting active run renders a product label without snake_case", async ({ p
   await page.goto("/");
   await openEngineeringChannel(page);
 
-  const strip = await expectStatusStrip(page, {
-    kind: "run",
-    label: "Waiting for approval",
-    tone: "warning",
-    actionCount: 2,
-  });
-  await expect(strip).not.toContainText("waiting_for_approval");
+  await expectRunOutsideProviderStrip(page);
   await expectNoDocumentOverflow(page);
   expect(runtimeErrors).toEqual([]);
 });
 
-test("pending approval keeps its detail action in dark mode", async ({ page }) => {
+test("pending runtime approval replaces the composer without duplicating the provider strip", async ({ page }) => {
   await prepareSurface(page, "dark", 1280, 800);
   const runtimeErrors = collectRuntimeErrors(page);
   const state = pendingApprovalState();
@@ -106,17 +85,13 @@ test("pending approval keeps its detail action in dark mode", async ({ page }) =
   await page.goto("/");
   await openEngineeringChannel(page);
 
-  const strip = await expectStatusStrip(page, {
-    kind: "pending-approval",
-    label: "Waiting for approval",
-    tone: "warning",
-    actionCount: 1,
-  });
-  await expect(strip).toContainText("Review the long provider change request before applying it to the current channel workspace");
-  await strip.getByRole("button", { name: "Open approval" }).click();
-  const detail = page.locator(".conversation-detail-overlay");
-  await expect(detail).toHaveAttribute("aria-label", "Approval details");
-  await expect(detail).toContainText("Review the long provider change request");
+  await expect(page.locator(".channel-active-status-strip")).toHaveCount(0);
+  await expect(page.getByLabel("Channel composer")).toHaveCount(0);
+  const gate = page.getByRole("region", { name: "Allow this action?" });
+  await expect(gate).toBeVisible();
+  await expect(gate).toContainText("echo inspect");
+  await expectMinimumHitArea(gate.getByRole("button", { name: "Allow once" }), 32);
+  await expectMinimumHitArea(gate.getByRole("button", { name: "Deny" }), 32);
   await expectNoDocumentOverflow(page);
   expect(runtimeErrors).toEqual([]);
 });
@@ -168,25 +143,13 @@ function activeRunState(status: Extract<RunStatus, "queued" | "running" | "waiti
 }
 
 function pendingApprovalState(): MockState {
-  const state = createBaseState({ approvalStatus: "expired" });
+  const state = createBaseState({ approvalStatus: "pending" });
   const providerId = "provider_channel_pending_approval";
   state.providers = [readyProvider(providerId)];
   state.channels = state.channels.map((channel) => isRecord(channel)
     ? { ...channel, defaultProviderPresetId: providerId }
     : channel);
-  const approval: MockApproval = {
-    id: "approval_channel_active_status",
-    channelId: "channel_engineering",
-    actionType: "provider_change",
-    risk: "medium",
-    title: "Review the long provider change request before applying it to the current channel workspace",
-    description: "Confirm the provider route selected for subsequent channel work.",
-    payload: { type: "provider_change", providerPresetId: providerId },
-    status: "pending",
-    createdAt: "2026-07-26T01:10:00.000Z",
-    expiresAt: "2099-07-26T01:15:00.000Z",
-  };
-  state.approvals = [approval];
+  state.runs[0].status = "waiting_for_approval";
   return state;
 }
 
@@ -220,7 +183,7 @@ function readyProvider(id: string): Record<string, unknown> {
 async function expectStatusStrip(
   page: Page,
   expected: {
-    readonly kind: "run" | "pending-approval" | "provider-blocked";
+    readonly kind: "provider-blocked";
     readonly label: string;
     readonly tone: string;
     readonly actionCount: number;
@@ -243,6 +206,12 @@ async function expectStatusStrip(
   }
   await expectContained(strip, page.getByLabel("Channel composer"));
   return strip;
+}
+
+async function expectRunOutsideProviderStrip(page: Page): Promise<void> {
+  await expect(page.locator(".channel-active-status-strip")).toHaveCount(0);
+  await expect(page.locator('[data-channel-active-status="run"]')).toHaveCount(0);
+  await expect(page.getByLabel("Channel composer")).toBeVisible();
 }
 
 async function prepareSurface(page: Page, theme: "light" | "dark", width: number, height: number): Promise<void> {

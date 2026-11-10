@@ -1,5 +1,7 @@
 import type {
   ApprovalActionType,
+  ApprovalCommandRuleProposal,
+  ApprovalDecisionKind,
   ApprovalPolicy,
   ApprovalPolicyFormState,
   ApprovalRequest,
@@ -61,6 +63,8 @@ export function buildRunApprovalSummaries(
         status: "pending",
         createdAt: event.ts,
         expiresAt: readDataString(event.data, "expiresAt") || undefined,
+        availableDecisions: readApprovalDecisionKinds(event.data),
+        proposedCommandRule: readApprovalCommandRuleProposal(event.data),
       });
       continue;
     }
@@ -89,11 +93,45 @@ export function buildRunApprovalSummaries(
         resolvedAt: event.ts,
         resolvedBy: "local-user",
         decisionReason: readDataString(event.data, "decisionReason") || existing?.decisionReason,
+        decisionKind: readApprovalDecisionKind(event.data) ?? existing?.decisionKind,
+        decisionRuleId: readDataString(event.data, "decisionRuleId") || existing?.decisionRuleId,
       });
     }
   }
 
   return [...summaries.values()].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+}
+
+function readApprovalDecisionKinds(data: unknown): readonly ApprovalDecisionKind[] {
+  const value = readDataField(data, "availableDecisions");
+  if (!Array.isArray(value)) return ["approve_once", "deny"];
+  const allowed = new Set<ApprovalDecisionKind>(["approve_once", "approve_command_rule", "deny"]);
+  const parsed = value.filter((item): item is ApprovalDecisionKind => typeof item === "string" && allowed.has(item as ApprovalDecisionKind));
+  return parsed.length > 0 ? parsed : ["approve_once", "deny"];
+}
+
+function readApprovalDecisionKind(data: unknown): ApprovalDecisionKind | undefined {
+  const value = readDataString(data, "decisionKind");
+  return value === "approve_once" || value === "approve_command_rule" || value === "deny" ? value : undefined;
+}
+
+function readApprovalCommandRuleProposal(data: unknown): ApprovalCommandRuleProposal | undefined {
+  const value = readDataField(data, "proposedCommandRule");
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  if (
+    record.version !== 1 ||
+    !Array.isArray(record.prefix) ||
+    !record.prefix.every((item) => typeof item === "string") ||
+    typeof record.display !== "string" ||
+    typeof record.fingerprint !== "string"
+  ) return undefined;
+  return {
+    version: 1,
+    prefix: record.prefix as string[],
+    display: record.display,
+    fingerprint: record.fingerprint,
+  };
 }
 
 export function mergeApprovalsForRun(
@@ -102,7 +140,24 @@ export function mergeApprovalsForRun(
   runId: string,
 ): readonly ApprovalRequest[] {
   const otherApprovals = current.filter((approval) => approval.runId !== runId);
-  return [...nextRunApprovals, ...otherApprovals];
+  return [...mergeApprovalSnapshot(current, nextRunApprovals), ...otherApprovals];
+}
+
+/** Snapshot arrival order cannot reopen an already resolved request. */
+export function mergeApprovalSnapshot(
+  current: readonly ApprovalRequest[],
+  incoming: readonly ApprovalRequest[],
+): readonly ApprovalRequest[] {
+  const known = new Map(current.map((approval) => [approval.id, approval]));
+  const next = new Map<string, ApprovalRequest>();
+  for (const approval of incoming) {
+    next.set(approval.id, reconcileApproval(next.get(approval.id) ?? known.get(approval.id), approval));
+  }
+  return [...next.values()];
+}
+
+function reconcileApproval(current: ApprovalRequest | undefined, incoming: ApprovalRequest): ApprovalRequest {
+  return current && current.status !== "pending" && incoming.status !== current.status ? current : incoming;
 }
 
 export function approvalOwnerLabels(approval: ApprovalRequest): readonly string[] {
@@ -155,7 +210,7 @@ export function upsertApproval(current: readonly ApprovalRequest[], next: Approv
   if (existingIndex === -1) {
     return [next, ...current];
   }
-  return current.map((approval, index) => (index === existingIndex ? next : approval));
+  return current.map((approval, index) => (index === existingIndex ? reconcileApproval(approval, next) : approval));
 }
 
 export function readApprovalActionType(data: unknown): ApprovalActionType {

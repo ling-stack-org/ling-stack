@@ -1,3 +1,5 @@
+import { getMemorySemanticService } from "./semantic-registry.js";
+import { recallMemory } from "./recall-service.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { join } from "node:path";
@@ -104,10 +106,7 @@ export async function handleMemoryCollection(
           tag: url.searchParams.get("tag") ?? undefined,
           limit: readOptionalIntegerQuery(url, "limit", 1),
         }),
-        vectorRetrieval: {
-          status: "not_installed",
-          optional: true,
-        },
+        vectorRetrieval: getMemorySemanticService(store)?.status() ?? { status: "not_configured", optional: true },
       });
       return;
     }
@@ -716,11 +715,12 @@ export async function handleMemoryRecall(
 
   try {
     const body = await readJsonBody(request, config.maxBodyBytes);
-    const result = storeRegistry.getStore(cwd).recallMemory(parseMemoryRecallRequest(body));
+    const result = await recallMemory(storeRegistry.getStore(cwd), parseMemoryRecallRequest(body));
     writeJson(response, 200, {
       cwd,
       memories: result.memories,
       policyVersion: result.policyVersion,
+      audit: result.audit,
     });
   } catch (error) {
     writeJson(response, error instanceof HttpError ? error.statusCode : 400, {

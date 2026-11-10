@@ -89,7 +89,7 @@ test("Profile blocking errors remain inline and EmptyState uses the shared primi
 });
 
 async function openProfileSettings(page: Page): Promise<void> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: "User profile" }).click();
   await expect(page.locator('[data-profile-section="identity"]')).toBeVisible();
 }

@@ -71,6 +71,20 @@ export interface ParsedSkillSourceSyncPublishRequest extends ParsedSkillSourceSy
   readonly publishArtifacts: boolean;
 }
 
+export interface ParsedSharedSkillSourceScanRequest {
+  readonly includeProjectRoot?: boolean;
+  readonly includeUserRoot?: boolean;
+  readonly includeSkillIds?: readonly string[];
+  readonly excludeSkillIds?: readonly string[];
+  readonly maxSourceBytes?: number;
+}
+
+export interface ParsedSharedSkillSourcePublishRequest extends ParsedSharedSkillSourceScanRequest {
+  readonly selectedSkillIds: readonly string[];
+  readonly allowNewSkills: boolean;
+  readonly publishArtifacts: boolean;
+}
+
 export interface ParsedSkillSourceUpgradePolicyUpdateRequest {
   readonly mode?: SkillSourceUpgradeMode;
   readonly approvedRootIds?: readonly string[];
@@ -175,6 +189,8 @@ export function parseProcedureObservationJobRequest(value: unknown): ProcedureOb
     source: readProcedureObservationSource(value, "source"),
     signals: readProcedureObservationSignals(value.signals),
     runId: readOptionalString(value, "runId"),
+    effectiveAttemptId: readOptionalString(value, "effectiveAttemptId"),
+    evidenceVersion: readOptionalString(value, "evidenceVersion"),
     messageId: readOptionalString(value, "messageId"),
     reviewActionId: readOptionalString(value, "reviewActionId"),
     channelId: readOptionalString(value, "channelId"),
@@ -656,7 +672,7 @@ const skillCandidateOrigins = ["ling-generated", "recording", "manual-draft", "i
 const skillCandidateStatuses = ["pending", "needs_edit", "approved_for_draft", "published", "rejected", "quarantined", "superseded", "expired"] as const;
 const skillCandidateProposedActions = ["create", "update_existing", "wrap_external", "supersede"] as const;
 const skillCandidateReviewActions = ["keep_pending", "request_changes", "approve_for_draft", "reject", "quarantine", "supersede"] as const;
-const skillCandidateSourceRefTypes = ["skill", "manual", "message", "decision", "run", "run-event", "artifact", "import", "observation-job"] as const;
+const skillCandidateSourceRefTypes = ["skill", "manual", "message", "decision", "run", "run-event", "artifact", "import", "observation-job", "learning-review"] as const;
 const procedureObservationSources = ["explicit_user_request", "user_correction", "successful_tool_chain", "repeated_pattern", "workflow_step_output", "multi_agent_handoff", "manual_recording"] as const;
 const procedureObservationSignals = ["save_as_skill", "next_time_instruction", "correction_phrase", "long_successful_sequence", "same_sequence_repeated", "handoff_stabilized", "user_approved_recording"] as const;
 const procedureObservationConfidences = ["low", "medium", "high"] as const;
@@ -813,6 +829,42 @@ export function parseSkillSourceSyncPublishRequest(value: unknown): ParsedSkillS
   }
   return {
     ...parseSkillSourceSyncRequest(value),
+    selectedSkillIds,
+    allowNewSkills: readOptionalBoolean(value, "allowNewSkills") ?? false,
+    publishArtifacts: readOptionalBoolean(value, "publishArtifacts") ?? true,
+  };
+}
+
+export function parseSharedSkillSourceScanRequest(value: unknown): ParsedSharedSkillSourceScanRequest {
+  if (value === undefined) {
+    return {};
+  }
+  if (!isRecord(value)) {
+    throw new Error("Shared skill source scan request must be a JSON object");
+  }
+  const maxSourceBytes = readOptionalNumber(value, "maxSourceBytes");
+  if (maxSourceBytes !== undefined && (!Number.isInteger(maxSourceBytes) || maxSourceBytes < 1)) {
+    throw new Error("maxSourceBytes must be a positive integer");
+  }
+  return {
+    includeProjectRoot: readOptionalBoolean(value, "includeProjectRoot"),
+    includeUserRoot: readOptionalBoolean(value, "includeUserRoot"),
+    includeSkillIds: readOptionalStringArray(value, "includeSkillIds"),
+    excludeSkillIds: readOptionalStringArray(value, "excludeSkillIds"),
+    maxSourceBytes,
+  };
+}
+
+export function parseSharedSkillSourcePublishRequest(value: unknown): ParsedSharedSkillSourcePublishRequest {
+  if (!isRecord(value)) {
+    throw new Error("Shared skill source publish request must be a JSON object");
+  }
+  const selectedSkillIds = readRequiredStringArray(value, "selectedSkillIds");
+  if (selectedSkillIds.length === 0) {
+    throw new Error("selectedSkillIds must include at least one skill id");
+  }
+  return {
+    ...parseSharedSkillSourceScanRequest(value),
     selectedSkillIds,
     allowNewSkills: readOptionalBoolean(value, "allowNewSkills") ?? false,
     publishArtifacts: readOptionalBoolean(value, "publishArtifacts") ?? true,
@@ -1019,7 +1071,7 @@ function readOptionalSkillSourceScanRoots(value: unknown): SkillSourceScanRoot[]
 
 function readSkillSourceKind(record: Record<string, unknown>, key: string): SkillSourceKind {
   const value = readString(record, key);
-  if (!["gstack-skill-directory", "codex-skill-directory", "workspace-skill-directory", "manual-markdown"].includes(value)) {
+  if (!["gstack-skill-directory", "codex-skill-directory", "claude-skill-directory", "dsh-skill-directory", "workspace-skill-directory", "manual-markdown"].includes(value)) {
     throw new Error(`${key} must be a supported skill source kind`);
   }
   return value as SkillSourceKind;

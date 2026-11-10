@@ -16,6 +16,7 @@ export interface ConversationErrorEntry {
   readonly identity: string;
   readonly scope: ConversationErrorScope;
   readonly message: string;
+  readonly origin?: "transport";
   readonly sequence: number;
 }
 
@@ -32,6 +33,7 @@ export interface ConversationErrorQuery {
   readonly surface: ConversationErrorSurface;
   readonly identity?: string;
   readonly scopes?: readonly ConversationErrorScope[];
+  readonly excludeTransport?: boolean;
 }
 
 export class ConversationErrorStore {
@@ -49,14 +51,14 @@ export class ConversationErrorStore {
     return this.latestOperationByKey.get(conversationErrorKey(operation)) === operation.sequence;
   }
 
-  report(operation: ConversationErrorOperation, message: string): boolean {
+  report(operation: ConversationErrorOperation, message: string, origin?: "transport"): boolean {
     if (!this.isCurrent(operation)) return false;
     const normalizedMessage = message.trim();
     if (!normalizedMessage) return this.clear(operation);
     const key = conversationErrorKey(operation);
     const current = this.entryByKey.get(key);
-    if (current?.message === normalizedMessage && current.sequence === operation.sequence) return false;
-    this.entryByKey.set(key, { ...operation, message: normalizedMessage });
+    if (current?.message === normalizedMessage && current.sequence === operation.sequence && current.origin === origin) return false;
+    this.entryByKey.set(key, { ...operation, message: normalizedMessage, origin });
     return true;
   }
 
@@ -80,6 +82,7 @@ export function selectConversationError(
     && entry.surface === query.surface
     && (query.identity === undefined || entry.identity === query.identity)
     && (!scopes || scopes.has(entry.scope))
+    && (!query.excludeTransport || entry.origin !== "transport")
   );
 }
 
@@ -87,7 +90,7 @@ export function useConversationErrorOwner(): {
   readonly entries: readonly ConversationErrorEntry[];
   readonly begin: (input: Omit<ConversationErrorOperation, "sequence">) => ConversationErrorOperation;
   readonly isCurrent: (operation: ConversationErrorOperation) => boolean;
-  readonly report: (operation: ConversationErrorOperation, message: string) => void;
+  readonly report: (operation: ConversationErrorOperation, message: string, origin?: "transport") => void;
   readonly clear: (operation: ConversationErrorOperation) => void;
 } {
   const storeRef = useRef<ConversationErrorStore | undefined>(undefined);
@@ -106,8 +109,8 @@ export function useConversationErrorOwner(): {
     if (changed) setEntries(storeRef.current!.entries());
   }, []);
 
-  const report = useCallback((operation: ConversationErrorOperation, message: string): void => {
-    publishIfChanged(storeRef.current!.report(operation, message));
+  const report = useCallback((operation: ConversationErrorOperation, message: string, origin?: "transport"): void => {
+    publishIfChanged(storeRef.current!.report(operation, message, origin));
   }, [publishIfChanged]);
 
   const clear = useCallback((operation: ConversationErrorOperation): void => {

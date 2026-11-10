@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { LingDaemonError } from "@ling-stack/api-client";
+import { isSupportedLocale, localeDescriptor } from "@ling-stack/localization";
 import {
   Check,
   CircleAlert,
@@ -12,6 +13,8 @@ import {
   Workflow,
 } from "lucide-react";
 import { useI18n, type Translate } from "../../i18n.js";
+import { LearningReviewDisclosure } from "../../shared/components/learning/LearningReviewPanel.js";
+import { SupportedLocaleOptions } from "../../i18n/SupportedLocaleOptions.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import { correctChannelTurnContext, getChannelTurnContext } from "../../api.js";
 import { InlineFeedback, Select, useLingToast } from "../../shared/ui/index.js";
@@ -117,17 +120,10 @@ export function ChannelInspector({
   runtimeLoading,
   runtimeActionWorkUnitId,
   selectedTask,
-  onSupersedeDecision,
-  onRejectDecision,
   onUpdateHandoffStatus,
-  onStartWorkflowFromHandoff,
   onStartTemplateWorkflow,
-  onOrchestrateWorkflow,
-  onCancelWorkflow,
   onStartWorkflowStep,
-  onRetryWorkflowStep,
   onUpdateWorkflowStepStatus,
-  onCreateTaskFromContextSummary,
   onRefreshRuntime,
   onCancelWorkUnit,
   onRetryWorkUnit,
@@ -166,17 +162,10 @@ export function ChannelInspector({
   readonly runtimeLoading: boolean;
   readonly runtimeActionWorkUnitId: string;
   readonly selectedTask: Task | undefined;
-  readonly onSupersedeDecision: (decision: ChannelDecision) => void;
-  readonly onRejectDecision: (decision: ChannelDecision) => void;
   readonly onUpdateHandoffStatus: (handoff: ChannelHandoff, status: ChannelHandoffStatus) => void;
-  readonly onStartWorkflowFromHandoff: (handoff: ChannelHandoff) => void;
   readonly onStartTemplateWorkflow: () => void;
-  readonly onOrchestrateWorkflow: (workflow: ChannelWorkflow) => void;
-  readonly onCancelWorkflow: (workflow: ChannelWorkflow) => void;
   readonly onStartWorkflowStep: (step: ChannelWorkflowStep, mode: ChannelWorkflowStepStartMode) => void;
-  readonly onRetryWorkflowStep: (step: ChannelWorkflowStep) => void;
   readonly onUpdateWorkflowStepStatus: (step: ChannelWorkflowStep, status: "skipped" | "cancelled") => void;
-  readonly onCreateTaskFromContextSummary: (summary: ChannelContextSummary) => void;
   readonly onRefreshRuntime: () => void;
   readonly onCancelWorkUnit: (workUnitId: string) => void;
   readonly onRetryWorkUnit: (workUnitId: string) => void;
@@ -242,11 +231,8 @@ export function ChannelInspector({
               <span>
                 <strong>{decision.title}</strong>
                 <small>{decision.status} · {decision.decision}</small>
+                {decision.status === "active" && decision.createdBy === "local-user" ? <LearningReviewDisclosure cwd={cwd} decisionId={decision.id} /> : null}
               </span>
-              <div className="activity-action-row">
-                <button className="secondary-button compact-button" type="button" onClick={() => onSupersedeDecision(decision)}>{t("Supersede")}</button>
-                <button className="secondary-button compact-button" type="button" onClick={() => onRejectDecision(decision)}>{t("Reject")}</button>
-              </div>
             </div>
           )}
         />
@@ -262,14 +248,6 @@ export function ChannelInspector({
                 <small>{handoff.status} · {handoff.reason}</small>
               </span>
               <div className="activity-action-row">
-                <button
-                  className="secondary-button compact-button"
-                  type="button"
-                  onClick={() => onStartWorkflowFromHandoff(handoff)}
-                  disabled={workflows.some((workflow) => workflow.sourceHandoffId === handoff.id)}
-                >
-                  {workflows.some((workflow) => workflow.sourceHandoffId === handoff.id) ? t("Workflow started") : t("Start workflow")}
-                </button>
                 <button className="secondary-button compact-button" type="button" onClick={() => onUpdateHandoffStatus(handoff, "accepted")}>{t("Accept")}</button>
                 <button className="secondary-button compact-button" type="button" onClick={() => onUpdateHandoffStatus(handoff, "completed")}>{t("Complete")}</button>
               </div>
@@ -316,12 +294,8 @@ export function ChannelInspector({
                 attachments={attachments}
                 linkPreviews={linkPreviews}
                 runningWorkflowStepId={runningWorkflowStepId}
-                orchestrating={orchestratingWorkflowId === workflow.id}
                 operationErrors={workflowErrors}
-                onOrchestrateWorkflow={onOrchestrateWorkflow}
-                onCancelWorkflow={onCancelWorkflow}
                 onStartWorkflowStep={onStartWorkflowStep}
-                onRetryWorkflowStep={onRetryWorkflowStep}
                 onUpdateWorkflowStepStatus={onUpdateWorkflowStepStatus}
               />
             )}
@@ -351,7 +325,6 @@ export function ChannelInspector({
               <div className="protocol-row compact" key={summary.id}>
                 <strong>{summary.targetId}</strong>
                 <small>{summary.summary}</small>
-                <button className="secondary-button compact-button" type="button" onClick={() => onCreateTaskFromContextSummary(summary)}>{t("Create task")}</button>
               </div>
             )}
           />
@@ -572,8 +545,7 @@ function ChannelProtocolEditor({
             >
               <option value="workspace">{t("Workspace default")}</option>
               <option value="follow_user">{t("Follow user")}</option>
-              <option value="zh-CN">{t("Chinese")}</option>
-              <option value="en-US">{t("English")}</option>
+              <SupportedLocaleOptions />
             </Select>
           </label>
           <div className="task-strip-head">
@@ -676,12 +648,7 @@ function responseLanguageLabel(value: NonNullable<Channel["responseLanguage"]>, 
   if (value === "follow_user") {
     return t("Follow user");
   }
-  if (value === "zh-CN") {
-    return t("Chinese");
-  }
-  if (value === "en-US") {
-    return t("English");
-  }
+  if (isSupportedLocale(value)) return localeDescriptor(value).nativeName;
   return t("Follow user");
 }
 

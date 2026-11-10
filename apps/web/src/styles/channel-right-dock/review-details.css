@@ -33,6 +33,132 @@
   min-width: 0;
 }
 
+.message-local-file-control {
+  display: inline;
+}
+
+.message-local-file-control .message-local-file-link {
+  color: var(--ling-text-link);
+}
+
+.message-local-file-error {
+  margin-inline-start: var(--ling-space-2);
+  color: var(--ling-status-danger);
+}
+
+.local-file-preview {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: var(--ling-space-3);
+}
+
+.local-file-preview-toolbar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--ling-space-2);
+  padding-bottom: var(--ling-space-3);
+  border-bottom: 1px solid var(--ling-border-default);
+}
+
+.local-file-breadcrumb {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.local-file-parent,
+.local-file-preview .workspace-file-open-trigger,
+.local-file-directory > button {
+  display: flex;
+  min-width: 0;
+  min-height: 32px;
+  align-items: center;
+  gap: var(--ling-space-2);
+  padding: var(--ling-space-2);
+  border: 0;
+  border-radius: var(--ling-radius-sm);
+  color: var(--ling-text-default);
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  text-align: start;
+}
+
+.local-file-preview .workspace-file-open-trigger {
+  flex-shrink: 0;
+  border: 1px solid var(--ling-border-default);
+  white-space: nowrap;
+}
+
+.local-file-parent:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.local-file-parent:hover:enabled,
+.local-file-preview .workspace-file-open-trigger:hover,
+.local-file-directory > button:hover {
+  background: var(--ling-bg-subtle);
+}
+
+.local-file-preview button:focus-visible,
+.message-local-file-link:focus-visible {
+  outline: 2px solid var(--ling-border-focus);
+  outline-offset: 2px;
+}
+
+.local-file-directory {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-1);
+}
+
+.local-file-directory > button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.local-file-directory svg,
+.message-local-file-link svg {
+  flex-shrink: 0;
+}
+
+.local-file-unsupported {
+  display: flex;
+  min-height: 320px;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: var(--ling-space-3);
+  padding: var(--ling-space-5);
+  color: var(--ling-text-muted);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.local-file-unsupported strong {
+  color: var(--ling-text-strong);
+}
+
+.local-file-loading {
+  display: flex;
+  align-items: center;
+  gap: var(--ling-space-2);
+  color: var(--ling-text-muted);
+}
+
+.local-file-preview-note {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+}
+
 .right-dock-workspace-file-preview-actions {
   display: flex;
   min-width: 0;
@@ -112,7 +238,6 @@
 }
 
 .right-dock-review-fallback-action,
-.right-dock-review-mode,
 .right-dock-review-badges span {
   display: inline-flex;
   min-height: 22px;
@@ -284,41 +409,24 @@
 .right-dock-review-mini.red { background: var(--ling-status-danger); }
 .right-dock-review-mini.gray { background: var(--ling-status-neutral); opacity: 0.72; }
 
-.right-dock-review-mode-row {
-  display: flex;
-  min-width: 0;
-  gap: var(--ling-space-2);
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.right-dock-review-mode-row::-webkit-scrollbar {
-  display: none;
-}
-
-.right-dock-review-mode.active {
-  color: var(--ling-status-info);
-  background: var(--ling-status-info-bg);
-}
-
 .right-dock-code-preview {
   display: grid;
   min-width: 0;
   margin: 0;
   overflow: hidden;
-  border: 1px solid var(--conversation-code-border);
+  border: 1px solid var(--ling-border-default);
   border-radius: var(--ling-radius-md);
-  color: var(--conversation-code-text);
-  background: var(--conversation-code-bg);
+  color: var(--ling-text-default);
+  background: var(--ling-bg-code);
 }
 
 .right-dock-code-preview figcaption {
   display: block;
   min-width: 0;
   min-height: 34px;
-  border-bottom: 1px solid var(--conversation-code-border);
-  color: var(--conversation-code-muted);
-  background: var(--conversation-code-bg-hover);
+  border-bottom: 1px solid var(--ling-border-default);
+  color: var(--ling-text-muted);
+  background: var(--ling-bg-subtle);
   font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
   font-size: 10px;
 }
@@ -346,7 +454,7 @@
 }
 
 .right-dock-code-preview-toggle:hover {
-  background: color-mix(in srgb, var(--conversation-code-text) 5%, transparent);
+  background: color-mix(in srgb, var(--ling-text-default) 5%, transparent);
 }
 
 .right-dock-code-preview-toggle:focus-visible {
@@ -386,8 +494,8 @@
   max-height: 560px;
   margin: 0;
   overflow: auto;
-  color: var(--conversation-code-text);
-  background: var(--conversation-code-bg);
+  color: var(--ling-text-default);
+  background: var(--ling-bg-code);
   font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
   font-size: 11px;
   line-height: 1.48;
@@ -407,14 +515,14 @@
 .right-dock-code-mark,
 .right-dock-code-note-mark {
   padding-inline: var(--ling-space-2);
-  color: var(--conversation-code-muted);
+  color: var(--ling-text-muted);
   font-size: 11px;
   text-align: right;
   user-select: none;
 }
 
 .right-dock-code-mark {
-  border-right: 1px solid var(--conversation-code-border);
+  border-right: 1px solid var(--ling-border-default);
   text-align: center;
 }
 
@@ -432,22 +540,22 @@
 }
 
 .right-dock-code-line.add {
-  border-left-color: var(--conversation-diff-add);
-  color: var(--conversation-code-text);
-  background: color-mix(in srgb, var(--conversation-diff-add) 13%, var(--conversation-code-bg));
+  border-left-color: var(--ling-status-success);
+  color: var(--ling-text-default);
+  background: color-mix(in srgb, var(--ling-status-success) 13%, var(--ling-bg-code));
 }
 
 .right-dock-code-line.delete {
-  border-left-color: var(--conversation-diff-remove);
-  color: var(--conversation-code-text);
-  background: color-mix(in srgb, var(--conversation-diff-remove) 12%, var(--conversation-code-bg));
+  border-left-color: var(--ling-status-danger);
+  color: var(--ling-text-default);
+  background: color-mix(in srgb, var(--ling-status-danger) 12%, var(--ling-bg-code));
 }
 
 .right-dock-code-line.add .right-dock-code-number,
-.right-dock-code-line.add .right-dock-code-mark { color: var(--conversation-diff-add); }
+.right-dock-code-line.add .right-dock-code-mark { color: var(--ling-status-success); }
 
 .right-dock-code-line.delete .right-dock-code-number,
-.right-dock-code-line.delete .right-dock-code-mark { color: var(--conversation-diff-remove); }
+.right-dock-code-line.delete .right-dock-code-mark { color: var(--ling-status-danger); }
 
 .right-dock-code-line.hunk,
 .right-dock-code-line.meta,
@@ -456,7 +564,7 @@
 
 .right-dock-code-line.hunk,
 .right-dock-code-line.meta {
-  background: color-mix(in srgb, var(--ling-status-info) 8%, var(--conversation-code-bg));
+  background: color-mix(in srgb, var(--ling-status-info) 8%, var(--ling-bg-code));
 }
 
 .right-dock-code-line.has-note .right-dock-code-note-mark,
@@ -477,9 +585,9 @@
   align-items: center;
   gap: var(--ling-space-3);
   padding: var(--ling-space-3) var(--ling-space-4);
-  border-block: 1px solid var(--conversation-code-border);
-  color: var(--conversation-code-muted);
-  background: var(--conversation-code-bg-hover);
+  border-block: 1px solid var(--ling-border-default);
+  color: var(--ling-text-muted);
+  background: var(--ling-bg-subtle);
   font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
   font-size: 10px;
   white-space: nowrap;
@@ -493,8 +601,8 @@
   padding: 0;
   border: 0;
   border-radius: var(--ling-radius-sm);
-  color: var(--conversation-code-muted);
-  background: color-mix(in srgb, var(--conversation-code-border) 42%, transparent);
+  color: var(--ling-text-muted);
+  background: color-mix(in srgb, var(--ling-border-default) 42%, transparent);
 }
 
 .right-dock-inline-note {
@@ -549,8 +657,8 @@
 
 .right-dock-code-truncated {
   padding: var(--ling-space-3);
-  border-top: 1px solid var(--conversation-code-border);
-  color: var(--conversation-code-muted);
+  border-top: 1px solid var(--ling-border-default);
+  color: var(--ling-text-muted);
   font-size: 10px;
 }
 

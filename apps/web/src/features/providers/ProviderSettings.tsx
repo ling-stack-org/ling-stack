@@ -234,6 +234,8 @@ export function ProviderSettings(props: ProviderSettingsProps): React.JSX.Elemen
             <ProviderModelImportPanel
               modelOptions={editor.setupModelOptions}
               visibleModelOptions={editor.visibleModelOptions}
+              modelOptionsCatalog={editor.modelOptionsCatalog}
+              modelOptionsFetchedAt={editor.modelOptionsFetchedAt}
               modelOptionsSource={editor.modelOptionsSource}
               modelSearch={editor.modelSearch}
               selectedModelIds={editor.selectedModelIds}

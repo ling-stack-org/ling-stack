@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   buildExternalWorkActionView,
   cancelExternalWorkAction,
+  ExternalWorkActionExecutionError,
   parseExternalWorkflowMarkdown,
   proposeExternalWorkAction,
   type ExternalWorkActionExecutionResult,
@@ -84,6 +85,12 @@ export interface ExternalWorkActionExecuteHooks {
   readonly startRuntimeWorkUnit: (input: ExternalWorkActionRuntimeStartRequest) => ExternalWorkActionRuntimeHandle;
   readonly appendArtifactRuntimeEvent: (input: ExternalWorkActionArtifactRuntimeEventRequest) => void;
   readonly transitionRuntimeWorkUnitTerminal: (input: ExternalWorkActionRuntimeTerminalTransitionRequest) => void;
+  readonly transitionRuntimeWorkUnitCancelled: (input: {
+    readonly store: RunStore;
+    readonly workUnitId: string;
+    readonly attemptId: string;
+    readonly reason: string;
+  }) => void;
   readonly executeExternalWorkAction: (input: ExternalWorkActionExecuteRequest) => Promise<ExternalWorkActionExecutionResult>;
 }
 
@@ -219,6 +226,7 @@ export async function handleExternalWorkActionExecute(
   }
 
   let supervised: ExternalWorkActionRuntimeHandle | undefined;
+  let executionResult: ExternalWorkActionExecutionResult | undefined;
   try {
     const body = await readOptionalJsonBody(request, config.maxBodyBytes);
     const input = parseExternalWorkActionExecuteRequest(body);
@@ -265,7 +273,10 @@ export async function handleExternalWorkActionExecute(
       githubToken,
       fetch: externalWorkFetch,
     });
-    for (const artifact of result.artifacts) {
+    executionResult = result;
+    // A rejected execution may observe another invocation's current action.
+    // Its artifacts and terminal status do not belong to this Runtime attempt.
+    for (const artifact of result.executionSettled ? result.artifacts : []) {
       hooks.appendArtifactRuntimeEvent({
         store,
         workUnitId: supervised.workUnit.id,
@@ -274,18 +285,45 @@ export async function handleExternalWorkActionExecute(
         now: new Date().toISOString(),
       });
     }
-    hooks.transitionRuntimeWorkUnitTerminal({
-      store,
-      workUnitId: supervised.workUnit.id,
-      attemptId: supervised.attempt.id,
-      event: result.action.status === "succeeded" ? "runner_succeeded" : "runner_failed",
-      attemptStatus: result.action.status === "succeeded" ? "succeeded" : "failed",
-      runtimeEventType: result.action.status === "succeeded" ? "work_unit_succeeded" : "work_unit_failed",
-      actor: "runner",
-      now: new Date().toISOString(),
-      errorCode: result.action.status === "succeeded" ? undefined : result.action.status,
-      errorMessage: result.action.lastErrorMessage,
-    });
+    const effectUnconfirmed = result.dispatchState === "effect_unconfirmed";
+    const cancelled = result.executionSettled && result.action.status === "cancelled" && result.dispatchState === "not_sent";
+    const succeeded = result.executionSettled && result.action.status === "succeeded" && !effectUnconfirmed;
+    const errorCode = effectUnconfirmed
+      ? "external_action_effect_unconfirmed"
+      : !result.executionSettled
+        ? "external_action_authority_lost"
+        : result.action.lastErrorCode ?? result.action.status;
+    const errorMessage = !result.executionSettled
+      ? effectUnconfirmed
+        ? "This execution lost its authority after dispatch; external effects remain unconfirmed. Verify the remote subject before any further action."
+        : "This execution lost its authority before dispatch and did not send a mutation. The returned action is the current persisted snapshot, not this execution's result."
+      : result.action.lastErrorMessage;
+    if (cancelled) {
+      hooks.transitionRuntimeWorkUnitCancelled({
+        store, workUnitId: supervised.workUnit.id, attemptId: supervised.attempt.id,
+        reason: "External work action was cancelled before dispatch.",
+      });
+    } else {
+      hooks.transitionRuntimeWorkUnitTerminal({
+        store,
+        workUnitId: supervised.workUnit.id,
+        attemptId: supervised.attempt.id,
+        event: succeeded ? "runner_succeeded" : "runner_failed",
+        attemptStatus: succeeded ? "succeeded" : "failed",
+        runtimeEventType: succeeded ? "work_unit_succeeded" : "work_unit_failed",
+        actor: "runner",
+        now: new Date().toISOString(),
+        errorCode: succeeded ? undefined : errorCode,
+        errorMessage,
+      });
+    }
+    if (!result.executionSettled) {
+      writeJson(response, 409, {
+        error: errorCode, message: errorMessage, cwd,
+        action: result.action, dispatchState: result.dispatchState,
+      });
+      return;
+    }
     const responseBody: ExternalWorkActionMutationResponse = {
       cwd,
       action: result.action,
@@ -294,21 +332,57 @@ export async function handleExternalWorkActionExecute(
     };
     writeJson(response, 200, responseBody);
   } catch (error) {
-    if (supervised) {
-      hooks.transitionRuntimeWorkUnitTerminal({
-        store,
-        workUnitId: supervised.workUnit.id,
-        attemptId: supervised.attempt.id,
-        event: "runner_failed",
-        attemptStatus: "failed",
-        runtimeEventType: "work_unit_failed",
-        actor: "runner",
-        now: new Date().toISOString(),
-        errorCode: error instanceof HttpError ? error.code : "external_work_action_failed",
-        errorMessage: error instanceof Error ? error.message : String(error),
+    if (executionResult) {
+      // Core has already decided this invocation's outcome. A failed Runtime
+      // projection must not replace that fact with runner_failed or authorize
+      // another dispatch, including cancelled and unconfirmed outcomes.
+      writeJson(response, 503, {
+        error: executionResult.dispatchState === "effect_unconfirmed"
+          ? "external_action_effect_unconfirmed"
+          : "external_action_runtime_projection_failed",
+        message: "Runtime projection could not be persisted. The current action snapshot and this invocation's dispatch state are preserved; projection failure does not grant permission to replay the action.",
+        cwd,
+        action: executionResult.action,
+        dispatchState: executionResult.dispatchState,
+        executionSettled: executionResult.executionSettled,
+        runtimeProjectionUnavailable: true,
       });
+      return;
     }
-    writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+    const executionError = error instanceof ExternalWorkActionExecutionError ? error : undefined;
+    let runtimeProjectionUnavailable = false;
+    if (supervised) {
+      try {
+        hooks.transitionRuntimeWorkUnitTerminal({
+          store,
+          workUnitId: supervised.workUnit.id,
+          attemptId: supervised.attempt.id,
+          event: "runner_failed",
+          attemptStatus: "failed",
+          runtimeEventType: "work_unit_failed",
+          actor: "runner",
+          now: new Date().toISOString(),
+          errorCode: executionError?.code ?? (error instanceof HttpError ? error.code : "external_work_action_failed"),
+          errorMessage: error instanceof Error ? error.message : String(error),
+        });
+      } catch {
+        // Storage may be unavailable twice. Keep the known send boundary in
+        // the response instead of replacing it with a generic projection error.
+        runtimeProjectionUnavailable = true;
+      }
+    }
+    if (executionError) {
+      writeJson(response, 503, {
+        error: executionError.code, message: executionError.message,
+        dispatchState: executionError.dispatchState,
+        ...(runtimeProjectionUnavailable ? { runtimeProjectionUnavailable: true } : {}),
+      });
+      return;
+    }
+    writeJson(response, 400, {
+      error: "bad_request", message: error instanceof Error ? error.message : String(error),
+      ...(runtimeProjectionUnavailable ? { runtimeProjectionUnavailable: true } : {}),
+    });
   }
 }
 

@@ -17,10 +17,16 @@ export interface ChannelContextMemoryEligibility {
   readonly mode: ChannelContextMemoryUseMode;
   readonly quotePolicy: ChannelContextQuotePolicy;
   readonly droppedReason?: ChannelContextDroppedReason;
-  readonly policyVersion: "memory_use_isolation_v1";
+  readonly policyVersion: "memory_use_isolation_v2";
 }
 
-export const MEMORY_USE_ISOLATION_POLICY_VERSION = "memory_use_isolation_v1" as const;
+export const MEMORY_USE_ISOLATION_POLICY_VERSION = "memory_use_isolation_v2" as const;
+
+/** Selected by the Host, never inferred from memory text or supplied as an authority grant. */
+export interface MemoryContextConsumerScope {
+  readonly workspaceId: string;
+  readonly channelId?: string;
+}
 
 export interface RecalledMemoryContextSourceInput {
   readonly item: RecalledMemory;
@@ -41,7 +47,8 @@ export function recalledMemoryToContextSource(input: RecalledMemoryContextSource
   return {
     id: `memory:${memory.id}`,
     kind: "memory",
-    workspaceId: input.workspaceId ?? memory.workspaceId,
+    // Consumer scope cannot relabel source ownership.
+    workspaceId: memory.workspaceId,
     channelId: memory.scopeType === "channel" ? memory.ownerId : input.channelId,
     teammateId: memory.scopeType === "teammate" ? memory.ownerId : undefined,
     sourceRefs,
@@ -69,9 +76,13 @@ export function memoryEligibilityForView(
   source: ChannelContextSource,
   viewKind: ChannelContextViewKind,
   consumerTeammateId?: string,
+  consumerScope?: MemoryContextConsumerScope,
 ): ChannelContextMemoryEligibility | undefined {
   if (source.kind !== "memory") {
     return undefined;
+  }
+  if (consumerScope && !memoryMatchesConsumerScope(source, consumerScope)) {
+    return excludedMemory("scope");
   }
 
   if (viewKind === "evidence_inspect_view") {
@@ -82,7 +93,7 @@ export function memoryEligibilityForView(
     return excludedMemory("sensitivity");
   }
 
-  if (source.sensitivity === "private" && !isPrivateMemoryAllowed(source, viewKind, consumerTeammateId)) {
+  if (source.sensitivity === "private" && !isPrivateMemoryAllowed(source, viewKind, consumerTeammateId, consumerScope)) {
     return excludedMemory("sensitivity");
   }
 
@@ -90,13 +101,15 @@ export function memoryEligibilityForView(
     return excludedMemory("scope");
   }
 
-  if (source.sensitivity === "private") {
-    return memoryEligibility("influence_only", "influence_only");
-  }
-
   const metadataQuotePolicy = memoryQuotePolicyFromMetadata(source.metadata);
   if (metadataQuotePolicy === "inspect_only") {
     return memoryEligibility("inspect_only", "inspect_only");
+  }
+  if (source.sensitivity === "private") {
+    return memoryEligibility("influence_only", "influence_only");
+  }
+  if (source.metadata.verifyBeforeUse === true) {
+    return memoryEligibility("influence_only", "influence_only");
   }
   if (metadataQuotePolicy === "influence_only") {
     return memoryEligibility("influence_only", "influence_only");
@@ -117,11 +130,26 @@ function isPrivateMemoryAllowed(
   source: ChannelContextSource,
   viewKind: ChannelContextViewKind,
   consumerTeammateId?: string,
+  consumerScope?: MemoryContextConsumerScope,
 ): boolean {
+  if (viewKind === "selector_view" || viewKind === "workflow_proposal_view") return false;
+  if (consumerScope && memoryMatchesConsumerScope(source, consumerScope) &&
+    (source.metadata.scopeType === "workspace" || source.metadata.scopeType === "channel")) {
+    return true;
+  }
   if (viewKind !== "private_chat_view" && viewKind !== "workflow_step_view" && viewKind !== "specialist_task_view") {
     return false;
   }
   return Boolean(consumerTeammateId && source.teammateId === consumerTeammateId);
+}
+
+function memoryMatchesConsumerScope(source: ChannelContextSource, scope: MemoryContextConsumerScope): boolean {
+  if (source.workspaceId !== scope.workspaceId) return false;
+  if (source.metadata.scopeType === "workspace") return source.metadata.ownerId === scope.workspaceId;
+  if (source.metadata.scopeType === "channel") {
+    return Boolean(scope.channelId && source.channelId === scope.channelId && source.metadata.ownerId === scope.channelId);
+  }
+  return true;
 }
 
 function memoryQuotePolicyFromMetadata(metadata: Readonly<Record<string, unknown>>): ChannelContextQuotePolicy | undefined {

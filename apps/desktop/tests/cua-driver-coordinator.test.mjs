@@ -11,6 +11,96 @@ import {
 } from "../dist/main/cua-driver/provider-seal.js";
 import { CuaDriverInputFenceError } from "../dist/main/cua-driver/input-fence-client.js";
 import { DEFAULT_CUA_DRIVER_FEATURE_FLAGS } from "@ling-stack/contracts";
+import { CuaDriverAvailabilityPublisher } from "../dist/main/cua-driver/availability-publisher.js";
+import { createA34CoordinatorArtifactFixture } from "./support/a34-coordinator-artifact-fixture.mjs";
+
+test("A34 real lazy coordinator restart drops queued prior-generation availability", {
+  skip: process.platform !== "darwin",
+}, async (t) => {
+  const fixture = await createA34CoordinatorArtifactFixture(t);
+  const gate = deferred();
+  const reports = [];
+  const snapshots = [];
+  const publishedLeases = [];
+  const revokedLeases = [];
+  let spawnCount = 0;
+  const authority = {
+    desktopInstanceId: "desktop-a34-producer-fixture",
+    desktopInstanceEpoch: 1,
+    bridgeConnectionId: "bridge-a34-producer-fixture",
+    daemonAuthorityEpoch: "authority-a34-producer-fixture",
+    workspaceCwd: fixture.workspaceCwd,
+    platform: "darwin",
+    limitations: [],
+  };
+  const availabilityPublisher = new CuaDriverAvailabilityPublisher({
+    authority,
+    client: {
+      async publish(report) {
+        reports.push(report);
+        if (reports.length === 1) await gate.promise;
+      },
+    },
+  });
+  const coordinator = new CuaDriverDesktopCoordinator({
+    platform: "darwin",
+    architecture: "arm64",
+    resourcesPath: fixture.resourcesPath,
+    userDataPath: fixture.userDataPath,
+    workspaceCwd: fixture.workspaceCwd,
+    daemonBaseUrl: "http://127.0.0.1:17891",
+    desktopInstanceId: authority.desktopInstanceId,
+    bridgeContext: { ...authority, bridgeToken: "a34-fixture-only-bridge" },
+    featureFlags: {
+      bundledEmbedded: { darwin: true, win32: false },
+      packagedProvider: { darwin: true, win32: false },
+    },
+    // No MCP initialize request is made. The real host remains lazy; a spawn
+    // attempt is a fixture failure, never execution of the synthetic payload.
+    processLifecycle: {
+      lifetimeBoundary: "test-fixture",
+      spawn() { spawnCount += 1; throw new Error("a34_synthetic_payload_must_not_spawn"); },
+      async terminate() {},
+    },
+    leaseClient: {
+      async publish(value) { publishedLeases.push(value); },
+      async revoke(value) { revokedLeases.push(value); },
+    },
+    telemetry: { emit() {} },
+    availabilityPublisher,
+    onStateChanged(snapshot) { snapshots.push(snapshot); },
+  });
+  try {
+    const first = await coordinator.enable();
+    assert.equal(first.generation, 1);
+    assert.equal(first.lifecycle, "active");
+    assert.equal(first.providerState, "desktop_unavailable");
+    await waitFor(() => reports.length === 1);
+    assert.equal(reports[0].generation, 0);
+
+    // Do not override enableInternal, generation, snapshots or queue logic.
+    // restart completes lease G2 while the independent availability queue is
+    // still blocked in the initial generation-0 client call.
+    const restarted = await coordinator.restart("a34_permission_refresh_fixture");
+    assert.equal(restarted.generation, 2);
+    assert.equal(restarted.lifecycle, "active");
+    assert.deepEqual(publishedLeases.map((value) => value.generation), [1, 2]);
+    assert.deepEqual(revokedLeases.map((value) => value.generation), [1]);
+    assert.ok(snapshots.some((snapshot) => snapshot.lifecycle === "stopping" && snapshot.generation === 1));
+    assert.ok(snapshots.some((snapshot) => snapshot.lifecycle === "validating" && snapshot.generation === 1));
+    assert.equal(reports.length, 1);
+
+    gate.resolve();
+    await availabilityPublisher.close();
+    assert.deepEqual(reports.map((value) => value.generation), [0, 2]);
+    assert.ok(reports.every((value) => value.providerState !== "ready"));
+    assert.ok(publishedLeases.every((value) => value.bridgeConnectionId === authority.bridgeConnectionId));
+    assert.equal(spawnCount, 0);
+  } finally {
+    gate.resolve();
+    await coordinator.shutdown();
+  }
+});
 
 test("coordinator keeps bundled gate closed and never falls through to PATH/external provider", async () => {
   let spawnCount = 0;
@@ -222,7 +312,8 @@ test("Windows bundled gate requires an injected Job Object lifecycle before touc
   await coordinator.shutdown();
 });
 
-test("disable waits for an in-flight recovery enable and removes the recovered generation", async () => {
+test("disable waits for an in-flight recovery enable and removes the recovered generation", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const coordinator = createCoordinator();
   const recoveryStarted = deferred();
   const releaseRecovery = deferred();
@@ -250,6 +341,8 @@ test("disable waits for an in-flight recovery enable and removes the recovered g
   };
 
   coordinator.scheduleRecovery("fixture_recovery", 1);
+  await waitForRecoveryBackoff(coordinator);
+  t.mock.timers.tick(100);
   await recoveryStarted.promise;
   const disabling = coordinator.disable("fixture_disable");
   await Promise.resolve();
@@ -357,7 +450,8 @@ test("an exhausted recovery budget tears down the active generation before retry
   assert.equal(coordinator.recoveryAttempt, 0);
 });
 
-test("enable during recovery backoff joins the recovery-owned generation", async () => {
+test("enable during recovery backoff joins the recovery-owned generation", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const coordinator = createCoordinator();
   let enableCount = 0;
   let revokeCount = 0;
@@ -384,8 +478,11 @@ test("enable during recovery backoff joins the recovery-owned generation", async
 
   coordinator.scheduleRecovery("fixture_recovery", 1);
   const recovery = coordinator.recoveryPromise;
-  await waitFor(() => coordinator.snapshot.lifecycle === "disabled");
-  const enabled = await coordinator.enable();
+  await waitForRecoveryBackoff(coordinator);
+  const enabling = coordinator.enable();
+  assert.equal(enableCount, 0);
+  t.mock.timers.tick(100);
+  const enabled = await enabling;
   await recovery;
 
   assert.equal(enableCount, 1);
@@ -1038,6 +1135,20 @@ function deferred() {
     resolve = resolvePromise;
   });
   return { promise, resolve };
+}
+
+async function waitForRecoveryBackoff(coordinator) {
+  // The fake host has no live process handle. Wait only for beginDisable's
+  // microtasks: recovery increments its attempt immediately before installing
+  // the unref backoff timer synchronously, which the test must advance itself.
+  for (let turn = 0; turn < 100; turn += 1) {
+    if (coordinator.recoveryAttempt === 1) {
+      assert.equal(coordinator.snapshot.lifecycle, "disabled");
+      return;
+    }
+    await Promise.resolve();
+  }
+  throw new Error("fixture_recovery_backoff_not_started");
 }
 
 async function waitFor(predicate) {

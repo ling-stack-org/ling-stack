@@ -21,12 +21,17 @@ will replace this table before the first stable release.
 
 Use GitHub's private vulnerability reporting flow:
 
-<https://github.com/tianxiaochannel-oss88/ling-stack/security/advisories/new>
+<https://github.com/ling-stack-org/ling-stack/security/advisories/new>
 
-If the private reporting button is unavailable, contact a repository maintainer through
-a private GitHub channel. Do not open a public issue, discussion, or pull request that
-contains exploit details, credentials, private workspace data, or an unpatched proof of
-concept.
+Sign in to GitHub and use the **Report a vulnerability** entry under the repository's
+Security tab. Maintainers must keep private vulnerability reporting enabled; it is a
+repository setting, not an ordinary public Issue template. English and Chinese reports
+are welcome.
+
+If the private reporting button is unavailable, do not publish sensitive details in an
+issue, discussion, or pull request. A public request to restore the reporting entry must
+contain no exploit details, credentials, private workspace data, or unpatched proof of
+concept. Wait for a verified private reporting channel before sharing those details.
 
 Include only the information needed to reproduce and assess the issue:
 

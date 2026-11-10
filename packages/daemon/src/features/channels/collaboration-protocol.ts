@@ -14,6 +14,7 @@ import {
   type ChannelResponseLanguage,
   type ChannelWorkflowPreference,
   type ProcedureObservationCluster,
+  type ResponseLanguagePreference,
   type RunStore,
   type SkillCandidateSourceRef,
   type WorkspaceStoreFacet,
@@ -700,7 +701,7 @@ function readLimit(value: string | null): number | undefined {
 
 function resolveResponseLanguageField(
   channel: Channel,
-  workspaceResponseLanguage: "follow_user" | "zh-CN" | "en-US" | undefined,
+  workspaceResponseLanguage: ResponseLanguagePreference | undefined,
 ): ChannelProtocolFieldResolution<ChannelResponseLanguage> {
   if (channel.responseLanguage && channel.responseLanguage !== "workspace") {
     return {

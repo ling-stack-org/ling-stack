@@ -1,11 +1,17 @@
 import { join } from "node:path";
 import { redactSecrets } from "@ling-stack/core";
 import type { PiRunnerEvent, PiRunnerResult, PiRunnerRunOptions } from "@ling-stack/runner-pi";
+import type { RunnerToolExecutionConformanceV1 } from "../runner-tool-conformance.js";
 import { extractAssistantText } from "../../shared/assistant-text.js";
 import { bridgeExternalToolApproval } from "./approval-bridge.js";
 import { importExternalAgentArtifact, type ExternalArtifactImportInput } from "./artifact-importer.js";
 import { normalizeExternalAgentEvent, type ExternalAgentEvent } from "./event-normalizer.js";
-import { assertExternalToolAllowed, defaultExternalToolSurfacePolicy, type ExternalToolProposal } from "./tool-surface.js";
+import {
+  assertExternalArtifactImportAllowed,
+  assertExternalToolAllowed,
+  externalToolSurfacePolicyFromConformance,
+  type ExternalToolProposal,
+} from "./tool-surface.js";
 import { resolveExternalWorkspacePath } from "./workspace-boundary.js";
 
 export interface ExternalAgentRunArtifact {
@@ -45,6 +51,8 @@ export interface ExternalAgentRunResult {
 export interface RunExternalAgentTaskOptions {
   readonly runnerId: string;
   readonly backend: string;
+  readonly adapterRevision: string;
+  readonly toolExecutionConformance?: RunnerToolExecutionConformanceV1;
   readonly options: PiRunnerRunOptions;
   readonly run: (input: ExternalAgentRunInput, signal?: AbortSignal) => Promise<ExternalAgentRunResult>;
   readonly extraSecrets?: readonly (string | undefined)[];
@@ -159,7 +167,12 @@ async function handleToolProposal(
   input: RunExternalAgentTaskOptions,
   emit: (event: PiRunnerEvent) => void,
 ): Promise<void> {
-  assertExternalToolAllowed(proposal, defaultExternalToolSurfacePolicy());
+  const policy = externalToolSurfacePolicyFromConformance(
+    input.adapterRevision,
+    input.toolExecutionConformance,
+    input.options.tools ?? [],
+  );
+  assertExternalToolAllowed(proposal, policy);
   emit({
     type: "tool_start",
     toolCallId: proposal.backendToolCallId,
@@ -167,7 +180,7 @@ async function handleToolProposal(
     args: proposal.input,
   });
   const decision = await bridgeExternalToolApproval(proposal, {
-    approvalBridgeVerified: true,
+    approvalBridgeVerified: policy.approvalBridgeVerified,
     onApprovalRequired: input.options.onApprovalRequired
       ? async (request) => {
         const decision = await input.options.onApprovalRequired?.({
@@ -196,6 +209,12 @@ function handleArtifact(
   input: RunExternalAgentTaskOptions,
   emit: (event: PiRunnerEvent) => void,
 ): void {
+  const policy = externalToolSurfacePolicyFromConformance(
+    input.adapterRevision,
+    input.toolExecutionConformance,
+    input.options.tools ?? [],
+  );
+  assertExternalArtifactImportAllowed(policy);
   const summary = importExternalAgentArtifact({
     artifactRoot: input.options.runtimePaths?.artifactsDir ?? join(input.options.cwd, ".ling-stack", "artifacts"),
     runId: input.options.task.id,

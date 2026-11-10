@@ -10,7 +10,7 @@ import type {
   MediaVendorTransportRequest,
   MediaVendorTransportResult,
 } from "../types.js";
-import { isRecord, removeUndefined } from "../utils.js";
+import { isRecord, removeUndefined, stripTrailingSlashes } from "../utils.js";
 
 const MAX_MEDIA_VENDOR_IMAGE_BYTES = 25 * 1024 * 1024;
 const DEFAULT_LIVE_MEDIA_VENDOR_TIMEOUT_MS = 180_000;
@@ -19,7 +19,7 @@ export async function executeSeedreamImageGeneration(
   request: MediaVendorTransportRequest,
   options: LiveMediaVendorTransportOptions,
 ): Promise<MediaVendorTransportResult> {
-  const endpoint = `${options.baseUrl?.replace(/\/+$/, "")}/images/generations`;
+  const endpoint = `${stripTrailingSlashes(options.baseUrl)}/images/generations`;
   const payload = buildSeedreamImageGenerationPayload(request.requestPlan);
   return await executeSeedreamImageRequest({
     request,
@@ -37,7 +37,7 @@ export async function executeSeedreamImageEdit(
   request: MediaVendorTransportRequest,
   options: LiveMediaVendorTransportOptions,
 ): Promise<MediaVendorTransportResult> {
-  const endpoint = `${options.baseUrl?.replace(/\/+$/, "")}/images/generations`;
+  const endpoint = `${stripTrailingSlashes(options.baseUrl)}/images/generations`;
   const payloadResolution = buildSeedreamImageEditPayload(request.requestPlan);
   if (!payloadResolution.ok) {
     return {

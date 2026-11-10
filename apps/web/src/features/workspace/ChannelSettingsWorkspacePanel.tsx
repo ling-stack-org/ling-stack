@@ -6,7 +6,6 @@ import {
   Field,
   InlineFeedback,
   Input,
-  StatusIndicator,
 } from "../../shared/ui/index.js";
 import type { ChannelFormState, ChannelWorkspaceBinding, ChannelWorkspaceMode } from "../../types.js";
 import { ChannelExecutionPathField } from "./ChannelExecutionPathField.js";
@@ -46,6 +45,9 @@ export function ChannelSettingsWorkspacePanel({
   readonly onHandoffChannelWorkspace: (mode: ChannelWorkspaceMode) => void;
 }): React.JSX.Element {
   const { t } = useI18n();
+  const workspaceShortPath = selectedChannelWorkspace
+    ? shortWorkspacePath(selectedChannelExecutionPath, cwd)
+    : "";
 
   return (
     <section className="channel-settings-surface channel-workspace-settings" aria-label={t("Channel workspace settings")}>
@@ -82,16 +84,16 @@ export function ChannelSettingsWorkspacePanel({
               {channelWorkspaceModeIcon(selectedChannelWorkspace.mode, 15)}
               <strong>{t("Current workspace")}</strong>
             </span>
-            <StatusIndicator
-              compact
-              label={t(channelWorkspaceModeLabel(selectedChannelWorkspace.mode))}
-              tone={selectedChannelWorkspace.errorMessage ? "danger" : "neutral"}
-            />
+            <span className="channel-workspace-mode-label">
+              {t(channelWorkspaceModeLabel(selectedChannelWorkspace.mode))}
+            </span>
           </div>
-          <div className="channel-workspace-summary">
-            <small title={selectedChannelExecutionPath}>{shortWorkspacePath(selectedChannelExecutionPath, cwd)}</small>
-            {selectedChannelWorkspace.errorMessage ? <small className="danger-text">{selectedChannelWorkspace.errorMessage}</small> : null}
-          </div>
+          {workspaceShortPath || selectedChannelWorkspace.errorMessage ? (
+            <div className="channel-workspace-summary">
+              {workspaceShortPath ? <small title={selectedChannelExecutionPath}>{workspaceShortPath}</small> : null}
+              {selectedChannelWorkspace.errorMessage ? <small className="danger-text">{selectedChannelWorkspace.errorMessage}</small> : null}
+            </div>
+          ) : null}
           <div className="channel-workspace-actions">
             <Button
               leadingIcon={<GitBranch size={14} />}
@@ -203,7 +205,7 @@ export function shortWorkspacePath(path: string, cwd: string): string {
   }
   const workspace = cwd.trim().replace(/\/$/, "");
   if (workspace && trimmed === workspace) {
-    return ".";
+    return "";
   }
   if (workspace && trimmed.startsWith(`${workspace}/`)) {
     return `.${trimmed.slice(workspace.length)}`;

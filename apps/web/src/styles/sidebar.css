@@ -1,27 +1,7 @@
 /* Codex-style global sidebar shell. Keep this file focused on shell chrome only. */
 :root {
-  --sidebar-expanded-width: 240px;
+  --sidebar-expanded-width: 292px;
   --sidebar-collapsed-width: 48px;
-  --sidebar-rail-motion-duration: var(--ling-motion-slow);
-  --sidebar-rail-motion-ease: var(--ling-ease-standard);
-}
-
-.app-shell.channel-drawer-shell {
-  transition: grid-template-columns var(--sidebar-rail-motion-duration) var(--sidebar-rail-motion-ease);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  :root {
-    --sidebar-rail-motion-duration: var(--ling-motion-instant);
-  }
-
-  .app-shell.channel-drawer-shell {
-    transition-duration: var(--ling-motion-instant);
-  }
-
-  .app-shell.channel-drawer-shell .channel-left-drawer {
-    transition-duration: var(--ling-motion-instant);
-  }
 }
 
 @media (max-width: 900px) {
@@ -49,14 +29,13 @@
     overflow: hidden;
   }
 
-  .task-workbench-main.with-channel-side-panel {
-    grid-template-columns: minmax(0, 1fr);
-    padding-right: 0;
+  .activity-chat-layout.with-thread > .thread-reply-panel {
+    display: grid;
   }
 
-  .task-workbench-main.with-channel-side-panel .channel-side-panel,
-  .task-workbench-main.with-channel-side-panel .channel-side-panel-resize-handle,
-  .activity-chat-layout.with-thread > .thread-reply-panel {
+  /* Keep the opened topic usable in a narrow desktop window. Closing it
+     reveals the still-mounted channel feed and preserves its scroll/draft. */
+  .activity-chat-layout.with-thread > .activity-chat-main {
     display: none;
   }
 
@@ -75,8 +54,7 @@
   }
 
   .activity-shell .message-feed-wrap,
-  .activity-shell .message-feed,
-  .message-feed-virtualizer {
+  .activity-shell .message-feed {
     max-width: 100%;
     min-width: 0;
     overflow-x: hidden;

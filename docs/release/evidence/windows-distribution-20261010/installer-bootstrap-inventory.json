@@ -1,0 +1,160 @@
+{
+  "runtimeSourceSha": "f0a632b1bd5bd09b12778cbd7da3d26c354b832f",
+  "installerRevision": "notices-r1",
+  "installerSha256": "69cf35afc819d06e63d68a78e4630233d0faee70465bcc02fdd8333ca217e6b2",
+  "installerEngine": {
+    "name": "NSIS",
+    "toolchainVersion": "3.0.4.1",
+    "format": "NSIS-3 Unicode",
+    "compression": "Deflate",
+    "stubSizeBytes": 98304
+  },
+  "pluginArchitecture": "x86 Unicode; application payload is x64",
+  "binaryFiles": [
+    {
+      "file": "System.dll",
+      "sha256": "3eb38ae99653a7dbc724132ee240f6e5c4af4bfe7c01d31d23faf373f9f2eaca",
+      "sizeBytes": 12288,
+      "roles": [
+        "installer",
+        "uninstaller"
+      ]
+    },
+    {
+      "file": "nsExec.dll",
+      "sha256": "5d9ceb1ce5f35aea5f9e5a0c0edeeec04dfefe0c77890c80c70e98209b58b962",
+      "sizeBytes": 6656,
+      "roles": [
+        "installer",
+        "uninstaller"
+      ]
+    },
+    {
+      "file": "StdUtils.dll",
+      "sha256": "b72e9013a6204e9f01076dc38dabbf30870d44dfc66962adbf73619d4331601e",
+      "sizeBytes": 102400,
+      "roles": [
+        "installer",
+        "uninstaller"
+      ]
+    },
+    {
+      "file": "SpiderBanner.dll",
+      "sha256": "996a259e53ca18b89ec36d038c40148957c978c0fd600a268497d4c92f882a93",
+      "sizeBytes": 9216,
+      "roles": [
+        "installer"
+      ]
+    },
+    {
+      "file": "nsis7z.dll",
+      "sha256": "b393f05e8ff919ef071181050e1873c9a776e1a0ae8329aefff7007d0cadf592",
+      "sizeBytes": 434176,
+      "roles": [
+        "installer"
+      ]
+    },
+    {
+      "file": "WinShell.dll",
+      "sha256": "9be85b986ea66a6997dde658abe82b3147ed2a1a3dcb784bb5176f41d22815a6",
+      "sizeBytes": 3072,
+      "roles": [
+        "installer",
+        "uninstaller"
+      ]
+    }
+  ],
+  "licenseFiles": [
+    {
+      "file": "licenses/NSIS-3.0.4.1-COPYING.txt",
+      "sha256": "3c8de989f6504d52f5f8dfafedb6668cd47201f5d01f1319570727c091425dd6",
+      "origin": "Exact NSIS compiler distribution used by Electron Builder"
+    },
+    {
+      "file": "licenses/electron-builder-26.15.3-MIT.txt",
+      "sha256": "bed8d0ab3e6031817f775a641ff37313b0f5591bc8ba0ed79b978dafbd4231ce",
+      "origin": "Exact electron-builder 26.15.3 project license; same-version app-builder-lib declares MIT but omits its own LICENSE file"
+    },
+    {
+      "file": "licenses/StdUtils-1.14-ReadMe.txt",
+      "sha256": "31b67e463c6e5695e9ffaf62dd077d9bd62df34026593c2f29bc9ea87fdac72f",
+      "origin": "Official 1.14 release binary archive, matches shipped Unicode DLL"
+    },
+    {
+      "file": "licenses/StdUtils-LGPL-2.1.txt",
+      "sha256": "1e7e6bae5a5bde32f1ae5a7c37a082d1ab03cf89354f7f936ac40be9e39a6531",
+      "origin": "Official corresponding-source archive paired with exact matching binary"
+    },
+    {
+      "file": "licenses/StdUtils-LGPL-clarification.txt",
+      "sha256": "ae0ab3f49b4473152181c1fe5670435faaca079eda0b261ee31a51a6180bc9e7",
+      "origin": "Original author clarification for unmodified NSIS plug-in use"
+    },
+    {
+      "file": "licenses/StdUtils-BLAKE2-COPYING.txt",
+      "sha256": "f4e7f373b9b996950337e8d41a4a2939c2d90b7725e9baf3d5084a22717ad328",
+      "origin": "Official corresponding-source archive"
+    },
+    {
+      "file": "licenses/StdUtils-RHash-COPYING.txt",
+      "sha256": "842fef4921191943e531c6cc939b0334f1c2658c9204e30dd35d13f51fdf70dd",
+      "origin": "Official corresponding-source archive"
+    },
+    {
+      "file": "licenses/SpiderBanner-author-documentation.txt",
+      "sha256": "3dad83e5e71427f9e46d54a915a6289413f82ff0c23e60f14bf0a14fdb348f4b",
+      "origin": "Original archive with matching shipped DLL; usage statement, no complete explicit license"
+    },
+    {
+      "file": "licenses/LZMA-SDK-19-public-domain.txt",
+      "sha256": "63fcfe54826809b5a9f9df8a8ff53c04330122319ec67a2dd815085586adaf0e",
+      "origin": "Pinned 19.00 source mirror; SDK terms do not establish entire shipped plug-in license"
+    },
+    {
+      "file": "licenses/WinShell_plug-in-supplier-record.txt",
+      "sha256": "f88c7eb163b189cfc190be71f30809b27862d9771269b44107c233c794e0f09e",
+      "origin": "Supplier wiki; context record, not a new license grant"
+    },
+    {
+      "file": "licenses/SpiderBanner_plug-in-supplier-record.txt",
+      "sha256": "8454c5a24ae307f2653ea552c4de4a9b692ce5790b9185c0bf23e7290e75cd58",
+      "origin": "Supplier wiki; context record, not a new license grant"
+    },
+    {
+      "file": "licenses/Nsis7z_plug-in-supplier-record.txt",
+      "sha256": "fce1418fb759ece4dbeddebe1188300bc784ef9cfdca0fca434132cbc2c08a7c",
+      "origin": "Supplier wiki; context record, not a new license grant"
+    }
+  ],
+  "sources": [
+    {
+      "file": "sources/StdUtils.2018-10-27.sources.tbz2",
+      "sha256": "c5e3b1a66219bc9564c2ccc1702691327eecf044ad33404ac268d725d22dca49",
+      "origin": "https://github.com/lordmulder/stdutils/releases/download/1.14/StdUtils.2018-10-27.sources.tbz2"
+    },
+    {
+      "file": "sources/SpiderBanner_plugin.zip",
+      "sha256": "45c79a024e5122834a3473a87649757bc11958a11602a3ce2d9f7ce006f0e2b7",
+      "origin": "https://nsis.sourceforge.io/mediawiki/images/4/4c/SpiderBanner_plugin.zip"
+    }
+  ],
+  "reviewQuestions": [
+    {
+      "component": "WinShell",
+      "issue": "Supplier identifies it as Freeware but does not provide complete redistribution/source-license terms; supplied archive contains binaries only.",
+      "source": "https://nsis.sourceforge.io/WinShell_plug-in"
+    },
+    {
+      "component": "SpiderBanner",
+      "issue": "Matching source/binary archive and author usage statement are available, but no complete explicit plug-in license was found.",
+      "source": "https://nsis.sourceforge.io/SpiderBanner_plug-in"
+    },
+    {
+      "component": "nsis7z 19.00",
+      "issue": "Shipped DLL matches the vendor resource bundle. The current supplier ZIP DLL differs; a pinned 19.00 source mirror and public-domain SDK text do not establish exact corresponding plug-in source or resolve legacy LGPL context.",
+      "source": "https://nsis.sourceforge.io/Nsis7z_plug-in"
+    }
+  ],
+  "publicBinaryDistribution": "NO_GO",
+  "verifiedUtc": "2026-10-10T06:25:42.144Z"
+}

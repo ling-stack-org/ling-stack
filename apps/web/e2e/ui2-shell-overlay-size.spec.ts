@@ -31,7 +31,7 @@ test("AppShell owns one portal root for Dialog and Toast ordering", async ({ pag
   const toastViewport = overlayRoot.locator(".ling-ui-toast-viewport");
   await expect(toastViewport).toHaveCount(1);
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await navigation.getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: "Interface preferences" }).click();
   await page.evaluate(() => {

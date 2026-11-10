@@ -3,6 +3,7 @@ import type { ResourceLease, RuntimeSemaphoreSlot, WorkUnit } from "../../types.
 
 export type RuntimeStatusLabelKey =
   | "Active"
+  | "Waiting for input"
   | "Cancelling"
   | "Cancelled"
   | "Claimed"
@@ -25,6 +26,7 @@ const workUnitStatusPresentations = {
   claimed: { labelKey: "Claimed", tone: "info" },
   running: { labelKey: "Running", tone: "info" },
   waiting_for_approval: { labelKey: "Waiting for approval", tone: "warning" },
+  waiting_for_input: { labelKey: "Waiting for input", tone: "neutral" },
   cancelling: { labelKey: "Cancelling", tone: "warning" },
   succeeded: { labelKey: "Succeeded", tone: "success" },
   failed: { labelKey: "Failed", tone: "danger" },

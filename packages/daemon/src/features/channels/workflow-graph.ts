@@ -1,11 +1,13 @@
 import {
   approvalActionTypes,
   buildEffectiveTeammateSkills,
+  channelWorkflowStepStatuses,
   createBuiltinAiTeammateId,
   getBuiltinSkillPack,
   getEffectiveTeammateSkill,
   GSTACK_DEFAULT_SKILL_PACK_ID,
   isRiskyRunTool,
+  normalizeRunnerId,
   type ChannelExecutionProposalStepSource,
   type ChannelWorkflow,
   type ChannelWorkflowMetadata,
@@ -36,6 +38,8 @@ import { isRecord, readOptionalBoolean, readOptionalNumber, readOptionalString, 
 import { listExecutableSkillDefinitions } from "../skills/registry.js";
 import { resolveCouncilSlotParticipant } from "./council-slot-resolver.js";
 import { createLingAgentExecutor, isLingAgentExecutorId } from "./ling-agent-executor.js";
+import { renderGraphNodePrompt } from "./workflow-step-prompt.js";
+import { compileWorkflowStepSafety, readWorkflowStepSafety } from "./workflow-step-safety.js";
 
 export interface CompileWorkflowGraphInput {
   readonly channelId: string;
@@ -87,11 +91,16 @@ export function compileWorkflowGraph(
   );
 
   const orderedNodes = topologicalGraphNodes(graph);
+  const channel = store.getChannel(input.channelId)!;
   const steps: ChannelWorkflowStep[] = [];
   const stepByNodeId = new Map<string, ChannelWorkflowStep>();
   for (const [index, node] of orderedNodes.entries()) {
     const resolved = resolveGraphNodeParticipant(store, input.channelId, node);
     const dependencyMode = graphNodeDependencyMode(graph, node.id);
+    const safety = compileWorkflowStepSafety(node, {
+      maxConcurrentRuns: channel.runtimePolicy.maxConcurrentRuns,
+      maxParallelSteps: graph.maxParallelSteps,
+    });
     const metadata: ChannelWorkflowStepMetadata = omitUndefined({
       workflowTemplateId: graph.id,
       templateVersion: `graph:${graph.schemaVersion}`,
@@ -110,7 +119,8 @@ export function compileWorkflowGraph(
       branchGroupId: node.branchGroupId,
       joinGroupId: node.joinGroupId,
       dependencyMode,
-      maxParallelSiblings: graph.maxParallelSteps,
+      ...safety,
+      maxParallelSiblings: safety.parallelPolicy?.maxParallelSiblings,
       policy: node.policy ?? defaultWorkflowGraphStepPolicy(graph),
       gates: node.gates,
     });
@@ -145,9 +155,6 @@ export function compileWorkflowGraph(
       .filter((edge) => edge.toNodeId === graphNodeId)
       .map((edge) => stepByNodeId.get(edge.fromNodeId)?.id)
       .filter((stepId): stepId is string => typeof stepId === "string");
-    if (dependsOnStepIds.length === 0) {
-      return step;
-    }
     return store.updateChannelWorkflowStep(
       step.id,
       {
@@ -177,6 +184,10 @@ export function validateWorkflowGraph(store: RunStore, input: CompileWorkflowGra
   }
   const nodeIds = new Set<string>();
   for (const node of graph.nodes) {
+    compileWorkflowStepSafety(node, {
+      maxConcurrentRuns: channel.runtimePolicy.maxConcurrentRuns,
+      maxParallelSteps: graph.maxParallelSteps,
+    });
     if (node.kind !== "step" && node.kind !== "join") {
       throw new HttpError(400, "workflow_graph_node_kind_unsupported", `Unsupported workflow graph node kind: ${String(node.kind)}`);
     }
@@ -269,6 +280,7 @@ function readWorkflowGraphNode(value: unknown, location: string): WorkflowGraphN
     throw new Error(`${location} must be an object`);
   }
   return {
+    ...readWorkflowStepSafety(value),
     id: readString(value, "id"),
     kind: readString(value, "kind") as WorkflowGraphNode["kind"],
     name: readString(value, "name"),
@@ -279,7 +291,7 @@ function readWorkflowGraphNode(value: unknown, location: string): WorkflowGraphN
     skillId: readOptionalString(value, "skillId"),
     providerPresetId: readOptionalString(value, "providerPresetId"),
     providerBinding: readOptionalWorkflowParticipantProviderBinding(value, "providerBinding"),
-    requestedRunnerId: readOptionalString(value, "requestedRunnerId"),
+    requestedRunnerId: normalizeRunnerId(readOptionalString(value, "requestedRunnerId")),
     branchGroupId: readOptionalString(value, "branchGroupId"),
     joinGroupId: readOptionalString(value, "joinGroupId"),
     policy: readOptionalWorkflowStepPolicy(value, "policy"),
@@ -564,13 +576,11 @@ function validateGraphNodeRunner(store: RunStore, requestedRunnerId: string | un
 }
 
 function graphNodeHasSideEffects(store: RunStore, node: WorkflowGraphNode): boolean {
-  if (node.gates && node.gates.length > 0) {
-    return false;
-  }
   const skillTools = node.skillId
     ? listExecutableSkillDefinitions(store).find((skill) => skill.id === node.skillId)?.requiredTools ?? []
     : [];
-  return skillTools.some(isRiskyRunTool);
+  return [...skillTools, ...(node.requiredTools ?? [])].some(isRiskyRunTool)
+    || node.sideEffectClass === "workspace_write" || node.sideEffectClass === "external_mutation" || node.sideEffectClass === "release";
 }
 
 function defaultWorkflowGraphStepPolicy(graph: WorkflowGraph): WorkflowStepPolicy {
@@ -582,17 +592,6 @@ function defaultWorkflowGraphStepPolicy(graph: WorkflowGraph): WorkflowStepPolic
     onApprovalDenied: approvalFailure,
     retryable: true,
   };
-}
-
-function renderGraphNodePrompt(node: WorkflowGraphNode, objective: string): string {
-  return [
-    `Workflow objective:\n${objective}`,
-    `Current graph node: ${node.name}`,
-    node.skillId ? `Skill: ${node.skillId}` : undefined,
-    node.prompt,
-    "Complete this graph node only. Do not start or approve later workflow nodes.",
-    "Return a concise terminal summary and any artifacts or follow-up decisions needed by later nodes.",
-  ].filter(isString).join("\n\n");
 }
 
 function readOptionalWorkflowStepPolicy(record: Record<string, unknown>, key: string): WorkflowStepPolicy | undefined {
@@ -636,7 +635,7 @@ function readWorkflowStepGate(value: unknown, location: string): WorkflowStepGat
     approvalProfile: readSkillApprovalProfile(value, "approvalProfile"),
     title: readString(value, "title"),
     reason: readString(value, "reason"),
-    requiredForStatuses: readOptionalStringArray(value, "requiredForStatuses"),
+    requiredForStatuses: readOptionalStringArray(value, "requiredForStatuses", channelWorkflowStepStatuses),
   };
 }
 
@@ -678,7 +677,7 @@ function readOptionalPositiveInteger(record: Record<string, unknown>, key: strin
   if (value === undefined) {
     return undefined;
   }
-  if (!Number.isInteger(value) || value <= 0) {
+  if (!Number.isSafeInteger(value) || value <= 0) {
     throw new Error(`${key} must be a positive integer`);
   }
   return value;

@@ -63,12 +63,20 @@ test("message row keeps own identity, status, pending, and system semantics", ()
     tone: "system",
     body: "Runtime notice",
   }));
+  const blocked = renderToStaticMarkup(createElement(MessageRow, {
+    surface: "normal_conversation",
+    authorType: "ai-teammate",
+    authorName: "Ling Agent",
+    tone: "chat-blocked",
+    body: "Waiting for approval",
+  }));
 
   assert.match(own, /message-bubble-own-with-author/u);
   assert.match(own, /message-row-own-identity/u);
   assert.match(own, /message-bubble-pending/u);
   assert.match(own, /role="status"/u);
   assert.match(system, /message-bubble-system/u);
+  assert.match(blocked, /message-bubble-chat-blocked/u);
 });
 
 test("peer identity labels stay available to assistive technology without duplicating visible status", () => {

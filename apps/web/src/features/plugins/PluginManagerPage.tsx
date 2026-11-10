@@ -1,8 +1,10 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useI18n } from "../../i18n.js";
+import { useDesktopTitlebarPlacement } from "../../app/DesktopTitlebarSurface.js";
 import { PLUGIN_DRAFT_ID } from "../../domains/plugins/use-plugins-domain.js";
 import { CuaDriverInstallDrawer } from "./CuaDriverInstallDrawer.js";
 import { PluginCreateDialog } from "./PluginCreateDialog.js";
+import { PluginImportDialog } from "./PluginImportDialog.js";
 import { PluginDetailDrawer } from "./PluginDetailDrawer.js";
 import { PluginManagerHeader } from "./PluginManagerHeader.js";
 import { PluginManagerTable } from "./PluginManagerTable.js";
@@ -16,6 +18,8 @@ export type { PluginManagerPageProps } from "./plugin-manager-types.js";
 
 export function PluginManagerPage(props: PluginManagerPageProps): React.JSX.Element {
   const { t } = useI18n();
+  const titlebarPlacement = useDesktopTitlebarPlacement();
+  const [importOpen, setImportOpen] = useState(false);
   const copy = useMemo(() => buildPluginManagerCopy(t), [t]);
   const controller = usePluginManagerController({
     plugins: props.plugins,
@@ -111,7 +115,7 @@ export function PluginManagerPage(props: PluginManagerPageProps): React.JSX.Elem
   return (
     <div className="plugin-manager-page">
       <section
-        className="settings-plugin-manager"
+        className={`settings-plugin-manager titlebar-${titlebarPlacement}`}
         aria-labelledby="plugin-manager-title"
         data-retained-refresh={controller.retainedRefreshError ? "true" : undefined}
       >
@@ -122,7 +126,8 @@ export function PluginManagerPage(props: PluginManagerPageProps): React.JSX.Elem
           isLoading={props.isLoading}
           onRefresh={props.onRefresh}
           t={t}
-        />
+                onOpenImport={() => setImportOpen(true)}
+      />
         <PluginManagerTable
           allRows={controller.rows}
           copy={copy}
@@ -162,6 +167,13 @@ export function PluginManagerPage(props: PluginManagerPageProps): React.JSX.Elem
           owner: "create",
         })}
         open={controller.createOpen}
+      />
+      <PluginImportDialog
+        busy={false}
+        onClose={() => setImportOpen(false)}
+        onApply={props.onImportApply}
+        onPreview={props.onImportPreview}
+        open={importOpen}
       />
       <CuaDriverInstallDrawer
         actionFailure={guidePlugin ? controller.actionFailureFor(guidePlugin.id, "guide", "connect") : undefined}

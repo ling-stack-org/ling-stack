@@ -1,4 +1,4 @@
-import type { ChannelMessage, RunIntervention, RunSession, RunStore } from "@ling-stack/core";
+import type { ChannelMessage, RunIntervention, RunSession, RunStore, SecretResolver } from "@ling-stack/core";
 import type { ConversationContextProjectionMetadata } from "@ling-stack/contracts";
 import { buildChannelReplyContextPack, renderContextPack } from "./context-packs.js";
 import { ensureChannelReplyThread } from "./channel-reply-execution.js";
@@ -21,6 +21,7 @@ export interface ChannelReplyContinuationContext {
 
 export function buildChannelReplyContinuationContext(input: {
   readonly store: RunStore;
+  readonly secretResolver?: SecretResolver;
   readonly sourceRun: RunSession;
   readonly intervention: RunIntervention;
   readonly sourceMessageId: string;
@@ -67,6 +68,7 @@ export function buildChannelReplyContinuationContext(input: {
   });
   const contextPack = buildChannelReplyContextPack({
     store: input.store,
+    secretResolver: input.secretResolver,
     channel,
     sourceMessage,
     turnEnvelope,
@@ -80,14 +82,14 @@ export function buildChannelReplyContinuationContext(input: {
     store: input.store,
     channel,
     sourceText: sourceMessage.body,
-  }).language;
+  });
   return {
     title: `Channel follow-up in ${channel.name}`,
     prompt: renderContextPack(contextPack),
     systemPromptInstruction: [
       "You are an AI teammate inside a Ling Stack channel.",
       "Reply concisely and only to the current channel discussion.",
-      responseLanguageInstruction(responseLanguage),
+      responseLanguageInstruction(responseLanguage.instructionLanguage),
       "Do not use workspace tools, MCP tools, or other side effects. If Ling exposes image_generate or video_generate for this run, you may use only those first-party media tools when the user asks to generate media.",
       "Do not include hidden proposal blocks. Do not create or suggest tasks, runs, workflows, branches, approvals, or other side effects; the explicitly exposed first-party media generation tools are the only exception.",
       "Treat the latest queued follow-up as the current user message.",

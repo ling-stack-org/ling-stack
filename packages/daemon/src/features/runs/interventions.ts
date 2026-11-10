@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { conversationWorkspaceFileRefSourcesV1 } from "@ling-stack/contracts";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   runInterventionModes,
@@ -21,6 +22,7 @@ import {
 } from "@ling-stack/core";
 import type { McpBroker } from "../../context.js";
 import { RunControlService } from "../../run-control.js";
+import { HttpError } from "../../errors.js";
 import type { ActiveRunRegistry } from "../../runtime/active-runs.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
@@ -37,6 +39,10 @@ import {
   executeRunRequest,
 } from "./orchestrator.js";
 import { buildRunInterventionContinuationRequest } from "./run-intervention-continuation-request.js";
+import { assertNoUnsafeRequiredPause } from "./user-input-cancellation-guard.js";
+import { continuationSourceReady } from "../../runtime/continuation-source-barrier.js";
+import type { NativeRunDispatcher } from "./native-run-dispatcher.js";
+import { projectPublicRunSession } from "./public-execution-snapshots.js";
 
 const runControlService = new RunControlService();
 
@@ -54,6 +60,7 @@ export async function handleRunInterventions(
   computerUsePreviews: ComputerUseProjectionRegistry,
   controlPlaneEvents: ControlPlaneEventHub,
   startupState: StartupStateRegistry | undefined,
+  nativeRunDispatcher: NativeRunDispatcher | undefined,
   sourceRunId: string,
 ): Promise<void> {
   const store = storeRegistry.findStoreForRun(sourceRunId, url.searchParams.get("cwd") ?? undefined);
@@ -67,9 +74,11 @@ export async function handleRunInterventions(
   }
 
   if (request.method === "GET") {
+    const idempotencyKey = url.searchParams.get("idempotencyKey") ?? undefined;
     writeJson(response, 200, {
       cwd: store.paths.cwd,
-      interventions: store.listRunInterventions({ sourceRunId, limit: readOptionalIntegerQuery(url, "limit", 1) }),
+      ...(idempotencyKey !== undefined ? { idempotencyKey } : {}),
+      interventions: store.listRunInterventions({ sourceRunId, idempotencyKey, limit: readOptionalIntegerQuery(url, "limit", 1) }),
     });
     return;
   }
@@ -93,8 +102,18 @@ export async function handleRunInterventions(
   }
 
   if (input.mode === "interrupt_redirect" && isTerminalRunStatus(sourceRun.status)) {
-    writeJson(response, 409, { error: "run_not_cancellable", message: `Run ${sourceRun.id} is already ${sourceRun.status}.`, run: sourceRun });
+    writeJson(response, 409, { error: "run_not_cancellable", message: `Run ${sourceRun.id} is already ${sourceRun.status}.`, run: projectPublicRunSession(sourceRun, store) });
     return;
+  }
+
+  if (input.mode === "interrupt_redirect" && sourceRun.status !== "yielded") {
+    try {
+      assertNoUnsafeRequiredPause(store, sourceRun);
+    } catch (error) {
+      if (!(error instanceof HttpError)) throw error;
+      writeJson(response, error.statusCode, { error: error.code, message: error.message });
+      return;
+    }
   }
 
   const now = new Date().toISOString();
@@ -136,6 +155,7 @@ export async function handleRunInterventions(
         computerUsePreviews,
         controlPlaneEvents,
         startupState,
+        nativeRunDispatcher,
       });
     }
     writeJson(response, 201, { cwd: store.paths.cwd, intervention: store.getRunIntervention(intervention.id) ?? intervention });
@@ -161,16 +181,23 @@ export async function handleRunInterventions(
     instruction: updated.instruction,
   });
 
-  const cancellation = runControlService.cancelRunForRedirect({
-    store,
-    run: sourceRun,
-    activeRun: activeRuns.get(sourceRunId),
-  });
+  let cancellation;
+  try {
+    cancellation = runControlService.cancelRunForRedirect({
+      store,
+      run: sourceRun,
+      activeRun: activeRuns.get(sourceRunId),
+    });
+  } catch (error) {
+    if (!(error instanceof HttpError)) throw error;
+    writeJson(response, error.statusCode, { error: error.code, message: error.message });
+    return;
+  }
 
   writeJson(response, 201, {
     cwd: store.paths.cwd,
     intervention: store.getRunIntervention(intervention.id) ?? updated,
-    run: store.getRun(sourceRunId),
+    run: projectPublicRunSession(store.getRun(sourceRunId), store),
     event: cancellation.event,
   });
 }
@@ -220,6 +247,7 @@ export function handleRunInterventionPromote(
   computerUsePreviews: ComputerUseProjectionRegistry,
   controlPlaneEvents: ControlPlaneEventHub,
   startupState: StartupStateRegistry | undefined,
+  nativeRunDispatcher: NativeRunDispatcher | undefined,
   interventionId: string,
 ): void {
   const resolved = getCwdStoreOrWriteError(response, url, storeRegistry);
@@ -264,14 +292,25 @@ export function handleRunInterventionPromote(
       computerUsePreviews,
       controlPlaneEvents,
       startupState,
+      nativeRunDispatcher,
     }).catch(() => {});
     writeJson(response, 202, {
       cwd: resolved.cwd,
       intervention: resolved.store.getRunIntervention(intervention.id) ?? intervention,
-      run: resolved.store.getRun(sourceRun.id) ?? sourceRun,
+      run: projectPublicRunSession(resolved.store.getRun(sourceRun.id) ?? sourceRun, resolved.store),
       message: "当前运行已结束，这条引导会按排队顺序继续执行。",
     });
     return;
+  }
+
+  if (currentRun.status !== "yielded") {
+    try {
+      assertNoUnsafeRequiredPause(resolved.store, currentRun);
+    } catch (error) {
+      if (!(error instanceof HttpError)) throw error;
+      writeJson(response, error.statusCode, { error: error.code, message: error.message });
+      return;
+    }
   }
 
   const now = new Date().toISOString();
@@ -294,11 +333,18 @@ export function handleRunInterventionPromote(
     instruction: promoted.instruction,
   });
 
-  const cancellation = runControlService.cancelRunForRedirect({
-    store: resolved.store,
-    run: currentRun,
-    activeRun: activeRuns.get(currentRun.id),
-  });
+  let cancellation;
+  try {
+    cancellation = runControlService.cancelRunForRedirect({
+      store: resolved.store,
+      run: currentRun,
+      activeRun: activeRuns.get(currentRun.id),
+    });
+  } catch (error) {
+    if (!(error instanceof HttpError)) throw error;
+    writeJson(response, error.statusCode, { error: error.code, message: error.message });
+    return;
+  }
   void maybeStartNextRunInterventionContinuation({
     sourceRunId: intervention.sourceRunId,
     store: resolved.store,
@@ -311,12 +357,13 @@ export function handleRunInterventionPromote(
     computerUsePreviews,
     controlPlaneEvents,
     startupState,
+    nativeRunDispatcher,
   }).catch(() => {});
 
   writeJson(response, 200, {
     cwd: resolved.cwd,
     intervention: resolved.store.getRunIntervention(intervention.id) ?? promoted,
-    run: resolved.store.getRun(currentRun.id),
+    run: projectPublicRunSession(resolved.store.getRun(currentRun.id), resolved.store),
     event: cancellation.event,
   });
 }
@@ -334,6 +381,7 @@ export async function maybeStartNextRunInterventionContinuation(input: {
   readonly computerUsePreviews: ComputerUseProjectionRegistry;
   readonly controlPlaneEvents: ControlPlaneEventHub;
   readonly startupState?: StartupStateRegistry;
+  readonly nativeRunDispatcher?: NativeRunDispatcher;
 }): Promise<void> {
   if (input.terminalRun?.interventionId) {
     completeTerminalRunIntervention(input.store, input.terminalRun);
@@ -341,6 +389,17 @@ export async function maybeStartNextRunInterventionContinuation(input: {
   const sourceRun = input.store.getRun(input.sourceRunId);
   if (!sourceRun || !isTerminalRunStatus(sourceRun.status)) {
     return;
+  }
+  const sourceUnit = sourceRun.workUnitId ? input.store.getWorkUnit(sourceRun.workUnitId) : undefined;
+  if (!sourceUnit || !continuationSourceReady(input.store, sourceUnit, input.activeRuns, "run-interventions",
+    () => maybeStartNextRunInterventionContinuation(input))) return;
+  const predecessor = input.store.listRunInterventions({ sourceRunId: input.sourceRunId,
+    hasContinuation: true, newestFirst: true, limit: 1 })[0];
+  if (predecessor?.continuationRunId) {
+    const previousRun = input.store.getRun(predecessor.continuationRunId);
+    const previousUnit = previousRun?.workUnitId ? input.store.getWorkUnit(previousRun.workUnitId) : undefined;
+    if (!previousUnit || !continuationSourceReady(input.store, previousUnit, input.activeRuns, "run-interventions",
+      () => maybeStartNextRunInterventionContinuation(input))) return;
   }
   while (true) {
     const now = new Date().toISOString();
@@ -353,6 +412,11 @@ export async function maybeStartNextRunInterventionContinuation(input: {
     });
     if (!starting) {
       return;
+    }
+    if ((starting.sourceWorkUnitId && starting.sourceWorkUnitId !== sourceUnit.id)
+      || (starting.sourceAttemptId && starting.sourceAttemptId !== sourceUnit.activeAttemptId)) {
+      failRunIntervention(input, starting.id, "continuation_source_attempt_changed");
+      continue;
     }
     streamRunEventIfPossible(input.store, input.activeRuns, input.sourceRunId, "run_continuation_starting", {
       interventionId: starting.id,
@@ -369,7 +433,7 @@ export async function maybeStartNextRunInterventionContinuation(input: {
       const continuationRequest = buildRunInterventionContinuationRequest(input.store, sourceRun, starting, {
         sourceMessageId: channelProjection?.sourceMessageId,
         linkedMessageId: channelProjection?.replyMessageId,
-      });
+      }, input.secretResolver);
       continuationRunId = await executeRunRequest(
         continuationRequest,
         channelProjection?.sink ?? createDetachedRunExecutionSink(),
@@ -383,6 +447,7 @@ export async function maybeStartNextRunInterventionContinuation(input: {
           controlPlaneEvents: input.controlPlaneEvents,
           startupState: input.startupState,
           computerUsePreviews: input.computerUsePreviews,
+          nativeRunDispatcher: input.nativeRunDispatcher,
           onRunReady: (runId) => {
             const run = input.store.getRun(runId);
             const started = input.store.updateRunInterventionStatus({
@@ -854,9 +919,14 @@ function readOptionalRunInterventionWorkspaceFilePayloads(
     const label = readOptionalString(item, "label");
     const previewText = readOptionalString(item, "previewText");
     const blockedReason = readOptionalString(item, "blockedReason");
+    const source = item.source;
+    if (source !== undefined && source !== "composer" && source !== "explicit_text" && source !== "api" && source !== "inferred_text") {
+      throw new Error(`fileRefs source must be one of ${conversationWorkspaceFileRefSourcesV1.join(", ")}`);
+    }
     return {
       path: readString(item, "path"),
       ...(label ? { label } : {}),
+      ...(source ? { source } : {}),
       rootRelation: readRunInterventionWorkspaceFileRootRelation(item.rootRelation),
       kind: readRunInterventionWorkspaceFileKind(item.kind),
       materializationStatus: readRunInterventionMaterializationStatus(item.materializationStatus),

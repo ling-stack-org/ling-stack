@@ -190,6 +190,7 @@ export function TeammateProfileTab({
         </Field>
       ) : (
         <InspectorSection
+          appearance="plain"
           className="teammate-profile-advanced"
           title={t("Advanced profile")}
         >
@@ -201,8 +202,7 @@ export function TeammateProfileTab({
                 onChange={(event) => onSettingsFormChange({ ...settingsForm, systemPrompt: event.target.value })}
               />
             </Field>
-            <div className="teammate-profile-persona-entry">
-              <strong>{t("Role profile")}</strong>
+            <div className="teammate-profile-persona-actions">
               <Button
                 leadingIcon={<UserRoundCog />}
                 size="sm"

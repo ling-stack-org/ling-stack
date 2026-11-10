@@ -1,0 +1,369 @@
+TAP version 13
+# A27 actual HTTP fixture entered: direct-collection-workspace
+# Subtest: A27 permission axes HTTP integration direct-collection-workspace
+ok 1 - A27 permission axes HTTP integration direct-collection-workspace
+  ---
+  duration_ms: 1436.670959
+  type: 'test'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1477.28125
+A27 child exit: {"label":"direct-collection-workspace","code":0,"signal":null}
+✔ A27 permission axes HTTP integration direct-collection-workspace (1506.284541ms)
+TAP version 13
+# A27 actual HTTP fixture entered: direct-collection-full-access
+# Subtest: A27 permission axes HTTP integration direct-collection-full-access
+ok 1 - A27 permission axes HTTP integration direct-collection-full-access
+  ---
+  duration_ms: 1013.879958
+  type: 'test'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1054.937584
+A27 child exit: {"label":"direct-collection-full-access","code":0,"signal":null}
+✔ A27 permission axes HTTP integration direct-collection-full-access (1081.596167ms)
+TAP version 13
+# A27 actual HTTP fixture entered: direct-sse-workspace
+# Subtest: A27 permission axes HTTP integration direct-sse-workspace
+ok 1 - A27 permission axes HTTP integration direct-sse-workspace
+  ---
+  duration_ms: 1030.459209
+  type: 'test'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1069.3495
+A27 child exit: {"label":"direct-sse-workspace","code":0,"signal":null}
+✔ A27 permission axes HTTP integration direct-sse-workspace (1094.689334ms)
+TAP version 13
+# A27 actual HTTP fixture entered: direct-sse-full-access
+# Subtest: A27 permission axes HTTP integration direct-sse-full-access
+ok 1 - A27 permission axes HTTP integration direct-sse-full-access
+  ---
+  duration_ms: 1026.896959
+  type: 'test'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1064.819959
+A27 child exit: {"label":"direct-sse-full-access","code":0,"signal":null}
+✔ A27 permission axes HTTP integration direct-sse-full-access (1090.791417ms)
+TAP version 13
+# A27 actual HTTP fixture entered: resume-conversation-read-only
+# Subtest: A27 permission axes HTTP integration resume-conversation-read-only
+ok 1 - A27 permission axes HTTP integration resume-conversation-read-only
+  ---
+  duration_ms: 1092.457959
+  type: 'test'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1130.778916
+A27 child exit: {"label":"resume-conversation-read-only","code":0,"signal":null}
+✔ A27 permission axes HTTP integration resume-conversation-read-only (1156.656167ms)
+TAP version 13
+# A27 actual HTTP fixture entered: resume-conversation-ask-workspace
+# Subtest: A27 permission axes HTTP integration resume-conversation-ask-workspace
+ok 1 - A27 permission axes HTTP integration resume-conversation-ask-workspace
+  ---
+  duration_ms: 1101.713
+  type: 'test'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1139.327458
+A27 child exit: {"label":"resume-conversation-ask-workspace","code":0,"signal":null}
+✔ A27 permission axes HTTP integration resume-conversation-ask-workspace (1165.029042ms)
+TAP version 13
+# A27 actual HTTP fixture entered: resume-teammate_direct-read-only
+# Subtest: A27 permission axes HTTP integration resume-teammate_direct-read-only
+ok 1 - A27 permission axes HTTP integration resume-teammate_direct-read-only
+  ---
+  duration_ms: 1079.132958
+  type: 'test'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1116.671958
+A27 child exit: {"label":"resume-teammate_direct-read-only","code":0,"signal":null}
+✔ A27 permission axes HTTP integration resume-teammate_direct-read-only (1144.913125ms)
+TAP version 13
+# A27 actual HTTP fixture entered: resume-teammate_direct-ask-workspace
+# Subtest: A27 permission axes HTTP integration resume-teammate_direct-ask-workspace
+ok 1 - A27 permission axes HTTP integration resume-teammate_direct-ask-workspace
+  ---
+  duration_ms: 1033.191625
+  type: 'test'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1069.123416
+A27 child exit: {"label":"resume-teammate_direct-ask-workspace","code":0,"signal":null}
+✔ A27 permission axes HTTP integration resume-teammate_direct-ask-workspace (1095.474667ms)
+TAP version 13
+# A27 actual HTTP fixture entered: resume-channel_discussion-read-only
+# Subtest: A27 permission axes HTTP integration resume-channel_discussion-read-only
+ok 1 - A27 permission axes HTTP integration resume-channel_discussion-read-only
+  ---
+  duration_ms: 1043.345625
+  type: 'test'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1080.44875
+A27 child exit: {"label":"resume-channel_discussion-read-only","code":0,"signal":null}
+✔ A27 permission axes HTTP integration resume-channel_discussion-read-only (1106.08875ms)
+TAP version 13
+# A27 actual HTTP fixture entered: resume-channel_discussion-ask-workspace
+# Subtest: A27 permission axes HTTP integration resume-channel_discussion-ask-workspace
+ok 1 - A27 permission axes HTTP integration resume-channel_discussion-ask-workspace
+  ---
+  duration_ms: 1042.756458
+  type: 'test'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1078.827917
+A27 child exit: {"label":"resume-channel_discussion-ask-workspace","code":0,"signal":null}
+✔ A27 permission axes HTTP integration resume-channel_discussion-ask-workspace (1104.174167ms)
+TAP version 13
+# A27 actual HTTP fixture entered: resume-channel-full-access
+# Subtest: A27 permission axes HTTP integration resume-channel-full-access
+ok 1 - A27 permission axes HTTP integration resume-channel-full-access
+  ---
+  duration_ms: 1045.5985
+  type: 'test'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1082.67625
+A27 child exit: {"label":"resume-channel-full-access","code":0,"signal":null}
+✔ A27 permission axes HTTP integration resume-channel-full-access (1109.404166ms)
+TAP version 13
+# A27 actual HTTP fixture entered: legacy-and-canonical
+# Subtest: A27 permission axes HTTP integration legacy-and-canonical
+ok 1 - A27 permission axes HTTP integration legacy-and-canonical
+  ---
+  duration_ms: 1093.042
+  type: 'test'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1129.011458
+A27 child exit: {"label":"legacy-and-canonical","code":0,"signal":null}
+✔ A27 permission axes HTTP integration legacy-and-canonical (1157.337709ms)
+TAP version 13
+# A27 actual HTTP fixture entered: full-access-confirmation-fence
+# Subtest: A27 permission axes HTTP integration full-access-confirmation-fence
+ok 1 - A27 permission axes HTTP integration full-access-confirmation-fence
+  ---
+  duration_ms: 1023.224291
+  type: 'test'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1059.736667
+A27 child exit: {"label":"full-access-confirmation-fence","code":0,"signal":null}
+✔ A27 permission axes HTTP integration full-access-confirmation-fence (1085.563084ms)
+TAP version 13
+# A27 actual HTTP fixture entered: normal-prepared-retry-current-policy
+# Subtest: A27 permission axes HTTP integration normal-prepared-retry-current-policy
+ok 1 - A27 permission axes HTTP integration normal-prepared-retry-current-policy
+  ---
+  duration_ms: 1145.047583
+  type: 'test'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1183.467
+A27 child exit: {"label":"normal-prepared-retry-current-policy","code":0,"signal":null}
+✔ A27 permission axes HTTP integration normal-prepared-retry-current-policy (1209.499334ms)
+TAP version 13
+# A27 actual HTTP fixture entered: malformed-source-axis-rejected-before-input
+# Subtest: A27 permission axes HTTP integration malformed-source-axis-rejected-before-input
+ok 1 - A27 permission axes HTTP integration malformed-source-axis-rejected-before-input
+  ---
+  duration_ms: 1059.527916
+  type: 'test'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1098.724708
+A27 child exit: {"label":"malformed-source-axis-rejected-before-input","code":0,"signal":null}
+✔ A27 permission axes HTTP integration malformed-source-axis-rejected-before-input (1127.409792ms)
+TAP version 13
+# A27 actual HTTP fixture entered: fork-conversation-read-only
+# Subtest: A27 permission axes HTTP integration fork-conversation-read-only
+ok 1 - A27 permission axes HTTP integration fork-conversation-read-only
+  ---
+  duration_ms: 1126.085625
+  type: 'test'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1165.065667
+A27 child exit: {"label":"fork-conversation-read-only","code":0,"signal":null}
+✔ A27 permission axes HTTP integration fork-conversation-read-only (1191.681833ms)
+TAP version 13
+# A27 actual HTTP fixture entered: fork-teammate_direct-read-only
+# Subtest: A27 permission axes HTTP integration fork-teammate_direct-read-only
+ok 1 - A27 permission axes HTTP integration fork-teammate_direct-read-only
+  ---
+  duration_ms: 1020.927375
+  type: 'test'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1057.76
+A27 child exit: {"label":"fork-teammate_direct-read-only","code":0,"signal":null}
+✔ A27 permission axes HTTP integration fork-teammate_direct-read-only (1084.068125ms)
+TAP version 13
+# A27 actual HTTP fixture entered: fork-channel_discussion-read-only
+# Subtest: A27 permission axes HTTP integration fork-channel_discussion-read-only
+ok 1 - A27 permission axes HTTP integration fork-channel_discussion-read-only
+  ---
+  duration_ms: 1027.823959
+  type: 'test'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1065.989084
+A27 child exit: {"label":"fork-channel_discussion-read-only","code":0,"signal":null}
+✔ A27 permission axes HTTP integration fork-channel_discussion-read-only (1091.467084ms)
+TAP version 13
+# A27 actual HTTP fixture entered: fork-conversation-full-access-receipt-not-reused
+# Subtest: A27 permission axes HTTP integration fork-conversation-full-access-receipt-not-reused
+ok 1 - A27 permission axes HTTP integration fork-conversation-full-access-receipt-not-reused
+  ---
+  duration_ms: 1063.384416
+  type: 'test'
+  ...
+1..1
+# tests 1
+# suites 0
+# pass 1
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1103.219208
+A27 child exit: {"label":"fork-conversation-full-access-receipt-not-reused","code":0,"signal":null}
+✔ A27 permission axes HTTP integration fork-conversation-full-access-receipt-not-reused (1129.633166ms)
+ℹ tests 19
+ℹ suites 0
+ℹ pass 19
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 21766.321625

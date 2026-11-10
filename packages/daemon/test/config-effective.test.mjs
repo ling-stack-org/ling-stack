@@ -4,6 +4,43 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { test } from "node:test";
 import { createDaemonServer } from "../dist/index.js";
+import { SUPPORTED_LOCALES } from "../../localization/dist/index.js";
+import { parseWorkspaceSettingsUpdate } from "../dist/features/settings/effective-config.js";
+
+test("workspace settings schema accepts exactly the shared locale registry", () => {
+  for (const locale of SUPPORTED_LOCALES) {
+    const parsed = parseWorkspaceSettingsUpdate({ locale, responseLanguage: locale });
+    assert.equal(parsed.locale, locale);
+    assert.equal(parsed.responseLanguage, locale);
+  }
+  assert.throws(
+    () => parseWorkspaceSettingsUpdate({ locale: "xx-YY" }),
+    /locale must be a supported locale/u,
+  );
+  assert.throws(
+    () => parseWorkspaceSettingsUpdate({ responseLanguage: "xx-YY" }),
+    /responseLanguage must be follow_user, a supported locale, or null/u,
+  );
+  for (const mode of ["auto", "concise", "detailed", "none", null]) {
+    assert.equal(parseWorkspaceSettingsUpdate({ defaultReasoningSummary: mode }).defaultReasoningSummary, mode);
+  }
+  assert.throws(
+    () => parseWorkspaceSettingsUpdate({ defaultReasoningSummary: "raw" }),
+    /defaultReasoningSummary must be auto, concise, detailed, none, or null/u,
+  );
+});
+
+test("workspace settings v2 rejects legacy permission writes with a stable migration error", () => {
+  assert.throws(
+    () => parseWorkspaceSettingsUpdate({ schemaVersion: 2, defaultAuthorizationMode: "smart", defaultPermissionMode: "full_access" }),
+    error => error?.code === "legacy_permission_fields_removed" && error?.statusCode === 400,
+  );
+  const parsed = parseWorkspaceSettingsUpdate({ schemaVersion: 2, defaultAuthorizationMode: "ask" });
+  assert.equal(parsed.schemaVersion, 2);
+  assert.equal(parsed.defaultAuthorizationMode, "ask");
+  assert.equal(parsed.defaultPermissionMode, undefined);
+  assert.equal(parsed.defaultPermissionPreset, undefined);
+});
 
 test("effective config reports user defaults and workspace execution sources", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-effective-config-workspace-"));
@@ -19,6 +56,7 @@ test("effective config reports user defaults and workspace execution sources", a
       locale: "zh-CN",
       responseLanguage: "en-US",
       lingConversationTone: "friendly",
+      defaultReasoningSummary: "concise",
     }), "utf8");
     await writeFile(resolve(userRoot, "config.json"), JSON.stringify({
       schemaVersion: 1,
@@ -44,6 +82,8 @@ test("effective config reports user defaults and workspace execution sources", a
     assert.equal(initial.values.lingConversationTone.value, "friendly");
     assert.equal(initial.values.lingConversationTone.source, "user");
     assert.equal(initial.values.lingConversationTone.path, resolve(userRoot, "settings.json"));
+    assert.equal(initial.values.reasoningSummary.value, "concise");
+    assert.equal(initial.values.reasoningSummary.source, "user");
     assert.equal(initial.values.skillGovernancePolicy.value.generationMode, "semi_auto");
     assert.equal(initial.values.skillGovernancePolicy.source, "workspace");
     assert.equal(initial.values.runtime.defaultRunnerId.value, "pi");
@@ -60,6 +100,7 @@ test("effective config reports user defaults and workspace execution sources", a
       theme: "light",
       locale: "en-US",
       lingConversationTone: "pragmatic",
+      defaultReasoningSummary: "detailed",
       skillGovernancePolicy: {
         generationMode: "approval_only",
         recordingMode: "user_initiated",
@@ -81,6 +122,8 @@ test("effective config reports user defaults and workspace execution sources", a
     assert.equal(patched.values.lingConversationTone.value, "pragmatic");
     assert.equal(patched.values.lingConversationTone.source, "workspace");
     assert.equal(patched.values.lingConversationTone.path, resolve(cwd, ".ling-stack", "ling-stack.sqlite"));
+    assert.equal(patched.values.reasoningSummary.value, "detailed");
+    assert.equal(patched.values.reasoningSummary.source, "workspace");
     assert.equal(patched.values.skillGovernancePolicy.value.generationMode, "approval_only");
     assert.equal(patched.values.skillGovernancePolicy.source, "workspace");
     assert.equal(patched.values.runtime.defaultRunnerId.source, "workspace");
@@ -101,29 +144,38 @@ test("effective config reports user defaults and workspace execution sources", a
   }
 });
 
-test("desktop runtime env enables unified exec without overriding an explicit daemon setting", async () => {
+test("desktop runtime env enables unified exec without overriding an explicit daemon setting", async (t) => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-effective-config-runtime-"));
   const previousUnifiedExec = process.env.LING_STACK_RUNTIME_UNIFIED_EXEC;
+  let enabled;
+  let explicitlyDisabled;
+  t.after(async () => {
+    try {
+      await Promise.all([enabled?.stop(), explicitlyDisabled?.stop()]);
+    } finally {
+      if (previousUnifiedExec === undefined) {
+        delete process.env.LING_STACK_RUNTIME_UNIFIED_EXEC;
+      } else {
+        process.env.LING_STACK_RUNTIME_UNIFIED_EXEC = previousUnifiedExec;
+      }
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
   process.env.LING_STACK_RUNTIME_UNIFIED_EXEC = "1";
-  const enabled = createDaemonServer({
+  enabled = createDaemonServer({
     host: "127.0.0.1",
     port: 0,
+    defaultWorkspaceCwd: resolve(cwd, "enabled"),
     runtimeTools: {},
   });
-  const explicitlyDisabled = createDaemonServer({
+  explicitlyDisabled = createDaemonServer({
     host: "127.0.0.1",
     port: 0,
+    defaultWorkspaceCwd: resolve(cwd, "disabled"),
     runtimeTools: { unifiedExec: false },
   });
-  try {
-    assert.equal(enabled.config.runtimeTools.unifiedExec, true);
-    assert.equal(explicitlyDisabled.config.runtimeTools.unifiedExec, false);
-  } finally {
-    if (previousUnifiedExec === undefined) {
-      delete process.env.LING_STACK_RUNTIME_UNIFIED_EXEC;
-    } else {
-      process.env.LING_STACK_RUNTIME_UNIFIED_EXEC = previousUnifiedExec;
-    }
-  }
+  assert.equal(enabled.config.runtimeTools.unifiedExec, true);
+  assert.equal(explicitlyDisabled.config.runtimeTools.unifiedExec, false);
 });
 
 test("effective config reports user settings diagnostics without applying invalid values", async () => {
@@ -137,7 +189,7 @@ test("effective config reports user settings diagnostics without applying invali
       schemaVersion: 1,
       theme: "sepia",
       locale: "",
-      responseLanguage: "fr-FR",
+      responseLanguage: "xx-YY",
       lingConversationTone: "verbose",
     }), "utf8");
     await writeFile(resolve(userRoot, "config.json"), JSON.stringify({

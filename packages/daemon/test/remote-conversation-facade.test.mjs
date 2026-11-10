@@ -123,6 +123,65 @@ test("remote facade lists and opens only normalized channel, normal, and teammat
   }
 });
 
+test("remote teammate transcript hides execution control and keeps governance messages", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-remote-private-system-purpose-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const teammateId = createBuiltinAiTeammateId("designer");
+    const direct = store.getOrCreateTeammateDirectThread(teammateId, "2026-07-31T05:00:00.000Z");
+    store.createTeammateDirectMessage({
+      threadId: direct.id,
+      teammateId,
+      authorType: "ai-teammate",
+      authorId: teammateId,
+      body: "Private teammate reply.",
+    }, "2026-07-31T05:00:01.000Z");
+    store.createTeammateDirectMessage({
+      threadId: direct.id,
+      teammateId,
+      authorType: "system",
+      authorId: "system",
+      systemPurpose: "execution_control",
+      body: "Private execution control must remain internal.",
+    }, "2026-07-31T05:00:02.000Z");
+    store.createTeammateDirectMessage({
+      threadId: direct.id,
+      teammateId,
+      authorType: "system",
+      authorId: "system",
+      systemPurpose: "governance_notification",
+      body: "Private governance notice.",
+    }, "2026-07-31T05:00:03.000Z");
+
+    const facade = createFacade(store);
+    const initial = facade.openConversation(DEFAULT_WORKSPACE_ID, direct.id);
+    assert.deepEqual(initial.messages.map((message) => message.body), ["Private teammate reply.", "Private governance notice."]);
+
+    for (let index = 0; index < 101; index += 1) {
+      store.createTeammateDirectMessage({
+        threadId: direct.id,
+        teammateId,
+        authorType: "system",
+        authorId: "system",
+        systemPurpose: "execution_control",
+        body: `Internal continuation ${index}.`,
+      }, new Date(Date.parse("2026-07-31T05:01:00.000Z") + index).toISOString());
+    }
+
+    const listed = facade.listConversations(DEFAULT_WORKSPACE_ID);
+    assert.equal(listed.conversations.find((item) => item.conversationId === direct.id)?.latestPreview, "Private governance notice.");
+    const recent = facade.openConversation(DEFAULT_WORKSPACE_ID, direct.id);
+    assert.deepEqual(recent.messages, []);
+    assert.equal(recent.hasMoreOlder, true);
+    assert.ok(recent.olderPageCursor);
+    const older = facade.openConversation(DEFAULT_WORKSPACE_ID, direct.id, recent.olderPageCursor);
+    assert.deepEqual(older.messages.map((message) => message.body), ["Private teammate reply.", "Private governance notice."]);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("remote projections keep advancing after more than one thousand conversation activities", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-remote-facade-large-outbox-"));
   const store = createSqliteRunStore(cwd);

@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page, type Route } from "@playwright/test";
+import { isViteClientTransportError } from "./support/vite-client-console-error";
 import { mockDaemon, type MockState } from "./support/mock-daemon";
 import { createBaseState } from "./support/mock-state";
 import { openMediaProduction } from "./support/media-production-fixtures";
@@ -55,6 +56,7 @@ test("MP-08 direct source drift keeps field failure drafts and restores authorit
 test("MP-08 Run validates the visible prompt and commits it before creating a task", async ({ page }) => {
   const errors = collectBrowserErrors(page);
   const state = directFixture();
+  state.providers = [{ ...state.providers[0], displayName: "seedance-ui2 · seedance-ui2" }];
   state.mediaScenes = [scene("scene_prompt_commit", "Prompt commit scene", "", 0)];
   const control = routeControl();
   await prepare(page, state, control);
@@ -63,6 +65,11 @@ test("MP-08 Run validates the visible prompt and commits it before creating a ta
   const inspector = page.locator(".scene-inspector");
   const prompt = inspector.getByLabel("Prompt");
   const run = inspector.getByRole("button", { name: "Run", exact: true });
+  await expect(inspector.getByLabel("Default video model").locator('option[value="provider_video"]')).toHaveText("seedance-ui2 · example.invalid");
+  await expect(page.locator("body")).not.toContainText("seedance-ui2 · seedance-ui2");
+  if (process.env.LING_CAPTURE_UI2_EVIDENCE === "1") {
+    await page.screenshot({ animations: "disabled", fullPage: true, path: "test-results/media-model-label.png" });
+  }
 
   await expect(run).toBeEnabled();
   await run.click();
@@ -609,7 +616,7 @@ function artifact(id: string, mediaJobId: string): MockState["artifactsByMediaJo
 
 function collectBrowserErrors(page: Page): string[] {
   const errors: string[] = [];
-  page.on("console", (message) => { if (message.type() === "error") errors.push(`console:${message.text()}`); });
+  page.on("console", (message) => { if (message.type() === "error" && !isViteClientTransportError(message)) errors.push(`console:${message.text()}`); });
   page.on("pageerror", (error) => errors.push(`pageerror:${error.message}`));
   return errors;
 }

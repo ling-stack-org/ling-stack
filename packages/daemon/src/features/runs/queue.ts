@@ -4,6 +4,7 @@ import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import type { QueueableRunConflictCode } from "./concurrency.js";
 import type { RunRequest } from "./schemas.js";
 import { markLingThreadRunActive } from "./threads.js";
+import { providerForRunPersistence } from "./provider-persistence.js";
 
 export function createQueuedRunForConflict(input: {
   readonly store: RunStore;
@@ -22,8 +23,11 @@ export function createQueuedRunForConflict(input: {
   readonly queuedAt: string;
   readonly reason: QueueableRunConflictCode;
   readonly message: string;
+  /** Continuation runs are persisted before concurrency admission. Reuse that row. */
+  readonly existingRun?: RunSession;
 }): RunSession {
-  const run = input.store.createRun({
+  const persistenceProvider = providerForRunPersistence(input.provider);
+  const run = input.existingRun ?? input.store.createRun({
     id: input.runId,
     cwd: input.runRequest.cwd,
     taskId: input.runRequest.task.id,
@@ -35,11 +39,11 @@ export function createQueuedRunForConflict(input: {
     providerName: input.provider.provider,
     providerModel: input.provider.model,
     taskSnapshot: input.runRequest.task,
-    providerSnapshot: { providerPresetId: input.runRequest.providerPresetId, ...input.provider },
+    providerSnapshot: { providerPresetId: input.runRequest.providerPresetId, ...persistenceProvider },
     requestSnapshot: {
       ...input.runRequest,
       workspaceCwd: input.workspaceCwd,
-      provider: input.provider,
+      provider: persistenceProvider,
       threadId: input.thread?.id,
       turnId: input.turn?.id,
       runnerResolution: {
@@ -59,11 +63,13 @@ export function createQueuedRunForConflict(input: {
     contextViewCreatedAt: input.runRequest.contextProjection?.contextViewCreatedAt,
     createdAt: input.queuedAt,
   });
-  input.store.linkRunToWorkUnit(run.id, input.workUnit.id, input.queuedAt);
-  if (input.thread) {
-    markLingThreadRunActive(input.store, input.thread.id, run.id, input.queuedAt);
+  if (!input.existingRun) {
+    input.store.linkRunToWorkUnit(run.id, input.workUnit.id, input.queuedAt);
+    if (input.thread) {
+      markLingThreadRunActive(input.store, input.thread.id, run.id, input.queuedAt);
+    }
+    input.storeRegistry.rememberRun(run.id, input.store);
   }
-  input.storeRegistry.rememberRun(run.id, input.store);
   input.store.appendEvent(run.id, "run_created", {
     taskId: run.taskId,
     workUnitId: input.workUnit.id,

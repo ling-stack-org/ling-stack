@@ -1,0 +1,14 @@
+{
+  "result": "MATCHING_OFFICIAL_SOURCE_PACKAGE_RECOVERED",
+  "component": "nsis7z 19.00",
+  "archiveUrl": "https://nsis.sourceforge.io/mediawiki/images/6/69/Nsis7z_19.00.7z",
+  "archiveSha1": "a2423c9f92c21462aae1f42708e75afef4b226dc",
+  "archiveSha256": "6f2f3730049926f40442ee0c8b7d3e3dee7ace544d82467ff8059ea3f4201c58",
+  "exactOriginalInstallerDllSha256": "b393f05e8ff919ef071181050e1873c9a776e1a0ae8329aefff7007d0cadf592",
+  "officialArchiveIncludesPairedSource": true,
+  "sdkUrl": "https://www.7-zip.org/a/lzma1900.7z",
+  "sdkSha256": "00f569e624b3d9ed89cf8d40136662c4c5207eaceb92a70b1044c77f84234bad",
+  "licenseStatus": "Archive retains SDK public-domain text and legacy plugin LGPL statement; do not label the entire plugin public domain",
+  "replacementCandidateUsesPlugin": false,
+  "verifiedUtc": "2026-10-10T10:04:07.0144828Z"
+}

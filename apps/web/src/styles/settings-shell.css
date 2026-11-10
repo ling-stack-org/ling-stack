@@ -4,6 +4,7 @@
 .app-shell.settings-fullscreen-shell.channel-drawer-shell,
 .app-shell.settings-fullscreen-shell.channel-drawer-shell.inspector-hidden,
 .app-shell.settings-fullscreen-shell.channel-sidebar-collapsed.inspector-collapsed {
+  --settings-sidebar-width: clamp(236px, 19.5vw, 282px);
   grid-template-areas: "workspace";
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
@@ -19,7 +20,7 @@
 
 .settings-layout {
   display: grid;
-  grid-template-columns: clamp(236px, 19.5vw, 282px) minmax(0, 1fr);
+  grid-template-columns: var(--settings-sidebar-width, clamp(236px, 19.5vw, 282px)) minmax(0, 1fr);
   width: 100%;
   height: 100%;
   max-width: none;
@@ -52,10 +53,13 @@
 .settings-app-return-button,
 .settings-section-item {
   --ling-button-label-text-align: left;
+  align-items: center;
   width: 100%;
+  height: auto;
+  min-height: var(--ling-control-sm);
   justify-content: flex-start;
   gap: var(--ling-space-4);
-  padding-inline: 10px;
+  padding: 6px 10px;
   color: var(--ling-text-default);
   font-weight: 600;
 }
@@ -67,6 +71,11 @@
 .settings-app-return-button [data-ling-button-slot="label"],
 .settings-section-item [data-ling-button-slot="label"] {
   flex: 1 1 auto;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  hyphens: auto;
+  text-overflow: clip;
+  white-space: normal;
 }
 
 .settings-app-return-button [data-ling-button-slot="leading"],
@@ -84,16 +93,15 @@
 .settings-section-group-label {
   display: block;
   min-width: 0;
-  padding: 0 var(--ling-space-4);
-  overflow: hidden;
+  padding: 3px var(--ling-space-4);
   color: var(--ling-text-soft);
   font-size: var(--ling-font-xs);
   font-weight: 700;
   letter-spacing: 0;
-  line-height: 22px;
-  text-overflow: ellipsis;
+  line-height: 16px;
+  overflow-wrap: anywhere;
+  hyphens: auto;
   text-transform: uppercase;
-  white-space: nowrap;
 }
 
 .settings-section-item {
@@ -162,6 +170,10 @@
 }
 
 @media (max-width: 760px) {
+  .app-shell.settings-fullscreen-shell {
+    --settings-sidebar-width: 0px;
+  }
+
   .settings-layout {
     display: flex;
     flex-direction: column;
@@ -197,6 +209,15 @@
   .settings-section-item {
     flex: 0 0 auto;
     width: auto;
+    height: var(--ling-control-sm);
+    min-height: var(--ling-control-sm);
+    padding-block: 0;
+  }
+
+  .settings-app-return-button [data-ling-button-slot="label"],
+  .settings-section-item [data-ling-button-slot="label"] {
+    overflow-wrap: normal;
+    white-space: nowrap;
   }
 
   .settings-section-item[aria-current="page"]::before {

@@ -123,15 +123,41 @@ test("P11.2 characterization: fallback projection, request cap and search normal
   expect(normalizeWorkHistorySearchQuery(" x ")).toBeUndefined();
 });
 
+test("RUN-INSPECTOR-001: persisted run lookup is reachable, loads evidence, and reports failures", async ({ page }) => {
+  await initPage(page, "en-US", "ling-light", { width: 1440, height: 960 });
+  const state = createRunsThreadsFixture();
+  await installRunsThreadsFixture(page, state);
+  await page.goto("/");
+  await openMainRunHistory(page);
+
+  const inspector = page.getByLabel("Run inspector");
+  await expect(inspector).toBeVisible();
+  const runId = inspector.getByLabel("Run ID");
+  await runId.fill("");
+  await inspector.getByRole("button", { name: "Load persisted run" }).click();
+  await expect(inspector.getByRole("alert")).toHaveText("Enter a Run ID");
+
+  await runId.fill("run_ui2_failed");
+  await runId.press("Enter");
+  await expect(inspector.getByText("failed", { exact: true })).toBeVisible();
+  await expect(inspector.getByText("local-relay/gpt-5.5", { exact: true })).toBeVisible();
+
+  await runId.fill("missing_run");
+  await inspector.getByRole("button", { name: "Load persisted run" }).click();
+  await expect(inspector.getByRole("alert")).toBeVisible();
+});
+
 test("RUN-HISTORY-001: 100 groups, keyboard, no-result, retained stale and dual-theme ledger", async ({ page }) => {
   const errors = collectRuntimeErrors(page);
   await initPage(page, "en-US", "ling-light", { width: 1440, height: 960 });
   const state = createRunsThreadsFixture(100);
   let failThreadList = false;
+  let failedListRequests = 0;
   await installRunsThreadsFixture(page, state);
   await page.route(/\/threads\?/u, async (route) => {
     const url = new URL(route.request().url());
     if (failThreadList && route.request().method() === "GET" && url.searchParams.get("limit") === "100" && url.searchParams.has("archived")) {
+      failedListRequests++;
       await route.fulfill({ status: 503, json: { error: "focused_list_failure", message: "Focused list refresh failed" } });
       return;
     }
@@ -155,9 +181,11 @@ test("RUN-HISTORY-001: 100 groups, keyboard, no-result, retained stale and dual-
   await search.press("Escape");
   await expect(search).toHaveValue("");
   await expect(search).toBeFocused();
+  await expect(rows).toHaveCount(100);
   failThreadList = true;
   await expect(shell.locator(".runs-page-header").getByRole("button", { name: "Refresh" })).toHaveCount(0);
   await triggerFocusRevalidation(page);
+  await expect.poll(() => failedListRequests).toBeGreaterThan(0);
   await expect(shell.getByText("Some information may be out of date. Reconnect to continue.")).toBeVisible();
   await applyThemeWithoutReload(page, "ling-dark");
   await page.setViewportSize({ width: 1280, height: 800 });
@@ -237,9 +265,15 @@ test("RUN-INTERVENTION-001 and recording: scoped failure, promote, focus, valida
   let failNextGuidance = true;
   await installRunsThreadsFixture(page, state);
   await page.route(/\/runs\/run_ui2_failed\/interventions(?:\?|$)/u, async (route) => {
+    const key = new URL(route.request().url()).searchParams.get("idempotencyKey");
+    if (route.request().method() === "GET" && key) {
+      await route.fulfill({ json: { cwd: "/tmp/ling-stack-workspace", idempotencyKey: key,
+        interventions: state.runInterventions.filter(item => item.sourceRunId === "run_ui2_failed" && item.idempotencyKey === key) } });
+      return;
+    }
     if (route.request().method() === "POST" && failNextGuidance) {
       failNextGuidance = false;
-      await route.fulfill({ status: 503, json: { message: "Injected focused guidance failure" } });
+      await route.fulfill({ status: 400, json: { message: "Injected focused guidance failure" } });
       return;
     }
     await route.fallback();
@@ -278,7 +312,7 @@ test("RUN-INTERVENTION-001 and recording: scoped failure, promote, focus, valida
   await expect(validationError).toBeVisible();
   await expect(dialog.getByRole("button", { name: /Create candidate|Append evidence/ })).toBeDisabled();
   await assertNoOverflow(page);
-  await captureLedger(page, "1440x960-ling-light-recording-validation.png", "recording_validation_reduced_motion", "RUN-DETAIL-001", errors, [expectedInjected503]);
+  await captureLedger(page, "1440x960-ling-light-recording-validation.png", "recording_validation_reduced_motion", "RUN-DETAIL-001", errors, ["Failed to load resource: the server responded with a status of 400 (Bad Request)"]);
 });
 
 test("request identity: a late thread response cannot overwrite the latest search", async ({ page }) => {

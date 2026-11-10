@@ -14,10 +14,12 @@ acceptance, tray, updater, and full keychain UX remain incomplete or later shell
 - [UI 2.0 Theme Packs](ui2.0升级/themes/README.md)
 - [Theme Registry And Runtime Switching](ui2.0升级/architecture/07-主题注册表与运行时切换.md)
 - [Desktop Main Window Integrated Chrome](./ui2.0升级/modules/18-Desktop-Client-Shell.md)
+- [Desktop Local File Viewing](conversation-shared-capabilities.md#desktop-local-file-viewing)
 
 ## Purpose
 
-This document records the future desktop shell design.
+This document records the implemented Electron alpha and its remaining OS integration
+and release boundaries.
 
 Desktop should make Ling Stack feel like a local app, but it should not fork the product
 model. The product state remains in the local daemon and Web feature modules. Desktop
@@ -40,8 +42,9 @@ must not fork Button, Dialog, Menu, Toast, form, status, or feature-page UI.
 - Add cross-platform floating Computer Use preview windows without owning Computer Use
   runtime state or approval policy.
 - Keep Desktop downstream of daemon state machines, approvals, leases, and audit logs.
-- Render the shared `ConversationTranscript` contract from the daemon instead of copying
-  Web-only conversation grouping logic.
+- Target the proposed shared `ConversationTranscript` contract from the daemon instead
+  of copying Web-only conversation grouping logic. The current main window reuses Web's
+  existing conversation projection.
 - Reuse the shared conversation UI packages where practical:
   `packages/conversation-ui-core` for semantics and `packages/conversation-ui-react` for
   React renderer primitives.
@@ -128,6 +131,7 @@ Desktop owns:
 - local daemon URL injection,
 - tray/menu bar,
 - file picker,
+- user-activated local file previews and native file actions,
 - OS notifications,
 - OS keychain access,
 - update UX,
@@ -178,8 +182,13 @@ Detailed contracts and sequencing:
 
 ## Conversation Transcript Boundary
 
-Desktop may style the conversation differently from Web, but it consumes the same semantic
-transcript:
+The daemon-owned block-level transcript and snapshot/delta stream below remain a target
+contract, as described in [Contracts and API Client](contracts-api-client.md#conversation-transcript-contract).
+They are not current daemon endpoints or exported shared transcript types. The implemented
+Desktop main window loads the shared Web build and therefore reuses its existing
+conversation projection rather than maintaining a separate Desktop projection.
+
+Target data flow:
 
 ```text
 local daemon
@@ -275,8 +284,8 @@ Desktop theme behavior:
 - Desktop preload resolves and injects the validated Theme Pack before the
   renderer's first visible frame. Theme persistence belongs to the Desktop
   settings adapter, not to shared UI components.
-- Locally imported themes are data and approved local images only. Desktop does
-  not execute theme CSS/JavaScript or expose arbitrary filesystem APIs to the renderer.
+- Only official built-in themes are available. Desktop does not execute theme CSS/JavaScript,
+  import third-party theme packages, or expose arbitrary filesystem APIs to the renderer.
 
 ## Daemon Lifecycle
 
@@ -299,7 +308,11 @@ owned by the daemon.
 
 ## Preload API
 
-Expose a narrow desktop API:
+The implemented preload exposes `LingDesktopCapabilities` from
+`apps/desktop/shared/desktop-capabilities.ts` through
+`apps/desktop/preload/main-window.ts`, with typed groups such as `daemon`,
+`themePackages`, and `localFiles`. The flat interface below is the original target
+sketch, not the current callable API or evidence that every OS integration is implemented:
 
 ```ts
 export interface LingDesktopApi {
@@ -370,11 +383,12 @@ v0.1 only needs the update model documented:
 - failed update must leave the previous version usable,
 - release notes should mention daemon/schema compatibility.
 
-Actual updater implementation can wait until packaging exists.
+Packaging scripts exist, but the updater is still a later shell slice. Packaging alone
+does not imply update delivery, signing, or clean-machine release acceptance.
 
 ## Test Plan
 
-When implementation starts:
+For changes to the implemented shell:
 
 ```bash
 corepack pnpm --filter @ling-stack/desktop typecheck
@@ -399,8 +413,8 @@ Desktop smoke tests:
 
 ## Assumptions
 
-- Web modularization and contracts/api-client extraction should happen before serious
-  desktop implementation.
+- Web feature modules and shared contracts/api-client are implemented foundations; the
+  Desktop main window loads the shared Web build through `main/window-factory.ts`.
 - Desktop is a shell over daemon and Web, not a second client model.
 - Desktop is a client over shared semantic contracts, not a second conversation
   projection implementation.

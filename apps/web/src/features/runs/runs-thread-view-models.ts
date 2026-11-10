@@ -170,7 +170,8 @@ export function deriveThreadsFromRuns(runs: readonly RunSession[]): readonly Lin
       teammateId: latestRun.teammateId,
       title: readTaskTitle(latestRun.taskSnapshot) || latestRun.taskId,
       objective: readTaskPrompt(latestRun.taskSnapshot) || readTaskTitle(latestRun.taskSnapshot) || latestRun.taskId,
-      status: latestRun.status === "queued" ? "open" : latestRun.status,
+      // This fallback has no durable question checkpoint; do not invent a resumable wait.
+      status: latestRun.status === "queued" ? "open" : latestRun.status === "yielded" ? "blocked" : latestRun.status,
       activeRunId: runCanBeStopped(latestRun) ? latestRun.id : undefined,
       lastRunId: latestRun.id,
       conversationMode: { mode: "default" },

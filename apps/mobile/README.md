@@ -5,6 +5,15 @@ devices enter the secure QR flow; paired devices synchronize the PC conversation
 channel/normal/teammate-direct transcripts, profile, and device-local appearance. Android
 keeps compiling from the same Expo source but remains outside the current release gate.
 
+The current source targets Expo SDK 58, React Native 0.88, and React 19.3. Expo modules,
+including Secure Store 58, follow the SDK's published native dependency requirements.
+The device evidence recorded below belongs to an older SDK 57 build; it must be rerun
+on a new native build before accepting this SDK upgrade for a physical-device release.
+
+Mobile uses TypeScript 7 for type checking. Expo Doctor currently recommends TypeScript
+`~6.0.3` for SDK 58 and reports this version difference; the warning is not excluded.
+Validate both `typecheck` and iOS/Android `expo export` when changing this compiler.
+
 The app-local Expo module exposes only four operations: generate/load a key, sign bytes,
 verify a signature, and delete the key. It has no private-key export API. Canonical JSON
 and signing transcripts stay in `@ling-stack/remote-protocol`; native code receives only

@@ -1,0 +1,128 @@
+{
+  "version": "scene-themes-v4",
+  "artwork": "Existing forest photograph, summer manga illustration and user-selected valley-overlook game artwork. No new image generation or character compositing.",
+  "retrievedAt": "2026-10-28",
+  "processing": "Breeze and Ocean exports retained from v3. Night uses the complete downloaded 3840x2160 CDN image without crop, mirroring or upscaling; same-source 640x360 thumbnail. CDN size does not establish native master resolution.",
+  "designIntent": {
+    "ocean": "Existing long-haired adult woman in floral swimwear integrated with the beach, ocean and clouds, on the right; seafoam shell, warm-white composer and coral controls. The previous Nami reference is not used.",
+    "night": "User confirmed the mountain valley overlooking scene: mecha on the left, layered valley and clouds on the right. Warm graphite reading panels, copper sunset controls; no independent character layer."
+  },
+  "assets": [
+    {
+      "themeId": "ling-breeze",
+      "source": {
+        "title": "Forest path to the sun.jpg",
+        "page": "https://commons.wikimedia.org/wiki/File:Forest_path_to_the_sun.jpg",
+        "direct": "https://upload.wikimedia.org/wikipedia/commons/e/e4/Forest_path_to_the_sun.jpg",
+        "author": "Drlukitas",
+        "license": "CC BY-SA 4.0",
+        "date": "2020-04-19",
+        "sourceSha256": "bc145456ea6adc089b38fef7cbda06846eb51b088d7a3ebb16d05818bce93115",
+        "sourceSize": [
+          5312,
+          2988
+        ]
+      },
+      "exports": [
+        {
+          "path": "apps/web/public/themes/ling-breeze/forest-morning-v1.webp",
+          "bytes": 691482,
+          "size": [
+            1672,
+            941
+          ],
+          "sha256": "955e36d938670b5cddf59da09cc683f504ed772d8fa19df9fb2650490a28efb6"
+        },
+        {
+          "path": "apps/web/public/themes/ling-breeze/forest-morning-v1-thumb.webp",
+          "bytes": 90694,
+          "size": [
+            640,
+            360
+          ],
+          "sha256": "19c085dc9b05a220fcc41f4e54090b1a90fb489854ed3fe21b0d76f37f337c37"
+        }
+      ]
+    },
+    {
+      "themeId": "ling-ocean",
+      "source": {
+        "title": "Anime Beach Sunset",
+        "page": "https://stockcake.com/i/anime-beach-sunset_4306699_1909957/",
+        "direct": "https://images.stockcake.com/public/8/a/7/8a762f0f-bafb-4d8c-b200-faaef645f976/anime-beach-sunset-stockcake.jpg",
+        "author": "StockCake",
+        "license": "CC0 1.0 / Public Domain (as declared by source)",
+        "licensePage": "https://stockcake.com/info/license",
+        "sourceSha256": "2e382a1439f209cfb45be420ae3961ac23dd6dcdacaf3b982782e6db4125364c",
+        "sourceSize": [
+          1344,
+          768
+        ],
+        "aiGeneratedAtSource": true,
+        "newImageGenerationInThisChange": false
+      },
+      "exports": [
+        {
+          "path": "apps/web/public/themes/ling-ocean/summer-manga-v1.webp",
+          "bytes": 254744,
+          "size": [
+            1344,
+            756
+          ],
+          "sha256": "3659d740d93148726d74b9366ec15b5e773e0cd599de8aad8f4bb67ab9ef91d7"
+        },
+        {
+          "path": "apps/web/public/themes/ling-ocean/summer-manga-v1-thumb.webp",
+          "bytes": 56296,
+          "size": [
+            640,
+            360
+          ],
+          "sha256": "53e0554e3beab7907a1fb3c7959a1e29072361f0aed35003c17e7c5ef93a2e41"
+        }
+      ],
+      "processing": "Native 1344x768 source, crop y=6..762 to 1344x756 without upscaling; main WebP quality 92, thumbnail 640x360 quality 86. Original source is not a 4K image."
+    },
+    {
+      "themeId": "ling-night",
+      "source": {
+        "title": "Titanfall 2 Deluxe Edition valley-overlook promotional artwork",
+        "page": "https://stash.games/games/titanfall-2-deluxe-edition",
+        "direct": "https://images.igdb.com/igdb/image/upload/t_1080p_2x/sc828n.jpg",
+        "host": "IGDB image CDN",
+        "rightsHolder": "Titanfall artwork rights remain with the original rights holders (Respawn Entertainment / Electronic Arts).",
+        "license": "Copyrighted game artwork; public redistribution permission not established.",
+        "publicationStatus": "User-selected local theme implementation only. Public source/binary redistribution clearance remains open.",
+        "sourceSha256": "eed4a0d06d2abf5669eb67678d27f0fafe36963d026b476f7a56d3f2c3dee61a",
+        "sourceBytes": 550448,
+        "sourceSize": [
+          3840,
+          2160
+        ],
+        "resolutionQualification": "Downloaded CDN dimensions, not independently verified native master resolution.",
+        "newImageGenerationInThisChange": false
+      },
+      "exports": [
+        {
+          "path": "apps/web/public/themes/ling-night/valley-overlook-v1.webp",
+          "bytes": 724910,
+          "size": [
+            3840,
+            2160
+          ],
+          "sha256": "0d23b59b7a0c63640bbf193374bb3c6189bd2f267df7a5fbcad9145d9fcf14d4"
+        },
+        {
+          "path": "apps/web/public/themes/ling-night/valley-overlook-v1-thumb.webp",
+          "bytes": 46522,
+          "size": [
+            640,
+            360
+          ],
+          "sha256": "ec71b8d0bd0f4514db034d1713e5d4203b9a11b09a4857d9242b746ea34c5a78"
+        }
+      ],
+      "processing": "cwebp -q 94 -m 6 source.jpg -o valley-overlook-v1.webp; cwebp -q 88 -m 6 -resize 640 360 source.jpg -o valley-overlook-v1-thumb.webp. Whole image, no crop, no upscaling, no overlays."
+    }
+  ]
+}

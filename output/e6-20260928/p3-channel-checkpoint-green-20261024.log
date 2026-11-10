@@ -1,0 +1,10 @@
+✔ real Pi plus loopback SSE completes source-bound read and exclusive create with continuations=off (1657.819667ms)
+✔ real Pi plus loopback SSE completes source-bound read and exclusive create with continuations=enforce (1201.555209ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3672.251

@@ -4,6 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { test } from "node:test";
+import { removePendingAuthorityOverlay } from "./support/legacy-schema-rollback.mjs";
 import {
   createBuiltinAiTeammateId,
   createSqliteRunStore,
@@ -184,6 +185,9 @@ test("teammate model binding migration repairs a local version 107 collision", a
     store.close();
     const database = new DatabaseSync(databasePath);
     try {
+      // Reconstruct the historical collision without later triggers that read
+      // the column being removed. Reopen must recreate their full migration.
+      removePendingAuthorityOverlay(database);
       database.exec("ALTER TABLE ai_teammates DROP COLUMN model_binding_mode;");
       database.prepare("UPDATE schema_migrations SET name = 'create_remote_conversation_state' WHERE version = 107").run();
     } finally {

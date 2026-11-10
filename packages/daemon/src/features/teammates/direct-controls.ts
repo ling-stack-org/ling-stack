@@ -16,6 +16,8 @@ import {
 } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
+import type { ExecutionCancellationRequest } from "@ling-stack/contracts";
+import { parseExecutionCancellationRequest } from "../../shared/cancellation-request.js";
 import type { RunControlService } from "../../run-control.js";
 import type { ActiveRunRegistry } from "../../runtime/active-runs.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
@@ -28,6 +30,11 @@ import { readOptionalChannelMessageFileRefs } from "../channels/schemas.js";
 import { createAiTeammateDirectReply, type StartTeammateDirectRun } from "./direct-replies.js";
 import type { ActiveDirectReplyRegistry } from "./direct-reply-active-registry.js";
 import { assertDirectFileRefsWithinWorkspace, ensureDirectWorkspaceReady } from "./direct-workspace.js";
+import { assertNoUnsafeRequiredPause } from "../runs/user-input-cancellation-guard.js";
+import { settleTeammateDirectMessage } from "./direct-message-lifecycle.js";
+import { continuationSourceReady } from "../../runtime/continuation-source-barrier.js";
+import { readWorkUnitStopEvidence } from "../../runtime/work-unit-stop-evidence.js";
+import { projectPublicWorkUnit } from "../runs/public-execution-snapshots.js";
 
 export interface TeammateDirectRuntimeSnapshot {
   readonly teammateId: string;
@@ -69,7 +76,7 @@ export class DirectReplyControlService {
     };
   }
 
-  cancelReply(input: { readonly store: RunStore; readonly workUnitId: string; readonly reason?: string }): {
+  cancelReply(input: ExecutionCancellationRequest & { readonly store: RunStore; readonly workUnitId: string; readonly reason?: string }): {
     readonly workUnit: WorkUnit;
     readonly message?: TeammateDirectMessage;
   } {
@@ -80,12 +87,14 @@ export class DirectReplyControlService {
     const active = this.dependencies.activeDirectReplies.get(workUnit.id);
     const activeRun = workUnit.linkedRunId ? this.dependencies.activeRuns.get(workUnit.linkedRunId) : undefined;
     const cancellation = this.dependencies.runControl.cancelWorkUnit({
+      expectedAttemptId: input.expectedAttemptId,
+      expectedRunId: input.expectedRunId,
       store: input.store,
       workUnit,
       reason: input.reason ?? "direct_reply_cancelled",
       activeRun: activeRun ?? (active ? { abortController: active.abortController, streamEnvelope: () => undefined } : undefined),
     });
-    this.dependencies.activeDirectReplies.delete(workUnit.id);
+    // The owning execution, not logical cancellation, retires this live handle.
     const message = this.markLinkedMessageCancelled(input.store, cancellation.workUnit, "回复已停止");
     return { workUnit: cancellation.workUnit, message };
   }
@@ -103,6 +112,9 @@ export class DirectReplyControlService {
     const active = this.findActiveReply(input.store, teammate.id, thread.id);
     if (!active) {
       throw new Error("当前没有正在回复的私聊消息。");
+    }
+    if (input.mode === "interrupt_redirect") {
+      this.assertReplyCancellationAdmitted(input.store, active.workUnit);
     }
     if (input.messagePayload?.fileRefs?.length) {
       assertDirectFileRefsWithinWorkspace({
@@ -130,6 +142,7 @@ export class DirectReplyControlService {
     if (input.mode === "interrupt_redirect") {
       const cancelling = input.store.updateTeammateDirectReplyInterventionStatus({
         interventionId: intervention.id,
+        expectedStatuses: ["queued"],
         status: "cancelling_source",
         startedAt: now,
         now,
@@ -155,6 +168,9 @@ export class DirectReplyControlService {
     if (!cancelled) {
       throw new Error(`Direct reply intervention not found: ${input.interventionId}`);
     }
+    if (cancelled.status === "starting_continuation") {
+      throw new HttpError(409, "direct_intervention_already_starting", "The continuation is already starting; stop its execution instead of cancelling its queue record.");
+    }
     return cancelled;
   }
 
@@ -174,29 +190,24 @@ export class DirectReplyControlService {
     const thread = input.store.getOrCreateTeammateDirectThread(teammate.id, new Date().toISOString());
     const active = this.findActiveReply(input.store, teammate.id, intervention.threadId);
     if (!active) {
-      const now = new Date().toISOString();
-      const starting = input.store.updateTeammateDirectReplyInterventionStatus({
-        interventionId: intervention.id,
-        status: "starting_continuation",
-        startedAt: intervention.startedAt ?? now,
-        now,
-      }) ?? intervention;
       queueMicrotask(() => {
         void this.startContinuation({
           store: input.store,
           teammate,
           thread,
-          intervention: starting,
+          intervention,
         });
       });
       return {
-        intervention: input.store.getTeammateDirectReplyIntervention(intervention.id) ?? starting,
+        intervention: input.store.getTeammateDirectReplyIntervention(intervention.id) ?? intervention,
         message: "当前回复已结束，已开始执行这条引导。",
       };
     }
+    this.assertReplyCancellationAdmitted(input.store, active.workUnit);
     const now = new Date().toISOString();
     const cancelling = input.store.updateTeammateDirectReplyInterventionStatus({
       interventionId: intervention.id,
+      expectedStatuses: ["queued"],
       status: "cancelling_source",
       startedAt: now,
       now,
@@ -227,10 +238,11 @@ export class DirectReplyControlService {
       .listTeammateDirectReplyInterventions({
         teammateId: input.teammateId,
         threadId: input.threadId,
-        status: "queued",
+        statuses: ["queued", "cancelling_source"],
         limit: 100,
       })
-      .filter((intervention) => intervention.mode === "queue_followup");
+      .filter((intervention) => intervention.status === "cancelling_source"
+        || (intervention.status === "queued" && intervention.mode === "queue_followup"));
     const next = candidates[0];
     if (!next) {
       return;
@@ -246,9 +258,27 @@ export class DirectReplyControlService {
     readonly thread: TeammateDirectThread;
     readonly intervention: TeammateDirectReplyIntervention;
   }): Promise<void> {
+    const source = input.intervention.sourceWorkUnitId ? input.store.getWorkUnit(input.intervention.sourceWorkUnitId) : undefined;
+    if (source && (input.intervention.sourceAttemptId ? source.activeAttemptId !== input.intervention.sourceAttemptId
+      : input.store.listWorkUnitAttempts(source.id).length !== 1)) {
+      input.store.updateTeammateDirectReplyInterventionStatus({ interventionId: input.intervention.id,
+        expectedStatuses: ["queued", "cancelling_source"], status: "failed",
+        failureReason: "continuation_source_attempt_changed", completedAt: new Date().toISOString(), now: new Date().toISOString() });
+      return;
+    }
+    if (!source || !continuationSourceReady(input.store, source, this.dependencies.activeRuns,
+      `direct-intervention:${input.intervention.id}`, () => this.startContinuation(input))) return;
+    const previous = input.store.listTeammateDirectReplyInterventions({ teammateId: input.teammate.id,
+      threadId: input.thread.id, hasContinuation: true, newestFirst: true, limit: 1 })[0];
+    if (previous?.continuationWorkUnitId) {
+      const previousUnit = input.store.getWorkUnit(previous.continuationWorkUnitId);
+      if (!previousUnit || !continuationSourceReady(input.store, previousUnit, this.dependencies.activeRuns,
+        `direct-intervention:${input.intervention.id}`, () => this.startContinuation(input))) return;
+    }
     const now = new Date().toISOString();
     const starting = input.store.updateTeammateDirectReplyInterventionStatus({
       interventionId: input.intervention.id,
+      expectedStatuses: ["queued", "cancelling_source"],
       status: "starting_continuation",
       startedAt: input.intervention.startedAt ?? now,
       now,
@@ -265,6 +295,7 @@ export class DirectReplyControlService {
       if (!workspace.ok) {
         throw new Error(workspace.message);
       }
+      if (input.store.getTeammateDirectReplyIntervention(starting.id)?.status !== "starting_continuation") return;
       const queuedFollowup = starting.mode === "queue_followup";
       const guidance = input.store.createTeammateDirectMessage(
         {
@@ -272,6 +303,7 @@ export class DirectReplyControlService {
           teammateId: input.teammate.id,
           authorType: queuedFollowup ? "local-user" : "system",
           authorId: queuedFollowup ? "local-user" : "system",
+          systemPurpose: queuedFollowup ? undefined : "execution_control",
           body: renderDirectGuidanceMessage(starting),
           attachmentIds: starting.messagePayload?.attachmentIds ?? [],
           linkPreviewIds: starting.messagePayload?.linkPreviewIds ?? [],
@@ -293,7 +325,16 @@ export class DirectReplyControlService {
         providerPresetId,
       });
       const reply = await createAiTeammateDirectReply({
-        startRun: this.dependencies.startRun,
+        startRun: async (request, sink) => {
+          const current = input.store.getTeammateDirectReplyIntervention(starting.id);
+          const currentSource = input.store.getWorkUnit(source.id);
+          if (current?.status !== "starting_continuation" || !currentSource || currentSource.activeAttemptId !== source.activeAttemptId
+            || !continuationSourceReady(input.store, currentSource, this.dependencies.activeRuns,
+              `direct-intervention:${starting.id}`, () => undefined)) {
+            throw new Error("direct_continuation_source_changed");
+          }
+          return this.dependencies.startRun(request, sink);
+        },
         store: input.store,
         teammate: input.teammate,
         thread: workspace.workspace.thread,
@@ -306,6 +347,10 @@ export class DirectReplyControlService {
         signal: abortController.signal,
         onWorkUnitStarted: (handle) => {
           continuationWorkUnitId = handle.workUnitId;
+          const linked = input.store.updateTeammateDirectReplyInterventionStatus({ interventionId: starting.id,
+            expectedStatuses: ["starting_continuation"], status: "starting_continuation",
+            continuationMessageId: handle.messageId, continuationWorkUnitId: handle.workUnitId, now: new Date().toISOString() });
+          if (!linked) throw new Error("direct_continuation_claim_lost");
           this.dependencies.activeDirectReplies.register({ ...handle, abortController });
         },
       });
@@ -314,6 +359,7 @@ export class DirectReplyControlService {
         : input.store.listWorkUnits({ kind: "teammate_direct_reply", linkedMessageId: reply.id, limit: 1 })[0];
       input.store.updateTeammateDirectReplyInterventionStatus({
         interventionId: starting.id,
+        expectedStatuses: ["starting_continuation"],
         status: "started",
         continuationMessageId: reply.id,
         continuationWorkUnitId: workUnit?.id ?? starting.continuationWorkUnitId,
@@ -331,6 +377,7 @@ export class DirectReplyControlService {
     } catch (error) {
       input.store.updateTeammateDirectReplyInterventionStatus({
         interventionId: starting.id,
+        expectedStatuses: ["starting_continuation"],
         status: "failed",
         completedAt: new Date().toISOString(),
         failureReason: error instanceof Error ? error.message : String(error),
@@ -339,10 +386,23 @@ export class DirectReplyControlService {
     }
   }
 
+  /** Check before intervention writes; the later RunControl check remains the effect boundary. */
+  private assertReplyCancellationAdmitted(store: RunStore, workUnit: WorkUnit): void {
+    const run = workUnit.linkedRunId ? store.getRun(workUnit.linkedRunId) : undefined;
+    // A committed wait is cancelled atomically by RunControl, not through the
+    // generic execution guard. Terminal Runs have no execution to interrupt.
+    if (run && !["yielded", "succeeded", "failed", "cancelled"].includes(run.status)) {
+      assertNoUnsafeRequiredPause(store, run);
+    }
+  }
+
   private findActiveReply(store: RunStore, teammateId: string, threadId: string): TeammateDirectRuntimeSnapshot["activeReply"] {
     const activeUnits = store
       .listWorkUnits({ kind: "teammate_direct_reply", teammateId, limit: 500 })
-      .filter((workUnit) => isActiveDirectReplyStatus(workUnit.status))
+      .filter((workUnit) => isActiveDirectReplyStatus(workUnit.status)
+        || (workUnit.status === "cancelled" && (Boolean(this.dependencies.activeDirectReplies?.get(workUnit.id))
+          || readWorkUnitStopEvidence(store, workUnit, store.listWorkUnitAttempts(workUnit.id), this.dependencies.activeRuns)
+            .attempts.some(attempt => attempt.localExecution !== "drained" || attempt.effects !== "settled"))))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     for (const workUnit of activeUnits) {
       if (!workUnit.linkedMessageId) {
@@ -353,7 +413,7 @@ export class DirectReplyControlService {
         continue;
       }
       return {
-        status: workUnit.status === "cancelling" ? "cancelling" : "running",
+        status: workUnit.status === "cancelling" || workUnit.status === "cancelled" ? "cancelling" : "running",
         workUnitId: workUnit.id,
         messageId: message.id,
         sourceMessageId: workUnit.ownerId,
@@ -388,15 +448,11 @@ export class DirectReplyControlService {
     if (!current) {
       return undefined;
     }
-    return store.updateTeammateDirectMessageRuntime(
-      current.id,
-      {
-        body: current.body.trim() || fallbackBody,
-        status: "cancelled",
-        errorMessage: fallbackBody,
-      },
-      new Date().toISOString(),
-    );
+    return settleTeammateDirectMessage(store, current, {
+      runId: workUnit.linkedRunId,
+      workUnitId: workUnit.id,
+      cancelledReason: fallbackBody,
+    }).message;
   }
 
   private requireTeammate(store: RunStore, teammateId: string): AiTeammate {
@@ -432,6 +488,12 @@ function renderDirectGuidanceFileRef(fileRef: ChannelMessageFileRef): string {
   return `${fileRef.label?.trim() || fileRef.path}${line}`;
 }
 
+/** Execution services retain recovery input; only the transport receives this view. */
+function projectPublicDirectRuntime(runtime: TeammateDirectRuntimeSnapshot, store: RunStore): TeammateDirectRuntimeSnapshot {
+  return { ...runtime, ...(runtime.activeReply ? { activeReply: { ...runtime.activeReply,
+    workUnit: projectPublicWorkUnit(runtime.activeReply.workUnit, store) } } : {}) };
+}
+
 export async function handleTeammateDirectRuntime(
   request: IncomingMessage,
   response: ServerResponse,
@@ -455,7 +517,7 @@ export async function handleTeammateDirectRuntime(
           void service.maybeStartNextQueuedContinuation({ store, teammateId, threadId: runtime.thread.id }).catch(() => undefined);
         });
       }
-      writeJson(response, 200, { cwd, ...runtime });
+      writeJson(response, 200, { cwd, ...projectPublicDirectRuntime(runtime, store) });
       return;
     }
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for teammate direct-runtime` });
@@ -485,13 +547,18 @@ export async function handleTeammateDirectInterventions(
     const store = storeRegistry.getStore(cwd);
     if (request.method === "GET") {
       const runtime = service.getRuntime({ store, teammateId });
-      writeJson(response, 200, { cwd, teammateId, thread: runtime.thread, interventions: runtime.interventions });
+      const idempotencyKey = url.searchParams.get("idempotencyKey") ?? undefined;
+      const interventions = idempotencyKey === undefined ? runtime.interventions
+        : store.listTeammateDirectReplyInterventions({ teammateId, threadId: runtime.thread.id, idempotencyKey });
+      writeJson(response, 200, { cwd, teammateId, thread: runtime.thread, interventions,
+        ...(idempotencyKey !== undefined ? { idempotencyKey } : {}) });
       return;
     }
     if (request.method === "POST") {
       const body = parseDirectInterventionCreateRequest(await readJsonBody(request, config.maxBodyBytes));
       const intervention = service.createIntervention({ store, teammateId, ...body });
-      writeJson(response, 201, { cwd, teammateId, intervention, runtime: service.getRuntime({ store, teammateId }) });
+      writeJson(response, 201, { cwd, teammateId, intervention,
+        runtime: projectPublicDirectRuntime(service.getRuntime({ store, teammateId }), store) });
       return;
     }
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for teammate direct-interventions` });
@@ -560,7 +627,7 @@ export async function handleTeammateDirectInterventionPromote(
       cwd,
       teammateId: result.intervention.teammateId,
       intervention: result.intervention,
-      runtime: service.getRuntime({ store, teammateId: result.intervention.teammateId }),
+      runtime: projectPublicDirectRuntime(service.getRuntime({ store, teammateId: result.intervention.teammateId }), store),
       ...(result.message ? { message: result.message } : {}),
     });
   } catch (error) {
@@ -591,9 +658,10 @@ export async function handleTeammateDirectReplyCancel(
       writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for teammate direct reply cancel` });
       return;
     }
-    const body = parseOptionalReason(await readOptionalJsonBody(request, config.maxBodyBytes));
-    const result = service.cancelReply({ store, workUnitId, reason: body.reason });
-    writeJson(response, 200, { cwd, ...result });
+    const raw = await readOptionalJsonBody(request, config.maxBodyBytes);
+    const body = parseOptionalReason(raw);
+    const result = service.cancelReply({ store, workUnitId, reason: body.reason, ...parseExecutionCancellationRequest(raw) });
+    writeJson(response, 200, { cwd, ...result, workUnit: projectPublicWorkUnit(result.workUnit, store) });
   } catch (error) {
     writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
       error: error instanceof HttpError ? error.code : "bad_request",

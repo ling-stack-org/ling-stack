@@ -8,7 +8,6 @@ import {
   Play,
   Plus,
   RefreshCw,
-  Square,
   Workflow,
 } from "lucide-react";
 import { artifactContentUrl, getChannelWorkflowEvidence } from "../../api.js";
@@ -56,12 +55,8 @@ export function WorkflowQueueCard({
   attachments,
   linkPreviews,
   runningWorkflowStepId,
-  orchestrating,
   operationErrors,
-  onOrchestrateWorkflow,
-  onCancelWorkflow,
   onStartWorkflowStep,
-  onRetryWorkflowStep,
   onUpdateWorkflowStepStatus,
 }: {
   readonly cwd: string;
@@ -75,18 +70,13 @@ export function WorkflowQueueCard({
   readonly attachments: readonly ChannelAttachment[];
   readonly linkPreviews: readonly ChannelLinkPreview[];
   readonly runningWorkflowStepId: string;
-  readonly orchestrating: boolean;
   readonly operationErrors: Readonly<Record<string, string>>;
-  readonly onOrchestrateWorkflow: (workflow: ChannelWorkflow) => void;
-  readonly onCancelWorkflow: (workflow: ChannelWorkflow) => void;
   readonly onStartWorkflowStep: (step: ChannelWorkflowStep, mode: ChannelWorkflowStepStartMode) => void;
-  readonly onRetryWorkflowStep: (step: ChannelWorkflowStep) => void;
   readonly onUpdateWorkflowStepStatus: (step: ChannelWorkflowStep, status: "skipped" | "cancelled") => void;
 }): React.JSX.Element {
   const { t } = useI18n();
   const orderedSteps = [...steps].sort((left, right) => left.position - right.position);
   const workflowContextSummaries = contextSummaries.filter((summary) => orderedSteps.some((step) => step.contextSummaryId === summary.id));
-  const canAdvance = workflowCanAdvance(workflow.status);
   return (
     <div className="protocol-row workflow-queue-card">
       <div className="workflow-queue-head">
@@ -94,17 +84,7 @@ export function WorkflowQueueCard({
           <strong>{workflow.title}</strong>
           <small><ChannelWorkflowStatusLabel status={workflow.status} /> · {workflow.objective}</small>
         </span>
-        <span className="workflow-queue-actions">
-          <ChannelWorkflowStatusIndicator kind="workflow" status={workflow.status} />
-          <button className="secondary-button compact-button" type="button" onClick={() => onOrchestrateWorkflow(workflow)} disabled={!canAdvance || orchestrating}>
-            {orchestrating ? <Loader2 className="spin" size={13} /> : <Play size={13} />}
-            {t("Advance")}
-          </button>
-          <button className="secondary-button compact-button" type="button" onClick={() => onCancelWorkflow(workflow)} disabled={!workflowCanCancel(workflow.status) || orchestrating}>
-            <Square size={13} />
-            {t("Cancel")}
-          </button>
-        </span>
+        <ChannelWorkflowStatusIndicator kind="workflow" status={workflow.status} />
       </div>
       {operationErrors[workflow.id] ? (
         <div className="provider-run-notice compact" role="alert">
@@ -137,7 +117,6 @@ export function WorkflowQueueCard({
               contextSummary={contextSummaries.find((summary) => summary.id === step.contextSummaryId)}
               artifactsByRun={artifactsByRun}
               onStartWorkflowStep={onStartWorkflowStep}
-              onRetryWorkflowStep={onRetryWorkflowStep}
               onUpdateWorkflowStepStatus={onUpdateWorkflowStepStatus}
             />
           ))
@@ -155,7 +134,6 @@ function WorkflowStepCard({
   contextSummary,
   artifactsByRun,
   onStartWorkflowStep,
-  onRetryWorkflowStep,
   onUpdateWorkflowStepStatus,
 }: {
   readonly cwd: string;
@@ -165,7 +143,6 @@ function WorkflowStepCard({
   readonly contextSummary: ChannelContextSummary | undefined;
   readonly artifactsByRun: Readonly<Record<string, readonly RunArtifact[]>>;
   readonly onStartWorkflowStep: (step: ChannelWorkflowStep, mode: ChannelWorkflowStepStartMode) => void;
-  readonly onRetryWorkflowStep: (step: ChannelWorkflowStep) => void;
   readonly onUpdateWorkflowStepStatus: (step: ChannelWorkflowStep, status: "skipped" | "cancelled") => void;
 }): React.JSX.Element {
   const { t } = useI18n();
@@ -292,10 +269,6 @@ function WorkflowStepCard({
         <button className="secondary-button compact-button" type="button" onClick={() => onStartWorkflowStep(step, "create_and_run_task")} disabled={!canStart || running}>
           {running ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
           {t("Start + run")}
-        </button>
-        <button className="secondary-button compact-button" type="button" onClick={() => onRetryWorkflowStep(step)} disabled={step.status !== "blocked" || running}>
-          {running ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
-          {t("Retry")}
         </button>
         <button className="secondary-button compact-button" type="button" onClick={() => onUpdateWorkflowStepStatus(step, "skipped")} disabled={!canSkip || running}>
           {t("Skip")}
@@ -936,6 +909,10 @@ export function workflowCanAdvance(status: ChannelWorkflow["status"]): boolean {
 
 export function workflowCanCancel(status: ChannelWorkflow["status"]): boolean {
   return status === "draft" || status === "ready" || status === "running" || status === "waiting_for_approval" || status === "blocked";
+}
+
+export function workflowStepCanRetry(status: ChannelWorkflowStep["status"]): boolean {
+  return status === "blocked";
 }
 
 function workflowProviderBindingSourceLabel(

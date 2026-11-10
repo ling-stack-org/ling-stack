@@ -146,7 +146,7 @@ export async function openCouncilSettings(
   page: Page,
   councilName: string | RegExp = /Product Review Council/,
 ): Promise<{ readonly panel: Locator; readonly surface: Locator }> {
-  await page.getByLabel(/Ling Stack navigation|Ling Stack 导航/).getByRole("button", { name: /Settings|设置/ }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: /Settings|设置/ }).click();
   await page.getByLabel(/Settings sections|设置分组/).getByRole("button", { name: /Council Workspace|智囊团工作区/ }).click();
   const surface = page.locator("[data-settings-workspace-tool='councils']");
   await expect(surface).toBeVisible();

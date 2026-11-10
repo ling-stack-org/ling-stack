@@ -3,16 +3,17 @@
 Status: approved and implemented from the 2026-07-15 product plan.
 
 Related follow-up: [Skill Editing And Revision](skill-editing-and-revision.md)
+Related surface: [External Agent Skill Discovery And Adoption](external-agent-skill-discovery.md)
 
 ## Purpose
 
-Keep My skills, AI evolution, and Built-in skills visually consistent while making
-AI-created skills a complete governed lifecycle instead of a candidate queue that leaks
-published records into My skills.
+Keep My skills, Local skill folders, AI evolution, and Built-in skills visually consistent
+while making AI-created skills a complete governed lifecycle instead of a candidate queue
+that leaks published records into My skills.
 
 ## Height Contract
 
-All three Skill Library sections use natural content height. Their list or drawer content
+All four Skill Library sections use natural content height. Their list or drawer content
 may grow up to:
 
 ```css
@@ -25,7 +26,11 @@ area. Empty states stay compact. The list and its detail drawer share the same m
 
 ## Ownership Contract
 
-- My skills contains user-managed skills that are not built in and not AI-evolved.
+- My skills contains user-managed skills that are not built in and not AI-evolved. Local
+  skill folders is a review surface, not an ownership list: publishing an external record
+  creates a user-owned `skill-directory` entry that appears in My skills.
+- Local skill folders shows shared `.agents/skills` candidates and client-side ignored
+  state; it never lists built-in, AI-evolved, or already adopted entries as its own.
 - AI evolution owns skills whose `packId` is `ling-generated` or whose source path starts
   with `skill-candidates/`.
 - Built-in skills contains built-in and managed gstack skills and remains read-only.

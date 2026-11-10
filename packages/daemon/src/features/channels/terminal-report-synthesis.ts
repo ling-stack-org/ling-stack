@@ -91,7 +91,7 @@ export async function synthesizeTerminalReportContent(
     }
     previousOutput = output;
     try {
-      const content = bindEvidenceArtifactFileRefs(
+      const content = bindEvidenceFacts(
         parseTerminalReportContent(parseStrictJsonObject(output, "Terminal report model output")),
         input.snapshot,
       );
@@ -125,32 +125,40 @@ export async function synthesizeTerminalReportContent(
   });
 }
 
-function bindEvidenceArtifactFileRefs(
+function bindEvidenceFacts(
   content: TerminalReportContent,
   snapshot: TerminalReportEvidenceSnapshot,
 ): TerminalReportContent {
   const evidenceArtifacts = new Map(snapshot.artifacts.map((artifact) => [artifact.id, artifact]));
+  const evidenceParticipants = new Map(snapshot.participants.map((participant) => [participant.agentId, participant]));
   return {
     ...content,
+    // Participant rows are a semantic responsibility summary. Bind them to
+    // Host-derived summaries so a model cannot copy a raw or materialized
+    // command from the verification section into the participant narrative.
+    participants: content.participants.map((participant) => {
+      const evidence = evidenceParticipants.get(participant.agentId);
+      const contribution = evidence?.contributionSummaries.filter(Boolean).join("; ").trim();
+      return evidence ? {
+        ...participant,
+        ...(contribution ? { contribution } : {}),
+        sourceRefs: [...participant.sourceRefs, ...evidence.sourceRefs],
+      } : participant;
+    }),
     artifacts: content.artifacts.map((artifact) => {
-      const trustedFileRefs = evidenceArtifacts.get(artifact.id)?.sourceRefs.filter((ref) =>
-        ref.kind === "file" && ref.visibility !== "developer_only" && ref.sensitivity !== "secret_adjacent"
-      ) ?? [];
-      if (trustedFileRefs.length === 0) {
+      const evidence = evidenceArtifacts.get(artifact.id);
+      if (!evidence) {
         return artifact;
       }
       return {
         ...artifact,
-        sourceRefs: uniqueTerminalReportSourceRefs([...artifact.sourceRefs, ...trustedFileRefs]),
+        // Rebinding Host facts must carry the entire section's privacy lineage.
+        // Keep model refs too: overwriting a weaker alias here would hide its
+        // downgrade from the validator and silently repair invalid output.
+        sourceRefs: [...artifact.sourceRefs, ...evidence.sourceRefs],
       };
     }),
   };
-}
-
-function uniqueTerminalReportSourceRefs(
-  refs: readonly TerminalReportSourceRef[],
-): readonly TerminalReportSourceRef[] {
-  return [...new Map(refs.map((ref) => [`${ref.kind}:${ref.id}`, ref])).values()];
 }
 
 function resolveSynthesisRuntime(input: Required<Pick<TerminalReportSynthesisInput, "store" | "snapshot" | "runnerRegistry" | "secretResolver">>) {
@@ -348,6 +356,9 @@ function parseRisk(value: unknown, index: number): TerminalReportRisk {
     id: requiredString(record.id, `risks.${index}.id`),
     severity: requiredEnum(record.severity, `risks.${index}.severity`, ["info", "warning", "critical"]),
     status: requiredEnum(record.status, `risks.${index}.status`, ["unresolved", "mitigated", "accepted", "unverified"]),
+    approvalDecision: record.approvalDecision === undefined
+      ? undefined
+      : requiredEnum(record.approvalDecision, `risks.${index}.approvalDecision`, ["pending", "approved", "denied", "expired", "cancelled"]),
     summary: requiredString(record.summary, `risks.${index}.summary`),
     nextAction: optionalString(record.nextAction, `risks.${index}.nextAction`),
     sourceRefs: parseSourceRefs(record.sourceRefs, `risks.${index}.sourceRefs`),

@@ -2,13 +2,16 @@ import {
   authorizationModes,
   readOnlyRunTools,
   lingConversationTones,
+  reasoningSummaryModes,
   permissionModeForPreset,
   permissionPresets,
+  providerThinkingModes,
   providerTransports,
   responseLanguages,
   runContinuationReasons,
   sessionPermissionModes,
   workspaceAccessModes,
+  normalizeRunnerId,
   type AuthorizationMode,
   type ChannelMessageFileRef,
   type PermissionConfirmation,
@@ -17,6 +20,7 @@ import {
   type LingTurnCreatedByActor,
   type LingConversationTone,
   type PermissionPreset,
+  type ReasoningSummaryMode,
   type ResponseLanguage,
   type RunContinuationReason,
   type RunTool,
@@ -30,10 +34,19 @@ import type {
   ChannelIntentExecutionOperationV1,
   ConversationContextProjectionMetadata,
   DelegatedStepRequirementV1,
+  HarnessFeatureSnapshotV1,
+  RunnerContinuationOrigin,
   WorkflowParticipantProviderBindingV1,
+  ExecutionBindingRequest,
 } from "@ling-stack/contracts";
+import { isExternalExecutionEngineId, parseExecutionBindingRequest } from "@ling-stack/contracts";
 import { HttpError } from "../../errors.js";
+import type { WorkflowOperationExecutionSnapshot } from "./workflow-operation-snapshot.js";
+import type { UserInputContinuationContext } from "./user-input-continuation-context.js";
+import type { NormalConversationContextSnapshot } from "../conversations/normal-conversation-context.js";
+import type { NativeResponsePreferences } from "../conversations/native-response-preferences.js";
 import { parseApprovalProfileObject } from "../../shared/approval-profile.js";
+import { assertPermissionContractVersion } from "../../shared/permission-contract.js";
 import {
   isRecord,
   readOptionalBoolean,
@@ -44,34 +57,58 @@ import {
   readString,
 } from "../../shared/validation.js";
 
+export interface MemorySourceRevision {
+  readonly memoryId: string;
+  /** SHA-256 of the complete semantic source; lastUsedAt is observational only. */
+  readonly semanticHash: string;
+}
+
 export interface PreselectedMemoryUse {
   readonly memoryIds: readonly string[];
   readonly recallQuery: string;
   readonly policyVersion: string;
+  /** Host-rendered, one-time hydration only; never part of durable request/task fields. */
+  readonly renderedPrompt?: string;
+  /** Required with first hydration; never included in frozen usedMemory metadata. */
+  readonly sourceRevisions?: readonly MemorySourceRevision[];
 }
 
 export interface RunRequest extends Omit<
   PiRunnerRunOptions,
   | "onApprovalRequired"
+  | "onToolBefore"
+  | "onReadonlyToolCall"
+  | "onIsolatedToolCall"
   | "onEvent"
   | "provider"
+  | "providerBudget"
   | "tools"
   | "mcpTools"
   | "onMcpToolCall"
+  | "hostCompactionEnabled"
   | "mediaGenerationTools"
   | "onMediaGenerationToolCall"
 > {
+  readonly schemaVersion?: 2;
   readonly workspaceCwd?: string;
   readonly providerPresetId?: string;
+  readonly executionBinding?: ExecutionBindingRequest;
   /** Internal-only immutable provider ownership snapshot for workflow participant Runs. */
   readonly providerBinding?: WorkflowParticipantProviderBindingV1;
   readonly provider?: PiRunnerProviderConfig;
   readonly teammateId?: string;
   readonly workflowStepId?: string;
+  readonly workflowStartOwner?: import("@ling-stack/core").WorkflowStepStartOwnerV1;
   /** Internal-only immutable delegated completion requirement. External request parsing does not accept it. */
   readonly delegatedRequirement?: DelegatedStepRequirementV1;
   /** Internal-only Host execution bindings for workflow-owned operations. */
   readonly executionOperationBindings?: readonly ChannelIntentExecutionOperationV1[];
+  /** Internal-only full accepted plan plus exact step-owned IDs, durably captured at dispatch. */
+  readonly workflowOperationExecution?: WorkflowOperationExecutionSnapshot;
+  /** Internal Host-produced scope; never accepted by the public request parser. */
+  readonly workflowSafetySnapshot?: import("./workflow-safety.js").WorkflowSafetySnapshotV1;
+  /** Host-only isolation plan binding; never accepted by the public request parser. */
+  readonly workflowIsolationPlan?: { readonly planId: string; readonly planDigest: string };
   readonly threadId?: string;
   readonly turnId?: string;
   readonly runnerId?: string;
@@ -88,6 +125,7 @@ export interface RunRequest extends Omit<
   readonly idempotencyKey?: string;
   readonly lingConversationTone?: LingConversationTone;
   readonly responseLanguage?: ResponseLanguage;
+  readonly reasoningSummary?: ReasoningSummaryMode;
   readonly conversationAttachmentIds?: readonly string[];
   readonly conversationFileRefs?: readonly ChannelMessageFileRef[];
   readonly parentRunId?: string;
@@ -103,6 +141,25 @@ export interface RunRequest extends Omit<
   readonly preselectedMemoryUse?: PreselectedMemoryUse;
   /** Internal-only evidence version for conversation-derived runs. External request parsing does not accept it. */
   readonly contextProjection?: ConversationContextProjectionMetadata;
+  /** Internal-only frozen normal input evidence. External request parsing never accepts it. */
+  readonly normalConversationContext?: NormalConversationContextSnapshot;
+  /** Internal acceptance evidence; never parsed from an external RunRequest. */
+  readonly normalConversationAcceptedSnapshotId?: string;
+  /** Internal immutable request preparation, never accepted by external parsing. */
+  readonly normalConversationPreparedRequestRef?: { readonly id: string; readonly fingerprint: string };
+  readonly normalConversationPreparedExecutionRef?: { readonly id: string; readonly fingerprint: string };
+  /** Internal ACP presentation intent. Public Run parsing never accepts this field. */
+  readonly nativeResponsePreferences?: NativeResponsePreferences;
+  /** Internal frozen private input evidence; external parsing never accepts this field. */
+  readonly teammateDirectInputRef?: { readonly id: string; readonly fingerprint: string };
+  /** Host-produced source SDK input. External parsing never accepts or restores it as authority. */
+  readonly runnerExecutionInput?: import("./prepared-runner-input.js").PreparedRunnerInput;
+  /** Internal-only immutable Harness rollout snapshot. External parsing never accepts this field. */
+  readonly harnessFeatureSnapshot?: HarnessFeatureSnapshotV1;
+  /** Internal-only normalized continuation origin. External parsing never accepts this field. */
+  readonly harnessContinuationOrigin?: RunnerContinuationOrigin;
+  /** Internal-only answer continuation lineage; external parsing never accepts this field. */
+  readonly userInputContinuationContext?: UserInputContinuationContext;
   /** Internal-only override used by trusted multi-reply channel orchestration. */
   readonly channelParallelLimit?: number;
 }
@@ -111,17 +168,33 @@ export function parseRunRequest(value: unknown): RunRequest {
   if (!isRecord(value)) {
     throw new Error("Run request must be a JSON object");
   }
+  assertPermissionContractVersion(value);
 
   const cwd = readString(value, "cwd");
   const workspaceCwd = readOptionalString(value, "workspaceCwd");
   const task = value.task;
   const provider = value.provider;
-  const providerPresetId = readOptionalString(value, "providerPresetId");
+  const executionBinding = readExecutionBinding(value.executionBinding);
+  if (executionBinding && (provider !== undefined || value.providerPresetId !== undefined
+    && (executionBinding.kind !== "pi_provider" || value.providerPresetId !== executionBinding.providerPresetId))) {
+    throw new HttpError(400, "execution_binding_conflict", "execution_binding_conflict");
+  }
+  const providerPresetId = executionBinding?.kind === "pi_provider"
+    ? executionBinding.providerPresetId : readOptionalString(value, "providerPresetId");
   const teammateId = readOptionalString(value, "teammateId");
   const workflowStepId = readOptionalString(value, "workflowStepId");
   const threadId = readOptionalString(value, "threadId");
   const turnId = readOptionalString(value, "turnId");
-  const runnerId = readOptionalString(value, "runnerId");
+  const requestedRunnerId = normalizeRunnerId(readOptionalString(value, "runnerId"));
+  const boundRunnerId = executionBinding?.kind === "native_profile" ? executionBinding.engineId
+    : executionBinding?.kind === "pi_provider" ? "pi" : undefined;
+  if (boundRunnerId && requestedRunnerId !== undefined && requestedRunnerId !== boundRunnerId) {
+    throw new HttpError(400, "execution_binding_conflict", "execution_binding_conflict");
+  }
+  const runnerId = boundRunnerId ?? requestedRunnerId;
+  if (!executionBinding && isExternalExecutionEngineId(runnerId)) {
+    throw new HttpError(409, "legacy_runner_migration_required", "Select a native profile before starting this engine.");
+  }
   const requestedSkillId = readOptionalString(value, "requestedSkillId");
   const skillOptimizationMode = readOptionalSkillOptimizationMode(value, "skillOptimizationMode");
   const skipProviderPreflight = readOptionalBoolean(value, "skipProviderPreflight") ?? false;
@@ -143,14 +216,16 @@ export function parseRunRequest(value: unknown): RunRequest {
   if (providerPresetId && provider !== undefined) {
     throw new Error("providerPresetId and provider cannot both be supplied");
   }
-  if (!providerPresetId && provider === undefined) {
+  if (!executionBinding && !providerPresetId && provider === undefined) {
     throw new Error("Either providerPresetId or provider is required");
   }
 
   const runRequest: RunRequest = {
+    ...(value.schemaVersion === 2 ? { schemaVersion: 2 as const } : {}),
     cwd,
     workspaceCwd,
     providerPresetId,
+    executionBinding,
     teammateId,
     workflowStepId,
     threadId,
@@ -175,6 +250,7 @@ export function parseRunRequest(value: unknown): RunRequest {
     permissionMode,
     permissionConfirmation: readOptionalPermissionConfirmation(value, "permissionConfirmation"),
     thinkingLevel: readOptionalThinkingLevel(value, "thinkingLevel"),
+    reasoningSummary: readOptionalReasoningSummary(value, "reasoningSummary"),
     systemPrompt: readOptionalString(value, "systemPrompt"),
     appendSystemPrompt: readOptionalStringArray(value, "appendSystemPrompt"),
     agentDir: readOptionalString(value, "agentDir"),
@@ -189,6 +265,15 @@ export function parseRunRequest(value: unknown): RunRequest {
   return runRequest;
 }
 
+function readExecutionBinding(value: unknown): ExecutionBindingRequest | undefined {
+  if (value === undefined) return undefined;
+  try {
+    return parseExecutionBindingRequest(value);
+  } catch {
+    throw new HttpError(400, "execution_binding_invalid", "execution_binding_invalid");
+  }
+}
+
 function readOptionalLingConversationTone(record: Record<string, unknown>, key: string): LingConversationTone | undefined {
   const value = readOptionalString(record, key);
   if (value === undefined) {
@@ -198,6 +283,15 @@ function readOptionalLingConversationTone(record: Record<string, unknown>, key: 
     throw new Error(`${key} must be one of: ${lingConversationTones.join(", ")}`);
   }
   return value as LingConversationTone;
+}
+
+function readOptionalReasoningSummary(record: Record<string, unknown>, key: string): ReasoningSummaryMode | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) return undefined;
+  if (!reasoningSummaryModes.includes(value as ReasoningSummaryMode)) {
+    throw new Error(`${key} must be one of: ${reasoningSummaryModes.join(", ")}`);
+  }
+  return value as ReasoningSummaryMode;
 }
 
 function readOptionalResponseLanguage(record: Record<string, unknown>, key: string): ResponseLanguage | undefined {
@@ -261,11 +355,25 @@ function parseInlineProvider(provider: Record<string, unknown>): PiRunnerProvide
     headers: readOptionalStringRecord(provider, "headers"),
     authHeader: readOptionalBoolean(provider, "authHeader"),
     reasoning: readOptionalBoolean(provider, "reasoning"),
+    thinkingLevelMap: readOptionalThinkingLevelMap(provider),
     input: readOptionalStringArray(provider, "input", ["text", "image"]),
     contextWindow: readOptionalNumber(provider, "contextWindow"),
     maxTokens: readOptionalNumber(provider, "maxTokens"),
     compat: isRecord(provider.compat) ? provider.compat : undefined,
   };
+}
+
+function readOptionalThinkingLevelMap(provider: Record<string, unknown>): PiRunnerProviderConfig["thinkingLevelMap"] {
+  if (provider.thinkingLevelMap === undefined) return undefined;
+  if (!isRecord(provider.thinkingLevelMap)) throw new Error("thinkingLevelMap must be an object");
+  const result: Record<string, string | null> = {};
+  for (const [level, value] of Object.entries(provider.thinkingLevelMap)) {
+    if (!providerThinkingModes.some((mode) => mode === level) || (value !== null && typeof value !== "string")) {
+      throw new Error("thinkingLevelMap must map known reasoning levels to strings or null");
+    }
+    result[level] = value;
+  }
+  return result;
 }
 
 function readOptionalApprovalProfile(record: Record<string, unknown>, key: string): SkillApprovalProfile | undefined {
@@ -287,6 +395,8 @@ function readOptionalThinkingLevel(record: Record<string, unknown>, key: string)
     "medium",
     "high",
     "xhigh",
+    "max",
+    "ultra",
   ])?.[0];
 }
 

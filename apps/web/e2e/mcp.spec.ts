@@ -15,8 +15,8 @@ test("MCP settings creates servers without exposing secret values", async ({ pag
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "工具接入" })).toHaveCount(0);
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "设置" }).click();
+  await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "工具接入" })).toHaveCount(0);
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "设置" }).click();
   await page.getByLabel("设置分组").getByRole("button", { name: /MCP 工具服务/ }).click();
   await expect(page.getByRole("toolbar", { name: "MCP 服务操作" })).toContainText("服务 0 · 就绪 0 · 工具 0");
   await expect(page.getByRole("button", { name: "添加 MCP 服务" })).toBeVisible();
@@ -89,7 +89,7 @@ test("AI teammate exposes external tools through one compact service list and Dr
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "工程队友" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "工程队友" }).click();
   const chatHeader = page.locator("[data-ui2-teammate-chat-header='true']");
   await chatHeader.getByRole("button", { name: "显示详情" }).click();
   await page.getByLabel("私聊工作区面板").getByRole("button", { name: "设置" }).click();

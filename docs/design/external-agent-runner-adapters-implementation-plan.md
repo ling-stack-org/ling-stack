@@ -1,5 +1,12 @@
 # External Agent Runner Adapters Implementation Plan
 
+> Historical plan. The user-approved 2026-10-18 change retires endpoint activation
+> and migrates to native profiles. Follow
+> [Native Execution Engines](native-execution-engines.md) and its
+> [implementation plan](native-execution-engines-implementation-plan.md) for
+> current delivery and validation. Do not reopen legacy network activation from
+> this historical plan.
+
 ## Purpose
 
 This document breaks the future Codex app-server, OpenClaw/ACP, Hermes, and other
@@ -59,7 +66,6 @@ Recommended daemon layout:
 packages/daemon/src/runtime/
   runners.ts                         existing registry and resolution
   runner-readiness.ts                shared readiness/doctor contracts
-  runner-conformance.ts              shared adapter conformance helpers
   external-agent/
     session-handles.ts               opaque backend session metadata
     event-normalizer.ts              backend event -> Ling event mapping
@@ -72,11 +78,15 @@ packages/daemon/src/runtime/
     client.ts                        process/http client lifecycle
     capabilities.ts                  capability negotiation and policy decisions
     doctor.ts                        ACP endpoint readiness checks
-    fake-server.ts                   test-only conformance harness
   adapters/
     codex-app-server.ts              dedicated Codex app-server adapter
     openclaw-acp.ts                  OpenClaw via ACP client bridge
     hermes-decision.ts               decision record helpers, no runner until chosen
+
+packages/daemon/test/test-support/
+  runner-conformance.ts              shared adapter conformance helpers
+  fake-acp-server.ts                 ACP conformance harness
+  fake-codex-app-server.ts            Codex app-server conformance harness
 ```
 
 Recommended contract package additions only when the daemon API needs to expose them:
@@ -107,10 +117,28 @@ export interface RunnerReadinessReport {
   readonly status: RunnerReadinessStatus;
   readonly checkedAt: string;
   readonly featureFlagEnabled: boolean;
-  readonly conformancePassed: boolean;
   readonly endpointReachable?: boolean;
   readonly capabilityNegotiated?: boolean;
+  readonly toolExecutionConformance: RunnerToolExecutionConformanceView;
   readonly blockingReasons: readonly RunnerReadinessBlocker[];
+}
+
+export interface RunnerToolExecutionConformanceView {
+  readonly status: "verified" | "blocked";
+  readonly adapterRevision: string;
+  readonly receiptAdapterRevision: string;
+  readonly curatedTools: readonly string[];
+  readonly toolSideEffects: Readonly<Record<string, ExternalToolSideEffect>>;
+  readonly allowedSideEffects: readonly ExternalToolSideEffect[];
+  readonly nativeSideEffectMode: "disabled" | "daemon_brokered" | "unverified";
+  readonly toolSurfaceCurated: boolean;
+  readonly approvalBridgeVerified: boolean;
+  readonly sandboxBindingVerified: boolean;
+  readonly evidenceCommitVerified: boolean;
+  readonly abortPropagationVerified: boolean;
+  readonly attemptFencingVerified: boolean;
+  readonly workspaceBoundaryVerified: boolean;
+  readonly artifactImportVerified: boolean;
 }
 
 export interface RunnerReadinessBlocker {
@@ -119,10 +147,24 @@ export interface RunnerReadinessBlocker {
     | "missing_endpoint"
     | "endpoint_unreachable"
     | "missing_capability_negotiation"
-    | "conformance_not_passed"
+    | "tool_conformance_not_passed"
+    | "tool_conformance_revision_mismatch"
     | "tool_surface_not_curated"
+    | "tool_side_effect_mode_unverified"
     | "approval_bridge_not_verified"
-    | "workspace_boundary_not_verified";
+    | "evidence_commit_not_verified"
+    | "abort_propagation_not_verified"
+    | "attempt_fencing_not_verified"
+    | "workspace_boundary_not_verified"
+    | "artifact_import_not_verified"
+    | "sandbox_profile_missing"
+    | "sandbox_backend_unverified"
+    | "sandbox_artifact_import_unverified"
+    | "sandbox_network_policy_unverified"
+    | "sandbox_policy_unverified"
+    | "sandbox_os_unsupported"
+    | "sandbox_execution_wrapper_missing"
+    | "adapter_not_implemented";
   readonly message: string;
 }
 ```
@@ -291,7 +333,7 @@ Use this template before adding any non-Pi runner id or adapter module:
 
 ### P2: Conformance Harness Extraction
 
-- Move reusable checks from `runner-conformance.test.mjs` into a helper that adapter tests
+- Move reusable checks from `runner-conformance.test.ts` into a helper that adapter tests
   can reuse.
 - Add fixtures for capability negotiation, side-effect approval, cancellation, artifact
   import, and secret redaction.

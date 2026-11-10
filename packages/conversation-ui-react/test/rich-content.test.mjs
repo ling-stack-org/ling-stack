@@ -18,6 +18,16 @@ test("shared renderer keeps incomplete Mermaid as escaped source", () => {
   assert.doesNotMatch(html, /message-mermaid-canvas/);
 });
 
+test("host-owned Mermaid labels reach the shared renderer without importing a product locale", () => {
+  const html = renderToStaticMarkup(MessageBodyRenderer({
+    text: "```mermaid\ngraph TD\nA --> B\n```",
+    mermaidLabels: { expand: "Host expand", copy: "Host copy", copied: "Host copied",
+      unavailable: "Host unavailable", title: "Host preview", close: "Host close" },
+  }));
+  assert.match(html, /aria-label="Host copy"/);
+  assert.doesNotMatch(html, /Copy Mermaid source/);
+});
+
 test("shared renderer emits semantic GFM table and read-only task controls", () => {
   const html = renderToStaticMarkup(
     MessageBodyRenderer({

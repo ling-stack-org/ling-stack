@@ -1,5 +1,6 @@
+import { useWorkSummaryContext } from "../workspace/work-summary/WorkSummaryProvider.js";
+import { useTeammateObservationReads } from "./use-teammate-private-timeline.js";
 import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type UIEvent } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Bot,
   Brain,
@@ -14,14 +15,14 @@ import {
   Wrench,
 } from "lucide-react";
 import type { SkillPack } from "@ling-stack/core/skill-types";
+import type { ConversationRuntimeMetrics } from "@ling-stack/contracts";
 import {
   cancelTeammateDirectIntervention,
-  cancelTeammateDirectReply,
   createTeammateDirectLinkPreview,
-  createTeammateDirectIntervention,
   deleteAttachment,
   getSkillSourceHealth,
   getTeammateDirectRuntime,
+  getTeammateDirectMessageSubmission,
   getTeammateDirectWorkspace,
   listSkills,
   listTeammateActivity,
@@ -39,18 +40,27 @@ import {
   uploadTeammatePrivateAttachment,
 } from "../../api.js";
 import { useI18n } from "../../i18n.js";
+import { recoverSubmissionReceipt, submissionWasRejected, UnconfirmedConversationSubmissionError } from "../../shared/conversation/conversation-submission-recovery.js";
+import { submissionLookupJournal } from "../../shared/conversation/conversation-submission-journal.js";
+import { validatePrivateSubmissionReceipt } from "../../shared/conversation/submission-receipt-scope.js";
+import { shouldReportConversationStreamError } from "../../shared/conversation/stream-error-ownership.js";
+import { privateSubmissionDraftMatches, type PrivateSubmissionDraft } from "./teammate-private-submission-draft.js";
+import { hasPendingPrivateGuidance, submitPrivateGuidance } from "./teammate-private-guidance.js";
+import { useTeammateDirectStopController } from "./useTeammateDirectStopController.js";
+import { useComposerAttachmentUploads } from "../../shared/conversation/use-composer-attachment-uploads.js";
+import {
+  DesktopTitlebarSurface,
+  useDesktopTitlebarPlacement,
+} from "../../app/DesktopTitlebarSurface.js";
 import { buildInlineApprovalViews } from "../../lib/inline-approvals.js";
+import { providerCompactModelLabel } from "../../lib/providers.js";
 import { readSseResponse } from "../../sse.js";
 import { useFocusRevalidationToken } from "../../shared/hooks/use-focus-revalidation-token.js";
 import {
   composerWorkspaceFileParts,
-  createAttachmentPreviewUrl,
   createLocalComposerAssetId,
   parseComposerInputParts,
   removeComposerInputRawToken,
-  revokeObjectUrl,
-  revokePendingAttachmentPreview,
-  revokePendingAttachmentPreviews,
   serializeComposerInputParts,
   type PendingAttachmentItem,
 } from "../../shared/components/index.js";
@@ -84,6 +94,7 @@ import type {
   TeammateDirectMessageStreamDoneEvent,
   TeammateDirectMessageStreamErrorEvent,
   TeammateDirectMessageStreamReadyEvent,
+  TeammateDirectMessageStreamAcceptedEvent,
   UpdateAiTeammateRequest,
   UserProfile,
   WorkUnit,
@@ -102,6 +113,9 @@ import { TeammateModelTab } from "./TeammateModelTab.js";
 import { TeammatePermissionsTab } from "./TeammatePermissionsTab.js";
 import { TeammateProfileTab } from "./TeammateProfileTab.js";
 import { TeammatePrivateChatSurface } from "./TeammatePrivateChatSurface.js";
+import { useConversationReadingViewport } from "../../shared/conversation/blocks/use-conversation-reading-viewport.js";
+import { conversationReadingScope } from "../../shared/conversation/view-store/conversation-reading-storage.js";
+import { daemonBaseUrl } from "../../api/client.js";
 import { TeammateRenameDialog } from "./TeammateRenameDialog.js";
 import { RuntimeApprovalComposerGate } from "../approvals/RuntimeApprovalComposerGate.js";
 import type { ApprovalResolution } from "../approvals/types.js";
@@ -112,6 +126,7 @@ import { useWorkspaceRightDockController } from "../workspace/useWorkspaceRightD
 import { useConversationSummaryLayout } from "../workspace/conversation-summary-layout.js";
 import { useConversationHeaderController } from "../workspace/useConversationHeaderController.js";
 import { buildTeammatePrivateModelNotice, teammatePrivateMessageSearchText } from "./teammate-private-chat-view-models.js";
+import { privateTimelineResponseIsOwned } from "./teammate-private-timeline-items.js";
 import {
   directComposerFileRefs,
   directWorkspacePathLabel,
@@ -179,6 +194,7 @@ export function TeammateWorkspace({
   fullAccessConfirmed = false,
   onConfirmFullAccess,
   onConfirmFullAccessSelection,
+  permissionSelectionOwnerKey,
   defaultPermissionMode,
   defaultPermissionPreset,
   workspacePolicy,
@@ -225,6 +241,7 @@ export function TeammateWorkspace({
   readonly fullAccessConfirmed?: boolean;
   readonly onConfirmFullAccess?: () => Promise<PermissionConfirmation | undefined>;
   readonly onConfirmFullAccessSelection?: () => Promise<PermissionConfirmation | undefined>;
+  readonly permissionSelectionOwnerKey?: string;
   readonly defaultPermissionMode?: SessionPermissionMode;
   readonly defaultPermissionPreset?: PermissionPreset;
   readonly workspacePolicy?: ApprovalPolicy;
@@ -233,7 +250,12 @@ export function TeammateWorkspace({
   readonly onRefreshWorkspacePolicy?: () => void;
   readonly approvalErrors: Readonly<Record<string, string>>;
   readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
-  readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution, reason?: string) => MaybePromise<void>;
+  readonly onResolveApproval: (
+    approvalId: string,
+    decision: ApprovalResolution,
+    reason?: string,
+    proposedRuleFingerprint?: string,
+  ) => MaybePromise<void>;
   readonly settingsOpenRequest?: {
     readonly teammateId: string;
     readonly requestId: number;
@@ -242,13 +264,21 @@ export function TeammateWorkspace({
   readonly onSettingsOpenRequestConsumed?: (requestId: number) => void;
 }): React.JSX.Element {
   const { t } = useI18n();
+  const observationReads = useTeammateObservationReads(cwd);
+  const titlebarPlacement = useDesktopTitlebarPlacement();
   const focusRevalidationToken = useFocusRevalidationToken();
   const [workspaceView, setWorkspaceView] = useState<TeammateWorkspaceView>("chat");
   const [activeTab, setActiveTab] = useState<TeammateWorkspaceTab>("profile");
   const [messages, setMessages] = useState<readonly TeammateDirectMessage[]>([]);
+  const [runtimeMetrics, setRuntimeMetrics] = useState<ConversationRuntimeMetrics>();
   const [generatedMedia, setGeneratedMedia] = useState<readonly ConversationGeneratedMedia[]>([]);
   const workspaceMessageIdentity = JSON.stringify([cwd.trim(), teammate.id]);
   const [messageSnapshotIdentity, setMessageSnapshotIdentity] = useState(workspaceMessageIdentity);
+  const [selectedAuthorizationMode, setSelectedAuthorizationMode] = useState<AuthorizationMode>(() => resolveAuthorizationMode(
+    defaultAuthorizationMode,
+    defaultPermissionMode,
+    defaultPermissionPreset,
+  ));
   const [selectedWorkspaceAccessMode, setSelectedWorkspaceAccessMode] = useState<WorkspaceAccessMode>(() => resolveWorkspaceAccessMode(
     defaultWorkspaceAccessMode,
     defaultPermissionMode,
@@ -260,11 +290,14 @@ export function TeammateWorkspace({
   const [terminalReports, setTerminalReports] = useState<readonly TerminalReportDto[]>([]);
   const [directExecutionActions, setDirectExecutionActions] = useState<readonly ExecutionAction[]>([]);
   const [directRuntime, setDirectRuntime] = useState<TeammateDirectRuntimeResponse | undefined>();
+  const [directTimelineRuns, setDirectTimelineRuns] = useState<readonly RunSession[]>([]);
   const [directWorkspace, setDirectWorkspace] = useState<DirectWorkspaceResponse | undefined>();
   const workspaceSnapshotCurrent = messageSnapshotIdentity === workspaceMessageIdentity;
   const currentMessages = workspaceSnapshotCurrent ? messages : emptyTeammateDirectMessages;
+  const currentRuntimeMetrics = workspaceSnapshotCurrent ? runtimeMetrics : undefined;
   const currentGeneratedMedia = workspaceSnapshotCurrent ? generatedMedia : emptyConversationGeneratedMedia;
   const currentDirectRuntime = workspaceSnapshotCurrent ? directRuntime : undefined;
+  const currentDirectTimelineRuns = workspaceSnapshotCurrent ? directTimelineRuns : [];
   const currentDirectWorkspace = workspaceSnapshotCurrent ? directWorkspace : undefined;
 
   useEffect(() => {
@@ -273,7 +306,7 @@ export function TeammateWorkspace({
 
   useEffect(() => () => onDirectConversationChange?.(undefined), [onDirectConversationChange]);
   const directSendLifecycle = useConversationSendLifecycle(`teammate:${cwd.trim()}:${teammate.id}`);
-  const [directGuidanceSubmitting, setDirectGuidanceSubmitting] = useState<"queue_followup" | "interrupt_redirect" | "stop" | "">("");
+  const [guidanceSubmitting, setDirectGuidanceSubmitting] = useState<"queue_followup" | "interrupt_redirect" | "">("");
   const [directGuidanceCancelingId, setDirectGuidanceCancelingId] = useState("");
   const [directGuidancePromotingId, setDirectGuidancePromotingId] = useState("");
   const [messageSearchQuery, setMessageSearchQuery] = useState("");
@@ -293,20 +326,24 @@ export function TeammateWorkspace({
   const [settingsForm, setSettingsForm] = useState<TeammateSettingsForm>(() => teammateToSettingsForm(teammate));
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
-  const [privateFeedLatestButtonVisible, setPrivateFeedLatestButtonVisible] = useState(false);
-  const [uploadingAttachments, setUploadingAttachments] = useState(false);
+  const uploadingAttachments = pendingAttachments.some(item => item.state === "uploading");
   const [composerDragActive, setComposerDragActive] = useState(false);
   const workspaceRequestOwner = useTeammateWorkspaceRequestOwner(cwd, teammate.id);
   const workspaceError = workspaceRequestOwner.latestError?.message ?? "";
+  const directStopController = useTeammateDirectStopController({
+    cwd, teammateId: teammate.id, busy: Boolean(guidanceSubmitting),
+    threadId: currentDirectRuntime?.thread.id ?? currentDirectWorkspace?.threadId,
+    activeWorkUnitId: currentDirectRuntime?.activeReply?.workUnitId,
+    owner: workspaceRequestOwner, resolveReply: resolveActiveDirectReply,
+    refreshRuntime: refreshDirectRuntime,
+    noActiveReplyMessage: t("There is no active private reply right now."),
+    pendingMessage: t("Pending confirmation"),
+  });
+  const directGuidanceSubmitting = directStopController.stopping ? "stop" : guidanceSubmitting;
   const chatHeaderController = useConversationHeaderController({
     identityKey: teammate.id,
     onSearchChange: setMessageSearchQuery,
   });
-  const privateFeedRef = useRef<HTMLDivElement | null>(null);
-  const privateFeedPinnedToLatestRef = useRef(true);
-  const privateFeedAutoFollowUntilRef = useRef(0);
-  const privateFeedUserScrollIntentRef = useRef(false);
-  const directGuidanceOperationSeqRef = useRef(0);
   const attachmentPreviewUrlsRef = useRef(new Set<string>());
   const effectivePrivateProviderPresetId = teammate.modelBindingMode === "workspace_default"
     ? workspaceDefaultProviderPresetId
@@ -386,11 +423,26 @@ export function TeammateWorkspace({
   );
   const composerInputParts = parseComposerInputParts(messageDraft, {
     cwd: cwd.trim(),
+    deferTrailingAtomicTokens: true,
     attachments: readyAttachmentIds.map((attachmentId) => ({ attachmentId })),
     skills: effectiveSkills.map((skill) => ({ id: skill.skillId, label: skill.skill.name })),
     slashCommands: privateSlashCommands,
   });
-  const composerFileReferenceParts = composerWorkspaceFileParts(composerInputParts);
+  const composerSubmissionInputParts = useMemo(() => parseComposerInputParts(messageDraft, {
+    cwd: cwd.trim(),
+    attachments: readyAttachmentIds.map((attachmentId) => ({ attachmentId })),
+    skills: effectiveSkills.map((skill) => ({ id: skill.skillId, label: skill.skill.name })),
+    slashCommands: privateSlashCommands,
+  }), [cwd, effectiveSkills, messageDraft, privateSlashCommands, readyAttachmentIds]);
+  const composerFileReferenceParts = composerWorkspaceFileParts(composerSubmissionInputParts);
+  const privateSubmissionDraftRef = useRef<PrivateSubmissionDraft>(undefined);
+  privateSubmissionDraftRef.current = {
+    body: serializeComposerInputParts(composerSubmissionInputParts).body,
+    attachmentIds: readyAttachmentIds,
+    pendingAttachmentCount: pendingAttachments.length,
+    linkPreviewIds: pendingDirectLinkPreviewIds,
+    fileRefs: directComposerFileRefs(composerFileReferenceParts),
+  };
   const composerFileReferenceTokens = composerFileReferenceParts.map((part, index) => ({
     part,
     occurrenceIndex: composerFileReferenceParts.slice(0, index).filter((candidate) => candidate.raw === part.raw).length,
@@ -445,10 +497,12 @@ export function TeammateWorkspace({
       runById,
     }).includes(normalizedMessageSearchQuery));
   }, [currentMessages, directLinkPreviewById, normalizedMessageSearchQuery, privateAttachmentById, runById]);
-  const directReplyActive = Boolean(currentDirectRuntime?.activeReply || directSendLifecycle.activeReplies.length > 0);
-  const hasDirectRuntimeActivity = Boolean(currentDirectRuntime?.activeReply || directSendLifecycle.activeReplies.length > 0 || (currentDirectRuntime?.interventions.length ?? 0) > 0);
+  const directReplyActive = Boolean(directStopController.stopping || currentDirectRuntime?.activeReply || directSendLifecycle.activeReplies.length > 0);
+  const hasDirectRuntimeActivity = Boolean(directReplyActive || (currentDirectRuntime?.interventions.length ?? 0) > 0);
 
   useEffect(() => {
+    const observationRead = observationReads.begin();
+    if (!observationRead) return undefined;
     const request = workspaceRequestOwner.beginWorkspaceAction("terminal-reports");
     if (!workspaceRequestOwner.isActionCurrent(request)) return undefined;
     const workspaceCwd = cwd.trim();
@@ -463,15 +517,18 @@ export function TeammateWorkspace({
     }
     void Promise.all(threadIds.map((threadId) => listTerminalReports(workspaceCwd, { threadId, limit: 100 })))
       .then((responses) => {
+        if (!observationReads.isCurrent(observationRead)) return;
         workspaceRequestOwner.commit(request, "terminal-reports", () => {
           setTerminalReports(responses.flatMap((response) => response.reports));
         });
       })
-      .catch(() => {
-        workspaceRequestOwner.commit(request, "terminal-reports", () => setTerminalReports([]));
+      .catch((error) => {
+        if (!observationReads.shouldMergeTransport(error)) {
+          workspaceRequestOwner.reportError(request, error instanceof Error ? error.message : String(error));
+        }
       });
     return undefined;
-  }, [cwd, runs, teammate.id, visibleMessages]);
+  }, [cwd, runs, teammate.id, visibleMessages, observationReads.epoch, observationReads.paused]);
 
   const visibleDirectRunIds = useMemo(() => {
     const teammateRunIds = new Set(runs.filter((run) => !run.teammateId || run.teammateId === teammate.id).map((run) => run.id));
@@ -480,19 +537,25 @@ export function TeammateWorkspace({
       .filter((runId): runId is string => Boolean(runId && teammateRunIds.has(runId))))];
   }, [runs, teammate.id, visibleMessages]);
   const visibleDirectRunKey = visibleDirectRunIds.join("|");
-  const directApprovalViews = useMemo(
-    () => currentDirectRuntime ? buildInlineApprovalViews(currentDirectRuntime.approvals, {
+  const directApprovalViews = useMemo(() => {
+    if (!currentDirectRuntime) return [];
+    const activeWorkUnit = currentDirectRuntime.activeReply?.workUnit;
+    // Private runtime snapshots already carry the current Host-owned WorkUnit.
+    // Global runtime lists load independently and may predate this submission.
+    const activeWorkUnits = activeWorkUnit?.id === currentDirectRuntime.activeReply?.workUnitId
+      && activeWorkUnit?.kind === "teammate_direct_reply" && activeWorkUnit.teammateId === teammate.id
+      ? [activeWorkUnit] : [];
+    return buildInlineApprovalViews(currentDirectRuntime.approvals, {
       owner: {
         kind: "teammate_direct",
         teammateId: teammate.id,
         threadId: currentDirectRuntime.thread.id,
       },
-      runs,
+      runs: [...runs, ...currentDirectTimelineRuns],
       teammateDirectMessages: currentMessages,
-      workUnits,
-    }) : [],
-    [currentDirectRuntime, currentMessages, runs, teammate.id, workUnits],
-  );
+      workUnits: [...workUnits, ...activeWorkUnits],
+    });
+  }, [currentDirectRuntime, currentDirectTimelineRuns, currentMessages, runs, teammate.id, workUnits]);
   const hasActiveVisibleDirectRun = useMemo(() => {
     const visibleRunIds = new Set(visibleDirectRunIds);
     return runs.some((run) => visibleRunIds.has(run.id) && (
@@ -501,6 +564,7 @@ export function TeammateWorkspace({
   }, [runs, visibleDirectRunKey]);
 
   useEffect(() => {
+    if (!observationReads.begin()) return undefined;
     const emptyRequest = workspaceRequestOwner.beginWorkspaceAction("execution-actions");
     if (!workspaceRequestOwner.isActionCurrent(emptyRequest)) return undefined;
     const workspaceCwd = cwd.trim();
@@ -511,7 +575,8 @@ export function TeammateWorkspace({
     let cancelled = false;
     let loading = false;
     const refresh = async (): Promise<void> => {
-      if (loading) {
+      const observationRead = observationReads.begin();
+      if (loading || !observationRead) {
         return;
       }
       loading = true;
@@ -524,12 +589,16 @@ export function TeammateWorkspace({
         const responses = await Promise.all(visibleDirectRunIds.map((runId) =>
           listExecutionActions(workspaceCwd, { runId, limit: 100 }),
         ));
-        if (!cancelled) workspaceRequestOwner.commit(request, "execution-actions", () => {
+        if (!cancelled && observationReads.isCurrent(observationRead)) workspaceRequestOwner.commit(request, "execution-actions", () => {
           const byId = new Map(responses.flatMap((response) => response.actions).map((action) => [action.id, action]));
           setDirectExecutionActions([...byId.values()]);
         });
-      } catch {
-        // Preserve the last persisted snapshot across transient polling failures.
+      } catch (error) {
+        // Keep persisted evidence. Only the owned paused Host's transport
+        // failure belongs to the shared connection state, not business errors.
+        if (!observationReads.shouldMergeTransport(error)) {
+          workspaceRequestOwner.reportError(request, error instanceof Error ? error.message : String(error));
+        }
       } finally {
         loading = false;
       }
@@ -548,33 +617,33 @@ export function TeammateWorkspace({
         window.clearInterval(interval);
       }
     };
-  }, [cwd, directReplyActive, hasActiveVisibleDirectRun, hasDirectRuntimeActivity, teammate.id, visibleDirectRunKey]);
+  }, [cwd, directReplyActive, hasActiveVisibleDirectRun, hasDirectRuntimeActivity, teammate.id, visibleDirectRunKey, observationReads.epoch, observationReads.paused]);
 
   useEffect(() => {
     if (isProtectedSystemTeammate && (activeTab === "skills" || activeTab === "tools_permissions")) {
       setActiveTab("profile");
     }
   }, [activeTab, isProtectedSystemTeammate]);
-  const latestVisiblePrivateMessageId = visibleMessages.at(-1)?.id ?? "";
-  const latestVisiblePrivateMessage = visibleMessages.at(-1);
-  const latestVisiblePrivateMessageSignature = latestVisiblePrivateMessage
-    ? [
-        latestVisiblePrivateMessage.id,
-        latestVisiblePrivateMessage.status,
-        latestVisiblePrivateMessage.updatedAt,
-        latestVisiblePrivateMessage.body,
-        latestVisiblePrivateMessage.attachmentIds.join(","),
-      ].join("|")
-    : "";
-  const privateMessageFeedVirtualizer = useVirtualizer({
-    count: visibleMessages.length,
-    getScrollElement: () => privateFeedRef.current,
-    estimateSize: () => 112,
-    overscan: 8,
-    getItemKey: (index) => visibleMessages[index]?.id ?? index,
-    useFlushSync: false,
+  const privateReading = useConversationReadingViewport({
+    scopeKey: JSON.stringify([workspaceMessageIdentity, currentDirectWorkspace?.threadId]),
+    revision: visibleMessages,
+    contentKey: visibleMessages.map(message => message.id).join("|"),
+    searchActive: chatHeaderController.searchOpen,
+    enabled: !loading && workspaceView === "chat",
+    latestThresholdPx: 24,
+    readingScopeKey: conversationReadingScope(daemonBaseUrl, cwd, `teammate:${teammate.id}`, currentDirectWorkspace?.threadId),
+    onRestoreMissingAnchor: () => {
+      if (!hasMoreDirectMessages || !nextDirectBeforeMessageId || normalizedMessageSearchQuery) return false;
+      if (!loadingOlderDirectMessages) void loadOlderDirectMessages();
+      return true;
+    },
   });
-  const privateMessageFeedVirtualRows = privateMessageFeedVirtualizer.getVirtualItems();
+  const {
+    scrollRef: privateFeedRef,
+    locatorRef: privateFeedLocatorRef,
+    latestButtonVisible: privateFeedLatestButtonVisible,
+    pauseAutoFollow: cancelPrivateFeedAutoFollow,
+  } = privateReading;
   const directAttachments = useMemo(
     () => privateAttachments.filter((attachment) => attachment.scope === "teammate_direct_thread"),
     [privateAttachments],
@@ -658,8 +727,10 @@ export function TeammateWorkspace({
     intentOpen: chatDockOpen,
     resizeObserverKey: `${teammate.id}:${cwd.trim()}`,
   });
+  const workSummary = useWorkSummaryContext();
   const chatSummaryLayout = useConversationSummaryLayout({
     requestedOpen: chatSummaryOpen,
+    allowOverlay: Boolean(workSummary),
     containerWidth: chatDockController.containerWidth,
     dockVisible: chatDockController.visible,
     dockWidth: chatDockController.width,
@@ -694,7 +765,7 @@ export function TeammateWorkspace({
   const openDirectInterventions = currentDirectRuntime?.interventions ?? [];
   const hasQueuedDirectGuidance = openDirectInterventions.some((intervention) => intervention.status === "queued");
   const privateComposerPayload = useMemo(() => {
-    const serializedInput = serializeComposerInputParts(composerInputParts);
+    const serializedInput = serializeComposerInputParts(composerSubmissionInputParts);
     const fileRefs = directComposerFileRefs(composerFileReferenceParts);
     return {
       body: serializedInput.body.trim(),
@@ -702,23 +773,24 @@ export function TeammateWorkspace({
       linkPreviewIds: [...pendingDirectLinkPreviewIds],
       fileRefs,
     };
-  }, [composerFileReferenceParts, composerInputParts, pendingDirectLinkPreviewIds]);
+  }, [composerFileReferenceParts, composerSubmissionInputParts, pendingDirectLinkPreviewIds]);
   const privateComposerHasGuidancePayload =
     privateComposerPayload.body.length > 0 ||
     privateComposerPayload.attachmentIds.length > 0 ||
     privateComposerPayload.linkPreviewIds.length > 0 ||
     privateComposerPayload.fileRefs.length > 0;
-  const privateAttachmentOperationPending = pendingAttachments.some((item) => item.state === "uploading");
+  const privateAttachmentOperationPending = pendingAttachments.some((item) => item.state !== "ready");
+  const privateGuidancePending = hasPendingPrivateGuidance(cwd.trim(), teammate.id);
   const privateComposerSendDisabled = directReplyActive
     ? Boolean(directGuidanceSubmitting || privateAttachmentOperationPending)
-    : hasQueuedDirectGuidance || privateAttachmentOperationPending || (!messageDraft.trim() && readyAttachmentIds.length === 0 && pendingDirectLinkPreviewIds.length === 0 && composerFileReferenceParts.length === 0);
-  const privateComposerSending = directReplyActive ? Boolean(directGuidanceSubmitting) : sending;
-  const privateComposerSendLabel = directReplyActive
+    : Boolean(directGuidanceSubmitting) || privateAttachmentOperationPending || (!privateGuidancePending && (hasQueuedDirectGuidance || (!messageDraft.trim() && readyAttachmentIds.length === 0 && pendingDirectLinkPreviewIds.length === 0 && composerFileReferenceParts.length === 0)));
+  const privateComposerSending = directReplyActive || privateGuidancePending ? Boolean(directGuidanceSubmitting) : sending;
+  const privateComposerSendLabel = privateGuidancePending ? t("Retry") : directReplyActive
     ? privateComposerHasGuidancePayload
       ? t("Queue guidance")
       : t("Stop reply")
     : t("Send");
-  const privateComposerSendingLabel = directReplyActive
+  const privateComposerSendingLabel = directGuidanceSubmitting === "stop" ? t("Stopping") : directReplyActive
     ? directGuidanceSubmitting === "queue_followup"
       ? t("Queueing guidance...")
       : t("Stop reply")
@@ -728,19 +800,18 @@ export function TeammateWorkspace({
     : hasQueuedDirectGuidance
       ? t("Guidance is queued. Wait for it to run, or run it now.")
       : t("Message this AI teammate privately");
-  const directAuthorizationMode = resolveAuthorizationMode(
-    defaultAuthorizationMode,
-    defaultPermissionMode,
-    defaultPermissionPreset,
-  );
-
   useEffect(() => {
+    setSelectedAuthorizationMode(resolveAuthorizationMode(
+      defaultAuthorizationMode,
+      defaultPermissionMode,
+      defaultPermissionPreset,
+    ));
     setSelectedWorkspaceAccessMode(resolveWorkspaceAccessMode(
       defaultWorkspaceAccessMode,
       defaultPermissionMode,
       defaultPermissionPreset,
     ));
-  }, [defaultPermissionMode, defaultPermissionPreset, defaultWorkspaceAccessMode, teammate.id]);
+  }, [defaultAuthorizationMode, defaultPermissionMode, defaultPermissionPreset, defaultWorkspaceAccessMode, teammate.id]);
 
   useEffect(() => {
     setSettingsForm(teammateToSettingsForm(teammate));
@@ -755,6 +826,7 @@ export function TeammateWorkspace({
     setChatSummaryOpen(false);
     setChatTerminalOpen(false);
     setMessages([]);
+    setRuntimeMetrics(undefined);
     setGeneratedMedia([]);
     setMessageSnapshotIdentity(workspaceMessageIdentity);
     setHasMoreDirectMessages(false);
@@ -762,8 +834,6 @@ export function TeammateWorkspace({
     setLoading(false);
     setLoadingOlderDirectMessages(false);
     setSending(false);
-    setUploadingAttachments(false);
-    revokePendingAttachmentPreviews(pendingAttachments, (previewUrl) => attachmentPreviewUrlsRef.current.delete(previewUrl));
     setPendingAttachments([]);
     setPendingDirectLinkPreviewIds([]);
     setDirectLinkPreviews([]);
@@ -779,9 +849,6 @@ export function TeammateWorkspace({
     setDirectGuidanceSubmitting("");
     setDirectGuidanceCancelingId("");
     setDirectGuidancePromotingId("");
-    privateFeedPinnedToLatestRef.current = true;
-    privateFeedUserScrollIntentRef.current = false;
-    setPrivateFeedLatestButtonVisible(false);
   }, [workspaceMessageIdentity]);
 
   useEffect(() => {
@@ -791,21 +858,14 @@ export function TeammateWorkspace({
     onSettingsOpenRequestConsumed?.(settingsOpenRequest.requestId);
   }, [settingsOpenRequest?.requestId, settingsOpenRequest?.teammateId, teammate.id]);
 
-  useEffect(() => () => {
-    for (const previewUrl of attachmentPreviewUrlsRef.current) {
-      revokeObjectUrl(previewUrl);
-    }
-    attachmentPreviewUrlsRef.current.clear();
-  }, []);
-
   useEffect(() => {
     void refreshTeammateWorkspace();
-  }, [cwd, teammate.id]);
+  }, [cwd, teammate.id, observationReads.epoch, observationReads.paused]);
 
   useEffect(() => {
     if (focusRevalidationToken === 0) return;
     void refreshTeammateWorkspace(false);
-    if (workspaceView === "settings" && activeTab === "channels") void channelsController.refresh("refresh");
+    if (observationReads.begin() && workspaceView === "settings" && activeTab === "channels") void channelsController.refresh("refresh");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusRevalidationToken]);
 
@@ -816,41 +876,6 @@ export function TeammateWorkspace({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversationRefreshToken]);
 
-  useEffect(() => {
-    privateFeedPinnedToLatestRef.current = true;
-    privateFeedUserScrollIntentRef.current = false;
-    setPrivateFeedLatestButtonVisible(false);
-  }, [normalizedMessageSearchQuery]);
-
-  useEffect(() => {
-    if (loading || workspaceView !== "chat" || !privateFeedPinnedToLatestRef.current) {
-      return undefined;
-    }
-    const feed = privateFeedRef.current;
-    if (!feed) {
-      return undefined;
-    }
-    const frameIds: number[] = [];
-    const scrollToLatest = (attempt: number): void => {
-      privateFeedAutoFollowUntilRef.current = Date.now() + 1_000;
-      privateFeedUserScrollIntentRef.current = false;
-      if (visibleMessages.length > 0) {
-        privateMessageFeedVirtualizer.scrollToIndex(visibleMessages.length - 1, { align: "end" });
-      }
-      feed.scrollTop = feed.scrollHeight;
-      privateFeedPinnedToLatestRef.current = true;
-      setPrivateFeedLatestButtonVisible(false);
-      if (attempt < 4) {
-        const frameId = globalThis.requestAnimationFrame(() => scrollToLatest(attempt + 1));
-        frameIds.push(frameId);
-      }
-    };
-    const frameId = globalThis.requestAnimationFrame(() => scrollToLatest(0));
-    frameIds.push(frameId);
-    return () => {
-      frameIds.forEach((scheduledFrameId) => globalThis.cancelAnimationFrame(scheduledFrameId));
-    };
-  }, [latestVisiblePrivateMessageId, latestVisiblePrivateMessageSignature, loading, privateMessageFeedVirtualizer, visibleMessages.length, workspaceView]);
 
   useEffect(() => {
     if (workspaceView !== "chat" || !hasDirectRuntimeActivity || !cwd.trim()) {
@@ -860,8 +885,10 @@ export function TeammateWorkspace({
     const refresh = async (): Promise<void> => {
       try {
         await refreshDirectRuntime();
-      } catch {
-        // Runtime polling is opportunistic; primary send errors still surface through workspaceError.
+      } catch (error) {
+        if (!observationReads.shouldMergeTransport(error)) {
+          workspaceRequestOwner.reportImmediate("runtime", error instanceof Error ? error.message : String(error));
+        }
       }
     };
     const intervalId = globalThis.setInterval(() => {
@@ -876,6 +903,8 @@ export function TeammateWorkspace({
   }, [cwd, hasDirectRuntimeActivity, teammate.id, workspaceView]);
 
   async function refreshTeammateWorkspace(showLoading = true): Promise<void> {
+    const observationRead = observationReads.begin();
+    if (!observationRead) return;
     const request = workspaceRequestOwner.beginWorkspaceAction("workspace");
     if (!workspaceRequestOwner.isActionCurrent(request)) return;
     const workspaceCwd = cwd.trim();
@@ -914,13 +943,18 @@ export function TeammateWorkspace({
         listTeammateMcpBindings(workspaceCwd, request.teammateId),
         listTeammateActivity(workspaceCwd, request.teammateId),
       ]);
+      if (!observationReads.isCurrent(observationRead)) return;
       workspaceRequestOwner.commit(request, "conversation", () => {
         setMessages(directResponse.messages);
+        setRuntimeMetrics(directResponse.runtimeMetrics);
         setGeneratedMedia(directResponse.generatedMedia);
         setMessageSnapshotIdentity(JSON.stringify([workspaceCwd, request.teammateId]));
         setHasMoreDirectMessages(Boolean(directResponse.hasMore));
         setNextDirectBeforeMessageId(directResponse.nextBeforeMessageId);
         setDirectRuntime(directRuntimeResponse);
+        setDirectTimelineRuns(directResponse.cwd === workspaceCwd && privateTimelineResponseIsOwned(directResponse, {
+          teammateId: request.teammateId, directThreadId: directRuntimeResponse.thread.id,
+        }) ? directResponse.timeline?.runs ?? [] : []);
         setDirectWorkspace(directWorkspaceResponse);
         setDirectLinkPreviews(directLinkPreviewsResponse.linkPreviews);
         setPrivateAttachments(privateAttachmentsResponse.attachments);
@@ -941,33 +975,46 @@ export function TeammateWorkspace({
       workspaceRequestOwner.commit(request, "activity", () => setActivityItems(activityResponse.items));
       workspaceRequestOwner.clearError(request);
     } catch (error) {
-      workspaceRequestOwner.reportError(request, error instanceof Error ? error.message : String(error));
+      if (!observationReads.shouldMergeTransport(error)) {
+        workspaceRequestOwner.reportError(request, error instanceof Error ? error.message : String(error));
+      }
     } finally {
       if (workspaceRequestOwner.isActionCurrent(request)) setLoading(false);
     }
   }
 
   async function refreshTeammateConversationSnapshot(): Promise<void> {
+    const observationRead = observationReads.begin();
+    if (!observationRead) return;
     const request = workspaceRequestOwner.beginWorkspaceAction("messages");
     if (!workspaceRequestOwner.isActionCurrent(request)) return;
     const workspaceCwd = cwd.trim();
     if (!workspaceCwd) return;
     try {
       const response = await listTeammateDirectMessages(workspaceCwd, request.teammateId);
+      if (!observationReads.isCurrent(observationRead)) return;
       workspaceRequestOwner.commit(request, "conversation", () => {
         setMessages((current) => current.length > response.messages.length
           ? upsertDirectMessages(current, response.messages)
           : response.messages);
+        setRuntimeMetrics(response.runtimeMetrics);
         setGeneratedMedia((current) => mergeConversationGeneratedMedia(current, response.generatedMedia));
         setMessageSnapshotIdentity(JSON.stringify([workspaceCwd, request.teammateId]));
+        setDirectTimelineRuns(response.cwd === workspaceCwd && privateTimelineResponseIsOwned(response, {
+          teammateId: request.teammateId,
+        }) ? response.timeline?.runs ?? [] : []);
       });
       workspaceRequestOwner.clearError(request);
     } catch (error) {
-      workspaceRequestOwner.reportError(request, error instanceof Error ? error.message : String(error));
+      if (!observationReads.shouldMergeTransport(error)) {
+        workspaceRequestOwner.reportError(request, error instanceof Error ? error.message : String(error));
+      }
     }
   }
 
   async function refreshDirectRuntime(): Promise<"committed" | "stale"> {
+    const observationRead = observationReads.begin();
+    if (!observationRead) return "stale";
     const request = workspaceRequestOwner.beginWorkspaceAction("runtime");
     if (!workspaceRequestOwner.isActionCurrent(request)) return "stale";
     const workspaceCwd = cwd.trim();
@@ -982,15 +1029,20 @@ export function TeammateWorkspace({
         listTeammateDirectLinkPreviews(workspaceCwd, request.teammateId),
         listTeammatePrivateAttachments(workspaceCwd, request.teammateId),
       ]);
+      if (!observationReads.isCurrent(observationRead)) return "stale";
       const committed = workspaceRequestOwner.commit(request, "conversation", () => {
         setMessages((current) => current.length > directResponse.messages.length
           ? upsertDirectMessages(current, directResponse.messages)
           : directResponse.messages);
+        setRuntimeMetrics(directResponse.runtimeMetrics);
         setGeneratedMedia(directResponse.generatedMedia);
         setMessageSnapshotIdentity(JSON.stringify([workspaceCwd, request.teammateId]));
         setHasMoreDirectMessages(Boolean(directResponse.hasMore));
         setNextDirectBeforeMessageId(directResponse.nextBeforeMessageId);
         setDirectRuntime(runtimeResponse);
+        setDirectTimelineRuns(directResponse.cwd === workspaceCwd && privateTimelineResponseIsOwned(directResponse, {
+          teammateId: request.teammateId, directThreadId: runtimeResponse.thread.id,
+        }) ? directResponse.timeline?.runs ?? [] : []);
         setDirectWorkspace(directWorkspaceResponse);
         setDirectLinkPreviews(linkPreviewsResponse.linkPreviews);
         setPrivateAttachments(privateAttachmentsResponse.attachments);
@@ -998,21 +1050,26 @@ export function TeammateWorkspace({
       if (workspaceRequestOwner.isActionCurrent(request)) workspaceRequestOwner.clearError(request);
       return committed ? "committed" : "stale";
     } catch (error) {
+      if (observationReads.shouldMergeTransport(error)) return "stale";
       if (workspaceRequestOwner.isActionCurrent(request)) throw error;
       return "stale";
     }
   }
 
   async function refreshTeammateActivity(): Promise<void> {
+    const observationRead = observationReads.begin();
+    if (!observationRead) return;
     const request = workspaceRequestOwner.beginWorkspaceAction("activity");
     if (!workspaceRequestOwner.isActionCurrent(request)) return;
     const workspaceCwd = cwd.trim();
     if (!workspaceCwd) return;
     try {
       const response = await listTeammateActivity(workspaceCwd, request.teammateId);
+      if (!observationReads.isCurrent(observationRead)) return;
       workspaceRequestOwner.commit(request, "activity", () => setActivityItems(response.items));
       workspaceRequestOwner.clearError(request);
     } catch (error) {
+      if (observationReads.shouldMergeTransport(error)) return;
       if (workspaceRequestOwner.isActionCurrent(request)) {
         workspaceRequestOwner.reportError(request, error instanceof Error ? error.message : String(error));
         throw error;
@@ -1021,6 +1078,8 @@ export function TeammateWorkspace({
   }
 
   async function loadOlderDirectMessages(): Promise<void> {
+    const observationRead = observationReads.begin();
+    if (!observationRead) return;
     const workspaceCwd = cwd.trim();
     if (
       !workspaceCwd ||
@@ -1034,32 +1093,23 @@ export function TeammateWorkspace({
     const request = workspaceRequestOwner.beginWorkspaceAction("older-messages");
     if (!workspaceRequestOwner.isActionCurrent(request)) return;
     const beforeMessageId = nextDirectBeforeMessageId;
-    const feed = privateFeedRef.current;
-    const previousScrollHeight = feed?.scrollHeight ?? 0;
-    const previousScrollTop = feed?.scrollTop ?? 0;
     setLoadingOlderDirectMessages(true);
-    privateFeedPinnedToLatestRef.current = false;
     try {
       const response = await listTeammateDirectMessages(workspaceCwd, request.teammateId, {
         beforeMessageId,
       });
+      if (!observationReads.isCurrent(observationRead)) return;
       workspaceRequestOwner.commit(request, "conversation", () => {
         setMessages((current) => upsertDirectMessages(current, response.messages));
         setGeneratedMedia((current) => mergeConversationGeneratedMedia(current, response.generatedMedia));
         setHasMoreDirectMessages(Boolean(response.hasMore));
         setNextDirectBeforeMessageId(response.nextBeforeMessageId);
-        globalThis.requestAnimationFrame(() => {
-          globalThis.requestAnimationFrame(() => {
-            if (!workspaceRequestOwner.ownsResource(request, "conversation")) return;
-            const nextFeed = privateFeedRef.current;
-            if (!nextFeed) return;
-            nextFeed.scrollTop = nextFeed.scrollHeight - previousScrollHeight + previousScrollTop;
-          });
-        });
       });
       workspaceRequestOwner.clearError(request);
     } catch (error) {
-      workspaceRequestOwner.reportError(request, error instanceof Error ? error.message : String(error));
+      if (!observationReads.shouldMergeTransport(error)) {
+        workspaceRequestOwner.reportError(request, error instanceof Error ? error.message : String(error));
+      }
     } finally {
       if (workspaceRequestOwner.isActionCurrent(request)) setLoadingOlderDirectMessages(false);
     }
@@ -1074,14 +1124,17 @@ export function TeammateWorkspace({
     if (transientReply?.workUnitId) {
       return { status: "current" as const, activeReply: { workUnitId: transientReply.workUnitId } };
     }
+    const observationRead = observationReads.begin();
+    if (!observationRead) return { status: "stale" as const };
     try {
       const runtimeResponse = await getTeammateDirectRuntime(cwd.trim(), operation.teammateId);
-      if (!workspaceRequestOwner.isActionCurrent(operation)) return { status: "stale" as const };
+      if (!workspaceRequestOwner.isActionCurrent(operation) || !observationReads.isCurrent(observationRead)) return { status: "stale" as const };
       workspaceRequestOwner.claimAndCommit(operation, ["conversation"], () => {
         setDirectRuntime(runtimeResponse);
       });
       return { status: "current" as const, activeReply: runtimeResponse.activeReply };
     } catch (error) {
+      if (observationReads.shouldMergeTransport(error)) return { status: "stale" as const };
       if (workspaceRequestOwner.isActionCurrent(operation)) throw error;
       return { status: "stale" as const };
     }
@@ -1091,18 +1144,20 @@ export function TeammateWorkspace({
     body: string,
     operation: TeammateWorkspaceRequestToken,
   ): Promise<readonly TeammateDirectLinkPreview[] | undefined> {
-    if (!workspaceRequestOwner.isActionCurrent(operation)) return undefined;
+    const observationRead = observationReads.begin();
+    if (!observationRead || !workspaceRequestOwner.isActionCurrent(operation)) return undefined;
     const existing = [...pendingDirectLinkPreviews];
     const created: TeammateDirectLinkPreview[] = [];
     for (const url of extractUrls(body)) {
+      if (!observationReads.isCurrent(observationRead) || !workspaceRequestOwner.isActionCurrent(operation)) return undefined;
       if (existing.some((preview) => preview.url === url || preview.normalizedUrl === url) || created.some((preview) => preview.url === url || preview.normalizedUrl === url)) {
         continue;
       }
       const response = await createTeammateDirectLinkPreview(cwd.trim(), operation.teammateId, { url });
-      if (!workspaceRequestOwner.isActionCurrent(operation)) return undefined;
+      if (!observationReads.isCurrent(observationRead) || !workspaceRequestOwner.isActionCurrent(operation)) return undefined;
       created.push(response.linkPreview);
       workspaceRequestOwner.claimAndCommit(operation, ["conversation"], () => {
-        setDirectLinkPreviews((current) => [
+        setDirectLinkPreviews((current) => !observationReads.isCurrent(observationRead) || !workspaceRequestOwner.isActionCurrent(operation) ? current : [
           response.linkPreview,
           ...current.filter((preview) => preview.id !== response.linkPreview.id),
         ]);
@@ -1112,14 +1167,21 @@ export function TeammateWorkspace({
   }
 
   async function sendPrivateMessage(authorization: {
+    readonly authorizationMode: AuthorizationMode;
     readonly permissionPreset: PermissionPreset;
     readonly permissionConfirmation?: PermissionConfirmation;
   }): Promise<void> {
-    const serializedInput = serializeComposerInputParts(composerInputParts);
+    const sendObservation = observationReads.begin();
+    if (!sendObservation) return;
+    if (hasPendingPrivateGuidance(cwd.trim(), teammate.id)) {
+      await submitDirectGuidance("queue_followup");
+      return;
+    }
+    const serializedInput = serializeComposerInputParts(composerSubmissionInputParts);
     const body = serializedInput.body.trim();
     const attachmentIds = [...serializedInput.attachmentIds];
     const fileRefs = directComposerFileRefs(composerFileReferenceParts);
-    if ((!body && attachmentIds.length === 0 && pendingDirectLinkPreviewIds.length === 0 && fileRefs.length === 0) || sending) {
+    if ((!body && attachmentIds.length === 0 && pendingDirectLinkPreviewIds.length === 0 && fileRefs.length === 0) || sending || privateAttachmentOperationPending) {
       return;
     }
     let permissionConfirmation = authorization.permissionConfirmation;
@@ -1127,88 +1189,143 @@ export function TeammateWorkspace({
       permissionConfirmation = await onConfirmFullAccess?.();
       if (!permissionConfirmation) return;
     }
+    if (!observationReads.isCurrent(sendObservation)) return;
     const operation = workspaceRequestOwner.beginWorkspaceAction("send");
     if (!workspaceRequestOwner.isActionCurrent(operation)) return;
+    const submissionOwner = { cwd: cwd.trim(), surface: "private" as const, ownerId: operation.teammateId };
+    const unconfirmedKey = submissionLookupJournal.read(submissionOwner);
+    if (unconfirmedKey) {
+      const receipt = observationReads.isCurrent(sendObservation) ? await recoverSubmissionReceipt(async () => {
+        if (!observationReads.isCurrent(sendObservation) || !workspaceRequestOwner.isActionCurrent(operation)) {
+          throw new UnconfirmedConversationSubmissionError(unconfirmedKey, true);
+        }
+        return validatePrivateSubmissionReceipt(
+          await getTeammateDirectMessageSubmission(submissionOwner.cwd, operation.teammateId, unconfirmedKey),
+          submissionOwner.cwd, operation.teammateId, unconfirmedKey);
+      }) : undefined;
+      if (!workspaceRequestOwner.isActionCurrent(operation)) return;
+      if (receipt?.message && receipt.idempotencyKey === unconfirmedKey && receipt.teammateId === operation.teammateId) {
+        submissionLookupJournal.forget(submissionOwner, unconfirmedKey);
+        setMessages(current => observationReads.isCurrent(sendObservation) && workspaceRequestOwner.isActionCurrent(operation)
+          ? upsertDirectMessages(current, [receipt.message!, ...(receipt.aiReply ? [receipt.aiReply] : [])]) : current);
+        if (privateSubmissionDraftMatches(privateSubmissionDraftRef.current!, receipt.message)) {
+          setMessageDraft("");
+          setPendingAttachments([]);
+          setPendingDirectLinkPreviewIds([]);
+          privateAttachmentUploads.releasePreviews(pendingAttachments);
+        }
+        if (observationReads.isCurrent(sendObservation)) {
+          await refreshDirectRuntime();
+          if (observationReads.isCurrent(sendObservation)) workspaceRequestOwner.clearError(operation);
+        }
+      } else {
+        workspaceRequestOwner.reportError(operation, t("Pending confirmation"));
+      }
+      return;
+    }
     const draftSnapshot = messageDraft;
     const attachmentsSnapshot = pendingAttachments;
     const linkPreviewIdsSnapshot = pendingDirectLinkPreviewIds;
     const sendOperation = directSendLifecycle.begin();
+    const idempotencyKey = crypto.randomUUID();
+    let submitted = false;
+    let accepted = false;
     setSending(true);
     let streamFailed = false;
+    // A stream's acceptance/terminal receipts outlive observation pauses. Its
+    // view snapshots do not: resumed reads own a new observation epoch.
+    const publishStreamMessages = (update: (current: readonly TeammateDirectMessage[]) => readonly TeammateDirectMessage[]): void => {
+      if (!observationReads.isCurrent(sendObservation) || !workspaceRequestOwner.isActionCurrent(operation)) return;
+      workspaceRequestOwner.claimAndCommit(operation, ["conversation"], () => {
+        setMessages(current => observationReads.isCurrent(sendObservation) && workspaceRequestOwner.isActionCurrent(operation)
+          ? update(current) : current);
+      });
+    };
     try {
       const linkPreviews = await ensureDirectLinkPreviewsForBody(body, operation);
-      if (!linkPreviews || !workspaceRequestOwner.isActionCurrent(operation)) return;
+      if (!linkPreviews || !workspaceRequestOwner.isActionCurrent(operation) || !observationReads.isCurrent(sendObservation)) {
+        directSendLifecycle.settle(sendOperation);
+        return;
+      }
       setMessageDraft("");
       setPendingAttachments([]);
       setPendingDirectLinkPreviewIds([]);
-      privateFeedPinnedToLatestRef.current = true;
-      privateFeedAutoFollowUntilRef.current = Date.now() + 3_000;
-      privateFeedUserScrollIntentRef.current = false;
-      setPrivateFeedLatestButtonVisible(false);
+      scrollPrivateFeedToLatest();
+      submissionLookupJournal.remember(submissionOwner, idempotencyKey);
+      submitted = true;
       const response = await streamTeammateDirectMessage(cwd.trim(), operation.teammateId, {
+        idempotencyKey,
         body,
         attachmentIds,
         linkPreviewIds: linkPreviews.map((preview) => preview.id),
         fileRefs,
         providerPresetId: teammate.providerPresetId,
-        authorizationMode: directAuthorizationMode,
+        authorizationMode: authorization.authorizationMode,
         workspaceAccessMode: selectedWorkspaceAccessMode,
         permissionPreset: authorization.permissionPreset,
         permissionConfirmation,
       });
       await readSseResponse(response, (event) => {
+        if (event.event === "accepted") {
+          accepted = true;
+          submissionLookupJournal.forget(submissionOwner, idempotencyKey);
+          if (!workspaceRequestOwner.isActionCurrent(operation)) return;
+          const data = JSON.parse(event.data) as TeammateDirectMessageStreamAcceptedEvent;
+          directSendLifecycle.accept(sendOperation);
+          publishStreamMessages(current => upsertDirectMessages(current, [data.message]));
+          return;
+        }
+        if (event.event === "ready" || event.event === "done" || event.event === "blocked") {
+          accepted = true;
+          submissionLookupJournal.forget(submissionOwner, idempotencyKey);
+        }
         if (!workspaceRequestOwner.isActionCurrent(operation)) return;
         if (event.event === "ready") {
           const data = JSON.parse(event.data) as TeammateDirectMessageStreamReadyEvent;
-          workspaceRequestOwner.claimAndCommit(operation, ["conversation"], () => {
-            setMessages((current) => upsertDirectMessages(current, [data.message, data.aiReply]));
-            directSendLifecycle.accept(sendOperation);
-          });
+          directSendLifecycle.accept(sendOperation);
+          publishStreamMessages(current => upsertDirectMessages(current, [data.message, data.aiReply]));
           return;
         }
         if (event.event === "delta") {
           const data = JSON.parse(event.data) as TeammateDirectMessageStreamDeltaEvent;
-          workspaceRequestOwner.claimAndCommit(operation, ["conversation"], () => {
-            setMessages((current) => current.map((message) => message.id === data.messageId ? {
-              ...message,
-              body: data.body,
-              status: "pending",
-            } : message));
-          });
+          publishStreamMessages(current => current.map((message) => message.id === data.messageId ? {
+            ...message,
+            body: data.body,
+            narrationSegments: data.narrationSegments ?? message.narrationSegments,
+            status: "pending",
+          } : message));
           return;
         }
         if (event.event === "run_linked") {
           const data = JSON.parse(event.data) as TeammateDirectMessageStreamRunLinkedEvent;
-          workspaceRequestOwner.claimAndCommit(operation, ["conversation"], () => {
-            setMessages((current) => current.map((message) => message.id === data.messageId ? {
-              ...message,
-              linkedRunId: data.linkedRunId ?? message.linkedRunId,
-            } : message));
-            if (data.activeReply) {
-              directSendLifecycle.accept(sendOperation);
-              directSendLifecycle.link(sendOperation, data.activeReply);
-              setSending(false);
+          publishStreamMessages(current => current.map((message) => message.id === data.messageId ? {
+            ...message,
+            linkedRunId: data.linkedRunId ?? message.linkedRunId,
+          } : message));
+          if (data.activeReply) {
+            directSendLifecycle.accept(sendOperation);
+            directSendLifecycle.link(sendOperation, data.activeReply);
+            setSending(false);
+          }
+          if (observationReads.isCurrent(sendObservation)) void refreshDirectRuntime().catch((error) => {
+            if (!observationReads.shouldMergeTransport(error)) {
+              workspaceRequestOwner.reportError(operation, error instanceof Error ? error.message : String(error));
             }
           });
-          void refreshDirectRuntime();
           return;
         }
         if (event.event === "done") {
           const data = JSON.parse(event.data) as TeammateDirectMessageStreamDoneEvent;
-          workspaceRequestOwner.claimAndCommit(operation, ["conversation"], () => {
-            setMessages((current) => upsertDirectMessages(current, [data.message, data.aiReply]));
-            directSendLifecycle.settle(sendOperation);
-            setSending(false);
-          });
+          directSendLifecycle.settle(sendOperation);
+          setSending(false);
+          publishStreamMessages(current => upsertDirectMessages(current, [data.message, data.aiReply]));
           return;
         }
         if (event.event === "blocked") {
           const data = JSON.parse(event.data) as TeammateDirectMessageStreamBlockedEvent;
-          workspaceRequestOwner.claimAndCommit(operation, ["conversation"], () => {
-            setMessages((current) => upsertDirectMessages(current, [data.message, data.aiReply]));
-            directSendLifecycle.settle(sendOperation);
-            setSending(false);
-          });
+          directSendLifecycle.settle(sendOperation);
+          setSending(false);
+          publishStreamMessages(current => upsertDirectMessages(current, [data.message, data.aiReply]));
           return;
         }
         if (event.event === "error") {
@@ -1216,28 +1333,72 @@ export function TeammateWorkspace({
           directSendLifecycle.fail(sendOperation);
           const data = JSON.parse(event.data) as TeammateDirectMessageStreamErrorEvent;
           const nextMessages = [data.message, data.aiReply].filter((message): message is TeammateDirectMessage => Boolean(message));
-          workspaceRequestOwner.claimAndCommit(operation, ["conversation"], () => {
-            if (nextMessages.length > 0) {
-              setMessages((current) => upsertDirectMessages(current, nextMessages));
-            }
-            setSending(false);
-          });
-          if (data.error) workspaceRequestOwner.reportError(operation, data.error);
+          if (nextMessages.length > 0) publishStreamMessages(current => upsertDirectMessages(current, nextMessages));
+          setSending(false);
+          // A failed AI reply owns its provider error. The feed renders the
+          // error beside that persisted message, so repeating it in the
+          // workspace-level banner creates two competing copies of the same
+          // failure. Keep the workspace error only for transport failures
+          // where the daemon did not return a reply record to anchor it to.
+          if (shouldReportConversationStreamError({ error: data.error, hasAssistantReply: Boolean(data.aiReply) })) {
+            workspaceRequestOwner.reportError(operation, data.error);
+          } else if (data.error) {
+            workspaceRequestOwner.clearError(operation);
+          }
         }
       });
+      if (streamFailed) return;
+      if (!accepted) throw new UnconfirmedConversationSubmissionError(idempotencyKey);
       if (!workspaceRequestOwner.isActionCurrent(operation)) return;
+      privateAttachmentUploads.releasePreviews(attachmentsSnapshot);
+      if (!observationReads.isCurrent(sendObservation)) return;
       await Promise.all([
         refreshTeammateActivity(),
         memoryController.refresh("background"),
       ]);
-      if (!workspaceRequestOwner.isActionCurrent(operation)) return;
-      revokePendingAttachmentPreviews(attachmentsSnapshot, (previewUrl) => attachmentPreviewUrlsRef.current.delete(previewUrl));
+      if (!workspaceRequestOwner.isActionCurrent(operation) || !observationReads.isCurrent(sendObservation)) return;
       await refreshDirectRuntime();
-      if (workspaceRequestOwner.isActionCurrent(operation) && !streamFailed) {
+      if (workspaceRequestOwner.isActionCurrent(operation) && observationReads.isCurrent(sendObservation) && !streamFailed) {
         workspaceRequestOwner.clearError(operation);
       }
     } catch (error) {
+      let rejectionConfirmed = false;
+      if (submitted && !accepted && observationReads.isCurrent(sendObservation)) {
+        const receipt = await recoverSubmissionReceipt(async () => {
+          if (!observationReads.isCurrent(sendObservation) || !workspaceRequestOwner.isActionCurrent(operation)) {
+            throw new UnconfirmedConversationSubmissionError(idempotencyKey, true);
+          }
+          return validatePrivateSubmissionReceipt(
+            await getTeammateDirectMessageSubmission(submissionOwner.cwd, operation.teammateId, idempotencyKey),
+            submissionOwner.cwd, operation.teammateId, idempotencyKey);
+        });
+        rejectionConfirmed = observationReads.isCurrent(sendObservation) && submissionWasRejected(error, receipt);
+        accepted = Boolean(receipt?.message);
+        if (receipt?.message && workspaceRequestOwner.isActionCurrent(operation)) {
+          directSendLifecycle.accept(sendOperation);
+          publishStreamMessages(current => upsertDirectMessages(current, [receipt.message!, ...(receipt.aiReply ? [receipt.aiReply] : [])]));
+        }
+      }
+      if (rejectionConfirmed) submissionLookupJournal.forget(submissionOwner, idempotencyKey);
       if (!workspaceRequestOwner.isActionCurrent(operation)) return;
+      if (accepted) {
+        submissionLookupJournal.forget(submissionOwner, idempotencyKey);
+        directSendLifecycle.accept(sendOperation);
+        if (observationReads.shouldMergeTransport(error)) return;
+        if (observationReads.isCurrent(sendObservation)) await refreshDirectRuntime();
+        if (!workspaceRequestOwner.isActionCurrent(operation)) return;
+        workspaceRequestOwner.reportError(operation, error instanceof Error ? error.message : String(error));
+        return;
+      }
+      if (submissionLookupJournal.read(submissionOwner)) {
+        directSendLifecycle.defer(sendOperation);
+        setMessageDraft(current => current || draftSnapshot);
+        setPendingAttachments(current => current.length ? current : attachmentsSnapshot.map(item => ({ ...item, deleteOnRemove: false })));
+        setPendingDirectLinkPreviewIds(current => current.length ? current : linkPreviewIdsSnapshot);
+        workspaceRequestOwner.reportError(operation, observationReads.shouldMergeTransport(error) || error instanceof UnconfirmedConversationSubmissionError
+          ? t("Pending confirmation") : error instanceof Error ? error.message : String(error));
+        return;
+      }
       const failure = directSendLifecycle.fail(sendOperation);
       if (failure.restoreInput) {
         setMessageDraft(draftSnapshot);
@@ -1251,86 +1412,68 @@ export function TeammateWorkspace({
   }
 
   async function stopDirectReply(): Promise<void> {
-    if (directGuidanceSubmitting) {
-      return;
-    }
-    const operation = workspaceRequestOwner.beginWorkspaceAction("guidance");
-    if (!workspaceRequestOwner.isActionCurrent(operation)) return;
-    setDirectGuidanceSubmitting("stop");
-    try {
-      const resolution = await resolveActiveDirectReply(operation);
-      if (resolution.status === "stale") return;
-      const activeReply = resolution.activeReply;
-      if (!activeReply) {
-        workspaceRequestOwner.reportError(operation, t("There is no active private reply right now."));
-        return;
-      }
-      const response = await cancelTeammateDirectReply(cwd.trim(), activeReply.workUnitId, { reason: "user_requested" });
-      if (!workspaceRequestOwner.isActionCurrent(operation)) return;
-      workspaceRequestOwner.claimAndCommit(operation, ["conversation"], () => {
-        if (response.message) {
-          setMessages((current) => upsertDirectMessages(current, [response.message!]));
-        }
-      });
-      await refreshDirectRuntime();
-      workspaceRequestOwner.clearError(operation);
-    } catch (error) {
-      workspaceRequestOwner.reportError(operation, error instanceof Error ? error.message : String(error));
-    } finally {
-      if (workspaceRequestOwner.isActionCurrent(operation)) setDirectGuidanceSubmitting("");
-    }
+    await directStopController.stop();
   }
 
   async function submitDirectGuidance(mode: "queue_followup" | "interrupt_redirect"): Promise<boolean> {
+    const guidanceObservation = observationReads.begin();
+    if (!guidanceObservation) return false;
     const payload = privateComposerPayload;
-    if ((!payload.body && payload.attachmentIds.length === 0 && payload.linkPreviewIds.length === 0 && payload.fileRefs.length === 0) || directGuidanceSubmitting) {
+    const recoveryPending = hasPendingPrivateGuidance(cwd.trim(), teammate.id);
+    if ((!recoveryPending && !payload.body && payload.attachmentIds.length === 0 && payload.linkPreviewIds.length === 0 && payload.fileRefs.length === 0) || directGuidanceSubmitting || privateAttachmentOperationPending) {
       return false;
     }
-    const draftSnapshot = messageDraft;
     const attachmentsSnapshot = pendingAttachments;
-    const linkPreviewIdsSnapshot = pendingDirectLinkPreviewIds;
     const operation = workspaceRequestOwner.beginWorkspaceAction("guidance");
     if (!workspaceRequestOwner.isActionCurrent(operation)) return false;
     setDirectGuidanceSubmitting(mode);
+    let accepted = false;
     try {
-      const resolution = await resolveActiveDirectReply(operation);
-      if (resolution.status === "stale") return false;
-      const activeReply = resolution.activeReply;
-      if (!activeReply) {
+      const resolution = recoveryPending ? undefined : await resolveActiveDirectReply(operation);
+      if (resolution?.status === "stale" || !observationReads.isCurrent(guidanceObservation)) return false;
+      const activeReply = resolution?.activeReply;
+      if (!recoveryPending && !activeReply) {
         workspaceRequestOwner.reportError(operation, t("There is no active private reply right now."));
         return false;
       }
-      const linkPreviews = await ensureDirectLinkPreviewsForBody(payload.body, operation);
-      if (!linkPreviews || !workspaceRequestOwner.isActionCurrent(operation)) return false;
+      const linkPreviews = recoveryPending ? pendingDirectLinkPreviews : await ensureDirectLinkPreviewsForBody(payload.body, operation);
+      if (!linkPreviews || !workspaceRequestOwner.isActionCurrent(operation) || !observationReads.isCurrent(guidanceObservation)) return false;
       const completePayload = {
         ...payload,
         linkPreviewIds: linkPreviews.map((preview) => preview.id),
       };
       const instruction = summarizeDirectGuidancePayload(completePayload, t);
-      const operationId = directGuidanceOperationSeqRef.current + 1;
-      directGuidanceOperationSeqRef.current = operationId;
-      const response = await createTeammateDirectIntervention(cwd.trim(), operation.teammateId, {
-        mode,
-        instruction,
-        messagePayload: completePayload,
-        idempotencyKey: `direct-guidance:${activeReply.workUnitId}:${mode}:${operationId}:${instruction}`,
+      const response = await submitPrivateGuidance({
+        cwd: cwd.trim(), teammateId: operation.teammateId, threadId: currentDirectRuntime?.thread.id,
+        sourceWorkUnitId: activeReply?.workUnitId,
+        request: { mode, instruction, messagePayload: completePayload },
+        notReadyMessage: t("There is no active private reply right now."),
+        onSubmitting: () => { privateAttachmentUploads.protectForSubmission(attachmentsSnapshot); },
       });
+      accepted = true;
       if (!workspaceRequestOwner.isActionCurrent(operation)) return false;
       workspaceRequestOwner.claimAndCommit(operation, ["conversation"], () => {
-        setDirectRuntime(response.runtime);
-        setMessageDraft("");
-        setPendingAttachments([]);
-        setPendingDirectLinkPreviewIds([]);
+        if (response.runtime) setDirectRuntime(current => observationReads.isCurrent(guidanceObservation) && workspaceRequestOwner.isActionCurrent(operation)
+          ? response.runtime : current);
+        const acceptedPayload = response.intervention.messagePayload ?? { body: response.intervention.instruction,
+          attachmentIds: [], linkPreviewIds: [], fileRefs: [] };
+        if (privateSubmissionDraftMatches(privateSubmissionDraftRef.current!, { ...acceptedPayload, fileRefs: acceptedPayload.fileRefs ?? [] })) setMessageDraft("");
+        const boundIds = new Set(acceptedPayload.attachmentIds);
+        const liveItems = privateAttachmentUploads.takePending();
+        privateAttachmentUploads.replacePending(liveItems.filter(item => !item.attachment || !boundIds.has(item.attachment.id)));
+        privateAttachmentUploads.releasePreviews(liveItems.filter(item => item.attachment && boundIds.has(item.attachment.id)));
+        setPendingDirectLinkPreviewIds(current => current.filter(id => !acceptedPayload.linkPreviewIds.includes(id)));
       });
-      revokePendingAttachmentPreviews(attachmentsSnapshot, (previewUrl) => attachmentPreviewUrlsRef.current.delete(previewUrl));
+      if (!observationReads.isCurrent(guidanceObservation)) return true;
       await refreshDirectRuntime();
-      workspaceRequestOwner.clearError(operation);
+      if (observationReads.isCurrent(guidanceObservation)) workspaceRequestOwner.clearError(operation);
       return true;
     } catch (error) {
       if (!workspaceRequestOwner.isActionCurrent(operation)) return false;
-      setMessageDraft(draftSnapshot);
-      setPendingAttachments(attachmentsSnapshot);
-      setPendingDirectLinkPreviewIds(linkPreviewIdsSnapshot);
+      if (!accepted && !(error instanceof UnconfirmedConversationSubmissionError)) {
+        const originals = new Map(attachmentsSnapshot.map(item => [item.localId, item]));
+        setPendingAttachments(current => current.map(item => originals.get(item.localId) ?? item));
+      }
       workspaceRequestOwner.reportError(operation, error instanceof Error ? error.message : String(error));
       return false;
     } finally {
@@ -1361,7 +1504,7 @@ export function TeammateWorkspace({
     if (intervention.status !== "queued" || directGuidanceCancelingId) {
       return;
     }
-    revokePendingAttachmentPreviews(pendingAttachments, (previewUrl) => attachmentPreviewUrlsRef.current.delete(previewUrl));
+    privateAttachmentUploads.releasePreviews(pendingAttachments);
     setMessageDraft(intervention.messagePayload ? directGuidanceDraftText(intervention.messagePayload) : intervention.instruction);
     setPendingAttachments(pendingAttachmentItemsFromIds(intervention.messagePayload?.attachmentIds ?? [], privateAttachmentById));
     setPendingDirectLinkPreviewIds(intervention.messagePayload?.linkPreviewIds ?? []);
@@ -1386,17 +1529,22 @@ export function TeammateWorkspace({
       }
       await refreshDirectRuntime();
       if (!workspaceRequestOwner.isActionCurrent(operation)) return;
+      const observationRead = observationReads.begin();
+      if (!observationRead) return;
       const request = workspaceRequestOwner.beginWorkspaceAction("messages");
       if (workspaceRequestOwner.isActionCurrent(request)) {
         try {
           const directMessagesResponse = await listTeammateDirectMessages(cwd.trim(), request.teammateId);
+          if (!observationReads.isCurrent(observationRead)) return;
           workspaceRequestOwner.commit(request, "conversation", () => {
             setMessages(directMessagesResponse.messages);
+            setRuntimeMetrics(directMessagesResponse.runtimeMetrics);
             setGeneratedMedia(directMessagesResponse.generatedMedia);
             setMessageSnapshotIdentity(JSON.stringify([cwd.trim(), request.teammateId]));
           });
           workspaceRequestOwner.clearError(request);
         } catch (error) {
+          if (observationReads.shouldMergeTransport(error)) return;
           if (workspaceRequestOwner.isActionCurrent(request)) throw error;
         }
       }
@@ -1409,9 +1557,14 @@ export function TeammateWorkspace({
   }
 
   function handlePrivateComposerSubmit(authorization: {
+    readonly authorizationMode: AuthorizationMode;
     readonly permissionPreset: PermissionPreset;
     readonly permissionConfirmation?: PermissionConfirmation;
   }): void {
+    if (hasPendingPrivateGuidance(cwd.trim(), teammate.id)) {
+      void submitDirectGuidance("queue_followup");
+      return;
+    }
     if (directReplyActive) {
       if (privateComposerHasGuidancePayload) {
         void submitDirectGuidance("queue_followup");
@@ -1426,6 +1579,7 @@ export function TeammateWorkspace({
   function handlePrivateComposerKeyDown(
     event: KeyboardEvent<HTMLDivElement>,
     authorization: {
+      readonly authorizationMode: AuthorizationMode;
       readonly permissionPreset: PermissionPreset;
       readonly permissionConfirmation?: PermissionConfirmation;
     },
@@ -1434,6 +1588,10 @@ export function TeammateWorkspace({
       return;
     }
     event.preventDefault();
+    if (hasPendingPrivateGuidance(cwd.trim(), teammate.id)) {
+      void submitDirectGuidance("queue_followup");
+      return;
+    }
     if (directReplyActive) {
       if (privateComposerHasGuidancePayload) {
         void submitDirectGuidance("queue_followup");
@@ -1477,130 +1635,49 @@ export function TeammateWorkspace({
     void uploadPrivateFiles(Array.from(event.dataTransfer.files));
   }
 
-  async function uploadPrivateFiles(files: readonly File[]): Promise<void> {
-    const selectedFiles = Array.from(files).slice(0, Math.max(0, 10 - pendingAttachments.length));
-    if (selectedFiles.length === 0 || uploadingAttachments) {
-      return;
-    }
-    const request = workspaceRequestOwner.beginWorkspaceAction("attachment-upload");
-    if (!workspaceRequestOwner.isActionCurrent(request)) return;
-    const uploadItems = selectedFiles.map((file) => {
-      const previewUrl = createAttachmentPreviewUrl(file);
-      if (previewUrl) {
-        attachmentPreviewUrlsRef.current.add(previewUrl);
-      }
+  const privateAttachmentUploads = useComposerAttachmentUploads({
+    ownerKey: workspaceMessageIdentity,
+    pending: pendingAttachments,
+    setPending: setPendingAttachments,
+    previewUrls: attachmentPreviewUrlsRef.current,
+    captureScope: () => {
+      const workspaceCwd = cwd.trim();
+      const teammateId = teammate.id;
       return {
-        localId: createLocalComposerAssetId("attachment"),
-        fileName: file.name,
-        sizeBytes: file.size,
-        state: "uploading" as const,
-        previewUrl,
-        deleteOnRemove: true,
+        upload: async (file: File) => (await uploadTeammatePrivateAttachment(workspaceCwd, teammateId, file)).attachment,
+        remove: async (attachment: TeammatePrivateAttachment) => { await deleteAttachment(workspaceCwd, attachment.id); },
+        onUploaded: (attachment: TeammatePrivateAttachment) => {
+          const request = workspaceRequestOwner.beginWorkspaceAction("attachment-upload");
+          workspaceRequestOwner.claimAndCommit(request, ["conversation"], () => {
+            setPrivateAttachments(current => [attachment, ...current.filter(item => item.id !== attachment.id)]);
+          });
+        },
       };
-    });
-    setPendingAttachments((current) => [...current, ...uploadItems]);
-    setUploadingAttachments(true);
-    try {
-      const responses = await Promise.all(selectedFiles.map((file) => uploadTeammatePrivateAttachment(cwd.trim(), request.teammateId, file)));
-      if (!workspaceRequestOwner.isActionCurrent(request)) return;
-      const uploaded = responses.map((response) => response.attachment);
-      const uploadedByLocalId = new Map(uploadItems.map((item, index) => [item.localId, uploaded[index]]));
-      workspaceRequestOwner.claimAndCommit(request, ["conversation"], () => {
-        setPrivateAttachments((current) => [...uploaded, ...current.filter((attachment) => !uploaded.some((item) => item.id === attachment.id))]);
-        setPendingAttachments((current) => current.map((item) => {
-          if (!uploadedByLocalId.has(item.localId)) return item;
-          const attachment = uploadedByLocalId.get(item.localId);
-          return attachment
-            ? { ...item, state: "ready", attachment }
-            : { ...item, state: "failed", error: t("Upload failed") };
-        }));
-      });
-      workspaceRequestOwner.clearError(request);
-    } catch (error) {
-      if (!workspaceRequestOwner.isActionCurrent(request)) return;
-      const message = error instanceof Error ? error.message : String(error);
-      setPendingAttachments((current) => current.map((item) =>
-        uploadItems.some((upload) => upload.localId === item.localId)
-          ? { ...item, state: "failed", error: message }
-          : item,
-      ));
-      workspaceRequestOwner.reportError(request, message);
-    } finally {
-      if (workspaceRequestOwner.isActionCurrent(request)) setUploadingAttachments(false);
-    }
+    },
+  });
+
+  async function uploadPrivateFiles(files: readonly File[]): Promise<void> {
+    if (sending) return;
+    await privateAttachmentUploads.attachFiles(files);
   }
 
-  async function removePendingAttachment(localId: string): Promise<void> {
-    const removed = pendingAttachments.find((item) => item.localId === localId);
-    revokePendingAttachmentPreview(removed, (previewUrl) => attachmentPreviewUrlsRef.current.delete(previewUrl));
-    setPendingAttachments((current) => current.filter((item) => item.localId !== localId));
-    if (!removed?.attachment || !removed.deleteOnRemove) {
-      return;
-    }
-    const request = workspaceRequestOwner.beginWorkspaceAction("attachment-delete");
-    if (!workspaceRequestOwner.isActionCurrent(request)) return;
-    try {
-      await deleteAttachment(cwd.trim(), removed.attachment.id);
-      workspaceRequestOwner.claimAndCommit(request, ["conversation"], () => {
-        setPrivateAttachments((current) => current.filter((attachment) => attachment.id !== removed?.attachment?.id));
-      });
-      workspaceRequestOwner.clearError(request);
-    } catch (error) {
-      workspaceRequestOwner.reportError(request, error instanceof Error ? error.message : String(error));
-    }
-  }
+  const removePendingAttachment = privateAttachmentUploads.removeAttachment;
 
   function removeComposerFileReference(raw: string, occurrenceIndex: number): void {
     setMessageDraft((current) => removeComposerInputRawToken(current, raw, occurrenceIndex));
   }
 
-  function handlePrivateFeedScroll(_event: UIEvent<HTMLDivElement>): void {
+  function handlePrivateFeedScroll(event: UIEvent<HTMLDivElement>): void {
+    privateReading.onScroll(event);
     const feed = privateFeedRef.current;
-    if (!feed) {
-      return;
-    }
-    if (feed.scrollTop <= 80 && hasMoreDirectMessages && nextDirectBeforeMessageId && !loadingOlderDirectMessages && !normalizedMessageSearchQuery) {
+    if (feed && feed.scrollTop <= 80 && hasMoreDirectMessages && nextDirectBeforeMessageId
+      && !loadingOlderDirectMessages && !normalizedMessageSearchQuery) {
       void loadOlderDirectMessages();
     }
-    const maxScrollTop = feed.scrollHeight - feed.clientHeight;
-    const pinnedToLatest = maxScrollTop <= 0 || maxScrollTop - feed.scrollTop <= 24;
-    const latestMessage = visibleMessages.at(-1);
-    const latestMessagePending = latestMessage?.authorType === "ai-teammate" && latestMessage.status === "pending";
-    const preserveAutoFollow =
-      !pinnedToLatest &&
-      !privateFeedUserScrollIntentRef.current &&
-      privateFeedPinnedToLatestRef.current &&
-      (Date.now() < privateFeedAutoFollowUntilRef.current || latestMessagePending);
-    if (preserveAutoFollow) {
-      privateFeedPinnedToLatestRef.current = true;
-      setPrivateFeedLatestButtonVisible(false);
-      return;
-    }
-    privateFeedPinnedToLatestRef.current = pinnedToLatest;
-    setPrivateFeedLatestButtonVisible((visible) => {
-      const nextVisible = !pinnedToLatest && maxScrollTop > 0;
-      return visible === nextVisible ? visible : nextVisible;
-    });
-  }
-
-  function cancelPrivateFeedAutoFollow(): void {
-    privateFeedAutoFollowUntilRef.current = 0;
-    privateFeedUserScrollIntentRef.current = true;
   }
 
   function scrollPrivateFeedToLatest(): void {
-    const feed = privateFeedRef.current;
-    if (!feed) {
-      return;
-    }
-    privateFeedAutoFollowUntilRef.current = Date.now() + 1_000;
-    privateFeedUserScrollIntentRef.current = false;
-    if (visibleMessages.length > 0) {
-      privateMessageFeedVirtualizer.scrollToIndex(visibleMessages.length - 1, { align: "end" });
-    }
-    feed.scrollTop = feed.scrollHeight;
-    privateFeedPinnedToLatestRef.current = true;
-    setPrivateFeedLatestButtonVisible(false);
+    privateReading.scrollToLatest("auto");
   }
 
   function copyMessageText(text: string): void {
@@ -1630,10 +1707,12 @@ export function TeammateWorkspace({
         "teammate-workspace",
         `right-dock-motion-${chatDockController.motionState}`,
         workspaceView === "settings" ? "settings-mode" : "chat-mode",
+        `titlebar-${titlebarPlacement}`,
       ].filter(Boolean).join(" ")}
       data-ui2-teammate-settings={workspaceView === "settings" || undefined}
     >
       {workspaceView === "chat" ? (
+        <DesktopTitlebarSurface>
         <TeammateChatHeader
           cwd={cwd}
           teammate={teammate}
@@ -1642,16 +1721,17 @@ export function TeammateWorkspace({
           searchOpen={chatHeaderController.searchOpen}
           searchQuery={messageSearchQuery}
           searchTriggerRef={chatHeaderController.searchTriggerRef}
-          summaryOpen={chatSummaryOpen}
           summaryVisible={chatSummaryLayout.visible}
           summaryDockOffset={chatSummaryDockOffset}
           summaryDockResizing={chatDockController.resizing}
           summaryDockMotion={chatSummaryDockMotion}
           summaryDockState={chatDockController.motionState}
           summaryRows={privateSummaryRows}
+          onOpenSummaryChanges={(reviewCwd) => openChatDockPage("review", undefined, { cwd: reviewCwd, baseline: "head" })}
           terminalOpen={chatTerminalOpen}
           terminalDisabled={!cwd.trim()}
-          detailsOpen={chatDockOpen}
+          detailsOpen={chatDockController.expanded}
+          detailsDisabled={!chatDockController.available}
           moreButtonRef={renameController.triggerRef}
           onToggleSearch={() => {
             setChatSummaryOpen(false);
@@ -1680,12 +1760,14 @@ export function TeammateWorkspace({
             setChatTerminalOpen((current) => !current);
           }}
           onToggleDetails={() => {
+            if (!chatDockController.available) return;
             setChatDockOpen((current) => !current);
           }}
         />
+        </DesktopTitlebarSurface>
       ) : (
+        <DesktopTitlebarSurface>
         <TeammateSettingsHeader
-          teammateName={settingsForm.displayName.trim() || teammate.displayName}
           profileActive={activeTab === "profile"}
           profileDirty={profileController.profileDirty}
           savingProfile={profileController.savingProfile}
@@ -1709,6 +1791,7 @@ export function TeammateWorkspace({
             externalToolsController.save(),
           ])}
         />
+        </DesktopTitlebarSurface>
       )}
 
       {renameController.open ? (
@@ -1738,14 +1821,14 @@ export function TeammateWorkspace({
         <TeammatePrivateChatSurface
           cwd={cwd}
           teammate={teammate}
+          threadId={currentDirectWorkspace?.threadId}
           userProfile={userProfile}
           loading={loading}
           visibleMessages={visibleMessages}
           generatedMedia={currentGeneratedMedia}
           normalizedMessageSearchQuery={normalizedMessageSearchQuery}
           privateFeedRef={privateFeedRef}
-          privateMessageFeedVirtualizer={privateMessageFeedVirtualizer}
-          privateMessageFeedVirtualRows={privateMessageFeedVirtualRows}
+          privateFeedLocatorRef={privateFeedLocatorRef}
           usedMemoryEvents={usedMemoryEvents}
           memoryById={memoryById}
           runs={runs}
@@ -1756,6 +1839,8 @@ export function TeammateWorkspace({
           dockViewModel={privateDockViewModel}
           providerRecovered={providerRecovered}
           modelNotice={privateModelNotice}
+          composerModelLabel={provider ? providerCompactModelLabel(provider) : undefined}
+          runtimeMetrics={currentRuntimeMetrics}
           privateAttachmentById={privateAttachmentById}
           taskCreateBusyKeys={tasksController.busyKeys}
           taskCreateErrors={tasksController.messageErrors}
@@ -1790,8 +1875,13 @@ export function TeammateWorkspace({
               approvalErrors={approvalErrors}
               resolvingApprovals={resolvingApprovals}
               surface="teammate_direct"
-              onResolve={(approvalId, decision, reason) => {
-                void Promise.resolve(onResolveApproval(approvalId, decision, reason)).then(() => refreshDirectRuntime());
+              onResolve={(approvalId, decision, reason, proposedRuleFingerprint) => {
+                void Promise.resolve(onResolveApproval(
+                  approvalId,
+                  decision,
+                  reason,
+                  proposedRuleFingerprint,
+                )).then(() => refreshDirectRuntime());
               }}
             />
           ) : undefined}
@@ -1819,10 +1909,18 @@ export function TeammateWorkspace({
           onRemoveComposerFileReference={removeComposerFileReference}
           onRemovePendingLinkPreview={(previewId) => setPendingDirectLinkPreviewIds((current) => current.filter((id) => id !== previewId))}
           onRemovePendingAttachment={removePendingAttachment}
+          onRetryPendingAttachment={privateAttachmentUploads.retryAttachment}
+          attachmentCleanupFailures={privateAttachmentUploads.cleanupFailures}
+          onRetryAttachmentCleanup={privateAttachmentUploads.retryCleanup}
+          authorizationMode={selectedAuthorizationMode}
+          permissionSelectionOwnerKey={permissionSelectionOwnerKey ?? workspaceMessageIdentity}
+          defaultWorkspaceAccessMode={resolveWorkspaceAccessMode(defaultWorkspaceAccessMode, defaultPermissionMode, defaultPermissionPreset)}
+          onPermissionError={(error) => workspaceRequestOwner.reportImmediate("runtime", error instanceof Error ? error.message : String(error))}
+          onAuthorizationModeChange={setSelectedAuthorizationMode}
           workspaceAccessMode={selectedWorkspaceAccessMode}
           onWorkspaceAccessModeChange={setSelectedWorkspaceAccessMode}
           onFullAccessPresetSelected={onConfirmFullAccessSelection}
-          dockOpen={chatDockOpen}
+          dockOpen={chatDockController.renderedOpen}
           dockController={chatDockController}
           dockPageRequest={chatDockPageRequest}
           dockActions={(

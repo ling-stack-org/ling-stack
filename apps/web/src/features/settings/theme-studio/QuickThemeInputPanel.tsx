@@ -1,5 +1,5 @@
 import { ImagePlus, Trash2, Upload } from "lucide-react";
-import { useRef, type DragEvent } from "react";
+import { useRef } from "react";
 import { useI18n } from "../../../i18n.js";
 import {
   Button,
@@ -7,6 +7,7 @@ import {
   Input,
   SegmentedControl,
   SegmentedControlItem,
+  useFileDropFeedback,
 } from "../../../shared/ui/index.js";
 import type { QuickThemeStudioController } from "./useQuickThemeStudioController.js";
 
@@ -16,12 +17,14 @@ export function QuickThemeInputPanel({ controller }: { readonly controller: Quic
   const { source, stage } = controller.state;
   const analyzing = controller.restoring || stage === "validating" || stage === "analyzing";
 
-  const loadDroppedFile = (event: DragEvent<HTMLDivElement>): void => {
-    event.preventDefault();
-    if (controller.restoring) return;
-    const file = event.dataTransfer.files.item(0);
-    if (file) void controller.analyzeFile(file);
-  };
+  const fileDrop = useFileDropFeedback({
+    blocked: controller.restoring,
+    resetKey: controller.state.draftId,
+    onFiles: (files) => {
+      const file = files.item(0);
+      if (file) return controller.analyzeFile(file);
+    },
+  });
 
   return (
     <section className="settings-theme-studio-input" aria-labelledby="settings-theme-studio-input-title">
@@ -35,9 +38,11 @@ export function QuickThemeInputPanel({ controller }: { readonly controller: Quic
       <div
         className="settings-theme-studio-dropzone"
         data-has-source={source ? "true" : undefined}
-        onDragOver={(event) => event.preventDefault()}
-        onDrop={loadDroppedFile}
+        onDragOver={fileDrop.onDragOver}
+        onDragLeave={fileDrop.onDragLeave}
+        onDrop={fileDrop.onDrop}
       >
+        {fileDrop.feedback}
         <input
           ref={inputRef}
           accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp"

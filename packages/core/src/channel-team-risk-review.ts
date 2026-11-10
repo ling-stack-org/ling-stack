@@ -109,6 +109,9 @@ function addPayloadTriggers(triggers: Map<string, string>, payload: ApprovalPayl
   if (payload.type === "runtime_permission_request") {
     addRuntimePermissionTriggers(triggers, payload);
   }
+  if (payload.type === "native_permission_request" && payload.resources.some(resource => resource.kind === "network" || resource.access === "write")) {
+    triggers.set("runtime_permission_expansion", "Runtime permission expansion requires risk review.");
+  }
 }
 
 function addBashRiskTriggers(

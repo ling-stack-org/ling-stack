@@ -28,7 +28,7 @@ export function InlineMessageEditor({
 }: InlineMessageEditorProps): React.JSX.Element {
   const [value, setValue] = useState(initialValue);
   const inputRef = useRef<TokenizedComposerInputHandle | null>(null);
-  const parts = useMemo(() => parseComposerInputParts(value, { cwd }), [cwd, value]);
+  const parts = useMemo(() => parseComposerInputParts(value, { cwd, deferTrailingAtomicTokens: true }), [cwd, value]);
   const canSave = Boolean(value.trim()) && value.trim() !== initialValue.trim() && !saving;
 
   useEffect(() => {

@@ -1,9 +1,15 @@
 import type { LingApprovalCheckpoint } from "../../approval-checkpoints.js";
+import type { RuntimeEvent, WorkUnit, WorkUnitAttempt } from "../../runtime-supervisor-types.js";
+import { classifyWorkflowStepStartOwner, type WorkflowStepStartReadStore,
+  type WorkflowStepStartFailureInput, type WorkflowStepStartCommitResult } from "../../workflow-step-start-owner.js";
 import type { ApprovalRequest, ListApprovalRequestsOptions } from "../../approval-types.js";
+import { inspectWorkflowPreApproval, isWorkflowPreGateMarkerV1,
+  type WorkflowStepPreApprovalResolveInput, type WorkflowStepPreApprovalResult } from "../../workflow-pre-gate.js";
 import {
   type LingThread,
   type RunEventDataByType,
   type RunEventType,
+  type RunStore,
   type RunSession,
   type UpdateLingThreadInput,
 } from "../../run-types.js";
@@ -23,18 +29,29 @@ import {
 
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
-export interface SqliteRuntimeRecoveryCoordinatorPorts {
+export interface SqliteRuntimeRecoveryCoordinatorPorts extends Pick<RunStore,
+  "getWorkUnitAttempt" | "getUserInputContinuationBinding" | "getUserInputContinuationReceipt"> {
+  readonly workflowStepStartReadStore: WorkflowStepStartReadStore & Pick<RunStore, "getApprovalRequest">;
+  readonly settleChannelWorkflowStepStartFailure: (input: WorkflowStepStartFailureInput) => WorkflowStepStartCommitResult;
   readonly expireResourceLeases: (now: string) => number;
   readonly listRecoverableRunIds: () => string[];
   readonly hasTerminalRunEvent: (runId: string) => boolean;
   readonly appendRunEvent: <K extends RunEventType>(runId: string, type: K, data: RunEventDataByType[K]) => unknown;
   readonly markRunFailed: (runId: string, endedAt: string, errorMessage: string) => void;
   readonly getRun: (runId: string) => RunSession | undefined;
+  readonly getWorkUnit: (workUnitId: string) => WorkUnit | undefined;
+  readonly getWorkUnitAttempt: (attemptId: string) => WorkUnitAttempt | undefined;
+  readonly hasPendingRunTerminalIntent: RunStore["hasPendingRunTerminalIntent"];
+  readonly hasPendingRunSuspension: RunStore["hasPendingRunSuspension"];
+  readonly hasRuntimeRunQueueCustody: RunStore["hasRuntimeRunQueueCustody"];
+  readonly findWorkUnitAttemptTerminalAudit: (attempt: WorkUnitAttempt) => RuntimeEvent | undefined;
   readonly getLingThread: (threadId: string) => LingThread | undefined;
   readonly updateLingThread: (threadId: string, input: UpdateLingThreadInput, now: string) => LingThread | undefined;
   readonly listRecoverableChannelWorkflows: () => ChannelWorkflow[];
+  readonly hasWorkflowIsolationRound: (workflowId: string) => boolean;
   readonly listChannelWorkflowSteps: (options: ListChannelWorkflowStepsOptions) => ChannelWorkflowStep[];
   readonly getApprovalRequest: (id: string) => ApprovalRequest | undefined;
+  readonly resolveChannelWorkflowStepPreApproval: (input: WorkflowStepPreApprovalResolveInput) => WorkflowStepPreApprovalResult;
   readonly listApprovalRequests: (options: ListApprovalRequestsOptions) => ApprovalRequest[];
   readonly getApprovalCheckpointForApproval: (approvalId: string) => LingApprovalCheckpoint | undefined;
   readonly transitionChannelWorkflowStepStatus: (input: {
@@ -66,14 +83,32 @@ export class SqliteRuntimeRecoveryCoordinator {
   constructor(private readonly ports: SqliteRuntimeRecoveryCoordinatorPorts) {}
 
   recoverStaleRuns(now: string): number {
-    this.ports.expireResourceLeases(now);
     const staleRuns = this.ports.listRecoverableRunIds();
     let recovered = 0;
 
     for (const runId of staleRuns) {
       const runBeforeRecovery = this.ports.getRun(runId);
+      if (this.ports.hasRuntimeRunQueueCustody(runId)) continue;
+      // Queued/pre-ACK delegated children may not have a context view or Runner
+      // snapshot yet. Their private lifecycle, not the ordinary recovery shape,
+      // owns reconciliation. Preserve unknown effects and reserved capacity;
+      // neither this exclusion nor an expired lease is authority to replay.
+      const workUnit = runBeforeRecovery?.workUnitId ? this.ports.getWorkUnit(runBeforeRecovery.workUnitId) : undefined;
+      if (workUnit?.ownerType === "delegation_step") continue;
+      const pendingAttempt = workUnit?.activeAttemptId ? this.ports.getWorkUnitAttempt(workUnit.activeAttemptId) : undefined;
+      if (pendingAttempt && this.ports.hasPendingRunTerminalIntent({ runId,
+        workUnitId: pendingAttempt.workUnitId, attemptId: pendingAttempt.id,
+        runtimeInstanceId: pendingAttempt.runtimeInstanceId, fencingToken: pendingAttempt.fencingToken })) continue;
+      // A graceful request can survive a crash before SDK/Host drain. Neither
+      // generic startup loss nor an expired lease may manufacture that proof.
+      // This preserves custody only; the dedicated recovery path must verify
+      // a source-bound stopped receipt before admitting any successor.
+      if (pendingAttempt && this.ports.hasPendingRunSuspension({ runId,
+        workUnitId: pendingAttempt.workUnitId, attemptId: pendingAttempt.id,
+        runtimeInstanceId: pendingAttempt.runtimeInstanceId, fencingToken: pendingAttempt.fencingToken })) continue;
+      let resumableApproval: ApprovalRequest | undefined;
       if (runBeforeRecovery?.status === "waiting_for_approval" || runBeforeRecovery?.status === "running") {
-        const resumableApproval = this.ports.listApprovalRequests({ runId, limit: 20 })
+        resumableApproval = this.ports.listApprovalRequests({ runId, limit: 20 })
           .find((approval) => approval.status === "pending" || approval.status === "approved");
         const checkpoint = resumableApproval
           ? this.ports.getApprovalCheckpointForApproval(resumableApproval.id)
@@ -88,6 +123,21 @@ export class SqliteRuntimeRecoveryCoordinator {
           && checkpoint.resumeBasis.approvalId === resumableApproval.id) {
           continue;
         }
+      }
+      if (!resumableApproval && runBeforeRecovery && this.isDaemonRecoverableHarnessRun(runBeforeRecovery)) {
+        // The daemon owns restart continuation for enforced Harness task,
+        // conversation, and private Runs. Channel reply children have their
+        // own dispatch recovery path and must not be claimed here.
+        // Runtime custody may already have fenced the abandoned Attempt.
+        // Preserve the logical Run for the daemon's atomic replacement only
+        // while its active or exact startup-loss evidence remains recoverable.
+        continue;
+      }
+      if (!resumableApproval && runBeforeRecovery && this.isRecoverableUserInputReceiver(runBeforeRecovery)) {
+        // The immutable pre-ACK binding is the restart authority. The daemon
+        // must reopen that exact queued Run/claimed WorkUnit/created Attempt;
+        // Core must not publish a terminal failure before the receiver does.
+        continue;
       }
       if (!this.ports.hasTerminalRunEvent(runId)) {
         this.ports.appendRunEvent(runId, "run_error", { message: STALE_RUN_ERROR });
@@ -109,7 +159,75 @@ export class SqliteRuntimeRecoveryCoordinator {
       recovered += 1;
     }
 
+    // Expiry never revokes an Attempt; run it after recovery and require positive
+    // terminal ownership evidence in the lease store itself.
+    this.ports.expireResourceLeases(now);
     return recovered;
+  }
+
+  private isDaemonRecoverableHarnessRun(run: RunSession): boolean {
+    if ((run.status !== "queued" && run.status !== "running") || !run.workUnitId || !run.contextViewId) {
+      return false;
+    }
+    const workUnit = this.ports.getWorkUnit(run.workUnitId);
+    const thread = run.threadId ? this.ports.getLingThread(run.threadId) : undefined;
+    if (!workUnit
+      || !["task_run", "conversation_run", "teammate_direct_reply"].includes(workUnit.kind)
+      || workUnit.linkedRunId !== run.id
+      || !workUnit.activeAttemptId) {
+      return false;
+    }
+    if (workUnit.status === "stale") {
+      const attempt = this.ports.getWorkUnitAttempt(workUnit.activeAttemptId);
+      if (workUnit.errorCode !== "runtime_stale" || workUnit.errorMessage !== "runtime-startup-reconcile"
+        || !attempt || attempt.id !== workUnit.activeAttemptId || attempt.workUnitId !== workUnit.id
+        || attempt.attemptNumber !== workUnit.attemptCount || attempt.status !== "lost"
+        || attempt.errorCode !== "runtime_stale" || attempt.errorMessage !== "runtime-startup-reconcile") {
+        return false;
+      }
+      const audit = this.ports.findWorkUnitAttemptTerminalAudit(attempt);
+      if (!audit || audit.type !== "work_unit_stale" || audit.actor !== "system" || !attempt.endedAt
+        || audit.ts !== attempt.endedAt || !isRecord(audit.data)
+        || (audit.data.fromStatus !== "claimed" && audit.data.fromStatus !== "running") || audit.data.toStatus !== "stale"
+        || audit.data.errorCode !== "runtime_stale" || audit.data.errorMessage !== "runtime-startup-reconcile") {
+        return false;
+      }
+    } else if (!["claimed", "running", "cancelling"].includes(workUnit.status)) {
+      return false;
+    }
+    if (workUnit.kind === "conversation_run" && thread?.kind !== "conversation") return false;
+    if (workUnit.kind === "teammate_direct_reply"
+      && (thread?.kind !== "teammate_direct" || !run.teammateId
+        || thread.teammateId !== run.teammateId || workUnit.teammateId !== run.teammateId)) return false;
+    const snapshot = run.requestSnapshot;
+    if (!isRecord(snapshot) || !isRecord(snapshot.harnessFeatureSnapshot)) return false;
+    return snapshot.harnessFeatureSnapshot.schemaVersion === 1
+      && snapshot.harnessFeatureSnapshot.continuations === "enforce"
+      && isRecord(snapshot.runnerExecutionInput);
+  }
+
+  private isRecoverableUserInputReceiver(run: RunSession): boolean {
+    if (run.status !== "queued" || run.continuationReason !== "user_input_answer"
+      || !run.threadId || !run.workUnitId) return false;
+    const deliveryId = deliveryIdFromContinuationSnapshot(run.requestSnapshot);
+    if (!deliveryId) return false;
+    const workUnit = this.ports.getWorkUnit(run.workUnitId);
+    if (!workUnit || workUnit.status !== "claimed" || workUnit.linkedRunId !== run.id
+      || !workUnit.activeAttemptId) return false;
+    try {
+      const binding = this.ports.getUserInputContinuationBinding(run.threadId, deliveryId);
+      if (!binding || this.ports.getUserInputContinuationReceipt(run.threadId, deliveryId)
+        || binding.runId !== run.id || binding.fence.workUnitId !== workUnit.id
+        || binding.fence.attemptId !== workUnit.activeAttemptId) return false;
+      const attempt = this.ports.getWorkUnitAttempt(binding.fence.attemptId);
+      return Boolean(attempt && attempt.status === "created" && !attempt.endedAt
+        && attempt.workUnitId === workUnit.id
+        && attempt.runtimeInstanceId === binding.fence.runtimeInstanceId
+        && attempt.fencingToken === binding.fence.fencingToken);
+    } catch {
+      // Missing or corrupt continuation evidence is not restart authority.
+      return false;
+    }
   }
 
   recoverStaleChannelWorkflows(now: string): number {
@@ -118,8 +236,42 @@ export class SqliteRuntimeRecoveryCoordinator {
 
     for (const workflow of workflows) {
       const steps = this.ports.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true });
+      const isolated = this.ports.hasWorkflowIsolationRound(workflow.id) || steps.some(step => step.metadata?.isolationScopePlan);
       for (const step of steps) {
-        if (workflow.metadata?.requiredParticipantManifest && step.status === "running" && step.runId) {
+        if ((step.status === "running" || step.status === "waiting_for_approval")
+          && step.metadata?.activeGateStage === "pre" && !step.taskId && !step.runId && !step.metadata.startOwner) {
+          // A permission wait is not an abandoned execution. Resolve the exact
+          // persisted cycle before legacy recovery can block/fail it. Stale or
+          // missing markers never fall through into approval-only completion.
+          const beforeWorkflow = this.ports.getChannelWorkflow(workflow.id);
+          if (step.metadata.preStepApprovalId) this.ports.resolveChannelWorkflowStepPreApproval({
+            workflowStepId: step.id, approvalId: step.metadata.preStepApprovalId, actor: "system", now,
+          });
+          const current = this.ports.workflowStepStartReadStore.getChannelWorkflowStep(step.id);
+          if (current?.status !== step.status || this.ports.getChannelWorkflow(workflow.id)?.status !== beforeWorkflow?.status) recovered += 1;
+          continue;
+        }
+        if (this.isApprovedPreAdmissionHolding(step, now)) {
+          // Approval grants permission for a later explicit start. Until that
+          // start atomically consumes the marker with its Task, there is no
+          // missing execution owner for startup recovery to repair.
+          continue;
+        }
+        if (step.status === "running" || step.status === "waiting_for_approval" && Boolean(step.taskId || step.runId || step.metadata?.startOwner)) {
+          const ownership = classifyWorkflowStepStartOwner(this.ports.workflowStepStartReadStore, step, now, { requireActiveLease: false });
+          if (ownership.status !== "linked") {
+            const owner = step.metadata?.startOwner;
+            const result = this.ports.settleChannelWorkflowStepStartFailure({ workflowStepId: step.id, expected: step,
+              ...(owner ? { owner, leaseId: owner.leaseId } : {}),
+              mode: ownership.status === "preparing" ? "startup_recovery" : "invalid_owner",
+              blocker: ownership.status === "preparing"
+                ? "Daemon restarted before workflow step run started; retry required."
+                : "Workflow start owner is missing or inconsistent after daemon restart; retry required.", now });
+            if (result.status === "linked") recovered += 1;
+            continue;
+          }
+        }
+        if ((workflow.metadata?.requiredParticipantManifest || isolated) && step.status === "running" && step.runId) {
           const run = this.ports.getRun(step.runId);
           if (!run) {
             recovered += this.recoverWorkflowStepBlocked(step, "Linked run is missing after daemon restart.", now) ? 1 : 0;
@@ -128,7 +280,7 @@ export class SqliteRuntimeRecoveryCoordinator {
           // reloads immutable requirements, actions, packets, approvals, and graph state.
           continue;
         }
-        if (workflow.metadata?.requiredParticipantManifest
+        if ((workflow.metadata?.requiredParticipantManifest || isolated)
           && step.status === "waiting_for_approval"
           && step.metadata?.activeGateStage === "post") {
           // Approval state is durable, but only the daemon semantic reconciler may turn
@@ -179,6 +331,30 @@ export class SqliteRuntimeRecoveryCoordinator {
       }
     }
     return this.ports.listApprovalRequests({ workflowStepId: step.id, limit: 1 })[0];
+  }
+
+  private isApprovedPreAdmissionHolding(step: ChannelWorkflowStep, now: string): boolean {
+    const approvalId = step.metadata?.preStepApprovalId;
+    const marker = step.metadata?.preStepApprovalMarker;
+    if ((step.status !== "running" && step.status !== "waiting_for_approval")
+      || !approvalId || !isWorkflowPreGateMarkerV1(marker) || marker.consumedByTaskId
+      || step.taskId || step.runId || step.metadata?.startOwner) {
+      return false;
+    }
+    const inspection = inspectWorkflowPreApproval(this.ports.workflowStepStartReadStore, step, now);
+    return inspection.status === "approved" && inspection.approval.id === approvalId;
+  }
+
+  private isTerminalRejectedPreAdmission(step: ChannelWorkflowStep, now: string): boolean {
+    const approvalId = step.metadata?.preStepApprovalId;
+    const marker = step.metadata?.preStepApprovalMarker;
+    if (step.status !== "skipped" || !approvalId || !isWorkflowPreGateMarkerV1(marker)
+      || marker.consumedByTaskId) {
+      return false;
+    }
+    const inspection = inspectWorkflowPreApproval(this.ports.workflowStepStartReadStore, step, now);
+    return inspection.status === "blocked" && inspection.approval.id === approvalId
+      && inspection.approval.status !== "pending" && inspection.approval.status !== "approved";
   }
 
   private recoverApprovedWorkflowStep(step: ChannelWorkflowStep, approval: ApprovalRequest, now: string): number {
@@ -336,7 +512,13 @@ export class SqliteRuntimeRecoveryCoordinator {
     }
     const steps = this.ports.listChannelWorkflowSteps({ workflowId, complete: true });
     if (steps.length > 0 && steps.every((step) => step.status === "succeeded" || step.status === "skipped")) {
-      if (workflow.metadata?.requiredParticipantManifest) {
+      if (steps.some(step => this.isTerminalRejectedPreAdmission(step, now))) {
+        // A pre-gate denial policy may skip a Step, but cannot publish workflow
+        // success. The canonical completion gate still owns that decision.
+        return 0;
+      }
+      if (workflow.metadata?.requiredParticipantManifest || this.ports.hasWorkflowIsolationRound(workflowId)
+        || steps.some(step => step.metadata?.isolationScopePlan)) {
         // Continuity-backed workflows are completed only by the daemon's shared
         // WorkflowCompletionGate after this storage-level reconciliation returns.
         // Core cannot verify operation actions, output packets, or immutable graph edges.
@@ -389,4 +571,18 @@ export class SqliteRuntimeRecoveryCoordinator {
     }
     return 0;
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function deliveryIdFromContinuationSnapshot(value: unknown): string | undefined {
+  if (!isRecord(value) || !isRecord(value.userInputContinuationContext)) return undefined;
+  const seedRef = value.userInputContinuationContext.seedRef;
+  if (!isRecord(seedRef)) return undefined;
+  const prefix = "user_input_continuation_seed:";
+  return typeof seedRef.id === "string" && seedRef.id.startsWith(prefix) && seedRef.id.length > prefix.length
+    ? seedRef.id.slice(prefix.length)
+    : undefined;
 }

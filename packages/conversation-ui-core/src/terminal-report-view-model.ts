@@ -1,9 +1,20 @@
+import {
+  formatSynchronousCatalogMessage,
+  type SupportedLocale,
+} from "@ling-stack/localization";
 import type {
   ConversationArtifactStripItem,
   ConversationWorkCellEvidenceLink,
   ConversationWorkCellRow,
   ConversationWorkCellRowTone,
 } from "./work-cell-view-model.js";
+import {
+  isUserVisibleTerminalReportArtifact,
+  isUserVisibleTerminalReportSourceRef,
+  userVisibleTerminalReportChanges,
+} from "./terminal-report-visibility.js";
+import { projectVisibleTerminalReportContent } from "./terminal-report-presentation.js";
+import { extractWrappedSection, trimBoundaryCharacters } from "./string-boundaries.js";
 
 interface TerminalReportSourceRefInput {
   readonly kind: string;
@@ -33,7 +44,7 @@ type TerminalReportArtifactKindInput =
 export interface TerminalReportViewInput {
   readonly id: string;
   readonly status: "committed" | "fallback";
-  readonly language: "zh-CN" | "en-US";
+  readonly language: SupportedLocale;
   readonly outcome: TerminalReportSectionInput & {
     readonly status: "succeeded" | "partially_succeeded" | "blocked" | "failed" | "cancelled";
     readonly title: string;
@@ -80,6 +91,7 @@ export interface TerminalReportViewInput {
     readonly id: string;
     readonly severity: "info" | "warning" | "critical";
     readonly status: "unresolved" | "mitigated" | "accepted" | "unverified";
+    readonly approvalDecision?: "pending" | "approved" | "denied" | "expired" | "cancelled";
     readonly summary: string;
     readonly nextAction?: string;
   })[];
@@ -97,7 +109,8 @@ export interface TerminalReportViewModel {
   readonly updatedAt: string;
 }
 
-export function terminalReportToViewModel(report: TerminalReportViewInput): TerminalReportViewModel {
+export function terminalReportToViewModel(input: TerminalReportViewInput): TerminalReportViewModel {
+  const report = projectVisibleTerminalReportContent(input);
   const rawSections: readonly TerminalReportSectionInput[] = [
     report.outcome,
     ...report.outcome.corrections,
@@ -111,7 +124,7 @@ export function terminalReportToViewModel(report: TerminalReportViewInput): Term
     ...report.references,
     ...rawSections.flatMap((section) => section.sourceRefs),
   ];
-  const changes = workspaceChanges(report.changes, allSourceRefs);
+  const changes = userVisibleTerminalReportChanges(report.changes, allSourceRefs);
   const visibleArtifacts = report.artifacts.filter(isUserVisibleTerminalReportArtifact);
   const sections: readonly TerminalReportSectionInput[] = [
     report.outcome,
@@ -141,7 +154,7 @@ export function terminalReportToViewModel(report: TerminalReportViewInput): Term
         kind: "watch",
         presentation: "note",
         reportSection: "outcome",
-        title: report.outcome.title,
+        title: compactTerminalReportTitle(report.outcome.title),
         description: report.outcome.summary,
         tone: outcomeTone(report.outcome.status),
       },
@@ -150,7 +163,7 @@ export function terminalReportToViewModel(report: TerminalReportViewInput): Term
         kind: "watch" as const,
         presentation: "note" as const,
         reportSection: "correction" as const,
-        title: correction.correctedFact,
+        title: compactTerminalReportTitle(correction.correctedFact),
         description: correction.originalAssumption,
         meta: localizedMeta(report.language, correction.confidence),
         tone: "neutral" as const,
@@ -159,7 +172,7 @@ export function terminalReportToViewModel(report: TerminalReportViewInput): Term
         id: `${report.id}:change:${change.id}`,
         kind: "edit" as const,
         reportSection: "change" as const,
-        title: change.title,
+        title: compactTerminalReportTitle(change.title),
         description: change.summary,
         meta: changeMeta(change, report.language),
         detailLines: change.paths.map((path) => ({ kind: "file_ref" as const, text: path, path })),
@@ -169,7 +182,7 @@ export function terminalReportToViewModel(report: TerminalReportViewInput): Term
         id: `${report.id}:verification:${verification.id}`,
         kind: "verify" as const,
         reportSection: "verification" as const,
-        title: verification.title,
+        title: compactTerminalReportTitle(verification.title),
         description: verification.summary,
         meta: verificationMeta(verification.status, verification.durationMs, report.language),
         commandText: verification.command,
@@ -189,9 +202,9 @@ export function terminalReportToViewModel(report: TerminalReportViewInput): Term
         id: `${report.id}:risk:${risk.id}`,
         kind: "watch" as const,
         reportSection: "risk" as const,
-        title: risk.summary,
+        title: compactTerminalReportTitle(risk.summary),
         description: risk.nextAction,
-        meta: localizedMeta(report.language, risk.status),
+        meta: localizedMeta(report.language, risk.approvalDecision ?? risk.status),
         tone: riskTone(risk.severity, risk.status),
       })),
     ],
@@ -236,22 +249,6 @@ export function terminalReportToViewModel(report: TerminalReportViewInput): Term
   };
 }
 
-function workspaceChanges(
-  changes: TerminalReportViewInput["changes"],
-  sourceRefs: readonly TerminalReportSourceRefInput[],
-): TerminalReportViewInput["changes"] {
-  const artifactStoragePrefixes = sourceRefs
-    .filter((ref) => ref.kind === "run")
-    .map((ref) => `${ref.id}/`);
-  if (artifactStoragePrefixes.length === 0) {
-    return changes;
-  }
-  return changes.flatMap((change) => {
-    const paths = change.paths.filter((path) => !artifactStoragePrefixes.some((prefix) => path.startsWith(prefix)));
-    return paths.length > 0 ? [{ ...change, paths }] : [];
-  });
-}
-
 const WORKSPACE_FILE_ARTIFACT_KINDS = new Set<TerminalReportArtifactKindInput>([
   "file",
   "diff",
@@ -288,10 +285,8 @@ function normalizedConversationFilePath(value?: string): string {
 }
 
 function localizedChangedFilesLabel(language: TerminalReportViewInput["language"], count: number): string {
-  if (language === "zh-CN") {
-    return count === 1 ? "已编辑 1 个文件" : `已编辑 ${count} 个文件`;
-  }
-  return count === 1 ? "Edited 1 file" : `Edited ${count} files`;
+  const category = new Intl.PluralRules(language).select(count) === "one" ? "one" : "other";
+  return formatSynchronousCatalogMessage(language, `terminal_report.changed_files.${category}`, { count });
 }
 
 function uniqueSourceRefs(refs: readonly TerminalReportSourceRefInput[]): TerminalReportSourceRefInput[] {
@@ -299,41 +294,25 @@ function uniqueSourceRefs(refs: readonly TerminalReportSourceRefInput[]): Termin
   return [...new Map(visible.map((ref) => [`${ref.kind}:${ref.id}`, ref])).values()];
 }
 
-const INTERNAL_TERMINAL_REPORT_REFERENCE_KINDS = new Set([
-  "approval",
-  "check",
-  "message",
-  "operation",
-  "run",
-  "task",
-  "turn",
-  "workflow",
-  "workflow_step",
-]);
-
-function isUserVisibleTerminalReportSourceRef(ref: TerminalReportSourceRefInput): boolean {
-  if (ref.visibility === "developer_only" || ref.sensitivity === "secret_adjacent") {
-    return false;
-  }
-  if (INTERNAL_TERMINAL_REPORT_REFERENCE_KINDS.has(ref.kind)) {
-    return false;
-  }
-  if (isInternalTerminalReportArtifactText(ref.label ?? "")) {
-    return false;
-  }
-  if (ref.kind === "external") {
-    return Boolean(ref.href);
-  }
-  return ref.kind === "artifact" || ref.kind === "file" || ref.kind === "memory" || Boolean(ref.href);
-}
-
-function isUserVisibleTerminalReportArtifact(artifact: TerminalReportViewInput["artifacts"][number]): boolean {
-  return !isInternalTerminalReportArtifactText([artifact.title, artifact.path].filter(Boolean).join(" "));
-}
-
-function isInternalTerminalReportArtifactText(value: string): boolean {
-  return /^(Generated file metadata|Workflow step context|Workflow step output|Action preview):/iu.test(value.trim()) ||
-    /\bcontent log\b/iu.test(value);
+/**
+ * Titles are compact labels, not narrative bodies. Keep model output that
+ * accidentally echoes the full workflow prompt from taking over the report;
+ * the complete Markdown remains in the corresponding summary/description.
+ */
+function compactTerminalReportTitle(value: string): string {
+  const normalized = value.replace(/\s+/gu, " ").trim();
+  const wrapped = extractWrappedSection(normalized, ["原始请求", "Original request"], [
+    "执行任务",
+    "已物化的执行操作",
+    "建议协作步骤",
+    "Requested objective",
+    "No literal file content",
+    "Materialized operations",
+    "Participant operation ownership",
+    "Permission boundary",
+  ]);
+  const candidate = trimBoundaryCharacters(wrapped || normalized, "*").trim();
+  return candidate.length > 180 ? `${candidate.slice(0, 177).trimEnd()}...` : candidate;
 }
 
 function outcomeTone(status: TerminalReportViewInput["outcome"]["status"]): ConversationWorkCellRowTone {
@@ -370,7 +349,11 @@ function changeMeta(
 ): string | undefined {
   const stats = [
     change.paths.length > 0
-      ? language === "zh-CN" ? `${change.paths.length} 个文件` : `${change.paths.length} ${change.paths.length === 1 ? "file" : "files"}`
+      ? formatSynchronousCatalogMessage(
+          language,
+          `terminal_report.file_count.${new Intl.PluralRules(language).select(change.paths.length) === "one" ? "one" : "other"}`,
+          { count: change.paths.length },
+        )
       : undefined,
     change.addedLines !== undefined ? `+${change.addedLines}` : undefined,
     change.deletedLines !== undefined ? `-${change.deletedLines}` : undefined,
@@ -389,23 +372,27 @@ function verificationMeta(
 }
 
 function localizedMeta(language: TerminalReportViewInput["language"], value: string): string {
-  if (language !== "zh-CN") return value;
-  return ZH_CN_META[value] ?? value;
+  const key = LOCALIZED_META_KEYS[value];
+  return key ? formatSynchronousCatalogMessage(language, key) : value;
 }
 
-const ZH_CN_META: Readonly<Record<string, string>> = {
-  high: "高置信度",
-  medium: "中等置信度",
-  passed: "已通过",
-  failed: "失败",
-  blocked: "已阻塞",
-  cancelled: "已取消",
-  skipped: "已跳过",
-  not_run: "未运行",
-  unknown: "未知",
-  completed: "已完成",
-  unresolved: "未解决",
-  mitigated: "已缓解",
-  accepted: "已接受",
-  unverified: "未验证",
+const LOCALIZED_META_KEYS: Readonly<Record<string, `terminal_report.${string}`>> = {
+  high: "terminal_report.meta.high",
+  medium: "terminal_report.meta.medium",
+  passed: "terminal_report.meta.passed",
+  failed: "terminal_report.meta.failed",
+  blocked: "terminal_report.meta.blocked",
+  cancelled: "terminal_report.meta.cancelled",
+  skipped: "terminal_report.meta.skipped",
+  not_run: "terminal_report.meta.not_run",
+  unknown: "terminal_report.meta.unknown",
+  completed: "terminal_report.meta.completed",
+  pending: "terminal_report.meta.pending",
+  approved: "terminal_report.meta.approved",
+  denied: "terminal_report.meta.denied",
+  expired: "terminal_report.meta.expired",
+  unresolved: "terminal_report.meta.unresolved",
+  mitigated: "terminal_report.meta.mitigated",
+  accepted: "terminal_report.meta.accepted",
+  unverified: "terminal_report.meta.unverified",
 };

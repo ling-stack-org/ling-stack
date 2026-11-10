@@ -134,7 +134,7 @@
 }
 
 .message-diff-file + .message-diff-file {
-  border-top: 1px solid var(--conversation-code-border);
+  border-top: 1px solid var(--ling-border-default);
 }
 
 .message-diff-file-head {
@@ -144,23 +144,23 @@
   gap: var(--ling-space-4);
   min-width: 0;
   padding: var(--ling-space-3) var(--ling-space-4);
-  border-bottom: 1px solid var(--conversation-code-border);
-  background: var(--conversation-bg-muted);
-  color: var(--conversation-text-muted);
+  border-bottom: 1px solid var(--ling-border-default);
+  background: var(--ling-bg-subtle);
+  color: var(--ling-text-muted);
   font-size: 11px;
 }
 
 .message-diff-file-head code {
   min-width: 0;
   overflow: hidden;
-  color: var(--conversation-code-text);
+  color: var(--ling-text-default);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .message-diff-file-head span {
   flex: 0 0 auto;
-  color: var(--conversation-code-muted);
+  color: var(--ling-text-muted);
   font-family: "SFMono-Regular", Consolas, monospace;
 }
 
@@ -171,8 +171,8 @@
   max-height: 420px;
   margin: 0;
   overflow: auto;
-  background: var(--conversation-code-bg);
-  color: var(--conversation-code-text);
+  background: var(--ling-bg-code);
+  color: var(--ling-text-default);
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 11px;
   line-height: 1.45;
@@ -186,16 +186,16 @@
 
 .diff-line-number {
   padding: 0 7px;
-  border-right: 1px solid color-mix(in srgb, var(--conversation-code-border) 72%, transparent);
-  color: var(--conversation-code-muted);
+  border-right: 1px solid color-mix(in srgb, var(--ling-border-default) 72%, transparent);
+  color: var(--ling-text-muted);
   text-align: right;
   user-select: none;
 }
 
 .diff-gutter {
   padding: 0 var(--ling-space-2);
-  border-right: 1px solid var(--conversation-code-border);
-  color: var(--conversation-code-muted);
+  border-right: 1px solid var(--ling-border-default);
+  color: var(--ling-text-muted);
   text-align: center;
   user-select: none;
 }
@@ -209,7 +209,7 @@
 }
 
 .diff-line.add {
-  background: color-mix(in srgb, var(--conversation-diff-add-bg) 54%, transparent);
+  background: color-mix(in srgb, var(--ling-status-success-bg) 54%, transparent);
 }
 
 .diff-line.add .diff-line-number,
@@ -218,7 +218,7 @@
 }
 
 .diff-line.delete {
-  background: color-mix(in srgb, var(--conversation-diff-remove-bg) 54%, transparent);
+  background: color-mix(in srgb, var(--ling-status-danger-bg) 54%, transparent);
 }
 
 .diff-line.delete .diff-line-number,
@@ -228,8 +228,8 @@
 
 .diff-line.hunk,
 .diff-line.meta {
-  background: var(--conversation-bg-muted);
-  color: var(--conversation-text-muted);
+  background: var(--ling-bg-subtle);
+  color: var(--ling-text-muted);
 }
 
 .diff-fold {
@@ -239,9 +239,9 @@
   align-items: center;
   min-width: 0;
   padding: 7px var(--ling-space-5);
-  border-block: 1px solid var(--conversation-code-border);
-  background: color-mix(in srgb, var(--conversation-bg-muted) 78%, transparent);
-  color: var(--conversation-text-soft);
+  border-block: 1px solid var(--ling-border-default);
+  background: color-mix(in srgb, var(--ling-bg-subtle) 78%, transparent);
+  color: var(--ling-text-soft);
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 10.5px;
   font-weight: 720;
@@ -252,5 +252,5 @@
 .diff-fold-rule {
   height: 1px;
   min-width: 0;
-  background: var(--conversation-code-border);
+  background: var(--ling-border-default);
 }

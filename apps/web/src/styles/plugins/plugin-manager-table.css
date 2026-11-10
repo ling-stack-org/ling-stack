@@ -28,7 +28,7 @@
   position: relative;
   z-index: 1;
   border-bottom: 1px solid var(--ling-border-strong);
-  background: var(--ling-bg-subtle);
+  background: var(--ling-table-header-bg);
 }
 
 .plugin-table-body {
@@ -73,7 +73,7 @@
 }
 
 .plugin-table-row:hover {
-  background: var(--ling-bg-subtle);
+  background: var(--ling-row-hover-bg);
 }
 
 .plugin-table-row td {

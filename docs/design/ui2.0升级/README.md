@@ -1,7 +1,7 @@
 # Ling UI 2.0 文档入口
 
 Status: current design source of truth
-Updated: 2026-08-03
+Updated: 2026-10-28 (主题与新模块适配规则)
 
 ## Current Boundary
 
@@ -10,7 +10,7 @@ Updated: 2026-08-03
 - Work Board 产品重新开放；
 - Startup 与 Diagnostics 重新开放；
 - Workspace Tools 嵌入态；
-- Desktop Theme Pack 原生发布与持久化；
+- 官方场景主题与自定义媒体背景的原生发布与持久化；
 - packaged macOS/Windows、Computer Use PiP 和签名发布验收；
 - 产品合同明确标记 pending 的 Council runtime、MCP 或其他高级能力。
 
@@ -24,7 +24,8 @@ Web verified 不等于 Desktop release-ready。原生状态只由
 3. [视觉语言](foundations/01-视觉语言与设计原则.md)
 4. [Design Tokens 与主题](foundations/02-Design-Tokens与主题.md)
 5. [共享 UI 架构](architecture/01-ui-react共享包架构.md)
-6. 当前页面对应的模块合同
+6. [共享组件、主题制作与新模块适配合同](../component-theme-presentation.md)
+7. 当前页面对应的模块合同；新增模块必须写明组件复用、外观参数、背景表面策略和主题验收
 
 ## Contracts
 

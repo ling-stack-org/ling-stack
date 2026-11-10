@@ -1,11 +1,18 @@
+import {
+  projectConversationActivity,
+  projectConversationMessagePresentation,
+  projectConversationTimelineItems,
+  type ConversationTimelineItem,
+} from "@ling-stack/conversation-ui-core";
 import { artifactContentUrl } from "../../api.js";
 import type { Translate } from "../../i18n.js";
 import {
+  buildConversationExecutionActionEvidenceRows,
   buildConversationWorkCellViewModel,
   type ConversationWorkCellViewModel,
 } from "../../lib/conversation-work-cell.js";
 import { conversationRunHasVisibleWork } from "../../lib/conversation-runtime-visibility.js";
-import { providerRunPreflightBlocker } from "../../lib/providers.js";
+import { providerCompactModelLabel, providerRunPreflightBlocker } from "../../lib/providers.js";
 import type { LocalFileReference } from "../../shared/conversation/index.js";
 import type {
   ApprovalRequest,
@@ -46,7 +53,7 @@ export function buildTeammatePrivateModelNotice({
 
   return {
     description,
-    modelLabel: provider ? `${provider.displayName} / ${provider.model}` : t("No model selected"),
+    modelLabel: provider ? providerCompactModelLabel(provider) : t("No model selected"),
   };
 }
 
@@ -55,6 +62,7 @@ export interface TeammatePrivateMessageProjection {
   readonly authorType: TeammateDirectMessage["authorType"];
   readonly blocked: boolean;
   readonly body: string;
+  readonly errorText: string;
   readonly copyBody: string;
   readonly userGuidance: boolean;
   readonly pendingAiReply: boolean;
@@ -62,14 +70,12 @@ export interface TeammatePrivateMessageProjection {
 }
 
 export function projectTeammatePrivateMessage({
-  hasStructuredTerminalReport,
   localUserDisplayName,
   message,
   providerRecovered,
   teammateDisplayName,
   t,
 }: {
-  readonly hasStructuredTerminalReport: boolean;
   readonly localUserDisplayName: string;
   readonly message: TeammateDirectMessage;
   readonly providerRecovered: boolean;
@@ -79,11 +85,6 @@ export function projectTeammatePrivateMessage({
   const pendingAiReply = message.authorType === "ai-teammate" && message.status === "pending";
   const blocked = message.status === "blocked" || message.status === "failed" || message.status === "cancelled";
   const recoveredHistoricalProviderFailure = providerRecovered && isHistoricalProviderPreflightMessage(message);
-  const errorOwnsBody = Boolean(
-    message.errorMessage?.trim() &&
-    message.errorMessage.trim() === message.body.trim() &&
-    (message.status === "blocked" || message.status === "failed"),
-  );
   const guidanceBody = projectUserGuidanceBody(message);
   const authorType = guidanceBody === undefined ? message.authorType : "local-user";
   const authorName = authorType === "ai-teammate"
@@ -91,21 +92,26 @@ export function projectTeammatePrivateMessage({
     : authorType === "system"
       ? t("System")
       : localUserDisplayName;
-  const body = hasStructuredTerminalReport || errorOwnsBody
-    ? ""
-    : pendingAiReply && !message.body.trim()
-      ? t("AI teammate is replying...")
-      : message.status === "cancelled" && !message.body.trim()
-        ? t("Reply stopped")
-        : recoveredHistoricalProviderFailure
-          ? t("Historical model check failed. The model is available now; resend or continue the chat.")
-          : guidanceBody ?? message.body;
+  const bodyContent = recoveredHistoricalProviderFailure
+    ? t("Historical model check failed. The model is available now; resend or continue the chat.")
+    : guidanceBody ?? message.body;
+  const messagePresentation = projectConversationMessagePresentation({
+    content: bodyContent,
+    errorMessage: message.errorMessage,
+    status: message.status,
+    streaming: pendingAiReply,
+    streamingPlaceholder: t("AI teammate is replying..."),
+  });
+  const body = message.status === "cancelled" && !bodyContent.trim()
+    ? t("Reply stopped")
+    : messagePresentation.body;
 
   return {
     authorName,
     authorType,
     blocked,
     body,
+    errorText: recoveredHistoricalProviderFailure ? "" : messagePresentation.errorText,
     copyBody: guidanceBody ?? message.body,
     userGuidance: guidanceBody !== undefined,
     pendingAiReply,
@@ -164,6 +170,7 @@ export function buildTeammatePrivateWorkCellMap(input: {
     }
     const model = buildConversationWorkCellViewModel({
       threadId: run.threadId,
+      participantId: input.teammateId,
       runs: [run],
       allowRunThreadFallback: true,
       approvals,
@@ -178,6 +185,42 @@ export function buildTeammatePrivateWorkCellMap(input: {
     }
   }
   return cells;
+}
+
+/**
+ * Legacy direct-message links are visibility hints, not execution authority.
+ * Run their action rows through the strict shared adapter so incomplete records
+ * can publish only blocked diagnostics while canonical ownership is unavailable.
+ */
+export function buildTeammatePrivateUnverifiedEvidenceMap(input: {
+  readonly messages: readonly TeammateDirectMessage[];
+  readonly teammateId: string;
+  readonly authorizedRunIds: ReadonlySet<string>;
+  readonly runs: readonly RunSession[];
+  readonly executionActions: readonly ExecutionAction[];
+  readonly t: Translate;
+}): ReadonlyMap<string, readonly ConversationTimelineItem[]> {
+  const runById = new Map(input.runs.map((run) => [run.id, run]));
+  const factsByMessageId = new Map<string, readonly ConversationTimelineItem[]>();
+  for (const message of input.messages) {
+    if (message.authorType !== "ai-teammate" || message.authorId !== input.teammateId || !message.linkedRunId ||
+      input.authorizedRunIds.has(message.linkedRunId)) continue;
+    const run = runById.get(message.linkedRunId);
+    if (!run || run.channelId || run.workflowStepId || (run.teammateId && run.teammateId !== input.teammateId)) continue;
+    const actions = input.executionActions
+      .filter((action) => action.runId === run.id && action.workspaceId === message.workspaceId &&
+        (!run.threadId || action.threadId === run.threadId))
+      .sort((left, right) => actionTimelineTime(left).localeCompare(actionTimelineTime(right)) || left.id.localeCompare(right.id));
+    if (actions.length === 0) continue;
+    const rows = buildConversationExecutionActionEvidenceRows({ actions, t: input.t });
+    const facts = projectConversationTimelineItems(projectConversationActivity(rows));
+    if (facts.length > 0) factsByMessageId.set(message.id, facts);
+  }
+  return factsByMessageId;
+}
+
+function actionTimelineTime(action: ExecutionAction): string {
+  return action.executedAt ?? action.resolvedAt ?? action.completedAt ?? action.createdAt;
 }
 
 export function teammateWorkspaceFileTarget(reference: LocalFileReference): WorkspaceRightDockFileTarget {

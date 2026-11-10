@@ -6,6 +6,7 @@ import { mockDaemon } from "./support/mock-daemon";
 import { createBaseState, type MockState } from "./support/mock-state";
 import { captureP6FeedbackEvidence } from "./support/p6-feedback-evidence";
 import { openEngineeringChannel } from "./support/test-helpers";
+import { expandTimelineProcesses } from "./support/timeline-process";
 
 const hookPath = fileURLToPath(new URL(
   "../src/features/workspace/useChannelConversationBlockInteractions.tsx",
@@ -62,18 +63,17 @@ test("copy and expand success use deduped 3000ms global Toast without local stat
     "1440x960-ling-light-copy-success-toast.png",
   );
 
-  const operationToggle = feed.getByRole("button", { name: "Expand operation" }).first();
-  await expect(operationToggle).toBeVisible();
-  await operationToggle.click();
-  const expandableBlock = feed.locator([
-    "[data-conversation-focus-block='true']:has(.conversation-work-cell-evidence-summary[aria-expanded='false'])",
-    "[data-conversation-focus-block='true']:has(.conversation-work-cell-row-main[aria-expanded='false'])",
-    "[data-conversation-focus-block='true']:has(.transcript-block-view-head[aria-expanded='false'])",
-  ].join(",")).first();
+  await expandTimelineProcesses(feed);
+  const expandableBlock = feed.locator(
+    "[data-conversation-focus-block='true'][data-feed-item-kind='commandBatch']",
+  ).first();
   await expect(expandableBlock).toBeVisible();
+  const expandableToggle = expandableBlock.locator(".conversation-command-batch-header");
+  await expect(expandableToggle).toHaveAttribute("aria-expanded", "false");
   const expandableBlockId = await requiredAttribute(expandableBlock, "data-feed-item-id");
   await expandableBlock.focus();
   await expandableBlock.press("Enter");
+  await expect(expandableToggle).toHaveAttribute("aria-expanded", "true");
   const expandToast = toastByScope(page, `message:${expandableBlockId}:expand`);
   await expect(expandToast).toContainText("Expanded focused block");
   await expect(expandToast).toHaveAttribute("data-tone", "info");
@@ -190,7 +190,9 @@ function feedbackMessageFixture(id: string, body: string, createdAt: string): Mo
 }
 
 function feedbackMessage(feed: Locator, text: string): Locator {
-  return feed.locator("[data-conversation-focus-block='true']").filter({ hasText: text });
+  return feed.locator(
+    "[data-conversation-focus-block='true'][data-feed-item-kind='userMessage']",
+  ).filter({ hasText: text });
 }
 
 function toastByScope(page: Page, scope: string): Locator {

@@ -1,7 +1,9 @@
 import { expect, type Page, test, type TestInfo } from "@playwright/test";
+import type { DesktopDaemonStatus, LingDesktopCapabilities } from "../../desktop/shared/desktop-capabilities.js";
 import { createMockBundledEmbeddedCuaPlugin, mockDaemon } from "./support/mock-daemon";
 import { openWorkBoardFromInbox } from "./support/open-work-board";
 import { openPendingStartupDiagnostics } from "./support/pending-settings-sections";
+import type { AutomationDefinition } from "../src/types";
 import {
   createBaseState,
   createChatProvider,
@@ -35,14 +37,13 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page },
   });
   const state = createDarkThemeState();
   await mockDaemon(page, state);
-  await mockAutomationReadRoutes(page);
+  await mockAutomationReadRoutes(page, state);
   await page.goto("/");
 
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await expect(page.locator("html")).toHaveAttribute("data-ui-theme", "ling-dark");
-  await assertDarkAliasConvergence(page);
-  await assertAliasesTrackRuntimeThemeTokens(page);
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await assertCanonicalThemeTokens(page);
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering", exact: true }).click();
   await expect(page.locator(".client-window")).toBeVisible();
   await assertDarkPage(page, "channel workspace", [
     ".workspace-client-surface",
@@ -52,7 +53,7 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page },
   ]);
   await captureDarkEvidence(page, testInfo, "01-channel-workspace");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await expect(navigation.getByRole("button", { name: "收件箱" })).toHaveCount(0);
 
   await navigation.getByRole("button", { name: "媒体生产" }).click();
@@ -98,6 +99,9 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page },
 
   await navigation.getByRole("button", { name: "自动化" }).click();
   await expect(page.locator(".automations-inbox-page")).toBeVisible();
+  await expect(page.locator(".automation-execution-inspector")).toHaveCount(0);
+  await page.locator('[data-automation-id="automation_dark_mode"]').click();
+  await expect(page.locator(".automation-execution-inspector")).toContainText("深色主题自动化");
   await assertDarkPage(page, "automations", [
     ".workspace-automations-surface",
     ".automations-inbox-page",
@@ -127,16 +131,24 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page },
   ]);
   await captureDarkEvidence(page, testInfo, "06b-settings-interface-preferences");
 
-  await page.getByRole("button", { name: /创建主题|Create theme/ }).click();
-  await expect(page.locator("[data-ui2-theme-studio]")).toBeVisible();
-  await assertDarkPage(page, "quick theme studio", [
+  const themePicker = page.locator("[data-ui2-interface-theme]").getByRole("radiogroup", { name: /主题包|Theme packs/ });
+  await expect(themePicker.getByRole("radio")).toHaveCount(6);
+  for (const themeId of ["ling-breeze", "ling-dark", "ling-light", "ling-night", "ling-ocean", "ling-journey"]) {
+    await expect(themePicker.locator(`[data-theme-option-id="${themeId}"]`)).toBeVisible();
+  }
+  await expect(themePicker.locator('[data-theme-option-id="ling-dark"]')).toHaveAttribute("aria-checked", "true");
+  await expect(page.getByRole("button", { name: /创建主题|Create theme/ })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /导入主题|Import theme/ })).toHaveCount(0);
+  await expect(page.locator("[data-ui2-theme-studio]")).toHaveCount(0);
+  await expect(page.locator("[data-background-settings] [data-background-file]")).toBeEnabled();
+  await assertDarkPage(page, "built-in themes and workspace background", [
     ".settings-layout",
-    "[data-ui2-theme-studio]",
-    ".settings-theme-studio-input",
-    ".settings-theme-studio-preview",
+    "[data-ui2-interface-theme]",
+    '[data-ui2-interface-theme] [role="radiogroup"]',
+    "[data-background-settings]",
+    ".background-editor",
   ]);
-  await captureDarkEvidence(page, testInfo, "06c-settings-quick-theme-studio");
-  await page.getByRole("button", { name: /返回主题列表|Back to themes/ }).click();
+  await captureDarkEvidence(page, testInfo, "06c-settings-built-in-themes-and-background");
 
   await page.getByLabel("设置分组").getByRole("button", { name: /外部工作|External work/ }).click();
   await expect(page.locator("[data-ui2-external-work]")).toBeVisible();
@@ -230,7 +242,9 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page },
   await captureDarkEvidence(page, testInfo, "13-settings-mcp");
 
   await page.getByLabel("设置分组").getByRole("button", { name: /个性化|Personalization/ }).click();
-  await expect(page.locator(".personalization-settings-panel")).toBeVisible();
+  await expect(page.locator(".personalization-settings-panel")).toHaveCount(2);
+  await expect(page.locator(".personalization-settings-panel").first()).toBeVisible();
+  await expect(page.locator(".personalization-settings-panel").last()).toBeVisible();
   await expect(page.locator(".skill-governance-settings-panel")).toBeVisible();
   await assertDarkPage(page, "personalization settings", [
     ".settings-layout",
@@ -280,7 +294,7 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page },
   await openPendingStartupDiagnostics(page);
   await page.getByRole("button", { name: /打开运行诊断|Open run diagnostics/ }).first().click();
   await expect(page.getByLabel("设置分组")).toBeVisible();
-  await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
+  await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })).toHaveCount(0);
   await expect(page.locator(".settings-run-diagnostics-panel")).toBeVisible();
   await assertDarkPage(page, "settings run diagnostics", [
     ".settings-layout",
@@ -324,11 +338,16 @@ test("packaged Computer Control follows the same dark surface hierarchy", async 
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "zh-CN");
     localStorage.setItem("ling-stack.themePreference", "dark");
+    const daemonStatus: DesktopDaemonStatus = {
+      state: "connected",
+      baseUrl: "http://127.0.0.1:17891",
+      ownedByDesktop: true,
+    };
     Object.defineProperty(window, "lingDesktop", {
       configurable: true,
       value: {
         platform: "macos",
-        daemonBaseUrl: "http://127.0.0.1:17891",
+        daemonBaseUrl: daemonStatus.baseUrl,
         appearance: { reportTheme() {} },
         computerControl: {
           packagedBundledCapable: true,
@@ -341,8 +360,15 @@ test("packaged Computer Control follows the same dark surface hierarchy", async 
           onIntent: () => () => undefined,
         },
         daemon: {
-          getStatus: async () => ({ state: "connected", baseUrl: "http://127.0.0.1:17891", ownedByDesktop: true }),
-          restart: async () => ({ state: "connected", baseUrl: "http://127.0.0.1:17891", ownedByDesktop: true }),
+          getStatus: async () => daemonStatus,
+          restart: async () => daemonStatus,
+          onStatusChanged(listener) {
+            let subscribed = true;
+            queueMicrotask(() => {
+              if (subscribed) listener(daemonStatus);
+            });
+            return () => { subscribed = false; };
+          },
         },
         computerUse: {
           reportLocale() {},
@@ -356,7 +382,7 @@ test("packaged Computer Control follows the same dark surface hierarchy", async 
           setAutoShow: async () => ({ accepted: true }),
           onSummaryChanged: () => () => undefined,
         },
-      },
+      } satisfies Pick<LingDesktopCapabilities, "platform" | "daemonBaseUrl" | "daemon"> & Record<string, unknown>,
     });
   });
   const state = createDarkThemeState();
@@ -370,7 +396,7 @@ test("packaged Computer Control follows the same dark surface hierarchy", async 
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "设置" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "设置" }).click();
   await page.getByLabel("设置分组").getByRole("button", { name: /电脑控制|Computer Control/ }).click();
   await expect(page.locator(".computer-control-settings")).toBeVisible();
   await assertDarkPage(page, "packaged computer control", [
@@ -488,12 +514,24 @@ function createDarkThemeState(): MockState {
   return state;
 }
 
-async function mockAutomationReadRoutes(page: Page): Promise<void> {
+async function mockAutomationReadRoutes(page: Page, state: MockState): Promise<void> {
+  const automation: AutomationDefinition = {
+    id: "automation_dark_mode", workspaceId: "workspace_default", channelId: "channel_engineering",
+    threadId: "thread_dark_automation", automationMode: "cron", title: "深色主题自动化", kind: "custom_prompt",
+    status: "enabled", trigger: { type: "manual" }, cwds: [cwd], executionEnvironment: "local",
+    target: { scope: "channel", workspaceId: "workspace_default", channelId: "channel_engineering", cwd },
+    promptTemplate: { templateVersion: 1, promptMarkdown: "检查频道工作。", contextSelectors: [] },
+    executionPolicy: {}, outputPolicy: { destinations: [{ type: "automation_thread" }], artifactFormat: "markdown" },
+    createdAt: "2026-06-24T00:00:00.000Z", updatedAt: "2026-06-24T00:00:00.000Z",
+  };
+  state.threads.push({ id: automation.threadId, workspaceId: automation.workspaceId, kind: "automation",
+    channelId: automation.channelId, title: automation.title, objective: automation.promptTemplate.promptMarkdown,
+    status: "open", createdAt: automation.createdAt, updatedAt: automation.updatedAt });
   await page.route("http://127.0.0.1:17891/**", async (route) => {
     const request = route.request();
     const url = new URL(request.url());
     if (request.method() === "GET" && url.pathname === "/automations") {
-      await route.fulfill({ json: { cwd, automations: [], templates: [] } });
+      await route.fulfill({ json: { cwd, automations: [automation], templates: [] } });
       return;
     }
     if (request.method() === "GET" && url.pathname === "/automation-drafts") {
@@ -513,7 +551,7 @@ async function mockAutomationReadRoutes(page: Page): Promise<void> {
             cwd,
             status: "running",
             startedAt: "2026-06-24T00:00:00.000Z",
-            automationCount: 0,
+            automationCount: 1,
             tickCount: 1,
             items: [],
           }],
@@ -537,10 +575,10 @@ async function assertDarkPage(page: Page, label: string, selectors: readonly str
     expect(surface.maxChannel, `${label}: ${surface.selector} must not collapse to pure or legacy near-black`).toBeGreaterThanOrEqual(16);
     expect(surface.maxChannel, `${label}: ${surface.selector} should use dark background tokens`).toBeLessThanOrEqual(70);
   }
-  const textSamples = await readTextSamples(page);
+  const textSamples = await readTextSamples(page, selectors);
   expect(textSamples.length, `${label}: should expose readable text samples`).toBeGreaterThan(0);
   for (const sample of textSamples) {
-    expect(sample.maxChannel, `${label}: ${sample.selector} text should not stay black in dark mode`).toBeGreaterThanOrEqual(88);
+    expect(sample.maxChannel, `${label}: ${sample.selector} ${sample.element} "${sample.text}" should not stay black in dark mode`).toBeGreaterThanOrEqual(88);
   }
   await assertNoUnexpectedLargeSurfaceColors(page, label);
   await assertNoDocumentHorizontalOverflow(page, label);
@@ -551,9 +589,22 @@ async function readDarkSurfaces(page: Page, selectors: readonly string[]): Promi
   readonly maxChannel: number;
 }>> {
   return await page.evaluate((inputSelectors) => {
+    const context = document.createElement("canvas").getContext("2d", { willReadFrequently: true });
+    if (!context) throw new Error("CSS color conversion requires a 2D context");
+    const colors = new Map<string, number[]>();
+    function parseColor(value: string): number[] {
+      const cached = colors.get(value);
+      if (cached) return cached;
+      context!.clearRect(0, 0, 1, 1);
+      context!.fillStyle = value;
+      context!.fillRect(0, 0, 1, 1);
+      const [red, green, blue, alpha] = context!.getImageData(0, 0, 1, 1).data;
+      const channels = [red, green, blue, alpha / 255];
+      colors.set(value, channels);
+      return channels;
+    }
     function effectiveBackgroundColor(element: Element): number[] {
-      const color = getComputedStyle(element).backgroundColor;
-      const channels = color.match(/\d+(?:\.\d+)?/g)?.map(Number) ?? [];
+      const channels = parseColor(getComputedStyle(element).backgroundColor);
       const parentColor = element.parentElement ? effectiveBackgroundColor(element.parentElement) : [0, 0, 0];
       if (channels.length < 3) {
         return parentColor;
@@ -585,96 +636,35 @@ async function readDarkSurfaces(page: Page, selectors: readonly string[]): Promi
   }, selectors);
 }
 
-async function assertDarkAliasConvergence(page: Page): Promise<void> {
-  const pairs = [
-    ["--app-bg", "--ling-bg-app"],
-    ["--window-bg", "--ling-bg-app"],
-    ["--surface-sidebar", "--ling-bg-sidebar"],
-    ["--surface-panel", "--ling-bg-panel"],
-    ["--surface-panel-strong", "--ling-bg-elevated"],
-    ["--surface-subtle", "--ling-bg-subtle"],
-    ["--surface-hover", "--ling-bg-subtle"],
-    ["--surface-selected", "--ling-action-selection"],
-    ["--surface-pressed", "--ling-bg-pressed"],
-    ["--text-strong", "--ling-text-strong"],
-    ["--text", "--ling-text-default"],
-    ["--text-muted", "--ling-text-muted"],
-    ["--border", "--ling-border-default"],
-    ["--border-strong", "--ling-border-strong"],
-    ["--accent", "--ling-action-accent"],
-    ["--success-soft", "--ling-status-success-bg"],
-    ["--warning-soft", "--ling-status-warning-bg"],
-    ["--danger-soft", "--ling-status-danger-bg"],
-    ["--info-soft", "--ling-status-info-bg"],
+async function assertCanonicalThemeTokens(page: Page): Promise<void> {
+  const tokens = [
+    "--ling-bg-app", "--ling-bg-panel", "--ling-bg-elevated", "--ling-bg-subtle",
+    "--ling-text-strong", "--ling-text-default", "--ling-text-muted",
+    "--ling-border-default", "--ling-border-strong", "--ling-border-focus",
+    "--ling-action-accent", "--ling-action-selection",
+    "--ling-status-success-bg", "--ling-status-warning-bg",
+    "--ling-status-danger-bg", "--ling-status-info-bg",
   ] as const;
-
-  const values = await page.evaluate((variables) => {
-    const resolveColor = (variable: string): string => {
-      const probe = document.createElement("span");
-      probe.style.backgroundColor = `var(${variable})`;
-      document.body.append(probe);
-      const value = getComputedStyle(probe).backgroundColor;
-      probe.remove();
-      return value;
-    };
-    return variables.map(([alias, canonical]) => ({
-      alias,
-      canonical,
-      aliasValue: resolveColor(alias),
-      canonicalValue: resolveColor(canonical),
-    }));
-  }, pairs);
-
-  for (const value of values) {
-    expect(value.aliasValue, `${value.alias} should resolve through ${value.canonical}`).toBe(value.canonicalValue);
-  }
-}
-
-async function assertAliasesTrackRuntimeThemeTokens(page: Page): Promise<void> {
-  const values = await page.evaluate(() => {
-    const root = document.documentElement;
-    const overrides = [
-      ["--ling-bg-app", "#182431", "--app-bg"],
-      ["--ling-bg-panel", "#20303e", "--surface-panel"],
-      ["--ling-text-default", "#c5d2df", "--text"],
-    ] as const;
-    const previous = overrides.map(([canonical]) => [canonical, root.style.getPropertyValue(canonical)] as const);
-    const resolveColor = (variable: string, property: "backgroundColor" | "color"): string => {
-      const probe = document.createElement("span");
-      probe.style[property] = `var(${variable})`;
-      document.body.append(probe);
-      const value = getComputedStyle(probe)[property];
-      probe.remove();
-      return value;
-    };
-    try {
-      for (const [canonical, value] of overrides) root.style.setProperty(canonical, value);
-      return overrides.map(([canonical, , alias]) => ({
-        alias,
-        aliasValue: resolveColor(alias, alias === "--text" ? "color" : "backgroundColor"),
-        canonical,
-        canonicalValue: resolveColor(canonical, alias === "--text" ? "color" : "backgroundColor"),
-      }));
-    } finally {
-      for (const [canonical, value] of previous) {
-        if (value) root.style.setProperty(canonical, value);
-        else root.style.removeProperty(canonical);
-      }
-    }
-  });
-
-  for (const value of values) {
-    expect(value.aliasValue, `${value.alias} should remain a live binding to ${value.canonical}`).toBe(value.canonicalValue);
-  }
+  const values = await page.evaluate((names) => names.map((name) => ({ name, value: getComputedStyle(document.documentElement).getPropertyValue(name).trim() })), tokens);
+  for (const token of values) expect(token.value, `${token.name} must be defined by the active theme`).not.toBe("");
 }
 
 async function assertNoUnexpectedLargeSurfaceColors(page: Page, label: string): Promise<void> {
   const findings = await page.evaluate(() => {
     type Rgba = readonly [number, number, number, number];
+    const context = document.createElement("canvas").getContext("2d", { willReadFrequently: true });
+    if (!context) throw new Error("CSS color conversion requires a 2D context");
+    const colors = new Map<string, Rgba>();
     const parseColor = (value: string): Rgba | undefined => {
-      const channels = value.match(/\d+(?:\.\d+)?/g)?.map(Number);
-      if (!channels || channels.length < 3) return undefined;
-      return [channels[0] ?? 0, channels[1] ?? 0, channels[2] ?? 0, channels[3] ?? 1];
+      const cached = colors.get(value);
+      if (cached) return cached;
+      context.clearRect(0, 0, 1, 1);
+      context.fillStyle = value;
+      context.fillRect(0, 0, 1, 1);
+      const [red, green, blue, alpha] = context.getImageData(0, 0, 1, 1).data;
+      const channels: Rgba = [red, green, blue, alpha / 255];
+      colors.set(value, channels);
+      return channels;
     };
     const composite = (foreground: Rgba, background: Rgba): Rgba => {
       const alpha = foreground[3] + background[3] * (1 - foreground[3]);
@@ -745,28 +735,59 @@ async function assertNoUnexpectedLargeSurfaceColors(page: Page, label: string): 
   expect(findings, `${label}: large product surfaces should stay inside the dark Theme Pack hierarchy`).toEqual([]);
 }
 
-async function readTextSamples(page: Page): Promise<Array<{
+async function readTextSamples(page: Page, surfaceSelectors: readonly string[]): Promise<Array<{
   readonly selector: string;
   readonly maxChannel: number;
+  readonly element: string;
+  readonly text: string;
 }>> {
-  return await page.evaluate(() => {
-    const selectors = [".workspace h1", ".workspace h2", ".workspace h3", ".workspace strong", ".workspace label"];
-    return selectors.flatMap((selector) =>
-      Array.from(document.querySelectorAll(selector))
+  return await page.evaluate((selectors) => {
+    const context = document.createElement("canvas").getContext("2d", { willReadFrequently: true });
+    if (!context) throw new Error("CSS color conversion requires a 2D context");
+    const colors = new Map<string, number[]>();
+    const parseColor = (value: string): number[] => {
+      const cached = colors.get(value);
+      if (cached) return cached;
+      context.clearRect(0, 0, 1, 1);
+      context.fillStyle = value;
+      context.fillRect(0, 0, 1, 1);
+      const [red, green, blue, alpha] = context.getImageData(0, 0, 1, 1).data;
+      const channels = [red, green, blue, alpha / 255];
+      colors.set(value, channels);
+      return channels;
+    };
+    const effectiveBackground = (element: Element): number[] => {
+      const channels = parseColor(getComputedStyle(element).backgroundColor);
+      const parent = element.parentElement ? effectiveBackground(element.parentElement) : [0, 0, 0];
+      if (channels.length < 3) return parent;
+      const alpha = channels[3] ?? 1;
+      if (alpha <= 0) return parent;
+      return channels.slice(0, 3).map((channel, index) => Math.round(channel * alpha + parent[index] * (1 - alpha)));
+    };
+    return selectors.flatMap((surfaceSelector) =>
+      Array.from(document.querySelectorAll(surfaceSelector))
+        .flatMap((surface) => Array.from(surface.querySelectorAll("h1, h2, h3, strong, label, button, span")))
         .filter((element) => {
           const rect = element.getBoundingClientRect();
-          return rect.width > 0 && rect.height > 0 && (element.textContent ?? "").trim().length > 0;
+          const hasDirectText = Array.from(element.childNodes).some((node) =>
+            node.nodeType === Node.TEXT_NODE && (node.textContent ?? "").trim().length > 0
+          );
+          return rect.width > 0 && rect.height > 0
+            && hasDirectText
+            && Math.max(...effectiveBackground(element)) <= 70;
         })
         .slice(0, 4)
         .map((element) => {
-          const channels = getComputedStyle(element).color.match(/\d+(?:\.\d+)?/g)?.slice(0, 3).map(Number) ?? [0, 0, 0];
+          const channels = parseColor(getComputedStyle(element).color).slice(0, 3);
           return {
-            selector,
+            selector: surfaceSelector,
             maxChannel: Math.max(...channels),
+            element: `${element.tagName.toLowerCase()}.${String(element.className).replace(/\s+/gu, ".")}`,
+            text: (element.textContent ?? "").trim().slice(0, 80),
           };
         }),
     );
-  });
+  }, surfaceSelectors);
 }
 
 async function assertNoDocumentHorizontalOverflow(page: Page, label: string): Promise<void> {

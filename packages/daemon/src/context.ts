@@ -1,3 +1,4 @@
+import type { LearningReviewCoordinator } from "./features/learning/coordinator.js";
 import type {
   McpServer,
   McpRuntimeStatusSnapshot,
@@ -5,11 +6,13 @@ import type {
   SecretPurpose,
   SecretResolver,
   SecretStatus,
+  RunStore,
 } from "@ling-stack/core";
 import type {
   PiRunnerMcpToolCallResult,
   PiRunnerResult,
   PiRunnerRunOptions,
+  PiRunnerPreparedInput,
 } from "@ling-stack/runner-pi";
 import type { LingExtensionRegistry } from "@ling-stack/plugin-sdk";
 import type { ResolvedDaemonConfig } from "./config.js";
@@ -21,7 +24,10 @@ import type { ExternalWorkBackgroundSchedulerRegistry } from "./features/externa
 import type { ProviderStartupRefreshService } from "./features/providers/startup-refresh.js";
 import type { ProviderImportPreflightService } from "./features/providers/import-preflight.js";
 import type { ApprovalResumeCoordinator } from "./features/runs/approval-resume-coordinator.js";
-import type { ControlPlaneEventHub } from "./features/control-plane/events.js";
+import type { UserInputDeliveryWorker } from "./features/runs/user-input-delivery-worker.js";
+import type { NotificationHub } from "./features/notifications/hub.js";
+import type { ImDestinationRegistry } from "./features/im-destinations/registry.js";
+import type { ControlPlaneEventHub} from "./features/control-plane/events.js";
 import type { ComputerUsePreviewProjection } from "@ling-stack/contracts";
 import type {
   ComputerUseProjectionRegistry,
@@ -35,6 +41,7 @@ import type { RunStoreFactory } from "./runtime/store-registry.js";
 import type { RunStoreRegistry } from "./runtime/store-registry.js";
 import type { RunnerRegistry } from "./runtime/runners.js";
 import type { RuntimeSupervisor } from "./runtime/supervisor.js";
+import type { OfficeLocalReviewedNativeArtifact } from "./runtime/sandbox/protected-host-office-native-identity.js";
 import type { StartupOptionalWarmupCoordinator } from "./startup/optional-warmups.js";
 import type { StartupStateRegistry } from "./startup/state.js";
 import type { BundledCuaDriverActivationService } from "./features/plugins/cua-driver-bundled-activation.js";
@@ -47,17 +54,37 @@ import type { ChromeBrowserSessionController } from "./features/browser-extensio
 import type { ChromeBrowserPluginService } from "./features/plugins/chrome-browser.js";
 import type { OfficeDriverController } from "./features/office-documents/driver-controller.js";
 import type { OfficeDocumentsPluginService } from "./features/plugins/office-documents.js";
+import type { WorkspaceFileCapabilityRegistry } from "./features/previews/workspace-file-capabilities.js";
+import type { HostCapabilityBridgeController } from "./features/runs/host-capability-bridge-controller.js";
+import type { HostMcpOperation } from "./features/mcp/host-operation.js";
+import type { HostOfficeLocalMcpOperation } from "./features/mcp/office-local-mcp-operation.js";
+import type { HumanEvaluationService } from "./features/harness/evaluations/human-evaluation-service.js";
+import type { RunEvaluationQaTaskWorkerActivation } from "./features/harness/evaluations/task-worker-composition.js";
+import type { EngineManagementFeature, EngineManagementFeatureOptions } from "./features/execution-engines/feature.js";
+import type { NativeRunDispatcher, NativeRunTargetDispatcher } from "./features/runs/native-run-dispatcher.js";
 
 export interface RunnerAdapter {
+  /** Optional capability; absence must reject prepared execution, never fabricate evidence. */
+  prepareTaskInput?(options: PiRunnerRunOptions): Promise<PiRunnerPreparedInput>;
   runTask(options: PiRunnerRunOptions): Promise<PiRunnerResult>;
   resumeTask?(input: RunnerNativeResumeInputV1): Promise<PiRunnerResult>;
 }
 
 export interface RunnerNativeResumeInputV1 {
+  readonly schemaVersion: 1;
   readonly runId: string;
+  readonly rootRunId: string;
+  readonly workUnitId: string;
   readonly attemptId: string;
+  readonly sourceAttemptId: string;
+  readonly runnerId: string;
+  readonly runnerCapabilityRevision: string;
+  readonly contextViewId: string;
+  readonly workspaceIdentity: string;
+  readonly policySnapshotFingerprint: string;
   readonly handleRef: string;
-  readonly signal?: AbortSignal;
+  /** Live Host callbacks, secrets, cancellation and current approval bridge are never persisted in the handle. */
+  readonly options: PiRunnerRunOptions;
 }
 
 export interface McpBroker {
@@ -95,7 +122,7 @@ export interface McpBroker {
   ): Promise<PiRunnerMcpToolCallResult>;
 }
 
-export interface McpBrokerOptions {
+interface McpBrokerCommonOptions {
   readonly secretResolver: SecretResolver;
   /** Workspace authority for generation-scoped bundled providers. */
   readonly workspaceCwd?: string;
@@ -114,6 +141,12 @@ export interface McpBrokerOptions {
   };
 }
 
+/** Transport and fixed local Office scopes are distinct, mutually exclusive capabilities. */
+export type McpBrokerOptions = McpBrokerCommonOptions & (
+  | { readonly hostOperation?: HostMcpOperation; readonly officeLocalOperation?: never }
+  | { readonly hostOperation?: never; readonly officeLocalOperation: HostOfficeLocalMcpOperation }
+);
+
 export interface ExternalSecretStore extends SecretResolver {
   setSecret(ref: string, value: string, purpose?: SecretPurpose): SecretStatus;
   deleteSecret(ref: string, purpose?: SecretPurpose): SecretStatus;
@@ -123,6 +156,14 @@ export interface DaemonDependencies {
   readonly runner?: RunnerAdapter;
   readonly runnerRegistry?: RunnerRegistry;
   readonly storeFactory?: RunStoreFactory;
+  /** Optional synchronous observation of the exact production-owned Store after initialization. */
+  readonly onStoreInitialized?: (cwd: string, store: RunStore) => void;
+  /** Optional in-memory QA Provider authority. Absence keeps model task execution disabled. */
+  readonly runEvaluationQaTaskWorker?: RunEvaluationQaTaskWorkerActivation;
+  /** Authenticated bundled sources, initialized synchronously before recovery/read access. */
+  readonly initializeBundledSkills?: (store: RunStore) => void;
+  /** Host build selection only. Never supplied by workspace policy, HTTP or model input. */
+  readonly officeLocalNativeArtifact?: OfficeLocalReviewedNativeArtifact;
   readonly extensionRegistry?: LingExtensionRegistry;
   readonly secretResolver?: SecretResolver;
   readonly externalSecretStore?: ExternalSecretStore;
@@ -164,6 +205,9 @@ export interface DaemonDependencies {
   readonly computerUseTargetOwnershipTimeoutMs?: number;
   readonly remoteAccessManagementCapability?: string;
   readonly remoteAccessStateDir?: string;
+  readonly engineManagement?: Partial<EngineManagementFeatureOptions>;
+  /** Trusted embedding/test seam. Null intentionally keeps native execution fail-closed. */
+  readonly nativeRunTargetDispatcher?: NativeRunTargetDispatcher | null;
   /** Pass null only for fail-closed embedding/tests that intentionally disable Mobile send. */
   readonly remoteReplyDispatcher?: RemoteReplyDispatcher | null;
   readonly chromeBrowserExtensionIds?: readonly string[];
@@ -173,12 +217,14 @@ export interface DaemonDependencies {
 }
 
 export interface DaemonContext {
+  readonly learningReviewCoordinator?: LearningReviewCoordinator;
   readonly config: ResolvedDaemonConfig;
   readonly runnerRegistry: RunnerRegistry;
   readonly extensionRegistry: LingExtensionRegistry;
   readonly storeRegistry: RunStoreRegistry;
   readonly activeRuns: ActiveRunRegistry;
   readonly approvalResumeCoordinator: ApprovalResumeCoordinator;
+  readonly userInputDeliveryWorker: UserInputDeliveryWorker;
   readonly activeDirectReplies: ActiveDirectReplyRegistry;
   readonly channelReplyDispatchCoordinator: ChannelReplyDispatchCoordinator;
   readonly channelTurnDispatchWorker: ChannelTurnDispatchWorkerRegistry;
@@ -193,6 +239,8 @@ export interface DaemonContext {
   readonly backgroundSchedulers: ExternalWorkBackgroundSchedulerRegistry;
   readonly automationSchedulers: AutomationSchedulerRegistry;
   readonly controlPlaneEvents: ControlPlaneEventHub;
+  readonly notificationHub: NotificationHub;
+  readonly imDestinations: ImDestinationRegistry;
   readonly providerStartupRefresh: ProviderStartupRefreshService;
   readonly providerImportPreflight: ProviderImportPreflightService;
   readonly startupState: StartupStateRegistry;
@@ -207,8 +255,15 @@ export interface DaemonContext {
   readonly computerUseRouteToken?: string;
   readonly computerUseTargetOwnershipTimeoutMs?: number;
   readonly remoteAccess: RemoteAccessController;
+  readonly engineManagement: EngineManagementFeature;
+  readonly nativeRunDispatcher?: NativeRunDispatcher;
   readonly chromeBrowserSessions: ChromeBrowserSessionController;
   readonly chromeBrowserPlugin: ChromeBrowserPluginService;
   readonly officeDriverController: OfficeDriverController;
   readonly officeDocumentsPlugin: OfficeDocumentsPluginService;
+  /** Process-local transcript source grants; daemon restart invalidates all grants. */
+  readonly workspaceFileCapabilities: WorkspaceFileCapabilityRegistry;
+  readonly hostCapabilityBridge: HostCapabilityBridgeController;
+  /** Independent private Main ingress; never an Agent/MCP or Mobile capability. */
+  readonly humanEvaluations: HumanEvaluationService;
 }

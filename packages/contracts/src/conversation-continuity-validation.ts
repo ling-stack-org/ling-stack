@@ -1,3 +1,6 @@
+import { channelOperationPlanFingerprintV1, isChannelOperationBindingV1 } from "./channel-operation-bindings.js";
+import { isUserInputRunEventPositionV1 } from "./user-input-event-position.js";
+import { hasConsistentCommittedRunNarration, isCommittedRunNarrationV1 } from "./committed-run-narration.js";
 import {
   channelIntentDecisionV2Actions,
   channelIntentDecisionV2CreatedByValues,
@@ -8,6 +11,7 @@ import {
   requiredParticipantRequirementsV1,
   requiredParticipantManifestFingerprintV1,
   conversationAssistantDeliveryStatusesV1,
+  conversationAssistantPresentationRolesV1,
   contextSegmentStates,
   conversationContextSummaryScopes,
   conversationContextSummaryStatuses,
@@ -26,6 +30,8 @@ import {
   type ChannelIntentDecisionV2,
   type ChannelIntentDecisionV2Action,
   type ChannelIntentExecutionPlanV1,
+  type ChannelIntentExecutionOperationV1,
+  type ChannelIntentPendingOperationV1,
   type CommandMatchPolicyV1,
   type RequiredParticipantManifestV1,
   type ContextSegment,
@@ -77,14 +83,17 @@ const PAYLOAD_KEYS: Readonly<Record<ConversationItemKindV1, ReadonlySet<string>>
     "replyToItemId",
     "quotedItemIds",
   ]),
-  assistant_message: new Set(["body", "format", "streaming", "deliveryStatus", "errorMessage"]),
+  assistant_message: new Set(["body", "format", "streaming", "deliveryStatus", "presentationRole", "errorMessage", "runNarration"]),
   tool_call: new Set(["toolCallId", "toolName", "title", "inputSummary"]),
   tool_result: new Set(["toolCallId", "status", "outputSummary", "errorCode"]),
   approval_request: new Set(["approvalRequestId", "title", "summary"]),
   approval_decision: new Set(["approvalRequestId", "decision", "reason"]),
+  user_input_request: new Set(["requestId", "requestVersion", "runEventPosition"]),
+  user_input_answer: new Set(["requestId", "requestVersion", "answerId", "runEventPosition"]),
   handoff: new Set(["handoffId", "targetTeammateId", "summary"]),
   operation_state: new Set(["operationId", "state", "title", "summary"]),
   artifact_ref: new Set(["artifactId", "title", "artifactKind"]),
+  terminal_report: new Set(["reportId", "generation", "sourceKind", "sourceId", "evidenceFingerprint", "outcomeStatus"]),
   system_event: new Set(["eventType", "summary"]),
 };
 
@@ -246,9 +255,10 @@ export function isLingThreadContinuityV2(value: unknown): value is LingThreadCon
       && value.forkContextSnapshotId === undefined;
   }
   if (value.relationKind === "branch") {
+    // Empty-parent forks have no Turn to reference. The Store validates the
+    // matching zero-watermark snapshot and parent emptiness atomically.
     return value.surfaceKind === "branch"
       && isText(value.parentThreadId)
-      && isText(value.parentTurnId)
       && value.anchorItemId === undefined
       && isText(value.forkContextSnapshotId);
   }
@@ -296,7 +306,7 @@ export function isConversationItemV1(value: unknown): value is ConversationItemV
   } else if (value.committedAt !== undefined) {
     return false;
   }
-  if (value.kind === "assistant_message" && !isAssistantItemStateConsistent(value)) {
+  if (value.kind === "assistant_message" && (!isAssistantItemStateConsistent(value) || !hasConsistentCommittedRunNarration(value))) {
     return false;
   }
   return value.supersedesItemId !== value.id
@@ -391,11 +401,14 @@ export function isConversationContextSnapshot(value: unknown): value is Conversa
   return isRecordWithOnlyKeys(value, SNAPSHOT_KEYS)
     && isText(value.id)
     && isText(value.threadId)
-    && isText(value.segmentId)
     && isText(value.projectionVersion)
     && isNonNegativeInteger(value.throughItemSequence)
     && isTextArray(value.summaryIds)
     && isArrayOf(value.sourceRefs, isConversationDomainRef)
+    && (value.throughItemSequence === 0
+      ? value.segmentId === undefined && value.summaryIds.length === 0
+        && value.sourceRefs.length === 1 && value.sourceRefs[0]?.type === "thread" && value.sourceRefs[0].id === value.threadId
+      : isText(value.segmentId))
     && isText(value.policyVersion)
     && isCanonicalTimestamp(value.createdAt);
 }
@@ -549,6 +562,12 @@ export function serializeConversationContinuityGoldenFixtureV1(
 function isConversationItemPayloadV1(kind: ConversationItemKindV1, value: unknown): boolean {
   if (!isRecordWithOnlyKeys(value, PAYLOAD_KEYS[kind])) return false;
   switch (kind) {
+    case "user_input_request":
+      return isText(value.requestId) && isPositiveInteger(value.requestVersion)
+        && (value.runEventPosition === undefined || isUserInputRunEventPositionV1(value.runEventPosition));
+    case "user_input_answer":
+      return isText(value.requestId) && isPositiveInteger(value.requestVersion) && isText(value.answerId)
+        && (value.runEventPosition === undefined || isUserInputRunEventPositionV1(value.runEventPosition));
     case "user_message":
       return typeof value.body === "string"
         && value.body.length <= 32_768
@@ -565,10 +584,12 @@ function isConversationItemPayloadV1(kind: ConversationItemKindV1, value: unknow
         && (value.quotedItemIds === undefined || isUniqueTextArray(value.quotedItemIds));
     case "assistant_message":
       return typeof value.body === "string"
+        && (value.runNarration === undefined || isCommittedRunNarrationV1(value.runNarration))
         && value.body.length <= 128_000
         && (value.format === "plain_text" || value.format === "markdown")
         && typeof value.streaming === "boolean"
         && includes(conversationAssistantDeliveryStatusesV1, value.deliveryStatus)
+        && includes(conversationAssistantPresentationRolesV1, value.presentationRole)
         && isOptionalText(value.errorMessage, 8_192);
     case "tool_call":
       return isText(value.toolCallId)
@@ -601,6 +622,17 @@ function isConversationItemPayloadV1(kind: ConversationItemKindV1, value: unknow
       return isText(value.artifactId)
         && isOptionalText(value.title)
         && isOptionalText(value.artifactKind);
+    case "terminal_report":
+      return isText(value.reportId)
+        && isPositiveInteger(value.generation)
+        && (value.sourceKind === "workflow" || value.sourceKind === "run" || value.sourceKind === "turn")
+        && isText(value.sourceId)
+        && isText(value.evidenceFingerprint)
+        && (value.outcomeStatus === "succeeded"
+          || value.outcomeStatus === "partially_succeeded"
+          || value.outcomeStatus === "blocked"
+          || value.outcomeStatus === "failed"
+          || value.outcomeStatus === "cancelled");
     case "system_event":
       return isText(value.eventType)
         && isText(value.summary, 8_192);
@@ -610,6 +642,10 @@ function isConversationItemPayloadV1(kind: ConversationItemKindV1, value: unknow
 function isAssistantItemStateConsistent(item: Record<string, unknown>): boolean {
   if (!isRecord(item.payload)) return false;
   const payload = item.payload;
+  // A terminal Run may fail after producing text. Its immutable message was
+  // still committed successfully; execution/delivery failure is a separate axis.
+  if (payload.runNarration !== undefined && item.status === "committed" && payload.streaming === false
+    && payload.deliveryStatus === "failed") return true;
   if (item.status === "pending") {
     return payload.streaming === true
       && payload.deliveryStatus === "pending"
@@ -648,36 +684,89 @@ function isConversationWorkspaceFileRef(value: unknown): value is {
 }
 
 function isClarification(value: unknown): boolean {
-  return isRecordWithOnlyKeys(value, new Set(["missingFields", "question"]))
+  return isRecordWithOnlyKeys(value, new Set(["missingFields", "question", "pendingOperation"]))
     && isUniqueTextArray(value.missingFields)
     && value.missingFields.length > 0
-    && isText(value.question, 8_192);
+    && isText(value.question, 8_192)
+    && (value.pendingOperation === undefined || isChannelIntentPendingOperationV1(value.pendingOperation));
+}
+
+export function isChannelIntentPendingOperationV1(value: unknown): value is ChannelIntentPendingOperationV1 {
+  if (!isRecordWithOnlyKeys(value, new Set(["schemaVersion", "sourceRevision", "sourceAssignmentId", "sourceAssignmentRevision", "authorityFingerprint", "execution", "participantManifest", "slots", "fingerprint"]))
+    || value.schemaVersion !== 1 || !isNonNegativeInteger(value.sourceRevision)
+    || !isText(value.sourceAssignmentId) || !isNonNegativeInteger(value.sourceAssignmentRevision)
+    || typeof value.authorityFingerprint !== "string" || !/^[a-f0-9]{64}$/u.test(value.authorityFingerprint)
+    || typeof value.fingerprint !== "string" || !/^[a-f0-9]{64}$/u.test(value.fingerprint)
+    || !isChannelIntentExecutionPlanV1(value.execution) || value.execution.bindingVersion !== 1
+    || !isRequiredParticipantManifestV1(value.participantManifest)
+    || !Array.isArray(value.slots) || value.slots.length === 0 || value.slots.length > 64) return false;
+  const execution = value.execution;
+  const participants = value.participantManifest.participants;
+  if (execution.operations.some(operation => !participants.some(participant => participant.participantId === operation.binding!.ownerParticipantId
+    && (!operation.required || participant.requiredOperationIds.includes(operation.id))))
+    || participants.some(participant => participant.requiredOperationIds.some(id => !execution.operations.some(operation =>
+      operation.id === id && operation.required && operation.binding!.ownerParticipantId === participant.participantId)))) return false;
+  const ids = new Set<string>();
+  return value.slots.every(slot => {
+    if (!isRecordWithOnlyKeys(slot, new Set(["operationId", "field"])) || !isText(slot.operationId)
+      || slot.field !== "project_input_root" || ids.has(slot.operationId)) return false;
+    ids.add(slot.operationId);
+    const operation = execution.operations.find(operation => operation.id === slot.operationId);
+    return operation?.kind === "run_command" && operation.binding?.commandInputScope === undefined
+      && operation.binding?.effectScope.exactCommands.length === 1
+      && /^node\s/u.test(operation.binding.effectScope.exactCommands[0]!)
+      && operation.binding.inputRefs.some(ref => /\.(?:mjs|cjs|js)$/u.test(ref.path));
+  });
 }
 
 export function isChannelIntentExecutionPlanV1(value: unknown): value is ChannelIntentExecutionPlanV1 {
-  if (!isRecordWithOnlyKeys(value, new Set(["operations"]))
+  if (!isRecordWithOnlyKeys(value, new Set(["operations", "bindingVersion", "fingerprint"]))
     || !Array.isArray(value.operations)
     || value.operations.length === 0
     || !value.operations.every(isExecutionOperation)) {
     return false;
   }
+  if (value.bindingVersion === undefined
+    ? value.fingerprint !== undefined || value.operations.some((operation) => operation.binding !== undefined || operation.kind === "file_read")
+    : value.bindingVersion !== 1 || value.operations.some((operation) => !operation.binding)
+      || value.fingerprint !== channelOperationPlanFingerprintV1(value.operations)) return false;
   const operationIds = new Set(value.operations.map((operation) => operation.id));
   if (operationIds.size !== value.operations.length
     || value.operations.some((operation) => operation.dependsOn.some((dependencyId) => !operationIds.has(dependencyId)))) {
     return false;
   }
+  if (value.bindingVersion === 1) {
+    const byId = new Map(value.operations.map((operation) => [operation.id, operation]));
+    for (const operation of value.operations) {
+      const binding = operation.binding!;
+      const goal = binding.commandGoal;
+      if (goal?.inputOperationId !== undefined) {
+        const predecessor = byId.get(goal.inputOperationId);
+        if (!predecessor || !operation.dependsOn.includes(predecessor.id)
+          || !["file_read", "file_create", "file_edit"].includes(predecessor.kind)
+          || !(predecessor.kind === "file_read" ? predecessor.binding?.inputRefs : predecessor.binding?.outputRefs)
+            ?.some(ref => ref.path === goal.modulePath)) return false;
+      }
+      const content = binding.contentSource;
+      if (content?.kind !== "generated_objective") continue;
+      const inputPaths: string[] = operation.kind === "file_edit" ? [binding.outputRefs[0]!.path] : [];
+      for (const inputId of content.inputOperationIds) {
+        const predecessor = byId.get(inputId);
+        if (!predecessor || (predecessor.kind !== "file_read" && predecessor.kind !== "run_command")
+          || predecessor.binding?.ownerParticipantId !== binding.ownerParticipantId
+          || !operation.dependsOn.includes(inputId)) return false;
+        // A command contributes its Host result, never its staged read scope.
+        if (predecessor.kind === "run_command") continue;
+        const path = predecessor.binding.inputRefs[0]!.path;
+        if (!inputPaths.includes(path)) inputPaths.push(path);
+      }
+      if (JSON.stringify(binding.effectScope.readPaths) !== JSON.stringify(inputPaths)) return false;
+    }
+  }
   return !executionPlanHasCycle(value.operations);
 }
 
-function isExecutionOperation(value: unknown): value is {
-  readonly id: string;
-  readonly kind: "file_create" | "file_edit" | "open_local_target" | "run_command";
-  readonly targetKind: "file" | "directory" | "command" | "workspace";
-  readonly targetRef: ConversationDomainRef;
-  readonly commandMatchPolicy?: CommandMatchPolicyV1;
-  readonly required: boolean;
-  readonly dependsOn: readonly string[];
-} {
+function isExecutionOperation(value: unknown): value is ChannelIntentExecutionOperationV1 {
   if (!isRecordWithOnlyKeys(value, new Set([
     "id",
     "kind",
@@ -686,11 +775,12 @@ function isExecutionOperation(value: unknown): value is {
     "commandMatchPolicy",
     "required",
     "dependsOn",
+    "binding",
   ]))) {
     return false;
   }
   if (!isText(value.id)
-    || (value.kind !== "file_create" && value.kind !== "file_edit" && value.kind !== "open_local_target" && value.kind !== "run_command")
+    || (value.kind !== "file_read" && value.kind !== "file_create" && value.kind !== "file_edit" && value.kind !== "open_local_target" && value.kind !== "run_command")
     || (value.targetKind !== "file" && value.targetKind !== "directory" && value.targetKind !== "command" && value.targetKind !== "workspace")
     || !isConversationDomainRef(value.targetRef)
     || typeof value.required !== "boolean"
@@ -698,7 +788,21 @@ function isExecutionOperation(value: unknown): value is {
     || value.dependsOn.includes(value.id)) {
     return false;
   }
-  if (value.kind === "file_create" || value.kind === "file_edit" || value.kind === "open_local_target") {
+  if (value.binding !== undefined) {
+    if (!isChannelOperationBindingV1(value.binding, value.id)) return false;
+    const binding = value.binding;
+    if ((binding.commandGoal !== undefined || binding.commandInputScope !== undefined || binding.workingDirectory !== undefined)
+      && value.kind !== "run_command") return false;
+    const writes = value.kind === "file_create" || value.kind === "file_edit";
+    if (writes ? binding.outputRefs.length !== 1 || !binding.contentSource : binding.outputRefs.length > 0 || binding.contentSource !== undefined) return false;
+    const targets = writes ? binding.outputRefs : binding.inputRefs;
+    if (value.kind !== "run_command" && (targets.length !== 1 || value.targetRef.label !== targets[0]?.path)) return false;
+    if (value.kind === "run_command"
+      ? !isCommandMatchPolicyV1(value.commandMatchPolicy) || value.commandMatchPolicy.kind !== "exact_command"
+        || binding.effectScope.exactCommands.length !== 1 || binding.effectScope.exactCommands[0] !== value.commandMatchPolicy.command
+      : binding.effectScope.exactCommands.length !== 0) return false;
+  }
+  if (value.kind === "file_read" || value.kind === "file_create" || value.kind === "file_edit" || value.kind === "open_local_target") {
     return value.targetKind === "file" && value.commandMatchPolicy === undefined;
   }
   return value.targetKind === "command"

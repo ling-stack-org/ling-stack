@@ -82,7 +82,7 @@
   height: 26px;
   min-height: 26px;
   background: color-mix(in srgb, var(--ling-bg-panel) 90%, transparent);
-  box-shadow: var(--ling-shadow-sm);
+  box-shadow: var(--ling-shadow-low);
 }
 
 .scene-video-image-pending-actions {
@@ -228,7 +228,7 @@
   top: 6px;
   right: 6px;
   background: color-mix(in srgb, var(--ling-bg-panel) 90%, transparent);
-  box-shadow: var(--ling-shadow-sm);
+  box-shadow: var(--ling-shadow-low);
 }
 
 .media-project-generated-copy {

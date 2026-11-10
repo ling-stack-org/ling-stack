@@ -2,6 +2,7 @@
 
 import { spawn } from "node:child_process";
 import { mkdtemp, mkdir, rm, rmdir } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,9 +16,11 @@ import {
   packageAuthorityInputFromEnvironment,
   writeCuaDriverPackageAuthorityFiles,
 } from "./cua-driver-package-runtime-policy.mjs";
+import { prepareDistributionBuilder } from "./distribution/installer-builder.mjs";
 
 const APP_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CONFIG_PATH = resolve(APP_ROOT, "scripts/cua-driver-electron-builder.config.mjs");
+const require = createRequire(import.meta.url);
 
 export async function prepareCuaDriverElectronPackage(input, dependencies = {}) {
   const platform = normalizePlatform(input?.platform);
@@ -208,25 +211,41 @@ export async function runCuaDriverElectronPackageCli(
   if (cleanupError) throw cleanupError;
 }
 
-async function spawnElectronBuilder({ appRoot, args, environment }) {
-  const executable = process.platform === "win32" ? "corepack.cmd" : "corepack";
-  return new Promise((settle, reject) => {
-    const child = spawn(executable, ["pnpm", "exec", "electron-builder", ...args], {
-      cwd: appRoot,
-      env: environment,
-      shell: false,
-      stdio: "inherit",
-      windowsHide: true,
+export async function spawnElectronBuilder({ appRoot, args, environment }) {
+  // .cmd shims cannot be spawned directly on Windows without a shell.
+  // Use the installed CLI with this Node runtime and preserve the argv boundary.
+  let cliPath = require.resolve("electron-builder/cli.js");
+  let toolingRoot;
+  try {
+    if (args.includes("--win") && args.includes("nsis")
+      && environment.LING_CUA_DRIVER_PACKAGE_PROVIDER !== "1"
+      && (environment.LING_CUA_SIGNING_TIER ?? "unsigned_dev").trim() === "unsigned_dev") {
+      // The development installer keeps the stock upgrade/rollback machinery.
+      // Patch only private tooling, leaving shared dependencies and signed lanes intact.
+      toolingRoot = await mkdtemp(join(tmpdir(), "ling-distribution-builder-"));
+      const prepared = prepareDistributionBuilder({ desktopRoot: appRoot, outputRoot: toolingRoot });
+      cliPath = join(prepared.electronBuilderRoot, "cli.js");
+    }
+    return await new Promise((settle, reject) => {
+      const child = spawn(process.execPath, [cliPath, ...args], {
+        cwd: appRoot,
+        env: environment,
+        shell: false,
+        stdio: "inherit",
+        windowsHide: true,
+      });
+      child.once("error", reject);
+      child.once("exit", (code, signal) => {
+        if (signal) {
+          reject(new Error(`electron_builder_signal:${signal}`));
+          return;
+        }
+        settle(code ?? 1);
+      });
     });
-    child.once("error", reject);
-    child.once("exit", (code, signal) => {
-      if (signal) {
-        reject(new Error(`electron_builder_signal:${signal}`));
-        return;
-      }
-      settle(code ?? 1);
-    });
-  });
+  } finally {
+    if (toolingRoot) await rm(toolingRoot, { recursive: true, force: true });
+  }
 }
 
 function parseArgs(values) {

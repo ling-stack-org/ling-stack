@@ -13,6 +13,7 @@ import {
   channelWorkflowStatuses,
   channelWorkflowStepStatuses,
   readOnlyRunTools,
+  normalizeRunnerId,
   type Channel,
   type ChannelBranchStatus,
   type ChannelBranchUpdateInput,
@@ -39,10 +40,11 @@ import {
   type CreateChannelExecutionProposalInput,
   type CreateChannelBranchInput,
   type CreateChannelInput,
-  type ResponseLanguage,
+  type ResponseLanguagePreference,
   type RunTool,
   type UpdateChannelExecutionProposalInput,
 } from "@ling-stack/core";
+import { isSupportedLocale } from "@ling-stack/localization";
 import {
   isRecord,
   readNullableString,
@@ -64,7 +66,7 @@ export interface ChannelExecutionProposalRequest {
   readonly collaborationSteps: readonly ChannelExecutionProposalStep[];
   readonly requiredTools: readonly RunTool[];
   readonly riskSummary?: string;
-  readonly responseLanguage?: ResponseLanguage;
+  readonly responseLanguage?: ResponseLanguagePreference;
   readonly shaping?: ChannelRequirementShaping;
 }
 
@@ -86,7 +88,7 @@ export interface ChannelDecisionUpdateRequest {
   readonly decision?: string;
   readonly rationale?: string;
   readonly alternatives?: readonly string[];
-  readonly status?: ChannelDecisionStatus;
+  readonly status?: "rejected";
 }
 
 export interface ChannelHandoffRequest {
@@ -324,6 +326,7 @@ export function parseChannelExecutionProposalUpdateInput(value: unknown): Update
     throw new Error("Channel proposal update must be a JSON object");
   }
   const input: UpdateChannelExecutionProposalInput = {
+    expectedRevision: readOptionalNumber(value, "expectedRevision"),
     title: readOptionalString(value, "title"),
     prompt: readOptionalString(value, "prompt"),
     assigneeTeammateId: readOptionalString(value, "assigneeTeammateId"),
@@ -339,6 +342,9 @@ export function parseChannelExecutionProposalUpdateInput(value: unknown): Update
     linkedWorkflowId: readNullableString(value, "linkedWorkflowId"),
     errorMessage: readNullableString(value, "errorMessage"),
   };
+  if (input.expectedRevision !== undefined && (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 1)) {
+    throw new Error("expectedRevision must be a positive safe integer");
+  }
   validateChannelExecutionProposalInput(input);
   return input;
 }
@@ -391,6 +397,11 @@ export function parseChannelDecisionRequest(value: unknown): ChannelDecisionRequ
   if (!isRecord(value)) {
     throw new Error("Channel decision request must be a JSON object");
   }
+  const status = readOptionalChannelDecisionStatus(value, "status");
+  const supersedesDecisionId = readOptionalString(value, "supersedesDecisionId");
+  if (supersedesDecisionId && status !== undefined && status !== "active") {
+    throw new Error("status must be active when supersedesDecisionId is provided");
+  }
   return {
     sourceMessageId: readOptionalString(value, "sourceMessageId"),
     sourceTaskId: readOptionalString(value, "sourceTaskId"),
@@ -399,8 +410,8 @@ export function parseChannelDecisionRequest(value: unknown): ChannelDecisionRequ
     decision: readString(value, "decision"),
     rationale: readOptionalString(value, "rationale"),
     alternatives: readOptionalStringArray(value, "alternatives") ?? [],
-    status: readOptionalChannelDecisionStatus(value, "status"),
-    supersedesDecisionId: readOptionalString(value, "supersedesDecisionId"),
+    status,
+    supersedesDecisionId,
     createdBy: readString(value, "createdBy"),
   };
 }
@@ -409,12 +420,16 @@ export function parseChannelDecisionUpdateRequest(value: unknown): ChannelDecisi
   if (!isRecord(value)) {
     throw new Error("Channel decision update must be a JSON object");
   }
+  const status = readOptionalChannelDecisionStatus(value, "status");
+  if (status !== undefined && status !== "rejected") {
+    throw new Error("status must be rejected when updating a decision; supersession requires creating a successor");
+  }
   return {
     title: readOptionalString(value, "title"),
     decision: readOptionalString(value, "decision"),
     rationale: readOptionalString(value, "rationale"),
     alternatives: readOptionalStringArray(value, "alternatives"),
-    status: readOptionalChannelDecisionStatus(value, "status"),
+    status,
   };
 }
 
@@ -761,7 +776,7 @@ export function parseChannelWorkflowStepStartRequest(value: unknown): ChannelWor
     taskTitle: readOptionalString(value, "taskTitle"),
     taskPrompt: readOptionalString(value, "taskPrompt"),
     providerPresetId: readOptionalString(value, "providerPresetId"),
-    runnerId: readOptionalString(value, "runnerId"),
+    runnerId: normalizeRunnerId(readOptionalString(value, "runnerId")),
     assigneeTeammateId: readOptionalString(value, "assigneeTeammateId"),
     idempotencyKey: readOptionalString(value, "idempotencyKey"),
     skipProviderPreflight: readOptionalBoolean(value, "skipProviderPreflight"),
@@ -1153,8 +1168,8 @@ function readOptionalChannelMessageFileRefSource(
   if (value === undefined) {
     return undefined;
   }
-  if (value !== "composer" && value !== "explicit_text" && value !== "api") {
-    throw new Error(`${label} must be one of: composer, explicit_text, api`);
+  if (value !== "composer" && value !== "explicit_text" && value !== "api" && value !== "inferred_text") {
+    throw new Error(`${label} must be one of: composer, explicit_text, api, inferred_text`);
   }
   return value;
 }
@@ -1275,18 +1290,18 @@ function readNullableChannelResponseLanguage(record: Record<string, unknown>, ke
   return value as NonNullable<Channel["responseLanguage"]>;
 }
 
-function readOptionalResponseLanguage(record: Record<string, unknown>, key: string): ResponseLanguage | undefined {
+function readOptionalResponseLanguage(record: Record<string, unknown>, key: string): ResponseLanguagePreference | undefined {
   const value = readOptionalString(record, key);
   if (value === undefined) {
     return undefined;
   }
-  if (value !== "zh-CN" && value !== "en-US") {
-    throw new Error(`${key} must be one of: zh-CN, en-US`);
+  if (value !== "follow_user" && !isSupportedLocale(value)) {
+    throw new Error(`${key} must be follow_user or a supported locale`);
   }
   return value;
 }
 
-function readNullableResponseLanguage(record: Record<string, unknown>, key: string): ResponseLanguage | null | undefined {
+function readNullableResponseLanguage(record: Record<string, unknown>, key: string): ResponseLanguagePreference | null | undefined {
   const value = record[key];
   if (value === undefined) {
     return undefined;
@@ -1294,8 +1309,8 @@ function readNullableResponseLanguage(record: Record<string, unknown>, key: stri
   if (value === null) {
     return null;
   }
-  if (value !== "zh-CN" && value !== "en-US") {
-    throw new Error(`${key} must be one of: zh-CN, en-US, or null`);
+  if (typeof value !== "string" || (value !== "follow_user" && !isSupportedLocale(value))) {
+    throw new Error(`${key} must be follow_user, a supported locale, or null`);
   }
   return value;
 }

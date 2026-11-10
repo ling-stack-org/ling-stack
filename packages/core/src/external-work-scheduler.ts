@@ -4,6 +4,8 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { isAbsolute, relative, resolve as resolvePath } from "node:path";
 import { DEFAULT_WORKSPACE_ID, type Channel } from "./workspace-types.js";
 import { redactSecrets } from "./redaction.js";
+import { trimBoundaryCharacters } from "./string-boundaries.js";
+import { createCoreOriginalProcessEntry, isCoreOriginalLaunchRefusal, type CoreOriginalProcessEntry } from "./original-host-process-entry.js";
 import type {
   ChannelStoreFacet,
   ExternalWorkStoreFacet,
@@ -97,6 +99,11 @@ export interface ExternalWorkReconcileInput {
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 100;
 const EXTERNAL_WORK_LEASE_TTL_MS = 15 * 60 * 1000;
+const originalSchedulerSpawn = spawn;
+const originalExternalWorkHook = createCoreOriginalProcessEntry("external_work_scheduler", (input: {
+  readonly command: string; readonly cwd: string;
+}) => originalSchedulerSpawn(input.command, { cwd: input.cwd, shell: true, stdio: ["ignore", "pipe", "pipe"] }));
+export const CORE_EXTERNAL_WORK_SCHEDULER_ENTRY: CoreOriginalProcessEntry = originalExternalWorkHook.entry;
 const INITIAL_RETRY_BACKOFF_MS = 1_000;
 const ACTIVE_SCHEDULER_STATUSES = new Set<ExternalWorkSchedulerStatus>([
   "discovered",
@@ -111,7 +118,7 @@ export function createGitHubExternalWorkAdapter(options: GitHubExternalWorkAdapt
   if (!fetchImpl) {
     throw new Error("A fetch implementation is required for GitHub external work polling.");
   }
-  const apiBaseUrl = (options.apiBaseUrl ?? "https://api.github.com").replace(/\/+$/, "");
+  const apiBaseUrl = trimBoundaryCharacters(options.apiBaseUrl ?? "https://api.github.com", "/", "end");
 
   return {
     id: "github-readonly",
@@ -563,6 +570,7 @@ async function processCandidate(input: {
       input.response.schedulerStates.push(ready);
     }
   } catch (error) {
+    if (isCoreOriginalLaunchRefusal(error)) throw error;
     const externalWork = input.store.getExternalWorkRecordByIdempotency(input.item.sourceKind, input.item.idempotencyKey);
     if (!externalWork) {
       input.response.blocked += 1;
@@ -769,7 +777,8 @@ class WorkspaceHookExecutionError extends Error {
 
 function runShellCommand(command: string, cwd: string, timeoutMs: number): Promise<{ readonly exitCode: number | null; readonly timedOut: boolean; readonly stdout: string; readonly stderr: string }> {
   return new Promise((resolveRun) => {
-    const child = spawn(command, { cwd, shell: true, stdio: ["ignore", "pipe", "pipe"] });
+    const record = originalExternalWorkHook.capture(Object.freeze({ command, cwd }));
+    const child = originalExternalWorkHook.entry.invoke(record);
     let stdout = "";
     let stderr = "";
     let timedOut = false;

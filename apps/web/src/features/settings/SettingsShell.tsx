@@ -1,5 +1,9 @@
 import { ArrowLeft, type LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
+import {
+  DesktopTitlebarSurface,
+  useDesktopTitlebarPlacement,
+} from "../../app/DesktopTitlebarSurface.js";
 import { Button } from "../../shared/ui/index.js";
 import type { SettingsSectionId } from "./settings-shell-model.js";
 
@@ -41,22 +45,32 @@ export function SettingsShell({
   readonly onBack?: () => void;
   readonly onSelectSection: (sectionId: SettingsSectionId) => void;
 }): React.JSX.Element {
+  const titlebarPlacement = useDesktopTitlebarPlacement();
+  const activeItem = groups
+    .flatMap((group) => group.items)
+    .find((item) => item.id === activeSection);
+
   return (
     <div
       className="settings-layout"
       data-ui2-settings-shell="true"
       data-settings-active-section={activeSection}
     >
+      {titlebarPlacement === "window" && contentState !== "workspace-tool" ? (
+        <DesktopTitlebarSurface>
+          <header className="settings-window-titlebar" data-desktop-window-drag-region="true">
+            <h1>{activeItem?.label ?? contentLabel}</h1>
+          </header>
+        </DesktopTitlebarSurface>
+      ) : null}
       <nav
         className="settings-section-nav"
-        data-desktop-window-drag-region="true"
         data-settings-shell-navigation="true"
         aria-label={navigationLabel}
       >
         {onBack ? (
           <Button
             className="settings-app-return-button"
-            data-desktop-window-traffic-light-clearance="true"
             leadingIcon={<ArrowLeft />}
             size="sm"
             variant="ghost"

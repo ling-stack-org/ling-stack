@@ -14,7 +14,12 @@ import {
   type RunExecutionSink,
 } from "../runs/orchestrator.js";
 import type { RunRequest } from "../runs/schemas.js";
+import type { HostCapabilityBridgeController } from "../runs/host-capability-bridge-controller.js";
+import type { NativeRunDispatcher } from "../runs/native-run-dispatcher.js";
+import type { RuntimeHostCapacityAdmission } from "../../runtime/run-queue.js";
 import { resolveProviderForRun } from "../runs/providers.js";
+import { createWorkflowParallelCapabilityResolver } from "../runs/workflow-safety.js";
+import type { ProviderInvocationFailureSink } from "../providers/runtime-invocations.js";
 import { createAiChannelReply } from "./ai-replies.js";
 import {
   findChannelAssistantReplyForSource,
@@ -51,6 +56,9 @@ export interface ChannelTurnDispatchExecutorOptions {
   readonly controlPlaneEvents: ControlPlaneEventHub;
   readonly startupState: StartupStateRegistry;
   readonly computerUsePreviews: ComputerUseProjectionRegistry;
+  readonly hostCapabilityBridge: HostCapabilityBridgeController;
+  readonly nativeRunDispatcher?: NativeRunDispatcher;
+  readonly hostCapacity?: RuntimeHostCapacityAdmission;
   readonly replyDispatchCoordinator: ChannelReplyDispatchCoordinator;
   readonly imageVisionSummarizer?: LingImageVisionSummarizer;
   readonly webFetch?: typeof globalThis.fetch;
@@ -127,6 +135,7 @@ export function createChannelTurnDispatchExecutor(
         runnerRegistry: options.runnerRegistry,
         secretResolver: options.secretResolver,
         config: options.config,
+        hostCapabilityAvailable: (capabilityId) => options.hostCapabilityBridge.hasCapability(capabilityId),
       },
       imageVisionSummarizer: options.imageVisionSummarizer,
       replyDispatchCoordinator: options.replyDispatchCoordinator,
@@ -240,7 +249,11 @@ function channelReplyMessageId(sourceTurnId: string, teammateId: string | undefi
 }
 
 function createStartRun(options: ChannelTurnDispatchExecutorOptions) {
-  return async (runRequest: RunRequest, sink: RunExecutionSink): Promise<string | undefined> =>
+  return async (
+    runRequest: RunRequest,
+    sink: RunExecutionSink,
+    onProviderInvocationFailure?: ProviderInvocationFailureSink,
+  ): Promise<string | undefined> =>
     await executeRunRequest(
       runRequest,
       sink,
@@ -251,10 +264,15 @@ function createStartRun(options: ChannelTurnDispatchExecutorOptions) {
       options.secretResolver,
       options.mcpBroker,
       {
+        onProviderInvocationFailure,
+        providerInvocationOrigin: "reply",
         afterRunTerminal: options.afterRunTerminal,
         controlPlaneEvents: options.controlPlaneEvents,
         startupState: options.startupState,
         computerUsePreviews: options.computerUsePreviews,
+        hostCapabilityBridge: options.hostCapabilityBridge,
+        nativeRunDispatcher: options.nativeRunDispatcher,
+        workflowHostCapacityAdmission: options.hostCapacity,
       },
     );
 }
@@ -269,6 +287,8 @@ async function confirmAndOrchestrateProposal(
     resolveProviderForRun(store, request, options.secretResolver);
   };
   const confirmed = confirmChannelExecutionProposalWorkflow({
+    restrictedCommandRuntime: options.runtimeSupervisor.getRestrictedCommandRuntime(),
+    hostCapabilityAvailable: (capabilityId) => options.hostCapabilityBridge.hasCapability(capabilityId),
     store,
     cwd,
     proposalId,
@@ -278,6 +298,14 @@ async function confirmAndOrchestrateProposal(
   const startRun = createStartOrchestratedRun(options, store, cwd);
   const orchestration = await orchestrateChannelWorkflow({
     store,
+    secretResolver: options.secretResolver,
+    resolveParallelCapability: createWorkflowParallelCapabilityResolver(options.runnerRegistry,
+      { toolBrokerMode: () => options.runtimeSupervisor.getHarnessFeatures().toolBroker.mode }),
+    runnerRegistry: options.runnerRegistry,
+    isolationHost: { enabled: () => options.runtimeSupervisor.getChannelFeatures().workflowIsolatedFiles === true,
+      toolBrokerMode: () => options.runtimeSupervisor.getHarnessFeatures().toolBroker.mode,
+      maxConcurrentSteps: () => options.runtimeSupervisor.getConcurrencyPolicy().enabled
+        ? options.runtimeSupervisor.getConcurrencyPolicy().isolatedWriteMaxConcurrentSteps : 2 },
     cwd,
     workflowId: confirmed.workflow.id,
     validateRunRequest,
@@ -291,7 +319,7 @@ async function confirmAndOrchestrateProposal(
   };
 }
 
-function createStartOrchestratedRun(
+export function createStartOrchestratedRun(
   options: ChannelTurnDispatchExecutorOptions,
   store: RunStore,
   cwd: string,
@@ -314,8 +342,8 @@ function createStartOrchestratedRun(
         options.secretResolver,
         options.mcpBroker,
         {
+          enableUserInputPause: true,
           onRunReady: (runId) => {
-            store.updateChannelWorkflowStep(workflowStep.id, { taskId, runId }, new Date().toISOString());
             resolveOnce(runId);
           },
           afterRunTerminal: async (terminalRun) => {
@@ -324,6 +352,14 @@ function createStartOrchestratedRun(
             if (terminalRun.status === "succeeded") {
               await orchestrateChannelWorkflow({
                 store,
+                secretResolver: options.secretResolver,
+                resolveParallelCapability: createWorkflowParallelCapabilityResolver(options.runnerRegistry,
+                  { toolBrokerMode: () => options.runtimeSupervisor.getHarnessFeatures().toolBroker.mode }),
+                runnerRegistry: options.runnerRegistry,
+                isolationHost: { enabled: () => options.runtimeSupervisor.getChannelFeatures().workflowIsolatedFiles === true,
+                  toolBrokerMode: () => options.runtimeSupervisor.getHarnessFeatures().toolBroker.mode,
+                  maxConcurrentSteps: () => options.runtimeSupervisor.getConcurrencyPolicy().enabled
+                    ? options.runtimeSupervisor.getConcurrencyPolicy().isolatedWriteMaxConcurrentSteps : 2 },
                 cwd,
                 workflowId: workflow.id,
                 validateRunRequest: (request) => resolveProviderForRun(store, request, options.secretResolver),
@@ -334,6 +370,9 @@ function createStartOrchestratedRun(
           controlPlaneEvents: options.controlPlaneEvents,
           startupState: options.startupState,
           computerUsePreviews: options.computerUsePreviews,
+          hostCapabilityBridge: options.hostCapabilityBridge,
+          nativeRunDispatcher: options.nativeRunDispatcher,
+          workflowHostCapacityAdmission: options.hostCapacity,
         },
       ).then(resolveOnce, () => resolveOnce(undefined));
     });

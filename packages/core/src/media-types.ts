@@ -38,6 +38,8 @@ export interface ListMediaJobsOptions {
 
 export interface UpdateMediaJobStatusInput {
   readonly status: MediaJobStatus;
+  /** Atomic status compare-and-set; a rejected comparison returns undefined. */
+  readonly expectedStatuses?: readonly MediaJobStatus[];
   readonly artifactIds?: readonly string[];
   readonly errorMessage?: string | null;
 }

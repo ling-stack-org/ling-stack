@@ -11,6 +11,7 @@ import { readNumber, rollbackOwnedSqliteTransaction, stringifyJson } from "./hel
 import { mapControlPlaneEvent } from "./control-plane-mappers.js";
 import { controlPlaneEventSelectSql } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
+import { normalizeRunnerIdsInSnapshot } from "../../runner-ids.js";
 
 export class SqliteControlPlaneStore {
   private readonly context: SqliteStoreContext;
@@ -44,7 +45,7 @@ export class SqliteControlPlaneStore {
   ): ControlPlaneEvent {
     if (ownsTransaction) this.context.database.exec("BEGIN IMMEDIATE;");
     try {
-      const redactedData = redactSecrets(input.data ?? {}) as Record<string, unknown>;
+      const redactedData = normalizeRunnerIdsInSnapshot(redactSecrets(input.data ?? {})) as Record<string, unknown>;
       const inserted = this.context.database
         .prepare(`
           INSERT INTO control_plane_events (
@@ -214,7 +215,7 @@ function addReplayFilters(
 }
 
 function assertSameControlPlaneEvent(existing: ControlPlaneEvent, input: AppendControlPlaneEventInput): void {
-  const data = redactSecrets(input.data ?? {}) as Record<string, unknown>;
+  const data = normalizeRunnerIdsInSnapshot(redactSecrets(input.data ?? {})) as Record<string, unknown>;
   if (existing.cwd !== input.cwd
     || existing.domain !== input.domain
     || existing.entityType !== input.entityType

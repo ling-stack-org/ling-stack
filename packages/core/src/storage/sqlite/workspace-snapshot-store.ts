@@ -25,6 +25,7 @@ import {
   type WorkspaceSnapshotRestoreAnchor,
 } from "@ling-stack/contracts";
 import { DEFAULT_WORKSPACE_ID } from "../../workspace-types.js";
+import type { ClaimSnapshotRestoreFenceInput } from "../../run-types.js";
 import { parseJson, readNullableString, readNumber, readString, stringifyJson } from "./helpers.js";
 import type { SqliteStoreContext } from "./store-context.js";
 
@@ -359,12 +360,20 @@ export class SqliteWorkspaceSnapshotStore {
   updateRestoreRequest(input: UpdateSnapshotRestoreRequestInput): SnapshotRestoreRequest | undefined {
     if (!snapshotRestoreStates.includes(input.expectedState) || !snapshotRestoreStates.includes(input.state)) throw new Error("Invalid snapshot restore state.");
     if (!Number.isSafeInteger(input.fencingEpoch ?? 0) || (input.fencingEpoch ?? 0) < 0) throw new Error("Invalid snapshot restore fence epoch.");
+    if (input.expectedFencingEpoch !== undefined && (!Number.isSafeInteger(input.expectedFencingEpoch) || input.expectedFencingEpoch < 0)) throw new Error("Invalid expected snapshot restore fence epoch.");
     assertTimestamp(input.updatedAt);
     const result = this.context.database.prepare(`
       UPDATE workspace_snapshot_restore_requests
       SET state = ?, fencing_epoch = COALESCE(?, fencing_epoch), journal_entry_count = COALESCE(?, journal_entry_count), last_error = ?, updated_at = ?
       WHERE id = ? AND state = ?
-    `).run(input.state, input.fencingEpoch ?? null, input.journalEntryCount ?? null, input.lastError ?? null, input.updatedAt, input.id, input.expectedState);
+        AND (? IS NULL OR (fencing_epoch = ? AND EXISTS (
+          SELECT 1 FROM workspace_snapshot_fences AS fence
+          WHERE fence.workspace_id = workspace_snapshot_restore_requests.workspace_id
+            AND fence.owner_request_id = workspace_snapshot_restore_requests.id AND fence.epoch = ?
+        )))
+    `).run(input.state, input.fencingEpoch ?? null, input.journalEntryCount ?? null, input.lastError ?? null,
+      input.updatedAt, input.id, input.expectedState, input.expectedFencingEpoch ?? null,
+      input.expectedFencingEpoch ?? null, input.expectedFencingEpoch ?? null);
     if (Number(result.changes) !== 1) return undefined;
     return this.getRestoreRequest(input.id);
   }
@@ -420,11 +429,60 @@ export class SqliteWorkspaceSnapshotStore {
 
   updateJournalEntry(input: UpdateSnapshotRestoreJournalEntryInput): SnapshotRestoreJournalEntry | undefined {
     if (!snapshotRestoreJournalStates.includes(input.expectedState) || !snapshotRestoreJournalStates.includes(input.state)) throw new Error("Invalid restore journal state.");
+    if (input.expectedFencingEpoch !== undefined && (!Number.isSafeInteger(input.expectedFencingEpoch) || input.expectedFencingEpoch < 0)) throw new Error("Invalid expected snapshot restore fence epoch.");
     assertTimestamp(input.updatedAt);
-    const result = this.context.database.prepare("UPDATE workspace_snapshot_restore_journal SET state = ?, updated_at = ? WHERE id = ? AND state = ?").run(input.state, input.updatedAt, input.id, input.expectedState);
+    const result = this.context.database.prepare(`
+      UPDATE workspace_snapshot_restore_journal SET state = ?, updated_at = ? WHERE id = ? AND state = ?
+        AND (? IS NULL OR EXISTS (
+          SELECT 1 FROM workspace_snapshot_restore_requests AS request
+          JOIN workspace_snapshot_fences AS fence ON fence.workspace_id = request.workspace_id
+          WHERE request.id = workspace_snapshot_restore_journal.restore_request_id
+            AND request.fencing_epoch = ? AND fence.epoch = ? AND fence.owner_request_id = request.id
+        ))
+    `).run(input.state, input.updatedAt, input.id, input.expectedState, input.expectedFencingEpoch ?? null,
+      input.expectedFencingEpoch ?? null, input.expectedFencingEpoch ?? null);
     if (Number(result.changes) !== 1) return undefined;
     const row = this.context.database.prepare(`${journalSelectSql} WHERE id = ?`).get(input.id);
     return row ? mapJournalEntry(row as Record<string, SQLOutputValue>) : undefined;
+  }
+
+  /** The durable restore state and its lease are a single SQLite fact. */
+  claimRestoreFence(input: ClaimSnapshotRestoreFenceInput): number | undefined {
+    const requestId = normalize(input.requestId, "snapshot restore request id");
+    if (!["requested", "validating"].includes(input.expectedState)) throw new Error("Invalid snapshot restore claim state.");
+    if (!Number.isSafeInteger(input.expectedRequestFencingEpoch) || input.expectedRequestFencingEpoch < 0) throw new Error("Invalid expected snapshot restore request epoch.");
+    assertTimestamp(input.now);
+    this.context.database.exec("BEGIN IMMEDIATE");
+    try {
+      const request = this.context.database.prepare("SELECT workspace_id, state, fencing_epoch FROM workspace_snapshot_restore_requests WHERE id = ?").get(requestId) as Record<string, SQLOutputValue> | undefined;
+      if (!request || readString(request, "state") !== input.expectedState || readNumber(request, "fencing_epoch") !== input.expectedRequestFencingEpoch) {
+        this.context.database.exec("COMMIT");
+        return undefined;
+      }
+      // The workspace is authoritative request data, never caller-selected scope.
+      const workspaceId = readString(request, "workspace_id");
+      const fence = this.context.database.prepare("SELECT epoch, owner_request_id FROM workspace_snapshot_fences WHERE workspace_id = ?").get(workspaceId) as Record<string, SQLOutputValue> | undefined;
+      const priorOwner = fence && readNullableString(fence, "owner_request_id");
+      if (priorOwner && priorOwner !== requestId) throw new Error("Workspace snapshot restore fence is already owned.");
+      const epoch = (fence ? readNumber(fence, "epoch") : 0) + 1;
+      if (!Number.isSafeInteger(epoch) || epoch < 1) throw new Error("Snapshot restore fence epoch exhausted.");
+      this.context.database.prepare(`
+        INSERT INTO workspace_snapshot_fences (workspace_id, epoch, owner_request_id, updated_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(workspace_id) DO UPDATE SET epoch = excluded.epoch, owner_request_id = excluded.owner_request_id, updated_at = excluded.updated_at
+      `).run(workspaceId, epoch, requestId, input.now);
+      const bound = this.context.database.prepare(`
+        UPDATE workspace_snapshot_restore_requests SET state = 'fenced', fencing_epoch = ?, last_error = NULL, updated_at = ?
+        WHERE id = ? AND state = ? AND fencing_epoch = ?
+      `).run(epoch, input.now, requestId, input.expectedState, input.expectedRequestFencingEpoch);
+      if (Number(bound.changes) !== 1) throw new Error("Snapshot restore fence claim was superseded.");
+      this.context.database.exec("COMMIT");
+      return epoch;
+    } catch (error) {
+      try { this.context.database.exec("ROLLBACK"); }
+      catch (rollbackError) { throw new AggregateError([error, rollbackError], "Snapshot restore fence claim rollback failed.", { cause: error }); }
+      throw error;
+    }
   }
 
   acquireFence(workspaceId: string, ownerRequestId: string, now: string): number {
@@ -454,9 +512,10 @@ export class SqliteWorkspaceSnapshotStore {
     return row ? { epoch: readNumber(row, "epoch"), ...(readNullableString(row, "owner_request_id") ? { ownerRequestId: readNullableString(row, "owner_request_id") } : {}) } : { epoch: 0 };
   }
 
-  releaseFence(workspaceId: string, ownerRequestId: string, now: string): boolean {
+  releaseFence(workspaceId: string, ownerRequestId: string, now: string, expectedEpoch?: number): boolean {
     assertTimestamp(now);
-    const result = this.context.database.prepare("UPDATE workspace_snapshot_fences SET owner_request_id = NULL, updated_at = ? WHERE workspace_id = ? AND owner_request_id = ?").run(now, workspaceId, ownerRequestId);
+    if (expectedEpoch !== undefined && (!Number.isSafeInteger(expectedEpoch) || expectedEpoch < 0)) throw new Error("Invalid expected snapshot restore fence epoch.");
+    const result = this.context.database.prepare("UPDATE workspace_snapshot_fences SET owner_request_id = NULL, updated_at = ? WHERE workspace_id = ? AND owner_request_id = ? AND (? IS NULL OR epoch = ?)").run(now, workspaceId, ownerRequestId, expectedEpoch ?? null, expectedEpoch ?? null);
     return Number(result.changes) === 1;
   }
 

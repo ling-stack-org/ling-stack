@@ -1,24 +1,26 @@
 import type {
   Channel,
-  RunFormState,
   RunSession,
   SkillApprovalProfile,
   Task,
   ToolName,
-} from "../types.js";
+} from "@ling-stack/contracts";
+import type { RunFormState } from "../types.js";
 import {
   isRunnerTool,
   readOptionalString,
   readRecord,
   readRunTask,
-  readStringArray,
   readToolArray,
   removeUndefined,
 } from "./shared.js";
+import { authorizationAndAccessFromLegacyPermission } from "@ling-stack/core/session-permissions";
 
 export function buildRunRequest(form: RunFormState): unknown {
+  const permissions = canonicalPermissions(form.authorizationMode, form.workspaceAccessMode, form.permissionMode, form.permissionPreset);
   if (form.providerPresetId) {
     return {
+      schemaVersion: 2,
       cwd: form.cwd,
       task: {
         id: form.taskId,
@@ -28,15 +30,13 @@ export function buildRunRequest(form: RunFormState): unknown {
       },
       providerPresetId: form.providerPresetId,
       tools: form.tools.filter(isRunnerTool),
-      authorizationMode: form.authorizationMode,
-      workspaceAccessMode: form.workspaceAccessMode,
-      permissionPreset: form.permissionPreset,
-      permissionMode: form.permissionMode,
+      ...permissions,
       thinkingLevel: "medium",
     };
   }
 
   return {
+    schemaVersion: 2,
     cwd: form.cwd,
     task: {
       id: form.taskId,
@@ -54,10 +54,7 @@ export function buildRunRequest(form: RunFormState): unknown {
       input: ["text"],
     },
     tools: form.tools.filter(isRunnerTool),
-    authorizationMode: form.authorizationMode,
-    workspaceAccessMode: form.workspaceAccessMode,
-    permissionPreset: form.permissionPreset,
-    permissionMode: form.permissionMode,
+    ...permissions,
     thinkingLevel: "medium",
   };
 }
@@ -77,7 +74,9 @@ export function buildTaskRunRequest(
   } = {},
 ): unknown {
   const fallbackTools: readonly ToolName[] = ["read", "grep", "find", "ls"];
+  const permissions = canonicalPermissions(options.authorizationMode, options.workspaceAccessMode, options.permissionMode, options.permissionPreset);
   return {
+    schemaVersion: 2,
     workspaceCwd,
     cwd: resolveChannelExecutionCwd(channel, workspaceCwd),
     task: {
@@ -89,10 +88,7 @@ export function buildTaskRunRequest(
     providerPresetId,
     tools: (options.tools && options.tools.length > 0 ? options.tools : channel.allowedTools.length > 0 ? channel.allowedTools : fallbackTools).filter(isRunnerTool),
     approvalProfile: options.approvalProfile,
-    authorizationMode: options.authorizationMode,
-    workspaceAccessMode: options.workspaceAccessMode,
-    permissionPreset: options.permissionPreset,
-    permissionMode: options.permissionMode,
+    ...permissions,
     thinkingLevel: "medium",
   };
 }
@@ -107,27 +103,57 @@ function resolveChannelExecutionCwd(channel: Channel, workspaceCwd: string): str
   return channel.boundPath || workspaceCwd;
 }
 
+function isWorkflowRun(run: RunSession): boolean {
+  return Boolean(run.workflowStepId || readOptionalString(readRecord(run.requestSnapshot), "workflowStepId"));
+}
+
+/** Workflow retries belong to the Host step controller, never a reconstructed task. */
+export function canRerunSnapshot(run: RunSession | undefined): boolean {
+  if (!run || isWorkflowRun(run)) return false;
+  return Boolean((run.providerPresetId ?? readOptionalString(readRecord(run.requestSnapshot), "providerPresetId"))
+    && readOptionalString(readRecord(run.taskSnapshot), "prompt"));
+}
+
 export function buildRerunRequest(run: RunSession): unknown {
+  if (isWorkflowRun(run)) {
+    throw new Error("Retry this workflow step through its channel workflow controls, not its public snapshot.");
+  }
   const snapshot = readRecord(run.requestSnapshot);
   const providerPresetId = run.providerPresetId ?? readOptionalString(snapshot, "providerPresetId");
   if (!providerPresetId) {
     throw new Error("This run cannot be rerun because it did not use a provider preset.");
   }
 
+  const permissions = canonicalPermissions(
+    readOptionalString(snapshot, "authorizationMode") as RunFormState["authorizationMode"] | undefined,
+    readOptionalString(snapshot, "workspaceAccessMode") as RunFormState["workspaceAccessMode"] | undefined,
+    readOptionalString(snapshot, "permissionMode") as RunFormState["permissionMode"] | undefined,
+    readOptionalString(snapshot, "permissionPreset") as RunFormState["permissionPreset"] | undefined,
+  );
   return removeUndefined({
+    schemaVersion: 2,
     workspaceCwd: readOptionalString(snapshot, "workspaceCwd") ?? run.cwd,
     cwd: readOptionalString(snapshot, "cwd") ?? run.cwd,
     task: readRunTask(run),
     providerPresetId,
     tools: readToolArray(snapshot, "tools"),
-    authorizationMode: readOptionalString(snapshot, "authorizationMode"),
-    workspaceAccessMode: readOptionalString(snapshot, "workspaceAccessMode"),
-    permissionPreset: readOptionalString(snapshot, "permissionPreset"),
-    permissionMode: readOptionalString(snapshot, "permissionMode"),
+    ...permissions,
     thinkingLevel: readOptionalString(snapshot, "thinkingLevel") ?? "medium",
     lingConversationTone: readOptionalString(snapshot, "lingConversationTone"),
-    systemPrompt: readOptionalString(snapshot, "systemPrompt"),
-    appendSystemPrompt: readStringArray(snapshot, "appendSystemPrompt"),
+    // Private system hydration is Host-owned and is not replayed from cached public DTOs.
     agentDir: readOptionalString(snapshot, "agentDir"),
   });
+}
+
+function canonicalPermissions(
+  authorizationMode: RunFormState["authorizationMode"] | undefined,
+  workspaceAccessMode: RunFormState["workspaceAccessMode"] | undefined,
+  permissionMode: RunFormState["permissionMode"] | undefined,
+  permissionPreset: RunFormState["permissionPreset"] | undefined,
+): { readonly authorizationMode: RunFormState["authorizationMode"]; readonly workspaceAccessMode: RunFormState["workspaceAccessMode"] } {
+  const legacy = authorizationAndAccessFromLegacyPermission(permissionMode, permissionPreset);
+  return {
+    authorizationMode: authorizationMode ?? legacy.authorizationMode,
+    workspaceAccessMode: workspaceAccessMode ?? legacy.workspaceAccessMode,
+  };
 }

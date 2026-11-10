@@ -29,6 +29,8 @@ export interface ConversationComposerShellProps {
   readonly leftToolsNode?: ReactNode;
   readonly rightToolsNode?: ReactNode;
   readonly feedbackNode?: ReactNode;
+  /** Rendered outside the composer box, centered beneath it. */
+  readonly bottomStatusNode?: ReactNode;
   readonly onDragOver?: DragEventHandler<HTMLDivElement>;
   readonly onDragLeave?: DragEventHandler<HTMLDivElement>;
   readonly onDrop?: DragEventHandler<HTMLDivElement>;
@@ -37,6 +39,7 @@ export interface ConversationComposerShellProps {
 export function ConversationComposerShell({
   ariaLabel,
   approvalNode,
+  bottomStatusNode,
   className,
   density = "docked",
   dropHintNode,
@@ -87,44 +90,47 @@ export function ConversationComposerShell({
   ].filter(Boolean).join(" ");
 
   return (
-    <section
-      ref={rootRef}
-      className={rootClassName}
-      style={style}
-      aria-label={ariaLabel}
-      data-conversation-composer="true"
-      data-surface={surface}
-      data-density={density}
-      {...(surface === "teammate_direct"
-        ? { "data-computer-use-obstacle": "true", "data-computer-use-obstacle-kind": "composer" }
-        : {})}
-    >
-      {statusNode}
-      {approvalNode}
-      {guidanceNode}
-      <div
-        className={zoneClassName}
-        style={dropZoneStyle}
-        onDragOver={onDragOver}
-        onDragLeave={onDragLeave}
-        onDrop={onDrop}
+    <div className="conversation-composer-frame" data-conversation-composer-frame={surface}>
+      <section
+        ref={rootRef}
+        className={rootClassName}
+        style={style}
+        aria-label={ariaLabel}
+        data-conversation-composer="true"
+        data-surface={surface}
+        data-density={density}
+        {...(surface === "teammate_direct"
+          ? { "data-computer-use-obstacle": "true", "data-computer-use-obstacle-kind": "composer" }
+          : {})}
       >
-        {resizeHandleNode}
-        {previewNode}
-        {inputNode}
-        {mentionPickerNode}
-        {slashPickerNode}
-        {dropHintNode}
-      </div>
-      <div className={toolbarClassNames}>
-        <div className={leftClassNames} aria-label={leftToolsAriaLabel}>
-          {leftToolsNode}
+        {statusNode}
+        {approvalNode}
+        {guidanceNode}
+        <div
+          className={zoneClassName}
+          style={dropZoneStyle}
+          onDragOver={onDragOver}
+          onDragLeave={onDragLeave}
+          onDrop={onDrop}
+        >
+          {resizeHandleNode}
+          {previewNode}
+          {inputNode}
+          {mentionPickerNode}
+          {slashPickerNode}
+          {dropHintNode}
         </div>
-        <div className={rightClassNames}>
-          {rightToolsNode}
+        <div className={toolbarClassNames}>
+          <div className={leftClassNames} aria-label={leftToolsAriaLabel}>
+            {leftToolsNode}
+          </div>
+          <div className={rightClassNames}>
+            {rightToolsNode}
+          </div>
         </div>
-      </div>
-      {feedbackNode}
-    </section>
+        {feedbackNode}
+      </section>
+      {bottomStatusNode}
+    </div>
   );
 }

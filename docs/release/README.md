@@ -2,7 +2,7 @@
 
 Status: active release boundary
 Owner: repository maintainers
-Last verified: 2026-08-03
+Last verified: 2026-10-13
 Document type: release policy
 Code and workflow anchors: `package.json`, `apps/desktop/package.json`,
 `.github/workflows/ci.yml`
@@ -12,40 +12,95 @@ Code and workflow anchors: `package.json`, `apps/desktop/package.json`,
 | Class | Purpose | Current status |
 | --- | --- | --- |
 | Public source snapshot | Review and source-based development | Allowed after the open-source readiness checklist passes |
-| Alpha GitHub tag | Named prerelease source baseline | Not created yet |
-| Internal Desktop artifact | Platform and signing evidence | Available only through governed manual workflows |
+| Alpha GitHub tag | Named historical prerelease source baseline | `v0.1.2-alpha.1` has been published; [published Releases](https://github.com/ling-stack-org/ling-stack/releases) record publication status |
+| Local Desktop development candidate | Engineering checks on a platform host | See the [Mac and Windows packaging checklist](development-packages.md); macOS currently requires an independent Office source review record |
 | Public Desktop binary | End-user installation | Blocked by signing, platform, notice, and clean-machine gates |
-| Stable release | Supported product line | Not defined yet |
+| Numeric product version | Source and potential GitHub Release identity | Candidate version follows [VERSION](../../VERSION), with tag `v<product-version>`; [published Releases](https://github.com/ling-stack-org/ling-stack/releases) record publication status, subject to applicable gates |
 
 Making the repository public is not permission to publish an unsigned Desktop artifact.
+
+For the maintainer-triggered native build and Draft release workflow, see
+[GitHub Actions desktop candidates](github-actions.md). Draft creation preserves
+the development-only signing and acceptance boundaries described here.
 
 ## Versioning
 
 Future releases use Semantic Versioning. Before `1.0.0`, incompatible product or API
 changes may occur in minor releases but must still be documented.
 
-- Source prereleases use tags such as `v0.1.0-alpha.1`.
+- The candidate product version is defined in [VERSION](../../VERSION); its corresponding
+  release tag is `v<product-version>`. Actual publication status is recorded in
+  [published Releases](https://github.com/ling-stack-org/ling-stack/releases).
+  The already-published `v0.1.2-alpha.1` remains historical and immutable. Tags and Releases
+  are created explicitly after maintainer review and applicable release gates.
 - Release tags must point to reviewed commits on `main`.
 - `VERSION`, root, and Desktop package versions must match the approved tag.
-- The current `0.0.0` package version is a development sentinel, not a release number.
+- Internal workspace packages still using `0.0.0` have a development sentinel, not the
+  product release number.
 - Integration components such as the Chrome Extension and Browser Host have independent
   compatibility versions; do not rewrite them merely to match the product release tag.
-- Do not create or move a release tag to repair an artifact. Publish a new prerelease.
+- Do not create or move a release tag to repair an artifact. Advance to a new product version and tag.
+
+### Release Naming
+
+- Use `v<product-version>` for every new release tag, matching the approved product version.
+  Older prerelease tags retain their original meaning; numeric naming by itself does not close release gates.
+- Use `Ling Stack <tag>` as the GitHub Release title, for example
+  `Ling Stack v<product-version>`.
+- Do not include a platform, `dev` prefix, date, commit hash, or packaging recipe
+  revision in the tag or title. Record the full source commit, date, development-only
+  status, verification scope, and known limits in the release notes and evidence.
+  A concise name does not change release readiness or signing requirements.
+- Publish one Release per product version. macOS and Windows assets belong to the
+  same Release and must use the same reviewed source commit. Identify platform and
+  architecture in asset filenames, not separate release tags. Different source
+  commits require different product versions and Releases.
+- Check the remote tag before publication. An existing published tag is never
+  overwritten or reused for a different commit. A new candidate advances the
+  product version and matching version files before building.
+- Keep historical platform/date/SHA tags and immutable release assets unchanged.
+  The published `desktop-dev-0.1.2-alpha.1-20261013-dfb61ac` tag is a legacy
+  naming exception; it must not be renamed or mapped onto the existing
+  `v0.1.2-alpha.1` source tag. Editing a display title does not rename its tag or
+  invalidate the original artifact checksums and evidence.
 
 ## Source Release Checklist
 
 1. Start from a clean, reviewed `main` commit.
-2. Confirm the generic CI workflow passes without repository secrets.
+2. Run the generic CI workflow without repository secrets when Actions capacity is
+   available. During the current quota-related pause, record local checks and their
+   scope; do not claim an online CI pass.
 3. Run documentation, license, public-repository safety, typecheck, unit, and build gates.
 4. Complete a current-tree and Git-history secret scan.
 5. Confirm the changelog and implementation-status index are current.
 6. Confirm Security, Support, Contributing, and Code of Conduct links work publicly.
+   The current maintainer preparation scope defers branch-protection and private
+   vulnerability-reporting verification; record their status separately from local checks.
 7. Review third-party source licensing and trademark/name/logo authority.
-8. Create an annotated prerelease tag and GitHub prerelease with source archives only.
+8. After applicable gates pass, create the reviewed tag and GitHub Release with verified assets; a Draft alone is not publication.
 9. Verify the published tag and source archive checksums from a clean checkout.
 
 No automatic release-on-push workflow exists. Publishing a GitHub Release remains an
-explicit maintainer action.
+explicit maintainer action. A product Release eligible for GitHub's
+`/repos/ling-stack-org/ling-stack/releases/latest` requires publication in that repository
+with `draft=false` and `prerelease=false` after the applicable gates; numeric naming and
+an unsigned Draft do not establish release readiness.
+
+## Current Preparation Evidence
+
+On 2026-10-08, a clean checkout of the reviewed source baseline was installed with the
+frozen lockfile. The CLI dependency build (including daemon and Web) and the Desktop
+source build passed. A fresh local workspace reached the homepage and Model Workbench.
+No provider key or real model task was used in that check.
+
+Documentation links, source dependency licenses, current-tree public-repository safety,
+and a redacted Git-history scan are checked separately in the
+[open-source readiness checklist](../maintenance/open-source-readiness.md). These local
+results do not establish Windows execution, signed installation, or public binary readiness.
+
+Windows development packaging and manual acceptance are assigned to a Windows host;
+the [colleague checklist](development-packages.md#windows-x64同事执行清单) records the
+required tools, fixed source ref, commands, and evidence to return.
 
 ## Desktop Release Gates
 

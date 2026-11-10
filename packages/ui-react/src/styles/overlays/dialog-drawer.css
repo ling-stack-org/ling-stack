@@ -31,17 +31,18 @@
   max-height: calc(100vh - 32px);
   max-height: calc(100dvh - 32px);
   overflow: hidden;
-  border: 1px solid var(--ling-border-default);
-  background: var(--ling-bg-elevated);
+  border: 1px solid var(--ling-overlay-border);
+  background: var(--ling-overlay-bg);
+  background-image: var(--ling-overlay-finish);
   color: var(--ling-text-default);
-  box-shadow: var(--ling-shadow-overlay);
+  box-shadow: var(--ling-overlay-shadow);
 }
 
 .ling-ui-dialog-content {
   position: fixed;
   top: 50%;
   left: 50%;
-  border-radius: var(--ling-radius-lg);
+  border-radius: var(--ling-dialog-radius);
   transform: translate(-50%, -50%);
 }
 
@@ -103,6 +104,8 @@
   min-width: 0;
   padding: var(--ling-space-7) var(--ling-space-8) var(--ling-space-6);
   border-bottom: 1px solid var(--ling-border-default);
+  background: var(--ling-overlay-heading-bg);
+  box-shadow: var(--ling-overlay-heading-shadow);
 }
 
 .ling-ui-dialog-title-block {
@@ -155,13 +158,13 @@
   min-width: 0;
   padding: var(--ling-space-5) var(--ling-space-8) var(--ling-space-6);
   border-top: 1px solid var(--ling-border-default);
-  background: var(--ling-bg-elevated);
+  background: var(--ling-overlay-footer-bg);
 }
 
 .ling-ui-dialog-content:focus-visible,
 .ling-ui-drawer-content:focus-visible {
-  outline: 2px solid var(--ling-border-focus);
-  outline-offset: -2px;
+  outline: 0;
+  box-shadow: inset 0 0 0 1px var(--ling-border-focus), var(--ling-overlay-shadow);
 }
 
 @keyframes ling-ui-overlay-presence {

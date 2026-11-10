@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { mockDaemon } from "./support/mock-daemon";
 import { triggerFocusRevalidation } from "./support/focus-revalidation";
+import { openEngineeringChannel } from "./support/test-helpers";
 import {
   createBaseState,
   createChatProvider,
@@ -90,7 +91,7 @@ test("T13-P.9EF.C teammate list failure stays out of Channel", async ({ page }) 
   await expect(panel).toContainText("Teammates could not be refreshed. The last loaded list is still shown.");
 
   await page.getByLabel("Settings sections").getByRole("button", { name: "Back to app" }).click();
-  await page.getByLabel("Ling Stack navigation").getByRole("button").filter({ hasText: "Engineering" }).first().click();
+  await openEngineeringChannel(page);
   await expect(page.getByLabel("Channel composer")).toBeVisible();
   await expect(page.getByText("Owned teammate list failure", { exact: true })).toHaveCount(0);
   await expect(page.getByText("Teammates could not be refreshed. The last loaded list is still shown.", { exact: true })).toHaveCount(0);
@@ -190,13 +191,86 @@ test("T13-P.9EF.C a late private workspace load error stays with its teammate", 
   await teammateRow(panel, "Ling Engineer").getByRole("button", { name: "Open chat in app" }).click();
   await requestStarted.promise;
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await navigation.getByRole("button").filter({ hasText: "Ling Designer" }).first().click();
   await expect(page.getByRole("heading", { name: "Ling Designer", level: 1 })).toBeVisible();
   releaseFailure.resolve();
   await page.waitForResponse((response) => response.status() === 503 && response.url().includes("/teammates/teammate_engineer/direct-messages"));
   await expect(page.getByText("Late Engineer private load", { exact: true })).toHaveCount(0);
   await expect(page.locator(".workspace-teammate-private-surface > .inline-error")).toHaveCount(0);
+  expect(runtimeErrors).toEqual([]);
+});
+
+test("T13-P.9EF.C a provider failure stays on its private reply", async ({ page }) => {
+  await prepareSurface(page);
+  const runtimeErrors = collectRuntimeErrors(page);
+  const state = createTeammateState();
+  await mockDaemon(page, state);
+  // Isolate this error-owner check from unrelated seeded automation notifications.
+  await page.route(/\/notifications(?:\/stream)?(?:\?.*)?$/u, async (route) => {
+    await route.fulfill({ json: { schemaVersion: 1, notifications: [], nextSince: null } });
+  });
+  await page.route(/\/teammates\/teammate_designer\/direct-messages\/stream(?:\?.*)?$/u, async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.fallback();
+      return;
+    }
+    const requestBody = await route.request().postDataJSON() as Record<string, unknown>;
+    const threadId = "tdthread_teammate_designer";
+    const message = {
+      id: `tdmsg_${state.teammateDirectMessages.length + 1}`,
+      workspaceId: "workspace_default",
+      threadId,
+      teammateId: "teammate_designer",
+      authorType: "local-user",
+      authorId: "local-user",
+      body: typeof requestBody.body === "string" ? requestBody.body : "",
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      createdAt: "2026-10-26T00:10:00.000Z",
+      updatedAt: "2026-10-26T00:10:00.000Z",
+    };
+    const aiReply = {
+      id: `tdmsg_${state.teammateDirectMessages.length + 2}`,
+      workspaceId: "workspace_default",
+      threadId,
+      teammateId: "teammate_designer",
+      authorType: "ai-teammate",
+      authorId: "teammate_designer",
+      body: "AI teammate is blocked: Provider message ended with an error.",
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "failed",
+      errorMessage: "Provider message ended with an error.",
+      createdAt: "2026-10-26T00:10:01.000Z",
+      updatedAt: "2026-10-26T00:10:01.000Z",
+    };
+    state.teammateDirectMessages.push(message, aiReply);
+    const events = [
+      { event: "accepted", data: { message } },
+      { event: "error", data: { message, aiReply, error: "Provider message ended with an error." } },
+    ];
+    await route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body: events.map((event) => `event: ${event.event}\ndata: ${JSON.stringify(event.data)}\n\n`).join(""),
+    });
+  });
+
+  await page.goto("/");
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })
+    .getByRole("button", { name: "Ling Designer" }).click();
+  await expect(page.getByRole("heading", { name: "Ling Designer", level: 1 })).toBeVisible();
+  await page.getByPlaceholder("Message this AI teammate privately").fill("Trigger provider failure");
+  await page.getByPlaceholder("Message this AI teammate privately").press("Enter");
+
+  const privateFeed = page.getByLabel("Private message feed", { exact: true });
+  await expect(privateFeed.getByText("AI teammate is blocked: Provider message ended with an error.", { exact: true })).toBeVisible();
+  await expect(page.locator(".teammate-workspace.chat-mode > .inline-error")).toHaveCount(0);
+  await expect(page.locator('.ling-ui-toast[data-tone="error"]')).toHaveCount(0);
   expect(runtimeErrors).toEqual([]);
 });
 
@@ -229,7 +303,7 @@ test("T13-P.9EF.C create failure remains in its draft progress flow", async ({ p
 
   await dialog.getByRole("button", { name: "Close" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: "Back to app" }).click();
-  await page.getByLabel("Ling Stack navigation").getByRole("button").filter({ hasText: "Engineering" }).first().click();
+  await openEngineeringChannel(page);
   await expect(page.getByText("Provider rejected the endpoint or model", { exact: false })).toHaveCount(0);
   expect(runtimeErrors).toEqual([]);
 });
@@ -269,7 +343,7 @@ async function prepareSurface(page: Page): Promise<void> {
 }
 
 async function openTeammateManagement(page: Page): Promise<Locator> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: "Teammate Management" }).click();
   const panel = page.getByLabel("Workspace teammates");
   await expect(panel).toBeVisible();

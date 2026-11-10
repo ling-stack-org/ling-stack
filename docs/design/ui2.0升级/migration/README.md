@@ -2,7 +2,7 @@
 
 Status: active compatibility contract
 Owner: UI platform maintainers
-Last verified: 2026-08-03
+Last verified: 2026-10-23
 Code anchors: `packages/ui-react/src/`, `apps/web/src/shared/ui/`, `apps/web/src/styles/`
 Test anchors: `packages/ui-react/test/package-boundary.test.mjs`, `apps/web/e2e/ui2-components-zero-ref-prune.spec.ts`
 
@@ -18,7 +18,7 @@ Test anchors: `packages/ui-react/test/package-boundary.test.mjs`, `apps/web/e2e/
 - Work Board 产品开发；
 - Startup 与 Diagnostics 重新开放；
 - Workspace Tools 嵌入态；
-- Desktop Theme Pack 原生持久化与发布；
+- 官方场景主题与自定义媒体背景的原生持久化与发布；
 - Desktop 主窗口、Computer Use PiP 和 packaged macOS/Windows 验收；
 - 各产品合同明确标记为 pending 的 Council runtime、MCP 或其他真实能力。
 

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { ComfyUiClient } from "../dist/features/media/workflows/comfyui-client.js";
 import { analyzeComfyWorkflowGraph, materializeComfyWorkflowGraph } from "../dist/features/media/workflows/comfyui-graph.js";
@@ -31,15 +32,10 @@ test("ComfyUI adapter writes the scene prompt to the semantic prompt field and c
       submittedGraph = JSON.parse(init.body).prompt;
       return jsonResponse({ prompt_id: "prompt_1" });
     }
-    if (parsed.pathname === "/api/history_v2/prompt_1") {
-      return jsonResponse({ error: "not_found" }, 404);
-    }
-    if (parsed.pathname === "/api/history/prompt_1") {
+    if (parsed.pathname === "/api/jobs/prompt_1") {
       return jsonResponse({
-        prompt_1: {
-          status: { status_str: "success" },
-          outputs: { "9": { videos: [{ filename: "scene.mp4", type: "output" }] } },
-        },
+        id: "prompt_1", status: "completed",
+        outputs: { "9": { videos: [{ filename: "scene.mp4", type: "output" }] } },
       });
     }
     if (parsed.pathname === "/api/view") {
@@ -50,7 +46,7 @@ test("ComfyUI adapter writes the scene prompt to the semantic prompt field and c
   const version = workflowVersion();
   const adapter = createComfyUiWorkflowAdapter({
     store: {},
-    connection: connection({ health: { ok: true, message: "ready", checkedAt: now, protocolVariant: "prompt_legacy" } }),
+    connection: connection({ protocolVariant: "jobs_v1", health: { ok: true, message: "ready", checkedAt: now, protocolVariant: "jobs_v1" } }),
     version,
     fetchImpl,
     resolveHostAddresses: async () => ["203.0.113.10"],
@@ -79,6 +75,18 @@ test("ComfyUI client blocks private addresses unless the connection is explicitl
   });
   await assert.rejects(() => client.inspect(), /可信自托管连接/);
   assert.equal(requested, false);
+});
+
+test("A11 Comfy public_only uses the actual guarded native sender, not fake fetch facts", () => {
+  const childEnv = { ...process.env, LING_A11_SOCKET_CASE: "comfy-native" };
+  delete childEnv.NODE_TEST_CONTEXT;
+  const result = spawnSync(process.execPath, ["--test", "--test-name-pattern=^A11 fixture child$",
+    new URL("./media-native-transport.test.mjs", import.meta.url).pathname], {
+    env: childEnv, encoding: "utf8", timeout: 20_000,
+  });
+  assert.equal(result.error, undefined, result.error?.message);
+  assert.match(result.stdout, /A11 child entered: comfy-native/, "child must execute its socket assertions");
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
 });
 
 test("ComfyUI client blocks redirects and workflow mapping payloads are structurally validated", async () => {

@@ -115,12 +115,12 @@ test("late teammate workspace success cannot replace the selected teammate or sh
   await startTransientLoadingRecorder(page);
   await openTeammate(page, "Ling Engineer", false);
   await engineerStarted.promise;
-  expect(await readTransientLoadingSightings(page)).toEqual([]);
+  expect(await readTransientLoadingSightings(page)).toContain("Loading teammate workspace...");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Ling Designer" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Ling Designer" }).click();
   await expect(page.getByRole("heading", { name: "Ling Designer", level: 1 })).toBeVisible();
   await designerStarted.promise;
-  await expect(page.getByText("Loading teammate workspace...", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Loading teammate workspace...", { exact: true })).toBeVisible();
   await expect(page.getByText("No private messages yet", { exact: true })).toHaveCount(0);
   await expect(page.getByText("Late Engineer response", { exact: true })).toHaveCount(0);
   await expect(page.getByText("Designer remains authoritative", { exact: true })).toHaveCount(0);
@@ -128,7 +128,7 @@ test("late teammate workspace success cannot replace the selected teammate or sh
   const engineerResponse = page.waitForResponse((response) => response.ok() && response.url().includes("/teammate_engineer/direct-messages"));
   releaseEngineer.resolve();
   await engineerResponse;
-  await expect(page.getByText("Loading teammate workspace...", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Loading teammate workspace...", { exact: true })).toBeVisible();
   await expect(page.getByText("No private messages yet", { exact: true })).toHaveCount(0);
   await expect(page.getByText("Late Engineer response", { exact: true })).toHaveCount(0);
 
@@ -180,18 +180,19 @@ test("late teammate guidance finally cannot clear the selected teammate guidance
   const designerStop = page.getByLabel("Private chat composer").getByRole("button", { name: "Stop reply" });
   await designerStop.click();
   await designerStarted.promise;
-  await expect(designerStop).toHaveAttribute("aria-busy", "true");
+  const designerStopping = page.getByLabel("Private chat composer").getByRole("button", { name: "Stopping", exact: true });
+  await expect(designerStopping).toHaveAttribute("aria-busy", "true");
 
   const engineerResponse = page.waitForResponse((response) => response.ok() && response.url().includes("wu_teammate_engineer/cancel"));
   releaseEngineer.resolve();
   await engineerResponse;
-  await expect(designerStop).toHaveAttribute("aria-busy", "true");
+  await expect(designerStopping).toHaveAttribute("aria-busy", "true");
 
   const designerResponse = page.waitForResponse((response) => response.ok() && response.url().includes("wu_teammate_designer/cancel"));
   releaseDesigner.resolve();
   await designerResponse;
   const designerComposer = page.getByLabel("Private chat composer");
-  await expect(designerStop).toHaveCount(0);
+  await expect(designerStopping).toHaveCount(0);
   const send = designerComposer.getByRole("button", { name: "Send" });
   await expect(send).not.toHaveAttribute("aria-busy", "true");
   await designerComposer.getByRole("textbox").fill("Ready for the next message");
@@ -349,7 +350,7 @@ test("profile responses from the previous teammate are discarded after identity 
   await page.getByLabel("Single agent settings").getByRole("button", { name: "Save changes" }).click();
   await profileStarted.promise;
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Ling Designer" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Ling Designer" }).click();
   await expect(page.getByRole("heading", { name: "Ling Designer", level: 1 })).toBeVisible();
   const profileResponse = page.waitForResponse((response) => response.ok() && response.request().method() === "PATCH" && new URL(response.url()).pathname === "/teammates/teammate_engineer");
   releaseProfile.resolve();
@@ -434,7 +435,7 @@ function activeReplyWorkUnit(
 }
 
 async function openTeammate(page: Page, name: string, waitForLoad = true): Promise<void> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name }).click();
   await expect(page.getByRole("heading", { name, level: 1 })).toBeVisible();
   if (waitForLoad) {
     await expect(page.getByText("Loading teammate workspace...", { exact: true })).toHaveCount(0);

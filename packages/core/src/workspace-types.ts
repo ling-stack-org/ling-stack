@@ -1,4 +1,10 @@
 import { randomUUID } from "node:crypto";
+import {
+  SUPPORTED_LOCALES,
+  type InterfaceLocale,
+  type ResponseLanguagePreference as SharedResponseLanguagePreference,
+  type SupportedLocale,
+} from "@ling-stack/localization";
 import type { RunTool } from "./approval-policy.js";
 import type { ProcedureObservationStep, ProcedureObservationValidationStep } from "./procedure-observation-types.js";
 import type { RunnerFallbackReason, RunnerRequestSource } from "./runtime-supervisor-types.js";
@@ -21,6 +27,8 @@ import {
   type WorkflowParticipantAuthorityV1,
   type WorkflowParticipantProviderBindingV1,
   type WorkflowParticipantProviderBlockerV1,
+  type WorkflowStepParallelPolicy,
+  type WorkflowStepSideEffectClass,
 } from "@ling-stack/contracts";
 
 export const DEFAULT_WORKSPACE_ID = "workspace_default";
@@ -29,6 +37,7 @@ export type TaskStatus =
   | "todo"
   | "claimed"
   | "running"
+  | "waiting_for_input"
   | "blocked"
   | "review"
   | "done"
@@ -39,6 +48,7 @@ export const taskStatuses: readonly TaskStatus[] = [
   "todo",
   "claimed",
   "running",
+  "waiting_for_input",
   "blocked",
   "review",
   "done",
@@ -58,17 +68,22 @@ export type ChannelAutoReplyMode = "mentions_only" | "default_teammate" | "auto_
 
 export const channelAutoReplyModes: readonly ChannelAutoReplyMode[] = ["mentions_only", "default_teammate", "auto_route"];
 
-export type ResponseLanguage = "zh-CN" | "en-US";
+export type ResponseLanguage = SupportedLocale;
 
-export const responseLanguages: readonly ResponseLanguage[] = ["zh-CN", "en-US"];
+export const responseLanguages: readonly ResponseLanguage[] = SUPPORTED_LOCALES;
 
-export type ResponseLanguagePreference = "follow_user" | ResponseLanguage;
+export type ResponseLanguagePreference = SharedResponseLanguagePreference;
 
-export const responseLanguagePreferences: readonly ResponseLanguagePreference[] = ["follow_user", "zh-CN", "en-US"];
+export const responseLanguagePreferences: readonly ResponseLanguagePreference[] = ["follow_user", ...SUPPORTED_LOCALES];
 
 export type LingConversationTone = "friendly" | "pragmatic" | "none";
 
 export const lingConversationTones: readonly LingConversationTone[] = ["friendly", "pragmatic", "none"];
+
+/** Provider-designated public reasoning summary verbosity; never raw chain-of-thought. */
+export type ReasoningSummaryMode = "auto" | "concise" | "detailed" | "none";
+
+export const reasoningSummaryModes: readonly ReasoningSummaryMode[] = ["auto", "concise", "detailed", "none"];
 
 export const DEFAULT_LING_CONVERSATION_TONE: LingConversationTone = "pragmatic";
 
@@ -103,7 +118,7 @@ export const DEFAULT_SKILL_GOVERNANCE_POLICY: SkillGovernancePolicy = {
 
 export type ChannelResponseLanguage = "workspace" | ResponseLanguagePreference;
 
-export const channelResponseLanguages: readonly ChannelResponseLanguage[] = ["workspace", "follow_user", "zh-CN", "en-US"];
+export const channelResponseLanguages: readonly ChannelResponseLanguage[] = ["workspace", "follow_user", ...SUPPORTED_LOCALES];
 
 export type ChannelWorkflowPreference = "manual" | "architect_engineer_qa";
 
@@ -413,6 +428,8 @@ export interface CreateChannelBranchInput {
   readonly name: string;
   readonly status?: ChannelBranchStatus;
   readonly rootThreadId?: string;
+  /** Host-built canonical origin; persisted atomically with the registry row. */
+  readonly conversationThread?: Extract<import("./conversation-thread-topology-types.js").ResolveOrCreateConversationThreadInput, { surfaceKind: "branch" }>;
   readonly archivedAt?: string;
   readonly deletedAt?: string;
 }
@@ -483,9 +500,10 @@ export interface WorkspaceSettings {
   readonly schemaVersion: 1;
   readonly workspaceCwd?: string;
   readonly theme?: "light" | "dark" | "system";
-  readonly locale?: string;
+  readonly locale?: InterfaceLocale;
   readonly responseLanguage?: ResponseLanguagePreference;
   readonly lingConversationTone?: LingConversationTone;
+  readonly defaultReasoningSummary?: ReasoningSummaryMode;
   readonly defaultProviderPresetId?: string;
   readonly mediaGenerationDefaults?: import("./media-generation-routing-types.js").WorkspaceMediaGenerationDefaults;
   readonly defaultAuthorizationMode?: AuthorizationMode;
@@ -499,11 +517,13 @@ export interface WorkspaceSettings {
 }
 
 export interface UpdateWorkspaceSettingsInput {
+  readonly schemaVersion?: 2;
   readonly workspaceCwd?: string | null;
   readonly theme?: "light" | "dark" | "system" | null;
-  readonly locale?: string | null;
+  readonly locale?: InterfaceLocale | null;
   readonly responseLanguage?: ResponseLanguagePreference | null;
   readonly lingConversationTone?: LingConversationTone | null;
+  readonly defaultReasoningSummary?: ReasoningSummaryMode | null;
   readonly defaultProviderPresetId?: string | null;
   readonly mediaGenerationDefaults?: import("./media-generation-routing-types.js").WorkspaceMediaGenerationDefaults | null;
   readonly defaultAuthorizationMode?: AuthorizationMode | null;
@@ -975,6 +995,8 @@ export type TeammateDirectMessageStatus = "pending" | "ready" | "blocked" | "fai
 
 export type TeammateDirectMessageAuthorType = "local-user" | "ai-teammate" | "system";
 
+export type TeammateDirectMessageSystemPurpose = "governance_notification" | "execution_control";
+
 export interface ConversationPendingReplacement {
   readonly supersessionId: string;
   readonly idempotencyKey: string;
@@ -988,6 +1010,8 @@ export interface TeammateDirectMessage {
   readonly teammateId: string;
   readonly authorType: TeammateDirectMessageAuthorType;
   readonly authorId?: string;
+  /** Host-issued purpose for system rows. Unknown system rows are never display authority. */
+  readonly systemPurpose?: TeammateDirectMessageSystemPurpose;
   readonly body: string;
   readonly attachmentIds: readonly string[];
   readonly linkPreviewIds: readonly string[];
@@ -1011,6 +1035,7 @@ export interface CreateTeammateDirectMessageInput {
   readonly teammateId: string;
   readonly authorType: TeammateDirectMessageAuthorType;
   readonly authorId?: string;
+  readonly systemPurpose?: TeammateDirectMessageSystemPurpose;
   readonly body: string;
   readonly attachmentIds?: readonly string[];
   readonly linkPreviewIds?: readonly string[];
@@ -1105,6 +1130,7 @@ export interface TeammateDirectReplyIntervention {
   readonly threadId: string;
   readonly sourceMessageId: string;
   readonly sourceWorkUnitId?: string;
+  readonly sourceAttemptId?: string;
   readonly mode: TeammateDirectReplyInterventionMode;
   readonly status: TeammateDirectReplyInterventionStatus;
   readonly instruction: string;
@@ -1126,6 +1152,7 @@ export interface CreateTeammateDirectReplyInterventionInput {
   readonly threadId: string;
   readonly sourceMessageId: string;
   readonly sourceWorkUnitId?: string;
+  readonly sourceAttemptId?: string;
   readonly mode: TeammateDirectReplyInterventionMode;
   readonly instruction: string;
   readonly messagePayload?: TeammateDirectReplyInterventionMessagePayload;
@@ -1135,15 +1162,20 @@ export interface CreateTeammateDirectReplyInterventionInput {
 
 export interface ListTeammateDirectReplyInterventionsOptions {
   readonly teammateId?: string;
+  readonly idempotencyKey?: string;
   readonly threadId?: string;
   readonly sourceWorkUnitId?: string;
   readonly status?: TeammateDirectReplyInterventionStatus;
+  readonly statuses?: readonly TeammateDirectReplyInterventionStatus[];
   readonly mode?: TeammateDirectReplyInterventionMode;
+  readonly hasContinuation?: boolean;
+  readonly newestFirst?: boolean;
   readonly limit?: number;
 }
 
 export interface UpdateTeammateDirectReplyInterventionStatusInput {
   readonly interventionId: string;
+  readonly expectedStatuses?: readonly TeammateDirectReplyInterventionStatus[];
   readonly status: TeammateDirectReplyInterventionStatus;
   readonly continuationMessageId?: string | null;
   readonly continuationWorkUnitId?: string | null;
@@ -1245,7 +1277,8 @@ export interface ChannelMention {
   readonly kind: "ai-teammate" | "local-user" | "channel";
 }
 
-export type ChannelMessageFileRefSource = "composer" | "explicit_text" | "api";
+/** inferred_text is display-only lexical metadata, not a request to load a file. */
+export type ChannelMessageFileRefSource = "composer" | "explicit_text" | "api" | "inferred_text";
 
 export interface ChannelMessageFileRef {
   readonly path: string;
@@ -1480,6 +1513,8 @@ export interface ChannelRequirementShaping {
 
 export interface ChannelExecutionProposal {
   readonly id: string;
+  /** Monotonic durable version used for proposal edits and execution claims. */
+  readonly revision: number;
   readonly workspaceId: string;
   readonly channelId: string;
   readonly sourceMessageId: string;
@@ -1491,7 +1526,7 @@ export interface ChannelExecutionProposal {
   readonly collaborationSteps: readonly ChannelExecutionProposalStep[];
   readonly requiredTools: readonly ("read" | "grep" | "find" | "ls" | "bash" | "edit" | "write")[];
   readonly riskSummary?: string;
-  readonly responseLanguage?: ResponseLanguage;
+  readonly responseLanguage?: ResponseLanguagePreference;
   readonly shaping?: ChannelRequirementShaping;
   readonly status: ChannelExecutionProposalStatus;
   readonly linkedTaskId?: string;
@@ -1514,7 +1549,7 @@ export interface CreateChannelExecutionProposalInput {
   readonly collaborationSteps?: readonly ChannelExecutionProposalStep[];
   readonly requiredTools?: readonly ChannelExecutionProposal["requiredTools"][number][];
   readonly riskSummary?: string;
-  readonly responseLanguage?: ResponseLanguage;
+  readonly responseLanguage?: ResponseLanguagePreference;
   readonly shaping?: ChannelRequirementShaping;
   readonly status?: ChannelExecutionProposalStatus;
   readonly linkedTaskId?: string;
@@ -1525,6 +1560,10 @@ export interface CreateChannelExecutionProposalInput {
 }
 
 export interface UpdateChannelExecutionProposalInput {
+  /** When provided, the mutation must win a durable compare-and-swap. */
+  readonly expectedRevision?: number;
+  /** Internal owner token for completing a confirmation claim. */
+  readonly confirmationClaimId?: string;
   readonly title?: string;
   readonly prompt?: string;
   readonly assigneeTeammateId?: string;
@@ -1532,7 +1571,7 @@ export interface UpdateChannelExecutionProposalInput {
   readonly collaborationSteps?: readonly ChannelExecutionProposalStep[];
   readonly requiredTools?: readonly ChannelExecutionProposal["requiredTools"][number][];
   readonly riskSummary?: string | null;
-  readonly responseLanguage?: ResponseLanguage | null;
+  readonly responseLanguage?: ResponseLanguagePreference | null;
   readonly shaping?: ChannelRequirementShaping | null;
   readonly status?: ChannelExecutionProposalStatus;
   readonly linkedTaskId?: string | null;
@@ -1541,6 +1580,12 @@ export interface UpdateChannelExecutionProposalInput {
   readonly errorMessage?: string | null;
   readonly blocker?: WorkflowParticipantProviderBlockerV1 | null;
 }
+
+export type ChannelExecutionProposalClaimResult =
+  | { readonly kind: "claimed"; readonly proposal: ChannelExecutionProposal }
+  | { readonly kind: "not_found" }
+  | { readonly kind: "stale"; readonly proposal: ChannelExecutionProposal }
+  | { readonly kind: "busy"; readonly proposal: ChannelExecutionProposal };
 
 export interface ListChannelExecutionProposalsOptions {
   readonly channelId: string;
@@ -1727,6 +1772,42 @@ export interface CreateChannelDecisionInput {
   readonly createdBy: string;
 }
 
+export type CreateSupersedingChannelDecisionInput = CreateChannelDecisionInput & {
+  readonly supersedesDecisionId: string;
+};
+
+export interface CreateOrReuseSupersedingChannelDecisionResult {
+  readonly decision: ChannelDecision;
+  readonly reused: boolean;
+}
+
+export class ChannelDecisionSupersessionConflictError extends Error {
+  readonly code = "decision_supersession_conflict";
+
+  constructor(
+    readonly supersededDecisionId: string,
+    readonly successorDecisionId?: string,
+  ) {
+    super(successorDecisionId
+      ? `Channel decision ${supersededDecisionId} already has a different successor: ${successorDecisionId}`
+      : `Channel decision is not active and cannot be superseded: ${supersededDecisionId}`);
+    this.name = "ChannelDecisionSupersessionConflictError";
+  }
+}
+
+export class ChannelDecisionStatusConflictError extends Error {
+  readonly code = "decision_status_conflict";
+
+  constructor(
+    readonly decisionId: string,
+    readonly expectedStatus: ChannelDecisionStatus,
+    readonly actualStatus: ChannelDecisionStatus,
+  ) {
+    super(`Channel decision ${decisionId} must be ${expectedStatus}, but is ${actualStatus}`);
+    this.name = "ChannelDecisionStatusConflictError";
+  }
+}
+
 export interface UpdateChannelDecisionInput {
   readonly title?: string;
   readonly decision?: string;
@@ -1734,6 +1815,8 @@ export interface UpdateChannelDecisionInput {
   readonly alternatives?: readonly string[];
   readonly status?: ChannelDecisionStatus;
 }
+
+export type RejectActiveChannelDecisionInput = Omit<UpdateChannelDecisionInput, "status">;
 
 export interface ListChannelDecisionsOptions {
   readonly channelId: string;
@@ -1868,6 +1951,7 @@ export type ChannelWorkflowStatus =
   | "ready"
   | "running"
   | "waiting_for_approval"
+  | "waiting_for_input"
   | "blocked"
   | "succeeded"
   | "failed"
@@ -1878,6 +1962,7 @@ export const channelWorkflowStatuses: readonly ChannelWorkflowStatus[] = [
   "ready",
   "running",
   "waiting_for_approval",
+  "waiting_for_input",
   "blocked",
   "succeeded",
   "failed",
@@ -1889,6 +1974,7 @@ export type ChannelWorkflowStepStatus =
   | "claimed"
   | "running"
   | "waiting_for_approval"
+  | "waiting_for_input"
   | "blocked"
   | "succeeded"
   | "failed"
@@ -1900,6 +1986,7 @@ export const channelWorkflowStepStatuses: readonly ChannelWorkflowStepStatus[] =
   "claimed",
   "running",
   "waiting_for_approval",
+  "waiting_for_input",
   "blocked",
   "succeeded",
   "failed",
@@ -2304,10 +2391,16 @@ export interface ChannelWorkflowStepOutputPacket {
 }
 
 export interface ChannelWorkflowStepMetadata {
+  readonly sideEffectClass?: WorkflowStepSideEffectClass;
+  readonly parallelPolicy?: WorkflowStepParallelPolicy;
+  readonly safetyPlan?: import("./workflow-safety-plan.js").WorkflowStepSafetyPlanV1;
+  readonly isolationScopePlan?: { readonly planId: string; readonly planDigest: string };
+  readonly startOwner?: import("./workflow-step-start-owner.js").WorkflowStepStartOwnerV1;
   readonly participantAuthority?: WorkflowParticipantAuthorityV1;
   readonly providerBinding?: WorkflowParticipantProviderBindingV1;
   readonly workflowTemplateId?: string;
   readonly templateVersion?: string;
+  readonly templateCompilationPin?: import("@ling-stack/contracts").WorkflowTemplateCompilationStepPinV1;
   readonly templateStepId?: string;
   readonly graphId?: string;
   readonly graphNodeId?: string;
@@ -2332,6 +2425,7 @@ export interface ChannelWorkflowStepMetadata {
   readonly autoStart?: boolean;
   readonly approvalGate?: SkillApprovalProfile;
   readonly preStepApprovalId?: string;
+  readonly preStepApprovalMarker?: import("./workflow-pre-gate.js").WorkflowPreGateMarkerV1;
   readonly policy?: WorkflowStepPolicy;
   readonly gates?: readonly WorkflowStepGate[];
   readonly fanInPolicy?: WorkflowFanInPolicy;
@@ -2352,6 +2446,7 @@ export interface ChannelWorkflowStepMetadata {
 }
 
 export interface ChannelWorkflowMetadata {
+  readonly templateCompilation?: import("@ling-stack/contracts").WorkflowTemplateCompilationV1;
   readonly workflowGraphId?: string;
   readonly workflowGraphSchemaVersion?: number;
   readonly workflowGraphArtifactId?: string;
@@ -2365,7 +2460,7 @@ export interface ChannelWorkflowMetadata {
   readonly sourceIntentDecisionId?: string;
   readonly requiredParticipantManifest?: RequiredParticipantManifestV1;
   readonly completionGate?: WorkflowCompletionGateV1;
-  readonly responseLanguage?: ResponseLanguage;
+  readonly responseLanguage?: ResponseLanguagePreference;
 }
 
 export type DelegatedOutcomeV1 = import("@ling-stack/contracts").DelegatedOutcomeV1;
@@ -2410,6 +2505,19 @@ export interface CreateChannelWorkflowInput {
   readonly status?: ChannelWorkflowStatus;
   readonly createdBy: string;
   readonly metadata?: ChannelWorkflowMetadata;
+}
+
+export interface CreateOrReuseChannelHandoffWorkflowInput {
+  readonly channelId: string;
+  readonly sourceHandoffId: string;
+  readonly workflow: Omit<CreateChannelWorkflowInput, "channelId" | "sourceHandoffId">;
+  readonly workflowStep: Omit<CreateChannelWorkflowStepInput, "workflowId" | "sourceHandoffId">;
+}
+
+export interface CreateOrReuseChannelHandoffWorkflowResult {
+  readonly workflow: ChannelWorkflow;
+  readonly workflowStep: ChannelWorkflowStep;
+  readonly reused: boolean;
 }
 
 export interface UpdateChannelWorkflowInput {
@@ -2463,6 +2571,7 @@ export interface CreateChannelWorkflowStepInput {
 }
 
 export interface UpdateChannelWorkflowStepInput {
+  readonly expectedStartOwner?: import("./workflow-step-start-owner.js").WorkflowStepStartOwnerV1;
   readonly sourceHandoffId?: string | null;
   readonly contextSummaryId?: string | null;
   readonly taskId?: string | null;

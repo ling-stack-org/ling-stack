@@ -2,19 +2,16 @@
 
 ## Purpose
 
-This document records the v0.1 internal registry and plugin SDK plan.
+This document records the implemented v0.1 internal registry and plugin SDK boundary.
 
-Ling Stack should become extensible, but v0.1 should not start with an external plugin
-marketplace or dynamic code loading. The first step is to make internal capabilities use
-one typed registration model.
+Internal capabilities use a typed registration model in `packages/plugin-sdk`, composed
+by `createDefaultLingExtensionRegistry()` in `packages/daemon/src/index.ts`. This metadata
+layer does not open an external plugin marketplace or arbitrary dynamic code loading.
 
-The next product-facing layer is [Plugin Manager](plugin-manager.md). Its Stage 1-3
-implementation is detailed in [Plugin Manager](./plugin-manager.md).
-Together, those documents define Codex-like management for internal, bundled, and
-trusted local capabilities without opening a third-party plugin API yet.
-The Plugin Manager design also tracks the Codex-derived follow-up layers for package
-manifests, source indexes, install cache, runtime capability injection, and MCP/app/hook
-policy overlays.
+The product-facing [Plugin Manager](plugin-manager.md) is also implemented for internal,
+bundled, and trusted-local capabilities. It owns managed plugin lifecycle, package
+validation/install flows, health checks, and policy surfaces separately from this
+registry. Its contract tracks further work without opening a third-party plugin API.
 
 Current local extension points already exist in different forms:
 
@@ -23,16 +20,16 @@ Current local extension points already exist in different forms:
 - `packages/core` has built-in skill packs such as `gstack-default`.
 - tools are represented as allowed run tools and approval policy decisions.
 
-The registry layer should unify discovery and capability metadata before external plugin
-loading exists.
+The registry layer unifies discovery and capability metadata. Concrete execution still
+belongs to the owning feature and runtime modules.
 
-## Goals
+## Original Slice Goals
 
 - Define one internal extension vocabulary.
 - Register built-in providers, runners, channel sources, skill packs, tools, memory
   providers, and automations.
 - Keep execution authority in daemon/coordinator/kernel state machines.
-- Make future GitHub automation and alternative runners easier to add.
+- Make GitHub automation and alternative runners easier to add.
 - Avoid external plugin install UX in v0.1.
 
 ## Package Shape
@@ -45,13 +42,14 @@ packages/plugin-sdk/
     index.ts
     manifest.ts
     memory.ts
+    provider.ts
     registry.ts
     runner.ts
     skill-pack.ts
     tool.ts
 ```
 
-The SDK package should contain interfaces and lightweight registry helpers only. It must
+The SDK package contains interfaces, manifest validation, and lightweight registry helpers. It must
 not import daemon internals, SQLite stores, React, or concrete provider SDKs.
 
 ## Modular Contribution Contract
@@ -71,8 +69,9 @@ Rules:
   or `apps/web/src/features/*`.
 - New extension kinds must define their contract, trust level, side-effect model, and
   tests before they are added to `LingExtensionKind`.
-- A future package manifest should compile into these per-kind records. Runtime code
-  should consume compiled records, not parse package files during execution.
+- Package contributions remain separate from per-kind extension metadata. Manifest
+  validation and installation live in Plugin Manager modules; concrete runtime behavior
+  stays feature-owned.
 - UI-facing plugin surfaces should depend on safe registry projections and linked
   resource ids, never raw code paths or secret values.
 
@@ -117,16 +116,10 @@ real sandbox and install UX exists.
 
 ## Registries
 
-Recommended registries:
-
-- `ProviderExtensionRegistry`
-- `RunnerExtensionRegistry`
-- `ChannelSourceRegistry`
-- `SkillPackRegistry`
-- `ToolRegistry`
-- `MemoryProviderRegistry`
-- `AutomationRegistry`
-- `LingExtensionRegistry`
+`LingExtensionRegistry` exposes typed `ExtensionKindRegistry<K>` collections for
+providers, runners, channel sources, skill packs, tools, memory providers, and
+automations. The executable daemon `RunnerRegistry` is separate from this metadata
+registry.
 
 Base behavior:
 
@@ -138,7 +131,7 @@ Base behavior:
 
 ## Built-In Registration
 
-`createDefaultLingExtensionRegistry()` should register:
+`createDefaultLingExtensionRegistry()` registers:
 
 - `runner:pi`,
 - `channel-source:local`,
@@ -189,13 +182,14 @@ explicit approval requirements.
 
 ## Daemon Integration
 
-The daemon should create the default registry at startup.
+The daemon creates the default registry during server construction.
 
 Initial integration is read-only:
 
 - use registry for diagnostics,
 - verify built-in capabilities,
-- later use it to select runner/provider/channel/automation implementations.
+- keep runner selection in the separate executable `RunnerRegistry` and other execution
+  behavior in the owning feature modules.
 
 The diagnostic endpoint exposes safe metadata:
 
@@ -221,8 +215,14 @@ It must not expose secrets or dynamic code paths.
 - Daemon exposes `GET /runtime/extensions` as a read-only diagnostic view of safe
   internal extension metadata. This endpoint is separate from `/plugins`, which reports
   product-managed plugin lifecycle state.
+- Source/test anchors: `packages/plugin-sdk/src/registry.ts`,
+  `packages/plugin-sdk/test/registry.test.mjs`, `packages/daemon/src/index.ts`, and
+  `packages/daemon/test/plugin-registry.test.mjs`.
 
-## Non-Goals
+## Original Slice Non-Goals
+
+These limits describe the initial metadata extraction. Plugin Manager now has its own
+managed install UI and lifecycle; that does not add arbitrary third-party code loading.
 
 - No external plugin marketplace.
 - No plugin install UI.
@@ -260,5 +260,5 @@ Required tests:
 
 - Internal registry comes before external plugin support.
 - Internal and bundled plugin management comes before third-party plugin APIs.
-- Package boundaries may later require a new ADR when implementation starts.
+- Further package-boundary changes may require a new ADR.
 - Registry metadata is useful even before all execution paths are routed through it.

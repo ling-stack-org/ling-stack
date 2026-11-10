@@ -30,7 +30,8 @@ test("teammate management searches and filters one-status rows", async ({ page }
   const readyRow = teammateRow(list, "Ling Architect");
   await expect(readyRow.locator(".teammate-row-status")).toHaveCount(1);
   await expect(readyRow.locator(".teammate-row-status.ready")).toContainText("Ready teammate");
-  await expect(readyRow).toContainText("Local Relay / gpt-5.5");
+  await expect(readyRow.locator(".teammate-model-pill")).toHaveText("gpt-5.5");
+  await expect(readyRow).not.toContainText("gpt-5.5 · gpt-5.5");
   await expect(readyRow).toContainText("Engineering");
   const readyRowColumns = await readyRow.evaluate((element) => {
     const summary = element.querySelector<HTMLElement>(".teammate-management-row-summary")?.getBoundingClientRect();
@@ -227,7 +228,7 @@ function createManagementState(): ReturnType<typeof createBaseState> {
 function readyProvider(): Record<string, unknown> {
   return createChatProvider({
     id: "provider_ready",
-    displayName: "Local Relay",
+    displayName: "gpt-5.5 · gpt-5.5",
     model: "gpt-5.5",
     lastCheck: { ok: true, message: "Ready", checkedAt: "2026-07-20T00:00:00.000Z" },
   });
@@ -248,11 +249,11 @@ function teammateRow(list: Locator, name: string): Locator {
 }
 
 async function openTeammateManagement(page: Page): Promise<Locator> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: "Teammate Management" }).click();
   const surface = page.locator("[data-ui2-settings-workspace-tool][data-settings-workspace-tool='teammates']");
   await expect(surface).toBeVisible();
-  await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
+  await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })).toHaveCount(0);
   return surface;
 }
 

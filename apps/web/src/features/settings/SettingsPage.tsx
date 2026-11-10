@@ -2,7 +2,7 @@ import { type ReactNode, useEffect, useState } from "react";
 import type { ComputerControlController } from "../../domains/computer-control/use-computer-control-controller.js";
 import { shouldHideCuaDriverInternalRows, CUA_DRIVER_MCP_SERVER_ID } from "../../domains/computer-control/computer-control-surface.js";
 import type { McpBusyAction } from "../../domains/mcp/use-mcp-domain.js";
-import { useI18n } from "../../i18n.js";
+import { useI18n, type Locale } from "../../i18n.js";
 import type {
   AuthorizationMode,
   Channel,
@@ -26,6 +26,9 @@ import { ArchivedSettingsPanel } from "./ArchivedSettingsPanel.js";
 import { ExecutionPermissionsSettingsPanel } from "./ExecutionPermissionsSettingsPanel.js";
 import { ExternalWorkSettingsPanel } from "./ExternalWorkSettingsPanel.js";
 import { StartupDiagnosticsSettingsPanel } from "./MaintenanceSettingsPanel.js";
+import { DiagnosticsDoctorCard } from "./DiagnosticsDoctorCard.js";
+import { NotificationsPreferencesCard } from "./NotificationsPreferencesCard.js";
+import { HumanQaSettingsPanel } from "./human-qa/HumanQaSettingsPanel.js";
 import { InterfacePreferencesSettingsPanel, PersonalSettingsPanel } from "./PersonalInterfaceSettingsPanel.js";
 import { PersonalizationSettingsPanel } from "./PersonalizationSettingsPanel.js";
 import { SettingsRunDiagnosticsPanel } from "./SettingsRunDiagnosticsPanel.js";
@@ -42,6 +45,7 @@ import {
 import { useArchivedSettingsController } from "./useArchivedSettingsController.js";
 import { ComputerControlSettingsPage } from "./computer-control/ComputerControlSettingsPage.js";
 import { MobileAccessSettingsPage } from "./mobile-access/MobileAccessSettingsPage.js";
+import { ExecutionEnginesSettingsPage } from "./execution-engines/ExecutionEnginesSettingsPage.js";
 
 export type { SettingsSectionId } from "./settings-shell-model.js";
 
@@ -79,6 +83,7 @@ export function SettingsPage({
   selectedRun,
   onWorkspaceDefaultAuthorizationChange,
   onWorkspaceDefaultWorkspaceAccessChange,
+  onProductLanguageChange,
   onWorkspaceResponseLanguageChange,
   onRefreshStartup,
   onRefreshExternalWork,
@@ -147,6 +152,7 @@ export function SettingsPage({
   readonly selectedRun: RunSession | undefined;
   readonly onWorkspaceDefaultAuthorizationChange: (mode: AuthorizationMode) => void;
   readonly onWorkspaceDefaultWorkspaceAccessChange: (mode: WorkspaceAccessMode) => void;
+  readonly onProductLanguageChange: (locale: Locale) => Promise<boolean>;
   readonly onWorkspaceResponseLanguageChange: (language: ResponseLanguagePreference) => void;
   readonly onRefreshStartup: () => void;
   readonly onRefreshExternalWork: () => void;
@@ -320,6 +326,7 @@ export function SettingsPage({
         {visibleActiveSection === "interface-preferences" && !workspaceToolDetailOpen ? (
           <InterfacePreferencesSettingsPanel
             workspaceResponseLanguage={workspaceResponseLanguage}
+            onProductLanguageChange={onProductLanguageChange}
             onWorkspaceResponseLanguageChange={onWorkspaceResponseLanguageChange}
           />
         ) : null}
@@ -330,8 +337,11 @@ export function SettingsPage({
 
         {visibleActiveSection === "mobile-access" && !workspaceToolDetailOpen ? <MobileAccessSettingsPage /> : null}
 
+        {visibleActiveSection === "execution-engines" && !workspaceToolDetailOpen ? <ExecutionEnginesSettingsPage cwd={cwd} /> : null}
+
         {visibleActiveSection === "approval-strategy" && !workspaceToolDetailOpen ? (
           <ExecutionPermissionsSettingsPanel
+            cwd={cwd}
             workspaceDefaultAuthorizationMode={workspaceDefaultAuthorizationMode}
             workspaceDefaultWorkspaceAccessMode={workspaceDefaultWorkspaceAccessMode}
             workspaceDefaultPermissionMode={workspaceDefaultPermissionMode}
@@ -386,6 +396,7 @@ export function SettingsPage({
         ) : null}
 
         {visibleActiveSection === "startup-diagnostics" && !workspaceToolDetailOpen && !runDiagnosticsOpen ? (
+          <div className="settings-startup-diagnostics">
           <StartupDiagnosticsSettingsPanel
             cwd={cwd}
             effectiveConfig={effectiveConfig}
@@ -396,6 +407,10 @@ export function SettingsPage({
             onRefreshStartup={onRefreshStartup}
             onOpenRunDiagnostics={onOpenRunDiagnostics}
           />
+          <DiagnosticsDoctorCard cwd={cwd} />
+          <NotificationsPreferencesCard cwd={cwd} />
+          <HumanQaSettingsPanel key={cwd} cwd={cwd} />
+          </div>
         ) : null}
     </SettingsShell>
   );

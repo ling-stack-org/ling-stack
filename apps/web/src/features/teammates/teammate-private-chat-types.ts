@@ -1,4 +1,3 @@
-import type { ReactVirtualizer, VirtualItem } from "@tanstack/react-virtual";
 import type {
   CSSProperties,
   DragEvent,
@@ -8,10 +7,13 @@ import type {
   UIEvent,
 } from "react";
 import type { ComposerInputPart, PendingAttachmentItem } from "../../shared/components/index.js";
+import type { ConversationRuntimeMetrics } from "@ling-stack/contracts";
+import type { ConversationTimelineItemLocator } from "../../shared/conversation/timeline/ConversationTimeline.js";
 import type { InlineApprovalView } from "../../lib/inline-approvals.js";
 import type {
   AiTeammate,
   ApprovalRequest,
+  AuthorizationMode,
   Channel,
   ConversationGeneratedMedia,
   ExecutionAction,
@@ -48,14 +50,15 @@ export interface TeammatePrivateModelNotice {
 export interface TeammatePrivateChatSurfaceProps {
   readonly cwd: string;
   readonly teammate: AiTeammate;
+  /** Verified LingThread scope for the private transcript. */
+  readonly threadId?: string;
   readonly userProfile?: UserProfile;
   readonly loading: boolean;
   readonly visibleMessages: readonly TeammateDirectMessage[];
   readonly generatedMedia: readonly ConversationGeneratedMedia[];
   readonly normalizedMessageSearchQuery: string;
   readonly privateFeedRef: RefObject<HTMLDivElement | null>;
-  readonly privateMessageFeedVirtualizer: ReactVirtualizer<HTMLDivElement, Element>;
-  readonly privateMessageFeedVirtualRows: readonly VirtualItem[];
+  readonly privateFeedLocatorRef: RefObject<ConversationTimelineItemLocator | null>;
   readonly usedMemoryEvents: readonly UsedMemoryEvent[];
   readonly memoryById: ReadonlyMap<string, MemoryObject>;
   readonly runs: readonly RunSession[];
@@ -65,6 +68,8 @@ export interface TeammatePrivateChatSurfaceProps {
   readonly terminalReports: readonly TerminalReportDto[];
   readonly providerRecovered: boolean;
   readonly modelNotice?: TeammatePrivateModelNotice;
+  readonly composerModelLabel?: string;
+  readonly runtimeMetrics?: ConversationRuntimeMetrics;
   readonly privateAttachmentById: ReadonlyMap<string, TeammatePrivateAttachment>;
   readonly taskCreateBusyKeys: ReadonlySet<string>;
   readonly taskCreateErrors: Readonly<Record<string, string>>;
@@ -112,12 +117,14 @@ export interface TeammatePrivateChatSurfaceProps {
   readonly onOpenModelSettings: () => void;
   readonly onMessageDraftChange: (value: string) => void;
   readonly onComposerSubmit: (authorization: {
+    readonly authorizationMode: AuthorizationMode;
     readonly permissionPreset: PermissionPreset;
     readonly permissionConfirmation?: PermissionConfirmation;
   }) => void;
   readonly onComposerKeyDown: (
     event: KeyboardEvent<HTMLDivElement>,
     authorization: {
+      readonly authorizationMode: AuthorizationMode;
       readonly permissionPreset: PermissionPreset;
       readonly permissionConfirmation?: PermissionConfirmation;
     },
@@ -130,6 +137,14 @@ export interface TeammatePrivateChatSurfaceProps {
   readonly onRemoveComposerFileReference: (raw: string, occurrenceIndex: number) => void;
   readonly onRemovePendingLinkPreview: (previewId: string) => void;
   readonly onRemovePendingAttachment: (localId: string) => void | Promise<void>;
+  readonly onRetryPendingAttachment?: (localId: string) => void | Promise<void>;
+  readonly attachmentCleanupFailures?: readonly import("../../shared/components/composer-pending-assets.js").AttachmentCleanupFailure[];
+  readonly onRetryAttachmentCleanup?: (localId: string) => void | Promise<void>;
+  readonly authorizationMode: AuthorizationMode;
+  readonly permissionSelectionOwnerKey: string;
+  readonly defaultWorkspaceAccessMode: WorkspaceAccessMode;
+  readonly onPermissionError: (error: unknown) => void;
+  readonly onAuthorizationModeChange: (mode: AuthorizationMode) => void;
   readonly workspaceAccessMode: WorkspaceAccessMode;
   readonly onWorkspaceAccessModeChange: (mode: WorkspaceAccessMode) => void;
   readonly onFullAccessPresetSelected?: () => Promise<PermissionConfirmation | undefined>;

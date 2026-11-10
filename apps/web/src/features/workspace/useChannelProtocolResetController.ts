@@ -43,6 +43,18 @@ export function useChannelProtocolResetController({
     setOpen(false);
   }, [channelId, open]);
 
+  useEffect(() => {
+    if (!open || busy) return undefined;
+    const handleEscape = (event: KeyboardEvent): void => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      event.preventDefault();
+      event.stopPropagation();
+      onOpenChange(false);
+    };
+    document.addEventListener("keydown", handleEscape, true);
+    return () => document.removeEventListener("keydown", handleEscape, true);
+  }, [busy, onOpenChange, open]);
+
   const confirm = useCallback(async (): Promise<void> => {
     if (inFlightRef.current) return;
     const resetTarget = resetTargetRef.current;

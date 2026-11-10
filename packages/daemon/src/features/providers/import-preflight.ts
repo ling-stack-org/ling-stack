@@ -1,12 +1,12 @@
 import {
-  DEFAULT_WORKSPACE_ID,
+  type ProviderCheckRequestTicket,
   type ProviderCheckResult,
   type ProviderPreset,
   type RunStore,
   type SecretResolver,
 } from "@ling-stack/core";
 import type { ControlPlaneEventHub } from "../control-plane/events.js";
-import { appendControlPlaneEvent } from "../control-plane/events.js";
+import { publishProviderCheckResult } from "./check-publication.js";
 import { checkProviderPreset } from "./preflight.js";
 
 export const PROVIDER_IMPORT_CHECK_CONCURRENCY = 3;
@@ -16,7 +16,7 @@ interface ProviderImportCheckJob {
   readonly cwd: string;
   readonly store: RunStore;
   readonly provider: ProviderPreset;
-  readonly pendingCheck: ProviderCheckResult;
+  readonly ticket: ProviderCheckRequestTicket;
 }
 
 export class ProviderImportPreflightService {
@@ -44,10 +44,11 @@ export class ProviderImportPreflightService {
       message: "Provider check is running.",
       checkedAt: new Date().toISOString(),
     };
-    const pendingProvider = store.recordProviderCheckResult(provider.id, pendingCheck) ?? provider;
-    this.queuedJobs.push({ cwd, store, provider: pendingProvider, pendingCheck });
+    const admission = store.beginProviderCheckRequest(provider.id, "model_import", pendingCheck);
+    if (!admission) return provider;
+    this.queuedJobs.push({ cwd, store, provider: admission.provider, ticket: admission.ticket });
     this.pump();
-    return pendingProvider;
+    return admission.provider;
   }
 
   async shutdown(): Promise<void> {
@@ -67,7 +68,11 @@ export class ProviderImportPreflightService {
         break;
       }
       this.activeCount += 1;
-      void this.run(job).finally(() => {
+      void this.run(job).catch(() => {
+        // A durable publication failure must not become an unhandled background
+        // rejection or leak raw storage/credential errors into diagnostics.
+        console.warn("Provider background check publication failed. Run Check again from Model Workbench.");
+      }).finally(() => {
         this.activeCount -= 1;
         this.pump();
         this.resolveIdleWaiters();
@@ -95,29 +100,7 @@ export class ProviderImportPreflightService {
     if (this.closing || this.abortController.signal.aborted) {
       return;
     }
-    const currentProvider = job.store.getProviderPreset(job.provider.id);
-    if (!currentProvider || !isCurrentPendingImportCheck(job, currentProvider)) {
-      return;
-    }
-    const checked = job.store.recordProviderCheckResult(job.provider.id, result);
-    if (!checked) {
-      return;
-    }
-    appendControlPlaneEvent(job.store, this.dependencies.controlPlaneEvents, {
-      workspaceId: DEFAULT_WORKSPACE_ID,
-      cwd: job.cwd,
-      domain: "providers",
-      entityType: "provider",
-      entityId: checked.id,
-      action: "provider.preflight_checked",
-      data: {
-        providerId: checked.id,
-        ok: result.ok,
-        code: result.code ?? (result.ok ? "ok" : "failed"),
-        checkedAt: result.checkedAt,
-        source: "model_import",
-      },
-    });
+    publishProviderCheckResult(job.store, this.dependencies.controlPlaneEvents, job.ticket, result, job.cwd);
   }
 
   private waitForIdle(): Promise<void> {
@@ -136,12 +119,4 @@ export class ProviderImportPreflightService {
     }
     this.idleWaiters.clear();
   }
-}
-
-function isCurrentPendingImportCheck(job: ProviderImportCheckJob, current: ProviderPreset): boolean {
-  return (
-    current.updatedAt === job.provider.updatedAt &&
-    current.lastCheck?.code === PROVIDER_IMPORT_CHECK_PENDING_CODE &&
-    current.lastCheck.checkedAt === job.pendingCheck.checkedAt
-  );
 }

@@ -1,0 +1,33 @@
+diff --git a/src/sprintf.js b/src/sprintf.js
+index 65d6324645ef1d0133614a71497751009dc5c912..6a7f4a21741e53e38114172dcc2dd7aa980fd6ab 100644
+--- a/src/sprintf.js
++++ b/src/sprintf.js
+@@ -30,6 +30,11 @@
+         return sprintf.apply(null, [fmt].concat(argv || []))
+     }
+ 
++    // Out-of-range precision must not crash callers such as loggers.
++    function bounded_precision(value, minimum) {
++        return Math.max(minimum, Math.min(100, Number(value)))
++    }
++
+     function sprintf_format(parse_tree, argv) {
+         var cursor = 1, tree_length = parse_tree.length, arg, output = '', i, k, ph, pad, pad_character, pad_length, is_positive, sign
+         for (i = 0; i < tree_length; i++) {
+@@ -81,13 +86,13 @@
+                         arg = JSON.stringify(arg, null, ph.width ? parseInt(ph.width) : 0)
+                         break
+                     case 'e':
+-                        arg = ph.precision ? parseFloat(arg).toExponential(ph.precision) : parseFloat(arg).toExponential()
++                        arg = ph.precision ? parseFloat(arg).toExponential(bounded_precision(ph.precision, 0)) : parseFloat(arg).toExponential()
+                         break
+                     case 'f':
+-                        arg = ph.precision ? parseFloat(arg).toFixed(ph.precision) : parseFloat(arg)
++                        arg = ph.precision ? parseFloat(arg).toFixed(bounded_precision(ph.precision, 0)) : parseFloat(arg)
+                         break
+                     case 'g':
+-                        arg = ph.precision ? String(Number(arg.toPrecision(ph.precision))) : parseFloat(arg)
++                        arg = ph.precision ? String(Number(arg.toPrecision(bounded_precision(ph.precision, 1)))) : parseFloat(arg)
+                         break
+                     case 'o':
+                         arg = (parseInt(arg, 10) >>> 0).toString(8)

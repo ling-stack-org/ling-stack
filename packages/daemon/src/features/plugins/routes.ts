@@ -8,7 +8,7 @@ import type {
 } from "@ling-stack/core";
 import type { LingExtensionRegistry } from "@ling-stack/plugin-sdk";
 import type { ResolvedDaemonConfig } from "../../config.js";
-import type { McpBroker } from "../../context.js";
+import type { ExternalSecretStore, McpBroker } from "../../context.js";
 import { HttpError } from "../../errors.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody } from "../../shared/request.js";
@@ -39,7 +39,10 @@ import {
   parseManagedPluginInstallRequest,
   parseManagedPluginUninstallRequest,
   parseManagedPluginValidatePackageRequest,
+  parsePluginImportApplyRequest,
+  parsePluginImportPreviewRequest,
 } from "./schemas.js";
+import { applyPluginImport, buildPluginImportPreview } from "./import/apply.js";
 import {
   configuredCuaDriverCommand,
   connectCuaDriver,
@@ -156,6 +159,52 @@ export async function handlePluginSourcesCollection(
     return;
   }
   writeJson(response, 200, { cwd, sources: listPluginSourceViews() });
+}
+
+export async function handlePluginsImport(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  storeRegistry: RunStoreRegistry,
+  mcpBroker: McpBroker,
+  secretResolver: SecretResolver,
+  externalSecretStore: ExternalSecretStore | undefined,
+  route: { readonly action: "preview" | "apply" },
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+  try {
+    if (request.method !== "POST") {
+      writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /plugins/import/${route.action}` });
+      return;
+    }
+    const store = storeRegistry.getStore(cwd);
+    const body = await readJsonBody(request, config.maxBodyBytes);
+    const now = new Date().toISOString();
+    if (route.action === "preview") {
+      const input = parsePluginImportPreviewRequest(body);
+      const report = buildPluginImportPreview({ store, source: input.source });
+      writeJson(response, 200, { cwd, ...report });
+      return;
+    }
+    const input = parsePluginImportApplyRequest(body);
+    const report = await applyPluginImport({
+      store,
+      mcpBroker,
+      secretResolver,
+      externalSecretStore,
+      source: input.source,
+      names: input.names,
+      now,
+    });
+    writeJson(response, 200, { cwd, ...report });
+  } catch (error) {
+    writeRouteError(response, error);
+  }
 }
 
 export async function handlePluginPackageItem(

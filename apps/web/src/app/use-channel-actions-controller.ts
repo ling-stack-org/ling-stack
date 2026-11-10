@@ -1,4 +1,4 @@
-import type { Dispatch, SetStateAction } from "react";
+import { useRef, type Dispatch, type SetStateAction } from "react";
 import {
   createChannel,
   createChannelContextSummary,
@@ -9,6 +9,7 @@ import {
   createTask,
   deleteChannelAttachment,
   streamChannelTurn,
+  getConversationSubmission,
   updateChannel,
   updateChannelBrief,
   updateChannelCollaborationProtocol,
@@ -28,6 +29,16 @@ import { titleFromPrompt } from "../lib/formatting.js";
 import { canUseConversationProvider, providerEffectiveBaseUrl, providerPreflightReady } from "../lib/providers.js";
 import { defaultTools } from "../lib/tools.js";
 import { readSseResponse } from "../sse.js";
+import { recoverSubmissionReceipt, submissionWasRejected, UnconfirmedConversationSubmissionError, RecoveredConversationSubmissionError } from "../shared/conversation/conversation-submission-recovery.js";
+import { submissionLookupJournal } from "../shared/conversation/conversation-submission-journal.js";
+import { validateConversationSubmissionReceipt } from "../shared/conversation/submission-receipt-scope.js";
+import {
+  channelConversationScopeKey,
+  channelStreamErrorOwner,
+  type ChannelStreamErrorOwner,
+  type ChannelStreamErrorOwnerHint,
+} from "../shared/conversation/stream-error-ownership.js";
+import { DaemonObservationDeferredError, isDaemonObservationPausedForWorkspace, liveDaemonObservation, shouldDeferDaemonObservationError, type DaemonObservation } from "../shared/conversation/observation/daemon-observation.js";
 import type {
   AiTeammate,
   Channel,
@@ -124,19 +135,21 @@ export interface ChannelActionsController {
 
 export interface ChannelMessageSendResult {
   readonly errorMessage?: string;
+  readonly errorOwner?: ChannelStreamErrorOwner;
 }
 
 type ChannelActionFeedbackSurface = "create-dialog" | "workspace" | "composer" | "task" | "workflow" | "protocol" | "dock" | "sidebar";
 type ChannelActionFeedbackScope = "validation" | "mutation" | "stream";
 
 interface ChannelActionFeedbackEntry {
+  readonly workspaceCwd: string;
   readonly surface: ChannelActionFeedbackSurface;
   readonly identity: string;
   readonly scope: ChannelActionFeedbackScope;
   readonly message: string;
 }
 
-interface SendChannelMessageInput {
+export interface SendChannelMessageInput {
   readonly threadId?: string;
   readonly body: string;
   readonly mentions: readonly { readonly id: string; readonly label: string; readonly kind: "ai-teammate" | "local-user" | "channel" }[];
@@ -144,6 +157,7 @@ interface SendChannelMessageInput {
   readonly linkPreviewIds: readonly string[];
   readonly fileRefs: readonly ChannelMessageFileRef[];
   readonly requestAiReply: boolean;
+  readonly streamOwner?: ChannelStreamErrorOwnerHint;
   readonly replyDisposition?: ChannelReplyDisposition;
   readonly onMessageAccepted?: (message: ChannelMessage) => void;
   readonly onReplyPending?: (pending: ChannelReplyPendingEvent) => void;
@@ -160,6 +174,7 @@ interface CreateTaskFromSlashCommandInput {
 }
 
 export function useChannelActionsController(input: {
+  readonly observation?: DaemonObservation;
   readonly form: RunFormState;
   readonly setForm: Dispatch<SetStateAction<RunFormState>>;
   readonly channels: readonly Channel[];
@@ -169,6 +184,8 @@ export function useChannelActionsController(input: {
   readonly providers: readonly ProviderPreset[];
   readonly providerTemplates: readonly ProviderTemplate[];
   readonly selectedChannelId: string;
+  readonly selectedChannelBranchRootThreadId?: string;
+  readonly isSelectedChannelConversation?: (channelId: string, threadId?: string) => boolean;
   readonly activeSidebarTarget: SidebarTarget;
   readonly channelDecisions: readonly ChannelDecision[];
   readonly setActiveView: Dispatch<SetStateAction<ViewId>>;
@@ -198,7 +215,11 @@ export function useChannelActionsController(input: {
   readonly setChannelWorkflows: Dispatch<SetStateAction<readonly ChannelWorkflow[]>>;
   readonly setChannelWorkflowSteps: Dispatch<SetStateAction<readonly ChannelWorkflowStep[]>>;
   readonly reportFeedback: (entry: ChannelActionFeedbackEntry) => void;
-  readonly clearFeedback: (surface: ChannelActionFeedbackSurface, identity: string) => void;
+  readonly clearFeedback: (
+    surface: ChannelActionFeedbackSurface,
+    identity: string,
+    workspaceCwd: string,
+  ) => void;
   readonly t: (value: string, values?: Record<string, string | number>) => string;
   readonly addChannelTeammate: (channelId: string, teammateId: string) => Promise<void>;
   readonly setDefaultChannelTeammate: (channelId: string, teammateId: string) => Promise<void>;
@@ -216,6 +237,15 @@ export function useChannelActionsController(input: {
   readonly refreshRuntimeState: (cwd?: string) => Promise<void>;
   readonly refreshChannelActivity: () => Promise<void>;
 }): ChannelActionsController {
+  const observationRef = useRef(input.observation ?? liveDaemonObservation);
+  observationRef.current = input.observation ?? liveDaemonObservation;
+  function assertObservationOpen(cwd = input.form.cwd.trim()): void {
+    if (isDaemonObservationPausedForWorkspace(observationRef.current, cwd)) throw new DaemonObservationDeferredError();
+  }
+  const uploadOwnerKey = JSON.stringify([input.form.cwd.trim(), input.selectedChannelId, input.selectedChannelBranchRootThreadId ?? "root"]);
+  const uploadOwnerRef = useRef({ key: uploadOwnerKey, pending: 0 });
+  if (uploadOwnerRef.current.key !== uploadOwnerKey) uploadOwnerRef.current = { key: uploadOwnerKey, pending: 0 };
+
   function reportFeedback(
     surface: ChannelActionFeedbackSurface,
     identity: string,
@@ -223,12 +253,20 @@ export function useChannelActionsController(input: {
     caught: unknown,
   ): string {
     const message = caught instanceof Error ? caught.message : String(caught);
-    input.reportFeedback({ surface, identity, scope, message });
+    input.reportFeedback({ workspaceCwd: input.form.cwd.trim(), surface, identity, scope, message });
     return message;
   }
 
+  function composerFeedbackIdentity(channelId = input.selectedChannelId): string {
+    return channelConversationScopeKey({
+      workspaceCwd: input.form.cwd,
+      channelId,
+      branchRootThreadId: input.selectedChannelBranchRootThreadId,
+    });
+  }
+
   function clearFeedback(surface: ChannelActionFeedbackSurface, identity: string): void {
-    input.clearFeedback(surface, identity);
+    input.clearFeedback(surface, identity, input.form.cwd.trim());
   }
 
   function buildChannelCreatePayload(form: ChannelCreateFormState): ChannelFormState {
@@ -271,6 +309,7 @@ export function useChannelActionsController(input: {
       clearFeedback("create-dialog", "draft");
       const response = await createChannel(input.form.cwd.trim(), buildChannelCreatePayload(input.channelForm));
       await applyCreatedChannelTeammates(response.channel.id, input.channelForm);
+      input.setSelectedChannelBranchId("");
       input.setSelectedChannelId(response.channel.id);
       input.setActiveSidebarTarget(channelSidebarTarget(response.channel.id));
       input.setChannelCreateOpen(false);
@@ -310,6 +349,7 @@ export function useChannelActionsController(input: {
         runtimePolicy: input.channelForm.runtimePolicy,
       });
       await applyCreatedChannelTeammates(response.channel.id, input.channelForm);
+      input.setSelectedChannelBranchId("");
       input.setSelectedChannelId(response.channel.id);
       input.setActiveSidebarTarget(channelSidebarTarget(response.channel.id));
       input.setChannelCreateOpen(false);
@@ -461,12 +501,12 @@ export function useChannelActionsController(input: {
       return;
     }
     if (!commandInput.prompt.trim()) {
-      reportFeedback("composer", input.selectedChannelId, "validation", "Slash command prompt 不能为空");
+      reportFeedback("composer", composerFeedbackIdentity(input.selectedChannelId), "validation", "Slash command prompt 不能为空");
       return;
     }
 
     try {
-      clearFeedback("composer", input.selectedChannelId);
+      clearFeedback("composer", composerFeedbackIdentity(input.selectedChannelId));
       const selectedChannel = input.channels.find((channel) => channel.id === input.selectedChannelId);
       const response = await createTask(input.form.cwd.trim(), input.selectedChannelId, {
         title: commandInput.title.trim() || titleFromPrompt(commandInput.prompt),
@@ -479,7 +519,7 @@ export function useChannelActionsController(input: {
       await input.refreshTasks(input.selectedChannelId);
       await input.refreshChannelActivity();
     } catch (error) {
-      reportFeedback("composer", input.selectedChannelId, "mutation", error);
+      reportFeedback("composer", composerFeedbackIdentity(input.selectedChannelId), "mutation", error);
       throw error;
     }
   }
@@ -490,19 +530,47 @@ export function useChannelActionsController(input: {
       return { errorMessage };
     }
     const channelId = input.selectedChannelId;
+    assertObservationOpen();
     const selectedChannel = input.channels.find((channel) => channel.id === channelId);
     const providerPresetId = messageInput.requestAiReply
       ? selectedChannel?.defaultProviderPresetId
         || input.form.providerPresetId
         || input.providers.find(providerPreflightReady)?.id
       : undefined;
+    const observation = observationRef.current;
+    const submissionCwd = input.form.cwd.trim();
+    const canObserveStream = () => observationRef.current.epoch === observation.epoch
+      && observationRef.current.baseUrl === observation.baseUrl && observationRef.current.workspaceCwd === observation.workspaceCwd
+      && !isDaemonObservationPausedForWorkspace(observationRef.current, submissionCwd);
+    const refreshObservation = async (read: () => Promise<void>): Promise<void> => {
+      if (canObserveStream()) await read();
+    };
+    const canProject = () => (input.isSelectedChannelConversation?.(channelId, messageInput.threadId) ?? true) && canObserveStream();
+    const setMessages: typeof input.setChannelMessages = (update) => { if (canProject()) input.setChannelMessages(update); };
+    const setItems: typeof input.setChannelConversationItems = (update) => { if (canProject()) input.setChannelConversationItems(update); };
+    let messageAccepted = false;
+    const submissionScope = { cwd: input.form.cwd.trim(), surface: "channel" as const, ownerId: channelId, threadId: messageInput.threadId };
+    const pendingKey = submissionLookupJournal.read(submissionScope);
+    if (pendingKey) {
+      const query = { surface: "channel" as const, channelId, threadId: messageInput.threadId, idempotencyKey: pendingKey };
+      const receipt = await recoverSubmissionReceipt(async () => {
+        if (!canObserveStream()) throw new DaemonObservationDeferredError();
+        return validateConversationSubmissionReceipt(await getConversationSubmission(submissionScope.cwd, query), submissionScope.cwd, query);
+      });
+      if (!receipt?.sourceItem) throw new UnconfirmedConversationSubmissionError(pendingKey, true);
+      await refreshObservation(() => input.refreshChannelMessages(channelId, messageInput.threadId, { silent: true }));
+      submissionLookupJournal.forget(submissionScope, pendingKey);
+      throw new RecoveredConversationSubmissionError(projectMessageItem(receipt.sourceItem, []).body);
+    }
+    const idempotencyKey = crypto.randomUUID();
+    let receivedAiReply = false;
+    let streamErrorMessage = "";
     try {
-      clearFeedback("composer", channelId);
-      let receivedAiReply = false;
-      let messageAccepted = false;
+      clearFeedback("composer", composerFeedbackIdentity(channelId));
       let autoStartedWorkflow = false;
-      let streamErrorMessage = "";
-      const response = await streamChannelTurn(input.form.cwd.trim(), channelId, {
+      submissionLookupJournal.begin(submissionScope, idempotencyKey);
+      const response = await streamChannelTurn(submissionScope.cwd, channelId, {
+        idempotencyKey,
         surface: messageInput.threadId
           ? { kind: "thread", threadId: messageInput.threadId }
           : { kind: "channel_root" },
@@ -521,10 +589,11 @@ export function useChannelActionsController(input: {
           const data = projectChannelConversationTurn(raw);
           const aiReplies = data.aiReplies?.length ? data.aiReplies : data.aiReply ? [data.aiReply] : [];
           receivedAiReply = receivedAiReply || aiReplies.length > 0;
-          input.setChannelMessages((current) => projectChannelStreamReady(current, data));
-          input.setChannelConversationItems((current) => projectChannelItemsReady(current, data));
+          setMessages((current) => projectChannelStreamReady(current, data));
+          setItems((current) => projectChannelItemsReady(current, data));
           if (!messageAccepted) {
             messageAccepted = true;
+            submissionLookupJournal.forget(submissionScope, idempotencyKey);
             messageInput.onMessageAccepted?.(data.message);
           }
           return;
@@ -540,23 +609,23 @@ export function useChannelActionsController(input: {
         }
         if (event.event === "delta") {
           const data = JSON.parse(event.data) as ChannelConversationStreamDeltaEvent;
-          input.setChannelMessages((current) => current.map((message) => message.id === data.itemId ? { ...message, body: data.body, status: "pending" } : message));
-          input.setChannelConversationItems((current) => projectChannelItemDelta(current, data.itemId, data.body));
+          setMessages((current) => current.map((message) => message.id === data.itemId ? { ...message, body: data.body, status: "pending" } : message));
+          setItems((current) => projectChannelItemDelta(current, data.itemId, data.body));
           return;
         }
         if (event.event === "run_linked") {
           const data = JSON.parse(event.data) as ChannelConversationStreamRunLinkedEvent;
-          input.setChannelMessages((current) => current.map((message) =>
+          setMessages((current) => current.map((message) =>
             message.id === data.itemId ? { ...message, linkedRunId: data.linkedRunId } : message
           ));
-          input.setChannelConversationItems((current) => projectChannelItemRunLinked(current, data.itemId, data.linkedRunId));
+          setItems((current) => projectChannelItemRunLinked(current, data.itemId, data.linkedRunId));
           if (data.activeReply) {
             messageInput.onReplyLinked?.(data.activeReply);
           }
           const workspaceCwd = input.form.cwd.trim();
-          void Promise.allSettled([
-            input.refreshRuns(workspaceCwd),
-            input.refreshRuntimeState(workspaceCwd),
+          if (canObserveStream()) void Promise.allSettled([
+            refreshObservation(() => input.refreshRuns(workspaceCwd)),
+            refreshObservation(() => input.refreshRuntimeState(workspaceCwd)),
           ]);
           return;
         }
@@ -566,8 +635,8 @@ export function useChannelActionsController(input: {
           const aiReplies = data.aiReplies?.length ? data.aiReplies : data.aiReply ? [data.aiReply] : [];
           receivedAiReply = receivedAiReply || aiReplies.length > 0;
           autoStartedWorkflow = Boolean(data.autoStartedWorkflow);
-          input.setChannelMessages((current) => projectChannelStreamTerminal(current, data));
-          input.setChannelConversationItems((current) => projectChannelItemsTerminal(current, data));
+          setMessages((current) => projectChannelStreamTerminal(current, data));
+          setItems((current) => projectChannelItemsTerminal(current, data));
           if (data.replyDispatch) messageInput.onReplyDispatch?.(data.replyDispatch);
           return;
         }
@@ -576,8 +645,8 @@ export function useChannelActionsController(input: {
           const data = { ...projectChannelConversationTurn(raw), ...(raw.error ? { error: raw.error } : {}) };
           const aiReplies = data.aiReplies?.length ? data.aiReplies : data.aiReply ? [data.aiReply] : [];
           receivedAiReply = receivedAiReply || aiReplies.length > 0;
-          input.setChannelMessages((current) => projectChannelStreamTerminal(current, data));
-          input.setChannelConversationItems((current) => projectChannelItemsTerminal(current, data));
+          setMessages((current) => projectChannelStreamTerminal(current, data));
+          setItems((current) => projectChannelItemsTerminal(current, data));
           if (data.error) {
             streamErrorMessage = data.error;
           }
@@ -611,33 +680,91 @@ export function useChannelActionsController(input: {
           const messages = [data.message, ...(data.aiReplies?.length ? data.aiReplies : data.aiReply ? [data.aiReply] : [])]
             .filter((message): message is ChannelMessage => Boolean(message));
           receivedAiReply = receivedAiReply || messages.some((message) => message.kind === "ai_reply");
-          input.setChannelMessages((current) => projectChannelStreamTerminal(current, data));
-          input.setChannelConversationItems((current) => projectChannelItemsTerminal(current, data));
+          setMessages((current) => projectChannelStreamTerminal(current, data));
+          setItems((current) => projectChannelItemsTerminal(current, data));
           if (data.error) {
             streamErrorMessage = data.error;
           }
           if (data.replyDispatch) messageInput.onReplyDispatch?.(data.replyDispatch);
         }
       });
-      await input.refreshChannelMessages(channelId, messageInput.threadId, { silent: true });
-      await input.refreshChannelExecutionProposals(channelId);
-      await input.refreshChannelIntentDecisions(channelId);
-      if (receivedAiReply) {
-        await input.refreshUsedMemoryAudit(input.form.cwd.trim());
-      }
-      await input.refreshChannelMessageRouteDecisions(channelId);
-      await input.refreshChannelFiles(channelId);
-      if (autoStartedWorkflow) {
-        await input.refreshChannelActivity();
-      }
+      if (!messageAccepted) throw new Error("Pending confirmation");
+      if (!canObserveStream()) return {};
+      await refreshObservation(() => input.refreshChannelMessages(channelId, messageInput.threadId, { silent: true }));
+      if (!canObserveStream()) return {};
+      await refreshObservation(() => input.refreshChannelExecutionProposals(channelId));
+      await refreshObservation(() => input.refreshChannelIntentDecisions(channelId));
+      if (receivedAiReply) await refreshObservation(() => input.refreshUsedMemoryAudit(submissionCwd));
+      await refreshObservation(() => input.refreshChannelMessageRouteDecisions(channelId));
+      await refreshObservation(() => input.refreshChannelFiles(channelId));
+      if (autoStartedWorkflow) await refreshObservation(() => input.refreshChannelActivity());
+      // A failed or blocked AI reply owns its provider error. The channel
+      // feed renders that error beside the persisted assistant message; keep
+      // Composer feedback for transport failures that have no reply record to
+      // anchor the error to.
       if (streamErrorMessage) {
-        reportFeedback("composer", channelId, "stream", streamErrorMessage);
-        return { errorMessage: streamErrorMessage };
+        return {
+          errorMessage: streamErrorMessage,
+          errorOwner: channelStreamErrorOwner({
+            hasAssistantReply: receivedAiReply,
+            fallbackOwner: messageInput.streamOwner ?? "channel-composer",
+          }),
+        };
       }
       return {};
     } catch (error) {
-      reportFeedback("composer", channelId, "stream", error);
+      if (streamErrorMessage) {
+        if (messageAccepted) {
+          await Promise.allSettled([
+            refreshObservation(() => input.refreshChannelMessages(channelId, messageInput.threadId, { silent: true })),
+          ]);
+        }
+        return {
+          errorMessage: streamErrorMessage,
+          errorOwner: channelStreamErrorOwner({
+            hasAssistantReply: receivedAiReply,
+            fallbackOwner: messageInput.streamOwner ?? "channel-composer",
+          }),
+        };
+      }
+      if (shouldDeferDaemonObservationError(error, observationRef.current, submissionCwd)) {
+        if (messageAccepted) return {};
+        throw new UnconfirmedConversationSubmissionError(idempotencyKey);
+      }
+      let rejectionConfirmed = false;
+      if (!messageAccepted) {
+        if (isDaemonObservationPausedForWorkspace(observationRef.current, submissionCwd)) {
+          reportFeedback("composer", composerFeedbackIdentity(channelId), "stream", error);
+          throw error;
+        }
+        const query = { surface: "channel" as const, channelId, threadId: messageInput.threadId, idempotencyKey };
+        const receipt = await recoverSubmissionReceipt(async () => {
+          if (!canObserveStream()) throw new DaemonObservationDeferredError();
+          return validateConversationSubmissionReceipt(await getConversationSubmission(submissionScope.cwd, query), submissionScope.cwd, query);
+        });
+        rejectionConfirmed = canObserveStream() && submissionWasRejected(error, receipt);
+        if (receipt?.sourceItem) {
+          messageAccepted = true;
+          submissionLookupJournal.forget(submissionScope, idempotencyKey);
+          messageInput.onMessageAccepted?.(projectMessageItem(receipt.sourceItem, []));
+        } else if (!rejectionConfirmed) {
+          if (!canObserveStream()) {
+            reportFeedback("composer", composerFeedbackIdentity(channelId), "stream", error);
+            throw error;
+          }
+          throw new UnconfirmedConversationSubmissionError(idempotencyKey);
+        }
+      }
+      if (rejectionConfirmed) submissionLookupJournal.forget(submissionScope, idempotencyKey);
+      if (messageAccepted) {
+        // Reconcile the original accepted turn; a broken stream is not a resend request.
+        await Promise.allSettled([
+          refreshObservation(() => input.refreshChannelMessages(channelId, messageInput.threadId, { silent: true })),
+        ]);
+      }
       throw error;
+    } finally {
+      submissionLookupJournal.finish(submissionScope, idempotencyKey);
     }
   }
 
@@ -650,18 +777,20 @@ export function useChannelActionsController(input: {
       return [];
     }
 
+    const owner = uploadOwnerRef.current;
+    const sourceCwd = input.form.cwd.trim();
+    const channelId = input.selectedChannelId;
+    owner.pending++;
     input.setChannelFilesLoading(true);
     try {
-      clearFeedback("composer", input.selectedChannelId);
-      const responses = await Promise.all(files.map((file) => uploadChannelAttachment(input.form.cwd.trim(), input.selectedChannelId, file)));
+      clearFeedback("composer", composerFeedbackIdentity(channelId));
+      const responses = await Promise.all(files.map((file) => uploadChannelAttachment(sourceCwd, channelId, file)));
       const uploaded = responses.map((response) => response.attachment);
-      input.setChannelAttachments((current) => [...uploaded, ...current]);
+      if (uploadOwnerRef.current === owner) input.setChannelAttachments((current) => [...uploaded, ...current]);
       return uploaded;
-    } catch (error) {
-      reportFeedback("composer", input.selectedChannelId, "mutation", error);
-      throw error;
     } finally {
-      input.setChannelFilesLoading(false);
+      owner.pending--;
+      if (uploadOwnerRef.current === owner && owner.pending === 0) input.setChannelFilesLoading(false);
     }
   }
 
@@ -671,7 +800,7 @@ export function useChannelActionsController(input: {
       return undefined;
     }
     try {
-      clearFeedback("composer", input.selectedChannelId);
+      clearFeedback("composer", composerFeedbackIdentity(input.selectedChannelId));
       const response = await createChannelLinkPreview(input.form.cwd.trim(), input.selectedChannelId, { url });
       input.setChannelLinkPreviews((current) => [
         response.linkPreview,
@@ -679,7 +808,7 @@ export function useChannelActionsController(input: {
       ]);
       return response.linkPreview;
     } catch (error) {
-      reportFeedback("composer", input.selectedChannelId, "mutation", error);
+      reportFeedback("composer", composerFeedbackIdentity(input.selectedChannelId), "mutation", error);
       throw error;
     }
   }
@@ -687,11 +816,11 @@ export function useChannelActionsController(input: {
   async function removeChannelAttachment(attachmentId: string): Promise<void> {
     const channelId = input.selectedChannelId || "unselected";
     try {
-      clearFeedback("composer", channelId);
+      clearFeedback("composer", composerFeedbackIdentity(channelId));
       await deleteChannelAttachment(input.form.cwd.trim(), attachmentId);
       input.setChannelAttachments((current) => current.filter((attachment) => attachment.id !== attachmentId));
     } catch (error) {
-      reportFeedback("composer", channelId, "mutation", error);
+      reportFeedback("composer", composerFeedbackIdentity(channelId), "mutation", error);
     }
   }
 
@@ -912,7 +1041,9 @@ export function useChannelActionsController(input: {
 
       const response = await createChannelContextSummary(input.form.cwd.trim(), input.selectedChannelId, {
         targetType: sourceRefs.contextTargetType,
-        targetId: sourceRefs.contextTargetId,
+        targetId: sourceRefs.contextTargetType === "thread"
+          ? input.selectedChannelBranchRootThreadId ?? sourceRefs.contextTargetId
+          : sourceRefs.contextTargetId,
         sourceMessageIds: sourceRefs.sourceMessageIds,
         decisionIds: draft.decisionIds,
         summary: draft.summary,
@@ -932,29 +1063,30 @@ export function useChannelActionsController(input: {
     }
   }
 
+  const guard = <T extends (...args: any[]) => any>(action: T): T => (async (...args: Parameters<T>) => { assertObservationOpen(); return action(...args); }) as T;
   return {
-    saveChannel,
-    saveDefaultChannel,
-    saveChannelEdit,
-    saveChannelBranch,
-    archiveSidebarChannel,
-    archiveSidebarChannelBranch,
-    removeChannel,
-    saveTask,
-    createTaskFromSlashCommand,
-    sendChannelMessage,
-    uploadChannelFiles,
-    addChannelLinkPreview,
-    removeChannelAttachment,
-    saveChannelBrief,
-    saveChannelProtocolPatch,
-    revertChannelProtocolSettings,
-    supersedeChannelDecision,
-    rejectChannelDecision,
-    createHandoffFromTask,
-    updateHandoffStatusValue,
-    startWorkflowFromHandoff,
-    createTaskFromContextSummary,
-    runActivityTriageAction,
+    saveChannel: guard(saveChannel),
+    saveDefaultChannel: guard(saveDefaultChannel),
+    saveChannelEdit: guard(saveChannelEdit),
+    saveChannelBranch: guard(saveChannelBranch),
+    archiveSidebarChannel: guard(archiveSidebarChannel),
+    archiveSidebarChannelBranch: guard(archiveSidebarChannelBranch),
+    removeChannel: guard(removeChannel),
+    saveTask: guard(saveTask),
+    createTaskFromSlashCommand: guard(createTaskFromSlashCommand),
+    sendChannelMessage: guard(sendChannelMessage),
+    uploadChannelFiles: guard(uploadChannelFiles),
+    addChannelLinkPreview: guard(addChannelLinkPreview),
+    removeChannelAttachment: guard(removeChannelAttachment),
+    saveChannelBrief: guard(saveChannelBrief),
+    saveChannelProtocolPatch: guard(saveChannelProtocolPatch),
+    revertChannelProtocolSettings: guard(revertChannelProtocolSettings),
+    supersedeChannelDecision: guard(supersedeChannelDecision),
+    rejectChannelDecision: guard(rejectChannelDecision),
+    createHandoffFromTask: guard(createHandoffFromTask),
+    updateHandoffStatusValue: guard(updateHandoffStatusValue),
+    startWorkflowFromHandoff: guard(startWorkflowFromHandoff),
+    createTaskFromContextSummary: guard(createTaskFromContextSummary),
+    runActivityTriageAction: guard(runActivityTriageAction),
   };
 }

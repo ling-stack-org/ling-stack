@@ -14,11 +14,15 @@ import {
   type ListSkillRegistryOptions,
   type ListSkillSourceSnapshotOptions,
   type PublishSkillRevisionDraftInput,
+  type PublishSkillSourceBatchInput,
+  type PublishedSkillSourceBatch,
   type SkillImportDraft,
   type SkillHardDeleteBlocker,
   type SkillHardDeleteResult,
   type SkillCompiledRuntimeViewRecord,
   type SkillDefinition,
+  type SkillDefinitionRevision,
+  type SkillDefinitionUndoRequest,
   type SkillRegistryEntry,
   type SkillSourceArtifact,
   type SkillSourceSnapshot,
@@ -33,9 +37,25 @@ import { omitUndefined, stringifyJson } from "./helpers.js";
 import { mapOfficialSkillSourceSubscription, mapSkillCompiledRuntimeView, mapSkillImportDraft, mapSkillRegistryEntry, mapSkillSourceArtifact, mapSkillSourceSnapshot, mapSkillSourceUpgradePolicy } from "./task-skill-mappers.js";
 import { officialSkillSourceSubscriptionSelectSql, skillCompiledRuntimeViewSelectSql, skillImportDraftSelectSql, skillRegistryEntrySelectSql, skillSourceArtifactSelectSql, skillSourceSnapshotSelectSql, skillSourceUpgradePolicySelectSql } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
+import { rollbackSkillSourceSnapshot } from "./skill-source-rollback.js";
+import { publishSkillSourceBatch } from "./skill-source-publication.js";
+import { completeNewSkillDefinitionRevision, getSkillDefinitionRevision, listSkillDefinitionRevisions,
+  nextSkillDefinitionTimestamp, undoSkillDefinitionRevision } from "./skill-definition-revision-store.js";
 
 export class SqliteSkillRegistryStore {
   constructor(private readonly context: SqliteStoreContext) {}
+
+  listSkillDefinitionRevisions(skillId: string, limit?: number): SkillDefinitionRevision[] {
+    return listSkillDefinitionRevisions(this.context, skillId, limit);
+  }
+
+  getSkillDefinitionRevision(skillId: string, revisionId?: string): SkillDefinitionRevision | undefined {
+    return getSkillDefinitionRevision(this.context, skillId, revisionId);
+  }
+
+  undoSkillDefinitionRevision(skillId: string, input: SkillDefinitionUndoRequest, now: string) {
+    return undoSkillDefinitionRevision(this.context, id => this.getSkillRegistryEntry(id), skillId, input, now);
+  }
 
   listSkillRegistryEntries(options: ListSkillRegistryOptions = {}): SkillRegistryEntry[] {
     const conditions = ["workspace_id = ?"];
@@ -105,6 +125,7 @@ export class SqliteSkillRegistryStore {
       upstreamName: input.upstreamName,
       upstreamVersion: input.upstreamVersion,
       upstreamSkillPath: input.upstreamSkillPath,
+      bundleUpdateMode: input.bundleUpdateMode,
       sourceChecksum: input.sourceChecksum,
       rawSkillMarkdown: input.rawSkillMarkdown,
       rawSkillMarkdownArtifactId: input.rawSkillMarkdownArtifactId,
@@ -126,6 +147,7 @@ export class SqliteSkillRegistryStore {
           upstream_name,
           upstream_version,
           upstream_skill_path,
+          bundle_update_mode,
           source_checksum,
           raw_skill_markdown,
           raw_skill_markdown_artifact_id,
@@ -135,7 +157,7 @@ export class SqliteSkillRegistryStore {
           review_status,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           skill_id = excluded.skill_id,
           source_kind = excluded.source_kind,
@@ -143,6 +165,7 @@ export class SqliteSkillRegistryStore {
           upstream_name = excluded.upstream_name,
           upstream_version = excluded.upstream_version,
           upstream_skill_path = excluded.upstream_skill_path,
+          bundle_update_mode = excluded.bundle_update_mode,
           source_checksum = excluded.source_checksum,
           raw_skill_markdown = excluded.raw_skill_markdown,
           raw_skill_markdown_artifact_id = excluded.raw_skill_markdown_artifact_id,
@@ -161,6 +184,7 @@ export class SqliteSkillRegistryStore {
         snapshot.upstreamName ?? null,
         snapshot.upstreamVersion ?? null,
         snapshot.upstreamSkillPath ?? null,
+        snapshot.bundleUpdateMode ?? null,
         snapshot.sourceChecksum,
         snapshot.rawSkillMarkdown,
         snapshot.rawSkillMarkdownArtifactId ?? null,
@@ -186,32 +210,11 @@ export class SqliteSkillRegistryStore {
   }
 
   rollbackSkillSourceSnapshot(snapshotId: string, now: string): SkillSourceSnapshot | undefined {
-    const existing = this.getSkillSourceSnapshotById(snapshotId);
-    if (!existing) {
-      return undefined;
-    }
-    const current = this.getSkillSourceSnapshot(existing.skillId);
-    if (current && current.id !== existing.id) {
-      this.context.database
-        .prepare("UPDATE skill_source_snapshots SET review_status = 'archived', updated_at = ? WHERE workspace_id = ? AND id = ?")
-        .run(now, DEFAULT_WORKSPACE_ID, current.id);
-    }
-    return this.upsertSkillSourceSnapshot({
-      id: existing.id,
-      skillId: existing.skillId,
-      sourceKind: existing.sourceKind,
-      sourcePath: existing.sourcePath,
-      upstreamName: existing.upstreamName,
-      upstreamVersion: existing.upstreamVersion,
-      upstreamSkillPath: existing.upstreamSkillPath,
-      sourceChecksum: existing.sourceChecksum,
-      rawSkillMarkdown: existing.rawSkillMarkdown,
-      rawSkillMarkdownArtifactId: existing.rawSkillMarkdownArtifactId,
-      agentMetadata: existing.agentMetadata,
-      referencedFiles: existing.referencedFiles,
-      warnings: existing.warnings,
-      reviewStatus: "published",
-    }, now);
+    return rollbackSkillSourceSnapshot(this.context, snapshotId, now);
+  }
+
+  publishSkillSourceBatch(input: PublishSkillSourceBatchInput, now: string): PublishedSkillSourceBatch {
+    return publishSkillSourceBatch(this.context, this, input, now);
   }
 
   getOfficialSkillSourceSubscription(): OfficialSkillSourceSubscription | undefined {
@@ -594,7 +597,8 @@ export class SqliteSkillRegistryStore {
       throw new Error("Skill import draft has error warnings and cannot be published");
     }
     const packId = draft.packId ?? createSkillPackId();
-    this.context.database.exec("BEGIN");
+    const ownsTransaction = !this.context.database.isTransaction;
+    this.context.database.exec(ownsTransaction ? "BEGIN IMMEDIATE" : "SAVEPOINT skill_import_publication");
     try {
       this.context.database
         .prepare(`
@@ -679,9 +683,10 @@ export class SqliteSkillRegistryStore {
       this.context.database
         .prepare("UPDATE skill_import_drafts SET updated_at = ? WHERE workspace_id = ? AND id = ?")
         .run(now, DEFAULT_WORKSPACE_ID, id);
-      this.context.database.exec("COMMIT");
+      this.context.database.exec(ownsTransaction ? "COMMIT" : "RELEASE SAVEPOINT skill_import_publication");
     } catch (error) {
-      this.context.database.exec("ROLLBACK");
+      this.context.database.exec(ownsTransaction ? "ROLLBACK" : "ROLLBACK TO SAVEPOINT skill_import_publication");
+      if (!ownsTransaction) this.context.database.exec("RELEASE SAVEPOINT skill_import_publication");
       throw error;
     }
     return draft.definitions
@@ -714,6 +719,31 @@ export class SqliteSkillRegistryStore {
       if (existing.updatedAt !== input.expectedUpdatedAt) {
         throw new SkillRevisionStoreError("skill_revision_conflict", "Skill changed after the editor was opened");
       }
+      const previousRevision = getSkillDefinitionRevision(this.context, input.skillId);
+      if (input.expectedRevisionId !== undefined && previousRevision?.id !== input.expectedRevisionId) {
+        throw new SkillRevisionStoreError("skill_revision_conflict", "Skill definition revision changed after the editor was opened");
+      }
+      if (input.reviewedCandidateId) {
+        const candidate = this.context.database.prepare(`SELECT status, target_skill_id, proposed_action, source_refs_json
+          FROM skill_candidates WHERE workspace_id = ? AND id = ?`).get(DEFAULT_WORKSPACE_ID, input.reviewedCandidateId);
+        if (!candidate || candidate.status !== "approved_for_draft" || candidate.target_skill_id !== input.skillId ||
+          candidate.proposed_action !== "update_existing" || input.sourceCandidateId !== input.reviewedCandidateId) {
+          throw new SkillRevisionStoreError("skill_revision_invalid", "An approved correction for this skill is required");
+        }
+        const refs = JSON.parse(String(candidate.source_refs_json)) as { type: string; id: string }[];
+        const learningRef = refs.find(ref => ref.type === "learning-review");
+        if (learningRef) {
+          const row = this.context.database.prepare("SELECT record_json FROM learning_review_jobs WHERE id = ? AND workspace_id = ?")
+            .get(learningRef.id, DEFAULT_WORKSPACE_ID);
+          const job = row ? JSON.parse(String(row.record_json)) as { status: string; candidateIds: string[];
+            evidence: { selectedSkillId?: string; selectedSkillRevisionId?: string } } : undefined;
+          if (!job || job.status !== "succeeded" || !job.candidateIds.includes(input.reviewedCandidateId) ||
+            job.evidence.selectedSkillId !== input.skillId || job.evidence.selectedSkillRevisionId !== previousRevision?.id) {
+            throw new SkillRevisionStoreError("skill_revision_conflict", "The skill changed since the reviewed evidence was captured");
+          }
+        }
+      }
+      const updatedAt = nextSkillDefinitionTimestamp(now, existing.updatedAt);
       const result = this.context.database
         .prepare(`
           UPDATE skill_definitions
@@ -722,7 +752,7 @@ export class SqliteSkillRegistryStore {
         `)
         .run(
           stringifyJson(withoutLegacySkillWorkflowPhase(draft.definitions[0].definition)),
-          now,
+          updatedAt,
           DEFAULT_WORKSPACE_ID,
           input.skillId,
           input.expectedUpdatedAt,
@@ -732,7 +762,12 @@ export class SqliteSkillRegistryStore {
       }
       this.context.database
         .prepare("UPDATE skill_import_drafts SET updated_at = ? WHERE workspace_id = ? AND id = ?")
-        .run(now, DEFAULT_WORKSPACE_ID, input.draftId);
+        .run(updatedAt, DEFAULT_WORKSPACE_ID, input.draftId);
+      completeNewSkillDefinitionRevision(this.context, input, previousRevision?.id);
+      if (input.reviewedCandidateId) {
+        this.context.database.prepare("UPDATE skill_candidates SET status = 'published', updated_at = ? WHERE workspace_id = ? AND id = ?")
+          .run(updatedAt, DEFAULT_WORKSPACE_ID, input.reviewedCandidateId);
+      }
       this.context.database.exec("COMMIT");
     } catch (error) {
       this.context.database.exec("ROLLBACK");

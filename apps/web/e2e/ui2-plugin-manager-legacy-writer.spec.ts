@@ -35,8 +35,7 @@ interface SourceFile {
 }
 
 test("T13-O.32-D Plugin focused owner has no strict Dark blanket and uses only the public feedback slot", async () => {
-  const [strictCss, styles, pluginImports, feedbackCss, inlineFeedback, packageTest, productionSources, pluginStyleSources] = await Promise.all([
-    readRepositoryFile("apps/web/src/styles/strict-console.css"),
+  const [styles, pluginImports, feedbackCss, inlineFeedback, packageTest, productionSources, pluginStyleSources] = await Promise.all([
     readRepositoryFile("apps/web/src/styles.css"),
     readRepositoryFile("apps/web/src/styles/plugins.css"),
     readRepositoryFile("apps/web/src/styles/plugins/plugin-manager-feedback.css"),
@@ -46,18 +45,12 @@ test("T13-O.32-D Plugin focused owner has no strict Dark blanket and uses only t
     readSourceTree(pluginStylesDirectory),
   ]);
 
-  const strictSelectors = extractCssSelectors(strictCss);
-  const darkWorkspaceBlankets = strictSelectors.filter((selector) => (
-    selector.includes(':root[data-theme="dark"] .workspace')
-  ));
-  expect(darkWorkspaceBlankets, "strict must not restore generic Dark workspace blankets").toHaveLength(0);
-  expect(strictCss).not.toContain(":not(.workspace-plugins-surface)");
 
   const pluginRootOwners = findExactSelectorOwners(productionSources, ".workspace.workspace-plugins-surface");
   expect(pluginRootOwners).toEqual([
     "apps/web/src/styles/plugins/plugin-manager-shell.css",
   ]);
-  expectImportOrder(styles, ["./styles/plugins.css", "./styles/strict-console.css"]);
+  expectImportOrder(styles, ["./styles/plugins.css", "./styles/shared/workspace-navigation-appearance.css"]);
   for (const focusedImport of [
     "plugin-manager-shell.css",
     "plugin-manager-toolbar.css",
@@ -441,8 +434,8 @@ async function openPluginManager(page: Page): Promise<void> {
 }
 
 async function openPluginManagerFromShell(page: Page): Promise<void> {
-  const navigation = page.getByLabel("Ling Stack navigation");
-  await navigation.getByRole("button", { name: "Engineering" }).click();
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
+  await navigation.getByRole("button", { name: "Engineering", exact: true }).click();
   await navigation.getByRole("button", { name: "Plugin Manager" }).click();
   await expect(page.locator(".workspace.workspace-plugins-surface .settings-plugin-manager")).toBeVisible();
   await expect(page.locator(".plugin-table-row").first()).toBeVisible();

@@ -1,6 +1,7 @@
 import type { SQLOutputValue } from "node:sqlite";
 import {
   createExternalWorkActionId,
+  type CommitExternalWorkActionTransitionInput,
   type CreateExternalWorkActionInput,
   type ExternalWorkAction,
   type ExternalWorkRecord,
@@ -8,7 +9,8 @@ import {
   type UpdateExternalWorkActionInput,
 } from "../../external-work-types.js";
 import { DEFAULT_WORKSPACE_ID } from "../../workspace-types.js";
-import { omitUndefined, stringifyJson } from "./helpers.js";
+import { omitUndefined, rollbackOwnedSqliteTransaction, stringifyJson } from "./helpers.js";
+import type { ApprovalRequest } from "../../approval-types.js";
 import { mapExternalWorkAction } from "./external-work-mappers.js";
 import { externalWorkActionSelectSql } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
@@ -16,6 +18,7 @@ import type { SqliteStoreContext } from "./store-context.js";
 export interface SqliteExternalWorkActionStorePorts {
   readonly assertChannelExists: (channelId: string) => void;
   readonly getExternalWorkRecord: (id: string) => ExternalWorkRecord | undefined;
+  readonly denyPendingApproval: (id: string, reason: string, now: string) => ApprovalRequest | undefined;
 }
 
 export class SqliteExternalWorkActionStore {
@@ -212,5 +215,63 @@ export class SqliteExternalWorkActionStore {
         id,
       );
     return this.getExternalWorkAction(id);
+  }
+
+  /** HTTP awaits stay outside this transaction; the guard, evidence and state commit are indivisible. */
+  commitExternalWorkActionTransition(
+    input: CommitExternalWorkActionTransitionInput,
+    now: string,
+    createEvidence?: (action: ExternalWorkAction) => readonly string[],
+  ): ExternalWorkAction | undefined {
+    const database = this.context.database;
+    database.exec("BEGIN IMMEDIATE");
+    try {
+      const clauses = ["id = ?", "status = ?", "execution_attempt_count = ?", "approval_id IS ?"];
+      const params: (string | number | null)[] = [input.actionId, input.expectedStatus, input.expectedExecutionAttemptCount, input.expectedApprovalId];
+      if (input.approvalStatus !== undefined) {
+        clauses.push(`EXISTS (SELECT 1 FROM approval_requests AS approval
+          WHERE approval.id = external_work_actions.approval_id
+            AND approval.external_work_action_id = external_work_actions.id
+            AND approval.channel_id IS external_work_actions.channel_id
+            AND approval.status = ?)`);
+        params.push(input.approvalStatus);
+      }
+      if (input.subjectLease) {
+        clauses.push(`EXISTS (SELECT 1 FROM resource_leases AS lease
+          WHERE lease.id = ? AND lease.owner_type = 'system' AND lease.owner_id = ?
+            AND lease.resource_type = 'external_subject' AND lease.resource_key = ?
+            AND lease.workspace_id = external_work_actions.workspace_id
+            AND lease.status = 'active' AND lease.attempt_id IS NULL
+            AND lease.acquired_at <= ? AND lease.expires_at > ?)`);
+        params.push(input.subjectLease.id, input.subjectLease.ownerId, input.subjectLease.resourceKey, now, now);
+      }
+      const row = database.prepare(externalWorkActionSelectSql(`WHERE ${clauses.join(" AND ")}`)).get(...params);
+      if (!row) {
+        database.exec("COMMIT");
+        return undefined;
+      }
+      const action = mapExternalWorkAction(row as Record<string, SQLOutputValue>);
+      if (input.cancelPendingApproval && action.approvalId) {
+        const approval = database.prepare("SELECT external_work_action_id, channel_id, status FROM approval_requests WHERE id = ?").get(action.approvalId);
+        if (!approval || approval.external_work_action_id !== action.id || approval.channel_id !== action.channelId) {
+          throw new Error(`Approval request does not belong to external work action: ${action.id}`);
+        }
+        if (approval.status === "pending") {
+          const denied = this.ports.denyPendingApproval(action.approvalId, input.cancelPendingApproval.reason, now);
+          if (denied?.status !== "denied") throw new Error(`Failed to deny cancelled action approval: ${action.approvalId}`);
+        }
+      }
+      const evidenceIds = createEvidence?.(action) ?? [];
+      const updated = this.updateExternalWorkAction(action.id, {
+        ...input.update,
+        artifactIds: [...(input.update.artifactIds ?? action.artifactIds), ...evidenceIds],
+      }, now);
+      if (!updated) throw new Error(`Failed to commit external work action transition: ${action.id}`);
+      database.exec("COMMIT");
+      return updated;
+    } catch (error) {
+      rollbackOwnedSqliteTransaction(database);
+      throw error;
+    }
   }
 }
