@@ -75,7 +75,7 @@
     "@types/react-dom": "^19.2.4",
     "ajv": "8.20.0",
     "ajv-formats": "3.0.1",
-    "electron": "45.2.3",
+    "electron": "45.2.1",
     "electron-builder": "26.18.0",
     "esbuild": "^0.28.1",
     "resedit": "3.1.0",
