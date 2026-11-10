@@ -679,6 +679,21 @@ workflow step 不会同时创建普通 `attempt` 与 `workflow_start` 两种 Hos
 check 和 `git diff --check` 通过。该增量结果更新了受影响代码的当前验证状态；此前完整回归数字
 不因本次增量自动扩展，真实 Provider、packaged、跨平台和 review/CI/merge 发布门禁仍未完成。
 
+同日 Desktop 门禁复核：`@ling-stack/desktop` 的 `typecheck:ci`、development build、16 个
+release evidence schema 和 55 个语言包 parity 检查通过。`package:mac` 在生成 archive 前被
+Office native source/toolchain admission 拒绝；当前本机观察到的是 CommandLineTools 的
+`macosx27.0`/clang 与本地 Node headers，不能匹配提交的 Xcode 26.6、`macosx26.5` 和精确
+review hash。针对 `fef3129d`、`v0.2.3` 的 prerequisites inspection 还明确阻断了
+reviewed native source/toolchain、restricted runtime review 和 genuine platform GStack
+selection。因此本轮没有把旧 archive 当作当前提交的 packaged 证据，也没有放宽任何 review
+或签名门禁。
+
+同日生产入口定向回归：Daemon 相关 Host/queue、native/automation、approval/continuation、
+isolated workflow 规划/执行/2-4 档位、冲突恢复、candidate/apply、cleanup、Graph 和
+Experience review 集合共 300 项通过，0 fail、0 skipped。该集合验证代码闭环与受控 Git/
+SQLite/Pi/Host 生命周期；它不改变真实 Provider 组合、packaged、Windows/Linux 和远端
+review/CI/merge 的门禁状态。
+
 ### 代码责任与实现约束
 
 - B1：daemon `config.ts` 与专用 `runtime/concurrency-policy.ts` 捕获可信启动值；
