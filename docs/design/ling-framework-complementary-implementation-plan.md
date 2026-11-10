@@ -431,6 +431,10 @@ Common checks 的失败已定位到全历史 Gitleaks：1438 个提交、3833874
 - 依赖锁当前摘要为 `49c509936672cbe4ce9118a4bf3907c4b32eea1babfc6dd74dec295c526f4d10`。三任务来源更新到该完整提交，任务版本递增为 `4/4/5`，套件递增为 `5`；v4 文件保留为历史输入，默认套件改为 `framework-v5.json`。v5 套件字节摘要为 `69129d529f41cdad17e9da1a706c4a1f7d3f00b7c4d8b59d11268faaf329a303`。
 - v5 修复后，framework-assurance、CI policy、workflow、平台 lane 与 SDK 边界相关回归共 `179/179` 通过；直接执行 `preflight` 与 `calibrate` 均成功。输出目录仍在 checkout 外，未初始化用户 Store、派发普通 Run、调用 Provider 或运行真实模型/付费任务。
 
+### 依赖 PR 的冻结锁摘要边界（2026-11-10）
+
+依赖更新 PR 曾在 assurance 的 `verifySource` 中因候选 `pnpm-lock.yaml` 不再等于 fixture 锁摘要而失败。校验现保留冻结 commit 内 `pnpm-lock.yaml` 与 `source.lockSha256` 的严格对应，同时只对候选 checkout 的源码文件执行字节 pin；候选锁由 dependency-policy 和 SDK consumer 记录、验证，合法锁更新不会再被当作冻结 artifact 损坏。该边界不放宽任务、规则、profile、源码 pin 或冻结来源的完整性检查。
+
 ### F3-A / F4-01 当前批次（2026-11-09）
 
 | 项目 | 已确认结果 |
