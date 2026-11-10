@@ -154,6 +154,10 @@ test("shared bytes parser enforces allowlisted files and referenced assets", asy
     launchAnimation: { path: "assets/launch.webp", bytes: IMAGE_BYTES.webp },
   }), "invalid-launch-animation");
   await rejectsCode(themePackageFixture({
+    manifest: importedManifest({ launchAnimation: { preset: "canvas-windmill", referenceImage: "assets//launch.webp" } }),
+    launchAnimation: { path: "assets/launch.webp", bytes: IMAGE_BYTES.webp },
+  }), "invalid-launch-animation");
+  await rejectsCode(themePackageFixture({
     manifest: importedManifest({ launchAnimation: { preset: "canvas-windmill", referenceImage: "https://example.test/launch.webp" } }),
   }), "invalid-launch-animation");
 });

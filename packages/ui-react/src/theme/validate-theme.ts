@@ -316,7 +316,8 @@ function validateLaunchAnimation(issues: LingThemeValidationIssue[], value: unkn
     && (typeof value.referenceImage !== "string"
       || value.referenceImage.includes("..")
       || value.referenceImage.includes(":")
-      || !LAUNCH_ANIMATION_PATH_PATTERN.test(value.referenceImage))
+      || !LAUNCH_ANIMATION_PATH_PATTERN.test(value.referenceImage)
+      || value.referenceImage.split("/").some((segment) => segment.length === 0 || segment === "." || segment === ".."))
   ) {
     issue(issues, "invalid-launch-animation", "launchAnimation.referenceImage", "Launch animation reference image must be a local PNG or WebP asset path.");
   }
