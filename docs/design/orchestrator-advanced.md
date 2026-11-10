@@ -161,6 +161,12 @@ the implementation boundary but do not replace those gates. Until then, Host kee
 workspace-write parallelism closed and exposes only the explicitly selected candidate-only
 profile.
 
+Current release evidence is tracked in the implementation plan: the local `v0.2.3` Desktop
+candidate contract and development build pass, while the current source still requires a fresh
+independent Office/codesign review closure and a genuine platform GStack selection before the
+packaged gate can pass. Windows/Linux evidence, remote review, CI and merge remain separate
+acceptance steps.
+
 ## Non-Goals
 
 - No OpenClaw/ACP delegation. Runner backend selection is owned by

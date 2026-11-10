@@ -468,6 +468,19 @@ branch/owner，不跨数个大阶段堆积一个不可审查的 dirty worktree�
 Provider/Runner、packaged/平台验收及 review/CI/merge。不能把本地可运行实现或受控
 Provider 验收报成整体可发布，各门禁通过前保持普通写并发关闭。
 
+### 完整目标的当前发布门禁
+
+| 门禁 | 当前证据 | 状态 | 关闭条件 |
+| --- | --- | --- | --- |
+| 代码与协议 | P1-P5、B1-B5 已接入统一 Run/WorkUnit/Attempt、Host capacity、审批、恢复和同会话 Graph；Core/Daemon/Web/Graph/模板/冲突回归通过 | 本地完成 | review、CI 和 merge 仍需在远端执行 |
+| 真实 Provider | 一次本机真实 Provider smoke 已通过 provider check、真实 Run、持久事件/token usage 与 daemon 重启回读；受控 loopback Provider 的 daemon/Web 链路另有证据 | 部分完成 | 选定发布 Provider 组合在目标环境重复通过，保留脱敏报告 |
+| Desktop | `@ling-stack/desktop` 类型检查、选定 release tests、development build 通过；`v0.2.3` candidate 版本契约通过 | 部分完成 | 当前 SHA 的独立 Office/codesign review 快照更新并通过，提供 genuine platform GStack selection，再完成 packaged archive 检查 |
+| 跨平台 | 当前主机只验证 macOS arm64；Windows/Linux 的安装包、Provider、Host 和恢复链路没有本机证据 | 未完成 | 在对应原生 runner 上完成平台验收并上传证据 |
+| 交付 | 当前分支只在本地提交，尚未 push、开 PR、跑远端 CI 或 merge | 未完成 | 评审通过、CI 全绿、合并后核对远端 main |
+
+在这些门禁关闭前，公开入口继续保持 candidate-only，普通 workspace write 并发继续关闭；
+代码实现完成不等于发布完成。
+
 ## 12. 并发预算与扩容
 
 目标：将首版固定档位推进为可配置、受控、可恢复的并发准入，不增加另一套 Agent
