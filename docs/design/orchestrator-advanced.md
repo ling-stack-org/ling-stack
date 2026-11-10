@@ -29,6 +29,10 @@ The product delivery stages are:
 
 The complete implementation target also includes the cross-cutting Host budget track:
 
+The single entry point for the complete target is
+[Ling Multi-Agent Complete Target](ling-multi-agent-complete-target.md). This document remains
+the English reference contract for orchestrator-specific details.
+
 6. B1 trusted Host concurrency policy and strict configuration parsing;
 7. B2 one durable workspace budget shared by ordinary Runs, workflow steps,
    delegations, approval resumes and continuations;

@@ -8,6 +8,7 @@
 Owner：Ling maintainers。
 最后核对：2026-11-10，基于 PR #614 合并后的 `main`。
 文档类型：Reference / Explanation。
+完整目标总入口：[Ling 多 Agent 完整目标设计](ling-multi-agent-complete-target.md)。
 权威边界：[Multi-Agent App Detailed Design](multi-agent-app-detailed-design.md)
 继续拥有总体产品设计；本文细化安全并发、隔离执行与合并协议。
 交付顺序与完成标准：[实施计划](ling-multi-agent-safe-concurrency-implementation-plan.md)。

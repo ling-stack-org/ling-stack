@@ -9,6 +9,7 @@ packaged、跨平台与 review/CI/merge 尚未完成，不满足发布门禁。B
 Owner：Ling maintainers。
 最后核对：2026-11-10。
 文档类型：implementation plan；完成后将长期规则归入 owning contracts，不保留完成日志。
+完整目标总入口：[Ling 多 Agent 完整目标设计](ling-multi-agent-complete-target.md)。
 权威设计：[总体设计](multi-agent-app-detailed-design.md)、
 [安全并发详细设计](ling-multi-agent-safe-concurrency-detailed-design.md)。
 基线：PR #614 已于 2026-11-02 合并；从更新后的 `origin/main` 开发，不从旧 Harness 分支接续。
