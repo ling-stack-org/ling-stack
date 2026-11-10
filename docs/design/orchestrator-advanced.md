@@ -2,7 +2,7 @@
 
 Status: reference contract with active safe-concurrency follow-up
 Owner: Ling maintainers
-Last verified: 2026-11-10 (local implementation, targeted regression and production builds; release gates remain open)
+Last verified: 2026-11-10 (local implementation, targeted regression, real-provider smoke and production builds; release gates remain open)
 Code anchors: daemon workflow compiler, smart scheduler and orchestrator listed below
 
 ## Purpose
@@ -28,6 +28,10 @@ The product delivery stages are:
 5. workflow graph visualization.
 
 The complete implementation target also includes the cross-cutting Host budget track:
+
+The single entry point for the complete target is
+[Ling Multi-Agent Complete Target](ling-multi-agent-complete-target.md). This document remains
+the English reference contract for orchestrator-specific details.
 
 6. B1 trusted Host concurrency policy and strict configuration parsing;
 7. B2 one durable workspace budget shared by ordinary Runs, workflow steps,
@@ -95,7 +99,9 @@ Local acceptance and remaining gates:
   regressions, builds and Web lint pass. Unchanged-input shards are reused only after
   digest/preimage verification; existing platform/native/fixture skips remain explicit;
 - recorded local regression covers real Git/SQLite and macOS real Pi SDK/Host with a
-  credential-free scripted loopback Provider. Production-build live
+  credential-free scripted loopback Provider. One separate local real-provider smoke also
+  completed provider check, a real Run, durable events and daemon restart readback; it does not
+  represent every Provider or a packaged release. Production-build live
   browser E2E passed four local daemon/HTTP/SSE scenarios: cancel/offline reconnect/reload/
   Host drain/same-scenario restart, merge-approval UI/apply/TerminalReport/reload, explicit
   public candidate-only selection with unchanged target and desktop/narrow-width
@@ -158,6 +164,12 @@ Local fixtures, controlled Provider transport, TypeScript checks and production 
 the implementation boundary but do not replace those gates. Until then, Host keeps ordinary
 workspace-write parallelism closed and exposes only the explicitly selected candidate-only
 profile.
+
+Current release evidence is tracked in the implementation plan: the local `v0.2.3` Desktop
+candidate contract and development build pass, while the current source still requires a fresh
+independent Office/codesign review closure and a genuine platform GStack selection before the
+packaged gate can pass. Windows/Linux evidence, remote review, CI and merge remain separate
+acceptance steps.
 
 ## Non-Goals
 
