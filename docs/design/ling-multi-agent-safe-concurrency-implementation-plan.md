@@ -1,17 +1,19 @@
 # Ling 多 Agent 安全并发实施计划
 
 状态：P1/P2 执行路径、P3 本地联合可靠性、P4 模板创作、P5 graph、B4 受控档位验收和 B5 Host 策略回读均已有本地实现；
-构建、冻结输入下的完整相关 package 回归与受控 Provider 的真实 daemon 浏览器链路通过。
+构建、冻结输入下的完整相关 package 回归、受控 Provider 的真实 daemon 浏览器链路和一次本机真实 Provider smoke 通过。
 Web 冲突修复、共享 UI、语言目录和夹具另有增量回归与真实浏览器验收；完整冻结回归
-不覆盖其后新增的源码。Daemon 独立 dependency-security lane 已通过；真实 Provider、
+不覆盖其后新增的源码。Daemon 独立 dependency-security lane 已通过；其他 Provider、
 packaged、跨平台与 review/CI/merge 尚未完成，不满足发布门禁。B3.3 的 native/automation
 接缝代码已接入统一 Host/queue 路径并有受控 daemon 回归；这不等于所有执行链的联合发布验收。
 Owner：Ling maintainers。
 最后核对：2026-11-10。
 文档类型：implementation plan；完成后将长期规则归入 owning contracts，不保留完成日志。
+完整目标总入口：[Ling 多 Agent 完整目标设计](ling-multi-agent-complete-target.md)。
 权威设计：[总体设计](multi-agent-app-detailed-design.md)、
 [安全并发详细设计](ling-multi-agent-safe-concurrency-detailed-design.md)。
-基线：PR #614 已于 2026-11-02 合并；从更新后的 `origin/main` 开发，不从旧 Harness 分支接续。
+基线：PR #614 已于 2026-11-02 合并，完整交付 PR #662 已于 2026-11-09 合并；当前基线为
+`origin/main@841dab4d`，从更新后的 `origin/main` 开发，不从旧 Harness 分支接续。
 Code/test anchors：各阶段表格列出的模块与测试；尚未接入实际执行链的组件不算阶段交付。
 
 ## 1. 交付目标与边界
@@ -468,6 +470,19 @@ branch/owner，不跨数个大阶段堆积一个不可审查的 dirty worktree�
 Provider/Runner、packaged/平台验收及 review/CI/merge。不能把本地可运行实现或受控
 Provider 验收报成整体可发布，各门禁通过前保持普通写并发关闭。
 
+### 完整目标的当前发布门禁
+
+| 门禁 | 当前证据 | 状态 | 关闭条件 |
+| --- | --- | --- | --- |
+| 代码与协议 | P1-P5、B1-B5 已接入统一 Run/WorkUnit/Attempt、Host capacity、审批、恢复和同会话 Graph；Core/Daemon/Web/Graph/模板/冲突回归通过 | 本地完成 | review、CI 和 merge 仍需在远端执行 |
+| 真实 Provider | 一次本机真实 Provider smoke 已通过 provider check、真实 Run、持久事件/token usage 与 daemon 重启回读；受控 loopback Provider 的 daemon/Web 链路另有证据 | 部分完成 | 选定发布 Provider 组合在目标环境重复通过，保留脱敏报告 |
+| Desktop | `@ling-stack/desktop` 类型检查、选定 release tests、development build 通过；`v0.2.3` candidate 版本契约通过 | 部分完成 | 当前 SHA 的独立 Office/codesign review 快照更新并通过，提供 genuine platform GStack selection，再完成 packaged archive 检查 |
+| 跨平台 | 当前主机只验证 macOS arm64；Windows/Linux 的安装包、Provider、Host 和恢复链路没有本机证据 | 未完成 | 在对应原生 runner 上完成平台验收并上传证据 |
+| 交付 | 当前分支只在本地提交，尚未 push、开 PR、跑远端 CI 或 merge | 未完成 | 评审通过、CI 全绿、合并后核对远端 main |
+
+在这些门禁关闭前，公开入口继续保持 candidate-only，普通 workspace write 并发继续关闭；
+代码实现完成不等于发布完成。
+
 ## 12. 并发预算与扩容
 
 目标：将首版固定档位推进为可配置、受控、可恢复的并发准入，不增加另一套 Agent
@@ -638,12 +653,13 @@ terminal/drain 及资源释放；普通 writer 拒绝和 Host 策略关闭边界
 本地受控 Provider transport，不等于外部真实 Provider、packaged、跨平台或 review/CI/merge
 发布门禁已通过。
 
-2026-11-10，本地收口回归：Core `test:ci` 全量 6607 项通过、0 项失败；受影响的 Core
+2026-11-10，本地收口回归：Core `test:ci` 全量 6610 项通过、0 项失败；受影响的 Core
 并发/Host/queue/隔离/模板定向集合 270 项通过，Daemon 并发策略、Host composition、queue、
 审批恢复、Graph 和 isolated workflow 定向集合 275 项通过。Web 全部单元回归 1323 项、
 Conversation UI Core 207 项、Contracts 151 项、API client 137 项、Localization 24 项通过。
 Core、Daemon、Web 类型检查通过，Core/Daemon 构建、Web 生产构建、Web lint、i18n 和 Markdown
-link check 通过，且 `git diff --check` 无输出。Daemon 全量 `test:ci` 曾启动但因包含大量与本
+link check 通过，且 `git diff --check` 无输出；随后根 `pnpm typecheck` 和 `pnpm build` 也通过，
+其中 Desktop 为 development bundle。Daemon 全量 `test:ci` 曾启动但因包含大量与本
 目标无关的全仓边界测试而中止，不能计为通过。以上本地证据不替代真实外部 Provider、packaged、
 跨平台或 review/CI/merge 验收。
 
@@ -663,6 +679,38 @@ workflow step 不会同时创建普通 `attempt` 与 `workflow_start` 两种 Hos
 读取在已有 SQLite writer transaction 中保持同一快照。Daemon typecheck/build、Markdown link
 check 和 `git diff --check` 通过。该增量结果更新了受影响代码的当前验证状态；此前完整回归数字
 不因本次增量自动扩展，真实 Provider、packaged、跨平台和 review/CI/merge 发布门禁仍未完成。
+
+同日 Desktop 门禁复核：`@ling-stack/desktop` 的 `typecheck:ci`、development build、16 个
+release evidence schema 和 55 个语言包 parity 检查通过。`package:mac` 在生成 archive 前被
+Office native source/toolchain admission 拒绝；当前本机观察到的是 CommandLineTools 的
+`macosx27.0`/clang 与本地 Node headers，不能匹配提交的 Xcode 26.6、`macosx26.5` 和精确
+review hash。针对 `fef3129d`、`v0.2.3` 的 prerequisites inspection 还明确阻断了
+reviewed native source/toolchain、restricted runtime review 和 genuine platform GStack
+selection。因此本轮没有把旧 archive 当作当前提交的 packaged 证据，也没有放宽任何 review
+或签名门禁。
+
+同日针对当前工作树 `8253da8f13653529ac759b3bc171cebe808668bd` 的 Desktop prerequisite
+inspection 重新执行并留存 `.codex-artifacts/desktop-release/prerequisites.json`：磁盘容量、DMG
+inventory、native toolchain 和 restricted runtime observation 通过；Office/codesign review
+快照仍因当前源码与工具链不匹配而拒绝，restricted runtime review 与实际 Electron host 不匹配，
+且缺少 genuine platform GStack selection。该检查只生成观察证据，没有生成安装包、授予 native
+approval 或改变发布状态；因此当前 SHA 仍不能进入 packaged archive、跨平台或正式交付门禁。
+
+同日生产入口定向回归：Daemon 相关 Host/queue、native/automation、approval/continuation、
+isolated workflow 规划/执行/2-4 档位、冲突恢复、candidate/apply、cleanup、Graph 和
+Experience review 集合共 300 项通过，0 fail、0 skipped。该集合验证代码闭环与受控 Git/
+SQLite/Pi/Host 生命周期；它不改变真实 Provider 组合、packaged、Windows/Linux 和远端
+review/CI/merge 的门禁状态。
+
+同日当前工作树最终定向重跑（`e91fe606`，基于 `origin/main@841dab4d`）：Core 容量、队列、
+恢复、取消、重试、隔离、结果封存、迁移和模板集合 1663/1663 通过，Daemon Host/queue、
+恢复、隔离 Git、candidate/apply、Graph、模板和 Experience review 集合 916/916 通过；两者
+均为 0 fail、0 skipped。Web 会话、Graph、隔离 workflow、冲突恢复、模板和经验入口集合
+299/299 通过，`conversation-ui-core` 108/108、`conversation-ui-react` 23/23 通过。
+Web typecheck、测试/e2e typecheck、生产构建和 lint 通过。生产构建预览上的真实 macOS
+daemon/HTTP/SSE/Pi/SQLite/Git Playwright 场景 4/4 通过：断线重连与取消后重启、候选审批
+应用、公开 candidate-only、模板保存/发布/预览后显式启动。该重跑仍只证明本机受控链路；
+真实外部 Provider 组合、packaged/cross-platform、远端 review/CI/merge 继续保持开放。
 
 ### 代码责任与实现约束
 
