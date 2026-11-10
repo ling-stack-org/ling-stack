@@ -35,7 +35,7 @@ does not select core/daemon test shards just because a build needs their outputs
 
 Dependency policy runs for dependency inputs and its own regression tests, not
 for every source/test edit. Typecheck and Linux unit jobs run only for nonempty
-selections. Core test-only changes have four core entries and no empty packages job;
+selections. Core test-only changes have eight core entries and no empty packages job;
 daemon-only test changes have no Linux unit entry. Daemon shards and Linux/macOS
 native contracts remain coupled to daemon selection. A source change can select
 additional consumers, so daemon source may still need the CLI unit entry.
@@ -65,19 +65,26 @@ a requested package via `--if-present`.
 
 ## Test Lanes
 
-- Core: four Linux shards, two serial file workers per shard. These jobs are
+- Core: eight Linux shards, two serial file workers per shard. These jobs are
   included in the existing `unit-tests` matrix only when core is selected.
 - Other packages and Web checks: one Linux matrix entry only when at least one
   such package is selected, excluding core and daemon because their complete
   discovery runs in their own entries.
-- Daemon: six `macos-26` shards, two serial file workers per shard. The Kimi Host
-  read/terminal and delegation production-tool-surface files run serially in an
-  exclusive phase before other files on their assigned runner. The six-shard
-  split keeps first runs bounded before the default-branch timing cache has
-  measurements for newly added daemon files; it does not reduce file discovery,
-  per-file watchdogs or platform coverage.
+- Daemon: [the platform manifest](daemon-test-platforms.json) assigns 493 portable
+  files to eight Linux shards with two workers, and 161 native/platform files to
+  four `macos-26` shards with three workers. The four macOS test jobs and separate
+  native smoke total five macOS jobs; available concurrency is controlled by
+  GitHub. Kimi Host read/terminal and delegation
+  production-tool-surface files retain their exclusive phase on their assigned
+  platform. All files retain their watchdogs and original test cases.
 - Linux restricted-command contracts and real macOS native smoke remain separate
-  mandatory lanes. No daemon files have been moved to Linux or removed.
+  mandatory lanes. The manifest's disjoint union must equal fresh daemon discovery;
+  new, missing, duplicated or stale assignments fail before execution. Native
+  source/fixture contract checks prevent silently moving Darwin cases to Linux.
+- Production Web smoke: an independent required Linux job consumes the same
+  `ci-dist` output as other tests. Browser installation and Playwright execution
+  do not delay the shared build artifact. The aggregate requires this lane when
+  Web is selected and rejects failure, cancellation, missing or unexpected skips.
 - Framework assurance: complete non-documentation runs add an Ubuntu / Node
   22.22.1 lane for the zero-model offline tests, frozen controls and real external
   SDK consumer. It checks out complete history and owns fresh serial builds and
@@ -132,6 +139,9 @@ ancestry sampling are outside its guarantees.
 Scope restores timing hints once and uploads `ci-test-plan`. Every shard uses
 that same plan and verifies it against fresh discovery. Unknown/new files fall
 back to source-size/category weights; invalid caches never reduce coverage.
+Daemon files additionally need an explicit platform-manifest assignment. The plan
+publishes its runner, shard count and worker count for both daemon suites. Linux
+and Darwin timings remain separate; macOS measurements are not Linux timing hints.
 Measured timings influence both outer shards and inner worker placement, not
 test deadlines or platform selection.
 Outer placement counts exclusive files against all workers they occupy, so a
@@ -242,10 +252,15 @@ node scripts/ci/test-shard-plan.mjs \
 On the suite's required platform, run a shard with that immutable plan:
 
 ```sh
-node scripts/ci/daemon-test-shard.mjs --shard=0 --shard-count=6 --concurrency=2 \
+node scripts/ci/daemon-test-shard.mjs --shard=0 --shard-count=4 --concurrency=3 \
   --plan=.codex-artifacts/ci/test-plan.json \
   --report=.codex-artifacts/ci/reports/daemon-0.json
 ```
+
+On Linux, run the portable daemon suite with `node-test-shard.mjs --suite=daemon-linux`,
+`--shard-count=8`, and `--concurrency=2`, using the same plan and a distinct
+`daemon-linux-<shard>.json` report path. Each command executes only its platform's
+assigned files; both suites are required for complete daemon CI coverage.
 
 ## Secret Scans
 
