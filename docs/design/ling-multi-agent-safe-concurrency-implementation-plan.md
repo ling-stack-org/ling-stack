@@ -689,6 +689,13 @@ reviewed native source/toolchain、restricted runtime review 和 genuine platfor
 selection。因此本轮没有把旧 archive 当作当前提交的 packaged 证据，也没有放宽任何 review
 或签名门禁。
 
+同日针对当前工作树 `8253da8f13653529ac759b3bc171cebe808668bd` 的 Desktop prerequisite
+inspection 重新执行并留存 `.codex-artifacts/desktop-release/prerequisites.json`：磁盘容量、DMG
+inventory、native toolchain 和 restricted runtime observation 通过；Office/codesign review
+快照仍因当前源码与工具链不匹配而拒绝，restricted runtime review 与实际 Electron host 不匹配，
+且缺少 genuine platform GStack selection。该检查只生成观察证据，没有生成安装包、授予 native
+approval 或改变发布状态；因此当前 SHA 仍不能进入 packaged archive、跨平台或正式交付门禁。
+
 同日生产入口定向回归：Daemon 相关 Host/queue、native/automation、approval/continuation、
 isolated workflow 规划/执行/2-4 档位、冲突恢复、candidate/apply、cleanup、Graph 和
 Experience review 集合共 300 项通过，0 fail、0 skipped。该集合验证代码闭环与受控 Git/
