@@ -39,7 +39,7 @@
     "exceljs": "^4.4.0",
     "fflate": "^0.8.2",
     "jszip": "3.10.2",
-    "officeparser": "8.6.0",
+    "officeparser": "8.4.1",
     "pdf-parse": "2.4.5",
     "pptxgenjs": "4.0.1",
     "proper-lockfile": "4.1.2",

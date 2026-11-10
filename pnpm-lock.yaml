@@ -472,8 +472,8 @@ importers:
         specifier: 3.10.2
         version: 3.10.2
       officeparser:
-        specifier: 8.6.0
-        version: 8.6.0
+        specifier: 8.4.1
+        version: 8.4.1
       pdf-parse:
         specifier: 2.4.5
         version: 2.4.5
@@ -5450,9 +5450,9 @@ packages:
     resolution: {integrity: sha512-NuAESUOUMrlIXOfHKzD6bpPu3tYt3xvjNdRIQ+FeT0lNb4K8WR70CaDxhuNguS2XG+GjkyMwOzsN5ZktImfhLA==}
     engines: {node: '>= 0.4'}
 
-  officeparser@8.6.0:
-    resolution: {integrity: sha512-r5sKSkNef8dn/DATfLMyPwWBShfJlvbr9p6l7nKPEbp0OaK3ZZSadXPtde0nx1NwKU2bYJR0y7ixV+LxozyhWw==}
-    engines: {node: '>=22.23.4 <23 || >=24.22.1 <25 || >=26.12.1'}
+  officeparser@8.4.1:
+    resolution: {integrity: sha512-MeyEdnqlZCThds/7W/w2xgMrwYKa7VoZirfECJ9+a3jigkF9HNHLNYqEGGS0k6kmfhUmPdoL0G2Od5EgKZDa5w==}
+    engines: {node: '>=22.13.0'}
     hasBin: true
     peerDependencies:
       '@pdf-lib/fontkit': ^1.1.1 || ^2.0.0
@@ -12723,7 +12723,7 @@ snapshots:
   object-keys@1.1.1:
     optional: true
 
-  officeparser@8.6.0:
+  officeparser@8.4.1:
     dependencies:
       '@xmldom/xmldom': 0.9.12
       fflate: 0.8.3
