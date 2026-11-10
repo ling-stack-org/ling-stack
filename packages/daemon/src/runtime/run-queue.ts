@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { DEFAULT_WORKSPACE_ID, type HostOperationSource, type RunStore,
+import { type HostOperationSource, type RunStore,
   type RuntimeRunQueueClaim } from "@ling-stack/core";
 import { RuntimeHostCapacityBridge, type HostRunCapacityStore,
   type RuntimeHostCapacityDispatchReference, type RuntimeHostCapacityJournal,
@@ -15,6 +15,9 @@ interface StoreQueueSignals {
   retain(runId: string, options: ExecuteRunRequestOptions): void;
 }
 export interface RuntimeHostCapacityAdmission {
+  readonly getWorkspaceIdentity: (workspaceId: string) => ReturnType<RuntimeHostCapacityJournal["getWorkspaceIdentity"]>;
+  readonly observeReservation?: (input: { readonly workspaceId: string; readonly intentId: string; readonly now: string }) =>
+    ReturnType<RuntimeHostCapacityBridge["observeReservation"]>;
   reserveExecution(input: { readonly workspaceId: string; readonly source: HostOperationSource; readonly now: string }):
     | { readonly status: "reserved" | "duplicate"; readonly reference: RuntimeHostCapacityDispatchReference }
     | { readonly status: "full" | "unconfigured" | "changed" };
@@ -61,6 +64,12 @@ export function createRuntimeHostCapacityAdmission(input: {
     return { status: result.status === "retained" ? "changed" as const : result.status };
   };
   return {
+    getWorkspaceIdentity(workspaceId) {
+      return input.workspace(workspaceId).getWorkspaceIdentity();
+    },
+    observeReservation({ workspaceId, intentId, now }) {
+      return new RuntimeHostCapacityBridge(input.workspace(workspaceId), input.host).observeReservation(intentId, now);
+    },
     reserveExecution({ workspaceId, source, now }) {
       return reservedReference(bridgeFor(workspaceId).reserveExecution({ source, now }));
     },
@@ -134,6 +143,7 @@ export function createRuntimeHostCapacityAdmission(input: {
 }
 const signals = new WeakMap<RunStore, StoreQueueSignals>();
 const MINIMUM_QUEUE_PREPARATIONS = 4;
+const MAX_QUEUE_SCAN_ATTEMPTS = 16;
 
 export function notifyRuntimeRunQueued(store: RunStore, runId: string, options: ExecuteRunRequestOptions): void {
   signals.get(store)?.retain(runId, options);
@@ -153,6 +163,7 @@ export class RuntimeRunQueueCoordinator {
   private readonly stores = new Set<RunStore>();
   private readonly preparing = new WeakMap<RunStore, Set<symbol>>();
   private readonly retainedOptions = new WeakMap<RunStore, Map<string, ExecuteRunRequestOptions>>();
+  private readonly workspaceScanCursors = new WeakMap<RunStore, string>();
   private readonly scanning = new WeakSet<RunStore>();
   private readonly pendingWake = new WeakSet<RunStore>();
   private readonly pendingResourceWake = new WeakSet<RunStore>();
@@ -240,11 +251,41 @@ export class RuntimeRunQueueCoordinator {
       // starve another; the policy still raises the bound for larger budgets.
       const preparingLimit = Math.max(MINIMUM_QUEUE_PREPARATIONS,
         this.options.runtimeSupervisor.getConcurrencyPolicy().maxConcurrentRuns);
-      for (let visited = 0; visited < 16 && preparing.size < preparingLimit && !this.closed; visited++) {
-        const selected = store.claimNextRuntimeRun({ workspaceId: DEFAULT_WORKSPACE_ID,
-          runtimeInstanceId: runtime.runtimeInstanceId, ownerId: this.ownerId, leaseMs: 30_000, now: new Date().toISOString(),
+      const workspaceIds = [...store.listWorkspaceIds()];
+      const workspaceRuntimes = new Map<string, ReturnType<RuntimeSupervisor["getRuntime"]>>();
+      const cursor = this.workspaceScanCursors.get(store);
+      let workspaceIndex = cursor ? workspaceIds.indexOf(cursor) : 0;
+      if (workspaceIndex < 0) workspaceIndex = 0;
+      let visited = 0;
+      while (visited < MAX_QUEUE_SCAN_ATTEMPTS && workspaceIds.length > 0
+        && preparing.size < preparingLimit && !this.closed) {
+        const workspaceId = workspaceIds[workspaceIndex]!;
+        const workspaceRuntime = workspaceRuntimes.get(workspaceId) ?? (workspaceId === runtime.workspaceId ? runtime
+          : this.options.runtimeSupervisor.getRuntimeForWorkspace(store.paths.cwd, store, workspaceId));
+        workspaceRuntimes.set(workspaceId, workspaceRuntime);
+        const selected = store.claimNextRuntimeRun({ workspaceId,
+          runtimeInstanceId: workspaceRuntime.runtimeInstanceId, ownerId: this.ownerId, leaseMs: 30_000, now: new Date().toISOString(),
           ...(ignoreRetryAt ? { ignoreRetryAt: true } : {}) });
-        if (selected.status !== "claimed") break;
+        if (selected.status === "empty") {
+          workspaceIds.splice(workspaceIndex, 1);
+          if (workspaceIds.length > 0) {
+            workspaceIndex %= workspaceIds.length;
+            this.workspaceScanCursors.set(store, workspaceIds[workspaceIndex]!);
+          } else {
+            this.workspaceScanCursors.delete(store);
+          }
+          continue;
+        }
+        if (selected.status !== "claimed") {
+          if (workspaceIds.length > 1) {
+            workspaceIndex = (workspaceIndex + 1) % workspaceIds.length;
+            this.workspaceScanCursors.set(store, workspaceIds[workspaceIndex]!);
+          }
+          break;
+        }
+        visited += 1;
+        workspaceIndex = (workspaceIndex + 1) % workspaceIds.length;
+        this.workspaceScanCursors.set(store, workspaceIds[workspaceIndex]!);
         const { claim } = selected;
         const now = new Date().toISOString();
         const hostCapacity = capacity?.reserve({

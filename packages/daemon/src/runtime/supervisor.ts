@@ -335,6 +335,29 @@ export class RuntimeSupervisor {
     }
   }
 
+  /** Returns the process-owned runtime identity with a persisted business workspace policy attached. */
+  getRuntimeForWorkspace(cwd: string, store: RuntimeSupervisorRuntimeStore, workspaceId: string): RuntimeInstance {
+    const runtime = this.getRuntime(cwd, store);
+    if (runtime.workspaceId === workspaceId) return runtime;
+    const currentPolicy = store.getRuntimeConcurrencyPolicy(workspaceId);
+    const installed = store.installRuntimeConcurrencyPolicy({
+      workspaceId,
+      runtimeInstanceId: runtime.runtimeInstanceId,
+      expectedRevision: currentPolicy?.revision ?? 0,
+      enabled: this.concurrency.enabled,
+      limits: {
+        maxConcurrentRuns: this.concurrency.maxConcurrentRuns,
+        maxReadOnlyRuns: this.concurrency.maxReadOnlyRuns,
+        maxWorkspaceWriteRuns: this.concurrency.maxWorkspaceWriteRuns,
+        maxRunsPerProvider: this.concurrency.maxRunsPerProvider,
+        maxRunsPerRunner: this.concurrency.maxRunsPerRunner,
+      },
+      installedAt: runtime.startedAt,
+    });
+    if (installed.status === "changed") throw new Error("runtime_concurrency_policy_changed");
+    return { ...runtime, workspaceId };
+  }
+
   getDiagnostics(cwd: string, store: RuntimeSupervisorRuntimeStore): {
     readonly runtime: RuntimeInstance;
     readonly active: readonly WorkUnit[];

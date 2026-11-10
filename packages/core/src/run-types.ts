@@ -2073,6 +2073,7 @@ export interface RunStore extends MemoryWikiStore, MemoryDerivativeStore, Learni
   getUserProfile(now: string): UserProfile;
   updateUserProfile(input: UpdateUserProfileInput, now: string): UserProfile;
   getWorkspaceSettings(): WorkspaceSettings;
+  listWorkspaceIds(): readonly string[];
   updateWorkspaceSettings(input: UpdateWorkspaceSettingsInput, now: string): WorkspaceSettings;
   createChannelSession(input: CreateChannelSessionInput, now: string): { session: ChannelSessionSummary; idempotentReplay: boolean };
   repairChannelSessionDirectory(channelId: string, branchId: string, now: string): ChannelSessionSummary;

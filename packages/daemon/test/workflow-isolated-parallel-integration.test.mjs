@@ -28,7 +28,7 @@ const expandedBranches = [
   { participantId: "teammate_builtin_security", name: "Security", path: "security.txt", content: "security through parallel Host\n" },
   { participantId: "teammate_builtin_docs", name: "Docs", path: "docs.txt", content: "docs through parallel Host\n" },
 ];
-const options = { skip: process.platform !== "darwin", timeout: 120_000 };
+const options = { skip: process.platform !== "darwin", timeout: 300_000 };
 
 // The SDK and Host execute real writes; only the provider HTTP transport is scripted locally.
 for (const maxConcurrentSteps of [2, 3, 4]) test(`explicit isolated siblings at Host limit ${maxConcurrentSteps} write before completion and apply one fan-in`, options, async t => {

@@ -144,6 +144,21 @@ for (const [name, input, expected] of [
   });
 }
 
+test("runtime policy follows persisted business workspace identity", async t => {
+  const f = await fixture(t), foreignWorkspaceId = "workspace_non_default", now = new Date().toISOString();
+  testDatabase(f.store).prepare(`INSERT INTO workspaces (id,name,default_provider_preset_id,created_at,updated_at)
+    VALUES (?,?,?,?,?)`).run(foreignWorkspaceId, "Non-default workspace", null, now, now);
+  const supervisor = f.supervisor(f.config(explicit));
+  const runtime = supervisor.getRuntimeForWorkspace(f.cwd, f.store, foreignWorkspaceId);
+  assert.equal(runtime.workspaceId, foreignWorkspaceId);
+  assert.equal(supervisor.getRuntime(f.cwd, f.store).workspaceId, DEFAULT_WORKSPACE_ID);
+  assert.deepEqual(f.store.listWorkspaceIds(), [DEFAULT_WORKSPACE_ID, foreignWorkspaceId].toSorted());
+  const policy = f.store.getRuntimeConcurrencyPolicy(foreignWorkspaceId);
+  assert.ok(policy);
+  assert.equal(policy.runtimeInstanceId, runtime.runtimeInstanceId);
+  assert.deepEqual(policy.limits, limits(explicit));
+});
+
 test("constructor captures concurrency before startup and ignores later input mutation or replacement", async t => {
   const f = await fixture(t), input = { ...explicit }, config = f.config(input);
   const supervisor = f.supervisor(config);

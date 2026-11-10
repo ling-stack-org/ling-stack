@@ -74,6 +74,11 @@ export class SqliteRuntimeHostCapacityStore {
     this.assertIdentity();
   }
 
+  getWorkspaceIdentity(): HostRunCapacityWorkspaceIdentitySnapshot {
+    this.assertIdentity();
+    return this.identity;
+  }
+
   assertOutsideTransaction(): void {
     if (this.context.database.isTransaction === true) throw new Error("runtime_host_capacity.nested_handoff");
     if (this.context.database.isTransaction === false) return;
@@ -432,9 +437,7 @@ export class SqliteRuntimeHostCapacityStore {
         || !isTimestamp(completion.drainedAt) || completion.drainedAt < completion.registeredAt || completion.drainedAt > input.now
         || !["pi_no_tools_v1", "pi_tracked_tools_v1", "native_journal_v1"].includes(completion.effectCoverage ?? "")
         || !isDeepStrictEqual(completion.source, record.source)
-        || this.hasPendingObligations(record.source)
-        || record.intent.ownerKind !== "delegation_spawn" && this.context.database.prepare("SELECT 1 FROM delegation_steps WHERE root_run_id=? OR parent_run_id=? LIMIT 1")
-          .get(record.source.runId, record.source.runId)) return { status: "changed" };
+        || this.hasPendingObligations(record.source)) return { status: "changed" };
       let settlements: ReadonlyMap<string, string>;
       try { settlements = assertUserInputDurableQuiescence(this.context.database, record.source.runId, record.source, Date.parse(input.now)); }
       catch { return { status: "changed" }; }
@@ -691,8 +694,13 @@ export class SqliteRuntimeHostCapacityStore {
           WHERE a.request_id=user_input_requests.request_id AND d.status IN ('pending','claimed','failed')))
       UNION ALL SELECT 1 FROM approval_requests WHERE run_id=? AND status='pending'
       UNION ALL SELECT 1 FROM delegation_budget_charges WHERE run_id=?
-        AND state NOT IN ('measured','cancelled_before_dispatch') LIMIT 1`)
-      .get(source.runId, source.attemptId, source.runId, source.runId));
+        AND state NOT IN ('measured','cancelled_before_dispatch')
+      UNION ALL SELECT 1 FROM delegation_budget_reservations r
+        JOIN delegation_steps s ON s.id=r.delegation_step_id
+        WHERE r.state NOT IN ('settled','released')
+          AND (r.root_run_id=? OR s.parent_run_id=? OR r.child_run_id=?) LIMIT 1`)
+      .get(source.runId, source.attemptId, source.runId, source.runId,
+        source.runId, source.runId, source.runId));
   }
 
   private hasCompleteLocalAdmission(source: HostOperationSource, now: string,

@@ -24,15 +24,22 @@ function deferred() {
 }
 
 // Finite selections exercise scheduling, without emulating SQLite admission or a Provider.
-function scriptedStore(label: string, count = 0) {
+function scriptedStore(label: string, count = 0, workspaceId = DEFAULT_WORKSPACE_ID,
+  additionalWorkspaces: readonly { readonly workspaceId: string; readonly count: number }[] = []) {
   const pending = Array.from({ length: count }, (_, index) => `${label}-${index + 1}`);
+  const pendingByWorkspace = new Map<string, string[]>([[workspaceId, pending]]);
+  for (const additional of additionalWorkspaces) {
+    pendingByWorkspace.set(additional.workspaceId,
+      Array.from({ length: additional.count }, (_, index) => `${label}-${additional.workspaceId}-${index + 1}`));
+  }
   const claimInputs: ClaimInput[] = [], claimed: Claimed[] = [], deferrals: Deferral[] = [];
   const revisions = new Map<string, number>();
   const store = {
-    paths: { cwd: `/queue-coordinator/${label}` },
+    paths: { cwd: `/queue-coordinator/${label}`, identity: { workspaceId } },
+    listWorkspaceIds() { return [...pendingByWorkspace.keys()]; },
     claimNextRuntimeRun(input: ClaimInput): ReturnType<RunStore["claimNextRuntimeRun"]> {
       claimInputs.push(input);
-      const runId = pending.shift();
+      const runId = pendingByWorkspace.get(input.workspaceId)?.shift();
       if (!runId) return { status: "empty" };
       const revision = (revisions.get(runId) ?? 1) + 1;
       revisions.set(runId, revision);
@@ -40,7 +47,7 @@ function scriptedStore(label: string, count = 0) {
         runtimeInstanceId: `accepted-${label}`, fencingToken: `fence-${runId}` });
       const claim = Object.freeze({ runId, revision, sourceFence, ownerId: input.ownerId,
         token: `claim-${runId}-${revision}`, runtimeInstanceId: input.runtimeInstanceId });
-      const entry: RuntimeRunQueueEntry = { sequence: claimed.length + 1, runId, workspaceId: DEFAULT_WORKSPACE_ID, sourceFence,
+      const entry: RuntimeRunQueueEntry = { sequence: claimed.length + 1, runId, workspaceId: input.workspaceId, sourceFence,
         snapshotDigest: "a".repeat(64), groupKey: label, queuedAt: input.now,
         reason: claimed.length % 2 ? "resource_conflict" : "runtime_semaphore_conflict",
         revision: claim.revision, lastSelected: claimed.length + 1, claim,
@@ -53,7 +60,7 @@ function scriptedStore(label: string, count = 0) {
     getRun(runId: string) { return { id: runId, status: "succeeded" as const }; },
   };
   // The coordinator reads only cwd, claims, deferrals and the terminal Run status.
-  return { store: store as unknown as RunStore, pending, claimInputs, claimed, deferrals };
+  return { store: store as unknown as RunStore, pending, pendingByWorkspace, claimInputs, claimed, deferrals };
 }
 
 function fixture(t: TestContext, stores: ReturnType<typeof scriptedStore>[] = [],
@@ -70,7 +77,12 @@ function fixture(t: TestContext, stores: ReturnType<typeof scriptedStore>[] = []
       getRuntime(cwd: string, store: RunStore) {
         assert.equal(cwd, store.paths.cwd);
         runtimeCalls.push({ cwd, store });
-        return { runtimeInstanceId: `runtime:${cwd}` };
+        return { workspaceId: store.paths.identity.workspaceId, runtimeInstanceId: `runtime:${cwd}` };
+      },
+      getRuntimeForWorkspace(cwd: string, store: RunStore, requestedWorkspaceId: string) {
+        assert.equal(cwd, store.paths.cwd);
+        runtimeCalls.push({ cwd, store });
+        return { workspaceId: requestedWorkspaceId, runtimeInstanceId: `runtime:${cwd}` };
       },
       getConcurrencyPolicy() {
         return { maxConcurrentRuns };
@@ -139,10 +151,29 @@ test("preparation capacity follows the trusted Supervisor policy above its fairn
   assert.deepEqual(queue.pending, ["configured-preparation-7", "configured-preparation-8", "configured-preparation-9", "configured-preparation-10"]);
 });
 
+test("workspace scan cursor continues across bounded preparation scans", async t => {
+  const workspaces = ["workspace_b", "workspace_c", "workspace_d", "workspace_e"];
+  const queue = scriptedStore("workspace-cursor", 1, DEFAULT_WORKSPACE_ID,
+    workspaces.map(workspaceId => ({ workspaceId, count: 1 })));
+  const f = fixture(t, [queue]);
+  f.coordinator.start();
+  await nextTurn();
+  assert.deepEqual(f.executions.map(item => item.claim.sourceFence.workUnitId), [
+    "unit-workspace-cursor-1", "unit-workspace-cursor-workspace_b-1",
+    "unit-workspace-cursor-workspace_c-1", "unit-workspace-cursor-workspace_d-1",
+  ]);
+
+  ready(f.executions[0]!);
+  await nextTurn();
+  assert.equal(f.executions.length, 5);
+  assert.equal(f.executions[4]!.claim.sourceFence.workUnitId, "unit-workspace-cursor-workspace_e-1");
+});
+
 test("Host capacity full defers a claim without starting execution", async t => {
   const queue = scriptedStore("host-full", 1);
   const reserve = t.mock.fn<HostCapacity["reserve"]>(() => ({ status: "full" }));
   const f = fixture(t, [queue], { hostCapacity: {
+    getWorkspaceIdentity: () => ({ workspaceKey: "workspace-key", canonicalCwd: "/workspace", databasePath: "/workspace/db", databaseFileIdentity: "1:2", workspaceId: "workspace" }),
     reserve,
     reserveExecution: t.mock.fn<HostCapacity["reserveExecution"]>(() => ({ status: "changed" })),
     reserveApprovalResumePending: t.mock.fn<HostCapacity["reserveApprovalResumePending"]>(() => ({ status: "changed" })),
@@ -165,11 +196,55 @@ test("Host capacity full defers a claim without starting execution", async t => 
   assert.equal(queue.deferrals[0]!.reason, "runtime_semaphore_conflict");
 });
 
+test("workspace scans rotate before the global claim-attempt bound", async t => {
+  const laterWorkspaceId = "workspace_later";
+  const queue = scriptedStore("workspace-fairness", 20, DEFAULT_WORKSPACE_ID,
+    [{ workspaceId: laterWorkspaceId, count: 20 }]);
+  const reserve = t.mock.fn<HostCapacity["reserve"]>(() => ({ status: "full" }));
+  const f = fixture(t, [queue], { maxConcurrentRuns: 32, hostCapacity: {
+    getWorkspaceIdentity: () => ({ workspaceKey: "workspace-key", canonicalCwd: "/workspace", databasePath: "/workspace/db", databaseFileIdentity: "1:2", workspaceId: "workspace" }),
+    reserve,
+    reserveExecution: t.mock.fn<HostCapacity["reserveExecution"]>(() => ({ status: "changed" })),
+    reserveApprovalResumePending: t.mock.fn<HostCapacity["reserveApprovalResumePending"]>(() => ({ status: "changed" })),
+    reserveUserInputContinuation: t.mock.fn<HostCapacity["reserveUserInputContinuation"]>(() => ({ status: "changed" })),
+    getAttemptReference: t.mock.fn<HostCapacity["getAttemptReference"]>(() => undefined),
+    consumeDispatch: t.mock.fn<HostCapacity["consumeDispatch"]>(() => false),
+    reserveWorkflowStart: t.mock.fn<HostCapacity["reserveWorkflowStart"]>(() => ({ status: "changed" })),
+    reserveDelegationSpawn: t.mock.fn<HostCapacity["reserveDelegationSpawn"]>(() => ({ status: "changed" })),
+    reserveDelegationPending: t.mock.fn<HostCapacity["reserveDelegationPending"]>(() => ({ status: "changed" })),
+    releaseNoDispatch: t.mock.fn<HostCapacity["releaseNoDispatch"]>(() => true),
+    releaseStopped: t.mock.fn<HostCapacity["releaseStopped"]>(() => true),
+  } });
+  f.coordinator.start();
+  await nextTurn();
+  assert.equal(f.executions.length, 0);
+  assert.equal(queue.claimed.length, 16);
+  assert.deepEqual(queue.claimed.map(item => item.entry.workspaceId), [
+    DEFAULT_WORKSPACE_ID, laterWorkspaceId, DEFAULT_WORKSPACE_ID, laterWorkspaceId,
+    DEFAULT_WORKSPACE_ID, laterWorkspaceId, DEFAULT_WORKSPACE_ID, laterWorkspaceId,
+    DEFAULT_WORKSPACE_ID, laterWorkspaceId, DEFAULT_WORKSPACE_ID, laterWorkspaceId,
+    DEFAULT_WORKSPACE_ID, laterWorkspaceId, DEFAULT_WORKSPACE_ID, laterWorkspaceId,
+  ]);
+  assert.equal(queue.deferrals.length, 16);
+  assert.equal(reserve.mock.calls.length, 16);
+});
+
+test("claims use the registered Store workspace identity", async t => {
+  const workspaceId = "workspace_non_default";
+  const queue = scriptedStore("non-default-workspace", 1, workspaceId);
+  const f = fixture(t, [queue]);
+  f.coordinator.start();
+  await nextTurn();
+  assert.equal(queue.claimInputs[0]?.workspaceId, workspaceId);
+  assert.equal(f.executions[0]?.claim.runId, "non-default-workspace-1");
+});
+
 test("a queued Host receipt reaches execution and is released only when dispatch is not committed", async t => {
   const queue = scriptedStore("host-receipt", 1);
   const releaseNoDispatch = t.mock.fn(() => true);
   const reference = { intentId: "intent-host-receipt", dispatchToken: "token-host-receipt" };
   const f = fixture(t, [queue], { hostCapacity: {
+    getWorkspaceIdentity: () => ({ workspaceKey: "workspace-key", canonicalCwd: "/workspace", databasePath: "/workspace/db", databaseFileIdentity: "1:2", workspaceId: "workspace" }),
     reserve: t.mock.fn(() => ({ status: "reserved", reference })),
     reserveExecution: t.mock.fn<HostCapacity["reserveExecution"]>(() => ({ status: "changed" })),
     reserveApprovalResumePending: t.mock.fn<HostCapacity["reserveApprovalResumePending"]>(() => ({ status: "changed" })),

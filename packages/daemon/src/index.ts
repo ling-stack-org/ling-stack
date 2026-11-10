@@ -90,6 +90,7 @@ import { resumePendingMediaJobExecutions, syncMediaJobForApprovalDecision } from
 import { createNativeRunDispatcher } from "./features/runs/native-run-dispatcher.js";
 import { publishConversationMediaProjectionChange } from "./features/media/conversation-events.js";
 import { ActiveRunRegistry } from "./runtime/active-runs.js";
+import { recoverHostCapacityReservations } from "./runtime/host-capacity-recovery.js";
 import { createRunShutdownCoordinator } from "./runtime/run-shutdown-coordinator.js";
 import { createRunnerRegistry, DEFAULT_RUNNER_ID, LEGACY_PI_RUNNER_ID, type RunnerRegistry } from "./runtime/runners.js";
 import { listNativeRunnerRegistrations } from "./runtime/native-runners.js";
@@ -434,6 +435,26 @@ export function createDaemonServer(
     const recoveryNow = new Date().toISOString();
     store.recoverStaleRuns(recoveryNow);
     store.recoverStaleChannelWorkflows(recoveryNow);
+    if (resolvedConfig.concurrency.enabled) {
+      const capacity = runtimeHostCapacities.get(store);
+      if (capacity) {
+        try {
+          let observed = 0, released = 0;
+          for (const workspaceId of store.listWorkspaceIds()) {
+            runtimeSupervisor.getRuntimeForWorkspace(cwd, store, workspaceId);
+            const recovery = recoverHostCapacityReservations({ store, workspaceId,
+              host: hostRunCapacity, admission: capacity, now: recoveryNow });
+            observed += recovery.observed;
+            released += recovery.released;
+          }
+          if (observed || released) {
+            console.info(`runtime_host_capacity_startup_recovery: observed=${observed} released=${released}`);
+          }
+        } catch {
+          console.warn("runtime_host_capacity_startup_recovery_incomplete: held reservations remain recoverable");
+        }
+      }
+    }
     configureWorkflowIsolationLifecycle(store, {
       trackCompletion: completion => activeRuns.trackCompletion(completion),
       isShuttingDown: () => activeRuns.isShuttingDown(),

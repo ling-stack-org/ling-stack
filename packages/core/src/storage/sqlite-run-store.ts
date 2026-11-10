@@ -3981,6 +3981,12 @@ export class SqliteRunStore implements RunStore {
     return this.workspaceSettings.getWorkspaceSettings();
   }
 
+  listWorkspaceIds(): readonly string[] {
+    return this.database.prepare("SELECT id FROM workspaces ORDER BY id")
+      .all()
+      .map(row => readString(row, "id"));
+  }
+
   updateWorkspaceSettings(input: UpdateWorkspaceSettingsInput, now: string): WorkspaceSettings {
     return this.workspaceSettings.updateWorkspaceSettings(input, now);
   }

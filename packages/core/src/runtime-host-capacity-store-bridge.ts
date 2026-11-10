@@ -13,7 +13,7 @@ declare const bindingBrand: unique symbol;
 export interface RuntimeHostCapacityStoreBinding { readonly [bindingBrand]: true }
 
 export type RuntimeHostCapacityJournal = Pick<SqliteRuntimeHostCapacityStore,
-  "assertOutsideTransaction" | "prepareAttempt" | "prepareExecution" | "prepareWorkflowStart" | "prepareDelegationSpawn" | "prepareDelegationPending"
+  "getWorkspaceIdentity" | "assertOutsideTransaction" | "prepareAttempt" | "prepareExecution" | "prepareWorkflowStart" | "prepareDelegationSpawn" | "prepareDelegationPending"
   | "prepareApprovalResumePending" | "prepareUserInputContinuation" | "getIntent" | "getAttemptIntent" | "attachReservation"
   | "consumeDispatchGateWithinTransaction" | "consumeDispatchGate" | "bindDelegationSourceWithinTransaction"
   | "bindApprovalResumeSourceWithinTransaction" | "bindUserInputSourceWithinTransaction"
@@ -53,6 +53,7 @@ export function createRuntimeHostCapacityStoreBinding(): {
         }) as RuntimeHostCapacityJournal[K];
       };
       const facade = Object.freeze({
+        getWorkspaceIdentity: invoke("getWorkspaceIdentity"),
         assertOutsideTransaction: invoke("assertOutsideTransaction"),
         prepareAttempt: invoke("prepareAttempt"),
         prepareExecution: invoke("prepareExecution"),
