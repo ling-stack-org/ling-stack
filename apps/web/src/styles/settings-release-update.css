@@ -1,0 +1,93 @@
+.release-update-card {
+  display: grid;
+  gap: var(--ling-space-4);
+  min-width: 0;
+  padding: var(--ling-space-5);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-lg, 12px);
+  background: var(--ling-surface-raised, rgba(127, 127, 127, 0.06));
+}
+
+.release-update-card-heading,
+.release-update-card-title,
+.release-update-card-actions,
+.release-update-card-version-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.release-update-card-heading,
+.release-update-card-actions {
+  justify-content: space-between;
+  gap: var(--ling-space-4);
+}
+
+.release-update-card-title {
+  gap: var(--ling-space-3);
+}
+
+.release-update-card-title > svg {
+  width: 18px;
+  height: 18px;
+  color: var(--ling-color-info, #2563eb);
+}
+
+.release-update-card-title > span {
+  display: grid;
+  gap: var(--ling-space-1);
+}
+
+.release-update-card-title strong {
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-sm);
+}
+
+.release-update-card-title small,
+.release-update-card-meta {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+}
+
+.release-update-card-body {
+  display: grid;
+  gap: var(--ling-space-2);
+  padding: var(--ling-space-3) 0;
+  border-top: 1px solid var(--ling-border-default);
+  border-bottom: 1px solid var(--ling-border-default);
+}
+
+.release-update-card-version-row {
+  justify-content: space-between;
+  gap: var(--ling-space-4);
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+}
+
+.release-update-card-version-row code,
+.release-update-card-version-row strong {
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-sm);
+}
+
+.release-update-card-version-row--available strong {
+  color: var(--ling-color-warning, #b45309);
+}
+
+.release-update-card-actions {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+}
+
+.release-update-card-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ling-space-2);
+  color: var(--ling-color-info, #2563eb);
+  font-size: var(--ling-font-xs);
+  text-decoration: none;
+}
+
+.release-update-card-link:hover {
+  text-decoration: underline;
+}
