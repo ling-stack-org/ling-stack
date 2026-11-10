@@ -34,10 +34,10 @@ function runQuality(overrides = {}) {
 
 // Value: protects=all original daemon positives execute on a real supported Host;
 // fails_when=CI silently restores Linux for Darwin-only positives or removes shards;
-// why_new=production platform gates exposed an invalid runner assumption; seam=none
-test("complete daemon shards run on the explicit real macOS arm64 image", () => {
+// why_new=the six-shard regression lane must not depend on the scarce macOS 26 pool; seam=none
+test("complete daemon shards run on the standard real macOS image", () => {
   const job = jobSource("daemon-tests");
-  assert.match(job, /runs-on: macos-26\n/u);
+  assert.match(job, /runs-on: macos-13\n/u);
   assert.match(job, /shard: \[0, 1, 2, 3, 4, 5\]/u);
   assert.match(job, /daemon-test-shard\.mjs --shard=\$\{\{ matrix\.shard \}\} --shard-count=6 --concurrency=2/u);
   assert.doesNotMatch(job, /continue-on-error|--test-name-pattern|--test-skip-pattern/u);

@@ -1,5 +1,5 @@
 name: Desktop candidate
-run-name: Desktop ${{ inputs.operation || (github.event.label.name == 'desktop-package-build' && 'build') || 'inspect' }} · ${{ inputs.release_tag || github.event.pull_request.head.sha }}
+run-name: Desktop ${{ inputs.operation || ((github.event_name == 'push' || github.event_name == 'workflow_call') && 'build') || (github.event.label.name == 'desktop-package-build' && 'build') || 'inspect' }} · ${{ inputs.release_tag || github.ref_name || github.event.pull_request.head.sha }}
 
 on:
   workflow_dispatch:
@@ -21,6 +21,29 @@ on:
         description: Create a Draft release after BOTH builds pass (source must be on main)
         type: boolean
         default: false
+  workflow_call:
+    inputs:
+      operation:
+        description: Inspect prerequisites or build both unsigned candidates
+        type: string
+        required: false
+        default: inspect
+      source_sha:
+        description: Full reviewed source commit SHA
+        type: string
+        required: true
+      release_tag:
+        description: New release tag matching VERSION
+        type: string
+        required: true
+      create_draft:
+        description: Create a Draft release after BOTH builds pass
+        type: boolean
+        required: false
+        default: false
+  push:
+    tags:
+      - "v*.*.*"
   # Explicit maintainer opt-in permits inspecting a new workflow before landing it.
   pull_request:
     types: [labeled]
@@ -35,7 +58,7 @@ concurrency:
 
 jobs:
   candidate:
-    if: github.event_name == 'workflow_dispatch' || (contains(fromJSON('["desktop-package-inspect", "desktop-package-build"]'), github.event.label.name) && github.event.pull_request.head.repo.full_name == github.repository)
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' || github.event_name == 'push' || (contains(fromJSON('["desktop-package-inspect", "desktop-package-build"]'), github.event.label.name) && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -45,7 +68,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ inputs.source_sha || github.event.pull_request.head.sha }}
+          ref: ${{ inputs.source_sha || (github.event_name == 'pull_request' && github.event.pull_request.head.sha) || github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
@@ -55,9 +78,9 @@ jobs:
         id: candidate
         shell: bash
         env:
-          DESKTOP_SOURCE_SHA: ${{ inputs.source_sha || github.event.pull_request.head.sha }}
-          DESKTOP_RELEASE_TAG: ${{ inputs.release_tag }}
-          DESKTOP_CREATE_DRAFT: ${{ inputs.create_draft && inputs.operation == 'build' }}
+          DESKTOP_SOURCE_SHA: ${{ inputs.source_sha || (github.event_name == 'pull_request' && github.event.pull_request.head.sha) || github.sha }}
+          DESKTOP_RELEASE_TAG: ${{ inputs.release_tag || (github.event_name == 'push' && github.ref_name) || '' }}
+          DESKTOP_CREATE_DRAFT: ${{ github.event_name == 'push' || (inputs.create_draft && inputs.operation == 'build') }}
         run: |
           set -euo pipefail
           if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
@@ -68,7 +91,7 @@ jobs:
 
   package:
     needs: candidate
-    name: ${{ matrix.target }} · ${{ inputs.operation || (github.event.label.name == 'desktop-package-build' && 'build') || 'inspect' }}
+    name: ${{ matrix.target }} · ${{ inputs.operation || ((github.event_name == 'push' || github.event_name == 'workflow_call') && 'build') || (github.event.label.name == 'desktop-package-build' && 'build') || 'inspect' }}
     strategy:
       fail-fast: false
       matrix:
@@ -86,7 +109,7 @@ jobs:
       DESKTOP_RELEASE_TAG: ${{ needs.candidate.outputs.tag }}
       DESKTOP_TARGET: ${{ matrix.target }}
       DESKTOP_MATERIAL_PLATFORM: ${{ matrix.material-platform }}
-      DESKTOP_OPERATION: ${{ inputs.operation || (github.event.label.name == 'desktop-package-build' && 'build') || 'inspect' }}
+      DESKTOP_OPERATION: ${{ inputs.operation || ((github.event_name == 'push' || github.event_name == 'workflow_call') && 'build') || (github.event.label.name == 'desktop-package-build' && 'build') || 'inspect' }}
       RUSTUP_TOOLCHAIN: 1.97.1
       # The fixed macOS config selects ad-hoc signing and rejects CSC overrides.
       LING_CUA_SIGNING_TIER: unsigned_dev
@@ -296,7 +319,7 @@ jobs:
           retention-days: 14
 
   draft:
-    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'build' && inputs.create_draft
+    if: (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' || github.event_name == 'push') && (github.event_name == 'push' || inputs.operation == 'build') && (github.event_name == 'push' || inputs.create_draft)
     needs: [candidate, package]
     runs-on: ubuntu-latest
     timeout-minutes: 10

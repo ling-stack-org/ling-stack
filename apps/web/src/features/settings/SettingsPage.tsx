@@ -46,6 +46,7 @@ import { useArchivedSettingsController } from "./useArchivedSettingsController.j
 import { ComputerControlSettingsPage } from "./computer-control/ComputerControlSettingsPage.js";
 import { MobileAccessSettingsPage } from "./mobile-access/MobileAccessSettingsPage.js";
 import { ExecutionEnginesSettingsPage } from "./execution-engines/ExecutionEnginesSettingsPage.js";
+import { ReleaseUpdateCard } from "./ReleaseUpdateCard.js";
 
 export type { SettingsSectionId } from "./settings-shell-model.js";
 
@@ -407,6 +408,7 @@ export function SettingsPage({
             onRefreshStartup={onRefreshStartup}
             onOpenRunDiagnostics={onOpenRunDiagnostics}
           />
+          <ReleaseUpdateCard />
           <DiagnosticsDoctorCard cwd={cwd} />
           <NotificationsPreferencesCard cwd={cwd} />
           <HumanQaSettingsPanel key={cwd} cwd={cwd} />
