@@ -4,6 +4,7 @@
     "allowJs": true,
     "allowImportingTsExtensions": true,
     "noEmit": true,
+    "rootDirs": [".", "./dist"],
     "types": ["node", "vite/client"]
   },
   "include": ["tests/**/*.ts", "renderer/computer-use-preview/global.d.ts"]
