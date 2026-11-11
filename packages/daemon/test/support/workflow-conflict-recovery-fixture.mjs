@@ -23,7 +23,11 @@ import { AttemptHostOperationTracker } from "../../dist/runtime/attempt-host-ope
 import { createRunnerRegistry } from "../../dist/runtime/runners.js";
 
 const exec = promisify(execFile);
-export const recoveryHost = { skip: process.platform !== "darwin", timeout: 90_000 };
+// These cases exercise real Git worktrees, Host leases, approvals, and recovery
+// publication on the shared macOS runner. Keep the assertion budget separate from
+// the shard watchdog so slower hosted disks do not turn a valid recovery into a
+// false timeout.
+export const recoveryHost = { skip: process.platform !== "darwin", timeout: 180_000 };
 export const now = () => new Date().toISOString();
 
 /** Real production selection, Pi preparation, Host writes/approvals/drain and Git capture. No model dispatch. */
