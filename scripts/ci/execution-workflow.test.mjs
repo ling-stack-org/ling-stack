@@ -11,9 +11,9 @@ import { createTestPlan } from "./test-shard-plan.mjs";
 const workflow = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
 const labelWorkflow = readFileSync(new URL("../../.github/workflows/full-ci-label.yml", import.meta.url), "utf8");
 const root = fileURLToPath(new URL("../../", import.meta.url));
-const lanes = ["SCOPE", "COMMON", "DEPENDENCY", "ASSURANCE", "BUILD", "TYPECHECK", "UNIT", "DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE"];
+const lanes = ["SCOPE", "COMMON", "DEPENDENCY", "ASSURANCE", "BUILD", "TYPECHECK", "UNIT", "DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE", "WEB_SMOKE"];
 const platformJobs = ["daemon-tests", "daemon-linux-contracts", "restricted-command-macos"];
-const selectorOutputs = { DEPENDENCY: "dependency-policy", TYPECHECK: "typecheck-selected", UNIT: "unit-selected", DAEMON: "daemon" };
+const selectorOutputs = { DEPENDENCY: "dependency-policy", TYPECHECK: "typecheck-selected", UNIT: "unit-selected", DAEMON: "daemon", WEB: "web" };
 const unselected = Object.fromEntries(Object.keys(selectorOutputs).map((selector) => [`${selector}_SELECTED`, "false"]));
 
 /** Read a top-level job without matching similarly named steps. */
@@ -85,7 +85,8 @@ async function assertScopeOutputs(scope, { mode, packages, daemon, web, dependen
   // must not turn a selected lane's skipped result into a passing quality gate.
   const required = ["SCOPE", "COMMON", ...(mode === "docs" ? [] : ["ASSURANCE", "BUILD"]),
     ...(dependency ? ["DEPENDENCY"] : []), ...(packages.length ? ["TYPECHECK"] : []),
-    ...(matrix.length ? ["UNIT"] : []), ...(daemon ? ["DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE"] : [])];
+    ...(matrix.length ? ["UNIT"] : []), ...(daemon ? ["DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE"] : []),
+    ...(web ? ["WEB_SMOKE"] : [])];
   for (const lane of required) gate[`${lane}_RESULT`] = "success";
   const passed = runQuality(gate);
   assert.equal(passed.status, 0, passed.stdout + passed.stderr);
@@ -114,13 +115,13 @@ test("workflow transformations keep daemon test-only work outside the unit matri
   });
 });
 
-// protects: all four core unit shards; fails_when: matrix or unit selector drops core;
+// protects: all core unit shards; fails_when: matrix or unit selector drops core;
 // why_new: executes matrix-to-selector heredoc against the real plan; seam=none;
 // no_claim=hosted GitHub scheduler not executed.
-test("workflow transformations select the four core shards for core test-only work", { timeout: 90_000 }, async () => {
+test("workflow transformations select the eight core shards for core test-only work", { timeout: 90_000 }, async () => {
   await assertScopeOutputs(classifyChangedFiles({ files: ["packages/core/test/example.test.ts"] }), {
     mode: "affected", packages: ["@ling-stack/core"], daemon: false, web: false,
-    matrix: [0, 1, 2, 3].map((shard) => ({ suite: "core", shard })),
+    matrix: Array.from({ length: 8 }, (_, shard) => ({ suite: "core", shard })),
   });
 });
 
@@ -149,7 +150,7 @@ test("workflow transformations require every lane for a bounded full package gra
   }));
   await assertScopeOutputs(classifyChangedFiles({ files: ["package.json"], packageEntries }), {
     mode: "full", packages, dependency: true, daemon: true, web: true,
-    matrix: [{ suite: "packages", shard: 0 }, ...[0, 1, 2, 3].map((shard) => ({ suite: "core", shard }))],
+    matrix: [{ suite: "packages", shard: 0 }, ...Array.from({ length: 8 }, (_, shard) => ({ suite: "core", shard }))],
   });
 });
 
@@ -216,7 +217,7 @@ test("long-running jobs respond to cancellation while quality still reports inco
   assert.match(cancelled.stdout, /UNIT=cancelled.*DAEMON=cancelled/u);
 });
 
-test("workflow gate requires all ten lanes and refuses incomplete Draft validation", () => {
+test("workflow gate requires every selected lane and refuses incomplete Draft validation", () => {
   const quality = jobSource("quality");
   assert.match(quality, /^    if: always\(\)/mu);
   assert.match(quality, /EXECUTION_TIER: \$\{\{ needs\.scope\.outputs\.execution-tier \}\}/u);

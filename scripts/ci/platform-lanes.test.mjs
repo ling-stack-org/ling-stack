@@ -26,20 +26,18 @@ function runQuality(overrides = {}) {
     env: { ...process.env, EXECUTION_TIER: "complete", SCOPE_MODE: "full",
       SCOPE_RESULT: "success", COMMON_RESULT: "success",
       DEPENDENCY_RESULT: "success", ASSURANCE_RESULT: "success", BUILD_RESULT: "success", TYPECHECK_RESULT: "success",
-      UNIT_RESULT: "success", DAEMON_RESULT: "success", LINUX_CONTRACT_RESULT: "success",
+      UNIT_RESULT: "success", DAEMON_RESULT: "success", WEB_SMOKE_RESULT: "success", WEB_SELECTED: "true", LINUX_CONTRACT_RESULT: "success",
       MACOS_NATIVE_RESULT: "success", DAEMON_SELECTED: "true", DEPENDENCY_SELECTED: "true",
       TYPECHECK_SELECTED: "true", UNIT_SELECTED: "true", ...overrides },
   });
 }
 
-// Value: protects=all original daemon positives execute on a real supported Host;
-// fails_when=CI silently restores Linux for Darwin-only positives or removes shards;
-// why_new=production platform gates exposed an invalid runner assumption; seam=none
-test("complete daemon shards run on the explicit real macOS arm64 image", () => {
+test("daemon shards consume the platform plan without filtering individual cases", () => {
   const job = jobSource("daemon-tests");
-  assert.match(job, /runs-on: macos-26\n/u);
-  assert.match(job, /shard: \[0, 1, 2, 3, 4, 5\]/u);
-  assert.match(job, /daemon-test-shard\.mjs --shard=\$\{\{ matrix\.shard \}\} --shard-count=6 --concurrency=2/u);
+  assert.match(job, /runs-on: \$\{\{ matrix\.runner \}\}/u);
+  assert.match(job, /matrix: \$\{\{ fromJSON\(needs\.scope\.outputs\.daemon-matrix\) \}\}/u);
+  assert.match(job, /node-test-shard\.mjs --suite=\$\{\{ matrix\.suite \}\}/u);
+  assert.match(job, /--shard-count=\$\{\{ matrix\.shardCount \}\} --concurrency=\$\{\{ matrix\.concurrency \}\}/u);
   assert.doesNotMatch(job, /continue-on-error|--test-name-pattern|--test-skip-pattern/u);
 });
 
@@ -67,7 +65,7 @@ test("quality passes only when selected platform lanes actually succeed", () => 
   assert.equal(result.status, 0, result.stderr);
 });
 
-for (const lane of ["DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE"]) {
+for (const lane of ["DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE", "WEB_SMOKE"]) {
   for (const result of ["failure", "cancelled", "skipped", ""]) {
     test(`quality rejects selected ${lane}=${result}`, () => {
       const check = runQuality({ [`${lane}_RESULT`]: result });
@@ -96,7 +94,7 @@ test("workflow quality gate keeps a Draft full scope deferred after common check
 });
 
 test("workflow documentation gate requires successful scope and common checks", () => {
-  const docs = { SCOPE_MODE: "docs", DAEMON_SELECTED: "false", DEPENDENCY_RESULT: "skipped",
+  const docs = { WEB_SELECTED: "false", SCOPE_MODE: "docs", DAEMON_SELECTED: "false", DEPENDENCY_RESULT: "skipped",
     DEPENDENCY_SELECTED: "false", TYPECHECK_SELECTED: "false", UNIT_SELECTED: "false",
     BUILD_RESULT: "skipped", TYPECHECK_RESULT: "skipped", UNIT_RESULT: "skipped",
     DAEMON_RESULT: "skipped", LINUX_CONTRACT_RESULT: "skipped", MACOS_NATIVE_RESULT: "skipped" };
@@ -124,7 +122,7 @@ test("workflow affected platform-only scope may skip unselected product lanes bu
   const platformOnly = { SCOPE_MODE: "affected", DEPENDENCY_SELECTED: "false", TYPECHECK_SELECTED: "false",
     UNIT_SELECTED: "false", DEPENDENCY_RESULT: "skipped", TYPECHECK_RESULT: "skipped", UNIT_RESULT: "skipped" };
   assert.equal(runQuality(platformOnly).status, 0);
-  for (const lane of ["BUILD", "DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE"]) {
+  for (const lane of ["BUILD", "DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE", "WEB_SMOKE"]) {
     const check = runQuality({ ...platformOnly, [`${lane}_RESULT`]: "skipped" });
     assert.equal(check.status, 1, check.stdout + check.stderr);
     assert.match(check.stdout, new RegExp(`${lane}=skipped`, "u"));

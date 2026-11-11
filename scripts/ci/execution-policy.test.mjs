@@ -8,8 +8,8 @@ import { fileURLToPath } from "node:url";
 import { assertCiResults, selectExecutionTier } from "./execution-policy.mjs";
 
 const script = fileURLToPath(new URL("./execution-policy.mjs", import.meta.url));
-const lanes = ["SCOPE", "COMMON", "DEPENDENCY", "ASSURANCE", "BUILD", "TYPECHECK", "UNIT", "DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE"];
-const selectors = ["dependency", "typecheck", "unit", "daemon"];
+const lanes = ["SCOPE", "COMMON", "DEPENDENCY", "ASSURANCE", "BUILD", "TYPECHECK", "UNIT", "DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE", "WEB_SMOKE"];
+const selectors = ["dependency", "typecheck", "unit", "daemon", "web"];
 const unselected = Object.fromEntries(selectors.map((selector) => [selector, false]));
 
 function prEvent(action, { draft = false, labels = [], label } = {}) {
@@ -26,7 +26,7 @@ function results(overrides = {}) {
 
 function quality(overrides = {}) {
   return assertCiResults({ tier: "complete", mode: "full", dependency: true, typecheck: true, unit: true,
-    daemon: true, results: results(), ...overrides });
+    daemon: true, web: true, results: results(), ...overrides });
 }
 
 test("every Draft update previews while opened and ready PR updates run complete checks", () => {
@@ -123,6 +123,7 @@ test("affected scope permits every selector combination without skipping selecte
       DAEMON: selected.daemon ? "success" : "skipped",
       LINUX_CONTRACT: selected.daemon ? "success" : "skipped",
       MACOS_NATIVE: selected.daemon ? "success" : "skipped",
+      WEB_SMOKE: selected.web ? "success" : "skipped",
     });
     assert.equal(quality({ mode: "affected", ...selected, results: outcomes }), true, JSON.stringify(selected));
     for (const lane of lanes) {
@@ -204,7 +205,7 @@ test("event-file CLI emits only the tier and rejects unreadable, invalid or ambi
 });
 
 test("quality CLI enforces environment types and reports failures in the workflow log", () => {
-  const env = { ...process.env, EXECUTION_TIER: "complete", SCOPE_MODE: "full", DAEMON_SELECTED: "true",
+  const env = { ...process.env, EXECUTION_TIER: "complete", SCOPE_MODE: "full", DAEMON_SELECTED: "true", WEB_SELECTED: "true",
     DEPENDENCY_SELECTED: "true", TYPECHECK_SELECTED: "true", UNIT_SELECTED: "true",
     ...Object.fromEntries(lanes.map((lane) => [`${lane}_RESULT`, "success"])) };
   const run = (overrides = {}) => spawnSync(process.execPath, [script, "--check-quality"], { encoding: "utf8", env: { ...env, ...overrides } });

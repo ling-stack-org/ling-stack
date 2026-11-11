@@ -46,7 +46,7 @@ test("published plans apply exclusive cost without altering measured timing evid
     daemon: { platform: config.platform, durationsMs },
   } } });
   const suite = plan.suites.daemon;
-  assert.ok(suite.files.includes("test/recovery-discovery-prefix.test.ts"));
+  assert.ok(plan.suites["daemon-linux"].files.includes("test/recovery-discovery-prefix.test.ts"));
   assert.deepEqual(suite.shards, assignTestShards(suite.files, config.shardCount, {
     cwd: config.cwd, timings: durationsMs, exclusive: config.exclusive, concurrency: config.concurrency,
   }));
