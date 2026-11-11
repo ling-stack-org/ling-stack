@@ -335,8 +335,8 @@ test("serial SDK/Host writing Runs fan in, approve_once delivers once, and reope
     assert.notEqual(evidence[0].run.id, evidence[1].run.id);
     assert.notEqual(evidence[0].run.cwd, evidence[1].run.cwd);
     assert.notEqual(evidence[0].writer.bindingId, evidence[1].writer.bindingId);
-    await wait(() => pending().length === 1 && pending()[0].actionType === "workflow_merge", "production merge approval proposal");
     await waitForWorkflowIsolationIdle(store, workflow.id);
+    await wait(() => pending().length === 1 && pending()[0].actionType === "workflow_merge", "production merge approval proposal");
     const reconciled = await reconcileWorkflowIntegrations(store, workflow.id);
     assert.equal(reconciled[0].status, "awaiting_approval", JSON.stringify(reconciled));
     const approval = pending()[0], candidate = round().candidate;
