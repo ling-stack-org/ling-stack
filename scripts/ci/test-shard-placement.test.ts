@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -58,11 +58,15 @@ test("published plans apply exclusive cost without altering measured timing evid
 });
 
 test("combined plans fit twenty runner slots while preserving isolated suite parallelism", async () => {
+  const workflow = await readFile(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
+  const siblingJobs = workflow.split(/(?=^  [a-z][a-z-]*:\n)/mu).slice(1)
+    .filter(block => /^    needs: \[scope, build\]$/mu.test(block) && !/^    strategy:/mu.test(block))
+    .map(block => /^  ([a-z][a-z-]*):/u.exec(block)![1]).sort();
+  assert.deepEqual(siblingJobs, ["daemon-linux-contracts", "restricted-command-macos", "typecheck", "web-smoke"]);
   for (const extra of [[], ["@ling-stack/web"], ["@ling-stack/api-client"]]) {
     const plan = await createTestPlan(["@ling-stack/core", "@ling-stack/daemon", ...extra]);
-    // Typecheck and the Linux/macOS native contract jobs run alongside the matrices.
-    const siblingJobs = 3;
-    assert.ok(plan.unitMatrix.include.length + plan.daemonMatrix.include.length + siblingJobs <= 20);
+    const requested = plan.unitMatrix.include.length + plan.daemonMatrix.include.length + siblingJobs.length;
+    assert.ok(requested <= 20, `Requested ${requested} runner slots`);
     assert.equal(plan.daemonMatrix.include.filter(entry => entry.runner === "macos-26").length + 1, 5);
     for (const [name, config] of Object.entries(testSuites)) {
       const discovered = await discoverSuiteFiles(config);

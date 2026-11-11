@@ -12,7 +12,7 @@ test("core and daemon plans preserve full discovery exactly once with dynamic co
   for (const packages of [[], ["@ling-stack/core"], ["@ling-stack/daemon"], ["@ling-stack/core", "@ling-stack/daemon"]]) {
     const plan = await createTestPlan(packages);
     assert.deepEqual(Object.keys(plan.suites), Object.keys(testSuites).filter(name => packages.includes(testSuites[name].packageName)));
-    const count = packages.includes("@ling-stack/daemon") ? 6 : 8;
+    const count = packages.includes("@ling-stack/daemon") ? 5 : 8;
     assert.deepEqual(plan.unitMatrix.include, packages.includes("@ling-stack/core")
       ? Array.from({ length: count }, (_, shard) => ({ suite: "core", shard, shardCount: count, concurrency: 2 })) : []);
     for (const [name, suite] of Object.entries(plan.suites)) {
@@ -20,7 +20,7 @@ test("core and daemon plans preserve full discovery exactly once with dynamic co
       assert.ok(discovered.length > 100);
       assert.doesNotThrow(() => assertSuiteCoverage(suite, discovered));
       assert.equal(suite.shardCount, name === "daemon" ? 4
-        : packages.includes("@ling-stack/core") && packages.includes("@ling-stack/daemon") ? 6 : 8);
+        : packages.includes("@ling-stack/core") && packages.includes("@ling-stack/daemon") ? name === "core" ? 5 : 6 : 8);
     }
     if (plan.suites.daemon) assert.ok(!plan.suites.daemon.files.includes("test/dependency-security.test.mjs"));
   }
@@ -34,7 +34,7 @@ test("only selected unsharded packages create the packages job", async () => {
   }
   const mixed = await createTestPlan(["@ling-stack/web", "@ling-stack/core", "@ling-stack/daemon"]);
   assert.deepEqual(mixed.unitMatrix.include, [{ suite: "packages", shard: 0 },
-    ...Array.from({ length: 6 }, (_, shard) => ({ suite: "core", shard, shardCount: 6, concurrency: 2 }))]);
+    ...Array.from({ length: 5 }, (_, shard) => ({ suite: "core", shard, shardCount: 5, concurrency: 2 }))]);
 });
 
 test("split channel suites are discovered once with ordinary parallel workers and watchdogs", async () => {

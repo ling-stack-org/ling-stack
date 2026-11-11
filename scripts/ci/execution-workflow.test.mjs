@@ -152,7 +152,7 @@ test("workflow transformations require every lane for a bounded full package gra
   await assertScopeOutputs(classifyChangedFiles({ files: ["package.json"], packageEntries }), {
     mode: "full", packages, dependency: true, assurance: true, daemon: true, web: true,
     matrix: [{ suite: "packages", shard: 0 },
-      ...Array.from({ length: 6 }, (_, shard) => ({ suite: "core", shard, shardCount: 6, concurrency: 2 }))],
+      ...Array.from({ length: 5 }, (_, shard) => ({ suite: "core", shard, shardCount: 5, concurrency: 2 }))],
   });
 });
 

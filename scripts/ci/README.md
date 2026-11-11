@@ -75,7 +75,7 @@ a requested package via `--if-present`.
 
 ## Test Lanes
 
-- Core: eight Linux shards when selected without Daemon, six when both suites are
+- Core: eight Linux shards when selected without Daemon, five when both suites are
   selected, with two serial file workers per shard. These jobs are
   included in the existing `unit-tests` matrix only when core is selected.
 - Other packages and Web checks: one Linux matrix entry only when at least one
@@ -95,11 +95,11 @@ a requested package via `--if-present`.
   mandatory lanes. The manifest's disjoint union must equal fresh daemon discovery;
   new, missing, duplicated or stale assignments fail before execution. Native
   source/fixture contract checks prevent silently moving Darwin cases to Linux.
-- Combined Core/Daemon plans use twelve Linux shards and four macOS shards.
-  Together with typecheck, the unsharded package job and both native contract jobs,
+- Combined Core/Daemon plans use eleven Linux shards and four macOS shards.
+  Together with typecheck, Web smoke, the unsharded package job and both native contract jobs,
   the product wave fits twenty runner slots and five macOS slots, the GitHub Free
   [concurrency limits](https://docs.github.com/en/actions/reference/limits#job-concurrency-limits-for-github-hosted-runners).
-  Web smoke starts after the package job. Other workflows can still consume shared
+  Web smoke starts independently after the build. Other workflows can still consume shared
   organization capacity; shard counts do not guarantee immediate runner availability.
 - Production Web smoke: an independent required Linux job consumes the same
   `ci-dist` output as other tests. Browser installation and Playwright execution

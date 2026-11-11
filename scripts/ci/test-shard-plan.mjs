@@ -91,15 +91,16 @@ export async function loadTimingHints(path) {
 
 export async function createTestPlan(packages, { timings = { suites: {} } } = {}) {
   if (!Array.isArray(packages) || packages.some(name => typeof name !== "string")) throw new TypeError("packages must be a string array");
-  // Combined runs reserve eight of twenty slots for macOS shards, native contracts,
-  // typecheck and the unsharded package lane. Isolated suites retain eight shards.
+  // Combined runs reserve nine of twenty slots for macOS shards, native contracts,
+  // typecheck, Web smoke and the unsharded package lane. Isolated suites retain eight shards.
   const combined = packages.includes("@ling-stack/core") && packages.includes("@ling-stack/daemon");
   /** @type {Record<string, { platform: string, files: string[], shardCount: number, concurrency: number,
    * timings: Record<string, number>, shards: ReturnType<typeof assignTestShards> }>} */
   const suites = {};
   for (const [name, config] of Object.entries(testSuites)) {
     if (!packages.includes(config.packageName)) continue;
-    const shardCount = combined && config.platform === "linux" ? 6 : config.shardCount;
+    const shardCount = combined && name === "core" ? 5
+      : combined && name === "daemon-linux" ? 6 : config.shardCount;
     const files = await discoverSuiteFiles(config);
     if (files.length === 0) throw new Error(`No tests discovered for ${name}`);
     const hints = timings.suites?.[name];
