@@ -5,6 +5,7 @@ import { parseArgs } from "node:util";
 import { AssuranceError, parseJson, readBoundFile, requireCondition } from "./manifest.mjs";
 import { preflight } from "./preflight.mjs";
 import { DEFAULT_TRIAL, renderTrialPreflightMarkdown, trialPreflight } from "./trial-preflight.mjs";
+import { assessHostReadiness, renderHostReadinessMarkdown } from "./host-readiness.mjs";
 import { calibrate } from "./evidence.mjs";
 import { buildReport, compareBundles, observationBundle, parseObservationBundle, renderReportMarkdown } from "./report.mjs";
 import { prepareOutputDir, publishFile, publishJson } from "./output.mjs";
@@ -17,6 +18,7 @@ Commands:
   calibrate       Grade synthetic positive/negative/missing-evidence controls.
   report          Summarize offline observations; never dispatches tasks.
   trial-preflight Check one frozen T01 trial manifest and external resources.
+  host-readiness  Assess a complete read-only Host evidence projection.
   sdk-consumer    Pack and verify the real SDK in an external consumer.
 
 Options:
@@ -24,18 +26,24 @@ Options:
   --trial <path>       Trial manifest relative to fixtures/framework-assurance.
   --resource-root <path>
                        External absolute root for trial runtime resources.
-  --input <path>       Offline observations JSON for report.
+  --input <path>       Offline observations or captured Host evidence JSON.
   --compare <path>     Optional second offline observations JSON.
   --variable <name>    model or executionStrategy; only with --compare.
   --output <dir>       Output outside the checkout; defaults to a new temp dir.
   --help              Print this message.
 
-No command calls a Provider or starts a daemon. Live task evidence is not accepted.
+No command calls a Provider or starts a daemon. Host readiness reads a captured
+read-only evidence projection and never grants execution authority.
 `;
 
 async function readBundle(path) {
   const absolute = resolve(path);
   return parseObservationBundle(parseJson((await readBoundFile(dirname(absolute), basename(absolute))).bytes));
+}
+
+async function readJson(path, label) {
+  const absolute = resolve(path);
+  return parseJson((await readBoundFile(dirname(absolute), basename(absolute))).bytes, label);
 }
 
 /**
@@ -49,14 +57,15 @@ export async function runCli(args, { repoRoot = REPO_ROOT, fixtureRoot = resolve
       compare: { type: "string" }, variable: { type: "string" }, output: { type: "string" }, help: { type: "boolean", short: "h" } } });
   const { values, positionals } = parsed;
   if (values.help) return { exitCode: 0, text: HELP };
-  requireCondition(positionals.length === 1 && ["preflight", "calibrate", "report", "trial-preflight", "sdk-consumer"].includes(positionals[0]),
+  requireCondition(positionals.length === 1 && ["preflight", "calibrate", "report", "trial-preflight", "host-readiness", "sdk-consumer"].includes(positionals[0]),
     "invalid_arguments", "Choose exactly one supported command; see --help.");
   const command = positionals[0];
   const allowed = { preflight: ["suite", "output"], calibrate: ["suite", "output"], report: ["input", "compare", "variable", "output"],
-    "trial-preflight": ["trial", "resource-root", "output"], "sdk-consumer": ["output"] }[command];
+    "trial-preflight": ["trial", "resource-root", "output"], "host-readiness": ["input", "output"], "sdk-consumer": ["output"] }[command];
   requireCondition(Object.keys(values).every(key => allowed.includes(key)), "invalid_arguments", "Option is not valid for this command.");
   requireCondition(command !== "report" || Boolean(values.input), "invalid_arguments", "report requires --input observations.json.");
   requireCondition(command !== "trial-preflight" || Boolean(values["resource-root"]), "invalid_arguments", "trial-preflight requires --resource-root.");
+  requireCondition(command !== "host-readiness" || Boolean(values.input), "invalid_arguments", "host-readiness requires --input evidence.json.");
   requireCondition(!values.variable || Boolean(values.compare), "invalid_arguments", "--variable requires --compare.");
   requireCondition(!values.variable || ["model", "executionStrategy"].includes(values.variable),
     "invalid_arguments", "--variable must be model or executionStrategy.");
@@ -78,6 +87,8 @@ export async function runCli(args, { repoRoot = REPO_ROOT, fixtureRoot = resolve
   } else if (command === "trial-preflight") {
     result = await trialPreflight({ repoRoot, fixtureRoot, trialPath: values.trial ?? DEFAULT_TRIAL,
       resourceRoot: values["resource-root"], reportOutputDir: outputDir, probePort });
+  } else if (command === "host-readiness") {
+    result = assessHostReadiness(await readJson(values.input, "captured Host evidence"));
   }
   if (command === "sdk-consumer") {
     const { runSdkConsumer } = await import("./sdk-consumer.mjs");
@@ -95,6 +106,8 @@ export async function runCli(args, { repoRoot = REPO_ROOT, fixtureRoot = resolve
     files.markdown = await publishFile(outputDir, "report.md", renderReportMarkdown(result));
   } else if (command === "trial-preflight") {
     files.markdown = await publishFile(outputDir, "trial-preflight.md", renderTrialPreflightMarkdown(result));
+  } else if (command === "host-readiness") {
+    files.markdown = await publishFile(outputDir, "host-readiness.md", renderHostReadinessMarkdown(result));
   }
   return { exitCode: result.status === "blocked" ? 2 : result.passed === false ? 1 : 0,
     text: `${JSON.stringify({ command, passed: result.passed ?? null, outputDir, files })}\n` };
