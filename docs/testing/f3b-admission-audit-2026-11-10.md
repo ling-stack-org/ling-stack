@@ -1,8 +1,8 @@
 # F3-B 真实试点准入审计（准入证据前置增量）
 
 - 状态：**BLOCKED**
-- 审计日期：2026-11-10
-- 实施起点：`origin/main@841dab4d`；2026-11-11 复验基线：`origin/main@0490f71f`
+- 审计日期：2026-11-11
+- 实施起点：`origin/main@841dab4d`；实际合并基线：`5990095f06d9a03c95ceb307e57f529afd462dcb`（PR #676）
 - 实施分支：`codex/ling-f3b-assurance-evidence`
 - 审计范围：准入证据投影、合同、客户端适配器和受控 SQLite/Git 回归；不启动真实 Provider、模型、daemon 生产进程或付费任务。
 
@@ -14,8 +14,10 @@ workspace Store 只读投影 Run/WorkUnit/Attempt、fence、停止证据、artif
 客户端可以把该投影与冻结任务输入关联，并在未知或不完整时保持 `not_assessed` 或 fail-closed。
 
 这项能力解决了“真实试点开始前如何核查证据”的接口缺口，但不等于真实试点已经获得执行许可。
-实现尚在独立分支，且真实 Provider、生产 daemon、packaged、跨平台、完整 evaluation 关联和
-独立资源预算尚未完成同一合并基线上的验收。因此本轮没有运行真实模型、Provider 或付费任务。
+准入证据实现已通过 PR #676 合并，实际合并提交上的受控回归与零模型 preflight 通过。
+真实 Provider、生产 daemon、packaged、跨平台、完整 evaluation 关联和独立资源预算尚未完成
+同一合并基线上的验收。Run/evaluation 只读关联在 PR #684 中单独验证，不替代真实试点验收。
+本轮没有运行真实模型、Provider 或付费任务。
 
 ## 已实现的证据边界
 
@@ -38,12 +40,13 @@ workspace Store 只读投影 Run/WorkUnit/Attempt、fence、停止证据、artif
 | Contracts/API client/Daemon 构建 | `build:ci` 全部通过 |
 | Contracts/API client/Daemon 类型检查 | `typecheck` / `typecheck:ci` 全部通过，含新增 TypeScript 测试 |
 | 工作树格式检查 | `git diff --check` 通过 |
+| 托管门禁与合并后复验 | #676 最终候选 `90bca175` 的完整 CI/CodeQL 共 35 项检查全部成功，审查项全部解决；实际合并提交 `5990095f` 与候选 tree 相同，Node 22 相关回归 84/84、零模型 preflight 通过 |
 
 ## 八项准入核查
 
 | # | 准入项 | 状态 | 证据与影响 |
 | --- | --- | --- | --- |
-| 1 | 源代码进入核实的实施基线 | **阻断** | 证据合同、Daemon endpoint 和客户端适配已在本分支实现，但尚未进入 `main`；PR review/CI/merge 仍是前置条件。 |
+| 1 | 源代码进入核实的实施基线 | **通过** | 证据合同、Daemon endpoint 和客户端适配已在 PR #676 合并至 `5990095f`；完整托管门禁、审查与合并后受控复验通过。 |
 | 2 | Host 权限、能力分类、admission、执行代次约束 | **部分通过** | projection 会暴露 safety plan、Tool Broker、binding/fence 并在不满足时 fail-closed；尚未完成合并基线上的完整 Host 生产验收。 |
 | 3 | 可信隔离执行 profile | **部分通过** | 受控回归验证 `pi_host_isolated_files_v1`、scope plan 和 binding；真实 Provider、packaged 和平台边界未验收。 |
 | 4 | Run/evaluation 身份、artifact 封存和恢复 | **部分通过** | 真实 SQLite fixture 已投影 Run/WorkUnit/Attempt、artifact digest 和历史 Attempt；evaluation grade 仍明确不在本接口中。 |
@@ -54,8 +57,8 @@ workspace Store 只读投影 Run/WorkUnit/Attempt、fence、停止证据、artif
 
 ## 解阻顺序
 
-1. 完成当前分支的审查、CI、推送和合并，记录实际 main merge SHA。
-2. 以合并后的 SHA 重新核对 endpoint、合同、隔离 profile、生命周期和预算证据。
+1. 已完成：#676 最终候选通过审查、完整 CI/CodeQL 并合并到 `5990095f`。
+2. 已完成：实际合并提交上的 endpoint、合同、隔离、生命周期和预算相关回归 84/84，零模型 preflight 通过；真实生产验收仍独立保留。
 3. 接入真实 Host Run 与既有 evaluation 的完整关联，补齐失败、缺证据、取消未确认停止样本。
 4. 为试点冻结 Provider、模型、金额/币种、请求/Token、工具循环、子代理、grader、在途预留和未知结果停止规则。
 5. 为一次只读 T01 试点分配独立数据根、workspace、输出目录和端口；A13/A14 通过后才评估并发。
