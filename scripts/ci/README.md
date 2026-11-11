@@ -44,8 +44,10 @@ additional consumers, so daemon source may still need the CLI unit entry.
 Offline assurance runs for its tooling/fixtures and source/configuration changes
 to Core or the SDK producers (localization, contracts, plugin-sdk, api-client).
 Product test-only changes and unrelated package changes do not select assurance.
-Relative validation imports are followed transitively: changes to assurance's
-diagnostics module or its dependencies retain API Client build/typecheck/tests.
+Relative validation imports and module-relative fixture URLs are followed transitively: changes to assurance's
+diagnostics module retain API Client build/typecheck/tests; its shared manifest
+also retains Daemon validation through the execution-evidence parser. Its frozen
+fixture selects Daemon validation as a module-relative input.
 The SDK consumer still builds, packs and installs its producers independently;
 an assurance-only change does not require the product build artifact. Mixed
 changes retain the union of required checks, and unknown paths remain full scope.
@@ -81,9 +83,9 @@ a requested package via `--if-present`.
 - Other packages and Web checks: one Linux matrix entry only when at least one
   such package is selected, excluding core and daemon because their complete
   discovery runs in their own entries.
-- Daemon: [the platform manifest](daemon-test-platforms.json) assigns 491 portable
+- Daemon: [the platform manifest](daemon-test-platforms.json) assigns 496 portable
   files to eight Linux shards without Core or six alongside Core, with two workers,
-  and 164 native/platform files to
+  and 166 native/platform files to
   four `macos-26` shards with three workers. The four macOS test jobs and separate
   native smoke total five macOS jobs; available concurrency is controlled by
   GitHub. Kimi Host read/terminal, delegation production-tool-surface, engine

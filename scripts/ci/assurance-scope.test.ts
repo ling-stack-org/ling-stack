@@ -75,15 +75,18 @@ test("assurance follows its real SDK producers and Core grader inputs", () => {
   }
 });
 
-test("direct and transitive assurance imports retain the API client's validation", () => {
-  for (const file of ["scripts/framework-assurance/diagnostics.mjs", "scripts/framework-assurance/manifest.mjs"]) {
+test("direct and transitive assurance imports retain package validation consumers", () => {
+  for (const [file, packages] of [["scripts/framework-assurance/diagnostics.mjs", ["@ling-stack/api-client"]],
+    ["scripts/framework-assurance/manifest.mjs", ["@ling-stack/api-client", "@ling-stack/daemon"]],
+    ["scripts/framework-assurance/execution-evidence.mjs", ["@ling-stack/daemon"]],
+    ["fixtures/framework-assurance/execution-evidence/valid.json", ["@ling-stack/daemon"]]] as const) {
     const scope = classifyChangedFiles({ files: [file] });
     assert.equal(scope.mode, "affected");
     assert.equal(scope.assurance, true);
-    assert.deepEqual(scope.packages, ["@ling-stack/api-client"]);
-    assert.deepEqual(scope.testPackages, ["@ling-stack/api-client"]);
-    assert.deepEqual(scope.typecheckPackages, ["@ling-stack/api-client"]);
-    assert.equal(scope.daemon, false);
+    assert.deepEqual(scope.packages, packages);
+    assert.deepEqual(scope.testPackages, packages);
+    assert.deepEqual(scope.typecheckPackages, packages);
+    assert.equal(scope.daemon, packages.some(name => name === "@ling-stack/daemon"));
     assert.equal(scope.web, false);
   }
 });

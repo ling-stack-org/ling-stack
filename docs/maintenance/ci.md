@@ -12,7 +12,7 @@ CI 会先根据整个 Pull Request 的变更路径选择最小安全范围：
 
 - 只有文档、各级 `README.md`、已登记的 PR／Issue 模板、`CODEOWNERS`、`FUNDING.yml` 或维护脚本变更时，不选择产品任务，但仍运行公共检查和汇总门。完整执行档位即使是纯文档范围也扫描 Git 历史；只有 Draft preview 延后历史扫描。维护脚本白名单仅包含 `check-markdown-links.mjs`、`check-public-repo-safety.mjs` 和后者的测试，新增脚本仍保守处理。
 - 工作区源码或包内 TypeScript／构建配置变更时，[分类器](../../scripts/ci/classify-scope.mjs)选择所属包及直接、间接消费者；仅改测试时选择所属包，并补充已识别的跨包测试辅助文件使用方。Web 的目录导入器额外选择 localization 验证，实际依赖图也包含 CLI 对 Web 的依赖；为构建补齐依赖不等于选择这些依赖的测试分片。
-- 仅修改 `scripts/framework-assurance/` 或 `fixtures/framework-assurance/` 的非文档输入时，选择独立 assurance 任务及实际导入这些模块的包级测试消费者；没有消费者时，不选择产品构建、测试或原生 smoke。诊断模块及其传递依赖保留 API Client 验证。Assurance 仍执行离线测试、校准、真实 SDK 仓外消费验证和 CI 工具测试类型检查。混合产品改动取两者并集，未知路径仍回退全量。
+- 仅修改 `scripts/framework-assurance/` 或 `fixtures/framework-assurance/` 的非文档输入时，选择独立 assurance 任务及实际导入这些模块的包级测试消费者；没有消费者时，不选择产品构建、测试或原生 smoke。诊断模块保留 API Client 验证；共享 manifest、执行证据模块及其冻结 fixture 还保留 Daemon 验证。Assurance 仍执行离线测试、校准、真实 SDK 仓外消费验证和 CI 工具测试类型检查。混合产品改动取两者并集，未知路径仍回退全量。
 - 包级 `package.json` 只有在 base 与当前包目录、名称、测试／类型检查入口存在性及全部 scripts 内容可核验且不变时才允许收窄；使用新旧依赖边的并集扩大消费者，并选择依赖策略任务。新增、删除、重命名、无法核验或任意 script 增删改均回退全量。根 `package.json`、锁文件、workspace 配置、除上述工具路径和白名单以外的 `.github/`／`scripts/`、补丁、根 TypeScript／构建配置及未知路径仍全量；维护脚本与源码混合不豁免源码检查。
 - [工作流](../../.github/workflows/ci.yml)由 Pull Request、手动运行和每日定时触发，没有 `main` push 触发。定时为每天 UTC 03:17，即北京时间 11:17；手动和定时运行始终走现有完整 Linux/macOS 矩阵，即使当天没有提交也执行。GitHub 定时任务可能排队或延迟，不保证准点启动。没有启用成功证据去重或每日 Linux 单独分档。
 - 新增 `full-ci` 标签立即触发全量；已有标签让后续推送继续全量。无关标签事件不替换必需检查结果，也不取消当前验证；移除标签只影响下一次正常 PR 运行，不立即重跑。
@@ -27,7 +27,7 @@ CI 会先根据整个 Pull Request 的变更路径选择最小安全范围：
 | 手动运行 | 目标分支上的完整验证 |
 | 定时运行 | 默认分支每天 UTC 03:17（北京时间 11:17）的完整验证 |
 
-[Daemon 平台清单](../../scripts/ci/daemon-test-platforms.json)将 491 个通用文件分到八个 Linux shard；同时选择 Core 时使用六个，每个使用两个 worker；164 个包含原生／平台约束的文件保留在四个 `macos-26` shard，每个使用三个 worker。四个 macOS 分片与独立 native smoke 合计五个任务，减少超出同批容量后再运行一个完整分片的情况；实际可用容量和排队仍由 GitHub 决定。每个文件保持 `--test-concurrency=1`、独立 runtime home／workspace 和 POSIX 进程组。Kimi Host read／terminal、delegation production tool surface、engine lifecycle installation，以及 workflow conflict／isolated-delivery fixtures 保留所属分片的独占阶段，避免这些会大量创建原生进程、Git worktree 或临时资源的 fixture 互相争用；其余文件进入按估计耗时降序的共享队列。Linux restricted-command 拒绝契约和真实 macOS helper／Seatbelt smoke 仍为必需任务。
+[Daemon 平台清单](../../scripts/ci/daemon-test-platforms.json)将 496 个通用文件分到八个 Linux shard；同时选择 Core 时使用六个，每个使用两个 worker；166 个包含原生／平台约束的文件保留在四个 `macos-26` shard，每个使用三个 worker。四个 macOS 分片与独立 native smoke 合计五个任务，减少超出同批容量后再运行一个完整分片的情况；实际可用容量和排队仍由 GitHub 决定。每个文件保持 `--test-concurrency=1`、独立 runtime home／workspace 和 POSIX 进程组。Kimi Host read／terminal、delegation production tool surface、engine lifecycle installation，以及 workflow conflict／isolated-delivery fixtures 保留所属分片的独占阶段，避免这些会大量创建原生进程、Git worktree 或临时资源的 fixture 互相争用；其余文件进入按估计耗时降序的共享队列。Linux restricted-command 拒绝契约和真实 macOS helper／Seatbelt smoke 仍为必需任务。
 
 Daemon 分片任务上限为 40 分钟，执行队列上限为 30 分钟。默认文件 watchdog 为五分钟，已登记的高耗时 workflow／recovery fixture 保留十分钟或十五分钟的独立上限，具体清单见[测试执行说明](../../scripts/ci/README.md)。超时或取消会终止所属进程并使任务失败，不重试或强制通过；watchdog 上限不是十分钟性能验收结果。
 

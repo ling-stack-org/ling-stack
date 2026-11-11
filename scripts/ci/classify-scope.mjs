@@ -237,8 +237,8 @@ function collectDependents(name, packages, affected, visited = new Set()) {
 }
 
 /**
- * Relative validation imports cross package boundaries through shared fixtures
- * and assurance modules. Follow their transitive consumers without treating
+ * Validation imports and module-relative URLs cross package boundaries through
+ * shared fixtures and assurance modules. Follow their transitive consumers without treating
  * validation-only dependencies as production dependencies.
  */
 function findChangedValidationImporters({ files, packages }) {
@@ -252,7 +252,8 @@ function findChangedValidationImporters({ files, packages }) {
     if (!isTestPath(candidate) && !isAssurancePath(candidate)) continue;
     const source = readFileIfText(resolve(repositoryRoot, candidate));
     if (source === undefined) continue;
-    imports.set(candidate, [...source.matchAll(/(?:from\s+|import\s*\(\s*|require\s*\(\s*)["'](\.[^"']+)["']/gu)]
+    imports.set(candidate, [...source.matchAll(/(?:from\s+|import\s*\(\s*|require\s*\(\s*)["'](\.[^"']+)["']/gu),
+      ...source.matchAll(/new\s+URL\(\s*["'](\.[^"']+)["']\s*,\s*import\.meta\.url\s*\)/gu)]
       .map(specifier => normalizePath(relative(repositoryRoot, resolve(dirname(resolve(repositoryRoot, candidate)), specifier[1])))));
   }
   let expanded;
