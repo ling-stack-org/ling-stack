@@ -16,7 +16,7 @@
     "check:docs": "node scripts/check-markdown-links.mjs",
     "assurance:offline": "node scripts/framework-assurance/index.mjs calibrate",
     "assurance:sdk": "node scripts/framework-assurance/index.mjs sdk-consumer",
-    "test:assurance": "node --test scripts/framework-assurance/*.test.mjs",
+    "test:assurance": "node --test scripts/framework-assurance/*.test.mjs scripts/framework-assurance/*.test.ts",
     "check:i18n": "corepack pnpm --filter @ling-stack/localization test && corepack pnpm --filter @ling-stack/web check:i18n",
     "i18n:import-legacy": "corepack pnpm --filter @ling-stack/localization catalog:import-legacy",
     "i18n:translate": "corepack pnpm --filter @ling-stack/localization catalog:translate --",
