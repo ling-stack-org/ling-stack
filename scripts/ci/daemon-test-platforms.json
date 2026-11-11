@@ -36,6 +36,7 @@
     "test/assurance-evidence-admission.test.ts",
     "test/assurance-evidence-api.test.mjs",
     "test/assurance-evidence-budget.test.ts",
+    "test/assurance-evidence-errors.test.ts",
     "test/assurance-evidence-parser.test.ts",
     "test/attempt-execution-quiescence.test.mjs",
     "test/attempt-host-media-tracker.test.mjs",

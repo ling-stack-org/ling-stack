@@ -87,3 +87,30 @@ test("live collection rejects a private body in an optional isolation identifier
     caseId: frozen.caseId, invocationId: "00000000-0000-4000-8000-000000000001",
   }), invalidManifest);
 });
+
+function withReceipt(): FrameworkAssuranceEvidenceResponse {
+  const value = source();
+  Object.assign(value.completion, { fingerprint: "completion-parser" });
+  Object.assign(value.isolation, { receipts: [{ receiptId: "receipt-parser", intentId: "intent-parser", outcome: "confirmed",
+    observedDigest: `observation_${"a".repeat(64)}`, artifactId: "artifact-parser", artifactContentSha256: "a".repeat(64) }] });
+  Object.assign(value.isolation.branchResults[0], { packetContentSha256: "a".repeat(64) });
+  return value;
+}
+
+test("live evidence accepts string fingerprints and receipt content digests", () => {
+  assert.equal(parseLiveExecutionEvidenceResponse(withReceipt()).completion.fingerprint, "completion-parser");
+});
+
+const shapedFields: [string, unknown, (value: FrameworkAssuranceEvidenceResponse, invalid: unknown) => void][] = [
+  ["array completion fingerprint", ["completion-parser"], (value, invalid) => { Object.assign(value.completion, { fingerprint: invalid }); }],
+  ["numeric completion fingerprint", 123, (value, invalid) => { Object.assign(value.completion, { fingerprint: invalid }); }],
+  ["array branch content digest", ["a".repeat(64)], (value, invalid) => { Object.assign(value.isolation.branchResults[0], { packetContentSha256: invalid }); }],
+  ["array receipt content digest", ["a".repeat(64)], (value, invalid) => { Object.assign(value.isolation.receipts[0], { artifactContentSha256: invalid }); }],
+];
+for (const [field, invalid, mutate] of shapedFields) {
+  test(`live evidence rejects ${field}`, () => {
+    const value = withReceipt();
+    mutate(value, invalid);
+    assert.throws(() => parseLiveExecutionEvidenceResponse(value), invalidManifest);
+  });
+}

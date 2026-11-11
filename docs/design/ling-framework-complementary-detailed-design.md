@@ -221,6 +221,7 @@ assertions
 - `admission` 是由 Host 投影重新计算的 fail-closed 结果。缺少 `pi_host_isolated_files_v1`、Tool Broker `enforce`、当前 fence binding、完整 round 或确认停止，delegation completion 未满足，或预算 pending/unknown/over/missing/invalid 时，只记录 blocker，不产生执行授权；原始 completion issue 和预算 blocker 同时保留。
 - `collectLiveExecutionEvidence()` 通过 `LingDaemonClient` 读取该响应，再与冻结任务身份、source commit 和 input digest 关联，输出 `live_execution` / `not_assessed`。离线 CLI 默认仍拒绝 live evidence；只有显式的 live consumer 适配路径才能读取该类型。
 - 响应不包含 task input、claim token、resume handle、sealed artifact body 或 evaluation grade。预算未知、effect 未确认、snapshot 变化和 lineage 不一致均不能升级为通过。
+- 未知内部异常统一返回固定不可用消息；仅公开定义的 lineage/证据错误保留其消息。客户端的 fingerprint 和 digest 正则校验先检查字符串类型，拒绝数组及数值的隐式转换。
 
 该接入已在临时 SQLite/Git/HTTP fixture 上验证 endpoint、生命周期、预算、隔离、candidate/approval/apply 和敏感字段边界；它不等于真实 Provider、生产 daemon、packaged、跨平台或完整 evaluation 验收。
 

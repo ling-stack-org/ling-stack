@@ -77,7 +77,7 @@ export function handleGetRunAssuranceEvidence(
   } catch (error) {
     const code = error instanceof AssuranceEvidenceError ? error.code : "assurance_evidence_unavailable";
     const status = error instanceof AssuranceEvidenceError && error.statusCode ? error.statusCode : 409;
-    writeJson(response, status, { error: code, message: error instanceof Error ? error.message : "Live assurance evidence is unavailable." });
+    writeJson(response, status, { error: code, message: error instanceof AssuranceEvidenceError ? error.message : "Live assurance evidence is unavailable." });
   }
 }
 

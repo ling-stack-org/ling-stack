@@ -33,7 +33,7 @@ workspace Store 只读投影 Run/WorkUnit/Attempt、fence、停止证据、artif
 | 检查 | 结果 |
 | --- | --- |
 | framework-assurance 全套 | `node --test scripts/framework-assurance/*.test.mjs`：98 passed、0 failed、0 skipped、0 cancelled |
-| Daemon 证据/API/隔离/预算/准入/解析回归 | 45 passed；包括 completion 与预算阻断、7 个 nullable 字段和 collector 拒绝非法输入 |
+| Daemon 证据/API/隔离/预算/准入/解析回归 | 51 passed；包括 completion 与预算阻断、7 个 nullable 字段、collector 拒绝非法输入、损坏 artifact 错误脱敏和摘要字段类型边界 |
 | API client 全套 | 139 passed |
 | Contracts/API client/Daemon 构建 | `build:ci` 全部通过 |
 | Contracts/API client/Daemon 类型检查 | `typecheck` / `typecheck:ci` 全部通过，含新增 TypeScript 测试 |

@@ -371,7 +371,8 @@ function parseLifecycle(value) {
 function parseCompletion(value) {
   exactObject(value, ["status", "rootRunIds", "fingerprint", "stepCount", "requiredStepCount", "completedStepCount", "steps", "issues", "resultArtifacts"], "live completion");
   requireCondition(["satisfied", "pending", "blocked", "failed", "cancelled", "not_applicable"].includes(value.status)
-    && Array.isArray(value.rootRunIds) && value.rootRunIds.length <= 1024 && (value.fingerprint === null || /^[a-zA-Z0-9._-]{1,200}$/.test(value.fingerprint))
+    && Array.isArray(value.rootRunIds) && value.rootRunIds.length <= 1024
+    && (value.fingerprint === null || typeof value.fingerprint === "string" && /^[a-zA-Z0-9._-]{1,200}$/.test(value.fingerprint))
     && Number.isSafeInteger(value.stepCount) && value.stepCount >= 0 && Number.isSafeInteger(value.requiredStepCount) && value.requiredStepCount >= 0
     && Number.isSafeInteger(value.completedStepCount) && value.completedStepCount >= 0 && Array.isArray(value.steps) && value.steps.length === value.stepCount
     && Array.isArray(value.issues) && Array.isArray(value.resultArtifacts), "invalid_manifest", "Live completion summary is invalid.");
@@ -466,7 +467,8 @@ function parseIsolation(value) {
     exactObject(receipt, ["receiptId", "intentId", "outcome", "observedDigest", "artifactId", "artifactContentSha256"], "live isolation receipt");
     [receipt.receiptId, receipt.intentId, receipt.outcome, receipt.artifactId].forEach(item => identifier(item, "live isolation receipt field"));
     workflowDigest(receipt.observedDigest, "live isolation receipt observation digest");
-    requireCondition(receipt.artifactContentSha256 === "" || /^[a-f0-9]{64}$/.test(receipt.artifactContentSha256), "invalid_manifest", "Live isolation receipt artifact digest is invalid.");
+    requireCondition(typeof receipt.artifactContentSha256 === "string"
+      && (receipt.artifactContentSha256 === "" || /^[a-f0-9]{64}$/.test(receipt.artifactContentSha256)), "invalid_manifest", "Live isolation receipt artifact digest is invalid.");
   }
   for (const branch of value.branchResults) {
     exactObject(branch, ["workflowStepId", "status", "packetDigest", "packetContentSha256"], "live isolation branch result");
@@ -523,7 +525,7 @@ function nullableIdentifier(value) {
 }
 
 function nullableDigest(value) {
-  return value === null || /^[a-f0-9]{64}$/.test(value);
+  return value === null || typeof value === "string" && /^[a-f0-9]{64}$/.test(value);
 }
 
 function publicEffectKey(value, label) {
