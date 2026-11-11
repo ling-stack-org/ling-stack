@@ -1,8 +1,8 @@
 # Ling 框架补强详细设计
 
-Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A/F4-01 and F3-B read-only admission evidence merged in PR #676 (`5990095f`); root Run budget projection repair is prepared on a follow-up branch; F3-B real trial and F5 rerun remain blocked/design contracts
+Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A/F4-01 and F3-B read-only admission evidence are on main; root Run budget projection repair and exact Run/evaluation association are merged in PR #685/#684 (`9af7ad54`); F3-B real trial and F5 rerun remain blocked/design contracts
 Owner: Ling framework maintainers; evaluation and SDK implementation owners
-Last verified: 2026-11-11
+Last verified: 2026-11-12
 Document type: reference / technical design
 Canonical replacement: none; does not replace existing evaluation, runtime, or API contracts
 Code and test anchors: section 12 and the implementation record; live evidence is read-only and not assessed, with no real task or GUI acceptance
