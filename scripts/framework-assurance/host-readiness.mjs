@@ -4,6 +4,7 @@ import { identifier, requireCondition } from "./manifest.mjs";
 const TERMINAL_RUN_STATUSES = new Set(["succeeded", "failed", "cancelled"]);
 const TERMINAL_WORK_UNIT_STATUSES = new Set(["succeeded", "failed", "cancelled"]);
 const TERMINAL_ATTEMPT_STATUSES = new Set(["succeeded", "failed", "cancelled"]);
+const TERMINAL_LIFECYCLE_ATTEMPT_STATUSES = new Set([...TERMINAL_ATTEMPT_STATUSES, "lost"]);
 const REQUIRED_ASSURANCE_KEYS = ["lifecycle", "completion", "budget", "isolation", "admission"];
 
 /**
@@ -37,6 +38,9 @@ export function assessHostReadiness(value) {
 
   if (lifecycle.status !== "drained") blockers.push("host_readiness.lifecycle_not_drained");
   if (!lifecycle.stop.allAttemptsTerminal) blockers.push("host_readiness.attempts_not_terminal");
+  if (!lifecycle.attempts.every(attempt => TERMINAL_LIFECYCLE_ATTEMPT_STATUSES.has(attempt.status))) {
+    blockers.push("host_readiness.attempts_not_terminal");
+  }
   if (lifecycle.stop.localExecution !== "drained") blockers.push("host_readiness.local_execution_not_drained");
   if (lifecycle.stop.effects !== "settled" || !lifecycle.stop.reusable) blockers.push("host_readiness.effects_not_settled");
 
@@ -191,11 +195,11 @@ function assertCrossFieldIdentity(evidence) {
   "host_readiness_lineage_mismatch", "Host lifecycle current Attempt does not match execution lineage.");
 
   if (completion.status !== "not_applicable") {
-    requireCondition(completion.rootRunIds.includes(execution.runId),
+    requireCondition(completion.rootRunIds.length > 0 && completion.rootRunIds.every(rootRunId => rootRunId === execution.runId),
       "host_readiness_lineage_mismatch", "Completion evidence is not rooted at the observed Run.");
   }
   if (budget.status !== "not_applicable") {
-    requireCondition(budget.roots.some(root => root.runId === execution.runId),
+    requireCondition(budget.roots.length > 0 && budget.roots.every(root => root.runId === execution.runId),
       "host_readiness_lineage_mismatch", "Budget evidence is not rooted at the observed Run.");
   }
   requireCondition(admission.profile === null || admission.profile === isolation.safetyPlan.profile,

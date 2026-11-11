@@ -126,6 +126,34 @@ test("readiness blocks a missing or incomplete isolation round", () => {
   }
 });
 
+test("readiness checks every lifecycle Attempt instead of trusting the aggregate stop flag", () => {
+  const candidate = clone(ready) as {
+    lifecycle: { attempts: Array<{ status: string }>; stop: { allAttemptsTerminal: boolean } };
+  };
+  candidate.lifecycle.attempts[0].status = "started";
+  candidate.lifecycle.stop.allAttemptsTerminal = true;
+  const report = assessHostReadiness(candidate);
+  assert.equal(report.status, "blocked");
+  assert.ok(report.blockers.includes("host_readiness.attempts_not_terminal"));
+});
+
+test("readiness rejects completion and budget roots mixed with another Run", () => {
+  const completion = clone(ready) as {
+    completion: { status: string; rootRunIds: string[] };
+  };
+  completion.completion.status = "satisfied";
+  completion.completion.rootRunIds = ["run-host-ready-001", "run-foreign-001"];
+  assert.throws(() => assessHostReadiness(completion), code("host_readiness_lineage_mismatch"));
+
+  const budget = clone(ready) as {
+    budget: { roots: Array<{ runId: string }> };
+  };
+  const foreignRoot = clone(budget.budget.roots[0]);
+  foreignRoot.runId = "run-foreign-001";
+  budget.budget.roots.push(foreignRoot);
+  assert.throws(() => assessHostReadiness(budget), code("host_readiness_lineage_mismatch"));
+});
+
 test("client collection performs one read-only evidence call and never changes authorization", async () => {
   const calls: Array<{ runId: string; cwd: string }> = [];
   const report = await collectHostReadiness({

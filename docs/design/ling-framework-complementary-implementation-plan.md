@@ -145,9 +145,9 @@ Code and test anchors: sections 7 and 9; live evidence is read-only, Host readin
 ### F3-B-01 Host readiness review gate
 
 - **输入**：已捕获的 `FrameworkAssuranceEvidenceResponse`，不接受 task input、claim token、resume handle、artifact body 或 evaluation grade。
-- **实施**：新增 `host-readiness.mjs` 与 `host-readiness` CLI。解析器强制 lifecycle、completion、budget、isolation、admission 五域；评估器核对当前 Attempt/runtime/fence/generation、请求 Run 与 projection Run 的一致性、根 Run lineage、恢复后的旧 Attempt、drain/settle/reusable、terminal claim、effect confirmation、完整且已确认 `applied` 的隔离 round、隔离 profile/binding、Tool Broker `enforce` 和预算 blocker。aggregate 与 token/cost 两个预算维度不一致、未知用量、未确认取消或非当前 fence 均 fail-closed。
+- **实施**：新增 `host-readiness.mjs` 与 `host-readiness` CLI。解析器强制 lifecycle、completion、budget、isolation、admission 五域；评估器逐个核对 lifecycle Attempt（旧恢复 Attempt 允许 `lost`）、当前 Attempt/runtime/fence/generation、请求 Run 与 projection Run 的一致性、全部 completion/budget root 的根 Run 归属、drain/settle/reusable、terminal claim、effect confirmation、完整且已确认 `applied` 的隔离 round、隔离 profile/binding、Tool Broker `enforce` 和预算 blocker。aggregate 与 token/cost 两个预算维度不一致、未知用量、未确认取消或非当前 fence 均 fail-closed。
 - **输出**：只生成 `ready-for-trial-review` 或 `blocked` 的 JSON/Markdown review report；`executionAuthorized` 永远为 `false`。`collectHostReadiness()` 只做一次客户端读取，不触发 recovery、取消、重试、Store 初始化或派发。
-- **验收**：合成 Host shape 覆盖旧 Attempt 丢失后当前 Attempt 成功、缺五域、lineage 漂移、预算维度不一致、请求 Run 不一致、缺失或未应用隔离 round、取消未确认和 CLI 输出；新增 `9/9`，当前候选 assurance 全套 `116/116`，`corepack pnpm typecheck:ci-tests` 和 `node --check` 通过。
+- **验收**：合成 Host shape 覆盖旧 Attempt 丢失后当前 Attempt 成功、缺五域、lineage 漂移、预算维度不一致、请求 Run 不一致、缺失或未应用隔离 round、非终态 Attempt、混合根 Run、取消未确认和 CLI 输出；新增 `11/11`，当前候选 assurance 全套 `118/118`，`corepack pnpm typecheck:ci-tests` 和 `node --check` 通过。
 - **证据边界**：候选工作树中的 fixture 是 parser 和 review gate 的合成输入，不是真实 Provider、模型、生产 daemon、跨平台 packaged 或付费试点验收；F3-B 继续保持 `BLOCKED`。
 
 ### F3-03 并发对比及写入结果验收
