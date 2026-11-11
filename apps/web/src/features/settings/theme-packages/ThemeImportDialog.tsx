@@ -120,6 +120,7 @@ export function ThemeImportDialog({
               <dl>
                 <div><dt>{t("Theme ID")}</dt><dd>{candidate.manifest.id}</dd></div>
                 <div><dt>{t("Preview")}</dt><dd>{candidate.preview ? t("Included") : t("Token preview")}</dd></div>
+                <div><dt>{t("Launch animation")}</dt><dd>{candidate.launchAnimation ? t("Included") : t("Default")}</dd></div>
                 <div><dt>{t("License")}</dt><dd>{candidate.manifest.license || t("Not declared")}</dd></div>
               </dl>
               {candidate.warnings.length > 0 ? (
@@ -150,6 +151,13 @@ export function ThemeImportDialog({
                     <>
                       <div><dt>{t("Preview size")}</dt><dd>{formatThemePackageBytes(candidate.preview.byteLength)}</dd></div>
                       <div><dt>{t("Preview dimensions")}</dt><dd>{candidate.preview.width} x {candidate.preview.height}</dd></div>
+                    </>
+                  ) : null}
+                  {candidate.launchAnimation ? (
+                    <>
+                      <div><dt>{t("Launch animation asset")}</dt><dd>{candidate.launchAnimation.path}</dd></div>
+                      <div><dt>{t("Launch animation size")}</dt><dd>{formatThemePackageBytes(candidate.launchAnimation.byteLength)}</dd></div>
+                      <div><dt>{t("Launch animation dimensions")}</dt><dd>{candidate.launchAnimation.width} x {candidate.launchAnimation.height}</dd></div>
                     </>
                   ) : null}
                   {state.issues.map((item, index) => (
