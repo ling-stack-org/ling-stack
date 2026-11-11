@@ -12,6 +12,8 @@ export function projectInitializedAssuranceEvaluationAssociation(input: {
   readonly registry: Pick<RunStoreRegistry, "findInitializedStoreForRun">;
   readonly activeRuns: ActiveRunRegistry;
   readonly cwd: string;
+  /** Optional route binding; the internal composition can also be used directly by tests and jobs. */
+  readonly runId?: string;
   readonly request: AssuranceEvaluationAssociationRequest;
   readonly getFrozenInput: AssuranceEvaluationReadPorts["getFrozenInput"];
 }): AssuranceEvaluationAssociationResult {
@@ -23,6 +25,9 @@ export function projectInitializedAssuranceEvaluationAssociation(input: {
     return associationFailure(error instanceof AssociationRefusal ? error.code : "association.invalid_request");
   }
   const { request, cwd, activeRuns } = input;
+  if (input.runId !== undefined && request.source.execution.runId !== input.runId) {
+    return associationFailure("association.lineage_mismatch", request.observation.observationId, request.mappingDigest);
+  }
   try {
     const store = input.registry.findInitializedStoreForRun(request.source.execution.runId, cwd);
     if (!store) return associationFailure("association.workspace_uninitialized", request.observation.observationId, request.mappingDigest);

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -11,6 +12,8 @@ import { RunStoreRegistry } from "../dist/runtime/store-registry.js";
 import { readRunAssuranceEvidence } from "../dist/features/runs/assurance-evidence.js";
 import { hostAssociationSource, projectInitializedAssuranceEvaluationAssociation }
   from "../dist/features/harness/evaluations/assurance-association-composition.js";
+import { handlePostRunAssuranceEvaluationAssociation }
+  from "../dist/features/harness/evaluations/assurance-association-route.js";
 import { assuranceAssociationFixture, associationNow } from "./support/assurance-evaluation-association-fixture.ts";
 
 async function sqliteFixture(t: TestContext) {
@@ -79,6 +82,32 @@ test("initialized composition reads real Host and evaluation rows inside a query
     assert.deepEqual(host[field], hostBefore[field], "matching evaluation evidence preserves each Host authority dimension");
   assert.ok(!JSON.stringify(first).includes("PRIVATE_EVALUATION_CLAIM"));
   assert.ok(!JSON.stringify(first).includes(f.cwd));
+});
+
+test("HTTP association entry point composes a real Store and Host snapshot without initialization", async t => {
+  const f = await sqliteFixture(t);
+  const body = {
+    request: f.request,
+    frozenInputs: Object.fromEntries(Object.entries(f.bundle).map(([key, value]) => [key, Buffer.from(value).toString("base64")])),
+  };
+  const server = createServer((request, response) => {
+    void handlePostRunAssuranceEvaluationAssociation(request, response, new URL(request.url ?? "/", "http://local"),
+      1, f.registry, f.activeRuns, f.identity.runId);
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const url = new URL(`http://127.0.0.1:${address.port}/runs/${encodeURIComponent(f.identity.runId)}/assurance-evaluation-association`);
+  url.searchParams.set("cwd", f.cwd);
+  const response = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  assert.equal(response.status, 200);
+  const result = await response.json();
+  assert.equal(result.status, "matched", JSON.stringify(result));
+  assert.equal(result.evaluation.id, f.evaluation.id);
+  assert.equal(result.grades[0].gradeId, f.grade.id);
+  assert.ok(!JSON.stringify(result).includes("PRIVATE_EVALUATION_CLAIM"));
+  assert.equal(f.factoryCalls(), 1);
 });
 
 test("cold composition never creates a Store or reads frozen bytes", async t => {

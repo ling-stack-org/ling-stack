@@ -39,6 +39,8 @@ import type {
   LingTraceSpansResponse,
   LingTurnMutationResponse,
   RunArtifactListResponse,
+  FrameworkAssuranceAssociationHttpRequest,
+  FrameworkAssuranceAssociationResult,
   FrameworkAssuranceEvidenceResponse,
   RunCancelResponse,
   RunEventsResponse,
@@ -323,6 +325,14 @@ export const runEndpoints = {
 
   async getRunAssuranceEvidence(this: LingDaemonEndpointContext, runId: string, cwd?: string): Promise<FrameworkAssuranceEvidenceResponse> {
       return this._get(`/runs/${encodeURIComponent(runId)}/assurance-evidence`, { cwd });
+    },
+
+  async projectRunAssuranceEvaluationAssociation(this: LingDaemonEndpointContext,
+      runId: string,
+      cwd: string,
+      input: FrameworkAssuranceAssociationHttpRequest,
+    ): Promise<FrameworkAssuranceAssociationResult> {
+      return this._post(`/runs/${encodeURIComponent(runId)}/assurance-evaluation-association`, { cwd }, input);
     },
 
   async listRunShellSnapshots(this: LingDaemonEndpointContext, runId: string, cwd?: string, toolCallId?: string): Promise<ShellSnapshotListResponse> {

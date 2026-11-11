@@ -492,6 +492,7 @@ Common checks 的失败已定位到全历史 Gitleaks：1438 个提交、3833874
 | 实施分支 | PR #684，`codex/ling-evaluation-association`；已整合实际主线 `5990095f`，保留完整独立增量 |
 | 核心投影 | 指定 evaluation ID、16 字段冻结 identity/key、候选与可选 grade pins；独立验证六份原始输入、三组 Host snapshot、Run/root、封存 artifact owner/字节和 grade 摘要，首尾重读拒绝漂移 |
 | Host 组合 | 只查已初始化 Store，所有读取在同步只读 snapshot 内；冷工作区不初始化，已提交观察不能代替独立 Host 读取 |
+| Daemon/API 接线 | `POST /runs/:id/assurance-evaluation-association?cwd=...` 接收完整 request 和六份 Base64 冻结输入；`LingDaemonClient.projectRunAssuranceEvaluationAssociation()` 复用同一只读投影，URL Run ID 与 request lineage 一致性由 Daemon 校验 |
 | 行为证据 | 新增 association、SQLite composition 和 F4 接线 TypeScript 回归共 85/85；涵盖无写入、快照中拒绝写入、冷 Store、读取漂移、grade 四种 verdict、摘要分域、Run 状态合同、敏感字段和失败不发布部分结果 |
 | 集成验证 | 对齐 #676 实际主线 `5990095f` 后，Node 22 Daemon 回归 169/169、离线 assurance 98/98，零模型 preflight/calibrate 通过；Daemon 构建和源码/测试类型检查通过 |
 | 权限边界 | 固定 `not_assessed` / `enforcementAuthorized:false`；Attempt/artifact 归属始终 unavailable，不将 caller mapping 或 grade pass 当真实执行验收 |

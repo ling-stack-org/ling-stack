@@ -234,6 +234,11 @@ assertions
 Host source 由同一 Store 的 `readRunAssuranceEvidence()` 独立生成，包含环境、十项执行字段、三组
 snapshot 和完整 artifact pins；观察时钟不参与 snapshot 比较。
 
+Daemon 通过 `POST /runs/:id/assurance-evaluation-association?cwd=...` 暴露该只读投影；请求体包含
+完整 association request 和六份 Base64 编码的冻结输入。路由把 URL 中的 Run ID 绑定到 request，
+只允许已初始化 Store，并通过 `LingDaemonClient.projectRunAssuranceEvaluationAssociation()` 供 SDK
+调用。输入解码、关联读取和结果投影不创建 Store、不触发 recovery、不写入数据库，也不授予执行权限。
+
 冻结 mapping 明确保存任务身份、observation case、source commit、六份原始输入摘要、evaluation
 identity 与候选 role/ID/摘要。mapping digest 使用 `digestRunEvaluationValue()`；mapping 本身是关联
 声明，不认证 producer。输入原始 bytes 由独立的预加载内存 bundle 提供，逐项校验 suite、task、rule、
