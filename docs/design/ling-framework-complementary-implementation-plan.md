@@ -469,3 +469,24 @@ Common checks 的失败已定位到全历史 Gitleaks：1438 个提交、3833874
 | 冲突恢复夹具 | 手工 Host 回调在审批消费期间持有既有 post-commit owner claim，原回调成功且 owner 证据验证后才结算；强制后台扫描的 TypeScript 回归先复现 `tool.stale_attempt`，修正后与原七项冲突恢复回归共 8/8 通过，平台登记/CI 合同 29/29 通过 |
 | 运行边界 | 只运行临时 SQLite/Git/HTTP fixture；未启动真实 Provider、模型、生产 daemon 或付费任务，不开放普通 workflow 写并发 |
 | 当前未完成 | 真实 Provider/评测关联、生产 daemon 重启与权限撤销、packaged/跨平台、独立资源预算和合并后同 SHA 复验；F3-B 真实试点保持 BLOCKED |
+
+### F4 Host 观察关联（2026-11-11）
+
+| 项目 | 已确认结果 |
+| --- | --- |
+| 实施分支 | `codex/ling-evaluation-association`；从 #676 候选 `115573ed` 隔离开发，待 #676 合并后对齐实际主线 |
+| 显式适配 | `adaptLiveExecutionEvidenceForDiagnostics()` 校验 collector 的 Host source 与 observation 一致性，输出 F4 严格三字段输入，保留 `not_assessed` |
+| 行为回归 | 新 TypeScript 回归覆盖真实 collector 到 F4 报告的组合、四项执行身份、时间、状态、环境、artifact、限制、字段 allowlist 和对象隔离；与既有 execution/diagnostics 回归共 56/56 通过 |
+| 类型与 CI | Daemon `typecheck:ci` 通过；新回归登记 Linux lane，平台与 assurance workflow 合同 32/32 通过 |
+| 证据边界 | 只使用内存客户端响应；未读取共享 Store，未发起真实 Run、Provider、模型或付费任务；完整 evaluation 关联及 F3-B 真实验收仍未完成 |
+
+### Run/evaluation 只读关联（2026-11-11）
+
+| 项目 | 已确认结果 |
+| --- | --- |
+| 实施分支 | `codex/ling-evaluation-association`；待 #676 合并后对齐实际主线，尚未推送本增量 |
+| 核心投影 | 指定 evaluation ID、16 字段冻结 identity/key、候选与可选 grade pins；独立验证六份原始输入、三组 Host snapshot、Run/root、封存 artifact owner/字节和 grade 摘要，首尾重读拒绝漂移 |
+| Host 组合 | 只查已初始化 Store，所有读取在同步只读 snapshot 内；冷工作区不初始化，已提交观察不能代替独立 Host 读取 |
+| 行为证据 | 新增 association、SQLite composition 和 F4 接线 TypeScript 回归共 85/85；涵盖无写入、快照中拒绝写入、冷 Store、读取漂移、grade 四种 verdict、摘要分域、Run 状态合同、敏感字段和失败不发布部分结果 |
+| 权限边界 | 固定 `not_assessed` / `enforcementAuthorized:false`；Attempt/artifact 归属始终 unavailable，不将 caller mapping 或 grade pass 当真实执行验收 |
+| 尚待完成 | 合并主线对齐与复验、托管 CI；真实 Producer/计费、Attempt 产物归属、packaged/跨平台和受控试点验收继续独立保留 |
