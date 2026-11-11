@@ -4,13 +4,14 @@ import { pathToFileURL } from "node:url";
 
 const EXECUTION_TIERS = new Set(["complete", "preview", "ignore"]);
 const SCOPE_MODES = new Set(["docs", "affected", "full"]);
-const LANES = ["SCOPE", "COMMON", "DEPENDENCY", "ASSURANCE", "BUILD", "TYPECHECK", "UNIT", "DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE"];
+const LANES = ["SCOPE", "COMMON", "DEPENDENCY", "ASSURANCE", "BUILD", "TYPECHECK", "UNIT", "DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE", "WEB_SMOKE"];
 const PRODUCT_LANES = ["ASSURANCE", "BUILD"];
 const SELECTOR_LANES = {
   dependency: ["DEPENDENCY"],
   typecheck: ["TYPECHECK"],
   unit: ["UNIT"],
   daemon: ["DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE"],
+  web: ["WEB_SMOKE"],
 };
 const JOB_RESULTS = new Set(["success", "failure", "cancelled", "skipped"]);
 
@@ -56,15 +57,15 @@ export function selectExecutionTier({ eventName, event }) {
  * Fail closed if any selected lane did not execute successfully. Even a lane
  * outside the scope cannot hide a failure or cancellation behind the aggregate.
  * A Draft preview always fails the merge gate after its common checks pass.
- * @param {{tier: "complete"|"preview"|"ignore", mode: "docs"|"affected"|"full", dependency: boolean, typecheck: boolean, unit: boolean, daemon: boolean, results: Record<string, string>}} input
+ * @param {{tier: "complete"|"preview"|"ignore", mode: "docs"|"affected"|"full", dependency: boolean, typecheck: boolean, unit: boolean, daemon: boolean, web: boolean, results: Record<string, string>}} input
  * @returns {true} Only a complete execution with all required lanes succeeding.
  * @throws {Error} For malformed scope, failed lanes, or intentionally deferred CI.
  */
-export function assertCiResults({ tier, mode, dependency, typecheck, unit, daemon, results }) {
+export function assertCiResults({ tier, mode, dependency, typecheck, unit, daemon, web, results }) {
   if (!EXECUTION_TIERS.has(tier)) throw new Error(`Invalid EXECUTION_TIER: ${String(tier)}`);
   if (tier === "ignore") throw new Error("ignored_event_not_quality_gate: unrelated label events cannot publish the required CI context");
   if (!SCOPE_MODES.has(mode)) throw new Error(`Invalid SCOPE_MODE: ${String(mode)}`);
-  const selectors = { dependency, typecheck, unit, daemon };
+  const selectors = { dependency, typecheck, unit, daemon, web };
   for (const [selector, selected] of Object.entries(selectors)) {
     const name = `${selector.toUpperCase()}_SELECTED`;
     if (typeof selected !== "boolean") throw new Error(`${name} must be true or false`);

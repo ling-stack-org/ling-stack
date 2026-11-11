@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { finished } from "node:stream/promises";
-import { assignTestShards, assertSuiteCoverage, discoverTestFiles, estimateTestWeight, parseArguments, testSuites } from "./test-shard-plan.mjs";
+import { assignTestShards, assertSuiteCoverage, discoverSuiteFiles, estimateTestWeight, parseArguments, testSuites } from "./test-shard-plan.mjs";
 import { trackTestProcesses } from "./test-processes.mjs";
 
 export const defaultFileTimeoutMs = 300_000;
@@ -235,13 +235,14 @@ export async function runTestShard(suiteName, argv) {
   if (!Number.isInteger(shard) || !Number.isInteger(shardCount) || shardCount < 1 || shard < 0 || shard >= shardCount) {
     throw new RangeError(`expected --shard in [0, ${shardCount - 1}]`);
   }
-  const discovered = await discoverTestFiles(config.cwd, config.excluded);
+  const discovered = await discoverSuiteFiles(config);
   let shards = assignTestShards(discovered, shardCount, { ...config, concurrency });
   let timings = {};
   if (args["--plan"]) {
     const plan = JSON.parse(await readFile(args["--plan"], "utf8"));
     const suite = plan.suites?.[suiteName];
-    if (plan.version !== 1 || suite?.shardCount !== shardCount || suite.platform !== process.platform) throw new Error("Invalid test plan for this suite/platform");
+    if (plan.version !== 1 || suite?.shardCount !== shardCount || suite.platform !== process.platform
+      || suite.concurrency !== concurrency) throw new Error("Invalid test plan for this suite/platform");
     assertSuiteCoverage(suite, discovered);
     shards = suite.shards;
     timings = suite.timings ?? {};

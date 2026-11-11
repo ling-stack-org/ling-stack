@@ -2,11 +2,10 @@ import { readFile, readdir, mkdir, writeFile } from "node:fs/promises";
 import { statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { loadDaemonTestPlatforms } from "./daemon-test-platforms.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-export const testSuites = {
-  core: { packageName: "@ling-stack/core", cwd: join(root, "packages/core"), platform: "linux", shardCount: 4, concurrency: 2, excluded: [], exclusive: [] },
-  daemon: { packageName: "@ling-stack/daemon", cwd: join(root, "packages/daemon"), platform: "darwin", shardCount: 6, concurrency: 2,
+const daemonSuite = { packageName: "@ling-stack/daemon", cwd: join(root, "packages/daemon"), platform: "darwin", shardCount: 4, concurrency: 3,
     excluded: ["dependency-security.test.mjs"],
     // Keep explicit hosted-runner allowances for high-cost workflow fixtures.
     // Split channel files use the ordinary five-minute watchdog and workers.
@@ -21,14 +20,27 @@ export const testSuites = {
       "test/workflow-worktree-cleanup.test.mjs": 600_000,
       "test/workflow-worktree-cleanup-store.test.mjs": 600_000,
     },
+    // These fixtures create many native/process and Git-backed resources. Run
+    // them before the ordinary queue on their assigned shard so they cannot
+    // starve one another under hosted macOS runner pressure.
     exclusive: ["test/acp-kimi-host-read.test.mjs", "test/acp-kimi-host-terminal.test.mjs",
-      // Preserve the child-lifecycle fixture's exclusive execution from the PR.
-      "test/delegation-production-tool-surface.test.mjs"] },
+      "test/delegation-production-tool-surface.test.mjs", "test/engine-lifecycle.test.mjs",
+      "test/workflow-conflict-recovery.test.mjs", "test/workflow-isolated-delivery-integration.test.mjs"] };
+export const testSuites = {
+  core: { packageName: "@ling-stack/core", cwd: join(root, "packages/core"), platform: "linux", shardCount: 8, concurrency: 2, excluded: [], exclusive: [] },
+  daemon: daemonSuite,
+  "daemon-linux": { ...daemonSuite, platform: "linux", shardCount: 8, concurrency: 2 },
 };
 
 export async function discoverTestFiles(cwd, excluded = []) {
   return (await readdir(join(cwd, "test"))).filter(file => /\.test\.(?:mjs|ts)$/u.test(file) && !excluded.includes(file))
     .sort().map(file => `test/${file}`);
+}
+
+export async function discoverSuiteFiles(config) {
+  const discovered = await discoverTestFiles(config.cwd, config.excluded);
+  if (config.packageName !== "@ling-stack/daemon") return discovered;
+  return (await loadDaemonTestPlatforms(discovered))[config.platform];
 }
 
 /** Timing hints only change placement, never discovery, coverage or deadlines. */
@@ -84,7 +96,7 @@ export async function createTestPlan(packages, { timings = { suites: {} } } = {}
   const suites = {};
   for (const [name, config] of Object.entries(testSuites)) {
     if (!packages.includes(config.packageName)) continue;
-    const files = await discoverTestFiles(config.cwd, config.excluded);
+    const files = await discoverSuiteFiles(config);
     if (files.length === 0) throw new Error(`No tests discovered for ${name}`);
     const hints = timings.suites?.[name];
     const durations = hints?.platform === config.platform ? hints.durationsMs : {};
@@ -92,7 +104,12 @@ export async function createTestPlan(packages, { timings = { suites: {} } } = {}
       shards: assignTestShards(files, config.shardCount, { ...config, timings: durations ?? {} }) };
   }
   const shardedPackages = Object.values(testSuites).map(config => config.packageName);
-  return { version: 1, suites, unitMatrix: { include: [
+  return { version: 1, suites, daemonMatrix: { include: Object.entries(suites)
+    .filter(([name]) => name.startsWith("daemon"))
+    .flatMap(([suite, config]) => Array.from({ length: config.shardCount }, (_, shard) => ({
+      suite, shard, runner: config.platform === "darwin" ? "macos-26" : "ubuntu-latest",
+      shardCount: config.shardCount, concurrency: config.concurrency,
+    }))) }, unitMatrix: { include: [
     ...(packages.some(name => !shardedPackages.includes(name)) ? [{ suite: "packages", shard: 0 }] : []),
     ...Array.from({ length: suites.core?.shardCount ?? 0 }, (_, shard) => ({ suite: "core", shard })),
   ] } };
