@@ -195,6 +195,44 @@ test("readiness rejects completion and budget roots mixed with another Run", () 
   assert.throws(() => assessHostReadiness(budget), code("host_readiness_lineage_mismatch"));
 });
 
+test("readiness validates required completion steps and summary counts", () => {
+  const candidate = clone(ready) as {
+    completion: {
+      status: string;
+      rootRunIds: string[];
+      stepCount: number;
+      requiredStepCount: number;
+      completedStepCount: number;
+      steps: Array<{ stepId: string; required: boolean; state: string; childRunId: string | null; attemptId: string | null;
+        reservationState: string | null; completionStatus: string; resultArtifacts: unknown[] }>;
+    };
+  };
+  candidate.completion.status = "satisfied";
+  candidate.completion.rootRunIds = ["run-host-ready-001"];
+  candidate.completion.stepCount = 1;
+  candidate.completion.requiredStepCount = 1;
+  candidate.completion.completedStepCount = 1;
+  candidate.completion.steps = [{ stepId: "required-step-001", required: true, state: "succeeded", childRunId: "child-001",
+    attemptId: "attempt-child-001", reservationState: "settled", completionStatus: "pending", resultArtifacts: [] }];
+  const incomplete = assessHostReadiness(candidate);
+  assert.equal(incomplete.status, "blocked");
+  assert.ok(incomplete.blockers.includes("host_readiness.completion_steps_incomplete"));
+
+  candidate.completion.steps[0].completionStatus = "verified";
+  candidate.completion.completedStepCount = 0;
+  const inconsistent = assessHostReadiness(candidate);
+  assert.equal(inconsistent.status, "blocked");
+  assert.ok(inconsistent.blockers.includes("host_readiness.completion_steps_incomplete"));
+});
+
+test("readiness blocks budget issue records even when the aggregate is within", () => {
+  const candidate = clone(ready) as { budget: { issues: string[] } };
+  candidate.budget.issues = ["delegation.accounting_invalid"];
+  const report = assessHostReadiness(candidate);
+  assert.equal(report.status, "blocked");
+  assert.ok(report.blockers.includes("host_readiness.budget_issues_present"));
+});
+
 test("readiness blocks an admission safety plan that is absent or invalid", () => {
   for (const dimension of ["present", "valid"] as const) {
     const candidate = clone(ready) as {

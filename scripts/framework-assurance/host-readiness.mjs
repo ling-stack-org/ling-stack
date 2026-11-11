@@ -47,12 +47,22 @@ export function assessHostReadiness(value) {
   if (completion.status !== "satisfied" && completion.status !== "not_applicable") {
     blockers.push("host_readiness.completion_not_satisfied");
   }
+  const requiredCompletionSteps = completion.steps.filter(step => step.required);
+  const verifiedCompletionSteps = completion.steps.filter(step => step.completionStatus === "verified");
+  if ((completion.status === "not_applicable" && completion.steps.length > 0)
+    || completion.requiredStepCount !== requiredCompletionSteps.length
+    || completion.completedStepCount !== verifiedCompletionSteps.length
+    || completion.completedStepCount < completion.requiredStepCount
+    || requiredCompletionSteps.some(step => step.completionStatus !== "verified")) {
+    blockers.push("host_readiness.completion_steps_incomplete");
+  }
   if (completion.issues.length > 0) blockers.push(...completion.issues.map(issue => `host_readiness.${issue.code}`));
   if (budget.status !== "within" && budget.status !== "not_applicable") blockers.push("host_readiness.budget_not_within");
   const expectedDimensionStatus = budget.status === "not_applicable" ? "not_applicable" : "within";
   if (budget.usage.tokenStatus !== expectedDimensionStatus || budget.usage.costStatus !== expectedDimensionStatus) {
     blockers.push("host_readiness.budget_dimensions_not_consistent");
   }
+  if (budget.issues.length > 0) blockers.push("host_readiness.budget_issues_present");
   blockers.push(...budget.blockers.map(issue => `host_readiness.${issue}`));
 
   if (isolation.status !== "verified") blockers.push("host_readiness.isolation_not_verified");
