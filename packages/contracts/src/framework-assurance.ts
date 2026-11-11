@@ -1,5 +1,6 @@
 import type { RunStatus } from "./shared.js";
 import type { WorkUnitAttemptStatus, WorkUnitStatus } from "./runtime.js";
+import type { RunEvaluationGradeV1, RunEvaluationState } from "./harness.js";
 
 export type FrameworkAssuranceClaimStatus = "unclaimed" | "held" | "expired" | "terminal_retained";
 export type FrameworkAssuranceEffectStatus = "none" | "confirmed" | "unknown";
@@ -268,4 +269,155 @@ export interface FrameworkAssuranceEvidenceResponse {
   readonly admission: FrameworkAssuranceAdmissionEvidence;
   readonly observedAt: string;
   readonly limitations: readonly string[];
+}
+
+export const FRAMEWORK_ASSURANCE_ASSOCIATION_FROZEN_INPUT_KEYS = [
+  "suiteBytes", "taskBytes", "ruleBytes", "expectedBytes", "profileBytes", "lockBytes",
+] as const;
+export type FrameworkAssuranceAssociationFrozenInputKey =
+  (typeof FRAMEWORK_ASSURANCE_ASSOCIATION_FROZEN_INPUT_KEYS)[number];
+
+export type FrameworkAssuranceAssociationCode =
+  | "association.invalid_request" | "association.workspace_uninitialized"
+  | "association.read_failed" | "association.host_source_unavailable"
+  | "association.lineage_mismatch" | "association.stale_attempt" | "association.snapshot_changed"
+  | "association.frozen_input_missing" | "association.frozen_input_mismatch"
+  | "association.mapping_mismatch" | "association.evaluation_missing"
+  | "association.evaluation_identity_mismatch" | "association.evaluation_incomplete"
+  | "association.artifact_missing" | "association.artifact_invalid"
+  | "association.grade_missing" | "association.grade_invalid"
+  | "association.attempt_binding_unavailable" | "association.grades_not_selected";
+
+export interface FrameworkAssuranceAssociationArtifactPin {
+  readonly artifactId: string;
+  readonly contentSha256: string;
+}
+
+export interface FrameworkAssuranceAssociationTaskIdentity {
+  readonly suiteId: string;
+  readonly suiteVersion: string;
+  readonly taskId: string;
+  readonly taskVersion: string;
+}
+
+export type FrameworkAssuranceAssociationInputDigests =
+  Readonly<Record<FrameworkAssuranceAssociationFrozenInputKey, string>>;
+
+export interface FrameworkAssuranceAssociationObservation {
+  readonly observationId: string;
+  readonly invocationId: string;
+  readonly caseId: string;
+  readonly taskIdentity: FrameworkAssuranceAssociationTaskIdentity;
+  readonly sourceCommit: string;
+  readonly inputDigests: FrameworkAssuranceAssociationInputDigests;
+  readonly comparison: FrameworkAssuranceComparison;
+  readonly evidenceKind: "live_execution" | "fixture_replay";
+  readonly assessment: "not_assessed";
+}
+
+export interface FrameworkAssuranceAssociationEvaluationIdentity {
+  readonly rootRunId: string;
+  readonly runId: string;
+  readonly suiteId: string;
+  readonly suiteVersion: string;
+  readonly suiteArtifactId: string;
+  readonly suiteDigest: string;
+  readonly caseId: string;
+  readonly caseVersion: string;
+  readonly caseArtifactId: string;
+  readonly caseDigest: string;
+  readonly baselineId: string;
+  readonly baselineVersion: string;
+  readonly baselineArtifactId: string;
+  readonly baselineDigest: string;
+  readonly candidateArtifactId: string;
+  readonly candidateDigest: string;
+}
+
+export type FrameworkAssuranceAssociationJsonValue =
+  | null | boolean | number | string
+  | readonly FrameworkAssuranceAssociationJsonValue[]
+  | { readonly [key: string]: FrameworkAssuranceAssociationJsonValue };
+
+export interface FrameworkAssuranceAssociationMapping {
+  readonly schemaVersion: 1;
+  readonly kind: "assurance_evaluation_mapping";
+  readonly definitionEncoding: "json_parse_stringify_v1";
+  readonly taskIdentity: FrameworkAssuranceAssociationTaskIdentity;
+  readonly observationCaseId: string;
+  readonly sourceCommit: string;
+  readonly inputDigests: FrameworkAssuranceAssociationInputDigests;
+  readonly evaluationIdentity: FrameworkAssuranceAssociationEvaluationIdentity;
+  readonly candidate: FrameworkAssuranceAssociationArtifactPin & { readonly role: string };
+}
+
+export interface FrameworkAssuranceAssociationGradePin {
+  readonly gradeId: string;
+  readonly gradeDigest: string;
+  readonly graderType: RunEvaluationGradeV1["graderType"];
+  readonly graderId: string;
+  readonly graderVersion: string;
+  readonly rawOutputArtifact?: FrameworkAssuranceAssociationArtifactPin;
+  readonly rationaleArtifact?: FrameworkAssuranceAssociationArtifactPin;
+}
+
+export type FrameworkAssuranceAssociationHostSource = Pick<
+  FrameworkAssuranceEvidenceResponse, "comparison" | "execution" | "snapshots" | "artifacts"
+>;
+
+export interface FrameworkAssuranceAssociationRequest {
+  readonly schemaVersion: 1;
+  readonly observation: FrameworkAssuranceAssociationObservation;
+  readonly source: FrameworkAssuranceAssociationHostSource;
+  readonly evaluationId: string;
+  readonly evaluationKey: string;
+  readonly mapping: FrameworkAssuranceAssociationMapping;
+  readonly mappingDigest: string;
+  readonly gradePins: readonly FrameworkAssuranceAssociationGradePin[];
+}
+
+export interface FrameworkAssuranceAssociationResult {
+  readonly schemaVersion: 1;
+  readonly kind: "assurance_evaluation_association";
+  readonly authority: "report-only";
+  readonly assessment: "not_assessed";
+  readonly enforcementAuthorized: false;
+  readonly status: "matched" | "incomplete" | "unavailable" | "invalid";
+  readonly observationId: string | null;
+  readonly mappingDigest: string | null;
+  readonly evaluation: {
+    readonly id: string;
+    readonly runId: string;
+    readonly rootRunId: string;
+    readonly state: RunEvaluationState;
+    readonly revision: number;
+    readonly evaluationKey: string;
+  } | null;
+  readonly binding: {
+    readonly run: "matched" | "unavailable";
+    readonly frozenInputs: "matched" | "unavailable";
+    readonly candidateArtifact: "matched" | "unavailable";
+  };
+  readonly attemptBinding: {
+    readonly status: "unavailable";
+    readonly code: "association.attempt_binding_unavailable";
+  };
+  readonly grades: readonly {
+    readonly gradeId: string;
+    readonly gradeDigest: string;
+    readonly graderType: RunEvaluationGradeV1["graderType"];
+    readonly graderId: string;
+    readonly graderVersion: string;
+    readonly verdict: RunEvaluationGradeV1["verdict"];
+    readonly score: number | null;
+    readonly severity: RunEvaluationGradeV1["severity"] | null;
+  }[];
+  readonly diagnostics: readonly { readonly code: FrameworkAssuranceAssociationCode }[];
+  readonly limitations: readonly string[];
+}
+
+/** JSON transport for the daemon's read-only association projection. */
+export interface FrameworkAssuranceAssociationHttpRequest {
+  readonly request: FrameworkAssuranceAssociationRequest;
+  readonly frozenInputs: Readonly<Record<FrameworkAssuranceAssociationFrozenInputKey, string>>;
 }
