@@ -7,6 +7,7 @@ import type {
   CompanionMessageResponse,
   CompanionMessagesResponse,
   CompanionMutationResponse,
+  CompanionProactiveResponse,
   CompanionProactiveRequest,
   CompanionStateResponse,
   CreateCompanionRequest,
@@ -82,6 +83,6 @@ export function triggerCompanionProactive(
   cwd: string,
   companionId: string,
   input: CompanionProactiveRequest = {},
-): Promise<CompanionMessageResponse> {
+): Promise<CompanionProactiveResponse> {
   return daemonClient.triggerCompanionProactive(cwd, companionId, input);
 }

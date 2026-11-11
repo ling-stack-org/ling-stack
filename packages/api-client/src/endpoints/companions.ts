@@ -7,6 +7,7 @@ import type {
   CompanionMessageResponse,
   CompanionMessagesResponse,
   CompanionMutationResponse,
+  CompanionProactiveResponse,
   CompanionProactiveRequest,
   CompanionStateResponse,
   CreateCompanionRequest,
@@ -41,7 +42,7 @@ export const companionEndpoints = {
   },
 
   async disableCompanion(this: LingDaemonEndpointContext, cwd: string, companionId: string): Promise<CompanionMutationResponse> {
-    return this._delete(`/companions/${encodeURIComponent(companionId)}`, { cwd });
+    return this._requestJson("DELETE", `/companions/${encodeURIComponent(companionId)}`, { cwd });
   },
 
   async getCompanionState(this: LingDaemonEndpointContext, cwd: string, companionId: string): Promise<CompanionStateResponse> {
@@ -118,7 +119,7 @@ export const companionEndpoints = {
     cwd: string,
     companionId: string,
     input: CompanionProactiveRequest = {},
-  ): Promise<CompanionMessageResponse> {
+  ): Promise<CompanionProactiveResponse> {
     return this._post(`/companions/${encodeURIComponent(companionId)}/proactive`, { cwd }, input);
   },
 };

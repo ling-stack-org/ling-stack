@@ -19,6 +19,8 @@ export type {
   CompanionMessageRequest,
   CompanionMessageResponse,
   CompanionMessagesResponse,
+  CompanionProactiveResponse,
+  CompanionProactiveResult,
   CompanionProactiveRequest,
   CompanionMutationResponse,
   CompanionPhase,

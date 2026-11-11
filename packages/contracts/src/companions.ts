@@ -171,6 +171,16 @@ export interface CompanionMessageResponse {
   readonly state: CompanionState;
 }
 
+export interface CompanionProactiveResponse {
+  readonly status: "started" | "duplicate" | "skipped";
+  readonly cwd: string;
+  readonly companion: CompanionProfile;
+  readonly reason?: string;
+  readonly response?: CompanionMessageResponse;
+}
+
+export type CompanionProactiveResult = CompanionProactiveResponse;
+
 export interface CompanionMessagesResponse {
   readonly cwd: string;
   readonly companion: CompanionProfile;
