@@ -39,6 +39,7 @@ import type {
   LingTraceSpansResponse,
   LingTurnMutationResponse,
   RunArtifactListResponse,
+  FrameworkAssuranceEvidenceResponse,
   RunCancelResponse,
   RunEventsResponse,
   RunInterventionListResponse,
@@ -318,6 +319,10 @@ export const runEndpoints = {
 
   async listRunArtifacts(this: LingDaemonEndpointContext, runId: string, cwd?: string): Promise<RunArtifactListResponse> {
       return this._get(`/runs/${encodeURIComponent(runId)}/artifacts`, { cwd });
+    },
+
+  async getRunAssuranceEvidence(this: LingDaemonEndpointContext, runId: string, cwd?: string): Promise<FrameworkAssuranceEvidenceResponse> {
+      return this._get(`/runs/${encodeURIComponent(runId)}/assurance-evidence`, { cwd });
     },
 
   async listRunShellSnapshots(this: LingDaemonEndpointContext, runId: string, cwd?: string, toolCallId?: string): Promise<ShellSnapshotListResponse> {

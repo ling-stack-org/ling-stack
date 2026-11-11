@@ -254,6 +254,7 @@ import {
   handleListRuns,
   handleRun,
 } from "../features/runs/routes.js";
+import { handleGetRunAssuranceEvidence } from "../features/runs/assurance-evidence.js";
 import { handleUserInputAnswerSubmission } from "../features/runs/user-input-answer-routes.js";
 import { handleLingThreadItem, handleLingThreadsCollection } from "../features/runs/thread-routes.js";
 import { handleHostCapabilityBridgeRoute } from "../features/runs/host-capability-bridge-routes.js";
@@ -1649,6 +1650,10 @@ export async function routeRequest(
   }
   if (request.method === "GET" && runRoute?.kind === "artifacts") {
     handleListRunArtifacts(response, url, storeRegistry, runRoute.runId);
+    return;
+  }
+  if (request.method === "GET" && runRoute?.kind === "assurance-evidence") {
+    handleGetRunAssuranceEvidence(response, url, storeRegistry, activeRuns, runRoute.runId);
     return;
   }
   if (request.method === "GET" && runRoute?.kind === "shell-snapshots") {
