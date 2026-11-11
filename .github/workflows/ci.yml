@@ -32,6 +32,8 @@ jobs:
       test-packages: ${{ steps.classify.outputs.test-packages }}
       typecheck-packages: ${{ steps.classify.outputs.typecheck-packages }}
       dependency-policy: ${{ steps.classify.outputs.dependency-policy }}
+      assurance-selected: ${{ steps.classify.outputs.assurance-selected }}
+      build-selected: ${{ steps.classify.outputs.build-selected }}
       typecheck-selected: ${{ steps.classify.outputs.typecheck-selected }}
       unit-matrix: ${{ steps.test-plan.outputs.unit-matrix }}
       daemon-matrix: ${{ steps.test-plan.outputs.daemon-matrix }}
@@ -86,6 +88,8 @@ jobs:
             "test-packages": JSON.stringify(scope.testPackages),
             "typecheck-packages": JSON.stringify(scope.typecheckPackages),
             "dependency-policy": String(scope.dependencyPolicy),
+            "assurance-selected": String(scope.assurance),
+            "build-selected": String(scope.packages.length > 0),
             "typecheck-selected": String(scope.typecheckPackages.length > 0),
             daemon: String(scope.daemon),
             web: String(scope.web),
@@ -94,7 +98,7 @@ jobs:
           NODE
 
       - name: Restore timing hints once for the entire run
-        if: steps.policy.outputs.execution-tier == 'complete' && steps.classify.outputs.mode != 'docs'
+        if: steps.policy.outputs.execution-tier == 'complete' && (steps.classify.outputs.daemon == 'true' || contains(steps.classify.outputs.test-packages, '"@ling-stack/core"'))
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .codex-artifacts/ci/timings.json
@@ -240,7 +244,7 @@ jobs:
   framework-assurance:
     name: Offline assurance and external SDK consumer
     needs: scope
-    if: needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.mode != 'docs'
+    if: needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.assurance-selected == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -272,6 +276,9 @@ jobs:
       - name: Test offline assurance boundaries
         run: node --test scripts/framework-assurance/*.test.mjs
 
+      - name: Typecheck CI tooling tests
+        run: corepack pnpm typecheck:ci-tests
+
       - name: Calibrate frozen offline controls without a Provider
         run: node scripts/framework-assurance/index.mjs calibrate --output "$RUNNER_TEMP/ling-framework-assurance/offline"
 
@@ -296,7 +303,7 @@ jobs:
   build:
     name: Build selected package graph once
     needs: scope
-    if: needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.mode != 'docs'
+    if: needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.build-selected == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -823,6 +830,8 @@ jobs:
           DAEMON_SELECTED: ${{ needs.scope.outputs.daemon }}
           WEB_SELECTED: ${{ needs.scope.outputs.web }}
           DEPENDENCY_SELECTED: ${{ needs.scope.outputs.dependency-policy }}
+          ASSURANCE_SELECTED: ${{ needs.scope.outputs.assurance-selected }}
+          BUILD_SELECTED: ${{ needs.scope.outputs.build-selected }}
           TYPECHECK_SELECTED: ${{ needs.scope.outputs.typecheck-selected }}
           UNIT_SELECTED: ${{ needs.scope.outputs.unit-selected }}
         shell: bash

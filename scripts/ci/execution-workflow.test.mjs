@@ -13,7 +13,7 @@ const labelWorkflow = readFileSync(new URL("../../.github/workflows/full-ci-labe
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const lanes = ["SCOPE", "COMMON", "DEPENDENCY", "ASSURANCE", "BUILD", "TYPECHECK", "UNIT", "DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE", "WEB_SMOKE"];
 const platformJobs = ["daemon-tests", "daemon-linux-contracts", "restricted-command-macos"];
-const selectorOutputs = { DEPENDENCY: "dependency-policy", TYPECHECK: "typecheck-selected", UNIT: "unit-selected", DAEMON: "daemon", WEB: "web" };
+const selectorOutputs = { ASSURANCE: "assurance-selected", BUILD: "build-selected", DEPENDENCY: "dependency-policy", TYPECHECK: "typecheck-selected", UNIT: "unit-selected", DAEMON: "daemon", WEB: "web" };
 const unselected = Object.fromEntries(Object.keys(selectorOutputs).map((selector) => [`${selector}_SELECTED`, "false"]));
 
 /** Read a top-level job without matching similarly named steps. */
@@ -64,11 +64,12 @@ function runOutputTransform(variable, value) {
   }
 }
 
-async function assertScopeOutputs(scope, { mode, packages, daemon, web, dependency = false, matrix }) {
+async function assertScopeOutputs(scope, { mode, packages, daemon, web, dependency = false, assurance = false, matrix }) {
   const outputs = runOutputTransform("SCOPE_JSON", JSON.stringify(scope));
   assert.deepEqual(outputs, {
     mode, packages: JSON.stringify(packages), "test-packages": JSON.stringify(packages),
     "typecheck-packages": JSON.stringify(packages), "dependency-policy": String(dependency),
+    "assurance-selected": String(assurance), "build-selected": String(packages.length > 0),
     "typecheck-selected": String(packages.length > 0), daemon: String(daemon), web: String(web),
   });
   const plan = await createTestPlan(JSON.parse(outputs["test-packages"]));
@@ -83,7 +84,7 @@ async function assertScopeOutputs(scope, { mode, packages, daemon, web, dependen
   };
   // Expected lanes are independent of the emitted selectors: a false selector
   // must not turn a selected lane's skipped result into a passing quality gate.
-  const required = ["SCOPE", "COMMON", ...(mode === "docs" ? [] : ["ASSURANCE", "BUILD"]),
+  const required = ["SCOPE", "COMMON", ...(assurance ? ["ASSURANCE"] : []), ...(packages.length ? ["BUILD"] : []),
     ...(dependency ? ["DEPENDENCY"] : []), ...(packages.length ? ["TYPECHECK"] : []),
     ...(matrix.length ? ["UNIT"] : []), ...(daemon ? ["DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE"] : []),
     ...(web ? ["WEB_SMOKE"] : [])];
@@ -149,7 +150,7 @@ test("workflow transformations require every lane for a bounded full package gra
     dependencies: [], hasTestScript: true, hasTypecheckScript: true,
   }));
   await assertScopeOutputs(classifyChangedFiles({ files: ["package.json"], packageEntries }), {
-    mode: "full", packages, dependency: true, daemon: true, web: true,
+    mode: "full", packages, dependency: true, assurance: true, daemon: true, web: true,
     matrix: [{ suite: "packages", shard: 0 }, ...Array.from({ length: 8 }, (_, shard) => ({ suite: "core", shard }))],
   });
 });
@@ -171,7 +172,7 @@ test("PR transitions and full-ci labels trigger validation while full regression
 });
 
 test("every expensive job requires complete execution and retains its scope selection", () => {
-  const selectedJobs = { "dependency-policy": "dependency-policy", typecheck: "typecheck-selected", "unit-tests": "unit-selected" };
+  const selectedJobs = { "dependency-policy": "dependency-policy", build: "build-selected", typecheck: "typecheck-selected", "unit-tests": "unit-selected" };
   for (const id of ["dependency-policy", "build", "typecheck", "unit-tests", ...platformJobs]) {
     const source = jobSource(id);
     assert.match(source, /^    if: .*needs\.scope\.outputs\.execution-tier == 'complete'/mu, id);
@@ -185,7 +186,7 @@ test("every expensive job requires complete execution and retains its scope sele
   assert.match(dependencyPolicy, /name: Check production dependency update policy\n        run: node --test scripts\/production-dependency-policy\.test\.mjs/u);
   const assurance = jobSource("framework-assurance");
   assert.match(assurance, /^    if: .*needs\.scope\.outputs\.execution-tier == 'complete'/mu);
-  assert.match(assurance, /needs\.scope\.outputs\.mode != 'docs'/u);
+  assert.match(assurance, /needs\.scope\.outputs\.assurance-selected == 'true'/u);
 });
 
 test("label events never create CI runs so the latest run always publishes the required context", () => {
@@ -257,6 +258,7 @@ test("workflow affected scope cannot hide skipped product work or selected Daemo
 
 test("workflow affected scope permits only explicit out-of-scope skips and still requires build", () => {
   const affected = { SCOPE_MODE: "affected", ...unselected,
+    BUILD_SELECTED: "true", ASSURANCE_SELECTED: "true",
     ASSURANCE_RESULT: "success",
     ...Object.fromEntries(lanes.slice(2).filter((lane) => lane !== "BUILD" && lane !== "ASSURANCE").map((lane) => [`${lane}_RESULT`, "skipped"])) };
   assert.equal(runQuality(affected).status, 0);

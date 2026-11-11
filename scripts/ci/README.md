@@ -15,6 +15,7 @@ Mixed changes union their affected packages and required lanes.
 | Docs, nested READMEs, PR/Issue templates, CODEOWNERS, FUNDING | None; common checks and the required quality gate still run |
 | Allowlisted Markdown-link and public-repository checks | Common fast checks only |
 | Package tests and test support | Owning package; shared test-support importers are included |
+| Offline assurance tooling or fixtures | Assurance and actual package-level validation importers; no unrelated product shards |
 | Package source or local build/typecheck configuration | Owning package and transitive consumers |
 | Existing package manifest, with verified stable identity and unchanged complete script contents | Owner and consumers from the old/current graph, plus dependency policy |
 | Dependency-security regression tests | Owning package plus dependency policy |
@@ -40,7 +41,16 @@ daemon-only test changes have no Linux unit entry. Daemon shards and Linux/macOS
 native contracts remain coupled to daemon selection. A source change can select
 additional consumers, so daemon source may still need the CLI unit entry.
 
-The aggregate validates explicit dependency/typecheck/unit/daemon selectors.
+Offline assurance runs for its tooling/fixtures and source/configuration changes
+to Core or the SDK producers (localization, contracts, plugin-sdk, api-client).
+Product test-only changes and unrelated package changes do not select assurance.
+Relative validation imports are followed transitively: changes to assurance's
+diagnostics module or its dependencies retain API Client build/typecheck/tests.
+The SDK consumer still builds, packs and installs its producers independently;
+an assurance-only change does not require the product build artifact. Mixed
+changes retain the union of required checks, and unknown paths remain full scope.
+
+The aggregate validates explicit assurance/build/dependency/typecheck/unit/daemon/Web selectors.
 Selected checks must succeed; only genuinely unselected checks may be skipped.
 Failure, cancellation, missing or malformed results never pass as a skip. Docs
 must select no product lanes, and full scope must select all lanes. No workflow
@@ -70,8 +80,8 @@ a requested package via `--if-present`.
 - Other packages and Web checks: one Linux matrix entry only when at least one
   such package is selected, excluding core and daemon because their complete
   discovery runs in their own entries.
-- Daemon: [the platform manifest](daemon-test-platforms.json) assigns 493 portable
-  files to eight Linux shards with two workers, and 163 native/platform files to
+- Daemon: [the platform manifest](daemon-test-platforms.json) assigns 491 portable
+  files to eight Linux shards with two workers, and 164 native/platform files to
   four `macos-26` shards with three workers. The four macOS test jobs and separate
   native smoke total five macOS jobs; available concurrency is controlled by
   GitHub. Kimi Host read/terminal, delegation production-tool-surface, engine
@@ -87,7 +97,7 @@ a requested package via `--if-present`.
   `ci-dist` output as other tests. Browser installation and Playwright execution
   do not delay the shared build artifact. The aggregate requires this lane when
   Web is selected and rejects failure, cancellation, missing or unexpected skips.
-- Framework assurance: complete non-documentation runs add an Ubuntu / Node
+- Framework assurance: selected complete-tier runs add an Ubuntu / Node
   22.22.1 lane for the zero-model offline tests, frozen controls and real external
   SDK consumer. It checks out complete history and owns fresh serial builds and
   tarballs of localization, contracts, plugin-sdk and api-client; it never consumes
