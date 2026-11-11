@@ -569,6 +569,7 @@
     "test/kimi-probe-routes.test.mjs",
     "test/locked-control-audit.test.mjs",
     "test/locked-control-registry.test.mjs",
+    "test/locked-task-continuation-timers.test.ts",
     "test/locked-task-continuation.test.mjs",
     "test/macos-native-command.test.mjs",
     "test/mcp-api.test.mjs",

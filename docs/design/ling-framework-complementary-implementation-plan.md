@@ -469,5 +469,6 @@ Common checks 的失败已定位到全历史 Gitleaks：1438 个提交、3833874
 | 相关回归 | framework-assurance 全套 98/98；2026-11-11 复验 Daemon 证据/API/隔离/预算/准入/解析回归 74/74，含当前执行归属门禁、lost claim 的真实 SQLite route、损坏 artifact 的错误消息隔离和摘要字段类型边界；API client 全套 139/139；Contracts/API client/Daemon 构建与类型检查通过 |
 | 冲突恢复夹具 | 手工 Host 回调在审批消费期间持有既有 post-commit owner claim，原回调成功且 owner 证据验证后才结算；强制后台扫描的 TypeScript 回归先复现 `tool.stale_attempt`，修正后与原七项冲突恢复回归共 8/8 通过，平台登记/CI 合同 29/29 通过 |
 | 隔离交付同步 | SDK/Host 交付夹具先等待既有 isolation lifecycle drain，再等待后台生成 merge approval；保留原超时与全部审批、产物、单次 apply 和重开只读断言。交付端到端及生命周期回归 13/13 通过 |
+| 锁屏时间边界 | 部分 heartbeat 间隔内解锁的 HTTP 回归使用受控 monotonic 时钟和原生 MockTimers，等待真实 gate/runner 边界；保持 80ms hard budget、60ms 锁屏和 50ms runner。Node 22 的锁屏与 supervision 回归 10/10，错误计入锁屏时间的临时反例确定失败，CI 平台/工作流合同 22/22 |
 | 运行边界 | 只运行临时 SQLite/Git/HTTP fixture；未启动真实 Provider、模型、生产 daemon 或付费任务，不开放普通 workflow 写并发 |
 | 当前未完成 | 真实 Provider/评测关联、生产 daemon 重启与权限撤销、packaged/跨平台、独立资源预算和合并后同 SHA 复验；F3-B 真实试点保持 BLOCKED |
