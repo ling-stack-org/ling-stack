@@ -14,7 +14,7 @@ import type {
   FrameworkAssuranceLifecycleEvidence,
 } from "@ling-stack/contracts";
 import { createSqliteRunStore, DEFAULT_WORKSPACE_ID, toRuntimeAttemptFence, type RunSession } from "@ling-stack/core";
-import { buildAdmission as projectAdmission, handleGetRunAssuranceEvidence } from "../dist/features/runs/assurance-evidence.js";
+import { buildAdmission as projectAdmission, handleGetRunAssuranceEvidence, workflowCandidateBranchDigestsMatch } from "../dist/features/runs/assurance-evidence.js";
 import { ActiveRunRegistry } from "../dist/runtime/active-runs.js";
 import { RunStoreRegistry } from "../dist/runtime/store-registry.js";
 
@@ -22,6 +22,23 @@ const run = {
   status: "succeeded",
   requestSnapshot: { harnessFeatureSnapshot: { toolBroker: "enforce" } },
 } as unknown as RunSession;
+
+for (const [name, candidate, results, expected] of [
+  ["each distinct result", ["digest-a", "digest-b"], ["digest-a", "digest-b"], true],
+  ["reordered results", ["digest-b", "digest-a"], ["digest-a", "digest-b"], true],
+  ["a duplicate candidate replacing a participant", ["digest-a", "digest-a"], ["digest-a", "digest-b"], false],
+  ["a duplicate result replacing a candidate", ["digest-a", "digest-b"], ["digest-a", "digest-a"], false],
+  ["equal repeated multiplicities", ["digest-a", "digest-a", "digest-b"], ["digest-b", "digest-a", "digest-a"], true],
+  ["unequal repeated multiplicities", ["digest-a", "digest-a", "digest-b"], ["digest-a", "digest-b", "digest-b"], false],
+  ["a missing participant", ["digest-a", "digest-b"], ["digest-a"], false],
+  ["an extra participant", ["digest-a", "digest-b"], ["digest-a", "digest-b", "digest-c"], false],
+  ["an unsealed result", ["digest-a"], [null], false],
+  ["no participants", [], [], false],
+] as const) {
+  test(`candidate branch digest comparison preserves ${name}`, () => {
+    assert.equal(workflowCandidateBranchDigestsMatch(Object.freeze([...candidate]), Object.freeze([...results])), expected);
+  });
+}
 
 function buildAdmission(
   sourceRun: RunSession,

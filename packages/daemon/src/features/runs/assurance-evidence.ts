@@ -483,8 +483,8 @@ function buildIsolation(store: RunStore, run: RunSession, attempt: WorkUnitAttem
     if (round) {
       if (!round.candidate) blockers.push("workflow_merge.candidate_missing");
       if (branchResults.some(result => result.status !== "confirmed")) blockers.push("workflow_merge.branch_result_unconfirmed");
-      if (round.candidate && (round.candidate.branchResultDigests.length !== branchResults.length
-        || round.candidate.branchResultDigests.some(digest => !branchResults.some(result => result.packetDigest === digest)))) {
+      if (round.candidate && !workflowCandidateBranchDigestsMatch(round.candidate.branchResultDigests,
+        branchResults.map(result => result.packetDigest))) {
         blockers.push("workflow_merge.candidate_branch_results_mismatch");
       }
     }
@@ -549,6 +549,11 @@ function buildIsolation(store: RunStore, run: RunSession, attempt: WorkUnitAttem
     blockers.push("workflow_isolation.projection_unavailable");
     return { ...base, status: "unavailable", safetyPlan, blockers };
   }
+}
+
+export function workflowCandidateBranchDigestsMatch(candidate: readonly string[], branchResults: readonly (string | null)[]): boolean {
+  return candidate.length > 0 && candidate.length === branchResults.length
+    && sameJson([...candidate].sort(), [...branchResults].sort());
 }
 
 export function buildAdmission(
