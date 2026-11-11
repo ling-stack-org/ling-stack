@@ -207,7 +207,13 @@ node scripts/check-public-repo-safety.mjs
 下面的命令会真实执行一个 Daemon 分片，不是只打印分配；需要构建产物和对应支持平台：
 
 ```bash
-node scripts/ci/daemon-test-shard.mjs --shard=0 --shard-count=4 --concurrency=3
+node scripts/ci/test-shard-plan.mjs \
+  --packages='["@ling-stack/daemon"]' \
+  --output=.codex-artifacts/ci/test-plan.json
+node scripts/ci/node-test-shard.mjs --suite=daemon \
+  --shard=0 --shard-count=4 --concurrency=3 \
+  --plan=.codex-artifacts/ci/test-plan.json \
+  --report=.codex-artifacts/ci/reports/daemon-0.json
 ```
 
 ## 未决事项

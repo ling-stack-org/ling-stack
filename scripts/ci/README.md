@@ -254,7 +254,7 @@ node scripts/ci/test-shard-plan.mjs \
 On the suite's required platform, run a shard with that immutable plan:
 
 ```sh
-node scripts/ci/daemon-test-shard.mjs --shard=0 --shard-count=4 --concurrency=3 \
+node scripts/ci/node-test-shard.mjs --suite=daemon --shard=0 --shard-count=4 --concurrency=3 \
   --plan=.codex-artifacts/ci/test-plan.json \
   --report=.codex-artifacts/ci/reports/daemon-0.json
 ```
