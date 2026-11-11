@@ -15,6 +15,7 @@ Mixed changes union their affected packages and required lanes.
 | Docs, nested READMEs, PR/Issue templates, CODEOWNERS, FUNDING | None; common checks and the required quality gate still run |
 | Allowlisted Markdown-link and public-repository checks | Common fast checks only |
 | Package tests and test support | Owning package; shared test-support importers are included |
+| Offline assurance tooling or fixtures | Assurance and actual package-level validation importers; no unrelated product shards |
 | Package source or local build/typecheck configuration | Owning package and transitive consumers |
 | Existing package manifest, with verified stable identity and unchanged complete script contents | Owner and consumers from the old/current graph, plus dependency policy |
 | Dependency-security regression tests | Owning package plus dependency policy |
@@ -40,7 +41,18 @@ daemon-only test changes have no Linux unit entry. Daemon shards and Linux/macOS
 native contracts remain coupled to daemon selection. A source change can select
 additional consumers, so daemon source may still need the CLI unit entry.
 
-The aggregate validates explicit dependency/typecheck/unit/daemon selectors.
+Offline assurance runs for its tooling/fixtures and source/configuration changes
+to Core or the SDK producers (localization, contracts, plugin-sdk, api-client).
+Product test-only changes and unrelated package changes do not select assurance.
+Relative validation imports and module-relative fixture URLs are followed transitively: changes to assurance's
+diagnostics module retain API Client build/typecheck/tests; its shared manifest
+also retains Daemon validation through the execution-evidence parser. Its frozen
+fixture selects Daemon validation as a module-relative input.
+The SDK consumer still builds, packs and installs its producers independently;
+an assurance-only change does not require the product build artifact. Mixed
+changes retain the union of required checks, and unknown paths remain full scope.
+
+The aggregate validates explicit assurance/build/dependency/typecheck/unit/daemon/Web selectors.
 Selected checks must succeed; only genuinely unselected checks may be skipped.
 Failure, cancellation, missing or malformed results never pass as a skip. Docs
 must select no product lanes, and full scope must select all lanes. No workflow
@@ -65,13 +77,15 @@ a requested package via `--if-present`.
 
 ## Test Lanes
 
-- Core: eight Linux shards, two serial file workers per shard. These jobs are
+- Core: eight Linux shards when selected without Daemon, five when both suites are
+  selected, with two serial file workers per shard. These jobs are
   included in the existing `unit-tests` matrix only when core is selected.
 - Other packages and Web checks: one Linux matrix entry only when at least one
   such package is selected, excluding core and daemon because their complete
   discovery runs in their own entries.
-- Daemon: [the platform manifest](daemon-test-platforms.json) assigns 493 portable
-  files to eight Linux shards with two workers, and 163 native/platform files to
+- Daemon: [the platform manifest](daemon-test-platforms.json) assigns 496 portable
+  files to eight Linux shards without Core or six alongside Core, with two workers,
+  and 166 native/platform files to
   four `macos-26` shards with three workers. The four macOS test jobs and separate
   native smoke total five macOS jobs; available concurrency is controlled by
   GitHub. Kimi Host read/terminal, delegation production-tool-surface, engine
@@ -83,11 +97,20 @@ a requested package via `--if-present`.
   mandatory lanes. The manifest's disjoint union must equal fresh daemon discovery;
   new, missing, duplicated or stale assignments fail before execution. Native
   source/fixture contract checks prevent silently moving Darwin cases to Linux.
+- Combined Core/Daemon plans use eleven Linux shards and four macOS shards.
+  Together with typecheck, Web smoke, the unsharded package job and both native contract jobs,
+  the product wave fits twenty runner slots and five macOS slots, the GitHub Free
+  [concurrency limits](https://docs.github.com/en/actions/reference/limits#job-concurrency-limits-for-github-hosted-runners).
+  Web smoke starts independently after the build. Other workflows can still consume shared
+  organization capacity; shard counts do not guarantee immediate runner availability.
 - Production Web smoke: an independent required Linux job consumes the same
-  `ci-dist` output as other tests. Browser installation and Playwright execution
-  do not delay the shared build artifact. The aggregate requires this lane when
+  `ci-dist` output as other tests. It uses the official Playwright Noble container,
+  pinned by version and digest, with browsers and OS dependencies preinstalled.
+  The workflow contract checks its version against Web's Playwright dependency;
+  the job does not run apt or install browsers. Playwright execution
+  does not delay the shared build artifact. The aggregate requires this lane when
   Web is selected and rejects failure, cancellation, missing or unexpected skips.
-- Framework assurance: complete non-documentation runs add an Ubuntu / Node
+- Framework assurance: selected complete-tier runs add an Ubuntu / Node
   22.22.1 lane for the zero-model offline tests, frozen controls and real external
   SDK consumer. It checks out complete history and owns fresh serial builds and
   tarballs of localization, contracts, plugin-sdk and api-client; it never consumes
@@ -265,9 +288,10 @@ node scripts/ci/node-test-shard.mjs --suite=daemon --shard=0 --shard-count=4 --c
 ```
 
 On Linux, run the portable daemon suite with `node-test-shard.mjs --suite=daemon-linux`,
-`--shard-count=8`, and `--concurrency=2`, using the same plan and a distinct
+`--shard-count=6`, and `--concurrency=2`, using the combined plan above and a distinct
 `daemon-linux-<shard>.json` report path. Each command executes only its platform's
-assigned files; both suites are required for complete daemon CI coverage.
+assigned files; both suites are required for complete daemon CI coverage. A plan
+without Core uses eight Linux Daemon shards; runner arguments must match its plan.
 
 ## Secret Scans
 
