@@ -125,7 +125,8 @@ These exceptions are file-scoped; every other daemon file keeps the five-minute
 bound. The Codex journaled lifecycle fixture keeps its local five-second
 subtest budget and uses a ten-second budget only when `CI=true`, covering peer
 process startup while another worker is active. Workflow isolation polling
-allows up to 90 seconds for a hosted runner to observe drained parent state.
+allows up to 180 seconds for a hosted runner to observe drained parent state
+and complete a four-way fan-in.
 Channel discussion, intent, workflow and workspace tests are separate
 files in the ordinary parallel queue, each with the default five-minute
 watchdog; their shared support fixture is not a test entrypoint.
