@@ -641,6 +641,7 @@
     "test/teammate-direct-pause-recovery.test.mjs",
     "test/unified-exec-raw-source.test.mjs",
     "test/windows-target-validation.test.mjs",
+    "test/workflow-conflict-approval-fixture.test.ts",
     "test/workflow-conflict-recovery-live-fixture.test.mjs",
     "test/workflow-conflict-recovery.test.mjs",
     "test/workflow-git-apply.test.mjs",
