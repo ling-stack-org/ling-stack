@@ -461,7 +461,7 @@ Common checks 的失败已定位到全历史 Gitleaks：1438 个提交、3833874
 
 | 项目 | 已确认结果 |
 | --- | --- |
-| 实施基线 | PR #676 已合并到 `5990095f`；当前跟进分支 `codex/ling-root-budget-assurance` 从该主线修复零 delegation step 的根预算投影 |
+| 实施基线 | PR #676 已合并到 `5990095f`，候选 `90bca175` 的托管门禁、审查和合并后受控回归均已通过；PR #685 已合并到 `origin/main@df5c03df`，补齐零 delegation step 时根预算和 Provider charge 的只读投影 |
 | Daemon 只读入口 | `GET /runs/:id/assurance-evidence`；只读取已初始化 Store，不创建 Store、不触发 recovery、不派发 Run |
 | 证据内容 | Run/WorkUnit/Attempt/fence、snapshot/artifact digest、生命周期停止、delegation completion、预算 reservation/charge、isolated binding、integration round、effect/receipt、branch result、candidate、approval、apply 和 fail-closed admission |
 | 准入归属门禁 | Run、WorkUnit、当前 Attempt 仅接受 succeeded/failed/cancelled 且当前 claim 为 terminal_retained；lost claim 固定 expired，聚合停止完成不能替代当前执行归属 |
@@ -473,4 +473,27 @@ Common checks 的失败已定位到全历史 Gitleaks：1438 个提交、3833874
 | 隔离交付同步 | SDK/Host 交付夹具先等待既有 isolation lifecycle drain，再等待后台生成 merge approval；保留原超时与全部审批、产物、单次 apply 和重开只读断言。交付端到端及生命周期回归 13/13 通过 |
 | 锁屏时间边界 | 部分 heartbeat 间隔内解锁的 HTTP 回归使用受控 monotonic 时钟和原生 MockTimers，等待真实 gate/runner 边界；保持 80ms hard budget、60ms 锁屏和 50ms runner。Node 22 的锁屏与 supervision 回归 10/10，错误计入锁屏时间的临时反例确定失败，CI 平台/工作流合同 22/22 |
 | 运行边界 | 只运行临时 SQLite/Git/HTTP fixture；未启动真实 Provider、模型、生产 daemon 或付费任务，不开放普通 workflow 写并发 |
-| 当前未完成 | 真实 Provider/评测关联、生产 daemon 重启与权限撤销、packaged/跨平台、独立资源预算和合并后同 SHA 复验；F3-B 真实试点保持 BLOCKED |
+| 当前未完成 | 真实 Provider/评测验收、生产 daemon 重启与权限撤销、packaged/跨平台和独立资源预算；Run/evaluation 只读关联另见后续增量，F3-B 真实试点保持 BLOCKED |
+
+### F4 Host 观察关联（2026-11-11）
+
+| 项目 | 已确认结果 |
+| --- | --- |
+| 实施分支 | PR #684，`codex/ling-evaluation-association`；已整合 #676 的实际主线合并提交 `5990095f` |
+| 显式适配 | `adaptLiveExecutionEvidenceForDiagnostics()` 校验 collector 的 Host source 与 observation 一致性，输出 F4 严格三字段输入，保留 `not_assessed` |
+| 行为回归 | 新 TypeScript 回归覆盖真实 collector 到 F4 报告的组合、四项执行身份、时间、状态、环境、artifact、限制、字段 allowlist 和对象隔离；与既有 execution/diagnostics 回归共 56/56 通过 |
+| 类型与 CI | Daemon `typecheck:ci` 通过；新回归登记 Linux lane，平台与 workflow 合同 38/38 通过 |
+| 证据边界 | 只使用内存客户端响应；未读取共享 Store，未发起真实 Run、Provider、模型或付费任务；完整 evaluation 关联及 F3-B 真实验收仍未完成 |
+
+### Run/evaluation 只读关联（2026-11-11）
+
+| 项目 | 已确认结果 |
+| --- | --- |
+| 实施分支 | PR #684，`codex/ling-evaluation-association`；已整合实际主线 `5990095f`，保留完整独立增量 |
+| 核心投影 | 指定 evaluation ID、16 字段冻结 identity/key、候选与可选 grade pins；独立验证六份原始输入、三组 Host snapshot、Run/root、封存 artifact owner/字节和 grade 摘要，首尾重读拒绝漂移 |
+| Host 组合 | 只查已初始化 Store，所有读取在同步只读 snapshot 内；冷工作区不初始化，已提交观察不能代替独立 Host 读取 |
+| Daemon/API 接线 | `POST /runs/:id/assurance-evaluation-association?cwd=...` 接收完整 request 和六份 Base64 冻结输入；`LingDaemonClient.projectRunAssuranceEvaluationAssociation()` 复用同一只读投影，URL Run ID 与 request lineage 一致性由 Daemon 校验 |
+| 行为证据 | 新增 association、SQLite composition 和 F4 接线 TypeScript 回归共 85/85；涵盖无写入、快照中拒绝写入、冷 Store、读取漂移、grade 四种 verdict、摘要分域、Run 状态合同、敏感字段和失败不发布部分结果 |
+| 集成验证 | 对齐 #676 实际主线 `5990095f` 后，Node 22 Daemon 回归 169/169、离线 assurance 98/98，零模型 preflight/calibrate 通过；Daemon 构建和源码/测试类型检查通过 |
+| 权限边界 | 固定 `not_assessed` / `enforcementAuthorized:false`；Attempt/artifact 归属始终 unavailable，不将 caller mapping 或 grade pass 当真实执行验收 |
+| 尚待完成 | #684 正式托管 CI、审查与合并；真实 Producer/计费、Attempt 产物归属、packaged/跨平台和受控试点验收继续独立保留 |

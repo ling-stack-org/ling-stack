@@ -258,8 +258,8 @@ export async function collectLiveExecutionEvidence({
     limitations: [...new Set([...evidence.limitations, "live_execution_read_only", "no_evaluation_grade"])],
   }, { allowLive: true });
   return {
-    observation,
-    source,
+    observation: structuredClone(observation),
+    source: structuredClone(source),
     lineage: {
       runId: source.execution.runId,
       workUnitId: source.execution.workUnitId,
@@ -268,6 +268,43 @@ export async function collectLiveExecutionEvidence({
     },
     observedAt: source.observedAt,
   };
+}
+
+/**
+ * Validate a collected Host observation and copy the three-field F4 envelope.
+ * The source remains a point-in-time observation, not a current-fence check or
+ * an evaluation grade.
+ */
+export function adaptLiveExecutionEvidenceForDiagnostics(value) {
+  exactObject(value, ["observation", "source", "lineage", "observedAt"], "collected live execution evidence");
+  const source = parseLiveExecutionEvidenceResponse(value.source);
+  const observation = parseObservation(value.observation, { allowLive: true });
+  exactObject(value.lineage, ["runId", "workUnitId", "attemptId", "runtimeInstanceId"], "collected live execution lineage");
+  for (const key of ["runId", "workUnitId", "attemptId", "runtimeInstanceId"]) {
+    requireCondition(value.lineage[key] === source.execution[key], "evidence_lineage_mismatch",
+      "Collected live evidence and its Host source do not share execution lineage.");
+  }
+  requireCondition(value.observedAt === source.observedAt, "evidence_snapshot_changed",
+    "Collected live evidence and its Host source do not share an observation time.");
+  requireCondition(observation.evidenceKind === "live_execution" && observation.assessment === "not_assessed",
+    "evidence_assessment_invalid", "A collected Host observation must remain unassessed live evidence.");
+  requireCondition(observation.executionStatus === executionStatusFor(source.execution.attemptStatus)
+    && observation.stopReason === stopReasonFor(source.execution)
+    && observation.effectStatus === source.execution.effectStatus,
+  "evidence_state_mismatch", "Collected live evidence does not match its Host execution state.");
+  for (const key of COMPARISON_KEYS) {
+    requireCondition(observation.comparison[key] === source.comparison[key], "evidence_input_mismatch",
+      "Collected live evidence does not match its Host comparison environment.");
+  }
+  requireCondition(observation.artifacts.length === source.artifacts.length
+    && observation.artifacts.every((artifact, index) => artifact.role === source.artifacts[index].role
+      && artifact.sha256 === source.artifacts[index].contentSha256),
+  "evidence_artifact_digest_mismatch", "Collected live evidence does not match its Host artifact pins.");
+  requireCondition(source.limitations.every(item => observation.limitations.includes(item))
+    && ["live_execution_read_only", "no_evaluation_grade"].every(item => observation.limitations.includes(item))
+    && observation.usage.length === 0 && Object.values(observation.timings).every(item => item === null),
+  "evidence_state_mismatch", "A collected Host observation must retain its source limitations and unknown usage and timing.");
+  return structuredClone({ observation, lineage: value.lineage, observedAt: value.observedAt });
 }
 
 function assertBinding(evidence, expected) {

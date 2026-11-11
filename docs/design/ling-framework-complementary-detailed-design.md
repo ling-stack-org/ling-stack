@@ -225,6 +225,51 @@ assertions
 
 该接入已在临时 SQLite/Git/HTTP fixture 上验证 endpoint、生命周期、预算、隔离、candidate/approval/apply 和敏感字段边界；它不等于真实 Provider、生产 daemon、packaged、跨平台或完整 evaluation 验收。
 
+### 5.6 指定 evaluation 的只读关联
+
+`projectAssuranceEvaluationAssociation()` 通过 getter-only ports 核对指定 `evaluationId`、完整的
+16 字段冻结 identity / `evaluationKey`、候选和可选 grade pins。它不枚举 latest，不创建 evaluation，
+也不调用 claim、恢复或执行入口。`projectInitializedAssuranceEvaluationAssociation()` 只通过明确 cwd 的
+`findInitializedStoreForRun()` 查找已打开 Store，并把所有读取放在一次同步 `readSnapshot()` 中。
+Host source 由同一 Store 的 `readRunAssuranceEvidence()` 独立生成，包含环境、十项执行字段、三组
+snapshot 和完整 artifact pins；观察时钟不参与 snapshot 比较。
+
+Daemon 通过 `POST /runs/:id/assurance-evaluation-association?cwd=...` 暴露该只读投影；请求体包含
+完整 association request 和六份 Base64 编码的冻结输入。路由把 URL 中的 Run ID 绑定到 request，
+只允许已初始化 Store，并通过 `LingDaemonClient.projectRunAssuranceEvaluationAssociation()` 供 SDK
+调用。输入解码、关联读取和结果投影不创建 Store、不触发 recovery、不写入数据库，也不授予执行权限。
+
+冻结 mapping 明确保存任务身份、observation case、source commit、六份原始输入摘要、evaluation
+identity 与候选 role/ID/摘要。mapping digest 使用 `digestRunEvaluationValue()`；mapping 本身是关联
+声明，不认证 producer。输入原始 bytes 由独立的预加载内存 bundle 提供，逐项校验 suite、task、rule、
+expected、profile、lock 的 SHA-256 及交叉引用。固定定义映射如下，不执行任意转换：
+
+| evaluation 定义 | 冻结内容 | artifact owner |
+| --- | --- | --- |
+| suite | `JSON.parse(suiteBytes)` | 被评估 Run 或 root Run |
+| case | `JSON.parse(ruleBytes)` | 被评估 Run 或 root Run |
+| baseline | `JSON.parse(expectedBytes)` | 被评估 Run 或 root Run |
+| candidate | 指定候选的真实 sealed payload | 仅被评估 Run |
+
+原始文件摘要保留空白；sealed payload 摘要是 `SHA-256(JSON.stringify(payload))`，不排序键；
+evaluation identity 和 mapping 使用 Core 的 canonical digest；grade 使用 `digestRunEvaluationGrade()`。
+这些摘要域分别验证，不能互换。每份原始输入和单个 artifact 限 1 MiB，artifact 总量限 16 MiB，
+Host pins 限 100 项，grade pins 限 8 项；沿 Run 父链验证 root 并拒绝环及缺失节点。
+
+候选必须同时匹配 evaluation、提交观察和独立 Host 读取的完整 pin 集，再核对 Store owner、封存正文和
+重算摘要。指定 grade 必须匹配 evaluation、grader 类型/ID/版本、重算摘要及显式正文 pins。
+返回前重新读取 Host、Run 父链、evaluation、grades 和 artifacts；变化或缺失会清空已匹配项目和 grades，
+只返回固定诊断码。既有 Core getter 可能先解析一行封存 JSON，以上 artifact 限额不是 SQL 解析前的内存限额。
+
+输出固定 `authority: report-only`、`assessment: not_assessed`、`enforcementAuthorized: false`。
+`matched` 仅表示 Run 级关联匹配；未完成、失败或取消的 evaluation 保留真实 state 并返回 `incomplete`。
+已完成 grade 的 pass/fail/abstain/error 独立保留。`RunEvaluationV1` 和普通 RunArtifact 缺少独立的
+Attempt/fence 归属，因此 `attemptBinding` 始终为 `unavailable`，并保留
+`attempt_artifact_binding_unavailable`、声明来源和 Host binary 来源限制。
+
+这是内部投影与组合函数，不扩展 HTTP、SDK 或 F4 格式。调用方可以独立持有 F4 报告和关联结果；
+二者不构成跨分页、跨进程的原子快照。读取匹配不会覆盖 Host 的 completion、预算、隔离或 admission。
+
 ## 6. 结果格式与比较
 
 ### 6.1 已实现离线观察文件
@@ -348,6 +393,13 @@ extension manifest 与 plugin-package manifest 的版本校验不是同一套规
 ## 8. F4 只读诊断
 
 现有入口：`LingDaemonClient.getWorkUnitHarnessDiagnostics(cwd, workUnitId, query)` 对应 `GET /work-units/:id/harness`。cwd 必填，limit 当前为 1 至 500，cursor 受 Run/WorkUnit 范围约束。F4-01 由 `readHarnessDiagnosticsReportFromClient` 将这个真实客户端入口接入 `readHarnessDiagnosticsReport`，逐页读取并输出 workspace 摘要哈希、页级时间标记、allowlist 诊断记录和同一 Run/WorkUnit 的 F3 observation 关联。底层回调仍保留为纯适配边界，便于验证报告逻辑而不创建客户端或执行状态。
+
+Host collector 的返回值包含 `observation`、`source`、`lineage`、`observedAt`；F4 的关联输入严格只接受
+`observation`、`lineage`、`observedAt`。`adaptLiveExecutionEvidenceForDiagnostics()` 校验原始 Host
+响应、四项执行身份、观察时间、执行状态、环境、artifact 摘要和来源限制后，复制出这三个字段。
+collector 的观察结果与原始响应分别复制，修改一侧不会同步改变另一侧。适配保留 `live_execution` /
+`not_assessed`、空 usage 和未知耗时；F4 继续独立检查目标 Run/WorkUnit。该关联只证明同一次观察的
+内部一致性，不验证当前 fence，也不补足 Attempt 与 artifact 的归属证据。
 
 | 条件 | 消费方行为 |
 | --- | --- |

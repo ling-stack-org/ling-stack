@@ -72,7 +72,7 @@ export function handleGetRunAssuranceEvidence(
   }
 
   try {
-    const evidence = store.readSnapshot(() => buildEvidence(store!, activeRuns, runId));
+    const evidence = store.readSnapshot(() => readRunAssuranceEvidence(store!, activeRuns, runId));
     writeJson(response, 200, evidence);
   } catch (error) {
     const code = error instanceof AssuranceEvidenceError ? error.code : "assurance_evidence_unavailable";
@@ -81,7 +81,7 @@ export function handleGetRunAssuranceEvidence(
   }
 }
 
-function buildEvidence(store: RunStore, activeRuns: ActiveRunRegistry, runId: string): FrameworkAssuranceEvidenceResponse {
+export function readRunAssuranceEvidence(store: RunStore, activeRuns: ActiveRunRegistry, runId: string): FrameworkAssuranceEvidenceResponse {
   const run = store.getRun(runId);
   if (!run) throw new AssuranceEvidenceError("run_not_found", "Run was not found.", 404);
   if (!run.workUnitId) throw new AssuranceEvidenceError("assurance_lineage_incomplete", "Run has no WorkUnit lineage.");
