@@ -80,20 +80,25 @@ export function projectAssuranceEvaluationAssociation(
     function artifact(id: string, digest: string, owners: readonly string[]): RunArtifact {
       const value = read("association.read_failed", () => ports.getArtifact(id));
       if (!value) refuseAssociation("association.artifact_missing");
-      checked("association.artifact_invalid", () => projectionRecord(value, ARTIFACT_FIELDS, ARTIFACT_OPTIONAL));
-      if (value.sealedPayloadState === "pruned" || value.sealedPayload === undefined) refuseAssociation("association.artifact_missing");
+      const projected = checked("association.artifact_invalid", () => projectionRecord(value, ARTIFACT_FIELDS, ARTIFACT_OPTIONAL));
+      const field = (name: string): unknown => Object.hasOwn(projected, name) ? projectionField(projected, name) : undefined;
+      const sealedPayloadState = field("sealedPayloadState"), sealedPayload = field("sealedPayload");
+      if (sealedPayloadState === "pruned" || sealedPayload === undefined) refuseAssociation("association.artifact_missing");
       const snapshot = checked("association.artifact_invalid", () => {
-        projectionRecord(value, ARTIFACT_FIELDS, ARTIFACT_OPTIONAL);
-        if (value.id !== id || !value.runId || !owners.includes(value.runId) || value.mediaJobId !== undefined
-          || value.externalWorkId !== undefined || isPrivateHostRecoveryArtifact(value) || value.contentSha256 !== digest) refuseAssociation("association.artifact_invalid");
-        projectionDigest(value.contentSha256);
-        validateProjectionJson(value.sealedPayload);
-        const bytes = JSON.stringify(value.sealedPayload);
+        const artifactId = field("id"), runId = field("runId"), mediaJobId = field("mediaJobId");
+        const externalWorkId = field("externalWorkId"), contentType = field("contentType");
+        const contentSha256 = field("contentSha256");
+        if (artifactId !== id || typeof runId !== "string" || !owners.includes(runId) || mediaJobId !== undefined
+          || externalWorkId !== undefined || isPrivateHostRecoveryArtifact({ contentType: typeof contentType === "string" ? contentType : undefined })
+          || contentSha256 !== digest) refuseAssociation("association.artifact_invalid");
+        projectionDigest(contentSha256);
+        validateProjectionJson(sealedPayload);
+        const bytes = JSON.stringify(sealedPayload);
         if (Buffer.byteLength(bytes, "utf8") > 1_048_576 || sha256(bytes) !== digest) refuseAssociation("association.artifact_invalid");
         if (!artifacts.has(id)) artifactBytes += Buffer.byteLength(bytes, "utf8");
         if (artifactBytes > 16 * 1_048_576) refuseAssociation("association.artifact_invalid");
-        return digestRunEvaluationValue({ id: value.id, runId: value.runId, contentSha256: value.contentSha256,
-          contentType: value.contentType ?? null, sealedPayload: value.sealedPayload });
+        return digestRunEvaluationValue({ id: artifactId, runId, contentSha256,
+          contentType: contentType ?? null, sealedPayload });
       });
       if (artifacts.has(id) && artifacts.get(id) !== snapshot) refuseAssociation("association.snapshot_changed");
       artifacts.set(id, snapshot);
