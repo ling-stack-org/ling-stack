@@ -75,7 +75,8 @@ export function assessHostReadiness(value) {
 
   if (isolation.status !== "verified") blockers.push("host_readiness.isolation_not_verified");
   if (!isolation.safetyPlan.present || !isolation.safetyPlan.valid
-    || isolation.safetyPlan.profile !== "pi_host_isolated_files_v1" || isolation.safetyPlan.digest === null) {
+    || isolation.safetyPlan.profile !== "pi_host_isolated_files_v1" || isolation.safetyPlan.digest === null
+    || isolation.safetyPlan.networkAccess !== false) {
     blockers.push("host_readiness.isolated_profile_invalid");
   }
   if (isolation.binding.status !== "current" || !isolation.binding.matchesCurrentFence) {

@@ -143,6 +143,14 @@ test("readiness blocks an absent isolation safety plan", () => {
   assert.ok(report.blockers.includes("host_readiness.isolated_profile_invalid"));
 });
 
+test("readiness rejects isolation safety plans that permit session-policy networking", () => {
+  const candidate = clone(ready) as { isolation: { safetyPlan: { networkAccess: false | "session_policy" } } };
+  candidate.isolation.safetyPlan.networkAccess = "session_policy";
+  const report = assessHostReadiness(candidate);
+  assert.equal(report.status, "blocked");
+  assert.ok(report.blockers.includes("host_readiness.isolated_profile_invalid"));
+});
+
 test("readiness requires a confirmed isolation apply operation", () => {
   for (const mutate of [
     (candidate: { isolation: { apply: { status: string } } }) => { candidate.isolation.apply.status = "failed"; },
