@@ -781,6 +781,7 @@ export async function routeRequest(
   }
 
   if (url.pathname === "/companions") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) return;
     await handleCompanionsCollection(request, response, config, storeRegistry);
     return;
   }
@@ -2607,6 +2608,7 @@ export async function routeRequest(
 
   const companionRoute = parseCompanionRoute(url.pathname);
   if (companionRoute) {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) return;
     if (companionRoute.action === "messages") {
       await handleCompanionMessagesCollection(
         request,

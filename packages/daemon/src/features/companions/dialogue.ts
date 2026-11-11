@@ -112,7 +112,7 @@ export async function handleCompanionMessagesCollection(
           writeJson(response, 200, cached);
           return;
         }
-        throw new HttpError(409, "companion_message_in_progress", "The idempotent Companion message is still processing.");
+        assertCompanionReplyNotPending(store, companionReplyId(companion.id, input.idempotencyKey!));
       }
     }
     const run = processCompanionMessage({
@@ -196,14 +196,14 @@ export async function handleCompanionMessageStream(
       const existing = store.getTeammateDirectMessage(messageId);
       if (existing) {
         const cached = readCachedCompanionMessage(store, companion, thread, messageId, cwd);
-        if (!cached) {
-          throw new HttpError(409, "companion_message_in_progress", "The idempotent Companion message is still processing.");
+        if (cached) {
+          writeSseHead(response);
+          writeSse(response, "accepted", cached);
+          writeSse(response, "done", cached);
+          response.end();
+          return;
         }
-        writeSseHead(response);
-        writeSse(response, "accepted", cached);
-        writeSse(response, "done", cached);
-        response.end();
-        return;
+        assertCompanionReplyNotPending(store, companionReplyId(companion.id, input.idempotencyKey!));
       }
     }
     started = beginCompanionMessage(store, companion, teammate, thread, input.body, input.idempotencyKey);
@@ -375,7 +375,8 @@ function beginCompanionMessage(
     throw new HttpError(409, "companion_disabled", "Disabled companions cannot receive messages.");
   }
   const now = new Date().toISOString();
-  const message = store.createTeammateDirectMessage({
+  const existing = idempotencyKey ? store.getTeammateDirectMessage(companionMessageId(companion.id, idempotencyKey)) : undefined;
+  const message = existing ?? store.createTeammateDirectMessage({
     ...(idempotencyKey ? { id: companionMessageId(companion.id, idempotencyKey) } : {}),
     threadId: thread.id,
     teammateId: teammate.id,
@@ -383,11 +384,13 @@ function beginCompanionMessage(
     authorId: "local-user",
     body,
   }, now);
-  store.recordCompanionEvent({
-    companionId: companion.id,
-    type: "message",
-    payload: { direction: "user", messageId: message.id, body, ...(idempotencyKey ? { idempotencyKey } : {}) },
-  }, now);
+  if (!existing) {
+    store.recordCompanionEvent({
+      companionId: companion.id,
+      type: "message",
+      payload: { direction: "user", messageId: message.id, body, ...(idempotencyKey ? { idempotencyKey } : {}) },
+    }, now);
+  }
   const state = store.recordCompanionInteraction({
     companionId: companion.id,
     type: "presence_changed",
@@ -701,6 +704,12 @@ function companionReplyId(companionId: string, idempotencyKey: string): string {
   return `companion_reply_${stableHash(`${companionId}:${idempotencyKey}`)}`;
 }
 
+export function assertCompanionReplyNotPending(store: RunStore, replyMessageId: string): void {
+  if (store.getTeammateDirectMessage(replyMessageId)?.status === "pending") {
+    throw new HttpError(409, "companion_message_in_progress", "The idempotent Companion message is still processing.");
+  }
+}
+
 function stableHash(value: string): string {
   return createHash("sha256").update(value).digest("hex").slice(0, 40);
 }
@@ -727,7 +736,7 @@ function requireCompanionTeammate(store: RunStore, companion: CompanionProfile):
   return teammate;
 }
 
-function recordCompanionError(store: RunStore, companionId: string, error: unknown, sourceMessageId?: string): void {
+export function recordCompanionError(store: RunStore, companionId: string, error: unknown, sourceMessageId?: string): void {
   const message = error instanceof Error ? error.message : String(error);
   const now = new Date().toISOString();
   try {

@@ -9,12 +9,14 @@ import {
 import { HttpError } from "../../errors.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import {
+  assertCompanionReplyNotPending,
   buildCompanionPrompt,
   finalizeCompanionReply,
   listAllCompanionEvents,
   readCachedCompanionMessage,
+  recordCompanionError,
 } from "./dialogue.js";
-import { CompanionReplyService } from "./reply-service.js";
+import type { CompanionReplyService } from "./reply-service.js";
 
 export type CompanionProactiveTriggerSource = "scheduler" | "manual";
 
@@ -55,7 +57,7 @@ export class CompanionSchedulerRegistry {
   constructor(
     private readonly dependencies: {
       readonly storeRegistry: RunStoreRegistry;
-      readonly replyService: CompanionReplyService;
+      readonly replyService: Pick<CompanionReplyService, "createReply">;
       readonly intervalMs?: number;
     },
   ) {}
@@ -148,27 +150,32 @@ export class CompanionSchedulerRegistry {
       || (options.force && source === "manual"
         ? `manual:${companionId}:${now}`
         : `scheduler:${companionId}:${Math.floor(nowMs / Math.max(companion.behaviorPolicy.cooldownMs, 60_000))}`);
+    const key = `${cwd}:${companionId}:${idempotencyKey}`;
+    const pending = this.inFlight.get(key);
+    if (pending) return { ...await pending, status: "duplicate" };
     const existing = events.find((event) => event.type === "proactive_prompt" && event.payload.idempotencyKey === idempotencyKey);
-    if (existing) {
+    const cached = existing ? cachedProactiveResponse(store, companion, existing, cwd) : undefined;
+    if (cached) {
       return {
         status: "duplicate",
         cwd,
         companion,
-        response: cachedProactiveResponse(store, companion, existing, cwd),
+        response: cached,
       };
     }
 
     if (!options.force && inQuietHours(companion, nowMs)) {
       return { status: "skipped", cwd, companion, reason: "quiet_hours" };
     }
-    const latest = events.find((event) => event.type === "proactive_prompt");
+    if (!options.force && companion.behaviorPolicy.cooldownMs > 0
+      && [...this.inFlight.keys()].some((activeKey) => activeKey.startsWith(`${cwd}:${companionId}:`))) {
+      return { status: "skipped", cwd, companion, reason: "cooldown" };
+    }
+    const latest = events.find((event) => event.type === "proactive_prompt" && event.payload.idempotencyKey !== idempotencyKey);
     if (!options.force && latest && nowMs - Date.parse(latest.createdAt) < companion.behaviorPolicy.cooldownMs) {
       return { status: "skipped", cwd, companion, reason: "cooldown" };
     }
 
-    const key = `${cwd}:${companionId}:${idempotencyKey}`;
-    const pending = this.inFlight.get(key);
-    if (pending) return await pending;
     const run = this.runProactive({ cwd, store, companion, idempotencyKey, source, now });
     this.inFlight.set(key, run);
     try {
@@ -192,8 +199,11 @@ export class CompanionSchedulerRegistry {
     }
     const thread = input.store.getOrCreateTeammateDirectThread(teammate.id, input.now);
     const prompt = "主动陪伴触发。请根据当前 Companion 状态，用一两句自然、具体的话主动陪伴用户；不要执行工具，不要声称用户刚刚发送了消息。";
-    const sourceMessage = input.store.createTeammateDirectMessage({
-      id: `companion_prompt_${stableHash(`${input.companion.id}:${input.idempotencyKey}`)}`,
+    const sourceMessageId = `companion_prompt_${stableHash(`${input.companion.id}:${input.idempotencyKey}`)}`;
+    const replyMessageId = `companion_reply_${stableHash(`${input.companion.id}:${input.idempotencyKey}`)}`;
+    assertCompanionReplyNotPending(input.store, replyMessageId);
+    const sourceMessage = input.store.getTeammateDirectMessage(sourceMessageId) ?? input.store.createTeammateDirectMessage({
+      id: sourceMessageId,
       threadId: thread.id,
       teammateId: teammate.id,
       authorType: "system",
@@ -201,32 +211,34 @@ export class CompanionSchedulerRegistry {
       body: prompt,
       status: "ready",
     }, input.now);
-    input.store.recordCompanionEvent({
-      companionId: input.companion.id,
-      type: "proactive_prompt",
-      payload: {
-        idempotencyKey: input.idempotencyKey,
-        source: input.source,
-        messageId: sourceMessage.id,
-      },
-    }, input.now);
     const started = input.store.recordCompanionInteraction({
       companionId: input.companion.id,
       type: "presence_changed",
       phase: "thinking",
       payload: { source: "proactive", messageId: sourceMessage.id },
     }, input.now).state;
-    const aiReply = await this.dependencies.replyService.createReply({
-      store: input.store,
-      companion: input.companion,
-      teammate,
-      thread,
-      sourceMessage,
-      replyMessageId: `companion_reply_${stableHash(`${input.companion.id}:${input.idempotencyKey}`)}`,
-      disableWebEvidence: true,
-      systemPromptAppend: `${buildCompanionPrompt(input.companion, started)}\nThis is a proactive Companion message. Keep it brief and do not ask for tool execution.`,
-    });
-    const finalized = finalizeCompanionReply(input.store, input.companion, sourceMessage, aiReply);
+    let finalized: ReturnType<typeof finalizeCompanionReply>;
+    try {
+      const aiReply = await this.dependencies.replyService.createReply({
+        store: input.store,
+        companion: input.companion,
+        teammate,
+        thread,
+        sourceMessage,
+        replyMessageId,
+        disableWebEvidence: true,
+        systemPromptAppend: `${buildCompanionPrompt(input.companion, started)}\nThis is a proactive Companion message. Keep it brief and do not ask for tool execution.`,
+      });
+      finalized = finalizeCompanionReply(input.store, input.companion, sourceMessage, aiReply);
+      input.store.recordCompanionEvent({
+        companionId: input.companion.id,
+        type: "proactive_prompt",
+        payload: { idempotencyKey: input.idempotencyKey, source: input.source, messageId: sourceMessage.id },
+      }, input.now);
+    } catch (error) {
+      recordCompanionError(input.store, input.companion.id, error, sourceMessage.id);
+      throw error;
+    }
     return {
       status: "started",
       cwd: input.cwd,

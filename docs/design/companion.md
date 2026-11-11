@@ -2,7 +2,7 @@
 
 Status: foundation, dialogue, memory bridge, proactive scheduler, surface contracts, adapter-selection acceptance, and Web renderer delivered
 Owner: repository maintainers
-Last verified: 2026-11-10
+Last verified: 2026-11-11
 Document type: product and architecture contract
 Code and test anchors: `packages/contracts/src/companions.ts`,
 `packages/core/src/companion-types.ts`, `packages/core/src/storage/sqlite/companion-store.ts`,
@@ -120,6 +120,10 @@ companions.
 state and rejects new interactions. Event payloads are JSON objects and are treated as
 data, never as executable instructions.
 
+All Companion collection and item routes validate the request origin and workspace
+before accessing the store. Requests require an allowed local origin, when present,
+and a daemon-trusted workspace root through the existing workspace access policy.
+
 ## API surface
 
 ```http
@@ -144,15 +148,21 @@ model configuration. The stream emits the same execution milestones as teammate 
 replies and adds the parsed Companion state and reply on `done`. Message reads accept
 `limit` and `beforeMessageId`; event reads accept `limit`, `beforeCreatedAt`, and
 `beforeEventId`. Responses expose `hasMore` and the next cursor while retaining the
-original array fields. Message writes accept an optional `idempotencyKey`; retries return
-the existing user/AI pair without starting another provider run.
+original array fields. Message writes accept an optional `idempotencyKey`; completed
+outcomes, including recorded reply failures, replay the existing user/AI pair. A failure
+before a reply is persisted permits a retry with the original user message, including
+after a daemon restart. Concurrent requests join the same in-flight result across JSON
+and streaming transports. A persisted pending reply returns `companion_message_in_progress`
+instead of dispatching another run.
 
 The proactive scheduler is daemon-owned and uses the same direct-reply service as a user
 message. It scans active Companions, skips disabled or paused records, and enforces
 `proactiveEnabled`, `quietHours`, and `cooldownMs`. Each trigger writes a durable
-`proactive_prompt` event with an idempotency key before invoking the bound teammate. An
-in-process in-flight map prevents concurrent duplicate work, and the durable event key
-prevents a retry or daemon tick from dispatching the same prompt again. The manual endpoint
+`proactive_prompt` event with an idempotency key after persisting the reply outcome.
+An in-process in-flight map joins concurrent duplicate requests and enforces cooldown
+while a reply is pending. Completed outcomes replay after restart; startup failures
+retain error state and permit retries with the original prompt. An incomplete prompt
+marker without a reply does not count as a completed outcome. The manual endpoint
 accepts `{ "force": true, "idempotencyKey": "..." }`; force bypasses cooldown and quiet
 hours only for that local trigger.
 
