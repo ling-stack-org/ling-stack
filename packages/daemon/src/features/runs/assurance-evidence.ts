@@ -265,7 +265,8 @@ interface UsageSummary {
 }
 
 export function projectDelegationBudgetEvidence(evidence: DelegationCompletionEvidenceV1, runId: string): FrameworkAssuranceBudgetEvidence {
-  if (evidence.steps.length === 0) {
+  if (evidence.steps.length === 0 && evidence.issues.length === 0
+    && evidence.roots.every(root => !root.budget && root.charges.length === 0)) {
     return {
       status: "not_applicable", roots: [], reservations: [], charges: [],
       usage: { tokenStatus: "not_applicable", costStatus: "not_applicable", tokens: null, costMicros: null, tokenLimit: null, costLimitMicros: null },

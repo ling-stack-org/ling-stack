@@ -1,8 +1,8 @@
 # Ling 框架补强实现计划书
 
-Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A fixture evidence adapter, F4-01 read-only diagnostics report, and F3-B admission evidence projection implemented on `codex/ling-f3b-assurance-evidence`; F3-B real trial and F5 rerun remain blocked/unimplemented
+Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A/F4-01 and F3-B admission evidence merged in PR #676 (`5990095f`); root Run budget projection repair prepared on `codex/ling-root-budget-assurance`; F3-B real trial and F5 rerun remain blocked/unimplemented
 Owner: Ling framework maintainers; one integration owner per implementation batch
-Last verified: 2026-11-10
+Last verified: 2026-11-11
 Document type: implementation plan / acceptance checklist
 Canonical replacement: none; retain while material work remains unfinished
 Code and test anchors: sections 7 and 9; live evidence is read-only and not assessed, with no real task or GUI acceptance claimed
@@ -13,7 +13,7 @@ Code and test anchors: sections 7 and 9; live evidence is read-only and not asse
 
 按“离线评测与报告 + SDK 独立消费”先实施，再接真实执行和诊断。不要等待另一会话完成所有未来功能，也不要抢先改它正在拥有的安全并发、隔离执行、合并和恢复文件。
 
-用户确认开始后，F1/F2 已在独立工作区实现并合并到主线，合并提交为 `47afcc47b9063cd7a402a81cf1088caa695f3638`。上一批在 `codex/ling-f3-f4-readonly` 完成 F3-A fixture 证据适配和 F4-01 只读诊断报告；当前在 `codex/ling-f3b-assurance-evidence` 基于 `origin/main@841dab4d` 补齐 F3-B 准入证据前置。默认不产生付费模型请求，不启动生产 daemon、不修改共享数据库，不开放真实 F3-B 试点。实际证据见第 9 节。
+用户确认开始后，F1/F2 已在独立工作区实现并合并到主线，合并提交为 `47afcc47b9063cd7a402a81cf1088caa695f3638`。F3-A/F4-01 和 F3-B 准入证据前置已在 PR #676 合并到 `5990095f06d9a03c95ceb307e57f529afd462dcb`；当前 `codex/ling-root-budget-assurance` 只修复根 Run budget/Provider charge 的零 delegation step 投影遗漏。默认不产生付费模型请求，不启动生产 daemon、不修改共享数据库，不开放真实 F3-B 试点。实际证据见第 9 节。
 
 | 里程碑 | 内容 | 当前状态 | 进入条件 |
 | --- | --- | --- | --- |
@@ -461,13 +461,14 @@ Common checks 的失败已定位到全历史 Gitleaks：1438 个提交、3833874
 
 | 项目 | 已确认结果 |
 | --- | --- |
-| 实施基线 | PR #676 已合并，实际主线提交 `5990095f06d9a03c95ceb307e57f529afd462dcb`；合并前候选 `90bca175` 的 35 项托管检查全部成功，审查项全部解决；实际 merge tree 与该候选完全一致，合并提交上 84 项相关回归及零模型 preflight 通过 |
+| 实施基线 | PR #676 已合并到 `5990095f`，候选 `90bca175` 的托管门禁、审查和合并后受控回归均已通过；PR #685 已合并到 `origin/main@df5c03df`，补齐零 delegation step 时根预算和 Provider charge 的只读投影 |
 | Daemon 只读入口 | `GET /runs/:id/assurance-evidence`；只读取已初始化 Store，不创建 Store、不触发 recovery、不派发 Run |
 | 证据内容 | Run/WorkUnit/Attempt/fence、snapshot/artifact digest、生命周期停止、delegation completion、预算 reservation/charge、isolated binding、integration round、effect/receipt、branch result、candidate、approval、apply 和 fail-closed admission |
 | 准入归属门禁 | Run、WorkUnit、当前 Attempt 仅接受 succeeded/failed/cancelled 且当前 claim 为 terminal_retained；lost claim 固定 expired，聚合停止完成不能替代当前执行归属 |
+| 根 Run 预算适用性 | 无子代理时仍投影既有根预算和 Provider charge，保留 pending/unknown/over/missing 与原始 issue；子任务、根预算、根 charge 和读取问题均不存在时才返回 not_applicable。Node 22 预算回归 17/17、六文件证据回归 96/96；修复前确定复现 11 项失败，含真实 SQLite/Host writer→HTTP 的 root reservation。限定修改只读投影，不更改计费、调度或数据库 |
 | 客户端接入 | `collectLiveExecutionEvidence()` 通过 `LingDaemonClient` 读取投影，与冻结任务输入关联；结果为 `live_execution` / `not_assessed`，不自动判 pass |
 | 候选结果归属 | candidate 分支摘要与全部参与者结果按数量精确匹配，保留重复次数、不依赖顺序、不修改输入；缺失、多余、未封存或空集合均阻断 |
-| 相关回归 | framework-assurance 全套 98/98；2026-11-11 Node 22 复验 Daemon 证据/API/隔离/预算/准入/解析回归 84/84，含摘要重复数量的三项修复前失败、当前执行归属门禁、lost claim 的真实 SQLite route、损坏 artifact 的错误消息隔离和摘要字段类型边界；API client 全套 139/139；Contracts/API client/Daemon 构建与类型检查通过 |
+| 相关回归 | PR #676 合并基线 framework-assurance 全套 98/98、Daemon 证据/API/隔离/预算/准入/解析回归 84/84；跟进分支 Node 22 根预算矩阵 17/17、六文件证据回归 96/96，含真实 SQLite Host writer→HTTP root reservation、pending/unknown/over/missing 与普通空 Run `not_applicable`；修复前确定复现 11 项失败；API client 全套 139/139；Contracts/API client/Daemon 构建与类型检查通过 |
 | 冲突恢复夹具 | 手工 Host 回调在审批消费期间持有既有 post-commit owner claim，原回调成功且 owner 证据验证后才结算；强制后台扫描的 TypeScript 回归先复现 `tool.stale_attempt`，修正后与原七项冲突恢复回归共 8/8 通过，平台登记/CI 合同 29/29 通过 |
 | 隔离交付同步 | SDK/Host 交付夹具先等待既有 isolation lifecycle drain，再等待后台生成 merge approval；保留原超时与全部审批、产物、单次 apply 和重开只读断言。交付端到端及生命周期回归 13/13 通过 |
 | 锁屏时间边界 | 部分 heartbeat 间隔内解锁的 HTTP 回归使用受控 monotonic 时钟和原生 MockTimers，等待真实 gate/runner 边界；保持 80ms hard budget、60ms 锁屏和 50ms runner。Node 22 的锁屏与 supervision 回归 10/10，错误计入锁屏时间的临时反例确定失败，CI 平台/工作流合同 22/22 |
