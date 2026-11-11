@@ -725,7 +725,7 @@ function sse(delta, reason) {
 
 function changes() {
   const listeners = new Set();
-  return { notify: () => { for (const check of [...listeners]) check(); }, wait: (predicate, label, describe, timeoutMs = 40_000) => new Promise((resolve, reject) => {
+  return { notify: () => { for (const check of [...listeners]) check(); }, wait: (predicate, label, describe, timeoutMs = 90_000) => new Promise((resolve, reject) => {
     // Timers bound failures; store notifications and explicit barriers establish ordering, never elapsed sleeps.
     let poll;
     const check = () => { try { if (!predicate()) return; clearTimeout(timer); clearInterval(poll); listeners.delete(check); resolve(); }

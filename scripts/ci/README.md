@@ -122,7 +122,11 @@ because hosted runners crossed five minutes while continuing to make progress.
 serial native Git scenarios can exceed ten minutes on hosted runners while
 continuing to make progress.
 These exceptions are file-scoped; every other daemon file keeps the five-minute
-bound. Channel discussion, intent, workflow and workspace tests are separate
+bound. The Codex journaled lifecycle fixture keeps its local five-second
+subtest budget and uses a ten-second budget only when `CI=true`, covering peer
+process startup while another worker is active. Workflow isolation polling
+allows up to 90 seconds for a hosted runner to observe drained parent state.
+Channel discussion, intent, workflow and workspace tests are separate
 files in the ordinary parallel queue, each with the default five-minute
 watchdog; their shared support fixture is not a test entrypoint.
 SIGTERM gets up to five seconds before SIGKILL. Cancellation stops new work.
