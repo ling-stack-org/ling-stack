@@ -9,7 +9,7 @@ import { assertCiResults, selectExecutionTier } from "./execution-policy.mjs";
 
 const script = fileURLToPath(new URL("./execution-policy.mjs", import.meta.url));
 const lanes = ["SCOPE", "COMMON", "DEPENDENCY", "ASSURANCE", "BUILD", "TYPECHECK", "UNIT", "DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE", "WEB_SMOKE"];
-const selectors = ["dependency", "typecheck", "unit", "daemon", "web"];
+const selectors = ["assurance", "build", "dependency", "typecheck", "unit", "daemon", "web"];
 const unselected = Object.fromEntries(selectors.map((selector) => [selector, false]));
 
 function prEvent(action, { draft = false, labels = [], label } = {}) {
@@ -25,7 +25,7 @@ function results(overrides = {}) {
 }
 
 function quality(overrides = {}) {
-  return assertCiResults({ tier: "complete", mode: "full", dependency: true, typecheck: true, unit: true,
+  return assertCiResults({ tier: "complete", mode: "full", assurance: true, build: true, dependency: true, typecheck: true, unit: true,
     daemon: true, web: true, results: results(), ...overrides });
 }
 
@@ -117,6 +117,8 @@ test("affected scope permits every selector combination without skipping selecte
   for (let mask = 0; mask < 2 ** selectors.length; mask += 1) {
     const selected = Object.fromEntries(selectors.map((selector, index) => [selector, Boolean(mask & (1 << index))]));
     const outcomes = results({
+      ASSURANCE: selected.assurance ? "success" : "skipped",
+      BUILD: selected.build ? "success" : "skipped",
       DEPENDENCY: selected.dependency ? "success" : "skipped",
       TYPECHECK: selected.typecheck ? "success" : "skipped",
       UNIT: selected.unit ? "success" : "skipped",
@@ -206,6 +208,7 @@ test("event-file CLI emits only the tier and rejects unreadable, invalid or ambi
 
 test("quality CLI enforces environment types and reports failures in the workflow log", () => {
   const env = { ...process.env, EXECUTION_TIER: "complete", SCOPE_MODE: "full", DAEMON_SELECTED: "true", WEB_SELECTED: "true",
+    ASSURANCE_SELECTED: "true", BUILD_SELECTED: "true",
     DEPENDENCY_SELECTED: "true", TYPECHECK_SELECTED: "true", UNIT_SELECTED: "true",
     ...Object.fromEntries(lanes.map((lane) => [`${lane}_RESULT`, "success"])) };
   const run = (overrides = {}) => spawnSync(process.execPath, [script, "--check-quality"], { encoding: "utf8", env: { ...env, ...overrides } });

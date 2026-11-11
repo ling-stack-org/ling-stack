@@ -34,6 +34,7 @@ export function parseRunRoute(
   | { kind: "run"; runId: string }
   | { kind: "events"; runId: string }
   | { kind: "artifacts"; runId: string }
+  | { kind: "assurance-evidence"; runId: string }
   | { kind: "shell-snapshots"; runId: string }
   | { kind: "shell-snapshot"; runId: string; snapshotId: string }
   | { kind: "workspace-changes"; runId: string }
@@ -52,6 +53,9 @@ export function parseRunRoute(
   }
   if (segments.length === 3 && segments[0] === "runs" && segments[2] === "artifacts") {
     return { kind: "artifacts", runId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "runs" && segments[2] === "assurance-evidence") {
+    return { kind: "assurance-evidence", runId: segments[1] };
   }
   if (segments.length === 3 && segments[0] === "runs" && segments[2] === "shell-snapshots") {
     return { kind: "shell-snapshots", runId: segments[1] };

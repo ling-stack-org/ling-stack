@@ -1,11 +1,11 @@
 # Ling 框架补强总体设计
 
-Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A fixture evidence adapter and F4-01 read-only diagnostics report implemented on an independent branch; F3-B live execution and F5 rerun remain unimplemented
+Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A fixture evidence adapter, F4-01 read-only diagnostics report, and F3-B admission evidence projection implemented on the current assurance branch; F3-B real trial and F5 rerun remain blocked/unimplemented
 Owner: Ling framework maintainers; evaluation and SDK implementation owners
-Last verified: 2026-11-09
+Last verified: 2026-11-10
 Document type: explanation / scope contract
 Canonical replacement: none; complements existing runtime, evaluation, and SDK contracts
-Code and test anchors: see section 10 and the implementation record; offline, fixture evidence, and read-only diagnostics acceptance only, no live task or GUI acceptance
+Code and test anchors: see section 10 and the implementation record; live evidence is read-only and not assessed, with no real task, Provider, or GUI acceptance
 
 配套文档：[详细设计](ling-framework-complementary-detailed-design.md)、[实现计划书](ling-framework-complementary-implementation-plan.md)。
 
@@ -26,6 +26,7 @@ Code and test anchors: see section 10 and the implementation record; offline, fi
 - F1/F2 已在独立工作区实现并合并到主线，合并提交为 `47afcc47b9063cd7a402a81cf1088caa695f3638`；此前 Linux 托管证据覆盖离线工具与冻结校准数据、四包真实 tarball 的仓外消费。F3-A/F4-01 在独立 worktree 中补齐 fixture 证据适配和只读诊断报告，仍不代表真实 Run 或节点重跑能力。
 - 审查修复后，新工具 64 项测试与相关 CI/历史扫描契约 125 项共 189/189 通过；既有三包 261 项测试及类型检查已有本地通过记录。候选 `0a4f5327` 的 Linux 托管 job 另行验证了工具 64/64、九控制校准、仓外 SDK 19/19 及 NodeNext/Bundler 类型正反例；Windows 安装器契约也已通过，但不代表 Windows SDK 消费通过。已获批准补齐 106 条精确历史误报指纹，本地同范围全历史扫描零命中、扫描契约 22/22 通过，未放宽规则或范围。旧候选的完整 CI 已以 failure 结束：Common checks 与 Daemon shard 3 失败，Daemon shard 0 取消，1/2 与 helper smoke 成功。本地修复不改写远端结果，不能声称门禁全绿。
 - PR #653 的 hosted CI 已在合并前通过，合并结果以 `47afcc47` 为准；该门禁证据只覆盖 F1/F2，不扩大为真实 Runner、GUI、F3-B 或 F5 验收。
+- 2026-11-10 在 `origin/main@841dab4d` 上实现 F3-B 准入证据前置：Daemon 只读投影 Run/WorkUnit/Attempt、fence、停止、artifact、delegation 预算、isolated binding、branch result、candidate、approval 和 apply；API client 将投影与冻结任务输入关联。当前分支的受控回归通过，但尚未合并，也不启动真实 Provider、模型、daemon 生产进程或付费任务；详见[准入审计增量](../testing/f3b-admission-audit-2026-11-10.md)。
 - 失败分片的限时追加诊断未完整完成任何一轮，并发现一个原生私有状态隔离缺陷；该缺陷已在本分支修复，并由真实 macOS native boundary 回归 22/22、相关 Kimi/relay 回归 65/65 验证。原超时和远端完整 CI 失败仍分别记录，均不以单独 lane 成功或文档补齐替代收口。
 - 不修改多代理并发、worktree 合并、审批、Run/Attempt 生命周期和 SQLite schema。
 - 不运行真实模型，不启动、停止或重启其他会话的服务。
@@ -35,10 +36,10 @@ Code and test anchors: see section 10 and the implementation record; offline, fi
 
 | 对象 | 本次确认 | 如何使用 |
 | --- | --- | --- |
-| 主线源码 | 本地 `origin/main` 快照 `04d10ab5435b669d8eafb9a54e6702177e73cf53` | 本文事实的主要代码基线，不声称是远端最新状态 |
+| 主线源码 | 当前 `origin/main@841dab4d` | 本文当前实现核对的代码基线；历史批次仍保留各自快照 |
 | 复核时主线引用 | `d7227c83af77daf237e85845961cb54511d681f8`，新增架构文档同步 | 本文涉及的 evaluation、SDK、diagnostics 源码在两快照间无变化 |
 | 原文档工作区 | `codex/retry-report-supersession`，HEAD `8b259da0ff4302b97c69f9ef65e221fd108e0ee0` | 只保留原 WIP，不在此实现 |
-| 实施工作区 | `codex/ling-framework-assurance`，基于 `d7227c83af77daf237e85845961cb54511d681f8` | 独立 managed worktree；仅带入本计划文档与索引 |
+| 当前实施工作区 | `codex/ling-f3b-assurance-evidence`，基于 `origin/main@841dab4d` | 独立 worktree；当前增量包含 F3-B 准入证据前置 |
 | 提前验证提交 | `0a4f5327073058f45d14b5c21940a1811d9fb6b1`，已整合主线 `9f0b72d028f1` | 2026-11-03 核实同提交的托管 job 与产物；未创建 PR，完整 CI 尚未通过 |
 | 并发实现会话 | 开工核查时，`评估 Super-agent 设计是否适合 Ling` 正在推进 P1/P2 | 这是观察快照，不是实时进度；正式接入前重新核验 |
 | F1 验证层级 | 纯函数与 CLI 进程回归，实际离线校准 | 三任务九控制；不执行候选代码，不构成真实任务或 GUI 验收 |
@@ -167,7 +168,7 @@ F1 只验证这些任务的元数据、注入补丁可应用性和 synthetic 控
 | F1 | 固定任务、零模型预检、正反校准、离线报告 | 否 |
 | F2 | 真实 tarball 的独立 SDK consumer 与测试矩阵 | 否；可运行可信测试工具，不启动 daemon |
 | F3-A | Run 证据适配的 fixture 与接口回归 | 否 |
-| F3-B | 普通 Run 真实试点，随后按能力增加并发对比 | 是，须通过安全、隔离、预算前置检查 |
+| F3-B | 准入证据前置与普通 Run 真实试点，随后按能力增加并发对比 | 证据投影已实现；真实执行仍须通过安全、隔离、预算和资源前置检查 |
 | F4 | 已有诊断的只读摘要和报告关联 | 只读取已存在的运行数据 |
 | F5 | 节点重跑的设计合同 | 否；实现另立任务 |
 
@@ -207,6 +208,8 @@ F1 只验证这些任务的元数据、注入补丁可应用性和 synthetic 控
 | macOS native boundary | `packages/daemon/src/runtime/sandbox/native-process-launch.ts`、`packages/daemon/test/native-process-boundary.test.mjs`；本地验证覆盖 workspace/private-state、Kimi metadata、relay 与进程回收 |
 | 本轮离线实现与回归 | `scripts/framework-assurance/manifest.mjs`、`preflight.mjs`、`grader.mjs`、`evidence.mjs`、`report.mjs`、`output.mjs`、`index.mjs`、`offline.test.mjs`、`cli.test.mjs` |
 | F3-A fixture 证据适配 | `scripts/framework-assurance/execution-evidence.mjs`、`execution-evidence.test.mjs`、`fixtures/framework-assurance/execution-evidence/` |
+| F3-B 准入证据投影 | `packages/contracts/src/framework-assurance.ts`、`packages/daemon/src/features/runs/assurance-evidence.ts`、`packages/api-client/src/endpoints/runs.ts`、`scripts/framework-assurance/execution-evidence.mjs` |
+| F3-B 受控回归 | `packages/daemon/test/assurance-evidence-api.test.mjs`、`assurance-evidence-isolation.test.mjs`、`assurance-evidence-budget.test.ts`、`packages/api-client/test/harness-diagnostics.test.mjs` |
 | F4-01 只读诊断报告 | `scripts/framework-assurance/diagnostics.mjs`、`diagnostics.test.mjs`；通过 `readHarnessDiagnosticsReportFromClient` 组合既有 `LingDaemonClient.getWorkUnitHarnessDiagnostics` |
 | 本轮真实包消费与回归 | `scripts/framework-assurance/sdk-consumer.mjs`、`sdk-consumer.test.mjs`、`fixtures/framework-assurance/sdk-consumer/` |
 | 冻结校准输入 | `fixtures/framework-assurance/suites/framework-v5.json` 及 cases/controls 引用；历史 v3/v4 结果不改写 |

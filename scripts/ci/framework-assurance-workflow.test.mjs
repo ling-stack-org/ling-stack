@@ -16,7 +16,7 @@ function jobSource(id) {
 test("assurance keeps frozen history and the pinned offline-capable toolchain", () => {
   const source = jobSource("framework-assurance");
   assert.match(source, /^    needs: scope$/mu);
-  assert.match(source, /execution-tier == 'complete' && needs\.scope\.outputs\.mode != 'docs'/u);
+  assert.match(source, /execution-tier == 'complete' && needs\.scope\.outputs\.assurance-selected == 'true'/u);
   assert.match(source, /^    runs-on: ubuntu-latest$/mu);
   assert.match(source, /^    timeout-minutes: 20$/mu);
   assert.match(source, /fetch-depth: 0/u);
