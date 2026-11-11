@@ -26,11 +26,11 @@ CI 会先根据整个 Pull Request 的变更路径选择最小安全范围：
 | 手动运行 | 目标分支上的完整验证 |
 | 定时运行 | 默认分支每天 UTC 03:17（北京时间 11:17）的完整验证 |
 
-[Daemon 平台清单](../../scripts/ci/daemon-test-platforms.json)将 491 个通用文件分到五个 Linux shard，每个使用四个 worker；163 个包含原生／平台约束的文件保留在四个 `macos-26` shard，每个使用三个 worker。四个 macOS 分片与独立 native smoke 合计五个任务，减少超出同批容量后再运行一个完整分片的情况；实际可用容量和排队仍由 GitHub 决定。每个文件保持 `--test-concurrency=1`、独立 runtime home／workspace 和 POSIX 进程组。Kimi Host read／terminal 与 delegation production tool surface 文件保留所属分片的独占阶段，其余文件进入按估计耗时降序的共享队列。Linux restricted-command 拒绝契约和真实 macOS helper／Seatbelt smoke 仍为必需任务。
+[Daemon 平台清单](../../scripts/ci/daemon-test-platforms.json)将 491 个通用文件分到八个 Linux shard，每个使用两个 worker；163 个包含原生／平台约束的文件保留在四个 `macos-26` shard，每个使用三个 worker。四个 macOS 分片与独立 native smoke 合计五个任务，减少超出同批容量后再运行一个完整分片的情况；实际可用容量和排队仍由 GitHub 决定。每个文件保持 `--test-concurrency=1`、独立 runtime home／workspace 和 POSIX 进程组。Kimi Host read／terminal 与 delegation production tool surface 文件保留所属分片的独占阶段，其余文件进入按估计耗时降序的共享队列。Linux restricted-command 拒绝契约和真实 macOS helper／Seatbelt smoke 仍为必需任务。
 
 Daemon 分片任务上限为 40 分钟，执行队列上限为 30 分钟。默认文件 watchdog 为五分钟，已登记的高耗时 workflow／recovery fixture 保留十分钟或十五分钟的独立上限，具体清单见[测试执行说明](../../scripts/ci/README.md)。超时或取消会终止所属进程并使任务失败，不重试或强制通过；watchdog 上限不是十分钟性能验收结果。
 
-Core 已接入四个 Linux shard，每个使用四个文件 worker、30 分钟队列上限，属于既有 `unit-tests` 必需矩阵。普通 packages 入口排除 Core 与 Daemon，避免重复执行；只有存在其他被选测试包时才生成该入口。仅改 Core 测试时生成四个 Core 入口，且不生成空 packages 入口；仅改 Daemon 测试时没有 Linux unit 入口。
+Core 已接入八个 Linux shard，每个使用两个文件 worker、30 分钟队列上限，属于既有 `unit-tests` 必需矩阵。普通 packages 入口排除 Core 与 Daemon，避免重复执行；只有存在其他被选测试包时才生成该入口。仅改 Core 测试时生成八个 Core 入口，且不生成空 packages 入口；仅改 Daemon 测试时没有 Linux unit 入口。
 
 [分片计划](../../scripts/ci/test-shard-plan.mjs)在 scope 阶段统一生成并上传 `ci-test-plan`，各 shard 与新发现的 `test/*.test.mjs`、`test/*.test.ts` 核对完整且恰好一次的分配。计时提示仅影响外层分片和内部队列顺序；缺失或不可用时回退源码大小／类别估算，不减少覆盖。每文件日志及 JSON 计时报告上传为 `ci-test-report-core-*`／`ci-test-report-daemon-*`／`ci-test-report-daemon-linux-*`；汇总验证全部计划文件恰好通过一次后，仅默认分支运行可发布计时缓存。无关策略失败不阻止完整测试报告的计时保存，但仍使质量门失败；PR 不能发布计时基线。这些计时不是跳过测试的成功证据。
 
@@ -179,7 +179,7 @@ timeout/leaked-process 计数。job 启动延迟包含依赖等待，不能当�
 | --- | --- | --- |
 | P1：规则与开发阶段分档（已接入） | 分类器、执行策略、CI 工作流、现有 CI 契约测试、本文 | 模板／已登记脚本不误触全量；未知配置仍全量；Draft 不冒充完整通过；转正式和 `full-ci` 标签正确补齐；所有必需任务意外跳过均被拒绝；定时完整矩阵每日运行 |
 | P2：平台分工（已实现，hosted 验收待完成） | 测试清单、Daemon 分片执行器、平台契约、工作流 | discovery 与清单守恒；Linux 通用组通过；原有 Darwin 正向／负向用例实际执行；额外 Linux 拒绝与 native smoke 保留；共享变更正确扩大平台范围 |
-| P3：耗时与定时优化（部分实现） | Core／Daemon 分片执行、文件级计时、必要的 CI 任务、定时选择 | Core 四分片与四 worker、Daemon Linux／macOS 独立分片和必需 Web smoke、普通入口排除、共享计划及计时报表已实现；hosted 性能收益待验证。每日去重／每周 macOS 尚未实现，仍须满足可信成功证据与平台覆盖规则 |
+| P3：耗时与定时优化（部分实现） | Core／Daemon 分片执行、文件级计时、必要的 CI 任务、定时选择 | Core 八分片与两 worker、Daemon Linux／macOS 独立分片和必需 Web smoke、普通入口排除、共享计划及计时报表已实现；hosted 性能收益待验证。每日去重／每周 macOS 尚未实现，仍须满足可信成功证据与平台覆盖规则 |
 
 实施前以分类和汇总契约测试覆盖文档、局部源码、共享契约、未知路径、标签、Draft 转正式、平台新增文件、上游失败和意外跳过。P2 在真实 Linux 与 macOS 上验证同一候选提交的原有覆盖后，才允许减少 macOS 任务。P3 对相同任务集合比较改动前后的累计运行时间和等待时间。
 
@@ -213,7 +213,7 @@ node scripts/ci/daemon-test-shard.mjs --shard=0 --shard-count=4 --concurrency=3
 ## 未决事项
 
 - **平台清单待 hosted 验收**：已实现明确分组、覆盖守恒和原生源码约束；仍须确认同一候选提交的 Linux 通用组完整通过、macOS 原有正向／负向用例实际执行，才能发布平台切换。
-- **十分钟目标尚未验证**：Core 四分片、Daemon 平台分工和并行 Web smoke 已实现；仍须比较同等覆盖下的排队、准备、测试及总时长与累计任务分钟，不能从本地文件计时推导 hosted 加速或费用下降。
+- **十分钟目标尚未验证**：Core 八分片、Daemon 平台分工和并行 Web smoke 已实现；仍须比较同等覆盖下的排队、准备、测试及总时长与累计任务分钟，不能从本地文件计时推导 hosted 加速或费用下降。
 - **主 CI 定时去重尚未实现**：当前按本次要求每天运行完整矩阵；上节 CodeQL 的定时基线不适用于该矩阵。若未来重新提出分层或去重，必须满足平台覆盖与成功基线规则。
 
 以上缺口不阻塞 P1。P1 的本地契约验证不能代替 GitHub runner 实际验收，也不能证明原生平台测试已通过；运行额度仍由账户账单决定。

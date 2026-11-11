@@ -526,7 +526,7 @@ jobs:
         if: matrix.suite == 'core'
         run: >-
           node scripts/ci/node-test-shard.mjs --suite=core
-          --shard=${{ matrix.shard }} --shard-count=4 --concurrency=4
+          --shard=${{ matrix.shard }} --shard-count=8 --concurrency=2
           --shard-timeout-ms=1800000
           --plan=.codex-artifacts/ci/test-plan.json
           --report=.codex-artifacts/ci/reports/core-${{ matrix.shard }}.json

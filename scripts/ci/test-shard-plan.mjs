@@ -23,9 +23,9 @@ const daemonSuite = { packageName: "@ling-stack/daemon", cwd: join(root, "packag
     exclusive: ["test/acp-kimi-host-read.test.mjs", "test/acp-kimi-host-terminal.test.mjs",
       "test/delegation-production-tool-surface.test.mjs"] };
 export const testSuites = {
-  core: { packageName: "@ling-stack/core", cwd: join(root, "packages/core"), platform: "linux", shardCount: 4, concurrency: 4, excluded: [], exclusive: [] },
+  core: { packageName: "@ling-stack/core", cwd: join(root, "packages/core"), platform: "linux", shardCount: 8, concurrency: 2, excluded: [], exclusive: [] },
   daemon: daemonSuite,
-  "daemon-linux": { ...daemonSuite, platform: "linux", shardCount: 5, concurrency: 4 },
+  "daemon-linux": { ...daemonSuite, platform: "linux", shardCount: 8, concurrency: 2 },
 };
 
 export async function discoverTestFiles(cwd, excluded = []) {
@@ -87,7 +87,6 @@ export async function loadTimingHints(path) {
 
 export async function createTestPlan(packages, { timings = { suites: {} } } = {}) {
   if (!Array.isArray(packages) || packages.some(name => typeof name !== "string")) throw new TypeError("packages must be a string array");
-  const baseline = await loadTimingHints(new URL("./test-timing-baseline.json", import.meta.url));
   /** @type {Record<string, { platform: string, files: string[], shardCount: number, concurrency: number,
    * timings: Record<string, number>, shards: ReturnType<typeof assignTestShards> }>} */
   const suites = {};
@@ -96,9 +95,7 @@ export async function createTestPlan(packages, { timings = { suites: {} } } = {}
     const files = await discoverSuiteFiles(config);
     if (files.length === 0) throw new Error(`No tests discovered for ${name}`);
     const hints = timings.suites?.[name];
-    const seed = baseline.suites?.[name];
-    const durations = { ...(seed?.platform === config.platform ? seed.durationsMs : {}),
-      ...(hints?.platform === config.platform ? hints.durationsMs : {}) };
+    const durations = hints?.platform === config.platform ? hints.durationsMs : {};
     suites[name] = { platform: config.platform, files, shardCount: config.shardCount, concurrency: config.concurrency, timings: durations ?? {},
       shards: assignTestShards(files, config.shardCount, { ...config, timings: durations ?? {} }) };
   }
