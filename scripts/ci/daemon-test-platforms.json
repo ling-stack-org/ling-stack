@@ -128,7 +128,7 @@
     "test/conversation-summary-coordinator.test.mjs",
     "test/conversation-summary-execution.test.mjs",
     "test/coordinator-workflow-narration.test.mjs",
-    "test/daemon-resource-bootstrap.test.mjs",
+    "test/daemon-resource-bootstrap.test.ts",
     "test/daemon-startup-cleanup.test.mjs",
     "test/delegated-run-compaction-recovery.test.mjs",
     "test/delegated-run-dispatch.test.mjs",
