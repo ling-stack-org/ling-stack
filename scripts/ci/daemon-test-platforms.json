@@ -548,6 +548,7 @@
     "test/execution-engine-probe-routes.test.mjs",
     "test/external-work-workflow-controlled-race.test.mjs",
     "test/external-work-workflow-path-admission.test.mjs",
+    "test/external-workflow-request-worker-source.test.mjs",
     "test/external-workflow-request-runtime.test.mjs",
     "test/external-workflow-request-worker-source.test.mjs",
     "test/host-command-native-preparation.test.mjs",
