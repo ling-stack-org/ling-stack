@@ -1,8 +1,8 @@
 # Ling 框架补强实现计划书
 
-Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A/F4-01 and F3-B admission evidence merged in PR #676 (`5990095f`); root Run budget projection repair prepared on `codex/ling-root-budget-assurance`; F3-B real trial and F5 rerun remain blocked/unimplemented
+Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A/F4-01 and F3-B admission evidence are on main; root Run budget projection repair and exact Run/evaluation association are merged in PR #685/#684 (`9af7ad54`); F3-B real trial and F5 rerun remain blocked/unimplemented
 Owner: Ling framework maintainers; one integration owner per implementation batch
-Last verified: 2026-11-11
+Last verified: 2026-11-12
 Document type: implementation plan / acceptance checklist
 Canonical replacement: none; retain while material work remains unfinished
 Code and test anchors: sections 7 and 9; live evidence is read-only and not assessed, with no real task or GUI acceptance claimed
@@ -13,7 +13,7 @@ Code and test anchors: sections 7 and 9; live evidence is read-only and not asse
 
 按“离线评测与报告 + SDK 独立消费”先实施，再接真实执行和诊断。不要等待另一会话完成所有未来功能，也不要抢先改它正在拥有的安全并发、隔离执行、合并和恢复文件。
 
-用户确认开始后，F1/F2 已在独立工作区实现并合并到主线，合并提交为 `47afcc47b9063cd7a402a81cf1088caa695f3638`。F3-A/F4-01 和 F3-B 准入证据前置已在 PR #676 合并到 `5990095f06d9a03c95ceb307e57f529afd462dcb`；当前 `codex/ling-root-budget-assurance` 只修复根 Run budget/Provider charge 的零 delegation step 投影遗漏。默认不产生付费模型请求，不启动生产 daemon、不修改共享数据库，不开放真实 F3-B 试点。实际证据见第 9 节。
+用户确认开始后，F1/F2 已在独立工作区实现并合并到主线，合并提交为 `47afcc47b9063cd7a402a81cf1088caa695f3638`。F3-A/F4-01 和 F3-B 准入证据前置已进入 `main@9af7ad54`，包含 #676、#685 和 #684 的已合并增量。默认不产生付费模型请求，不启动生产 daemon、不修改共享数据库，不开放真实 F3-B 试点。实际证据见第 9 节。
 
 | 里程碑 | 内容 | 当前状态 | 进入条件 |
 | --- | --- | --- | --- |
@@ -168,10 +168,7 @@ Code and test anchors: sections 7 and 9; live evidence is read-only and not asse
 
 任一项不满足，只阻断受影响的真实执行阶段，F1/F2 可继续。F5 仅对详细设计 A17 做合同检查，不进入代码实施。
 
-2026-11-09 的只读准入审计基于旧主线快照，结论为 `F3-B BLOCKED`；2026-11-10 的增量审计基于
-`origin/main@841dab4d`，确认准入证据前置已实现，但真实试点仍为 `F3-B BLOCKED`。完整证据、
-八项核查和解阻顺序见[2026-11-10 准入审计增量](../testing/f3b-admission-audit-2026-11-10.md)，
-旧快照记录见[2026-11-09 准入审计](../testing/f3b-admission-audit-2026-11-09.md)。
+2026-11-09 的只读准入审计基于旧主线快照，结论为 `F3-B BLOCKED`；2026-11-10 的增量审计确认准入证据前置已实现；2026-11-12 的合并基线复核确认 #684 已进入 `main@9af7ad54`，但真实试点仍为 `F3-B BLOCKED`。完整证据、八项核查和解阻顺序见[2026-11-12 合并基线审计](../testing/f3b-admission-audit-2026-11-12.md)，历史记录见[2026-11-10 准入审计增量](../testing/f3b-admission-audit-2026-11-10.md)和[2026-11-09 准入审计](../testing/f3b-admission-audit-2026-11-09.md)。
 
 ## 6. PR 与集成顺序
 
@@ -489,11 +486,11 @@ Common checks 的失败已定位到全历史 Gitleaks：1438 个提交、3833874
 
 | 项目 | 已确认结果 |
 | --- | --- |
-| 实施分支 | PR #684，`codex/ling-evaluation-association`；已整合实际主线 `5990095f`，保留完整独立增量 |
+| 实施分支 | PR #684，`codex/ling-evaluation-association`；已合并到实际主线 `9af7ad54`，保留完整独立增量 |
 | 核心投影 | 指定 evaluation ID、16 字段冻结 identity/key、候选与可选 grade pins；独立验证六份原始输入、三组 Host snapshot、Run/root、封存 artifact owner/字节和 grade 摘要，首尾重读拒绝漂移 |
 | Host 组合 | 只查已初始化 Store，所有读取在同步只读 snapshot 内；冷工作区不初始化，已提交观察不能代替独立 Host 读取 |
 | Daemon/API 接线 | `POST /runs/:id/assurance-evaluation-association?cwd=...` 接收完整 request 和六份 Base64 冻结输入；`LingDaemonClient.projectRunAssuranceEvaluationAssociation()` 复用同一只读投影，URL Run ID 与 request lineage 一致性由 Daemon 校验 |
 | 行为证据 | 新增 association、SQLite composition 和 F4 接线 TypeScript 回归共 85/85；涵盖无写入、快照中拒绝写入、冷 Store、读取漂移、grade 四种 verdict、摘要分域、Run 状态合同、敏感字段和失败不发布部分结果 |
-| 集成验证 | 对齐 #676 实际主线 `5990095f` 后，Node 22 Daemon 回归 169/169、离线 assurance 98/98，零模型 preflight/calibrate 通过；Daemon 构建和源码/测试类型检查通过 |
+| 集成验证 | 合并后 Node 22 Daemon assurance 相关回归 182/182、API client 7/7、离线 assurance 98/98；Contracts/API client/Daemon 构建和 Daemon 源码/测试类型检查通过；托管门禁最终 30 项成功 |
 | 权限边界 | 固定 `not_assessed` / `enforcementAuthorized:false`；Attempt/artifact 归属始终 unavailable，不将 caller mapping 或 grade pass 当真实执行验收 |
-| 尚待完成 | #684 正式托管 CI、审查与合并；真实 Producer/计费、Attempt 产物归属、packaged/跨平台和受控试点验收继续独立保留 |
+| 尚待完成 | 真实 Producer/计费、Attempt 产物归属、packaged/跨平台和受控试点验收继续独立保留；F3-B 仍 BLOCKED |
