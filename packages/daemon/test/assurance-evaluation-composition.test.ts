@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -14,12 +14,14 @@ import { hostAssociationSource, projectInitializedAssuranceEvaluationAssociation
 import { assuranceAssociationFixture, associationNow } from "./support/assurance-evaluation-association-fixture.ts";
 
 async function sqliteFixture(t: TestContext) {
-  const f = assuranceAssociationFixture(), cwd = await mkdtemp(join(tmpdir(), "ling-assurance-association-"));
+  const f = assuranceAssociationFixture(), ambient = await isolatedWorkspace(t), { cwd } = ambient;
   const store = createSqliteRunStore(cwd), activeRuns = new ActiveRunRegistry();
+  ambient.onCleanup(() => store.close());
   const observer = new DatabaseSync(resolveRuntimePaths(cwd).databasePath, { readOnly: true });
+  ambient.onCleanup(() => observer.close());
   let factoryCalls = 0;
   const registry = new RunStoreRegistry(() => { factoryCalls++; return store; }, { recoverOnOpen: false });
-  t.after(async () => { observer.close(); registry.closeAll(); await rm(cwd, { recursive: true, force: true }); });
+  ambient.onCleanup(() => registry.closeAll());
   registry.getStore(cwd);
   for (const id of [f.identity.rootRunId, f.identity.runId]) {
     store.createRun({ id, cwd, taskId: "task-association", providerName: "fixture", providerModel: "fixture",
@@ -80,10 +82,10 @@ test("initialized composition reads real Host and evaluation rows inside a query
 });
 
 test("cold composition never creates a Store or reads frozen bytes", async t => {
-  const f = assuranceAssociationFixture(), cwd = await mkdtemp(join(tmpdir(), "ling-association-cold-"));
+  const f = assuranceAssociationFixture(), ambient = await isolatedWorkspace(t), { cwd } = ambient;
   let factories = 0, frozenReads = 0;
   const registry = new RunStoreRegistry(() => { factories++; throw new Error("must not initialize"); }, { recoverOnOpen: false });
-  t.after(async () => { registry.closeAll(); await rm(cwd, { recursive: true, force: true }); });
+  ambient.onCleanup(() => registry.closeAll());
   const result = projectInitializedAssuranceEvaluationAssociation({ registry, cwd, request: f.request,
     activeRuns: new ActiveRunRegistry(), getFrozenInput() { frozenReads++; return undefined; } });
   assert.equal(result.status, "unavailable");
@@ -135,3 +137,23 @@ test("registry and snapshot exceptions remain sanitized", () => {
   assert.equal(result.status, "unavailable");
   assert.ok(!JSON.stringify(result).includes("PRIVATE_DB")); assert.ok(!JSON.stringify(result).includes("/private/"));
 });
+
+async function isolatedWorkspace(t: TestContext) {
+  const root = await mkdtemp(join(tmpdir(), "ling-assurance-association-")), cwd = join(root, "workspace");
+  await mkdir(cwd);
+  const previous = { LING_STACK_HOME: process.env.LING_STACK_HOME,
+    LING_STACK_DEFAULT_WORKSPACE_CWD: process.env.LING_STACK_DEFAULT_WORKSPACE_CWD };
+  process.env.LING_STACK_HOME = join(root, "user");
+  process.env.LING_STACK_DEFAULT_WORKSPACE_CWD = cwd;
+  const cleanups: (() => void | Promise<void>)[] = [];
+  t.after(async () => {
+    try { for (const cleanup of cleanups.reverse()) await cleanup(); }
+    finally {
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[key]; else process.env[key] = value;
+      }
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+  return { cwd, onCleanup: (cleanup: () => void | Promise<void>) => cleanups.push(cleanup) };
+}
