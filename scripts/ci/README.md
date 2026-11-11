@@ -74,9 +74,11 @@ a requested package via `--if-present`.
   files to eight Linux shards with two workers, and 163 native/platform files to
   four `macos-26` shards with three workers. The four macOS test jobs and separate
   native smoke total five macOS jobs; available concurrency is controlled by
-  GitHub. Kimi Host read/terminal and delegation
-  production-tool-surface files retain their exclusive phase on their assigned
-  platform. All files retain their watchdogs and original test cases.
+  GitHub. Kimi Host read/terminal, delegation production-tool-surface, engine
+  lifecycle installation, and workflow conflict/isolate-delivery fixtures retain
+  an exclusive phase on their assigned platform because they create many native,
+  process, or Git-backed resources. All files retain their watchdogs and original
+  test cases.
 - Linux restricted-command contracts and real macOS native smoke remain separate
   mandatory lanes. The manifest's disjoint union must equal fresh daemon discovery;
   new, missing, duplicated or stale assignments fail before execution. Native

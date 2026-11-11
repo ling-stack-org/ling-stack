@@ -26,7 +26,7 @@ CI 会先根据整个 Pull Request 的变更路径选择最小安全范围：
 | 手动运行 | 目标分支上的完整验证 |
 | 定时运行 | 默认分支每天 UTC 03:17（北京时间 11:17）的完整验证 |
 
-[Daemon 平台清单](../../scripts/ci/daemon-test-platforms.json)将 491 个通用文件分到八个 Linux shard，每个使用两个 worker；163 个包含原生／平台约束的文件保留在四个 `macos-26` shard，每个使用三个 worker。四个 macOS 分片与独立 native smoke 合计五个任务，减少超出同批容量后再运行一个完整分片的情况；实际可用容量和排队仍由 GitHub 决定。每个文件保持 `--test-concurrency=1`、独立 runtime home／workspace 和 POSIX 进程组。Kimi Host read／terminal 与 delegation production tool surface 文件保留所属分片的独占阶段，其余文件进入按估计耗时降序的共享队列。Linux restricted-command 拒绝契约和真实 macOS helper／Seatbelt smoke 仍为必需任务。
+[Daemon 平台清单](../../scripts/ci/daemon-test-platforms.json)将 493 个通用文件分到八个 Linux shard，每个使用两个 worker；163 个包含原生／平台约束的文件保留在四个 `macos-26` shard，每个使用三个 worker。四个 macOS 分片与独立 native smoke 合计五个任务，减少超出同批容量后再运行一个完整分片的情况；实际可用容量和排队仍由 GitHub 决定。每个文件保持 `--test-concurrency=1`、独立 runtime home／workspace 和 POSIX 进程组。Kimi Host read／terminal、delegation production tool surface、engine lifecycle installation，以及 workflow conflict／isolated-delivery fixtures 保留所属分片的独占阶段，避免这些会大量创建原生进程、Git worktree 或临时资源的 fixture 互相争用；其余文件进入按估计耗时降序的共享队列。Linux restricted-command 拒绝契约和真实 macOS helper／Seatbelt smoke 仍为必需任务。
 
 Daemon 分片任务上限为 40 分钟，执行队列上限为 30 分钟。默认文件 watchdog 为五分钟，已登记的高耗时 workflow／recovery fixture 保留十分钟或十五分钟的独立上限，具体清单见[测试执行说明](../../scripts/ci/README.md)。超时或取消会终止所属进程并使任务失败，不重试或强制通过；watchdog 上限不是十分钟性能验收结果。
 
