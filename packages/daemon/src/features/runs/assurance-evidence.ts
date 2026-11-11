@@ -114,7 +114,9 @@ export function readRunAssuranceEvidence(store: RunStore, activeRuns: ActiveRunR
   const budget = projectDelegationBudgetEvidence(completionEvidence, run.id);
   const isolation = buildIsolation(store, run, attempt, observedAt);
   const lifecycle = buildLifecycle(workUnit, attempts, stop.attempts);
-  const admission = buildAdmission(run, isolation, lifecycle, effectStatus, completion, budget);
+  const claimStatus = claimStatusFor(workUnit, attempt);
+  const admission = buildAdmission(run, isolation, lifecycle, effectStatus, completion, budget,
+    { claimStatus, workUnitStatus: workUnit.status, attemptStatus: attempt.status });
   return {
     schemaVersion: 1,
     kind: "live_execution_evidence",
@@ -132,7 +134,7 @@ export function readRunAssuranceEvidence(store: RunStore, activeRuns: ActiveRunR
       runStatus: run.status,
       workUnitStatus: workUnit.status,
       attemptStatus: attempt.status,
-      claimStatus: claimStatusFor(workUnit, attempt),
+      claimStatus,
       effectStatus,
     },
     snapshots: {
@@ -556,6 +558,7 @@ export function buildAdmission(
   effectStatus: FrameworkAssuranceEffectStatus,
   completion: FrameworkAssuranceCompletionEvidence,
   budget: FrameworkAssuranceBudgetEvidence,
+  ownership: Pick<FrameworkAssuranceEvidenceResponse["execution"], "claimStatus" | "workUnitStatus" | "attemptStatus">,
 ): FrameworkAssuranceAdmissionEvidence {
   if (isolation.status === "not_applicable") return {
     status: "not_applicable", profile: null,
@@ -566,6 +569,11 @@ export function buildAdmission(
   const profile = isolation.safetyPlan.profile;
   const mode = harnessToolBrokerModeForRun(run);
   const blockers = [...isolation.blockers, ...completion.issues.map(issue => issue.code), ...budget.blockers];
+  if (!TERMINAL_RUN_STATUSES.has(run.status)) blockers.push("workflow_admission.run_not_terminal");
+  if (!TERMINAL_RUN_STATUSES.has(ownership.workUnitStatus)) blockers.push("workflow_admission.work_unit_not_terminal");
+  if (ownership.claimStatus !== "terminal_retained" || !TERMINAL_RUN_STATUSES.has(ownership.attemptStatus)) {
+    blockers.push("workflow_admission.terminal_claim_not_retained");
+  }
   if (completion.status !== "satisfied" && completion.status !== "not_applicable") {
     blockers.push("workflow_admission.delegation_completion_not_satisfied");
   }
@@ -665,8 +673,9 @@ function selectAttempt(workUnit: WorkUnit, attempts: readonly WorkUnitAttempt[])
 }
 
 function claimStatusFor(workUnit: WorkUnit, attempt: WorkUnitAttempt): FrameworkAssuranceClaimStatus {
+  if (attempt.status === "lost") return "expired";
   if (workUnit.activeAttemptId === attempt.id) return TERMINAL_ATTEMPT_STATUSES.has(attempt.status) ? "terminal_retained" : "held";
-  return attempt.status === "lost" ? "expired" : "unclaimed";
+  return "unclaimed";
 }
 
 function effectStatusFor(attempt: WorkUnitAttempt, effects: FrameworkAssuranceStopEffectStatus | undefined): FrameworkAssuranceEffectStatus {
