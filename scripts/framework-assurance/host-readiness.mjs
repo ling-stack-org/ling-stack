@@ -56,7 +56,8 @@ export function assessHostReadiness(value) {
   blockers.push(...budget.blockers.map(issue => `host_readiness.${issue}`));
 
   if (isolation.status !== "verified") blockers.push("host_readiness.isolation_not_verified");
-  if (!isolation.safetyPlan.valid || isolation.safetyPlan.profile !== "pi_host_isolated_files_v1") {
+  if (!isolation.safetyPlan.present || !isolation.safetyPlan.valid
+    || isolation.safetyPlan.profile !== "pi_host_isolated_files_v1" || isolation.safetyPlan.digest === null) {
     blockers.push("host_readiness.isolated_profile_invalid");
   }
   if (isolation.binding.status !== "current" || !isolation.binding.matchesCurrentFence) {
@@ -64,6 +65,9 @@ export function assessHostReadiness(value) {
   }
   if (isolation.round === null || isolation.round.phase !== "applied" || isolation.round.lastConfirmedPhase !== "applied") {
     blockers.push("host_readiness.isolation_round_not_applied");
+  }
+  if (isolation.apply.status !== "applied" || !isolation.apply.intentPresent) {
+    blockers.push("host_readiness.isolation_apply_not_confirmed");
   }
   blockers.push(...isolation.blockers.map(issue => `host_readiness.${issue}`));
 

@@ -135,6 +135,27 @@ test("readiness blocks a missing or incomplete isolation round", () => {
   }
 });
 
+test("readiness blocks an absent isolation safety plan", () => {
+  const candidate = clone(ready) as { isolation: { safetyPlan: { present: boolean } } };
+  candidate.isolation.safetyPlan.present = false;
+  const report = assessHostReadiness(candidate);
+  assert.equal(report.status, "blocked");
+  assert.ok(report.blockers.includes("host_readiness.isolated_profile_invalid"));
+});
+
+test("readiness requires a confirmed isolation apply operation", () => {
+  for (const mutate of [
+    (candidate: { isolation: { apply: { status: string } } }) => { candidate.isolation.apply.status = "failed"; },
+    (candidate: { isolation: { apply: { intentPresent: boolean } } }) => { candidate.isolation.apply.intentPresent = false; },
+  ]) {
+    const candidate = clone(ready) as { isolation: { apply: { status: string; intentPresent: boolean } } };
+    mutate(candidate);
+    const report = assessHostReadiness(candidate);
+    assert.equal(report.status, "blocked");
+    assert.ok(report.blockers.includes("host_readiness.isolation_apply_not_confirmed"));
+  }
+});
+
 test("readiness rejects missing Admission safety binding facts", () => {
   for (const mutate of [
     (candidate: { admission: { profile: string | null } }) => { candidate.admission.profile = null; },
