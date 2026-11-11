@@ -75,13 +75,15 @@ a requested package via `--if-present`.
 
 ## Test Lanes
 
-- Core: eight Linux shards, two serial file workers per shard. These jobs are
+- Core: eight Linux shards when selected without Daemon, six when both suites are
+  selected, with two serial file workers per shard. These jobs are
   included in the existing `unit-tests` matrix only when core is selected.
 - Other packages and Web checks: one Linux matrix entry only when at least one
   such package is selected, excluding core and daemon because their complete
   discovery runs in their own entries.
 - Daemon: [the platform manifest](daemon-test-platforms.json) assigns 491 portable
-  files to eight Linux shards with two workers, and 164 native/platform files to
+  files to eight Linux shards without Core or six alongside Core, with two workers,
+  and 164 native/platform files to
   four `macos-26` shards with three workers. The four macOS test jobs and separate
   native smoke total five macOS jobs; available concurrency is controlled by
   GitHub. Kimi Host read/terminal, delegation production-tool-surface, engine
@@ -93,6 +95,12 @@ a requested package via `--if-present`.
   mandatory lanes. The manifest's disjoint union must equal fresh daemon discovery;
   new, missing, duplicated or stale assignments fail before execution. Native
   source/fixture contract checks prevent silently moving Darwin cases to Linux.
+- Combined Core/Daemon plans use twelve Linux shards and four macOS shards.
+  Together with typecheck, the unsharded package job and both native contract jobs,
+  the product wave fits twenty runner slots and five macOS slots, the GitHub Free
+  [concurrency limits](https://docs.github.com/en/actions/reference/limits#job-concurrency-limits-for-github-hosted-runners).
+  Web smoke starts after the package job. Other workflows can still consume shared
+  organization capacity; shard counts do not guarantee immediate runner availability.
 - Production Web smoke: an independent required Linux job consumes the same
   `ci-dist` output as other tests. Browser installation and Playwright execution
   do not delay the shared build artifact. The aggregate requires this lane when
@@ -275,9 +283,10 @@ node scripts/ci/node-test-shard.mjs --suite=daemon --shard=0 --shard-count=4 --c
 ```
 
 On Linux, run the portable daemon suite with `node-test-shard.mjs --suite=daemon-linux`,
-`--shard-count=8`, and `--concurrency=2`, using the same plan and a distinct
+`--shard-count=6`, and `--concurrency=2`, using the combined plan above and a distinct
 `daemon-linux-<shard>.json` report path. Each command executes only its platform's
-assigned files; both suites are required for complete daemon CI coverage.
+assigned files; both suites are required for complete daemon CI coverage. A plan
+without Core uses eight Linux Daemon shards; runner arguments must match its plan.
 
 ## Secret Scans
 

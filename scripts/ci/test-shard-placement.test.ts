@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { discoverDaemonTestFiles } from "./daemon-test-shard.mjs";
-import { assertSuiteCoverage, assignTestShards, createTestPlan, discoverTestFiles, testSuites } from "./test-shard-plan.mjs";
+import { assertSuiteCoverage, assignTestShards, createTestPlan, discoverSuiteFiles, discoverTestFiles, testSuites } from "./test-shard-plan.mjs";
 
 test("shared and daemon discovery include TypeScript tests without treating helpers as tests", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "ling-test-discovery-"));
@@ -55,4 +55,21 @@ test("published plans apply exclusive cost without altering measured timing evid
   assert.equal(suite.shards.reduce((sum: number, shard: { weight: number }) => sum + shard.weight, 0), expectedCost);
   assert.deepEqual(suite.timings, durationsMs);
   assert.doesNotThrow(() => assertSuiteCoverage(suite, base.suites.daemon.files));
+});
+
+test("combined plans fit twenty runner slots while preserving isolated suite parallelism", async () => {
+  for (const extra of [[], ["@ling-stack/web"], ["@ling-stack/api-client"]]) {
+    const plan = await createTestPlan(["@ling-stack/core", "@ling-stack/daemon", ...extra]);
+    // Typecheck and the Linux/macOS native contract jobs run alongside the matrices.
+    const siblingJobs = 3;
+    assert.ok(plan.unitMatrix.include.length + plan.daemonMatrix.include.length + siblingJobs <= 20);
+    assert.equal(plan.daemonMatrix.include.filter(entry => entry.runner === "macos-26").length + 1, 5);
+    for (const [name, config] of Object.entries(testSuites)) {
+      const discovered = await discoverSuiteFiles(config);
+      assert.doesNotThrow(() => assertSuiteCoverage(plan.suites[name], discovered));
+    }
+  }
+  assert.equal((await createTestPlan(["@ling-stack/core"])).unitMatrix.include.length, 8);
+  const daemon = await createTestPlan(["@ling-stack/daemon"]);
+  assert.equal(daemon.daemonMatrix.include.filter(entry => entry.suite === "daemon-linux").length, 8);
 });

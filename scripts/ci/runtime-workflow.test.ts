@@ -31,7 +31,7 @@ test("all core matrix jobs are part of the existing mandatory unit gate", () => 
   assert.match(source, /matrix: \$\{\{ fromJSON\(needs\.scope\.outputs\.unit-matrix\) \}\}/u);
   assert.match(source, /fail-fast: false/u);
   assert.match(source, /node-test-shard\.mjs --suite=core/u);
-  assert.match(source, /--shard=\$\{\{ matrix\.shard \}\} --shard-count=8 --concurrency=2/u);
+  assert.match(source, /--shard=\$\{\{ matrix\.shard \}\} --shard-count=\$\{\{ matrix\.shardCount \}\} --concurrency=\$\{\{ matrix\.concurrency \}\}/u);
   assert.match(source, /timeout-minutes: 35/u);
   assert.match(source, /--shard-timeout-ms=1800000/u);
   assert.match(source, /--exclude='\["@ling-stack\/daemon","@ling-stack\/core"\]'/u);

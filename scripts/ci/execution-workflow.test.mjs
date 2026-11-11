@@ -122,7 +122,7 @@ test("workflow transformations keep daemon test-only work outside the unit matri
 test("workflow transformations select the eight core shards for core test-only work", { timeout: 90_000 }, async () => {
   await assertScopeOutputs(classifyChangedFiles({ files: ["packages/core/test/example.test.ts"] }), {
     mode: "affected", packages: ["@ling-stack/core"], daemon: false, web: false,
-    matrix: Array.from({ length: 8 }, (_, shard) => ({ suite: "core", shard })),
+    matrix: Array.from({ length: 8 }, (_, shard) => ({ suite: "core", shard, shardCount: 8, concurrency: 2 })),
   });
 });
 
@@ -151,7 +151,8 @@ test("workflow transformations require every lane for a bounded full package gra
   }));
   await assertScopeOutputs(classifyChangedFiles({ files: ["package.json"], packageEntries }), {
     mode: "full", packages, dependency: true, assurance: true, daemon: true, web: true,
-    matrix: [{ suite: "packages", shard: 0 }, ...Array.from({ length: 8 }, (_, shard) => ({ suite: "core", shard }))],
+    matrix: [{ suite: "packages", shard: 0 },
+      ...Array.from({ length: 6 }, (_, shard) => ({ suite: "core", shard, shardCount: 6, concurrency: 2 }))],
   });
 });
 
