@@ -43,6 +43,14 @@ export class DesktopThemePackageRepositoryAdapter implements ThemePackageReposit
     return themePackageRepositorySuccess(Object.freeze({
       descriptor,
       ...(licenseText !== undefined ? { licenseText } : {}),
+      ...(result.value.launchAnimationBytes && descriptor.launchAnimation
+        ? {
+          launchAnimation: Object.freeze({
+            ...descriptor.launchAnimation,
+            blob: new Blob([copyArrayBuffer(result.value.launchAnimationBytes)], { type: descriptor.launchAnimation.mimeType }),
+          }),
+        }
+        : {}),
       ...(previewBytes && descriptor.preview
         ? {
           preview: Object.freeze({

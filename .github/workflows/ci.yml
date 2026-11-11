@@ -34,6 +34,7 @@ jobs:
       dependency-policy: ${{ steps.classify.outputs.dependency-policy }}
       typecheck-selected: ${{ steps.classify.outputs.typecheck-selected }}
       unit-matrix: ${{ steps.test-plan.outputs.unit-matrix }}
+      daemon-matrix: ${{ steps.test-plan.outputs.daemon-matrix }}
       unit-selected: ${{ steps.test-plan.outputs.unit-selected }}
       daemon: ${{ steps.classify.outputs.daemon }}
       web: ${{ steps.classify.outputs.web }}
@@ -115,6 +116,11 @@ jobs:
           UNIT_MATRIX="$unit_matrix" node --input-type=module <<'NODE' >> "$GITHUB_OUTPUT"
           const matrix = JSON.parse(process.env.UNIT_MATRIX);
           console.log(`unit-selected=${matrix.include.length > 0}`);
+          NODE
+          node --input-type=module <<'NODE' >> "$GITHUB_OUTPUT"
+          import { readFileSync } from "node:fs";
+          const plan = JSON.parse(readFileSync(".codex-artifacts/ci/test-plan.json", "utf8"));
+          console.log(`daemon-matrix=${JSON.stringify(plan.daemonMatrix)}`);
           NODE
 
       - name: Publish the immutable test plan for every shard
@@ -340,13 +346,60 @@ jobs:
         working-directory: packages/cli
         run: node --test test/daemon-lifecycle.test.mjs
 
+      - name: Upload reusable build outputs
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ci-dist
+          if-no-files-found: error
+          retention-days: 1
+          path: |
+            packages/*/dist/**
+            apps/web/dist/**
+            apps/chrome-extension/dist/**
+
+  web-smoke:
+    name: Production Web smoke on Linux
+    needs: [scope, build]
+    if: ${{ !cancelled() && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.web == 'true' && needs.build.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository without retained credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+        with:
+          version: 10.0.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22.22.1
+          cache: pnpm
+
+      - name: Install locked dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Download reusable build outputs
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: ci-dist
+          path: .
+
       - name: Install browser for production Web smoke
-        if: needs.scope.outputs.web == 'true'
         working-directory: apps/web
         run: corepack pnpm exec playwright install --with-deps chromium --only-shell
 
       - name: Check production Web QA regressions on Linux
-        if: needs.scope.outputs.web == 'true'
         working-directory: apps/web
         env:
           LING_PLAYWRIGHT_PREVIEW: "1"
@@ -360,24 +413,13 @@ jobs:
           --reporter=line
 
       - name: Preserve Linux production Web smoke evidence
-        if: always() && needs.scope.outputs.web == 'true'
+        if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: ci-linux-source-web-smoke
           if-no-files-found: error
           retention-days: 7
           path: apps/web/test-results/**
-
-      - name: Upload reusable build outputs
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: ci-dist
-          if-no-files-found: error
-          retention-days: 1
-          path: |
-            packages/*/dist/**
-            apps/web/dist/**
-            apps/chrome-extension/dist/**
 
   typecheck:
     name: Typecheck selected packages
@@ -484,7 +526,7 @@ jobs:
         if: matrix.suite == 'core'
         run: >-
           node scripts/ci/node-test-shard.mjs --suite=core
-          --shard=${{ matrix.shard }} --shard-count=4 --concurrency=2
+          --shard=${{ matrix.shard }} --shard-count=8 --concurrency=2
           --shard-timeout-ms=1800000
           --plan=.codex-artifacts/ci/test-plan.json
           --report=.codex-artifacts/ci/reports/core-${{ matrix.shard }}.json
@@ -508,18 +550,16 @@ jobs:
         run: corepack pnpm --filter @ling-stack/web check:i18n
 
   daemon-tests:
-    name: Daemon tests (shard ${{ matrix.shard }})
+    name: Daemon tests (${{ matrix.suite }}, shard ${{ matrix.shard }})
     needs: [scope, build]
     if: ${{ !cancelled() && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.daemon == 'true' && needs.build.result == 'success' }}
-    # Full discovery is unchanged: original Darwin-only positive cases must
-    # execute on the real Host, not skip or weaken the production platform gate.
-    runs-on: macos-26
+    # The platform manifest retains Darwin positives on the real Host.
+    runs-on: ${{ matrix.runner }}
     # File/shard watchdogs report failures before this final infrastructure cap.
     timeout-minutes: 40
     strategy:
       fail-fast: false
-      matrix:
-        shard: [0, 1, 2, 3, 4, 5]
+      matrix: ${{ fromJSON(needs.scope.outputs.daemon-matrix) }}
     steps:
       - name: Check out repository without retained credentials
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -560,36 +600,42 @@ jobs:
 
       # ci-dist comes from Ubuntu; native codecs must be rebuilt on this macOS host.
       - name: Build the host image codec
+        if: matrix.runner == 'macos-26'
         env:
           RUSTUP_TOOLCHAIN: 1.97.1
         run: |
           rustup toolchain install 1.97.1 --profile minimal
           corepack pnpm --filter @ling-stack/daemon build:image-sanitizer
 
+      - name: Restore the Linux codec executable permission after artifact extraction
+        if: matrix.runner == 'ubuntu-latest'
+        run: chmod +x packages/daemon/dist/native/image-sanitizer/ling-image-sanitizer
+
       - name: Run isolated daemon shard
         # Every file owns its home/workspace and process group. Short native
         # lifecycle fixtures still finish exclusively before parallel workers.
         run: >-
-          node scripts/ci/daemon-test-shard.mjs --shard=${{ matrix.shard }} --shard-count=6 --concurrency=2
+          node scripts/ci/node-test-shard.mjs --suite=${{ matrix.suite }}
+          --shard=${{ matrix.shard }} --shard-count=${{ matrix.shardCount }} --concurrency=${{ matrix.concurrency }}
           --plan=.codex-artifacts/ci/test-plan.json
-          --report=.codex-artifacts/ci/reports/daemon-${{ matrix.shard }}.json
+          --report=.codex-artifacts/ci/reports/${{ matrix.suite }}-${{ matrix.shard }}.json
 
       - name: Preserve daemon file timings and failure logs
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
-          name: ci-test-report-daemon-${{ matrix.shard }}
+          name: ci-test-report-${{ matrix.suite }}-${{ matrix.shard }}
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
           path: .codex-artifacts/ci/reports/**
 
       - name: Collect fixed OS bootstrap source for review only
-        if: always()
+        if: always() && matrix.runner == 'macos-26'
         run: node scripts/ci/macos-bootstrap-diagnostic.mjs > "${{ runner.temp }}/macos-bootstrap-diagnostic.json"
 
       - name: Preserve bootstrap observation without granting profile support
-        if: always()
+        if: always() && matrix.runner == 'macos-26'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: ci-macos-bootstrap-shard-${{ matrix.shard }}
@@ -743,7 +789,7 @@ jobs:
 
   quality:
     name: Typecheck, unit tests, and Web build
-    needs: [scope, common-fast, dependency-policy, framework-assurance, build, typecheck, unit-tests, daemon-tests, daemon-linux-contracts, restricted-command-macos]
+    needs: [scope, common-fast, dependency-policy, framework-assurance, build, typecheck, unit-tests, daemon-tests, daemon-linux-contracts, restricted-command-macos, web-smoke]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -771,9 +817,11 @@ jobs:
           TYPECHECK_RESULT: ${{ needs.typecheck.result }}
           UNIT_RESULT: ${{ needs.unit-tests.result }}
           DAEMON_RESULT: ${{ needs.daemon-tests.result }}
+          WEB_SMOKE_RESULT: ${{ needs.web-smoke.result }}
           LINUX_CONTRACT_RESULT: ${{ needs.daemon-linux-contracts.result }}
           MACOS_NATIVE_RESULT: ${{ needs.restricted-command-macos.result }}
           DAEMON_SELECTED: ${{ needs.scope.outputs.daemon }}
+          WEB_SELECTED: ${{ needs.scope.outputs.web }}
           DEPENDENCY_SELECTED: ${{ needs.scope.outputs.dependency-policy }}
           TYPECHECK_SELECTED: ${{ needs.scope.outputs.typecheck-selected }}
           UNIT_SELECTED: ${{ needs.scope.outputs.unit-selected }}

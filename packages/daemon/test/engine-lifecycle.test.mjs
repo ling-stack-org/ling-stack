@@ -111,7 +111,6 @@ echo "2.1.311 (Claude Code)"
   const info = await stat(result.executablePath);
   assert.ok(info.isFile());
   const probe = spawn(result.executablePath, [], { stdio: ["ignore", "pipe", "ignore"] });
-  probe.stdout.once("data", () => undefined);
   const output = [];
   probe.stdout.on("data", (chunk) => output.push(chunk));
   const [code] = await once(probe, "exit");
