@@ -63,6 +63,14 @@ export function assessHostReadiness(value) {
     blockers.push("host_readiness.budget_dimensions_not_consistent");
   }
   if (budget.issues.length > 0) blockers.push("host_readiness.budget_issues_present");
+  if (budget.status === "not_applicable" && (
+    budget.roots.length > 0 || budget.reservations.length > 0 || budget.charges.length > 0
+    || budget.issues.length > 0 || budget.blockers.length > 0
+    || budget.usage.tokens !== null || budget.usage.costMicros !== null
+    || budget.usage.tokenLimit !== null || budget.usage.costLimitMicros !== null
+  )) {
+    blockers.push("host_readiness.budget_not_applicable_has_facts");
+  }
   blockers.push(...budget.blockers.map(issue => `host_readiness.${issue}`));
 
   if (isolation.status !== "verified") blockers.push("host_readiness.isolation_not_verified");

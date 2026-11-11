@@ -233,6 +233,27 @@ test("readiness blocks budget issue records even when the aggregate is within", 
   assert.ok(report.blockers.includes("host_readiness.budget_issues_present"));
 });
 
+test("readiness rejects not-applicable budgets that retain accounting facts", () => {
+  const candidate = clone(ready) as {
+    budget: {
+      status: string;
+      roots: Array<unknown>;
+      usage: { tokenStatus: string; costStatus: string; tokens: number | null; costMicros: number | null;
+        tokenLimit: number | null; costLimitMicros: number | null };
+    };
+  };
+  candidate.budget.status = "not_applicable";
+  candidate.budget.usage.tokenStatus = "not_applicable";
+  candidate.budget.usage.costStatus = "not_applicable";
+  candidate.budget.usage.tokens = null;
+  candidate.budget.usage.costMicros = null;
+  candidate.budget.usage.tokenLimit = null;
+  candidate.budget.usage.costLimitMicros = null;
+  const report = assessHostReadiness(candidate);
+  assert.equal(report.status, "blocked");
+  assert.ok(report.blockers.includes("host_readiness.budget_not_applicable_has_facts"));
+});
+
 test("readiness blocks an admission safety plan that is absent or invalid", () => {
   for (const dimension of ["present", "valid"] as const) {
     const candidate = clone(ready) as {
