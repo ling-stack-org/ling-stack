@@ -68,6 +68,9 @@ export function assessHostReadiness(value) {
   blockers.push(...isolation.blockers.map(issue => `host_readiness.${issue}`));
 
   if (admission.status !== "verified") blockers.push("host_readiness.admission_not_verified");
+  if (!admission.safetyPlan.present || !admission.safetyPlan.valid) {
+    blockers.push("host_readiness.admission_safety_plan_invalid");
+  }
   if (admission.toolBroker.mode !== "enforce" || !admission.toolBroker.required || !admission.toolBroker.satisfies) {
     blockers.push("host_readiness.tool_broker_not_enforced");
   }

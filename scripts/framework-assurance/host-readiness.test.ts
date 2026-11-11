@@ -154,6 +154,18 @@ test("readiness rejects completion and budget roots mixed with another Run", () 
   assert.throws(() => assessHostReadiness(budget), code("host_readiness_lineage_mismatch"));
 });
 
+test("readiness blocks an admission safety plan that is absent or invalid", () => {
+  for (const dimension of ["present", "valid"] as const) {
+    const candidate = clone(ready) as {
+      admission: { safetyPlan: { present: boolean; valid: boolean } };
+    };
+    candidate.admission.safetyPlan[dimension] = false;
+    const report = assessHostReadiness(candidate);
+    assert.equal(report.status, "blocked");
+    assert.ok(report.blockers.includes("host_readiness.admission_safety_plan_invalid"));
+  }
+});
+
 test("client collection performs one read-only evidence call and never changes authorization", async () => {
   const calls: Array<{ runId: string; cwd: string }> = [];
   const report = await collectHostReadiness({
