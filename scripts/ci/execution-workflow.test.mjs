@@ -118,10 +118,10 @@ test("workflow transformations keep daemon test-only work outside the unit matri
 // protects: all core unit shards; fails_when: matrix or unit selector drops core;
 // why_new: executes matrix-to-selector heredoc against the real plan; seam=none;
 // no_claim=hosted GitHub scheduler not executed.
-test("workflow transformations select the eight core shards for core test-only work", { timeout: 90_000 }, async () => {
+test("workflow transformations select the four core shards for core test-only work", { timeout: 90_000 }, async () => {
   await assertScopeOutputs(classifyChangedFiles({ files: ["packages/core/test/example.test.ts"] }), {
     mode: "affected", packages: ["@ling-stack/core"], daemon: false, web: false,
-    matrix: Array.from({ length: 8 }, (_, shard) => ({ suite: "core", shard })),
+    matrix: Array.from({ length: 4 }, (_, shard) => ({ suite: "core", shard })),
   });
 });
 
@@ -150,7 +150,7 @@ test("workflow transformations require every lane for a bounded full package gra
   }));
   await assertScopeOutputs(classifyChangedFiles({ files: ["package.json"], packageEntries }), {
     mode: "full", packages, dependency: true, daemon: true, web: true,
-    matrix: [{ suite: "packages", shard: 0 }, ...Array.from({ length: 8 }, (_, shard) => ({ suite: "core", shard }))],
+    matrix: [{ suite: "packages", shard: 0 }, ...Array.from({ length: 4 }, (_, shard) => ({ suite: "core", shard }))],
   });
 });
 

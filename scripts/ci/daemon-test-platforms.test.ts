@@ -32,7 +32,7 @@ test("both daemon plans conserve full discovery and publish their actual platfor
   assert.equal(new Set(assigned).size, discovered.length);
   assert.deepEqual(assigned.sort(), discovered);
   for (const [suite, runner, count, concurrency] of [
-    ["daemon", "macos-26", 4, 3], ["daemon-linux", "ubuntu-latest", 8, 2],
+    ["daemon", "macos-26", 4, 3], ["daemon-linux", "ubuntu-latest", 5, 4],
   ] as const) {
     assert.deepEqual(plan.daemonMatrix.include.filter(entry => entry.suite === suite),
       Array.from({ length: count }, (_, shard) => ({ suite, runner, shard, shardCount: count, concurrency })));
@@ -46,7 +46,8 @@ test("real Darwin positive contracts retain their Host while portable Git transa
   const groups = await loadDaemonTestPlatforms(discovered);
   for (const name of ["platform-native-sandbox", "macos-native-command", "acp-kimi-host-read",
     "acp-kimi-host-terminal", "protected-host-staging", "workflow-conflict-recovery",
-    "host-text-write-runtime", "computer-use-producer"]) {
+    "host-text-write-runtime", "computer-use-producer", "channel-intents",
+    "external-workflow-request-worker-source"]) {
     assert.ok(groups.darwin.includes(`test/${name}.test.mjs`), name);
   }
   for (const name of ["workflow-merge-apply", "workflow-candidate-validation", "workflow-merge-approval",

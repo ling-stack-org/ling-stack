@@ -13,12 +13,12 @@ test("core and daemon plans preserve full discovery exactly once with dynamic co
     const plan = await createTestPlan(packages);
     assert.deepEqual(Object.keys(plan.suites), Object.keys(testSuites).filter(name => packages.includes(testSuites[name].packageName)));
     assert.deepEqual(plan.unitMatrix.include, packages.includes("@ling-stack/core")
-      ? Array.from({ length: 8 }, (_, shard) => ({ suite: "core", shard })) : []);
+      ? Array.from({ length: 4 }, (_, shard) => ({ suite: "core", shard })) : []);
     for (const [name, suite] of Object.entries(plan.suites)) {
       const discovered = await discoverSuiteFiles(testSuites[name]);
       assert.ok(discovered.length > 100);
       assert.doesNotThrow(() => assertSuiteCoverage(suite, discovered));
-      assert.equal(suite.shardCount, name === "daemon" ? 4 : 8);
+      assert.equal(suite.shardCount, name === "daemon-linux" ? 5 : 4);
     }
     if (plan.suites.daemon) assert.ok(!plan.suites.daemon.files.includes("test/dependency-security.test.mjs"));
   }
@@ -32,7 +32,7 @@ test("only selected unsharded packages create the packages job", async () => {
   }
   const mixed = await createTestPlan(["@ling-stack/web", "@ling-stack/core", "@ling-stack/daemon"]);
   assert.deepEqual(mixed.unitMatrix.include, [{ suite: "packages", shard: 0 },
-    ...Array.from({ length: 8 }, (_, shard) => ({ suite: "core", shard }))]);
+    ...Array.from({ length: 4 }, (_, shard) => ({ suite: "core", shard }))]);
 });
 
 test("split channel suites are discovered once with ordinary parallel workers and watchdogs", async () => {

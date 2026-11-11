@@ -35,7 +35,7 @@ does not select core/daemon test shards just because a build needs their outputs
 
 Dependency policy runs for dependency inputs and its own regression tests, not
 for every source/test edit. Typecheck and Linux unit jobs run only for nonempty
-selections. Core test-only changes have eight core entries and no empty packages job;
+selections. Core test-only changes have four core entries and no empty packages job;
 daemon-only test changes have no Linux unit entry. Daemon shards and Linux/macOS
 native contracts remain coupled to daemon selection. A source change can select
 additional consumers, so daemon source may still need the CLI unit entry.
@@ -65,13 +65,13 @@ a requested package via `--if-present`.
 
 ## Test Lanes
 
-- Core: eight Linux shards, two serial file workers per shard. These jobs are
+- Core: four Linux shards, four serial file workers per shard. These jobs are
   included in the existing `unit-tests` matrix only when core is selected.
 - Other packages and Web checks: one Linux matrix entry only when at least one
   such package is selected, excluding core and daemon because their complete
   discovery runs in their own entries.
-- Daemon: [the platform manifest](daemon-test-platforms.json) assigns 493 portable
-  files to eight Linux shards with two workers, and 161 native/platform files to
+- Daemon: [the platform manifest](daemon-test-platforms.json) assigns 491 portable
+  files to five Linux shards with four workers, and 163 native/platform files to
   four `macos-26` shards with three workers. The four macOS test jobs and separate
   native smoke total five macOS jobs; available concurrency is controlled by
   GitHub. Kimi Host read/terminal and delegation
@@ -142,6 +142,10 @@ back to source-size/category weights; invalid caches never reduce coverage.
 Daemon files additionally need an explicit platform-manifest assignment. The plan
 publishes its runner, shard count and worker count for both daemon suites. Linux
 and Darwin timings remain separate; macOS measurements are not Linux timing hints.
+The checked-in `test-timing-baseline.json` contains successful per-file timings
+from the last complete hosted observation for deterministic first placement; a
+new complete default-branch run may replace it only after report coverage is
+verified. Missing files still fall back to source-size/category weights.
 Measured timings influence both outer shards and inner worker placement, not
 test deadlines or platform selection.
 Outer placement counts exclusive files against all workers they occupy, so a
@@ -258,7 +262,7 @@ node scripts/ci/daemon-test-shard.mjs --shard=0 --shard-count=4 --concurrency=3 
 ```
 
 On Linux, run the portable daemon suite with `node-test-shard.mjs --suite=daemon-linux`,
-`--shard-count=8`, and `--concurrency=2`, using the same plan and a distinct
+`--shard-count=5`, and `--concurrency=4`, using the same plan and a distinct
 `daemon-linux-<shard>.json` report path. Each command executes only its platform's
 assigned files; both suites are required for complete daemon CI coverage.
 
