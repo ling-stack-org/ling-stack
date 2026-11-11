@@ -85,7 +85,8 @@ test("actual CLI authenticates resources before FD4 and service startup, with FD
   assert.equal(authorityReady, false, "FD4 must not masquerade as completed service/engine readiness");
   input.child.send("service-ready");
   assert.equal((await authority).pid, input.child.pid);
-  input.child.disconnect();
+  // The service stub has no listener handle and may exit after writing FD3.
+  if (input.child.connected) input.child.disconnect();
   assert.deepEqual(await input.exited, [0, null]);
   assert.equal(input.output().includes("x".repeat(43)), false);
 });
