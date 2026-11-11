@@ -61,6 +61,7 @@ import {
   type LocalServiceStatus,
   type LocalStackStatus,
 } from "./local/services.js";
+import { LING_DAEMON_PROTOCOL_VERSION, LING_PRODUCT_VERSION } from "@ling-stack/contracts";
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = "17891";
@@ -260,6 +261,13 @@ async function dispatch(parsed: ParsedGlobalArgs): Promise<number> {
 
   if (!command || command === "help") {
     printHelp();
+    return 0;
+  }
+
+  if (command === "version") {
+    if (rest.length > 0) throw new CliError(2, "bad_usage", "Usage: ling-stack version [--json]");
+    if (parsed.options.json) printJson({ productVersion: LING_PRODUCT_VERSION, daemonProtocolVersion: LING_DAEMON_PROTOCOL_VERSION });
+    else console.log(`Ling Stack ${LING_PRODUCT_VERSION} (daemon protocol ${LING_DAEMON_PROTOCOL_VERSION})`);
     return 0;
   }
 
@@ -7776,6 +7784,7 @@ function printHelp(): void {
   console.log(`Ling Stack CLI
 
 Usage:
+  ling-stack version [--json]
   ling restart
   ling status
   ling logs

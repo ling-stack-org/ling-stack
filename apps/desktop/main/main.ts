@@ -418,6 +418,7 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
           baseUrl: daemonBaseUrl,
           daemonEntryPath: resources.daemonEntryPath,
           defaultWorkspaceCwd,
+          expectedProductVersion: app.getVersion(),
           desktopBridgeToken: bridgeToken,
           browserHostPath: resources.browserHostPath,
           packaged: app.isPackaged,

@@ -98,3 +98,4 @@ export * from "./memory-derivatives.js";
 
 export * from "./memory-wiki.js";
 export * from "./deliverables.js";
+export * from "./product-version.js";
