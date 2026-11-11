@@ -110,6 +110,22 @@ test("client collection rejects evidence captured for a different Run", async ()
   }), code("host_readiness_lineage_mismatch"));
 });
 
+test("readiness blocks a missing or incomplete isolation round", () => {
+  const missing = clone(ready) as { isolation: { round: null } };
+  missing.isolation.round = null;
+  const missingReport = assessHostReadiness(missing);
+  assert.equal(missingReport.status, "blocked");
+  assert.ok(missingReport.blockers.includes("host_readiness.isolation_round_not_applied"));
+
+  for (const phase of ["awaiting_approval", "applying"] as const) {
+    const incomplete = clone(ready) as { isolation: { round: { phase: string; lastConfirmedPhase: string } } };
+    incomplete.isolation.round.phase = phase;
+    const incompleteReport = assessHostReadiness(incomplete);
+    assert.equal(incompleteReport.status, "blocked");
+    assert.ok(incompleteReport.blockers.includes("host_readiness.isolation_round_not_applied"));
+  }
+});
+
 test("client collection performs one read-only evidence call and never changes authorization", async () => {
   const calls: Array<{ runId: string; cwd: string }> = [];
   const report = await collectHostReadiness({

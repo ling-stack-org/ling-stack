@@ -58,6 +58,9 @@ export function assessHostReadiness(value) {
   if (isolation.binding.status !== "current" || !isolation.binding.matchesCurrentFence) {
     blockers.push("host_readiness.execution_binding_invalid");
   }
+  if (isolation.round === null || isolation.round.phase !== "applied" || isolation.round.lastConfirmedPhase !== "applied") {
+    blockers.push("host_readiness.isolation_round_not_applied");
+  }
   blockers.push(...isolation.blockers.map(issue => `host_readiness.${issue}`));
 
   if (admission.status !== "verified") blockers.push("host_readiness.admission_not_verified");
