@@ -255,11 +255,11 @@ assertions
 
 1. **lifecycle**：当前 Attempt、代次、旧 Attempt、所有 Attempt 的终态、local execution drain、effect settle 和可复用性。
 2. **completion**：根 Run、子步骤、完成状态、结果 artifact 摘要及原始 issue。
-3. **budget**：根预算、reservation、charge、token/cost 用量和 blocker；pending、unknown、over、missing、invalid 都保持阻断。
+3. **budget**：根预算、reservation、charge、token/cost 用量和 blocker；aggregate 与两个 usage dimension 必须一致，pending、unknown、over、missing、invalid 都保持阻断。
 4. **isolation**：`pi_host_isolated_files_v1` safety plan、execution binding、integration round、effect/receipt、branch result、candidate、approval 和 apply 摘要。
 5. **admission**：Host 重新计算的状态、profile、safety plan、Tool Broker 模式和当前 fence binding。
 
-跨域检查要求 lifecycle 当前 Attempt 与 execution 的 Attempt/runtime/fence/generation 一致；completion 和 budget 必须指向同一根 Run；admission 的 profile、safety plan digest 和 binding 状态必须与 isolation 一致。评估时还要求 Run、WorkUnit、当前 Attempt 终态，claim 为 `terminal_retained`，effect 已确认，lifecycle 已 drain 且可复用，completion 已满足或明确为 `not_applicable`，budget 在限额内或明确为 `not_applicable`，隔离 profile 和 binding 有效，Tool Broker 为 `enforce`。任一事实缺失或 blocker 存在都返回 `blocked`。
+跨域检查要求 lifecycle 当前 Attempt 与 execution 的 Attempt/runtime/fence/generation 一致，client 请求的 Run 也必须与 projection 的 `execution.runId` 一致；completion 和 budget 必须指向同一根 Run；admission 的 profile、safety plan digest 和 binding 状态必须与 isolation 一致。评估时还要求 Run、WorkUnit、当前 Attempt 终态，claim 为 `terminal_retained`，effect 已确认，lifecycle 已 drain 且可复用，completion 已满足或明确为 `not_applicable`，budget 的 aggregate 与 token/cost 两个维度必须分别为 `within` 或一致的 `not_applicable`，隔离 profile 和 binding 有效，Tool Broker 为 `enforce`。任一事实缺失或 blocker 存在都返回 `blocked`。
 
 报告只有 `ready-for-trial-review` 和 `blocked` 两个结果；两者都固定 `executionAuthorized: false`，并明确不包含 task input、claim token、resume handle、artifact body 或 evaluation grade。提交内的 `host-ready-shape.json` 仅是包含一次旧 Attempt 丢失、当前 Attempt 成功的合成形状，用于验证 parser、lineage、恢复痕迹、取消未确认和预算未知的 fail-closed 行为，不能作为真实 Host 或真实试点验收。
 

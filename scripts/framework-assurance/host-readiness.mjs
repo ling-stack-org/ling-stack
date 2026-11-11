@@ -45,6 +45,10 @@ export function assessHostReadiness(value) {
   }
   if (completion.issues.length > 0) blockers.push(...completion.issues.map(issue => `host_readiness.${issue.code}`));
   if (budget.status !== "within" && budget.status !== "not_applicable") blockers.push("host_readiness.budget_not_within");
+  const expectedDimensionStatus = budget.status === "not_applicable" ? "not_applicable" : "within";
+  if (budget.usage.tokenStatus !== expectedDimensionStatus || budget.usage.costStatus !== expectedDimensionStatus) {
+    blockers.push("host_readiness.budget_dimensions_not_consistent");
+  }
   blockers.push(...budget.blockers.map(issue => `host_readiness.${issue}`));
 
   if (isolation.status !== "verified") blockers.push("host_readiness.isolation_not_verified");
@@ -143,7 +147,9 @@ export async function collectHostReadiness({ client, cwd, runId } = {}) {
   "host_readiness_client_invalid", "A read-only assurance evidence client is required.");
   requireCondition(typeof cwd === "string" && cwd.length > 0, "host_readiness_query_invalid", "A workspace cwd is required.");
   identifier(runId, "Host readiness Run id");
-  const source = await client.getRunAssuranceEvidence(runId, cwd);
+  const source = parseHostReadinessEvidence(await client.getRunAssuranceEvidence(runId, cwd));
+  requireCondition(source.execution.runId === runId,
+    "host_readiness_lineage_mismatch", "Host readiness evidence does not match the requested Run.");
   return assessHostReadiness(source);
 }
 

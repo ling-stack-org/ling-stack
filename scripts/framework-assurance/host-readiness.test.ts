@@ -84,6 +84,32 @@ test("unknown budget and unconfirmed cancellation remain blocked without executi
   assert.ok(cancelledReport.blockers.includes("host_readiness.lifecycle_not_drained"));
 });
 
+test("readiness blocks budget dimensions that disagree with an otherwise usable aggregate", () => {
+  for (const [dimension, status] of [["tokenStatus", "unknown"], ["costStatus", "over"]] as const) {
+    const candidate = clone(ready) as {
+      budget: { usage: { tokenStatus: string; costStatus: string } };
+    };
+    candidate.budget.usage[dimension] = status;
+    const report = assessHostReadiness(candidate);
+    assert.equal(report.status, "blocked");
+    assert.ok(report.blockers.includes("host_readiness.budget_dimensions_not_consistent"));
+  }
+});
+
+test("client collection rejects evidence captured for a different Run", async () => {
+  const foreign = clone(ready) as {
+    execution: { runId: string };
+    budget: { roots: Array<{ runId: string }> };
+  };
+  foreign.execution.runId = "run-foreign-001";
+  foreign.budget.roots[0].runId = "run-foreign-001";
+  await assert.rejects(collectHostReadiness({
+    cwd: "/workspace/host-readiness",
+    runId: "run-host-ready-001",
+    client: { getRunAssuranceEvidence: async () => foreign },
+  }), code("host_readiness_lineage_mismatch"));
+});
+
 test("client collection performs one read-only evidence call and never changes authorization", async () => {
   const calls: Array<{ runId: string; cwd: string }> = [];
   const report = await collectHostReadiness({
