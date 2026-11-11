@@ -1,11 +1,11 @@
 # Ling 框架补强实现计划书
 
-Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A fixture evidence adapter and F4-01 read-only diagnostics report implemented on `codex/ling-f3-f4-readonly`; F3-B/F5 remain unimplemented
+Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A fixture evidence adapter, F4-01 read-only diagnostics report, and F3-B admission evidence projection implemented on `codex/ling-f3b-assurance-evidence`; F3-B real trial and F5 rerun remain blocked/unimplemented
 Owner: Ling framework maintainers; one integration owner per implementation batch
-Last verified: 2026-11-09
+Last verified: 2026-11-10
 Document type: implementation plan / acceptance checklist
 Canonical replacement: none; retain while material work remains unfinished
-Code and test anchors: sections 7 and 9; no live task or GUI acceptance claimed
+Code and test anchors: sections 7 and 9; live evidence is read-only and not assessed, with no real task or GUI acceptance claimed
 
 设计依据：[总体设计](ling-framework-complementary-design.md)、[详细设计](ling-framework-complementary-detailed-design.md)。
 
@@ -13,15 +13,15 @@ Code and test anchors: sections 7 and 9; no live task or GUI acceptance claimed
 
 按“离线评测与报告 + SDK 独立消费”先实施，再接真实执行和诊断。不要等待另一会话完成所有未来功能，也不要抢先改它正在拥有的安全并发、隔离执行、合并和恢复文件。
 
-用户确认开始后，F1/F2 已在独立工作区实现并合并到主线，合并提交为 `47afcc47b9063cd7a402a81cf1088caa695f3638`。本轮继续在 `codex/ling-f3-f4-readonly` 实现 F3-A fixture 证据适配和 F4-01 只读诊断报告；默认不产生付费模型请求，不启动服务、不修改共享数据库，不进入 F3-B/F5。实际证据见第 9 节。
+用户确认开始后，F1/F2 已在独立工作区实现并合并到主线，合并提交为 `47afcc47b9063cd7a402a81cf1088caa695f3638`。上一批在 `codex/ling-f3-f4-readonly` 完成 F3-A fixture 证据适配和 F4-01 只读诊断报告；当前在 `codex/ling-f3b-assurance-evidence` 基于 `origin/main@841dab4d` 补齐 F3-B 准入证据前置。默认不产生付费模型请求，不启动生产 daemon、不修改共享数据库，不开放真实 F3-B 试点。实际证据见第 9 节。
 
 | 里程碑 | 内容 | 当前状态 | 进入条件 |
 | --- | --- | --- | --- |
 | F0 | 三份设计与实施文档 | 已编写；文档检查通过 | 无代码执行依赖 |
 | F1 | 固定校准任务、预检、正反校准、离线报告 | 已实现；47 项离线/CLI 测试与实际校准通过 | 不构成真实代码任务验收 |
 | F2 | 真实包审计、仓外 consumer、支持矩阵 | 已实现；17 项边界测试及修复后的真实四包消费通过 | macOS arm64 本地及 Linux x64 托管分别有 19 组 runtime 与两个类型格；Windows SDK 未验证 |
-| F3-A | Run 证据适配与 fixture 回归 | 已实现 fixture 适配；未接真实 Host | F1 格式稳定、来源接口可核实 |
-| F3-B | 普通 Run 真实试点及后续并发对比 | 未开始，受准入约束 | 对应安全/隔离/恢复验收、可信验证、试点预算 |
+| F3-A | Run 证据适配与 fixture 回归 | fixture 适配及只读 Host 来源适配已实现；仍不代表真实评测通过 | F1 格式稳定、来源接口可核实 |
+| F3-B | 准入证据前置、普通 Run 真实试点及后续并发对比 | 准入证据前置已实现；真实试点仍 BLOCKED | 对应安全/隔离/恢复验收、可信验证、试点预算 |
 | F4 | 已有 Harness 诊断的只读消费 | F4-01 已实现分页报告；未改生产者 | F1 报告稳定、已有诊断合同可用 |
 | F5 | 节点重跑合同 | 仅文档设计 | 实现另立任务，本计划不增加 rerun 功能 |
 
@@ -168,7 +168,10 @@ Code and test anchors: sections 7 and 9; no live task or GUI acceptance claimed
 
 任一项不满足，只阻断受影响的真实执行阶段，F1/F2 可继续。F5 仅对详细设计 A17 做合同检查，不进入代码实施。
 
-2026-11-09 的只读准入审计基于 `origin/main@0e56b76b`，结论为 `F3-B BLOCKED`；完整证据、八项核查和解阻顺序见[准入审计报告](../testing/f3b-admission-audit-2026-11-09.md)。
+2026-11-09 的只读准入审计基于旧主线快照，结论为 `F3-B BLOCKED`；2026-11-10 的增量审计基于
+`origin/main@841dab4d`，确认准入证据前置已实现，但真实试点仍为 `F3-B BLOCKED`。完整证据、
+八项核查和解阻顺序见[2026-11-10 准入审计增量](../testing/f3b-admission-audit-2026-11-10.md)，
+旧快照记录见[2026-11-09 准入审计](../testing/f3b-admission-audit-2026-11-09.md)。
 
 ## 6. PR 与集成顺序
 
@@ -296,7 +299,7 @@ corepack pnpm --filter @ling-stack/daemon exec node --test --test-concurrency=1 
 | 已合并 | 合并 commit，不以批准或 CI 通过代替 |
 | 已启用/发布 | 实际环境与版本；未发布时明确未发布 |
 
-F1/F2、F3-A fixture 适配和 F4-01 只读报告是独立交付；它们不等于 F3-B 真实执行或 F5 已完成。F5 即使文档通过评审，也不能列成“支持节点重跑”。
+F1/F2、F3-A fixture 适配、F4-01 只读报告和 F3-B 准入证据前置是分层交付；它们不等于 F3-B 真实执行或 F5 已完成。F5 即使文档通过评审，也不能列成“支持节点重跑”。
 
 ### 本批实施记录（2026-11-02）
 
@@ -453,3 +456,20 @@ Common checks 的失败已定位到全历史 Gitleaks：1438 个提交、3833874
 | 组合入口 | `readHarnessDiagnosticsReportFromClient` 将 `LingDaemonClient.getWorkUnitHarnessDiagnostics` 接入既有只读分页报告适配器 |
 | 真实客户端回归 | `packages/api-client/test/harness-diagnostics.test.mjs` 使用真实 `LingDaemonClient`，验证 GET、cwd/WorkUnit scope、分页参数、无 body 和不携带 Computer Use token |
 | 生产范围 | 未改 daemon、Store、诊断 endpoint、数据库、UI 或执行入口；未启动真实 Run、Provider、模型或付费任务 |
+
+### F3-B 准入证据前置增量（2026-11-10）
+
+| 项目 | 已确认结果 |
+| --- | --- |
+| 实施基线 | `codex/ling-f3b-assurance-evidence`，基于 `origin/main@841dab4d`；代码尚未合并，PR review/CI/merge 仍是前置条件 |
+| Daemon 只读入口 | `GET /runs/:id/assurance-evidence`；只读取已初始化 Store，不创建 Store、不触发 recovery、不派发 Run |
+| 证据内容 | Run/WorkUnit/Attempt/fence、snapshot/artifact digest、生命周期停止、delegation completion、预算 reservation/charge、isolated binding、integration round、effect/receipt、branch result、candidate、approval、apply 和 fail-closed admission |
+| 准入归属门禁 | Run、WorkUnit、当前 Attempt 仅接受 succeeded/failed/cancelled 且当前 claim 为 terminal_retained；lost claim 固定 expired，聚合停止完成不能替代当前执行归属 |
+| 客户端接入 | `collectLiveExecutionEvidence()` 通过 `LingDaemonClient` 读取投影，与冻结任务输入关联；结果为 `live_execution` / `not_assessed`，不自动判 pass |
+| 候选结果归属 | candidate 分支摘要与全部参与者结果按数量精确匹配，保留重复次数、不依赖顺序、不修改输入；缺失、多余、未封存或空集合均阻断 |
+| 相关回归 | framework-assurance 全套 98/98；2026-11-11 Node 22 复验 Daemon 证据/API/隔离/预算/准入/解析回归 84/84，含摘要重复数量的三项修复前失败、当前执行归属门禁、lost claim 的真实 SQLite route、损坏 artifact 的错误消息隔离和摘要字段类型边界；API client 全套 139/139；Contracts/API client/Daemon 构建与类型检查通过 |
+| 冲突恢复夹具 | 手工 Host 回调在审批消费期间持有既有 post-commit owner claim，原回调成功且 owner 证据验证后才结算；强制后台扫描的 TypeScript 回归先复现 `tool.stale_attempt`，修正后与原七项冲突恢复回归共 8/8 通过，平台登记/CI 合同 29/29 通过 |
+| 隔离交付同步 | SDK/Host 交付夹具先等待既有 isolation lifecycle drain，再等待后台生成 merge approval；保留原超时与全部审批、产物、单次 apply 和重开只读断言。交付端到端及生命周期回归 13/13 通过 |
+| 锁屏时间边界 | 部分 heartbeat 间隔内解锁的 HTTP 回归使用受控 monotonic 时钟和原生 MockTimers，等待真实 gate/runner 边界；保持 80ms hard budget、60ms 锁屏和 50ms runner。Node 22 的锁屏与 supervision 回归 10/10，错误计入锁屏时间的临时反例确定失败，CI 平台/工作流合同 22/22 |
+| 运行边界 | 只运行临时 SQLite/Git/HTTP fixture；未启动真实 Provider、模型、生产 daemon 或付费任务，不开放普通 workflow 写并发 |
+| 当前未完成 | 真实 Provider/评测关联、生产 daemon 重启与权限撤销、packaged/跨平台、独立资源预算和合并后同 SHA 复验；F3-B 真实试点保持 BLOCKED |
