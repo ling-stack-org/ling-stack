@@ -136,9 +136,11 @@ Code and test anchors: sections 7 and 9; live evidence is read-only and not asse
 ### F3-02 单任务串行真实验收
 
 - **输入**：F3-01、正常执行入口、可信验证器，以及准入清单。
-- **实施**：先做 T01 只读任务，随后仅对已具备隔离验收的写任务做 T02/T03；真实任务、验证与 grader 分别记录调用与费用。
+- **实施**：先做 T01 只读任务，随后仅对已具备隔离验收的写任务做 T02/T03；真实任务、验证与 grader 分别记录调用与费用。当前已先交付 `trial-preflight`：它只接受可信绑定的提交内 T01 manifest，核对 suite/task/source/input 摘要，冻结 Provider/model、金额/币种、Provider 请求、token、工具循环、子代理、grader、在途 reservation 和未知状态停止规则，并检查 checkout 外的 `LING_STACK_HOME`、workspace、输出目录、loopback 端口及 CPU/内存/磁盘余量。
 - **验收**：A13/A14；完整链条不是用合成日志替代。包含一次失败/缺证据和一次取消未确认停止的处理证据，不人为强制所有任务通过。
-- **限制**：默认不进入日常付费 CI。预算、Provider 与请求上限没有明确前，不运行模型。
+- **限制**：默认不进入日常付费 CI。预算、Provider 与请求上限没有明确前，不运行模型。`trial-preflight` 只返回 `blocked` / `ready-for-review`，始终 `executionAuthorized=false`，不启动 Provider、模型、daemon、Store 或真实任务；资源与端口在真正启动前仍须重查。
+
+**F3-02 前置交付状态（2026-11-12）**：`scripts/framework-assurance/trial-preflight.mjs`、`fixtures/framework-assurance/trials/t01-review.json` 和 `trial-preflight.test.ts` 已实现。测试覆盖冻结摘要漂移、可信 manifest 路径和字节绑定、符号链接、非空目录、目录根 symlink 逃逸、错误 `LING_STACK_HOME`、端口冲突、资源不足、checkout 内资源根、隐式 Provider 和执行授权字段；新测试 `9/9`，assurance 全套（含新 TypeScript 测试）`107/107`，`tsc -p scripts/ci/tsconfig.test.json --noEmit` 通过。该状态只关闭 F3-02 的离线前置缺口，不关闭 A13/A14 或 F3-B 真实试点准入。
 
 ### F3-03 并发对比及写入结果验收
 
@@ -494,3 +496,15 @@ Common checks 的失败已定位到全历史 Gitleaks：1438 个提交、3833874
 | 集成验证 | 合并后 Node 22 Daemon assurance 相关回归 182/182、API client 7/7、离线 assurance 98/98；Contracts/API client/Daemon 构建和 Daemon 源码/测试类型检查通过；托管门禁最终 30 项成功 |
 | 权限边界 | 固定 `not_assessed` / `enforcementAuthorized:false`；Attempt/artifact 归属始终 unavailable，不将 caller mapping 或 grade pass 当真实执行验收 |
 | 尚待完成 | 真实 Producer/计费、Attempt 产物归属、packaged/跨平台和受控试点验收继续独立保留；F3-B 仍 BLOCKED |
+
+### F3-02 试点前置预检（2026-11-12）
+
+| 项目 | 已确认结果 |
+| --- | --- |
+| 代码 | `scripts/framework-assurance/trial-preflight.mjs` 增加严格 trial manifest 解析、冻结 T01 输入核对、外置资源与端口预检、容量检查和脱敏 JSON/Markdown 报告；`index.mjs` 增加 `trial-preflight` 子命令 |
+| 冻结输入 | `fixtures/framework-assurance/trials/t01-review.json` 固定 suite/task/source、七组输入摘要、review-only Provider/model 标识、金额/币种、Provider 请求/token/工具循环/子代理/grader/在途 reservation 上限和 fail-closed 停止规则 |
+| 资源边界 | 只接受 checkout 外的绝对 resource root；逐级拒绝符号链接和文件冲突，已有目录必须为空，三类目录不可重叠；`LING_STACK_HOME` 必须与计划路径一致；daemon/UI 只能是不同 loopback 端口 |
+| 余量检查 | 读取 `availableParallelism`、free memory、free disk 和 load-1；资源根缺失、测量失败、端口占用或低于最低值均为 `blocked` |
+| 授权边界 | `ready-for-review` 仍固定 `executionAuthorized=false`，Provider/模型/Run/Store/daemon/任务调用计数为零；端口探针绑定后立即释放，执行前必须再次检查 |
+| 回归 | `node --test scripts/framework-assurance/*.test.mjs scripts/framework-assurance/*.test.ts`：107/107；新边界测试 9/9；`corepack pnpm exec tsc -p scripts/ci/tsconfig.test.json --noEmit` 通过；CI assurance lane 已纳入 TypeScript 测试发现 |
+| 尚待完成 | 真实 Host lifecycle、Provider/evaluation/费用账本、重启/取消/授权撤销、跨平台 packaged 和 A13/A14 试点验收仍未完成；F3-B 继续 BLOCKED |

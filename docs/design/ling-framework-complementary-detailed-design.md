@@ -1,6 +1,6 @@
 # Ling 框架补强详细设计
 
-Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A/F4-01 and F3-B read-only admission evidence are on main; root Run budget projection repair and exact Run/evaluation association are merged in PR #685/#684 (`9af7ad54`); F3-B real trial and F5 rerun remain blocked/design contracts
+Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A/F4-01 and F3-B read-only admission evidence are on main; root Run budget projection repair and exact Run/evaluation association are merged in PR #685/#684 (`9af7ad54`); F3-02 review-only trial preflight is implemented; F3-B real trial and F5 rerun remain blocked/design contracts
 Owner: Ling framework maintainers; evaluation and SDK implementation owners
 Last verified: 2026-11-12
 Document type: reference / technical design
@@ -34,6 +34,7 @@ scripts/framework-assurance/
   evidence.mjs             # 离线观察格式
   execution-evidence.mjs   # F3-A fixture 与 F3-B live evidence 适配
   diagnostics.mjs          # F4-01 只读诊断分页报告
+  trial-preflight.mjs      # F3-02 trial manifest 与外置资源准入预检
   report.mjs               # JSON/Markdown 报告与可比性检查
   output.mjs               # 外部目录校验与不覆盖式原子发布
   sdk-consumer.mjs         # producer 产物审计、仓外消费
@@ -44,6 +45,7 @@ fixtures/framework-assurance/
   controls/                # 已知正确、错误、缺证据的合成输入
   sdk-consumer/            # 仓外消费者模板；不是 workspace 包
   execution-evidence/      # F3-A 的 Run/WorkUnit/Attempt fixture
+  trials/                  # F3-02 review-only trial manifest
 ```
 
 F1/F2 路径均已实现，F2 经统一 CLI 入口调用独立 consumer 模块。没有为了脚本便利新增 Core 公共出口或复制 grader。输出默认写入新临时根，显式 `--output` 必须在实施 checkout 外，并在创建目录前检查词法路径与最近已存在祖先的真实位置，拒绝 `.git`、`.ling-stack`、`node_modules` 及符号链接解析后落入上述位置的目录。不提交真实日志、用户数据库、tarball 或模型输出。
@@ -53,9 +55,10 @@ F1/F2 路径均已实现，F2 经统一 CLI 入口调用独立 consumer 模块�
 | `preflight` | suite 路径 / 预检 JSON | 解析、摘要、路径、引用与工具链声明检查 | 派发 Run、执行任务命令、创建 Store |
 | `calibrate` | 已预检 suite / 校准 JSON | 通过已有确定性 grader 检验合成正反控制 | 执行候选代码、调用 Provider |
 | `report` | 已验证的观察文件 / JSON 与 Markdown | 校验来源、汇总、比较与脱敏 | 自动补跑失败任务、猜测缺失费用 |
+| `trial-preflight` | trial manifest、外置资源根 / JSON 与 Markdown | 冻结 T01 输入、预算、停止规则、安全 profile，检查目录、端口和资源余量 | 派发 Run、创建 Store、启动 Provider、模型、daemon 或授予执行权限 |
 | `sdk-consumer` | 当前 producer 输入 / 消费报告 | 在实施工作区串行构建，在隔离临时目录打包、安装本地包、运行固定测试 | 根目录安装、源码 fallback、启动真实 daemon |
 
-CLI 入口为 `node scripts/framework-assurance/index.mjs <command>`。`preflight/calibrate` 接受 `--suite`（相对 fixture 根）；`report` 必须指定 `--input`，可加 `--compare` 和唯一变量 `--variable model|executionStrategy`；各命令可用 `--output`。根脚本有 `assurance:offline`、`assurance:sdk`、`test:assurance`。F3 不得在这里增加绕过 Host 的 `run-shell` 或隐式付费模式。
+CLI 入口为 `node scripts/framework-assurance/index.mjs <command>`。`preflight/calibrate` 接受 `--suite`（相对 fixture 根）；`trial-preflight` 接受 `--trial`（相对 fixture 根）和 checkout 外的绝对 `--resource-root`；`report` 必须指定 `--input`，可加 `--compare` 和唯一变量 `--variable model|executionStrategy`；各命令可用 `--output`。根脚本有 `assurance:offline`、`assurance:sdk`、`test:assurance`。F3 不得在这里增加绕过 Host 的 `run-shell` 或隐式付费模式。
 
 退出码：`0` 表示本命令成功，`1` 表示校准或消费验收失败，`2` 表示输入、环境或前置条件不满足。`report` 成功生成含失败或不可比样本的报告仍返回 `0`；报告生成成功与被测对象成功分开。离线进程测试封锁网络、任务子进程和 SQLite 加载，仅允许读取源码的 `git cat-file blob`。
 
@@ -224,6 +227,22 @@ assertions
 - 未知内部异常统一返回固定不可用消息；仅公开定义的 lineage/证据错误保留其消息。客户端的 fingerprint 和 digest 正则校验先检查字符串类型，拒绝数组及数值的隐式转换。
 
 该接入已在临时 SQLite/Git/HTTP fixture 上验证 endpoint、生命周期、预算、隔离、candidate/approval/apply 和敏感字段边界；它不等于真实 Provider、生产 daemon、packaged、跨平台或完整 evaluation 验收。
+
+### 5.5.1 F3-02 trial manifest 与资源预检
+
+`trial-preflight` 是 F3-02 的离线前置步骤。它只生成 `blocked` 或 `ready-for-review` 报告，两个状态都固定
+`executionAuthorized: false`。`ready-for-review` 表示输入和本机资源边界可供人工审查，不表示可以启动真实试点。
+
+提交的 `fixtures/framework-assurance/trials/t01-review.json` 固定以下内容；预检还把该文件的提交内相对路径和自身字节摘要固定在可信工具代码中，当前只允许这份 T01 manifest 进入 F3-02：
+
+- suite、T01 task identity、source commit，以及 suite/task/prompt/rule/baseline/profile/lock 的原始字节摘要；预检复用既有 `preflight`，重新读取并核对这些摘要，不能用当前会话输入替换冻结内容。
+- 明确的 Provider/model 标识、金额和币种、Provider 请求数、输入/输出 token、工具循环、子代理、grader、在途 reservation 和总超时上限。预算字段只是试点输入，不产生扣费或 reservation。
+- `unknownUsage=stop`、`unknownEffect=stop`、未确认取消 `block`、超预算 `stop`、未知状态后禁止重试；安全 profile 固定为 `pi_host_isolated_files_v1`、Tool Broker `enforce`、无网络、无 shell、需要 fence/terminal claim/确认停止。
+- 三个相互独立的相对目录角色：`LING_STACK_HOME`、workspace 和 trial output；资源根由命令行传入的 checkout 外绝对路径提供。资源根先对真实父级路径做 canonicalize，再检查是否落入 checkout；根、每级目录和叶目录拒绝符号链接、文件冲突、保留目录名和目录重叠；已有目录只能为空。
+- daemon/UI 两个不同的 loopback 端口。预检可以短暂绑定端口确认占用并立即关闭探针，不启动任何服务；端口可被其他进程抢占，因此后续执行器仍必须在启动前重查。
+- `availableParallelism`、free memory、free disk 和 load-1 与 manifest 最低值比较。不能取得资源根或测量失败时直接阻断。
+
+报告只保留路径摘要、端口状态、资源观测、冻结输入摘要、预算和检查码，不写绝对路径、prompt、claim token、resume handle 或 artifact 正文。`externalProviderCalls`、`ordinaryRunsDispatched`、`userStoresInitialized` 和 `taskCodeExecuted` 固定为零/false。预检结束后目录和端口可能被外部状态改变，因此它是准入证据准备，不是执行授权或完整 A13/A14 验收。
 
 ### 5.6 指定 evaluation 的只读关联
 
@@ -484,5 +503,5 @@ collector 的观察结果与原始响应分别复制，修改一侧不会同步�
 - Client：`packages/api-client/test/client.test.mjs`、`computer-use.test.mjs`、`transport-origin.regression-1.test.mjs`；Web SSE 解码代码位于 `apps/web/src/sse.ts`，不等于 api-client 公共 decoder。
 - 现有构建/测试调度：`scripts/ci/run-packages.mjs`；实施时按同一基线先构建再测试，不重复使用来源不明的 dist。
 - macOS native boundary：`packages/daemon/src/runtime/sandbox/native-process-launch.ts` 与 `packages/daemon/test/native-process-boundary.test.mjs`；私有状态规则、合法 workspace 写入、Kimi metadata、relay 和进程回收分别保留独立边界。
-- 新工具：`scripts/framework-assurance/`；冻结输入：`fixtures/framework-assurance/`；实现测试：`offline.test.mjs`、`cli.test.mjs`、`sdk-consumer.test.mjs`、`execution-evidence.test.mjs` 与 `diagnostics.test.mjs`，均位于新工具目录。
+- 新工具：`scripts/framework-assurance/`；冻结输入：`fixtures/framework-assurance/`；实现测试：`offline.test.mjs`、`cli.test.mjs`、`sdk-consumer.test.mjs`、`execution-evidence.test.mjs`、`diagnostics.test.mjs` 与 `trial-preflight.test.ts`；F3-02 manifest 位于 `fixtures/framework-assurance/trials/t01-review.json`。
 - F3-B 只读接入：`packages/contracts/src/framework-assurance.ts`、`packages/daemon/src/features/runs/assurance-evidence.ts`、`packages/daemon/src/server/routes.ts`、`packages/api-client/src/endpoints/runs.ts`；回归为 `packages/daemon/test/assurance-evidence-api.test.mjs`、`assurance-evidence-isolation.test.mjs`、`assurance-evidence-budget.test.ts` 和 API client 的 `harness-diagnostics.test.mjs`。
