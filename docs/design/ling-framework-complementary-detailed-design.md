@@ -1,11 +1,11 @@
 # Ling 框架补强详细设计
 
-Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A/F4-01 and F3-B read-only admission evidence are on main; root Run budget projection repair and exact Run/evaluation association are merged in PR #685/#684 (`9af7ad54`); F3-02 review-only trial preflight is implemented; F3-B real trial and F5 rerun remain blocked/design contracts
+Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A/F4-01 and F3-B read-only admission evidence are on main; root Run budget projection repair and exact Run/evaluation association are on main at `f3282429` (PR #688); F3-02 review-only trial preflight is implemented; the Host readiness review gate is implemented in a candidate worktree and is not yet on main; F3-B real trial and F5 rerun remain blocked/design contracts
 Owner: Ling framework maintainers; evaluation and SDK implementation owners
 Last verified: 2026-11-12
 Document type: reference / technical design
 Canonical replacement: none; does not replace existing evaluation, runtime, or API contracts
-Code and test anchors: section 12 and the implementation record; live evidence is read-only and not assessed, with no real task or GUI acceptance
+Code and test anchors: section 12 and the implementation record; live evidence is read-only, Host readiness is review-only, and no real task or GUI acceptance is claimed
 
 上层边界见[总体设计](ling-framework-complementary-design.md)，执行顺序见[实现计划书](ling-framework-complementary-implementation-plan.md)。
 
@@ -35,6 +35,7 @@ scripts/framework-assurance/
   execution-evidence.mjs   # F3-A fixture 与 F3-B live evidence 适配
   diagnostics.mjs          # F4-01 只读诊断分页报告
   trial-preflight.mjs      # F3-02 trial manifest 与外置资源准入预检
+  host-readiness.mjs       # F3-B Host evidence 五域 review gate
   report.mjs               # JSON/Markdown 报告与可比性检查
   output.mjs               # 外部目录校验与不覆盖式原子发布
   sdk-consumer.mjs         # producer 产物审计、仓外消费
@@ -46,6 +47,7 @@ fixtures/framework-assurance/
   sdk-consumer/            # 仓外消费者模板；不是 workspace 包
   execution-evidence/      # F3-A 的 Run/WorkUnit/Attempt fixture
   trials/                  # F3-02 review-only trial manifest
+  execution-evidence/host-ready-shape.json # Host readiness 合成形状
 ```
 
 F1/F2 路径均已实现，F2 经统一 CLI 入口调用独立 consumer 模块。没有为了脚本便利新增 Core 公共出口或复制 grader。输出默认写入新临时根，显式 `--output` 必须在实施 checkout 外，并在创建目录前检查词法路径与最近已存在祖先的真实位置，拒绝 `.git`、`.ling-stack`、`node_modules` 及符号链接解析后落入上述位置的目录。不提交真实日志、用户数据库、tarball 或模型输出。
@@ -56,9 +58,10 @@ F1/F2 路径均已实现，F2 经统一 CLI 入口调用独立 consumer 模块�
 | `calibrate` | 已预检 suite / 校准 JSON | 通过已有确定性 grader 检验合成正反控制 | 执行候选代码、调用 Provider |
 | `report` | 已验证的观察文件 / JSON 与 Markdown | 校验来源、汇总、比较与脱敏 | 自动补跑失败任务、猜测缺失费用 |
 | `trial-preflight` | trial manifest、外置资源根 / JSON 与 Markdown | 冻结 T01 输入、预算、停止规则、安全 profile，检查目录、端口和资源余量 | 派发 Run、创建 Store、启动 Provider、模型、daemon 或授予执行权限 |
+| `host-readiness` | 已捕获的 Host evidence JSON / JSON 与 Markdown | 校验 lifecycle、completion、budget、isolation、admission 五域及跨域 lineage，输出 review gate | recovery、取消、派发 Run、创建 Store、启动 Provider、模型、daemon 或授予执行权限 |
 | `sdk-consumer` | 当前 producer 输入 / 消费报告 | 在实施工作区串行构建，在隔离临时目录打包、安装本地包、运行固定测试 | 根目录安装、源码 fallback、启动真实 daemon |
 
-CLI 入口为 `node scripts/framework-assurance/index.mjs <command>`。`preflight/calibrate` 接受 `--suite`（相对 fixture 根）；`trial-preflight` 接受 `--trial`（相对 fixture 根）和 checkout 外的绝对 `--resource-root`；`report` 必须指定 `--input`，可加 `--compare` 和唯一变量 `--variable model|executionStrategy`；各命令可用 `--output`。根脚本有 `assurance:offline`、`assurance:sdk`、`test:assurance`。F3 不得在这里增加绕过 Host 的 `run-shell` 或隐式付费模式。
+CLI 入口为 `node scripts/framework-assurance/index.mjs <command>`。`preflight/calibrate` 接受 `--suite`（相对 fixture 根）；`trial-preflight` 接受 `--trial`（相对 fixture 根）和 checkout 外的绝对 `--resource-root`；`report` 必须指定 `--input`，可加 `--compare` 和唯一变量 `--variable model|executionStrategy`；`host-readiness` 必须指定已捕获的 `--input`；各命令可用 `--output`。根脚本有 `assurance:offline`、`assurance:sdk`、`test:assurance`。F3 不得在这里增加绕过 Host 的 `run-shell` 或隐式付费模式。
 
 退出码：`0` 表示本命令成功，`1` 表示校准或消费验收失败，`2` 表示输入、环境或前置条件不满足。`report` 成功生成含失败或不可比样本的报告仍返回 `0`；报告生成成功与被测对象成功分开。离线进程测试封锁网络、任务子进程和 SQLite 加载，仅允许读取源码的 `git cat-file blob`。
 
@@ -243,6 +246,22 @@ assertions
 - `availableParallelism`、free memory、free disk 和 load-1 与 manifest 最低值比较。不能取得资源根或测量失败时直接阻断。
 
 报告只保留路径摘要、端口状态、资源观测、冻结输入摘要、预算和检查码，不写绝对路径、prompt、claim token、resume handle 或 artifact 正文。`externalProviderCalls`、`ordinaryRunsDispatched`、`userStoresInitialized` 和 `taskCodeExecuted` 固定为零/false。预检结束后目录和端口可能被外部状态改变，因此它是准入证据准备，不是执行授权或完整 A13/A14 验收。
+
+### 5.5.2 Host readiness review gate
+
+`host-readiness` 是完整 Host evidence projection 的只读审查门禁。它不重新读取 Store，也不执行 recovery、取消、重试或派发；CLI 只接收已经捕获的 JSON，`collectHostReadiness()` 只通过 `getRunAssuranceEvidence(runId, cwd)` 发起一次读取。
+
+解析器要求以下五个域同时存在，并拒绝未知字段、非法枚举和不完整的公共摘要：
+
+1. **lifecycle**：当前 Attempt、代次、旧 Attempt、所有 Attempt 的终态、local execution drain、effect settle 和可复用性。
+2. **completion**：根 Run、子步骤、完成状态、结果 artifact 摘要及原始 issue。
+3. **budget**：根预算、reservation、charge、token/cost 用量和 blocker；pending、unknown、over、missing、invalid 都保持阻断。
+4. **isolation**：`pi_host_isolated_files_v1` safety plan、execution binding、integration round、effect/receipt、branch result、candidate、approval 和 apply 摘要。
+5. **admission**：Host 重新计算的状态、profile、safety plan、Tool Broker 模式和当前 fence binding。
+
+跨域检查要求 lifecycle 当前 Attempt 与 execution 的 Attempt/runtime/fence/generation 一致；completion 和 budget 必须指向同一根 Run；admission 的 profile、safety plan digest 和 binding 状态必须与 isolation 一致。评估时还要求 Run、WorkUnit、当前 Attempt 终态，claim 为 `terminal_retained`，effect 已确认，lifecycle 已 drain 且可复用，completion 已满足或明确为 `not_applicable`，budget 在限额内或明确为 `not_applicable`，隔离 profile 和 binding 有效，Tool Broker 为 `enforce`。任一事实缺失或 blocker 存在都返回 `blocked`。
+
+报告只有 `ready-for-trial-review` 和 `blocked` 两个结果；两者都固定 `executionAuthorized: false`，并明确不包含 task input、claim token、resume handle、artifact body 或 evaluation grade。提交内的 `host-ready-shape.json` 仅是包含一次旧 Attempt 丢失、当前 Attempt 成功的合成形状，用于验证 parser、lineage、恢复痕迹、取消未确认和预算未知的 fail-closed 行为，不能作为真实 Host 或真实试点验收。
 
 ### 5.6 指定 evaluation 的只读关联
 
@@ -477,7 +496,7 @@ collector 的观察结果与原始响应分别复制，修改一侧不会同步�
 
 ## 11. 错误、兼容与未决项
 
-新脚本错误采用私有 code，并附脱敏 message。F1 已实现既有校验错误；F3-A 增加 `evidence_lineage_mismatch`、`evidence_stale_attempt`、`evidence_snapshot_changed`、`evidence_artifact_missing`、`evidence_artifact_digest_mismatch`、`evidence_claim_lost`、`evidence_effect_unknown` 等拒绝码；F4-01 增加 `diagnostics_scope_mismatch`、`diagnostics_invalid_response`、`diagnostics_duplicate_record`、`diagnostics_pagination_stalled` 等只读适配错误。冷工作区和既有 endpoint 错误映射为脱敏报告状态，不伪造 daemon HTTP code。
+新脚本错误采用私有 code，并附脱敏 message。F1 已实现既有校验错误；F3-A 增加 `evidence_lineage_mismatch`、`evidence_stale_attempt`、`evidence_snapshot_changed`、`evidence_artifact_missing`、`evidence_artifact_digest_mismatch`、`evidence_claim_lost`、`evidence_effect_unknown` 等拒绝码；F4-01 增加 `diagnostics_scope_mismatch`、`diagnostics_invalid_response`、`diagnostics_duplicate_record`、`diagnostics_pagination_stalled` 等只读适配错误；Host readiness 增加 `host_readiness_evidence_incomplete`、`host_readiness_lineage_mismatch`、`host_readiness_admission_mismatch` 以及 lifecycle、budget、isolation、Tool Broker blocker。冷工作区和既有 endpoint 错误映射为脱敏报告状态，不伪造 daemon HTTP code。
 
 既有 `harness_workspace_uninitialized` 等错误仍按原合同解释。现有 canonical write、历史 read、不可变证据字节、权限与 Runner 迁移继续归原兼容文档拥有，不因消费测试而放宽。
 
@@ -487,7 +506,7 @@ collector 的观察结果与原始响应分别复制，修改一侧不会同步�
 | --- | --- | --- |
 | 三个具体校准任务与冻结规则 | F1-01 已关闭 | 源码分析/故障注入标签明确；候选修复行为验证仍待 F3 |
 | 消费矩阵的实际工具链与依赖预置 | F2-01 已有 macOS arm64 本地及 Linux x64 托管消费格 | Windows SDK 及其他工具链仍未验证；安装器 job 不替代 SDK 消费 |
-| F3-B 只读 Host 证据投影及客户端关联 | F3-B 准入前置已实现 | 只读读取已初始化 Store；不包含 evaluation grade，不授予真实执行许可 |
+| F3-B 只读 Host 证据投影及客户端关联 | F3-B 准入前置已实现；Host readiness review gate 在候选工作树实现 | 只读读取已初始化 Store；五域 review gate 仍不包含 evaluation grade，不授予真实执行许可 |
 | 正常 Run 真实 evidence 封存与 evaluation 关联 | F3-B 真实试点前 | 缺失时阻断真实任务，不降级为 fixture 或模型自报 |
 | 对应执行 profile 的安全/恢复验收 | F3-B 启动前 | 阻断该能力的真实任务，不阻断离线和 SDK |
 | 付费总额与 Provider 选择 | 每次真实试点前 | 不产生任何模型请求 |
@@ -503,5 +522,5 @@ collector 的观察结果与原始响应分别复制，修改一侧不会同步�
 - Client：`packages/api-client/test/client.test.mjs`、`computer-use.test.mjs`、`transport-origin.regression-1.test.mjs`；Web SSE 解码代码位于 `apps/web/src/sse.ts`，不等于 api-client 公共 decoder。
 - 现有构建/测试调度：`scripts/ci/run-packages.mjs`；实施时按同一基线先构建再测试，不重复使用来源不明的 dist。
 - macOS native boundary：`packages/daemon/src/runtime/sandbox/native-process-launch.ts` 与 `packages/daemon/test/native-process-boundary.test.mjs`；私有状态规则、合法 workspace 写入、Kimi metadata、relay 和进程回收分别保留独立边界。
-- 新工具：`scripts/framework-assurance/`；冻结输入：`fixtures/framework-assurance/`；实现测试：`offline.test.mjs`、`cli.test.mjs`、`sdk-consumer.test.mjs`、`execution-evidence.test.mjs`、`diagnostics.test.mjs` 与 `trial-preflight.test.ts`；F3-02 manifest 位于 `fixtures/framework-assurance/trials/t01-review.json`。
+- 新工具：`scripts/framework-assurance/`；冻结输入：`fixtures/framework-assurance/`；实现测试：`offline.test.mjs`、`cli.test.mjs`、`sdk-consumer.test.mjs`、`execution-evidence.test.mjs`、`diagnostics.test.mjs`、`trial-preflight.test.ts` 与 `host-readiness.test.ts`；F3-02 manifest 位于 `fixtures/framework-assurance/trials/t01-review.json`，Host readiness 合成形状位于 `fixtures/framework-assurance/execution-evidence/host-ready-shape.json`。
 - F3-B 只读接入：`packages/contracts/src/framework-assurance.ts`、`packages/daemon/src/features/runs/assurance-evidence.ts`、`packages/daemon/src/server/routes.ts`、`packages/api-client/src/endpoints/runs.ts`；回归为 `packages/daemon/test/assurance-evidence-api.test.mjs`、`assurance-evidence-isolation.test.mjs`、`assurance-evidence-budget.test.ts` 和 API client 的 `harness-diagnostics.test.mjs`。

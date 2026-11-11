@@ -1,0 +1,172 @@
+{
+  "schemaVersion": 1,
+  "kind": "live_execution_evidence",
+  "comparison": {
+    "model": "review-only-model",
+    "reasoning": "low",
+    "executionStrategy": "pi",
+    "node": "22.22.1",
+    "platform": "darwin",
+    "arch": "arm64"
+  },
+  "execution": {
+    "runId": "run-host-ready-001",
+    "workUnitId": "work-unit-host-ready-001",
+    "attemptId": "attempt-host-ready-002",
+    "runtimeInstanceId": "runtime-host-ready-002",
+    "fencingToken": "fence-host-ready-002",
+    "runStatus": "succeeded",
+    "workUnitStatus": "succeeded",
+    "attemptStatus": "succeeded",
+    "claimStatus": "terminal_retained",
+    "effectStatus": "confirmed"
+  },
+  "snapshots": {
+    "run": { "revision": 12, "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+    "workUnit": { "revision": 18, "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" },
+    "attempt": { "revision": 7, "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" }
+  },
+  "artifacts": [
+    { "role": "validation", "artifactId": "artifact-host-ready-001", "contentSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" }
+  ],
+  "lifecycle": {
+    "status": "drained",
+    "currentAttemptId": "attempt-host-ready-002",
+    "currentGeneration": 2,
+    "attemptCount": 2,
+    "oldAttemptCount": 1,
+    "attempts": [
+      {
+        "attemptId": "attempt-host-ready-001",
+        "attemptNumber": 1,
+        "runtimeInstanceId": "runtime-host-ready-001",
+        "fencingToken": "fence-host-ready-001",
+        "status": "lost",
+        "isCurrent": false,
+        "abortRequestedAt": "2026-11-12T08:00:00.000Z",
+        "endedAt": "2026-11-12T08:00:01.000Z",
+        "localExecution": "drained",
+        "effects": "settled"
+      },
+      {
+        "attemptId": "attempt-host-ready-002",
+        "attemptNumber": 2,
+        "runtimeInstanceId": "runtime-host-ready-002",
+        "fencingToken": "fence-host-ready-002",
+        "status": "succeeded",
+        "isCurrent": true,
+        "abortRequestedAt": null,
+        "endedAt": "2026-11-12T08:00:04.000Z",
+        "localExecution": "drained",
+        "effects": "settled"
+      }
+    ],
+    "stop": {
+      "localExecution": "drained",
+      "effects": "settled",
+      "allAttemptsTerminal": true,
+      "reusable": true
+    }
+  },
+  "completion": {
+    "status": "not_applicable",
+    "rootRunIds": [],
+    "fingerprint": null,
+    "stepCount": 0,
+    "requiredStepCount": 0,
+    "completedStepCount": 0,
+    "steps": [],
+    "issues": [],
+    "resultArtifacts": []
+  },
+  "budget": {
+    "status": "within",
+    "roots": [
+      { "runId": "run-host-ready-001", "present": true, "tokenBudget": 100, "costBudgetMicros": 100, "deadlineAt": "2026-11-12T09:00:00.000Z", "chargeCount": 1 }
+    ],
+    "reservations": [],
+    "charges": [
+      {
+        "chargeId": "charge-host-ready-001",
+        "reservationId": null,
+        "runId": "run-host-ready-001",
+        "attemptId": "attempt-host-ready-002",
+        "state": "measured",
+        "reservedTokens": null,
+        "reservedCostMicros": null,
+        "inputTokens": 10,
+        "cachedInputTokens": 0,
+        "outputTokens": 5,
+        "actualCostMicros": 20
+      }
+    ],
+    "usage": {
+      "tokenStatus": "within",
+      "costStatus": "within",
+      "tokens": 15,
+      "costMicros": 20,
+      "tokenLimit": 100,
+      "costLimitMicros": 100
+    },
+    "issues": [],
+    "blockers": []
+  },
+  "isolation": {
+    "status": "verified",
+    "workflowId": "workflow-host-ready-001",
+    "workflowStepId": "step-host-ready-001",
+    "selection": { "profile": "pi_host_isolated_files_v1", "roundId": "round-host-ready-001", "phase": "applied" },
+    "safetyPlan": {
+      "present": true,
+      "valid": true,
+      "profile": "pi_host_isolated_files_v1",
+      "digest": "safety-plan-host-ready-001",
+      "toolsCount": 1,
+      "writeRootsCount": 1,
+      "networkAccess": false
+    },
+    "binding": {
+      "status": "current",
+      "bindingId": "binding-host-ready-001",
+      "revision": 2,
+      "planDigest": "plan-host-ready-001",
+      "matchesCurrentFence": true
+    },
+    "round": {
+      "roundId": "round-host-ready-001",
+      "generation": 1,
+      "revision": 4,
+      "phase": "applied",
+      "lastConfirmedPhase": "applied",
+      "candidate": null
+    },
+    "history": [],
+    "effects": [],
+    "receipts": [],
+    "branchResults": [],
+    "approval": {
+      "status": "approved",
+      "approvalId": "approval-host-ready-001",
+      "requestId": "request-host-ready-001",
+      "authorityDigest": "authority-host-ready-001",
+      "basisFingerprint": "basis-host-ready-001"
+    },
+    "apply": { "status": "applied", "code": null, "intentPresent": true },
+    "blockers": []
+  },
+  "admission": {
+    "status": "verified",
+    "profile": "pi_host_isolated_files_v1",
+    "safetyPlan": { "present": true, "valid": true, "digest": "safety-plan-host-ready-001" },
+    "toolBroker": { "mode": "enforce", "required": true, "satisfies": true },
+    "binding": { "status": "current", "matchesCurrentFence": true },
+    "blockers": []
+  },
+  "observedAt": "2026-11-12T08:00:05.000Z",
+  "limitations": [
+    "read_only_host_projection",
+    "no_task_input",
+    "no_artifact_body",
+    "no_evaluation_grade"
+  ]
+}
