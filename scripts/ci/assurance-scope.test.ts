@@ -76,7 +76,7 @@ test("assurance follows its real SDK producers and Core grader inputs", () => {
 });
 
 test("direct and transitive assurance imports retain package validation consumers", () => {
-  for (const [file, packages] of [["scripts/framework-assurance/diagnostics.mjs", ["@ling-stack/api-client"]],
+  for (const [file, packages] of [["scripts/framework-assurance/diagnostics.mjs", ["@ling-stack/api-client", "@ling-stack/daemon"]],
     ["scripts/framework-assurance/manifest.mjs", ["@ling-stack/api-client", "@ling-stack/daemon"]],
     ["scripts/framework-assurance/execution-evidence.mjs", ["@ling-stack/daemon"]],
     ["fixtures/framework-assurance/execution-evidence/valid.json", ["@ling-stack/daemon"]]] as const) {
