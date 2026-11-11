@@ -28,6 +28,7 @@ function runQuality(overrides = {}) {
       DEPENDENCY_RESULT: "success", ASSURANCE_RESULT: "success", BUILD_RESULT: "success", TYPECHECK_RESULT: "success",
       UNIT_RESULT: "success", DAEMON_RESULT: "success", WEB_SMOKE_RESULT: "success", WEB_SELECTED: "true", LINUX_CONTRACT_RESULT: "success",
       MACOS_NATIVE_RESULT: "success", DAEMON_SELECTED: "true", DEPENDENCY_SELECTED: "true",
+      ASSURANCE_SELECTED: "true", BUILD_SELECTED: "true",
       TYPECHECK_SELECTED: "true", UNIT_SELECTED: "true", ...overrides },
   });
 }
@@ -95,6 +96,7 @@ test("workflow quality gate keeps a Draft full scope deferred after common check
 
 test("workflow documentation gate requires successful scope and common checks", () => {
   const docs = { WEB_SELECTED: "false", SCOPE_MODE: "docs", DAEMON_SELECTED: "false", DEPENDENCY_RESULT: "skipped",
+    ASSURANCE_SELECTED: "false", BUILD_SELECTED: "false",
     DEPENDENCY_SELECTED: "false", TYPECHECK_SELECTED: "false", UNIT_SELECTED: "false",
     BUILD_RESULT: "skipped", TYPECHECK_RESULT: "skipped", UNIT_RESULT: "skipped",
     DAEMON_RESULT: "skipped", LINUX_CONTRACT_RESULT: "skipped", MACOS_NATIVE_RESULT: "skipped" };

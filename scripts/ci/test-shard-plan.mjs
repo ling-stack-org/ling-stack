@@ -91,17 +91,22 @@ export async function loadTimingHints(path) {
 
 export async function createTestPlan(packages, { timings = { suites: {} } } = {}) {
   if (!Array.isArray(packages) || packages.some(name => typeof name !== "string")) throw new TypeError("packages must be a string array");
+  // Combined runs reserve nine of twenty slots for macOS shards, native contracts,
+  // typecheck, Web smoke and the unsharded package lane. Isolated suites retain eight shards.
+  const combined = packages.includes("@ling-stack/core") && packages.includes("@ling-stack/daemon");
   /** @type {Record<string, { platform: string, files: string[], shardCount: number, concurrency: number,
    * timings: Record<string, number>, shards: ReturnType<typeof assignTestShards> }>} */
   const suites = {};
   for (const [name, config] of Object.entries(testSuites)) {
     if (!packages.includes(config.packageName)) continue;
+    const shardCount = combined && name === "core" ? 5
+      : combined && name === "daemon-linux" ? 6 : config.shardCount;
     const files = await discoverSuiteFiles(config);
     if (files.length === 0) throw new Error(`No tests discovered for ${name}`);
     const hints = timings.suites?.[name];
     const durations = hints?.platform === config.platform ? hints.durationsMs : {};
-    suites[name] = { platform: config.platform, files, shardCount: config.shardCount, concurrency: config.concurrency, timings: durations ?? {},
-      shards: assignTestShards(files, config.shardCount, { ...config, timings: durations ?? {} }) };
+    suites[name] = { platform: config.platform, files, shardCount, concurrency: config.concurrency, timings: durations ?? {},
+      shards: assignTestShards(files, shardCount, { ...config, timings: durations ?? {} }) };
   }
   const shardedPackages = Object.values(testSuites).map(config => config.packageName);
   return { version: 1, suites, daemonMatrix: { include: Object.entries(suites)
@@ -111,7 +116,8 @@ export async function createTestPlan(packages, { timings = { suites: {} } } = {}
       shardCount: config.shardCount, concurrency: config.concurrency,
     }))) }, unitMatrix: { include: [
     ...(packages.some(name => !shardedPackages.includes(name)) ? [{ suite: "packages", shard: 0 }] : []),
-    ...Array.from({ length: suites.core?.shardCount ?? 0 }, (_, shard) => ({ suite: "core", shard })),
+    ...Array.from({ length: suites.core?.shardCount ?? 0 }, (_, shard) => ({ suite: "core", shard,
+      shardCount: suites.core.shardCount, concurrency: suites.core.concurrency })),
   ] } };
 }
 
