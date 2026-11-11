@@ -51,7 +51,7 @@ Daemon 专用的依赖安全测试由 `dependency-policy` 任务单独运行，�
 
 框架 assurance 是独立重建例外，不能用产品测试图的 `dist` artifact 代替实际 producer/tarball 消费证据。完整档位中，assurance 工具／fixture、Core 源码或 SDK producer 包 localization/contracts/plugin-sdk/api-client 的源码／配置改动会选择该任务；仅改这些产品包的测试，或只改其他产品包，不选择该任务。全量、手动和定时运行始终选择它。该任务执行离线测试、三任务九控制校准及真实 SDK consumer；零模型、无 secrets、不启动 daemon。Consumer 串行重建四个 producer，实际 pack 并仓外离线安装。`quality` 分别验证明确的 assurance 和 build selector：选中必须成功，未选中才允许跳过，失败、取消、缺失或无效 selector 均拒绝；Draft/full-ci 规则不变。报告和直属日志上传为 `ci-framework-assurance` 并保留七天，不上传 consumer/toolchain 树或 tarball。详见[补强实现记录](../design/ling-framework-complementary-implementation-plan.md#9-交付记录与完成判定)。
 
-Linux 构建任务在选中 CLI 时运行真实 daemon 生命周期和新工作区 doctor 检查；未配置 provider 的新工作区预期返回诊断退出码 4。选中 Web 时，独立 `web-smoke` 任务在下载共享构建产物后，使用生产构建的 Vite preview 运行六项 Playwright 回归，覆盖权限、内置技能元数据和中文角色。浏览器安装和执行不阻塞其他测试获取 `ci-dist`；`quality` 根据 Web selector 强制要求该任务成功，失败、取消、缺失及意外跳过均拒绝。浏览器测试使用模拟 daemon 数据，不包含真实模型调用。当前运行的截图与测试结果上传为 `ci-linux-source-web-smoke` artifact，保留七天。
+Linux 构建任务在选中 CLI 时运行真实 daemon 生命周期和新工作区 doctor 检查；未配置 provider 的新工作区预期返回诊断退出码 4。选中 Web 时，独立 `web-smoke` 任务在下载共享构建产物后，使用生产构建的 Vite preview 运行六项 Playwright 回归，覆盖权限、内置技能元数据和中文角色。该任务使用按版本和 digest 固定的官方 Playwright Noble 镜像，浏览器与字体等系统依赖已预装，不执行 apt 或浏览器安装；工作流契约要求镜像版本与 Web 的 Playwright 依赖一致。Web 执行不阻塞其他测试获取 `ci-dist`；`quality` 根据 Web selector 强制要求该任务成功，失败、取消、缺失及意外跳过均拒绝。浏览器测试使用模拟 daemon 数据，不包含真实模型调用。当前运行的截图与测试结果上传为 `ci-linux-source-web-smoke` artifact，保留七天。
 
 会话操作记录、复制、文件审查、归属与颜色层级场景可通过 `corepack pnpm --filter @ling-stack/web test:e2e:work-cell` 本地按需运行。会话样例由 E2E mock daemon 提供，不依赖开发模式；Web 的 `typecheck` 和 `typecheck:ci` 通过 `tsconfig.e2e.json` 检查所列用例及其辅助文件。
 

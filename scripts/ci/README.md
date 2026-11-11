@@ -104,8 +104,11 @@ a requested package via `--if-present`.
   Web smoke starts independently after the build. Other workflows can still consume shared
   organization capacity; shard counts do not guarantee immediate runner availability.
 - Production Web smoke: an independent required Linux job consumes the same
-  `ci-dist` output as other tests. Browser installation and Playwright execution
-  do not delay the shared build artifact. The aggregate requires this lane when
+  `ci-dist` output as other tests. It uses the official Playwright Noble container,
+  pinned by version and digest, with browsers and OS dependencies preinstalled.
+  The workflow contract checks its version against Web's Playwright dependency;
+  the job does not run apt or install browsers. Playwright execution
+  does not delay the shared build artifact. The aggregate requires this lane when
   Web is selected and rejects failure, cancellation, missing or unexpected skips.
 - Framework assurance: selected complete-tier runs add an Ubuntu / Node
   22.22.1 lane for the zero-model offline tests, frozen controls and real external

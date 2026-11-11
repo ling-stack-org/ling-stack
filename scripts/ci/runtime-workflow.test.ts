@@ -65,7 +65,12 @@ test("browser smoke starts after reusable outputs without delaying the core and 
   assert.match(smoke, /needs: \[scope, build\]/u);
   assert.match(smoke, /needs\.scope\.outputs\.web == 'true'/u);
   assert.match(smoke, /name: ci-dist/u);
-  assert.match(smoke, /playwright install --with-deps chromium --only-shell/u);
+  const webPackage = JSON.parse(readFileSync(new URL("../../apps/web/package.json", import.meta.url), "utf8"));
+  const image = /^      image: mcr\.microsoft\.com\/playwright:v([^@\s]+)@sha256:([a-f0-9]{64})$/mu.exec(smoke);
+  assert.ok(image, "The browser environment must use an immutable official image");
+  assert.equal(image[1], `${webPackage.devDependencies["@playwright/test"]}-noble`,
+    "The installed Playwright client must match the image's preinstalled browser revision");
+  assert.doesNotMatch(smoke, /playwright install|apt-get/u);
   assert.match(smoke, /playwright test/u);
   assert.match(smoke, /name: ci-linux-source-web-smoke/u);
   assert.doesNotMatch(smoke, /continue-on-error/u);
