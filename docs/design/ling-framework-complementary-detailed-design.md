@@ -218,7 +218,7 @@ assertions
 
 - Daemon 提供 `GET /runs/:id/assurance-evidence`。路由只能解析已初始化的 workspace Store；冷工作区返回不可用，不创建 Store、不触发 recovery、不重派 Run。
 - 响应固定为 `FrameworkAssuranceEvidenceResponse`，包含 Run/WorkUnit/Attempt/fence lineage、三组 snapshot digest、已封存 artifact digest、Attempt 历史与停止状态、delegation completion、预算 reservation/charge，以及 isolated workflow 的 safety plan、execution binding、integration round、effect/receipt、branch result、candidate、approval 和 apply 投影。
-- `admission` 是由 Host 投影重新计算的 fail-closed 结果。缺少 `pi_host_isolated_files_v1`、Tool Broker `enforce`、当前 fence binding、完整 round 或确认停止时，只记录 blocker，不产生执行授权。
+- `admission` 是由 Host 投影重新计算的 fail-closed 结果。缺少 `pi_host_isolated_files_v1`、Tool Broker `enforce`、当前 fence binding、完整 round 或确认停止，delegation completion 未满足，或预算 pending/unknown/over/missing/invalid 时，只记录 blocker，不产生执行授权；原始 completion issue 和预算 blocker 同时保留。
 - `collectLiveExecutionEvidence()` 通过 `LingDaemonClient` 读取该响应，再与冻结任务身份、source commit 和 input digest 关联，输出 `live_execution` / `not_assessed`。离线 CLI 默认仍拒绝 live evidence；只有显式的 live consumer 适配路径才能读取该类型。
 - 响应不包含 task input、claim token、resume handle、sealed artifact body 或 evaluation grade。预算未知、effect 未确认、snapshot 变化和 lineage 不一致均不能升级为通过。
 

@@ -190,6 +190,16 @@ export function adaptExecutionEvidence(value, { binding, stopReason = "fixture_e
 /**
  * Read a live Host projection through the existing API client and join it with
  * the frozen task identity. This function has no dispatch or mutation path.
+ * @param {{
+ *   client: { getRunAssuranceEvidence: (runId: string, cwd: string) => Promise<unknown> },
+ *   cwd: string,
+ *   runId: string,
+ *   taskIdentity: Record<"suiteId" | "suiteVersion" | "taskId" | "taskVersion", string>,
+ *   sourceCommit: string,
+ *   inputDigests: Record<"suiteBytes" | "taskBytes" | "ruleBytes" | "expectedBytes" | "profileBytes" | "lockBytes", string>,
+ *   caseId: string,
+ *   invocationId?: string
+ * }} [options]
  */
 export async function collectLiveExecutionEvidence({
   client,
@@ -441,8 +451,9 @@ function parseIsolation(value) {
   if (value.round !== null) parseIsolationRound(value.round);
   for (const item of value.history) {
     exactObject(item, ["roundId", "generation", "revision", "phase", "reason"], "live isolation history");
-    identifier(item.roundId, "live isolation history round"); identifier(item.phase, "live isolation history phase"); nullableIdentifier(item.reason);
-    requireCondition(Number.isSafeInteger(item.generation) && item.generation >= 1 && Number.isSafeInteger(item.revision) && item.revision >= 0, "invalid_manifest", "Live isolation history revision is invalid.");
+    identifier(item.roundId, "live isolation history round"); identifier(item.phase, "live isolation history phase");
+    requireCondition(nullableIdentifier(item.reason) && Number.isSafeInteger(item.generation) && item.generation >= 1
+      && Number.isSafeInteger(item.revision) && item.revision >= 0, "invalid_manifest", "Live isolation history entry is invalid.");
   }
   for (const effect of value.effects) {
     exactObject(effect, ["effectKey", "kind", "status", "digest", "beforeDigest", "afterDigest", "payloadContentSha256"], "live isolation effect");
@@ -460,11 +471,14 @@ function parseIsolation(value) {
   for (const branch of value.branchResults) {
     exactObject(branch, ["workflowStepId", "status", "packetDigest", "packetContentSha256"], "live isolation branch result");
     identifier(branch.workflowStepId, "live isolation branch step"); identifier(branch.status, "live isolation branch status");
-    nullableIdentifier(branch.packetDigest); nullableDigest(branch.packetContentSha256);
+    requireCondition(nullableIdentifier(branch.packetDigest) && nullableDigest(branch.packetContentSha256),
+      "invalid_manifest", "Live isolation branch digests are invalid.");
   }
   exactObject(value.approval, ["status", "approvalId", "requestId", "authorityDigest", "basisFingerprint"], "live isolation approval");
-  identifier(value.approval.status, "live isolation approval status"); nullableIdentifier(value.approval.approvalId); nullableIdentifier(value.approval.requestId);
-  nullableIdentifier(value.approval.authorityDigest); nullableIdentifier(value.approval.basisFingerprint);
+  identifier(value.approval.status, "live isolation approval status");
+  requireCondition(nullableIdentifier(value.approval.approvalId) && nullableIdentifier(value.approval.requestId)
+    && nullableIdentifier(value.approval.authorityDigest) && nullableIdentifier(value.approval.basisFingerprint),
+  "invalid_manifest", "Live isolation approval identifiers are invalid.");
   exactObject(value.apply, ["status", "code", "intentPresent"], "live isolation apply");
   requireCondition(identifier(value.apply.status, "live isolation apply status") && (value.apply.code === null || typeof value.apply.code === "string")
     && typeof value.apply.intentPresent === "boolean", "invalid_manifest", "Live isolation apply is invalid.");

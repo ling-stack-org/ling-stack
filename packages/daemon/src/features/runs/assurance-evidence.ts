@@ -114,7 +114,7 @@ function buildEvidence(store: RunStore, activeRuns: ActiveRunRegistry, runId: st
   const budget = projectDelegationBudgetEvidence(completionEvidence, run.id);
   const isolation = buildIsolation(store, run, attempt, observedAt);
   const lifecycle = buildLifecycle(workUnit, attempts, stop.attempts);
-  const admission = buildAdmission(run, isolation, lifecycle, effectStatus);
+  const admission = buildAdmission(run, isolation, lifecycle, effectStatus, completion, budget);
   return {
     schemaVersion: 1,
     kind: "live_execution_evidence",
@@ -554,6 +554,8 @@ export function buildAdmission(
   isolation: FrameworkAssuranceIsolationEvidence,
   lifecycle: FrameworkAssuranceLifecycleEvidence,
   effectStatus: FrameworkAssuranceEffectStatus,
+  completion: FrameworkAssuranceCompletionEvidence,
+  budget: FrameworkAssuranceBudgetEvidence,
 ): FrameworkAssuranceAdmissionEvidence {
   if (isolation.status === "not_applicable") return {
     status: "not_applicable", profile: null,
@@ -563,7 +565,13 @@ export function buildAdmission(
   };
   const profile = isolation.safetyPlan.profile;
   const mode = harnessToolBrokerModeForRun(run);
-  const blockers = [...isolation.blockers];
+  const blockers = [...isolation.blockers, ...completion.issues.map(issue => issue.code), ...budget.blockers];
+  if (completion.status !== "satisfied" && completion.status !== "not_applicable") {
+    blockers.push("workflow_admission.delegation_completion_not_satisfied");
+  }
+  if (budget.status !== "within" && budget.status !== "not_applicable") {
+    blockers.push("workflow_admission.delegation_budget_not_within");
+  }
   if (!isolation.safetyPlan.present) blockers.push("workflow_admission.safety_plan_missing");
   if (!isolation.safetyPlan.valid || profile !== "pi_host_isolated_files_v1") blockers.push("workflow_admission.isolated_profile_required");
   if (mode !== "enforce") blockers.push("workflow_admission.tool_broker_enforce_required");

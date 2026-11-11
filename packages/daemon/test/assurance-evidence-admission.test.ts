@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type {
+  FrameworkAssuranceBudgetEvidence,
+  FrameworkAssuranceCompletionEvidence,
   FrameworkAssuranceEffectStatus,
   FrameworkAssuranceIsolationEvidence,
   FrameworkAssuranceLifecycleEvidence,
@@ -29,6 +31,29 @@ const isolation: FrameworkAssuranceIsolationEvidence = {
   blockers: [],
 };
 
+const completion: FrameworkAssuranceCompletionEvidence = {
+  status: "satisfied",
+  rootRunIds: ["run-assurance"],
+  fingerprint: "completion-assurance",
+  stepCount: 1,
+  requiredStepCount: 1,
+  completedStepCount: 1,
+  steps: [{ stepId: "delegation-assurance", required: true, state: "succeeded", childRunId: "child-assurance",
+    attemptId: "attempt-child", reservationState: "settled", completionStatus: "verified", resultArtifacts: [] }],
+  issues: [],
+  resultArtifacts: [],
+};
+
+const budget: FrameworkAssuranceBudgetEvidence = {
+  status: "within",
+  roots: [],
+  reservations: [],
+  charges: [],
+  usage: { tokenStatus: "within", costStatus: "within", tokens: 5, costMicros: 7, tokenLimit: 10, costLimitMicros: 10 },
+  issues: [],
+  blockers: [],
+};
+
 function lifecycle(overrides: Partial<FrameworkAssuranceLifecycleEvidence> = {}): FrameworkAssuranceLifecycleEvidence {
   return {
     status: "drained",
@@ -46,7 +71,7 @@ test("isolated admission stays blocked while an Attempt is active", () => {
   const evidence = buildAdmission(run, isolation, lifecycle({
     status: "active",
     stop: { localExecution: "unverified", effects: "unverified", allAttemptsTerminal: false, reusable: false },
-  }), "none");
+  }), "none", completion, budget);
   assert.equal(evidence.status, "blocked");
   assert.ok(evidence.blockers.includes("workflow_admission.lifecycle_not_drained"));
   assert.ok(evidence.blockers.includes("workflow_admission.attempt_not_terminal"));
@@ -60,14 +85,53 @@ test("isolated admission stays blocked until terminal stop effects are confirmed
     const evidence = buildAdmission(run, isolation, lifecycle({
       status: "terminal",
       stop: { localExecution: "drained", effects: "settled", allAttemptsTerminal: true, reusable: true },
-    }), effectStatus);
+    }), effectStatus, completion, budget);
     assert.equal(evidence.status, "blocked");
     assert.ok(evidence.blockers.includes("workflow_admission.execution_effects_unconfirmed"));
   }
 });
 
 test("isolated admission is verified only after reusable lifecycle and confirmed effects", () => {
-  const evidence = buildAdmission(run, isolation, lifecycle(), "confirmed");
+  const evidence = buildAdmission(run, isolation, lifecycle(), "confirmed", completion, budget);
+  assert.equal(evidence.status, "verified");
+  assert.deepEqual(evidence.blockers, []);
+});
+
+for (const status of ["pending", "blocked", "failed", "cancelled"] as const) {
+  test(`isolated admission blocks ${status} delegation completion`, () => {
+    const evidence = buildAdmission(run, isolation, lifecycle(), "confirmed", { ...completion, status }, budget);
+    assert.equal(evidence.status, "blocked");
+    assert.ok(evidence.blockers.includes("workflow_admission.delegation_completion_not_satisfied"));
+  });
+}
+
+for (const status of ["pending", "unknown", "over", "missing", "invalid"] as const) {
+  test(`isolated admission blocks a ${status} delegation budget`, () => {
+    const evidence = buildAdmission(run, isolation, lifecycle(), "confirmed", completion, { ...budget, status });
+    assert.equal(evidence.status, "blocked");
+    assert.ok(evidence.blockers.includes("workflow_admission.delegation_budget_not_within"));
+  });
+}
+
+test("isolated admission preserves detailed completion and budget blockers", () => {
+  const evidence = buildAdmission(run, isolation, lifecycle(), "confirmed", {
+    ...completion, status: "blocked",
+    issues: [{ code: "delegation.completion_lineage_invalid", stepId: "delegation-assurance", runId: null, factFingerprint: null }],
+  }, { ...budget, status: "unknown", blockers: ["delegation.usage_unknown"] });
+  assert.equal(evidence.status, "blocked");
+  assert.ok(evidence.blockers.includes("delegation.completion_lineage_invalid"));
+  assert.ok(evidence.blockers.includes("delegation.usage_unknown"));
+});
+
+test("isolated admission accepts a completed Run with no delegated work", () => {
+  const evidence = buildAdmission(run, isolation, lifecycle(), "confirmed", {
+    status: "not_applicable", rootRunIds: [], fingerprint: null, stepCount: 0, requiredStepCount: 0,
+    completedStepCount: 0, steps: [], issues: [], resultArtifacts: [],
+  }, {
+    status: "not_applicable", roots: [], reservations: [], charges: [],
+    usage: { tokenStatus: "not_applicable", costStatus: "not_applicable", tokens: null, costMicros: null, tokenLimit: null, costLimitMicros: null },
+    issues: [], blockers: [],
+  });
   assert.equal(evidence.status, "verified");
   assert.deepEqual(evidence.blockers, []);
 });

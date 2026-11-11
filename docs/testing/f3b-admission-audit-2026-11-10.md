@@ -2,7 +2,7 @@
 
 - 状态：**BLOCKED**
 - 审计日期：2026-11-10
-- 主线基线：`origin/main@841dab4d`
+- 实施起点：`origin/main@841dab4d`；2026-11-11 复验基线：`origin/main@0490f71f`
 - 实施分支：`codex/ling-f3b-assurance-evidence`
 - 审计范围：准入证据投影、合同、客户端适配器和受控 SQLite/Git 回归；不启动真实 Provider、模型、daemon 生产进程或付费任务。
 
@@ -24,7 +24,7 @@ workspace Store 只读投影 Run/WorkUnit/Attempt、fence、停止证据、artif
 | 只读 Host 投影 | `GET /runs/:id/assurance-evidence`；只解析已初始化 Store，不创建 Store、不触发 recovery、不派发 Run | 仍需合并后在正式 daemon 路径复验 |
 | 执行身份 | Run、WorkUnit、Attempt、runtime instance、fencing token、Run/WorkUnit/Attempt snapshot digest | 投影不包含 claim token、任务输入、resume handle |
 | 生命周期与停止 | 当前/历史 Attempt、generation、取消、drain、effect settlement 和 reusable 状态；isolated admission 要求生命周期 drained、Attempt terminal 且 effect confirmed | 受控 fixture 已验收，真实进程重启和外部 effect 仍待验收 |
-| 结果与预算 | delegation completion、artifact pin、reservation/charge、pending/over/unknown/missing/invalid 状态 | 尚未形成一次真实试点的完整 Provider/子调用/grader 账本 |
+| 结果与预算 | delegation completion、artifact pin、reservation/charge、pending/over/unknown/missing/invalid 状态；未满足的 completion 或预算状态阻断 isolated admission，原始 issue/blocker 保留 | 尚未形成一次真实试点的完整 Provider/子调用/grader 账本 |
 | 隔离与合并 | safety plan、isolated binding、integration round、effects/receipts、branch result、candidate、approval、apply | 仅受控 SQLite/Git fixture；不打开普通 workflow 写并发 |
 | 客户端适配 | `collectLiveExecutionEvidence()` 读取投影并关联冻结任务输入；输出 `live_execution`、`not_assessed` | 不把读取结果自动升级为 pass，也不触发执行 |
 
@@ -33,8 +33,8 @@ workspace Store 只读投影 Run/WorkUnit/Attempt、fence、停止证据、artif
 | 检查 | 结果 |
 | --- | --- |
 | framework-assurance 全套 | `node --test scripts/framework-assurance/*.test.mjs`：98 passed、0 failed、0 skipped、0 cancelled |
-| Daemon 新增证据/API/隔离/预算/准入回归 | 11 passed |
-| API client 证据 endpoint 回归 | 6 passed |
+| Daemon 证据/API/隔离/预算/准入/解析回归 | 45 passed；包括 completion 与预算阻断、7 个 nullable 字段和 collector 拒绝非法输入 |
+| API client 全套 | 139 passed |
 | Contracts/API client/Daemon 构建 | `build:ci` 全部通过 |
 | Contracts/API client/Daemon 类型检查 | `typecheck` / `typecheck:ci` 全部通过，含新增 TypeScript 测试 |
 | 工作树格式检查 | `git diff --check` 通过 |

@@ -465,6 +465,6 @@ Common checks 的失败已定位到全历史 Gitleaks：1438 个提交、3833874
 | Daemon 只读入口 | `GET /runs/:id/assurance-evidence`；只读取已初始化 Store，不创建 Store、不触发 recovery、不派发 Run |
 | 证据内容 | Run/WorkUnit/Attempt/fence、snapshot/artifact digest、生命周期停止、delegation completion、预算 reservation/charge、isolated binding、integration round、effect/receipt、branch result、candidate、approval、apply 和 fail-closed admission |
 | 客户端接入 | `collectLiveExecutionEvidence()` 通过 `LingDaemonClient` 读取投影，与冻结任务输入关联；结果为 `live_execution` / `not_assessed`，不自动判 pass |
-| 相关回归 | framework-assurance 全套 98/98；Daemon 新增证据/API/隔离/预算回归 8/8；API client 证据 endpoint 回归 6/6；Contracts/API client/Daemon 构建与类型检查通过 |
+| 相关回归 | framework-assurance 全套 98/98；Daemon 证据/API/隔离/预算/准入/解析回归 45/45；API client 全套 139/139；Contracts/API client/Daemon 构建与类型检查通过 |
 | 运行边界 | 只运行临时 SQLite/Git/HTTP fixture；未启动真实 Provider、模型、生产 daemon 或付费任务，不开放普通 workflow 写并发 |
 | 当前未完成 | 真实 Provider/评测关联、生产 daemon 重启与权限撤销、packaged/跨平台、独立资源预算和合并后同 SHA 复验；F3-B 真实试点保持 BLOCKED |
