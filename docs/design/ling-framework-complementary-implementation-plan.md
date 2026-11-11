@@ -464,8 +464,9 @@ Common checks 的失败已定位到全历史 Gitleaks：1438 个提交、3833874
 | 实施基线 | `codex/ling-f3b-assurance-evidence`，基于 `origin/main@841dab4d`；代码尚未合并，PR review/CI/merge 仍是前置条件 |
 | Daemon 只读入口 | `GET /runs/:id/assurance-evidence`；只读取已初始化 Store，不创建 Store、不触发 recovery、不派发 Run |
 | 证据内容 | Run/WorkUnit/Attempt/fence、snapshot/artifact digest、生命周期停止、delegation completion、预算 reservation/charge、isolated binding、integration round、effect/receipt、branch result、candidate、approval、apply 和 fail-closed admission |
+| 准入归属门禁 | Run、WorkUnit、当前 Attempt 仅接受 succeeded/failed/cancelled 且当前 claim 为 terminal_retained；lost claim 固定 expired，聚合停止完成不能替代当前执行归属 |
 | 客户端接入 | `collectLiveExecutionEvidence()` 通过 `LingDaemonClient` 读取投影，与冻结任务输入关联；结果为 `live_execution` / `not_assessed`，不自动判 pass |
-| 相关回归 | framework-assurance 全套 98/98；Daemon 证据/API/隔离/预算/准入/解析回归 51/51，含损坏 artifact 的错误消息隔离和摘要字段类型边界；API client 全套 139/139；Contracts/API client/Daemon 构建与类型检查通过 |
+| 相关回归 | framework-assurance 全套 98/98；2026-11-11 复验 Daemon 证据/API/隔离/预算/准入/解析回归 74/74，含当前执行归属门禁、lost claim 的真实 SQLite route、损坏 artifact 的错误消息隔离和摘要字段类型边界；API client 全套 139/139；Contracts/API client/Daemon 构建与类型检查通过 |
 | 冲突恢复夹具 | 手工 Host 回调在审批消费期间持有既有 post-commit owner claim，原回调成功且 owner 证据验证后才结算；强制后台扫描的 TypeScript 回归先复现 `tool.stale_attempt`，修正后与原七项冲突恢复回归共 8/8 通过，平台登记/CI 合同 29/29 通过 |
 | 隔离交付同步 | SDK/Host 交付夹具先等待既有 isolation lifecycle drain，再等待后台生成 merge approval；保留原超时与全部审批、产物、单次 apply 和重开只读断言。交付端到端及生命周期回归 13/13 通过 |
 | 运行边界 | 只运行临时 SQLite/Git/HTTP fixture；未启动真实 Provider、模型、生产 daemon 或付费任务，不开放普通 workflow 写并发 |

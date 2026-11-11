@@ -1,18 +1,41 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import type { ServerResponse } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import type {
   FrameworkAssuranceBudgetEvidence,
+  FrameworkAssuranceClaimStatus,
   FrameworkAssuranceCompletionEvidence,
   FrameworkAssuranceEffectStatus,
+  FrameworkAssuranceEvidenceResponse,
   FrameworkAssuranceIsolationEvidence,
   FrameworkAssuranceLifecycleEvidence,
 } from "@ling-stack/contracts";
-import type { RunSession } from "@ling-stack/core";
-import { buildAdmission } from "../dist/features/runs/assurance-evidence.js";
+import { createSqliteRunStore, DEFAULT_WORKSPACE_ID, toRuntimeAttemptFence, type RunSession } from "@ling-stack/core";
+import { buildAdmission as projectAdmission, handleGetRunAssuranceEvidence } from "../dist/features/runs/assurance-evidence.js";
+import { ActiveRunRegistry } from "../dist/runtime/active-runs.js";
+import { RunStoreRegistry } from "../dist/runtime/store-registry.js";
 
 const run = {
+  status: "succeeded",
   requestSnapshot: { harnessFeatureSnapshot: { toolBroker: "enforce" } },
 } as unknown as RunSession;
+
+function buildAdmission(
+  sourceRun: RunSession,
+  isolation: FrameworkAssuranceIsolationEvidence,
+  lifecycle: FrameworkAssuranceLifecycleEvidence,
+  effectStatus: FrameworkAssuranceEffectStatus,
+  completion: FrameworkAssuranceCompletionEvidence,
+  budget: FrameworkAssuranceBudgetEvidence,
+  claimStatus: FrameworkAssuranceClaimStatus = "terminal_retained",
+  workUnitStatus: FrameworkAssuranceEvidenceResponse["execution"]["workUnitStatus"] = "succeeded",
+  attemptStatus: FrameworkAssuranceEvidenceResponse["execution"]["attemptStatus"] = "succeeded",
+) {
+  return projectAdmission(sourceRun, isolation, lifecycle, effectStatus, completion, budget, { claimStatus, workUnitStatus, attemptStatus });
+}
 
 const isolation: FrameworkAssuranceIsolationEvidence = {
   status: "verified",
@@ -95,6 +118,71 @@ test("isolated admission is verified only after reusable lifecycle and confirmed
   const evidence = buildAdmission(run, isolation, lifecycle(), "confirmed", completion, budget);
   assert.equal(evidence.status, "verified");
   assert.deepEqual(evidence.blockers, []);
+});
+
+for (const status of ["queued", "running", "waiting_for_approval", "yielded"] as const) {
+  test(`isolated admission blocks nonterminal Run ${status}`, () => {
+    const evidence = buildAdmission({ ...run, status }, isolation, lifecycle(), "confirmed", completion, budget);
+    assert.equal(evidence.status, "blocked");
+    assert.ok(evidence.blockers.includes("workflow_admission.run_not_terminal"));
+  });
+}
+
+for (const status of ["failed", "cancelled"] as const) {
+  test(`isolated admission retains reusable ${status} execution as distinct from its outcome`, () => {
+    const evidence = buildAdmission({ ...run, status }, isolation, lifecycle(), "confirmed", completion, budget, "terminal_retained", status, status);
+    assert.equal(evidence.status, "verified");
+    assert.deepEqual(evidence.blockers, []);
+  });
+}
+
+for (const claim of ["unclaimed", "held", "expired"] as const) {
+  test(`isolated admission blocks ${claim} Attempt ownership despite settled stop evidence`, () => {
+    const evidence = buildAdmission(run, isolation, lifecycle(), "confirmed", completion, budget, claim);
+    assert.equal(evidence.status, "blocked");
+    assert.ok(evidence.blockers.includes("workflow_admission.terminal_claim_not_retained"));
+  });
+}
+
+for (const status of ["queued", "claimed", "running", "waiting_for_input", "waiting_for_approval", "cancelling", "stale"] as const) {
+  test(`isolated admission blocks nonterminal WorkUnit ${status}`, () => {
+    const evidence = buildAdmission(run, isolation, lifecycle(), "confirmed", completion, budget, "terminal_retained", status);
+    assert.equal(evidence.status, "blocked");
+    assert.ok(evidence.blockers.includes("workflow_admission.work_unit_not_terminal"));
+  });
+}
+
+for (const status of ["created", "started", "waiting_for_approval", "cancelling", "yielded", "lost"] as const) {
+  test(`isolated admission rejects ${status} current Attempt despite a retained-claim label`, () => {
+    const evidence = buildAdmission(run, isolation, lifecycle(), "confirmed", completion, budget, "terminal_retained", "succeeded", status);
+    assert.equal(evidence.status, "blocked");
+    assert.ok(evidence.blockers.includes("workflow_admission.terminal_claim_not_retained"));
+  });
+}
+
+test("Host projection marks a lost current Attempt claim expired even while its active ID remains", async t => {
+  const cwd = await mkdtemp(join(tmpdir(), "ling-assurance-claim-")), now = "2026-11-11T00:00:00.000Z";
+  const store = createSqliteRunStore(cwd), registry = new RunStoreRegistry(() => store, { recoverOnOpen: false });
+  t.after(async () => { registry.closeAll(); await rm(cwd, { recursive: true, force: true }); });
+  registry.getStore(cwd);
+  const unit = store.createWorkUnit({ workspaceId: DEFAULT_WORKSPACE_ID, kind: "task_run", ownerType: "run", ownerId: "run-lost",
+    idempotencyKey: "lost-claim-unit", status: "running", createdByActor: "system", request: {}, now });
+  const attempt = store.createWorkUnitAttempt({ id: "attempt-lost", workUnitId: unit.id, attemptNumber: 1,
+    runtimeInstanceId: "runtime-lost", runnerId: "pi", effectiveRunnerId: "pi", status: "started", now });
+  store.createRun({ id: "run-lost", cwd, taskId: "task-lost", workUnitId: unit.id, providerName: "fixture", providerModel: "fixture",
+    taskSnapshot: {}, providerSnapshot: {}, requestSnapshot: {}, createdAt: now });
+  store.linkRunToWorkUnit("run-lost", unit.id, now);
+  assert.equal(store.updateWorkUnitAttemptStatus({ ...toRuntimeAttemptFence(attempt), status: "lost", endedAt: now, now })?.status, "lost");
+  assert.equal(store.getWorkUnit(unit.id)?.activeAttemptId, attempt.id);
+  store.createArtifact({ runId: "run-lost", type: "json", path: "result.json", sealedPayload: { result: true }, createdAt: now });
+  let status = 0, payload = "";
+  const response = { setHeader() {}, writeHead(code: number) { status = code; }, end(body: string) { payload = body; } } as unknown as ServerResponse;
+  const url = new URL("http://fixture/runs/run-lost/assurance-evidence"); url.searchParams.set("cwd", cwd);
+  handleGetRunAssuranceEvidence(response, url, registry, new ActiveRunRegistry(), "run-lost");
+  assert.equal(status, 200, payload);
+  const evidence = JSON.parse(payload) as FrameworkAssuranceEvidenceResponse;
+  assert.equal(evidence.execution.attemptStatus, "lost");
+  assert.equal(evidence.execution.claimStatus, "expired");
 });
 
 for (const status of ["pending", "blocked", "failed", "cancelled"] as const) {
