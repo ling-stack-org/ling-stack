@@ -48,6 +48,12 @@ test("readiness rejects cross-domain Attempt identity drift before assessing sta
   assert.throws(() => assessHostReadiness(drift), code("host_readiness_lineage_mismatch"));
 });
 
+test("readiness rejects current Attempt status drift before assessing status", () => {
+  const drift = clone(ready) as { execution: { attemptStatus: string } };
+  drift.execution.attemptStatus = "failed";
+  assert.throws(() => assessHostReadiness(drift), code("host_readiness_lineage_mismatch"));
+});
+
 test("unknown budget and unconfirmed cancellation remain blocked without execution authority", () => {
   const unknown = clone(ready) as {
     budget: { status: string; usage: { tokenStatus: string; costStatus: string }; blockers: string[] };
@@ -66,7 +72,7 @@ test("unknown budget and unconfirmed cancellation remain blocked without executi
 
   const cancelled = clone(ready) as {
     execution: { runStatus: string; workUnitStatus: string; attemptStatus: string; effectStatus: string };
-    lifecycle: { status: string; stop: { effects: string; reusable: boolean } };
+    lifecycle: { status: string; attempts: Array<{ isCurrent: boolean; status: string }>; stop: { effects: string; reusable: boolean } };
     admission: { status: string; blockers: string[] };
   };
   cancelled.execution.runStatus = "cancelled";
@@ -74,6 +80,9 @@ test("unknown budget and unconfirmed cancellation remain blocked without executi
   cancelled.execution.attemptStatus = "cancelled";
   cancelled.execution.effectStatus = "unknown";
   cancelled.lifecycle.status = "cancelling";
+  const currentCancelledAttempt = cancelled.lifecycle.attempts.find(attempt => attempt.isCurrent);
+  if (!currentCancelledAttempt) throw new Error("fixture current Attempt missing");
+  currentCancelledAttempt.status = "cancelled";
   cancelled.lifecycle.stop.effects = "unknown";
   cancelled.lifecycle.stop.reusable = false;
   cancelled.admission.status = "blocked";
@@ -123,6 +132,17 @@ test("readiness blocks a missing or incomplete isolation round", () => {
     const incompleteReport = assessHostReadiness(incomplete);
     assert.equal(incompleteReport.status, "blocked");
     assert.ok(incompleteReport.blockers.includes("host_readiness.isolation_round_not_applied"));
+  }
+});
+
+test("readiness rejects missing Admission safety binding facts", () => {
+  for (const mutate of [
+    (candidate: { admission: { profile: string | null } }) => { candidate.admission.profile = null; },
+    (candidate: { admission: { safetyPlan: { digest: string | null } } }) => { candidate.admission.safetyPlan.digest = null; },
+  ]) {
+    const candidate = clone(ready) as { admission: { profile: string | null; safetyPlan: { digest: string | null } } };
+    mutate(candidate);
+    assert.throws(() => assessHostReadiness(candidate), code("host_readiness_admission_mismatch"));
   }
 });
 

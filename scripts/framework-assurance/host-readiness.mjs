@@ -68,7 +68,8 @@ export function assessHostReadiness(value) {
   blockers.push(...isolation.blockers.map(issue => `host_readiness.${issue}`));
 
   if (admission.status !== "verified") blockers.push("host_readiness.admission_not_verified");
-  if (!admission.safetyPlan.present || !admission.safetyPlan.valid) {
+  if (!admission.safetyPlan.present || !admission.safetyPlan.valid
+    || admission.profile !== "pi_host_isolated_files_v1" || admission.safetyPlan.digest === null) {
     blockers.push("host_readiness.admission_safety_plan_invalid");
   }
   if (admission.toolBroker.mode !== "enforce" || !admission.toolBroker.required || !admission.toolBroker.satisfies) {
@@ -194,7 +195,8 @@ function assertCrossFieldIdentity(evidence) {
   requireCondition(current?.attemptId === execution.attemptId
     && current.runtimeInstanceId === execution.runtimeInstanceId
     && current.fencingToken === execution.fencingToken
-    && current.attemptNumber === lifecycle.currentGeneration,
+    && current.attemptNumber === lifecycle.currentGeneration
+    && current.status === execution.attemptStatus,
   "host_readiness_lineage_mismatch", "Host lifecycle current Attempt does not match execution lineage.");
 
   if (completion.status !== "not_applicable") {
@@ -205,9 +207,9 @@ function assertCrossFieldIdentity(evidence) {
     requireCondition(budget.roots.length > 0 && budget.roots.every(root => root.runId === execution.runId),
       "host_readiness_lineage_mismatch", "Budget evidence is not rooted at the observed Run.");
   }
-  requireCondition(admission.profile === null || admission.profile === isolation.safetyPlan.profile,
+  requireCondition(admission.profile !== null && admission.profile === isolation.safetyPlan.profile,
     "host_readiness_admission_mismatch", "Admission profile does not match the isolation safety profile.");
-  requireCondition(admission.safetyPlan.digest === null || admission.safetyPlan.digest === isolation.safetyPlan.digest,
+  requireCondition(admission.safetyPlan.digest !== null && admission.safetyPlan.digest === isolation.safetyPlan.digest,
     "host_readiness_admission_mismatch", "Admission safety plan does not match isolation evidence.");
   requireCondition(admission.binding.status === isolation.binding.status
     && admission.binding.matchesCurrentFence === isolation.binding.matchesCurrentFence,
