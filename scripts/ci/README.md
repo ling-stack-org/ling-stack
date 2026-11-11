@@ -91,7 +91,9 @@ a requested package via `--if-present`.
   GitHub. Kimi Host read/terminal, delegation production-tool-surface, engine
   lifecycle installation, and workflow conflict/isolate-delivery fixtures retain
   an exclusive phase on their assigned platform because they create many native,
-  process, or Git-backed resources. All files retain their watchdogs and original
+  process, or Git-backed resources. The Kimi owned-execution, repository-fence,
+  and signal-shutdown regression fixtures also run in that phase so process and
+  repository lifecycles do not overlap with other macOS files. All files retain their watchdogs and original
   test cases.
 - Linux restricted-command contracts and real macOS native smoke remain separate
   mandatory lanes. The manifest's disjoint union must equal fresh daemon discovery;
