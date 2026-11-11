@@ -31,7 +31,7 @@ test("all core matrix jobs are part of the existing mandatory unit gate", () => 
   assert.match(source, /matrix: \$\{\{ fromJSON\(needs\.scope\.outputs\.unit-matrix\) \}\}/u);
   assert.match(source, /fail-fast: false/u);
   assert.match(source, /node-test-shard\.mjs --suite=core/u);
-  assert.match(source, /--shard=\$\{\{ matrix\.shard \}\} --shard-count=8 --concurrency=2/u);
+  assert.match(source, /--shard=\$\{\{ matrix\.shard \}\} --shard-count=\$\{\{ matrix\.shardCount \}\} --concurrency=\$\{\{ matrix\.concurrency \}\}/u);
   assert.match(source, /timeout-minutes: 35/u);
   assert.match(source, /--shard-timeout-ms=1800000/u);
   assert.match(source, /--exclude='\["@ling-stack\/daemon","@ling-stack\/core"\]'/u);
@@ -65,7 +65,12 @@ test("browser smoke starts after reusable outputs without delaying the core and 
   assert.match(smoke, /needs: \[scope, build\]/u);
   assert.match(smoke, /needs\.scope\.outputs\.web == 'true'/u);
   assert.match(smoke, /name: ci-dist/u);
-  assert.match(smoke, /playwright install --with-deps chromium --only-shell/u);
+  const webPackage = JSON.parse(readFileSync(new URL("../../apps/web/package.json", import.meta.url), "utf8"));
+  const image = /^      image: mcr\.microsoft\.com\/playwright:v([^@\s]+)@sha256:([a-f0-9]{64})$/mu.exec(smoke);
+  assert.ok(image, "The browser environment must use an immutable official image");
+  assert.equal(image[1], `${webPackage.devDependencies["@playwright/test"]}-noble`,
+    "The installed Playwright client must match the image's preinstalled browser revision");
+  assert.doesNotMatch(smoke, /playwright install|apt-get/u);
   assert.match(smoke, /playwright test/u);
   assert.match(smoke, /name: ci-linux-source-web-smoke/u);
   assert.doesNotMatch(smoke, /continue-on-error/u);
