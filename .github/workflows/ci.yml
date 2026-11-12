@@ -39,6 +39,7 @@ jobs:
       daemon-matrix: ${{ steps.test-plan.outputs.daemon-matrix }}
       unit-selected: ${{ steps.test-plan.outputs.unit-selected }}
       daemon: ${{ steps.classify.outputs.daemon }}
+      macos-native: ${{ steps.classify.outputs.macos-native }}
       web: ${{ steps.classify.outputs.web }}
     steps:
       - name: Check out repository without retained credentials
@@ -92,6 +93,7 @@ jobs:
             "build-selected": String(scope.packages.length > 0),
             "typecheck-selected": String(scope.typecheckPackages.length > 0),
             daemon: String(scope.daemon),
+            "macos-native": String(scope.macosNative),
             web: String(scope.web),
           };
           for (const [key, value] of Object.entries(outputs)) console.log(`${key}=${value}`);
@@ -693,7 +695,7 @@ jobs:
   restricted-command-macos:
     name: Real macOS helper and Seatbelt smoke
     needs: [scope, build]
-    if: ${{ !cancelled() && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.daemon == 'true' && needs.build.result == 'success' }}
+    if: ${{ !cancelled() && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.macos-native == 'true' && needs.build.result == 'success' }}
     # actions/runner-images documents macos-26 as arm64, not the Intel/large image.
     # This is standalone helper evidence, not reviewed packaged issuer certification.
     runs-on: macos-26
@@ -826,6 +828,7 @@ jobs:
           LINUX_CONTRACT_RESULT: ${{ needs.daemon-linux-contracts.result }}
           MACOS_NATIVE_RESULT: ${{ needs.restricted-command-macos.result }}
           DAEMON_SELECTED: ${{ needs.scope.outputs.daemon }}
+          MACOS_NATIVE_SELECTED: ${{ needs.scope.outputs.macos-native }}
           WEB_SELECTED: ${{ needs.scope.outputs.web }}
           DEPENDENCY_SELECTED: ${{ needs.scope.outputs.dependency-policy }}
           ASSURANCE_SELECTED: ${{ needs.scope.outputs.assurance-selected }}

@@ -41,6 +41,18 @@ const TEST_PATH_PATTERN = /(?:^|\/)(?:test|tests|__tests__|e2e)(?:\/|$)|(?:^|\/)
 const TEST_SUPPORT_PATTERN = /(?:fixture|fixtures|helper|helpers|support|setup|util|utils)/iu;
 const SUPPORTED_TEST_PACKAGE_PREFIXES = ["packages/"];
 const SUPPORTED_TEST_PACKAGE_DIRECTORIES = new Set(["apps/web", "apps/chrome-extension", "apps/mobile"]);
+// The standalone macOS helper smoke validates the reviewed Seatbelt/native
+// helper itself. Keep it for changes that can alter that contract; ordinary
+// Daemon changes retain the complete Darwin test suite without consuming an
+// additional hosted macOS runner.
+const MACOS_NATIVE_PATH_PATTERNS = [
+  /^native\/sandbox(?:\/|$)/u,
+  /^packages\/daemon\/src\/runtime\/sandbox(?:\/|$)/u,
+  /^packages\/daemon\/src\/runtime\/adapters\/native-command-policy\.[^/]+$/u,
+  /^packages\/daemon\/src\/features\/runs\/restricted-command-dispatch\.[^/]+$/u,
+  /^packages\/daemon\/test\/(?:platform-native-sandbox|macos-native-command|restricted-command-dispatch)\.test\.[^/]+$/u,
+  /^packages\/daemon\/test\/restricted-command-launch-unknown\.contract\.mjs$/u,
+];
 // The catalog importer reads Web's AST helper, locale sources and tsconfig
 // without a manifest dependency. Keep that validation consumer in the graph.
 const VALIDATION_CONSUMERS = new Map([["@ling-stack/web", ["@ling-stack/localization"]]]);
@@ -65,6 +77,7 @@ export function classifyChangedFiles(input) {
   const files = normalizeFiles(input.files);
   const eventName = input.eventName ?? "pull_request";
   const packages = input.packageEntries ?? discoverPackages(repositoryRoot);
+  const nativeSurfaceChanged = files.some(isMacosNativePath);
 
   if (eventName !== "pull_request" || input.forceFull || files.length === 0) {
     return buildScope("full", files, packages, "non-PR event or explicit full CI");
@@ -100,6 +113,7 @@ export function classifyChangedFiles(input) {
 
   for (const file of files) {
     if (isDocumentationPath(file) || isMaintenancePath(file) || isAssurancePath(file)) continue;
+    if (isMacosNativePath(file)) continue;
     const entry = findOwningPackage(file, packages);
     if (!entry) {
       unresolvedFiles.push(file);
@@ -111,6 +125,14 @@ export function classifyChangedFiles(input) {
     } else {
       changedSourceEntries.add(entry.name);
     }
+  }
+
+  // The native helper lives outside a workspace package, but its build and
+  // contract are consumed by Daemon. Treat it as a Daemon source input so the
+  // normal build and platform test graph remain selected.
+  if (nativeSurfaceChanged && packages.some((entry) => entry.name === "@ling-stack/daemon")) {
+    changedEntries.add("@ling-stack/daemon");
+    changedSourceEntries.add("@ling-stack/daemon");
   }
 
   if (unresolvedFiles.length > 0) {
@@ -162,6 +184,7 @@ export function classifyChangedFiles(input) {
     dependencyPolicy: files.some((file) => file.endsWith("/package.json") || DEPENDENCY_CHECK_FILES.has(file)),
     assurance: files.some(isAssurancePath) || sourceEntries.some(name => ASSURANCE_PACKAGES.has(name)),
     daemon: affectedNames.has("@ling-stack/daemon"),
+    macosNative: nativeSurfaceChanged,
     web: affectedNames.has("@ling-stack/web"),
     reason: changedEntries.size === 0 ? "offline assurance inputs and validation consumers" : changedSourceEntries.size === 0
       ? "test or test-support changes in affected workspace packages"
@@ -170,7 +193,7 @@ export function classifyChangedFiles(input) {
 }
 
 /** @typedef {{name: string, directory: string, dependencies: string[], hasTestScript: boolean, hasTypecheckScript: boolean, scriptsFingerprint?: string}} PackageEntry */
-/** @typedef {{mode: "docs"|"affected"|"full", files: string[], packages: string[], testPackages: string[], typecheckPackages: string[], dependencyPolicy: boolean, assurance: boolean, daemon: boolean, web: boolean, reason: string}} CiScope */
+/** @typedef {{mode: "docs"|"affected"|"full", files: string[], packages: string[], testPackages: string[], typecheckPackages: string[], dependencyPolicy: boolean, assurance: boolean, daemon: boolean, macosNative: boolean, web: boolean, reason: string}} CiScope */
 
 /** @param {string} value */
 function normalizePath(value) {
@@ -198,6 +221,11 @@ function isMaintenancePath(file) {
 /** @param {string} file */
 function isTestPath(file) {
   return TEST_PATH_PATTERN.test(file);
+}
+
+/** @param {string} file */
+function isMacosNativePath(file) {
+  return MACOS_NATIVE_PATH_PATTERNS.some((pattern) => pattern.test(file));
 }
 
 /** @param {PackageEntry} entry */
@@ -350,6 +378,7 @@ function buildScope(mode, files, packages, reason) {
     dependencyPolicy: mode === "full",
     assurance: mode === "full",
     daemon: mode === "full" || names.includes("@ling-stack/daemon"),
+    macosNative: mode === "full" || files.some(isMacosNativePath),
     web: mode === "full" || names.includes("@ling-stack/web"),
     reason,
   };

@@ -51,6 +51,7 @@ test("offline assurance changes select their own lane without product builds or 
     assert.deepEqual(scope.testPackages, []);
     assert.deepEqual(scope.typecheckPackages, []);
     assert.equal(scope.daemon, false);
+    assert.equal(scope.macosNative, false);
     assert.equal(scope.web, false);
     assert.equal(scope.dependencyPolicy, false);
     const plan = await createTestPlan(scope.testPackages);
@@ -126,11 +127,12 @@ test("workflow outputs and the real aggregate command require precisely the sele
     const required = new Set(["SCOPE", "COMMON", ...(scope.assurance ? ["ASSURANCE"] : []),
       ...(scope.packages.length ? ["BUILD"] : []), ...(scope.typecheckPackages.length ? ["TYPECHECK"] : []),
       ...(scope.testPackages.some(name => !["@ling-stack/core", "@ling-stack/daemon"].includes(name)) ? ["UNIT"] : []),
-      ...(scope.daemon ? ["DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE"] : []), ...(scope.web ? ["WEB_SMOKE"] : [])]);
+      ...(scope.daemon ? ["DAEMON", "LINUX_CONTRACT"] : []), ...(scope.macosNative ? ["MACOS_NATIVE"] : []), ...(scope.web ? ["WEB_SMOKE"] : [])]);
     const env = { ...process.env, EXECUTION_TIER: "complete", SCOPE_MODE: scope.mode,
       ASSURANCE_SELECTED: outputs["assurance-selected"], BUILD_SELECTED: outputs["build-selected"],
       DEPENDENCY_SELECTED: outputs["dependency-policy"], TYPECHECK_SELECTED: outputs["typecheck-selected"],
-      UNIT_SELECTED: String(required.has("UNIT")), DAEMON_SELECTED: outputs.daemon, WEB_SELECTED: outputs.web,
+      UNIT_SELECTED: String(required.has("UNIT")), DAEMON_SELECTED: outputs.daemon,
+      MACOS_NATIVE_SELECTED: outputs["macos-native"], WEB_SELECTED: outputs.web,
       ...Object.fromEntries(lanes.map(lane => [`${lane}_RESULT`, required.has(lane) ? "success" : "skipped"])) };
     const run = (overrides: Record<string, string> = {}): SpawnSyncReturns<string> => spawnSync("bash", ["-euo", "pipefail", "-c",
       command.replace(/^ {10}/gmu, "")], { cwd: root, encoding: "utf8", timeout: 10_000, env: { ...env, ...overrides } });
