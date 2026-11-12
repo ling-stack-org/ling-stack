@@ -1,12 +1,16 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
+import { createServer } from "node:http";
 import { promisify } from "node:util";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { test } from "node:test";
 import { createSqliteRunStore } from "../../core/dist/index.js";
+import { resolveConfig } from "../dist/config.js";
 import { createDaemonServer } from "../dist/index.js";
+import { handleCompanionMessagesCollection } from "../dist/features/companions/dialogue.js";
+import { RunStoreRegistry } from "../dist/runtime/store-registry.js";
 
 // This fixture intentionally stays ESM JavaScript because the daemon's current
 // Node test entrypoint runs built dist through the existing *.test.mjs glob.
@@ -159,6 +163,93 @@ test("Companion dialogue reuses the bound teammate provider and persists validat
   } finally {
     await daemon.stop();
     await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("Companion message in-flight deduplication is scoped by workspace", async () => {
+  const cwdA = await mkdtemp(resolve(tmpdir(), "ling-stack-companion-scope-a-"));
+  const cwdB = await mkdtemp(resolve(tmpdir(), "ling-stack-companion-scope-b-"));
+  const storeA = createSqliteRunStore(cwdA);
+  const storeB = createSqliteRunStore(cwdB);
+  const companionId = "companion_shared_scope_fixture";
+  const now = new Date().toISOString();
+  for (const store of [storeA, storeB]) {
+    store.createCompanion({ id: companionId, teammateId, displayName: "Scoped Companion" }, now);
+  }
+  const stores = new Map([[cwdA, storeA], [cwdB, storeB]]);
+  const registry = new RunStoreRegistry(cwd => {
+    const store = stores.get(cwd);
+    if (!store) throw new Error(`Unknown test workspace: ${cwd}`);
+    return store;
+  }, { trustedWorkspaceRoots: [cwdA, cwdB] });
+  const config = resolveConfig({ host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwdA });
+  let release;
+  const gate = new Promise(resolveGate => { release = resolveGate; });
+  let entered = 0;
+  let resolveSecond;
+  const secondEntered = new Promise(resolveGate => { resolveSecond = resolveGate; });
+  const createReply = async input => {
+    entered++;
+    if (entered === 2) resolveSecond();
+    await gate;
+    return input.store.createTeammateDirectMessage({
+      id: input.replyMessageId,
+      teammateId,
+      threadId: input.thread.id,
+      authorType: "ai-teammate",
+      authorId: teammateId,
+      body: `reply:${input.sourceMessage.body}`,
+      status: "ready",
+    }, new Date().toISOString());
+  };
+  const server = createServer((request, response) => {
+    void handleCompanionMessagesCollection(request, response, config, registry, companionId, createReply).catch(error => {
+      response.writeHead(500);
+      response.end(String(error));
+    });
+  });
+  await new Promise((resolveListen, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolveListen);
+  });
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const send = (cwd, body) => fetch(`http://127.0.0.1:${address.port}/companions/${companionId}/messages?cwd=${encodeURIComponent(cwd)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ body, idempotencyKey: "same-key" }),
+  });
+  try {
+    const first = send(cwdA, "workspace A");
+    const second = send(cwdB, "workspace B");
+    let timeout;
+    try {
+      await Promise.race([secondEntered, new Promise((_, reject) => {
+        timeout = setTimeout(() => reject(new Error("second workspace did not enter the reply service")), 5000);
+      })]);
+    } finally {
+      clearTimeout(timeout);
+      release();
+    }
+    const [firstResponse, secondResponse] = await Promise.all([first, second]);
+    const firstBody = await firstResponse.json();
+    const secondBody = await secondResponse.json();
+    assert.equal(firstResponse.status, 200);
+    assert.equal(secondResponse.status, 200);
+    assert.equal(entered, 2);
+    assert.equal(firstBody.cwd, cwdA);
+    assert.equal(secondBody.cwd, cwdB);
+    assert.equal(firstBody.message.body, "workspace A");
+    assert.equal(secondBody.message.body, "workspace B");
+    assert.equal(firstBody.aiReply.body, "reply:workspace A");
+    assert.equal(secondBody.aiReply.body, "reply:workspace B");
+  } finally {
+    release();
+    server.closeAllConnections();
+    await new Promise(resolveClose => server.close(() => resolveClose()));
+    registry.closeAll();
+    await rm(cwdA, { recursive: true, force: true });
+    await rm(cwdB, { recursive: true, force: true });
   }
 });
 

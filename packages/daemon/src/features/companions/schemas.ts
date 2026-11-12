@@ -2,7 +2,6 @@ import {
   companionEventTypes,
   companionPhases,
   companionStatuses,
-  normalizeCompanionBehaviorPolicy,
   normalizeCompanionManifest,
   type CompanionInteractionRequest,
   type CompanionMessageRequest,
@@ -129,6 +128,8 @@ function parseManifest(value: Record<string, unknown>) {
 }
 
 function parseBehaviorPolicy(value: Record<string, unknown>) {
+  const proactiveEnabled = readOptionalBoolean(value, "proactiveEnabled");
+  const cooldownMs = readOptionalNumber(value, "cooldownMs");
   const quietHours = value.quietHours;
   let parsedQuietHours: readonly [number, number] | undefined;
   if (quietHours !== undefined) {
@@ -137,11 +138,11 @@ function parseBehaviorPolicy(value: Record<string, unknown>) {
     }
     parsedQuietHours = [quietHours[0] as number, quietHours[1] as number];
   }
-  return normalizeCompanionBehaviorPolicy({
-    proactiveEnabled: readOptionalBoolean(value, "proactiveEnabled"),
-    cooldownMs: readOptionalNumber(value, "cooldownMs"),
-    quietHours: parsedQuietHours,
-  });
+  return {
+    ...(proactiveEnabled === undefined ? {} : { proactiveEnabled }),
+    ...(cooldownMs === undefined ? {} : { cooldownMs }),
+    ...(parsedQuietHours === undefined ? {} : { quietHours: parsedQuietHours }),
+  };
 }
 
 function readManifestEntries(value: Record<string, unknown>, key: string): Record<string, unknown>[] {

@@ -99,8 +99,9 @@ export async function handleCompanionMessagesCollection(
 
     const input = parseCompanionMessageRequest(await readJsonBody(request, config.maxBodyBytes));
     const messageId = input.idempotencyKey ? companionMessageId(companion.id, input.idempotencyKey) : undefined;
+    const inFlightKey = messageId ? companionMessageInFlightKey(cwd, messageId) : undefined;
     if (messageId) {
-      const pending = companionMessageInFlight.get(messageId);
+      const pending = companionMessageInFlight.get(inFlightKey!);
       if (pending) {
         writeJson(response, 200, await pending);
         return;
@@ -125,12 +126,12 @@ export async function handleCompanionMessagesCollection(
       idempotencyKey: input.idempotencyKey,
       createReply,
     });
-    if (messageId) companionMessageInFlight.set(messageId, run);
+    if (inFlightKey) companionMessageInFlight.set(inFlightKey, run);
     try {
       const result = await run;
       writeJson(response, messageId ? 200 : 201, result);
     } finally {
-      if (messageId && companionMessageInFlight.get(messageId) === run) companionMessageInFlight.delete(messageId);
+      if (inFlightKey && companionMessageInFlight.get(inFlightKey) === run) companionMessageInFlight.delete(inFlightKey);
     }
   } catch (error) {
     writeCompanionDialogueError(response, error);
@@ -179,8 +180,9 @@ export async function handleCompanionMessageStream(
     const thread = store.getOrCreateTeammateDirectThread(teammate.id, new Date().toISOString());
     const input = parseCompanionMessageRequest(await readJsonBody(request, config.maxBodyBytes));
     const messageId = input.idempotencyKey ? companionMessageId(companion.id, input.idempotencyKey) : undefined;
+    const inFlightKey = messageId ? companionMessageInFlightKey(cwd, messageId) : undefined;
     if (messageId) {
-      const pending = companionMessageInFlight.get(messageId);
+      const pending = companionMessageInFlight.get(inFlightKey!);
       if (pending) {
         try {
           const cachedResult = await pending;
@@ -216,7 +218,7 @@ export async function handleCompanionMessageStream(
       });
       void promise.catch(() => undefined);
       idempotentResult = { promise, resolve: resolveResult, reject: rejectResult };
-      companionMessageInFlight.set(messageId, promise);
+      companionMessageInFlight.set(inFlightKey!, promise);
     }
     writeSseHead(response);
     const safeWriteSse = (event: string, data: unknown): void => {
@@ -348,8 +350,8 @@ export async function handleCompanionMessageStream(
       }
     } finally {
       if (registeredWorkUnitId) activeDirectReplies?.delete(registeredWorkUnitId);
-      if (messageId && companionMessageInFlight.get(messageId) === idempotentResult?.promise) {
-        companionMessageInFlight.delete(messageId);
+      if (inFlightKey && companionMessageInFlight.get(inFlightKey) === idempotentResult?.promise) {
+        companionMessageInFlight.delete(inFlightKey);
       }
       if (!closed && !response.destroyed) response.end();
     }
@@ -698,6 +700,10 @@ function companionReplyFromEvents(
 
 function companionMessageId(companionId: string, idempotencyKey: string): string {
   return `companion_msg_${stableHash(`${companionId}:${idempotencyKey}`)}`;
+}
+
+function companionMessageInFlightKey(cwd: string, messageId: string): string {
+  return `${cwd}:${messageId}`;
 }
 
 function companionReplyId(companionId: string, idempotencyKey: string): string {

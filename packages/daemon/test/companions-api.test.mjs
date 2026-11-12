@@ -73,6 +73,20 @@ test("Companion API persists a teammate binding and validates semantic interacti
     assert.equal(paused.status, 200);
     assert.equal(paused.body.companion.status, "paused");
 
+    const configured = await requestJson(`${baseUrl}/companions/${companionId}?${query}`, "PATCH", {
+      behaviorPolicy: { proactiveEnabled: true, cooldownMs: 12_345, quietHours: [22, 6] },
+    });
+    assert.equal(configured.status, 200);
+    const partialPolicy = await requestJson(`${baseUrl}/companions/${companionId}?${query}`, "PATCH", {
+      behaviorPolicy: { proactiveEnabled: false },
+    });
+    assert.equal(partialPolicy.status, 200);
+    assert.deepEqual(partialPolicy.body.companion.behaviorPolicy, {
+      proactiveEnabled: false,
+      cooldownMs: 12_345,
+      quietHours: [22, 6],
+    });
+
     const disabled = await requestJson(`${baseUrl}/companions/${companionId}?${query}`, "DELETE", {});
     assert.equal(disabled.status, 200);
     assert.equal(disabled.body.companion.status, "disabled");
