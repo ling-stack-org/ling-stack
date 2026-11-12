@@ -157,7 +157,7 @@ function evaluationFixture(options: {
     baselineDigest: "c".repeat(64),
     candidateArtifactId: "artifact-candidate",
     candidateDigest: "d".repeat(64),
-    idempotencyKey: "evaluation-assurance-1",
+    idempotencyKey: "eval-a",
     state: "completed",
     revision: 2,
     createdAt: "2026-11-12T08:00:00.000Z",

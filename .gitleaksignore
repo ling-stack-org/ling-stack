@@ -61,6 +61,7 @@ bfbcac2e1c21adbb9d88e55af2865987b86ec7cd:packages/daemon/test/provider-runtime-c
 05df64bd4520662fe971ec41cafcb3cc56112844:packages/daemon/test/assurance-evidence-extended.test.ts:generic-api-key:136
 05df64bd4520662fe971ec41cafcb3cc56112844:packages/daemon/test/assurance-evidence-extended.test.ts:generic-api-key:160
 05df64bd4520662fe971ec41cafcb3cc56112844:packages/daemon/test/assurance-evidence-extended.test.ts:generic-api-key:229
+6483b72dd18b89d75535bf638e0048f2adc779ff:packages/daemon/test/assurance-evidence-extended.test.ts:generic-api-key:160
 
 # Dedicated offline TLS fixture key; it is trusted only by the matching test CA.
 de71ccccd55f21e909cb597347bcc6e1f81103e3:packages/daemon/test/media-native-transport.test.mjs:private-key:21
