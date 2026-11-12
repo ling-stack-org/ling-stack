@@ -605,6 +605,31 @@ export function parseTeammateRoute(
   return undefined;
 }
 
+export function parseCompanionRoute(
+  pathname: string,
+): { readonly companionId: string; readonly action?: "state" | "events" | "interactions" | "proactive" | "messages" | "messages-stream" } | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 2 && segments[0] === "companions") {
+    return { companionId: segments[1] };
+  }
+  if (
+    segments.length === 3 &&
+    segments[0] === "companions" &&
+    (segments[2] === "state" || segments[2] === "events" || segments[2] === "interactions" || segments[2] === "proactive" || segments[2] === "messages")
+  ) {
+    return { companionId: segments[1], action: segments[2] };
+  }
+  if (
+    segments.length === 4 &&
+    segments[0] === "companions" &&
+    segments[2] === "messages" &&
+    segments[3] === "stream"
+  ) {
+    return { companionId: segments[1], action: "messages-stream" };
+  }
+  return undefined;
+}
+
 export function parseMcpServerRoute(
   pathname: string,
 ): { readonly serverId: string; readonly action?: "check" | "sync-tools" | "secret" | "status" } | undefined {

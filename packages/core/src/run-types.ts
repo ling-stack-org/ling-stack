@@ -191,6 +191,19 @@ import type {
   UpdateMediaWorkflowDefinitionInput,
 } from "./media-workflow-types.js";
 import type {
+  CompanionEvent,
+  CompanionEventPage,
+  CompanionProfile,
+  CompanionState,
+  CreateCompanionInput,
+  ListCompanionEventsOptions,
+  ListCompanionsOptions,
+  RecordCompanionInteractionInput,
+  RecordCompanionInteractionResult,
+  RecordCompanionEventInput,
+  UpdateCompanionInput,
+} from "./companion-types.js";
+import type {
   CreateOrReuseConversationMediaJobInput,
   CreateOrReuseConversationMediaJobResult,
 } from "./media-generation-routing-types.js";
@@ -2104,6 +2117,16 @@ export interface RunStore extends MemoryWikiStore, MemoryDerivativeStore, Learni
   updateAiTeammate(id: string, input: AiTeammateUpdateInput, now: string): AiTeammate | undefined;
   disableAiTeammate(id: string, now: string): AiTeammate | undefined;
   hardDeleteAiTeammate(id: string, input: HardDeleteAiTeammateInput, now: string): HardDeleteAiTeammateResult | undefined;
+  createCompanion(input: CreateCompanionInput, now: string): CompanionProfile;
+  getCompanion(id: string): CompanionProfile | undefined;
+  listCompanions(options?: ListCompanionsOptions): CompanionProfile[];
+  updateCompanion(id: string, input: UpdateCompanionInput, now: string): CompanionProfile | undefined;
+  disableCompanion(id: string, now: string): CompanionProfile | undefined;
+  getCompanionState(companionId: string): CompanionState | undefined;
+  listCompanionEvents(options: ListCompanionEventsOptions): CompanionEvent[];
+  listCompanionEventsPage(options: ListCompanionEventsOptions): CompanionEventPage;
+  recordCompanionInteraction(input: RecordCompanionInteractionInput, now: string): RecordCompanionInteractionResult;
+  recordCompanionEvent(input: RecordCompanionEventInput, now: string): CompanionEvent;
   getAiCouncil(id: string): AiCouncil | undefined;
   listAiCouncils(options?: ListAiCouncilsOptions): AiCouncil[];
   createAiCouncil(input: CreateAiCouncilInput, now: string): AiCouncil;
@@ -2955,6 +2978,19 @@ export type TeammateStoreFacet = RunStoreFacet<
   | "deleteTeammatePrivateAttachment"
   | "replaceTeammateMcpBindings"
   | "listTeammateMcpBindings"
+>;
+
+export type CompanionStoreFacet = RunStoreFacet<
+  | "createCompanion"
+  | "getCompanion"
+  | "listCompanions"
+  | "updateCompanion"
+  | "disableCompanion"
+  | "getCompanionState"
+  | "listCompanionEvents"
+  | "listCompanionEventsPage"
+  | "recordCompanionInteraction"
+  | "recordCompanionEvent"
 >;
 
 export type AiCouncilStoreFacet = RunStoreFacet<
