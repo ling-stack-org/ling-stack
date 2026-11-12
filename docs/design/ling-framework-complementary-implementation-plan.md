@@ -1,11 +1,11 @@
 # Ling 框架补强实现计划书
 
-Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A/F4-01 and F3-B admission evidence are on main; root Run budget projection repair and exact Run/evaluation association are merged in PR #685/#684 (`9af7ad54`); F3-B real trial and F5 rerun remain blocked/unimplemented
+Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A/F4-01, F3-B admission evidence, F3-02 review-only preflight, and Host readiness entered main at `edb820f0` (PR #690), with the current main documentation refresh at `878e422a` (PR #691); the F3-B real trial and F5 rerun remain blocked/unimplemented
 Owner: Ling framework maintainers; one integration owner per implementation batch
 Last verified: 2026-11-12
 Document type: implementation plan / acceptance checklist
 Canonical replacement: none; retain while material work remains unfinished
-Code and test anchors: sections 7 and 9; live evidence is read-only and not assessed, with no real task or GUI acceptance claimed
+Code and test anchors: sections 7 and 9; live evidence is read-only, Host readiness is review-only, and no real task or GUI acceptance is claimed
 
 设计依据：[总体设计](ling-framework-complementary-design.md)、[详细设计](ling-framework-complementary-detailed-design.md)。
 
@@ -13,7 +13,7 @@ Code and test anchors: sections 7 and 9; live evidence is read-only and not asse
 
 按“离线评测与报告 + SDK 独立消费”先实施，再接真实执行和诊断。不要等待另一会话完成所有未来功能，也不要抢先改它正在拥有的安全并发、隔离执行、合并和恢复文件。
 
-用户确认开始后，F1/F2 已在独立工作区实现并合并到主线，合并提交为 `47afcc47b9063cd7a402a81cf1088caa695f3638`。F3-A/F4-01 和 F3-B 准入证据前置已进入 `main@9af7ad54`，包含 #676、#685 和 #684 的已合并增量。默认不产生付费模型请求，不启动生产 daemon、不修改共享数据库，不开放真实 F3-B 试点。实际证据见第 9 节。
+用户确认开始后，F1/F2 已在独立工作区实现并合并到主线，合并提交为 `47afcc47b9063cd7a402a81cf1088caa695f3638`。F3-A/F4-01、F3-B 准入证据前置、F3-02 和 Host readiness 已进入 `main@edb820f0`，包含 #676、#685、#684、#688、#689 和 #690 的已合并增量；当前主线为 `main@878e422a`，包含 #691 文档同步。默认不产生付费模型请求，不启动生产 daemon、不修改共享数据库，不开放真实 F3-B 试点。实际证据见第 9 节。
 
 | 里程碑 | 内容 | 当前状态 | 进入条件 |
 | --- | --- | --- | --- |
@@ -136,9 +136,19 @@ Code and test anchors: sections 7 and 9; live evidence is read-only and not asse
 ### F3-02 单任务串行真实验收
 
 - **输入**：F3-01、正常执行入口、可信验证器，以及准入清单。
-- **实施**：先做 T01 只读任务，随后仅对已具备隔离验收的写任务做 T02/T03；真实任务、验证与 grader 分别记录调用与费用。
+- **实施**：先做 T01 只读任务，随后仅对已具备隔离验收的写任务做 T02/T03；真实任务、验证与 grader 分别记录调用与费用。当前已先交付 `trial-preflight`：它只接受可信绑定的提交内 T01 manifest，核对 suite/task/source/input 摘要，冻结 Provider/model、金额/币种、Provider 请求、token、工具循环、子代理、grader、在途 reservation 和未知状态停止规则，并检查 checkout 外的 `LING_STACK_HOME`、workspace、输出目录、loopback 端口及 CPU/内存/磁盘余量。
 - **验收**：A13/A14；完整链条不是用合成日志替代。包含一次失败/缺证据和一次取消未确认停止的处理证据，不人为强制所有任务通过。
-- **限制**：默认不进入日常付费 CI。预算、Provider 与请求上限没有明确前，不运行模型。
+- **限制**：默认不进入日常付费 CI。预算、Provider 与请求上限没有明确前，不运行模型。`trial-preflight` 只返回 `blocked` / `ready-for-review`，始终 `executionAuthorized=false`，不启动 Provider、模型、daemon、Store 或真实任务；资源与端口在真正启动前仍须重查。
+
+**F3-02 前置交付状态（2026-11-12）**：`scripts/framework-assurance/trial-preflight.mjs`、`fixtures/framework-assurance/trials/t01-review.json` 和 `trial-preflight.test.ts` 已实现。测试覆盖冻结摘要漂移、可信 manifest 路径和字节绑定、符号链接、非空目录、目录根 symlink 逃逸、错误 `LING_STACK_HOME`、端口冲突、资源不足、checkout 内资源根、隐式 Provider 和执行授权字段；新测试 `9/9`，assurance 全套（含新 TypeScript 测试）`107/107`，`tsc -p scripts/ci/tsconfig.test.json --noEmit` 通过。该状态只关闭 F3-02 的离线前置缺口，不关闭 A13/A14 或 F3-B 真实试点准入。
+
+### F3-B-01 Host readiness review gate
+
+- **输入**：已捕获的 `FrameworkAssuranceEvidenceResponse`，不接受 task input、claim token、resume handle、artifact body 或 evaluation grade。
+- **实施**：新增 `host-readiness.mjs` 与 `host-readiness` CLI。解析器强制 lifecycle、completion、budget、isolation、admission 五域；评估器逐个核对 lifecycle Attempt（旧恢复 Attempt 允许 `lost`）、当前 Attempt/runtime/fence/generation、请求 Run 与 projection Run 的一致性、全部 completion/budget root 的根 Run 归属、drain/settle/reusable、terminal claim、effect confirmation、完整且已确认 `applied` 的隔离 round、隔离 profile/binding、独立 admission safety plan 的存在与有效性、Tool Broker `enforce` 和预算 blocker。aggregate 与 token/cost 两个预算维度不一致、未知用量、未确认取消或非当前 fence 均 fail-closed。
+- **输出**：只生成 `ready-for-trial-review` 或 `blocked` 的 JSON/Markdown review report；`executionAuthorized` 永远为 `false`。`collectHostReadiness()` 只做一次客户端读取，不触发 recovery、取消、重试、Store 初始化或派发。
+- **验收**：合成 Host shape 覆盖旧 Attempt 丢失后当前 Attempt 成功、缺五域、lineage 漂移、预算维度不一致、请求 Run 不一致、缺失或未应用隔离 round、非终态 Attempt、混合根 Run、无效 admission safety plan、取消未确认和 CLI 输出；合并前后收口回归 `20/20`，framework-assurance 全套 `127/127`，`corepack pnpm typecheck:ci-tests` 和格式检查通过。
+- **证据边界**：PR #690 已合并到 `main@edb820f0`；fixture 仍是 parser 和 review gate 的合成输入，不是真实 Provider、模型、生产 daemon、跨平台 packaged 或付费试点验收；F3-B 继续保持 `BLOCKED`。
 
 ### F3-03 并发对比及写入结果验收
 
@@ -157,7 +167,9 @@ Code and test anchors: sections 7 and 9; live evidence is read-only and not asse
 
 ### F3-B 准入清单
 
-- [ ] 对应源代码已经进入核实的实施基线，不只存在于 WIP 或未合并 PR。
+Host readiness review gate 只把已捕获投影的五域完整性和跨域一致性变成可重复检查；它不把合成 fixture 或本地报告升级为真实 Host/Provider 验收。以下真实试点项目仍需逐项取得证据。
+
+- [x] 对应源代码已经进入核实的实施基线，不只存在于 WIP 或未合并 PR。
 - [ ] Host 权限与能力分类、admission 及执行代次约束有验收证据。
 - [ ] 候选代码/测试所需的真实隔离执行 profile 已验收；不能在主机任意 shell 执行。
 - [ ] 普通 Run 与 evaluation 的证据身份、artifact 封存及恢复已通过 fixture 回归。
@@ -168,7 +180,7 @@ Code and test anchors: sections 7 and 9; live evidence is read-only and not asse
 
 任一项不满足，只阻断受影响的真实执行阶段，F1/F2 可继续。F5 仅对详细设计 A17 做合同检查，不进入代码实施。
 
-2026-11-09 的只读准入审计基于旧主线快照，结论为 `F3-B BLOCKED`；2026-11-10 的增量审计确认准入证据前置已实现；2026-11-12 的合并基线复核确认 #684 已进入 `main@9af7ad54`，但真实试点仍为 `F3-B BLOCKED`。完整证据、八项核查和解阻顺序见[2026-11-12 合并基线审计](../testing/f3b-admission-audit-2026-11-12.md)，历史记录见[2026-11-10 准入审计增量](../testing/f3b-admission-audit-2026-11-10.md)和[2026-11-09 准入审计](../testing/f3b-admission-audit-2026-11-09.md)。
+2026-11-09 的只读准入审计基于旧主线快照，结论为 `F3-B BLOCKED`；2026-11-10 的增量审计确认准入证据前置已实现；2026-11-12 的合并基线复核确认 #690 已进入 `main@edb820f0`，当前主线为 `main@878e422a`，Host readiness review gate 已具备但真实试点仍为 `F3-B BLOCKED`。完整证据、八项核查和解阻顺序见[2026-11-12 合并基线审计](../testing/f3b-admission-audit-2026-11-12.md)，历史记录见[2026-11-10 准入审计增量](../testing/f3b-admission-audit-2026-11-10.md)和[2026-11-09 准入审计](../testing/f3b-admission-audit-2026-11-09.md)。
 
 ## 6. PR 与集成顺序
 
@@ -217,13 +229,15 @@ git diff --check
 以下入口已存在，在独立实施 checkout 根目录运行：
 
 ```bash
-node --test scripts/framework-assurance/*.test.mjs
+node --test scripts/framework-assurance/*.test.mjs scripts/framework-assurance/*.test.ts
+corepack pnpm typecheck:ci-tests
 node scripts/framework-assurance/index.mjs preflight
+node scripts/framework-assurance/index.mjs host-readiness --input fixtures/framework-assurance/execution-evidence/host-ready-shape.json
 corepack pnpm assurance:offline
 corepack pnpm assurance:sdk
 ```
 
-`preflight` 只读；`assurance:offline` 即 `calibrate`，输出 `calibrate.json`、`observations.json`、`report.json`、`report.md` 至新外部临时目录。`assurance:sdk` 构建/打包可信 producer，运行固定仓外消费测试，不启动 daemon。所有命令默认零模型调用。
+`preflight` 和 `host-readiness` 只读；`host-readiness` 只产生 review report，不能授予执行权限；`assurance:offline` 即 `calibrate`，输出 `calibrate.json`、`observations.json`、`report.json`、`report.md` 至新外部临时目录。`assurance:sdk` 构建/打包可信 producer，运行固定仓外消费测试，不启动 daemon。所有命令默认零模型调用。
 
 命令 stdout 为 JSON，含本机 outputDir 与文件位置，便于本地打开；这些私有绝对路径不写入公开报告内容。重读或比较时使用 CLI 返回的观察文件路径：
 
@@ -494,3 +508,38 @@ Common checks 的失败已定位到全历史 Gitleaks：1438 个提交、3833874
 | 集成验证 | 合并后 Node 22 Daemon assurance 相关回归 182/182、API client 7/7、离线 assurance 98/98；Contracts/API client/Daemon 构建和 Daemon 源码/测试类型检查通过；托管门禁最终 30 项成功 |
 | 权限边界 | 固定 `not_assessed` / `enforcementAuthorized:false`；Attempt/artifact 归属始终 unavailable，不将 caller mapping 或 grade pass 当真实执行验收 |
 | 尚待完成 | 真实 Producer/计费、Attempt 产物归属、packaged/跨平台和受控试点验收继续独立保留；F3-B 仍 BLOCKED |
+
+### F3-02 试点前置预检（2026-11-12）
+
+| 项目 | 已确认结果 |
+| --- | --- |
+| 代码 | `scripts/framework-assurance/trial-preflight.mjs` 增加严格 trial manifest 解析、冻结 T01 输入核对、外置资源与端口预检、容量检查和脱敏 JSON/Markdown 报告；`index.mjs` 增加 `trial-preflight` 子命令 |
+| 冻结输入 | `fixtures/framework-assurance/trials/t01-review.json` 固定 suite/task/source、七组输入摘要、review-only Provider/model 标识、金额/币种、Provider 请求/token/工具循环/子代理/grader/在途 reservation 上限和 fail-closed 停止规则 |
+| 资源边界 | 只接受 checkout 外的绝对 resource root；逐级拒绝符号链接和文件冲突，已有目录必须为空，三类目录不可重叠；`LING_STACK_HOME` 必须与计划路径一致；daemon/UI 只能是不同 loopback 端口 |
+| 余量检查 | 读取 `availableParallelism`、free memory、free disk 和 load-1；资源根缺失、测量失败、端口占用或低于最低值均为 `blocked` |
+| 授权边界 | `ready-for-review` 仍固定 `executionAuthorized=false`，Provider/模型/Run/Store/daemon/任务调用计数为零；端口探针绑定后立即释放，执行前必须再次检查 |
+| 回归 | `node --test scripts/framework-assurance/*.test.mjs scripts/framework-assurance/*.test.ts`：107/107；新边界测试 9/9；`corepack pnpm exec tsc -p scripts/ci/tsconfig.test.json --noEmit` 通过；CI assurance lane 已纳入 TypeScript 测试发现 |
+| 尚待完成 | 真实 Host lifecycle、Provider/evaluation/费用账本、重启/取消/授权撤销、跨平台 packaged 和 A13/A14 试点验收仍未完成；F3-B 继续 BLOCKED |
+
+### F3-B Host readiness review gate（2026-11-12，PR #690 已合并）
+
+| 项目 | 已确认结果 |
+| --- | --- |
+| 合并结果 | PR #690，候选 head `23af3c4a`，实际 merge commit `edb820f0`；已进入 `main` |
+| 代码 | `scripts/framework-assurance/host-readiness.mjs` 提供五域解析、跨域 lineage 校验、fail-closed review assessment、一次性只读 client collection 和脱敏 JSON/Markdown；`index.mjs` 增加 `host-readiness` 子命令 |
+| fixture | `fixtures/framework-assurance/execution-evidence/host-ready-shape.json` 展示旧 Attempt 丢失、当前 Attempt 成功、隔离 apply、预算 charge 和 admission projection；只用于合成 parser/review gate 验收 |
+| 回归 | `host-readiness.test.ts`：20/20；全套 `node --test scripts/framework-assurance/*.test.mjs scripts/framework-assurance/*.test.ts`：127/127；`corepack pnpm typecheck:ci-tests` 与 `git diff --check` 通过 |
+| 授权边界 | `ready-for-trial-review` 和 `blocked` 都固定 `executionAuthorized=false`；未启动 Provider、模型、付费任务、生产 daemon、Store 或共享数据库 |
+| 未完成 | 真实 Host/Provider/evaluation/费用账本、重启/取消/权限撤销、跨平台 packaged 和 A13/A14 仍缺真实验收，F3-B 保持 BLOCKED |
+
+### 当前主线受控复核（2026-11-12，`main@878e422a`）
+
+| 项目 | 已确认结果 |
+| --- | --- |
+| 基线 | 当前 worktree 为 `codex/f3b-readiness-evidence`，复核起点与 `origin/main@878e422a` 一致；没有修改其他 worktree 或共享运行数据 |
+| framework-assurance | `node --test scripts/framework-assurance/*.test.mjs scripts/framework-assurance/*.test.ts`：`127/127`，无失败、取消或跳过 |
+| Daemon 受控套件 | evaluation association、Host evidence、预算、隔离、串行/并行交付、取消和权限边界定向套件：`204/204` |
+| 构建与类型 | `corepack pnpm --filter @ling-stack/daemon build` 通过；`corepack pnpm typecheck:ci-tests` 通过 |
+| 设计判断 | Host readiness 与 evaluation association 保持独立：前者复核五域 Host 准入投影，后者复核指定 evaluation 的 Run/artifact/grade 关联；二者均为只读、`not_assessed` 且不授予执行权 |
+| 运行边界 | 仅使用临时 SQLite/Git/HTTP fixture；未启动真实 Provider、模型、生产 daemon、付费任务或普通 workspace 写并发 |
+| 当前结论 | 受控准入前置能力可继续维护；A13/A14 所需的真实 Host 生命周期、真实 Provider/evaluation/费用账本、跨平台 packaged 和独立资源验收仍缺失，F3-B 保持 `BLOCKED` |

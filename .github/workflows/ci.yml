@@ -274,7 +274,7 @@ jobs:
           corepack pnpm install --frozen-lockfile --prefer-offline
 
       - name: Test offline assurance boundaries
-        run: node --test scripts/framework-assurance/*.test.mjs
+        run: node --test scripts/framework-assurance/*.test.mjs scripts/framework-assurance/*.test.ts
 
       - name: Typecheck CI tooling tests
         run: corepack pnpm typecheck:ci-tests

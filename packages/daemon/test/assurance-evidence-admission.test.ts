@@ -13,8 +13,8 @@ import type {
   FrameworkAssuranceIsolationEvidence,
   FrameworkAssuranceLifecycleEvidence,
 } from "@ling-stack/contracts";
-import { createSqliteRunStore, DEFAULT_WORKSPACE_ID, toRuntimeAttemptFence, type RunSession } from "@ling-stack/core";
-import { buildAdmission as projectAdmission, handleGetRunAssuranceEvidence, workflowCandidateBranchDigestsMatch } from "../dist/features/runs/assurance-evidence.js";
+import { createSqliteRunStore, DEFAULT_WORKSPACE_ID, toRuntimeAttemptFence, type DelegationCompletionEvidenceV1, type RunSession } from "@ling-stack/core";
+import { buildAdmission as projectAdmission, handleGetRunAssuranceEvidence, projectDelegationCompletionEvidence, workflowCandidateBranchDigestsMatch } from "../dist/features/runs/assurance-evidence.js";
 import { ActiveRunRegistry } from "../dist/runtime/active-runs.js";
 import { RunStoreRegistry } from "../dist/runtime/store-registry.js";
 
@@ -39,6 +39,57 @@ for (const [name, candidate, results, expected] of [
     assert.equal(workflowCandidateBranchDigestsMatch(Object.freeze([...candidate]), Object.freeze([...results])), expected);
   });
 }
+
+const contentDigest = "a".repeat(64);
+
+function completionEvidence(overrides: Partial<DelegationCompletionEvidenceV1> = {}): DelegationCompletionEvidenceV1 {
+  return {
+    schemaVersion: 1,
+    rootRunIds: ["run-assurance"],
+    roots: [],
+    steps: [{
+      step: { id: "delegation-result", required: true, state: "succeeded" },
+      hostCompletion: { drainedAt: "2026-11-12T08:00:00.000Z", effectCoverage: "pi_tracked_tools_v1" },
+      quiescence: "verified",
+      reservation: { state: "settled" },
+      results: [],
+      charges: [],
+    }],
+    issues: [],
+    status: "satisfied",
+    fingerprint: "completion-assurance",
+    ...overrides,
+  } as unknown as DelegationCompletionEvidenceV1;
+}
+
+function completionEvidenceWithResult(result: Record<string, string>): DelegationCompletionEvidenceV1 {
+  const value = completionEvidence() as unknown as { steps: Array<{ results: unknown[] }> };
+  value.steps[0]!.results = [result];
+  return value as unknown as DelegationCompletionEvidenceV1;
+}
+
+test("completion projection requires a sealed result content digest", () => {
+  const fingerprintOnly = projectDelegationCompletionEvidence(completionEvidenceWithResult({ artifactId: "artifact-result", artifactFingerprint: contentDigest }));
+  assert.equal(fingerprintOnly.status, "blocked");
+  assert.equal(fingerprintOnly.steps[0]?.completionStatus, "pending");
+  assert.deepEqual(fingerprintOnly.resultArtifacts, []);
+
+  const sealed = projectDelegationCompletionEvidence(completionEvidenceWithResult({ artifactId: "artifact-result", artifactContentSha256: contentDigest }));
+  assert.equal(sealed.status, "satisfied");
+  assert.equal(sealed.steps[0]?.completionStatus, "verified");
+  assert.deepEqual(sealed.resultArtifacts, [{ role: "delegation-result-delegation-result-0", artifactId: "artifact-result", contentSha256: contentDigest }]);
+});
+
+test("completion projection preserves issues when no steps are present", () => {
+  const projected = projectDelegationCompletionEvidence(completionEvidence({
+    steps: [],
+    issues: [{ code: "delegation.completion_result_invalid", stepId: "delegation-result", runId: "child-assurance" }],
+    status: "blocked",
+  }));
+  assert.equal(projected.status, "blocked");
+  assert.equal(projected.stepCount, 0);
+  assert.equal(projected.issues[0]?.code, "delegation.completion_result_invalid");
+});
 
 function buildAdmission(
   sourceRun: RunSession,
