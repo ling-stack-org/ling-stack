@@ -272,6 +272,11 @@ const TEAMMATE_DIRECT_SYSTEM_PURPOSE_MIGRATION_VERSION = 134;
 const TEAMMATE_DIRECT_SYSTEM_PURPOSE_MIGRATION_NAME = "add_teammate_direct_system_purpose";
 const CHANNEL_EXECUTION_PROPOSAL_CAS_MIGRATION_VERSION = 138;
 const CHANNEL_EXECUTION_PROPOSAL_CAS_MIGRATION_NAME = "add_channel_execution_proposal_cas";
+// Version 139 is retained by the historical delegation marker. Version 140 is
+// owned by run compaction checkpoints; keep companion storage on the next
+// available database-global version before the 144+ migration family.
+const COMPANIONS_MIGRATION_VERSION = 141;
+const COMPANIONS_MIGRATION_NAME = "create_companions";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
   database.exec(`
@@ -5913,6 +5918,53 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
       database.exec("ROLLBACK;");
       throw error;
     }
+  }
+
+  if (
+    !context.hasMigration(COMPANIONS_MIGRATION_VERSION)
+    || !context.hasTable("companions")
+    || !context.hasTable("companion_events")
+  ) {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS companions (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        teammate_id TEXT NOT NULL,
+        display_name TEXT NOT NULL,
+        description TEXT NOT NULL,
+        manifest_json TEXT NOT NULL,
+        behavior_policy_json TEXT NOT NULL,
+        status TEXT NOT NULL,
+        phase TEXT NOT NULL,
+        emotion_id TEXT NOT NULL,
+        emotion_intensity REAL NOT NULL,
+        energy REAL NOT NULL,
+        last_interaction_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+        FOREIGN KEY(teammate_id) REFERENCES ai_teammates(id) ON DELETE CASCADE,
+        UNIQUE(workspace_id, teammate_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_companions_workspace_status
+      ON companions(workspace_id, status, updated_at DESC);
+
+      CREATE TABLE IF NOT EXISTS companion_events (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        companion_id TEXT NOT NULL,
+        type TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+        FOREIGN KEY(companion_id) REFERENCES companions(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_companion_events_companion_created
+      ON companion_events(workspace_id, companion_id, created_at DESC);
+    `);
+    context.recordMigration(COMPANIONS_MIGRATION_VERSION, COMPANIONS_MIGRATION_NAME);
   }
 
   applyRunContextViewLineageMigration({
