@@ -3281,6 +3281,12 @@ export class SqliteRunStore implements RunStore {
     return this.runnerContinuations.findRunnerContinuationByIdempotencyKey(idempotencyKey);
   }
 
+  listRunnerContinuations(
+    runId: string,
+  ): readonly import("@ling-stack/contracts").RunnerContinuationV1[] {
+    return this.runnerContinuations.listRunnerContinuations(runId);
+  }
+
   listClaimableRunnerContinuations(
     input: import("../harness/continuations.js").ListClaimableRunnerContinuationsInput,
   ): readonly import("@ling-stack/contracts").RunnerContinuationV1[] {

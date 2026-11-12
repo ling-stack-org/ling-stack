@@ -10,11 +10,17 @@ import type {
   FrameworkAssuranceCompletionIssue,
   FrameworkAssuranceCompletionStep,
   FrameworkAssuranceEffectStatus,
+  FrameworkAssuranceEvaluationEvidence,
   FrameworkAssuranceEvidenceResponse,
   FrameworkAssuranceIsolationEvidence,
   FrameworkAssuranceLifecycleEvidence,
+  FrameworkAssurancePolicyEvidence,
+  FrameworkAssuranceRecoveryEvidence,
   FrameworkAssuranceStopEffectStatus,
   FrameworkAssuranceStopExecutionStatus,
+  RunnerContinuationV1,
+  RunEvaluationGradeV1,
+  RunEvaluationV1,
 } from "@ling-stack/contracts";
 import {
   createSqliteWorkflowIntegrationCoordinatorStore,
@@ -23,6 +29,8 @@ import {
   createSqliteWorkflowMergeApplyStore,
   isWorkflowStepSafetyPlanV1,
   toRuntimeAttemptFence,
+  readCurrentRunProgressPolicySnapshot,
+  runProgressHashJson,
   workflowIsolationDigest,
   workflowIsolationStepSafetyFingerprint,
   type DelegationBudgetCharge,
@@ -43,6 +51,7 @@ import { writeJson } from "../../shared/response.js";
 import { isRecord } from "../../shared/validation.js";
 import { isPrivateHostRecoveryArtifact } from "./public-artifacts.js";
 import { harnessToolBrokerModeForRun } from "../harness/tool-execution/broker.js";
+import { readStoredEffectivePolicySnapshot } from "./existing-run-request.js";
 
 const TERMINAL_ATTEMPT_STATUSES = new Set<WorkUnitAttempt["status"]>(["succeeded", "failed", "cancelled", "lost"]);
 const TERMINAL_RUN_STATUSES = new Set(["succeeded", "failed", "cancelled"]);
@@ -114,12 +123,16 @@ export function readRunAssuranceEvidence(store: RunStore, activeRuns: ActiveRunR
   const budget = projectDelegationBudgetEvidence(completionEvidence, run.id);
   const isolation = buildIsolation(store, run, attempt, observedAt);
   const lifecycle = buildLifecycle(workUnit, attempts, stop.attempts);
+  const recovery = projectRecoveryEvidence(store, workUnit, attempts, stop.attempts, lifecycle);
+  const policy = projectPolicyEvidence(store, run);
+  const evaluation = projectEvaluationEvidence(store, run, completionEvidence, budget);
   const claimStatus = claimStatusFor(workUnit, attempt);
   const admission = buildAdmission(run, isolation, lifecycle, effectStatus, completion, budget,
-    { claimStatus, workUnitStatus: workUnit.status, attemptStatus: attempt.status });
+    { claimStatus, workUnitStatus: workUnit.status, attemptStatus: attempt.status }, { recovery, policy, evaluation });
   return {
     schemaVersion: 1,
     kind: "live_execution_evidence",
+    executionAuthorized: false,
     comparison: {
       model: run.providerModel,
       reasoning: readReasoning(run.requestSnapshot),
@@ -148,12 +161,16 @@ export function readRunAssuranceEvidence(store: RunStore, activeRuns: ActiveRunR
     budget,
     isolation,
     admission,
+    recovery,
+    policy,
+    evaluation,
     observedAt,
     limitations: [
       "read_only_host_projection",
+      "no_execution_authority",
       "no_task_input",
       "no_artifact_body",
-      "no_evaluation_grade",
+      "no_evaluation_grade_body",
       "snapshot_digest_is_authoritative",
       "budget_and_merge_payloads_digest_only",
       ...(runtimeEvents.length >= 1000 ? ["runtime_event_revision_page_bounded"] : []),
@@ -209,6 +226,296 @@ function buildLifecycle(
     attempts: projected,
     stop: { localExecution, effects, allAttemptsTerminal, reusable },
   };
+}
+
+export function projectRecoveryEvidence(
+  store: RunStore,
+  workUnit: WorkUnit,
+  attempts: readonly WorkUnitAttempt[],
+  stopAttempts: readonly {
+    readonly attemptId: string;
+    readonly localExecution: FrameworkAssuranceStopExecutionStatus;
+    readonly effects: FrameworkAssuranceStopEffectStatus;
+  }[],
+  lifecycle: FrameworkAssuranceLifecycleEvidence,
+): FrameworkAssuranceRecoveryEvidence {
+  const currentAttemptId = lifecycle.currentAttemptId;
+  const oldAttempts = attempts.filter(attempt => attempt.id !== currentAttemptId);
+  if (oldAttempts.length === 0) {
+    return {
+      status: "not_applicable",
+      source: null,
+      target: null,
+      continuation: null,
+      duplicateDispatch: { status: "not_applicable", continuationCount: 0 },
+      blockers: [],
+    };
+  }
+
+  let continuations: readonly RunnerContinuationV1[];
+  try {
+    if (!workUnit.linkedRunId) throw new Error("recovery.run_missing");
+    continuations = store.listRunnerContinuations(workUnit.linkedRunId)
+      .filter(continuation => continuation.workUnitId === workUnit.id);
+  } catch {
+    return {
+      status: "unavailable",
+      source: null,
+      target: null,
+      continuation: null,
+      duplicateDispatch: { status: "unknown", continuationCount: 0 },
+      blockers: ["recovery.continuation_unavailable"],
+    };
+  }
+
+  const recovery = continuations.filter(continuation => continuation.origin === "daemon_recovery");
+  const stopByAttempt = new Map(stopAttempts.map(value => [value.attemptId, value]));
+  const duplicateGroups = new Map<string, RunnerContinuationV1[]>();
+  for (const continuation of recovery) {
+    const key = `${continuation.sourceAttemptId}:${continuation.origin}`;
+    const group = duplicateGroups.get(key) ?? [];
+    group.push(continuation);
+    duplicateGroups.set(key, group);
+  }
+  const duplicateDispatch = {
+    status: [...duplicateGroups.values()].some(group => group.length > 1) ? "detected" as const : "protected" as const,
+    continuationCount: recovery.length,
+  };
+  const blockers: string[] = [];
+  if (duplicateDispatch.status === "detected") blockers.push("recovery.duplicate_dispatch");
+
+  const source = oldAttempts.at(-1);
+  const sourceStop = source ? stopByAttempt.get(source.id) : undefined;
+  const selected = source
+    ? recovery.find(continuation => continuation.sourceAttemptId === source.id
+      && continuation.targetAttemptId === currentAttemptId)
+      ?? recovery.find(continuation => continuation.sourceAttemptId === source.id)
+    : undefined;
+  for (const oldAttempt of oldAttempts) {
+    const matching = recovery.filter(continuation => continuation.sourceAttemptId === oldAttempt.id);
+    if (matching.length === 0) blockers.push("recovery.continuation_missing");
+    if (matching.length > 1) blockers.push("recovery.duplicate_dispatch");
+    const stop = stopByAttempt.get(oldAttempt.id);
+    if (!stop || stop.localExecution !== "drained") blockers.push("recovery.source_not_drained");
+    if (!stop || stop.effects !== "settled") blockers.push("recovery.source_effects_not_settled");
+    const current = matching.at(-1);
+    if (current && current.targetAttemptId !== currentAttemptId) blockers.push("recovery.target_attempt_mismatch");
+    if (current && !["succeeded", "failed", "cancelled", "superseded"].includes(current.state)) {
+      blockers.push("recovery.continuation_not_terminal");
+    }
+  }
+  if (selected && selected.state !== "succeeded") blockers.push("recovery.continuation_not_succeeded");
+  if (!selected) blockers.push("recovery.continuation_missing");
+
+  const targetAttempt = selected?.targetAttemptId
+    ? attempts.find(attempt => attempt.id === selected.targetAttemptId) ?? null
+    : null;
+  const status: FrameworkAssuranceRecoveryEvidence["status"] = blockers.length > 0
+    ? "blocked"
+    : selected && targetAttempt ? "verified" : "pending";
+  return {
+    status,
+    source: source && sourceStop ? {
+      attemptId: source.id,
+      attemptNumber: source.attemptNumber,
+      runtimeInstanceId: source.runtimeInstanceId,
+      status: source.status,
+      localExecution: sourceStop.localExecution,
+      effects: sourceStop.effects,
+    } : null,
+    target: targetAttempt ? {
+      attemptId: targetAttempt.id,
+      attemptNumber: targetAttempt.attemptNumber,
+      runtimeInstanceId: targetAttempt.runtimeInstanceId,
+      status: targetAttempt.status,
+    } : null,
+    continuation: selected ? {
+      continuationId: selected.id,
+      origin: selected.origin,
+      state: selected.state,
+      generation: selected.generation,
+      revision: selected.revision,
+    } : null,
+    duplicateDispatch,
+    blockers: [...new Set(blockers)],
+  };
+}
+
+export function projectPolicyEvidence(store: RunStore, run: RunSession): FrameworkAssurancePolicyEvidence {
+  let stored: ReturnType<typeof readStoredEffectivePolicySnapshot>;
+  try {
+    stored = readStoredEffectivePolicySnapshot(run.requestSnapshot);
+  } catch {
+    stored = undefined;
+  }
+  const storedFingerprint = stored ? runProgressHashJson(stored) : null;
+  const storedUpdatedAt = stored?.workspacePolicyUpdatedAt ?? null;
+  let currentFingerprint: string | null = null;
+  let currentUpdatedAt: string | null = null;
+  let currentAvailable = false;
+  const blockers: string[] = [];
+  try {
+    currentUpdatedAt = store.getApprovalPolicy().updatedAt;
+    const current = readCurrentRunProgressPolicySnapshot(store, run);
+    currentFingerprint = runProgressHashJson(current);
+    currentAvailable = true;
+  } catch {
+    blockers.push("policy.current_snapshot_unavailable");
+  }
+  if (!stored) blockers.push("policy.stored_snapshot_missing");
+  const status: FrameworkAssurancePolicyEvidence["status"] = !stored
+    ? "missing"
+    : !currentAvailable
+      ? "unavailable"
+      : storedFingerprint === currentFingerprint ? "current" : "drifted";
+  if (status === "drifted") blockers.push("policy.snapshot_drift");
+  return {
+    status,
+    stored: { present: stored !== undefined, fingerprint: storedFingerprint, updatedAt: storedUpdatedAt },
+    current: { available: currentAvailable, fingerprint: currentFingerprint, updatedAt: currentUpdatedAt },
+    blockers: [...new Set(blockers)],
+  };
+}
+
+export function projectEvaluationEvidence(
+  store: RunStore,
+  run: RunSession,
+  completionEvidence: DelegationCompletionEvidenceV1,
+  budget: FrameworkAssuranceBudgetEvidence,
+): FrameworkAssuranceEvaluationEvidence {
+  let evaluations: readonly RunEvaluationV1[];
+  try {
+    evaluations = store.listRunEvaluations({ runId: run.id, limit: 500 });
+  } catch {
+    return { status: "unavailable", evaluation: null, grades: [], charges: [], budget: null,
+      blockers: ["evaluation.read_unavailable"] };
+  }
+  const charges = uniqueById([...completionEvidence.roots.flatMap(root => root.charges),
+    ...completionEvidence.steps.flatMap(step => step.charges)]);
+  if (evaluations.length === 0) {
+    return { status: "not_applicable", evaluation: null, grades: [], charges: [], budget: null, blockers: [] };
+  }
+  if (evaluations.length !== 1) {
+    return { status: "blocked", evaluation: null, grades: [], charges: projectBudgetCharges(charges), budget: null,
+      blockers: ["evaluation.association_non_unique"] };
+  }
+  const evaluation = evaluations[0]!;
+  const root = completionEvidence.roots.find(value => value.runId === evaluation.rootRunId);
+  const budgetRoot = root?.budget;
+  const projectedBudget = budgetRoot ? {
+    rootRunId: evaluation.rootRunId,
+    present: true,
+    tokenBudget: budgetRoot.tokenBudget ?? null,
+    costBudgetMicros: budgetRoot.costBudgetMicros ?? null,
+  } : {
+    rootRunId: evaluation.rootRunId,
+    present: false,
+    tokenBudget: null,
+    costBudgetMicros: null,
+  };
+  const blockers: string[] = [];
+  if (evaluation.runId !== run.id || evaluation.rootRunId !== run.id) blockers.push("evaluation.lineage_mismatch");
+  if (!budgetRoot) blockers.push("evaluation.budget_missing");
+  if (budget.status !== "within") blockers.push("evaluation.budget_not_within");
+  let grades: readonly RunEvaluationGradeV1[];
+  try {
+    grades = store.listRunEvaluationGrades(evaluation.id);
+  } catch {
+    return { status: "unavailable", evaluation: projectEvaluation(evaluation), grades: [], charges: projectBudgetCharges(charges),
+      budget: projectedBudget, blockers: ["evaluation.grade_read_unavailable"] };
+  }
+  if (grades.length === 0) {
+    blockers.push(evaluation.state === "completed" ? "evaluation.grade_missing" : "evaluation.grade_pending");
+  }
+  const runCharges = charges.filter(charge => charge.runId === evaluation.runId);
+  const usedCharges = new Map<string, number>();
+  const projectedGrades = grades.map(grade => {
+    const costs = [grade.costInputTokens, grade.costOutputTokens, grade.costAmountMicros];
+    const hasCost = costs.some(value => value !== undefined);
+    const completeCost = costs.every(value => value !== undefined);
+    let chargeId: string | null = null;
+    let chargeMatch: FrameworkAssuranceEvaluationEvidence["grades"][number]["chargeMatch"] = "not_required";
+    if (grade.evaluationId !== evaluation.id) {
+      chargeMatch = "mismatch";
+      blockers.push("evaluation.grade_lineage_mismatch");
+    } else if (grade.graderType === "model" && !completeCost) {
+      chargeMatch = "mismatch";
+      blockers.push("evaluation.grade_cost_incomplete");
+    } else if (hasCost && !completeCost) {
+      chargeMatch = "mismatch";
+      blockers.push("evaluation.grade_cost_incomplete");
+    } else if (completeCost) {
+      const matches = runCharges.filter(charge => charge.state === "measured"
+        && charge.inputTokens === grade.costInputTokens
+        && charge.outputTokens === grade.costOutputTokens
+        && charge.actualCostMicros === grade.costAmountMicros);
+      if (matches.length === 0) {
+        chargeMatch = runCharges.length > 0 ? "mismatch" : "missing";
+        blockers.push(chargeMatch === "mismatch" ? "evaluation.charge_cost_mismatch" : "evaluation.charge_missing");
+      } else if (matches.length > 1) {
+        chargeMatch = "non_unique";
+        blockers.push("evaluation.charge_association_non_unique");
+      } else {
+        chargeMatch = "matched";
+        chargeId = matches[0]!.id;
+        usedCharges.set(chargeId, (usedCharges.get(chargeId) ?? 0) + 1);
+      }
+    }
+    return {
+      gradeId: grade.id,
+      evaluationId: grade.evaluationId,
+      graderType: grade.graderType,
+      graderId: grade.graderId,
+      graderVersion: grade.graderVersion,
+      verdict: grade.verdict,
+      score: grade.score ?? null,
+      severity: grade.severity ?? null,
+      costInputTokens: grade.costInputTokens ?? null,
+      costOutputTokens: grade.costOutputTokens ?? null,
+      costAmountMicros: grade.costAmountMicros ?? null,
+      gradeDigest: grade.gradeDigest,
+      chargeId,
+      chargeMatch,
+    };
+  });
+  if ([...usedCharges.values()].some(count => count > 1)) blockers.push("evaluation.charge_association_non_unique");
+  for (const charge of charges) {
+    if (charge.runId === evaluation.runId && charge.rootRunId !== evaluation.rootRunId) blockers.push("evaluation.charge_root_mismatch");
+  }
+  if (evaluation.state === "failed" || evaluation.state === "cancelled") blockers.push("evaluation.not_completed");
+  const pending = evaluation.state !== "completed" && !blockers.some(code => code === "evaluation.lineage_mismatch");
+  const status: FrameworkAssuranceEvaluationEvidence["status"] = blockers.length > 0
+    ? pending && blockers.every(code => code === "evaluation.grade_pending") ? "pending" : "blocked"
+    : "verified";
+  return {
+    status,
+    evaluation: projectEvaluation(evaluation),
+    grades: projectedGrades,
+    charges: projectBudgetCharges(charges.filter(charge => charge.runId === evaluation.runId || projectedGrades.some(grade => grade.chargeId === charge.id))),
+    budget: projectedBudget,
+    blockers: [...new Set(blockers)],
+  };
+}
+
+function projectEvaluation(value: RunEvaluationV1): NonNullable<FrameworkAssuranceEvaluationEvidence["evaluation"]> {
+  return { id: value.id, rootRunId: value.rootRunId, runId: value.runId, state: value.state,
+    revision: value.revision, evaluationKey: value.idempotencyKey };
+}
+
+function projectBudgetCharges(values: readonly DelegationBudgetCharge[]): FrameworkAssuranceEvaluationEvidence["charges"] {
+  return values.map(charge => ({
+    chargeId: charge.id,
+    reservationId: charge.reservationId ?? null,
+    runId: charge.runId,
+    attemptId: charge.attemptId,
+    state: charge.state,
+    reservedTokens: charge.reservedTokens ?? null,
+    reservedCostMicros: charge.reservedCostMicros ?? null,
+    inputTokens: charge.inputTokens ?? null,
+    cachedInputTokens: charge.cachedInputTokens ?? null,
+    outputTokens: charge.outputTokens ?? null,
+    actualCostMicros: charge.actualCostMicros ?? null,
+  }));
 }
 
 export function projectDelegationCompletionEvidence(evidence: DelegationCompletionEvidenceV1): FrameworkAssuranceCompletionEvidence {
@@ -574,6 +881,11 @@ export function buildAdmission(
   completion: FrameworkAssuranceCompletionEvidence,
   budget: FrameworkAssuranceBudgetEvidence,
   ownership: Pick<FrameworkAssuranceEvidenceResponse["execution"], "claimStatus" | "workUnitStatus" | "attemptStatus">,
+  domains?: {
+    readonly recovery?: FrameworkAssuranceRecoveryEvidence;
+    readonly policy?: FrameworkAssurancePolicyEvidence;
+    readonly evaluation?: FrameworkAssuranceEvaluationEvidence;
+  },
 ): FrameworkAssuranceAdmissionEvidence {
   if (isolation.status === "not_applicable") return {
     status: "not_applicable", profile: null,
@@ -584,6 +896,15 @@ export function buildAdmission(
   const profile = isolation.safetyPlan.profile;
   const mode = harnessToolBrokerModeForRun(run);
   const blockers = [...isolation.blockers, ...completion.issues.map(issue => issue.code), ...budget.blockers];
+  if (domains?.recovery && !["verified", "not_applicable"].includes(domains.recovery.status)) {
+    blockers.push("workflow_admission.recovery_not_verified", ...domains.recovery.blockers);
+  }
+  if (domains?.policy && domains.policy.status !== "current") {
+    blockers.push(`workflow_admission.policy_${domains.policy.status}`, ...domains.policy.blockers);
+  }
+  if (domains?.evaluation && !["verified", "not_applicable"].includes(domains.evaluation.status)) {
+    blockers.push("workflow_admission.evaluation_not_verified", ...domains.evaluation.blockers);
+  }
   if (!TERMINAL_RUN_STATUSES.has(run.status)) blockers.push("workflow_admission.run_not_terminal");
   if (!TERMINAL_RUN_STATUSES.has(ownership.workUnitStatus)) blockers.push("workflow_admission.work_unit_not_terminal");
   if (ownership.claimStatus !== "terminal_retained" || !TERMINAL_RUN_STATUSES.has(ownership.attemptStatus)) {

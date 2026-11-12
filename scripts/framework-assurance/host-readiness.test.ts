@@ -20,7 +20,7 @@ async function temporary(t: test.TestContext): Promise<string> {
   return root;
 }
 
-test("complete Host evidence requires all five readiness domains and preserves recovery lineage", () => {
+test("complete Host evidence requires all eight readiness domains and preserves recovery lineage", () => {
   const parsed = parseHostReadinessEvidence(ready);
   assert.equal(parsed.lifecycle.oldAttemptCount, 1);
   assert.equal(parsed.lifecycle.currentAttemptId, parsed.execution.attemptId);
@@ -38,8 +38,107 @@ test("complete Host evidence requires all five readiness domains and preserves r
 
 test("readiness rejects a base live response without lifecycle, budget and admission evidence", () => {
   const base = clone(ready) as Record<string, unknown>;
-  for (const key of ["lifecycle", "completion", "budget", "isolation", "admission"]) delete base[key];
+  for (const key of ["lifecycle", "completion", "budget", "isolation", "admission", "recovery", "policy", "evaluation"]) delete base[key];
   assert.throws(() => parseHostReadinessEvidence(base), code("host_readiness_evidence_incomplete"));
+});
+
+test("readiness requires an explicit read-only authority marker and rejects authority escalation", () => {
+  const missing = clone(ready) as { executionAuthorized?: boolean };
+  delete missing.executionAuthorized;
+  assert.throws(() => parseHostReadinessEvidence(missing), code("host_readiness_evidence_incomplete"));
+
+  const escalated = clone(ready) as { executionAuthorized: boolean };
+  escalated.executionAuthorized = true;
+  assert.throws(() => parseHostReadinessEvidence(escalated), code("invalid_manifest"));
+});
+
+test("readiness fail-closes an incomplete or duplicate recovery chain", () => {
+  for (const mutate of [
+    (candidate: { recovery: { status: string; continuation: unknown } }) => {
+      candidate.recovery.status = "blocked";
+      candidate.recovery.continuation = null;
+    },
+    (candidate: { recovery: { duplicateDispatch: { status: string } } }) => {
+      candidate.recovery.duplicateDispatch.status = "detected";
+    },
+    (candidate: { recovery: { source: { localExecution: string } } }) => {
+      candidate.recovery.source.localExecution = "draining";
+    },
+    (candidate: { recovery: { continuation: { origin: string } } }) => {
+      candidate.recovery.continuation.origin = "approval_resume";
+    },
+    (candidate: { recovery: { continuation: { state: string } } }) => {
+      candidate.recovery.continuation.state = "prepared";
+    },
+  ]) {
+    const candidate = clone(ready) as typeof ready;
+    mutate(candidate);
+    const report = assessHostReadiness(candidate);
+    assert.equal(report.status, "blocked");
+    assert.ok(report.blockers.some(blocker => blocker.startsWith("host_readiness.recovery")));
+  }
+});
+
+test("readiness fail-closes policy drift, missing snapshots and unavailable current policy", () => {
+  const cases = [
+    (candidate: typeof ready) => {
+      candidate.policy.status = "drifted";
+      candidate.policy.current.fingerprint = "a".repeat(64);
+    },
+    (candidate: typeof ready) => {
+      candidate.policy.status = "missing";
+      candidate.policy.stored.present = false;
+      candidate.policy.stored.fingerprint = null;
+    },
+    (candidate: typeof ready) => {
+      candidate.policy.status = "unavailable";
+      candidate.policy.current.available = false;
+      candidate.policy.current.fingerprint = null;
+    },
+  ];
+  for (const mutate of cases) {
+    const candidate = clone(ready) as typeof ready;
+    mutate(candidate);
+    const report = assessHostReadiness(candidate);
+    assert.equal(report.status, "blocked");
+    assert.ok(report.blockers.some(blocker => blocker.startsWith("host_readiness.policy")));
+  }
+});
+
+test("readiness fail-closes evaluation charge, budget and uniqueness mismatches", () => {
+  const cases = [
+    (candidate: typeof ready) => {
+      candidate.evaluation.grades[0].chargeMatch = "missing";
+      candidate.evaluation.grades[0].chargeId = null;
+      candidate.evaluation.charges = [];
+    },
+    (candidate: typeof ready) => {
+      candidate.evaluation.budget.present = false;
+      candidate.evaluation.budget.tokenBudget = null;
+      candidate.evaluation.budget.costBudgetMicros = null;
+    },
+    (candidate: typeof ready) => {
+      candidate.evaluation.grades[0].chargeMatch = "mismatch";
+      candidate.evaluation.grades[0].chargeId = null;
+    },
+    (candidate: typeof ready) => {
+      candidate.evaluation.grades[0].chargeMatch = "non_unique";
+      candidate.evaluation.grades[0].chargeId = null;
+    },
+    (candidate: typeof ready) => {
+      candidate.evaluation.grades[0].evaluationId = "evaluation-foreign-001";
+    },
+    (candidate: typeof ready) => {
+      candidate.evaluation.grades[0].chargeId = null;
+    },
+  ];
+  for (const mutate of cases) {
+    const candidate = clone(ready) as typeof ready;
+    mutate(candidate);
+    const report = assessHostReadiness(candidate);
+    assert.equal(report.status, "blocked");
+    assert.ok(report.blockers.some(blocker => blocker.startsWith("host_readiness.evaluation")));
+  }
 });
 
 test("readiness rejects cross-domain Attempt identity drift before assessing status", () => {
