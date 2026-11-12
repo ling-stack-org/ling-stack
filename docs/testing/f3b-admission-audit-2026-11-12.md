@@ -13,6 +13,12 @@ PR #684 已进入 `main`，Run/evaluation 的精确只读关联和 collector 到
 
 这些证据证明准入观察链已经可以在不派发任务的条件下复核 Run、Host 和 evaluation 的身份关系。它们没有证明真实 Provider、真实生产 daemon、完整费用账本、跨平台 packaged 运行或独立试点资源已经验收，因此 F3-B 真实试点继续保持 `BLOCKED`。
 
+## 本轮增量复核（PR #692）
+
+在上述主线基线之上，本轮补齐了准入投影的一个证据边界：delegation result 只有合法的 64 位内容 SHA-256（`artifactContentSha256` 或 `artifactPayloadSha256`）才会进入公开 result artifact pin 并允许 required step 标记为 `verified`；artifact 元数据指纹不再被当作内容摘要。`satisfied` 但存在未验证 required step 的 completion 会降为 `blocked`；零步骤但存在 completion issue 时保留 issue 状态，不再误报为 `not_applicable`。
+
+本轮新增回归包括真实 SQLite/Git/HTTP evidence 通过 `collectHostReadiness()` 的只读受控验收，以及上述 completion projection 负例。已运行：Daemon assurance 定向套件 `121/121`、framework-assurance 全套 `127/127`、Daemon `typecheck:ci`、Daemon build 和 `git diff --check`。这些结果只证明证据投影与 review gate 的边界，不改变真实 Provider、生产 daemon、付费任务或 packaged acceptance 尚未验收的结论。
+
 ## 当前证据
 
 | 能力 | 合并后状态 | 证据边界 |
