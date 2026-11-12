@@ -1,6 +1,6 @@
 # Ling 框架补强详细设计
 
-Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A/F4-01, F3-B read-only admission evidence, F3-02 review-only trial preflight, and the Host readiness review gate are on main at `edb820f0` (PR #690); F3-B real trial and F5 rerun remain blocked/design contracts
+Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A/F4-01, F3-B read-only admission evidence, F3-02 review-only trial preflight, and the Host readiness review gate entered main at `edb820f0` (PR #690), with the current main documentation refresh at `878e422a` (PR #691); F3-B real trial and F5 rerun remain blocked/design contracts
 Owner: Ling framework maintainers; evaluation and SDK implementation owners
 Last verified: 2026-11-12
 Document type: reference / technical design
@@ -506,7 +506,7 @@ collector 的观察结果与原始响应分别复制，修改一侧不会同步�
 | --- | --- | --- |
 | 三个具体校准任务与冻结规则 | F1-01 已关闭 | 源码分析/故障注入标签明确；候选修复行为验证仍待 F3 |
 | 消费矩阵的实际工具链与依赖预置 | F2-01 已有 macOS arm64 本地及 Linux x64 托管消费格 | Windows SDK 及其他工具链仍未验证；安装器 job 不替代 SDK 消费 |
-| F3-B 只读 Host 证据投影及客户端关联 | F3-B 准入前置和 Host readiness review gate 已进入 `main@edb820f0` | 只读读取已初始化 Store；五域 review gate 仍不包含 evaluation grade，不授予真实执行许可 |
+| F3-B 只读 Host 证据投影及客户端关联 | F3-B 准入前置和 Host readiness review gate 已进入 `main@edb820f0`；当前 main 为 `878e422a` | 只读读取已初始化 Store；五域 review gate 仍不包含 evaluation grade，不授予真实执行许可 |
 | 正常 Run 真实 evidence 封存与 evaluation 关联 | F3-B 真实试点前 | 缺失时阻断真实任务，不降级为 fixture 或模型自报 |
 | 对应执行 profile 的安全/恢复验收 | F3-B 启动前 | 阻断该能力的真实任务，不阻断离线和 SDK |
 | 付费总额与 Provider 选择 | 每次真实试点前 | 不产生任何模型请求 |
