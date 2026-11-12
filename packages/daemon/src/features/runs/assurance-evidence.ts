@@ -118,9 +118,10 @@ export function readRunAssuranceEvidence(store: RunStore, activeRuns: ActiveRunR
 
   const observedAt = new Date().toISOString();
   const effectStatus = effectStatusFor(attempt, stopByAttempt.get(attempt.id)?.effects);
-  const completionEvidence = store.getDelegationCompletionEvidence({ rootRunIds: [run.id] });
+  const rootRun = resolveRootRun(store, run);
+  const completionEvidence = store.getDelegationCompletionEvidence({ rootRunIds: [rootRun.id] });
   const completion = projectDelegationCompletionEvidence(completionEvidence);
-  const budget = projectDelegationBudgetEvidence(completionEvidence, run.id);
+  const budget = projectDelegationBudgetEvidence(completionEvidence, rootRun.id);
   const isolation = buildIsolation(store, run, attempt, observedAt);
   const lifecycle = buildLifecycle(workUnit, attempts, stop.attempts);
   const recovery = projectRecoveryEvidence(store, workUnit, attempts, stop.attempts, lifecycle);
@@ -170,6 +171,7 @@ export function readRunAssuranceEvidence(store: RunStore, activeRuns: ActiveRunR
       "no_execution_authority",
       "no_task_input",
       "no_artifact_body",
+      "no_evaluation_grade",
       "no_evaluation_grade_body",
       "snapshot_digest_is_authoritative",
       "budget_and_merge_payloads_digest_only",
@@ -400,7 +402,8 @@ export function projectEvaluationEvidence(
       blockers: ["evaluation.association_non_unique"] };
   }
   const evaluation = evaluations[0]!;
-  const root = completionEvidence.roots.find(value => value.runId === evaluation.rootRunId);
+  const rootRun = resolveRootRun(store, run);
+  const root = completionEvidence.roots.find(value => value.runId === rootRun.id);
   const budgetRoot = root?.budget;
   const projectedBudget = budgetRoot ? {
     rootRunId: evaluation.rootRunId,
@@ -414,7 +417,7 @@ export function projectEvaluationEvidence(
     costBudgetMicros: null,
   };
   const blockers: string[] = [];
-  if (evaluation.runId !== run.id || evaluation.rootRunId !== run.id) blockers.push("evaluation.lineage_mismatch");
+  if (evaluation.runId !== run.id || evaluation.rootRunId !== rootRun.id) blockers.push("evaluation.lineage_mismatch");
   if (!budgetRoot) blockers.push("evaluation.budget_missing");
   if (budget.status !== "within") blockers.push("evaluation.budget_not_within");
   let grades: readonly RunEvaluationGradeV1[];
@@ -1001,6 +1004,21 @@ function emptyIsolation(status: FrameworkAssuranceIsolationEvidence["status"], w
     approval: { status: "not_requested", approvalId: null, requestId: null, authorityDigest: null, basisFingerprint: null },
     apply: { status: "not_started", code: null, intentPresent: false }, blockers: [],
   };
+}
+
+function resolveRootRun(store: RunStore, run: RunSession): RunSession {
+  let current = run;
+  const visited = new Set<string>([run.id]);
+  for (let depth = 0; ; depth += 1) {
+    if (!current.parentRunId) return current;
+    if (depth >= 100 || visited.has(current.parentRunId)) {
+      throw new AssuranceEvidenceError("assurance_lineage_mismatch", "Run parent lineage is cyclic or exceeds the supported depth.");
+    }
+    const parent = store.getRun(current.parentRunId);
+    if (!parent) throw new AssuranceEvidenceError("assurance_lineage_incomplete", "Run parent lineage is incomplete.");
+    current = parent;
+    visited.add(current.id);
+  }
 }
 
 function selectAttempt(workUnit: WorkUnit, attempts: readonly WorkUnitAttempt[]): WorkUnitAttempt | undefined {

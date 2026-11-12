@@ -32,6 +32,7 @@ test("complete Host evidence requires all eight readiness domains and preserves 
   assert.equal(report.domains.budget.status, "within");
   assert.equal(report.domains.isolation.applyStatus, "applied");
   assert.equal(report.domains.admission.toolBrokerMode, "enforce");
+  assert.ok(report.limitations.includes("no_evaluation_grade"));
   assert.doesNotMatch(JSON.stringify(report), /fence-host-ready|claimToken|sealedPayload/u);
   assert.match(renderHostReadinessMarkdown(report), /read-only Host projection gate/u);
 });
@@ -300,6 +301,29 @@ test("readiness rejects completion and budget roots mixed with another Run", () 
   foreignRoot.runId = "run-foreign-001";
   budget.budget.roots.push(foreignRoot);
   assert.throws(() => assessHostReadiness(budget), code("host_readiness_lineage_mismatch"));
+});
+
+test("readiness accepts a child Run whose evaluation and budget are rooted at its ancestor", () => {
+  const candidate = clone(ready) as {
+    execution: { runId: string };
+    budget: { roots: Array<{ runId: string }>; charges: Array<{ runId: string }> };
+    evaluation: {
+      evaluation: { runId: string; rootRunId: string };
+      charges: Array<{ runId: string }>;
+      budget: { rootRunId: string };
+    };
+  };
+  const childRunId = "child-host-ready-001", rootRunId = "root-host-ready-001";
+  candidate.execution.runId = childRunId;
+  candidate.budget.roots[0].runId = rootRunId;
+  candidate.budget.charges[0].runId = childRunId;
+  candidate.evaluation.evaluation.runId = childRunId;
+  candidate.evaluation.evaluation.rootRunId = rootRunId;
+  candidate.evaluation.charges[0].runId = childRunId;
+  candidate.evaluation.budget.rootRunId = rootRunId;
+  const report = assessHostReadiness(candidate);
+  assert.equal(report.status, "ready-for-trial-review");
+  assert.deepEqual(report.blockers, []);
 });
 
 test("readiness validates required completion steps and summary counts", () => {

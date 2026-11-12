@@ -227,6 +227,7 @@ export function assessHostReadiness(value) {
       "no_execution_authority",
       "no_task_input",
       "no_artifact_body",
+      "no_evaluation_grade",
       "no_evaluation_grade_body",
       "readiness_is_not_real_trial_acceptance",
     ],
@@ -276,6 +277,15 @@ export function renderHostReadinessMarkdown(report) {
 
 function assertCrossFieldIdentity(evidence) {
   const { execution, lifecycle, completion, budget, isolation, admission, recovery, policy, evaluation } = evidence;
+  const lineageRoots = [
+    ...(completion.status !== "not_applicable" ? completion.rootRunIds : []),
+    ...(budget.status !== "not_applicable" ? budget.roots.map(root => root.runId) : []),
+    ...(evaluation.status !== "not_applicable" && evaluation.evaluation ? [evaluation.evaluation.rootRunId] : []),
+  ];
+  const uniqueLineageRoots = [...new Set(lineageRoots)];
+  requireCondition(uniqueLineageRoots.length <= 1,
+    "host_readiness_lineage_mismatch", "Host assurance domains disagree about the Run lineage root.");
+  const lineageRootId = uniqueLineageRoots[0] ?? execution.runId;
   const current = lifecycle.attempts.find(attempt => attempt.isCurrent);
   requireCondition(current?.attemptId === execution.attemptId
     && current.runtimeInstanceId === execution.runtimeInstanceId
@@ -285,12 +295,12 @@ function assertCrossFieldIdentity(evidence) {
   "host_readiness_lineage_mismatch", "Host lifecycle current Attempt does not match execution lineage.");
 
   if (completion.status !== "not_applicable") {
-    requireCondition(completion.rootRunIds.length > 0 && completion.rootRunIds.every(rootRunId => rootRunId === execution.runId),
-      "host_readiness_lineage_mismatch", "Completion evidence is not rooted at the observed Run.");
+    requireCondition(completion.rootRunIds.length > 0 && completion.rootRunIds.every(rootRunId => rootRunId === lineageRootId),
+      "host_readiness_lineage_mismatch", "Completion evidence is not rooted in the observed Run lineage.");
   }
   if (budget.status !== "not_applicable") {
-    requireCondition(budget.roots.length > 0 && budget.roots.every(root => root.runId === execution.runId),
-      "host_readiness_lineage_mismatch", "Budget evidence is not rooted at the observed Run.");
+    requireCondition(budget.roots.length > 0 && budget.roots.every(root => root.runId === lineageRootId),
+      "host_readiness_lineage_mismatch", "Budget evidence is not rooted in the observed Run lineage.");
   }
   requireCondition(admission.profile !== null && admission.profile === isolation.safetyPlan.profile,
     "host_readiness_admission_mismatch", "Admission profile does not match the isolation safety profile.");
@@ -309,8 +319,8 @@ function assertCrossFieldIdentity(evidence) {
   }
   if (evaluation.status !== "not_applicable") {
     requireCondition(evaluation.evaluation?.runId === execution.runId
-      && evaluation.evaluation?.rootRunId === execution.runId,
-    "host_readiness_lineage_mismatch", "Evaluation does not belong to the observed Run.");
+      && evaluation.evaluation?.rootRunId === lineageRootId,
+    "host_readiness_lineage_mismatch", "Evaluation does not belong to the observed Run lineage.");
     requireCondition(evaluation.charges.every(charge => charge.runId === execution.runId),
     "host_readiness_lineage_mismatch", "Evaluation Provider charges do not belong to the observed Run.");
   }

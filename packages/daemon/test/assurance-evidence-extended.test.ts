@@ -120,11 +120,15 @@ function evaluationFixture(options: {
   readonly rootBudget?: boolean;
   readonly grade?: Partial<RunEvaluationGradeV1>;
   readonly budgetStatus?: FrameworkAssuranceBudgetEvidence["status"];
+  readonly runId?: string;
+  readonly rootRunId?: string;
 } = {}) {
+  const observedRunId = options.runId ?? runId;
+  const observedRootRunId = options.rootRunId ?? observedRunId;
   const charge: DelegationBudgetCharge = {
     id: "charge-assurance-evaluation-1",
-    rootRunId: runId,
-    runId,
+    rootRunId: observedRootRunId,
+    runId: observedRunId,
     attemptId: targetAttemptId,
     invocationId: "invocation-assurance-evaluation-1",
     requestDigest: "request-digest",
@@ -141,8 +145,8 @@ function evaluationFixture(options: {
   const evaluation = {
     schemaVersion: 1,
     id: "evaluation-assurance-1",
-    rootRunId: runId,
-    runId,
+    rootRunId: observedRootRunId,
+    runId: observedRunId,
     suiteId: "suite-assurance",
     suiteVersion: "1",
     suiteArtifactId: "artifact-suite",
@@ -181,20 +185,22 @@ function evaluationFixture(options: {
   const charges = options.charges ?? [charge];
   const completion = {
     schemaVersion: 1,
-    rootRunIds: [runId],
-    roots: [{ runId, ...(options.rootBudget === false ? {} : { budget: { tokenBudget: 100, costBudgetMicros: 100 } }), charges }],
+    rootRunIds: [observedRootRunId],
+    roots: [{ runId: observedRootRunId, ...(options.rootBudget === false ? {} : { budget: { tokenBudget: 100, costBudgetMicros: 100 } }), charges }],
     steps: [],
     issues: [],
     status: "satisfied",
     fingerprint: "completion-assurance-evaluation",
   } as unknown as DelegationCompletionEvidenceV1;
   const budget = { status: options.budgetStatus ?? "within" } as FrameworkAssuranceBudgetEvidence;
+  const run = { id: observedRunId, ...(observedRunId === observedRootRunId ? {} : { parentRunId: observedRootRunId }) } as RunSession;
+  const root = { id: observedRootRunId } as RunSession;
   const store = {
+    getRun: (id: string) => id === run.id ? run : id === root.id ? root : undefined,
     listRunEvaluations: () => [evaluation],
     listRunEvaluationGrades: () => [grade],
   } as unknown as RunStore;
-  const run = { id: runId } as RunSession;
-  return { charge, evaluation, grade, completion, budget, store, run };
+  return { charge, evaluation, grade, completion, budget, store, run, root };
 }
 
 test("evaluation evidence verifies a grade against the measured Provider charge", () => {
@@ -237,4 +243,16 @@ test("evaluation evidence blocks non-unique charges and grade lineage drift", ()
   assert.equal(foreignEvidence.status, "blocked");
   assert.equal(foreignEvidence.grades[0]?.chargeMatch, "mismatch");
   assert.ok(foreignEvidence.blockers.includes("evaluation.grade_lineage_mismatch"));
+});
+
+test("evaluation evidence accepts a child Run rooted at its ancestor and keeps charge and budget lineage", () => {
+  const f = evaluationFixture({ runId: "child-assurance-evaluation", rootRunId: "root-assurance-evaluation" });
+  const evidence = projectEvaluationEvidence(f.store, f.run, f.completion, f.budget);
+  assert.equal(evidence.status, "verified");
+  assert.equal(evidence.evaluation?.runId, f.run.id);
+  assert.equal(evidence.evaluation?.rootRunId, f.root.id);
+  assert.equal(evidence.budget?.rootRunId, f.root.id);
+  assert.equal(evidence.grades[0]?.chargeMatch, "matched");
+  assert.equal(evidence.charges[0]?.runId, f.run.id);
+  assert.deepEqual(evidence.blockers, []);
 });
