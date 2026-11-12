@@ -27,7 +27,7 @@ function runQuality(overrides = {}) {
       SCOPE_RESULT: "success", COMMON_RESULT: "success",
       DEPENDENCY_RESULT: "success", ASSURANCE_RESULT: "success", BUILD_RESULT: "success", TYPECHECK_RESULT: "success",
       UNIT_RESULT: "success", DAEMON_RESULT: "success", WEB_SMOKE_RESULT: "success", WEB_SELECTED: "true", LINUX_CONTRACT_RESULT: "success",
-      MACOS_NATIVE_RESULT: "success", DAEMON_SELECTED: "true", DEPENDENCY_SELECTED: "true",
+      MACOS_NATIVE_RESULT: "success", DAEMON_SELECTED: "true", MACOS_NATIVE_SELECTED: "true", DEPENDENCY_SELECTED: "true",
       ASSURANCE_SELECTED: "true", BUILD_SELECTED: "true",
       TYPECHECK_SELECTED: "true", UNIT_SELECTED: "true", ...overrides },
   });
@@ -42,7 +42,7 @@ test("daemon shards consume the platform plan without filtering individual cases
   assert.doesNotMatch(job, /continue-on-error|--test-name-pattern|--test-skip-pattern/u);
 });
 
-test("Linux rejection and real macOS helper smoke are mandatory separate lanes", () => {
+test("Linux rejection and real macOS helper smoke remain separate selected lanes", () => {
   const linux = jobSource("daemon-linux-contracts");
   const macos = jobSource("restricted-command-macos");
   assert.match(linux, /runs-on: ubuntu-latest\n/u);
@@ -58,6 +58,7 @@ test("Linux rejection and real macOS helper smoke are mandatory separate lanes",
   assert.match(quality, /needs: \[[^\n]*daemon-linux-contracts[^\n]*restricted-command-macos[^\n]*\]/u);
   assert.match(quality, /LINUX_CONTRACT_RESULT: \$\{\{ needs\.daemon-linux-contracts\.result \}\}/u);
   assert.match(quality, /MACOS_NATIVE_RESULT: \$\{\{ needs\.restricted-command-macos\.result \}\}/u);
+  assert.match(jobSource("restricted-command-macos"), /needs\.scope\.outputs\.macos-native == 'true'/u);
   assert.doesNotMatch(linux + macos, /continue-on-error/u);
 });
 
@@ -78,7 +79,7 @@ for (const lane of ["DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE", "WEB_SMOKE"]) {
 
 test("out-of-scope platform skips do not block affected Web-only changes", () => {
   const result = runQuality({ SCOPE_MODE: "affected", DAEMON_SELECTED: "false", DAEMON_RESULT: "skipped",
-    LINUX_CONTRACT_RESULT: "skipped", MACOS_NATIVE_RESULT: "skipped" });
+    MACOS_NATIVE_SELECTED: "false", LINUX_CONTRACT_RESULT: "skipped", MACOS_NATIVE_RESULT: "skipped" });
   assert.equal(result.status, 0, result.stderr);
 });
 
@@ -97,7 +98,7 @@ test("workflow quality gate keeps a Draft full scope deferred after common check
 test("workflow documentation gate requires successful scope and common checks", () => {
   const docs = { WEB_SELECTED: "false", SCOPE_MODE: "docs", DAEMON_SELECTED: "false", DEPENDENCY_RESULT: "skipped",
     ASSURANCE_SELECTED: "false", BUILD_SELECTED: "false",
-    DEPENDENCY_SELECTED: "false", TYPECHECK_SELECTED: "false", UNIT_SELECTED: "false",
+    DEPENDENCY_SELECTED: "false", TYPECHECK_SELECTED: "false", UNIT_SELECTED: "false", MACOS_NATIVE_SELECTED: "false",
     BUILD_RESULT: "skipped", TYPECHECK_RESULT: "skipped", UNIT_RESULT: "skipped",
     DAEMON_RESULT: "skipped", LINUX_CONTRACT_RESULT: "skipped", MACOS_NATIVE_RESULT: "skipped" };
   assert.equal(runQuality(docs).status, 0);
@@ -113,7 +114,7 @@ test("workflow documentation gate requires successful scope and common checks", 
 test("workflow non-daemon scope cannot pass with skipped build or selected unit tests", () => {
   for (const lane of ["BUILD", "UNIT"]) {
     const check = runQuality({ SCOPE_MODE: "affected", DAEMON_SELECTED: "false",
-      DAEMON_RESULT: "skipped", LINUX_CONTRACT_RESULT: "skipped", MACOS_NATIVE_RESULT: "skipped",
+      MACOS_NATIVE_SELECTED: "false", DAEMON_RESULT: "skipped", LINUX_CONTRACT_RESULT: "skipped", MACOS_NATIVE_RESULT: "skipped",
       [`${lane}_RESULT`]: "skipped" });
     assert.equal(check.status, 1, check.stderr);
     assert.ok(check.stdout.includes(`${lane}=skipped`), check.stdout);
