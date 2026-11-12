@@ -13,7 +13,7 @@ export interface ReleaseUpdate {
 
 export interface ReleaseCheckOptions {
   readonly currentVersion: string;
-  readonly fetchRelease?: (url: string, init: RequestInit) => Promise<Pick<Response, "ok" | "json">>;
+  readonly fetchRelease?: (url: string, init: RequestInit) => Promise<Pick<Response, "ok" | "status" | "json">>;
 }
 
 function parseStableVersion(value: unknown): StableVersion | undefined {
@@ -40,7 +40,7 @@ export async function fetchReleaseUpdate(options: ReleaseCheckOptions): Promise<
     redirect: "error",
     signal: AbortSignal.timeout(5_000),
   });
-  if (!response.ok) return undefined;
+  if (!response.ok) throw new Error(`GitHub release check failed with HTTP ${response.status}`);
   const release: unknown = await response.json();
   if (!release || typeof release !== "object" || Array.isArray(release)) return undefined;
   const value = release as Record<string, unknown>;

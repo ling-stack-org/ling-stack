@@ -20,7 +20,7 @@ function fakeFetch(body, ok = true) {
     assert.equal(url, LING_RELEASE_API_URL);
     assert.equal(init.headers.Accept, "application/vnd.github+json");
     assert.equal(init.redirect, "error");
-    return { ok, json: async () => body };
+    return { ok, status: ok ? 200 : 503, json: async () => body };
   };
 }
 
@@ -45,7 +45,7 @@ test("ignores equal, older, draft, prerelease, malformed and foreign releases", 
   ]) {
     assert.equal(await fetchReleaseUpdate({ currentVersion: "0.2.2", fetchRelease: fakeFetch(body) }), undefined);
   }
-  assert.equal(await fetchReleaseUpdate({ currentVersion: "0.2.2", fetchRelease: fakeFetch(release("v0.2.3"), false) }), undefined);
+  await assert.rejects(fetchReleaseUpdate({ currentVersion: "0.2.2", fetchRelease: fakeFetch(release("v0.2.3"), false) }), /HTTP 503/u);
 });
 
 test("does not query GitHub for a non-stable installed version", async () => {

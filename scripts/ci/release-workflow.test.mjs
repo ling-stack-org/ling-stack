@@ -16,7 +16,8 @@ test("tag release workflow delegates to the reviewed desktop candidate build", (
 
 test("candidate workflow accepts reusable calls and keeps publication as Draft", () => {
   assert.match(reusableWorkflow, /workflow_call:/u);
-  assert.match(reusableWorkflow, /github\.event_name == 'push'/u);
+  assert.doesNotMatch(reusableWorkflow, /on:\n\s+push:/u);
+  assert.doesNotMatch(reusableWorkflow, /github\.event_name == 'push'/u);
   assert.match(reusableWorkflow, /create-desktop-draft\.mjs/u);
   assert.match(reusableWorkflow, /contents: write/u);
   assert.match(releasePolicy, /Release remains an explicit maintainer action/u);

@@ -34,13 +34,13 @@ TestSavant 模型保留完整推理功能，权重在首次扫描时从官方固
 ## 每次发版
 
 发布目标仓库固定为 `ling-stack-org/ling-stack`：必须在该仓库运行工作流、创建 Draft 并最终发布
-`v0.2.2`。当前本地 checkout 的 `origin` 指向 `tianxiaochannel-oss88/ling-stack`；在那里
+`v0.3.0`。当前本地 checkout 的 `origin` 指向 `tianxiaochannel-oss88/ling-stack`；在那里
 创建的 Release 不会被 Desktop 配置的 `ling-stack-org/ling-stack` 更新检查发现。
 发布前核对目标仓库中的源码 SHA 和 tag，历史 `v0.1.2-alpha.1` 不复用或移动。
 
 1. 在发布 PR 中将根 `VERSION`、根 `package.json`、Desktop `package.json` 的版本改为相同的
-   SemVer 产品版本，本次为 `0.2.2`，完成审查和测试后合入主分支。
-2. 选取已审查的完整 40 位 commit SHA；新 tag 使用 `v<版本>`，本次为 `v0.2.2`。
+   SemVer 产品版本，本次为 `0.3.0`，完成审查和测试后合入主分支。
+2. 选取已审查的完整 40 位 commit SHA；新 tag 使用 `v<版本>`，本次为 `v0.3.0`。
    不使用移动分支作为源码输入，不复用已有 tag 或 Release。
 3. 在 `ling-stack-org/ling-stack` 的 GitHub **Actions → Desktop candidate → Run workflow** 中选择：
 
@@ -49,7 +49,7 @@ TestSavant 模型保留完整推理功能，权重在首次扫描时从官方固
    | Workflow ref | `main` |
    | `operation` | 先 `inspect`，解决阻断后再 `build` |
    | `source_sha` | 已合入 main 的完整源码 SHA |
-   | `release_tag` | 与上述三个版本文件一致的新 release tag，例如 `v0.2.2` |
+   | `release_tag` | 与上述三个版本文件一致的新 release tag，例如 `v0.3.0` |
    | `create_draft` | `false` 仅保留候选 artifact；`true` 在两平台成功后创建 Draft |
 
 4. 下载并检查本次生成的安装包、每平台验证 JSON、分发材料压缩包和 `checksums.txt`。
@@ -73,7 +73,7 @@ TestSavant 模型保留完整推理功能，权重在首次扫描时从官方固
 gh workflow run desktop-prerelease.yml --repo ling-stack-org/ling-stack --ref main \
   -f operation=inspect \
   -f source_sha=REPLACE_WITH_REVIEWED_FULL_COMMIT_SHA \
-  -f release_tag=v0.2.2 \
+  -f release_tag=v0.3.0 \
   -F create_draft=false
 ```
 
