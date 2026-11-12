@@ -6,13 +6,14 @@ import { RunStoreRegistry } from "../dist/runtime/store-registry.js";
 import { handleGetRunAssuranceEvidence } from "../dist/features/runs/assurance-evidence.js";
 import { requestWorkflowMergeApproval } from "../dist/features/channels/workflow-merge-approval.js";
 import { applyApprovedWorkflowMerge } from "../dist/features/channels/workflow-merge-apply.js";
+import { collectHostReadiness } from "../../../scripts/framework-assurance/host-readiness.mjs";
 import { parseLiveExecutionEvidenceResponse } from "../../../scripts/framework-assurance/execution-evidence.mjs";
 import { nativeGit, now, workflowIntegrationCoordinatorFixture } from "./support/workflow-integration-coordinator-fixture.mjs";
 import { recoveryHost, workflowConflictRecoveryFixture } from "./support/workflow-conflict-recovery-fixture.mjs";
 
 // The workflow fixture uses native ESM and real SQLite/Git state; the owning daemon
 // integration suite loads this boundary through its existing .mjs test runner.
-async function readEvidence(t, fixture) {
+async function startEvidenceServer(t, fixture) {
   const registry = new RunStoreRegistry(() => fixture.store, { recoverOnOpen: false });
   registry.getStore(fixture.cwd);
   const activeRuns = new ActiveRunRegistry();
@@ -27,10 +28,19 @@ async function readEvidence(t, fixture) {
   const address = server.address();
   const url = new URL(`http://127.0.0.1:${address.port}/runs/${encodeURIComponent(fixture.runId)}/assurance-evidence`);
   url.searchParams.set("cwd", fixture.cwd);
-  const response = await fetch(url);
-  const body = await response.json();
-  assert.equal(response.status, 200, JSON.stringify(body));
-  return parseLiveExecutionEvidenceResponse(body);
+  return {
+    async read() {
+      const response = await fetch(url);
+      const body = await response.json();
+      assert.equal(response.status, 200, JSON.stringify(body));
+      return body;
+    },
+  };
+}
+
+async function readEvidence(t, fixture) {
+  const endpoint = await startEvidenceServer(t, fixture);
+  return parseLiveExecutionEvidenceResponse(await endpoint.read());
 }
 
 test("assurance endpoint projects a real SQLite isolation round without private paths", recoveryHost, async t => {
@@ -92,4 +102,36 @@ test("assurance endpoint keeps candidate, approval and apply states distinct", n
   assert.equal(evidence.admission.status, "blocked");
   assert.ok(evidence.admission.blockers.includes("workflow_admission.tool_broker_enforce_required"));
   assert.ok(evidence.admission.blockers.includes("workflow_admission.execution_binding_invalid"));
+});
+
+test("host readiness collects real SQLite/Git evidence through HTTP without granting execution", nativeGit, async t => {
+  const fixture = await workflowIntegrationCoordinatorFixture(t, { mode: "apply_to_target", isolatedProfile: true });
+  assert.equal((await fixture.coordinate()).status, "awaiting_approval");
+  const request = await requestWorkflowMergeApproval({ store: fixture.store, roundId: fixture.roundId, now });
+  fixture.store.approveApprovalRequest(request.value.approvalId, { resolvedBy: "local-user", decisionKind: "approve_once" }, now());
+  assert.equal((await applyApprovedWorkflowMerge({ store: fixture.store, approvalId: request.value.approvalId, now })).status, "applied");
+
+  const endpoint = await startEvidenceServer(t, fixture);
+  let calls = 0;
+  const report = await collectHostReadiness({
+    cwd: fixture.cwd,
+    runId: fixture.runId,
+    client: {
+      async getRunAssuranceEvidence(runId, cwd) {
+        calls += 1;
+        assert.equal(runId, fixture.runId);
+        assert.equal(cwd, fixture.cwd);
+        return endpoint.read();
+      },
+    },
+  });
+  assert.equal(calls, 1);
+  assert.equal(report.status, "blocked");
+  assert.equal(report.executionAuthorized, false);
+  assert.equal(report.domains.lifecycle.status, "drained");
+  assert.equal(report.domains.lifecycle.allAttemptsTerminal, true);
+  assert.equal(report.domains.lifecycle.effects, "settled");
+  assert.equal(report.domains.isolation.status, "verified");
+  assert.equal(report.domains.isolation.applyStatus, "applied");
+  assert.ok(report.blockers.includes("host_readiness.admission_not_verified"));
 });

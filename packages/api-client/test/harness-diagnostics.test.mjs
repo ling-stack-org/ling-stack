@@ -77,6 +77,52 @@ test("live assurance evidence uses a read-only encoded Run endpoint", async () =
   assert.ok(!JSON.stringify(calls).includes("TOKEN_SENTINEL"));
 });
 
+test("evaluation association uses a read-only POST with encoded Run scope", async () => {
+  const calls = [];
+  const body = {
+    schemaVersion: 1,
+    kind: "assurance_evaluation_association",
+    authority: "report-only",
+    assessment: "not_assessed",
+    enforcementAuthorized: false,
+    status: "unavailable",
+    observationId: null,
+    mappingDigest: null,
+    evaluation: null,
+    binding: { run: "unavailable", frozenInputs: "unavailable", candidateArtifact: "unavailable" },
+    attemptBinding: { status: "unavailable", code: "association.attempt_binding_unavailable" },
+    grades: [],
+    diagnostics: [{ code: "association.workspace_uninitialized" }],
+    limitations: ["read_only"],
+  };
+  const input = {
+    request: { schemaVersion: 1, source: { execution: { runId: "run/association" } } },
+    frozenInputs: {
+      suiteBytes: "",
+      taskBytes: "",
+      ruleBytes: "",
+      expectedBytes: "",
+      profileBytes: "",
+      lockBytes: "",
+    },
+  };
+  const client = new LingDaemonClient({
+    baseUrl: "http://daemon.test",
+    computerUseRouteToken: "TOKEN_SENTINEL",
+    fetch: async (request, init) => {
+      calls.push({ url: new URL(String(request)), init });
+      return Response.json(body);
+    },
+  });
+  assert.deepEqual(await client.projectRunAssuranceEvaluationAssociation("run/association", "/workspace/assurance", input), body);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url.pathname, "/runs/run%2Fassociation/assurance-evaluation-association");
+  assert.equal(calls[0].url.searchParams.get("cwd"), "/workspace/assurance");
+  assert.equal(calls[0].init.method, "POST");
+  assert.deepEqual(JSON.parse(calls[0].init.body), input);
+  assert.ok(!JSON.stringify(calls).includes("TOKEN_SENTINEL"));
+});
+
 test("structured cold-workspace and invalid-cursor failures stay visible to the safe UI adapter", async () => {
   for (const [status, code] of [[503, "harness_workspace_uninitialized"], [400, "harness_diagnostics_invalid_query"], [500, "harness_diagnostics_unavailable"]]) {
     const client = new LingDaemonClient({ fetch: async () => Response.json({ error: code, message: "SECRET_SENTINEL" }, { status }) });

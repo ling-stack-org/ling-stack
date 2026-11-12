@@ -29,7 +29,7 @@ test("assurance keeps frozen history and the pinned offline-capable toolchain", 
 
 test("assurance runs both zero-model commands in an external output tree", () => {
   const source = jobSource("framework-assurance");
-  assert.match(source, /run: node --test scripts\/framework-assurance\/\*\.test\.mjs/u);
+  assert.match(source, /run: node --test scripts\/framework-assurance\/\*\.test\.mjs scripts\/framework-assurance\/\*\.test\.ts/u);
   for (const [command, directory] of [["calibrate", "offline"], ["sdk-consumer", "sdk"]]) {
     assert.ok(source.includes(`run: node scripts/framework-assurance/index.mjs ${command} --output "$RUNNER_TEMP/ling-framework-assurance/${directory}"`));
   }

@@ -203,7 +203,7 @@ test("CI tools' TypeScript tests are discovered and typechecked in the required 
   assert.match(manifest.scripts["typecheck:ci-tests"], /tsc -p scripts\/ci\/tsconfig\.test\.json/u);
   assert.match(manifest.scripts.typecheck, /typecheck:ci-tests/u);
   const config = JSON.parse(readFileSync(new URL("./tsconfig.test.json", import.meta.url), "utf8"));
-  assert.deepEqual(config.include, ["*.test.ts"]);
+  assert.deepEqual(config.include, ["*.test.ts", "../framework-assurance/*.test.ts"]);
   assert.equal(config.compilerOptions.strict, true);
   assert.equal(config.compilerOptions.noEmit, true);
   assert.equal(config.compilerOptions.module, "NodeNext");

@@ -1,8 +1,8 @@
 # Ling 框架补强总体设计
 
-Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A fixture evidence adapter, F4-01 read-only diagnostics report, and F3-B admission evidence projection implemented on the current assurance branch; F3-B real trial and F5 rerun remain blocked/unimplemented
+Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A/F4-01, F3-B admission evidence, F3-02 preflight, and the Host readiness review gate are on main through PR #690 (`edb820f0`); current main includes the PR #691 documentation refresh (`878e422a`); exact Run/evaluation association merged in PR #684 (`9af7ad54`); F3-B real trial and F5 rerun remain blocked/unimplemented
 Owner: Ling framework maintainers; evaluation and SDK implementation owners
-Last verified: 2026-11-10
+Last verified: 2026-11-12
 Document type: explanation / scope contract
 Canonical replacement: none; complements existing runtime, evaluation, and SDK contracts
 Code and test anchors: see section 10 and the implementation record; live evidence is read-only and not assessed, with no real task, Provider, or GUI acceptance
@@ -23,10 +23,12 @@ Code and test anchors: see section 10 and the implementation record; live eviden
 
 ### 本轮实施边界
 
-- F1/F2 已在独立工作区实现并合并到主线，合并提交为 `47afcc47b9063cd7a402a81cf1088caa695f3638`；此前 Linux 托管证据覆盖离线工具与冻结校准数据、四包真实 tarball 的仓外消费。F3-A/F4-01 在独立 worktree 中补齐 fixture 证据适配和只读诊断报告，仍不代表真实 Run 或节点重跑能力。
+- F1/F2 已合并到主线，合并提交为 `47afcc47b9063cd7a402a81cf1088caa695f3638`；此前 Linux 托管证据覆盖离线工具与冻结校准数据、四包真实 tarball 的仓外消费。F3-A/F4-01 的 fixture 证据适配和只读诊断报告已在主线可用，仍不代表真实 Run 或节点重跑验收。
 - 审查修复后，新工具 64 项测试与相关 CI/历史扫描契约 125 项共 189/189 通过；既有三包 261 项测试及类型检查已有本地通过记录。候选 `0a4f5327` 的 Linux 托管 job 另行验证了工具 64/64、九控制校准、仓外 SDK 19/19 及 NodeNext/Bundler 类型正反例；Windows 安装器契约也已通过，但不代表 Windows SDK 消费通过。已获批准补齐 106 条精确历史误报指纹，本地同范围全历史扫描零命中、扫描契约 22/22 通过，未放宽规则或范围。旧候选的完整 CI 已以 failure 结束：Common checks 与 Daemon shard 3 失败，Daemon shard 0 取消，1/2 与 helper smoke 成功。本地修复不改写远端结果，不能声称门禁全绿。
 - PR #653 的 hosted CI 已在合并前通过，合并结果以 `47afcc47` 为准；该门禁证据只覆盖 F1/F2，不扩大为真实 Runner、GUI、F3-B 或 F5 验收。
-- 2026-11-10 在 `origin/main@841dab4d` 上实现 F3-B 准入证据前置：Daemon 只读投影 Run/WorkUnit/Attempt、fence、停止、artifact、delegation 预算、isolated binding、branch result、candidate、approval 和 apply；API client 将投影与冻结任务输入关联。当前分支的受控回归通过，但尚未合并，也不启动真实 Provider、模型、daemon 生产进程或付费任务；详见[准入审计增量](../testing/f3b-admission-audit-2026-11-10.md)。
+- F3-B 准入证据前置已通过 PR #676 合并到 `5990095f06d9a03c95ceb307e57f529afd462dcb`：Daemon 只读投影 Run/WorkUnit/Attempt、fence、停止、artifact、delegation 预算、isolated binding、branch result、candidate、approval 和 apply；API client 将投影与冻结任务输入关联。最终候选 35 项托管检查全部成功，实际合并提交的 84 项相关回归及零模型 preflight 通过；详见[准入审计增量](../testing/f3b-admission-audit-2026-11-10.md)。
+- Run/evaluation 精确只读关联和 collector→F4 适配已在 PR #684 实现并合并到 `main@9af7ad54`；合并后 framework-assurance 98/98、Daemon assurance 相关回归 182/182、API client 7/7，以及构建和类型检查通过，托管门禁最终 30 项成功。普通 artifact 缺少独立 Attempt/fence 归属，保留 `attemptBinding: unavailable`，不授予真实执行权限。当前八项准入复核见[2026-11-12 合并基线审计](../testing/f3b-admission-audit-2026-11-12.md)。
+- F3-02 review-only preflight 与 Host readiness review gate 已在 PR #690 合并到 `main@edb820f0`；当前主线为 `main@878e422a`。Host readiness 回归 20/20，framework-assurance 全套 127/127，`typecheck:ci-tests` 和格式检查通过。它只审查已捕获的五域 evidence projection，始终保持 `executionAuthorized:false`，不替代真实 Provider、生产 daemon、跨平台 packaged 或付费试点验收。当前八项准入复核见[Host readiness 收口审计](../testing/f3b-admission-audit-2026-11-12.md)。
 - 失败分片的限时追加诊断未完整完成任何一轮，并发现一个原生私有状态隔离缺陷；该缺陷已在本分支修复，并由真实 macOS native boundary 回归 22/22、相关 Kimi/relay 回归 65/65 验证。原超时和远端完整 CI 失败仍分别记录，均不以单独 lane 成功或文档补齐替代收口。
 - 不修改多代理并发、worktree 合并、审批、Run/Attempt 生命周期和 SQLite schema。
 - 不运行真实模型，不启动、停止或重启其他会话的服务。
@@ -36,10 +38,10 @@ Code and test anchors: see section 10 and the implementation record; live eviden
 
 | 对象 | 本次确认 | 如何使用 |
 | --- | --- | --- |
-| 主线源码 | 当前 `origin/main@841dab4d` | 本文当前实现核对的代码基线；历史批次仍保留各自快照 |
+| 主线源码 | 当前 `origin/main@878e422a` | PR #690 功能合并提交为 `edb820f0`，PR #691 同步设计与准入文档；历史批次仍保留各自快照 |
 | 复核时主线引用 | `d7227c83af77daf237e85845961cb54511d681f8`，新增架构文档同步 | 本文涉及的 evaluation、SDK、diagnostics 源码在两快照间无变化 |
 | 原文档工作区 | `codex/retry-report-supersession`，HEAD `8b259da0ff4302b97c69f9ef65e221fd108e0ee0` | 只保留原 WIP，不在此实现 |
-| 当前实施工作区 | `codex/ling-f3b-assurance-evidence`，基于 `origin/main@841dab4d` | 独立 worktree；当前增量包含 F3-B 准入证据前置 |
+| 当前实施工作区 | `codex/f3b-readiness-evidence`，基于 `origin/main@878e422a` | 独立 worktree；复核 Host readiness 与 evaluation association 后同步当前准入记录 |
 | 提前验证提交 | `0a4f5327073058f45d14b5c21940a1811d9fb6b1`，已整合主线 `9f0b72d028f1` | 2026-11-03 核实同提交的托管 job 与产物；未创建 PR，完整 CI 尚未通过 |
 | 并发实现会话 | 开工核查时，`评估 Super-agent 设计是否适合 Ling` 正在推进 P1/P2 | 这是观察快照，不是实时进度；正式接入前重新核验 |
 | F1 验证层级 | 纯函数与 CLI 进程回归，实际离线校准 | 三任务九控制；不执行候选代码，不构成真实任务或 GUI 验收 |
