@@ -5,6 +5,7 @@ import type {
   FrameworkAssuranceLifecycleEvidence,
   RunnerContinuationV1,
   RunEvaluationGradeV1,
+  RunEvaluationQaRequestV1,
   RunEvaluationV1,
 } from "@ling-stack/contracts";
 import type {
@@ -134,6 +135,7 @@ function evaluationFixture(options: {
   readonly budgetStatus?: FrameworkAssuranceBudgetEvidence["status"];
   readonly runId?: string;
   readonly rootRunId?: string;
+  readonly qaRequests?: readonly RunEvaluationQaRequestV1[];
 } = {}) {
   const observedRunId = options.runId ?? runId;
   const observedRootRunId = options.rootRunId ?? observedRunId;
@@ -210,6 +212,7 @@ function evaluationFixture(options: {
   const store = {
     getRun: (id: string) => id === run.id ? run : id === root.id ? root : undefined,
     listRunEvaluations: () => [evaluation],
+    listRunEvaluationQaRequestsForEvaluation: () => options.qaRequests ?? [],
     listRunEvaluationGrades: () => [grade],
   } as unknown as RunStore;
   return { charge, evaluation, grade, completion, budget, store, run, root };
@@ -267,4 +270,76 @@ test("evaluation evidence accepts a child Run rooted at its ancestor and keeps c
   assert.equal(evidence.grades[0]?.chargeMatch, "matched");
   assert.equal(evidence.charges[0]?.runId, f.run.id);
   assert.deepEqual(evidence.blockers, []);
+});
+
+function qaRequest(overrides: Partial<RunEvaluationQaRequestV1> = {}): RunEvaluationQaRequestV1 {
+  return {
+    schemaVersion: 1,
+    id: "qa-request-assurance-1",
+    namespaceId: "evaluation-qa-assurance",
+    batchId: "qa-batch-assurance",
+    enrollmentId: "qa-enrollment-assurance",
+    taskId: "qa-task-assurance",
+    attemptId: targetAttemptId,
+    invocationId: "qa-invocation-assurance",
+    requestDigest: "f".repeat(64),
+    executionScopeDigest: "a".repeat(64),
+    payloadSha256: "b".repeat(64),
+    payloadBytes: 100,
+    estimatedInputTokens: 12,
+    outputTokenLimit: 1024,
+    state: "completed",
+    usage: { state: "measured", inputTokens: 10, outputTokens: 5 },
+    chargedAt: "2026-11-12T08:00:00.000Z",
+    processBootEpoch: "boot-assurance",
+    revision: 3,
+    completedAt: "2026-11-12T08:00:01.000Z",
+    releasedAt: "2026-11-12T08:00:02.000Z",
+    releaseKind: "host_callback_drained",
+    ...overrides,
+  };
+}
+
+test("evaluation evidence matches measured QA usage without inventing monetary cost", () => {
+  const request = qaRequest();
+  const f = evaluationFixture({ charges: [], grade: { costAmountMicros: undefined }, qaRequests: [request] });
+  const evidence = projectEvaluationEvidence(f.store, f.run, f.completion, f.budget);
+  assert.equal(evidence.status, "verified");
+  assert.equal(evidence.grades[0]?.chargeMatch, "matched");
+  assert.equal(evidence.grades[0]?.chargeId, `evaluation_qa_request:${request.id}`);
+  assert.deepEqual(evidence.charges[0], {
+    chargeId: `evaluation_qa_request:${request.id}`,
+    reservationId: null,
+    runId: f.run.id,
+    attemptId: targetAttemptId,
+    state: "measured",
+    reservedTokens: 12,
+    reservedCostMicros: null,
+    inputTokens: 10,
+    cachedInputTokens: null,
+    outputTokens: 5,
+    actualCostMicros: null,
+  });
+});
+
+test("evaluation evidence keeps unknown QA usage fail-closed", () => {
+  const request = qaRequest({ id: "qa-request-assurance-unknown", state: "unknown", usage: { state: "unknown" }, releasedAt: undefined,
+    releaseKind: undefined });
+  const f = evaluationFixture({ charges: [], grade: { costAmountMicros: undefined }, qaRequests: [request] });
+  const evidence = projectEvaluationEvidence(f.store, f.run, f.completion, f.budget);
+  assert.equal(evidence.status, "blocked");
+  assert.equal(evidence.grades[0]?.chargeMatch, "mismatch");
+  assert.ok(evidence.blockers.includes("evaluation.qa_usage_unknown"));
+  assert.equal(evidence.charges[0]?.state, "unknown");
+});
+
+test("evaluation evidence refuses duplicate QA charge associations", () => {
+  const f = evaluationFixture({ charges: [], grade: { costAmountMicros: undefined }, qaRequests: [
+    qaRequest(), qaRequest({ id: "qa-request-assurance-2", taskId: "qa-task-assurance-2" }),
+  ] });
+  const evidence = projectEvaluationEvidence(f.store, f.run, f.completion, f.budget);
+  assert.equal(evidence.status, "blocked");
+  assert.equal(evidence.grades[0]?.chargeMatch, "non_unique");
+  assert.ok(evidence.blockers.includes("evaluation.qa_charge_association_non_unique"));
+  assert.equal(evidence.charges.length, 2);
 });

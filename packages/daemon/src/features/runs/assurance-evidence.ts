@@ -18,6 +18,7 @@ import type {
   FrameworkAssuranceRecoveryEvidence,
   FrameworkAssuranceStopEffectStatus,
   FrameworkAssuranceStopExecutionStatus,
+  RunEvaluationQaRequestV1,
   RunnerContinuationV1,
   RunEvaluationGradeV1,
   RunEvaluationV1,
@@ -436,40 +437,83 @@ export function projectEvaluationEvidence(
   if (evaluation.runId !== run.id || evaluation.rootRunId !== rootRun.id) blockers.push("evaluation.lineage_mismatch");
   if (!budgetRoot) blockers.push("evaluation.budget_missing");
   if (budget.status !== "within") blockers.push("evaluation.budget_not_within");
+  let qaRequests: readonly RunEvaluationQaRequestV1[];
+  try {
+    qaRequests = store.listRunEvaluationQaRequestsForEvaluation(evaluation.id);
+  } catch {
+    return { status: "unavailable", evaluation: projectEvaluation(evaluation), grades: [], charges: projectBudgetCharges(charges),
+      budget: projectedBudget, blockers: ["evaluation.qa_read_unavailable"] };
+  }
+  const qaCharges = qaRequests.map(request => projectEvaluationQaCharge(request, evaluation.runId));
+  const projectedCharges = [...projectBudgetCharges(charges), ...qaCharges];
+  if (qaRequests.length > 1) blockers.push("evaluation.qa_charge_association_non_unique");
   let grades: readonly RunEvaluationGradeV1[];
   try {
     grades = store.listRunEvaluationGrades(evaluation.id);
   } catch {
-    return { status: "unavailable", evaluation: projectEvaluation(evaluation), grades: [], charges: projectBudgetCharges(charges),
+    return { status: "unavailable", evaluation: projectEvaluation(evaluation), grades: [], charges: projectedCharges,
       budget: projectedBudget, blockers: ["evaluation.grade_read_unavailable"] };
   }
   if (grades.length === 0) {
     blockers.push(evaluation.state === "completed" ? "evaluation.grade_missing" : "evaluation.grade_pending");
   }
-  const runCharges = charges.filter(charge => charge.runId === evaluation.runId);
+  const chargeCandidates = [
+    ...charges.filter(charge => charge.runId === evaluation.runId).map(charge => ({
+      id: charge.id,
+      state: charge.state,
+      inputTokens: charge.inputTokens ?? null,
+      outputTokens: charge.outputTokens ?? null,
+      actualCostMicros: charge.actualCostMicros ?? null,
+      qa: false,
+    })),
+    ...qaCharges.map(charge => ({
+      id: charge.chargeId,
+      state: charge.state,
+      inputTokens: charge.inputTokens,
+      outputTokens: charge.outputTokens,
+      actualCostMicros: charge.actualCostMicros,
+      qa: true,
+    })),
+  ];
+  const qaRequest = qaRequests.length === 1 ? qaRequests[0] : undefined;
+  const qaMeasured = qaRequest?.state === "completed" && qaRequest.releasedAt !== undefined && qaRequest.usage.state === "measured";
+  if (qaRequest && !qaMeasured) {
+    blockers.push(qaRequest.state === "unknown" || qaRequest.usage.state === "unknown"
+      ? "evaluation.qa_usage_unknown" : "evaluation.qa_charge_pending");
+  }
   const usedCharges = new Map<string, number>();
   const projectedGrades = grades.map(grade => {
     const costs = [grade.costInputTokens, grade.costOutputTokens, grade.costAmountMicros];
     const hasCost = costs.some(value => value !== undefined);
     const completeCost = costs.every(value => value !== undefined);
+    const modelTokenCost = grade.graderType === "model" && qaMeasured
+      && grade.costInputTokens !== undefined && grade.costOutputTokens !== undefined && grade.costAmountMicros === undefined;
     let chargeId: string | null = null;
     let chargeMatch: FrameworkAssuranceEvaluationEvidence["grades"][number]["chargeMatch"] = "not_required";
     if (grade.evaluationId !== evaluation.id) {
       chargeMatch = "mismatch";
       blockers.push("evaluation.grade_lineage_mismatch");
-    } else if (grade.graderType === "model" && !completeCost) {
+    } else if (grade.graderType === "model" && qaRequests.length > 1) {
+      chargeMatch = "non_unique";
+    } else if (grade.graderType === "model" && qaRequest && !qaMeasured) {
+      chargeMatch = "mismatch";
+      blockers.push(qaRequest.state === "unknown" || qaRequest.usage.state === "unknown"
+        ? "evaluation.qa_usage_unknown" : "evaluation.qa_charge_pending");
+    } else if (grade.graderType === "model" && !completeCost && !modelTokenCost) {
       chargeMatch = "mismatch";
       blockers.push("evaluation.grade_cost_incomplete");
-    } else if (hasCost && !completeCost) {
+    } else if (hasCost && !completeCost && !modelTokenCost) {
       chargeMatch = "mismatch";
       blockers.push("evaluation.grade_cost_incomplete");
-    } else if (completeCost) {
-      const matches = runCharges.filter(charge => charge.state === "measured"
+    } else if (completeCost || modelTokenCost) {
+      const matches = chargeCandidates.filter(charge => charge.state === "measured"
         && charge.inputTokens === grade.costInputTokens
         && charge.outputTokens === grade.costOutputTokens
-        && charge.actualCostMicros === grade.costAmountMicros);
+        && (charge.qa
+          ? grade.costAmountMicros === undefined && charge.actualCostMicros === null
+          : charge.actualCostMicros === (grade.costAmountMicros ?? null)));
       if (matches.length === 0) {
-        chargeMatch = runCharges.length > 0 ? "mismatch" : "missing";
+        chargeMatch = chargeCandidates.length > 0 ? "mismatch" : "missing";
         blockers.push(chargeMatch === "mismatch" ? "evaluation.charge_cost_mismatch" : "evaluation.charge_missing");
       } else if (matches.length > 1) {
         chargeMatch = "non_unique";
@@ -510,7 +554,8 @@ export function projectEvaluationEvidence(
     status,
     evaluation: projectEvaluation(evaluation),
     grades: projectedGrades,
-    charges: projectBudgetCharges(charges.filter(charge => charge.runId === evaluation.runId || projectedGrades.some(grade => grade.chargeId === charge.id))),
+    charges: projectedCharges.filter(charge => charge.runId === evaluation.runId
+      || projectedGrades.some(grade => grade.chargeId === charge.chargeId)),
     budget: projectedBudget,
     blockers: [...new Set(blockers)],
   };
@@ -535,6 +580,27 @@ function projectBudgetCharges(values: readonly DelegationBudgetCharge[]): Framew
     outputTokens: charge.outputTokens ?? null,
     actualCostMicros: charge.actualCostMicros ?? null,
   }));
+}
+
+function projectEvaluationQaCharge(
+  request: RunEvaluationQaRequestV1,
+  runId: string,
+): FrameworkAssuranceEvaluationEvidence["charges"][number] {
+  const measured = request.state === "completed" && request.releasedAt !== undefined && request.usage.state === "measured";
+  const unknown = request.state === "unknown" || request.usage.state === "unknown";
+  return {
+    chargeId: `evaluation_qa_request:${request.id}`,
+    reservationId: null,
+    runId,
+    attemptId: request.attemptId,
+    state: measured ? "measured" : unknown ? "unknown" : "pending",
+    reservedTokens: request.estimatedInputTokens,
+    reservedCostMicros: null,
+    inputTokens: measured ? request.usage.inputTokens : null,
+    cachedInputTokens: null,
+    outputTokens: measured ? request.usage.outputTokens : null,
+    actualCostMicros: null,
+  };
 }
 
 export function projectDelegationCompletionEvidence(evidence: DelegationCompletionEvidenceV1): FrameworkAssuranceCompletionEvidence {

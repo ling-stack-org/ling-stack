@@ -3546,6 +3546,9 @@ export class SqliteRunStore implements RunStore {
   getRunEvaluationQaRequestForTask(...args: Parameters<RunStore["getRunEvaluationQaRequestForTask"]>): ReturnType<RunStore["getRunEvaluationQaRequestForTask"]> {
     return this.runEvaluationQa.getRunEvaluationQaRequestForTask(...args);
   }
+  listRunEvaluationQaRequestsForEvaluation(...args: Parameters<RunStore["listRunEvaluationQaRequestsForEvaluation"]>): ReturnType<RunStore["listRunEvaluationQaRequestsForEvaluation"]> {
+    return this.runEvaluationQa.listRunEvaluationQaRequestsForEvaluation(...args);
+  }
   listClaimableRunEvaluationQaTasks(...args: Parameters<RunStore["listClaimableRunEvaluationQaTasks"]>): ReturnType<RunStore["listClaimableRunEvaluationQaTasks"]> {
     return this.runEvaluationQa.listClaimableRunEvaluationQaTasks(...args);
   }
