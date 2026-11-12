@@ -445,6 +445,12 @@ Common checks 的失败已定位到全历史 Gitleaks：1438 个提交、3833874
 - 依赖锁当前摘要为 `49c509936672cbe4ce9118a4bf3907c4b32eea1babfc6dd74dec295c526f4d10`。三任务来源更新到该完整提交，任务版本递增为 `4/4/5`，套件递增为 `5`；v4 文件保留为历史输入，默认套件改为 `framework-v5.json`。v5 套件字节摘要为 `69129d529f41cdad17e9da1a706c4a1f7d3f00b7c4d8b59d11268faaf329a303`。
 - v5 修复后，framework-assurance、CI policy、workflow、平台 lane 与 SDK 边界相关回归共 `179/179` 通过；直接执行 `preflight` 与 `calibrate` 均成功。输出目录仍在 checkout 外，未初始化用户 Store、派发普通 Run、调用 Provider 或运行真实模型/付费任务。
 
+### 当前分支锁更新与 v6 冻结（2026-11-11）
+
+- CLI 新增对 `@ling-stack/contracts` 的 workspace 依赖后，旧 v5 的锁字节摘要按设计被拒绝；未放宽校验，也未改变任务规则、profile、注入补丁或控制输入。
+- 保留 v5 为历史输入，新增默认 v6：T01/T02/T03 任务版本为 `5/5/6`，来源冻结到 `dd3fa912a09f0494c9899090e861dfa2058e5553`，锁摘要为 `0d4fa92e297e8820140bb7c23d1b689d6d75038e74b858ac9c2851584909b0af`，套件摘要为 `78e92e3384c3844ac5b1b6b485dbb751df74e1d377a9727434d047354d704998`。
+- 本地直接执行 v6 `preflight` 与 `calibrate` 均成功；输出目录在 checkout 外，未初始化用户 Store、派发普通 Run、调用 Provider 或运行真实模型/付费任务。
+
 ### F3-A / F4-01 当前批次（2026-11-09）
 
 | 项目 | 已确认结果 |

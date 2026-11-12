@@ -12,6 +12,7 @@ import {
 } from "../../shared/ui/index.js";
 import type { AutomationMutationKind } from "../../domains/automations/use-automations-domain.js";
 import type { AutomationStatus } from "../../types.js";
+import { formatDateTime } from "../../lib/formatting.js";
 import type { AutomationDefinitionViewModel, AutomationTranslate } from "./automation-view-models.js";
 
 export function AutomationDefinitionRow({
@@ -84,6 +85,7 @@ export function AutomationDefinitionRow({
         <div className="automation-ui2-row-summary">
           <span>{viewModel.targetLabel}</span>
           <span>{viewModel.scheduleLabel}</span>
+          {automation.nextRunAt ? <span>{t("Next run")} · {formatDateTime(automation.nextRunAt)}</span> : null}
         </div>
       )}
       actions={(

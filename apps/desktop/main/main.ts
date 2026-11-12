@@ -418,6 +418,7 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
           baseUrl: daemonBaseUrl,
           daemonEntryPath: resources.daemonEntryPath,
           defaultWorkspaceCwd,
+          expectedProductVersion: app.getVersion(),
           desktopBridgeToken: bridgeToken,
           browserHostPath: resources.browserHostPath,
           packaged: app.isPackaged,
@@ -665,6 +666,7 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
     const loadedWindow = await createMainWindow({
       backgroundColor: nativeTheme.shouldUseDarkColors ? "#1f1f1f" : "#ffffff",
       daemonBaseUrl,
+      productVersion: app.getVersion(),
       themePackageFirstPaint: createDesktopThemePackageFirstPaintState(
         initializedThemePackages.value,
       ),

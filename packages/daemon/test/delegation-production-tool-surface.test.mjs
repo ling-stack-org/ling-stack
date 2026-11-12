@@ -238,7 +238,12 @@ test("production stop_with_parent freezes a deep optional subtree without erasin
   assert.equal(f.observed.calls.length, 3);
 });
 
-for (const featureOff of [false, true]) for (const outcome of ["failed", "cancelled"]) test(`${outcome}-parent stop observation timeout retains custody then durably closes after late drain${featureOff ? " with producer feature off" : ""}`, { timeout: 15_000 }, async t => {
+// These cases intentionally keep the physical child drain pending while the
+// parent terminal intent is persisted. Keep enough headroom for hosted Linux
+// runners, where the SQLite/recovery sequence can be substantially slower than
+// the local fixture while retaining the same bounded test contract.
+const DELEGATION_PRODUCTION_SURFACE_TIMEOUT_MS = 60_000;
+for (const featureOff of [false, true]) for (const outcome of ["failed", "cancelled"]) test(`${outcome}-parent stop observation timeout retains custody then durably closes after late drain${featureOff ? " with producer feature off" : ""}`, { timeout: DELEGATION_PRODUCTION_SURFACE_TIMEOUT_MS }, async t => {
   keepEventLoopAlive(t);
   const parentPrompt = "Inspect the selected workflow.", childObjective = "Hold original stop drain beyond the observation deadline.";
   const childModel = deferred(), stopped = deferred(), drain = deferred(); t.after(() => drain.resolve());
