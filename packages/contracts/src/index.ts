@@ -87,6 +87,7 @@ export { isCommittedRunNarrationV1, type CommittedRunNarrationV1 } from "./commi
 export type * from "./harness-diagnostics.js";
 export { FRAMEWORK_ASSURANCE_ASSOCIATION_FROZEN_INPUT_KEYS } from "./framework-assurance.js";
 export type * from "./framework-assurance.js";
+export * from "./node-rerun.js";
 
 export type * from "./work-summary.js";
 export type * from "./diagnostics.js";

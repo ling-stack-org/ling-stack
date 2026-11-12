@@ -1,8 +1,8 @@
 # Ling 框架补强实现计划书
 
-Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A/F4-01, F3-B admission evidence, F3-02 review-only preflight, and Host readiness entered main at `edb820f0` (PR #690), with the current main documentation refresh at `878e422a` (PR #691); the F3-B real trial and F5 rerun remain blocked/unimplemented
+Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A/F4-01, F3-B admission evidence, F3-02 review-only preflight, and Host readiness entered main at `edb820f0` (PR #690), with `main@5dc138493` including the later CI merge; F5-01 A17 contract preflight is implemented in an isolated worktree, while the F3-B real trial and F5 rerun execution remain blocked/unimplemented
 Owner: Ling framework maintainers; one integration owner per implementation batch
-Last verified: 2026-11-12
+Last verified: 2026-11-13
 Document type: implementation plan / acceptance checklist
 Canonical replacement: none; retain while material work remains unfinished
 Code and test anchors: sections 7 and 9; live evidence is read-only, Host readiness is review-only, and no real task or GUI acceptance is claimed
@@ -23,7 +23,7 @@ Code and test anchors: sections 7 and 9; live evidence is read-only, Host readin
 | F3-A | Run 证据适配与 fixture 回归 | fixture 适配及只读 Host 来源适配已实现；仍不代表真实评测通过 | F1 格式稳定、来源接口可核实 |
 | F3-B | 准入证据前置、普通 Run 真实试点及后续并发对比 | 准入证据前置已实现；真实试点仍 BLOCKED | 对应安全/隔离/恢复验收、可信验证、试点预算 |
 | F4 | 已有 Harness 诊断的只读消费 | F4-01 已实现分页报告；未改生产者 | F1 报告稳定、已有诊断合同可用 |
-| F5 | 节点重跑合同 | 仅文档设计 | 实现另立任务，本计划不增加 rerun 功能 |
+| F5 | 节点重跑合同 | F5-01 A17 纯合同预检已实现；真实节点重跑仍未实现 | Host 接线、当前策略复核、新 Attempt/fence、重新审批和真实验收 |
 
 ## 2. 开工前的隔离与分工
 
@@ -165,6 +165,14 @@ Code and test anchors: sections 7 and 9; live evidence is read-only, Host readin
 - **验收**：A16；读取不能创建 Store、触发 supervisor / reconcile / retry / dispatch；无敏感字段泄露。
 - **本批结果**：`diagnostics.mjs` 由 `readHarnessDiagnosticsReportFromClient` 组合真实 `LingDaemonClient.getWorkUnitHarnessDiagnostics`，再逐页消费并保留页级 `observedAt`、cursor 和 checkpoint，输出 workspace 哈希并关联同一 Run/WorkUnit 的 F3 observation；冷工作区和断链状态转为脱敏报告状态。底层回调保留为纯测试边界；未改 daemon、Store、API endpoint 或 UI。
 
+### F5-01 A17 节点重跑合同预检
+
+- **输入**：冻结的 `NodeRerunIntentV1` 与 Host 读取的 `NodeRerunObservedSourceV1`；两者均只描述既有不可变身份、摘要和状态事实。
+- **实施**：在 `packages/contracts/src/node-rerun.ts` 中严格拒绝未知字段、非 SHA-256 摘要、重复依赖和 accessor 输入；`evaluateNodeRerunAdmission()` fail-closed 检查源 Run/Attempt 是否结束、停止是否确认、lease/fence/effect 是否已收口、外部副作用是否可重放、依赖闭包是否完整、策略是否漂移和权限是否有效。
+- **授权边界**：合法结果只有 `eligible_for_host_admission`，不等于执行许可；返回固定 `executionAuthorized: false`，下一步必须由 Host 当前校验并生成新的 execution identity、fence 和 approval。
+- **回归**：`packages/contracts/test/node-rerun.test.ts` 覆盖合法前置、活动执行、未知/非幂等效果、依赖缺失、身份漂移、未知字段、无效摘要和 accessor 不执行；Contracts 的 `typecheck:ci` 与 `test:ci` 已纳入 TypeScript 测试。
+- **限制**：不增加 API、UI、数据库列、Run/Attempt 状态、审批动作、Store 写入、Provider/模型调用或真实 Daemon 接线；真实 Host 重跑仍保持 blocked。
+
 ### F3-B 准入清单
 
 Host readiness review gate 只把已捕获投影的五域完整性和跨域一致性变成可重复检查；它不把合成 fixture 或本地报告升级为真实 Host/Provider 验收。以下真实试点项目仍需逐项取得证据。
@@ -205,7 +213,7 @@ F0 -> 实施基线 -> E1 -> E2 -> E3 -----> B1 -> B2
        并发会话对应能力合并/验收 --------+
                         E3 -> O1
 
-F5: 仅合同，不进入本轮实现依赖图
+F5-01: 合同前置已实现；Host 接线和真实节点重跑仍不进入本轮依赖图
 ```
 
 两个并行实现者提交明确文件清单与测试结果，集成负责人核对最终实际消费的 commit / fixture / tarball，而不是仅凭各自一次通过就汇总“全部通过”。共享 CLI、CI 和文档由单人集成。
