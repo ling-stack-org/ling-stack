@@ -1,6 +1,6 @@
 # Ling 框架补强实现计划书
 
-Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A/F4-01, F3-B admission evidence, F3-02 review-only preflight, and Host readiness are on main at `edb820f0` (PR #690); the F3-B real trial and F5 rerun remain blocked/unimplemented
+Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A/F4-01, F3-B admission evidence, F3-02 review-only preflight, and Host readiness entered main at `edb820f0` (PR #690), with the current main documentation refresh at `878e422a` (PR #691); the F3-B real trial and F5 rerun remain blocked/unimplemented
 Owner: Ling framework maintainers; one integration owner per implementation batch
 Last verified: 2026-11-12
 Document type: implementation plan / acceptance checklist
@@ -13,7 +13,7 @@ Code and test anchors: sections 7 and 9; live evidence is read-only, Host readin
 
 按“离线评测与报告 + SDK 独立消费”先实施，再接真实执行和诊断。不要等待另一会话完成所有未来功能，也不要抢先改它正在拥有的安全并发、隔离执行、合并和恢复文件。
 
-用户确认开始后，F1/F2 已在独立工作区实现并合并到主线，合并提交为 `47afcc47b9063cd7a402a81cf1088caa695f3638`。F3-A/F4-01、F3-B 准入证据前置、F3-02 和 Host readiness 已进入 `main@edb820f0`，包含 #676、#685、#684、#688、#689 和 #690 的已合并增量。默认不产生付费模型请求，不启动生产 daemon、不修改共享数据库，不开放真实 F3-B 试点。实际证据见第 9 节。
+用户确认开始后，F1/F2 已在独立工作区实现并合并到主线，合并提交为 `47afcc47b9063cd7a402a81cf1088caa695f3638`。F3-A/F4-01、F3-B 准入证据前置、F3-02 和 Host readiness 已进入 `main@edb820f0`，包含 #676、#685、#684、#688、#689 和 #690 的已合并增量；当前主线为 `main@878e422a`，包含 #691 文档同步。默认不产生付费模型请求，不启动生产 daemon、不修改共享数据库，不开放真实 F3-B 试点。实际证据见第 9 节。
 
 | 里程碑 | 内容 | 当前状态 | 进入条件 |
 | --- | --- | --- | --- |
@@ -180,7 +180,7 @@ Host readiness review gate 只把已捕获投影的五域完整性和跨域一�
 
 任一项不满足，只阻断受影响的真实执行阶段，F1/F2 可继续。F5 仅对详细设计 A17 做合同检查，不进入代码实施。
 
-2026-11-09 的只读准入审计基于旧主线快照，结论为 `F3-B BLOCKED`；2026-11-10 的增量审计确认准入证据前置已实现；2026-11-12 的合并基线复核确认 #690 已进入 `main@edb820f0`，Host readiness review gate 已具备但真实试点仍为 `F3-B BLOCKED`。完整证据、八项核查和解阻顺序见[2026-11-12 合并基线审计](../testing/f3b-admission-audit-2026-11-12.md)，历史记录见[2026-11-10 准入审计增量](../testing/f3b-admission-audit-2026-11-10.md)和[2026-11-09 准入审计](../testing/f3b-admission-audit-2026-11-09.md)。
+2026-11-09 的只读准入审计基于旧主线快照，结论为 `F3-B BLOCKED`；2026-11-10 的增量审计确认准入证据前置已实现；2026-11-12 的合并基线复核确认 #690 已进入 `main@edb820f0`，当前主线为 `main@878e422a`，Host readiness review gate 已具备但真实试点仍为 `F3-B BLOCKED`。完整证据、八项核查和解阻顺序见[2026-11-12 合并基线审计](../testing/f3b-admission-audit-2026-11-12.md)，历史记录见[2026-11-10 准入审计增量](../testing/f3b-admission-audit-2026-11-10.md)和[2026-11-09 准入审计](../testing/f3b-admission-audit-2026-11-09.md)。
 
 ## 6. PR 与集成顺序
 
@@ -531,3 +531,15 @@ Common checks 的失败已定位到全历史 Gitleaks：1438 个提交、3833874
 | 回归 | `host-readiness.test.ts`：20/20；全套 `node --test scripts/framework-assurance/*.test.mjs scripts/framework-assurance/*.test.ts`：127/127；`corepack pnpm typecheck:ci-tests` 与 `git diff --check` 通过 |
 | 授权边界 | `ready-for-trial-review` 和 `blocked` 都固定 `executionAuthorized=false`；未启动 Provider、模型、付费任务、生产 daemon、Store 或共享数据库 |
 | 未完成 | 真实 Host/Provider/evaluation/费用账本、重启/取消/权限撤销、跨平台 packaged 和 A13/A14 仍缺真实验收，F3-B 保持 BLOCKED |
+
+### 当前主线受控复核（2026-11-12，`main@878e422a`）
+
+| 项目 | 已确认结果 |
+| --- | --- |
+| 基线 | 当前 worktree 为 `codex/f3b-readiness-evidence`，复核起点与 `origin/main@878e422a` 一致；没有修改其他 worktree 或共享运行数据 |
+| framework-assurance | `node --test scripts/framework-assurance/*.test.mjs scripts/framework-assurance/*.test.ts`：`127/127`，无失败、取消或跳过 |
+| Daemon 受控套件 | evaluation association、Host evidence、预算、隔离、串行/并行交付、取消和权限边界定向套件：`204/204` |
+| 构建与类型 | `corepack pnpm --filter @ling-stack/daemon build` 通过；`corepack pnpm typecheck:ci-tests` 通过 |
+| 设计判断 | Host readiness 与 evaluation association 保持独立：前者复核五域 Host 准入投影，后者复核指定 evaluation 的 Run/artifact/grade 关联；二者均为只读、`not_assessed` 且不授予执行权 |
+| 运行边界 | 仅使用临时 SQLite/Git/HTTP fixture；未启动真实 Provider、模型、生产 daemon、付费任务或普通 workspace 写并发 |
+| 当前结论 | 受控准入前置能力可继续维护；A13/A14 所需的真实 Host 生命周期、真实 Provider/evaluation/费用账本、跨平台 packaged 和独立资源验收仍缺失，F3-B 保持 `BLOCKED` |

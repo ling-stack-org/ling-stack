@@ -110,7 +110,7 @@ export function readRunAssuranceEvidence(store: RunStore, activeRuns: ActiveRunR
   const observedAt = new Date().toISOString();
   const effectStatus = effectStatusFor(attempt, stopByAttempt.get(attempt.id)?.effects);
   const completionEvidence = store.getDelegationCompletionEvidence({ rootRunIds: [run.id] });
-  const completion = buildCompletion(completionEvidence);
+  const completion = projectDelegationCompletionEvidence(completionEvidence);
   const budget = projectDelegationBudgetEvidence(completionEvidence, run.id);
   const isolation = buildIsolation(store, run, attempt, observedAt);
   const lifecycle = buildLifecycle(workUnit, attempts, stop.attempts);
@@ -211,7 +211,7 @@ function buildLifecycle(
   };
 }
 
-function buildCompletion(evidence: DelegationCompletionEvidenceV1): FrameworkAssuranceCompletionEvidence {
+export function projectDelegationCompletionEvidence(evidence: DelegationCompletionEvidenceV1): FrameworkAssuranceCompletionEvidence {
   const issues: FrameworkAssuranceCompletionIssue[] = evidence.issues.map(issue => ({
     code: issue.code,
     stepId: issue.stepId ?? null,
@@ -221,10 +221,20 @@ function buildCompletion(evidence: DelegationCompletionEvidenceV1): FrameworkAss
   const steps: FrameworkAssuranceCompletionStep[] = evidence.steps.map(read => {
     const hasIssue = issues.some(issue => issue.stepId === read.step.id);
     const terminal = TERMINAL_RUN_STATUSES.has(read.step.state);
+    const resultArtifacts = uniqueArtifactPins(read.results.map((result, index) => {
+      const contentSha256 = [result.artifactContentSha256, result.artifactPayloadSha256]
+        .find(value => typeof value === "string" && /^[a-f0-9]{64}$/u.test(value));
+      return contentSha256 ? {
+        role: `delegation-result-${read.step.id}-${index}`,
+        artifactId: result.artifactId,
+        contentSha256,
+      } : undefined;
+    }).filter((value): value is FrameworkAssuranceArtifactPin => value !== undefined));
     const completionStatus: FrameworkAssuranceCompletionStep["completionStatus"] = hasIssue ? "invalid"
       : !terminal ? "pending"
         : read.hostCompletion?.drainedAt && read.hostCompletion.effectCoverage && read.quiescence === "verified"
-          && (read.reservation?.state === "settled" || read.reservation?.state === "released") ? "verified"
+          && (read.reservation?.state === "settled" || read.reservation?.state === "released")
+          && resultArtifacts.length > 0 ? "verified"
           : read.hostCompletion || read.reservation ? "pending" : "missing";
     return {
       stepId: read.step.id,
@@ -234,16 +244,15 @@ function buildCompletion(evidence: DelegationCompletionEvidenceV1): FrameworkAss
       attemptId: read.attempt?.sourceFence.attemptId ?? null,
       reservationState: read.reservation?.state ?? null,
       completionStatus,
-      resultArtifacts: uniqueArtifactPins(read.results.map((result, index) => ({
-        role: `delegation-result-${read.step.id}-${index}`,
-        artifactId: result.artifactId,
-        contentSha256: result.artifactContentSha256 ?? result.artifactPayloadSha256 ?? result.artifactFingerprint ?? "",
-      })).filter(value => value.contentSha256.length > 0)),
+      resultArtifacts,
     };
   });
   const resultArtifacts = uniqueArtifactPins(steps.flatMap(step => step.resultArtifacts));
+  const status = evidence.steps.length === 0 && evidence.issues.length === 0 ? "not_applicable" : evidence.status;
+  const requiredResultMissing = status === "satisfied"
+    && steps.some(step => step.required && step.completionStatus !== "verified");
   return {
-    status: evidence.steps.length === 0 ? "not_applicable" : evidence.status,
+    status: requiredResultMissing ? "blocked" : status,
     rootRunIds: evidence.rootRunIds,
     fingerprint: evidence.steps.length === 0 ? null : evidence.fingerprint,
     stepCount: steps.length,
