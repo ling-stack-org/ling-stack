@@ -17,6 +17,7 @@ import { operationEndpoints, type OperationEndpoints } from "./endpoints/operati
 import { terminalReportEndpoints, type TerminalReportEndpoints } from "./endpoints/terminal-reports.js";
 import { computerUseEndpoints, type ComputerUseEndpoints } from "./endpoints/computer-use.js";
 import { transcriptionEndpoints, type TranscriptionEndpoints } from "./endpoints/transcriptions.js";
+import { companionEndpoints, type CompanionEndpoints } from "./endpoints/companions.js";
 import { LingDaemonTransport } from "./transport.js";
 
 export { daemonBaseUrlFromEnv, type LingDaemonClientOptions } from "./transport.js";
@@ -40,7 +41,8 @@ export interface LingDaemonClient extends
   OperationEndpoints,
   TerminalReportEndpoints,
   ComputerUseEndpoints,
-  TranscriptionEndpoints {}
+  TranscriptionEndpoints,
+  CompanionEndpoints {}
 
 export class LingDaemonClient extends LingDaemonTransport {}
 
@@ -65,4 +67,5 @@ Object.assign(
   terminalReportEndpoints,
   computerUseEndpoints,
   transcriptionEndpoints,
+  companionEndpoints,
 );

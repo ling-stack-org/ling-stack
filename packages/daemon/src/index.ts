@@ -154,6 +154,9 @@ import { RemoteAccessController } from "./features/remote-access/controller.js";
 import { EngineManagementFeature } from "./features/execution-engines/feature.js";
 import { DefaultRemoteReplyDispatcher } from "./features/remote-access/default-reply-dispatcher.js";
 import { HostCapabilityBridgeController } from "./features/runs/host-capability-bridge-controller.js";
+import { executeRunRequest, type RunExecutionSink } from "./features/runs/orchestrator.js";
+import { CompanionReplyService } from "./features/companions/reply-service.js";
+import { CompanionSchedulerRegistry } from "./features/companions/scheduler.js";
 
 export { defaultDaemonConfig } from "./config.js";
 export type { DaemonConfig, HarnessFeatureConfig, ResolvedDaemonConfig } from "./config.js";
@@ -371,6 +374,7 @@ export function createDaemonServer(
   let channelTurnDispatchWorker: ChannelTurnDispatchWorkerRegistry;
   let channelTurnDispatchReady = false;
   let approvalResumeCoordinator: ApprovalResumeCoordinator | undefined;
+  let companionSchedulers: CompanionSchedulerRegistry | undefined;
   let userInputDeliveryWorker!: UserInputDeliveryWorker;
   const answerDeliveryStores = new Set<RunStore>();
   const approvalRecoveryStores = new Set<RunStore>();
@@ -514,6 +518,7 @@ export function createDaemonServer(
     harnessProjectionStores.add(store);
     reconcileHarnessProjections(store);
     if (channelTurnDispatchReady) channelTurnDispatchWorker?.start(store);
+    companionSchedulers?.start(cwd);
     learningReviewCoordinator?.registerStore(store);
     if (!memorySemanticServices.has(store)) {
       const service = new MemorySemanticService({ store, secretResolver });
@@ -737,6 +742,41 @@ export function createDaemonServer(
     });
     daemonRunnerRecoveryCoordinator?.recoverStore(store);
   };
+  const startCompanionRun = async (
+    runRequest: import("./features/runs/schemas.js").RunRequest,
+    sink: RunExecutionSink,
+  ): Promise<string | undefined> => executeRunRequest(
+    runRequest,
+    sink,
+    runnerRegistry,
+    storeRegistry,
+    activeRuns,
+    runtimeSupervisor,
+    secretResolver,
+    mcpBroker,
+    {
+      afterRunTerminal: afterChannelRunTerminal,
+      controlPlaneEvents,
+      startupState,
+      computerUsePreviews,
+      hostCapabilityBridge,
+      nativeRunDispatcher,
+    },
+  );
+  const companionReplyService = new CompanionReplyService({
+    startRun: startCompanionRun,
+    activeRuns,
+    secretResolver,
+    activeDirectReplies,
+    providerStartupRefresh,
+    imageVisionSummarizer,
+    webFetch,
+    webResolveHostAddresses,
+  });
+  companionSchedulers = new CompanionSchedulerRegistry({
+    storeRegistry,
+    replyService: companionReplyService,
+  });
   const channelTurnDispatchOptions = {
     config: resolvedConfig,
     storeRegistry,
@@ -978,6 +1018,8 @@ export function createDaemonServer(
     workspaceFileCapabilities,
     hostCapabilityBridge,
     humanEvaluations,
+    companionReplyService,
+    companionSchedulers: companionSchedulers!,
   };
   const server = createServer((request, response) => {
     if (harnessShuttingDown || activeRuns.isShuttingDown()) {
@@ -1068,6 +1110,7 @@ export function createDaemonServer(
       channelTurnDispatchWorker.beginShutdown();
       backgroundSchedulers.stopAdmission();
       automationSchedulers.stopAll();
+      companionSchedulers?.stopAll();
     },
     abortOwned: () => {
       approvalAutoReviewRecoveryCoordinator?.abortOwned();
@@ -1080,6 +1123,7 @@ export function createDaemonServer(
       runtimeRunQueueCoordinator?.waitForIdle() ?? Promise.resolve(),
       approvalAutoReviewRecoveryCoordinator?.waitForIdle() ?? Promise.resolve(),
       automationSchedulers.waitForIdle(), backgroundSchedulers.waitForIdle(),
+      companionSchedulers?.waitForIdle() ?? Promise.resolve(),
       providerStartupRefresh.waitForIdle(), harnessProjectionReconciler.waitForIdle(),
       harnessArtifactRetention.waitForIdle(),
       learningReviewCoordinator?.drain() ?? Promise.resolve(),
@@ -1215,6 +1259,7 @@ export function createDaemonServer(
           await remoteAccess.startIfEnabled();
         }
         startupOptionalWarmups.start(resolvedConfig.defaultWorkspaceCwd, storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd));
+        companionSchedulers?.start(resolvedConfig.defaultWorkspaceCwd);
         channelTurnDispatchReady = true;
         channelTurnDispatchWorker.start(storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd));
         const mediaRecoveryHooks: Parameters<typeof resumePendingMediaJobExecutions>[0]["hooks"] = {

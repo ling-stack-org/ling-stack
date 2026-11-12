@@ -12,8 +12,8 @@ const workflow = readFileSync(new URL("../../.github/workflows/ci.yml", import.m
 const labelWorkflow = readFileSync(new URL("../../.github/workflows/full-ci-label.yml", import.meta.url), "utf8");
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const lanes = ["SCOPE", "COMMON", "DEPENDENCY", "ASSURANCE", "BUILD", "TYPECHECK", "UNIT", "DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE", "WEB_SMOKE"];
-const platformJobs = ["daemon-tests", "daemon-linux-contracts", "restricted-command-macos"];
-const selectorOutputs = { ASSURANCE: "assurance-selected", BUILD: "build-selected", DEPENDENCY: "dependency-policy", TYPECHECK: "typecheck-selected", UNIT: "unit-selected", DAEMON: "daemon", WEB: "web" };
+const platformJobs = { "daemon-tests": "daemon", "daemon-linux-contracts": "daemon", "restricted-command-macos": "macos-native" };
+const selectorOutputs = { ASSURANCE: "assurance-selected", BUILD: "build-selected", DEPENDENCY: "dependency-policy", TYPECHECK: "typecheck-selected", UNIT: "unit-selected", DAEMON: "daemon", MACOS_NATIVE: "macos-native", WEB: "web" };
 const unselected = Object.fromEntries(Object.keys(selectorOutputs).map((selector) => [`${selector}_SELECTED`, "false"]));
 
 /** Read a top-level job without matching similarly named steps. */
@@ -64,13 +64,13 @@ function runOutputTransform(variable, value) {
   }
 }
 
-async function assertScopeOutputs(scope, { mode, packages, daemon, web, dependency = false, assurance = false, matrix }) {
+async function assertScopeOutputs(scope, { mode, packages, daemon, macosNative = false, web, dependency = false, assurance = false, matrix }) {
   const outputs = runOutputTransform("SCOPE_JSON", JSON.stringify(scope));
   assert.deepEqual(outputs, {
     mode, packages: JSON.stringify(packages), "test-packages": JSON.stringify(packages),
     "typecheck-packages": JSON.stringify(packages), "dependency-policy": String(dependency),
     "assurance-selected": String(assurance), "build-selected": String(packages.length > 0),
-    "typecheck-selected": String(packages.length > 0), daemon: String(daemon), web: String(web),
+    "typecheck-selected": String(packages.length > 0), daemon: String(daemon), "macos-native": String(macosNative), web: String(web),
   });
   const plan = await createTestPlan(JSON.parse(outputs["test-packages"]));
   assert.deepEqual(plan.unitMatrix, { include: matrix });
@@ -86,7 +86,7 @@ async function assertScopeOutputs(scope, { mode, packages, daemon, web, dependen
   // must not turn a selected lane's skipped result into a passing quality gate.
   const required = ["SCOPE", "COMMON", ...(assurance ? ["ASSURANCE"] : []), ...(packages.length ? ["BUILD"] : []),
     ...(dependency ? ["DEPENDENCY"] : []), ...(packages.length ? ["TYPECHECK"] : []),
-    ...(matrix.length ? ["UNIT"] : []), ...(daemon ? ["DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE"] : []),
+    ...(matrix.length ? ["UNIT"] : []), ...(daemon ? ["DAEMON", "LINUX_CONTRACT"] : []), ...(macosNative ? ["MACOS_NATIVE"] : []),
     ...(web ? ["WEB_SMOKE"] : [])];
   for (const lane of required) gate[`${lane}_RESULT`] = "success";
   const passed = runQuality(gate);
@@ -103,7 +103,7 @@ async function assertScopeOutputs(scope, { mode, packages, daemon, web, dependen
 // no_claim=hosted GitHub scheduler not executed.
 test("workflow transformations preserve docs empty arrays and deselected lanes", { timeout: 90_000 }, async () => {
   await assertScopeOutputs(classifyChangedFiles({ files: ["README.md"] }), {
-    mode: "docs", packages: [], daemon: false, web: false, matrix: [],
+    mode: "docs", packages: [], daemon: false, macosNative: false, web: false, matrix: [],
   });
 });
 
@@ -112,7 +112,7 @@ test("workflow transformations preserve docs empty arrays and deselected lanes",
 // no_claim=hosted GitHub scheduler not executed.
 test("workflow transformations keep daemon test-only work outside the unit matrix", { timeout: 90_000 }, async () => {
   await assertScopeOutputs(classifyChangedFiles({ files: ["packages/daemon/test/approval-policy-run.test.mjs"] }), {
-    mode: "affected", packages: ["@ling-stack/daemon"], daemon: true, web: false, matrix: [],
+    mode: "affected", packages: ["@ling-stack/daemon"], daemon: true, macosNative: false, web: false, matrix: [],
   });
 });
 
@@ -121,7 +121,7 @@ test("workflow transformations keep daemon test-only work outside the unit matri
 // no_claim=hosted GitHub scheduler not executed.
 test("workflow transformations select the eight core shards for core test-only work", { timeout: 90_000 }, async () => {
   await assertScopeOutputs(classifyChangedFiles({ files: ["packages/core/test/example.test.ts"] }), {
-    mode: "affected", packages: ["@ling-stack/core"], daemon: false, web: false,
+    mode: "affected", packages: ["@ling-stack/core"], daemon: false, macosNative: false, web: false,
     matrix: Array.from({ length: 8 }, (_, shard) => ({ suite: "core", shard, shardCount: 8, concurrency: 2 })),
   });
 });
@@ -135,7 +135,7 @@ test("workflow transformations retain web test and source validation consumers",
     ["apps/web/src/example.ts", ["@ling-stack/cli", "@ling-stack/localization", "@ling-stack/web"]],
   ]) {
     await assertScopeOutputs(classifyChangedFiles({ files: [file] }), {
-      mode: "affected", packages, daemon: false, web: true, matrix: [{ suite: "packages", shard: 0 }],
+      mode: "affected", packages, daemon: false, macosNative: false, web: true, matrix: [{ suite: "packages", shard: 0 }],
     });
   }
 });
@@ -150,7 +150,7 @@ test("workflow transformations require every lane for a bounded full package gra
     dependencies: [], hasTestScript: true, hasTypecheckScript: true,
   }));
   await assertScopeOutputs(classifyChangedFiles({ files: ["package.json"], packageEntries }), {
-    mode: "full", packages, dependency: true, assurance: true, daemon: true, web: true,
+    mode: "full", packages, dependency: true, assurance: true, daemon: true, macosNative: true, web: true,
     matrix: [{ suite: "packages", shard: 0 },
       ...Array.from({ length: 5 }, (_, shard) => ({ suite: "core", shard, shardCount: 5, concurrency: 2 }))],
   });
@@ -174,10 +174,10 @@ test("PR transitions and full-ci labels trigger validation while full regression
 
 test("every expensive job requires complete execution and retains its scope selection", () => {
   const selectedJobs = { "dependency-policy": "dependency-policy", build: "build-selected", typecheck: "typecheck-selected", "unit-tests": "unit-selected" };
-  for (const id of ["dependency-policy", "build", "typecheck", "unit-tests", ...platformJobs]) {
+  for (const id of ["dependency-policy", "build", "typecheck", "unit-tests", ...Object.keys(platformJobs)]) {
     const source = jobSource(id);
     assert.match(source, /^    if: .*needs\.scope\.outputs\.execution-tier == 'complete'/mu, id);
-    const selector = platformJobs.includes(id) ? "daemon" : selectedJobs[id];
+    const selector = platformJobs[id] ?? selectedJobs[id];
     assert.match(source, selector ? new RegExp(`^    if: .*needs\\.scope\\.outputs\\.${selector} == 'true'`, "mu") : /^    if: .*needs\.scope\.outputs\.mode != 'docs'/mu, id);
   }
   const common = jobSource("common-fast");
@@ -207,7 +207,7 @@ test("label events never create CI runs so the latest run always publishes the r
 });
 
 test("long-running jobs respond to cancellation while quality still reports incomplete validation", () => {
-  for (const id of ["typecheck", "unit-tests", ...platformJobs]) {
+  for (const id of ["typecheck", "unit-tests", ...Object.keys(platformJobs)]) {
     const source = jobSource(id);
     assert.match(source, /^    if: \$\{\{ !cancelled\(\) &&/mu, id);
     assert.doesNotMatch(source, /^    if: .*always\(\)/mu, id);
@@ -253,7 +253,7 @@ test("workflow affected scope cannot hide skipped product work or selected Daemo
     assert.equal(check.status, 1, check.stderr);
     assert.match(check.stdout, new RegExp(`${lane}=skipped`, "u"));
   }
-  const web = runQuality({ SCOPE_MODE: "affected", DAEMON_SELECTED: "false", DAEMON_RESULT: "skipped", LINUX_CONTRACT_RESULT: "skipped", MACOS_NATIVE_RESULT: "skipped" });
+  const web = runQuality({ SCOPE_MODE: "affected", DAEMON_SELECTED: "false", MACOS_NATIVE_SELECTED: "false", DAEMON_RESULT: "skipped", LINUX_CONTRACT_RESULT: "skipped", MACOS_NATIVE_RESULT: "skipped" });
   assert.equal(web.status, 0, web.stderr);
 });
 
