@@ -214,7 +214,7 @@ F1 只验证这些任务的元数据、注入补丁可应用性和 synthetic 控
 | F3-B 受控回归 | `packages/daemon/test/assurance-evidence-api.test.mjs`、`assurance-evidence-isolation.test.mjs`、`assurance-evidence-budget.test.ts`、`packages/api-client/test/harness-diagnostics.test.mjs` |
 | F4-01 只读诊断报告 | `scripts/framework-assurance/diagnostics.mjs`、`diagnostics.test.mjs`；通过 `readHarnessDiagnosticsReportFromClient` 组合既有 `LingDaemonClient.getWorkUnitHarnessDiagnostics` |
 | 本轮真实包消费与回归 | `scripts/framework-assurance/sdk-consumer.mjs`、`sdk-consumer.test.mjs`、`fixtures/framework-assurance/sdk-consumer/` |
-| 冻结校准输入 | `fixtures/framework-assurance/suites/framework-v5.json` 及 cases/controls 引用；历史 v3/v4 结果不改写 |
+| 冻结校准输入 | `fixtures/framework-assurance/suites/framework-v6.json` 及 cases/controls 引用；历史 v3/v4/v5 结果不改写 |
 
 既有业务兼容设计归 `docs/design/business-data-api-compatibility.md`、`business-data-api-compatibility-cutover.md`、`business-compatibility-boundary-hardening.md` 等主线文档所有。本计划不取代其迁移和退出门禁。
 
