@@ -56,6 +56,12 @@ c051c30ef0d747a8046eb98807cc4f9fad3b186a:packages/core/test/teammate-direct-inpu
 7d97eb8e5239d36ec4c93cb7615b7a56c169b99b:packages/daemon/test/automation-context-item-budget.test.mjs:generic-api-key:356
 bfbcac2e1c21adbb9d88e55af2865987b86ec7cd:packages/daemon/test/provider-runtime-consumers.test.mjs:generic-api-key:203
 
+# Exact F3-B synthetic evaluation idempotency fixtures reviewed on 2026-11-12 with Gitleaks v8.30.1.
+# These values identify in-memory budget/evaluation records and are not authentication keys.
+05df64bd4520662fe971ec41cafcb3cc56112844:packages/daemon/test/assurance-evidence-extended.test.ts:generic-api-key:136
+05df64bd4520662fe971ec41cafcb3cc56112844:packages/daemon/test/assurance-evidence-extended.test.ts:generic-api-key:160
+05df64bd4520662fe971ec41cafcb3cc56112844:packages/daemon/test/assurance-evidence-extended.test.ts:generic-api-key:229
+
 # Dedicated offline TLS fixture key; it is trusted only by the matching test CA.
 de71ccccd55f21e909cb597347bcc6e1f81103e3:packages/daemon/test/media-native-transport.test.mjs:private-key:21
 

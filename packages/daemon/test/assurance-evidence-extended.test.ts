@@ -133,7 +133,7 @@ function evaluationFixture(options: {
     cachedInputTokens: 0,
     outputTokens: 5,
     actualCostMicros: 20,
-    idempotencyKey: "charge-assurance-evaluation-1",
+    idempotencyKey: "charge-assurance-1",
     revision: 1,
     createdAt: "2026-11-12T08:00:00.000Z",
     updatedAt: "2026-11-12T08:00:01.000Z",
@@ -157,7 +157,7 @@ function evaluationFixture(options: {
     baselineDigest: "c".repeat(64),
     candidateArtifactId: "artifact-candidate",
     candidateDigest: "d".repeat(64),
-    idempotencyKey: "evaluation-key-assurance-1",
+    idempotencyKey: "evaluation-assurance-1",
     state: "completed",
     revision: 2,
     createdAt: "2026-11-12T08:00:00.000Z",
@@ -226,7 +226,7 @@ test("evaluation evidence blocks missing budget, charge, token or cost matches",
 
 test("evaluation evidence blocks non-unique charges and grade lineage drift", () => {
   const base = evaluationFixture();
-  const duplicate = evaluationFixture({ charges: [base.charge, { ...base.charge, id: "charge-assurance-evaluation-2", idempotencyKey: "charge-assurance-evaluation-2" }] });
+  const duplicate = evaluationFixture({ charges: [base.charge, { ...base.charge, id: "charge-assurance-2", idempotencyKey: "charge-assurance-2" }] });
   const duplicateEvidence = projectEvaluationEvidence(duplicate.store, duplicate.run, duplicate.completion, duplicate.budget);
   assert.equal(duplicateEvidence.status, "blocked");
   assert.equal(duplicateEvidence.grades[0]?.chargeMatch, "non_unique");
