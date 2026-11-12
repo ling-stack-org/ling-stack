@@ -146,7 +146,7 @@ assertions
 
 最新主线再次只改变了依赖锁：`main@c156901c6c0bb97570ba56f39ec0f731872f56d9` 的 `pnpm-lock.yaml` 摘要为 `49c509936672cbe4ce9118a4bf3907c4b32eea1babfc6dd74dec295c526f4d10`，四个源码 pin 与 v4 保持一致。按版本规则保留 v4，并生成当前默认的 v5：T01/T02/T03 任务版本为 `4/4/5`，`suiteVersion` 为 `5`，默认索引为 `suites/framework-v5.json`，套件字节摘要为 `69129d529f41cdad17e9da1a706c4a1f7d3f00b7c4d8b59d11268faaf329a303`。该更新只重绑定冻结来源，不改变任务规则、控制输入或 F1 的零模型边界。
 
-当前分支新增 CLI 对 `@ling-stack/contracts` 的 workspace 依赖，锁文件摘要随之变为 `0d4fa92e297e8820140bb7c23d1b689d6d75038e74b858ac9c2851584909b0af`。按同一规则保留 v5，并生成默认 v6：T01/T02/T03 任务版本为 `5/5/6`，冻结来源为 `dd3fa912a09f0494c9899090e861dfa2058e5553`，默认索引为 `suites/framework-v6.json`，套件字节摘要为 `78e92e3384c3844ac5b1b6b485dbb751df74e1d377a9727434d047354d704998`。任务规则、控制输入和 F1 的零模型边界不变。
+当前分支新增 CLI 对 `@ling-stack/contracts` 的 workspace 依赖，锁文件摘要随之变为 `0d4fa92e297e8820140bb7c23d1b689d6d75038e74b858ac9c2851584909b0af`。按同一规则保留 v5，并生成默认 v6：T01/T02/T03 任务版本为 `5/5/6`，冻结来源为当前主线 `4f2474d29b814a50ab44b56baabbb9f33f1e7d4b`，默认索引为 `suites/framework-v6.json`，套件字节摘要为 `9a59dc5089b7503360d445ca3b940a759ddede825e2c348878ce77e568939818`，任务规则、控制输入和 F1 的零模型边界不变。
 
 ## 4. F1 离线流程
 
