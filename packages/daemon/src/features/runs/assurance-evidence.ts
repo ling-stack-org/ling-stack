@@ -271,6 +271,22 @@ export function projectRecoveryEvidence(
   }
 
   const recovery = continuations.filter(continuation => continuation.origin === "daemon_recovery");
+  const recoverySourceAttemptIds = new Set(recovery.map(continuation => continuation.sourceAttemptId));
+  const nonRecoverySourceAttemptIds = new Set(continuations
+    .filter(continuation => continuation.origin !== "daemon_recovery")
+    .map(continuation => continuation.sourceAttemptId));
+  const recoveryChainAttempts = oldAttempts.filter(attempt => recoverySourceAttemptIds.has(attempt.id)
+    || !nonRecoverySourceAttemptIds.has(attempt.id));
+  if (recoveryChainAttempts.length === 0) {
+    return {
+      status: "not_applicable",
+      source: null,
+      target: null,
+      continuation: null,
+      duplicateDispatch: { status: "not_applicable", continuationCount: 0 },
+      blockers: [],
+    };
+  }
   const stopByAttempt = new Map(stopAttempts.map(value => [value.attemptId, value]));
   const duplicateGroups = new Map<string, RunnerContinuationV1[]>();
   for (const continuation of recovery) {
@@ -286,14 +302,14 @@ export function projectRecoveryEvidence(
   const blockers: string[] = [];
   if (duplicateDispatch.status === "detected") blockers.push("recovery.duplicate_dispatch");
 
-  const source = oldAttempts.at(-1);
+  const source = recoveryChainAttempts.at(-1);
   const sourceStop = source ? stopByAttempt.get(source.id) : undefined;
   const selected = source
     ? recovery.find(continuation => continuation.sourceAttemptId === source.id
       && continuation.targetAttemptId === currentAttemptId)
       ?? recovery.find(continuation => continuation.sourceAttemptId === source.id)
     : undefined;
-  for (const oldAttempt of oldAttempts) {
+  for (const oldAttempt of recoveryChainAttempts) {
     const matching = recovery.filter(continuation => continuation.sourceAttemptId === oldAttempt.id);
     if (matching.length === 0) blockers.push("recovery.continuation_missing");
     if (matching.length > 1) blockers.push("recovery.duplicate_dispatch");

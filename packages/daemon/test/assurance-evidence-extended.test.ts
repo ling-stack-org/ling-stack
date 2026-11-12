@@ -89,6 +89,18 @@ test("recovery evidence detects duplicate dispatches for one source across gener
   assert.ok(evidence.blockers.includes("recovery.duplicate_dispatch"));
 });
 
+test("recovery evidence ignores approval resumes and runner retries", () => {
+  const f = recoveryFixture();
+  for (const origin of ["approval_resume", "runner_retry"] as const) {
+    const continuation = { ...f.continuation, id: `continuation-assurance-${origin}`, origin } as RunnerContinuationV1;
+    const store = { listRunnerContinuations: () => [continuation] } as unknown as RunStore;
+    const evidence = projectRecoveryEvidence(store, f.workUnit, [f.source, f.target], [f.sourceStop, f.targetStop], f.lifecycle);
+    assert.equal(evidence.status, "not_applicable", origin);
+    assert.equal(evidence.duplicateDispatch.status, "not_applicable", origin);
+    assert.deepEqual(evidence.blockers, [], origin);
+  }
+});
+
 test("policy evidence distinguishes current, drifted, missing and unavailable snapshots", async (t: TestContext) => {
   const f = await runtimeRunQueueFixture(t);
   const prepared = f.prepare("assurance-policy");
