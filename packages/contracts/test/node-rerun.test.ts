@@ -151,3 +151,23 @@ test("invalid input or observation fails closed without exposing a partial execu
   assert.equal(invalidObserved.decision, "blocked");
   assert.deepEqual(invalidObserved.blockers, ["invalid_observation"]);
 });
+
+test("malformed admission envelopes fail closed without executing accessors", () => {
+  const malformedInputs = [null, undefined];
+  for (const input of malformedInputs) {
+    const result = evaluateNodeRerunAdmission(input as unknown as Parameters<typeof evaluateNodeRerunAdmission>[0]);
+    assert.deepEqual(result.blockers, ["invalid_intent"]);
+    assert.equal(result.executionAuthorized, false);
+  }
+
+  let executed = false;
+  const input = {} as Record<string, unknown>;
+  Object.defineProperties(input, {
+    intent: { enumerable: true, get() { executed = true; return validIntent(); } },
+    observed: { enumerable: true, get() { executed = true; return validObserved(); } },
+  });
+  const result = evaluateNodeRerunAdmission(input as unknown as Parameters<typeof evaluateNodeRerunAdmission>[0]);
+  assert.deepEqual(result.blockers, ["invalid_intent"]);
+  assert.equal(result.executionAuthorized, false);
+  assert.equal(executed, false);
+});
