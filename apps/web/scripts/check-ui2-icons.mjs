@@ -11,6 +11,8 @@ const typedActionOwners = [
   "src/features/councils/CouncilChannelsPanel.tsx",
   "src/features/councils/CouncilListHealthPanel.tsx",
   "src/features/councils/CouncilMemberRow.tsx",
+  "src/features/companions/CompanionMiniPanel.tsx",
+  "src/features/companions/CompanionSettingsPage.tsx",
   "src/features/mcp/McpServerRow.tsx",
   "src/features/media-production/ProjectSceneOutline.tsx",
   "src/features/media-production/MediaProjectAssetPickerDialog.tsx",

@@ -80,8 +80,9 @@ changes may occur in minor releases but must still be documented.
 8. After applicable gates pass, create the reviewed tag and GitHub Release with verified assets; a Draft alone is not publication.
 9. Verify the published tag and source archive checksums from a clean checkout.
 
-No automatic release-on-push workflow exists. Publishing a GitHub Release remains an
-explicit maintainer action. A product Release eligible for GitHub's
+The tag-triggered `Desktop release candidate` workflow builds both platform candidates
+and creates a new Draft Release after version and source checks. Publishing a GitHub
+Release remains an explicit maintainer action. A product Release eligible for GitHub's
 `/repos/ling-stack-org/ling-stack/releases/latest` requires publication in that repository
 with `draft=false` and `prerelease=false` after the applicable gates; numeric naming and
 an unsigned Draft do not establish release readiness.

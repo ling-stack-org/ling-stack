@@ -30,35 +30,35 @@ test("automations page uses one create dialog and keeps template, manual, and ch
   const automationState = await mockAutomationRoutes(page, state);
   await page.goto("/");
 
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "自动化" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "定时任务" }).click();
   const automationsPage = page.locator(".automations-inbox-page");
-  const createButton = page.getByRole("button", { name: "创建自动化" });
+  const createButton = page.getByRole("button", { name: "创建任务" });
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-  await expect(page.getByRole("heading", { name: "自动化", level: 1 })).toBeVisible();
-  await expect(automationsPage.getByRole("tab", { name: /已启用/ })).toHaveAttribute("aria-selected", "true");
+  await expect(page.getByRole("heading", { name: "定时任务", level: 1 })).toBeVisible();
+  await expect(automationsPage.getByRole("tab", { name: /定时任务/ })).toHaveAttribute("aria-selected", "true");
   const schedulerStrip = automationsPage.locator(".automation-scheduler-strip");
   await expect(schedulerStrip.getByText("调度已启动")).toBeVisible();
-  await expect(schedulerStrip.getByText("还没有启用的定时自动化。")).toBeVisible();
+  await expect(schedulerStrip.getByText("还没有启用的定时任务。")).toBeVisible();
   await expect(schedulerStrip.getByRole("button")).toHaveCount(0);
   await expect(automationsPage.getByRole("tab")).toHaveCount(4);
   await expect(createButton).toHaveCount(1);
 
   await createButton.click();
-  const chatDialog = page.getByRole("dialog", { name: "新建自动化" });
+  const chatDialog = page.getByRole("dialog", { name: "新建任务" });
   await chatDialog.getByRole("radio", { name: "从对话创建" }).click();
   await chatDialog.getByLabel("请求").fill("每分钟给我发一下你好");
   await chatDialog.getByRole("button", { name: "创建草稿" }).click();
   await expect(chatDialog.getByText("草稿已就绪")).toBeVisible();
   await expect(chatDialog).toContainText("每 1 分钟");
-  await chatDialog.getByRole("button", { name: "确认启用自动化" }).click();
+  await chatDialog.getByRole("button", { name: "确认启用任务" }).click();
   await expect.poll(() => automationState.automations.length).toBe(1);
   await expect(chatDialog).toHaveCount(0);
   await expect(automationsPage.locator("[data-automation-id]", { hasText: "每分钟给我发一下你好" })).toBeVisible();
   await expect.poll(() => automationState.schedulers[0]?.status).toBe("running");
-  await expect(schedulerStrip.getByText("正在监听 1 条定时自动化。")).toBeVisible();
+  await expect(schedulerStrip.getByText("正在监听 1 条定时任务。")).toBeVisible();
 
   await createButton.click();
-  const manualDialog = page.getByRole("dialog", { name: "新建自动化" });
+  const manualDialog = page.getByRole("dialog", { name: "新建任务" });
   await manualDialog.getByRole("radio", { name: "手动设置" }).click();
   await manualDialog.getByLabel("自动化名称").fill("每日检查");
   await manualDialog.getByLabel("执行动作").fill("每天检查最近运行、审批和风险。");
@@ -66,7 +66,7 @@ test("automations page uses one create dialog and keeps template, manual, and ch
   await manualDialog.getByLabel("时间").fill("09:00");
   await manualDialog.getByRole("button", { name: "高级配置" }).click();
   await manualDialog.getByLabel("运行态").selectOption("local");
-  await manualDialog.getByRole("button", { name: "创建自动化" }).click();
+  await manualDialog.getByRole("button", { name: "创建任务" }).click();
   await expect.poll(() => automationState.automations.length).toBe(2);
   await expect(manualDialog).toHaveCount(0);
   const createdRow = automationsPage.locator("[data-automation-id]", { hasText: "每日检查" });
@@ -74,13 +74,13 @@ test("automations page uses one create dialog and keeps template, manual, and ch
   await expect(createdRow.getByText("每天 09:00")).toBeVisible();
 
   await createButton.click();
-  const templateDialog = page.getByRole("dialog", { name: "新建自动化" });
+  const templateDialog = page.getByRole("dialog", { name: "新建任务" });
   await expect(templateDialog.getByRole("option", { name: /Bug 扫描/ })).toBeVisible();
   await templateDialog.getByRole("option", { name: /Bug 扫描/ }).click();
   await templateDialog.getByRole("button", { name: "使用此模板" }).click();
   await expect(templateDialog.getByLabel("自动化名称")).toHaveValue("Bug 扫描");
   await templateDialog.getByLabel("目标").selectOption("thread:thread_launch_planning");
-  await templateDialog.getByRole("button", { name: "创建自动化" }).click();
+  await templateDialog.getByRole("button", { name: "创建任务" }).click();
   await expect.poll(() => automationState.automations.length).toBe(3);
   const conversationAutomationRow = automationsPage.locator("[data-automation-id]", { hasText: "Bug 扫描" });
   await expect(conversationAutomationRow).toBeVisible();
@@ -121,11 +121,11 @@ test("automations page keeps failed recent runs in enabled definitions with a cl
   refreshScheduler(automationState);
 
   await page.goto("/");
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Automations" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Scheduled tasks" }).click();
 
   const automationsPage = page.locator(".automations-inbox-page");
-  await expect(automationsPage.locator(".automation-scheduler-strip").getByText("No enabled scheduled automations yet.")).toBeVisible();
-  await expect(automationsPage.getByRole("tab", { name: /Enabled automations/ })).toHaveAttribute("aria-selected", "true");
+  await expect(automationsPage.locator(".automation-scheduler-strip").getByText("No enabled scheduled tasks yet.")).toBeVisible();
+  await expect(automationsPage.getByRole("tab", { name: /Scheduled tasks/ })).toHaveAttribute("aria-selected", "true");
   const failedRow = automationsPage.locator("[data-automation-id]", { hasText: "Nightly check" });
   await expect(failedRow).toContainText("Recent run failed");
   await expect(failedRow.getByRole("button", { name: "Inspect failure" })).toBeVisible();

@@ -66,6 +66,8 @@ export function themePackageIssueLabel(issue: LingThemePackageIssue, t: Translat
     case "invalid-preview-mime":
     case "invalid-preview-image":
     case "invalid-preview-dimensions": return t("The theme preview is missing or invalid.");
+    case "invalid-launch-animation":
+    case "missing-launch-animation": return t("The launch animation resource is missing or invalid.");
     case "runtime-artwork-not-supported": return t("Runtime backgrounds are not supported for imported themes yet.");
     case "unreferenced-asset": return t("This token-only theme contains an unreferenced asset.");
     case "theme-already-installed": return t("This theme is already installed. Use Reimport from its menu.");

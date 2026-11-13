@@ -234,6 +234,92 @@ test("plugin import preview strips secret headers from claude plugin manifests",
   });
 });
 
+test("plugin import previews Claude global and project servers and dsh cordis inserts", async () => {
+  await withFixtureHome({
+    ".claude.json": JSON.stringify({
+      mcpServers: {
+        global: { command: "npx", args: ["global-mcp"] },
+      },
+      projects: {
+        "/workspace/demo": {
+          mcpServers: {
+            project: { url: "https://project.example.com/mcp" },
+          },
+        },
+      },
+    }),
+    ".dsh/cordis.patch.yml": [
+      "insert:",
+      "  - name: \"@deepseek-ai/dsh-mcp-client\"",
+      "    id: dsh-demo",
+      "    config:",
+      "      serverName: dsh-demo",
+      "      transport: stdio",
+      "      command: npx",
+      "      args:",
+      "        - dsh-mcp",
+    ].join("\n"),
+  }, async () => {
+    const daemon = await startDaemonForTest();
+    const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-plugin-import-multi-source-"));
+    try {
+      const claude = await postJson(`${daemon.url}/plugins/import/preview?cwd=${encodeURIComponent(cwd)}`, {
+        source: "claude-user-json",
+      });
+      assert.equal(claude.sourceFound, true);
+      assert.deepEqual(claude.candidates.map((candidate) => candidate.name), [
+        "global",
+        "/workspace/demo:project",
+      ]);
+      assert.equal(claude.candidates[1].displayName, "project (/workspace/demo)");
+
+      const dsh = await postJson(`${daemon.url}/plugins/import/preview?cwd=${encodeURIComponent(cwd)}`, {
+        source: "dsh-cordis-patch",
+      });
+      assert.equal(dsh.sourceFound, true);
+      assert.equal(dsh.candidates.length, 1);
+      assert.equal(dsh.candidates[0].name, "dsh-demo");
+      assert.equal(dsh.candidates[0].transportSummary, "npx dsh-mcp");
+    } finally {
+      await daemon.close();
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
+test("uninstalling an imported plugin disables its MCP contribution and records the event", async () => {
+  await withFixtureHome({
+    ".codex/config.toml": `
+[mcp_servers.demo]
+command = "uvx"
+args = ["demo-mcp"]
+`,
+  }, async () => {
+    const daemon = await startDaemonForTest({ externalSecretStore: createMemorySecretStore() });
+    const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-plugin-import-uninstall-"));
+    try {
+      const report = await postJson(`${daemon.url}/plugins/import/apply?cwd=${encodeURIComponent(cwd)}`, {
+        source: "codex-config-toml",
+        names: ["demo"],
+      });
+      const pluginId = report.imported[0].pluginId;
+      const result = await postJson(`${daemon.url}/plugins/${encodeURIComponent(pluginId)}/uninstall?cwd=${encodeURIComponent(cwd)}`, {
+        reason: "L1 acceptance cleanup",
+      });
+      assert.equal(result.plugin.status, "disabled");
+      assert.equal(result.plugin.events.some((event) => event.type === "uninstalled"), true);
+
+      const servers = await getJson(`${daemon.url}/mcp/servers?cwd=${encodeURIComponent(cwd)}`);
+      const server = servers.servers.find((entry) => entry.id === report.imported[0].mcpServerId);
+      assert.ok(server);
+      assert.equal(server.enabled, false);
+    } finally {
+      await daemon.close();
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
 test("claude command import creates a skill draft and reports inline-execution degradation", async () => {
   await withFixtureHome({
     ".claude/commands/deploy-check.md": [
