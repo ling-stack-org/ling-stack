@@ -15,6 +15,7 @@ Mixed changes union their affected packages and required lanes.
 | Docs, nested READMEs, PR/Issue templates, CODEOWNERS, FUNDING | None; common checks and the required quality gate still run |
 | Allowlisted Markdown-link and public-repository checks | Common fast checks only |
 | Package tests and test support | Owning package; shared test-support importers are included |
+| Offline assurance tooling or fixtures | Assurance and actual package-level validation importers; no unrelated product shards |
 | Package source or local build/typecheck configuration | Owning package and transitive consumers |
 | Existing package manifest, with verified stable identity and unchanged complete script contents | Owner and consumers from the old/current graph, plus dependency policy |
 | Dependency-security regression tests | Owning package plus dependency policy |
@@ -35,12 +36,25 @@ does not select core/daemon test shards just because a build needs their outputs
 
 Dependency policy runs for dependency inputs and its own regression tests, not
 for every source/test edit. Typecheck and Linux unit jobs run only for nonempty
-selections. Core test-only changes have four core entries and no empty packages job;
-daemon-only test changes have no Linux unit entry. Daemon shards and Linux/macOS
-native contracts remain coupled to daemon selection. A source change can select
-additional consumers, so daemon source may still need the CLI unit entry.
+selections. Core test-only changes have eight core entries and no empty packages job;
+daemon-only test changes have no Linux unit entry. Daemon shards and Linux
+restricted-command contracts remain coupled to daemon selection. The standalone
+macOS helper smoke is selected only for the explicit native sandbox/Seatbelt
+surface; unknown paths and full-scope inputs still select it. A source change can
+select additional consumers, so daemon source may still need the CLI unit entry.
 
-The aggregate validates explicit dependency/typecheck/unit/daemon selectors.
+Offline assurance runs for its tooling/fixtures and source/configuration changes
+to Core or the SDK producers (localization, contracts, plugin-sdk, api-client).
+Product test-only changes and unrelated package changes do not select assurance.
+Relative validation imports and module-relative fixture URLs are followed transitively: changes to assurance's
+diagnostics module retain API Client build/typecheck/tests; its shared manifest
+also retains Daemon validation through the execution-evidence parser. Its frozen
+fixture selects Daemon validation as a module-relative input.
+The SDK consumer still builds, packs and installs its producers independently;
+an assurance-only change does not require the product build artifact. Mixed
+changes retain the union of required checks, and unknown paths remain full scope.
+
+The aggregate validates explicit assurance/build/dependency/typecheck/unit/daemon/Linux-contract/macOS-native/Web selectors.
 Selected checks must succeed; only genuinely unselected checks may be skipped.
 Failure, cancellation, missing or malformed results never pass as a skip. Docs
 must select no product lanes, and full scope must select all lanes. No workflow
@@ -65,20 +79,46 @@ a requested package via `--if-present`.
 
 ## Test Lanes
 
-- Core: four Linux shards, two serial file workers per shard. These jobs are
+- Core: eight Linux shards when selected without Daemon, five when both suites are
+  selected, with two serial file workers per shard. These jobs are
   included in the existing `unit-tests` matrix only when core is selected.
 - Other packages and Web checks: one Linux matrix entry only when at least one
   such package is selected, excluding core and daemon because their complete
   discovery runs in their own entries.
-- Daemon: six `macos-26` shards, two serial file workers per shard. The Kimi Host
-  read/terminal and delegation production-tool-surface files run serially in an
-  exclusive phase before other files on their assigned runner. The six-shard
-  split keeps first runs bounded before the default-branch timing cache has
-  measurements for newly added daemon files; it does not reduce file discovery,
-  per-file watchdogs or platform coverage.
+- Daemon: [the platform manifest](daemon-test-platforms.json) assigns 505 portable
+  files to eight Linux shards without Core or six alongside Core, with two workers,
+  and 166 native/platform files to
+  four `macos-26` shards with three workers. Full-scope runs add the separate
+  native smoke as a fifth macOS job; ordinary Daemon changes use four macOS jobs,
+  and available concurrency is controlled by GitHub. Kimi Host read/terminal, delegation production-tool-surface, engine
+  lifecycle installation, and workflow conflict/isolate-delivery fixtures retain
+  an exclusive phase on their assigned platform because they create many native,
+  process, or Git-backed resources. The Kimi owned-execution, repository-fence,
+  and signal-shutdown regression fixtures also run in that phase so process and
+  repository lifecycles do not overlap with other macOS files. All files retain their watchdogs and original
+  test cases.
 - Linux restricted-command contracts and real macOS native smoke remain separate
-  mandatory lanes. No daemon files have been moved to Linux or removed.
-- Framework assurance: complete non-documentation runs add an Ubuntu / Node
+  lanes. The Linux contract is selected with Daemon; the standalone macOS smoke
+  follows the explicit native sandbox/Seatbelt path map. Full-scope runs retain
+  both lanes, and unknown paths fall back to full scope. The manifest's disjoint
+  union must equal fresh daemon discovery; new, missing, duplicated or stale
+  assignments fail before execution. Native source/fixture contract checks prevent
+  silently moving Darwin cases to Linux.
+- Combined Core/Daemon plans use eleven Linux shards and four macOS shards.
+  Full-scope runs add the standalone native smoke, so the product wave fits twenty
+  runner slots and five macOS slots; ordinary Daemon changes omit that extra job.
+  Available capacity is controlled by GitHub and follows its
+  [concurrency limits](https://docs.github.com/en/actions/reference/limits#job-concurrency-limits-for-github-hosted-runners).
+  Web smoke starts independently after the build. Other workflows can still consume shared
+  organization capacity; shard counts do not guarantee immediate runner availability.
+- Production Web smoke: an independent required Linux job consumes the same
+  `ci-dist` output as other tests. It uses the official Playwright Noble container,
+  pinned by version and digest, with browsers and OS dependencies preinstalled.
+  The workflow contract checks its version against Web's Playwright dependency;
+  the job does not run apt or install browsers. Playwright execution
+  does not delay the shared build artifact. The aggregate requires this lane when
+  Web is selected and rejects failure, cancellation, missing or unexpected skips.
+- Framework assurance: selected complete-tier runs add an Ubuntu / Node
   22.22.1 lane for the zero-model offline tests, frozen controls and real external
   SDK consumer. It checks out complete history and owns fresh serial builds and
   tarballs of localization, contracts, plugin-sdk and api-client; it never consumes
@@ -113,7 +153,12 @@ because hosted runners crossed five minutes while continuing to make progress.
 serial native Git scenarios can exceed ten minutes on hosted runners while
 continuing to make progress.
 These exceptions are file-scoped; every other daemon file keeps the five-minute
-bound. Channel discussion, intent, workflow and workspace tests are separate
+bound. The Codex journaled lifecycle fixture keeps its local five-second
+subtest budget and uses a ten-second budget only when `CI=true`, covering peer
+process startup while another worker is active. Workflow isolation polling
+allows up to 180 seconds for a hosted runner to observe drained parent state
+and complete a four-way fan-in.
+Channel discussion, intent, workflow and workspace tests are separate
 files in the ordinary parallel queue, each with the default five-minute
 watchdog; their shared support fixture is not a test entrypoint.
 SIGTERM gets up to five seconds before SIGKILL. Cancellation stops new work.
@@ -132,6 +177,9 @@ ancestry sampling are outside its guarantees.
 Scope restores timing hints once and uploads `ci-test-plan`. Every shard uses
 that same plan and verifies it against fresh discovery. Unknown/new files fall
 back to source-size/category weights; invalid caches never reduce coverage.
+Daemon files additionally need an explicit platform-manifest assignment. The plan
+publishes its runner, shard count and worker count for both daemon suites. Linux
+and Darwin timings remain separate; macOS measurements are not Linux timing hints.
 Measured timings influence both outer shards and inner worker placement, not
 test deadlines or platform selection.
 Outer placement counts exclusive files against all workers they occupy, so a
@@ -242,10 +290,16 @@ node scripts/ci/test-shard-plan.mjs \
 On the suite's required platform, run a shard with that immutable plan:
 
 ```sh
-node scripts/ci/daemon-test-shard.mjs --shard=0 --shard-count=6 --concurrency=2 \
+node scripts/ci/node-test-shard.mjs --suite=daemon --shard=0 --shard-count=4 --concurrency=3 \
   --plan=.codex-artifacts/ci/test-plan.json \
   --report=.codex-artifacts/ci/reports/daemon-0.json
 ```
+
+On Linux, run the portable daemon suite with `node-test-shard.mjs --suite=daemon-linux`,
+`--shard-count=6`, and `--concurrency=2`, using the combined plan above and a distinct
+`daemon-linux-<shard>.json` report path. Each command executes only its platform's
+assigned files; both suites are required for complete daemon CI coverage. A plan
+without Core uses eight Linux Daemon shards; runner arguments must match its plan.
 
 ## Secret Scans
 

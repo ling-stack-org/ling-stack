@@ -78,8 +78,9 @@ export function AutomationListPane({
   readonly onTabChange: (tab: AutomationTab) => void;
 }): React.JSX.Element {
   const hasContent = activeTab === "history" ? runs.length > 0 : definitions.length > 0 || drafts.length > 0;
+  const listLabel = activeTab === "history" ? t("Recent history") : t("Scheduled tasks");
   return (
-    <section className="automation-current-pane automation-ui2-list-pane" aria-label={t("Enabled automations")} data-automation-list-pane>
+    <section className="automation-current-pane automation-ui2-list-pane" aria-label={listLabel} data-automation-list-pane>
       <div className="automation-ui2-toolbar">
         <Input
           aria-label={t("Search")}
@@ -121,7 +122,7 @@ export function AutomationListPane({
             {activeTab === "history" ? (
               <AutomationRunList runs={runs} t={t} onOpenRun={onOpenRun} />
             ) : (
-              <div className="automation-ui2-definition-list" role="listbox" aria-label={t("Automations")}>
+              <div className="automation-ui2-definition-list" role="listbox" aria-label={listLabel}>
                 {definitions.map((definition) => (
                   <AutomationDefinitionRow
                     key={definition.automation.id}
@@ -159,7 +160,7 @@ export function AutomationListPane({
             className="automation-ui2-empty"
             compact
             icon={search ? <Search size={18} /> : <Timer size={18} />}
-            title={activeTab === "history" ? t("No runs yet") : t("No automations yet")}
+            title={activeTab === "history" ? t("No runs yet") : activeTab === "scheduled" ? t("No scheduled tasks yet") : t("No automations yet")}
           />
         )}
       </div>

@@ -84,6 +84,8 @@ test("startup status api returns readiness and refresh rereads user config", asy
 
     const health = await getJson(`${baseUrl}/health`);
     assert.equal(health.readiness, "ready");
+    assert.equal(health.productVersion, "0.3.0");
+    assert.equal(health.protocolVersion, 1);
 
     const initial = await getJson(`${baseUrl}/startup/status`);
     assert.equal(initial.cwd, cwd);

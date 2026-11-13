@@ -4,11 +4,13 @@ import { once } from "node:events";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 import test from "node:test";
+import type { TestContext } from "node:test";
 import { readDaemonResourceBootstrap } from "../../core/dist/daemon-resource-bootstrap.js";
 import { readExecutionEngineHostAuthority } from "../../core/dist/execution-engine-host-authority.js";
 
-async function launchCli(t, extraEnv = {}) {
+async function launchCli(t: TestContext, extraEnv: NodeJS.ProcessEnv = {}) {
   const cwd = await mkdtemp(join(tmpdir(), "ling-cli-resource-bootstrap-"));
   t.after(() => rm(cwd, { recursive: true, force: true }));
   const source = new URL("../src/cli.ts", import.meta.url).href;
@@ -33,6 +35,8 @@ async function launchCli(t, extraEnv = {}) {
       process.send('starting-service');
       const [action] = await once(process, 'message');
       assert.equal(action, 'service-ready');
+      // The service owns a live handle until the parent closes the fixture IPC.
+      process.channel.ref();
       return { config, server: { address: () => ({port: 17991}) }, stop: async () => {},
         engineManagement: {capability: 'x'.repeat(43), csrfToken: 'y'.repeat(43)} };
     }`;
@@ -57,24 +61,31 @@ async function launchCli(t, extraEnv = {}) {
     stdio: ["ignore", "pipe", "pipe", "pipe", "pipe", "ipc"],
   });
   const exited = once(child, "exit");
+  const pid = child.pid;
+  const authorityChannel = child.stdio[3];
+  const resourceChannel = child.stdio[4];
+  assert.ok(pid);
+  assert.ok(child.stdout && child.stderr);
+  assert.ok(authorityChannel instanceof Readable);
+  assert.ok(resourceChannel instanceof Readable);
   let output = "";
-  const messages = [];
+  const messages: unknown[] = [];
   child.stdout.on("data", bytes => { output += bytes; });
   child.stderr.on("data", bytes => { output += bytes; });
   child.on("message", value => messages.push(value));
   t.after(async () => {
     if (child.exitCode === null && child.signalCode === null) { child.kill("SIGKILL"); await exited; }
   });
-  return { child, exited, messages, output: () => output };
+  return { child, pid, exited, authorityChannel, resourceChannel, messages, output: () => output };
 }
 
 test("actual CLI authenticates resources before FD4 and service startup, with FD3 only after service readiness", { timeout: 5000 }, async t => {
   const input = await launchCli(t);
   assert.equal((await once(input.child, "message"))[0], "preparing");
   let resourcesReady = false, authorityReady = false;
-  const resource = readDaemonResourceBootstrap({ channel: input.child.stdio[4], pid: input.child.pid })
+  const resource = readDaemonResourceBootstrap({ channel: input.resourceChannel, pid: input.pid })
     .then(() => { resourcesReady = true; });
-  const authority = readExecutionEngineHostAuthority({ channel: input.child.stdio[3], pid: input.child.pid,
+  const authority = readExecutionEngineHostAuthority({ channel: input.authorityChannel, pid: input.pid,
     baseUrl: "http://127.0.0.1:17991" }).then(value => { authorityReady = true; return value; });
   assert.equal(resourcesReady, false);
   assert.deepEqual(input.messages, ["preparing"]);
@@ -84,7 +95,8 @@ test("actual CLI authenticates resources before FD4 and service startup, with FD
   await resource;
   assert.equal(authorityReady, false, "FD4 must not masquerade as completed service/engine readiness");
   input.child.send("service-ready");
-  assert.equal((await authority).pid, input.child.pid);
+  assert.equal((await authority).pid, input.pid);
+  assert.equal(input.child.connected, true, "the fixture service stays alive after publishing authority");
   input.child.disconnect();
   assert.deepEqual(await input.exited, [0, null]);
   assert.equal(input.output().includes("x".repeat(43)), false);
@@ -93,7 +105,7 @@ test("actual CLI authenticates resources before FD4 and service startup, with FD
 test("actual CLI resource failure exits without a resource receipt, service or authority", { timeout: 5000 }, async t => {
   const input = await launchCli(t);
   assert.equal((await once(input.child, "message"))[0], "preparing");
-  const resource = assert.rejects(readDaemonResourceBootstrap({ channel: input.child.stdio[4], pid: input.child.pid }), /invalid|unavailable/);
+  const resource = assert.rejects(readDaemonResourceBootstrap({ channel: input.resourceChannel, pid: input.pid }), /invalid|unavailable/);
   input.child.send("fail");
   assert.deepEqual(await input.exited, [1, null]);
   await resource;
