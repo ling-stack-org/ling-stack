@@ -21,7 +21,7 @@
   },
   "dependencies": {
     "acorn": "8.19.0",
-    "@agentclientprotocol/sdk": "2.2.0",
+    "@agentclientprotocol/sdk": "2.4.0",
     "@anthropic-ai/sdk": "0.135.0",
     "@ling-stack/browser-host": "workspace:*",
     "@ling-stack/contracts": "workspace:*",
@@ -35,7 +35,7 @@
     "@napi-rs/keyring": "2.1.2",
     "@xmldom/xmldom": "0.9.12",
     "diff": "9.0.0",
-    "docx": "9.15.0",
+    "docx": "9.15.3",
     "exceljs": "^4.4.0",
     "fflate": "^0.8.2",
     "jszip": "3.10.2",
