@@ -1,6 +1,7 @@
 {
   "schemaVersion": 1,
   "kind": "live_execution_evidence",
+  "executionAuthorized": false,
   "comparison": {
     "model": "review-only-model",
     "reasoning": "low",
@@ -160,6 +161,97 @@
     "safetyPlan": { "present": true, "valid": true, "digest": "safety-plan-host-ready-001" },
     "toolBroker": { "mode": "enforce", "required": true, "satisfies": true },
     "binding": { "status": "current", "matchesCurrentFence": true },
+    "blockers": []
+  },
+  "recovery": {
+    "status": "verified",
+    "source": {
+      "attemptId": "attempt-host-ready-001",
+      "attemptNumber": 1,
+      "runtimeInstanceId": "runtime-host-ready-001",
+      "status": "lost",
+      "localExecution": "drained",
+      "effects": "settled"
+    },
+    "target": {
+      "attemptId": "attempt-host-ready-002",
+      "attemptNumber": 2,
+      "runtimeInstanceId": "runtime-host-ready-002",
+      "status": "succeeded"
+    },
+    "continuation": {
+      "continuationId": "continuation-host-ready-001",
+      "origin": "daemon_recovery",
+      "state": "succeeded",
+      "generation": 2,
+      "revision": 1
+    },
+    "duplicateDispatch": { "status": "protected", "continuationCount": 1 },
+    "blockers": []
+  },
+  "policy": {
+    "status": "current",
+    "stored": {
+      "present": true,
+      "fingerprint": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "updatedAt": "2026-11-12T08:00:00.000Z"
+    },
+    "current": {
+      "available": true,
+      "fingerprint": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "updatedAt": "2026-11-12T08:00:00.000Z"
+    },
+    "blockers": []
+  },
+  "evaluation": {
+    "status": "verified",
+    "evaluation": {
+      "id": "evaluation-host-ready-001",
+      "rootRunId": "run-host-ready-001",
+      "runId": "run-host-ready-001",
+      "state": "completed",
+      "revision": 2,
+      "evaluationKey": "evaluation-key-host-ready-001"
+    },
+    "grades": [
+      {
+        "gradeId": "grade-host-ready-001",
+        "evaluationId": "evaluation-host-ready-001",
+        "graderType": "model",
+        "graderId": "fixture-grader",
+        "graderVersion": "1",
+        "verdict": "pass",
+        "score": 1,
+        "severity": null,
+        "costInputTokens": 10,
+        "costOutputTokens": 5,
+        "costAmountMicros": 20,
+        "gradeDigest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "chargeId": "charge-host-ready-001",
+        "chargeMatch": "matched"
+      }
+    ],
+    "charges": [
+      {
+        "chargeId": "charge-host-ready-001",
+        "reservationId": null,
+        "runId": "run-host-ready-001",
+        "attemptId": "attempt-host-ready-002",
+        "state": "measured",
+        "reservedTokens": null,
+        "reservedCostMicros": null,
+        "inputTokens": 10,
+        "cachedInputTokens": 0,
+        "outputTokens": 5,
+        "actualCostMicros": 20
+      }
+    ],
+    "budget": {
+      "rootRunId": "run-host-ready-001",
+      "present": true,
+      "tokenBudget": 100,
+      "costBudgetMicros": 100
+    },
     "blockers": []
   },
   "observedAt": "2026-11-12T08:00:05.000Z",

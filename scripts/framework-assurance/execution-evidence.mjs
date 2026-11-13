@@ -14,14 +14,26 @@ const STOP_EXECUTION_STATUSES = new Set(["draining", "drained", "unverified"]);
 const STOP_EFFECT_STATUSES = new Set(["settled", "pending", "unknown", "unverified"]);
 const BUDGET_STATUSES = new Set(["within", "pending", "unknown", "over", "missing", "invalid", "not_applicable"]);
 const DIMENSION_STATUSES = new Set(["within", "pending", "unknown", "over", "missing", "invalid", "not_applicable"]);
+const RECOVERY_STATUSES = new Set(["verified", "pending", "blocked", "not_applicable", "unavailable"]);
+const POLICY_STATUSES = new Set(["current", "drifted", "missing", "unavailable"]);
+const EVALUATION_STATUSES = new Set(["verified", "pending", "blocked", "not_applicable", "unavailable"]);
+const EVALUATION_STATES = new Set(["queued", "claimed", "grading", "completed", "failed", "cancelled"]);
 
 /** Parse the daemon's read-only live evidence projection before it is joined with frozen task inputs. */
 export function parseLiveExecutionEvidenceResponse(value) {
   const baseKeys = ["schemaVersion", "kind", "comparison", "execution", "snapshots", "artifacts", "observedAt", "limitations"];
   const assuranceKeys = ["lifecycle", "completion", "budget", "isolation", "admission"];
+  const extendedAssuranceKeys = ["recovery", "policy", "evaluation"];
   const hasAssurance = assuranceKeys.some(key => Object.hasOwn(value ?? {}, key));
-  exactObject(value, hasAssurance ? [...baseKeys, ...assuranceKeys] : baseKeys, "live execution evidence response");
+  const hasExtendedAssurance = extendedAssuranceKeys.some(key => Object.hasOwn(value ?? {}, key));
+  const hasExecutionAuthorized = Object.hasOwn(value ?? {}, "executionAuthorized");
+  exactObject(value, [
+    ...baseKeys,
+    ...(hasExecutionAuthorized ? ["executionAuthorized"] : []),
+    ...(hasAssurance ? [...assuranceKeys, ...(hasExtendedAssurance ? extendedAssuranceKeys : [])] : []),
+  ], "live execution evidence response");
   requireCondition(value.schemaVersion === 1 && value.kind === "live_execution_evidence", "invalid_manifest", "Unsupported live execution evidence response.");
+  if (hasExecutionAuthorized) requireCondition(value.executionAuthorized === false, "invalid_manifest", "Live execution evidence cannot grant execution authority.");
   parseComparison(value.comparison, "live execution comparison");
   parseExecutionLineage(value.execution, "live execution lineage");
   parseSnapshots(value.snapshots, "live execution snapshots");
@@ -32,6 +44,11 @@ export function parseLiveExecutionEvidenceResponse(value) {
     parseBudget(value.budget);
     parseIsolation(value.isolation);
     parseAdmission(value.admission);
+    if (hasExtendedAssurance) {
+      parseRecovery(value.recovery);
+      parsePolicy(value.policy);
+      parseEvaluation(value.evaluation);
+    }
   }
   requireCondition(isCanonicalTimestamp(value.observedAt), "invalid_manifest", "Live execution observedAt must be an ISO-8601 timestamp.");
   requireCondition(Array.isArray(value.limitations) && value.limitations.length >= 1 && value.limitations.length <= 100,
@@ -453,18 +470,93 @@ function parseBudget(value) {
       && (reservation.failureCode === null || typeof reservation.failureCode === "string"), "invalid_manifest", "Live budget reservation is invalid.");
   }
   for (const charge of value.charges) {
-    exactObject(charge, ["chargeId", "reservationId", "runId", "attemptId", "state", "reservedTokens", "reservedCostMicros", "inputTokens", "cachedInputTokens", "outputTokens", "actualCostMicros"], "live budget charge");
-    identifier(charge.chargeId, "live budget charge id"); identifier(charge.runId, "live budget charge Run"); identifier(charge.attemptId, "live budget charge Attempt"); identifier(charge.state, "live budget charge state");
-    requireCondition((charge.reservationId === null || typeof charge.reservationId === "string")
-      && nullableNonnegativeInteger(charge.reservedTokens) && nullableNonnegativeInteger(charge.reservedCostMicros)
-      && nullableNonnegativeInteger(charge.inputTokens) && nullableNonnegativeInteger(charge.cachedInputTokens)
-      && nullableNonnegativeInteger(charge.outputTokens) && nullableNonnegativeInteger(charge.actualCostMicros), "invalid_manifest", "Live budget charge is invalid.");
+    parseBudgetCharge(charge, "live budget charge");
   }
   exactObject(value.usage, ["tokenStatus", "costStatus", "tokens", "costMicros", "tokenLimit", "costLimitMicros"], "live budget usage");
   requireCondition(DIMENSION_STATUSES.has(value.usage.tokenStatus) && DIMENSION_STATUSES.has(value.usage.costStatus)
     && nullableNonnegativeInteger(value.usage.tokens) && nullableNonnegativeInteger(value.usage.costMicros)
     && nullableNonnegativeInteger(value.usage.tokenLimit) && nullableNonnegativeInteger(value.usage.costLimitMicros), "invalid_manifest", "Live budget usage is invalid.");
   value.issues.concat(value.blockers).forEach(item => identifier(item, "live budget issue"));
+}
+
+function parseRecovery(value) {
+  exactObject(value, ["status", "source", "target", "continuation", "duplicateDispatch", "blockers"], "live recovery");
+  requireCondition(RECOVERY_STATUSES.has(value.status) && Array.isArray(value.blockers), "invalid_manifest", "Live recovery summary is invalid.");
+  if (value.source !== null) {
+    exactObject(value.source, ["attemptId", "attemptNumber", "runtimeInstanceId", "status", "localExecution", "effects"], "live recovery source");
+    parseRecoveryAttempt(value.source, "live recovery source");
+    requireCondition(STOP_EXECUTION_STATUSES.has(value.source.localExecution) && STOP_EFFECT_STATUSES.has(value.source.effects), "invalid_manifest", "Live recovery source stop state is invalid.");
+  }
+  if (value.target !== null) {
+    exactObject(value.target, ["attemptId", "attemptNumber", "runtimeInstanceId", "status"], "live recovery target");
+    parseRecoveryAttempt(value.target, "live recovery target");
+  }
+  if (value.continuation !== null) {
+    exactObject(value.continuation, ["continuationId", "origin", "state", "generation", "revision"], "live recovery continuation");
+    [value.continuation.continuationId, value.continuation.origin, value.continuation.state].forEach(item => identifier(item, "live recovery continuation field"));
+    requireCondition(Number.isSafeInteger(value.continuation.generation) && value.continuation.generation >= 1
+      && Number.isSafeInteger(value.continuation.revision) && value.continuation.revision >= 0, "invalid_manifest", "Live recovery continuation revision is invalid.");
+  }
+  exactObject(value.duplicateDispatch, ["status", "continuationCount"], "live recovery duplicate dispatch");
+  requireCondition(["protected", "detected", "not_applicable", "unknown"].includes(value.duplicateDispatch.status)
+    && Number.isSafeInteger(value.duplicateDispatch.continuationCount) && value.duplicateDispatch.continuationCount >= 0, "invalid_manifest", "Live recovery duplicate dispatch is invalid.");
+  value.blockers.forEach(item => identifier(item, "live recovery blocker"));
+}
+
+function parseRecoveryAttempt(value, label) {
+  identifier(value.attemptId, `${label} Attempt id`);
+  identifier(value.runtimeInstanceId, `${label} runtime id`);
+  requireCondition(Number.isSafeInteger(value.attemptNumber) && value.attemptNumber >= 1 && ATTEMPT_STATUSES.has(value.status), "invalid_manifest", `${label} Attempt is invalid.`);
+}
+
+function parsePolicy(value) {
+  exactObject(value, ["status", "stored", "current", "blockers"], "live policy");
+  requireCondition(POLICY_STATUSES.has(value.status) && Array.isArray(value.blockers), "invalid_manifest", "Live policy summary is invalid.");
+  for (const [name, snapshot] of [["stored", value.stored], ["current", value.current]]) {
+    exactObject(snapshot, name === "stored" ? ["present", "fingerprint", "updatedAt"] : ["available", "fingerprint", "updatedAt"], `live policy ${name}`);
+    requireCondition(typeof snapshot[name === "stored" ? "present" : "available"] === "boolean"
+      && nullableDigest(snapshot.fingerprint) && (snapshot.updatedAt === null || isCanonicalTimestamp(snapshot.updatedAt)), "invalid_manifest", `Live policy ${name} is invalid.`);
+  }
+  value.blockers.forEach(item => identifier(item, "live policy blocker"));
+}
+
+function parseEvaluation(value) {
+  exactObject(value, ["status", "evaluation", "grades", "charges", "budget", "blockers"], "live evaluation");
+  requireCondition(EVALUATION_STATUSES.has(value.status) && Array.isArray(value.grades) && Array.isArray(value.charges)
+    && Array.isArray(value.blockers), "invalid_manifest", "Live evaluation summary is invalid.");
+  if (value.evaluation !== null) {
+    exactObject(value.evaluation, ["id", "rootRunId", "runId", "state", "revision", "evaluationKey"], "live evaluation identity");
+    identifier(value.evaluation.id, "live evaluation id"); identifier(value.evaluation.rootRunId, "live evaluation root Run");
+    identifier(value.evaluation.runId, "live evaluation Run"); identifier(value.evaluation.evaluationKey, "live evaluation key");
+    requireCondition(EVALUATION_STATES.has(value.evaluation.state) && Number.isSafeInteger(value.evaluation.revision) && value.evaluation.revision >= 0, "invalid_manifest", "Live evaluation identity is invalid.");
+  }
+  for (const grade of value.grades) {
+    exactObject(grade, ["gradeId", "evaluationId", "graderType", "graderId", "graderVersion", "verdict", "score", "severity",
+      "costInputTokens", "costOutputTokens", "costAmountMicros", "gradeDigest", "chargeId", "chargeMatch"], "live evaluation grade");
+    [grade.gradeId, grade.evaluationId, grade.graderType, grade.graderId, grade.graderVersion, grade.verdict, grade.gradeDigest].forEach(item => identifier(item, "live evaluation grade field"));
+    requireCondition((grade.score === null || typeof grade.score === "number" && Number.isFinite(grade.score) && grade.score >= 0 && grade.score <= 1)
+      && nullableNonnegativeInteger(grade.costInputTokens) && nullableNonnegativeInteger(grade.costOutputTokens)
+      && nullableNonnegativeInteger(grade.costAmountMicros) && (grade.severity === null || typeof grade.severity === "string")
+      && (grade.chargeId === null || typeof grade.chargeId === "string")
+      && ["matched", "not_required", "missing", "non_unique", "mismatch"].includes(grade.chargeMatch), "invalid_manifest", "Live evaluation grade is invalid.");
+  }
+  for (const charge of value.charges) parseBudgetCharge(charge, "live evaluation charge");
+  if (value.budget !== null) {
+    exactObject(value.budget, ["rootRunId", "present", "tokenBudget", "costBudgetMicros"], "live evaluation budget");
+    identifier(value.budget.rootRunId, "live evaluation budget root Run");
+    requireCondition(typeof value.budget.present === "boolean" && nullableNonnegativeInteger(value.budget.tokenBudget)
+      && nullableNonnegativeInteger(value.budget.costBudgetMicros), "invalid_manifest", "Live evaluation budget is invalid.");
+  }
+  value.blockers.forEach(item => identifier(item, "live evaluation blocker"));
+}
+
+function parseBudgetCharge(charge, label) {
+  exactObject(charge, ["chargeId", "reservationId", "runId", "attemptId", "state", "reservedTokens", "reservedCostMicros", "inputTokens", "cachedInputTokens", "outputTokens", "actualCostMicros"], label);
+  identifier(charge.chargeId, `${label} id`); identifier(charge.runId, `${label} Run`); identifier(charge.attemptId, `${label} Attempt`); identifier(charge.state, `${label} state`);
+  requireCondition((charge.reservationId === null || typeof charge.reservationId === "string")
+    && nullableNonnegativeInteger(charge.reservedTokens) && nullableNonnegativeInteger(charge.reservedCostMicros)
+    && nullableNonnegativeInteger(charge.inputTokens) && nullableNonnegativeInteger(charge.cachedInputTokens)
+    && nullableNonnegativeInteger(charge.outputTokens) && nullableNonnegativeInteger(charge.actualCostMicros), "invalid_manifest", `${label} is invalid.`);
 }
 
 function parseIsolation(value) {
