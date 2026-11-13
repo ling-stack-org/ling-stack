@@ -189,6 +189,7 @@ import { useShellErrorFeedback } from "./use-shell-error-feedback.js";
 import { useNotificationBridge } from "../domains/notifications/use-notification-bridge.js";
 import { buildSidebarObjectContextSeeds } from "./sidebar-object-context.js";
 import { useSidebarObjectContexts } from "./use-sidebar-object-contexts.js";
+import { CompanionMiniPanel } from "../features/companions/CompanionMiniPanel.js";
 import {
   acknowledgeSidebarConversationFailure,
   hasAcknowledgedSidebarConversationFailure,
@@ -293,6 +294,7 @@ export function AppShell(): React.JSX.Element {
   const [skillLibraryRefreshToken, setSkillLibraryRefreshToken] = useState(0);
   const [teammateConversationRefreshToken, setTeammateConversationRefreshToken] = useState(0);
   const [teammateCreateOpen, setTeammateCreateOpen] = useState(false);
+  const [companionMiniOpen, setCompanionMiniOpen] = useState(false);
   const workspaceTimelineLoadRef = useRef("");
   const channelEditFormSyncKeyRef = useRef("");
   const workspaceDefaultProviderPresetIdRef = useRef<string | undefined>(undefined);
@@ -2623,6 +2625,7 @@ export function AppShell(): React.JSX.Element {
         }}
         onSelectRecentConversation={selectRecentConversation}
         channelDrawer
+        onOpenCompanionMini={() => setCompanionMiniOpen(true)}
       />
       ) : !settingsFullscreen ? (
         <SidebarCompactRail
@@ -2633,6 +2636,16 @@ export function AppShell(): React.JSX.Element {
           onOpenView={openSidebarView}
         />
       ) : null}
+      <CompanionMiniPanel
+        cwd={form.cwd}
+        teammates={aiTeammates}
+        open={companionMiniOpen}
+        onClose={() => setCompanionMiniOpen(false)}
+        onOpenSettings={() => {
+          setCompanionMiniOpen(false);
+          openSettingsSection("companion");
+        }}
+      />
       <section
         ref={workspaceSurfaceRef}
         className={
@@ -3498,6 +3511,7 @@ export function AppShell(): React.JSX.Element {
                     onOpenProviders={() => openSettingsWorkspaceTool("providers")}
                     onOpenTeammates={() => openSettingsWorkspaceTool("teammates")}
                     onOpenCouncils={() => openSettingsWorkspaceTool("councils")}
+                    onOpenCompanionMini={() => setCompanionMiniOpen(true)}
                     workspaceToolDetail={settingsWorkspaceToolDetail}
                     workspaceToolView={settingsWorkspaceToolView}
                     runDiagnosticsRunId={settingsRunDiagnosticsRunId}

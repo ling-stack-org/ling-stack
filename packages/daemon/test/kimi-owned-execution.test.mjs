@@ -800,7 +800,7 @@ for (const kind of ["missing", "malformed", "oversized", "symlink", "hardlink", 
 
 for (const kind of ["source-config", "projected-config", "state-directory"]) test(`owned Kimi stops before prompt if ${kind} changes during handshake`,
   { timeout: 8000 }, async t => {
-    const f = await fixture(t), options = f.makeOptions(); let projectedHome;
+    const f = await fixture(t, "gated-initialize"), options = f.makeOptions(); let projectedHome;
     await assert.rejects(executeOwnedKimiPrompt({ ...options, launch: (...args) => {
       projectedHome = args[2].env.KIMI_CODE_HOME;
       const child = options.launch(...args);
@@ -809,6 +809,7 @@ for (const kind of ["source-config", "projected-config", "state-directory"]) tes
         if (kind === "source-config") writeFileSync(join(f.home, "config.toml"), `${nativeConfig}\n# Changed during startup\n`);
         else if (kind === "projected-config") { rmSync(join(projectedHome, "config.toml")); writeFileSync(join(projectedHome, "config.toml"), nativeConfig); }
         else { rmSync(join(f.home, "sessions"), { recursive: true }); symlinkSync(f.cwd, join(f.home, "sessions")); }
+        child.send({ method: "fixture-initialize-release" });
       });
       return child;
     } }), { message: "kimi_execution_configuration_invalid" });

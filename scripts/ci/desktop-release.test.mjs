@@ -8,7 +8,7 @@ import { assembleRelease, collectTarget, desktopTargets, fileRecord, releaseVers
 import { createDesktopDraft, verifyAssembledRelease } from "../release/create-desktop-draft.mjs";
 
 const input = { sha: "a".repeat(40), tag: "v0.1.3", versionFile: "0.1.3",
-  rootVersion: "0.1.3", desktopVersion: "0.1.3" };
+  rootVersion: "0.1.3", desktopVersion: "0.1.3", productContractVersion: "0.1.3" };
 const candidate = validateCandidate(input);
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), "ling-desktop-release-"));
@@ -81,7 +81,7 @@ test("release accepts numeric and historical prerelease tags, rejecting malforme
   for (const sha of ["main", "a".repeat(7), "A".repeat(40), "a".repeat(40) + "\n"]) {
     assert.throws(() => validateCandidate({ ...input, sha }), /complete lowercase/u);
   }
-  for (const key of ["versionFile", "rootVersion", "desktopVersion"]) {
+  for (const key of ["versionFile", "rootVersion", "desktopVersion", "productContractVersion"]) {
     assert.throws(() => validateCandidate({ ...input, [key]: "0.1.2-alpha.1" }), /versions must match/u);
   }
 });
@@ -95,6 +95,8 @@ test("draft preparation requires a clean exact mainline source and a new tag", a
   await mkdir(join(root, "apps/desktop"), { recursive: true });
   await writeFile(join(root, "VERSION"), input.versionFile + "\n");
   for (const path of ["package.json", "apps/desktop/package.json"]) await writeFile(join(root, path), JSON.stringify({ version: input.rootVersion }));
+  await mkdir(join(root, "packages/contracts/src"), { recursive: true });
+  await writeFile(join(root, "packages/contracts/src/product-version.ts"), `export const LING_PRODUCT_VERSION = "${input.productContractVersion}" as const;\n`);
   git(["add", "."]); git(["commit", "-qm", "candidate"]);
   const sha = git(["rev-parse", "HEAD"]);
   git(["update-ref", "refs/remotes/origin/main", sha]);

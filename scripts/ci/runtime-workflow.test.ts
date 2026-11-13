@@ -31,7 +31,7 @@ test("all core matrix jobs are part of the existing mandatory unit gate", () => 
   assert.match(source, /matrix: \$\{\{ fromJSON\(needs\.scope\.outputs\.unit-matrix\) \}\}/u);
   assert.match(source, /fail-fast: false/u);
   assert.match(source, /node-test-shard\.mjs --suite=core/u);
-  assert.match(source, /--shard=\$\{\{ matrix\.shard \}\} --shard-count=4 --concurrency=2/u);
+  assert.match(source, /--shard=\$\{\{ matrix\.shard \}\} --shard-count=\$\{\{ matrix\.shardCount \}\} --concurrency=\$\{\{ matrix\.concurrency \}\}/u);
   assert.match(source, /timeout-minutes: 35/u);
   assert.match(source, /--shard-timeout-ms=1800000/u);
   assert.match(source, /--exclude='\["@ling-stack\/daemon","@ling-stack\/core"\]'/u);
@@ -51,9 +51,39 @@ test("timings are restored once and every shard consumes one immutable plan", ()
     assert.match(source, /name: ci-test-plan/u);
     assert.match(source, /--plan=\.codex-artifacts\/ci\/test-plan\.json/u);
     assert.doesNotMatch(source, /actions\/cache\/restore/u);
-    assert.match(source, /name: ci-test-report-(?:core|daemon)-\$\{\{ matrix\.shard \}\}\n          include-hidden-files: true/u);
+    const suite = name === "unit-tests" ? "core" : "${{ matrix.suite }}";
+    assert.ok(source.includes("name: ci-test-report-" + suite + "-${{ matrix.shard }}\n          include-hidden-files: true"));
     assert.match(source, /if-no-files-found: error/u);
   }
+});
+
+test("browser smoke starts after reusable outputs without delaying the core and daemon queues", () => {
+  const build = job("build");
+  const smoke = job("web-smoke");
+  assert.match(build, /name: Upload reusable build outputs/u);
+  assert.doesNotMatch(build, /playwright install|playwright test/u);
+  assert.match(smoke, /needs: \[scope, build\]/u);
+  assert.match(smoke, /needs\.scope\.outputs\.web == 'true'/u);
+  assert.match(smoke, /name: ci-dist/u);
+  const webPackage = JSON.parse(readFileSync(new URL("../../apps/web/package.json", import.meta.url), "utf8"));
+  const image = /^      image: mcr\.microsoft\.com\/playwright:v([^@\s]+)@sha256:([a-f0-9]{64})$/mu.exec(smoke);
+  assert.ok(image, "The browser environment must use an immutable official image");
+  assert.equal(image[1], `${webPackage.devDependencies["@playwright/test"]}-noble`,
+    "The installed Playwright client must match the image's preinstalled browser revision");
+  assert.doesNotMatch(smoke, /playwright install|apt-get/u);
+  assert.match(smoke, /playwright test/u);
+  assert.match(smoke, /name: ci-linux-source-web-smoke/u);
+  assert.doesNotMatch(smoke, /continue-on-error/u);
+  const quality = job("quality");
+  assert.match(quality, /needs: \[[^\n]*web-smoke\]/u);
+  assert.match(quality, /WEB_SMOKE_RESULT: \$\{\{ needs\.web-smoke\.result \}\}/u);
+  assert.match(quality, /WEB_SELECTED: \$\{\{ needs\.scope\.outputs\.web \}\}/u);
+});
+
+test("daemon runners restore executable codec artifacts on their owning platform", () => {
+  const daemon = job("daemon-tests");
+  assert.match(daemon, /name: Build the host image codec\n        if: matrix\.runner == 'macos-26'/u);
+  assert.match(daemon, /if: matrix\.runner == 'ubuntu-latest'\n        run: chmod \+x packages\/daemon\/dist\/native\/image-sanitizer\/ling-image-sanitizer/u);
 });
 
 test("the aggregate verifies reports before caching only default-branch successful timings", () => {
@@ -173,7 +203,7 @@ test("CI tools' TypeScript tests are discovered and typechecked in the required 
   assert.match(manifest.scripts["typecheck:ci-tests"], /tsc -p scripts\/ci\/tsconfig\.test\.json/u);
   assert.match(manifest.scripts.typecheck, /typecheck:ci-tests/u);
   const config = JSON.parse(readFileSync(new URL("./tsconfig.test.json", import.meta.url), "utf8"));
-  assert.deepEqual(config.include, ["*.test.ts"]);
+  assert.deepEqual(config.include, ["*.test.ts", "../framework-assurance/*.test.ts"]);
   assert.equal(config.compilerOptions.strict, true);
   assert.equal(config.compilerOptions.noEmit, true);
   assert.equal(config.compilerOptions.module, "NodeNext");

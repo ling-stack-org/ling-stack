@@ -7,12 +7,17 @@ import {
   openWebThemeDatabase,
   waitForThemeTransaction,
 } from "../web-theme-database.js";
-import type { ParsedWebThemePreview, WebThemePreviewMimeType } from "./web-theme-package-types.js";
+import type {
+  ParsedWebThemeLaunchAnimation,
+  ParsedWebThemePreview,
+  WebThemePreviewMimeType,
+} from "./web-theme-package-types.js";
 
 export interface WebThemePackagePublication {
   readonly licenseText?: string;
   readonly manifest: LingThemePackManifest;
   readonly packageChecksumSha256: string;
+  readonly launchAnimation?: ParsedWebThemeLaunchAnimation;
   readonly preview?: ParsedWebThemePreview;
 }
 
@@ -21,6 +26,7 @@ export interface StoredWebThemePackage {
   readonly licenseText?: string;
   readonly manifest: LingThemePackManifest;
   readonly packageChecksumSha256?: string;
+  readonly launchAnimation?: StoredWebThemePreview;
   readonly preview?: StoredWebThemePreview;
   readonly updatedAt: string;
 }
@@ -39,6 +45,7 @@ interface StoredPackageRecord {
   readonly installedAt: string;
   readonly licenseText?: string;
   readonly packageChecksumSha256: string;
+  readonly launchAnimationPath?: string;
   readonly previewPath?: string;
   readonly themeId: string;
   readonly updatedAt: string;
@@ -71,6 +78,11 @@ export async function readStoredWebThemePackage(themeId: string): Promise<Stored
         transaction.objectStore(WEB_THEME_ASSET_STORE).get(assetKey(themeId, metadata.previewPath)),
       )
       : undefined;
+    const launchAnimation = metadata?.launchAnimationPath
+      ? await requestValue<StoredAssetRecord | undefined>(
+        transaction.objectStore(WEB_THEME_ASSET_STORE).get(assetKey(themeId, metadata.launchAnimationPath)),
+      )
+      : undefined;
     await completion;
     return Object.freeze({
       manifest,
@@ -78,6 +90,7 @@ export async function readStoredWebThemePackage(themeId: string): Promise<Stored
       updatedAt: metadata?.updatedAt ?? new Date(0).toISOString(),
       ...(metadata?.licenseText !== undefined ? { licenseText: metadata.licenseText } : {}),
       ...(metadata?.packageChecksumSha256 ? { packageChecksumSha256: metadata.packageChecksumSha256 } : {}),
+      ...(launchAnimation ? { launchAnimation: storedAsset(launchAnimation) } : {}),
       ...(preview ? { preview: storedPreview(preview) } : {}),
     });
   } finally {
@@ -99,6 +112,7 @@ export async function putStoredWebThemePackage(
     installedAt: installedAt ?? previous?.installedAt ?? now,
     updatedAt: now,
     ...(publication.licenseText !== undefined ? { licenseText: publication.licenseText } : {}),
+    ...(publication.launchAnimation ? { launchAnimationPath: publication.launchAnimation.path } : {}),
     ...(publication.preview ? { previewPath: publication.preview.path } : {}),
   });
   try {
@@ -109,7 +123,12 @@ export async function putStoredWebThemePackage(
     try {
       transaction.objectStore(WEB_THEME_MANIFEST_STORE).put(publication.manifest);
       transaction.objectStore(WEB_THEME_PACKAGE_STORE).put(record);
-      replaceThemeAssets(transaction.objectStore(WEB_THEME_ASSET_STORE), publication.manifest.id, publication.preview);
+      replaceThemeAssets(
+        transaction.objectStore(WEB_THEME_ASSET_STORE),
+        publication.manifest.id,
+        publication.preview,
+        publication.launchAnimation,
+      );
     } catch (error) {
       transaction.abort();
       throw error;
@@ -121,6 +140,7 @@ export async function putStoredWebThemePackage(
       updatedAt: record.updatedAt,
       packageChecksumSha256: publication.packageChecksumSha256,
       ...(publication.licenseText !== undefined ? { licenseText: publication.licenseText } : {}),
+      ...(publication.launchAnimation ? { launchAnimation: publication.launchAnimation } : {}),
       ...(publication.preview ? { preview: publication.preview } : {}),
     });
   } finally {
@@ -154,6 +174,7 @@ function replaceThemeAssets(
   store: IDBObjectStore,
   themeId: string,
   preview?: ParsedWebThemePreview,
+  launchAnimation?: ParsedWebThemeLaunchAnimation,
 ): void {
   const cursorRequest = store.index(WEB_THEME_ASSET_THEME_INDEX).openCursor(IDBKeyRange.only(themeId));
   cursorRequest.onsuccess = () => {
@@ -163,24 +184,25 @@ function replaceThemeAssets(
       cursor.continue();
       return;
     }
-    if (preview) {
+    for (const asset of [preview, launchAnimation]) {
+      if (!asset) continue;
       const record: StoredAssetRecord = Object.freeze({
-        key: assetKey(themeId, preview.path),
+        key: assetKey(themeId, asset.path),
         themeId,
-        path: preview.path,
-        blob: preview.blob,
-        byteLength: preview.byteLength,
-        checksumSha256: preview.checksumSha256,
-        height: preview.height,
-        mimeType: preview.mimeType,
-        width: preview.width,
+        path: asset.path,
+        blob: asset.blob,
+        byteLength: asset.byteLength,
+        checksumSha256: asset.checksumSha256,
+        height: asset.height,
+        mimeType: asset.mimeType,
+        width: asset.width,
       });
       store.put(record);
     }
   };
 }
 
-function storedPreview(record: StoredAssetRecord): StoredWebThemePreview {
+function storedAsset(record: StoredAssetRecord): StoredWebThemePreview {
   return Object.freeze({
     blob: record.blob,
     byteLength: record.byteLength,
@@ -190,6 +212,10 @@ function storedPreview(record: StoredAssetRecord): StoredWebThemePreview {
     path: record.path,
     width: record.width,
   });
+}
+
+function storedPreview(record: StoredAssetRecord): StoredWebThemePreview {
+  return storedAsset(record);
 }
 
 function assetKey(themeId: string, path: string): string {

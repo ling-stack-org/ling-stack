@@ -9,6 +9,7 @@ import {
   GitBranch,
   Palette,
   MonitorCog,
+  Sparkles,
   Smartphone,
   Shield,
   SlidersHorizontal,
@@ -22,6 +23,7 @@ export type SettingsSectionId =
   | "execution-engines"
   | "ai-teammates"
   | "ai-councils"
+  | "companion"
   | "approval-strategy"
   | "personal-profile"
   | "personalization"
@@ -65,6 +67,7 @@ export const settingsSectionGroups: readonly SettingsSectionGroupDefinition[] = 
       { id: "execution-engines", label: "Execution engines", icon: CircuitBoard },
       { id: "ai-teammates", label: "Teammate Management", icon: Bot },
       { id: "ai-councils", pageTitle: "Council Workspace", label: "Council Workspace", icon: Brain },
+      { id: "companion", label: "Intelligent companion", icon: Sparkles },
       { id: "approval-strategy", label: "Default authorization", icon: Shield },
     ],
   },

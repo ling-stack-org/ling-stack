@@ -25,6 +25,7 @@ const SAFE_SHADOW_PATTERN = /^[0-9a-z#(),.%/\s+-]+$/i;
 const SAFE_MATERIAL_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
 const ARTWORK_PATH_PATTERN = /^(?:assets\/)?[a-zA-Z0-9][a-zA-Z0-9._/-]*\.(?:png|webp)$/;
 const PREVIEW_PATH_PATTERN = /^(?:assets\/)?[a-zA-Z0-9][a-zA-Z0-9._/-]*\.(?:jpe?g|png|webp)$/;
+const LAUNCH_ANIMATION_PATH_PATTERN = /^assets\/[a-zA-Z0-9][a-zA-Z0-9._/-]*\.(?:png|webp)$/;
 const COLOR_PATHS = [
   "background.app", "background.panel", "background.elevated", "background.subtle", "background.pressed",
   "background.overlay", "background.code", "background.sidebar", "background.composer",
@@ -88,6 +89,7 @@ export function validateThemeManifest(
   validateArtwork(issues, value.artwork);
   validateScene(issues, value.scene, effectiveSource);
   validateGeneration(issues, value.generation);
+  validateLaunchAnimation(issues, value.launchAnimation);
 
   if (issues.length > 0 || !id || !effectiveSource) {
     return { ok: false, issues: Object.freeze(issues) };
@@ -297,6 +299,27 @@ function validateGeneration(issues: LingThemeValidationIssue[], value: unknown):
   }
   for (const key of ["plannerModelRef", "artworkModelRef", "promptTemplateVersion"] as const) {
     validateOptionalText(issues, value[key], `generation.${key}`, 120, undefined, "invalid-generation");
+  }
+}
+
+function validateLaunchAnimation(issues: LingThemeValidationIssue[], value: unknown): void {
+  if (value === undefined) return;
+  if (!isRecord(value)) {
+    issue(issues, "invalid-launch-animation", "launchAnimation", "Launch animation must be an object.");
+    return;
+  }
+  if (value.preset !== "canvas-windmill") {
+    issue(issues, "invalid-launch-animation", "launchAnimation.preset", "Launch animation preset is not registered.");
+  }
+  if (
+    value.referenceImage !== undefined
+    && (typeof value.referenceImage !== "string"
+      || value.referenceImage.includes("..")
+      || value.referenceImage.includes(":")
+      || !LAUNCH_ANIMATION_PATH_PATTERN.test(value.referenceImage)
+      || value.referenceImage.split("/").some((segment) => segment.length === 0 || segment === "." || segment === ".."))
+  ) {
+    issue(issues, "invalid-launch-animation", "launchAnimation.referenceImage", "Launch animation reference image must be a local PNG or WebP asset path.");
   }
 }
 

@@ -33,6 +33,9 @@ import { subscribeWithInitialRead } from "../shared/initial-state-subscription.j
 const daemonBaseUrl = process.argv
   .find((argument) => argument.startsWith("--ling-daemon-base-url="))
   ?.slice("--ling-daemon-base-url=".length) ?? "http://127.0.0.1:17891";
+const productVersion = process.argv
+  .find((argument) => argument.startsWith("--ling-product-version="))
+  ?.slice("--ling-product-version=".length);
 const themePackageFirstPaint = parseDesktopThemePackageFirstPaintArgument(process.argv);
 const computerControlPlatform = process.argv
   .find((argument) => argument.startsWith("--ling-computer-control-platform="))
@@ -41,6 +44,7 @@ const platform = desktopPlatform();
 
 const capabilities: LingDesktopCapabilities = {
   platform,
+  ...(productVersion ? { productVersion } : {}),
   daemonBaseUrl,
   backgrounds: {
     read: () => ipcRenderer.invoke(BACKGROUND_CHANNELS.read),
@@ -83,6 +87,9 @@ const capabilities: LingDesktopCapabilities = {
       {
         themeId: request.themeId,
         includePreviewBytes: request.includePreviewBytes,
+        ...(request.includeLaunchAnimationBytes !== undefined
+          ? { includeLaunchAnimationBytes: request.includeLaunchAnimationBytes }
+          : {}),
       },
     ),
     install: (request) => ipcRenderer.invoke(
