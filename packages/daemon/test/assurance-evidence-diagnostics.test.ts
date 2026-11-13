@@ -18,7 +18,7 @@ function source(): Source {
   return structuredClone({
     schemaVersion: 1, kind: "live_execution_evidence", comparison: frozen.comparison,
     execution: frozen.execution, snapshots: frozen.snapshots, artifacts: frozen.artifacts,
-    observedAt: frozen.observedAt, limitations: ["read_only_host_projection", "attempt_artifact_binding_unavailable"],
+    observedAt: frozen.observedAt, limitations: ["read_only_host_projection", "no_evaluation_grade", "no_evaluation_grade_body", "attempt_artifact_binding_unavailable"],
   });
 }
 
@@ -44,6 +44,8 @@ test("collected Host evidence joins F4 diagnostics through the explicit three-fi
   const envelope = adaptLiveExecutionEvidenceForDiagnostics(collected);
   assert.deepEqual(Object.keys(envelope).sort(), ["lineage", "observation", "observedAt"]);
   assert.equal(envelope.observation.assessment, "not_assessed");
+  assert.ok(collected.source.limitations.includes("no_evaluation_grade"));
+  assert.ok(collected.source.limitations.includes("no_evaluation_grade_body"));
   assert.ok(envelope.observation.limitations.includes("attempt_artifact_binding_unavailable"));
   const calls: unknown[] = [];
   const report = await readHarnessDiagnosticsReportFromClient({
