@@ -80,6 +80,13 @@ export function ThemePreviewDialog({
                 {packageValue?.preview ? (
                   <div><dt>{t("Preview size")}</dt><dd>{formatThemePackageBytes(packageValue.preview.byteLength)}</dd></div>
                 ) : null}
+                <div><dt>{t("Launch animation")}</dt><dd>{packageValue?.launchAnimation ? t("Included") : t("Default")}</dd></div>
+                {packageValue?.launchAnimation ? (
+                  <>
+                    <div><dt>{t("Launch animation asset")}</dt><dd>{packageValue.launchAnimation.path}</dd></div>
+                    <div><dt>{t("Launch animation size")}</dt><dd>{formatThemePackageBytes(packageValue.launchAnimation.byteLength)}</dd></div>
+                  </>
+                ) : null}
               </dl>
             </InspectorSection>
           ) : null}

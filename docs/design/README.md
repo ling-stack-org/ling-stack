@@ -97,6 +97,7 @@ retains the detailed implementation brief and historical checkpoint.
 
 ## Teammates, Memory, And Skills
 
+- [Ling Companion](companion.md)
 - [AI Teammate Private Workspace](ai-teammate-private-workspace.md)
 - [AI Teammates And Skills](ai-teammates-and-skills.md)
 - [AI Councils](ai-councils.md)

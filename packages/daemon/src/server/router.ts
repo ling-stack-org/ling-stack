@@ -254,6 +254,8 @@ import {
   handleListRuns,
   handleRun,
 } from "../features/runs/routes.js";
+import { handleGetRunAssuranceEvidence } from "../features/runs/assurance-evidence.js";
+import { handlePostRunAssuranceEvaluationAssociation } from "../features/harness/evaluations/assurance-association-route.js";
 import { handleUserInputAnswerSubmission } from "../features/runs/user-input-answer-routes.js";
 import { handleLingThreadItem, handleLingThreadsCollection } from "../features/runs/thread-routes.js";
 import { handleHostCapabilityBridgeRoute } from "../features/runs/host-capability-bridge-routes.js";
@@ -294,6 +296,11 @@ import {
   handleTeammateDirectRuntime,
 } from "../features/teammates/direct-controls.js";
 import { handleTeammateDirectLinkPreviews } from "../features/teammates/direct-link-previews.js";
+import { handleCompanionItem, handleCompanionsCollection } from "../features/companions/routes.js";
+import {
+  handleCompanionMessageStream,
+  handleCompanionMessagesCollection,
+} from "../features/companions/dialogue.js";
 import { handleTeammateDirectMessagesCollection, handleTeammateDirectMessageStream, handleTeammateDirectThread } from "../features/teammates/direct-messages.js";
 import { createAiTeammateDirectReply } from "../features/teammates/direct-replies.js";
 import { ensureDirectWorkspaceReady, handleTeammateDirectWorkspace } from "../features/teammates/direct-workspace.js";
@@ -345,6 +352,7 @@ import {
   parseChannelHandoffRoute,
   parseChannelLinkPreviewRoute,
   parseChannelRoute,
+  parseCompanionRoute,
   parseChannelWorkflowRoute,
   parseWorkflowHandoffIntentRoute,
   parseWorkflowSelectorDecisionRoute,
@@ -377,7 +385,7 @@ import { RunControlService } from "../run-control.js";
 import { allowLocalServiceRequest, allowLocalWorkspaceRequest } from "../shared/local-workspace-access.js";
 import { setCorsHeaders, writeJson } from "../shared/response.js";
 import { readOptionalJsonBody } from "../shared/request.js";
-import { parseChannelWorkflowOrchestrationRequest } from "@ling-stack/contracts";
+import { LING_DAEMON_PROTOCOL_VERSION, LING_PRODUCT_VERSION, parseChannelWorkflowOrchestrationRequest } from "@ling-stack/contracts";
 import { selectWorkflowIsolatedExecution, type WorkflowIsolationHost } from "../features/channels/workflow-isolation-selection.js";
 import { handleWorkflowConflictRecovery } from "../features/channels/workflow-conflict-recovery-route.js";
 import { handleStartupStatus } from "../startup/routes.js";
@@ -429,6 +437,8 @@ export async function routeRequest(
     workspaceFileCapabilities,
     notificationHub,
     imDestinations,
+    companionReplyService,
+    companionSchedulers,
   } = context;
   setCorsHeaders(response);
 
@@ -632,6 +642,8 @@ export async function routeRequest(
     writeJson(response, 200, {
       ok: true,
       service: "ling-stack-daemon",
+      productVersion: LING_PRODUCT_VERSION,
+      protocolVersion: LING_DAEMON_PROTOCOL_VERSION,
       defaultWorkspaceCwd: config.defaultWorkspaceCwd,
       readiness: startupState.snapshot(config.defaultWorkspaceCwd)?.state ?? "starting",
       features: {
@@ -769,6 +781,12 @@ export async function routeRequest(
 
   if (url.pathname === "/teammates") {
     await handleTeammatesCollection(request, response, config, storeRegistry, secretResolver);
+    return;
+  }
+
+  if (url.pathname === "/companions") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) return;
+    await handleCompanionsCollection(request, response, config, storeRegistry);
     return;
   }
 
@@ -1649,6 +1667,22 @@ export async function routeRequest(
   }
   if (request.method === "GET" && runRoute?.kind === "artifacts") {
     handleListRunArtifacts(response, url, storeRegistry, runRoute.runId);
+    return;
+  }
+  if (request.method === "GET" && runRoute?.kind === "assurance-evidence") {
+    handleGetRunAssuranceEvidence(response, url, storeRegistry, activeRuns, runRoute.runId);
+    return;
+  }
+  if (runRoute?.kind === "assurance-evaluation-association") {
+    await handlePostRunAssuranceEvaluationAssociation(
+      request,
+      response,
+      url,
+      config.maxBodyBytes,
+      storeRegistry,
+      activeRuns,
+      runRoute.runId,
+    );
     return;
   }
   if (request.method === "GET" && runRoute?.kind === "shell-snapshots") {
@@ -2589,6 +2623,44 @@ export async function routeRequest(
       return;
     }
     await handleChannelExecutionProposalItem(request, response, config, storeRegistry, channelProposalRoute.proposalId);
+    return;
+  }
+
+  const companionRoute = parseCompanionRoute(url.pathname);
+  if (companionRoute) {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) return;
+    if (companionRoute.action === "messages") {
+      await handleCompanionMessagesCollection(
+        request,
+        response,
+        config,
+        storeRegistry,
+        companionRoute.companionId,
+        companionReplyService.createReply,
+      );
+      return;
+    }
+    if (companionRoute.action === "messages-stream") {
+      await handleCompanionMessageStream(
+        request,
+        response,
+        config,
+        storeRegistry,
+        companionRoute.companionId,
+        companionReplyService.createReply,
+        activeDirectReplies,
+      );
+      return;
+    }
+    await handleCompanionItem(
+      request,
+      response,
+      config,
+      storeRegistry,
+      companionRoute.companionId,
+      companionRoute.action,
+      companionSchedulers,
+    );
     return;
   }
 

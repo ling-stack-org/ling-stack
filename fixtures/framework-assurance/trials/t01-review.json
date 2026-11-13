@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "kind": "f3b_trial_manifest",
+  "trialId": "f3b-t01-review",
+  "mode": "review_only",
+  "task": {
+    "suite": {
+      "path": "suites/framework-v6.json",
+      "sha256": "79007562c3a3e93fe6672c42c63136cbe9dc3fbc38328b93dfa3c599e4ad6cb5",
+      "mediaType": "application/json"
+    },
+    "suiteId": "ling-framework-assurance",
+    "suiteVersion": "6",
+    "taskId": "T01",
+    "taskVersion": "5",
+    "sourceCommit": "dd3fa912a09f0494c9899090e861dfa2058e5553",
+    "inputDigests": {
+      "suiteBytes": "79007562c3a3e93fe6672c42c63136cbe9dc3fbc38328b93dfa3c599e4ad6cb5",
+      "taskBytes": "8d4e9de1e404497987c17e15a9aa63558c12059a4813af2b769d894f26ffd09c",
+      "promptBytes": "c3c1787f6beff88b7ffd28670425664b97953db031c1d497bd4013c9ddf608f0",
+      "ruleBytes": "242c5de3e03c6a08598a3a574a000435e1b31dc9a91389d8f82356362cc518cd",
+      "expectedBytes": "2709611907f5761cd61a7b9845137b6b2e855c64c2097d5024207b018983a9cc",
+      "profileBytes": "66b1bf54b662a33557ee713aaeddd725389eb938ccad90ce505eb7e495152687",
+      "lockBytes": "0d4fa92e297e8820140bb7c23d1b689d6d75038e74b858ac9c2851584909b0af"
+    }
+  },
+  "provider": {
+    "providerId": "review-only-provider",
+    "modelId": "review-only-model"
+  },
+  "budget": {
+    "maxAmountMinor": 100,
+    "currency": "USD",
+    "maxProviderRequests": 1,
+    "maxInputTokens": 12000,
+    "maxOutputTokens": 8000,
+    "maxToolLoops": 0,
+    "maxSubagents": 0,
+    "maxGraderCalls": 1,
+    "maxInFlightReservations": 1,
+    "timeoutMs": 60000
+  },
+  "stopRules": {
+    "unknownUsage": "stop",
+    "unknownEffect": "stop",
+    "cancelUnconfirmed": "block",
+    "overBudget": "stop",
+    "retryAfterUnknown": "forbid"
+  },
+  "admission": {
+    "hostProfile": "pi_host_isolated_files_v1",
+    "toolBrokerMode": "enforce",
+    "network": false,
+    "shell": false,
+    "requiresFence": true,
+    "requiresTerminalClaim": true,
+    "requiresConfirmedStop": true,
+    "executionAuthorized": false
+  },
+  "resources": {
+    "rootPolicy": "external_absolute_cli",
+    "paths": {
+      "lingStackHome": "runtime-home",
+      "workspace": "workspace",
+      "output": "trial-output"
+    },
+    "ports": {
+      "daemon": {
+        "host": "127.0.0.1",
+        "port": 39123
+      },
+      "ui": {
+        "host": "127.0.0.1",
+        "port": 39124
+      }
+    },
+    "minimum": {
+      "availableParallelism": 1,
+      "freeMemoryBytes": 268435456,
+      "freeDiskBytes": 268435456,
+      "maxLoad1": 64
+    }
+  }
+}

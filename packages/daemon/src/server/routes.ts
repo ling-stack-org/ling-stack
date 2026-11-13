@@ -34,6 +34,8 @@ export function parseRunRoute(
   | { kind: "run"; runId: string }
   | { kind: "events"; runId: string }
   | { kind: "artifacts"; runId: string }
+  | { kind: "assurance-evidence"; runId: string }
+  | { kind: "assurance-evaluation-association"; runId: string }
   | { kind: "shell-snapshots"; runId: string }
   | { kind: "shell-snapshot"; runId: string; snapshotId: string }
   | { kind: "workspace-changes"; runId: string }
@@ -52,6 +54,12 @@ export function parseRunRoute(
   }
   if (segments.length === 3 && segments[0] === "runs" && segments[2] === "artifacts") {
     return { kind: "artifacts", runId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "runs" && segments[2] === "assurance-evidence") {
+    return { kind: "assurance-evidence", runId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "runs" && segments[2] === "assurance-evaluation-association") {
+    return { kind: "assurance-evaluation-association", runId: segments[1] };
   }
   if (segments.length === 3 && segments[0] === "runs" && segments[2] === "shell-snapshots") {
     return { kind: "shell-snapshots", runId: segments[1] };
@@ -593,6 +601,31 @@ export function parseTeammateRoute(
     segments[3] === "stream"
   ) {
     return { teammateId: segments[1], action: "direct-messages-stream" };
+  }
+  return undefined;
+}
+
+export function parseCompanionRoute(
+  pathname: string,
+): { readonly companionId: string; readonly action?: "state" | "events" | "interactions" | "proactive" | "messages" | "messages-stream" } | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 2 && segments[0] === "companions") {
+    return { companionId: segments[1] };
+  }
+  if (
+    segments.length === 3 &&
+    segments[0] === "companions" &&
+    (segments[2] === "state" || segments[2] === "events" || segments[2] === "interactions" || segments[2] === "proactive" || segments[2] === "messages")
+  ) {
+    return { companionId: segments[1], action: segments[2] };
+  }
+  if (
+    segments.length === 4 &&
+    segments[0] === "companions" &&
+    segments[2] === "messages" &&
+    segments[3] === "stream"
+  ) {
+    return { companionId: segments[1], action: "messages-stream" };
   }
   return undefined;
 }

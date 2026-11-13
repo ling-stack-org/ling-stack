@@ -41,9 +41,28 @@ const TEST_PATH_PATTERN = /(?:^|\/)(?:test|tests|__tests__|e2e)(?:\/|$)|(?:^|\/)
 const TEST_SUPPORT_PATTERN = /(?:fixture|fixtures|helper|helpers|support|setup|util|utils)/iu;
 const SUPPORTED_TEST_PACKAGE_PREFIXES = ["packages/"];
 const SUPPORTED_TEST_PACKAGE_DIRECTORIES = new Set(["apps/web", "apps/chrome-extension", "apps/mobile"]);
+// The standalone macOS helper smoke validates the reviewed Seatbelt/native
+// helper itself. Keep it for changes that can alter that contract; ordinary
+// Daemon changes retain the complete Darwin test suite without consuming an
+// additional hosted macOS runner.
+const MACOS_NATIVE_PATH_PATTERNS = [
+  /^native\/sandbox(?:\/|$)/u,
+  /^packages\/daemon\/src\/runtime\/sandbox(?:\/|$)/u,
+  /^packages\/daemon\/src\/runtime\/adapters\/native-command-policy\.[^/]+$/u,
+  /^packages\/daemon\/src\/features\/runs\/restricted-command-dispatch\.[^/]+$/u,
+  /^packages\/daemon\/test\/(?:platform-native-sandbox|macos-native-command|restricted-command-dispatch)\.test\.[^/]+$/u,
+  /^packages\/daemon\/test\/restricted-command-launch-unknown\.contract\.mjs$/u,
+];
 // The catalog importer reads Web's AST helper, locale sources and tsconfig
 // without a manifest dependency. Keep that validation consumer in the graph.
 const VALIDATION_CONSUMERS = new Map([["@ling-stack/web", ["@ling-stack/localization"]]]);
+// Offline calibration loads the Core grader; the external consumer builds these SDK producers.
+const ASSURANCE_PACKAGES = new Set(["@ling-stack/core", "@ling-stack/localization",
+  "@ling-stack/contracts", "@ling-stack/plugin-sdk", "@ling-stack/api-client"]);
+
+function isAssurancePath(file) {
+  return file.startsWith("scripts/framework-assurance/") || file.startsWith("fixtures/framework-assurance/");
+}
 
 /**
  * Classify a pull request by the narrowest safe CI scope.
@@ -58,12 +77,13 @@ export function classifyChangedFiles(input) {
   const files = normalizeFiles(input.files);
   const eventName = input.eventName ?? "pull_request";
   const packages = input.packageEntries ?? discoverPackages(repositoryRoot);
+  const nativeSurfaceChanged = files.some(isMacosNativePath);
 
   if (eventName !== "pull_request" || input.forceFull || files.length === 0) {
     return buildScope("full", files, packages, "non-PR event or explicit full CI");
   }
 
-  if (files.some((file) => !isDocumentationPath(file) && !isMaintenancePath(file)
+  if (files.some((file) => !isDocumentationPath(file) && !isMaintenancePath(file) && !isAssurancePath(file)
     && FORCE_FULL_PATTERNS.some((pattern) => pattern.test(file)))) {
     return buildScope("full", files, packages, "root, workflow, dependency, or build configuration change");
   }
@@ -92,7 +112,8 @@ export function classifyChangedFiles(input) {
   const unresolvedFiles = [];
 
   for (const file of files) {
-    if (isDocumentationPath(file) || isMaintenancePath(file)) continue;
+    if (isDocumentationPath(file) || isMaintenancePath(file) || isAssurancePath(file)) continue;
+    if (isMacosNativePath(file)) continue;
     const entry = findOwningPackage(file, packages);
     if (!entry) {
       unresolvedFiles.push(file);
@@ -104,6 +125,14 @@ export function classifyChangedFiles(input) {
     } else {
       changedSourceEntries.add(entry.name);
     }
+  }
+
+  // The native helper lives outside a workspace package, but its build and
+  // contract are consumed by Daemon. Treat it as a Daemon source input so the
+  // normal build and platform test graph remain selected.
+  if (nativeSurfaceChanged && packages.some((entry) => entry.name === "@ling-stack/daemon")) {
+    changedEntries.add("@ling-stack/daemon");
+    changedSourceEntries.add("@ling-stack/daemon");
   }
 
   if (unresolvedFiles.length > 0) {
@@ -125,7 +154,7 @@ export function classifyChangedFiles(input) {
     }
   }
 
-  const testSupportImporters = findChangedTestSupportImporters({
+  const testSupportImporters = findChangedValidationImporters({
     files,
     packages,
   });
@@ -153,16 +182,18 @@ export function classifyChangedFiles(input) {
     testPackages,
     typecheckPackages,
     dependencyPolicy: files.some((file) => file.endsWith("/package.json") || DEPENDENCY_CHECK_FILES.has(file)),
+    assurance: files.some(isAssurancePath) || sourceEntries.some(name => ASSURANCE_PACKAGES.has(name)),
     daemon: affectedNames.has("@ling-stack/daemon"),
+    macosNative: nativeSurfaceChanged,
     web: affectedNames.has("@ling-stack/web"),
-    reason: changedSourceEntries.size === 0
+    reason: changedEntries.size === 0 ? "offline assurance inputs and validation consumers" : changedSourceEntries.size === 0
       ? "test or test-support changes in affected workspace packages"
       : "workspace source change with transitive consumers",
   };
 }
 
 /** @typedef {{name: string, directory: string, dependencies: string[], hasTestScript: boolean, hasTypecheckScript: boolean, scriptsFingerprint?: string}} PackageEntry */
-/** @typedef {{mode: "docs"|"affected"|"full", files: string[], packages: string[], testPackages: string[], typecheckPackages: string[], dependencyPolicy: boolean, daemon: boolean, web: boolean, reason: string}} CiScope */
+/** @typedef {{mode: "docs"|"affected"|"full", files: string[], packages: string[], testPackages: string[], typecheckPackages: string[], dependencyPolicy: boolean, assurance: boolean, daemon: boolean, macosNative: boolean, web: boolean, reason: string}} CiScope */
 
 /** @param {string} value */
 function normalizePath(value) {
@@ -190,6 +221,11 @@ function isMaintenancePath(file) {
 /** @param {string} file */
 function isTestPath(file) {
   return TEST_PATH_PATTERN.test(file);
+}
+
+/** @param {string} file */
+function isMacosNativePath(file) {
+  return MACOS_NATIVE_PATH_PATTERNS.some((pattern) => pattern.test(file));
 }
 
 /** @param {PackageEntry} entry */
@@ -229,28 +265,38 @@ function collectDependents(name, packages, affected, visited = new Set()) {
 }
 
 /**
- * Test support is a special case because some daemon tests import fixtures from
- * another package's test directory. Resolve relative imports and include the
- * importing package without treating test-only changes as production changes.
+ * Validation imports and module-relative URLs cross package boundaries through
+ * shared fixtures and assurance modules. Follow their transitive consumers without treating
+ * validation-only dependencies as production dependencies.
  */
-function findChangedTestSupportImporters({ files, packages }) {
-  const changedSupportFiles = files.filter((file) => isTestPath(file) && TEST_SUPPORT_PATTERN.test(file));
-  if (changedSupportFiles.length === 0) return new Set();
+function findChangedValidationImporters({ files, packages }) {
+  const affected = new Set(files.filter(file => isAssurancePath(file)
+    || (isTestPath(file) && TEST_SUPPORT_PATTERN.test(file))));
+  if (affected.size === 0) return new Set();
 
   const importers = new Set();
-  const trackedFiles = listRepositoryFiles(repositoryRoot);
-  for (const candidate of trackedFiles) {
-    if (!isTestPath(candidate)) continue;
+  const imports = new Map();
+  for (const candidate of listRepositoryFiles(repositoryRoot)) {
+    if (!isTestPath(candidate) && !isAssurancePath(candidate)) continue;
     const source = readFileIfText(resolve(repositoryRoot, candidate));
     if (source === undefined) continue;
-    const owner = findOwningPackage(candidate, packages);
-    if (!owner) continue;
-    for (const specifier of source.matchAll(/(?:from\s+|import\s*\(|require\s*\()["'](\.[^"']+)["']/gu)) {
-      const resolved = normalizePath(relative(repositoryRoot, resolve(dirname(resolve(repositoryRoot, candidate)), specifier[1])));
-      if (changedSupportFiles.some((changed) => sameImportTarget(changed, resolved))) {
-        importers.add(owner.name);
+    imports.set(candidate, [...source.matchAll(/(?:from\s+|import\s*\(\s*|require\s*\(\s*)["'](\.[^"']+)["']/gu),
+      ...source.matchAll(/new\s+URL\(\s*["'](\.[^"']+)["']\s*,\s*import\.meta\.url\s*\)/gu)]
+      .map(specifier => normalizePath(relative(repositoryRoot, resolve(dirname(resolve(repositoryRoot, candidate)), specifier[1])))));
+  }
+  let expanded;
+  do {
+    expanded = false;
+    for (const [candidate, targets] of imports) {
+      if (!affected.has(candidate) && targets.some(target => [...affected].some(file => sameImportTarget(file, target)))) {
+        affected.add(candidate);
+        expanded = true;
       }
     }
+  } while (expanded);
+  for (const file of affected) {
+    const owner = findOwningPackage(file, packages);
+    if (owner && isTestPath(file)) importers.add(owner.name);
   }
   return importers;
 }
@@ -330,7 +376,9 @@ function buildScope(mode, files, packages, reason) {
     testPackages: mode === "full" ? packages.filter((entry) => entry.hasTestScript && isSupportedTestPackage(entry.directory)).map((entry) => entry.name).sort() : [],
     typecheckPackages: mode === "full" ? packages.filter((entry) => entry.hasTypecheckScript && isSupportedTypecheckPackage(entry.directory)).map((entry) => entry.name).sort() : [],
     dependencyPolicy: mode === "full",
+    assurance: mode === "full",
     daemon: mode === "full" || names.includes("@ling-stack/daemon"),
+    macosNative: mode === "full" || files.some(isMacosNativePath),
     web: mode === "full" || names.includes("@ling-stack/web"),
     reason,
   };
