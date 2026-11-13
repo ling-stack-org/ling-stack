@@ -39,6 +39,7 @@ jobs:
       daemon-matrix: ${{ steps.test-plan.outputs.daemon-matrix }}
       unit-selected: ${{ steps.test-plan.outputs.unit-selected }}
       daemon: ${{ steps.classify.outputs.daemon }}
+      daemon-platforms: ${{ steps.classify.outputs.daemon-platforms }}
       macos-native: ${{ steps.classify.outputs.macos-native }}
       web: ${{ steps.classify.outputs.web }}
     steps:
@@ -93,6 +94,7 @@ jobs:
             "build-selected": String(scope.packages.length > 0),
             "typecheck-selected": String(scope.typecheckPackages.length > 0),
             daemon: String(scope.daemon),
+            "daemon-platforms": JSON.stringify(scope.daemonPlatforms),
             "macos-native": String(scope.macosNative),
             web: String(scope.web),
           };
@@ -111,11 +113,13 @@ jobs:
         id: test-plan
         env:
           SELECTED_TEST_PACKAGES: ${{ steps.classify.outputs.test-packages }}
+          DAEMON_PLATFORMS: ${{ steps.classify.outputs.daemon-platforms }}
         shell: bash
         run: |
           set -euo pipefail
           unit_matrix="$(node scripts/ci/test-shard-plan.mjs \
             --packages="$SELECTED_TEST_PACKAGES" \
+            --daemon-platforms="$DAEMON_PLATFORMS" \
             --timings=.codex-artifacts/ci/timings.json \
             --output=.codex-artifacts/ci/test-plan.json)"
           printf 'unit-matrix=%s\n' "$unit_matrix" >> "$GITHUB_OUTPUT"

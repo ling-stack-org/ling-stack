@@ -91,16 +91,19 @@ export async function loadTimingHints(path) {
   }
 }
 
-export async function createTestPlan(packages, { timings = { suites: {} } } = {}) {
+export async function createTestPlan(packages, { timings = { suites: {} }, daemonPlatforms } = {}) {
   if (!Array.isArray(packages) || packages.some(name => typeof name !== "string")) throw new TypeError("packages must be a string array");
-  // Combined runs reserve nine of twenty slots for macOS shards, native contracts,
-  // typecheck, Web smoke and the unsharded package lane. Isolated suites retain eight shards.
-  const combined = packages.includes("@ling-stack/core") && packages.includes("@ling-stack/daemon");
+  const selectedDaemonPlatforms = normalizeDaemonPlatforms(daemonPlatforms, packages.includes("@ling-stack/daemon"));
+  // Combined Core/Linux-Daemon runs reserve the runner-capacity layout used by
+  // the full matrix. A Darwin-only Daemon plan keeps Core at its isolated count.
+  const combined = packages.includes("@ling-stack/core") && selectedDaemonPlatforms.includes("linux");
   /** @type {Record<string, { platform: string, files: string[], shardCount: number, concurrency: number,
    * timings: Record<string, number>, shards: ReturnType<typeof assignTestShards> }>} */
   const suites = {};
   for (const [name, config] of Object.entries(testSuites)) {
     if (!packages.includes(config.packageName)) continue;
+    if (name === "daemon" && !selectedDaemonPlatforms.includes("darwin")) continue;
+    if (name === "daemon-linux" && !selectedDaemonPlatforms.includes("linux")) continue;
     const shardCount = combined && name === "core" ? 5
       : combined && name === "daemon-linux" ? 6 : config.shardCount;
     const files = await discoverSuiteFiles(config);
@@ -121,6 +124,17 @@ export async function createTestPlan(packages, { timings = { suites: {} } } = {}
     ...Array.from({ length: suites.core?.shardCount ?? 0 }, (_, shard) => ({ suite: "core", shard,
       shardCount: suites.core.shardCount, concurrency: suites.core.concurrency })),
   ] } };
+}
+
+/** @param {unknown} value @param {boolean} daemonSelected @returns {string[]} */
+function normalizeDaemonPlatforms(value, daemonSelected) {
+  if (value === undefined) return daemonSelected ? ["linux", "darwin"] : [];
+  if (!Array.isArray(value) || value.some(platform => platform !== "linux" && platform !== "darwin")) {
+    throw new TypeError("daemonPlatforms must contain only linux or darwin");
+  }
+  const selected = ["linux", "darwin"].filter(platform => value.includes(platform));
+  if (daemonSelected && selected.length === 0) throw new Error("daemonPlatforms cannot be empty when Daemon is selected");
+  return selected;
 }
 
 export function assertSuiteCoverage(suite, discovered) {
@@ -176,7 +190,7 @@ export function parseArguments(argv, allowed) {
 }
 
 async function main() {
-  const args = parseArguments(process.argv.slice(2), ["--packages", "--timings", "--output", "--plan", "--reports"]);
+  const args = parseArguments(process.argv.slice(2), ["--packages", "--daemon-platforms", "--timings", "--output", "--plan", "--reports"]);
   let result;
   if (args["--reports"]) {
     const plan = JSON.parse(await readFile(args["--plan"], "utf8"));
@@ -187,6 +201,7 @@ async function main() {
     console.log(`Verified complete test coverage for ${Object.keys(plan.suites).join(", ")}.`);
   } else {
     result = await createTestPlan(JSON.parse(args["--packages"]), {
+      daemonPlatforms: args["--daemon-platforms"] ? JSON.parse(args["--daemon-platforms"]) : undefined,
       timings: args["--timings"] ? await loadTimingHints(args["--timings"]) : undefined,
     });
     console.log(JSON.stringify(result.unitMatrix));

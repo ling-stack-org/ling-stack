@@ -37,8 +37,12 @@ does not select core/daemon test shards just because a build needs their outputs
 Dependency policy runs for dependency inputs and its own regression tests, not
 for every source/test edit. Typecheck and Linux unit jobs run only for nonempty
 selections. Core test-only changes have eight core entries and no empty packages job;
-daemon-only test changes have no Linux unit entry. Daemon shards and Linux
-restricted-command contracts remain coupled to daemon selection. The standalone
+daemon-only test changes have no Linux unit entry. A Daemon change set made only
+of directly edited test entrypoints follows the platform manifest: Linux-only
+edits plan only the Linux suite and Darwin-only edits plan only the Darwin suite.
+Source, shared fixture, validation-import, unknown-path and full-scope changes
+retain both Daemon platforms. Daemon shards and Linux restricted-command contracts
+remain coupled to daemon selection. The standalone
 macOS helper smoke is selected only for the explicit native sandbox/Seatbelt
 surface; unknown paths and full-scope inputs still select it. A source change can
 select additional consumers, so daemon source may still need the CLI unit entry.
@@ -90,7 +94,9 @@ a requested package via `--if-present`.
   and 166 native/platform files to
   four `macos-26` shards with three workers. Full-scope runs add the separate
   native smoke as a fifth macOS job; ordinary Daemon changes use four macOS jobs,
-  and available concurrency is controlled by GitHub. Kimi Host read/terminal, delegation production-tool-surface, engine
+  while direct test-only edits can omit the untouched platform. Source and shared
+  validation changes retain both platforms, and available concurrency is controlled
+  by GitHub. Kimi Host read/terminal, delegation production-tool-surface, engine
   lifecycle installation, and workflow conflict/isolate-delivery fixtures retain
   an exclusive phase on their assigned platform because they create many native,
   process, or Git-backed resources. The Kimi owned-execution, repository-fence,
@@ -104,9 +110,11 @@ a requested package via `--if-present`.
   union must equal fresh daemon discovery; new, missing, duplicated or stale
   assignments fail before execution. Native source/fixture contract checks prevent
   silently moving Darwin cases to Linux.
-- Combined Core/Daemon plans use eleven Linux shards and four macOS shards.
-  Full-scope runs add the standalone native smoke, so the product wave fits twenty
-  runner slots and five macOS slots; ordinary Daemon changes omit that extra job.
+- Combined Core/Daemon plans use eleven Linux shards and four macOS shards when both
+  Daemon platforms are selected. A Linux-only Daemon test plan keeps the five Core
+  and six Linux shard layout; a Darwin-only plan restores eight Core shards and
+  omits the Linux Daemon suite. Full-scope runs add the standalone native smoke,
+  so the complete product wave fits twenty runner slots and five macOS slots.
   Available capacity is controlled by GitHub and follows its
   [concurrency limits](https://docs.github.com/en/actions/reference/limits#job-concurrency-limits-for-github-hosted-runners).
   Web smoke starts independently after the build. Other workflows can still consume shared

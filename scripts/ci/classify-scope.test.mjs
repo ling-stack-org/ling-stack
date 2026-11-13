@@ -209,8 +209,29 @@ test("daemon source changes include CLI but do not pull Web", () => {
   const scope = classify(["packages/daemon/src/index.ts"]);
   assert.deepEqual(scope.packages, ["@ling-stack/cli", "@ling-stack/daemon"]);
   assert.equal(scope.daemon, true);
+  assert.deepEqual(scope.daemonPlatforms, ["linux", "darwin"]);
   assert.equal(scope.macosNative, false);
   assert.equal(scope.web, false);
+});
+
+test("direct Daemon test changes use the assigned platform only", () => {
+  const linux = classify(["packages/daemon/test/runtime-supervisor.test.mjs"]);
+  assert.deepEqual(linux.daemonPlatforms, ["linux"]);
+  const darwin = classify(["packages/daemon/test/macos-native-command.test.mjs"]);
+  assert.deepEqual(darwin.daemonPlatforms, ["darwin"]);
+  const mixed = classify(["packages/daemon/test/runtime-supervisor.test.mjs", "packages/daemon/test/macos-native-command.test.mjs"]);
+  assert.deepEqual(mixed.daemonPlatforms, ["linux", "darwin"]);
+});
+
+test("Daemon source and shared validation inputs retain both platforms", () => {
+  for (const files of [
+    ["packages/daemon/src/index.ts", "packages/daemon/test/runtime-supervisor.test.mjs"],
+    ["packages/daemon/test/runtime-supervisor.test.mjs", "packages/daemon/test/test-support/sqlite-workspace-fixture.ts"],
+    ["packages/daemon/test/fixtures/shared-fixture.mjs"],
+  ]) {
+    const scope = classify(files);
+    assert.deepEqual(scope.daemonPlatforms, ["linux", "darwin"], files.join(", "));
+  }
 });
 
 test("macOS helper smoke follows explicit native surface paths", () => {
@@ -248,6 +269,7 @@ test("test-only changes keep the direct package scope", () => {
   const scope = classify(["packages/daemon/test/runtime-supervisor.test.mjs"]);
   assert.deepEqual(scope.packages, ["@ling-stack/daemon"]);
   assert.deepEqual(scope.testPackages, ["@ling-stack/daemon"]);
+  assert.deepEqual(scope.daemonPlatforms, ["linux"]);
   assert.equal(scope.macosNative, false);
   assert.match(scope.reason, /test/);
 });

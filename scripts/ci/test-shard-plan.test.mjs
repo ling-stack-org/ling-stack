@@ -26,6 +26,20 @@ test("core and daemon plans preserve full discovery exactly once with dynamic co
   }
 });
 
+test("platform-scoped daemon plans omit the untouched platform and keep core capacity", async () => {
+  const linux = await createTestPlan(["@ling-stack/core", "@ling-stack/daemon"], { daemonPlatforms: ["linux"] });
+  assert.deepEqual(Object.keys(linux.suites), ["core", "daemon-linux"]);
+  assert.equal(linux.suites.core.shardCount, 5);
+  assert.equal(linux.suites["daemon-linux"].shardCount, 6);
+  assert.ok(!linux.daemonMatrix.include.some(entry => entry.suite === "daemon"));
+
+  const darwin = await createTestPlan(["@ling-stack/core", "@ling-stack/daemon"], { daemonPlatforms: ["darwin"] });
+  assert.deepEqual(Object.keys(darwin.suites), ["core", "daemon"]);
+  assert.equal(darwin.suites.core.shardCount, 8);
+  assert.equal(darwin.suites.daemon.shardCount, 4);
+  assert.ok(!darwin.daemonMatrix.include.some(entry => entry.suite === "daemon-linux"));
+});
+
 test("only selected unsharded packages create the packages job", async () => {
   for (const name of ["@ling-stack/web", "@ling-stack/cli", "@ling-stack/mobile"]) {
     const plan = await createTestPlan([name, "@ling-stack/daemon"]);
@@ -108,8 +122,8 @@ test("coverage rejects omissions, duplicate files, changed discovery and wrong s
   assert.throws(() => assertSuiteCoverage(valid, [...files, "test/new.test.mjs"]), /coverage_mismatch/u);
 });
 
-async function reportFixture() {
-  const plan = await createTestPlan(["@ling-stack/core", "@ling-stack/daemon"]);
+async function reportFixture(options = {}) {
+  const plan = await createTestPlan(["@ling-stack/core", "@ling-stack/daemon"], options);
   const reports = Object.entries(plan.suites).flatMap(([suite, entry]) => entry.shards.map((bucket, shard) => ({
     version: 1, suite, shard, shardCount: entry.shardCount, platform: entry.platform, complete: true,
     results: bucket.files.map((file, index) => ({ file, status: "passed", durationMs: index + 1 })),
@@ -146,11 +160,15 @@ test("the plan CLI publishes a parseable matrix and the aggregate CLI verifies d
   const script = fileURLToPath(new URL("./test-shard-plan.mjs", import.meta.url));
   const path = join(root, "test-plan.json");
   const matrix = JSON.parse(execFileSync(process.execPath, [script, '--packages=["@ling-stack/core","@ling-stack/daemon"]',
+    '--daemon-platforms=["linux"]',
     `--output=${path}`], { encoding: "utf8" }));
   const plan = JSON.parse(await readFile(path, "utf8"));
   assert.deepEqual(matrix, plan.unitMatrix);
-  const fixture = await reportFixture();
-  assert.deepEqual(plan, fixture.plan);
+  const fixture = await reportFixture({ daemonPlatforms: ["linux"] });
+  assert.deepEqual(plan.unitMatrix, {
+    include: Array.from({ length: 5 }, (_, shard) => ({ suite: "core", shard, shardCount: 5, concurrency: 2 })),
+  });
+  assert.deepEqual(Object.keys(plan.suites), ["core", "daemon-linux"]);
   const reports = join(root, "reports");
   await mkdir(join(reports, "logs"), { recursive: true });
   await Promise.all(fixture.reports.map(report => writeFile(join(reports, `${report.suite}-${report.shard}.json`), JSON.stringify(report))));
