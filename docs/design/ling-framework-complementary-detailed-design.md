@@ -1,8 +1,8 @@
 # Ling 框架补强详细设计
 
-Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A/F4-01, F3-B read-only admission evidence, F3-02 review-only trial preflight, and the Host readiness review gate entered main at `edb820f0` (PR #690), with the current main documentation refresh at `878e422a` (PR #691); F3-B real trial and F5 rerun remain blocked/design contracts
+Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A/F4-01, F3-B read-only admission evidence, F3-02 review-only trial preflight, and the Host readiness review gate entered main at `edb820f0` (PR #690), with `main@5dc138493` including the later CI merge; F5 A17 now has a pure contract preflight slice, while real F3-B trial and node rerun execution remain blocked
 Owner: Ling framework maintainers; evaluation and SDK implementation owners
-Last verified: 2026-11-12
+Last verified: 2026-11-13
 Document type: reference / technical design
 Canonical replacement: none; does not replace existing evaluation, runtime, or API contracts
 Code and test anchors: section 12 and the implementation record; live evidence is read-only, Host readiness is review-only, and no real task or GUI acceptance is claimed
@@ -16,8 +16,8 @@ Code and test anchors: section 12 and the implementation record; live evidence i
 - **现有合同**：已在核查基线中存在的函数、字段与行为。
 - **已实现私有格式**：F1 task/suite、offline observation 与报告、F2 consumer 报告、F3-A fixture 执行证据与 F4-01 只读诊断报告，只用于本工具链。
 - **已实现只读接入合同**：F3-B 的 Daemon `FrameworkAssuranceEvidenceResponse`、API client 读取和 framework-assurance 关联适配；它提供准入证据，不授予真实执行许可。
-- **仍拟新增接入合同**：F3-B 的真实 Provider/evaluation 完整闭环与 F5 节点重跑，尚无完整运行验收。
-- **未来约束**：节点级重跑的设计要求，没有授权本轮修改执行链路。
+- **仍拟新增接入合同**：F3-B 的真实 Provider/evaluation 完整闭环与 F5 节点重跑执行，尚无完整运行验收。
+- **已实现合同前置**：F5-01 的 `node-rerun` 纯解析与 A17 fail-closed 评估只验证 intent 和 Host observation，不创建执行身份，也不授权执行。
 
 所有新格式采用 `schemaVersion: 1`。F1、F3-A 和 F4-01 由显式解析器拒绝未知 schema、未知字段和不合法枚举；F3-B 的 Host 响应和 live consumer 也遵循相同原则。F3-A/F4-01 格式是本工具链私有报告，F3-B 的只读响应是明确的 contracts DTO。
 
@@ -145,6 +145,8 @@ assertions
 审查期间，为通过完整提交范围的空白检查，T03 patch 删除了一个不必要的空白上下文行；schema 与 cwd 的注入改动不变，T03 和 suite 曾递增到 `2`。随后整合主线锁更新，旧锁摘要在真实预检中被正确拒绝；历史 v3 将三任务源码基线和锁摘要一起冻结，当前 v4 再次跟随最新主线锁更新，T01/T02 `taskVersion` 为 `3`、T03 为 `4`，`suiteVersion` 为 `4`，默认索引为 `suites/framework-v4.json`。v4 套件字节摘要为 `cd22fb7efda7585107a39b4bda195bcaf058be1a37e6e9416afd1da9bc8fab04`。源码文件、注入内容、schema、规则和 profile 未变；历史报告和 v3 套件不改写，也不作为 v4 验收证据。
 
 最新主线再次只改变了依赖锁：`main@c156901c6c0bb97570ba56f39ec0f731872f56d9` 的 `pnpm-lock.yaml` 摘要为 `49c509936672cbe4ce9118a4bf3907c4b32eea1babfc6dd74dec295c526f4d10`，四个源码 pin 与 v4 保持一致。按版本规则保留 v4，并生成当前默认的 v5：T01/T02/T03 任务版本为 `4/4/5`，`suiteVersion` 为 `5`，默认索引为 `suites/framework-v5.json`，套件字节摘要为 `69129d529f41cdad17e9da1a706c4a1f7d3f00b7c4d8b59d11268faaf329a303`。该更新只重绑定冻结来源，不改变任务规则、控制输入或 F1 的零模型边界。
+
+当前分支新增 CLI 对 `@ling-stack/contracts` 的 workspace 依赖，锁文件摘要随之变为 `0d4fa92e297e8820140bb7c23d1b689d6d75038e74b858ac9c2851584909b0af`。按同一规则保留 v5，并生成默认 v6：T01/T02/T03 任务版本为 `5/5/6`，冻结来源为当前主线 `4f2474d29b814a50ab44b56baabbb9f33f1e7d4b`，默认索引为 `suites/framework-v6.json`，套件字节摘要为 `9a59dc5089b7503360d445ca3b940a759ddede825e2c348878ce77e568939818`，任务规则、控制输入和 F1 的零模型边界不变。
 
 ## 4. F1 离线流程
 
@@ -450,9 +452,9 @@ collector 的观察结果与原始响应分别复制，修改一侧不会同步�
 
 不公开 claimToken、resume handle、私有输入、artifact body。新增报告只引用允许字段；详细失败日志仍由原权限边界控制。集成测试覆盖“读取不启动执行”的反例，不只验证返回 JSON。
 
-## 9. F5 节点重跑未来合同
+## 9. F5 节点重跑合同
 
-本节不授权实现。第一轮不新增 rerun API、按钮、状态、数据库列或审批动作。
+本节的 F5-01 只实现合同前置，不新增 rerun API、按钮、状态、数据库列或审批动作。
 
 ### 9.1 将来必须满足的准入
 
@@ -469,7 +471,16 @@ collector 的观察结果与原始响应分别复制，修改一侧不会同步�
 - 修改后的图是新版本，不直接修改已接受的执行图来绕过依赖检查。
 - 控制平面只提交意图，Host 再校验；不能把 UI 可点击或诊断 fence 当执行许可。
 - 取消、重启、重复点击和审批失效的语义必须与并发拥有方联合验收。
-- 实现方案、迁移需求及 UI 另立任务。相关批准前，F5 状态始终为设计合同，不计入已实现能力。
+- 实现方案、迁移需求及 UI 另立任务；F5-01 不改变“真实节点重跑未实现”的状态。
+
+### 9.3 F5-01 合同前置实现
+
+`packages/contracts/src/node-rerun.ts` 提供两个纯边界：
+
+- `parseNodeRerunIntent()` 只接受带有完整 Run/Attempt/node、图版本、输入 artifact、依赖闭包和源快照摘要的严格 JSON；不接受 prompt、cwd、旧 approval、旧 fence 或 caller 提供的目标身份。
+- `evaluateNodeRerunAdmission()` 将 intent 与 Host observation 做一次 fail-closed 比对。只有源 Run 已结束、源 Attempt 已停止、lease/fence 已释放、效果已结算、依赖闭包完整、策略指纹当前且权限有效时，才返回 `eligible_for_host_admission`；结果始终带有 `executionAuthorized: false`，并要求 Host 重新校验和生成新身份。
+
+该切片不读取 Store、不写数据库、不创建 Run/Attempt、不调用 Provider、不发起审批，也不接 UI/API。它为 A17 提供可独立回归的合同边界，Host 执行接线和真实运行验收仍需后续单独任务。
 
 ## 10. 验收矩阵
 
@@ -491,7 +502,7 @@ collector 的观察结果与原始响应分别复制，修改一侧不会同步�
 | A14 | F3-B | 所有子调用和 grader 纳入预算；未知用量、取消未停、权限变化停止派发 |
 | A15 | F3-B | 串行先验收；并发对比只在对应能力/隔离/汇合及恢复验收后进行 |
 | A16 | F4 | 冷工作区、错 lineage、分页变化正确呈现；诊断零执行副作用与敏感字段泄露 |
-| A17 | F5 设计 | 停止确认、冻结输入、依赖闭包、新身份、新审批及未知副作用阻断齐全 |
+| A17 | F5-01 合同前置 | 停止确认、冻结输入、依赖闭包、新身份、新审批及未知副作用阻断齐全 |
 | A18 | 全阶段 | 原 WIP、共享运行数据和锁文件未被越界修改；文档同步真实交付状态 |
 
 ## 11. 错误、兼容与未决项
@@ -524,3 +535,4 @@ collector 的观察结果与原始响应分别复制，修改一侧不会同步�
 - macOS native boundary：`packages/daemon/src/runtime/sandbox/native-process-launch.ts` 与 `packages/daemon/test/native-process-boundary.test.mjs`；私有状态规则、合法 workspace 写入、Kimi metadata、relay 和进程回收分别保留独立边界。
 - 新工具：`scripts/framework-assurance/`；冻结输入：`fixtures/framework-assurance/`；实现测试：`offline.test.mjs`、`cli.test.mjs`、`sdk-consumer.test.mjs`、`execution-evidence.test.mjs`、`diagnostics.test.mjs`、`trial-preflight.test.ts` 与 `host-readiness.test.ts`；F3-02 manifest 位于 `fixtures/framework-assurance/trials/t01-review.json`，Host readiness 合成形状位于 `fixtures/framework-assurance/execution-evidence/host-ready-shape.json`。
 - F3-B 只读接入：`packages/contracts/src/framework-assurance.ts`、`packages/daemon/src/features/runs/assurance-evidence.ts`、`packages/daemon/src/server/routes.ts`、`packages/api-client/src/endpoints/runs.ts`；回归为 `packages/daemon/test/assurance-evidence-api.test.mjs`、`assurance-evidence-isolation.test.mjs`、`assurance-evidence-budget.test.ts` 和 API client 的 `harness-diagnostics.test.mjs`。
+- F5-01 合同前置：`packages/contracts/src/node-rerun.ts`、`packages/contracts/test/node-rerun.test.ts`；合同包的 TypeScript 测试通过 `packages/contracts/tsconfig.test.json` 纳入类型检查和 `test:ci` 发现。

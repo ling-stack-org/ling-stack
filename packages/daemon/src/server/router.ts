@@ -385,7 +385,7 @@ import { RunControlService } from "../run-control.js";
 import { allowLocalServiceRequest, allowLocalWorkspaceRequest } from "../shared/local-workspace-access.js";
 import { setCorsHeaders, writeJson } from "../shared/response.js";
 import { readOptionalJsonBody } from "../shared/request.js";
-import { parseChannelWorkflowOrchestrationRequest } from "@ling-stack/contracts";
+import { LING_DAEMON_PROTOCOL_VERSION, LING_PRODUCT_VERSION, parseChannelWorkflowOrchestrationRequest } from "@ling-stack/contracts";
 import { selectWorkflowIsolatedExecution, type WorkflowIsolationHost } from "../features/channels/workflow-isolation-selection.js";
 import { handleWorkflowConflictRecovery } from "../features/channels/workflow-conflict-recovery-route.js";
 import { handleStartupStatus } from "../startup/routes.js";
@@ -642,6 +642,8 @@ export async function routeRequest(
     writeJson(response, 200, {
       ok: true,
       service: "ling-stack-daemon",
+      productVersion: LING_PRODUCT_VERSION,
+      protocolVersion: LING_DAEMON_PROTOCOL_VERSION,
       defaultWorkspaceCwd: config.defaultWorkspaceCwd,
       readiness: startupState.snapshot(config.defaultWorkspaceCwd)?.state ?? "starting",
       features: {
