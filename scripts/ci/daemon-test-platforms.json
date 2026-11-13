@@ -38,6 +38,7 @@
     "test/assurance-evidence-budget.test.ts",
     "test/assurance-evidence-diagnostics.test.ts",
     "test/assurance-evidence-errors.test.ts",
+    "test/assurance-evidence-extended.test.ts",
     "test/assurance-evidence-parser.test.ts",
     "test/assurance-evaluation-association.test.ts",
     "test/assurance-evaluation-composition.test.ts",
