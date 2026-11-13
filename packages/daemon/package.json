@@ -53,6 +53,7 @@
   },
   "devDependencies": {
     "@babel/parser": "8.1.0",
+    "@ling-stack/conversation-ui-core": "workspace:*",
     "@types/pdf-parse": "1.1.5",
     "@types/proper-lockfile": "4.1.4",
     "@types/ws": "^8.5.13",

@@ -47,6 +47,14 @@ export class SqliteRunnerContinuationStore {
     return row ? mapRunnerContinuation(row as Record<string, SQLOutputValue>) : undefined;
   }
 
+  listRunnerContinuations(runId: string): readonly RunnerContinuationV1[] {
+    validateIdentity(runId, "run id");
+    return this.context.database
+      .prepare(`${runnerContinuationSelectSql("WHERE run_id = ?")} ORDER BY generation ASC, created_at ASC, id ASC`)
+      .all(runId)
+      .map((row) => mapRunnerContinuation(row as Record<string, SQLOutputValue>));
+  }
+
   listClaimableRunnerContinuations(input: ListClaimableRunnerContinuationsInput): readonly RunnerContinuationV1[] {
     assertTimestamp(input.now);
     const limit = input.limit ?? 100;
