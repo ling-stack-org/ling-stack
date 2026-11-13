@@ -119,6 +119,23 @@ export class RunStoreRegistry {
     return undefined;
   }
 
+  /** Observation only: resolve an already-open Store without initialization or recovery. */
+  findInitializedStoreForRun(runId: string, cwd?: string): RunStore | undefined {
+    if (this.closed) throw new Error("Run Store registry is closed; observation is unavailable.");
+    if (cwd) {
+      const store = this.getInitializedStore(cwd);
+      return store?.getRun(runId) ? store : undefined;
+    }
+    const remembered = this.storesByRunId.get(runId);
+    if (remembered?.getRun(runId)) return remembered;
+    for (const store of this.storesByCwd.values()) {
+      if (store.getRun(runId)) {
+        return store;
+      }
+    }
+    return undefined;
+  }
+
   findStoreForWorkflow(workflowId: string, cwd?: string): RunStore | undefined {
     for (const store of this.storesByCwd.values()) {
       if (store.getChannelWorkflow(workflowId)) {

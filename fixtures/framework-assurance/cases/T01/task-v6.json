@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "taskId": "T01",
+  "taskVersion": "5",
+  "category": "analysis_readonly",
+  "source": {
+    "repository": "ling-stack",
+    "commit": "dd3fa912a09f0494c9899090e861dfa2058e5553",
+    "lockSha256": "0d4fa92e297e8820140bb7c23d1b689d6d75038e74b858ac9c2851584909b0af",
+    "files": [
+      {
+        "path": "packages/core/src/harness/evaluation-rule-grader.ts",
+        "sha256": "e2a0e9eeda75bc46b54dac88bfc585b01a0bd0f5188bfee6aee8c77bf89295db",
+        "mediaType": "text/plain"
+      }
+    ]
+  },
+  "provenance": {
+    "kind": "source_analysis",
+    "description": "Read-only source analysis of the existing deterministic array contains rule. This is not a historical regression.",
+    "anchors": [
+      "packages/core/src/harness/evaluation-rule-grader.ts"
+    ],
+    "injection": null
+  },
+  "prompt": {
+    "path": "cases/T01/prompt.txt",
+    "sha256": "c3c1787f6beff88b7ffd28670425664b97953db031c1d497bd4013c9ddf608f0",
+    "mediaType": "text/plain"
+  },
+  "validationProfile": {
+    "id": "ling-assurance-t01",
+    "version": "1",
+    "artifact": {
+      "path": "cases/T01/profile.json",
+      "sha256": "66b1bf54b662a33557ee713aaeddd725389eb938ccad90ce505eb7e495152687",
+      "mediaType": "application/json"
+    }
+  },
+  "ruleCase": {
+    "path": "cases/T01/rule.json",
+    "sha256": "242c5de3e03c6a08598a3a574a000435e1b31dc9a91389d8f82356362cc518cd",
+    "mediaType": "application/json"
+  },
+  "expected": {
+    "path": "cases/T01/expected.json",
+    "sha256": "2709611907f5761cd61a7b9845137b6b2e855c64c2097d5024207b018983a9cc",
+    "mediaType": "application/json"
+  },
+  "controls": {
+    "correct": {
+      "candidate": {
+        "path": "controls/T01-correct.json",
+        "sha256": "2709611907f5761cd61a7b9845137b6b2e855c64c2097d5024207b018983a9cc",
+        "mediaType": "application/json"
+      },
+      "expectedAssessment": "pass"
+    },
+    "incorrect": {
+      "candidate": {
+        "path": "controls/T01-incorrect.json",
+        "sha256": "3cf3e543c1f76524edeb694ede1b39dd5977e56292dd5460c0279364717b8c63",
+        "mediaType": "application/json"
+      },
+      "expectedAssessment": "fail"
+    },
+    "missing": {
+      "candidate": {
+        "path": "controls/T01-missing.json",
+        "sha256": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356",
+        "mediaType": "application/json"
+      },
+      "expectedAssessment": "invalid_evidence"
+    }
+  },
+  "environment": {
+    "node": ">=22.22.1",
+    "pnpm": "10.0.0",
+    "typescript": "7.0.2",
+    "platform": "record_at_execution"
+  },
+  "capabilityRequirements": [
+    "analysis_readonly"
+  ],
+  "requiredEvidence": [
+    "analysis"
+  ],
+  "limits": {
+    "timeoutMs": 60000,
+    "maxConcurrent": 1,
+    "maxRequests": 0,
+    "maxAmount": 0,
+    "currency": "USD",
+    "unknownUsagePolicy": "stop"
+  }
+}

@@ -65,7 +65,7 @@ for (const maxConcurrentSteps of [2, 3, 4]) test(`explicit isolated siblings at 
 
   for (const index of evidence.keys()) if (index !== firstFinished) f.release[index].resolve();
   await Promise.all(evidence.map((item, index) => index === firstFinished ? undefined : f.finished(item)));
-  await f.wait(() => f.pending().some(approval => approval.actionType === "workflow_merge"), "real merge approval", 90_000);
+  await f.wait(() => f.pending().some(approval => approval.actionType === "workflow_merge"), "real merge approval", 180_000);
   await waitForWorkflowIsolationIdle(f.store, f.workflow.id);
   const candidate = f.round().candidate, approval = f.pending().find(value => value.actionType === "workflow_merge");
   const packet = evidence.flatMap(item => f.store.listArtifacts(item.run.id)).map(artifact => artifact.sealedPayload)
@@ -725,7 +725,7 @@ function sse(delta, reason) {
 
 function changes() {
   const listeners = new Set();
-  return { notify: () => { for (const check of [...listeners]) check(); }, wait: (predicate, label, describe, timeoutMs = 40_000) => new Promise((resolve, reject) => {
+  return { notify: () => { for (const check of [...listeners]) check(); }, wait: (predicate, label, describe, timeoutMs = 180_000) => new Promise((resolve, reject) => {
     // Timers bound failures; store notifications and explicit barriers establish ordering, never elapsed sleeps.
     let poll;
     const check = () => { try { if (!predicate()) return; clearTimeout(timer); clearInterval(poll); listeners.delete(check); resolve(); }

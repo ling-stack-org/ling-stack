@@ -1,11 +1,11 @@
 # Ling 框架补强详细设计
 
-Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A fixture evidence adapter and F4-01 read-only diagnostics report implemented on an independent branch; F3-B live execution and F5 rerun remain design contracts
+Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A/F4-01, F3-B read-only admission evidence, F3-02 review-only trial preflight, and the Host readiness review gate entered main at `edb820f0` (PR #690), with the current main documentation refresh at `878e422a` (PR #691); F3-B real trial and F5 rerun remain blocked/design contracts
 Owner: Ling framework maintainers; evaluation and SDK implementation owners
-Last verified: 2026-11-09
+Last verified: 2026-11-12
 Document type: reference / technical design
 Canonical replacement: none; does not replace existing evaluation, runtime, or API contracts
-Code and test anchors: section 12 and the implementation record; offline, fixture evidence, and read-only diagnostics acceptance only
+Code and test anchors: section 12 and the implementation record; live evidence is read-only, Host readiness is review-only, and no real task or GUI acceptance is claimed
 
 上层边界见[总体设计](ling-framework-complementary-design.md)，执行顺序见[实现计划书](ling-framework-complementary-implementation-plan.md)。
 
@@ -14,11 +14,12 @@ Code and test anchors: section 12 and the implementation record; offline, fixtur
 本文区分四类内容：
 
 - **现有合同**：已在核查基线中存在的函数、字段与行为。
-- **已实现私有格式**：F1 task/suite、offline observation 与报告、F2 consumer 报告、F3-A fixture 执行证据与 F4-01 只读诊断报告，只用于本工具链；不是新增 daemon 公共 API。
-- **拟新增接入合同**：F3-B 真实执行证据接线与 F5 节点重跑，尚无运行实现。
+- **已实现私有格式**：F1 task/suite、offline observation 与报告、F2 consumer 报告、F3-A fixture 执行证据与 F4-01 只读诊断报告，只用于本工具链。
+- **已实现只读接入合同**：F3-B 的 Daemon `FrameworkAssuranceEvidenceResponse`、API client 读取和 framework-assurance 关联适配；它提供准入证据，不授予真实执行许可。
+- **仍拟新增接入合同**：F3-B 的真实 Provider/evaluation 完整闭环与 F5 节点重跑，尚无完整运行验收。
 - **未来约束**：节点级重跑的设计要求，没有授权本轮修改执行链路。
 
-所有新格式采用 `schemaVersion: 1`。F1、F3-A 和 F4-01 由显式解析器拒绝未知 schema、未知字段和不合法枚举；F3-B/F5 接入遵循相同原则。F3-A/F4-01 格式是本工具链私有报告，不是新增 daemon DTO。
+所有新格式采用 `schemaVersion: 1`。F1、F3-A 和 F4-01 由显式解析器拒绝未知 schema、未知字段和不合法枚举；F3-B 的 Host 响应和 live consumer 也遵循相同原则。F3-A/F4-01 格式是本工具链私有报告，F3-B 的只读响应是明确的 contracts DTO。
 
 首批不新增持久化表、不更改 Run/Attempt 状态机，不把任务元数据塞进已有规则 case。
 
@@ -31,8 +32,10 @@ scripts/framework-assurance/
   preflight.mjs            # 纯离线预检与校准编排
   grader.mjs               # 源码加载两个既有 Core 纯函数模块
   evidence.mjs             # 离线观察格式
-  execution-evidence.mjs   # F3-A fixture 证据与可信绑定适配
+  execution-evidence.mjs   # F3-A fixture 与 F3-B live evidence 适配
   diagnostics.mjs          # F4-01 只读诊断分页报告
+  trial-preflight.mjs      # F3-02 trial manifest 与外置资源准入预检
+  host-readiness.mjs       # F3-B Host evidence 五域 review gate
   report.mjs               # JSON/Markdown 报告与可比性检查
   output.mjs               # 外部目录校验与不覆盖式原子发布
   sdk-consumer.mjs         # producer 产物审计、仓外消费
@@ -43,6 +46,8 @@ fixtures/framework-assurance/
   controls/                # 已知正确、错误、缺证据的合成输入
   sdk-consumer/            # 仓外消费者模板；不是 workspace 包
   execution-evidence/      # F3-A 的 Run/WorkUnit/Attempt fixture
+  trials/                  # F3-02 review-only trial manifest
+  execution-evidence/host-ready-shape.json # Host readiness 合成形状
 ```
 
 F1/F2 路径均已实现，F2 经统一 CLI 入口调用独立 consumer 模块。没有为了脚本便利新增 Core 公共出口或复制 grader。输出默认写入新临时根，显式 `--output` 必须在实施 checkout 外，并在创建目录前检查词法路径与最近已存在祖先的真实位置，拒绝 `.git`、`.ling-stack`、`node_modules` 及符号链接解析后落入上述位置的目录。不提交真实日志、用户数据库、tarball 或模型输出。
@@ -52,9 +57,11 @@ F1/F2 路径均已实现，F2 经统一 CLI 入口调用独立 consumer 模块�
 | `preflight` | suite 路径 / 预检 JSON | 解析、摘要、路径、引用与工具链声明检查 | 派发 Run、执行任务命令、创建 Store |
 | `calibrate` | 已预检 suite / 校准 JSON | 通过已有确定性 grader 检验合成正反控制 | 执行候选代码、调用 Provider |
 | `report` | 已验证的观察文件 / JSON 与 Markdown | 校验来源、汇总、比较与脱敏 | 自动补跑失败任务、猜测缺失费用 |
+| `trial-preflight` | trial manifest、外置资源根 / JSON 与 Markdown | 冻结 T01 输入、预算、停止规则、安全 profile，检查目录、端口和资源余量 | 派发 Run、创建 Store、启动 Provider、模型、daemon 或授予执行权限 |
+| `host-readiness` | 已捕获的 Host evidence JSON / JSON 与 Markdown | 校验 lifecycle、completion、budget、isolation、admission 五域及跨域 lineage，输出 review gate | recovery、取消、派发 Run、创建 Store、启动 Provider、模型、daemon 或授予执行权限 |
 | `sdk-consumer` | 当前 producer 输入 / 消费报告 | 在实施工作区串行构建，在隔离临时目录打包、安装本地包、运行固定测试 | 根目录安装、源码 fallback、启动真实 daemon |
 
-CLI 入口为 `node scripts/framework-assurance/index.mjs <command>`。`preflight/calibrate` 接受 `--suite`（相对 fixture 根）；`report` 必须指定 `--input`，可加 `--compare` 和唯一变量 `--variable model|executionStrategy`；各命令可用 `--output`。根脚本有 `assurance:offline`、`assurance:sdk`、`test:assurance`。F3 不得在这里增加绕过 Host 的 `run-shell` 或隐式付费模式。
+CLI 入口为 `node scripts/framework-assurance/index.mjs <command>`。`preflight/calibrate` 接受 `--suite`（相对 fixture 根）；`trial-preflight` 接受 `--trial`（相对 fixture 根）和 checkout 外的绝对 `--resource-root`；`report` 必须指定 `--input`，可加 `--compare` 和唯一变量 `--variable model|executionStrategy`；`host-readiness` 必须指定已捕获的 `--input`；各命令可用 `--output`。根脚本有 `assurance:offline`、`assurance:sdk`、`test:assurance`。F3 不得在这里增加绕过 Host 的 `run-shell` 或隐式付费模式。
 
 退出码：`0` 表示本命令成功，`1` 表示校准或消费验收失败，`2` 表示输入、环境或前置条件不满足。`report` 成功生成含失败或不可比样本的报告仍返回 `0`；报告生成成功与被测对象成功分开。离线进程测试封锁网络、任务子进程和 SQLite 加载，仅允许读取源码的 `git cat-file blob`。
 
@@ -139,6 +146,8 @@ assertions
 
 最新主线再次只改变了依赖锁：`main@c156901c6c0bb97570ba56f39ec0f731872f56d9` 的 `pnpm-lock.yaml` 摘要为 `49c509936672cbe4ce9118a4bf3907c4b32eea1babfc6dd74dec295c526f4d10`，四个源码 pin 与 v4 保持一致。按版本规则保留 v4，并生成当前默认的 v5：T01/T02/T03 任务版本为 `4/4/5`，`suiteVersion` 为 `5`，默认索引为 `suites/framework-v5.json`，套件字节摘要为 `69129d529f41cdad17e9da1a706c4a1f7d3f00b7c4d8b59d11268faaf329a303`。该更新只重绑定冻结来源，不改变任务规则、控制输入或 F1 的零模型边界。
 
+当前分支新增 CLI 对 `@ling-stack/contracts` 的 workspace 依赖，锁文件摘要随之变为 `0d4fa92e297e8820140bb7c23d1b689d6d75038e74b858ac9c2851584909b0af`。按同一规则保留 v5，并生成默认 v6：T01/T02/T03 任务版本为 `5/5/6`，冻结来源为 `dd3fa912a09f0494c9899090e861dfa2058e5553`，默认索引为 `suites/framework-v6.json`，套件字节摘要为 `78e92e3384c3844ac5b1b6b485dbb751df74e1d377a9727434d047354d704998`。任务规则、控制输入和 F1 的零模型边界不变。
+
 ## 4. F1 离线流程
 
 ```text
@@ -186,7 +195,7 @@ assertions
 | 资源观察 | 已知调用和用量、未知项、来源、币种，分别区分任务和 grader |
 | 证据类型 | `synthetic_control`、`fixture_replay`、`live_execution`，不可互相冒充 |
 
-本批将这些字段收敛为 `scripts/framework-assurance/execution-evidence.mjs` 的 fixture 格式，并以独立 `trusted-binding` 作为可信侧输入。它不修改既有数据库 DTO，也不从候选证据推导可信绑定；真实 Host 读取和封存接口仍留给 F3-B 前的独立任务。若无法通过现有公开内部接口取得必要关联，不直接访问其他模块私有 SQLite 表。
+本批将这些字段收敛为 `scripts/framework-assurance/execution-evidence.mjs` 的 fixture 格式，并以独立 `trusted-binding` 作为可信侧输入。当前增量增加了 Daemon 的只读 Host 投影和 API client 关联适配；它仍不执行 Store 初始化、recovery、Run 派发或 evaluation 判分，也不从候选证据推导可信绑定。真实 Provider、evaluation 封存和完整试点验收仍留给 F3-B 后续阶段。若无法通过现有公开内部接口取得必要关联，不直接访问其他模块私有 SQLite 表。
 
 ### 5.3 可信验证边界
 
@@ -211,18 +220,108 @@ assertions
 
 映射源任务状态、evaluation 状态和客观结果时分别保留。现有 evaluation 的 `completed` 只说明判定过程结束，不自动代表 verdict 成功。
 
+### 5.5 F3-B 准入证据前置实现
+
+当前实现把真实 Host 证据接入限定为只读观察边界：
+
+- Daemon 提供 `GET /runs/:id/assurance-evidence`。路由只能解析已初始化的 workspace Store；冷工作区返回不可用，不创建 Store、不触发 recovery、不重派 Run。
+- 响应固定为 `FrameworkAssuranceEvidenceResponse`，包含 Run/WorkUnit/Attempt/fence lineage、三组 snapshot digest、已封存 artifact digest、Attempt 历史与停止状态、delegation completion、预算 reservation/charge，以及 isolated workflow 的 safety plan、execution binding、integration round、effect/receipt、branch result、candidate、approval 和 apply 投影。
+- `admission` 是由 Host 投影重新计算的 fail-closed 结果。Run、WorkUnit 和当前 Attempt 必须处于 `succeeded` / `failed` / `cancelled`，且当前 Attempt 的 claim 必须为 `terminal_retained`；`lost` 始终投影为 `expired`。缺少 `pi_host_isolated_files_v1`、Tool Broker `enforce`、当前 fence binding、完整 round 或确认停止，delegation completion 未满足，或预算 pending/unknown/over/missing/invalid 时，只记录 blocker，不产生执行授权；原始 completion issue 和预算 blocker 同时保留。没有 delegation step 时，根 Run 的冻结预算和 Provider charge 仍进入预算投影；仅在所有根/子账本事实和读取 issue 都不存在时才是 `not_applicable`。
+- `collectLiveExecutionEvidence()` 通过 `LingDaemonClient` 读取该响应，再与冻结任务身份、source commit 和 input digest 关联，输出 `live_execution` / `not_assessed`。离线 CLI 默认仍拒绝 live evidence；只有显式的 live consumer 适配路径才能读取该类型。
+- 响应不包含 task input、claim token、resume handle、sealed artifact body 或 evaluation grade。预算未知、effect 未确认、snapshot 变化和 lineage 不一致均不能升级为通过。
+- 未知内部异常统一返回固定不可用消息；仅公开定义的 lineage/证据错误保留其消息。客户端的 fingerprint 和 digest 正则校验先检查字符串类型，拒绝数组及数值的隐式转换。
+
+该接入已在临时 SQLite/Git/HTTP fixture 上验证 endpoint、生命周期、预算、隔离、candidate/approval/apply 和敏感字段边界；它不等于真实 Provider、生产 daemon、packaged、跨平台或完整 evaluation 验收。
+
+### 5.5.1 F3-02 trial manifest 与资源预检
+
+`trial-preflight` 是 F3-02 的离线前置步骤。它只生成 `blocked` 或 `ready-for-review` 报告，两个状态都固定
+`executionAuthorized: false`。`ready-for-review` 表示输入和本机资源边界可供人工审查，不表示可以启动真实试点。
+
+提交的 `fixtures/framework-assurance/trials/t01-review.json` 固定以下内容；预检还把该文件的提交内相对路径和自身字节摘要固定在可信工具代码中，当前只允许这份 T01 manifest 进入 F3-02：
+
+- suite、T01 task identity、source commit，以及 suite/task/prompt/rule/baseline/profile/lock 的原始字节摘要；预检复用既有 `preflight`，重新读取并核对这些摘要，不能用当前会话输入替换冻结内容。
+- 明确的 Provider/model 标识、金额和币种、Provider 请求数、输入/输出 token、工具循环、子代理、grader、在途 reservation 和总超时上限。预算字段只是试点输入，不产生扣费或 reservation。
+- `unknownUsage=stop`、`unknownEffect=stop`、未确认取消 `block`、超预算 `stop`、未知状态后禁止重试；安全 profile 固定为 `pi_host_isolated_files_v1`、Tool Broker `enforce`、无网络、无 shell、需要 fence/terminal claim/确认停止。
+- 三个相互独立的相对目录角色：`LING_STACK_HOME`、workspace 和 trial output；资源根由命令行传入的 checkout 外绝对路径提供。资源根先对真实父级路径做 canonicalize，再检查是否落入 checkout；根、每级目录和叶目录拒绝符号链接、文件冲突、保留目录名和目录重叠；已有目录只能为空。
+- daemon/UI 两个不同的 loopback 端口。预检可以短暂绑定端口确认占用并立即关闭探针，不启动任何服务；端口可被其他进程抢占，因此后续执行器仍必须在启动前重查。
+- `availableParallelism`、free memory、free disk 和 load-1 与 manifest 最低值比较。不能取得资源根或测量失败时直接阻断。
+
+报告只保留路径摘要、端口状态、资源观测、冻结输入摘要、预算和检查码，不写绝对路径、prompt、claim token、resume handle 或 artifact 正文。`externalProviderCalls`、`ordinaryRunsDispatched`、`userStoresInitialized` 和 `taskCodeExecuted` 固定为零/false。预检结束后目录和端口可能被外部状态改变，因此它是准入证据准备，不是执行授权或完整 A13/A14 验收。
+
+### 5.5.2 Host readiness review gate
+
+`host-readiness` 是完整 Host evidence projection 的只读审查门禁。它不重新读取 Store，也不执行 recovery、取消、重试或派发；CLI 只接收已经捕获的 JSON，`collectHostReadiness()` 只通过 `getRunAssuranceEvidence(runId, cwd)` 发起一次读取。
+
+解析器要求以下五个域同时存在，并拒绝未知字段、非法枚举和不完整的公共摘要：
+
+1. **lifecycle**：当前 Attempt、代次、旧 Attempt、所有 Attempt 的终态、local execution drain、effect settle 和可复用性。
+2. **completion**：根 Run、子步骤、完成状态、结果 artifact 摘要及原始 issue。
+3. **budget**：根预算、reservation、charge、token/cost 用量和 blocker；aggregate 与两个 usage dimension 必须一致，pending、unknown、over、missing、invalid 都保持阻断。
+4. **isolation**：`pi_host_isolated_files_v1` safety plan、current execution binding、完整且已确认 `applied` 的 integration round、effect/receipt、branch result、candidate、approval 和 apply 摘要。
+5. **admission**：Host 重新计算的状态、profile、独立且存在有效的 safety plan、Tool Broker 模式和当前 fence binding。
+
+跨域检查要求 lifecycle 每个 Attempt 都已结束（恢复场景允许旧 Attempt 为 `lost`），当前 Attempt 与 execution 的 Attempt/runtime/fence/generation 一致，client 请求的 Run 也必须与 projection 的 `execution.runId` 一致；completion 和 budget 的全部 root 必须指向同一根 Run；admission 的 profile、safety plan digest 和 binding 状态必须与 isolation 一致。评估时还要求 Run、WorkUnit、当前 Attempt 终态，claim 为 `terminal_retained`，effect 已确认，lifecycle 已 drain 且可复用，completion 已满足或明确为 `not_applicable`，budget 的 aggregate 与 token/cost 两个维度必须分别为 `within` 或一致的 `not_applicable`，隔离 profile 和 binding 有效，Tool Broker 为 `enforce`。任一事实缺失或 blocker 存在都返回 `blocked`。
+
+报告只有 `ready-for-trial-review` 和 `blocked` 两个结果；两者都固定 `executionAuthorized: false`，并明确不包含 task input、claim token、resume handle、artifact body 或 evaluation grade。提交内的 `host-ready-shape.json` 仅是包含一次旧 Attempt 丢失、当前 Attempt 成功的合成形状，用于验证 parser、lineage、恢复痕迹、取消未确认和预算未知的 fail-closed 行为，不能作为真实 Host 或真实试点验收。
+
+### 5.6 指定 evaluation 的只读关联
+
+`projectAssuranceEvaluationAssociation()` 通过 getter-only ports 核对指定 `evaluationId`、完整的
+16 字段冻结 identity / `evaluationKey`、候选和可选 grade pins。它不枚举 latest，不创建 evaluation，
+也不调用 claim、恢复或执行入口。`projectInitializedAssuranceEvaluationAssociation()` 只通过明确 cwd 的
+`findInitializedStoreForRun()` 查找已打开 Store，并把所有读取放在一次同步 `readSnapshot()` 中。
+Host source 由同一 Store 的 `readRunAssuranceEvidence()` 独立生成，包含环境、十项执行字段、三组
+snapshot 和完整 artifact pins；观察时钟不参与 snapshot 比较。
+
+Daemon 通过 `POST /runs/:id/assurance-evaluation-association?cwd=...` 暴露该只读投影；请求体包含
+完整 association request 和六份 Base64 编码的冻结输入。路由把 URL 中的 Run ID 绑定到 request，
+只允许已初始化 Store，并通过 `LingDaemonClient.projectRunAssuranceEvaluationAssociation()` 供 SDK
+调用。输入解码、关联读取和结果投影不创建 Store、不触发 recovery、不写入数据库，也不授予执行权限。
+
+冻结 mapping 明确保存任务身份、observation case、source commit、六份原始输入摘要、evaluation
+identity 与候选 role/ID/摘要。mapping digest 使用 `digestRunEvaluationValue()`；mapping 本身是关联
+声明，不认证 producer。输入原始 bytes 由独立的预加载内存 bundle 提供，逐项校验 suite、task、rule、
+expected、profile、lock 的 SHA-256 及交叉引用。固定定义映射如下，不执行任意转换：
+
+| evaluation 定义 | 冻结内容 | artifact owner |
+| --- | --- | --- |
+| suite | `JSON.parse(suiteBytes)` | 被评估 Run 或 root Run |
+| case | `JSON.parse(ruleBytes)` | 被评估 Run 或 root Run |
+| baseline | `JSON.parse(expectedBytes)` | 被评估 Run 或 root Run |
+| candidate | 指定候选的真实 sealed payload | 仅被评估 Run |
+
+原始文件摘要保留空白；sealed payload 摘要是 `SHA-256(JSON.stringify(payload))`，不排序键；
+evaluation identity 和 mapping 使用 Core 的 canonical digest；grade 使用 `digestRunEvaluationGrade()`。
+这些摘要域分别验证，不能互换。每份原始输入和单个 artifact 限 1 MiB，artifact 总量限 16 MiB，
+Host pins 限 100 项，grade pins 限 8 项；沿 Run 父链验证 root 并拒绝环及缺失节点。
+
+候选必须同时匹配 evaluation、提交观察和独立 Host 读取的完整 pin 集，再核对 Store owner、封存正文和
+重算摘要。指定 grade 必须匹配 evaluation、grader 类型/ID/版本、重算摘要及显式正文 pins。
+返回前重新读取 Host、Run 父链、evaluation、grades 和 artifacts；变化或缺失会清空已匹配项目和 grades，
+只返回固定诊断码。既有 Core getter 可能先解析一行封存 JSON，以上 artifact 限额不是 SQL 解析前的内存限额。
+
+输出固定 `authority: report-only`、`assessment: not_assessed`、`enforcementAuthorized: false`。
+`matched` 仅表示 Run 级关联匹配；未完成、失败或取消的 evaluation 保留真实 state 并返回 `incomplete`。
+已完成 grade 的 pass/fail/abstain/error 独立保留。`RunEvaluationV1` 和普通 RunArtifact 缺少独立的
+Attempt/fence 归属，因此 `attemptBinding` 始终为 `unavailable`，并保留
+`attempt_artifact_binding_unavailable`、声明来源和 Host binary 来源限制。
+
+这是内部投影与组合函数，不扩展 HTTP、SDK 或 F4 格式。调用方可以独立持有 F4 报告和关联结果；
+二者不构成跨分页、跨进程的原子快照。读取匹配不会覆盖 Host 的 completion、预算、隔离或 admission。
+
 ## 6. 结果格式与比较
 
 ### 6.1 已实现离线观察文件
 
-F1 仅接受 `synthetic_control` 与声明为 `fixture_replay` 的离线数据，显式拒绝 `live_execution`。`fixture_replay` 是输入标签，不是可信 Host 认证；不能凭调用者填写的 pass 字段取得真实执行验收。F3 将另加来源权威与封存验证，不放宽当前限制。
+离线 CLI 仍仅接受 `synthetic_control` 与声明为 `fixture_replay` 的离线数据，显式拒绝 `live_execution`。`fixture_replay` 是输入标签，不是可信 Host 认证；不能凭调用者填写的 pass 字段取得真实执行验收。F3-B 的 live consumer 只读取 Host 投影并输出 `not_assessed`，不改变离线报告的默认限制。
 
 | 字段 | 合同 |
 | --- | --- |
 | `schemaVersion` / `observationId` / `invocationId` / `caseId` | 固定版本、观察身份、独立调用身份与控制身份；同一调用重复导出不增样本 |
 | `taskIdentity` / `inputDigests` | 完整冻结引用，不能只写任务展示名 |
 | `sourceCommit` / `comparison` | 完整源码 commit；实际 model/reasoning/executionStrategy/node/platform/arch，离线模型与推理均为 `none` |
-| `evidenceKind` | 当前只允许合成校准与 fixture 重放；真实执行不是本格式已支持能力 |
+| `evidenceKind` | 离线报告只允许合成校准与 fixture 重放；live consumer 单独输出 `live_execution`，且不自动判定成功 |
 | `executionStatus` | 归一化观察状态：`not_started / running / completed / failed / cancelled / timed_out / unknown` |
 | `assessment` | 新报告的 `pass / fail / not_assessed / invalid_evidence`；不是替换现有数据库枚举 |
 | `stopReason` / `effectStatus` | 保留停止原因；副作用为 `none / confirmed / unknown`，不能从文本猜测 |
@@ -255,6 +354,8 @@ JSON 是机器读取的主格式，Markdown 从同一已验证对象生成，不
 ### 6.3 付费与重试约束
 
 默认离线模式不产生模型费用。真实试点必须在启动前明确总体金额、币种、请求/工具循环/子任务/时间上限、最大在途并发，以及最坏情况下未结算请求的预算预留。总账包含所有子代理、工具循环和后置 grader，不能只统计 root Run。
+
+只读预算投影按已存在的账本事实判定适用性：没有子代理时，根 Run 的冻结预算和 Provider charge 仍须投影；预留、未知用量、超限和缺失预算分别保留对应状态。仅在子任务、根预算、根 charge 和读取问题均不存在时返回 `not_applicable`。该投影不补造 grader 费用或完整试点总账。
 
 未知用量、金额超限、无法确认停机或权限变化时停止继续派发，并明确已有在途请求及其停止状态。不自动更换付费模型、不偷偷重试。现有人工 model-grader pilot 的 1 至 3 次请求限制只适用于它自身，不能套用为整项代码任务预算。
 
@@ -333,6 +434,13 @@ extension manifest 与 plugin-package manifest 的版本校验不是同一套规
 
 现有入口：`LingDaemonClient.getWorkUnitHarnessDiagnostics(cwd, workUnitId, query)` 对应 `GET /work-units/:id/harness`。cwd 必填，limit 当前为 1 至 500，cursor 受 Run/WorkUnit 范围约束。F4-01 由 `readHarnessDiagnosticsReportFromClient` 将这个真实客户端入口接入 `readHarnessDiagnosticsReport`，逐页读取并输出 workspace 摘要哈希、页级时间标记、allowlist 诊断记录和同一 Run/WorkUnit 的 F3 observation 关联。底层回调仍保留为纯适配边界，便于验证报告逻辑而不创建客户端或执行状态。
 
+Host collector 的返回值包含 `observation`、`source`、`lineage`、`observedAt`；F4 的关联输入严格只接受
+`observation`、`lineage`、`observedAt`。`adaptLiveExecutionEvidenceForDiagnostics()` 校验原始 Host
+响应、四项执行身份、观察时间、执行状态、环境、artifact 摘要和来源限制后，复制出这三个字段。
+collector 的观察结果与原始响应分别复制，修改一侧不会同步改变另一侧。适配保留 `live_execution` /
+`not_assessed`、空 usage 和未知耗时；F4 继续独立检查目标 Run/WorkUnit。该关联只证明同一次观察的
+内部一致性，不验证当前 fence，也不补足 Attempt 与 artifact 的归属证据。
+
 | 条件 | 消费方行为 |
 | --- | --- |
 | 冷工作区返回 `harness_workspace_uninitialized` / 503 | 展示不可用，不触发 Store 初始化、reconcile 或 retry |
@@ -390,7 +498,7 @@ extension manifest 与 plugin-package manifest 的版本校验不是同一套规
 
 ## 11. 错误、兼容与未决项
 
-新脚本错误采用私有 code，并附脱敏 message。F1 已实现既有校验错误；F3-A 增加 `evidence_lineage_mismatch`、`evidence_stale_attempt`、`evidence_snapshot_changed`、`evidence_artifact_missing`、`evidence_artifact_digest_mismatch`、`evidence_claim_lost`、`evidence_effect_unknown` 等拒绝码；F4-01 增加 `diagnostics_scope_mismatch`、`diagnostics_invalid_response`、`diagnostics_duplicate_record`、`diagnostics_pagination_stalled` 等只读适配错误。冷工作区和既有 endpoint 错误映射为脱敏报告状态，不伪造 daemon HTTP code。
+新脚本错误采用私有 code，并附脱敏 message。F1 已实现既有校验错误；F3-A 增加 `evidence_lineage_mismatch`、`evidence_stale_attempt`、`evidence_snapshot_changed`、`evidence_artifact_missing`、`evidence_artifact_digest_mismatch`、`evidence_claim_lost`、`evidence_effect_unknown` 等拒绝码；F4-01 增加 `diagnostics_scope_mismatch`、`diagnostics_invalid_response`、`diagnostics_duplicate_record`、`diagnostics_pagination_stalled` 等只读适配错误；Host readiness 增加 `host_readiness_evidence_incomplete`、`host_readiness_lineage_mismatch`、`host_readiness_admission_mismatch` 以及 lifecycle、budget、isolation、Tool Broker blocker。冷工作区和既有 endpoint 错误映射为脱敏报告状态，不伪造 daemon HTTP code。
 
 既有 `harness_workspace_uninitialized` 等错误仍按原合同解释。现有 canonical write、历史 read、不可变证据字节、权限与 Runner 迁移继续归原兼容文档拥有，不因消费测试而放宽。
 
@@ -400,7 +508,8 @@ extension manifest 与 plugin-package manifest 的版本校验不是同一套规
 | --- | --- | --- |
 | 三个具体校准任务与冻结规则 | F1-01 已关闭 | 源码分析/故障注入标签明确；候选修复行为验证仍待 F3 |
 | 消费矩阵的实际工具链与依赖预置 | F2-01 已有 macOS arm64 本地及 Linux x64 托管消费格 | Windows SDK 及其他工具链仍未验证；安装器 job 不替代 SDK 消费 |
-| 正常 Run 证据内部读取及封存接口 | F3-01 | 只做 fixture，不执行真实适配 |
+| F3-B 只读 Host 证据投影及客户端关联 | F3-B 准入前置和 Host readiness review gate 已进入 `main@edb820f0`；当前 main 为 `878e422a` | 只读读取已初始化 Store；五域 review gate 仍不包含 evaluation grade，不授予真实执行许可 |
+| 正常 Run 真实 evidence 封存与 evaluation 关联 | F3-B 真实试点前 | 缺失时阻断真实任务，不降级为 fixture 或模型自报 |
 | 对应执行 profile 的安全/恢复验收 | F3-B 启动前 | 阻断该能力的真实任务，不阻断离线和 SDK |
 | 付费总额与 Provider 选择 | 每次真实试点前 | 不产生任何模型请求 |
 | 公开包稳定窗口和版本发布策略 | 对外宣称稳定前 | 可以内部验证，不能扩大支持承诺 |
@@ -415,4 +524,5 @@ extension manifest 与 plugin-package manifest 的版本校验不是同一套规
 - Client：`packages/api-client/test/client.test.mjs`、`computer-use.test.mjs`、`transport-origin.regression-1.test.mjs`；Web SSE 解码代码位于 `apps/web/src/sse.ts`，不等于 api-client 公共 decoder。
 - 现有构建/测试调度：`scripts/ci/run-packages.mjs`；实施时按同一基线先构建再测试，不重复使用来源不明的 dist。
 - macOS native boundary：`packages/daemon/src/runtime/sandbox/native-process-launch.ts` 与 `packages/daemon/test/native-process-boundary.test.mjs`；私有状态规则、合法 workspace 写入、Kimi metadata、relay 和进程回收分别保留独立边界。
-- 新工具：`scripts/framework-assurance/`；冻结输入：`fixtures/framework-assurance/`；实现测试：`offline.test.mjs`、`cli.test.mjs`、`sdk-consumer.test.mjs`、`execution-evidence.test.mjs` 与 `diagnostics.test.mjs`，均位于新工具目录。
+- 新工具：`scripts/framework-assurance/`；冻结输入：`fixtures/framework-assurance/`；实现测试：`offline.test.mjs`、`cli.test.mjs`、`sdk-consumer.test.mjs`、`execution-evidence.test.mjs`、`diagnostics.test.mjs`、`trial-preflight.test.ts` 与 `host-readiness.test.ts`；F3-02 manifest 位于 `fixtures/framework-assurance/trials/t01-review.json`，Host readiness 合成形状位于 `fixtures/framework-assurance/execution-evidence/host-ready-shape.json`。
+- F3-B 只读接入：`packages/contracts/src/framework-assurance.ts`、`packages/daemon/src/features/runs/assurance-evidence.ts`、`packages/daemon/src/server/routes.ts`、`packages/api-client/src/endpoints/runs.ts`；回归为 `packages/daemon/test/assurance-evidence-api.test.mjs`、`assurance-evidence-isolation.test.mjs`、`assurance-evidence-budget.test.ts` 和 API client 的 `harness-diagnostics.test.mjs`。

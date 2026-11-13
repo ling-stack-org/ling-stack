@@ -70,6 +70,7 @@ export type * from "./skills.js";
 export type * from "./official-skill-source.js";
 export type * from "./governance-notifications.js";
 export type * from "./teammates.js";
+export type * from "./companions.js";
 export type * from "./ai-councils.js";
 export type * from "./settings.js";
 export type * from "./workspace-directory.js";
@@ -84,6 +85,8 @@ export * from "./computer-use-validation.js";
 export * from "./remote-access.js";
 export { isCommittedRunNarrationV1, type CommittedRunNarrationV1 } from "./committed-run-narration.js";
 export type * from "./harness-diagnostics.js";
+export { FRAMEWORK_ASSURANCE_ASSOCIATION_FROZEN_INPUT_KEYS } from "./framework-assurance.js";
+export type * from "./framework-assurance.js";
 
 export type * from "./work-summary.js";
 export type * from "./diagnostics.js";
@@ -97,3 +100,4 @@ export * from "./memory-derivatives.js";
 
 export * from "./memory-wiki.js";
 export * from "./deliverables.js";
+export * from "./product-version.js";

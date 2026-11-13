@@ -100,7 +100,8 @@ test(`compaction ${drift} cannot become suspension authority`, async t => {
 
 test("post-seal compaction drift fails stop atomically and retained compaction inputs survive collection", async t => {
   const f = await fixture(t); f.track(); f.seal(); f.begin(); await f.drain();
-  for (const artifactId of [f.snapshotArtifact.id, f.artifact.id]) f.store.enrollHarnessArtifactRetention({ artifactId, retainUntil: stopNow(), now: stopNow() });
+  const now = stopNow();
+  for (const artifactId of [f.snapshotArtifact.id, f.artifact.id]) f.store.enrollHarnessArtifactRetention({ artifactId, retainUntil: now, now });
   assert.deepEqual(f.store.collectHarnessArtifactBodies({ now: stopNow() }).prunedArtifactIds, []);
   f.db.prepare("UPDATE run_compaction_checkpoints SET revision=revision+1 WHERE id=?").run(f.checkpoint.id);
   const before = f.snapshot(); assert.throws(() => f.commit()); assert.deepEqual(f.snapshot(), before);
@@ -110,8 +111,9 @@ test("real compaction predecessor prefixes keep every retained input through sto
   const f = await fixture(t); progress(f, "one"); const latest = progress(f, "two");
   const read = f.read(); assert.equal(read.kind, "verified", JSON.stringify(read)); assert.deepEqual(read.modelView, latest.modelView);
   f.track(); f.seal(); f.begin(); await f.drain(); assert.equal(f.commit().state, "stopped");
+  const now = stopNow();
   for (const artifact of f.store.listArtifacts(f.run.id).filter(row => row.contentType?.includes("compaction")))
-    f.store.enrollHarnessArtifactRetention({ artifactId: artifact.id, retainUntil: stopNow(), now: stopNow() });
+    f.store.enrollHarnessArtifactRetention({ artifactId: artifact.id, retainUntil: now, now });
   assert.deepEqual(f.store.collectHarnessArtifactBodies({ now: stopNow() }).prunedArtifactIds, []);
 });
 
