@@ -16,14 +16,14 @@ import {
 import { preflight as suitePreflight } from "./preflight.mjs";
 
 export const DEFAULT_TRIAL = "trials/t01-review.json";
-export const DEFAULT_TRIAL_BYTE_DIGEST = "9943876f54f1b7b827e69ab0fe35df6f7dbb8dac414fa96e1fc3e2376e071601";
+export const DEFAULT_TRIAL_BYTE_DIGEST = "e018146a53e185acca5bc23ff58a671887d80508e2ba6324b98c976c1a8333b4";
 
 const PATH_KEYS = ["lingStackHome", "workspace", "output"];
 const PORT_KEYS = ["daemon", "ui"];
 const INVALID_PROVIDER_IDS = new Set(["auto", "default", "pending", "unassigned", "unknown"]);
 const INPUT_DIGEST_KEYS = ["suiteBytes", "taskBytes", "promptBytes", "ruleBytes", "expectedBytes", "profileBytes", "lockBytes"];
 const TRUSTED_TASK = Object.freeze({ suiteId: "ling-framework-assurance", suiteVersion: "6", taskId: "T01", taskVersion: "5",
-  sourceCommit: "dd3fa912a09f0494c9899090e861dfa2058e5553" });
+  sourceCommit: "4f2474d29b814a50ab44b56baabbb9f33f1e7d4b" });
 const TRUSTED_PROVIDER = Object.freeze({ providerId: "review-only-provider", modelId: "review-only-model" });
 
 function boundedInteger(value, label, { min = 0, max = Number.MAX_SAFE_INTEGER } = {}) {
