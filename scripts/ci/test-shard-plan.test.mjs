@@ -6,19 +6,21 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { assertSuiteCoverage, assignTestShards, createTestPlan, discoverTestFiles, estimateTestWeight,
-  loadTimingHints, mergeTestReports, testSuites } from "./test-shard-plan.mjs";
+  discoverSuiteFiles, loadTimingHints, mergeTestReports, testSuites } from "./test-shard-plan.mjs";
 
 test("core and daemon plans preserve full discovery exactly once with dynamic core jobs", async () => {
   for (const packages of [[], ["@ling-stack/core"], ["@ling-stack/daemon"], ["@ling-stack/core", "@ling-stack/daemon"]]) {
     const plan = await createTestPlan(packages);
     assert.deepEqual(Object.keys(plan.suites), Object.keys(testSuites).filter(name => packages.includes(testSuites[name].packageName)));
+    const count = packages.includes("@ling-stack/daemon") ? 5 : 8;
     assert.deepEqual(plan.unitMatrix.include, packages.includes("@ling-stack/core")
-      ? Array.from({ length: 4 }, (_, shard) => ({ suite: "core", shard })) : []);
+      ? Array.from({ length: count }, (_, shard) => ({ suite: "core", shard, shardCount: count, concurrency: 2 })) : []);
     for (const [name, suite] of Object.entries(plan.suites)) {
-      const discovered = await discoverTestFiles(testSuites[name].cwd, testSuites[name].excluded);
+      const discovered = await discoverSuiteFiles(testSuites[name]);
       assert.ok(discovered.length > 100);
       assert.doesNotThrow(() => assertSuiteCoverage(suite, discovered));
-      assert.equal(suite.shardCount, name === "daemon" ? 6 : 4);
+      assert.equal(suite.shardCount, name === "daemon" ? 4
+        : packages.includes("@ling-stack/core") && packages.includes("@ling-stack/daemon") ? name === "core" ? 5 : 6 : 8);
     }
     if (plan.suites.daemon) assert.ok(!plan.suites.daemon.files.includes("test/dependency-security.test.mjs"));
   }
@@ -28,24 +30,29 @@ test("only selected unsharded packages create the packages job", async () => {
   for (const name of ["@ling-stack/web", "@ling-stack/cli", "@ling-stack/mobile"]) {
     const plan = await createTestPlan([name, "@ling-stack/daemon"]);
     assert.deepEqual(plan.unitMatrix.include, [{ suite: "packages", shard: 0 }]);
-    assert.deepEqual(Object.keys(plan.suites), ["daemon"]);
+    assert.deepEqual(Object.keys(plan.suites), ["daemon", "daemon-linux"]);
   }
   const mixed = await createTestPlan(["@ling-stack/web", "@ling-stack/core", "@ling-stack/daemon"]);
   assert.deepEqual(mixed.unitMatrix.include, [{ suite: "packages", shard: 0 },
-    ...Array.from({ length: 4 }, (_, shard) => ({ suite: "core", shard }))]);
+    ...Array.from({ length: 5 }, (_, shard) => ({ suite: "core", shard, shardCount: 5, concurrency: 2 }))]);
 });
 
 test("split channel suites are discovered once with ordinary parallel workers and watchdogs", async () => {
   const plan = await createTestPlan(["@ling-stack/daemon"]);
-  const suite = plan.suites.daemon;
+  const files = [...plan.suites.daemon.files, ...plan.suites["daemon-linux"].files];
   for (const file of ["channel-discussion", "channel-intents", "channel-workflows", "channel-workspace"]) {
     const path = `test/${file}.test.mjs`;
-    assert.equal(suite.shards.flatMap(bucket => bucket.files).filter(file => file === path).length, 1);
+    assert.equal(files.filter(file => file === path).length, 1);
     assert.ok(!testSuites.daemon.exclusive.includes(path));
     assert.equal(testSuites.daemon.fileTimeouts[path], undefined);
   }
-  assert.ok(!suite.files.some(file => file.includes("channel-workspace-fixture")));
+  assert.ok(!files.some(file => file.includes("channel-workspace-fixture")));
   assert.ok(testSuites.daemon.exclusive.includes("test/delegation-production-tool-surface.test.mjs"));
+  for (const file of ["test/engine-lifecycle.test.mjs", "test/workflow-conflict-recovery.test.mjs",
+    "test/workflow-isolated-delivery-integration.test.mjs", "test/kimi-owned-execution.test.mjs",
+    "test/workflow-repository-fence.test.mjs", "test/signal-shutdown.regression-3.test.mjs"]) {
+    assert.ok(testSuites.daemon.exclusive.includes(file));
+  }
   for (const file of ["test/recovery-discovery-fair-scan.test.mjs", "test/workflow-candidate-validation.test.mjs",
     "test/workflow-conflict-recovery.test.mjs", "test/workflow-integration-candidate.test.mjs",
     "test/workflow-isolated-parallel-integration.test.mjs", "test/workflow-merge-approval.test.mjs",

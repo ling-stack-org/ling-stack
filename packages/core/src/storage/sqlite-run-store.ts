@@ -249,6 +249,19 @@ import {
   type WorkflowPacketSourceRef,
   type WorkflowSelectorDecision,
 } from "../workspace-types.js";
+import type {
+  CompanionEvent,
+  CompanionEventPage,
+  CompanionProfile,
+  CompanionState,
+  CreateCompanionInput,
+  ListCompanionEventsOptions,
+  ListCompanionsOptions,
+  RecordCompanionInteractionInput,
+  RecordCompanionInteractionResult,
+  RecordCompanionEventInput,
+  UpdateCompanionInput,
+} from "../companion-types.js";
 import {
   type CreateSkillCompiledRuntimeViewInput,
   type CreateSkillImportDraftInput,
@@ -748,6 +761,7 @@ import { SqliteSkillUsageStore } from "./sqlite/skill-usage-store.js";
 import { SqliteProcedureObservationStore } from "./sqlite/procedure-observation-store.js";
 import { SqliteTaskStore } from "./sqlite/task-store.js";
 import { SqliteTeammateDirectStore } from "./sqlite/teammate-direct-store.js";
+import { SqliteCompanionStore } from "./sqlite/companion-store.js";
 import { SqliteTeammateAssociationStore } from "./sqlite/teammate-association-store.js";
 import { SqliteTeammateCoreStore } from "./sqlite/teammate-core-store.js";
 import { SqliteTeammateBootstrapCoordinator } from "./sqlite/teammate-bootstrap-coordinator.js";
@@ -912,6 +926,7 @@ export class SqliteRunStore implements RunStore {
   private readonly procedureObservations: SqliteProcedureObservationStore;
   private readonly tasks: SqliteTaskStore;
   private readonly teammateDirect: SqliteTeammateDirectStore;
+  private readonly companions: SqliteCompanionStore;
   private readonly teammateAssociations: SqliteTeammateAssociationStore;
   private readonly aiTeammates: SqliteTeammateCoreStore;
   private readonly teammateBootstrap: SqliteTeammateBootstrapCoordinator;
@@ -1343,6 +1358,10 @@ export class SqliteRunStore implements RunStore {
     this.procedureObservations = new SqliteProcedureObservationStore({ database: this.database });
     this.tasks = new SqliteTaskStore({ database: this.database });
     this.teammateDirect = new SqliteTeammateDirectStore(
+      { database: this.database },
+      { getAiTeammate: (id) => this.getAiTeammate(id) },
+    );
+    this.companions = new SqliteCompanionStore(
       { database: this.database },
       { getAiTeammate: (id) => this.getAiTeammate(id) },
     );
@@ -4192,6 +4211,46 @@ export class SqliteRunStore implements RunStore {
 
   hardDeleteAiTeammate(id: string, input: HardDeleteAiTeammateInput, now: string): HardDeleteAiTeammateResult | undefined {
     return this.teammateCleanup.hardDeleteAiTeammate(id, input, now);
+  }
+
+  createCompanion(input: CreateCompanionInput, now: string): CompanionProfile {
+    return this.companions.createCompanion(input, now);
+  }
+
+  getCompanion(id: string): CompanionProfile | undefined {
+    return this.companions.getCompanion(id);
+  }
+
+  listCompanions(options: ListCompanionsOptions = {}): CompanionProfile[] {
+    return this.companions.listCompanions(options);
+  }
+
+  updateCompanion(id: string, input: UpdateCompanionInput, now: string): CompanionProfile | undefined {
+    return this.companions.updateCompanion(id, input, now);
+  }
+
+  disableCompanion(id: string, now: string): CompanionProfile | undefined {
+    return this.companions.disableCompanion(id, now);
+  }
+
+  getCompanionState(companionId: string): CompanionState | undefined {
+    return this.companions.getCompanionState(companionId);
+  }
+
+  listCompanionEvents(options: ListCompanionEventsOptions): CompanionEvent[] {
+    return this.companions.listCompanionEvents(options);
+  }
+
+  listCompanionEventsPage(options: ListCompanionEventsOptions): CompanionEventPage {
+    return this.companions.listCompanionEventsPage(options);
+  }
+
+  recordCompanionInteraction(input: RecordCompanionInteractionInput, now: string): RecordCompanionInteractionResult {
+    return this.companions.recordCompanionInteraction(input, now);
+  }
+
+  recordCompanionEvent(input: RecordCompanionEventInput, now: string): CompanionEvent {
+    return this.companions.recordCompanionEvent(input, now);
   }
 
   getAiCouncil(id: string): AiCouncil | undefined {

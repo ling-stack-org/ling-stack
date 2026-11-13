@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { discoverDaemonTestFiles } from "./daemon-test-shard.mjs";
-import { assertSuiteCoverage, assignTestShards, createTestPlan, discoverTestFiles, testSuites } from "./test-shard-plan.mjs";
+import { assertSuiteCoverage, assignTestShards, createTestPlan, discoverSuiteFiles, discoverTestFiles, testSuites } from "./test-shard-plan.mjs";
 
 test("shared and daemon discovery include TypeScript tests without treating helpers as tests", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "ling-test-discovery-"));
@@ -46,7 +46,7 @@ test("published plans apply exclusive cost without altering measured timing evid
     daemon: { platform: config.platform, durationsMs },
   } } });
   const suite = plan.suites.daemon;
-  assert.ok(suite.files.includes("test/recovery-discovery-prefix.test.ts"));
+  assert.ok(plan.suites["daemon-linux"].files.includes("test/recovery-discovery-prefix.test.ts"));
   assert.deepEqual(suite.shards, assignTestShards(suite.files, config.shardCount, {
     cwd: config.cwd, timings: durationsMs, exclusive: config.exclusive, concurrency: config.concurrency,
   }));
@@ -55,4 +55,25 @@ test("published plans apply exclusive cost without altering measured timing evid
   assert.equal(suite.shards.reduce((sum: number, shard: { weight: number }) => sum + shard.weight, 0), expectedCost);
   assert.deepEqual(suite.timings, durationsMs);
   assert.doesNotThrow(() => assertSuiteCoverage(suite, base.suites.daemon.files));
+});
+
+test("combined plans fit twenty runner slots while preserving isolated suite parallelism", async () => {
+  const workflow = await readFile(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
+  const siblingJobs = workflow.split(/(?=^  [a-z][a-z-]*:\n)/mu).slice(1)
+    .filter(block => /^    needs: \[scope, build\]$/mu.test(block) && !/^    strategy:/mu.test(block))
+    .map(block => /^  ([a-z][a-z-]*):/u.exec(block)![1]).sort();
+  assert.deepEqual(siblingJobs, ["daemon-linux-contracts", "restricted-command-macos", "typecheck", "web-smoke"]);
+  for (const extra of [[], ["@ling-stack/web"], ["@ling-stack/api-client"]]) {
+    const plan = await createTestPlan(["@ling-stack/core", "@ling-stack/daemon", ...extra]);
+    const requested = plan.unitMatrix.include.length + plan.daemonMatrix.include.length + siblingJobs.length;
+    assert.ok(requested <= 20, `Requested ${requested} runner slots`);
+    assert.equal(plan.daemonMatrix.include.filter(entry => entry.runner === "macos-26").length + 1, 5);
+    for (const [name, config] of Object.entries(testSuites)) {
+      const discovered = await discoverSuiteFiles(config);
+      assert.doesNotThrow(() => assertSuiteCoverage(plan.suites[name], discovered));
+    }
+  }
+  assert.equal((await createTestPlan(["@ling-stack/core"])).unitMatrix.include.length, 8);
+  const daemon = await createTestPlan(["@ling-stack/daemon"]);
+  assert.equal(daemon.daemonMatrix.include.filter(entry => entry.suite === "daemon-linux").length, 8);
 });

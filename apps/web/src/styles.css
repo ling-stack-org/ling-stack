@@ -10,6 +10,7 @@
 @import "./styles/runs.css";
 @import "./styles/features/media-jobs/index.css";
 @import "./styles/features/media-production/index.css";
+@import "./styles/features/launch-transition.css";
 @import "./styles/profile.css";
 @import "./styles/automations.css";
 @import "./styles/plugins.css";
@@ -25,7 +26,9 @@
 @import "./styles/settings-skill-library.css";
 @import "./styles/settings-archived-items.css";
 @import "./styles/settings-startup-diagnostics.css";
+@import "./styles/settings-release-update.css";
 @import "./styles/settings-human-qa.css";
+@import "./styles/companion.css";
 @import "./styles/settings-permissions.css";
 @import "./styles/approvals.css";
 @import "./styles/approvals/dialog-queue.css";

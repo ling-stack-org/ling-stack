@@ -15,6 +15,7 @@ import {
   PlugZap,
   Plus,
   Settings,
+  Sparkles,
 } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import { sidebarObjectContextKey, type SidebarObjectContext } from "../../app/sidebar-object-context.js";
@@ -91,6 +92,7 @@ export function SidebarNavigation({
   onSelectTeammate,
   onSelectRecentConversation,
   channelDrawer = false,
+  onOpenCompanionMini,
 }: {
   readonly activeSidebarTarget: SidebarTarget;
   readonly channels: readonly Channel[];
@@ -129,6 +131,7 @@ export function SidebarNavigation({
   readonly onSelectTeammate: (teammateId: string) => void;
   readonly onSelectRecentConversation: (conversation: SidebarRecentConversation) => void;
   readonly channelDrawer?: boolean;
+  readonly onOpenCompanionMini?: () => void;
 }): React.JSX.Element {
   const { t } = useI18n();
   const observationPaused = isDaemonObservationPausedForWorkspace(useDaemonObservation(), cwd);
@@ -522,6 +525,19 @@ export function SidebarNavigation({
       </div>
 
       <div className={channelDrawer ? "sidebar-bottom" : "sidebar-config"}>
+        {onOpenCompanionMini ? (
+          <SidebarTooltip label={t("Intelligent companion")}>
+            <button
+              className="config-button companion-config-button"
+              type="button"
+              onClick={onOpenCompanionMini}
+              aria-label={t("Intelligent companion")}
+            >
+              <Icon icon={Sparkles} />
+              <span className="config-button-label">{t("Companion")}</span>
+            </button>
+          </SidebarTooltip>
+        ) : null}
         <SidebarTooltip label={t("Settings")}>
           <button
             className={activeSidebarTarget === "settings" ? "config-button active" : "config-button"}

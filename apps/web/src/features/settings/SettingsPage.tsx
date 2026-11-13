@@ -46,6 +46,8 @@ import { useArchivedSettingsController } from "./useArchivedSettingsController.j
 import { ComputerControlSettingsPage } from "./computer-control/ComputerControlSettingsPage.js";
 import { MobileAccessSettingsPage } from "./mobile-access/MobileAccessSettingsPage.js";
 import { ExecutionEnginesSettingsPage } from "./execution-engines/ExecutionEnginesSettingsPage.js";
+import { CompanionSettingsPage } from "../companions/CompanionSettingsPage.js";
+import { ReleaseUpdateCard } from "./ReleaseUpdateCard.js";
 
 export type { SettingsSectionId } from "./settings-shell-model.js";
 
@@ -108,6 +110,7 @@ export function SettingsPage({
   onOpenProviders,
   onOpenTeammates,
   onOpenCouncils,
+  onOpenCompanionMini,
   workspaceToolDetail,
   workspaceToolView,
   runDiagnosticsRunId,
@@ -181,6 +184,7 @@ export function SettingsPage({
   readonly onOpenProviders: () => void;
   readonly onOpenTeammates: () => void;
   readonly onOpenCouncils: () => void;
+  readonly onOpenCompanionMini: () => void;
   readonly workspaceToolDetail?: ReactNode;
   readonly workspaceToolView?: SettingsWorkspaceToolView;
   readonly runDiagnosticsRunId?: string;
@@ -339,6 +343,10 @@ export function SettingsPage({
 
         {visibleActiveSection === "execution-engines" && !workspaceToolDetailOpen ? <ExecutionEnginesSettingsPage cwd={cwd} /> : null}
 
+        {visibleActiveSection === "companion" && !workspaceToolDetailOpen ? (
+          <CompanionSettingsPage cwd={cwd} onOpenMini={onOpenCompanionMini} />
+        ) : null}
+
         {visibleActiveSection === "approval-strategy" && !workspaceToolDetailOpen ? (
           <ExecutionPermissionsSettingsPanel
             cwd={cwd}
@@ -407,6 +415,7 @@ export function SettingsPage({
             onRefreshStartup={onRefreshStartup}
             onOpenRunDiagnostics={onOpenRunDiagnostics}
           />
+          <ReleaseUpdateCard />
           <DiagnosticsDoctorCard cwd={cwd} />
           <NotificationsPreferencesCard cwd={cwd} />
           <HumanQaSettingsPanel key={cwd} cwd={cwd} />

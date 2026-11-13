@@ -8,7 +8,7 @@ const DIGEST_KEYS = ["suiteBytes", "taskBytes", "ruleBytes", "expectedBytes", "p
 const COMPARISON_KEYS = ["model", "reasoning", "executionStrategy", "node", "platform", "arch"];
 const TIMING_KEYS = ["queueMs", "executionMs", "validationMs", "gradingMs"];
 
-export function parseObservation(value) {
+export function parseObservation(value, { allowLive = false } = {}) {
   exactObject(value, ["schemaVersion", "observationId", "invocationId", "caseId", "taskIdentity", "sourceCommit", "inputDigests", "comparison",
     "evidenceKind", "executionStatus", "assessment", "stopReason", "effectStatus", "timings", "usage", "artifacts", "limitations"], "observation");
   requireCondition(value.schemaVersion === 1, "invalid_manifest", "Unsupported observation schema.");
@@ -21,8 +21,9 @@ export function parseObservation(value) {
   Object.values(value.inputDigests).forEach(item => digest(item, "input digest"));
   exactObject(value.comparison, COMPARISON_KEYS, "comparison environment");
   Object.values(value.comparison).forEach(item => identifier(item, "comparison value"));
-  requireCondition(["synthetic_control", "fixture_replay"].includes(value.evidenceKind), "unsupported_evidence_kind",
-    "This offline tool does not accept live execution evidence; F3 authority integration is not implemented.");
+  requireCondition(["synthetic_control", "fixture_replay"].includes(value.evidenceKind)
+    || allowLive && value.evidenceKind === "live_execution", "unsupported_evidence_kind",
+    "Unsupported framework-assurance evidence kind.");
   requireCondition(["not_started", "running", "completed", "failed", "cancelled", "timed_out", "unknown"].includes(value.executionStatus)
     && ["pass", "fail", "not_assessed", "invalid_evidence"].includes(value.assessment)
     && ["none", "confirmed", "unknown"].includes(value.effectStatus), "invalid_manifest", "Invalid observation state.");

@@ -18,7 +18,7 @@ export const nativeGit = { skip: !["darwin", "linux"].includes(process.platform)
 export const now = () => new Date().toISOString();
 
 /** One real isolated branch, Host completion and sealed result; no forged coordinator authority. */
-export async function workflowIntegrationCoordinatorFixture(t, { stage = "succeeded", mode = "candidate_only" } = {}) {
+export async function workflowIntegrationCoordinatorFixture(t, { stage = "succeeded", mode = "candidate_only", isolatedProfile = false } = {}) {
   assert.ok(["running", "terminal", "captured", "succeeded"].includes(stage));
   let drain;
   t.after(async () => { await drain?.(); });
@@ -47,7 +47,8 @@ export async function workflowIntegrationCoordinatorFixture(t, { stage = "succee
     stepId: "integration", generation: 1, worktreeId: "coordinator-integration" });
   f.executionRoot = f.scopeGit.executionRoot;
   const metadata = f.current(f.scopeIsolation).metadata;
-  const safety = { ...metadata.safetyPlan, executionRoot: f.executionRoot, writeRoots: [f.executionRoot] };
+  const safety = { ...metadata.safetyPlan, ...(isolatedProfile ? { profile: "pi_host_isolated_files_v1" } : {}),
+    executionRoot: f.executionRoot, writeRoots: [f.executionRoot] };
   safety.digest = workflowStepSafetyPlanDigest(safety);
   f.store.updateChannelWorkflowStep(f.scopeIsolation.step.id, { metadata: { ...metadata, safetyPlan: safety } }, f.at(0));
   f.stepFingerprint = workflowIsolationStepSafetyFingerprint(f.current(f.scopeIsolation));
