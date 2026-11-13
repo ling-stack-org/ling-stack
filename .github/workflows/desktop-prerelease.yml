@@ -121,7 +121,7 @@ jobs:
           ref: ${{ needs.candidate.outputs.source-sha }}
           fetch-depth: 0
           persist-credentials: false
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115
         with:
           version: 10.0.0
           run_install: false
@@ -129,7 +129,7 @@ jobs:
         with:
           node-version: 22.22.1
           cache: pnpm
-      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73
         if: runner.os == 'Windows'
         with:
           dotnet-version: 8.0.x

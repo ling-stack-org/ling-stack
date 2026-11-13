@@ -28,10 +28,10 @@
     "@ling-stack/core": "workspace:*",
     "@ling-stack/localization": "workspace:*",
     "@ling-stack/ui-react": "workspace:*",
-    "@tanstack/react-virtual": "3.14.24",
+    "@tanstack/react-virtual": "3.14.26",
     "@xyflow/react": "^12.9.3",
     "katex": "^0.19.0",
-    "lucide-react": "1.65.0",
+    "lucide-react": "1.70.0",
     "qrcode": "1.5.4",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
@@ -39,7 +39,7 @@
     "shiki": "^4.3.0"
   },
   "devDependencies": {
-    "@playwright/test": "1.64.1",
+    "@playwright/test": "1.65.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "@vitejs/plugin-react": "^6.0.5",
