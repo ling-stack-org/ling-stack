@@ -7,7 +7,9 @@ import {
   type LingThemePackageIndexEntry,
   type LingThemePackageIssue,
   type NormalizedLingThemePackageFile,
+  type ParsedLingThemeLaunchAnimation,
   type ParsedLingThemePackage,
+  type ParsedLingThemePreview,
   type ParseThemePackageBytesOptions,
 } from "./package-types.js";
 import { validateThemeImage } from "./theme-image-validation.js";
@@ -19,6 +21,7 @@ const WINDOWS_RESERVED_THEME_ID = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/u;
 const ROOT_FIELDS = new Set([
   "schemaVersion", "id", "name", "familyId", "description", "author", "homepage", "license",
   "colorScheme", "source", "tokens", "desktop", "presentation", "artwork", "generation", "preview",
+  "launchAnimation",
 ]);
 const DESKTOP_FIELDS = new Set([
   "windowBackground", "sidebarMaterial", "overlayMaterial", "titlebarForeground", "shadowStrength", "blurStrength",
@@ -27,6 +30,7 @@ const PRESENTATION_FIELDS = new Set(["profileId", "surfaceIntensity", "artworkIn
 const GENERATION_FIELDS = new Set([
   "mode", "createdAt", "compilerVersion", "plannerModelRef", "artworkModelRef", "promptTemplateVersion", "sourceAssetCount",
 ]);
+const LAUNCH_ANIMATION_FIELDS = new Set(["preset", "referenceImage"]);
 const TOKEN_FIELDS = Object.freeze({
   background: new Set(["app", "panel", "elevated", "subtle", "pressed", "overlay", "code", "sidebar", "composer"]),
   text: new Set(["strong", "default", "muted", "soft", "inverse", "link"]),
@@ -78,36 +82,49 @@ export async function parseThemePackageBytes(
   if (manifest.preview && (!previewPath || !previewPath.startsWith("assets/"))) {
     throw packageIssue("invalid-preview", "preview", "Theme preview must reference a canonical asset path.");
   }
+  const launchAnimationReferenceImage = manifest.launchAnimation?.referenceImage;
+  const launchAnimationPath = launchAnimationReferenceImage
+    ? normalizeThemePackagePath(launchAnimationReferenceImage)
+    : undefined;
+  if (
+    launchAnimationReferenceImage
+    && (
+      !launchAnimationPath
+      || launchAnimationPath !== launchAnimationReferenceImage
+      || !launchAnimationPath.startsWith("assets/")
+    )
+  ) {
+    throw packageIssue("invalid-launch-animation", "launchAnimation.referenceImage", "Launch animation reference image must reference a canonical asset path.");
+  }
+  if (previewPath && launchAnimationPath && previewPath === launchAnimationPath) {
+    throw packageIssue("invalid-launch-animation", "launchAnimation.referenceImage", "Launch animation reference image must be different from the theme preview.");
+  }
   const assetPaths = [...extracted.keys()].filter((path) => path.startsWith("assets/"));
-  if (assetPaths.some((path) => path !== previewPath)) {
-    throw packageIssue("unreferenced-asset", "assets", "Theme archive contains an asset that is not its declared preview.");
+  const referencedAssetPaths = new Set([previewPath, launchAnimationPath].filter((path): path is string => Boolean(path)));
+  if (assetPaths.some((path) => !referencedAssetPaths.has(path))) {
+    throw packageIssue("unreferenced-asset", "assets", "Theme archive contains an asset that is not referenced by the theme manifest.");
   }
   if (previewPath && !extracted.has(previewPath)) {
     throw packageIssue("missing-preview", "preview", "Theme preview asset is missing from the archive.");
   }
+  if (launchAnimationPath && !extracted.has(launchAnimationPath)) {
+    throw packageIssue("missing-launch-animation", "launchAnimation.referenceImage", "Launch animation reference image is missing from the archive.");
+  }
 
   const previewBytes = previewPath ? extracted.get(previewPath) : undefined;
-  const previewValidation = previewPath && previewBytes
-    ? await validateThemeImage(previewPath, previewBytes, options.decodeImage)
+  const launchAnimationBytes = launchAnimationPath ? extracted.get(launchAnimationPath) : undefined;
+  const preview = previewPath && previewBytes
+    ? await parseImageAsset(previewPath, previewBytes, options)
     : undefined;
-  const previewChecksumSha256 = previewBytes ? await sha256(previewBytes) : undefined;
-  const preview = previewPath && previewBytes && previewValidation && previewChecksumSha256
-    ? Object.freeze({
-      byteLength: previewBytes.byteLength,
-      bytes: previewBytes,
-      checksumSha256: previewChecksumSha256,
-      height: previewValidation.height,
-      mimeType: previewValidation.mimeType,
-      path: previewPath as `assets/${string}`,
-      width: previewValidation.width,
-    })
+  const launchAnimation = launchAnimationPath && launchAnimationBytes
+    ? await parseImageAsset(launchAnimationPath, launchAnimationBytes, options) as ParsedLingThemeLaunchAnimation
     : undefined;
 
   const licenseSource = extracted.get("LICENSE.txt");
   const licenseText = licenseSource ? decodeText(licenseSource, "LICENSE.txt") : undefined;
   const canonicalManifestBytes = textEncoder.encode(`${JSON.stringify(manifest, null, 2)}\n`);
   const normalizedLicenseBytes = licenseText !== undefined ? textEncoder.encode(licenseText) : undefined;
-  const files = await normalizedFiles(canonicalManifestBytes, normalizedLicenseBytes, preview);
+  const files = await normalizedFiles(canonicalManifestBytes, normalizedLicenseBytes, preview, launchAnimation);
   const warnings: LingThemePackageIssue[] = licenseText === undefined
     ? [Object.freeze({
       code: "license-not-declared",
@@ -120,10 +137,28 @@ export async function parseThemePackageBytes(
     archiveByteLength: archiveBytes.byteLength,
     files: Object.freeze(files),
     ...(licenseText !== undefined ? { licenseText } : {}),
+    ...(launchAnimation ? { launchAnimation } : {}),
     manifest,
     packageChecksumSha256: await sha256(archiveBytes),
     ...(preview ? { preview } : {}),
     warnings: Object.freeze(warnings),
+  });
+}
+
+async function parseImageAsset(
+  path: string,
+  bytes: Uint8Array,
+  options: ParseThemePackageBytesOptions,
+): Promise<ParsedLingThemePreview> {
+  const validation = await validateThemeImage(path, bytes, options.decodeImage);
+  return Object.freeze({
+    byteLength: bytes.byteLength,
+    bytes,
+    checksumSha256: await sha256(bytes),
+    height: validation.height,
+    mimeType: validation.mimeType,
+    path: path as `assets/${string}`,
+    width: validation.width,
   });
 }
 
@@ -174,6 +209,7 @@ async function normalizedFiles(
   manifestBytes: Uint8Array,
   licenseBytes: Uint8Array | undefined,
   preview: ParsedLingThemePackage["preview"],
+  launchAnimation: ParsedLingThemePackage["launchAnimation"],
 ): Promise<NormalizedLingThemePackageFile[]> {
   const sources: Array<Omit<NormalizedLingThemePackageFile, "checksumSha256">> = [{
     byteLength: manifestBytes.byteLength,
@@ -192,6 +228,12 @@ async function normalizedFiles(
     bytes: preview.bytes,
     mimeType: preview.mimeType,
     path: preview.path,
+  });
+  if (launchAnimation) sources.push({
+    byteLength: launchAnimation.byteLength,
+    bytes: launchAnimation.bytes,
+    mimeType: launchAnimation.mimeType,
+    path: launchAnimation.path,
   });
   const files = await Promise.all(sources.map(async (file) => Object.freeze({
     ...file,
@@ -225,6 +267,7 @@ function validateStrictManifestShape(value: unknown): LingThemePackageIssue | un
     [value.desktop, DESKTOP_FIELDS, "desktop", "invalid-schema"],
     [value.presentation, PRESENTATION_FIELDS, "presentation", "invalid-presentation"],
     [value.generation, GENERATION_FIELDS, "generation", "invalid-schema"],
+    [value.launchAnimation, LAUNCH_ANIMATION_FIELDS, "launchAnimation", "invalid-launch-animation"],
   ];
   for (const [candidate, allowed, path, code] of nestedChecks) {
     if (!isRecord(candidate)) continue;

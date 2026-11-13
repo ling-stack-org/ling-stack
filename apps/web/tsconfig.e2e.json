@@ -40,6 +40,7 @@
     "e2e/macos-titlebar.spec.ts",
     "e2e/ui2-desktop-theme-package-persistence.spec.ts",
     "e2e/ui2-settings-interface-preferences.spec.ts",
+    "e2e/ui2-theme-package-repository-adapters.spec.ts",
     "e2e/workspace.spec.ts"
   ]
 }

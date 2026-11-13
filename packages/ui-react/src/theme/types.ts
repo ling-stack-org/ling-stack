@@ -124,6 +124,11 @@ export interface LingThemeGenerationMetadata {
   readonly sourceAssetCount: number;
 }
 
+export interface LingThemeLaunchAnimation {
+  readonly preset: "canvas-windmill";
+  readonly referenceImage?: string;
+}
+
 export interface LingThemePackManifest {
   readonly schemaVersion: typeof LING_THEME_SCHEMA_VERSION;
   readonly id: string;
@@ -141,6 +146,7 @@ export interface LingThemePackManifest {
   readonly artwork?: LingThemeArtwork;
   readonly scene?: LingThemeScene;
   readonly generation?: LingThemeGenerationMetadata;
+  readonly launchAnimation?: LingThemeLaunchAnimation;
   readonly preview?: string;
 }
 
@@ -156,7 +162,8 @@ export type LingThemeValidationIssueCode =
   | "invalid-desktop-token"
   | "invalid-presentation"
   | "invalid-artwork"
-  | "invalid-generation";
+  | "invalid-generation"
+  | "invalid-launch-animation";
 
 export interface LingThemeValidationIssue {
   readonly code: LingThemeValidationIssueCode;

@@ -140,9 +140,10 @@ test("changed artifact, task identity and locally unavailable source cannot pass
   await writeJson(join(root, DEFAULT_SUITE), suite);
   await assert.rejects(preflight({ repoRoot, fixtureRoot: root }), code("invalid_manifest"));
   const task = clone(checked.tasks[0].task); task.source.commit = "0".repeat(40);
-  await writeJson(join(root, "cases/T01/task.json"), task);
+  const taskPath = checked.suite.tasks[0].task.path;
+  await writeJson(join(root, taskPath), task);
   suite.tasks[0].taskId = task.taskId;
-  suite.tasks[0].task.sha256 = sha256(await readFile(join(root, "cases/T01/task.json")));
+  suite.tasks[0].task.sha256 = sha256(await readFile(join(root, taskPath)));
   await writeJson(join(root, DEFAULT_SUITE), suite);
   await assert.rejects(preflight({ repoRoot, fixtureRoot: root }), code("source_unavailable"));
 });
@@ -174,8 +175,9 @@ test("re-pinned false negative control produces a failed calibration, not a pass
   const task = clone(checked.tasks[1].task); const suite = clone(checked.suite);
   await writeJson(join(root, "controls/T02-incorrect.json"), checked.tasks[1].expected);
   task.controls.incorrect.candidate.sha256 = sha256(await readFile(join(root, "controls/T02-incorrect.json")));
-  await writeJson(join(root, "cases/T02/task.json"), task);
-  suite.tasks[1].task.sha256 = sha256(await readFile(join(root, "cases/T02/task.json")));
+  const taskPath = checked.suite.tasks[1].task.path;
+  await writeJson(join(root, taskPath), task);
+  suite.tasks[1].task.sha256 = sha256(await readFile(join(root, taskPath)));
   await writeJson(join(root, DEFAULT_SUITE), suite);
   const result = await calibrate({ repoRoot, fixtureRoot: root, invocationId: "bad-control" });
   assert.equal(result.passed, false);

@@ -20,11 +20,11 @@ export function releaseVersion(tag) {
   return match[1];
 }
 
-export function validateCandidate({ sha, tag, versionFile, rootVersion, desktopVersion }) {
+export function validateCandidate({ sha, tag, versionFile, rootVersion, desktopVersion, productContractVersion }) {
   if (!/^[a-f0-9]{40}$/u.test(sha ?? "")) throw new Error("Source must be a complete lowercase commit SHA");
   const version = releaseVersion(tag);
-  if ([versionFile, rootVersion, desktopVersion].some(value => value !== version)) {
-    throw new Error("Release tag, VERSION, root package and Desktop package versions must match");
+  if ([versionFile, rootVersion, desktopVersion, productContractVersion].some(value => value !== version)) {
+    throw new Error("Release tag, VERSION, root package, Desktop package and shared product contract versions must match");
   }
   return Object.freeze({ schemaVersion: 1, sourceSha: sha, tag, version,
     signingTier: "unsigned_dev", distributionChannel: "development", releaseReady: false });
@@ -37,9 +37,11 @@ function git(args, root) {
 export async function readCandidate({ root = repositoryRoot, sha, tag, requireMain = false }) {
   const rootPackage = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
   const desktopPackage = JSON.parse(await readFile(join(root, "apps/desktop/package.json"), "utf8"));
+  const productContractSource = await readFile(join(root, "packages/contracts/src/product-version.ts"), "utf8");
+  const productContractVersion = /^export const LING_PRODUCT_VERSION = "([^"]+)" as const;$/mu.exec(productContractSource)?.[1];
   const candidate = validateCandidate({ sha, tag,
     versionFile: (await readFile(join(root, "VERSION"), "utf8")).trim(),
-    rootVersion: rootPackage.version, desktopVersion: desktopPackage.version });
+    rootVersion: rootPackage.version, desktopVersion: desktopPackage.version, productContractVersion });
   if (git(["rev-parse", "HEAD"], root) !== sha) throw new Error("Checkout does not match the chosen source SHA");
   if (git(["status", "--porcelain", "--untracked-files=no"], root)) throw new Error("Release source must be clean");
   if (requireMain) {

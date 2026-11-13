@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -16,6 +17,7 @@ import { readWorkflowIsolationWorktreeScope } from "../../dist/features/channels
 import { createWorkflowStepContextArtifact } from "../../dist/features/channels/workflow-step-packets.js";
 import { finalizeOrchestratedWorkflowStepRun } from "../../dist/features/channels/orchestrator.js";
 import { createRunApprovalHandler } from "../../dist/features/runs/approvals.js";
+import { verifyApprovalPostCommitEvidence } from "../../dist/features/runs/approval-postcommit-evidence.js";
 import { capturePreparedRunnerInput } from "../../dist/features/runs/prepared-runner-input.js";
 import { prepareWorkflowIsolatedExecution } from "../../dist/features/runs/workflow-isolation-execution.js";
 import { workflowSafetySnapshot } from "../../dist/features/runs/workflow-safety.js";
@@ -23,7 +25,11 @@ import { AttemptHostOperationTracker } from "../../dist/runtime/attempt-host-ope
 import { createRunnerRegistry } from "../../dist/runtime/runners.js";
 
 const exec = promisify(execFile);
-export const recoveryHost = { skip: process.platform !== "darwin", timeout: 90_000 };
+// These cases exercise real Git worktrees, Host leases, approvals, and recovery
+// publication on the shared macOS runner. Keep the assertion budget separate from
+// the shard watchdog so slower hosted disks do not turn a valid recovery into a
+// false timeout.
+export const recoveryHost = { skip: process.platform !== "darwin", timeout: 180_000 };
 export const now = () => new Date().toISOString();
 
 /** Real production selection, Pi preparation, Host writes/approvals/drain and Git capture. No model dispatch. */
@@ -157,9 +163,21 @@ export async function workflowConflictRecoveryFixture(t) {
       });
       pending.catch(() => undefined); item.pending.push(pending);
       const approvalId = await Promise.race([approval, pending.then(result => assert.fail(`Expected approval: ${JSON.stringify(result)}`))]);
-      f.store.approveApprovalRequest(approvalId, { resolvedBy: "local-user", decisionKind: "approve_once" }, now());
+      const approvedAt = now();
+      const approved = f.store.approveApprovalRequest(approvalId, { resolvedBy: "local-user", decisionKind: "approve_once" }, approvedAt);
+      assert.ok(approved);
+      // Manual Host callbacks have no daemon ActiveRunRegistry entry. Their
+      // original callback owns decision consumption until its effect is verified.
+      const ownerToken = randomUUID();
+      assert.ok(f.store.claimApprovalPostCommitEffect(approvalId, "owner", {
+        token: ownerToken, claimExpiresAt: new Date(Date.parse(approvedAt) + 60_000).toISOString(),
+      }, approvedAt));
       const result = await pending;
       assert.equal(result.approved, true, JSON.stringify(result)); assert.notEqual(result.handledResult?.isError, true, JSON.stringify(result));
+      assert.equal(verifyApprovalPostCommitEvidence(f.store, approved, "owner").status, "applied");
+      assert.equal(f.store.settleApprovalPostCommitEffect(approvalId, "owner", {
+        token: ownerToken, status: "completed",
+      }, now())?.status, "completed");
       return { approvalId, request, result };
     };
     return item;

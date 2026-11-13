@@ -7,6 +7,7 @@ import {
 } from "@ling-stack/ui-react/theme";
 import {
   WebThemePackageError,
+  type ParsedWebThemeLaunchAnimation,
   type ParsedWebThemePackage,
   type ParsedWebThemePreview,
 } from "./web-theme-package-types.js";
@@ -31,6 +32,7 @@ export async function parseWebThemePackage(file: File): Promise<ParsedWebThemePa
       manifest: parsed.manifest,
       originalFileName: file.name,
       packageChecksumSha256: parsed.packageChecksumSha256,
+      ...(parsed.launchAnimation ? { launchAnimation: webLaunchAnimation(parsed.launchAnimation) } : {}),
       ...(parsed.preview ? { preview: webPreview(parsed.preview) } : {}),
       warnings: parsed.warnings,
     });
@@ -51,6 +53,20 @@ function webPreview(
     mimeType: preview.mimeType,
     path: preview.path,
     width: preview.width,
+  });
+}
+
+function webLaunchAnimation(
+  launchAnimation: NonNullable<Awaited<ReturnType<typeof parseThemePackageBytes>>["launchAnimation"]>,
+): ParsedWebThemeLaunchAnimation {
+  return Object.freeze({
+    blob: new Blob([copyToArrayBuffer(launchAnimation.bytes)], { type: launchAnimation.mimeType }),
+    byteLength: launchAnimation.byteLength,
+    checksumSha256: launchAnimation.checksumSha256,
+    height: launchAnimation.height,
+    mimeType: launchAnimation.mimeType,
+    path: launchAnimation.path,
+    width: launchAnimation.width,
   });
 }
 
