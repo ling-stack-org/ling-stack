@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from "node:util";
 import { buildEffectiveTeammateSkills, getEffectiveTeammateSkill } from "./effective-skills.js";
 import { GSTACK_DEFAULT_SKILL_PACK_ID, listDefaultSkills } from "./builtin-skill-packs.js";
 import { redactSecrets } from "./redaction.js";
-import type { RunSession, RunStore } from "./run-types.js";
+import { conversationModeKinds, type RunSession, type RunStore } from "./run-types.js";
 import { RunProgressCheckpointError, type RunProgressCheckpointLineage } from "./run-progress-checkpoint-types.js";
 import { applyConversationModeToEffectiveRunPolicySnapshot, resolveSessionRunPolicy,
   type EffectiveRunPolicySnapshot, type ResolveSessionRunPolicyInput } from "./session-permissions.js";
@@ -94,6 +94,60 @@ export function captureRunProgressCheckpointLineage(
     policySnapshotFingerprint: runProgressHashJson(policySnapshot), policySourcesFingerprint: runProgressHashJson(policySources),
     workspaceProvenanceWatermark: store.getLatestWorkspaceProvenanceWatermark(unit.workspaceId),
   } };
+}
+
+/**
+ * Recompute the current effective policy for a persisted Run without comparing
+ * it to the Run's frozen snapshot. Read-only assurance uses this distinction to
+ * report current, drifted and revoked policy states instead of turning every
+ * drift into an indistinguishable checkpoint exception.
+ */
+export function readCurrentRunProgressPolicySnapshot(
+  store: RunProgressLineageStore,
+  run: RunSession,
+): EffectiveRunPolicySnapshot {
+  const request = record(run.requestSnapshot);
+  const storedPolicy = record(request.effectivePolicySnapshot);
+  const workspacePolicy = store.getApprovalPolicy();
+  const thread = run.threadId ? store.getLingThread(run.threadId) : undefined;
+  const channel = run.channelId ? store.getChannel(run.channelId) : undefined;
+  const preset = run.providerPresetId ? store.getProviderPreset(run.providerPresetId) : undefined;
+  if (run.threadId && !thread || run.channelId && !channel || run.providerPresetId && (!preset || !preset.enabled)) {
+    throw invalid("checkpoint.permission_drift");
+  }
+  const baseProfile = readProfile(request.approvalProfile);
+  let approvalProfile = baseProfile;
+  if (run.selectedSkillId) {
+    if (request.requestedSkillId !== run.selectedSkillId
+      || request.selectedSkillId !== undefined && request.selectedSkillId !== run.selectedSkillId
+      || !run.teammateId) throw invalid("checkpoint.permission_drift");
+    const teammate = store.getAiTeammate(run.teammateId);
+    const entry = store.getSkillRegistryEntry(run.selectedSkillId);
+    const builtin = listDefaultSkills(GSTACK_DEFAULT_SKILL_PACK_ID).find(skill => skill.id === run.selectedSkillId);
+    const definition = builtin ?? (entry?.reviewStatus === "published" ? entry.definition : undefined);
+    const bindings = store.listTeammateSkillBindings(run.teammateId);
+    if (!teammate || teammate.status !== "active" || !definition) throw invalid("checkpoint.permission_drift");
+    const effective = getEffectiveTeammateSkill(buildEffectiveTeammateSkills({ teammate, bindings, skills: [definition],
+      channelAllowedTools: channel?.allowedTools, providerCapabilities: preset?.capabilities }), run.selectedSkillId);
+    if (!effective?.executable) throw invalid("checkpoint.permission_drift");
+    approvalProfile = mergeRunProgressApprovalProfiles(baseProfile, definition.approvalProfile);
+  } else if (request.requestedSkillId !== undefined || request.selectedSkillId !== undefined) {
+    throw invalid("checkpoint.permission_drift");
+  }
+  const policy = resolveSessionRunPolicy({ workspacePolicy,
+    authorizationMode: selection(request, "authorizationMode", ["ask", "smart", "always"]),
+    workspaceAccessMode: selection(request, "workspaceAccessMode", ["read_only", "workspace_write", "full_access"]),
+    permissionPreset: selection(request, "permissionPreset", ["read_only", "workspace_collaboration", "full_access", "custom"]),
+    permissionMode: selection(request, "permissionMode", ["ask_everything", "balanced", "workspace_write", "full_access", "custom"]),
+    channelBoundPath: channel?.boundPath || run.cwd,
+    approvalProfile,
+  } satisfies ResolveSessionRunPolicyInput);
+  const storedConversationMode = storedPolicy.conversationMode;
+  const conversationMode = thread?.conversationMode.mode
+    ?? (conversationModeKinds.includes(storedConversationMode as typeof conversationModeKinds[number])
+      ? storedConversationMode as typeof conversationModeKinds[number]
+      : undefined);
+  return applyConversationModeToEffectiveRunPolicySnapshot(policy.snapshot, conversationMode);
 }
 
 /** Exactly the existing strict-rank merge, shared with the Host instead of another decisioner. */

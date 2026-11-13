@@ -1952,6 +1952,7 @@ export interface RunStore extends MemoryWikiStore, MemoryDerivativeStore, Learni
   listWorkUnitAttempts(workUnitId: string): WorkUnitAttempt[];
   getRunnerContinuation(id: string): RunnerContinuationV1 | undefined;
   findRunnerContinuationByIdempotencyKey(idempotencyKey: string): RunnerContinuationV1 | undefined;
+  listRunnerContinuations(runId: string): readonly RunnerContinuationV1[];
   listClaimableRunnerContinuations(input: ListClaimableRunnerContinuationsInput): readonly RunnerContinuationV1[];
   prepareContinuationAndAttempt(input: PrepareContinuationInput): PreparedContinuation;
   commitExistingRunContinuation(
