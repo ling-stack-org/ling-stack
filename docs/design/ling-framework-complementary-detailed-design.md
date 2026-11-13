@@ -94,7 +94,7 @@ SDK 未预置 TypeScript 时返回 `toolchain_missing` / `blocked` / exit `2`，
 | --- | --- |
 | `schemaVersion` / `taskId` / `taskVersion` | 固定 schema；与 suite 引用完全一致 |
 | `category` | `analysis_readonly`、`single_module_fix`、`two_module_change` 三种首轮任务类别；不是执行权限分类 |
-| `source` | `{ repository: "ling-stack", commit, lockSha256, files }`；完整本地 commit SHA、锁及 1 至 20 个文件引用，不任意克隆 URL |
+| `source` | `{ repository: "ling-stack", commit, lockSha256, files }`；完整本地 commit SHA、冻结来源锁摘要及 1 至 20 个文件引用，不任意克隆 URL |
 | `provenance` | `{ kind, description, anchors, injection }`；`source_analysis / real_regression / fault_injection`。注入必须有补丁引用，其余为 null；不把只读源码分析假称历史回归 |
 | `prompt` | 固定任务说明的 artifact 引用，不从当前会话临时拼接 |
 | `validationProfile` | 经维护者审核的验证 profile 标识、版本与摘要；由可信运行配置解析，不采信候选代码中的同名配置 |
@@ -146,6 +146,7 @@ assertions
 
 最新主线再次只改变了依赖锁：`main@c156901c6c0bb97570ba56f39ec0f731872f56d9` 的 `pnpm-lock.yaml` 摘要为 `49c509936672cbe4ce9118a4bf3907c4b32eea1babfc6dd74dec295c526f4d10`，四个源码 pin 与 v4 保持一致。按版本规则保留 v4，并生成当前默认的 v5：T01/T02/T03 任务版本为 `4/4/5`，`suiteVersion` 为 `5`，默认索引为 `suites/framework-v5.json`，套件字节摘要为 `69129d529f41cdad17e9da1a706c4a1f7d3f00b7c4d8b59d11268faaf329a303`。该更新只重绑定冻结来源，不改变任务规则、控制输入或 F1 的零模型边界。
 
+`source.lockSha256` 仍严格校验冻结 commit 中的锁文件，保证 fixture 的来源与工具链输入可复现。候选 checkout 可以提交新的 `pnpm-lock.yaml`；离线校准不执行候选依赖，候选锁由 dependency-policy 和 SDK consumer 各自核验，因此不把依赖更新误报为冻结 artifact 损坏。任务源码文件仍要求候选 checkout 与冻结摘要一致。
 当前分支新增 CLI 对 `@ling-stack/contracts` 的 workspace 依赖，锁文件摘要随之变为 `0d4fa92e297e8820140bb7c23d1b689d6d75038e74b858ac9c2851584909b0af`。按同一规则保留 v5，并生成默认 v6：T01/T02/T03 任务版本为 `5/5/6`，冻结来源为当前主线 `4f2474d29b814a50ab44b56baabbb9f33f1e7d4b`，默认索引为 `suites/framework-v6.json`，套件字节摘要为 `9a59dc5089b7503360d445ca3b940a759ddede825e2c348878ce77e568939818`，任务规则、控制输入和 F1 的零模型边界不变。
 
 ## 4. F1 离线流程

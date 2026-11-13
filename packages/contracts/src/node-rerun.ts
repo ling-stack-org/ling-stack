@@ -344,16 +344,25 @@ function result(input: {
  * it never creates a Run, Attempt, lease, approval, Provider call or database row.
  */
 export function evaluateNodeRerunAdmission(input: NodeRerunAdmissionInput): NodeRerunAdmissionResult {
+  let envelope: Record<string, unknown>;
+  try {
+    // Treat the outer admission envelope as untrusted too. In particular, do
+    // not dereference getters before the parser's fail-closed boundary runs.
+    envelope = record(input, ["intent", "observed"], "input");
+  } catch {
+    return result({ decision: "blocked", intentId: null, source: null, blockers: ["invalid_intent"] });
+  }
+
   let intent: NodeRerunIntentV1;
   try {
-    intent = parseNodeRerunIntent(input.intent);
+    intent = parseNodeRerunIntent(envelope.intent);
   } catch {
     return result({ decision: "blocked", intentId: null, source: null, blockers: ["invalid_intent"] });
   }
 
   let observed: NodeRerunObservedSourceV1;
   try {
-    observed = parseNodeRerunObservedSource(input.observed);
+    observed = parseNodeRerunObservedSource(envelope.observed);
   } catch {
     return result({
       decision: "blocked",

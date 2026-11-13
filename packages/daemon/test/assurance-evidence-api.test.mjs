@@ -98,6 +98,8 @@ test("live assurance endpoint reads initialized Host facts without exposing bodi
   assert.equal(body.execution.runId, run.id);
   assert.equal(body.execution.workUnitId, unit.id);
   assert.equal(body.execution.attemptId, currentAttempt.id);
+  assert.ok(body.limitations.includes("no_evaluation_grade"));
+  assert.ok(body.limitations.includes("no_evaluation_grade_body"));
   assert.equal(body.execution.claimStatus, "held");
   assert.equal(body.execution.effectStatus, "none");
   assert.equal(body.comparison.model, "fixture-model");
