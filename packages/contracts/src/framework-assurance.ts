@@ -8,6 +8,9 @@ export type FrameworkAssuranceStopExecutionStatus = "draining" | "drained" | "un
 export type FrameworkAssuranceStopEffectStatus = "settled" | "pending" | "unknown" | "unverified";
 export type FrameworkAssuranceBudgetStatus = "within" | "pending" | "unknown" | "over" | "missing" | "invalid" | "not_applicable";
 export type FrameworkAssuranceDimensionStatus = "within" | "pending" | "unknown" | "over" | "missing" | "invalid" | "not_applicable";
+export type FrameworkAssuranceRecoveryStatus = "verified" | "pending" | "blocked" | "not_applicable" | "unavailable";
+export type FrameworkAssurancePolicyStatus = "current" | "drifted" | "missing" | "unavailable";
+export type FrameworkAssuranceEvaluationStatus = "verified" | "pending" | "blocked" | "not_applicable" | "unavailable";
 
 export interface FrameworkAssuranceComparison {
   readonly model: string;
@@ -247,6 +250,87 @@ export interface FrameworkAssuranceAdmissionEvidence {
   readonly blockers: readonly string[];
 }
 
+export interface FrameworkAssuranceRecoveryAttempt {
+  readonly attemptId: string;
+  readonly attemptNumber: number;
+  readonly runtimeInstanceId: string;
+  readonly status: WorkUnitAttemptStatus;
+}
+
+export interface FrameworkAssuranceRecoveryEvidence {
+  readonly status: FrameworkAssuranceRecoveryStatus;
+  readonly source: FrameworkAssuranceRecoveryAttempt & {
+    readonly localExecution: FrameworkAssuranceStopExecutionStatus;
+    readonly effects: FrameworkAssuranceStopEffectStatus;
+  } | null;
+  readonly target: FrameworkAssuranceRecoveryAttempt | null;
+  readonly continuation: {
+    readonly continuationId: string;
+    readonly origin: string;
+    readonly state: string;
+    readonly generation: number;
+    readonly revision: number;
+  } | null;
+  readonly duplicateDispatch: {
+    readonly status: "protected" | "detected" | "not_applicable" | "unknown";
+    readonly continuationCount: number;
+  };
+  readonly blockers: readonly string[];
+}
+
+export interface FrameworkAssurancePolicyEvidence {
+  readonly status: FrameworkAssurancePolicyStatus;
+  readonly stored: {
+    readonly present: boolean;
+    readonly fingerprint: string | null;
+    readonly updatedAt: string | null;
+  };
+  readonly current: {
+    readonly available: boolean;
+    readonly fingerprint: string | null;
+    readonly updatedAt: string | null;
+  };
+  readonly blockers: readonly string[];
+}
+
+export interface FrameworkAssuranceEvaluationGrade {
+  readonly gradeId: string;
+  readonly evaluationId: string;
+  readonly graderType: string;
+  readonly graderId: string;
+  readonly graderVersion: string;
+  readonly verdict: string;
+  readonly score: number | null;
+  readonly severity: string | null;
+  readonly costInputTokens: number | null;
+  readonly costOutputTokens: number | null;
+  readonly costAmountMicros: number | null;
+  readonly gradeDigest: string;
+  readonly chargeId: string | null;
+  readonly chargeMatch: "matched" | "not_required" | "missing" | "non_unique" | "mismatch";
+}
+
+export interface FrameworkAssuranceEvaluationEvidence {
+  readonly status: FrameworkAssuranceEvaluationStatus;
+  readonly evaluation: {
+    readonly id: string;
+    readonly rootRunId: string;
+    readonly runId: string;
+    readonly state: RunEvaluationState;
+    readonly revision: number;
+    readonly evaluationKey: string;
+  } | null;
+  readonly grades: readonly FrameworkAssuranceEvaluationGrade[];
+  readonly charges: readonly FrameworkAssuranceBudgetCharge[];
+  readonly budget: {
+    readonly rootRunId: string;
+    readonly present: boolean;
+    readonly tokenBudget: number | null;
+    readonly costBudgetMicros: number | null;
+  } | null;
+  readonly blockers: readonly string[];
+}
+
 /**
  * Read-only Host facts for framework-assurance. This surface deliberately omits
  * task input, claim tokens, resume handles, sealed payloads and artifact bodies.
@@ -254,6 +338,8 @@ export interface FrameworkAssuranceAdmissionEvidence {
 export interface FrameworkAssuranceEvidenceResponse {
   readonly schemaVersion: 1;
   readonly kind: "live_execution_evidence";
+  /** Always false on the live Host projection; the projection grants no execution authority. */
+  readonly executionAuthorized?: false;
   readonly comparison: FrameworkAssuranceComparison;
   readonly execution: FrameworkAssuranceExecutionLineage;
   readonly snapshots: {
@@ -267,6 +353,9 @@ export interface FrameworkAssuranceEvidenceResponse {
   readonly budget: FrameworkAssuranceBudgetEvidence;
   readonly isolation: FrameworkAssuranceIsolationEvidence;
   readonly admission: FrameworkAssuranceAdmissionEvidence;
+  readonly recovery?: FrameworkAssuranceRecoveryEvidence;
+  readonly policy?: FrameworkAssurancePolicyEvidence;
+  readonly evaluation?: FrameworkAssuranceEvaluationEvidence;
   readonly observedAt: string;
   readonly limitations: readonly string[];
 }
