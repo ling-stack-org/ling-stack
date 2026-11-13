@@ -5,7 +5,7 @@ const TERMINAL_RUN_STATUSES = new Set(["succeeded", "failed", "cancelled"]);
 const TERMINAL_WORK_UNIT_STATUSES = new Set(["succeeded", "failed", "cancelled"]);
 const TERMINAL_ATTEMPT_STATUSES = new Set(["succeeded", "failed", "cancelled"]);
 const TERMINAL_LIFECYCLE_ATTEMPT_STATUSES = new Set([...TERMINAL_ATTEMPT_STATUSES, "lost"]);
-const REQUIRED_ASSURANCE_KEYS = ["lifecycle", "completion", "budget", "isolation", "admission"];
+const REQUIRED_ASSURANCE_KEYS = ["lifecycle", "completion", "budget", "isolation", "admission", "recovery", "policy", "evaluation"];
 
 /**
  * Parse the complete Host evidence shape required before a real trial can be
@@ -14,8 +14,8 @@ const REQUIRED_ASSURANCE_KEYS = ["lifecycle", "completion", "budget", "isolation
  */
 export function parseHostReadinessEvidence(value) {
   const evidence = parseLiveExecutionEvidenceResponse(value);
-  requireCondition(REQUIRED_ASSURANCE_KEYS.every(key => Object.hasOwn(evidence, key)),
-    "host_readiness_evidence_incomplete", "Host readiness requires lifecycle, completion, budget, isolation and admission evidence.");
+  requireCondition(evidence.executionAuthorized === false && REQUIRED_ASSURANCE_KEYS.every(key => Object.hasOwn(evidence, key)),
+    "host_readiness_evidence_incomplete", "Host readiness requires read-only execution authority and all eight assurance domains.");
   assertCrossFieldIdentity(evidence);
   return evidence;
 }
@@ -28,7 +28,7 @@ export function parseHostReadinessEvidence(value) {
 export function assessHostReadiness(value) {
   const evidence = parseHostReadinessEvidence(value);
   const blockers = [];
-  const { execution, lifecycle, completion, budget, isolation, admission } = evidence;
+  const { execution, lifecycle, completion, budget, isolation, admission, recovery, policy, evaluation } = evidence;
 
   if (!TERMINAL_RUN_STATUSES.has(execution.runStatus)) blockers.push("host_readiness.run_not_terminal");
   if (!TERMINAL_WORK_UNIT_STATUSES.has(execution.workUnitStatus)) blockers.push("host_readiness.work_unit_not_terminal");
@@ -103,6 +103,47 @@ export function assessHostReadiness(value) {
   }
   blockers.push(...admission.blockers.map(issue => `host_readiness.${issue}`));
 
+  if (recovery.status !== "verified" && recovery.status !== "not_applicable") blockers.push("host_readiness.recovery_not_verified");
+  if (recovery.status === "not_applicable" && (recovery.source !== null || recovery.target !== null || recovery.continuation !== null
+    || recovery.duplicateDispatch.continuationCount !== 0)) blockers.push("host_readiness.recovery_not_applicable_has_facts");
+  if (recovery.status === "verified" && (!recovery.source || !recovery.target || !recovery.continuation
+    || recovery.source.localExecution !== "drained" || recovery.source.effects !== "settled"
+    || recovery.continuation.origin !== "daemon_recovery" || recovery.continuation.state !== "succeeded"
+    || recovery.duplicateDispatch.status !== "protected" || recovery.duplicateDispatch.continuationCount < 1)) {
+    blockers.push("host_readiness.recovery_chain_invalid");
+  }
+  blockers.push(...recovery.blockers.map(issue => `host_readiness.${issue}`));
+
+  if (policy.status !== "current") blockers.push("host_readiness.policy_not_current");
+  if (!policy.stored.present || policy.stored.fingerprint === null) blockers.push("host_readiness.policy_stored_missing");
+  if (!policy.current.available || policy.current.fingerprint === null) blockers.push("host_readiness.policy_current_unavailable");
+  if (policy.stored.fingerprint !== null && policy.current.fingerprint !== null
+    && policy.stored.fingerprint !== policy.current.fingerprint) blockers.push("host_readiness.policy_snapshot_drift");
+  blockers.push(...policy.blockers.map(issue => `host_readiness.${issue}`));
+
+  if (evaluation.status !== "verified" && evaluation.status !== "not_applicable") blockers.push("host_readiness.evaluation_not_verified");
+  if (evaluation.status === "not_applicable" && (evaluation.evaluation !== null || evaluation.grades.length > 0
+    || evaluation.charges.length > 0 || evaluation.budget !== null)) blockers.push("host_readiness.evaluation_not_applicable_has_facts");
+  if (evaluation.status === "verified") {
+    if (!evaluation.evaluation || evaluation.evaluation.state !== "completed" || evaluation.evaluation.runId !== execution.runId) {
+      blockers.push("host_readiness.evaluation_lineage_invalid");
+    }
+    if (!evaluation.budget?.present || evaluation.budget.rootRunId !== evaluation.evaluation?.rootRunId) blockers.push("host_readiness.evaluation_budget_missing");
+    const chargeById = new Map(evaluation.charges.map(charge => [charge.chargeId, charge]));
+    if (evaluation.grades.length === 0 || evaluation.grades.some(grade => {
+      if (grade.evaluationId !== evaluation.evaluation?.id) return true;
+      if (!["matched", "not_required"].includes(grade.chargeMatch)) return true;
+      if (grade.chargeMatch !== "matched") return false;
+      if (grade.chargeId === null) return true;
+      const charge = chargeById.get(grade.chargeId);
+      return !charge || charge.inputTokens !== grade.costInputTokens
+        || charge.outputTokens !== grade.costOutputTokens || charge.actualCostMicros !== grade.costAmountMicros;
+    })) {
+      blockers.push("host_readiness.evaluation_grades_incomplete");
+    }
+  }
+  blockers.push(...evaluation.blockers.map(issue => `host_readiness.${issue}`));
+
   const uniqueBlockers = [...new Set(blockers)];
   return {
     schemaVersion: 1,
@@ -158,6 +199,27 @@ export function assessHostReadiness(value) {
         matchesCurrentFence: admission.binding.matchesCurrentFence,
         blockers: admission.blockers,
       },
+      recovery: {
+        status: recovery.status,
+        sourceAttemptId: recovery.source?.attemptId ?? null,
+        targetAttemptId: recovery.target?.attemptId ?? null,
+        continuationState: recovery.continuation?.state ?? null,
+        duplicateDispatch: recovery.duplicateDispatch.status,
+        blockers: recovery.blockers,
+      },
+      policy: {
+        status: policy.status,
+        storedFingerprint: policy.stored.fingerprint,
+        currentFingerprint: policy.current.fingerprint,
+        blockers: policy.blockers,
+      },
+      evaluation: {
+        status: evaluation.status,
+        evaluationId: evaluation.evaluation?.id ?? null,
+        gradeCount: evaluation.grades.length,
+        matchedChargeCount: evaluation.grades.filter(grade => grade.chargeMatch === "matched").length,
+        blockers: evaluation.blockers,
+      },
     },
     blockers: uniqueBlockers,
     limitations: [
@@ -166,6 +228,7 @@ export function assessHostReadiness(value) {
       "no_task_input",
       "no_artifact_body",
       "no_evaluation_grade",
+      "no_evaluation_grade_body",
       "readiness_is_not_real_trial_acceptance",
     ],
   };
@@ -213,7 +276,16 @@ export function renderHostReadinessMarkdown(report) {
 }
 
 function assertCrossFieldIdentity(evidence) {
-  const { execution, lifecycle, completion, budget, isolation, admission } = evidence;
+  const { execution, lifecycle, completion, budget, isolation, admission, recovery, policy, evaluation } = evidence;
+  const lineageRoots = [
+    ...(completion.status !== "not_applicable" ? completion.rootRunIds : []),
+    ...(budget.status !== "not_applicable" ? budget.roots.map(root => root.runId) : []),
+    ...(evaluation.status !== "not_applicable" && evaluation.evaluation ? [evaluation.evaluation.rootRunId] : []),
+  ];
+  const uniqueLineageRoots = [...new Set(lineageRoots)];
+  requireCondition(uniqueLineageRoots.length <= 1,
+    "host_readiness_lineage_mismatch", "Host assurance domains disagree about the Run lineage root.");
+  const lineageRootId = uniqueLineageRoots[0] ?? execution.runId;
   const current = lifecycle.attempts.find(attempt => attempt.isCurrent);
   requireCondition(current?.attemptId === execution.attemptId
     && current.runtimeInstanceId === execution.runtimeInstanceId
@@ -223,12 +295,12 @@ function assertCrossFieldIdentity(evidence) {
   "host_readiness_lineage_mismatch", "Host lifecycle current Attempt does not match execution lineage.");
 
   if (completion.status !== "not_applicable") {
-    requireCondition(completion.rootRunIds.length > 0 && completion.rootRunIds.every(rootRunId => rootRunId === execution.runId),
-      "host_readiness_lineage_mismatch", "Completion evidence is not rooted at the observed Run.");
+    requireCondition(completion.rootRunIds.length > 0 && completion.rootRunIds.every(rootRunId => rootRunId === lineageRootId),
+      "host_readiness_lineage_mismatch", "Completion evidence is not rooted in the observed Run lineage.");
   }
   if (budget.status !== "not_applicable") {
-    requireCondition(budget.roots.length > 0 && budget.roots.every(root => root.runId === execution.runId),
-      "host_readiness_lineage_mismatch", "Budget evidence is not rooted at the observed Run.");
+    requireCondition(budget.roots.length > 0 && budget.roots.every(root => root.runId === lineageRootId),
+      "host_readiness_lineage_mismatch", "Budget evidence is not rooted in the observed Run lineage.");
   }
   requireCondition(admission.profile !== null && admission.profile === isolation.safetyPlan.profile,
     "host_readiness_admission_mismatch", "Admission profile does not match the isolation safety profile.");
@@ -237,4 +309,19 @@ function assertCrossFieldIdentity(evidence) {
   requireCondition(admission.binding.status === isolation.binding.status
     && admission.binding.matchesCurrentFence === isolation.binding.matchesCurrentFence,
   "host_readiness_admission_mismatch", "Admission binding does not match isolation evidence.");
+  requireCondition(policy.stored.fingerprint === null || policy.current.fingerprint === null
+    || policy.stored.fingerprint === policy.current.fingerprint || policy.status === "drifted",
+  "host_readiness_policy_mismatch", "Policy evidence fingerprints are inconsistent.");
+  if (recovery.status === "verified") {
+    requireCondition(recovery.target?.attemptId === execution.attemptId
+      && recovery.target.runtimeInstanceId === execution.runtimeInstanceId,
+    "host_readiness_lineage_mismatch", "Recovery target does not match execution lineage.");
+  }
+  if (evaluation.status !== "not_applicable") {
+    requireCondition(evaluation.evaluation?.runId === execution.runId
+      && evaluation.evaluation?.rootRunId === lineageRootId,
+    "host_readiness_lineage_mismatch", "Evaluation does not belong to the observed Run lineage.");
+    requireCondition(evaluation.charges.every(charge => charge.runId === execution.runId),
+    "host_readiness_lineage_mismatch", "Evaluation Provider charges do not belong to the observed Run.");
+  }
 }

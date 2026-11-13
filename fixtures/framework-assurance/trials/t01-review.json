@@ -6,17 +6,17 @@
   "task": {
     "suite": {
       "path": "suites/framework-v6.json",
-      "sha256": "79007562c3a3e93fe6672c42c63136cbe9dc3fbc38328b93dfa3c599e4ad6cb5",
+      "sha256": "9a59dc5089b7503360d445ca3b940a759ddede825e2c348878ce77e568939818",
       "mediaType": "application/json"
     },
     "suiteId": "ling-framework-assurance",
     "suiteVersion": "6",
     "taskId": "T01",
     "taskVersion": "5",
-    "sourceCommit": "dd3fa912a09f0494c9899090e861dfa2058e5553",
+    "sourceCommit": "4f2474d29b814a50ab44b56baabbb9f33f1e7d4b",
     "inputDigests": {
-      "suiteBytes": "79007562c3a3e93fe6672c42c63136cbe9dc3fbc38328b93dfa3c599e4ad6cb5",
-      "taskBytes": "8d4e9de1e404497987c17e15a9aa63558c12059a4813af2b769d894f26ffd09c",
+      "suiteBytes": "9a59dc5089b7503360d445ca3b940a759ddede825e2c348878ce77e568939818",
+      "taskBytes": "a8eb2a5d2fbf912872a5785b0e260d27b5bdcd23f0eae7eefc3ebd0b6e534377",
       "promptBytes": "c3c1787f6beff88b7ffd28670425664b97953db031c1d497bd4013c9ddf608f0",
       "ruleBytes": "242c5de3e03c6a08598a3a574a000435e1b31dc9a91389d8f82356362cc518cd",
       "expectedBytes": "2709611907f5761cd61a7b9845137b6b2e855c64c2097d5024207b018983a9cc",
