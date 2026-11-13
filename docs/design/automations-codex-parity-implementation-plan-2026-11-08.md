@@ -1,6 +1,6 @@
 # Automations Codex-like parity implementation plan
 
-Status: implemented and merged to `main` via PR #655 (`d6614ed393ea56493f401047aad6fb33673c0bd8`); phase-2 CLI/timer follow-up is tracked in the companion SDD.
+Status: implemented and merged to `main` via PR #655 (`d6614ed393ea56493f401047aad6fb33673c0bd8`); phase-2 CLI/timer follow-up is tracked in the companion SDD. The visible scheduled-task workspace is now part of the Web delivery.
 
 ## Decision
 
@@ -72,6 +72,18 @@ idempotency keys, and bounded late-wake handling. It does not add a cloud schedu
 - runtime: daemon scheduler start/status/stop and SQLite state are inspected after
   the focused suite. Browser/mobile acceptance remains outside this change unless
   the repository's Web checks require it.
+
+## Web scheduled-task surface
+
+The Automations entry is the scheduled-task workspace for users. It opens on a
+single `Scheduled tasks` view that lists all enabled task definitions, including
+manual-run tasks, with their target, recurrence and next run when available.
+Paused definitions, drafts, and run history remain reachable through separate
+status tabs; there is no parallel `Enabled automations` view. The scheduler strip
+stays visible above the list so users can see whether the resident daemon is
+running and which scheduled task will run next. This is a presentation change over
+the existing durable automation model; it does not create a second scheduler or
+change the daemon/API contract.
 
 ## Follow-up
 

@@ -5,23 +5,23 @@
   "mode": "review_only",
   "task": {
     "suite": {
-      "path": "suites/framework-v5.json",
-      "sha256": "69129d529f41cdad17e9da1a706c4a1f7d3f00b7c4d8b59d11268faaf329a303",
+      "path": "suites/framework-v6.json",
+      "sha256": "79007562c3a3e93fe6672c42c63136cbe9dc3fbc38328b93dfa3c599e4ad6cb5",
       "mediaType": "application/json"
     },
     "suiteId": "ling-framework-assurance",
-    "suiteVersion": "5",
+    "suiteVersion": "6",
     "taskId": "T01",
-    "taskVersion": "4",
-    "sourceCommit": "c156901c6c0bb97570ba56f39ec0f731872f56d9",
+    "taskVersion": "5",
+    "sourceCommit": "dd3fa912a09f0494c9899090e861dfa2058e5553",
     "inputDigests": {
-      "suiteBytes": "69129d529f41cdad17e9da1a706c4a1f7d3f00b7c4d8b59d11268faaf329a303",
-      "taskBytes": "350f0885647e5bbaae0df1d3c006734d6587e3ee051beb5233d8dea07c66e8b8",
+      "suiteBytes": "79007562c3a3e93fe6672c42c63136cbe9dc3fbc38328b93dfa3c599e4ad6cb5",
+      "taskBytes": "8d4e9de1e404497987c17e15a9aa63558c12059a4813af2b769d894f26ffd09c",
       "promptBytes": "c3c1787f6beff88b7ffd28670425664b97953db031c1d497bd4013c9ddf608f0",
       "ruleBytes": "242c5de3e03c6a08598a3a574a000435e1b31dc9a91389d8f82356362cc518cd",
       "expectedBytes": "2709611907f5761cd61a7b9845137b6b2e855c64c2097d5024207b018983a9cc",
       "profileBytes": "66b1bf54b662a33557ee713aaeddd725389eb938ccad90ce505eb7e495152687",
-      "lockBytes": "49c509936672cbe4ce9118a4bf3907c4b32eea1babfc6dd74dec295c526f4d10"
+      "lockBytes": "0d4fa92e297e8820140bb7c23d1b689d6d75038e74b858ac9c2851584909b0af"
     }
   },
   "provider": {

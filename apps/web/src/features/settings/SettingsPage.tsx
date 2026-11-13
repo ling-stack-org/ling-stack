@@ -47,6 +47,7 @@ import { ComputerControlSettingsPage } from "./computer-control/ComputerControlS
 import { MobileAccessSettingsPage } from "./mobile-access/MobileAccessSettingsPage.js";
 import { ExecutionEnginesSettingsPage } from "./execution-engines/ExecutionEnginesSettingsPage.js";
 import { CompanionSettingsPage } from "../companions/CompanionSettingsPage.js";
+import { ReleaseUpdateCard } from "./ReleaseUpdateCard.js";
 
 export type { SettingsSectionId } from "./settings-shell-model.js";
 
@@ -414,6 +415,7 @@ export function SettingsPage({
             onRefreshStartup={onRefreshStartup}
             onOpenRunDiagnostics={onOpenRunDiagnostics}
           />
+          <ReleaseUpdateCard />
           <DiagnosticsDoctorCard cwd={cwd} />
           <NotificationsPreferencesCard cwd={cwd} />
           <HumanQaSettingsPanel key={cwd} cwd={cwd} />
