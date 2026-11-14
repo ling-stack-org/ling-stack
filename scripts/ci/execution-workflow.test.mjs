@@ -64,15 +64,17 @@ function runOutputTransform(variable, value) {
   }
 }
 
-async function assertScopeOutputs(scope, { mode, packages, daemon, macosNative = false, web, dependency = false, assurance = false, matrix }) {
+async function assertScopeOutputs(scope, { mode, packages, daemon, daemonPlatforms = daemon ? ["linux", "darwin"] : [], daemonSuites = daemon ? ["daemon", "daemon-linux"] : [], macosNative = false, web, dependency = false, assurance = false, matrix }) {
   const outputs = runOutputTransform("SCOPE_JSON", JSON.stringify(scope));
   assert.deepEqual(outputs, {
     mode, packages: JSON.stringify(packages), "test-packages": JSON.stringify(packages),
     "typecheck-packages": JSON.stringify(packages), "dependency-policy": String(dependency),
     "assurance-selected": String(assurance), "build-selected": String(packages.length > 0),
-    "typecheck-selected": String(packages.length > 0), daemon: String(daemon), "macos-native": String(macosNative), web: String(web),
+    "typecheck-selected": String(packages.length > 0), daemon: String(daemon), "daemon-platforms": JSON.stringify(daemonPlatforms),
+    "macos-native": String(macosNative), web: String(web),
   });
-  const plan = await createTestPlan(JSON.parse(outputs["test-packages"]));
+  const plan = await createTestPlan(JSON.parse(outputs["test-packages"]), { daemonPlatforms: JSON.parse(outputs["daemon-platforms"]) });
+  assert.deepEqual(Object.keys(plan.suites).filter(name => name.startsWith("daemon")), daemonSuites);
   assert.deepEqual(plan.unitMatrix, { include: matrix });
   const selected = runOutputTransform("UNIT_MATRIX", JSON.stringify(plan.unitMatrix));
   assert.deepEqual(selected, { "unit-selected": matrix.length > 0 ? "true" : "false" });
@@ -112,7 +114,12 @@ test("workflow transformations preserve docs empty arrays and deselected lanes",
 // no_claim=hosted GitHub scheduler not executed.
 test("workflow transformations keep daemon test-only work outside the unit matrix", { timeout: 90_000 }, async () => {
   await assertScopeOutputs(classifyChangedFiles({ files: ["packages/daemon/test/approval-policy-run.test.mjs"] }), {
-    mode: "affected", packages: ["@ling-stack/daemon"], daemon: true, macosNative: false, web: false, matrix: [],
+    mode: "affected", packages: ["@ling-stack/daemon"], daemon: true, daemonPlatforms: ["linux"], daemonSuites: ["daemon-linux"], macosNative: false, web: false, matrix: [],
+  });
+
+  await assertScopeOutputs(classifyChangedFiles({ files: ["packages/daemon/test/macos-native-command.test.mjs"] }), {
+    mode: "affected", packages: ["@ling-stack/cli", "@ling-stack/daemon"], daemon: true, daemonPlatforms: ["darwin"], daemonSuites: ["daemon"],
+    macosNative: true, web: false, matrix: [{ suite: "packages", shard: 0 }],
   });
 });
 
@@ -150,7 +157,7 @@ test("workflow transformations require every lane for a bounded full package gra
     dependencies: [], hasTestScript: true, hasTypecheckScript: true,
   }));
   await assertScopeOutputs(classifyChangedFiles({ files: ["package.json"], packageEntries }), {
-    mode: "full", packages, dependency: true, assurance: true, daemon: true, macosNative: true, web: true,
+    mode: "full", packages, dependency: true, assurance: true, daemon: true, daemonPlatforms: ["linux", "darwin"], macosNative: true, web: true,
     matrix: [{ suite: "packages", shard: 0 },
       ...Array.from({ length: 5 }, (_, shard) => ({ suite: "core", shard, shardCount: 5, concurrency: 2 }))],
   });
