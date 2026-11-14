@@ -59,12 +59,11 @@ export function buildWorkflowIsolationEvidence(store: RunStore, workflowId: stri
  * remains behind the per-workflow endpoint and is still read only there.
  */
 export function listRetainedIsolationWorkflowIds(store: RunStore, workflows: readonly ChannelWorkflow[]): readonly string[] {
-  const workflowIds = new Set(workflows.map(workflow => workflow.id));
   const retained = new Set(workflows.filter(workflow => workflowIsolationIsDraining(store, workflow.id)).map(workflow => workflow.id));
   try {
     const coordinator = createSqliteWorkflowIntegrationCoordinatorStore(store);
-    for (const round of coordinator.listRounds()) {
-      if (workflowIds.has(round.inputs.workflowId)) retained.add(round.inputs.workflowId);
+    for (const workflow of workflows) {
+      if (coordinator.listRounds(workflow.id).length) retained.add(workflow.id);
     }
   } catch {
     // Non-SQLite stores and unregistered coordinator adapters have no durable

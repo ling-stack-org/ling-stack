@@ -28,9 +28,9 @@ test("node rerun admission keeps workspace Origin authorization at the router bo
     activeRuns: new ActiveRunRegistry(),
   } as never;
   const server = createServer((request, response) => {
-    void routeRequest(request, response, context).catch(error => {
+    void routeRequest(request, response, context).catch(() => {
       if (!response.headersSent) response.writeHead(500);
-      response.end(JSON.stringify({ error: String(error) }));
+      response.end(JSON.stringify({ error: "unexpected_error" }));
     });
   });
   await new Promise<void>((resolve, reject) => {
