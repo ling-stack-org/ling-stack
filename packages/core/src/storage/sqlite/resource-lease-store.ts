@@ -310,10 +310,11 @@ export class SqliteResourceLeaseStore {
       params.push(options.attemptId);
     }
     const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
-    params.push(limit);
     const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+    const limitClause = options.complete ? "" : " LIMIT ?";
+    if (!options.complete) params.push(limit);
     return this.context.database
-      .prepare(`${resourceLeaseSelectSql(whereClause)} ORDER BY acquired_at DESC, id DESC LIMIT ?`)
+      .prepare(`${resourceLeaseSelectSql(whereClause)} ORDER BY acquired_at DESC, id DESC${limitClause}`)
       .all(...params)
       .map(mapResourceLease);
   }

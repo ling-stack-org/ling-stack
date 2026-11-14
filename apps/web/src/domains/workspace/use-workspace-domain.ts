@@ -143,6 +143,7 @@ export interface WorkspaceState {
   readonly channelContextSummaries: readonly ChannelContextSummary[];
   readonly channelWorkflows: readonly ChannelWorkflow[];
   readonly channelWorkflowSteps: readonly ChannelWorkflowStep[];
+  readonly channelRetainedIsolationWorkflowIds: readonly string[];
   readonly channelMessagesLoading: boolean;
   readonly channelFilesLoading: boolean;
   readonly channelRunArtifactsLoading: boolean;
@@ -317,6 +318,7 @@ export function useWorkspaceDomain(input: {
   const [channelContextSummaries, setChannelContextSummaries] = useState<readonly ChannelContextSummary[]>([]);
   const [channelWorkflows, setChannelWorkflows] = useState<readonly ChannelWorkflow[]>([]);
   const [channelWorkflowSteps, setChannelWorkflowSteps] = useState<readonly ChannelWorkflowStep[]>([]);
+  const [channelRetainedIsolationWorkflowIds, setChannelRetainedIsolationWorkflowIds] = useState<readonly string[]>([]);
   // Active-run polling can outlive the initial protocol load. Read its latest scope.
   const channelWorkflowStepsRef = useRef(channelWorkflowSteps);
   channelWorkflowStepsRef.current = channelWorkflowSteps;
@@ -1168,6 +1170,7 @@ export function useWorkspaceDomain(input: {
       read.publish(setChannelHandoffs, handoffsResponse.handoffs);
       read.publish(setChannelContextSummaries, summariesResponse.contextSummaries);
       read.publish(setChannelWorkflows, workflowsResponse.workflows);
+      read.publish(setChannelRetainedIsolationWorkflowIds, workflowsResponse.retainedIsolationWorkflowIds ?? []);
       read.publish(setChannelWorkflowSteps, current => mergeWorkflowStepReadModels(current, workflowSteps));
     } catch (caught) {
       read.report("protocol", caught);
@@ -1225,6 +1228,7 @@ export function useWorkspaceDomain(input: {
     setChannelContextSummaries([]);
     setChannelWorkflows([]);
     setChannelWorkflowSteps([]);
+    setChannelRetainedIsolationWorkflowIds([]);
     setChannelProtocolLoading(false);
   }
 
@@ -1375,6 +1379,7 @@ export function useWorkspaceDomain(input: {
       channelContextSummaries,
       channelWorkflows,
       channelWorkflowSteps,
+      channelRetainedIsolationWorkflowIds,
       channelMessagesLoading,
       channelFilesLoading,
       channelRunArtifactsLoading,

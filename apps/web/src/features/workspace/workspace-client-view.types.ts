@@ -126,6 +126,7 @@ export interface WorkspaceClientViewProps {
   readonly channelContextSummaries: readonly ChannelContextSummary[];
   readonly channelWorkflows: readonly ChannelWorkflow[];
   readonly channelWorkflowSteps: readonly ChannelWorkflowStep[];
+  readonly channelRetainedIsolationWorkflowIds: readonly string[];
   readonly channelStateTransitions: readonly StateTransitionEvent[];
   readonly channelActivityTransitionsLoading: boolean;
   readonly channelActivityTransitionError: string;

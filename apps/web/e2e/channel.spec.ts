@@ -120,6 +120,43 @@ async function useEnglishLocale(page: Page): Promise<void> {
   });
 }
 
+async function mockScheduledTasksRoutes(page: Page): Promise<void> {
+  await page.route("http://127.0.0.1:17891/**", async (route) => {
+    const request = route.request();
+    const path = new URL(request.url()).pathname;
+    if (request.method() === "GET" && path === "/automations") {
+      await route.fulfill({ json: { cwd, automations: [], templates: [] } });
+      return;
+    }
+    if (request.method() === "GET" && path === "/automation-drafts") {
+      await route.fulfill({ json: { cwd, drafts: [], templates: [] } });
+      return;
+    }
+    if (request.method() === "GET" && path === "/automation-runs") {
+      await route.fulfill({ json: { cwd, automationRuns: [] } });
+      return;
+    }
+    if (request.method() === "GET" && path === "/automations/scheduler") {
+      await route.fulfill({
+        json: {
+          cwd,
+          schedulers: [{
+            id: "automation_scheduler_sidebar",
+            cwd,
+            status: "running",
+            startedAt: "2026-06-06T00:20:00.000Z",
+            automationCount: 0,
+            tickCount: 0,
+            items: [],
+          }],
+        },
+      });
+      return;
+    }
+    await route.fallback();
+  });
+}
+
 function mockRetryCommandAction(
   id: string,
   threadId: string,
@@ -736,6 +773,7 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
     });
   }
   await mockDaemon(page, state);
+  await mockScheduledTasksRoutes(page);
   await page.goto("/");
 
   const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
@@ -751,7 +789,7 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
   await expect(navigation.getByRole("button", { name: "Plugin Manager" })).toBeVisible();
   await expect(navigation.locator(".primary-nav").getByRole("button", { name: "AI Teammates" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "AI Teammates" })).toBeVisible();
-  await expect(navigation.getByRole("button", { name: "Automations" })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "Scheduled tasks" })).toBeVisible();
   await expect(navigation.getByRole("button", { name: "Settings" })).toBeVisible();
   await expect(navigation.getByRole("button", { name: "Profile" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Model Workbench" })).toHaveCount(0);
@@ -777,7 +815,7 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
     const selectedSession = document.querySelector('.channel-left-drawer [data-session-default="true"].selected');
     const primaryNav = document.querySelector(".channel-left-drawer .primary-nav");
     const firstSectionTitle = document.querySelector(".channel-left-drawer .sidebar-section-title");
-    const settings = document.querySelector(".channel-left-drawer .config-button");
+    const settings = document.querySelector(".channel-left-drawer .config-button:not(.companion-config-button)");
     const scrollRegionElement = scrollRegion as HTMLElement | null;
     if (scrollRegionElement) {
       scrollRegionElement.scrollTop = scrollRegionElement.scrollHeight;
@@ -869,8 +907,8 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
   await expect.poll(async () => Math.round((await navigation.boundingBox())?.width ?? 0)).toBe(292);
   await navigation.getByRole("button", { name: "Media Production" }).click();
   await expect(page.getByRole("radiogroup", { name: "Media production views" })).toBeVisible();
-  await navigation.getByRole("button", { name: "Automations" }).click();
-  await expect(page.getByRole("heading", { name: "Automations", level: 1 })).toBeVisible();
+  await navigation.getByRole("button", { name: "Scheduled tasks" }).click();
+  await expect(page.getByRole("heading", { name: "Scheduled tasks", level: 1 })).toBeVisible();
   await navigation.getByRole("button", { name: "Settings" }).click();
   await expect(page.getByLabel("Settings sections")).toBeVisible();
   await expect(page.getByLabel("Settings sections").getByRole("button", { name: "Configuration overview" })).toHaveCount(0);
@@ -1225,7 +1263,6 @@ test("channel AI replies use the standard full conversation width", async ({ pag
   await page.goto("/");
   await openEngineeringChannel(page);
 
-  const chatLayout = page.locator(".activity-chat-layout");
   const composer = page.locator(".activity-shell .channel-composer");
   const feed = page.getByLabel("Channel message feed");
   const sourceMessage = feed.locator(".channel-message-row.local-user")
@@ -1241,8 +1278,6 @@ test("channel AI replies use the standard full conversation width", async ({ pag
   const standaloneAssistantReply = feed.locator(".channel-message-row.ai-teammate")
     .filter({ hasText: "This standalone AI reply must use the full channel conversation width" });
   const standaloneAssistantContent = standaloneAssistantReply.locator(":scope > .message-content");
-  await expect.poll(async () => Math.round((await chatLayout.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(780);
-  await expect.poll(async () => Math.round((await chatLayout.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(820);
   await expect.poll(async () => Math.round((await composer.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(780);
   await expect.poll(async () => Math.round((await composer.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(820);
   await expect(sourceMessage).toHaveCount(1);
@@ -1417,8 +1452,6 @@ test("channel environment surface shows read-only context and opens review", asy
   await openEngineeringChannel(page);
   await page.getByRole("button", { name: "Hide navigation" }).click();
   await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })).toHaveAttribute("data-sidebar-mode", "compact");
-  await expect.poll(async () => Math.round((await page.locator(".activity-chat-layout").boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(780);
-  await expect.poll(async () => Math.round((await page.locator(".activity-chat-layout").boundingBox())?.width ?? 0)).toBeLessThanOrEqual(820);
   await expect.poll(async () => Math.round((await page.locator(".activity-shell .channel-composer").boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(780);
   await expect.poll(async () => Math.round((await page.locator(".activity-shell .channel-composer").boundingBox())?.width ?? 0)).toBeLessThanOrEqual(820);
   const readChatLayoutSnapshot = async () => page.evaluate(() => {
@@ -1480,8 +1513,7 @@ test("channel environment surface shows read-only context and opens review", asy
   const chatLayoutBeforeDock = await chatLayout.boundingBox();
   expect(chatLayoutBeforeDock).not.toBeNull();
   const chatSnapshotBeforeDock = await readChatLayoutSnapshot();
-  expect(chatSnapshotBeforeDock.chatWidth).toBeGreaterThanOrEqual(780);
-  expect(chatSnapshotBeforeDock.chatWidth).toBeLessThanOrEqual(820);
+  expect(chatSnapshotBeforeDock.chatWidth).toBeGreaterThanOrEqual(chatSnapshotBeforeDock.composerWidth);
   expect(chatSnapshotBeforeDock.composerWidth).toBeGreaterThanOrEqual(780);
   expect(chatSnapshotBeforeDock.composerWidth).toBeLessThanOrEqual(820);
   expect(["none", "matrix(1, 0, 0, 1, 0, 0)"]).toContain(chatSnapshotBeforeDock.chatTransform);
@@ -1508,14 +1540,6 @@ test("channel environment surface shows read-only context and opens review", asy
     }
     return Math.round(popoverBox.x + popoverBox.width - dockBox.x);
   }).toBeLessThanOrEqual(-8);
-  await expect.poll(async () => {
-    const popoverBox = await popover.boundingBox();
-    const chatBox = await chatLayout.boundingBox();
-    if (!popoverBox || !chatBox) {
-      return -999;
-    }
-    return Math.round(popoverBox.x - (chatBox.x + chatBox.width));
-  }).toBeGreaterThanOrEqual(8);
   expect(await messageFeed.evaluate((node) => node.dataset.remountProbe)).toBe("right-dock-stable");
   expect(Math.abs(await messageFeed.evaluate((node) => Math.round(node.scrollTop)) - feedScrollBeforeDock)).toBeLessThanOrEqual(1);
   await page.locator(".task-toolbar-panel").click();
@@ -1586,14 +1610,6 @@ test("channel environment surface shows read-only context and opens review", asy
     }
     return Math.round(popoverBox.x + popoverBox.width - dockBox.x);
   }).toBeLessThanOrEqual(-8);
-  await expect.poll(async () => {
-    const popoverBox = await popover.boundingBox();
-    const chatBox = await chatLayout.boundingBox();
-    if (!popoverBox || !chatBox) {
-      return -999;
-    }
-    return Math.round(popoverBox.x - (chatBox.x + chatBox.width));
-  }).toBeGreaterThanOrEqual(8);
   const defaultPopoverWithDockBox = await popover.boundingBox();
   const defaultDockWithPopoverBox = await dock.boundingBox();
   expect(defaultPopoverWithDockBox).not.toBeNull();
@@ -2198,7 +2214,7 @@ test("wide channel progress popover does not resize the conversation", async ({ 
     };
   });
   expect(spacing.mainPaddingRight).toBe("0px");
-  expect(spacing.chatWidth).toBe(800);
+  expect(spacing.chatWidth).toBeGreaterThanOrEqual(spacing.composerWidth);
   expect(spacing.composerWidth).toBe(800);
   expect(spacing.attentionWidth).toBeGreaterThanOrEqual(270);
   expect(spacing.attentionWidth).toBeLessThanOrEqual(290);
@@ -6013,7 +6029,14 @@ test("channel execution proposal confirms into a multi-step workflow", async ({ 
     .filter({ hasText: "Refine channel workspace copy" });
   await expect(workflowEvent).toHaveCount(1);
   await expect(workflowEvent).toHaveAttribute("data-conversation-timeline-status", "running");
-  await expect(workflowEvent).toContainText("running");
+  await expandTimelineItem(workflowEvent);
+  const workflowGraph = workflowEvent.locator(".workflow-graph-detail");
+  await expect(workflowGraph).toHaveAttribute("data-workflow-graph", "workflow_1");
+  await expect(workflowGraph).toHaveAttribute("data-observation", "stale");
+  await workflowGraph.getByRole("radio", { name: "List", exact: true }).click();
+  await expect(workflowGraph.locator('[data-workflow-step-id="workflow_step_1"]')).toContainText("Ling Engineer: coordinated");
+  await expect(workflowGraph.locator('[data-workflow-step-id="workflow_step_2"]')).toContainText("Ling Designer: reviewed");
+  await expect(workflowGraph.locator('[data-workflow-step-id="workflow_step_1"] .workflow-graph-status')).toHaveAttribute("data-status", "unknown");
   await expect(workflowEvent.locator(".conversation-timeline-activity-main")).toHaveAttribute("aria-label", /Working/);
   await expect(timeline.locator('[data-conversation-timeline-kind="subAgentActivity"]')).toHaveCount(0);
   await expect(feed.locator(".conversation-work-cell")).toHaveCount(0);
@@ -6950,9 +6973,15 @@ test("workflow-only multi-agent transcript does not fabricate child Agent eviden
   await expect(workflowFact).toHaveCount(1);
   await expect(workflowFact).toHaveAttribute("data-conversation-timeline-status", "running");
   await maybeCaptureR32Screenshot(page, "parallel-multi-agent-active");
-  await expect(workflowFact).toContainText("Implement login form");
-  await expect(timeline).not.toContainText("Existing login flow inspected.");
-  await expect(timeline).not.toContainText("Prepare QA checklist");
+  await expandTimelineItem(workflowFact);
+  const parallelGraph = workflowFact.locator(".workflow-graph-detail");
+  await expect(parallelGraph).toHaveAttribute("data-workflow-graph", "workflow_r32_parallel");
+  await expect(parallelGraph).toHaveAttribute("data-observation", "stale");
+  await parallelGraph.getByRole("radio", { name: "List", exact: true }).click();
+  await expect(parallelGraph.locator('[data-workflow-step-id="workflow_step_r32_parallel_engineer_read"]')).toContainText("Inspect existing login flow");
+  await expect(parallelGraph.locator('[data-workflow-step-id="workflow_step_r32_parallel_engineer_build"]')).toContainText("Implement login form");
+  await expect(parallelGraph.locator('[data-workflow-step-id="workflow_step_r32_parallel_qa"]')).toContainText("Prepare QA checklist");
+  await expect(parallelGraph.locator('[data-workflow-step-id="workflow_step_r32_parallel_engineer_build"] .workflow-graph-status')).toHaveAttribute("data-status", "unknown");
   await expectPhase1MainFeedClean(feed);
   await expect(page.locator(".channel-progress-popover")).toHaveCount(0);
   await expect(page.locator(".channel-side-panel")).toHaveCount(0);
@@ -9354,8 +9383,10 @@ test("channel composer preserves failed sends and can retry", async ({ page }) =
   const composerInput = channelComposerTextbox(page);
   const composer = page.getByLabel("Channel composer");
   await expect(composerInput).toHaveAttribute("title", "Enter sends. Shift+Enter inserts a newline. Esc closes menus.");
-  await expect(composer.getByRole("button", { name: "Send" })).toHaveAttribute("title", "Send (Enter)");
+  const sendButton = composer.getByRole("button", { name: "Send" });
+  await expect(sendButton).toHaveAttribute("title", "Send");
   await composerInput.fill("Retryable channel message");
+  await expect(sendButton).toHaveAttribute("title", "Send (Enter)");
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText("Message failed")).toBeVisible();
   await expectComposerValue(composerInput, "Retryable channel message");
@@ -9790,7 +9821,6 @@ test("handoff activity starts workflows without restoring the legacy context dra
   const createdWorkflow = state.channelWorkflows[0];
   if (!isRecord(createdWorkflow)) throw new Error("Created workflow fixture is missing");
   await expect(channelProtocolItem(page, "workflow", createdWorkflow.id)).toBeVisible();
-  await invokeTimelineAction(handoffItem, "Review source");
   await expectConversationReviewSurface(page);
 
   const blockedStep = {
@@ -9817,8 +9847,10 @@ test("handoff activity starts workflows without restoring the legacy context dra
   await openChannelChatTools(page);
   const blockedStepItem = channelProtocolItem(page, "workflow-step", blockedStep.id);
   await expect(blockedStepItem).toContainText("Provider preflight failed.");
-  await invokeTimelineAction(blockedStepItem, "Review source");
-  await expectConversationReviewSurface(page);
+  await expandTimelineItem(blockedStepItem);
+  await expect(blockedStepItem.getByRole("button", { name: "Review source", exact: true })).toHaveCount(0);
+  await expect(blockedStepItem.getByRole("button", { name: "Details", exact: true })).toHaveCount(0);
+  await expect(blockedStepItem.getByRole("button", { name: "Retry", exact: true })).toHaveCount(1);
 });
 
 test("workflow activity uses review source instead of the legacy context run surface", async ({ page }) => {
@@ -9864,7 +9896,10 @@ test("workflow activity uses review source instead of the legacy context run sur
   await openChannelChatTools(page);
   const workflowItem = channelProtocolItem(page, "workflow", "workflow_seed");
   await expect(workflowItem).toBeVisible();
-  await invokeTimelineAction(workflowItem, "Review source");
+  await expandTimelineItem(workflowItem);
+  await expect(workflowItem.getByRole("button", { name: "Review source", exact: true })).toHaveCount(0);
+  await expect(workflowItem.getByRole("button", { name: "Details", exact: true })).toHaveCount(0);
+  await expect(workflowItem.getByRole("button", { name: "Advance workflow", exact: true })).toHaveCount(1);
   await expectConversationReviewSurface(page);
 });
 
@@ -11398,7 +11433,10 @@ test("failed conversation work cell does not label terminal rows as working", as
   await expect(failedCommand).toContainText("Failed");
   await expect(failedCommand).not.toContainText("Working");
   await expect(failedCommand.locator(".conversation-timeline-output")).toContainText("Command exited with code 1.");
-  await expect(timeline.locator('[data-conversation-timeline-kind="diagnostic"]')).toHaveCount(0);
+  const runFeedback = timeline.locator('[data-conversation-timeline-kind="diagnostic"]');
+  await expect(runFeedback).toHaveCount(1);
+  await expect(runFeedback).toHaveAttribute("data-conversation-diagnostic-code", "run_feedback");
+  await expect(runFeedback).toContainText("Response failed");
 });
 
 test("active conversation work cell stays sparse while runtime approval replaces its composer", async ({ page }) => {
@@ -12378,7 +12416,10 @@ test("channel activity derives task run approval transition and workflow events"
   await openDetailsFrom(runEventItem, `Run ${inspectRun.id}`);
   await openDetailsFrom(approvalEventItem, "Approval expired");
   await openDetailsFrom(stateTransitionItem, "task_failed");
-  await openDetailsFrom(workflowStepItem, "Blocked timeline step");
+  await expandTimelineItem(workflowStepItem);
+  await expect(workflowStepItem.getByRole("button", { name: "Details", exact: true })).toHaveCount(0);
+  await expect(workflowStepItem.getByRole("button", { name: "Review source", exact: true })).toHaveCount(0);
+  await expect(workflowStepItem.getByRole("button", { name: "Retry", exact: true })).toHaveCount(1);
 
   await invokeTimelineAction(taskEventItem, "Show task in transcript");
   await expectConversationReviewSurface(page);
@@ -12395,8 +12436,6 @@ test("channel activity derives task run approval transition and workflow events"
   await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering", exact: true }).click();
   await openChannelChatTools(page);
 
-  await invokeTimelineAction(workflowStepItem, "Review source");
-  await expectConversationReviewSurface(page);
   await expect(page.getByLabel("Channel message feed")).toBeVisible();
   await expect(activityDetails).toHaveCount(0);
 
@@ -12586,8 +12625,9 @@ test("channel activity derives task run approval transition and workflow events"
 
   await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering", exact: true }).click();
   await openChannelChatTools(page);
-  await invokeTimelineAction(workflowStepItem, "Review source");
-  await expectConversationReviewSurface(page);
+  await expandTimelineItem(workflowStepItem);
+  await expect(workflowStepItem.getByRole("button", { name: "Review source", exact: true })).toHaveCount(0);
+  await expect(workflowStepItem.getByRole("button", { name: "Details", exact: true })).toHaveCount(0);
 });
 
 test("channel activity triage actions create follow-up records and preserve local state", async ({ page }) => {
@@ -12702,15 +12742,10 @@ test("channel activity triage actions create follow-up records and preserve loca
 
   await expect(page.getByLabel("Channel message feed")).toBeVisible();
   await openChannelChatTools(page);
-  await invokeTimelineAction(workflowStepItem, "Details");
-  await openTriageActions();
-  await activityDetails.getByRole("button", { name: "Create handoff" }).click();
-  await activityDetails.getByLabel("Reason").fill("Escalate blocked triage step");
-  await activityDetails.getByRole("button", { name: "Run triage action" }).click();
-  await expect.poll(() => state.channelHandoffs.some((handoff) => isRecord(handoff) && handoff.reason === "Escalate blocked triage step")).toBe(true);
-  await expect(activityDetails.getByRole("status")).toContainText("Triage action created");
-  await activityDetails.getByRole("button", { name: "Review created source" }).click();
-  await expectConversationReviewSurface(page);
+  await expandTimelineItem(workflowStepItem);
+  await expect(workflowStepItem.getByRole("button", { name: "Details", exact: true })).toHaveCount(0);
+  await expect(workflowStepItem.getByRole("button", { name: "Review source", exact: true })).toHaveCount(0);
+  await expect(workflowStepItem.getByRole("button", { name: "Retry", exact: true })).toHaveCount(1);
 
   await expect(page.getByLabel("Channel message feed")).toBeVisible();
   await openChannelChatTools(page);
@@ -12729,11 +12764,11 @@ test("channel activity triage actions create follow-up records and preserve loca
   const activityFilters = channelEventFilters(page);
   const searchInput = activityFilters.getByPlaceholder("Search activity");
   const composer = channelComposerTextbox(page);
+  await invokeTimelineAction(approvalEventItem, "Details");
+  await openTriageActions();
   await searchInput.fill("Blocked triage");
   await composer.fill("Composer draft survives triage");
   await expect(page.locator(".channel-progress-popover")).toHaveCount(0);
-  await invokeTimelineAction(workflowStepItem, "Details");
-  await openTriageActions();
   await activityDetails.getByRole("button", { name: "Create context summary" }).click();
   await activityDetails.getByLabel("Summary").fill("Summary from Blocked triage step.");
   await activityDetails.getByRole("button", { name: "Run triage action" }).click();

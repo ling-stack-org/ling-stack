@@ -32,3 +32,5 @@
 ## 明确未完成
 
 本批没有新增 API、UI、数据库列、Run/Attempt 状态、审批动作或 Host 执行接线。真实节点重跑必须另行完成 Host 当前复核、新 Attempt/fence、重新审批、下游失效传播、取消/重启/重复点击和真实 Provider 证据；因此 F5 真实执行仍保持 `BLOCKED`。
+
+后续 F5-02 已补齐 Daemon 内部的 Host 只读观察和当前策略复核，但仍不创建新执行身份或授予执行权；详见 [F5-02 Host-backed 节点重跑观察](f5-node-rerun-host-observation-2026-11-13.md)。

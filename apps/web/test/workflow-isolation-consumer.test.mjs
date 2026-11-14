@@ -50,7 +50,7 @@ async function fixture(t, payload = evidence()) {
   const runActualWorkspaceChain = runInNewContext(`(function(input) {
     const {cwd, selectedChannelId, daemonHealthy, selectedChannelWorkflows, selectedChannelWorkflowSteps,
       channelCollaborationCardRefreshSignature, committedTerminalReportItemRevisionSignature, channelConversationRefreshToken,
-      channelWorkflows, channelWorkflowSteps, channelRuns, approvals, channelArtifactsByRun,
+      channelRetainedIsolationWorkflowIds, channelWorkflows, channelWorkflowSteps, channelRuns, approvals, channelArtifactsByRun,
       channelExecutionActions, channelContextSegmentIdByItemId, t, terminalReportByWorkflowId} = input;
     ${declarations}
     return { workflowProgressByWorkflowId, conversationWorkCellByWorkflowId };
@@ -59,7 +59,7 @@ async function fixture(t, payload = evidence()) {
   const owner = workflow(), tasks = steps(owner);
   const input = { cwd: "/qa", selectedChannelId: owner.channelId, daemonHealthy: true, selectedChannelWorkflows: [owner], selectedChannelWorkflowSteps: tasks,
     channelCollaborationCardRefreshSignature: "initial", committedTerminalReportItemRevisionSignature: "", channelConversationRefreshToken: 0,
-    channelWorkflows: [owner], channelWorkflowSteps: tasks, channelRuns: [], approvals: [], channelArtifactsByRun: {},
+    channelRetainedIsolationWorkflowIds: [], channelWorkflows: [owner], channelWorkflowSteps: tasks, channelRuns: [], approvals: [], channelArtifactsByRun: {},
     channelExecutionActions: [], channelContextSegmentIdByItemId: new Map(), t: h.state.t, terminalReportByWorkflowId: new Map() };
   t.after(() => port.unmount());
   function snapshot(chain) {
@@ -137,8 +137,10 @@ test("actual reload/SSE consumer converges approved-not-applied→applying→app
 test("the real consumer does not hide retained integration evidence when the current step list is empty", async t => {
   const f = await fixture(t);
   f.input.selectedChannelWorkflowSteps = []; f.input.channelWorkflowSteps = [];
+  f.input.channelRetainedIsolationWorkflowIds = ["workflow-qa"];
   f.chain(); await f.port.flush();
   const chain = f.chain();
+  assert.deepEqual(f.requests, [["/qa", "workflow-qa"]]);
   assert(chain.conversationWorkCellByWorkflowId.has("workflow-qa"));
   assert(f.snapshot(chain).items.some(item => item.id.startsWith("workflow-isolation:")));
 });

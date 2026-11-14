@@ -1627,6 +1627,7 @@ export interface RunStore extends MemoryWikiStore, MemoryDerivativeStore, Learni
   settleHostOperation(ticket: import("./host-operation-journal-types.js").HostOperationTicket, input: import("./host-operation-journal-types.js").HostOperationSettlementInput): import("./host-operation-journal-types.js").HostOperationRecord;
   /** Safe rows are independently reverified against their exact domain evidence on every read. */
   getHostOperation(operationId: string): import("./host-operation-journal-types.js").HostOperationRecord | undefined;
+  listHostOperations(source: import("./host-operation-journal-types.js").HostOperationSource, stoppedAt?: string): import("./host-operation-journal-types.js").HostOperationRecord[];
   listHostOperationBlockers(source: import("./host-operation-journal-types.js").HostOperationSource, stoppedAt?: string): import("./host-operation-journal-types.js").HostOperationRecord[];
   prepareHostOfficeLocalExecution(parent: import("./host-operation-journal-types.js").HostOperationTicket,
     producer: import("./host-operation-journal-types.js").HostOperationTicket,

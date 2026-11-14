@@ -1489,6 +1489,8 @@ export interface ChannelWorkflowListResponse {
   readonly cwd: string;
   readonly channelId: string;
   readonly workflows: readonly ChannelWorkflow[];
+  /** Workflow ids with retained isolation rounds that may outlive the current step projection. */
+  readonly retainedIsolationWorkflowIds?: readonly string[];
 }
 
 export interface ChannelWorkflowMutationResponse {
