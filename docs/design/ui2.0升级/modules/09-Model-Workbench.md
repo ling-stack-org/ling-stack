@@ -16,6 +16,15 @@
 
 ## List
 
+### CPA-style presentation contract
+
+The workbench follows the proven supplier-management pattern used by the local CPA reference (`chatgpt-price-board`): a concise summary first, explicit primary action, and progressive disclosure for configuration and diagnostics. The Web surface keeps semantic table roles for keyboard and screen-reader stability, but populated rows are presented as separated surface cards rather than a dense spreadsheet. Each row shows only model, route, capability, one primary state, and the next useful action; endpoint, response, and raw checks stay behind existing details disclosures.
+
+- The first viewport answers “what model is this, where does it route, can I use it, and what should I do next?”
+- Add/edit remains one focused flow. Advanced fields and model discovery are secondary, not competing with the model identity and save action.
+- Empty, filtered, loading, and stale states use one compact owner with one next action. Do not add summary cards or duplicate banners for the same state.
+- Keep the three default-purpose controls visible above the list, but keep their labels and options compact (`聊天`, `图片`, `视频`) and do not repeat provider metadata in every option.
+
 模型列表上方常显一条无卡片外框的紧凑用途配置栏，直接显示聊天模型、生图目标和生视频目标的当前选择。
 不显示独立“默认用途”标题；每个标签与其下拉同一行，下拉保持约 `220px`，不按可用宽度拉伸。
 默认列为模型、提供方、能力、状态和操作。名称获得弹性宽度；操作列固定 `184px`、表头与按钮组右对齐。
