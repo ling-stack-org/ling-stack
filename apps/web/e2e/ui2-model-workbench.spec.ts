@@ -339,7 +339,7 @@ test("UI2 model focus revalidation retains stale rows and blocked delete remains
   await expect(page.getByRole("button", { name: "Refresh" })).toHaveCount(0);
   await triggerFocusRevalidation(page);
   await expect(page.locator(".provider-row")).toHaveCount(7);
-  await expect(page.locator(".provider-page-error")).toContainText("Synthetic provider list failure");
+  await expect(page.locator(".provider-page-error")).toContainText("The service is temporarily unavailable. Try again shortly.");
   await expect(page.locator(".provider-page-error").getByRole("button", { name: "Retry" })).toBeVisible();
   await expect(page.locator(".provider-readiness-summary")).toContainText("Stale");
   await captureEvidence(page, runtimeErrors, "1440x960-ling-light-retained-refresh-error.png", [503]);
@@ -350,7 +350,9 @@ test("UI2 model focus revalidation retains stale rows and blocked delete remains
   const dialog = page.getByRole("dialog", { name: "Delete ready-model" });
   await dialog.getByRole("button", { name: "Delete" }).click();
   await expect(dialog).toBeVisible();
-  await expect(dialog).toContainText("Provider is still used by this workspace.");
+  await expect(dialog).toContainText("This item changed elsewhere. Refresh and try again.");
+  await dialog.getByText("Technical details", { exact: true }).click();
+  await expect(dialog.getByText("Provider is still used by this workspace.")).toBeVisible();
   await expect(dialog.getByRole("button", { name: "Delete" })).toBeEnabled();
   await captureEvidence(page, runtimeErrors, "1440x960-ling-light-delete-blocked.png", [503, 409]);
   await dialog.getByRole("button", { name: "Cancel" }).click();
@@ -381,7 +383,7 @@ test("UI2 row check scopes busy state and keeps failure details", async ({ page 
   const failure = page.locator(".provider-check-feedback-row.bad");
   await expect(failure).toBeVisible({ timeout: 10_000 });
   await expect(failure).toContainText("Check failed");
-  await failure.getByText("Check details").click();
+  await failure.getByText("Technical details").click();
   await expect(failure).toContainText("API key");
   await captureEvidence(page, runtimeErrors, "1280x800-ling-dark-check-failure-details.png");
 });

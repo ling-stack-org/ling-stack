@@ -83,7 +83,7 @@ for (const fixture of [
     await navigation.getByRole("button", { name: "Settings" }).click();
     await page.getByLabel("Settings sections").getByRole("button", { name: "Model Workbench" }).click();
     const workbench = page.locator(".provider-workbench");
-    await expect(workbench.locator(".provider-page-error")).toContainText("Synthetic scoped Provider failure");
+    await expect(workbench.locator(".provider-page-error")).toContainText("The service is temporarily unavailable. Try again shortly.");
     await captureEvidence(page, `${fixture.width}x${fixture.height}-ling-${fixture.theme}-provider-failure.png`);
 
     await page.getByLabel("Settings sections").getByRole("button", { name: "Back to app" }).click();

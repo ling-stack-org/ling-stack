@@ -2,6 +2,7 @@ import { useRef, type ReactNode } from "react";
 import { Plus, Save } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import { providerCheckStatusLabel } from "../../lib/providers.js";
+import { ProductErrorDetails } from "../../shared/feedback/ProductErrorDetails.js";
 import {
   Button,
   Dialog,
@@ -28,6 +29,7 @@ export function ProviderEditorPanel({
   canEditCustomProviderFields,
   modelImportPanel,
   editorErrorMessage,
+  editorErrorTechnicalMessage,
   editorWarningMessage,
   checkResult,
   editorCheckProviderName,
@@ -54,6 +56,7 @@ export function ProviderEditorPanel({
   readonly canEditCustomProviderFields: boolean;
   readonly modelImportPanel: ReactNode;
   readonly editorErrorMessage: string;
+  readonly editorErrorTechnicalMessage: string;
   readonly editorWarningMessage: string;
   readonly checkResult: ProviderCheckResult | undefined;
   readonly editorCheckProviderName: string;
@@ -125,7 +128,12 @@ export function ProviderEditorPanel({
             canEditCustomProviderFields={canEditCustomProviderFields}
             onFormChange={onFormChange}
           />
-          {editorErrorMessage ? <InlineFeedback className="provider-editor-error" tone="danger" title={t("Error")}>{t(editorErrorMessage)}</InlineFeedback> : null}
+          {editorErrorMessage ? (
+            <InlineFeedback className="provider-editor-error" tone="danger" title={t("Error")}>
+              <span>{editorErrorMessage}</span>
+              <ProductErrorDetails technicalMessage={editorErrorTechnicalMessage} />
+            </InlineFeedback>
+          ) : null}
           {editorWarningMessage ? <InlineFeedback className="provider-editor-warning" tone="warning">{t(editorWarningMessage)}</InlineFeedback> : null}
           {checkResult && !editorErrorMessage ? (
             <InlineFeedback className="provider-editor-check-feedback" tone={checkResult.ok ? "success" : "danger"} title={editorCheckProviderName || t("Provider check")}>
@@ -133,8 +141,8 @@ export function ProviderEditorPanel({
               <span>{editorCheckMessage}</span>
               {editorCheckGuidance ? <small>{editorCheckGuidance}</small> : null}
               {checkResult.message ? (
-                <InspectorSection className="provider-check-raw-details" title={t("Check details")}>
-                  <small>{t("Provider response")}: {t(checkResult.message)}</small>
+                <InspectorSection className="provider-check-raw-details" title={t("Technical details")}>
+                  <small>{t("Provider response")}: {checkResult.message}</small>
                 </InspectorSection>
               ) : null}
             </InlineFeedback>

@@ -183,8 +183,8 @@ export function ProviderRouteList({
                         <p>{providerCheckDisplayMessage(rowCheckResult, provider, t)}</p>
                         {rowCheckGuidance ? <small>{rowCheckGuidance}</small> : null}
                         {rowCheckResult.message ? (
-                          <InspectorSection className="provider-check-raw-details" title={t("Check details")}>
-                            <small>{providerCheckStatusLabel(rowCheckResult, t)}: {t(rowCheckResult.message)}</small>
+                          <InspectorSection className="provider-check-raw-details" title={t("Technical details")}>
+                            <small>{providerCheckStatusLabel(rowCheckResult, t)}: {rowCheckResult.message}</small>
                           </InspectorSection>
                         ) : null}
                       </InlineFeedback>
