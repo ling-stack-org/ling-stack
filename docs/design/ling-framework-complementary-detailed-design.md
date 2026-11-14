@@ -1,6 +1,6 @@
 # Ling 框架补强详细设计
 
-Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A/F4-01, F3-B read-only admission evidence, F3-02 review-only trial preflight, and the Host readiness review gate entered main at `edb820f0` (PR #690), with `main@5dc138493` including the later CI merge; F5 A17 now has a pure contract preflight slice, while real F3-B trial and node rerun execution remain blocked
+Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A/F4-01, F3-B read-only admission evidence, F3-02 review-only trial preflight, and the Host readiness review gate entered main at `edb820f0` (PR #690), with `main@5dc138493` including the later CI merge; F5 A17 pure contract preflight, Host-backed read-only observation, and the read-only Host admission plan endpoint are implemented in isolated branches, while real F3-B trial and node rerun execution remain blocked
 Owner: Ling framework maintainers; evaluation and SDK implementation owners
 Last verified: 2026-11-13
 Document type: reference / technical design
@@ -18,6 +18,8 @@ Code and test anchors: section 12 and the implementation record; live evidence i
 - **已实现只读接入合同**：F3-B 的 Daemon `FrameworkAssuranceEvidenceResponse`、API client 读取和 framework-assurance 关联适配；它提供准入证据，不授予真实执行许可。
 - **仍拟新增接入合同**：F3-B 的真实 Provider/evaluation 完整闭环与 F5 节点重跑执行，尚无完整运行验收。
 - **已实现合同前置**：F5-01 的 `node-rerun` 纯解析与 A17 fail-closed 评估只验证 intent 和 Host observation，不创建执行身份，也不授权执行。
+- **已实现只读观察接入**：F5-02 的 Daemon Host 观察器在单个 SQLite read snapshot 内重建源 Run/WorkUnit/Attempt、Workflow/DAG、artifact、依赖闭包、停止/lease/fence/effect 与当前策略事实；事实完整且源摘要一致时才调用 F5-01 纯评估器，观察器本身不写 Store、不创建执行对象，也不授予执行权限。
+- **已实现 Host admission plan 接线**：F5-03 的 Daemon endpoint 只接受严格 intent，复用 F5-02 观察结果生成确定性 `NodeRerunHostAdmissionPlanV1`；plan 绑定源 snapshot、当前 policy 和幂等键，描述未来由 Host mint 的 WorkUnit/Run/Attempt/fence 与 fresh approval，不创建这些对象，也不触发 Provider。
 
 所有新格式采用 `schemaVersion: 1`。F1、F3-A 和 F4-01 由显式解析器拒绝未知 schema、未知字段和不合法枚举；F3-B 的 Host 响应和 live consumer 也遵循相同原则。F3-A/F4-01 格式是本工具链私有报告，F3-B 的只读响应是明确的 contracts DTO。
 
@@ -453,9 +455,9 @@ collector 的观察结果与原始响应分别复制，修改一侧不会同步�
 
 不公开 claimToken、resume handle、私有输入、artifact body。新增报告只引用允许字段；详细失败日志仍由原权限边界控制。集成测试覆盖“读取不启动执行”的反例，不只验证返回 JSON。
 
-## 9. F5 节点重跑合同
+## 9. F5 节点重跑合同与 Host 观察
 
-本节的 F5-01 只实现合同前置，不新增 rerun API、按钮、状态、数据库列或审批动作。
+本节的 F5-01 与 F5-02 实现合同和只读观察前置，F5-03 增加只读 admission plan API；这些切片不新增按钮、状态、数据库列或审批动作。
 
 ### 9.1 将来必须满足的准入
 
@@ -472,7 +474,7 @@ collector 的观察结果与原始响应分别复制，修改一侧不会同步�
 - 修改后的图是新版本，不直接修改已接受的执行图来绕过依赖检查。
 - 控制平面只提交意图，Host 再校验；不能把 UI 可点击或诊断 fence 当执行许可。
 - 取消、重启、重复点击和审批失效的语义必须与并发拥有方联合验收。
-- 实现方案、迁移需求及 UI 另立任务；F5-01 不改变“真实节点重跑未实现”的状态。
+- 实现方案、迁移需求及 UI 另立任务；F5-01/F5-02/F5-03 不改变“真实节点重跑未开放”的状态。
 
 ### 9.3 F5-01 合同前置实现
 
@@ -482,6 +484,38 @@ collector 的观察结果与原始响应分别复制，修改一侧不会同步�
 - `evaluateNodeRerunAdmission()` 将 intent 与 Host observation 做一次 fail-closed 比对。只有源 Run 已结束、源 Attempt 已停止、lease/fence 已释放、效果已结算、依赖闭包完整、策略指纹当前且权限有效时，才返回 `eligible_for_host_admission`；结果始终带有 `executionAuthorized: false`，并要求 Host 重新校验和生成新身份。
 
 该切片不读取 Store、不写数据库、不创建 Run/Attempt、不调用 Provider、不发起审批，也不接 UI/API。它为 A17 提供可独立回归的合同边界，Host 执行接线和真实运行验收仍需后续单独任务。
+
+### 9.4 F5-02 Host-backed 只读观察
+
+`packages/daemon/src/features/runs/node-rerun-observation.ts` 将现有 Store 和运行时观察事实组合成 F5-01 可消费的 `NodeRerunObservedSourceV1`。入口 `observeNodeRerunAdmission()` 的读取顺序固定在一个 `RunStore.readSnapshot()` 内：
+
+1. 严格解析 intent，并沿 Run → WorkUnit → Attempt → WorkflowStep → Workflow 校验所有身份绑定。
+2. 从已接受的 Workflow graph 重算完整 SHA-256 graph digest 和节点 digest，校验 graph fingerprint、节点唯一性、边引用、物化步骤以及 `dependsOnStepIds` 与 DAG 一致。
+3. 读取源输入 artifact 和上游输入/输出 artifact 的 owner 与 SHA-256；同时计算完整上游/下游依赖闭包，任何缺失、重复、非终态或无摘要事实都 fail-closed。
+4. 读取停止证据、Resource lease、runtime semaphore、terminal runtime audit、Host operation/command blocker 和当前有效策略。当前策略只重新解析并比较指纹，不产生审批或执行动作。
+5. 将当前 Host 投影重新计算的 source snapshot 与 intent 的 immutable pins 做完整比较；只有全部事实一致时才调用 `evaluateNodeRerunAdmission()`。
+
+观察结果包含脱敏 blocker code、是否调用纯评估器和最终 admission。输入无效或事实不完整时 `evaluationInvoked` 固定为 `false`；即使纯评估器返回 `eligible_for_host_admission`，`executionAuthorized` 仍固定为 `false`。该观察器不写 Store，不创建 Run、Attempt、lease、fence、approval 或 artifact，不调用 Provider，不触发 recovery、dispatch 或下游失效。
+
+F5-02 目前是 Daemon 内部只读模块；F5-03 增加了只读 admission plan endpoint 和 API client caller。两者都不包含 Host 新 Attempt/fence/approval minting、真实执行、下游失效、取消/重启/重复点击语义或 A17/A18 真实验收。
+
+### 9.5 F5-03 Host admission plan 接线
+
+入口为 `POST /runs/:runId/node-rerun/admission?cwd=...`。它要求 `cwd` 对应已初始化的 Host Store，严格解析请求体，并先核对 URL Run 与 `intent.source.runId`。冷工作区、非法 intent 或 URL lineage 不匹配直接返回脱敏错误，不初始化 Store。
+
+通过 F5-02 观察且得到 `eligible_for_host_admission` 后，Host 生成 `NodeRerunHostAdmissionPlanV1`。计划只包含以下未来动作的所有权和边界：
+
+| 目标 | 计划值 | 含义 |
+| --- | --- | --- |
+| WorkUnit / Run / Attempt | `host_minted` | 未来由 Host 在提交事务内生成新的执行身份 |
+| fence | `host_minted` | 绑定新 Attempt，不复用源 Attempt fence |
+| approval | `fresh_current_policy` | 按提交时当前 policy 重新生成，不继承旧 approval |
+| graphMutation | `none` | 不通过 rerun 修改已接受 DAG |
+| providerDispatch | `disabled` | 计划阶段不调用 Provider 或 Runner |
+
+`planId` 和 `planFingerprint` 由 intent、source pins、source/current policy fingerprint 和固定动作集合确定性计算。相同 intent 在源 snapshot、策略和幂等键不变时返回相同 plan；幂等键改变会产生新的 plan；源 snapshot 或 policy 漂移先被观察器阻断，不复用旧 plan。`preconditions.revalidateBeforeWrite` 固定为 `true`，后续真正写入必须在 Host 事务中再次读取并核对 source snapshot、当前 policy 和幂等键。
+
+响应是 `NodeRerunHostAdmissionResponseV1`，包含 `admission`、`evaluationInvoked` 和可选 plan；`admission.executionAuthorized` 永远是 `false`。F5-03 不创建 Run、WorkUnit、Attempt、lease、fence、approval 或 artifact，不写 Store，不修改 graph，不触发 Provider、recovery、下游失效、取消或重启。实际提交和真实运行必须由后续阶段单独定义并验收。
 
 ## 10. 验收矩阵
 
@@ -504,6 +538,8 @@ collector 的观察结果与原始响应分别复制，修改一侧不会同步�
 | A15 | F3-B | 串行先验收；并发对比只在对应能力/隔离/汇合及恢复验收后进行 |
 | A16 | F4 | 冷工作区、错 lineage、分页变化正确呈现；诊断零执行副作用与敏感字段泄露 |
 | A17 | F5-01 合同前置 | 停止确认、冻结输入、依赖闭包、新身份、新审批及未知副作用阻断齐全 |
+| A17-H | F5-02 Host 只读观察 | 单 SQLite snapshot 内的 lineage、DAG、artifact、依赖闭包、停止/lease/fence/effect、当前策略和源摘要均经过 fail-closed 校验；不完整事实不调用评估器且不授予执行权 |
+| A17-P | F5-03 Host admission plan | 合法观察生成确定性 plan；源 snapshot、当前策略或幂等键变化不复用旧 plan；HTTP 重复提交零 Store 写入、零目标对象、零 Provider 调用 |
 | A18 | 全阶段 | 原 WIP、共享运行数据和锁文件未被越界修改；文档同步真实交付状态 |
 
 ## 11. 错误、兼容与未决项
@@ -537,3 +573,5 @@ collector 的观察结果与原始响应分别复制，修改一侧不会同步�
 - 新工具：`scripts/framework-assurance/`；冻结输入：`fixtures/framework-assurance/`；实现测试：`offline.test.mjs`、`cli.test.mjs`、`sdk-consumer.test.mjs`、`execution-evidence.test.mjs`、`diagnostics.test.mjs`、`trial-preflight.test.ts` 与 `host-readiness.test.ts`；F3-02 manifest 位于 `fixtures/framework-assurance/trials/t01-review.json`，Host readiness 合成形状位于 `fixtures/framework-assurance/execution-evidence/host-ready-shape.json`。
 - F3-B 只读接入：`packages/contracts/src/framework-assurance.ts`、`packages/daemon/src/features/runs/assurance-evidence.ts`、`packages/daemon/src/server/routes.ts`、`packages/api-client/src/endpoints/runs.ts`；回归为 `packages/daemon/test/assurance-evidence-api.test.mjs`、`assurance-evidence-isolation.test.mjs`、`assurance-evidence-budget.test.ts` 和 API client 的 `harness-diagnostics.test.mjs`。
 - F5-01 合同前置：`packages/contracts/src/node-rerun.ts`、`packages/contracts/test/node-rerun.test.ts`；合同包的 TypeScript 测试通过 `packages/contracts/tsconfig.test.json` 纳入类型检查和 `test:ci` 发现。
+- F5-02 Host 只读观察：`packages/daemon/src/features/runs/node-rerun-observation.ts`、`packages/daemon/test/node-rerun-observation.test.ts`；Daemon 测试类型检查、生产构建和五项 SQLite/Host 边界回归覆盖完整观察、缺 Run/Attempt、graph/依赖漂移、artifact 缺失/无摘要和当前策略漂移。
+- F5-03 Host admission plan：`packages/contracts/src/node-rerun.ts` 的 plan/response 合同、`packages/daemon/src/features/runs/node-rerun-admission.ts`、`packages/daemon/src/server/routes.ts`、`packages/daemon/src/server/router.ts`、`packages/api-client/src/endpoints/runs.ts`；回归为 `packages/daemon/test/node-rerun-observation.test.ts`、`node-rerun-admission-route.test.ts` 和 `packages/api-client/test/harness-diagnostics.test.mjs`，覆盖确定性幂等 plan、源快照漂移、HTTP 重复提交、route 解析和 encoded Run scope。

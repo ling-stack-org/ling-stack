@@ -62,6 +62,7 @@ import {
   terminalReportsEnabledForStore,
 } from "./terminal-report-coordinator.js";
 import { buildWorkflowEvidence, projectPublicWorkflowEvidence } from "./workflow-evidence.js";
+import { listRetainedIsolationWorkflowIds } from "./workflow-isolation-evidence.js";
 import { createMemorySourceRevisions, renderUsedMemoryPromptForView } from "../memory/prompt.js";
 import { reviewWorkflowFanInContext } from "./workflow-fanin.js";
 import type { PreselectedMemoryUse } from "../runs/schemas.js";
@@ -184,14 +185,16 @@ export async function handleChannelWorkflowsCollection(
       return;
     }
     if (request.method === "GET") {
+      const workflows = store.listChannelWorkflows({
+        channelId,
+        status: readOptionalChannelWorkflowStatusQuery(url, "status"),
+        limit: readOptionalIntegerQuery(url, "limit", 1),
+      });
       writeJson(response, 200, {
         cwd,
         channelId,
-        workflows: store.listChannelWorkflows({
-          channelId,
-          status: readOptionalChannelWorkflowStatusQuery(url, "status"),
-          limit: readOptionalIntegerQuery(url, "limit", 1),
-        }),
+        workflows,
+        retainedIsolationWorkflowIds: listRetainedIsolationWorkflowIds(store, workflows),
       });
       return;
     }

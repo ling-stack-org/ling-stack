@@ -389,6 +389,7 @@ export function AppShell(): React.JSX.Element {
     channelContextSummaries,
     channelWorkflows,
     channelWorkflowSteps,
+    channelRetainedIsolationWorkflowIds,
     channelMessagesLoading,
     channelFilesLoading,
     channelRunArtifactsLoading,
@@ -2752,6 +2753,7 @@ export function AppShell(): React.JSX.Element {
             channelContextSummaries={channelContextSummaries}
             channelWorkflows={channelWorkflows}
             channelWorkflowSteps={channelWorkflowSteps}
+            channelRetainedIsolationWorkflowIds={channelRetainedIsolationWorkflowIds}
             channelStateTransitions={channelStateTransitions}
             channelActivityTransitionsLoading={channelActivityTransitionsLoading}
             channelActivityTransitionError={channelActivityTransitionError}

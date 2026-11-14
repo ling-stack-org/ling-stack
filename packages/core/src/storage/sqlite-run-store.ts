@@ -2816,6 +2816,10 @@ export class SqliteRunStore implements RunStore {
     return this.hostOperationJournal.getHostOperation(...args);
   }
 
+  listHostOperations(...args: Parameters<RunStore["listHostOperations"]>): ReturnType<RunStore["listHostOperations"]> {
+    return this.hostOperationJournal.listHostOperations(...args);
+  }
+
   listHostOperationBlockers(...args: Parameters<RunStore["listHostOperationBlockers"]>): ReturnType<RunStore["listHostOperationBlockers"]> {
     return this.hostOperationJournal.listHostOperationBlockers(...args);
   }

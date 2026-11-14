@@ -27,7 +27,9 @@ export function ConversationTimelineProtocolRenderer({
   const surfaceDetail = renderProtocolDetail?.(item);
   const inlineGraph = item.protocolKind === "workflow" && Boolean(surfaceDetail);
   const workflowProtocol = item.protocolKind === "workflow" || item.protocolKind === "workflow-step";
-  const actionItem = workflowProtocol ? { ...item, availableActions: item.availableActions?.filter(action => action !== "open_source" && action !== "open_details") } : item;
+  const actionItem = workflowProtocol
+    ? { ...item, availableActions: item.availableActions?.filter(action => action !== "open_source" && action !== "open_details") }
+    : item;
   const hasActions = Boolean(onInvokeProtocolAction && actionItem.availableActions?.length);
   return (
     <TimelineFactRow

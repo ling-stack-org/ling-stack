@@ -323,6 +323,8 @@ export interface AppendRuntimeDiagnosticEventInput {
 export interface ListRuntimeEventsOptions {
   readonly afterSeq?: number;
   readonly limit?: number;
+  /** Read every matching row when the caller must prove that no audit was truncated. */
+  readonly complete?: boolean;
 }
 
 export interface RuntimeHeartbeat {
@@ -391,6 +393,8 @@ export interface ListRuntimeSemaphoreSlotsOptions {
   readonly ownerId?: string;
   readonly workUnitId?: string;
   readonly limit?: number;
+  /** Read every matching row when the caller must prove that no row was truncated. */
+  readonly complete?: boolean;
 }
 
 export interface RuntimeDiagnostics {

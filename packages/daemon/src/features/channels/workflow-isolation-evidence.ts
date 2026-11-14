@@ -1,4 +1,4 @@
-import type { WorkflowIntegrationRoundEvidenceV1, WorkflowIsolationEvidenceV1 } from "@ling-stack/contracts";
+import type { ChannelWorkflow, WorkflowIntegrationRoundEvidenceV1, WorkflowIsolationEvidenceV1 } from "@ling-stack/contracts";
 import { createSqliteWorkflowIntegrationCoordinatorStore, createSqliteWorkflowMergeApprovalStore,
   createSqliteWorkflowMergeApplyStore, type RunStore } from "@ling-stack/core";
 import { workflowIsolationIsDraining } from "./workflow-isolation-lifecycle.js";
@@ -51,4 +51,23 @@ export function buildWorkflowIsolationEvidence(store: RunStore, workflowId: stri
     if (!pinned && !hostOperationPending && error instanceof Error && error.message === "workflow_integration.store_not_sqlite") return undefined;
     return unavailable("workflow_isolation.evidence_unavailable");
   }
+}
+
+/**
+ * Returns a cheap channel-level discovery hint for evidence that can survive
+ * removal or delayed loading of the current workflow steps. The full evidence
+ * remains behind the per-workflow endpoint and is still read only there.
+ */
+export function listRetainedIsolationWorkflowIds(store: RunStore, workflows: readonly ChannelWorkflow[]): readonly string[] {
+  const retained = new Set(workflows.filter(workflow => workflowIsolationIsDraining(store, workflow.id)).map(workflow => workflow.id));
+  try {
+    const coordinator = createSqliteWorkflowIntegrationCoordinatorStore(store);
+    for (const workflow of workflows) {
+      if (coordinator.listRounds(workflow.id).length) retained.add(workflow.id);
+    }
+  } catch {
+    // Non-SQLite stores and unregistered coordinator adapters have no durable
+    // retained-round index to expose; live draining hints remain valid.
+  }
+  return workflows.filter(workflow => retained.has(workflow.id)).map(workflow => workflow.id);
 }

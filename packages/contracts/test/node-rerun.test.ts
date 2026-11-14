@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  createNodeRerunHostAdmissionPlanV1,
   evaluateNodeRerunAdmission,
   NodeRerunValidationError,
+  nodeRerunHostAdmissionPlanFingerprintV1,
   parseNodeRerunIntent,
   parseNodeRerunObservedSource,
 } from "../src/node-rerun.ts";
@@ -76,6 +78,83 @@ test("A17 valid intent is only eligible for Host admission and never authorized"
     blockers: [],
     nextStep: "host_must_revalidate_and_mint_identity",
   });
+});
+
+test("F5-03 creates a deterministic Host plan without execution identities", () => {
+  const intent = parseNodeRerunIntent(validIntent());
+  const observed = parseNodeRerunObservedSource(validObserved());
+  const admission = evaluateNodeRerunAdmission({ intent, observed });
+  const first = createNodeRerunHostAdmissionPlanV1({ intent, observed, admission });
+  const second = createNodeRerunHostAdmissionPlanV1({
+    intent: { ...intent, source: { ...intent.source, dependencyClosure: { ...intent.source.dependencyClosure } } },
+    observed: { ...observed, source: { ...observed.source, dependencyClosure: { ...observed.source.dependencyClosure } } },
+    admission,
+  });
+
+  assert.deepEqual(second, first);
+  assert.equal(first.planId, `node_rerun_plan_${first.planFingerprint}`);
+  assert.equal(first.actions.workUnit, "host_minted");
+  assert.equal(first.actions.run, "host_minted");
+  assert.equal(first.actions.attempt, "host_minted");
+  assert.equal(first.actions.fence, "host_minted");
+  assert.equal(first.actions.approval, "fresh_current_policy");
+  assert.equal(first.actions.graphMutation, "none");
+  assert.equal(first.actions.providerDispatch, "disabled");
+  assert.equal(first.preconditions.revalidateBeforeWrite, true);
+  assert.equal(first.preconditions.sourceSnapshotDigest, intent.source.sourceSnapshotDigest);
+  assert.equal(first.preconditions.policyFingerprint, observed.currentPolicyFingerprint);
+
+  const changedKey = { ...intent, idempotencyKey: "node-rerun:intent-002" };
+  assert.notEqual(
+    nodeRerunHostAdmissionPlanFingerprintV1({
+      intent,
+      source: intent.source,
+      sourcePolicyFingerprint: observed.sourcePolicyFingerprint!,
+      currentPolicyFingerprint: observed.currentPolicyFingerprint!,
+    }),
+    nodeRerunHostAdmissionPlanFingerprintV1({
+      intent: changedKey,
+      source: changedKey.source,
+      sourcePolicyFingerprint: observed.sourcePolicyFingerprint!,
+      currentPolicyFingerprint: observed.currentPolicyFingerprint!,
+    }),
+  );
+});
+
+test("F5-03 refuses to mint a plan for blocked or policy-drifted admission", () => {
+  const intent = parseNodeRerunIntent(validIntent());
+  const observed = { ...parseNodeRerunObservedSource(validObserved()), currentPolicyFingerprint: digest("2") };
+  const admission = evaluateNodeRerunAdmission({ intent, observed });
+  assert.equal(admission.decision, "blocked");
+  assert.throws(() => createNodeRerunHostAdmissionPlanV1({ intent, observed, admission }), NodeRerunValidationError);
+});
+
+test("F5-03 revalidates the admission envelope before creating a Host plan", () => {
+  const intent = parseNodeRerunIntent(validIntent());
+  const observed = parseNodeRerunObservedSource(validObserved());
+  const admission = evaluateNodeRerunAdmission({ intent, observed });
+  assert.equal(admission.decision, "eligible_for_host_admission");
+
+  const invalidAdmissions: readonly unknown[] = [
+    { ...admission, schemaVersion: 2 },
+    { ...admission, blockers: ["policy_drift"] },
+    { ...admission, nextStep: "manual_review_required" },
+    { ...admission, source: { ...admission.source!, runId: "run-other" } },
+    { ...admission, intentId: "intent-other" },
+  ];
+  for (const invalidAdmission of invalidAdmissions) {
+    assert.throws(() => createNodeRerunHostAdmissionPlanV1({
+      intent,
+      observed,
+      admission: invalidAdmission as typeof admission,
+    }), NodeRerunValidationError);
+  }
+
+  assert.throws(() => createNodeRerunHostAdmissionPlanV1({
+    intent,
+    observed: { ...observed, externalEffectStatus: "non_idempotent" },
+    admission,
+  }), NodeRerunValidationError);
 });
 
 test("A17 blocks active work, unknown effects, policy drift and stale permission together", () => {

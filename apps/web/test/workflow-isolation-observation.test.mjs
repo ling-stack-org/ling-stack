@@ -13,7 +13,7 @@ async function fixture(t, request) {
     "features/workspace/useWorkflowIsolationEvidence.ts": ["useWorkflowIsolationEvidence", "WORKFLOW_ISOLATION_POLL_LIMIT", "WORKFLOW_ISOLATION_POLL_MS", "WORKFLOW_ISOLATION_READ_TIMEOUT_MS"],
   } });
   const owner = workflow();
-  const input = { cwd: "/qa", channelId: owner.channelId, enabled: true, workflows: [owner], steps: steps(), refreshSignature: "initial", refreshToken: 0 };
+  const input = { cwd: "/qa", channelId: owner.channelId, enabled: true, workflows: [owner], steps: steps(), retainedIsolationWorkflowIds: [], refreshSignature: "initial", refreshToken: 0 };
   t.after(() => port.unmount());
   return { ...h, port, ports, input, calls, render: () => port.render(h.module.useWorkflowIsolationEvidence, input) };
 }
@@ -34,16 +34,18 @@ for (const change of ["workspace", "channel", "away-and-back"]) {
   });
 }
 
-test("actual hook discovers ordinary workflows once and never polls them, including failures", async t => {
+test("actual hook skips ordinary workflows without an isolation plan and never polls them", async t => {
   const f = await fixture(t, async (_cwd, id) => { if (id === "error-qa") throw new Error("Synthetic failure"); return { workflow: workflow({ id }) }; });
   f.input.workflows = [workflow(), workflow({ id: "error-qa" })]; f.input.steps = [];
   t.mock.timers.enable({ apis: ["setTimeout"] });
   f.render(); await f.port.flush();
-  assert.equal(f.calls.length, 2);
+  assert.equal(f.calls.length, 0);
   t.mock.timers.tick(200_000); await f.port.flush();
-  assert.equal(f.calls.length, 2);
-  assert.equal(f.render().get("workflow-qa").status, "loaded");
-  assert.equal(f.render().get("error-qa").status, "error");
+  assert.equal(f.calls.length, 0);
+  assert.equal(f.render().get("workflow-qa").status, "loading");
+  assert.equal(f.render().get("workflow-qa").expected, false);
+  assert.equal(f.render().get("error-qa").status, "loading");
+  assert.equal(f.render().get("error-qa").expected, false);
 });
 
 test("isolated in-flight/unknown reads have a finite follow-up budget; SSE token and signature can refresh it", async t => {

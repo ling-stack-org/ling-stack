@@ -15,12 +15,14 @@ export function useWorkflowIsolationEvidence(input: {
   readonly enabled: boolean;
   readonly workflows: readonly ChannelWorkflow[];
   readonly steps: readonly ChannelWorkflowStep[];
+  readonly retainedIsolationWorkflowIds?: readonly string[];
   readonly refreshSignature: string;
   readonly refreshToken: number;
 }): ReadonlyMap<string, WorkflowIsolationObservation> {
   const observation = useDaemonObservation();
   const cwd = input.cwd.trim();
   const { channelId, enabled, refreshSignature, refreshToken } = input;
+  const retainedIsolationWorkflowIds = input.retainedIsolationWorkflowIds ?? [];
   const paused = isDaemonObservationPausedForWorkspace(observation, cwd);
   const owner = useMemo(() => ({ cwd, channelId, epoch: observation.epoch, baseUrl: observation.baseUrl }),
     [cwd, channelId, observation.epoch, observation.baseUrl]);
@@ -28,7 +30,8 @@ export function useWorkflowIsolationEvidence(input: {
   currentOwner.current = owner;
   const selected = input.workflows.filter(workflow => workflow.channelId === channelId);
   const membership = JSON.stringify(selected.map(workflow => [workflow.id, workflow.workspaceId]).sort());
-  const episode = useMemo(() => ({}), [owner, membership, enabled, paused, refreshSignature, refreshToken]);
+  const retainedMembership = JSON.stringify([...retainedIsolationWorkflowIds].sort());
+  const episode = useMemo(() => ({}), [owner, membership, retainedMembership, enabled, paused, refreshSignature, refreshToken]);
   const currentEpisode = useRef(episode);
   currentEpisode.current = episode;
   const latestInput = useRef(input);
@@ -45,9 +48,17 @@ export function useWorkflowIsolationEvidence(input: {
     const previous = records.current.owner === owner ? records.current.entries : new Map<string, WorkflowIsolationObservation>();
     const entries = new Map<string, WorkflowIsolationObservation>();
     const workflows = latestInput.current.workflows.filter(workflow => workflow.channelId === channelId);
+    const isolationWorkflows = workflows.filter((workflow) => {
+      const before = previous.get(workflow.id);
+      return before?.expected === true
+        || Boolean(before?.isolation)
+        || retainedIsolationWorkflowIds.includes(workflow.id)
+        || workflowHasIsolationPlan(latestInput.current.steps.filter(step => step.workflowId === workflow.id));
+    });
     for (const workflow of workflows) {
       const before = previous.get(workflow.id);
       entries.set(workflow.id, { status: "loading", expected: before?.expected === true
+        || retainedIsolationWorkflowIds.includes(workflow.id)
         || workflowHasIsolationPlan(latestInput.current.steps.filter(step => step.workflowId === workflow.id)), isolation: before?.isolation });
     }
     const publish = (): void => {
@@ -94,7 +105,7 @@ export function useWorkflowIsolationEvidence(input: {
       }
     };
     if (cwd && channelId && enabled && !paused) {
-      for (const workflow of workflows) void load(workflow, WORKFLOW_ISOLATION_POLL_LIMIT);
+      for (const workflow of isolationWorkflows) void load(workflow, WORKFLOW_ISOLATION_POLL_LIMIT);
     }
     return () => { disposed = true; for (const timer of timers) clearTimeout(timer); };
   }, [owner, episode]);

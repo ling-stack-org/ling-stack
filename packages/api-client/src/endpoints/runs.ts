@@ -42,6 +42,8 @@ import type {
   FrameworkAssuranceAssociationHttpRequest,
   FrameworkAssuranceAssociationResult,
   FrameworkAssuranceEvidenceResponse,
+  NodeRerunHostAdmissionResponseV1,
+  NodeRerunIntentV1,
   RunCancelResponse,
   RunEventsResponse,
   RunInterventionListResponse,
@@ -333,6 +335,14 @@ export const runEndpoints = {
       input: FrameworkAssuranceAssociationHttpRequest,
     ): Promise<FrameworkAssuranceAssociationResult> {
       return this._post(`/runs/${encodeURIComponent(runId)}/assurance-evaluation-association`, { cwd }, input);
+    },
+
+  async admitNodeRerun(this: LingDaemonEndpointContext,
+      runId: string,
+      cwd: string,
+      input: NodeRerunIntentV1,
+    ): Promise<NodeRerunHostAdmissionResponseV1> {
+      return this._post(`/runs/${encodeURIComponent(runId)}/node-rerun/admission`, { cwd }, input);
     },
 
   async listRunShellSnapshots(this: LingDaemonEndpointContext, runId: string, cwd?: string, toolCallId?: string): Promise<ShellSnapshotListResponse> {

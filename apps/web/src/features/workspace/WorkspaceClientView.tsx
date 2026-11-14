@@ -314,6 +314,7 @@ export function WorkspaceClientView({
   channelContextSummaries,
   channelWorkflows,
   channelWorkflowSteps,
+  channelRetainedIsolationWorkflowIds,
   channelStateTransitions,
   channelActivityTransitionsLoading,
   channelActivityTransitionError,
@@ -736,6 +737,7 @@ export function WorkspaceClientView({
   const workflowIsolationEvidenceByWorkflowId = useWorkflowIsolationEvidence({
     cwd, channelId: selectedChannelId, enabled: daemonHealthy === true,
     workflows: selectedChannelWorkflows, steps: selectedChannelWorkflowSteps,
+    retainedIsolationWorkflowIds: channelRetainedIsolationWorkflowIds,
     refreshSignature: [channelCollaborationCardRefreshSignature, committedTerminalReportItemRevisionSignature].join("\n"),
     refreshToken: channelConversationRefreshToken,
   });

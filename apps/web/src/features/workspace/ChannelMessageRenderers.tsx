@@ -115,7 +115,7 @@ function channelMessageTimelineItem(
     markdown: body,
     waitingPlaceholder: streaming && !message.body.trim(),
     phase: role === "agent" && !streaming && message.status === "ready" ? "final" : "commentary",
-    revision: message.revision,
+    revision: channelMessageRevision(message),
     threadSequence: 0,
     status: streaming ? "running" : message.status === "blocked" ? "blocked" : message.status === "failed" ? "failed" : "succeeded",
     turnId: message.turnId,
@@ -306,6 +306,13 @@ function protocolActions(
 function protocolRevision(value: string): number {
   const parsed = Date.parse(value);
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0;
+}
+
+function channelMessageRevision(message: ChannelMessage): number {
+  const persistedRevision = Number.isSafeInteger(message.revision) && (message.revision ?? 0) >= 0
+    ? message.revision ?? 0
+    : 0;
+  return Math.max(persistedRevision, protocolRevision(message.createdAt), protocolRevision(message.updatedAt));
 }
 
 function channelTurnTimelineItems(

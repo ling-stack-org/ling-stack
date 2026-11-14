@@ -255,6 +255,7 @@ import {
   handleRun,
 } from "../features/runs/routes.js";
 import { handleGetRunAssuranceEvidence } from "../features/runs/assurance-evidence.js";
+import { handlePostNodeRerunAdmission } from "../features/runs/node-rerun-admission.js";
 import { handlePostRunAssuranceEvaluationAssociation } from "../features/harness/evaluations/assurance-association-route.js";
 import { handleUserInputAnswerSubmission } from "../features/runs/user-input-answer-routes.js";
 import { handleLingThreadItem, handleLingThreadsCollection } from "../features/runs/thread-routes.js";
@@ -1675,6 +1676,21 @@ export async function routeRequest(
   }
   if (runRoute?.kind === "assurance-evaluation-association") {
     await handlePostRunAssuranceEvaluationAssociation(
+      request,
+      response,
+      url,
+      config.maxBodyBytes,
+      storeRegistry,
+      activeRuns,
+      runRoute.runId,
+    );
+    return;
+  }
+  if (runRoute?.kind === "node-rerun-admission") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) {
+      return;
+    }
+    await handlePostNodeRerunAdmission(
       request,
       response,
       url,

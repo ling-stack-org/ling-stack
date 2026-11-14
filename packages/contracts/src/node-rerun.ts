@@ -2,6 +2,7 @@ import type { RunStatus } from "./shared.js";
 import type { WorkUnitAttemptStatus } from "./runtime.js";
 
 export const NODE_RERUN_INTENT_SCHEMA_VERSION = 1 as const;
+export const NODE_RERUN_HOST_ADMISSION_PLAN_SCHEMA_VERSION = 1 as const;
 
 export type NodeRerunTerminalRunStatus = "succeeded" | "failed" | "cancelled";
 export type NodeRerunAttemptStatus = NodeRerunTerminalRunStatus | "lost";
@@ -120,6 +121,49 @@ export interface NodeRerunAdmissionResult {
   } | null;
   readonly blockers: readonly NodeRerunBlockerCode[];
   readonly nextStep: "host_must_revalidate_and_mint_identity" | "manual_review_required";
+}
+
+export interface NodeRerunHostAdmissionPlanV1 {
+  readonly schemaVersion: typeof NODE_RERUN_HOST_ADMISSION_PLAN_SCHEMA_VERSION;
+  readonly kind: "node_rerun_host_admission_plan";
+  /** Deterministic identity for the read-only plan; it is not a persisted execution identity. */
+  readonly planId: string;
+  readonly planFingerprint: string;
+  readonly intentId: string;
+  readonly idempotencyKey: string;
+  readonly source: NodeRerunSourceRefV1;
+  readonly sourcePolicyFingerprint: string;
+  readonly currentPolicyFingerprint: string;
+  readonly actions: {
+    readonly workUnit: "host_minted";
+    readonly run: "host_minted";
+    readonly attempt: "host_minted";
+    readonly fence: "host_minted";
+    readonly approval: "fresh_current_policy";
+    readonly graphMutation: "none";
+    readonly providerDispatch: "disabled";
+  };
+  readonly preconditions: {
+    readonly sourceSnapshotDigest: string;
+    readonly policyFingerprint: string;
+    readonly idempotencyKey: string;
+    readonly revalidateBeforeWrite: true;
+  };
+}
+
+export interface NodeRerunHostAdmissionPlanInputV1 {
+  readonly intent: NodeRerunIntentV1;
+  readonly observed: NodeRerunObservedSourceV1;
+  readonly admission: NodeRerunAdmissionResult;
+}
+
+export interface NodeRerunHostAdmissionResponseV1 {
+  readonly schemaVersion: typeof NODE_RERUN_HOST_ADMISSION_PLAN_SCHEMA_VERSION;
+  readonly kind: "node_rerun_host_admission_response";
+  readonly runId: string;
+  readonly admission: NodeRerunAdmissionResult;
+  readonly evaluationInvoked: boolean;
+  readonly plan: NodeRerunHostAdmissionPlanV1 | null;
 }
 
 export class NodeRerunValidationError extends Error {
@@ -321,6 +365,138 @@ function sameSource(left: NodeRerunSourceRefV1, right: NodeRerunSourceRefV1): bo
     && left.dependencyClosure.upstream.every((dependency, index) => sameDependency(dependency, right.dependencyClosure.upstream[index]!));
 }
 
+/**
+ * Stable identity for an admission plan. Arrays retain their contract order;
+ * object keys are sorted so the identity does not depend on object construction order.
+ */
+export function nodeRerunHostAdmissionPlanFingerprintV1(input: {
+  readonly intent: NodeRerunIntentV1;
+  readonly source: NodeRerunSourceRefV1;
+  readonly sourcePolicyFingerprint: string;
+  readonly currentPolicyFingerprint: string;
+}): string {
+  const value = sortJson({
+    schemaVersion: NODE_RERUN_HOST_ADMISSION_PLAN_SCHEMA_VERSION,
+    kind: "node_rerun_host_admission_plan",
+    intent: input.intent,
+    source: input.source,
+    sourcePolicyFingerprint: input.sourcePolicyFingerprint,
+    currentPolicyFingerprint: input.currentPolicyFingerprint,
+    actions: {
+      workUnit: "host_minted",
+      run: "host_minted",
+      attempt: "host_minted",
+      fence: "host_minted",
+      approval: "fresh_current_policy",
+      graphMutation: "none",
+      providerDispatch: "disabled",
+    },
+  });
+  let hash = 0xcbf29ce484222325n;
+  for (const byte of new TextEncoder().encode(JSON.stringify(value))) {
+    hash ^= BigInt(byte);
+    hash = BigInt.asUintN(64, hash * 0x100000001b3n);
+  }
+  return `nrhpv1_${hash.toString(16).padStart(16, "0")}`;
+}
+
+/**
+ * Build a deterministic Host-owned admission plan after the read-only
+ * observation has passed the pure evaluator. This function never allocates
+ * execution IDs, fences, approvals or Provider work.
+ */
+export function createNodeRerunHostAdmissionPlanV1(
+  input: NodeRerunHostAdmissionPlanInputV1,
+): NodeRerunHostAdmissionPlanV1 {
+  let intent: NodeRerunIntentV1;
+  let observed: NodeRerunObservedSourceV1;
+  try {
+    intent = parseNodeRerunIntent(input.intent);
+    observed = parseNodeRerunObservedSource(input.observed);
+  } catch {
+    throw new NodeRerunValidationError("The Host plan input is not a valid intent and observation pair.");
+  }
+
+  const { admission } = input;
+  if (admission.schemaVersion !== NODE_RERUN_INTENT_SCHEMA_VERSION
+    || admission.kind !== "node_rerun_admission"
+    || admission.decision !== "eligible_for_host_admission"
+    || admission.executionAuthorized !== false
+    || !Array.isArray(admission.blockers)
+    || admission.blockers.length !== 0
+    || admission.nextStep !== "host_must_revalidate_and_mint_identity") {
+    throw new NodeRerunValidationError("A blocked admission cannot produce a Host plan.");
+  }
+  const reevaluated = evaluateNodeRerunAdmission({ intent, observed });
+  if (!sameAdmissionResult(admission, reevaluated)
+    || reevaluated.decision !== "eligible_for_host_admission"
+    || !sameSource(intent.source, observed.source)) {
+    throw new NodeRerunValidationError("The admission result and Host observation do not bind to the same source.");
+  }
+  if (!observed.currentPolicyAvailable
+    || !observed.sourcePolicyFingerprint
+    || !observed.currentPolicyFingerprint
+    || observed.sourcePolicyFingerprint !== observed.currentPolicyFingerprint) {
+    throw new NodeRerunValidationError("A current policy fingerprint is required to build a Host plan.");
+  }
+
+  const sourcePolicyFingerprint = observed.sourcePolicyFingerprint;
+  const currentPolicyFingerprint = observed.currentPolicyFingerprint;
+  const planFingerprint = nodeRerunHostAdmissionPlanFingerprintV1({
+    intent,
+    source: observed.source,
+    sourcePolicyFingerprint,
+    currentPolicyFingerprint,
+  });
+  return {
+    schemaVersion: NODE_RERUN_HOST_ADMISSION_PLAN_SCHEMA_VERSION,
+    kind: "node_rerun_host_admission_plan",
+    planId: `node_rerun_plan_${planFingerprint}`,
+    planFingerprint,
+    intentId: intent.intentId,
+    idempotencyKey: intent.idempotencyKey,
+    source: observed.source,
+    sourcePolicyFingerprint,
+    currentPolicyFingerprint,
+    actions: {
+      workUnit: "host_minted",
+      run: "host_minted",
+      attempt: "host_minted",
+      fence: "host_minted",
+      approval: "fresh_current_policy",
+      graphMutation: "none",
+      providerDispatch: "disabled",
+    },
+    preconditions: {
+      sourceSnapshotDigest: observed.source.sourceSnapshotDigest,
+      policyFingerprint: currentPolicyFingerprint,
+      idempotencyKey: intent.idempotencyKey,
+      revalidateBeforeWrite: true,
+    },
+  };
+}
+
+function sameAdmissionResult(left: NodeRerunAdmissionResult, right: NodeRerunAdmissionResult): boolean {
+  return left.schemaVersion === right.schemaVersion
+    && left.kind === right.kind
+    && left.decision === right.decision
+    && left.executionAuthorized === right.executionAuthorized
+    && left.intentId === right.intentId
+    && sameAdmissionSource(left.source, right.source)
+    && left.blockers.length === right.blockers.length
+    && left.blockers.every((blocker, index) => blocker === right.blockers[index])
+    && left.nextStep === right.nextStep;
+}
+
+function sameAdmissionSource(
+  left: NodeRerunAdmissionResult["source"],
+  right: NodeRerunAdmissionResult["source"],
+): boolean {
+  return left === null && right === null
+    || left !== null && right !== null
+      && left.runId === right.runId && left.attemptId === right.attemptId && left.nodeId === right.nodeId;
+}
+
 function result(input: {
   readonly decision: NodeRerunAdmissionResult["decision"];
   readonly intentId: string | null;
@@ -337,6 +513,13 @@ function result(input: {
     blockers: [...new Set(input.blockers)],
     nextStep: input.decision === "blocked" ? "manual_review_required" : "host_must_revalidate_and_mint_identity",
   };
+}
+
+function sortJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortJson);
+  if (!value || typeof value !== "object") return value;
+  const record = value as Record<string, unknown>;
+  return Object.fromEntries(Object.keys(record).sort().map((key) => [key, sortJson(record[key])]));
 }
 
 /**
