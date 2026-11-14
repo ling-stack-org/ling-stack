@@ -121,7 +121,7 @@ async function useEnglishLocale(page: Page): Promise<void> {
 }
 
 async function mockScheduledTasksRoutes(page: Page): Promise<void> {
-  await page.route("http://127.0.0.1:17891/**", async (route) => {
+  await page.route(/\/(?:automations(?:\/scheduler)?|automation-drafts|automation-runs)(?:\?|$)/u, async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
     if (request.method() === "GET" && path === "/automations") {
