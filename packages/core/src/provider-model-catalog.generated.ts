@@ -3,12 +3,12 @@ import type { ProviderModelCatalogManifest, ProviderModelCatalogRecord } from ".
 
 export const providerModelCatalogManifest = {
   "schemaVersion": 1,
-  "version": "models.dev:a64cd7055b6b",
+  "version": "models.dev:296fc0817b43",
   "source": "models.dev",
   "sourceUrl": "https://models.dev/api.json",
   "license": "MIT",
-  "generatedAt": "2026-11-06T09:32:04.318Z",
-  "updatedAt": "2026-10-26"
+  "generatedAt": "2026-11-14T09:06:43.960Z",
+  "updatedAt": "2026-11-12"
 } as const satisfies ProviderModelCatalogManifest;
 
 export const providerModelCatalogRecords = [
@@ -1064,6 +1064,31 @@ export const providerModelCatalogRecords = [
   },
   {
     "providerId": "anthropic",
+    "id": "claude-fable-5-2",
+    "displayName": "Claude Fable 5.2",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning",
+      "vision"
+    ],
+    "thinkingModes": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ],
+    "contextWindow": 1000000,
+    "maxTokens": 128000,
+    "updatedAt": "2026-11-09"
+  },
+  {
+    "providerId": "anthropic",
     "id": "claude-haiku-4-5",
     "displayName": "Claude Haiku 4.5 (latest)",
     "input": [
@@ -1519,7 +1544,7 @@ export const providerModelCatalogRecords = [
       "reasoning",
       "vision"
     ],
-    "contextWindow": 131072,
+    "contextWindow": 1048576,
     "maxTokens": 65536,
     "updatedAt": "2026-04-21"
   },
@@ -1537,7 +1562,7 @@ export const providerModelCatalogRecords = [
       "reasoning",
       "vision"
     ],
-    "contextWindow": 131072,
+    "contextWindow": 1048576,
     "maxTokens": 65536,
     "updatedAt": "2026-04-21"
   },
@@ -2035,6 +2060,53 @@ export const providerModelCatalogRecords = [
   },
   {
     "providerId": "google",
+    "id": "gemini-4-carbon",
+    "displayName": "Gemini 4 Carbon",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning",
+      "vision"
+    ],
+    "thinkingModes": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "contextWindow": 1048576,
+    "maxTokens": 32768,
+    "updatedAt": "2026-11-10"
+  },
+  {
+    "providerId": "google",
+    "id": "gemini-4-hydrogen",
+    "displayName": "Gemini 4 Hydrogen",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning",
+      "vision"
+    ],
+    "thinkingModes": [
+      "low",
+      "medium",
+      "high",
+      "xhigh"
+    ],
+    "contextWindow": 1048576,
+    "maxTokens": 65536,
+    "updatedAt": "2026-11-12"
+  },
+  {
+    "providerId": "google",
     "id": "gemini-embedding-001",
     "displayName": "Gemini Embedding 001",
     "input": [
@@ -2109,22 +2181,6 @@ export const providerModelCatalogRecords = [
     "contextWindow": 1048576,
     "maxTokens": 65536,
     "updatedAt": "2026-07-21"
-  },
-  {
-    "providerId": "google",
-    "id": "gemini-omni-flash-preview",
-    "displayName": "Gemini Omni Flash Preview",
-    "input": [
-      "text",
-      "image"
-    ],
-    "capabilities": [
-      "reasoning",
-      "vision"
-    ],
-    "contextWindow": 131072,
-    "maxTokens": 65536,
-    "updatedAt": "2026-06-30"
   },
   {
     "providerId": "google",
@@ -2403,12 +2459,14 @@ export const providerModelCatalogRecords = [
     "id": "deepseek-v4-1-flash-1017",
     "displayName": "DeepSeek V4.1 Flash 1017",
     "input": [
-      "text"
+      "text",
+      "image"
     ],
     "capabilities": [
       "chat",
       "tool_call",
-      "reasoning"
+      "reasoning",
+      "vision"
     ],
     "thinkingModes": [
       "off",
@@ -2720,11 +2778,17 @@ export const providerModelCatalogRecords = [
     "capabilities": [
       "chat",
       "tool_call",
+      "reasoning",
       "vision"
     ],
-    "contextWindow": 262144,
-    "maxTokens": 16384,
-    "updatedAt": "2025-12-02"
+    "thinkingModes": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "contextWindow": 1048576,
+    "maxTokens": 262144,
+    "updatedAt": "2026-10-06"
   },
   {
     "providerId": "mistral",
