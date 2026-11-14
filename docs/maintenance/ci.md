@@ -27,7 +27,7 @@ CI 会先根据整个 Pull Request 的变更路径选择最小安全范围：
 | 手动运行 | 目标分支上的完整验证 |
 | 定时运行 | 默认分支每天 UTC 03:17（北京时间 11:17）的完整验证 |
 
-[Daemon 平台清单](../../scripts/ci/daemon-test-platforms.json)将 505 个通用文件分到八个 Linux shard；同时选择 Core 时使用六个，每个使用两个 worker；166 个包含原生／平台约束的文件保留在四个 `macos-26` shard，每个使用三个 worker。独立 native smoke 只在原生 sandbox／Seatbelt 路径变更或完整回归时选择，普通 Daemon 改动不再额外占用一个 macOS runner；实际可用容量和排队仍由 GitHub 决定。每个文件保持 `--test-concurrency=1`、独立 runtime home／workspace 和 POSIX 进程组。Kimi Host read／terminal、delegation production tool surface、engine lifecycle installation、Kimi owned-execution、workflow repository-fence、signal-shutdown regression，以及 workflow conflict／isolated-delivery fixtures 保留所属分片的独占阶段，避免这些会大量创建原生进程、Git worktree 或临时资源的 fixture 互相争用；其余文件进入按估计耗时降序的共享队列。Linux restricted-command 拒绝契约仍随 Daemon 选择；真实 macOS helper／Seatbelt smoke 由显式原生路径映射选择，未知路径回退完整验证。
+[Daemon 平台清单](../../scripts/ci/daemon-test-platforms.json)将 505 个通用文件分到八个 Linux shard；同时选择 Core 时使用六个，每个使用两个 worker；166 个包含原生／平台约束的文件保留在四个 `macos-26` shard，每个使用三个 worker。仅修改已登记 Daemon 测试入口时，分类器按清单选择对应平台，Linux-only 或 Darwin-only 改动不会排另一平台的整套分片；源码、共享 fixture、验证导入、未知路径和完整回归仍保留双平台。独立 native smoke 只在原生 sandbox／Seatbelt 路径变更或完整回归时选择，普通 Daemon 改动不再额外占用一个 macOS runner；实际可用容量和排队仍由 GitHub 决定。每个文件保持 `--test-concurrency=1`、独立 runtime home／workspace 和 POSIX 进程组。Kimi Host read／terminal、delegation production tool surface、engine lifecycle installation、Kimi owned-execution、workflow repository-fence、signal-shutdown regression，以及 workflow conflict／isolated-delivery fixtures 保留所属分片的独占阶段，避免这些会大量创建原生进程、Git worktree 或临时资源的 fixture 互相争用；其余文件进入按估计耗时降序的共享队列。Linux restricted-command 拒绝契约仍随 Daemon 选择；真实 macOS helper／Seatbelt smoke 由显式原生路径映射选择，未知路径回退完整验证。
 
 Daemon 分片任务上限为 40 分钟，执行队列上限为 30 分钟。默认文件 watchdog 为五分钟，已登记的高耗时 workflow／recovery fixture 保留十分钟或十五分钟的独立上限，具体清单见[测试执行说明](../../scripts/ci/README.md)。超时或取消会终止所属进程并使任务失败，不重试或强制通过；watchdog 上限不是十分钟性能验收结果。
 
@@ -39,7 +39,7 @@ Core 单独选择时使用八个 Linux shard，与 Daemon 同跑时使用五个�
 
 [平台清单契约](../../scripts/ci/daemon-test-platforms.test.ts)验证 discovery 的并集、互斥与原生文件归属，并检查通用文件及共享 fixture 的原生平台约束。混有 Darwin 正向用例的文件整体保留 macOS；文件缺失、重复、新增未分类或 stale 清单直接失败。源码契约不能替代同一提交在 Linux 与 macOS 上的实际执行和原生用例数量核对。
 
-Core 与 Daemon 同跑时，两组 Linux 分片合计十一个，加上四个 macOS 分片、类型检查、Web smoke、普通 packages 和 Linux 原生契约；完整回归再加独立 macOS native smoke，最多占二十个 runner、其中五个 macOS，符合 GitHub Free 的[并发上限](https://docs.github.com/en/actions/reference/limits#job-concurrency-limits-for-github-hosted-runners)。普通 Daemon 改动省去额外的 macOS smoke runner。Web smoke 在构建完成后独立启动。其他工作流仍共享组织容量，不能据此保证没有排队；分片数量不影响文件发现、覆盖或 watchdog。
+Core 与 Daemon 双平台同跑时，两组 Linux 分片合计十一个，加上四个 macOS 分片、类型检查、Web smoke、普通 packages 和 Linux 原生契约；完整回归再加独立 macOS native smoke，最多占二十个 runner、其中五个 macOS，符合 GitHub Free 的[并发上限](https://docs.github.com/en/actions/reference/limits#job-concurrency-limits-for-github-hosted-runners)。Linux-only Daemon 测试计划只保留六个 Linux Daemon shard 并将 Core 保持五个，Darwin-only 计划省去 Linux Daemon shard 并将 Core 恢复八个。普通 Daemon 改动省去额外的 macOS smoke runner。Web smoke 在构建完成后独立启动。其他工作流仍共享组织容量，不能据此保证没有排队；分片数量不影响文件发现、覆盖或 watchdog。
 
 Daemon 专用的依赖安全测试由 `dependency-policy` 任务单独运行，因此不会在 shard 中重复执行。`quality` 汇总任务保留检查名 `Typecheck, unit tests, and Web build`，统一判断适用任务的结果。
 

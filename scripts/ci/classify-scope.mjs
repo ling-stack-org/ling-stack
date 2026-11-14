@@ -53,6 +53,9 @@ const MACOS_NATIVE_PATH_PATTERNS = [
   /^packages\/daemon\/test\/(?:platform-native-sandbox|macos-native-command|restricted-command-dispatch)\.test\.[^/]+$/u,
   /^packages\/daemon\/test\/restricted-command-launch-unknown\.contract\.mjs$/u,
 ];
+const DAEMON_TEST_ENTRY_PATTERN = /^packages\/daemon\/(test\/[^/]+\.test\.(?:mjs|ts))$/u;
+const DAEMON_PLATFORMS = ["linux", "darwin"];
+let daemonPlatformManifest;
 // The catalog importer reads Web's AST helper, locale sources and tsconfig
 // without a manifest dependency. Keep that validation consumer in the graph.
 const VALIDATION_CONSUMERS = new Map([["@ling-stack/web", ["@ling-stack/localization"]]]);
@@ -174,6 +177,9 @@ export function classifyChangedFiles(input) {
     .filter((entry) => entry.hasTypecheckScript && isSupportedTypecheckPackage(entry.directory))
     .map((entry) => entry.name)
     .sort();
+  const daemonPlatforms = affectedNames.has("@ling-stack/daemon")
+    ? selectDaemonPlatforms({ files, changedSourceEntries, testSupportImporters })
+    : [];
 
   return {
     mode: "affected",
@@ -184,6 +190,7 @@ export function classifyChangedFiles(input) {
     dependencyPolicy: files.some((file) => file.endsWith("/package.json") || DEPENDENCY_CHECK_FILES.has(file)),
     assurance: files.some(isAssurancePath) || sourceEntries.some(name => ASSURANCE_PACKAGES.has(name)),
     daemon: affectedNames.has("@ling-stack/daemon"),
+    daemonPlatforms,
     macosNative: nativeSurfaceChanged,
     web: affectedNames.has("@ling-stack/web"),
     reason: changedEntries.size === 0 ? "offline assurance inputs and validation consumers" : changedSourceEntries.size === 0
@@ -193,7 +200,7 @@ export function classifyChangedFiles(input) {
 }
 
 /** @typedef {{name: string, directory: string, dependencies: string[], hasTestScript: boolean, hasTypecheckScript: boolean, scriptsFingerprint?: string}} PackageEntry */
-/** @typedef {{mode: "docs"|"affected"|"full", files: string[], packages: string[], testPackages: string[], typecheckPackages: string[], dependencyPolicy: boolean, assurance: boolean, daemon: boolean, macosNative: boolean, web: boolean, reason: string}} CiScope */
+/** @typedef {{mode: "docs"|"affected"|"full", files: string[], packages: string[], testPackages: string[], typecheckPackages: string[], dependencyPolicy: boolean, assurance: boolean, daemon: boolean, daemonPlatforms: string[], macosNative: boolean, web: boolean, reason: string}} CiScope */
 
 /** @param {string} value */
 function normalizePath(value) {
@@ -226,6 +233,62 @@ function isTestPath(file) {
 /** @param {string} file */
 function isMacosNativePath(file) {
   return MACOS_NATIVE_PATH_PATTERNS.some((pattern) => pattern.test(file));
+}
+
+/** @param {string} file */
+function daemonTestEntry(file) {
+  return DAEMON_TEST_ENTRY_PATTERN.exec(file)?.[1];
+}
+
+/**
+ * Only a change set made entirely of directly assigned Daemon test entrypoints
+ * can narrow the platform matrix. Source, shared fixtures, validation imports,
+ * unknown files and full-scope events retain both platforms.
+ * @param {{files: string[], changedSourceEntries: Set<string>, testSupportImporters: Set<string>}} input
+ */
+function selectDaemonPlatforms({ files, changedSourceEntries, testSupportImporters }) {
+  const actionable = files.filter(file => !isDocumentationPath(file) && !isMaintenancePath(file) && !isAssurancePath(file));
+  const entries = actionable.map(daemonTestEntry);
+  const nativeTestOnly = changedSourceEntries.size === 1
+    && changedSourceEntries.has("@ling-stack/daemon")
+    && actionable.length > 0
+    && actionable.every(file => isMacosNativePath(file));
+  if ((changedSourceEntries.size > 0 && !nativeTestOnly) || testSupportImporters.has("@ling-stack/daemon")) return [...DAEMON_PLATFORMS];
+  if (entries.length === 0 || entries.some(entry => !entry)) return [...DAEMON_PLATFORMS];
+  const manifest = loadDaemonPlatformManifest();
+  if (!manifest) return [...DAEMON_PLATFORMS];
+  const selected = new Set();
+  for (const entry of entries) {
+    const platform = manifest.get(entry);
+    if (!platform) return [...DAEMON_PLATFORMS];
+    selected.add(platform);
+  }
+  return DAEMON_PLATFORMS.filter(platform => selected.has(platform));
+}
+
+/** @returns {Map<string, string>|undefined} */
+function loadDaemonPlatformManifest() {
+  if (daemonPlatformManifest !== undefined) return daemonPlatformManifest;
+  try {
+    const manifest = JSON.parse(readFileSync(resolve(repositoryRoot, "scripts/ci/daemon-test-platforms.json"), "utf8"));
+    if (manifest?.version !== 1 || !Array.isArray(manifest.linux) || !Array.isArray(manifest.darwin)) {
+      daemonPlatformManifest = undefined;
+      return undefined;
+    }
+    const all = [...manifest.linux, ...manifest.darwin];
+    if (new Set(all).size !== all.length || all.some(file => typeof file !== "string")) {
+      daemonPlatformManifest = undefined;
+      return undefined;
+    }
+    daemonPlatformManifest = new Map([
+      ...manifest.linux.map(file => [file, "linux"]),
+      ...manifest.darwin.map(file => [file, "darwin"]),
+    ]);
+    return daemonPlatformManifest;
+  } catch {
+    daemonPlatformManifest = undefined;
+    return undefined;
+  }
 }
 
 /** @param {PackageEntry} entry */
@@ -378,6 +441,7 @@ function buildScope(mode, files, packages, reason) {
     dependencyPolicy: mode === "full",
     assurance: mode === "full",
     daemon: mode === "full" || names.includes("@ling-stack/daemon"),
+    daemonPlatforms: mode === "full" ? [...DAEMON_PLATFORMS] : [],
     macosNative: mode === "full" || files.some(isMacosNativePath),
     web: mode === "full" || names.includes("@ling-stack/web"),
     reason,
