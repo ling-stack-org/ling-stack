@@ -22,6 +22,7 @@ import {
   providerCompactModelLabel,
   providerDisplaySourceLabel,
 } from "./provider-model-labels.js";
+import { toProductError, type ProductError } from "./product-error.js";
 
 export { providerCompactModelLabel, providerDisplaySourceLabel } from "./provider-model-labels.js";
 export { providerFormWithSelectedModel } from "./provider-model-selection.js";
@@ -860,7 +861,11 @@ export function providerCheckMessage(result: ProviderCheckResult, t?: ProviderTr
   if (result.code === "unsupported_capability") {
     return translateProviderText(t, "Provider preset cannot run chat tasks.");
   }
-  return translateProviderText(t, result.message);
+  return toProductError(
+    result,
+    (key, values) => translateProviderText(t, key, values),
+    { fallbackMessage: "Provider check failed. Review technical details and try again." },
+  ).message;
 }
 
 export function providerCheckDisplayMessage(result: ProviderCheckResult, provider: Pick<ProviderPreset, "api"> | undefined, t?: ProviderTranslate): string {
@@ -878,24 +883,44 @@ export function providerCheckDisplayGuidance(result: ProviderCheckResult, provid
 }
 
 export function providerModelDiscoveryErrorMessage(error: unknown, t?: ProviderTranslate): string {
+  return providerModelDiscoveryError(error, t).message;
+}
+
+export function providerModelDiscoveryError(error: unknown, t?: ProviderTranslate): ProductError {
   const message = error instanceof Error ? error.message : String(error);
   const normalized = message.toLowerCase();
+  let fallbackMessage = "Could not fetch the model list. Check the provider configuration and try again.";
   if (normalized.includes("no route for post /provider-models")) {
-    return translateProviderText(t, "No route for POST /provider-models");
+    fallbackMessage = "No route for POST /provider-models";
   }
-  if (normalized.includes("api key missing") || normalized.includes("secret_missing")) {
-    return translateProviderText(t, "API key missing. Add an API key before fetching models.");
+  else if (normalized.includes("api key missing") || normalized.includes("secret_missing")) {
+    fallbackMessage = "API key missing. Add an API key before fetching models.";
   }
-  if (normalized.includes("provider_model_connection_changed")) {
-    return translateProviderText(t, "Save the provider connection changes or enter the API key again before fetching models.");
+  else if (normalized.includes("provider_model_connection_changed")) {
+    fallbackMessage = "Save the provider connection changes or enter the API key again before fetching models.";
   }
-  if (normalized.includes("auth_failed") || normalized.includes("401") || normalized.includes("403")) {
-    return translateProviderText(t, "The API key was rejected. Check the key and account permission, then try again.");
+  else if (normalized.includes("auth_failed") || normalized.includes("401") || normalized.includes("403")) {
+    fallbackMessage = "The API key was rejected. Check the key and account permission, then try again.";
   }
-  if (normalized.includes("timeout") || normalized.includes("network") || normalized.includes("operation was aborted")) {
-    return translateProviderText(t, "Could not reach the provider. Check Base URL, proxy, and local relay, then try again.");
+  else if (normalized.includes("timeout") || normalized.includes("network") || normalized.includes("operation was aborted")) {
+    fallbackMessage = "Could not reach the provider. Check Base URL, proxy, and local relay, then try again.";
   }
-  return translateProviderText(t, "Could not fetch the model list. Check the provider configuration and try again.");
+  return toProductError(
+    error,
+    (key, values) => translateProviderText(t, key, values),
+    {
+      codeMessages: {
+        auth_failed: "The API key was rejected. Check the key and account permission, then try again.",
+        invalid_api_key: "The API key was rejected. Check the key and account permission, then try again.",
+        network_failed: "Could not reach the provider. Check Base URL, proxy, and local relay, then try again.",
+        not_found: "No route for POST /provider-models",
+        provider_model_connection_changed: "Save the provider connection changes or enter the API key again before fetching models.",
+        secret_missing: "API key missing. Add an API key before fetching models.",
+        secret_store_unavailable: "API key missing. Add an API key before fetching models.",
+      },
+      fallbackMessage,
+    },
+  );
 }
 
 export function providerCheckGuidance(result: ProviderCheckResult, provider: Pick<ProviderPreset, "api"> | undefined, t?: ProviderTranslate): string {

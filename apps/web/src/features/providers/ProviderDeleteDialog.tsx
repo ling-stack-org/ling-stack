@@ -1,5 +1,6 @@
 import { Trash2 } from "lucide-react";
 import { useI18n } from "../../i18n.js";
+import { ProductErrorDetails } from "../../shared/feedback/ProductErrorDetails.js";
 import type { ProviderPreset } from "../../types.js";
 import {
   Button,
@@ -14,12 +15,14 @@ import {
 export function ProviderDeleteDialog({
   busy,
   errorMessage,
+  errorTechnicalMessage,
   target,
   onCancel,
   onConfirm,
 }: {
   readonly busy: boolean;
   readonly errorMessage: string;
+  readonly errorTechnicalMessage?: string;
   readonly target: ProviderPreset | undefined;
   readonly onCancel: () => void;
   readonly onConfirm: () => void;
@@ -37,6 +40,7 @@ export function ProviderDeleteDialog({
           {errorMessage ? (
             <InlineFeedback tone="danger" title={t("Error")}>
               {errorMessage}
+              <ProductErrorDetails technicalMessage={errorTechnicalMessage} />
             </InlineFeedback>
           ) : null}
         </DialogBody>

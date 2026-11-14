@@ -14,6 +14,7 @@ import type { DomainController, DomainError } from "../../app/domain-controller.
 import type {
   ProviderBatchResult,
   ProviderCheckScope,
+  ProviderDeleteResult,
   ProviderImportResult,
   ProviderSaveResult,
 } from "../../features/providers/index.js";
@@ -32,6 +33,7 @@ import {
   providerTemplateToForm,
   providerToForm,
 } from "../../lib/providers.js";
+import { toProductError, type ProductError } from "../../lib/product-error.js";
 import type {
   ProviderCheckResult,
   ProviderFormState,
@@ -54,6 +56,7 @@ export interface ProvidersState {
   readonly checkingProviderIds: readonly string[];
   readonly providerBatchResult: ProviderBatchResult | undefined;
   readonly providerOperationWarning: string;
+  readonly providerOperationWarningTechnical: string;
   readonly providerRepairRunId: string;
 }
 
@@ -72,7 +75,7 @@ export interface ProvidersActions {
   readonly checkProviderForRun: (provider: ProviderPreset) => Promise<boolean>;
   readonly saveProviderWithPreflight: () => Promise<ProviderSaveResult>;
   readonly importModelsFromProviderForm: (models: readonly ProviderModelOption[]) => Promise<ProviderImportResult>;
-  readonly removeProvider: (providerId: string) => Promise<void>;
+  readonly removeProvider: (providerId: string) => Promise<ProviderDeleteResult>;
   readonly runProviderCheck: (providerId: string) => Promise<void>;
   readonly runProviderBatchCheck: () => Promise<ProviderBatchResult | undefined>;
   readonly editProvider: (provider: ProviderPreset) => void;
@@ -86,10 +89,22 @@ export interface ProvidersActions {
 
 export type ProvidersController = DomainController<ProvidersState, ProvidersActions>;
 
-function readProviderDomainError(scope: DomainError["scope"], caught: unknown): DomainError {
+function readProviderDomainError(
+  scope: DomainError["scope"],
+  caught: unknown,
+  translate: (value: string, params?: Record<string, string | number>) => string,
+): DomainError {
+  const error = toProductError(caught, translate, {
+    fallbackMessage: scope === "load"
+      ? "Could not load model presets. Check the local service and retry."
+      : "The model preset operation could not be completed. Try again.",
+  });
   return {
     scope,
-    message: caught instanceof Error ? caught.message : String(caught),
+    message: error.message,
+    code: error.code,
+    status: error.status,
+    technicalMessage: error.technicalMessage,
   };
 }
 
@@ -113,6 +128,7 @@ export function useProvidersDomain(input: {
   const [checkingProviderIds, setCheckingProviderIds] = useState<readonly string[]>([]);
   const [providerBatchResult, setProviderBatchResult] = useState<ProviderBatchResult | undefined>();
   const [providerOperationWarning, setProviderOperationWarning] = useState("");
+  const [providerOperationWarningTechnical, setProviderOperationWarningTechnical] = useState("");
   const [providerRepairRunId, setProviderRepairRunId] = useState("");
   const [providerListError, setProviderListError] = useState<DomainError | undefined>();
   const [providerTemplateError, setProviderTemplateError] = useState<DomainError | undefined>();
@@ -139,7 +155,7 @@ export function useProvidersDomain(input: {
       const response = await listProviders(cwd);
       setProviders(response.providers);
     } catch (caught) {
-      setProviderListError(readProviderDomainError("load", caught));
+      setProviderListError(readProviderDomainError("load", caught, input.translate));
     } finally {
       setProvidersLoading(false);
       setProvidersLoaded(true);
@@ -152,7 +168,7 @@ export function useProvidersDomain(input: {
       const response = await listProviderTemplates();
       setProviderTemplates(response.templates);
     } catch (caught) {
-      setProviderTemplateError(readProviderDomainError("load", caught));
+      setProviderTemplateError(readProviderDomainError("load", caught, input.translate));
       setProviderTemplates([]);
     }
   }
@@ -186,7 +202,7 @@ export function useProvidersDomain(input: {
       await notifyRunnableChatProviderReady(provider);
       return true;
     } catch (caught) {
-      setProviderMutationError(readProviderDomainError("mutation", caught));
+      setProviderMutationError(readProviderDomainError("mutation", caught, input.translate));
       return false;
     } finally {
       setCheckingProviderIds([]);
@@ -203,6 +219,7 @@ export function useProvidersDomain(input: {
     const checkingId = editingProviderId || "provider_draft_check";
     try {
       setProviderOperationWarning("");
+      setProviderOperationWarningTechnical("");
       setProviderCheck(undefined);
       setProviderCheckScope("save");
       setProviderCheckTargetId(checkingId);
@@ -246,8 +263,14 @@ export function useProvidersDomain(input: {
       await notifyRunnableChatProviderReady({ ...savedProvider, lastCheck: savedCheck });
       return { ok: true, successMessage: input.translate("Model preset saved successfully.") };
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      return { ok: false, errorMessage: message };
+      const error = toProductError(caught, input.translate, {
+        fallbackMessage: "Could not save the model preset. Check the settings and try again.",
+      });
+      return {
+        ok: false,
+        errorMessage: error.message,
+        errorTechnicalMessage: error.technicalMessage,
+      };
     } finally {
       setCheckingProviderIds([]);
     }
@@ -266,6 +289,7 @@ export function useProvidersDomain(input: {
 
     try {
       setProviderOperationWarning("");
+      setProviderOperationWarningTechnical("");
       setProviderCheck(undefined);
       setProviderCheckScope("save");
       setProviderCheckTargetId("provider_model_import");
@@ -284,8 +308,14 @@ export function useProvidersDomain(input: {
         }),
       };
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      return { ok: false, errorMessage: message };
+      const error = toProductError(caught, input.translate, {
+        fallbackMessage: "Could not import models. Check the provider settings and try again.",
+      });
+      return {
+        ok: false,
+        errorMessage: error.message,
+        errorTechnicalMessage: error.technicalMessage,
+      };
     } finally {
       setCheckingProviderIds([]);
       setProviderCheckScope(undefined);
@@ -314,24 +344,45 @@ export function useProvidersDomain(input: {
     return "Saved, but provider check failed. Review the configuration and run Check again.";
   }
 
-  async function removeProvider(providerId: string): Promise<void> {
+  async function removeProvider(providerId: string): Promise<ProviderDeleteResult> {
     try {
       setProviderMutationError(undefined);
+      setProviderOperationWarning("");
+      setProviderOperationWarningTechnical("");
       setProviderCheck(undefined);
       setProviderCheckScope(undefined);
       setProviderCheckTargetId("");
       setProviderBatchResult(undefined);
       await deleteProvider(input.cwd.trim(), providerId);
-      if (editingProviderId === providerId) {
-        setEditingProviderId("");
-        setProviderForm(defaultProviderForm);
-      }
-      input.clearSelectedProvider(providerId);
-      await input.clearProviderUsage(providerId);
-      await refreshProviders();
     } catch (caught) {
-      setProviderMutationError(readProviderDomainError("mutation", caught));
+      const error = toProductError(caught, input.translate, {
+        fallbackMessage: "Could not delete the model preset. Try again.",
+      });
+      return {
+        ok: false,
+        errorMessage: error.message,
+        errorTechnicalMessage: error.technicalMessage,
+      };
     }
+    if (editingProviderId === providerId) {
+      setEditingProviderId("");
+      setProviderForm(defaultProviderForm);
+    }
+    input.clearSelectedProvider(providerId);
+    let cleanupError: ProductError | undefined;
+    try {
+      await input.clearProviderUsage(providerId);
+    } catch (caught) {
+      cleanupError = toProductError(caught, input.translate);
+    }
+    await refreshProviders();
+    if (cleanupError) {
+      setProviderOperationWarning(input.translate(
+        "Model preset was deleted, but some references could not be cleared. Review workspace defaults.",
+      ));
+      setProviderOperationWarningTechnical(cleanupError.technicalMessage ?? "");
+    }
+    return { ok: true };
   }
 
   async function runProviderCheck(providerId: string): Promise<void> {
@@ -355,11 +406,13 @@ export function useProvidersDomain(input: {
       }
       await refreshProviders();
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
+      const error = toProductError(caught, input.translate, {
+        fallbackMessage: "Provider check failed. Review technical details and try again.",
+      });
       setProviderCheck({
         ok: false,
         code: "request_failed",
-        message,
+        message: error.technicalMessage ?? error.message,
         checkedAt: new Date().toISOString(),
       });
     } finally {
@@ -409,7 +462,7 @@ export function useProvidersDomain(input: {
       setProviderBatchResult(failedCount > 0 ? nextBatchResult : undefined);
       return nextBatchResult;
     } catch (caught) {
-      setProviderMutationError(readProviderDomainError("mutation", caught));
+      setProviderMutationError(readProviderDomainError("mutation", caught, input.translate));
       return undefined;
     } finally {
       setCheckingProviderIds([]);
@@ -485,7 +538,7 @@ export function useProvidersDomain(input: {
       }
       await refreshProviders();
     } catch (caught) {
-      setProviderMutationError(readProviderDomainError("mutation", caught));
+      setProviderMutationError(readProviderDomainError("mutation", caught, input.translate));
       await refreshProviders(workspaceCwd);
     }
   }
@@ -521,6 +574,7 @@ export function useProvidersDomain(input: {
     setCheckingProviderIds([]);
     setProviderBatchResult(undefined);
     setProviderOperationWarning("");
+    setProviderOperationWarningTechnical("");
     setProviderRepairRunId("");
     setProviderListError(undefined);
     setProviderTemplateError(undefined);
@@ -542,6 +596,7 @@ export function useProvidersDomain(input: {
       checkingProviderIds,
       providerBatchResult,
       providerOperationWarning,
+      providerOperationWarningTechnical,
       providerRepairRunId,
     },
     actions: {

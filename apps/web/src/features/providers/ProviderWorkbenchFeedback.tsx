@@ -10,6 +10,7 @@ import {
   providerRunPreflightBlocker,
 } from "../../lib/providers.js";
 import { readRunProviderPresetId } from "../../lib/run-evidence.js";
+import { ProductErrorDetails } from "../../shared/feedback/ProductErrorDetails.js";
 import { Button, InlineFeedback, InspectorSection, StatusIndicator } from "../../shared/ui/index.js";
 import type { ProviderPreset, RunSession } from "../../types.js";
 import type { ProviderBatchResult } from "./types.js";
@@ -17,9 +18,11 @@ import type { ProviderBatchResult } from "./types.js";
 export function ProviderOperationFeedback({
   batchResult,
   operationWarning,
+  operationWarningTechnical,
 }: {
   readonly batchResult: ProviderBatchResult | undefined;
   readonly operationWarning: string;
+  readonly operationWarningTechnical: string;
 }): React.JSX.Element | null {
   const { t } = useI18n();
   if (!batchResult && !operationWarning) return null;
@@ -34,7 +37,8 @@ export function ProviderOperationFeedback({
       ) : null}
       {operationWarning ? (
         <InlineFeedback className="provider-operation-warning" tone="warning" title={t("Needs attention")}>
-          {operationWarning}
+          <span>{operationWarning}</span>
+          <ProductErrorDetails technicalMessage={operationWarningTechnical} />
         </InlineFeedback>
       ) : null}
     </>

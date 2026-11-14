@@ -7,6 +7,7 @@ import {
   providerNeedsSecret,
 } from "../../lib/providers.js";
 import { readRunProviderPresetId } from "../../lib/run-evidence.js";
+import { ProductErrorDetails } from "../../shared/feedback/ProductErrorDetails.js";
 import { Button, InlineFeedback } from "../../shared/ui/index.js";
 import type {
   ProviderCheckResult,
@@ -31,6 +32,7 @@ import {
 import type {
   ProviderBatchResult,
   ProviderCheckScope,
+  ProviderDeleteResult,
   ProviderImportResult,
   ProviderSaveResult,
 } from "./types.js";
@@ -50,11 +52,13 @@ export interface ProviderSettingsProps {
   readonly isLoading: boolean;
   readonly checkingProviderIds: readonly string[];
   readonly errorMessage: string;
+  readonly errorTechnicalMessage?: string;
   readonly checkResult: ProviderCheckResult | undefined;
   readonly checkedProviderId: string;
   readonly checkScope: ProviderCheckScope | undefined;
   readonly batchResult: ProviderBatchResult | undefined;
   readonly operationWarning: string;
+  readonly operationWarningTechnical: string;
   readonly selectedTemplateId: string;
   readonly repairRun: RunSession | undefined;
   readonly isRunning: boolean;
@@ -65,7 +69,7 @@ export interface ProviderSettingsProps {
   readonly onImportModels: (models: readonly ProviderModelOption[]) => Promise<ProviderImportResult>;
   readonly onRefresh: () => void;
   readonly onEdit: (provider: ProviderPreset) => void;
-  readonly onDelete: (providerId: string) => void;
+  readonly onDelete: (providerId: string) => Promise<ProviderDeleteResult>;
   readonly onCheck: (providerId: string) => void;
   readonly onCheckBatch: () => Promise<ProviderBatchResult | undefined>;
   readonly onToggleEnabled: (provider: ProviderPreset, enabled: boolean) => void;
@@ -105,7 +109,6 @@ export function ProviderSettings(props: ProviderSettingsProps): React.JSX.Elemen
   const repairProvider = repairProviderId ? providers.find((provider) => provider.id === repairProviderId) : undefined;
   const workbench = useProviderWorkbenchController({
     providers,
-    errorMessage: props.errorMessage,
     onDelete: props.onDelete,
   });
   const feedback = useProviderFeedbackController({
@@ -175,6 +178,7 @@ export function ProviderSettings(props: ProviderSettingsProps): React.JSX.Elemen
           <InlineFeedback className="provider-page-error inline-error" tone="danger" title={t("Error")}>
             <span>{props.errorMessage}</span>
             <Button size="sm" variant="secondary" onClick={props.onRefresh}>{t("Retry")}</Button>
+            <ProductErrorDetails technicalMessage={props.errorTechnicalMessage} />
           </InlineFeedback>
         ) : null}
         <ProviderNextAction providers={providers} nextActionProvider={nextActionProvider} isLoading={props.isLoading} />
@@ -194,6 +198,7 @@ export function ProviderSettings(props: ProviderSettingsProps): React.JSX.Elemen
         <ProviderOperationFeedback
           batchResult={props.batchResult}
           operationWarning={props.operationWarning}
+          operationWarningTechnical={props.operationWarningTechnical}
         />
         <ProviderRouteList
           providers={providers}
@@ -243,6 +248,7 @@ export function ProviderSettings(props: ProviderSettingsProps): React.JSX.Elemen
               currentModel={form.model}
               isFetchingModels={editor.isFetchingModels}
               modelFetchError={editor.modelFetchError}
+              modelFetchTechnicalError={editor.modelFetchTechnicalError}
               modelSelectionNotice={editor.modelSelectionNotice}
               onFetchModels={() => void editor.fetchModels()}
               onModelSearchChange={editor.setModelSearch}
@@ -253,6 +259,7 @@ export function ProviderSettings(props: ProviderSettingsProps): React.JSX.Elemen
             />
           )}
           editorErrorMessage={editor.editorErrorMessage}
+          editorErrorTechnicalMessage={editor.editorErrorTechnicalMessage}
           editorWarningMessage={editor.editorWarningMessage}
           checkResult={checkResult}
           editorCheckProviderName={editorCheckProvider?.displayName ?? ""}
@@ -273,9 +280,10 @@ export function ProviderSettings(props: ProviderSettingsProps): React.JSX.Elemen
       <ProviderDeleteDialog
         busy={workbench.deleteBusy}
         errorMessage={workbench.deleteErrorMessage}
+        errorTechnicalMessage={workbench.deleteErrorTechnicalMessage}
         target={workbench.deleteTarget}
         onCancel={workbench.closeDelete}
-        onConfirm={workbench.confirmDelete}
+        onConfirm={() => void workbench.confirmDelete()}
       />
     </div>
   );

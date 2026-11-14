@@ -1,5 +1,6 @@
 import { Info, RefreshCw, Search } from "lucide-react";
 import { useI18n } from "../../i18n.js";
+import { ProductErrorDetails } from "../../shared/feedback/ProductErrorDetails.js";
 import { providerCapabilityChipLabels } from "../../lib/providers.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import {
@@ -31,6 +32,7 @@ export function ProviderModelImportPanel({
   currentModel,
   isFetchingModels,
   modelFetchError,
+  modelFetchTechnicalError,
   modelSelectionNotice,
   onFetchModels,
   onModelSearchChange,
@@ -50,6 +52,7 @@ export function ProviderModelImportPanel({
   readonly currentModel: string;
   readonly isFetchingModels: boolean;
   readonly modelFetchError: string;
+  readonly modelFetchTechnicalError: string;
   readonly modelSelectionNotice: string;
   readonly onFetchModels: () => void;
   readonly onModelSearchChange: (value: string) => void;
@@ -159,7 +162,12 @@ export function ProviderModelImportPanel({
       {modelOptions.length > 0 && visibleModelOptions.length === 0 ? (
         <EmptyState compact icon={<Search />} title={t("No provider models match the current search")} />
       ) : null}
-      {modelFetchError ? <InlineFeedback className="model-fetch-error" tone="danger">{t(modelFetchError)}</InlineFeedback> : null}
+      {modelFetchError ? (
+        <InlineFeedback className="model-fetch-error" tone="danger">
+          <span>{modelFetchError}</span>
+          <ProductErrorDetails technicalMessage={modelFetchTechnicalError} />
+        </InlineFeedback>
+      ) : null}
       {modelSelectionNotice ? <InlineFeedback className="model-fetch-error neutral" tone="info">{modelSelectionNotice}</InlineFeedback> : null}
     </section>
   );
