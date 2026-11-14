@@ -4,7 +4,7 @@ Status: implemented in the follow-up to PR #699.
 
 ## Reference
 
-The local CPA supplier surface at `/Volumes/codex/workspace/中转站/chatgpt-price-board/apps/web/src/pages/Vendors/` uses a compact summary-first flow: one primary add action, one supplier summary surface, and `<details>`-based progressive disclosure for editing, catalog state, and diagnostics.
+The local CPA supplier surface in the companion `chatgpt-price-board` workspace uses a compact summary-first flow: one primary add action, one supplier summary surface, and `<details>`-based progressive disclosure for editing, catalog state, and diagnostics.
 
 ## Scope
 
