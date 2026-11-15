@@ -25,6 +25,10 @@
   grid-template-columns: minmax(0, 1fr);
 }
 
+.provider-workbench-surface:has(.provider-sheet) .provider-workbench {
+  min-width: 0;
+}
+
 .provider-workbench {
   display: flex;
   width: 100%;
@@ -70,41 +74,6 @@
   color: var(--ling-text-strong);
   font-size: 20px;
   line-height: 28px;
-}
-
-.provider-readiness-summary {
-  display: flex;
-  min-width: 0;
-  min-height: 24px;
-  align-items: center;
-  flex-wrap: wrap;
-  color: var(--ling-text-muted);
-  font-size: var(--ling-font-xs);
-  line-height: var(--ling-line-xs);
-}
-
-.provider-readiness-summary > span {
-  display: inline-flex;
-  align-items: center;
-  white-space: nowrap;
-}
-
-.provider-readiness-summary > span + span::before {
-  width: 3px;
-  height: 3px;
-  margin-inline: var(--ling-space-5);
-  border-radius: var(--ling-radius-pill);
-  background: var(--ling-text-muted);
-  content: "";
-}
-
-.provider-readiness-summary .attention {
-  color: var(--ling-status-warning);
-  font-weight: 650;
-}
-
-.provider-readiness-summary .quiet {
-  color: var(--ling-text-muted);
 }
 
 .provider-toolbar-controls {

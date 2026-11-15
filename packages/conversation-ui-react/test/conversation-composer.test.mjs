@@ -74,7 +74,7 @@ test("bottom status is a standalone, centered row outside the composer box on al
     assert.match(html, /2 rounds/u);
     assert.match(html, /3 steps/u);
     assert.match(html, /4\.0 tok\/s/u);
-    assert.match(html, /100 tokens/u);
+    assert.match(html, /<span>100<\/span>/u);
     assert.match(html, /25% cache hit/u);
     assert.match(html, /Recent request context 50%/u);
   }
@@ -83,9 +83,8 @@ test("bottom status is a standalone, centered row outside the composer box on al
       ariaLabel: "Conversation status",
     }),
   });
-  assert.match(idle, /— rounds/u);
-  assert.match(idle, /— cache hit/u);
-  assert.match(idle, /Context —/u);
+  assert.match(idle, /Status unavailable/u);
+  assert.doesNotMatch(idle, /Run|Token|Context/u);
   const partial = renderComposer({ bottomStatusNode: createElement(ConversationBottomStatusStrip, {
     ariaLabel: "对话状态", locale: "zh-CN",
     translate: (key) => JSON.parse(readFileSync(new URL("../../localization/catalogs/zh-CN.json", import.meta.url), "utf8")).messages[key] ?? key,
@@ -145,9 +144,8 @@ for (const locale of ["de-DE", "ja-JP"]) {
     const html = renderComposer({ bottomStatusNode: createElement(ConversationBottomStatusStrip, {
       ariaLabel: messages["Conversation status"], locale, translate: (key) => messages[key] ?? key,
     }) });
-    assert.notEqual(messages["Runtime activity"], "Runtime activity");
-    assert.ok(html.includes(messages["Runtime activity"]));
-    assert.ok(html.includes(messages["rounds"]));
+    assert.notEqual(messages["Status unavailable"], "Status unavailable");
+    assert.ok(html.includes(messages["Status unavailable"]));
     assert.doesNotMatch(html, /— rounds/u);
   });
 }

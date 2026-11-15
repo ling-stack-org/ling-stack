@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { getConversationMediaGenerationTargets } from "../../api/media.js";
 import { useI18n } from "../../i18n.js";
-import { providerModelRouteLabel, providerPreflightReady } from "../../lib/providers.js";
+import { providerDisplaySourceLabel, providerPreflightReady } from "../../lib/providers.js";
 import { Select, StatusIndicator } from "../../shared/ui/index.js";
 import type {
   ConversationMediaGenerationTargetsResponse,
@@ -108,7 +108,7 @@ export function ProviderDefaultPurposeBar(props: {
   return (
     <section className="provider-default-purpose-bar" aria-label={t("Default uses")}>
       <label className="provider-default-purpose-field">
-        <span>{t("Chat model")}</span>
+        <span>{t("Chat")}</span>
         <Select
           size="sm"
           value={currentChatId}
@@ -118,17 +118,17 @@ export function ProviderDefaultPurposeBar(props: {
           <option value="">{t("Not configured")}</option>
           {unavailableCurrentChat ? (
             <option value={unavailableCurrentChat.id} disabled>
-              {t("{target} · Needs attention", { target: providerPurposeLabel(unavailableCurrentChat) })}
+              {t("{target} · Needs attention", { target: providerPurposeLabel(unavailableCurrentChat, chatProviders) })}
             </option>
           ) : null}
           {chatProviders.map((provider) => (
-            <option value={provider.id} key={provider.id}>{providerPurposeLabel(provider)}</option>
+            <option value={provider.id} key={provider.id}>{providerPurposeLabel(provider, chatProviders)}</option>
           ))}
         </Select>
       </label>
       <MediaPurposeSelect
         kind="image"
-        label={t("Image generation target")}
+        label={t("Image")}
         targets={snapshot?.targets ?? []}
         providers={props.providers}
         defaultRef={defaults.image}
@@ -137,7 +137,7 @@ export function ProviderDefaultPurposeBar(props: {
       />
       <MediaPurposeSelect
         kind="video"
-        label={t("Video generation target")}
+        label={t("Video")}
         targets={snapshot?.targets ?? []}
         providers={props.providers}
         defaultRef={defaults.video}
@@ -170,10 +170,8 @@ function MediaPurposeSelect(props: {
     : undefined;
   const selectedValue = selectedTarget?.id ?? missingDefaultValue ?? noExplicitTarget;
   const automaticLabel = runnableTargets.length === 1
-    ? t("Automatic selection ({target})", { target: targetOptionLabel(runnableTargets[0], props.providers, t) })
-    : runnableTargets.length > 1
-      ? t("Ask when used ({count} available)", { count: runnableTargets.length })
-      : t("Not configured");
+    ? targetOptionLabel(runnableTargets[0], props.providers)
+    : t("Not configured");
 
   return (
     <label className="provider-default-purpose-field">
@@ -191,8 +189,8 @@ function MediaPurposeSelect(props: {
         {targets.map((target) => (
           <option value={target.id} key={target.id} disabled={!target.runnable}>
             {target.runnable
-              ? targetOptionLabel(target, props.providers, t)
-              : t("{target} · Needs attention", { target: targetOptionLabel(target, props.providers, t) })}
+              ? targetOptionLabel(target, props.providers)
+              : t("{target} · Needs attention", { target: targetOptionLabel(target, props.providers) })}
           </option>
         ))}
       </Select>
@@ -203,20 +201,26 @@ function MediaPurposeSelect(props: {
 function targetOptionLabel(
   target: MediaGenerationTargetView,
   providers: readonly ProviderPreset[],
-  t: ReturnType<typeof useI18n>["t"],
 ): string {
   if (target.ref.kind === "workflow") {
-    return t("ComfyUI · {target}", { target: target.displayName });
+    return target.displayName;
   }
   const providerPresetId = target.ref.providerPresetId;
   const provider = providers.find((candidate) => candidate.id === providerPresetId);
-  return t("Model · {target}", {
-    target: provider ? providerPurposeLabel(provider) : target.displayName,
-  });
+  return provider ? providerPurposeLabel(provider, providers) : target.displayName;
 }
 
-function providerPurposeLabel(provider: ProviderPreset): string {
-  return providerModelRouteLabel(provider);
+function providerPurposeLabel(provider: ProviderPreset, peers: readonly ProviderPreset[]): string {
+  const modelLabel = provider.model.trim() || provider.displayName.trim();
+  const sameModelPeers = peers.filter((peer) => peer.id !== provider.id && peer.model.trim() === provider.model.trim());
+  const sourceLabel = providerDisplaySourceLabel(provider.displayName, modelLabel);
+  if (sameModelPeers.length === 0) return modelLabel;
+  const sameSource = sameModelPeers.some((peer) =>
+    providerDisplaySourceLabel(peer.displayName, modelLabel).toLowerCase() === sourceLabel.toLowerCase());
+  const disambiguator = sameSource
+    ? provider.providerId.trim() || provider.baseUrl?.trim() || provider.id
+    : sourceLabel;
+  return disambiguator && disambiguator !== modelLabel ? `${modelLabel} · ${disambiguator}` : modelLabel;
 }
 
 function mediaTargetRefKey(ref: MediaGenerationTargetRef): string {

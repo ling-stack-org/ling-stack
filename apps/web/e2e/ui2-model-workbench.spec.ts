@@ -24,6 +24,7 @@ const readyCheck = {
 };
 
 async function useEnglish(page: Page, theme: "light" | "dark" = "light"): Promise<void> {
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await page.addInitScript(({ selectedTheme }) => {
     localStorage.setItem("ling-stack.locale", "en-US");
     localStorage.setItem("ling-stack.themePreference", selectedTheme);
@@ -123,7 +124,7 @@ test("UI2 model list exposes one state and the exact routine action matrix", asy
   await expect(ready.getByRole("button", { name: "Edit" })).toBeVisible();
 
   const current = row(page, "default-model");
-  await expect(page.locator(".provider-default-purpose-bar").getByLabel("Chat model")).toHaveValue("model_default_chat");
+  await expect(page.locator(".provider-default-purpose-bar").getByLabel("Chat")).toHaveValue("model_default_chat");
   await expect(current.getByRole("button", { name: /Set default|Current default/ })).toHaveCount(0);
 
   const image = row(page, "image-model");
@@ -341,7 +342,7 @@ test("UI2 model focus revalidation retains stale rows and blocked delete remains
   await expect(page.locator(".provider-row")).toHaveCount(7);
   await expect(page.locator(".provider-page-error")).toContainText("Synthetic provider list failure");
   await expect(page.locator(".provider-page-error").getByRole("button", { name: "Retry" })).toBeVisible();
-  await expect(page.locator(".provider-readiness-summary")).toContainText("Stale");
+  await expect(page.locator(".provider-readiness-summary")).toHaveCount(0);
   await captureEvidence(page, runtimeErrors, "1440x960-ling-light-retained-refresh-error.png", [503]);
 
   const target = row(page, "ready-model");

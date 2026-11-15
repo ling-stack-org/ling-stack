@@ -198,7 +198,8 @@ test("generation tasks page lists, runs, and creates generation tasks", async ({
   });
 });
 
-test("generation tasks page routes empty model state to model configuration", async ({ page }) => {
+// Value: protects=purpose-driven setup keeps the complete supplier directory visible while preventing incompatible selection; fails_when=the supplier list shrinks again or incompatible chat-only suppliers become selectable; why_new=existing setup test checks only the recommended default; seam=none; no_claim=live supplier connectivity (mock daemon; browser E2E)
+test("generation tasks page routes empty model state to the complete compatible model directory", async ({ page }) => {
   const state = createBaseState({});
   await mockDaemon(page, state, { templates: createDefaultProviderTemplates() });
   await page.goto("/");
@@ -215,7 +216,11 @@ test("generation tasks page routes empty model state to model configuration", as
 
   const generationEditor = page.getByRole("dialog", { name: "New image generation model" });
   await expect(generationEditor).toBeVisible();
-  await expect(generationEditor.getByLabel("Model supplier")).toHaveValue("seedream-image");
+  const supplier = generationEditor.getByLabel("Model supplier");
+  await expect(supplier).toHaveValue("seedream-image");
+  await expect(supplier.locator('option[value="openai-gpt"]')).toHaveText("OpenAI GPT");
+  await expect(supplier.locator('option[value="openai-gpt"]')).toBeDisabled();
+  await expect(generationEditor.getByText(/compatible suppliers; .* more are available for other purposes/u)).toBeVisible();
   await expect(page.getByRole("dialog", { name: "New generation task" })).toHaveCount(0);
 });
 

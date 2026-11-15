@@ -15,6 +15,7 @@ const runtimeMetricsFixture = {
   coverage: "complete",
 } as const;
 
+// Value: protects=status details open on hover or focus and close when both interactions leave; fails_when=hover-only users lose details or a stale detail remains after pointer and focus move away; why_new=existing assertions observed details after click/focus without checking lifecycle boundaries; seam=none; no_claim=screen-reader announcement quality beyond roles and labels (browser E2E)
 for (const surface of surfaces) {
   for (const locale of ["en-US", "zh-CN"] as const) {
     test(`${surface} displays localized metrics centered below the composer (${locale})`, async ({ page }) => {
@@ -60,17 +61,28 @@ for (const surface of surfaces) {
       await expect(status).toContainText(locale === "zh-CN" ? "8 轮 AI" : "8 rounds");
       await expect(status).toContainText(locale === "zh-CN" ? "12 步骤" : "12 steps");
       await expect(status).toContainText("15.5 tok/s");
-      await expect(status).toContainText(locale === "zh-CN" ? "1,000 Token" : "1,000 tokens");
+      await expect(status).toContainText("1,000");
       await expect(status).toContainText(locale === "zh-CN" ? "22% 缓存命中" : "22% cache hit");
       await expect(status).toContainText("30%");
       const activity = locale === "zh-CN" ? "运行活动" : "Runtime activity";
       const usage = locale === "zh-CN" ? "Token 与缓存" : "Token and cache usage";
       const context = locale === "zh-CN" ? "上下文" : "Context usage";
       const detail = locale === "zh-CN" ? "详情" : "details";
-      await status.getByRole("button", { name: activity }).click();
-      await expect(status.getByRole("group", { name: `${activity} ${detail}` }))
+      const activityTrigger = status.getByRole("button", { name: activity });
+      const composerFrame = page.locator(".conversation-composer-frame");
+      const frameBefore = await composerFrame.boundingBox();
+      await activityTrigger.hover();
+      const activityDetail = status.getByRole("group", { name: `${activity} ${detail}` });
+      await expect(activityDetail)
         .toContainText(locale === "zh-CN" ? "含工具耗时" : "including tool time");
+      const frameAfter = await composerFrame.boundingBox();
+      expect(frameAfter?.height ?? 0).toBeCloseTo(frameBefore?.height ?? 0, 0);
+      await page.mouse.move(0, 0);
+      await expect(activityDetail).toHaveCount(0);
+      await activityTrigger.focus();
+      await expect(status.getByRole("group", { name: `${activity} ${detail}` })).toBeVisible();
       await status.getByRole("button", { name: usage }).focus();
+      await expect(status.getByRole("group", { name: `${activity} ${detail}` })).toHaveCount(0);
       const usageDetail = status.getByRole("group", { name: `${usage} ${detail}` });
       await expect(usageDetail).toContainText(locale === "zh-CN" ? "缓存读取: 200" : "Cache read: 200");
       await expect(usageDetail).toContainText(locale === "zh-CN" ? "覆盖: 完整" : "Coverage: complete");

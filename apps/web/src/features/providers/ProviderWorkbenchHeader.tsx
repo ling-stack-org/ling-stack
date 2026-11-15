@@ -6,7 +6,6 @@ import {
   SegmentedControl,
   SegmentedControlItem,
   Select,
-  StatusIndicator,
 } from "../../shared/ui/index.js";
 import type {
   ProviderCapabilityFilter,
@@ -23,45 +22,33 @@ export function ProviderWorkbenchHeader({
   providerSearch,
   providerStatusFilter,
   providerCapabilityFilter,
-  isLoading,
   isCheckingProviders,
   isBatchChecking,
-  isStale,
   onProviderSearchChange,
   onProviderStatusFilterChange,
   onProviderCapabilityFilterChange,
   onAddModel,
   onCheckBatch,
+  showBatchCheckAction = true,
   settingsToolMode = false,
 }: {
   readonly summary: ProviderWorkbenchSummary;
   readonly providerSearch: string;
   readonly providerStatusFilter: ProviderStatusFilter;
   readonly providerCapabilityFilter: ProviderCapabilityFilter;
-  readonly isLoading: boolean;
   readonly isCheckingProviders: boolean;
   readonly isBatchChecking: boolean;
-  readonly isStale: boolean;
   readonly onProviderSearchChange: (value: string) => void;
   readonly onProviderStatusFilterChange: (value: ProviderStatusFilter) => void;
   readonly onProviderCapabilityFilterChange: (value: ProviderCapabilityFilter) => void;
   readonly onAddModel: () => void;
   readonly onCheckBatch: () => void;
+  readonly showBatchCheckAction?: boolean;
   readonly settingsToolMode?: boolean;
 }): React.JSX.Element {
   const { t } = useI18n();
   const titlebarPlacement = useDesktopTitlebarPlacement();
-  const readinessSummary = (
-    <div className="provider-readiness-summary" aria-label={t("Model readiness summary")}>
-      <span>{t("{count} models", { count: summary.totalCount })}</span>
-      <span>{t("{count} chat ready", { count: summary.chatReadyCount })}</span>
-      <span>{t("{count} generation ready", { count: summary.generationReadyCount })}</span>
-      {summary.missingSecretCount > 0 ? <span className="attention">{t("{count} need API key", { count: summary.missingSecretCount })}</span> : null}
-      {summary.disabledCount > 0 ? <span className="quiet">{t("{count} disabled", { count: summary.disabledCount })}</span> : null}
-      {isLoading && summary.totalCount > 0 ? <StatusIndicator label={t("Refreshing")} tone="info" /> : null}
-      {isStale ? <StatusIndicator label={t("Stale")} tone="warning" /> : null}
-    </div>
-  );
+  const hasModels = summary.totalCount > 0;
   const filterControls = (
     <>
       <Input
@@ -108,18 +95,22 @@ export function ProviderWorkbenchHeader({
   );
   const actionControls = (
     <>
-      <Button className="provider-add-model-action" size="sm" variant="primary" leadingIcon={<Plus />} onClick={onAddModel}>{t("Add model")}</Button>
-      <Button
-        className="provider-check-all-action"
-        size="sm"
-        leadingIcon={<CheckCircle2 />}
-        loading={isBatchChecking}
-        loadingLabel={t("Checking")}
-        disabled={isCheckingProviders || summary.batchCheckProviderCount === 0}
-        onClick={onCheckBatch}
-      >
-        {t("Check all")}
-      </Button>
+      {hasModels ? (
+        <Button className="provider-add-model-action" size="sm" variant="primary" leadingIcon={<Plus />} onClick={onAddModel}>{t("Add model")}</Button>
+      ) : null}
+      {hasModels && showBatchCheckAction ? (
+        <Button
+          className="provider-check-all-action"
+          size="sm"
+          leadingIcon={<CheckCircle2 />}
+          loading={isBatchChecking}
+          loadingLabel={t("Checking")}
+          disabled={isCheckingProviders || summary.batchCheckProviderCount === 0}
+          onClick={onCheckBatch}
+        >
+          {t("Check all")}
+        </Button>
+      ) : null}
     </>
   );
   return (
@@ -134,16 +125,14 @@ export function ProviderWorkbenchHeader({
               <h1 id="provider-workbench-title">{t("Model Workbench")}</h1>
             </div>
           ) : null}
-          {titlebarPlacement === "inline" ? readinessSummary : null}
           <div className="provider-header-tools provider-toolbar-controls" aria-label={t("Model preset filters")}>
-            {titlebarPlacement === "inline" ? filterControls : null}
+            {titlebarPlacement === "inline" && hasModels ? filterControls : null}
             {actionControls}
           </div>
         </header>
       </DesktopTitlebarSurface>
-      {titlebarPlacement === "window" ? (
+      {titlebarPlacement === "window" && hasModels ? (
         <div className="provider-workbench-inline-tools">
-          {readinessSummary}
           <div className="provider-toolbar-controls" aria-label={t("Model preset filters")}>{filterControls}</div>
         </div>
       ) : null}

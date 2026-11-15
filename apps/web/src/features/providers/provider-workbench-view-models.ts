@@ -5,7 +5,6 @@ import {
   isWorkbenchReadyProvider,
   providerCheckGuidance,
   providerCheckIsPending,
-  providerDisplaySourceLabel,
   providerGenerationRuntimeSummary,
   providerNeedsSecret,
   providerPreflightReady,
@@ -70,9 +69,6 @@ export interface ProviderRouteRowView {
   readonly primaryStatusTone: ProviderStatusTone;
   readonly statusHint: string;
   readonly modelLabel: string;
-  readonly sourceLabel: string;
-  readonly sourceInitial: string;
-  readonly secondaryLabel: string;
   readonly showInlineCheck: boolean;
   readonly showInlineEdit: boolean;
   readonly showDisableMenuAction: boolean;
@@ -265,15 +261,7 @@ export function readProviderRouteRowView({
     : generationCapable && provider.enabled
       ? generationProviderStatusHint({ provider, missingApiKey, canGenerate, rowCheckGuidance, t })
       : providerRunPreflightBlocker(provider, t) ?? rowCheckGuidance;
-  const isCustomRoute = provider.providerId === "custom-openai-compatible";
-  const sourceLabel = isCustomRoute
-    ? t("Custom access")
-    : providerDisplaySourceLabel(provider.displayName, provider.model);
   const modelLabel = provider.model.trim() || provider.displayName.trim();
-  const secondaryLabel = isCustomRoute || !sourceLabel || sourceLabel.toLowerCase() === modelLabel.toLowerCase()
-    ? ""
-    : sourceLabel;
-
   return {
     missingApiKey,
     chatCapable,
@@ -288,9 +276,6 @@ export function readProviderRouteRowView({
     primaryStatusTone,
     statusHint,
     modelLabel,
-    sourceLabel,
-    sourceInitial: providerInitial(sourceLabel || provider.displayName),
-    secondaryLabel,
     showInlineCheck: provider.enabled && !missingApiKey && !checking && primaryAction !== "check",
     showInlineEdit: primaryAction !== "add_api_key",
     showDisableMenuAction: provider.enabled,
@@ -323,14 +308,6 @@ function generationProviderStatusHint({
     return providerGenerationRuntimeSummary(provider, t) ?? rowCheckGuidance;
   }
   return rowCheckGuidance;
-}
-
-export function providerInitial(displayName: string): string {
-  const normalizedName = displayName.trim();
-  if (!normalizedName) {
-    return "#";
-  }
-  return normalizedName.slice(0, 1).toUpperCase();
 }
 
 export function normalizeProviderEndpoint(value: string): string {
