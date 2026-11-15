@@ -22,6 +22,7 @@ test("model workbench always exposes independent chat, image, and video default 
   const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [
     createChatProvider({ id: "chat_primary", displayName: "Primary Chat", model: "gpt-primary", lastCheck: readyCheck }),
+    createChatProvider({ id: "chat_primary_duplicate", displayName: "Secondary Relay · gpt-primary", model: "gpt-primary", lastCheck: readyCheck }),
     createChatProvider({ id: "chat_secondary", displayName: "Secondary Chat", model: "gpt-secondary", lastCheck: readyCheck }),
     createChatProvider({ id: "chat_unchecked", displayName: "Unchecked Chat", model: "gpt-unchecked" }),
     createChatProvider({
@@ -32,6 +33,7 @@ test("model workbench always exposes independent chat, image, and video default 
       lastCheck: readyCheck,
     }),
     createMediaProvider({ id: "image_seedream", displayName: "Seedream Studio", lastCheck: readyCheck }),
+    createMediaProvider({ id: "image_seedream_duplicate", displayName: "Backup Image · doubao-seedream-5-0-260128", lastCheck: readyCheck }),
     createMediaProvider({
       id: "image_custom_imported",
       kind: "openai-compatible",
@@ -62,24 +64,28 @@ test("model workbench always exposes independent chat, image, and video default 
   await openModelWorkbench(page);
 
   const defaults = page.locator(".provider-default-purpose-bar");
-  const chat = defaults.getByLabel("Chat model");
-  const image = defaults.getByLabel("Image generation target");
-  const video = defaults.getByLabel("Video generation target");
+  const chat = defaults.getByLabel("Chat");
+  const image = defaults.getByLabel("Image");
+  const video = defaults.getByLabel("Video");
   await expect(defaults).toBeVisible();
   await expect(defaults.getByText("Default uses", { exact: true })).toHaveCount(0);
   await expect(chat).toHaveValue("chat_primary");
   await expect(chat.locator("option", { hasText: "Unchecked Chat" })).toHaveCount(0);
-  await expect(image.locator("option:checked")).toHaveText("Ask when used (4 available)");
-  await expect(video.locator("option:checked")).toHaveText("Automatic selection (Model · doubao-seedance-1-0-pro-250528 · ark.cn-beijing.volces.com)");
+  await expect(image.locator("option:checked")).toHaveText("Not configured");
+  await expect(video.locator("option:checked")).toHaveText("doubao-seedance-1-0-pro-250528");
   await expect(image.locator("option")).toContainText([
-    "Ask when used (4 available)",
-    "Model · doubao-seedream-5-0-260128 · ark.cn-beijing.volces.com",
-    "Model · gpt-image-2 · ark.cn-beijing.volces.com",
-    "Model · gpt-image-1 · ark.cn-beijing.volces.com",
-    "ComfyUI · Poster Flow",
+    "Not configured",
+    "doubao-seedream-5-0-260128",
+    "gpt-image-2",
+    "gpt-image-1",
+    "Poster Flow",
   ]);
   await expect(chat.locator('option[value="chat_custom_imported"]')).toContainText("gemini-pro-agent");
-  await expect(image.locator('option[value="provider:image_custom_imported"]')).toHaveText("Model · gpt-image-2 · ark.cn-beijing.volces.com");
+  await expect(chat.locator('option[value="chat_primary"]')).toHaveText("gpt-primary · Primary Chat");
+  await expect(chat.locator('option[value="chat_primary_duplicate"]')).toHaveText("gpt-primary · Secondary Relay");
+  await expect(image.locator('option[value="provider:image_custom_imported"]')).toHaveText("gpt-image-2");
+  await expect(image.locator('option[value="provider:image_seedream"]')).toHaveText("doubao-seedream-5-0-260128 · Seedream Studio");
+  await expect(image.locator('option[value="provider:image_seedream_duplicate"]')).toHaveText("doubao-seedream-5-0-260128 · Backup Image");
   await expect(defaults).not.toContainText("gpt-5.6-luna");
   const purposeGeometry = await defaults.locator(".provider-default-purpose-field").evaluateAll((fields) =>
     fields.map((field) => {
@@ -101,7 +107,7 @@ test("model workbench always exposes independent chat, image, and video default 
   await expect.poll(() => state.workspaceSettings.mediaGenerationDefaults).toEqual({
     image: { kind: "workflow", workflowDefinitionId: "poster_flow" },
   });
-  await expect(image.locator("option:checked")).toHaveText("ComfyUI · Poster Flow");
+  await expect(image.locator("option:checked")).toHaveText("Poster Flow");
   await image.selectOption("provider:image_seedream");
   await video.selectOption("provider:video_seedance");
   await expect.poll(() => state.workspaceSettings.defaultProviderPresetId).toBe("chat_secondary");
@@ -109,15 +115,15 @@ test("model workbench always exposes independent chat, image, and video default 
     image: { kind: "provider", providerPresetId: "image_seedream" },
     video: { kind: "provider", providerPresetId: "video_seedance" },
   });
-  await expect(image.locator("option:checked")).toHaveText("Model · doubao-seedream-5-0-260128 · ark.cn-beijing.volces.com");
-  await expect(video.locator("option:checked")).toHaveText("Model · doubao-seedance-1-0-pro-250528 · ark.cn-beijing.volces.com");
+  await expect(image.locator("option:checked")).toHaveText("doubao-seedream-5-0-260128 · Seedream Studio");
+  await expect(video.locator("option:checked")).toHaveText("doubao-seedance-1-0-pro-250528");
 
   await page.reload();
   await openModelWorkbench(page);
   const restored = page.locator(".provider-default-purpose-bar");
-  await expect(restored.getByLabel("Chat model")).toHaveValue("chat_secondary");
-  await expect(restored.getByLabel("Image generation target")).toHaveValue("provider:image_seedream");
-  await expect(restored.getByLabel("Video generation target")).toHaveValue("provider:video_seedance");
+  await expect(restored.getByLabel("Chat")).toHaveValue("chat_secondary");
+  await expect(restored.getByLabel("Image")).toHaveValue("provider:image_seedream");
+  await expect(restored.getByLabel("Video")).toHaveValue("provider:video_seedance");
 });
 
 test("default uses expose unavailable records, dangling references, and explicit clearing", async ({ page }) => {
@@ -149,14 +155,14 @@ test("default uses expose unavailable records, dangling references, and explicit
   await openModelWorkbench(page);
 
   const defaults = page.locator(".provider-default-purpose-bar");
-  const image = defaults.getByLabel("Image generation target");
-  const video = defaults.getByLabel("Video generation target");
-  await expect(image.locator("option:checked")).toHaveText("Model · doubao-seedream-5-0-260128 · ark.cn-beijing.volces.com · Needs attention");
+  const image = defaults.getByLabel("Image");
+  const video = defaults.getByLabel("Video");
+  await expect(image.locator("option:checked")).toHaveText("doubao-seedream-5-0-260128 · Unchecked Image · Needs attention");
   await expect(video.locator("option:checked")).toHaveText("Unavailable target · Needs attention");
-  const neverCheckedRow = page.locator(".provider-row").filter({ hasText: "Never Checked Image" });
+  const neverCheckedRow = page.locator(".provider-row").filter({ hasText: "Needs check" });
   await expect(neverCheckedRow).toContainText("Needs check");
   await expect(neverCheckedRow).not.toContainText("Ready");
-  await expect(image.locator('option[value="provider:image_never_checked"]')).toHaveText("Model · doubao-seedream-5-0-260128 · ark.cn-beijing.volces.com · Needs attention");
+  await expect(image.locator('option[value="provider:image_never_checked"]')).toHaveText("doubao-seedream-5-0-260128 · Never Checked Image · Needs attention");
 
   await image.selectOption({ label: "Not configured" });
   await expect.poll(() => state.workspaceSettings.mediaGenerationDefaults).toEqual({

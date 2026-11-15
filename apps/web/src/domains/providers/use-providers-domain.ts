@@ -86,10 +86,18 @@ export interface ProvidersActions {
 
 export type ProvidersController = DomainController<ProvidersState, ProvidersActions>;
 
-function readProviderDomainError(scope: DomainError["scope"], caught: unknown): DomainError {
+function readProviderDomainError(
+  scope: DomainError["scope"],
+  caught: unknown,
+): DomainError {
+  const rawMessage = caught instanceof Error ? caught.message : String(caught);
   return {
     scope,
-    message: caught instanceof Error ? caught.message : String(caught),
+    message: rawMessage.toLowerCase() === "failed to fetch"
+      ? scope === "load"
+        ? "Could not load model presets. Check the local service and retry."
+        : "Could not complete the provider action. Check the local service and retry."
+      : rawMessage,
   };
 }
 
@@ -358,7 +366,7 @@ export function useProvidersDomain(input: {
       const message = caught instanceof Error ? caught.message : String(caught);
       setProviderCheck({
         ok: false,
-        code: "request_failed",
+        code: "network_failed",
         message,
         checkedAt: new Date().toISOString(),
       });

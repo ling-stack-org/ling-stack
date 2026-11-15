@@ -10,9 +10,9 @@ One shared metric strip appears beneath the three composers. It is transparent, 
 
 ## Presentation
 
-Three groups, in this order: an icon followed by AI rounds, tool steps, and output token speed; an icon followed by aggregate tokens and cache hit percentage; a circular context-use meter and percentage. Match the supplied reference screenshots for icons, order, copy, and compact formatting as closely as available theme tokens allow. Hover and click expose separate detail cards for token/cache breakdown and context usage. Keyboard users can focus and activate these details.
+When runtime evidence exists, show up to three groups in this order: an icon followed by AI rounds, tool steps, and output token speed; an icon followed by aggregate tokens and cache hit percentage; and a circular context-use meter and percentage. Groups without any evidence are hidden. Match the supplied reference screenshots for icons, order, copy, and compact formatting as closely as available theme tokens allow. Hover and click expose separate detail cards for token/cache breakdown and context usage. Keyboard users can focus and activate these details.
 
-Numbers must come from real scoped runtime evidence. Never substitute screenshot examples or pretend that a model's context-window capacity is its occupied context. A missing or unsupported metric displays `—`; a zero is displayed only when the underlying measurement is known. Estimated context is explicitly identified as estimated; provider-measured context is explicitly identified as measured. If an individual run uses an execution adapter that does not emit usage evidence, its absence is visible rather than silently treated as zero.
+Numbers must come from real scoped runtime evidence. Never substitute screenshot examples or pretend that a model's context-window capacity is its occupied context. A missing or unsupported metric within a visible group displays `—`; when no group has any evidence, the strip shows a single `Status unavailable` empty state. A zero is displayed only when the underlying measurement is known. Estimated context is explicitly identified as estimated; provider-measured context is explicitly identified as measured. If an individual run uses an execution adapter that does not emit usage evidence, its absence is visible rather than silently treated as zero.
 
 ## Aggregation and scope
 
@@ -22,7 +22,7 @@ Numbers must come from real scoped runtime evidence. Never substitute screenshot
 - Count AI rounds from runtime turn starts when emitted; count tool steps from distinct runtime tool starts. These are not channel workflow-step counts or user-message counts.
 - Aggregate measured token inputs, outputs, cache reads, and cache writes from provider usage events. Handle run continuations and separate compaction calls without duplicating an event. Cache hit numerator and denominator must follow the underlying provider SDK semantics; display a percentage only when they are comparable and measured.
 - Show token throughput only when a measured output count and reliable interval belong to the same completed assistant response; the observable `turn_start → message_end` interval includes tools and is labeled end-to-end round throughput, not pure model-generation speed. Do not divide conversation lifetime by total tokens.
-- Context usage uses the latest invocation's measured input and a known capacity where available. If only a projected-input estimate exists, expose it distinctly with its source and uncertainty; if neither exists, display `—`.
+- Context usage uses the latest invocation's measured input and a known capacity where available. If only a projected-input estimate exists, expose it distinctly with its source and uncertainty; if neither exists, hide the context group. If no group has evidence, show the single unavailable empty state.
 
 ## Module seam
 

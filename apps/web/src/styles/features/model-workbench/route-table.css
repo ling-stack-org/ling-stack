@@ -60,20 +60,6 @@
   gap: var(--ling-space-4);
 }
 
-.provider-avatar {
-  display: inline-grid;
-  width: 28px;
-  height: 28px;
-  flex: 0 0 auto;
-  place-items: center;
-  border: 0;
-  border-radius: var(--ling-radius-md);
-  color: var(--ling-text-muted);
-  background: var(--ling-bg-subtle);
-  font-size: var(--ling-font-xs);
-  font-weight: 700;
-}
-
 .provider-name-copy {
   display: grid;
   min-width: 0;
@@ -220,4 +206,14 @@
   display: inline-flex;
   align-items: center;
   gap: var(--ling-space-4);
+}
+
+.provider-table-shell:has(.ling-ui-empty-state) .ling-ui-empty-state {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+}
+
+.provider-table-shell:has(.ling-ui-empty-state) .ling-ui-empty-state-actions {
+  grid-column: 2;
+  justify-self: start;
 }

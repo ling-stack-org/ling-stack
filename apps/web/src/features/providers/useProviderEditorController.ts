@@ -23,7 +23,6 @@ import {
 } from "./provider-discovery-request-identity.js";
 import type { ProviderImportResult, ProviderSaveResult } from "./types.js";
 import {
-  filterProviderTemplatesForSetupIntent,
   normalizeProviderEndpoint,
   selectProviderTemplateForSetupIntent,
   type ProviderSetupIntent,
@@ -84,8 +83,11 @@ export function useProviderEditorController(input: {
     [input.templates],
   );
   const visibleSupplierTemplates = useMemo(
-    () => filterProviderTemplatesForSetupIntent(supplierTemplates, setupIntent),
-    [setupIntent, supplierTemplates],
+    // Keep the complete built-in directory visible in the picker. The editor
+    // marks templates that do not support the selected purpose as unavailable,
+    // instead of making the directory appear to shrink unexpectedly.
+    () => supplierTemplates,
+    [supplierTemplates],
   );
   const setupModelOptions = useMemo(
     () => setupIntent === "video_generation"

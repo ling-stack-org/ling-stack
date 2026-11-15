@@ -154,30 +154,33 @@ export function ProviderSettings(props: ProviderSettingsProps): React.JSX.Elemen
           providerSearch={workbench.query}
           providerStatusFilter={workbench.statusFilter}
           providerCapabilityFilter={workbench.capabilityFilter}
-          isLoading={props.isLoading}
           isCheckingProviders={isCheckingProviders}
           isBatchChecking={isBatchChecking}
-          isStale={Boolean(props.errorMessage && providers.length)}
           onProviderSearchChange={workbench.setQuery}
           onProviderStatusFilterChange={workbench.setStatusFilter}
           onProviderCapabilityFilterChange={workbench.setCapabilityFilter}
           onAddModel={() => editor.openNew()}
           onCheckBatch={() => void feedback.checkBatch()}
+          showBatchCheckAction={providers.length > 0}
           settingsToolMode={props.settingsToolMode}
         />
-        <ProviderDefaultPurposeBar
-          cwd={props.cwd}
-          providers={providers}
-          workspaceSettings={props.workspaceSettings}
-          onPatchWorkspaceSettings={props.onPatchWorkspaceSettings}
-        />
+        {providers.length > 0 ? (
+          <ProviderDefaultPurposeBar
+            cwd={props.cwd}
+            providers={providers}
+            workspaceSettings={props.workspaceSettings}
+            onPatchWorkspaceSettings={props.onPatchWorkspaceSettings}
+          />
+        ) : null}
         {props.errorMessage ? (
           <InlineFeedback className="provider-page-error inline-error" tone="danger" title={t("Error")}>
-            <span>{props.errorMessage}</span>
+            <span>{t(props.errorMessage)}</span>
             <Button size="sm" variant="secondary" onClick={props.onRefresh}>{t("Retry")}</Button>
           </InlineFeedback>
         ) : null}
-        <ProviderNextAction providers={providers} nextActionProvider={nextActionProvider} isLoading={props.isLoading} />
+        {providers.length > 0 ? (
+          <ProviderNextAction providers={providers} nextActionProvider={nextActionProvider} isLoading={props.isLoading} />
+        ) : null}
         {repairRun ? (
           <ProviderRunRepairPanel
             run={repairRun}

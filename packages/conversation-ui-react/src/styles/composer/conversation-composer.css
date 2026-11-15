@@ -6,13 +6,14 @@
 }
 
 .conversation-bottom-status-strip {
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: center;
-  gap: 14px;
+  gap: 8px;
   min-width: 0;
-  padding: 0 8px;
+  padding: 2px 8px 4px;
   color: var(--ling-text-muted);
   background: transparent;
   border: 0;
@@ -35,17 +36,23 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 0;
+  min-height: 24px;
+  padding: 3px 7px;
   border: 0;
+  border-radius: var(--ling-radius-sm);
   color: inherit;
   background: transparent;
   font: inherit;
   cursor: pointer;
+  transition:
+    color var(--ling-motion-fast) var(--ling-ease-standard),
+    background-color var(--ling-motion-fast) var(--ling-ease-standard);
 }
 
 .conversation-bottom-status-trigger:hover,
 .conversation-bottom-status-trigger:focus-visible {
   color: var(--ling-text-default);
+  background: var(--ling-bg-subtle);
 }
 
 .conversation-bottom-status-trigger:focus-visible {
@@ -57,16 +64,17 @@
 .conversation-bottom-status-detail {
   position: absolute;
   z-index: 20;
-  bottom: calc(100% + 8px);
+  top: calc(100% + 6px);
   left: 50%;
   display: grid;
+  grid-template-columns: repeat(2, minmax(0, max-content));
   width: max-content;
   min-width: 160px;
-  max-width: min(260px, calc(100vw - 32px));
-  gap: 4px;
+  max-width: min(300px, calc(100vw - 32px));
+  gap: 5px 14px;
   padding: 10px 12px;
   transform: translateX(-50%);
-  border: 1px solid var(--ling-border-default);
+  border: 1px solid color-mix(in srgb, var(--ling-border-focus) 38%, var(--ling-border-default));
   border-radius: var(--ling-radius-md);
   color: var(--ling-text-default);
   background: var(--ling-bg-elevated);
@@ -75,10 +83,20 @@
   pointer-events: none;
 }
 
+.conversation-bottom-status-group[data-status-kind="context"] .conversation-bottom-status-detail > span,
+.conversation-bottom-status-group[data-status-kind="runtime"] .conversation-bottom-status-detail > span:nth-child(3) {
+  grid-column: 1 / -1;
+}
+
+.conversation-bottom-status-empty {
+  color: var(--ling-text-muted);
+  font-style: italic;
+}
+
 .conversation-bottom-status-meter {
   display: inline-block;
-  width: 14px;
-  height: 14px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
   background: conic-gradient(var(--ling-border-focus) var(--conversation-context-progress), var(--ling-border-default) 0);
   mask: radial-gradient(farthest-side, transparent 55%, var(--ling-text-default) 60%);

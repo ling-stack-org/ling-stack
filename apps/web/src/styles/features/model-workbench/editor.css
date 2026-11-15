@@ -2,8 +2,11 @@
   display: flex;
   flex-direction: column;
   width: min(720px, calc(100vw - 32px));
-  max-height: calc(100vh - 32px);
-  max-height: calc(100dvh - 32px);
+  height: 100vh;
+  height: 100dvh;
+  max-height: none;
+  border-width: 0 0 0 1px;
+  border-radius: 0;
 }
 
 .provider-sheet-header,
@@ -22,6 +25,25 @@
 .provider-editor-core,
 .provider-editor-advanced-body {
   min-width: 0;
+}
+
+.provider-template-select-field {
+  display: grid;
+  gap: var(--ling-space-2);
+}
+
+.provider-template-picker {
+  display: grid;
+  gap: var(--ling-space-2);
+}
+
+.provider-supplier-search {
+  max-width: 420px;
+}
+
+.provider-template-directory-note {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
 }
 
 .provider-editor-core {

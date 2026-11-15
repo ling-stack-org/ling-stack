@@ -6,6 +6,17 @@ open-source baseline onward.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and future
 release versions will follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-11-15
+
+### Added
+
+- **Model Workbench defaults are compact and purpose-focused**, with concise Chat, Image and Video selectors, minimal same-model disambiguation, preserved current selections during search, and clearer provider loading and save errors.
+- **Conversation runtime status is less repetitive**, revealing metric details on hover or focus without shifting the composer layout, and showing a single unavailable state when no evidence exists.
+
+### Changed
+
+- Refreshed the provider model catalog and synchronized all supported localization catalogs with the updated model-workbench and conversation status copy.
+
 ## [0.3.0] - 2026-11-11
 
 ### Added
