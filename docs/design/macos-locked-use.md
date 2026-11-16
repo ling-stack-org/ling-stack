@@ -128,6 +128,14 @@ facts. A fixture can exercise this composition; it does not constitute packaged
 acceptance. The release composition must also promote the daemon's disabled policy
 through a trusted boot boundary. No environment or renderer switch does this.
 
+The installed helper is fixed at `Client.app/Contents/MacOS/LingLockedUseClient`
+under the administrator-owned component directory. The installer retains its
+build manifest beside it. A native-client factory pins the release-approved
+manifest digest, checks root ownership and non-writable ancestry, verifies the
+helper's SHA-256 and Developer ID requirement, and rejects injection entitlements.
+These checks run before each helper spawn. Neither an installed manifest nor a
+verified helper declares capture/input acceptance or promotes the daemon policy.
+
 The native helper owns the Broker socket while the Cua provider is a separate
 process. Only successful provider fence/shutdown followed by explicit native `end`
 can acknowledge external quiescence. The Broker is configured to reject helper

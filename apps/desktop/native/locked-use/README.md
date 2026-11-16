@@ -57,7 +57,9 @@ provider quiescence.
 
 These are separate system maintenance operations. Building never performs them.
 The installer requires a root-owned staging tree, a matching signed team and a
-positive plug-in load test. Prepare the intended component set for review before
+positive plug-in load test. The staging manifest must match the target architecture,
+record the Developer ID kernel-identity check, and hash the signed Client executable.
+Ad hoc or development-only manifests cannot be installed. Prepare the intended component set for review before
 authorizing installation. Its fixed targets are:
 
 - `/Library/Application Support/LingStack/LockedUse`
@@ -76,7 +78,13 @@ LingLockInstaller uninstall
 ```
 
 `install` backs up the exact existing screensaver rule, tests plug-in loading and
-adds an OR branch preserving native authentication. Interrupted installation keeps
+adds an OR branch preserving native authentication. It installs `Client.app` and
+`build-manifest.json` with the Broker, Guardian and installer. Public components
+are root-owned and readable/executable by the enrolled user; recovery journals
+remain private. Desktop independently pins the release-approved manifest digest
+and verifies the installed helper's digest, Developer ID, hardened runtime and
+empty entitlements before each spawn. This identity check supplies no GUI acceptance.
+Interrupted installation keeps
 its recovery plan. `recover` restores a matching recorded policy and removes owned
 artifacts; it refuses to overwrite concurrent policy changes. `uninstall` first
 requires a fully stopped/released lease. `reconcile-stopped-guards` only addresses

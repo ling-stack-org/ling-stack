@@ -3,6 +3,7 @@ import Foundation
 import LockedUseNative
 import LingLockedUse
 import Security
+import CryptoKit
 
 private let root = URL(fileURLWithPath: "/Library/Application Support/LingStack/LockedUse", isDirectory: true)
 private let pluginName = "LingLockAuth.bundle"
@@ -100,6 +101,21 @@ struct InstallerMain {
             guard mkdir(url.path, 0o755) == 0 else { throw InstallError.untrusted }
         }
         try trustedTreeShallow(url)
+    }
+    private static func makeComponentReadable(_ url: URL) throws {
+        let descendants = FileManager.default.enumerator(at: url, includingPropertiesForKeys: nil, options: [])
+        var items = [url]
+        while let item = descendants?.nextObject() as? URL { items.append(item) }
+        for item in items {
+            let fd = open(item.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+            guard fd >= 0 else { throw InstallError.untrusted }
+            defer { Darwin.close(fd) }
+            var info = stat()
+            guard fstat(fd, &info) == 0, info.st_uid == 0,
+                  [S_IFREG, S_IFDIR].contains(info.st_mode & S_IFMT) else { throw InstallError.untrusted }
+            let mode: mode_t = info.st_mode & S_IFMT == S_IFDIR || info.st_mode & 0o111 != 0 ? 0o755 : 0o644
+            guard ling_remove_extended_acl(fd) == 0, fchmod(fd, mode) == 0 else { throw InstallError.untrusted }
+        }
     }
     private static func trustedTreeShallow(_ url: URL) throws {
         var cursor = url
@@ -203,6 +219,26 @@ struct InstallerMain {
         guard let identifier = Bundle(url: client)?.bundleIdentifier,
               identifier == "com.lingstack.locked-use.client" else { throw InstallError.untrusted }
         _ = try verify(client, id: identifier, team: team)
+        let manifest = source.appendingPathComponent("build-manifest.json")
+        let manifestHandle = try FileHandle(forReadingFrom: manifest)
+        defer { try? manifestHandle.close() }
+        let manifestData = try manifestHandle.read(upToCount: 16 * 1024 + 1) ?? Data()
+        #if arch(arm64)
+        let architecture = "arm64"
+        #else
+        let architecture = "x64"
+        #endif
+        let clientHash = try LockedUseBuildManifest.clientSHA256(data: manifestData, team: team, architecture: architecture)
+        let clientHandle = try FileHandle(forReadingFrom: client.appendingPathComponent("Contents/MacOS/LingLockedUseClient"))
+        defer { try? clientHandle.close() }
+        var digest = SHA256()
+        var total = 0
+        while let bytes = try clientHandle.read(upToCount: 64 * 1024), !bytes.isEmpty {
+            total += bytes.count
+            guard total <= 32 * 1024 * 1024 else { throw InstallError.untrusted }
+            digest.update(data: bytes)
+        }
+        guard total > 0, digest.finalize().map({ String(format: "%02x", $0) }).joined() == clientHash else { throw InstallError.untrusted }
         guard !FileManager.default.fileExists(atPath: root.path), !FileManager.default.fileExists(atPath: plugin.path),
               !FileManager.default.fileExists(atPath: daemon.path),
               !FileManager.default.fileExists(atPath: plugin.deletingLastPathComponent().appendingPathComponent("LingStackLockedUseAuthorizationPlugin.bundle").path) else { throw InstallError.existingInstallation }
@@ -224,11 +260,14 @@ struct InstallerMain {
         ])
         try write(approvals, name: "clients.json")
         try write(LockedUseBrokerConfiguration(enabled: true), name: "configuration.json")
-        for name in ["LingLockBroker", guardianName, "LingLockInstaller"] {
-            try FileManager.default.copyItem(at: source.appendingPathComponent(name), to: root.appendingPathComponent(name))
+        for name in ["LingLockBroker", guardianName, "LingLockInstaller", "Client.app", "build-manifest.json"] {
+            let destination = root.appendingPathComponent(name)
+            try FileManager.default.copyItem(at: source.appendingPathComponent(name), to: destination)
+            try makeComponentReadable(destination)
         }
         try makeDirectory(plugin.deletingLastPathComponent())
         try FileManager.default.copyItem(at: source.appendingPathComponent(pluginName), to: plugin)
+        try makeComponentReadable(plugin)
         // Preserve a recoverable plan before writes; never blindly repair a
         // concurrently modified authentication policy in a failure handler.
         do {

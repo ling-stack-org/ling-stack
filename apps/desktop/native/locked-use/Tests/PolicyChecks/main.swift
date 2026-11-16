@@ -58,7 +58,35 @@ do {
     try denies { try binding().validate(sessionDigest: digest, now: now) }
     payload["expiresAt"] = formatter.string(from: now.addingTimeInterval(901))
     try denies { try binding().validate(sessionDigest: digest, now: now) }
-    print("Locked Use policy checks passed: permit replay, observed unlock, external drain, relock, session binding and task TTL; no system state changed.")
+    #if arch(arm64)
+    let architecture = "arm64"
+    #else
+    let architecture = "x64"
+    #endif
+    let clientHash = String(repeating: "c", count: 64)
+    let artifactNames = ["LingLockBroker", "LingLockInstaller", "Ling Guardian.app/Contents/MacOS/LingGuardian",
+        "Client.app/Contents/MacOS/LingLockedUseClient", "LingLockAuth.bundle/Contents/MacOS/LingLockAuth"]
+    var manifest: [String: Any] = ["schemaVersion": 1, "platform": "darwin", "architecture": architecture,
+        "team": "ABCDE12345", "signing": "local_identity", "productCapability": "disabled_by_build", "nativeAcceptance": "not_run",
+        "upstreamCommit": String(repeating: "a", count: 40),
+        "checks": ["policy": "passed", "authorizationPluginABI": "passed", "kernelTaskVerifier": "identity_passed", "xctest": "separate"],
+        "artifacts": Dictionary(uniqueKeysWithValues: artifactNames.map { ($0, clientHash) })]
+    func readManifest() throws -> String {
+        try LockedUseBuildManifest.clientSHA256(data: JSONSerialization.data(withJSONObject: manifest), team: "ABCDE12345", architecture: architecture)
+    }
+    try require(readManifest() == clientHash, "Signed client manifest must preserve the helper digest")
+    manifest["schemaVersion"] = true
+    try denies { _ = try readManifest() }
+    manifest["schemaVersion"] = 1
+    manifest["productCapability"] = "supported_restricted"
+    try denies { _ = try readManifest() }
+    manifest["productCapability"] = "disabled_by_build"
+    manifest["team"] = "OTHER12345"
+    try denies { _ = try readManifest() }
+    manifest["team"] = "ABCDE12345"
+    manifest["extra"] = true
+    try denies { _ = try readManifest() }
+    print("Locked Use policy checks passed: permit replay, observed unlock, external drain, relock, session binding, task TTL and manifest identity; no system state changed.")
 } catch {
     fputs("Locked Use policy checks failed: \(error)\n", stderr)
     exit(1)
