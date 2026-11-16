@@ -200,7 +200,10 @@ private final class IdentityResult: @unchecked Sendable {
 @main
 enum ClientMain {
     @MainActor static func main() async {
-        if Array(CommandLine.arguments.dropFirst()) == ["--validate", "--attended"] {
+        if Array(CommandLine.arguments.dropFirst()) == ["--validate", "--preflight"] {
+            do { try AttendedValidation.preflight() }
+            catch { fputs("Attended validation preflight failed: \(error)\n", stderr); exit(1) }
+        } else if Array(CommandLine.arguments.dropFirst()) == ["--validate", "--attended"] {
             do { try await AttendedValidation.run() }
             catch { fputs("Attended validation failed: \(error)\n", stderr); exit(1) }
         } else {

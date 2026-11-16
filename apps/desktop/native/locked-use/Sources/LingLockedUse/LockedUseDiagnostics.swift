@@ -76,6 +76,7 @@ public struct LockedUseDiagnostics: Codable, Sendable {
     public let available: Bool
     public let clientApproved: Bool
     public let authenticationPolicyIntact: Bool
+    public let componentsVerified: Bool
     public let session: LockedUseSession
     public let accessibility: Bool
     public let screenRecording: Bool
@@ -107,9 +108,11 @@ public struct LockedUseDiagnostics: Codable, Sendable {
         } ?? false
         var available = false
         var guardianPermissions: [String: Bool] = [:]
+        var componentsVerified = false
         var componentsValidated = false
         if let configuration, let team = try? LockedUseSigningIdentity.current().teamIdentifier,
            let evidence = try? LockedUseComponentValidation.current(team: team) {
+            componentsVerified = true
             componentsValidated = configuration.matchesValidation(osBuild: evidence.osBuild,
                 brokerHash: evidence.brokerHash, guardianHash: evidence.guardianHash,
                 pluginHash: evidence.pluginHash, clientHash: evidence.clientHash)
@@ -120,7 +123,7 @@ public struct LockedUseDiagnostics: Codable, Sendable {
         }
         return .init(
             schemaVersion: 1, stage: available ? "enabled" : configuration == nil ? "not-installed" : "unavailable", enabled: configuration?.enabled ?? false, available: available,
-            clientApproved: approved, authenticationPolicyIntact: policyIntact,
+            clientApproved: approved, authenticationPolicyIntact: policyIntact, componentsVerified: componentsVerified,
             session: .current(), accessibility: AXIsProcessTrusted(),
             screenRecording: CGPreflightScreenCaptureAccess(), inputMonitoring: CGPreflightListenEventAccess(),
             installedPluginVersion: Bundle(url: URL(fileURLWithPath: pluginsPath + "/" + ownPlugin))?.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String,
@@ -134,6 +137,21 @@ public struct LockedUseDiagnostics: Codable, Sendable {
                 "Administrator installation and permissions for Ling Stack and Ling Guardian are required. Client approval, signed components and authentication policy must be intact."
             ],
         )
+    }
+
+    /// Validation starts before production promotion. Input Monitoring belongs
+    /// to Guardian, while the Client needs Accessibility and Screen Recording.
+    public var attendedValidationBlockers: [String] {
+        [
+            session.state == .unlocked && session.userID != nil && session.auditSessionID != nil ? nil : "completed_unlocked_aqua_session_required",
+            accessibility ? nil : "client_accessibility_permission_required",
+            screenRecording ? nil : "client_screen_recording_permission_required",
+            componentsVerified ? nil : "installed_components_verification_required",
+            clientApproved ? nil : "installed_client_approval_required",
+            authenticationPolicyIntact ? nil : "installed_authentication_policy_required",
+            guardianAccessibility == true ? nil : "guardian_accessibility_permission_required",
+            guardianInputMonitoring == true ? nil : "guardian_input_monitoring_permission_required",
+        ].compactMap { $0 }
     }
 
     private static func installedGuardianPermissions() -> [String: Bool] {

@@ -46,7 +46,8 @@ node apps/desktop/scripts/build-locked-use.ts --validation-development --identit
 
 This profile is selected at compilation, uses the kernel's development signing
 category with the same team/runtime/injection checks, and has an isolated Swift
-build directory. Its Client accepts only `--validate --attended`; it exposes no
+build directory. Its Client accepts only `--validate --preflight` and
+`--validate --attended`; it exposes no
 Desktop task protocol. The Broker serves only validation, the installer refuses
 production installation and promotion, and production manifests/release tools
 reject its `development_validation` evidence. The build still performs no
@@ -143,8 +144,18 @@ After explicit administrator installation in validation mode, run the installed
 signed Client from the enrolled user's unlocked Aqua session:
 
 ```text
+/Library/Application Support/LingStack/LockedUse/Client.app/Contents/MacOS/LingLockedUseClient --validate --preflight
 /Library/Application Support/LingStack/LockedUse/Client.app/Contents/MacOS/LingLockedUseClient --validate --attended
 ```
+
+`--preflight` is read-only and prints structured blockers for the current Aqua
+session, Client Accessibility/Screen Recording, Guardian Accessibility/Input
+Monitoring, signed components, client approval and installed authentication
+rules. It does not contact the Broker or modify system configuration. Guardian
+is invoked only to read its permission state. Preflight does not require prior
+production promotion; `ready: true` does not enable the Desktop capability.
+Run it before `--attended`; a nonzero result means the attended run should not
+be started yet.
 
 The Client requires Accessibility and Screen Recording permission. Guardian also
 requires its documented Accessibility/Input Monitoring grants. The harness asks

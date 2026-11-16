@@ -107,6 +107,30 @@ enum AttendedValidation {
         }
     }
 
+    /// Read-only readiness report for the enrolled Aqua session. This does not
+    /// start shields, contact the Broker, request authentication, or change
+    /// system configuration. Guardian reports its own permission state.
+    static func preflight() throws {
+        let diagnostics = LockedUseDiagnostics.current()
+        let blockers = diagnostics.attendedValidationBlockers
+        let value: [String: Any] = [
+            "event": "attendedValidationPreflight",
+            "ready": blockers.isEmpty,
+            "session": diagnostics.session.state.rawValue,
+            "accessibility": diagnostics.accessibility,
+            "screenRecording": diagnostics.screenRecording,
+            "guardianAccessibility": diagnostics.guardianAccessibility ?? false,
+            "guardianInputMonitoring": diagnostics.guardianInputMonitoring ?? false,
+            "componentsVerified": diagnostics.componentsVerified,
+            "nativeAvailable": diagnostics.available,
+            "nativeStage": diagnostics.stage,
+            "blockers": blockers,
+        ]
+        let data = try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
+        FileHandle.standardOutput.write(data + Data([10]))
+        if !blockers.isEmpty { throw LockedUseError.stateUnavailable("Attended validation preflight is not ready") }
+    }
+
     private static func waitForManualUnlock(_ initial: LockedUseSession) async throws {
         let deadline = ProcessInfo.processInfo.systemUptime + 120
         while LockedUseSession.current() != initial, ProcessInfo.processInfo.systemUptime < deadline {
