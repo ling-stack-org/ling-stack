@@ -59,7 +59,9 @@ function validView(view: readonly unknown[]): Record<string, unknown> {
       for (const key of ["input", "output", "cacheRead", "cacheWrite", "totalTokens"])
         if (!Number.isSafeInteger(message.usage[key]) || Number(message.usage[key]) < 0) fail("checkpoint.effect_unknown");
       if (message.usage.cost !== undefined && (!record(message.usage.cost)
-        || Object.values(message.usage.cost).some(value => typeof value !== "number" || !Number.isFinite(value) || value < 0))) fail("checkpoint.effect_unknown");
+        || Object.entries(message.usage.cost).some(([key, value]) => key === "totalFromProvider"
+          ? typeof value !== "boolean"
+          : typeof value !== "number" || !Number.isFinite(value) || value < 0))) fail("checkpoint.effect_unknown");
     }
   }
   if (pending.size) fail();

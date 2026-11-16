@@ -66,6 +66,7 @@ export function createLingStackHostIsolatedFilesExtension(options: PiRunnerRunOp
       pi.registerTool({ name, label: name, description: descriptions[name],
         parameters: name === "grep" ? literalGrepParameters(original.parameters)
           : name === "edit" ? nonemptyEditParameters(original.parameters) : original.parameters,
+        ...(name === "edit" ? { prepareArguments: prepareEditArguments } : {}),
         executionMode: "sequential",
         renderCall: original.renderCall, renderResult: original.renderResult, renderShell: original.renderShell,
         async execute(toolCallId, input, toolSignal) {
@@ -106,4 +107,10 @@ function nonemptyEditParameters(original: ToolDefinition["parameters"]): ToolDef
   const edits = isRecord(properties.edits) ? properties.edits : {};
   // The SDK normally enforces nonempty edits in its execute, which this profile never invokes.
   return { ...base, properties: { ...properties, edits: { ...edits, minItems: 1 } } } as ToolDefinition["parameters"];
+}
+
+function prepareEditArguments(input: unknown): Record<string, unknown> {
+  // Preserve the array boundary before SDK schema coercion can wrap a single edit object.
+  if (!isRecord(input) || !Array.isArray(input.edits)) throw new Error("workflow_isolated_edit_input_invalid");
+  return input;
 }
