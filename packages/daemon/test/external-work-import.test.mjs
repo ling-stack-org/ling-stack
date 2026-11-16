@@ -1211,7 +1211,7 @@ test("GitHub CI triage run bridge starts an explicit local fix run and links it 
     assert.ok(runId);
     assert.equal(runner.runs.length, 1);
     assert.equal(runner.runs[0].task.id, taskId);
-    assert.equal(runner.runs[0].cwd, cwd);
+    assert.equal(runner.runs[0].cwd, channel.channel.workspaceBinding.worktreePath);
     assert.deepEqual(runner.runs[0].tools, ["read"]);
 
     const duplicateSse = await postSse(`${daemon.url}/external-work/github/ci/triage/${encodeURIComponent(triageId)}/run?cwd=${encodeURIComponent(cwd)}`, {

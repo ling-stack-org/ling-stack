@@ -831,7 +831,7 @@ test("channel response language overrides follow-user inference for workflow pro
 test("single-step file creation becomes direct workflow with bounded write tools", async () => {
   const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-single-step-file-"));
   const runner = new RecordingRunner();
-  const daemon = await startDaemonForTest(runner);
+  const daemon = await startDaemonForTest(runner, {}, { defaultWorkspaceCwd: cwd });
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
     await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
@@ -880,7 +880,7 @@ test("single-step file creation becomes direct workflow with bounded write tools
 test("explicit command request becomes execute with bounded bash tools", async () => {
   const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-single-command-"));
   const runner = new RecordingRunner();
-  const daemon = await startDaemonForTest(runner);
+  const daemon = await startDaemonForTest(runner, {}, { defaultWorkspaceCwd: cwd });
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
     await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
@@ -3169,7 +3169,7 @@ test("Ling Agent fallback edits code proposal when no Engineer teammate can run"
 test("single-step file creation blocks when channel lacks the required write tool", async () => {
   const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-single-step-file-channel-readonly-"));
   const runner = new RecordingRunner();
-  const daemon = await startDaemonForTest(runner);
+  const daemon = await startDaemonForTest(runner, {}, { defaultWorkspaceCwd: cwd });
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
     await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
@@ -3215,7 +3215,7 @@ test("single-step file creation blocks when channel lacks the required write too
 test("single-step file edit inherits target path from recent workflow context", async () => {
   const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-single-step-file-continuation-"));
   const runner = new RecordingRunner();
-  const daemon = await startDaemonForTest(runner);
+  const daemon = await startDaemonForTest(runner, {}, { defaultWorkspaceCwd: cwd });
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
     await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
@@ -3263,7 +3263,7 @@ test("single-step file edit inherits target path from recent workflow context", 
 test("single-step file edit normalizes Users path without leading slash", async () => {
   const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-single-step-file-users-path-"));
   const runner = new RecordingRunner();
-  const daemon = await startDaemonForTest(runner);
+  const daemon = await startDaemonForTest(runner, {}, { defaultWorkspaceCwd: cwd });
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
     await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
@@ -3335,7 +3335,7 @@ test("file creation how-to question remains ordinary Ling chat intent", async ()
 
 test("single-step test request becomes direct workflow with bounded bash tools", async () => {
   const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-single-step-test-"));
-  const daemon = await startDaemonForTest();
+  const daemon = await startDaemonForTest(undefined, {}, { defaultWorkspaceCwd: cwd });
   try {
     const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
       name: "QA execution",
@@ -4083,7 +4083,7 @@ test("Ling Agent replies to greetings, repeated greetings, punctuation, and ackn
     "看到了，继续说。",
     "收到，继续。",
   ]);
-  const daemon = await startDaemonForTest(runner);
+  const daemon = await startDaemonForTest(runner, {}, { defaultWorkspaceCwd: cwd });
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
     await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
@@ -4236,7 +4236,7 @@ test("auto_route is rejected by channel create and update while the feature flag
       }
       return store;
     },
-  }, { channels: { autoRoute: false, intentSelector: false } });
+  }, { defaultWorkspaceCwd: cwd, channels: { autoRoute: false, intentSelector: false } });
   try {
     const createUrl = `${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`;
     const createBody = {

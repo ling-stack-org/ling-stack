@@ -2477,7 +2477,7 @@ test("fan-in requireAllBranchesTerminal is a scheduling barrier even with any_su
       stores.set(storeCwd, store);
       return store;
     },
-  });
+  }, { defaultWorkspaceCwd: cwd });
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd, {
       capabilities: ["chat", "reasoning", "tool_call"],
@@ -2713,7 +2713,7 @@ test("workflow cancel aborts active run, queued steps, and pending workflow appr
 test("workflow step retry starts a blocked step after configuration is repaired", async () => {
   const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-workflow-retry-"));
   const runner = new RecordingRunner();
-  const daemon = await startDaemonForTest(runner);
+  const daemon = await startDaemonForTest(runner, {}, { defaultWorkspaceCwd: cwd });
   try {
     const channel = await createWorkflowTestChannel(daemon.url, cwd, "Retry workflow");
     simulateLegacyChannelWithoutModel(cwd, channel.id);

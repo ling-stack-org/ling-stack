@@ -52,6 +52,7 @@ import {
   type WorkUnitAttempt,
   type WorkUnitKind,
   toRuntimeAttemptFence,
+  resolveChannelExecutionCwd,
   workflowIsolationDigest,
 } from "@ling-stack/core";
 import type {
@@ -319,8 +320,9 @@ function writeRunPreparationFailure(sink: RunExecutionSink, statusCode: number, 
 export function executeRunRequest(
   ...args: Parameters<typeof executeAdmittedRunRequest>
 ): Promise<string | undefined> {
-  const [request, sink, , , activeRuns, , , , options = {}] = args;
+  const [request, sink, , storeRegistry, activeRuns, , , , options = {}] = args;
   const completion = Promise.resolve().then(() => {
+    const effectiveRequest = resolveChannelRunExecutionCwd(request, storeRegistry);
     if (request.continuationReason === "user_input_answer" || request.userInputContinuationContext !== undefined) {
       writeRunPreparationFailure(sink, 409, { error: "user_input_continuation_coordinator_required",
         message: "Saved answers must resume their existing WorkUnit through the continuation coordinator, not create a new task." });
@@ -330,12 +332,12 @@ export function executeRunRequest(
       writeRunPreparationFailure(sink, 503, { error: "runtime_shutting_down", message: "Runtime is shutting down." });
       return undefined;
     }
-    if (!request.executionBinding && isExternalExecutionEngineId(request.runnerId)) {
+    if (!effectiveRequest.executionBinding && isExternalExecutionEngineId(effectiveRequest.runnerId)) {
       writeRunPreparationFailure(sink, 409, { error: "legacy_runner_migration_required",
         message: "Endpoint execution is retired. Select a native profile before starting this engine." });
       return undefined;
     }
-    if (request.executionBinding?.kind === "native_profile") {
+    if (effectiveRequest.executionBinding?.kind === "native_profile") {
       if (options.delegatedExecution) {
         writeRunPreparationFailure(sink, 409, { error: "delegation.native_execution_unsupported",
           message: "Dynamic delegated execution requires its original Pi Host entry." });
@@ -350,17 +352,41 @@ export function executeRunRequest(
         return undefined;
       }
       return nativeRunDispatcher.dispatch({
-        runRequest: request as RunRequest & {
+        runRequest: effectiveRequest as RunRequest & {
           readonly executionBinding: Extract<NonNullable<RunRequest["executionBinding"]>, { readonly kind: "native_profile" }>;
         },
         sink,
         executionOptions,
       });
     }
-    return executeAdmittedRunRequest(...args);
+    return executeAdmittedRunRequest(effectiveRequest, sink, args[2], storeRegistry, activeRuns, args[5], args[6], args[7], options);
   });
   activeRuns.trackCompletion(completion);
   return completion;
+}
+
+/**
+ * Public and legacy channel callers identify the canonical Store with the
+ * workspace root, while the execution boundary must use the channel's current
+ * workspace binding. Workflow isolation requests already carry a Host-owned
+ * execution root and therefore keep their explicit cwd.
+ */
+function resolveChannelRunExecutionCwd(request: RunRequest, storeRegistry: RunStoreRegistry): RunRequest {
+  if (request.workflowSafetySnapshot || request.workflowIsolationPlan || !request.task.channelId) return request;
+  const workspaceCwd = request.workspaceCwd ?? request.cwd;
+  try {
+    const store = storeRegistry.getStore(workspaceCwd);
+    const channel = store.getChannel(request.task.channelId);
+    if (!channel) return request;
+    const executionCwd = resolveChannelExecutionCwd(channel, workspaceCwd);
+    if (executionCwd === request.cwd || request.cwd === workspaceCwd || request.cwd === channel.boundPath) {
+      return executionCwd === request.cwd ? request : { ...request, cwd: executionCwd, workspaceCwd };
+    }
+  } catch {
+    // The normal admission path owns the user-visible workspace error. Do not
+    // turn a lookup-only normalization attempt into a different failure.
+  }
+  return request;
 }
 
 /** Original startup registry entry. Reuses normal supervision; it never creates another Runner loop. */

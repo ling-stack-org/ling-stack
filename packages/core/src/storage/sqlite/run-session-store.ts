@@ -1,4 +1,5 @@
 import { assertChannelSessionThreadWritable } from "./channel-session-admission.js";
+import { realpathSync } from "node:fs";
 import type { SQLOutputValue } from "node:sqlite";
 import type { CreateStateTransitionEventInput, StateTransitionEvent } from "../../channel-runtime-types.js";
 import { getRunEventLogPath, type LingStackRuntimePaths } from "../../runtime-paths.js";
@@ -503,6 +504,21 @@ function managedWorkspaceMatches(
   return current?.mode === "managed_worktree" && current.status === "ready"
     && Boolean(current.worktreePath) && Boolean(current.branchName)
     && snapshot?.mode === "managed_worktree" && snapshot.status === "ready"
-    && snapshot.worktreePath === current.worktreePath && snapshot.branchName === current.branchName
-    && snapshot.executionCwd === current.worktreePath && cwd === current.worktreePath;
+    && sameWorkspacePath(snapshot.worktreePath, current.worktreePath)
+    && snapshot.branchName === current.branchName
+    && sameWorkspacePath(snapshot.executionCwd, current.worktreePath)
+    && sameWorkspacePath(cwd, current.worktreePath);
+}
+
+function sameWorkspacePath(left: unknown, right: unknown): boolean {
+  if (typeof left !== "string" || typeof right !== "string") return false;
+  return canonicalWorkspacePath(left) === canonicalWorkspacePath(right);
+}
+
+function canonicalWorkspacePath(value: string): string {
+  try {
+    return realpathSync.native(value);
+  } catch {
+    return value;
+  }
 }

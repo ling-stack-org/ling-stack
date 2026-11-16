@@ -260,7 +260,7 @@ test("channel branches follow archive restore and delete lifecycle", async () =>
       stores.push(store);
       return store;
     },
-  });
+  }, { defaultWorkspaceCwd: cwd });
   try {
     const channel = await createChannel(daemon.url, cwd);
     const store = stores.find((item) => item.paths.cwd === cwd);
@@ -1054,7 +1054,7 @@ test("active channel reply does not intercept an unmarked direct workflow reques
       stores.set(storeCwd, store);
       return store;
     },
-  });
+  }, { defaultWorkspaceCwd: cwd });
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
     await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
@@ -1104,7 +1104,7 @@ test("root reply guidance cannot capture a branch turn and branch continuation s
       stores.set(storeCwd, store);
       return store;
     },
-  });
+  }, { defaultWorkspaceCwd: cwd });
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
     await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
@@ -1199,7 +1199,7 @@ test("topic channel replies keep canonical LingThread identity and isolate guida
       stores.set(storeCwd, store);
       return store;
     },
-  });
+  }, { defaultWorkspaceCwd: cwd });
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
     await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
@@ -2557,7 +2557,7 @@ test("channel reply guidance drains FIFO without interrupting and projects every
       stores.set(storeCwd, store);
       return store;
     },
-  });
+  }, { defaultWorkspaceCwd: cwd });
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
     const designerProvider = (await createStaticChatProvider(daemon.url, cwd, {
@@ -2728,7 +2728,7 @@ test("channel reply guidance continues draining after the first continuation fai
       stores.set(storeCwd, store);
       return store;
     },
-  });
+  }, { defaultWorkspaceCwd: cwd });
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
     await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
@@ -2824,7 +2824,7 @@ test("queued channel source stays hidden while dispatch classification is still 
         structuredSummary: { source: "classification_visibility_test" },
       };
     },
-  });
+  }, { defaultWorkspaceCwd: cwd });
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
     await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
@@ -2928,7 +2928,7 @@ test("unmentioned channel guidance joins the pending Ling reply lane before its 
         }],
       }), { status: 200, headers: { "content-type": "application/json" } });
     },
-  });
+  }, { defaultWorkspaceCwd: cwd });
   try {
     const channel = await createChannel(daemon.url, cwd);
     const provider = (await createStaticChatProvider(daemon.url, cwd, {
@@ -3974,7 +3974,7 @@ test("channel hard summary uses the effective workspace provider before dispatch
       stores.set(storeCwd, store);
       return store;
     },
-  });
+  }, { defaultWorkspaceCwd: cwd });
   try {
     const channel = await createChannel(daemon.url, cwd);
     const provider = (await createStaticChatProvider(daemon.url, cwd, {
@@ -4159,7 +4159,7 @@ test("channel hard summary with no completed prefix records the limitation and b
       stores.set(storeCwd, store);
       return store;
     },
-  });
+  }, { defaultWorkspaceCwd: cwd });
   try {
     const channel = await createChannel(daemon.url, cwd);
     const provider = (await createStaticChatProvider(daemon.url, cwd, {
