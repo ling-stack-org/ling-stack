@@ -1,8 +1,8 @@
 # Agent Execution Capabilities Implementation Plan
 
-Status: C1–C3, A1/A2 and R1–R3 locally implemented; full regression/review/CI open
+Status: C1–C3, A1/A2 and R1–R3 locally implemented; full regression/review/CI in progress
 Owner: Runner and daemon maintainers
-Last verified: 2026-11-16
+Last verified: 2026-11-17
 Document type: implementation plan
 Contract: [Agent Execution Capabilities](agent-execution-capabilities.md)
 
@@ -26,7 +26,7 @@ evidence-based Goal supervision through the existing runtime owners.
 C1–C3 and A1–R3 are locally implemented. The local controlled-transport acceptance
 uses a scripted Provider; full regression, review and remote CI remain release gates.
 
-The local implementation is on `codex/agent-capabilities`, based on `main@878dfa13`.
+The local implementation is on `codex/agent-capabilities`, integrated with `origin/main@27a9ccb23` before the final merge check.
 This record does not establish that the changes are merged or deployed.
 
 ## Implementation Batches

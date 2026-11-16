@@ -2,7 +2,7 @@
 
 Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A/F4-01, F3-B admission evidence, F3-02 review-only preflight, and Host readiness entered main at `edb820f0` (PR #690), with `main@5dc138493` including the later CI merge; F5-01 A17 contract preflight, F5-02 Host-backed read-only observation, and F5-03 Host admission planning are implemented in isolated worktrees, F3-B real trial remains blocked; ordinary-graph F5 execution is locally implemented in A1–R3 with release gates open
 Owner: Ling framework maintainers; one integration owner per implementation batch
-Last verified: 2026-11-16
+Last verified: 2026-11-17
 Document type: implementation plan / acceptance checklist
 Canonical replacement: none; retain while material work remains unfinished
 Code and test anchors: sections 7 and 9; live evidence is read-only, Host readiness is review-only, and no real task or GUI acceptance is claimed
@@ -13,7 +13,7 @@ Code and test anchors: sections 7 and 9; live evidence is read-only, Host readin
 
 按“离线评测与报告 + SDK 独立消费”先实施，再接真实执行和诊断。不要等待另一会话完成所有未来功能，也不要抢先改它正在拥有的安全并发、隔离执行、合并和恢复文件。
 
-用户确认开始后，F1/F2 已在独立工作区实现并合并到主线，合并提交为 `47afcc47b9063cd7a402a81cf1088caa695f3638`。F3-A/F4-01、F3-B 准入证据前置、F3-02 和 Host readiness 已进入 `main@edb820f0`，包含 #676、#685、#684、#688、#689 和 #690 的已合并增量；当前主线为 `main@878e422a`，包含 #691 文档同步。默认不产生付费模型请求，不启动生产 daemon、不修改共享数据库，不开放真实 F3-B 试点。实际证据见第 9 节。
+用户确认开始后，F1/F2 已在独立工作区实现并合并到主线，合并提交为 `47afcc47b9063cd7a402a81cf1088caa695f3638`。F3-A/F4-01、F3-B 准入证据前置、F3-02 和 Host readiness 已进入 `main@edb820f0`，包含 #676、#685、#684、#688、#689 和 #690 的已合并增量；当前交付分支已整合 `origin/main@27a9ccb23`，包含后续主线更新。默认不产生付费模型请求，不启动生产 daemon、不修改共享数据库，不开放真实 F3-B 试点。实际证据见第 9 节。
 
 | 里程碑 | 内容 | 当前状态 | 进入条件 |
 | --- | --- | --- | --- |

@@ -4,7 +4,7 @@
 
 Status: implemented active product contract
 Owner: Automations domain
-Last verified: 2026-11-16
+Last verified: 2026-11-17
 
 Durable definitions, drafts, runs, templates, scheduler control, daemon routes, API client,
 Web management, manual execution and standard Run/Approval integration are implemented.

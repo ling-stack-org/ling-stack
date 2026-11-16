@@ -1,8 +1,8 @@
 # Agent Execution Capabilities
 
-Status: C1–C3, A1/A2 and R1–R3 locally implemented; release gates open
+Status: C1–C3, A1/A2 and R1–R3 locally implemented; release gates in progress
 Owner: Runner and daemon maintainers
-Last verified: 2026-11-16
+Last verified: 2026-11-17
 Document type: design contract
 
 ## Scope And Existing Owners
@@ -11,7 +11,7 @@ This contract covers code intelligence, Code Mode, lifecycle Hooks, external-eve
 automations, selective rerun and evidence-based Goal supervision. Delivery
 order and acceptance live in the [implementation plan](agent-execution-capabilities-implementation-plan.md).
 
-The baseline is `main@878dfa13`. Ling already owns tool hydration, MCP, Skills,
+The integration baseline for this delivery is `origin/main@27a9ccb23`. Ling already owns tool hydration, MCP, Skills,
 approvals, cancellation, sandbox selection, prepared Runner input, Goal continuation,
 automations and workflow rerun admission. These owners remain authoritative:
 

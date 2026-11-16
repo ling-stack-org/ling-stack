@@ -2,7 +2,7 @@
 
 Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A/F4-01, F3-B admission evidence, F3-02 preflight, and the Host readiness review gate are on main through PR #690 (`edb820f0`); current main includes the PR #691 documentation refresh (`878e422a`); exact Run/evaluation association merged in PR #684 (`9af7ad54`); F5-01/02/03 remain the read-only contract/observation layers, while ordinary materialized-graph rerun submission and Goal supervision are locally implemented in the current delivery branch; F3-B real trial, advanced workflow profiles and release gates remain open
 Owner: Ling framework maintainers; evaluation and SDK implementation owners
-Last verified: 2026-11-16
+Last verified: 2026-11-17
 Document type: explanation / scope contract
 Canonical replacement: none; complements existing runtime, evaluation, and SDK contracts
 Code and test anchors: see section 10 and the implementation record; live evidence is read-only and not assessed, with no real task, Provider, or GUI acceptance
@@ -29,7 +29,7 @@ Code and test anchors: see section 10 and the implementation record; live eviden
 - F3-B 准入证据前置已通过 PR #676 合并到 `5990095f06d9a03c95ceb307e57f529afd462dcb`：Daemon 只读投影 Run/WorkUnit/Attempt、fence、停止、artifact、delegation 预算、isolated binding、branch result、candidate、approval 和 apply；API client 将投影与冻结任务输入关联。最终候选 35 项托管检查全部成功，实际合并提交的 84 项相关回归及零模型 preflight 通过；详见[准入审计增量](../testing/f3b-admission-audit-2026-11-10.md)。
 - Run/evaluation 精确只读关联和 collector→F4 适配已在 PR #684 实现并合并到 `main@9af7ad54`；合并后 framework-assurance 98/98、Daemon assurance 相关回归 182/182、API client 7/7，以及构建和类型检查通过，托管门禁最终 30 项成功。普通 artifact 缺少独立 Attempt/fence 归属，保留 `attemptBinding: unavailable`，不授予真实执行权限。当前八项准入复核见[2026-11-12 合并基线审计](../testing/f3b-admission-audit-2026-11-12.md)。
 - F5-02 在隔离分支新增 Daemon Host 只读观察器：单 SQLite snapshot 重新核对 Run/WorkUnit/Attempt、Workflow/DAG、artifact 与依赖闭包、停止/lease/fence/effect 和当前 policy，事实完整时才调用 F5-01 纯评估器；F5-03 在此基础上增加只读 admission plan endpoint。当前交付分支的 R1/R2 提交层在一个 Host writer transaction 内重做观察、创建 successor workflow、只使目标及下游失效并复用成功 artifact；R3 增加 Goal acceptance evidence 与有界监督。普通物化图的本地 HTTP/Pi/Host/SQLite/脚本 Provider 回归通过；模板编译、participant/intent authority、delegated/safety/isolation profiles 继续 fail closed，真实 Provider/跨平台验收仍未完成。
-- F3-02 review-only preflight 与 Host readiness review gate 已在 PR #690 合并到 `main@edb820f0`；当前主线为 `main@878e422a`。Host readiness 回归 20/20，framework-assurance 全套 127/127，`typecheck:ci-tests` 和格式检查通过。它只审查已捕获的五域 evidence projection，始终保持 `executionAuthorized:false`，不替代真实 Provider、生产 daemon、跨平台 packaged 或付费试点验收。当前八项准入复核见[Host readiness 收口审计](../testing/f3b-admission-audit-2026-11-12.md)。
+- F3-02 review-only preflight 与 Host readiness review gate 已在 PR #690 合并到 `main@edb820f0`；当前交付分支已整合 `origin/main@27a9ccb23`。Host readiness 回归 20/20，framework-assurance 全套 127/127，`typecheck:ci-tests` 和格式检查通过。它只审查已捕获的五域 evidence projection，始终保持 `executionAuthorized:false`，不替代真实 Provider、生产 daemon、跨平台 packaged 或付费试点验收。当前八项准入复核见[Host readiness 收口审计](../testing/f3b-admission-audit-2026-11-12.md)。
 - 失败分片的限时追加诊断未完整完成任何一轮，并发现一个原生私有状态隔离缺陷；该缺陷已在本分支修复，并由真实 macOS native boundary 回归 22/22、相关 Kimi/relay 回归 65/65 验证。原超时和远端完整 CI 失败仍分别记录，均不以单独 lane 成功或文档补齐替代收口。
 - 不修改多代理并发、worktree 合并、审批、Run/Attempt 生命周期和 SQLite schema。
 - 不运行真实模型，不启动、停止或重启其他会话的服务。
