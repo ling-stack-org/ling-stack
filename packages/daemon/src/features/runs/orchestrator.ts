@@ -322,7 +322,6 @@ export function executeRunRequest(
 ): Promise<string | undefined> {
   const [request, sink, , storeRegistry, activeRuns, , , , options = {}] = args;
   const completion = Promise.resolve().then(() => {
-    const effectiveRequest = resolveChannelRunExecutionCwd(request, storeRegistry);
     if (request.continuationReason === "user_input_answer" || request.userInputContinuationContext !== undefined) {
       writeRunPreparationFailure(sink, 409, { error: "user_input_continuation_coordinator_required",
         message: "Saved answers must resume their existing WorkUnit through the continuation coordinator, not create a new task." });
@@ -332,6 +331,7 @@ export function executeRunRequest(
       writeRunPreparationFailure(sink, 503, { error: "runtime_shutting_down", message: "Runtime is shutting down." });
       return undefined;
     }
+    const effectiveRequest = resolveChannelRunExecutionCwd(request, storeRegistry);
     if (!effectiveRequest.executionBinding && isExternalExecutionEngineId(effectiveRequest.runnerId)) {
       writeRunPreparationFailure(sink, 409, { error: "legacy_runner_migration_required",
         message: "Endpoint execution is retired. Select a native profile before starting this engine." });
@@ -372,7 +372,7 @@ export function executeRunRequest(
  * execution root and therefore keep their explicit cwd.
  */
 function resolveChannelRunExecutionCwd(request: RunRequest, storeRegistry: RunStoreRegistry): RunRequest {
-  if (request.workflowSafetySnapshot || request.workflowIsolationPlan || !request.task.channelId) return request;
+  if (request.workflowSafetySnapshot || request.workflowIsolationPlan || !request.task?.channelId || !storeRegistry) return request;
   const workspaceCwd = request.workspaceCwd ?? request.cwd;
   try {
     const store = storeRegistry.getStore(workspaceCwd);
