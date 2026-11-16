@@ -60,6 +60,10 @@ test("Windows process-table observation tracks nested descendants and rejects PI
   assert.deepEqual(observeWindowsProcessSnapshot({ rootPid: 10, tracked, snapshot: [] }),
     { status: "absent", livePids: [] });
 
+  const orphan = new Map();
+  assert.deepEqual(observeWindowsProcessSnapshot({ rootPid: 40, tracked: orphan,
+    snapshot: [process(41, 40, "orphan-descendant")] }), { status: "present", livePids: [41] });
+
   const reused = new Map();
   observeWindowsProcessSnapshot({ rootPid: 30, tracked: reused, snapshot: [process(30, 1, "old-owner")] });
   assert.deepEqual(observeWindowsProcessSnapshot({ rootPid: 30, tracked: reused,

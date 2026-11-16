@@ -42,11 +42,14 @@ export function managedNodeArguments(operation, args) {
   return [join(scripts, entry[0]), ...args];
 }
 
-async function stopGroup(child, signal, windowsPids = []) {
+async function stopGroup(child, signal, windowsTracked = new Map()) {
   if (!Number.isSafeInteger(child.pid) || child.pid < 1) return;
   if (process.platform === "win32") {
-    const targets = [...new Set([child.pid, ...windowsPids])]
-      .filter(pid => Number.isSafeInteger(pid) && pid > 0);
+    // Re-read the process table immediately before termination. A tracked PID
+    // whose creation identity changed belongs to another process and is never
+    // passed to taskkill.
+    const snapshot = await readWindowsProcessSnapshot();
+    const targets = observeWindowsProcessSnapshot({ snapshot, rootPid: child.pid, tracked: windowsTracked }).livePids;
     const failures = [];
     for (const pid of targets) await new Promise(resolve => execFile("taskkill.exe", ["/PID", `${pid}`, "/T", "/F"],
       { timeout: 5000, maxBuffer: 64 * 1024 }, error => {
@@ -188,11 +191,11 @@ export async function runManagedNode({ root, args, additionalBytes = 6 * 1024 **
     // Bound that wait, but never turn its expiry into permission to clean scratch.
     drainDeadline ??= setTimeout(() => resolveTerminal(null), 5500);
     if (!killing && child?.pid && !(closed && observeGroup(child, spawnError).status === "absent")) killing = (async () => {
-      try { await stopGroup(child, "SIGTERM", [...windowsTracked.keys()]); }
+      try { await stopGroup(child, "SIGTERM", windowsTracked); }
       catch (error) { terminationErrors.push({ signal: "SIGTERM", code: error.code ?? "termination_failed" }); }
       await delay(500);
       if (observeGroup(child, spawnError).status === "absent") return;
-      try { await stopGroup(child, "SIGKILL", [...windowsTracked.keys()]); }
+      try { await stopGroup(child, "SIGKILL", windowsTracked); }
       catch (error) { terminationErrors.push({ signal: "SIGKILL", code: error.code ?? "termination_failed" }); }
     })();
   };
@@ -210,8 +213,8 @@ export async function runManagedNode({ root, args, additionalBytes = 6 * 1024 **
     child = spawn(process.execPath, args, { cwd: repository, env, shell: false,
       detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"] });
     if (process.platform === "win32") {
-      windowsMonitor = setInterval(() => {
-        if (windowsProbe) return;
+      const sampleWindowsTree = () => {
+        if (windowsProbe) return windowsProbe;
         windowsProbe = readWindowsProcessSnapshot().then(snapshot => {
           windowsProbeError = null;
           return observeWindowsProcessSnapshot({ snapshot, rootPid: child.pid, tracked: windowsTracked });
@@ -219,8 +222,11 @@ export async function runManagedNode({ root, args, additionalBytes = 6 * 1024 **
           windowsProbeError = error.code ?? error.message ?? "observation_failed";
           return { status: "unknown", errorCode: windowsProbeError };
         }).finally(() => { windowsProbe = null; });
-      }, 5000);
+        return windowsProbe;
+      };
+      windowsMonitor = setInterval(sampleWindowsTree, 5000);
       windowsMonitor.unref?.();
+      void sampleWindowsTree();
     }
     for (const stream of ["stdout", "stderr"]) child[stream].on("data", bytes => {
       if (finalized) return;
