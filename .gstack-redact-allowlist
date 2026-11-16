@@ -20,4 +20,4 @@ http://user:secret@localhost:4234
 # parser rejects embedded URL credentials before any navigation is attempted.
 # packages/contracts/test/desktop-browser.test.ts:18
 https://user:secret@example.com
-https://user:secret@example.com\",
+https://user:secret@example.com",
