@@ -68,6 +68,15 @@ jobs:
           ref: ${{ inputs.source_sha || (github.event_name == 'pull_request' && github.event.pull_request.head.sha) || github.sha }}
           fetch-depth: 0
           persist-credentials: false
+      # The tag may contain arbitrary source, so never use its release policy
+      # until a policy copy from the protected default branch has accepted it.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: refs/heads/main
+          path: .trusted-main
+          fetch-depth: 0
+          persist-credentials: false
+          clean: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: 22.22.1
@@ -78,13 +87,27 @@ jobs:
           DESKTOP_SOURCE_SHA: ${{ inputs.source_sha || (github.event_name == 'pull_request' && github.event.pull_request.head.sha) || github.sha }}
           DESKTOP_RELEASE_TAG: ${{ inputs.release_tag || '' }}
           DESKTOP_CREATE_DRAFT: ${{ inputs.create_draft && inputs.operation == 'build' }}
+          DESKTOP_ALLOW_EXISTING_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
         run: |
           set -euo pipefail
           if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
             DESKTOP_RELEASE_TAG="v$(node -p 'require("./package.json").version')"
             export DESKTOP_RELEASE_TAG
           fi
-          node scripts/release/desktop-release.mjs candidate
+          node --input-type=module <<'NODE'
+          import { appendFile } from "node:fs/promises";
+          import { readCandidate } from "./.trusted-main/scripts/release/desktop-release.mjs";
+          const candidate = await readCandidate({
+            root: process.env.GITHUB_WORKSPACE,
+            sha: process.env.DESKTOP_SOURCE_SHA,
+            tag: process.env.DESKTOP_RELEASE_TAG,
+            requireMain: process.env.DESKTOP_CREATE_DRAFT === "true",
+            allowExistingTag: process.env.DESKTOP_ALLOW_EXISTING_TAG === "true",
+          });
+          if (process.env.GITHUB_OUTPUT) await appendFile(process.env.GITHUB_OUTPUT,
+            `source-sha=${candidate.sourceSha}\ntag=${candidate.tag}\nversion=${candidate.version}\n`);
+          console.log(JSON.stringify(candidate, null, 2));
+          NODE
 
   package:
     needs: candidate
@@ -328,6 +351,15 @@ jobs:
           ref: ${{ needs.candidate.outputs.source-sha }}
           fetch-depth: 0
           persist-credentials: false
+      # Keep the write-capable release implementation on the protected default
+      # branch; the candidate checkout is data, not executable release policy.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: refs/heads/main
+          path: .trusted-main
+          fetch-depth: 0
+          persist-credentials: false
+          clean: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: 22.22.1
@@ -345,7 +377,9 @@ jobs:
           DESKTOP_CREATE_DRAFT: "true"
           DESKTOP_INPUT_ROOT: ${{ runner.temp }}/desktop-inputs
           DESKTOP_OUTPUT_ROOT: ${{ runner.temp }}/desktop-release
+          DESKTOP_SOURCE_ROOT: ${{ github.workspace }}
+          DESKTOP_ALLOW_EXISTING_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
         run: |
           set -euo pipefail
-          node scripts/release/desktop-release.mjs assemble
-          node scripts/release/create-desktop-draft.mjs
+          node .trusted-main/scripts/release/desktop-release.mjs assemble
+          node .trusted-main/scripts/release/create-desktop-draft.mjs
