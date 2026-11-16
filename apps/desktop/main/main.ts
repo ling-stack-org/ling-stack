@@ -3,9 +3,11 @@ import {
   BrowserWindow,
   desktopCapturer,
   dialog,
+  ipcMain,
   nativeTheme,
   powerMonitor,
   screen,
+  session,
   shell,
   systemPreferences,
   webContents,
@@ -65,6 +67,7 @@ import {
 import type { DesktopStartupFailurePrompt } from "./startup-failure-recovery.js";
 import { loadOrCreateDesktopBridgeToken } from "./bridge-token.js";
 import { registerDesktopIpc } from "./ipc.js";
+import { registerCompanionWindowIpc } from "./companion-window.js";
 import { createDesktopUpdateNotification } from "./update-notification.js";
 import { registerDesktopThemePackageIpc } from "./theme-packages/theme-package-ipc.js";
 import { createHumanEvaluationDesktopComposition } from "./human-evaluation/composition.js";
@@ -162,6 +165,7 @@ let realCaptureSmokeDescriptorRegistry: InMemoryComputerUsePreviewDescriptorRegi
 let realCaptureSmokeProjectionClient: FakeComputerUseProjectionClient | undefined;
 let smokeProjectionSource: "daemon" | "fake" = "fake";
 let desktopBridgeToken: string | undefined;
+let unregisterCompanionWindowIpc: (() => void) | undefined;
 let unregisterIpc: (() => void) | undefined;
 let unregisterThemePackageIpc: (() => void) | undefined;
 let unregisterBackgroundIpc: (() => void) | undefined;
@@ -641,6 +645,13 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
       getMainWindow: () => mainWindow ?? loadingMainWindow,
     });
   }
+  unregisterCompanionWindowIpc ??= registerCompanionWindowIpc({
+    ipcMain, getMainWindow: () => mainWindow ?? loadingMainWindow,
+    webIndexPath: resources.webIndexPath, daemonBaseUrl,
+    getWorkArea: (owner) => screen.getDisplayMatching(owner.getBounds()).workArea,
+    createWindow: (options) => new BrowserWindow(options),
+    webRequest: session.defaultSession.webRequest,
+  });
   unregisterIpc ??= registerDesktopIpc({
     runtime: desktopRuntime,
     computerUse,
@@ -2064,6 +2075,8 @@ async function shutdown(): Promise<void> {
   humanEvaluation = undefined;
   await attemptCleanup(() => activeHumanEvaluation?.dispose());
 
+  unregisterCompanionWindowIpc?.();
+  unregisterCompanionWindowIpc = undefined;
   const activeUnregisterIpc = unregisterIpc;
   unregisterIpc = undefined;
   await attemptCleanup(() => activeUnregisterIpc?.());

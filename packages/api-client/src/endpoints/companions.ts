@@ -4,6 +4,7 @@ import type {
   CompanionInteractionResponse,
   CompanionListResponse,
   CompanionMessageRequest,
+  CompanionMessageSubmissionReceipt,
   CompanionMessageResponse,
   CompanionMessagesResponse,
   CompanionMutationResponse,
@@ -14,6 +15,8 @@ import type {
   UpdateCompanionRequest,
 } from "@ling-stack/contracts";
 import type { LingDaemonEndpointContext, PublicEndpointGroup } from "../transport.js";
+import { readErrorMessage } from "../transport.js";
+import { LingDaemonError } from "../errors.js";
 
 export const companionEndpoints = {
   async listCompanions(this: LingDaemonEndpointContext, cwd: string): Promise<CompanionListResponse> {
@@ -94,11 +97,21 @@ export const companionEndpoints = {
     return this._post(`/companions/${encodeURIComponent(companionId)}/messages`, { cwd }, input);
   },
 
+  async getCompanionMessageSubmission(
+    this: LingDaemonEndpointContext,
+    cwd: string,
+    companionId: string,
+    idempotencyKey: string,
+  ): Promise<CompanionMessageSubmissionReceipt> {
+    return this._get(`/companions/${encodeURIComponent(companionId)}/messages`, { cwd, idempotencyKey });
+  },
+
   async streamCompanionMessage(
     this: LingDaemonEndpointContext,
     cwd: string,
     companionId: string,
     input: CompanionMessageRequest,
+    signal?: AbortSignal,
   ): Promise<Response> {
     const response = await this._fetch(this._url(`/companions/${encodeURIComponent(companionId)}/messages/stream`, { cwd }), {
       method: "POST",
@@ -107,9 +120,10 @@ export const companionEndpoints = {
         "Content-Type": "application/json",
       },
       body: JSON.stringify(input),
+      signal,
     });
     if (!response.ok) {
-      throw new Error(`Companion stream failed with status ${response.status}`);
+      throw new LingDaemonError(await readErrorMessage(response), response.status, response.statusText);
     }
     return response;
   },

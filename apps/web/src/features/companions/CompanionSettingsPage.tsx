@@ -27,6 +27,10 @@ export function CompanionSettingsPage({
   const [description, setDescription] = useState("");
   const [teammateId, setTeammateId] = useState("");
   const [proactiveEnabled, setProactiveEnabled] = useState(true);
+  const [cooldownMinutes, setCooldownMinutes] = useState(15);
+  const [quietHoursEnabled, setQuietHoursEnabled] = useState(false);
+  const [quietHoursStart, setQuietHoursStart] = useState(22);
+  const [quietHoursEnd, setQuietHoursEnd] = useState(8);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<"create" | "save" | "disable" | "refresh" | undefined>();
   const [error, setError] = useState("");
@@ -49,7 +53,11 @@ export function CompanionSettingsPage({
     setDescription(selected.description);
     setTeammateId(selected.teammateId);
     setProactiveEnabled(selected.behaviorPolicy.proactiveEnabled);
-  }, [selected?.id]);
+    setCooldownMinutes(Math.max(1, Math.round(selected.behaviorPolicy.cooldownMs / 60_000)));
+    setQuietHoursEnabled(Boolean(selected.behaviorPolicy.quietHours));
+    setQuietHoursStart(selected.behaviorPolicy.quietHours?.[0] ?? 22);
+    setQuietHoursEnd(selected.behaviorPolicy.quietHours?.[1] ?? 8);
+  }, [selected]);
 
   async function refresh(): Promise<void> {
     if (!cwd.trim()) return;
@@ -79,14 +87,18 @@ export function CompanionSettingsPage({
     setSelectedId("");
     setDisplayName("");
     setDescription("");
-    setProactiveEnabled(true);
+    setProactiveEnabled(false);
+    setCooldownMinutes(15);
+    setQuietHoursEnabled(false);
+    setQuietHoursStart(22);
+    setQuietHoursEnd(8);
     setTeammateId(activeTeammates[0]?.id ?? "");
     setError("");
   }
 
   async function save(): Promise<void> {
     const name = displayName.trim();
-    if (!cwd.trim() || !name || !teammateId) return;
+    if (!cwd.trim() || !name || !teammateId || (quietHoursEnabled && quietHoursStart === quietHoursEnd)) return;
     setBusy(selected ? "save" : "create");
     setError("");
     try {
@@ -94,13 +106,21 @@ export function CompanionSettingsPage({
         ? await updateCompanion(cwd.trim(), selected.id, {
           displayName: name,
           description: description.trim(),
-          behaviorPolicy: { proactiveEnabled },
+          behaviorPolicy: {
+            proactiveEnabled,
+            cooldownMs: Math.max(1, cooldownMinutes) * 60_000,
+            quietHours: quietHoursEnabled ? [quietHoursStart, quietHoursEnd] : null,
+          },
         })
         : await createCompanion(cwd.trim(), {
           teammateId,
           displayName: name,
           description: description.trim(),
-          behaviorPolicy: { proactiveEnabled, cooldownMs: 300_000 },
+          behaviorPolicy: {
+            proactiveEnabled,
+            cooldownMs: Math.max(1, cooldownMinutes) * 60_000,
+            quietHours: quietHoursEnabled ? [quietHoursStart, quietHoursEnd] : null,
+          },
         });
       setCompanions((current) => selected
         ? current.map((item) => item.id === response.companion.id ? response.companion : item)
@@ -191,7 +211,19 @@ export function CompanionSettingsPage({
               onChange={(event) => setProactiveEnabled(event.target.checked)}
               label={<span>{proactiveEnabled ? <Play size={14} /> : <Pause size={14} />}{t("Allow proactive companion prompts")}</span>}
             />
-            <div className="companion-settings-editor-actions"><Button variant="primary" onClick={() => void save()} disabled={!displayName.trim() || !teammateId || busy !== undefined} loading={busy === "save" || busy === "create"}>{selected ? t("Save companion") : t("Create companion")}</Button>{selected ? <Button variant="ghost" onClick={startCreate} disabled={busy !== undefined}>{t("New companion")}</Button> : null}</div>
+            <div className="companion-settings-policy-grid">
+              <label className="companion-settings-field"><span>{t("Proactive cooldown")}</span><Select value={String(cooldownMinutes)} onChange={(event) => setCooldownMinutes(Number(event.target.value))}>
+                {[...new Set([5, 15, 30, 60, 240, cooldownMinutes])].sort((a, b) => a - b).map((minutes) => <option key={minutes} value={minutes}>{minutes} {t("minutes")}</option>)}
+              </Select></label>
+              <div className="companion-settings-field"><span>{t("Quiet hours")}</span><Checkbox checked={quietHoursEnabled} onChange={(event) => setQuietHoursEnabled(event.target.checked)} label={t("Pause proactive prompts during quiet hours")} /></div>
+              {quietHoursEnabled ? <>
+                <label className="companion-settings-field"><span>{t("Quiet hours start")}</span><Select value={String(quietHoursStart)} onChange={(event) => setQuietHoursStart(Number(event.target.value))}>{Array.from({ length: 24 }, (_, hour) => <option key={hour} value={hour}>{String(hour).padStart(2, "0")}:00</option>)}</Select></label>
+                <label className="companion-settings-field"><span>{t("Quiet hours end")}</span><Select value={String(quietHoursEnd)} onChange={(event) => setQuietHoursEnd(Number(event.target.value))}>{Array.from({ length: 24 }, (_, hour) => <option key={hour} value={hour}>{String(hour).padStart(2, "0")}:00</option>)}</Select></label>
+              </> : null}
+            </div>
+            <p className="companion-settings-muted">{t("Times use the local time of the computer running Ling.")}</p>
+            {quietHoursEnabled && quietHoursStart === quietHoursEnd ? <p role="alert" className="companion-settings-error">{t("Choose different quiet hours start and end.")}</p> : null}
+            <div className="companion-settings-editor-actions"><Button variant="primary" onClick={() => void save()} disabled={!displayName.trim() || !teammateId || busy !== undefined || (quietHoursEnabled && quietHoursStart === quietHoursEnd)} loading={busy === "save" || busy === "create"}>{selected ? t("Save companion") : t("Create companion")}</Button>{selected ? <Button variant="ghost" onClick={startCreate} disabled={busy !== undefined}>{t("New companion")}</Button> : null}</div>
           </section>
         </div>
       ) : null}

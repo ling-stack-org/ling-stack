@@ -220,47 +220,46 @@
   padding-bottom: 122px;
 }
 
-.companion-pet-sprite {
+.companion-character {
   display: block;
   position: relative;
   z-index: 1;
-  width: 310px;
-  height: 335px;
+  width: 280px;
+  aspect-ratio: 2 / 3;
   background-repeat: no-repeat;
   background-position: 0% 0%;
-  background-size: 800% 1100%;
-  filter: drop-shadow(0 14px 12px rgb(0 0 0 / 30%));
+  background-size: 300% 200%;
+  filter: drop-shadow(0 8px 12px rgb(0 0 0 / 18%));
+  transform-origin: 50% 96%;
+  animation: companion-character-breathe 4.8s ease-in-out infinite;
   pointer-events: none;
   user-select: none;
 }
 
-.companion-pet-sprite-idle {
-  animation: companion-pet-sprite-idle 1.1s steps(5) infinite;
+.companion-character-idle {
+  background-position: 2% 0%;
 }
 
-.companion-pet-sprite-running {
-  background-position-y: 70%;
-  animation: companion-pet-sprite-running 0.82s steps(5) infinite;
+.companion-character-thinking {
+  background-position: 50% 0%;
 }
 
-.companion-pet-sprite-waiting {
-  background-position-y: 60%;
-  animation: companion-pet-sprite-waiting 1.01s steps(5) infinite;
+.companion-character-waiting {
+  background-position: 50% 100%;
+  animation-duration: 6s;
 }
 
-.companion-pet-sprite-waving {
-  background-position-y: 30%;
-  animation: companion-pet-sprite-waving 0.7s steps(3) infinite;
+.companion-character-greeting {
+  background-position: 98% 0%;
 }
 
-.companion-pet-sprite-jumping {
-  background-position-y: 40%;
-  animation: companion-pet-sprite-jumping 0.84s steps(4) infinite;
+.companion-character-celebrating {
+  background-position: 2% 100%;
+  animation: companion-character-celebrate var(--ling-motion-attention) var(--ling-ease-standard) 2;
 }
 
-.companion-pet-sprite-failed {
-  background-position-y: 50%;
-  animation: companion-pet-sprite-failed 1.22s steps(7) infinite;
+.companion-character-attention {
+  background-position: 98% 100%;
 }
 
 .companion-pet-ground {
@@ -276,43 +275,18 @@
   transform: translateX(-50%);
 }
 
-@keyframes companion-pet-sprite-idle {
-  from { background-position: 0% 0%; }
-  to { background-position: 71.4286% 0%; }
+@keyframes companion-character-breathe {
+  0%, 100% { transform: translateY(0) scaleY(1); }
+  50% { transform: translateY(-2px) scaleY(1.005); }
 }
 
-@keyframes companion-pet-sprite-running {
-  from { background-position: 0% 70%; }
-  to { background-position: 71.4286% 70%; }
-}
-
-@keyframes companion-pet-sprite-waiting {
-  from { background-position: 0% 60%; }
-  to { background-position: 71.4286% 60%; }
-}
-
-@keyframes companion-pet-sprite-waving {
-  from { background-position: 0% 30%; }
-  to { background-position: 42.8571% 30%; }
-}
-
-@keyframes companion-pet-sprite-jumping {
-  from { background-position: 0% 40%; }
-  to { background-position: 57.1429% 40%; }
-}
-
-@keyframes companion-pet-sprite-failed {
-  from { background-position: 0% 50%; }
-  to { background-position: 100% 50%; }
+@keyframes companion-character-celebrate {
+  0%, 100% { transform: translateY(0); }
+  45% { transform: translateY(-10px); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .companion-pet-sprite-idle,
-  .companion-pet-sprite-running,
-  .companion-pet-sprite-waiting,
-  .companion-pet-sprite-waving,
-  .companion-pet-sprite-jumping,
-  .companion-pet-sprite-failed {
+  .companion-character {
     animation: none;
   }
 }
@@ -744,6 +718,31 @@
   font-size: 13px;
 }
 
+.companion-settings-policy-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.companion-mini-load-earlier,
+.companion-mini-reconnect {
+  position: absolute;
+  z-index: 6;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.companion-mini-load-earlier {
+  top: 145px;
+}
+
+.companion-mini-reconnect {
+  bottom: 166px;
+  width: max-content;
+  max-width: calc(100% - 40px);
+}
+
 .companion-settings-toggle span {
   gap: 6px;
 }
@@ -765,6 +764,64 @@
   }
 }
 
+.companion-mini-panel.is-history-open .companion-mini-messages {
+  top: 154px;
+  bottom: 154px;
+  max-height: none;
+  padding: 8px;
+  border-radius: 14px;
+  background: var(--surface-panel);
+}
+
+.companion-mini-panel.is-history-open .companion-mini-messages,
+.companion-mini-panel.has-connection-issue .companion-mini-error,
+.companion-mini-panel.has-connection-issue .companion-mini-header {
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+}
+
+html[data-companion-window="true"],
+html[data-companion-window="true"] body,
+html[data-companion-window="true"] #root {
+  background: transparent;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.companion-mini-panel.companion-desktop-panel {
+  inset: 0;
+  width: 100%;
+  height: 100dvh;
+}
+
+.companion-desktop-panel .companion-pet-stage,
+.companion-desktop-panel .companion-mini-heading {
+  -webkit-app-region: drag;
+}
+
+.companion-desktop-panel button,
+.companion-desktop-panel textarea,
+.companion-desktop-panel select,
+.companion-desktop-panel .companion-mini-messages {
+  -webkit-app-region: no-drag;
+}
+
+.companion-mini-panel.companion-desktop-panel .companion-character {
+  width: min(380px, calc((100dvh - 160px) * 2 / 3));
+}
+
+@media (hover: none) {
+  .companion-mini-panel .companion-mini-header,
+  .companion-mini-panel .companion-mini-composer,
+  .companion-mini-panel .companion-mini-footer,
+  .companion-mini-panel .companion-mini-error {
+    opacity: 1;
+    pointer-events: auto;
+    transform: none;
+  }
+}
+
 .channel-left-drawer .companion-config-button {
   color: color-mix(in srgb, var(--ling-accent, #8b7cf6) 72%, var(--text-muted));
 }
@@ -781,18 +838,18 @@
   bottom: 20px;
   left: auto;
   z-index: 100;
-  width: 300px;
-  height: 390px;
+  width: min(360px, calc(100vw - 24px));
+  height: min(560px, calc(100dvh - 24px));
   overflow: visible;
   pointer-events: auto;
 }
 
 .companion-mini-panel .companion-pet-stage {
-  height: 390px;
+  height: 100%;
 }
 
 .companion-mini-panel .companion-pet-scene {
-  height: 390px;
+  height: 100%;
   background: radial-gradient(
     ellipse at 50% 74%,
     color-mix(in srgb, var(--ling-accent, #8b7cf6) 12%, transparent),
@@ -804,9 +861,8 @@
   padding-bottom: 64px;
 }
 
-.companion-mini-panel .companion-pet-sprite {
-  width: 220px;
-  height: 238px;
+.companion-mini-panel .companion-character {
+  width: min(280px, calc((100dvh - 140px) * 2 / 3));
 }
 
 .companion-mini-panel .companion-pet-ground {
@@ -940,12 +996,12 @@
     right: 12px;
     bottom: 12px;
     left: auto;
-    width: 280px;
-    height: 360px;
+    width: min(320px, calc(100vw - 24px));
+    height: min(520px, calc(100dvh - 24px));
   }
 
   .companion-mini-panel .companion-pet-stage,
   .companion-mini-panel .companion-pet-scene {
-    height: 360px;
+    height: 100%;
   }
 }

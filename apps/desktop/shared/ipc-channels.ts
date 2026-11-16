@@ -24,6 +24,10 @@ export const DESKTOP_THEME_PACKAGE_IPC_CHANNELS = {
 } as const satisfies Readonly<Record<DesktopThemePackageIpcChannelKey, string>>;
 
 export const DESKTOP_IPC_CHANNELS = {
+  companionWindowOpen: "ling-desktop:companion:open",
+  companionWindowClose: "ling-desktop:companion:close",
+  companionWindowSettings: "ling-desktop:companion:settings",
+  companionSettingsRequested: "ling-desktop:companion:settings-requested",
   localServiceRequest: "ling-desktop:local-service:request",
   executionEnginesList: "ling-desktop:execution-engines:list",
   executionEnginesDiscover: "ling-desktop:execution-engines:discover",

@@ -2,14 +2,22 @@
   "compilerOptions": {
     "allowSyntheticDefaultImports": true,
     "jsx": "react-jsx",
-    "lib": ["DOM", "DOM.Iterable", "ES2022", "ESNext.Disposable"],
+    "lib": [
+      "DOM",
+      "DOM.Iterable",
+      "ES2022",
+      "ESNext.Disposable"
+    ],
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "noEmit": true,
     "skipLibCheck": true,
     "strict": true,
     "target": "ES2022",
-    "types": ["node", "vite/client"]
+    "types": [
+      "node",
+      "vite/client"
+    ]
   },
   "files": [
     "e2e/app.spec.ts",
@@ -41,6 +49,7 @@
     "e2e/ui2-desktop-theme-package-persistence.spec.ts",
     "e2e/ui2-settings-interface-preferences.spec.ts",
     "e2e/ui2-theme-package-repository-adapters.spec.ts",
-    "e2e/workspace.spec.ts"
+    "e2e/workspace.spec.ts",
+    "e2e/companions.spec.ts"
   ]
 }

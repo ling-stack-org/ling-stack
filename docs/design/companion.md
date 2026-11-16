@@ -55,11 +55,12 @@ The manifest describes capabilities, not renderer implementation. An action such
 `greet` or `think` is a semantic event. A UI may map it to an animation, sound, or text
 decoration, but the daemon does not execute arbitrary local commands from model output.
 
-The first Ling web renderer uses the verified Codex-compatible v2 pet atlas for 澜星/Yui
-(`apps/web/public/companions/lanxing-spritesheet.png`). The atlas stays transparent and
-is rendered as CSS sprite frames: companion phases map to `idle`, `running`, `waiting`,
-`waving`, `jumping`, or `failed`, while manifest actions map `greet` to `waving`, `think`
-to `running`, and `celebrate` to `jumping`. The role-first surface is an independent
+The Ling web renderer uses a transparent, non-pixel full-body pose atlas for 澜星/Yui
+(`apps/web/public/companions/yui-poses.png`). Its three columns and two rows contain
+idle, thinking, greeting, celebrating, waiting, and attention poses. Phases and manifest
+actions select a registered pose; `tired` and `sad` emotions select the waiting and
+attention poses while idle. Breathing and celebration motion use CSS transforms and
+respect reduced-motion preferences. The role-first surface is an independent
 fixed overlay and does not resize or restyle the Ling application surface. It has no
 enclosing card: the name, state, messages, actions, settings link, and composer are
 translucent controls that appear around the character on hover or focus. Text input and
@@ -180,8 +181,8 @@ hours only for that local trigger.
    durable idempotency, and single-flight execution through the existing direct-reply path.
 5. **Surface contract (delivered):** stable state, event, and message APIs with cursor
    pagination and idempotent writes for Web/Desktop clients.
-6. **Renderer acceptance (delivered for Web MVP):** render the transparent v2 pet atlas,
-   map semantic phases/actions to sprite rows, consume new action events and state/message
+6. **Renderer acceptance (delivered for Web MVP):** render the transparent character atlas,
+   map semantic phases/actions to poses, consume new action events and state/message
    changes through the companion event surface, present the character on a frameless
    role-first surface with translucent controls, and expose the surface from the sidebar
    and Settings. Desktop-native packaging and reconnect coverage remain follow-up work.
@@ -197,3 +198,32 @@ Completion means a Companion can be created for any active teammate, converse th
 same configured model path, preserve private history and memory boundaries, emit validated
 semantic events, pause/resume proactive behavior, and switch between any Ling provider
 without changing Companion data.
+
+## Completion work plan
+
+The following work is planned for the Web and desktop companion surfaces. A milestone is
+complete only after its implementation and relevant acceptance checks pass.
+
+- [x] **Character resources:** use a transparent, non-pixel full-body Yui pose atlas based
+  on the supplied character reference. Register idle, thinking, greeting, celebration,
+  waiting, and attention poses; size the character for readable adult proportions on
+  desktop and smaller viewports. Respect reduced-motion preferences.
+- [ ] **Conversation surface:** consume the existing streaming message endpoint, retain
+  one idempotency key per pending user message across retries and reloads, load older
+  history with the existing cursor, and reconcile messages/state after connectivity
+  returns. Isolate pending requests and drafts by workspace and companion.
+- [ ] **Proactive controls:** expose proactive enablement, cooldown, and optional quiet
+  hours in Settings. Make creation defaults explicit and preserve the remaining policy
+  fields when editing one setting.
+- [ ] **Independent desktop window:** provide a transparent companion window with its
+  own bounded preload/IPC authority, workspace/companion selection, native dragging and
+  close behavior. Keep it usable while the main Ling window is hidden. Include the
+  renderer, preload, and character assets in desktop builds.
+- [ ] **Acceptance and integration:** cover streaming, retries, pagination, reconnection,
+  settings, and native-window boundaries with focused behavior tests; run production and
+  test typechecks, browser visual checks, a real-provider multi-turn session, a sustained
+  runtime check, and local desktop packaging/runtime checks. Review the final diff, pass
+  the pull-request CI gates, and merge the reviewed change into main.
+
+Additional characters, speech, articulated Live2D animation, and work-event-driven
+proactive behavior remain separate enhancements.
