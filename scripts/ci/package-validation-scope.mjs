@@ -11,9 +11,9 @@ const typecheckCommand = /^tsc -p (tsconfig(?:\.[\w-]+)?\.json)( --noEmit)?$/u;
  * metadata, build commands, hooks and CI entrypoint presence must stay fixed.
  * Opaque shell commands retain the full-regression fallback.
  */
-export function packageValidationScope({ current, previous, directory, root, repositoryFiles, previousTestFiles }) {
-  if (!current || !previous || !Array.isArray(previousTestFiles)
-    || previousTestFiles.some(file => typeof file !== "string")) return undefined;
+export function packageValidationScope({ current, previous, directory, root, repositoryFiles, previousFiles, changedFiles }) {
+  if (!current || !previous || !Array.isArray(previousFiles) || !Array.isArray(changedFiles)
+    || [...previousFiles, ...changedFiles].some(file => typeof file !== "string")) return undefined;
   const { scripts, ...metadata } = current;
   const { scripts: oldScripts, ...oldMetadata } = previous;
   if (!scripts || !oldScripts || !isDeepStrictEqual(metadata, oldMetadata)
@@ -24,6 +24,7 @@ export function packageValidationScope({ current, previous, directory, root, rep
 
   const packageRoot = join(root, directory);
   const production = Object.values(productionScripts(scripts));
+  const previousPaths = new Set(previousFiles);
   const testConfigs = new Set();
   const typedTestIncludes = new Set();
   for (const candidate of [oldScripts, scripts]) {
@@ -33,7 +34,12 @@ export function packageValidationScope({ current, previous, directory, root, rep
     for (const command of checks) {
       const match = typecheckCommand.exec(command);
       if (!match) return undefined;
+      const configPath = `${directory}/${match[1]}`;
+      // Reading the checkout can verify a baseline config only when its tracked
+      // contents are unchanged across the complete PR diff.
+      if (previousPaths.has(configPath) && changedFiles.includes(configPath)) return undefined;
       if (!match[2]) {
+        if (candidate === oldScripts && !previousPaths.has(configPath)) return undefined;
         let config;
         try { config = JSON.parse(readFileSync(join(packageRoot, match[1]), "utf8")); }
         catch { return undefined; }
@@ -76,7 +82,7 @@ export function packageValidationScope({ current, previous, directory, root, rep
       ![...typedTestIncludes].some(pattern => matchesGlob(`${directoryName}/${file}`, pattern)))) return undefined;
   }
   if (testCount === 0) return undefined;
-  const baselineTests = previousTestFiles.filter(file => oldPatterns.some(pattern => matchesGlob(file, `${directory}/${pattern}`)));
+  const baselineTests = previousFiles.filter(file => oldPatterns.some(pattern => matchesGlob(file, `${directory}/${pattern}`)));
   if (baselineTests.length === 0 || baselineTests.some(file =>
     !testIdentities.has(file.replace(/\.(?:mjs|ts)$/u, "")))) return undefined;
   return { testConfigs: [...testConfigs] };

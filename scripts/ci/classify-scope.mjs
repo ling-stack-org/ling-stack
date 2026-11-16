@@ -117,7 +117,8 @@ export function classifyChangedFiles(input) {
     }
     if (current.scriptsFingerprint !== previous.scriptsFingerprint) {
       const validation = packageValidationScope({ current: current.manifest, previous: previous.manifest,
-        directory, root: repositoryRoot, repositoryFiles: listRepositoryFiles(repositoryRoot), previousTestFiles: previous.testFiles });
+        directory, root: repositoryRoot, repositoryFiles: listRepositoryFiles(repositoryRoot),
+        previousFiles: previous.files, changedFiles: files });
       if (!validation || !isSupportedTestPackage(directory) || !isSupportedTypecheckPackage(directory)) {
         return buildScope("full", files, packages, "unverified or changed workspace package identity or validation scripts");
       }
@@ -224,7 +225,7 @@ export function classifyChangedFiles(input) {
   };
 }
 
-/** @typedef {{name: string, directory: string, dependencies: string[], hasTestScript: boolean, hasTypecheckScript: boolean, scriptsFingerprint?: string, manifest?: object, testFiles?: string[]}} PackageEntry */
+/** @typedef {{name: string, directory: string, dependencies: string[], hasTestScript: boolean, hasTypecheckScript: boolean, scriptsFingerprint?: string, manifest?: object, files?: string[]}} PackageEntry */
 /** @typedef {{mode: "docs"|"affected"|"full", files: string[], packages: string[], testPackages: string[], typecheckPackages: string[], dependencyPolicy: boolean, assurance: boolean, daemon: boolean, daemonPlatforms: string[], macosNative: boolean, macosHelper: boolean, nativeRelease: boolean, web: boolean, reason: string}} CiScope */
 
 /** @param {string} value */
@@ -408,7 +409,7 @@ function discoverPackages(root, ref) {
       const directory = dirname(file);
       return {
         ...packageEntry(directory, JSON.parse(execFileSync("git", ["show", `${ref}:${file}`], { cwd: root, encoding: "utf8" }))),
-        testFiles: files.filter(candidate => candidate.startsWith(`${directory}/test/`) || candidate.startsWith(`${directory}/tests/`)),
+        files: files.filter(candidate => candidate.startsWith(`${directory}/`)),
       };
     });
   }

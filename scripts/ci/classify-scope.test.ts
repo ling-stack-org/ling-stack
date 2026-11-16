@@ -371,7 +371,7 @@ test("the real package graph keeps Web's CLI and catalog consumers without core 
   assert.ok(!scope.testPackages.includes("@ling-stack/core"));
 });
 
-function validationMigration(t: TestContext, additionalTests: string[] = []) {
+function validationMigration(t: TestContext, additionalTests: string[] = [], baselineConfig?: object) {
   const repo = repositoryFixture(t);
   const manifest = {
     name: "@ling-stack/core", type: "module",
@@ -386,6 +386,11 @@ function validationMigration(t: TestContext, additionalTests: string[] = []) {
     } as Record<string, string>,
   };
   const saveManifest = () => repo.write("packages/core/package.json", JSON.stringify(manifest));
+  if (baselineConfig) {
+    manifest.scripts["typecheck:ci"] = "tsc -p tsconfig.test.json";
+    manifest.scripts.typecheck = "corepack pnpm build && corepack pnpm typecheck:ci";
+    repo.write("packages/core/tsconfig.test.json", JSON.stringify(baselineConfig));
+  }
   saveManifest();
   repo.write("packages/core/test/probe.test.mjs", "import test from 'node:test'; test('probe', () => {});\n");
   for (const file of additionalTests) repo.write(`packages/core/test/${file}`, "import test from 'node:test'; test('retained', () => {});\n");
@@ -430,6 +435,36 @@ test("validation migrations cannot discard baseline test entrypoints", t => {
     assert.equal(scope.daemon, true);
     assert.equal(scope.web, true);
   }
+});
+
+test("validation migrations cannot reinterpret an existing TypeScript configuration", t => {
+  for (const baselineConfig of [
+    { compilerOptions: { noEmit: true }, include: ["src/**/*.ts", "test/**/*.ts"] },
+    { compilerOptions: { noEmit: false }, include: ["test/**/*.ts"] },
+    { compilerOptions: { noEmit: true }, include: ["test/**/*"] },
+  ]) {
+    const repo = validationMigration(t, [], baselineConfig);
+    repo.commit();
+    const scope = repo.classify(repo.base);
+    assert.equal(scope.mode, "full", JSON.stringify(baselineConfig));
+    assert.equal(scope.daemon, true);
+    assert.equal(scope.web, true);
+  }
+});
+
+test("validation migrations can reuse an unchanged isolated TypeScript configuration", t => {
+  const baselineConfig = {
+    extends: "./tsconfig.json", compilerOptions: { noEmit: true }, include: ["test/**/*"],
+  };
+  const repo = validationMigration(t, [], baselineConfig);
+  repo.write("packages/core/tsconfig.test.json", JSON.stringify(baselineConfig));
+  repo.commit();
+  const scope = repo.classify(repo.base);
+  assert.equal(scope.mode, "affected");
+  assert.deepEqual(scope.testPackages, ["@ling-stack/core"]);
+  assert.deepEqual(scope.typecheckPackages, ["@ling-stack/core"]);
+  assert.equal(scope.daemon, false);
+  assert.equal(scope.web, false);
 });
 
 test("a validation migration mixed with source or production config still selects transitive consumers", t => {
