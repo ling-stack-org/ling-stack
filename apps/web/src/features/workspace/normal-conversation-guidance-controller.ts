@@ -61,7 +61,9 @@ export async function submitNormalConversationGuidance(input: {
       notReadyMessage: input.notReadyMessage,
     });
     accepted = true;
-    input.onInputAccepted?.(intervention.messagePayload?.fileRefs ?? (queryOnly ? [] : input.fileRefs));
+    const acceptedFileRefs = intervention.messagePayload?.fileRefs ?? (queryOnly ? [] : input.fileRefs);
+    // The server has accepted the intervention; the guard only protects presentation state after navigation.
+    input.onInputAccepted?.(acceptedFileRefs);
     if (!commitGuard(threadId)) {
       input.attachmentController.abandonSend(submittedAttachments);
       return;
