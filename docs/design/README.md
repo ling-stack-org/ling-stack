@@ -58,6 +58,7 @@ Maintenance-only transition notes are kept in [Development Handoffs](../maintena
 - [频道下多会话](channel-sessions-detailed-design.md)
   （含侧栏与空白会话线框、全部会话目录、状态反馈和迁移边界；[实现计划](channel-sessions-implementation-plan.md)）
 - [Conversation Composer Unification](conversation-composer-unification.md)
+- [Conversation Change Summary](conversation-change-summary.md)
 - [Conversation Model Binding And Creation Validation](conversation-model-binding-and-creation-validation.md)
 - [Conversation Full Access Confirmation](conversation-session-full-access-confirmation.md)
 - [Conversation Right Dock Workspace Tools](conversation-right-dock-workspace-tools.md)
