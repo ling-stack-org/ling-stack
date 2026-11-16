@@ -179,16 +179,17 @@ export function assertWorkflowSafetyRunner(store: RunStore, request: RunRequest,
 
 /** Drop optional plugin surfaces; required core/skill tools were checked, never silently narrowed. */
 export function restrictWorkflowSafetyTools<T extends PiRunnerRunOptions>(options: T, plan: WorkflowStepSafetyPlanV1 | undefined): T {
-  if (plan?.profile === "pi_host_isolated_files_v1") return { ...options, readonlyToolsProfile: undefined,
+  if (plan?.profile === "pi_host_isolated_files_v1") return { ...options, readonlyToolsProfile: undefined, hooks: undefined,
     isolatedToolsProfile: "host_isolated_files_v1", mcpTools: [], hostCapabilityTools: [], mediaGenerationTools: [],
     onMcpToolCall: undefined, onHostCapabilityCall: undefined, onMediaGenerationToolCall: undefined,
     onToolHydrationRequest: undefined, onDelegationToolCall: undefined, onUserInputRequest: undefined, onPermissionRequired: undefined,
     runtimeToolFeatures: { requestPermissions: false, unifiedExec: false, shellSnapshot: false },
     initialToolSurface: { mediaGeneration: false, toolHydration: false, nativeFileCreate: false, userInput: false, delegation: false } };
   if (plan?.profile !== "pi_host_readonly_v1") return options;
-  return { ...options, readonlyToolsProfile: "host_readonly_v1", mcpTools: [], hostCapabilityTools: [], mediaGenerationTools: [],
+  return { ...options, readonlyToolsProfile: "host_readonly_v1", hooks: undefined, mcpTools: [], hostCapabilityTools: [], mediaGenerationTools: [],
     runtimeToolFeatures: { ...options.runtimeToolFeatures, requestPermissions: false },
-    initialToolSurface: { ...options.initialToolSurface, mediaGeneration: false, toolHydration: false, delegation: false } };
+    initialToolSurface: { ...options.initialToolSurface, mediaGeneration: false, toolHydration: false, delegation: false,
+      codeIntelligence: false, codeMode: false } };
 }
 
 export function workflowSafetyEffectRejection(input: {

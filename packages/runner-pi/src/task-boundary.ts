@@ -121,11 +121,20 @@ export function createPiTaskBoundary(options: PiRunnerRunOptions, readTaskContex
         return latchFailure(error);
       }
     } : guard(options.onToolBefore) } : {}),
-    ...(options.onApprovalRequired ? { onApprovalRequired: guard(options.onApprovalRequired) } : {}),
+    ...(options.onApprovalRequired ? { onApprovalRequired: request => {
+      assertOpen();
+      return options.onApprovalRequired!({ ...request, signal: request.signal ? AbortSignal.any([signal, request.signal]) : signal });
+    } } : {}),
     ...(options.onPermissionRequired ? { onPermissionRequired: guard(options.onPermissionRequired) } : {}),
     ...(options.onToolHydrationRequest ? { onToolHydrationRequest: guard(options.onToolHydrationRequest) } : {}),
     ...(options.onMcpToolCall ? { onMcpToolCall: guard(options.onMcpToolCall) } : {}),
     ...(options.onHostCapabilityCall ? { onHostCapabilityCall: guard(options.onHostCapabilityCall) } : {}),
+    ...(options.onCodeIntelligenceCall ? { onCodeIntelligenceCall: async request => {
+      assertOpen();
+      const result = await options.onCodeIntelligenceCall!({ ...request,
+        signal: request.signal ? AbortSignal.any([signal, request.signal]) : signal });
+      assertOpen(); return result;
+    } } : {}),
     ...(options.onReadonlyToolCall ? { onReadonlyToolCall: async request => {
       try {
         assertOpen();

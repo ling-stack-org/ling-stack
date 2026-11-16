@@ -1,0 +1,142 @@
+# Agent Execution Capabilities Implementation Plan
+
+Status: C1–C3 locally implemented and validated; A1–R3 planned; release gates open
+Owner: Runner and daemon maintainers
+Last verified: 2026-11-16
+Document type: implementation plan
+Contract: [Agent Execution Capabilities](agent-execution-capabilities.md)
+
+## Objective And Ordering
+
+Deliver code intelligence, Code Mode and general lifecycle Hooks through Ling's actual
+Pi/daemon execution path. Plan external-event automation and selective rerun in the
+same dependency sequence, without representing their plans as working execution.
+
+| Stage | Deliverable | Dependency | Acceptance |
+|---|---|---|---|
+| C1 | TS/JS definition, references, hover, symbols, diagnostics and bounded repo map | Host workspace snapshot | Cross-file query, next-query edit freshness, partial-index disclosure and path/fence rejection |
+| C2 | Bounded QuickJS Code Mode and nested tool audit | Existing SDK nested executor | Parallel reads, serialized effects, filtering, approvals, cancellation and limits via real tool pipeline |
+| C3 | Trusted configuration and lifecycle Hooks | C2 sandbox, Host approvals | Policy denial, post-result observation, approved command, project trust/digest, timeout and no recursion |
+| A1 | Signed Webhook and durable event inbox | Existing automation store/queue | Signature/replay/dedupe, matching, burst/restart and one execution per event |
+| A2 | External sources and result delivery outbox | A1 | One GitHub adapter and one generic business-event adapter; scoped delivery, retries and reconciliation |
+| R1 | F5 rerun submission and dependency invalidation | Existing F5 admission | Fresh successor identity, unaffected result reuse, duplicate/stale-plan rejection |
+| R2 | Restart/cancellation/effect reconciliation | R1 | No repeated known effect or replay of unknown effect; reliable dependent scheduling |
+| R3 | Goal acceptance and bounded long-term supervision | R2, existing Goal | Evidence-based acceptance, budgets/no-progress, pause/blocker and visible continuation |
+
+C1/C2/C3 are the current implementation goal. A1–R3 are planned follow-up work; this
+change does not expose Webhook endpoints or submit real reruns.
+
+The local implementation is on `codex/agent-capabilities`, based on `main@878dfa13`.
+This record does not establish that the changes are merged or deployed.
+
+## Implementation Batches
+
+### C1: Code Intelligence
+
+- Add bounded Host snapshot I/O and the TS/JS language adapter as focused daemon modules.
+- Register one versioned `code_intelligence` Runner schema selected before preparation.
+- Bind live execution to the frozen cwd, current Run admission and cancellation signal.
+- Keep compiler I/O inside the immutable source snapshot; exclude dependency loading,
+  plugins, process launch and emit.
+- Add temporary-workspace cross-file behavior and forbidden-path tests.
+
+### C2: Code Mode
+
+- Reuse the installed Pi Code Mode sandbox as an explicit dependency; disable direct
+  model APIs and avoid tool implementations or unreviewed SDK extension loading.
+- Add Ling-owned limits, selected-tool filtering, read/effect scheduling and result bounds.
+- Use `ctx.executeTool`, with child identities and existing validation/approval handlers.
+- Preserve parent tool ids in Runner/contract Run events and frozen schema selection.
+- Exercise blocked writes, actual Host-handled commands, output filtering, infinite
+  loops, unawaited calls, cancellation and resource release.
+
+### C3: Hooks
+
+- Strictly parse user configuration and digest-pinned project proposals in the daemon.
+- Freeze selected non-secret definitions; recheck trust/configuration on restoration.
+- Add a Runner dispatcher for `run_start`, `before_tool`, `after_tool`, `run_end`.
+- Execute policy scripts without I/O and commands only through Host bash approval.
+- Bound matching/count/time/output, suppress recursive command events, preserve audit
+  receipts and propagate blocking failures through the task boundary.
+- Provide configuration examples in the contract, with tested trust/denial semantics.
+
+### A1/A2: Event Automation (Planned)
+
+Owner modules: `core` automation storage/contracts, daemon automation feature, API/CLI
+and existing automation settings. Add inbox/source/outbox migrations with rollback/reopen
+coverage. Keep secrets in the existing secret resolver.
+
+First deliver source CRUD, key reference/signature rotation, authenticated ingress,
+envelope validation, deterministic predicates and transactional dispatch. Then add
+GitHub issue events, a generic alert/business-event mapping and explicit destination
+delivery policies. Use at-least-once ingress/delivery with idempotent claims and receipts;
+do not promise exactly-once remote effects.
+
+Acceptance scenarios: valid issue opens one task; redelivered event opens none; changed
+payload under the same id is rejected; wrong signature and stale timestamps start no
+work; daemon restart recovers an accepted event; burst rate limiting preserves queue
+state; failed Run and failed delivery have distinct statuses; unknown delivery is
+reconciled before retry. No external messages are sent during local fixture tests.
+
+### R1/R2/R3: Rerun And Completion (Planned)
+
+Owner modules: existing F5 Host admission, workflow graph/storage/scheduler, Run
+orchestration and Goal interventions. Extend those owners rather than introduce a
+parallel task engine. The [F5 plan](ling-framework-complementary-implementation-plan.md)
+remains authoritative for its existing phases.
+
+R1 adds a transactional submission API consuming a current admission plan and an
+idempotency key. It records successor revision and the exact invalidated closure,
+creates fresh execution objects and queues through normal approval. R2 adds durable
+submission/effect reconciliation and recovery. R3 adds acceptance criteria/evidence
+tracking and configurable bounded supervision, retaining the current guard until the
+replacement is tested.
+
+Acceptance scenarios: `A -> B -> C` with independent successful `D`; rerun failed B,
+keep A/D artifacts and only reconsider C; two submissions create one successor; edited
+A invalidates B/C pins; stale plan creates nothing; cancellation/restart never repeats
+an uncertain external action; user pause stops scheduling; exhausted budget and
+repeated no-evidence continuation stop visibly; acceptance passes only with declared
+evidence. Run completion alone cannot complete a Goal.
+
+## Verification And Status
+
+Use the owning package build, focused TS behavior tests and production/test typecheck.
+Run related prepared-input, tool-before, approval, workflow profile and event-contract
+regressions. Run docs links/license/public checks and `git diff --check`. Broaden only
+for changed dependencies, failures or unresolved risks. Native packaging and real
+Provider acceptance are separate release gates.
+
+Local checks cover Runner and Contracts suites, daemon capability/approval/prepared
+input/workflow regressions, the owning production and test typechecks, and the daemon
+dependency build graph. The integration fixture starts a real daemon and Pi SDK with
+a local scripted SSE Provider: Code Mode resolves a cross-file symbol, then a command
+Hook waits for manual approval through the daemon API and executes through the
+journaled Host shell. SQLite readback verifies lineage, Hook receipts and frozen
+capabilities. No external Provider or messaging service is exercised.
+
+Implementation owners:
+
+- `packages/daemon/src/runtime/code-intelligence/` captures and queries source snapshots;
+  `features/runs/code-intelligence.ts` owns Worker lifetime and live admission checks.
+- `packages/runner-pi/src/extensions/code-mode.ts` owns tool selection/scheduling;
+  `script-runtime.ts` owns the shared bounded QuickJS worker lifetime.
+- `packages/daemon/src/features/runs/hooks-configuration.ts` owns configuration trust;
+  Runner `hook-runtime.ts` and `extensions/hooks.ts` own lifecycle dispatch and receipts.
+- Prepared Runner input freezes schema/configuration; existing Host approvals own every
+  command and nested effect. Child cancellation uses the captured approval fence.
+
+The code-intelligence compiler profile is deliberately independent of project tsconfig
+and package types. It is a bounded TS/JS adapter, not a persistent repository-wide or
+multi-language index. Workflow/delegated/native capability support, packaged Worker/WASM
+resource lookup and live Provider quality remain separate follow-up acceptance.
+
+| Work | Current status | Remaining |
+|---|---|---|
+| Plan/design | Contract and staged acceptance synchronized with local code | Maintain alongside subsequent delivery |
+| C1 | Local Pi/daemon implementation and validation complete | Review/CI and packaged/live Provider acceptance |
+| C2 | Local nested SDK execution, audit, approval and cancellation validation complete | Review/CI and packaged/live Provider acceptance |
+| C3 | Local trust, lifecycle policy, approved command and failure-boundary validation complete | Review/CI and packaged/live Provider acceptance |
+| A1/A2 | Design/planning only | Implement and validate in later goal |
+| R1/R2/R3 | Design/planning only | Implement and validate in later goal |
+| Release | Unverified | Review/CI, merge, packaged acceptance and deployment |

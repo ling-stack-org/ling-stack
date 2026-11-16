@@ -1,4 +1,6 @@
 export * from "./types.js";
+export * from "./code-intelligence-types.js";
+export * from "./hook-types.js";
 export { DELEGATION_TOOL_NAMES } from "./extensions/delegation.js";
 export { readPreparedPiInput, assertPreparedPiTaskInput, type PiRunnerPreparedInput } from "./prepared-input.js";
 export { readApprovedToolContinuation } from "./approved-tool-continuation.js";
