@@ -54,7 +54,9 @@ export function registerCompanionWindowIpc(input: {
   };
   const ownerClosed = (): void => { close(); owner = undefined; };
   const daemonOrigin = new URL(input.daemonBaseUrl).origin;
-  const networkFilter = { urls: [`${daemonOrigin}/companions*`, `${daemonOrigin}/ai-teammates*`] };
+  const networkFilter = {
+    urls: [`${daemonOrigin}/companions*`, `${daemonOrigin}/teammates*`, `${daemonOrigin}/ai-teammates*`],
+  };
   // file:// has an opaque Origin. Only the two owned top-level documents may
   // project their Companion fetches as local requests; other frames retain it.
   input.webRequest.onBeforeSendHeaders(networkFilter, (details, callback) => {
@@ -62,7 +64,7 @@ export function registerCompanionWindowIpc(input: {
     const url = new URL(details.url);
     const routeAllowed = url.origin === daemonOrigin && (
       url.pathname === "/companions" || url.pathname.startsWith("/companions/")
-      || (url.pathname === "/ai-teammates" && details.method === "GET")
+      || ((url.pathname === "/teammates" || url.pathname === "/ai-teammates") && details.method === "GET")
     );
     const trusted = routeAllowed && allowed.some(([window, document]) => window && !window.isDestroyed()
       && details.webContentsId === window.webContents.id

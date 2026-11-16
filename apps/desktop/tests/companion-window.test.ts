@@ -98,6 +98,8 @@ test("native Companion requests project opaque Origin only for owned documents a
     assert.equal(f.headers(f.main, { frame: null })?.Origin, "null");
     assert.equal(f.headers(f.main, { frame: { ...f.main.webContents.mainFrame } as Electron.WebFrameMain })?.Origin, "null");
     assert.equal(f.headers(f.main, { url: "https://foreign.invalid/companions" })?.Origin, "null");
+    assert.equal(f.headers(f.main, { url: "http://127.0.0.1:17891/teammates?cwd=%2Fw" })?.Origin, "http://127.0.0.1:17891");
+    assert.equal(f.headers(f.main, { url: "http://127.0.0.1:17891/teammates/teammate_1?cwd=%2Fw" })?.Origin, "null");
     assert.equal(f.headers(f.main, { url: "http://127.0.0.1:17891/providers" })?.Origin, "null");
     f.main.url += "?untrusted=1"; f.main.webContents.mainFrame.url = f.main.url;
     assert.equal(f.headers(f.main)?.Origin, "null");
