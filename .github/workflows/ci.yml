@@ -825,15 +825,17 @@ jobs:
           retention-days: 1
           path: ${{ runner.temp }}/macos-bootstrap-diagnostic.json
 
+      - name: Compile localization inputs for native release reviews
+        if: needs.scope.outputs.native-release == 'true'
+        run: corepack pnpm --filter @ling-stack/localization catalog:compile
+
       - name: Check changed native release reviews and publication boundaries
         if: needs.scope.outputs.native-release == 'true'
-        run: |
-          set -euo pipefail
-          corepack pnpm --filter @ling-stack/localization catalog:compile
-          node --test --test-concurrency=1 \
-            apps/desktop/tests/packaged-codesign-review-publication.test.mjs \
-            apps/desktop/tests/packaged-office-native-publication.test.mjs \
-            apps/desktop/tests/packaged-office-daemon-source-inputs.test.mjs
+        run: >-
+          node --test --test-concurrency=1
+          apps/desktop/tests/packaged-codesign-review-publication.test.mjs
+          apps/desktop/tests/packaged-office-native-publication.test.mjs
+          apps/desktop/tests/packaged-office-daemon-source-inputs.test.mjs
 
   quality:
     name: Typecheck, unit tests, and Web build
