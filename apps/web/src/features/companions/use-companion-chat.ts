@@ -76,6 +76,10 @@ export function useCompanionChat(input: {
     if (!submission) return true;
     const receipt = await getCompanionMessageSubmission(session.cwd, session.companionId, submission.key);
     if (!isCurrent(session)) return false;
+    // A background lookup may finish after the user has already submitted a
+    // different message in this session. Its receipt must not replace the
+    // newer submission's recovery key or clear its pending state.
+    if (session.pending?.key !== submission.key) return false;
     if (receipt.message) {
       setMessages((current) => mergeCompanionMessages(current, [receipt.message!]));
       session.pending = { key: submission.key, body: receipt.message.body };
@@ -227,8 +231,9 @@ export function useCompanionChat(input: {
     setConnection("reconnecting");
     try {
       if (session.pending) {
+        const key = session.pending.key;
         const finished = await reconcile(session);
-        if (!isCurrent(session) || finished) return;
+        if (!isCurrent(session) || finished || session.pending?.key !== key) return;
         if (session.pending?.body) await send(session.pending.body);
         else await session.reconnect?.();
       } else await session.reconnect?.();

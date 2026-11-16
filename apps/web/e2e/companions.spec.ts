@@ -7,7 +7,7 @@ import { createBaseState, createMockTeammate } from "./support/mock-state";
 
 test.setTimeout(60_000);
 
-async function fixture(page: Page, mode: "normal" | "interrupted" | "pending" = "normal", historyCount = 0,
+async function fixture(page: Page, mode: "normal" | "interrupted" | "pending" | "same-session-race" = "normal", historyCount = 0,
   options: { empty?: boolean; cooldownMs?: number; secondCompanion?: boolean; locale?: string } = {}) {
   page.on("pageerror", error => console.error("Companion page error:", error.message));
   const base = createBaseState({ approvalStatus: "pending" });
@@ -35,6 +35,8 @@ async function fixture(page: Page, mode: "normal" | "interrupted" | "pending" = 
   let completed = false;
   let receiptGate: Promise<void> | undefined;
   let releaseReceipt: (() => void) | undefined;
+  const heldReceiptKeys = new Set<string>();
+  const heldReceiptWaiters = new Map<string, Array<() => void>>();
   const gate = new Promise<void>(resolve => { release = resolve; });
   const json = (response: ServerResponse, body: unknown, code = 200) => {
     response.writeHead(code, { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }); response.end(JSON.stringify(body));
@@ -67,7 +69,8 @@ async function fixture(page: Page, mode: "normal" | "interrupted" | "pending" = 
       const frame = (event: string, data: unknown) => response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
       frame("accepted", { message: user, state: { ...state, phase: "thinking" } });
       frame("ready", { aiReply: reply }); frame("delta", { messageId: reply.id, body: "Streamed", delta: "Streamed" });
-      if (mode === "interrupted" && keys.length === 1) { response.end(); return; }
+      if ((mode === "interrupted" && keys.length === 1)
+        || (mode === "same-session-race" && keys.length <= 2)) { response.end(); return; }
       if (mode === "pending") {
         submission.aiReply = { ...reply, body: "Streamed" }; response.end(); return;
       }
@@ -78,6 +81,13 @@ async function fixture(page: Page, mode: "normal" | "interrupted" | "pending" = 
     if (url.pathname.endsWith("/messages")) {
       const key = url.searchParams.get("idempotencyKey");
       if (key) {
+        if (heldReceiptKeys.has(key)) {
+          await new Promise<void>(resolve => {
+            const waiters = heldReceiptWaiters.get(key) ?? [];
+            waiters.push(resolve);
+            heldReceiptWaiters.set(key, waiters);
+          });
+        }
         await receiptGate;
         const submission = submissions.get(key); json(response, { status: submission ? "accepted" : "unknown", ...submission, state }); return;
       }
@@ -105,12 +115,22 @@ async function fixture(page: Page, mode: "normal" | "interrupted" | "pending" = 
     keys, cursors, get companion() { return companion; },
     holdReceipts: () => { receiptGate = new Promise<void>(resolve => { releaseReceipt = resolve; }); },
     releaseReceipts: () => { releaseReceipt?.(); receiptGate = undefined; },
+    holdReceiptKey: (key: string) => { heldReceiptKeys.add(key); },
+    heldReceiptCount: (key: string) => heldReceiptWaiters.get(key)?.length ?? 0,
+    releaseLatestReceipt: (key: string) => { heldReceiptWaiters.get(key)?.pop()?.(); },
+    releaseOldestReceipt: (key: string) => { heldReceiptWaiters.get(key)?.shift()?.(); },
     addSystemMessage: (body: string) => messages.push(makeMessage("system_prompt", body, "system")),
     finish: () => { if (completed) return; completed = true; release?.(); },
-    finishPending: () => { for (const submission of submissions.values()) if (submission.aiReply) {
-      submission.aiReply = { ...submission.aiReply, body: "Recovered after disconnect.", status: "ready" }; messages.push(submission.aiReply);
+    finishPending: () => { for (const submission of submissions.values()) {
+      const reply = submission.aiReply ?? makeMessage(`reply_${submission.message.id}`, "", "ai-teammate", "pending", 101);
+      submission.aiReply = { ...reply, body: "Recovered after disconnect.", status: "ready" };
+      if (!messages.some(message => message.id === submission.aiReply!.id)) messages.push(submission.aiReply);
     } },
-    close: async () => { releaseReceipt?.(); release?.(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); },
+    close: async () => {
+      releaseReceipt?.(); release?.();
+      for (const waiters of heldReceiptWaiters.values()) for (const resolve of waiters) resolve();
+      server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
+    },
   };
 }
 
@@ -188,6 +208,50 @@ test("a delayed receipt cannot retry a message in a different companion session"
     await panel.getByRole("textbox").fill("Draft for Mio");
     await expect(panel.getByRole("textbox")).toHaveValue("Draft for Mio");
     expect(f.keys).toHaveLength(1);
+  } finally { await f.close(); }
+});
+
+test("a delayed receipt cannot replace a newer pending message in the same session", async ({ page }) => {
+  const f = await fixture(page, "same-session-race");
+  try {
+    const panel = await openPanel(page);
+    await panel.getByRole("textbox").fill("Message A");
+    await panel.getByRole("button", { name: "Send", exact: true }).click();
+    await expect(panel.getByRole("button", { name: "Recover or retry message" })).toBeVisible();
+
+    const keyA = f.keys[0]!;
+    f.holdReceiptKey(keyA);
+    const automaticLookup = page.waitForRequest(request => request.method() === "GET" && request.url().includes(`idempotencyKey=${keyA}`));
+    await page.evaluate(() => window.dispatchEvent(new Event("online")));
+    await automaticLookup;
+    await expect.poll(() => f.heldReceiptCount(keyA)).toBe(1);
+
+    f.finishPending();
+    const manualLookup = page.waitForRequest(request => request.method() === "GET" && request.url().includes(`idempotencyKey=${keyA}`));
+    await panel.getByRole("button", { name: "Recover or retry message" }).click();
+    await manualLookup;
+    await expect.poll(() => f.heldReceiptCount(keyA)).toBe(2);
+    f.releaseLatestReceipt(keyA);
+    await expect.poll(() => f.heldReceiptCount(keyA)).toBe(1);
+
+    await expect(panel.getByRole("textbox")).toBeEnabled();
+    await panel.getByRole("textbox").fill("Message B");
+    await panel.getByRole("button", { name: "Send", exact: true }).click();
+    await expect.poll(() => f.keys).toHaveLength(2);
+    await expect(panel.getByRole("button", { name: "Recover or retry message" })).toBeVisible();
+
+    const delayedReceipt = page.waitForResponse(response => response.request().method() === "GET"
+      && response.request().url().includes(`idempotencyKey=${keyA}`));
+    f.releaseOldestReceipt(keyA);
+    await delayedReceipt;
+
+    await expect(panel.getByRole("button", { name: "Recover or retry message" })).toBeVisible();
+    await panel.getByRole("button", { name: "Recover or retry message" }).click();
+    await expect.poll(() => f.keys).toHaveLength(3);
+    expect(f.keys[2]).toBe(f.keys[1]);
+    f.finish();
+    await expect(panel.getByRole("log")).toContainText("Streamed reply.");
+    await expect(panel.locator(".companion-mini-message.user").filter({ hasText: "Message B" })).toHaveCount(1);
   } finally { await f.close(); }
 });
 

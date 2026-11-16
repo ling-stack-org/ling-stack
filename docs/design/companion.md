@@ -249,9 +249,10 @@ complete only after its implementation and relevant acceptance checks pass.
 - Focused daemon Companion suites: 17 tests passed, including receipt lookup, retry
   deduplication, changed-text rejection, restart recovery, memory, proactive scheduling,
   quiet-hour clearing, and origin/access checks.
-- Production-build Web end-to-end acceptance: 10 tests passed, covering chunked SSE before completion,
+- Production-build Web end-to-end acceptance: 11 tests passed, covering chunked SSE before completion,
   truncated-stream retry, receipt recovery after reload, older-history pagination,
-  session changes during receipt recovery, proactive defaults and settings, exact custom
+  session changes during receipt recovery, delayed receipts after a newer submission,
+  proactive defaults and settings, exact custom
   cooldown retention, compiled Chinese controls, and non-overlapping character/chat layout.
   Layout was exercised across all six built-in themes, a 1440 by 1000 desktop viewport, a 390 by 844 narrow
   viewport, and reduced motion. These are configured mock-provider browser checks.
