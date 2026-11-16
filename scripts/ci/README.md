@@ -384,6 +384,11 @@ the owning `typecheck:ci` validates its new tests and imported TypeScript helper
 Desktop's Node test command discovers both `.test.mjs` and `.test.ts`; its preview
 renderer Playwright configuration selects `.spec.ts`. Desktop's `typecheck:ci`
 includes the strict, no-emit `tsconfig.test.json` for `tests/**/*.ts`.
+Remote Protocol's `test:ci` discovers its complete `.test.ts` suite with Node's
+existing test runner. Its `typecheck:ci` checks source and the strict, no-emit
+`packages/remote-protocol/tsconfig.test.json`, including the shared signing fixture
+helper; local `typecheck` builds dependencies and package declarations before
+running the same checks. Tests continue to import the package's `dist` output.
 
 Local fixture and package checks are not evidence of Linux/macOS hosted-runner
 latency. Compare queue, setup, test-file and total durations after the next

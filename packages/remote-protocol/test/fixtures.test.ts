@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash, createHmac, createPublicKey, verify } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import type { KeyObject } from "node:crypto";
 import test from "node:test";
 import {
   authChallengeSigningBytes,
@@ -13,16 +13,14 @@ import {
   pairingChallengeSigningBytes,
   pairingProofSigningBytes,
 } from "../dist/index.js";
+import { fixture } from "./canonical-signing-fixture.ts";
+import type { SignedFixture } from "./canonical-signing-fixture.ts";
 
-const fixture = JSON.parse(await readFile(
-  new URL("../fixtures/v1/canonical-signing.json", import.meta.url),
-  "utf8",
-));
-const sha256 = (bytes) => createHash("sha256").update(bytes).digest();
+const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest();
 const gatewayKey = createPublicKey({ key: fixture.gatewayIdentity.publicKeyJwk, format: "jwk" });
 const deviceKey = createPublicKey({ key: fixture.deviceIdentity.publicKeyJwk, format: "jwk" });
 
-function verifyFixture(fixturePart, signingBytes, key) {
+function verifyFixture(fixturePart: SignedFixture<unknown>, signingBytes: Uint8Array, key: KeyObject) {
   assert.equal(encodeBase64Url(signingBytes), fixturePart.signingBytesBase64Url);
   assert.equal(verify(
     "sha256",
@@ -32,7 +30,12 @@ function verifyFixture(fixturePart, signingBytes, key) {
   ), true);
 }
 
-function assertEveryMutationFails({ fixturePart, signingBytesFor, key, mutations }) {
+function assertEveryMutationFails<Input extends object>({ fixturePart, signingBytesFor, key, mutations }: {
+  fixturePart: SignedFixture<Input>;
+  signingBytesFor: (input: Input) => Uint8Array;
+  key: KeyObject;
+  mutations: Partial<Record<keyof Input, unknown>>;
+}) {
   const signature = decodeBase64Url(fixturePart.signatureBase64Url);
   for (const [field, value] of Object.entries(mutations)) {
     const bytes = signingBytesFor({ ...fixturePart.input, [field]: value });
