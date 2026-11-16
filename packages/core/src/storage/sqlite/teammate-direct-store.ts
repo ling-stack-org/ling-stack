@@ -102,8 +102,9 @@ export class SqliteTeammateDirectStore {
       params.push(options.teammateId);
     }
     params.push(Math.min(Math.max(options.limit ?? 100, 1), 500));
+    params.push(Math.max(0, Math.trunc(options.offset ?? 0)));
     return this.context.database
-      .prepare(`${teammateDirectThreadSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY updated_at DESC, id DESC LIMIT ?`)
+      .prepare(`${teammateDirectThreadSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY updated_at DESC, id DESC LIMIT ? OFFSET ?`)
       .all(...params)
       .map((row) => mapTeammateDirectThread(row as Record<string, SQLOutputValue>));
   }

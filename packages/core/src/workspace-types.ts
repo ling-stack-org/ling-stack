@@ -456,6 +456,7 @@ export interface ChannelBranchUpdateInput {
 }
 
 export interface ListChannelsOptions {
+  readonly offset?: number;
   readonly archived?: boolean;
   readonly defaultProviderPresetId?: string;
   readonly limit?: number;
@@ -497,6 +498,7 @@ export function createChannelWorkspaceSnapshot(channel: Channel, workspaceCwd: s
 }
 
 export interface WorkspaceSettings {
+  readonly worktreePolicy?: import("@ling-stack/contracts").WorktreePolicy;
   readonly schemaVersion: 1;
   readonly workspaceCwd?: string;
   readonly theme?: "light" | "dark" | "system";
@@ -517,6 +519,7 @@ export interface WorkspaceSettings {
 }
 
 export interface UpdateWorkspaceSettingsInput {
+  readonly worktreePolicy?: import("@ling-stack/contracts").WorktreePolicy | null;
   readonly schemaVersion?: 2;
   readonly workspaceCwd?: string | null;
   readonly theme?: "light" | "dark" | "system" | null;
@@ -987,6 +990,7 @@ export interface TeammateDirectThread {
 }
 
 export interface ListTeammateDirectThreadsOptions {
+  readonly offset?: number;
   readonly teammateId?: string;
   readonly limit?: number;
 }

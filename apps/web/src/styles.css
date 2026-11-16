@@ -106,6 +106,7 @@
 @import "./styles/settings-workspace-tools.css";
 @import "./styles/settings-default-authorization.css";
 @import "./styles/settings-personalization.css";
+@import "./styles/settings-worktrees.css";
 @import "./styles/profile-crop-dialog.css";
 @import "./styles/profile-settings.css";
 @import "./styles/profile-settings-activity.css";

@@ -28,6 +28,7 @@ import type { ActiveRunRegistry } from "../../runtime/active-runs.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
+import { allowLocalWorkspaceRequest } from "../../shared/local-workspace-access.js";
 import {
   isRecord,
   readOptionalString,
@@ -114,6 +115,8 @@ export async function handleConversationMessageEdit(
     writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
     return;
   }
+
+  if (!allowLocalWorkspaceRequest({ request, response, storeRegistry })) return;
 
   try {
     const input = parseEditConversationMessageRequest(await readJsonBody(request, config.maxBodyBytes));

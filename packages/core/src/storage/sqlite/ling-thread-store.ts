@@ -184,9 +184,9 @@ export class SqliteLingThreadStore {
       clauses.push("(archived_at IS NOT NULL OR status = 'archived')");
     }
     const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
-    params.push(limit);
+    params.push(limit, Math.max(0, Math.trunc(options.offset ?? 0)));
     return this.context.database
-      .prepare(`${lingThreadSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY pinned_at IS NULL ASC, pinned_at DESC, updated_at DESC LIMIT ?`)
+      .prepare(`${lingThreadSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY pinned_at IS NULL ASC, pinned_at DESC, updated_at DESC, id ASC LIMIT ? OFFSET ?`)
       .all(...params)
       .map((row) => mapLingThread(row as Record<string, SQLOutputValue>));
   }

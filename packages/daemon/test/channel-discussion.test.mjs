@@ -3712,7 +3712,7 @@ test("channel message stream emits visible deltas into a durable AI reply", asyn
 test("conversation stream materializes uploaded attachments into the run prompt", async () => {
   const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-conversation-attachment-"));
   const runner = new ScriptedRunner(["Attachment received"]);
-  const daemon = await startDaemonForTest(runner);
+  const daemon = await startDaemonForTest(runner, {}, { defaultWorkspaceCwd: cwd });
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
     await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);

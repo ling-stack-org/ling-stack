@@ -4,6 +4,7 @@ import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
 import { HttpError } from "../../errors.js";
+import { allowLocalWorkspaceRequest } from "../../shared/local-workspace-access.js";
 import { readJsonBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import { buildEffectiveConfigResponse, parseWorkspaceSettingsUpdate } from "./effective-config.js";
@@ -26,14 +27,16 @@ export async function handleWorkspaceSettings(
     return;
   }
 
+  if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) return;
+
   try {
+    const body = request.method === "PATCH" ? await readJsonBody(request, config.maxBodyBytes) : undefined;
     const store = storeRegistry.getStore(cwd);
     if (request.method === "GET") {
       writeJson(response, 200, { cwd, settings: store.getWorkspaceSettings() });
       return;
     }
     if (request.method === "PATCH") {
-      const body = await readJsonBody(request, config.maxBodyBytes);
       const update = parseWorkspaceSettingsUpdate(body);
       assertMediaGenerationDefaultUpdate({
         current: store.getWorkspaceSettings().mediaGenerationDefaults,
@@ -70,6 +73,8 @@ export async function handleEffectiveConfig(
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for effective config` });
     return;
   }
+
+  if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) return;
 
   try {
     const store = storeRegistry.getStore(cwd);

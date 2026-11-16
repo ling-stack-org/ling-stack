@@ -33,7 +33,7 @@ import {
 
 test("channel collaboration protocol resolver API patches existing channel fields and reverts to defaults", async () => {
   const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-protocol-settings-"));
-  const daemon = await startDaemonForTest(undefined, {}, { channels: { autoRoute: false } });
+  const daemon = await startDaemonForTest(undefined, {}, { defaultWorkspaceCwd: cwd, channels: { autoRoute: false } });
   try {
     await patchJson(`${daemon.url}/workspace-settings?cwd=${encodeURIComponent(cwd)}`, {
       responseLanguage: "zh-CN",

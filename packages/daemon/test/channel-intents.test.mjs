@@ -763,7 +763,7 @@ test("channel intent selector auto-starts explicit direct workflow proposals", a
 test("explicit response language overrides workspace default for workflow proposals", async () => {
   const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-intent-language-override-"));
   const runner = new RecordingRunner();
-  const daemon = await startDaemonForTest(runner);
+  const daemon = await startDaemonForTest(runner, {}, { defaultWorkspaceCwd: cwd });
   try {
     await patchJson(`${daemon.url}/workspace-settings?cwd=${encodeURIComponent(cwd)}`, {
       responseLanguage: "zh-CN",

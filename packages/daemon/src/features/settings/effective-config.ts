@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { parseWorktreePolicy } from "../workspaces/worktree-policy.js";
 import {
   DEFAULT_LING_CONVERSATION_TONE,
   DEFAULT_SKILL_GOVERNANCE_POLICY,
@@ -196,6 +197,7 @@ export function parseWorkspaceSettingsUpdate(value: unknown): UpdateWorkspaceSet
     channelNotifications: readNullableStringRecord(record.channelNotifications, "channelNotifications"),
     channelActivityViews: readNullableUnknownRecord(record.channelActivityViews, "channelActivityViews"),
     skillGovernancePolicy: readNullableSkillGovernancePolicy(record.skillGovernancePolicy),
+    worktreePolicy: parseWorktreePolicy(record.worktreePolicy),
   };
 }
 

@@ -12,7 +12,7 @@ import {
   type RunStatus,
   type RunStore,
 } from "../../run-types.js";
-import { DEFAULT_WORKSPACE_ID } from "../../workspace-types.js";
+import { DEFAULT_WORKSPACE_ID, type ChannelWorkspaceBinding } from "../../workspace-types.js";
 import {
   transitionRun,
   type RunTransitionEvent,
@@ -20,7 +20,7 @@ import {
   type TransitionResult,
 } from "../../state-machines.js";
 import { redactSecrets } from "../../redaction.js";
-import { readString, rollbackOwnedSqliteTransaction, stringifyJson } from "./helpers.js";
+import { isRecord, readNullableString, readString, rollbackOwnedSqliteTransaction, stringifyJson } from "./helpers.js";
 import { readSqliteWithinTransaction } from "./read-snapshot.js";
 import { mapRunSession } from "./run-mappers.js";
 import { runSessionSelectSql } from "./select-sql.js";
@@ -29,6 +29,7 @@ import type { RuntimeAttemptFenceV1 } from "../../runtime-supervisor-types.js";
 import { isCurrentRunExecutionOwner, runExecutionOwnerParameters, runExecutionOwnerSql } from "./run-execution-admission.js";
 import { assertDelegationCompletionSatisfied } from "../../delegation-completion-barrier.js";
 import { normalizeRunnerIdsInSnapshot } from "../../runner-ids.js";
+import { parseNullableChannelWorkspaceBinding, parseNullableDirectWorkspaceBinding } from "./workspace-binding-parsers.js";
 
 export interface SqliteRunSessionStorePorts {
   readonly insertLingTurnRun: (turnId: string, runId: string, role: LingTurnRunRole, createdAt: string) => LingTurnRun;
@@ -96,9 +97,13 @@ export class SqliteRunSessionStore {
     const sourceThreadId = captured.threadId ?? (captured.turnId
       ? this.context.database.prepare("SELECT thread_id FROM ling_turns WHERE id = ?").get(captured.turnId)?.thread_id as string | undefined
       : undefined);
-    if (sourceThreadId && this.context.database.prepare("SELECT channel_id FROM ling_threads WHERE id = ?").get(sourceThreadId)?.channel_id) {
+    const sourceThread = sourceThreadId
+      ? this.context.database.prepare("SELECT id, kind, channel_id, teammate_id FROM ling_threads WHERE id = ?").get(sourceThreadId)
+      : undefined;
+    if (sourceThreadId && sourceThread?.channel_id) {
       assertChannelSessionThreadWritable(this.context.database, sourceThreadId);
     }
+    this.assertManagedWorkspaceBinding(captured, prepared.requestJson, sourceThread);
     const eventLogPath = getRunEventLogPath(this.paths, captured.id);
     this.context.database
       .prepare(`
@@ -183,6 +188,46 @@ export class SqliteRunSessionStore {
     this.ports.recordRunSelection(session);
     this.assertCreationTransactionActive();
     return session;
+  }
+
+  private assertManagedWorkspaceBinding(
+    input: CreateRunInput,
+    requestJson: string,
+    sourceThread: Record<string, SQLOutputValue> | undefined,
+  ): void {
+    const request: unknown = JSON.parse(requestJson);
+    if (!isRecord(request)) return;
+    const channelSnapshot = isRecord(request.channelWorkspaceBinding) ? request.channelWorkspaceBinding : undefined;
+    const directSnapshot = isRecord(request.directWorkspaceSnapshot) ? request.directWorkspaceSnapshot : undefined;
+    const directBinding = isRecord(request.directWorkspaceBinding) ? request.directWorkspaceBinding : undefined;
+    const channelManaged = channelSnapshot?.mode === "managed_worktree";
+    const directManaged = directSnapshot?.mode === "managed_worktree" || directBinding?.mode === "managed_worktree";
+    if (!channelManaged && !directManaged) return;
+
+    const fail = (): never => { throw new Error("Managed workspace binding is no longer current for Run creation"); };
+    if (request.threadId !== undefined && request.threadId !== sourceThread?.id
+      || request.cwd !== undefined && request.cwd !== input.cwd
+      || request.executionCwd !== undefined && request.executionCwd !== input.cwd) fail();
+    // A request can await provider/input preparation after its cleanup fence is
+    // released. The current binding and its captured identity join the Run write.
+    if (channelManaged) {
+      if (!input.channelId || sourceThread?.channel_id && sourceThread.channel_id !== input.channelId
+        || isRecord(request.task) && request.task.channelId !== undefined && request.task.channelId !== input.channelId) fail();
+      const channel = this.context.database.prepare("SELECT workspace_binding_json FROM channels WHERE id = ? AND workspace_id = ?")
+        .get(input.channelId!, DEFAULT_WORKSPACE_ID);
+      const current = parseNullableChannelWorkspaceBinding(readNullableString(channel ?? {}, "workspace_binding_json"));
+      if (!managedWorkspaceMatches(current, channelSnapshot, input.cwd)) fail();
+    }
+    if (directManaged) {
+      if (!input.teammateId || request.teammateId !== undefined && request.teammateId !== input.teammateId
+        || sourceThread && (sourceThread.kind !== "teammate_direct" || sourceThread.teammate_id !== input.teammateId)) fail();
+      const thread = this.context.database.prepare("SELECT workspace_binding_json FROM teammate_direct_threads WHERE workspace_id = ? AND teammate_id = ?")
+        .get(DEFAULT_WORKSPACE_ID, input.teammateId!);
+      const current = parseNullableDirectWorkspaceBinding(readNullableString(thread ?? {}, "workspace_binding_json"));
+      if (!managedWorkspaceMatches(current, directSnapshot, input.cwd)
+        || directBinding && (directBinding.mode !== current?.mode || directBinding.status !== "ready"
+          || directBinding.worktreePath !== current?.worktreePath || directBinding.branchName !== current?.branchName)) fail();
+    }
   }
 
   private assertCreationTransactionActive(): void {
@@ -448,4 +493,16 @@ export class SqliteRunSessionStore {
     this.ports.reconcileLingTurnStatusForRun(runId, updatedAt ?? endedAt ?? startedAt ?? new Date().toISOString());
     this.ports.rebuildLingThreadMetadata(existing?.threadId, updatedAt ?? endedAt ?? startedAt ?? new Date().toISOString());
   }
+}
+
+function managedWorkspaceMatches(
+  current: ChannelWorkspaceBinding | undefined,
+  snapshot: Record<string, unknown> | undefined,
+  cwd: string,
+): boolean {
+  return current?.mode === "managed_worktree" && current.status === "ready"
+    && Boolean(current.worktreePath) && Boolean(current.branchName)
+    && snapshot?.mode === "managed_worktree" && snapshot.status === "ready"
+    && snapshot.worktreePath === current.worktreePath && snapshot.branchName === current.branchName
+    && snapshot.executionCwd === current.worktreePath && cwd === current.worktreePath;
 }

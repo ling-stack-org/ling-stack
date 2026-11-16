@@ -409,15 +409,11 @@ async function fixture(t, { holdReturn = false, publicSelection = false, feature
   const git = async (...args) => (await exec("/usr/bin/git", args, { cwd, env: { PATH: "/usr/bin:/bin", HOME: root,
     GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_AUTHOR_NAME: "Fixture", GIT_AUTHOR_EMAIL: "fixture@ling.invalid",
     GIT_COMMITTER_NAME: "Fixture", GIT_COMMITTER_EMAIL: "fixture@ling.invalid" } })).stdout.trim();
-  await git("init", "--initial-branch=main");
   // Repository initialization only; runtime mutations below are exclusively real Host write calls.
   await writeFile(join(cwd, ".gitignore"), `*\n!.gitignore\n${branchSet.map(branch => `!${branch.path}`).join("\n")}\n`);
   for (const branch of branchSet) await writeFile(join(cwd, branch.path), `initial ${branch.path}\n`);
-  await git("add", "--", ".gitignore", ...branchSet.map(branch => branch.path));
-  await git("commit", "-m", "initial parallel inputs");
   const target = async () => ({ head: await git("rev-parse", "HEAD"), status: await git("status", "--porcelain=v1", "--untracked-files=all"),
     files: await Promise.all(branchSet.map(branch => readFile(join(cwd, branch.path), "utf8"))) });
-  const initialTarget = await target();
 
   class ParallelPiRunner extends ToolFreePiRunner {
     async runTask(options) {
@@ -548,10 +544,12 @@ async function fixture(t, { holdReturn = false, publicSelection = false, feature
     defaultProviderPresetId: provider.id, allowedTools: ["write"], autoReplyMode: "mentions_only",
     runtimePolicy: { maxConcurrentRuns: parallelLimit, schedulingMode: "smart", writeLockScope: "boundPath",
       allowReadOnlyParallel: false, queueOnConflict: true } })).channel;
-  assert.equal(channel.workspaceBinding.mode, "managed_worktree");
-  // Local handoff retains the auto-created checkout; remove it while it is still managed and clean.
-  await api(`/channels/${channel.id}/workspace/cleanup`, {});
-  await api(`/channels/${channel.id}/workspace/handoff`, { mode: "local" });
+  assert.equal(channel.workspaceBinding.mode, "local");
+  // Record Local ownership before Git initialization so only workflow-owned checkouts exist.
+  await git("init", "--initial-branch=main");
+  await git("add", "--", ".gitignore", ...branchSet.map(branch => branch.path));
+  await git("commit", "-m", "initial parallel inputs");
+  const initialTarget = await target();
   assert.deepEqual((await git("worktree", "list", "--porcelain", "-z")).split("\0")
     .filter(field => field.startsWith("worktree ")).map(field => field.slice(9)), [cwd]);
   for (const branch of branchSet) await api(`/teammates/${branch.participantId}/channels`, { memberships: [{ channelId: channel.id }] }, "PUT");
