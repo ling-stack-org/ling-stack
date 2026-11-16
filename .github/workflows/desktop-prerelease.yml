@@ -202,6 +202,8 @@ jobs:
             throw new Error("desktop_electron_native_runtime_mismatch");
           console.log(JSON.stringify({ status: "passed", ...actual }));
           NODE
+      - name: Generate reviewed localization catalog bindings
+        run: corepack pnpm --filter @ling-stack/localization catalog:compile
       - name: Observe tools and source prerequisites without granting approval
         run: node scripts/release/desktop-prerequisites.mjs inspect
       - name: Build the source and browser manifest verifier dependencies

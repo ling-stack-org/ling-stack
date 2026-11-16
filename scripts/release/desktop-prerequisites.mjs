@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { appendFile, mkdir, readFile, realpath, statfs, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { createRequire } from "node:module";
@@ -8,6 +9,44 @@ import { readCandidate } from "./desktop-release.mjs";
 
 const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 const evidenceRoot = join(repositoryRoot, ".codex-artifacts/desktop-release");
+const sha256 = bytes => createHash("sha256").update(bytes).digest("hex");
+
+async function officeReviewDrift() {
+  try {
+    const { readReviewedPackagedOfficeSource } = await import("../../apps/desktop/scripts/packaged-office-native-review.mjs");
+    const { OFFICE_LOCAL_NATIVE_REVIEW_SOURCE_INPUTS } = await import(
+      "../../packages/daemon/src/runtime/sandbox/packaged-office-native-published-review.ts");
+    const { PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS } = await import(
+      "../../apps/desktop/scripts/packaged-office-native-review-inputs.mjs");
+    const reviewBytes = await readFile(join(repositoryRoot, "native/office-local/reviewed-packaged-source-v1.json"));
+    const review = JSON.parse(reviewBytes);
+    const compare = async (root, paths, expected) => {
+      const mismatches = [];
+      for (const path of paths) {
+        try {
+          const actual = sha256(await readFile(join(root, path)));
+          if (actual !== expected[path]) mismatches.push({ path, expected: expected[path], actual });
+        } catch (error) {
+          mismatches.push({ path, expected: expected[path], error: error.code ?? error.message });
+        }
+      }
+      return { expectedCount: Object.keys(expected).length, pathCount: paths.length,
+        mismatchCount: mismatches.length, mismatches: mismatches.slice(0, 20) };
+    };
+    try {
+      readReviewedPackagedOfficeSource();
+      return { status: "passed" };
+    } catch (error) {
+      return { status: "blocked", reason: error.message,
+        source: await compare(join(repositoryRoot, "native/office-local"), OFFICE_LOCAL_NATIVE_REVIEW_SOURCE_INPUTS,
+          review.sourceSha256),
+        packaging: await compare(repositoryRoot, PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS,
+          review.packagingSha256) };
+    }
+  } catch (error) {
+    return { status: "unavailable", reason: error.code ?? error.message };
+  }
+}
 
 /** Inspection reports facts only; it never grants a native or resource approval. */
 export async function inspectDesktopPrerequisites() {
@@ -20,7 +59,10 @@ export async function inspectDesktopPrerequisites() {
   const checks = [];
   const check = async (name, operation) => {
     try { checks.push({ name, status: "passed", observation: await operation() }); }
-    catch (error) { checks.push({ name, status: "blocked", reason: error.message }); }
+    catch (error) {
+      checks.push({ name, status: "blocked", reason: error.message,
+        ...(name === "reviewed-native-source-and-toolchain" ? { diagnostic: await officeReviewDrift() } : {}) });
+    }
   };
   await check("native-build-storage-observation", async () => {
     const directory = await realpath(process.env.RUNNER_TEMP ?? evidenceRoot);
