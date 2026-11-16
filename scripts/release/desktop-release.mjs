@@ -34,7 +34,7 @@ function git(args, root) {
   return execFileSync("git", args, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
 }
 
-export async function readCandidate({ root = repositoryRoot, sha, tag, requireMain = false }) {
+export async function readCandidate({ root = repositoryRoot, sha, tag, requireMain = false, allowExistingTag = false }) {
   const rootPackage = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
   const desktopPackage = JSON.parse(await readFile(join(root, "apps/desktop/package.json"), "utf8"));
   const productContractSource = await readFile(join(root, "packages/contracts/src/product-version.ts"), "utf8");
@@ -46,8 +46,13 @@ export async function readCandidate({ root = repositoryRoot, sha, tag, requireMa
   if (git(["status", "--porcelain", "--untracked-files=no"], root)) throw new Error("Release source must be clean");
   if (requireMain) {
     git(["merge-base", "--is-ancestor", sha, "refs/remotes/origin/main"], root);
-    // Published tags and even earlier source-only tags are never repointed.
-    if (git(["tag", "--list", tag], root)) throw new Error("Tag already exists; choose a new release version");
+    const existingTag = git(["tag", "--list", tag], root);
+    if (existingTag) {
+      if (!allowExistingTag || git(["rev-parse", `refs/tags/${tag}^{commit}`], root) !== sha) {
+        // Published tags and unrelated source-only tags are never repointed.
+        throw new Error("Tag already exists; choose a new release version");
+      }
+    }
   }
   return candidate;
 }
@@ -190,15 +195,18 @@ export async function assembleRelease({ candidate, inputRoot, outputRoot }) {
 
 async function main() {
   const [command] = process.argv.slice(2);
-  const candidate = await readCandidate({ sha: process.env.DESKTOP_SOURCE_SHA, tag: process.env.DESKTOP_RELEASE_TAG,
-    requireMain: process.env.DESKTOP_CREATE_DRAFT === "true" });
+  const sourceRoot = resolve(process.env.DESKTOP_SOURCE_ROOT ?? repositoryRoot);
+  const candidate = await readCandidate({ root: sourceRoot,
+    sha: process.env.DESKTOP_SOURCE_SHA, tag: process.env.DESKTOP_RELEASE_TAG,
+    requireMain: process.env.DESKTOP_CREATE_DRAFT === "true",
+    allowExistingTag: process.env.DESKTOP_ALLOW_EXISTING_TAG === "true" });
   if (command === "candidate") {
     if (process.env.GITHUB_OUTPUT) await appendFile(process.env.GITHUB_OUTPUT,
       `source-sha=${candidate.sourceSha}\ntag=${candidate.tag}\nversion=${candidate.version}\n`);
     console.log(JSON.stringify(candidate, null, 2));
   } else if (command === "collect") {
     await collectTarget({ candidate, target: process.env.DESKTOP_TARGET,
-      releaseRoot: join(repositoryRoot, "apps/desktop/release"), evidenceRoot: join(repositoryRoot, ".codex-artifacts/desktop-release"),
+      releaseRoot: join(sourceRoot, "apps/desktop/release"), evidenceRoot: join(sourceRoot, ".codex-artifacts/desktop-release"),
       outputRoot: resolve(process.env.DESKTOP_OUTPUT_ROOT) });
   } else if (command === "assemble") {
     await assembleRelease({ candidate, inputRoot: resolve(process.env.DESKTOP_INPUT_ROOT), outputRoot: resolve(process.env.DESKTOP_OUTPUT_ROOT) });

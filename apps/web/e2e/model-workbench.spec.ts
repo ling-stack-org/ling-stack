@@ -453,7 +453,10 @@ test("model workbench localizes unsupported daemon model discovery errors", asyn
   await page.getByRole("button", { name: "获取模型" }).click();
 
   await expect(page.getByText("当前本地服务版本不支持获取模型，请停止旧服务后重新启动项目。")).toBeVisible();
-  await expect(page.getByText("No route for POST /provider-models")).toHaveCount(0);
+  const unsupportedDetails = page.getByText("No route for POST /provider-models");
+  await expect(unsupportedDetails).not.toBeVisible();
+  await page.getByText("技术详情", { exact: true }).click();
+  await expect(unsupportedDetails).toBeVisible();
 });
 
 // Value: protects=provider-list transport failures render a localized actionable message instead of browser jargon; fails_when=Failed to fetch leaks into the Chinese model workbench; why_new=model-discovery error tests exercise a different API and mapper; seam=none; no_claim=real daemon recovery (request aborted by Playwright)
@@ -505,7 +508,10 @@ test("model workbench keeps model discovery network failures productized", async
   await page.getByRole("button", { name: "获取模型" }).click();
 
   await expect(page.getByText("无法连接模型供应商。请检查 Base URL、代理或本地中转后重试。")).toBeVisible();
-  await expect(page.getByText("Provider model discovery failed: The operation was aborted due to timeout")).toHaveCount(0);
+  const networkDetails = page.getByText("Provider model discovery failed: The operation was aborted due to timeout");
+  await expect(networkDetails).not.toBeVisible();
+  await page.getByText("技术详情", { exact: true }).click();
+  await expect(networkDetails).toBeVisible();
 });
 
 test("model import dialog keeps its footer attached without an empty trailing panel", async ({ page }) => {

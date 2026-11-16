@@ -124,8 +124,10 @@ test("dark photograph remains visible in light and dark themes", async ({ page }
     }
     await openBackgroundSettings(page);
     await expect(page.locator("html")).toHaveAttribute("data-ui-surface-recipe", "solid");
-    await expect(page.locator(".desktop-window-chrome")).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-    await expect(page.locator(".desktop-window-chrome")).not.toHaveCSS("box-shadow", "none");
+    await expect(page.locator("html")).toHaveAttribute("data-ui-background-visible", "true");
+    await expect(page.locator("[data-background-layer]")).toBeVisible();
+    await expect(page.locator(".desktop-window-chrome")).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    await expect(page.locator(".desktop-window-chrome")).toHaveCSS("box-shadow", "none");
   }
 
   expect(failures).toEqual([]);

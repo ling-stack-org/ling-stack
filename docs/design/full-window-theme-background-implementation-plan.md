@@ -32,7 +32,7 @@ Code and test anchors: `packages/ui-react/src/theme/built-ins/`、`packages/ui-r
 | 自定义背景 | 用户显式上传本地图片或视频后覆盖主题默认画面 |
 | 清除背景 | 只移除用户媒体，回到当前主题默认画面；不重置主题 |
 | 可见度 | 连续 `opacity`，20%–100%，默认 60%；旧三档映射为 45% / 60% / 75% |
-| 保护页面 | settings、management、diagnostics、approvals、media-canvas、overlay 保持实底 |
+| 保护页面 | 背景层保持连续；settings、management、diagnostics、approvals、media-canvas、overlay 的内容面板保持实底 |
 | 设置入口 | 保持“设置 → 界面偏好”内的主题区和背景区，一个目的地 |
 | UI 视觉适配 | 由独立 UI 方案拥有组件层级、材质、状态和截图门槛；本计划只拥有背景层与 route surface policy |
 
@@ -119,7 +119,7 @@ type BackgroundAsset =
 
 `ThemePickerOption` 增加可选 scene。scene 主题卡显示约 84px 的大幅缩略图，经典主题保持 44px 色板。`WorkspaceBackgroundLayer` 优先显示自定义媒体；无自定义且 manifest 有 scene 时显示主题场景；否则保持纯色。
 
-`data-user-background="ready"` 表示共享背景层可见，`data-background-source` 区分 `theme-scene`、`local-image`、`local-video` 和 `theme-solid`。保护路由仍由 presentation policy 回退实底。
+`data-user-background="ready"` 表示共享背景资源可用，`data-ui-background-visible` 表示当前 route 是否展示背景，`data-background-source` 区分 `theme-scene`、`local-image`、`local-video` 和 `theme-solid`。保护路由的页面画布仍可显示背景，但内容面板由 presentation policy 回退实底。
 
 ### 6.2 连续可见度
 

@@ -55,7 +55,7 @@ test('BG-03/04/07/08/09/16 preview, persist, themes, protected routes, narrow an
  await page.getByRole('button',{name:'Cancel preview'}).click();await expect(page.locator('[data-background-preview]')).toHaveAttribute('data-draft','false');
  await select(page);await setOpacity(page,75);await apply(page);
  await expect(panel.locator('[data-background-opacity]')).toHaveValue('75');await expect(panel.getByRole('button',{name:'Apply background',exact:true})).toHaveCount(0);
- await expect(page.locator('[data-background-layer]')).toBeHidden();
+ await expect(page.locator('[data-background-layer]')).toBeVisible();
  const src=await page.locator('[data-background-layer] img').getAttribute('src');
  await page.locator('[data-theme-option-id="ling-light"]').click();
  await expect(page.locator('[data-background-layer] img')).toHaveAttribute('src',src!);
@@ -110,7 +110,7 @@ test('BG-01/03/04/05/06 official scene themes, thumbnails and custom override',a
  await settings(page);await select(page);await apply(page);await page.getByRole('button',{name:'Back to app',exact:true}).click();
  await expect(page.locator('html')).toHaveAttribute('data-background-source','local-image');
  await expect(page.locator('[data-background-layer] img')).toBeVisible();
- await settings(page);await expect(page.locator('[data-background-layer]')).toBeHidden();
+ await settings(page);await expect(page.locator('[data-background-layer]')).toBeVisible();
  await page.getByRole('button',{name:'Restore default background'}).click();await page.getByRole('button',{name:'Back to app',exact:true}).click();
  await expect(page.locator('html')).toHaveAttribute('data-background-source','theme-scene');
  await expect(page.locator('[data-background-layer] svg[data-scene="farbound-journey"] image')).toBeVisible();

@@ -151,7 +151,7 @@ Code and test anchors：`packages/ui-react/src/styles/themes/built-in-themes.css
 ### 4.4 弹层与设置
 
 - Dialog、Popover、Menu、Tooltip 和 Toast 统一使用 `background.elevated`、`shadow.overlay`、`border.default`。
-- 设置页保持 token-only 实底，但主题卡、range slider、按钮和说明文字使用同一套暖金/冷蓝灰状态语言。
+- 设置页保留主题背景，但主题卡、设置卡、range slider、按钮和说明文字使用实底或局部语义材质以及同一套暖金/冷蓝灰状态语言。
 - 主题卡保留母图缩略图，并增加明确的 active border、selected mark、hover spotlight 和 keyboard focus。
 - 背景设置页同时展示“当前主题默认画面”和“用户自定义覆盖”，避免用户误以为背景设置会改变主题 token。
 

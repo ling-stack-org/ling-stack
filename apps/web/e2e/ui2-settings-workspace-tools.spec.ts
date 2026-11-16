@@ -48,7 +48,7 @@ test("Model embedded boundary preserves loading, empty, failure, and exact retur
   providerMode = "fail";
   await expect(surface.getByRole("button", { name: "Refresh" })).toHaveCount(0);
   await triggerFocusRevalidation(page);
-  await expect(surface.locator(".inline-error")).toContainText("Synthetic provider list failure");
+  await expect(surface.locator(".inline-error")).toContainText("The service is temporarily unavailable. Try again shortly.");
   await expectWorkspaceToolBoundary(page, surface);
 
   await page.getByLabel("Settings sections").getByRole("button", { name: "Back to app" }).click();

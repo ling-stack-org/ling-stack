@@ -12,6 +12,8 @@
 .provider-table {
   min-width: 0;
   table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0 var(--ling-space-3);
 }
 
 .provider-table th,
@@ -47,6 +49,29 @@
 
 .provider-row {
   min-height: 52px;
+}
+
+/* Keep the semantic table contract, but present each model route like the
+ * compact supplier cards used by the reference provider manager. */
+.provider-table tbody .provider-row > td {
+  border-block: 1px solid var(--ling-border-default);
+  background: var(--ling-bg-panel);
+}
+
+.provider-table tbody .provider-row > td:first-child {
+  border-inline-start: 1px solid var(--ling-border-default);
+  border-start-start-radius: var(--ling-radius-md);
+  border-end-start-radius: var(--ling-radius-md);
+}
+
+.provider-table tbody .provider-row > td:last-child {
+  border-inline-end: 1px solid var(--ling-border-default);
+  border-start-end-radius: var(--ling-radius-md);
+  border-end-end-radius: var(--ling-radius-md);
+}
+
+.provider-table tbody .provider-row:hover > td {
+  background: var(--ling-row-hover-bg);
 }
 
 .provider-row.selected > td:first-child {
