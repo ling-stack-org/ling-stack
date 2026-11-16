@@ -130,6 +130,7 @@ export function TeammatePrivateChatSurface(props: TeammatePrivateChatSurfaceProp
             >
               <WorkspaceRightDock
                 surface="teammate_direct"
+                browserScopeId={props.threadId}
                 open={dockOpen}
                 ariaLabel={t("Private chat workspace dock")}
                 className="teammate-private-right-dock"

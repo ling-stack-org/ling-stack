@@ -2,14 +2,15 @@
 
 ## Goal
 
-Ling Agent should answer questions that require current public web evidence without pretending that Codex-only tools are part of the Ling runtime. Like Codex, Ling treats `web_search`, `open_url`, and future `browser` as host/global tools owned by the daemon. The selected chat model provider does not need to implement web access; Ling gathers web evidence first, then passes bounded evidence to the current model as context.
+Ling Agent should answer questions that require current public web evidence without pretending that Codex-only tools are part of the Ling runtime. Ling treats public search, URL reading and interactive browser tools as host capabilities owned by the daemon. The selected chat model provider does not need to implement web access; Ling gathers web evidence first, then passes bounded evidence to the current model as context.
 
 - `web_search`: a Ling global tool backed by a configured web-search backend provider when one can return citations, with a host-owned public search fallback when model-provider search cannot produce source URLs.
 - `open_url` / `read_url`: public URL body extraction for explicit URL-reading requests.
-- `browser`: delivered through the separately enabled
-  [Chrome Browser Built-in Plugin](chrome-browser-built-in-plugin.md). It uses an authenticated local
-  extension session and the existing MCP approval/audit pipeline; it is not part of automatic public
-  search or URL evidence enrichment.
+- Interactive browsing has two separately enabled MCP integrations:
+  [Chrome](chrome-browser-built-in-plugin.md) uses the user's external Chrome profile;
+  [Ling Browser](desktop-browser-implementation-plan.md) uses Desktop-hosted pages and an isolated
+  workspace profile. Both reuse existing MCP approvals and run records, and neither participates
+  in automatic public search or URL evidence enrichment.
 
 ## Current Slice
 
@@ -200,18 +201,25 @@ When the turn envelope already contains an available materialized link body, the
 
 ### browser
 
-Codex Browser Use is not directly portable into Ling Agent as a simple function call. Ling exposes
-interactive control only through the explicit Chrome built-in plugin contract:
+Interactive control enters through the explicit Chrome and Ling Browser built-in plugin contracts:
 
 - user approval before navigation that changes account state or submits forms;
 - session lifecycle and artifact capture;
-- source/event rows for open page, click, type, screenshot, and find-in-page;
+- MCP records for navigation, snapshot, click, type and screenshot;
 - network and origin policy;
 - replayable audit evidence in the channel/work-unit timeline.
 
-The plugin supplies those capabilities as MCP tools, so existing binding, approval, cancellation and
-run-event ownership remain authoritative. When the plugin is disabled or Chrome is disconnected, Ling
-continues to support public lookup and URL reading but does not pretend interactive control is available.
+Chrome exposes `chrome_*` tools. Ling Browser exposes `browser_tabs`, `browser_navigate`,
+`browser_snapshot`, `browser_click`, `browser_type` and `browser_screenshot` through
+`mcp_browser`. Both default to `ask`; binding, approval, cancellation and run-event ownership remain
+authoritative. Disabling one integration or losing its runtime does not switch to the other profile.
+Public lookup and URL reading remain available independently.
+
+Ling Browser supports explicit loopback development previews without relaxing the public URL
+reader's SSRF rules. The first snapshot covers visible main-document content; it does not traverse
+frames, shadow roots or canvas. Page text and screenshots are untrusted evidence. Website device
+permissions, downloads and popups are blocked, and sensitive inputs require user control. The
+shared Browser dock is available in Desktop; non-Desktop clients retain evidence inspection.
 
 ## Conversation Evidence UI
 

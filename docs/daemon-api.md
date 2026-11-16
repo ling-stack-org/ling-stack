@@ -4069,6 +4069,44 @@ The check validates base URL format, required secret refs, enabled state, and su
 MCP server config stores transport metadata and secret refs. Runtime status is reported
 through short-lived status snapshots, not by returning or mutating raw secret values.
 
+### Ling Browser
+
+The Desktop in-app browser is the managed plugin `built-in:browser`, with logical MCP
+server `mcp_browser`. Enable or disable it through the existing managed-plugin routes;
+the six tools are `browser_tabs`, `browser_navigate`, `browser_snapshot`, `browser_click`,
+`browser_type` and `browser_screenshot`, all defaulting to `ask`. Enabling can bind the
+built-in Ling Agent; custom teammates retain explicit MCP bindings. A disabled plugin
+does not prevent the user from browsing manually in Desktop's conversation Browser dock.
+
+Tools require the current Desktop runtime and the run's real conversation scope.
+Existing targets require `tabId` and `navigationRevision`; click/type additionally
+require `snapshotRevision` and `ref`. Page text and screenshots are untrusted evidence.
+The external `mcp_chrome_browser` integration has an independent transport and profile.
+
+Desktop main uses these internal, POST-only bridge routes:
+
+```http
+POST /desktop/capabilities/browser/availability
+POST /desktop/capabilities/browser/commands/claim
+POST /desktop/capabilities/browser/commands/:id/start
+POST /desktop/capabilities/browser/commands/:id/cancelled
+POST /desktop/capabilities/browser/commands/:id/result
+```
+
+All require the host-owned `x-ling-desktop-bridge-token` and reject browser `Origin`
+requests. Command routes also require `x-ling-browser-instance` and
+`x-ling-browser-generation`. Availability publishes the exact
+`DesktopBrowserState` contract and receives the daemon `runtimeId`; Desktop rotates
+its generation when that daemon identity changes. Commands are ephemeral, claimed
+once and never automatically requeued. Cancellation/timeout after an action starts
+retains `effect: "unknown"`, and late or replaced-authority results are rejected.
+Contract types and strict parsers live in `packages/contracts/src/desktop-browser.ts`.
+
+The current runtime is bound to the daemon default workspace. Tabs and commands do
+not survive process restart; Chromium's workspace profile persists. Windows,
+signed-package and real-model acceptance remain open. Remaining browser capabilities
+are tracked in the [Desktop Browser plan](design/desktop-browser-implementation-plan.md).
+
 ### List MCP Servers
 
 ```http

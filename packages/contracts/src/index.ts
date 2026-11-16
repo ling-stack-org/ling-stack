@@ -63,6 +63,7 @@ export type * from "./mcp.js";
 export type * from "./tool-surfaces.js";
 export type * from "./plugins.js";
 export * from "./chrome-browser.js";
+export * from "./desktop-browser.js";
 export * from "./office-documents.js";
 export * from "./cua-driver-bundled.js";
 export * from "./locked-computer-control.js";

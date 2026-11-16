@@ -91,6 +91,7 @@ export function NormalConversationWorkspacePanels({
             proposedPlansLoading={proposedPlansLoading}
             proposedPlansError={proposedPlansError}
             currentPlanThreadId={currentThreadId}
+            browserScopeId={currentThreadId}
             contextNode={<NormalConversationContextPage context={dockViewModel.context} />}
             contextLabel={t("Context")}
             contextDescription={t("Conversation context and workspace state")}

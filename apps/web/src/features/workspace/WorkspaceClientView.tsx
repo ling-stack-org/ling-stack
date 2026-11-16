@@ -4100,6 +4100,7 @@ export function WorkspaceClientView({
               proposedPlansError={proposedPlanHistoryError}
               externalError={selectedDockError}
               currentPlanThreadId={channelPlanModeThreadId}
+              browserScopeId={channelPlanModeThreadId}
               planActionBusyId={proposedPlanActionBusyId}
               includeActivity
               activityNode={channelDockActivityNode}
