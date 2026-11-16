@@ -44,7 +44,13 @@ test("isolated profile overrides all six definitions with native file schemas an
     assert.equal(tool.executionMode, "sequential");
     assert.equal(typeof tool.renderCall, "function");
     assert.equal(typeof tool.renderResult, "function");
-    assert.equal(tool.prepareArguments, undefined, "no SDK legacy mutation argument adapter");
+    if (name === "edit") {
+      const input = { path: "existing.txt", edits: [{ oldText: "original", newText: "replacement" }] };
+      assert.equal(tool.prepareArguments(input), input, "native edit arrays pass through unchanged");
+      for (const edits of [input.edits[0], JSON.stringify(input.edits)]) {
+        assert.throws(() => tool.prepareArguments({ path: input.path, edits }), { message: "workflow_isolated_edit_input_invalid" });
+      }
+    } else assert.equal(tool.prepareArguments, undefined, "no SDK legacy mutation argument adapter");
     assert.match(tool.description, /Host isolated-files handler/);
   }
   assert.deepEqual(f.tools.get("write").parameters.required, ["path", "content"]);
