@@ -12,6 +12,10 @@ import {
   authProofSigningBytes,
   pairingProofSigningBytes,
 } from "../dist/index.js";
+import type {
+  RemoteAuthProofSigningInputV1,
+  RemotePairingProofSigningInputV1,
+} from "../dist/index.js";
 
 const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
 
@@ -26,16 +30,16 @@ test("V1 signing domains exclude the unprefixed public-key fingerprint", () => {
   });
 });
 
-function signP1363(bytes) {
+function signP1363(bytes: Uint8Array) {
   return sign("sha256", bytes, { key: privateKey, dsaEncoding: "ieee-p1363" });
 }
 
-function verifyP1363(bytes, signature) {
+function verifyP1363(bytes: Uint8Array, signature: Uint8Array) {
   return verify("sha256", bytes, { key: publicKey, dsaEncoding: "ieee-p1363" }, signature);
 }
 
 test("every auth-bound field mutation invalidates the ES256 proof", () => {
-  const original = {
+  const original: RemoteAuthProofSigningInputV1 = {
     gatewayOrigin: "https://ling-pc.example.ts.net",
     gatewayId: "gateway-1",
     challengeId: "challenge-1",
@@ -74,7 +78,7 @@ test("every auth-bound field mutation invalidates the ES256 proof", () => {
 });
 
 test("pairing HMAC and device signature bind the same canonical transcript", () => {
-  const transcript = {
+  const transcript: RemotePairingProofSigningInputV1 = {
     gatewayOrigin: "https://ling-pc.example.ts.net",
     gatewayId: "gateway-1",
     pairingId: "pairing-1",
