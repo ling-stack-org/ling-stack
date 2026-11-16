@@ -1278,12 +1278,21 @@ test("channel AI replies use the standard full conversation width", async ({ pag
   const standaloneAssistantReply = feed.locator(".channel-message-row.ai-teammate")
     .filter({ hasText: "This standalone AI reply must use the full channel conversation width" });
   const standaloneAssistantContent = standaloneAssistantReply.locator(":scope > .message-content");
+  const timeline = feed.locator('[data-conversation-timeline-depth="0"]').first();
+  const expectFullRowWidth = async (row: Locator): Promise<void> => {
+    await expect.poll(async () => {
+      const availableWidth = await timeline.evaluate(element => {
+        const style = getComputedStyle(element);
+        return element.clientWidth - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight);
+      });
+      return Math.abs(((await row.boundingBox())?.width ?? 0) - availableWidth);
+    }).toBeLessThanOrEqual(1);
+  };
   await expect.poll(async () => Math.round((await composer.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(780);
   await expect.poll(async () => Math.round((await composer.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(820);
   await expect(sourceMessage).toHaveCount(1);
   await expect(assistantReply).toHaveCount(1);
-  await expect.poll(async () => Math.round((await sourceMessage.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(780);
-  await expect.poll(async () => Math.round((await sourceMessage.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(820);
+  await expectFullRowWidth(sourceMessage);
   await expect(sourceMessageContent.locator(".channel-message-user-actions")).toHaveCount(0);
   await expect(sourceMessageActionBar).toHaveCount(1);
   await expect(sourceMessageActionBar).toHaveCSS("opacity", "0");
@@ -1294,18 +1303,16 @@ test("channel AI replies use the standard full conversation width", async ({ pag
     const actionsBox = await sourceMessageActions.boundingBox();
     return contentBox && actionsBox ? Math.round(actionsBox.y - (contentBox.y + contentBox.height)) : -1;
   }).toBeGreaterThanOrEqual(0);
-  await expect.poll(async () => Math.round((await assistantReply.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(780);
-  await expect.poll(async () => Math.round((await assistantReply.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(820);
-  await expect.poll(async () => Math.round((await assistantContent.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(740);
-  await expect.poll(async () => Math.round((await assistantContent.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(780);
+  await expectFullRowWidth(assistantReply);
   await expect(regularAssistantReply).toHaveCount(1);
-  await expect.poll(async () => Math.round((await regularAssistantReply.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(780);
-  await expect.poll(async () => Math.round((await regularAssistantReply.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(820);
+  await expectFullRowWidth(regularAssistantReply);
   await expect(standaloneAssistantReply).toHaveCount(1);
-  await expect.poll(async () => Math.round((await standaloneAssistantReply.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(780);
-  await expect.poll(async () => Math.round((await standaloneAssistantReply.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(820);
-  await expect.poll(async () => Math.round((await standaloneAssistantContent.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(740);
-  await expect.poll(async () => Math.round((await standaloneAssistantContent.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(780);
+  await expectFullRowWidth(standaloneAssistantReply);
+  for (const content of [assistantContent, standaloneAssistantContent]) {
+    await expect.poll(async () => Math.round((await content.boundingBox())?.width ?? 0)).toBeGreaterThan(680);
+    await expect.poll(() => content.evaluate(element => Math.abs(element.getBoundingClientRect().right
+      - element.parentElement!.getBoundingClientRect().right))).toBeLessThanOrEqual(1);
+  }
 });
 
 test("channel environment surface shows read-only context and opens review", async ({ page }) => {

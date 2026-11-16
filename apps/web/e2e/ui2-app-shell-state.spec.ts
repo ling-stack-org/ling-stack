@@ -150,7 +150,7 @@ test("persistent Sidebar stays stable across every visible main navigation targe
     await expect(root).toHaveAttribute("data-ui-surface", "media-canvas");
     await navigation.getByRole("button", { name: "Plugin Manager" }).click();
     await expect(root).toHaveAttribute("data-ui-surface", "management");
-    await navigation.getByRole("button", { name: "Automations" }).click();
+    await navigation.getByRole("button", { name: "Scheduled tasks" }).click();
     await expect(root).toHaveAttribute("data-ui-surface", "management");
     await navigation.getByRole("button", { name: "Engineering", exact: true }).click();
     await expect(root).toHaveAttribute("data-ui-surface", "channel");

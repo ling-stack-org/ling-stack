@@ -306,23 +306,24 @@ test("channel work-cell mock renders a realistic multi-agent operation record", 
   const terminalReportItem = timeline.locator('[data-conversation-timeline-kind="terminalReport"]');
   await expect(terminalReportItem).toHaveCount(1);
   await expandTimelineItem(terminalReportItem);
-  const terminalReport = terminalReportItem.locator(".conversation-timeline-terminal-report");
-  await expect(terminalReport).toBeVisible();
-  await expect.poll(() => terminalReport.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
+  await expect(terminalReportItem).toBeVisible();
+  await expect(terminalReportItem.locator(".conversation-timeline-terminal-report")).toHaveCount(0);
+  await expect.poll(() => terminalReportItem.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
   await expect(terminalReportItem).toHaveAttribute("data-conversation-timeline-status", "succeeded");
-  await expect(terminalReportItem).toContainText("任务已完成。");
-  await expect(terminalReportItem).not.toContainText("频道现在会保留 Architect、Designer、Engineer 和 QA 的真实操作过程");
-  await expect(terminalReport.locator('[data-terminal-report-section="agents"], [data-terminal-report-section="verification"]')).toHaveCount(0);
-  await expect(terminalReport).not.toContainText("重构操作记录展示");
-  await expect(terminalReport).not.toContainText("Web typecheck");
-  const reportRef = terminalReport.locator(".conversation-timeline-file-ref")
+  await expect(terminalReportItem).toContainText("频道现在会保留 Architect、Designer、Engineer 和 QA 的真实操作过程");
+  await expect(terminalReportItem.locator('[data-terminal-report-section="agents"], [data-terminal-report-section="verification"]')).toHaveCount(0);
+  await expect(terminalReportItem).not.toContainText("重构操作记录展示");
+  await expect(terminalReportItem).not.toContainText("Web typecheck");
+  const responseFiles = timeline.locator("[data-conversation-response-files]");
+  await expect(responseFiles).toContainText("已编辑 3 个文件");
+  const reportRef = responseFiles.locator(".conversation-timeline-file-ref")
     .filter({ hasText: "conversation-work-cell-operation-records.md" });
   await expect(reportRef).toHaveCount(1);
   await expect(reportRef).toBeVisible();
   await expect(reportRef).toHaveAttribute("title", "docs/design/conversation-work-cell-operation-records.md");
-  await expect(reportRef.locator(".conversation-timeline-file-ref-icon")).toBeVisible();
-  await expect(terminalReport.getByRole("button", { name: "conversation-work-cell-operation-records.md", exact: true })).toHaveCount(0);
+  await expect(reportRef.locator(".terminal-report-file-type-icon")).toBeVisible();
+  await expect(reportRef).toBeDisabled();
   await expect(timeline.locator('[data-conversation-timeline-kind="agentMessage"]').filter({ hasText: "完成：「频道 work-cell 操作记录样例」" })).toHaveCount(0);
 
   const topLevelKinds = await timeline.locator(":scope > .conversation-timeline-focus-block")
