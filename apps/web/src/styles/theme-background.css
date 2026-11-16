@@ -93,7 +93,7 @@ html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell
 }
 
 
-html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell :is(.normal-conversation-page, .normal-conversation-header, .conversation-home, .client-window, .task-workbench-main, .task-workbench-window, .workspace-right-dock-frame, .right-dock, .channel-side-panel, .workspace-automations-surface, .automation-ui2-page, .workspace-generation-surface, .media-production-page) { background: transparent; }
+html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell :is(.normal-conversation-page, .normal-conversation-header, .conversation-home, .client-window, .task-workbench-main, .task-workbench-window, .workspace-right-dock-frame, .right-dock, .channel-side-panel, .workspace-automations-surface, .automation-ui2-page, .workspace-generation-surface, .media-production-page, .media-jobs-page) { background: transparent; }
 html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell :is(.normal-conversation-header, .workspace-right-dock-frame, .right-dock, .channel-side-panel) {
   border-color: var(--ling-surface-border-subtle);
 }

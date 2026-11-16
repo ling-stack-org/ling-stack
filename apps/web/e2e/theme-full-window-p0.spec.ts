@@ -5,6 +5,7 @@ import { resolve } from "node:path";
 import { mockDaemon } from "./support/mock-daemon";
 import { createBaseState, createChatProvider } from "./support/mock-state";
 import { installNormalConversationFixture } from "./support/normal-conversation-fixture";
+import { openMediaJobs } from "./support/media-jobs-fixtures";
 
 const photo = await readFile(new URL("./fixtures/fronalpstock-3840.jpg", import.meta.url));
 
@@ -73,6 +74,38 @@ test("BG-25 themed background remains continuous through window chrome and setti
     ]),
     scope: "Chromium production components and CSS with isolated daemon fixtures; no model invocation",
   }, null, 2));
+});
+
+test("BG-26 generation tasks keeps the ambient scene behind protected panels", async ({ page }, testInfo) => {
+  test.setTimeout(60_000);
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await prepare(page);
+
+  await openBackgroundSettings(page);
+  await page.locator("[data-background-file]").setInputFiles({
+    name: "fronalpstock-3840.jpg",
+    mimeType: "image/jpeg",
+    buffer: photo,
+  });
+  await page.getByRole("button", { name: "Apply background", exact: true }).click();
+  await expect(page.locator("[data-background-preview]")).toHaveAttribute("data-draft", "false");
+  await expect(page.locator("html")).toHaveAttribute("data-ui-background-visible", "true");
+
+  await page.getByRole("button", { name: "Back to app", exact: true }).click();
+  await openMediaJobs(page);
+  await expect(page.locator("html")).toHaveAttribute("data-ui-background-visible", "true");
+  await expect(page.locator("[data-background-layer] img")).toBeVisible();
+  await expect(page.locator(".media-jobs-page")).toBeVisible();
+  const material = await page.evaluate(() => {
+    const background = (selector: string): string => getComputedStyle(document.querySelector(selector)!).backgroundColor;
+    return {
+      header: background(".media-jobs-header"),
+      page: background(".media-jobs-page"),
+    };
+  });
+  expect(isTransparent(material.page)).toBe(true);
+  expect(isTransparent(material.header)).toBe(false);
+  await capture(page, testInfo, "generation-jobs-full-window.png");
 });
 
 async function prepare(page: Page): Promise<void> {
