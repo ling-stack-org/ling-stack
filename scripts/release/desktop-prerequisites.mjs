@@ -12,31 +12,39 @@ const evidenceRoot = join(repositoryRoot, ".codex-artifacts/desktop-release");
 const sha256 = bytes => createHash("sha256").update(bytes).digest("hex");
 
 async function officeReviewDrift() {
-  const { readReviewedPackagedOfficeSource } = await import("../../apps/desktop/scripts/packaged-office-native-review.mjs");
-  const { OFFICE_LOCAL_NATIVE_REVIEW_SOURCE_INPUTS } = await import(
-    "../../packages/daemon/src/runtime/sandbox/packaged-office-native-published-review.ts");
-  const { PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS } = await import(
-    "../../apps/desktop/scripts/packaged-office-native-review-inputs.mjs");
-  const reviewBytes = await readFile(join(repositoryRoot, "native/office-local/reviewed-packaged-source-v1.json"));
-  const review = JSON.parse(reviewBytes);
-  const compare = async (root, paths, expected) => {
-    const mismatches = [];
-    for (const path of paths) {
-      const actual = sha256(await readFile(join(root, path)));
-      if (actual !== expected[path]) mismatches.push({ path, expected: expected[path], actual });
-    }
-    return { expectedCount: Object.keys(expected).length, pathCount: paths.length,
-      mismatchCount: mismatches.length, mismatches: mismatches.slice(0, 20) };
-  };
   try {
-    readReviewedPackagedOfficeSource();
-    return { status: "passed" };
+    const { readReviewedPackagedOfficeSource } = await import("../../apps/desktop/scripts/packaged-office-native-review.mjs");
+    const { OFFICE_LOCAL_NATIVE_REVIEW_SOURCE_INPUTS } = await import(
+      "../../packages/daemon/src/runtime/sandbox/packaged-office-native-published-review.ts");
+    const { PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS } = await import(
+      "../../apps/desktop/scripts/packaged-office-native-review-inputs.mjs");
+    const reviewBytes = await readFile(join(repositoryRoot, "native/office-local/reviewed-packaged-source-v1.json"));
+    const review = JSON.parse(reviewBytes);
+    const compare = async (root, paths, expected) => {
+      const mismatches = [];
+      for (const path of paths) {
+        try {
+          const actual = sha256(await readFile(join(root, path)));
+          if (actual !== expected[path]) mismatches.push({ path, expected: expected[path], actual });
+        } catch (error) {
+          mismatches.push({ path, expected: expected[path], error: error.code ?? error.message });
+        }
+      }
+      return { expectedCount: Object.keys(expected).length, pathCount: paths.length,
+        mismatchCount: mismatches.length, mismatches: mismatches.slice(0, 20) };
+    };
+    try {
+      readReviewedPackagedOfficeSource();
+      return { status: "passed" };
+    } catch (error) {
+      return { status: "blocked", reason: error.message,
+        source: await compare(join(repositoryRoot, "native/office-local"), OFFICE_LOCAL_NATIVE_REVIEW_SOURCE_INPUTS,
+          review.sourceSha256),
+        packaging: await compare(repositoryRoot, PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS,
+          review.packagingSha256) };
+    }
   } catch (error) {
-    return { status: "blocked", reason: error.message,
-      source: await compare(join(repositoryRoot, "native/office-local"), OFFICE_LOCAL_NATIVE_REVIEW_SOURCE_INPUTS,
-        review.sourceSha256),
-      packaging: await compare(repositoryRoot, PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS,
-        review.packagingSha256) };
+    return { status: "unavailable", reason: error.code ?? error.message };
   }
 }
 
