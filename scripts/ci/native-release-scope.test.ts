@@ -101,7 +101,7 @@ test("the macOS job independently gates native smoke and the complete publicatio
   }
   const release = source.slice(source.indexOf("      - name: Check changed native release reviews"));
   assert.match(release, /if: needs\.scope\.outputs\.native-release == 'true'/u);
-  const localizationCompile = source.indexOf("      - name: Generate localization source inputs for native release contracts");
+  const localizationCompile = source.indexOf("      - name: Generate reviewed localization catalog bindings");
   const releaseChecks = source.indexOf("      - name: Check changed native release reviews");
   assert.ok(localizationCompile >= 0 && localizationCompile < releaseChecks);
   assert.match(source.slice(localizationCompile, releaseChecks), /if: needs\.scope\.outputs\.native-release == 'true'/u);
