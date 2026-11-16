@@ -4,8 +4,14 @@ This scoped source prerequisite covers the Locked Use integration in the fixed
 Office packaging closure for Darwin arm64, `unsigned_dev`, ad-hoc signing and
 `provider=false`.
 
-Candidate: `b47c62345b3ed4af83ece9590d7ab2ddccfd8f38`.
+Packaging review record: `b47c62345b3ed4af83ece9590d7ab2ddccfd8f38`.
+Current implementation: `7bd0a549f364ada9d4dc8327bbc64c4c27376eb8`.
 Base: `27a9ccb23c59bcb890d556767f175830717b94cc`.
+
+The adopted record is checked against the current tree by digest. The current
+implementation contains the 60 approved packaging bytes and follow-up Locked
+Use authorization-boundary changes outside the frozen Office inventory; those
+follow-up changes are covered by the focused Desktop/provider tests below.
 
 ## Independent decision
 
