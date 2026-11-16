@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { packageValidationScope } from "./package-validation-scope.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -37,10 +38,14 @@ const FORCE_FULL_PATTERNS = [
   /(?:^|\/)(?:Dockerfile|docker-compose[^/]*|Makefile)$/u,
 ];
 
-const TEST_PATH_PATTERN = /(?:^|\/)(?:test|tests|__tests__|e2e)(?:\/|$)|(?:^|\/)[^/]+\.test\.[^/]+$/u;
+const TEST_PATH_PATTERN = /(?:^|\/)(?:test|tests|__tests__|e2e)(?:\/|$)|(?:^|\/)[^/]+\.test\.(?:[cm]?[jt]s|[jt]sx)$/u;
 const TEST_SUPPORT_PATTERN = /(?:fixture|fixtures|helper|helpers|support|setup|util|utils)/iu;
 const SUPPORTED_TEST_PACKAGE_PREFIXES = ["packages/"];
 const SUPPORTED_TEST_PACKAGE_DIRECTORIES = new Set(["apps/web", "apps/chrome-extension", "apps/mobile"]);
+const NATIVE_RELEASE_REVIEW_FILES = new Set([
+  "native/office-local/reviewed-packaged-source-v1.json",
+  "native/sandbox/reviewed-codesign-source-v1.json",
+]);
 // The standalone macOS helper smoke validates the reviewed Seatbelt/native
 // helper itself. Keep it for changes that can alter that contract; ordinary
 // Daemon changes retain the complete Darwin test suite without consuming an
@@ -81,6 +86,7 @@ export function classifyChangedFiles(input) {
   const eventName = input.eventName ?? "pull_request";
   const packages = input.packageEntries ?? discoverPackages(repositoryRoot);
   const nativeSurfaceChanged = files.some(isMacosNativePath);
+  const nativeRelease = files.some(file => NATIVE_RELEASE_REVIEW_FILES.has(file));
 
   if (eventName !== "pull_request" || input.forceFull || files.length === 0) {
     return buildScope("full", files, packages, "non-PR event or explicit full CI");
@@ -98,14 +104,26 @@ export function classifyChangedFiles(input) {
     return buildScope("docs", files, packages, reason);
   }
 
+  const validationManifests = new Set();
+  const validationConfigs = new Set();
   for (const file of files.filter((file) => file.endsWith("/package.json"))) {
     const directory = dirname(file);
     const current = packages.find((entry) => entry.directory === directory);
     const previous = input.basePackageEntries?.find((entry) => entry.directory === directory);
     if (!current || !previous || current.name !== previous.name
       || current.hasTestScript !== previous.hasTestScript || current.hasTypecheckScript !== previous.hasTypecheckScript
-      || !current.scriptsFingerprint || current.scriptsFingerprint !== previous.scriptsFingerprint) {
+      || !current.scriptsFingerprint || !previous.scriptsFingerprint) {
       return buildScope("full", files, packages, "unverified or changed workspace package identity or validation scripts");
+    }
+    if (current.scriptsFingerprint !== previous.scriptsFingerprint) {
+      const validation = packageValidationScope({ current: current.manifest, previous: previous.manifest,
+        directory, root: repositoryRoot, repositoryFiles: listRepositoryFiles(repositoryRoot),
+        previousFiles: previous.files, changedFiles: files });
+      if (!validation || !isSupportedTestPackage(directory) || !isSupportedTypecheckPackage(directory)) {
+        return buildScope("full", files, packages, "unverified or changed workspace package identity or validation scripts");
+      }
+      validationManifests.add(file);
+      for (const config of validation.testConfigs) validationConfigs.add(config);
     }
   }
 
@@ -116,6 +134,7 @@ export function classifyChangedFiles(input) {
 
   for (const file of files) {
     if (isDocumentationPath(file) || isMaintenancePath(file) || isAssurancePath(file)) continue;
+    if (NATIVE_RELEASE_REVIEW_FILES.has(file)) continue;
     if (isMacosNativePath(file)) continue;
     const entry = findOwningPackage(file, packages);
     if (!entry) {
@@ -123,7 +142,7 @@ export function classifyChangedFiles(input) {
       continue;
     }
     changedEntries.add(entry.name);
-    if (isTestPath(file)) {
+    if (isTestPath(file) || validationManifests.has(file) || validationConfigs.has(file)) {
       changedTestEntries.add(entry.name);
     } else {
       changedSourceEntries.add(entry.name);
@@ -140,6 +159,9 @@ export function classifyChangedFiles(input) {
 
   if (unresolvedFiles.length > 0) {
     return buildScope("full", files, packages, `unrecognized paths: ${unresolvedFiles.join(", ")}`);
+  }
+  if (nativeRelease && !packages.some(entry => entry.name === "@ling-stack/daemon")) {
+    return buildScope("full", files, packages, "native release review requires the Daemon build dependency");
   }
 
   const sourceEntries = [...changedSourceEntries];
@@ -184,23 +206,27 @@ export function classifyChangedFiles(input) {
   return {
     mode: "affected",
     files,
-    packages: affectedEntries.map((entry) => entry.name).sort(),
+    packages: [...new Set([...affectedEntries.map((entry) => entry.name),
+      ...(nativeRelease ? ["@ling-stack/daemon"] : [])])].sort(),
     testPackages,
     typecheckPackages,
     dependencyPolicy: files.some((file) => file.endsWith("/package.json") || DEPENDENCY_CHECK_FILES.has(file)),
     assurance: files.some(isAssurancePath) || sourceEntries.some(name => ASSURANCE_PACKAGES.has(name)),
     daemon: affectedNames.has("@ling-stack/daemon"),
     daemonPlatforms,
-    macosNative: nativeSurfaceChanged,
+    macosNative: nativeSurfaceChanged || nativeRelease,
+    macosHelper: nativeSurfaceChanged,
+    nativeRelease,
     web: affectedNames.has("@ling-stack/web"),
-    reason: changedEntries.size === 0 ? "offline assurance inputs and validation consumers" : changedSourceEntries.size === 0
+    reason: nativeRelease && changedEntries.size === 0 ? "native release review inputs and build dependencies"
+      : changedEntries.size === 0 ? "offline assurance inputs and validation consumers" : changedSourceEntries.size === 0
       ? "test or test-support changes in affected workspace packages"
       : "workspace source change with transitive consumers",
   };
 }
 
-/** @typedef {{name: string, directory: string, dependencies: string[], hasTestScript: boolean, hasTypecheckScript: boolean, scriptsFingerprint?: string}} PackageEntry */
-/** @typedef {{mode: "docs"|"affected"|"full", files: string[], packages: string[], testPackages: string[], typecheckPackages: string[], dependencyPolicy: boolean, assurance: boolean, daemon: boolean, daemonPlatforms: string[], macosNative: boolean, web: boolean, reason: string}} CiScope */
+/** @typedef {{name: string, directory: string, dependencies: string[], hasTestScript: boolean, hasTypecheckScript: boolean, scriptsFingerprint?: string, manifest?: object, files?: string[]}} PackageEntry */
+/** @typedef {{mode: "docs"|"affected"|"full", files: string[], packages: string[], testPackages: string[], typecheckPackages: string[], dependencyPolicy: boolean, assurance: boolean, daemon: boolean, daemonPlatforms: string[], macosNative: boolean, macosHelper: boolean, nativeRelease: boolean, web: boolean, reason: string}} CiScope */
 
 /** @param {string} value */
 function normalizePath(value) {
@@ -232,7 +258,7 @@ function isTestPath(file) {
 
 /** @param {string} file */
 function isMacosNativePath(file) {
-  return MACOS_NATIVE_PATH_PATTERNS.some((pattern) => pattern.test(file));
+  return !NATIVE_RELEASE_REVIEW_FILES.has(file) && MACOS_NATIVE_PATH_PATTERNS.some((pattern) => pattern.test(file));
 }
 
 /** @param {string} file */
@@ -376,12 +402,16 @@ function sameImportTarget(changed, imported) {
 /** @param {string} root @returns {PackageEntry[]} */
 function discoverPackages(root, ref) {
   if (ref) {
-    return execFileSync("git", ["ls-tree", "-r", "--name-only", "-z", ref, "--", "packages", "apps"], {
+    const files = execFileSync("git", ["ls-tree", "-r", "--name-only", "-z", ref, "--", "packages", "apps"], {
       cwd: root, encoding: "utf8",
-    }).split("\0").filter((file) => /^(?:apps|packages)\/[^/]+\/package\.json$/u.test(file))
-      .map((file) => packageEntry(dirname(file), JSON.parse(execFileSync("git", ["show", `${ref}:${file}`], {
-        cwd: root, encoding: "utf8",
-      }))));
+    }).split("\0").filter(Boolean);
+    return files.filter((file) => /^(?:apps|packages)\/[^/]+\/package\.json$/u.test(file)).map((file) => {
+      const directory = dirname(file);
+      return {
+        ...packageEntry(directory, JSON.parse(execFileSync("git", ["show", `${ref}:${file}`], { cwd: root, encoding: "utf8" }))),
+        files: files.filter(candidate => candidate.startsWith(`${directory}/`)),
+      };
+    });
   }
   const entries = [];
   for (const workspaceRoot of ["packages", "apps"]) {
@@ -407,6 +437,7 @@ function packageEntry(directory, manifest) {
     hasTestScript: typeof manifest.scripts?.test === "string",
     hasTypecheckScript: typeof manifest.scripts?.typecheck === "string",
     scriptsFingerprint: JSON.stringify(Object.entries(manifest.scripts ?? {}).sort(([a], [b]) => a.localeCompare(b))),
+    manifest,
   };
 }
 
@@ -443,6 +474,8 @@ function buildScope(mode, files, packages, reason) {
     daemon: mode === "full" || names.includes("@ling-stack/daemon"),
     daemonPlatforms: mode === "full" ? [...DAEMON_PLATFORMS] : [],
     macosNative: mode === "full" || files.some(isMacosNativePath),
+    macosHelper: mode === "full" || files.some(isMacosNativePath),
+    nativeRelease: files.some(file => NATIVE_RELEASE_REVIEW_FILES.has(file)),
     web: mode === "full" || names.includes("@ling-stack/web"),
     reason,
   };
