@@ -1,5 +1,8 @@
 /* OpenClaw ChatPositionRail motion: 12px pitch, 8/12/16/24/32px ticks, 100ms ease. */
 [data-conversation-position-navigation] > [data-conversation-feed-viewport] .conversation-timeline-depth-0 {
+  width: calc(100% + 48px);
+  max-width: none;
+  margin-inline-start: -48px;
   padding-inline-start: 48px;
 }
 
