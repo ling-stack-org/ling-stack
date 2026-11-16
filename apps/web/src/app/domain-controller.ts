@@ -1,6 +1,9 @@
 export interface DomainError {
   readonly scope: "load" | "mutation" | "stream";
   readonly message: string;
+  readonly code?: string;
+  readonly status?: number;
+  readonly technicalMessage?: string;
   readonly origin?: "transport";
   readonly retryLabel?: string;
 }

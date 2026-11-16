@@ -1,0 +1,15 @@
+.product-error-details {
+  margin-top: var(--ling-space-2);
+}
+
+.product-error-details-message {
+  display: block;
+  max-width: 100%;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--ling-text-muted);
+  font-family: var(--ling-font-mono);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+  white-space: pre-wrap;
+}
