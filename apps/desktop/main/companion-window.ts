@@ -9,8 +9,8 @@ export function buildCompanionWindowOptions(input: {
   readonly daemonBaseUrl: string;
   readonly workArea: DesktopRect;
 }): BrowserWindowConstructorOptions {
-  const width = Math.min(420, input.workArea.width);
-  const height = Math.min(760, input.workArea.height);
+  const width = Math.min(760, input.workArea.width);
+  const height = Math.min(680, input.workArea.height);
   return {
     width, height,
     x: input.workArea.x + input.workArea.width - width,

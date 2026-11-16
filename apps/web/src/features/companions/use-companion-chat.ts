@@ -21,6 +21,7 @@ interface ChatSession {
   readonly controller: AbortController;
   pending?: PendingSubmission;
   sending: boolean;
+  replyError?: string;
   reconnect?: () => Promise<void>;
 }
 interface CompanionStreamEvent {
@@ -85,7 +86,8 @@ export function useCompanionChat(input: {
       setMessages((current) => mergeCompanionMessages(current, [receipt.aiReply!]));
       if (receipt.aiReply.status !== "pending") {
         finish(session);
-        if (receipt.aiReply.errorMessage) setError(receipt.aiReply.errorMessage);
+        session.replyError = receipt.aiReply.errorMessage;
+        setError(session.replyError ?? "");
         return true;
       }
     }
@@ -124,7 +126,7 @@ export function useCompanionChat(input: {
           getCompanionState(session.cwd, session.companionId),
           listCompanionEvents(session.cwd, session.companionId, { limit: 40 }),
         ]);
-        if (!isCurrent(session)) return;
+        if (!isCurrent(session) || session.sending) return;
         setMessages((current) => mergeCompanionMessages(current, history.messages));
         setState((current) => current && current.updatedAt > status.state.updatedAt ? current : status.state);
         if (!initialized) setCursor(history.hasMore ? history.nextBeforeMessageId : undefined);
@@ -133,7 +135,7 @@ export function useCompanionChat(input: {
         initialized = true;
         if (!session.pending || await reconcile(session)) {
           setConnection("connected");
-          setError("");
+          setError(session.replyError ?? "");
         }
       } catch (caught) {
         if (isCurrent(session)) {
@@ -167,6 +169,7 @@ export function useCompanionChat(input: {
     const submission = { key: session.pending?.key ?? crypto.randomUUID(), body: session.pending?.body ?? body.trim() };
     session.pending = submission;
     session.sending = true;
+    session.replyError = undefined;
     setPending(submission);
     setSending(true);
     setError("");
@@ -190,7 +193,8 @@ export function useCompanionChat(input: {
           terminal = true;
           callbacks.current.onActions(data.companionReply?.actionRequests?.map((action) => action.actionId) ?? []);
           if (data.aiReply && data.aiReply.status !== "pending") finish(session);
-          if (data.error) setError(data.error);
+          session.replyError = data.error ?? data.aiReply?.errorMessage;
+          if (session.replyError) setError(session.replyError);
         }
       });
       if (isCurrent(session) && session.pending) {
@@ -203,8 +207,10 @@ export function useCompanionChat(input: {
         await reconcile(session);
         if (session.pending) setError(t("The reply was interrupted. Reconnect to recover or retry the same message."));
       } catch {
-        setConnection("offline");
-        setError(caught instanceof Error ? caught.message : String(caught));
+        if (isCurrent(session)) {
+          setConnection("offline");
+          setError(caught instanceof Error ? caught.message : String(caught));
+        }
       }
     } finally {
       session.sending = false;

@@ -20,7 +20,7 @@ async function fixture(page: Page, mode: "normal" | "interrupted" | "pending" = 
   };
   const state: CompanionState = { companionId: companion.id, phase: "idle", emotionId: "neutral",
     emotionIntensity: 0.5, energy: 100, updatedAt: new Date().toISOString() };
-  const makeMessage = (id: string, body: string, authorType: "local-user" | "ai-teammate", status: TeammateDirectMessage["status"] = "ready", index = 0): TeammateDirectMessage => ({
+  const makeMessage = (id: string, body: string, authorType: TeammateDirectMessage["authorType"], status: TeammateDirectMessage["status"] = "ready", index = 0): TeammateDirectMessage => ({
     id, workspaceId: "workspace_default", threadId: "thread", teammateId: teammate.id, authorType, body, status,
     attachmentIds: [], linkPreviewIds: [], fileRefs: [], createdAt: new Date(Date.parse("2026-11-16T01:00:00Z") + index * 1000).toISOString(), updatedAt: new Date().toISOString(),
   });
@@ -82,12 +82,14 @@ async function fixture(page: Page, mode: "normal" | "interrupted" | "pending" = 
   });
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
   const address = server.address(); if (!address || typeof address === "string") throw new Error("missing address");
-  await page.route(url => url.pathname === "/companions" || url.pathname.startsWith("/companions/"), async route => {
+  await page.route(url => url.origin === "http://127.0.0.1:17891"
+    && (url.pathname === "/companions" || url.pathname.startsWith("/companions/")), async route => {
     const url = new URL(route.request().url());
     await route.continue({ url: `http://127.0.0.1:${address.port}${url.pathname}${url.search}` });
   });
   return {
     keys, cursors, get companion() { return companion; },
+    addSystemMessage: (body: string) => messages.push(makeMessage("system_prompt", body, "system")),
     finish: () => { if (completed) return; completed = true; release?.(); },
     finishPending: () => { for (const submission of submissions.values()) if (submission.aiReply) {
       submission.aiReply = { ...submission.aiReply, body: "Recovered after disconnect.", status: "ready" }; messages.push(submission.aiReply);
@@ -152,7 +154,7 @@ test("pending receipt survives reload and recovers without another POST", async 
 test("history pagination retains its cursor across reconnect synchronization", async ({ page }) => {
   const f = await fixture(page, "normal", 90);
   try {
-    const panel = await openPanel(page); await panel.getByRole("button", { name: "Companion messages" }).click();
+    const panel = await openPanel(page);
     const log = panel.getByRole("log"); await log.evaluate(element => { element.scrollTop = 0; });
     await log.getByRole("button", { name: "Load earlier messages" }).click();
     await expect(log).toContainText("History 10");
@@ -162,6 +164,52 @@ test("history pagination retains its cursor across reconnect synchronization", a
     await log.getByRole("button", { name: "Load earlier messages" }).click();
     await expect(log).toContainText("History 0"); expect(f.cursors).toEqual(["history_50", "history_10"]);
     await expect(log.getByRole("button", { name: "Load earlier messages" })).toHaveCount(0);
+  } finally { await f.close(); }
+});
+
+test("conversation stays beside the character across themes and below it on narrow screens", async ({ page }) => {
+  test.setTimeout(240_000);
+  const errors: string[] = [];
+  page.on("pageerror", error => errors.push(error.message));
+  const f = await fixture(page, "normal", 10);
+  f.addSystemMessage("Internal proactive scheduler prompt");
+  const evidence = process.env.LING_COMPANION_VISUAL_EVIDENCE;
+  try {
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await openPanel(page);
+    for (const themeId of ["ling-light", "ling-dark", "ling-breeze", "ling-ocean", "ling-night", "ling-journey"]) {
+      await page.evaluate(id => {
+        const selection = JSON.stringify({ mode: "fixed", themeId: id });
+        localStorage.setItem("ling-stack.themeSelection", selection);
+        localStorage.setItem("ling-stack.themeBootstrapSelection", selection);
+      }, themeId);
+      const panel = await openPanel(page);
+      await expect(page.locator("html")).toHaveAttribute("data-ui-theme", themeId);
+      const conversation = await panel.locator(".companion-mini-conversation").boundingBox();
+      const character = await panel.getByRole("img", { name: "Yui" }).boundingBox();
+      expect(conversation!.x + conversation!.width).toBeLessThanOrEqual(character!.x);
+      expect(await panel.getByRole("img", { name: "Yui" }).evaluate(async el => {
+        const url = getComputedStyle(el).backgroundImage.slice(5, -2);
+        const image = new Image(); image.src = url; await image.decode();
+        return image.naturalWidth;
+      })).toBeGreaterThan(1000);
+      await expect(panel.getByRole("log")).toContainText("History 9");
+      await expect(panel.getByRole("log")).not.toContainText("Internal proactive scheduler prompt");
+      await panel.getByRole("textbox").fill("A draft beside Yui");
+      await expect(panel.getByRole("textbox")).toHaveValue("A draft beside Yui");
+      if (evidence) await page.screenshot({ path: `${evidence}/companion-chat-${themeId}.png` });
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    const panel = page.getByRole("dialog", { name: "Intelligent companion" });
+    const stage = await panel.locator(".companion-pet-stage").boundingBox();
+    const conversation = await panel.locator(".companion-mini-conversation").boundingBox();
+    expect(stage!.y + stage!.height).toBeLessThanOrEqual(conversation!.y);
+    expect(await panel.getByRole("img", { name: "Yui" }).evaluate(el => getComputedStyle(el).animationName)).toBe("none");
+    await panel.getByRole("textbox").focus();
+    await expect(panel.getByRole("textbox")).toBeFocused();
+    if (evidence) await page.screenshot({ path: `${evidence}/companion-chat-mobile.png` });
+    expect(errors).toEqual([]);
   } finally { await f.close(); }
 });
 

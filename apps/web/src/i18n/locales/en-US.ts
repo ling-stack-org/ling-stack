@@ -4871,4 +4871,12 @@ export const enUS = {
   "Could not update the default model. Try again.": "Could not update the default model. Try again.",
   "Provider check failed. Review technical details and try again.": "Provider check failed. Review technical details and try again.",
   "Model preset was deleted, but some references could not be cleared. Review workspace defaults.": "Model preset was deleted, but some references could not be cleared. Review workspace defaults.",
+  "Neutral": "Neutral",
+  "Happy": "Happy",
+  "Sad": "Sad",
+  "Excited": "Excited",
+  "Tired": "Tired",
+  "Greet": "Greet",
+  "Think": "Think",
+  "Celebrate": "Celebrate",
 } as const satisfies Readonly<Record<string, string>>;

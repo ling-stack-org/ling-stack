@@ -6774,4 +6774,12 @@ export const zhCN = {
   "No referenced files": "没有引用文件",
   "Source preview unavailable": "来源预览不可用",
   "Selected skill sources published. Teammate bindings and runtime injection are unchanged.": "所选技能来源已发布。队友绑定和运行时注入未改变。",
+  "Neutral": "平静",
+  "Happy": "开心",
+  "Sad": "难过",
+  "Excited": "兴奋",
+  "Tired": "疲惫",
+  "Greet": "打招呼",
+  "Think": "思考",
+  "Celebrate": "庆祝",
 } as const satisfies Readonly<Record<string, string>>;

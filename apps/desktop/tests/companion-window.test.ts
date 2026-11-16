@@ -58,7 +58,7 @@ function fixture() {
 
 test("desktop companion is a larger transparent sandboxed window clamped to its display", () => {
   const options = buildCompanionWindowOptions({ cwd: "/workspace", daemonBaseUrl: "http://127.0.0.1:17891", workArea: { x: -800, y: 0, width: 800, height: 600 } });
-  assert.equal(options.width, 420); assert.equal(options.height, 600); assert.equal(options.x, -420);
+  assert.equal(options.width, 760); assert.equal(options.height, 600); assert.equal(options.x, -760);
   assert.equal(options.transparent, true); assert.equal(options.frame, false); assert.equal(options.alwaysOnTop, true);
   assert.equal(options.webPreferences?.nodeIntegration, false); assert.equal(options.webPreferences?.sandbox, true);
   assert.equal(options.webPreferences?.contextIsolation, true);

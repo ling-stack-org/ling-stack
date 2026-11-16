@@ -9,16 +9,12 @@ export function CompanionPetStage({
   phase,
   actionId,
   emotionId,
-  emotionLabel,
-  message,
   onPointerDown,
 }: {
   readonly companionName: string;
   readonly phase?: CompanionState["phase"];
   readonly actionId?: string;
   readonly emotionId?: string;
-  readonly emotionLabel: string;
-  readonly message: string;
   readonly onPointerDown?: React.PointerEventHandler<HTMLElement>;
 }): React.JSX.Element {
   const { t } = useI18n();
@@ -32,14 +28,7 @@ export function CompanionPetStage({
       data-companion-drag-handle="true"
       onPointerDown={onPointerDown}
     >
-      <div className="companion-pet-stage-topline">
-        <span className="companion-pet-stage-name">{companionName}</span>
-        <span className="companion-pet-stage-emotion">{emotionLabel}</span>
-      </div>
       <div className="companion-pet-scene">
-        <div className="companion-pet-bubble" aria-live="polite">
-          {message}
-        </div>
         <div className="companion-pet-art-wrap">
           <span
             className={`companion-character companion-character-${pose}`}

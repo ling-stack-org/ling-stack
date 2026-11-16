@@ -2643,6 +2643,7 @@ export function AppShell(): React.JSX.Element {
         />
       ) : null}
       <CompanionMiniPanel
+        key={form.cwd}
         cwd={form.cwd}
         teammates={aiTeammates}
         open={companionMiniOpen}

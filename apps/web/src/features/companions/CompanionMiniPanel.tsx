@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, ExternalLink, MessageSquare, Pause, Play, RefreshCw, Send, Sparkles, X, Zap } from "lucide-react";
+import { ArrowUp, ExternalLink, Pause, Play, RefreshCw, Send, Sparkles, X, Zap } from "lucide-react";
 import type {
   AiTeammate,
   CompanionProfile,
@@ -35,7 +35,6 @@ export function CompanionMiniPanel({
   const [companions, setCompanions] = useState<readonly CompanionProfile[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [input, setInput] = useState("");
-  const [historyOpen, setHistoryOpen] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
   const followMessagesRef = useRef(true);
   const [activeActionId, setActiveActionId] = useState<string | undefined>();
@@ -60,14 +59,12 @@ export function CompanionMiniPanel({
   });
   const { state, setState } = chat;
   const orderedMessages = useMemo(
-    () => [...chat.messages].sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
+    () => chat.messages.filter((message) => message.authorType !== "system")
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
     [chat.messages],
   );
   const emotion = selected?.manifest.emotions.find((item) => item.id === state?.emotionId)
     ?? selected?.manifest.emotions.find((item) => item.id === selected.manifest.defaultEmotionId);
-  const latestAssistantMessage = [...orderedMessages]
-    .reverse()
-    .find((message) => message.authorType !== "local-user" && message.body.trim())?.body.trim();
   const visiblePhase = chat.sending ? "thinking" : state && (
     state.phase === "error"
     || Boolean(activeActionId)
@@ -76,7 +73,7 @@ export function CompanionMiniPanel({
 
   useEffect(() => {
     if (followMessagesRef.current && logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
-  }, [orderedMessages.at(-1)?.id, orderedMessages.at(-1)?.body, historyOpen]);
+  }, [orderedMessages.at(-1)?.id, orderedMessages.at(-1)?.body]);
 
   useEffect(() => {
     if (activeActionId) {
@@ -226,7 +223,7 @@ export function CompanionMiniPanel({
   return (
     <aside
       ref={panelRef}
-      className={`companion-mini-panel${desktop ? " companion-desktop-panel" : ""}${historyOpen ? " is-history-open" : ""}${chat.connection !== "connected" ? " has-connection-issue" : ""}${dragging ? " is-dragging" : ""}`}
+      className={`companion-mini-panel${desktop ? " companion-desktop-panel" : ""}${chat.connection !== "connected" ? " has-connection-issue" : ""}${dragging ? " is-dragging" : ""}`}
       role="dialog"
       aria-label={t("Intelligent companion")}
       style={floatingPosition ? {
@@ -239,134 +236,143 @@ export function CompanionMiniPanel({
       onPointerUp={endDrag}
       onPointerCancel={endDrag}
     >
-      <header className="companion-mini-header">
-        <div className="companion-mini-heading">
-          <span className="companion-mini-heading-icon" aria-hidden="true"><Icon icon={Sparkles} size="sm" /></span>
-          <div>
-            <strong>{t("Intelligent companion")}</strong>
-            <span>{selected ? selected.displayName : t("No companion selected")}</span>
+      <div className="companion-mini-conversation">
+        <header className="companion-mini-header">
+          <div className="companion-mini-heading">
+            <span className="companion-mini-heading-icon" aria-hidden="true"><Icon icon={Sparkles} size="sm" /></span>
+            <div>
+              <strong>{t("Intelligent companion")}</strong>
+              <span>{selected ? selected.displayName : t("No companion selected")}</span>
+            </div>
           </div>
-        </div>
-        <div className="companion-mini-header-actions">
-          <IconButton label={t("Companion messages")} icon={MessageSquare} size="sm" aria-pressed={historyOpen} onClick={() => setHistoryOpen((current) => !current)} />
-          {!desktop && window.lingDesktop?.companionWindow ? <IconButton label={t("Open desktop companion")} icon={ExternalLink} size="sm" onClick={() => {
-            void window.lingDesktop!.companionWindow!.open(cwd.trim()).then((result) => {
-              if (result.accepted) onClose();
-              else setError(result.reason ?? t("Unable to open desktop companion"));
-            }).catch((caught) => setError(caught instanceof Error ? caught.message : String(caught)));
-          }} /> : null}
-          <IconButton label={t("Refresh")} icon={RefreshCw} size="sm" onClick={() => void refresh()} disabled={loading} />
-          <IconButton label={t("Close")} icon={X} size="sm" onClick={onClose} />
-        </div>
-      </header>
+          <div className="companion-mini-header-actions">
+            {!desktop && window.lingDesktop?.companionWindow ? <IconButton label={t("Open desktop companion")} icon={ExternalLink} size="sm" onClick={() => {
+              void window.lingDesktop!.companionWindow!.open(cwd.trim()).then((result) => {
+                if (result.accepted) onClose();
+                else setError(result.reason ?? t("Unable to open desktop companion"));
+              }).catch((caught) => setError(caught instanceof Error ? caught.message : String(caught)));
+            }} /> : null}
+            <IconButton label={t("Refresh")} icon={RefreshCw} size="sm" onClick={() => void refresh()} disabled={loading} />
+            <IconButton label={t("Close")} icon={X} size="sm" onClick={onClose} />
+          </div>
+        </header>
 
-      {activeCompanions.length > 1 ? (
-        <label className="companion-mini-select-label">
-          <span>{t("Active companion")}</span>
-          <Select value={selected?.id ?? ""} onChange={(event) => setSelectedId(event.target.value)}>
-            {activeCompanions.map((companion) => <option key={companion.id} value={companion.id}>{companion.displayName}</option>)}
-          </Select>
-        </label>
-      ) : null}
+        {activeCompanions.length > 1 ? (
+          <label className="companion-mini-select-label">
+            <span>{t("Active companion")}</span>
+            <Select value={selected?.id ?? ""} onChange={(event) => setSelectedId(event.target.value)}>
+              {activeCompanions.map((companion) => <option key={companion.id} value={companion.id}>{companion.displayName}</option>)}
+            </Select>
+          </label>
+        ) : null}
 
-      {!cwd.trim() ? (
-        <div className="companion-mini-empty">
-          <span>{t("Choose a workspace before opening a companion.")}</span>
-        </div>
-      ) : activeCompanions.length === 0 ? (
-        <div className="companion-mini-empty">
-          <span>{t("Create a companion in Settings to start chatting.")}</span>
-          <Button size="sm" variant="primary" leadingIcon={<Sparkles />} onClick={onOpenSettings}>{t("Open companion settings")}</Button>
-        </div>
-      ) : selected ? (
-        <>
-          <CompanionPetStage
-            companionName={selected.displayName}
-            phase={visiblePhase}
-            actionId={activeActionId}
-            emotionId={state?.emotionId}
-            emotionLabel={emotion?.label ?? t("Ready")}
-            message={latestAssistantMessage ?? t("Say hello to your companion.")}
-            onPointerDown={beginDrag}
-          />
-
-          <form className="companion-mini-composer companion-mini-composer-under-stage" onSubmit={(event) => void sendMessage(event)}>
-            <Textarea
-              aria-label={t("Message companion")}
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              placeholder={t("Message your companion...")}
-              rows={1}
-              disabled={busy !== undefined || chat.sending || Boolean(chat.pending?.body)}
-            />
-            <Button type="submit" size="sm" variant="primary" leadingIcon={<Send />} disabled={!input.trim() || busy !== undefined || chat.sending || Boolean(chat.pending?.body)} loading={chat.sending}>
-              {t("Send")}
-            </Button>
-          </form>
-          {chat.connection !== "connected" && !chat.sending ? <Button className="companion-mini-reconnect" size="sm" variant="secondary" onClick={() => void chat.reconnect()} disabled={busy !== undefined}>{chat.pending?.body ? t("Recover or retry message") : t("Reconnect")}</Button> : null}
-          <section className="companion-mini-presence" aria-label={t("Companion status")}>
-            <div className="companion-mini-avatar-wrap">
-              {teammate ? <TeammateAvatarView teammate={teammate} cwd={cwd} /> : <span className="companion-mini-avatar-fallback" aria-hidden="true">🐾</span>}
-              <span className={`companion-mini-phase companion-mini-phase-${visiblePhase ?? "idle"}`} aria-label={visiblePhase ?? "idle"} />
-            </div>
-            <div className="companion-mini-presence-copy">
-              <strong>{emotion?.label ?? t("Ready")}</strong>
-              <span>{phaseLabel(visiblePhase, t)} · {t("Energy")} {Math.round(state?.energy ?? 100)}%</span>
-              <div className="companion-energy-bar" aria-label={t("Energy") }><span style={{ width: `${Math.max(0, Math.min(100, state?.energy ?? 100))}%` }} /></div>
-            </div>
-            <IconButton
-              label={selected.behaviorPolicy.proactiveEnabled ? t("Pause proactive behavior") : t("Resume proactive behavior")}
-              icon={selected.behaviorPolicy.proactiveEnabled ? Pause : Play}
-              size="sm"
-              disabled={busy === "status"}
-              onClick={() => void toggleProactive()}
-            />
-          </section>
-
-          <div ref={logRef} className="companion-mini-messages" onScroll={(event) => {
-            const log = event.currentTarget;
-            followMessagesRef.current = log.scrollHeight - log.scrollTop - log.clientHeight < 32;
-          }} role="log" aria-label={t("Companion messages")} aria-live="polite">
-            {chat.hasEarlier ? <Button size="sm" variant="ghost" leadingIcon={<ArrowUp />} onClick={() => {
-              const log = logRef.current;
-              const height = log?.scrollHeight ?? 0;
-              followMessagesRef.current = false;
-              void chat.loadEarlier().then(() => requestAnimationFrame(() => {
-                if (log) log.scrollTop += log.scrollHeight - height;
-              }));
-            }} loading={chat.loadingEarlier}>{t("Load earlier messages")}</Button> : null}
-            {orderedMessages.length === 0 ? <p className="companion-mini-message-empty">{t("Say hello to your companion.")}</p> : null}
-            {orderedMessages.map((message) => (
-              <div key={message.id} className={`companion-mini-message ${message.authorType === "local-user" ? "user" : "assistant"}`}>
-                <span>{message.body || (message.status === "pending" ? t("Thinking...") : message.errorMessage ?? "")}</span>
+        {!cwd.trim() ? (
+          <div className="companion-mini-empty">
+            <span>{t("Choose a workspace before opening a companion.")}</span>
+          </div>
+        ) : activeCompanions.length === 0 ? (
+          <div className="companion-mini-empty">
+            <span>{t("Create a companion in Settings to start chatting.")}</span>
+            <Button size="sm" variant="primary" leadingIcon={<Sparkles />} onClick={onOpenSettings}>{t("Open companion settings")}</Button>
+          </div>
+        ) : selected ? (
+          <>
+            <section className="companion-mini-presence" aria-label={t("Companion status")}>
+              <div className="companion-mini-avatar-wrap">
+                {teammate ? <TeammateAvatarView teammate={teammate} cwd={cwd} /> : <span className="companion-mini-avatar-fallback" aria-hidden="true">🐾</span>}
+                <span className={`companion-mini-phase companion-mini-phase-${visiblePhase ?? "idle"}`} aria-label={visiblePhase ?? "idle"} />
               </div>
-            ))}
-          </div>
-
-          <div className="companion-mini-actions" aria-label={t("Companion actions")}>
-            {selected.manifest.actions.map((action) => (
-              <Button
-                key={action.id}
+              <div className="companion-mini-presence-copy">
+                <strong>{emotion ? companionLabel(emotion.label, t) : t("Ready")}</strong>
+                <span>{phaseLabel(visiblePhase, t)} · {t("Energy")} {Math.round(state?.energy ?? 100)}%</span>
+                <div className="companion-energy-bar" aria-label={t("Energy") }><span style={{ width: `${Math.max(0, Math.min(100, state?.energy ?? 100))}%` }} /></div>
+              </div>
+              <IconButton
+                label={selected.behaviorPolicy.proactiveEnabled ? t("Pause proactive behavior") : t("Resume proactive behavior")}
+                icon={selected.behaviorPolicy.proactiveEnabled ? Pause : Play}
                 size="sm"
-                variant="ghost"
-                leadingIcon={<Zap />}
-                disabled={busy !== undefined}
-                onClick={() => void requestAction(action.id)}
-              >
-                {action.label}
+                disabled={busy === "status"}
+                onClick={() => void toggleProactive()}
+              />
+            </section>
+
+            <div ref={logRef} className="companion-mini-messages" onScroll={(event) => {
+              const log = event.currentTarget;
+              followMessagesRef.current = log.scrollHeight - log.scrollTop - log.clientHeight < 32;
+            }} role="log" aria-label={t("Companion messages")} aria-live="polite">
+              {chat.hasEarlier ? <Button size="sm" variant="ghost" leadingIcon={<ArrowUp />} onClick={() => {
+                const log = logRef.current;
+                const height = log?.scrollHeight ?? 0;
+                followMessagesRef.current = false;
+                void chat.loadEarlier().then(() => requestAnimationFrame(() => {
+                  if (log) log.scrollTop += log.scrollHeight - height;
+                }));
+              }} loading={chat.loadingEarlier}>{t("Load earlier messages")}</Button> : null}
+              {orderedMessages.length === 0 ? <p className="companion-mini-message-empty">{t("Say hello to your companion.")}</p> : null}
+              {orderedMessages.map((message) => (
+                <div key={message.id} className={`companion-mini-message ${message.authorType === "local-user" ? "user" : "assistant"}`}>
+                  <span>{message.body || (message.status === "pending" ? t("Thinking...") : message.errorMessage ?? "")}</span>
+                </div>
+              ))}
+            </div>
+
+            <div className="companion-mini-actions" aria-label={t("Companion actions")}>
+              {selected.manifest.actions.map((action) => (
+                <Button
+                  key={action.id}
+                  size="sm"
+                  variant="ghost"
+                  leadingIcon={<Zap />}
+                  disabled={busy !== undefined}
+                  onClick={() => void requestAction(action.id)}
+                >
+                  {companionLabel(action.label, t)}
+                </Button>
+              ))}
+            </div>
+
+            <form className="companion-mini-composer" onSubmit={(event) => void sendMessage(event)}>
+              <Textarea
+                aria-label={t("Message companion")}
+                value={input}
+                onChange={(event) => setInput(event.target.value)}
+                placeholder={t("Message your companion...")}
+                rows={1}
+                disabled={busy !== undefined || chat.sending || Boolean(chat.pending?.body)}
+              />
+              <Button type="submit" size="sm" variant="primary" leadingIcon={<Send />} disabled={!input.trim() || busy !== undefined || chat.sending || Boolean(chat.pending?.body)} loading={chat.sending}>
+                {t("Send")}
               </Button>
-            ))}
-          </div>
+            </form>
+            {chat.connection !== "connected" && !chat.sending ? <Button className="companion-mini-reconnect" size="sm" variant="secondary" onClick={() => void chat.reconnect()} disabled={busy !== undefined}>{chat.pending?.body ? t("Recover or retry message") : t("Reconnect")}</Button> : null}
 
-        </>
-      ) : null}
+          </>
+        ) : null}
 
-      {error || chat.error ? <p className="companion-mini-error" role="alert">{error || chat.error}</p> : null}
-      <footer className="companion-mini-footer">
-        <button type="button" className="companion-mini-settings-link" onClick={onOpenSettings}>{t("Manage companions in Settings")}</button>
-      </footer>
+        {error || chat.error ? <p className="companion-mini-error" role="alert">{error || chat.error}</p> : null}
+        <footer className="companion-mini-footer">
+          <Button size="sm" variant="ghost" className="companion-mini-settings-link" onClick={onOpenSettings}>{t("Manage companions in Settings")}</Button>
+        </footer>
+      </div>
+      {selected ? <CompanionPetStage companionName={selected.displayName} phase={visiblePhase}
+        actionId={activeActionId} emotionId={state?.emotionId} onPointerDown={beginDrag} /> : null}
     </aside>
   );
+}
+
+function companionLabel(label: string, t: (key: string) => string): string {
+  switch (label) {
+    case "Neutral": return t("Neutral");
+    case "Happy": return t("Happy");
+    case "Sad": return t("Sad");
+    case "Excited": return t("Excited");
+    case "Tired": return t("Tired");
+    case "Idle": return t("Idle");
+    case "Greet": return t("Greet");
+    case "Think": return t("Think");
+    case "Celebrate": return t("Celebrate");
+    default: return label;
+  }
 }
 
 function phaseLabel(phase: CompanionState["phase"] | undefined, t: (key: string) => string): string {
