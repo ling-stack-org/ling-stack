@@ -3,10 +3,12 @@ import { execFileSync } from "node:child_process";
 import { copyFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import test from "node:test";
+import test, { type TestContext } from "node:test";
 import { classifyChangedFiles } from "./classify-scope.mjs";
 
-const packageEntries = [
+type ScopeInput = Parameters<typeof classifyChangedFiles>[0];
+type PackageEntry = NonNullable<ScopeInput["packageEntries"]>[number];
+const packageEntries: PackageEntry[] = [
   entry("@ling-stack/contracts", "packages/contracts", [], true, true),
   entry("@ling-stack/plugin-sdk", "packages/plugin-sdk", [], true, true),
   entry("@ling-stack/core", "packages/core", ["@ling-stack/contracts", "@ling-stack/plugin-sdk"], true, true),
@@ -21,11 +23,11 @@ const packageEntries = [
   entry("@ling-stack/mobile", "apps/mobile", [], true, true),
 ];
 
-function entry(name, directory, dependencies, hasTestScript, hasTypecheckScript) {
+function entry(name: string, directory: string, dependencies: string[], hasTestScript: boolean, hasTypecheckScript: boolean): PackageEntry {
   return { name, directory, dependencies, hasTestScript, hasTypecheckScript, scriptsFingerprint: "[]" };
 }
 
-function classify(files, extra = {}) {
+function classify(files: string[], extra: Partial<ScopeInput> = {}) {
   return classifyChangedFiles({ files, packageEntries, basePackageEntries: packageEntries, ...extra });
 }
 
@@ -286,11 +288,11 @@ test("unknown paths and non-PR events use full scope", () => {
   assert.equal(classify(["packages/core/src/index.ts"], { eventName: "schedule" }).mode, "full");
 });
 
-function repositoryFixture(t) {
+function repositoryFixture(t: TestContext) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "ling-ci-scope-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
-  const write = (file, contents) => {
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
+  const write = (file: string, contents: string) => {
     const path = join(root, file);
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, contents);
@@ -301,6 +303,7 @@ function repositoryFixture(t) {
   mkdirSync(join(root, "scripts/ci"), { recursive: true });
   const script = join(root, "scripts/ci/classify-scope.mjs");
   copyFileSync(new URL("./classify-scope.mjs", import.meta.url), script);
+  copyFileSync(new URL("./package-validation-scope.mjs", import.meta.url), join(root, "scripts/ci/package-validation-scope.mjs"));
   for (const entry of packageEntries) {
     write(`${entry.directory}/package.json`, JSON.stringify({
       name: entry.name, dependencies: Object.fromEntries(entry.dependencies.map((name) => [name, "workspace:*"])),
@@ -308,9 +311,9 @@ function repositoryFixture(t) {
     }));
   }
   const commit = () => { git("add", "."); git("commit", "--quiet", "-m", "fixture"); return git("rev-parse", "HEAD"); };
-  const classify = (base) => JSON.parse(execFileSync(process.execPath, [script,
+  const classify = (base: string): ReturnType<typeof classifyChangedFiles> => JSON.parse(execFileSync(process.execPath, [script,
     "--event=pull_request", `--base=${base}`, "--head=HEAD"], { encoding: "utf8" }));
-  return { git, write, commit, classify };
+  return { root, git, write, commit, classify };
 }
 
 test("the Git boundary retains the entire PR and both sides of source-to-doc renames", (t) => {
@@ -366,4 +369,140 @@ test("the real package graph keeps Web's CLI and catalog consumers without core 
   for (const name of ["@ling-stack/web", "@ling-stack/cli", "@ling-stack/localization"]) assert.ok(scope.packages.includes(name), name);
   assert.equal(scope.daemon, false);
   assert.ok(!scope.testPackages.includes("@ling-stack/core"));
+});
+
+function validationMigration(t: TestContext) {
+  const repo = repositoryFixture(t);
+  const manifest = {
+    name: "@ling-stack/core", type: "module",
+    dependencies: { "@ling-stack/contracts": "workspace:*", "@ling-stack/plugin-sdk": "workspace:*" },
+    scripts: {
+      build: "corepack pnpm --filter @ling-stack/contracts build && tsc -p tsconfig.json",
+      "build:ci": "tsc -p tsconfig.json",
+      test: "corepack pnpm --filter @ling-stack/contracts build && tsc -p tsconfig.json && node --test test/*.test.mjs",
+      "test:ci": "node --test test/*.test.mjs",
+      typecheck: "corepack pnpm --filter @ling-stack/contracts build && tsc -p tsconfig.json --noEmit",
+      "typecheck:ci": "tsc -p tsconfig.json --noEmit",
+    } as Record<string, string>,
+  };
+  const saveManifest = () => repo.write("packages/core/package.json", JSON.stringify(manifest));
+  saveManifest();
+  repo.write("packages/core/test/probe.test.mjs", "import test from 'node:test'; test('probe', () => {});\n");
+  const base = repo.commit();
+  repo.git("mv", "packages/core/test/probe.test.mjs", "packages/core/test/probe.test.ts");
+  Object.assign(manifest.scripts, {
+    "test:ci": "node --test test/*.test.ts",
+    test: "corepack pnpm build && corepack pnpm test:ci",
+    "typecheck:ci": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
+    typecheck: "corepack pnpm build && corepack pnpm typecheck:ci",
+  });
+  repo.write("packages/core/tsconfig.test.json", JSON.stringify({
+    extends: "./tsconfig.json", compilerOptions: { noEmit: true }, include: ["test/**/*.ts"],
+  }));
+  saveManifest();
+  return { ...repo, base, manifest, saveManifest };
+}
+
+test("a verified Node/TypeScript test migration retains complete owner validation without production consumers", t => {
+  const repo = validationMigration(t);
+  repo.commit();
+  const scope = repo.classify(repo.base);
+  assert.equal(scope.mode, "affected");
+  assert.deepEqual(scope.packages, ["@ling-stack/core"]);
+  assert.deepEqual(scope.testPackages, ["@ling-stack/core"]);
+  assert.deepEqual(scope.typecheckPackages, ["@ling-stack/core"]);
+  assert.equal(scope.dependencyPolicy, true);
+  assert.equal(scope.assurance, false);
+  assert.equal(scope.daemon, false);
+  assert.equal(scope.web, false);
+  assert.match(scope.reason, /test/u);
+});
+
+test("a validation migration mixed with source or production config still selects transitive consumers", t => {
+  for (const file of ["packages/core/src/probe.ts", "packages/core/tsconfig.json"]) {
+    const repo = validationMigration(t);
+    repo.write(file, file.endsWith(".json") ? "{}" : "export const probe = true;\n");
+    repo.commit();
+    repo.write("docs/latest.md", "# Latest commit\n");
+    repo.commit();
+    const scope = repo.classify(repo.base);
+    assert.equal(scope.mode, "affected", file);
+    for (const name of ["@ling-stack/core", "@ling-stack/daemon", "@ling-stack/cli", "@ling-stack/web"]) {
+      assert.ok(scope.packages.includes(name), `${file}: ${name}`);
+    }
+    assert.equal(scope.assurance, true);
+  }
+});
+
+test("validation migrations retain shared test-support importers", t => {
+  const repo = validationMigration(t);
+  repo.write("packages/core/test/helpers.ts", "export const probe = true;\n");
+  repo.write("packages/daemon/test/probe.test.ts", "import { probe } from '../../core/test/helpers.ts';\n");
+  repo.commit();
+  const scope = repo.classify(repo.base);
+  assert.deepEqual(scope.testPackages, ["@ling-stack/core", "@ling-stack/daemon"]);
+  assert.equal(scope.daemon, true);
+  assert.deepEqual(scope.daemonPlatforms, ["linux", "darwin"]);
+  assert.equal(scope.web, false);
+});
+
+test("opaque commands, build hooks, metadata changes and incomplete test discovery retain full regression", t => {
+  const mutations: ((repo: ReturnType<typeof validationMigration>) => void)[] = [
+    repo => { repo.manifest.scripts["test:ci"] = "echo omitted"; },
+    repo => { repo.manifest.scripts.typecheck = "echo omitted"; },
+    repo => {
+      repo.manifest.scripts["typecheck:ci"] = "tsc -p tsconfig.json --noEmit";
+      repo.manifest.scripts.typecheck = "corepack pnpm build && corepack pnpm typecheck:ci";
+    },
+    repo => { repo.manifest.scripts["test:ci"] = "node --test --test-name-pattern=probe test/*.test.ts"; },
+    repo => { repo.manifest.scripts["test:ci"] += " && node ../../scripts/check.mjs"; },
+    repo => { repo.manifest.scripts["build:ci"] = "echo omitted"; },
+    repo => { repo.manifest.scripts.pretest = "node prepare.mjs"; },
+    repo => { delete repo.manifest.scripts["typecheck:ci"]; },
+    repo => { repo.manifest.dependencies["@ling-stack/contracts"] = "workspace:^"; },
+    repo => { repo.write("packages/core/test/retained.test.mjs", "// Retained test entry\n"); },
+    repo => {
+      rmSync(join(repo.root, "packages/core/test/probe.test.ts"));
+      repo.write("packages/core/test/helpers.ts", "export {};\n");
+    },
+    repo => { repo.write("packages/core/tsconfig.test.json", JSON.stringify({ include: ["test/**/*.ts"] })); },
+    repo => { repo.write("packages/core/tsconfig.test.json", JSON.stringify({ compilerOptions: { noEmit: true }, include: ["test/other.ts"] })); },
+    repo => { repo.write("unknown/input.json", "{}"); },
+  ];
+  for (const mutate of mutations) {
+    const repo = validationMigration(t);
+    mutate(repo);
+    repo.saveManifest();
+    repo.commit();
+    const scope = repo.classify(repo.base);
+    assert.equal(scope.mode, "full", String(mutate));
+    assert.equal(scope.daemon, true);
+    assert.equal(scope.web, true);
+  }
+});
+
+test("a validation config covering source remains a production input", t => {
+  const repo = validationMigration(t);
+  repo.write("packages/core/tsconfig.test.json", JSON.stringify({ compilerOptions: { noEmit: true }, include: ["src/**/*.ts", "test/**/*.ts"] }));
+  repo.commit();
+  const scope = repo.classify(repo.base);
+  assert.equal(scope.mode, "full");
+  assert.equal(scope.daemon, true);
+  assert.equal(scope.web, true);
+});
+
+test("validation configs consumed by root or nested production configs retain full regression", t => {
+  for (const [file, contents] of [
+    ["tsconfig.prod.server.json", { extends: "./tsconfig.test" }],
+    ["config/tsconfig.build.json", { extends: "../tsconfig.test.json" }],
+    ["config/tsconfig.build.json", { references: [{ path: "../tsconfig.test" }] }],
+  ] as const) {
+    const repo = validationMigration(t);
+    repo.write(`packages/core/${file}`, JSON.stringify(contents));
+    repo.commit();
+    const scope = repo.classify(repo.base);
+    assert.equal(scope.mode, "full", file);
+    assert.equal(scope.daemon, true);
+    assert.equal(scope.web, true);
+  }
 });
