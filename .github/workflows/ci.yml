@@ -41,6 +41,8 @@ jobs:
       daemon: ${{ steps.classify.outputs.daemon }}
       daemon-platforms: ${{ steps.classify.outputs.daemon-platforms }}
       macos-native: ${{ steps.classify.outputs.macos-native }}
+      macos-helper: ${{ steps.classify.outputs.macos-helper }}
+      native-release: ${{ steps.classify.outputs.native-release }}
       web: ${{ steps.classify.outputs.web }}
     steps:
       - name: Check out repository without retained credentials
@@ -96,6 +98,8 @@ jobs:
             daemon: String(scope.daemon),
             "daemon-platforms": JSON.stringify(scope.daemonPlatforms),
             "macos-native": String(scope.macosNative),
+            "macos-helper": String(scope.macosHelper),
+            "native-release": String(scope.nativeRelease),
             web: String(scope.web),
           };
           for (const [key, value] of Object.entries(outputs)) console.log(`${key}=${value}`);
@@ -697,7 +701,7 @@ jobs:
         run: node --test --test-concurrency=1 test/restricted-command-linux.contract.mjs test/restricted-command-dispatch.test.mjs
 
   restricted-command-macos:
-    name: Real macOS helper and Seatbelt smoke
+    name: macOS native and release contracts
     needs: [scope, build]
     if: ${{ !cancelled() && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.macos-native == 'true' && needs.build.result == 'success' }}
     # actions/runner-images documents macos-26 as arm64, not the Intel/large image.
@@ -736,7 +740,20 @@ jobs:
           name: ci-dist
           path: .
 
+      - name: Validate selected macOS work
+        env:
+          MACOS_HELPER_SELECTED: ${{ needs.scope.outputs.macos-helper }}
+          NATIVE_RELEASE_SELECTED: ${{ needs.scope.outputs.native-release }}
+        run: |
+          node --input-type=module <<'NODE'
+          const selectors = [process.env.MACOS_HELPER_SELECTED, process.env.NATIVE_RELEASE_SELECTED];
+          if (selectors.some(value => value !== "true" && value !== "false") || !selectors.includes("true")) {
+            throw new Error("Invalid or empty macOS work selection");
+          }
+          NODE
+
       - name: Require the actual arm64 macOS Host and fixed Seatbelt backend
+        if: needs.scope.outputs.macos-helper == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -755,6 +772,7 @@ jobs:
           NODE
 
       - name: Prepare the pinned native build inputs
+        if: needs.scope.outputs.macos-helper == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -763,6 +781,7 @@ jobs:
           rustup run 1.97.1 cargo fetch --locked --manifest-path native/sandbox/Cargo.toml
 
       - name: Build a fresh helper and run real Host and channel isolation smoke
+        if: needs.scope.outputs.macos-helper == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -775,7 +794,7 @@ jobs:
           node native/sandbox/tests/channel-command-smoke.mjs "$ling_native_output/ling-sandbox-runner"
 
       - name: Preserve native build diagnostics without certifying the packaged issuer
-        if: always()
+        if: always() && needs.scope.outputs.macos-helper == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: ci-restricted-command-native-evidence
@@ -786,17 +805,25 @@ jobs:
             ${{ runner.temp }}/ling-native-evidence/logs/**
 
       - name: Collect fixed OS bootstrap source for review only
-        if: always()
+        if: always() && needs.scope.outputs.macos-helper == 'true'
         run: node scripts/ci/macos-bootstrap-diagnostic.mjs > "${{ runner.temp }}/macos-bootstrap-diagnostic.json"
 
       - name: Preserve bootstrap observation without granting profile support
-        if: always()
+        if: always() && needs.scope.outputs.macos-helper == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: ci-macos-bootstrap-native
           if-no-files-found: warn
           retention-days: 1
           path: ${{ runner.temp }}/macos-bootstrap-diagnostic.json
+
+      - name: Check changed native release reviews and publication boundaries
+        if: needs.scope.outputs.native-release == 'true'
+        run: >-
+          node --test --test-concurrency=1
+          apps/desktop/tests/packaged-codesign-review-publication.test.mjs
+          apps/desktop/tests/packaged-office-native-publication.test.mjs
+          apps/desktop/tests/packaged-office-daemon-source-inputs.test.mjs
 
   quality:
     name: Typecheck, unit tests, and Web build
