@@ -224,6 +224,10 @@ lease 到期不等于进程停止。仍有工具、子执行或 effect journal �
 `enforce`，实际工具限定为文件读写能力；shell、MCP/CUA、外部操作和未知 executor
 不取得该能力。当前平台边界与是否开启以执行端 gate 为准，不能由客户端显示解锁。
 
+隔离文件 profile 在 SDK 参数强制转换前要求 edit 的原始 `edits` 为数组，非空与元素结构
+由 schema 校验。单对象、JSON 字符串和旧式 `oldText`/`newText` 输入不会转换成 Host
+写入请求；原生多项 edit 数组保持原样交给唯一的 Host handler。
+
 首次冻结 round 时，在同一短事务中取得 workspace/Git common-directory 的持久父锁。
 父锁覆盖整个 round/generation，而每个 sibling 单独保留自己的 worktree 资源、step
 lease 与 Attempt slots。只有精确匹配 frozen participants、scope plan、authority basis、

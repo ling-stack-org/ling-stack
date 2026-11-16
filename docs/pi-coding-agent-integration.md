@@ -53,6 +53,10 @@ packages/runner-pi/
 @earendil-works/pi-ai
 ```
 
+The workspace resolves `pi-ai@1.5.2` for the adapter and the transitive
+`pi-coding-agent@1.4.0` / `pi-agent-core@1.4.0` consumers. They share the same
+transcript and stream contracts; the coding-agent summary-budget patch remains applied.
+
 The adapter exposes Ling Stack types instead of pi internal types:
 
 - `PiRunnerTask`
