@@ -5,8 +5,12 @@ import {
   canonicalizeJson,
   parseRemoteClientFrameV1,
 } from "../dist/index.js";
+import type { CanonicalJsonValue } from "../dist/index.js";
 
-function createPrng(seed) {
+type RandomSource = () => number;
+type MutableFrame = Record<string, unknown> & { payload: Record<string, unknown> };
+
+function createPrng(seed: number): RandomSource {
   let state = seed >>> 0;
   return () => {
     state ^= state << 13;
@@ -16,7 +20,7 @@ function createPrng(seed) {
   };
 }
 
-function shuffled(values, random) {
+function shuffled<Value>(values: readonly Value[], random: RandomSource): Value[] {
   const output = [...values];
   for (let index = output.length - 1; index > 0; index -= 1) {
     const target = Math.floor(random() * (index + 1));
@@ -25,19 +29,19 @@ function shuffled(values, random) {
   return output;
 }
 
-function reorderObject(value, random) {
+function reorderObject(value: CanonicalJsonValue, random: RandomSource): CanonicalJsonValue {
   if (Array.isArray(value)) {
-    return value.map((item) => reorderObject(item, random));
+    return value.map((item: CanonicalJsonValue) => reorderObject(item, random));
   }
   if (value !== null && typeof value === "object") {
     return Object.fromEntries(
-      shuffled(Object.entries(value), random).map(([key, item]) => [key, reorderObject(item, random)]),
+      shuffled(Object.entries<CanonicalJsonValue>(value), random).map(([key, item]) => [key, reorderObject(item, random)]),
     );
   }
   return value;
 }
 
-function generatedJsonValue(random, depth = 0) {
+function generatedJsonValue(random: RandomSource, depth = 0): CanonicalJsonValue {
   const scalars = [null, false, true, 0, 1, -17, 1e-7, 42.5, "Ling", "手机😀", "line\nfeed"];
   if (depth >= 3 || random() < 0.45) {
     return scalars[Math.floor(random() * scalars.length)];
@@ -46,7 +50,7 @@ function generatedJsonValue(random, depth = 0) {
     return Array.from({ length: Math.floor(random() * 5) }, () => generatedJsonValue(random, depth + 1));
   }
   const count = Math.floor(random() * 5);
-  const output = {};
+  const output: Record<string, CanonicalJsonValue> = {};
   for (let index = 0; index < count; index += 1) {
     output[`key_${depth}_${index}_${Math.floor(random() * 10_000)}`] = generatedJsonValue(random, depth + 1);
   }
@@ -112,7 +116,7 @@ test("generated frame boundary mutations always fail closed", () => {
       retryUntil: "2026-07-19T10:30:00.000Z",
     },
   };
-  const mutations = [
+  const mutations: Array<(candidate: MutableFrame, iteration: number) => void> = [
     (candidate, iteration) => { candidate[`unknown_${iteration}`] = true; },
     (candidate, iteration) => { candidate.payload[`unknown_${iteration}`] = true; },
     (candidate) => { delete candidate.sessionId; },
@@ -127,7 +131,7 @@ test("generated frame boundary mutations always fail closed", () => {
   ];
 
   for (let iteration = 0; iteration < 500; iteration += 1) {
-    const candidate = structuredClone(frame);
+    const candidate: MutableFrame = structuredClone(frame);
     mutations[Math.floor(random() * mutations.length)](candidate, iteration);
     assert.throws(() => parseRemoteClientFrameV1(JSON.stringify(candidate), { nowMs }));
   }
