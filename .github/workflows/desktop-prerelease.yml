@@ -55,7 +55,7 @@ concurrency:
 
 jobs:
   candidate:
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' || (contains(fromJSON('["desktop-package-inspect", "desktop-package-build"]'), github.event.label.name) && github.event.pull_request.head.repo.full_name == github.repository)
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && inputs.operation == 'build' && inputs.create_draft) || (contains(fromJSON('["desktop-package-inspect", "desktop-package-build"]'), github.event.label.name) && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -316,7 +316,7 @@ jobs:
           retention-days: 14
 
   draft:
-    if: (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.operation == 'build' && inputs.create_draft
+    if: (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))) && inputs.operation == 'build' && inputs.create_draft
     needs: [candidate, package]
     runs-on: ubuntu-latest
     timeout-minutes: 10
