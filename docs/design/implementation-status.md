@@ -75,6 +75,7 @@ These are real gaps, but they must not be described as currently scheduled work.
 
 | Contract | Remaining boundary |
 |---|---|
+| [Code Review And Security Scan Workbench](code-review-and-security-workbench.md) | Local working-tree/branch/commit review and two-stage security assessment, immutable snapshots, tool-free Pi Runs/artifacts, durable phase/stale/triage state, anchored comments, instructions and lazy full/Dock Diff UI are implemented. Scoped browser acceptance, an independently inspected six-case/nine-request text-model quality smoke and native review are complete; CI and mainline merge are separate release checks. GitHub PR sources, full/deep/external scanners and remediation remain later stages; packaged-client acceptance is unverified. |
 | Memory and Skill Learning release gates | Source implementation, review, CI and mainline merge are complete in PR #627; macOS/Windows packaged FTS/native acceptance and CPA monetary rate remain unverified. Native LanceDB remains outside default bundles; these are release follow-ups, not evidence that source behavior is incomplete. |
 | [Provider Hardening And Media Adapters](provider-hardening-and-media-adapter-completion.md) | Jimeng live generation and stored-artifact image-edit materialization |
 | [Two-Layer Configuration](two-layer-configuration.md) | Provider-profile cleanup and remaining Keychain migration, shared with [runtime inheritance](runtime-provider-secrets-inheritance.md) |

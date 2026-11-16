@@ -28,6 +28,7 @@ export interface NormalConversationWorkspacePanelsProps {
   readonly terminalResize: WorkspaceBottomPanelResizeController;
   readonly terminalSession: WorkspaceTerminalSession;
   readonly onCloseDock: () => void;
+  readonly onOpenRun?: (runId: string) => void;
   readonly onCloseTerminal: () => void;
 }
 
@@ -43,6 +44,7 @@ export function NormalConversationWorkspacePanels({
   terminalResize,
   terminalSession,
   onCloseDock,
+  onOpenRun,
   onCloseTerminal,
 }: NormalConversationWorkspacePanelsProps): React.JSX.Element {
   const { t } = useI18n();
@@ -101,6 +103,7 @@ export function NormalConversationWorkspacePanels({
             pageRequest={dockController.pageRequest}
             onPageRequestConsumed={dockController.consumePageRequest}
             onClose={onCloseDock}
+            onOpenRun={onOpenRun}
           />
         </div>
       ) : null}

@@ -102,3 +102,6 @@ export * from "./memory-derivatives.js";
 export * from "./memory-wiki.js";
 export * from "./deliverables.js";
 export * from "./product-version.js";
+export * from "./code-assessments.js";
+export * from "./code-assessment-overview.js";
+export * from "./code-assessment-comments.js";

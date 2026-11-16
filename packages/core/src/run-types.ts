@@ -1,5 +1,7 @@
 import type { ChannelSessionPage, ChannelSessionSummary, CreateChannelSessionInput, ListChannelSessionsOptions, UpdateChannelSessionRequest } from "./channel-session-types.js";
 import type { MemoryWikiStore } from "./memory-wiki-types.js";
+import type { CodeAssessmentStore } from "./code-assessment-store.js";
+import type { CodeAssessmentCommentsStore } from "./code-assessment-comments.js";
 import type { MemoryDerivativeStore } from "./memory-derivative-types.js";
 import type { LearningReviewStore } from "./learning-review-types.js";
 import type { RuntimeRunQueueStore } from "./runtime-run-queue-types.js";
@@ -1584,7 +1586,7 @@ export interface ClaimSnapshotRestoreFenceInput {
   readonly now: string;
 }
 
-export interface RunStore extends MemoryWikiStore, MemoryDerivativeStore, LearningReviewStore, RuntimeRunQueueStore, NativeExecutionStore, HarnessProjectionStore, HarnessArtifactRetentionStore, DelegationQueryStore, HarnessDiagnosticsStore, RunEvaluationTaskStore, RunEvaluationQaStore, RunEvaluationHumanStore, RunEvaluationHumanReadStore {
+export interface RunStore extends CodeAssessmentStore, CodeAssessmentCommentsStore, MemoryWikiStore, MemoryDerivativeStore, LearningReviewStore, RuntimeRunQueueStore, NativeExecutionStore, HarnessProjectionStore, HarnessArtifactRetentionStore, DelegationQueryStore, HarnessDiagnosticsStore, RunEvaluationTaskStore, RunEvaluationQaStore, RunEvaluationHumanStore, RunEvaluationHumanReadStore {
   getDelegationCompletionEvidence(input: GetDelegationCompletionEvidenceInput): DelegationCompletionEvidenceV1;
   listApprovalPostCommitEffects(options?: {
     readonly approvalId?: string;

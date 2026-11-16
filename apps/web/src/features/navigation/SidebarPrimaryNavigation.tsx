@@ -1,4 +1,4 @@
-import { Clapperboard, Inbox, PlugZap, Timer, type LucideIcon } from "lucide-react";
+import { Clapperboard, Inbox, PlugZap, Timer, ScanSearch, type LucideIcon } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import type { SidebarTarget, ViewId } from "../../app/view-types.js";
 import { Button, Icon, IconButton } from "../../shared/ui/index.js";
@@ -20,6 +20,7 @@ export function SidebarPrimaryNavigation({
       <NavItem compact={compact} icon={Clapperboard} label={t("Media Production")} active={activeSidebarTarget === "media"} onClick={() => onOpenView("media")} />
       <NavItem compact={compact} icon={PlugZap} label={t("Plugin Manager")} active={activeSidebarTarget === "plugins"} onClick={() => onOpenView("plugins")} />
       <NavItem compact={compact} icon={Timer} label={t("Scheduled tasks")} active={activeSidebarTarget === "automations"} onClick={() => onOpenView("automations")} />
+      <NavItem compact={compact} icon={ScanSearch} label={t("Code review and security")} active={activeSidebarTarget === "code_assessments"} onClick={() => onOpenView("code_assessments")} />
     </nav>
   );
 }

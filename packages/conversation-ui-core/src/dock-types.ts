@@ -8,6 +8,7 @@ export type DockPageKind =
   | "launcher"
   | "context"
   | "review"
+  | "security"
   | "plans"
   | "evidence"
   | "files"

@@ -7,6 +7,7 @@ import {
   History,
   MessageSquare,
   SquareTerminal,
+  Shield,
 } from "lucide-react";
 import { getWorkspaceChanges, previewArtifactContent } from "../../../api.js";
 import { useI18n } from "../../../i18n.js";
@@ -38,6 +39,8 @@ import {
 } from "./PlanHistoryPage.js";
 import { reviewNeedsAction } from "./projections.js";
 import { WorkspaceTerminalPanel, type WorkspaceTerminalSession } from "../WorkspaceTerminalPanel.js";
+import { CodeAssessmentDock } from "../../code-assessments/CodeAssessmentDock.js";
+import { CodeAssessmentPage } from "../../code-assessments/CodeAssessmentPage.js";
 import { WorkspaceChangeReviewPage } from "./WorkspaceChangeReviewPage.js";
 import { DockReviewItemDetail } from "./DockReviewItemDetail.js";
 import { codePreviewFromArtifact, fileNameFromPath } from "./DockReviewCodePreview.js";
@@ -116,6 +119,7 @@ export interface WorkspaceRightDockProps {
   readonly pageRequest?: WorkspaceRightDockPageRequest;
   readonly onPageRequestConsumed?: (nonce: number) => void;
   readonly onClose?: () => void;
+  readonly onOpenRun?: (runId: string) => void;
   readonly onCollapsedChange?: (collapsed: boolean) => void;
   readonly onOpenPlanSource?: (plan: ProposedPlanArtifact) => void;
   readonly onSavePlan?: (plan: ProposedPlanArtifact) => void;
@@ -158,6 +162,7 @@ export function WorkspaceRightDock({
   pageRequest,
   onPageRequestConsumed,
   onClose,
+  onOpenRun,
   onCollapsedChange,
   onOpenPlanSource,
   onSavePlan,
@@ -456,7 +461,7 @@ export function WorkspaceRightDock({
           severity: codeChangeActionCount > 0 ? "warning" : reviewFileCount > 0 ? "info" : "neutral",
         },
         render: () => (
-          <WorkspaceChangeReviewPage
+          <CodeAssessmentDock cwd={effectiveReviewCwd} onOpenRun={onOpenRun} changes={<WorkspaceChangeReviewPage
             cwd={effectiveReviewCwd}
             changes={workspaceChanges}
             review={scopedReview}
@@ -465,8 +470,17 @@ export function WorkspaceRightDock({
             error={requestedWorkspaceReview?.scope ? scopedResource.status === "unavailable" && !scopedReview ? t("Historical diff unavailable") : "" : workspaceChangesError || externalError}
             requestedPath={requestedWorkspaceReview?.path}
             onRefresh={requestedWorkspaceReview?.scope ? scopedResource.refresh : () => setWorkspaceChangesRefreshKey((current) => current + 1)}
-          />
+          />} />
         ),
+      },
+      {
+        id: "security",
+        label: t("Security scan"),
+        icon: <Shield size={16} />,
+        launcherItem: { description: t("Scan a local Diff for security candidates"), severity: "neutral" },
+        render: () => effectiveReviewCwd
+          ? <CodeAssessmentPage key={effectiveReviewCwd} cwd={effectiveReviewCwd} initialKind="security" onOpenRun={onOpenRun} compact />
+          : <p>{t("Open a project to start an assessment.")}</p>,
       },
       ...(includePlans ? [{
         id: "plans" as const,

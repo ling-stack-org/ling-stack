@@ -4127,6 +4127,7 @@ export function WorkspaceClientView({
                 </>
               )}
               onClose={closeChannelRightDock}
+              onOpenRun={openRunInPanel}
             />
           </div>
         ) : null}

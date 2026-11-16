@@ -151,6 +151,7 @@ export function TeammatePrivateChatSurface(props: TeammatePrivateChatSurfaceProp
                 pageRequest={dockPageRequest}
                 onPageRequestConsumed={onDockPageRequestConsumed}
                 onClose={onDockClose}
+                onOpenRun={props.onOpenRun}
               />
             </div>
           ) : null}

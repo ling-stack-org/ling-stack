@@ -265,6 +265,7 @@ import { handleTraceItem, handleTracesCollection } from "../features/runs/traces
 import { resolveProviderForRun } from "../features/runs/providers.js";
 import { createWorkflowParallelCapabilityResolver } from "../features/runs/workflow-safety.js";
 import { handleGetWorkspaceChanges } from "../features/previews/workspace-changes.js";
+import { handleCodeAssessmentRoutes } from "../features/code-assessments/routes.js";
 import {
   handleGetWorkspaceFileContent,
   handleGetWorkspaceFileOpenIcon,
@@ -581,6 +582,26 @@ export async function routeRequest(
         controlPlaneEvents,
         startupState,
         computerUsePreviews,
+        nativeRunDispatcher,
+      },
+    );
+  const startCodeAssessmentRun = (runRequest: RunRequest, afterRunTerminal: (run: RunSession) => Promise<void>, onRunReady: (runId: string) => void): Promise<string | undefined> =>
+    executeRunRequest(
+      runRequest,
+      createDetachedRunExecutionSink(),
+      runnerRegistry,
+      storeRegistry,
+      activeRuns,
+      runtimeSupervisor,
+      secretResolver,
+      mcpBroker,
+      {
+        onRunReady,
+        afterRunTerminal,
+        controlPlaneEvents,
+        startupState,
+        computerUsePreviews,
+        hostCapabilityBridge,
         nativeRunDispatcher,
       },
     );
@@ -1623,6 +1644,9 @@ export async function routeRequest(
         },
       ));
     return;
+  }
+  if (url.pathname.startsWith("/workspace/code-assessments")) {
+    if (await handleCodeAssessmentRoutes(request, response, url, { storeRegistry, activeRuns, startRun: startCodeAssessmentRun })) return;
   }
   if (request.method === "GET" && url.pathname === "/runs") {
     handleListRuns(response, url, storeRegistry);

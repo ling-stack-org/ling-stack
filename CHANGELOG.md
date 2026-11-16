@@ -6,6 +6,17 @@ open-source baseline onward.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and future
 release versions will follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-11-17
+
+### Added
+
+- **Local code review and security scans** now inspect working-tree, branch, or commit changes from an immutable snapshot, with review history, staged phases, confidence and severity filters, anchored findings, comments, custom instructions, and read-only boundaries.
+- **The review workbench** now provides a full page and compact Right Dock with bounded summaries, lazy file Diffs, unified or split views, narrow-screen layouts, durable stale and triage states, and cancellation or restart recovery.
+
+### Changed
+
+- **Review evidence and diagnostics** now retain bounded source references, scan metrics, and explicit unverified security findings while keeping GitHub, deep scanning, external scanners, and remediation as later stages.
+
 ## [0.4.0] - 2026-11-15
 
 ### Added

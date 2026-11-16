@@ -90,6 +90,8 @@ export interface RunRequest extends Omit<
   | "onMediaGenerationToolCall"
 > {
   readonly schemaVersion?: 2;
+  /** Daemon-owned snapshot assessment binding. Public request parsing never accepts this field. */
+  readonly codeAssessment?: { readonly id: string; readonly snapshotDigest: string; readonly phase?: "threat_model" | "reviewing_code" };
   readonly workspaceCwd?: string;
   readonly providerPresetId?: string;
   readonly executionBinding?: ExecutionBindingRequest;

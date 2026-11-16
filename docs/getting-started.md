@@ -122,6 +122,31 @@ Git repositories run locally in the selected folder. A teammate's role or skill 
 not grant tools or filesystem permission by itself. Native command execution and
 Computer Use may remain unavailable until their platform gates are satisfied.
 
+## Review Local Code Changes
+
+Open the root of an existing Git repository with at least one commit, then select
+**Code review and security**. Choose **Code review** or **Security scan**, a working-tree,
+branch or commit target, and an enabled chat model. Branch mode compares the merge-base
+with committed HEAD. Commit mode takes a full SHA and optionally a base revision;
+otherwise it compares the first parent. Both ignore dirty working-tree edits. Optional
+review instructions stay with the assessment and are reused by **Run again**.
+
+**Start** captures a bounded Diff and sends it to the selected model without analysis
+tools. Security runs threat modeling and code review as two visible stages. Findings
+link to exact captured lines, with unified/split/auto Diff layouts. Use severity/confidence/status
+filters, add anchored comments, acknowledge, ignore with a typed reason or reopen a
+finding. **Check for changes** persists whether the snapshot still matches. Marking a
+finding resolved requires a current snapshot and an explanation; it remains unverified.
+**Run again** captures a new result. Reports, comments and triage remain in history;
+finished results can be exported. Phase links open their ordinary Runs.
+
+The conversation's Right Dock also offers **Review → Code review** and **Security scan**.
+Partial coverage is shown when sensitive, binary, oversized or unsupported content is
+excluded or redacted. Findings are unverified candidates; dismissal does not fix code.
+This local Diff feature does not scan the whole repository, verify exploits or apply
+patches. See the [workbench contract](design/code-review-and-security-workbench.md)
+for scope and resource limits.
+
 ## Try Media Production
 
 Add and check a model with the needed image or video capability, then open

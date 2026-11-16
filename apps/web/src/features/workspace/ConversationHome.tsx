@@ -929,6 +929,7 @@ export function ConversationHome({
           terminalPresence: conversationTerminalPresence,
           terminalResize: conversationBottomPanelResize,
           terminalSession: workspaceTerminalSession,
+          onOpenRun,
           onCloseDock: () => {
             conversationDockController.close();
             setConversationDockOpen(false);

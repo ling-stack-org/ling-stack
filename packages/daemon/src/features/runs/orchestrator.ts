@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from "node:util";
+import { assertCodeAssessmentRequest, restrictCodeAssessmentTools } from "../code-assessments/run-policy.js";
 import {
   type ApprovalPolicy,
   approvalSideEffectFingerprintV1,
@@ -628,6 +629,7 @@ async function executeAdmittedRunRequest(
       secretResolver,
     });
     store = storeRegistry.getStore(workspaceCwd);
+    assertCodeAssessmentRequest(store, runRequest);
     hostCapacityAdmission ??= runtimeSupervisor.getHostCapacityAdmission(store);
     workflowHostCapacityAdmission ??= hostCapacityAdmission;
     if (queuedClaim) {
@@ -879,6 +881,7 @@ async function executeAdmittedRunRequest(
     }
     assertWorkflowSafetyRunner(store, runRequest, { adapter: runnerResolution.runner.adapter,
       runnerId: runnerResolution.effectiveRunnerId, tools: runtimeTools });
+    assertCodeAssessmentRequest(store, runRequest, runnerResolution.runner.adapter);
     const channelForPolicy = runRequest.task.channelId ? store.getChannel(runRequest.task.channelId) : undefined;
     const channelWorkspaceSnapshot = channelForPolicy
       ? createChannelWorkspaceSnapshot(channelForPolicy, workspaceCwd)
@@ -970,7 +973,7 @@ async function executeAdmittedRunRequest(
         userInput: userInputAvailable(),
         nativeFileCreate: workflowOperationUsesNativeFileCreate(runRequest),
         delegation: delegationToolSurfaceEnabled } };
-    runnerRequest = restrictWorkflowSafetyTools(runnerRequest, workflowSafetyPlan);
+    runnerRequest = restrictCodeAssessmentTools(runRequest, restrictWorkflowSafetyTools(runnerRequest, workflowSafetyPlan));
     if (workflowSafetyPlan?.profile === "pi_host_readonly_v1") {
       // SDK preparation may inspect schemas, but it has no execution authority.
       runnerRequest = { ...runnerRequest, onReadonlyToolCall: () => {
@@ -1058,7 +1061,7 @@ async function executeAdmittedRunRequest(
           delegation: currentDelegationToolSurfaceEnabled },
         provider: resolvedProvider, mcpTools: currentMcp, mediaGenerationTools: mediaGenerationEligible
           ? createConversationMediaGenerationToolDefinitions(listConversationMediaGenerationTargets(runStore, secretResolver)) : [] }, workflowSafetyPlan));
-      runnerRequest = restrictWorkflowSafetyTools(runnerRequest, workflowSafetyPlan);
+      runnerRequest = restrictCodeAssessmentTools(runRequest, restrictWorkflowSafetyTools(runnerRequest, workflowSafetyPlan));
       runtimeTools = executionInput.input.tools;
       mcpTools = runnerRequest.mcpTools ?? [];
       const names = new Set(mcpTools.map((tool) => tool.registeredName));
@@ -3551,9 +3554,9 @@ async function executeAdmittedRunRequest(
             workflowStartOwner,
           })
         : undefined;
-    const unscopedContinuationRequest = approvedToolContinuation
+    const unscopedContinuationRequest = restrictCodeAssessmentTools(runRequest, approvedToolContinuation
       ? { ...boundRunnerRequest, approvedToolContinuation }
-      : boundRunnerRequest;
+      : boundRunnerRequest);
     const continuationRunnerRequest = localWriters
       ? scopeUserInputLocalWriters(unscopedContinuationRequest, localWriters, {
           requireTrackedMedia: hostOperationTracker !== undefined,
