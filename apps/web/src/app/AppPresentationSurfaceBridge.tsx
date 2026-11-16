@@ -19,18 +19,20 @@ export function AppPresentationSurfaceBridge(props: {
   const { url, setPresentation } = useBackground();
   const environment = usePresentationEnvironment();
   const surface = resolveAppPresentationSurface(props);
+  const hasBackground = Boolean(url || resolved.manifest.scene);
   const policy = useMemo(() => profileRegistry.resolveSurface(
     resolved.presentationProfileId,
     surface,
     {
       ...environment,
-      // Ordinary workspaces are allowed to keep the selected scene visible.
-      // Settings, diagnostics, approvals and the media canvas remain opaque
-      // because they are dense or full-screen workflows.
+      // Every route keeps the selected backdrop visible. Dense management and
+      // diagnostic surfaces still protect their own content panels.
       ambientWorkspace: !["settings", "media", "runs", "threads", "approvals"].includes(props.activeView),
-      userBackground: Boolean(url || resolved.manifest.scene),
+      userBackground: hasBackground,
     },
-  ), [environment, props.activeView, resolved.manifest.scene, resolved.presentationProfileId, surface, url]);
+  ), [environment, hasBackground, props.activeView, resolved.presentationProfileId, surface]);
+
+  const backgroundVisible = hasBackground && policy.artwork !== "off";
 
   useLayoutEffect(() => {
     const root = globalThis.document?.documentElement;
@@ -39,8 +41,9 @@ export function AppPresentationSurfaceBridge(props: {
     root.dataset.uiSurfaceRecipe = policy.surfaceRecipe;
     root.dataset.uiArtworkPolicy = policy.artwork;
     root.dataset.uiDecorationPolicy = policy.decorations ? "on" : "off";
-    setPresentation({ surface, visible: policy.surfaceRecipe === "translucent" && policy.artwork !== "off" });
-  }, [policy, surface, setPresentation]);
+    root.dataset.uiBackgroundVisible = backgroundVisible ? "true" : "false";
+    setPresentation({ surface, visible: backgroundVisible });
+  }, [backgroundVisible, policy, surface, setPresentation]);
 
   useEffect(() => () => {
     const root = globalThis.document?.documentElement;
@@ -49,6 +52,7 @@ export function AppPresentationSurfaceBridge(props: {
     delete root.dataset.uiSurfaceRecipe;
     delete root.dataset.uiArtworkPolicy;
     delete root.dataset.uiDecorationPolicy;
+    delete root.dataset.uiBackgroundVisible;
   }, []);
 
   return null;

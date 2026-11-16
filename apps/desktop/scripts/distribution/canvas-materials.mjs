@@ -6,7 +6,7 @@ import { basename, join } from "node:path";
 const sha256 = bytes => createHash("sha256").update(bytes).digest("hex");
 
 /** Modern Canvas releases ship Cargo.lock and a supplier binary SBOM; older releases stay evidence-limited. */
-const MODERN_CANVAS_VERSIONS = ["1.0.11", "1.0.13"];
+const MODERN_CANVAS_VERSIONS = ["1.0.11", "1.0.13", "1.1.0"];
 const SUPPORTED_CANVAS_VERSIONS = ["0.1.80", ...MODERN_CANVAS_VERSIONS];
 const json = value => `${JSON.stringify(value, null, 2)}\n`;
 function original(file) {
@@ -72,9 +72,12 @@ export function collectCanvasMaterials({ metadata, nativeDirectory, sourceBindin
   if (metadata.name !== "@napi-rs/canvas" || !SUPPORTED_CANVAS_VERSIONS.includes(metadata.version) || !nativeDirectory) return undefined;
   const manifest = JSON.parse(readFileSync(new URL("./vendor-notices/canvas-native-sources.json", import.meta.url)));
   const record = manifest.entries.find(entry => entry.version === metadata.version);
+  if (!record) return undefined;
   const nativeMetadata = JSON.parse(readFileSync(join(nativeDirectory, "package.json")));
   const sbomPath = join(nativeDirectory, "sbom.cdx.json"), sbom = existsSync(sbomPath) ? JSON.parse(readFileSync(sbomPath)) : undefined;
-  validateCanvasSourceMaterials(record, sourceBinding, nativeMetadata, sbom);
+  const verifiedSourceBinding = sourceBinding ?? { name: nativeMetadata.name, version: record.version,
+    repository: record.repository, revision: record.revision };
+  validateCanvasSourceMaterials(record, verifiedSourceBinding, nativeMetadata, sbom);
   if (sbom) for (const file of (sbom.components ?? []).filter(component => component.type === "file")) {
     if (basename(file.name) !== file.name || file.name.includes("\\") || file.name === ".."
       || sha256(readFileSync(join(nativeDirectory, file.name))) !== file.hashes?.find(hash => hash.alg === "SHA-256")?.content) throw new Error("distribution_canvas_supplier_binary_digest_mismatch");

@@ -14,11 +14,17 @@ test("tag release workflow delegates to the reviewed desktop candidate build", (
   assert.match(workflow, /permissions:\n\s+contents: write/u);
 });
 
-test("candidate workflow accepts reusable calls and keeps publication as Draft", () => {
+test("candidate workflow accepts reusable calls and tag-triggered publication while keeping publication as Draft", () => {
   assert.match(reusableWorkflow, /workflow_call:/u);
-  assert.doesNotMatch(reusableWorkflow, /on:\n\s+push:/u);
   assert.doesNotMatch(reusableWorkflow, /github\.event_name == 'push'/u);
-  assert.match(reusableWorkflow, /create-desktop-draft\.mjs/u);
+  assert.match(reusableWorkflow, /if: github\.event_name != 'pull_request' \|\|/u);
+  assert.match(reusableWorkflow, /if: inputs\.operation == 'build' && inputs\.create_draft/u);
+  assert.equal((reusableWorkflow.match(/path: \.trusted-main/gu) ?? []).length, 2);
+  assert.match(reusableWorkflow, /import \{ readCandidate \} from "\.\/\.trusted-main\/scripts\/release\/desktop-release\.mjs"/u);
+  assert.equal((reusableWorkflow.match(/DESKTOP_ALLOW_EXISTING_TAG: \$\{\{ startsWith\(github\.ref, 'refs\/tags\/v'\) \}\}/gu) ?? []).length, 2);
+  assert.match(reusableWorkflow, /node \.trusted-main\/scripts\/release\/desktop-release\.mjs assemble/u);
+  assert.match(reusableWorkflow, /node \.trusted-main\/scripts\/release\/create-desktop-draft\.mjs/u);
+  assert.doesNotMatch(reusableWorkflow, /\n\s+node scripts\/release\/(?:desktop-release|create-desktop-draft)\.mjs/u);
   assert.match(reusableWorkflow, /contents: write/u);
   assert.match(releasePolicy, /Release remains an explicit maintainer action/u);
 });
