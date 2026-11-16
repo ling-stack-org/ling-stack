@@ -740,6 +740,10 @@ jobs:
           name: ci-dist
           path: .
 
+      - name: Generate localization source inputs for native release contracts
+        if: needs.scope.outputs.native-release == 'true'
+        run: corepack pnpm --filter @ling-stack/localization catalog:compile
+
       - name: Validate selected macOS work
         env:
           MACOS_HELPER_SELECTED: ${{ needs.scope.outputs.macos-helper }}

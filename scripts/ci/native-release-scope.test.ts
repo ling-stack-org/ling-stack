@@ -101,6 +101,11 @@ test("the macOS job independently gates native smoke and the complete publicatio
   }
   const release = source.slice(source.indexOf("      - name: Check changed native release reviews"));
   assert.match(release, /if: needs\.scope\.outputs\.native-release == 'true'/u);
+  const localizationCompile = source.indexOf("      - name: Generate localization source inputs for native release contracts");
+  const releaseChecks = source.indexOf("      - name: Check changed native release reviews");
+  assert.ok(localizationCompile >= 0 && localizationCompile < releaseChecks);
+  assert.match(source.slice(localizationCompile, releaseChecks), /if: needs\.scope\.outputs\.native-release == 'true'/u);
+  assert.match(source.slice(localizationCompile, releaseChecks), /run: corepack pnpm --filter @ling-stack\/localization catalog:compile/u);
   const command = /run: >-\n([\s\S]+)/u.exec(release)?.[1].trim().replace(/\s+/gu, " ");
   assert.equal(command, "node --test --test-concurrency=1 apps/desktop/tests/packaged-codesign-review-publication.test.mjs "
     + "apps/desktop/tests/packaged-office-native-publication.test.mjs apps/desktop/tests/packaged-office-daemon-source-inputs.test.mjs");
