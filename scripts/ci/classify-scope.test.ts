@@ -371,7 +371,7 @@ test("the real package graph keeps Web's CLI and catalog consumers without core 
   assert.ok(!scope.testPackages.includes("@ling-stack/core"));
 });
 
-function validationMigration(t: TestContext) {
+function validationMigration(t: TestContext, additionalTests: string[] = []) {
   const repo = repositoryFixture(t);
   const manifest = {
     name: "@ling-stack/core", type: "module",
@@ -388,6 +388,7 @@ function validationMigration(t: TestContext) {
   const saveManifest = () => repo.write("packages/core/package.json", JSON.stringify(manifest));
   saveManifest();
   repo.write("packages/core/test/probe.test.mjs", "import test from 'node:test'; test('probe', () => {});\n");
+  for (const file of additionalTests) repo.write(`packages/core/test/${file}`, "import test from 'node:test'; test('retained', () => {});\n");
   const base = repo.commit();
   repo.git("mv", "packages/core/test/probe.test.mjs", "packages/core/test/probe.test.ts");
   Object.assign(manifest.scripts, {
@@ -416,6 +417,19 @@ test("a verified Node/TypeScript test migration retains complete owner validatio
   assert.equal(scope.daemon, false);
   assert.equal(scope.web, false);
   assert.match(scope.reason, /test/u);
+});
+
+test("validation migrations cannot discard baseline test entrypoints", t => {
+  for (const replacement of [undefined, "different.test.ts"]) {
+    const repo = validationMigration(t, ["retained.test.mjs"]);
+    rmSync(join(repo.root, "packages/core/test/retained.test.mjs"));
+    if (replacement) repo.write(`packages/core/test/${replacement}`, "import test from 'node:test'; test('different', () => {});\n");
+    repo.commit();
+    const scope = repo.classify(repo.base);
+    assert.equal(scope.mode, "full", replacement ?? "deleted test");
+    assert.equal(scope.daemon, true);
+    assert.equal(scope.web, true);
+  }
 });
 
 test("a validation migration mixed with source or production config still selects transitive consumers", t => {

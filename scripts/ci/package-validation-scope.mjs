@@ -11,8 +11,9 @@ const typecheckCommand = /^tsc -p (tsconfig(?:\.[\w-]+)?\.json)( --noEmit)?$/u;
  * metadata, build commands, hooks and CI entrypoint presence must stay fixed.
  * Opaque shell commands retain the full-regression fallback.
  */
-export function packageValidationScope({ current, previous, directory, root, repositoryFiles }) {
-  if (!current || !previous) return undefined;
+export function packageValidationScope({ current, previous, directory, root, repositoryFiles, previousTestFiles }) {
+  if (!current || !previous || !Array.isArray(previousTestFiles)
+    || previousTestFiles.some(file => typeof file !== "string")) return undefined;
   const { scripts, ...metadata } = current;
   const { scripts: oldScripts, ...oldMetadata } = previous;
   if (!scripts || !oldScripts || !isDeepStrictEqual(metadata, oldMetadata)
@@ -60,12 +61,14 @@ export function packageValidationScope({ current, previous, directory, root, rep
   // A migration cannot narrow discovery by leaving another test language out.
   const patterns = testCommand.exec(scripts["test:ci"])[1].trim().split(" ");
   const oldPatterns = testCommand.exec(oldScripts["test:ci"])[1].trim().split(" ");
+  const testIdentities = new Set();
   let testCount = 0;
   for (const directoryName of new Set([...patterns, ...oldPatterns].map(pattern => pattern.split("/")[0]))) {
     let files;
     try { files = readdirSync(join(packageRoot, directoryName)); }
     catch { return undefined; }
     const tests = files.filter(file => /\.test\.(?:mjs|ts)$/u.test(file));
+    for (const file of tests) testIdentities.add(`${directory}/${directoryName}/${file}`.replace(/\.(?:mjs|ts)$/u, ""));
     testCount += tests.length;
     if (tests.some(file =>
       !patterns.some(pattern => pattern === `${directoryName}/*.test.${file.split(".").at(-1)}`))) return undefined;
@@ -73,6 +76,9 @@ export function packageValidationScope({ current, previous, directory, root, rep
       ![...typedTestIncludes].some(pattern => matchesGlob(`${directoryName}/${file}`, pattern)))) return undefined;
   }
   if (testCount === 0) return undefined;
+  const baselineTests = previousTestFiles.filter(file => oldPatterns.some(pattern => matchesGlob(file, `${directory}/${pattern}`)));
+  if (baselineTests.length === 0 || baselineTests.some(file =>
+    !testIdentities.has(file.replace(/\.(?:mjs|ts)$/u, "")))) return undefined;
   return { testConfigs: [...testConfigs] };
 }
 

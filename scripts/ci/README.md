@@ -35,7 +35,10 @@ manifest fields and scripts are unchanged. It recognizes complete top-level
 `node --test` globs for `.test.mjs`/`.test.ts`, no-emit package-local `tsc`
 commands, and wrappers around those CI entries and unchanged build prefixes.
 Name filters, shell additions, no-op commands, omitted test languages and empty
-discovery retain full scope. An isolated `tsconfig.test.json`/`tsconfig.tests.json`
+discovery retain full scope. Each test entrypoint discovered by the baseline glob
+must retain its directory and basename under the current glob; `.mjs`/`.ts`
+extension changes are allowed. Missing baseline inventories and deleted or renamed
+entrypoints retain full scope. An isolated `tsconfig.test.json`/`tsconfig.tests.json`
 is a test input only with explicit no-emit and test-only includes and no production
 script/config consumer; other package configuration remains a source input.
 Mixed source changes still expand to transitive consumers.
