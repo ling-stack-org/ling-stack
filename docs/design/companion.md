@@ -267,10 +267,12 @@ complete only after its implementation and relevant acceptance checks pass.
   model was unavailable at the proxy, so the available model was selected only in the
   isolated acceptance workspace. After 41.7 minutes of continuous daemon operation, a
   fresh request still recalled the initial test code correctly and completed in 2,817 ms.
-- Full macOS `package:mac` was attempted. The current machine's Xcode/Command Line Tools
-  use SDK 27.x, while the Office native publication contract admits SDK 26.5 toolchains.
-  The full-package gate remains blocked locally; native Companion execution does not
-  establish a signed/notarized installation package. Windows native runtime acceptance
-  remains unverified.
+- Full macOS `package:mac` initially rejected the local SDK 27.2 toolchain. An
+  [independent native prerequisite review](../../native/office-local/reviewed-packaged-source-v1-review.md#companion-and-native-runtime-review-2026-11-17)
+  admitted the exact Apple-signed local compiler/SDK profile and actual Electron
+  45.3.1 / Node 24.22.2 runtime, retaining all native source, OS and signing bounds.
+  Standard archive packaging and final artifact acceptance remain pending; native
+  Companion execution does not establish a signed/notarized installation package.
+  Windows native runtime acceptance remains unverified.
 Additional characters, speech, articulated Live2D animation, and work-event-driven
 proactive behavior remain separate enhancements.

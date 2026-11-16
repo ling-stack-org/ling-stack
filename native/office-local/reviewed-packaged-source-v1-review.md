@@ -1,7 +1,64 @@
 # Scoped macOS Development Packaging Review
 
-Latest source/runtime rebinding: [2026-11-03 macOS development packaging review](../../docs/release/macos-source-review-2026-11-03.md).
-The dated reviews below retain their historical evidence and scope.
+Current source prerequisite: [Companion and native runtime review](#companion-and-native-runtime-review-2026-11-17).
+The [2026-11-03 dependency review](../../docs/release/macos-source-review-2026-11-03.md)
+and the dated reviews below retain their historical evidence and scope.
+
+## Companion and native runtime review, 2026-11-17
+
+The Companion source closure retains 43 roots and contains 1,843 fixed packaging
+inputs, including its explicit native window and capability modules. Scoped
+review covered the Companion changes and deterministic compilation of the 55
+locale catalogs before adopting their exact input bindings. The Office 15 and
+sandbox 19 native inputs remain byte-identical to their reviewed records.
+
+Independent Codex context `native_packaging_prerequisites` returned
+`SCOPED SOURCE-REVIEW PASS` for the exact native prerequisite proposal before
+either persistent record was changed. This is a separate context on the same
+model host, not human or cross-model approval, and is not a clean-review
+certificate for the full pull request.
+
+Both records bind Darwin arm64, Electron 45.3.1, embedded Node 24.22.2 and libuv
+1.52.1. The sandbox record changes only its Electron and Node fields. The Office
+record makes the same two changes, binds that sandbox record, and retains both
+SDK 26.5 profiles while adding this exact local profile:
+
+| Field | Reviewed value |
+| --- | --- |
+| Profile | `local-xcode27.2-sdk27.2-arm64` |
+| Compiler | `Apple clang version 21.0.0 (clang-2100.4.1.1)` |
+| Compiler SHA-256 | `fc5e3cbba6ad54059295cad716aacb05ace8235f5f7a6031f1d8c15d24bd6d66` |
+| SDK | `macosx27.2`, version `27.2` |
+| SDK settings SHA-256 | `82165b15ee21419d4cffaba8895797391b908ac9499ba70f561f3e1bd16758d6` |
+
+The reviewer compared the fixed native inputs, candidate field differences,
+Apple compiler signature and existing OS identities, and the native ABI and
+publication contracts. The compiler's strict signature verifies as
+`com.apple.clang` with the Apple Software Signing chain; the containing Xcode
+27.2 bundle also passes strict signature verification. All four N-API headers
+are unchanged. Office uses N-API 8, C++17 and deployment target 13.0; it does not
+link to Node's internal ABI. The local Darwin 27.0.0 backend, codesign and dyld
+profile identities match the existing `additionalOs` row.
+
+Fresh evidence covers 48/48 Office tests under standalone Node and 48/48 under
+the actual Electron runtime, with equal source fingerprints and no fixture
+residue. The fresh sandbox build passes 26 Rust tests with two existing ignored
+cases; process, input-read and codesign protocol suites pass 19/19, 10/10 and
+18/18. Restricted dispatch using the actual Electron executable and its exact
+resource digests passes 15/15, including write/network refusal. Launch-unknown
+contracts pass 2/2. No source, test, observer or approval mechanism was changed
+to obtain these results.
+
+The exact approved sandbox record SHA-256 is
+`3b6404b32c2e52166fb581744c4fccb1232e21e4cd847b0dd936032f7f1be3bf`;
+the approved Office record SHA-256 is
+`f888550f1a89ca8d3015372e9b019b72ae1c15130236c89d0443395252cee7f1`.
+The sandbox record is adopted first. All other source pins, OS rows, trust,
+signing and false/unbound safety axes are unchanged. This finite prerequisite
+review does not accept final App/archive bytes, public signing, notarization,
+clean-machine behavior, root-only capability observers or full Host protection.
+
+## Historical baseline, 2026-10-13
 
 Status: independently reviewed source prerequisite; final artifact acceptance separate
 Date: 2026-10-13
