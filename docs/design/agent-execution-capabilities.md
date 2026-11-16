@@ -1,14 +1,14 @@
 # Agent Execution Capabilities
 
-Status: C1–C3 locally implemented; automation/rerun planned; release gates open
+Status: C1–C3, A1/A2 and R1–R3 locally implemented; release gates open
 Owner: Runner and daemon maintainers
 Last verified: 2026-11-16
 Document type: design contract
 
 ## Scope And Existing Owners
 
-This contract covers code intelligence, Code Mode and lifecycle Hooks. It also defines
-the integration boundaries for external-event automations and selective rerun. Delivery
+This contract covers code intelligence, Code Mode, lifecycle Hooks, external-event
+automations, selective rerun and evidence-based Goal supervision. Delivery
 order and acceptance live in the [implementation plan](agent-execution-capabilities-implementation-plan.md).
 
 The baseline is `main@878dfa13`. Ling already owns tool hydration, MCP, Skills,
@@ -244,58 +244,128 @@ execution. A restored complete view does not dispatch `run_end` again.
 Hooks are a lifecycle extension mechanism. They do not implement an arbitrary plugin
 runtime, marketplace, automatic self-modification or an external event scheduler.
 
-## External-Event Automation Boundary
+## External-Event Automations
 
-Planned ingress reuses AutomationDefinition/AutomationRun and the ordinary Run queue:
+Signed ingress reuses AutomationDefinition/AutomationRun and ordinary Run admission:
 
 ```text
 authenticated source -> durable inbox -> matching rule -> AutomationRun -> Run
                                                         -> delivery outbox
 ```
 
-The first source is a generic signed Webhook; later adapters normalize GitHub issues,
-messaging, alerts and business events into the same envelope. An envelope includes
-source id, external event id, type, timestamp, workspace binding, payload digest and
-bounded redacted payload. Authentication/signature verification precedes persistence;
-source+event id deduplicates retries, with digest conflicts rejected. Timestamp windows,
-rate limits and source scope are enforced before queueing. Secrets are resolved by the
-Host and never embedded in prompt templates or event rows.
+Migration 221 owns sources, inbox events, dispatch leases, deliveries and receipts.
+Source management uses `GET/POST /automation-event-sources?cwd=...` and
+`GET/PUT /automation-event-sources/:id?cwd=...`. POST/PUT takes `{source,
+expectedRevision}`; updates require the current revision. A source binds an adapter
+(`webhook`, `github` or `business`), one or two secret references, enabled state,
+optional GitHub repository and rules. A rule selects one existing automation, exact
+event types, optional dot-path equality predicates and up to eight existing enabled
+IM destination ids. Configuration never accepts raw secrets. A second secret reference
+permits key rotation; replacing the source increments its revision and revokes queued
+work under the prior revision.
 
-Definitions select allowed event types and deterministic field predicates. Payloads
-are untrusted task data. A trigger cannot widen workspace/tool permissions, bypass an
-approval, send a message or execute a shell command. Disabled definitions do not launch
-work. A durable claim creates at most one AutomationRun per matched definition/event;
-restart, bursts, backpressure and dead-letter handling preserve that relationship.
+`POST /automation-event-sources/:id/events?cwd=...` accepts a UTF-8 JSON object of at
+most 64 KiB. Generic/business requests supply `x-ling-event-id`, `x-ling-event-type`,
+`x-ling-event-timestamp` (ISO timestamp) and `x-ling-signature-256`. The signature is
+`sha256=<lowercase hex HMAC-SHA256>` over the exact bytes
+`timestamp.eventId.eventType.` followed by the raw request body. GitHub uses its
+`x-github-delivery`, `x-github-event` and `x-hub-signature-256` raw-body signature;
+only `issues` and `issue_comment` from the configured `owner/repository` are accepted.
+Types normalize to `github.issues.<action>` or `github.issue_comment.<action>`.
+The generic timestamp, or the issue/comment `updated_at`, must be within five minutes
+of receipt. Delayed GitHub events outside this window are rejected.
 
-Results first appear in Ling's existing automation thread. External delivery is an
-explicit, destination-scoped policy backed by an outbox with retry, idempotency and
-delivery receipts. A completed Run and a delivered result are separate states. Unknown
-external submission remains unknown until reconciled, rather than being blindly retried.
-Hooks may observe ingress/delivery later, but ingress never depends on running a hook.
+Only this exact ingress POST bypasses daemon bearer authentication; its HMAC is
+mandatory. The workspace must already be initialized and trusted. Management routes
+remain local-service-only. Authentication precedes persistence; source/external id
+retries return the original event, changed bytes under the same id are rejected, and
+GitHub also deduplicates raw payload digests. Limits are 100 accepted events per source
+per minute and 5,000 pending dispatches per workspace. Payloads are redacted untrusted
+task data and cannot change tools, workspace, approvals or destinations.
 
-## Selective Rerun And Long-Term Completion Boundary
+Source revision, enabled definition and definition digest are rechecked immediately
+before execution. A durable lease and stable event/definition idempotency key recover
+accepted work through the existing automation owner. Busy automations retry every two
+seconds, with a 100-attempt dispatch cap; failures remain visible in
+`GET /automation-events?cwd=...`. The worker starts for explicitly registered sources,
+accepted ingress and scheduler registration; it does not scan arbitrary workspaces.
 
-F5-01/02/03 already provide pure evaluation, Host observation and a read-only admission
-plan. Actual submission must consume a still-current plan in one Host transaction:
+Terminal Runs create one outbox item per explicitly bound destination. Delivery uses
+the existing secret-resolved, egress-pinned IM dispatcher with redirects disabled,
+a ten-second request deadline and a stable `idempotency-key`. The body contains Run id,
+terminal status and bounded redacted final assistant text/error. Source configuration
+is the explicit authorization for this result relay; model output cannot add recipients.
+An AutomationRun that fails before creating a Run remains visible locally and has no
+Run-result delivery. Other automation output proposals retain their existing approval
+path.
 
-1. Recheck source graph/input/artifact revisions, terminal state, leases, effects,
-   policy and the idempotency key. A plan digest is evidence, not authority.
-2. Create a successor execution revision, Run/WorkUnit/Attempt and fresh fence. Keep the
-   original successful results and immutable lineage; never rewrite historical success.
-3. Invalidate only the transitive dependency closure whose pinned inputs changed.
-   Unaffected successful nodes retain their verified artifacts and are not resubmitted.
-4. Queue through the normal admission/approval path. Prior approvals and completed
-   external effects are never inherited as permission to repeat an operation.
-5. Reconcile duplicate requests, cancellation, restart and uncertain effects before
-   scheduling dependents. Unknown effects block the affected closure.
+A send has a thirty-second durable lease. Pre-dispatch failures and explicit HTTP 429
+responses have bounded backoff and five attempts. Uncertain remote outcomes and
+interrupted sending leases become `unknown` and are never automatically replayed.
+`GET /automation-deliveries?cwd=...` exposes delivery state;
+`POST /automation-deliveries/:id/reconcile?cwd=...` requires
+`{expectedUpdatedAt,decision,reason}`, where decision is `delivered`, `retry` or `failed`.
+The local user's CAS decision records a receipt before an explicit retry. Run success
+and delivery success remain separate facts; remote exactly-once delivery is not promised.
 
-Goal continuation remains a supervisor over visible queued work. A bounded continuation
-chain must use actual evidence delta and explicit acceptance criteria; model text alone
-cannot mark an objective achieved. Budgets, no-progress detection, pending approvals,
-user pause and blocker handling stop continuation. Extend policy only after selective
-rerun submission/recovery works; do not obtain long-running behavior by simply removing
-the current three-continuation guard. Acceptance evidence, execution completion and
-result delivery are independent facts.
+## Selective Rerun
+
+F5-01/02/03 retain pure evaluation, Host observation and the read-only admission plan.
+`POST /runs/:id/node-rerun/submit?cwd=...` consumes `{intent,planFingerprint}`. It
+re-observes the source and current policy inside the same Host writer transaction,
+requires a matching reviewed plan, and atomically records the submission and successor
+workflow. `GET` on the same path with `idempotencyKey=...` reads its result.
+
+The source workflow must be terminal and quiescent, with settled effects, no active
+lease/Attempt or pending approval. Unknown and pending effects block submission;
+known external effects on invalidated nodes also block replay. This implementation
+supports ordinary materialized workflow graphs. Template compilation, participant
+manifests/intent authority, delegated requirements, execution plans and safety/isolation
+profiles remain explicitly unsupported and fail closed.
+
+Only the target and transitive downstream nodes become queued successor steps.
+Unaffected successful/skipped nodes retain their results and immutable artifact pins.
+Historical workflows, steps and Runs remain intact; the source workflow is durably
+retired from dispatch. Duplicate submissions return the same successor, while changed
+intent, plan, source snapshot or a second request for the same source conflicts.
+
+The normal workflow orchestrator owns dependency scheduling, fresh Run/WorkUnit/Attempt
+creation, current-policy approval and cancellation. Fences are new Attempt-bound tuples;
+their numeric token need not differ across distinct WorkUnits. Durable supervision
+recovers pending successors after restart and checks reused step/artifact pins before
+dispatch. Missing or changed reused evidence blocks the successor. Cancelling a
+successor never resumes its retired source or authorizes replay of an uncertain effect.
+
+## Goal Acceptance And Long-Term Supervision
+
+Migration 222 stores rerun submissions and adds Goal criteria, criterion/evidence
+bindings and supervision policy. Existing Goal create/replace/PATCH routes accept
+`acceptanceCriteria` and `supervisionPolicy`; the complete route accepts
+`acceptanceEvidence` alongside current completion evidence and a verification summary.
+Criteria declare `id`, `description`, `kind` (`run_succeeded`, `workflow_succeeded` or
+`artifact`), optional exact `evidenceId` and optional artifact `contentSha256`.
+
+Completion verifies persisted evidence in the writer transaction: thread/workflow scope,
+creation after the Goal, terminal success, complete workflow steps and sealed artifact
+content digests. Pending Runs or approvals prevent completion. Each declared criterion
+needs a matching evidence binding among the submitted current proof. Historical refs
+remain stored, including failed Runs, but do not become required successful proof for a
+later completion. An agent's completion without criteria still needs explicit verified
+evidence and a summary; a model summary alone is insufficient.
+
+Policy defaults retain three continuations and two no-evidence continuations.
+`maxContinuations` accepts 1–1,000, `maxNoEvidenceContinuations` 1–10, and optional
+`maxTimeSeconds` 1–2,592,000. `autoContinue` defaults true; `retryFailedRuns` and
+`autoComplete` default false. Automatic completion additionally requires all criteria
+to name exact evidence ids. Token/time budgets, user pause, plan mode, blockers, pending
+work/approvals, authority changes and no-evidence limits stop scheduling visibly.
+
+Continuation accounting and a fixed source/Goal intervention key commit atomically.
+Restart recovers visible queued interventions through the existing Run owner. Explicit
+resume can requeue an intervention stopped by changed Goal authority without consuming
+another continuation depth. The supervisor does not create a second task engine or
+replace existing Host recovery. Acceptance, execution completion and external delivery
+are independent states.
 
 ## Validation And Release
 
@@ -313,4 +383,10 @@ C1–C3 have local Pi/daemon behavior and boundary coverage, including a loopbac
 fixture through real SDK dispatch, SQLite, the approval API and the journaled Host
 command executor. The fixture verifies cross-file code lookup, nested event lineage,
 Hook receipts and frozen configuration. It makes no external Provider or messaging
-request. Automation ingress/delivery and selective rerun remain design-only.
+request. A1/A2 tests exercise signed ingress, durable claim/reopen, matching and
+unknown-delivery reconciliation. A loopback HTTP -> Pi -> Host -> SQLite -> mock IM
+fixture verifies one Run per event, explicit destination scope and redacted delivery.
+R1/R2 tests cover A -> B -> C with independent D, atomic successor/reuse, stale plan,
+reopen, duplicates, effect rejection and real local Host execution. R3 tests verify
+criterion binding, terminal/sealed evidence, atomic continuation, pause/budgets and
+restart supervision. These fixtures send no real external message.

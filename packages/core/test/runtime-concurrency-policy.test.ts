@@ -22,9 +22,11 @@ type Fixture = ReturnType<typeof fixture>;
 const table = "runtime_concurrency_policies";
 const successors = [{ version: 216, name: "runtime_delegation_capacity_admissions" }, { version: 217, name: "runtime_run_queue" },
   { version: 218, name: "runtime_host_capacity" }, { version: 219, name: "runtime_delegation_spawn_admissions" },
-  { version: 220, name: "runtime_host_capacity_continuations" }];
+  { version: 220, name: "runtime_host_capacity_continuations" }, { version: 221, name: "create_automation_event_ingress_and_delivery" },
+  { version: 222, name: "create_node_rerun_submissions_and_goal_supervision" }];
 const successorTables = (successor: typeof successors[number]) => successor.version === 218 ? ["runtime_host_capacity_intents", "runtime_host_capacity_releases"]
-  : successor.version === 220 ? [] : [successor.name];
+  : successor.version === 220 ? [] : successor.version === 221 ? ["automation_event_sources", "automation_events", "automation_event_dispatches", "automation_deliveries", "automation_delivery_receipts"]
+    : successor.version === 222 ? ["node_rerun_submissions"] : [successor.name];
 const successorVersion = (version: SQLOutputValue) => successors.some(successor => successor.version === version);
 const now = "2026-11-03T00:00:00.000Z";
 const later = "2026-11-03T01:00:00.000Z";
@@ -66,10 +68,11 @@ function fixture(t: TestContext, { predecessor = false } = {}) {
   if (predecessor) {
     assert.equal(testDatabase(store).prepare(`SELECT COUNT(*) AS n FROM ${table}`).get()!.n, 0);
     assert.deepEqual(markers(testDatabase(store)).filter(row => successorVersion(row.version)).map(({ version, name }) => ({ version, name })), successors);
+    for (const index of ["idx_automation_event_pending", "idx_automation_event_rate", "idx_automation_delivery_pending"]) testDatabase(store).exec(`DROP INDEX IF EXISTS ${index}`);
     for (const successor of [...successors].reverse()) {
       for (const table of [...successorTables(successor)].reverse()) {
         assert.equal(testDatabase(store).prepare(`SELECT COUNT(*) AS n FROM ${table}`).get()!.n, 0);
-        assert.deepEqual(fullSchema.filter(row => row.tbl_name === table).map(row => row.name), [table]);
+        assert.deepEqual(fullSchema.filter(row => row.tbl_name === table && row.type === "table").map(row => row.name), [table]);
         testDatabase(store).exec(`DROP TABLE ${table}`);
       }
       assert.equal(testDatabase(store).prepare("DELETE FROM schema_migrations WHERE version=? AND name=?")

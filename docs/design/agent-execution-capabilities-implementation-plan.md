@@ -1,6 +1,6 @@
 # Agent Execution Capabilities Implementation Plan
 
-Status: C1–C3 locally implemented and validated; A1–R3 planned; release gates open
+Status: C1–C3, A1/A2 and R1–R3 locally implemented; full regression/review/CI open
 Owner: Runner and daemon maintainers
 Last verified: 2026-11-16
 Document type: implementation plan
@@ -9,8 +9,8 @@ Contract: [Agent Execution Capabilities](agent-execution-capabilities.md)
 ## Objective And Ordering
 
 Deliver code intelligence, Code Mode and general lifecycle Hooks through Ling's actual
-Pi/daemon execution path. Plan external-event automation and selective rerun in the
-same dependency sequence, without representing their plans as working execution.
+Pi/daemon execution path, with signed event automation, selective rerun and bounded
+evidence-based Goal supervision through the existing runtime owners.
 
 | Stage | Deliverable | Dependency | Acceptance |
 |---|---|---|---|
@@ -23,8 +23,8 @@ same dependency sequence, without representing their plans as working execution.
 | R2 | Restart/cancellation/effect reconciliation | R1 | No repeated known effect or replay of unknown effect; reliable dependent scheduling |
 | R3 | Goal acceptance and bounded long-term supervision | R2, existing Goal | Evidence-based acceptance, budgets/no-progress, pause/blocker and visible continuation |
 
-C1/C2/C3 are the current implementation goal. A1–R3 are planned follow-up work; this
-change does not expose Webhook endpoints or submit real reruns.
+C1–C3 and A1–R3 are locally implemented. The local controlled-transport acceptance
+uses a scripted Provider; full regression, review and remote CI remain release gates.
 
 The local implementation is on `codex/agent-capabilities`, based on `main@878dfa13`.
 This record does not establish that the changes are merged or deployed.
@@ -60,17 +60,18 @@ This record does not establish that the changes are merged or deployed.
   receipts and propagate blocking failures through the task boundary.
 - Provide configuration examples in the contract, with tested trust/denial semantics.
 
-### A1/A2: Event Automation (Planned)
+### A1/A2: Event Automation
 
 Owner modules: `core` automation storage/contracts, daemon automation feature, API/CLI
 and existing automation settings. Add inbox/source/outbox migrations with rollback/reopen
 coverage. Keep secrets in the existing secret resolver.
 
-First deliver source CRUD, key reference/signature rotation, authenticated ingress,
-envelope validation, deterministic predicates and transactional dispatch. Then add
-GitHub issue events, a generic alert/business-event mapping and explicit destination
-delivery policies. Use at-least-once ingress/delivery with idempotent claims and receipts;
-do not promise exactly-once remote effects.
+The implementation provides source CRUD/revision CAS, two secret refs for rotation,
+raw-body HMAC verification, strict envelope limits, exact type/predicate matching and
+transactional claims. GitHub issue/comment and generic business sources share the
+inbox. Destination-bound result delivery has a durable outbox, CAS receipts, bounded
+retry for known non-delivery and explicit reconciliation for unknown remote outcomes.
+Migration 221 owns these tables. See the contract for headers, limits and endpoints.
 
 Acceptance scenarios: valid issue opens one task; redelivered event opens none; changed
 payload under the same id is rejected; wrong signature and stale timestamps start no
@@ -78,19 +79,27 @@ work; daemon restart recovers an accepted event; burst rate limiting preserves q
 state; failed Run and failed delivery have distinct statuses; unknown delivery is
 reconciled before retry. No external messages are sent during local fixture tests.
 
-### R1/R2/R3: Rerun And Completion (Planned)
+### R1/R2/R3: Rerun And Completion
 
 Owner modules: existing F5 Host admission, workflow graph/storage/scheduler, Run
 orchestration and Goal interventions. Extend those owners rather than introduce a
 parallel task engine. The [F5 plan](ling-framework-complementary-implementation-plan.md)
 remains authoritative for its existing phases.
 
-R1 adds a transactional submission API consuming a current admission plan and an
-idempotency key. It records successor revision and the exact invalidated closure,
-creates fresh execution objects and queues through normal approval. R2 adds durable
-submission/effect reconciliation and recovery. R3 adds acceptance criteria/evidence
-tracking and configurable bounded supervision, retaining the current guard until the
-replacement is tested.
+The submission API consumes intent and a reviewed plan fingerprint inside a Host
+transaction. It records one successor and exact invalidated closure, retires the
+source, and pins unaffected results. Existing orchestration creates fresh execution
+identities and approvals. The durable supervisor checks pins and resumes successors
+through the normal workflow owner. Ordinary materialized graphs are supported;
+compiled templates, participant/intent authority and safety/isolation/delegated profiles
+fail closed. Unknown, pending and affected known external effects block replay.
+
+Migration 222 owns submission records and Goal criterion/evidence/policy columns.
+Goal completion verifies current explicit persisted proof while retaining historical
+references. Supervision atomically queues idempotent interventions and enforces token,
+time, no-progress, pause, pending-work and authority limits. The default three-step
+bound remains; configured limits are covered by behavior tests. Exact-evidence
+`autoComplete` is opt-in. Existing Goal and workflow owners retain execution authority.
 
 Acceptance scenarios: `A -> B -> C` with independent successful `D`; rerun failed B,
 keep A/D artifacts and only reconsider C; two submissions create one successor; edited
@@ -123,6 +132,13 @@ Implementation owners:
   `script-runtime.ts` owns the shared bounded QuickJS worker lifetime.
 - `packages/daemon/src/features/runs/hooks-configuration.ts` owns configuration trust;
   Runner `hook-runtime.ts` and `extensions/hooks.ts` own lifecycle dispatch and receipts.
+- `packages/core/src/storage/sqlite/automation-event-store.ts` owns inbox/outbox and
+  receipts; daemon `features/automations/event-{ingress,routes,worker}.ts` own source
+  authentication, local management and dispatch through existing automation/IM ports.
+- `packages/core/src/storage/sqlite/node-rerun-store.ts` owns atomic successor records;
+  daemon `features/runs/node-rerun-submission.ts` revalidates Host observation.
+- Core `goal-acceptance.ts`/`goal-supervision-store.ts` own proof and intervention
+  transactions; daemon `task-supervisor.ts` recovers both workflow and Goal work.
 - Prepared Runner input freezes schema/configuration; existing Host approvals own every
   command and nested effect. Child cancellation uses the captured approval fence.
 
@@ -137,6 +153,6 @@ resource lookup and live Provider quality remain separate follow-up acceptance.
 | C1 | Local Pi/daemon implementation and validation complete | Review/CI and packaged/live Provider acceptance |
 | C2 | Local nested SDK execution, audit, approval and cancellation validation complete | Review/CI and packaged/live Provider acceptance |
 | C3 | Local trust, lifecycle policy, approved command and failure-boundary validation complete | Review/CI and packaged/live Provider acceptance |
-| A1/A2 | Design/planning only | Implement and validate in later goal |
-| R1/R2/R3 | Design/planning only | Implement and validate in later goal |
+| A1/A2 | Local signed ingress, GitHub/business adapter, durable claims/outbox and mock-IM integration pass | Full regression, review/CI; live service acceptance |
+| R1/R2/R3 | Local successor/reuse/effect/restart and Goal acceptance/supervision regressions pass | Full regression, review/CI; advanced workflow profiles remain closed |
 | Release | Unverified | Review/CI, merge, packaged acceptance and deployment |

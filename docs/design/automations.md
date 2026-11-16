@@ -4,12 +4,14 @@
 
 Status: implemented active product contract
 Owner: Automations domain
-Last verified: 2026-11-08
+Last verified: 2026-11-16
 
 Durable definitions, drafts, runs, templates, scheduler control, daemon routes, API client,
 Web management, manual execution and standard Run/Approval integration are implemented.
-Richer monitor sources, desktop notifications and external destinations remain bounded
-follow-ups.
+Signed Webhook/GitHub/business ingress and destination-bound result outbox are locally
+implemented with controlled-transport tests. Remote CI/merge and live messaging
+acceptance remain open. Richer monitor sources, desktop notifications and general
+external action proposals remain follow-ups.
 
 Related design docs:
 
@@ -23,7 +25,7 @@ Related design docs:
 ## Purpose
 
 Automations let a user turn repeatable AI teammate work into durable scheduled,
-manual, or monitor-driven runs.
+manual, monitor-driven, or authenticated external-event runs.
 
 The Codex product shape to borrow is the user-facing pattern:
 
@@ -91,8 +93,12 @@ Implemented foundations and product behavior:
 - A timer that wakes materially late after sleep or a wall-clock jump follows the
   persisted `skip`/`run_one` policy instead of dispatching an unbounded stale slot.
 
-Remaining product work is limited to richer monitor sources, desktop notification policy,
-export/report destinations and approval-backed external action proposals.
+Event sources use the existing automation definition and Run owner; source rules
+explicitly authorize result relay to existing enabled IM destinations. The signed ingress,
+durable dispatch and outbox contract is described in [Agent Execution
+Capabilities](agent-execution-capabilities.md#external-event-automations). Remaining
+product work includes source-management UI/CLI, richer monitor sources, desktop
+notifications, export destinations and approval-backed general external actions.
 
 ## Goals
 
@@ -119,7 +125,6 @@ export/report destinations and approval-backed external action proposals.
 - No automatic approval of side effects.
 - No daemon-wide scan of every workspace on the machine.
 - No cloud scheduler in the first local design.
-- No webhook receiver for generic automations in v1.
 - No replacement of `LingThread`, `RunSession`, workflow, or runtime supervisor state with
   Codex app-server internals.
 - No direct mutation of memory, persona, provider, tools, approval policy, or secrets from
@@ -323,8 +328,10 @@ type AutomationOutputDestination =
   | { readonly type: "external_action_proposal"; readonly service: "github" | "linear" | "email" | "slack" };
 ```
 
-Internal Ling thread and channel outputs can be automatic. External outputs must be
-represented as proposed external actions and pass through approval.
+Internal Ling thread and channel outputs can be automatic. General external actions
+remain approval-backed proposals. Event-source rules may explicitly preauthorize the
+bounded terminal Run result relay to named enabled IM destinations; recipients cannot
+be chosen by model output or event payload.
 
 ### AutomationRun
 
@@ -345,7 +352,7 @@ interface AutomationRun {
   readonly channelId?: string;
   readonly threadId: string;
   readonly runId?: string;
-  readonly triggerType: AutomationTrigger["type"];
+  readonly triggerType: AutomationTrigger["type"] | "event";
   readonly scheduledFor?: string;
   readonly firedAt: string;
   readonly startedAt?: string;
@@ -498,6 +505,27 @@ monitor timer fires
 -> either write finding artifact only or start a normal Ling run according to policy
 ```
 
+### Authenticated Event
+
+```text
+signed Webhook/GitHub/business POST
+-> verify raw-body HMAC, source scope, freshness and bounds
+-> atomically persist inbox event and matching dispatches
+-> claim durable dispatch lease and recheck source/definition authority
+-> runAutomation with stable event dispatch idempotency key
+-> ordinary Run/Approval/Host execution
+-> materialize terminal Run outbox for explicit source destination ids
+-> send bounded redacted result and retain delivery receipt
+```
+
+Migration 221 adds `automation_event_sources`, `automation_events`,
+`automation_event_dispatches`, `automation_deliveries` and
+`automation_delivery_receipts`. External ids/digests deduplicate ingress; expired
+claims recover accepted work. A thirty-second sending lease that expires is
+`unknown`, requiring a local explicit reconcile before retry. Known pre-dispatch
+failures and HTTP 429 have bounded backoff. A terminal AutomationRun with no Run
+created has no Run-result delivery and retains its local failure record.
+
 ## Daemon Scheduler Model
 
 Definitions are durable. Timers are process-local.
@@ -530,7 +558,7 @@ inspectable process state, durable work records, and no hidden daemon-wide crawl
 
 ## API Surface
 
-Planned daemon endpoints:
+Implemented daemon endpoints:
 
 ```http
 GET /automations?cwd=...
@@ -548,6 +576,15 @@ POST /automation-runs/:automationRunId/cancel?cwd=...
 POST /automations/scheduler/start?cwd=...
 GET /automations/scheduler?cwd=...
 POST /automations/scheduler/stop?cwd=...
+
+GET /automation-event-sources?cwd=...
+POST /automation-event-sources?cwd=...
+GET /automation-event-sources/:id?cwd=...
+PUT /automation-event-sources/:id?cwd=...
+POST /automation-event-sources/:id/events?cwd=...
+GET /automation-events?cwd=...
+GET /automation-deliveries?cwd=...
+POST /automation-deliveries/:id/reconcile?cwd=...
 ```
 
 Create request:
@@ -761,7 +798,9 @@ Automations inherit all existing Ling safety rules:
 - File writes, shell commands, Git commits, Git pushes, external sends, deployments,
   credential changes, provider changes, and high-cost media operations require normal
   approvals.
-- External destinations create proposed actions. They do not execute inline.
+- General external destinations create proposed actions. A source-configured terminal
+  result relay uses only its explicit existing IM destination ids and rechecks source
+  revision, automation definition digest and enabled destination before dispatch.
 - Raw secrets are never stored in automation definitions, run rows, artifacts, logs,
   scheduler state, or doctor JSON.
 - Automation prompts cannot grant tools, MCP access, provider capabilities, memory scope,
@@ -844,6 +883,16 @@ Do not borrow:
 - Add local notification output.
 - Add Web monitor cards and no-op history.
 
+### A1/A2: Signed event ingress and scoped result delivery - locally implemented
+
+- Webhook, GitHub issue/comment and generic business adapters share durable inbox claims.
+- Authentication, freshness, body/rate/queue limits, revision CAS and digest conflicts
+  are enforced before work dispatch.
+- Real local HTTP/Pi/Host/SQLite fixtures verify event idempotency and a mock IM
+  result relay; no real external message is sent by these tests.
+- Run completion, delivery completion and unknown outcomes have distinct durable state.
+- Remote CI/merge and live external-service acceptance remain separate gates.
+
 ### P3: Rich outputs and desktop integration - deferred
 
 - Add desktop scheduler opt-in.
@@ -862,7 +911,9 @@ The maintained regression suite must continue to prove:
 - Disabled automation cannot be run by scheduler.
 - Manual run still works when scheduler is stopped.
 - Context preview is deterministic and redacted.
-- External output destinations create approval-backed action proposals, not direct sends.
+- General external output destinations create approval-backed action proposals.
+- Signed event result relay targets only configured enabled destinations, redacts/bounds
+  text, retains a stable idempotency key and never auto-retries an unknown outcome.
 - Cancelling the underlying Ling run marks the automation run cancelled.
 - Late runner completion does not overwrite cancelled automation run state.
 - `--json` CLI automation commands print JSON-only stdout.

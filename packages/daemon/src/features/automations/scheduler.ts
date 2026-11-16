@@ -75,6 +75,7 @@ export class AutomationSchedulerRegistry {
     private readonly startupState?: StartupStateRegistry,
     private readonly nativeRunDispatcher?: NativeRunDispatcher,
     private readonly notificationHub?: NotificationHub,
+    private readonly automationEvents?: AutomationEventWorker,
   ) {}
 
   start(cwd: string): { readonly scheduler: AutomationSchedulerState; readonly duplicate: boolean } {
@@ -92,6 +93,7 @@ export class AutomationSchedulerRegistry {
 
       const now = new Date().toISOString();
       const store = this.storeRegistry.getStore(cwd);
+      this.automationEvents?.start(cwd);
       const automations = store.listAutomationDefinitions({ status: "enabled", scheduledOnly: true, limit: 500 });
       const entry: AutomationSchedulerEntry = {
         state: {
@@ -180,6 +182,7 @@ export class AutomationSchedulerRegistry {
   }
 
   stop(cwd: string): AutomationSchedulerState | undefined {
+    this.automationEvents?.stop(cwd);
     const entry = this.entriesByCwd.get(cwd);
     if (!entry) {
       return undefined;
@@ -570,3 +573,4 @@ export class AutomationSchedulerRegistry {
 function automationScheduleIdentity(automation: AutomationDefinition): string {
   return JSON.stringify([automation.trigger, automation.rrule]);
 }
+import type { AutomationEventWorker } from "./event-worker.js";

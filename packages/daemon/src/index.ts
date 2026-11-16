@@ -1,3 +1,7 @@
+import { resolveProviderForRun } from "./features/runs/providers.js";
+import { TaskSupervisor } from "./features/runs/task-supervisor.js";
+import { orchestrateChannelWorkflow } from "./features/channels/orchestrator.js";
+import { createWorkflowParallelCapabilityResolver } from "./features/runs/workflow-safety.js";
 import { MemorySemanticService } from "./features/memory/semantic-service.js";
 import { registerMemorySemanticService } from "./features/memory/semantic-registry.js";
 import { LearningReviewCoordinator } from "./features/learning/coordinator.js";
@@ -43,7 +47,7 @@ import {
 } from "./features/channels/terminal-report-coordinator.js";
 import { ChannelReplyDispatchCoordinator } from "./features/channels/channel-reply-dispatch-coordinator.js";
 import { ChannelTurnDispatchWorkerRegistry } from "./features/channels/channel-turn-dispatch-worker.js";
-import { createChannelTurnDispatchExecutor } from "./features/channels/channel-turn-dispatch-executor.js";
+import { createChannelTurnDispatchExecutor, createStartOrchestratedRun } from "./features/channels/channel-turn-dispatch-executor.js";
 import { maybeScheduleRunTerminalReport } from "./features/channels/terminal-report-coordinator.js";
 import { reconcileAllContinuityWorkflows } from "./features/channels/workflow-reconciliation.js";
 import { configureWorkflowIsolationLifecycle } from "./features/channels/workflow-isolation-lifecycle.js";
@@ -433,6 +437,7 @@ export function createDaemonServer(
   const activeRuns = new ActiveRunRegistry();
   const pendingOwnedStores = new Map<RunStore, string>();
   const initializedOwnedStores = new WeakSet<RunStore>();
+  let taskSupervisor: TaskSupervisor | undefined;
   const initializeOwnedStore = (cwd: string, store: RunStore): void => {
     if (harnessShuttingDown) throw new Error("runtime_shutting_down");
     if (initializedOwnedStores.has(store)) return;
@@ -519,6 +524,7 @@ export function createDaemonServer(
     reconcileHarnessProjections(store);
     if (channelTurnDispatchReady) channelTurnDispatchWorker?.start(store);
     companionSchedulers?.start(cwd);
+    taskSupervisor?.start(cwd);
     learningReviewCoordinator?.registerStore(store);
     if (!memorySemanticServices.has(store)) {
       const service = new MemorySemanticService({ store, secretResolver });
@@ -688,6 +694,12 @@ export function createDaemonServer(
         target: nativeRunTargetDispatcher,
       })
     : undefined;
+  const automationEvents = new AutomationEventWorker(storeRegistry, imDestinations, (request, hooks) =>
+    startDetachedRunAndResolveReady(onReady => executeRunRequest(request, createDetachedRunExecutionSink(),
+      runnerRegistry, storeRegistry, activeRuns, runtimeSupervisor, secretResolver, mcpBroker, {
+        onRunReady: (id, info) => { hooks.onRunReady?.(id, info); onReady(id); },
+        afterRunTerminal: hooks.afterRunTerminal, controlPlaneEvents, startupState, computerUsePreviews, nativeRunDispatcher,
+      })));
   automationSchedulers = new AutomationSchedulerRegistry(
     runnerRegistry,
     storeRegistry,
@@ -700,6 +712,7 @@ export function createDaemonServer(
     startupState,
     nativeRunDispatcher,
     notificationHub,
+    automationEvents,
   );
   startupOptionalWarmups = new StartupOptionalWarmupCoordinator({
     startupState,
@@ -796,6 +809,23 @@ export function createDaemonServer(
     webResolveHostAddresses,
     afterRunTerminal: afterChannelRunTerminal,
   };
+  taskSupervisor = new TaskSupervisor(storeRegistry, (store, workflowId) => orchestrateChannelWorkflow({
+    store, cwd: store.paths.cwd, workflowId, secretResolver, runnerRegistry,
+    resolveParallelCapability: createWorkflowParallelCapabilityResolver(runnerRegistry,
+      { toolBrokerMode: () => runtimeSupervisor.getHarnessFeatures().toolBroker.mode }),
+    isolationHost: { enabled: () => runtimeSupervisor.getChannelFeatures().workflowIsolatedFiles === true,
+      toolBrokerMode: () => runtimeSupervisor.getHarnessFeatures().toolBroker.mode,
+      maxConcurrentSteps: () => runtimeSupervisor.getConcurrencyPolicy().enabled
+        ? runtimeSupervisor.getConcurrencyPolicy().isolatedWriteMaxConcurrentSteps : 2 },
+    validateRunRequest: request => { resolveProviderForRun(store, request, secretResolver); },
+    startRun: createStartOrchestratedRun(channelTurnDispatchOptions, store, store.paths.cwd),
+  }), async (store, run) => {
+    const queued = maybeQueueGoalContinuation({ terminalRun: run, store, activeRuns });
+    const pending = queued ?? store.listRunInterventions({ sourceRunId: run.id, status: "queued", limit: 100 })
+      .find(item => item.requestedBy === "system" && item.idempotencyKey?.startsWith("goal_auto_continue:"));
+    if (pending) await maybeStartNextRunInterventionContinuation({ sourceRunId: run.id, store, runnerRegistry, storeRegistry,
+      activeRuns, runtimeSupervisor, secretResolver, mcpBroker, computerUsePreviews, controlPlaneEvents, startupState, nativeRunDispatcher });
+  });
   // Explicit typed Host startup selection. No HTTP/model request can add an
   // ID, and a normal installation leaves dynamic producers closed by default.
   const selectedDelegationWorkflowIds = resolvedConfig.harness.delegations.selectedWorkflowIds;
@@ -988,6 +1018,8 @@ export function createDaemonServer(
     imageVisionSummarizer,
     backgroundSchedulers,
     automationSchedulers,
+    automationEvents,
+    taskSupervisor,
     controlPlaneEvents,
     notificationHub,
     imDestinations,
@@ -1110,6 +1142,8 @@ export function createDaemonServer(
       channelTurnDispatchWorker.beginShutdown();
       backgroundSchedulers.stopAdmission();
       automationSchedulers.stopAll();
+      automationEvents.stopAll();
+      taskSupervisor.stopAll();
       companionSchedulers?.stopAll();
     },
     abortOwned: () => {
@@ -1123,6 +1157,7 @@ export function createDaemonServer(
       runtimeRunQueueCoordinator?.waitForIdle() ?? Promise.resolve(),
       approvalAutoReviewRecoveryCoordinator?.waitForIdle() ?? Promise.resolve(),
       automationSchedulers.waitForIdle(), backgroundSchedulers.waitForIdle(),
+      automationEvents.waitForIdle(), taskSupervisor.waitForIdle(),
       companionSchedulers?.waitForIdle() ?? Promise.resolve(),
       providerStartupRefresh.waitForIdle(), harnessProjectionReconciler.waitForIdle(),
       harnessArtifactRetention.waitForIdle(),
@@ -1260,6 +1295,7 @@ export function createDaemonServer(
         }
         startupOptionalWarmups.start(resolvedConfig.defaultWorkspaceCwd, storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd));
         companionSchedulers?.start(resolvedConfig.defaultWorkspaceCwd);
+        taskSupervisor.start(resolvedConfig.defaultWorkspaceCwd);
         channelTurnDispatchReady = true;
         channelTurnDispatchWorker.start(storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd));
         const mediaRecoveryHooks: Parameters<typeof resumePendingMediaJobExecutions>[0]["hooks"] = {
@@ -1563,3 +1599,5 @@ export async function startDaemon(
   return daemon;
 }
 import { configureNormalNarrationPublication, recoverNormalNarrationPublications } from "./features/conversations/normal-narration-publication.js";
+import { AutomationEventWorker } from "./features/automations/event-worker.js";
+import { startDetachedRunAndResolveReady } from "./features/runs/detached.js";

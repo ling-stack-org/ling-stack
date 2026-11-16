@@ -86,6 +86,11 @@ function fixture(t: TestContext, { installed = false } = {}) {
   applyRuntimeRunQueueMigration(input(db));
   assert.equal(db.prepare("SELECT name FROM schema_migrations WHERE version=217").get()!.name, predecessor);
   migrate(db);
+  db.exec("PRAGMA foreign_keys=OFF");
+  try {
+    for (const table of ["node_rerun_submissions", "automation_delivery_receipts", "automation_deliveries", "automation_event_dispatches", "automation_events", "automation_event_sources"]) db.exec(`DROP TABLE IF EXISTS ${table}`);
+    db.prepare("DELETE FROM schema_migrations WHERE version IN (221,222)").run();
+  } finally { db.exec("PRAGMA foreign_keys=ON"); }
   const successorTable = "runtime_delegation_spawn_admissions";
   const currentMarkers = markers(db).filter(row => row.version >= 218).map(({ version, name }) => [version, name]);
   assert.deepEqual(currentMarkers, [[218, name], [219, successorTable], [220, "runtime_host_capacity_continuations"]]);
@@ -129,7 +134,13 @@ function fixture(t: TestContext, { installed = false } = {}) {
     reopen() {
       store!.close(); store = undefined;
       const next = createSqliteRunStore(cwd, paths);
-      try { migrate(testDatabase(next)); } catch (error) { next.close(); throw error; }
+      const nextDb = testDatabase(next);
+      nextDb.exec("PRAGMA foreign_keys=OFF");
+      try {
+        for (const table of ["node_rerun_submissions", "automation_delivery_receipts", "automation_deliveries", "automation_event_dispatches", "automation_events", "automation_event_sources"]) nextDb.exec(`DROP TABLE IF EXISTS ${table}`);
+        nextDb.prepare("DELETE FROM schema_migrations WHERE version IN (221,222)").run();
+      } finally { nextDb.exec("PRAGMA foreign_keys=ON"); }
+      try { migrate(nextDb); } catch (error) { next.close(); throw error; }
       store = next;
     } };
 }
