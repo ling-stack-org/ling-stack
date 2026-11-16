@@ -354,6 +354,9 @@ test("packaged Computer Control follows the same dark surface hierarchy", async 
           platform: "macos",
           requestPermissions: async () => ({ accepted: true }),
           openPermissionSettings: async () => ({ accepted: true }),
+          getLockedComputerControlState: async () => ({ projection: { schemaVersion: 1, capability: "disabled_by_build", phase: "off", reason: "locked_control_disabled_by_build" }, activeTaskAvailable: false }),
+          authorizeLockedComputerControl: async () => ({ accepted: false, reason: "locked_control_disabled_by_build" }),
+          revokeLockedComputerControl: async () => ({ accepted: false, reason: "locked_control_disabled_by_build" }),
         },
         navigation: {
           acknowledgeIntent: async () => ({ accepted: true }),

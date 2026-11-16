@@ -5,7 +5,7 @@ import type { DesktopRuntime } from "../desktop-runtime.js";
 /** Local identity verification and grant construction remain in the runtime. */
 export function registerLockedControlIpc(input: {
   readonly ipcMain: Pick<IpcMain, "handle" | "removeHandler">;
-  readonly runtime: Pick<DesktopRuntime, "authorizeLockedComputerControl" | "revokeLockedComputerControl">;
+  readonly runtime: Pick<DesktopRuntime, "getLockedComputerControlState" | "authorizeLockedComputerControl" | "revokeLockedComputerControl">;
   readonly getMainWindow: () => BrowserWindow | undefined;
   readonly trustedDocumentUrl?: string;
 }): () => void {
@@ -24,6 +24,16 @@ export function registerLockedControlIpc(input: {
       return actual.protocol === "file:" && actual.href === expected.href;
     } catch { return false; }
   };
+  input.ipcMain.handle(DESKTOP_IPC_CHANNELS.computerControlLockedState, async (event, ...args: unknown[]) => {
+    if (args.length !== 0 || !isTrusted(event)) throw new Error("unauthorized_sender");
+    try {
+      const state = await input.runtime.getLockedComputerControlState();
+      if (!isTrusted(event)) throw new Error("unauthorized_sender");
+      return state;
+    } catch {
+      throw new Error("locked_control_state_unavailable");
+    }
+  });
   input.ipcMain.handle(DESKTOP_IPC_CHANNELS.computerControlLockedAuthorize, async (event, ...args: unknown[]) => {
     if (args.length !== 0 || !isTrusted(event)) return { accepted: false, reason: "unauthorized_sender" };
     const result = await input.runtime.authorizeLockedComputerControl();
@@ -38,6 +48,7 @@ export function registerLockedControlIpc(input: {
     return input.runtime.revokeLockedComputerControl();
   });
   return () => {
+    input.ipcMain.removeHandler(DESKTOP_IPC_CHANNELS.computerControlLockedState);
     input.ipcMain.removeHandler(DESKTOP_IPC_CHANNELS.computerControlLockedAuthorize);
     input.ipcMain.removeHandler(DESKTOP_IPC_CHANNELS.computerControlLockedRevoke);
   };

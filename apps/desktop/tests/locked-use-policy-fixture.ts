@@ -1,10 +1,12 @@
 import { LockedComputerControlPolicyCoordinator, type LockedControlGenerationRuntime } from "../dist/main/locked-computer-control/policy-coordinator.js";
 import type { LockedControlDaemonClient } from "../dist/main/locked-computer-control/daemon-client.js";
 import type { LockedControlCapabilityAttestor } from "../dist/main/locked-computer-control/capability-attestor.js";
+import type { LockedControlIdentityVerifier } from "../dist/main/locked-computer-control/identity-verifier.js";
 import { deferred, enabledPolicy, sessionDigest, supportedCapability, taskGrant } from "./locked-use-fixtures.ts";
 
-export function policyFixture() {
+export function policyFixture(options: { readonly identityVerifier?: LockedControlIdentityVerifier } = {}) {
   const events: string[] = [];
+  let identityCalls = 0;
   const grant = taskGrant();
   const snapshot = { revision: 1, projection: { schemaVersion: 1 as const, capability: "supported_restricted" as const, phase: "off" as const } };
   const daemon: LockedControlDaemonClient & { currentTask(): Promise<{ runId: string; computerUseSessionId: string }> } = {
@@ -42,9 +44,22 @@ export function policyFixture() {
       } };
     },
   };
+  const defaultIdentityVerifier: LockedControlIdentityVerifier = {
+    async verify(requestId: string) {
+      identityCalls += 1;
+      return {
+        schemaVersion: 1 as const,
+        requestId,
+        status: "verified" as const,
+        method: "device_owner_authentication" as const,
+        verifiedAt: new Date().toISOString(),
+      };
+    },
+  };
+  const identityVerifier = options.identityVerifier ?? defaultIdentityVerifier;
   const coordinator = new LockedComputerControlPolicyCoordinator({
     policy: enabledPolicy, capability: () => supportedCapability, daemon, runtime, attestor,
-    identityVerifier: { async verify(requestId) { return { schemaVersion: 1, requestId, status: "verified", method: "device_owner_authentication", verifiedAt: new Date().toISOString() }; } },
+    identityVerifier,
   });
-  return { coordinator, events, runtime, daemon, attestor, grant };
+  return { coordinator, events, runtime, daemon, attestor, grant, identityVerifier, get identityCalls() { return identityCalls; } };
 }

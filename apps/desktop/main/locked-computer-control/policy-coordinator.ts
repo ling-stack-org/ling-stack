@@ -112,8 +112,9 @@ export class LockedComputerControlPolicyCoordinator {
   authorizeCurrentTask(): Promise<DesktopCommandResult> {
     if (this.stopped) return Promise.resolve({ accepted: false, reason: "locked_control_authority_rotated" });
     if (this.authorizePromise) return this.authorizePromise;
+    const authorizationBoundaryRevision = this.boundaryRevision;
     const pending = this.enqueue(async () => {
-      try { return await this.authorizeInternal(); }
+      try { return await this.authorizeInternal(authorizationBoundaryRevision); }
       catch {
         await this.revokeInMemoryFirst("locked_control_authority_rotated", this.safeReadAuthority(), false);
         return { accepted: false, reason: "locked_control_authority_rotated" } as const;
@@ -128,6 +129,7 @@ export class LockedComputerControlPolicyCoordinator {
 
   revokeCurrentGrant(): Promise<DesktopCommandResult> {
     this.advanceBoundaryRevision();
+    this.cancelIdentityVerification();
     this.options.runtime.closeCallGate("locked_control_grant_consumed");
     return this.enqueue(async () => {
       const authority = this.safeReadAuthority();
@@ -140,6 +142,7 @@ export class LockedComputerControlPolicyCoordinator {
   handleLock(): Promise<void> {
     this.sessionLocked = true;
     const boundaryRevision = this.advanceBoundaryRevision();
+    this.cancelIdentityVerification();
     this.options.runtime.closeCallGate("locked_control_session_mismatch");
     return this.enqueue(() => this.handleLockInternal(boundaryRevision));
   }
@@ -148,6 +151,7 @@ export class LockedComputerControlPolicyCoordinator {
   handleUnlock(): Promise<void> {
     this.sessionLocked = false;
     this.advanceBoundaryRevision();
+    this.cancelIdentityVerification();
     this.options.runtime.closeCallGate("locked_control_grant_consumed");
     return this.enqueue(async () => {
       await this.revokeInMemoryFirst("locked_control_grant_consumed", this.safeReadAuthority(), true);
@@ -160,6 +164,7 @@ export class LockedComputerControlPolicyCoordinator {
   handleSuspend(): Promise<void> {
     this.systemSuspended = true;
     this.advanceBoundaryRevision();
+    this.cancelIdentityVerification();
     this.options.runtime.closeCallGate("locked_control_suspend");
     return this.enqueue(async () => {
       await this.options.runtime.retireNormalForLock("locked_control_suspend").catch(() => undefined);
@@ -170,6 +175,7 @@ export class LockedComputerControlPolicyCoordinator {
   handleResume(): Promise<void> {
     this.systemSuspended = false;
     this.advanceBoundaryRevision();
+    this.cancelIdentityVerification();
     this.options.runtime.closeCallGate("locked_control_suspend");
     return this.enqueue(async () => {
       if (!this.stopped && !this.sessionLocked && !this.systemSuspended) {
@@ -180,6 +186,7 @@ export class LockedComputerControlPolicyCoordinator {
 
   handleAuthorityRotated(): Promise<void> {
     this.advanceBoundaryRevision();
+    this.cancelIdentityVerification();
     this.options.runtime.closeCallGate("locked_control_authority_rotated");
     return this.enqueue(async () => {
       await this.revokeInMemoryFirst("locked_control_authority_rotated", this.safeReadAuthority(), false);
@@ -189,13 +196,17 @@ export class LockedComputerControlPolicyCoordinator {
   shutdown(): Promise<void> {
     this.stopped = true;
     this.advanceBoundaryRevision();
+    this.cancelIdentityVerification();
     this.options.runtime.closeCallGate("locked_control_authority_rotated");
     return this.enqueue(async () => {
       await this.revokeInMemoryFirst("locked_control_authority_rotated", this.safeReadAuthority(), false);
     });
   }
 
-  private async authorizeInternal(): Promise<DesktopCommandResult> {
+  private async authorizeInternal(authorizationBoundaryRevision: number): Promise<DesktopCommandResult> {
+    if (!this.isBoundaryCurrent(authorizationBoundaryRevision)) {
+      return { accepted: false, reason: "locked_control_authority_rotated" };
+    }
     if (this.options.policy.mode !== "task_grant_required") {
       return { accepted: false, reason: "locked_control_disabled_by_build" };
     }
@@ -214,7 +225,6 @@ export class LockedComputerControlPolicyCoordinator {
       return { accepted: false, reason: "locked_control_authority_rotated" };
     }
     const requestId = this.options.createRequestId?.() ?? `locked-control-${randomUUID()}`;
-    const authorizationBoundaryRevision = this.boundaryRevision;
     const daemonSnapshot = await this.options.daemon.snapshot();
     const begun = await this.options.daemon.beginAuthorization({
       requestId,
@@ -222,6 +232,15 @@ export class LockedComputerControlPolicyCoordinator {
       authority,
     });
     if (!begun.accepted) return { accepted: false, reason: begun.reason };
+    if (!this.isBoundaryCurrent(authorizationBoundaryRevision)) {
+      await this.revokeInMemoryFirst(
+        "locked_control_authority_rotated",
+        authority,
+        false,
+        true,
+      );
+      return { accepted: false, reason: "locked_control_authority_rotated" };
+    }
     this.transition("verifying");
     const identity = await this.options.identityVerifier.verify(requestId);
     if (identity.status !== "verified") {
@@ -449,8 +468,9 @@ export class LockedComputerControlPolicyCoordinator {
     reason: LockedControlReasonCode,
     authority: LockedControlRuntimeAuthority | undefined,
     acknowledged: boolean,
+    daemonStateStarted = false,
   ): Promise<void> {
-    const hadDaemonState = this.phase !== "off" || Boolean(this.grant);
+    const hadDaemonState = daemonStateStarted || this.phase !== "off" || Boolean(this.grant);
     this.options.runtime.closeCallGate(reason);
     if (this.attestationTimer) clearInterval(this.attestationTimer);
     this.attestationTimer = undefined;
@@ -508,6 +528,11 @@ export class LockedComputerControlPolicyCoordinator {
     } catch {
       return undefined;
     }
+  }
+
+  private cancelIdentityVerification(): void {
+    try { this.options.identityVerifier.cancel?.(); }
+    catch { /* Cancellation is advisory; the boundary checks still fence late results. */ }
   }
 
   private transition(phase: LockedControlLocalPhase, reason?: LockedControlReasonCode): void {

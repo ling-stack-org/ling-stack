@@ -9,6 +9,7 @@ import type { DesktopDaemonStatus } from "../shared/desktop-capabilities.js";
 import type {
   ComputerControlPermissionKind,
   DesktopCommandResult,
+  LockedComputerControlDesktopState,
 } from "../shared/desktop-capabilities.js";
 import {
   CuaDriverDesktopCoordinator,
@@ -285,6 +286,16 @@ export class DesktopRuntime {
         reason: error instanceof Error ? error.message : "permission_settings_failed",
       };
     }
+  }
+
+  getLockedComputerControlState(): Promise<LockedComputerControlDesktopState> {
+    if (this.shutdownRequested || this.hostDraining) {
+      return Promise.reject(new Error("locked_control_state_unavailable"));
+    }
+    return this.lockedControlRuntime?.readState() ?? Promise.resolve({
+      projection: { schemaVersion: 1, capability: "disabled_by_build", phase: "off", reason: "locked_control_disabled_by_build" },
+      activeTaskAvailable: false,
+    });
   }
 
   authorizeLockedComputerControl(): Promise<DesktopCommandResult> {

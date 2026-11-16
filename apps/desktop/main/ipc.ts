@@ -43,6 +43,7 @@ export function registerDesktopIpc(input: {
     | "openComputerControlPermissionSettings"
     | "getLockedTaskContinuationPreferences"
     | "setContinueTasksWhileLocked"
+    | "getLockedComputerControlState"
     | "authorizeLockedComputerControl"
     | "revokeLockedComputerControl"
   >;

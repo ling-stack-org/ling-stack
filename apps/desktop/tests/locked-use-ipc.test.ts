@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { runInNewContext } from "node:vm";
+import { build } from "esbuild";
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from "electron";
+import type { LingDesktopCapabilities, LockedComputerControlDesktopState } from "../shared/desktop-capabilities.js";
 import { registerLockedControlIpc } from "../dist/main/locked-computer-control/ipc.js";
 import { DESKTOP_IPC_CHANNELS } from "../dist/shared/ipc-channels.js";
 import { deferred } from "./locked-use-fixtures.ts";
@@ -13,6 +16,10 @@ function fixture() {
   const owner = { id: 11, mainFrame: frame, getURL: () => frame.url, isDestroyed: () => false };
   const window = { webContents: owner, isDestroyed: () => false };
   const runtime = {
+    async getLockedComputerControlState(): Promise<LockedComputerControlDesktopState> {
+      calls.push("state");
+      return { projection: { schemaVersion: 1, capability: "disabled_by_build", phase: "off", reason: "locked_control_disabled_by_build" }, activeTaskAvailable: false };
+    },
     async authorizeLockedComputerControl() { calls.push("authorize"); return { accepted: false, reason: "locked_control_disabled_by_build" }; },
     async revokeLockedComputerControl() { calls.push("revoke"); return { accepted: true }; },
   };
@@ -27,13 +34,59 @@ function fixture() {
 
 test("locked IPC forwards explicit commands without promoting disabled capability", async () => {
   const fx = fixture();
+  assert.deepEqual(await fx.invoke(DESKTOP_IPC_CHANNELS.computerControlLockedState), {
+    projection: { schemaVersion: 1, capability: "disabled_by_build", phase: "off", reason: "locked_control_disabled_by_build" }, activeTaskAvailable: false,
+  });
   assert.deepEqual(await fx.invoke(DESKTOP_IPC_CHANNELS.computerControlLockedAuthorize), {
     accepted: false, reason: "locked_control_disabled_by_build",
   });
   assert.deepEqual(await fx.invoke(DESKTOP_IPC_CHANNELS.computerControlLockedRevoke), { accepted: true });
-  assert.deepEqual(fx.calls, ["authorize", "revoke"]);
+  assert.deepEqual(fx.calls, ["state", "authorize", "revoke"]);
   fx.unregister();
   assert.equal(fx.handlers.size, 0);
+});
+
+test("read-only locked status denies untrusted senders, arguments and navigation during a read", async () => {
+  const fx = fixture();
+  const channel = DESKTOP_IPC_CHANNELS.computerControlLockedState;
+  for (const event of [
+    { ...fx.event, sender: { ...fx.event.sender } },
+    { ...fx.event, senderFrame: { ...fx.frame } },
+    { ...fx.event, senderFrame: null },
+  ] as IpcMainInvokeEvent[]) {
+    await assert.rejects(fx.invoke(channel, event), /unauthorized_sender/u);
+  }
+  await assert.rejects(fx.invoke(channel, fx.event, { cwd: "/forged" }), /unauthorized_sender/u);
+  assert.deepEqual(fx.calls, []);
+  const release = deferred<LockedComputerControlDesktopState>();
+  fx.runtime.getLockedComputerControlState = () => release.promise;
+  const read = fx.invoke(channel);
+  fx.frame.url = "https://example.org/";
+  release.resolve({ projection: { schemaVersion: 1, capability: "supported_restricted", phase: "off" }, activeTaskAvailable: true });
+  await assert.rejects(read, /locked_control_state_unavailable/u);
+  fx.unregister();
+});
+
+test("actual preload status and task commands transmit no renderer parameters", async () => {
+  const bundle = await build({ entryPoints: [new URL("../preload/main-window.ts", import.meta.url).pathname],
+    write: false, bundle: true, platform: "node", format: "cjs", external: ["electron"], logLevel: "silent" });
+  let desktop!: LingDesktopCapabilities;
+  const calls: unknown[][] = [];
+  runInNewContext(bundle.outputFiles[0].text, {
+    require: () => ({ contextBridge: { exposeInMainWorld: (_key: string, value: LingDesktopCapabilities) => { desktop = value; } },
+      ipcRenderer: { invoke: async (...args: unknown[]) => { calls.push(args); return {}; } } }),
+    process: { argv: ["--ling-computer-control-platform=macos"], platform: "darwin" }, URL, TextEncoder,
+  });
+  assert.ok(desktop.computerControl);
+  // JavaScript callers can supply extra arguments; the preload never forwards them.
+  for (const command of ["getLockedComputerControlState", "authorizeLockedComputerControl", "revokeLockedComputerControl"] as const) {
+    await (desktop.computerControl[command] as (...args: unknown[]) => Promise<unknown>)({ runId: "forged" });
+  }
+  assert.deepEqual(calls.map((args) => [...args]), [
+    [DESKTOP_IPC_CHANNELS.computerControlLockedState],
+    [DESKTOP_IPC_CHANNELS.computerControlLockedAuthorize],
+    [DESKTOP_IPC_CHANNELS.computerControlLockedRevoke],
+  ]);
 });
 
 test("locked IPC denies preview, subframe, detached, remote and argument-bearing requests", async () => {

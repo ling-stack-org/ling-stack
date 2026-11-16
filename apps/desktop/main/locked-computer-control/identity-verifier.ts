@@ -30,6 +30,8 @@ export interface LockedControlIdentityContext {
 
 export interface LockedControlIdentityVerifier {
   verify(requestId: string): Promise<LockedControlIdentityResultV1>;
+  /** Abort the active native identity prompt, if one is open. */
+  cancel?(): void;
 }
 
 export function createLockedControlIdentityVerifier(options: {
@@ -46,13 +48,19 @@ export function createLockedControlIdentityVerifier(options: {
   const now = options.now ?? (() => new Date());
   const timeoutMs = boundedTimeout(options.timeoutMs);
   const nativeFlight = new AsyncSingleFlight<LockedControlNativeIdentityResponse | undefined>();
+  let activeController: AbortController | undefined;
+  let cancellationRevision = 0;
 
   return Object.freeze({
     async verify(requestId: string): Promise<LockedControlIdentityResultV1> {
+      const verificationCancellationRevision = cancellationRevision;
       if (!isText(requestId) || !isText(options.localizedReason)) {
         return failure(requestId, method, "failed", "locked_control_identity_failed");
       }
       const before = await safeReadContext(options.readContext, options.platform);
+      if (verificationCancellationRevision !== cancellationRevision) {
+        return failure(requestId, method, "cancelled", "locked_control_identity_cancelled");
+      }
       const initialReason = contextEligibilityReason(before);
       if (initialReason) {
         return failure(requestId, method, "failed", initialReason);
@@ -60,10 +68,14 @@ export function createLockedControlIdentityVerifier(options: {
       if (!options.nativeBridge) {
         return failure(requestId, method, "unavailable", "locked_control_identity_unavailable");
       }
-
       const nativeResult = await nativeFlight.run(async () => {
         const controller = new AbortController();
+        activeController = controller;
         try {
+          if (verificationCancellationRevision !== cancellationRevision) {
+            controller.abort();
+            return { status: "cancelled" as const };
+          }
           const raw = await withTimeout(
             options.nativeBridge!.verifyIdentity({
               requestId,
@@ -74,9 +86,17 @@ export function createLockedControlIdentityVerifier(options: {
             timeoutMs,
             controller,
           );
+          if (controller.signal.aborted || verificationCancellationRevision !== cancellationRevision) {
+            return { status: "cancelled" as const };
+          }
           return parseLockedControlNativeIdentityResponse(raw);
         } catch {
+          if (controller.signal.aborted && verificationCancellationRevision !== cancellationRevision) {
+            return { status: "cancelled" as const };
+          }
           return undefined;
+        } finally {
+          if (activeController === controller) activeController = undefined;
         }
       });
 
@@ -93,6 +113,9 @@ export function createLockedControlIdentityVerifier(options: {
       }
 
       const after = await safeReadContext(options.readContext, options.platform);
+      if (verificationCancellationRevision !== cancellationRevision) {
+        return failure(requestId, method, "cancelled", "locked_control_identity_cancelled");
+      }
       const changedReason = contextChangedReason(before!, after);
       if (changedReason) {
         return failure(requestId, method, "failed", changedReason);
@@ -104,6 +127,10 @@ export function createLockedControlIdentityVerifier(options: {
         method,
         verifiedAt: now().toISOString(),
       };
+    },
+    cancel(): void {
+      cancellationRevision += 1;
+      activeController?.abort(new Error("locked_control_identity_cancelled"));
     },
   });
 }

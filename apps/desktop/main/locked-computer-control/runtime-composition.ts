@@ -8,6 +8,7 @@ import {
   type LockedComputerControlPolicyV1,
 } from "@ling-stack/contracts";
 import type { DesktopRuntimeCuaDriverCoordinator } from "../desktop-runtime.js";
+import type { LockedComputerControlDesktopState } from "../../shared/desktop-capabilities.js";
 import type { DesktopDaemonCuaDriverAuthorityTuple } from "../daemon-lifecycle.js";
 import type { CuaDriverCoordinatorOptions, CuaDriverCoordinatorSnapshot } from "../cua-driver/coordinator.js";
 import { RestrictedCuaDriverGeneration } from "../cua-driver/restricted-generation.js";
@@ -234,6 +235,22 @@ export function composeLockedControlRuntime(options: {
       launcher?.closeCallGate(reason);
     },
     ownsManagedSession: () => client?.ownsManagedSession === true,
+    async readState(): Promise<LockedComputerControlDesktopState> {
+      if (!options.isCurrent()) throw new Error("locked_control_authority_rotated");
+      if (!backend || capability.state !== "supported_restricted") {
+        return {
+          projection: { schemaVersion: 1, capability: capability.state, phase: "off", reason: capability.reason },
+          activeTaskAvailable: false,
+        };
+      }
+      await daemonReady;
+      if (!options.isCurrent()) throw new Error("locked_control_authority_rotated");
+      const [snapshot, task] = await Promise.all([
+        daemon.snapshot(), daemon.currentTask(options.authority),
+      ]);
+      if (!options.isCurrent()) throw new Error("locked_control_authority_rotated");
+      return { projection: snapshot.projection, activeTaskAvailable: task !== undefined };
+    },
     async authorize() {
       if (!backend || capability.state !== "supported_restricted") return { accepted: false, reason: capability.reason ?? "locked_control_probe_required" };
       try { await daemonReady; }

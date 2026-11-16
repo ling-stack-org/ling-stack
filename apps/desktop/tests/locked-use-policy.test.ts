@@ -38,6 +38,92 @@ test("a boundary during prepare or commit cannot arm a late grant", async () => 
   }
 });
 
+test("a queued authorization is invalidated by a later revoke before it starts", async () => {
+  const fx = policyFixture(); const entered = deferred(); const release = deferred();
+  fx.runtime.retireNormalForLock = async () => { entered.resolve(); await release.promise; };
+
+  const locking = fx.coordinator.handleLock();
+  await entered.promise;
+  const authorizing = fx.coordinator.authorizeCurrentTask();
+  const revoking = fx.coordinator.revokeCurrentGrant();
+  release.resolve();
+
+  assert.deepEqual(await authorizing, {
+    accepted: false,
+    reason: "locked_control_authority_rotated",
+  });
+  assert.deepEqual(await revoking, { accepted: true });
+  await locking;
+  assert.equal(fx.identityCalls, 0);
+  assert.equal(fx.events.includes("start"), false);
+  assert.equal(fx.coordinator.snapshot().phase, "off");
+  await fx.coordinator.shutdown();
+});
+
+test("revocation during daemon authorization clears the accepted intent before verification", async () => {
+  const beginStarted = deferred(); const releaseBegin = deferred();
+  const fx = policyFixture();
+  let daemonPhase: "off" | "verifying" = "off";
+  fx.daemon.beginAuthorization = async () => {
+    beginStarted.resolve();
+    await releaseBegin.promise;
+    daemonPhase = "verifying";
+    return { accepted: true, snapshot: await fx.daemon.snapshot() };
+  };
+  const revoke = fx.daemon.revoke;
+  fx.daemon.revoke = async (...args) => {
+    daemonPhase = "off";
+    return revoke(...args);
+  };
+  const authorizing = fx.coordinator.authorizeCurrentTask();
+  await beginStarted.promise;
+  const revoking = fx.coordinator.revokeCurrentGrant();
+  releaseBegin.resolve();
+
+  assert.deepEqual(await authorizing, {
+    accepted: false,
+    reason: "locked_control_authority_rotated",
+  });
+  assert.deepEqual(await revoking, { accepted: true });
+  assert.equal(fx.identityCalls, 0);
+  assert.equal(daemonPhase, "off");
+  assert.equal(fx.events.filter((event) => event === "revoke").length, 1);
+  assert.equal(fx.coordinator.snapshot().phase, "off");
+  await fx.coordinator.shutdown();
+});
+
+test("revocation aborts an in-flight identity prompt before queued cleanup", async () => {
+  const identityStarted = deferred(); const releaseIdentity = deferred();
+  let cancelCalls = 0;
+  const fx = policyFixture({
+    identityVerifier: {
+      cancel() { cancelCalls += 1; releaseIdentity.resolve(); },
+      async verify(requestId) {
+        identityStarted.resolve();
+        await releaseIdentity.promise;
+        return {
+          schemaVersion: 1 as const,
+          requestId,
+          status: "verified" as const,
+          method: "device_owner_authentication" as const,
+          verifiedAt: new Date().toISOString(),
+        };
+      },
+    },
+  });
+  const authorizing = fx.coordinator.authorizeCurrentTask();
+  await identityStarted.promise;
+  const revoking = fx.coordinator.revokeCurrentGrant();
+  assert.equal(cancelCalls, 1);
+  assert.deepEqual(await authorizing, {
+    accepted: false,
+    reason: "locked_control_authority_rotated",
+  });
+  assert.deepEqual(await revoking, { accepted: true });
+  assert.equal(fx.coordinator.snapshot().phase, "off");
+  await fx.coordinator.shutdown();
+});
+
 test("explicit revoke fences synchronously and a failed cleanup cannot return to off or resume normal", async () => {
   const fx = policyFixture();
   await fx.coordinator.authorizeCurrentTask(); await fx.coordinator.handleLock();

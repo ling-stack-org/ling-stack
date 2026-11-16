@@ -157,6 +157,38 @@ authorization host remain compatibility risks requiring real-machine acceptance.
 
 ## Implementation boundary
 
+### Task authorization in Settings
+
+The lock-behavior section keeps the non-visual continuation preference independent
+from GUI authorization. The trusted main-window preload exposes a parameterless,
+read-only status command. Desktop reads the canonical daemon projection and checks
+whether its private current-task lookup has exactly one active task. Renderer
+supplied workspace paths, task selectors, grants and native credentials are not
+accepted. A read waits for capability publication and policy promotion and checks
+the Desktop authority before and after its asynchronous work.
+
+Ordinary builds retain the pause-on-lock explanation. Only a validated
+`supported_restricted` projection exposes the task authorization row. Authorization
+additionally requires normal Computer Control readiness and a unique active task.
+A confirmation explains the protected temporary unlock, local-input takeover and
+short task lifetime before invoking system identity verification. A successful IPC
+reply alone never renders an armed state; the UI refreshes the daemon projection.
+Read failures close authorization admission, while an observed grant or pending
+identity check keeps its revocation action available. Revocation can interrupt an
+in-flight authorization; late command replies cannot restore its UI state.
+
+#### Theme adaptation
+
+The section reuses `DataRow`, `Badge`, `Button`, `InlineFeedback` and the shared
+`Dialog` primitives from the Web UI facade. Their control, row, semantic status,
+focus and overlay tokens own appearance; feature CSS owns spacing and flow.
+Settings and the confirmation use the existing protected, opaque surfaces, with
+no scene or theme-specific branches. Acceptance covers disabled, loading, invalid,
+off, verifying, armed, active, paused and expired states, cancellation, revocation
+and read failure. Browser interaction and current screenshots cover all six
+built-in themes, narrow layouts, keyboard focus, language and theme switching;
+these fixtures do not establish native lock or signed-package acceptance.
+
 The standalone native targets, authorization bundle, installer/restore commands,
 task-bound JSON client, Desktop restricted-generation composition, action gates
 and periodic attestation publication are implemented. The packaged entrypoint

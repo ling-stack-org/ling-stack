@@ -202,6 +202,33 @@ test("native identity prompt is single-flight and malformed output fails closed"
   assert.equal((await malformed.verify("request-malformed")).reason, "locked_control_identity_unavailable");
 });
 
+test("identity cancellation aborts the active native prompt and returns a closed result", async () => {
+  let entered;
+  const started = new Promise((resolve) => { entered = resolve; });
+  const verifier = createLockedControlIdentityVerifier({
+    platform: "darwin",
+    localizedReason: "Authorize Ling for this task",
+    readContext: () => identityContext,
+    nativeBridge: {
+      async verifyIdentity({ signal }) {
+        entered();
+        await new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true }));
+        return { status: "verified" };
+      },
+    },
+  });
+  const verifying = verifier.verify("request-cancel");
+  await started;
+  verifier.cancel?.();
+  assert.deepEqual(await verifying, {
+    schemaVersion: 1,
+    requestId: "request-cancel",
+    status: "cancelled",
+    method: "device_owner_authentication",
+    reason: "locked_control_identity_cancelled",
+  });
+});
+
 test("positive attestation binds the exact grant, epoch, generation and sequence", async () => {
   const attestor = createLockedControlCapabilityAttestor({
     nativeBridge: { async attestLockedSession() { return nativeAttestation; } },

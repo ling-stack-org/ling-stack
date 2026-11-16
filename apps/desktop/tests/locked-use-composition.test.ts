@@ -64,8 +64,28 @@ function fixture(enabled = true, configureDaemon?: (daemon: ReturnType<typeof po
 
 test("composition retains fixed off without a trusted backend", async () => {
   const fx = fixture(false);
+  assert.deepEqual(await fx.binding.readState(), {
+    projection: { schemaVersion: 1, capability: "disabled_by_build", phase: "off", reason: "locked_control_disabled_by_build" }, activeTaskAvailable: false,
+  });
   assert.equal((await fx.binding.authorize()).accepted, false);
   assert.equal(fx.clients(), 0);
+  await fx.binding.coordinator.shutdown();
+});
+
+test("task status reads the canonical projection without creating native authority", async () => {
+  const fx = fixture();
+  assert.deepEqual(await fx.binding.readState(), {
+    projection: { schemaVersion: 1, capability: "supported_restricted", phase: "off" }, activeTaskAvailable: true,
+  });
+  assert.equal(fx.clients(), 0);
+  assert.deepEqual(fx.events, []);
+  const release = deferred<Awaited<ReturnType<typeof fx.daemon.snapshot>>>();
+  fx.daemon.snapshot = () => release.promise;
+  const reading = fx.binding.readState();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  fx.rotate();
+  release.resolve({ revision: 1, projection: { schemaVersion: 1, capability: "supported_restricted", phase: "off" } });
+  await assert.rejects(reading, /locked_control_authority_rotated/u);
   await fx.binding.coordinator.shutdown();
 });
 
@@ -78,6 +98,7 @@ test("capability publication or policy promotion failure prevents local identity
     assert.equal(result.accepted, false);
     assert.equal(fx.clients(), 0);
     assert.equal(fx.events.includes("identity"), false);
+    await assert.rejects(fx.binding.readState(), /locked_control_probe_required/u);
     await fx.binding.coordinator.shutdown();
   }
 });
