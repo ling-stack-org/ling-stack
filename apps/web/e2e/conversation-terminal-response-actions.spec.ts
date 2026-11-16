@@ -34,8 +34,11 @@ for (const surface of ["normal", "private", "channel"] as const) {
     expect(responseId).toBeTruthy();
     const rows = page.locator(`.conversation-timeline-focus-block[data-conversation-response-id=${JSON.stringify(responseId)}]`);
     const footer = rows.locator("[data-conversation-response-footer]");
+    const copy = footer.getByRole("button", { name: "Copy message", exact: true });
+    const actions = footer.locator(".message-action-bar").filter({ has: page.getByRole("button", { name: "Copy message", exact: true }) });
     await expect(footer).toHaveCount(1);
-    await expect(rows.locator(".message-action-bar")).toHaveCount(1);
+    await expect(actions).toHaveCount(1);
+    await expect(rows.getByRole("button", { name: "Copy message", exact: true })).toHaveCount(1);
     await expect(result.locator(".message-action-bar")).toHaveCount(0);
     const narration = rows.locator('[data-conversation-timeline-message][data-conversation-timeline-kind="agentMessage"]');
     const narrationText = (await narration.locator(".message-body-renderer").allTextContents()).join("\n\n").trim();
@@ -50,9 +53,10 @@ for (const surface of ["normal", "private", "channel"] as const) {
       await expect(toggle).toHaveAttribute("aria-expanded", "false");
       await toggle.blur();
     }
-    else if (await result.count()) await expect(result.locator(".conversation-timeline-activity-main.static")).toHaveCount(1);
-    const copy = footer.getByRole("button", { name: "Copy message", exact: true });
-    const actions = footer.locator(".message-action-bar");
+    else if (await result.count()) {
+      await expect(summary).toBeVisible();
+      await expect(result.locator(".conversation-timeline-activity-main")).toHaveCount(0);
+    } else await expect(narration.first()).toBeVisible();
     await page.mouse.move(0, 0);
     await expect(actions).toHaveCSS("opacity", "0");
     await anchor.screenshot({ path: testInfo.outputPath(`fixture-${surface}-copy-hidden.png`) });
