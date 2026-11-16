@@ -3,7 +3,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { _electron, expect, type ElectronApplication } from "@playwright/test";
@@ -60,7 +60,7 @@ test("standard Electron browser performs scoped tools through its authenticated 
   await build({ entryPoints: [fileURLToPath(new URL("../main/browser/schema-worker.ts", import.meta.url))], outfile: join(temporary, "schema-worker.js"), bundle: true, platform: "node", format: "cjs", logLevel: "silent" });
   await build({ entryPoints: [join(support, "browser-electron-preload.ts")], outfile: preload, bundle: true, platform: "node", format: "cjs", external: ["electron"], logLevel: "silent" });
   const launcher = join(temporary, "launch.cjs");
-  await writeFile(launcher, `const { app, dialog } = require("electron"); dialog.showErrorBox = (title, message) => { console.error(title, message); app.exit(1); }; import(${JSON.stringify(pathToFileURL(appFile).href)}).catch(error => { console.error(error); app.exit(1); });`);
+  await writeFile(launcher, `const { app, dialog } = require("electron"); dialog.showErrorBox = (title, message) => { console.error(title, message); app.exit(1); }; import("./browser-app.mjs").catch(error => { console.error(error); app.exit(1); });`);
   const launchBrowser = () => _electron.launch({ args: [launcher], timeout: 20000, env: { ...process.env, LING_BROWSER_TEST_PROFILE: join(temporary, "profile"),
     LING_BROWSER_TEST_WORKSPACE: workspaceCwd, LING_BROWSER_TEST_DAEMON: daemonBaseUrl, LING_BROWSER_TEST_HTML: html, LING_BROWSER_TEST_PRELOAD: preload } });
   electron = await launchBrowser();
