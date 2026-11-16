@@ -211,6 +211,9 @@ hours only for that local trigger.
    the Companion; hiding it leaves the Companion usable. The dedicated sandboxed preload
    exposes only workspace/daemon context and close/settings commands, not `lingDesktop`.
    IPC and opaque-origin request projection require the owned, trusted top-level document.
+   The desktop surface retries teammate discovery after a transient daemon failure so a
+   temporary startup outage does not leave the character on its fallback avatar until the
+   window is reopened.
 
 Deterministic daemon/provider fixtures cover recovery and policy boundaries. They are
 separate from the real-provider acceptance described below. There is no additional model

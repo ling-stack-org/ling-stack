@@ -190,6 +190,50 @@ test("pending receipt survives reload and recovers without another POST", async 
   } finally { await f.close(); }
 });
 
+test("does not resubmit while the original reply is still pending", async ({ page }) => {
+  const f = await fixture(page, "pending");
+  try {
+    const panel = await openPanel(page);
+    await panel.getByRole("textbox").fill("Wait for the original reply");
+    await panel.getByRole("button", { name: "Send", exact: true }).click();
+    await expect(panel.getByRole("button", { name: "Recover or retry message" })).toBeVisible();
+    expect(f.keys).toHaveLength(1);
+    await panel.getByRole("button", { name: "Recover or retry message" }).click();
+    await expect.poll(() => f.keys).toHaveLength(1);
+    await expect(panel.getByRole("button", { name: "Recover or retry message" })).toBeVisible();
+  } finally { await f.close(); }
+});
+
+test("desktop companion retries teammate discovery after a transient daemon failure", async ({ page }) => {
+  const f = await fixture(page);
+  let teammateReads = 0;
+  await page.route(url => url.origin === "http://127.0.0.1:17891" && url.pathname === "/teammates", async route => {
+    teammateReads++;
+    if (teammateReads === 1) {
+      await route.fulfill({ status: 503, json: { error: "temporarily_unavailable" } });
+      return;
+    }
+    await route.fallback();
+  });
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "lingCompanionDesktop", {
+      configurable: true,
+      value: {
+        cwd: "/tmp/ling-stack-workspace",
+        daemonBaseUrl: "http://127.0.0.1:17891",
+        close: async () => ({ accepted: true }),
+        openSettings: async () => ({ accepted: true }),
+      },
+    });
+  });
+  try {
+    await page.goto("/?companionWindow=1");
+    const panel = page.getByRole("dialog", { name: "Intelligent companion" });
+    await expect(panel.locator(".companion-mini-avatar-wrap .teammate-avatar-image")).toHaveCount(1, { timeout: 12_000 });
+    expect(teammateReads).toBeGreaterThanOrEqual(2);
+  } finally { await f.close(); }
+});
+
 test("a restored submission blocks new text until its unavailable receipt recovers", async ({ page }) => {
   const f = await fixture(page, "pending");
   try {

@@ -20,6 +20,7 @@ interface ChatSession {
   readonly companionId: string;
   readonly controller: AbortController;
   pending?: PendingSubmission;
+  receiptPending: boolean;
   sending: boolean;
   replyError?: string;
   reconnect?: () => Promise<void>;
@@ -65,6 +66,7 @@ export function useCompanionChat(input: {
     if (!submission) return;
     forgetPendingCompanionSubmission(session.cwd, session.companionId, submission.key);
     session.pending = undefined;
+    session.receiptPending = false;
     setPending(undefined);
     setConnection("connected");
     setError("");
@@ -80,6 +82,7 @@ export function useCompanionChat(input: {
     // different message in this session. Its receipt must not replace the
     // newer submission's recovery key or clear its pending state.
     if (session.pending?.key !== submission.key) return false;
+    session.receiptPending = false;
     if (receipt.message) {
       setMessages((current) => mergeCompanionMessages(current, [receipt.message!]));
       session.pending = { key: submission.key, body: receipt.message.body };
@@ -94,6 +97,7 @@ export function useCompanionChat(input: {
         setError(session.replyError ?? "");
         return true;
       }
+      session.receiptPending = true;
     }
     setConnection("reconnecting");
     return false;
@@ -110,7 +114,7 @@ export function useCompanionChat(input: {
     if (!input.open || !input.cwd.trim() || !input.companion) return;
     const session: ChatSession = {
       cwd: input.cwd.trim(), companionId: input.companion.id,
-      controller: new AbortController(), sending: false,
+      controller: new AbortController(), receiptPending: false, sending: false,
       pending: readPendingCompanionSubmission(input.cwd, input.companion.id),
     };
     sessionRef.current = session;
@@ -174,6 +178,7 @@ export function useCompanionChat(input: {
     // Retrying always uses the original text and key, even if the draft was edited.
     const submission = { key: session.pending?.key ?? crypto.randomUUID(), body: session.pending?.body ?? body.trim() };
     session.pending = submission;
+    session.receiptPending = false;
     session.sending = true;
     session.replyError = undefined;
     setPending(submission);
@@ -236,6 +241,7 @@ export function useCompanionChat(input: {
         const key = session.pending.key;
         const finished = await reconcile(session);
         if (!isCurrent(session) || finished || session.pending?.key !== key) return;
+        if (session.receiptPending) return;
         if (session.pending?.body) await send(session.pending.body);
         else await session.reconnect?.();
       } else await session.reconnect?.();
