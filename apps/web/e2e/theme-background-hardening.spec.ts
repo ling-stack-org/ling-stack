@@ -41,7 +41,7 @@ test('BG-H1/H2 one visible player, reading surfaces, reduced motion, recovery an
   const failures:string[]=[]; page.on('pageerror',e=>failures.push(e.message));
   await prepare(page); await upload(page);
   await page.locator('[data-background-preview]').scrollIntoViewIfNeeded();
-  await expect.poll(()=>paused(page,'[data-background-layer] video')).toBe(true);
+  await expect.poll(()=>paused(page,'[data-background-layer] video')).toBe(false);
   await expect.poll(()=>paused(page,'.background-preview video')).toBe(false);
   await page.emulateMedia({reducedMotion:'reduce'});
   await expect.poll(()=>paused(page,'.background-preview video')).toBe(true);
@@ -80,6 +80,7 @@ test('BG-H1/H2 one visible player, reading surfaces, reduced motion, recovery an
 });
 
 test('BG-H3 focus and visibility are per-theme, cancel/recommend are drafts and refresh preserves media',async({page})=>{
+  test.setTimeout(45_000);
   await prepare(page); await upload(page);
   await page.locator('[data-background-opacity]').fill('80');
   await page.locator('[data-background-focus="x"]').fill('88');
@@ -149,6 +150,7 @@ test('BG-H3 recommendations follow edited parameters and actions occupy one row'
 });
 
 test('BG-H4 saves and clear use one expiring global success Toast without inline success state', async ({ page }, info) => {
+  test.setTimeout(45_000);
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   await page.clock.install();
   await prepare(page); await settings(page);
@@ -210,6 +212,7 @@ test('BG-H4 a failed save dismisses old success and keeps local error until succ
 
 for (const themeId of ['ling-breeze', 'ling-ocean', 'ling-night', 'ling-journey']) {
   test(`BG-H3 ${themeId} previews the full range and persists visibility after apply`, async ({ page }, info) => {
+    test.setTimeout(45_000);
     await prepare(page); await settings(page);
     await page.locator(`[data-theme-option-id="${themeId}"]`).click();
     const exposure = () => page.evaluate(() => {

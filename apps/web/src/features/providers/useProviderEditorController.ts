@@ -6,7 +6,7 @@ import {
   normalizeProviderModelForImport,
   providerFormToTemplate,
   providerFormWithSelectedModel,
-  providerModelDiscoveryErrorMessage,
+  providerModelDiscoveryError,
 } from "../../lib/providers.js";
 import type {
   ProviderFormState,
@@ -60,9 +60,11 @@ export function useProviderEditorController(input: {
   const [modelSearch, setModelSearch] = useState("");
   const [storedSelectedModelIds, setSelectedModelIds] = useState<readonly string[]>([]);
   const [modelFetchError, setModelFetchError] = useState("");
+  const [modelFetchTechnicalError, setModelFetchTechnicalError] = useState("");
   const [modelSelectionNotice, setModelSelectionNotice] = useState("");
   const [storedIsFetchingModels, setIsFetchingModels] = useState(false);
   const [editorErrorMessage, setEditorErrorMessage] = useState("");
+  const [editorErrorTechnicalMessage, setEditorErrorTechnicalMessage] = useState("");
   const [editorWarningMessage, setEditorWarningMessage] = useState("");
   const requestFenceRef = useRef<ReturnType<typeof createProviderDiscoveryRequestFence> | undefined>(undefined);
   if (!requestFenceRef.current) requestFenceRef.current = createProviderDiscoveryRequestFence();
@@ -133,6 +135,7 @@ export function useProviderEditorController(input: {
     setModelSearch("");
     setSelectedModelIds([]);
     setModelFetchError("");
+    setModelFetchTechnicalError("");
     setModelSelectionNotice("");
     setEditorWarningMessage("");
   }
@@ -171,6 +174,7 @@ export function useProviderEditorController(input: {
     setSetupIntent(intent);
     setShowApiKey(false);
     setEditorErrorMessage("");
+    setEditorErrorTechnicalMessage("");
     setEditorWarningMessage("");
     resetDiscovery();
     setIsOpen(true);
@@ -181,6 +185,7 @@ export function useProviderEditorController(input: {
     setSetupIntent("");
     setShowApiKey(false);
     setEditorErrorMessage("");
+    setEditorErrorTechnicalMessage("");
     setEditorWarningMessage("");
     resetDiscovery();
     setIsOpen(true);
@@ -189,6 +194,7 @@ export function useProviderEditorController(input: {
   function close(): void {
     resetDiscovery();
     setEditorErrorMessage("");
+    setEditorErrorTechnicalMessage("");
     setEditorWarningMessage("");
     setSetupIntent("");
     setIsOpen(false);
@@ -208,6 +214,7 @@ export function useProviderEditorController(input: {
     pendingRequestRef.current = receipt;
     setIsFetchingModels(true);
     setModelFetchError("");
+    setModelFetchTechnicalError("");
     try {
       const response = await listProviderModels(input.cwd.trim(), sourceForm, input.editingProviderId || undefined);
       if (!requestFence.isCurrent(receipt)) return;
@@ -231,7 +238,9 @@ export function useProviderEditorController(input: {
       setModelOptionsSource("");
       setModelOptionsFetchedAt("");
       setModelOptionsCatalog(undefined);
-      setModelFetchError(providerModelDiscoveryErrorMessage(error, t));
+      const productError = providerModelDiscoveryError(error, t);
+      setModelFetchError(productError.message);
+      setModelFetchTechnicalError(productError.technicalMessage ?? "");
     } finally {
       if (requestFence.isCurrent(receipt)) {
         pendingRequestRef.current = undefined;
@@ -255,10 +264,14 @@ export function useProviderEditorController(input: {
 
   async function saveCurrent(): Promise<void> {
     setEditorErrorMessage("");
+    setEditorErrorTechnicalMessage("");
     setEditorWarningMessage("");
     const result = await input.onSave();
     if (result.ok) close();
-    else setEditorErrorMessage(result.errorMessage ?? "Save failed.");
+    else {
+      setEditorErrorMessage(result.errorMessage ?? t("Could not save the model preset. Check the settings and try again."));
+      setEditorErrorTechnicalMessage(result.errorTechnicalMessage ?? "");
+    }
   }
 
   async function submit(): Promise<void> {
@@ -267,10 +280,14 @@ export function useProviderEditorController(input: {
       return;
     }
     setEditorErrorMessage("");
+    setEditorErrorTechnicalMessage("");
     setEditorWarningMessage("");
     const result = await input.onImportModels(selectedImportModels);
     if (result.ok) close();
-    else setEditorErrorMessage(result.errorMessage ?? "Import failed.");
+    else {
+      setEditorErrorMessage(result.errorMessage ?? t("Could not import models. Check the provider settings and try again."));
+      setEditorErrorTechnicalMessage(result.errorTechnicalMessage ?? "");
+    }
   }
 
   return {
@@ -278,11 +295,13 @@ export function useProviderEditorController(input: {
     close,
     editingProvider,
     editorErrorMessage,
+    editorErrorTechnicalMessage,
     editorWarningMessage,
     fetchModels,
     isFetchingModels,
     isOpen,
     modelFetchError: hasCurrentDiscovery ? modelFetchError : "",
+    modelFetchTechnicalError: hasCurrentDiscovery ? modelFetchTechnicalError : "",
     modelOptions,
     modelOptionsCatalog: hasCurrentDiscovery ? modelOptionsCatalog : undefined,
     modelOptionsFetchedAt: hasCurrentDiscovery ? modelOptionsFetchedAt : "",

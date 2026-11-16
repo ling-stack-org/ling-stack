@@ -7,7 +7,7 @@ import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { initResourceWorkspace, RESOURCE_REVIEW_HOLD_NAME } from "./resource-workspace.mjs";
-import { managedNodeArguments, runManagedNode } from "./run-managed.mjs";
+import { managedNodeArguments, observeWindowsProcessSnapshot, runManagedNode } from "./run-managed.mjs";
 
 async function fixture(t, mayClean = () => true) {
   const parent = await realpath(await mkdtemp(join(tmpdir(), "gstack-supervisor-test-")));
@@ -47,6 +47,27 @@ test("real-resource test entrypoints refuse ungoverned invocation before reading
   assert.notEqual(run.status, 0);
   assert.match(run.stdout + run.stderr, /gstack_resource_lease_required/);
   assert.doesNotMatch(run.stdout + run.stderr, /ENOENT/);
+});
+
+test("Windows process-table observation tracks nested descendants and rejects PID reuse", () => {
+  const tracked = new Map();
+  const process = (ProcessId, ParentProcessId, CreationDate) => ({ ProcessId, ParentProcessId, CreationDate });
+  assert.deepEqual(observeWindowsProcessSnapshot({ rootPid: 10, tracked, snapshot: [
+    process(10, 1, "root-a"), process(11, 10, "child-a"), process(12, 11, "grandchild-a"), process(20, 1, "foreign")] }),
+  { status: "present", livePids: [10, 11, 12] });
+  assert.deepEqual(observeWindowsProcessSnapshot({ rootPid: 10, tracked,
+    snapshot: [process(12, 99, "grandchild-a")] }), { status: "present", livePids: [12] });
+  assert.deepEqual(observeWindowsProcessSnapshot({ rootPid: 10, tracked, snapshot: [] }),
+    { status: "absent", livePids: [] });
+
+  const orphan = new Map();
+  assert.deepEqual(observeWindowsProcessSnapshot({ rootPid: 40, tracked: orphan,
+    snapshot: [process(41, 40, "orphan-descendant")] }), { status: "present", livePids: [41] });
+
+  const reused = new Map();
+  observeWindowsProcessSnapshot({ rootPid: 30, tracked: reused, snapshot: [process(30, 1, "old-owner")] });
+  assert.deepEqual(observeWindowsProcessSnapshot({ rootPid: 30, tracked: reused,
+    snapshot: [process(30, 1, "new-owner")] }), { status: "absent", livePids: [] });
 });
 
 test("supervision preserves real exit status, external tmp/cache, and removes only owned scratch", async t => {

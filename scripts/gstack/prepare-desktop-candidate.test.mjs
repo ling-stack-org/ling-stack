@@ -7,8 +7,9 @@ import { desktopCandidatePackageSelection, parseDesktopCandidateArguments } from
 import { hostedRunnerStorage } from "./resource-workspace.mjs";
 
 test("desktop candidate CLI requires explicit native tools and one storage policy", () => {
-  const args = ["--workspace", "/new/root", "--bun", "/tool/bun", "--shell", "/bin/bash"];
+  const args = ["--workspace", "/new/root", "--bun", "/tool/bun", "--shell", "/bin/bash", "--go", "/tool/go"];
   assert.equal(parseDesktopCandidateArguments(args)["stop-after"], undefined);
+  assert.equal(parseDesktopCandidateArguments(args).go, "/tool/go");
   assert.equal(parseDesktopCandidateArguments([...args, "--ci-ephemeral"]).ciEphemeral, true);
   for (const more of [["--release-ready"], ["--workspace", "/other"], ["--stop-after", "publish"], ["--ci-ephemeral", "--mount", "/mount"]]) {
     assert.throws(() => parseDesktopCandidateArguments([...args, ...more]), /gstack_desktop|Usage/);

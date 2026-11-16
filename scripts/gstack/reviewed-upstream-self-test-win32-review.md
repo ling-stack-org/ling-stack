@@ -1,11 +1,28 @@
 # Windows upstream self-test package exclusion review
 
+## LF-normalized source rebind, 2026-11-16
+
+[Hosted run 43835904917](https://github.com/ling-stack-org/ling-stack/actions/runs/43835904917)
+produced the current Windows x64 native receipt from source
+`47d639abffa882b8cbb641d7d1dedf08ecada9ec`. The source recipe now explicitly
+checks out with `core.autocrlf=false`, so the actual Windows source manifest is
+`sha256:46d0b73ac3efa12039ea2332f03782b9d940cdd47c3798bf99cd75406166f866`,
+the same 3,714-file manifest bound by the current macOS catalog. The generated
+native receipt is
+`sha256:8d8f6b2367ab61aab899744494bb6aae655e35cb81c1ac2ccfccbbe5ab035e7a`.
+
+This rebind changes only `sourceManifestChecksum` in the Windows catalog. The
+target, 3,714 source count, 29 marker references, five import graphs, two SDK
+0.2.117 package records, 57 skill bodies, excluded roots and Windows Bun 1.4.4
+compiler checksum remain unchanged. The previous CRLF source identity and its
+line-ending adaptation are historical and are not accepted by this catalog.
+
 [Hosted run 40028538469](https://github.com/ling-stack-org/ling-stack/actions/runs/40028538469)
 produced the native Windows x64 inputs from source
 `4fd4cc349fa000d7e19db32e458cb0e38778c698`. The independent review admits only
 private-staging exclusion of `@anthropic-ai/claude-agent-sdk@0.2.117` and
 `@anthropic-ai/claude-agent-sdk-win32-x64@0.2.117` under the exact new catalog.
-Its SHA-256 is `8d19700627d67c09b46e9eae5159abd720116aa5e87d43691cf0f85514a02896`.
+Its current SHA-256 is `7423aff7c9e1f4fba8732a3137c40f268fe22590a19b8ede5f899d4056bc94b3`.
 
 The Windows source manifest is
 `sha256:25e50f1790d789b85d7c99f808a41726f922029b5f8a92874383c9912fc0a384`.

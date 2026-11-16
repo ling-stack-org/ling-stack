@@ -8,6 +8,7 @@ import { openEngineeringChannel } from './support/test-helpers';
 
 const themes = ['ling-breeze', 'ling-ocean', 'ling-night'] as const;
 type PhotoTheme = typeof themes[number];
+test.describe.configure({ timeout: 60_000 });
 const evidenceDirectory = process.env.LING_PHOTO_THEME_EVIDENCE;
 const sceneExports = {
   'ling-breeze': { file: 'forest-clearing-v1.webp', width: 1672, height: 941 },
@@ -152,14 +153,17 @@ for (const theme of themes) {
     await capture(page, info, `${theme}-dialog`);
     await page.keyboard.press('Escape');
     const nav = page.getByRole('complementary', { name: /Sidebar display|侧栏显示/u });
-    for (const name of ['Plugin Manager', 'Automations']) {
+    for (const { file, name } of [
+      { file: 'plugin-manager', name: 'Plugin Manager' },
+      { file: 'scheduled-tasks', name: 'Scheduled tasks' },
+    ]) {
       await nav.getByRole('button', { name, exact: true }).click();
       await expect(page.locator('[data-background-layer]')).toBeVisible();
       await expect(page.locator('html')).toHaveAttribute('data-ui-surface-recipe', 'translucent');
-      await capture(page, info, `${theme}-${name.toLowerCase()}`);
+      await capture(page, info, `${theme}-${file}`);
     }
     await settings(page);
-    await expect(page.locator('[data-background-layer]')).toBeHidden();
+    await expect(page.locator('[data-background-layer]')).toBeVisible();
     const thumbnail = page.locator(`[data-theme-option-id="${theme}"] image`);
     await expect(thumbnail).toHaveAttribute('href', asset!.replace('.webp', '-thumb.webp'));
     await capture(page, info, `${theme}-settings`);

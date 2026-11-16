@@ -137,7 +137,8 @@ test("all exact archives are independently hashed and remain non-executable cand
   await assert.rejects(lstat(home), { code: "ENOENT" });
 });
 
-test("a failed registry retains artifact-output staging inside its lease until explicit owner release", async t => {
+test("a failed registry retains artifact-output staging inside its lease until explicit owner release",
+  { skip: process.platform === "win32" ? "local-bounded directories require POSIX uid and mode checks" : false }, async t => {
   const f = await fixture(t), managed = join(await realpath(f.root), "managed");
   await initResourceWorkspace({ root: managed, storageMode: "local-bounded" });
   const lease = await acquireResourceLease(managed);

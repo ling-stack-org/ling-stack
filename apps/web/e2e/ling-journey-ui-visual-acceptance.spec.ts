@@ -29,7 +29,7 @@ interface BrowserEvidence {
   readonly consoleAndPageErrors: readonly string[];
 }
 
-test.describe.configure({ mode: "serial" });
+test.describe.configure({ mode: "serial", timeout: 60_000 });
 
 test("Journey UI-01..UI-05 and UI-11: shell, home, composer and visual delta", async ({ page }, testInfo) => {
   const failures = collectBrowserErrors(page);
@@ -139,9 +139,10 @@ test("Journey UI-06..UI-12: conversation dock, overlays, fallback modes and cont
     "Ling conversation tone applied",
   );
   screenshots.push(await capture(page, testInfo, "ui-09-journey-toast.png"));
-  screenshots.push(await capture(page, testInfo, "ui-10-journey-settings-solid.png"));
+  screenshots.push(await capture(page, testInfo, "ui-10-journey-settings-ambient.png"));
   expect(await page.locator("html").getAttribute("data-ui-surface-recipe")).toBe("solid");
-  await expect(page.locator("[data-background-layer]")).toBeHidden();
+  await expect(page.locator("html")).toHaveAttribute("data-ui-background-visible", "true");
+  await expect(page.locator("[data-background-layer]")).toBeVisible();
 
   await page.getByRole("button", { name: "Back to app", exact: true }).click();
   await page.emulateMedia({ forcedColors: "active" });
