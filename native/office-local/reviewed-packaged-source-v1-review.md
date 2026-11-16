@@ -58,6 +58,20 @@ signing and false/unbound safety axes are unchanged. This finite prerequisite
 review does not accept final App/archive bytes, public signing, notarization,
 clean-machine behavior, root-only capability observers or full Host protection.
 
+Integration of main `86f057874` (#715) changes only the fixed
+`packages/remote-protocol/package.json` input: four test/typecheck scripts select
+the migrated TypeScript suites. Its production build scripts, exports,
+dependencies, source and production compiler configuration are unchanged. The
+new test configuration uses `noEmit`; it does not add a runtime import edge.
+The same independent context separately returned `SCOPED SOURCE-REVIEW PASS`
+for the exact candidate before adoption. Only that packaging input digest
+changes, to `ed97b6e2218a30e5bd17788c7a5a6a1498d490a68dbbadc35d730a5ce6ca093a`;
+the resulting Office record SHA-256 is
+`a3bb786d0f0b7147171fdb804423cf87c8c9d5ed375bdb066f501d8b54e607d2`.
+All 1,843 packaging and 15 Office native inputs match this record. The sandbox
+record and every runtime, toolchain, OS, signing and trust field retain the
+approved values above.
+
 ## Historical baseline, 2026-10-13
 
 Status: independently reviewed source prerequisite; final artifact acceptance separate

@@ -86,7 +86,6 @@ fi
 LING_CUA_SIGNING_TIER=unsigned_dev \
 LING_CUA_DISTRIBUTION_CHANNEL=development \
 LING_CUA_DRIVER_PACKAGE_PROVIDER=0 \
-CSC_IDENTITY_AUTO_DISCOVERY=false \
 corepack pnpm --filter @ling-stack/desktop package:mac
 ```
 

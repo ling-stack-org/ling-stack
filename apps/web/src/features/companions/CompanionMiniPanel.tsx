@@ -338,9 +338,9 @@ export function CompanionMiniPanel({
                 onChange={(event) => setInput(event.target.value)}
                 placeholder={t("Message your companion...")}
                 rows={1}
-                disabled={busy !== undefined || chat.sending || Boolean(chat.pending?.body)}
+                disabled={busy !== undefined || chat.sending || Boolean(chat.pending)}
               />
-              <Button type="submit" size="sm" variant="primary" leadingIcon={<Send />} disabled={!input.trim() || busy !== undefined || chat.sending || Boolean(chat.pending?.body)} loading={chat.sending}>
+              <Button type="submit" size="sm" variant="primary" leadingIcon={<Send />} disabled={!input.trim() || busy !== undefined || chat.sending || Boolean(chat.pending)} loading={chat.sending}>
                 {t("Send")}
               </Button>
             </form>

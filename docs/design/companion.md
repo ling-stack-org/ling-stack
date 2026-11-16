@@ -192,6 +192,8 @@ hours only for that local trigger.
    map validated semantic phases/actions to poses. Keep a pending idempotency key in
    localStorage, scoped by workspace and Companion; message text stays in the daemon.
    A reconnect or reload looks up the receipt before retrying the same message and key.
+   A restored key keeps the composer disabled until its original message is recovered;
+   a failed receipt lookup cannot bind newly typed text to an earlier submission.
    Fetch 40 messages at a time and preserve the older-history cursor across background
    synchronization. Abort streaming on surface disposal and ignore stale session results.
    Sync state/history/events every five seconds when not sending, and resume on visibility
@@ -238,20 +240,23 @@ complete only after its implementation and relevant acceptance checks pass.
   own bounded preload/IPC authority, workspace/companion selection, native dragging and
   close behavior. Keep it usable while the main Ling window is hidden. Include the
   renderer, preload, and character assets in desktop builds.
-- [ ] **Acceptance and integration:** cover streaming, retries, pagination, reconnection,
+- [x] **Local acceptance:** cover streaming, retries, pagination, reconnection,
   settings, and native-window boundaries with focused behavior tests; run production and
   test typechecks, browser visual checks, a real-provider multi-turn session, a sustained
-  runtime check, and local desktop packaging/runtime checks. Review the final diff, pass
-  the pull-request CI gates, and merge the reviewed change into main.
+  runtime check, and local desktop packaging/runtime checks.
+
+Integration is tracked in [PR #717](https://github.com/ling-stack-org/ling-stack/pull/717),
+which records the final source revision, CI gates, review threads and merge status.
 
 ## Acceptance evidence and limits
 
 - Focused daemon Companion suites: 17 tests passed, including receipt lookup, retry
   deduplication, changed-text rejection, restart recovery, memory, proactive scheduling,
   quiet-hour clearing, and origin/access checks.
-- Production-build Web end-to-end acceptance: 11 tests passed, covering chunked SSE before completion,
+- Production-build Web end-to-end acceptance: 12 tests passed, covering chunked SSE before completion,
   truncated-stream retry, receipt recovery after reload, older-history pagination,
   session changes during receipt recovery, delayed receipts after a newer submission,
+  composer locking while a restored key's receipt is unavailable,
   proactive defaults and settings, exact custom
   cooldown retention, compiled Chinese controls, and non-overlapping character/chat layout.
   Layout was exercised across all six built-in themes, a 1440 by 1000 desktop viewport, a 390 by 844 narrow
@@ -267,12 +272,24 @@ complete only after its implementation and relevant acceptance checks pass.
   model was unavailable at the proxy, so the available model was selected only in the
   isolated acceptance workspace. After 41.7 minutes of continuous daemon operation, a
   fresh request still recalled the initial test code correctly and completed in 2,817 ms.
-- Full macOS `package:mac` initially rejected the local SDK 27.2 toolchain. An
+- Full macOS `package:mac` uses an
   [independent native prerequisite review](../../native/office-local/reviewed-packaged-source-v1-review.md#companion-and-native-runtime-review-2026-11-17)
-  admitted the exact Apple-signed local compiler/SDK profile and actual Electron
+  of the exact Apple-signed local compiler/SDK 27.2 profile and actual Electron
   45.3.1 / Node 24.22.2 runtime, retaining all native source, OS and signing bounds.
-  Standard archive packaging and final artifact acceptance remain pending; native
-  Companion execution does not establish a signed/notarized installation package.
-  Windows native runtime acceptance remains unverified.
+  Standard packaging produced an App, ZIP and DMG. Local checks matched the complete
+  archive payloads to the App, verified distribution materials, decoded the character
+  asset, checked native binary architecture and deep strict ad-hoc signatures, and
+  started the pinned embedded runtime. The package-owned browser passed first download,
+  interaction, offline cache reuse and restart with an unavailable proxy.
+- The complete macOS App started its own packaged daemon in an isolated workspace and
+  profile. Its Companion completed a real-model reply, wide/narrow layout, moving and
+  resizing, operation with the main window hidden, independent close/reopen, and owner
+  cleanup, with no renderer page errors. Existing native-messaging registrations were
+  restored after the check. Archive/runtime receipts bind their exact source snapshot
+  separately from the earlier sustained-model session.
+- These are local development artifacts with ad-hoc signatures. Developer ID,
+  notarization, clean-machine installation and Windows GUI acceptance remain unverified;
+  archive and CI results do not establish those acceptance scopes.
+
 Additional characters, speech, articulated Live2D animation, and work-event-driven
 proactive behavior remain separate enhancements.

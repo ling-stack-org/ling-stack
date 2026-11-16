@@ -169,6 +169,8 @@ export function useCompanionChat(input: {
   async function send(body: string): Promise<void> {
     const session = sessionRef.current;
     if (!session || !isCurrent(session) || session.sending || !body.trim()) return;
+    // A restored key needs its receipt's original text before it can be retried.
+    if (session.pending && session.pending.body === undefined) return;
     // Retrying always uses the original text and key, even if the draft was edited.
     const submission = { key: session.pending?.key ?? crypto.randomUUID(), body: session.pending?.body ?? body.trim() };
     session.pending = submission;

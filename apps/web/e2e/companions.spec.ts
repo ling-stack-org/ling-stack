@@ -34,6 +34,7 @@ async function fixture(page: Page, mode: "normal" | "interrupted" | "pending" | 
   let release: (() => void) | undefined;
   let completed = false;
   let receiptGate: Promise<void> | undefined;
+  let receiptsUnavailable = false;
   let releaseReceipt: (() => void) | undefined;
   const heldReceiptKeys = new Set<string>();
   const heldReceiptWaiters = new Map<string, Array<() => void>>();
@@ -81,6 +82,7 @@ async function fixture(page: Page, mode: "normal" | "interrupted" | "pending" | 
     if (url.pathname.endsWith("/messages")) {
       const key = url.searchParams.get("idempotencyKey");
       if (key) {
+        if (receiptsUnavailable) { json(response, { error: "receipt_temporarily_unavailable" }, 503); return; }
         if (heldReceiptKeys.has(key)) {
           await new Promise<void>(resolve => {
             const waiters = heldReceiptWaiters.get(key) ?? [];
@@ -115,6 +117,7 @@ async function fixture(page: Page, mode: "normal" | "interrupted" | "pending" | 
     keys, cursors, get companion() { return companion; },
     holdReceipts: () => { receiptGate = new Promise<void>(resolve => { releaseReceipt = resolve; }); },
     releaseReceipts: () => { releaseReceipt?.(); receiptGate = undefined; },
+    setReceiptsUnavailable: (unavailable: boolean) => { receiptsUnavailable = unavailable; },
     holdReceiptKey: (key: string) => { heldReceiptKeys.add(key); },
     heldReceiptCount: (key: string) => heldReceiptWaiters.get(key)?.length ?? 0,
     releaseLatestReceipt: (key: string) => { heldReceiptWaiters.get(key)?.pop()?.(); },
@@ -184,6 +187,31 @@ test("pending receipt survives reload and recovers without another POST", async 
     f.finishPending(); await panel.getByRole("button", { name: "Recover or retry message" }).click();
     await expect(panel.getByRole("log")).toContainText("Recovered after disconnect.");
     await expect(panel.getByRole("textbox")).toBeEnabled(); expect(f.keys).toHaveLength(1);
+  } finally { await f.close(); }
+});
+
+test("a restored submission blocks new text until its unavailable receipt recovers", async ({ page }) => {
+  const f = await fixture(page, "pending");
+  try {
+    let panel = await openPanel(page);
+    await panel.getByRole("textbox").fill("Original pending text");
+    await panel.getByRole("button", { name: "Send", exact: true }).click();
+    await expect(panel.getByRole("button", { name: "Recover or retry message" })).toBeVisible();
+    f.setReceiptsUnavailable(true);
+    await page.reload(); await page.locator(".companion-config-button").click();
+    panel = page.getByRole("dialog", { name: "Intelligent companion" }); await panel.hover();
+    await expect(panel.getByRole("alert")).toBeVisible();
+    await expect(panel.getByRole("textbox")).toBeDisabled();
+    await expect(panel.getByRole("button", { name: "Send", exact: true })).toBeDisabled();
+    expect(f.keys).toHaveLength(1);
+    f.finishPending(); f.setReceiptsUnavailable(false);
+    await panel.getByRole("button", { name: "Reconnect", exact: true }).click();
+    await expect(panel.getByRole("log")).toContainText("Recovered after disconnect.");
+    await expect(panel.getByRole("textbox")).toBeEnabled();
+    await panel.getByRole("textbox").fill("A different new message");
+    await panel.getByRole("button", { name: "Send", exact: true }).click();
+    await expect.poll(() => f.keys).toHaveLength(2);
+    expect(f.keys[1]).not.toBe(f.keys[0]);
   } finally { await f.close(); }
 });
 
