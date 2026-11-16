@@ -97,14 +97,20 @@ test("BG-26 generation tasks keeps the ambient scene behind protected panels", a
   await expect(page.locator("[data-background-layer] img")).toBeVisible();
   await expect(page.locator(".media-jobs-page")).toBeVisible();
   const material = await page.evaluate(() => {
-    const background = (selector: string): string => getComputedStyle(document.querySelector(selector)!).backgroundColor;
+    const style = (selector: string): CSSStyleDeclaration => getComputedStyle(document.querySelector(selector)!);
+    const probe = document.createElement("div");
+    probe.style.backgroundColor = "color-mix(in srgb, var(--ling-bg-panel) var(--user-background-workspace, 100%), transparent)";
+    document.body.append(probe);
+    const expectedHeader = getComputedStyle(probe).backgroundColor;
+    probe.remove();
     return {
-      header: background(".media-jobs-header"),
-      page: background(".media-jobs-page"),
+      expectedHeader,
+      header: style(".media-jobs-header").backgroundColor,
+      page: style(".media-jobs-page").backgroundColor,
     };
   });
   expect(isTransparent(material.page)).toBe(true);
-  expect(isTransparent(material.header)).toBe(false);
+  expect(material.header).toBe(material.expectedHeader);
   await capture(page, testInfo, "generation-jobs-full-window.png");
 });
 
