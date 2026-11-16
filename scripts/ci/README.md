@@ -64,8 +64,9 @@ job's serial codesign-publication, Office-publication and Office-daemon-source
 contracts. The Daemon build supplies their compiled inputs without selecting its
 unit tests, typecheck or Linux contracts. `macos-native` requires that shared job
 to succeed; `macos-helper` and `native-release` independently select its steps.
-Native source or mixed changes retain the union of required work. Unknown paths
-beside these records retain full scope. Publication contracts check the recorded
+Native source or mixed changes retain the union of required work. Unrecognized
+Office paths retain full scope; other Sandbox paths retain Daemon validation and
+real helper smoke. Publication contracts check the recorded
 source hashes and use explicit synthetic compiler/signature fixtures; they do
 not approve new review records or establish a real signed/package acceptance.
 Full regression retains real helper smoke; publication checks are selected when
