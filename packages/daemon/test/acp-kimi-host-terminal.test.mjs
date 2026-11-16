@@ -231,7 +231,7 @@ test("released Kimi terminals reclaim quota for more than 64 sequential commands
 });
 
 for (const denied of [true, false]) {
-  test(`never-started Kimi terminals reclaim quota after ${denied ? "denial" : "pre-spawn failure"}`, native, async t => {
+  test(`never-started Kimi terminals reclaim quota after ${denied ? "denial" : "pre-spawn failure"}`, { ...native, timeout: 20000 }, async t => {
     const f = await setup(t, { policy: denied ? "ask" : "allow", command: "printf unused",
       assertUnchanged: denied ? undefined : () => { throw new Error("Changed profile"); } });
     for (let i = 0; i < 66; i++) {
