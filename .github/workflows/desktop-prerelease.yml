@@ -55,7 +55,7 @@ concurrency:
 
 jobs:
   candidate:
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && inputs.operation == 'build' && inputs.create_draft) || (contains(fromJSON('["desktop-package-inspect", "desktop-package-build"]'), github.event.label.name) && github.event.pull_request.head.repo.full_name == github.repository)
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' || (contains(fromJSON('["desktop-package-inspect", "desktop-package-build"]'), github.event.label.name) && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -87,7 +87,7 @@ jobs:
           DESKTOP_SOURCE_SHA: ${{ inputs.source_sha || (github.event_name == 'pull_request' && github.event.pull_request.head.sha) || github.sha }}
           DESKTOP_RELEASE_TAG: ${{ inputs.release_tag || '' }}
           DESKTOP_CREATE_DRAFT: ${{ inputs.create_draft && inputs.operation == 'build' }}
-          DESKTOP_ALLOW_EXISTING_TAG: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+          DESKTOP_ALLOW_EXISTING_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
         run: |
           set -euo pipefail
           if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
@@ -339,7 +339,7 @@ jobs:
           retention-days: 14
 
   draft:
-    if: (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))) && inputs.operation == 'build' && inputs.create_draft
+    if: (github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call') && inputs.operation == 'build' && inputs.create_draft
     needs: [candidate, package]
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -378,7 +378,7 @@ jobs:
           DESKTOP_INPUT_ROOT: ${{ runner.temp }}/desktop-inputs
           DESKTOP_OUTPUT_ROOT: ${{ runner.temp }}/desktop-release
           DESKTOP_SOURCE_ROOT: ${{ github.workspace }}
-          DESKTOP_ALLOW_EXISTING_TAG: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+          DESKTOP_ALLOW_EXISTING_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
         run: |
           set -euo pipefail
           node .trusted-main/scripts/release/desktop-release.mjs assemble
