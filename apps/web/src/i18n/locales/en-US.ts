@@ -4857,7 +4857,6 @@ export const enUS = {
   "Could not save the model preset. Check the settings and try again.": "Could not save the model preset. Check the settings and try again.",
   "Could not import models. Check the provider settings and try again.": "Could not import models. Check the provider settings and try again.",
   "Could not delete the model preset. Try again.": "Could not delete the model preset. Try again.",
-  "Could not load model presets. Check the local service and retry.": "Could not load model presets. Check the local service and retry.",
   "Could not load default model options. Refresh and try again.": "Could not load default model options. Refresh and try again.",
   "Could not update the default model. Try again.": "Could not update the default model. Try again.",
   "Provider check failed. Review technical details and try again.": "Provider check failed. Review technical details and try again.",

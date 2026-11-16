@@ -9006,7 +9006,7 @@
     "Could not load generation tasks": "无法加载生成任务",
     "Could not load Host concurrency limits.": "无法读取 Host 并发限制。",
     "Could not load media projects.": "无法加载媒体项目。",
-    "Could not load model presets. Check the local service and retry.": "无法加载模型预设。请检查本地服务后重试。",
+    "Could not load model presets. Check the local service and retry.": "无法加载模型预设，请检查本地服务后重试。",
     "Could not load production workflows.": "无法加载生产流程。",
     "Could not load this media project.": "无法加载此媒体项目。",
     "Could not load workspace engines.": "无法加载工作区引擎。",

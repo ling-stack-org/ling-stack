@@ -128,11 +128,11 @@ export function ProviderDefaultPurposeBar(props: {
           <option value="">{t("Not configured")}</option>
           {unavailableCurrentChat ? (
             <option value={unavailableCurrentChat.id} disabled>
-              {t("{target} · Needs attention", { target: providerPurposeLabel(unavailableCurrentChat, chatProviders) })}
+              {t("{target} · Needs attention", { target: providerPurposeLabel(unavailableCurrentChat) })}
             </option>
           ) : null}
           {chatProviders.map((provider) => (
-            <option value={provider.id} key={provider.id}>{providerPurposeLabel(provider, chatProviders)}</option>
+            <option value={provider.id} key={provider.id}>{providerPurposeLabel(provider)}</option>
           ))}
         </Select>
       </label>
@@ -222,20 +222,11 @@ function targetOptionLabel(
   }
   const providerPresetId = target.ref.providerPresetId;
   const provider = providers.find((candidate) => candidate.id === providerPresetId);
-  return provider ? providerPurposeLabel(provider, providers) : target.displayName;
+  return provider ? providerPurposeLabel(provider) : target.displayName;
 }
 
-function providerPurposeLabel(provider: ProviderPreset, peers: readonly ProviderPreset[]): string {
-  const modelLabel = provider.model.trim() || provider.displayName.trim();
-  const sameModelPeers = peers.filter((peer) => peer.id !== provider.id && peer.model.trim() === provider.model.trim());
-  const sourceLabel = providerDisplaySourceLabel(provider.displayName, modelLabel);
-  if (sameModelPeers.length === 0) return modelLabel;
-  const sameSource = sameModelPeers.some((peer) =>
-    providerDisplaySourceLabel(peer.displayName, modelLabel).toLowerCase() === sourceLabel.toLowerCase());
-  const disambiguator = sameSource
-    ? provider.providerId.trim() || provider.baseUrl?.trim() || provider.id
-    : sourceLabel;
-  return disambiguator && disambiguator !== modelLabel ? `${modelLabel} · ${disambiguator}` : modelLabel;
+function providerPurposeLabel(provider: ProviderPreset): string {
+  return providerModelRouteLabel(provider);
 }
 
 function mediaTargetRefKey(ref: MediaGenerationTargetRef): string {
