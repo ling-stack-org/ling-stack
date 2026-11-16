@@ -94,6 +94,10 @@ test("private execution preserves review annotations in the canonical input", as
   const turn = input.store.getLingTurn(execution.runRequest.turnId);
   const item = turn && input.store.getConversationItem(turn.sourceItemId);
   assert.deepEqual(item?.payload.fileRefs, fileRefs);
+  const view = buildPrivateChatContextView({ store: input.store, teammate: input.teammate, thread: input.directThread,
+    messages: [input.sourceMessage], sourceMessage: input.sourceMessage });
+  assert.match(view.sections[0].text, /Modified lines 2-3/);
+  assert.match(view.sections[0].text, /User feedback:\nCheck this/);
 });
 
 test("private execution rejects a different teammate or lane without creating a turn", async (t) => {
