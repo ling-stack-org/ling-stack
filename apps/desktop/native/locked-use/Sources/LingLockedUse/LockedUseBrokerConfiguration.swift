@@ -9,13 +9,15 @@ public struct LockedUseBrokerConfiguration: Codable, Sendable {
     public let validatedBrokerHash: String?
     public let validatedGuardianHash: String?
     public let validatedPluginHash: String?
+    public let validatedClientHash: String?
 
     public init(enabled: Bool, validatedOSBuild: String? = nil,
                 validatedBrokerHash: String? = nil, validatedGuardianHash: String? = nil,
-                validatedPluginHash: String? = nil) {
+                validatedPluginHash: String? = nil, validatedClientHash: String? = nil) {
         schemaVersion = 1; self.enabled = enabled; self.validatedOSBuild = validatedOSBuild
         self.validatedBrokerHash = validatedBrokerHash; self.validatedGuardianHash = validatedGuardianHash
         self.validatedPluginHash = validatedPluginHash
+        self.validatedClientHash = validatedClientHash
     }
 
     public static func loadInstalled() throws -> Self {
@@ -25,9 +27,10 @@ public struct LockedUseBrokerConfiguration: Codable, Sendable {
         return value
     }
 
-    public func matchesValidation(osBuild: String, brokerHash: String, guardianHash: String, pluginHash: String) -> Bool {
-        enabled && !osBuild.isEmpty && !brokerHash.isEmpty && !guardianHash.isEmpty && !pluginHash.isEmpty
+    public func matchesValidation(osBuild: String, brokerHash: String, guardianHash: String, pluginHash: String, clientHash: String) -> Bool {
+        enabled && !osBuild.isEmpty && !brokerHash.isEmpty && !guardianHash.isEmpty && !pluginHash.isEmpty && !clientHash.isEmpty
             && validatedOSBuild == osBuild && validatedBrokerHash == brokerHash
             && validatedGuardianHash == guardianHash && validatedPluginHash == pluginHash
+            && validatedClientHash == clientHash
     }
 }

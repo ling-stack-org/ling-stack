@@ -57,6 +57,21 @@ public struct LockedUsePeerIdentity: Sendable {
     public static func verified(socket descriptor: Int32, requirement: String) throws -> LockedUsePeerIdentity {
         var native = LingPeerIdentity()
         guard ling_copy_peer_identity(descriptor, &native) == 0 else { throw Failure.peerUnavailable(errno) }
+        return try verified(native: native, requirement: requirement)
+    }
+
+    public static func verified(processID: Int32, requirement: String) throws -> LockedUsePeerIdentity {
+        var native = LingPeerIdentity()
+        guard ling_copy_process_identity(processID, &native) == 0 else { throw Failure.peerUnavailable(errno) }
+        let identity = try verified(native: native, requirement: requirement)
+        let matches = identity.auditToken.withUnsafeBytes {
+            ling_process_identity_matches(processID, $0.bindMemory(to: UInt8.self).baseAddress)
+        }
+        guard matches == 1 else { throw Failure.malformedIdentity }
+        return identity
+    }
+
+    private static func verified(native: LingPeerIdentity, requirement: String) throws -> LockedUsePeerIdentity {
         let token = withUnsafeBytes(of: native.audit_token) { Data($0) }
         var guest: SecCode?
         let attributes = [kSecGuestAttributeAudit as String: token] as CFDictionary

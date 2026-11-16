@@ -9,6 +9,7 @@ import {
   type LockedControlNativeStatusResponse,
 } from "./native-helper-bridge.js";
 import type { LockedControlNativeIdentityRequest } from "./native-bridge.js";
+import type { LockedUseActionTarget } from "./action-target.js";
 
 export interface DarwinLockedUseTaskBinding {
   readonly grantID: string;
@@ -37,6 +38,8 @@ export class DarwinLockedUseNativeClient {
   private revocationReported = false;
   private managed = false;
   private actionActive = false;
+  private actionTarget: LockedUseActionTarget | undefined;
+  private providerAttached = false;
 
   constructor(private readonly options: {
     readonly helperPath: string;
@@ -49,6 +52,27 @@ export class DarwinLockedUseNativeClient {
   }
 
   get ownsManagedSession(): boolean { return this.managed; }
+
+  get providerHostProcessID(): number {
+    this.assertBound();
+    const pid = this.child?.pid;
+    if (!Number.isSafeInteger(pid) || !pid || pid <= 0) return this.fail("locked_use_helper_identity_unavailable");
+    return pid;
+  }
+
+  async attachProvider(processID: number, signal: AbortSignal): Promise<void> {
+    this.assertBound();
+    if (this.providerAttached || !Number.isSafeInteger(processID) || processID <= 0
+      || processID > 2_147_483_647 || processID === this.providerHostProcessID) {
+      throw new Error("locked_use_provider_identity_invalid");
+    }
+    // Registration is terminal for the episode, including a failed/late reply.
+    this.providerAttached = true;
+    if (!isFlag(await this.request("provider-attach", signal, 10_000, { providerProcessID: processID }), "attached")) {
+      this.fail("locked_use_provider_registration_denied");
+    }
+    this.assertBound();
+  }
 
   async readSession(signal: AbortSignal): Promise<LockedControlNativeSessionResponse> {
     const value = parseLockedControlNativeSessionResponse(await this.request("session", signal));
@@ -88,33 +112,45 @@ export class DarwinLockedUseNativeClient {
     this.assertBound();
   }
 
-  async beginAction(signal: AbortSignal): Promise<void> {
+  async beginAction(signal: AbortSignal, target: LockedUseActionTarget): Promise<void> {
     this.assertBound();
+    if (!this.providerAttached) throw new Error("locked_use_provider_not_registered");
+    if (!target) throw new Error("locked_use_action_target_missing");
     if (this.actionActive) throw new Error("locked_use_action_in_flight");
     this.actionActive = true;
+    this.actionTarget = Object.freeze({ toolName: target.toolName, processID: target.processID, windowID: target.windowID });
     try {
-      if (!isFlag(await this.request("action-begin", signal), "active")) this.fail("locked_use_action_denied");
+      if (!isFlag(await this.request("action-begin", signal, 10_000, { actionTarget: this.actionTarget }), "active")) this.fail("locked_use_action_denied");
       this.assertBound();
     } catch (error) {
       this.actionActive = false;
+      this.actionTarget = undefined;
       throw error;
     }
   }
 
-  async finishAction(signal: AbortSignal): Promise<void> {
+  async finishAction(signal: AbortSignal, target: LockedUseActionTarget): Promise<void> {
     if (!this.actionActive) throw new Error("locked_use_action_not_started");
+    if (this.actionTarget?.toolName !== target.toolName || this.actionTarget.processID !== target.processID
+      || this.actionTarget.windowID !== target.windowID) throw new Error("locked_use_action_target_changed");
     try {
-      if (!isFlag(await this.request("action-end", signal), "active")) this.fail("locked_use_action_denied");
+      if (!isFlag(await this.request("action-end", signal, 10_000, { actionTarget: this.actionTarget }), "active")) this.fail("locked_use_action_denied");
       this.assertBound();
-    } finally { this.actionActive = false; }
+    } finally { this.actionActive = false; this.actionTarget = undefined; }
   }
 
   /** Call only after the provider has fenced and quiesced every admitted action. */
   async end(): Promise<void> {
     if (this.actionActive) throw new Error("locked_use_provider_not_quiesced");
     if (this.binding) {
-      if (this.invalid) throw new Error("locked_use_relock_unconfirmed");
-      if (!isFlag(await this.request("end", new AbortController().signal), "ended")) this.fail("locked_use_end_denied");
+      if (this.invalid) {
+        const observer = new DarwinLockedUseNativeClient({ ...this.options, onRevoked() {} });
+        try {
+          if (!isFlag(await observer.request("release-status", new AbortController().signal, 10_000,
+            { binding: this.binding }), "ended")) throw new Error("locked_use_relock_unconfirmed");
+        } catch { throw new Error("locked_use_relock_unconfirmed"); }
+        finally { observer.close(); }
+      } else if (!isFlag(await this.request("end", new AbortController().signal), "ended")) this.fail("locked_use_end_denied");
     }
     this.managed = false;
     this.close();
@@ -135,7 +171,8 @@ export class DarwinLockedUseNativeClient {
     }
   }
 
-  private request(command: string, signal: AbortSignal, timeoutMs = 10_000): Promise<unknown> {
+  private request(command: string, signal: AbortSignal, timeoutMs = 10_000,
+    fields: Readonly<{ providerProcessID?: number; binding?: DarwinLockedUseTaskBinding; actionTarget?: LockedUseActionTarget }> = {}): Promise<unknown> {
     const pending = this.tail.then(async () => {
       signal.throwIfAborted();
       if (this.invalid) throw new Error("locked_use_client_closed");
@@ -167,7 +204,7 @@ export class DarwinLockedUseNativeClient {
         };
         signal.addEventListener("abort", abort, { once: true });
         if (signal.aborted) { abort(); return; }
-        this.child!.stdin.write(`${JSON.stringify({ command, requestId: id,
+        this.child!.stdin.write(`${JSON.stringify({ command, requestId: id, ...fields,
           ...(this.binding && !["session", "identity"].includes(command) ? { binding: this.binding } : {}),
         })}\n`);
       });

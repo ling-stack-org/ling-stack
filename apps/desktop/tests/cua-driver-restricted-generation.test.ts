@@ -6,6 +6,7 @@ import { allowedTools, deferred, taskGrant } from "./locked-use-fixtures.ts";
 
 function fixture() {
   const events: string[] = [];
+  const targets: unknown[] = [];
   let generation = 3;
   let gate!: CuaDriverActionGate;
   let drainFails = false;
@@ -17,9 +18,11 @@ function fixture() {
     allowedToolIds: allowedTools,
     isAuthorityCurrent: () => current,
     native: {
+      providerHostProcessID: 123,
+      async attachProvider() {},
       async check() { events.push("check"); },
-      async beginAction() { events.push("begin"); },
-      async finishAction() { events.push("finish"); },
+      async beginAction(_signal, target) { events.push("begin"); targets.push(target); },
+      async finishAction(_signal, target) { events.push("finish"); targets.push(target); },
       async end() { events.push("end"); },
     },
     createCoordinator(input) {
@@ -37,7 +40,7 @@ function fixture() {
       };
     },
   });
-  return { owner, events, gate: () => gate, generation: () => generation,
+  return { owner, events, targets, gate: () => gate, generation: () => generation,
     setSnapshot: (value: CuaDriverCoordinatorSnapshot) => { snapshot = value; },
     setDrainFails: (value: boolean) => { drainFails = value; }, setCurrent: (value: boolean) => { current = value; } };
 }
@@ -52,25 +55,40 @@ test("a restricted owner reserves a unique generation, freezes authority and fen
   await fx.owner.start({ generation, grant });
   assert.deepEqual(fx.events.slice(0, 4), ["check", "enable", "prime", "check"]);
   Object.assign(grant, { expiresAt: "2000-01-01T00:00:00.000Z" });
-  const finish = await fx.gate().beforeCall({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "capture" } });
+  const finish = await fx.gate().beforeCall({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "get_window_state", arguments: { pid: 321, window_id: 1 } } });
   assert.equal(fx.events.at(-1), "begin");
   await finish();
   assert.equal(fx.events.at(-1), "finish");
   const begins = fx.events.filter((event) => event === "begin").length;
   for (const message of [
     { jsonrpc: "2.0" as const, id: 2, method: "tools/call", params: { name: "shell" } },
-    { jsonrpc: "2.0" as const, method: "tools/call", params: { name: "click" } },
+    { jsonrpc: "2.0" as const, method: "tools/call", params: { name: "click", arguments: { pid: 321 } } },
     { jsonrpc: "2.0" as const, id: 2, method: "resources/read", params: { uri: "file:///private/data" } },
     { jsonrpc: "2.0" as const, id: 2, method: "custom/input" },
     { jsonrpc: "2.0" as const, id: 2, method: "notifications/initialized" },
     { jsonrpc: "2.0" as const, id: 2, result: {} },
   ]) await assert.rejects(fx.gate().beforeCall(message), /disabled_by_policy/u);
   assert.equal(fx.events.filter((event) => event === "begin").length, begins);
-  const postFence = await fx.gate().beforeCall({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "click" } });
+  const postFence = await fx.gate().beforeCall({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "click", arguments: { pid: 321 } } });
   fx.setCurrent(false);
   await assert.rejects(postFence(), /authority_rotated/u);
   await fx.owner.stop("revoked");
   assert.deepEqual(fx.events.slice(-4), ["close", "fence", "shutdown", "end"]);
+});
+
+test("authority loss after native admission finishes the same content-free action target", async () => {
+  const fx = fixture();
+  await fx.owner.start({ generation: fx.owner.reserve(), grant: taskGrant() });
+  const admitting = fx.gate().beforeCall({ jsonrpc: "2.0", id: 1, method: "tools/call",
+    params: { name: "click", arguments: { pid: 321, window_id: 1, x: 20, y: 20 } } });
+  fx.setCurrent(false);
+  await assert.rejects(admitting, /authority_rotated/u);
+  assert.deepEqual(fx.targets, [
+    { toolName: "click", processID: 321, windowID: 1 },
+    { toolName: "click", processID: 321, windowID: 1 },
+  ]);
+  assert.deepEqual(fx.events.slice(-2), ["begin", "finish"]);
+  await fx.owner.stop("revoked");
 });
 
 test("restricted readiness wait is cancellable and rejects a replacement generation", async () => {
@@ -114,7 +132,7 @@ test("stop during native startup cannot create a successor provider", async () =
   const fx = new RestrictedCuaDriverGeneration({
     currentGeneration: () => 3, advanceNormalGenerationFloor() {}, allowedToolIds: allowedTools,
     isAuthorityCurrent: () => true,
-    native: { async check() { checking.resolve(); await release.promise; }, async beginAction() {}, async finishAction() {}, async end() { ended = true; } },
+    native: { providerHostProcessID: 123, async attachProvider() {}, async check() { checking.resolve(); await release.promise; }, async beginAction() {}, async finishAction() {}, async end() { ended = true; } },
     createCoordinator() { enabled = true; throw new Error("must not start"); },
   });
   const starting = fx.start({ generation: fx.reserve(), grant: taskGrant() });

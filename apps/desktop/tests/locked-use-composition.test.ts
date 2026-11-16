@@ -18,6 +18,8 @@ function fixture(enabled = true, configureDaemon?: (daemon: ReturnType<typeof po
     createClient(onRevoked) {
       clients += 1; revoked = onRevoked;
       return {
+        providerHostProcessID: 123,
+        async attachProvider() {},
         get ownsManagedSession() { return managed; },
         async readSession() { return { platform: "darwin", sessionBindingDigest: sessionDigest, sessionActive: true, sessionLocked: false }; },
         async verifyIdentity() { events.push("identity"); return { status: "verified" }; },
@@ -93,7 +95,7 @@ test("lazy restricted initialization and daemon attestation both precede tool ad
   await fx.binding.authorize();
   const locking = fx.binding.coordinator.handleLock();
   await fx.restrictedEnabled.promise;
-  const action = { jsonrpc: "2.0" as const, id: 1, method: "tools/call", params: { name: "click" } };
+  const action = { jsonrpc: "2.0" as const, id: 1, method: "tools/call", params: { name: "click", arguments: { pid: 321 } } };
   await assert.rejects(fx.gate().beforeCall(action), /attestation_pending/u);
   assert.equal(fx.events.some((event) => event.startsWith("attestation:")), false);
   fx.setProviderState("ready");
@@ -115,7 +117,7 @@ test("composition retires normal control before managed unlock and releases nati
   assert.ok(fx.events.indexOf("normal-retire") < fx.events.indexOf("native-begin"));
   assert.ok(fx.events.indexOf("native-begin") < fx.events.indexOf("restricted-enable"));
   assert.ok(fx.events.indexOf("restricted-enable") < fx.events.indexOf("restricted-prime"));
-  const finish = await fx.gate().beforeCall({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "capture" } });
+  const finish = await fx.gate().beforeCall({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "get_window_state", arguments: { pid: 321, window_id: 1 } } });
   await finish();
   await fx.binding.coordinator.revokeCurrentGrant();
   assert.ok(fx.events.indexOf("restricted-shutdown") < fx.events.indexOf("native-end"));

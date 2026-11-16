@@ -19,10 +19,14 @@ final class ExternalFixture: NSObject {
         button.frame = NSRect(x: 100, y: 50, width: 240, height: 44)
         label.frame = NSRect(x: 100, y: 120, width: 250, height: 34)
         label.font = .systemFont(ofSize: 24)
+        label.setAccessibilityIdentifier("locked-use-validation-counter")
         label.textColor = .white
         window.contentView?.addSubview(button)
         window.contentView?.addSubview(label)
     }
     func show() { window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true) }
-    @objc private func increment() { counter += 1; label.stringValue = "Counter: \(counter)" }
+    @objc private func increment() {
+        counter += 1; label.stringValue = "Counter: \(counter)"
+        window.backgroundColor = counter.isMultiple(of: 2) ? .systemBlue : .systemOrange
+    }
 }

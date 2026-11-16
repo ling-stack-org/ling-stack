@@ -5,6 +5,7 @@ import { DarwinLockedUseNativeClient } from "../dist/main/locked-computer-contro
 import { sessionDigest, taskGrant } from "./locked-use-fixtures.ts";
 
 const signal = () => new AbortController().signal;
+const target = { toolName: "click", processID: 321 } as const;
 const session = { platform: "darwin", sessionBindingDigest: sessionDigest, sessionActive: true, sessionLocked: true };
 function fixture(t: TestContext, handler = "reply({active:true})") {
   let verifications = 0;
@@ -23,6 +24,7 @@ function fixture(t: TestContext, handler = "reply({active:true})") {
           if(request.command==='session') return reply(${JSON.stringify(session)});
           if(request.command==='identity') return reply({status:'verified'});
           if(request.command==='end') return reply({ended:true});
+          if(request.command==='provider-attach') return reply({attached:true});
           ${handler}
         });
       `], { stdio: ["pipe", "pipe", "pipe"] });
@@ -37,10 +39,13 @@ test("native client verifies once, binds one task and refuses overlapping action
   assert.deepEqual(await fx.client.readSession(signal()), session);
   await fx.client.verifyIdentity({ requestId: "auth", platform: "darwin", localizedReason: "Authorize task", signal: signal() });
   await fx.client.begin(taskGrant(), 4, signal());
-  await fx.client.beginAction(signal());
-  await assert.rejects(fx.client.beginAction(signal()), /action_in_flight/u);
+  await assert.rejects(fx.client.beginAction(signal(), target), /provider_not_registered/u);
+  await fx.client.attachProvider(321, signal());
+  await fx.client.beginAction(signal(), target);
+  await assert.rejects(fx.client.beginAction(signal(), target), /action_in_flight/u);
+  await assert.rejects(fx.client.finishAction(signal(), { ...target, processID: 322 }), /action_target_changed/u);
   await assert.rejects(fx.client.end(), /provider_not_quiesced/u);
-  await fx.client.finishAction(signal());
+  await fx.client.finishAction(signal(), target);
   await fx.client.check(signal());
   assert.equal(fx.verifications(), 1);
   await fx.client.end();
@@ -54,7 +59,7 @@ test("native revocation fences the task while retaining cleanup ownership until 
   await assert.rejects(fx.client.check(signal()), /authority_expired/u);
   assert.equal(fx.revoked(), 1);
   assert.equal(fx.client.ownsManagedSession, true);
-  await assert.rejects(fx.client.beginAction(signal()));
+  await assert.rejects(fx.client.beginAction(signal(), target));
   await fx.client.end();
   assert.equal(fx.client.ownsManagedSession, false);
 });
@@ -62,7 +67,8 @@ test("native revocation fences the task while retaining cleanup ownership until 
 test("native denial prevents dispatch and still permits an explicit post-drain end", async (t) => {
   const fx = fixture(t, "if(request.command==='action-begin') emit({requestId:request.requestId,ok:false,reason:'denied'}); else reply({active:true});");
   await fx.client.begin(taskGrant(), 4, signal());
-  await assert.rejects(fx.client.beginAction(signal()), /native_denied/u);
+  await fx.client.attachProvider(321, signal());
+  await assert.rejects(fx.client.beginAction(signal(), target), /native_denied/u);
   assert.equal(fx.revoked(), 1);
   await fx.client.end();
   assert.equal(fx.client.ownsManagedSession, false);
@@ -107,4 +113,38 @@ test("failed executable verification prevents spawn", async () => {
   await assert.rejects(client.readSession(signal()), /signature_rejected/u);
   assert.equal(spawned, false);
   client.close();
+});
+
+test("native client registers one exact provider and never treats a PID as action authority", async (t) => {
+  const fx = fixture(t, "reply({active:true})");
+  assert.throws(() => fx.client.providerHostProcessID, /authority_expired/u);
+  const active = fixture(t);
+  await active.client.begin(taskGrant(), 4, signal());
+  const helper = active.client.providerHostProcessID;
+  assert.ok(helper > 0);
+  for (const pid of [0, -1, 1.5, Number.MAX_SAFE_INTEGER, helper]) {
+    await assert.rejects(active.client.attachProvider(pid, signal()), /provider_identity_invalid/u);
+  }
+  await active.client.attachProvider(321, signal());
+  await assert.rejects(active.client.attachProvider(322, signal()), /provider_identity_invalid/u);
+  await active.client.beginAction(signal(), target); await active.client.finishAction(signal(), target);
+  await active.client.end();
+});
+
+test("helper loss can release ownership only after a new verified observer confirms root release", async (t) => {
+  for (const released of [false, true]) {
+    const fx = fixture(t, `if(request.command==='check') process.exit(0);
+      else if(request.command==='release-status') reply({ended:${released}}); else reply({active:true});`);
+    await fx.client.begin(taskGrant(), 4, signal());
+    await assert.rejects(fx.client.check(signal()), /helper_exited/u);
+    if (released) {
+      await fx.client.end();
+      assert.equal(fx.client.ownsManagedSession, false);
+    } else {
+      await assert.rejects(fx.client.end(), /relock_unconfirmed/u);
+      assert.equal(fx.client.ownsManagedSession, true);
+    }
+    assert.equal(fx.verifications(), 2);
+    assert.equal(fx.revoked(), 1);
+  }
 });

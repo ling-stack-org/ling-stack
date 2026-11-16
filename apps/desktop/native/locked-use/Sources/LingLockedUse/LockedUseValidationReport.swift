@@ -8,16 +8,18 @@ public struct LockedUseValidationReport: Codable, Sendable {
     public let leaseID: UUID
     public let evidence: LockedUseComponentValidation.Evidence
     public let ownerToken: Data
+    public let ownerCodeHash: Data
     public let guiAndKeychainPassed: Bool
     public var lockedAndReleased: Bool
     public var afterManualUnlockPassed: Bool
 
-    public init(leaseID: UUID, evidence: LockedUseComponentValidation.Evidence, ownerToken: Data) {
-        schemaVersion = 1; self.leaseID = leaseID; self.evidence = evidence; self.ownerToken = ownerToken
+    public init(leaseID: UUID, evidence: LockedUseComponentValidation.Evidence, ownerToken: Data, ownerCodeHash: Data) {
+        schemaVersion = 2; self.leaseID = leaseID; self.evidence = evidence; self.ownerToken = ownerToken; self.ownerCodeHash = ownerCodeHash
         guiAndKeychainPassed = true; lockedAndReleased = false; afterManualUnlockPassed = false
     }
     public func canPromote(current: LockedUseComponentValidation.Evidence) -> Bool {
-        schemaVersion == 1 && ownerToken.count == 32 && evidence == current
+        schemaVersion == 2 && ownerToken.count == 32 && !ownerCodeHash.isEmpty && evidence == current
+            && ownerCodeHash.map({ String(format: "%02x", $0) }).joined() == current.clientHash
             && guiAndKeychainPassed && lockedAndReleased && afterManualUnlockPassed
     }
     public static func loadInstalled() throws -> Self {

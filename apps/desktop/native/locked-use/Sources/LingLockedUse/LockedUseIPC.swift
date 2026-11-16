@@ -6,6 +6,7 @@ public struct LockedUseIPCMessage: Codable, Sendable {
     public enum Operation: String, Codable, Sendable {
         case status, disable, validationPassed, validationManual, begin, beginRecoveryProbe, guardianHello, guardianReport, guardianReleased, watchdogHello, watchdogRecoveryHello, watchdogReport, watchdogReleased, ownerRecoveryHello, guardianRecoveryHello, action, end, quiesced
         case pluginClaim, pluginConsume, pluginFinished, beginUnshieldedDiagnostic, endUnshieldedDiagnostic
+        case check, providerAttach, actionBegin, actionEnd, releaseStatus
     }
     public let version: Int
     public let id: UUID
@@ -17,20 +18,27 @@ public struct LockedUseIPCMessage: Codable, Sendable {
     public let stopReason: LockedUseStateMachine.StopReason?
     public let unlockWorkPending: Bool?
     public let hasObservedUnlock: Bool?
+    public let taskBinding: LockedUseTaskBinding?
+    public let providerProcessID: Int32?
+    public let actionTarget: LockedUseActionTarget?
 
     public init(id: UUID = UUID(), operation: Operation, leaseID: UUID? = nil,
                 token: Data? = nil, session: LockedUseSession? = nil,
                 guards: LockedUseStateMachine.Guards? = nil,
-                stopReason: LockedUseStateMachine.StopReason? = nil, unlockWorkPending: Bool? = nil, hasObservedUnlock: Bool? = nil) {
+                stopReason: LockedUseStateMachine.StopReason? = nil, unlockWorkPending: Bool? = nil, hasObservedUnlock: Bool? = nil,
+                taskBinding: LockedUseTaskBinding? = nil, providerProcessID: Int32? = nil, actionTarget: LockedUseActionTarget? = nil) {
         version = 1; self.id = id; self.operation = operation
         self.leaseID = leaseID; self.token = token; self.session = session
         self.guards = guards; self.stopReason = stopReason
         self.unlockWorkPending = unlockWorkPending
         self.hasObservedUnlock = hasObservedUnlock
+        self.taskBinding = taskBinding; self.providerProcessID = providerProcessID
+        self.actionTarget = actionTarget
     }
 
     public func validated() throws -> Self {
         guard version == 1, token == nil || token?.count == 32 else { throw LockedUseIPCFrame.Failure.malformed }
+        try actionTarget?.validate()
         return self
     }
 }

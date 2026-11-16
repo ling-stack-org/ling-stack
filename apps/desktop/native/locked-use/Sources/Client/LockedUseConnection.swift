@@ -19,6 +19,8 @@ final class LockedUseConnection: @unchecked Sendable {
     private var clientDisconnected = false
     private var inFlight = false
     private var externalProviderQuiesced = false
+    private var taskBinding: LockedUseTaskBinding?
+    private var actionTarget: LockedUseActionTarget?
     private var validationLease: UUID?
     private var recoveryProbeStarted = false
     private var displayHold: LockedUseDisplayHold?
@@ -79,7 +81,7 @@ final class LockedUseConnection: @unchecked Sendable {
         return hold
     }
 
-    func acquire(session: LockedUseSession, recoveryProbe: Bool = false) throws {
+    func acquire(session: LockedUseSession, taskBinding: LockedUseTaskBinding? = nil, recoveryProbe: Bool = false) throws {
         mutex.lock(); let existing = lease; let denied = stopped || clientDisconnected; mutex.unlock()
         if existing != nil || denied { try validateAction(); return }
         // Dark-display insurance before the broker's startup deadline starts counting:
@@ -94,7 +96,8 @@ final class LockedUseConnection: @unchecked Sendable {
             throw LockedUseError.stateUnavailable("Computer Use client disconnected during display preparation.")
         }
         let connection = try connectForAcquisition(clientSocket)
-        let reply = try connection.request(.init(operation: recoveryProbe ? .beginRecoveryProbe : .begin, session: session))
+        self.taskBinding = taskBinding
+        let reply = try connection.request(.init(operation: recoveryProbe ? .beginRecoveryProbe : .begin, session: session, taskBinding: taskBinding))
         let now = ProcessInfo.processInfo.systemUptime
         let startupDeadline = reply.startupDeadline ?? now + LockedUseStateMachine.unlockTimeout
         guard reply.result != .denied, reply.phase == .preparing,
@@ -153,29 +156,49 @@ final class LockedUseConnection: @unchecked Sendable {
         guard !denied, let connection, let lease else {
             throw LockedUseError.stateUnavailable("Locked Use lease is no longer active.")
         }
-        let reply = try connection.request(.init(operation: .action, leaseID: lease, session: .current()))
+        let reply = try connection.request(.init(operation: .check, leaseID: lease, session: .current(), taskBinding: taskBinding))
         receive(reply)
         guard reply.result == .active else { throw LockedUseError.stateUnavailable("Locked Use stopped before this GUI action.") }
     }
 
     /// Hold the release barrier while an external provider owns an action.
-    func beginExternalAction() throws {
-        try validateAction()
+    func beginExternalAction(target: LockedUseActionTarget) throws {
+        mutex.lock(); let connection = broker; let lease = lease; let binding = taskBinding; let denied = stopped || clientDisconnected; mutex.unlock()
+        guard !denied, let connection, let lease else { throw LockedUseError.stateUnavailable("Locked Use lease is no longer active.") }
+        let reply = try connection.request(.init(operation: .actionBegin, leaseID: lease, session: .current(), taskBinding: binding, actionTarget: target))
+        receive(reply)
+        guard reply.result == .active else { throw LockedUseError.stateUnavailable("Locked Use stopped before this GUI action.") }
         mutex.lock(); defer { mutex.unlock() }
         guard !stopped, !clientDisconnected, !inFlight else {
             throw LockedUseError.stateUnavailable("Native action gate closed")
         }
         inFlight = true
+        actionTarget = target
     }
 
-    func finishExternalAction() throws {
+    func finishExternalAction(target: LockedUseActionTarget) throws {
         defer {
-            mutex.lock(); inFlight = false; mutex.unlock()
+            mutex.lock(); inFlight = false; actionTarget = nil; mutex.unlock()
         }
-        try validateAction()
+        mutex.lock(); let connection = broker; let lease = lease; let binding = taskBinding; let denied = stopped || clientDisconnected; let activeTarget = actionTarget; mutex.unlock()
+        guard !denied, let connection, let lease else { throw LockedUseError.stateUnavailable("Locked Use lease is no longer active.") }
+        guard activeTarget == target else { throw LockedUseError.stateUnavailable("Native action target changed") }
+        let reply = try connection.request(.init(operation: .actionEnd, leaseID: lease, session: .current(), taskBinding: binding, actionTarget: target))
+        receive(reply)
+        guard reply.result == .active else { throw LockedUseError.stateUnavailable("Locked Use stopped before GUI action completion.") }
     }
 
     func checkAction() throws { try validateAction() }
+
+    func attachProvider(processID: Int32) throws {
+        try validateAction()
+        mutex.lock(); let connection = broker; let lease = lease; let binding = taskBinding; mutex.unlock()
+        guard let connection, let lease, let binding else { throw LockedUseError.stateUnavailable("Task-bound lease required") }
+        let reply = try connection.request(.init(operation: .providerAttach, leaseID: lease,
+            taskBinding: binding, providerProcessID: processID))
+        receive(reply)
+        guard reply.result == .active else { throw LockedUseError.stateUnavailable("Provider registration denied") }
+    }
 
     /// Exercise real dual-guard cleanup without allowing a single unlock. The
     /// installed validation Broker rejects this mode in a production profile.

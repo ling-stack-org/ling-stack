@@ -19,6 +19,8 @@ let plugin = LockedUseBrokerCoordinator.Context(id: UUID(), role: .plugin, userI
 let guards = LockedUseStateMachine.Guards(allDisplaysCovered: true, inputTapHealthy: true, watchdogHealthy: true, displayGeneration: 1)
 
 do {
+    try checkActionTargets()
+    try checkProviderLifetimes()
     var broker = LockedUseBrokerCoordinator(enabled: true, backendValidated: true, requiresExplicitOwnerDrain: true)
     let begin = try broker.handle(.init(operation: .begin, session: locked), context: agent, now: 1)
     guard let lease = begin.leaseID, let token = begin.token else { throw CheckFailure.failed("Lease missing") }
@@ -67,14 +69,17 @@ do {
     let artifactNames = ["LingLockBroker", "LingLockInstaller", "Ling Guardian.app/Contents/MacOS/LingGuardian",
         "Client.app/Contents/MacOS/LingLockedUseClient", "LingLockAuth.bundle/Contents/MacOS/LingLockAuth"]
     var manifest: [String: Any] = ["schemaVersion": 1, "platform": "darwin", "architecture": architecture,
-        "team": "ABCDE12345", "signing": "local_identity", "productCapability": "disabled_by_build", "nativeAcceptance": "not_run",
+        "team": "ABCDE12345", "signing": LockedUseBuildProfile.manifestSigning, "productCapability": "disabled_by_build", "nativeAcceptance": "not_run",
         "upstreamCommit": String(repeating: "a", count: 40),
-        "checks": ["policy": "passed", "authorizationPluginABI": "passed", "kernelTaskVerifier": "identity_passed", "xctest": "separate"],
+        "checks": ["policy": "passed", "authorizationPluginABI": "passed", "kernelTaskVerifier": LockedUseBuildProfile.kernelTaskCheck, "xctest": "separate"],
         "artifacts": Dictionary(uniqueKeysWithValues: artifactNames.map { ($0, clientHash) })]
     func readManifest() throws -> String {
         try LockedUseBuildManifest.clientSHA256(data: JSONSerialization.data(withJSONObject: manifest), team: "ABCDE12345", architecture: architecture)
     }
     try require(readManifest() == clientHash, "Signed client manifest must preserve the helper digest")
+    manifest["signing"] = LockedUseBuildProfile.developmentValidation ? "local_identity" : "development_validation"
+    try denies { _ = try readManifest() }
+    manifest["signing"] = LockedUseBuildProfile.manifestSigning
     manifest["schemaVersion"] = true
     try denies { _ = try readManifest() }
     manifest["schemaVersion"] = 1

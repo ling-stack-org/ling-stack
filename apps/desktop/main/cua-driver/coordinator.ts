@@ -100,6 +100,10 @@ export interface CuaDriverCoordinatorSnapshot {
 export interface CuaDriverCoordinatorOptions {
   readonly generationFloor?: number;
   readonly actionGate?: CuaDriverActionGate;
+  readonly providerLifetime?: {
+    readonly hostProcessId: number;
+    readonly registerProcess: (pid: number, signal: AbortSignal) => Promise<void>;
+  };
   readonly platform: BundledCuaDriverPlatform;
   readonly architecture: CuaDriverArchitecture;
   readonly resourcesPath: string;
@@ -581,6 +585,8 @@ export class CuaDriverDesktopCoordinator {
         generation,
         platform: this.options.platform,
         lifecycle: this.processLifecycle,
+        hostProcessId: this.options.providerLifetime?.hostProcessId,
+        registerProcess: this.options.providerLifetime?.registerProcess,
         telemetry,
         preSpawn: async (signal) => {
           try {
@@ -643,7 +649,7 @@ export class CuaDriverDesktopCoordinator {
         generation,
         childInstanceNonce: host.childInstanceNonce,
         platform: this.options.platform,
-        hostProcessId: process.pid,
+        hostProcessId: this.options.providerLifetime?.hostProcessId ?? process.pid,
         providerProcessId: host.pid,
         requestControl: (method: `ling/${string}`, params: import("./provider-host.js").JsonRpcParams) => host.requestControl(method, params),
         requestCheckPermissions: () => host.requestCheckPermissions(),

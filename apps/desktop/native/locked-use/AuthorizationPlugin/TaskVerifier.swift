@@ -3,8 +3,8 @@ import Security
 import LightweightCodeRequirements
 
 /// Kernel-backed live verification avoids CMS/keychain work in the lock-screen
-/// helper. IDs alone are insufficient: require Developer ID validation and
-/// live hardened/signature flags, then reject injection entitlements.
+/// helper. Require the compiled signing category and live hardened/signature
+/// flags, then reject injection entitlements.
 @_cdecl("ling_verify_broker_task")
 public func verifyBrokerTask(_ bytes: UnsafeRawPointer?, _ teamBytes: UnsafePointer<CChar>?) -> Int32 {
     guard #available(macOS 14.4, *) else { return -1 }
@@ -18,7 +18,11 @@ public func verifyBrokerTask(_ bytes: UnsafeRawPointer?, _ teamBytes: UnsafePoin
         let requirement = try ProcessCodeRequirement.allOf {
             SigningIdentifier("com.lingstack.locked-use.broker")
             TeamIdentifier(team)
+            #if LING_LOCKED_USE_DEVELOPMENT_VALIDATION
+            ValidationCategory(.development)
+            #else
             ValidationCategory(.developerID)
+            #endif
             ProcessCodeSigningFlags.isSuperset(of: [.isDynamicallyValid, .isSigned, .isHardenedRuntimeEnforced, .isLibraryValidationRequired])
         }
         guard try SecTaskValidateForRequirement(task: task, requirement: requirement) else { return 0 }

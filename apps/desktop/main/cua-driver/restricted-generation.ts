@@ -3,15 +3,18 @@ import { setTimeout as wait } from "node:timers/promises";
 import { isLockedComputerControlGrantV1, type LockedComputerControlGrantV1 } from "@ling-stack/contracts";
 import type { CuaDriverCoordinatorOptions, CuaDriverCoordinatorSnapshot } from "./coordinator.js";
 import type { JsonRpcClientMessage } from "./provider-host.js";
+import { describeLockedUseAction } from "../locked-computer-control/action-target.js";
 
 export interface CuaDriverActionGate {
   beforeCall(message: JsonRpcClientMessage): Promise<() => Promise<void>>;
 }
 
 export interface RestrictedCuaDriverNativeSession {
+  readonly providerHostProcessID: number;
+  attachProvider(processID: number, signal: AbortSignal): Promise<void>;
   check(signal: AbortSignal): Promise<void>;
-  beginAction(signal: AbortSignal): Promise<void>;
-  finishAction(signal: AbortSignal): Promise<void>;
+  beginAction(signal: AbortSignal, target: ReturnType<typeof describeLockedUseAction>): Promise<void>;
+  finishAction(signal: AbortSignal, target: ReturnType<typeof describeLockedUseAction>): Promise<void>;
   /** Provider shutdown must complete before acknowledging native quiescence. */
   end(): Promise<void>;
 }
@@ -38,7 +41,7 @@ export class RestrictedCuaDriverGeneration {
   constructor(private readonly options: {
     readonly currentGeneration: () => number;
     readonly advanceNormalGenerationFloor: (generation: number) => void;
-    readonly createCoordinator: (input: Pick<CuaDriverCoordinatorOptions, "generationFloor" | "actionGate">) => RestrictedCuaDriverCoordinator;
+    readonly createCoordinator: (input: Pick<CuaDriverCoordinatorOptions, "generationFloor" | "actionGate" | "providerLifetime">) => RestrictedCuaDriverCoordinator;
     readonly native: RestrictedCuaDriverNativeSession;
     readonly allowedToolIds: readonly string[];
     readonly isAuthorityCurrent: (grant: LockedComputerControlGrantV1) => boolean;
@@ -128,11 +131,14 @@ export class RestrictedCuaDriverGeneration {
         if (!this.actionAdmissionOpen) {
           throw new Error("locked_control_attestation_pending");
         }
-        await this.options.native.beginAction(new AbortController().signal);
+        const actionArguments = typeof params === "object" && params !== null && !Array.isArray(params)
+          ? (params as Readonly<Record<string, unknown>>).arguments : undefined;
+        const target = describeLockedUseAction({ toolName: name, arguments: actionArguments });
+        await this.options.native.beginAction(new AbortController().signal, target);
         try { assertCurrent(); }
-        catch (error) { await this.options.native.finishAction(new AbortController().signal).catch(() => undefined); throw error; }
+        catch (error) { await this.options.native.finishAction(new AbortController().signal, target).catch(() => undefined); throw error; }
         return async () => {
-          await this.options.native.finishAction(new AbortController().signal);
+          await this.options.native.finishAction(new AbortController().signal, target);
           assertCurrent();
         };
       },
@@ -141,7 +147,18 @@ export class RestrictedCuaDriverGeneration {
       assertCurrent();
       await this.options.native.check(new AbortController().signal);
       assertCurrent();
-      const coordinator = this.options.createCoordinator({ generationFloor: input.generation - 1, actionGate });
+      const coordinator = this.options.createCoordinator({ generationFloor: input.generation - 1, actionGate,
+        providerLifetime: {
+          hostProcessId: this.options.native.providerHostProcessID,
+          registerProcess: async (pid, signal) => {
+            assertCurrent();
+            signal.throwIfAborted();
+            await this.options.native.attachProvider(pid, signal);
+            assertCurrent();
+            signal.throwIfAborted();
+          },
+        },
+      });
       this.coordinator = coordinator;
       const snapshot = await coordinator.enable();
       assertCurrent();

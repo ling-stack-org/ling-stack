@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { LockedComputerControlCapabilityV1, LockedComputerControlGrantV1, LockedComputerControlPolicyV1 } from "@ling-stack/contracts";
 
-export const allowedTools = Object.freeze(["capture", "click"]);
+export const allowedTools = Object.freeze(["get_window_state", "click"]);
 export const sessionDigest = "a".repeat(64);
 export const enabledPolicy: LockedComputerControlPolicyV1 = {
   schemaVersion: 1, mode: "task_grant_required", maxGrantTtlSeconds: 900,

@@ -25,6 +25,18 @@ struct InstallerMain {
             _ = umask(0o022)
             let identity = try LockedUseSigningIdentity.current()
             guard identity.signingIdentifier == "com.lingstack.locked-use.installer", let team = identity.teamIdentifier else { throw InstallError.untrusted }
+            let args = Array(CommandLine.arguments.dropFirst())
+            if LockedUseBuildProfile.developmentValidation {
+                let installingValidation = args.count == 4 && args[0] == "install" && args[3] == "validation"
+                let maintenance = [["validation-report"], ["recover"], ["reconcile-stopped-guards"], ["uninstall"]].contains(args)
+                guard installingValidation || maintenance else { throw InstallError.invalidArguments }
+            }
+            if args == ["validation-report"] {
+                let report = try LockedUseValidationReport.loadInstalled()
+                guard report.canPromote(current: try LockedUseComponentValidation.current(team: team)) else { throw InstallError.changedPolicy }
+                FileHandle.standardOutput.write(try JSONEncoder().encode(report) + Data([10]))
+                return
+            }
             let lockDirectory = URL(fileURLWithPath: "/Library/Application Support/LingStackLockedUseStaging", isDirectory: true)
             try makeDirectory(lockDirectory)
             let lockFD = open(lockDirectory.appendingPathComponent("installation.lock").path, O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0o600)
@@ -34,7 +46,6 @@ struct InstallerMain {
             guard fstat(lockFD, &lockInfo) == 0, lockInfo.st_uid == 0, lockInfo.st_mode & S_IFMT == S_IFREG,
                   lockInfo.st_mode & 0o077 == 0, ling_has_mutating_acl(lockFD) == 0,
                   flock(lockFD, LOCK_EX | LOCK_NB) == 0 else { throw InstallError.existingInstallation }
-            let args = Array(CommandLine.arguments.dropFirst())
             if args.count == 4, args[0] == "install" {
                 guard let uid = UInt32(args[2]), uid > 0,
                       ["validation", "production"].contains(args[3]) else { throw InstallError.invalidArguments }
@@ -295,6 +306,13 @@ struct InstallerMain {
         }
     }
     private static func promote(team: String) throws {
+        guard !LockedUseBuildProfile.developmentValidation else { throw InstallError.untrusted }
+        #if arch(arm64)
+        let architecture = "arm64"
+        #else
+        let architecture = "x64"
+        #endif
+        _ = try LockedUseBuildManifest.installedClientSHA256(team: team, architecture: architecture)
         let evidence = try LockedUseComponentValidation.current(team: team)
         let report = try LockedUseValidationReport.loadInstalled()
         guard report.canPromote(current: evidence) else { throw InstallError.changedPolicy }
@@ -312,7 +330,7 @@ struct InstallerMain {
         try run("/bin/launchctl", ["bootout", "system/" + service])
         try write(LockedUseBrokerConfiguration(enabled: true, validatedOSBuild: evidence.osBuild,
             validatedBrokerHash: evidence.brokerHash, validatedGuardianHash: evidence.guardianHash,
-            validatedPluginHash: evidence.pluginHash), name: "configuration.json", replacing: true)
+            validatedPluginHash: evidence.pluginHash, validatedClientHash: evidence.clientHash), name: "configuration.json", replacing: true)
         definition["ProgramArguments"] = [root.appendingPathComponent("LingLockBroker").path, "--serve"]
         let updated = try PropertyListSerialization.data(fromPropertyList: definition, format: .xml, options: 0)
         try updated.write(to: daemon, options: [.atomic])

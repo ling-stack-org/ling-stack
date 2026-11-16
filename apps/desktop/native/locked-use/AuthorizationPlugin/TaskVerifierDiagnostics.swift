@@ -10,10 +10,15 @@ public func diagnoseBrokerTask(_ bytes: UnsafeRawPointer?, _ teamBytes: UnsafePo
     withUnsafeMutableBytes(of: &token) { $0.copyMemory(from: UnsafeRawBufferPointer(start: bytes, count: 32)) }
     guard let task = SecTaskCreateWithAuditToken(nil, token) else { return -2 }
     do {
+        #if LING_LOCKED_USE_DEVELOPMENT_VALIDATION
+        let category = ValidationCategory(.development)
+        #else
+        let category = ValidationCategory(.developerID)
+        #endif
         let checks = try [
             ProcessCodeRequirement.allOf { SigningIdentifier("com.lingstack.locked-use.broker") },
             ProcessCodeRequirement.allOf { TeamIdentifier(String(cString: teamBytes)) },
-            ProcessCodeRequirement.allOf { ValidationCategory(.developerID) },
+            ProcessCodeRequirement.allOf { category },
             ProcessCodeRequirement.allOf { ProcessCodeSigningFlags.isSuperset(of: [.isDynamicallyValid]) },
             ProcessCodeRequirement.allOf { ProcessCodeSigningFlags.isSuperset(of: [.isSigned]) },
             ProcessCodeRequirement.allOf { ProcessCodeSigningFlags.isSuperset(of: [.isHardenedRuntimeEnforced]) },

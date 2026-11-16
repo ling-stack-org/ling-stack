@@ -16,7 +16,7 @@ int main(int argc, char **argv) {
     int32_t result = ling_verify_broker_task(&token, LING_SIGNING_TEAM);
     if (result == -1) { puts("Kernel task verifier unavailable; legacy verification remains required."); return 0; }
     if (result != (strcmp(argv[1], "match") == 0 ? 1 : 0)) {
-        fprintf(stderr, "Task verifier result=%d failedChecks=%d (bits: id=1 team=2 developerID=4 dynamic=8 signed=16 hardened=32 library=64)\n", result, ling_diagnose_broker_task(&token, LING_SIGNING_TEAM));
+        fprintf(stderr, "Task verifier result=%d failedChecks=%d (bits: id=1 team=2 category=4 dynamic=8 signed=16 hardened=32 library=64)\n", result, ling_diagnose_broker_task(&token, LING_SIGNING_TEAM));
     }
     assert(result == (strcmp(argv[1], "match") == 0 ? 1 : 0));
     assert(ling_verify_broker_task(&token, "AAAAAAAAAA") == 0);

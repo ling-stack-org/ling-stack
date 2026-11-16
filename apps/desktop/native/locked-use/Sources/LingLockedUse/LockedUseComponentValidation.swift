@@ -10,6 +10,7 @@ public enum LockedUseComponentValidation {
         public let brokerHash: String
         public let guardianHash: String
         public let pluginHash: String
+        public let clientHash: String
     }
     public static func bootSessionID() throws -> String {
         let value = try kernelString("kern.bootsessionuuid")
@@ -30,7 +31,8 @@ public enum LockedUseComponentValidation {
         return try .init(osBuild: osBuild,
             brokerHash: hash(path: base + "LingLockBroker", id: "com.lingstack.locked-use.broker", team: team),
             guardianHash: hash(path: base + "Ling Guardian.app", id: "com.lingstack.locked-use.guardian.dev", team: team),
-            pluginHash: hash(path: "/Library/Security/SecurityAgentPlugins/LingLockAuth.bundle", id: "com.lingstack.locked-use.authorization", team: team))
+            pluginHash: hash(path: "/Library/Security/SecurityAgentPlugins/LingLockAuth.bundle", id: "com.lingstack.locked-use.authorization", team: team),
+            clientHash: hash(path: base + "Client.app", id: "com.lingstack.locked-use.client", team: team))
     }
     private static func hash(path: String, id: String, team: String) throws -> String {
         var code: SecStaticCode?

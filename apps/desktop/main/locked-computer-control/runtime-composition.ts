@@ -25,7 +25,7 @@ export interface DesktopLockedUseBackend {
   readonly policy: LockedComputerControlPolicyV1;
   readonly allowedToolIds: readonly string[];
   readonly createClient: (onRevoked: () => void) => Pick<DarwinLockedUseNativeClient,
-    "readSession" | "verifyIdentity" | "begin" | "check" | "beginAction" | "finishAction" | "end" | "ownsManagedSession">
+    "readSession" | "verifyIdentity" | "begin" | "check" | "beginAction" | "finishAction" | "end" | "ownsManagedSession" | "providerHostProcessID" | "attachProvider">
     & Partial<Pick<DarwinLockedUseNativeClient, "readStatus">>;
   readonly verifyTargetReadiness: (input: {
     readonly generation: number;
@@ -49,7 +49,7 @@ export function composeLockedControlRuntime(options: {
   readonly bridgeToken: string;
   readonly daemonClient?: ReturnType<typeof createLockedControlDaemonClient>;
   readonly coordinator: DesktopRuntimeCuaDriverCoordinator;
-  readonly createRestrictedCoordinator: (input: Pick<CuaDriverCoordinatorOptions, "generationFloor" | "actionGate">) => DesktopRuntimeCuaDriverCoordinator;
+  readonly createRestrictedCoordinator: (input: Pick<CuaDriverCoordinatorOptions, "generationFloor" | "actionGate" | "providerLifetime">) => DesktopRuntimeCuaDriverCoordinator;
   readonly backend?: DesktopLockedUseBackend;
   readonly isCurrent: () => boolean;
   readonly resumeNormal: () => Promise<void>;

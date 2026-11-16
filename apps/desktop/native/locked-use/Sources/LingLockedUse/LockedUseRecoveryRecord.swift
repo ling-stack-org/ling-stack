@@ -16,15 +16,20 @@ public struct LockedUseRecoveryRecord: Codable, Sendable {
     public let observedUnlocked: Bool
     public let agentDrained: Bool
     public let fullyReleased: Bool
+    public let taskBinding: LockedUseTaskBinding?
+    public let provider: LockedUseProviderIdentity?
+    public let providerExited: Bool?
 
     public init(leaseID: UUID, owner: LockedUseBrokerCoordinator.Context, originalClientToken: Data,
                 guardian: LockedUseBrokerCoordinator.Context?, watchdog: LockedUseBrokerCoordinator.Context?,
                 watchdogChallenge: Data?, everGranted: Bool, observedUnlocked: Bool,
-                agentDrained: Bool, fullyReleased: Bool, bootSessionID: String = UUID().uuidString) {
-        schemaVersion = 1; self.bootSessionID = bootSessionID; self.leaseID = leaseID; self.owner = owner; self.originalClientToken = originalClientToken
+                agentDrained: Bool, fullyReleased: Bool, bootSessionID: String = UUID().uuidString,
+                taskBinding: LockedUseTaskBinding? = nil, provider: LockedUseProviderIdentity? = nil, providerExited: Bool = false) {
+        schemaVersion = 2; self.bootSessionID = bootSessionID; self.leaseID = leaseID; self.owner = owner; self.originalClientToken = originalClientToken
         self.guardian = guardian; self.watchdog = watchdog; self.watchdogChallenge = watchdogChallenge
         self.everGranted = everGranted; self.observedUnlocked = observedUnlocked
         self.agentDrained = agentDrained; self.fullyReleased = fullyReleased
+        self.taskBinding = taskBinding; self.provider = provider; self.providerExited = providerExited
     }
 
     public func validated() throws -> Self {
@@ -32,7 +37,10 @@ public struct LockedUseRecoveryRecord: Codable, Sendable {
             context.userID > 0 && context.auditSessionID > 0 && context.processID > 0
                 && context.auditToken.count == 32 && !context.codeHash.isEmpty && context.codeHash.count <= 64
         }
-        guard schemaVersion == 1, UUID(uuidString: bootSessionID) != nil, valid(owner), owner.role == .agent,
+        guard [1, 2].contains(schemaVersion), UUID(uuidString: bootSessionID) != nil, valid(owner), owner.role == .agent,
+              schemaVersion != 1 || taskBinding == nil && provider == nil && providerExited == nil,
+              schemaVersion != 2 || providerExited != nil,
+              provider == nil || taskBinding != nil,
               originalClientToken.count == 32,
               guardian.map({ valid($0) && $0.role == .guardian && $0.userID == owner.userID && $0.auditSessionID == owner.auditSessionID }) ?? true,
               watchdog.map({ valid($0) && $0.role == .guardian && $0.userID == owner.userID && $0.auditSessionID == owner.auditSessionID }) ?? true,
@@ -41,6 +49,14 @@ public struct LockedUseRecoveryRecord: Codable, Sendable {
               guardian == nil || watchdog == nil || guardian?.id != watchdog?.id,
               !fullyReleased || guardian == nil && watchdog == nil,
               !fullyReleased || !everGranted || observedUnlocked && agentDrained else { throw LockedUseBrokerCoordinator.Failure.malformed }
+        try taskBinding?.validateStructure()
+        if let taskBinding {
+            let session = LockedUseSession(state: .locked, userID: owner.userID, auditSessionID: owner.auditSessionID)
+            guard try lockedUseSessionDigest(session: session, bootSessionID: bootSessionID) == taskBinding.sessionBindingDigest else {
+                throw LockedUseBrokerCoordinator.Failure.malformed
+            }
+        }
+        try provider?.validate(owner: owner)
         return self
     }
 

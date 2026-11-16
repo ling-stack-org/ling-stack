@@ -3,6 +3,11 @@ import CoreFoundation
 
 /// Offline build facts are separate from installed and attended acceptance.
 public enum LockedUseBuildManifest {
+    public static func installedClientSHA256(team: String, architecture: String) throws -> String {
+        let data = try LockedUseSecureStore.read(components: ["Library", "Application Support", "LingStack", "LockedUse", "build-manifest.json"])
+        return try clientSHA256(data: data, team: team, architecture: architecture)
+    }
+
     public static func clientSHA256(data: Data, team: String, architecture: String) throws -> String {
         guard data.count <= 16 * 1024,
               let value = try JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -14,14 +19,14 @@ public enum LockedUseBuildManifest {
               ["arm64", "x64"].contains(architecture),
               value["architecture"] as? String == architecture,
               team.utf8.count == 10, team.range(of: "^[A-Z0-9]{10}$", options: .regularExpression) != nil, team != "0000000000",
-              value["team"] as? String == team, value["signing"] as? String == "local_identity",
+              value["team"] as? String == team, value["signing"] as? String == LockedUseBuildProfile.manifestSigning,
               value["productCapability"] as? String == "disabled_by_build",
               value["nativeAcceptance"] as? String == "not_run",
               let commit = value["upstreamCommit"] as? String,
               commit.utf8.count == 40, commit.range(of: "^[a-f0-9]{40}$", options: .regularExpression) != nil,
               let checks = value["checks"] as? [String: String],
               checks == ["policy": "passed", "authorizationPluginABI": "passed",
-                "kernelTaskVerifier": "identity_passed", "xctest": "separate"],
+                "kernelTaskVerifier": LockedUseBuildProfile.kernelTaskCheck, "xctest": "separate"],
               let artifacts = value["artifacts"] as? [String: String],
               Set(artifacts.keys) == ["LingLockBroker", "LingLockInstaller",
                 "Ling Guardian.app/Contents/MacOS/LingGuardian",

@@ -12,14 +12,28 @@ public struct LockedUseTaskBinding: Codable, Equatable, Sendable {
     public let providerGeneration: Int
     public let expiresAt: String
 
+    public init(grantID: String, runID: String, computerUseSessionID: String, desktopInstanceID: String,
+                sessionBindingDigest: String, lockEpoch: Int, providerGeneration: Int, expiresAt: String) {
+        self.grantID = grantID; self.runID = runID; self.computerUseSessionID = computerUseSessionID
+        self.desktopInstanceID = desktopInstanceID; self.sessionBindingDigest = sessionBindingDigest
+        self.lockEpoch = lockEpoch; self.providerGeneration = providerGeneration; self.expiresAt = expiresAt
+    }
+
     public func validate(sessionDigest: String, now: Date = Date()) throws {
+        try validateStructure()
+        guard sessionDigest == sessionBindingDigest,
+              let remaining = remainingLifetime(now: now), remaining > 0, remaining <= 900 else {
+            throw LockedUseError.stateUnavailable("Task authority invalid or expired")
+        }
+    }
+
+    public func validateStructure() throws {
         guard [grantID, runID, computerUseSessionID, desktopInstanceID].allSatisfy({
             !$0.isEmpty && $0.utf8.count <= 256 && $0.trimmingCharacters(in: .whitespacesAndNewlines) == $0
         }), sessionBindingDigest.count == 64,
               sessionBindingDigest.allSatisfy({ $0.isHexDigit && !$0.isUppercase }),
-              sessionDigest == sessionBindingDigest,
               lockEpoch > 0, providerGeneration > 0,
-              let remaining = remainingLifetime(now: now), remaining > 0, remaining <= 900 else {
+              remainingLifetime() != nil else {
             throw LockedUseError.stateUnavailable("Task authority invalid or expired")
         }
     }

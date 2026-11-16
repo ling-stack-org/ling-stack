@@ -29,8 +29,9 @@ private final class Client {
     }
 
     func handle(_ value: [String: Any]) throws -> [String: Any] {
-        guard Set(value.keys).isSubset(of: ["command", "requestId", "binding"]),
+        guard Set(value.keys).isSubset(of: ["command", "requestId", "binding", "providerProcessID", "actionTarget"]),
               let command = value["command"] as? String else { throw LockedUseError.message("Malformed request") }
+        guard command == "provider-attach" || value["providerProcessID"] == nil else { throw LockedUseError.message("Unexpected provider identity") }
         let session = LockedUseSession.current()
         if command == "session" {
             return ["platform": "darwin", "sessionBindingDigest": try digest(session),
@@ -43,6 +44,21 @@ private final class Client {
                 "captureReady": status.available,
                 "inputReady": status.available,
                 "secureSurfaceExcluded": status.available]
+        }
+        if command == "release-status" {
+            guard connection == nil, let raw = value["binding"] as? [String: Any] else { throw LockedUseError.message("Release binding required") }
+            let binding = try JSONDecoder().decode(LockedUseTaskBinding.self, from: JSONSerialization.data(withJSONObject: raw))
+            try binding.validateStructure()
+            let observer = try LockedUseIPCClient(endpoint: .observer, brokerRequirement: LockedUseSigningIdentity.brokerRequirement())
+            defer { observer.close() }
+            let deadline = ProcessInfo.processInfo.systemUptime + 5
+            repeat {
+                let status = try observer.request(.init(operation: .releaseStatus, session: .current(), taskBinding: binding))
+                if status.result != .denied, status.guardsReleased == true,
+                   status.phase == .idle || status.phase == .awaitingManualUnlock { return ["ended": true] }
+                Thread.sleep(forTimeInterval: 0.1)
+            } while ProcessInfo.processInfo.systemUptime < deadline
+            throw LockedUseError.stateUnavailable("Protected release not confirmed")
         }
         if command == "identity" {
             guard session.state == .unlocked, connection == nil, binding == nil else {
@@ -90,7 +106,7 @@ private final class Client {
             let owner = LockedUseConnection(clientSocket: descriptors[0])
             owner.onRevoked = { [output] in output.send(["event": "revoked"]) }
             connection = owner; binding = candidate
-            try owner.acquire(session: session)
+            try owner.acquire(session: session, taskBinding: candidate)
             guard ProcessInfo.processInfo.systemUptime < bindingDeadline else {
                 throw LockedUseError.stateUnavailable("Task expired during acquisition")
             }
@@ -112,7 +128,9 @@ private final class Client {
         }
         if command == "action-end" {
             // Completion releases the action barrier even after authority expires.
-            try connection.finishExternalAction()
+            guard let rawTarget = value["actionTarget"] as? [String: Any] else { throw LockedUseError.message("Action target required") }
+            let target = try JSONDecoder().decode(LockedUseActionTarget.self, from: JSONSerialization.data(withJSONObject: rawTarget))
+            try connection.finishExternalAction(target: target)
             guard ProcessInfo.processInfo.systemUptime < bindingDeadline else {
                 throw LockedUseError.stateUnavailable("Task monotonic deadline expired")
             }
@@ -125,7 +143,14 @@ private final class Client {
         try binding.validate(sessionDigest: digest(session))
         switch command {
         case "check": try connection.checkAction()
-        case "action-begin": try connection.beginExternalAction()
+        case "action-begin":
+            guard let rawTarget = value["actionTarget"] as? [String: Any] else { throw LockedUseError.message("Action target required") }
+            let target = try JSONDecoder().decode(LockedUseActionTarget.self, from: JSONSerialization.data(withJSONObject: rawTarget))
+            try connection.beginExternalAction(target: target)
+        case "provider-attach":
+            guard let pid = value["providerProcessID"] as? Int32, pid > 0 else { throw LockedUseError.message("Provider process unavailable") }
+            try connection.attachProvider(processID: pid)
+            return ["attached": true]
         default: throw LockedUseError.message("Unknown operation")
         }
         return ["active": true]
@@ -174,8 +199,13 @@ private final class IdentityResult: @unchecked Sendable {
 
 @main
 enum ClientMain {
-    static func main() {
-        guard CommandLine.arguments.count == 1 else { exit(64) }
-        Client().run()
+    @MainActor static func main() async {
+        if Array(CommandLine.arguments.dropFirst()) == ["--validate", "--attended"] {
+            do { try await AttendedValidation.run() }
+            catch { fputs("Attended validation failed: \(error)\n", stderr); exit(1) }
+        } else {
+            guard !LockedUseBuildProfile.developmentValidation, CommandLine.arguments.count == 1 else { exit(64) }
+            Client().run()
+        }
     }
 }

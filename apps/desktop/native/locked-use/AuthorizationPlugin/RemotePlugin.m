@@ -15,7 +15,7 @@
 #include <bsm/libbsm.h>
 
 #ifndef LING_SIGNING_TEAM
-#error "Remote mechanism requires a fixed Developer ID signing team"
+#error "Remote mechanism requires a fixed signing team"
 #endif
 
 extern int32_t ling_verify_broker_task(const void *auditToken, const char *team);

@@ -7,7 +7,7 @@ public enum LockedUseIPCEndpoint: String, Sendable {
     var responseTimeout: TimeInterval { 2 }
     func timeout(operation: LockedUseIPCMessage.Operation, firstReply: Bool) -> TimeInterval {
         if firstReply, self != .plugin,
-           [.status, .begin, .beginRecoveryProbe, .guardianHello, .guardianRecoveryHello,
+           [.status, .releaseStatus, .begin, .beginRecoveryProbe, .guardianHello, .guardianRecoveryHello,
             .watchdogHello, .watchdogRecoveryHello, .ownerRecoveryHello, .disable,
             .beginUnshieldedDiagnostic].contains(operation) { return 8 }
         return responseTimeout

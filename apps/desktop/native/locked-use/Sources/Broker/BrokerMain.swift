@@ -17,13 +17,16 @@ enum BrokerMain {
             let approvals = try LockedUseClientApprovals.loadInstalled()
             let configuration = try LockedUseBrokerConfiguration.loadInstalled()
             let validation = CommandLine.arguments[1] == "--serve-validation"
+            guard LockedUseBuildProfile.permitsService(validation: validation) else {
+                throw BrokerError.message("Development validation components cannot serve production tasks")
+            }
             guard let team = try LockedUseSigningIdentity.current().teamIdentifier else {
                 throw BrokerError.message("Signed Broker team unavailable")
             }
             let evidence = try LockedUseComponentValidation.current(team: team)
             let validated = configuration.matchesValidation(osBuild: evidence.osBuild,
                 brokerHash: evidence.brokerHash, guardianHash: evidence.guardianHash,
-                pluginHash: evidence.pluginHash)
+                pluginHash: evidence.pluginHash, clientHash: evidence.clientHash)
             let server = try BrokerServer(approvals: approvals, enabled: configuration.enabled,
                 backendValidated: validation || validated, validationMode: validation)
             try server.start()
@@ -63,10 +66,15 @@ private final class BrokerServer: @unchecked Sendable {
     private var ownerClientToken: Data?
     private var lastRecoveryData: Data?
     private let instanceLock: Int32
+    private var providerWatch: LockedUseProviderExitWatch?
+    private var activeAction: (leaseID: UUID, ownerID: UUID, target: LockedUseVerifiedActionTarget)?
+    private let signingTeam: String
 
     init(approvals: LockedUseClientApprovals, enabled: Bool, backendValidated: Bool, validationMode: Bool) throws {
         self.approvals = approvals
-        coordinator = .init(enabled: enabled, backendValidated: backendValidated, requiresWatchdog: true, requiresExplicitOwnerDrain: true, validationMode: validationMode)
+        guard let team = try LockedUseSigningIdentity.current().teamIdentifier else { throw BrokerError.message("signer unavailable") }
+        signingTeam = team
+        coordinator = .init(enabled: enabled, backendValidated: backendValidated, requiresWatchdog: true, requiresExplicitOwnerDrain: true, requiresTaskBinding: true, validationMode: validationMode)
         try Self.validateRunDirectory()
         let fd = open("/Library/Application Support/LingStack/LockedUse/run/broker.lock", O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0o600)
         guard fd >= 0 else { throw BrokerError.message("instance lock unavailable") }
@@ -86,7 +94,7 @@ private final class BrokerServer: @unchecked Sendable {
             recoverySeed = nil
         }
         ownerClientToken = recoverySeed?.originalClientToken
-        coordinator = .init(enabled: enabled, backendValidated: backendValidated, requiresWatchdog: true, requiresExplicitOwnerDrain: true, recovery: recoverySeed, bootSessionID: bootID, validationMode: validationMode)
+        coordinator = .init(enabled: enabled, backendValidated: backendValidated, requiresWatchdog: true, requiresExplicitOwnerDrain: true, requiresTaskBinding: true, recovery: recoverySeed, bootSessionID: bootID, validationMode: validationMode)
     }
 
     func start() throws {
@@ -146,11 +154,15 @@ private final class BrokerServer: @unchecked Sendable {
                     }
                 }
                 try self.coordinator.tick(now: now)
+                try self.observeProviderLifetime()
                 if let guardian = self.coordinator.recordedGuardian, kill(guardian.processID, 0) != 0, errno == ESRCH {
                     try self.coordinator.guardianProcessExited()
                 }
-                if let owner = self.coordinator.recordedOwner, kill(owner.processID, 0) != 0, errno == ESRCH {
-                    try self.coordinator.ownerProcessExited()
+                if let owner = self.coordinator.recordedOwner, owner.auditToken.count == 32 {
+                    let state = owner.auditToken.withUnsafeBytes {
+                        ling_process_identity_matches(owner.processID, $0.bindMemory(to: UInt8.self).baseAddress)
+                    }
+                    if state == 0 { try self.coordinator.ownerProcessExited() }
                 }
                 try self.persistRecovery()
                 try self.persistValidation()
@@ -313,15 +325,16 @@ private final class BrokerServer: @unchecked Sendable {
                   current.codeDirectoryHash == connection.identity.codeDirectoryHash else { throw BrokerError.message("peer changed") }
             for frame in try connection.decoder.append(Data(bytes.prefix(count))) {
                 let request = try JSONDecoder().decode(LockedUseIPCMessage.self, from: frame).validated()
+                guard LockedUseBuildProfile.permitsRequest(request) else { throw BrokerError.message("Desktop tasks are unavailable in development validation") }
                 // Keep the authenticated agent alive to revoke and acknowledge
                 // drainage after its original native client has exited.
                 if connection.endpoint == .admin && ![LockedUseIPCMessage.Operation.status, .disable].contains(request.operation) { throw BrokerError.message("invalid installer request") }
-                if connection.endpoint == .observer && request.operation != .status { throw BrokerError.message("observer cannot mutate") }
+                if connection.endpoint == .observer && ![.status, .releaseStatus].contains(request.operation) { throw BrokerError.message("observer cannot mutate") }
                 let previousPhase = coordinator.phase
                 let reply: LockedUseIPCReply
                 do {
                     if [.begin, .beginRecoveryProbe, .beginUnshieldedDiagnostic, .pluginClaim, .pluginConsume].contains(request.operation) { try checkInstallationPolicy() }
-                    if connection.endpoint == .agent && [.begin, .beginRecoveryProbe, .action, .validationPassed, .validationManual].contains(request.operation) {
+                    if connection.endpoint == .agent && [.begin, .beginRecoveryProbe, .action, .check, .providerAttach, .actionBegin, .actionEnd, .validationPassed, .validationManual].contains(request.operation) {
                         do { try verifyOriginalClient(connection) }
                         catch {
                             connection.clientInvalidated = true
@@ -329,8 +342,41 @@ private final class BrokerServer: @unchecked Sendable {
                             throw error
                         }
                     }
+                    var provider: LockedUseProviderIdentity?
+                    var watch: LockedUseProviderExitWatch?
+                    var actionTarget: LockedUseVerifiedActionTarget?
+                    if request.operation == .providerAttach {
+                        guard connection.endpoint == .agent, let pid = request.providerProcessID,
+                              coordinator.recordedOwner?.id == connection.context.id,
+                              coordinator.recordedProvider == nil else { throw BrokerError.message("provider registration denied") }
+                        let identity = try LockedUseProviderIdentity.verified(processID: pid, owner: connection.context, team: signingTeam)
+                        provider = identity
+                        watch = try makeProviderWatch(identity)
+                    }
+                    if [.actionBegin, .actionEnd].contains(request.operation) {
+                        guard let provider = coordinator.recordedProvider, !coordinator.recordedProviderExited else {
+                            throw BrokerError.message("provider unavailable")
+                        }
+                        try provider.revalidateLive(team: signingTeam)
+                        guard let target = request.actionTarget else { throw BrokerError.message("action target missing") }
+                        if request.operation == .actionBegin {
+                            let excluded = Set([connection.context.processID, provider.processID])
+                            actionTarget = try target.verified(owner: connection.context, excludedPIDs: excluded)
+                        } else {
+                            guard let activeAction, activeAction.leaseID == request.leaseID,
+                                  activeAction.ownerID == connection.context.id,
+                                  activeAction.target.target == target else { throw BrokerError.message("action target changed") }
+                            try activeAction.target.revalidate()
+                        }
+                    }
                     if connection.endpoint == .observer { logger.notice("observerStage=handling") }
-                    reply = try coordinator.handle(request, context: connection.context, now: ProcessInfo.processInfo.systemUptime)
+                    reply = try coordinator.handle(request, context: connection.context, now: ProcessInfo.processInfo.systemUptime, verifiedProvider: provider)
+                    if let watch { providerWatch = watch }
+                    if reply.result == .active, let actionTarget, let leaseID = request.leaseID {
+                        activeAction = (leaseID, connection.context.id, actionTarget)
+                    } else if request.operation == .actionEnd || [.begin, .beginRecoveryProbe].contains(request.operation) {
+                        activeAction = nil
+                    }
                     if connection.endpoint == .observer { logger.notice("observerStage=handled") }
                 } catch {
                     reply = .init(id: request.id, result: .denied, phase: coordinator.phase,
@@ -355,7 +401,12 @@ private final class BrokerServer: @unchecked Sendable {
                 if connection.endpoint == .observer { logger.notice("observerStage=persisted") }
                 if reply.result != .denied, request.operation == .validationPassed, let leaseID = request.leaseID {
                     let team = try LockedUseSigningIdentity.current().teamIdentifier!
-                    validationReport = .init(leaseID: leaseID, evidence: try LockedUseComponentValidation.current(team: team), ownerToken: connection.identity.auditToken)
+                    let evidence = try LockedUseComponentValidation.current(team: team)
+                    guard connection.identity.signingIdentifier == "com.lingstack.locked-use.client",
+                          connection.identity.codeDirectoryHash.map({ String(format: "%02x", $0) }).joined() == evidence.clientHash else {
+                        throw BrokerError.message("validation client does not match installed build")
+                    }
+                    validationReport = .init(leaseID: leaseID, evidence: evidence, ownerToken: connection.identity.auditToken, ownerCodeHash: connection.identity.codeDirectoryHash)
                 }
                 if reply.result != .denied, request.operation == .validationManual {
                     guard var report = validationReport, report.leaseID == request.leaseID,
@@ -374,6 +425,28 @@ private final class BrokerServer: @unchecked Sendable {
         guard coordinator.stopReason == .guardLost else { return }
         let evidence = coordinator.protectionDiagnostics(now: ProcessInfo.processInfo.systemUptime)
         logger.notice("guardLostEvidence guardianAgeMilliseconds=\(Int(evidence.guardianAge * 1000), privacy: .public) watchdogAgeMilliseconds=\(Int(evidence.watchdogAge * 1000), privacy: .public) watchdogProtected=\(evidence.watchdogProtected, privacy: .public)")
+    }
+
+    private func makeProviderWatch(_ identity: LockedUseProviderIdentity) throws -> LockedUseProviderExitWatch {
+        try LockedUseProviderExitWatch(identity: identity, queue: queue) { [weak self] in
+            guard let self, self.coordinator.recordedProvider == identity else { return }
+            do {
+                try self.coordinator.providerProcessExited(identity)
+                self.providerWatch = nil
+                try self.persistRecovery()
+            } catch { self.stopAll() }
+        }
+    }
+
+    private func observeProviderLifetime() throws {
+        guard let provider = coordinator.recordedProvider, !coordinator.recordedProviderExited else { return }
+        if provider.processState == 0 {
+            try coordinator.providerProcessExited(provider)
+            providerWatch = nil
+        } else if providerWatch == nil {
+            // A failed watch/identity inspection cannot establish quiescence.
+            providerWatch = try? makeProviderWatch(provider)
+        }
     }
 
     private func persistRecovery() throws {

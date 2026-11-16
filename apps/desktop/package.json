@@ -51,6 +51,7 @@
     "package:win": "corepack pnpm --filter @ling-stack/browser-host build:native && corepack pnpm --filter @ling-stack/daemon build:engine-supervisor && corepack pnpm build && node scripts/cua-driver-electron-package.mjs --platform win32-x64 -- --win nsis --x64",
     "build:engine-secret-worker": "esbuild ../../packages/daemon/dist/features/execution-engines/engine-secret-worker.js --bundle --platform=node --format=esm --external:@napi-rs/keyring --outfile=dist/daemon/engine-secret-worker.js",
     "build:locked-use:mac": "node scripts/build-locked-use.ts",
+    "prepare:locked-use:release": "node scripts/prepare-locked-use-release.ts",
     "test:locked-use:mac": "swift test --package-path native/locked-use --jobs 4",
     "check:locked-use:mac": "./native/locked-use/script/build_and_run.sh --verify"
   },

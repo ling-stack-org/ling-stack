@@ -112,7 +112,7 @@ public struct LockedUseDiagnostics: Codable, Sendable {
            let evidence = try? LockedUseComponentValidation.current(team: team) {
             componentsValidated = configuration.matchesValidation(osBuild: evidence.osBuild,
                 brokerHash: evidence.brokerHash, guardianHash: evidence.guardianHash,
-                pluginHash: evidence.pluginHash)
+                pluginHash: evidence.pluginHash, clientHash: evidence.clientHash)
             guardianPermissions = installedGuardianPermissions()
             available = componentsValidated && policyIntact && approved
                 && AXIsProcessTrusted() && CGPreflightScreenCaptureAccess()

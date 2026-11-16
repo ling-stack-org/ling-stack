@@ -22,6 +22,7 @@ async function fixture(t: TestContext, pauseReadiness = false) {
   };
   let generation = 3;
   let readinessChecks = 0;
+  let registeredPID: number | undefined;
   let coordinator!: CuaDriverDesktopCoordinator;
   const owner = new RestrictedCuaDriverGeneration({
     currentGeneration: () => generation,
@@ -29,6 +30,8 @@ async function fixture(t: TestContext, pauseReadiness = false) {
     allowedToolIds: allowedTools,
     isAuthorityCurrent: () => true,
     native: {
+      providerHostProcessID: process.pid,
+      async attachProvider(pid) { assert.equal(children[0]?.pid, pid); registeredPID = pid; },
       async check() {},
       async beginAction() { events.push("action-begin"); },
       async finishAction() { events.push("action-finish"); },
@@ -66,6 +69,8 @@ async function fixture(t: TestContext, pauseReadiness = false) {
           async check(context) {
             readinessChecks += 1;
             assert.ok(context.providerProcessId);
+            assert.equal(registeredPID, context.providerProcessId);
+            assert.equal(context.hostProcessId, process.pid);
             const result = await context.requestCheckPermissions!();
             assert.ok("result" in result);
             assert.deepEqual(result.result, { checked: true });
@@ -118,7 +123,7 @@ const initialize = {
   jsonrpc: "2.0", id: 1, method: "initialize",
   params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "fixture-daemon", version: "1" } },
 };
-const capture = { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "capture" } };
+const capture = { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "get_window_state", arguments: { pid: 321, window_id: 1 } } };
 
 test("restricted startup primes the real lazy host before attestation and daemon attachment", {
   skip: process.platform !== "darwin",

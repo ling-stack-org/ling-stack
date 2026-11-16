@@ -23,6 +23,7 @@ public struct LockedUseBrokerCoordinator: Sendable {
     private var unshieldedDiagnostic: LockedUseUnshieldedDiagnostic?
     private let requiresWatchdog: Bool
     private let requiresExplicitOwnerDrain: Bool
+    private let requiresTaskBinding: Bool
     private let bootSessionID: String
     private var recovering = false
     private var ownerContext: Context?
@@ -55,16 +56,23 @@ public struct LockedUseBrokerCoordinator: Sendable {
     private let validationMode: Bool
     private var recoveryProbe = false
     private var recoveryProbePrepared = false
+    private var taskBinding: LockedUseTaskBinding?
+    private var taskDeadline: TimeInterval?
+    private var provider: LockedUseProviderIdentity?
+    private var providerExited = false
+    private var externalActionActive = false
+    private var externalActionTarget: LockedUseActionTarget?
     public var phase: LockedUseStateMachine.Phase { unshieldedDiagnostic?.phase ?? machine.phase }
     public var stopReason: LockedUseStateMachine.StopReason? { machine.stopReason }
     public var owner: LockedUseStateMachine.Owner? { machine.owner ?? connectionOwner }
 
-    public init(enabled: Bool, backendValidated: Bool, requiresWatchdog: Bool = false, requiresExplicitOwnerDrain: Bool = false, recovery: LockedUseRecoveryRecord? = nil, bootSessionID: String = UUID().uuidString, validationMode: Bool = false) {
+    public init(enabled: Bool, backendValidated: Bool, requiresWatchdog: Bool = false, requiresExplicitOwnerDrain: Bool = false, requiresTaskBinding: Bool = false, recovery: LockedUseRecoveryRecord? = nil, bootSessionID: String = UUID().uuidString, validationMode: Bool = false) {
         self.validationMode = validationMode
         machine = .init(validationWait: validationMode)
         prerequisites = .init(enabled: enabled, backendValidated: backendValidated, clientAuthorized: true)
         self.requiresWatchdog = requiresWatchdog
         self.requiresExplicitOwnerDrain = requiresExplicitOwnerDrain
+        self.requiresTaskBinding = requiresTaskBinding
         self.bootSessionID = bootSessionID
         if let recovery {
             recovering = true
@@ -75,6 +83,8 @@ public struct LockedUseBrokerCoordinator: Sendable {
             watchdogChallenge = recovery.watchdogChallenge
             everGranted = recovery.everGranted; observedUnlocked = recovery.observedUnlocked
             agentDrained = recovery.agentDrained
+            taskBinding = recovery.taskBinding; provider = recovery.provider
+            providerExited = recovery.providerExited == true
             guardianGone = recovery.guardian == nil
             unlockWorkDrained = guardianGone && (!recovery.everGranted || recovery.observedUnlocked)
             agentEffects = ["stopActions"]; guardianEffects = ["cancelUnlock", "requestRelock"]
@@ -84,6 +94,8 @@ public struct LockedUseBrokerCoordinator: Sendable {
     public var recordedGuardian: Context? { guardianContext }
     public var recordedWatchdog: Context? { watchdogContext }
     public var recordedOwner: Context? { ownerContext }
+    public var recordedProvider: LockedUseProviderIdentity? { provider }
+    public var recordedProviderExited: Bool { providerExited }
     public var isFullyReleased: Bool { guardianContext == nil && watchdogContext == nil }
     /// Metadata only, for distinguishing unhealthy evidence from stale IPC.
     public func protectionDiagnostics(now: TimeInterval) -> (guardianAge: TimeInterval, watchdogAge: TimeInterval, watchdogProtected: Bool) {
@@ -94,11 +106,12 @@ public struct LockedUseBrokerCoordinator: Sendable {
         guard let leaseID, let ownerContext, phase != .idle || !isFullyReleased else { return nil }
         return .init(leaseID: leaseID, owner: ownerContext, originalClientToken: clientToken,
             guardian: guardianContext, watchdog: watchdogContext, watchdogChallenge: watchdogChallenge,
-            everGranted: everGranted, observedUnlocked: observedUnlocked, agentDrained: agentDrained, fullyReleased: isFullyReleased, bootSessionID: bootSessionID)
+            everGranted: everGranted, observedUnlocked: observedUnlocked, agentDrained: agentDrained, fullyReleased: isFullyReleased, bootSessionID: bootSessionID,
+            taskBinding: taskBinding, provider: provider, providerExited: providerExited)
     }
 
     public mutating func handle(_ message: LockedUseIPCMessage, context: Context,
-                                now: TimeInterval) throws -> LockedUseIPCReply {
+                                now: TimeInterval, verifiedProvider: LockedUseProviderIdentity? = nil) throws -> LockedUseIPCReply {
         _ = try message.validated()
         try tick(now: now)
         if message.operation == .beginUnshieldedDiagnostic {
@@ -126,12 +139,20 @@ public struct LockedUseBrokerCoordinator: Sendable {
                 try apply(machine.observe(session: session, now: now))
             }
             return reply(message, context: context)
+        case .releaseStatus:
+            guard context.role == .observer, let session = message.session, let requested = message.taskBinding,
+                  isFullyReleased, phase == .idle || phase == .awaitingManualUnlock,
+                  taskBinding == nil && owner == nil || requested == taskBinding else { throw Failure.denied }
+            try check(session: session, context: context)
+            try requested.validateStructure()
+            if owner != nil { guard sameSession(context) else { throw Failure.denied } }
+            return reply(message, context: context)
         case .validationPassed:
-            guard isOwner(context), message.leaseID == leaseID, phase == .active else { throw Failure.denied }
+            guard validationMode, isOwner(context), message.leaseID == leaseID, phase == .active else { throw Failure.denied }
             try freshGuards(now: now)
             return reply(message, context: context)
         case .validationManual:
-            guard context.role == .agent, sameSession(context), isFullyReleased,
+            guard validationMode, context.role == .agent, sameSession(context), isFullyReleased,
                   phase == .idle || phase == .awaitingManualUnlock,
                   let session = message.session, session.state == .unlocked else { throw Failure.denied }
             try check(session: session, context: context)
@@ -147,6 +168,11 @@ public struct LockedUseBrokerCoordinator: Sendable {
             if message.operation == .beginRecoveryProbe, !validationMode { throw Failure.denied }
             guard accepting, guardianID == nil, watchdogContext == nil, context.role == .agent, let session = message.session else { throw Failure.denied }
             try check(session: session, context: context)
+            let binding = message.taskBinding
+            guard !requiresTaskBinding || validationMode || binding != nil else { throw Failure.denied }
+            if let binding {
+                try binding.validate(sessionDigest: lockedUseSessionDigest(session: session, bootSessionID: bootSessionID))
+            }
             let owner = LockedUseStateMachine.Owner(connectionID: context.id,
                 userID: context.userID, auditSessionID: context.auditSessionID)
             let effects = try machine.begin(owner: owner, session: session, prerequisites: prerequisites, now: now)
@@ -160,6 +186,9 @@ public struct LockedUseBrokerCoordinator: Sendable {
             guardianID = nil; releaseSent = false; pluginID = nil; issued = nil
             guardEvidence = nil; observedSession = session
             everGranted = false; observedUnlocked = false
+            taskBinding = binding
+            taskDeadline = binding?.remainingLifetime().map { now + min($0, LockedUseStateMachine.maximumLease) }
+            provider = nil; providerExited = false; externalActionActive = false; externalActionTarget = nil
             unlockWorkDrained = true
             recoveryProbe = message.operation == .beginRecoveryProbe
             recoveryProbePrepared = false
@@ -270,12 +299,31 @@ public struct LockedUseBrokerCoordinator: Sendable {
             guard context.role == .plugin, context.id == pluginID else { throw Failure.denied }
             if message.stopReason != nil, let owner { try apply(machine.end(owner: owner, reason: .operationFailed)) }
             return reply(message, context: context)
-        case .action:
+        case .providerAttach:
+            guard isOwner(context), phase == .active, message.leaseID == leaseID,
+                  let taskBinding, message.taskBinding == taskBinding, provider == nil,
+                  let verifiedProvider, verifiedProvider.processID == message.providerProcessID else { throw Failure.denied }
+            try verifiedProvider.validate(owner: context)
+            try freshGuards(now: now)
+            provider = verifiedProvider
+            return reply(message, context: context)
+        case .action, .check, .actionBegin, .actionEnd:
             guard isOwner(context), message.leaseID == leaseID,
                   let owner, let session = message.session else { throw Failure.denied }
+            if let taskBinding { guard message.taskBinding == taskBinding else { throw Failure.denied } }
+            if message.operation == .action { guard taskBinding == nil else { throw Failure.denied } }
+            if message.operation == .actionBegin || message.operation == .actionEnd {
+                guard taskBinding != nil, provider != nil, !providerExited,
+                      message.actionTarget != nil,
+                      message.operation == .actionBegin ? !externalActionActive : externalActionActive else { throw Failure.denied }
+                if message.operation == .actionEnd { guard message.actionTarget == externalActionTarget else { throw Failure.denied } }
+            }
             try check(session: session, context: context)
             try freshGuards(now: now)
             try apply(machine.authorizeAction(owner: owner, session: session, now: now))
+            if message.operation == .actionBegin { externalActionActive = true }
+            if message.operation == .actionBegin { externalActionTarget = message.actionTarget }
+            if message.operation == .actionEnd { externalActionActive = false; externalActionTarget = nil }
             return reply(message, context: context)
         case .end:
             guard isOwner(context), let owner else { throw Failure.denied }
@@ -283,6 +331,7 @@ public struct LockedUseBrokerCoordinator: Sendable {
             return reply(message, context: context)
         case .quiesced:
             guard isOwner(context), let owner, message.leaseID == leaseID else { throw Failure.denied }
+            guard provider == nil || providerExited else { return reply(message, context: context) }
             // A consumed allow may still be queued in loginwindow. An old lock
             // screen is insufficient; require that unlock actually occurred
             // before accepting the action/transaction drain acknowledgement.
@@ -316,6 +365,10 @@ public struct LockedUseBrokerCoordinator: Sendable {
         try registry.expire(now: now)
         receiptTime = now
         try apply(machine.tick(now: now))
+        if let taskDeadline, now >= taskDeadline, let owner,
+           ![.idle, .relocking, .awaitingManualUnlock].contains(phase) {
+            try apply(machine.end(owner: owner, reason: .leaseExpired))
+        }
         if requiresWatchdog, watchdogContext != nil, now - watchdogLastReport >= 1.5,
            ![.idle, .relocking, .awaitingManualUnlock].contains(phase), let owner {
             try apply(machine.end(owner: owner, reason: .guardLost))
@@ -342,9 +395,26 @@ public struct LockedUseBrokerCoordinator: Sendable {
     /// Called only after the daemon observes ESRCH for the kernel-verified
     /// owner process. Socket closure alone cannot prove GUI dispatch drained.
     public mutating func ownerProcessExited() throws {
-        // Ling's helper does not own the external provider's process lifetime.
-        // Its death cannot establish that provider input has drained.
-        guard !requiresExplicitOwnerDrain else { return }
+        if taskBinding != nil, let owner, ![.idle, .relocking, .awaitingManualUnlock].contains(phase) {
+            try apply(machine.end(owner: owner, reason: .disconnected))
+        }
+        guard !requiresExplicitOwnerDrain || taskBinding != nil && (provider == nil || providerExited) else { return }
+        try confirmExternalExitDrain()
+    }
+
+    /// Only an independently observed exit of the recorded kernel token may
+    /// replace an external provider's explicit drain acknowledgement.
+    public mutating func providerProcessExited(_ identity: LockedUseProviderIdentity) throws {
+        guard provider == identity else { throw Failure.denied }
+        providerExited = true; externalActionActive = false
+        if let owner, ![.idle, .relocking, .awaitingManualUnlock].contains(phase) {
+            try apply(machine.end(owner: owner, reason: .disconnected))
+        }
+        agentDrained = true
+        try confirmExternalExitDrain()
+    }
+
+    private mutating func confirmExternalExitDrain() throws {
         guard phase == .relocking, let owner, unlockWorkDrained,
               !everGranted || observedUnlocked else { return }
         agentDrained = true
