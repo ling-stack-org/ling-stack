@@ -29,6 +29,9 @@ export function ConversationChangeSummary(props: {
   const open = Boolean(scope) && openScope === scope;
   const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const keyboardOpen = useRef(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const restoreTriggerFocus = useRef(false);
   const cancelClose = () => clearTimeout(closeTimer.current);
   const hoverOpen = () => { cancelClose(); setOpenScope(scope); };
   const hoverClose = () => {
@@ -63,16 +66,23 @@ export function ConversationChangeSummary(props: {
               {review.state === "exact" ? counts(review.additions, review.deletions) : review.files.length ? <small>{t("Partial statistics")}</small> : null}
             </button>
             {review.files.length ? <PopoverTrigger asChild>
-              <button type="button" className="conversation-change-summary-list-trigger" aria-label={t("Changed files")}
-                onClick={(event) => { event.preventDefault(); keyboardOpen.current = true; hoverOpen(); }}
-                onFocus={(event) => { if (event.currentTarget.matches(":focus-visible")) { keyboardOpen.current = true; hoverOpen(); } }}>
+              <button ref={triggerRef} type="button" className="conversation-change-summary-list-trigger" aria-label={t("Changed files")}
+                onClick={(event) => {
+                  event.preventDefault(); keyboardOpen.current = true; hoverOpen();
+                  contentRef.current?.querySelector<HTMLButtonElement>("li button")?.focus();
+                }}>
                 <ChevronUp size={14} aria-hidden="true" />
               </button>
             </PopoverTrigger> : null}
           </div>
         </PopoverAnchor>
-        <PopoverContent side="top" align="center" size="content" className="conversation-change-summary-popover" aria-label={t("Changed files")}
-          onOpenAutoFocus={(event) => event.preventDefault()} onCloseAutoFocus={(event) => event.preventDefault()}
+        <PopoverContent ref={contentRef} side="top" align="center" size="content" className="conversation-change-summary-popover" aria-label={t("Changed files")}
+          onOpenAutoFocus={(event) => { if (!keyboardOpen.current) event.preventDefault(); }}
+          onEscapeKeyDown={() => { restoreTriggerFocus.current = true; }}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            if (restoreTriggerFocus.current) { restoreTriggerFocus.current = false; triggerRef.current?.focus(); }
+          }}
           onPointerEnter={cancelClose} onPointerLeave={hoverClose}>
           <div className="conversation-change-summary-heading">{t("Changed files")}</div>
           {review.state !== "exact" ? <p className="conversation-change-summary-incomplete">{t("Historical diff unavailable")}</p> : null}

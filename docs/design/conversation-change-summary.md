@@ -17,12 +17,14 @@ The chip reads `Editing N files +A -D` while the Turn is active and `Edited N fi
 after completion. Normal conversation, channel conversation and teammate private chat use
 the same component. A new Turn replaces the prior summary; an empty latest Turn hides it.
 
-Hovering or focusing the file-list control opens an interactive popover above the chip.
+Hovering the chip opens an interactive popover above it without moving input focus.
 The popover has a bounded scrolling list, full workspace-relative paths, file kind and
 per-file line counts. Long paths truncate visually while retaining their accessible name.
 The main summary opens the existing scoped review dock. Each file opens that review at its
-path. A separate list button supports touch, keyboard and Escape without requiring hover.
-The summary occupies its own composer slot, outside goal, approval and input controls.
+path. Activating the separate list button by touch, click or keyboard focuses the first
+file. Tab moves between files; Escape closes the list and returns focus to that button.
+The summary uses `ConversationComposerShell.aboveComposerNode`, outside goal, approval
+and input controls.
 
 Unknown or incomplete changes show an explicit incomplete state and omit aggregate line
 counts. An unavailable file does not acquire invented counts. The feature describes only
@@ -55,8 +57,10 @@ never the recovery operation totals. A repeated edit is composed from the first 
 snapshot to the last after snapshot; a restored path has no net row. Missing provenance,
 broken chains or bounded-out content retain the review's partial/unavailable state.
 
-The typed API client and Web wrapper expose this contract. Opening review passes the Turn
-scope and optional path. The existing recovery endpoint loads diff hunks on demand. The
+`ThreadWorkspaceChangeSummaryResponse` and
+`LingDaemonClient.getThreadWorkspaceChangeSummary(cwd, threadId)` expose the typed contract
+through the Web wrapper. Opening review passes the Turn scope and optional path. The
+existing recovery endpoint loads diff hunks on demand. The
 composer summary does not inject an initial review that could constrain later files to an
 older disclosure set. Historical transcript review retains its existing disclosure limits.
 
@@ -101,6 +105,13 @@ late responses, submission and observation gates. Browser acceptance covers the 
 conversation surfaces, live updates, empty/latest-Turn reset, keyboard and pointer file
 selection, review path navigation, long lists, narrow width, localization and console errors.
 Owning package typechecks, Web build, lint, i18n and documentation checks must pass.
+
+The daemon summary test is registered in the Linux suite of
+`scripts/ci/daemon-test-platforms.json`. Web's observer test is included by
+`tsconfig.test.json`; its browser spec is included by `tsconfig.e2e.json` and the local
+`test:e2e:work-cell` command. Owning `typecheck:ci` commands check these TypeScript tests.
+The production Web smoke runs the complete summary browser spec and retains its screenshots
+under the `ci-linux-source-web-smoke` artifact.
 
 Local Chromium acceptance uses the mock-daemon harness at desktop and narrow widths,
 in English/light and Chinese/dark configurations. It exercises the rendered components
