@@ -134,6 +134,7 @@ function installDecisionSurface(state: ReturnType<typeof createBaseState>, surfa
 for (const theme of ["light", "dark"] as const) {
 for (const surface of ["channel", "normal_conversation", "teammate_direct"] as const) {
 test(`reload restores the original ${surface} decision and menu keyboard focus in ${theme}`, async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await page.setViewportSize(theme === "light" ? { width: 1440, height: 960 } : { width: 1280, height: 800 });
   await page.addInitScript(theme => {
     localStorage.setItem("ling-stack.locale", "en-US");
@@ -155,7 +156,8 @@ test(`reload restores the original ${surface} decision and menu keyboard focus i
   const stale = structuredClone(approval);
   await mockDaemon(page, state);
   let receiptAvailable = false;
-  let receiptReads = 0;
+  let receiptStage: "decision" | "unconfirmed_reload" | "recovered_reload" = "decision";
+  const receiptStages = new Set<typeof receiptStage>();
   if (surface === "teammate_direct") {
     await page.route(url => /^\/teammates\/p2-decision-teammate\/direct-(runtime|messages|thread)$/.test(url.pathname), route =>
       handleDaemonRoute(route, receiptAvailable ? state : { ...state, approvals: [stale] }));
@@ -164,8 +166,9 @@ test(`reload restores the original ${surface} decision and menu keyboard focus i
       handleDaemonRoute(route, receiptAvailable ? state : { ...state, approvals: [stale] }));
   }
   await page.route(url => url.pathname === `/approvals/${approval.id}`, route => {
-    receiptReads++;
+    receiptStages.add(receiptStage);
     expect(route.request().method()).toBe("GET");
+    expect(new URL(route.request().url()).searchParams.get("cwd")).toBe(cwd);
     return receiptAvailable ? route.fallback() : route.fulfill({ status: 503, json: { error: "receipt_unavailable" } });
   });
   await page.route(url => url.pathname === "/approvals", route => route.fulfill({ json: { cwd, approvals: [stale] } }));
@@ -180,6 +183,7 @@ test(`reload restores the original ${surface} decision and menu keyboard focus i
       : navigation.getByRole("button", { name: targetName, exact: true })).first().click();
   }
   await page.goto("/");
+  await expect(page.getByTestId("ling-launch-transition")).toHaveCount(0);
   await selectSurface();
   const gate = page.getByRole("region", { name: "Allow this action?", exact: true });
   await expect(gate).toHaveCount(1);
@@ -195,21 +199,25 @@ test(`reload restores the original ${surface} decision and menu keyboard focus i
   await expect(gate.getByRole("alert")).not.toBeEmpty();
   await mkdir(evidenceDir, { recursive: true });
   await page.screenshot({ path: `${evidenceDir}${surface}-reload-unconfirmed-${theme}.png`, animations: "disabled" });
+  receiptStage = "unconfirmed_reload";
   await page.reload();
+  await expect(page.getByTestId("ling-launch-transition")).toHaveCount(0);
   await selectSurface();
   await expect(page.getByRole("region", { name: "Notifications", exact: true })
     .getByRole("status")).toContainText("Execution recovery could not be confirmed");
   expect(state.approvalDecisionRequests).toHaveLength(1);
   await page.screenshot({ path: `${evidenceDir}${surface}-reload-still-unconfirmed-${theme}.png`, animations: "disabled" });
   receiptAvailable = true;
+  receiptStage = "recovered_reload";
   await page.reload();
+  await expect(page.getByTestId("ling-launch-transition")).toHaveCount(0);
   await selectSurface();
   await expect(gate).toHaveCount(0);
   await expect(page.getByLabel(surface === "channel" ? "Channel composer"
     : surface === "normal_conversation" ? "New conversation composer" : "Private chat composer", { exact: true })).toBeVisible();
   expect(state.approvalDecisionRequests).toHaveLength(1);
   expect(state.approvalCommandRules).toHaveLength(0);
-  expect(receiptReads).toBe(3);
+  expect([...receiptStages].sort()).toEqual(["decision", "recovered_reload", "unconfirmed_reload"]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   expect(errors).toEqual([]);
   await page.screenshot({ path: `${evidenceDir}${surface}-reload-recovered-${theme}.png`, animations: "disabled" });
