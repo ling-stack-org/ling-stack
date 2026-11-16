@@ -1,6 +1,6 @@
 # Agent Execution Capabilities
 
-Status: C1–C3, A1/A2 and R1–R3 locally implemented; release gates in progress
+Status: C1–C3, A1/A2 and R1–R3 implemented; source delivery tracked in PR #714
 Owner: Runner and daemon maintainers
 Last verified: 2026-11-17
 Document type: design contract
@@ -10,8 +10,9 @@ Document type: design contract
 This contract covers code intelligence, Code Mode, lifecycle Hooks, external-event
 automations, selective rerun and evidence-based Goal supervision. Delivery
 order and acceptance live in the [implementation plan](agent-execution-capabilities-implementation-plan.md).
+Source review, CI and merge status are tracked in [PR #714](https://github.com/ling-stack-org/ling-stack/pull/714).
 
-The integration baseline for this delivery is `origin/main@27a9ccb23`. Ling already owns tool hydration, MCP, Skills,
+The integration baseline for this delivery is `origin/main@86f057874`. Ling already owns tool hydration, MCP, Skills,
 approvals, cancellation, sandbox selection, prepared Runner input, Goal continuation,
 automations and workflow rerun admission. These owners remain authoritative:
 
@@ -287,8 +288,10 @@ Source revision, enabled definition and definition digest are rechecked immediat
 before execution. A durable lease and stable event/definition idempotency key recover
 accepted work through the existing automation owner. Busy automations retry every two
 seconds, with a 100-attempt dispatch cap; failures remain visible in
-`GET /automation-events?cwd=...`. The worker starts for enabled persisted sources when their trusted workspace opens,
-accepted ingress and scheduler registration; it does not scan arbitrary workspaces.
+`GET /automation-events?cwd=...`. The worker starts when a trusted workspace with
+enabled persisted sources opens, a source is configured or an event is accepted.
+It does not scan arbitrary workspaces. Scheduled timer registration and stop leave
+the durable event worker running; daemon shutdown stops and drains it.
 
 Terminal Runs create one outbox item per explicitly bound destination. Delivery uses
 the existing secret-resolved, egress-pinned IM dispatcher with redirects disabled,

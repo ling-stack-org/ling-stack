@@ -884,15 +884,18 @@ Do not borrow:
 - Add local notification output.
 - Add Web monitor cards and no-op history.
 
-### A1/A2: Signed event ingress and scoped result delivery - locally implemented
+### A1/A2: Signed event ingress and scoped result delivery
 
 - Webhook, GitHub issue/comment and generic business adapters share durable inbox claims.
 - Authentication, freshness, body/rate/queue limits, revision CAS and digest conflicts
   are enforced before work dispatch.
 - Real local HTTP/Pi/Host/SQLite fixtures verify event idempotency and a mock IM
   result relay; no real external message is sent by these tests.
+- Stopping scheduled timers leaves durable event processing active, including work
+  accepted without a new HTTP request; daemon restart restores accepted work.
 - Run completion, delivery completion and unknown outcomes have distinct durable state.
-- Remote CI/merge and live external-service acceptance remain separate gates.
+- Source review, CI and merge are tracked in [PR #714](https://github.com/ling-stack-org/ling-stack/pull/714).
+  Live external-service acceptance remains separate.
 
 ### P3: Rich outputs and desktop integration - deferred
 
@@ -911,6 +914,7 @@ The maintained regression suite must continue to prove:
 - Scheduled duplicate fire returns the existing automation run.
 - Disabled automation cannot be run by scheduler.
 - Manual run still works when scheduler is stopped.
+- Signed event dispatch and result delivery continue when scheduled timers are stopped.
 - Context preview is deterministic and redacted.
 - General external output destinations create approval-backed action proposals.
 - Signed event result relay targets only configured enabled destinations, redacts/bounds

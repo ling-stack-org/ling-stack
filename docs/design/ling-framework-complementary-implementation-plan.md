@@ -1,6 +1,6 @@
 # Ling 框架补强实现计划书
 
-Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A/F4-01, F3-B admission evidence, F3-02 review-only preflight, and Host readiness entered main at `edb820f0` (PR #690), with `main@5dc138493` including the later CI merge; F5-01 A17 contract preflight, F5-02 Host-backed read-only observation, and F5-03 Host admission planning are implemented in isolated worktrees, F3-B real trial remains blocked; ordinary-graph F5 execution is locally implemented in A1–R3 with release gates open
+Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A/F4-01, F3-B admission evidence, F3-02 review-only preflight, and Host readiness entered main at `edb820f0` (PR #690), with `main@5dc138493` including the later CI merge; F5-01 contract preflight, F5-02 Host observation and F5-03 admission planning are on the integration baseline; ordinary-graph F5 execution is implemented with source delivery tracked in PR #714; F3-B real trial remains blocked and installed/live acceptance remains separate
 Owner: Ling framework maintainers; one integration owner per implementation batch
 Last verified: 2026-11-17
 Document type: implementation plan / acceptance checklist
@@ -23,7 +23,7 @@ Code and test anchors: sections 7 and 9; live evidence is read-only, Host readin
 | F3-A | Run 证据适配与 fixture 回归 | fixture 适配及只读 Host 来源适配已实现；仍不代表真实评测通过 | F1 格式稳定、来源接口可核实 |
 | F3-B | 准入证据前置、普通 Run 真实试点及后续并发对比 | 准入证据前置已实现；真实试点仍 BLOCKED | 对应安全/隔离/恢复验收、可信验证、试点预算 |
 | F4 | 已有 Harness 诊断的只读消费 | F4-01 已实现分页报告；未改生产者 | F1 报告稳定、已有诊断合同可用 |
-| F5 | 节点重跑合同、观察与提交 | F5-01/02/03 保留只读前置；R1/R2 已在隔离分支实现普通物化图的原子提交、后继工作流、下游失效、成功产物复用及现有 Host 调度，本地脚本 Provider 链路通过 | 全量回归、评审/CI/合并及真实 Provider/平台验收；模板编译、参与者/intent authority、delegated/safety/isolation profiles fail closed |
+| F5 | 节点重跑合同、观察与提交 | F5-01/02/03 保留只读前置；R1/R2 已实现普通物化图的原子提交、后继工作流、下游失效、成功产物复用及现有 Host 调度，本地脚本 Provider 链路通过 | 源码评审、回归、CI 与合并状态见 [PR #714](https://github.com/ling-stack-org/ling-stack/pull/714)；真实 Provider/平台另验收，模板编译、参与者/intent authority、delegated/safety/isolation profiles fail closed |
 
 ## 2. 开工前的隔离与分工
 
@@ -190,7 +190,7 @@ Code and test anchors: sections 7 and 9; live evidence is read-only, Host readin
 - **回归**：Contracts 覆盖确定性 plan、幂等键变化和 blocked admission；Daemon 覆盖计划零写入、源 snapshot 漂移、HTTP 重复提交和 route parser；API client 覆盖编码后的 Run scope 与 POST body。
 - **限制**：Host admission plan 不是执行提交凭证。普通物化图的实际提交由 R1/R2 消费此计划并重新校验；远端 CI、真实 Provider 和跨平台验收单独记录。
 
-### R1/R2 执行接线（本地实现）
+### R1/R2 执行接线
 
 `POST /runs/:id/node-rerun/submit?cwd=...` 接收 `{intent,planFingerprint}`，在一个
 Host writer transaction 内重做 F5 观察，检查已审阅 plan、终态且静止的源 workflow、

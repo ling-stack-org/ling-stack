@@ -1,6 +1,6 @@
 # Ling 框架补强总体设计
 
-Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A/F4-01, F3-B admission evidence, F3-02 preflight, and the Host readiness review gate are on main through PR #690 (`edb820f0`); current main includes the PR #691 documentation refresh (`878e422a`); exact Run/evaluation association merged in PR #684 (`9af7ad54`); F5-01/02/03 remain the read-only contract/observation layers, while ordinary materialized-graph rerun submission and Goal supervision are locally implemented in the current delivery branch; F3-B real trial, advanced workflow profiles and release gates remain open
+Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A/F4-01, F3-B admission evidence, F3-02 preflight, and the Host readiness review gate are on main through PR #690 (`edb820f0`); current main includes the PR #691 documentation refresh (`878e422a`); exact Run/evaluation association merged in PR #684 (`9af7ad54`); F5-01/02/03 read-only contract/observation/admission layers are on the integration baseline; ordinary materialized-graph rerun submission and Goal supervision are implemented with source delivery tracked in PR #714; F3-B real trial, advanced workflow profiles and installed/live acceptance remain open
 Owner: Ling framework maintainers; evaluation and SDK implementation owners
 Last verified: 2026-11-17
 Document type: explanation / scope contract

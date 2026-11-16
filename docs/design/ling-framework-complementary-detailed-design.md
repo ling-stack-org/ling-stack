@@ -1,8 +1,8 @@
 # Ling 框架补强详细设计
 
-Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A/F4-01, F3-B read-only admission evidence, F3-02 review-only trial preflight, and the Host readiness review gate entered main at `edb820f0` (PR #690), with `main@5dc138493` including the later CI merge; F5 A17 pure contract preflight, Host-backed read-only observation, and the read-only Host admission plan endpoint are implemented in isolated branches, real F3-B trial remains blocked; ordinary-graph node rerun submission is locally implemented with release gates open
+Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A/F4-01, F3-B read-only admission evidence, F3-02 review-only trial preflight, and the Host readiness review gate entered main at `edb820f0` (PR #690), with `main@5dc138493` including the later CI merge; F5 A17 contract preflight, Host observation and read-only admission planning are on the integration baseline; ordinary-graph node rerun submission is implemented with source delivery tracked in PR #714; real F3-B trial remains blocked and installed/live acceptance remains separate
 Owner: Ling framework maintainers; evaluation and SDK implementation owners
-Last verified: 2026-11-16
+Last verified: 2026-11-17
 Document type: reference / technical design
 Canonical replacement: none; does not replace existing evaluation, runtime, or API contracts
 Code and test anchors: section 12 and the implementation record; live evidence is read-only, Host readiness is review-only, and no real task or GUI acceptance is claimed
@@ -11,7 +11,7 @@ Code and test anchors: section 12 and the implementation record; live evidence i
 
 ## 1. 合同层级
 
-本文区分四类内容：
+本文区分以下合同：
 
 - **现有合同**：已在核查基线中存在的函数、字段与行为。
 - **已实现私有格式**：F1 task/suite、offline observation 与报告、F2 consumer 报告、F3-A fixture 执行证据与 F4-01 只读诊断报告，只用于本工具链。
@@ -507,7 +507,7 @@ F5-02 目前是 Daemon 内部只读模块；F5-03 增加了只读 admission plan
 
 | 目标 | 计划值 | 含义 |
 | --- | --- | --- |
-| WorkUnit / Run / Attempt | `host_minted` | 未来由 Host 在提交事务内生成新的执行身份 |
+| WorkUnit / Run / Attempt | `host_minted` | 由现有 Host 编排在后继步骤派发时生成新的执行身份 |
 | fence | `host_minted` | 绑定新 Attempt，不复用源 Attempt fence |
 | approval | `fresh_current_policy` | 按提交时当前 policy 重新生成，不继承旧 approval |
 | graphMutation | `none` | 不通过 rerun 修改已接受 DAG |

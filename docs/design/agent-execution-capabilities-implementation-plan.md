@@ -1,6 +1,6 @@
 # Agent Execution Capabilities Implementation Plan
 
-Status: C1–C3, A1/A2 and R1–R3 locally implemented; full regression/review/CI in progress
+Status: C1–C3, A1/A2 and R1–R3 implemented; source delivery tracked in PR #714
 Owner: Runner and daemon maintainers
 Last verified: 2026-11-17
 Document type: implementation plan
@@ -23,11 +23,14 @@ evidence-based Goal supervision through the existing runtime owners.
 | R2 | Restart/cancellation/effect reconciliation | R1 | No repeated known effect or replay of unknown effect; reliable dependent scheduling |
 | R3 | Goal acceptance and bounded long-term supervision | R2, existing Goal | Evidence-based acceptance, budgets/no-progress, pause/blocker and visible continuation |
 
-C1–C3 and A1–R3 are locally implemented. The local controlled-transport acceptance
-uses a scripted Provider; full regression, review and remote CI remain release gates.
+C1–C3 and A1–R3 are implemented for the supported execution profiles. The local
+controlled-transport acceptance uses a scripted Provider. Source delivery requires
+repository regression, review and remote CI before merge; results and merge status
+are tracked in [PR #714](https://github.com/ling-stack-org/ling-stack/pull/714).
 
-The local implementation is on `codex/agent-capabilities`, integrated with `origin/main@27a9ccb23` before the final merge check.
-This record does not establish that the changes are merged or deployed.
+The source integration baseline is `origin/main@86f057874`. Installed-client and live
+external-service acceptance remain separate from source integration. Deployment
+requires its own authorization and evidence.
 
 ## Implementation Batches
 
@@ -75,7 +78,8 @@ Migration 221 owns these tables. See the contract for headers, limits and endpoi
 
 Acceptance scenarios: valid issue opens one task; redelivered event opens none; changed
 payload under the same id is rejected; wrong signature and stale timestamps start no
-work; daemon restart recovers an accepted event; burst rate limiting preserves queue
+work; stopping scheduled timers leaves accepted event processing active; daemon
+restart recovers an accepted event; burst rate limiting preserves queue
 state; failed Run and failed delivery have distinct statuses; unknown delivery is
 reconciled before retry. No external messages are sent during local fixture tests.
 
@@ -155,9 +159,9 @@ live Provider quality remain separate follow-up acceptance.
 | Work | Current status | Remaining |
 |---|---|---|
 | Plan/design | Contract and staged acceptance synchronized with local code | Maintain alongside subsequent delivery |
-| C1 | Local Pi/daemon implementation and validation complete | Review/CI and packaged/live Provider acceptance |
-| C2 | Local nested SDK execution, audit, approval and cancellation validation complete | Review/CI and packaged/live Provider acceptance |
-| C3 | Local trust, lifecycle policy, approved command and failure-boundary validation complete | Review/CI and packaged/live Provider acceptance |
-| A1/A2 | Local signed ingress, GitHub/business adapter, durable claims/outbox and mock-IM integration pass | Full regression, review/CI; live service acceptance |
-| R1/R2/R3 | Local successor/reuse/effect/restart and Goal acceptance/supervision regressions pass | Full regression, review/CI; advanced workflow profiles remain closed |
-| Release | Unverified | Review/CI, merge, packaged acceptance and deployment |
+| C1 | Pi/daemon implementation, cross-file and incomplete-source regressions pass | Installed-client and live Provider acceptance |
+| C2 | Nested SDK execution, audit, approval and cancellation regressions pass | Installed-client and live Provider acceptance |
+| C3 | Trust, lifecycle policy, approved command and failure-boundary regressions pass | Installed-client and live Provider acceptance |
+| A1/A2 | Signed ingress, GitHub/business adapter, durable claims/outbox, independent timer lifecycle and mock-IM integration pass | Live external-service acceptance; source-management UI/CLI and richer adapters are follow-ups |
+| R1/R2/R3 | Successor/reuse/effect/restart and Goal acceptance/supervision regressions pass | Live Provider/platform acceptance; advanced workflow profiles remain closed |
+| Source delivery | Review, repository validation, CI and merge are tracked in PR #714 | Installed-client acceptance and deployment require separate evidence |
