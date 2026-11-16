@@ -71,7 +71,7 @@ function canvasFixture(version) {
 }
 
 test("Canvas supplier records bind native SBOM crate hashes and retain old historical limits", t => {
-  for (const version of ["0.1.80", "1.0.11", "1.0.13"]) {
+  for (const version of ["0.1.80", "1.0.11", "1.0.13", "1.1.0"]) {
     const { record, metadata, binding, sbom } = canvasFixture(version);
     assert.equal(validateCanvasSourceMaterials(record, binding, metadata, version !== "0.1.80" ? sbom : undefined), undefined);
     const nativeDirectory = mkdtempSync(join(tmpdir(), "ling-canvas-source-test-"));
@@ -90,6 +90,22 @@ test("Canvas supplier records bind native SBOM crate hashes and retain old histo
       assert.match(result.limitations[0].details, /cannot be reconstructed/u);
     }
   }
+});
+
+test("current Canvas material records derive the native source binding from exact reviewed bytes", t => {
+  const { metadata, record } = canvasFixture("1.1.0");
+  const nativeDirectory = mkdtempSync(join(tmpdir(), "ling-current-canvas-source-test-"));
+  t.after(() => rmSync(nativeDirectory, { recursive: true, force: true }));
+  writeFileSync(join(nativeDirectory, "package.json"), JSON.stringify(metadata));
+  writeFileSync(join(nativeDirectory, "sbom.cdx.json"), JSON.stringify({ metadata: { component: metadata },
+    components: record.crates.map(crate => ({ name: crate.name, version: crate.version, purl: `pkg:cargo/${crate.name}@${crate.version}`,
+      hashes: [{ alg: "SHA-256", content: crate.sha256 }] })) }));
+  const components = [];
+  const collected = collectCanvasMaterials({ metadata: { name: "@napi-rs/canvas", version: record.version }, nativeDirectory,
+    sourceBinding: undefined }, () => "material", components);
+  assert.equal(collected.historicalRustResolutionPublished, true);
+  assert.equal(collected.limitations.length, 0);
+  assert.equal(components[0].sourceRevision, record.revision);
 });
 
 test("Canvas original blobs, source pins, SBOM identities and crate checksums fail closed", () => {
