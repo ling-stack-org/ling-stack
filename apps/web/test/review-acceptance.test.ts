@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test, { type TestContext } from "node:test";
 import type { ChannelMessageFileRef, ConversationSubmissionQuery } from "@ling-stack/contracts";
 import type { useConversationDomain, ConversationStreamHandlers } from "../src/domains/conversations/use-conversation-domain.js";
+import type { useChannelActionsController } from "../src/app/use-channel-actions-controller.js";
 import type { submitNormalConversationGuidance } from "../src/features/workspace/normal-conversation-guidance-controller.js";
 import { acknowledgeReviewDraft } from "../src/shared/conversation/review/review-draft.ts";
 import { catalogConsumerHarness } from "./support/catalog-consumer-harness.mjs";
@@ -148,4 +150,70 @@ for (const recovered of [false, true]) test(`queued guidance acknowledges feedba
   assert.equal(posts, recovered ? 0 : 1);
   assert.equal(finished, true);
   assert.equal(abandoned, true);
+});
+
+for (const scenario of ["ready", "lost", "pending"] as const) test(`channel ${scenario} acceptance retires the receipt's comments independently of presentation`, async t => {
+  const path = "app/use-channel-actions-controller.ts";
+  const source = await readFile(new URL(`../src/${path}`, import.meta.url), "utf8");
+  const apiStart = source.indexOf("import {\n");
+  const apiEnd = source.indexOf('} from "../api.js";', apiStart);
+  assert.ok(apiStart >= 0 && apiEnd > apiStart);
+  const apiAnchor = source.slice(apiStart, source.indexOf(";", apiEnd) + 1);
+  const apiNames = apiAnchor.slice(apiAnchor.indexOf("{") + 1, apiAnchor.indexOf("}")).split(",").map(name => name.trim()).filter(Boolean);
+  const port = catalogHookPort();
+  let pendingKey = scenario === "pending" ? "pending-channel-review" : undefined;
+  let posts = 0;
+  const item = { schemaVersion: 1, id: userMessage.id, workspaceId: "review-workspace", channelId: "review-channel", threadId: thread.id,
+    turnId: userMessage.turnId, sequence: 1, kind: "user_message", actorType: "local_user", actorId: "local-user", status: "committed",
+    visibility: "channel", revision: 1, domainRefs: [], createdAt: timestamp, updatedAt: timestamp,
+    payload: { body: "Review", format: "plain_text", mentions: [], attachmentIds: [], linkPreviewIds: [], fileRefs: [canonicalRef] } };
+  const envelope = { channelId: item.channelId, thread: { ...thread, channelId: item.channelId, surfaceKind: "channel_root", relationKind: "root" },
+    turn: { id: item.turnId }, userItem: item, items: [item], assistantItems: [], decorations: [], turnContextAssignments: [], generatedMedia: [] };
+  const harness = await catalogConsumerHarness(t, {
+    exports: { [path]: ["useChannelActionsController"] },
+    ports: { hooks: port.hooks,
+      journal: { read: () => pendingKey, begin() {}, finish() {}, forget() { pendingKey = undefined; } },
+      api: Object.fromEntries(apiNames.map(name => [name, async (...args: unknown[]) => {
+        if (name === "streamChannelTurn") { posts += 1; return {}; }
+        if (name === "getConversationSubmission") {
+          const query = args[1] as ConversationSubmissionQuery;
+          return { status: "accepted", cwd, idempotencyKey: query.idempotencyKey, threadId: item.threadId,
+            turnId: item.turnId, sourceItemId: item.id, sourceItem: item };
+        }
+        throw new Error(`Unexpected IO: ${name}`);
+      }])),
+      async readSseResponse(_response: unknown, receive: (event: { event: string; data: string }) => void) {
+        if (scenario === "lost") throw new TypeError("Stream disconnected");
+        receive({ event: "ready", data: JSON.stringify(envelope) });
+      },
+    },
+    transforms: { [path]: [
+      { anchor: source.slice(0, source.indexOf(";") + 1), replace: (key: string) =>
+        `const { useRef } = globalThis[${JSON.stringify(key)}].ports.hooks;` },
+      { anchor: apiAnchor, replace: (key: string) => `const { ${apiNames.join(", ")} } = globalThis[${JSON.stringify(key)}].ports.api;` },
+      { anchor: 'import { readSseResponse } from "../sse.js";', replace: (key: string) =>
+        `const { readSseResponse } = globalThis[${JSON.stringify(key)}].ports;` },
+      { anchor: 'import { submissionLookupJournal } from "../shared/conversation/conversation-submission-journal.js";', replace: (key: string) =>
+        `const submissionLookupJournal = globalThis[${JSON.stringify(key)}].ports.journal;` },
+    ] },
+  });
+  const module = harness.module as { useChannelActionsController: typeof useChannelActionsController };
+  const actions: ReturnType<typeof useChannelActionsController> = port.render(module.useChannelActionsController, {
+    form: { cwd }, selectedChannelId: item.channelId, channels: [], providers: [], providerTemplates: [], channelDecisions: [],
+    isSelectedChannelConversation: () => false, clearFeedback() {}, reportFeedback() {},
+    setChannelMessages: () => assert.fail("Departed channel cannot publish messages"),
+    setChannelConversationItems: () => assert.fail("Departed channel cannot publish items"),
+    refreshChannelMessages: async () => {}, refreshChannelExecutionProposals: async () => {}, refreshChannelIntentDecisions: async () => {},
+    refreshUsedMemoryAudit: async () => {}, refreshChannelMessageRouteDecisions: async () => {}, refreshChannelFiles: async () => {},
+  });
+  t.after(() => port.unmount());
+  let remaining: readonly ChannelMessageFileRef[] = [ref, added];
+  let accepts = 0;
+  const sending = actions.sendChannelMessage({ body: "Review", fileRefs: remaining, mentions: [], attachmentIds: [], linkPreviewIds: [], requestAiReply: false,
+    onInputAccepted: refs => { accepts += 1; remaining = acknowledgeReviewDraft(remaining, refs); } });
+  if (scenario === "ready") await sending;
+  else await assert.rejects(sending, scenario === "pending" ? { name: "RecoveredConversationSubmissionError" } : /Stream disconnected/);
+  assert.equal(accepts, 1);
+  assert.deepEqual(remaining, [added]);
+  assert.equal(posts, scenario === "pending" ? 0 : 1);
 });

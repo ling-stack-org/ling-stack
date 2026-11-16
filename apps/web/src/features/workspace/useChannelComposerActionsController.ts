@@ -132,6 +132,7 @@ interface ChannelComposerActionsInput {
     readonly requestAiReply: boolean;
     readonly streamOwner?: "channel-composer";
     readonly replyDisposition?: ChannelReplyDisposition;
+    readonly onInputAccepted?: (fileRefs: readonly ChannelMessageFileRef[]) => void;
     readonly onMessageAccepted?: (message: ChannelMessage) => void;
     readonly onReplyPending?: (pending: ChannelReplyPendingEvent) => void;
     readonly onReplyLinked?: (target: ConversationActiveReplyTarget) => void;
@@ -613,9 +614,9 @@ export function useChannelComposerActionsController({
         requestAiReply: shouldRequestAi,
         streamOwner: "channel-composer",
         ...(replyDisposition ? { replyDisposition } : {}),
+        onInputAccepted: acceptedFileRefs => reviewDraft?.acknowledge(acceptedFileRefs, reviewOwner),
         onMessageAccepted: (message) => {
           acceptedSourceMessageId = message.id;
-          reviewDraft?.acknowledge(reviewSnapshot, reviewOwner);
           if (!pendingAttachmentPreviewsReleased) {
             pendingAttachmentPreviewsReleased = true;
             releaseAttachmentPreviews(pendingAttachmentsSnapshot);
