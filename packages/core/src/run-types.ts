@@ -2,6 +2,7 @@ import type { ChannelSessionPage, ChannelSessionSummary, CreateChannelSessionInp
 import type { MemoryWikiStore } from "./memory-wiki-types.js";
 import type { MemoryDerivativeStore } from "./memory-derivative-types.js";
 import type { LearningReviewStore } from "./learning-review-types.js";
+import type { RuntimeRunQueueStore } from "./runtime-run-queue-types.js";
 import { randomUUID } from "node:crypto";
 import type { ApplyProposedPlanArtifactActionInput, ProposedPlanArtifactActionResult } from "./proposed-plan-mutation.js";
 import type { NativeExecutionStore } from "./native-execution-types.js";
@@ -189,6 +190,19 @@ import type {
   UpdateMediaWorkflowConnectionInput,
   UpdateMediaWorkflowDefinitionInput,
 } from "./media-workflow-types.js";
+import type {
+  CompanionEvent,
+  CompanionEventPage,
+  CompanionProfile,
+  CompanionState,
+  CreateCompanionInput,
+  ListCompanionEventsOptions,
+  ListCompanionsOptions,
+  RecordCompanionInteractionInput,
+  RecordCompanionInteractionResult,
+  RecordCompanionEventInput,
+  UpdateCompanionInput,
+} from "./companion-types.js";
 import type {
   CreateOrReuseConversationMediaJobInput,
   CreateOrReuseConversationMediaJobResult,
@@ -1570,7 +1584,7 @@ export interface ClaimSnapshotRestoreFenceInput {
   readonly now: string;
 }
 
-export interface RunStore extends MemoryWikiStore, MemoryDerivativeStore, LearningReviewStore, NativeExecutionStore, HarnessProjectionStore, HarnessArtifactRetentionStore, DelegationQueryStore, HarnessDiagnosticsStore, RunEvaluationTaskStore, RunEvaluationQaStore, RunEvaluationHumanStore, RunEvaluationHumanReadStore {
+export interface RunStore extends MemoryWikiStore, MemoryDerivativeStore, LearningReviewStore, RuntimeRunQueueStore, NativeExecutionStore, HarnessProjectionStore, HarnessArtifactRetentionStore, DelegationQueryStore, HarnessDiagnosticsStore, RunEvaluationTaskStore, RunEvaluationQaStore, RunEvaluationHumanStore, RunEvaluationHumanReadStore {
   getDelegationCompletionEvidence(input: GetDelegationCompletionEvidenceInput): DelegationCompletionEvidenceV1;
   listApprovalPostCommitEffects(options?: {
     readonly approvalId?: string;
@@ -1613,6 +1627,7 @@ export interface RunStore extends MemoryWikiStore, MemoryDerivativeStore, Learni
   settleHostOperation(ticket: import("./host-operation-journal-types.js").HostOperationTicket, input: import("./host-operation-journal-types.js").HostOperationSettlementInput): import("./host-operation-journal-types.js").HostOperationRecord;
   /** Safe rows are independently reverified against their exact domain evidence on every read. */
   getHostOperation(operationId: string): import("./host-operation-journal-types.js").HostOperationRecord | undefined;
+  listHostOperations(source: import("./host-operation-journal-types.js").HostOperationSource, stoppedAt?: string): import("./host-operation-journal-types.js").HostOperationRecord[];
   listHostOperationBlockers(source: import("./host-operation-journal-types.js").HostOperationSource, stoppedAt?: string): import("./host-operation-journal-types.js").HostOperationRecord[];
   prepareHostOfficeLocalExecution(parent: import("./host-operation-journal-types.js").HostOperationTicket,
     producer: import("./host-operation-journal-types.js").HostOperationTicket,
@@ -1938,6 +1953,7 @@ export interface RunStore extends MemoryWikiStore, MemoryDerivativeStore, Learni
   listWorkUnitAttempts(workUnitId: string): WorkUnitAttempt[];
   getRunnerContinuation(id: string): RunnerContinuationV1 | undefined;
   findRunnerContinuationByIdempotencyKey(idempotencyKey: string): RunnerContinuationV1 | undefined;
+  listRunnerContinuations(runId: string): readonly RunnerContinuationV1[];
   listClaimableRunnerContinuations(input: ListClaimableRunnerContinuationsInput): readonly RunnerContinuationV1[];
   prepareContinuationAndAttempt(input: PrepareContinuationInput): PreparedContinuation;
   commitExistingRunContinuation(
@@ -2015,7 +2031,10 @@ export interface RunStore extends MemoryWikiStore, MemoryDerivativeStore, Learni
   appendRuntimeDiagnosticEvent(input: import("./runtime-supervisor-types.js").AppendRuntimeDiagnosticEventInput): RuntimeEvent;
   listRuntimeEvents(workUnitId: string, options?: ListRuntimeEventsOptions): RuntimeEvent[];
   recordRuntimeHeartbeat(input: RecordRuntimeHeartbeatInput): RuntimeHeartbeat;
+  getRuntimeConcurrencyPolicy(workspaceId: string): import("./runtime-concurrency-policy.js").RuntimeConcurrencyPolicy | undefined;
+  installRuntimeConcurrencyPolicy(input: import("./runtime-concurrency-policy.js").InstallRuntimeConcurrencyPolicyInput): import("./runtime-concurrency-policy.js").InstallRuntimeConcurrencyPolicyResult;
   acquireRuntimeSemaphoreSlot(input: AcquireRuntimeSemaphoreSlotInput): RuntimeSemaphoreSlot | undefined;
+  acquireRuntimeSemaphoreSlots(inputs: readonly AcquireRuntimeSemaphoreSlotInput[]): import("./runtime-supervisor-types.js").AcquireRuntimeSemaphoreSlotsResult;
   renewRuntimeSemaphoreSlotsForAttempt(fence: RuntimeAttemptFenceV1, renewal: RuntimeResourceRenewal): number;
   releaseRuntimeSemaphoreSlotsForAttempt(fence: RuntimeAttemptFenceV1, releasedAt: string, releaseReason: string): number;
   expireRuntimeSemaphoreSlots(now: string): number;
@@ -2069,6 +2088,7 @@ export interface RunStore extends MemoryWikiStore, MemoryDerivativeStore, Learni
   getUserProfile(now: string): UserProfile;
   updateUserProfile(input: UpdateUserProfileInput, now: string): UserProfile;
   getWorkspaceSettings(): WorkspaceSettings;
+  listWorkspaceIds(): readonly string[];
   updateWorkspaceSettings(input: UpdateWorkspaceSettingsInput, now: string): WorkspaceSettings;
   createChannelSession(input: CreateChannelSessionInput, now: string): { session: ChannelSessionSummary; idempotentReplay: boolean };
   repairChannelSessionDirectory(channelId: string, branchId: string, now: string): ChannelSessionSummary;
@@ -2098,6 +2118,16 @@ export interface RunStore extends MemoryWikiStore, MemoryDerivativeStore, Learni
   updateAiTeammate(id: string, input: AiTeammateUpdateInput, now: string): AiTeammate | undefined;
   disableAiTeammate(id: string, now: string): AiTeammate | undefined;
   hardDeleteAiTeammate(id: string, input: HardDeleteAiTeammateInput, now: string): HardDeleteAiTeammateResult | undefined;
+  createCompanion(input: CreateCompanionInput, now: string): CompanionProfile;
+  getCompanion(id: string): CompanionProfile | undefined;
+  listCompanions(options?: ListCompanionsOptions): CompanionProfile[];
+  updateCompanion(id: string, input: UpdateCompanionInput, now: string): CompanionProfile | undefined;
+  disableCompanion(id: string, now: string): CompanionProfile | undefined;
+  getCompanionState(companionId: string): CompanionState | undefined;
+  listCompanionEvents(options: ListCompanionEventsOptions): CompanionEvent[];
+  listCompanionEventsPage(options: ListCompanionEventsOptions): CompanionEventPage;
+  recordCompanionInteraction(input: RecordCompanionInteractionInput, now: string): RecordCompanionInteractionResult;
+  recordCompanionEvent(input: RecordCompanionEventInput, now: string): CompanionEvent;
   getAiCouncil(id: string): AiCouncil | undefined;
   listAiCouncils(options?: ListAiCouncilsOptions): AiCouncil[];
   createAiCouncil(input: CreateAiCouncilInput, now: string): AiCouncil;
@@ -2457,6 +2487,10 @@ export interface RunStore extends MemoryWikiStore, MemoryDerivativeStore, Learni
   requestChannelWorkflowStepPreApproval(input: import("./workflow-pre-gate.js").WorkflowStepPreApprovalInput): import("./workflow-pre-gate.js").WorkflowStepPreApprovalResult;
   resolveChannelWorkflowStepPreApproval(input: import("./workflow-pre-gate.js").WorkflowStepPreApprovalResolveInput): import("./workflow-pre-gate.js").WorkflowStepPreApprovalResult;
   beginChannelWorkflowStepStart(input: import("./workflow-step-start-owner.js").BeginChannelWorkflowStepStartInput): import("./workflow-step-start-owner.js").BeginChannelWorkflowStepStartResult;
+  getChannelWorkflowStepStartAdmission(...args: Parameters<import("./workflow-step-admission.js").WorkflowStepAdmissionStore["getChannelWorkflowStepStartAdmission"]>): import("./workflow-step-admission.js").WorkflowStepStartAdmission | undefined;
+  transferChannelWorkflowStepStartAdmission(input: import("./workflow-step-admission.js").TransferChannelWorkflowStepStartAdmissionInput): import("./workflow-step-admission.js").TransferChannelWorkflowStepStartAdmissionResult;
+  resumeChannelWorkflowStepStartAdmission(input: import("./workflow-step-admission.js").ResumeChannelWorkflowStepStartAdmissionInput): import("./workflow-step-admission.js").ResumeChannelWorkflowStepStartAdmissionResult;
+  releaseChannelWorkflowStepStartAdmission(input: import("./workflow-step-admission.js").ReleaseChannelWorkflowStepStartAdmissionInput): import("./workflow-step-admission.js").ReleaseChannelWorkflowStepStartAdmissionResult;
   commitChannelWorkflowStepRunReady(input: import("./workflow-step-start-owner.js").WorkflowStepStartCommitInput): import("./workflow-step-start-owner.js").WorkflowStepStartCommitResult;
   settleChannelWorkflowStepStartFailure(input: import("./workflow-step-start-owner.js").WorkflowStepStartFailureInput): import("./workflow-step-start-owner.js").WorkflowStepStartCommitResult;
   commitChannelWorkflowStepPostApproval(input: import("./workflow-step-start-owner.js").WorkflowStepPostApprovalInput): import("./workflow-step-start-owner.js").WorkflowStepPostApprovalResult;
@@ -2836,6 +2870,9 @@ export type RunExecutionStoreFacet = RunStoreFacet<
 >;
 
 export type RuntimeSupervisorStoreFacet = RunStoreFacet<
+  | "getRuntimeConcurrencyPolicy"
+  | "hasRuntimeRunQueueCustody"
+  | "installRuntimeConcurrencyPolicy"
   | "hasPendingRunTerminalIntent"
   | "hasPendingRunSuspension"
   | "createWorkUnit"
@@ -2855,6 +2892,7 @@ export type RuntimeSupervisorStoreFacet = RunStoreFacet<
   | "listRuntimeEvents"
   | "recordRuntimeHeartbeat"
   | "acquireRuntimeSemaphoreSlot"
+  | "acquireRuntimeSemaphoreSlots"
   | "renewRuntimeSemaphoreSlotsForAttempt"
   | "releaseRuntimeSemaphoreSlotsForAttempt"
   | "expireRuntimeSemaphoreSlots"
@@ -2941,6 +2979,19 @@ export type TeammateStoreFacet = RunStoreFacet<
   | "deleteTeammatePrivateAttachment"
   | "replaceTeammateMcpBindings"
   | "listTeammateMcpBindings"
+>;
+
+export type CompanionStoreFacet = RunStoreFacet<
+  | "createCompanion"
+  | "getCompanion"
+  | "listCompanions"
+  | "updateCompanion"
+  | "disableCompanion"
+  | "getCompanionState"
+  | "listCompanionEvents"
+  | "listCompanionEventsPage"
+  | "recordCompanionInteraction"
+  | "recordCompanionEvent"
 >;
 
 export type AiCouncilStoreFacet = RunStoreFacet<

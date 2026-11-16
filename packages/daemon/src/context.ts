@@ -62,6 +62,8 @@ import type { HumanEvaluationService } from "./features/harness/evaluations/huma
 import type { RunEvaluationQaTaskWorkerActivation } from "./features/harness/evaluations/task-worker-composition.js";
 import type { EngineManagementFeature, EngineManagementFeatureOptions } from "./features/execution-engines/feature.js";
 import type { NativeRunDispatcher, NativeRunTargetDispatcher } from "./features/runs/native-run-dispatcher.js";
+import type { CompanionReplyService } from "./features/companions/reply-service.js";
+import type { CompanionSchedulerRegistry } from "./features/companions/scheduler.js";
 
 export interface RunnerAdapter {
   /** Optional capability; absence must reject prepared execution, never fabricate evidence. */
@@ -156,6 +158,8 @@ export interface DaemonDependencies {
   readonly runner?: RunnerAdapter;
   readonly runnerRegistry?: RunnerRegistry;
   readonly storeFactory?: RunStoreFactory;
+  /** Optional synchronous observation of the exact production-owned Store after initialization. */
+  readonly onStoreInitialized?: (cwd: string, store: RunStore) => void;
   /** Optional in-memory QA Provider authority. Absence keeps model task execution disabled. */
   readonly runEvaluationQaTaskWorker?: RunEvaluationQaTaskWorkerActivation;
   /** Authenticated bundled sources, initialized synchronously before recovery/read access. */
@@ -264,4 +268,6 @@ export interface DaemonContext {
   readonly hostCapabilityBridge: HostCapabilityBridgeController;
   /** Independent private Main ingress; never an Agent/MCP or Mobile capability. */
   readonly humanEvaluations: HumanEvaluationService;
+  readonly companionReplyService: CompanionReplyService;
+  readonly companionSchedulers: CompanionSchedulerRegistry;
 }

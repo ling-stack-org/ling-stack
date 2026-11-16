@@ -4,10 +4,12 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import {
   adaptExecutionEvidence,
+  collectLiveExecutionEvidence,
   loadExecutionEvidence,
   loadExecutionEvidenceBinding,
   parseExecutionEvidence,
   parseExecutionEvidenceBinding,
+  parseLiveExecutionEvidenceResponse,
 } from "./execution-evidence.mjs";
 
 const fixtureRoot = fileURLToPath(new URL("../../fixtures/framework-assurance/execution-evidence/", import.meta.url));
@@ -88,4 +90,85 @@ test("execution fixture parser requires canonical observation time and bounded p
   const invalidDigest = clone(evidence);
   invalidDigest.artifacts[0].contentSha256 = "short";
   assert.throws(() => parseExecutionEvidence(invalidDigest), errorCode("invalid_manifest"));
+});
+
+test("live evidence is collected from the read-only client and joined with frozen inputs", async () => {
+  const source = {
+    schemaVersion: 1,
+    kind: "live_execution_evidence",
+    comparison: evidence.comparison,
+    execution: evidence.execution,
+    snapshots: evidence.snapshots,
+    artifacts: evidence.artifacts,
+    observedAt: evidence.observedAt,
+    limitations: ["read_only_host_projection", "no_task_input"],
+  };
+  const calls = [];
+  const client = {
+    getRunAssuranceEvidence: async (runId, cwd) => {
+      calls.push({ runId, cwd });
+      return clone(source);
+    },
+  };
+  const collected = await collectLiveExecutionEvidence({
+    client,
+    cwd: "/workspace/assurance",
+    runId: evidence.execution.runId,
+    taskIdentity: evidence.taskIdentity,
+    sourceCommit: evidence.sourceCommit,
+    inputDigests: evidence.inputDigests,
+    caseId: evidence.caseId,
+    invocationId: "invocation-live-001",
+  });
+  assert.deepEqual(calls, [{ runId: evidence.execution.runId, cwd: "/workspace/assurance" }]);
+  assert.equal(collected.observation.evidenceKind, "live_execution");
+  assert.equal(collected.observation.assessment, "not_assessed");
+  assert.equal(collected.observation.executionStatus, "completed");
+  assert.deepEqual(collected.lineage, {
+    runId: evidence.execution.runId,
+    workUnitId: evidence.execution.workUnitId,
+    attemptId: evidence.execution.attemptId,
+    runtimeInstanceId: evidence.execution.runtimeInstanceId,
+  });
+  assert.ok(collected.observation.limitations.includes("live_execution_read_only"));
+  assert.ok(!JSON.stringify(collected).includes("claimToken"));
+});
+
+test("live evidence parser rejects private fields and foreign Run identity", async () => {
+  const source = {
+    schemaVersion: 1,
+    kind: "live_execution_evidence",
+    comparison: evidence.comparison,
+    execution: evidence.execution,
+    snapshots: evidence.snapshots,
+    artifacts: evidence.artifacts,
+    observedAt: evidence.observedAt,
+    limitations: ["read_only_host_projection"],
+  };
+  assert.throws(() => parseLiveExecutionEvidenceResponse({ ...clone(source), claimToken: "private" }), errorCode("invalid_manifest"));
+  const client = { getRunAssuranceEvidence: async () => ({ ...clone(source), execution: { ...source.execution, runId: "run-foreign-001" } }) };
+  await assert.rejects(collectLiveExecutionEvidence({
+    client,
+    cwd: "/workspace/assurance",
+    runId: evidence.execution.runId,
+    taskIdentity: evidence.taskIdentity,
+    sourceCommit: evidence.sourceCommit,
+    inputDigests: evidence.inputDigests,
+    caseId: evidence.caseId,
+    invocationId: "invocation-live-002",
+  }), errorCode("evidence_lineage_mismatch"));
+});
+
+test("live evidence accepts a yielded Run used by the durable input-wait boundary", () => {
+  const source = {
+    schemaVersion: 1,
+    kind: "live_execution_evidence",
+    comparison: evidence.comparison,
+    execution: { ...evidence.execution, runStatus: "yielded", workUnitStatus: "waiting_for_input", attemptStatus: "yielded" },
+    snapshots: evidence.snapshots,
+    artifacts: evidence.artifacts,
+    observedAt: evidence.observedAt,
+    limitations: ["read_only_host_projection"],
+  };
+  assert.equal(parseLiveExecutionEvidenceResponse(source).execution.runStatus, "yielded");
 });

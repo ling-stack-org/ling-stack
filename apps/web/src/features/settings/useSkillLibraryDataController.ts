@@ -11,6 +11,7 @@ import {
   listTeammateSkills,
 } from "../../api.js";
 import type {
+  AiTeammate,
   Channel,
   ChannelPlaybookCandidate,
   ProcedureObservationCluster,
@@ -43,6 +44,7 @@ export function useSkillLibraryDataController({
   const [skillCandidates, setSkillCandidates] = useState<readonly SkillCandidate[]>([]);
   const [playbookCandidates, setPlaybookCandidates] = useState<readonly ChannelPlaybookCandidate[]>([]);
   const [channels, setChannels] = useState<readonly Channel[]>([]);
+  const [teammates, setTeammates] = useState<readonly AiTeammate[]>([]);
   const [observationClusters, setObservationClusters] = useState<readonly ProcedureObservationCluster[]>([]);
   const [bindingSummaries, setBindingSummaries] = useState<readonly TeammateSkillBindingSummary[]>([]);
   const [selectedSkillId, setSelectedSkillId] = useState("");
@@ -85,6 +87,7 @@ export function useSkillLibraryDataController({
       setSkillCandidates(candidates.candidates);
       setPlaybookCandidates(playbooks.flatMap((response) => response.candidates));
       setChannels(channelResponse.channels);
+      setTeammates(visibleTeammates);
       setBindingSummaries(teammateSkills);
       setLoadError("");
       return true;
@@ -178,6 +181,7 @@ export function useSkillLibraryDataController({
     playbookCandidates,
     setPlaybookCandidates,
     channels,
+    teammates,
     observationClusters,
     bindingSummaries,
     selectedSkillId,

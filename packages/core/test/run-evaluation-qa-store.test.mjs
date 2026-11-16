@@ -119,6 +119,19 @@ test("task receipt lookup returns one allowlisted immutable binding and rejects 
   }, f.cwd, id => f.store.getArtifact(id));
   assert.throws(() => corrupted.getRunEvaluationQaRequestForTask(first.task.id), /evaluation.task_invalid/u);
 });
+test("evaluation receipt lookup is bounded, exact and excludes request payload bytes", async t => {
+  const f = await qaFixture(t);
+  const first = f.complete(f.admit(f.claim(f.enroll())));
+  f.release(first.request);
+  assert.deepEqual(f.store.listRunEvaluationQaRequestsForEvaluation(f.evaluation.id), [f.store.getRunEvaluationQaRequest(first.request.id)]);
+
+  const second = f.complete(f.admit(f.claim(f.enroll(2))));
+  f.release(second.request);
+  const requests = f.store.listRunEvaluationQaRequestsForEvaluation(f.evaluation.id);
+  assert.equal(requests.length, 2);
+  assert.deepEqual(new Set(requests.map(request => request.id)), new Set([first.request.id, second.request.id]));
+  for (const request of requests) assert.equal("payloadUtf8" in request, false);
+});
 test("fault in final receipt update rolls task result and terminal task/attempt back", async t => {
   const f = await qaFixture(t), admitted = f.admit(f.claim(f.enroll())), before = f.counts();
   f.database.exec("CREATE TRIGGER qa_inject BEFORE UPDATE OF receipt_json ON run_evaluation_qa_requests BEGIN SELECT RAISE(ABORT,'inject'); END");

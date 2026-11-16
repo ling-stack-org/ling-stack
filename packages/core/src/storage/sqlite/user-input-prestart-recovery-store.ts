@@ -34,6 +34,10 @@ import type { SqliteStoreContext } from "./store-context.js";
 import { userInputTimestamp } from "./user-input-records.js";
 import { validDeliveryKey, validDeliveryRevision } from "./user-input-delivery-records.js";
 import { isUserInputRunCreatedReplay } from "./user-input-run-created-replay.js";
+import type { UserInputWorkflowAdmissionRecoveryPlan } from "./user-input-workflow-step-admission.js";
+import { readRuntimeSemaphoreCapacity } from "./workflow-step-admission-capacity.js";
+import { readRuntimeRunCapacityConflict } from "./runtime-run-capacity.js";
+import { hasActiveWorkflowMergeApplyLease } from "./workflow-merge-lease-guard.js";
 
 type BindingReader = (threadId: string, deliveryId: string) => UserInputContinuationBinding | undefined;
 type RunReader = (runId: string) => RunSession | undefined;
@@ -44,6 +48,8 @@ export class SqliteUserInputPrestartRecoveryStore {
     private readonly context: SqliteStoreContext,
     private readonly readBinding: BindingReader,
     private readonly getRun: RunReader,
+    private readonly planWorkflowAdmission: (input: RecoverUserInputContinuationPrestart,
+      binding: UserInputContinuationBinding) => UserInputWorkflowAdmissionRecoveryPlan,
   ) {}
 
   claim(input: ClaimUserInputContinuationRecovery, now: string): ClaimUserInputContinuationRecoveryResult {
@@ -140,11 +146,23 @@ export class SqliteUserInputPrestartRecoveryStore {
       if (!binding || !sameBinding(input, binding) || binding.runId !== input.runId
         || binding.deliveryRevision !== input.claim.expectedRevision || !this.hasCurrentClaim(input, input.now)
         || !this.hasCurrentPrestartOwner(binding)) return this.rollbackResult({ status: "changed" });
+      const workspaceId = this.context.database.prepare("SELECT workspace_id FROM work_units WHERE id=? AND active_attempt_id=?")
+        .get(binding.fence.workUnitId, binding.fence.attemptId)?.workspace_id;
+      if (typeof workspaceId !== "string" || !workspaceId) return this.rollbackResult({ status: "changed" });
+      if (hasActiveWorkflowMergeApplyLease(this.context.database, workspaceId)) {
+        return this.rollbackResult({ status: "busy", kind: "resource", resourceType: "workspace", resourceKey: workspaceId });
+      }
+      const admission = this.planWorkflowAdmission(input, binding);
+      if (admission.status === "changed") return this.rollbackResult(admission);
+      if (input.leases.some(lease => lease.workspaceId !== workspaceId)
+        || admission.semaphores.some(slot => slot.workspaceId !== workspaceId)) return this.rollbackResult({ status: "changed" });
+      const recovery = { ...input, semaphores: admission.semaphores };
       const leases = this.recoverLeases(input, binding);
       if (!Array.isArray(leases)) return this.rollbackResult(leases);
-      const semaphores = this.recoverSemaphores(input, binding);
+      const semaphores = this.recoverSemaphores(recovery, binding);
       if (!Array.isArray(semaphores)) return this.rollbackResult(semaphores);
-      if (!this.ensureSemaphoreEvidence(binding, input.semaphores, semaphores, input.now)) {
+      if (!this.ensureSemaphoreEvidence(binding, recovery.semaphores, semaphores, input.now)
+        || !admission.commit(semaphores)) {
         return this.rollbackResult({ status: "changed" });
       }
       this.context.database.exec("COMMIT");
@@ -299,7 +317,14 @@ export class SqliteUserInputPrestartRecoveryStore {
         recovered.push({ ...slot, lastRenewedAt: input.now, expiresAt: input.expiresAt });
         continue;
       }
-      if (rows.length >= candidate.limit) return { status: "busy", kind: "semaphore",
+      if (candidate.resourceType === "provider" || candidate.resourceType === "runner") {
+        const conflict = readRuntimeRunCapacityConflict(this.context.database, {
+          workspaceId: candidate.workspaceId, fence: candidate, now: input.now,
+        });
+        if (conflict) return { status: "busy", kind: "semaphore", ...conflict };
+      }
+      const capacity = readRuntimeSemaphoreCapacity(this.context.database, { ...candidate, fence: candidate, now: input.now });
+      if (capacity.occupied >= capacity.limit) return { status: "busy", kind: "semaphore",
         resourceType: candidate.resourceType, resourceKey: candidate.resourceKey };
       const slot: RuntimeSemaphoreSlot = { ...candidate, id: createRuntimeSemaphoreSlotId(), status: "active",
         acquiredAt: input.now, lastRenewedAt: input.now, expiresAt: input.expiresAt };

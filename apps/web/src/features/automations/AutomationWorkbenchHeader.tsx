@@ -21,8 +21,8 @@ export function AutomationWorkbenchHeader({
       data-desktop-window-drag-region="true"
     >
       <div className="automation-ui2-header-copy">
-        <h1 id="automations-title">{t("Automations")}</h1>
-        <p>{t("{count} automations · {enabled} enabled · {scheduled} scheduled watches · {attention} need attention", {
+        <h1 id="automations-title">{t("Scheduled tasks")}</h1>
+        <p>{t("{count} tasks · {enabled} enabled · {scheduled} scheduled · {attention} need attention", {
           attention: summary.attentionCount,
           count: summary.totalCount,
           enabled: summary.enabledCount,
@@ -36,7 +36,7 @@ export function AutomationWorkbenchHeader({
           onClick={onCreate}
           variant="primary"
         >
-          {t("Create automation")}
+          {t("Create task")}
         </Button>
       </div>
     </header>

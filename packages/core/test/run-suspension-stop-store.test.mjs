@@ -275,7 +275,8 @@ test("all stop authority/view/control/receipt bodies stay recovery and audit pin
   const f = await suspensionStopFixture(t); f.track(); f.seal(); f.begin(); await f.drain(); const stopped = f.commit();
   const ids = f.db.prepare("SELECT artifact_id FROM harness_artifact_pins WHERE holder LIKE 'host:run_suspension_stop:%' AND released_at IS NULL").all().map(row => row.artifact_id);
   assert.ok(ids.includes(stopped.beginArtifactId)); assert.ok(ids.includes(stopped.receiptArtifactId));
-  for (const artifactId of ids) f.store.enrollHarnessArtifactRetention({ artifactId, retainUntil: stopNow(), now: stopNow() });
+  const now = stopNow();
+  for (const artifactId of ids) f.store.enrollHarnessArtifactRetention({ artifactId, retainUntil: now, now });
   assert.deepEqual(f.store.collectHarnessArtifactBodies({ now: stopNow() }).prunedArtifactIds, []);
 });
 

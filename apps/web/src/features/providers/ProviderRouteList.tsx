@@ -17,12 +17,12 @@ import {
   TableHead,
   TableHeaderCell,
   TableRow,
-  Tooltip,
 } from "../../shared/ui/index.js";
 import {
   providerCheckDisplayGuidance,
   providerCheckDisplayMessage,
   providerCheckStatusLabel,
+  providerDisplaySourceLabel,
 } from "../../lib/providers.js";
 import type { ProviderCheckResult, ProviderPreset } from "../../types.js";
 import { ProviderRouteActions } from "./ProviderRouteActions.js";
@@ -74,8 +74,7 @@ export function ProviderRouteList({
           title={t("Add a model route to start using Ling.")}
           action={(
             <span className="provider-empty-actions">
-              <Button size="sm" variant="primary" onClick={() => onAddModel("chat")}>{t("Add chat model")}</Button>
-              <Button size="sm" onClick={() => onAddModel("generation")}>{t("Add image generation model")}</Button>
+              <Button size="sm" variant="primary" onClick={() => onAddModel()}>{t("Add model")}</Button>
             </span>
           )}
         />
@@ -119,18 +118,16 @@ export function ProviderRouteList({
             const rowCheckResult = checkScope === "row" && checkedProviderId === provider.id ? checkResult : undefined;
             const rowCheckGuidance = rowCheckResult ? providerCheckDisplayGuidance(rowCheckResult, provider, t) : "";
             const row = readProviderRouteRowView({ provider, rowCheckGuidance, t });
+            const disambiguator = duplicateModelDisambiguator(provider, providers);
             const tone = row.primaryStatusTone === "attention" ? "warning" : row.primaryStatusTone;
             return (
               <Fragment key={provider.id}>
                 <TableRow className="provider-row">
                   <TableCell className="provider-name-cell">
                     <span className="provider-name-main">
-                      <Tooltip content={row.sourceLabel}>
-                        <span className="provider-avatar" role="img" aria-label={row.sourceLabel} title={row.sourceLabel}>{row.sourceInitial}</span>
-                      </Tooltip>
                       <span className="provider-name-copy">
                         <strong title={row.modelLabel}>{row.modelLabel}</strong>
-                        {row.secondaryLabel ? <small title={row.secondaryLabel}>{row.secondaryLabel}</small> : null}
+                        {disambiguator ? <small title={disambiguator}>{disambiguator}</small> : null}
                       </span>
                     </span>
                   </TableCell>
@@ -183,8 +180,8 @@ export function ProviderRouteList({
                         <p>{providerCheckDisplayMessage(rowCheckResult, provider, t)}</p>
                         {rowCheckGuidance ? <small>{rowCheckGuidance}</small> : null}
                         {rowCheckResult.message ? (
-                          <InspectorSection className="provider-check-raw-details" title={t("Check details")}>
-                            <small>{providerCheckStatusLabel(rowCheckResult, t)}: {t(rowCheckResult.message)}</small>
+                          <InspectorSection className="provider-check-raw-details" title={t("Technical details")}>
+                            <small>{providerCheckStatusLabel(rowCheckResult, t)}: {rowCheckResult.message}</small>
                           </InspectorSection>
                         ) : null}
                       </InlineFeedback>
@@ -198,6 +195,21 @@ export function ProviderRouteList({
       </Table>
     </TableContainer>
   );
+}
+
+function duplicateModelDisambiguator(
+  provider: ProviderPreset,
+  providers: readonly ProviderPreset[],
+): string {
+  const modelLabel = (provider.model.trim() || provider.displayName.trim()).toLowerCase();
+  const duplicateCount = providers.filter((candidate) =>
+    (candidate.model.trim() || candidate.displayName.trim()).toLowerCase() === modelLabel
+  ).length;
+  if (duplicateCount < 2) return "";
+  const sourceLabel = providerDisplaySourceLabel(provider.displayName, provider.model).trim();
+  return sourceLabel && sourceLabel.toLowerCase() !== modelLabel
+    ? sourceLabel
+    : provider.providerId.trim();
 }
 
 function ProviderTableSkeleton(): React.JSX.Element {

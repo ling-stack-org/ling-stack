@@ -4,13 +4,16 @@ import { pathToFileURL } from "node:url";
 
 const EXECUTION_TIERS = new Set(["complete", "preview", "ignore"]);
 const SCOPE_MODES = new Set(["docs", "affected", "full"]);
-const LANES = ["SCOPE", "COMMON", "DEPENDENCY", "ASSURANCE", "BUILD", "TYPECHECK", "UNIT", "DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE"];
-const PRODUCT_LANES = ["ASSURANCE", "BUILD"];
+const LANES = ["SCOPE", "COMMON", "DEPENDENCY", "ASSURANCE", "BUILD", "TYPECHECK", "UNIT", "DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE", "WEB_SMOKE"];
 const SELECTOR_LANES = {
+  assurance: ["ASSURANCE"],
+  build: ["BUILD"],
   dependency: ["DEPENDENCY"],
   typecheck: ["TYPECHECK"],
   unit: ["UNIT"],
-  daemon: ["DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE"],
+  daemon: ["DAEMON", "LINUX_CONTRACT"],
+  macosNative: ["MACOS_NATIVE"],
+  web: ["WEB_SMOKE"],
 };
 const JOB_RESULTS = new Set(["success", "failure", "cancelled", "skipped"]);
 
@@ -56,17 +59,17 @@ export function selectExecutionTier({ eventName, event }) {
  * Fail closed if any selected lane did not execute successfully. Even a lane
  * outside the scope cannot hide a failure or cancellation behind the aggregate.
  * A Draft preview always fails the merge gate after its common checks pass.
- * @param {{tier: "complete"|"preview"|"ignore", mode: "docs"|"affected"|"full", dependency: boolean, typecheck: boolean, unit: boolean, daemon: boolean, results: Record<string, string>}} input
+ * @param {{tier: "complete"|"preview"|"ignore", mode: "docs"|"affected"|"full", assurance: boolean, build: boolean, dependency: boolean, typecheck: boolean, unit: boolean, daemon: boolean, macosNative: boolean, web: boolean, results: Record<string, string>}} input
  * @returns {true} Only a complete execution with all required lanes succeeding.
  * @throws {Error} For malformed scope, failed lanes, or intentionally deferred CI.
  */
-export function assertCiResults({ tier, mode, dependency, typecheck, unit, daemon, results }) {
+export function assertCiResults({ tier, mode, assurance, build, dependency, typecheck, unit, daemon, macosNative, web, results }) {
   if (!EXECUTION_TIERS.has(tier)) throw new Error(`Invalid EXECUTION_TIER: ${String(tier)}`);
   if (tier === "ignore") throw new Error("ignored_event_not_quality_gate: unrelated label events cannot publish the required CI context");
   if (!SCOPE_MODES.has(mode)) throw new Error(`Invalid SCOPE_MODE: ${String(mode)}`);
-  const selectors = { dependency, typecheck, unit, daemon };
+  const selectors = { assurance, build, dependency, typecheck, unit, daemon, macosNative, web };
   for (const [selector, selected] of Object.entries(selectors)) {
-    const name = `${selector.toUpperCase()}_SELECTED`;
+    const name = selector === "macosNative" ? "MACOS_NATIVE_SELECTED" : `${selector.toUpperCase()}_SELECTED`;
     if (typeof selected !== "boolean") throw new Error(`${name} must be true or false`);
     if (mode === "docs" && selected) throw new Error(`Invalid docs scope: ${name} must be false`);
     if (mode === "full" && !selected) throw new Error(`Invalid full scope: ${name} must be true`);
@@ -75,7 +78,6 @@ export function assertCiResults({ tier, mode, dependency, typecheck, unit, daemo
 
   const required = new Set(["SCOPE", "COMMON"]);
   if (tier === "complete") {
-    if (mode !== "docs") for (const lane of PRODUCT_LANES) required.add(lane);
     for (const [selector, lanes] of Object.entries(SELECTOR_LANES)) {
       if (selectors[selector]) for (const lane of lanes) required.add(lane);
     }
@@ -138,7 +140,7 @@ function main(args, env) {
   const options = parseArguments(args);
   if (options.checkQuality) {
     const selectors = Object.fromEntries(Object.keys(SELECTOR_LANES).map((selector) => {
-      const name = `${selector.toUpperCase()}_SELECTED`;
+      const name = selector === "macosNative" ? "MACOS_NATIVE_SELECTED" : `${selector.toUpperCase()}_SELECTED`;
       if (env[name] !== "true" && env[name] !== "false") throw new Error(`${name} must be true or false`);
       return [selector, env[name] === "true"];
     }));

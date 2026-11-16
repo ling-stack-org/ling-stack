@@ -32,7 +32,8 @@ test("mock relays close after startup and shutdown failures without hiding faile
   const env = { ...process.env };
   delete env.NODE_TEST_CONTEXT;
   // Run node:test in-process so the watchdog also owns any leaked HTTP listener.
-  const result = spawnSync(process.execPath, [fixture], { env, encoding: "utf8", timeout: 5000, killSignal: "SIGKILL" });
+  const result = spawnSync(process.execPath, ["--test-reporter=tap", fixture],
+    { env, encoding: "utf8", timeout: 5000, killSignal: "SIGKILL" });
   assert.ifError(result.error);
   assert.equal(result.status, 1, result.stdout + result.stderr);
   assert.match(result.stdout, /runtime_already_running/u);

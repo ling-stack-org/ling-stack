@@ -149,6 +149,8 @@ export function buildTelemetry({ run = {}, jobs = [], reports = [], capturedAt =
   const leakedProcessFiles = files
     .filter(result => result.status === "leaked_processes").length;
   const suiteSummaries = reportDetails.suites;
+  const daemonShardDurations = [suiteSummaries.daemon, suiteSummaries["daemon-linux"]]
+    .map(summary => summary?.maxShardFileDurationMs).filter(Number.isFinite);
   const finiteJobExecutions = jobDurations.map(job => job.executionMs).filter(Number.isFinite);
   const finiteJobStartDelays = jobDurations.map(job => job.startDelayMs).filter(Number.isFinite);
   return {
@@ -177,7 +179,7 @@ export function buildTelemetry({ run = {}, jobs = [], reports = [], capturedAt =
       maxJobExecutionMs: finiteJobExecutions.length ? Math.max(...finiteJobExecutions) : null,
       maxJobStartDelayMs: finiteJobStartDelays.length ? Math.max(...finiteJobStartDelays) : null,
       maxCoreShardFileDurationMs: suiteSummaries.core?.maxShardFileDurationMs ?? null,
-      maxDaemonShardFileDurationMs: suiteSummaries.daemon?.maxShardFileDurationMs ?? null,
+      maxDaemonShardFileDurationMs: daemonShardDurations.length ? Math.max(...daemonShardDurations) : null,
       shardImbalanceRatioBySuite: Object.fromEntries(Object.entries(suiteSummaries)
         .map(([suite, summary]) => [suite, summary.imbalanceRatio])),
     },

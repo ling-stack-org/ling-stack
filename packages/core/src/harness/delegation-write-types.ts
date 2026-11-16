@@ -7,7 +7,7 @@ export type DelegationWriteErrorCode = `delegation.${
   "invalid_input" | "source_attempt_stale" | "parent_not_running" | "root_budget_missing"
   | "root_budget_conflict" | "lineage_invalid" | "workflow_lineage_invalid" | "authority_invalid"
   | "capability_escalation" | "price_unknown" | "price_scope_conflict" | "deadline_exceeded"
-  | "budget_exhausted" | "depth_exceeded" | "cycle_detected" | "idempotency_conflict"
+  | "budget_exhausted" | "capacity_exhausted" | "depth_exceeded" | "cycle_detected" | "idempotency_conflict"
   | "persisted_fact_invalid" | "settlement_conflict" | "settlement_incomplete"}`;
 
 export class DelegationWriteError extends Error {

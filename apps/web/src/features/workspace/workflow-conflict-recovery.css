@@ -1,0 +1,15 @@
+.workflow-conflict-recovery-dialog form,
+.workflow-conflict-recovery-body { display: grid; min-width: 0; gap: 12px; }
+.workflow-conflict-recovery-body > strong { font-size: 14px; line-height: 20px; overflow-wrap: anywhere; }
+.workflow-conflict-recovery-body p { margin: 0; color: var(--ling-text-muted); line-height: 20px; overflow-wrap: anywhere; }
+.workflow-conflict-recovery-body dl { display: grid; gap: 8px; margin: 0; min-width: 0; }
+.workflow-conflict-recovery-body dl > div { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 12px; }
+.workflow-conflict-recovery-body dt { color: var(--ling-text-muted); font-size: 12px; }
+.workflow-conflict-recovery-body dd { margin: 0; min-width: 0; font-size: 12px; overflow-wrap: anywhere; }
+.workflow-conflict-recovery-body textarea { width: 100%; min-width: 0; resize: vertical; }
+.workflow-conflict-recovery-footer { flex-wrap: wrap; }
+.workflow-conflict-recovery-footer button { max-width: 100%; height: auto; min-height: 30px; padding-block: 5px; white-space: normal; overflow-wrap: anywhere; }
+.workflow-conflict-recovery-footer .ling-ui-button-label { overflow: visible; text-overflow: clip; white-space: normal; }
+@media (max-width: 480px) {
+  .workflow-conflict-recovery-body dl > div { grid-template-columns: minmax(0, 1fr); gap: 3px; }
+}

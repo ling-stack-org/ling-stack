@@ -4,6 +4,13 @@
   gap: var(--ling-space-3);
 }
 .learning-review-panel { padding: var(--ling-space-4); border: 1px solid var(--ling-border-default); border-radius: var(--ling-radius-md); }
+.ling-ui-popover-content.learning-review-popover {
+  width: min(420px, var(--radix-popover-content-available-width));
+  max-height: min(36rem, var(--radix-popover-content-available-height));
+  padding: 0;
+  overflow-wrap: anywhere;
+}
+.learning-review-popover > .learning-review-panel { border: 0; border-radius: 0; }
 .learning-review-panel p, .learning-review-result p { margin: 0; }
 .learning-review-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--ling-space-3); }
 .learning-review-toolbar strong { display: inline-flex; align-items: center; gap: var(--ling-space-2); }

@@ -48,6 +48,9 @@ import type {
   ChannelWorkflowCancelResponse,
   ChannelWorkflowMutationResponse,
   ChannelWorkflowOrchestrationResponse,
+  ChannelWorkflowOrchestrationRequest,
+  WorkflowConflictRecoveryRequest,
+  WorkflowConflictRecoveryResponse,
   ChannelWorkflowStatus,
   ChannelWorkflowStepListResponse,
   ChannelWorkflowStepMutationResponse,
@@ -846,8 +849,18 @@ export const channelEndpoints = {
       return this._post(`/workflow-steps/${encodeURIComponent(workflowStepId)}/retry`, { cwd }, {});
     },
 
-  async orchestrateChannelWorkflow(this: LingDaemonEndpointContext, cwd: string, workflowId: string): Promise<ChannelWorkflowOrchestrationResponse> {
-      return this._post(`/workflows/${encodeURIComponent(workflowId)}/orchestrate`, { cwd }, {});
+  async orchestrateChannelWorkflow(this: LingDaemonEndpointContext, cwd: string, workflowId: string,
+      input: ChannelWorkflowOrchestrationRequest = {}): Promise<ChannelWorkflowOrchestrationResponse> {
+      return this._post(`/workflows/${encodeURIComponent(workflowId)}/orchestrate`, { cwd }, input);
+    },
+
+  async recoverChannelWorkflowConflict(this: LingDaemonEndpointContext, cwd: string, workflowId: string,
+      input: WorkflowConflictRecoveryRequest): Promise<WorkflowConflictRecoveryResponse> {
+      return this._post(`/workflows/${encodeURIComponent(workflowId)}/conflict-recovery`, { cwd }, input);
+    },
+
+  async getChannelWorkflowConflictRecovery(this: LingDaemonEndpointContext, cwd: string, workflowId: string): Promise<WorkflowConflictRecoveryResponse> {
+      return this._get(`/workflows/${encodeURIComponent(workflowId)}/conflict-recovery`, { cwd });
     },
 
   async listChannelCollaborationCards(this: LingDaemonEndpointContext,

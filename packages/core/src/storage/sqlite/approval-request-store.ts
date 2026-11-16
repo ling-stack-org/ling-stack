@@ -60,6 +60,10 @@ export class SqliteApprovalRequestStore {
   }
 
   createApprovalRequest(input: CreateApprovalRequestInput, now: string, sourceFence?: RuntimeAttemptFenceV1): ApprovalRequest {
+    if ((input.actionType === "workflow_merge" || input.payload.type === "workflow_merge")
+      && [input.runId, input.taskId, input.mediaJobId, input.externalWorkActionId].some(owner => owner !== undefined)) {
+      throw new Error("Workflow merge approvals require only a workflowStepId owner.");
+    }
     const runId = normalizeOptionalOwnerId(input.runId);
     const taskId = normalizeOptionalOwnerId(input.taskId);
     const mediaJobId = normalizeOptionalOwnerId(input.mediaJobId);
@@ -115,6 +119,7 @@ export class SqliteApprovalRequestStore {
 
     this.context.database.exec("SAVEPOINT approval_request_creation");
     try {
+      this.assertWorkflowMergeApproval(approval);
       const inserted = this.context.database
         .prepare(`
           INSERT INTO approval_requests (
@@ -257,6 +262,9 @@ export class SqliteApprovalRequestStore {
     const existing = this.getApprovalRequest(input.approvalId);
     if (!existing) return { ok: false, code: "approval_not_found" };
     if (existing.status !== "pending") return { ok: false, code: "approval_not_pending" };
+    if (existing.actionType === "workflow_merge" || existing.payload.type === "workflow_merge") {
+      return { ok: false, code: "approval_system_reviewer_disallowed" };
+    }
     if (
       existing.createdAt !== input.approvalCreatedAt
       || existing.runId !== input.runId
@@ -288,6 +296,8 @@ export class SqliteApprovalRequestStore {
           decision_rule_id = NULL
         WHERE id = ?
           AND status = 'pending'
+          AND action_type <> 'workflow_merge'
+          AND CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.type') END IS NOT 'workflow_merge'
           AND created_at = ?
           AND run_id = ?
           AND tool_call_id = ?
@@ -327,11 +337,13 @@ export class SqliteApprovalRequestStore {
         const code: Extract<ResolveApprovalBySystemReviewerResult, { readonly ok: false }>["code"] =
           !latest ? "approval_not_found"
             : latest.status !== "pending" ? "approval_not_pending"
-              : latest.createdAt !== input.approvalCreatedAt || latest.runId !== input.runId || latest.toolCallId !== input.toolCallId
-                ? "approval_identity_changed"
-                : policyUpdatedAt?.updated_at !== input.workspacePolicyUpdatedAt
-                  ? "approval_policy_changed"
-                  : "approval_execution_stale";
+              : latest.actionType === "workflow_merge" || latest.payload.type === "workflow_merge"
+                ? "approval_system_reviewer_disallowed"
+                : latest.createdAt !== input.approvalCreatedAt || latest.runId !== input.runId || latest.toolCallId !== input.toolCallId
+                  ? "approval_identity_changed"
+                  : policyUpdatedAt?.updated_at !== input.workspacePolicyUpdatedAt
+                    ? "approval_policy_changed"
+                    : "approval_execution_stale";
         this.context.database.exec("ROLLBACK TO system_reviewer_approval_resolution");
         this.context.database.exec("RELEASE system_reviewer_approval_resolution");
         return { ok: false, code };
@@ -514,26 +526,34 @@ export class SqliteApprovalRequestStore {
     if (input.executionCleanup && status !== "denied" && status !== "cancelled") {
       throw new Error("Execution cleanup can only deny or cancel an approval.");
     }
-    const existing = this.getApprovalRequest(id);
-    if (!existing) {
-      return undefined;
-    }
-    if (existing.status !== "pending") {
-      throw new Error(`Approval request is not pending: ${id}`);
-    }
-
-    const decisionKind = status === "approved"
-      ? (input.decisionKind ?? "approve_once")
-      : status === "denied" ? "deny" : undefined;
-    if (status === "approved") {
-      assertApprovalDecisionAvailable(existing, decisionKind);
-      if (decisionKind === "approve_permission_scope" && (!existing.expiresAt
-        || !Number.isFinite(Date.parse(existing.expiresAt)) || !Number.isFinite(Date.parse(now))
-        || Date.parse(existing.expiresAt) <= Date.parse(now))) throw new ApprovalDecisionUnavailableError();
-    }
-
+    const nonGrantApproval = status === "approved" ? undefined : this.getApprovalRequest(id);
     this.context.database.exec("SAVEPOINT approval_request_resolution");
     try {
+      const existing = status === "approved" ? this.getApprovalRequest(id) : nonGrantApproval;
+      if (!existing) {
+        this.context.database.exec("RELEASE approval_request_resolution");
+        return undefined;
+      }
+      if (existing.status !== "pending") {
+        throw new Error(`Approval request is not pending: ${id}`);
+      }
+
+      const decisionKind = status === "approved"
+        ? (input.decisionKind ?? "approve_once")
+        : status === "denied" ? "deny" : undefined;
+      if (status === "approved") {
+        const merge = existing.actionType === "workflow_merge" || existing.payload.type === "workflow_merge";
+        if (merge && input.resolvedBy === "system-reviewer") throw new ApprovalDecisionUnavailableError();
+        this.assertWorkflowMergeApproval(existing);
+        if (merge && (!Number.isFinite(Date.parse(now))
+          || existing.expiresAt !== undefined && (!Number.isFinite(Date.parse(existing.expiresAt))
+            || Date.parse(existing.expiresAt) <= Date.parse(now)))) throw new ApprovalDecisionUnavailableError();
+        assertApprovalDecisionAvailable(existing, decisionKind);
+        if (decisionKind === "approve_permission_scope" && (!existing.expiresAt
+          || !Number.isFinite(Date.parse(existing.expiresAt)) || !Number.isFinite(Date.parse(now))
+          || Date.parse(existing.expiresAt) <= Date.parse(now))) throw new ApprovalDecisionUnavailableError();
+      }
+
       const update = this.context.database
         .prepare(`
           UPDATE approval_requests
@@ -572,6 +592,34 @@ export class SqliteApprovalRequestStore {
       this.context.database.exec("ROLLBACK TO approval_request_resolution");
       this.context.database.exec("RELEASE approval_request_resolution");
       throw error;
+    }
+  }
+
+  /** Consent ownership only; a generic approval never verifies or grants a merge permit. */
+  private assertWorkflowMergeApproval(approval: CreateApprovalRequestInput): void {
+    if (approval.actionType !== "workflow_merge" && approval.payload.type !== "workflow_merge") return;
+    if (approval.actionType !== "workflow_merge" || approval.payload.type !== "workflow_merge" || approval.payload.schemaVersion !== 1) {
+      throw new Error("Workflow merge approval action and versioned payload must match.");
+    }
+    if (!approval.workflowStepId || approval.workflowStepId !== approval.payload.workflowStepId
+      || [approval.runId, approval.taskId, approval.mediaJobId, approval.externalWorkActionId].some(owner => owner !== undefined)) {
+      throw new Error("Workflow merge approvals require only the matching workflowStepId owner.");
+    }
+    if (typeof approval.payload.workflowId !== "string" || !approval.channelId
+      || !this.context.database.prepare(`SELECT step.id FROM channel_workflow_steps step JOIN channels channel ON channel.id=step.channel_id
+        WHERE step.id=? AND step.workflow_id=? AND step.channel_id=?`)
+        .get(approval.workflowStepId, approval.payload.workflowId, approval.channelId)) {
+      throw new Error("Workflow merge approvals require the owning workflow and channel.");
+    }
+    if (typeof approval.expiresAt !== "string" || typeof approval.payload.expiresAt !== "string"
+      || approval.expiresAt !== approval.payload.expiresAt
+      || !Number.isFinite(Date.parse(approval.expiresAt))) {
+      throw new Error("Workflow merge approval expiry must match its payload.");
+    }
+    if (approval.proposedCommandRule !== undefined || approval.availableDecisions !== undefined
+      && (!Array.isArray(approval.availableDecisions) || approval.availableDecisions.length === 0
+        || approval.availableDecisions.some(decision => decision !== "approve_once" && decision !== "deny"))) {
+      throw new Error("Workflow merge approvals only support approve_once and deny.");
     }
   }
 

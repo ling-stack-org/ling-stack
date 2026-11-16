@@ -387,6 +387,34 @@ test("runtime startup reconcile appends work-unit control-plane events outside w
   }
 });
 
+test("runtime endpoint exposes the trusted Host concurrency policy for client readback", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-runtime-concurrency-readback-"));
+  const daemon = await startDaemonForTest({ config: { concurrency: {
+    enabled: true,
+    maxConcurrentRuns: 8,
+    maxReadOnlyRuns: 6,
+    maxWorkspaceWriteRuns: 3,
+    maxRunsPerProvider: 5,
+    maxRunsPerRunner: 7,
+    isolatedWriteMaxConcurrentSteps: 3,
+  } } });
+  try {
+    const response = await getJson(`${daemon.url}/runtime?cwd=${encodeURIComponent(cwd)}`);
+    assert.deepEqual(response.concurrency, {
+      enabled: true,
+      maxConcurrentRuns: 8,
+      maxReadOnlyRuns: 6,
+      maxWorkspaceWriteRuns: 3,
+      maxRunsPerProvider: 5,
+      maxRunsPerRunner: 7,
+      isolatedWriteMaxConcurrentSteps: 3,
+    });
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("control-plane SSE stream replays events and emits heartbeat without using run streams", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-control-plane-sse-"));
   const stores = new Map();

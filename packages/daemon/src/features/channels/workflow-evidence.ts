@@ -12,6 +12,7 @@ import { listAllExecutionActionsForRun, listExecutionActions } from "../runs/exe
 import { projectPublicRunSession } from "../runs/public-execution-snapshots.js";
 import { toPublicArtifactMetadata } from "../runs/public-artifacts.js";
 import { buildWorkflowContextInspectSummary, type WorkflowContextInspectSummary } from "./context-processing/inspect.js";
+import { buildWorkflowIsolationEvidence } from "./workflow-isolation-evidence.js";
 import {
   readWorkflowStepContextPacketArtifact,
   readWorkflowStepOutputPacketArtifact,
@@ -32,6 +33,7 @@ export interface WorkflowEvidenceDiagnostic {
 
 export interface WorkflowEvidence {
   readonly workflow: ChannelWorkflow;
+  readonly isolation?: ReturnType<typeof buildWorkflowIsolationEvidence>;
   readonly steps: readonly {
     readonly step: ChannelWorkflowStep;
     readonly contextPacket?: ReturnType<typeof readWorkflowStepContextPacketArtifact>;
@@ -103,6 +105,7 @@ export function buildWorkflowEvidence(store: RunStore, workflowId: string): Work
   const artifacts = uniqueArtifacts(evidenceSteps.flatMap((step) => [...step.packetArtifacts, ...step.linkedArtifacts]));
   return {
     workflow,
+    isolation: buildWorkflowIsolationEvidence(store, workflowId),
     steps: evidenceSteps,
     selectorDecisions,
     handoffIntents,

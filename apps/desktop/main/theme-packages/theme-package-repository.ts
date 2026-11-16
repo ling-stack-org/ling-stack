@@ -133,11 +133,15 @@ export class DesktopThemePackageRepository implements DesktopThemePackageCapabil
         if (!entry) throw repositoryError("theme_not_found", { themeId: request.themeId });
         if (entry.descriptor.health === "corrupt") return themeSuccess({ descriptor: entry.descriptor });
         const installed = await readInstalledTheme(this.#context(), entry.packagePath, {
+            includeLaunchAnimationBytes: request.includeLaunchAnimationBytes === true,
           includePreviewBytes: request.includePreviewBytes === true,
         });
         return themeSuccess({
           descriptor: entry.descriptor,
           ...(installed.licenseText !== undefined ? { licenseText: installed.licenseText } : {}),
+          ...(installed.launchAnimationBytes
+            ? { launchAnimationBytes: copyThemeArrayBuffer(installed.launchAnimationBytes) }
+            : {}),
           ...(installed.previewBytes
             ? { previewBytes: copyThemeArrayBuffer(installed.previewBytes) }
             : {}),
@@ -532,6 +536,7 @@ export class DesktopThemePackageRepository implements DesktopThemePackageCapabil
       installedAt: installed.record.installedAt,
       updatedAt: installed.record.updatedAt,
       ...(installed.preview ? { preview: installed.preview } : {}),
+      ...(installed.launchAnimation ? { launchAnimation: installed.launchAnimation } : {}),
     });
   }
 

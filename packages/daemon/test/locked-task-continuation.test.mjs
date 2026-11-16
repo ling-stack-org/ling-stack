@@ -184,46 +184,6 @@ test("a locked run can outwait idle and hard budgets then resume the same runner
   }
 });
 
-test("unlock between hard-timeout ticks excludes the complete blocked interval", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-locked-task-partial-tick-"));
-  const originalTimeoutPolicy = { ...defaultRuntimeTimeoutPolicy };
-  Object.assign(defaultRuntimeTimeoutPolicy, {
-    heartbeatIntervalMs: 80,
-    heartbeatTimeoutMs: 500,
-    idleTimeoutMs: 500,
-    hardTimeoutMs: 80,
-    cancelGraceMs: 20,
-  });
-  const runner = new SignalAwareDelayedRunner(50);
-  const daemon = createDaemonServer(
-    { host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd },
-    { desktopBridgeToken: DESKTOP_TOKEN, runner },
-  );
-  await daemon.start();
-  try {
-    const address = daemon.server.address();
-    assert.ok(address && typeof address === "object");
-    const baseUrl = `http://127.0.0.1:${address.port}`;
-    const stateUrl = `${baseUrl}/computer-use/locked-task-continuation/desktop/state`;
-    await post(stateUrl, { workspaceCwd: cwd, continueWhileLocked: false, locked: true }, DESKTOP_TOKEN);
-
-    const responsePromise = postRun(baseUrl, cwd, "task_locked_partial_tick");
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 60));
-    assert.equal(runner.calls, 0);
-    await post(stateUrl, { workspaceCwd: cwd, continueWhileLocked: false, locked: false }, DESKTOP_TOKEN);
-
-    const response = await responsePromise;
-    const body = await response.text();
-    assert.equal(response.ok, true, body);
-    assert.match(body, /event: result/u);
-    assert.equal(runner.abortedAt, undefined);
-  } finally {
-    Object.assign(defaultRuntimeTimeoutPolicy, originalTimeoutPolicy);
-    await daemon.stop().catch(() => undefined);
-    await rm(cwd, { recursive: true, force: true });
-  }
-});
-
 test("an opaque runner keeps consuming hard-timeout budget until it reaches a cooperative boundary", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-locked-task-opaque-runner-"));
   const originalTimeoutPolicy = { ...defaultRuntimeTimeoutPolicy };

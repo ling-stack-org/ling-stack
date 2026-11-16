@@ -1,4 +1,4 @@
-import { FileWarning } from "lucide-react";
+import { FileWarning, RefreshCw } from "lucide-react";
 import type {
   ConversationTimelineDiagnosticItem,
   ConversationTimelineRuntimeDiagnostic,
@@ -20,14 +20,17 @@ export function ConversationTimelineDiagnosticRenderer({
   const executionLoop = item.runtimeDiagnostic?.code === "execution_loop_detected"
     ? item.runtimeDiagnostic
     : undefined;
+  const runFeedback = item.code === "run_feedback";
 
   return (
     <TimelineFactRow
       item={item}
       depth={depth}
       title={executionLoop ? t("Repeated execution stopped") : item.title}
-      meta={executionLoop ? t("No new evidence") : item.code}
-      icon={<FileWarning size={14} aria-hidden="true" />}
+      meta={executionLoop ? t("No new evidence") : runFeedback ? item.meta ?? null : item.code}
+      compact={runFeedback}
+      defaultExpanded={runFeedback ? false : undefined}
+      icon={runFeedback && item.status === "running" ? <RefreshCw size={14} aria-hidden="true" /> : <FileWarning size={14} aria-hidden="true" />}
       detail={executionLoop
         ? <ExecutionLoopDiagnosticDetail diagnostic={executionLoop} />
         : detailExists(item) ? <TextDetail text={item.description ?? item.summary} cwd={cwd} /> : undefined}

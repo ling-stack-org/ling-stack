@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { DelegationLifecycleError, DelegationWriteError } from "@ling-stack/core";
 import { createDelegationRunnerToolHandler } from "../dist/features/harness/delegations/runner-tools.js";
 
 const observation = (changes = {}) => ({
@@ -15,7 +16,7 @@ const observation = (changes = {}) => ({
   ...changes,
 });
 
-function fixture() {
+function fixture(overrides = {}) {
   const calls = [];
   const waitSignal = new AbortController().signal;
   const tools = {
@@ -24,6 +25,7 @@ function fixture() {
     async wait(input) { calls.push(["wait", input]); return { timedOut: false, observation: observation({ classification: "terminal", state: "succeeded", runStatus: "succeeded" }) }; },
     interrupt(input) { calls.push(["interrupt", input]); return { ...observation({ state: "interrupting" }), replayed: false }; },
     resume(input) { calls.push(["resume", input]); return { ...observation({ state: "resuming", stepRevision: 3 }), replayed: false }; },
+    ...overrides,
   };
   return { calls, waitSignal, handler: createDelegationRunnerToolHandler({ tools, signal: waitSignal }) };
 }
@@ -102,3 +104,75 @@ test("blocked and timed-out observations remain explicit and never become succes
   assert.equal(waited.timedOut, true);
   assert.equal(calls.length, 1);
 });
+
+const capacityCode = "delegation.capacity_exhausted";
+const admissionRequests = [
+  ["spawn", { toolName: "spawn_agent", toolCallId: "spawn-capacity",
+    input: { objective: "Inspect.", required: true, requestedBudget: {} } }, "accepted"],
+  ["resume", { toolName: "resume_agent", toolCallId: "resume-capacity",
+    input: { reservationId: "reservation-1", expectedStepRevision: 2 } }, "resume_requested"],
+];
+
+for (const [method, request, successStatus] of admissionRequests) {
+  for (const ErrorClass of [DelegationWriteError, DelegationLifecycleError]) {
+    test(`${method} returns an ID-free blocked receipt for ${ErrorClass.name} capacity exhaustion`, async () => {
+      const failure = Object.assign(new ErrorClass(capacityCode), {
+        reservationId: "uncommitted-reservation", childRunId: "uncommitted-child", stepId: "uncommitted-step",
+      });
+      const calls = [];
+      const f = fixture({ [method](input) {
+        calls.push(input);
+        if (calls.length === 1) throw failure;
+        return { ...observation(), replayed: false };
+      } });
+      const result = await f.handler(request);
+      assert.deepEqual(result, { status: "blocked", code: capacityCode });
+      assert.ok(Object.isFrozen(result));
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0][method === "spawn" ? "spawnCallId" : "callId"], request.toolCallId);
+      const accepted = await f.handler({ ...request, toolCallId: `${request.toolCallId}-retry` });
+      assert.equal(accepted.status, successStatus);
+      assert.equal(accepted.childRunId, "child-run-1");
+      assert.equal(calls.length, 2);
+    });
+  }
+
+  test(`${method} rethrows non-capacity and untrusted errors without changing their identity`, async () => {
+    const failures = [
+      new DelegationWriteError("delegation.budget_exhausted"),
+      new DelegationWriteError("delegation.source_attempt_stale"),
+      new DelegationLifecycleError("delegation.lifecycle_conflict"),
+      new DelegationLifecycleError("delegation.authority_invalid"),
+      Object.assign(new DelegationWriteError(capacityCode), { code: `${capacityCode}.retry` }),
+      Object.assign(new DelegationLifecycleError(capacityCode), { code: `${capacityCode} ` }),
+      new Error("SQLite admission failed"),
+      Object.assign(new Error(capacityCode), { code: capacityCode, name: "DelegationWriteError" }),
+      { code: capacityCode, name: "DelegationLifecycleError" },
+      capacityCode, null, undefined,
+    ];
+    for (const failure of failures) {
+      let calls = 0;
+      const f = fixture({ [method]() { calls++; throw failure; } });
+      await assert.rejects(() => f.handler(request), error => error === failure);
+      assert.equal(calls, 1);
+    }
+  });
+}
+
+for (const [method, request] of [
+  ["message", { toolName: "send_message", toolCallId: "message-capacity",
+    input: { reservationId: "reservation-1", text: "Continue." } }],
+  ["wait", { toolName: "wait_agent", toolCallId: "wait-capacity",
+    input: { reservationId: "reservation-1", timeoutMs: 0 } }],
+  ["interrupt", { toolName: "interrupt_agent", toolCallId: "interrupt-capacity",
+    input: { reservationId: "reservation-1" } }],
+]) {
+  test(`${method} does not reinterpret capacity errors as admission results`, async () => {
+    for (const ErrorClass of [DelegationWriteError, DelegationLifecycleError]) {
+      const failure = new ErrorClass(capacityCode);
+      const fail = () => { throw failure; };
+      const f = fixture({ [method]: method === "wait" ? async () => fail() : fail });
+      await assert.rejects(() => f.handler(request), error => error === failure);
+    }
+  });
+}

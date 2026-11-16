@@ -1,4 +1,6 @@
 import {
+  DelegationLifecycleError,
+  DelegationWriteError,
   delegationBudget,
   delegationId,
   delegationInteger,
@@ -20,9 +22,12 @@ export function createDelegationRunnerToolHandler(input: {
       case "spawn_agent": {
         const value = delegationRecord(request.input, ["objective", "required", "participantId", "requestedBudget"]);
         if (typeof value.required !== "boolean") return delegationWriteFail("delegation.invalid_input");
-        const observation = input.tools.spawn({ spawnCallId: toolCallId,
-          objective: boundedText(value.objective), requestedBudget: requestedBudget(value.requestedBudget),
-          required: value.required, ...(value.participantId === undefined ? {} : { participantId: boundedId(value.participantId) }) });
+        let observation;
+        try {
+          observation = input.tools.spawn({ spawnCallId: toolCallId,
+            objective: boundedText(value.objective), requestedBudget: requestedBudget(value.requestedBudget),
+            required: value.required, ...(value.participantId === undefined ? {} : { participantId: boundedId(value.participantId) }) });
+        } catch (error) { return admissionFailureResult(error); }
         return observationResult(observation.code ? "blocked" : observation.classification === "terminal" ? "terminal" : "accepted", observation);
       }
       case "send_message": {
@@ -46,13 +51,24 @@ export function createDelegationRunnerToolHandler(input: {
       }
       case "resume_agent": {
         const value = delegationRecord(request.input, ["reservationId", "expectedStepRevision"]);
-        const observation = input.tools.resume({ reservationId: boundedId(value.reservationId),
-          expectedStepRevision: boundedInteger(value.expectedStepRevision, 1, Number.MAX_SAFE_INTEGER),
-          callId: toolCallId });
+        let observation;
+        try {
+          observation = input.tools.resume({ reservationId: boundedId(value.reservationId),
+            expectedStepRevision: boundedInteger(value.expectedStepRevision, 1, Number.MAX_SAFE_INTEGER),
+            callId: toolCallId });
+        } catch (error) { return admissionFailureResult(error); }
         return observationResult(observation.code ? "blocked" : "resume_requested", observation);
       }
     }
   };
+}
+
+function admissionFailureResult(error: unknown): PiRunnerDelegationToolResult {
+  if ((error instanceof DelegationWriteError || error instanceof DelegationLifecycleError)
+    && error.code === "delegation.capacity_exhausted") {
+    return Object.freeze({ status: "blocked", code: error.code });
+  }
+  throw error;
 }
 
 function observationResult(status: string, value: DelegationRuntimeObservation,

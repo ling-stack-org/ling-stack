@@ -79,7 +79,7 @@ export type RuntimeEventType =
   | "stale_runner_completion_ignored"
   | "diagnostic_stuck_detected";
 
-export type RuntimeSemaphoreResourceType = "provider" | "channel_parallel" | "runner" | "media_provider";
+export type RuntimeSemaphoreResourceType = "provider" | "channel_parallel" | "runner" | "media_provider" | "workflow_resource";
 
 export type RuntimeSemaphoreSlotStatus = "active" | "released" | "expired";
 
@@ -323,6 +323,8 @@ export interface AppendRuntimeDiagnosticEventInput {
 export interface ListRuntimeEventsOptions {
   readonly afterSeq?: number;
   readonly limit?: number;
+  /** Read every matching row when the caller must prove that no audit was truncated. */
+  readonly complete?: boolean;
 }
 
 export interface RuntimeHeartbeat {
@@ -379,6 +381,11 @@ export interface AcquireRuntimeSemaphoreSlotInput extends RuntimeAttemptFenceV1 
   readonly expiresAt: string;
 }
 
+export type AcquireRuntimeSemaphoreSlotsResult =
+  | { readonly status: "acquired"; readonly slots: readonly RuntimeSemaphoreSlot[] }
+  | { readonly status: "full"; readonly resourceType: RuntimeSemaphoreResourceType; readonly resourceKey: string }
+  | { readonly status: "changed" };
+
 export interface ListRuntimeSemaphoreSlotsOptions {
   readonly status?: RuntimeSemaphoreSlotStatus;
   readonly resourceType?: RuntimeSemaphoreResourceType;
@@ -386,6 +393,8 @@ export interface ListRuntimeSemaphoreSlotsOptions {
   readonly ownerId?: string;
   readonly workUnitId?: string;
   readonly limit?: number;
+  /** Read every matching row when the caller must prove that no row was truncated. */
+  readonly complete?: boolean;
 }
 
 export interface RuntimeDiagnostics {

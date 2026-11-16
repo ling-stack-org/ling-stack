@@ -46,6 +46,7 @@ export function themePackagePublication(candidate: ParsedWebThemePackage) {
     manifest: candidate.manifest,
     packageChecksumSha256: candidate.packageChecksumSha256,
     ...(candidate.licenseText !== undefined ? { licenseText: candidate.licenseText } : {}),
+    ...(candidate.launchAnimation !== undefined ? { launchAnimation: candidate.launchAnimation } : {}),
     ...(candidate.preview !== undefined ? { preview: candidate.preview } : {}),
   });
 }
@@ -69,6 +70,7 @@ export function storedPackageFromRepositoryRead(
     ...(value.descriptor.packageChecksumSha256 !== undefined
       ? { packageChecksumSha256: value.descriptor.packageChecksumSha256 }
       : {}),
+    ...(value.launchAnimation !== undefined ? { launchAnimation: value.launchAnimation } : {}),
     ...(value.preview !== undefined ? { preview: value.preview } : {}),
   });
 }

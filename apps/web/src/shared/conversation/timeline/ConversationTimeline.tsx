@@ -54,6 +54,7 @@ export interface ConversationTimelineProps {
     command: UserInputAnswerCommandV1,
   ) => Promise<UserInputAnswerAcceptedResponseV1>;
   readonly renderMessageChrome?: (item: Extract<ConversationTimelineItem, { kind: "userMessage" | "agentMessage" }>, body: ReactNode, presentation: ConversationTimelineMessagePresentation) => ReactNode;
+  readonly renderProtocolDetail?: (item: Extract<ConversationTimelineItem, { kind: "protocolEvent" }>) => ReactNode;
   readonly renderResponseActions?: ConversationTimelineResponseActionsRenderer;
   readonly emptyLabel?: ReactNode;
   /**
@@ -106,6 +107,7 @@ export function ConversationTimeline({
   renderUserInputAvatar,
   onSubmitUserInputAnswer,
   renderMessageChrome,
+  renderProtocolDetail,
   renderResponseActions,
   emptyLabel,
   virtualScrollRef,
@@ -312,6 +314,7 @@ export function ConversationTimeline({
             onInvokeProtocolAction,
             onDisclosureIntent,
             renderMessageChrome,
+            renderProtocolDetail,
             renderResponseActions,
             responsePresentation,
             visibleIdentityOwners,
@@ -346,6 +349,7 @@ export function ConversationTimeline({
         onInvokeProtocolAction,
         onDisclosureIntent,
         renderMessageChrome,
+        renderProtocolDetail,
         renderResponseActions,
         responsePresentation,
         visibleIdentityOwners,
@@ -432,7 +436,7 @@ function countAtomicItems(items: readonly ConversationTimelineItem[]): number {
   }, 0);
 }
 
-type TimelineRenderContext = Pick<ConversationTimelineProps, "cwd" | "loadPreview" | "onOpenSourceRef" | "onOpenReview" | "onInvokeProtocolAction" | "onDisclosureIntent" | "renderMessageChrome" | "renderSubAgentAvatar" | "renderUserInputAvatar" | "onSubmitUserInputAnswer"> & {
+type TimelineRenderContext = Pick<ConversationTimelineProps, "cwd" | "loadPreview" | "onOpenSourceRef" | "onOpenReview" | "onInvokeProtocolAction" | "onDisclosureIntent" | "renderMessageChrome" | "renderProtocolDetail" | "renderSubAgentAvatar" | "renderUserInputAvatar" | "onSubmitUserInputAnswer"> & {
   readonly scopeKind?: ConversationTimelineScopeKind;
   readonly depth: 0 | 1;
 };
@@ -561,6 +565,7 @@ function renderTimelineDisplayRow(
         onInvokeProtocolAction: context.onInvokeProtocolAction,
         onDisclosureIntent: context.onDisclosureIntent,
         renderMessageChrome: context.renderMessageChrome,
+        renderProtocolDetail: context.renderProtocolDetail,
         messagePresentation: { ownsIdentity: row.item.kind === "userMessage" || context.visibleIdentityOwners.has(row.item.id) },
         hasResponseNarration: Boolean(response && hasFinalTimelineResponseNarration(response)),
         renderSubAgentAvatar: context.renderSubAgentAvatar,
@@ -592,6 +597,7 @@ function renderTimelineItem(
     onOpenSourceRef: context.onOpenSourceRef,
     onInvokeProtocolAction: context.onInvokeProtocolAction,
     renderMessageChrome: context.renderMessageChrome,
+    renderProtocolDetail: context.renderProtocolDetail,
     messagePresentation: context.messagePresentation,
     hasResponseNarration: context.hasResponseNarration,
     depth: context.depth,

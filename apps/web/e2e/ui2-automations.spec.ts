@@ -32,6 +32,12 @@ test("AUTO-LIST/STATUS/INSPECT handles 100 rows, search, stale refresh, keyboard
   await expect(surface.getByRole("tab")).toHaveCount(4);
   await expect(surface.locator("[data-automation-inspector]")).toHaveCount(0);
   await expect(surface.getByRole("option", { name: "Automation 001" })).toBeVisible();
+  await surface.getByRole("tab", { name: /Scheduled tasks/ }).click();
+  await expect(surface.getByRole("option", { name: "Automation 001" })).toBeVisible();
+  await expect(surface.getByRole("option", { name: "Automation 002" })).toBeVisible();
+  const failureToast = page.locator(".ling-ui-toast");
+  await failureToast.getByRole("button", { name: /Dismiss notification|关闭提示/ }).click({ timeout: 1500 }).catch(() => undefined);
+  await captureEvidence(page, "1440x960-ling-light-scheduled-tasks.png", { width: 1440, height: 960 });
   const scrollRegion = surface.locator("[data-automation-scroll-region]");
   expect(await scrollRegion.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
   await assertNoHorizontalOverflow(page, surface);
@@ -81,34 +87,34 @@ test("AUTO-CREATE uses one keyboard-safe shared dialog and preserves failed manu
   const monitor = watchRuntime(page);
 
   await openAutomations(page);
-  const createAutomationButton = page.getByRole("button", { name: "Create automation" });
+  const createAutomationButton = page.getByRole("button", { name: "Create task" });
   await createAutomationButton.click();
-  let dialog = page.getByRole("dialog", { name: "New automation" });
+  let dialog = page.getByRole("dialog", { name: "New task" });
   await expect(dialog.getByRole("radio")).toHaveCount(3);
   expect(await dialog.evaluate((element) => getComputedStyle(element).animationName)).toBe("none");
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
 
   await createAutomationButton.click();
-  dialog = page.getByRole("dialog", { name: "New automation" });
+  dialog = page.getByRole("dialog", { name: "New task" });
   await dialog.getByRole("radio", { name: "Manual setup" }).click();
   await expect(dialog.getByLabel("Model").locator('option[value="provider_local"]')).toHaveText("gpt-test · 127.0.0.1:8317");
   await expect(dialog).not.toContainText("gpt-test · gpt-test");
-  await dialog.getByRole("button", { name: "Create automation" }).click();
+  await dialog.getByRole("button", { name: "Create task" }).click();
   await expect(dialog.getByLabel("Automation name")).toBeFocused();
   await dialog.getByLabel("Automation name").fill("Daily evidence review");
   await dialog.getByLabel("Execution action").fill("Review recent runs and approvals with evidence.");
   await dialog.getByLabel("Schedule").selectOption("daily");
   fixture.failNextCreate = true;
-  await dialog.getByRole("button", { name: "Create automation" }).click();
+  await dialog.getByRole("button", { name: "Create task" }).click();
   await expect(dialog.getByText("Fixture create unavailable.")).toBeVisible();
   await expect(dialog.getByLabel("Automation name")).toHaveValue("Daily evidence review");
 
-  await dialog.getByRole("button", { name: "Create automation" }).click();
+  await dialog.getByRole("button", { name: "Create task" }).click();
   await expect(dialog).toHaveCount(0);
   await dismissToasts(page);
   await createAutomationButton.click();
-  dialog = page.getByRole("dialog", { name: "New automation" });
+  dialog = page.getByRole("dialog", { name: "New task" });
 
   await dialog.getByRole("radio", { name: "Use template" }).click();
   await dialog.getByRole("option", { name: /Bug Scan/ }).click();
@@ -117,7 +123,7 @@ test("AUTO-CREATE uses one keyboard-safe shared dialog and preserves failed manu
   await captureEvidence(page, "1440x960-ling-light-create-review.png", { width: 1440, height: 960 });
 
   fixture.createDelayMs = 180;
-  await dialog.getByRole("button", { name: "Create automation" }).click();
+  await dialog.getByRole("button", { name: "Create task" }).click();
   await expect(dialog).toHaveAttribute("aria-busy", "true");
   await page.keyboard.press("Escape");
   await expect(dialog).toBeVisible();
@@ -136,8 +142,8 @@ test("AUTO-CREATE chat draft keeps invalid input and exposes repair without pret
   const monitor = watchRuntime(page);
 
   await openAutomations(page);
-  await page.getByRole("button", { name: "Create automation" }).click();
-  const dialog = page.getByRole("dialog", { name: "New automation" });
+  await page.getByRole("button", { name: "Create task" }).click();
+  const dialog = page.getByRole("dialog", { name: "New task" });
   await dialog.getByRole("radio", { name: "Create from conversation" }).click();
   await dialog.getByLabel("Request").fill("invalid draft without a target");
   await dialog.getByRole("button", { name: "Create draft" }).click();
@@ -195,7 +201,7 @@ test("AUTO-SCHEDULE/TARGET/RUN/INSPECT keeps scheduler, repair, raw details, and
   await inspector.getByRole("button", { name: "Target" }).click();
   await expect.poll(() => readTargetScope(fixture.definitions.find((item) => item.id === missing.id))).toBe("workspace");
 
-  await surface.getByRole("tab", { name: /Enabled automations/ }).click();
+  await surface.getByRole("tab", { name: /Scheduled tasks/ }).click();
   await scheduledRow(surface).getByRole("button", { name: "Schedule" }).click();
   const scheduleDialog = page.getByRole("dialog", { name: "Schedule" });
   await scheduleDialog.getByRole("combobox", { name: "Schedule" }).selectOption("interval");
@@ -251,7 +257,7 @@ test("AUTO-THEME keeps imported Theme Pack ownership on the list and shared crea
   await page.goto("/");
   const themeId = await seedImportedQuietOcean(page);
   await page.reload();
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Automations" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Scheduled tasks" }).click();
 
   const root = page.locator("html");
   const surface = page.locator("[data-automation-ui2-page]");
@@ -262,9 +268,9 @@ test("AUTO-THEME keeps imported Theme Pack ownership on the list and shared crea
   await captureEvidence(page, "1440x960-quiet-ocean-list-inspector.png", { width: 1440, height: 960 });
 
   await page.locator("[data-desktop-window-titlebar-surface='true']")
-    .getByRole("button", { name: "Create automation" })
+    .getByRole("button", { name: "Create task" })
     .click();
-  const dialog = page.getByRole("dialog", { name: "New automation" });
+  const dialog = page.getByRole("dialog", { name: "New task" });
   await expect(dialog).toBeVisible();
   await expectBackgroundToMatchToken(dialog, "--ling-bg-elevated");
   await captureEvidence(page, "1280x800-quiet-ocean-create-dialog.png", { width: 1280, height: 800 });
@@ -630,7 +636,7 @@ async function initializePage(page: Page, locale: "en-US" | "zh-CN", theme: "dar
 
 async function openAutomations(page: Page): Promise<void> {
   await page.goto("/");
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Automations" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Scheduled tasks" }).click();
   await expect(page.locator("[data-automation-ui2-page]")).toBeVisible();
 }
 

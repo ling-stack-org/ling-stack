@@ -30,21 +30,26 @@ export interface ThemePackageRepositoryPreview {
   readonly width: number;
 }
 
+export type ThemePackageRepositoryLaunchAnimation = ThemePackageRepositoryPreview;
+
 export interface ThemePackageRepositoryPublication {
   readonly licenseText?: string;
   readonly manifest: LingThemePackManifest;
   readonly packageChecksumSha256: string;
+  readonly launchAnimation?: ThemePackageRepositoryLaunchAnimation;
   readonly preview?: ThemePackageRepositoryPreview;
 }
 
 export interface ThemePackageRepositoryReadValue {
   readonly descriptor: ThemePackageRepositoryDescriptor;
   readonly licenseText?: string;
+  readonly launchAnimation?: ThemePackageRepositoryLaunchAnimation;
   readonly preview?: ThemePackageRepositoryPreview;
 }
 
 export interface ThemePackageRepositoryReadRequest {
   readonly includePreviewBytes: boolean;
+  readonly includeLaunchAnimationBytes?: boolean;
   readonly themeId: string;
 }
 

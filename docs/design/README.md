@@ -2,7 +2,7 @@
 
 Status: canonical documentation index
 Owner: repository maintainers
-Last verified: 2026-10-29 (business data/API compatibility hardening; other delivery states retain their owners)
+Last verified: 2026-11-02 (safe-concurrency design/plan added; other delivery states retain their owners)
 Document type: governance index
 Code and test anchors: each linked contract owns its anchors
 
@@ -106,6 +106,7 @@ retains the detailed implementation brief and historical checkpoint.
 
 ## Teammates, Memory, And Skills
 
+- [Ling Companion](companion.md)
 - [AI Teammate Private Workspace](ai-teammate-private-workspace.md)
 - [AI Teammates And Skills](ai-teammates-and-skills.md)
 - [AI Councils](ai-councils.md)
@@ -130,6 +131,11 @@ retains the detailed implementation brief and historical checkpoint.
 - [Inline Runtime Approval](inline-runtime-approval-detailed-design.md)
 - [State Machines And Recovery](state-machine-recovery.md)
 - [Multi-Channel Concurrency](multi-channel-concurrency.md)
+- [Multi-Agent App Detailed Design](multi-agent-app-detailed-design.md)
+- [Multi-Agent Orchestrator](multi-agent-orchestrator.md)
+- [Orchestrator Advanced](orchestrator-advanced.md)
+- [Ling 多 Agent 安全并发详细设计](ling-multi-agent-safe-concurrency-detailed-design.md)
+- [Ling 多 Agent 安全并发实施计划](ling-multi-agent-safe-concurrency-implementation-plan.md)
 - [Runtime Supervisor](runtime-supervisor.md)
 - [Runtime Control Plane](runtime-control-plane-roadmap.md)
 - [Secrets And Keychain](secrets-keychain.md)

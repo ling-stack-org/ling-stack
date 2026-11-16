@@ -283,6 +283,7 @@ export interface LingDesktopCapabilities {
   readonly backgrounds?: import("./background-capabilities.js").DesktopBackgroundCapabilities;
   readonly humanEvaluation?: import("./human-evaluation-capabilities.js").DesktopHumanEvaluationCapabilities;
   readonly platform: DesktopPlatform;
+  readonly productVersion?: string;
   readonly daemonBaseUrl: string;
   readonly appearance: {
     reportTheme(theme: DesktopRendererThemeInput): void;

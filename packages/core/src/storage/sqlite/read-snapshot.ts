@@ -1,8 +1,32 @@
 import type { DatabaseSync } from "node:sqlite";
 
-// Only snapshots or explicit read windows opened by this module may be nested. Never adopt an unrelated
+// Only snapshots or explicit parent/read scopes opened by this module may be nested. Never adopt an unrelated
 // caller-owned transaction or let a nested reader commit/roll back its parent.
 const activeReadSnapshots = new WeakSet<DatabaseSync>();
+const snapshotParentTransactions = new WeakSet<DatabaseSync>();
+
+/** Explicitly allow nested read snapshots during a synchronous caller-owned write transaction. */
+export function withSqliteSnapshotParentTransaction<T>(database: DatabaseSync, write: () => T): T {
+  if (!database.isTransaction) throw new Error("SQLite snapshot parent transaction required");
+  if (Object.prototype.toString.call(write) === "[object AsyncFunction]") {
+    throw new TypeError("SQLite transaction callback must be synchronous");
+  }
+  const alreadyOwned = snapshotParentTransactions.has(database);
+  snapshotParentTransactions.add(database);
+  try {
+    const result = write();
+    if (result && (typeof result === "object" || typeof result === "function") &&
+      typeof Reflect.get(result, "then") === "function") {
+      if (typeof Reflect.get(result, "catch") === "function") {
+        void Promise.resolve(result as unknown as PromiseLike<unknown>).catch(() => undefined);
+      }
+      throw new TypeError("SQLite transaction callback must be synchronous");
+    }
+    return result;
+  } finally {
+    if (!alreadyOwned) snapshotParentTransactions.delete(database);
+  }
+}
 
 /** A synchronous read-only window inside a caller-owned transaction; never commits it. */
 export function readSqliteWithinTransaction<T>(database: DatabaseSync, read: () => T): T {
@@ -37,7 +61,9 @@ export function readSqliteSnapshot<T>(database: DatabaseSync, read: () => T): T 
   if (Object.prototype.toString.call(read) === "[object AsyncFunction]") {
     throw new TypeError("SQLite snapshot callback must be synchronous");
   }
-  if (activeReadSnapshots.has(database)) return readSqliteWithinTransaction(database, read);
+  if (activeReadSnapshots.has(database) || snapshotParentTransactions.has(database)) {
+    return readSqliteWithinTransaction(database, read);
+  }
   const queryOnly = database.prepare("PRAGMA query_only").get()?.query_only === 1;
   let began = false;
   try {

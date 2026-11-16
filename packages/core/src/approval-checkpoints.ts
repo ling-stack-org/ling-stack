@@ -9,6 +9,7 @@ import type {
 } from "./approval-types.js";
 import type { ControlPlaneEvent, RunSession } from "./run-types.js";
 import type { PrepareContinuationInput } from "./harness/continuations.js";
+import type { RuntimeHostCapacityDispatchReference } from "./runtime-host-capacity-types.js";
 import type {
   CreateWorkUnitAttemptInput,
   RuntimeAttemptFenceV1,
@@ -124,6 +125,7 @@ interface CommitApprovalResumeClaimBase {
   readonly attemptToLoseId?: string;
   readonly runnerResumeHandle: RunnerResumeHandle;
   readonly mode: ApprovalResumeClaimMode;
+  readonly hostCapacity?: RuntimeHostCapacityDispatchReference;
   readonly now: string;
 }
 
@@ -157,6 +159,7 @@ export type CommitApprovalResumeClaimResult =
         | "approval_resume_run_state_stale"
         | "approval_resume_work_unit_state_stale"
         | "approval_resume_attempt_conflict"
+        | "approval_resume_host_capacity_changed"
         | "approval_resume_transition_failed";
     };
 

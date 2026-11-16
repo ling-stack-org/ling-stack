@@ -168,6 +168,7 @@ test("A23 public heartbeat preserves normal source lineage and full instructions
   assert.equal(run.threadId, source.thread.id);
   assert.equal(run.parentRunId, source.run.id);
   assert.equal(run.continuationReason, "manual_resume");
+  assert.equal(fixture.store.getWorkUnit(run.workUnitId).createdByActor, "scheduler");
   assert.equal(run.requestSnapshot.threadId, source.thread.id);
   assert.equal(run.requestSnapshot.parentRunId, source.run.id);
   assert.equal(run.requestSnapshot.providerPresetId, source.run.requestSnapshot.providerPresetId);

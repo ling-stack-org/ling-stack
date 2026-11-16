@@ -407,7 +407,11 @@ export function ThemeProvider({ children }: { readonly children: ReactNode }): R
   }, [applyTarget, resolved.themeId, selection, systemScheme, themePackageRepairs]);
 
   const readThemePackage = useCallback(async (themeId: string): Promise<StoredWebThemePackage | undefined> => {
-    const result = await repositoryRef.current!.read({ includePreviewBytes: true, themeId });
+    const result = await repositoryRef.current!.read({
+      includeLaunchAnimationBytes: true,
+      includePreviewBytes: true,
+      themeId,
+    });
     return storedPackageFromRepositoryRead(requireThemePackageResult(result));
   }, []);
 
@@ -578,6 +582,8 @@ function sameResolvedTheme(left: ResolvedThemeState, right: ResolvedThemeState):
     || left.source !== right.source
     || left.presentationProfileId !== right.presentationProfileId
     || left.manifest.name !== right.manifest.name
+    || left.manifest.launchAnimation?.preset !== right.manifest.launchAnimation?.preset
+    || left.manifest.launchAnimation?.referenceImage !== right.manifest.launchAnimation?.referenceImage
     || !sameThemeSelection(left.selection, right.selection)
   ) return false;
   return Object.entries(left.variableMap).every(([key, value]) => right.variableMap[key as keyof typeof right.variableMap] === value);

@@ -96,7 +96,8 @@ export interface DelegatedRunDispatchAuthority {
   readonly readRunnerStartObservation: (reference: unknown) => DelegationRunnerStartObservation;
   readonly withReceiver: (input: { readonly store: DispatchStore; readonly child: ClaimedDelegatedChild;
     readonly prepared: DelegationPreparedExecution; readonly adapter: RunnerAdapter; readonly options: PiRunnerRunOptions;
-    readonly now?: () => string; readonly onAccepted: (startReference: object, acceptedAt: string) => void | Promise<void> }) => PiRunnerRunOptions;
+    readonly now?: () => string; readonly beforeAccepted?: (acceptedAt: string) => void | Promise<void>;
+    readonly onAccepted: (startReference: object, acceptedAt: string) => void | Promise<void> }) => PiRunnerRunOptions;
 }
 const originalDispatchAuthorities = new WeakSet<DelegatedRunDispatchAuthority>();
 
@@ -168,6 +169,7 @@ export function createDelegatedRunDispatchAuthority(): DelegatedRunDispatchAutho
           // ACK is attempted once. A failed/aborted callback cannot retry model
           // execution with the same physical session or manufacture a new start.
           accepted = true;
+          await input.beforeAccepted?.(at);
           await input.onAccepted(reference, at);
           signal.throwIfAborted();
         } };

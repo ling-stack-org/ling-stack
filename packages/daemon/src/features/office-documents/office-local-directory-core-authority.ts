@@ -1,4 +1,5 @@
 import { SqliteRunStore, resolveStoragePaths, type RunStore } from "@ling-stack/core";
+import type { RuntimeHostCapacityStoreBinding } from "@ling-stack/core/runtime-host-capacity-store-bridge";
 import { createOriginalOfficeHostBridgeForComposition, sealOriginalOfficeHostBridgeForComposition,
   mintOriginalOfficeDirectoryAuthorityV2, type OriginalOfficeHostBridgeSetup,
   type OriginalOfficeDirectoryAuthorityV2 } from "@ling-stack/core/original-office-host-bridge";
@@ -36,7 +37,9 @@ function requireOriginal(value: unknown): asserts value {
 /** Trusted startup factory. It constructs the exact Store; no caller factory/endpoint/reader retrofit. */
 export function createOriginalOfficeDirectoryStoreFactory(supervisor: RuntimeSupervisor,
   delegationDependencies?: { readonly runnerRegistry: RunnerRegistry; readonly secretResolver: SecretResolver;
-    readonly onDelegationStore?: (store: RunStore, lifecycle: OriginalDelegationLifecycle) => void }): RunStoreFactory {
+    readonly onDelegationStore?: (store: RunStore, lifecycle: OriginalDelegationLifecycle) => void;
+    readonly createRuntimeHostCapacity?: () => { readonly binding: RuntimeHostCapacityStoreBinding;
+      readonly bindStore: (store: RunStore) => void } }): RunStoreFactory {
   requireOriginal(isOriginalRuntimeSupervisorOfficeRoot(supervisor));
   return (cwd: string): RunStore => {
     requireOriginal(isOriginalRuntimeSupervisorOfficeRoot(supervisor));
@@ -49,9 +52,12 @@ export function createOriginalOfficeDirectoryStoreFactory(supervisor: RuntimeSup
         runnerRegistry: delegationDependencies.runnerRegistry, secretResolver: delegationDependencies.secretResolver,
         delegatedDispatchAuthority: createDelegatedRunDispatchAuthority() }) : undefined;
     if (supervisor.getHarnessFeatures().delegations.mode !== "off" && !delegation) throw new Error("delegation.host_composition_unavailable");
+    const capacity = delegationDependencies?.createRuntimeHostCapacity?.();
     const store = new SqliteRunStore({ cwd, paths: resolveStoragePaths(cwd).workspace, originalOfficeHostBridge: reader,
+      ...(capacity ? { runtimeHostCapacityBinding: capacity.binding } : {}),
       ...(delegation ? { delegationHostBinding: delegation.binding } : {}) });
     try {
+      capacity?.bindStore(store);
       delegation?.bindExactStore(store);
       const originalCustody = (custodyRef: object): Custody => {
         const original = custodies.get(custodyRef);

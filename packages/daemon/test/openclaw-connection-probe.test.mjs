@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -93,9 +93,53 @@ function fixture(t, { credentialType, scenario = "connected" } = {}) {
   return { root, paths, profile, launch, processes, credentialFiles,
     setScenario: value => { scenario = value; },
     get home() { return authHome; },
-    methods: () => existsSync(methodsPath) ? readFileSync(methodsPath, "utf8").trim().split("\n").map(JSON.parse) : [],
+    methods: () => {
+      if (!existsSync(methodsPath)) return [];
+      // A read may observe an append before its terminating newline arrives.
+      return readFileSync(methodsPath, "utf8").split("\n").slice(0, -1).map(frame => JSON.parse(frame));
+    },
     secretResolver: { resolve: () => ({ configured: true, value: token }) } };
 }
+
+test("OpenClaw fixture method log treats missing and empty files as no frames", (t) => {
+  const f = fixture(t);
+  assert.deepEqual(f.methods(), []);
+  writeFileSync(join(f.root, "methods.jsonl"), "");
+  assert.deepEqual(f.methods(), []);
+});
+
+test("OpenClaw fixture method log waits for complete JSONL frames without losing earlier frames", (t) => {
+  const f = fixture(t);
+  const methodsPath = join(f.root, "methods.jsonl");
+  const first = { jsonrpc: "2.0", id: 1, method: "initialize", params: { clientCapabilities: {} } };
+  const second = { ...first, id: 2 };
+  const firstFrame = JSON.stringify(first);
+  const secondFrame = JSON.stringify(second);
+  writeFileSync(methodsPath, firstFrame.slice(0, -1));
+  assert.deepEqual(f.methods(), []);
+  appendFileSync(methodsPath, firstFrame.slice(-1));
+  assert.deepEqual(f.methods(), [], "valid JSON is not a complete frame until its newline arrives");
+  appendFileSync(methodsPath, "\n");
+  assert.deepEqual(f.methods(), [first]);
+  appendFileSync(methodsPath, secondFrame.slice(0, -1));
+  assert.deepEqual(f.methods(), [first]);
+  appendFileSync(methodsPath, secondFrame.slice(-1) + "\n");
+  assert.deepEqual(f.methods(), [first, second]);
+});
+
+test("OpenClaw fixture method log rejects every malformed complete frame", (t) => {
+  const f = fixture(t);
+  const methodsPath = join(f.root, "methods.jsonl");
+  const validFrame = JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize" }) + "\n";
+  for (const malformedFrame of ["", "not-json", '{"method":']) {
+    writeFileSync(methodsPath, malformedFrame);
+    assert.deepEqual(f.methods(), [], "an unfinished frame must wait for its delimiter");
+    appendFileSync(methodsPath, "\n");
+    assert.throws(() => f.methods(), SyntaxError);
+    writeFileSync(methodsPath, validFrame + malformedFrame + "\n" + '{"id":');
+    assert.throws(() => f.methods(), SyntaxError, "an unfinished tail must not hide an earlier bad frame");
+  }
+});
 
 test("OpenClaw checks the explicit existing bridge with initialize only and cleans credentials before publishing", localOnly, async (t) => {
   const f = fixture(t);

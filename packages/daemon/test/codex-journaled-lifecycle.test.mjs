@@ -21,6 +21,10 @@ const now = "2026-09-08T12:00:00.000Z";
 const input = { input: [{ type: "text", text: "Owned protocol fixture", text_elements: [] }] };
 const approvalData = { actionType: "bash", risk: "low", toolCallId: "item-2", title: "Owned approval",
   description: "Owned protocol fixture", payload: { type: "bash", command: "whois example.com", cwd: "/tmp", riskFlags: [] } };
+// These tests start a peer process and exercise SQLite-backed lifecycle state;
+// hosted runners can spend extra time on process startup while another shard
+// worker is active.
+const nativeLifecycleTestTimeoutMs = process.env.CI === "true" ? 10_000 : 5_000;
 
 async function setup(t, scenario = "normal", overrides = {}, policyOverrides = {}, approvalWait, output) {
   const cwd = await mkdtemp(join(tmpdir(), "ling-codex-journal-"));
@@ -116,7 +120,7 @@ for (const large of [false, true]) test(`owned native PNG reaches conversation a
   }
 });
 
-test("an invalid terminal image preserves native completion but never publishes corrupt output", { timeout: 5000 }, async t => {
+test("an invalid terminal image preserves native completion but never publishes corrupt output", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   const f = await setup(t, "image-terminal-invalid", {}, {}, undefined, { requireAssistantText: true, onEvent: () => {} });
   await f.lifecycle.open();
   await assert.rejects((await f.lifecycle.startTurn(input)).completed);
@@ -131,7 +135,7 @@ async function peerReply(f, id) {
   return f.requests.find(message => message.id === id);
 }
 
-test("native output reaches durable run events and existing conversation projection before completion", { timeout: 5000 }, async t => {
+test("native output reaches durable run events and existing conversation projection before completion", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   const output = [];
   const live = Promise.withResolvers();
   const f = await setup(t, "hold", {}, {}, undefined, { requireAssistantText: true, onEvent: event => {
@@ -155,7 +159,7 @@ test("native output reaches durable run events and existing conversation project
   assert.equal(f.store.getNativeSubmission(f.reservation.submission.id).status, "cancelled");
 });
 
-test("owned native tool and text events retain identity through persisted projection", { timeout: 5000 }, async t => {
+test("owned native tool and text events retain identity through persisted projection", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   const output = [];
   const f = await setup(t, "output-events", {}, {}, undefined, { requireAssistantText: true, extraSecrets: ["owned secret"],
     onEvent: event => output.push(event) });
@@ -175,7 +179,7 @@ test("owned native tool and text events retain identity through persisted projec
   assert.equal(f.store.getNativeSubmission(f.reservation.submission.id).status, "completed");
 });
 
-test("known native completion stays recorded when the output consumer rejects", { timeout: 5000 }, async t => {
+test("known native completion stays recorded when the output consumer rejects", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   const f = await setup(t, "output-events", {}, {}, undefined, { requireAssistantText: true, onEvent: event => {
     if (event.type === "message_end") throw new Error("owned_output_sink_failure");
   } });
@@ -185,7 +189,7 @@ test("known native completion stays recorded when the output consumer rejects", 
   assert.equal(f.store.listEvents("run_native").filter(event => event.type === "message_end").length, 1);
 });
 
-test("owned native rich content persists translated resources and tool evidence without private metadata", { timeout: 5000 }, async t => {
+test("owned native rich content persists translated resources and tool evidence without private metadata", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   const output = [];
   const f = await setup(t, "rich-output", {}, {}, undefined, { requireAssistantText: false, onEvent: event => output.push(event) });
   await f.lifecycle.open();
@@ -206,7 +210,7 @@ test("owned native rich content persists translated resources and tool evidence 
   assert.equal(f.store.getNativeSubmission(f.reservation.submission.id).status, "completed");
 });
 
-test("empty native chat completion is not reported as successful output", { timeout: 5000 }, async t => {
+test("empty native chat completion is not reported as successful output", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   const f = await setup(t, "empty-output", {}, {}, undefined, { requireAssistantText: true, onEvent: () => {} });
   await f.lifecycle.open();
   await assert.rejects((await f.lifecycle.startTurn(input)).completed);
@@ -214,7 +218,7 @@ test("empty native chat completion is not reported as successful output", { time
   assert.equal(f.store.listEvents("run_native").some(event => event.type === "message_end"), false);
 });
 
-for (const scenario of ["local-environment", "file-local-environment"]) test(`accepted ${scenario} reaches the durable native one-time approval path`, { timeout: 5000 }, async t => {
+for (const scenario of ["local-environment", "file-local-environment"]) test(`accepted ${scenario} reaches the durable native one-time approval path`, { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   let f;
   const events = [];
   f = await setup(t, scenario, {}, {}, { pollIntervalMs: 10, onEvent: event => {
@@ -231,7 +235,7 @@ for (const scenario of ["local-environment", "file-local-environment"]) test(`ac
 });
 
 for (const scenario of ["local-environment-foreign-request", "local-environment-expanded-command"]) {
-  test(`local environment does not authorize ${scenario}`, { timeout: 5000 }, async t => {
+  test(`local environment does not authorize ${scenario}`, { timeout: nativeLifecycleTestTimeoutMs }, async t => {
     const events = [];
     const f = await setup(t, scenario, {}, {}, { pollIntervalMs: 10, onEvent: event => events.push(event.type) });
     await f.lifecycle.open();
@@ -242,7 +246,7 @@ for (const scenario of ["local-environment-foreign-request", "local-environment-
   });
 }
 
-test("normalized output and native approvals share ordered durable events while human waiting continues", { timeout: 5000 }, async t => {
+test("normalized output and native approvals share ordered durable events while human waiting continues", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   const requested = Promise.withResolvers();
   const streamed = Promise.withResolvers();
   const f = await setup(t, "normal", {}, {}, { pollIntervalMs: 10, onEvent: event => {
@@ -266,7 +270,7 @@ test("normalized output and native approvals share ordered durable events while 
   assert.equal(new Set(events.map(event => event.id)).size, events.length);
 });
 
-test("replaced Attempt cannot publish late normalized output", { timeout: 5000 }, async t => {
+test("replaced Attempt cannot publish late normalized output", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   const live = Promise.withResolvers();
   const f = await setup(t, "hold", {}, {}, undefined, { requireAssistantText: true, onEvent: event => {
     if (event.type === "assistant_text_delta") live.resolve();
@@ -282,7 +286,7 @@ test("replaced Attempt cannot publish late normalized output", { timeout: 5000 }
   assert.deepEqual(f.store.listEvents("run_native"), before);
 });
 
-test("native approval waiter streams during a decision and continues after an explicit denial", { timeout: 5000 }, async t => {
+test("native approval waiter streams during a decision and continues after an explicit denial", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   const requested = Promise.withResolvers();
   const streamed = Promise.withResolvers();
   let f;
@@ -314,7 +318,7 @@ test("native approval waiter streams during a decision and continues after an ex
   assert.deepEqual(events.map(event => event.type), ["approval_requested", "approval_denied"]);
 });
 
-test("native waiter preserves exact explicit turn consent and streams each saved event once", { timeout: 5000 }, async t => {
+test("native waiter preserves exact explicit turn consent and streams each saved event once", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   let f;
   const events = [];
   f = await setup(t, "permissions", {}, {}, { pollIntervalMs: 10, onEvent: event => {
@@ -329,7 +333,7 @@ test("native waiter preserves exact explicit turn consent and streams each saved
   assert.equal(new Set(events.map(event => event.id)).size, events.length);
 });
 
-test("native waiter uses stored expiry and does not grant or send a late decision", { timeout: 5000 }, async t => {
+test("native waiter uses stored expiry and does not grant or send a late decision", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   let clock = now;
   let approvalId;
   const waits = [];
@@ -344,7 +348,7 @@ test("native waiter uses stored expiry and does not grant or send a late decisio
   assert.deepEqual(waits, [true, false]);
 });
 
-test("native resolution cancels the waiter and retires its displayed request without a reply", { timeout: 5000 }, async t => {
+test("native resolution cancels the waiter and retires its displayed request without a reply", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   const requested = Promise.withResolvers();
   const cancelled = Promise.withResolvers();
   const waitEnded = Promise.withResolvers();
@@ -371,7 +375,7 @@ test("native resolution cancels the waiter and retires its displayed request wit
   await handle.completed;
 });
 
-test("two native requests hold one wait budget until both decisions arrive", { timeout: 5000 }, async t => {
+test("two native requests hold one wait budget until both decisions arrive", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   const bothRequested = Promise.withResolvers();
   const ids = [];
   const waits = [];
@@ -399,7 +403,7 @@ test("two native requests hold one wait budget until both decisions arrive", { t
   assert.equal(f.store.getRun("run_native").status, "running");
 });
 
-test("native cancellation while waiting sends no response and publishes no late event", { timeout: 5000 }, async t => {
+test("native cancellation while waiting sends no response and publishes no late event", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   const requested = Promise.withResolvers();
   const ended = Promise.withResolvers();
   const events = [];
@@ -419,7 +423,7 @@ test("native cancellation while waiting sends no response and publishes no late 
   assert.deepEqual(events.map(event => event.type), ["approval_requested"]);
 });
 
-test("waiting on a replacement Attempt cannot publish a grant or resume the replacement", { timeout: 5000 }, async t => {
+test("waiting on a replacement Attempt cannot publish a grant or resume the replacement", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   let f;
   const events = [];
   f = await setup(t, "normal", {}, {}, { pollIntervalMs: 10, onEvent: event => {
@@ -438,7 +442,7 @@ test("waiting on a replacement Attempt cannot publish a grant or resume the repl
   assert.equal(f.store.getWorkUnitAttempt(work.activeAttemptId).status, "created");
 });
 
-test("a human approval wait pauses the native turn timeout budget", { timeout: 5000 }, async t => {
+test("a human approval wait pauses the native turn timeout budget", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   const requested = Promise.withResolvers();
   const f = await setup(t, "normal", { turnTimeoutMs: 250 }, {}, { pollIntervalMs: 10, onEvent: event => {
     if (event.type === "approval_requested") requested.resolve(event.data.approvalId);
@@ -452,7 +456,7 @@ test("a human approval wait pauses the native turn timeout budget", { timeout: 5
   assert.equal((await handle.completed).status, "completed");
 });
 
-test("native approval waiting preserves the separate application user-input handler", { timeout: 5000 }, async t => {
+test("native approval waiting preserves the separate application user-input handler", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   let asked = false;
   const result = { answers: { q1: { answers: ["Continue"] } } };
   const f = await setup(t, "user-input", { onRequest: async request => {
@@ -467,7 +471,7 @@ test("native approval waiting preserves the separate application user-input hand
   assert.deepEqual(f.store.listApprovalRequests(), []);
 });
 
-test("journal prepares the approval from native command data without a caller-authored payload", { timeout: 5000 }, async t => {
+test("journal prepares the approval from native command data without a caller-authored payload", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   let f;
   let approval;
   f = await setup(t, "normal", { onRequest: async (_request, _signal, createApproval, prepared) => {
@@ -484,7 +488,7 @@ test("journal prepares the approval from native command data without a caller-au
   assert.equal(f.requests.find(message => message.method === "initialize").params.capabilities.experimentalApi, true);
 });
 
-test("journal rejects a caller-supplied replacement command before persistence", { timeout: 5000 }, async t => {
+test("journal rejects a caller-supplied replacement command before persistence", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   let attempted = false;
   const f = await setup(t, "normal", { onRequest: async (_request, _signal, createApproval) => {
     attempted = true;
@@ -497,7 +501,7 @@ test("journal rejects a caller-supplied replacement command before persistence",
   assert.deepEqual(f.store.listApprovalRequests(), []);
 });
 
-test("journal prepares file approval before a blocked application observer drains", { timeout: 5000 }, async t => {
+test("journal prepares file approval before a blocked application observer drains", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   const gate = Promise.withResolvers();
   let f;
   let approval;
@@ -525,7 +529,7 @@ test("journal prepares file approval before a blocked application observer drain
 });
 
 for (const scenario of ["wrapped-plan", "native-no-accept", "file-move-outside"]) {
-  test(`journal policy prevents an approved record granting ${scenario}`, { timeout: 5000 }, async t => {
+  test(`journal policy prevents an approved record granting ${scenario}`, { timeout: nativeLifecycleTestTimeoutMs }, async t => {
     let f;
     let approval;
     f = await setup(t, scenario, { onRequest: async (_request, _signal, createApproval, prepared) => {
@@ -543,7 +547,7 @@ for (const scenario of ["wrapped-plan", "native-no-accept", "file-move-outside"]
 }
 
 for (const scenario of ["file-missing", "file-completed", "command-permissions"]) {
-  test(`journal refuses once mapping for ${scenario}`, { timeout: 5000 }, async t => {
+  test(`journal refuses once mapping for ${scenario}`, { timeout: nativeLifecycleTestTimeoutMs }, async t => {
     const f = await setup(t, scenario, { onRequest: async (_request, _signal, createApproval, prepared) => {
       assert.equal(prepared.kind, "unsupported");
       assert.throws(() => createApproval());
@@ -555,7 +559,7 @@ for (const scenario of ["file-missing", "file-completed", "command-permissions"]
   });
 }
 
-test("native client persists session and turn before dispatching events and releases only on terminal", { timeout: 5000 }, async t => {
+test("native client persists session and turn before dispatching events and releases only on terminal", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   let f;
   const observations = [];
   f = await setup(t, "normal", { onEvent: async event => {
@@ -572,7 +576,7 @@ test("native client persists session and turn before dispatching events and rele
   await assert.rejects(f.lifecycle.startTurn(input));
 });
 
-test("lost native response leaves a durable unknown submission, never a second turn", { timeout: 5000 }, async t => {
+test("lost native response leaves a durable unknown submission, never a second turn", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   const f = await setup(t, "lost-response");
   await f.lifecycle.open();
   await assert.rejects(f.lifecycle.startTurn(input), { outcome: "unknown" });
@@ -581,14 +585,14 @@ test("lost native response leaves a durable unknown submission, never a second t
   assert.equal(f.requests.filter(message => message.method === "turn/start").length, 1);
 });
 
-test("failed thread validation releases only an unsent reservation", { timeout: 5000 }, async t => {
+test("failed thread validation releases only an unsent reservation", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   const f = await setup(t, "wrong-cwd");
   await assert.rejects(f.lifecycle.open(), { code: "binding_mismatch" });
   assert.equal(f.store.getNativeSubmission(f.reservation.submission.id).status, "not_submitted");
   assert.equal(f.requests.some(message => message.method === "turn/start"), false);
 });
 
-test("database rejection of the send permit prevents native submission", { timeout: 5000 }, async t => {
+test("database rejection of the send permit prevents native submission", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   const f = await setup(t, "hold");
   await f.lifecycle.open();
   f.store.createWorkUnitAttempt({ workUnitId: f.fence.workUnitId, attemptNumber: 2, runnerId: "codex-app-server", runtimeInstanceId: "new_runtime", now });
@@ -597,7 +601,7 @@ test("database rejection of the send permit prevents native submission", { timeo
   assert.equal(f.store.getNativeSubmission(f.reservation.submission.id).status, "reserved");
 });
 
-test("accepted turn interrupted during cancellation persists native terminal evidence", { timeout: 5000 }, async t => {
+test("accepted turn interrupted during cancellation persists native terminal evidence", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   const f = await setup(t, "hold");
   await f.lifecycle.open();
   const handle = await f.lifecycle.startTurn(input);
@@ -607,7 +611,7 @@ test("accepted turn interrupted during cancellation persists native terminal evi
   assert.equal(f.store.getNativeSubmission(f.reservation.submission.id).status, "cancelled");
 });
 
-test("journaled lifecycle cannot reopen an existing send claim or change its configuration", { timeout: 5000 }, async t => {
+test("journaled lifecycle cannot reopen an existing send claim or change its configuration", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   const f = await setup(t, "hold");
   assert.throws(() => new CodexJournaledLifecycle({ ...f.options, configuration: { ...f.options.configuration, model: "injected" } }), { code: "binding_mismatch" });
   await f.lifecycle.open();
@@ -617,7 +621,7 @@ test("journaled lifecycle cannot reopen an existing send claim or change its con
   await handle.completed;
 });
 
-for (const decision of ["approve", "deny"]) test(`journaled ${decision} sends the exact stored decision and persists delivery before terminal`, { timeout: 5000 }, async t => {
+for (const decision of ["approve", "deny"]) test(`journaled ${decision} sends the exact stored decision and persists delivery before terminal`, { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   let f;
   let approval;
   const observed = [];
@@ -649,7 +653,7 @@ for (const decision of ["approve", "deny"]) test(`journaled ${decision} sends th
   assert.throws(() => f.store.claimNativeApprovalReply({ approvalId: approval.id, fence: f.fence }, now));
 });
 
-test("native resolution retires the pending Ling approval without waiting for its UI callback", { timeout: 5000 }, async t => {
+test("native resolution retires the pending Ling approval without waiting for its UI callback", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   let f;
   let approval;
   const created = Promise.withResolvers();
@@ -677,7 +681,7 @@ test("native resolution retires the pending Ling approval without waiting for it
   assert.equal(f.requests.some(message => message.id === "approval-1"), false);
 });
 
-test("a native grant without a registered Ling decision cannot leave the process", { timeout: 5000 }, async t => {
+test("a native grant without a registered Ling decision cannot leave the process", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   const f = await setup(t, "normal", { onRequest: async () => ({ decision: "accept" }) });
   await f.lifecycle.open();
   const handle = await f.lifecycle.startTurn(input);
@@ -687,7 +691,7 @@ test("a native grant without a registered Ling decision cannot leave the process
 });
 
 for (const reply of [{ decision: "accept" }, { decision: "acceptForSession" }, { decision: "decline", extra: "not-on-the-wire" }]) {
-  test(`mismatched or expanded reply is rejected: ${JSON.stringify(reply)}`, { timeout: 5000 }, async t => {
+  test(`mismatched or expanded reply is rejected: ${JSON.stringify(reply)}`, { timeout: nativeLifecycleTestTimeoutMs }, async t => {
     let f;
     let approval;
     f = await setup(t, "normal", { onRequest: async (_request, _signal, createApproval) => {
@@ -705,7 +709,7 @@ for (const reply of [{ decision: "accept" }, { decision: "acceptForSession" }, {
   });
 }
 
-test("expired approval is never written even if the user decision was saved", { timeout: 5000 }, async t => {
+test("expired approval is never written even if the user decision was saved", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   let f;
   let approval;
   f = await setup(t, "normal", { onRequest: async (_request, _signal, createApproval) => {
@@ -721,7 +725,7 @@ test("expired approval is never written even if the user decision was saved", { 
   assert.equal(f.requests.some(message => message.id === "approval-1"), false);
 });
 
-test("Attempt replacement after the user decides cannot grant from an old native callback", { timeout: 5000 }, async t => {
+test("Attempt replacement after the user decides cannot grant from an old native callback", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   let f;
   let approval;
   f = await setup(t, "normal", { onRequest: async (_request, _signal, createApproval) => {
@@ -739,7 +743,7 @@ test("Attempt replacement after the user decides cannot grant from an old native
   assert.equal(f.store.getNativeApprovalCorrelation(approval.id).replyStatus, "pending");
 });
 
-test("in-flight approval cancellation stays unknown in SQLite after the write callback settles", { timeout: 5000 }, async t => {
+test("in-flight approval cancellation stays unknown in SQLite after the write callback settles", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   let f;
   let approval;
   let complete;
@@ -769,7 +773,7 @@ test("in-flight approval cancellation stays unknown in SQLite after the write ca
   assert.equal(f.store.getNativeApprovalCorrelation(approval.id).replyStatus, "unknown");
 });
 
-test("file reply uses canonical item context, without inventing paths from the native callback", { timeout: 5000 }, async t => {
+test("file reply uses canonical item context, without inventing paths from the native callback", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   let f;
   let approval;
   const payload = { type: "file_edit", path: "owned-fixture.txt", touchedPaths: ["owned-fixture.txt"],
@@ -791,7 +795,7 @@ test("file reply uses canonical item context, without inventing paths from the n
 const originalPatch = [{ path: "owned-fixture.txt", kind: { type: "update", move_path: null }, diff: "-before\n+after" }];
 const changedPatch = [{ path: "changed-fixture.txt", kind: { type: "add" }, diff: "+new\n" }];
 
-test("native streaming patch input uses the finalized item, not partial preview text", { timeout: 5000 }, async t => {
+test("native streaming patch input uses the finalized item, not partial preview text", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   let f;
   let saved;
   f = await setup(t, "file-stream", { onRequest: async (_request, _signal, createApproval) => {
@@ -806,7 +810,7 @@ test("native streaming patch input uses the finalized item, not partial preview 
   assert.deepEqual((await peerReply(f, "approval-1")).result, { decision: "accept" });
 });
 
-test("streaming-only file preview has no approval-ready context", { timeout: 5000 }, async t => {
+test("streaming-only file preview has no approval-ready context", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   let received = false;
   const f = await setup(t, "file-preview-only", { onRequest: async (_request, _signal, createApproval, prepared) => {
     received = true;
@@ -822,7 +826,7 @@ test("streaming-only file preview has no approval-ready context", { timeout: 500
 });
 
 for (const variant of ["changed", "restored", "duplicate", "denied", "delayed-create"]) {
-  test(`receipt-time patch update fences ${variant} approval despite a slow event observer`, { timeout: 5000 }, async t => {
+  test(`receipt-time patch update fences ${variant} approval despite a slow event observer`, { timeout: nativeLifecycleTestTimeoutMs }, async t => {
     const received = Promise.withResolvers();
     const release = Promise.withResolvers();
     t.after(() => release.resolve());
@@ -867,7 +871,7 @@ for (const variant of ["changed", "restored", "duplicate", "denied", "delayed-cr
   });
 }
 
-test("a patch update received behind an occupied native write queue blocks an already approved grant", { timeout: 5000 }, async t => {
+test("a patch update received behind an occupied native write queue blocks an already approved grant", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   const blocked = Promise.withResolvers();
   const approved = Promise.withResolvers();
   const updated = Promise.withResolvers();
@@ -907,7 +911,7 @@ test("a patch update received behind an occupied native write queue blocks an al
   assert.equal(f.requests.some(message => message.id === "approval-1"), false);
 });
 
-test("a session-wide file grant is not represented as a one-time Ling approval", { timeout: 5000 }, async t => {
+test("a session-wide file grant is not represented as a one-time Ling approval", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   let attempted = false;
   const f = await setup(t, "file-session", { onRequest: async (_request, _signal, createApproval) => {
     attempted = true;
@@ -922,7 +926,7 @@ test("a session-wide file grant is not represented as a one-time Ling approval",
   assert.equal(f.requests.some(message => message.id === "approval-1"), false);
 });
 
-test("caller mutation of the exposed prepared action cannot change persisted command or policy", { timeout: 5000 }, async t => {
+test("caller mutation of the exposed prepared action cannot change persisted command or policy", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   let f;
   let approval;
   f = await setup(t, "wrapped-plan", { onRequest: async (request, _signal, createApproval, prepared) => {
@@ -940,7 +944,7 @@ test("caller mutation of the exposed prepared action cannot change persisted com
   assert.equal(f.requests.some(message => message.id === "approval-1"), false);
 });
 
-test("file symlink replacement after the saved user decision cannot leave as a native grant", { timeout: 5000 }, async t => {
+test("file symlink replacement after the saved user decision cannot leave as a native grant", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   let f;
   let approval;
   f = await setup(t, "file", { onRequest: async (_request, _signal, createApproval) => {
@@ -956,7 +960,7 @@ test("file symlink replacement after the saved user decision cannot leave as a n
   assert.equal(f.requests.some(message => message.id === "approval-1"), false);
 });
 
-test("a caller delaying approval creation cannot persist an obsolete file proposal", { timeout: 5000 }, async t => {
+test("a caller delaying approval creation cannot persist an obsolete file proposal", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   let f;
   f = await setup(t, "file", { onRequest: async (_request, _signal, createApproval) => {
     await symlink(join(f.cwd, ".ling-stack"), join(f.cwd, "owned-fixture.txt"), "dir");
@@ -968,7 +972,7 @@ test("a caller delaying approval creation cannot persist an obsolete file propos
   assert.deepEqual(f.store.listApprovalRequests(), []);
 });
 
-for (const grant of [false, true]) test(`unregistered turn permissions only allow an empty denial (grant=${grant})`, { timeout: 5000 }, async t => {
+for (const grant of [false, true]) test(`unregistered turn permissions only allow an empty denial (grant=${grant})`, { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   const f = await setup(t, "permissions", { onRequest: async () => ({
     permissions: grant ? { network: { enabled: true } } : {}, scope: "turn",
   }) });
@@ -980,7 +984,7 @@ for (const grant of [false, true]) test(`unregistered turn permissions only allo
   if (grant) assert.equal(f.requests.some(message => message.id === "approval-1"), false);
 });
 
-test("explicit native scope consent produces exactly one journaled turn permission reply", { timeout: 5000 }, async t => {
+test("explicit native scope consent produces exactly one journaled turn permission reply", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   let f;
   let approval;
   f = await setup(t, "permissions", { onRequest: async (request, _signal, createApproval, prepared) => {
@@ -1010,7 +1014,7 @@ for (const altered of [
   { permissions: { network: { enabled: true }, fileSystem: { read: null, write: ["/"] } }, scope: "turn" },
   { permissions: { network: { enabled: true } }, scope: "turn", strictAutoReview: true },
   { permissions: {}, scope: "turn" },
-]) test(`native scope reply cannot replace saved resource identity: ${JSON.stringify(altered)}`, { timeout: 5000 }, async t => {
+]) test(`native scope reply cannot replace saved resource identity: ${JSON.stringify(altered)}`, { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   let f;
   let approval;
   f = await setup(t, "permissions", { onRequest: async (_request, _signal, createApproval) => {
@@ -1025,7 +1029,7 @@ for (const altered of [
   assert.equal(f.store.getNativeApprovalCorrelation(approval.id).replyStatus, "not_written");
 });
 
-for (const decision of ["deny", "pending"]) test(`native ${decision} permission is never granted`, { timeout: 5000 }, async t => {
+for (const decision of ["deny", "pending"]) test(`native ${decision} permission is never granted`, { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   let f;
   let approval;
   f = await setup(t, "permissions", { onRequest: async (_request, _signal, createApproval) => {
@@ -1046,7 +1050,7 @@ for (const decision of ["deny", "pending"]) test(`native ${decision} permission 
   assert.ok(approval);
 });
 
-test("an approved native scope cannot bypass a Plan Mode policy denial", { timeout: 5000 }, async t => {
+test("an approved native scope cannot bypass a Plan Mode policy denial", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   let f;
   let approval;
   f = await setup(t, "permissions", { onRequest: async (_request, _signal, createApproval, prepared) => {
@@ -1061,7 +1065,7 @@ test("an approved native scope cannot bypass a Plan Mode policy denial", { timeo
   assert.equal(f.requests.some(message => message.id === "approval-1"), false);
 });
 
-test("file permission reply preserves native deny entries, paths and scan depth", { timeout: 5000 }, async t => {
+test("file permission reply preserves native deny entries, paths and scan depth", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   let f;
   let approval;
   let expected;
@@ -1078,7 +1082,7 @@ test("file permission reply preserves native deny entries, paths and scan depth"
   assert.equal(f.store.getNativeApprovalCorrelation(approval.id).replyStatus, "written");
 });
 
-test("file permission reply cannot silently drop a stored deny entry", { timeout: 5000 }, async t => {
+test("file permission reply cannot silently drop a stored deny entry", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   let f;
   let approval;
   f = await setup(t, "permissions-files", { onRequest: async (_request, _signal, createApproval) => {
@@ -1095,7 +1099,7 @@ test("file permission reply cannot silently drop a stored deny entry", { timeout
   assert.equal(f.requests.some(message => message.id === "approval-1"), false);
 });
 
-for (const phase of ["create", "reply"]) test(`permission write path is rechecked at ${phase}`, { timeout: 5000 }, async t => {
+for (const phase of ["create", "reply"]) test(`permission write path is rechecked at ${phase}`, { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   let f;
   let approval;
   f = await setup(t, "permissions-files", { onRequest: async (_request, _signal, createApproval) => {
@@ -1122,7 +1126,7 @@ for (const phase of ["create", "reply"]) test(`permission write path is rechecke
   }
 });
 
-test("retained request callbacks cannot create new approvals after returning a response", { timeout: 5000 }, async t => {
+test("retained request callbacks cannot create new approvals after returning a response", { timeout: nativeLifecycleTestTimeoutMs }, async t => {
   let createLater;
   const f = await setup(t, "normal", { onRequest: async (_request, _signal, createApproval) => {
     createLater = createApproval;

@@ -87,7 +87,7 @@ async function fixture(t, casePayload = validCase()) {
 test("rule scheduler completes sealed JSON evaluation and records deterministic rationale evidence", async (t) => {
   const f = await fixture(t);
   let semaphoreCalls = 0;
-  f.store.acquireRuntimeSemaphoreSlot = () => {
+  f.store.acquireRuntimeSemaphoreSlots = f.store.acquireRuntimeSemaphoreSlot = () => {
     semaphoreCalls += 1;
     throw new Error("normal run semaphore must not be used");
   };

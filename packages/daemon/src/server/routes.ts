@@ -34,6 +34,9 @@ export function parseRunRoute(
   | { kind: "run"; runId: string }
   | { kind: "events"; runId: string }
   | { kind: "artifacts"; runId: string }
+  | { kind: "assurance-evidence"; runId: string }
+  | { kind: "assurance-evaluation-association"; runId: string }
+  | { kind: "node-rerun-admission"; runId: string }
   | { kind: "shell-snapshots"; runId: string }
   | { kind: "shell-snapshot"; runId: string; snapshotId: string }
   | { kind: "workspace-changes"; runId: string }
@@ -52,6 +55,15 @@ export function parseRunRoute(
   }
   if (segments.length === 3 && segments[0] === "runs" && segments[2] === "artifacts") {
     return { kind: "artifacts", runId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "runs" && segments[2] === "assurance-evidence") {
+    return { kind: "assurance-evidence", runId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "runs" && segments[2] === "assurance-evaluation-association") {
+    return { kind: "assurance-evaluation-association", runId: segments[1] };
+  }
+  if (segments.length === 4 && segments[0] === "runs" && segments[2] === "node-rerun" && segments[3] === "admission") {
+    return { kind: "node-rerun-admission", runId: segments[1] };
   }
   if (segments.length === 3 && segments[0] === "runs" && segments[2] === "shell-snapshots") {
     return { kind: "shell-snapshots", runId: segments[1] };
@@ -597,6 +609,31 @@ export function parseTeammateRoute(
   return undefined;
 }
 
+export function parseCompanionRoute(
+  pathname: string,
+): { readonly companionId: string; readonly action?: "state" | "events" | "interactions" | "proactive" | "messages" | "messages-stream" } | undefined {
+  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  if (segments.length === 2 && segments[0] === "companions") {
+    return { companionId: segments[1] };
+  }
+  if (
+    segments.length === 3 &&
+    segments[0] === "companions" &&
+    (segments[2] === "state" || segments[2] === "events" || segments[2] === "interactions" || segments[2] === "proactive" || segments[2] === "messages")
+  ) {
+    return { companionId: segments[1], action: segments[2] };
+  }
+  if (
+    segments.length === 4 &&
+    segments[0] === "companions" &&
+    segments[2] === "messages" &&
+    segments[3] === "stream"
+  ) {
+    return { companionId: segments[1], action: "messages-stream" };
+  }
+  return undefined;
+}
+
 export function parseMcpServerRoute(
   pathname: string,
 ): { readonly serverId: string; readonly action?: "check" | "sync-tools" | "secret" | "status" } | undefined {
@@ -713,7 +750,7 @@ export function parseChannelHandoffRoute(pathname: string): { readonly handoffId
 export function parseChannelWorkflowRoute(
   pathname: string,
 ):
-  | { readonly kind: "workflow"; readonly workflowId: string; readonly action?: "orchestrate" | "cancel" | "evidence" | "collaboration-card" | "workspace-changes" | "workspace-changes-undo" | "workspace-changes-reapply" }
+  | { readonly kind: "workflow"; readonly workflowId: string; readonly action?: "orchestrate" | "cancel" | "evidence" | "conflict-recovery" | "collaboration-card" | "workspace-changes" | "workspace-changes-undo" | "workspace-changes-reapply" }
   | { readonly kind: "steps"; readonly workflowId: string }
   | { readonly kind: "workflow-step"; readonly workflowStepId: string; readonly action?: "start" | "retry" | "evidence" }
   | undefined {
@@ -723,6 +760,9 @@ export function parseChannelWorkflowRoute(
   }
   if (segments.length === 3 && segments[0] === "workflows" && segments[2] === "orchestrate") {
     return { kind: "workflow", workflowId: segments[1], action: "orchestrate" };
+  }
+  if (segments.length === 3 && segments[0] === "workflows" && segments[2] === "conflict-recovery") {
+    return { kind: "workflow", workflowId: segments[1], action: "conflict-recovery" };
   }
   if (segments.length === 3 && segments[0] === "workflows" && segments[2] === "cancel") {
     return { kind: "workflow", workflowId: segments[1], action: "cancel" };

@@ -65,7 +65,7 @@ test("non-macOS diagnostic never touches the filesystem or runs a command", () =
   assert.equal(result.collected, false); assert.equal(result.diagnosticError, "bootstrap_diagnostic_requires_macos");
 });
 
-test("both actual macOS lanes preserve diagnostics while retaining mandatory test gates", () => {
+test("both actual macOS lanes preserve diagnostics when selected", () => {
   const workflow = fs.readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
   for (const id of ["daemon-tests", "restricted-command-macos"]) {
     const rest = workflow.slice(workflow.indexOf(`\n  ${id}:\n`) + 1);

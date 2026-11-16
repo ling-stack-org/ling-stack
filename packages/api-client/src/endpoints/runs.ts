@@ -39,6 +39,11 @@ import type {
   LingTraceSpansResponse,
   LingTurnMutationResponse,
   RunArtifactListResponse,
+  FrameworkAssuranceAssociationHttpRequest,
+  FrameworkAssuranceAssociationResult,
+  FrameworkAssuranceEvidenceResponse,
+  NodeRerunHostAdmissionResponseV1,
+  NodeRerunIntentV1,
   RunCancelResponse,
   RunEventsResponse,
   RunInterventionListResponse,
@@ -318,6 +323,26 @@ export const runEndpoints = {
 
   async listRunArtifacts(this: LingDaemonEndpointContext, runId: string, cwd?: string): Promise<RunArtifactListResponse> {
       return this._get(`/runs/${encodeURIComponent(runId)}/artifacts`, { cwd });
+    },
+
+  async getRunAssuranceEvidence(this: LingDaemonEndpointContext, runId: string, cwd?: string): Promise<FrameworkAssuranceEvidenceResponse> {
+      return this._get(`/runs/${encodeURIComponent(runId)}/assurance-evidence`, { cwd });
+    },
+
+  async projectRunAssuranceEvaluationAssociation(this: LingDaemonEndpointContext,
+      runId: string,
+      cwd: string,
+      input: FrameworkAssuranceAssociationHttpRequest,
+    ): Promise<FrameworkAssuranceAssociationResult> {
+      return this._post(`/runs/${encodeURIComponent(runId)}/assurance-evaluation-association`, { cwd }, input);
+    },
+
+  async admitNodeRerun(this: LingDaemonEndpointContext,
+      runId: string,
+      cwd: string,
+      input: NodeRerunIntentV1,
+    ): Promise<NodeRerunHostAdmissionResponseV1> {
+      return this._post(`/runs/${encodeURIComponent(runId)}/node-rerun/admission`, { cwd }, input);
     },
 
   async listRunShellSnapshots(this: LingDaemonEndpointContext, runId: string, cwd?: string, toolCallId?: string): Promise<ShellSnapshotListResponse> {

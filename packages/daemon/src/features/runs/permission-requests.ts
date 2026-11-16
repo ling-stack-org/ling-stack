@@ -32,6 +32,7 @@ import {
   applyRiskReviewToApprovalInput,
 } from "./risk-review-approval-adapter.js";
 import { evaluatePlanModePermissionDenial } from "./plan-mode-policy.js";
+import { workflowSafetyEffectRejection } from "./workflow-safety.js";
 
 const PERMISSION_REQUEST_TIMEOUT_MS = 30 * 60 * 1000;
 
@@ -53,6 +54,9 @@ export function createRunPermissionRequestHandler(options: {
   readonly mcpToolRefs?: readonly string[];
 }): PiRunnerRunOptions["onPermissionRequired"] {
   return async (request: PiRunnerPermissionRequest) => {
+    const safety = workflowSafetyEffectRejection({ store: options.store, run: options.run,
+      request: { toolName: "request_permissions", input: request, cwd: options.run.cwd } });
+    if (safety) return { approved: false, reason: safety.code + ": " + safety.reason };
     const currentScope = createCurrentScopeSnapshot({
       tools: options.currentTools,
       allowedWritePaths: options.approvalPolicy.allowedWritePaths,
@@ -151,6 +155,10 @@ export function createRunPermissionRequestHandler(options: {
       };
     }
 
+    const currentSafety = workflowSafetyEffectRejection({ store: options.store, run: options.run,
+      request: { toolName: "request_permissions", input: request, cwd: options.run.cwd } });
+    if (currentSafety) return { approved: false, approvalId: resolvedApproval.id,
+      reason: currentSafety.code + ": " + currentSafety.reason };
     const grant = buildRuntimePermissionGrant(resolvedApproval, resolvedAt, "continuation");
     return {
       approved: true,

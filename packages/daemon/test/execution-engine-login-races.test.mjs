@@ -4,6 +4,7 @@ import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
 import { registerHooks, stripTypeScriptTypes } from "node:module";
 import { resolve } from "node:path";
+import { performance } from "node:perf_hooks";
 import { PassThrough, Readable, Writable } from "node:stream";
 import test, { mock } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -142,7 +143,7 @@ async function runFixture(target, scenario) {
   let profile = { id: "fixture", revision: 1, status: "configured", configuration: {
     engineId: "codex-app-server", executablePath: resolve("ling-login-race-fixture", "codex"), authProfileId: "old-fixture",
   } };
-  const observation = { methods: [], challenges: 0, startResponseDelivered: false, transportClosed: false,
+  const observation = { methods: [], challenges: 0, elapsedMs: 0, startResponseDelivered: false, transportClosed: false,
     cwdRemoved: false, oldHomeRemoved: false, adopted: false, newHomeExists: false, homeRemovalAttempts: 0, storeClosed: false };
   const started = Promise.withResolvers();
   const controller = new AbortController();
@@ -207,8 +208,8 @@ async function runFixture(target, scenario) {
       try {
         if (startup) {
           await started.promise;
-          mock.timers.tick(60);
           observation.elapsedMs = 60;
+          mock.timers.tick(60);
           if (scenario === "normal-start") complete();
           send({ method: "account/updated", params: { authMode: "chatgpt" } });
           observation.accountUpdateDelivered = true;
@@ -270,6 +271,8 @@ async function runFixture(target, scenario) {
   try {
     if (startup) {
       const { runEngineLogin } = await import(nativeUrl);
+      // Timer callbacks and monotonic deadline checks share the same controlled elapsed time.
+      mock.method(performance, "now", () => 1000 + observation.elapsedMs);
       mock.timers.enable({ apis: ["setTimeout"] });
       try {
         const updated = await runEngineLogin(profile, {}, { ...processOptions, method: "chatgptDeviceCode", signal: controller.signal,
@@ -308,6 +311,7 @@ async function runFixture(target, scenario) {
     if (feature) await closeCode(feature);
     authority?.close();
     mock.timers.reset();
+    mock.restoreAll();
     hooks.deregister();
     delete globalThis.__lingLoginRace;
   }

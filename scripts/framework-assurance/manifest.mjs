@@ -202,12 +202,20 @@ export function parseTask(value) {
 }
 
 export async function verifySource(repoRoot, source) {
-  const pins = [...source.files, { path: "pnpm-lock.yaml", sha256: source.lockSha256, mediaType: "text/plain" }];
-  for (const pin of pins) {
+  // The fixture source pin is the trusted grader provenance. A dependency PR
+  // may intentionally change the candidate checkout's lockfile, so the
+  // candidate lock is audited by the dependency-policy and SDK-consumer lanes
+  // instead of being required to equal this historical fixture input.
+  await readBoundFile(repoRoot, "pnpm-lock.yaml");
+  for (const pin of source.files) {
     await readArtifact(repoRoot, pin);
     let frozen;
     try { frozen = execFileSync("git", ["cat-file", "blob", `${source.commit}:${pin.path}`], { cwd: repoRoot, maxBuffer: MAX_JSON_BYTES, stdio: ["ignore", "pipe", "pipe"] }); }
     catch { throw new AssuranceError("source_unavailable", "Frozen source commit or file is not available locally."); }
     requireCondition(sha256(frozen) === pin.sha256, "artifact_digest_mismatch", "Source pin does not match its declared commit.");
   }
+  let frozenLock;
+  try { frozenLock = execFileSync("git", ["cat-file", "blob", `${source.commit}:pnpm-lock.yaml`], { cwd: repoRoot, maxBuffer: MAX_JSON_BYTES, stdio: ["ignore", "pipe", "pipe"] }); }
+  catch { throw new AssuranceError("source_unavailable", "Frozen source commit or file is not available locally."); }
+  requireCondition(sha256(frozenLock) === source.lockSha256, "artifact_digest_mismatch", "Source lock pin does not match its declared commit.");
 }

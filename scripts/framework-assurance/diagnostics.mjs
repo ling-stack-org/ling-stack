@@ -164,6 +164,37 @@ export async function readHarnessDiagnosticsReport({
   };
 }
 
+/**
+ * Compose the report adapter with the public read-only API client endpoint.
+ * The caller owns the client and transport; this helper never creates a
+ * client, Store, daemon connection, or execution authority.
+ */
+export function readHarnessDiagnosticsReportFromClient({
+  client,
+  cwd,
+  workUnitId,
+  runId,
+  assurance,
+  limit,
+  maxPages,
+  now,
+} = {}) {
+  requireCondition(client !== null && typeof client === "object"
+    && typeof client.getWorkUnitHarnessDiagnostics === "function",
+  "diagnostics_invalid_query", "A LingDaemonClient diagnostics reader is required.");
+  return readHarnessDiagnosticsReport({
+    cwd,
+    workUnitId,
+    runId,
+    assurance,
+    limit,
+    maxPages,
+    now,
+    read: (requestedCwd, requestedWorkUnitId, query) =>
+      client.getWorkUnitHarnessDiagnostics(requestedCwd, requestedWorkUnitId, query),
+  });
+}
+
 function buildUnavailableReport({ cwd, workUnitId, runId, status, observedAt, assurance }) {
   requireCondition(canonicalTimestamp(observedAt), "diagnostics_invalid_response", "Unavailable diagnostics timestamp is invalid.");
   const linked = assurance === undefined ? undefined : linkAssuranceReport(assurance, { runId, workUnitId });

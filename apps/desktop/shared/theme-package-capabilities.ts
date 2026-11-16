@@ -15,9 +15,11 @@ export const DESKTOP_THEME_PACKAGE_ERROR_CODES = Object.freeze([
   "invalid_text",
   "invalid_manifest",
   "invalid_schema",
+  "invalid_launch_animation",
   "reserved_theme_id",
   "runtime_artwork_not_supported",
   "missing_preview",
+  "missing_launch_animation",
   "invalid_preview_mime",
   "invalid_preview_image",
   "invalid_preview_dimensions",
@@ -66,6 +68,8 @@ export interface DesktopThemePackagePreviewDescriptor {
   readonly checksumSha256: string;
 }
 
+export type DesktopThemePackageLaunchAnimationDescriptor = DesktopThemePackagePreviewDescriptor;
+
 export interface DesktopThemePackageDescriptor {
   readonly themeId: string;
   readonly health: DesktopThemePackageHealth;
@@ -75,12 +79,14 @@ export interface DesktopThemePackageDescriptor {
   readonly installedAt?: string;
   readonly updatedAt?: string;
   readonly preview?: DesktopThemePackagePreviewDescriptor;
+  readonly launchAnimation?: DesktopThemePackageLaunchAnimationDescriptor;
   readonly issueCode?: DesktopThemePackageErrorCode;
 }
 
 export interface DesktopThemePackageReadValue {
   readonly descriptor: DesktopThemePackageDescriptor;
   readonly licenseText?: string;
+  readonly launchAnimationBytes?: ArrayBuffer;
   readonly previewBytes?: ArrayBuffer;
 }
 
@@ -113,6 +119,7 @@ export interface DesktopThemePackageFirstPaintEntry {
 export interface DesktopThemePackageReadRequest {
   readonly themeId: string;
   readonly includePreviewBytes: boolean;
+  readonly includeLaunchAnimationBytes?: boolean;
 }
 
 export interface DesktopThemePackageArchiveRequest {

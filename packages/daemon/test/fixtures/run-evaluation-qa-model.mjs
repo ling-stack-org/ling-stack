@@ -115,7 +115,10 @@ export async function fixture(t, baseUrl, overrides = {}, evidence = {}, provide
   };
   const original = sourceSnapshot(store, run, workUnit, attempt, evaluation);
   let semaphoreCalls = 0;
-  store.acquireRuntimeSemaphoreSlot = () => { semaphoreCalls += 1; throw new Error("ordinary quota forbidden"); };
+  store.acquireRuntimeSemaphoreSlots = store.acquireRuntimeSemaphoreSlot = () => {
+    semaphoreCalls += 1;
+    throw new Error("ordinary quota forbidden");
+  };
   verifySource = () => { assert.deepEqual(sourceSnapshot(store, run, workUnit, attempt, evaluation), original); assert.equal(semaphoreCalls, 0); };
   return { cwd, store, database, run, evaluation, task, frozen, configurationInput, configuration, configFacts, configArtifact,
     batch, ownedBatch, artifactPins, provider, adapter, enroll, pin,

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { LingDaemonTransportError } from "@ling-stack/api-client";
 import { DaemonObservationDeferredError, isDaemonObservationPausedForWorkspace, liveDaemonObservation, type DaemonObservation } from "../shared/conversation/observation/daemon-observation.js";
 import { getControlPlaneSnapshot } from "../api/control-plane.js";
@@ -21,6 +21,7 @@ import {
 export type ControlPlaneInvalidationError = FocusedDomainError<"control-plane", string>;
 
 export interface ControlPlaneInvalidationController {
+  readonly observationReady: boolean;
   readonly errors: readonly ControlPlaneInvalidationError[];
   readonly error: ControlPlaneInvalidationError | undefined;
   readonly clearError: () => void;
@@ -50,7 +51,8 @@ export function useControlPlaneInvalidation(input: {
   readonly refreshUsedMemoryAudit: (cwd?: string) => Promise<void>;
   readonly refreshChannelRunArtifacts: (cwd?: string, channelId?: string, channelRuns?: readonly RunSession[]) => Promise<void>;
   readonly refreshChannelExecutionActions: (cwd?: string, channelId?: string, channelRuns?: readonly RunSession[]) => Promise<void>;
-  readonly refreshChannelActivity: () => Promise<void>;
+  readonly refreshChannelActivity: (options?: { readonly throwOnError?: boolean }) => Promise<void>;
+  readonly refreshSelectedChannelProtocol?: () => Promise<void>;
   readonly refreshSelectedChannelConversation: () => Promise<void>;
   readonly invalidateSelectedTeammateConversation: () => void;
 }): ControlPlaneInvalidationController {
@@ -59,6 +61,8 @@ export function useControlPlaneInvalidation(input: {
   const observationRef = useRef(input.observation ?? liveDaemonObservation);
   observationRef.current = input.observation ?? liveDaemonObservation;
   const observationPaused = isDaemonObservationPausedForWorkspace(observationRef.current, input.workspaceCwd);
+  const observationIdentity = JSON.stringify([input.daemonBaseUrl, input.workspaceCwd, observationRef.current.epoch, input.localWebSocketRpcEnabled]);
+  const [streamObservation, setStreamObservation] = useState<{ identity: string; ready: boolean }>();
   const invalidationRef = useRef<(domains: readonly ControlPlaneDomain[]) => Promise<void>>(async () => undefined);
   invalidationRef.current = async (domains) => {
     const workspaceCwd = input.workspaceCwd;
@@ -114,12 +118,15 @@ export function useControlPlaneInvalidation(input: {
       trackRefresh(
         channelActivityDomain,
         `channel-activity:${input.selectedChannelId}`,
-        input.refreshChannelActivity(),
+        input.refreshChannelActivity({ throwOnError: true }),
       );
     }
     const channelActivityOwnsSelectedRefreshes = Boolean(channelActivityDomain && input.selectedChannelId);
     if (changed.has("approvals") && !channelActivityOwnsSelectedRefreshes) {
       trackRefresh("approvals", "list", input.refreshApprovals(workspaceCwd));
+      if (input.selectedChannelId && input.refreshSelectedChannelProtocol) {
+        trackRefresh("approvals", `channel-protocol:${input.selectedChannelId}`, input.refreshSelectedChannelProtocol());
+      }
     }
     if (changed.has("approvals")) {
       trackRefresh("approvals", "policy", input.refreshApprovalPolicy());
@@ -178,6 +185,11 @@ export function useControlPlaneInvalidation(input: {
       return undefined;
     }
     let closed = false;
+    const publishObservationReady = (ready: boolean): void => {
+      if (!closed) setStreamObservation(current => current?.identity === observationIdentity && current.ready === ready
+        ? current : { identity: observationIdentity, ready });
+    };
+    publishObservationReady(false);
     let source: EventSource | undefined;
     let ws: WebSocket | undefined;
     let retryTimer: number | undefined;
@@ -213,6 +225,7 @@ export function useControlPlaneInvalidation(input: {
       }
     };
     const abandonTransport = (): void => {
+      publishObservationReady(false);
       connectionGeneration += 1;
       handshakeComplete = false;
       baselinePending = false;
@@ -236,7 +249,10 @@ export function useControlPlaneInvalidation(input: {
     const flushDomains = async (): Promise<void> => {
       flushTimer = undefined;
       if (closed || !handshakeComplete || baselinePending) return;
-      if (pendingDomains.size === 0 && pendingProofSeq <= lastAppliedSeq) return;
+      if (pendingDomains.size === 0 && pendingProofSeq <= lastAppliedSeq) {
+        publishObservationReady(true);
+        return;
+      }
       const applyGeneration = connectionGeneration;
       const domains = [...pendingDomains];
       const batchLatestSeq = pendingLatestSeq;
@@ -249,6 +265,7 @@ export function useControlPlaneInvalidation(input: {
         if (closed || applyGeneration !== connectionGeneration) return;
         lastAppliedSeq = Math.max(lastAppliedSeq, batchLatestSeq, batchProofSeq);
         if (pendingDomains.size > 0 || pendingProofSeq > lastAppliedSeq) scheduleFlush();
+        else publishObservationReady(true);
       } catch {
         scheduleRetry();
       }
@@ -256,6 +273,7 @@ export function useControlPlaneInvalidation(input: {
     const enqueueDomain = (domain: ControlPlaneDomain, seq: number): void => {
       if (seq <= lastAppliedSeq || seq <= lastReceivedSeq) return;
       lastReceivedSeq = seq;
+      publishObservationReady(false);
       pendingDomains.add(domain);
       pendingLatestSeq = Math.max(pendingLatestSeq, seq);
       scheduleFlush();
@@ -286,7 +304,8 @@ export function useControlPlaneInvalidation(input: {
         hasAppliedSnapshot = true;
       }
       baselinePending = false;
-      scheduleFlush();
+      if (pendingDomains.size === 0 && pendingProofSeq <= lastAppliedSeq) publishObservationReady(true);
+      else scheduleFlush();
     };
     const openSseStream = (generation: number, afterSeq: number, baselineSeq: number | undefined): void => {
       if (closed || generation !== connectionGeneration) return;
@@ -430,6 +449,8 @@ export function useControlPlaneInvalidation(input: {
 
   const errors = errorOwner.errors().filter(error => !observationPaused || error.origin !== "transport");
   return {
+    observationReady: input.daemonHealthy === true && !observationPaused
+      && streamObservation?.identity === observationIdentity && streamObservation.ready,
     errors: errors as readonly ControlPlaneInvalidationError[],
     error: errors.at(-1) as ControlPlaneInvalidationError | undefined,
     clearError: errorOwner.clearAll,

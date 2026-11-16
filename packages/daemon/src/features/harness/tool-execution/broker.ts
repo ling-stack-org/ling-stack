@@ -33,6 +33,9 @@ import {
 import { recordNativeFileMutationCompletion } from "./native-file-mutation-completion.js";
 import { readBrokerCommandResult, type BrokerCommandResult } from "./broker-command-result.js";
 import { bindWorkflowCommandRequest } from "../../runs/workflow-command-cwd.js";
+import { workflowSafetyEffectRejection } from "../../runs/workflow-safety.js";
+import { requiresWorkflowIsolationFileMutation, workflowIsolationFileMutationRejection } from "../../runs/workflow-isolation-file-authority.js";
+import { applyWorkflowIsolationFileMutation } from "../../runs/workflow-isolation-file-mutation.js";
 
 const TOOL_EXECUTION_LEASE_GRACE_MS = 2 * 60 * 1000;
 const DEFAULT_TOOL_EXECUTION_TIMEOUT_MS = 10 * 60 * 1000;
@@ -51,6 +54,8 @@ export interface HarnessFileMutationToolContext {
   readonly mode: HarnessMode;
   readonly store: RunStore;
   readonly sourceFence?: RuntimeAttemptFenceV1;
+  /** Host-only binding captured at isolated Runner dispatch. */
+  readonly workflowIsolationBindingId?: string;
   readonly run: RunSession;
   readonly request: PiRunnerApprovalRequest;
   readonly draft: FileMutationActionDraft;
@@ -97,6 +102,12 @@ export async function executeHarnessedBashTool(input: HarnessBashExecutionInput)
     }
   };
   try {
+    const rejection = workflowSafetyEffectRejection({ ...input, request: { ...input.request, toolName: "bash" } });
+    if (rejection) {
+      settleBeforeDispatch();
+      return createUnifiedExecDeniedResult({ toolCallId: input.request.toolCallId, approvalId: input.approvalId,
+        reason: rejection.code + ": " + rejection.reason });
+    }
     input.hostOperation?.assertMayPrepare();
     try { input = { ...input, request: bindWorkflowCommandRequest(input.store, input.run, input.request) }; }
     catch (error) {
@@ -193,6 +204,11 @@ async function executeHarnessedBashToolInternal(
 export async function executeHarnessedFileMutationTool(
   input: HarnessFileMutationToolContext,
 ): Promise<PiRunnerToolHandledResult> {
+  const isolated = requiresWorkflowIsolationFileMutation(input);
+  const isolationRejection = workflowIsolationFileMutationRejection(input);
+  if (isolationRejection) return createFileMutationDeniedResult(input, isolationRejection);
+  const rejection = workflowSafetyEffectRejection({ ...input, request: { ...input.request, toolName: "write" } });
+  if (rejection) return createFileMutationDeniedResult(input, rejection.code + ": " + rejection.reason);
   input.hostOperation?.assertMayPrepare();
   if (input.mode === "off") {
     return input.hostOperation
@@ -211,7 +227,7 @@ export async function executeHarnessedFileMutationTool(
     approvalId: input.approvalId,
     effectivePolicySnapshot: input.effectivePolicySnapshot,
     executorKind: input.draft.executorKind,
-    recoveryBasis: createFileMutationRecoveryBasis(input.draft),
+    recoveryBasis: isolated ? undefined : createFileMutationRecoveryBasis(input.draft),
   };
   let execution: HarnessToolExecutionV1 | undefined;
   try {
@@ -235,7 +251,7 @@ export async function executeHarnessedFileMutationTool(
   }
 
   try {
-    const applied = await applyPatchActionDraft({
+    const applied = isolated ? await applyWorkflowIsolationFileMutation(input) : await applyPatchActionDraft({
       draft: input.draft,
       cwd: input.request.cwd,
       allowedWritePaths: input.allowedWritePaths,
@@ -450,7 +466,8 @@ function prepareBasis(input: HarnessToolContext) {
     mode: input.mode,
     policySnapshot,
     executorKind: input.executorKind,
-    recoveryBasis: input.recoveryBasis,
+    // File hashes cannot settle isolated effects without their durable binding receipt.
+    recoveryBasis: requiresWorkflowIsolationFileMutation(input) ? undefined : input.recoveryBasis,
   });
   return {
     runId: input.run.id,
@@ -596,6 +613,11 @@ function failExecutionBeforeStart(
 }
 
 async function executeFileMutationDirectly(input: HarnessFileMutationToolContext): Promise<PiRunnerToolHandledResult> {
+  if (requiresWorkflowIsolationFileMutation(input)) {
+    return createFileMutationDeniedResult(input, "workflow_isolation_file_denied: Direct file mutation cannot execute an isolated binding.");
+  }
+  const rejection = workflowSafetyEffectRejection({ ...input, request: { ...input.request, toolName: "write" } });
+  if (rejection) return createFileMutationDeniedResult(input, rejection.code + ": " + rejection.reason);
   input.hostOperation?.assertMayPrepare();
   const applied = await applyPatchActionDraft({
     draft: input.draft,

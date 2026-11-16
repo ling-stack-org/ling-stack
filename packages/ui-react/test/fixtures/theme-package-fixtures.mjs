@@ -22,6 +22,7 @@ export function importedManifest(overrides = {}) {
 export function themePackageFixture({
   extraEntries = [],
   license,
+  launchAnimation,
   manifest = importedManifest(),
   preview,
 } = {}) {
@@ -30,6 +31,7 @@ export function themePackageFixture({
   ];
   if (license !== undefined) entries.push({ name: "LICENSE.txt", bytes: textEncoder.encode(license) });
   if (preview) entries.push({ name: preview.path, bytes: preview.bytes, compression: preview.compression });
+  if (launchAnimation) entries.push({ name: launchAnimation.path, bytes: launchAnimation.bytes, compression: launchAnimation.compression });
   entries.push(...extraEntries);
   return createZip(entries);
 }

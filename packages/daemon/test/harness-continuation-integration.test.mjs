@@ -533,14 +533,14 @@ test(`daemon recovery preparation failure atomically closes the activated ${surf
   });
 
   supervisor.getRuntime(cwd, store);
-  const acquireRuntimeSemaphoreSlot = store.acquireRuntimeSemaphoreSlot.bind(store);
+  const acquireRuntimeSemaphoreSlots = store.acquireRuntimeSemaphoreSlots.bind(store);
   let injected = false;
-  store.acquireRuntimeSemaphoreSlot = (input) => {
+  store.acquireRuntimeSemaphoreSlots = (inputs) => {
     if (!injected) {
       injected = true;
       throw new Error("FAULT_AFTER_CONTINUATION_ACTIVATION");
     }
-    return acquireRuntimeSemaphoreSlot(input);
+    return acquireRuntimeSemaphoreSlots(inputs);
   };
   const errors = [];
   const result = await executeExistingRunContinuation(

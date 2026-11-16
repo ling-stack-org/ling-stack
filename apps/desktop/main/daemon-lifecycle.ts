@@ -9,6 +9,7 @@ import { connect } from "node:net";
 import { resolve as resolvePath } from "node:path";
 import {
   CUA_DRIVER_READINESS_DETAILS_V1_CAPABILITY,
+  LING_DAEMON_PROTOCOL_VERSION,
   isCuaDriverDesktopBridgeHandshakeResponseV1,
   type CuaDriverFeatureFlags,
   type CuaDriverLeaseHandshakeAuthorityV1,
@@ -81,6 +82,8 @@ export interface DesktopDaemonLifecycleOptions {
   readonly baseUrl: string;
   readonly daemonEntryPath: string;
   readonly defaultWorkspaceCwd: string;
+  /** Product version expected by this Desktop build; mismatches fail closed. */
+  readonly expectedProductVersion?: string;
   readonly healthTimeoutMs?: number;
   readonly startupTimeoutMs?: number;
   readonly shutdownTimeoutMs?: number;
@@ -765,11 +768,18 @@ export class DesktopDaemonLifecycle {
     const body = await response.json().catch(() => ({})) as {
       service?: unknown;
       defaultWorkspaceCwd?: unknown;
+      productVersion?: unknown;
+      protocolVersion?: unknown;
     };
     if (body.service !== "ling-stack-daemon") {
       return "occupied";
     }
     if (body.defaultWorkspaceCwd !== this.defaultWorkspaceCwd) {
+      return "incompatible";
+    }
+    if (this.options.expectedProductVersion !== undefined
+      && (body.productVersion !== this.options.expectedProductVersion
+        || body.protocolVersion !== LING_DAEMON_PROTOCOL_VERSION)) {
       return "incompatible";
     }
     if (!this.options.desktopBridgeToken) {

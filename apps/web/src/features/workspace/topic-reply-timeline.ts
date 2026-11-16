@@ -37,7 +37,7 @@ export function projectTopicReplyTimeline(input: {
     seen.add(message.id);
     const anchor = byId.get(message.id);
     if (anchor && (anchor.kind === "user_message" || anchor.kind === "assistant_message" || anchor.kind === "system_event")) {
-      messages.push(messageItem(message, anchor.sequence));
+      messages.push(messageItem(message, anchor.sequence, message.linkedRunId));
     } else if (!anchor && message.status === "pending") {
       pending.push(message);
     }
@@ -52,7 +52,7 @@ export function projectTopicReplyTimeline(input: {
   const reasoning = projectTopicReasoningItems(anchors, input.reasoningSummaries, input.contextCompactions ?? []);
   const historyWithReasoning = mergeConversationRunNarration(history, reasoning);
   const tail = anchors.reduce((max, item) => Math.max(max, item.sequence), 0);
-  return [root, ...historyWithReasoning, ...pending.map((message, index) => messageItem(message, tail + index + 1))];
+  return [root, ...historyWithReasoning, ...pending.map((message, index) => messageItem(message, tail + index + 1, message.linkedRunId))];
 }
 
 function projectTopicReasoningItems(
@@ -93,12 +93,13 @@ function projectTopicReasoningItems(
   }).items.filter((item) => item.kind === "reasoning" || item.kind === "contextCompaction");
 }
 
-function messageItem(message: ChannelMessage, sequence: number): ConversationTimelineItem {
+function messageItem(message: ChannelMessage, sequence: number, runId?: string): ConversationTimelineItem {
   const role = message.authorType === "local-user" ? "user" : "agent";
-  return createConversationTimelineMessageItem({
+  return { ...createConversationTimelineMessageItem({
     id: `message:${role}:${message.id}`, role, markdown: message.body, revision: message.revision,
     threadSequence: sequence, itemId: message.id, turnId: message.turnId, fileRefs: message.fileRefs,
+    waitingPlaceholder: message.status === "pending" && !message.body.trim(),
     status: message.status === "pending" ? "pending" : message.status === "blocked" ? "blocked"
       : message.status === "failed" ? "failed" : undefined,
-  });
+  }), ...(runId ? { runId } : {}) };
 }

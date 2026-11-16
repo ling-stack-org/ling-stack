@@ -189,6 +189,7 @@ import { useShellErrorFeedback } from "./use-shell-error-feedback.js";
 import { useNotificationBridge } from "../domains/notifications/use-notification-bridge.js";
 import { buildSidebarObjectContextSeeds } from "./sidebar-object-context.js";
 import { useSidebarObjectContexts } from "./use-sidebar-object-contexts.js";
+import { CompanionMiniPanel } from "../features/companions/CompanionMiniPanel.js";
 import {
   acknowledgeSidebarConversationFailure,
   hasAcknowledgedSidebarConversationFailure,
@@ -293,6 +294,7 @@ export function AppShell(): React.JSX.Element {
   const [skillLibraryRefreshToken, setSkillLibraryRefreshToken] = useState(0);
   const [teammateConversationRefreshToken, setTeammateConversationRefreshToken] = useState(0);
   const [teammateCreateOpen, setTeammateCreateOpen] = useState(false);
+  const [companionMiniOpen, setCompanionMiniOpen] = useState(false);
   const workspaceTimelineLoadRef = useRef("");
   const channelEditFormSyncKeyRef = useRef("");
   const workspaceDefaultProviderPresetIdRef = useRef<string | undefined>(undefined);
@@ -387,6 +389,7 @@ export function AppShell(): React.JSX.Element {
     channelContextSummaries,
     channelWorkflows,
     channelWorkflowSteps,
+    channelRetainedIsolationWorkflowIds,
     channelMessagesLoading,
     channelFilesLoading,
     channelRunArtifactsLoading,
@@ -605,6 +608,7 @@ export function AppShell(): React.JSX.Element {
     checkingProviderIds,
     providerBatchResult,
     providerOperationWarning,
+    providerOperationWarningTechnical,
     providerRepairRunId,
   } = providersDomain.state;
   const {
@@ -1845,6 +1849,9 @@ export function AppShell(): React.JSX.Element {
     refreshChannelRunArtifacts,
     refreshChannelExecutionActions,
     refreshChannelActivity,
+    refreshSelectedChannelProtocol: () => selectedChannelId
+      ? refreshChannelProtocol(selectedChannelId, { throwOnError: true })
+      : Promise.resolve(),
     refreshSelectedChannelConversation: () => selectedChannelId
       ? refreshChannelMessages(selectedChannelId, selectedChannelMessageThreadId)
       : Promise.resolve(),
@@ -2211,7 +2218,7 @@ export function AppShell(): React.JSX.Element {
     };
   }
 
-  async function refreshChannelActivity(): Promise<void> {
+  async function refreshChannelActivity(options?: { readonly throwOnError?: boolean }): Promise<void> {
     if (daemonObservationRef.current.paused) throw new DaemonObservationDeferredError();
     const channelId = selectedChannelId;
     if (!channelId) {
@@ -2227,7 +2234,7 @@ export function AppShell(): React.JSX.Element {
         refreshChannelFiles(channelId),
         refreshChannelRunArtifacts(form.cwd.trim(), channelId, channelRunsForArtifacts),
         refreshChannelExecutionActions(form.cwd.trim(), channelId, channelRunsForArtifacts),
-        refreshChannelProtocol(channelId),
+        refreshChannelProtocol(channelId, options),
         refreshChannelGovernanceNotifications(channelId),
         refreshSelectedChannelCouncil(channelId),
         refreshRuns(),
@@ -2236,7 +2243,8 @@ export function AppShell(): React.JSX.Element {
         refreshUsedMemoryAudit(),
       ]);
       await refreshChannelActivityTransitions(form.cwd.trim(), channelId, channelRunsForArtifacts);
-    } catch {
+    } catch (caught) {
+      if (options?.throwOnError) throw caught;
       // Each child refresh keeps its failure with its own channel or domain owner.
     }
   }
@@ -2400,11 +2408,13 @@ export function AppShell(): React.JSX.Element {
         isLoading={providersLoading}
         checkingProviderIds={checkingProviderIds}
         errorMessage={providersDomain.error?.message ?? ""}
+        errorTechnicalMessage={providersDomain.error?.technicalMessage}
         checkResult={providerCheck}
         checkedProviderId={providerCheckTargetId}
         checkScope={providerCheckScope}
         batchResult={providerBatchResult}
         operationWarning={providerOperationWarning}
+        operationWarningTechnical={providerOperationWarningTechnical}
         selectedTemplateId={selectedProviderTemplateId}
         repairRun={providerRepairRun}
         isRunning={isRunning}
@@ -2417,7 +2427,7 @@ export function AppShell(): React.JSX.Element {
         onImportModels={importModelsFromProviderForm}
         onRefresh={() => void refreshProviders()}
         onEdit={editProvider}
-        onDelete={(providerId) => void removeProvider(providerId)}
+        onDelete={removeProvider}
         onCheck={(providerId) => void runProviderCheck(providerId)}
         onCheckBatch={runProviderBatchCheck}
         onToggleEnabled={(provider, enabled) => void toggleProviderEnabled(provider, enabled)}
@@ -2619,6 +2629,7 @@ export function AppShell(): React.JSX.Element {
         }}
         onSelectRecentConversation={selectRecentConversation}
         channelDrawer
+        onOpenCompanionMini={() => setCompanionMiniOpen(true)}
       />
       ) : !settingsFullscreen ? (
         <SidebarCompactRail
@@ -2629,6 +2640,16 @@ export function AppShell(): React.JSX.Element {
           onOpenView={openSidebarView}
         />
       ) : null}
+      <CompanionMiniPanel
+        cwd={form.cwd}
+        teammates={aiTeammates}
+        open={companionMiniOpen}
+        onClose={() => setCompanionMiniOpen(false)}
+        onOpenSettings={() => {
+          setCompanionMiniOpen(false);
+          openSettingsSection("companion");
+        }}
+      />
       <section
         ref={workspaceSurfaceRef}
         className={
@@ -2680,6 +2701,7 @@ export function AppShell(): React.JSX.Element {
                 <WorkspaceClientView
             cwd={form.cwd}
             daemonHealthy={daemonHealthy}
+            workflowObservationReady={controlPlaneInvalidation.observationReady}
             channelAutoRouteEnabled={daemonFeatures.channels.autoRoute}
             providerLabel={`${form.provider}/${form.model}`}
             userProfile={userProfile}
@@ -2734,6 +2756,7 @@ export function AppShell(): React.JSX.Element {
             channelContextSummaries={channelContextSummaries}
             channelWorkflows={channelWorkflows}
             channelWorkflowSteps={channelWorkflowSteps}
+            channelRetainedIsolationWorkflowIds={channelRetainedIsolationWorkflowIds}
             channelStateTransitions={channelStateTransitions}
             channelActivityTransitionsLoading={channelActivityTransitionsLoading}
             channelActivityTransitionError={channelActivityTransitionError}
@@ -3282,11 +3305,13 @@ export function AppShell(): React.JSX.Element {
                 isLoading={providersLoading}
                 checkingProviderIds={checkingProviderIds}
                 errorMessage={providersDomain.error?.message ?? ""}
+                errorTechnicalMessage={providersDomain.error?.technicalMessage}
                 checkResult={providerCheck}
                 checkedProviderId={providerCheckTargetId}
                 checkScope={providerCheckScope}
                 batchResult={providerBatchResult}
                 operationWarning={providerOperationWarning}
+                operationWarningTechnical={providerOperationWarningTechnical}
                 selectedTemplateId={selectedProviderTemplateId}
                 repairRun={providerRepairRun}
                 isRunning={isRunning}
@@ -3299,7 +3324,7 @@ export function AppShell(): React.JSX.Element {
                 onImportModels={importModelsFromProviderForm}
                 onRefresh={() => void refreshProviders()}
                 onEdit={editProvider}
-                onDelete={(providerId) => void removeProvider(providerId)}
+                onDelete={removeProvider}
                 onCheck={(providerId) => void runProviderCheck(providerId)}
                 onCheckBatch={runProviderBatchCheck}
                 onToggleEnabled={(provider, enabled) => void toggleProviderEnabled(provider, enabled)}
@@ -3493,6 +3518,7 @@ export function AppShell(): React.JSX.Element {
                     onOpenProviders={() => openSettingsWorkspaceTool("providers")}
                     onOpenTeammates={() => openSettingsWorkspaceTool("teammates")}
                     onOpenCouncils={() => openSettingsWorkspaceTool("councils")}
+                    onOpenCompanionMini={() => setCompanionMiniOpen(true)}
                     workspaceToolDetail={settingsWorkspaceToolDetail}
                     workspaceToolView={settingsWorkspaceToolView}
                     runDiagnosticsRunId={settingsRunDiagnosticsRunId}

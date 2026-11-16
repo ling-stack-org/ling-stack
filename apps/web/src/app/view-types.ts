@@ -51,7 +51,7 @@ export function viewTitle(view: ViewId): string {
     return "Threads";
   }
   if (view === "automations") {
-    return "Automations";
+    return "Scheduled tasks";
   }
   if (view === "approvals") {
     return "Review Queue";
@@ -91,7 +91,7 @@ export function viewDescription(view: ViewId): string {
     return "查看长期线程的 lineage、证据、动作审计和 resume context。";
   }
   if (view === "automations") {
-    return "创建、预览并运行可重复的 AI teammate 工作。";
+    return "Manage scheduled tasks, their schedules, and run history.";
   }
   if (view === "approvals") {
     return "处理跨频道注意事项、外部动作审批、已批准动作执行和离线本地审批。";

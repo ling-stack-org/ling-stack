@@ -30,14 +30,16 @@ export interface PiCompletedTool {
 
 const observations = new WeakMap<PiToolBoundaryObservation, { ended: boolean; entered: boolean; ids: Set<string>;
   names: Map<string, string>; reads: Map<string, PiCompletedBuiltinRead>; invalid: boolean;
+  isolatedHostDispatches?: Set<string>;
   pending: Set<string>; completed: Set<string>; providerBoundary: boolean;
   settledBoundary: boolean; settledKind?: "original" | "restored"; settledSignal?: AbortSignal; settledModelView?: readonly unknown[] }>();
 
-export function createPiToolBoundaryObservation(runId: string, attemptId: string): {
+export function createPiToolBoundaryObservation(runId: string, attemptId: string, profile?: "host_isolated_files_v1"): {
   readonly receipt: PiToolBoundaryObservation;
   readonly enter: (toolCallId?: string, toolName?: string) => void;
   readonly completeBuiltinRead: (toolCallId: string, toolName: string) => void;
   readonly completeTool: (toolCallId: string, toolName: string) => void;
+  readonly dispatchIsolatedHostTool: (toolCallId: string, toolName: string) => void;
   readonly enterProviderBoundary: () => void;
   readonly leaveProviderBoundary: () => void;
   readonly enterSettledBoundary: (signal?: AbortSignal, modelView?: readonly unknown[]) => void;
@@ -48,6 +50,7 @@ export function createPiToolBoundaryObservation(runId: string, attemptId: string
   const receipt = Object.freeze({ runId, attemptId });
   const state = { ended: false, entered: false, ids: new Set<string>(), names: new Map<string, string>(),
     reads: new Map<string, PiCompletedBuiltinRead>(), invalid: false,
+    isolatedHostDispatches: profile === "host_isolated_files_v1" ? new Set<string>() : undefined,
     pending: new Set<string>(), completed: new Set<string>(), providerBoundary: false,
     settledBoundary: false, settledSignal: undefined as AbortSignal | undefined,
     settledKind: undefined as "original" | "restored" | undefined,
@@ -67,6 +70,11 @@ export function createPiToolBoundaryObservation(runId: string, attemptId: string
     completeTool: (id, name) => {
       if (state.ended || state.settledBoundary || !state.pending.has(id) || state.names.get(id) !== name) state.invalid = true;
       else { state.pending.delete(id); state.completed.add(id); }
+    },
+    dispatchIsolatedHostTool: (id, name) => {
+      if (!state.isolatedHostDispatches || state.ended || state.providerBoundary || state.settledBoundary
+        || !state.pending.has(id) || state.names.get(id) !== name || state.isolatedHostDispatches.has(id)) state.invalid = true;
+      else state.isolatedHostDispatches.add(id);
     },
     enterProviderBoundary: () => {
       if (state.ended || state.providerBoundary || state.settledBoundary) state.invalid = true;
@@ -149,16 +157,21 @@ export function readPiCompletedToolCalls(receipt: PiToolBoundaryObservation | un
   return state?.ended && !state.invalid ? Object.freeze([...state.ids]) : undefined;
 }
 
-/** Closed original SDK tool inventory, including the exact registered name. */
+/**
+ * Closed original SDK inventory. The isolated Host-only scope records actual
+ * producer entry, never SDK error text or an assertion that an effect settled.
+ */
 export function readPiCompletedTools(receipt: PiToolBoundaryObservation | undefined,
-  runId: string, attemptId: string): readonly PiCompletedTool[] | undefined {
+  runId: string, attemptId: string, scope: "sdk" | "isolated_host_effects" = "sdk"): readonly PiCompletedTool[] | undefined {
   if (!receipt || receipt.runId !== runId || receipt.attemptId !== attemptId) return undefined;
   const state = observations.get(receipt);
   if (!state?.ended || state.invalid || state.ids.size !== state.completed.size) return undefined;
+  if (scope !== "sdk" && (scope !== "isolated_host_effects" || !state.isolatedHostDispatches)) return undefined;
   const result: PiCompletedTool[] = [];
   for (const toolCallId of state.ids) {
     const toolName = state.names.get(toolCallId);
     if (!toolName) return undefined;
+    if (scope === "isolated_host_effects" && !state.isolatedHostDispatches!.has(toolCallId)) continue;
     result.push(Object.freeze({ toolCallId, toolName }));
   }
   return Object.freeze(result);

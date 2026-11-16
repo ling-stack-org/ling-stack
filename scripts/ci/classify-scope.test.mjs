@@ -39,6 +39,7 @@ test("review templates and nested READMEs are documentation before broad infrast
     const scope = classify([file]);
     assert.equal(scope.mode, "docs", file);
     assert.equal(scope.daemon, false, file);
+    assert.equal(scope.macosNative, false, file);
     assert.equal(scope.web, false, file);
     assert.equal(scope.dependencyPolicy, false, file);
   }
@@ -208,7 +209,48 @@ test("daemon source changes include CLI but do not pull Web", () => {
   const scope = classify(["packages/daemon/src/index.ts"]);
   assert.deepEqual(scope.packages, ["@ling-stack/cli", "@ling-stack/daemon"]);
   assert.equal(scope.daemon, true);
+  assert.deepEqual(scope.daemonPlatforms, ["linux", "darwin"]);
+  assert.equal(scope.macosNative, false);
   assert.equal(scope.web, false);
+});
+
+test("direct Daemon test changes use the assigned platform only", () => {
+  const linux = classify(["packages/daemon/test/runtime-supervisor.test.mjs"]);
+  assert.deepEqual(linux.daemonPlatforms, ["linux"]);
+  const darwin = classify(["packages/daemon/test/macos-native-command.test.mjs"]);
+  assert.deepEqual(darwin.daemonPlatforms, ["darwin"]);
+  const mixed = classify(["packages/daemon/test/runtime-supervisor.test.mjs", "packages/daemon/test/macos-native-command.test.mjs"]);
+  assert.deepEqual(mixed.daemonPlatforms, ["linux", "darwin"]);
+});
+
+test("Daemon source and shared validation inputs retain both platforms", () => {
+  for (const files of [
+    ["packages/daemon/src/index.ts", "packages/daemon/test/runtime-supervisor.test.mjs"],
+    ["packages/daemon/test/runtime-supervisor.test.mjs", "packages/daemon/test/test-support/sqlite-workspace-fixture.ts"],
+    ["packages/daemon/test/fixtures/shared-fixture.mjs"],
+  ]) {
+    const scope = classify(files);
+    assert.deepEqual(scope.daemonPlatforms, ["linux", "darwin"], files.join(", "));
+  }
+});
+
+test("macOS helper smoke follows explicit native surface paths", () => {
+  for (const file of [
+    "native/sandbox/src/main.rs",
+    "native/sandbox/tests/channel-command-smoke.mjs",
+    "packages/daemon/src/runtime/sandbox/macos-sandbox-backend.ts",
+    "packages/daemon/src/runtime/adapters/native-command-policy.ts",
+    "packages/daemon/src/features/runs/restricted-command-dispatch.ts",
+    "packages/daemon/test/platform-native-sandbox.test.mjs",
+    "packages/daemon/test/restricted-command-launch-unknown.contract.mjs",
+  ]) {
+    const scope = classify([file]);
+    assert.equal(scope.mode, "affected", file);
+    assert.equal(scope.daemon, true, file);
+    assert.equal(scope.macosNative, true, file);
+    assert.ok(scope.packages.includes("@ling-stack/daemon"), file);
+  }
+  assert.equal(classify(["native/unknown.rs"]).mode, "full");
 });
 
 test("Chrome extension and Mobile changes select their own checks", () => {
@@ -227,6 +269,8 @@ test("test-only changes keep the direct package scope", () => {
   const scope = classify(["packages/daemon/test/runtime-supervisor.test.mjs"]);
   assert.deepEqual(scope.packages, ["@ling-stack/daemon"]);
   assert.deepEqual(scope.testPackages, ["@ling-stack/daemon"]);
+  assert.deepEqual(scope.daemonPlatforms, ["linux"]);
+  assert.equal(scope.macosNative, false);
   assert.match(scope.reason, /test/);
 });
 

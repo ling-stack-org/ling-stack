@@ -1,4 +1,4 @@
-export type LocalPublicAssetPath = `${"avatars" | "brand" | "icons"}/${string}`;
+export type LocalPublicAssetPath = `${"avatars" | "brand" | "icons" | "companions"}/${string}`;
 
 const publicAssetBaseUrl = import.meta.env.BASE_URL.endsWith("/")
   ? import.meta.env.BASE_URL

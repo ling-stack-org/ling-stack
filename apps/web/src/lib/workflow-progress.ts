@@ -12,10 +12,11 @@ import type {
   ConversationWorkCellRowTone,
   ConversationWorkCellViewModel,
 } from "./conversation-work-cell.js";
-import { buildConversationApprovalCheckpointRows, buildConversationArtifactStripItems, buildConversationExecutionActionEvidenceRows, mainFeedArtifactEvidenceLinks, mainFeedEvidenceGroups, mergeConversationArtifactStripItems, normalizeConversationOperationCell } from "./conversation-work-cell.js";
+import { buildConversationApprovalCheckpointRows, buildConversationArtifactStripItems, buildConversationExecutionActionEvidenceRows, mainFeedArtifactEvidenceLinks, mainFeedEvidenceGroups, mergeConversationArtifactStripItems, normalizeConversationOperationCell, projectConversationWorkCellTimeline } from "./conversation-work-cell.js";
 import { truncatePreview } from "./data.js";
 import { projectWorkflowChildTimeline } from "./workflow-child-timeline.js";
 import { hasWorkflowTimelineContent } from "./workflow-timeline-content.js";
+import { buildWorkflowIsolationPresentation, type WorkflowIsolationObservation, type WorkflowIsolationPresentation } from "./workflow-isolation-evidence.js";
 
 export type WorkflowProgressMode = "active" | "completed";
 export type WorkflowProgressAttention = "none" | "waiting" | "blocked" | "failed";
@@ -47,6 +48,7 @@ export interface WorkflowProgressModel {
   readonly attention: WorkflowProgressAttention;
   readonly updatedAt: string;
   readonly terminalReport?: TerminalReportDto;
+  readonly isolation?: WorkflowIsolationPresentation;
   readonly conversationVisibility: "default" | "audit_only";
 }
 
@@ -61,9 +63,11 @@ export interface BuildWorkflowProgressInput {
   readonly t: Translate;
   readonly artifactHref?: (artifact: RunArtifact) => string;
   readonly terminalReport?: TerminalReportDto;
+  readonly isolationEvidence?: WorkflowIsolationObservation;
 }
 
 export function buildWorkflowProgressModel(input: BuildWorkflowProgressInput): WorkflowProgressModel {
+  const isolation = buildWorkflowIsolationPresentation({ workflow: input.workflow, observation: input.isolationEvidence, t: input.t });
   const orderedSteps = [...input.steps].sort((left, right) => left.position - right.position || left.createdAt.localeCompare(right.createdAt));
   const stepRunIds = orderedSteps.map((step) => step.runId).filter((runId): runId is string => Boolean(runId));
   const stepIds = new Set(orderedSteps.map((step) => step.id));
@@ -93,14 +97,17 @@ export function buildWorkflowProgressModel(input: BuildWorkflowProgressInput): W
     ? undefined
     : readWorkflowFinalResultSummary(orderedSteps, input.workflow.status) ??
       readWorkflowApprovalFinalResultSummary(workflowApprovals, input.workflow.status);
-  const attention: WorkflowProgressAttention = blockedStep
+  const workflowAttention: WorkflowProgressAttention = blockedStep
     ? "blocked"
     : failedStep || input.workflow.status === "failed"
       ? "failed"
       : waitingStep || pendingApprovals.length > 0 || input.workflow.status === "waiting_for_approval" || input.workflow.status === "waiting_for_input"
         ? "waiting"
         : "none";
+  const attention: WorkflowProgressAttention = (["failed", "blocked", "waiting"] as const)
+    .find(level => level === workflowAttention || level === isolation?.attention) ?? "none";
   const mode: WorkflowProgressMode = input.workflow.status === "draft" || input.workflow.status === "ready" || input.workflow.status === "running" || input.workflow.status === "waiting_for_approval" || input.workflow.status === "waiting_for_input"
+    || Boolean(isolation && !isolation.settled && input.workflow.status === "succeeded")
     ? "active"
     : "completed";
   const anchorRunId = latestRun(workflowRuns)?.id ?? `workflow:${input.workflow.id}`;
@@ -129,7 +136,7 @@ export function buildWorkflowProgressModel(input: BuildWorkflowProgressInput): W
     mode,
     status: input.workflow.status,
     title: input.workflow.title,
-    summary: buildWorkflowProgressSummary({
+    summary: isolation?.summary ?? buildWorkflowProgressSummary({
       t: input.t,
       workflow: input.workflow,
       currentStep,
@@ -156,11 +163,10 @@ export function buildWorkflowProgressModel(input: BuildWorkflowProgressInput): W
     evidenceLinks,
     artifactStripItems: buildConversationArtifactStripItems({ groups, evidenceLinks, artifacts, t: input.t }),
     attention,
-    updatedAt: input.terminalReport?.committedAt && input.terminalReport.committedAt > input.workflow.updatedAt
-      ? input.terminalReport.committedAt
-      : input.workflow.updatedAt,
+    updatedAt: [input.workflow.updatedAt, input.terminalReport?.committedAt, isolation?.updatedAt].filter((stamp): stamp is string => Boolean(stamp)).sort().at(-1)!,
     terminalReport: input.terminalReport,
-    conversationVisibility: isResolvedApprovalOnlyWorkflow(input.workflow, orderedSteps, workflowRuns, workflowApprovals, input.terminalReport)
+    isolation,
+    conversationVisibility: !isolation && isResolvedApprovalOnlyWorkflow(input.workflow, orderedSteps, workflowRuns, workflowApprovals, input.terminalReport)
       ? "audit_only"
       : "default",
   };
@@ -207,6 +213,7 @@ export function workflowProgressToConversationWorkCell(model: WorkflowProgressMo
   ).map((item) => item.kind === "changed"
     ? { ...item, recoveryTarget: { kind: "workflow" as const, id: model.workflowId } }
     : item);
+  const operationItems = projectConversationActivity(model.agentSpans.length > 0 ? [] : model.currentRows);
   return normalizeConversationOperationCell({
     id: model.id,
     sourceKind: "workflow",
@@ -222,7 +229,11 @@ export function workflowProgressToConversationWorkCell(model: WorkflowProgressMo
     operationRows: model.agentSpans.length > 0 ? [] : model.currentRows,
     agentSpans: model.agentSpans,
     agentBranches: model.agentSpans,
-    ...(model.agentSpans.length === 0 ? { operationItems: projectConversationActivity(model.currentRows) } : {}),
+    ...(model.agentSpans.length === 0 ? { operationItems } : {}),
+    ...(model.isolation ? { typedTimelineItems: [
+      ...projectConversationWorkCellTimeline({ operationItems, agentSpans: model.agentSpans }),
+      ...model.isolation.items,
+    ] } : {}),
     activitySummary: model.activitySummary,
     terminalReportId: terminalReport?.reportId,
     terminalReportRevisionKey: terminalReport?.revisionKey,

@@ -71,7 +71,12 @@ function mayReleaseCancelledAttemptResources(database: DatabaseSync, fence: Runt
   const completion = database.prepare(`SELECT run_id,drained_at,effect_coverage,tracked_tool_calls_json,native_effect_inventory_json FROM host_attempt_completions
     WHERE work_unit_id=? AND attempt_id=? AND runtime_instance_id=? AND fencing_token=?`)
     .get(fence.workUnitId, fence.attemptId, fence.runtimeInstanceId, fence.fencingToken);
-  if (typeof owner.run_id === "string" && isNativeCompletionSource(database, { runId: owner.run_id, ...fence })) {
+  // A native identity alone does not prove that an external execution began.
+  // Before the native Host lifetime is registered, the Attempt is still in
+  // preparation and its local resources may be released normally. Once a
+  // lifetime exists, require the durable native journal to settle before any
+  // release path can free the resources.
+  if (completion && typeof owner.run_id === "string" && isNativeCompletionSource(database, { runId: owner.run_id, ...fence })) {
     const source = { runId: owner.run_id, ...fence };
     if (!completion?.drained_at || readNativeAttemptEffectStatus(database, source, completion.native_effect_inventory_json, scope) !== "settled") return false;
   }

@@ -23,6 +23,22 @@ export function rebuildExistingRunRequest(
   run: RunSession,
   origin: RunnerContinuationOrigin,
 ): RunRequest {
+  const request = rebuildStoredRunRequest(run);
+  if (!isRecord(request.harnessFeatureSnapshot) || request.harnessFeatureSnapshot.continuations !== "enforce") {
+    throw new Error("Existing Run was not admitted with enforced continuation semantics.");
+  }
+  return { ...request, harnessContinuationOrigin: origin };
+}
+
+/** Reuse original input for a never-dispatched Run without manufacturing a continuation. */
+export function rebuildQueuedRunRequest(run: RunSession): RunRequest {
+  if (run.workflowStepId || run.parentRunId || run.interventionId || run.continuationReason) {
+    throw new Error("Queued Run is not an original ordinary execution.");
+  }
+  return { ...rebuildStoredRunRequest(run), harnessContinuationOrigin: undefined };
+}
+
+function rebuildStoredRunRequest(run: RunSession): RunRequest {
   if (!isRecord(run.requestSnapshot)) {
     throw new Error("Existing Run request snapshot is missing.");
   }
@@ -53,11 +69,6 @@ export function rebuildExistingRunRequest(
     && snapshot.selectedSkillId !== run.selectedSkillId) {
     throw new Error("Existing Run selected skill lineage does not match.");
   }
-  if (!isRecord(snapshot.harnessFeatureSnapshot)
-    || snapshot.harnessFeatureSnapshot.continuations !== "enforce") {
-    throw new Error("Existing Run was not admitted with enforced continuation semantics.");
-  }
-
   return {
     ...(snapshot as unknown as RunRequest),
     cwd: run.cwd,
@@ -72,7 +83,6 @@ export function rebuildExistingRunRequest(
     parentRunId: run.parentRunId,
     continuationReason: run.continuationReason,
     skipMemoryRecall: true,
-    harnessContinuationOrigin: origin,
   };
 }
 

@@ -106,6 +106,13 @@ function removeLearningOverlays(database) {
     "harness_projection_rows", "harness_projection_checkpoints", "harness_artifact_gc_receipts",
     "harness_artifact_pin_events", "harness_artifact_pins", "harness_artifact_retention",
     "delegation_budget_charges", "delegation_budget_reservations", "delegation_root_budgets",
+    // Runtime coordination tables are post-178 overlays. The policy table is
+    // rebuilt by migration 214 and extended by migration 215, so retaining its
+    // latest shape would make the historical fixture look like an unmarked
+    // schema conflict.
+    "runtime_delegation_spawn_admissions", "runtime_host_capacity_releases",
+    "runtime_host_capacity_intents", "runtime_run_queue",
+    "runtime_delegation_capacity_admissions", "runtime_concurrency_policies",
   ]) dropTable(table);
   for (const index of database.prepare("SELECT name FROM sqlite_master WHERE type='index' AND sql IS NOT NULL").all()) {
     const name = String(index.name);
@@ -241,7 +248,9 @@ test("real mainline schema178 upgrades to188 without changing canonical settings
     "work_summary_pull_requests", "run_suspensions", "run_suspension_stops",
     "run_suspension_root_activations", "run_suspension_root_starts",
     "run_suspension_delegated_activations", "run_suspension_delegated_starts", "run_final_settlements",
-    "run_terminal_intents",
+    "run_terminal_intents", "runtime_concurrency_policies", "runtime_delegation_capacity_admissions",
+    "runtime_run_queue", "runtime_host_capacity_intents", "runtime_host_capacity_releases",
+    "runtime_delegation_spawn_admissions",
   ]);
   const post178OverlayNames = [
     "idx_harness_", "pending_authority_", "trg_channel_session_", "idx_run_suspension_",

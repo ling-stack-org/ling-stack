@@ -1,0 +1,26 @@
+.ling-launch-transition {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  overflow: hidden;
+  background: #fff;
+  opacity: 1;
+  pointer-events: auto;
+  transition: opacity 420ms ease;
+}
+
+.ling-launch-transition[data-state="exiting"] {
+  opacity: 0;
+}
+
+.ling-launch-transition canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ling-launch-transition {
+    transition-duration: 180ms;
+  }
+}

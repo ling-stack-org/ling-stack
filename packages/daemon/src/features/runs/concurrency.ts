@@ -2,7 +2,6 @@ import { realpathSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import { resolve as resolvePath } from "node:path";
 import {
-  DEFAULT_WORKSPACE_ID,
   type Channel,
   type ResourceLease,
   type RunStore,
@@ -18,6 +17,8 @@ import { DEFAULT_RUNNER_ID } from "../../runtime/work-units.js";
 import { removeUndefined } from "../../shared/validation.js";
 import { usesSideEffectTools } from "./approvals.js";
 import type { RunRequest } from "./schemas.js";
+import { createWorkflowSafetyAdmission } from "./workflow-safety.js";
+import { assertWorkflowRepositoryRunAllowed } from "../workspaces/workflow-repository-fence.js";
 
 const RESOURCE_LEASE_TTL_MS = 6 * 60 * 60 * 1000;
 
@@ -40,6 +41,7 @@ export function prepareRunConcurrency(input: {
   readonly existingContinuationId?: string;
   readonly now: string;
 }): PreparedRunConcurrency {
+  assertWorkflowRepositoryRunAllowed(input.store, input.runRequest);
   input.store.expireResourceLeases(input.now);
 
   const taskId = input.runRequest.task.id;
@@ -127,6 +129,7 @@ export function recoverPreparedRunConcurrency(input: {
   readonly runnerId?: string;
   readonly now: string;
 }): PreparedRunConcurrency {
+  assertWorkflowRepositoryRunAllowed(input.store, input.runRequest);
   assertRecoverablePreparedRunOwner(input);
   if (input.binding.runId !== input.runId
     || !isDeepStrictEqual(input.binding.fence, toRuntimeAttemptFence(input.attempt))) {
@@ -161,7 +164,14 @@ export function recoverPreparedRunConcurrency(input: {
     taskId: task ? taskId : undefined,
     now: input.now,
   });
-  const semaphoreInputs = buildRunSemaphoreInputs({
+  const step = input.runRequest.workflowStepId ? input.store.getChannelWorkflowStep(input.runRequest.workflowStepId) : undefined;
+  const workflowAdmission = step ? createWorkflowSafetyAdmission(input.store, step,
+    { ...input.runRequest, runnerId: input.attempt.effectiveRunnerId }) : undefined;
+  const semaphoreInputs = workflowAdmission ? [
+    ...workflowAdmission.entries,
+    ...workflowAdmission.resourceKeys.map(resourceKey => ({ resourceType: "workflow_resource" as const, resourceKey, limit: 1 })),
+  ].map(entry => ({ ...entry, workspaceId: input.workUnit.workspaceId, ...toRuntimeAttemptFence(input.attempt),
+    ownerType: "work_unit_attempt" as const, ownerId: input.attempt.id, acquiredAt: input.now, expiresAt })) : buildRunSemaphoreInputs({
     workUnit: input.workUnit,
     attempt: input.attempt,
     channel,
@@ -177,6 +187,7 @@ export function recoverPreparedRunConcurrency(input: {
     runId: input.runId,
     leases: leaseInputs,
     semaphores: semaphoreInputs,
+    ...(workflowAdmission ? { workflowAdmission } : {}),
     now: input.now,
     expiresAt,
   });
@@ -288,18 +299,23 @@ export function acquireRunRuntimeSemaphores(input: {
   readonly runnerId?: string;
   readonly now: string;
 }): void {
-  for (const slotInput of buildRunSemaphoreInputs(input)) {
-    const slot = input.store.acquireRuntimeSemaphoreSlot(slotInput);
-    if (!slot) {
-      input.store.releaseRuntimeSemaphoreSlotsForAttempt(toRuntimeAttemptFence(input.attempt), input.now, "semaphore-conflict");
-      input.store.releaseResourceLeasesForAttempt(toRuntimeAttemptFence(input.attempt), input.now, "semaphore-conflict");
-      const message = `Runtime semaphore is full: ${slotInput.resourceType}:${slotInput.resourceKey}`;
-      if (input.channel?.runtimePolicy.queueOnConflict) {
-        throw new QueueableRunConflictError("runtime_semaphore_conflict", message, input.channel);
-      }
-      throw new HttpError(409, "runtime_semaphore_conflict", message);
+  assertWorkflowRepositoryRunAllowed(input.store, { cwd: input.store.paths.cwd });
+  const inputs = buildRunSemaphoreInputs(input);
+  const admitted = input.store.acquireRuntimeSemaphoreSlots(inputs);
+  if (admitted.status === "changed") {
+    throw new HttpError(409, "runtime_semaphore_owner_changed", "Runtime semaphore admission no longer has an unchanged Attempt owner.");
+  }
+  if (admitted.status === "full") {
+    input.store.releaseResourceLeasesForAttempt(toRuntimeAttemptFence(input.attempt), input.now, "semaphore-conflict");
+    const message = `Runtime semaphore is full: ${admitted.resourceType}:${admitted.resourceKey}`;
+    if (input.channel?.runtimePolicy.queueOnConflict) {
+      throw new QueueableRunConflictError("runtime_semaphore_conflict", message, input.channel);
     }
-    appendSemaphoreAcquired(input.store, input.attempt, slot, slotInput.limit, input.now);
+    throw new HttpError(409, "runtime_semaphore_conflict", message);
+  }
+  for (const slot of admitted.slots) {
+    const entry = inputs.find(value => value.resourceType === slot.resourceType && value.resourceKey === slot.resourceKey)!;
+    appendSemaphoreAcquired(input.store, input.attempt, slot, entry.limit, input.now);
   }
 }
 
@@ -322,7 +338,7 @@ function assertRecoverablePreparedRunOwner(input: {
   }
 }
 
-function buildRunSemaphoreInputs(input: {
+export function buildRunSemaphoreInputs(input: {
   readonly workUnit: WorkUnit;
   readonly attempt: WorkUnitAttempt;
   readonly channel?: Channel;
@@ -339,7 +355,7 @@ function buildRunSemaphoreInputs(input: {
       limit: Math.max(input.channelParallelLimit ?? input.channel.runtimePolicy.maxConcurrentRuns, 1) }] : []),
   ];
   return slots.map((slot) => ({
-    workspaceId: DEFAULT_WORKSPACE_ID,
+    workspaceId: input.workUnit.workspaceId,
     resourceType: slot.resourceType,
     resourceKey: slot.resourceKey,
     limit: slot.limit,
@@ -371,7 +387,7 @@ function recoveryChanged(message: string): HttpError {
   return new HttpError(409, "continuation_resource_recovery_changed", message);
 }
 
-function buildRunLeaseInputs(input: {
+export function buildRunLeaseInputs(input: {
   readonly runId: string;
   readonly workUnit: WorkUnit;
   readonly attempt: WorkUnitAttempt;
@@ -382,7 +398,7 @@ function buildRunLeaseInputs(input: {
 }): Parameters<RunStore["acquireResourceLease"]>[0][] {
   const expiresAt = new Date(new Date(input.now).getTime() + RESOURCE_LEASE_TTL_MS).toISOString();
   const base = removeUndefined({
-    workspaceId: DEFAULT_WORKSPACE_ID,
+    workspaceId: input.workUnit.workspaceId,
     ownerType: "run" as const,
     ownerId: input.runId,
     acquiredAt: input.now,
@@ -405,11 +421,11 @@ function buildRunLeaseInputs(input: {
   if (usesSideEffectTools(input.runRequest.tools ?? [])) {
     const scope = input.channel?.runtimePolicy.writeLockScope ?? "boundPath";
     if (scope === "workspace") {
-      leases.push({ ...base, resourceType: "workspace", resourceKey: DEFAULT_WORKSPACE_ID });
+      leases.push({ ...base, resourceType: "workspace", resourceKey: input.workUnit.workspaceId });
     } else if (scope === "channel" && input.channel) {
       leases.push({ ...base, resourceType: "channel", resourceKey: input.channel.id });
     } else if (scope === "channel") {
-      leases.push({ ...base, resourceType: "workspace", resourceKey: DEFAULT_WORKSPACE_ID });
+      leases.push({ ...base, resourceType: "workspace", resourceKey: input.workUnit.workspaceId });
     } else {
       leases.push({ ...base, resourceType: "bound_path", resourceKey: canonicalResourcePath(input.runRequest.cwd) });
     }

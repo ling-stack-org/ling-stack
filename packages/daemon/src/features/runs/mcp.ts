@@ -28,6 +28,7 @@ import { reserveHostMcpOperation } from "../mcp/host-operation.js";
 import { assertHostOfficeLocalMcpAdmission, assertHostOfficeLocalMcpResultCurrent, bindHostOfficeLocalMcpAuthority,
   finishHostOfficeLocalMcpOperation, isOfficeLocalArtifactToolName, reserveHostOfficeLocalMcpOperation } from "../mcp/office-local-mcp-operation.js";
 import type { RunRequest } from "./schemas.js";
+import { assertWorkflowSafetyEffectByRunId } from "./workflow-safety.js";
 
 export function resolveMcpToolAccessForRun(
   store: RunStore,
@@ -144,6 +145,7 @@ export function createMcpToolCallHandler(
 ): NonNullable<PiRunnerRunOptions["onMcpToolCall"]> {
   const byRegisteredName = new Map(tools.map((tool) => [tool.registeredName, tool]));
   return async (request) => {
+    assertWorkflowSafetyEffectByRunId(store, options.runId, "mcp");
     // Parent and connection producer are reserved before the first await.
     const tracker = options.hostOperationTracker ?? options.getHostOperationTracker?.();
     const capturedTool = byRegisteredName.get(request.registeredName);
@@ -173,6 +175,7 @@ export function createMcpToolCallHandler(
       // Observers are not dispatch authority. A replacement method must never
       // get invoked just because the original factory was checked before it.
       if (officeLocalOperation) assertHostOfficeLocalMcpResultCurrent(officeLocalOperation);
+      assertWorkflowSafetyEffectByRunId(store, options.runId, "mcp");
       const callTool = officeLocalOperation ? captureRegisteredMcpBrokerCallTool(mcpBroker) : mcpBroker.callTool;
       const callArguments: Parameters<McpBroker["callTool"]> = [server, {
         secretResolver,

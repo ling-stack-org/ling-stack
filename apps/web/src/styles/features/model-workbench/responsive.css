@@ -37,8 +37,8 @@
 
 @media (max-height: 720px) {
   .provider-form-panel.provider-sheet {
-    max-height: calc(100vh - 16px);
-    max-height: calc(100dvh - 16px);
+    height: 100vh;
+    height: 100dvh;
   }
 
   .provider-model-grid {

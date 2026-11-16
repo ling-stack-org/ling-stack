@@ -1,6 +1,6 @@
 import type { RunTool } from "./approval-policy.js";
 import type { ChannelExecutionProposalStepSource, WorkflowStepGate, WorkflowStepPolicy } from "./workspace-types.js";
-import type { WorkflowParticipantProviderBindingV1 } from "@ling-stack/contracts";
+import type { WorkflowParticipantProviderBindingV1, WorkflowStepParallelPolicy, WorkflowStepSideEffectClass } from "@ling-stack/contracts";
 
 export type WorkflowGraphNodeKind = "step" | "join";
 
@@ -36,6 +36,8 @@ export interface WorkflowGraphNode {
   readonly kind: WorkflowGraphNodeKind;
   readonly name: string;
   readonly prompt: string;
+  readonly sideEffectClass?: WorkflowStepSideEffectClass;
+  readonly parallelPolicy?: WorkflowStepParallelPolicy;
   readonly teammateTemplateId?: string;
   readonly teammateId?: string;
   readonly councilSlotKey?: string;

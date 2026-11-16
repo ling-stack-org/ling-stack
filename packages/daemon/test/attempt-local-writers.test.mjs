@@ -54,6 +54,62 @@ test("outer Host callback owns its final writes beyond the nested tool result", 
   assert.equal(idle, true);
 });
 
+for (const rejects of [false, true]) {
+  test(`isolated Host callback drains after its final write on ${rejects ? "rejection" : "success"}`, async () => {
+    const group = new AttemptLocalWriterGroup(source);
+    const nestedResult = deferred(), finalWrite = deferred(), finalWriteStarted = deferred();
+    const call = { toolCallId: "isolated-write", toolName: "write", input: { path: "result.txt", content: "done" }, cwd: "/workspace" };
+    const result = { content: [{ type: "text", text: "written" }] }, failure = new Error("isolated callback failed");
+    const boundaries = [], writes = [];
+    const request = scopeUserInputLocalWriters({ onIsolatedToolCall: async captured => {
+      assert.equal(captured, call);
+      try {
+        await nestedResult.promise;
+        if (rejects) throw failure;
+        return result;
+      } finally {
+        finalWriteStarted.resolve();
+        await finalWrite.promise;
+        writes.push(captured.toolCallId);
+      }
+    } }, group, { onToolBoundary: captured => { boundaries.push(captured); } });
+    const pending = request.onIsolatedToolCall(call);
+    const outcome = rejects ? assert.rejects(pending, error => error === failure)
+      : pending.then(actual => { assert.equal(actual, result); });
+    assert.deepEqual(boundaries, [call]);
+    assert.deepEqual(group.getSnapshot().writers, ["isolated_tool"]);
+    nestedResult.resolve();
+    await finalWriteStarted.promise;
+    group.close();
+    let idle = false;
+    const drain = group.waitForIdle().then(() => { idle = true; });
+    await tick();
+    assert.equal(idle, false, "the nested result cannot retire the outer callback's final write");
+    assert.deepEqual(writes, []);
+    assert.deepEqual(group.getSnapshot().writers, ["isolated_tool"]);
+    finalWrite.resolve();
+    await outcome;
+    await drain;
+    assert.deepEqual(writes, [call.toolCallId]);
+    assert.equal(idle, true);
+    assert.deepEqual(group.getSnapshot(), { closed: true, writers: [] });
+  });
+}
+
+test("closed isolated Host admission rejects before invoking the captured callback", async () => {
+  const group = new AttemptLocalWriterGroup(source), writes = [];
+  const request = scopeUserInputLocalWriters({ onIsolatedToolCall: call => {
+    writes.push(call.toolCallId);
+    return { content: [] };
+  } }, group);
+  group.close();
+  assert.throws(() => request.onIsolatedToolCall({ toolCallId: "late-isolated", toolName: "write", input: {}, cwd: "/workspace" }),
+    /admission is closed/u);
+  await group.waitForIdle();
+  assert.deepEqual(writes, []);
+  assert.deepEqual(group.getSnapshot(), { closed: true, writers: [] });
+});
+
 for (const [callback, label] of [["onTaskSettledBoundary", "settled_boundary"],
   ["onTaskRestoredCompleteBoundary", "restored_complete_boundary"]]) {
   test(`${callback} remains a tracked Host writer through its entire awaited fan-in`, async () => {
@@ -130,6 +186,61 @@ test("old retained cleanup cannot delete or stop a replacement attempt", async (
   await tick();
   assert.equal(registry.get(source.runId).attemptId, "successor");
   assert.equal(replacement.signal.aborted, false);
+  registry.delete(source.runId);
+  await registry.waitForIdle();
+});
+
+test("old isolated Host drain cannot retire a successor's callback or close its admission", async () => {
+  const registry = new ActiveRunRegistry(), oldGroup = new AttemptLocalWriterGroup(source);
+  const oldWrite = deferred(), successorWrite = deferred(), oldDrained = deferred();
+  const writes = [], cleanups = [];
+  const oldRequest = scopeUserInputLocalWriters({ onIsolatedToolCall: async call => {
+    await oldWrite.promise;
+    writes.push([oldGroup.source.attemptId, call.toolCallId]);
+    return { content: [] };
+  } }, oldGroup);
+  const call = { toolCallId: "old-isolated", toolName: "write", input: {}, cwd: "/workspace" };
+  const oldPending = oldRequest.onIsolatedToolCall(call);
+  register(registry, oldGroup);
+  registry.retainBlockedAttempt(source.runId, oldGroup, () => {
+    cleanups.push(oldGroup.source.attemptId);
+    oldDrained.resolve();
+  });
+  assert.equal(registry.getRetainedAttempt(source.runId, source.attemptId).localDrainStatus, "draining");
+  assert.deepEqual(oldGroup.getSnapshot(), { closed: true, writers: ["isolated_tool"] });
+
+  const successorGroup = new AttemptLocalWriterGroup({ ...source, attemptId: "successor", fencingToken: "local-token-2" });
+  const replacement = new AbortController();
+  registry.add(source.runId, { ...successorGroup.source, abortController: replacement, streamEnvelope() {} });
+  const successor = registry.get(source.runId);
+  const successorRequest = scopeUserInputLocalWriters({ onIsolatedToolCall: async captured => {
+    await successorWrite.promise;
+    writes.push([successorGroup.source.attemptId, captured.toolCallId]);
+    return { content: [] };
+  } }, successorGroup);
+  const successorPending = successorRequest.onIsolatedToolCall({ ...call, toolCallId: "successor-isolated" });
+  oldWrite.resolve();
+  await oldPending;
+  await oldDrained.promise;
+  assert.equal(registry.getRetainedAttempt(source.runId, source.attemptId).localDrainStatus, "drained");
+  assert.deepEqual(cleanups, [source.attemptId]);
+  assert.equal(registry.get(source.runId), successor);
+  assert.equal(replacement.signal.aborted, false);
+  assert.deepEqual(successorGroup.getSnapshot(), { closed: false, writers: ["isolated_tool"] });
+  assert.throws(() => oldRequest.onIsolatedToolCall({ ...call, toolCallId: "stale-isolated" }), /admission is closed/u);
+  assert.deepEqual(writes, [[source.attemptId, "old-isolated"]]);
+
+  const nextPending = successorRequest.onIsolatedToolCall({ ...call, toolCallId: "successor-next" });
+  assert.deepEqual(successorGroup.getSnapshot().writers, ["isolated_tool", "isolated_tool"]);
+  successorGroup.close();
+  await assert.rejects(successorGroup.waitForIdle(0), /have not drained/u);
+  successorWrite.resolve();
+  await Promise.all([successorPending, nextPending]);
+  await successorGroup.waitForIdle();
+  assert.deepEqual(writes, [[source.attemptId, "old-isolated"], ["successor", "successor-isolated"], ["successor", "successor-next"]]);
+  assert.equal(registry.get(source.runId), successor);
+  assert.equal(replacement.signal.aborted, false);
+  assert.deepEqual(successorGroup.getSnapshot(), { closed: true, writers: [] });
   registry.delete(source.runId);
   await registry.waitForIdle();
 });

@@ -1,5 +1,5 @@
 name: Desktop candidate
-run-name: Desktop ${{ inputs.operation || (github.event.label.name == 'desktop-package-build' && 'build') || 'inspect' }} · ${{ inputs.release_tag || github.event.pull_request.head.sha }}
+run-name: Desktop ${{ inputs.operation || (github.event_name == 'workflow_call' && 'build') || (github.event.label.name == 'desktop-package-build' && 'build') || 'inspect' }} · ${{ inputs.release_tag || github.ref_name || github.event.pull_request.head.sha }}
 
 on:
   workflow_dispatch:
@@ -21,6 +21,26 @@ on:
         description: Create a Draft release after BOTH builds pass (source must be on main)
         type: boolean
         default: false
+  workflow_call:
+    inputs:
+      operation:
+        description: Inspect prerequisites or build both unsigned candidates
+        type: string
+        required: false
+        default: inspect
+      source_sha:
+        description: Full reviewed source commit SHA
+        type: string
+        required: true
+      release_tag:
+        description: New release tag matching VERSION
+        type: string
+        required: true
+      create_draft:
+        description: Create a Draft release after BOTH builds pass
+        type: boolean
+        required: false
+        default: false
   # Explicit maintainer opt-in permits inspecting a new workflow before landing it.
   pull_request:
     types: [labeled]
@@ -35,7 +55,7 @@ concurrency:
 
 jobs:
   candidate:
-    if: github.event_name == 'workflow_dispatch' || (contains(fromJSON('["desktop-package-inspect", "desktop-package-build"]'), github.event.label.name) && github.event.pull_request.head.repo.full_name == github.repository)
+    if: github.event_name != 'pull_request' || (contains(fromJSON('["desktop-package-inspect", "desktop-package-build"]'), github.event.label.name) && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
@@ -45,9 +65,18 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ inputs.source_sha || github.event.pull_request.head.sha }}
+          ref: ${{ inputs.source_sha || (github.event_name == 'pull_request' && github.event.pull_request.head.sha) || github.sha }}
           fetch-depth: 0
           persist-credentials: false
+      # The tag may contain arbitrary source, so never use its release policy
+      # until a policy copy from the protected default branch has accepted it.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: refs/heads/main
+          path: .trusted-main
+          fetch-depth: 0
+          persist-credentials: false
+          clean: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: 22.22.1
@@ -55,20 +84,34 @@ jobs:
         id: candidate
         shell: bash
         env:
-          DESKTOP_SOURCE_SHA: ${{ inputs.source_sha || github.event.pull_request.head.sha }}
-          DESKTOP_RELEASE_TAG: ${{ inputs.release_tag }}
+          DESKTOP_SOURCE_SHA: ${{ inputs.source_sha || (github.event_name == 'pull_request' && github.event.pull_request.head.sha) || github.sha }}
+          DESKTOP_RELEASE_TAG: ${{ inputs.release_tag || '' }}
           DESKTOP_CREATE_DRAFT: ${{ inputs.create_draft && inputs.operation == 'build' }}
+          DESKTOP_ALLOW_EXISTING_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
         run: |
           set -euo pipefail
           if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
             DESKTOP_RELEASE_TAG="v$(node -p 'require("./package.json").version')"
             export DESKTOP_RELEASE_TAG
           fi
-          node scripts/release/desktop-release.mjs candidate
+          node --input-type=module <<'NODE'
+          import { appendFile } from "node:fs/promises";
+          import { readCandidate } from "./.trusted-main/scripts/release/desktop-release.mjs";
+          const candidate = await readCandidate({
+            root: process.env.GITHUB_WORKSPACE,
+            sha: process.env.DESKTOP_SOURCE_SHA,
+            tag: process.env.DESKTOP_RELEASE_TAG,
+            requireMain: process.env.DESKTOP_CREATE_DRAFT === "true",
+            allowExistingTag: process.env.DESKTOP_ALLOW_EXISTING_TAG === "true",
+          });
+          if (process.env.GITHUB_OUTPUT) await appendFile(process.env.GITHUB_OUTPUT,
+            `source-sha=${candidate.sourceSha}\ntag=${candidate.tag}\nversion=${candidate.version}\n`);
+          console.log(JSON.stringify(candidate, null, 2));
+          NODE
 
   package:
     needs: candidate
-    name: ${{ matrix.target }} · ${{ inputs.operation || (github.event.label.name == 'desktop-package-build' && 'build') || 'inspect' }}
+    name: ${{ matrix.target }} · ${{ inputs.operation || (github.event_name == 'workflow_call' && 'build') || (github.event.label.name == 'desktop-package-build' && 'build') || 'inspect' }}
     strategy:
       fail-fast: false
       matrix:
@@ -86,7 +129,7 @@ jobs:
       DESKTOP_RELEASE_TAG: ${{ needs.candidate.outputs.tag }}
       DESKTOP_TARGET: ${{ matrix.target }}
       DESKTOP_MATERIAL_PLATFORM: ${{ matrix.material-platform }}
-      DESKTOP_OPERATION: ${{ inputs.operation || (github.event.label.name == 'desktop-package-build' && 'build') || 'inspect' }}
+      DESKTOP_OPERATION: ${{ inputs.operation || (github.event_name == 'workflow_call' && 'build') || (github.event.label.name == 'desktop-package-build' && 'build') || 'inspect' }}
       RUSTUP_TOOLCHAIN: 1.97.1
       # The fixed macOS config selects ad-hoc signing and rejects CSC overrides.
       LING_CUA_SIGNING_TIER: unsigned_dev
@@ -101,7 +144,7 @@ jobs:
           ref: ${{ needs.candidate.outputs.source-sha }}
           fetch-depth: 0
           persist-credentials: false
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115
         with:
           version: 10.0.0
           run_install: false
@@ -109,7 +152,7 @@ jobs:
         with:
           node-version: 22.22.1
           cache: pnpm
-      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73
         if: runner.os == 'Windows'
         with:
           dotnet-version: 8.0.x
@@ -159,6 +202,8 @@ jobs:
             throw new Error("desktop_electron_native_runtime_mismatch");
           console.log(JSON.stringify({ status: "passed", ...actual }));
           NODE
+      - name: Generate reviewed localization catalog bindings
+        run: corepack pnpm --filter @ling-stack/localization catalog:compile
       - name: Observe tools and source prerequisites without granting approval
         run: node scripts/release/desktop-prerequisites.mjs inspect
       - name: Build the source and browser manifest verifier dependencies
@@ -205,13 +250,15 @@ jobs:
           set -euo pipefail
           desktop_bun="$(command -v bun)"
           desktop_shell="$(command -v bash)"
+          desktop_go="$(command -v go)"
           if [[ "$RUNNER_OS" == "Windows" ]]; then
             desktop_bun="$(cygpath -m "$desktop_bun")"
             desktop_shell="$(cygpath -m "$desktop_shell")"
+            desktop_go="$(cygpath -m "$desktop_go")"
           fi
           node scripts/gstack/prepare-desktop-candidate.mjs \
             --workspace "$RUNNER_TEMP/gstack-candidate" \
-            --bun "$desktop_bun" --shell "$desktop_shell" --ci-ephemeral \
+            --bun "$desktop_bun" --shell "$desktop_shell" --go "$desktop_go" --ci-ephemeral \
             --selection "$GITHUB_WORKSPACE/.ling-stack/build/gstack-desktop-selection.json"
       - name: Require original native and resource prerequisites before packaging
         if: env.DESKTOP_OPERATION == 'build'
@@ -296,7 +343,7 @@ jobs:
           retention-days: 14
 
   draft:
-    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'build' && inputs.create_draft
+    if: inputs.operation == 'build' && inputs.create_draft
     needs: [candidate, package]
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -308,6 +355,15 @@ jobs:
           ref: ${{ needs.candidate.outputs.source-sha }}
           fetch-depth: 0
           persist-credentials: false
+      # Keep the write-capable release implementation on the protected default
+      # branch; the candidate checkout is data, not executable release policy.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: refs/heads/main
+          path: .trusted-main
+          fetch-depth: 0
+          persist-credentials: false
+          clean: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: 22.22.1
@@ -325,7 +381,9 @@ jobs:
           DESKTOP_CREATE_DRAFT: "true"
           DESKTOP_INPUT_ROOT: ${{ runner.temp }}/desktop-inputs
           DESKTOP_OUTPUT_ROOT: ${{ runner.temp }}/desktop-release
+          DESKTOP_SOURCE_ROOT: ${{ github.workspace }}
+          DESKTOP_ALLOW_EXISTING_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
         run: |
           set -euo pipefail
-          node scripts/release/desktop-release.mjs assemble
-          node scripts/release/create-desktop-draft.mjs
+          node .trusted-main/scripts/release/desktop-release.mjs assemble
+          node .trusted-main/scripts/release/create-desktop-draft.mjs

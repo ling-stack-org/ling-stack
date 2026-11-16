@@ -28,6 +28,9 @@
   ],
   "include": [
     "src/desktop-capabilities.d.ts",
+    "src/qrcode.d.ts",
+    "e2e/support/conversation-run-feedback-harness.tsx",
+    "e2e/support/workflow-graph-harness.tsx",
     "e2e/conversation-tool-evidence-presentation.spec.ts",
     "e2e/dark-mode.spec.ts",
     "e2e/desktop-computer-use-bridge.spec.ts",
@@ -37,6 +40,7 @@
     "e2e/macos-titlebar.spec.ts",
     "e2e/ui2-desktop-theme-package-persistence.spec.ts",
     "e2e/ui2-settings-interface-preferences.spec.ts",
+    "e2e/ui2-theme-package-repository-adapters.spec.ts",
     "e2e/workspace.spec.ts"
   ]
 }

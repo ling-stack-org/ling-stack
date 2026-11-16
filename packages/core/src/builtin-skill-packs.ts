@@ -915,6 +915,8 @@ const autoplanLiteSteps: readonly WorkflowStepTemplate[] = [
     teammateTemplateId: "product-strategist",
     councilSlotKey: "product-strategist",
     skillId: "office-hours",
+    sideEffectClass: "analysis_readonly",
+    parallelPolicy: { autoParallel: false },
   },
   {
     id: "product-review",
@@ -924,6 +926,8 @@ const autoplanLiteSteps: readonly WorkflowStepTemplate[] = [
     councilSlotKey: "product-strategist",
     skillId: "plan-ceo-review",
     dependsOn: ["product-discovery"],
+    sideEffectClass: "analysis_readonly",
+    parallelPolicy: { autoParallel: false },
   },
   {
     id: "design-review",
@@ -933,6 +937,8 @@ const autoplanLiteSteps: readonly WorkflowStepTemplate[] = [
     councilSlotKey: "designer",
     skillId: "plan-design-review",
     dependsOn: ["product-review"],
+    sideEffectClass: "analysis_readonly",
+    parallelPolicy: { autoParallel: true, maxParallelSiblings: 2 },
   },
   {
     id: "engineering-review",
@@ -942,6 +948,8 @@ const autoplanLiteSteps: readonly WorkflowStepTemplate[] = [
     councilSlotKey: "architect",
     skillId: "plan-eng-review",
     dependsOn: ["product-review"],
+    sideEffectClass: "analysis_readonly",
+    parallelPolicy: { autoParallel: true, maxParallelSiblings: 2 },
   },
   {
     id: "implementation",
@@ -952,6 +960,8 @@ const autoplanLiteSteps: readonly WorkflowStepTemplate[] = [
     skillId: "implement",
     dependsOn: ["design-review", "engineering-review"],
     approvalGate: standardApproval,
+    sideEffectClass: "workspace_write",
+    parallelPolicy: { autoParallel: false },
   },
   {
     id: "code-review",
@@ -961,6 +971,8 @@ const autoplanLiteSteps: readonly WorkflowStepTemplate[] = [
     councilSlotKey: "architect",
     skillId: "review",
     dependsOn: ["implementation"],
+    sideEffectClass: "analysis_readonly",
+    parallelPolicy: { autoParallel: true, maxParallelSiblings: 2 },
   },
   {
     id: "qa",
@@ -971,6 +983,9 @@ const autoplanLiteSteps: readonly WorkflowStepTemplate[] = [
     skillId: "qa",
     dependsOn: ["implementation"],
     approvalGate: standardApproval,
+    // QA may write the workspace until a real artifact-only executor is available.
+    sideEffectClass: "workspace_write",
+    parallelPolicy: { autoParallel: false },
   },
   {
     id: "ship",
@@ -981,6 +996,8 @@ const autoplanLiteSteps: readonly WorkflowStepTemplate[] = [
     skillId: "ship",
     dependsOn: ["code-review", "qa"],
     approvalGate: strictReleaseApproval,
+    sideEffectClass: "release",
+    parallelPolicy: { autoParallel: false },
   },
 ];
 

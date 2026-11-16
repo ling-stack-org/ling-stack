@@ -10,5 +10,5 @@
     "target": "ES2022",
     "types": ["node"]
   },
-  "include": ["*.test.ts"]
+  "include": ["*.test.ts", "../framework-assurance/*.test.ts"]
 }

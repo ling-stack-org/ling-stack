@@ -5,6 +5,7 @@ import { mockDaemon } from "./support/mock-daemon";
 import { expectCompactMutedComposerControl } from "./support/composer-control-assertions";
 import { expectMessageFrameContained } from "./support/message-frame-assertions";
 import { createBaseState, createChatProvider, cwd, type MockState } from "./support/mock-state";
+import { expectRailAtSurfaceEdge } from "./support/conversation-position-assertions";
 
 const evidenceDirectory = fileURLToPath(new URL(
   "../../../docs/design/ui2.0升级/evidence/conversations/normal-conversation-feed-composer/",
@@ -46,7 +47,8 @@ for (const fixture of [
     await expect(feed.getByRole("button", { name: "Retry response" })).toBeVisible();
     await expect(composer.getByRole("button", { name: "Stop" })).toBeVisible();
 
-    await expectAlignedColumns(feedFrame, composerStack);
+    await expectAlignedColumns(feed, composerStack);
+    await expectRailAtSurfaceEdge(feed);
     await expect.poll(() => feed.evaluate((element) => getComputedStyle(element).overflowY)).toBe("auto");
     await expect.poll(() => feedFrame.evaluate((element) => getComputedStyle(element).overflowY)).toBe("hidden");
     await expect.poll(() => conversation.evaluate((element) => getComputedStyle(element).overflowY)).toBe("hidden");
@@ -91,10 +93,12 @@ for (const fixture of [
         actual: getComputedStyle(element).backgroundColor,
         expected,
         borderRadius: getComputedStyle(element).borderRadius,
+        expectedBorderRadius: getComputedStyle(element).getPropertyValue("--ling-composer-radius").trim(),
       };
     });
     expect(composerTheme.actual).toBe(composerTheme.expected);
-    expect(composerTheme.borderRadius).toBe("12px");
+    expect(composerTheme.expectedBorderRadius).not.toBe("");
+    expect(composerTheme.borderRadius).toBe(composerTheme.expectedBorderRadius);
     await expectNoDocumentOverflow(page);
     await captureEvidence(page, `${fixture.width}x${fixture.height}-ling-${fixture.theme}-normal-feed-active-states.png`);
     expect(state.threads.some((thread) => thread.id === threadId)).toBe(true);

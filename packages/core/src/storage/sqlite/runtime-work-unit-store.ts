@@ -855,9 +855,12 @@ export class SqliteRuntimeWorkUnitStore {
   listRuntimeEvents(workUnitId: string, options: ListRuntimeEventsOptions = {}): RuntimeEvent[] {
     const afterSeq = options.afterSeq ?? 0;
     const limit = Math.min(Math.max(options.limit ?? 200, 1), 1000);
+    const limitClause = options.complete ? "" : " LIMIT ?";
+    const parameters: (string | number)[] = [workUnitId, afterSeq];
+    if (!options.complete) parameters.push(limit);
     return this.context.database
-      .prepare(`${runtimeEventSelectSql("WHERE work_unit_id = ? AND seq > ?")} ORDER BY seq ASC LIMIT ?`)
-      .all(workUnitId, afterSeq, limit)
+      .prepare(`${runtimeEventSelectSql("WHERE work_unit_id = ? AND seq > ?")} ORDER BY seq ASC${limitClause}`)
+      .all(...parameters)
       .map((row) => mapRuntimeEvent(row as Record<string, SQLOutputValue>));
   }
 

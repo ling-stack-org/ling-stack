@@ -6,46 +6,75 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { assertSuiteCoverage, assignTestShards, createTestPlan, discoverTestFiles, estimateTestWeight,
-  loadTimingHints, mergeTestReports, testSuites } from "./test-shard-plan.mjs";
+  discoverSuiteFiles, loadTimingHints, mergeTestReports, testSuites } from "./test-shard-plan.mjs";
 
 test("core and daemon plans preserve full discovery exactly once with dynamic core jobs", async () => {
   for (const packages of [[], ["@ling-stack/core"], ["@ling-stack/daemon"], ["@ling-stack/core", "@ling-stack/daemon"]]) {
     const plan = await createTestPlan(packages);
     assert.deepEqual(Object.keys(plan.suites), Object.keys(testSuites).filter(name => packages.includes(testSuites[name].packageName)));
+    const count = packages.includes("@ling-stack/daemon") ? 5 : 8;
     assert.deepEqual(plan.unitMatrix.include, packages.includes("@ling-stack/core")
-      ? Array.from({ length: 4 }, (_, shard) => ({ suite: "core", shard })) : []);
+      ? Array.from({ length: count }, (_, shard) => ({ suite: "core", shard, shardCount: count, concurrency: 2 })) : []);
     for (const [name, suite] of Object.entries(plan.suites)) {
-      const discovered = await discoverTestFiles(testSuites[name].cwd, testSuites[name].excluded);
+      const discovered = await discoverSuiteFiles(testSuites[name]);
       assert.ok(discovered.length > 100);
       assert.doesNotThrow(() => assertSuiteCoverage(suite, discovered));
-      assert.equal(suite.shardCount, name === "daemon" ? 6 : 4);
+      assert.equal(suite.shardCount, name === "daemon" ? 4
+        : packages.includes("@ling-stack/core") && packages.includes("@ling-stack/daemon") ? name === "core" ? 5 : 6 : 8);
     }
     if (plan.suites.daemon) assert.ok(!plan.suites.daemon.files.includes("test/dependency-security.test.mjs"));
   }
+});
+
+test("platform-scoped daemon plans omit the untouched platform and keep core capacity", async () => {
+  const linux = await createTestPlan(["@ling-stack/core", "@ling-stack/daemon"], { daemonPlatforms: ["linux"] });
+  assert.deepEqual(Object.keys(linux.suites), ["core", "daemon-linux"]);
+  assert.equal(linux.suites.core.shardCount, 5);
+  assert.equal(linux.suites["daemon-linux"].shardCount, 6);
+  assert.ok(!linux.daemonMatrix.include.some(entry => entry.suite === "daemon"));
+
+  const darwin = await createTestPlan(["@ling-stack/core", "@ling-stack/daemon"], { daemonPlatforms: ["darwin"] });
+  assert.deepEqual(Object.keys(darwin.suites), ["core", "daemon"]);
+  assert.equal(darwin.suites.core.shardCount, 8);
+  assert.equal(darwin.suites.daemon.shardCount, 4);
+  assert.ok(!darwin.daemonMatrix.include.some(entry => entry.suite === "daemon-linux"));
 });
 
 test("only selected unsharded packages create the packages job", async () => {
   for (const name of ["@ling-stack/web", "@ling-stack/cli", "@ling-stack/mobile"]) {
     const plan = await createTestPlan([name, "@ling-stack/daemon"]);
     assert.deepEqual(plan.unitMatrix.include, [{ suite: "packages", shard: 0 }]);
-    assert.deepEqual(Object.keys(plan.suites), ["daemon"]);
+    assert.deepEqual(Object.keys(plan.suites), ["daemon", "daemon-linux"]);
   }
   const mixed = await createTestPlan(["@ling-stack/web", "@ling-stack/core", "@ling-stack/daemon"]);
   assert.deepEqual(mixed.unitMatrix.include, [{ suite: "packages", shard: 0 },
-    ...Array.from({ length: 4 }, (_, shard) => ({ suite: "core", shard }))]);
+    ...Array.from({ length: 5 }, (_, shard) => ({ suite: "core", shard, shardCount: 5, concurrency: 2 }))]);
 });
 
 test("split channel suites are discovered once with ordinary parallel workers and watchdogs", async () => {
   const plan = await createTestPlan(["@ling-stack/daemon"]);
-  const suite = plan.suites.daemon;
+  const files = [...plan.suites.daemon.files, ...plan.suites["daemon-linux"].files];
   for (const file of ["channel-discussion", "channel-intents", "channel-workflows", "channel-workspace"]) {
     const path = `test/${file}.test.mjs`;
-    assert.equal(suite.shards.flatMap(bucket => bucket.files).filter(file => file === path).length, 1);
+    assert.equal(files.filter(file => file === path).length, 1);
     assert.ok(!testSuites.daemon.exclusive.includes(path));
     assert.equal(testSuites.daemon.fileTimeouts[path], undefined);
   }
-  assert.ok(!suite.files.some(file => file.includes("channel-workspace-fixture")));
+  assert.ok(!files.some(file => file.includes("channel-workspace-fixture")));
   assert.ok(testSuites.daemon.exclusive.includes("test/delegation-production-tool-surface.test.mjs"));
+  for (const file of ["test/engine-lifecycle.test.mjs", "test/workflow-conflict-recovery.test.mjs",
+    "test/workflow-isolated-delivery-integration.test.mjs", "test/kimi-owned-execution.test.mjs",
+    "test/workflow-repository-fence.test.mjs", "test/signal-shutdown.regression-3.test.mjs"]) {
+    assert.ok(testSuites.daemon.exclusive.includes(file));
+  }
+  for (const file of ["test/recovery-discovery-fair-scan.test.mjs", "test/workflow-candidate-validation.test.mjs",
+    "test/workflow-conflict-recovery.test.mjs", "test/workflow-integration-candidate.test.mjs",
+    "test/workflow-isolated-parallel-integration.test.mjs", "test/workflow-merge-approval.test.mjs",
+    "test/workflow-worktree-cleanup.test.mjs",
+    "test/workflow-worktree-cleanup-store.test.mjs"]) {
+    assert.equal(testSuites.daemon.fileTimeouts[file], 600_000);
+  }
+  assert.equal(testSuites.daemon.fileTimeouts["test/workflow-merge-apply.test.mjs"], 900_000);
 });
 
 test("measured durations balance placement deterministically without changing coverage", () => {
@@ -93,8 +122,8 @@ test("coverage rejects omissions, duplicate files, changed discovery and wrong s
   assert.throws(() => assertSuiteCoverage(valid, [...files, "test/new.test.mjs"]), /coverage_mismatch/u);
 });
 
-async function reportFixture() {
-  const plan = await createTestPlan(["@ling-stack/core", "@ling-stack/daemon"]);
+async function reportFixture(options = {}) {
+  const plan = await createTestPlan(["@ling-stack/core", "@ling-stack/daemon"], options);
   const reports = Object.entries(plan.suites).flatMap(([suite, entry]) => entry.shards.map((bucket, shard) => ({
     version: 1, suite, shard, shardCount: entry.shardCount, platform: entry.platform, complete: true,
     results: bucket.files.map((file, index) => ({ file, status: "passed", durationMs: index + 1 })),
@@ -131,11 +160,15 @@ test("the plan CLI publishes a parseable matrix and the aggregate CLI verifies d
   const script = fileURLToPath(new URL("./test-shard-plan.mjs", import.meta.url));
   const path = join(root, "test-plan.json");
   const matrix = JSON.parse(execFileSync(process.execPath, [script, '--packages=["@ling-stack/core","@ling-stack/daemon"]',
+    '--daemon-platforms=["linux"]',
     `--output=${path}`], { encoding: "utf8" }));
   const plan = JSON.parse(await readFile(path, "utf8"));
   assert.deepEqual(matrix, plan.unitMatrix);
-  const fixture = await reportFixture();
-  assert.deepEqual(plan, fixture.plan);
+  const fixture = await reportFixture({ daemonPlatforms: ["linux"] });
+  assert.deepEqual(plan.unitMatrix, {
+    include: Array.from({ length: 5 }, (_, shard) => ({ suite: "core", shard, shardCount: 5, concurrency: 2 })),
+  });
+  assert.deepEqual(Object.keys(plan.suites), ["core", "daemon-linux"]);
   const reports = join(root, "reports");
   await mkdir(join(reports, "logs"), { recursive: true });
   await Promise.all(fixture.reports.map(report => writeFile(join(reports, `${report.suite}-${report.shard}.json`), JSON.stringify(report))));

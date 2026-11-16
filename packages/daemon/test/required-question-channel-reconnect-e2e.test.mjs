@@ -6,10 +6,22 @@ test("required channel answer and completion survive SSE disconnect and a fresh 
   const fixture = await createRequiredQuestionChannelFixture(t);
   const created = await fixture.postChannelTurn();
   const question = await fixture.waitForQuestion();
+  const pendingEvents = fixture.store.listControlPlaneEvents({
+    workspaceId: fixture.channel.workspaceId,
+    entityType: "user_input_request",
+    entityId: question.request.requestId,
+    action: "pending",
+    limit: 100,
+  });
+  assert.equal(pendingEvents.length, 1, "the pending event must already be durable before SSE subscribes");
+  const pendingEvent = pendingEvents[0];
+  assert.equal(pendingEvent.cwd, fixture.cwd, "the SSE subscription must use the durable event's canonical root");
   const stream = await openControlPlaneReplay(fixture, 0);
   t.after(() => stream.close());
   const initial = await stream.readReplay();
-  assert.ok(initial.events.some((event) => event.entityType === "user_input_request"
+  assert.equal(initial.window.disposition, "complete");
+  assert.ok(pendingEvent.seq <= initial.window.upperBoundSeq);
+  assert.ok(initial.events.some((event) => event.seq === pendingEvent.seq && event.entityType === "user_input_request"
     && event.entityId === question.request.requestId && event.action === "pending"));
   const cursor = initial.window.nextAfterSeq;
   assert.ok(Number.isSafeInteger(cursor) && cursor > 0);

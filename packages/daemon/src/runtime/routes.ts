@@ -150,6 +150,7 @@ export function handleGetRuntime(
     writeJson(response, 200, {
       cwd: resolved.cwd,
       runtime: runtimeSupervisor.getRuntime(resolved.cwd, resolved.store),
+      concurrency: runtimeSupervisor.getConcurrencyPolicy(),
     });
   } catch (error) {
     writeJson(response, error instanceof HttpError ? error.statusCode : 400, {

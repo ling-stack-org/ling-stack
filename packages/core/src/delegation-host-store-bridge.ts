@@ -21,7 +21,8 @@ export type DelegationHostWriter = Pick<SqliteDelegationWriteStore,
   "getRootDelegationBudget" | "getDelegationBudgetReservation" | "getDelegationBudgetCharge"
   | "freezeRootDelegationBudget" | "prepareDelegatedChild" | "reserveModelInvocation"
   | "settleModelInvocation" | "settleDelegatedChild">
-  & Pick<SqliteDelegationLifecycleStore, "claimDelegatedChild" | "commitDelegatedChildStart"
+  & Pick<SqliteDelegationLifecycleStore, "claimDelegatedChild" | "prepareDelegatedChildAdmission" | "commitDelegatedChildClaim" | "commitDelegatedChildStart"
+    | "consumeDelegatedChildDispatchGate"
     | "appendDelegationInstruction" | "classifyDelegatedChildRecovery"
     | "requestDelegatedChildInterrupt" | "commitDelegatedChildInterrupted"
     | "resumeDelegatedChild" | "commitDelegatedChildTerminal"
@@ -120,6 +121,9 @@ export function captureDelegationHostStoreBinding(binding: DelegationHostStoreBi
         settleModelInvocation: invoke("settleModelInvocation"),
         settleDelegatedChild: invoke("settleDelegatedChild"),
         claimDelegatedChild: invoke("claimDelegatedChild"),
+        prepareDelegatedChildAdmission: invoke("prepareDelegatedChildAdmission"),
+        commitDelegatedChildClaim: invoke("commitDelegatedChildClaim"),
+        consumeDelegatedChildDispatchGate: invoke("consumeDelegatedChildDispatchGate"),
         commitDelegatedChildStart: invoke("commitDelegatedChildStart"),
         appendDelegationInstruction: invoke("appendDelegationInstruction"),
         classifyDelegatedChildRecovery: invoke("classifyDelegatedChildRecovery"),

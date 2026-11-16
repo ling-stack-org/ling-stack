@@ -13,7 +13,6 @@ import {
   ConversationAttachmentStrip,
   ConversationGeneratedMediaBlock,
   ConversationTimelineFeed,
-  mountConversationTimeline,
   ConversationReferenceStrip,
   ConversationReplacementRetry,
   InlineMessageEditor,
@@ -37,6 +36,7 @@ import type {
   ConversationHomeMessage,
 } from "./normal-conversation-types.js";
 import { buildSurfaceTimelineSnapshot } from "../../domains/conversations/timeline-snapshot.js";
+import { mountConversationRunFeedbackTimeline } from "../../domains/conversations/ConversationRunFeedbackTimeline.js";
 import {
   flattenNormalTimelineItems,
   maxTimelineRevision,
@@ -216,7 +216,7 @@ export function NormalConversationFeed({
       onUserScrollIntent={pauseTimelineAutoFollow}
       timelineNode={(
         <div className="normal-conversation-timeline-surface" data-conversation-surface-timeline="normal">
-          {mountConversationTimeline({
+          {mountConversationRunFeedbackTimeline({
             snapshot: timelineSnapshot,
             depth: 0,
             cwd: projectPath?.trim() || workspaceCwd.trim(),

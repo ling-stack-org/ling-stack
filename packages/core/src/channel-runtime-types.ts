@@ -89,6 +89,8 @@ export interface ListResourceLeasesOptions {
   readonly workUnitId?: string;
   readonly attemptId?: string;
   readonly limit?: number;
+  /** Read every matching row when the caller must prove that no row was truncated. */
+  readonly complete?: boolean;
 }
 
 export interface StateTransitionEvent {

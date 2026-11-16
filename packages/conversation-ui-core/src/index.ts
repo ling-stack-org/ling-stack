@@ -7,6 +7,8 @@ export type {
   ConversationStatus,
   ConversationSurface,
 } from "./conversation-types.js";
+export * from "./workflow-graph-types.js";
+export { projectWorkflowGraph, reconcileWorkflowGraphSelection, workflowGraphLimits, workflowGraphStatus } from "./workflow-graph-model.js";
 export type {
   ConversationAgentActivitySpan,
   ConversationAgentActivitySpanKind,

@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import { exactObject, identifier, nonempty, parseJson, parseSuite, parseTask, readArtifact, readBoundFile, requireCondition, safeRelativePath, verifySource } from "./manifest.mjs";
 import { loadCoreGrader } from "./grader.mjs";
 
-export const DEFAULT_SUITE = "suites/framework-v5.json";
+export const DEFAULT_SUITE = "suites/framework-v6.json";
 
 export async function preflight({ repoRoot, fixtureRoot = resolve(repoRoot, "fixtures/framework-assurance"), suitePath = DEFAULT_SUITE }) {
   const suiteFile = await readBoundFile(fixtureRoot, suitePath);

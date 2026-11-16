@@ -37,12 +37,7 @@ test("P13 shows one neutral summary and one product state per model route", asyn
   await page.goto("/");
 
   await openModelWorkbench(page);
-  const summary = page.locator(".provider-readiness-summary");
-  await expect(summary).toContainText("4 models");
-  await expect(summary).toContainText("1 chat ready");
-  await expect(summary).toContainText("1 generation ready");
-  await expect(summary).toContainText("1 need API key");
-  await expect(summary).toContainText("1 disabled");
+  await expect(page.locator(".provider-readiness-summary")).toHaveCount(0);
   await expect(page.locator(".provider-readiness-strip")).toHaveCount(0);
 
   await expect(page.locator(".provider-table thead th")).toHaveCount(4);
@@ -61,7 +56,8 @@ test("P13 shows one neutral summary and one product state per model route", asyn
   expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth + 1);
 });
 
-test("P13.1 uses model-first identity and keeps routine row actions visible", async ({ page }) => {
+// Value: protects=duplicate model IDs expose only the minimal supplier disambiguator while unique IDs stay model-only; fails_when=duplicate routes become indistinguishable or all rows regain supplier subtitles; why_new=existing model-first assertions cover unique IDs only; seam=none; no_claim=live provider acceptance (mock daemon; browser E2E)
+test("P13.1 uses model-first identity, disambiguates duplicates, and keeps routine row actions visible", async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem("ling-stack.locale", "en-US"));
   const state = createBaseState({ approvalStatus: "expired" });
   const readyCheck = {
@@ -85,6 +81,13 @@ test("P13.1 uses model-first identity and keeps routine row actions visible", as
       model: "gpt-5.4",
       lastCheck: readyCheck,
     }),
+    createChatProvider({
+      id: "duplicate_chat",
+      displayName: "Local Relay · gpt-5.4",
+      providerId: "local-relay-secondary",
+      model: "gpt-5.4",
+      lastCheck: readyCheck,
+    }),
   ];
   state.workspaceSettings.defaultProviderPresetId = "custom_default";
   await mockDaemon(page, state);
@@ -97,15 +100,21 @@ test("P13.1 uses model-first identity and keeps routine row actions visible", as
   await expect(customRow.locator(".provider-name-copy strong")).toHaveText("gpt-5.5");
   await expect(customRow.locator(".provider-name-copy small")).toHaveCount(0);
   await expect(customRow).not.toContainText("Custom · gpt-5.5");
-  await expect(customRow.locator(".provider-avatar")).toHaveAttribute("title", "Custom access");
+  await expect(customRow.locator(".provider-avatar")).toHaveCount(0);
   await expect(customRow.getByRole("button", { name: "Check" })).toBeVisible();
   await expect(customRow.getByRole("button", { name: "Edit" })).toBeVisible();
 
   const readyRow = page.locator(".provider-row").filter({
-    has: page.locator(".provider-name-copy strong", { hasText: /^gpt-5\.4$/ }),
+    has: page.locator(".provider-name-copy small", { hasText: /^Ready Relay$/ }),
   });
   await expect(readyRow.locator(".provider-name-copy small")).toHaveText("Ready Relay");
-  await expect(page.locator(".provider-default-purpose-bar").getByLabel("Chat model")).toHaveValue("custom_default");
+  await expect(readyRow).not.toContainText("Ready Relay · gpt-5.4");
+  const duplicateRow = page.locator(".provider-row").filter({
+    has: page.locator(".provider-name-copy small", { hasText: /^Local Relay$/ }),
+  });
+  await expect(duplicateRow.locator(".provider-name-copy strong")).toHaveText("gpt-5.4");
+  await expect(duplicateRow.locator(".provider-name-copy small")).toHaveText("Local Relay");
+  await expect(page.locator(".provider-default-purpose-bar").getByLabel("Chat")).toHaveValue("custom_default");
   await expect(readyRow.getByRole("button", { name: /Set default|Current default/ })).toHaveCount(0);
   await expect(readyRow.getByRole("button", { name: "Check" })).toBeVisible();
   await expect(readyRow.getByRole("button", { name: "Edit" })).toBeVisible();
@@ -179,7 +188,7 @@ test("P13 keeps failed row feedback visible until the route changes", async ({ p
   await page.goto("/");
 
   await openModelWorkbench(page);
-  const row = page.locator(".provider-row").filter({ hasText: "Auth Failed Gateway" });
+  const row = page.locator(".provider-row").filter({ hasText: "dpv4" });
   await row.getByRole("button", { name: "Check" }).click();
   const failure = page.locator(".provider-check-feedback-row.bad");
   await expect(failure).toContainText("Check failed");

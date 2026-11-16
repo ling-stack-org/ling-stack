@@ -55,6 +55,24 @@ test("builds run, start-delay, job, and aggregate shard file telemetry", () => {
   }
 });
 
+test("daemon duration maxima include both platforms while retaining separate suite observations", () => {
+  const reports = [
+    { version: 1, suite: "core", shard: 0, platform: "linux", results: [{ file: "core.mjs", status: "passed", durationMs: 9000 }] },
+    { version: 1, suite: "daemon", shard: 0, platform: "darwin", results: [{ file: "native.mjs", status: "passed", durationMs: 3000 }] },
+    { version: 1, suite: "daemon-linux", shard: 0, platform: "linux", results: [{ file: "portable.mjs", status: "passed", durationMs: 6000 }] },
+  ];
+  const telemetry = buildTelemetry({ reports });
+  assert.equal(telemetry.summary.maxDaemonShardFileDurationMs, 6000);
+  assert.equal(telemetry.reports.suites.daemon.maxShardFileDurationMs, 3000);
+  assert.equal(telemetry.reports.suites["daemon-linux"].maxShardFileDurationMs, 6000);
+  assert.match(renderSummary(telemetry), /daemon-linux shards: \*\*1\*\*/u);
+  assert.equal(buildTelemetry({ reports: reports.slice(0, 2) }).summary.maxDaemonShardFileDurationMs, 3000);
+  assert.equal(buildTelemetry({ reports: reports.slice(2) }).summary.maxDaemonShardFileDurationMs, 6000);
+  assert.equal(buildTelemetry().summary.maxDaemonShardFileDurationMs, null);
+  assert.equal(buildTelemetry({ reports: [{ ...reports[2], results: [{ file: "zero.mjs", durationMs: 0 }] }] })
+    .summary.maxDaemonShardFileDurationMs, 0);
+});
+
 test("in-progress run duration uses the injected capture time rather than updated_at", () => {
   const capturedAt = "2026-01-01T00:10:00Z";
   const telemetry = buildTelemetry({

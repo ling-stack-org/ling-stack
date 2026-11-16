@@ -22,7 +22,10 @@ import {
   type NormalizedLingThemePackageFile,
   type ParsedLingThemePackage,
 } from "@ling-stack/ui-react/theme";
-import type { DesktopThemePackagePreviewDescriptor } from "../../shared/theme-package-capabilities.js";
+import type {
+  DesktopThemePackageLaunchAnimationDescriptor,
+  DesktopThemePackagePreviewDescriptor,
+} from "../../shared/theme-package-capabilities.js";
 import { normalizeThemePackageError, readErrno, repositoryError } from "./theme-package-errors.js";
 import { assertSafeThemeDirectory, relativeThemePath, type ThemePackagePaths } from "./theme-package-paths.js";
 
@@ -54,6 +57,8 @@ export interface ReadInstalledTheme {
   readonly record: DesktopThemeInstallationRecordV1;
   readonly manifest: LingThemePackManifest;
   readonly licenseText?: string;
+  readonly launchAnimation?: DesktopThemePackageLaunchAnimationDescriptor;
+  readonly launchAnimationBytes?: Uint8Array;
   readonly preview?: DesktopThemePackagePreviewDescriptor;
   readonly previewBytes?: Uint8Array;
 }
@@ -122,7 +127,10 @@ export async function writeThemeCandidate(
 export async function readInstalledTheme(
   context: ThemePackageFileContext,
   packagePath: string,
-  options: { readonly includePreviewBytes?: boolean } = {},
+  options: {
+    readonly includeLaunchAnimationBytes?: boolean;
+    readonly includePreviewBytes?: boolean;
+  } = {},
 ): Promise<ReadInstalledTheme> {
   await assertSafeTree(context.paths, packagePath);
   const metadataBytes = await readBoundedFile(join(packagePath, INSTALLATION_FILE), INSTALLATION_LIMIT);
@@ -135,8 +143,10 @@ export async function readInstalledTheme(
 
   let manifest: LingThemePackManifest | undefined;
   let licenseText: string | undefined;
-  let preview: DesktopThemePackagePreviewDescriptor | undefined;
-  let previewBytes: Uint8Array | undefined;
+  const imageAssets: Array<{
+    readonly bytes: Uint8Array;
+    readonly descriptor: DesktopThemePackagePreviewDescriptor;
+  }> = [];
   for (const file of record.files) {
     const bytes = await readBoundedFile(join(packagePath, ...file.path.split("/")), file.byteLength);
     if (bytes.byteLength !== file.byteLength || sha256(bytes) !== file.checksumSha256) {
@@ -157,27 +167,43 @@ export async function readInstalledTheme(
       if (validated.mimeType !== file.mimeType) {
         throw repositoryError("corrupt_installation", { themeId: record.themeId, relativePath: file.path });
       }
-      preview = Object.freeze({
-        path: file.path,
-        mimeType: validated.mimeType,
-        byteLength: bytes.byteLength,
-        width: validated.width,
-        height: validated.height,
-        checksumSha256: file.checksumSha256,
+      imageAssets.push({
+        bytes,
+        descriptor: Object.freeze({
+          path: file.path,
+          mimeType: validated.mimeType,
+          byteLength: bytes.byteLength,
+          width: validated.width,
+          height: validated.height,
+          checksumSha256: file.checksumSha256,
+        }),
       });
-      if (options.includePreviewBytes) previewBytes = bytes;
     }
   }
   if (!manifest) throw repositoryError("corrupt_installation", { themeId: record.themeId });
-  if (manifest.preview !== preview?.path && (manifest.preview || preview)) {
+  const previewPath = manifest.preview;
+  const launchAnimationPath = manifest.launchAnimation?.referenceImage;
+  const expectedImagePaths = [previewPath, launchAnimationPath].filter((path): path is string => Boolean(path));
+  const expectedImagePathSet = new Set(expectedImagePaths);
+  if (
+    expectedImagePathSet.size !== expectedImagePaths.length
+    || imageAssets.length !== expectedImagePaths.length
+    || imageAssets.some(({ descriptor }) => !expectedImagePathSet.has(descriptor.path))
+  ) {
     throw repositoryError("corrupt_installation", { themeId: record.themeId });
   }
+  const previewAsset = imageAssets.find(({ descriptor }) => descriptor.path === previewPath);
+  const launchAnimationAsset = imageAssets.find(({ descriptor }) => descriptor.path === launchAnimationPath);
   return Object.freeze({
     record,
     manifest,
     ...(licenseText !== undefined ? { licenseText } : {}),
-    ...(preview ? { preview } : {}),
-    ...(previewBytes ? { previewBytes } : {}),
+    ...(launchAnimationAsset ? { launchAnimation: launchAnimationAsset.descriptor } : {}),
+    ...(options.includeLaunchAnimationBytes && launchAnimationAsset
+      ? { launchAnimationBytes: launchAnimationAsset.bytes }
+      : {}),
+    ...(previewAsset ? { preview: previewAsset.descriptor } : {}),
+    ...(options.includePreviewBytes && previewAsset ? { previewBytes: previewAsset.bytes } : {}),
   });
 }
 
@@ -316,7 +342,7 @@ function parseInstallationRecord(bytes: Uint8Array): DesktopThemeInstallationRec
     || files.length > LING_THEME_PACKAGE_LIMITS.fileCount
     || filePaths.filter((path) => path === "theme.json").length !== 1
     || filePaths.filter((path) => path === "LICENSE.txt").length > 1
-    || filePaths.filter((path) => path.startsWith("assets/")).length > 1
+    || filePaths.filter((path) => path.startsWith("assets/")).length > 2
     || files.some((file) => !isInstallationFile(file) || !hasOnlyKeys(file, ["path", "byteLength", "checksumSha256", "mimeType"]) || pathSet.has(file.path) || !pathSet.add(file.path))
     || files.reduce((total, file) => total + (isRecord(file) && typeof file.byteLength === "number" ? file.byteLength : 0), 0) > LING_THEME_PACKAGE_LIMITS.totalUncompressedBytes
   ) throw repositoryError("corrupt_installation");

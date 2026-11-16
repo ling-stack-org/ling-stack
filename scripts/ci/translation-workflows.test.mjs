@@ -98,7 +98,7 @@ test("translation runs before staging, staging before the no-diff exit, push onl
     // must install locked dependencies before it can run. pnpm/action-setup must
     // precede setup-node's pnpm cache resolution, and lifecycle scripts stay
     // disabled so checked-out code cannot persist shims via the install.
-    const pnpmSetupAt = workflow.indexOf("uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413");
+    const pnpmSetupAt = workflow.indexOf("uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115");
     const nodeSetupAt = workflow.indexOf("uses: actions/setup-node@");
     const installAt = workflow.indexOf("corepack pnpm install --frozen-lockfile --prefer-offline --ignore-scripts");
     const importAt = workflow.indexOf("import-legacy-web-catalogs.mjs");

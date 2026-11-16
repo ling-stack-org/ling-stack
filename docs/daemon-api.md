@@ -1344,6 +1344,72 @@ Provider preflight failures emit `blocked`; provider/runtime errors emit `error`
 AI reply is stored as `failed` when one exists. Client aborts stop streaming and abort the
 provider request; already persisted messages remain durable.
 
+### Companion Dialogue
+
+Companions bind presentation and behavior state to one existing AI teammate. They do not
+have a separate model, Provider, credential, memory, tool, or permission configuration.
+The bound teammate's `modelBindingMode` and `providerPresetId` are the only model source;
+the Companion message body cannot override them.
+
+```http
+GET  /companions?cwd=/path/to/project
+POST /companions?cwd=/path/to/project
+GET  /companions/:id/messages?cwd=/path/to/project&limit=100
+POST /companions/:id/messages?cwd=/path/to/project
+POST /companions/:id/messages/stream?cwd=/path/to/project
+GET  /companions/:id/state?cwd=/path/to/project
+GET  /companions/:id/events?cwd=/path/to/project&limit=100
+POST /companions/:id/proactive?cwd=/path/to/project
+```
+
+The message request is intentionally small:
+
+```json
+{ "body": "今天陪我聊聊", "idempotencyKey": "client-message-1" }
+```
+
+The daemon resolves `:id` to its `teammateId`, reuses the teammate's direct thread and
+workspace preparation, and calls the existing direct-reply/provider path. Extra model
+fields such as `providerPresetId`, `baseUrl`, or `apiKey` are ignored by the Companion
+message parser and are never persisted as Companion state.
+
+The Companion prompt includes bounded identity, manifest capabilities, and current state.
+The model may return ordinary text and optionally append a `LING_COMPANION_META:` JSON
+object containing `emotion`, `actionRequests`, and `memoryCandidates`. Each emotion and
+action is validated against the manifest. Valid actions become `action_requested` semantic
+events only; the daemon never executes a local command from model metadata. Memory
+candidates remain event records until an explicit memory review flow accepts them.
+
+Message reads support `limit` and `beforeMessageId`, and return `hasMore` plus
+`nextBeforeMessageId`. Repeating a POST with the same `idempotencyKey` returns the same
+durable user message and AI reply without dispatching another provider run. The key is
+scoped to the Companion. Memory candidates are persisted as teammate-scoped Memory objects
+in `candidate` state and appear in `GET /memory/promotion-inbox`; they become `active` only
+after the existing `POST /memory/:id/review` approval flow.
+
+`POST /companions/:id/proactive` accepts an optional `{ "force": true, "idempotencyKey": "..." }`.
+Manual calls without `force` obey `proactiveEnabled`, `quietHours`, and `cooldownMs`.
+The scheduler uses the same direct-reply/provider path and writes a durable
+`proactive_prompt` event before dispatch. A repeated key returns `duplicate`; a policy or
+cooldown refusal returns `skipped` without a model run.
+
+The stream preserves the direct execution milestones and adds Companion data to terminal
+events:
+
+```text
+accepted
+ready
+run_linked
+delta
+done
+blocked
+error
+```
+
+`done` contains `companionReply` and the latest `state`; `blocked` and `error` contain the
+durable AI message and the latest error state when a reply cannot run. A disabled
+Companion returns `409 companion_disabled` and does not create a new user message.
+
 ### Private Attachments And Avatar
 
 Private attachments share the same file root and validation policy as channel
@@ -1411,6 +1477,59 @@ GET /teammates/:id/activity?cwd=/path/to/project&limit=100
 `tasks` returns tasks assigned through `assigneeTeammateId`. `activity` composes private
 messages, assigned tasks, teammate runs, approvals attached to teammate runs, and channel
 messages that mention the teammate.
+
+## Companions
+
+Companions are presentation-independent partner profiles bound to one existing AI teammate.
+They reuse the teammate's model binding, provider preset, private thread, memory scopes,
+tools, and permissions. Companion records never contain provider credentials or endpoint
+configuration. `DELETE` is a soft disable and preserves the profile and event history.
+
+All Companion endpoints require `cwd`.
+
+### Companion Profiles, State, And Events
+
+```http
+GET    /companions?cwd=/path/to/project&status=active&limit=100
+POST   /companions?cwd=/path/to/project
+GET    /companions/:id?cwd=/path/to/project
+PATCH  /companions/:id?cwd=/path/to/project
+DELETE /companions/:id?cwd=/path/to/project
+GET    /companions/:id/state?cwd=/path/to/project
+GET    /companions/:id/events?cwd=/path/to/project&limit=100
+POST   /companions/:id/interactions?cwd=/path/to/project
+POST   /companions/:id/proactive?cwd=/path/to/project
+```
+
+Creation requires `teammateId` and `displayName`. A profile has a versioned manifest of
+declared emotions and semantic actions plus a cooldown-based proactive policy. Interaction
+requests may change declared emotion, action, phase, or bounded energy and append one event.
+Undeclared actions/emotions and interactions for disabled companions are rejected.
+
+Event reads return `hasMore`, `nextBeforeCreatedAt`, and `nextBeforeEventId`. Pass both
+cursor fields to continue a page without duplicates when several events share a timestamp.
+
+```json
+{
+  "teammateId": "teammate_builtin_engineer",
+  "displayName": "Ling Companion",
+  "description": "A calm workspace companion",
+  "manifest": {
+    "version": 1,
+    "defaultEmotionId": "neutral",
+    "emotions": [{ "id": "neutral", "label": "Neutral" }],
+    "actions": [{ "id": "greet", "label": "Greet" }]
+  },
+  "behaviorPolicy": {
+    "proactiveEnabled": false,
+    "cooldownMs": 3600000
+  }
+}
+```
+
+Companion messages use the Companion-id route documented in [Companion Dialogue](#companion-dialogue)
+and the same teammate direct-message store underneath, so there is one durable conversation
+and one provider execution path.
 
 ## Channel Conversation Items, Turns, Attachments, and Links
 

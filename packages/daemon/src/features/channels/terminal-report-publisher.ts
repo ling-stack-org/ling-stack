@@ -3,6 +3,8 @@ import type { ConversationItemV1 } from "@ling-stack/contracts";
 import { getChannelMessageView } from "./conversation-item-messages.js";
 import { evaluateWorkflowCompletion } from "./workflow-completion-gate.js";
 import { publishNormalTerminalReport } from "./normal-terminal-report-publisher.js";
+import { workflowIsolationIsDraining } from "./workflow-isolation-lifecycle.js";
+import { collectWorkflowIsolationRisks } from "./terminal-report-isolation-evidence.js";
 
 export interface TerminalReportPublication {
   readonly message?: ChannelMessage;
@@ -40,6 +42,14 @@ export function publishTerminalReportPublication(input: {
   }
   if (input.report.source.kind !== "workflow") return publishLegacyTerminalReport(input, sourceMessage);
   const workflow = input.store.getChannelWorkflow(input.report.source.id);
+  if (workflowIsolationIsDraining(input.store, input.report.source.id)) {
+    throw new TerminalReportPublicationError("stale_completion_basis", "Workflow isolation effects are still draining.");
+  }
+  const isolationRisks = collectWorkflowIsolationRisks(input.store, input.report.source.id, input.report.language);
+  const captured = input.store.getTerminalReport(input.report.id)?.evidenceSnapshot;
+  if (isolationRisks.some(risk => !captured?.risks.some(item => item.id === risk.id && item.status === "unverified"))) {
+    throw new TerminalReportPublicationError("stale_completion_basis", "Workflow isolation effects are unconfirmed.");
+  }
   const sourceTurnId = workflow?.metadata?.sourceTurnId;
   const sourceTurn = sourceTurnId ? input.store.getLingTurn(sourceTurnId) : undefined;
   const sourceItem = input.store.getConversationItem(sourceMessage.id);

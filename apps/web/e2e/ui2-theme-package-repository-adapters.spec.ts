@@ -238,6 +238,35 @@ test("Web adapter keeps IndexedDB semantics for install, read, reimport, active,
   expect(stored.has(manifest.id)).toBe(false);
 });
 
+test("Web adapter carries the launch animation asset through publication and reads", async () => {
+  const stored = new Map<string, StoredWebThemePackage>();
+  const repository = new WebThemePackageRepositoryAdapter(fakeWebDependencies([], stored));
+  const launchAnimation = {
+    blob: new Blob([Uint8Array.from([7, 6, 5])], { type: "image/webp" }),
+    byteLength: 3,
+    checksumSha256: "c".repeat(64),
+    height: 1,
+    mimeType: "image/webp" as const,
+    path: "assets/launch.webp",
+    width: 1,
+  };
+  const launchManifest = {
+    ...manifest,
+    launchAnimation: { preset: "canvas-windmill" as const, referenceImage: launchAnimation.path },
+  } satisfies LingThemePackManifest;
+  const request = {
+    ...installRequest(),
+    publication: { ...installRequest().publication, launchAnimation, manifest: launchManifest },
+  };
+  const installed = await repository.install(request);
+  expect(installed.ok && installed.value.launchAnimation?.path).toBe(launchAnimation.path);
+  const read = await repository.read({ includeLaunchAnimationBytes: true, includePreviewBytes: false, themeId: manifest.id });
+  expect(read.ok).toBe(true);
+  if (!read.ok) return;
+  expect(read.value.launchAnimation?.path).toBe(launchAnimation.path);
+  expect([...new Uint8Array(await read.value.launchAnimation!.blob.arrayBuffer())]).toEqual([7, 6, 5]);
+});
+
 test("Web storage failures become typed results instead of leaking DOM exceptions", async () => {
   const dependencies: WebThemePackageRepositoryDependencies = {
     ...fakeWebDependencies(),
@@ -304,6 +333,7 @@ function fakeWebDependencies(
         packageChecksumSha256: publication.packageChecksumSha256,
         updatedAt: "2026-07-26T00:01:00.000Z",
         ...(publication.licenseText !== undefined ? { licenseText: publication.licenseText } : {}),
+        ...(publication.launchAnimation !== undefined ? { launchAnimation: publication.launchAnimation } : {}),
         ...(publication.preview !== undefined ? { preview: publication.preview } : {}),
       });
       stored.set(value.manifest.id, value);

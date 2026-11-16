@@ -165,8 +165,9 @@ test(`settled immutable authority rejects later ${change} drift`, async t => {
 
 test("final retained view and receipt survive retention; ledger cannot be rewritten or deleted", async t => {
   const f = await fixture(t), result = f.commit(); assert.equal(result.kind, "verified", JSON.stringify(result));
+  const now = stopNow();
   for (const artifactId of [result.modelViewArtifactId, result.witness.settlement.artifactId])
-    f.store.enrollHarnessArtifactRetention({ artifactId, retainUntil: stopNow(), now: stopNow() });
+    f.store.enrollHarnessArtifactRetention({ artifactId, retainUntil: now, now });
   assert.deepEqual(f.store.collectHarnessArtifactBodies({ now: stopNow() }).prunedArtifactIds, []);
   assert.throws(() => f.db.prepare("UPDATE run_final_settlements SET digest=?").run("0".repeat(64)), /immutable/u);
   assert.throws(() => f.db.prepare("DELETE FROM run_final_settlements").run(), /retained/u);

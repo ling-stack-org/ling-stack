@@ -1,7 +1,7 @@
 .normal-conversation-feed-frame {
   position: relative;
   box-sizing: border-box;
-  width: min(var(--channel-conversation-width, 800px), calc(100% - 48px));
+  width: 100%;
   min-height: 0;
   margin: 0 auto;
   overflow: hidden;
@@ -10,10 +10,12 @@
 }
 
 .normal-conversation-feed {
+  box-sizing: border-box;
   display: flex;
-  width: 100%;
+  width: min(var(--channel-conversation-width, 800px), calc(100% - 48px));
   height: 100%;
   min-height: 0;
+  margin-inline: auto;
   flex-direction: column;
   gap: var(--ling-space-6);
   padding: 28px 0 18px;
@@ -358,7 +360,7 @@
 }
 
 @media (max-width: 760px) {
-  .normal-conversation-feed-frame,
+  .normal-conversation-feed,
   .normal-conversation-composer-stack {
     width: calc(100% - 24px);
   }

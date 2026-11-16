@@ -92,6 +92,9 @@ export class WebThemePackageRepositoryAdapter implements ThemePackageRepositoryP
       return themePackageRepositorySuccess(Object.freeze({
         descriptor: this.#descriptor(stored),
         ...(stored.licenseText !== undefined ? { licenseText: stored.licenseText } : {}),
+        ...(request.includeLaunchAnimationBytes && stored.launchAnimation
+          ? { launchAnimation: { ...stored.launchAnimation, blob: stored.launchAnimation.blob.slice() } }
+          : {}),
         ...(request.includePreviewBytes && stored.preview
           ? { preview: { ...stored.preview, blob: stored.preview.blob.slice() } }
           : {}),
@@ -211,6 +214,18 @@ export class WebThemePackageRepositoryAdapter implements ThemePackageRepositoryP
           }),
         }
         : {}),
+      ...(stored.launchAnimation
+        ? {
+          launchAnimation: Object.freeze({
+            byteLength: stored.launchAnimation.byteLength,
+            checksumSha256: stored.launchAnimation.checksumSha256,
+            height: stored.launchAnimation.height,
+            mimeType: stored.launchAnimation.mimeType,
+            path: stored.launchAnimation.path,
+            width: stored.launchAnimation.width,
+          }),
+        }
+        : {}),
     });
   }
 }
@@ -232,6 +247,7 @@ function webPublication(request: ThemePackageRepositoryInstallRequest): WebTheme
     manifest: request.publication.manifest,
     packageChecksumSha256: request.publication.packageChecksumSha256,
     ...(request.publication.licenseText !== undefined ? { licenseText: request.publication.licenseText } : {}),
+    ...(request.publication.launchAnimation !== undefined ? { launchAnimation: request.publication.launchAnimation } : {}),
     ...(request.publication.preview !== undefined ? { preview: request.publication.preview } : {}),
   });
 }

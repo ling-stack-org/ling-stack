@@ -8,6 +8,7 @@ const macosMainWindowTrafficLightPosition = Object.freeze({ x: 12, y: 17 });
 export interface MainWindowFactoryInput {
   readonly backgroundColor?: string;
   readonly daemonBaseUrl: string;
+  readonly productVersion?: string;
   readonly themePackageFirstPaint: DesktopThemePackageFirstPaintState;
   readonly computerControlPlatform?: "macos" | "windows";
   readonly platform?: NodeJS.Platform;
@@ -19,7 +20,7 @@ export interface MainWindowFactoryInput {
 }
 
 export function buildMainWindowOptions(
-  input: Pick<MainWindowFactoryInput, "backgroundColor" | "daemonBaseUrl" | "themePackageFirstPaint" | "computerControlPlatform">,
+  input: Pick<MainWindowFactoryInput, "backgroundColor" | "daemonBaseUrl" | "productVersion" | "themePackageFirstPaint" | "computerControlPlatform">,
   platform: NodeJS.Platform = process.platform,
 ): BrowserWindowConstructorOptions {
   return {
@@ -51,6 +52,7 @@ export function buildMainWindowOptions(
       sandbox: true,
       additionalArguments: [
         `--ling-daemon-base-url=${input.daemonBaseUrl}`,
+        ...(input.productVersion ? [`--ling-product-version=${input.productVersion}`] : []),
         encodeDesktopThemePackageFirstPaintArgument(input.themePackageFirstPaint),
         ...(input.computerControlPlatform
           ? [`--ling-computer-control-platform=${input.computerControlPlatform}`]

@@ -35,6 +35,7 @@ import type {
   ConversationActiveReplyTarget,
   ChannelExecutionProposal,
   ChannelWorkflow,
+  ChannelWorkflowOrchestrationRequest,
   ChannelWorkflowStep,
   ChannelWorkflowStepStartMode,
   ExecutionAction,
@@ -75,6 +76,7 @@ import type { ChannelStreamErrorOwner, ChannelStreamErrorOwnerHint } from "../..
 export interface WorkspaceClientViewProps {
   readonly cwd: string;
   readonly daemonHealthy: boolean | undefined;
+  readonly workflowObservationReady?: boolean;
   readonly channelAutoRouteEnabled: boolean;
   readonly providerLabel: string;
   readonly userProfile?: UserProfile;
@@ -124,6 +126,7 @@ export interface WorkspaceClientViewProps {
   readonly channelContextSummaries: readonly ChannelContextSummary[];
   readonly channelWorkflows: readonly ChannelWorkflow[];
   readonly channelWorkflowSteps: readonly ChannelWorkflowStep[];
+  readonly channelRetainedIsolationWorkflowIds: readonly string[];
   readonly channelStateTransitions: readonly StateTransitionEvent[];
   readonly channelActivityTransitionsLoading: boolean;
   readonly channelActivityTransitionError: string;
@@ -233,7 +236,7 @@ export interface WorkspaceClientViewProps {
   readonly onUpdateHandoffStatus: (handoff: ChannelHandoff, status: ChannelHandoffStatus) => void;
   readonly onStartWorkflowFromHandoff: (handoff: ChannelHandoff) => Promise<void>;
   readonly onStartTemplateWorkflow: () => void;
-  readonly onOrchestrateWorkflow: (workflow: ChannelWorkflow) => Promise<void>;
+  readonly onOrchestrateWorkflow: (workflow: ChannelWorkflow, request?: ChannelWorkflowOrchestrationRequest) => Promise<void>;
   readonly onCancelWorkflow: (workflow: ChannelWorkflow) => Promise<void>;
   readonly onStartWorkflowStep: (step: ChannelWorkflowStep, mode: ChannelWorkflowStepStartMode) => void;
   readonly onRetryWorkflowStep: (step: ChannelWorkflowStep) => Promise<void>;

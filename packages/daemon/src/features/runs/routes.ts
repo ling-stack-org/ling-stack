@@ -38,6 +38,7 @@ import { parseRunRequest, type RunRequest } from "./schemas.js";
 import { isApprovalCommandRuleProposalCurrent } from "./approval-command-rules.js";
 import { isPrivateHostRecoveryArtifact, projectPublicRunEventEnvelope, toPublicArtifactMetadata } from "./public-artifacts.js";
 import { projectPublicRunSession } from "./public-execution-snapshots.js";
+import { applyApprovedWorkflowMerge } from "../channels/workflow-merge-apply.js";
 
 export async function handleRun(
   request: IncomingMessage,
@@ -697,6 +698,10 @@ export async function handleApprovalItem(
       return;
     }
     let postCommit: ReturnType<typeof reconcileApprovalPostCommitEffects> = { deferred: true };
+    if (updated.status === "approved" && updated.actionType === "workflow_merge" && updated.payload.type === "workflow_merge") {
+      try { await applyApprovedWorkflowMerge({ store, approvalId: updated.id }); }
+      catch { /* The committed consent and durable apply journal remain available for reconciliation. */ }
+    }
     try {
       postCommit = reconcileApprovalPostCommitEffects({
         store, approval: updated, cwd, now, controlPlaneEvents,

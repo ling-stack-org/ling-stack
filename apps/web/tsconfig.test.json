@@ -1,0 +1,20 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "allowJs": true,
+    "checkJs": false,
+    "declaration": false,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noEmit": true,
+    "rootDir": "../..",
+    "types": ["node", "vite/client"]
+  },
+  "include": [
+    "test/**/*.ts",
+    "e2e/conversation-position-layout.spec.ts",
+    "e2e/conversation-run-feedback.spec.ts",
+    "e2e/support/conversation-position-assertions.ts"
+  ]
+}

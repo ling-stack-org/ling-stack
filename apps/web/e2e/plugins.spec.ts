@@ -238,6 +238,65 @@ test("adds disabled local command and HTTP plugins with descriptions", async ({ 
   expect(state.mcpServers.at(-1)?.url).toBe("https://example.com/mcp");
 });
 
+test("imports a plugin through the four-step wizard without exposing secret values", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  await mockDaemon(page, state);
+  let appliedNames: unknown;
+  await page.route("http://127.0.0.1:17891/plugins/import/preview**", async (route) => {
+    await route.fulfill({
+      status: 200,
+      json: {
+        source: "codex-config-toml",
+        sourceFound: true,
+        candidates: [{
+          kind: "mcp",
+          source: "codex-config-toml",
+          name: "demo",
+          displayName: "demo",
+          transportSummary: "uvx demo-mcp",
+          status: "new",
+          secrets: [{ field: "API_KEY", masked: "…f00d", needsInput: false }],
+          warnings: [],
+        }],
+        warnings: [],
+      },
+    });
+  });
+  await page.route("http://127.0.0.1:17891/plugins/import/apply**", async (route) => {
+    appliedNames = route.request().postDataJSON()?.names;
+    await route.fulfill({
+      status: 200,
+      json: {
+        imported: [{ name: "demo", pluginId: "trusted-local:imported-demo", mcpServerId: "mcp_demo", check: "ready" }],
+        skipped: [],
+        secretsMigrated: 1,
+        secretsNeedsInput: 0,
+        degradations: [],
+        warnings: [],
+      },
+    });
+  });
+  await page.goto("/");
+  await openPluginManager(page);
+
+  await page.locator(".settings-plugin-manager-head").getByRole("button", { name: "Import" }).click();
+  const dialog = page.getByRole("dialog", { name: "Import from other agents" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "Scan source" }).click();
+  await expect(dialog).toContainText("demo");
+  await expect(dialog).toContainText("uvx demo-mcp");
+  await expect(dialog).not.toContainText("f00d");
+  await dialog.getByRole("button", { name: "Import selected" }).click();
+  await expect(dialog).toContainText("Imported demo");
+  await expect(dialog).toContainText("Secrets migrated: 1");
+  expect(appliedNames).toEqual(["demo"]);
+  await dialog.getByRole("button", { name: "Done" }).click();
+  await expect(dialog).toHaveCount(0);
+});
+
 test("detected Cua Driver auto-connects once and remains disabled", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");

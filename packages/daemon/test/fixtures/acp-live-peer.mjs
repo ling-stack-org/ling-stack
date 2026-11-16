@@ -55,10 +55,19 @@ if (scenario === "oauth-pending") process.on("message", message => {
 
 for await (const line of createInterface({ input: process.stdin })) {
   const message = JSON.parse(line);
+  const initializeReleased = message.method === "initialize" && scenario === "gated-initialize"
+    ? new Promise(resolve => {
+      const release = value => {
+        if (value?.method !== "fixture-initialize-release") return;
+        process.off("message", release); resolve();
+      };
+      process.on("message", release);
+    }) : undefined;
   process.send?.(message);
   switch (message.method) {
     case "initialize":
       if (scenario === "hold-initialize") break;
+      if (initializeReleased) await initializeReleased;
       await result(message.id, { protocolVersion: 1, agentInfo: {
         name: engine === "openclaw-acp" ? "openclaw-acp" : "Kimi Code CLI", version: "owned-peer-1",
       }, agentCapabilities: { loadSession: true }, authMethods: [] });

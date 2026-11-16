@@ -8,7 +8,7 @@ import { assembleRelease, collectTarget, desktopTargets, fileRecord, releaseVers
 import { createDesktopDraft, verifyAssembledRelease } from "../release/create-desktop-draft.mjs";
 
 const input = { sha: "a".repeat(40), tag: "v0.1.3", versionFile: "0.1.3",
-  rootVersion: "0.1.3", desktopVersion: "0.1.3" };
+  rootVersion: "0.1.3", desktopVersion: "0.1.3", productContractVersion: "0.1.3" };
 const candidate = validateCandidate(input);
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), "ling-desktop-release-"));
@@ -29,15 +29,16 @@ async function draftFixture(t, mode = "success") {
       if (args[1].includes("matching-refs")) {
         tagLookups++;
         if (mode === "api-error") throw new Error("GitHub authentication failed");
-        return JSON.stringify(mode === "existing-tag" || mode === "tag-race" && tagLookups > 1
+        return JSON.stringify(mode === "existing-tag" || mode === "allowed-existing-tag" || mode === "tag-race" && tagLookups > 1
           ? [{ ref: `refs/tags/${candidate.tag}` }] : []);
       }
-      if (args[1].includes("commits/")) return JSON.stringify({ sha: "b".repeat(40) });
+      if (args[1].includes("commits/")) return JSON.stringify({ sha: mode === "allowed-existing-tag" ? candidate.sourceSha : "b".repeat(40) });
       if (args[1].includes("releases?")) return JSON.stringify([[...(mode === "existing-release" ? [{ tag_name: candidate.tag }] : [])]]);
       const file = assets[Number(args[1].split("/").at(-1)) - 1];
       return JSON.stringify({ state: "uploaded", size: file.sizeBytes, digest: `sha256:${mode === "wrong-digest" ? "0".repeat(64) : file.sha256}` });
     }
-    if (args[1] === "view") return JSON.stringify({ isDraft: true, isPrerelease: mode === "unexpected-prerelease", targetCommitish: candidate.sourceSha,
+    if (args[1] === "view") return JSON.stringify({ isDraft: true, isPrerelease: mode === "unexpected-prerelease",
+      targetCommitish: mode === "allowed-existing-tag" ? "" : candidate.sourceSha,
       url: "https://github.com/example/ling-stack/releases/test-draft", assets: assets.map((file, index) => ({ name: file.name,
         apiUrl: `https://api.github.com/repos/${repository}/releases/assets/${index + 1}` })) });
     return "";
@@ -72,6 +73,18 @@ test("assembled checksum corruption is rejected before any GitHub call", async t
   assert.equal(f.calls.length, 0);
 });
 
+test("tag-triggered Draft accepts only the exact reviewed tag and requires it to remain present", async t => {
+  const f = await draftFixture(t, "allowed-existing-tag");
+  const result = await createDesktopDraft({ ...f.draft, allowExistingTag: true, requireExistingTag: true });
+  assert.equal(result.published, false);
+  assert.ok(f.calls.some(args => args[1] === "create"));
+
+  const missing = await draftFixture(t);
+  await assert.rejects(createDesktopDraft({ ...missing.draft, allowExistingTag: true, requireExistingTag: true }),
+    /tag disappeared/u);
+  assert.ok(missing.calls.every(args => args[1] !== "create"));
+});
+
 test("release accepts numeric and historical prerelease tags, rejecting malformed or shell-shaped tags", () => {
   assert.equal(releaseVersion("v0.1.3"), "0.1.3");
   assert.equal(releaseVersion("v0.1.2-alpha.1"), "0.1.2-alpha.1");
@@ -81,7 +94,7 @@ test("release accepts numeric and historical prerelease tags, rejecting malforme
   for (const sha of ["main", "a".repeat(7), "A".repeat(40), "a".repeat(40) + "\n"]) {
     assert.throws(() => validateCandidate({ ...input, sha }), /complete lowercase/u);
   }
-  for (const key of ["versionFile", "rootVersion", "desktopVersion"]) {
+  for (const key of ["versionFile", "rootVersion", "desktopVersion", "productContractVersion"]) {
     assert.throws(() => validateCandidate({ ...input, [key]: "0.1.2-alpha.1" }), /versions must match/u);
   }
 });
@@ -95,6 +108,8 @@ test("draft preparation requires a clean exact mainline source and a new tag", a
   await mkdir(join(root, "apps/desktop"), { recursive: true });
   await writeFile(join(root, "VERSION"), input.versionFile + "\n");
   for (const path of ["package.json", "apps/desktop/package.json"]) await writeFile(join(root, path), JSON.stringify({ version: input.rootVersion }));
+  await mkdir(join(root, "packages/contracts/src"), { recursive: true });
+  await writeFile(join(root, "packages/contracts/src/product-version.ts"), `export const LING_PRODUCT_VERSION = "${input.productContractVersion}" as const;\n`);
   git(["add", "."]); git(["commit", "-qm", "candidate"]);
   const sha = git(["rev-parse", "HEAD"]);
   git(["update-ref", "refs/remotes/origin/main", sha]);
@@ -103,6 +118,7 @@ test("draft preparation requires a clean exact mainline source and a new tag", a
   await assert.rejects(readCandidate({ ...args, sha: "b".repeat(40) }), /Checkout does not match/u);
   git(["tag", input.tag]);
   await assert.rejects(readCandidate(args), /Tag already exists/u);
+  assert.equal((await readCandidate({ ...args, allowExistingTag: true })).sourceSha, sha);
   git(["tag", "-d", input.tag]);
   await writeFile(join(root, "VERSION"), input.versionFile + "\n\n");
   await assert.rejects(readCandidate(args), /source must be clean/u);

@@ -12,6 +12,8 @@
 .provider-table {
   min-width: 0;
   table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0 var(--ling-space-3);
 }
 
 .provider-table th,
@@ -49,6 +51,29 @@
   min-height: 52px;
 }
 
+/* Keep the semantic table contract, but present each model route like the
+ * compact supplier cards used by the reference provider manager. */
+.provider-table tbody .provider-row > td {
+  border-block: 1px solid var(--ling-border-default);
+  background: var(--ling-bg-panel);
+}
+
+.provider-table tbody .provider-row > td:first-child {
+  border-inline-start: 1px solid var(--ling-border-default);
+  border-start-start-radius: var(--ling-radius-md);
+  border-end-start-radius: var(--ling-radius-md);
+}
+
+.provider-table tbody .provider-row > td:last-child {
+  border-inline-end: 1px solid var(--ling-border-default);
+  border-start-end-radius: var(--ling-radius-md);
+  border-end-end-radius: var(--ling-radius-md);
+}
+
+.provider-table tbody .provider-row:hover > td {
+  background: var(--ling-row-hover-bg);
+}
+
 .provider-row.selected > td:first-child {
   box-shadow: inset 2px 0 0 var(--ling-action-accent);
 }
@@ -58,20 +83,6 @@
   min-width: 0;
   align-items: center;
   gap: var(--ling-space-4);
-}
-
-.provider-avatar {
-  display: inline-grid;
-  width: 28px;
-  height: 28px;
-  flex: 0 0 auto;
-  place-items: center;
-  border: 0;
-  border-radius: var(--ling-radius-md);
-  color: var(--ling-text-muted);
-  background: var(--ling-bg-subtle);
-  font-size: var(--ling-font-xs);
-  font-weight: 700;
 }
 
 .provider-name-copy {
@@ -220,4 +231,14 @@
   display: inline-flex;
   align-items: center;
   gap: var(--ling-space-4);
+}
+
+.provider-table-shell:has(.ling-ui-empty-state) .ling-ui-empty-state {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+}
+
+.provider-table-shell:has(.ling-ui-empty-state) .ling-ui-empty-state-actions {
+  grid-column: 2;
+  justify-self: start;
 }

@@ -35,8 +35,10 @@ export type LingThemePackageIssueCode =
   | "invalid-preview-dimensions"
   | "invalid-preview-image"
   | "invalid-preview-mime"
+  | "invalid-launch-animation"
   | "invalid-text"
   | "missing-manifest"
+  | "missing-launch-animation"
   | "missing-preview"
   | "runtime-artwork-not-supported"
   | "too-many-entries"
@@ -112,12 +114,23 @@ export interface ParsedLingThemePreview {
   readonly width: number;
 }
 
+export interface ParsedLingThemeLaunchAnimation {
+  readonly byteLength: number;
+  readonly bytes: Uint8Array;
+  readonly checksumSha256: string;
+  readonly height: number;
+  readonly mimeType: LingThemeImageMimeType;
+  readonly path: `assets/${string}`;
+  readonly width: number;
+}
+
 export interface ParsedLingThemePackage {
   readonly archiveByteLength: number;
   readonly files: readonly NormalizedLingThemePackageFile[];
   readonly licenseText?: string;
   readonly manifest: LingThemePackManifest;
   readonly packageChecksumSha256: string;
+  readonly launchAnimation?: ParsedLingThemeLaunchAnimation;
   readonly preview?: ParsedLingThemePreview;
   readonly warnings: readonly LingThemePackageIssue[];
 }

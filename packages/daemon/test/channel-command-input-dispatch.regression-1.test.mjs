@@ -34,7 +34,8 @@ function fixture(readDecision) {
   const run = { id: "run", status: "running", cwd: "/workspace", channelId: "channel", teammateId: "owner", workflowStepId: "step",
     requestSnapshot: { workflowOperationExecution: createWorkflowOperationExecutionSnapshot(step), delegatedRequirement: requirement,
       effectivePolicySnapshot: { toolDecisions: { read: readDecision } } } };
-  const store = { paths: { cwd: "/workspace" }, getRun: () => run, getChannelWorkflowStep: () => step };
+  const store = { paths: { cwd: "/workspace" }, getRun: () => run, getChannelWorkflowStep: () => step,
+    getChannelWorkflow: () => ({ id: "workflow" }) };
   const runtime = new NativeRestrictedCommandRuntime({ inputHelper: {}, executables: {} });
   runtime.assertAvailable = () => ({ kind: "argv", argv: ["node", "project/cli.cjs"] });
   return { run, store, runtime, command };

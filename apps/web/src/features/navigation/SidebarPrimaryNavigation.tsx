@@ -19,7 +19,7 @@ export function SidebarPrimaryNavigation({
       <NavItem compact={compact} icon={Inbox} label={t("Inbox")} active={activeSidebarTarget === "approvals"} hidden pendingView="approvals" onClick={() => onOpenView("approvals")} />
       <NavItem compact={compact} icon={Clapperboard} label={t("Media Production")} active={activeSidebarTarget === "media"} onClick={() => onOpenView("media")} />
       <NavItem compact={compact} icon={PlugZap} label={t("Plugin Manager")} active={activeSidebarTarget === "plugins"} onClick={() => onOpenView("plugins")} />
-      <NavItem compact={compact} icon={Timer} label={t("Automations")} active={activeSidebarTarget === "automations"} onClick={() => onOpenView("automations")} />
+      <NavItem compact={compact} icon={Timer} label={t("Scheduled tasks")} active={activeSidebarTarget === "automations"} onClick={() => onOpenView("automations")} />
     </nav>
   );
 }

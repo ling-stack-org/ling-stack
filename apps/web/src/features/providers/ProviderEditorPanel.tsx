@@ -2,13 +2,14 @@ import { useRef, type ReactNode } from "react";
 import { Plus, Save } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import { providerCheckStatusLabel } from "../../lib/providers.js";
+import { ProductErrorDetails } from "../../shared/feedback/ProductErrorDetails.js";
 import {
   Button,
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
+  Drawer,
+  DrawerBody,
+  DrawerContent,
+  DrawerFooter,
+  DrawerHeader,
   InlineFeedback,
   InspectorSection,
 } from "../../shared/ui/index.js";
@@ -28,6 +29,7 @@ export function ProviderEditorPanel({
   canEditCustomProviderFields,
   modelImportPanel,
   editorErrorMessage,
+  editorErrorTechnicalMessage,
   editorWarningMessage,
   checkResult,
   editorCheckProviderName,
@@ -54,6 +56,7 @@ export function ProviderEditorPanel({
   readonly canEditCustomProviderFields: boolean;
   readonly modelImportPanel: ReactNode;
   readonly editorErrorMessage: string;
+  readonly editorErrorTechnicalMessage: string;
   readonly editorWarningMessage: string;
   readonly checkResult: ProviderCheckResult | undefined;
   readonly editorCheckProviderName: string;
@@ -87,8 +90,8 @@ export function ProviderEditorPanel({
   }
 
   return (
-    <Dialog busy={isCheckingProviders} dismissible open onOpenChange={(nextOpen) => { if (!nextOpen) requestClose(); }}>
-      <DialogContent
+    <Drawer busy={isCheckingProviders} dismissible open onOpenChange={(nextOpen) => { if (!nextOpen) requestClose(); }}>
+      <DrawerContent
         aria-label={title}
         className="provider-form-panel provider-sheet"
         size="lg"
@@ -104,10 +107,11 @@ export function ProviderEditorPanel({
           returnFocusRef.current?.focus({ preventScroll: true });
         }}
       >
-        <DialogHeader className="provider-sheet-header" closeLabel={t("Close model preset editor")} title={title} />
-        <DialogBody className="provider-sheet-body">
+        <DrawerHeader className="provider-sheet-header" closeLabel={t("Close model preset editor")} title={title} />
+        <DrawerBody className="provider-sheet-body">
           <ProviderEditorCoreFields
             supplierTemplates={supplierTemplates}
+            setupIntent={setupIntent}
             selectedTemplateId={selectedTemplateId}
             form={form}
             editingProvider={editingProvider}
@@ -125,7 +129,12 @@ export function ProviderEditorPanel({
             canEditCustomProviderFields={canEditCustomProviderFields}
             onFormChange={onFormChange}
           />
-          {editorErrorMessage ? <InlineFeedback className="provider-editor-error" tone="danger" title={t("Error")}>{t(editorErrorMessage)}</InlineFeedback> : null}
+          {editorErrorMessage ? (
+            <InlineFeedback className="provider-editor-error" tone="danger" title={t("Error")}>
+              <span>{editorErrorMessage}</span>
+              <ProductErrorDetails technicalMessage={editorErrorTechnicalMessage} />
+            </InlineFeedback>
+          ) : null}
           {editorWarningMessage ? <InlineFeedback className="provider-editor-warning" tone="warning">{t(editorWarningMessage)}</InlineFeedback> : null}
           {checkResult && !editorErrorMessage ? (
             <InlineFeedback className="provider-editor-check-feedback" tone={checkResult.ok ? "success" : "danger"} title={editorCheckProviderName || t("Provider check")}>
@@ -133,14 +142,14 @@ export function ProviderEditorPanel({
               <span>{editorCheckMessage}</span>
               {editorCheckGuidance ? <small>{editorCheckGuidance}</small> : null}
               {checkResult.message ? (
-                <InspectorSection className="provider-check-raw-details" title={t("Check details")}>
-                  <small>{t("Provider response")}: {t(checkResult.message)}</small>
+                <InspectorSection className="provider-check-raw-details" title={t("Technical details")}>
+                  <small>{t("Provider response")}: {checkResult.message}</small>
                 </InspectorSection>
               ) : null}
             </InlineFeedback>
           ) : null}
-        </DialogBody>
-        <DialogFooter className="provider-sheet-footer">
+        </DrawerBody>
+        <DrawerFooter className="provider-sheet-footer">
           <Button disabled={isCheckingProviders} onClick={requestClose}>{t("Cancel")}</Button>
           {editingProviderId && selectedImportCount > 0 ? (
             <Button disabled={isCheckingProviders} leadingIcon={<Save />} onClick={onSaveCurrentPreset}>{t("Save current preset")}</Button>
@@ -157,8 +166,8 @@ export function ProviderEditorPanel({
               ? t("Import selected models ({count})", { count: selectedImportCount })
               : editingProviderId ? t("Save changes") : t("Add model")}
           </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </DrawerFooter>
+      </DrawerContent>
+    </Drawer>
   );
 }

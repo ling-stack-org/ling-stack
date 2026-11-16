@@ -1,6 +1,7 @@
 import { systemEndpoints, type SystemEndpoints } from "./endpoints/system.js";
 import { automationEndpoints, type AutomationEndpoints } from "./endpoints/automation.js";
 import { skillEndpoints, type SkillEndpoints } from "./endpoints/skills.js";
+import { workflowTemplateEndpoints, type WorkflowTemplateEndpoints } from "./endpoints/workflow-templates.js";
 import { governanceNotificationEndpoints, type GovernanceNotificationEndpoints } from "./endpoints/governance-notifications.js";
 import { aiCouncilEndpoints, type AiCouncilEndpoints } from "./endpoints/ai-councils.js";
 import { conversationEndpoints, type ConversationEndpoints } from "./endpoints/conversations.js";
@@ -16,6 +17,7 @@ import { operationEndpoints, type OperationEndpoints } from "./endpoints/operati
 import { terminalReportEndpoints, type TerminalReportEndpoints } from "./endpoints/terminal-reports.js";
 import { computerUseEndpoints, type ComputerUseEndpoints } from "./endpoints/computer-use.js";
 import { transcriptionEndpoints, type TranscriptionEndpoints } from "./endpoints/transcriptions.js";
+import { companionEndpoints, type CompanionEndpoints } from "./endpoints/companions.js";
 import { LingDaemonTransport } from "./transport.js";
 
 export { daemonBaseUrlFromEnv, type LingDaemonClientOptions } from "./transport.js";
@@ -24,6 +26,7 @@ export interface LingDaemonClient extends
   SystemEndpoints,
   AutomationEndpoints,
   SkillEndpoints,
+  WorkflowTemplateEndpoints,
   GovernanceNotificationEndpoints,
   AiCouncilEndpoints,
   ConversationEndpoints,
@@ -38,7 +41,8 @@ export interface LingDaemonClient extends
   OperationEndpoints,
   TerminalReportEndpoints,
   ComputerUseEndpoints,
-  TranscriptionEndpoints {}
+  TranscriptionEndpoints,
+  CompanionEndpoints {}
 
 export class LingDaemonClient extends LingDaemonTransport {}
 
@@ -47,6 +51,7 @@ Object.assign(
   systemEndpoints,
   automationEndpoints,
   skillEndpoints,
+  workflowTemplateEndpoints,
   governanceNotificationEndpoints,
   aiCouncilEndpoints,
   conversationEndpoints,
@@ -62,4 +67,5 @@ Object.assign(
   terminalReportEndpoints,
   computerUseEndpoints,
   transcriptionEndpoints,
+  companionEndpoints,
 );

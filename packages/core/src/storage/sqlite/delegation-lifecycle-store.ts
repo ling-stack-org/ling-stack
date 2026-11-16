@@ -11,6 +11,7 @@ import {
   type DelegationRecoveryClassification, type DelegationRunnerStartObservation,
   type InterruptedDelegatedChildRequest, type InterruptDelegatedChildInput, type ResumeDelegatedChildInput,
   type DelegationPreparedExecution, type DelegationPreparedExecutionV1,
+  type ConsumeDelegatedChildDispatchGateInput,
 } from "../../harness/delegation-lifecycle-types.js";
 import { mapDelegationMessage } from "./delegation-mappers.js";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
@@ -26,6 +27,8 @@ import { assertNoPendingRunTerminalIntent } from "./run-terminal-intent-store.js
 import { assertRunSuspensionResumeAdmission } from "./run-suspension-store.js";
 import { assertRootSuspensionStartAdmission } from "./run-suspension-start-records.js";
 import { assertDelegatedSuspensionStartAdmission } from "./run-suspension-delegated-records.js";
+import { hasRuntimeDelegationCapacity } from "./runtime-delegation-admission.js";
+import { recordRuntimeDelegationCapacityAdmission } from "./runtime-delegation-capacity-admission.js";
 
 /**
  * Initial delegated execution lifecycle. No Task or accepted workflow mutation
@@ -115,10 +118,16 @@ export class SqliteDelegationLifecycleStore {
       if (runtime.workUnit.status !== "queued" || runtime.workUnit.attemptCount !== 0) fail("delegation.lifecycle_conflict");
       const runnerId = runtime.workUnit.effectiveRunnerId ?? runtime.workUnit.runnerId;
       if (!runnerId) fail("delegation.authority_invalid");
+      if (!hasRuntimeDelegationCapacity(this.context.database, { workspaceId: runtime.workUnit.workspaceId,
+        providerKey: runtime.run.providerPresetId ?? `${runtime.run.providerName}:${runtime.run.providerModel}`,
+        runnerId, reservedRunId: runtime.run.id, now })) fail("delegation.capacity_exhausted");
       const attempt = this.ports.createWorkUnitAttemptWithinTransaction({ workUnitId: runtime.workUnit.id, attemptNumber: 1,
         runtimeInstanceId, runnerId, requestedRunnerId: runtime.workUnit.requestedRunnerId,
         effectiveRunnerId: runnerId, status: "created", now });
       this.assertTransaction();
+      recordRuntimeDelegationCapacityAdmission(this.context.database, { reservationId, attemptNumber: attempt.attemptNumber,
+        workspaceId: runtime.workUnit.workspaceId,
+        providerKey: runtime.run.providerPresetId ?? `${runtime.run.providerName}:${runtime.run.providerModel}`, runnerId, now });
       this.ports.assertDispatchAuthorityWithinTransaction({ childRunId: runtime.run.id, stepId: runtime.step.id,
         sourceFence: toRuntimeAttemptFence(attempt), now });
       this.assertTransaction();
@@ -131,6 +140,94 @@ export class SqliteDelegationLifecycleStore {
         || after.step.childRunId !== undefined || after.run.status !== "queued") fail("delegation.lifecycle_conflict");
       return { ...after, attempt, replayed: false };
     });
+  }
+
+  prepareDelegatedChildAdmission(input: ClaimDelegatedChildInput): import("../../harness/delegation-lifecycle-types.js").DelegatedChildAdmission {
+    const request = delegationRecord(input, ["reservationId", "expectedStepRevision", "runtimeInstanceId", "now"]);
+    const reservationId = delegationId(request.reservationId), revision = delegationInteger(request.expectedStepRevision);
+    const runtimeInstanceId = delegationId(request.runtimeInstanceId), now = delegationTimestamp(request.now);
+    return this.transaction(() => {
+      const runtime = this.read(reservationId);
+      if (runtime.step.state !== "spawning" || runtime.step.childRunId !== undefined || runtime.run.status !== "queued"
+        || runtime.run.endedAt || runtime.step.revision !== revision || runtime.workUnit.status !== "queued"
+        || runtime.workUnit.attemptCount !== 0 || runtime.attempt) fail("delegation.lifecycle_conflict");
+      const idempotencyKey = `delegation-host:${runtime.step.id}:${revision}`;
+      const existing = this.context.database.prepare("SELECT * FROM runtime_delegation_spawn_admissions WHERE reservation_id=?").get(reservationId);
+      if (existing) return this.mapPendingAdmission(existing);
+      const admissionId = randomUUID();
+      this.context.database.prepare(`INSERT INTO runtime_delegation_spawn_admissions
+        (admission_id,reservation_id,attempt_number,expected_step_revision,runtime_instance_id,idempotency_key,status,created_at,updated_at)
+        VALUES(?,?,?,?,?,?, 'pending',?,?)`).run(admissionId, reservationId, 1, revision, runtimeInstanceId, idempotencyKey, now, now);
+      return this.mapPendingAdmission(this.context.database.prepare("SELECT * FROM runtime_delegation_spawn_admissions WHERE admission_id=?").get(admissionId)!);
+    });
+  }
+
+  commitDelegatedChildClaim(input: import("../../harness/delegation-lifecycle-types.js").CommitDelegatedChildClaimInput): ClaimedDelegatedChild {
+    const request = delegationRecord(input, ["admissionId", "reservationId", "expectedStepRevision", "runtimeInstanceId", "now"]);
+    const admissionId = delegationId(request.admissionId);
+    const reservationId = delegationId(request.reservationId), revision = delegationInteger(request.expectedStepRevision);
+    const runtimeInstanceId = delegationId(request.runtimeInstanceId), now = delegationTimestamp(request.now);
+    return this.transaction(() => {
+      const admission = this.context.database.prepare("SELECT * FROM runtime_delegation_spawn_admissions WHERE admission_id=?").get(admissionId);
+      if (!admission) fail("delegation.lifecycle_conflict");
+      const pending = this.mapPendingAdmission(admission);
+      if (pending.reservationId !== reservationId || pending.expectedStepRevision !== revision
+        || pending.runtimeInstanceId !== runtimeInstanceId || pending.status !== "reserved") fail("delegation.lifecycle_conflict");
+      const runtime = this.read(reservationId);
+      if (runtime.step.state !== "spawning" || runtime.step.revision !== revision || runtime.run.status !== "queued"
+        || runtime.workUnit.status !== "queued" || runtime.attempt) fail("delegation.lifecycle_conflict");
+      const runnerId = runtime.workUnit.effectiveRunnerId ?? runtime.workUnit.runnerId;
+      if (!runnerId) fail("delegation.authority_invalid");
+      if (!hasRuntimeDelegationCapacity(this.context.database, { workspaceId: runtime.workUnit.workspaceId,
+        providerKey: runtime.run.providerPresetId ?? `${runtime.run.providerName}:${runtime.run.providerModel}`, runnerId,
+        reservedRunId: runtime.run.id, now })) fail("delegation.capacity_exhausted");
+      const attempt = this.ports.createWorkUnitAttemptWithinTransaction({ workUnitId: runtime.workUnit.id, attemptNumber: 1,
+        runtimeInstanceId, runnerId, requestedRunnerId: runtime.workUnit.requestedRunnerId, effectiveRunnerId: runnerId, status: "created", now });
+      recordRuntimeDelegationCapacityAdmission(this.context.database, { reservationId, attemptNumber: 1,
+        workspaceId: runtime.workUnit.workspaceId,
+        providerKey: runtime.run.providerPresetId ?? `${runtime.run.providerName}:${runtime.run.providerModel}`, runnerId, now });
+      const fence = toRuntimeAttemptFence(attempt);
+      if (!this.ports.bindDelegationSourceWithinTransaction?.({ intentId: pending.hostIntentId ?? "", source: {
+        runId: runtime.run.id, ...fence }, now })) fail("delegation.lifecycle_conflict");
+      this.ports.assertDispatchAuthorityWithinTransaction({ childRunId: runtime.run.id, stepId: runtime.step.id, sourceFence: fence, now });
+      const transition = this.ports.transitionWorkUnitStatus({ workUnitId: runtime.workUnit.id, expectedStatus: "queued", event: "claim",
+        actor: "system", idempotencyKey: `delegation:${runtime.step.id}:initial-claim`, now, activeAttemptId: attempt.id });
+      if (!transition.ok) fail("delegation.lifecycle_conflict");
+      this.context.database.prepare(`UPDATE runtime_delegation_spawn_admissions SET status='claimed',attempt_id=?,attempt_runtime_instance_id=?,fencing_token=?,claimed_at=?,updated_at=?
+        WHERE admission_id=? AND status='reserved'`).run(attempt.id, runtimeInstanceId, attempt.fencingToken, now, now, admissionId);
+      const after = this.read(reservationId);
+      return { ...after, attempt, replayed: false };
+    });
+  }
+
+  consumeDelegatedChildDispatchGate(input: ConsumeDelegatedChildDispatchGateInput): void {
+    const request = delegationRecord(input, ["reservationId", "sourceFence", "hostCapacity", "now"]);
+    const reservationId = delegationId(request.reservationId), fence = delegationFence(request.sourceFence), now = delegationTimestamp(request.now);
+    const hostCapacity = delegationRecord(request.hostCapacity, ["intentId", "dispatchToken"]);
+    return this.transaction(() => {
+      const runtime = this.read(reservationId);
+      if (!runtime.attempt || !sameFence(fence, toRuntimeAttemptFence(runtime.attempt))
+        || !["spawning", "resuming"].includes(runtime.step.state)
+        || runtime.step.state === "spawning" && runtime.run.status !== "queued"
+        || runtime.step.state === "resuming" && runtime.run.status !== "running"
+        || runtime.workUnit.status !== "claimed"
+        || runtime.attempt.status !== "created" || !this.ports.consumeDelegationDispatchGateWithinTransaction?.({
+          intentId: delegationId(hostCapacity.intentId), token: delegationId(hostCapacity.dispatchToken),
+          source: { runId: runtime.run.id, ...fence }, now,
+        })) fail("delegation.lifecycle_conflict");
+    });
+  }
+
+  private mapPendingAdmission(row: Record<string, SQLOutputValue>): import("../../harness/delegation-lifecycle-types.js").DelegatedChildAdmission {
+    const read = (key: string): string => { const value = row[key]; if (typeof value !== "string" || !value) fail("delegation.lifecycle_conflict"); return value; };
+    const status = read("status");
+    if (!["pending", "reserved", "claimed", "abandoned"].includes(status)) fail("delegation.lifecycle_conflict");
+    return Object.freeze({ admissionId: read("admission_id"), reservationId: read("reservation_id"), attemptNumber: Number(row.attempt_number),
+      expectedStepRevision: Number(row.expected_step_revision), runtimeInstanceId: read("runtime_instance_id"), idempotencyKey: read("idempotency_key"),
+      status: status as "pending" | "reserved" | "claimed" | "abandoned", ...(typeof row.host_intent_id === "string" ? { hostIntentId: row.host_intent_id } : {}),
+      ...(typeof row.attempt_id === "string" ? { attemptId: row.attempt_id } : {}), ...(typeof row.fencing_token === "string" ? { fencingToken: row.fencing_token } : {}),
+      createdAt: read("created_at"), updatedAt: read("updated_at"), ...(typeof row.claimed_at === "string" ? { claimedAt: row.claimed_at } : {}),
+      ...(typeof row.abandoned_at === "string" ? { abandonedAt: row.abandoned_at } : {}) });
   }
 
   commitDelegatedChildStart(input: CommitDelegatedChildStartInput): ClaimedDelegatedChild {
@@ -324,16 +421,22 @@ export class SqliteDelegationLifecycleStore {
       if (!hasDelegationStoppedHandoff(this.context.database, previousFence, now)) fail("delegation.recovery_required");
       if (!suspension) assertRunSuspensionResumeAdmission(this.context, { runId: runtime.run.id, ...previousFence }, now);
       this.assertNoActiveResources(previousFence);
+      const runnerId = runtime.workUnit.effectiveRunnerId ?? runtime.workUnit.runnerId;
+      if (!runnerId) fail("delegation.authority_invalid");
+      if (!hasRuntimeDelegationCapacity(this.context.database, { workspaceId: runtime.workUnit.workspaceId,
+        providerKey: runtime.run.providerPresetId ?? `${runtime.run.providerName}:${runtime.run.providerModel}`,
+        runnerId, now })) fail("delegation.capacity_exhausted");
       this.transitionStep(runtime, "resuming", now);
       const queued = this.ports.transitionWorkUnitStatus({ workUnitId: runtime.workUnit.id, expectedStatus: "cancelled", event: "retry",
         actor: "system", idempotencyKey: `delegation:${runtime.step.id}:${revision}:resume-queue`, now, endedAt: null,
         errorCode: null, errorMessage: null });
       if (!queued.ok) fail("delegation.lifecycle_conflict");
-      const runnerId = runtime.workUnit.effectiveRunnerId ?? runtime.workUnit.runnerId;
-      if (!runnerId) fail("delegation.authority_invalid");
       const attempt = this.ports.createWorkUnitAttemptWithinTransaction({ workUnitId: runtime.workUnit.id,
         attemptNumber: runtime.workUnit.attemptCount + 1, runtimeInstanceId, runnerId,
         requestedRunnerId: runtime.workUnit.requestedRunnerId, effectiveRunnerId: runnerId, status: "created", now });
+      recordRuntimeDelegationCapacityAdmission(this.context.database, { reservationId: id, attemptNumber: attempt.attemptNumber,
+        workspaceId: runtime.workUnit.workspaceId,
+        providerKey: runtime.run.providerPresetId ?? `${runtime.run.providerName}:${runtime.run.providerModel}`, runnerId, now });
       const targetFence = toRuntimeAttemptFence(attempt);
       const payload = { schemaVersion: 1, kind: "delegation.resume.v1", parentFence, expectedStepRevision: revision,
         callId, sourceFence: previousFence, targetFence, requestedAt: now };

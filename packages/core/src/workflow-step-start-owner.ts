@@ -25,11 +25,13 @@ export interface BeginChannelWorkflowStepStartInput {
   readonly executionPermit?: import("./workflow-pre-gate.js").WorkflowPreGateExecutionPermitV1;
   readonly task: CreateTaskInput;
   readonly createTaskOnly?: boolean;
+  readonly admission?: import("./workflow-step-admission.js").WorkflowStepAdmissionPlan;
   readonly fanInContextReviews?: NonNullable<ChannelWorkflowStep["metadata"]>["fanInContextReviews"];
   readonly now: string;
 }
 export type BeginChannelWorkflowStepStartResult =
   | { readonly status: "begun"; readonly task: Task; readonly owner: WorkflowStepStartOwnerV1 }
+  | { readonly status: "conflict"; readonly code: string; readonly resourceType: import("./runtime-supervisor-types.js").RuntimeSemaphoreResourceType; readonly resourceKey: string }
   | { readonly status: "stale" | "invalid"; readonly code: string };
 
 export interface WorkflowStepStartCommitInput {
@@ -38,6 +40,11 @@ export interface WorkflowStepStartCommitInput {
   readonly runId: string;
   /** Host-only conflict queue handoff; canonical queue lineage is still mandatory. */
   readonly claimQueuedTask?: boolean;
+  /** Optional atomic handoff together with ready linking. Otherwise transfer must already be committed. */
+  readonly admission?: Omit<import("./workflow-step-admission.js").TransferChannelWorkflowStepStartAdmissionInput,
+    "workflowStepId" | "owner" | "runId" | "now">;
+  /** Trusted daemon capability for the initial workflow dispatch gate. */
+  readonly hostCapacity?: import("./runtime-host-capacity-types.js").RuntimeHostCapacityDispatchReference;
   readonly now: string;
 }
 export type WorkflowStepStartCommitResult = { readonly status: "linked" | "duplicate" | "stale" | "invalid"; readonly code?: string };
@@ -68,6 +75,7 @@ export interface WorkflowStepStartFailureInput {
   readonly expected?: WorkflowStepStartExpectedBasis;
   readonly leaseId?: string;
   readonly mode?: "start_failure" | "startup_recovery" | "invalid_owner";
+  readonly admissionRelease?: import("./workflow-step-admission.js").WorkflowStepAdmissionReleaseProof;
   readonly delegatedBlock?: {
     readonly code: import("@ling-stack/contracts").DelegatedBlockCodeV1;
     readonly reason: string;
@@ -112,19 +120,27 @@ export function workflowStepStartAuthorityBasis(store: WorkflowStepStartReadStor
     workflow: { id: workflow.id, channelId: workflow.channelId, objective: workflow.objective,
       graph: wm?.workflowGraph, graphFingerprint: wm?.workflowGraphFingerprint,
       manifest: wm?.requiredParticipantManifest, sourceIntentDecisionId: wm?.sourceIntentDecisionId,
-      sourceTurnId: wm?.sourceTurnId, termination: wm?.termination },
+      sourceTurnId: wm?.sourceTurnId, termination: wm?.termination,
+      ...(wm?.templateCompilation ? { templateCompilation: wm.templateCompilation } : {}) },
     step: { id: step.id, title: step.title, prompt: step.prompt, position: step.position,
       participant: step.toParticipantId, authority: step.participantAuthority,
       providerBinding: metadata?.providerBinding, providerPresetId: metadata?.providerPresetId,
       executionPlan: metadata?.executionPlan, operationIds: metadata?.executionOperationIds,
       requirement: metadata?.delegatedRequirement, dependsOnStepIds: metadata?.dependsOnStepIds,
       dependencyMode: metadata?.dependencyMode, gates: metadata?.gates, approvalGate: metadata?.approvalGate,
-      policy: metadata?.policy, requiredTools: metadata?.requiredTools, runnerId: metadata?.requestedRunnerId },
+      policy: metadata?.policy, requiredTools: metadata?.requiredTools, runnerId: metadata?.requestedRunnerId,
+      sideEffectClass: metadata?.sideEffectClass, parallelPolicy: metadata?.parallelPolicy,
+      safetyPlan: metadata?.safetyPlan,
+      isolationScopePlan: metadata?.isolationScopePlan,
+      maxParallelSiblings: metadata?.maxParallelSiblings,
+      templateId: metadata?.workflowTemplateId, templateVersion: metadata?.templateVersion,
+      ...(metadata?.templateCompilationPin ? { templateCompilationPin: metadata.templateCompilationPin } : {}) },
     decision: decision && { id: decision.id, sourceItemId: decision.sourceItemId, sourceTurnId: decision.sourceTurnId,
       execution: decision.execution, manifest: decision.participantManifest, action: decision.action },
     source: source && { id: source.id, revision: source.revision, turnId: source.turnId },
     turn: turn && { id: turn.id, sourceItemId: turn.sourceItemId },
-    channel: { id: channel.id, allowedTools: channel.allowedTools, defaultProviderPresetId: channel.defaultProviderPresetId },
+    channel: { id: channel.id, allowedTools: channel.allowedTools, defaultProviderPresetId: channel.defaultProviderPresetId,
+      runtimePolicy: channel.runtimePolicy },
   };
   return `wso1_${createHash("sha256").update(JSON.stringify(basis)).digest("hex")}`;
 }

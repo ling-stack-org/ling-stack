@@ -71,6 +71,7 @@ import type { AttemptHostOperationTracker } from "../../runtime/attempt-host-ope
 import type { HostCommandOperation } from "../../runtime/host-operation-effects.js";
 export { mergeRunTools, mergeApprovalProfiles } from "./run-approval-profile.js";
 import { reserveFileMutationAdmission, type FileMutationAdmission } from "./file-mutation-admission.js";
+import { workflowIsolationFileMutationRejection } from "./workflow-isolation-file-authority.js";
 import { validateWorkflowOperationRunContext } from "./workflow-operation-snapshot.js";
 import {
   createApprovalCommandRuleProposal,
@@ -148,6 +149,8 @@ export function createRunApprovalHandler(options: {
   readonly attemptId: string;
   /** Captured at Runner dispatch; required for Host calls, never inferred from the latest Attempt. */
   readonly sourceFence?: RuntimeAttemptFenceV1;
+  /** Host-only binding captured at isolated Runner dispatch; never public request input. */
+  readonly workflowIsolationBindingId?: string;
   /** Captured Host operation authority, never inferred from a later Attempt. */
   readonly hostOperationTracker?: AttemptHostOperationTracker;
   readonly recordCompactionBoundaryEvidence?: boolean;
@@ -252,6 +255,11 @@ export function createRunApprovalHandler(options: {
       };
     }
     const rejectUnboundEffect = (approvalId?: string) => {
+      const isolatedRejection = fileMutation ? workflowIsolationFileMutationRejection({ store: options.store,
+        run: options.run, request, sourceFence, workflowIsolationBindingId: options.workflowIsolationBindingId,
+        mode: toolBrokerMode, hostOperation: fileAdmission?.operation, signal: options.signal }) : undefined;
+      if (isolatedRejection) return { approved: false, approvalId, reason: isolatedRejection,
+        handledResult: createFileMutationDeniedResult({ request, approvalId }, isolatedRejection) };
       const rejection = workflowOperationEffectRejection({ store: options.store, run: options.run, request,
         restrictedCommandRuntime: options.restrictedCommandRuntime });
       if (!rejection) return undefined;
@@ -389,6 +397,7 @@ export function createRunApprovalHandler(options: {
             mode: toolBrokerMode,
             store: options.store,
             sourceFence,
+            workflowIsolationBindingId: options.workflowIsolationBindingId,
             run: options.run,
             request,
             draft: fileMutationDraft,
@@ -867,6 +876,7 @@ export function createRunApprovalHandler(options: {
           mode: toolBrokerMode,
           store: options.store,
           sourceFence,
+          workflowIsolationBindingId: options.workflowIsolationBindingId,
           run: options.run,
           request,
           draft: fileMutationDraft,

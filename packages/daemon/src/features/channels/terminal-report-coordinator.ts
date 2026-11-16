@@ -19,6 +19,7 @@ import { formatSynchronousCatalogMessage } from "@ling-stack/localization";
 import type { RunnerRegistry } from "../../runtime/runners.js";
 import { buildWorkflowEvidence } from "./workflow-evidence.js";
 import { collectRunTerminalReportEvidence, collectTurnTerminalReportEvidence, collectWorkflowTerminalReportEvidence } from "./terminal-report-evidence.js";
+import { waitForWorkflowIsolationIdle, workflowIsolationIsDraining } from "./workflow-isolation-lifecycle.js";
 import { publishTerminalReportPublication, TerminalReportPublicationError } from "./terminal-report-publisher.js";
 import { getChannelMessageView } from "./conversation-item-messages.js";
 import {
@@ -100,6 +101,7 @@ export function maybeScheduleWorkflowTerminalReport(
   if (!terminalReportsEnabledForStore(store)) {
     return undefined;
   }
+  if (workflowIsolationIsDraining(store, workflowId)) return undefined;
   const published = latestCommittedReport(store, "workflow", workflowId);
   if (published?.resultItemId && published.report) {
     // A workflow may be retried after a report was already published. Only
@@ -189,6 +191,7 @@ export async function processWorkflowTerminalReport(
   workflowId: string,
   options: ProcessWorkflowTerminalReportOptions = {},
 ): Promise<ProcessWorkflowTerminalReportResult> {
+  await waitForWorkflowIsolationIdle(store, workflowId);
   reconcileWorkflowFromCanonicalState({
     store,
     workflowId,

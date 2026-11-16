@@ -44,11 +44,12 @@ test("terminal report formats participant narration and separates mixed metadata
 
 test("status-only terminal reports have no empty disclosure or duplicate response owner", async () => {
   const source = await readFile(terminalReportSourceUrl, "utf8");
-  assert.match(source, /presentation\.showStatus \? <TimelineFactRow/u);
+  assert.match(source, /const showStatus = presentation\.showStatus &&/u);
+  assert.match(source, /\{showStatus \? <TimelineFactRow/u);
   assert.match(source, /statusLabel=""/u);
   assert.match(source, /meta=""/u);
   assert.doesNotMatch(source, /MessageActionBar/u, "TerminalReport must not own a second response action bar");
-  assert.match(source, /detail=\{hasDetail \? <TerminalReportResultSupplement/u);
+  assert.match(source, /detail=\{showSupplement && hasDetail \? <TerminalReportResultSupplement/u);
   assert.match(source, /terminalReportFinalPresentation\(inputItem, hasNarration\)/u);
 });
 

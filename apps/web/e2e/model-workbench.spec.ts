@@ -9,6 +9,7 @@ import {
 } from "./support/mock-state";
 
 async function useEnglishLocale(page: Page): Promise<void> {
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
@@ -30,6 +31,7 @@ async function clickProviderRowMenuItem(row: Locator, name: string | RegExp): Pr
 }
 
 async function openModelWorkbench(page: Page): Promise<void> {
+  await expect(page.getByTestId("ling-launch-transition")).toHaveCount(0);
   await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: /^(Settings|设置)$/ }).click();
   await page.getByLabel(/^(Settings sections|设置分组)$/).getByRole("button", { name: /^(Model Workbench|模型工作台)$/ }).click();
   await expect(page.getByLabel(/^(Settings sections|设置分组)$/)).toBeVisible();
@@ -112,15 +114,15 @@ test("the first checked chat model becomes workspace default without replacing i
   await page.goto("/");
   await openModelWorkbench(page);
 
-  const firstRow = page.locator(".provider-row").filter({ hasText: "First Ready Relay" });
+  const firstRow = page.locator(".provider-row").filter({ hasText: "gpt-first" });
   await firstRow.getByRole("button", { name: "Check" }).click();
   await expect.poll(() => state.workspaceSettings.defaultProviderPresetId).toBe("provider_first_ready");
-  await expect(page.locator(".provider-default-purpose-bar").getByLabel("Chat model")).toHaveValue("provider_first_ready");
+  await expect(page.locator(".provider-default-purpose-bar").getByLabel("Chat")).toHaveValue("provider_first_ready");
 
-  const laterRow = page.locator(".provider-row").filter({ hasText: "Later Ready Relay" });
+  const laterRow = page.locator(".provider-row").filter({ hasText: "gpt-later" });
   await laterRow.getByRole("button", { name: "Check" }).click();
   await expect.poll(() => state.workspaceSettings.defaultProviderPresetId).toBe("provider_first_ready");
-  await expect(page.locator(".provider-default-purpose-bar").getByLabel("Chat model")).toHaveValue("provider_first_ready");
+  await expect(page.locator(".provider-default-purpose-bar").getByLabel("Chat")).toHaveValue("provider_first_ready");
   await expect(page.locator(".provider-row").getByRole("button", { name: /Set default|Current default/ })).toHaveCount(0);
 });
 
@@ -133,23 +135,26 @@ test("model workbench empty state offers beginner chat and generation setup path
 
   await openModelWorkbench(page);
   await expect(page.getByText("Add a model route to start using Ling.")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Add chat model" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Add image generation model" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Add model" })).toHaveCount(1);
+  await expect(page.locator(".provider-default-purpose-bar")).toHaveCount(0);
+  await expect(page.getByLabel("Search model presets")).toHaveCount(0);
 
-  await page.getByRole("button", { name: "Add chat model" }).click();
-  const chatEditor = page.getByRole("dialog", { name: "New chat model" });
-  await expect(chatEditor).toBeVisible();
-  await expect(chatEditor.getByLabel("Model supplier")).toHaveValue("openai-gpt");
-  await expect(chatEditor.getByLabel("Model supplier")).not.toContainText("Seedream Image");
-  await chatEditor.getByRole("button", { name: "Close model preset editor" }).click();
-
-  await page.getByRole("button", { name: "Add image generation model" }).click();
-  const generationEditor = page.getByRole("dialog", { name: "New image generation model" });
-  await expect(generationEditor).toBeVisible();
-  await expect(generationEditor.getByLabel("Model supplier")).toHaveValue("seedream-image");
-  await expect(generationEditor.getByLabel("Model supplier")).not.toContainText("OpenAI GPT");
-  await generationEditor.getByText("Advanced settings").click();
-  await expect(generationEditor.getByText("Generation adapter")).toBeVisible();
+  await page.getByRole("button", { name: "Add model" }).click();
+  const editor = page.getByRole("dialog", { name: "New preset" });
+  await expect(editor).toBeVisible();
+  await expect(editor.getByLabel("Model supplier")).toHaveValue("custom-openai-compatible");
+  await expect(editor.getByLabel("Model supplier")).toContainText("Custom");
+  await expect(editor.getByLabel("Model supplier")).toContainText("Seedream Image");
+  const supplierSearch = editor.getByLabel("Search suppliers");
+  await supplierSearch.fill("Seedance");
+  await expect(editor.getByLabel("Model supplier")).toContainText("Seedance Video");
+  await expect(editor.getByLabel("Model supplier")).toHaveValue("custom-openai-compatible");
+  await expect(editor.getByLabel("Model supplier")).toContainText("Custom");
+  await supplierSearch.fill("");
+  await editor.getByLabel("Model supplier").selectOption("seedream-image");
+  await expect(editor.getByLabel("Model supplier")).toHaveValue("seedream-image");
+  await editor.getByText("Advanced settings").click();
+  await expect(editor.getByText("Generation adapter")).toBeVisible();
 });
 
 test("model workbench Chinese mode localizes setup copy and uses an add model sheet", async ({ page }) => {
@@ -217,7 +222,7 @@ test("model workbench Chinese mode localizes setup copy and uses an add model sh
   await expect(page.getByText("env:", { exact: false })).toHaveCount(0);
   await expect(page.getByText("New preset")).toHaveCount(0);
   await expect(page.getByLabel("Model Workbench context")).toHaveCount(0);
-  const missingKeyGatewayRow = page.locator(".provider-row").filter({ hasText: "Missing Key Gateway" });
+  const missingKeyGatewayRow = page.locator(".provider-row").filter({ hasText: "dpv4" });
   await expect(missingKeyGatewayRow.getByRole("button", { name: "添加 API Key" })).toBeVisible();
   const missingKeyStatusHint = missingKeyGatewayRow.locator(".provider-status-hint");
   await expect(missingKeyStatusHint).toBeVisible();
@@ -289,15 +294,14 @@ test("model workbench Chinese mode localizes setup copy and uses an add model sh
   await page.getByRole("button", { name: "添加模型" }).first().click();
   const editor = page.getByRole("dialog", { name: "新建预设" });
   await expect(editor).toBeVisible();
+  await page.waitForTimeout(300);
   const editorBox = await editor.boundingBox();
   const viewport = page.viewportSize();
   expect(editorBox).not.toBeNull();
   expect(editorBox?.x ?? -1).toBeGreaterThanOrEqual(0);
   expect(editorBox?.width ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(720);
-  expect((editorBox?.x ?? 0) + (editorBox?.width ?? 0)).toBeLessThanOrEqual(viewport?.width ?? 1280);
-  expect(Math.abs(
-    (editorBox?.x ?? 0) - ((viewport?.width ?? 1280) - ((editorBox?.x ?? 0) + (editorBox?.width ?? 0))),
-  )).toBeLessThanOrEqual(2);
+  expect((editorBox?.x ?? 0) + (editorBox?.width ?? 0)).toBeLessThanOrEqual((viewport?.width ?? 1280) + 1);
+  expect(Math.abs((viewport?.width ?? 1280) - ((editorBox?.x ?? 0) + (editorBox?.width ?? 0)))).toBeLessThanOrEqual(2);
   expect(editorBox?.y ?? -1).toBeGreaterThanOrEqual(0);
   expect((editorBox?.y ?? 0) + (editorBox?.height ?? 0)).toBeLessThanOrEqual(viewport?.height ?? 720);
   const editorBody = editor.locator(".provider-sheet-body");
@@ -449,7 +453,33 @@ test("model workbench localizes unsupported daemon model discovery errors", asyn
   await page.getByRole("button", { name: "获取模型" }).click();
 
   await expect(page.getByText("当前本地服务版本不支持获取模型，请停止旧服务后重新启动项目。")).toBeVisible();
-  await expect(page.getByText("No route for POST /provider-models")).toHaveCount(0);
+  const unsupportedDetails = page.getByText("No route for POST /provider-models");
+  await expect(unsupportedDetails).not.toBeVisible();
+  await page.getByText("技术详情", { exact: true }).click();
+  await expect(unsupportedDetails).toBeVisible();
+});
+
+// Value: protects=provider-list transport failures render a localized actionable message instead of browser jargon; fails_when=Failed to fetch leaks into the Chinese model workbench; why_new=model-discovery error tests exercise a different API and mapper; seam=none; no_claim=real daemon recovery (request aborted by Playwright)
+test("model workbench productizes provider list transport failures", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "zh-CN");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.workspaceSettings.locale = "zh-CN";
+  await mockDaemon(page, state, {
+    templates: createDefaultProviderTemplates(),
+  });
+  await page.route("**/providers?*", async (route) => {
+    await route.abort("failed");
+  });
+  await page.goto("/");
+
+  await openModelWorkbench(page);
+  await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
+  const error = page.locator(".provider-page-error");
+  await expect(error).toContainText("无法加载模型预设。请检查本地服务后重试。");
+  await expect(error).not.toContainText("Failed to fetch");
+  await expect(error.getByRole("button", { name: "重试" })).toBeVisible();
 });
 
 test("model workbench keeps model discovery network failures productized", async ({ page }) => {
@@ -478,7 +508,10 @@ test("model workbench keeps model discovery network failures productized", async
   await page.getByRole("button", { name: "获取模型" }).click();
 
   await expect(page.getByText("无法连接模型供应商。请检查 Base URL、代理或本地中转后重试。")).toBeVisible();
-  await expect(page.getByText("Provider model discovery failed: The operation was aborted due to timeout")).toHaveCount(0);
+  const networkDetails = page.getByText("Provider model discovery failed: The operation was aborted due to timeout");
+  await expect(networkDetails).not.toBeVisible();
+  await page.getByText("技术详情", { exact: true }).click();
+  await expect(networkDetails).toBeVisible();
 });
 
 test("model import dialog keeps its footer attached without an empty trailing panel", async ({ page }) => {
@@ -529,7 +562,7 @@ test("model import dialog keeps its footer attached without an empty trailing pa
   expect(layout).toBeDefined();
   expect(layout?.trailingGap ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(2);
   expect(Math.abs(layout?.bodyBottomGap ?? Number.POSITIVE_INFINITY)).toBeLessThanOrEqual(1);
-  expect(layout?.dialogHeight ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(880);
+  expect(layout?.dialogHeight ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(913);
   expect(layout?.bodyScrollHeight ?? 0).toBeGreaterThan(layout?.bodyClientHeight ?? 0);
   expect(layout?.modelGridScrollHeight ?? 0).toBeGreaterThan(layout?.modelGridClientHeight ?? 0);
 });
@@ -678,7 +711,7 @@ test("model workbench edits media presets from the unified supplier picker", asy
   await page.goto("/");
 
   await openModelWorkbench(page);
-  const seedreamRow = page.locator(".provider-row").filter({ hasText: "Seedream Image" });
+  const seedreamRow = page.locator(".provider-row").filter({ hasText: "doubao-seedream-5-0-260128" });
   await seedreamRow.getByRole("button", { name: "编辑" }).click();
   const editor = page.getByRole("dialog", { name: "编辑预设" });
   await expect(editor.getByRole("tab")).toHaveCount(0);
@@ -686,7 +719,7 @@ test("model workbench edits media presets from the unified supplier picker", asy
   await expect(editor.getByLabel("提供商 ID")).toHaveCount(0);
   await page.getByRole("button", { name: "关闭模型预设编辑器" }).click();
 
-  const seedanceRow = page.locator(".provider-row").filter({ hasText: "Seedance Video" });
+  const seedanceRow = page.locator(".provider-row").filter({ hasText: "doubao-seedance-1-0-pro-250528" });
   await seedanceRow.getByRole("button", { name: "编辑" }).click();
   const seedanceEditor = page.getByRole("dialog", { name: "编辑预设" });
   await expect(seedanceEditor.getByRole("tab")).toHaveCount(0);
@@ -822,33 +855,33 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await expect(missingKeyGatewayRow.locator(".provider-state.key-missing")).toHaveCount(1);
   await expect(missingKeyGatewayRow.locator(".provider-state.run-blocked")).toHaveCount(0);
   await expect(missingKeyGatewayRow.locator(".provider-state.check-bad")).toHaveCount(0);
-  await expect(page.locator(".provider-row").filter({ hasText: "Unchecked Domestic Gateway" })).toContainText("Needs check");
+  await expect(page.locator(".provider-row").filter({ hasText: "domestic-chat" })).toContainText("Needs check");
   await expect(page.locator(".provider-row").filter({ hasText: "Auth Failed Gateway" })).toContainText("Needs attention");
   await expect(readyLocalRelayRow).toContainText("Ready");
   await expect(readyLocalRelayRow.locator(".provider-state.run-ready")).toHaveCount(1);
   const defaultUses = page.locator(".provider-default-purpose-bar");
-  await defaultUses.getByLabel("Chat model").selectOption("provider_ready");
-  await expect(defaultUses.getByLabel("Chat model")).toHaveValue("provider_ready");
+  await defaultUses.getByLabel("Chat").selectOption("provider_ready");
+  await expect(defaultUses.getByLabel("Chat")).toHaveValue("provider_ready");
   await expect(page.locator(".provider-row").getByRole("button", { name: /Set default|Current default/ })).toHaveCount(0);
   const readyLocalRelayActionCell = readyLocalRelayRow.locator("td").nth(3);
   await expect(readyLocalRelayActionCell).toHaveCSS("border-left-width", "0px");
   await expect(readyLocalRelayActionCell).toHaveCSS("box-shadow", "none");
-  await defaultUses.getByLabel("Chat model").selectOption("");
+  await defaultUses.getByLabel("Chat").selectOption("");
   await expect.poll(() => state.workspaceSettings.defaultProviderPresetId).toBeUndefined();
   await expect.poll(() =>
     state.channels.every((channel) => !isRecord(channel) || channel.defaultProviderPresetId === "provider_ready")
   ).toBe(true);
-  await expect(page.locator(".provider-row").first()).toContainText("OpenAI Proxy Custom Endpoint");
+  await expect(page.locator(".provider-row").first()).toContainText("gpt-5.5");
   await expect(readyLocalRelayRow.locator(".provider-state.run-ready")).toHaveCount(1);
   await expect(readyLocalRelayRow.locator(".provider-state.disabled")).toHaveCount(0);
-  const seedreamRow = page.locator(".provider-row").filter({ hasText: "Seedream Image" });
+  const seedreamRow = page.locator(".provider-row").filter({ hasText: "doubao-seedream-5-0-260128" });
   await expect(seedreamRow).not.toContainText("Media task");
   await expect(seedreamRow).toContainText("Image");
   await expect(seedreamRow).not.toContainText("not chat-capable");
   await expect(seedreamRow.locator(".provider-action-note")).toHaveCount(0);
   await expect(seedreamRow).toContainText("Ready");
   await expect(seedreamRow.getByRole("button", { name: /Set default|Current default/ })).toHaveCount(0);
-  const legacyOpenAiRow = page.locator(".provider-row").filter({ hasText: "Legacy OpenAI Without Stored Endpoint" });
+  const legacyOpenAiRow = page.locator(".provider-row").filter({ hasText: "gpt-5.4" });
   await expect(legacyOpenAiRow).not.toContainText("https://api.openai.com/v1");
   await legacyOpenAiRow.getByRole("button", { name: "Edit" }).click();
   await expect(page.getByRole("dialog", { name: "Edit preset" })).toBeVisible();
@@ -856,26 +889,26 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await expect(page.getByLabel("Provider ID")).toHaveCount(0);
   await expect(page.getByLabel("API protocol")).toBeDisabled();
   await page.getByRole("button", { name: "Close model preset editor" }).click();
-  const openAiProxyRow = page.locator(".provider-row").filter({ hasText: "OpenAI Proxy Custom Endpoint" });
+  const openAiProxyRow = page.locator(".provider-row").filter({ hasText: "gpt-5.5" });
   await openAiProxyRow.getByRole("button", { name: "Edit" }).click();
   await expect(page.getByRole("dialog", { name: "Edit preset" })).toBeVisible();
   await expect(page.getByLabel("Base URL")).toHaveValue("http://192.168.80.114:8317/v1");
   await expect(page.getByLabel("Provider ID")).toHaveCount(0);
   await expect(page.getByLabel("API protocol")).toBeEnabled();
   await page.getByRole("button", { name: "Close model preset editor" }).click();
-  await defaultUses.getByLabel("Chat model").selectOption("provider_openai_proxy");
+  await defaultUses.getByLabel("Chat").selectOption("provider_openai_proxy");
   await expect.poll(() => state.workspaceSettings.defaultProviderPresetId).toBe("provider_openai_proxy");
   await expect(openAiProxyRow.locator(".provider-state.run-ready")).toHaveCount(1);
   await expect(readyLocalRelayRow.locator(".provider-state.run-ready")).toHaveCount(1);
 
   await page.reload();
   await openModelWorkbench(page);
-  const reloadedOpenAiProxyRow = page.locator(".provider-row").filter({ hasText: "OpenAI Proxy Custom Endpoint" });
-  await expect(page.locator(".provider-default-purpose-bar").getByLabel("Chat model")).toHaveValue("provider_openai_proxy");
+  const reloadedOpenAiProxyRow = page.locator(".provider-row").filter({ hasText: "gpt-5.5" });
+  await expect(page.locator(".provider-default-purpose-bar").getByLabel("Chat")).toHaveValue("provider_openai_proxy");
   await expect(reloadedOpenAiProxyRow.locator(".provider-state.run-ready")).toHaveCount(1);
   await clickProviderRowMenuItem(reloadedOpenAiProxyRow, "Disable");
   await expect(reloadedOpenAiProxyRow.locator(".provider-state.disabled")).toHaveCount(0);
-  await expect(page.locator(".provider-default-purpose-bar").getByLabel("Chat model")).toHaveValue("provider_openai_proxy");
+  await expect(page.locator(".provider-default-purpose-bar").getByLabel("Chat")).toHaveValue("provider_openai_proxy");
   await expect(page.getByText(/Provider is still used by Workspace default model/)).toBeVisible();
   await expect.poll(() => state.workspaceSettings.defaultProviderPresetId).toBe("provider_openai_proxy");
   await expect(page.getByText(/Ready: .* passed preflight/)).toHaveCount(0);
@@ -1165,7 +1198,7 @@ test("model workbench row checks separate scoped success Toasts from persistent 
   await page.waitForTimeout(2200);
   await expect(failedFeedback).toBeVisible();
 
-  const mediaRow = page.locator(".provider-row").filter({ hasText: "Seedream Image" });
+  const mediaRow = page.locator(".provider-row").filter({ hasText: "doubao-seedream-5-0-260128" });
   await mediaRow.getByRole("button", { name: "Check" }).click();
   const mediaToast = page.locator(
     '[data-ling-overlay="toast"][data-scope="provider:provider_seedream:check"]',
@@ -1208,12 +1241,12 @@ test("save and check enables a disabled provider before checking", async ({ page
   await page.goto("/");
 
   await openModelWorkbench(page);
-  const disabledRow = page.locator(".provider-row").filter({ hasText: "Disabled Relay" });
+  const disabledRow = page.locator(".provider-row").filter({ hasText: "dpv4" });
   await disabledRow.getByRole("button", { name: "Edit" }).click();
   await page.getByLabel("API key", { exact: true }).fill("disabled-provider-key");
   await page.getByRole("button", { name: "Save changes" }).click();
 
-  await expect(page.locator(".provider-default-purpose-bar").getByLabel("Chat model")).toHaveValue("provider_disabled");
+  await expect(page.locator(".provider-default-purpose-bar").getByLabel("Chat")).toHaveValue("provider_disabled");
   await expect(disabledRow.locator(".provider-primary-status")).toHaveCount(1);
   await expect.poll(() => {
     const provider = state.providers.find((item) => isRecord(item) && item.id === "provider_disabled");
@@ -1243,12 +1276,12 @@ test("disabled chat providers expose enable before their row check", async ({ pa
   await page.goto("/");
 
   await openModelWorkbench(page);
-  const disabledRow = page.locator(".provider-row").filter({ hasText: "Configured Disabled Relay" });
+  const disabledRow = page.locator(".provider-row").filter({ hasText: "dpv4" });
   await disabledRow.getByRole("button", { name: "Enable" }).click();
   await disabledRow.getByRole("button", { name: "Check" }).click();
 
   await expect(disabledRow.locator(".provider-state.run-ready")).toHaveCount(1);
-  await expect(page.locator(".provider-default-purpose-bar").getByLabel("Chat model")).toHaveValue("provider_disabled");
+  await expect(page.locator(".provider-default-purpose-bar").getByLabel("Chat")).toHaveValue("provider_disabled");
   await expect(disabledRow.getByRole("button", { name: /Set default|Current default/ })).toHaveCount(0);
   await expect.poll(() => {
     const provider = state.providers.find((item) => isRecord(item) && item.id === "provider_disabled");

@@ -1296,6 +1296,19 @@ test("concurrent restart calls share one stop and one replacement startup", asyn
   await lifecycle.stopOwnedDaemon();
 });
 
+test("expected product and daemon protocol mismatches fail closed before startup", async () => {
+  const lifecycle = new DesktopDaemonLifecycle({
+    baseUrl: "http://127.0.0.1:17991",
+    daemonEntryPath: existingEntryPath,
+    defaultWorkspaceCwd: "/tmp/ling-desktop-workspace",
+    expectedProductVersion: "0.2.3",
+    fetch: async () => daemonHealth("/tmp/ling-desktop-workspace", { productVersion: "0.2.2", protocolVersion: 1 }),
+    probePort: async () => "occupied",
+  });
+
+  await assert.rejects(lifecycle.ensureStarted(), (error) => error?.code === "bridge_incompatible");
+});
+
 test("restart leaves a compatible external daemon running", async () => {
   const defaultWorkspaceCwd = "/tmp/ling-desktop-external-restart-workspace";
   let healthChecks = 0;
@@ -1495,10 +1508,11 @@ function createFakeChild(options = {}) {
   return child;
 }
 
-function daemonHealth(defaultWorkspaceCwd) {
+function daemonHealth(defaultWorkspaceCwd, metadata = {}) {
   return Response.json({
     service: "ling-stack-daemon",
     defaultWorkspaceCwd: canonicalWorkspace(defaultWorkspaceCwd),
+    ...metadata,
   });
 }
 

@@ -37,6 +37,7 @@ export function archiveFor(themeId, overrides = {}) {
   return themePackageFixture({
     manifest: importedManifest({ id: themeId, name: overrides.name ?? themeId, ...overrides.manifest }),
     ...(overrides.license !== undefined ? { license: overrides.license } : {}),
+    ...(overrides.launchAnimation ? { launchAnimation: overrides.launchAnimation } : {}),
     ...(overrides.preview ? { preview: overrides.preview } : {}),
   });
 }

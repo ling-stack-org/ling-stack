@@ -26,7 +26,8 @@ export function DesktopDictationButton({
   const activeInputRef = useRef<"pointer" | "keyboard" | undefined>(undefined);
 
   const desktopHosted = typeof window !== "undefined" && Boolean(window.lingDesktop);
-  const unavailable = disabled || !cwd.trim() || !desktopHosted;
+  const normalizedCwd = typeof cwd === "string" ? cwd.trim() : "";
+  const unavailable = disabled || !normalizedCwd || !desktopHosted;
 
   useEffect(() => {
     const handleWindowBlur = (): void => {
@@ -129,7 +130,7 @@ export function DesktopDictationButton({
     setState("transcribing");
     try {
       const audio = new Blob(chunks, { type: mimeType });
-      const response = await transcribeAudio(cwd.trim(), audio, {
+      const response = await transcribeAudio(normalizedCwd, audio, {
         filename: recordingFilename(mimeType),
       });
       onInsertText(response.text);

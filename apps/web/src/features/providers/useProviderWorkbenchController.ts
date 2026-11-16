@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ProviderPreset } from "../../types.js";
+import type { ProviderDeleteResult } from "./types.js";
 import {
   filterProviderWorkbenchRoutes,
   type ProviderCapabilityFilter,
@@ -8,15 +9,14 @@ import {
 
 export function useProviderWorkbenchController(input: {
   readonly providers: readonly ProviderPreset[];
-  readonly errorMessage: string;
-  readonly onDelete: (providerId: string) => void;
+  readonly onDelete: (providerId: string) => Promise<ProviderDeleteResult>;
 }) {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<ProviderStatusFilter>("all");
   const [capabilityFilter, setCapabilityFilter] = useState<ProviderCapabilityFilter>("all");
   const [deleteTarget, setDeleteTarget] = useState<ProviderPreset>();
   const [deleteBusy, setDeleteBusy] = useState(false);
-  const [deleteErrorSnapshot, setDeleteErrorSnapshot] = useState("");
+  const [deleteError, setDeleteError] = useState<ProviderDeleteResult>();
   const filteredProviders = useMemo(
     () => filterProviderWorkbenchRoutes({
       providers: input.providers,
@@ -34,20 +34,25 @@ export function useProviderWorkbenchController(input: {
       setDeleteTarget(undefined);
       return;
     }
-    if (input.errorMessage && input.errorMessage !== deleteErrorSnapshot) setDeleteBusy(false);
-  }, [deleteBusy, deleteErrorSnapshot, deleteTarget, input.errorMessage, input.providers]);
+  }, [deleteBusy, deleteTarget, input.providers]);
 
   function requestDelete(provider: ProviderPreset): void {
-    setDeleteErrorSnapshot(input.errorMessage);
+    setDeleteError(undefined);
     setDeleteBusy(false);
     setDeleteTarget(provider);
   }
 
-  function confirmDelete(): void {
+  async function confirmDelete(): Promise<void> {
     if (!deleteTarget || deleteBusy) return;
-    setDeleteErrorSnapshot(input.errorMessage);
+    setDeleteError(undefined);
     setDeleteBusy(true);
-    input.onDelete(deleteTarget.id);
+    const result = await input.onDelete(deleteTarget.id);
+    setDeleteBusy(false);
+    if (result.ok) {
+      setDeleteTarget(undefined);
+      return;
+    }
+    setDeleteError(result);
   }
 
   return {
@@ -56,7 +61,8 @@ export function useProviderWorkbenchController(input: {
     closeDelete: () => { if (!deleteBusy) setDeleteTarget(undefined); },
     confirmDelete,
     deleteBusy,
-    deleteErrorMessage: deleteTarget && input.errorMessage !== deleteErrorSnapshot ? input.errorMessage : "",
+    deleteErrorMessage: deleteError?.errorMessage ?? "",
+    deleteErrorTechnicalMessage: deleteError?.errorTechnicalMessage,
     deleteTarget,
     filteredProviders,
     query,

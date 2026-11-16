@@ -22,6 +22,8 @@ import { assertNoPendingRunTerminalIntent } from "./run-terminal-intent-store.js
 import { assertNoRunSuspensionAdmission } from "./run-suspension-store.js";
 import { assertRootSuspensionStartAdmission } from "./run-suspension-start-records.js";
 import { assertDelegatedSuspensionParentStartAdmission, assertDelegatedSuspensionStartAdmission } from "./run-suspension-delegated-records.js";
+import { hasRuntimeDelegationCapacity } from "./runtime-delegation-admission.js";
+import { recordRuntimeDelegationCapacityAdmission } from "./runtime-delegation-capacity-admission.js";
 
 interface Allocation { readonly root: DelegationRootBudgetRecord; readonly reservation?: DelegationBudgetReservation; readonly authority: DelegationExecutionAuthority; readonly run: RunSession; readonly unit: WorkUnit }
 interface Usage { readonly tokens: bigint; readonly cost: bigint; readonly costKnown: boolean; readonly closed: boolean }
@@ -252,6 +254,9 @@ export class SqliteDelegationWriteStore {
       const parentStep = allocation.reservation ? this.row("delegation_steps", "id=?", [allocation.reservation.delegationStepId]) : undefined;
       const depth = parentStep ? delegationInteger(parentStep.depth) + 1 : 1;
       if (depth > Math.min(allocation.authority.maxDepth, capture.authority.maxDepth)) fail("delegation.depth_exceeded");
+      if (!hasRuntimeDelegationCapacity(this.context.database, { workspaceId: allocation.unit.workspaceId,
+        providerKey: allocation.run.providerPresetId ?? `${capture.provider.providerId}:${capture.provider.model}`,
+        runnerId: capture.runnerId, now })) fail("delegation.capacity_exhausted");
       const stepId = `delegation_${randomUUID()}`;
       const childRunId = `run_${randomUUID()}`;
       const childWorkUnitId = `work_${randomUUID()}`;
@@ -294,6 +299,10 @@ export class SqliteDelegationWriteStore {
         cost_reserved_micros: effective.costBudgetMicros ?? null, deadline_at: effective.deadlineAt,
         state: "reserved", settled_token_usage: null, settled_cost_micros: null, settlement_digest: null, failure_code: null,
         idempotency_key: key, revision: 0, created_at: now, updated_at: now, settled_at: null });
+      recordRuntimeDelegationCapacityAdmission(this.context.database, { reservationId, attemptNumber: 1,
+        workspaceId: allocation.unit.workspaceId,
+        providerKey: allocation.run.providerPresetId ?? `${capture.provider.providerId}:${capture.provider.model}`,
+        runnerId: capture.runnerId, now });
       const reservation = this.getDelegationBudgetReservation(reservationId);
       const linked = this.ports.getWorkUnit(childWorkUnit.id);
       if (!reservation || !linked || linked.linkedRunId !== childRun.id) fail("delegation.persisted_fact_invalid");

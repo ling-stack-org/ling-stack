@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { MAX_JSON_BYTES, artifactRef, parseJson, parseSuite, parseTask, readArtifact, readBoundFile, safeRelativePath, sha256 } from "./manifest.mjs";
+import { MAX_JSON_BYTES, artifactRef, parseJson, parseSuite, parseTask, readArtifact, readBoundFile, safeRelativePath, sha256, verifySource } from "./manifest.mjs";
 import { loadCoreGrader } from "./grader.mjs";
 import { assessControl, DEFAULT_SUITE, preflight } from "./preflight.mjs";
 import { calibrate, compareObservations, parseObservation } from "./evidence.mjs";
@@ -140,11 +140,34 @@ test("changed artifact, task identity and locally unavailable source cannot pass
   await writeJson(join(root, DEFAULT_SUITE), suite);
   await assert.rejects(preflight({ repoRoot, fixtureRoot: root }), code("invalid_manifest"));
   const task = clone(checked.tasks[0].task); task.source.commit = "0".repeat(40);
-  await writeJson(join(root, "cases/T01/task.json"), task);
+  const taskPath = checked.suite.tasks[0].task.path;
+  await writeJson(join(root, taskPath), task);
   suite.tasks[0].taskId = task.taskId;
-  suite.tasks[0].task.sha256 = sha256(await readFile(join(root, "cases/T01/task.json")));
+  suite.tasks[0].task.sha256 = sha256(await readFile(join(root, taskPath)));
   await writeJson(join(root, DEFAULT_SUITE), suite);
   await assert.rejects(preflight({ repoRoot, fixtureRoot: root }), code("source_unavailable"));
+});
+
+test("candidate lock drift does not invalidate the frozen source provenance", async t => {
+  const root = await temporary(t);
+  const sourcePath = "packages/core/src/harness/evaluation-rule-grader.ts";
+  await mkdir(join(root, "packages/core/src/harness"), { recursive: true });
+  await cp(join(repoRoot, sourcePath), join(root, sourcePath));
+  const frozenLock = await readFile(join(repoRoot, "pnpm-lock.yaml"));
+  await writeFile(join(root, "pnpm-lock.yaml"), frozenLock);
+  execFileSync("git", ["init", "--quiet", root]);
+  execFileSync("git", ["add", "packages", "pnpm-lock.yaml"], { cwd: root });
+  execFileSync("git", ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "commit", "--quiet", "-m", "Frozen source fixture"], { cwd: root });
+  const commit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim();
+  const source = {
+    ...clone(checked.tasks[0].task.source),
+    commit,
+    lockSha256: sha256(frozenLock),
+    files: [{ path: sourcePath, sha256: sha256(await readFile(join(root, sourcePath))), mediaType: "text/plain" }],
+  };
+  await writeFile(join(root, "pnpm-lock.yaml"), "candidate lockfile\n");
+  await verifySource(root, source);
+  await assert.rejects(verifySource(root, { ...source, lockSha256: "f".repeat(64) }), code("artifact_digest_mismatch"));
 });
 
 test("re-pinned false negative control produces a failed calibration, not a passing suite", async t => {
@@ -152,8 +175,9 @@ test("re-pinned false negative control produces a failed calibration, not a pass
   const task = clone(checked.tasks[1].task); const suite = clone(checked.suite);
   await writeJson(join(root, "controls/T02-incorrect.json"), checked.tasks[1].expected);
   task.controls.incorrect.candidate.sha256 = sha256(await readFile(join(root, "controls/T02-incorrect.json")));
-  await writeJson(join(root, "cases/T02/task.json"), task);
-  suite.tasks[1].task.sha256 = sha256(await readFile(join(root, "cases/T02/task.json")));
+  const taskPath = checked.suite.tasks[1].task.path;
+  await writeJson(join(root, taskPath), task);
+  suite.tasks[1].task.sha256 = sha256(await readFile(join(root, taskPath)));
   await writeJson(join(root, DEFAULT_SUITE), suite);
   const result = await calibrate({ repoRoot, fixtureRoot: root, invocationId: "bad-control" });
   assert.equal(result.passed, false);

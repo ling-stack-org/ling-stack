@@ -35,6 +35,7 @@ import {
 import type { RunTransitionEvent, StateTransitionActor, TaskTransitionEvent, TransitionResult, WorkUnitTransitionEvent } from "../../state-machines.js";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 import type { SqliteStoreContext } from "./store-context.js";
+import type { SqliteRuntimeHostCapacityStore } from "./runtime-host-capacity-store.js";
 
 interface ApprovalResumeStorePorts {
   readonly getApprovalRequest: (id: string) => ApprovalRequest | undefined;
@@ -135,6 +136,7 @@ export class SqliteApprovalResumeStore {
   constructor(
     private readonly context: SqliteStoreContext,
     private readonly ports: ApprovalResumeStorePorts,
+    private readonly hostCapacity?: (workspaceId: string) => SqliteRuntimeHostCapacityStore,
   ) {}
 
   commitApprovalResumeClaim(input: CommitApprovalResumeClaimInput): CommitApprovalResumeClaimResult {
@@ -174,6 +176,10 @@ export class SqliteApprovalResumeStore {
       }
       if (!workUnit || workUnit.status !== expectedStatus || workUnit.activeAttemptId !== input.expectedActiveAttemptId) {
         throw new ApprovalResumeClaimAbort("approval_resume_work_unit_state_stale");
+      }
+      if (Boolean(this.hostCapacity) !== Boolean(input.hostCapacity)
+        || (input.hostCapacity && (!input.hostCapacity.intentId || !input.hostCapacity.dispatchToken))) {
+        throw new ApprovalResumeClaimAbort("approval_resume_host_capacity_changed");
       }
       if (!continuationPreparation && this.ports.getWorkUnitAttempt(requestedReplacementAttemptId)) {
         throw new ApprovalResumeClaimAbort("approval_resume_attempt_conflict");
@@ -243,7 +249,8 @@ export class SqliteApprovalResumeStore {
       if (createdAttempt.id !== replacementAttemptId) {
         throw new ApprovalResumeClaimAbort("approval_resume_attempt_conflict");
       }
-      const attempt = preparedContinuation ? createdAttempt : this.ports.updateWorkUnitAttemptStatus({
+      const deferStart = Boolean(preparedContinuation || input.hostCapacity);
+      const attempt = deferStart ? createdAttempt : this.ports.updateWorkUnitAttemptStatus({
           attemptId: createdAttempt.id,
           workUnitId: createdAttempt.workUnitId,
           runtimeInstanceId: createdAttempt.runtimeInstanceId,
@@ -255,7 +262,7 @@ export class SqliteApprovalResumeStore {
           errorCode: null,
           errorMessage: null,
         });
-      if (!attempt || (preparedContinuation ? attempt.status !== "created" : attempt.status !== "started")) {
+      if (!attempt || (deferStart ? attempt.status !== "created" : attempt.status !== "started")) {
         throw new ApprovalResumeClaimAbort("approval_resume_attempt_conflict");
       }
 
@@ -290,7 +297,20 @@ export class SqliteApprovalResumeStore {
         }
       }
 
-      if (!preparedContinuation) {
+      if (input.hostCapacity && !this.hostCapacity!(workUnit.workspaceId).bindApprovalResumeSourceWithinTransaction({
+        intentId: input.hostCapacity.intentId,
+        token: input.hostCapacity.dispatchToken,
+        checkpointId: checkpoint.id,
+        expectedCheckpointRevision: input.expectedCheckpointRevision,
+        expectedActiveAttemptId: input.expectedActiveAttemptId,
+        runtimeInstanceId: attempt.runtimeInstanceId,
+        source: { runId: run.id, ...toRuntimeAttemptFence(attempt) },
+        now: input.now,
+      })) {
+        throw new ApprovalResumeClaimAbort("approval_resume_host_capacity_changed");
+      }
+
+      if (!deferStart) {
         this.ports.appendRuntimeEvent({
           workUnitId: workUnit.id,
           attemptId: attempt.id,

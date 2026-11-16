@@ -72,6 +72,17 @@ export class SqliteRunEvaluationQaStore implements RunEvaluationQaStore {
     }
     return request;
   }
+  listRunEvaluationQaRequestsForEvaluation(evaluationId: string) {
+    taskIdentity(evaluationId);
+    const rows = this.context.database.prepare(`SELECT q.task_id FROM run_evaluation_qa_requests q
+      JOIN run_evaluation_tasks t ON t.id=q.task_id
+      WHERE t.evaluation_id=? ORDER BY q.id LIMIT 2`).all(evaluationId);
+    return rows.flatMap(row => {
+      const request = this.getRunEvaluationQaRequestForTask((row as Row).task_id as string);
+      if (!request) throw new RunEvaluationInputError("evaluation.task_invalid");
+      return [request];
+    });
+  }
   /** Filter the current enrolled batch before LIMIT; unrelated queue prefixes cannot starve it. */
   listClaimableRunEvaluationQaTasks(input: ListClaimableRunEvaluationQaTasksInput) {
     validateQaInput(input, "list");

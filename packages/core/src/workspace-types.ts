@@ -27,6 +27,8 @@ import {
   type WorkflowParticipantAuthorityV1,
   type WorkflowParticipantProviderBindingV1,
   type WorkflowParticipantProviderBlockerV1,
+  type WorkflowStepParallelPolicy,
+  type WorkflowStepSideEffectClass,
 } from "@ling-stack/contracts";
 
 export const DEFAULT_WORKSPACE_ID = "workspace_default";
@@ -2389,11 +2391,16 @@ export interface ChannelWorkflowStepOutputPacket {
 }
 
 export interface ChannelWorkflowStepMetadata {
+  readonly sideEffectClass?: WorkflowStepSideEffectClass;
+  readonly parallelPolicy?: WorkflowStepParallelPolicy;
+  readonly safetyPlan?: import("./workflow-safety-plan.js").WorkflowStepSafetyPlanV1;
+  readonly isolationScopePlan?: { readonly planId: string; readonly planDigest: string };
   readonly startOwner?: import("./workflow-step-start-owner.js").WorkflowStepStartOwnerV1;
   readonly participantAuthority?: WorkflowParticipantAuthorityV1;
   readonly providerBinding?: WorkflowParticipantProviderBindingV1;
   readonly workflowTemplateId?: string;
   readonly templateVersion?: string;
+  readonly templateCompilationPin?: import("@ling-stack/contracts").WorkflowTemplateCompilationStepPinV1;
   readonly templateStepId?: string;
   readonly graphId?: string;
   readonly graphNodeId?: string;
@@ -2439,6 +2446,7 @@ export interface ChannelWorkflowStepMetadata {
 }
 
 export interface ChannelWorkflowMetadata {
+  readonly templateCompilation?: import("@ling-stack/contracts").WorkflowTemplateCompilationV1;
   readonly workflowGraphId?: string;
   readonly workflowGraphSchemaVersion?: number;
   readonly workflowGraphArtifactId?: string;

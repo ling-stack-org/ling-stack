@@ -502,22 +502,34 @@ test("direct Run setters cannot overwrite yielded or attach a late summary", asy
   assert.deepEqual(f.store.getRun(f.run.id), original);
 });
 
-test("lease admission atomically rejects a yield committed by a second connection before INSERT", async (t) => {
+for (const resourceType of ["task", "channel", "workspace", "bound_path"]) test(`lease admission atomically rejects a yield committed by a second connection before INSERT: ${resourceType}`, async (t) => {
   const f = await fixture(t);
   const second = createSqliteRunStore(f.cwd);
   t.after(() => second.close());
-  let interleaved = false;
+  let interleaved = false, inserted = false;
+  const commitYield = () => {
+    second.commitUserInputYield(f.input, committedAt);
+    interleaved = true;
+  };
   const leases = new SqliteResourceLeaseStore({ database: {
+    get isTransaction() { return f.db.isTransaction; },
+    exec(sql) {
+      // A second writer must commit before this connection takes SQLite's write lock.
+      if (sql === "BEGIN IMMEDIATE") commitYield();
+      return f.db.exec(sql);
+    },
     prepare(sql) {
       if (/INSERT INTO resource_leases/.test(sql)) {
-        interleaved = true;
-        second.commitUserInputYield(f.input, committedAt);
+        if (resourceType === "task") commitYield();
+        inserted = true;
       }
       return f.db.prepare(sql);
     },
   } });
-  assert.equal(leases.acquireResourceLease({ ...f.leaseInput, resourceKey: "second-resource" }), undefined);
+  assert.equal(leases.acquireResourceLease({ ...f.leaseInput, resourceType, resourceKey: "second-resource" }), undefined);
   assert.equal(interleaved, true);
+  assert.equal(inserted, true, "the SQL fence must reject the lease, not an earlier exception");
+  assert.equal(f.db.isTransaction, false);
   assert.equal(f.store.listResourceLeases({ ownerId: f.attempt.id, status: "active" }).length, 0);
 });
 

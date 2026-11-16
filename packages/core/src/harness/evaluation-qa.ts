@@ -65,6 +65,8 @@ export interface RunEvaluationQaStore {
   getRunEvaluationQaRequest(id: string): RunEvaluationQaRequestV1 | undefined;
   /** Exact allowlisted receipt row for one immutable task binding; never returns request payload bytes. */
   getRunEvaluationQaRequestForTask(taskId: string): RunEvaluationQaRequestV1 | undefined;
+  /** At most two exact allowlisted receipt rows for one evaluation; never returns request payload bytes. */
+  listRunEvaluationQaRequestsForEvaluation(evaluationId: string): readonly RunEvaluationQaRequestV1[];
   listClaimableRunEvaluationQaTasks(input: ListClaimableRunEvaluationQaTasksInput): readonly RunEvaluationTaskV1[];
   createRunEvaluationQaBatch(input: CreateRunEvaluationQaBatchInput): RunEvaluationQaMutationResult<RunEvaluationQaBatchV1>;
   enrollRunEvaluationQaTask(input: EnrollRunEvaluationQaTaskInput): RunEvaluationQaMutationResult<RunEvaluationQaEnrollmentV1>;

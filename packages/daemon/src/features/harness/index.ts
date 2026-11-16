@@ -47,3 +47,10 @@ export type { RunEvaluationQaOwnedModelBatch } from "./evaluations/qa-model-owne
 export { createRunEvaluationQaPilotReview, runEvaluationQaModelPilot } from "./evaluations/qa-model-pilot-runner.js";
 export type { RunEvaluationQaPilotCase, RunEvaluationQaPilotExecution, RunEvaluationQaPilotOptions,
   RunEvaluationQaPilotResult, RunEvaluationQaPilotReviewV1 } from "./evaluations/qa-model-pilot-runner.js";
+export { hostAssociationSource, projectInitializedAssuranceEvaluationAssociation }
+  from "./evaluations/assurance-association-composition.js";
+export { handlePostRunAssuranceEvaluationAssociation }
+  from "./evaluations/assurance-association-route.js";
+export type { AssuranceEvaluationAssociationRequest, AssuranceEvaluationAssociationResult,
+  AssuranceEvaluationReadPorts, AssociationCode, FrozenInputKey, HostAssociationSource }
+  from "./evaluations/assurance-association-contract.js";

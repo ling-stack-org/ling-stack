@@ -2,7 +2,9 @@ import { randomUUID } from "node:crypto";
 import type { ApprovalActionType, ApprovalRisk } from "./approval-types.js";
 import type { RunTool } from "./approval-policy.js";
 import type { ProviderCapability } from "./provider-types.js";
+import type { WorkflowStepParallelPolicy, WorkflowStepSideEffectClass } from "@ling-stack/contracts";
 export type { SkillDefinitionRevision, SkillDefinitionValidationStatus, SkillDefinitionUndoRequest } from "@ling-stack/contracts";
+export type { WorkflowStepExecutionSafety, WorkflowStepParallelPolicy, WorkflowStepSideEffectClass } from "@ling-stack/contracts";
 
 export type SkillPackSource = "builtin" | "gstack" | "workspace" | "skill-directory" | "agents-md" | "custom";
 export type SkillRegistryReviewStatus = "builtin" | "draft" | "published" | "disabled" | "archived";
@@ -177,6 +179,8 @@ export interface WorkflowStepTemplate {
   readonly skillId: string;
   readonly dependsOn?: readonly string[];
   readonly approvalGate?: SkillApprovalProfile;
+  readonly sideEffectClass?: WorkflowStepSideEffectClass;
+  readonly parallelPolicy?: WorkflowStepParallelPolicy;
 }
 
 export interface WorkflowTemplate {

@@ -23,6 +23,11 @@ export interface HostAttemptEffectInventory {
     readonly toolCallId: string;
     readonly toolName: "spawn_agent" | "send_message" | "wait_agent" | "interrupt_agent" | "resume_agent";
   }[];
+  /** Closed SDK calls that never entered a producer in the frozen Host-only isolated-files profile. */
+  readonly undispatchedIsolatedCalls?: readonly {
+    readonly toolCallId: string;
+    readonly toolName: string;
+  }[];
 }
 
 export interface NativeAttemptEffectInventory {

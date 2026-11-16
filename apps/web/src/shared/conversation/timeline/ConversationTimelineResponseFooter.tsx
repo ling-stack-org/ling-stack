@@ -5,7 +5,7 @@ import type { ConversationInteractionSurfaceKind, ConversationTimelineScopeKind 
 import { useI18n } from "../../../i18n.js";
 import { hasFinalTimelineResponseNarration, type ConversationTimelineResponse } from "./timeline-response-presentation.js";
 import { timelineResponseCopyText } from "./terminal-report-copy-text.js";
-import { LearningReviewDisclosure } from "../../components/learning/LearningReviewPanel.js";
+import { LearningReviewAction } from "../../components/learning/LearningReviewPanel.js";
 
 const surfaceByScope: Record<ConversationTimelineScopeKind, ConversationInteractionSurfaceKind> = {
   normal: "normal_conversation", private: "teammate_direct", channel_root: "channel_root",
@@ -33,5 +33,5 @@ export function ConversationTimelineResponseFooter({ response, scopeKind = "norm
   const runId = response.report?.runId ?? (runIds.length === 1 ? runIds[0] : undefined);
   return actions || (cwd && runId) ? <div className="conversation-timeline-response-footer" data-conversation-response-footer
     data-conversation-response-id={response.id} data-conversation-turn-id={response.message?.turnId ?? response.report?.turnId}
-    data-conversation-action-owner>{actions}{cwd && runId ? <LearningReviewDisclosure key={`${cwd}:${runId}`} cwd={cwd} runId={runId} /> : null}</div> : null;
+    data-conversation-action-owner>{actions}{cwd && runId ? <LearningReviewAction key={`${cwd}:${runId}`} cwd={cwd} runId={runId} /> : null}</div> : null;
 }

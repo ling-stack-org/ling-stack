@@ -3,9 +3,11 @@ import type { CreateRunArtifactInput, RunArtifact, RunSession, RunStore } from "
 import type { CreateWorkUnitAttemptInput, RuntimeAttemptFenceV1, WorkUnit, WorkUnitAttempt } from "../runtime-supervisor-types.js";
 import type { DelegationBudgetReservation } from "./delegation-write-types.js";
 import type { EffectiveRunPolicySnapshot } from "../session-permissions.js";
+import type { HostOperationSource } from "../host-operation-journal-types.js";
+import type { RuntimeHostCapacityDispatchReference } from "../runtime-host-capacity-types.js";
 
 export type DelegationLifecycleErrorCode = `delegation.${"invalid_input" | "lineage_invalid" | "source_attempt_stale"
-  | "lifecycle_conflict" | "authority_invalid" | "deadline_exceeded" | "idempotency_conflict" | "recovery_required"}`;
+  | "lifecycle_conflict" | "authority_invalid" | "deadline_exceeded" | "capacity_exhausted" | "idempotency_conflict" | "recovery_required"}`;
 export class DelegationLifecycleError extends Error {
   constructor(readonly code: DelegationLifecycleErrorCode) { super(code); this.name = "DelegationLifecycleError"; }
 }
@@ -66,6 +68,9 @@ export interface DelegationPreparedExecution {
 export interface DelegationLifecycleStorePorts extends Pick<RunStore,
   "getRun" | "getWorkUnit" | "getWorkUnitAttempt" | "transitionRunStatus" | "transitionWorkUnitStatus" | "updateWorkUnitAttemptStatus" | "appendRuntimeEvent"
   | "getHostAttemptCompletion" | "appendTerminalRuntimeAudit" | "releaseResourceLeasesForAttempt" | "releaseRuntimeSemaphoreSlotsForAttempt"> {
+  readonly bindDelegationSourceWithinTransaction?: (input: { readonly intentId: string; readonly source: HostOperationSource; readonly now: string }) => boolean;
+  readonly consumeDelegationDispatchGateWithinTransaction?: (input: { readonly intentId: string; readonly token: string;
+    readonly source: HostOperationSource; readonly now: string }) => boolean;
   readonly getDelegationStep: (stepId: string) => DelegationStepV1 | undefined;
   readonly getDelegationBudgetReservation: (id: string) => DelegationBudgetReservation | undefined;
   readonly createWorkUnitAttemptWithinTransaction: (input: CreateWorkUnitAttemptInput) => WorkUnitAttempt;
@@ -88,6 +93,32 @@ export interface ClaimDelegatedChildInput {
   readonly reservationId: string;
   readonly expectedStepRevision: number;
   readonly runtimeInstanceId: string;
+  readonly now: string;
+}
+export interface DelegatedChildAdmission {
+  readonly admissionId: string;
+  readonly reservationId: string;
+  readonly attemptNumber: number;
+  readonly expectedStepRevision: number;
+  readonly runtimeInstanceId: string;
+  readonly idempotencyKey: string;
+  readonly status: "pending" | "reserved" | "claimed" | "abandoned";
+  readonly hostIntentId?: string;
+  readonly attemptId?: string;
+  readonly fencingToken?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly claimedAt?: string;
+  readonly abandonedAt?: string;
+}
+export interface PrepareDelegatedChildAdmissionInput extends ClaimDelegatedChildInput {}
+export interface CommitDelegatedChildClaimInput extends ClaimDelegatedChildInput {
+  readonly admissionId: string;
+}
+export interface ConsumeDelegatedChildDispatchGateInput {
+  readonly reservationId: string;
+  readonly sourceFence: RuntimeAttemptFenceV1;
+  readonly hostCapacity: RuntimeHostCapacityDispatchReference;
   readonly now: string;
 }
 export interface ClaimedDelegatedChild extends DelegationChildRuntime {

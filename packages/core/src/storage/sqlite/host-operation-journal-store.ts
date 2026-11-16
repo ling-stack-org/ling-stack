@@ -251,10 +251,13 @@ export class SqliteHostOperationJournalStore {
       return operation ? this.verifiedRecord(operation) : undefined;
     });
   }
-  listHostOperationBlockers(source: HostOperationSource, stoppedAt?: string): HostOperationRecord[] {
+  listHostOperations(source: HostOperationSource, stoppedAt?: string): HostOperationRecord[] {
     const captured = { ...source };
-    return readSqliteSnapshot(this.context.database, () => readHostOperationBlockers(this.context.database, captured, stoppedAt,
+    return readSqliteSnapshot(this.context.database, () => readHostOperations(this.context.database, captured, stoppedAt,
       hostAttemptReadScopeForSource(this.context.database, captured)));
+  }
+  listHostOperationBlockers(source: HostOperationSource, stoppedAt?: string): HostOperationRecord[] {
+    return this.listHostOperations(source, stoppedAt).filter(operation => operation.phase !== "safe");
   }
 
   /** Internal Media facts preparation, with both original private capabilities under one writer lock. */
@@ -482,6 +485,11 @@ function isNativeNoActiveRollback(error: unknown): boolean {
 /** Caller-owned write transaction, used by both yield and answer-delivery claim. */
 export function readHostOperationBlockers(database: SqliteStoreContext["database"], source: HostOperationSource,
   stoppedAt?: string, scope: import("./host-attempt-read-scope.js").HostAttemptReadScope = "whole_run"): HostOperationRecord[] {
+  return readHostOperations(database, source, stoppedAt, scope).filter(operation => operation.phase !== "safe");
+}
+
+export function readHostOperations(database: SqliteStoreContext["database"], source: HostOperationSource,
+  stoppedAt?: string, scope: import("./host-attempt-read-scope.js").HostAttemptReadScope = "whole_run"): HostOperationRecord[] {
   if (stoppedAt) hostOperationTimestamp(stoppedAt);
   const operations = readSourceHostOperations(database, source, scope, stoppedAt);
   for (const operation of operations) {
@@ -498,5 +506,5 @@ export function readHostOperationBlockers(database: SqliteStoreContext["database
       return hostOperationFailure("host_operation_evidence_invalid");
     }
   }
-  return operations.filter(operation => operation.phase !== "safe");
+  return operations;
 }

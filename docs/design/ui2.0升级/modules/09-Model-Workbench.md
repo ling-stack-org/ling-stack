@@ -16,15 +16,26 @@
 
 ## List
 
+### CPA-style presentation contract
+
+The workbench follows the proven supplier-management pattern used by the local CPA reference (`chatgpt-price-board`): a concise summary first, explicit primary action, and progressive disclosure for configuration and diagnostics. The Web surface keeps semantic table roles for keyboard and screen-reader stability, but populated rows are presented as separated surface cards rather than a dense spreadsheet. Each row shows only model, route, capability, one primary state, and the next useful action; endpoint, response, and raw checks stay behind existing details disclosures.
+
+- The first viewport answers “what model is this, where does it route, can I use it, and what should I do next?”
+- Add/edit remains one focused flow. Advanced fields and model discovery are secondary, not competing with the model identity and save action.
+- Empty, filtered, loading, and stale states use one compact owner with one next action. Do not add summary cards or duplicate banners for the same state.
+- Keep the three default-purpose controls visible above the list, but keep their labels and options compact (`聊天`, `图片`, `视频`) and do not repeat provider metadata in every option.
+
 模型列表上方常显一条无卡片外框的紧凑用途配置栏，直接显示聊天模型、生图目标和生视频目标的当前选择。
 不显示独立“默认用途”标题；每个标签与其下拉同一行，下拉保持约 `220px`，不按可用宽度拉伸。
-默认列为模型、提供方、能力、状态和操作。名称获得弹性宽度；操作列固定 `184px`、表头与按钮组右对齐。
+默认列为模型、用途、状态和操作。模型名获得弹性宽度；操作列固定 `184px`、表头与按钮组右对齐。
 
 - 行内操作顺序为检查、编辑、更多，均保持 `32px` 命中区域。默认选择统一由顶部“默认用途”栏管理；
   停用和删除进入更多菜单。
 - 操作列不按百分比扩张，不使用过重竖分隔线。
 - 正常模型不显示多枚健康标签；只展示一个主状态。raw endpoint、model ID、checksum 和 provider response
   进入技术详情。
+- 列表首列默认只显示模型名，不显示 Provider 头像、常驻来源副标题、Base URL、host、端口或协议。
+  只有当当前列表确实存在同名模型时，才在冲突行下显示最小来源名用于区分；连接信息仍只在编辑器或技术详情中显示。
 - generation 模型只有在 generation runtime 可用且最新检查通过后才显示“就绪”；列表状态、顶部生成模型
   可用计数、“就绪”筛选和默认用途候选必须使用同一口径，不能出现列表“就绪”但默认目标“需处理”。
   未检查的生成模型显示“需要检查”，不得使用“不可聊天”解释生成状态。
@@ -64,29 +75,29 @@
 
 聊天默认模型、默认图片生成目标和默认视频生成目标是三个独立设置：
 
-- 用途栏以三个紧凑下拉框常显当前值：`聊天模型 [下拉] | 生图目标 [下拉] | 生视频目标 [下拉]`，不要求用户进入
+- 用途栏以三个紧凑下拉框常显当前值：`聊天 [下拉] | 图片 [下拉] | 视频 [下拉]`，不要求用户进入
   更多菜单或打开下拉框查看。
-- Provider 选项统一显示具体模型与路由，不能把入口显示名重复拼到每个模型；Workflow 以 `ComfyUI`
-  标识来源。
+- Provider 选项只显示具体模型名；Workflow 只显示自身名称。折叠状态不添加 Provider、
+  Base URL、host、端口、协议、“模型 ·”或“ComfyUI ·”前缀。
 - 新导入的自定义兼容模型在注册表中也以具体模型名作为 `displayName`；已有注册记录不做破坏性重写，
   展示层与生成目标 inventory 按同一规则归一化，用户再次导入或编辑时自然收敛。
 - 聊天下拉只包含可运行聊天模型；图片和视频同时包含可运行 generation Provider 与 active
-  ComfyUI Workflow，并明确标注“模型”或“ComfyUI”来源。
+  ComfyUI Workflow，不在名称前重复标注来源类型。
 - 默认图片和默认视频可指向不同 Provider，也可指向同一个多能力 Provider。
 - 模型工作台只保存 Workflow 引用，不管理 Workflow 版本、连接或运行状态；这些仍由 Workflow Library
   负责。
-- 只有一个媒体目标且没有显式默认时显示“自动选择（目标名）”；多个目标时显示“使用时询问”；
-  没有目标时显示“未配置”。失效默认仅在目标记录仍存在时保留原名称并显示“需处理”；悬空引用显示
+- 只有一个可运行媒体目标且没有显式默认时，折叠状态直接显示该目标名；多个或没有目标时显示
+  “未配置”。失效默认仅在目标记录仍存在时保留原名称并显示“需处理”；悬空引用显示
   “原默认目标不可用 · 需处理”，不虚构名称。
 - 删除、停用或失效目标时显示需要处理，不按创建时间静默选择另一个目标。
 - 用户在单次对话里明确指定生成目标只覆盖该任务，不改变这里的默认值。
 
 ## Model Label Semantics
 
-- 紧凑列表、频道成员、队友创建摘要和运行异常提示只显示实际使用的 `provider.model`。这些表面不重复
-  模型来源，也不拼接 `displayName`。
-- 需要区分同名模型路由的选择控件统一显示“模型 · 路由”。路由优先使用 Base URL 的 host，缺失时使用
-  provider id；路由与模型相同时只显示一次模型名。
+- 模型列表、默认用途、频道成员、队友创建摘要和运行异常提示只显示实际使用的 `provider.model`。
+  这些表面不重复模型来源，也不拼接 `displayName`。
+- 只有当同一选择面中实际出现模型重名且无法区分时，展开选项才可添加最小路由识别信息；
+  折叠状态仍只显示模型名。不得把 IP、端口或完整 Base URL 作为常规副文案。
 - Provider 名称只在模型工作台详情、明确标注为 Provider 的字段或来源详情中单独展示，不与模型名组成
   `displayName / model`、`displayName · model` 等非规范标签。
 - 所有产品表面必须使用共享模型标签函数。即使历史记录中的 `displayName` 已包含模型名，也不得再次拼接模型名。
@@ -96,4 +107,5 @@
 覆盖首个模型自动默认、后续模型不抢默认、显式绑定不被默认切换覆盖、引用中删除阻断、检查失败、密钥
 脱敏、generation capability、默认用途常显、Provider/Workflow 混合候选、图片/视频默认目标独立性、长名称、Light/Dark、
 `1440x960`、`1280x800` 和 packaged Desktop。模型标签回归必须包含 `displayName` 已含模型名的历史记录，验证紧凑
-表面只显示一次模型名，选择控件显示“模型 · 路由”，且不存在 `displayName / model` 或 `displayName · model` 重复。
+表面只显示一次模型名；默认用途和模型行不显示 Provider 副标题、头像、IP、端口、路由前缀，
+且不存在 `displayName / model` 或 `displayName · model` 重复。编辑器仍可查看并修改连接详情。

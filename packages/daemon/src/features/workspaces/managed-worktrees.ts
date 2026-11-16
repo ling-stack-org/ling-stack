@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { accessSync, constants, existsSync, statSync } from "node:fs";
 import { mkdir, realpath } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, isAbsolute } from "node:path";
 import { promisify } from "node:util";
 import { defineProtectedHostActorEntry } from "../../runtime/sandbox/protected-host-actor-inventory.js";
 
@@ -9,7 +9,44 @@ const execFileAsync = promisify(execFile);
 
 /** Shared original Git producer for repository reads and worktree mutations; neither family is certified by this hook. */
 export const MANAGED_WORKTREES_GIT_ACTOR_ENTRY = defineProtectedHostActorEntry("managed_worktrees_git",
-  (cwd: string, args: readonly string[]) => execFileAsync("git", args, { cwd, timeout: 15000, maxBuffer: 1024 * 1024 }));
+  (cwd: string, args: readonly string[], workflow?: WorkflowGitCommandOptions) => {
+    if (!workflow) return execFileAsync("git", args, { cwd, timeout: 15000, maxBuffer: 1024 * 1024 });
+    if (workflow.profile !== "workflow_isolation_v1" || !["darwin", "linux"].includes(process.platform)
+      || workflow.indexFile !== undefined && !isAbsolute(workflow.indexFile)
+      || workflow.input !== undefined && (!Buffer.isBuffer(workflow.input) || workflow.input.length > 8 * 1024 * 1024)) {
+      throw new Error("workflow_git_profile_unavailable");
+    }
+    // A second, environment-inheriting process source would bypass the original actor gate.
+    const result = execFileAsync("/usr/bin/git", ["--no-pager", "--literal-pathspecs", "--no-optional-locks",
+      "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.attributesFile=/dev/null",
+      "-c", "core.autocrlf=false", "-c", "core.eol=lf", "-c", "gc.auto=0", "-c", "maintenance.auto=false",
+      "-c", "submodule.recurse=false", "-c", "protocol.allow=never", "-c", "credential.helper=",
+      "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false", ...args], {
+      cwd, timeout: 15000, maxBuffer: 8 * 1024 * 1024, encoding: "buffer",
+      env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", LANG: "C", LC_ALL: "C", TZ: "UTC",
+        GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_SYSTEM: "/dev/null", GIT_CONFIG_GLOBAL: "/dev/null",
+        GIT_ATTR_NOSYSTEM: "1", GIT_NO_REPLACE_OBJECTS: "1", GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0",
+        GIT_PROTOCOL_FROM_USER: "0", GIT_AUTHOR_NAME: "Ling Workflow", GIT_AUTHOR_EMAIL: "workflow@ling.invalid",
+        GIT_COMMITTER_NAME: "Ling Workflow", GIT_COMMITTER_EMAIL: "workflow@ling.invalid",
+        ...(workflow.indexFile ? { GIT_INDEX_FILE: workflow.indexFile } : {}) },
+    });
+    result.child?.stdin?.end(workflow.input);
+    return result;
+  });
+
+interface WorkflowGitCommandOptions {
+  readonly profile: "workflow_isolation_v1";
+  readonly input?: Buffer;
+  readonly indexFile?: string;
+}
+
+/** Host-only Git plumbing. This profile is not a native Runner sandbox or a merge permit. */
+export async function workflowGit(cwd: string, args: readonly string[], input?: Omit<WorkflowGitCommandOptions, "profile">):
+  Promise<{ readonly stdout: Buffer; readonly stderr: Buffer }> {
+  const result = await MANAGED_WORKTREES_GIT_ACTOR_ENTRY.invoke(undefined, cwd, args,
+    { profile: "workflow_isolation_v1", ...input });
+  return { stdout: Buffer.from(result.stdout), stderr: Buffer.from(result.stderr) };
+}
 
 export interface GitCommandResult {
   readonly stdout: string;
@@ -47,7 +84,7 @@ export interface ManagedWorktreeCleanupResult {
 
 export async function git(cwd: string, args: readonly string[]): Promise<GitCommandResult> {
   const result = await MANAGED_WORKTREES_GIT_ACTOR_ENTRY.invoke(undefined, cwd, args);
-  return { stdout: result.stdout, stderr: result.stderr };
+  return { stdout: result.stdout.toString(), stderr: result.stderr.toString() };
 }
 
 export function redactGitError(error: unknown): string {

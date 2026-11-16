@@ -5,6 +5,7 @@ import type { HostOperationSource } from "../../host-operation-journal-types.js"
 import type { HostAttemptEffectInventory } from "../../host-attempt-completion-types.js";
 import { assertUserInputDurableQuiescence } from "./user-input-durable-quiescence.js";
 import type { HostAttemptReadScope } from "./host-attempt-read-scope.js";
+import { verifiedUndispatchedIsolatedCalls } from "./host-attempt-isolated-coverage.js";
 
 /** The closed original inventory is useful only with independently reverified executor receipts. */
 export function verifiedTrackedToolCalls(database: DatabaseSync, source: HostOperationSource,
@@ -21,8 +22,9 @@ export function verifiedTrackedToolCalls(database: DatabaseSync, source: HostOpe
     if (record) {
       if (record.schemaVersion !== 1 || !Array.isArray(record.settledBuiltinReads)
         || record.settledDelegationCalls !== undefined && !Array.isArray(record.settledDelegationCalls)
-        || !["schemaVersion,settledBuiltinReads,toolCallIds", "schemaVersion,settledBuiltinReads,settledDelegationCalls,toolCallIds"]
-          .includes(Object.keys(record).sort().join(","))) return undefined;
+        || record.undispatchedIsolatedCalls !== undefined && !Array.isArray(record.undispatchedIsolatedCalls)
+        || Object.keys(record).some(key => !["schemaVersion", "settledBuiltinReads", "settledDelegationCalls",
+          "toolCallIds", "undispatchedIsolatedCalls"].includes(key))) return undefined;
       for (const value of record.settledBuiltinReads) {
         if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
         const read = value as Record<string, unknown>;
@@ -44,9 +46,16 @@ export function verifiedTrackedToolCalls(database: DatabaseSync, source: HostOpe
           toolName: call.toolName as NonNullable<HostAttemptEffectInventory["settledDelegationCalls"]>[number]["toolName"] });
       }
     }
-    if (!ids.every(id => settled.has(id) || reads.has(id) || delegations.has(id))) return undefined;
+    const undispatchedValues = record?.undispatchedIsolatedCalls;
+    const undispatched = undispatchedValues === undefined ? [] : Array.isArray(undispatchedValues)
+      ? verifiedUndispatchedIsolatedCalls(database, source, undispatchedValues, ids, at) : undefined;
+    if (!undispatched || undispatched.some(call => settled.has(call.toolCallId) || reads.has(call.toolCallId)
+      || delegations.has(call.toolCallId))) return undefined;
+    const undispatchedIds = new Set(undispatched.map(call => call.toolCallId));
+    if (!ids.every(id => settled.has(id) || reads.has(id) || delegations.has(id) || undispatchedIds.has(id))) return undefined;
     return record ? { schemaVersion: 1, toolCallIds: [...ids], settledBuiltinReads: [...reads.values()],
-      ...(delegations.size ? { settledDelegationCalls: [...delegations.values()] } : {}) } : [...ids];
+      ...(delegations.size ? { settledDelegationCalls: [...delegations.values()] } : {}),
+      ...(undispatched.length ? { undispatchedIsolatedCalls: undispatched } : {}) } : [...ids];
   } catch { return undefined; }
 }
 

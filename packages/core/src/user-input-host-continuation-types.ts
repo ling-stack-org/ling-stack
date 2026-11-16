@@ -4,6 +4,8 @@ import type { CreateResourceLeaseInput, ResourceLease } from "./channel-runtime-
 import type { EffectiveRunPolicySnapshot } from "./session-permissions.js";
 import type { WorkflowStepStartOwnerV1 } from "./workflow-step-start-owner.js";
 import type { RunEventDataByType, RunEventEnvelope } from "./run-types.js";
+import type { WorkflowStepAdmissionPlan } from "./workflow-step-admission.js";
+import type { RuntimeHostCapacityDispatchReference } from "./runtime-host-capacity-types.js";
 
 export interface UserInputSnapshotRef { readonly id: string; readonly fingerprint: string }
 export type UserInputContinuationClaim = Pick<RetryUserInputDelivery, "threadId" | "deliveryId" | "expectedRevision" | "ownerId" | "claimToken">;
@@ -52,11 +54,13 @@ export interface AdmitUserInputContinuation extends UserInputContinuationClaim {
   readonly runtimeInstanceId: string;
   readonly effectivePolicySnapshot?: EffectiveRunPolicySnapshot;
   readonly workflowStartOwner?: WorkflowStepStartOwnerV1;
+  readonly hostCapacity?: RuntimeHostCapacityDispatchReference;
 }
 /** Historical binding is immutable; a getter does not grant this fence current execution rights. */
 export interface UserInputContinuationBinding extends UserInputContinuationRecord {
   readonly effectivePolicySnapshot?: EffectiveRunPolicySnapshot;
   readonly workflowStartOwner?: WorkflowStepStartOwnerV1;
+  readonly hostCapacity?: RuntimeHostCapacityDispatchReference;
   readonly executionRef: UserInputSnapshotRef;
   readonly runId: string;
   readonly fence: RuntimeAttemptFenceV1;
@@ -132,6 +136,8 @@ export interface RecoverUserInputContinuationPrestart {
   readonly runId: string;
   readonly leases: readonly CreateResourceLeaseInput[];
   readonly semaphores: readonly AcquireRuntimeSemaphoreSlotInput[];
+  /** Complete semantic source plan. Core expands a matching semaphore subset and readmits the whole group atomically. */
+  readonly workflowAdmission?: WorkflowStepAdmissionPlan;
   readonly now: string;
   readonly expiresAt: string;
 }

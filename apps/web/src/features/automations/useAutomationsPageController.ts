@@ -77,7 +77,7 @@ export function useAutomationsPageController(input: {
   readonly templates: readonly BuiltinAutomationTemplate[];
   readonly t: AutomationTranslate;
 }): AutomationsPageController {
-  const [activeTab, setActiveTab] = useState<AutomationTab>("enabled");
+  const [activeTab, setActiveTab] = useState<AutomationTab>("scheduled");
   const [search, setSearch] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [createMode, setCreateMode] = useState<AutomationCreateMode>("template");

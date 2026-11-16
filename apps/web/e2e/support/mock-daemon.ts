@@ -102,6 +102,7 @@ export interface MockState {
   workflowHandoffIntents: WorkflowHandoffIntent[];
   channelContextSummaries: unknown[];
   channelWorkflows: unknown[];
+  retainedIsolationWorkflowIds?: string[];
   channelWorkflowSteps: unknown[];
   failNextWorkflowOrchestrate?: { readonly error: string; readonly message: string; readonly status?: number; readonly delayMs?: number };
   failNextWorkflowCancel?: { readonly error: string; readonly message: string; readonly status?: number };
@@ -1194,15 +1195,19 @@ export async function openEngineeringChannel(page: Page): Promise<void> {
 
 export async function openChannelChatTools(page: Page): Promise<void> {
   await openEngineeringChannel(page);
-  const searchInput = page.getByPlaceholder(/Search activity|搜索动态/).first();
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    if (await searchInput.isVisible().catch(() => false)) {
-      return;
-    }
-    await page.locator(".channel-more-button").click();
-    await page.getByRole("menuitem", { name: channelEventFilterToggleLabel }).click();
-    await page.waitForTimeout(50);
+  const searchInput = channelEventFilters(page).getByPlaceholder(/Search activity|搜索动态/).first();
+  const filterMenuItem = page.getByRole("menuitem", { name: channelEventFilterToggleLabel });
+  if (await searchInput.isVisible().catch(() => false)) {
+    return;
   }
+  if (!(await filterMenuItem.isVisible().catch(() => false))) {
+    const moreButton = page.locator(".channel-more-button");
+    if (await moreButton.getAttribute("aria-expanded") !== "true") {
+      await moreButton.click();
+    }
+    await expect(filterMenuItem).toBeVisible();
+  }
+  await filterMenuItem.click();
   await expect(searchInput).toBeVisible();
 }
 
@@ -12860,7 +12865,7 @@ export async function handleDaemonRoute(
       workflow.channelId === channelId &&
       (!status || workflow.status === status)
     );
-    await route.fulfill({ json: { cwd, channelId, workflows } });
+    await route.fulfill({ json: { cwd, channelId, workflows, retainedIsolationWorkflowIds: state.retainedIsolationWorkflowIds ?? [] } });
     return;
   }
   const workflowEvidenceMatch = /^\/workflows\/([^/]+)\/evidence$/.exec(path);

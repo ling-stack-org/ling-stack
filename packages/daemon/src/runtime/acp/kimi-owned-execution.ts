@@ -47,6 +47,7 @@ export interface OwnedKimiExecutionOptions {
   readonly onEvent: (event: RunEventEnvelope) => void;
   readonly onApprovalWaitChanged?: (waiting: boolean) => void;
   readonly onLocalLifetime?: (lifetime: Promise<unknown>) => void;
+  readonly onDispatchAccepted?: (acceptedAt: string) => void;
   readonly assertCurrentAuthority?: () => void;
   readonly signal: AbortSignal;
   readonly now?: () => string;
@@ -194,6 +195,7 @@ export async function executeOwnedKimiPrompt(request: OwnedKimiExecutionOptions)
     executionHome.assertUnchanged();
     assertOwned(["reserved"]);
     await assertAuthenticationCurrent();
+    options.onDispatchAccepted?.(now());
     const delegateWrites = executionHome.enabledTools.some(tool => tool === "Write" || tool === "Edit");
     const delegateReads = delegateWrites || executionHome.enabledTools.includes("Read");
     const nativeTools = executionHome.enabledTools;

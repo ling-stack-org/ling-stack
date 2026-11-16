@@ -9,6 +9,8 @@ export function syncWorkflowSourceTurnProgress(
   if (!sourceTurnId) return;
   const turn = store.getLingTurn(sourceTurnId);
   if (!turn || isTerminalTurnStatus(turn.status)) return;
+  // Current-state guards and CAS deduplicate syncs; later approval/restart
+  // cycles must record new transitions instead of reusing a workflow-wide key.
   if (workflow.status === "waiting_for_approval"
     && (turn.status === "open" || turn.status === "running")) {
     store.transitionLingTurnStatus({
@@ -17,7 +19,6 @@ export function syncWorkflowSourceTurnProgress(
       event: "approval_requested",
       actor: "system",
       reason: `workflow:${workflow.id}:waiting_for_approval`,
-      idempotencyKey: `workflow:${workflow.id}:source-turn:waiting_for_approval`,
       now,
     });
   } else if (workflow.status === "running" && turn.status === "waiting_for_approval") {
@@ -27,7 +28,6 @@ export function syncWorkflowSourceTurnProgress(
       event: "approval_approved",
       actor: "system",
       reason: `workflow:${workflow.id}:running`,
-      idempotencyKey: `workflow:${workflow.id}:source-turn:approval_approved`,
       now,
     });
   } else if (workflow.status === "running" && (turn.status === "open" || turn.status === "blocked")) {
@@ -37,7 +37,6 @@ export function syncWorkflowSourceTurnProgress(
       event: "start",
       actor: "system",
       reason: `workflow:${workflow.id}:running`,
-      idempotencyKey: `workflow:${workflow.id}:source-turn:start`,
       now,
     });
   }

@@ -160,12 +160,18 @@ function readNoPayload(args: readonly unknown[]): ParsedRequest<undefined> {
 
 function readReadRequest(args: readonly unknown[]): ParsedRequest<DesktopThemePackageReadRequest> {
   const value = readRequestRecord(args);
-  if (!value || !isThemeId(value.themeId) || typeof value.includePreviewBytes !== "boolean") {
+  if (!value
+    || !isThemeId(value.themeId)
+    || typeof value.includePreviewBytes !== "boolean"
+    || (value.includeLaunchAnimationBytes !== undefined && typeof value.includeLaunchAnimationBytes !== "boolean")) {
     return invalid();
   }
   return parsed(Object.freeze({
     themeId: value.themeId,
     includePreviewBytes: value.includePreviewBytes,
+    ...(value.includeLaunchAnimationBytes !== undefined
+      ? { includeLaunchAnimationBytes: value.includeLaunchAnimationBytes }
+      : {}),
   }));
 }
 

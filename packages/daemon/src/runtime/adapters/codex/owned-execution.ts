@@ -31,6 +31,7 @@ export interface OwnedCodexExecutionOptions {
   readonly onRequest?: CodexJournaledLifecycleOptions["client"]["onRequest"];
   readonly onApprovalWaitChanged?: (waiting: boolean) => void;
   readonly onLocalLifetime?: (lifetime: Promise<unknown>) => void;
+  readonly onDispatchAccepted?: (acceptedAt: string) => void;
   readonly assertCurrentAuthority?: () => void;
   readonly signal: AbortSignal;
   readonly now?: () => string;
@@ -134,6 +135,7 @@ export async function executeOwnedCodexTurn(request: OwnedCodexExecutionOptions)
     const launch = await prepareOwnedNativeSpawn(executable, processInput.executableDigest, options.launch);
     await assertAuthenticationCurrent();
     const key = { submissionId: reserved.submission.id, fence: reserved.submission.fence };
+    options.onDispatchAccepted?.(now());
     const result = await withOwnedNativeProcess({ executable, root, launch, signal: executionAbort.signal, onLocalLifetime: options.onLocalLifetime, assertCurrentAuthority: options.assertCurrentAuthority,
       environment: { CODEX_HOME: home }, maxOutputBytes: 128 * 1024 * 1024,
       args: ["app-server", "--listen", "stdio://", "-c", 'cli_auth_credentials_store="file"', "-c", "check_for_update_on_startup=false"],

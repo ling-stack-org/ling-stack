@@ -1,7 +1,7 @@
 .activity-chat-layout {
   display: grid;
   flex: 1 1 auto;
-  width: min(var(--channel-conversation-width), calc(100% - 48px));
+  width: 100%;
   min-width: 0;
   min-height: 0;
   height: 100%;
@@ -31,11 +31,14 @@
   display: flex;
   flex: 1 1 auto;
   min-height: 0;
+  justify-content: center;
 }
 
 .activity-shell .message-feed {
+  box-sizing: border-box;
   display: flex;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
+  width: min(var(--channel-conversation-width), calc(100% - 48px));
   height: 100%;
   min-height: 0;
   max-height: none;
@@ -623,10 +626,6 @@
   align-self: center;
   width: min(var(--channel-conversation-width), calc(100% - 48px));
   margin-bottom: 14px;
-}
-
-.activity-chat-main > [data-conversation-composer-frame="channel"] {
-  width: 100%;
 }
 
 .activity-shell [data-conversation-composer][data-surface="channel"] {

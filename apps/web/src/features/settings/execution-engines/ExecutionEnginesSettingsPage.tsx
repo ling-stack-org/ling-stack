@@ -12,6 +12,7 @@ import { EngineManagementError } from "./EngineManagementError.js";
 import { EngineProfileDialog } from "./EngineProfileDialog.js";
 import { EngineLoginDialog } from "./EngineLoginDialog.js";
 import { WorkspaceEnginePolicySection } from "./WorkspaceEnginePolicySection.js";
+import { HostConcurrencyPolicySection } from "./HostConcurrencyPolicySection.js";
 import { engineProbeMessage } from "./engine-guidance.js";
 import { EngineSetupGuide } from "./EngineSetupGuide.js";
 
@@ -129,6 +130,7 @@ export function ExecutionEnginesSettingsPage({ cwd }: { readonly cwd: string }):
         })}
       </ul>
       {cwd.trim() ? <WorkspaceEnginePolicySection key={cwd} cwd={cwd} profiles={state.profiles} /> : null}
+      {cwd.trim() ? <HostConcurrencyPolicySection key={`host-concurrency:${cwd}`} cwd={cwd} /> : null}
       {ready && manager.transport.kind === "web" ? <div className="engine-settings-session">
         <Button size="sm" variant="ghost" leadingIcon={<Unplug />} onClick={() => void manager.revoke()}>{t("Clear authorization")}</Button>
       </div> : null}

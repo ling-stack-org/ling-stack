@@ -254,12 +254,16 @@ import {
   handleListRuns,
   handleRun,
 } from "../features/runs/routes.js";
+import { handleGetRunAssuranceEvidence } from "../features/runs/assurance-evidence.js";
+import { handlePostNodeRerunAdmission } from "../features/runs/node-rerun-admission.js";
+import { handlePostRunAssuranceEvaluationAssociation } from "../features/harness/evaluations/assurance-association-route.js";
 import { handleUserInputAnswerSubmission } from "../features/runs/user-input-answer-routes.js";
 import { handleLingThreadItem, handleLingThreadsCollection } from "../features/runs/thread-routes.js";
 import { handleHostCapabilityBridgeRoute } from "../features/runs/host-capability-bridge-routes.js";
 import { handleToolLoadRequestsCollection, handleToolSurfacesCollection } from "../features/runs/tool-surfaces.js";
 import { handleTraceItem, handleTracesCollection } from "../features/runs/traces-routes.js";
 import { resolveProviderForRun } from "../features/runs/providers.js";
+import { createWorkflowParallelCapabilityResolver } from "../features/runs/workflow-safety.js";
 import { handleGetWorkspaceChanges } from "../features/previews/workspace-changes.js";
 import {
   handleGetWorkspaceFileContent,
@@ -281,6 +285,7 @@ import {
 import { handleWorkspaceSnapshotRoute, parseWorkspaceSnapshotRoute } from "../features/runs/workspace-snapshot-routes.js";
 import { handleEffectiveConfig, handleWorkspaceSettings } from "../features/settings/routes.js";
 import { handleSkillRoute } from "../features/skills/routes.js";
+import { handleWorkflowTemplateRoute } from "../features/channels/workflow-template-routes.js";
 import { handleTaskItem, handleTaskRun, handleTasksCollection } from "../features/tasks/routes.js";
 import { materializeTaskAttachmentsForPrompt } from "../features/tasks/task-attachments.js";
 import {
@@ -292,6 +297,11 @@ import {
   handleTeammateDirectRuntime,
 } from "../features/teammates/direct-controls.js";
 import { handleTeammateDirectLinkPreviews } from "../features/teammates/direct-link-previews.js";
+import { handleCompanionItem, handleCompanionsCollection } from "../features/companions/routes.js";
+import {
+  handleCompanionMessageStream,
+  handleCompanionMessagesCollection,
+} from "../features/companions/dialogue.js";
 import { handleTeammateDirectMessagesCollection, handleTeammateDirectMessageStream, handleTeammateDirectThread } from "../features/teammates/direct-messages.js";
 import { createAiTeammateDirectReply } from "../features/teammates/direct-replies.js";
 import { ensureDirectWorkspaceReady, handleTeammateDirectWorkspace } from "../features/teammates/direct-workspace.js";
@@ -343,6 +353,7 @@ import {
   parseChannelHandoffRoute,
   parseChannelLinkPreviewRoute,
   parseChannelRoute,
+  parseCompanionRoute,
   parseChannelWorkflowRoute,
   parseWorkflowHandoffIntentRoute,
   parseWorkflowSelectorDecisionRoute,
@@ -374,6 +385,10 @@ import {
 import { RunControlService } from "../run-control.js";
 import { allowLocalServiceRequest, allowLocalWorkspaceRequest } from "../shared/local-workspace-access.js";
 import { setCorsHeaders, writeJson } from "../shared/response.js";
+import { readOptionalJsonBody } from "../shared/request.js";
+import { LING_DAEMON_PROTOCOL_VERSION, LING_PRODUCT_VERSION, parseChannelWorkflowOrchestrationRequest } from "@ling-stack/contracts";
+import { selectWorkflowIsolatedExecution, type WorkflowIsolationHost } from "../features/channels/workflow-isolation-selection.js";
+import { handleWorkflowConflictRecovery } from "../features/channels/workflow-conflict-recovery-route.js";
 import { handleStartupStatus } from "../startup/routes.js";
 import { handleDiagnosticsDoctor, handleDiagnosticsLogs } from "../features/diagnostics/routes.js";
 import { handleNotifications } from "../features/notifications/routes.js";
@@ -423,6 +438,8 @@ export async function routeRequest(
     workspaceFileCapabilities,
     notificationHub,
     imDestinations,
+    companionReplyService,
+    companionSchedulers,
   } = context;
   setCorsHeaders(response);
 
@@ -626,6 +643,8 @@ export async function routeRequest(
     writeJson(response, 200, {
       ok: true,
       service: "ling-stack-daemon",
+      productVersion: LING_PRODUCT_VERSION,
+      protocolVersion: LING_DAEMON_PROTOCOL_VERSION,
       defaultWorkspaceCwd: config.defaultWorkspaceCwd,
       readiness: startupState.snapshot(config.defaultWorkspaceCwd)?.state ?? "starting",
       features: {
@@ -766,6 +785,12 @@ export async function routeRequest(
     return;
   }
 
+  if (url.pathname === "/companions") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) return;
+    await handleCompanionsCollection(request, response, config, storeRegistry);
+    return;
+  }
+
   if (url.pathname === "/tasks") {
     await handleTasksCollection(request, response, config, storeRegistry);
     return;
@@ -847,8 +872,8 @@ export async function routeRequest(
             secretResolver,
             mcpBroker,
             {
-              onRunReady: (runId) => {
-                hooks.onRunReady?.(runId);
+              onRunReady: (runId, info) => {
+                hooks.onRunReady?.(runId, info);
                 onRunReady(runId);
               },
               afterRunTerminal: async (terminalRun) => {
@@ -1387,6 +1412,12 @@ export async function routeRequest(
     return;
   }
 
+  if (url.pathname === "/workflow-templates" || url.pathname.startsWith("/workflow-templates/")) {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) return;
+    await handleWorkflowTemplateRoute({ request, response, url, config, storeRegistry, runnerRegistry });
+    return;
+  }
+
   const skillRoute = parseSkillRoute(url.pathname);
   if (skillRoute?.kind === "skill" && (skillRoute.action === "revision-undo"
     || (skillRoute.action === "revisions" && request.method === "GET"))) {
@@ -1639,6 +1670,37 @@ export async function routeRequest(
     handleListRunArtifacts(response, url, storeRegistry, runRoute.runId);
     return;
   }
+  if (request.method === "GET" && runRoute?.kind === "assurance-evidence") {
+    handleGetRunAssuranceEvidence(response, url, storeRegistry, activeRuns, runRoute.runId);
+    return;
+  }
+  if (runRoute?.kind === "assurance-evaluation-association") {
+    await handlePostRunAssuranceEvaluationAssociation(
+      request,
+      response,
+      url,
+      config.maxBodyBytes,
+      storeRegistry,
+      activeRuns,
+      runRoute.runId,
+    );
+    return;
+  }
+  if (runRoute?.kind === "node-rerun-admission") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) {
+      return;
+    }
+    await handlePostNodeRerunAdmission(
+      request,
+      response,
+      url,
+      config.maxBodyBytes,
+      storeRegistry,
+      activeRuns,
+      runRoute.runId,
+    );
+    return;
+  }
   if (request.method === "GET" && runRoute?.kind === "shell-snapshots") {
     handleListShellSnapshots(response, url, storeRegistry, runRoute.runId);
     return;
@@ -1886,6 +1948,12 @@ export async function routeRequest(
     }
   };
 
+  const workflowIsolationHost: WorkflowIsolationHost = {
+    enabled: () => runtimeSupervisor.getChannelFeatures().workflowIsolatedFiles === true,
+    toolBrokerMode: () => runtimeSupervisor.getHarnessFeatures().toolBroker.mode,
+    maxConcurrentSteps: () => runtimeSupervisor.getConcurrencyPolicy().enabled
+      ? runtimeSupervisor.getConcurrencyPolicy().isolatedWriteMaxConcurrentSteps : 2,
+  };
   const createStartOrchestratedRun = (store: RunStore, cwd: string): StartOrchestratedWorkflowStepRun => {
     const startOrchestratedRun: StartOrchestratedWorkflowStepRun = ({ workflow, workflowStep, taskId, runRequest }) =>
       new Promise((resolve) => {
@@ -1918,6 +1986,10 @@ export async function routeRequest(
                 await orchestrateChannelWorkflow({
                   store,
                   secretResolver,
+                  resolveParallelCapability: createWorkflowParallelCapabilityResolver(runnerRegistry,
+                    { toolBrokerMode: () => runtimeSupervisor.getHarnessFeatures().toolBroker.mode }),
+                  runnerRegistry,
+                  isolationHost: workflowIsolationHost,
                   cwd,
                   workflowId: workflow.id,
                   validateRunRequest: (candidateRunRequest) => {
@@ -1959,6 +2031,10 @@ export async function routeRequest(
     const orchestration = await orchestrateChannelWorkflow({
       store: input.store,
       secretResolver,
+      resolveParallelCapability: createWorkflowParallelCapabilityResolver(runnerRegistry,
+        { toolBrokerMode: () => runtimeSupervisor.getHarnessFeatures().toolBroker.mode }),
+      runnerRegistry,
+      isolationHost: workflowIsolationHost,
       cwd: input.cwd,
       workflowId: confirmed.workflow.id,
       validateRunRequest: (candidateRunRequest) => {
@@ -2113,6 +2189,11 @@ export async function routeRequest(
   const workflowRoute = parseChannelWorkflowRoute(url.pathname);
   if (workflowRoute) {
     if (workflowRoute.kind === "workflow") {
+      if (workflowRoute.action === "conflict-recovery") {
+        await handleWorkflowConflictRecovery({ request, response, url, config, storeRegistry, runnerRegistry,
+          workflowId: workflowRoute.workflowId, host: workflowIsolationHost });
+        return;
+      }
       if (workflowRoute.action === "workspace-changes" || workflowRoute.action === "workspace-changes-undo" || workflowRoute.action === "workspace-changes-reapply") {
         const expectedMethod = workflowRoute.action === "workspace-changes" ? "GET" : "POST";
         if (request.method !== expectedMethod) {
@@ -2146,11 +2227,18 @@ export async function routeRequest(
           return;
         }
         try {
+          const input = parseChannelWorkflowOrchestrationRequest(await readOptionalJsonBody(request, config.maxBodyBytes));
           const store = storeRegistry.getStore(cwd);
+          if (input.executionProfile) await selectWorkflowIsolatedExecution({ store, workflowId: workflowRoute.workflowId,
+            runnerRegistry, host: workflowIsolationHost });
           const startOrchestratedRun = createStartOrchestratedRun(store, cwd);
           const result = await orchestrateChannelWorkflow({
             store,
             secretResolver,
+            resolveParallelCapability: createWorkflowParallelCapabilityResolver(runnerRegistry,
+              { toolBrokerMode: () => runtimeSupervisor.getHarnessFeatures().toolBroker.mode }),
+            runnerRegistry,
+            isolationHost: workflowIsolationHost,
             cwd,
             workflowId: workflowRoute.workflowId,
             validateRunRequest: (candidateRunRequest) => {
@@ -2179,7 +2267,7 @@ export async function routeRequest(
         }
         try {
           const store = storeRegistry.getStore(cwd);
-          const result = cancelChannelWorkflow({
+          const result = await cancelChannelWorkflow({
             store,
             workflowId: workflowRoute.workflowId,
             cancelRun: (run) => {
@@ -2240,6 +2328,8 @@ export async function routeRequest(
         const result = await retryChannelWorkflowStep({
           store,
           secretResolver,
+          runnerRegistry,
+          isolationHost: workflowIsolationHost,
           cwd,
           workflowStepId: workflowRoute.workflowStepId,
           validateRunRequest: (candidateRunRequest) => {
@@ -2299,6 +2389,8 @@ export async function routeRequest(
             },
           ),
         secretResolver,
+        runnerRegistry,
+        workflowIsolationHost,
       );
       return;
     }
@@ -2547,6 +2639,44 @@ export async function routeRequest(
       return;
     }
     await handleChannelExecutionProposalItem(request, response, config, storeRegistry, channelProposalRoute.proposalId);
+    return;
+  }
+
+  const companionRoute = parseCompanionRoute(url.pathname);
+  if (companionRoute) {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) return;
+    if (companionRoute.action === "messages") {
+      await handleCompanionMessagesCollection(
+        request,
+        response,
+        config,
+        storeRegistry,
+        companionRoute.companionId,
+        companionReplyService.createReply,
+      );
+      return;
+    }
+    if (companionRoute.action === "messages-stream") {
+      await handleCompanionMessageStream(
+        request,
+        response,
+        config,
+        storeRegistry,
+        companionRoute.companionId,
+        companionReplyService.createReply,
+        activeDirectReplies,
+      );
+      return;
+    }
+    await handleCompanionItem(
+      request,
+      response,
+      config,
+      storeRegistry,
+      companionRoute.companionId,
+      companionRoute.action,
+      companionSchedulers,
+    );
     return;
   }
 

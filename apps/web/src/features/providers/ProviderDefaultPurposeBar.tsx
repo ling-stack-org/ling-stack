@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { getConversationMediaGenerationTargets } from "../../api/media.js";
 import { useI18n } from "../../i18n.js";
+import { toProductError, type ProductError } from "../../lib/product-error.js";
 import { providerModelRouteLabel, providerPreflightReady } from "../../lib/providers.js";
-import { Select, StatusIndicator } from "../../shared/ui/index.js";
+import { ProductErrorDetails } from "../../shared/feedback/ProductErrorDetails.js";
+import { InlineFeedback, Select, StatusIndicator } from "../../shared/ui/index.js";
 import type {
   ConversationMediaGenerationTargetsResponse,
   MediaGenerationKind,
@@ -28,7 +30,7 @@ export function ProviderDefaultPurposeBar(props: {
   const [snapshot, setSnapshot] = useState<ConversationMediaGenerationTargetsResponse>();
   const [loading, setLoading] = useState(false);
   const [savingPurpose, setSavingPurpose] = useState<"chat" | MediaGenerationKind>();
-  const [errorMessage, setErrorMessage] = useState("");
+  const [error, setError] = useState<ProductError>();
   const providerRevision = useMemo(
     () => props.providers.map((provider) => [
       provider.id,
@@ -48,13 +50,17 @@ export function ProviderDefaultPurposeBar(props: {
     }
     let cancelled = false;
     setLoading(true);
-    setErrorMessage("");
+    setError(undefined);
     void getConversationMediaGenerationTargets(cwd).then(
       (next) => {
         if (!cancelled) setSnapshot(next);
       },
-      (error: unknown) => {
-        if (!cancelled) setErrorMessage(error instanceof Error ? error.message : String(error));
+      (caught: unknown) => {
+        if (!cancelled) {
+          setError(toProductError(caught, t, {
+            fallbackMessage: "Could not load default model options. Refresh and try again.",
+          }));
+        }
       },
     ).finally(() => {
       if (!cancelled) setLoading(false);
@@ -62,7 +68,7 @@ export function ProviderDefaultPurposeBar(props: {
     return () => {
       cancelled = true;
     };
-  }, [props.cwd, providerRevision]);
+  }, [props.cwd, providerRevision, t]);
 
   const defaults = props.workspaceSettings?.mediaGenerationDefaults ?? snapshot?.defaults ?? {};
   const chatProviders = props.providers.filter((provider) => providerPreflightReady(provider));
@@ -73,11 +79,13 @@ export function ProviderDefaultPurposeBar(props: {
 
   async function saveChat(providerPresetId: string): Promise<void> {
     setSavingPurpose("chat");
-    setErrorMessage("");
+    setError(undefined);
     try {
       await props.onPatchWorkspaceSettings({ defaultProviderPresetId: providerPresetId || null });
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } catch (caught) {
+      setError(toProductError(caught, t, {
+        fallbackMessage: "Could not update the default model. Try again.",
+      }));
     } finally {
       setSavingPurpose(undefined);
     }
@@ -87,7 +95,7 @@ export function ProviderDefaultPurposeBar(props: {
     const target = snapshot?.targets.find((candidate) => candidate.generationKind === kind && candidate.id === value);
     const nextDefaults = replaceMediaDefault(defaults, kind, target?.ref);
     setSavingPurpose(kind);
-    setErrorMessage("");
+    setError(undefined);
     try {
       const updated = await props.onPatchWorkspaceSettings({
         mediaGenerationDefaults: hasMediaDefault(nextDefaults) ? nextDefaults : null,
@@ -98,8 +106,10 @@ export function ProviderDefaultPurposeBar(props: {
           defaults: updated.mediaGenerationDefaults ?? {},
         } : current);
       }
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
+    } catch (caught) {
+      setError(toProductError(caught, t, {
+        fallbackMessage: "Could not update the default model. Try again.",
+      }));
     } finally {
       setSavingPurpose(undefined);
     }
@@ -108,7 +118,7 @@ export function ProviderDefaultPurposeBar(props: {
   return (
     <section className="provider-default-purpose-bar" aria-label={t("Default uses")}>
       <label className="provider-default-purpose-field">
-        <span>{t("Chat model")}</span>
+        <span>{t("Chat")}</span>
         <Select
           size="sm"
           value={currentChatId}
@@ -128,7 +138,7 @@ export function ProviderDefaultPurposeBar(props: {
       </label>
       <MediaPurposeSelect
         kind="image"
-        label={t("Image generation target")}
+        label={t("Image")}
         targets={snapshot?.targets ?? []}
         providers={props.providers}
         defaultRef={defaults.image}
@@ -137,7 +147,7 @@ export function ProviderDefaultPurposeBar(props: {
       />
       <MediaPurposeSelect
         kind="video"
-        label={t("Video generation target")}
+        label={t("Video")}
         targets={snapshot?.targets ?? []}
         providers={props.providers}
         defaultRef={defaults.video}
@@ -145,7 +155,12 @@ export function ProviderDefaultPurposeBar(props: {
         onChange={(value) => void saveMedia("video", value)}
       />
       {savingPurpose ? <StatusIndicator label={t("Saving")} tone="info" /> : null}
-      {errorMessage ? <span className="provider-default-purpose-error" role="alert">{errorMessage}</span> : null}
+      {error ? (
+        <InlineFeedback className="provider-default-purpose-error" tone="danger" title={t("Error")}>
+          <span>{error.message}</span>
+          <ProductErrorDetails technicalMessage={error.technicalMessage} />
+        </InlineFeedback>
+      ) : null}
     </section>
   );
 }
@@ -170,10 +185,8 @@ function MediaPurposeSelect(props: {
     : undefined;
   const selectedValue = selectedTarget?.id ?? missingDefaultValue ?? noExplicitTarget;
   const automaticLabel = runnableTargets.length === 1
-    ? t("Automatic selection ({target})", { target: targetOptionLabel(runnableTargets[0], props.providers, t) })
-    : runnableTargets.length > 1
-      ? t("Ask when used ({count} available)", { count: runnableTargets.length })
-      : t("Not configured");
+    ? targetOptionLabel(runnableTargets[0], props.providers)
+    : t("Not configured");
 
   return (
     <label className="provider-default-purpose-field">
@@ -191,8 +204,8 @@ function MediaPurposeSelect(props: {
         {targets.map((target) => (
           <option value={target.id} key={target.id} disabled={!target.runnable}>
             {target.runnable
-              ? targetOptionLabel(target, props.providers, t)
-              : t("{target} · Needs attention", { target: targetOptionLabel(target, props.providers, t) })}
+              ? targetOptionLabel(target, props.providers)
+              : t("{target} · Needs attention", { target: targetOptionLabel(target, props.providers) })}
           </option>
         ))}
       </Select>
@@ -203,16 +216,13 @@ function MediaPurposeSelect(props: {
 function targetOptionLabel(
   target: MediaGenerationTargetView,
   providers: readonly ProviderPreset[],
-  t: ReturnType<typeof useI18n>["t"],
 ): string {
   if (target.ref.kind === "workflow") {
-    return t("ComfyUI · {target}", { target: target.displayName });
+    return target.displayName;
   }
   const providerPresetId = target.ref.providerPresetId;
   const provider = providers.find((candidate) => candidate.id === providerPresetId);
-  return t("Model · {target}", {
-    target: provider ? providerPurposeLabel(provider) : target.displayName,
-  });
+  return provider ? providerPurposeLabel(provider) : target.displayName;
 }
 
 function providerPurposeLabel(provider: ProviderPreset): string {

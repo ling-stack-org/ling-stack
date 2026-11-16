@@ -9,7 +9,7 @@ import type {
   Channel,
 } from "../../types.js";
 
-export type AutomationTab = "attention" | "enabled" | "history" | "paused";
+export type AutomationTab = "attention" | "history" | "paused" | "scheduled";
 export type AutomationPrimaryState =
   | "definition-error"
   | "paused"
@@ -173,7 +173,7 @@ export function buildAutomationTabs(input: {
   const attentionDefinitions = input.definitions.filter(isAttentionDefinition);
   const attentionDrafts = input.drafts.filter((draft) => draft.draft.status !== "confirmed" && draft.draft.status !== "discarded");
   return [
-    { id: "enabled", label: input.t("Enabled automations"), count: input.definitions.filter((item) => item.automation.status === "enabled").length },
+    { id: "scheduled", label: input.t("Scheduled tasks"), count: input.definitions.filter((item) => item.automation.status === "enabled").length },
     { id: "paused", label: input.t("Paused"), count: input.definitions.filter((item) => item.automation.status === "paused" || item.automation.status === "disabled").length },
     { id: "attention", label: input.t("Needs attention"), count: attentionDefinitions.length + attentionDrafts.length },
     { id: "history", label: input.t("Recent history"), count: input.recentRuns.length },
@@ -184,6 +184,7 @@ export function definitionsForTab(
   definitions: readonly AutomationDefinitionViewModel[],
   tab: AutomationTab,
 ): readonly AutomationDefinitionViewModel[] {
+  if (tab === "scheduled") return definitions.filter((item) => item.automation.status === "enabled");
   if (tab === "paused") return definitions.filter((item) => item.automation.status === "paused" || item.automation.status === "disabled");
   if (tab === "attention") return definitions.filter(isAttentionDefinition);
   if (tab === "history") return [];
