@@ -111,7 +111,7 @@ export function restorePreparedRunnerOptions(
       throw new HttpError(409, "prepared_host_capability_changed", "A prepared Host capability was revoked or its schema changed.");
     }
   }
-  return { ...current, ...payload.input, provider: current.provider, mcpTools, hostCapabilityTools: payload.input.hostCapabilityTools ?? [], preparedInput: payload.preparedInput,
+  return { ...current, ...payload.input, initialToolSurface: frozenSurface, provider: current.provider, mcpTools, hostCapabilityTools: payload.input.hostCapabilityTools ?? [], preparedInput: payload.preparedInput,
     onToolHydrationRequest: payload.toolHydrationEnabled ? current.onToolHydrationRequest : undefined };
 }
 

@@ -156,3 +156,19 @@ test("prepared execution rejects capability revocation and Hook configuration dr
   assert.throws(() => restorePreparedRunnerOptions(payload, { ...options, hooks: undefined }), /configuration or trust changed/);
   assert.throws(() => restorePreparedRunnerOptions(payload, { ...options, initialToolSurface: { ...options.initialToolSurface!, codeMode: false } }), /capabilities changed/);
 });
+
+test("restoring a prepared execution without a tool surface preserves its original SDK input", async t => {
+  const { cwd } = await fixture(t);
+  const runner = new PiRunnerAdapter();
+  const options: PiRunnerRunOptions = { cwd, task: { id: "task", title: "test", prompt: "test" }, tools: ["read"],
+    provider: { provider: "prepared-capabilities", model: "test", api: "openai-completions", baseUrl: "https://fixture.invalid/v1", reasoning: false } };
+  const preparedInput = await runner.prepareTaskInput(options);
+  const payload = capturePreparedRunnerInput({ runnerId: "pi", options, preparedInput });
+  assert.equal(Object.hasOwn(payload.input, "initialToolSurface"), false);
+  const restored = restorePreparedRunnerOptions(payload, { ...options,
+    initialToolSurface: { mediaGeneration: false, toolHydration: false, codeMode: true, codeIntelligence: true } });
+  assert.equal(restored.initialToolSurface, undefined);
+  const reproduced = await runner.prepareTaskInput(restored);
+  assert.deepEqual(reproduced.tools, preparedInput.tools);
+  assert.equal(reproduced.fingerprint, preparedInput.fingerprint);
+});
