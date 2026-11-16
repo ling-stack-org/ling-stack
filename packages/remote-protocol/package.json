@@ -13,12 +13,12 @@
   },
   "scripts": {
     "build:ci": "tsc -p tsconfig.json",
-    "typecheck:ci": "tsc -p tsconfig.json --noEmit",
-    "test:ci": "node --test test/*.test.mjs",
+    "typecheck:ci": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
+    "test:ci": "node --test test/*.test.ts",
     "build": "corepack pnpm --filter @ling-stack/contracts build && tsc -p tsconfig.json",
-    "typecheck": "corepack pnpm --filter @ling-stack/contracts build && tsc -p tsconfig.json --noEmit",
+    "typecheck": "corepack pnpm build && corepack pnpm typecheck:ci",
     "lint": "echo \"lint not configured yet\"",
-    "test": "corepack pnpm --filter @ling-stack/contracts build && tsc -p tsconfig.json && node --test test/*.test.mjs"
+    "test": "corepack pnpm build && corepack pnpm test:ci"
   },
   "dependencies": {
     "@ling-stack/contracts": "workspace:*"
