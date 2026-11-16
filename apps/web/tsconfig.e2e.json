@@ -12,6 +12,7 @@
     "types": ["node", "vite/client"]
   },
   "files": [
+    "e2e/worktree-settings.spec.ts",
     "e2e/app.spec.ts",
     "e2e/channel-image-preview.spec.ts",
     "e2e/channel-work-cell.spec.ts",

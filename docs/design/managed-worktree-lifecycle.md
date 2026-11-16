@@ -10,7 +10,9 @@ This is not a generic temp directory. It is a Git worktree with explicit lifecyc
 
 - Canonical checkout: the user's normal project root, passed as `cwd`. The local
   daemon treats the configured workspace `cwd` as the canonical checkout.
-- Managed worktree: a Ling-created Git worktree under `paths.worktreesDir`. It is safe for agent execution and can be inspected, refreshed, or cleaned up through Ling APIs.
+- Managed worktree: a Ling-created Git worktree under the workspace's configured
+  worktree root, defaulting to `paths.worktreesDir`. It can be inspected, refreshed,
+  or cleaned up through Ling APIs.
 - External path: a user-supplied execution path. Ling can check whether it exists, but does not own its lifecycle.
 - Local binding: execution happens in the channel bound path or canonical workspace. Ling does not create or clean anything.
 
@@ -34,7 +36,7 @@ Managed bindings use the existing `ChannelWorkspaceStatus` values:
 - `unsupported`: reserved for future provider-specific workspace modes. A non-Git
   directory uses a ready Local binding instead of an unsupported state.
 
-Dirty state is not a runtime blocker. A normal agent run creates diffs, so refresh must keep a dirty worktree runnable. Dirty state is a cleanup blocker: Ling must not silently delete uncommitted or untracked work.
+Dirty state is not a runtime blocker. A normal agent run creates diffs, so refresh must keep a dirty worktree runnable. Automatic cleanup skips dirty worktrees; confirmed manual cleanup preserves their complete contents in a recovery snapshot.
 
 ## Lifecycle
 
@@ -59,11 +61,10 @@ Creation:
    Local only when it has never owned a created worktree. Previously created, cleaned,
    missing, or blocked managed worktrees retain their ownership metadata and recovery
    protections.
-7. Direct-thread first-use initialization is serialized per store and thread so two
-   concurrent replies cannot race to create the same managed binding. Initialization,
-   refresh, handoff, cleanup, and explicit worktree creation share the same per-thread
-   mutation coordinator, with each operation rereading the latest persisted binding
-   before it writes, so an explicit user handoff cannot be overwritten by stale setup.
+7. Direct-thread first-use initialization, refresh, handoff, cleanup, and explicit
+   worktree creation share the workspace-wide mutation coordinator. Operations across
+   the store's direct threads are serialized and reread the latest persisted binding
+   before writing, so an explicit handoff cannot be overwritten by stale setup.
 
 Refresh:
 
@@ -74,11 +75,12 @@ Refresh:
 
 Cleanup:
 
-1. Cleanup applies only to managed worktrees.
-2. Missing paths update the binding to `not_created`.
-3. Dirty worktrees return a `worktree_dirty` error and remain untouched.
-4. Clean worktrees are removed with `git worktree remove`.
-5. After successful removal, the binding returns to `not_created` and keeps branch/base metadata for later recreation.
+1. Cleanup applies only to recorded managed worktrees in the owning repository.
+2. Manual cleanup follows the saved confirmation policy. Automatic cleanup skips pinned, active, shared, dirty, or unavailable worktrees.
+3. A durable journal and the workspace snapshot fence precede any location change. Run creation, resumption, approvals and binding writes observe that fence.
+4. `git worktree move` relocates the complete directory to a private sibling `.ling-recovery/<snapshot-id>` directory. The Git worktree is locked against pruning; its branch, index, staged/unstaged files, untracked and ignored files, symlinks and worktree metadata remain together.
+5. The original path becomes absent and its binding becomes `not_created` while the same fence is still held. The snapshot continues to consume disk space. Cleanup does not permanently delete recovery snapshots.
+6. Restore moves the recorded worktree back to its original path. An existing destination, foreign repository/branch/lock, active command or changed owner blocks restoration without overwriting content.
 
 P0 does not auto-merge worktree changes back into the canonical checkout. Return paths remain explicit: inspect diff, create a patch/PR, or ask Ling to apply a reviewed change.
 
@@ -86,13 +88,154 @@ P0 does not auto-merge worktree changes back into the canonical checkout. Return
 
 - If a managed path exists but is not a Git worktree, mark the binding `blocked`; do not delete it.
 - If Git inspection fails, mark the binding `blocked` and preserve the original path.
-- If cleanup fails, return the redacted Git error and keep the prior binding.
-- If the branch still exists after cleanup, future create can reuse/reset it through the existing worktree creation flow.
+- Recovery Git failures return a redacted error. After an interrupted move, reconciliation
+  checks the original and snapshot locations and linked Git identity before finalizing
+  the observed binding. An unchanged original retains its binding; an archived directory
+  becomes `not_created`. Ambiguous locations or failed finalization keep the fence and
+  journal for recovery without deleting either directory.
+- Creation restores a retained snapshot at its recorded path before using the worktree.
+  A retained branch without a snapshot is reused without resetting its commits. New
+  branches use the requested base branch or current `HEAD`.
 
-## P0 Implementation Checklist
+## Worktree Settings and Management
 
-- Add a shared managed worktree helper for Git commands, inspect, create, and safe cleanup.
-- Replace duplicated channel/direct Git helper code with the shared helper.
-- Add `cleanup` workspace action for channel and direct teammate workspaces.
-- Add focused tests for clean cleanup and dirty cleanup refusal.
-- Keep canonical service execution rooted at the caller `cwd`; managed worktrees only affect channel/direct execution snapshots.
+The workspace Settings surface exposes General and Environment controls in a dedicated
+Worktrees section. Policy is stored in workspace settings JSON without a schema migration:
+
+- `rootDir`: empty uses `paths.worktreesDir`; a custom absolute root is namespaced by workspace identity. Existing bindings keep their paths across root changes, cleanup and restoration.
+- `fetchBeforeCreate`: fetches the default remote before creating a new worktree, updating refs without merging. Fetch failure stops creation.
+- `autoCleanup`: defaults to false. Workspace ownership starts maintenance on open and every 60 seconds; shutdown stops admission and drains pending operations.
+- `retainCount`: 1–100, default 15. Maintenance removes the oldest eligible active directories until the target is reached. Protected directories can keep the total above the target.
+- `confirmBeforeDelete`: defaults to true for manual cleanup. Automatic cleanup uses the enabled retention policy.
+- `protectedOwners`: explicit per-owner Keep worktree selections. Pinned conversation threads and pinned private-chat teammates also protect their worktrees.
+- `environment`: an enabled flag, user-authored setup script, environment variables and a 1–600 second timeout (default 120 seconds in the UI).
+
+The managed inventory comes from all channel and direct-thread ownership records using
+stable 500-row pages, with four concurrent Git inspections. It never enumerates arbitrary
+machine worktrees as cleanup candidates. Other owners' recorded bound, execution and
+worktree paths, including subdirectories, block cleanup. Active Run scopes and unsettled
+host-command write blockers also prevent cleanup. Recently updated owner/chat metadata
+orders retention; Git dirtiness and protected state are rechecked for each candidate.
+
+`GET /worktrees?cwd=...` returns policy, inventory, recovery snapshots and the last
+maintenance result. `POST /worktrees/actions?cwd=...` accepts `ownerKind`, `ownerId`, and
+`action`: `open`, `cleanup`, `restore`, `initialize`, `pin` or `unpin`. Manual cleanup
+requires `confirmed: true` while its confirmation policy is enabled; restore also names
+`snapshotId`. Targets are always resolved from server-owned records. Local-origin and
+trusted-workspace checks precede access to these routes, settings and effective-config
+responses. Mutable channel/direct-workspace and reply/continuation HTTP entries enforce
+the local-origin boundary because creation can launch a configured setup script.
+Browser requests with fetch metadata and no Origin are rejected; native clients may
+omit Origin.
+Internal services and schedulers retain their existing admission paths. Legacy cleanup
+routes use the same snapshot lifecycle and accept an optional confirmation body.
+
+A workspace-wide mutation queue covers filesystem operations and binding changes.
+Cleanup and restore additionally acquire the existing durable `workspace_default`
+snapshot fence. Its SQLite checks exclude competing Run admission and binding writes,
+including writes from another connection. An operation checks for already-active Runs
+and physical command blockers after acquiring the fence. The fence covers every Run in
+the store for the short location-change operation, even if it uses another worktree.
+Independent local processes outside Ling are not governed by this admission fence.
+Binding writes acquire the SQLite writer before checking the fence; owner finalization
+checks the matching owner/epoch and managed path/branch in that transaction. Run
+creation also checks a captured managed workspace against its current ready binding,
+so a request that waited for provider/input preparation cannot admit an old path after
+cleanup has released the fence. Internal delegated-child execution without workspace
+snapshots and local-channel workflow isolation retain their existing contracts.
+
+Pending recovery snapshots prevent HTTP workspace handoff and channel binding changes.
+Owner deletion refuses managed bindings, and the HTTP deletion routes also preserve
+owners with retained snapshots. Active Runs, unfinished WorkUnits and unsettled commands
+prevent teammate hard-delete. Settled `yielded` Run history alone does not block deletion.
+These checks keep restoration available through its recorded owner.
+
+Recovery journals are published with private permissions, atomic rename and file fsync
+before Git moves. POSIX additionally syncs directory metadata; Windows skips directory
+fsync because it cannot open directories using the same file-descriptor interface.
+Snapshots remain registered
+and locked Git worktrees, so their branches cannot be pruned or accidentally reused by a
+new checkout. Creation restores a retained snapshot instead of resetting or duplicating
+its branch. Startup reconciles a known interrupted operation by checking the original
+and snapshot locations against the linked Git identity, reinstating the snapshot's Git
+lock and finalizing the matching owner binding before releasing its fencing epoch.
+Finalization failure keeps the directory, journal and fence for reconciliation.
+Ambiguous locations or identity mismatches preserve both data and fence
+for manual inspection; startup never overwrites or deletes either directory. Snapshot
+storage has no automatic expiration or permanent deletion policy.
+
+### Settings Workflow
+
+1. Select the workspace, open **Settings → Worktrees → General**, edit the root,
+   fetch and retention options, and save. Root changes apply to future worktrees;
+   existing paths and recovery locations stay recorded.
+2. Enable automatic cleanup only when the saved retention policy should run in the
+   background. **Keep worktree** protects an entry from retention cleanup.
+3. For manual cleanup, select **Clean up** on the recorded worktree and confirm when
+   prompted. The entry becomes recreatable and a recovery snapshot appears. Files
+   and Git state stay in the snapshot and continue consuming disk space.
+4. Select **Restore** on the snapshot to return it to the recorded path. Resolve an
+   occupied destination or active task before retrying; restoration does not overwrite
+   either location. Restore retained snapshots before switching workspace ownership.
+5. Under **Environment**, enable initialization, enter the script, variables and
+   timeout, and save before creating a worktree. The script runs only for a newly
+   created checkout. A failed entry exposes redacted output and **Retry** after the
+   policy is corrected; existing and restored checkouts do not rerun setup automatically.
+
+### Environment Initialization
+
+Only the saved local policy selects a script; repository documents and discovered files
+do not authorize execution. Initialization uses the existing manual workspace-terminal
+actor, with the current OS shell and account permissions. Its variables apply to that
+script. It does not grant a native Runner sandbox or protected-stage proof. The policy
+applies to new worktrees; existing worktrees and restored snapshots are not reinitialized.
+
+A private marker in the linked worktree's Git administrative directory records running,
+succeeded or failed state. Output is bounded and configured variable values are redacted
+from the retained output. Failed setup retains the directory and blocks normal workspace
+readiness; the settings list exposes output and explicit retry with the current saved
+policy. On POSIX, timeout escalates from SIGTERM to SIGKILL for the process group and
+successful completion stops remaining children in that group. A retained running marker
+requires the recorded process group to be absent before retry; an unknown process
+identity remains blocked for local inspection. Process groups do not claim containment
+of programs that deliberately escape their group. Windows descendant-process termination
+and signed Desktop runtime acceptance have not been established by the macOS checks.
+
+### Theme Integration
+
+The panel reuses shared `Button`, `Input`, `Switch`, `Field`, `DataRow`,
+`StatusIndicator`, `InlineFeedback`, `Skeleton` and `Dialog` components. Feature CSS
+owns layout and consumes existing semantic text, border and card tokens;
+shared components retain control, overlay and feedback appearance. The settings shell
+keeps its existing continuous backdrop policy. The worktree panel uses the semantic
+`--ling-bg-panel` solid surface to protect dense content over that backdrop, with no
+feature-owned background layer.
+Loading, empty, failed-load/retry, edited/saved, dirty/in-use, confirmation and action
+failure states are covered by the browser interaction suite. English and Chinese
+use the compiled localization catalogs; other supported locales receive the same
+message keys through the catalog translation pipeline.
+
+### Verification
+
+`packages/daemon/test/worktree-management.test.ts` uses temporary Git repositories,
+SQLite stores, a local bare remote and the daemon/API client boundary. It covers
+policy validation and persistence, root selection, cleanup/recreation with retained
+commits, fetch without merging, fetch failure, active/shared/foreign worktree
+refusal, complete ownership pagination, staged/unstaged/ignored/untracked and symlink
+restoration, restart/fencing, retention protection, initialization retry and timeout and local-origin/workspace access checks.
+`worktree-http-boundary.test.ts` covers settings/effective-config disclosure and indirect
+initialization HTTP entries, including missing-Origin browser metadata and native-client
+compatibility. `managed-workspace-cleanup.test.ts` covers the optional legacy request
+body with confirmation enabled and disabled. Core `workspace-binding-fence.test.ts` and
+`managed-workspace-admission.test.ts` cover cross-connection owner writes and stale Run
+snapshots, settled `yielded` history and unfinished work; `teammate-hard-delete-access.test.ts`
+covers owner retention at deletion. The four daemon TypeScript suites are explicitly
+assigned to Linux CI and included in the daemon test typecheck.
+
+`apps/web/e2e/worktree-settings.spec.ts` covers saving and navigation persistence,
+opening paths, retention/environment persistence, snapshot restore, keep selections,
+cleanup cancellation/focus/error retry, load retry and empty states,
+Chinese/English, desktop/narrow-window layout and all six built-in themes. Browser
+tests use the mock daemon for UI states; real filesystem and API behavior are covered
+separately by the daemon tests. Web screenshots do not establish signed Desktop or
+deployed-runtime acceptance.
