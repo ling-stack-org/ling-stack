@@ -608,6 +608,7 @@ export function AppShell(): React.JSX.Element {
     checkingProviderIds,
     providerBatchResult,
     providerOperationWarning,
+    providerOperationWarningTechnical,
     providerRepairRunId,
   } = providersDomain.state;
   const {
@@ -2407,11 +2408,13 @@ export function AppShell(): React.JSX.Element {
         isLoading={providersLoading}
         checkingProviderIds={checkingProviderIds}
         errorMessage={providersDomain.error?.message ?? ""}
+        errorTechnicalMessage={providersDomain.error?.technicalMessage}
         checkResult={providerCheck}
         checkedProviderId={providerCheckTargetId}
         checkScope={providerCheckScope}
         batchResult={providerBatchResult}
         operationWarning={providerOperationWarning}
+        operationWarningTechnical={providerOperationWarningTechnical}
         selectedTemplateId={selectedProviderTemplateId}
         repairRun={providerRepairRun}
         isRunning={isRunning}
@@ -2424,7 +2427,7 @@ export function AppShell(): React.JSX.Element {
         onImportModels={importModelsFromProviderForm}
         onRefresh={() => void refreshProviders()}
         onEdit={editProvider}
-        onDelete={(providerId) => void removeProvider(providerId)}
+        onDelete={removeProvider}
         onCheck={(providerId) => void runProviderCheck(providerId)}
         onCheckBatch={runProviderBatchCheck}
         onToggleEnabled={(provider, enabled) => void toggleProviderEnabled(provider, enabled)}
@@ -3302,11 +3305,13 @@ export function AppShell(): React.JSX.Element {
                 isLoading={providersLoading}
                 checkingProviderIds={checkingProviderIds}
                 errorMessage={providersDomain.error?.message ?? ""}
+                errorTechnicalMessage={providersDomain.error?.technicalMessage}
                 checkResult={providerCheck}
                 checkedProviderId={providerCheckTargetId}
                 checkScope={providerCheckScope}
                 batchResult={providerBatchResult}
                 operationWarning={providerOperationWarning}
+                operationWarningTechnical={providerOperationWarningTechnical}
                 selectedTemplateId={selectedProviderTemplateId}
                 repairRun={providerRepairRun}
                 isRunning={isRunning}
@@ -3319,7 +3324,7 @@ export function AppShell(): React.JSX.Element {
                 onImportModels={importModelsFromProviderForm}
                 onRefresh={() => void refreshProviders()}
                 onEdit={editProvider}
-                onDelete={(providerId) => void removeProvider(providerId)}
+                onDelete={removeProvider}
                 onCheck={(providerId) => void runProviderCheck(providerId)}
                 onCheckBatch={runProviderBatchCheck}
                 onToggleEnabled={(provider, enabled) => void toggleProviderEnabled(provider, enabled)}

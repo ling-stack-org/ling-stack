@@ -25,14 +25,21 @@ function defaultGh(args) {
 }
 
 /** Creates only a new, unpublished Draft. Failure never deletes or overwrites it. */
-export async function createDesktopDraft({ candidate, outputRoot, repository, gh = defaultGh }) {
+export async function createDesktopDraft({ candidate, outputRoot, repository, allowExistingTag = false,
+  requireExistingTag = false, gh = defaultGh }) {
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(repository ?? "")) throw new Error("Missing GitHub repository");
   const assets = await verifyAssembledRelease({ candidate, outputRoot });
   const api = async path => JSON.parse(await gh(["api", path]));
   // Prefix lookup returns [] for an unused tag, while authentication/network
   // errors still fail. Treating any gh failure as a 404 would be unsafe.
   const tagRefs = () => api(`repos/${repository}/git/matching-refs/tags/${candidate.tag}`);
-  if ((await tagRefs()).some(ref => ref.ref === `refs/tags/${candidate.tag}`)) throw new Error("Tag already exists; nothing was replaced");
+  const existingTag = (await tagRefs()).some(ref => ref.ref === `refs/tags/${candidate.tag}`);
+  if (existingTag && !allowExistingTag) throw new Error("Tag already exists; nothing was replaced");
+  if (!existingTag && requireExistingTag) throw new Error("Release tag disappeared before Draft creation");
+  if (existingTag) {
+    const taggedCommit = await api(`repos/${repository}/commits/${candidate.tag}`);
+    if (taggedCommit.sha !== candidate.sourceSha) throw new Error("Release tag does not point to the reviewed source");
+  }
   const releases = JSON.parse(await gh(["api", `repos/${repository}/releases?per_page=100`, "--paginate", "--slurp"])).flat();
   if (releases.some(release => release.tag_name === candidate.tag)) throw new Error("A Release already uses this tag; nothing was replaced");
   let created = false;
@@ -43,7 +50,8 @@ export async function createDesktopDraft({ candidate, outputRoot, repository, gh
     await gh(["release", "upload", candidate.tag, "--repo", repository, ...assets.map(file => join(outputRoot, file.name))]);
     const release = JSON.parse(await gh(["release", "view", candidate.tag, "--repo", repository,
       "--json", "isDraft,isPrerelease,targetCommitish,assets,url"]));
-    if (!release.isDraft || release.isPrerelease !== false || release.targetCommitish !== candidate.sourceSha
+    if (!release.isDraft || release.isPrerelease !== false
+      || (!existingTag && release.targetCommitish !== candidate.sourceSha)
       || release.assets.length !== assets.length) throw new Error("Draft identity or uploaded asset count mismatch");
     for (const file of assets) {
       const remote = release.assets.find(asset => asset.name === file.name);
@@ -70,9 +78,15 @@ export async function createDesktopDraft({ candidate, outputRoot, repository, gh
 }
 
 async function main() {
+  // This entrypoint is loaded from the trusted default-branch checkout. Read
+  // release values from the verified source checkout passed by the workflow.
   const candidate = await readCandidate({ sha: process.env.DESKTOP_SOURCE_SHA,
-    tag: process.env.DESKTOP_RELEASE_TAG, requireMain: true });
-  const result = await createDesktopDraft({ candidate, outputRoot: resolve(process.env.DESKTOP_OUTPUT_ROOT), repository: process.env.GITHUB_REPOSITORY });
+    tag: process.env.DESKTOP_RELEASE_TAG, root: resolve(process.env.DESKTOP_SOURCE_ROOT),
+    requireMain: true, allowExistingTag: process.env.DESKTOP_ALLOW_EXISTING_TAG === "true" });
+  const result = await createDesktopDraft({ candidate, outputRoot: resolve(process.env.DESKTOP_OUTPUT_ROOT),
+    repository: process.env.GITHUB_REPOSITORY,
+    allowExistingTag: process.env.DESKTOP_ALLOW_EXISTING_TAG === "true",
+    requireExistingTag: process.env.DESKTOP_ALLOW_EXISTING_TAG === "true" });
   console.log(JSON.stringify(result, null, 2));
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) await main();

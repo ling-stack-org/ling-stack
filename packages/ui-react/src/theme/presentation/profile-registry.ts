@@ -53,15 +53,19 @@ export class PresentationProfileRegistry {
     }
 
     if (context.userBackground) {
-      // Keep dense management surfaces opaque. The automation workspace opts
-      // into the ambient scene explicitly because it shares the management
-      // route for data and navigation purposes.
-      const visible = (
+      // The window background remains continuous across every route. Dense
+      // management surfaces keep their semantic content panels opaque while
+      // still allowing the themed backdrop and shared chrome to show through.
+      const ambientSurface = (
         ["home", "sidebar", "conversation", "channel"].includes(surface)
         || (surface === "management" && context.ambientWorkspace === true)
       ) && (context.viewportWidth === undefined || context.viewportWidth >= MINIMUM_PRESENTATION_WIDTH);
-      return Object.freeze({ surfaceRecipe: visible ? "translucent" : policy.surfaceRecipe === "domain" ? "domain" : "solid",
-        artwork: visible ? "ambient" : "off", decorations: false });
+      const backgroundVisible = context.viewportWidth === undefined || context.viewportWidth >= MINIMUM_PRESENTATION_WIDTH;
+      return Object.freeze({
+        surfaceRecipe: ambientSurface ? "translucent" : policy.surfaceRecipe === "domain" ? "domain" : "solid",
+        artwork: backgroundVisible ? "ambient" : "off",
+        decorations: false,
+      });
     }
 
     return Object.freeze({

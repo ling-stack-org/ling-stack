@@ -4,6 +4,10 @@ Scope: the resource-build supervisor, not the model execution/Run lifecycle,
 whole-host containment, GUI acceptance or release. Implementation, focused
 regression verification and final narrow independent review are complete.
 
+> 2026-11-16 successor: Windows hosted builds now use process-table descendant
+> observation before releasing a managed lease. The POSIX contract below is
+> unchanged; see `windows-managed-process-settlement-2026-11-16.md`.
+
 ## Confirmed cause and contract
 
 `runManagedNode` previously awaited direct child `close`, sent TERM/KILL for a

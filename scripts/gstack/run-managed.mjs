@@ -42,15 +42,78 @@ export function managedNodeArguments(operation, args) {
   return [join(scripts, entry[0]), ...args];
 }
 
-async function stopGroup(child, signal) {
+async function stopGroup(child, signal, windowsTracked = new Map()) {
   if (!Number.isSafeInteger(child.pid) || child.pid < 1) return;
   if (process.platform === "win32") {
-    await new Promise((resolve, reject) => execFile("taskkill.exe", ["/PID", `${child.pid}`, "/T", "/F"],
-      { timeout: 5000, maxBuffer: 64 * 1024 }, error => error ? reject(error) : resolve()));
+    // Re-read the process table immediately before termination. A tracked PID
+    // whose creation identity changed belongs to another process and is never
+    // passed to taskkill.
+    const snapshot = await readWindowsProcessSnapshot();
+    const targets = observeWindowsProcessSnapshot({ snapshot, rootPid: child.pid, tracked: windowsTracked }).livePids;
+    const failures = [];
+    for (const pid of targets) await new Promise(resolve => execFile("taskkill.exe", ["/PID", `${pid}`, "/T", "/F"],
+      { timeout: 5000, maxBuffer: 64 * 1024 }, error => {
+        // 128 means the exact process already disappeared. The caller still
+        // requires a fresh process-table observation before releasing scratch.
+        if (error && error.code !== 128) failures.push({ pid, code: error.code ?? "termination_failed" });
+        resolve();
+      }));
+    if (failures.length) throw Object.assign(new Error("gstack_windows_process_termination_failed"), { failures });
   } else {
     try { process.kill(-child.pid, signal); }
     catch (error) { if (error.code !== "ESRCH") throw error; }
   }
+}
+
+function processCreation(value) {
+  return typeof value === "string" ? value : value?.DateTime ?? value ?? null;
+}
+
+export function observeWindowsProcessSnapshot({ snapshot, rootPid, tracked }) {
+  const processes = new Map();
+  for (const item of snapshot) {
+    const pid = Number(item?.ProcessId), parentPid = Number(item?.ParentProcessId);
+    if (!Number.isSafeInteger(pid) || pid < 1 || !Number.isSafeInteger(parentPid) || parentPid < 0) continue;
+    processes.set(pid, { pid, parentPid, creation: processCreation(item?.CreationDate) });
+  }
+  const descendants = new Map();
+  for (const process of processes.values()) {
+    const children = descendants.get(process.parentPid) ?? [];
+    children.push(process);
+    descendants.set(process.parentPid, children);
+  }
+  const root = processes.get(rootPid);
+  const rootReused = root && tracked.has(rootPid) && tracked.get(rootPid) !== root.creation;
+  if (!rootReused) {
+    const queue = [rootPid];
+    for (let index = 0; index < queue.length; index++) {
+      for (const child of descendants.get(queue[index]) ?? []) {
+        const known = tracked.get(child.pid);
+        if (known !== undefined && known !== child.creation) continue;
+        if (!tracked.has(child.pid)) queue.push(child.pid);
+        tracked.set(child.pid, child.creation);
+      }
+    }
+  }
+  if (root && !tracked.has(rootPid)) tracked.set(rootPid, root.creation);
+  const livePids = [...tracked].filter(([pid, creation]) => {
+    const current = processes.get(pid);
+    return current && (creation === null || current.creation === creation);
+  }).map(([pid]) => pid).sort((left, right) => left - right);
+  return { status: livePids.length ? "present" : "absent", livePids };
+}
+
+async function readWindowsProcessSnapshot() {
+  const executable = process.env.SystemRoot
+    ? join(process.env.SystemRoot, "System32/WindowsPowerShell/v1.0/powershell.exe") : "powershell.exe";
+  const command = "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,CreationDate | ConvertTo-Json -Compress";
+  const stdout = await new Promise((resolve, reject) => execFile(executable,
+    ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command],
+    { timeout: 5000, maxBuffer: 16 * 1024 ** 2, windowsHide: true, encoding: "utf8" },
+    (error, output) => error ? reject(error) : resolve(output)));
+  const clean = stdout.replace(/^\uFEFF/u, "").trim();
+  const parsed = clean ? JSON.parse(clean) : [];
+  return Array.isArray(parsed) ? parsed : [parsed];
 }
 
 function observeGroup(child, spawnError) {
@@ -114,6 +177,8 @@ export async function runManagedNode({ root, args, additionalBytes = 6 * 1024 **
   const lease = await acquireResourceLease(root, { additionalBytes });
   const started = Date.now();
   let child, deadline, drainDeadline, monitor, monitorWork = Promise.resolve(), killing;
+  let windowsMonitor, windowsProbe, windowsProbeError;
+  const windowsTracked = new Map();
   let reason = null, outputBytes = 0, signalHandler, outputError, spawnError;
   let terminal, closed = false, policy, primaryError, finalized = false;
   const terminationErrors = [];
@@ -126,11 +191,11 @@ export async function runManagedNode({ root, args, additionalBytes = 6 * 1024 **
     // Bound that wait, but never turn its expiry into permission to clean scratch.
     drainDeadline ??= setTimeout(() => resolveTerminal(null), 5500);
     if (!killing && child?.pid && !(closed && observeGroup(child, spawnError).status === "absent")) killing = (async () => {
-      try { await stopGroup(child, "SIGTERM"); }
+      try { await stopGroup(child, "SIGTERM", windowsTracked); }
       catch (error) { terminationErrors.push({ signal: "SIGTERM", code: error.code ?? "termination_failed" }); }
       await delay(500);
       if (observeGroup(child, spawnError).status === "absent") return;
-      try { await stopGroup(child, "SIGKILL"); }
+      try { await stopGroup(child, "SIGKILL", windowsTracked); }
       catch (error) { terminationErrors.push({ signal: "SIGKILL", code: error.code ?? "termination_failed" }); }
     })();
   };
@@ -147,6 +212,22 @@ export async function runManagedNode({ root, args, additionalBytes = 6 * 1024 **
     delete env.NODE_TEST_CONTEXT;
     child = spawn(process.execPath, args, { cwd: repository, env, shell: false,
       detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"] });
+    if (process.platform === "win32") {
+      const sampleWindowsTree = () => {
+        if (windowsProbe) return windowsProbe;
+        windowsProbe = readWindowsProcessSnapshot().then(snapshot => {
+          windowsProbeError = null;
+          return observeWindowsProcessSnapshot({ snapshot, rootPid: child.pid, tracked: windowsTracked });
+        }, error => {
+          windowsProbeError = error.code ?? error.message ?? "observation_failed";
+          return { status: "unknown", errorCode: windowsProbeError };
+        }).finally(() => { windowsProbe = null; });
+        return windowsProbe;
+      };
+      windowsMonitor = setInterval(sampleWindowsTree, 5000);
+      windowsMonitor.unref?.();
+      void sampleWindowsTree();
+    }
     for (const stream of ["stdout", "stderr"]) child[stream].on("data", bytes => {
       if (finalized) return;
       outputBytes += bytes.length;
@@ -172,9 +253,23 @@ export async function runManagedNode({ root, args, additionalBytes = 6 * 1024 **
   } finally {
     clearTimeout(deadline);
     clearInterval(monitor);
+    clearInterval(windowsMonitor);
     await monitorWork;
+    if (windowsProbe) await windowsProbe;
     if (child && !closed) { fail("direct_child_not_closed"); terminal ??= await terminalWait; }
-    let group = observeGroup(child, spawnError);
+    const observeSettlement = async () => {
+      if (process.platform !== "win32") return observeGroup(child, spawnError);
+      if (windowsProbe) await windowsProbe;
+      windowsProbe = readWindowsProcessSnapshot().then(snapshot => {
+        windowsProbeError = null;
+        return observeWindowsProcessSnapshot({ snapshot, rootPid: child.pid, tracked: windowsTracked });
+      }, error => {
+        windowsProbeError = error.code ?? error.message ?? "observation_failed";
+        return { status: "unknown", errorCode: windowsProbeError };
+      }).finally(() => { windowsProbe = null; });
+      return windowsProbe;
+    };
+    let group = await observeSettlement();
     if (group.status === "present") fail("descendant_leak");
     else if (group.status === "unknown") fail("group_observation_failed");
     if (killing) await killing;
@@ -185,7 +280,7 @@ export async function runManagedNode({ root, args, additionalBytes = 6 * 1024 **
     if (child) {
       const observeUntil = performance.now() + 5000;
       do {
-        group = observeGroup(child, spawnError);
+        group = await observeSettlement();
         if (["absent", "not_started"].includes(group.status) || performance.now() >= observeUntil) break;
         await delay(50);
       } while (true);
