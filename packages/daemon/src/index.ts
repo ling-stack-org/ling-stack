@@ -716,7 +716,6 @@ export function createDaemonServer(
     startupState,
     nativeRunDispatcher,
     notificationHub,
-    automationEvents,
   );
   startupOptionalWarmups = new StartupOptionalWarmupCoordinator({
     startupState,

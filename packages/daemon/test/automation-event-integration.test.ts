@@ -76,6 +76,17 @@ test("signed HTTP events execute once, scope delivery and recover accepted work 
   assert.equal(sends[0].headers.get("idempotency-key"), owned.listAutomationDeliveries()[0].id);
   assert.match(sends[0].body, /Issue handled with verified result/);
 
+  await api("/automations/scheduler/stop", {});
+  assert.equal((await api("/automation-event-sources")).worker.running, true);
+  const stoppedPayload = { issue: "Process events while scheduled timers are stopped" }, stoppedAt = new Date().toISOString();
+  owned.acceptAutomationEvent({ sourceId: "signed-issues", externalId: "stopped-timer-issue", type: "issue.opened",
+    occurredAt: stoppedAt, payload: stoppedPayload, payloadDigest: automationEventDigest(stoppedPayload) }, 1, stoppedAt);
+  const stoppedDeadline = Date.now() + 25_000;
+  while (Date.now() < stoppedDeadline && owned.listAutomationDeliveries().filter(item => item.status === "delivered").length < 2) await delay(25);
+  assert.equal(owned.listAutomationDeliveries().filter(item => item.status === "delivered").length, 2);
+  assert.equal(provider.requests.filter(request => JSON.stringify(request).includes(stoppedPayload.issue)).length, 1);
+  assert.equal(sends.length, 2);
+
   const payload = { issue: "Recover the accepted event" }, acceptedAt = new Date().toISOString();
   owned.acceptAutomationEvent({ sourceId: "signed-issues", externalId: "restart-issue", type: "issue.opened",
     occurredAt: acceptedAt, payload, payloadDigest: automationEventDigest(payload) }, 1, acceptedAt);
@@ -84,12 +95,12 @@ test("signed HTTP events execute once, scope delivery and recover accepted work 
   await daemon.start();
   const reopened = store!;
   const recoveryDeadline = Date.now() + 25_000;
-  while (Date.now() < recoveryDeadline && reopened.listAutomationDeliveries().filter(item => item.status === "delivered").length < 2) await delay(25);
-  assert.equal(reopened.listAutomationRuns({ automationId: automation.id }).length, 2);
-  assert.equal(reopened.listAutomationEventDispatches().filter(item => item.status === "linked").length, 2);
-  assert.equal(reopened.listAutomationDeliveries().filter(item => item.status === "delivered").length, 2);
+  while (Date.now() < recoveryDeadline && reopened.listAutomationDeliveries().filter(item => item.status === "delivered").length < 3) await delay(25);
+  assert.equal(reopened.listAutomationRuns({ automationId: automation.id }).length, 3);
+  assert.equal(reopened.listAutomationEventDispatches().filter(item => item.status === "linked").length, 3);
+  assert.equal(reopened.listAutomationDeliveries().filter(item => item.status === "delivered").length, 3);
   assert.equal(provider.requests.filter(request => JSON.stringify(request).includes("Fix the event fixture")).length, 1);
   assert.equal(provider.requests.filter(request => JSON.stringify(request).includes("Recover the accepted event")).length, 1);
-  assert.equal(sends.length, 2);
-  assert.notEqual(sends[0].headers.get("idempotency-key"), sends[1].headers.get("idempotency-key"));
+  assert.equal(sends.length, 3);
+  assert.equal(new Set(sends.map(send => send.headers.get("idempotency-key"))).size, 3);
 });

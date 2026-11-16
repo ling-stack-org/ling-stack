@@ -549,7 +549,8 @@ Registration rules:
   automations in that workspace.
 - `GET /automations/scheduler` lists process-local scheduler state.
 - `POST /automations/scheduler/stop` stops timers but does not delete definitions or run
-  history.
+  history. The durable event inbox/outbox worker continues independently; daemon shutdown
+  stops that worker.
 - Future desktop packaging may call scheduler start for the active workspace after user
   login or explicit setting opt-in.
 

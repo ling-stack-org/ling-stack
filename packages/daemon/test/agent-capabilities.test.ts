@@ -57,6 +57,19 @@ test("a subsequent query sees edits and reports the new snapshot without a stale
   assert.deepEqual(after.items, []); assert.notEqual(after.snapshot, before.snapshot);
 });
 
+test("empty and incomplete sources remain queryable without invented symbols", async t => {
+  const { cwd } = await fixture(t);
+  await writeFile(join(cwd, "empty.ts"), "");
+  await writeFile(join(cwd, "incomplete.ts"), "const =");
+  for (const path of ["empty.ts", "incomplete.ts"]) {
+    assert.deepEqual((await query(cwd, { operation: "symbols", path })).items, []);
+  }
+  const map = await query(cwd, { operation: "repo_map", path: "." });
+  assert.deepEqual(map.items.map(item => [item.path, item.kind]), [["empty.ts", "file"], ["incomplete.ts", "file"]]);
+  assert.equal(map.coverage.partial, false);
+  assert.ok((await query(cwd, { operation: "diagnostics", path: "incomplete.ts" })).items.length);
+});
+
 test("JavaScript/JSX symbols and explicit scope use the same bounded snapshot", async t => {
   const { cwd } = await fixture(t);
   await mkdir(join(cwd, "src")); await writeFile(join(cwd, "src", "component.jsx"), "export function View() { return <div/>; }\n");
