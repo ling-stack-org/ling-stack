@@ -1,7 +1,22 @@
 # Scoped macOS Development Packaging Review
 
-Latest source/runtime rebinding: [2026-11-03 macOS development packaging review](../../docs/release/macos-source-review-2026-11-03.md).
+Latest source prerequisite review: [2026-11-17 assessment source review](#assessment-source-prerequisite-review).
+Runtime/toolchain review: [2026-11-03 macOS development packaging review](../../docs/release/macos-source-review-2026-11-03.md).
 The dated reviews below retain their historical evidence and scope.
+
+## Assessment Source Prerequisite Review
+
+Date: 2026-11-17. Reviewed feature source: `d9bd55a20499fb442d3dd61280c3a0daf7034f0e`, tree `42ffd81985bcff7fae230c013bfce45bcf05de15`, against main `27a9ccb23c59bcb890d556767f175830717b94cc`.
+
+Two independent Codex contexts reviewed the assessment runtime closure and source semantics before the static record was adopted. The Babel 7.29.12 AST audit followed 43 authored roots, parsed 1,780 files and resolved 5,861 authored literal edges without unresolved imports or parse errors. The fixed list retains all 1,841 prior inputs and appends 15 assessment contract, persistence and daemon inputs. Explicit type-only edges remain excluded.
+
+The 1,856-entry packaging map has 15 added keys, 67 changed digests, 1,774 unchanged digests and no removals. The changes bind 11 tracked source/manifest/version inputs, 55 generated locale data files and the fixed list itself. Each locale adds 105 string messages without changing prior values. The final list is a literal-only extension with SHA-256 `8296f674934d844a9233df1d91a73d5aa8ae7075115cd6a2a2555b001995bbab`; its unchanged roots and prior path order were checked separately.
+
+The reviewed JSON SHA-256 is `aea08f7e1860503a7b6715b59158d26d806fc310b21bdfda1835fe8ad66c28c9`. The fixed-order packaging aggregate is `dd9242c89c370d54a2a3efbe2b467729166c299972d7c384d13574e0f45f6d5e`; the unchanged 15-input native aggregate is `9c5f6a1a05fe63ab96de941432ec13166af8974ec52730934d5ac348c41a854e`. Aggregates encode the record's fixed-order `[path, sha256]` pairs as JSON plus a newline.
+
+Assessment execution uses tool-free text-model Runs and creates no Office native grant, lease, publication or signing authority. All native hashes, schema, approval/trust values, toolchain profiles, headers, runtime and signing fields retain their existing values. The reader, import containment, publication guards and test assertions are unchanged. This source prerequisite review does not establish final App/archive, platform, signature or GUI acceptance.
+
+## Historical Reviews
 
 Status: independently reviewed source prerequisite; final artifact acceptance separate
 Date: 2026-10-13
