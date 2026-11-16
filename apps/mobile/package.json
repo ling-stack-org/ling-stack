@@ -45,7 +45,7 @@
   "devDependencies": {
     "expo-doctor": "1.21.6",
     "expo-mcp": "0.2.4",
-    "react-dom": "19.3.0",
+    "react-dom": "19.3.1",
     "react-types-mobile": "npm:@types/react@19.3.0",
     "typescript": "~7.0.2"
   }
