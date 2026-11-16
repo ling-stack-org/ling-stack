@@ -49,9 +49,17 @@ test('BG-01/02 strict state, IDs, bounded predecode and animated containers',()=
 test('BG-05/06/07/08 opt-in surface policy and conservative material',()=>{
  const registry=new PresentationProfileRegistry();
  assert.equal(registry.resolveSurface('ling-standard','home',{userBackground:true,viewportWidth:1440}).surfaceRecipe,'translucent');
- for(const surface of ['settings','management','diagnostics','approvals','media-canvas']) assert.notEqual(registry.resolveSurface('ling-standard',surface,{userBackground:true}).surfaceRecipe,'translucent');
+ for(const surface of ['settings','management','diagnostics','approvals','media-canvas']) {
+  const policy=registry.resolveSurface('ling-standard',surface,{userBackground:true,viewportWidth:1440});
+  assert.notEqual(policy.surfaceRecipe,'translucent');
+  assert.equal(policy.artwork,'ambient');
+ }
  assert.equal(registry.resolveSurface('ling-standard','management',{userBackground:true,ambientWorkspace:true,viewportWidth:1440}).surfaceRecipe,'translucent');
- for(const context of [{viewportWidth:1179},{forcedColors:true},{reducedTransparency:true}]) assert.notEqual(registry.resolveSurface('ling-standard','home',{userBackground:true,...context}).surfaceRecipe,'translucent');
+ for(const context of [{viewportWidth:1179},{forcedColors:true},{reducedTransparency:true}]) {
+  const policy=registry.resolveSurface('ling-standard','home',{userBackground:true,...context});
+  assert.notEqual(policy.surfaceRecipe,'translucent');
+  assert.equal(policy.artwork,'off');
+ }
  assert.equal(resolveBackgroundPanelAlpha({app:'rgb(0 0 0)',panel:'#000000',opacity:.75,foregrounds:[{color:'#ffffff',minimum:4.5}]}),1);
  assert.ok(resolveBackgroundPanelAlpha({app:'#ffffff',panel:'#ffffff',opacity:.75,foregrounds:[{color:'#767676',minimum:4.5}]})>=.8);
 });
