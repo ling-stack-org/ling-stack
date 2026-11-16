@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import type { RemotePairingQrV1 } from "@ling-stack/contracts";
 import test from "node:test";
 import {
   decodeRemotePairingQrV1,
@@ -15,11 +15,7 @@ import {
   validateRemotePairingProofV1,
   validateRemotePairingQrV1,
 } from "../dist/index.js";
-
-const fixture = JSON.parse(await readFile(
-  new URL("../fixtures/v1/canonical-signing.json", import.meta.url),
-  "utf8",
-));
+import { fixture } from "./canonical-signing-fixture.ts";
 
 const now = "2026-07-19T10:00:00.000Z";
 const nowMs = Date.parse(now);
@@ -27,7 +23,7 @@ const signature = fixture.authProof.signatureBase64Url;
 const nonce0 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 const nonce1 = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE";
 
-const pairingQr = {
+const pairingQr: RemotePairingQrV1 = {
   kind: "ling_remote_pairing",
   version: 1,
   gatewayId: "gateway-1",
