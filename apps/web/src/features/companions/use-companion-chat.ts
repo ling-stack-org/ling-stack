@@ -199,12 +199,14 @@ export function useCompanionChat(input: {
       });
       if (isCurrent(session) && session.pending) {
         await reconcile(session);
+        if (!isCurrent(session)) return;
         if (session.pending && !terminal) setError(t("The reply was interrupted. Reconnect to recover or retry the same message."));
       }
     } catch (caught) {
       if (!isCurrent(session)) return;
       try {
         await reconcile(session);
+        if (!isCurrent(session)) return;
         if (session.pending) setError(t("The reply was interrupted. Reconnect to recover or retry the same message."));
       } catch {
         if (isCurrent(session)) {
@@ -220,12 +222,13 @@ export function useCompanionChat(input: {
 
   async function reconnect(): Promise<void> {
     const session = sessionRef.current;
-    if (!session || session.sending) return;
+    if (!session || !isCurrent(session) || session.sending) return;
     setError("");
     setConnection("reconnecting");
     try {
       if (session.pending) {
-        if (await reconcile(session)) return;
+        const finished = await reconcile(session);
+        if (!isCurrent(session) || finished) return;
         if (session.pending?.body) await send(session.pending.body);
         else await session.reconnect?.();
       } else await session.reconnect?.();

@@ -177,11 +177,13 @@ export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   "packages/daemon/src/features/conversations/context-compaction-projection.ts",
   // Explicit cold resource-bootstrap delta; listing alone grants no approval.
   "apps/desktop/main/daemon-lifecycle.ts",
-  // Fixed local-service IPC and its exact integration inputs; listing is not approval.
+  // Fixed local-service and companion IPC integration inputs; listing is not approval.
   "apps/desktop/main/local-services.ts",
   "apps/desktop/main/main.ts",
+  "apps/desktop/main/companion-window.ts",
   "apps/desktop/main/ipc.ts",
   "apps/desktop/preload/main-window.ts",
+  "apps/desktop/preload/companion-window.ts",
   "apps/desktop/shared/ipc-channels.ts",
   "apps/desktop/shared/desktop-capabilities.ts",
   "apps/desktop/shared/local-service-capabilities.ts",

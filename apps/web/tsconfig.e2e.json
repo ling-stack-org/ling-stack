@@ -2,22 +2,14 @@
   "compilerOptions": {
     "allowSyntheticDefaultImports": true,
     "jsx": "react-jsx",
-    "lib": [
-      "DOM",
-      "DOM.Iterable",
-      "ES2022",
-      "ESNext.Disposable"
-    ],
+    "lib": ["DOM", "DOM.Iterable", "ES2022", "ESNext.Disposable"],
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "noEmit": true,
     "skipLibCheck": true,
     "strict": true,
     "target": "ES2022",
-    "types": [
-      "node",
-      "vite/client"
-    ]
+    "types": ["node", "vite/client"]
   },
   "files": [
     "e2e/app.spec.ts",

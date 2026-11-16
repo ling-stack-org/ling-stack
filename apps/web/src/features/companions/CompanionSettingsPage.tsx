@@ -26,8 +26,8 @@ export function CompanionSettingsPage({
   const [displayName, setDisplayName] = useState("");
   const [description, setDescription] = useState("");
   const [teammateId, setTeammateId] = useState("");
-  const [proactiveEnabled, setProactiveEnabled] = useState(true);
-  const [cooldownMinutes, setCooldownMinutes] = useState(15);
+  const [proactiveEnabled, setProactiveEnabled] = useState(false);
+  const [cooldownMs, setCooldownMs] = useState(900_000);
   const [quietHoursEnabled, setQuietHoursEnabled] = useState(false);
   const [quietHoursStart, setQuietHoursStart] = useState(22);
   const [quietHoursEnd, setQuietHoursEnd] = useState(8);
@@ -53,7 +53,7 @@ export function CompanionSettingsPage({
     setDescription(selected.description);
     setTeammateId(selected.teammateId);
     setProactiveEnabled(selected.behaviorPolicy.proactiveEnabled);
-    setCooldownMinutes(Math.max(1, Math.round(selected.behaviorPolicy.cooldownMs / 60_000)));
+    setCooldownMs(selected.behaviorPolicy.cooldownMs);
     setQuietHoursEnabled(Boolean(selected.behaviorPolicy.quietHours));
     setQuietHoursStart(selected.behaviorPolicy.quietHours?.[0] ?? 22);
     setQuietHoursEnd(selected.behaviorPolicy.quietHours?.[1] ?? 8);
@@ -88,7 +88,7 @@ export function CompanionSettingsPage({
     setDisplayName("");
     setDescription("");
     setProactiveEnabled(false);
-    setCooldownMinutes(15);
+    setCooldownMs(900_000);
     setQuietHoursEnabled(false);
     setQuietHoursStart(22);
     setQuietHoursEnd(8);
@@ -108,7 +108,7 @@ export function CompanionSettingsPage({
           description: description.trim(),
           behaviorPolicy: {
             proactiveEnabled,
-            cooldownMs: Math.max(1, cooldownMinutes) * 60_000,
+            cooldownMs,
             quietHours: quietHoursEnabled ? [quietHoursStart, quietHoursEnd] : null,
           },
         })
@@ -118,7 +118,7 @@ export function CompanionSettingsPage({
           description: description.trim(),
           behaviorPolicy: {
             proactiveEnabled,
-            cooldownMs: Math.max(1, cooldownMinutes) * 60_000,
+            cooldownMs,
             quietHours: quietHoursEnabled ? [quietHoursStart, quietHoursEnd] : null,
           },
         });
@@ -212,8 +212,8 @@ export function CompanionSettingsPage({
               label={<span>{proactiveEnabled ? <Play size={14} /> : <Pause size={14} />}{t("Allow proactive companion prompts")}</span>}
             />
             <div className="companion-settings-policy-grid">
-              <label className="companion-settings-field"><span>{t("Proactive cooldown")}</span><Select value={String(cooldownMinutes)} onChange={(event) => setCooldownMinutes(Number(event.target.value))}>
-                {[...new Set([5, 15, 30, 60, 240, cooldownMinutes])].sort((a, b) => a - b).map((minutes) => <option key={minutes} value={minutes}>{minutes} {t("minutes")}</option>)}
+              <label className="companion-settings-field"><span>{t("Proactive cooldown")}</span><Select value={String(cooldownMs / 60_000)} onChange={(event) => setCooldownMs(Math.round(Number(event.target.value) * 60_000))}>
+                {[...new Set([300_000, 900_000, 1_800_000, 3_600_000, 14_400_000, cooldownMs])].sort((a, b) => a - b).map((milliseconds) => <option key={milliseconds} value={milliseconds / 60_000}>{milliseconds / 60_000} {t("minutes")}</option>)}
               </Select></label>
               <div className="companion-settings-field"><span>{t("Quiet hours")}</span><Checkbox checked={quietHoursEnabled} onChange={(event) => setQuietHoursEnabled(event.target.checked)} label={t("Pause proactive prompts during quiet hours")} /></div>
               {quietHoursEnabled ? <>

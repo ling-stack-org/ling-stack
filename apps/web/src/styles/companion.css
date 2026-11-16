@@ -172,6 +172,10 @@
   resize: vertical;
 }
 
+.companion-mini-composer button {
+  flex-shrink: 0;
+}
+
 .companion-mini-error {
   flex-shrink: 0;
   max-height: 72px;

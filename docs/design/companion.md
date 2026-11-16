@@ -1,8 +1,8 @@
 # Ling Companion
 
-Status: foundation, dialogue, memory bridge, proactive scheduler, surface contracts, adapter-selection acceptance, and Web renderer delivered
+Status: character renderer, streaming/recovery, proactive controls, and independent desktop window implemented
 Owner: repository maintainers
-Last verified: 2026-11-11
+Last verified: 2026-11-17
 Document type: product and architecture contract
 Code and test anchors: `packages/contracts/src/companions.ts`,
 `packages/core/src/companion-types.ts`, `packages/core/src/storage/sqlite/companion-store.ts`,
@@ -60,11 +60,13 @@ The Ling web renderer uses a transparent, non-pixel full-body pose atlas for 澜
 idle, thinking, greeting, celebrating, waiting, and attention poses. Phases and manifest
 actions select a registered pose; `tired` and `sad` emotions select the waiting and
 attention poses while idle. Breathing and celebration motion use CSS transforms and
-respect reduced-motion preferences. The role-first surface is an independent
-fixed overlay and does not resize or restyle the Ling application surface. It has no
-enclosing card: the name, state, messages, actions, settings link, and composer are
-translucent controls that appear around the character on hover or focus. Text input and
-model execution remain separate from the visual asset.
+respect reduced-motion preferences. The fixed companion surface contains separate character
+and conversation columns: messages, status, actions, settings, and the composer stay in the
+conversation column. Below 640 CSS pixels, the character occupies its own row above the
+conversation. Controls never overlap the character. Conversation surfaces use Ling's
+current semantic theme tokens with opaque reading backgrounds. System scheduler prompts
+are excluded from the rendered transcript. Text input and model execution remain separate
+from the visual asset.
 
 ## Contracts
 
@@ -138,6 +140,7 @@ GET    /companions/:id/events?cwd=...
 POST   /companions/:id/interactions?cwd=...
 POST   /companions/:id/proactive?cwd=...
 GET    /companions/:id/messages?cwd=...
+GET    /companions/:id/messages?cwd=...&idempotencyKey=...
 POST   /companions/:id/messages?cwd=...
 POST   /companions/:id/messages/stream?cwd=...
 ```
@@ -153,7 +156,10 @@ original array fields. Message writes accept an optional `idempotencyKey`; compl
 outcomes, including recorded reply failures, replay the existing user/AI pair. A failure
 before a reply is persisted permits a retry with the original user message, including
 after a daemon restart. Concurrent requests join the same in-flight result across JSON
-and streaming transports. A persisted pending reply returns `companion_message_in_progress`
+and streaming transports. Reusing a key with different text returns
+`409 companion_message_payload_mismatch`. A read with `idempotencyKey` returns an
+`accepted` or `unknown` submission receipt, its persisted user/reply messages when
+available, and current state; it does not dispatch a provider run. A persisted pending reply returns `companion_message_in_progress`
 instead of dispatching another run.
 
 The proactive scheduler is daemon-owned and uses the same direct-reply service as a user
@@ -181,19 +187,32 @@ hours only for that local trigger.
    durable idempotency, and single-flight execution through the existing direct-reply path.
 5. **Surface contract (delivered):** stable state, event, and message APIs with cursor
    pagination and idempotent writes for Web/Desktop clients.
-6. **Renderer acceptance (delivered for Web MVP):** render the transparent character atlas,
-   map semantic phases/actions to poses, consume new action events and state/message
-   changes through the companion event surface, present the character on a frameless
-   role-first surface with translucent controls, and expose the surface from the sidebar
-   and Settings. Desktop-native packaging and reconnect coverage remain follow-up work.
-   Provider connectivity remains covered by Ling's existing model configuration and
-   provider acceptance flows.
+6. **Conversation renderer (implemented and locally verified):** render the transparent
+   six-pose character atlas beside the conversation, consume reply text through SSE, and
+   map validated semantic phases/actions to poses. Keep a pending idempotency key in
+   localStorage, scoped by workspace and Companion; message text stays in the daemon.
+   A reconnect or reload looks up the receipt before retrying the same message and key.
+   Fetch 40 messages at a time and preserve the older-history cursor across background
+   synchronization. Abort streaming on surface disposal and ignore stale session results.
+   Sync state/history/events every five seconds when not sending, and resume on visibility
+   or online events. This is bounded polling for background semantic events, not a separate
+   live event transport.
+7. **Proactive controls (implemented and locally verified):** new UI-created Companions
+   default to proactive behavior off and a 15-minute minimum interval. Settings expose
+   enablement, 5/15/30/60/240-minute intervals, and optional hourly quiet periods using the
+   daemon computer's local time. Existing custom intervals remain selectable. Clearing a
+   quiet period writes `quietHours: null`; equal start/end is rejected by the UI.
+8. **Native surface (implemented and locally verified on macOS arm64):** the main window
+   opens a separate transparent, frameless, always-on-top Electron window, initially
+   760 by 680 pixels and clamped to the display. It can move, resize, close independently,
+   and open Companion Settings in the main window. Closing the owning main window closes
+   the Companion; hiding it leaves the Companion usable. The dedicated sandboxed preload
+   exposes only workspace/daemon context and close/settings commands, not `lingDesktop`.
+   IPC and opaque-origin request projection require the owned, trusted top-level document.
 
-The daemon tests use deterministic configured-provider fixtures. They verify that the
-Companion does not add model settings and that the bound preset reaches the same direct
-execution path. External provider connectivity remains an environment-level concern of
-Ling's existing model configuration and provider acceptance flows.
-
+Deterministic daemon/provider fixtures cover recovery and policy boundaries. They are
+separate from the real-provider acceptance described below. There is no additional model
+or credential configuration for the Companion.
 Completion means a Companion can be created for any active teammate, converse through the
 same configured model path, preserve private history and memory boundaries, emit validated
 semantic events, pause/resume proactive behavior, and switch between any Ling provider
@@ -201,21 +220,21 @@ without changing Companion data.
 
 ## Completion work plan
 
-The following work is planned for the Web and desktop companion surfaces. A milestone is
+The following work tracks the Web and desktop companion surfaces. A milestone is
 complete only after its implementation and relevant acceptance checks pass.
 
 - [x] **Character resources:** use a transparent, non-pixel full-body Yui pose atlas based
   on the supplied character reference. Register idle, thinking, greeting, celebration,
   waiting, and attention poses; size the character for readable adult proportions on
   desktop and smaller viewports. Respect reduced-motion preferences.
-- [ ] **Conversation surface:** consume the existing streaming message endpoint, retain
+- [x] **Conversation surface:** consume the existing streaming message endpoint, retain
   one idempotency key per pending user message across retries and reloads, load older
   history with the existing cursor, and reconcile messages/state after connectivity
   returns. Isolate pending requests and drafts by workspace and companion.
-- [ ] **Proactive controls:** expose proactive enablement, cooldown, and optional quiet
+- [x] **Proactive controls:** expose proactive enablement, cooldown, and optional quiet
   hours in Settings. Make creation defaults explicit and preserve the remaining policy
   fields when editing one setting.
-- [ ] **Independent desktop window:** provide a transparent companion window with its
+- [x] **Independent desktop window:** provide a transparent companion window with its
   own bounded preload/IPC authority, workspace/companion selection, native dragging and
   close behavior. Keep it usable while the main Ling window is hidden. Include the
   renderer, preload, and character assets in desktop builds.
@@ -225,5 +244,32 @@ complete only after its implementation and relevant acceptance checks pass.
   runtime check, and local desktop packaging/runtime checks. Review the final diff, pass
   the pull-request CI gates, and merge the reviewed change into main.
 
+## Acceptance evidence and limits
+
+- Focused daemon Companion suites: 17 tests passed, including receipt lookup, retry
+  deduplication, changed-text rejection, restart recovery, memory, proactive scheduling,
+  quiet-hour clearing, and origin/access checks.
+- Production-build Web end-to-end acceptance: 10 tests passed, covering chunked SSE before completion,
+  truncated-stream retry, receipt recovery after reload, older-history pagination,
+  session changes during receipt recovery, proactive defaults and settings, exact custom
+  cooldown retention, compiled Chinese controls, and non-overlapping character/chat layout.
+  Layout was exercised across all six built-in themes, a 1440 by 1000 desktop viewport, a 390 by 844 narrow
+  viewport, and reduced motion. These are configured mock-provider browser checks.
+- Actual Electron 45.3.1 on macOS arm64: a separate sandboxed window loaded packaged Web
+  build files, displayed history, sent a real-model reply, moved and resized, closed
+  without closing the main window, reopened, and was cleaned up when its owner closed.
+  The Companion renderer had no page errors and did not receive the main-window bridge.
+- An isolated daemon used the existing loopback provider with `gpt-5.6-sol` for real
+  multi-turn streaming, context recall, native-window dialogue, a daemon-owned proactive
+  tick, quiet-hour refusal, cooldown refusal, and idempotent replay. The original
+  workspace's credentials/model settings were not modified. Its configured `gpt-5.5`
+  model was unavailable at the proxy, so the available model was selected only in the
+  isolated acceptance workspace. After 41.7 minutes of continuous daemon operation, a
+  fresh request still recalled the initial test code correctly and completed in 2,817 ms.
+- Full macOS `package:mac` was attempted. The current machine's Xcode/Command Line Tools
+  use SDK 27.x, while the Office native publication contract admits SDK 26.5 toolchains.
+  The full-package gate remains blocked locally; native Companion execution does not
+  establish a signed/notarized installation package. Windows native runtime acceptance
+  remains unverified.
 Additional characters, speech, articulated Live2D animation, and work-event-driven
 proactive behavior remain separate enhancements.
