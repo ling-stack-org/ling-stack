@@ -330,6 +330,7 @@
     "test/recovery-discovery-prefix.test.ts",
     "test/recovery-discovery-queued-admission.test.mjs",
     "test/recovery-discovery-scheduled-ownership.test.mjs",
+    "test/review-annotations.test.ts",
     "test/remote-conversation-facade.test.mjs",
     "test/remote-gateway-security.test.mjs",
     "test/remote-reply-authority.test.mjs",
