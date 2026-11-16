@@ -1864,7 +1864,7 @@
     "packages/daemon/src/features/harness/evaluations/assurance-association.ts": "e6db52a53ca11a8dcda9e15d25617b427920d134a1228c9d19085564e4d9a092",
     "packages/daemon/src/features/harness/evaluations/storage-projection-validation.ts": "b54c0e9dd9bfa2162e73f74904ca200b3d72fb67d065fe114667b121460280c6",
     "packages/daemon/src/features/runs/node-rerun-observation.ts": "14a192ad3d97ae9588956c8196a4150d33d5ed7a6b346858a6950d19b7b8ef93",
-    "apps/desktop/main/companion-window.ts": "3062e1ebb53f9810d6d3bf5739811ad56c22da71becc1876ac3513c816af5d4e",
+    "apps/desktop/main/companion-window.ts": "2d8a1e31745263876c573bb5d6a53c3fa38c9aa97ff6bb1518bf3684a800e43e",
     "apps/desktop/preload/companion-window.ts": "6e2f2a3ce9b32788881be6b58b6e0f930606c6100534bbef89d8e38907bec515"
   },
   "headers": {

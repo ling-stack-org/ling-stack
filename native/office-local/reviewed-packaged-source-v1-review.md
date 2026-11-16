@@ -72,6 +72,22 @@ All 1,843 packaging and 15 Office native inputs match this record. The sandbox
 record and every runtime, toolchain, OS, signing and trust field retain the
 approved values above.
 
+Integration of `eda498d93` (`fix(desktop): allow companion teammate lookup`)
+changes only the fixed `apps/desktop/main/companion-window.ts` input. Its network
+filter and route check allow the owned top-level Companion document to project
+GET `/teammates` requests while retaining null Origin for nested, non-GET,
+unowned and foreign requests. The paired `companion-window.test.ts` assertions
+cover the top-level positive and nested-path negative; the targeted suite passed
+3/3. There are no import, dependency, native input, runtime/toolchain/OS,
+signing/trust or false/unbound safety-field changes. Only the packaging digest
+changes from `3062e1ebb53f9810d6d3bf5739811ad56c22da71becc1876ac3513c816af5d4e`
+to `2d8a1e31745263876c573bb5d6a53c3fa38c9aa97ff6bb1518bf3684a800e43e`.
+The exact Office record SHA-256 is
+`c1af02b777c71acde3bcfd222b04ba1035f0051f60fd6ed3d77f23b2617b26da` and the
+fixed packaging aggregate is
+`48fb0d593fd30d3c612b141f1ac364e2235bf381f0601e46db1c60aa2de84d08`. All
+1,843 packaging and 15 Office native inputs match this record.
+
 ## Historical baseline, 2026-10-13
 
 Status: independently reviewed source prerequisite; final artifact acceptance separate
