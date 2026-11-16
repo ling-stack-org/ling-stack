@@ -248,13 +248,15 @@ jobs:
           set -euo pipefail
           desktop_bun="$(command -v bun)"
           desktop_shell="$(command -v bash)"
+          desktop_go="$(command -v go)"
           if [[ "$RUNNER_OS" == "Windows" ]]; then
             desktop_bun="$(cygpath -m "$desktop_bun")"
             desktop_shell="$(cygpath -m "$desktop_shell")"
+            desktop_go="$(cygpath -m "$desktop_go")"
           fi
           node scripts/gstack/prepare-desktop-candidate.mjs \
             --workspace "$RUNNER_TEMP/gstack-candidate" \
-            --bun "$desktop_bun" --shell "$desktop_shell" --ci-ephemeral \
+            --bun "$desktop_bun" --shell "$desktop_shell" --go "$desktop_go" --ci-ephemeral \
             --selection "$GITHUB_WORKSPACE/.ling-stack/build/gstack-desktop-selection.json"
       - name: Require original native and resource prerequisites before packaging
         if: env.DESKTOP_OPERATION == 'build'
