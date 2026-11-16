@@ -1,3 +1,4 @@
+import type { AutomationEventWorker } from "./event-worker.js";
 import { randomUUID } from "node:crypto";
 import type {
   AutomationDefinition,
@@ -573,4 +574,3 @@ export class AutomationSchedulerRegistry {
 function automationScheduleIdentity(automation: AutomationDefinition): string {
   return JSON.stringify([automation.trigger, automation.rrule]);
 }
-import type { AutomationEventWorker } from "./event-worker.js";

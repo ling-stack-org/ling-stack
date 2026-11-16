@@ -130,7 +130,7 @@ F1 只验证这些任务的元数据、注入补丁可应用性和 synthetic 控
 
 ### 5.6 节点级重跑合同
 
-本阶段已实现合同、Host 只读观察和 admission plan 接线：确认旧执行停止、冻结输入和图版本、校验受影响依赖与当前策略，并在事实完整时生成确定性 Host-owned plan；创建新执行身份、重新审批有副作用的操作、保留旧证据仍属于未来执行接线。plan 不写 Store、不创建 Run/Attempt/fence/approval、不调用 Provider，且提交前必须再次验证 source snapshot、current policy 和 idempotency key。不能根据一个诊断页面中的 fence 状态直接重放命令。
+本阶段已实现合同、Host 只读观察和 admission plan 接线：确认旧执行停止、冻结输入和图版本、校验受影响依赖与当前策略，并在事实完整时生成确定性 Host-owned plan；R1/R2 的普通图提交层另行创建后继步骤并交给现有 Host 生成新身份与审批，保留历史证据。plan 不写 Store、不创建 Run/Attempt/fence/approval、不调用 Provider，且提交前必须再次验证 source snapshot、current policy 和 idempotency key。不能根据一个诊断页面中的 fence 状态直接重放命令。
 
 ## 6. 需求与验收方向
 
@@ -145,7 +145,7 @@ F1 只验证这些任务的元数据、注入补丁可应用性和 synthetic 控
 | R07 | SDK 从真实包在仓外消费，公开与非公开导入均有正反测试 | F2 |
 | R08 | 只对测试矩阵中的环境形成证据，未测试范围不冒充支持承诺 | F2 |
 | R09 | 诊断无恢复、派发、审批或敏感数据泄露副作用 | F4 |
-| R10 | 重跑不复用旧审批或执行身份，不自动重放未知副作用 | F5 合同、只读观察和 admission plan，真实执行未来另验收 |
+| R10 | 重跑不复用旧审批或执行身份，不自动重放未知副作用 | F5 合同、观察与普通图提交；高级 profile/真实 Provider 另验收 |
 
 详细验收用例及字段合同见[详细设计](ling-framework-complementary-detailed-design.md)。
 

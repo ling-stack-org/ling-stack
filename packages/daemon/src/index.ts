@@ -1,3 +1,5 @@
+import { AutomationEventWorker } from "./features/automations/event-worker.js";
+import { startDetachedRunAndResolveReady } from "./features/runs/detached.js";
 import { resolveProviderForRun } from "./features/runs/providers.js";
 import { TaskSupervisor } from "./features/runs/task-supervisor.js";
 import { orchestrateChannelWorkflow } from "./features/channels/orchestrator.js";
@@ -374,6 +376,7 @@ export function createDaemonServer(
   const providerStartupRefresh = new ProviderStartupRefreshService({ secretResolver, controlPlaneEvents, startupState });
   const providerImportPreflight = new ProviderImportPreflightService({ secretResolver, controlPlaneEvents });
   let automationSchedulers: AutomationSchedulerRegistry;
+  let automationEvents: AutomationEventWorker;
   let startupOptionalWarmups: StartupOptionalWarmupCoordinator;
   let channelTurnDispatchWorker: ChannelTurnDispatchWorkerRegistry;
   let channelTurnDispatchReady = false;
@@ -524,6 +527,7 @@ export function createDaemonServer(
     reconcileHarnessProjections(store);
     if (channelTurnDispatchReady) channelTurnDispatchWorker?.start(store);
     companionSchedulers?.start(cwd);
+    if (store.listAutomationEventSources().some(source => source.enabled)) automationEvents?.start(cwd);
     taskSupervisor?.start(cwd);
     learningReviewCoordinator?.registerStore(store);
     if (!memorySemanticServices.has(store)) {
@@ -694,7 +698,7 @@ export function createDaemonServer(
         target: nativeRunTargetDispatcher,
       })
     : undefined;
-  const automationEvents = new AutomationEventWorker(storeRegistry, imDestinations, (request, hooks) =>
+  automationEvents = new AutomationEventWorker(storeRegistry, imDestinations, (request, hooks) =>
     startDetachedRunAndResolveReady(onReady => executeRunRequest(request, createDetachedRunExecutionSink(),
       runnerRegistry, storeRegistry, activeRuns, runtimeSupervisor, secretResolver, mcpBroker, {
         onRunReady: (id, info) => { hooks.onRunReady?.(id, info); onReady(id); },
@@ -1599,5 +1603,3 @@ export async function startDaemon(
   return daemon;
 }
 import { configureNormalNarrationPublication, recoverNormalNarrationPublications } from "./features/conversations/normal-narration-publication.js";
-import { AutomationEventWorker } from "./features/automations/event-worker.js";
-import { startDetachedRunAndResolveReady } from "./features/runs/detached.js";

@@ -1,3 +1,4 @@
+import type { AutomationEventStore } from "./automation-event-types.js";
 import type { GoalAcceptanceCriterion, GoalAcceptanceEvidence, GoalSupervisionPolicy } from "./goal-supervision.js";
 import type { ChannelSessionPage, ChannelSessionSummary, CreateChannelSessionInput, ListChannelSessionsOptions, UpdateChannelSessionRequest } from "./channel-session-types.js";
 import type { MemoryWikiStore } from "./memory-wiki-types.js";
@@ -3404,4 +3405,3 @@ export function createArtifactId(): string {
 export function createRunInterventionId(): string {
   return `rint_${randomUUID()}`;
 }
-import type { AutomationEventStore } from "./automation-event-types.js";

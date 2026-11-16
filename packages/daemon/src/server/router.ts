@@ -1,3 +1,4 @@
+import { handleAutomationEventRoute, isAutomationEventIngress } from "../features/automations/event-routes.js";
 import { handleNodeRerunSubmission } from "../features/runs/node-rerun-submission.js";
 import { handleChannelSessions, handleChannelSessionDirectoryRepair } from "../features/channels/session-routes.js";
 import { handleMemorySemanticRoute } from "../features/memory/semantic-routes.js";
@@ -3136,4 +3137,3 @@ function createBlockedTeammateDirectReply(
     new Date().toISOString(),
   );
 }
-import { handleAutomationEventRoute, isAutomationEventIngress } from "../features/automations/event-routes.js";

@@ -138,98 +138,98 @@ export async function runAutomation(input: RunAutomationInput): Promise<RunAutom
   }
   let linkedRunId: string | undefined;
   try {
-  const runRequest = buildAutomationRunRequest({
-    store,
-    cwd: input.cwd,
-    automation,
-    automationRun,
-    context,
-    idempotencyKey: `automation-run:${automationRun.id}`,
-  });
+    const runRequest = buildAutomationRunRequest({
+      store,
+      cwd: input.cwd,
+      automation,
+      automationRun,
+      context,
+      idempotencyKey: `automation-run:${automationRun.id}`,
+    });
 
-  const applyRunReady = (runId: string, info?: RunReadyInfo): void => {
-    const run = store.getRun(runId);
-    if (!run) return;
-    const alreadyLinked = linkedRunId === runId || automationRun.runId === runId;
-    linkedRunId = runId;
-    const readyAt = new Date().toISOString();
-    let contextArtifactId = automationRun.contextPreviewArtifactId;
-    if (!alreadyLinked) {
-      const artifact = createAutomationContextArtifact({
-        store,
-        automation,
-        automationRun,
-        run,
-        context,
-        now: readyAt,
-      });
-      contextArtifactId = artifact.id;
-      store.appendEvent(run.id, "artifact_created", {
-        artifact,
-        automationId: automation.id,
-        automationRunId: automationRun.id,
-      });
-    }
-    const queued = info?.queued === true;
-    automationRun = store.updateAutomationRun(
-      automationRun.id,
-      {
-        runId,
-        status: queued ? "queued" : "running",
-        ...(queued ? {} : { startedAt: automationRun.startedAt ?? readyAt }),
-        ...(queued && !automationRun.startedAt ? { startedAt: null } : {}),
-        contextPreviewArtifactId: contextArtifactId,
-      },
-      readyAt,
-    ) ?? automationRun;
-    input.storeRegistry.rememberRun(runId, store);
-  };
-
-  input.event?.assertCurrent();
-  const runId = await input.startRun(runRequest, {
-    onRunReady: applyRunReady,
-    afterRunTerminal: (terminalRun) => {
-      const completedAt = terminalRun.endedAt ?? new Date().toISOString();
-      const status = mapRunStatusToAutomationRunStatus(terminalRun.status);
-      store.updateAutomationRun(
+    const applyRunReady = (runId: string, info?: RunReadyInfo): void => {
+      const run = store.getRun(runId);
+      if (!run) return;
+      const alreadyLinked = linkedRunId === runId || automationRun.runId === runId;
+      linkedRunId = runId;
+      const readyAt = new Date().toISOString();
+      let contextArtifactId = automationRun.contextPreviewArtifactId;
+      if (!alreadyLinked) {
+        const artifact = createAutomationContextArtifact({
+          store,
+          automation,
+          automationRun,
+          run,
+          context,
+          now: readyAt,
+        });
+        contextArtifactId = artifact.id;
+        store.appendEvent(run.id, "artifact_created", {
+          artifact,
+          automationId: automation.id,
+          automationRunId: automationRun.id,
+        });
+      }
+      const queued = info?.queued === true;
+      automationRun = store.updateAutomationRun(
         automationRun.id,
         {
-          runId: terminalRun.id,
-          status,
-          completedAt,
-          errorMessage: terminalRun.errorMessage ?? null,
+          runId,
+          status: queued ? "queued" : "running",
+          ...(queued ? {} : { startedAt: automationRun.startedAt ?? readyAt }),
+          ...(queued && !automationRun.startedAt ? { startedAt: null } : {}),
+          contextPreviewArtifactId: contextArtifactId,
         },
-        completedAt,
-      );
-      void emitAutomationRunNotification(input, automation, terminalRun, status, completedAt);
-    },
-  });
+        readyAt,
+      ) ?? automationRun;
+      input.storeRegistry.rememberRun(runId, store);
+    };
 
-  if (!runId) {
-    const failedAt = new Date().toISOString();
-    automationRun = store.updateAutomationRun(
-      automationRun.id,
-      {
-        status: "failed",
-        completedAt: failedAt,
-        errorMessage: "Automation run could not start.",
+    input.event?.assertCurrent();
+    const runId = await input.startRun(runRequest, {
+      onRunReady: applyRunReady,
+      afterRunTerminal: (terminalRun) => {
+        const completedAt = terminalRun.endedAt ?? new Date().toISOString();
+        const status = mapRunStatusToAutomationRunStatus(terminalRun.status);
+        store.updateAutomationRun(
+          automationRun.id,
+          {
+            runId: terminalRun.id,
+            status,
+            completedAt,
+            errorMessage: terminalRun.errorMessage ?? null,
+          },
+          completedAt,
+        );
+        void emitAutomationRunNotification(input, automation, terminalRun, status, completedAt);
       },
-      failedAt,
-    ) ?? automationRun;
-    void emitAutomationRunNotification(input, automation, undefined, "failed", failedAt);
-  } else if (!linkedRunId) {
-    applyRunReady(runId);
-  }
+    });
 
-  const latestAutomation = store.getAutomationDefinition(automation.id) ?? automation;
-  return {
-    cwd: input.cwd,
-    automation: latestAutomation,
-    automationRun: store.getAutomationRun(automationRun.id) ?? automationRun,
-    thread,
-    run: runId ? store.getRun(runId) : undefined,
-    context,
-  };
+    if (!runId) {
+      const failedAt = new Date().toISOString();
+      automationRun = store.updateAutomationRun(
+        automationRun.id,
+        {
+          status: "failed",
+          completedAt: failedAt,
+          errorMessage: "Automation run could not start.",
+        },
+        failedAt,
+      ) ?? automationRun;
+      void emitAutomationRunNotification(input, automation, undefined, "failed", failedAt);
+    } else if (!linkedRunId) {
+      applyRunReady(runId);
+    }
+
+    const latestAutomation = store.getAutomationDefinition(automation.id) ?? automation;
+    return {
+      cwd: input.cwd,
+      automation: latestAutomation,
+      automationRun: store.getAutomationRun(automationRun.id) ?? automationRun,
+      thread,
+      run: runId ? store.getRun(runId) : undefined,
+      context,
+    };
   } catch (error) {
     if (!linkedRunId && !store.getAutomationRun(automationRun.id)?.runId) {
       const failedAt = new Date().toISOString();

@@ -5,11 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
-import { createSqliteRunStore, DEFAULT_WORKSPACE_ID, type RunStore } from "@ling-stack/core";
+import { automationEventDigest, createSqliteRunStore, DEFAULT_WORKSPACE_ID, type RunStore } from "@ling-stack/core";
 import { createDaemonServer } from "../dist/index.js";
 import { startLoopbackPiProvider } from "./support/loopback-pi-provider-fixture.mjs";
 
-test("signed HTTP events execute a real Pi Run once and deliver only to explicitly bound destinations", { timeout: 40_000 }, async t => {
+test("signed HTTP events execute once, scope delivery and recover accepted work after restart", { timeout: 60_000 }, async t => {
   const root = await realpath(await mkdtemp(join(tmpdir(), "ling-event-integration-"))), cwd = join(root, "workspace");
   await mkdir(cwd);
   const previousHome = process.env.LING_STACK_HOME; process.env.LING_STACK_HOME = join(root, "user");
@@ -24,7 +24,7 @@ test("signed HTTP events execute a real Pi Run once and deliver only to explicit
     return originalFetch(input, init);
   });
   let store: RunStore | undefined;
-  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, authToken: "event-fixture-token", defaultWorkspaceCwd: cwd,
+  const makeDaemon = () => createDaemonServer({ host: "127.0.0.1", port: 0, authToken: "event-fixture-token", defaultWorkspaceCwd: cwd,
     harness: { toolBroker: { mode: "enforce" } },
     channels: { autoRoute: false, intentSelector: false, terminalReports: false, teamObserverBus: false },
   }, { storeFactory: path => { store = createSqliteRunStore(path); return store; },
@@ -32,6 +32,7 @@ test("signed HTTP events execute a real Pi Run once and deliver only to explicit
     secretResolver: { status: ref => ({ ref, kind: "env", configured: true }), resolve: ref => ({ configured: true,
       value: ref === "env:EVENT_SIGNING_KEY" ? "fixture-signing-key" : ref === "env:EVENT_DESTINATION" ? "https://hooks.slack.com/services/T/B/test" : undefined }) },
   });
+  let daemon = makeDaemon();
   t.after(async () => { try { await daemon.stop(); await provider.close(); }
     finally { if (previousHome === undefined) delete process.env.LING_STACK_HOME; else process.env.LING_STACK_HOME = previousHome;
       await rm(root, { recursive: true, force: true }); } });
@@ -74,4 +75,21 @@ test("signed HTTP events execute a real Pi Run once and deliver only to explicit
   assert.equal(owned.listAutomationDeliveries()[0]?.status, "delivered"); assert.equal(sends.length, 1);
   assert.equal(sends[0].headers.get("idempotency-key"), owned.listAutomationDeliveries()[0].id);
   assert.match(sends[0].body, /Issue handled with verified result/);
+
+  const payload = { issue: "Recover the accepted event" }, acceptedAt = new Date().toISOString();
+  owned.acceptAutomationEvent({ sourceId: "signed-issues", externalId: "restart-issue", type: "issue.opened",
+    occurredAt: acceptedAt, payload, payloadDigest: automationEventDigest(payload) }, 1, acceptedAt);
+  await daemon.stop();
+  daemon = makeDaemon();
+  await daemon.start();
+  const reopened = store!;
+  const recoveryDeadline = Date.now() + 25_000;
+  while (Date.now() < recoveryDeadline && reopened.listAutomationDeliveries().filter(item => item.status === "delivered").length < 2) await delay(25);
+  assert.equal(reopened.listAutomationRuns({ automationId: automation.id }).length, 2);
+  assert.equal(reopened.listAutomationEventDispatches().filter(item => item.status === "linked").length, 2);
+  assert.equal(reopened.listAutomationDeliveries().filter(item => item.status === "delivered").length, 2);
+  assert.equal(provider.requests.filter(request => JSON.stringify(request).includes("Fix the event fixture")).length, 1);
+  assert.equal(provider.requests.filter(request => JSON.stringify(request).includes("Recover the accepted event")).length, 1);
+  assert.equal(sends.length, 2);
+  assert.notEqual(sends[0].headers.get("idempotency-key"), sends[1].headers.get("idempotency-key"));
 });

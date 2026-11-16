@@ -287,7 +287,7 @@ Source revision, enabled definition and definition digest are rechecked immediat
 before execution. A durable lease and stable event/definition idempotency key recover
 accepted work through the existing automation owner. Busy automations retry every two
 seconds, with a 100-attempt dispatch cap; failures remain visible in
-`GET /automation-events?cwd=...`. The worker starts for explicitly registered sources,
+`GET /automation-events?cwd=...`. The worker starts for enabled persisted sources when their trusted workspace opens,
 accepted ingress and scheduler registration; it does not scan arbitrary workspaces.
 
 Terminal Runs create one outbox item per explicitly bound destination. Delivery uses
