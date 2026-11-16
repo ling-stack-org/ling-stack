@@ -215,7 +215,7 @@
     "native/office-local/scripts/build.mjs": "5e4cd3082c689439d5b8bd012c0d44a3e8e042718305118e6e895491c4cfc1ef",
     "native/sandbox/Cargo.lock": "290ca72ac99599eb21b54eb7ec449a1ec4ed90b459d71791bfa2385825da792d",
     "native/sandbox/Cargo.toml": "01870bf261735745ae72a5c908e70de0c2a097d7bf2033dd4bb0a04a87fe8984",
-    "native/sandbox/reviewed-codesign-source-v1.json": "bef1d965a147f4cb4444e80e64db09eac2317e5ed603b249fa25352116384763",
+    "native/sandbox/reviewed-codesign-source-v1.json": "3b6404b32c2e52166fb581744c4fccb1232e21e4cd847b0dd936032f7f1be3bf",
     "native/sandbox/rust-toolchain.toml": "3003a09987459e5921dcddde94f8ea929b2d5e66efbbc30160e9d78de7ff010a",
     "native/sandbox/scripts/build.mjs": "4be37f1916123df92c3c0d899de72104b0dedaed65f8a71aab1b78478a7121be",
     "native/sandbox/src/codesign.rs": "91b11c723933a4fc1560e06e5d4dcc3136dbb08b0ec715f19fe889d7edc8fe73",
@@ -1907,8 +1907,8 @@
   "runtime": {
     "platform": "darwin",
     "architecture": "arm64",
-    "electron": "45.2.1",
-    "node": "24.22.1",
+    "electron": "45.3.1",
+    "node": "24.22.2",
     "uv": "1.52.1"
   },
   "signing": {
