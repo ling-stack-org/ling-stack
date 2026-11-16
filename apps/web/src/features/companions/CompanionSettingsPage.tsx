@@ -57,7 +57,7 @@ export function CompanionSettingsPage({
     setQuietHoursEnabled(Boolean(selected.behaviorPolicy.quietHours));
     setQuietHoursStart(selected.behaviorPolicy.quietHours?.[0] ?? 22);
     setQuietHoursEnd(selected.behaviorPolicy.quietHours?.[1] ?? 8);
-  }, [selected]);
+  }, [selectedId]);
 
   async function refresh(): Promise<void> {
     if (!cwd.trim()) return;
@@ -126,6 +126,13 @@ export function CompanionSettingsPage({
         ? current.map((item) => item.id === response.companion.id ? response.companion : item)
         : [...current, response.companion]);
       setSelectedId(response.companion.id);
+      setDisplayName(response.companion.displayName);
+      setDescription(response.companion.description);
+      setProactiveEnabled(response.companion.behaviorPolicy.proactiveEnabled);
+      setCooldownMs(response.companion.behaviorPolicy.cooldownMs);
+      setQuietHoursEnabled(Boolean(response.companion.behaviorPolicy.quietHours));
+      setQuietHoursStart(response.companion.behaviorPolicy.quietHours?.[0] ?? 22);
+      setQuietHoursEnd(response.companion.behaviorPolicy.quietHours?.[1] ?? 8);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {

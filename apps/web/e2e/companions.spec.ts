@@ -381,6 +381,43 @@ test("the first companion form defaults to proactive behavior off", async ({ pag
   } finally { await f.close(); }
 });
 
+test("refresh preserves unsaved companion settings while selection changes load the chosen companion", async ({ page }) => {
+  const f = await fixture(page, "normal", 0, { secondCompanion: true });
+  try {
+    const panel = await openPanel(page);
+    await panel.getByRole("button", { name: "Manage companions in Settings" }).click();
+    const settings = page.locator(".companion-settings-page");
+    await expect(settings.getByLabel("Companion name")).toHaveValue("Yui");
+    await settings.getByLabel("Companion name").fill("  Draft Yui  ");
+    await settings.locator("textarea").fill("An unsaved description");
+    await settings.getByText("Allow proactive companion prompts", { exact: true }).click();
+    await settings.getByLabel("Proactive cooldown").selectOption("30");
+    await settings.getByText("Pause proactive prompts during quiet hours", { exact: true }).click();
+    await settings.getByLabel("Quiet hours start").selectOption("21");
+    await settings.getByLabel("Quiet hours end").selectOption("7");
+    const refreshed = page.waitForResponse(response => new URL(response.url()).pathname === "/companions"
+      && response.request().method() === "GET");
+    await settings.getByRole("button", { name: "Refresh", exact: true }).click();
+    await refreshed;
+    await expect(settings.getByLabel("Companion name")).toHaveValue("  Draft Yui  ");
+    await expect(settings.locator("textarea")).toHaveValue("An unsaved description");
+    await expect(settings.getByLabel("Allow proactive companion prompts")).toBeChecked();
+    await expect(settings.getByLabel("Proactive cooldown")).toHaveValue("30");
+    await expect(settings.getByLabel("Quiet hours start")).toHaveValue("21");
+    await expect(settings.getByLabel("Quiet hours end")).toHaveValue("7");
+    await settings.getByRole("button", { name: "Save companion", exact: true }).click();
+    await expect(settings.getByLabel("Companion name")).toHaveValue("Draft Yui");
+    expect(f.companion.description).toBe("An unsaved description");
+    expect(f.companion.behaviorPolicy).toEqual({ proactiveEnabled: true, cooldownMs: 1_800_000, quietHours: [21, 7] });
+    await settings.locator(".companion-settings-list").getByRole("button", { name: /Mio/ }).click();
+    await expect(settings.getByLabel("Companion name")).toHaveValue("Mio");
+    await expect(settings.locator("textarea")).toHaveValue("Companion");
+    await expect(settings.getByLabel("Allow proactive companion prompts")).not.toBeChecked();
+    await expect(settings.getByLabel("Proactive cooldown")).toHaveValue("15");
+    await expect(settings.getByLabel("Pause proactive prompts during quiet hours")).not.toBeChecked();
+  } finally { await f.close(); }
+});
+
 test("editing a name preserves zero and non-minute custom cooldowns", async ({ page }) => {
   for (const cooldownMs of [0, 90_001]) {
     const f = await fixture(page, "normal", 0, { cooldownMs });
