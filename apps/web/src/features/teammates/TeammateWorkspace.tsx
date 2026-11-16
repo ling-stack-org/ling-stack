@@ -1395,8 +1395,11 @@ export function TeammateWorkspace({
         setMessageDraft(current => current || draftSnapshot);
         setPendingAttachments(current => current.length ? current : attachmentsSnapshot.map(item => ({ ...item, deleteOnRemove: false })));
         setPendingDirectLinkPreviewIds(current => current.length ? current : linkPreviewIdsSnapshot);
-        workspaceRequestOwner.reportError(operation, observationReads.shouldMergeTransport(error) || error instanceof UnconfirmedConversationSubmissionError
-          ? t("Pending confirmation") : error instanceof Error ? error.message : String(error));
+        // The durable lookup key is the only evidence available after an
+        // unconfirmed submission. Until a receipt proves acceptance or a
+        // retryable rejection, the composer must remain pending regardless
+        // of the transport error that interrupted the stream.
+        workspaceRequestOwner.reportError(operation, t("Pending confirmation"));
         return;
       }
       const failure = directSendLifecycle.fail(sendOperation);
