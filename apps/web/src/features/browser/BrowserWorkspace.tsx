@@ -1,10 +1,15 @@
+import { BrowserManagementPanel } from "./BrowserManagementPanel.js";
+import type { DesktopBrowserAnnotation } from "../../../../desktop/shared/browser-annotations.js";
+import { BrowserAnnotationEditor } from "./BrowserAnnotationEditor.js";
+import type { BrowserAnnotationHandler } from "./browser-annotation-submission.js";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { ArrowLeft, ArrowRight, ExternalLink, Globe2, LockKeyhole, Maximize2, Minimize2, Plus, RotateCw, Square, X } from "lucide-react";
+import { ArrowLeft, ArrowRight, ExternalLink, Globe2, LockKeyhole, Maximize2, Minimize2, Plus, RotateCw, Settings2, Square, MousePointer2, Scan, X } from "lucide-react";
 import type { DesktopBrowserScope } from "@ling-stack/contracts";
 import type { DesktopBrowserUserAction, DesktopBrowserWorkspaceState } from "../../../../desktop/shared/browser-capabilities.js";
 import { Button, EmptyState, IconButton, InlineFeedback, Input } from "../../shared/ui/index.js";
 import { useI18n } from "../../i18n.js";
 import { useBrowserViewport } from "./use-browser-viewport.js";
+import { BrowserPreferencesPanel } from "./BrowserPreferencesPanel.js";
 import "./browser-workspace.css";
 
 type BrowserAction = DesktopBrowserUserAction extends infer Action ? Action extends DesktopBrowserUserAction ? Omit<Action, "workspaceCwd" | "scope"> : never : never;
@@ -16,6 +21,7 @@ export function browserAddress(value: string): string {
 }
 
 interface BrowserWorkspaceProps {
+  readonly onAnnotation?: BrowserAnnotationHandler;
   readonly workspaceCwd: string; readonly surface: DesktopBrowserScope["surface"]; readonly ownerId: string;
 }
 
@@ -35,16 +41,20 @@ export function BrowserWorkspace({ evidence, ...workspace }: BrowserWorkspacePro
   );
 }
 
-function BrowserPage({ workspaceCwd, surface, ownerId }: BrowserWorkspaceProps): React.JSX.Element {
+function BrowserPage({ workspaceCwd, surface, ownerId, onAnnotation }: BrowserWorkspaceProps): React.JSX.Element {
   const { t } = useI18n();
   const capability = window.lingDesktop?.browser;
   const workspace = useMemo(() => ({ workspaceCwd, scope: { surface, ownerId } }), [workspaceCwd, surface, ownerId]);
   const [state, setState] = useState<DesktopBrowserWorkspaceState>();
   const [address, setAddress] = useState("");
   const [busy, setBusy] = useState(false);
+  const [selecting, setSelecting] = useState(false);
   const [error, setError] = useState("");
   const [expanded, setExpanded] = useState(false);
   const [newTab, setNewTab] = useState(false);
+  const [annotation, setAnnotation] = useState<DesktopBrowserAnnotation>();
+  const [annotationStatus, setAnnotationStatus] = useState<"available" | "stale">();
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const hostRef = useRef<HTMLDivElement>(null), addressRef = useRef<HTMLInputElement>(null);
   const lifetime = useRef(0);
   const tab = state?.tabs.find(item => item.id === state.activeTabId);
@@ -64,7 +74,11 @@ function BrowserPage({ workspaceCwd, surface, ownerId }: BrowserWorkspaceProps):
         .catch(() => { if (lifetime.current === epoch) setError(t("Browser is unavailable in this workspace.")); })
         .finally(() => { reading = false; if (dirty) { dirty = false; read(); } });
     };
-    const unsubscribe = capability?.onStateChanged(read); read();
+    let unsubscribe: (() => void) | undefined;
+    void capability?.act({ ...workspace, action: "activate_workspace" }).then(value => {
+      if (lifetime.current !== epoch) return;
+      commitState(value); unsubscribe = capability.onStateChanged(read); read();
+    }).catch(() => { if (lifetime.current === epoch) setError(t("Browser is unavailable in this workspace.")); });
     return () => { lifetime.current++; unsubscribe?.(); };
   }, [capability, workspace, t, commitState]);
 
@@ -74,11 +88,16 @@ function BrowserPage({ workspaceCwd, surface, ownerId }: BrowserWorkspaceProps):
   const act = useCallback((action: BrowserAction): void => {
     if (!capability) return;
     const epoch = lifetime.current;
-    setBusy(true); setError("");
+    setBusy(true); setSelecting(action.action === "annotate"); setError("");
     void capability.act({ ...workspace, ...action } as DesktopBrowserUserAction)
-      .then(value => { if (lifetime.current === epoch) { commitState(value); setNewTab(false); } })
+      .then(value => { if (lifetime.current === epoch) {
+        commitState(value); setNewTab(false);
+        if (value.annotation) { setAnnotation(value.annotation); setAnnotationStatus(undefined); }
+        if (value.annotationStatus) setAnnotationStatus(value.annotationStatus);
+        if (action.action === "navigate" || action.action === "open") setAddress(value.tabs.find(item => item.id === value.activeTabId)?.url ?? "");
+      } })
       .catch(() => { if (lifetime.current === epoch) setError(t("The browser action could not complete. Check the address and try again.")); })
-      .finally(() => { if (lifetime.current === epoch) setBusy(false); });
+      .finally(() => { if (lifetime.current === epoch) setBusy(false); setSelecting(false); });
   }, [capability, workspace, t, commitState]);
 
   const submit = (event: FormEvent): void => {
@@ -110,7 +129,17 @@ function BrowserPage({ workspaceCwd, surface, ownerId }: BrowserWorkspaceProps):
         ))}
         <IconButton icon={Plus} label={t("Open a browser tab")} disabled={busy || (state?.tabs.length ?? 0) >= 12} onClick={() => { setNewTab(true); setAddress(""); addressRef.current?.focus(); addressRef.current?.select(); }} />
         <IconButton icon={expanded ? Minimize2 : Maximize2} label={expanded ? t("Show browser beside chat") : t("Expand browser")} pressed={expanded} onClick={() => setExpanded(value => !value)} />
+        <IconButton icon={Settings2} label={t("Browser settings")} pressed={settingsOpen} onClick={() => setSettingsOpen(value => !value)} />
       </div>
+      {onAnnotation && tab ? <div className="browser-panel-actions">
+        <IconButton icon={MousePointer2} label={t("Annotate element")} disabled={busy} onClick={() => act({ action: "annotate", tabId: tab.id, kind: "element", screenshot: true })} />
+        <IconButton icon={Scan} label={t("Annotate region")} disabled={busy} onClick={() => act({ action: "annotate", tabId: tab.id, kind: "region", screenshot: true })} />
+        {selecting ? <span role="status">{t("Select the page. Press Escape to cancel.")}</span> : null}
+      </div> : null}
+      {annotation && onAnnotation ? <BrowserAnnotationEditor annotation={annotation} onSubmit={onAnnotation} onClose={() => setAnnotation(undefined)} status={annotationStatus}
+        onLocate={() => { const { screenshot: _screenshot, ...metadata } = annotation; act({ action: "locate_annotation", annotation: metadata }); }} /> : null}
+      {settingsOpen && state ? <div className="browser-settings-panel"><BrowserPreferencesPanel preferences={state.preferences} disabled={busy} onChange={preferences => act({ action: "preferences", preferences })} />
+        {state.management ? <BrowserManagementPanel state={state.management} cwd={workspaceCwd} url={tab?.url} disabled={busy} act={act} /> : null}</div> : null}
       <form className="browser-navigation" onSubmit={submit}>
         <IconButton icon={ArrowLeft} label={t("Back")} disabled={!tab?.canGoBack || busy} onClick={() => tab && act({ action: "back", tabId: tab.id })} />
         <IconButton icon={ArrowRight} label={t("Forward")} disabled={!tab?.canGoForward || busy} onClick={() => tab && act({ action: "forward", tabId: tab.id })} />
@@ -122,6 +151,7 @@ function BrowserPage({ workspaceCwd, surface, ownerId }: BrowserWorkspaceProps):
         <IconButton icon={ExternalLink} label={t("Open in system browser")} disabled={!tab} onClick={() => tab && act({ action: "open_external", tabId: tab.id })} />
       </form>
       {error || tab?.error ? <InlineFeedback tone="danger" role="alert">{error || t("The page could not load or a browser request was blocked.")}</InlineFeedback> : null}
+      {state?.persistenceError ? <InlineFeedback tone="warning">{t("Browser preferences could not be saved or restored.")}</InlineFeedback> : null}
       <div className="browser-native-viewport" ref={hostRef} data-browser-viewport>
         {tab ? <p className="browser-viewport-placeholder">{tab.loading ? t("Loading page…") : t("The website appears here in Ling Desktop.")}</p>
           : <EmptyState title={t("Open a website or development preview")} description={t("Enter a website or localhost address above. Browser tabs belong to this conversation.")} />}

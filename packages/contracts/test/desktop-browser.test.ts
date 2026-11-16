@@ -29,3 +29,12 @@ test("runtime projection validates unique tab ids and exact scopes", () => {
   assert.throws(() => parseDesktopBrowserState({ ...state, tabs: [tab, tab] }));
   assert.throws(() => parseDesktopBrowserState({ ...state, token: "secret" }));
 });
+
+test("management and developer operations validate bounded input without adding implicit authority", () => {
+  assert.deepEqual(parseDesktopBrowserOperation("browser_history", {}), { method: "browser_history", params: { limit: 20 } });
+  assert.throws(() => parseDesktopBrowserOperation("browser_history", { limit: 51 }));
+  assert.throws(() => parseDesktopBrowserOperation("browser_download", { tabId: "a", navigationRevision: 1, url: "file:///secret" }));
+  assert.throws(() => parseDesktopBrowserOperation("browser_cdp", { tabId: "a", navigationRevision: 1, method: "Runtime.evaluate", params: { expression: "x".repeat(17000) } }));
+  assert.throws(() => parseDesktopBrowserOperation("browser_webmcp_call", { tabId: "a", navigationRevision: 1, name: "example", arguments: {} }));
+  assert.equal(parseDesktopBrowserOperation("browser_webmcp_call", { tabId: "a", navigationRevision: 1, name: "example", toolRevision: "current", arguments: {} }).method, "browser_webmcp_call");
+});

@@ -47,7 +47,7 @@ test("Desktop browser bridge authenticates its runtime and uses existing MCP app
   const published = await post(`${bridge}/availability`, state, authority); assert.equal(typeof published.runtimeId, "string");
   const checked = await post(`${pluginPath}/check${query}`, {}); assert.equal(checked.health.status, "ready");
   const tools = await post(`/mcp/servers/${DESKTOP_BROWSER_MCP_SERVER_ID}/sync-tools${query}`, {});
-  assert.equal(tools.tools.length, 6); assert.ok(tools.tools.every((tool: { defaultApproval: string }) => tool.defaultApproval === "ask"));
+  assert.equal(tools.tools.length, 12); assert.ok(tools.tools.every((tool: { defaultApproval: string }) => tool.defaultApproval === "ask"));
   const bindings = await get(`/teammates/ling_agent/mcp${query}`);
   assert.equal(bindings.bindings.find((binding: { serverId: string }) => binding.serverId === DESKTOP_BROWSER_MCP_SERVER_ID)?.enabled, true);
 

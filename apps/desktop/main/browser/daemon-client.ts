@@ -21,10 +21,10 @@ export class DesktopBrowserDaemonClient {
     await this.request(`/commands/${result.id}/result`, result, state, signal);
   }
 
-  private async request(path: string, body: unknown, authority: Pick<DesktopBrowserState, "desktopInstanceId" | "generation">, signal: AbortSignal): Promise<Record<string, unknown>> {
+  private async request(path: string, body: unknown, authority: Pick<DesktopBrowserState, "desktopInstanceId" | "generation" | "workspaceCwd">, signal: AbortSignal): Promise<Record<string, unknown>> {
     const response = await fetch(new URL(`${ROOT}${path}`, this.options.daemonBaseUrl), {
       method: "POST", headers: { "content-type": "application/json", "x-ling-desktop-bridge-token": this.options.bridgeToken,
-        "x-ling-browser-instance": authority.desktopInstanceId, "x-ling-browser-generation": String(authority.generation) },
+        "x-ling-browser-instance": authority.desktopInstanceId, "x-ling-browser-workspace": encodeURIComponent(authority.workspaceCwd), "x-ling-browser-generation": String(authority.generation) },
       body: JSON.stringify(body), redirect: "error", signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]),
     });
     const reader = response.body?.getReader();

@@ -21,7 +21,7 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { appendFileSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
@@ -55,8 +55,7 @@ import { parseElectronWindowSourceId } from "./computer-use/source-mapping.js";
 import { FileComputerUsePreviewTelemetry } from "./computer-use/telemetry.js";
 import { DesktopDaemonLifecycle } from "./daemon-lifecycle.js";
 import { DesktopRuntime } from "./desktop-runtime.js";
-import { DesktopBrowserManager } from "./browser/manager.js";
-import { DesktopBrowserRuntime } from "./browser/runtime.js";
+import { DesktopBrowserWorkspaceRuntime } from "./browser/workspace-runtime.js";
 import { registerDesktopBrowserIpc } from "./browser/ipc.js";
 import { bindDesktopBrowserWindow } from "./browser/window-lifecycle.js";
 import {
@@ -177,7 +176,7 @@ let desktopDaemonAutomaticRecoveryArmed = false;
 let desktopDaemonAutomaticRecoveryUsed = false;
 let officeDriverRuntime: OfficeDriverRuntime | undefined;
 let hostCapabilityRuntime: HostCapabilityRuntime | undefined;
-let desktopBrowserRuntime: DesktopBrowserRuntime | undefined;
+let desktopBrowserRuntime: DesktopBrowserWorkspaceRuntime | undefined;
 let unregisterBrowserIpc: (() => void) | undefined;
 let computerUse: ComputerUsePreviewCoordinator | undefined;
 // Process-scoped so window recreation keeps the 24-hour throttle and per-release deduplication.
@@ -488,9 +487,9 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
   }
   logStartup("daemon.connected", { ownedByDesktop: desktopRuntime.status.ownedByDesktop });
   if (!desktopBrowserRuntime) {
-    const manager = new DesktopBrowserManager({ workspaceCwd: defaultWorkspaceCwd, desktopInstanceId: desktopRuntime.desktopInstanceId,
-      daemonBaseUrl, getMainWindow: () => mainWindow ?? loadingMainWindow });
-    desktopBrowserRuntime = new DesktopBrowserRuntime(manager, { daemonBaseUrl, bridgeToken, onDiagnostic: logStartup });
+    desktopBrowserRuntime = new DesktopBrowserWorkspaceRuntime({ workspaceCwd: defaultWorkspaceCwd, desktopInstanceId: desktopRuntime.desktopInstanceId,
+      daemonBaseUrl, bridgeToken, getMainWindow: () => mainWindow ?? loadingMainWindow, profileDirectory: join(app.getPath("userData"), "browser-profiles"), onDiagnostic: logStartup });
+    const manager = desktopBrowserRuntime.manager;
     const { ipcMain } = await import("electron");
     unregisterBrowserIpc = registerDesktopBrowserIpc({ ipcMain, manager, getMainWindow: () => mainWindow ?? loadingMainWindow,
       trustedDocumentUrl: pathToFileURL(resources.webIndexPath).href, onDiagnostic: logStartup });
@@ -2086,6 +2085,12 @@ async function shutdown(): Promise<void> {
   unregisterIpc = undefined;
   await attemptCleanup(() => activeUnregisterIpc?.());
 
+  const activeUnregisterBrowserIpc = unregisterBrowserIpc;
+  unregisterBrowserIpc = undefined;
+  await attemptCleanup(() => activeUnregisterBrowserIpc?.());
+  const activeBrowserRuntime = desktopBrowserRuntime; desktopBrowserRuntime = undefined;
+  await attemptCleanup(() => activeBrowserRuntime?.stop());
+
   const activeMainWindow = mainWindow;
   const activeLoadingMainWindow = loadingMainWindow;
   mainWindow = undefined;
@@ -2114,11 +2119,6 @@ async function shutdown(): Promise<void> {
   await attemptCleanup(() => mainSession?.closeAllConnections());
 
   const activeOfficeDriverRuntime = officeDriverRuntime;
-  const activeUnregisterBrowserIpc = unregisterBrowserIpc;
-  unregisterBrowserIpc = undefined;
-  await attemptCleanup(() => activeUnregisterBrowserIpc?.());
-  const activeBrowserRuntime = desktopBrowserRuntime; desktopBrowserRuntime = undefined;
-  await attemptCleanup(() => activeBrowserRuntime?.stop());
   officeDriverRuntime = undefined;
   await attemptCleanup(() => activeOfficeDriverRuntime?.stop());
 

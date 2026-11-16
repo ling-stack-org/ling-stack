@@ -1,5 +1,6 @@
 .browser-workspace-container { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; height: 100%; gap: 6px; }
 .browser-workspace-mode { display: flex; gap: 4px; flex-shrink: 0; }
+.browser-preferences { display: grid; gap: 8px; flex-shrink: 0; }
 .browser-workspace { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 360px; height: 100%; gap: 6px; }
 .browser-workspace.is-expanded { position: fixed; inset: 64px 12px 12px; z-index: 40; height: auto; background: var(--ling-bg-panel); padding: 10px; }
 .browser-tab-strip { display: flex; align-items: center; gap: 4px; overflow-x: auto; flex-shrink: 0; }
@@ -12,3 +13,11 @@
 .browser-viewport-placeholder { padding: 12px; font-size: 12px; }
 .browser-control-status { display: flex; gap: 8px; align-items: center; justify-content: space-between; font-size: 12px; }
 .browser-workspace-hint { margin: 0; font-size: 11px; color: var(--ling-text-secondary); }
+.browser-panel-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; flex-shrink: 0; }
+.browser-annotation-editor { display: grid; gap: 6px; flex-shrink: 0; max-height: 280px; overflow: auto; }
+.browser-annotation-editor p, .browser-annotation-editor blockquote { margin: 0; overflow-wrap: anywhere; font-size: 12px; }
+.browser-settings-panel { display: grid; gap: 10px; max-height: 320px; overflow: auto; flex-shrink: 0; }
+.browser-management, .browser-management-section { display: grid; gap: 8px; min-width: 0; }
+.browser-management p { font-size: 12px; margin: 0; overflow-wrap: anywhere; }
+.browser-management-row { display: flex; gap: 6px; align-items: center; min-width: 0; }
+.browser-management-row > :first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }

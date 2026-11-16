@@ -63,10 +63,13 @@ the native page detaches while evidence is shown and retains its tabs when reope
 The Web client keeps its browser-evidence surface when the Desktop capability is absent.
 
 `apps/desktop/main/browser` owns sandboxed `WebContentsView` pages and a persistent
-profile keyed by the daemon's default workspace. It detaches pages for shared UI
-overlays and window transitions, and accepts geometry only from the trusted main
-document. Page content has no Desktop bridge, Node integration or generic evaluator.
-Site device permissions, popups and downloads are blocked in this slice.
+profile per admitted local workspace. It detaches pages for shared UI overlays and
+window transitions, and accepts geometry only from the trusted main document. Page
+content has no Desktop bridge, Node integration or generic evaluator. The runtime
+supports history, downloads, device rules, clearing, bookmark preview/import, unpacked
+MV3 session extensions, bounded diagnostics, tab-scoped CDP and the public WebMCP
+`document.modelContext` contract. Device use remains human-only; downloads, CDP and
+website tools have separate approvals and origin policy.
 
 Agent tools use `built-in:browser` / `mcp_browser` and the existing MCP binding,
 approval, Host operation and run-result path. The authenticated Desktop runtime
@@ -75,11 +78,11 @@ revision. User takeover pauses control. Cancellation or connection loss after an
 action starts retains unknown effect and never replays the command automatically.
 The external Chrome plugin continues to use its own profile and transport.
 
-Source acceptance covers real Electron on macOS arm64 and the shared dock. Windows,
-signed packages and real-model acceptance remain open. Tabs are memory-only; profile
-storage persists. Link-routing preferences, restart restoration, annotations, history,
-download management and advanced browser capabilities remain in the
-[implementation plan](desktop-browser-implementation-plan.md).
+Source acceptance covers real Electron on macOS arm64, the shared dock and controlled
+local sites. Windows, signed packages, real-model annotation-to-edit acceptance and
+full daemon policy-revocation scenarios remain open. Profile storage and approved tab
+metadata persist; commands, refs and Agent leases do not. Detailed capability limits
+remain in the [implementation plan](desktop-browser-implementation-plan.md).
 
 ## Default Choice
 

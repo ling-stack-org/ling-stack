@@ -37,6 +37,7 @@ export class DesktopBrowserRuntime {
     });
     this.heartbeat = setInterval(() => { void publish().catch(reportError); }, 4_000);
     await publish().catch(reportError);
+    void this.manager.restore().catch(() => this.options.onDiagnostic?.("browser_tab_restore_failed"));
     this.loop = (async () => {
       while (!signal.aborted) {
         try {
@@ -87,10 +88,10 @@ export class DesktopBrowserRuntime {
       const result = await raceAbort(operation, signal);
       signal.throwIfAborted();
       return { protocol: DESKTOP_BROWSER_PROTOCOL, id: command.id, ok: true,
-        effect: ["browser_click", "browser_type", "browser_navigate"].includes(command.method) ? "completed" : "none", result };
+        effect: ["browser_click", "browser_type", "browser_navigate", "browser_download", "browser_cdp", "browser_webmcp_call"].includes(command.method) ? "completed" : "none", result };
     } catch (error) {
       const code = error instanceof BrowserPageError ? error.code : signal.aborted ? "browser_cancelled_or_expired" : "browser_execution_failed";
-      const effect = error instanceof BrowserPageError ? error.effect : started && ["browser_click", "browser_type", "browser_navigate"].includes(command.method) ? "unknown" : "none";
+      const effect = error instanceof BrowserPageError ? error.effect : started && ["browser_click", "browser_type", "browser_navigate", "browser_download", "browser_cdp", "browser_webmcp_call"].includes(command.method) ? "unknown" : "none";
       return { protocol: DESKTOP_BROWSER_PROTOCOL, id: command.id, ok: false, effect,
         error: { code, message: "Browser operation did not complete. Obtain a fresh snapshot before another action." } };
     } finally {

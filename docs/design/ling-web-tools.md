@@ -209,17 +209,19 @@ Interactive control enters through the explicit Chrome and Ling Browser built-in
 - network and origin policy;
 - replayable audit evidence in the channel/work-unit timeline.
 
-Chrome exposes `chrome_*` tools. Ling Browser exposes `browser_tabs`, `browser_navigate`,
-`browser_snapshot`, `browser_click`, `browser_type` and `browser_screenshot` through
-`mcp_browser`. Both default to `ask`; binding, approval, cancellation and run-event ownership remain
-authoritative. Disabling one integration or losing its runtime does not switch to the other profile.
+Chrome exposes `chrome_*` tools. Ling Browser exposes twelve `browser_*` tools through
+`mcp_browser`: tabs, navigate, snapshot, click, type, screenshot, history, download,
+debug, tab-scoped CDP, WebMCP tool discovery and WebMCP call. Both default to `ask`;
+binding, origin policy, approval, cancellation and run-event ownership remain authoritative.
+Disabling one integration or losing its runtime does not switch to the other profile.
 Public lookup and URL reading remain available independently.
 
 Ling Browser supports explicit loopback development previews without relaxing the public URL
 reader's SSRF rules. The first snapshot covers visible main-document content; it does not traverse
-frames, shadow roots or canvas. Page text and screenshots are untrusted evidence. Website device
-permissions, downloads and popups are blocked, and sensitive inputs require user control. The
-shared Browser dock is available in Desktop; non-Desktop clients retain evidence inspection.
+frames, shadow roots or canvas. Page text, screenshots, debug output and WebMCP metadata/results
+are untrusted evidence. Website device permissions are human-only; downloads, CDP and WebMCP
+have separate origin rules and approvals. The shared Browser dock is available in Desktop;
+non-Desktop clients retain evidence inspection.
 
 ## Conversation Evidence UI
 

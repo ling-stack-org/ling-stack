@@ -23,7 +23,7 @@ export class DesktopBrowserPluginService {
     const store = this.options.getStore(cwd), descriptor = this.descriptor;
     if (!store.getManagedPlugin(descriptor.id)) store.upsertManagedPlugin({ id: descriptor.id, sourceKind: "built-in", version: descriptor.version, enabled: false, descriptor }, now);
     const enabled = store.getManagedPlugin(descriptor.id)?.enabled === true;
-    const connected = cwd === this.options.controller.workspaceCwd && this.options.controller.snapshot().connected;
+    const connected = this.options.controller.forWorkspace(cwd).snapshot().connected;
     const effective = enabled && connected;
     let server = store.getMcpServer(DESKTOP_BROWSER_MCP_SERVER_ID) ?? store.createMcpServer({ id: DESKTOP_BROWSER_MCP_SERVER_ID,
       displayName: "Ling Browser", enabled: false, transport: { type: "streamable-http", url: "http://127.0.0.1:1/ling-internal/desktop-browser", headers: {}, secretHeaderRefs: {} } }, now);
@@ -48,11 +48,10 @@ export class DesktopBrowserPluginService {
   }
 
   setEnabled(cwd: string, enabled: boolean, reason?: string): ManagedPluginHealthSnapshot {
-    if (cwd !== this.options.controller.workspaceCwd) throw new Error("browser_workspace_mismatch");
     const store = this.options.getStore(cwd), now = new Date().toISOString();
     store.upsertManagedPlugin({ id: this.descriptor.id, sourceKind: "built-in", version: this.descriptor.version, enabled,
       descriptor: this.descriptor, ...(!enabled && reason ? { disabledReason: reason } : {}) }, now);
-    if (!enabled) this.options.controller.cancelAll();
+    if (!enabled) this.options.controller.forWorkspace(cwd).cancelAll();
     store.appendManagedPluginEvent({ pluginId: this.descriptor.id, actor: "local-user", type: enabled ? "enabled" : "disabled", message: enabled ? "Ling Browser tools enabled." : "Ling Browser tools disabled." }, now);
     if ("getAiTeammate" in store && "upsertLingAgentBuiltInMcpBinding" in store) {
       const bindingStore = store as Store & Pick<import("@ling-stack/core").RunStore, "getAiTeammate" | "upsertLingAgentBuiltInMcpBinding">;

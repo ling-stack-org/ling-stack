@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { browserInteger, browserString, DESKTOP_BROWSER_MAX_RESULT_BYTES } from "@ling-stack/contracts";
+import { browserInteger, browserString, DESKTOP_BROWSER_MAX_RESULT_BYTES, parseDesktopBrowserState } from "@ling-stack/contracts";
 import type { DaemonContext } from "../../context.js";
 import { desktopBridgeTokenStatus } from "../computer-use/desktop-bridge-auth.js";
 import { readJsonBody } from "../../shared/request.js";
@@ -15,11 +15,14 @@ export async function handleDesktopBrowserRoute(request: IncomingMessage, respon
     writeJson(response, auth === "unavailable" ? 503 : 403, { error: "browser_bridge_forbidden" }); return true;
   }
   if (request.method !== "POST") { writeJson(response, 405, { error: "method_not_allowed" }); return true; }
-  const controller = context.desktopBrowser;
   try {
+    const encodedWorkspace = request.headers["x-ling-browser-workspace"];
+    const workspaceCwd = typeof encodedWorkspace === "string" ? decodeURIComponent(encodedWorkspace) : context.config.defaultWorkspaceCwd;
+    const controller = context.desktopBrowser.forWorkspace(workspaceCwd);
     if (url.pathname === `${ROOT}/availability`) {
-      controller.publish(await readJsonBody(request, Math.min(context.config.maxBodyBytes, 128 * 1024)));
-      context.desktopBrowserPlugin.sync(context.config.defaultWorkspaceCwd);
+      const state = parseDesktopBrowserState(await readJsonBody(request, Math.min(context.config.maxBodyBytes, 128 * 1024)));
+      controller.publish(state);
+      context.desktopBrowserPlugin.sync(workspaceCwd);
       writeJson(response, 200, { accepted: true, runtimeId: controller.runtimeId }); return true;
     }
     const authority = { desktopInstanceId: browserString(request.headers["x-ling-browser-instance"], 128),

@@ -758,7 +758,7 @@ export async function routeRequest(
   }
 
   if (url.pathname === "/workspace-settings") {
-    await handleWorkspaceSettings(request, response, config, storeRegistry, secretResolver);
+    await handleWorkspaceSettings(request, response, config, storeRegistry, secretResolver, cwd => context.desktopBrowser.forWorkspace(cwd).cancelAll());
     return;
   }
 

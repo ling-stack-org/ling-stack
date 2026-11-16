@@ -73,3 +73,16 @@ test("runtime timeout after start reports unknown while an absent Desktop remain
   const command = await controller.claim(authority, signal()); assert.ok(command); controller.start(authority, command.id);
   await assert.rejects(execution, error => error instanceof BrowserExecutionError && error.code === "browser_timeout" && error.effect === "unknown");
 });
+
+test("workspace registry isolates runtime authority, commands and cancellation", async t => {
+  const root = new DesktopBrowserController("/workspace"); t.after(() => root.close()); root.publish(state());
+  const other = root.forWorkspace("/workspace-other"); other.publish(state({ workspaceCwd: "/workspace-other", desktopInstanceId: "desktop-other" }));
+  assert.notEqual(root.runtimeId, other.runtimeId); assert.equal(root.forWorkspace("/workspace-other"), other);
+  const abort = new AbortController();
+  const execution = other.execute({ operation: click, scope, runId: "r", toolCallId: "c", signal: abort.signal });
+  await assert.rejects(root.claim({ desktopInstanceId: "desktop-other", generation: 1 }, signal()), /browser_authority_invalid/u);
+  const command = await other.claim({ desktopInstanceId: "desktop-other", generation: 1 }, signal()); assert.equal(command?.workspaceCwd, "/workspace-other");
+  root.cancelAll(); other.start({ desktopInstanceId: "desktop-other", generation: 1 }, command!.id);
+  abort.abort(); await assert.rejects(execution, error => error instanceof BrowserExecutionError && error.effect === "unknown");
+  assert.throws(() => root.forWorkspace("relative/path")); assert.throws(() => root.forWorkspace("/workspace/../other"));
+});

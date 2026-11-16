@@ -5,7 +5,7 @@ export const DESKTOP_BROWSER_MAX_TABS = 12;
 export const DESKTOP_BROWSER_MAX_RESULT_BYTES = 2 * 1024 * 1024;
 
 export const desktopBrowserMethods = [
-  "browser_tabs", "browser_navigate", "browser_snapshot", "browser_click", "browser_type", "browser_screenshot",
+  "browser_tabs", "browser_navigate", "browser_snapshot", "browser_click", "browser_type", "browser_screenshot", "browser_history", "browser_download", "browser_debug", "browser_cdp", "browser_webmcp_tools", "browser_webmcp_call",
 ] as const;
 export type DesktopBrowserMethod = typeof desktopBrowserMethods[number];
 
@@ -42,6 +42,12 @@ export interface DesktopBrowserTarget {
 }
 
 export type DesktopBrowserOperation =
+  | { readonly method: "browser_history"; readonly params: { readonly query?: string; readonly limit?: number } }
+  | { readonly method: "browser_download"; readonly params: DesktopBrowserTarget & { readonly url: string } }
+  | { readonly method: "browser_debug"; readonly params: DesktopBrowserTarget }
+  | { readonly method: "browser_webmcp_tools"; readonly params: DesktopBrowserTarget }
+  | { readonly method: "browser_cdp"; readonly params: DesktopBrowserTarget & { readonly method: string; readonly params: Record<string, unknown> } }
+  | { readonly method: "browser_webmcp_call"; readonly params: DesktopBrowserTarget & { readonly name: string; readonly toolRevision: string; readonly arguments: Record<string, unknown> } }
   | { readonly method: "browser_tabs"; readonly params: Record<string, never> }
   | { readonly method: "browser_navigate"; readonly params: { readonly url: string; readonly tabId?: string; readonly navigationRevision?: number } }
   | { readonly method: "browser_snapshot"; readonly params: DesktopBrowserTarget }
@@ -91,13 +97,23 @@ export function parseDesktopBrowserUrl(value: unknown): string {
 }
 
 export function parseDesktopBrowserOperation(method: unknown, value: unknown): DesktopBrowserOperation {
-  const keys = method === "browser_tabs" ? []
+  const keys = method === "browser_history" ? ["query", "limit"]
+    : method === "browser_download" ? ["tabId", "navigationRevision", "url"]
+    : method === "browser_debug" || method === "browser_webmcp_tools" ? ["tabId", "navigationRevision"]
+    : method === "browser_cdp" ? ["tabId", "navigationRevision", "method", "params"]
+    : method === "browser_webmcp_call" ? ["tabId", "navigationRevision", "name", "toolRevision", "arguments"]
+    : method === "browser_tabs" ? []
     : method === "browser_navigate" ? ["url", "tabId", "navigationRevision"]
       : method === "browser_snapshot" || method === "browser_screenshot" ? ["tabId", "navigationRevision"]
         : method === "browser_click" ? ["tabId", "navigationRevision", "snapshotRevision", "ref"]
           : method === "browser_type" ? ["tabId", "navigationRevision", "snapshotRevision", "ref", "text"] : undefined;
   if (!keys) invalid();
   const record = browserRecord(value, keys);
+  if (method === "browser_history") {
+    const limit = record.limit === undefined ? 20 : browserInteger(record.limit, 1);
+    if (limit > 50) invalid();
+    return { method, params: { limit, ...(record.query === undefined ? {} : { query: browserString(record.query, 200, true) }) } };
+  }
   if (method === "browser_tabs") return { method, params: {} };
   if (method === "browser_navigate") {
     if ((record.tabId === undefined) !== (record.navigationRevision === undefined)) invalid();
@@ -106,6 +122,14 @@ export function parseDesktopBrowserOperation(method: unknown, value: unknown): D
     }) } };
   }
   const target = { tabId: browserString(record.tabId, 128), navigationRevision: browserInteger(record.navigationRevision) };
+  if (method === "browser_download") return { method, params: { ...target, url: parseDesktopBrowserUrl(record.url) } };
+  if (method === "browser_debug" || method === "browser_webmcp_tools") return { method, params: target };
+  if (method === "browser_cdp" || method === "browser_webmcp_call") {
+    const key = method === "browser_cdp" ? "params" : "arguments", value = record[key];
+    if (!value || typeof value !== "object" || Array.isArray(value) || JSON.stringify(value).length > 16_384) invalid();
+    return method === "browser_cdp" ? { method, params: { ...target, method: browserString(record.method, 128), params: value as Record<string, unknown> } }
+      : { method, params: { ...target, name: browserString(record.name, 128), toolRevision: browserString(record.toolRevision, 128), arguments: value as Record<string, unknown> } };
+  }
   if (method === "browser_snapshot" || method === "browser_screenshot") return { method, params: target };
   const reference = { ...target, snapshotRevision: browserString(record.snapshotRevision, 128), ref: browserString(record.ref, 128) };
   if (method === "browser_click") return { method, params: reference };

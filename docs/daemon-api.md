@@ -4073,8 +4073,9 @@ through short-lived status snapshots, not by returning or mutating raw secret va
 
 The Desktop in-app browser is the managed plugin `built-in:browser`, with logical MCP
 server `mcp_browser`. Enable or disable it through the existing managed-plugin routes;
-the six tools are `browser_tabs`, `browser_navigate`, `browser_snapshot`, `browser_click`,
-`browser_type` and `browser_screenshot`, all defaulting to `ask`. Enabling can bind the
+the twelve tools are `browser_tabs`, `browser_navigate`, `browser_snapshot`, `browser_click`,
+`browser_type`, `browser_screenshot`, `browser_history`, `browser_download`, `browser_debug`,
+`browser_cdp`, `browser_webmcp_tools` and `browser_webmcp_call`, all defaulting to `ask`. Enabling can bind the
 built-in Ling Agent; custom teammates retain explicit MCP bindings. A disabled plugin
 does not prevent the user from browsing manually in Desktop's conversation Browser dock.
 
@@ -4102,10 +4103,13 @@ once and never automatically requeued. Cancellation/timeout after an action star
 retains `effect: "unknown"`, and late or replaced-authority results are rejected.
 Contract types and strict parsers live in `packages/contracts/src/desktop-browser.ts`.
 
-The current runtime is bound to the daemon default workspace. Tabs and commands do
-not survive process restart; Chromium's workspace profile persists. Windows,
-signed-package and real-model acceptance remain open. Remaining browser capabilities
-are tracked in the [Desktop Browser plan](design/desktop-browser-implementation-plan.md).
+The runtime admits up to 16 absolute, normalized existing workspace paths. Each has an
+independent controller, runtime identity, generation and Chromium profile. Approved tab
+metadata may restore after restart with new tab IDs and human control; commands, refs and
+leases do not. Windows, signed-package, real-model and complete daemon policy-revocation
+acceptance remain open. Password/contact management, Chrome Web Store extensions and
+unrestricted browser-wide CDP are not supported. Remaining release gates are tracked in
+the [Desktop Browser plan](design/desktop-browser-implementation-plan.md).
 
 ### List MCP Servers
 

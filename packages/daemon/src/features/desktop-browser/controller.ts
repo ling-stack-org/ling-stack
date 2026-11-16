@@ -1,3 +1,4 @@
+import { isAbsolute, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import {
   DESKTOP_BROWSER_PROTOCOL, parseDesktopBrowserState, parseDesktopBrowserResult, parseDesktopBrowserOperation,
@@ -21,6 +22,18 @@ export class BrowserExecutionError extends Error {
 /** Owns ephemeral commands. A claimed command is never requeued after disconnect or cancellation. */
 export class DesktopBrowserController {
   readonly runtimeId = randomUUID();
+  private readonly workspaces = new Map<string, DesktopBrowserController>();
+
+  forWorkspace(cwd: string): DesktopBrowserController {
+    if (!isAbsolute(cwd) || resolve(cwd) !== cwd) throw new Error("browser_workspace_invalid");
+    if (cwd === this.workspaceCwd) return this;
+    let controller = this.workspaces.get(cwd);
+    if (!controller) {
+      if (this.closed || this.workspaces.size >= 16) throw new Error("browser_workspace_budget_exceeded");
+      controller = new DesktopBrowserController(cwd, this.options); this.workspaces.set(cwd, controller);
+    }
+    return controller;
+  }
   private stateValue?: DesktopBrowserState;
   private receivedAt = 0;
   private closed = false;
@@ -74,7 +87,8 @@ export class DesktopBrowserController {
     if (!connected || !state) throw new Error("browser_desktop_required");
     if (this.pending.size >= 32 || this.executions.size >= 4096) throw new Error("browser_command_budget_exceeded");
     if ("tabId" in operation.params && operation.params.tabId) {
-      const tab = state.tabs.find(item => item.id === operation.params.tabId);
+      const { tabId } = operation.params;
+      const tab = state.tabs.find(item => item.id === tabId);
       if (!tab || tab.control !== "agent" || !sameDesktopBrowserScope(tab.scope, input.scope)
         || tab.navigationRevision !== operation.params.navigationRevision) throw new Error("browser_target_stale_or_forbidden");
     }
@@ -138,14 +152,14 @@ export class DesktopBrowserController {
   }
 
   cancelAll(): void { for (const id of this.pending.keys()) this.fail(id, "browser_access_revoked"); }
-  close(): void { this.closed = true; this.cancelAll(); this.wake(); }
+  close(): void { for (const child of this.workspaces.values()) child.close(); this.workspaces.clear(); this.closed = true; this.cancelAll(); this.wake(); }
 
   private fail(id: string, code: string): void {
     const pending = this.pending.get(id);
     if (!pending) return;
     this.pending.delete(id);
     pending.cleanup();
-    const effect = pending.stage === "started" && ["browser_click", "browser_type", "browser_navigate"].includes(pending.command.method) ? "unknown" : "none";
+    const effect = pending.stage === "started" && ["browser_click", "browser_type", "browser_navigate", "browser_download", "browser_cdp", "browser_webmcp_call"].includes(pending.command.method) ? "unknown" : "none";
     pending.reject(new BrowserExecutionError(code, effect));
     this.wake();
   }

@@ -18,6 +18,8 @@ import { TeammatePrivateChatFeed } from "./TeammatePrivateChatFeed.js";
 import type { TeammatePrivateChatSurfaceProps } from "./teammate-private-chat-types.js";
 import { useTeammatePrivateComposerController } from "./useTeammatePrivateComposerController.js";
 import { useTeammatePrivateMessageController } from "./useTeammatePrivateMessageController.js";
+import { useConversationBrowserLinks } from "../browser/use-conversation-browser-links.js";
+import { InlineFeedback } from "../../shared/ui/index.js";
 
 export function TeammatePrivateChatSurface(props: TeammatePrivateChatSurfaceProps): React.JSX.Element {
   const { t } = useI18n();
@@ -79,6 +81,8 @@ export function TeammatePrivateChatSurface(props: TeammatePrivateChatSurfaceProp
     permissionPreset: composerController.selectedPermissionPreset,
     teammate,
   });
+  const browserLinkError = useConversationBrowserLinks({ rootRef: dockController.containerRef, workspaceCwd: cwd.trim(),
+    surface: "teammate_direct", ownerId: props.threadId, onOpen: () => props.onOpenBrowser?.() });
   return (
     <ConversationShell
       rootRef={dockController.containerRef}
@@ -100,11 +104,11 @@ export function TeammatePrivateChatSurface(props: TeammatePrivateChatSurfaceProp
       ].filter(Boolean).join(" ")}
       ariaLabel={t("Private chat")}
       feedNode={<TeammatePrivateChatFeed {...props} messageController={messageController} />}
-      composerNode={props.composerGateNode != null ? (
+      composerNode={<>{browserLinkError ? <InlineFeedback tone="danger" role="alert">{browserLinkError}</InlineFeedback> : null}{props.composerGateNode != null ? (
         <div className="teammate-private-composer-owner" data-ui2-teammate-private-composer="true">
           {props.composerGateNode}
         </div>
-      ) : <TeammatePrivateChatComposer {...props} controller={composerController} />}
+      ) : <TeammatePrivateChatComposer {...props} controller={composerController} />}</>}
       sideNode={(
         <>
           {dockController.resizable ? (
@@ -131,6 +135,10 @@ export function TeammatePrivateChatSurface(props: TeammatePrivateChatSurfaceProp
               <WorkspaceRightDock
                 surface="teammate_direct"
                 browserScopeId={props.threadId}
+                onBrowserAnnotation={async ({ comment, files }) => {
+                  props.onMessageDraftChange([props.messageDraft, comment].filter(Boolean).join("\n\n"));
+                  await props.onUploadPrivateFiles(files);
+                }}
                 open={dockOpen}
                 ariaLabel={t("Private chat workspace dock")}
                 className="teammate-private-right-dock"

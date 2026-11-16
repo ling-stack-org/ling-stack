@@ -1,6 +1,6 @@
 # Desktop 内置浏览器实施计划
 
-Status: first browser loop implemented; macOS source acceptance verified; broader delivery remains active
+Status: M0–M5 source implementation and macOS arm64 source acceptance verified; packaged/cross-platform release gates remain open
 Owner: Desktop、daemon、Web、approval 与 release maintainers
 Last verified: 2026-11-17
 Baseline: `origin/main` at `27a9ccb23`; branch `codex/desktop-browser-inapp`; no release claim
@@ -34,12 +34,12 @@ Desktop capability 决定，不渲染无法工作的地址栏。
 组件实现。同一抽屉可切换查看已有搜索与浏览证据；进入证据视图时卸载原生网页，返回后
 保留标签页。普通会话、频道会话和私聊使用相同组件，标签页按真实 thread scope 隔离。
 
-已经实现：
+已实现并由受控本地站点或包级测试覆盖：
 
-- `built-in:browser` / `mcp_browser` 及六个 `browser_*` 工具，默认 `ask`，复用现有
+- `built-in:browser` / `mcp_browser` 及十二个 `browser_*` 工具（标签页、导航、快照、点击、输入、截图、历史、下载、调试、CDP、WebMCP 工具发现和调用），默认 `ask`，复用现有
   MCP 绑定、审批、取消、Host operation 和运行结果通道。启用内置插件可绑定 Ling Agent；
   自定义队友仍需单独配置。手动浏览不要求启用 Agent 工具。
-- Desktop 独立持久化 workspace profile、沙箱网页、认证 runtime 的
+- Desktop 按本地 workspace 独立持久化 profile、沙箱网页、认证 runtime 的
   availability/claim/start/result/cancelled 协议、实例/代际/页面 revision 校验和单次派发。
   人工接管或连接失败暂停自动操作；已开始动作在取消/超时后保留 `unknown`，不自动重放。
 - 显式 HTTP(S)/loopback 导航、私网与 daemon origin 阻断、Agent 跨 origin 跳转拦截、
@@ -47,6 +47,15 @@ Desktop capability 决定，不渲染无法工作的地址栏。
   下载拦截不表示网络请求尚未发生。密码、文件、支付及验证码输入不交给 Agent。
 - 原生网页在 Dialog、Menu、Tooltip 打开期间 detach；窗口变化重新报告实际几何，
   renderer 不再上报时有超时隐藏。无 Desktop capability 的 Web 客户端保留证据视图。
+- 会话链接按网站/localhost 偏好路由，标签页恢复只保存 scope、URL 和 active 标记；
+  workspace 切换暂停旧 runtime 并提升 generation。
+- 页面元素和矩形区域批注、锚点重定位、用户评论与独立不可信页面附件已接入三类会话
+  Composer；页面变化、滚动、缩放和导航会使不再可靠的引用标记为 stale。
+- 内置 profile 的历史、下载、站点设备权限、清理、Chromium 书签预览/选择导入和
+  unpacked MV3 扩展管理已实现；不导入密码、Cookie 数据库或联系人。
+- 调试输出有界并去除 URL query/hash，tab-scoped CDP 逐次 native 确认；WebMCP 使用
+  Chromium 公开的 `document.modelContext`，真实注册/发现/调用/toolchange 失效及
+  动态 schema 参数校验已覆盖。
 
 macOS arm64 源码验收采用真实 Electron 与受控本地站点，覆盖共享抽屉和原生 view 的
 挂载/遮挡、会话切换、resize/zoom、快捷键、读取/点击/输入/截图、profile 隔离、接管、
@@ -55,23 +64,24 @@ macOS arm64 源码验收采用真实 Electron 与受控本地站点，覆盖共�
 `apps/web/e2e/desktop-browser.spec.ts` 和 `packages/daemon/test/desktop-browser-*.test.ts`。
 这不等同于付费模型执行、Windows 或签名安装包验收。
 
-当前 Desktop runtime 只接受其 daemon 的默认 workspace；Cookie/站点存储持久化，
-标签页及操作队列不跨 Desktop/daemon 重启恢复。按网站的持久政策、链接打开偏好、
-标签页恢复、批注、历史/下载管理和 M5 能力仍未交付。
+当前源实现支持最多 16 个绝对、规范且存在的本地 workspace；每个 workspace 使用独立
+ profile、daemon controller、runtime identity 和 generation。Cookie/站点存储持久化，
+标签页恢复只恢复允许的 URL 元数据，操作队列、ref 和 Agent 租约不恢复。默认政策仍是
+ browse/download/history `ask`，CDP/WebMCP 需要独立 origin 规则和审批。
 
 | 能力 | 当前 Ling 证据 | 待补内容 | 阶段 |
 | --- | --- | --- | --- |
-| 浏览器工具 | [内置浏览器六个工具](../../packages/daemon/src/features/plugins/desktop-browser-generation-broker.ts)与既有 Chrome 工具独立 | Windows 与安装包验收 | M1 |
-| 审批与运行记录 | [MCP broker](../../packages/daemon/src/features/mcp/broker.ts)、[控制器](../../packages/daemon/src/features/desktop-browser/controller.ts)已接入审批与取消 | 持久网站政策和更完整的运行场景 | M1、M4 |
+| 浏览器工具 | [内置浏览器十二个工具](../../packages/daemon/src/features/plugins/desktop-browser-generation-broker.ts)与既有 Chrome 工具独立 | Windows 与安装包验收 | M1、M5 |
+| 审批与运行记录 | [MCP broker](../../packages/daemon/src/features/mcp/broker.ts)、[控制器](../../packages/daemon/src/features/desktop-browser/controller.ts)已接入审批、取消、网站策略和结果过滤 | 付费模型、Windows 与签名包运行场景 | M1、M4 |
 | 桌面网页容器 | [Browser manager](../../apps/desktop/main/browser/manager.ts)与专用 IPC、session、runtime 模块 | Windows、安装包与完整故障验收 | M0–M1 |
-| Browser 侧栏 | [共享 BrowserWorkspace](../../apps/web/src/features/browser/BrowserWorkspace.tsx)提供原生网页、标签页、地址栏、导航和展开；Web 保留 evidence | 链接路由、偏好和重启恢复 | M2 |
-| 本地页面 | 内置浏览器支持显式 loopback preview；公共 URL reader 的 SSRF 边界保留 | 会话链接到 Browser 的集中打开路由 | M2 |
-| 页面批注 | 未找到网页元素/区域批注与 Composer 关联实现 | 锚点、截图、用户评论、消息附件和重新定位 | M3 |
-| 浏览数据与下载 | Chrome 集成不提供历史、下载、密码或 Cookie 管理 | 内置 profile 的历史、清理、下载位置和任务列表 | M4 |
-| 网站与设备权限 | 工具默认 `ask`；Agent 跳转限制 origin；设备默认拒绝 | 按 origin 的持久浏览/下载/历史政策与设备授权 UI | M4 |
-| 开发模式 | Chrome 扩展未声明 `debugger` 权限 | 受控调试工具、完整 CDP 独立授权和证据脱敏 | M5 |
-| WebMCP | 未找到网站工具接入 | 运行时可用性探测、工具发现、审批、撤销和结果审计 | M5 |
-| 浏览器配套管理 | 无内置 profile 导入、密码/联系信息、扩展管理 | 分别验证标准 Electron 能力，形成独立交付项 | M5 |
+| Browser 侧栏 | [共享 BrowserWorkspace](../../apps/web/src/features/browser/BrowserWorkspace.tsx)提供原生网页、标签页、地址栏、导航和展开；Web 保留 evidence | Windows、安装包与主题现场验收 | M2 |
+| 本地页面 | 显式 loopback preview、会话链接集中路由、独立 workspace profile | 现场平台验收 | M2 |
+| 页面批注 | 元素/区域锚点、截图、评论、附件和 stale 定位已接入 Composer | 真实模型依据批注修改代码后的现场复验 | M3 |
+| 浏览数据与下载 | 历史、清理、下载位置/任务、书签预览导入；不管理密码或 Cookie 数据库 | Windows/签名包现场验收 | M4 |
+| 网站与设备权限 | origin 规则、浏览/下载/历史 deny 过滤、设备人工确认和接管撤销 | 真实 daemon 派发撤销场景与跨平台现场验收 | M4 |
+| 开发模式 | 有界诊断、tab-scoped CDP、逐次 native Allow once 和敏感域拒绝 | 真实错误站点诊断与安装包验收 | M5 |
+| WebMCP | 公开 `document.modelContext` 的发现、调用、toolchange 失效、审批和有界 schema/result | 不支持该公开 API 的 Chromium 显示 unavailable；签名包现场验收 | M5 |
+| 浏览器配套管理 | Chromium bookmarks JSON 预览/选择导入、当前 profile unpacked MV3 加载/卸载 | Chrome API 兼容矩阵、Windows/签名包验收；密码/联系人管理仍不支持 | M5 |
 
 可复用的是审批、工具绑定、Run/WorkUnit、取消、artifact、控制面事件、共享 UI 和本机
 Desktop bridge 的模式。Chrome Native Messaging Host 只承担 Chrome 通信，不承担内置
@@ -225,6 +235,22 @@ profile 的文件属于 Desktop。UI 布局偏好与 workspace 级业务政策�
 
 ## 6. 分阶段计划
 
+本轮目标覆盖所有剩余阶段及 PR 审查、CI 和合并。执行顺序为链接路由/恢复、批注、
+历史/下载/站点权限、调试与网站工具，随后进行集成和安装包验收。每阶段以行为证据
+更新交付状态，不能用可运行的开关或静态类型替代功能实现。
+
+原生标签页恢复记录和链接打开偏好随 Desktop profile 管理；仅记录 URL、scope、
+选中页及用户偏好，不保存表单、快照 ref、命令队列或 Agent 控制租约。恢复采用新 tab id、
+新 generation 和人工控制；读取恢复页时仍执行当前网络规则。
+
+### 主题适配
+
+浏览器工具栏及管理面板使用现有 Button、IconButton、Input、SelectControl、Dialog、
+Menu、Checkbox、InlineFeedback 和共享会话 Composer/附件组件。组件消费现有 control、
+overlay、row 与语义状态参数，浏览器 feature CSS 只管理布局、尺寸和滚动。网页画布及
+权限/清理确认使用保护表面，聊天继续遵循环境背景策略。验收包含官方主题切换、明暗、
+空/加载/错误/禁用/聚焦状态，以及 1440×960、1280×800 的布局和原生遮挡行为。
+
 ### M0 — 标准运行时验证与合同固定
 
 交付：验证标准 Electron 的 `WebContentsView`、独立 partition、权限回调、截图、
@@ -249,7 +275,7 @@ MCP 流程接入。提供主 UI 内可见的最小单页容器供真实操作验
 归属及审批证据；deny 后不发生动作；审批期间导航、取消、断线、重启和旧 ref 均不能
 执行过期命令。无 Desktop 时工具明确 unavailable。现有 Chrome 行为回归通过。
 
-### M2 — 共享 Browser 工作区与链接路由
+### M2 — 共享 Browser 工作区与链接路由（源实现已完成）
 
 依赖 M1。增加多标签页、地址栏、前进/后退/刷新/停止、加载/错误状态、聊天分屏、
 全屏切换和必要快捷键；导航条呈现页面真实 URL、标题和 HTTPS 状态。
@@ -259,11 +285,12 @@ MCP 流程接入。提供主 UI 内可见的最小单页容器供真实操作验
 通过集中的链接意图路由处理 HTTP(S)，不直接把主 UI 的导航限制改成允许任意页面。
 恢复只还原获准的 tab 元数据与页面，不恢复待执行动作或操作租约。
 
-出口：用户从会话链接进入对应页面，可分屏、切换、返回和恢复；workspace 切换不
-串页；登录态仅在对应 profile 持久化；Dialog、审批和菜单不会被网页遮挡或穿透。
-在 `1440x960` 与 `1280x800`、中英、亮暗主题验证焦点、缩放和溢出。
+出口：已由共享 Web E2E 和 Electron 验收覆盖。用户从三类会话链接进入对应页面，可分屏、
+切换、返回和恢复；workspace 切换不串页且旧代际命令失效；登录态仅在对应 profile
+持久化；Dialog、审批和菜单不会被网页遮挡或穿透。`1440x960` 与 `1280x800`、中英、
+亮暗主题、焦点、缩放和溢出已有截图/交互证据。Windows 和安装包仍是发布门。
 
-### M3 — 页面批注与代码修改反馈
+### M3 — 页面批注与代码修改反馈（源实现已完成）
 
 依赖 M2。先实现单元素及矩形区域批注，保存用户文字、origin/URL、tab/document
 revision、frame/element 锚点、viewport/缩放、选区截图及来源归属；主 UI 编辑评论，
@@ -273,11 +300,12 @@ revision、frame/element 锚点、viewport/缩放、选区截图及来源归属�
 用户文字保留为独立用户意图。页面变化后定位失败显示失效状态，不按旧坐标自动点击。
 截图支持包含/不包含及区域裁剪；批注编辑过程中暂停 Agent 输入。
 
-出口：用户圈选问题并提交，Agent 能依据评论定位代码并完成修改，随后用真实页面
-复验；滚动、缩放、重载、SPA 导航和元素移除后，引用有明确可用/失效状态。
-可视化样式微调、多选及 Canvas 深度锚点作为本阶段后续增量，不挡住首个批注闭环。
+出口：元素和区域圈选、评论与 JPEG 附件进入三类会话现有草稿，页面侧引用显式标为
+不可信。原生 input 在网页事件前被拦截，选择不会触发页面点击；元素移除、滚动、缩放、
+导航和文档变化会返回 available/stale。真实模型依据批注修改代码后的复验仍需现场模型
+与目标仓库证据；多选及 Canvas 深度锚点不在当前支持范围。
 
-### M4 — 历史、下载、浏览数据与权限设置
+### M4 — 历史、下载、浏览数据与权限设置（源实现已完成）
 
 依赖 M1 的权限模型与 M2 的 profile/workspace 模型；可独立于 M3 的高级锚点推进。
 
@@ -290,20 +318,22 @@ revision、frame/element 锚点、viewport/缩放、选区截图及来源归属�
 - 清理 Cookie、缓存、站点存储和历史时，先显示 profile、范围和可能退出登录的结果，
   用户确认后执行。清理期间阻止冲突操作，完成后使相关 ref/租约失效。
 
-出口：默认政策、网站例外、撤销、重启恢复和下载异常有真实行为证据；清理当前
-profile 不影响 Ling 主 UI、其他 workspace 或外部 Chrome。
+出口：默认政策、网站例外、撤销、重启恢复、下载完成/取消、书签预览导入、扩展加载/卸载
+和清理已有 native/daemon 测试；清理当前 profile 不影响 Ling 主 UI，独立 profile 代码和
+Electron 测试覆盖其他 workspace。真实 daemon 站点 deny/revoke 中途派发、Windows 和
+签名包现场证据仍需补齐。
 
-### M5 — 调试、网站工具与浏览器配套功能
+### M5 — 调试、网站工具与浏览器配套功能（标准运行时源实现已完成）
 
 依赖 M1–M4 对应边界，按下表分别交付；任一项未通过不能显示成已支持的开关。
 
 | 工作包 | 交付与边界 | 退出条件 |
 | --- | --- | --- |
-| CDP 调试 | 先提供有界 console/error/network/performance 读取，再增加独立授权的完整 CDP；header/body/凭据脱敏与资源限制 | 有错误的本地站点可诊断并复验；跨 origin、取消和撤销后会话关闭 |
-| WebMCP | 探测 `document.modelContext` 等真实能力；网站工具数量/schema/结果有界，按文档代际注册和注销，复用 MCP 绑定与审批 | 固定测试站点发现、调用、拒绝、撤销、导航失效均通过；不以加 Chromium flag 代替可用性 |
-| profile 导入 | 逐种来源验证公开可用的导入方式、预览、选择范围和失败恢复 | 不读取未授权来源，不把浏览器机密送入模型；不承诺普通 Electron 支持 Codex 私有 importer |
+| CDP 调试 | 有界 console/error/network/performance 读取；tab-scoped CDP 每次 native Allow once，拒绝敏感域和 cookie 方法；不把结果承诺为完整脱敏 | macOS 真实错误站点、Performance、拒绝 cookie 和 detach 已通过；Windows/签名包仍需验收 |
+| WebMCP | 通过公开 `enableBlinkFeatures: "WebMCP"` 使用 `document.modelContext`；工具数量、schema、参数、结果有界，toolchange/导航/接管/取消失效，复用 MCP 审批 | Electron 45.3.1 / Chromium 156 真实测试站点发现、调用、schema 拒绝和注销已通过；其他 Chromium 显示 unavailable，不把 flag 当普遍能力 |
+| profile 导入 | Chromium bookmarks JSON 预览、HTTP(S) 选择导入和有界失败处理 | 不读取未授权来源，不把浏览器机密送入模型；不承诺普通 Electron 支持 Codex 私有 importer |
 | 密码与联系信息 | 独立设计 OS 密钥库/用户解锁及人工自动填充；先支持人工登录和现有登录态 | 原始密码不进入模型、通用 IPC、日志或证据；各 OS 实测后才开放管理 UI |
-| 扩展管理 | 验证标准 Electron 支持的扩展 API、MV3 生命周期、安装/卸载与来源校验 | 基于实际兼容矩阵宣称支持，不假定具备完整 Chrome Web Store 兼容性 |
+| 扩展管理 | 当前 profile 的用户选择 unpacked MV3 目录、manifest 预览、native 确认、加载/卸载 | 基于实际兼容矩阵宣称支持，不假定具备完整 Chrome Web Store 兼容性；重启不自动加载可变目录 |
 | 验证码与登录交接 | 停止自动操作、用户接管、完成后重新 snapshot 和恢复 | 不因失败循环输入或提交；自动验证码选项需另有可用执行后端才进入实现 |
 
 ## 7. 验证与交付门
@@ -332,17 +362,18 @@ Electron GUI 验收使用本地可控站点，避免对真实第三方账号发�
 
 ## 8. 建议执行顺序与待证事项
 
-关键路径：`M0 → M1 → M2 → M3`；`M2 → M4 → M5`。
-M1 是首次可演示的 Agent 浏览器闭环，M2 是日常开发预览可用版，M3 是批注驱动修改版。
-工具命名、独立 workspace profile 和首个 runtime 协议已固定。后续阶段沿用当前合同；
-持久网站政策、恢复元数据和 M5 扩展能力仍需按各自出口实现。
+关键路径：`M0 → M1 → M2 → M3`；`M2 → M4 → M5`。M0–M5 的源代码、合同和 macOS
+arm64 受控站点证据已在本分支完成；工具命名、独立 workspace profile、策略和 runtime
+协议已固定。剩余工作属于真实模型、Windows、签名/安装包、CI 审查和合并门，不再新增
+未验收的产品开关。
 
 后续交付仍需要补齐以下证据：
 
 1. Windows native view 的弹层、焦点和布局，以及双平台安装包行为。
 2. 签名 Desktop 与真实模型场景下认证、代际、取消和未知副作用的完整验收。
-3. 首版 DOM/frame 覆盖范围与目标测试站点是否足够；缺失项如何在产品中明确呈现。
-4. M5 使用的 CDP/WebMCP、扩展和导入能力在当前标准运行时中的真实支持范围。
+3. 真实 daemon 派发前后的网站 deny/revoke、跨 scope 下载和取消异常证据。
+4. M5 能力在目标安装包和其他 Chromium 版本中的兼容矩阵；当前 macOS Electron 45.3.1
+   的 WebMCP 正向证据不代表所有平台都提供该实验性 API。
 
 排期以阶段出口和 owner 容量确定，不把静态参考源码当作可以直接复用的开发完成量，
 也不据此承诺日历工期。实施从隔离工作区开始，保留现有未提交工作；本计划本身

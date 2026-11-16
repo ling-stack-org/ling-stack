@@ -1,3 +1,4 @@
+import type { BrowserAnnotationHandler } from "../../browser/browser-annotation-submission.js";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Activity,
@@ -85,6 +86,7 @@ export interface WorkspaceRightDockReviewTarget {
 }
 
 export interface WorkspaceRightDockProps {
+  readonly onBrowserAnnotation?: BrowserAnnotationHandler;
   readonly browserScopeId?: string;
   readonly surface: DockSurfaceKind;
   readonly open: boolean;
@@ -129,6 +131,7 @@ export interface WorkspaceRightDockProps {
 
 export function WorkspaceRightDock({
   browserScopeId,
+  onBrowserAnnotation,
   surface,
   open,
   collapsed,
@@ -592,7 +595,7 @@ export function WorkspaceRightDock({
         severity: browserEvidenceCount > 0 ? "info" : "neutral",
       },
       render: () => window.lingDesktop?.browser && cwd && browserScopeId && (surface === "normal_conversation" || surface === "channel" || surface === "teammate_direct") ? (
-        <BrowserWorkspace key={`${cwd}:${surface}:${browserScopeId}`} workspaceCwd={cwd} surface={surface} ownerId={browserScopeId} evidence={browserEvidence} />
+        <BrowserWorkspace key={`${cwd}:${surface}:${browserScopeId}`} workspaceCwd={cwd} surface={surface} ownerId={browserScopeId} onAnnotation={onBrowserAnnotation} evidence={browserEvidence} />
       ) : browserEvidence,
     });
     manifests.push({
@@ -649,6 +652,7 @@ export function WorkspaceRightDock({
     browserEvidenceCount,
     browserGroups,
     browserScopeId,
+    onBrowserAnnotation,
     contextCount,
     contextDescription,
     contextLabel,
