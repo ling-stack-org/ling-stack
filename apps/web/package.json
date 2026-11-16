@@ -18,7 +18,7 @@
     "check:select-controls": "node scripts/check-select-controls.mjs",
     "test": "node --experimental-strip-types --test test/*.test.mjs test/*.test.ts",
     "test:e2e": "corepack pnpm --filter @ling-stack/ui-react build && corepack pnpm --filter @ling-stack/conversation-ui-core build && corepack pnpm --filter @ling-stack/conversation-ui-react build && corepack pnpm --filter @ling-stack/api-client build && corepack pnpm --filter @ling-stack/core build && corepack pnpm run typecheck:e2e && playwright test",
-    "test:e2e:work-cell": "playwright test e2e/channel-work-cell.spec.ts e2e/conversation-terminal-response-actions.spec.ts e2e/conversation-transcript-color-hierarchy.spec.ts e2e/conversation-turn-change-review.spec.ts e2e/ui2-conversation-message-transcript-ownership.spec.ts e2e/ui2-conversation-work-cell-activity.spec.ts e2e/ui2-conversation-work-cell-shell-artifacts.spec.ts"
+    "test:e2e:work-cell": "playwright test e2e/channel-work-cell.spec.ts e2e/conversation-terminal-response-actions.spec.ts e2e/conversation-transcript-color-hierarchy.spec.ts e2e/conversation-turn-change-review.spec.ts e2e/conversation-change-summary.spec.ts e2e/ui2-conversation-message-transcript-ownership.spec.ts e2e/ui2-conversation-work-cell-activity.spec.ts e2e/ui2-conversation-work-cell-shell-artifacts.spec.ts"
   },
   "dependencies": {
     "@ling-stack/api-client": "workspace:*",

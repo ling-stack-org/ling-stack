@@ -1,13 +1,19 @@
 # Conversation Change Summary
 
-Status: implementation in progress
+Status: implemented; source and local browser validation complete
 Owner: Web conversation and daemon workspace review
+Last verified: 2026-11-17
+Canonical replacement: none
+Code and test anchors: `packages/daemon/src/features/runs/thread-workspace-change-summary.ts`,
+`apps/web/src/shared/conversation/change-summary/`,
+`packages/daemon/test/thread-workspace-change-summary.test.ts`,
+`apps/web/e2e/conversation-change-summary.spec.ts`
 
 ## Product contract
 
 The composer shows a compact, centered change summary above its input frame. It summarizes
 the latest canonical Turn in the selected conversation, across that Turn's linked Runs.
-The chip reads `Editing N files +A -D` while the Turn is active and `N files changed +A -D`
+The chip reads `Editing N files +A -D` while the Turn is active and `Edited N files +A -D`
 after completion. Normal conversation, channel conversation and teammate private chat use
 the same component. A new Turn replaces the prior summary; an empty latest Turn hides it.
 
@@ -24,6 +30,16 @@ recorded edits: arbitrary shell or external-editor changes without mutation prov
 outside this scope. Workspace-wide Git status remains a separate review scope.
 
 ## Data ownership
+
+```mermaid
+flowchart LR
+  Records[Host mutation records and immutable snapshots] --> Review[Scoped net review builder]
+  Review --> Summary[Latest public Turn summary API]
+  Summary --> Observer[Scoped client observer]
+  Observer --> Chip[Composer chip and file popover]
+  Chip -->|Turn scope and optional path| Dock[Existing Diff review dock]
+  Review -->|Diff bodies loaded on demand| Dock
+```
 
 `GET /threads/:threadId/workspace-change-summary?cwd=...` selects the thread's latest Turn
 in creation order, then uses `buildWorkspaceChangeReview` inside one store read snapshot.
@@ -61,12 +77,21 @@ transcript review behavior.
 
 ## Reference and implementation boundaries
 
-The supplied Codex Desktop 2026-10-28 reverse-engineering material identifies the design
-pattern: `turn/diff/updated` updates per-Turn diff state, and the composer projects a file
-summary with an upward interactive file list and path navigation. This is evidence for that
-dated build, not for every installed Codex version. Ling implements the interaction using
-its own contracts, immutable review builder and shared overlay components; bundled Codex
-code is not imported.
+The supplied Codex Desktop 2026-10-28 archive contains these static reference points under
+`rea-workspace/cgdesk/`:
+
+| Source | Verified reference |
+| --- | --- |
+| `app-initial-feb30b196d11.js`, line 1798; `main-0FVbxCQU.js`, line 523 | `turn/diff/updated` replaces the matching Turn's `diff` through `updateTurnState` |
+| `app-initial-feb30b196d11.js`, line 2574 | Turn projection produces a `turn-diff` with `unifiedDiff`, patch batches and cwd |
+| `app-initial-feb30b196d11.js`, line 1 | Lazy-module references name `diff-summary-f7ac0660791a.js` and `diff-preview-tooltip-292dda043529.js` |
+
+The two referenced UI modules are absent from this archive, so it does not provide a
+complete reusable composer-summary component. The supplied screenshots establish the
+centered chip and upward file-list interaction. These references concern that dated build,
+not every installed Codex version. Ling implements the behavior with its own contracts,
+immutable review builder and shared overlays; bundled Codex code is not imported. The
+separate file-list button makes pointer, touch and keyboard access explicit.
 
 ## Validation
 
@@ -76,6 +101,11 @@ late responses, submission and observation gates. Browser acceptance covers the 
 conversation surfaces, live updates, empty/latest-Turn reset, keyboard and pointer file
 selection, review path navigation, long lists, narrow width, localization and console errors.
 Owning package typechecks, Web build, lint, i18n and documentation checks must pass.
+
+Local Chromium acceptance uses the mock-daemon harness at desktop and narrow widths,
+in English/light and Chinese/dark configurations. It exercises the rendered components
+and HTTP request boundaries without sending a real provider request. Daemon behavior
+tests separately exercise SQLite, Host patch provenance and the read-only HTTP route.
 
 Source implementation and local browser acceptance are separate from installed Desktop,
 real-provider execution, CI, merge and production deployment.

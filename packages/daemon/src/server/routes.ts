@@ -190,6 +190,7 @@ export function parseLingThreadRoute(
   | { readonly kind: "detail"; readonly threadId: string }
   | { readonly kind: "turns"; readonly threadId: string }
   | { readonly kind: "evidence"; readonly threadId: string }
+  | { readonly kind: "workspace-change-summary"; readonly threadId: string }
   | { readonly kind: "mode"; readonly threadId: string }
   | { readonly kind: "goal"; readonly threadId: string }
   | { readonly kind: "goal-complete"; readonly threadId: string }
@@ -215,6 +216,9 @@ export function parseLingThreadRoute(
   }
   if (segments.length === 3 && segments[0] === "threads" && segments[2] === "evidence") {
     return { kind: "evidence", threadId: segments[1] };
+  }
+  if (segments.length === 3 && segments[0] === "threads" && segments[2] === "workspace-change-summary") {
+    return { kind: "workspace-change-summary", threadId: segments[1] };
   }
   if (segments.length === 3 && segments[0] === "threads" && segments[2] === "mode") {
     return { kind: "mode", threadId: segments[1] };

@@ -735,6 +735,8 @@ export function ConversationHome({
   const composerNode = (
     <NormalConversationComposer
       workspaceCwd={workspaceCwd}
+      threadId={conversationIdentityController.ready ? detailContext?.threadId : undefined}
+      onOpenReview={openConversationReview}
       runtimeMetrics={runtimeMetrics}
       draft={draft}
       inputRef={composerInputRef}

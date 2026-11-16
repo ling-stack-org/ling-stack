@@ -1,5 +1,6 @@
 import type {
   RunWorkspaceChangesResponse,
+  ThreadWorkspaceChangeSummaryResponse,
   TurnWorkspaceChangesResponse,
   WorkflowWorkspaceChangesResponse,
   WorkspaceChangesResponse,
@@ -20,6 +21,10 @@ import type {
 import { daemonClient } from "./client.js";
 
 const pendingNetChanges = new Map<string, Promise<WorkspaceChangesResponse>>();
+
+export function getThreadWorkspaceChangeSummary(cwd: string, threadId: string): Promise<ThreadWorkspaceChangeSummaryResponse> {
+  return daemonClient.getThreadWorkspaceChangeSummary(cwd, threadId);
+}
 
 export function getWorkspaceChanges(cwd: string, baseline?: "head"): Promise<WorkspaceChangesResponse> {
   if (baseline !== "head") return daemonClient.getWorkspaceChanges(cwd);
