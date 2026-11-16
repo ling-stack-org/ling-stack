@@ -35,7 +35,7 @@ export interface LockedControlIdentityVerifier {
 export function createLockedControlIdentityVerifier(options: {
   readonly platform: LockedComputerControlPlatform;
   readonly nativeBridge?: Pick<LockedControlNativeBridge, "verifyIdentity">;
-  readonly readContext: () => LockedControlIdentityContext;
+  readonly readContext: () => LockedControlIdentityContext | Promise<LockedControlIdentityContext>;
   readonly localizedReason: string;
   readonly timeoutMs?: number;
   readonly now?: () => Date;
@@ -52,7 +52,7 @@ export function createLockedControlIdentityVerifier(options: {
       if (!isText(requestId) || !isText(options.localizedReason)) {
         return failure(requestId, method, "failed", "locked_control_identity_failed");
       }
-      const before = safeReadContext(options.readContext, options.platform);
+      const before = await safeReadContext(options.readContext, options.platform);
       const initialReason = contextEligibilityReason(before);
       if (initialReason) {
         return failure(requestId, method, "failed", initialReason);
@@ -92,7 +92,7 @@ export function createLockedControlIdentityVerifier(options: {
         return failure(requestId, method, nativeResult.status, reason[nativeResult.status]);
       }
 
-      const after = safeReadContext(options.readContext, options.platform);
+      const after = await safeReadContext(options.readContext, options.platform);
       const changedReason = contextChangedReason(before!, after);
       if (changedReason) {
         return failure(requestId, method, "failed", changedReason);
@@ -149,12 +149,12 @@ function contextChangedReason(
   return undefined;
 }
 
-function safeReadContext(
-  readContext: () => LockedControlIdentityContext,
+async function safeReadContext(
+  readContext: () => LockedControlIdentityContext | Promise<LockedControlIdentityContext>,
   platform: LockedComputerControlPlatform,
-): LockedControlIdentityContext | undefined {
+): Promise<LockedControlIdentityContext | undefined> {
   try {
-    const context = readContext();
+    const context = await readContext();
     if (!context
       || context.platform !== platform
       || !isSha256(context.sessionBindingDigest)

@@ -60,6 +60,16 @@ export async function handleLockedControlDesktopRoute(
     writePrivateJson(response, 409, { error: "locked_control_authority_rotated" });
     return true;
   }
+  if (action === "current-task") {
+    assertOnlyKeys(body, ["authority"]);
+    const active = context.computerUsePreviews.list(authority.workspaceCwd).filter((projection) =>
+      projection.runId && !isTerminalComputerUseStatus(projection.status));
+    const task = active.length === 1 ? active[0] : undefined;
+    writePrivateJson(response, 200, task
+      ? { runId: task.runId, computerUseSessionId: task.sessionId }
+      : {});
+    return true;
+  }
   if (action === "capability") {
     assertOnlyKeys(body, ["authority", "buildId", "capability"]);
     const capability = body.capability;

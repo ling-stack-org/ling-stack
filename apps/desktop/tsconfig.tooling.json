@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.main.json",
+  "compilerOptions": { "noEmit": true },
+  "include": ["scripts/build-locked-use.ts"]
+}

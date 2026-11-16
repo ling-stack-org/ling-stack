@@ -38,6 +38,10 @@ export interface LockedControlGenerationRuntime {
   /** Fences input and retires the normal generation without starting another. */
   retireNormalForLock(reason: LockedControlReasonCode): Promise<void>;
   reserveLockedGeneration(): number;
+  prepareLockedGeneration?(input: {
+    readonly generation: number;
+    readonly grant: LockedComputerControlGrantV1;
+  }): Promise<void>;
   startLockedGeneration(input: {
     readonly generation: number;
     readonly grant: LockedComputerControlGrantV1;
@@ -71,6 +75,9 @@ export class LockedComputerControlPolicyCoordinator {
   private grant: LockedComputerControlGrantV1 | undefined;
   private grantDeadlineMonotonicMs: number | undefined;
   private grantDeadlineTimer: NodeJS.Timeout | undefined;
+  private attestationTimer: NodeJS.Timeout | undefined;
+  private attestationPending = false;
+  private activeGeneration: number | undefined;
   private lockEpoch = 0;
   private attestationSequence = 0;
   private boundaryRevision = 0;
@@ -103,7 +110,13 @@ export class LockedComputerControlPolicyCoordinator {
   authorizeCurrentTask(): Promise<DesktopCommandResult> {
     if (this.stopped) return Promise.resolve({ accepted: false, reason: "locked_control_authority_rotated" });
     if (this.authorizePromise) return this.authorizePromise;
-    const pending = this.enqueue(() => this.authorizeInternal());
+    const pending = this.enqueue(async () => {
+      try { return await this.authorizeInternal(); }
+      catch {
+        await this.revokeInMemoryFirst("locked_control_authority_rotated", this.safeReadAuthority(), false);
+        return { accepted: false, reason: "locked_control_authority_rotated" } as const;
+      }
+    });
     this.authorizePromise = pending;
     void pending.finally(() => {
       if (this.authorizePromise === pending) this.authorizePromise = undefined;
@@ -113,6 +126,7 @@ export class LockedComputerControlPolicyCoordinator {
 
   revokeCurrentGrant(): Promise<DesktopCommandResult> {
     this.advanceBoundaryRevision();
+    this.options.runtime.closeCallGate("locked_control_grant_consumed");
     return this.enqueue(async () => {
       const authority = this.safeReadAuthority();
       await this.revokeInMemoryFirst("locked_control_grant_consumed", authority, true);
@@ -134,7 +148,6 @@ export class LockedComputerControlPolicyCoordinator {
     this.advanceBoundaryRevision();
     this.options.runtime.closeCallGate("locked_control_grant_consumed");
     return this.enqueue(async () => {
-      await this.options.runtime.stopLockedGeneration("locked_control_grant_consumed").catch(() => undefined);
       await this.revokeInMemoryFirst("locked_control_grant_consumed", this.safeReadAuthority(), true);
       if (!this.stopped && !this.sessionLocked && !this.systemSuspended) {
         await this.options.runtime.resumeNormal();
@@ -147,7 +160,6 @@ export class LockedComputerControlPolicyCoordinator {
     this.advanceBoundaryRevision();
     this.options.runtime.closeCallGate("locked_control_suspend");
     return this.enqueue(async () => {
-      await this.options.runtime.stopLockedGeneration("locked_control_suspend").catch(() => undefined);
       await this.options.runtime.retireNormalForLock("locked_control_suspend").catch(() => undefined);
       await this.revokeInMemoryFirst("locked_control_suspend", this.safeReadAuthority(), false);
     });
@@ -168,7 +180,6 @@ export class LockedComputerControlPolicyCoordinator {
     this.advanceBoundaryRevision();
     this.options.runtime.closeCallGate("locked_control_authority_rotated");
     return this.enqueue(async () => {
-      await this.options.runtime.stopLockedGeneration("locked_control_authority_rotated").catch(() => undefined);
       await this.revokeInMemoryFirst("locked_control_authority_rotated", this.safeReadAuthority(), false);
     });
   }
@@ -178,7 +189,6 @@ export class LockedComputerControlPolicyCoordinator {
     this.advanceBoundaryRevision();
     this.options.runtime.closeCallGate("locked_control_authority_rotated");
     return this.enqueue(async () => {
-      await this.options.runtime.stopLockedGeneration("locked_control_authority_rotated").catch(() => undefined);
       await this.revokeInMemoryFirst("locked_control_authority_rotated", this.safeReadAuthority(), false);
     });
   }
@@ -249,6 +259,11 @@ export class LockedComputerControlPolicyCoordinator {
       this.transition("off", prepared.reason);
       return { accepted: false, reason: prepared.reason };
     }
+    if (!this.isBoundaryCurrent(authorizationBoundaryRevision)
+      || !sameAuthority(afterIdentity, this.safeReadAuthority())) {
+      await this.revokeInMemoryFirst("locked_control_authority_rotated", afterIdentity, false);
+      return { accepted: false, reason: "locked_control_authority_rotated" };
+    }
     this.installGrant(prepared.grant);
     let committed;
     try {
@@ -264,7 +279,9 @@ export class LockedComputerControlPolicyCoordinator {
         grantId: prepared.grant.grantId,
         authority: afterIdentity,
       }).catch(() => undefined);
-      if (reconciled?.projection.grantId === prepared.grant.grantId
+      if (this.isBoundaryCurrent(authorizationBoundaryRevision)
+        && sameAuthority(afterIdentity, this.safeReadAuthority())
+        && reconciled?.projection.grantId === prepared.grant.grantId
         && reconciled.projection.phase === "armed") {
         this.transition("armed");
         return { accepted: true };
@@ -275,6 +292,11 @@ export class LockedComputerControlPolicyCoordinator {
     if (!committed.accepted) {
       await this.revokeInMemoryFirst(committed.reason, afterIdentity, false);
       return { accepted: false, reason: committed.reason };
+    }
+    if (!this.isBoundaryCurrent(authorizationBoundaryRevision)
+      || !sameAuthority(afterIdentity, this.safeReadAuthority())) {
+      await this.revokeInMemoryFirst("locked_control_authority_rotated", afterIdentity, false);
+      return { accepted: false, reason: "locked_control_authority_rotated" };
     }
     this.transition("armed");
     return { accepted: true };
@@ -309,8 +331,19 @@ export class LockedComputerControlPolicyCoordinator {
       );
       return;
     }
-    const generation = this.options.runtime.reserveLockedGeneration();
     this.transition("attesting");
+    let generation: number;
+    try {
+      generation = this.options.runtime.reserveLockedGeneration();
+      await this.options.runtime.prepareLockedGeneration?.({ generation, grant });
+    } catch {
+      await this.revokeInMemoryFirst("locked_control_input_unavailable", authority, false);
+      return;
+    }
+    if (!this.isBoundaryCurrent(boundaryRevision)) {
+      await this.revokeInMemoryFirst("locked_control_authority_rotated", authority, false);
+      return;
+    }
     const attested = await this.options.attestor.attest({
       capability: this.options.capability(),
       grant,
@@ -341,11 +374,12 @@ export class LockedComputerControlPolicyCoordinator {
     try {
       await this.options.runtime.startLockedGeneration({ generation, grant });
       if (!this.isBoundaryCurrent(boundaryRevision)) {
-        await this.options.runtime.stopLockedGeneration("locked_control_authority_rotated").catch(() => undefined);
         await this.revokeInMemoryFirst("locked_control_authority_rotated", authority, false);
         return;
       }
       this.transition("active_locked");
+      this.activeGeneration = generation;
+      this.startAttestationHeartbeat(boundaryRevision);
     } catch {
       await this.revokeInMemoryFirst("locked_control_input_unavailable", authority, false);
     }
@@ -379,11 +413,13 @@ export class LockedComputerControlPolicyCoordinator {
     this.grantDeadlineMonotonicMs = this.monotonicNowMs() + ttlMs;
     this.grantDeadlineTimer = setTimeout(() => {
       this.grantDeadlineTimer = undefined;
+      this.advanceBoundaryRevision();
+      this.options.runtime.closeCallGate("locked_control_grant_expired");
       void this.enqueue(() => this.revokeInMemoryFirst(
         "locked_control_grant_expired",
         this.safeReadAuthority(),
         false,
-      ));
+      )).catch(() => undefined);
     }, ttlMs);
     this.grantDeadlineTimer.unref?.();
   }
@@ -400,13 +436,54 @@ export class LockedComputerControlPolicyCoordinator {
     acknowledged: boolean,
   ): Promise<void> {
     const hadDaemonState = this.phase !== "off" || Boolean(this.grant);
+    this.options.runtime.closeCallGate(reason);
+    if (this.attestationTimer) clearInterval(this.attestationTimer);
+    this.attestationTimer = undefined;
+    this.activeGeneration = undefined;
     this.clearDeadline();
     this.grant = undefined;
     this.transition("revoking", reason);
+    let cleanupError: unknown;
+    try { await this.options.runtime.stopLockedGeneration(reason); }
+    catch (error) { cleanupError = error; }
     if (hadDaemonState && authority) {
       await this.options.daemon.revoke({ authority, reason, acknowledged }).catch(() => undefined);
     }
+    if (cleanupError) throw cleanupError;
     this.transition("off", reason);
+  }
+
+  private startAttestationHeartbeat(boundaryRevision: number): void {
+    this.attestationTimer = setInterval(() => {
+      if (this.attestationPending || !this.isBoundaryCurrent(boundaryRevision)) return;
+      this.attestationPending = true;
+      const pending = this.enqueue(async () => {
+        const grant = this.grant;
+        const generation = this.activeGeneration;
+        const authority = this.safeReadAuthority();
+        if (!grant || generation === undefined || this.phase !== "active_locked"
+          || !this.isBoundaryCurrent(boundaryRevision)) return;
+        try {
+          const result = await this.options.attestor.attest({
+            capability: this.options.capability(), grant, lockEpoch: this.lockEpoch,
+            reservedProviderGeneration: generation, sequence: ++this.attestationSequence,
+          });
+          if (!this.isBoundaryCurrent(boundaryRevision)) return;
+          if (!result.ok || !authority || !sameAuthority(authority, this.safeReadAuthority())) {
+            throw new Error("locked_control_attestation_lost");
+          }
+          const published = await this.options.daemon.publishAttestation({ authority, attestation: result.attestation });
+          if (!this.isBoundaryCurrent(boundaryRevision)) return;
+          if (!published.accepted || !sameAuthority(authority, this.safeReadAuthority())) {
+            throw new Error("locked_control_attestation_rejected");
+          }
+        } catch {
+          await this.revokeInMemoryFirst("locked_control_authority_rotated", authority, false);
+        }
+      });
+      void pending.finally(() => { this.attestationPending = false; }).catch(() => undefined);
+    }, 1_000);
+    this.attestationTimer.unref();
   }
 
   private safeReadAuthority(): LockedControlRuntimeAuthority | undefined {

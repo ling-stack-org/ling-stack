@@ -46,6 +46,7 @@ const SUPPORTED_TEST_PACKAGE_DIRECTORIES = new Set(["apps/web", "apps/chrome-ext
 // Daemon changes retain the complete Darwin test suite without consuming an
 // additional hosted macOS runner.
 const MACOS_NATIVE_PATH_PATTERNS = [
+  /^apps\/desktop\/(?:native\/locked-use(?:\/|$)|scripts\/build-locked-use\.ts$)/u,
   /^native\/sandbox(?:\/|$)/u,
   /^packages\/daemon\/src\/runtime\/sandbox(?:\/|$)/u,
   /^packages\/daemon\/src\/runtime\/adapters\/native-command-policy\.[^/]+$/u,

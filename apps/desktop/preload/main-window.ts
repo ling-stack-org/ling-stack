@@ -214,6 +214,12 @@ const capabilities: LingDesktopCapabilities = {
               DESKTOP_IPC_CHANNELS.computerControlOpenPermissionSettings,
               permission,
             ),
+          authorizeLockedComputerControl: () => ipcRenderer.invoke(
+            DESKTOP_IPC_CHANNELS.computerControlLockedAuthorize,
+          ),
+          revokeLockedComputerControl: () => ipcRenderer.invoke(
+            DESKTOP_IPC_CHANNELS.computerControlLockedRevoke,
+          ),
         },
       }
     : {}),

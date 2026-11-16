@@ -16,6 +16,7 @@ import {
 } from "./provider-host.js";
 import type { CuaDriverTelemetrySink } from "./telemetry.js";
 import { createCuaDriverTelemetry } from "./telemetry.js";
+import type { CuaDriverActionGate } from "./restricted-generation.js";
 
 export const CUA_DRIVER_PROXY_PATH = "/mcp" as const;
 export const DEFAULT_CUA_DRIVER_PROXY_MAX_BODY_BYTES = 8 * 1024 * 1024;
@@ -38,6 +39,7 @@ export interface CuaDriverMcpProxyOptions {
   readonly maxSseQueueBytes?: number;
   readonly requestTimeoutMs?: number;
   readonly telemetry?: CuaDriverTelemetrySink;
+  readonly actionGate?: CuaDriverActionGate;
   readonly onSessionClosed?: (reason: string) => void;
   readonly onManagedReadinessChanged?: (message: unknown) => void;
   /** Runs after initialize is validated and before the response is exposed. */
@@ -99,8 +101,8 @@ export function deriveCuaDriverWorkspaceBinding(workspaceCwd: string): string {
 }
 
 /**
- * One-client loopback Streamable HTTP transport. It deliberately does not
- * interpret tool semantics; all non-reserved JSON-RPC messages pass through.
+ * One-client loopback Streamable HTTP transport. An injected action gate owns
+ * restricted admission while the transport preserves JSON-RPC envelopes.
  */
 export class CuaDriverMcpProxy {
   private readonly telemetry: CuaDriverTelemetrySink;
@@ -126,6 +128,7 @@ export class CuaDriverMcpProxy {
   private closed = false;
   private hostDraining = false;
   private callGateOpen = false;
+  private restrictedCallGateRevoked = false;
   private callGateClosedReason: string | undefined;
   private closingEpoch = 0;
 
@@ -158,6 +161,7 @@ export class CuaDriverMcpProxy {
 
   /** Close synchronously before async lease/client/child revocation begins. */
   closeCallGate(reason = "revoked"): void {
+    if (this.options.actionGate) this.restrictedCallGateRevoked = true;
     const wasOpen = this.callGateOpen;
     const reasonChanged = this.callGateClosedReason !== reason;
     this.callGateOpen = false;
@@ -179,7 +183,7 @@ export class CuaDriverMcpProxy {
 
   /** Re-open one retained same-generation session after readiness recovers. */
   openCallGate(): void {
-    if (this.closed || this.hostDraining) {
+    if (this.closed || this.hostDraining || this.restrictedCallGateRevoked) {
       return;
     }
     const wasOpen = this.callGateOpen;
@@ -362,7 +366,14 @@ export class CuaDriverMcpProxy {
         this.writeJson(response, 409, { error: "mcp_second_initialize_forbidden" });
         return;
       }
-      const responseValue = await this.options.host.exchange(message);
+      const release = await this.options.actionGate?.beforeCall(message);
+      let responseValue: JsonRpcResponse | undefined;
+      try {
+        this.assertOpenEpoch(initializeEpoch);
+        responseValue = await this.options.host.exchange(message);
+      } finally {
+        await release?.();
+      }
       this.assertOpenEpoch(initializeEpoch);
       if (!responseValue) {
         throw new CuaDriverMcpProxyError("mcp_initialize_response_missing");
@@ -439,6 +450,24 @@ export class CuaDriverMcpProxy {
   }
 
   private async exchangeAcceptedMessage(message: JsonRpcClientMessage): Promise<JsonRpcResponse | undefined> {
+    const release = await this.options.actionGate?.beforeCall(message);
+    if (release && (!this.callGateOpen || this.closed || this.hostDraining)) {
+      await release();
+      throw new CuaDriverMcpProxyError("mcp_call_gate_closed");
+    }
+    let response: JsonRpcResponse | undefined;
+    try {
+      response = await this.exchangeAdmittedMessage(message);
+    } finally {
+      await release?.();
+    }
+    if (release && (!this.callGateOpen || this.closed || this.hostDraining)) {
+      throw new CuaDriverMcpProxyError("mcp_call_gate_closed");
+    }
+    return response;
+  }
+
+  private async exchangeAdmittedMessage(message: JsonRpcClientMessage): Promise<JsonRpcResponse | undefined> {
     if (!("method" in message) || !("id" in message)) {
       return this.options.host.exchange(message);
     }
@@ -557,6 +586,7 @@ export class CuaDriverMcpProxy {
       }
       return;
     }
+    if (this.options.actionGate && (!this.callGateOpen || this.closed || this.hostDraining)) return;
     if (!this.sseResponse || this.sseResponse.destroyed) {
       return;
     }
@@ -675,6 +705,7 @@ export class CuaDriverMcpProxy {
   }
 
   private assertOpenEpoch(epoch: number): void {
+    if (this.restrictedCallGateRevoked) throw new CuaDriverMcpProxyError("mcp_call_gate_closed");
     if (this.closed || epoch !== this.closingEpoch) {
       throw new CuaDriverMcpProxyError("proxy_closed");
     }

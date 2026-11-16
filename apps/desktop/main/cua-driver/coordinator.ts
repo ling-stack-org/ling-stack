@@ -74,6 +74,7 @@ import {
 } from "./platform-binding.js";
 import type { CuaDriverAvailabilityPublisher } from "./availability-publisher.js";
 import { CuaDriverInputFenceError } from "./input-fence-client.js";
+import type { CuaDriverActionGate } from "./restricted-generation.js";
 
 export type CuaDriverCoordinatorLifecycle = "disabled" | "validating" | "included" | "starting" | "active" | "stopping" | "failed";
 
@@ -97,6 +98,8 @@ export interface CuaDriverCoordinatorSnapshot {
 }
 
 export interface CuaDriverCoordinatorOptions {
+  readonly generationFloor?: number;
+  readonly actionGate?: CuaDriverActionGate;
   readonly platform: BundledCuaDriverPlatform;
   readonly architecture: CuaDriverArchitecture;
   readonly resourcesPath: string;
@@ -184,6 +187,10 @@ export class CuaDriverDesktopCoordinator {
   private stopWindowsSessionRecoveryObserver: (() => void) | undefined;
 
   constructor(private readonly options: CuaDriverCoordinatorOptions) {
+    const generationFloor = options.generationFloor ?? 0;
+    if (!Number.isSafeInteger(generationFloor) || generationFloor < 0) throw new Error("cua_driver_generation_floor_invalid");
+    this.generation = generationFloor;
+    this.snapshotValue = { ...this.snapshotValue, generation: generationFloor };
     if (options.bridgeContext.workspaceCwd !== options.workspaceCwd) {
       throw new Error("cua_driver_bridge_workspace_mismatch");
     }
@@ -270,6 +277,15 @@ export class CuaDriverDesktopCoordinator {
 
   get providerHost(): CuaDriverProviderHost | undefined {
     return this.host;
+  }
+
+  /** Reserve authority for a separate protected owner while normal control is retired. */
+  advanceGenerationFloor(generation: number): void {
+    if (!this.windowsSessionSuspended || this.host || this.enablePromise || this.cleanupDebt
+      || !Number.isSafeInteger(generation) || generation <= this.generation) {
+      throw new Error("cua_driver_generation_reservation_invalid");
+    }
+    this.generation = generation;
   }
 
   /** Synchronous admission fence used before the locked-control policy queue awaits. */
@@ -628,6 +644,7 @@ export class CuaDriverDesktopCoordinator {
         host,
         context: proxyContext,
         telemetry,
+        actionGate: this.options.actionGate,
         onSessionClosed: (reason) => {
           if (this.host?.generation === generation) {
             this.scheduleRecovery(reason, generation);
@@ -913,6 +930,10 @@ export class CuaDriverDesktopCoordinator {
   }
 
   private scheduleRecovery(reason: string, generation: number): void {
+    if (this.options.actionGate) {
+      this.scheduleTerminalFailure(reason, generation, "platform_unavailable");
+      return;
+    }
     if (
       !this.requestedEnabled
       || this.stopped

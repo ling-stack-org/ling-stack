@@ -11,7 +11,7 @@
     "generate:icons": "node scripts/generate-brand-icons.mjs",
     "build": "corepack pnpm build:office-driver && corepack pnpm --filter @ling-stack/browser-host build && corepack pnpm --filter @ling-stack/chrome-extension build && corepack pnpm --filter @ling-stack/web build && corepack pnpm --filter @ling-stack/daemon build && tsc -p tsconfig.main.json && esbuild preload/main-window.ts preload/computer-use-preview.ts --bundle --platform=node --format=cjs --external:electron --outdir=dist/preload --out-extension:.js=.cjs && corepack pnpm build:engine-secret-worker && node scripts/build-packaged-daemon.mjs && node scripts/stage-development-bundled-plugins.mjs && vite build --config vite.config.ts",
     "build:office-driver": "node scripts/build-office-driver.mjs",
-    "typecheck:ci": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit && tsc -p tsconfig.renderer.json --noEmit && tsc -p tsconfig.test.json",
+    "typecheck:ci": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit && tsc -p tsconfig.renderer.json --noEmit && tsc -p tsconfig.test.json && tsc -p tsconfig.tooling.json",
     "typecheck": "corepack pnpm --filter @ling-stack/localization build && corepack pnpm --filter @ling-stack/browser-host build && corepack pnpm --filter @ling-stack/ui-react build && corepack pnpm --filter @ling-stack/api-client build && corepack pnpm typecheck:ci",
     "dev": "corepack pnpm build && electron .",
     "start": "electron .",
@@ -49,7 +49,10 @@
     "build:restricted-command-helper:mac": "node scripts/build-restricted-command-helper.mjs --platform darwin",
     "package:mac": "corepack pnpm --filter @ling-stack/browser-host build:native && corepack pnpm build && node scripts/package-macos-with-office.mjs",
     "package:win": "corepack pnpm --filter @ling-stack/browser-host build:native && corepack pnpm --filter @ling-stack/daemon build:engine-supervisor && corepack pnpm build && node scripts/cua-driver-electron-package.mjs --platform win32-x64 -- --win nsis --x64",
-    "build:engine-secret-worker": "esbuild ../../packages/daemon/dist/features/execution-engines/engine-secret-worker.js --bundle --platform=node --format=esm --external:@napi-rs/keyring --outfile=dist/daemon/engine-secret-worker.js"
+    "build:engine-secret-worker": "esbuild ../../packages/daemon/dist/features/execution-engines/engine-secret-worker.js --bundle --platform=node --format=esm --external:@napi-rs/keyring --outfile=dist/daemon/engine-secret-worker.js",
+    "build:locked-use:mac": "node scripts/build-locked-use.ts",
+    "test:locked-use:mac": "swift test --package-path native/locked-use --jobs 4",
+    "check:locked-use:mac": "./native/locked-use/script/build_and_run.sh --verify"
   },
   "dependencies": {
     "@ling-stack/browser-host": "workspace:*",

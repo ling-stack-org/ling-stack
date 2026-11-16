@@ -236,6 +236,8 @@ test("Daemon source and shared validation inputs retain both platforms", () => {
 
 test("macOS helper smoke follows explicit native surface paths", () => {
   for (const file of [
+    "apps/desktop/native/locked-use/Sources/Broker/BrokerMain.swift",
+    "apps/desktop/scripts/build-locked-use.ts",
     "native/sandbox/src/main.rs",
     "native/sandbox/tests/channel-command-smoke.mjs",
     "packages/daemon/src/runtime/sandbox/macos-sandbox-backend.ts",

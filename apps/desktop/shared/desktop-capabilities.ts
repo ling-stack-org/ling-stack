@@ -218,6 +218,8 @@ export interface ComputerControlDesktopCapability {
   readonly platform: "macos" | "windows";
   requestPermissions(): Promise<DesktopCommandResult>;
   openPermissionSettings(permission: ComputerControlPermissionKind): Promise<DesktopCommandResult>;
+  authorizeLockedComputerControl(): Promise<DesktopCommandResult>;
+  revokeLockedComputerControl(): Promise<DesktopCommandResult>;
 }
 
 export interface LockedTaskContinuationDesktopCapability {

@@ -168,6 +168,8 @@ test("identity adapter discards a verified result after session or authority cha
 
 test("native identity prompt is single-flight and malformed output fails closed", async () => {
   let calls = 0;
+  let entered;
+  const started = new Promise((resolve) => { entered = resolve; });
   let release;
   const gate = new Promise((resolve) => { release = resolve; });
   const verifier = createLockedControlIdentityVerifier({
@@ -177,6 +179,7 @@ test("native identity prompt is single-flight and malformed output fails closed"
     nativeBridge: {
       async verifyIdentity() {
         calls += 1;
+        entered();
         await gate;
         return { status: "verified" };
       },
@@ -185,6 +188,7 @@ test("native identity prompt is single-flight and malformed output fails closed"
   });
   const first = verifier.verify("request-1");
   const second = verifier.verify("request-2");
+  await started;
   assert.equal(calls, 1);
   release();
   assert.deepEqual((await Promise.all([first, second])).map((result) => result.status), ["verified", "verified"]);

@@ -645,6 +645,7 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
     runtime: desktopRuntime,
     computerUse,
     getMainWindow: () => mainWindow ?? loadingMainWindow,
+    trustedDocumentUrl: pathToFileURL(resources.webIndexPath).href,
     windowControlsEnabled: process.platform === "win32",
     navigationIntents: desktopNavigationIntents,
     themeStore: desktopRendererThemeStore,
