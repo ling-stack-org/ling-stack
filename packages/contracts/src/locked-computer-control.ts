@@ -10,6 +10,16 @@ export const LOCKED_COMPUTER_CONTROL_SCHEMA_VERSION = 1 as const;
 export const LOCKED_COMPUTER_CONTROL_MAX_GRANT_TTL_SECONDS = 900 as const;
 export const LOCKED_COMPUTER_CONTROL_TOOL_POLICY_REVISION = "locked-cua-tools-v1" as const;
 
+/** Canonical tool set shared by the Desktop gate and daemon policy. */
+export const LOCKED_COMPUTER_CONTROL_ALLOWED_TOOL_IDS = Object.freeze([
+  "bring_to_front", "check_permissions", "click", "double_click", "drag", "end_session",
+  "get_accessibility_tree", "get_cursor_position", "get_desktop_state", "get_screen_size",
+  "get_window_state", "health_report", "hotkey", "list_apps", "list_windows", "move_cursor",
+  "page", "press_key", "right_click", "scroll", "set_value", "start_session", "type_text",
+] as const);
+export const LOCKED_COMPUTER_CONTROL_ALLOWED_TOOL_IDS_SHA256 =
+  "5a74e9472dc59e09e1c464461d759e088c22f534588c8f0ac880dfca7fad40e2" as const;
+
 export const LOCKED_COMPUTER_CONTROL_REASON_CODES = [
   "locked_control_disabled_by_build",
   "locked_control_disabled_by_policy",

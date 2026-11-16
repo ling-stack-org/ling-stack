@@ -81,6 +81,7 @@ import { FileLockedTaskContinuationPreferenceStore } from "./locked-task-continu
 import { DesktopRendererThemeStore } from "./renderer-theme-store.js";
 import { resolveDesktopResourcePaths } from "./resource-paths.js";
 import { resolveDesktopResourcesWithStartupRecovery } from "./resource-startup-recovery.js";
+import { loadPackagedDarwinLockedUseBackend } from "./locked-computer-control/packaged-release-authority.js";
 import { installDesktopBrowserHostForLaunch } from "./qa-launch-profile.js";
 import { sendToLiveDesktopWindow } from "./safe-window-send.js";
 import { establishDesktopSingleInstanceAuthority } from "./single-instance.js";
@@ -169,6 +170,8 @@ let backgroundRepository: DesktopBackgroundRepository | undefined;
 let humanEvaluation: ReturnType<typeof createHumanEvaluationDesktopComposition> | undefined;
 let unregisterLockedControlPreview: (() => void) | undefined;
 let desktopRuntime: DesktopRuntime | undefined;
+let packagedDarwinLockedUseBackend: Awaited<ReturnType<typeof loadPackagedDarwinLockedUseBackend>> | undefined;
+let packagedDarwinLockedUseBackendResolved = false;
 let desktopDaemonAutomaticRecoveryArmed = false;
 let desktopDaemonAutomaticRecoveryUsed = false;
 let officeDriverRuntime: OfficeDriverRuntime | undefined;
@@ -356,6 +359,33 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
   if (!attempt.isCurrent()) {
     return false;
   }
+  if (!packagedDarwinLockedUseBackendResolved) {
+    packagedDarwinLockedUseBackendResolved = true;
+    if (app.isPackaged && process.platform === "darwin") {
+      try {
+        packagedDarwinLockedUseBackend = await loadPackagedDarwinLockedUseBackend({
+          packaged: app.isPackaged,
+          platform: process.platform,
+          appPath: app.getAppPath(),
+          resourcesRoot: resources.resourcesRoot,
+        });
+        logStartup(packagedDarwinLockedUseBackend
+          ? "locked_control.packaged_backend_loaded"
+          : "locked_control.packaged_backend_unavailable", {
+            platform: process.platform,
+            reason: packagedDarwinLockedUseBackend ? undefined : "release_authority_missing_or_invalid",
+          });
+      } catch (error) {
+        // A release authority or installed component failure disables only the
+        // optional locked backend; ordinary Desktop startup remains available.
+        packagedDarwinLockedUseBackend = undefined;
+        logStartup("locked_control.packaged_backend_unavailable", {
+          platform: process.platform,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }
   if (!desktopRuntime) {
     if (!cuaDriverFeatureFlags) {
       cuaDriverPackagedStartupAuthority = await resolveDesktopCuaDriverPackagedStartupAuthority({
@@ -442,6 +472,7 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
         featureFlags,
         packaged: app.isPackaged,
         powerMonitor,
+        ...(packagedDarwinLockedUseBackend ? { lockedUseBackend: packagedDarwinLockedUseBackend } : {}),
         ...(platformOwner ? { platformOwner } : {}),
         onDiagnostic: logStartup,
       });

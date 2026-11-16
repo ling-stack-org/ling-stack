@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { setTimeout as wait } from "node:timers/promises";
 import { isLockedComputerControlGrantV1, type LockedComputerControlGrantV1 } from "@ling-stack/contracts";
 import type { CuaDriverCoordinatorOptions, CuaDriverCoordinatorSnapshot } from "./coordinator.js";
 import type { JsonRpcClientMessage } from "./provider-host.js";
@@ -18,6 +19,8 @@ export interface RestrictedCuaDriverNativeSession {
 export interface RestrictedCuaDriverCoordinator {
   readonly snapshot?: CuaDriverCoordinatorSnapshot;
   enable(): Promise<CuaDriverCoordinatorSnapshot>;
+  /** Spawn and initialize the lazy provider while restricted calls stay gated. */
+  primeRestrictedSession?(): Promise<void>;
   suspendForSystem?(reason: string): Promise<void>;
   closeCallGateForSecurityBoundary?(reason: string): void;
   shutdown(): Promise<void>;
@@ -30,6 +33,7 @@ export class RestrictedCuaDriverGeneration {
   private stopped = false;
   private starting: Promise<void> | undefined;
   private stopping: Promise<void> | undefined;
+  private actionAdmissionOpen = false;
 
   constructor(private readonly options: {
     readonly currentGeneration: () => number;
@@ -49,10 +53,47 @@ export class RestrictedCuaDriverGeneration {
     return generation;
   }
 
-  start(input: { readonly generation: number; readonly grant: LockedComputerControlGrantV1 }): Promise<void> {
+  /** The provider may initialize while this gate is closed, but no GUI tool
+   * call is admitted until native attestation and the daemon publication have
+   * completed. */
+  openActionAdmission(): void {
+    if (this.stopped || !this.coordinator) {
+      throw new Error("locked_control_authority_rotated");
+    }
+    this.actionAdmissionOpen = true;
+  }
+
+  get snapshot(): CuaDriverCoordinatorSnapshot | undefined {
+    return this.coordinator?.snapshot;
+  }
+
+  /** Attestation waits for that generation's initialized child under the
+   * caller's bounded abort signal. */
+  async waitUntilReady(signal: AbortSignal): Promise<CuaDriverCoordinatorSnapshot> {
+    if (!this.coordinator) throw new Error("locked_control_capture_unavailable");
+    while (true) {
+      signal.throwIfAborted();
+      const snapshot = this.coordinator.snapshot;
+      if (this.stopped || !snapshot || snapshot.generation !== this.reserved) {
+        throw new Error("locked_control_authority_rotated");
+      }
+      if (snapshot.lifecycle !== "active") throw new Error("locked_control_capture_unavailable");
+      if (snapshot.providerState === "ready") return snapshot;
+      if (snapshot.providerState !== "desktop_unavailable") throw new Error("locked_control_capture_unavailable");
+      await wait(20, undefined, { signal });
+    }
+  }
+
+  start(input: {
+    readonly generation: number;
+    readonly grant: LockedComputerControlGrantV1;
+    /** Production Locked Use starts with tool admission held until attestation. */
+    readonly holdActionAdmission?: boolean;
+  }): Promise<void> {
     if (this.starting || this.coordinator || this.stopped) return Promise.reject(new Error("locked_control_authority_rotated"));
     if (!isLockedComputerControlGrantV1(input.grant)) return Promise.reject(new Error("locked_control_session_mismatch"));
     const grant = Object.freeze({ ...input.grant });
+    this.actionAdmissionOpen = input.holdActionAdmission !== true;
     const allowedIds = [...this.options.allowedToolIds];
     const allowed = new Set(allowedIds);
     const digest = createHash("sha256").update(JSON.stringify(allowedIds)).digest("hex");
@@ -84,6 +125,9 @@ export class RestrictedCuaDriverGeneration {
         if (!("id" in message) || typeof name !== "string" || !allowed.has(name)) {
           throw new Error("locked_control_disabled_by_policy");
         }
+        if (!this.actionAdmissionOpen) {
+          throw new Error("locked_control_attestation_pending");
+        }
         await this.options.native.beginAction(new AbortController().signal);
         try { assertCurrent(); }
         catch (error) { await this.options.native.finishAction(new AbortController().signal).catch(() => undefined); throw error; }
@@ -104,6 +148,9 @@ export class RestrictedCuaDriverGeneration {
       if (snapshot.generation !== input.generation || snapshot.lifecycle !== "active") {
         throw new Error("locked_control_capture_unavailable");
       }
+      if (!coordinator.primeRestrictedSession) throw new Error("locked_control_capture_unavailable");
+      await coordinator.primeRestrictedSession();
+      assertCurrent();
       await this.options.native.check(new AbortController().signal);
       assertCurrent();
     })();
@@ -113,6 +160,7 @@ export class RestrictedCuaDriverGeneration {
 
   closeCallGate(reason: string): void {
     this.stopped = true;
+    this.actionAdmissionOpen = false;
     this.coordinator?.closeCallGateForSecurityBoundary?.(reason);
   }
 

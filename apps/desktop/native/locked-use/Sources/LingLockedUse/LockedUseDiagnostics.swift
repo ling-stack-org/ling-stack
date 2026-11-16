@@ -107,11 +107,14 @@ public struct LockedUseDiagnostics: Codable, Sendable {
         } ?? false
         var available = false
         var guardianPermissions: [String: Bool] = [:]
+        var componentsValidated = false
         if let configuration, let team = try? LockedUseSigningIdentity.current().teamIdentifier,
            let evidence = try? LockedUseComponentValidation.current(team: team) {
-            _ = evidence
+            componentsValidated = configuration.matchesValidation(osBuild: evidence.osBuild,
+                brokerHash: evidence.brokerHash, guardianHash: evidence.guardianHash,
+                pluginHash: evidence.pluginHash)
             guardianPermissions = installedGuardianPermissions()
-            available = configuration.enabled && policyIntact && approved
+            available = componentsValidated && policyIntact && approved
                 && AXIsProcessTrusted() && CGPreflightScreenCaptureAccess()
                 && guardianPermissions["accessibility"] == true && guardianPermissions["inputMonitoring"] == true
         }
@@ -129,7 +132,7 @@ public struct LockedUseDiagnostics: Codable, Sendable {
             otherAuthorizationPlugins: others,
             blockers: available ? [] : [
                 "Administrator installation and permissions for Ling Stack and Ling Guardian are required. Client approval, signed components and authentication policy must be intact."
-            ]
+            ],
         )
     }
 

@@ -9,7 +9,7 @@ import {
 } from "@ling-stack/contracts";
 import type { DesktopRuntimeCuaDriverCoordinator } from "../desktop-runtime.js";
 import type { DesktopDaemonCuaDriverAuthorityTuple } from "../daemon-lifecycle.js";
-import type { CuaDriverCoordinatorOptions } from "../cua-driver/coordinator.js";
+import type { CuaDriverCoordinatorOptions, CuaDriverCoordinatorSnapshot } from "../cua-driver/coordinator.js";
 import { RestrictedCuaDriverGeneration } from "../cua-driver/restricted-generation.js";
 import { createLockedControlCapabilityAttestor } from "./capability-attestor.js";
 import { createLockedControlDaemonClient } from "./daemon-client.js";
@@ -17,6 +17,7 @@ import type { DarwinLockedUseNativeClient } from "./darwin-locked-use-client.js"
 import { createLockedControlIdentityVerifier } from "./identity-verifier.js";
 import { LockedComputerControlPolicyCoordinator, type LockedControlPolicyCoordinatorSnapshot } from "./policy-coordinator.js";
 import type { LockedControlNativeSessionResponse } from "./native-helper-bridge.js";
+import type { LockedControlNativeStatusResponse } from "./native-helper-bridge.js";
 
 /** Supplied only by a packaged composition after exact-build native acceptance. */
 export interface DesktopLockedUseBackend {
@@ -24,8 +25,15 @@ export interface DesktopLockedUseBackend {
   readonly policy: LockedComputerControlPolicyV1;
   readonly allowedToolIds: readonly string[];
   readonly createClient: (onRevoked: () => void) => Pick<DarwinLockedUseNativeClient,
-    "readSession" | "verifyIdentity" | "begin" | "check" | "beginAction" | "finishAction" | "end" | "ownsManagedSession">;
-  readonly verifyTargetReadiness: (input: { readonly generation: number; readonly sessionBindingDigest: string }) => Promise<{
+    "readSession" | "verifyIdentity" | "begin" | "check" | "beginAction" | "finishAction" | "end" | "ownsManagedSession">
+    & Partial<Pick<DarwinLockedUseNativeClient, "readStatus">>;
+  readonly verifyTargetReadiness: (input: {
+    readonly generation: number;
+    readonly sessionBindingDigest: string;
+    /** Snapshot is from the exact restricted coordinator being attested. */
+    readonly providerSnapshot?: CuaDriverCoordinatorSnapshot;
+    readonly nativeStatus?: LockedControlNativeStatusResponse;
+  }) => Promise<{
     readonly userDesktopTargeted: boolean;
     readonly captureReady: boolean;
     readonly inputReady: boolean;
@@ -119,13 +127,19 @@ export function composeLockedControlRuntime(options: {
     attestor: createLockedControlCapabilityAttestor({
       nativeBridge: {
         attestLockedSession: async (request) => {
-          if (!backend || !client || preparedGeneration !== request.providerGeneration || !options.isCurrent()) {
+          if (!backend || !client || !launcher || preparedGeneration !== request.providerGeneration || !options.isCurrent()) {
             throw new Error("locked_control_probe_required");
           }
+          await launcher.waitUntilReady(request.signal);
           await client.check(request.signal);
           const current = await client.readSession(request.signal);
+          const nativeStatus = "readStatus" in client && typeof client.readStatus === "function"
+            ? await client.readStatus(request.signal)
+            : undefined;
           const facts = await backend.verifyTargetReadiness({
             generation: request.providerGeneration, sessionBindingDigest: current.sessionBindingDigest,
+            providerSnapshot: launcher?.snapshot,
+            nativeStatus,
           });
           await client.check(request.signal);
           if (!options.isCurrent() || preparedGeneration !== request.providerGeneration) {
@@ -175,7 +189,11 @@ export function composeLockedControlRuntime(options: {
       },
       async startLockedGeneration(input) {
         if (!launcher) throw new Error("locked_control_disabled_by_build");
-        await launcher.start(input);
+        await launcher.start({ ...input, holdActionAdmission: true });
+      },
+      openLockedGeneration() {
+        if (!launcher) throw new Error("locked_control_disabled_by_build");
+        launcher.openActionAdmission();
       },
       async stopLockedGeneration(reason) {
         if (launcher) { await launcher.stop(reason); launcher = undefined; }
@@ -189,10 +207,26 @@ export function composeLockedControlRuntime(options: {
     },
     onStateChanged: options.onStateChanged,
   });
-  void daemon.publishCapability({ authority: options.authority, capability, buildId: "ling-desktop-locked-control-v1" })
-    .catch((error) => options.onDiagnostic?.("desktop_runtime.locked_control_capability_publish_failed", {
+  const daemonReady = daemon.publishCapability({
+    authority: options.authority, capability, buildId: "ling-desktop-locked-control-v1",
+  }).then(async (published) => {
+    if (!published.accepted) throw new Error(published.reason);
+    if (!options.isCurrent()) throw new Error("locked_control_authority_rotated");
+    if (!backend || backend.policy.mode !== "task_grant_required") return;
+    if (!daemon.promotePolicy) throw new Error("locked_control_daemon_policy_promotion_unavailable");
+    const promoted = await daemon.promotePolicy({
+      authority: options.authority,
+      policy: backend.policy,
+      buildId: "ling-desktop-locked-control-v1",
+    });
+    if (!promoted.accepted) throw new Error(promoted.reason);
+  }).catch((error) => {
+    options.onDiagnostic?.("desktop_runtime.locked_control_capability_publish_failed", {
       error: error instanceof Error ? error.message : String(error),
-    }));
+    });
+    throw error;
+  });
+  void daemonReady.catch(() => undefined);
   return Object.freeze({
     coordinator: policy,
     closeCallGate: (reason: string) => {
@@ -202,6 +236,8 @@ export function composeLockedControlRuntime(options: {
     ownsManagedSession: () => client?.ownsManagedSession === true,
     async authorize() {
       if (!backend || capability.state !== "supported_restricted") return { accepted: false, reason: capability.reason ?? "locked_control_probe_required" };
+      try { await daemonReady; }
+      catch { return { accepted: false, reason: "locked_control_disabled_by_policy" }; }
       if (policy.snapshot().phase !== "off" || client || launcher) return { accepted: false, reason: "locked_control_commit_unconfirmed" };
       client = backend.createClient(() => {
         // Native loss closes provider admission synchronously before the queue.

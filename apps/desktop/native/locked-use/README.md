@@ -94,8 +94,10 @@ certify external provider shutdown or restore an unlock permit.
 `promote` requires a root Broker validation report matching the OS build and
 Broker/Guardian/plugin hashes, observed relock/release and subsequent manual
 unlock. The Desktop JSON client does not produce a GUI/Keychain validation report;
-the attended provider validation harness and packaged backend remain release
-prerequisites. Production installation without matching evidence stays unavailable.
+the attended provider validation harness and accepted packaged release authority
+remain release prerequisites. The packaged backend is present but stays disabled
+without that authority and a live supported native status. Production installation
+without matching evidence stays unavailable.
 
 If the native client dies while an external provider may still execute input, the
 Broker retains the revocation fence and guards. Automated recovery from this case

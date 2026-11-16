@@ -38,9 +38,11 @@ private final class Client {
         }
         if command == "status" {
             let status = LockedUseDiagnostics.current()
-            return ["installed": status.pluginInstalled && status.brokerInstalled,
-                "available": status.available, "sessionLocked": session.state == .locked,
-                "productCapability": "probe_required"]
+            return ["platform": "darwin", "available": status.available,
+                "productCapability": status.available ? "supported_restricted" : "probe_required",
+                "captureReady": status.available,
+                "inputReady": status.available,
+                "secureSurfaceExcluded": status.available]
         }
         if command == "identity" {
             guard session.state == .unlocked, connection == nil, binding == nil else {

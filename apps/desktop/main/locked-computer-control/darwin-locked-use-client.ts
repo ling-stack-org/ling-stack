@@ -2,7 +2,12 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { isAbsolute } from "node:path";
 import { isLockedComputerControlGrantV1, type LockedComputerControlGrantV1 } from "@ling-stack/contracts";
-import { parseLockedControlNativeSessionResponse, type LockedControlNativeSessionResponse } from "./native-helper-bridge.js";
+import {
+  parseLockedControlNativeSessionResponse,
+  parseLockedControlNativeStatusResponse,
+  type LockedControlNativeSessionResponse,
+  type LockedControlNativeStatusResponse,
+} from "./native-helper-bridge.js";
 import type { LockedControlNativeIdentityRequest } from "./native-bridge.js";
 
 export interface DarwinLockedUseTaskBinding {
@@ -48,6 +53,12 @@ export class DarwinLockedUseNativeClient {
   async readSession(signal: AbortSignal): Promise<LockedControlNativeSessionResponse> {
     const value = parseLockedControlNativeSessionResponse(await this.request("session", signal));
     if (!value || value.platform !== "darwin") return this.fail("locked_use_session_invalid");
+    return value;
+  }
+
+  async readStatus(signal: AbortSignal): Promise<LockedControlNativeStatusResponse> {
+    const value = parseLockedControlNativeStatusResponse(await this.request("status", signal));
+    if (!value) return this.fail("locked_use_status_invalid");
     return value;
   }
 

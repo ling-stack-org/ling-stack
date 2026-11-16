@@ -3,6 +3,7 @@ import type {
   LockedComputerControlCapabilityV1,
   LockedComputerControlGrantV1,
   LockedComputerControlProjectionV1,
+  LockedComputerControlPolicyV1,
   LockedControlIdentityResultV1,
   LockedControlReasonCode,
 } from "@ling-stack/contracts";
@@ -81,6 +82,11 @@ export interface LockedControlDaemonClient {
   publishCapability(input: {
     readonly authority: LockedControlDaemonHandshakeAuthority;
     readonly capability: LockedComputerControlCapabilityV1;
+    readonly buildId: string;
+  }): Promise<LockedControlDaemonMutationResult>;
+  promotePolicy?(input: {
+    readonly authority: LockedControlDaemonHandshakeAuthority;
+    readonly policy: LockedComputerControlPolicyV1;
     readonly buildId: string;
   }): Promise<LockedControlDaemonMutationResult>;
   revoke(input: {
@@ -201,6 +207,13 @@ export function createLockedControlDaemonClient(options: {
       return parseMutation(await desktopRequest("capability", {
         ...input,
         authority: handshakeAuthorityBody(input.authority),
+      }));
+    },
+    async promotePolicy(input) {
+      return parseMutation(await desktopRequest("promote", {
+        authority: handshakeAuthorityBody(input.authority),
+        policy: input.policy,
+        buildId: input.buildId,
       }));
     },
     async revoke(input) {

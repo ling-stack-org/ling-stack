@@ -84,3 +84,77 @@ test("late initialize readiness cannot reopen a revoked restricted proxy", async
     assert.equal(fx.calls.length, 1);
   } finally { await fx.proxy.close("done"); }
 });
+
+test("restricted priming initializes the lazy provider and lets the daemon reattach", async () => {
+  const calls: JsonRpcClientMessage[] = [];
+  let readinessChecks = 0;
+  let stopCount = 0;
+  const host = {
+    onServerMessage() { return () => {}; },
+    async stop() { stopCount += 1; },
+    async exchange(message: JsonRpcClientMessage): Promise<JsonRpcResponse | undefined> {
+      calls.push(message);
+      if ("method" in message && message.method === "initialize" && "id" in message) {
+        return {
+          jsonrpc: "2.0", id: message.id,
+          result: { protocolVersion: "2025-06-18", capabilities: {}, serverInfo: { name: "fixture", version: "1" } },
+        };
+      }
+      if ("id" in message && message.id !== null) return { jsonrpc: "2.0", id: message.id, result: { content: [] } };
+      return undefined;
+    },
+  } as unknown as CuaDriverProviderHost;
+  const context = {
+    bridgeToken: "bridge-secret", daemonAuthorityEpoch: "epoch", bridgeConnectionId: "connection",
+    desktopInstanceEpoch: 1, generation: 4, workspaceCwd: "/workspace",
+  };
+  const gate: CuaDriverActionGate = {
+    async beforeCall(message) {
+      if ("method" in message && message.method === "tools/call") {
+        throw new Error("mcp_call_gate_closed");
+      }
+      return async () => {};
+    },
+  };
+  const proxy = new CuaDriverMcpProxy({
+    host, context, actionGate: gate,
+    onInitialized: () => { readinessChecks += 1; return { callGate: "closed" as const }; },
+  });
+  const endpoint = await proxy.start();
+  const requestHeaders: Record<string, string> = {
+    "content-type": "application/json", authorization: `Bearer ${endpoint.authorizationToken}`,
+    "x-ling-cua-driver-generation": "4", "x-ling-cua-driver-authority-epoch": "epoch",
+    "x-ling-cua-driver-workspace-sha256": deriveCuaDriverWorkspaceBinding(context.workspaceCwd),
+    "x-ling-cua-driver-instance-epoch": "1", "x-ling-cua-driver-bridge-connection": "connection",
+  };
+  try {
+    await proxy.primeRestrictedSession();
+    assert.equal(readinessChecks, 1);
+    assert.equal(calls.filter((message) => "method" in message && message.method === "initialize").length, 1);
+
+    const initialized = await fetch(endpoint.url, {
+      method: "POST", headers: requestHeaders,
+      body: JSON.stringify({
+        jsonrpc: "2.0", id: 10, method: "initialize",
+        params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "daemon", version: "1" } },
+      }),
+    });
+    assert.equal(initialized.status, 200);
+    const sessionId = initialized.headers.get("mcp-session-id");
+    assert.match(sessionId ?? "", /^[A-Za-z0-9_-]{16,128}$/u);
+    assert.equal((await initialized.json()).id, 10);
+    assert.equal(readinessChecks, 1, "reattach must not repeat readiness or native initialization");
+    assert.equal(calls.filter((message) => "method" in message && message.method === "initialize").length, 1);
+
+    const gated = await fetch(endpoint.url, {
+      method: "POST", headers: { ...requestHeaders, "mcp-session-id": sessionId! },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 11, method: "tools/call", params: { name: "capture" } }),
+    });
+    assert.equal(gated.status, 200);
+    assert.match(await gated.text(), /mcp_call_gate_closed/u);
+    assert.equal(stopCount, 0);
+  } finally {
+    await proxy.close("done");
+  }
+  assert.equal(stopCount, 1);
+});

@@ -4,6 +4,7 @@ import type { LockedControlReasonCode } from "@ling-stack/contracts";
 import {
   isLockedComputerControlAttestationV1,
   isLockedComputerControlCapabilityV1,
+  isLockedComputerControlPolicyV1,
   isLockedControlIdentityResultV1,
   isLockedControlReasonCode,
   isTerminalComputerUseStatus,
@@ -35,7 +36,9 @@ export async function handleLockedControlDesktopRoute(
   response.removeHeader("Access-Control-Allow-Origin");
   response.removeHeader("Access-Control-Allow-Methods");
   response.removeHeader("Access-Control-Allow-Headers");
-  const token = desktopBridgeTokenStatus(request, context.desktopBridgeToken);
+  const token = request.headers.origin === undefined
+    ? desktopBridgeTokenStatus(request, context.desktopBridgeToken)
+    : "forbidden";
   if (token !== "accepted") {
     writePrivateJson(response, token === "unavailable" ? 503 : 403, {
       error: token === "unavailable" ? "desktop_bridge_unavailable" : "desktop_bridge_forbidden",
@@ -77,6 +80,13 @@ export async function handleLockedControlDesktopRoute(
       throw new Error("locked_control_capability_invalid");
     }
     return writePrivateResult(response, registry.evaluateCapability(capability, body.buildId));
+  }
+  if (action === "promote") {
+    assertOnlyKeys(body, ["authority", "buildId", "policy"]);
+    if (!isLockedComputerControlPolicyV1(body.policy) || !isText(body.buildId)) {
+      throw new Error("locked_control_policy_invalid");
+    }
+    return writePrivateResult(response, registry.promotePolicy(body.policy, body.buildId));
   }
   if (action === "authorize") {
     assertOnlyKeys(body, ["authority", "expectedRevision", "requestId"]);

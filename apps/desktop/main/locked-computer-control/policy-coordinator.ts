@@ -46,6 +46,8 @@ export interface LockedControlGenerationRuntime {
     readonly generation: number;
     readonly grant: LockedComputerControlGrantV1;
   }): Promise<void>;
+  /** Open tool admission only after native facts and daemon attestation are accepted. */
+  openLockedGeneration?(): void;
   stopLockedGeneration(reason: LockedControlReasonCode): Promise<void>;
   resumeNormal(): Promise<void>;
 }
@@ -344,6 +346,19 @@ export class LockedComputerControlPolicyCoordinator {
       await this.revokeInMemoryFirst("locked_control_authority_rotated", authority, false);
       return;
     }
+    try {
+      // Start the exact restricted provider while its action gate remains
+      // closed. This gives attestation a live provider snapshot and prevents
+      // a late tool request from racing native proof publication.
+      await this.options.runtime.startLockedGeneration({ generation, grant });
+      if (!this.isBoundaryCurrent(boundaryRevision)) {
+        await this.revokeInMemoryFirst("locked_control_authority_rotated", authority, false);
+        return;
+      }
+    } catch {
+      await this.revokeInMemoryFirst("locked_control_input_unavailable", authority, false);
+      return;
+    }
     const attested = await this.options.attestor.attest({
       capability: this.options.capability(),
       grant,
@@ -372,7 +387,7 @@ export class LockedComputerControlPolicyCoordinator {
       return;
     }
     try {
-      await this.options.runtime.startLockedGeneration({ generation, grant });
+      this.options.runtime.openLockedGeneration?.();
       if (!this.isBoundaryCurrent(boundaryRevision)) {
         await this.revokeInMemoryFirst("locked_control_authority_rotated", authority, false);
         return;

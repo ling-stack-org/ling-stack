@@ -15,6 +15,7 @@ export function policyFixture() {
     async reconcile() { return snapshot; },
     async publishAttestation(input) { events.push(`attestation:${input.attestation.sequence}`); return { accepted: true, snapshot }; },
     async publishCapability() { return { accepted: true, snapshot }; },
+    async promotePolicy() { return { accepted: true, snapshot }; },
     async currentTask() { return { runId: "run-1", computerUseSessionId: "session-1" }; },
     async revoke() { events.push("revoke"); return { accepted: true, snapshot }; },
   };

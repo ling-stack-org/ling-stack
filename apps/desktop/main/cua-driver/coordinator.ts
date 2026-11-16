@@ -279,6 +279,14 @@ export class CuaDriverDesktopCoordinator {
     return this.host;
   }
 
+  /** Initialize a restricted generation's lazy provider while its action gate remains closed. */
+  async primeRestrictedSession(): Promise<void> {
+    if (!this.proxy) {
+      throw new Error("cua_driver_proxy_unavailable");
+    }
+    await this.proxy.primeRestrictedSession();
+  }
+
   /** Reserve authority for a separate protected owner while normal control is retired. */
   advanceGenerationFloor(generation: number): void {
     if (!this.windowsSessionSuspended || this.host || this.enablePromise || this.cleanupDebt

@@ -63,6 +63,22 @@ sign(guardian);
 const client = bundle("Client.app", "LingLockedUseClient", "com.lingstack.locked-use.client");
 copyFileSync(resolve(bin, "LingLockedUseClient"), resolve(client, "Contents/MacOS/LingLockedUseClient"));
 sign(client);
+const statusResult = spawnSync(resolve(client, "Contents/MacOS/LingLockedUseClient"), [], {
+  input: `${JSON.stringify({ command: "status", requestId: "build-protocol-check" })}\n`,
+  encoding: "utf8", timeout: 15_000, maxBuffer: 16 * 1024,
+});
+if (statusResult.status !== 0 || statusResult.error) throw new Error("locked_use_client_status_failed");
+const statusReply = JSON.parse(statusResult.stdout.trim()) as { requestId?: unknown; ok?: unknown; result?: Record<string, unknown> };
+const status = statusReply.result;
+if (statusReply.requestId !== "build-protocol-check" || statusReply.ok !== true || !status
+  || JSON.stringify(Object.keys(status).sort()) !== JSON.stringify([
+    "available", "captureReady", "inputReady", "platform", "productCapability", "secureSurfaceExcluded",
+  ]) || status.platform !== "darwin"
+  || !["probe_required", "supported_restricted"].includes(String(status.productCapability))
+  || ["available", "captureReady", "inputReady", "secureSurfaceExcluded"].some((key) =>
+    status[key] !== (status.productCapability === "supported_restricted"))) {
+  throw new Error("locked_use_client_status_invalid");
+}
 const plugin = bundle("LingLockAuth.bundle", "LingLockAuth", "com.lingstack.locked-use.authorization", "BNDL");
 const objects = resolve(output, "plugin-objects");
 mkdirSync(objects);

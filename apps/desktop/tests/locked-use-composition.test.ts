@@ -2,13 +2,17 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { composeLockedControlRuntime, type DesktopLockedUseBackend } from "../dist/main/locked-computer-control/runtime-composition.js";
 import type { CuaDriverActionGate } from "../dist/main/cua-driver/restricted-generation.js";
-import { allowedTools, enabledPolicy, sessionDigest, supportedCapability } from "./locked-use-fixtures.ts";
+import type { CuaDriverCoordinatorSnapshot } from "../dist/main/cua-driver/coordinator.js";
+import { allowedTools, deferred, enabledPolicy, sessionDigest, supportedCapability } from "./locked-use-fixtures.ts";
 import { policyFixture } from "./locked-use-policy-fixture.ts";
 
-function fixture(enabled = true) {
+function fixture(enabled = true, configureDaemon?: (daemon: ReturnType<typeof policyFixture>["daemon"]) => void) {
   const { daemon, events } = policyFixture();
+  configureDaemon?.(daemon);
   let managed = false; let revoked!: () => void; let gate!: CuaDriverActionGate;
   let clients = 0; let current = true; let drainFails = false;
+  let providerSnapshot: CuaDriverCoordinatorSnapshot = { generation: 4, lifecycle: "active", providerState: "ready" };
+  const restrictedEnabled = deferred();
   const backend: DesktopLockedUseBackend = {
     capability: supportedCapability, policy: enabledPolicy, allowedToolIds: allowedTools,
     createClient(onRevoked) {
@@ -41,7 +45,9 @@ function fixture(enabled = true) {
     createRestrictedCoordinator(input) {
       gate = input.actionGate!;
       return {
-        async enable() { events.push("restricted-enable"); return { generation: 4, lifecycle: "active", providerState: "ready" }; },
+        get snapshot() { return providerSnapshot; },
+        async enable() { events.push("restricted-enable"); restrictedEnabled.resolve(); return providerSnapshot; },
+        async primeRestrictedSession() { events.push("restricted-prime"); },
         closeCallGateForSecurityBoundary() { events.push("restricted-close"); },
         async suspendForSystem() { events.push("restricted-fence"); if (drainFails) throw new Error("drain_failed"); },
         async shutdown() { events.push("restricted-shutdown"); },
@@ -49,7 +55,8 @@ function fixture(enabled = true) {
     },
     async resumeNormal() { events.push("normal-resume"); },
   });
-  return { binding, backend, events, gate: () => gate, revoke: () => revoked(), clients: () => clients,
+  return { binding, backend, daemon, events, restrictedEnabled, gate: () => gate, revoke: () => revoked(), clients: () => clients,
+    setProviderState: (providerState: CuaDriverCoordinatorSnapshot["providerState"]) => { providerSnapshot = { ...providerSnapshot, providerState }; },
     rotate: () => { current = false; }, failDrain: (value: boolean) => { drainFails = value; } };
 }
 
@@ -57,6 +64,45 @@ test("composition retains fixed off without a trusted backend", async () => {
   const fx = fixture(false);
   assert.equal((await fx.binding.authorize()).accepted, false);
   assert.equal(fx.clients(), 0);
+  await fx.binding.coordinator.shutdown();
+});
+
+test("capability publication or policy promotion failure prevents local identity verification", async () => {
+  for (const boundary of ["publishCapability", "promotePolicy"] as const) {
+    const fx = fixture(true, (daemon) => {
+      daemon[boundary] = async () => ({ accepted: false, reason: "locked_control_probe_required", snapshot: await daemon.snapshot() });
+    });
+    const result = await fx.binding.authorize();
+    assert.equal(result.accepted, false);
+    assert.equal(fx.clients(), 0);
+    assert.equal(fx.events.includes("identity"), false);
+    await fx.binding.coordinator.shutdown();
+  }
+});
+
+test("lazy restricted initialization and daemon attestation both precede tool admission", async () => {
+  const fx = fixture();
+  const attestationEntered = deferred(); const acceptAttestation = deferred();
+  const publishAttestation = fx.daemon.publishAttestation;
+  fx.daemon.publishAttestation = async (input) => {
+    attestationEntered.resolve();
+    await acceptAttestation.promise;
+    return publishAttestation(input);
+  };
+  fx.setProviderState("desktop_unavailable");
+  await fx.binding.authorize();
+  const locking = fx.binding.coordinator.handleLock();
+  await fx.restrictedEnabled.promise;
+  const action = { jsonrpc: "2.0" as const, id: 1, method: "tools/call", params: { name: "click" } };
+  await assert.rejects(fx.gate().beforeCall(action), /attestation_pending/u);
+  assert.equal(fx.events.some((event) => event.startsWith("attestation:")), false);
+  fx.setProviderState("ready");
+  await attestationEntered.promise;
+  await assert.rejects(fx.gate().beforeCall(action), /attestation_pending/u);
+  acceptAttestation.resolve();
+  await locking;
+  const finish = await fx.gate().beforeCall(action);
+  await finish();
   await fx.binding.coordinator.shutdown();
 });
 
@@ -68,6 +114,7 @@ test("composition retires normal control before managed unlock and releases nati
   assert.equal(fx.binding.ownsManagedSession(), true);
   assert.ok(fx.events.indexOf("normal-retire") < fx.events.indexOf("native-begin"));
   assert.ok(fx.events.indexOf("native-begin") < fx.events.indexOf("restricted-enable"));
+  assert.ok(fx.events.indexOf("restricted-enable") < fx.events.indexOf("restricted-prime"));
   const finish = await fx.gate().beforeCall({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "capture" } });
   await finish();
   await fx.binding.coordinator.revokeCurrentGrant();

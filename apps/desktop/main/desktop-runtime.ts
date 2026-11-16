@@ -76,10 +76,12 @@ export class DesktopRuntimeError extends Error {
 export interface DesktopRuntimeCuaDriverCoordinator {
   /**
    * Validate the packaged provider, start its loopback proxy and publish the
-   * generation-scoped availability lease. The provider child itself remains
-   * lazy and is spawned only when the daemon opens an MCP session.
+   * generation-scoped availability lease. Normal generations keep the
+   * provider child lazy; restricted generations may prime it internally while
+   * their action gate remains closed.
    */
   enable(): Promise<CuaDriverCoordinatorSnapshot>;
+  primeRestrictedSession?(): Promise<void>;
   restart?(reason?: string): Promise<CuaDriverCoordinatorSnapshot>;
   suspendForSystem?(reason: string): Promise<void>;
   resumeForSystem?(): Promise<void>;

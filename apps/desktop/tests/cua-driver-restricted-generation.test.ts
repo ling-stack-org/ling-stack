@@ -10,6 +10,7 @@ function fixture() {
   let gate!: CuaDriverActionGate;
   let drainFails = false;
   let current = true;
+  let snapshot: CuaDriverCoordinatorSnapshot = { lifecycle: "active", providerState: "ready", generation: 4 };
   const owner = new RestrictedCuaDriverGeneration({
     currentGeneration: () => generation,
     advanceNormalGenerationFloor(value) { generation = value; },
@@ -24,10 +25,12 @@ function fixture() {
     createCoordinator(input) {
       gate = input.actionGate!;
       return {
+        get snapshot() { return snapshot; },
         async enable(): Promise<CuaDriverCoordinatorSnapshot> {
           events.push("enable");
           return { lifecycle: "active", providerState: "ready", generation: input.generationFloor! + 1 };
         },
+        async primeRestrictedSession() { events.push("prime"); },
         closeCallGateForSecurityBoundary() { events.push("close"); },
         async suspendForSystem() { events.push("fence"); if (drainFails) throw new Error("drain_failed"); },
         async shutdown() { events.push("shutdown"); },
@@ -35,6 +38,7 @@ function fixture() {
     },
   });
   return { owner, events, gate: () => gate, generation: () => generation,
+    setSnapshot: (value: CuaDriverCoordinatorSnapshot) => { snapshot = value; },
     setDrainFails: (value: boolean) => { drainFails = value; }, setCurrent: (value: boolean) => { current = value; } };
 }
 
@@ -46,6 +50,7 @@ test("a restricted owner reserves a unique generation, freezes authority and fen
   assert.throws(() => fx.owner.reserve());
   const grant = taskGrant();
   await fx.owner.start({ generation, grant });
+  assert.deepEqual(fx.events.slice(0, 4), ["check", "enable", "prime", "check"]);
   Object.assign(grant, { expiresAt: "2000-01-01T00:00:00.000Z" });
   const finish = await fx.gate().beforeCall({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "capture" } });
   assert.equal(fx.events.at(-1), "begin");
@@ -66,6 +71,20 @@ test("a restricted owner reserves a unique generation, freezes authority and fen
   await assert.rejects(postFence(), /authority_rotated/u);
   await fx.owner.stop("revoked");
   assert.deepEqual(fx.events.slice(-4), ["close", "fence", "shutdown", "end"]);
+});
+
+test("restricted readiness wait is cancellable and rejects a replacement generation", async () => {
+  const fx = fixture();
+  await fx.owner.start({ generation: fx.owner.reserve(), grant: taskGrant(), holdActionAdmission: true });
+  fx.setSnapshot({ lifecycle: "active", providerState: "desktop_unavailable", generation: 4 });
+  const controller = new AbortController();
+  const waiting = fx.owner.waitUntilReady(controller.signal);
+  controller.abort();
+  await assert.rejects(waiting, { name: "AbortError" });
+  fx.setSnapshot({ lifecycle: "active", providerState: "ready", generation: 5 });
+  await assert.rejects(fx.owner.waitUntilReady(new AbortController().signal), /authority_rotated/u);
+  assert.equal(fx.events.includes("begin"), false);
+  await fx.owner.stop("revoked");
 });
 
 test("invalid generation or tool digest never starts a restricted provider", async () => {

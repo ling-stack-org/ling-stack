@@ -75,14 +75,36 @@ The Desktop coordinator owns provider generation reservations, fenced retirement
 restricted launch and stop. Native status is content-free and bound to the lease,
 session, grant and generation. A native bridge is injected only by a trusted
 packaged composition with exact acceptance evidence; environment flags or a
-renderer request cannot promote capability. Missing components/evidence retain
+renderer request cannot promote capability. At startup on packaged Darwin,
+`main.ts` reads the optional signed-resource
+`locked-use/release-authority.json`. The authority has an exact schema,
+`nativeAcceptance: "passed"`, the expected Developer ID team and an independently
+approved build-manifest SHA-256. Missing, replaced, malformed or unaccepted
+authority leaves the backend absent. The installed component directory cannot
+self-promote. The authority's exact bytes must also match the SHA-256 pinned by
+`lingLockedUseReleaseAuthoritySha256` in the signed app.asar's `package.json`.
+A valid authority still has to pass the installed helper's live
+status probe before `supported_restricted` is published.
+
+When the backend is present, the Desktop publishes the content-free capability
+and then promotes the canonical daemon policy through the private
+Desktop-bridge route. The daemon accepts promotion only for the fixed
+task-grant policy, allowlist revision/digest, 900-second ceiling and required
+local verification, unlock consumption and suspend revocation. This promotion
+does not create a grant. Missing components/evidence retain
 `disabled_by_build` or `probe_required`.
 
 Attestation must reflect both native shield health and actual provider
-capture/input readiness. A successful build, signature, screenshot, mock or
-upstream test alone cannot produce `supported_restricted`. During the managed
-unlock the normal generation must stay retired. After native revocation the
-provider must be fenced and quiesced before the final native release ACK.
+capture/input readiness. The restricted provider is started with action
+admission closed. Desktop internally initializes its lazy MCP host using the
+fixed client protocol, then reuses the normal live readiness check. The daemon
+reattaches to that retained session without initializing a second child. The
+live readiness snapshot and native status are checked first, then the daemon
+attestation is accepted, and only then is action admission opened.
+A successful build, signature, screenshot, mock or upstream test
+alone cannot produce `supported_restricted`. During the managed unlock the
+normal generation must stay retired. After native revocation the provider must
+be fenced and quiesced before the final native release ACK.
 
 The restricted proxy admits allowlisted `tools/call` requests, initialization,
 ping, tool discovery and lifecycle notifications. Other MCP methods are denied.
@@ -113,14 +135,18 @@ authorization host remain compatibility risks requiring real-machine acceptance.
 
 The standalone native targets, authorization bundle, installer/restore commands,
 task-bound JSON client, Desktop restricted-generation composition, action gates
-and periodic attestation publication are implemented. The main-window preload
+and periodic attestation publication are implemented. The packaged entrypoint
+now performs the release-authority lookup and passes a verified backend into
+`DesktopRuntime`; ordinary development packages and packages without the
+authority remain disabled. The main-window preload
 exposes explicit authorization and revocation commands. Their IPC accepts only
 the trusted local document's main frame, takes no grant parameters and revokes
 authorization if its sender navigates away during local verification. The native
 component build and [offline checker](../../apps/desktop/native/locked-use/README.md) perform no
 system installation or authorization evaluation. Desktop and daemon retain their
-disabled default policies. The current Desktop entrypoint registers no production
-backend or visible authorization control.
+disabled default policies unless the signed release authority and live native
+probe both pass; there is still no renderer-controlled promotion or visible
+authorization control in ordinary builds.
 
 The Desktop composition accepts a trusted backend with verified helper identity,
 exact accepted capability/policy, canonical tool digest and live target-readiness
@@ -142,7 +168,7 @@ can acknowledge external quiescence. The Broker is configured to reject helper
 process death as drain evidence. If that helper dies first, the Broker retains its
 relock fence and guards; automatic recovery needs an independently verified
 provider lifetime. That recovery, the attended GUI/Keychain validation producer,
-packaged backend/policy registration, authorization UI and step 5 remain open.
+and step 5 remain open. Ordinary builds contain no accepted release authority.
 
 The root component-validation record covers OS build and Broker/Guardian/plugin
 hashes. Desktop/client/provider identity and readiness require separate packaged
