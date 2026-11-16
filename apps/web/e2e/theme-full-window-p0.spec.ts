@@ -106,11 +106,13 @@ test("BG-26 generation tasks keeps the ambient scene behind protected panels", a
     return {
       expectedHeader,
       header: style(".media-jobs-header").backgroundColor,
+      inspector: style(".media-job-inspector").backgroundColor,
       page: style(".media-jobs-page").backgroundColor,
     };
   });
   expect(isTransparent(material.page)).toBe(true);
   expect(material.header).toBe(material.expectedHeader);
+  expect(isTransparent(material.inspector)).toBe(true);
   await capture(page, testInfo, "generation-jobs-full-window.png");
 });
 

@@ -101,6 +101,22 @@ html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell
 html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell .media-jobs-heading-copy :is(strong, span) {
   text-shadow: 0 1px 2px var(--ling-bg-app), 0 0 12px color-mix(in srgb, var(--ling-bg-app) 78%, transparent);
 }
+/* Empty split-pane states are layout surfaces, not content cards. Keep the
+   ambient scene visible until the user selects something to inspect; populated
+   inspectors retain their local readable panel material. */
+html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell :is(
+  .media-job-inspector[aria-busy="true"],
+  .media-job-inspector:not([data-media-job-inspector]),
+  .scene-inspector:not([data-scene-id]),
+  .automation-ui2-inspector:has(> .ling-ui-empty-state),
+  .work-board-detail.empty,
+  .council-workspace-detail:has(> .ling-ui-empty-state),
+  .runs-detail-workspace:has(> .ling-ui-empty-state),
+  .approvals-ui2-detail.empty,
+  .inspector.empty-inspector
+) {
+  background: color-mix(in srgb, var(--ling-bg-panel) var(--user-background-workspace, 100%), transparent);
+}
 html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell :is(.normal-conversation-header, .workspace-right-dock-frame, .right-dock, .channel-side-panel) {
   border-color: var(--ling-surface-border-subtle);
 }
