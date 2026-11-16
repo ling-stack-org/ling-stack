@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { InMemoryCredentialStore, InMemoryModelsStore, type Model } from "@earendil-works/pi-ai";
+import { InMemoryCredentialStore, InMemoryModelsStore, type Model, type SimpleStreamOptions, type TranscriptContext } from "@earendil-works/pi-ai";
 import { stream } from "@earendil-works/pi-ai/api/openai-completions";
 import { compact, generateBranchSummary, generateSummaryWithUsage, ModelRuntime, type SessionEntry } from "@earendil-works/pi-coding-agent";
 import { createPiTaskBoundary } from "../dist/task-boundary.js";
@@ -35,9 +35,10 @@ async function fixture({ outputLimit = 1_024, quota = 204, finishReason = "stop"
   };
   const runtime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsStore: new InMemoryModelsStore(),
     modelsPath: null, allowModelNetwork: false, refreshOnCreate: false });
-  runtime.registerProvider(model.provider, {
-    api: model.api, apiKey: options.provider.apiKey,
-    streamSimple: (requestModel, context, requestOptions) => stream(requestModel as Model<"openai-completions">, context, {
+  // The application pins pi-coding-agent@1.4.0 while this PR supplies pi-ai@1.5.2.
+  // Their runtime stream contract is unchanged, but private branded types are nominally distinct.
+  const streamSimple = (requestModel: Model<"openai-completions">, context: TranscriptContext,
+    requestOptions: SimpleStreamOptions | undefined) => stream(requestModel, context, {
       ...requestOptions,
       fetch: async (_url, init) => {
         requests.push(JSON.parse(String(init?.body)));
@@ -50,7 +51,10 @@ async function fixture({ outputLimit = 1_024, quota = 204, finishReason = "stop"
           headers: { "content-type": "text/event-stream" },
         });
       },
-    }),
+    });
+  runtime.registerProvider(model.provider, {
+    api: model.api, apiKey: options.provider.apiKey,
+    streamSimple: streamSimple as unknown as NonNullable<Parameters<ModelRuntime["registerProvider"]>[1]["streamSimple"]>,
   });
   const boundary = createPiTaskBoundary(options);
   boundary.bindModelRuntime(runtime);
