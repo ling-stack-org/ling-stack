@@ -21,10 +21,10 @@ const asarRequire = createRequire(asarEntry);
 const legacyAsarEntry = appBuilderRequire.resolve("@electron/asar");
 const legacyAsarRequire = createRequire(legacyAsarEntry);
 const consumers = [
-  { name: "electron-builder -> app-builder-lib", require: appBuilderRequire, version: "14.0.2" },
+  { name: "electron-builder -> app-builder-lib", require: appBuilderRequire, version: "14.0.6" },
   { name: "Expo -> CLI", require: cliRequire, version: "14.0.2" },
   { name: "Expo -> expo-mcp", require: mcpRequire, version: "14.0.2" },
-  { name: "Desktop -> ASAR", require: asarRequire, version: "14.0.2" },
+  { name: "Desktop -> ASAR", require: asarRequire, version: "14.0.6" },
 ];
 const timeout = 5_000;
 const readJson = path => JSON.parse(fs.readFileSync(path, "utf8"));
@@ -122,12 +122,12 @@ function streamResult(stream) {
   return { values, get error() { return error; }, done: settled.promise };
 }
 
-const variants = [];
+const variants = new Map();
 for (const consumer of [consumers[2], consumers[0], consumers[1], consumers[3]]) {
   const manifestPath = consumer.require.resolve("glob/package.json");
   const manifest = readJson(manifestPath);
   assert.equal(manifest.version, consumer.version);
-  for (const raw of manifest.version === "14.0.2" ? [false, true] : [false]) {
+  for (const raw of [false, true]) {
     const specifier = raw ? "glob/raw" : "glob";
     const declaration = manifest.exports[raw ? "./raw" : "."];
     for (const format of ["require", "import"]) {
@@ -137,7 +137,7 @@ for (const consumer of [consumers[2], consumers[0], consumers[1], consumers[3]])
         label: `glob@${manifest.version} ${format === "require" ? "CJS" : "ESM"}${raw ? " /raw" : " default"}`,
         api: format === "require" ? consumer.require(specifier) : await import(pathToFileURL(entry).href),
       };
-      if (consumer === consumers[2] || consumer === consumers[0]) variants.push(variant);
+      variants.set(variant.label, variant);
     }
   }
 }
@@ -148,7 +148,8 @@ test("glob consumers resolve the official cancellation fix", { timeout }, async 
     const installedManifest = consumer.require.resolve("glob/package.json");
     const globManifest = readJson(installedManifest);
     assert.equal(globManifest.version, consumer.version, consumer.name);
-    assert.equal(consumer.version, "14.0.2");
+    assert.ok(appBuilderRequire("semver").satisfies(globManifest.version, ">=14.0.2 <15"),
+      `${consumer.name} includes the official cancellation fix`);
     assert.ok(lock.packages[`glob@${consumer.version}`], "lock retains the official fixed release");
     assert.equal(installedManifest.includes("patch_hash="), false, `${consumer.name} uses the official release`);
     for (const format of ["require", "import"]) {
@@ -164,7 +165,7 @@ test("glob consumers resolve the official cancellation fix", { timeout }, async 
   assert.equal(legacyAsarRequire("glob/package.json").version, "7.2.3", "legacy ASAR is not forced across glob majors");
 });
 
-for (const { label, api } of variants) {
+for (const { label, api } of variants.values()) {
   test(`behavior: ${label} stops all asynchronous reads after first-read abort`, { timeout }, async t => {
     const cwd = tree(t);
     const abort = new AbortController();
@@ -297,7 +298,7 @@ for (const { label, api } of variants) {
 }
 
 for (const [name, entry, globVersion] of [
-  ["Desktop ASAR 4.3.1 (glob 14)", asarEntry, "14.0.2"],
+  ["Desktop ASAR 4.3.2 (glob 14)", asarEntry, "14.0.6"],
   ["builder ASAR 3.4.1 (legacy glob 7)", legacyAsarEntry, "7.2.3"],
 ]) {
   test(`behavior: ${name} packs, unpacks and extracts real files and links`, { timeout }, async t => {
