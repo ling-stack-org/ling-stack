@@ -1,3 +1,4 @@
+import { renderReviewAnnotation } from "@ling-stack/contracts";
 import { LING_AGENT_ID, redactSecrets, type ConversationAttachment, type LingConversationTone, type LingThread, type LingTurn } from "@ling-stack/core";
 import type { ConversationStreamRequest, ChannelMessageFileRef, ResponseLanguagePreference, RunTool } from "@ling-stack/contracts";
 import type { ConversationAttachmentMaterialization } from "./materialization.js";
@@ -90,21 +91,21 @@ function buildConversationRunPrompt(
 ): string {
   const trimmedMessage = message.trim();
   const parts = [
-    trimmedMessage || "User attached files.",
+    trimmedMessage || (fileRefs.some(ref => ref.annotation) ? "Please address the review feedback." : "User attached files."),
     renderConversationAttachmentsForPrompt(attachments, materializations),
     renderConversationFileRefsForPrompt(fileRefs),
   ].filter((part) => part.trim());
   return parts.join("\n\n");
 }
 
-function renderConversationFileRefsForPrompt(fileRefs: readonly ChannelMessageFileRef[]): string {
+export function renderConversationFileRefsForPrompt(fileRefs: readonly ChannelMessageFileRef[]): string {
   const explicitRefs = fileRefs.filter((ref) => ref.source !== "inferred_text");
   if (explicitRefs.length === 0) {
     return "";
   }
   return [
     "Workspace file references:",
-    ...explicitRefs.map((fileRef, index) => `- ${index + 1}. ${fileRef.label ? `${fileRef.label}: ` : ""}${fileRef.path}${fileRef.line ? `:${fileRef.line}` : ""}`),
+    ...explicitRefs.map((fileRef, index) => `- ${index + 1}. ${fileRef.label ? `${fileRef.label}: ` : ""}${fileRef.path}${fileRef.line ? `:${fileRef.line}` : ""}${fileRef.annotation ? `\n${renderReviewAnnotation(fileRef.annotation, fileRef.line)}` : ""}`),
     "Treat these as user-supplied references only. Existing workspace and approval policy still controls access.",
   ].join("\n");
 }

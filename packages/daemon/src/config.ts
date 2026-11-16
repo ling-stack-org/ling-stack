@@ -13,6 +13,7 @@ export interface DaemonConfig {
   readonly host?: string;
   readonly port?: number;
   readonly maxBodyBytes?: number;
+  readonly maxMediaBodyBytes?: number;
   readonly defaultWorkspaceCwd?: string;
   /** Bearer token required on every request when bound to a non-loopback host. */
   readonly authToken?: string;
@@ -178,6 +179,7 @@ export interface ResolvedDaemonConfig {
   readonly host: string;
   readonly port: number;
   readonly maxBodyBytes: number;
+  readonly maxMediaBodyBytes: number;
   readonly authToken: string | undefined;
   readonly defaultWorkspaceCwd: string;
   readonly runners: RunnerFeatureConfig;
@@ -223,6 +225,7 @@ export const defaultDaemonConfig: DaemonConfig = {
   host: "127.0.0.1",
   port: 17891,
   maxBodyBytes: 1024 * 1024,
+  maxMediaBodyBytes: 24 * 1024 * 1024,
 };
 
 export function resolveConfig(config: DaemonConfig): ResolvedDaemonConfig {
@@ -231,6 +234,7 @@ export function resolveConfig(config: DaemonConfig): ResolvedDaemonConfig {
     host: config.host ?? "127.0.0.1",
     port,
     maxBodyBytes: config.maxBodyBytes ?? 1024 * 1024,
+    maxMediaBodyBytes: config.maxMediaBodyBytes ?? 24 * 1024 * 1024,
     authToken: config.authToken ?? process.env.LING_STACK_AUTH_TOKEN ?? undefined,
     defaultWorkspaceCwd: resolvePath(config.defaultWorkspaceCwd ?? process.env.LING_STACK_DEFAULT_WORKSPACE_CWD ?? process.cwd()),
     runners: config.runners ?? {},

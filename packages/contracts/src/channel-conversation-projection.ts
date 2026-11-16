@@ -109,6 +109,7 @@ function projectMention(mention: ConversationMessageMentionV1): ChannelMention {
 }
 
 function projectFileRef(ref: {
+  readonly annotation?: ChannelMessageFileRef["annotation"];
   readonly path: string;
   readonly label?: string;
   readonly source?: "composer" | "explicit_text" | "api" | "inferred_text";
@@ -116,6 +117,7 @@ function projectFileRef(ref: {
 }): ChannelMessageFileRef {
   return {
     path: ref.path,
+    ...(ref.annotation ? { annotation: ref.annotation } : {}),
     ...(ref.label ? { label: ref.label } : {}),
     ...(ref.source ? { source: ref.source } : {}),
     ...(ref.line !== undefined ? { line: ref.line } : {}),

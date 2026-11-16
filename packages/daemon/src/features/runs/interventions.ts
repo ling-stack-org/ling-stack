@@ -1,3 +1,4 @@
+import { parseReviewAnnotation } from "@ling-stack/contracts";
 import { randomUUID } from "node:crypto";
 import { conversationWorkspaceFileRefSourcesV1 } from "@ling-stack/contracts";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -912,6 +913,7 @@ function readOptionalRunInterventionWorkspaceFilePayloads(
   if (!Array.isArray(value)) {
     return undefined;
   }
+  if (value.length > 12) throw new Error("fileRefs must contain at most 12 references");
   return value.map((item) => {
     if (!isRecord(item)) {
       throw new Error(`${key} must contain objects`);
@@ -919,12 +921,17 @@ function readOptionalRunInterventionWorkspaceFilePayloads(
     const label = readOptionalString(item, "label");
     const previewText = readOptionalString(item, "previewText");
     const blockedReason = readOptionalString(item, "blockedReason");
+    const annotation = parseReviewAnnotation(item.annotation);
+    if (item.line !== undefined && (typeof item.line !== "number" || !Number.isSafeInteger(item.line) || item.line < 1)) throw new Error("Invalid file reference line");
+    if (annotation?.kind === "code" && (typeof item.line !== "number" || (annotation.startLine ?? item.line) > item.line)) throw new Error("Invalid review line range");
     const source = item.source;
     if (source !== undefined && source !== "composer" && source !== "explicit_text" && source !== "api" && source !== "inferred_text") {
       throw new Error(`fileRefs source must be one of ${conversationWorkspaceFileRefSourcesV1.join(", ")}`);
     }
     return {
       path: readString(item, "path"),
+      ...(typeof item.line === "number" && Number.isSafeInteger(item.line) && item.line > 0 ? { line: item.line } : {}),
+      ...(annotation ? { annotation } : {}),
       ...(label ? { label } : {}),
       ...(source ? { source } : {}),
       rootRelation: readRunInterventionWorkspaceFileRootRelation(item.rootRelation),

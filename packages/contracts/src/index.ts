@@ -37,6 +37,7 @@ export type * from "./automations.js";
 export type * from "./execution-actions.js";
 export type * from "./tasks.js";
 export type * from "./channels.js";
+export * from "./review-annotations.js";
 export type * from "./channel-conversations.js";
 export type * from "./channel-sessions.js";
 export * from "./channel-sessions-validation.js";
