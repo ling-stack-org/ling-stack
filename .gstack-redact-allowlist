@@ -15,3 +15,8 @@ https://user:password@preview.a11.test:${fixture.port}
 # apps/web/test/conversation-reading-storage.test.mjs:18
 # Scanner span ends at the localhost authority before the path/query.
 http://user:secret@localhost:4234
+
+# Negative browser URL-validation fixture; no account is contacted and the
+# parser rejects embedded URL credentials before any navigation is attempted.
+# packages/contracts/test/desktop-browser.test.ts:18
+https://user:secret@example.com
