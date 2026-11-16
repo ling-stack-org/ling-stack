@@ -72,6 +72,7 @@ async function assertScopeOutputs(scope, { mode, packages, daemon, daemonPlatfor
     "assurance-selected": String(assurance), "build-selected": String(packages.length > 0),
     "typecheck-selected": String(packages.length > 0), daemon: String(daemon), "daemon-platforms": JSON.stringify(daemonPlatforms),
     "macos-native": String(macosNative), web: String(web),
+    "macos-helper": String(macosNative), "native-release": "false",
   });
   const plan = await createTestPlan(JSON.parse(outputs["test-packages"]), { daemonPlatforms: JSON.parse(outputs["daemon-platforms"]) });
   assert.deepEqual(Object.keys(plan.suites).filter(name => name.startsWith("daemon")), daemonSuites);
