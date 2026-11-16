@@ -2,6 +2,7 @@ import ts from "typescript-language-service";
 import { dirname, relative, resolve, sep } from "node:path";
 import type { CodeSnapshot } from "./snapshot.js";
 
+const embeddedCodeIntelligenceLibraries: string = "NO_PACKAGED_CODE_INTELLIGENCE_LIBRARIES";
 export interface CodeQuery {
   operation: "definition" | "references" | "hover" | "symbols" | "diagnostics" | "repo_map";
   path: string; scope?: string; line?: number; column?: number; query?: string; limit?: number;
@@ -11,9 +12,12 @@ export interface CodeQuery {
 export function queryCodeSnapshot(snapshot: CodeSnapshot, query: CodeQuery): { items: unknown[]; truncated: boolean } {
   const { files, root } = snapshot;
   const paths = Object.keys(files);
-  const libDirectory = dirname(ts.getDefaultLibFilePath({ target: ts.ScriptTarget.ES2022 }));
+  const libraries: Record<string, string> | undefined = embeddedCodeIntelligenceLibraries === "NO_PACKAGED_CODE_INTELLIGENCE_LIBRARIES"
+    ? undefined : JSON.parse(embeddedCodeIntelligenceLibraries);
+  const libDirectory = libraries ? "/ling-typescript-lib" : dirname(ts.getDefaultLibFilePath({ target: ts.ScriptTarget.ES2022 }));
   const isLibrary = (path: string) => dirname(path) === libDirectory && /^lib\.[a-z0-9.]+\.d\.ts$/.test(path.slice(libDirectory.length + 1));
-  const read = (path: string) => Object.hasOwn(files, path) ? files[path] : isLibrary(path) ? ts.sys.readFile(path) : undefined;
+  const read = (path: string) => Object.hasOwn(files, path) ? files[path] : isLibrary(path)
+    ? libraries ? libraries[path.slice(libDirectory.length + 1)] : ts.sys.readFile(path) : undefined;
   const directories = new Set(paths.flatMap(path => {
     const result = []; let cursor = dirname(path);
     while (cursor === root || cursor.startsWith(root + sep)) { result.push(cursor); if (cursor === root) break; cursor = dirname(cursor); }
@@ -26,8 +30,8 @@ export function queryCodeSnapshot(snapshot: CodeSnapshot, query: CodeQuery): { i
     getCompilationSettings: () => ({ allowJs: true, checkJs: true, noEmit: true, strict: true, skipLibCheck: true,
       target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler,
       jsx: ts.JsxEmit.Preserve, allowImportingTsExtensions: true }),
-    getDefaultLibFileName: options => ts.getDefaultLibFilePath(options),
-    fileExists: path => Object.hasOwn(files, path) || isLibrary(path) && ts.sys.fileExists(path),
+    getDefaultLibFileName: options => libraries ? `${libDirectory}/lib.es2022.full.d.ts` : ts.getDefaultLibFilePath(options),
+    fileExists: path => Object.hasOwn(files, path) || isLibrary(path) && (libraries ? Object.hasOwn(libraries, path.slice(libDirectory.length + 1)) : ts.sys.fileExists(path)),
     readFile: read, directoryExists: path => directories.has(path) || path === libDirectory,
     readDirectory: () => [], getDirectories: path => [...directories].filter(child => dirname(child) === path),
     useCaseSensitiveFileNames: () => true, getNewLine: () => "\n",

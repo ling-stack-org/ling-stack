@@ -376,8 +376,13 @@ stale fences, symlink/secret escape, configuration drift, blocked approval, nest
 limits, recursion, worker timeout and cancellation. Existing recovery, prepared-input,
 approval and workflow safety regressions must remain green.
 
-Local source/test completion does not establish live Provider quality, native runner
-support, packaged Windows/macOS resource lookup, publication, merge or deployment.
+Desktop bundles embed both Workers, QuickJS WASM and TypeScript standard libraries in
+the same CLI bytes pinned by the publication gate. The source-input gate checks the
+actual CLI and Worker build results against retained authored snapshots. A standalone
+bundle test verifies nested calls, script Hooks, type queries and timeout recovery
+without a workspace dependency tree. This does not establish installed Windows/macOS
+client acceptance, live Provider quality, native runner support, publication, merge
+or deployment.
 
 C1–C3 have local Pi/daemon behavior and boundary coverage, including a loopback Provider
 fixture through real SDK dispatch, SQLite, the approval API and the journaled Host

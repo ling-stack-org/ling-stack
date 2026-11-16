@@ -4,6 +4,7 @@ import { CODE_INTELLIGENCE_OPERATIONS, type PiRunnerCodeIntelligenceRequest, typ
 import { captureCodeSnapshot, workspaceRelativePath } from "../../runtime/code-intelligence/snapshot.js";
 import type { CodeQuery } from "../../runtime/code-intelligence/query.js";
 
+const embeddedCodeIntelligenceWorkerSource: string = "NO_PACKAGED_CODE_INTELLIGENCE_WORKER";
 let activeWorkers = 0;
 export function parseCodeQuery(input: unknown): CodeQuery {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("code_intelligence_input_invalid");
@@ -41,7 +42,9 @@ export async function executeCodeIntelligence(input: {
     let worker: Worker | undefined;
     let result: { items: unknown[]; truncated: boolean };
     try {
-      worker = new Worker(new URL("../../runtime/code-intelligence/worker.js", import.meta.url), {
+      const embedded = embeddedCodeIntelligenceWorkerSource !== "NO_PACKAGED_CODE_INTELLIGENCE_WORKER";
+      worker = new Worker(embedded ? embeddedCodeIntelligenceWorkerSource : new URL("../../runtime/code-intelligence/worker.js", import.meta.url), {
+        ...(embedded ? { eval: true } : {}),
         workerData: { snapshot, query }, resourceLimits: { maxOldGenerationSizeMb: 192, stackSizeMb: 4 },
       });
       const current = worker;

@@ -66,7 +66,7 @@ Owner modules: `core` automation storage/contracts, daemon automation feature, A
 and existing automation settings. Add inbox/source/outbox migrations with rollback/reopen
 coverage. Keep secrets in the existing secret resolver.
 
-The implementation provides source CRUD/revision CAS, two secret refs for rotation,
+The implementation provides source creation/read/update with revision CAS, two secret refs for rotation,
 raw-body HMAC verification, strict envelope limits, exact type/predicate matching and
 transactional claims. GitHub issue/comment and generic business sources share the
 inbox. Destination-bound result delivery has a durable outbox, CAS receipts, bounded
@@ -144,8 +144,13 @@ Implementation owners:
 
 The code-intelligence compiler profile is deliberately independent of project tsconfig
 and package types. It is a bounded TS/JS adapter, not a persistent repository-wide or
-multi-language index. Workflow/delegated/native capability support, packaged Worker/WASM
-resource lookup and live Provider quality remain separate follow-up acceptance.
+multi-language index. The Desktop builder embeds the code-intelligence Worker and its
+standard libraries, the QuickJS Worker and WASM into the pinned CLI bytes. A standalone
+bundle test executes nested calls, script Hooks, type queries and timeout recovery from
+a temporary directory without workspace dependencies. The Office source gate checks
+the original CLI and Worker build inputs together; no build refreshes review digests.
+Workflow/delegated/native capability support, installed-client platform acceptance and
+live Provider quality remain separate follow-up acceptance.
 
 | Work | Current status | Remaining |
 |---|---|---|

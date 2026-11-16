@@ -1,5 +1,8 @@
 import { CodemodeSandbox, type CodemodeResult, type CodemodeTool } from "@earendil-works/pi-codemode";
 
+const embeddedScriptWorkerSource: string = "NO_PACKAGED_SCRIPT_WORKER";
+const embeddedScriptWasmBase64: string = "NO_PACKAGED_SCRIPT_WASM";
+let packagedWasm: Promise<WebAssembly.Module> | undefined;
 let workers = 0;
 export const SCRIPT_MAX_CODE_BYTES = 64 * 1024;
 
@@ -11,6 +14,10 @@ export async function runBoundedScript(input: {
   input.signal?.throwIfAborted();
   const sandbox = new CodemodeSandbox({
     tools: input.tools ?? [], timeoutMs: input.timeoutMs ?? 30_000, memoryLimitBytes: 64 * 1024 * 1024,
+    ...(embeddedScriptWorkerSource === "NO_PACKAGED_SCRIPT_WORKER" ? {} : {
+      workerUrl: new URL(`data:text/javascript;base64,${Buffer.from(embeddedScriptWorkerSource).toString("base64")}`),
+      wasm: packagedWasm ??= WebAssembly.compile(Buffer.from(embeddedScriptWasmBase64, "base64")),
+    }),
     acquireWorker: () => {
       input.signal?.throwIfAborted();
       if (workers >= 4) throw new Error("script_worker_capacity");
