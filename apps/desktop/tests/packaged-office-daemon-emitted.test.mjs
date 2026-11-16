@@ -97,6 +97,10 @@ async function fixture(t, options = {}) {
   const bridge = `const state = globalThis[Symbol.for(${JSON.stringify(symbolName)})];\n`;
   const sources = new Map([
     ["esbuild", bridge + "export const build = (...args) => state.build(...args);"],
+    ["./packaged-agent-runtime.mjs", bridge + `
+      export async function preparePackagedAgentRuntime() {
+        return { plugin: { name: "synthetic-packaged-agent-runtime", setup() {} }, assertIncluded() {} };
+      }`],
     ["./build-packaged-office-native.mjs", bridge + `
       export function buildFreshPackagedOfficeNativePublication() { state.nativeBuilds++; state.active = state.publication; return state.token; }
       export function readOriginalPackagedOfficeNativePublication(receipt) { return state.readOriginal(receipt); }

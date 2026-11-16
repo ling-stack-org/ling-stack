@@ -1488,7 +1488,7 @@
     "packages/providers/src/vendors/seedance-task-status.ts": "4b9667af1be831a65dd8af06f5f2d3a9e390d0af66b18b02a4a9103e09d2e5b0",
     "packages/providers/src/vendors/seedance.ts": "5e2151b067ea09e5119f252075c6644f04dbf8d574ff88652aa10f5a24268bd1",
     "packages/providers/src/vendors/seedream.ts": "ff5aa403cd3f6ae50ec4f4e245b55f6cef17be89877f02f6116dc94b2b321562",
-    "packages/remote-protocol/package.json": "6f3a0779f6d08df79d6891d21b8f090639d98016955538649fb1f7f791da3610",
+    "packages/remote-protocol/package.json": "ed97b6e2218a30e5bd17788c7a5a6a1498d490a68dbbadc35d730a5ce6ca093a",
     "packages/remote-protocol/src/canonical.ts": "d57248915235ca698fab3547a27a486d84fb82dd944e45fabe290ff4030535f1",
     "packages/remote-protocol/src/envelopes.ts": "5073e016918722951d89369146f37c5927b64cc6784508c84c93478096a33231",
     "packages/remote-protocol/src/errors.ts": "c175c5999a8574d54b781bbb8b0fe3147f8e9f85b8311b7d07e28e7f1780d5b1",
