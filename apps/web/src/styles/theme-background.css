@@ -17,42 +17,42 @@
    warm sword-light reads against the darkened scene, still below app surfaces. */
 .workspace-glow-cursor { position: absolute; inset: 0; }
 .sword-light-canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; pointer-events: none; user-select: none; }
-html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .workspace-background-layer { visibility: visible; }
-html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell { position: relative; background: transparent; }
-html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell {
+html[data-user-background="ready"][data-ui-background-visible="true"] .workspace-background-layer { visibility: visible; }
+html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell { position: relative; background: transparent; }
+html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell {
   --conversation-document-background: var(--ling-message-document-bg);
   --conversation-document-padding: 12px 16px;
   --conversation-document-radius: var(--ling-card-radius);
   --conversation-document-width: fit-content;
 }
 /* Protect populated table rows, keeping its empty layout area transparent. */
-html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell .plugin-table-row { background: var(--ling-card-bg); }
-html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell .plugin-table-row:hover { background: var(--ling-row-hover-bg); }
-html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell.desktop-window-shell > .desktop-window-chrome {
+html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell .plugin-table-row { background: var(--ling-card-bg); }
+html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell .plugin-table-row:hover { background: var(--ling-row-hover-bg); }
+html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell.desktop-window-shell > .desktop-window-chrome {
   background: transparent;
   box-shadow: none;
 }
-html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell.desktop-window-shell > .desktop-window-chrome > .desktop-window-chrome-leading {
+html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell.desktop-window-shell > .desktop-window-chrome > .desktop-window-chrome-leading {
   background: color-mix(in srgb, var(--ling-bg-sidebar) var(--user-background-sidebar, 100%), transparent);
 }
-html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell.desktop-window-shell > .desktop-window-chrome > :is(
+html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell.desktop-window-shell > .desktop-window-chrome > :is(
   .desktop-window-titlebar-surface,
   .desktop-window-controls
 ) {
-  background: color-mix(in srgb, var(--ling-bg-panel) var(--user-background-panel, 100%), transparent);
+  background: color-mix(in srgb, var(--ling-bg-panel) var(--user-background-workspace, 100%), transparent);
 }
-html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell .workspace {
+html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell .workspace {
   background: color-mix(in srgb, var(--ling-bg-panel) var(--user-background-workspace, 100%), transparent);
   border-color: var(--ling-surface-border-subtle);
   box-shadow: var(--ling-surface-shadow-shell);
 }
 /* Management pages opt into the same ambient scene as the home and conversation
    surfaces. Their own cards and editors still provide readable semantic panels. */
-html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell > .workspace:not(.workspace-client-surface) {
+html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell > .workspace:not(.workspace-client-surface) {
   background: transparent;
   border-color: var(--ling-surface-border-subtle);
 }
-html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell :is(
+html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell :is(
   .workspace-plugins-surface,
   .plugin-manager-page,
   .plugin-manager-page > .settings-plugin-manager,
@@ -72,18 +72,18 @@ html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-sh
 ) {
   background: transparent;
 }
-html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell :is(
+html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell :is(
   .teammate-workspace.chat-mode .teammate-message-list,
   .teammate-private-feed-owner
 ) {
   background: transparent;
 }
-html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell .right-panel {
+html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell .right-panel {
   background: color-mix(in srgb, var(--ling-bg-panel) var(--user-background-panel, 100%), transparent);
   border-color: var(--ling-surface-border-subtle);
   box-shadow: var(--ling-surface-shadow-shell);
 }
-html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell .left-nav {
+html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell .left-nav {
   --ling-text-muted: var(--ling-text-default);
   --ling-text-soft: var(--ling-text-default);
 
@@ -93,9 +93,27 @@ html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-sh
 }
 
 
-html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell :is(.normal-conversation-page, .normal-conversation-header, .conversation-home, .client-window, .task-workbench-main, .task-workbench-window, .workspace-right-dock-frame, .right-dock, .channel-side-panel, .workspace-automations-surface, .automation-ui2-page, .workspace-generation-surface, .media-production-page) { background: transparent; }
-html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .app-shell :is(.normal-conversation-header, .workspace-right-dock-frame, .right-dock, .channel-side-panel) {
+html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell :is(.normal-conversation-page, .normal-conversation-header, .conversation-home, .client-window, .task-workbench-main, .task-workbench-window, .workspace-right-dock-frame, .right-dock, .channel-side-panel, .workspace-automations-surface, .automation-ui2-page, .workspace-generation-surface, .media-production-page, .media-jobs-page) { background: transparent; }
+html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell .media-jobs-header {
+  background: color-mix(in srgb, var(--ling-bg-panel) var(--user-background-workspace, 100%), transparent);
   border-color: var(--ling-surface-border-subtle);
+}
+html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell .media-jobs-heading-copy :is(strong, span) {
+  text-shadow: 0 1px 2px var(--ling-bg-app), 0 0 12px color-mix(in srgb, var(--ling-bg-app) 78%, transparent);
+}
+html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell :is(.normal-conversation-header, .workspace-right-dock-frame, .right-dock, .channel-side-panel) {
+  border-color: var(--ling-surface-border-subtle);
+}
+html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell.settings-fullscreen-shell > .workspace.workspace-settings-surface,
+html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell .settings-layout,
+html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell .settings-content-stack {
+  background: transparent;
+}
+html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell .settings-section-nav {
+  background: color-mix(in srgb, var(--ling-bg-sidebar) var(--user-background-sidebar, 100%), transparent);
+}
+html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell.settings-fullscreen-shell > .desktop-window-chrome::before {
+  background: color-mix(in srgb, var(--ling-bg-sidebar) var(--user-background-sidebar, 100%), transparent);
 }
 html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .conversation-home h1,
 html[data-user-background="ready"][data-ui-surface-recipe="translucent"] .conversation-home-center > p {
