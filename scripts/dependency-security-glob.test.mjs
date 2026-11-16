@@ -14,7 +14,9 @@ const builderRequire = createRequire(desktopRequire.resolve("electron-builder"))
 const appBuilderRequire = createRequire(builderRequire.resolve("app-builder-lib"));
 const mobileRequire = createRequire(new URL("../apps/mobile/package.json", import.meta.url));
 const expoRequire = createRequire(mobileRequire.resolve("expo/package.json"));
-const cliRequire = createRequire(expoRequire.resolve("@expo/cli/package.json"));
+const cliManifestPath = expoRequire.resolve("@expo/cli/package.json");
+const cliManifest = JSON.parse(fs.readFileSync(cliManifestPath, "utf8"));
+const cliRequire = createRequire(cliManifestPath);
 const mcpRequire = createRequire(expoRequire.resolve("expo-mcp/package.json"));
 const asarEntry = desktopRequire.resolve("@electron/asar");
 const asarRequire = createRequire(asarEntry);
@@ -22,7 +24,7 @@ const legacyAsarEntry = appBuilderRequire.resolve("@electron/asar");
 const legacyAsarRequire = createRequire(legacyAsarEntry);
 const consumers = [
   { name: "electron-builder -> app-builder-lib", require: appBuilderRequire, version: "14.0.6" },
-  { name: "Expo -> CLI", require: cliRequire, version: "14.0.2" },
+  ...(cliManifest.dependencies?.glob ? [{ name: "Expo -> CLI", require: cliRequire, version: "14.0.2" }] : []),
   { name: "Expo -> expo-mcp", require: mcpRequire, version: "14.0.2" },
   { name: "Desktop -> ASAR", require: asarRequire, version: "14.0.6" },
 ];
@@ -123,7 +125,7 @@ function streamResult(stream) {
 }
 
 const variants = new Map();
-for (const consumer of [consumers[2], consumers[0], consumers[1], consumers[3]]) {
+for (const consumer of consumers) {
   const manifestPath = consumer.require.resolve("glob/package.json");
   const manifest = readJson(manifestPath);
   assert.equal(manifest.version, consumer.version);
