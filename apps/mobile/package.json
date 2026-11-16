@@ -36,7 +36,7 @@
     "expo-image-picker": "~58.0.10",
     "expo-network": "~58.0.4",
     "expo-secure-store": "~58.0.2",
-    "react": "19.3.1",
+    "react": "19.3.0",
     "react-native": "0.88.1",
     "react-native-safe-area-context": "~5.10.1",
     "react-native-screens": "~4.30.0",
@@ -45,7 +45,7 @@
   "devDependencies": {
     "expo-doctor": "1.21.6",
     "expo-mcp": "0.2.4",
-    "react-dom": "19.3.1",
+    "react-dom": "19.3.0",
     "react-types-mobile": "npm:@types/react@19.3.0",
     "typescript": "~7.0.2"
   }
