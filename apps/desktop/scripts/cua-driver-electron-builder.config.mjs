@@ -11,6 +11,7 @@ import {
 import { resolveSigningProfile } from "./cua-driver-signing/signing-contract.mjs";
 import { preparePackagedGstackBuild, packagedGstackBuilderConfig } from "./packaged-gstack-resources.mjs";
 import { lockedUseReleaseBuilderConfig } from "./locked-use-release-build.ts";
+import { lockedUseValidationBuilderConfig } from "./locked-use-validation-build.ts";
 
 const packageJson = JSON.parse(
   readFileSync(new URL("../package.json", import.meta.url), "utf8"),
@@ -51,6 +52,12 @@ const lockedUseBuild = await lockedUseReleaseBuilderConfig({
   signingTier: signingProfile.signingTier,
   providerExpected: packageHostAuthority.providerExpected && packageHostAuthority.platform === "darwin",
 });
+const lockedUseValidationBuild = await lockedUseValidationBuilderConfig({
+  candidateRoot: process.env.LING_LOCKED_USE_VALIDATION_ROOT,
+  releaseRoot: process.env.LING_LOCKED_USE_RELEASE_ROOT,
+  signingTier: signingProfile.signingTier,
+  providerExpected: packageHostAuthority.providerExpected && packageHostAuthority.platform === "darwin",
+});
 if (
   packageHostAuthority.providerExpected
   && (
@@ -69,6 +76,7 @@ export default {
     ...(baseBuild.extraMetadata ?? {}),
     ...(gstackBuild.extraMetadata ?? {}),
     ...(lockedUseBuild.extraMetadata ?? {}),
+    ...(lockedUseValidationBuild.extraMetadata ?? {}),
     [CUA_DRIVER_PACKAGE_AUTHORITY_METADATA_KEY]: packageHostAuthority,
   },
   electronFuses: {
@@ -86,6 +94,7 @@ export default {
     ...(baseBuild.extraResources ?? []),
     ...(gstackBuild.extraResources ?? []),
     ...(lockedUseBuild.extraResources ?? []),
+    ...(lockedUseValidationBuild.extraResources ?? []),
     ...(packageProvider
       ? [{ from: resolve(packageResourcesRoot), to: "providers/cua-driver" }]
       : []),

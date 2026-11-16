@@ -250,12 +250,34 @@ Promotion configuration retains the Client hash; legacy configuration without it
 requires fresh acceptance. Desktop/provider identity and readiness require separate
 packaged evidence. A root record alone cannot enable the Desktop capability.
 
-The first packaged integration candidate still needs an attended bootstrap path
-that exercises the packaged Desktop/provider without declaring ordinary product
-acceptance. Release preparation currently validates completed evidence; it does
-not create that path. Native fixture acceptance and offline composition tests do
-not satisfy the packaged GUI case. Until the candidate path and its real-machine
-matrix are complete, the end-to-end product target remains unfinished.
+### Packaged validation candidate
+
+The first packaged integration run uses a separate candidate entrypoint. A
+build-only candidate resource pins the native manifest, provider code hash,
+signed counter fixture, architecture and OS build. The signed ASAR metadata pins
+that resource and selects the validation entrypoint. Candidate and accepted-release
+inputs are mutually exclusive. A candidate cannot enter ordinary Desktop startup,
+publish product capability or promote daemon policy. Runtime environment variables
+and renderer requests cannot select this lane.
+
+An explicitly invoked attended run verifies the installed production native
+service, completes local identity verification while unlocked and waits for a
+manual lock. It creates one restricted provider generation using Desktop's
+coordinator, platform adapter, MCP proxy and native action gate. Its lease remains
+inside the harness; no daemon task or public tool endpoint is advertised. The
+fixed calls capture and click only the candidate's separate signed counter
+fixture. Independent fixture output acknowledges input; changed decoded pixels prove
+two window captures. No caller supplies tool arguments or target identities.
+
+The harness stops and observes the provider before ending the native lease,
+verifies relock/release, and waits for normal manual unlock in the original
+session. Only then can it write passing packaged GUI evidence. This evidence does
+not certify physical screen coverage or the remaining fault matrix. The release
+reviewer must still supply all required cases for the exact signed build.
+Development-validation native components remain restricted to their native
+fixture; they cannot run an external provider or qualify this production candidate.
+Until the real-machine matrix is complete, the end-to-end product target remains
+unfinished.
 
 The build entrypoint reports policy, negative authorization ABI and kernel task
 identity checks separately from XCTest. Complete XCTest requires Xcode's SDK;

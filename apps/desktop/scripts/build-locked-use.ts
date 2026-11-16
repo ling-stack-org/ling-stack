@@ -73,6 +73,9 @@ sign(guardian);
 const client = bundle("Client.app", "LingLockedUseClient", "com.lingstack.locked-use.client");
 copyFileSync(resolve(bin, "LingLockedUseClient"), resolve(client, "Contents/MacOS/LingLockedUseClient"));
 sign(client);
+const fixture = bundle("Locked Use Validation.app", "LingLockedUseFixture", "com.lingstack.validation.fixture");
+copyFileSync(resolve(bin, "LingLockedUseFixture"), resolve(fixture, "Contents/MacOS/LingLockedUseFixture"));
+sign(fixture);
 const statusResult = spawnSync(resolve(client, "Contents/MacOS/LingLockedUseClient"), [], {
   input: `${JSON.stringify({ command: "status", requestId: "build-protocol-check" })}\n`,
   encoding: "utf8", timeout: 15_000, maxBuffer: 16 * 1024,

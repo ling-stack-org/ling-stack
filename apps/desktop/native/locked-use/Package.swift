@@ -10,6 +10,7 @@ let package = Package(
         .executable(name: "LingGuardian", targets: ["Guardian"]),
         .executable(name: "LingLockInstaller", targets: ["Installer"]),
         .executable(name: "LingLockedUseClient", targets: ["Client"]),
+        .executable(name: "LingLockedUseFixture", targets: ["ValidationFixture"]),
         .executable(name: "LingLockedUsePolicyChecks", targets: ["PolicyChecks"]),
     ],
     targets: [
@@ -19,6 +20,7 @@ let package = Package(
         .executableTarget(name: "Guardian", dependencies: ["LingLockedUse"]),
         .executableTarget(name: "Installer", dependencies: ["LingLockedUse", "LockedUseNative"]),
         .executableTarget(name: "Client", dependencies: ["LingLockedUse"]),
+        .executableTarget(name: "ValidationFixture"),
         .executableTarget(name: "PolicyChecks", dependencies: ["LingLockedUse"], path: "Tests/PolicyChecks"),
         .testTarget(name: "LingLockedUseTests", dependencies: ["LingLockedUse", "LockedUseNative"]),
         .testTarget(name: "GuardianInputTests", dependencies: ["Guardian"]),

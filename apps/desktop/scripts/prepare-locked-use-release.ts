@@ -5,6 +5,7 @@ import {
   validateLockedUseReleaseEvidence,
 } from "./locked-use-release-evidence.ts";
 import { bounded, hashFile, run, signature } from "./locked-use-release-files.ts";
+import { validateLockedUsePackagedCase } from "./locked-use-release-evidence.ts";
 
 const installedRoot = "/Library/Application Support/LingStack/LockedUse";
 
@@ -75,6 +76,11 @@ async function main(): Promise<void> {
     const within = relative(evidenceRoot, evidencePath);
     if (within.startsWith("..") || isAbsolute(within) || await hashFile(evidencePath) !== item.evidenceSha256) {
       throw new Error("locked_use_release_evidence_mismatch:" + name);
+    }
+    if (name === "packaged_gui_capture_input") {
+      validateLockedUsePackagedCase(JSON.parse((await bounded(evidencePath)).toString("utf8")), {
+        osBuild: observed.osBuild, nativeBuildManifestSha256: sha256(manifestBytes), providerCodeHash,
+      });
     }
   }
   const pin = sha256(authority);

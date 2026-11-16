@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { parseLockedUsePackagedValidationReport } from "../shared/locked-use-validation-contract.ts";
 
 export const LOCKED_USE_ACCEPTANCE_CASES = Object.freeze([
   "source_checks", "cold_plugin_load", "packaged_gui_capture_input", "all_displays",
@@ -30,18 +31,24 @@ export interface ObservedLockedUseRelease {
   readonly componentCodeHashes: Readonly<{ brokerHash: string; guardianHash: string; pluginHash: string; clientHash: string }>;
 }
 
-/** Physical and fault results are supplied by an identified release reviewer. */
-export function validateLockedUseReleaseEvidence(input: {
-  readonly manifestBytes: Buffer;
+export function validateLockedUsePackagedCase(value: unknown, expected: {
+  readonly osBuild: string;
+  readonly nativeBuildManifestSha256: string;
+  readonly providerCodeHash: string;
+}): void {
+  const report = parseLockedUsePackagedValidationReport(value);
+  if (report.architecture !== process.arch || report.osBuild !== expected.osBuild
+    || report.nativeBuildManifestSha256 !== expected.nativeBuildManifestSha256
+    || report.providerCodeHash !== expected.providerCodeHash) throw new Error("locked_use_release_packaged_case_mismatch");
+}
+
+/** Signed build facts do not declare native or packaged acceptance. */
+export function validateLockedUseNativeManifest(input: {
   readonly manifest: unknown;
-  readonly report: unknown;
-  readonly checklist: unknown;
-  readonly observed: ObservedLockedUseRelease;
-}): Buffer {
-  const { manifest: manifest, report, checklist, observed } = input;
-  function fail(reason: string): never { throw new Error("locked_use_release_" + reason); }
+  readonly observed: Pick<ObservedLockedUseRelease, "team" | "artifactSha256">;
+}): void {
+  const { manifest, observed } = input;
   const artifacts = record(manifest) && record(manifest.artifacts) ? manifest.artifacts : {};
-  const reportedEvidence = record(report) && record(report.evidence) ? report.evidence : {};
   if (!record(manifest) || !exact(manifest, ["schemaVersion", "platform", "architecture", "team", "signing",
     "productCapability", "nativeAcceptance", "checks", "upstreamCommit", "artifacts"])
     || manifest.schemaVersion !== 1 || manifest.platform !== "darwin"
@@ -54,7 +61,21 @@ export function validateLockedUseReleaseEvidence(input: {
     || manifest.checks.kernelTaskVerifier !== "identity_passed" || manifest.checks.xctest !== "separate"
     || !record(manifest.artifacts) || !exact(manifest.artifacts, Object.keys(LOCKED_USE_COMPONENTS))
     || !Object.keys(LOCKED_USE_COMPONENTS).every((key) => isHash(artifacts[key])
-      && artifacts[key] === observed.artifactSha256[key])) fail("manifest_mismatch");
+      && artifacts[key] === observed.artifactSha256[key])) throw new Error("locked_use_release_manifest_mismatch");
+}
+
+/** Physical and fault results are supplied by an identified release reviewer. */
+export function validateLockedUseReleaseEvidence(input: {
+  readonly manifestBytes: Buffer;
+  readonly manifest: unknown;
+  readonly report: unknown;
+  readonly checklist: unknown;
+  readonly observed: ObservedLockedUseRelease;
+}): Buffer {
+  const { report, checklist, observed } = input;
+  function fail(reason: string): never { throw new Error("locked_use_release_" + reason); }
+  validateLockedUseNativeManifest(input);
+  const reportedEvidence = record(report) && record(report.evidence) ? report.evidence : {};
   const evidence = { osBuild: observed.osBuild, ...observed.componentCodeHashes };
   if (!record(report) || !exact(report, ["schemaVersion", "leaseID", "evidence", "ownerToken", "ownerCodeHash",
     "guiAndKeychainPassed", "lockedAndReleased", "afterManualUnlockPassed"])

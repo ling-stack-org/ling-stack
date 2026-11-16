@@ -174,6 +174,48 @@ validation component set before installing a production component set.
 This fixed fixture does not certify the packaged Desktop/Cua provider, physical
 screen coverage or the fault matrix. Build and offline checks never invoke it.
 
+## Packaged attended candidate
+
+A production-signed validation candidate exercises Desktop's restricted provider
+before final release authority exists. Its separate entrypoint has no ordinary
+Desktop startup or renderer. It does not advertise a daemon capability or accept
+caller-supplied tools. It captures and presses only its separate signed counter
+fixture, observes input acknowledgement and changed decoded window pixels, then
+drains the provider, confirms native relock/release and waits for manual unlock.
+
+First complete the production native fixture acceptance and explicitly promote
+the installed native service. This native promotion does not supply Desktop
+release authority. Prepare a candidate using the exact native component set and
+the provider signed by the production Cua pipeline:
+
+```text
+node apps/desktop/scripts/prepare-locked-use-validation.ts --components=/absolute/signed-components --provider=/absolute/signed-provider --output=/absolute/fresh-candidate
+```
+
+Pass that directory as `LING_LOCKED_USE_VALIDATION_ROOT` to the existing production
+Cua packaging command, together with its normal signing and provider inputs.
+Do not set `LING_LOCKED_USE_RELEASE_ROOT` for a candidate. The builder pins
+`validation-candidate.json`, chooses the separate main entrypoint and preserves
+the already signed counter fixture. The signing hook verifies its identity and
+hash before exclusion from outer re-signing; the after-sign check verifies it
+again alongside the provider. The fixture is neither installed nor granted
+authority over other applications.
+
+Run the packaged app's executable directly in the enrolled user's unlocked
+session, with the single argument `--validate-locked-use-attended`. Terminal JSON
+phases indicate when to lock and unlock manually. Reports and the two fixture PNGs
+are written under a fresh `locked-use-validation` directory in the app's data
+directory; Chromium uses a separate per-run subdirectory. A passing
+`packaged-gui-validation.json` satisfies only the packaged GUI review case. It
+retains `productCapability: disabled_by_build`. Cancellation, unknown provider
+drainage, missing permissions, unchanged pixels or an unobserved manual unlock
+produce no passing report. Neither the build nor the ordinary app launches this
+attended run.
+
+Apple Development validation components cannot host an external provider or
+qualify a production candidate. They remain usable for the local native attended
+fixture described above.
+
 ## Release evidence and packaging
 
 Create a fresh review template without producing acceptance:
@@ -184,7 +226,9 @@ corepack pnpm --filter @ling-stack/desktop prepare:locked-use:release --template
 
 An identified reviewer records the 19 acceptance cases for the exact OS/native
 build and signed provider. Each passing case references a relative evidence file
-inside the review directory and its SHA-256. Once all required evidence exists,
+inside the review directory and its SHA-256. The `packaged_gui_capture_input` case
+must reference the candidate's passing JSON report; preparation checks its OS,
+native manifest and provider code identity. Once all required evidence exists,
 an administrator can run the preparation command:
 
 ```text

@@ -1,7 +1,8 @@
 import { fileURLToPath } from "node:url";
 
-import { createDarwinPlatformSigner } from "./darwin-platform-signer.mjs";
+import { combineDarwinSignIgnore, createDarwinPlatformSigner } from "./darwin-platform-signer.mjs";
 import { runProviderAwareSign } from "./hooks.mjs";
+import { lockedUseValidationSigningIgnore } from "../locked-use-validation-build.ts";
 
 /**
  * Pinned Electron Builder `mac.sign` callback. Builder hands the callback a
@@ -11,6 +12,8 @@ import { runProviderAwareSign } from "./hooks.mjs";
  */
 export default async function electronBuilderMacSign(configuration, packager) {
   const appPath = configuration.app;
+  const validationIgnore = await lockedUseValidationSigningIgnore({ appPath,
+    metadata: packager?.config?.extraMetadata });
   const realOuterSigner =
     process.env.LING_CUA_SIGNING_FIXTURE !== "1"
     && process.env.LING_CUA_DARWIN_SIGNING_IDENTITY
@@ -20,7 +23,9 @@ export default async function electronBuilderMacSign(configuration, packager) {
           entitlementsPath: fileURLToPath(
             new URL("../../build/entitlements.cua-driver.plist", import.meta.url),
           ),
-          bundleSignOptions: configuration,
+          bundleSignOptions: validationIgnore
+            ? { ...configuration, ignore: combineDarwinSignIgnore(configuration.ignore, validationIgnore) }
+            : configuration,
         })
       : undefined;
   return runProviderAwareSign(
