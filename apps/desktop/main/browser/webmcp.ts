@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { WebContents } from "electron";
 import { browserRecord, browserString } from "@ling-stack/contracts";
 import { validateWebToolArguments } from "./webmcp-schema.js";
+import { serializeBrowserScriptArgument } from "./script-serialization.js";
 
 interface WebTool { readonly name: string; readonly description: string; readonly inputSchema: Record<string, unknown> }
 function webMcpProgram(request: { readonly action: "list" | "call" | "cancel"; readonly name?: string; readonly args?: object; readonly revision?: string; readonly chromiumMajor: number }): Promise<string> | string {
@@ -34,7 +35,10 @@ function webMcpProgram(request: { readonly action: "list" | "call" | "cancel"; r
     } finally { clearTimeout(timer); if (state.controller === controller) state.controller = undefined; }
   })();
 }
-export function webMcpScript(request: Omit<Parameters<typeof webMcpProgram>[0], "chromiumMajor">): string { return `(${webMcpProgram.toString()})(${JSON.stringify({ ...request, chromiumMajor: Number(process.versions.chrome?.split(".")[0] ?? 0) })})`; }
+export function webMcpScript(request: Omit<Parameters<typeof webMcpProgram>[0], "chromiumMajor">): string {
+  const requestWithVersion = { ...request, chromiumMajor: Number(process.versions.chrome?.split(".")[0] ?? 0) };
+  return `(${webMcpProgram.toString()})(${serializeBrowserScriptArgument(requestWithVersion)})`;
+}
 export class BrowserWebMcp {
   private snapshot?: { revision: string; nativeRevision: string; tools: WebTool[]; fingerprint: string };
   constructor(private readonly contents: WebContents) {}
