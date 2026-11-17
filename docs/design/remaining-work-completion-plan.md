@@ -2,9 +2,9 @@
 
 Status: active execution plan; branch-local implementation and verification are recorded below
 Owner: Ling maintainers; one integration owner for each delivery batch
-Last verified: 2026-11-17
-Branch-cut baseline: `origin/main@1afb3a923a4d5af7750d385ac961eb2d0465c4ef`
-Current main integrated locally: `origin/main@1afb3a923a4d5af7750d385ac961eb2d0465c4ef`.
+Last verified: 2026-11-18
+Branch-cut baseline: `origin/main@81f216d7de8211257448451ddfecde94fcf0ec63`
+Current main integrated locally: `origin/main@81f216d7de8211257448451ddfecde94fcf0ec63`.
 Target: 2027-03-15 release-candidate closure for the active delivery queue
 Canonical status source: [Implementation Status](implementation-status.md)
 Code and test anchors: each work package keeps its owning plan and contract
@@ -18,7 +18,7 @@ M0 audit packet: [Baseline And Decisions](remaining-work-m0-baseline-and-decisio
 - M0 的 main 基线、隔离分支、计划索引、PR 快照、owner/平台资源审计表和六项决策包已记录在
   [M0 Baseline And Decisions](remaining-work-m0-baseline-and-decisions.md)。六项产品决策、每项 active
   work 的命名 owner/平台预约及 PR/CI 逐项闭环尚未完成，因此 M0 尚未整体完成。
-- 本次复核从最新 `origin/main@1afb3a923a4d5af7750d385ac961eb2d0465c4ef` 新建目标分支和独立
+- 本次复核从 `origin/main@81f216d7de8211257448451ddfecde94fcf0ec63` 新建目标分支和独立
   worktree；目标分支尚未推送、开 PR 或合并。提交 PR 前仍必须重新做 main 合并、迁移和受影响
   测试复核。
 - 当前批次覆盖 External Work 8.0/8.1、Channel Context lineage/quote/redaction/startup reconstruction、F5
@@ -178,9 +178,10 @@ redaction 统一且失败时 fail closed。
 的 exact-effective、scope、visibility 检查和 id-only rejection diagnostics。source-level quote
 eligibility 已接入 proposal source-reference 和 channel/workflow context-pack caller；context view
 lineage 已以 SQLite migration 225 持久化，并覆盖 reopen、旧投影和匹配 CAS 的拒绝回归。daemon
-重启时从 durable sources 重建 canonical projection，并对 private-chat、workflow-proposal 和
-workflow-step 视图做只读复水与 view fingerprint 复核；channel reply/selector/specialist/inspect
-仍由下一次 Host 请求重建 prompt envelope。API/artifact redaction 的集中收口、Web/security 和平台
+重启时从 durable sources 重建 canonical projection，并对 private-chat、workflow-proposal、workflow-step、
+channel reply 和 selector 视图做只读复水；workflow/private/proposal 视图做 view fingerprint 复核，
+reply/selector 的 freshness 继续由 durable projection 判定，避免把 request-specific prompt envelope 当作持久事实。
+specialist/inspect 仍由下一次 Host 请求重建 prompt envelope。API/artifact redaction 的集中收口、Web/security 和平台
 验收仍未完成；本地定向测试通过不等于 PR、合并、部署或发布验收。
 
 ### 4.3 多 Agent 与原生执行

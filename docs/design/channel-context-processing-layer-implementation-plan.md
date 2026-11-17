@@ -2,7 +2,7 @@
 
 Status: active implementation plan
 Owner: channel context and Ling Agent session maintainers
-Last verified: 2026-11-17 (target branch: source citation callers and durable context-view lineage)
+Last verified: 2026-11-18 (target branch: restart rehydration for channel reply/selector plus shared workflow projection scope)
 
 ## Owning Contract
 
@@ -39,11 +39,12 @@ view lineage is now persisted in SQLite with a view-shape fingerprint, restart-r
 projection metadata and CAS/older-projection rejection. Daemon startup now reconstructs
 conversation projections from durable sources and reports current/reconstructed/stale/
 blocked lineage without rewriting an active Run's contextViewId. The recovery report now
-rehydrates private-chat, workflow-proposal and workflow-step views from durable records,
-preserving the persisted contextViewId and checking the view-shape fingerprint without
-writing a replacement. Channel reply/selector/specialist/inspect views still rebuild their
-prompt-specific envelope on the next Host request; Web/security and packaged acceptance
-remain open.
+rehydrates private-chat, workflow-proposal, workflow-step, channel reply and selector views
+from durable records, preserving the persisted contextViewId and avoiding lineage write-back.
+Private, proposal and workflow-step shapes are fingerprint-checked; reply/selector freshness
+remains projection-owned because their prompt envelope is request-specific. Specialist/inspect
+views still rebuild their prompt-specific envelope on the next Host request; Web/security and
+packaged acceptance remain open.
 
 ## Remaining Work
 
@@ -65,7 +66,7 @@ remain open.
 ### Persistence And Recovery
 
 - Persist rebuildable view lineage separately from prompt bodies; the SQLite migration and
-  reopen path now restore projection metadata and the private/proposal/workflow surface views
+  reopen path now restore projection metadata and the private/proposal/workflow/channel surface views
   without making a cached view the source of truth.
 - Ensure late materialization and stale requests cannot overwrite a newer context view;
   the lineage store now rejects older projections and mismatched CAS writes. The daemon
@@ -103,8 +104,8 @@ remain open.
 
 The target branch adds startup recovery coverage: Core/Daemon typechecks pass, the
 context lineage/projector/context-processing set is green, and the recovery fixture
-covers SQLite reopen, current projection reconstruction, private/proposal view
-rehydration, stale metadata detection and fail-closed missing-source handling. Startup
+covers SQLite reopen, current projection reconstruction, private/proposal/workflow/channel
+view rehydration, stale metadata detection and fail-closed missing-source handling. Startup
 recovery is a local source check; it does not replace browser, security, packaged or
 live-provider acceptance.
 
