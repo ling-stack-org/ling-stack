@@ -16,7 +16,7 @@ product decisions. A row is not complete merely because its source code exists l
 |---|---|---|
 | Protected source worktree | `/Users/tianxiao/ling-stack`, branch `codex/ling-companion`, `HEAD 65d2ed026` | Existing WIP is preserved and was not reset, cleaned, or rebased by this plan |
 | Target worktree | `/Users/tianxiao/.codex/worktrees/remaining-work-implementation` | Isolated implementation worktree for this delivery target |
-| Target branch | `codex/remaining-work-implementation` at `1ce2a969f` | Created from the latest `origin/main@81f216d7de8211257448451ddfecde94fcf0ec63`; role-view recovery is the latest local commit and the branch remains unpushed |
+| Target branch | `codex/remaining-work-implementation` | Created from the latest `origin/main@81f216d7de8211257448451ddfecde94fcf0ec63`; role-view recovery (`1ce2a969f`) and refreshed M0 evidence are local commits, and the branch remains unpushed |
 | Plan branch cut | `origin/main@81f216d7de8211257448451ddfecde94fcf0ec63` | Refreshed on 2026-11-18 before continuing the target work |
 | Main currently integrated locally | `origin/main@81f216d7de8211257448451ddfecde94fcf0ec63` | Target starts at this mainline commit; no target-branch merge is claimed |
 | Target remote state | No `origin/codex/remaining-work-implementation` ref and no target PR | Local commits are not reviewable from GitHub until explicitly pushed and a PR is opened |
