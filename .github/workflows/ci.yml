@@ -748,6 +748,11 @@ jobs:
           name: ci-dist
           path: .
 
+      - name: Generate reviewed localization catalog bindings
+        if: needs.scope.outputs.native-release == 'true'
+        shell: bash
+        run: corepack pnpm --filter @ling-stack/localization catalog:compile
+
       - name: Validate selected macOS work
         env:
           MACOS_HELPER_SELECTED: ${{ needs.scope.outputs.macos-helper }}
