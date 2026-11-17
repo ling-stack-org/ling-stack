@@ -3131,6 +3131,32 @@ The daemon loads the task and channel, rejects paused or archived channels, chec
 
 Conflicts return `409 resource_conflict` with the blocking resource in the message. v0.1 exposes conflict visibility; durable queued-attempt scheduling is a later slice.
 
+## Preview Run Policy
+
+```http
+POST /runs/policy-preview?cwd=/path/to/workspace
+Content-Type: application/json
+```
+
+The request is read-only and may include `channelId`, `taskId`, `permissionPreset`,
+`permissionMode` and an `approvalProfile`. If both a task and channel are supplied, they must
+refer to the same channel. Missing records and malformed permission values fail closed.
+
+```json
+{
+  "channelId": "channel_...",
+  "taskId": "task_...",
+  "permissionPreset": "workspace_collaboration",
+  "approvalProfile": { "mode": "strict", "requiredForTools": ["bash"] }
+}
+```
+
+The daemon resolves the effective policy with the same `resolveSessionRunPolicy` path used by
+run dispatch and returns `permissionPreset`, the resolved `permissionMode`, the effective tool
+decisions/write scope/risk notes, and `requiresConfirmation`. `full_access` always reports
+`requiresConfirmation: true`. The endpoint does not create or mutate a Run, Approval, Artifact,
+lease, or state transition. It does not check provider readiness or start a runner.
+
 ## Run Task
 
 ```http

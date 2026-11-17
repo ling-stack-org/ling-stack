@@ -11,6 +11,11 @@ This is the only cross-feature index of unfinished or protected implementation w
 Owning contracts remain authoritative for behavior; this index answers only whether
 material delivery work remains and where it is tracked.
 
+The [Remaining Work 14-Item Delivery Plan](remaining-work-14-item-delivery-plan.md) is the current
+execution overlay for the 2026-11-18 status review. It groups existing rows by code, integration,
+external acceptance and decision work; it does not replace the owning contract or turn local evidence
+into a merge, deployment or Release Candidate claim.
+
 The categories are mutually exclusive:
 
 - **Active delivery or platform closure**: implementation or release work is currently
@@ -40,7 +45,7 @@ counts, screenshots, hashes and run diaries belong in CI or Release artifacts.
 | [Desktop In-App Browser](desktop-browser-implementation-plan.md) | M0–M5 source implementation: isolated per-workspace Electron profiles, authenticated one-claim runtime, twelve MCP tools through existing approvals, shared conversation Browser dock, link routing/restoration, annotations, history/download/site policy, bounded CDP/WebMCP, bookmark import and unpacked MV3 session extensions. Real Electron macOS arm64 and controlled local-site acceptance pass | Real model annotation-to-edit proof, daemon policy deny/revoke scenarios, Windows/native view, signed package/clean host, CI review and merge remain open; passwords, contacts, Chrome Web Store and arbitrary full-browser CDP are out of scope |
 | [Project Defect Remediation 2026-09](project-defect-remediation-plan-2026-09.md) | Source remediation and automated Web/daemon/native regression are green across right-dock review, Runs, Profile i18n, Native Broker startup, and Native migration | Real macOS/Windows packaged-client and Chrome-extension environment acceptance closes |
 | [Workspace Command Rule Approval](workspace-command-rule-approval-implementation-plan.md) | Approval contracts, storage, daemon matching, and Composer split-button implementation exist | Real-browser proof of once versus persistent approval, cross-surface/restart behavior, revoke, and unsafe-command rejection closes |
-| [Permission Presets](codex-inspired-settings-permission-presets-implementation-plan.md) | Enforcement modes exist | Preset UI, effective preview and run audit agree with daemon enforcement |
+| [Permission Presets](codex-inspired-settings-permission-presets-implementation-plan.md) | Enforcement modes and the daemon-owned `POST /runs/policy-preview` slice are implemented locally on `codex/remaining-work-implementation`; the endpoint reuses `resolveSessionRunPolicy`, validates channel/task scope and approval profiles, and is read-only | Preset UI, effective preview and run audit agree with daemon enforcement; hosted review/merge and browser evidence remain open |
 | [Provider Model Catalog And Discovery](provider-model-catalog-and-discovery-p15-implementation-plan.md) | Implemented and verified: versioned catalog, native discovery adapters, secure saved-key discovery and workbench provenance | Daily catalog PR review and normal provider connector maintenance continue |
 | [Conversation Surface](conversation-surface-contract-implementation-plan.md) | Shared primitives and initial package extraction are implemented | WorkCell, evidence, attachment, package CSS and Desktop-consumption boundaries close |
 | [Conversation Media Generation](conversation-media-generation-tools-implementation-plan.md) | Shared image/video tool registration, explicit/default target resolution, three-surface integration, idempotent paid-task creation, cancellation, retry and restart recovery projection are implemented; Core 3/3, Daemon 25/25 and Runner-Pi 6/6 focused tests pass | Real paid Provider/browser acceptance, cost/approval evidence and signed packaged-client verification remain open |
@@ -84,13 +89,13 @@ These are real gaps, but they must not be described as currently scheduled work.
 | [AI Councils](ai-councils.md) | Council runtime and remaining product surfaces |
 | [Governance Notifications](channel-and-agent-governance-notifications.md) | Teammate-private delivery and Ling Agent/workspace digest |
 | [Conversation Memory Citations](conversation-memory-citations-and-sources.md) | Transcript citation footer and active source presentation |
-| [Conversation Activity Summary And Exploration Batching](conversation-activity-summary-and-exploration-batching-detailed-design.md) | Approved reversible presentation projection; implementation pending |
-| [Input Materialization](input-materialization-detailed-design.md) | Remaining rich-input materializers and ownership gates |
+| [Conversation Activity Summary And Exploration Batching](conversation-activity-summary-and-exploration-batching-detailed-design.md) | Projection and exploration-batch source slices exist; package/build, reconnect, restart, lineage and browser integration remain in the 14-item delivery plan |
+| [Input Materialization](input-materialization-detailed-design.md) | Text, link, PDF, OOXML, image and direct-message materialization slices exist; cache, restart, Desktop/Web and evidence-detail hardening remain |
 | [Media Production Image To Video](media-production-image-to-video-detailed-design.md) | Source implementation is locally verified; real Provider acceptance still requires explicit paid authorization |
-| [Multi-Agent Requirement Shaping](multi-agent-app-detailed-design.md) | Additional specialist discussion/contribution and shaping product slices; safe concurrency is separately active above and is not blocked by these extensions |
-| [Native Skill Recording](ling-native-skill-recording-p0-detailed-design.md) | Message-overflow and Settings follow-up entry points |
-| [SQLite Modularization](sqlite-storage-modularization-next-slices.md) | Further split only after transaction and coordinator ownership is designed |
-| [Automations](automations.md) | Richer monitor sources, desktop notification policy and external destinations |
+| [Multi-Agent Requirement Shaping](multi-agent-app-detailed-design.md) | Base shaping contract and projection exist; specialist contribution packets, collection/fan-in and detail route remain; safe concurrency is separately active above and ordinary write parallelism stays closed |
+| [Native Skill Recording](ling-native-skill-recording-p0-detailed-design.md) | Daemon, Run Inspector, artifact and Skill Library entry points exist; message-overflow source refs, Web E2E and accessibility remain |
+| [SQLite Modularization](sqlite-storage-modularization-next-slices.md) | Session/event/intervention/work-unit/semaphore/recovery stores are integrated; persistence, CAS, heartbeat, stale recovery and public API ownership verification remain |
+| [Automations](automations.md) | Durable definitions/runs, scheduler, approval and signed ingress exist; monitor fingerprint/no-op/history and external destinations remain |
 
 ## Reference Contracts, Not Separate Queues
 

@@ -59,6 +59,8 @@ import type {
   RunInterventionResponse,
   RunListRequest,
   RunListResponse,
+  RunPolicyPreviewRequest,
+  RunPolicyPreviewResponse,
   RunSession,
   ShellSnapshotListResponse,
   ShellSnapshotResponse,
@@ -82,6 +84,10 @@ export const runEndpoints = {
         threadId: request.threadId,
         limit: request.limit,
       });
+    },
+
+  async previewRunPolicy(this: LingDaemonEndpointContext, cwd: string, input: RunPolicyPreviewRequest = {}): Promise<RunPolicyPreviewResponse> {
+      return this._post("/runs/policy-preview", { cwd }, input);
     },
 
   async listExecutionActions(this: LingDaemonEndpointContext,

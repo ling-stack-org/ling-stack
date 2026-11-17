@@ -2,7 +2,8 @@
 
 ## Status
 
-Design plan.
+Design plan; the daemon-owned policy preview slice is implemented locally on
+`codex/remaining-work-implementation` and the preset UI/audit slices remain open.
 
 This document defines the narrow product slice for borrowing Codex-style general
 settings, work-mode presentation, and permission presets without copying Codex's full
@@ -256,8 +257,8 @@ Response:
 
 ```json
 {
-  "preset": "workspace_collaboration",
-  "mode": "workspace_write",
+  "permissionPreset": "workspace_collaboration",
+  "permissionMode": "workspace_write",
   "effectivePolicySnapshot": {
     "mode": "workspace_write",
     "toolDecisions": {
@@ -279,6 +280,11 @@ Response:
 
 The endpoint should call the same resolver used during run execution. It must not create a
 run, approval, artifact, or state transition.
+
+The current local implementation also rejects unknown modes and malformed approval profiles,
+requires a task's `channelId` to agree with an explicitly supplied `channelId`, and fails closed
+when either referenced record is missing. Full access is reported as confirmation-required. The
+endpoint does not acquire provider resources or start a runner; those remain run-dispatch concerns.
 
 ### Run Request Snapshot
 

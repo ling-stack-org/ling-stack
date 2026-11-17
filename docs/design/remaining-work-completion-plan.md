@@ -9,6 +9,7 @@ Target: 2027-03-15 release-candidate closure for the active delivery queue
 Canonical status source: [Implementation Status](implementation-status.md)
 Code and test anchors: each work package keeps its owning plan and contract
 M0 audit packet: [Baseline And Decisions](remaining-work-m0-baseline-and-decisions.md)
+14-item execution overlay: [Remaining Work 14-Item Delivery Plan](remaining-work-14-item-delivery-plan.md)
 
 ## 执行状态
 
@@ -59,6 +60,11 @@ M0 audit packet: [Baseline And Decisions](remaining-work-m0-baseline-and-decisio
   daemon 进程共享临时 Host/SQLite 的本地重启回归已通过；真实 Runner/Provider 停止确认、外部
   Provider/Daemon 验收仍未完成。
 - 本分支的源码、定向验证、远端合并和发布验收分别记录，不能相互替代。
+- 2026-11-18 的 14 项状态复核已转成独立执行台账；当前第一项跨切片本地交付是权限预览
+  `POST /runs/policy-preview`。它复用实际 Run dispatch 的 `resolveSessionRunPolicy`，校验
+  channel/task 归属和 approval profile，标记 full access 的确认要求，并保证不创建 Run、Approval、
+  Artifact 或状态迁移。该切片的 Contracts/Core/API Client/Daemon 类型检查、Daemon build 和两项
+  HTTP 回归已通过；分支仍未推送、开 PR、合并或部署。
 
 ## 1. 目标与完成定义
 

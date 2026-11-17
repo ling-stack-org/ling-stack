@@ -198,8 +198,14 @@ Evidence anchors:
 
 ## 6. Next authorized implementation step
 
-After the M0 decisions and owner/resource assignments are recorded, the next implementation slice is
-Web/security/session surface acceptance, while the F5 track continues with external Provider,
+The 2026-11-18 14-item review is now tracked by [Remaining Work 14-Item Delivery Plan](remaining-work-14-item-delivery-plan.md).
+The first cross-cutting local implementation slice, daemon-owned `POST /runs/policy-preview`, is
+implemented on the target branch and covered by `run-policy-preview.test.ts`; it is read-only and uses
+the same resolver as run dispatch. Its local typecheck/build evidence does not close hosted review,
+browser, packaging or provider gates.
+
+After the M0 decisions and owner/resource assignments are recorded, the next broader implementation
+slice is Web/security/session surface acceptance, while the F5 track continues with external Provider,
 stop-confirmation and A17/A18 evidence. The F5 receiver keeps the durable dispatch
 receipt read-only after release, preserves fail-closed unknown-outcome behavior, and does not open
 ordinary multi-agent write concurrency.

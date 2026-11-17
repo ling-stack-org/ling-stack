@@ -255,6 +255,7 @@ import {
   handleGetRunEvents,
   handleListRunArtifacts,
   handleListRuns,
+  handleRunPolicyPreview,
   handleRun,
 } from "../features/runs/routes.js";
 import { handleGetRunAssuranceEvidence } from "../features/runs/assurance-evidence.js";
@@ -1634,6 +1635,10 @@ export async function routeRequest(
           nativeRunDispatcher,
         },
       ));
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/runs/policy-preview") {
+    await handleRunPolicyPreview(request, response, config, url, storeRegistry);
     return;
   }
   if (request.method === "GET" && url.pathname === "/runs") {

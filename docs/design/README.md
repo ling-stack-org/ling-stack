@@ -2,7 +2,7 @@
 
 Status: canonical documentation index
 Owner: repository maintainers
-Last verified: 2026-11-17 (remaining-work completion plan and M0 audit packet added)
+Last verified: 2026-11-18 (14-item delivery plan and daemon policy preview slice added)
 Document type: governance index
 Code and test anchors: each linked contract owns its anchors
 
@@ -20,6 +20,7 @@ Maintenance-only transition notes are kept in [Development Handoffs](../maintena
 
 - [Implementation Status](implementation-status.md)
 - [Remaining Work Completion Plan](remaining-work-completion-plan.md)
+- [Remaining Work 14-Item Delivery Plan](remaining-work-14-item-delivery-plan.md)
 - [Remaining Work M0 Baseline And Decisions](remaining-work-m0-baseline-and-decisions.md)
 - [Agent Execution Capabilities](agent-execution-capabilities.md)
 - [Agent Execution Capabilities Implementation Plan](agent-execution-capabilities-implementation-plan.md)
@@ -123,6 +124,8 @@ retains the detailed implementation brief and historical checkpoint.
 ## Runtime, Security, And Storage
 
 - [Approval Policy](approval-policy.md)
+- [Codex-Inspired Settings And Permission Presets](codex-inspired-settings-permission-presets.md)
+- [Codex-Inspired Settings And Permission Presets Implementation Plan](codex-inspired-settings-permission-presets-implementation-plan.md)
 - [Workspace Command Rule Approval Implementation Plan](workspace-command-rule-approval-implementation-plan.md)
 - [Inline Runtime Approval](inline-runtime-approval-detailed-design.md)
 - [State Machines And Recovery](state-machine-recovery.md)
