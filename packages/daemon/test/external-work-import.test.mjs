@@ -1302,7 +1302,7 @@ class RecordingRunner {
 }
 
 async function startDaemonForTest(runner, externalWorkFetch, dependencies = {}) {
-  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0 }, { runner, externalWorkFetch, ...dependencies });
+  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, defaultWorkspaceCwd: tmpdir() }, { runner, externalWorkFetch, ...dependencies });
   await daemon.start();
   const address = daemon.server.address();
   assert.ok(address && typeof address === "object");

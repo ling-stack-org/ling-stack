@@ -166,7 +166,7 @@ test("Run and WorkUnit HTTP views and terminal control responses never serialize
     listWorkUnitAttempts: () => [], listRuntimeEvents: () => [],
     listResourceLeases: () => [], listRuntimeSemaphoreSlots: () => [],
   };
-  const registry = { getStore: () => store, findStoreForRun: () => store };
+  const registry = { getStore: () => store, findStoreForRun: () => store, isTrustedWorkspaceRoot: () => true };
   const supervisor = { getRuntime() {} };
   const server = createServer(async (request, response) => {
     const url = new URL(request.url, "http://localhost");
@@ -234,7 +234,7 @@ test("direct control HTTP runtime, intervention, promote, and cancel responses p
     promoteIntervention(input) { assert.equal(input.store, store); calls.push("promote"); return { intervention, message: "Accepted" }; },
     cancelReply(input) { assert.equal(input.store, store); calls.push("cancel"); return { workUnit: directUnit, message: runtime.activeReply.message }; },
   };
-  const registry = { getStore: () => store };
+  const registry = { getStore: () => store, isTrustedWorkspaceRoot: () => true };
   const config = { host: "127.0.0.1", port: 0, maxBodyBytes: 65536 };
   const server = createServer(async (request, response) => {
     try {

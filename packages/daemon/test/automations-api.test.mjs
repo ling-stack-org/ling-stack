@@ -632,6 +632,7 @@ async function startDaemonForTest(runner) {
   const daemon = createDaemonServer({
     host: "127.0.0.1",
     port: 0,
+    defaultWorkspaceCwd: tmpdir(),
     channels: { terminalReports: false },
   }, { runner });
   await daemon.start();

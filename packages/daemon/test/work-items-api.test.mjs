@@ -146,7 +146,7 @@ test("work item API returns structured claim blockers for dependencies", async (
 
 async function startDaemonForTest(stores) {
   const daemon = createDaemonServer(
-    { host: "127.0.0.1", port: 0 },
+    { host: "127.0.0.1", port: 0, defaultWorkspaceCwd: tmpdir() },
     {
       runner: {
         async runTask() {
