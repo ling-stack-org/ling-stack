@@ -23,6 +23,7 @@ plus daemon/API-client data, not from copied Web DOM labels or Web-only helpers.
 Design source of truth:
 
 - [Desktop Shell](../../docs/design/desktop-shell.md)
+- [Desktop In-App Browser](../../docs/design/desktop-browser-implementation-plan.md)
 - [Bundled Embedded Cua Driver](../../docs/design/cua-driver-bundled-embedded.md)
 - [Bundled Embedded Cua Driver Detailed Design](../../docs/design/cua-driver-bundled-embedded-detailed-design.md)
 - [Bundled Embedded Cua Driver Implementation Plan](../../docs/design/cua-driver-bundled-embedded-implementation-plan.md)

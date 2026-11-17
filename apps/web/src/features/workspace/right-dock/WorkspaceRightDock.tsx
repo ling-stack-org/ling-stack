@@ -1,3 +1,4 @@
+import type { BrowserAnnotationHandler } from "../../browser/browser-annotation-submission.js";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Activity,
@@ -37,6 +38,7 @@ import {
   type PlanStatusFilter,
 } from "./PlanHistoryPage.js";
 import { reviewNeedsAction } from "./projections.js";
+import { BrowserWorkspace } from "../../browser/BrowserWorkspace.js";
 import { WorkspaceTerminalPanel, type WorkspaceTerminalSession } from "../WorkspaceTerminalPanel.js";
 import { WorkspaceChangeReviewPage } from "./WorkspaceChangeReviewPage.js";
 import { DockReviewItemDetail } from "./DockReviewItemDetail.js";
@@ -84,6 +86,8 @@ export interface WorkspaceRightDockReviewTarget {
 }
 
 export interface WorkspaceRightDockProps {
+  readonly onBrowserAnnotation?: BrowserAnnotationHandler;
+  readonly browserScopeId?: string;
   readonly surface: DockSurfaceKind;
   readonly open: boolean;
   readonly collapsed?: boolean;
@@ -126,6 +130,8 @@ export interface WorkspaceRightDockProps {
 }
 
 export function WorkspaceRightDock({
+  browserScopeId,
+  onBrowserAnnotation,
   surface,
   open,
   collapsed,
@@ -564,6 +570,19 @@ export function WorkspaceRightDock({
         ),
       });
     }
+    const browserEvidence = (
+      <EvidencePage
+        groups={browserGroups}
+        emptyTitle={t("No browser evidence")}
+        emptyDescription={t("Browser and web search evidence appears only after real tool evidence exists.")}
+        onOpenItem={(itemId) => {
+          const item = browserGroups.flatMap((group) => group.items).find((candidate) => candidate.id === itemId);
+          if (item) {
+            pushDetail(`evidence:${item.id}`, item.title, item.sourceLabel);
+          }
+        }}
+      />
+    );
     manifests.push({
       id: "browser",
       label: t("Browser"),
@@ -571,22 +590,13 @@ export function WorkspaceRightDock({
       launcherItem: {
         description: t("Search and browser evidence"),
         count: browserEvidenceCount,
-        statusLabel: browserEvidenceCount === 1 ? t("1 browser item") : browserEvidenceCount > 1 ? t("{count} browser items", { count: browserEvidenceCount }) : t("No browser evidence"),
+        statusLabel: window.lingDesktop?.browser && cwd && browserScopeId ? t("Ling Browser")
+          : browserEvidenceCount === 1 ? t("1 browser item") : browserEvidenceCount > 1 ? t("{count} browser items", { count: browserEvidenceCount }) : t("No browser evidence"),
         severity: browserEvidenceCount > 0 ? "info" : "neutral",
       },
-      render: () => (
-        <EvidencePage
-          groups={browserGroups}
-          emptyTitle={t("No browser evidence")}
-          emptyDescription={t("Browser and web search evidence appears only after real tool evidence exists.")}
-          onOpenItem={(itemId) => {
-            const item = browserGroups.flatMap((group) => group.items).find((candidate) => candidate.id === itemId);
-            if (item) {
-              pushDetail(`evidence:${item.id}`, item.title, item.sourceLabel);
-            }
-          }}
-        />
-      ),
+      render: () => window.lingDesktop?.browser && cwd && browserScopeId && (surface === "normal_conversation" || surface === "channel" || surface === "teammate_direct") ? (
+        <BrowserWorkspace key={`${cwd}:${surface}:${browserScopeId}`} workspaceCwd={cwd} surface={surface} ownerId={browserScopeId} onAnnotation={onBrowserAnnotation} evidence={browserEvidence} />
+      ) : browserEvidence,
     });
     manifests.push({
       id: "terminal",
@@ -641,6 +651,8 @@ export function WorkspaceRightDock({
     activityNode,
     browserEvidenceCount,
     browserGroups,
+    browserScopeId,
+    onBrowserAnnotation,
     contextCount,
     contextDescription,
     contextLabel,

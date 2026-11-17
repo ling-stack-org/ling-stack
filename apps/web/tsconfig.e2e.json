@@ -27,6 +27,8 @@
     "e2e/ui2-conversation-work-cell-shell-artifacts.spec.ts"
   ],
   "include": [
+    "e2e/desktop-browser.spec.ts",
+    "e2e/support/desktop-browser-harness.tsx",
     "src/desktop-capabilities.d.ts",
     "src/qrcode.d.ts",
     "e2e/support/conversation-run-feedback-harness.tsx",

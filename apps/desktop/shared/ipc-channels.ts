@@ -1,5 +1,13 @@
 import type { DesktopThemePackageIpcChannelKey } from "./theme-package-capabilities.js";
 
+export const DESKTOP_BROWSER_IPC_CHANNELS = {
+  state: "ling-desktop:browser:state",
+  act: "ling-desktop:browser:act",
+  viewport: "ling-desktop:browser:viewport",
+  changed: "ling-desktop:browser:changed",
+  focusAddress: "ling-desktop:browser:focus-address",
+} as const;
+
 export const DESKTOP_LOCAL_FILE_IPC_CHANNELS = {
   inspect: "ling-desktop:local-file:inspect",
   menu: "ling-desktop:local-file:menu",

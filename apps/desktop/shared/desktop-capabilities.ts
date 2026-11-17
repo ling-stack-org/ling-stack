@@ -278,6 +278,7 @@ export interface ComputerUsePreviewPreferences {
 }
 
 export interface LingDesktopCapabilities {
+  readonly browser?: import("./browser-capabilities.js").DesktopBrowserCapabilities;
   readonly companionWindow?: import("./companion-capabilities.js").DesktopCompanionWindowCapabilities;
   readonly localServices?: import("./local-service-capabilities.js").DesktopLocalServiceCapabilities;
   readonly localFiles?: import("./local-file-capabilities.js").DesktopLocalFileCapabilities;

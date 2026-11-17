@@ -43,6 +43,7 @@ const computerControlPlatform = process.argv
 const platform = desktopPlatform();
 
 const capabilities: LingDesktopCapabilities = {
+  browser: createDesktopBrowserCapabilities(ipcRenderer),
   companionWindow: {
     open: (cwd) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.companionWindowOpen, cwd),
     onSettingsRequested: (listener) => {

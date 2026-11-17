@@ -204,6 +204,7 @@ import {
 } from "../features/plugins/routes.js";
 import { handleCuaDriverLeaseRoute } from "../features/plugins/cua-driver-lease-routes.js";
 import { handleOfficeDriverRoute } from "../features/office-documents/driver-routes.js";
+import { handleDesktopBrowserRoute } from "../features/desktop-browser/routes.js";
 import { handleChromeBrowserPair } from "../features/browser-extension/routes.js";
 import { handleWorkItemRoute, handleWorkItemsCollection } from "../features/work-items/routes.js";
 import { handleWorkspaceDirectorySelect, handleWorkspaceTerminalCommand, handleWorkspaceTerminalProfile } from "../features/workspace-directory/routes.js";
@@ -639,6 +640,7 @@ export async function routeRequest(
   if (await handleOfficeDriverRoute(request, response, context)) {
     return;
   }
+  if (await handleDesktopBrowserRoute(request, response, context)) return;
   if (request.method === "GET" && url.pathname === "/health") {
     writeJson(response, 200, {
       ok: true,
@@ -756,7 +758,7 @@ export async function routeRequest(
   }
 
   if (url.pathname === "/workspace-settings") {
-    await handleWorkspaceSettings(request, response, config, storeRegistry, secretResolver);
+    await handleWorkspaceSettings(request, response, config, storeRegistry, secretResolver, cwd => context.desktopBrowser.forWorkspace(cwd).cancelAll());
     return;
   }
 
@@ -957,6 +959,7 @@ export async function routeRequest(
       managedPluginRoute,
       context.chromeBrowserPlugin,
       context.officeDocumentsPlugin,
+      context.desktopBrowserPlugin,
     );
     return;
   }
