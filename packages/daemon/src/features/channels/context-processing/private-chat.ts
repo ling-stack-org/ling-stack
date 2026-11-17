@@ -33,6 +33,9 @@ export interface BuildPrivateChatContextViewInput {
   readonly materializationsByAttachmentId?: ReadonlyMap<string, PrivateChatAttachmentMaterialization>;
   readonly memorySources?: readonly ChannelContextSource[];
   readonly memoryDropped?: readonly ChannelContextDroppedSource[];
+  /** Startup rehydration supplies the persisted identity and skips the write-back. */
+  readonly viewId?: string;
+  readonly persistLineage?: boolean;
   readonly now?: string;
 }
 
@@ -93,19 +96,22 @@ export function buildPrivateChatContextView(input: BuildPrivateChatContextViewIn
     sourceRefs: [],
     sources: [...promptSources, ...(input.memorySources ?? [])],
     dropped: input.memoryDropped,
+    ...(input.viewId ? { viewId: input.viewId } : {}),
     now: input.now,
-    lineage: {
-      store: input.store,
-      lineageKey: contextViewLineageKey({
-        workspaceId: input.thread.workspaceId,
+    ...(input.persistLineage === false ? {} : {
+      lineage: {
+        store: input.store,
+        lineageKey: contextViewLineageKey({
+          workspaceId: input.thread.workspaceId,
+          threadId: input.thread.id,
+          sourceItemId: input.sourceMessage.id,
+          kind: "private_chat_view",
+          consumerTeammateId: input.teammate.id,
+        }),
         threadId: input.thread.id,
         sourceItemId: input.sourceMessage.id,
-        kind: "private_chat_view",
-        consumerTeammateId: input.teammate.id,
-      }),
-      threadId: input.thread.id,
-      sourceItemId: input.sourceMessage.id,
-    },
+      },
+    }),
   });
 }
 

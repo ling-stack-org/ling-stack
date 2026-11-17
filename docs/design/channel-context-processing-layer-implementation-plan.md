@@ -38,8 +38,12 @@ dropped, influence-only and inspect-only sources do not become public evidence. 
 view lineage is now persisted in SQLite with a view-shape fingerprint, restart-readable
 projection metadata and CAS/older-projection rejection. Daemon startup now reconstructs
 conversation projections from durable sources and reports current/reconstructed/stale/
-blocked lineage without rewriting an active Run's contextViewId. Full surface-specific
-view rehydration, Web/security and packaged acceptance remain open.
+blocked lineage without rewriting an active Run's contextViewId. The recovery report now
+rehydrates private-chat, workflow-proposal and workflow-step views from durable records,
+preserving the persisted contextViewId and checking the view-shape fingerprint without
+writing a replacement. Channel reply/selector/specialist/inspect views still rebuild their
+prompt-specific envelope on the next Host request; Web/security and packaged acceptance
+remain open.
 
 ## Remaining Work
 
@@ -61,8 +65,8 @@ view rehydration, Web/security and packaged acceptance remain open.
 ### Persistence And Recovery
 
 - Persist rebuildable view lineage separately from prompt bodies; the SQLite migration and
-  reopen path now restore projection metadata without making a cached view the source of
-  truth.
+  reopen path now restore projection metadata and the private/proposal/workflow surface views
+  without making a cached view the source of truth.
 - Ensure late materialization and stale requests cannot overwrite a newer context view;
   the lineage store now rejects older projections and mismatched CAS writes. The daemon
   restart reconciliation worker rebuilds the canonical conversation projection from
@@ -98,10 +102,11 @@ view rehydration, Web/security and packaged acceptance remain open.
 - Security fixtures verify that secrets and private-scope sources do not cross boundaries.
 
 The target branch adds startup recovery coverage: Core/Daemon typechecks pass, the
-context lineage/projector/context-processing set is 42/42, and the recovery fixture
-covers SQLite reopen, current projection reconstruction, stale metadata detection and
-fail-closed missing-source handling. Startup recovery is a local source check; it does
-not replace browser, security, packaged or live-provider acceptance.
+context lineage/projector/context-processing set is green, and the recovery fixture
+covers SQLite reopen, current projection reconstruction, private/proposal view
+rehydration, stale metadata detection and fail-closed missing-source handling. Startup
+recovery is a local source check; it does not replace browser, security, packaged or
+live-provider acceptance.
 
 ## Closure
 

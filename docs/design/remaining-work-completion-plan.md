@@ -178,8 +178,10 @@ redaction 统一且失败时 fail closed。
 的 exact-effective、scope、visibility 检查和 id-only rejection diagnostics。source-level quote
 eligibility 已接入 proposal source-reference 和 channel/workflow context-pack caller；context view
 lineage 已以 SQLite migration 225 持久化，并覆盖 reopen、旧投影和匹配 CAS 的拒绝回归。daemon
-重启时从 durable sources 重建视图、API/artifact redaction 的集中收口、Web/security 和平台验收仍未
-完成；本地定向测试通过不等于 PR、合并、部署或发布验收。
+重启时从 durable sources 重建 canonical projection，并对 private-chat、workflow-proposal 和
+workflow-step 视图做只读复水与 view fingerprint 复核；channel reply/selector/specialist/inspect
+仍由下一次 Host 请求重建 prompt envelope。API/artifact redaction 的集中收口、Web/security 和平台
+验收仍未完成；本地定向测试通过不等于 PR、合并、部署或发布验收。
 
 ### 4.3 多 Agent 与原生执行
 

@@ -48,7 +48,7 @@ export function recordContextViewLineage(input: {
     contextViewId: input.view.id,
     contextViewCreatedAt: input.view.metadata.createdAt,
     ...(projection ? { projection } : {}),
-    viewFingerprint: fingerprintViewShape(input.view),
+    viewFingerprint: fingerprintContextViewShape(input.view),
     ...(input.expectedCurrentViewId ? { expectedCurrentViewId: input.expectedCurrentViewId } : {}),
   };
   const result = input.store.upsertConversationContextViewLineage(request, now);
@@ -85,7 +85,7 @@ export function reconcileContextViewLineage(input: {
   return { status: "current", lineage };
 }
 
-function fingerprintViewShape(view: ChannelContextView): string {
+export function fingerprintContextViewShape(view: ChannelContextView): string {
   return sha256({
     kind: view.kind,
     workspaceId: view.workspaceId,

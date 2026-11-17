@@ -33,6 +33,8 @@ export interface BuildChannelContextViewInput {
   readonly contextProjection?: ConversationContextProjectionMetadata;
   readonly condenser?: BuildChannelContextCondenserInput;
   readonly compactionIds?: readonly string[];
+  /** Rehydration may preserve the durable identity instead of minting a new id. */
+  readonly viewId?: string;
   readonly now?: string;
   readonly lineage?: {
     readonly store: Pick<RunStore, "upsertConversationContextViewLineage">;
@@ -45,7 +47,7 @@ export interface BuildChannelContextViewInput {
 
 export function buildChannelContextView(input: BuildChannelContextViewInput): ChannelContextView {
   const createdAt = input.now ?? new Date().toISOString();
-  const id = createChannelContextViewId();
+  const id = input.viewId ?? createChannelContextViewId();
   const keptSources: ChannelContextSource[] = [];
   const dropped: ChannelContextDroppedSource[] = [...(input.dropped ?? [])];
   for (const source of input.sources ?? []) {

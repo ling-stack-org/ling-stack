@@ -8,6 +8,10 @@ import { assignContextSegmentForTurn } from "../dist/features/channels/context-p
 import { buildProjectedConversationContextSlice } from "../dist/features/channels/context-processing/conversation-context-adapter.js";
 import { contextViewLineageKey } from "../dist/features/channels/context-processing/context-view-lineage.js";
 import { buildChannelContextView } from "../dist/features/channels/context-processing/views.js";
+import { buildPrivateChatContextView } from "../dist/features/channels/context-processing/private-chat.js";
+import { buildWorkflowProposalContextView } from "../dist/features/channels/context-processing/proposals.js";
+import { buildWorkflowStepContextView } from "../dist/features/channels/context-processing/workflow-steps.js";
+import { buildChannelProtocolContextSection } from "../dist/features/channels/context-packs.js";
 import { reconcileContextViewLineagesAtStartup } from "../dist/features/channels/context-processing/context-view-recovery.js";
 
 const firstAt = "2026-11-17T03:00:00.000Z";
@@ -140,4 +144,189 @@ test("startup reconciliation keeps invalid lineage fail-closed and does not writ
   assert.equal(report.blocked, 1);
   assert.match(report.entries[0].reason, /Conversation projection source/);
   assert.equal(store.getConversationContextViewLineage("invalid-lineage")?.contextViewId, "view_missing");
+});
+
+test("startup reconciliation rehydrates the durable private-chat view without writing a replacement", async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), "ling-context-recovery-private-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  let store = createSqliteRunStore(cwd);
+  const teammate = store.getAiTeammate("teammate_builtin_engineer");
+  assert.ok(teammate);
+  const thread = store.getOrCreateTeammateDirectThread(teammate.id, firstAt);
+  const source = store.createTeammateDirectMessage({
+    threadId: thread.id,
+    teammateId: teammate.id,
+    authorType: "local-user",
+    body: "Rehydrate private context",
+    status: "ready",
+  }, firstAt);
+  const original = buildPrivateChatContextView({
+    store,
+    teammate,
+    thread,
+    messages: [source],
+    sourceMessage: source,
+    now: firstAt,
+  });
+  const lineageKey = contextViewLineageKey({
+    workspaceId: thread.workspaceId,
+    threadId: thread.id,
+    sourceItemId: source.id,
+    kind: "private_chat_view",
+    consumerTeammateId: teammate.id,
+  });
+  const persisted = store.getConversationContextViewLineage(lineageKey);
+  assert.ok(persisted);
+  store.close();
+
+  store = createSqliteRunStore(cwd);
+  t.after(() => store.close());
+  const report = reconcileContextViewLineagesAtStartup({ store });
+  assert.equal(report.current, 1);
+  assert.equal(report.entries[0].view?.id, original.id);
+  assert.equal(report.entries[0].view?.sections[0]?.text, original.sections[0]?.text);
+  assert.equal(store.getConversationContextViewLineage(lineageKey)?.contextViewId, original.id);
+});
+
+test("startup reconciliation rehydrates a workflow proposal view from the canonical source item", async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), "ling-context-recovery-proposal-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  let store = createSqliteRunStore(cwd);
+  const channel = store.createChannel({ name: "Proposal recovery", boundPath: cwd }, firstAt);
+  const thread = store.resolveOrCreateConversationThread({
+    surfaceKind: "channel_root",
+    channelId: channel.id,
+    title: "Proposal recovery",
+    objective: "Proposal recovery test",
+  }, firstAt).thread;
+  const turn = store.appendConversationUserTurn({
+    channelId: channel.id,
+    threadId: thread.id,
+    title: "propose a plan",
+    userInstruction: "propose a plan",
+    payload: {
+      body: "propose a plan",
+      format: "plain_text",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+    },
+    idempotencyKey: "context-recovery:proposal",
+  }, firstAt);
+  await assignContextSegmentForTurn({ store, sourceItemId: turn.item.id, now: firstAt });
+  const sourceMessage = {
+    id: turn.item.id,
+    workspaceId: channel.workspaceId,
+    channelId: channel.id,
+    threadId: thread.id,
+    kind: "message",
+    intent: "discuss",
+    authorType: "local-user",
+    body: "propose a plan",
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    fileRefs: [],
+    status: "ready",
+    createdAt: firstAt,
+    updatedAt: firstAt,
+  };
+  const original = buildWorkflowProposalContextView({ store, channel, sourceMessage });
+  const lineageKey = contextViewLineageKey({
+    workspaceId: channel.workspaceId,
+    channelId: channel.id,
+    threadId: thread.id,
+    sourceItemId: turn.item.id,
+    kind: "workflow_proposal_view",
+  });
+  store.close();
+
+  store = createSqliteRunStore(cwd);
+  t.after(() => store.close());
+  const report = reconcileContextViewLineagesAtStartup({ store });
+  assert.equal(report.current, 1);
+  assert.equal(report.entries[0].view?.id, original.id);
+  assert.equal(report.entries[0].view?.kind, "workflow_proposal_view");
+  assert.equal(store.getConversationContextViewLineage(lineageKey)?.contextViewId, original.id);
+});
+
+test("startup reconciliation resolves a workflow-step view through its source message and workflow records", async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), "ling-context-recovery-workflow-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  let store = createSqliteRunStore(cwd);
+  const channel = store.createChannel({ name: "Workflow recovery", boundPath: cwd }, firstAt);
+  const thread = store.resolveOrCreateConversationThread({
+    surfaceKind: "channel_root",
+    channelId: channel.id,
+    title: "Workflow recovery",
+    objective: "Workflow recovery test",
+  }, firstAt).thread;
+  const turn = store.appendConversationUserTurn({
+    channelId: channel.id,
+    threadId: thread.id,
+    title: "run the step",
+    userInstruction: "run the step",
+    payload: {
+      body: "run the step",
+      format: "plain_text",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+    },
+    idempotencyKey: "context-recovery:workflow",
+  }, firstAt);
+  await assignContextSegmentForTurn({ store, sourceItemId: turn.item.id, now: firstAt });
+  const workflow = store.createChannelWorkflow({
+    channelId: channel.id,
+    title: "Recovery workflow",
+    objective: "Recover the workflow context",
+    createdBy: "ling_agent",
+    metadata: { sourceMessageId: turn.item.id },
+  }, firstAt);
+  const step = store.createChannelWorkflowStep({
+    workflowId: workflow.id,
+    title: "Recover step",
+    prompt: "Run the recovered step.",
+    toParticipantId: "teammate_builtin_engineer",
+    toParticipantLabel: "Engineer",
+    metadata: { sourceMessageId: turn.item.id },
+  }, firstAt);
+  const protocol = buildChannelProtocolContextSection({ store, channel });
+  const protocolSection = {
+    ...protocol,
+    title: protocol.id,
+    sourceRefIds: protocol.sourceRefIds ?? [],
+    visibility: "prompt",
+    quotePolicy: "public_ok",
+    compactionSurvival: protocol.compactionSurvival ?? "rebuild",
+  };
+  const original = buildWorkflowStepContextView({
+    store,
+    channel,
+    workflow,
+    step,
+    prompt: step.prompt,
+    consumerTeammateId: step.toParticipantId,
+    workflowSteps: [step],
+    protocolSection,
+  });
+  const lineageKey = contextViewLineageKey({
+    workspaceId: channel.workspaceId,
+    channelId: channel.id,
+    threadId: thread.id,
+    sourceItemId: turn.item.id,
+    kind: "workflow_step_view",
+    consumerTeammateId: step.toParticipantId,
+  });
+  store.close();
+
+  store = createSqliteRunStore(cwd);
+  t.after(() => store.close());
+  const report = reconcileContextViewLineagesAtStartup({ store });
+  assert.equal(report.current, 1);
+  assert.equal(report.entries[0].view?.id, original.id);
+  assert.equal(report.entries[0].view?.kind, "workflow_step_view");
+  assert.equal(store.getConversationContextViewLineage(lineageKey)?.contextViewId, original.id);
 });

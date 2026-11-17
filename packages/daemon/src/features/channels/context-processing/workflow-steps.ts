@@ -48,10 +48,14 @@ export interface WorkflowStepCompactedDependencySummary {
 export interface BuildWorkflowStepContextViewInput extends WorkflowStepContextPackInput {
   readonly protocolSection: ChannelContextSection;
   readonly budget?: ChannelContextBudgetSnapshot;
+  /** Startup rehydration supplies the persisted identity and skips the write-back. */
+  readonly viewId?: string;
+  readonly persistLineage?: boolean;
 }
 
 export function buildWorkflowStepContextView(input: BuildWorkflowStepContextViewInput): ChannelContextView {
   const executionCwd = resolveChannelExecutionCwd(input.channel, input.store.paths.cwd);
+  const contextConsumerTeammateId = input.consumerTeammateId ?? input.step.toParticipantId;
   const sourceRefs = buildWorkflowStepContextSourceRefs(input);
   const sourceItemId = input.step.metadata?.sourceMessageId ?? input.workflow.metadata?.sourceMessageId;
   const projectedContext = sourceItemId ? buildProjectedConversationContextSlice({
@@ -59,6 +63,7 @@ export function buildWorkflowStepContextView(input: BuildWorkflowStepContextView
     channel: input.channel,
     sourceItemId,
     view: "workflow_step",
+    consumerTeammateId: contextConsumerTeammateId,
     // Coordinator/progress/result Items from the same source Turn are products
     // of the workflow, not input facts. Keep the runtime stamp aligned with the
     // terminal freshness review while dependency evidence remains available via
@@ -180,7 +185,7 @@ export function buildWorkflowStepContextView(input: BuildWorkflowStepContextView
     kind: "workflow_step_view",
     workspaceId: input.channel.workspaceId,
     channelId: input.channel.id,
-    consumerTeammateId: input.consumerTeammateId ?? input.step.toParticipantId,
+    consumerTeammateId: contextConsumerTeammateId,
     sections,
     sourceRefs: uniqueContextSourceRefs([
       ...compactedSourceRefs,
@@ -188,19 +193,22 @@ export function buildWorkflowStepContextView(input: BuildWorkflowStepContextView
       ...(input.roleEvidence?.sourceRefs ?? []),
     ]),
     contextProjection: projectedContext?.projection.metadata,
-    lineage: projectedContext ? {
-      store: input.store,
-      lineageKey: contextViewLineageKey({
-        workspaceId: input.channel.workspaceId,
-        channelId: input.channel.id,
+    ...(input.viewId ? { viewId: input.viewId } : {}),
+    ...(projectedContext && input.persistLineage !== false ? {
+      lineage: {
+        store: input.store,
+        lineageKey: contextViewLineageKey({
+          workspaceId: input.channel.workspaceId,
+          channelId: input.channel.id,
+          threadId: projectedContext.projection.metadata.threadId,
+          sourceItemId,
+          kind: "workflow_step_view",
+          consumerTeammateId: contextConsumerTeammateId,
+        }),
         threadId: projectedContext.projection.metadata.threadId,
         sourceItemId,
-        kind: "workflow_step_view",
-        consumerTeammateId: input.consumerTeammateId ?? input.step.toParticipantId,
-      }),
-      threadId: projectedContext.projection.metadata.threadId,
-      sourceItemId,
-    } : undefined,
+      },
+    } : {}),
     compactionIds: input.compactedDependencySummary ? [input.compactedDependencySummary.id] : undefined,
     budget: input.budget,
     sources: [

@@ -26,6 +26,9 @@ export interface BuildWorkflowProposalContextViewInput {
   readonly channel: Channel;
   readonly sourceMessage: ChannelMessage;
   readonly turnEnvelope?: LingAgentTurnEnvelope;
+  /** Startup rehydration supplies the persisted identity and skips the write-back. */
+  readonly viewId?: string;
+  readonly persistLineage?: boolean;
 }
 
 export function buildWorkflowProposalContextView(input: BuildWorkflowProposalContextViewInput): ChannelContextView {
@@ -86,17 +89,20 @@ export function buildWorkflowProposalContextView(input: BuildWorkflowProposalCon
       ...projectedContext.sourceRefs,
     ],
     contextProjection: projectedContext.projection.metadata,
-    lineage: {
-      store: input.store,
-      lineageKey: contextViewLineageKey({
-        workspaceId: input.channel.workspaceId,
-        channelId: input.channel.id,
-        threadId: projectedContext.projection.metadata.threadId,
+    ...(input.viewId ? { viewId: input.viewId } : {}),
+    ...(input.persistLineage === false ? {} : {
+      lineage: {
+        store: input.store,
+        lineageKey: contextViewLineageKey({
+          workspaceId: input.channel.workspaceId,
+          channelId: input.channel.id,
+          threadId: projectedContext.projection.metadata.threadId,
+          sourceItemId: input.sourceMessage.id,
+          kind: "workflow_proposal_view",
+        }),
         sourceItemId: input.sourceMessage.id,
-        kind: "workflow_proposal_view",
-      }),
-      sourceItemId: input.sourceMessage.id,
-    },
+      },
+    }),
     sources: [
       collectChannelStateSource({ channel: input.channel }),
       turnSource,
