@@ -81,4 +81,5 @@ test("token-count prose remains intact while singular token assignments are reda
   assert.equal(redactSecrets("Estimated input tokens: 420/31232\nTotal tokens: 436"),
     "Estimated input tokens: 420/31232\nTotal tokens: 436");
   assert.equal(redactSecrets("token: bearer-secret"), "token: [REDACTED]");
+  assert.equal(redactSecrets("tokens: bearer-secret"), "tokens: [REDACTED]");
 });

@@ -7,8 +7,8 @@ const CLOUD_ACCESS_KEY_PATTERN = /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g;
 const GITHUB_TOKEN_PATTERN = /\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/g;
 const SLACK_TOKEN_PATTERN = /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g;
 const JWT_PATTERN = /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\b/g;
-const SECRET_ASSIGNMENT_PREFIX_PATTERN = /(["'`]?(?=[A-Za-z_])[A-Za-z0-9_.-]*?(?:api[_-]?key|access[_-]?key|access[_-]?token|auth(?:orization|[_-]?token)?|client[_-]?secret|database[_-]?url|pass(?:word|phrase)?|private[_-]?key|secret|session[_-]?token|signing[_-]?key|token(?!s(?:\b|[_-]))|credential(?:s)?)[A-Za-z0-9_.-]*["'`]?\s*[:=]\s*)(["'`])/giu;
-const SECRET_ASSIGNMENT_UNQUOTED_PATTERN = /(["'`]?(?=[A-Za-z_])[A-Za-z0-9_.-]*?(?:api[_-]?key|access[_-]?key|access[_-]?token|auth(?:orization|[_-]?token)?|client[_-]?secret|database[_-]?url|pass(?:word|phrase)?|private[_-]?key|secret|session[_-]?token|signing[_-]?key|token(?!s(?:\b|[_-]))|credential(?:s)?)[A-Za-z0-9_.-]*["'`]?\s*[:=]\s*)([^\s,;)}\[\]"'\x60]+)/giu;
+const SECRET_ASSIGNMENT_PREFIX_PATTERN = /(["'`]?(?=[A-Za-z_])[A-Za-z0-9_.-]*?(?:api[_-]?key|access[_-]?key|access[_-]?token|auth(?:orization|[_-]?token)?|client[_-]?secret|database[_-]?url|pass(?:word|phrase)?|private[_-]?key|secret|session[_-]?token|signing[_-]?key|token|credential(?:s)?)[A-Za-z0-9_.-]*["'`]?\s*[:=]\s*)(["'`])/giu;
+const SECRET_ASSIGNMENT_UNQUOTED_PATTERN = /(["'`]?(?=[A-Za-z_])[A-Za-z0-9_.-]*?(?:api[_-]?key|access[_-]?key|access[_-]?token|auth(?:orization|[_-]?token)?|client[_-]?secret|database[_-]?url|pass(?:word|phrase)?|private[_-]?key|secret|session[_-]?token|signing[_-]?key|token|credential(?:s)?)[A-Za-z0-9_.-]*["'`]?\s*[:=]\s*)([^\s,;)}\[\]"'\x60]+)/giu;
 const URL_CREDENTIAL_PATTERN = /\b([a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:)[^\s@]+(@)/giu;
 
 export function redactSecrets(value: unknown, extraSecrets: readonly (string | undefined)[] = []): unknown {
@@ -106,11 +106,21 @@ function redactSecretAssignments(value: string): string {
       else if (character === quote) { end += 1; break; }
       end += 1;
     }
-    output += `${value.slice(cursor, match.index)}${prefix}${quote}${REDACTED}${quote}`;
+    const quotedValue = value.slice(match.index + match[0].length, end - (value[end - 1] === quote ? 1 : 0));
+    output += isTokenCountAssignment(prefix, quotedValue)
+      ? value.slice(cursor, end)
+      : `${value.slice(cursor, match.index)}${prefix}${quote}${REDACTED}${quote}`;
     cursor = end;
     SECRET_ASSIGNMENT_PREFIX_PATTERN.lastIndex = end;
   }
   output += value.slice(cursor);
   SECRET_ASSIGNMENT_UNQUOTED_PATTERN.lastIndex = 0;
-  return output.replace(SECRET_ASSIGNMENT_UNQUOTED_PATTERN, (_match, prefix: string) => `${prefix}${REDACTED}`);
+  return output.replace(SECRET_ASSIGNMENT_UNQUOTED_PATTERN, (match, prefix: string, rawValue: string) =>
+    isTokenCountAssignment(prefix, rawValue) ? match : `${prefix}${REDACTED}`);
+}
+
+function isTokenCountAssignment(prefix: string, assignedValue: string): boolean {
+  const key = prefix.match(/["'`]?([A-Za-z_][A-Za-z0-9_.-]*)["'`]?\s*[:=]\s*$/)?.[1];
+  if (!key || !/(?:^|[_-])tokens?$/iu.test(key)) return false;
+  return /^\s*\d+(?:\.\d+)?(?:\s*\/\s*\d+(?:\.\d+)?)?\s*$/u.test(assignedValue);
 }
