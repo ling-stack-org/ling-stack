@@ -1,12 +1,13 @@
 # External Work Phase 8.0 Adapter Registry Implementation Plan
 
-Status: Slices 1–4 source implementation and focused regression complete on `codex/remaining-work-implementation`; review, CI, merge, and platform acceptance remain open
+Status: Slices 1–4 source implementation and focused regression complete on `codex/automations-p2-completion`; review, CI, merge, and platform acceptance remain open
 Last verified: 2026-11-16
 
 ## Summary
 
 Phase 8.0 turns the current external-work source adapter shape into an explicit
-registry. This is a refactor phase with no new provider and no behavior change.
+registry. This is a refactor phase with no new provider; valid GitHub and Linear
+behavior remains stable, while malformed targets and cross-source payloads fail closed.
 
 The current code already has the beginning of the right abstraction:
 
@@ -108,6 +109,9 @@ Phase 8.0 should tighten these seams without changing output shapes.
   the compatibility input is removed before another provider is accepted.
 - Reconcile uses a registered capability and checks the state's source key before a
   remote lookup. A workflow for one target cannot settle another target's state.
+- GitHub targets are exactly two safe path segments before URL construction, and
+  imported GitHub repositories or Linear projects must match the configured source
+  target before a candidate is normalized.
 - Daemon import routes share parsing, workflow/evidence creation and duplicate handling;
   route-specific schema validation, status codes and source mismatch errors remain intact.
 - Secret status/configuration and poll use registration metadata. Linear reconcile stays
