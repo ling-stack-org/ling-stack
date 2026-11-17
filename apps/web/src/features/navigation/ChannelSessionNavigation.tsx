@@ -117,7 +117,7 @@ export function ChannelSessionNavigation({ channel, cwd, active, status, statusI
         <Input autoFocus size="sm" value={title} data-session-rename="true" aria-label={t("Conversation title")} onChange={event => setTitle(event.target.value)} onKeyDown={event => { if (event.key === "Escape") setEditing(""); }} />
         <Button type="submit" size="sm" disabled={!title.trim() || [...title.trim()].length > 120 || busyId === session.id}>{t("Save")}</Button>
       </form> : <>
-        <button type="button" className="sidebar-branch-row" title={session.title} aria-current={selectedId === session.id ? "page" : undefined} onClick={() => { navigateOnClose.current = allOpen; onSelectSession(session); setAllOpen(false); }}>
+        <button type="button" className="sidebar-branch-row" title={session.title} aria-label={active ? undefined : t("Conversation")} aria-current={selectedId === session.id ? "page" : undefined} onClick={() => { navigateOnClose.current = allOpen; onSelectSession(session); setAllOpen(false); }}>
           <MessageSquare size={13} aria-hidden="true" />
           <span>{session.title === "Default conversation" ? t("Default conversation") : session.title === "New conversation" ? t("New channel conversation") : session.title}</span>
           {session.isDefault ? <small className="sidebar-session-default">{t("Default")}</small> : null}
@@ -127,6 +127,7 @@ export function ChannelSessionNavigation({ channel, cwd, active, status, statusI
         </button>
         <span className="sidebar-row-tools">
           <ChannelSessionActionsMenu title={session.title} isDefault={session.isDefault} archived={Boolean(session.archivedAt)} disabled={busyId !== ""}
+            label={active ? undefined : t("Actions")}
             onOpenChange={open => setMenuOpen(open ? session.id : "")}
             onRename={() => { setEditing(session.id); setTitle(session.title); }}
             onToggleArchived={() => void mutate(session, { archived: !session.archivedAt })} />
@@ -141,12 +142,12 @@ export function ChannelSessionNavigation({ channel, cwd, active, status, statusI
     if (!event.currentTarget.contains(event.relatedTarget)) setFocusWithin(false);
   }}>
     <div className="sidebar-channel-container-row">
-      <IconButton className="sidebar-session-expand" icon={expanded ? ChevronDown : ChevronRight} label={`${expanded ? t("Collapse conversations") : t("Expand conversations")}: ${channel.name}`} aria-expanded={expanded} onClick={() => {
+      <IconButton className="sidebar-session-expand" icon={expanded ? ChevronDown : ChevronRight} hideLabelText label={active ? `${expanded ? t("Collapse conversations") : t("Expand conversations")}: ${channel.name}` : t(expanded ? "Collapse conversations" : "Expand conversations")} aria-expanded={expanded} onClick={() => {
         const next = !expanded; setExpanded(next); try { localStorage.setItem(`ling:channel-expanded:${cwd}:${channel.id}`, String(next)); } catch { /* Session remains usable without browser storage. */ }
       }} />
       <SidebarObjectRow actionsLabel={t("Channel actions")} ariaLabel={channel.name} shellClassName={active ? "channel-contains-selection" : undefined} icon={<span className={`sidebar-channel-avatar ${avatar.tone}`} aria-hidden="true">{avatar.label}</span>} onSelect={onSelectChannel}
         status={status} statusId={statusId}
-        actions={<><IconButton className="sidebar-mini-action" icon={Plus} label={t("New conversation in {channel}", { channel: channel.name })} onClick={onNewSession} />{onArchiveChannel ? <SidebarSectionMenu open={channelMenuOpen} onOpenChange={setChannelMenuOpen} label={`${t("Channel actions")}: ${channel.name}`} items={[
+        actions={<><IconButton className="sidebar-mini-action" icon={Plus} label={active ? t("New conversation in {channel}", { channel: channel.name }) : t("New conversation")} onClick={onNewSession} />{onArchiveChannel ? <SidebarSectionMenu open={channelMenuOpen} onOpenChange={setChannelMenuOpen} label={active ? `${t("Channel actions")}: ${channel.name}` : t("Channel actions")} items={[
             ...(onChannelAction ? [
               { id: "settings", icon: SlidersHorizontal, label: t("Channel settings"), onSelect: () => onChannelAction("settings") },
               { id: "rename", icon: PencilLine, label: t("Rename channel"), onSelect: () => onChannelAction("rename") },
@@ -158,7 +159,7 @@ export function ChannelSessionNavigation({ channel, cwd, active, status, statusI
       {preview?.defaultSession ? row(preview.defaultSession) : null}
       {selectedOutsidePreview ? row(selectedOutsidePreview) : null}
       {visibleSessions.map(row)}
-      {active && controller.drafts[channel.id]?.id === selectedId ? <div className="sidebar-branch-row-shell selected" data-session-draft="true"><button type="button" className="sidebar-branch-row" aria-current="page" onClick={onNewSession} title={controller.drafts[channel.id]?.title || t("New channel conversation")}><MessageSquare size={13} aria-hidden="true" /><span>{controller.drafts[channel.id]?.title || t("New channel conversation")}</span><small>{t("Draft")}</small></button></div> : null}
+      {active && controller.drafts[channel.id]?.id === selectedId ? <div className="sidebar-branch-row-shell selected" data-session-draft="true"><button type="button" className="sidebar-branch-row" aria-label={active ? undefined : t("Conversation")} aria-current="page" onClick={onNewSession} title={controller.drafts[channel.id]?.title || t("New channel conversation")}><MessageSquare size={13} aria-hidden="true" /><span>{controller.drafts[channel.id]?.title || t("New channel conversation")}</span><small>{t("Draft")}</small></button></div> : null}
       {!preview && controller.loading[channel.id] ? <div className="sidebar-session-loading" role="status"><span className="sidebar-session-empty">{t("Loading conversations...")}</span><Skeleton height={12} width="70%" /><Skeleton height={12} width="55%" /></div> : null}
       {controller.errors[channel.id] ? <><InlineFeedback tone="danger">{controller.errors[channel.id]}</InlineFeedback><Button size="sm" variant="ghost" onClick={() => void controller.refresh(channel.id)}>{t("Retry")}</Button></> : null}
       {preview?.diagnostics.length ? <details className="sidebar-session-diagnostics"><summary>{t("Some historical conversations need repair")}</summary><ul>{preview.diagnostics.map(item => <li key={`${item.branchId}:${item.code}`}><code>{item.branchId}</code>: {item.code}</li>)}</ul></details> : null}

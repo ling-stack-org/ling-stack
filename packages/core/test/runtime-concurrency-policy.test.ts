@@ -11,6 +11,7 @@ import { validateRuntimeConcurrencyLimits, type InstallRuntimeConcurrencyPolicyI
 import { SqliteRuntimeConcurrencyPolicyStore } from "../dist/storage/sqlite/runtime-concurrency-policy-store.js";
 import { applyRuntimeConcurrencyPolicyMigration, RUNTIME_CONCURRENCY_POLICY_MIGRATION_VERSION,
   RUNTIME_CONCURRENCY_POLICY_MIGRATION_NAME } from "../dist/storage/sqlite/runtime-concurrency-policy-migration.js";
+import { dropCodeAssessmentOverlay } from "./support/code-assessment-overlay-fixture.mjs";
 import { testDatabase } from "./support/sqlite-test-database.ts";
 
 type Store = ReturnType<typeof createSqliteRunStore>;
@@ -42,8 +43,8 @@ const record = (db: Database) => (version: number, name: string) => db.prepare("
 const migrate = (db: Database, extra: Partial<Omit<MigrationInput, "database">> = {}) => applyRuntimeConcurrencyPolicyMigration({ database: db as DatabaseSync,
   hasMigration: has(db), recordMigration: record(db), ...extra });
 const changes = (db: Database) => db.prepare("SELECT total_changes() AS n").get()!.n as number;
-const schema = (db: Database) => db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all() as SchemaRow[];
-const markers = (db: Database) => db.prepare("SELECT * FROM schema_migrations ORDER BY version").all();
+const schema = (db: Database) => db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' AND name NOT LIKE 'code_assessment_%' ORDER BY type,name").all() as SchemaRow[];
+const markers = (db: Database) => db.prepare("SELECT * FROM schema_migrations WHERE version < 223 ORDER BY version").all();
 const policyRows = (db: Database) => db.prepare(`SELECT * FROM ${table} ORDER BY workspace_id`).all();
 const executionRows = (db: Database) => Object.fromEntries(["workspaces", "tasks", "run_sessions", "work_units", "work_unit_attempts",
   "runtime_semaphore_slots", "resource_leases", "workflow_step_admissions", "workflow_step_admission_entries"]
@@ -63,6 +64,7 @@ function fixture(t: TestContext, { predecessor = false } = {}) {
     rmSync(directory, { recursive: true, force: true });
   });
   store = createSqliteRunStore(cwd, paths);
+  dropCodeAssessmentOverlay(testDatabase(store));
   const fullSchema = schema(testDatabase(store));
   assert.equal(testDatabase(store).prepare("SELECT name FROM schema_migrations WHERE version=213").get()!.name, "workflow_conflict_recoveries");
   if (predecessor) {

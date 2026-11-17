@@ -43,7 +43,7 @@ export function ConversationTimelineProtocolRenderer({
       detail={detailExists(item) || hasActions || surfaceDetail ? (
         <>
           {!inlineGraph && detailExists(item) ? <TextDetail text={item.description ?? item.detailLines?.map((line) => line.text).join("\n")} /> : null}
-          <ConversationTimelineProtocolActions item={actionItem} onInvoke={onInvokeProtocolAction} />
+          <ConversationTimelineProtocolActions item={actionItem} onInvoke={onInvokeProtocolAction} busy={item.actionBusy} />
           {surfaceDetail}
         </>
       ) : undefined}

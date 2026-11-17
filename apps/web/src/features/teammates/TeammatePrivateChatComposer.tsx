@@ -121,7 +121,8 @@ export function TeammatePrivateChatComposer({
   uploadingAttachments,
 }: TeammatePrivateChatComposerProps): React.JSX.Element {
   const { t, locale } = useI18n();
-  const permissionLocked = privateComposerSending || hasDirectRuntimeActivity || Boolean(directGuidanceSubmitting);
+  const permissionLocked = privateComposerSending || Boolean(directGuidanceSubmitting) ||
+    (hasDirectRuntimeActivity && !modelNotice);
   const visibleDirectInterventions = openDirectInterventions.filter((intervention) =>
     isConversationGuidanceQueueVisible(intervention.status)
   );
@@ -302,6 +303,7 @@ export function TeammatePrivateChatComposer({
               fullAccessConfirmed={fullAccessConfirmed}
               disabled={permissionLocked}
               disabledReason={t("Permission is locked while the private reply is running.")}
+              showAuthorizationModeOptions
               onAuthorizationModeChange={controller.handleAuthorizationModeChange}
               onPermissionPresetChange={controller.handlePermissionPresetChange}
             />

@@ -8,6 +8,7 @@ import { DEFAULT_WORKSPACE_ID, createSqliteRunStore, resolveStoragePaths } from 
 import { applyRuntimeConcurrencyPolicyMigration } from "../dist/storage/sqlite/runtime-concurrency-policy-migration.js";
 import { applyRuntimeConcurrencyPolicyActivationMigration, RUNTIME_CONCURRENCY_POLICY_ACTIVATION_MIGRATION_VERSION,
   RUNTIME_CONCURRENCY_POLICY_ACTIVATION_MIGRATION_NAME } from "../dist/storage/sqlite/runtime-concurrency-policy-activation-migration.js";
+import { dropCodeAssessmentOverlay } from "./support/code-assessment-overlay-fixture.mjs";
 import { testDatabase } from "./support/sqlite-test-database.ts";
 
 type Store = ReturnType<typeof createSqliteRunStore>;
@@ -35,8 +36,8 @@ const record = (db: Database) => (version: number, name: string) => db.prepare("
 const migrationInput = (db: Database, extra: Partial<Omit<MigrationInput, "database">> = {}): MigrationInput => ({ database: db as DatabaseSync, hasMigration: has(db), recordMigration: record(db), ...extra });
 const migrate = (db: Database, extra: Partial<Omit<MigrationInput, "database">> = {}) => applyRuntimeConcurrencyPolicyActivationMigration(migrationInput(db, extra));
 const migrate214 = (db: Database, extra: Partial<Omit<MigrationInput, "database">> = {}) => applyRuntimeConcurrencyPolicyMigration(migrationInput(db, extra));
-const schema = (db: Database) => db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all() as SchemaRow[];
-const markers = (db: Database) => db.prepare("SELECT * FROM schema_migrations ORDER BY version").all();
+const schema = (db: Database) => db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' AND name NOT LIKE 'code_assessment_%' ORDER BY type,name").all() as SchemaRow[];
+const markers = (db: Database) => db.prepare("SELECT * FROM schema_migrations WHERE version < 223 ORDER BY version").all();
 const rows = (db: Database, name: string) => db.prepare(`SELECT * FROM ${name} ORDER BY rowid`).all();
 const changes = (db: Database) => db.prepare("SELECT total_changes() AS n").get()!.n as number;
 const executionTables = ["workspaces", "tasks", "run_sessions", "work_units", "work_unit_attempts", "runtime_events",
@@ -59,6 +60,7 @@ function fixture(t: TestContext, { installed = false } = {}) {
     rmSync(root, { recursive: true, force: true });
   });
   store = createSqliteRunStore(cwd, paths);
+  dropCodeAssessmentOverlay(testDatabase(store));
   assert.equal(testDatabase(store).prepare("SELECT name FROM schema_migrations WHERE version=214").get()!.name, table);
   assert.equal(testDatabase(store).prepare("SELECT name FROM schema_migrations WHERE version=215").get()!.name, name);
   const fullSchema = schema(testDatabase(store));

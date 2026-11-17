@@ -59,7 +59,11 @@ export function TeammatePrivateChatSurface(props: TeammatePrivateChatSurfaceProp
   const composerController = useTeammatePrivateComposerController({
     identityKey: props.permissionSelectionOwnerKey,
     defaultWorkspaceAccessMode: props.defaultWorkspaceAccessMode,
-    permissionLocked: privateComposerSending || props.hasDirectRuntimeActivity || Boolean(props.directGuidanceSubmitting),
+    // Keep an active run's controls locked once model setup is available;
+    // an unconfigured teammate may still need to choose permissions before
+    // queuing a follow-up that will surface the configuration blocker.
+    permissionLocked: privateComposerSending || Boolean(props.directGuidanceSubmitting) ||
+      (props.hasDirectRuntimeActivity && !props.modelNotice),
     onPermissionError: props.onPermissionError,
     authorizationMode,
     messageDraft: props.messageDraft,

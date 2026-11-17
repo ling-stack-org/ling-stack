@@ -10,6 +10,7 @@ import { applyRuntimeConcurrencyPolicyActivationMigration } from "../dist/storag
 import { applyRuntimeDelegationCapacityAdmissionMigration, RUNTIME_DELEGATION_CAPACITY_ADMISSION_MIGRATION_VERSION,
   RUNTIME_DELEGATION_CAPACITY_ADMISSION_MIGRATION_NAME } from "../dist/storage/sqlite/runtime-delegation-capacity-admission-migration.js";
 import { createBudgetHarness } from "./support/delegation-budget-fixture.mjs";
+import { dropCodeAssessmentOverlay } from "./support/code-assessment-overlay-fixture.mjs";
 import { testDatabase } from "./support/sqlite-test-database.ts";
 
 type Store = ReturnType<typeof createSqliteRunStore>;
@@ -33,8 +34,8 @@ const record = (db: Database) => (version: number, name: string) => db.prepare("
 // Facades exercise the same SQLite connection with transaction metadata omitted.
 const input = (db: Database, extra: Partial<Omit<MigrationInput, "database">> = {}): MigrationInput => ({ database: db as DatabaseSync, hasMigration: has(db), recordMigration: record(db), ...extra });
 const migrate = (db: Database, extra: Partial<Omit<MigrationInput, "database">> = {}) => applyRuntimeDelegationCapacityAdmissionMigration(input(db, extra));
-const schema = (db: Database) => db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all() as SchemaRow[];
-const markers = (db: Database) => db.prepare("SELECT * FROM schema_migrations ORDER BY version").all();
+const schema = (db: Database) => db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' AND name NOT LIKE 'code_assessment_%' ORDER BY type,name").all() as SchemaRow[];
+const markers = (db: Database) => db.prepare("SELECT * FROM schema_migrations WHERE version < 223 ORDER BY version").all();
 const rows = (db: Database, name: string) => db.prepare(`SELECT * FROM ${name} ORDER BY rowid`).all();
 const changes = (db: Database) => db.prepare("SELECT total_changes() AS n").get()!.n as number;
 const dataTables = ["workspaces", "tasks", "run_sessions", "work_units", "work_unit_attempts", "runtime_events", "artifacts",
@@ -58,6 +59,7 @@ function fixture(t: TestContext, { installed = false } = {}) {
     rmSync(root, { recursive: true, force: true });
   });
   store = createSqliteRunStore(cwd, paths);
+  dropCodeAssessmentOverlay(testDatabase(store));
   const db = testDatabase(store), fullSchema = schema(db), definition = fullSchema.find(row => row.name === table)?.sql;
   assert.equal(typeof definition, "string", "the production constructor must install216");
   assert.deepEqual(markers(db).filter(row => (row.version as number) >= 215).map(({ version, name }) => ({ version, name })),

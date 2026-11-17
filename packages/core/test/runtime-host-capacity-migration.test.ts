@@ -7,6 +7,7 @@ import test, { type TestContext } from "node:test";
 import { pathToFileURL } from "node:url";
 import { DEFAULT_WORKSPACE_ID, createSqliteRunStore, resolveStoragePaths } from "../dist/index.js";
 import { applyRuntimeRunQueueMigration } from "../dist/storage/sqlite/runtime-run-queue-migration.js";
+import { dropCodeAssessmentOverlay } from "./support/code-assessment-overlay-fixture.mjs";
 import { testDatabase } from "./support/sqlite-test-database.ts";
 
 const migrationUrl = process.env.LING_CORE_MIGRATION_DIST
@@ -42,10 +43,10 @@ const migrate = (db: Database, extra: MigrationOverrides = {}) => applyRuntimeHo
 const schema = (db: Database) => {
   const result = db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all();
   assert.ok(result.every((row): row is SchemaRow => typeof row.name === "string" && typeof row.tbl_name === "string" && typeof row.sql === "string"));
-  return result;
+  return result.filter(row => !row.name.startsWith("code_assessment"));
 };
 const markers = (db: Database) => {
-  const result = db.prepare("SELECT * FROM schema_migrations ORDER BY version").all();
+  const result = db.prepare("SELECT * FROM schema_migrations WHERE version < 223 ORDER BY version").all();
   assert.ok(result.every((row): row is MarkerRow => typeof row.version === "number" && typeof row.name === "string"));
   return result;
 };
@@ -83,6 +84,7 @@ function fixture(t: TestContext, { installed = false } = {}) {
   });
   store = createSqliteRunStore(cwd, paths);
   const db = testDatabase(store);
+  dropCodeAssessmentOverlay(db);
   applyRuntimeRunQueueMigration(input(db));
   assert.equal(db.prepare("SELECT name FROM schema_migrations WHERE version=217").get()!.name, predecessor);
   migrate(db);

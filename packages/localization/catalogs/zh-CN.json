@@ -13610,7 +13610,7 @@
     "Selected links are added to browser history. Credentials are not imported.": "所选链接将加入浏览历史，不会导入凭据。",
     "Selected model {label}": "已选择模型 {label}",
     "Selected model needs configuration.": "所选模型需要先完成配置。",
-    "Selected permission preset {label}": "已选择权限预设 {label}",
+    "Selected permission preset {label}": "选择的权限预设 {label}",
     "Selected preset": "已选预设",
     "Selected QA case": "选中的 QA 案例",
     "Selected reasoning summary {label}": "已选择推理摘要：{label}",

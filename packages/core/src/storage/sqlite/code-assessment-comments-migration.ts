@@ -1,7 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 
-export const CODE_ASSESSMENT_COMMENTS_MIGRATION_VERSION = 223;
+export const CODE_ASSESSMENT_COMMENTS_MIGRATION_VERSION = 225;
 const migrationName = "code_assessment_comments";
 const definitions = [
   `CREATE TABLE code_assessment_comments (

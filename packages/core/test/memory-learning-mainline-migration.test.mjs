@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { createSqliteRunStore, resolveRuntimePaths } from "../dist/index.js";
+import { dropCodeAssessmentOverlay } from "./support/code-assessment-overlay-fixture.mjs";
 
 const now = "2026-10-29T00:00:00.000Z";
 const later = "2026-10-29T00:01:00.000Z";
@@ -114,6 +115,7 @@ function removeLearningOverlays(database) {
     "runtime_host_capacity_intents", "runtime_run_queue",
     "runtime_delegation_capacity_admissions", "runtime_concurrency_policies",
   ]) dropTable(table);
+  dropCodeAssessmentOverlay(database);
   for (const index of database.prepare("SELECT name FROM sqlite_master WHERE type='index' AND sql IS NOT NULL").all()) {
     const name = String(index.name);
     if (name.startsWith("idx_harness_") || name.startsWith("idx_run_suspension_")
@@ -259,6 +261,7 @@ test("real mainline schema178 upgrades to188 without changing canonical settings
   ];
   const stripOverlaySchema = rows => rows.filter(row =>
     !learningTables.has(row.tbl_name) && !learningTriggers.includes(row.name)
+    && !String(row.name).startsWith("code_assessment") && !String(row.tbl_name).startsWith("code_assessment")
     && !channelTables.has(row.tbl_name)
     && !channelTriggers.has(row.name)
     && !post178OverlayTables.has(row.tbl_name)
