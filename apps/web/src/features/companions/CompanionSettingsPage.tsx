@@ -26,7 +26,11 @@ export function CompanionSettingsPage({
   const [displayName, setDisplayName] = useState("");
   const [description, setDescription] = useState("");
   const [teammateId, setTeammateId] = useState("");
-  const [proactiveEnabled, setProactiveEnabled] = useState(true);
+  const [proactiveEnabled, setProactiveEnabled] = useState(false);
+  const [cooldownMs, setCooldownMs] = useState(900_000);
+  const [quietHoursEnabled, setQuietHoursEnabled] = useState(false);
+  const [quietHoursStart, setQuietHoursStart] = useState(22);
+  const [quietHoursEnd, setQuietHoursEnd] = useState(8);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState<"create" | "save" | "disable" | "refresh" | undefined>();
   const [error, setError] = useState("");
@@ -49,7 +53,11 @@ export function CompanionSettingsPage({
     setDescription(selected.description);
     setTeammateId(selected.teammateId);
     setProactiveEnabled(selected.behaviorPolicy.proactiveEnabled);
-  }, [selected?.id]);
+    setCooldownMs(selected.behaviorPolicy.cooldownMs);
+    setQuietHoursEnabled(Boolean(selected.behaviorPolicy.quietHours));
+    setQuietHoursStart(selected.behaviorPolicy.quietHours?.[0] ?? 22);
+    setQuietHoursEnd(selected.behaviorPolicy.quietHours?.[1] ?? 8);
+  }, [selectedId]);
 
   async function refresh(): Promise<void> {
     if (!cwd.trim()) return;
@@ -79,14 +87,18 @@ export function CompanionSettingsPage({
     setSelectedId("");
     setDisplayName("");
     setDescription("");
-    setProactiveEnabled(true);
+    setProactiveEnabled(false);
+    setCooldownMs(900_000);
+    setQuietHoursEnabled(false);
+    setQuietHoursStart(22);
+    setQuietHoursEnd(8);
     setTeammateId(activeTeammates[0]?.id ?? "");
     setError("");
   }
 
   async function save(): Promise<void> {
     const name = displayName.trim();
-    if (!cwd.trim() || !name || !teammateId) return;
+    if (!cwd.trim() || !name || !teammateId || (quietHoursEnabled && quietHoursStart === quietHoursEnd)) return;
     setBusy(selected ? "save" : "create");
     setError("");
     try {
@@ -94,18 +106,33 @@ export function CompanionSettingsPage({
         ? await updateCompanion(cwd.trim(), selected.id, {
           displayName: name,
           description: description.trim(),
-          behaviorPolicy: { proactiveEnabled },
+          behaviorPolicy: {
+            proactiveEnabled,
+            cooldownMs,
+            quietHours: quietHoursEnabled ? [quietHoursStart, quietHoursEnd] : null,
+          },
         })
         : await createCompanion(cwd.trim(), {
           teammateId,
           displayName: name,
           description: description.trim(),
-          behaviorPolicy: { proactiveEnabled, cooldownMs: 300_000 },
+          behaviorPolicy: {
+            proactiveEnabled,
+            cooldownMs,
+            quietHours: quietHoursEnabled ? [quietHoursStart, quietHoursEnd] : null,
+          },
         });
       setCompanions((current) => selected
         ? current.map((item) => item.id === response.companion.id ? response.companion : item)
         : [...current, response.companion]);
       setSelectedId(response.companion.id);
+      setDisplayName(response.companion.displayName);
+      setDescription(response.companion.description);
+      setProactiveEnabled(response.companion.behaviorPolicy.proactiveEnabled);
+      setCooldownMs(response.companion.behaviorPolicy.cooldownMs);
+      setQuietHoursEnabled(Boolean(response.companion.behaviorPolicy.quietHours));
+      setQuietHoursStart(response.companion.behaviorPolicy.quietHours?.[0] ?? 22);
+      setQuietHoursEnd(response.companion.behaviorPolicy.quietHours?.[1] ?? 8);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -191,7 +218,19 @@ export function CompanionSettingsPage({
               onChange={(event) => setProactiveEnabled(event.target.checked)}
               label={<span>{proactiveEnabled ? <Play size={14} /> : <Pause size={14} />}{t("Allow proactive companion prompts")}</span>}
             />
-            <div className="companion-settings-editor-actions"><Button variant="primary" onClick={() => void save()} disabled={!displayName.trim() || !teammateId || busy !== undefined} loading={busy === "save" || busy === "create"}>{selected ? t("Save companion") : t("Create companion")}</Button>{selected ? <Button variant="ghost" onClick={startCreate} disabled={busy !== undefined}>{t("New companion")}</Button> : null}</div>
+            <div className="companion-settings-policy-grid">
+              <label className="companion-settings-field"><span>{t("Proactive cooldown")}</span><Select value={String(cooldownMs / 60_000)} onChange={(event) => setCooldownMs(Math.round(Number(event.target.value) * 60_000))}>
+                {[...new Set([300_000, 900_000, 1_800_000, 3_600_000, 14_400_000, cooldownMs])].sort((a, b) => a - b).map((milliseconds) => <option key={milliseconds} value={milliseconds / 60_000}>{milliseconds / 60_000} {t("minutes")}</option>)}
+              </Select></label>
+              <div className="companion-settings-field"><span>{t("Quiet hours")}</span><Checkbox checked={quietHoursEnabled} onChange={(event) => setQuietHoursEnabled(event.target.checked)} label={t("Pause proactive prompts during quiet hours")} /></div>
+              {quietHoursEnabled ? <>
+                <label className="companion-settings-field"><span>{t("Quiet hours start")}</span><Select value={String(quietHoursStart)} onChange={(event) => setQuietHoursStart(Number(event.target.value))}>{Array.from({ length: 24 }, (_, hour) => <option key={hour} value={hour}>{String(hour).padStart(2, "0")}:00</option>)}</Select></label>
+                <label className="companion-settings-field"><span>{t("Quiet hours end")}</span><Select value={String(quietHoursEnd)} onChange={(event) => setQuietHoursEnd(Number(event.target.value))}>{Array.from({ length: 24 }, (_, hour) => <option key={hour} value={hour}>{String(hour).padStart(2, "0")}:00</option>)}</Select></label>
+              </> : null}
+            </div>
+            <p className="companion-settings-muted">{t("Times use the local time of the computer running Ling.")}</p>
+            {quietHoursEnabled && quietHoursStart === quietHoursEnd ? <p role="alert" className="companion-settings-error">{t("Choose different quiet hours start and end.")}</p> : null}
+            <div className="companion-settings-editor-actions"><Button variant="primary" onClick={() => void save()} disabled={!displayName.trim() || !teammateId || busy !== undefined || (quietHoursEnabled && quietHoursStart === quietHoursEnd)} loading={busy === "save" || busy === "create"}>{selected ? t("Save companion") : t("Create companion")}</Button>{selected ? <Button variant="ghost" onClick={startCreate} disabled={busy !== undefined}>{t("New companion")}</Button> : null}</div>
           </section>
         </div>
       ) : null}

@@ -1,6 +1,6 @@
 {
   "locale": "is-IS",
-  "sourceRevision": "ce2d99c10f787801d0cec6be9eb1a73a45da1361b8956c0f72a4e738d2ecfec8",
+  "sourceRevision": "467254d77d00a0eae24b753afb21ff64040e0c7032afa22da0154dadb133d93e",
   "sourceHashes": {
     "{action} (Enter)": "9472217728ec383f5dfdd37d2f84c381ed7b4546d115f6e3e536959810ef5af5",
     "{agent} wants to start task \"{task}\" and needs {permissions}.": "b87261e1f3ceaec90a862105f2885011d44b2722f9979327a3790af82a5dcdf1",
@@ -7514,7 +7514,25 @@
     "统一管理 MCP 工具服务，并按 AI 队友单独授权。": "9cdbc1dd772e35044d90b345d59c7f8ac7942037812485e8e96d1443dae29c64",
     "通过分步流程创建 AI 队友，选择默认角色、模型、频道、记忆和文件范围。": "1cafcb3368adc75921dcc473531c93bc577bdef39b8d260bb091bf5ff00b1edf",
     "配置 workspace 级 approval policy，控制工具自动允许、询问或拒绝，以及写入路径边界。": "2dd229acc3dc2fa1c8d45b3b42b7e4815162ad67d12df3ac9de86ad09612ed15",
-    "默认不授权任何 MCP 工具。只勾选这个队友确实需要使用的工具。": "2e29ff3cbeea52a15eb0f2ec7b0016f210c8ed8bbfdecf9b38641b37be55e26c"
+    "默认不授权任何 MCP 工具。只勾选这个队友确实需要使用的工具。": "2e29ff3cbeea52a15eb0f2ec7b0016f210c8ed8bbfdecf9b38641b37be55e26c",
+    "Celebrate": "169381e6fc21b70bfab26db6f6201fc33206f4831890def67f4c2665c4ea70bf",
+    "Choose different quiet hours start and end.": "d3b00f969f13f666db3ea43eee72c4eed035534e0d5b3eca98a0cbd56bf12ff4",
+    "Companion messages": "68527bf90ea1bd430ecf3435155344f6ba22ee423a6f2695cb5a78089dfbfd0d",
+    "Excited": "e8dbecf216f6e1a907c45237f964b722c4a0f00d6ba4ed63e40db6daa5311446",
+    "Greet": "d4fd03eee15d7906cd9dcaf9902a4b5e602d4f493b49a56342a4d6a4c3f0d4d6",
+    "Happy": "725accb5a8e46d19bc3f3a7636d0860a85470fa450be7f0f6a8c7572756765fd",
+    "Load earlier messages": "33fd46b9e7798283b42a66fe595d088ea3afb0badac619e86951ffd740d0caca",
+    "Neutral": "1c6ac69f1e5db9c36e9f549d72ef77d23ceab19c557a7eb3a27c7f06f4484b44",
+    "Open desktop companion": "b7beb436387396682d8feefaf2e0da274497bcc6579c6dbb364ac143a6c2fd2f",
+    "Pause proactive prompts during quiet hours": "de8172e8c2ec743078f8d95e645798380a1fa6e48ca6ba16c352ccd8d2f46a77",
+    "Proactive cooldown": "f528fceb296070aefb5c95d6a287679a6aa7fc3104b30304ab843761d2805a57",
+    "Recover or retry message": "55b8f582b5493c1612e2dec8f5d1c41998cb38c2dbc9b7146a274092bcc7ca27",
+    "Sad": "3ba6f1aeede102d36c0511309781ae5df4ee0f2cd43621942988fe186fb62bad",
+    "The reply was interrupted. Reconnect to recover or retry the same message.": "94d9d9900b809dfcb27c6fc129b2490ea8c4078c4d931b2eb84b061d5a3b8171",
+    "Think": "7ed41c126536ea7504205af2d972ac72fcdd67b9a86564261327f8e80cd7da5c",
+    "Times use the local time of the computer running Ling.": "832ebbf81eab2f7067e075aaf1b03ee50be59bd96b3df9e54c39e0ca4b815571",
+    "Tired": "3c4ce44c14d1e177cbe37bca38390b2b92d1e8ae1deb55c7aa2b3bbc90245ca3",
+    "Unable to open desktop companion": "548f135f76325e56c21e2a18bcedc2ddf0d65c8104498f5ca76c022e2663fef6"
   },
   "messages": {
     "{action} (Enter)": "{action} (Enter)",
@@ -15029,6 +15047,24 @@
     "统一管理 MCP 工具服务，并按 AI 队友单独授权。": "Hafðu umsjón með MCP verkfæraþjónum á einum stað og úthlutaðu þeim AI liðsfélögum sérstaklega.",
     "通过分步流程创建 AI 队友，选择默认角色、模型、频道、记忆和文件范围。": "Búðu til varanlega gervigreindarfélaga í gegnum skref-fyrir-skref flæði fyrir hlutverk, líkön, rásir, minni og skrár.",
     "配置 workspace 级 approval policy，控制工具自动允许、询问或拒绝，以及写入路径边界。": "Stilltu samþykkisstefnu á vinnusvæði fyrir verkfæri leyfa, spyrja, hafna ákvörðunum og skrifa slóðamörk.",
-    "默认不授权任何 MCP 工具。只勾选这个队友确实需要使用的工具。": "Engin MCP verkfæri eru sjálfgefið leyfð. Veldu aðeins þau verkfæri sem þessi liðsfélagi þarfnast."
+    "默认不授权任何 MCP 工具。只勾选这个队友确实需要使用的工具。": "Engin MCP verkfæri eru sjálfgefið leyfð. Veldu aðeins þau verkfæri sem þessi liðsfélagi þarfnast.",
+    "Celebrate": "Fagnaðu",
+    "Choose different quiet hours start and end.": "Veldu mismunandi kyrrðartíma upphaf og lok.",
+    "Companion messages": "Meðfylgjandi skilaboð",
+    "Excited": "Spenntur",
+    "Greet": "Heilsaðu þér",
+    "Happy": "Sælir",
+    "Load earlier messages": "Hlaða fyrri skilaboðum",
+    "Neutral": "Hlutlaus",
+    "Open desktop companion": "Opnaðu skjáborðsfélaga",
+    "Pause proactive prompts during quiet hours": "Gerðu hlé á fyrirbyggjandi leiðbeiningum á rólegum tímum",
+    "Proactive cooldown": "Fyrirbyggjandi kæling",
+    "Recover or retry message": "Endurheimtu eða reyndu aftur skilaboð",
+    "Sad": "Sorglegt",
+    "The reply was interrupted. Reconnect to recover or retry the same message.": "Svarið var truflað. Tengdu aftur til að endurheimta eða reyndu aftur sömu skilaboðin.",
+    "Think": "Hugsaðu",
+    "Times use the local time of the computer running Ling.": "Tímar nota staðartíma tölvunnar sem keyrir Ling.",
+    "Tired": "Þreyttur",
+    "Unable to open desktop companion": "Ekki er hægt að opna skjáborðsfélaga"
   }
 }

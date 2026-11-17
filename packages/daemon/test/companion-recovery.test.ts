@@ -208,3 +208,49 @@ test("proactive cooldown applies during execution while the same request joins i
     await Promise.allSettled(pending);
   }
 });
+
+for (const streaming of [false, true]) {
+  test(`${streaming ? "streaming" : "JSON"} submission receipts distinguish unknown, pending and terminal messages and reject changed text`, async t => {
+    const f = await fixture(t);
+    let release!: () => void;
+    const waiting = new Promise<void>(resolve => { release = resolve; });
+    let started!: () => void;
+    const ready = new Promise<void>(resolve => { started = resolve; });
+    let calls = 0;
+    const server = await serveMessages(t, f, async input => {
+      calls++;
+      const reply = input.store.createTeammateDirectMessage({ id: input.replyMessageId,
+        teammateId, threadId: input.thread.id, authorType: "ai-teammate", authorId: teammateId,
+        body: "", status: "pending" }, new Date().toISOString());
+      started();
+      await waiting;
+      return input.store.updateTeammateDirectMessageRuntime(reply.id, { body: "Finished.", status: "ready" }, new Date().toISOString())!;
+    });
+    t.after(release);
+    const lookup = async (key: string) => {
+      const url = new URL(server.url);
+      url.pathname = "/messages"; url.searchParams.set("idempotencyKey", key);
+      const response = await fetch(url);
+      assert.equal(response.status, 200);
+      return await response.json() as import("../../contracts/dist/index.js").CompanionMessageSubmissionReceipt;
+    };
+    assert.equal((await lookup("missing")).status, "unknown");
+    const submission = send(server.url, streaming);
+    await ready;
+    const receipt = await lookup("retry-message");
+    assert.equal(receipt.status, "accepted");
+    assert.equal(receipt.aiReply?.status, "pending");
+    assert.equal(receipt.message?.body, "Please retry this message.");
+    const changed = new URL(server.url); changed.pathname = streaming ? "/messages/stream" : "/messages";
+    const mismatch = await fetch(changed, { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ body: "Different text", idempotencyKey: "retry-message" }) });
+    assert.equal(mismatch.status, 409);
+    assert.equal((await mismatch.json()).error, "companion_message_payload_mismatch");
+    release();
+    const complete = await submission;
+    assert.equal(complete.reply?.aiReply?.body, "Finished.", complete.raw);
+    assert.equal((await lookup("retry-message")).aiReply?.status, "ready");
+    assert.equal(calls, 1);
+    assert.equal(f.store.listTeammateDirectMessages({ teammateId }).length, 2);
+  });
+}

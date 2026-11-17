@@ -482,6 +482,14 @@ jobs:
           --grep 'without a configured model|full access confirmation|built-in skill timestamps|Chinese built-in skill|Chinese QA member'
           --reporter=line
 
+      - name: Check Companion streaming, recovery, settings and character layout
+        working-directory: apps/web
+        env:
+          LING_PLAYWRIGHT_PREVIEW: "1"
+          LING_PLAYWRIGHT_REUSE_SERVER: "0"
+          LING_CAPTURE_UI2_EVIDENCE: "1"
+        run: corepack pnpm exec playwright test e2e/companions.spec.ts --reporter=line
+
       - name: Check production conversation change summaries
         working-directory: apps/web
         env:
@@ -895,6 +903,10 @@ jobs:
           if-no-files-found: warn
           retention-days: 1
           path: ${{ runner.temp }}/macos-bootstrap-diagnostic.json
+
+      - name: Compile localization inputs for native release reviews
+        if: needs.scope.outputs.native-release == 'true'
+        run: corepack pnpm --filter @ling-stack/localization catalog:compile
 
       - name: Check changed native release reviews and publication boundaries
         if: needs.scope.outputs.native-release == 'true'
