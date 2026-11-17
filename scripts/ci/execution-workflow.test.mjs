@@ -173,6 +173,8 @@ test("PR transitions and full-ci labels trigger validation while full regression
   assert.match(jobSource("scope"), /--event-file "\$GITHUB_EVENT_PATH"/u);
   assert.match(jobSource("scope"), /--base="\$BASE_SHA"/u);
   assert.match(jobSource("scope"), /execution-tier: \$\{\{ steps\.policy\.outputs\.execution-tier \}\}/u);
+  assert.match(jobSource("scope"), /scripts\/ci\/scope-audit\.mjs/u);
+  assert.match(jobSource("scope"), /name: ci-scope-report/u);
   for (const id of workflow.slice(workflow.indexOf("\njobs:\n")).matchAll(/^  ([a-z][a-z-]*):$/gmu)) {
     const ids = [...jobSource(id[1]).matchAll(/^        id: (\S+)$/gmu)].map((match) => match[1]);
     assert.equal(new Set(ids).size, ids.length, `${id[1]} must not contain duplicate step IDs`);
