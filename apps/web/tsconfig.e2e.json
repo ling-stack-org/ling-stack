@@ -14,6 +14,9 @@
   "files": [
     "e2e/worktree-settings.spec.ts",
     "e2e/app.spec.ts",
+    "e2e/review-annotations.spec.ts",
+    "e2e/review-annotation-recovery.spec.ts",
+    "e2e/image-review-tools.spec.ts",
     "e2e/channel-image-preview.spec.ts",
     "e2e/channel-work-cell.spec.ts",
     "e2e/computer-control.spec.ts",

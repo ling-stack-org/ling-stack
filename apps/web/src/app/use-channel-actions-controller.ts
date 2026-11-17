@@ -159,6 +159,7 @@ export interface SendChannelMessageInput {
   readonly requestAiReply: boolean;
   readonly streamOwner?: ChannelStreamErrorOwnerHint;
   readonly replyDisposition?: ChannelReplyDisposition;
+  readonly onInputAccepted?: (fileRefs: readonly ChannelMessageFileRef[]) => void;
   readonly onMessageAccepted?: (message: ChannelMessage) => void;
   readonly onReplyPending?: (pending: ChannelReplyPendingEvent) => void;
   readonly onReplyLinked?: (target: ConversationActiveReplyTarget) => void;
@@ -558,6 +559,7 @@ export function useChannelActionsController(input: {
         return validateConversationSubmissionReceipt(await getConversationSubmission(submissionScope.cwd, query), submissionScope.cwd, query);
       });
       if (!receipt?.sourceItem) throw new UnconfirmedConversationSubmissionError(pendingKey, true);
+      messageInput.onInputAccepted?.(projectMessageItem(receipt.sourceItem, []).fileRefs);
       await refreshObservation(() => input.refreshChannelMessages(channelId, messageInput.threadId, { silent: true }));
       submissionLookupJournal.forget(submissionScope, pendingKey);
       throw new RecoveredConversationSubmissionError(projectMessageItem(receipt.sourceItem, []).body);
@@ -594,6 +596,7 @@ export function useChannelActionsController(input: {
           if (!messageAccepted) {
             messageAccepted = true;
             submissionLookupJournal.forget(submissionScope, idempotencyKey);
+            messageInput.onInputAccepted?.(data.message.fileRefs);
             messageInput.onMessageAccepted?.(data.message);
           }
           return;
@@ -746,6 +749,7 @@ export function useChannelActionsController(input: {
         if (receipt?.sourceItem) {
           messageAccepted = true;
           submissionLookupJournal.forget(submissionScope, idempotencyKey);
+          messageInput.onInputAccepted?.(projectMessageItem(receipt.sourceItem, []).fileRefs);
           messageInput.onMessageAccepted?.(projectMessageItem(receipt.sourceItem, []));
         } else if (!rejectionConfirmed) {
           if (!canObserveStream()) {

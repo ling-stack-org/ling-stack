@@ -1,3 +1,4 @@
+import { parseReviewAnnotation } from "@ling-stack/contracts";
 import type { ChannelConversationSurface, ChannelReplyDisposition } from "@ling-stack/contracts";
 import {
   channelDecisionStatuses,
@@ -1136,6 +1137,7 @@ export function readOptionalChannelMessageFileRefs(record: Record<string, unknow
   if (!Array.isArray(value)) {
     throw new Error(`${key} must be an array`);
   }
+  if (value.length > 12) throw new Error(`${key} must contain at most 12 references`);
   return value.map((item, index) => {
     if (!isRecord(item)) {
       throw new Error(`${key}[${index}] must be an object`);
@@ -1146,12 +1148,15 @@ export function readOptionalChannelMessageFileRefs(record: Record<string, unknow
     }
     const label = readOptionalString(item, "label")?.trim();
     const source = readOptionalChannelMessageFileRefSource(item, "source", `${key}[${index}].source`);
+    const annotation = parseReviewAnnotation(item.annotation);
     const line = readOptionalNumber(item, "line");
-    if (line !== undefined && (!Number.isInteger(line) || line < 1)) {
+    if (line !== undefined && (!Number.isSafeInteger(line) || line < 1)) {
       throw new Error(`${key}[${index}].line must be a positive integer`);
     }
+    if (annotation?.kind === "code" && (line === undefined || (annotation.startLine ?? line) > line)) throw new Error("Invalid review line range");
     return {
       path,
+      ...(annotation ? { annotation } : {}),
       ...(label ? { label: label.slice(0, 240) } : {}),
       ...(source ? { source } : {}),
       ...(line !== undefined ? { line } : {}),

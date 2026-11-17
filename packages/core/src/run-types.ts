@@ -1389,6 +1389,8 @@ export interface RunInterventionLinkPreviewPayload {
 }
 
 export interface RunInterventionWorkspaceFilePayload {
+  readonly line?: number;
+  readonly annotation?: import("@ling-stack/contracts").ReviewAnnotation;
   readonly path: string;
   readonly label?: string;
   readonly source?: ConversationWorkspaceFileRefSourceV1;
