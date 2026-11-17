@@ -159,6 +159,28 @@ test("redacted snapshots cover unquoted and non-pattern credential values", asyn
   } finally { await rm(cwd, { recursive: true, force: true }); }
 });
 
+test("redacted snapshots cover conventional credentials in ordinary source files", async () => {
+  const cwd = await repo();
+  try {
+    const databaseUrl = `postgres://alice:${["db", "password"].join("-")}@example.test/app`;
+    await writeFile(join(cwd, "config.ts"), [
+      'export const AWS_SECRET_ACCESS_KEY = "secret-access-value";',
+      "export const AWS_SESSION_TOKEN = secret-session-value;",
+      `export const DATABASE_URL = "${databaseUrl}";`,
+      'export const password = "prefix\\\"SECRET-SUFFIX"; console.log("safe");',
+    ].join("\n") + "\n");
+    const snapshot = await captureCodeAssessmentSnapshot(cwd, { type: "working_tree" });
+    const serialized = JSON.stringify(snapshot);
+    assert.equal(snapshot.coverage, "partial");
+    assert.equal(snapshot.files[0]?.redacted, true);
+    assert.doesNotMatch(serialized, /secret-access-value|secret-session-value|db-password|SECRET-SUFFIX/u);
+    assert.match(snapshot.files[0]?.diff ?? "", /AWS_SECRET_ACCESS_KEY = "\[REDACTED\]"/u);
+    assert.match(snapshot.files[0]?.diff ?? "", /AWS_SESSION_TOKEN = \[REDACTED\]/u);
+    assert.match(snapshot.files[0]?.diff ?? "", /DATABASE_URL = "\[REDACTED\]"/u);
+    assert.match(snapshot.files[0]?.diff ?? "", /password = "\[REDACTED\]"; console\.log\("safe"\)/u);
+  } finally { await rm(cwd, { recursive: true, force: true }); }
+});
+
 test("branch assessment excludes changes unique to a diverged base branch", async () => {
   const cwd = await repo();
   try {

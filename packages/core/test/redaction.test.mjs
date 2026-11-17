@@ -45,3 +45,20 @@ test("cloud, repository and JWT credential formats are redacted from strings", (
     "jwt=[REDACTED]",
   ].join("\n"));
 });
+
+test("assignment redaction covers provider credentials and escaped quoted values", () => {
+  const databaseUrl = `postgres://alice:${["db", "password"].join("-")}@example.test/app`;
+  const input = [
+    'AWS_SECRET_ACCESS_KEY="secret-access-value"',
+    'AWS_SESSION_TOKEN=secret-session-value',
+    `DATABASE_URL="${databaseUrl}"`,
+    'const password = "prefix\\\"SECRET-SUFFIX"; console.log("safe");',
+  ].join("\n");
+  const redacted = redactSecrets(input);
+  assert.equal(redacted, [
+    'AWS_SECRET_ACCESS_KEY="[REDACTED]"',
+    'AWS_SESSION_TOKEN=[REDACTED]',
+    'DATABASE_URL="[REDACTED]"',
+    'const password = "[REDACTED]"; console.log("safe");',
+  ].join("\n"));
+});

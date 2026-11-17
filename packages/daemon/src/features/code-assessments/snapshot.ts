@@ -46,13 +46,7 @@ export function isSensitiveAssessmentPath(path: string): boolean {
 
 function redactAssessmentDiff(raw: string): string {
   const generic = redactSecrets(raw) as string;
-  const keyed = generic
-    .replace(/(["']?(?:api[_-]?key|access[_-]?token|auth[_-]?token|password|passphrase|client[_-]?secret|private[_-]?key|signing[_-]?key|secret|credential(?:s)?)["']?\s*[:=]\s*)(["'`])([^\r\n]*?)\2/giu,
-      (_match, prefix: string, quote: string) => `${prefix}${quote}[REDACTED]${quote}`)
-    .replace(/(["']?(?:api[_-]?key|access[_-]?token|auth[_-]?token|password|passphrase|client[_-]?secret|private[_-]?key|signing[_-]?key|secret|credential(?:s)?)["']?\s*[:=]\s*)([^\s,;)}\]]+)/giu,
-      (_match, prefix: string) => `${prefix}[REDACTED]`);
-  return keyed
-    .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/gu,
+  return generic.replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/gu,
       block => block.split("\n").map(() => "[REDACTED]").join("\n"));
 }
 
