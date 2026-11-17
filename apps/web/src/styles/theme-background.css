@@ -128,6 +128,19 @@ html[data-user-background="ready"][data-ui-background-visible="true"][data-ui-su
 html[data-user-background="ready"][data-ui-background-visible="true"][data-ui-surface="media-canvas"] .app-shell .left-nav {
   box-shadow: none;
 }
+/* Without an ambient backdrop, media production stays one opaque work canvas.
+   Use the canvas tone and spacing for hierarchy instead of shell hairlines. */
+html[data-ui-background-visible="false"][data-ui-surface="media-canvas"] .app-shell .media-jobs-page,
+html[data-ui-background-visible="false"][data-ui-surface="media-canvas"] .app-shell .media-jobs-layout {
+  background: var(--ling-bg-app);
+}
+html[data-ui-background-visible="false"][data-ui-surface="media-canvas"] .app-shell .media-jobs-header {
+  background: var(--ling-bg-panel);
+  border-bottom-width: 0;
+}
+html[data-ui-background-visible="false"][data-ui-surface="media-canvas"] .app-shell .media-jobs-list-pane {
+  border-right-width: 0;
+}
 /* Empty split-pane states are layout surfaces, not content cards. Keep the
    ambient scene visible until the user selects something to inspect; populated
    inspectors retain their local readable panel material. */

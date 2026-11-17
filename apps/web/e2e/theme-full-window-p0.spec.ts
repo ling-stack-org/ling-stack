@@ -151,9 +151,9 @@ test("BG-27 generation tasks keeps solid chrome when no backdrop is configured",
   });
   expect(isTransparent(material.page)).toBe(false);
   expect(isTransparent(material.header)).toBe(false);
-  expect(material.headerBorderWidth).toBe("1px");
+  expect(material.headerBorderWidth).toBe("0px");
   expect(isTransparent(material.inspector)).toBe(false);
-  expect(material.listBorderWidth).toBe("1px");
+  expect(material.listBorderWidth).toBe("0px");
   await capture(page, testInfo, "generation-jobs-solid-full-window.png");
 });
 
