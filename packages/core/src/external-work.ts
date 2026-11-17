@@ -463,7 +463,7 @@ function normalizeLinearLabels(raw: unknown): string[] {
 function normalizeGitHubRepository(raw: unknown, fallbackFullName: string | undefined): ExternalWorkRepositoryRef {
   const repository = isRecord(raw) ? raw : undefined;
   const payloadFullName = readOptionalString(repository?.full_name, "repository.full_name");
-  if (payloadFullName && fallbackFullName && payloadFullName !== fallbackFullName) {
+  if (payloadFullName && fallbackFullName && payloadFullName.toLowerCase() !== fallbackFullName.toLowerCase()) {
     throw new ExternalWorkflowValidationError(`GitHub repository does not match configured source: ${payloadFullName}`);
   }
   const fullName = payloadFullName ?? fallbackFullName;
