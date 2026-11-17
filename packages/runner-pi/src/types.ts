@@ -127,6 +127,8 @@ export interface PiRunnerProviderBudgetPort {
 }
 
 export interface PiRunnerApprovalRequest {
+  /** Per-call cancellation narrows the owning Run lifetime; never an authority grant. */
+  readonly signal?: AbortSignal;
   readonly toolCallId: string;
   readonly toolName: PiRunnerApprovalToolName;
   readonly input: unknown;
@@ -484,12 +486,19 @@ export interface PiRunnerDelegationToolResult {
 }
 
 export interface PiRunnerRunOptions {
+  /** Host-selected, non-secret lifecycle policy frozen with prepared input. */
+  readonly hooks?: import("./hook-types.js").PiHookSet;
+  /** Internal per-execution dispatcher; never persisted or supplied by project code. */
+  readonly onLifecycleHook?: (invocation: import("./hook-types.js").PiHookInvocation) => Promise<{ denied?: string }>;
+  readonly onCodeIntelligenceCall?: import("./code-intelligence-types.js").PiRunnerCodeIntelligenceHandler;
   /** Host-only, memory-sealed observation from the actual SDK execution. */
   readonly onToolBoundaryObservation?: (receipt: import("./tool-boundary-observation.js").PiToolBoundaryObservation) => void;
   /** Initial schema capabilities; not execution handlers or authorization grants. */
   readonly initialToolSurface?: {
     readonly mediaGeneration: boolean;
     readonly toolHydration: boolean;
+    readonly codeIntelligence?: boolean;
+    readonly codeMode?: boolean;
     /** Schema-only preparation is permitted; execution still requires the live Host handler. */
     readonly userInput?: boolean;
     /** Original Host registry selection; callback presence alone never enables schema preparation. */
@@ -693,6 +702,9 @@ export interface PiRunnerTokenUsage {
 }
 
 export type PiRunnerEvent =
+  | { readonly type: "hook_execution"; readonly hookId: string; readonly configDigest: string;
+      readonly event: import("./hook-types.js").PiHookEvent; readonly toolCallId?: string;
+      readonly status: "succeeded" | "denied" | "failed"; readonly durationMs: number; readonly message?: string }
   | { readonly type: "run_start"; readonly taskId: string; readonly cwd: string; readonly provider: string; readonly model: string }
   | { readonly type: "turn_start" }
   | { readonly type: "turn_end" }
@@ -759,9 +771,9 @@ export type PiRunnerEvent =
       readonly rejected: boolean;
       readonly code?: PiRunnerToolHydrationRejectionCode;
     }
-  | { readonly type: "tool_start"; readonly toolCallId: string; readonly toolName: string; readonly args: unknown }
-  | { readonly type: "tool_update"; readonly toolCallId: string; readonly toolName: string; readonly partialResult: unknown }
-  | { readonly type: "tool_end"; readonly toolCallId: string; readonly toolName: string; readonly result: unknown; readonly isError: boolean }
+  | { readonly type: "tool_start"; readonly toolCallId: string; readonly parentToolCallId?: string; readonly toolName: string; readonly args: unknown }
+  | { readonly type: "tool_update"; readonly toolCallId: string; readonly parentToolCallId?: string; readonly toolName: string; readonly partialResult: unknown }
+  | { readonly type: "tool_end"; readonly toolCallId: string; readonly parentToolCallId?: string; readonly toolName: string; readonly result: unknown; readonly isError: boolean }
   | {
       readonly type: "message_end";
       readonly role: string;

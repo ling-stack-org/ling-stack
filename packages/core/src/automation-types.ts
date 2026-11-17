@@ -19,6 +19,8 @@ export type AutomationRunStatus =
   | "failed"
   | "cancelled";
 
+export type AutomationRunTriggerType = AutomationTrigger["type"] | "event";
+
 export type AutomationTrigger =
   | ManualAutomationTrigger
   | ScheduledAutomationTrigger
@@ -294,7 +296,7 @@ export interface AutomationRun {
   readonly channelId?: string;
   readonly threadId: string;
   readonly runId?: string;
-  readonly triggerType: AutomationTrigger["type"];
+  readonly triggerType: AutomationRunTriggerType;
   readonly scheduledFor?: string;
   readonly firedAt: string;
   readonly startedAt?: string;
@@ -314,7 +316,7 @@ export interface CreateAutomationRunInput {
   readonly channelId?: string;
   readonly threadId: string;
   readonly runId?: string;
-  readonly triggerType: AutomationTrigger["type"];
+  readonly triggerType: AutomationRunTriggerType;
   readonly scheduledFor?: string;
   readonly firedAt?: string;
   readonly startedAt?: string;

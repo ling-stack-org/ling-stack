@@ -21,6 +21,7 @@ export function createLingStackMcpProxyExtension(options: PiRunnerRunOptions): E
           }
           if (options.onApprovalRequired) {
             const decision = await options.onApprovalRequired({
+              signal,
               toolCallId,
               toolName: tool.registeredName,
               input: params,

@@ -484,6 +484,7 @@ export type RunEventType =
   | "assistant_reasoning_summary"
   | "tool_hydration_request"
   | "tool_hydration_end"
+  | "hook_execution"
   | "message_end"
   | "tool_start"
   | "tool_update"
@@ -623,18 +624,31 @@ export interface RunEventDataByType {
     readonly [key: string]: unknown;
   };
   readonly tool_start: {
+    readonly parentToolCallId?: string;
     readonly toolCallId?: string;
     readonly toolName: string;
     readonly args?: unknown;
     readonly [key: string]: unknown;
   };
+  readonly hook_execution: {
+    readonly hookId: string;
+    readonly configDigest: string;
+    readonly event: "run_start" | "before_tool" | "after_tool" | "run_end";
+    readonly toolCallId?: string;
+    readonly status: "succeeded" | "denied" | "failed";
+    readonly durationMs: number;
+    readonly message?: string;
+    readonly [key: string]: unknown;
+  };
   readonly tool_update: {
+    readonly parentToolCallId?: string;
     readonly toolCallId?: string;
     readonly toolName: string;
     readonly partialResult?: unknown;
     readonly [key: string]: unknown;
   };
   readonly tool_end: {
+    readonly parentToolCallId?: string;
     readonly toolCallId?: string;
     readonly toolName: string;
     readonly result?: unknown;

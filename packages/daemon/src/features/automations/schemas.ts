@@ -63,7 +63,7 @@ export interface UpdateAutomationRequest {
 
 export interface AutomationRunRequest {
   readonly idempotencyKey?: string;
-  readonly triggerType?: AutomationTrigger["type"];
+  readonly triggerType?: AutomationTrigger["type"] | "event";
   readonly scheduledFor?: string;
 }
 
