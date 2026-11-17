@@ -3,7 +3,7 @@ import type { WorktreePolicy } from "@ling-stack/contracts";
 import { worktreeRoot } from "../workspaces/worktree-policy.js";
 import { coordinateWorktreeMutation, type WorktreeLifecycleStore } from "../workspaces/worktree-mutation.js";
 import { actOnManagedWorktreeLocked, WorktreeActionError } from "../workspaces/worktree-management.js";
-import { listWorktreeSnapshots } from "../workspaces/worktree-recovery.js";
+import { findWorktreeRecoveryRepoRoot, listWorktreeSnapshots } from "../workspaces/worktree-recovery.js";
 import { allowLocalWorkspaceRequest } from "../../shared/local-workspace-access.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
@@ -26,6 +26,7 @@ import {
   inspectManagedWorktree,
   isWorkspaceDirectory,
   resolveGitRepoRoot,
+  resolveManagedWorktreeRepoRoot,
 } from "../workspaces/managed-worktrees.js";
 
 type ChannelWorktreeTarget = Pick<Channel, "id" | "boundPath" | "workspaceBinding">;
@@ -57,7 +58,7 @@ export async function handleChannelWorkspace(
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
   const cwd = url.searchParams.get("cwd");
-  if (cwd && request.method !== "GET" && !allowLocalWorkspaceRequest({ request, response, storeRegistry })) return;
+  if (cwd && request.method !== "GET" && !allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) return;
   if (!cwd || request.method === "GET") return handleChannelWorkspaceOnce(request, response, config, storeRegistry, channelId, action);
   const store = storeRegistry.getStore(cwd);
   return coordinateWorktreeMutation(store, () => handleChannelWorkspaceOnce(request, response, config, storeRegistry, channelId, action));
@@ -295,7 +296,15 @@ export async function createManagedWorktreeBinding(
   | { readonly ok: false; readonly code: string; readonly message: string }
 > {
   const root = channel.boundPath ?? workspaceCwd;
-  const repo = await resolveGitRepoRoot(root);
+  const recordedRepoRoot = channel.workspaceBinding?.worktreePath && lifecycleStore
+    ? await findWorktreeRecoveryRepoRoot(lifecycleStore, channel.workspaceBinding.worktreePath, `ling/channel-${channel.id}`)
+    : undefined;
+  const repo = recordedRepoRoot
+    ? { ok: true as const, repoRoot: recordedRepoRoot }
+    : channel.workspaceBinding?.worktreePath && isWorkspaceDirectory(channel.workspaceBinding.worktreePath)
+      ? await resolveManagedWorktreeRepoRoot(channel.workspaceBinding.worktreePath)
+        .then((repoRoot) => ({ ok: true as const, repoRoot }), () => resolveGitRepoRoot(root))
+      : await resolveGitRepoRoot(root);
   if (!repo.ok) {
     return {
       ok: false,

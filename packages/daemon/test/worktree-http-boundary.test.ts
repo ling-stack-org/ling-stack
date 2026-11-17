@@ -106,4 +106,19 @@ test("foreign conversation requests cannot initialize worktrees or schedule cont
   const local = await fetch(f.url(`${privateBase}/direct-runtime`), { headers: { Origin: "http://localhost:4310" } });
   assert.equal(local.status, 200);
   assert.equal((await fetch(f.url(`${privateBase}/direct-runtime`))).status, 200, "Native continuation requests remain supported");
+
+  const untrustedCwd = join(tmpdir(), "ling-untrusted-workspace");
+  for (const [path, method, body] of [
+    ["/companions", "POST", {}],
+    ["/companions/unknown/messages", "POST", { body: "should be rejected" }],
+    ["/teammates/teammate_builtin_engineer/direct-workspace/refresh", "POST", {}],
+  ] as const) {
+    const response = await browserRequest(f.url(path, untrustedCwd), {
+      method,
+      headers: { Origin: "http://localhost:4310", "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    assert.equal(response.status, 403, `${method} ${path}`);
+  }
+  assert.equal(f.storeOpens(), opens);
 });

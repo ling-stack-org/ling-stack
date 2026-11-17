@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync, realpathSync } from "node:fs";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
 import { Document, Packer, Paragraph } from "docx";
@@ -620,6 +621,10 @@ async function startDaemonForTest(runner, dependencies = {}, config = {}) {
   const daemon = createDaemonServer({
     host: "127.0.0.1",
     port: 0,
+    // Route fixtures create their temporary workspaces below the system temp
+    // root. Keep that root trusted so the HTTP tests exercise handler logic
+    // after the same workspace-boundary check used by production requests.
+    defaultWorkspaceCwd: restConfig.defaultWorkspaceCwd ?? tmpdir(),
     ...restConfig,
     channels: { intentSelector: false, terminalReports: false, ...channels },
   }, {

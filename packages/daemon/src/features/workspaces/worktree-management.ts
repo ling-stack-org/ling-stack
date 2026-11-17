@@ -1,6 +1,6 @@
 import type { ChannelWorkspaceBinding, RunStore } from "@ling-stack/core";
 import type { ManagedWorktreeActionRequest, ManagedWorktreeEntry, ManagedWorktreeListResponse } from "@ling-stack/contracts";
-import { git, inspectManagedWorktree, resolveGitRepoRoot } from "./managed-worktrees.js";
+import { git, inspectManagedWorktree, resolveGitRepoRoot, resolveManagedWorktreeRepoRoot } from "./managed-worktrees.js";
 import { initializeWorktree } from "./worktree-initialization.js";
 import { archiveWorktree, listWorktreeSnapshots, recoverWorktreeOperations, restoreWorktreeSnapshot } from "./worktree-recovery.js";
 import { assertWorktreeIdle, coordinateWorktreeMutation, worktreeContains } from "./worktree-mutation.js";
@@ -110,7 +110,7 @@ export async function actOnManagedWorktreeLocked(store: RunStore, cwd: string, i
     if (!snapshot || snapshot.ownerKind !== owner.kind || snapshot.ownerId !== owner.id || snapshot.originalPath !== path) throw new WorktreeActionError("worktree_snapshot_mismatch", "恢复快照与工作树归属不符。");
     await restoreWorktreeSnapshot(store, snapshot.id, assertIdle, assertIdle);
   } else if (input.action === "initialize") {
-    const repo = await resolveGitRepoRoot(owner.repoPath);
+    const repo = await resolveOwnerRepository(owner);
     if (!repo.ok) throw new WorktreeActionError(repo.code, repo.message);
     const { assertOwnedLinkedWorktree } = await import("./worktree-recovery.js");
     await assertOwnedLinkedWorktree(repo.repoRoot, path, owner.binding.branchName ?? "");
@@ -124,7 +124,7 @@ export async function actOnManagedWorktreeLocked(store: RunStore, cwd: string, i
     if (!inspection.exists) throw new WorktreeActionError("worktree_unavailable", "工作树目录不存在。");
     if (inspection.initialization?.status === "running") throw new WorktreeActionError("worktree_in_use", "工作树初始化尚未结束。");
     if (automatic && inspection.isDirty) throw new WorktreeActionError("worktree_dirty", "包含未提交改动的工作树保留。");
-    const repo = await resolveGitRepoRoot(owner.repoPath);
+    const repo = await resolveOwnerRepository(owner);
     if (!repo.ok) throw new WorktreeActionError(repo.code, repo.message);
     if (owner.binding.branchName && (await git(path, ["branch", "--show-current"])).stdout.trim() !== owner.binding.branchName) throw new WorktreeActionError("worktree_owner_mismatch", "工作树分支与记录不符，无法清理。");
     await archiveWorktree(store, { repoRoot: repo.repoRoot, path, branchName: owner.binding.branchName ?? "", ownerKind: owner.kind, ownerId: owner.id,
@@ -137,4 +137,16 @@ export async function actOnManagedWorktreeLocked(store: RunStore, cwd: string, i
   if (owner.kind === "channel") store.updateChannel(owner.id, { workspaceBinding: binding }, now);
   else store.updateTeammateDirectThreadWorkspace(owner.id, binding, now);
   return path;
+}
+
+async function resolveOwnerRepository(owner: OwnedWorktree): ReturnType<typeof resolveGitRepoRoot> {
+  if (owner.binding.worktreePath && owner.binding.status !== "not_created") {
+    try {
+      return { ok: true, repoRoot: await resolveManagedWorktreeRepoRoot(owner.binding.worktreePath) };
+    } catch {
+      // Fall back to the recorded workspace path so the ownership check below
+      // can reject a foreign or malformed worktree without guessing its owner.
+    }
+  }
+  return resolveGitRepoRoot(owner.repoPath);
 }

@@ -509,7 +509,7 @@ export async function handleTeammateDirectRuntime(
     writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
     return;
   }
-  if (!allowLocalWorkspaceRequest({ request, response, storeRegistry })) return;
+  if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) return;
 
   try {
     const store = storeRegistry.getStore(cwd);
@@ -546,7 +546,7 @@ export async function handleTeammateDirectInterventions(
     writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
     return;
   }
-  if (!allowLocalWorkspaceRequest({ request, response, storeRegistry })) return;
+  if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) return;
 
   try {
     const store = storeRegistry.getStore(cwd);
@@ -589,7 +589,7 @@ export async function handleTeammateDirectInterventionCancel(
     writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
     return;
   }
-  if (!allowLocalWorkspaceRequest({ request, response, storeRegistry })) return;
+  if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) return;
 
   try {
     const store = storeRegistry.getStore(cwd);
@@ -622,7 +622,7 @@ export async function handleTeammateDirectInterventionPromote(
     writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
     return;
   }
-  if (!allowLocalWorkspaceRequest({ request, response, storeRegistry })) return;
+  if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) return;
 
   try {
     const store = storeRegistry.getStore(cwd);
@@ -661,7 +661,7 @@ export async function handleTeammateDirectReplyCancel(
     writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
     return;
   }
-  if (!allowLocalWorkspaceRequest({ request, response, storeRegistry })) return;
+  if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) return;
 
   try {
     const store = storeRegistry.getStore(cwd);

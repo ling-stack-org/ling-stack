@@ -14,12 +14,28 @@ export async function readWorktreeInitialization(path: string): Promise<Initiali
     const raw = await readFile(join(directory, "ling-worktree-initialization.json"), "utf8");
     if (raw.length > 64000) throw new Error("Worktree initialization record is too large");
     const record = JSON.parse(raw) as InitializationRecord;
-    if (!["running", "succeeded", "failed"].includes(record.status)) throw new Error("Invalid worktree initialization record");
+    if (!["pending", "running", "succeeded", "failed"].includes(record.status)) throw new Error("Invalid worktree initialization record");
     return record;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
     throw error;
   }
+}
+
+/** Save a local confirmation checkpoint without executing repository-supplied code. */
+export async function prepareWorktreeInitialization(path: string, environment: WorktreeEnvironment): Promise<WorktreeInitialization> {
+  const existing = await readWorktreeInitialization(path);
+  if (existing) return existing;
+  const directory = (await git(path, ["rev-parse", "--absolute-git-dir"])).stdout.trim();
+  const markerPath = join(directory, "ling-worktree-initialization.json");
+  const fingerprint = createHash("sha256").update(JSON.stringify(environment)).digest("hex");
+  const pending: InitializationRecord = {
+    status: "pending",
+    fingerprint,
+    errorMessage: "初始化脚本等待本地确认。",
+  };
+  writePrivateJson(markerPath, pending);
+  return pending;
 }
 
 /** Only a locally saved environment can select this manual terminal execution path. */

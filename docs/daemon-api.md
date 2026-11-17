@@ -290,7 +290,7 @@ because environment configuration can contain private values.
 | Request | Behavior |
 | --- | --- |
 | `GET /worktrees?cwd=...` | Return policy, recorded channel/private-chat worktrees, recovery snapshots and maintenance status. |
-| `POST /worktrees/actions?cwd=...` | Apply `open`, `cleanup`, `restore`, `initialize`, `pin` or `unpin` to a recorded owner. |
+| `POST /worktrees/actions?cwd=...` | Apply `open`, `cleanup`, `restore`, `initialize`, `pin` or `unpin` to a recorded owner. `initialize` is the explicit local approval step for a saved setup script; worktree creation never executes that script. |
 
 Actions specify `ownerKind` (`channel` or `teammate`) and `ownerId`. Manual cleanup
 requires `confirmed: true` while confirmation is enabled; restore requires `snapshotId`.

@@ -241,3 +241,12 @@ export async function restoreWorktreeForCreation(store: WorktreeLifecycleStore, 
   await restoreWorktreeSnapshot(store, record.id, () => assertWorktreeIdle(store, path));
   return true;
 }
+
+/** Return the repository recorded for a retained snapshot before the original path is restored. */
+export async function findWorktreeRecoveryRepoRoot(store: WorktreeLifecycleStore, path: string, branchName: string): Promise<string | undefined> {
+  const candidates = (await records(store.paths)).filter((item) => item.originalPath === resolve(path) && item.state !== "restored");
+  const record = (await Promise.all(candidates.map(async (item) => await pathExists(item.snapshotPath) ? item : undefined))).find(Boolean);
+  if (!record) return undefined;
+  if (record.branchName !== branchName) throw new Error("Recovery snapshot belongs to a different branch");
+  return record.repoRoot;
+}

@@ -5,8 +5,8 @@ import { dirname, isAbsolute, resolve } from "node:path";
 import { promisify } from "node:util";
 import { defineProtectedHostActorEntry } from "../../runtime/sandbox/protected-host-actor-inventory.js";
 import type { WorktreeEnvironment, WorktreeInitialization } from "@ling-stack/contracts";
-import { initializeWorktree, readWorktreeInitialization } from "./worktree-initialization.js";
-import { assertOwnedLinkedWorktree, restoreWorktreeForCreation } from "./worktree-recovery.js";
+import { prepareWorktreeInitialization, readWorktreeInitialization } from "./worktree-initialization.js";
+import { assertOwnedLinkedWorktree, findWorktreeRecoveryRepoRoot, restoreWorktreeForCreation } from "./worktree-recovery.js";
 import type { WorktreeLifecycleStore } from "./worktree-mutation.js";
 
 const execFileAsync = promisify(execFile);
@@ -141,6 +141,32 @@ export async function resolveGitRepoRoot(
   }
 }
 
+/**
+ * Resolve the stable repository root for an existing linked worktree.
+ *
+ * A channel may change its bound path after the worktree is created.  The
+ * worktree's own top-level directory is not a suitable repository root for
+ * recovery operations because that directory is moved during archival.  Git's
+ * worktree listing keeps the original checkout stable across that move.
+ */
+export async function resolveManagedWorktreeRepoRoot(worktreePath: string): Promise<string> {
+  if (!isWorkspaceDirectory(worktreePath)) {
+    throw new Error("worktree 目录不存在、不是目录或不可访问。");
+  }
+  const listing = await git(worktreePath, ["worktree", "list", "--porcelain"]);
+  const rootLine = listing.stdout.split(/\r?\n/).find((line) => line.startsWith("worktree "));
+  const repoRoot = rootLine?.slice("worktree ".length).trim();
+  if (!repoRoot || !isWorkspaceDirectory(repoRoot)) {
+    throw new Error("无法从现有 worktree 解析所属 Git 仓库。");
+  }
+  const sourceCommon = await realpath(resolve(repoRoot, (await git(repoRoot, ["rev-parse", "--git-common-dir"])).stdout.trim()));
+  const targetCommon = await realpath(resolve(worktreePath, (await git(worktreePath, ["rev-parse", "--git-common-dir"])).stdout.trim()));
+  if (sourceCommon !== targetCommon) {
+    throw new Error("现有 worktree 不属于解析出的 Git 仓库。");
+  }
+  return resolve(repoRoot);
+}
+
 export async function createManagedGitWorktree(input: {
   readonly repoRoot: string;
   readonly worktreePath: string;
@@ -153,7 +179,11 @@ export async function createManagedGitWorktree(input: {
   | { readonly ok: true; readonly result: ManagedWorktreeCreateResult }
   | { readonly ok: false; readonly code: "git_inspection_failed" | "worktree_create_failed" | "worktree_fetch_failed" | "worktree_unavailable" | "worktree_initialization_failed"; readonly message: string }
 > {
-  const baseCommit = await git(input.repoRoot, ["rev-parse", "HEAD"])
+  let repoRoot = input.repoRoot;
+  if (!existsSync(input.worktreePath) && input.lifecycleStore) {
+    repoRoot = await findWorktreeRecoveryRepoRoot(input.lifecycleStore, input.worktreePath, input.branchName) ?? repoRoot;
+  }
+  const baseCommit = await git(repoRoot, ["rev-parse", "HEAD"])
     .then((result) => result.stdout.trim())
     .catch(() => "");
   if (!baseCommit) {
@@ -163,26 +193,26 @@ export async function createManagedGitWorktree(input: {
       message: "Git 仓库没有可用的 HEAD 提交，无法创建或管理独立 worktree。",
     };
   }
-  const currentBranch = (await git(input.repoRoot, ["branch", "--show-current"]).catch(() => ({ stdout: "" }))).stdout.trim();
+  const currentBranch = (await git(repoRoot, ["branch", "--show-current"]).catch(() => ({ stdout: "" }))).stdout.trim();
   const baseBranch = input.requestedBaseBranch || currentBranch || baseCommit;
 
   if (!existsSync(input.worktreePath) && input.lifecycleStore) {
-    await restoreWorktreeForCreation(input.lifecycleStore, input.worktreePath, input.repoRoot, input.branchName);
+    await restoreWorktreeForCreation(input.lifecycleStore, input.worktreePath, repoRoot, input.branchName);
   }
   if (!existsSync(input.worktreePath)) {
     if (input.fetchBeforeCreate) {
       try {
-        const remotes = (await git(input.repoRoot, ["remote"])).stdout.trim();
-        if (remotes) await git(input.repoRoot, ["fetch", "--no-tags"]);
+        const remotes = (await git(repoRoot, ["remote"])).stdout.trim();
+        if (remotes) await git(repoRoot, ["fetch", "--no-tags"]);
       } catch (error) {
         return { ok: false, code: "worktree_fetch_failed", message: `获取工作树上游更新失败：${redactGitError(error)}` };
       }
     }
     await mkdir(dirname(input.worktreePath), { recursive: true });
     try {
-      const branchExists = await git(input.repoRoot, ["show-ref", "--verify", `refs/heads/${input.branchName}`])
+      const branchExists = await git(repoRoot, ["show-ref", "--verify", `refs/heads/${input.branchName}`])
         .then(() => true, () => false);
-      await git(input.repoRoot, branchExists
+      await git(repoRoot, branchExists
         ? ["worktree", "add", input.worktreePath, input.branchName]
         : ["worktree", "add", "-b", input.branchName, input.worktreePath, baseBranch]);
     } catch (error) {
@@ -192,13 +222,15 @@ export async function createManagedGitWorktree(input: {
       return { ok: false, code: "worktree_unavailable", message: "worktree 创建后目录不可用。" };
     }
     const createdCommit = (await git(input.worktreePath, ["rev-parse", "HEAD"])).stdout.trim();
-    const initialization = await initializeWorktree(input.worktreePath, input.environment);
+    const initialization = input.environment?.enabled
+      ? await prepareWorktreeInitialization(input.worktreePath, input.environment)
+      : undefined;
     return { ok: true, result: { baseBranch, baseCommit: createdCommit,
       ...(initialization && initialization.status !== "succeeded" ? { initializationError: initialization.errorMessage ?? "工作树初始化尚未完成。" } : {}) } };
   }
 
   const inspection = await inspectManagedWorktree(input.worktreePath);
-  try { await assertOwnedLinkedWorktree(input.repoRoot, input.worktreePath, input.branchName); }
+  try { await assertOwnedLinkedWorktree(repoRoot, input.worktreePath, input.branchName); }
   catch { return { ok: false, code: "worktree_unavailable", message: "现有目录与工作树的仓库、分支或归属不符。" }; }
   if (inspection.status !== "ready" && !inspection.initialization) {
     return {
@@ -208,8 +240,11 @@ export async function createManagedGitWorktree(input: {
     };
   }
 
+  const initialization = input.environment?.enabled && !inspection.initialization
+    ? await prepareWorktreeInitialization(input.worktreePath, input.environment)
+    : inspection.initialization;
   return { ok: true, result: { baseBranch, baseCommit,
-    ...(inspection.initialization && inspection.initialization.status !== "succeeded" ? { initializationError: inspection.errorMessage } : {}) } };
+    ...(initialization && initialization.status !== "succeeded" ? { initializationError: initialization.errorMessage } : {}) } };
 }
 
 export async function inspectManagedWorktree(worktreePath: string): Promise<ManagedWorktreeInspection> {

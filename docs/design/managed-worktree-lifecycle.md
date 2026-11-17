@@ -178,24 +178,29 @@ storage has no automatic expiration or permanent deletion policy.
    occupied destination or active task before retrying; restoration does not overwrite
    either location. Restore retained snapshots before switching workspace ownership.
 5. Under **Environment**, enable initialization, enter the script, variables and
-   timeout, and save before creating a worktree. The script runs only for a newly
-   created checkout. A failed entry exposes redacted output and **Retry** after the
-   policy is corrected; existing and restored checkouts do not rerun setup automatically.
+   timeout, and save before creating a worktree. New checkouts record a pending
+   setup checkpoint without executing the script. Use **Retry setup** to explicitly
+   approve and run it. A failed entry exposes redacted output and can be retried
+   after the policy is corrected; existing and restored checkouts do not rerun setup
+   automatically.
 
 ### Environment Initialization
 
 Only the saved local policy selects a script; repository documents and discovered files
-do not authorize execution. Initialization uses the existing manual workspace-terminal
-actor, with the current OS shell and account permissions. Its variables apply to that
-script. It does not grant a native Runner sandbox or protected-stage proof. The policy
-applies to new worktrees; existing worktrees and restored snapshots are not reinitialized.
+do not authorize execution. Creating a worktree records a pending checkpoint and never
+executes the saved command. Initialization runs only after an explicit local
+`initialize` action from the Settings surface, using the existing manual
+workspace-terminal actor with the current OS shell and account permissions. Its
+variables apply to that script. It does not grant a native Runner sandbox or
+protected-stage proof. Existing worktrees and restored snapshots are not
+reinitialized automatically.
 
-A private marker in the linked worktree's Git administrative directory records running,
-succeeded or failed state. Output is bounded and configured variable values are redacted
-from the retained output. Failed setup retains the directory and blocks normal workspace
-readiness; the settings list exposes output and explicit retry with the current saved
-policy. On POSIX, timeout escalates from SIGTERM to SIGKILL for the process group and
-successful completion stops remaining children in that group. A retained running marker
+A private marker in the linked worktree's Git administrative directory records pending,
+running, succeeded or failed state. Output is bounded and configured variable values are
+redacted from the retained output. Pending or failed setup retains the directory and
+blocks normal workspace readiness; the settings list exposes explicit retry with the
+current saved policy. On POSIX, timeout escalates from SIGTERM to SIGKILL for the process
+group and successful completion stops remaining children in that group. A retained running marker
 requires the recorded process group to be absent before retry; an unknown process
 identity remains blocked for local inspection. Process groups do not claim containment
 of programs that deliberately escape their group. Windows descendant-process termination

@@ -65,7 +65,7 @@ export async function handleChannelsCollection(
     return;
   }
 
-  if (request.method === "POST" && !allowLocalWorkspaceRequest({ request, response, storeRegistry })) return;
+  if (request.method === "POST" && !allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) return;
   try {
     const store = storeRegistry.getStore(cwd);
     if (request.method === "GET") {

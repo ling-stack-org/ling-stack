@@ -16,7 +16,7 @@ export interface WorktreeEnvironment {
 }
 
 export interface WorktreeInitialization {
-  readonly status: "running" | "succeeded" | "failed";
+  readonly status: "pending" | "running" | "succeeded" | "failed";
   readonly output?: string;
   readonly completedAt?: string;
   readonly errorMessage?: string;

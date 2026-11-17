@@ -116,7 +116,7 @@ export async function handleConversationMessageEdit(
     return;
   }
 
-  if (!allowLocalWorkspaceRequest({ request, response, storeRegistry })) return;
+  if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) return;
 
   try {
     const input = parseEditConversationMessageRequest(await readJsonBody(request, config.maxBodyBytes));

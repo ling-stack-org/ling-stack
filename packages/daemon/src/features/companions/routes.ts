@@ -26,7 +26,7 @@ export async function handleCompanionsCollection(
     writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
     return;
   }
-  if (request.method !== "GET" && !allowLocalWorkspaceRequest({ request, response, storeRegistry })) return;
+  if (request.method !== "GET" && !allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) return;
 
   try {
     const store = storeRegistry.getStore(cwd);
@@ -68,7 +68,7 @@ export async function handleCompanionItem(
     writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
     return;
   }
-  if (request.method !== "GET" && !allowLocalWorkspaceRequest({ request, response, storeRegistry })) return;
+  if (request.method !== "GET" && !allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) return;
 
   try {
     const store = storeRegistry.getStore(cwd);

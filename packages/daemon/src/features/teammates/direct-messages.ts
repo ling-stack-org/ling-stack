@@ -133,7 +133,7 @@ export async function handleTeammateDirectMessagesCollection(
     return;
   }
 
-  if (request.method === "POST" && !allowLocalWorkspaceRequest({ request, response, storeRegistry })) return;
+  if (request.method === "POST" && !allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) return;
 
   try {
     const store = storeRegistry.getStore(cwd);
@@ -267,7 +267,7 @@ export async function handleTeammateDirectMessageStream(
     return;
   }
 
-  if (!allowLocalWorkspaceRequest({ request, response, storeRegistry })) return;
+  if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) return;
 
   const transport = createSseRunExecutionSink(response);
   try {

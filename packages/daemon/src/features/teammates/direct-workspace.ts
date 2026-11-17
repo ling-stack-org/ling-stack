@@ -3,7 +3,7 @@ import type { WorktreePolicy } from "@ling-stack/contracts";
 import { worktreeRoot } from "../workspaces/worktree-policy.js";
 import { coordinateWorktreeMutation, type WorktreeLifecycleStore } from "../workspaces/worktree-mutation.js";
 import { actOnManagedWorktreeLocked, WorktreeActionError } from "../workspaces/worktree-management.js";
-import { listWorktreeSnapshots } from "../workspaces/worktree-recovery.js";
+import { findWorktreeRecoveryRepoRoot, listWorktreeSnapshots } from "../workspaces/worktree-recovery.js";
 import { allowLocalWorkspaceRequest } from "../../shared/local-workspace-access.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
@@ -27,6 +27,7 @@ import {
   inspectManagedWorktree,
   isWorkspaceDirectory,
   resolveGitRepoRoot,
+  resolveManagedWorktreeRepoRoot,
   safeGitBranchSegment,
   type WorkspaceBindingCreateResult,
 } from "../workspaces/managed-worktrees.js";
@@ -196,7 +197,7 @@ export async function handleTeammateDirectWorkspace(
     return;
   }
 
-  if (request.method !== "GET" && !allowLocalWorkspaceRequest({ request, response, storeRegistry })) return;
+  if (request.method !== "GET" && !allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) return;
   try {
     const store = storeRegistry.getStore(cwd);
     const teammate = store.getAiTeammate(teammateId);
@@ -405,7 +406,15 @@ async function createManagedDirectWorktreeBinding(
   | { readonly ok: true; readonly binding: DirectWorkspaceBinding }
   | { readonly ok: false; readonly code: string; readonly message: string }
 > {
-  const repo = await resolveGitRepoRoot(workspaceCwd);
+  const recordedRepoRoot = thread.workspaceBinding?.worktreePath && lifecycleStore
+    ? await findWorktreeRecoveryRepoRoot(lifecycleStore, thread.workspaceBinding.worktreePath, directWorktreeBranchName(thread.teammateId, thread.id))
+    : undefined;
+  const repo = recordedRepoRoot
+    ? { ok: true as const, repoRoot: recordedRepoRoot }
+    : thread.workspaceBinding?.worktreePath && isWorkspaceDirectory(thread.workspaceBinding.worktreePath)
+      ? await resolveManagedWorktreeRepoRoot(thread.workspaceBinding.worktreePath)
+        .then((repoRoot) => ({ ok: true as const, repoRoot }), () => resolveGitRepoRoot(workspaceCwd))
+      : await resolveGitRepoRoot(workspaceCwd);
   if (!repo.ok) {
     return {
       ok: false,

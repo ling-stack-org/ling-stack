@@ -204,12 +204,17 @@ test("environment initialization is explicit, bounded, persisted and retryable w
   const managed = await managedChannel(f, "Setup");
   let entry = (await listManagedWorktrees(f.store, f.cwd)).entries[0]!;
   assert.equal(managed.binding.status, "blocked");
-  assert.equal(entry.initialization?.status, "failed");
-  assert.equal(entry.initialization?.output, "[redacted]");
-  assert.equal(await readFile(join(managed.path, "initialized.txt"), "utf8"), "fixture-secret");
+  assert.equal(entry.initialization?.status, "pending");
+  assert.match(entry.initialization?.errorMessage ?? "", /等待本地确认/);
+  await assert.rejects(access(join(managed.path, "initialized.txt")));
   const reopened = createSqliteRunStore(f.cwd);
   try {
-    assert.equal((await listManagedWorktrees(reopened, f.cwd)).entries[0]?.initialization?.status, "failed");
+    assert.equal((await listManagedWorktrees(reopened, f.cwd)).entries[0]?.initialization?.status, "pending");
+    await actOnManagedWorktree(reopened, f.cwd, { ownerKind: "channel", ownerId: managed.channelId, action: "initialize" });
+    entry = (await listManagedWorktrees(reopened, f.cwd)).entries[0]!;
+    assert.equal(entry.initialization?.status, "failed");
+    assert.equal(entry.initialization?.output, "[redacted]");
+    assert.equal(await readFile(join(managed.path, "initialized.txt"), "utf8"), "fixture-secret");
     reopened.updateWorkspaceSettings({ worktreePolicy: { fetchBeforeCreate: false, environment: { ...environment, setupScript: "printf done > retry.txt" } } }, now);
     await actOnManagedWorktree(reopened, f.cwd, { ownerKind: "channel", ownerId: managed.channelId, action: "initialize" });
     entry = (await listManagedWorktrees(reopened, f.cwd)).entries[0]!;
@@ -226,6 +231,7 @@ test("initialization timeout terminates its process group and preserves a failed
   f.store.updateWorkspaceSettings({ worktreePolicy: { fetchBeforeCreate: false,
     environment: { enabled: true, setupScript: "trap '' TERM; sleep 20", variables: {}, timeoutSeconds: 1 } } }, now);
   const managed = await managedChannel(f, "Timeout");
+  await actOnManagedWorktree(f.store, f.cwd, { ownerKind: "channel", ownerId: managed.channelId, action: "initialize" });
   const entry = (await listManagedWorktrees(f.store, f.cwd)).entries[0]!;
   assert.equal(entry.initialization?.status, "failed");
   assert.match(entry.initialization?.errorMessage ?? "", /超时/);
@@ -305,6 +311,21 @@ test("managed list excludes external checkouts and cleanup refuses dirty, busy a
   await actOnManagedWorktree(f.store, f.cwd, action);
   await access(externalPath);
   assert.equal(f.store.getChannel(managed.channelId)?.workspaceBinding?.status, "not_created");
+});
+
+test("managed lifecycle retains the original repository when a channel bound path changes", async t => {
+  const f = await fixture(t);
+  const environment = { enabled: true, setupScript: "printf initialized > lifecycle.txt", variables: {}, timeoutSeconds: 2 };
+  f.store.updateWorkspaceSettings({ worktreePolicy: { fetchBeforeCreate: false, environment } }, now);
+  const managed = await managedChannel(f, "Rebound");
+  const changedBoundPath = join(f.cwd, "changed-bound-path");
+  await mkdir(changedBoundPath);
+  f.store.updateChannel(managed.channelId, { boundPath: changedBoundPath }, now);
+
+  await actOnManagedWorktree(f.store, f.cwd, { ownerKind: "channel", ownerId: managed.channelId, action: "initialize" });
+  assert.equal(await readFile(join(managed.path, "lifecycle.txt"), "utf8"), "initialized");
+  await actOnManagedWorktree(f.store, f.cwd, { ownerKind: "channel", ownerId: managed.channelId, action: "cleanup", confirmed: true });
+  assert.equal((await listWorktreeSnapshots(f.store.paths)).length, 1);
 });
 
 test("ownership pagination checks references beyond the first 500 channels", async t => {
