@@ -1900,6 +1900,7 @@ export function TeammateWorkspace({
           onCopyMessageText={copyMessageText}
           onOpenRun={onOpenRun}
           onOpenFiles={(target) => openChatDockPage("files", target)}
+          onOpenBrowser={() => openChatDockPage("browser")}
           onOpenReview={(target) => openChatDockPage("review", undefined, target)}
           onCreateTaskFromMessage={tasksController.createFromMessage}
           onPromoteDirectGuidance={promoteDirectGuidance}

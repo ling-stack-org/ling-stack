@@ -58,6 +58,8 @@ import { submitNormalConversationGuidance } from "./normal-conversation-guidance
 import { hasPendingNormalGuidance } from "./normal-conversation-guidance.js";
 import { createNormalConversationMessageEditController } from "./normal-conversation-message-edit-controller.js";
 import { useNormalConversationDropController } from "./useNormalConversationDropController.js";
+import { useConversationBrowserLinks } from "../browser/use-conversation-browser-links.js";
+import { InlineFeedback } from "../../shared/ui/index.js";
 
 export type {
   ConversationHomeDetailContext,
@@ -188,6 +190,9 @@ export function ConversationHome({
     intentOpen: conversationDockOpen,
     resizeObserverKey: conversationIdentityController.ownerKey,
   });
+  const browserLinkError = useConversationBrowserLinks({ rootRef: conversationDockController.containerRef,
+    workspaceCwd: workspaceCwd.trim(), surface: "normal_conversation", ownerId: detailContext?.threadId,
+    onOpen: () => { setConversationSummaryOpen(false); setConversationDockOpen(true); conversationDockController.requestPage("browser"); } });
   const conversationBottomPanelResize = useWorkspaceBottomPanelResizeController({
     containerRef: conversationDockController.containerRef,
     resizeObserverKey: conversationIdentityController.ownerKey,
@@ -852,7 +857,8 @@ export function ConversationHome({
       onResolve={onResolveApproval}
     />
   );
-  const visibleComposerNode = inlineApprovalViews.length > 0 ? approvalGateNode : composerNode;
+  const visibleComposerNode = <>{browserLinkError ? <InlineFeedback tone="danger" role="alert">{browserLinkError}</InlineFeedback> : null}
+    {inlineApprovalViews.length > 0 ? approvalGateNode : composerNode}</>;
 
   if (messages.length > 0) {
     return (
@@ -923,6 +929,10 @@ export function ConversationHome({
         panelsProps={{
           workspaceCwd,
           currentThreadId: detailContext?.threadId,
+          onBrowserAnnotation: async ({ comment, files }) => {
+            setDraft(current => [current, comment].filter(Boolean).join("\n\n"));
+            await attachmentController.attachFiles(files);
+          },
           dockController: conversationDockController,
           dockViewModel: conversationDockViewModel,
           proposedPlans: proposedPlanArtifacts,

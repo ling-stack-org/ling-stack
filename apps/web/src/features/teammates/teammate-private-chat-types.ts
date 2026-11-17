@@ -109,6 +109,7 @@ export interface TeammatePrivateChatSurfaceProps {
   readonly onCopyMessageText: (text: string) => void;
   readonly onOpenRun?: (runId: string) => void;
   readonly onOpenFiles: (target?: WorkspaceRightDockFileTarget) => void;
+  readonly onOpenBrowser?: () => void;
   readonly onOpenReview: (target: WorkspaceRightDockReviewTarget) => void;
   readonly onCreateTaskFromMessage: (message: TeammateDirectMessage) => void | Promise<void>;
   readonly onPromoteDirectGuidance: (interventionId: string) => void | Promise<void>;

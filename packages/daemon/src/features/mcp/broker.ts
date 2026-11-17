@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { Client as McpClient } from "@modelcontextprotocol/sdk/client/index.js";
 import type { Tool as SdkMcpTool } from "@modelcontextprotocol/sdk/types.js";
-import { CHROME_BROWSER_MCP_SERVER_ID, OFFICE_DOCUMENTS_MCP_SERVER_ID } from "@ling-stack/contracts";
+import { CHROME_BROWSER_MCP_SERVER_ID, OFFICE_DOCUMENTS_MCP_SERVER_ID, DESKTOP_BROWSER_MCP_SERVER_ID } from "@ling-stack/contracts";
+import { executeRegisteredDesktopBrowserTool, isRegisteredDesktopBrowserFactory } from "../plugins/desktop-browser-generation-broker.js";
 import type { McpRuntimeStatusSnapshot, McpServer, McpStreamableHttpTransport, ReplaceMcpServerToolInput, SecretStatus } from "@ling-stack/core";
 import type { PiRunnerMcpToolCallResult } from "@ling-stack/runner-pi";
 import type { McpBroker, McpBrokerOptions } from "../../context.js";
@@ -17,7 +18,7 @@ import { assertHostOfficeLocalMcpAdmission, executeHostOfficeLocalMcpOperation,
 
 // Host-owned capability. A copied/custom/generation broker or a replaced method
 // cannot assert its own support through McpBrokerOptions or public booleans.
-type GenerationRoute = { readonly kind: "chrome" | "office" } | { readonly kind: "cua"; readonly bundledEnabled: boolean };
+type GenerationRoute = { readonly kind: "chrome" | "office" | "browser" } | { readonly kind: "cua"; readonly bundledEnabled: boolean };
 type BrokerAdmission = { readonly callTool: McpBroker["callTool"] } & (
   | { readonly kind: "default_transport" }
   | { readonly kind: "generation_facade"; readonly baseBroker: McpBroker; readonly route: GenerationRoute }
@@ -50,6 +51,8 @@ export function assertMcpBrokerHostAdmission(broker: McpBroker, server: McpServe
       if (server.transport.type === "streamable-http" || server.transport.type === "stdio") return;
       break;
     }
+    if (registered.kind === "generation_facade" && registered.route.kind === "browser"
+      && server.id === DESKTOP_BROWSER_MCP_SERVER_ID && isRegisteredDesktopBrowserFactory(current)) return;
     if (registered.kind === "office_local_facade" ? server.id === OFFICE_DOCUMENTS_MCP_SERVER_ID
       : ownsGenerationServer(registered.route, server.id)) break;
     current = registered.baseBroker;
@@ -131,6 +134,9 @@ function createGenerationFacade(input: {
       if (!options.hostOperation) return facade.callTool(server, options, toolName, toolInput);
       assertHostMcpOperation(options.hostOperation);
       assertMcpBrokerHostAdmission(broker, server);
+      if (route.kind === "browser" && server.id === DESKTOP_BROWSER_MCP_SERVER_ID && isRegisteredDesktopBrowserFactory(broker)) {
+        return executeRegisteredDesktopBrowserTool(broker, server, options, toolName, toolInput);
+      }
       // Each current generic branch delegates directly to its base as well.
       // Owned routes reject above, before leases, artifact/desktop effects.
       return Reflect.apply(captureRegisteredMcpBrokerCallTool(baseBroker), baseBroker, [server, options, toolName, toolInput]);
@@ -143,6 +149,7 @@ function createGenerationFacade(input: {
 }
 
 function ownsGenerationServer(route: GenerationRoute, serverId: string): boolean {
+  if (route.kind === "browser") return serverId === DESKTOP_BROWSER_MCP_SERVER_ID;
   if (route.kind === "chrome") return serverId === CHROME_BROWSER_MCP_SERVER_ID;
   if (route.kind === "office") return serverId === OFFICE_DOCUMENTS_MCP_SERVER_ID;
   return route.kind === "cua" && route.bundledEnabled && serverId === CUA_DRIVER_MCP_SERVER_ID;

@@ -25,6 +25,7 @@ import {
 } from "./presets.js";
 import { BUNDLED_CUA_DRIVER_PLUGIN_ID } from "./bundled-index.js";
 import { buildCuaDriverSetupView } from "./cua-driver.js";
+import { createDesktopBrowserDescriptor } from "./desktop-browser.js";
 import { readBundledCuaDriverSetupMetadata } from "./cua-driver-catalog-projection.js";
 import { listBundledPackageDescriptors } from "./source-index.js";
 import { buildManagedPluginRuntimePreview, toManagedPluginPackageView } from "./runtime-injection.js";
@@ -176,7 +177,7 @@ function listProductManagedBuiltInPluginDescriptors(
   extensionRegistry: LingExtensionRegistry,
 ): readonly ManagedPluginDescriptor[] {
   void extensionRegistry;
-  return [createChromeBrowserDescriptor(), createOfficeDocumentsDescriptor()];
+  return [createChromeBrowserDescriptor(), createDesktopBrowserDescriptor(), createOfficeDocumentsDescriptor()];
 }
 
 function shouldIncludePersistedManagedPluginRecord(record: ManagedPluginRecord): boolean {

@@ -8,6 +8,7 @@ const typedActionOwners = [
   "src/features/automations/AutomationDraftList.tsx",
   "src/features/automations/AutomationListPane.tsx",
   "src/features/automations/AutomationRunList.tsx",
+  "src/features/browser/BrowserWorkspace.tsx",
   "src/features/councils/CouncilChannelsPanel.tsx",
   "src/features/councils/CouncilListHealthPanel.tsx",
   "src/features/councils/CouncilMemberRow.tsx",
