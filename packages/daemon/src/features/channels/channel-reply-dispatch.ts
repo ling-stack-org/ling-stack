@@ -179,6 +179,8 @@ function buildChannelReplyFollowupPayload(
       ? {
           fileRefs: turnEnvelope.fileRefs.map((ref) => ({
             path: ref.path,
+            ...(ref.line !== undefined ? { line: ref.line } : {}),
+            ...(ref.annotation ? { annotation: ref.annotation } : {}),
             ...(ref.label ? { label: ref.label } : {}),
             rootRelation: ref.rootRelation,
             kind: ref.kind,

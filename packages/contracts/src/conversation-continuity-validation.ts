@@ -1,3 +1,4 @@
+import { isReviewAnnotation, type ReviewAnnotation } from "./review-annotations.js";
 import { channelOperationPlanFingerprintV1, isChannelOperationBindingV1 } from "./channel-operation-bindings.js";
 import { isUserInputRunEventPositionV1 } from "./user-input-event-position.js";
 import { hasConsistentCommittedRunNarration, isCommittedRunNarrationV1 } from "./committed-run-narration.js";
@@ -575,7 +576,7 @@ function isConversationItemPayloadV1(kind: ConversationItemKindV1, value: unknow
         && isUniqueArrayOf(value.mentions, isConversationMessageMention, (mention) => `${mention.kind}:${mention.id}`)
         && isUniqueTextArray(value.attachmentIds)
         && isUniqueTextArray(value.linkPreviewIds)
-        && isUniqueArrayOf(value.fileRefs, isConversationWorkspaceFileRef, (fileRef) => `${fileRef.path}:${fileRef.line ?? ""}`)
+        && isUniqueArrayOf(value.fileRefs, isConversationWorkspaceFileRef, (fileRef) => fileRef.annotation?.id ?? `${fileRef.path}:${fileRef.line ?? ""}`)
         && (value.body.trim().length > 0
           || value.attachmentIds.length > 0
           || value.linkPreviewIds.length > 0
@@ -671,16 +672,18 @@ function isConversationMessageMention(value: unknown): value is {
 }
 
 function isConversationWorkspaceFileRef(value: unknown): value is {
+  readonly annotation?: ReviewAnnotation;
   readonly path: string;
   readonly label?: string;
   readonly source?: (typeof conversationWorkspaceFileRefSourcesV1)[number];
   readonly line?: number;
 } {
-  return isRecordWithOnlyKeys(value, new Set(["path", "label", "source", "line"]))
+  return isRecordWithOnlyKeys(value, new Set(["path", "label", "source", "line", "annotation"]))
     && isText(value.path, 4_096)
     && isOptionalText(value.label)
     && (value.source === undefined || includes(conversationWorkspaceFileRefSourcesV1, value.source))
-    && (value.line === undefined || isPositiveInteger(value.line));
+    && (value.line === undefined || isPositiveInteger(value.line))
+    && (value.annotation === undefined || isReviewAnnotation(value.annotation) && (value.annotation.kind !== "code" || isPositiveInteger(value.line) && (value.annotation.startLine ?? value.line) <= value.line));
 }
 
 function isClarification(value: unknown): boolean {

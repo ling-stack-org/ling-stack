@@ -3072,6 +3072,7 @@ export function AppShell(): React.JSX.Element {
                         homeMessageFromTranscript(event.assistantMessage),
                       ]),
                       onMessageAccepted: input.onMessageAccepted,
+                      onInputAccepted: input.onInputAccepted,
                       onSubmissionUnknown: input.onSubmissionUnknown,
                       onSubmissionRecovered: input.onSubmissionRecovered,
                       onReplyLinked: input.onReplyLinked,
