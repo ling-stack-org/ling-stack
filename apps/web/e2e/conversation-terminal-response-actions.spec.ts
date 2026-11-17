@@ -34,8 +34,11 @@ for (const surface of ["normal", "private", "channel"] as const) {
     expect(responseId).toBeTruthy();
     const rows = page.locator(`.conversation-timeline-focus-block[data-conversation-response-id=${JSON.stringify(responseId)}]`);
     const footer = rows.locator("[data-conversation-response-footer]");
+    const copy = footer.getByRole("button", { name: "Copy message", exact: true });
+    const actions = footer.locator(".message-action-bar").filter({ has: page.getByRole("button", { name: "Copy message", exact: true }) });
     await expect(footer).toHaveCount(1);
-    await expect(rows.locator(".message-action-bar")).toHaveCount(1);
+    await expect(actions).toHaveCount(1);
+    await expect(rows.getByRole("button", { name: "Copy message", exact: true })).toHaveCount(1);
     await expect(result.locator(".message-action-bar")).toHaveCount(0);
     const narration = rows.locator('[data-conversation-timeline-message][data-conversation-timeline-kind="agentMessage"]');
     const narrationText = (await narration.locator(".message-body-renderer").allTextContents()).join("\n\n").trim();
@@ -50,9 +53,10 @@ for (const surface of ["normal", "private", "channel"] as const) {
       await expect(toggle).toHaveAttribute("aria-expanded", "false");
       await toggle.blur();
     }
-    else if (await result.count()) await expect(result.locator(".conversation-timeline-activity-main.static")).toHaveCount(1);
-    const copy = footer.getByRole("button", { name: "Copy message", exact: true });
-    const actions = footer.locator(".message-action-bar");
+    else if (await result.count()) {
+      await expect(summary).toBeVisible();
+      await expect(result.locator(".conversation-timeline-activity-main")).toHaveCount(0);
+    } else await expect(narration.first()).toBeVisible();
     await page.mouse.move(0, 0);
     await expect(actions).toHaveCSS("opacity", "0");
     await anchor.screenshot({ path: testInfo.outputPath(`fixture-${surface}-copy-hidden.png`) });
@@ -201,16 +205,18 @@ test("channel child responses finish after their operations without copying anot
   expect(firstResponseId).toBeTruthy();
   const firstRows = detail.locator(`.conversation-timeline-focus-block[data-conversation-response-id=${JSON.stringify(firstResponseId)}]`);
   const childFooter = firstRows.locator("[data-conversation-response-footer]");
+  const childActions = childFooter.locator(".message-action-bar").filter({ has: page.getByRole("button", { name: "Copy message", exact: true }) });
   await expect(childFooter).toHaveCount(1);
+  await expect(childActions).toHaveCount(1);
   await expect(firstRows.last().locator("[data-conversation-response-footer]")).toHaveCount(1);
   await expect(firstRows.last().locator("[data-conversation-response-files]")).toContainText("Edited 2 files");
   await expect(firstRows.locator('[data-conversation-workspace-recovery="run"] button')).toBeDisabled();
   await expect(detail.locator("[data-conversation-response-footer]")).toHaveCount(2);
   await expect(detail.locator("[data-conversation-response-files]")).toHaveCount(2);
   await page.mouse.move(0, 0);
-  await expect(childFooter.locator(".message-action-bar")).toHaveCSS("opacity", "0");
+  await expect(childActions).toHaveCSS("opacity", "0");
   await firstNarration.hover();
-  await expect(childFooter.locator(".message-action-bar")).toHaveCSS("opacity", "1");
+  await expect(childActions).toHaveCSS("opacity", "1");
   await childFooter.getByRole("button", { name: "Copy message", exact: true }).click();
   const childCopy = await page.evaluate(() => Reflect.get(globalThis, "__nestedResponseCopy") as string);
   expect(childCopy).toContain("先把 agent 内部工作流拆成可扫描的步骤");

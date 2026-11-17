@@ -77,6 +77,8 @@ import { workflowOperationEffectRejection } from "./workflow-operation-effect-ga
 import { assertWorkflowSafetyAttempt, assertWorkflowSafetyRequest, assertWorkflowSafetyRunner,
   restrictWorkflowSafetyTools, workflowSafetyEffectRejection } from "./workflow-safety.js";
 import { executeWorkflowReadonlyTool } from "./workflow-readonly-executor.js";
+import { executeCodeIntelligence } from "./code-intelligence.js";
+import { loadAgentHooks } from "./hooks-configuration.js";
 import { executeWorkflowIsolatedTool } from "./workflow-isolated-executor.js";
 import { prepareWorkflowIsolatedExecution, type WorkflowIsolatedExecution } from "./workflow-isolation-execution.js";
 import { assertWorkflowIsolatedExecutionAuthority } from "./workflow-isolation-file-authority.js";
@@ -968,8 +970,16 @@ async function executeAdmittedRunRequest(
     const delegationToolSurfaceEnabled = !isolatedFiles && runnerResolution.runner.adapter instanceof PiRunnerAdapter
       && dynamicDelegationRegistry?.isSelectedWorkflow({ store, workflowStepId: runRequest.workflowStepId,
         channelId: runRequest.task.channelId }) === true;
+    const currentAgentCapabilitySurface = () => ({
+      codeIntelligence: !runRequest.workflowStepId && !delegatedExecution && runnerResolution?.runner.adapter instanceof PiRunnerAdapter
+        && (runtimeTools === undefined || runtimeTools.includes("read")),
+      codeMode: !runRequest.workflowStepId && !delegatedExecution && runnerResolution?.runner.adapter instanceof PiRunnerAdapter,
+    });
     runnerRequest = { ...runnerRequest, mediaGenerationTools: currentMediaTools,
+      hooks: !runRequest.workflowStepId && !delegatedExecution && runnerResolution.runner.adapter instanceof PiRunnerAdapter
+        ? await loadAgentHooks({ cwd: runRequest.cwd }) : undefined,
       initialToolSurface: { mediaGeneration: currentMediaTools.length > 0, toolHydration: toolHydrationEnabled,
+        ...currentAgentCapabilitySurface(),
         userInput: userInputAvailable(),
         nativeFileCreate: workflowOperationUsesNativeFileCreate(runRequest),
         delegation: delegationToolSurfaceEnabled } };
@@ -1055,6 +1065,7 @@ async function executeAdmittedRunRequest(
           workflowStepId: runRequest.workflowStepId, channelId: runRequest.task.channelId }) === true;
       runnerRequest = restoreNormalConversationExecutionOptions(executionInput, restrictWorkflowSafetyTools({ ...runnerRequest,
         initialToolSurface: { mediaGeneration: mediaGenerationEligible,
+          ...currentAgentCapabilitySurface(),
           toolHydration: runnerResolution.runner.toolHydration?.mode === "daemon_hydrated" && runnerResolution.runner.toolHydration.conformance === "verified",
           userInput: userInputAvailable(),
           nativeFileCreate: workflowOperationUsesNativeFileCreate(runRequest),
@@ -3322,6 +3333,8 @@ async function executeAdmittedRunRequest(
         ? { ordinaryProgressRecovery: { schemaVersion: 1 as const, modelView: ordinaryProgressRecoveryModelView } }
         : {}),
       sandbox: sandboxBinding,
+      ...(runnerRequest.initialToolSurface?.codeIntelligence ? { onCodeIntelligenceCall: (request) =>
+        executeCodeIntelligence({ root: run.cwd, request, assertCurrent: assertCurrentRunAdmission }) } : {}),
       ...(runnerRequest.readonlyToolsProfile ? { onReadonlyToolCall: (request) =>
         executeWorkflowReadonlyTool({ root: run.cwd, request, assertCurrent: assertCurrentRunAdmission }) } : {}),
       ...(isolatedExecution ? { onIsolatedToolCall: async (request) => {

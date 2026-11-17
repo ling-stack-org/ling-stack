@@ -15,7 +15,8 @@ export const registryTables = ["workflow_template_registry", "workflow_template_
 export const registryTriggers = ["trg_workflow_template_registry_created_draft", "trg_workflow_template_registry_immutable",
   "trg_workflow_template_registry_retained", "trg_workflow_template_versions_immutable", "trg_workflow_template_versions_retained"];
 export const registrySuccessorTables = ["workflow_conflict_recoveries", "runtime_concurrency_policies", "runtime_delegation_capacity_admissions", "runtime_run_queue",
-  "runtime_host_capacity_intents", "runtime_host_capacity_releases", "runtime_delegation_spawn_admissions"];
+  "runtime_host_capacity_intents", "runtime_host_capacity_releases", "runtime_delegation_spawn_admissions", "automation_event_sources",
+  "automation_events", "automation_event_dispatches", "automation_deliveries", "automation_delivery_receipts", "node_rerun_submissions"];
 const recoveryObjects = ["workflow_conflict_recoveries", "trg_workflow_conflict_recovery_immutable", "trg_workflow_conflict_recovery_retained"];
 export const rows = (db, name) => db.prepare(`SELECT * FROM "${name}" ORDER BY rowid`).all();
 export const schema = db => db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all();
@@ -51,7 +52,10 @@ export function removeRegistryOverlay(f) {
       { version: 214, name: "runtime_concurrency_policies" }, { version: 215, name: "runtime_concurrency_policy_activation" },
       { version: 216, name: "runtime_delegation_capacity_admissions" }, { version: 217, name: "runtime_run_queue" },
       { version: 218, name: "runtime_host_capacity" }, { version: 219, name: "runtime_delegation_spawn_admissions" },
-      { version: 220, name: "runtime_host_capacity_continuations" }]);
+      { version: 220, name: "runtime_host_capacity_continuations" },
+      { version: 221, name: "create_automation_event_ingress_and_delivery" },
+      { version: 222, name: "create_node_rerun_submissions_and_goal_supervision" }]);
+  for (const index of ["idx_automation_event_pending", "idx_automation_event_rate", "idx_automation_delivery_pending"]) db.exec(`DROP INDEX IF EXISTS ${index}`);
   for (const table of ["runtime_host_capacity_intents", "runtime_host_capacity_releases"]) {
     assert.deepEqual(rows(db, table), []);
     assert.deepEqual(schema(db).filter(row => row.tbl_name === table).map(row => row.name), [table]);
@@ -67,6 +71,10 @@ export function removeRegistryOverlay(f) {
   assert.equal(rows(db, "runtime_delegation_spawn_admissions").length, 0);
   assert.deepEqual(schema(db).filter(row => row.tbl_name === "runtime_delegation_spawn_admissions").map(row => row.name),
     ["runtime_delegation_spawn_admissions"]);
+  for (const table of ["automation_event_sources", "automation_events", "automation_event_dispatches", "automation_deliveries", "automation_delivery_receipts", "node_rerun_submissions"]) {
+    assert.deepEqual(rows(db, table), []);
+    assert.deepEqual(schema(db).filter(row => row.tbl_name === table).map(row => row.name), [table]);
+  }
   assert.equal(rows(db, recoveryObjects[0]).length, 0);
   assert.deepEqual(schema(db).filter(row => row.tbl_name === recoveryObjects[0]).map(row => row.name).sort(), [...recoveryObjects].sort());
   for (const table of registryTables) assert.equal(rows(db, table).length, 0);
@@ -75,6 +83,9 @@ export function removeRegistryOverlay(f) {
   db.exec("PRAGMA foreign_keys=OFF");
   try {
     db.exec("BEGIN IMMEDIATE");
+    for (const table of ["automation_delivery_receipts", "automation_deliveries", "automation_event_dispatches", "automation_events", "automation_event_sources", "node_rerun_submissions"]) db.exec(`DROP TABLE ${table}`);
+    assert.equal(db.prepare("DELETE FROM schema_migrations WHERE version=222 AND name='create_node_rerun_submissions_and_goal_supervision'").run().changes, 1);
+    assert.equal(db.prepare("DELETE FROM schema_migrations WHERE version=221 AND name='create_automation_event_ingress_and_delivery'").run().changes, 1);
     db.exec("DROP TABLE runtime_host_capacity_releases");
     db.exec("DROP TABLE runtime_host_capacity_intents");
     assert.equal(db.prepare("DELETE FROM schema_migrations WHERE version=218 AND name='runtime_host_capacity'").run().changes, 1);

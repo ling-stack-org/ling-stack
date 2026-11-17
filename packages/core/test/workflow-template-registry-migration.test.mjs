@@ -33,7 +33,7 @@ function rejectUnchanged(f, pattern, extra = {}, reopen = true) {
 test("fresh Core installs migration212 with exact owned tables, foreign keys and immutable retention guards", t => {
   const f = fixture(t, { fresh: true }), db = f.db;
   assert.equal(WORKFLOW_TEMPLATE_REGISTRY_MIGRATION_VERSION, 212);
-  assert.equal(db.prepare("SELECT MAX(version) AS v FROM schema_migrations").get().v, 220);
+  assert.equal(db.prepare("SELECT MAX(version) AS v FROM schema_migrations").get().v, 222);
   assert.deepEqual(db.prepare("SELECT version,name FROM schema_migrations WHERE version=212 OR name='workflow_template_registry'").all()
     .map(row => ({ ...row })), [{ version: 212, name: "workflow_template_registry" }]);
   assert.deepEqual(schema(db).filter(owned).map(row => row.name).sort(), [...registryTables, ...registryTriggers].sort());
@@ -90,7 +90,7 @@ test("Core constructor alone upgrades a real211 database exactly once", t => {
   const installed = snapshot(f.db);
   assert.deepEqual(installed.schema.filter(row => !owned(row) && !successorOwned(row)), before.schema);
   assert.deepEqual(installed.markers.filter(row => row.version < 212), before.markers);
-  assert.equal(installed.markers.at(-1).version, 220);
+  assert.equal(installed.markers.at(-1).version, 222);
   assert.deepEqual(installed.schema, fullSchema);
   assert.deepEqual(markerIdentity(f.db), fullMarkers);
   for (const table of registrySuccessorTables) assert.deepEqual(rows(f.db, table), []);

@@ -75,10 +75,12 @@ function fixture(t: TestContext, { installed = false } = {}) {
   store = createSqliteRunStore(cwd, paths);
   const db = testDatabase(store);
   // This suite exercises the 217/218 history in isolation. The current Core
-  // bootstrap also installs the later 219/220 migrations, so remove those
+  // bootstrap also installs later migrations, so remove the later-owned overlays
   // later-owned objects before taking the historical schema snapshot.
   db.exec("PRAGMA foreign_keys=OFF");
   try {
+    for (const table of ["node_rerun_submissions", "automation_delivery_receipts", "automation_deliveries", "automation_event_dispatches", "automation_events", "automation_event_sources"]) db.exec(`DROP TABLE IF EXISTS ${table}`);
+    db.prepare("DELETE FROM schema_migrations WHERE version IN (221,222)").run();
     db.exec("DROP TABLE IF EXISTS runtime_delegation_spawn_admissions");
     db.prepare("DELETE FROM schema_migrations WHERE version IN (219,220)").run();
   } finally {
@@ -151,6 +153,8 @@ function fixture(t: TestContext, { installed = false } = {}) {
       const nextDb = testDatabase(next);
       nextDb.exec("PRAGMA foreign_keys=OFF");
       try {
+        for (const table of ["node_rerun_submissions", "automation_delivery_receipts", "automation_deliveries", "automation_event_dispatches", "automation_events", "automation_event_sources"]) nextDb.exec(`DROP TABLE IF EXISTS ${table}`);
+        nextDb.prepare("DELETE FROM schema_migrations WHERE version IN (221,222)").run();
         nextDb.exec("DROP TABLE IF EXISTS runtime_delegation_spawn_admissions");
         nextDb.prepare("DELETE FROM schema_migrations WHERE version IN (219,220)").run();
       } finally {

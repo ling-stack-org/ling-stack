@@ -18,6 +18,7 @@ import type {
   WorkItemReleaseRequest,
   WorkItemRouteRequest,
   WorkspaceChangesResponse,
+  ThreadWorkspaceChangeSummaryResponse,
   WorkSummaryResponse,
   WorkspaceSnapshotManifest,
   WorkspaceSnapshotEntry,
@@ -73,6 +74,10 @@ export const operationEndpoints = {
   async createCodeAssessmentComment(this: LingDaemonEndpointContext, cwd: string, assessmentId: string, findingId: string, input: import("@ling-stack/contracts").CreateCodeAssessmentCommentRequest): Promise<import("@ling-stack/contracts").CodeAssessmentComment> {
     return this._post(`/workspace/code-assessments/${encodeURIComponent(assessmentId)}/findings/${encodeURIComponent(findingId)}/comments`, { cwd }, input);
   },
+  async getThreadWorkspaceChangeSummary(this: LingDaemonEndpointContext, cwd: string, threadId: string): Promise<ThreadWorkspaceChangeSummaryResponse> {
+    return this._get(`/threads/${encodeURIComponent(threadId)}/workspace-change-summary`, { cwd });
+  },
+
   async getWorkSummaryChanges(this: LingDaemonEndpointContext, cwd: string): Promise<WorkspaceChangesResponse> {
     return this._get("/workspace/changes", { cwd, baseline: "head" });
   },

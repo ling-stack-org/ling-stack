@@ -1,3 +1,5 @@
+import { handleAutomationEventRoute, isAutomationEventIngress } from "../features/automations/event-routes.js";
+import { handleNodeRerunSubmission } from "../features/runs/node-rerun-submission.js";
 import { handleChannelSessions, handleChannelSessionDirectoryRepair } from "../features/channels/session-routes.js";
 import { handleMemorySemanticRoute } from "../features/memory/semantic-routes.js";
 import { handleMemoryWikiRoute } from "../features/memory/wiki-routes.js";
@@ -455,7 +457,7 @@ export async function routeRequest(
   // request. /health stays open so lifecycle probes keep working.
   if (config.authToken) {
     const pathname = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`).pathname;
-    if (pathname !== "/health") {
+    if (pathname !== "/health" && !isAutomationEventIngress(pathname, request.method)) {
       if (!daemonRequestIsAuthorized(config.authToken, request.headers.authorization)) {
         writeJson(response, 401, { error: "unauthorized", message: "A valid bearer token is required for non-loopback access." });
         return;
@@ -844,6 +846,8 @@ export async function routeRequest(
     handleMcpToolsCollection(request, response, url, storeRegistry);
     return;
   }
+
+  if (await handleAutomationEventRoute(request, response, url, context)) return;
 
   if (url.pathname === "/automations") {
     await handleAutomationsCollection(request, response, config, storeRegistry, automationSchedulers);
@@ -1711,6 +1715,12 @@ export async function routeRequest(
       activeRuns,
       runRoute.runId,
     );
+    return;
+  }
+  if (runRoute?.kind === "node-rerun-submit") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) return;
+    await handleNodeRerunSubmission(request, response, url, config.maxBodyBytes, storeRegistry, activeRuns, runRoute.runId,
+      cwd => context.taskSupervisor.poke(cwd));
     return;
   }
   if (runRoute?.kind === "node-rerun-admission") {

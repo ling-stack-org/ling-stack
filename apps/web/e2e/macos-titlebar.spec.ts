@@ -357,8 +357,8 @@ test("macOS management surfaces share one titlebar owner", async ({ page }, test
   await expectSingleTitlebarOwner(titlebarSurface, "Plugin Manager");
   await expect(page.locator(".settings-plugin-manager > .plugin-manager-header")).toHaveCount(0);
 
-  await navigation.getByRole("button", { name: "Automations" }).click();
-  await expectSingleTitlebarOwner(titlebarSurface, "Automations");
+  await navigation.getByRole("button", { name: "Scheduled tasks" }).click();
+  await expectSingleTitlebarOwner(titlebarSurface, "Scheduled tasks");
   await expect(page.locator(".automation-ui2-page > .automation-ui2-header")).toHaveCount(0);
 
   await navigation.getByRole("button", { name: "Settings" }).click();

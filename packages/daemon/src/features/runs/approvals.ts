@@ -34,6 +34,7 @@ import {
 } from "./approval-decision-projection.js";
 import { reconcileApprovalPostCommitEffects } from "./approval-postcommit-effects.js";
 import { createCallbackApprovalWait, createOwnedApprovalPreviewArtifacts } from "./approval-preview-failure.js";
+import { waitForScopedApprovalDecision } from "./approval-call-cancellation.js";
 import {
   classifyApprovalActionType,
   classifyBashRiskFlags,
@@ -204,9 +205,10 @@ export function createRunApprovalHandler(options: {
     fileAdmission?: FileMutationAdmission,
     commandAdmission?: { readonly operation: HostCommandOperation; dispatched: boolean },
   ) => {
+    const signal = request.signal ? AbortSignal.any([request.signal, ...(options.signal ? [options.signal] : [])]) : options.signal;
     // A Run has one durable approval-wait state. Parallel tool calls must not
     // each create a pending approval against the same running -> waiting edge.
-    if (options.signal?.aborted) throwIfAborted(options.signal);
+    if (signal?.aborted) throwIfAborted(signal);
     if (options.store.getRun(options.run.id)?.status !== "running") {
       return { approved: false, reason: "stale_run_execution: Run is no longer active for this approval request." } as const;
     }
@@ -257,7 +259,7 @@ export function createRunApprovalHandler(options: {
     const rejectUnboundEffect = (approvalId?: string) => {
       const isolatedRejection = fileMutation ? workflowIsolationFileMutationRejection({ store: options.store,
         run: options.run, request, sourceFence, workflowIsolationBindingId: options.workflowIsolationBindingId,
-        mode: toolBrokerMode, hostOperation: fileAdmission?.operation, signal: options.signal }) : undefined;
+        mode: toolBrokerMode, hostOperation: fileAdmission?.operation, signal }) : undefined;
       if (isolatedRejection) return { approved: false, approvalId, reason: isolatedRejection,
         handledResult: createFileMutationDeniedResult({ request, approvalId }, isolatedRejection) };
       const rejection = workflowOperationEffectRejection({ store: options.store, run: options.run, request,
@@ -382,7 +384,7 @@ export function createRunApprovalHandler(options: {
             request,
             effectivePolicySnapshot: options.effectivePolicySnapshot,
             appendAndMaybeStream: options.appendAndMaybeStream,
-            signal: options.signal,
+            signal,
             extraSecrets: options.extraSecrets,
             shellSnapshotEnabled: options.shellSnapshotEnabled,
             hostOperation: commandAdmission?.operation,
@@ -404,7 +406,7 @@ export function createRunApprovalHandler(options: {
             allowedWritePaths: options.approvalPolicy.allowedWritePaths,
             effectivePolicySnapshot: options.effectivePolicySnapshot,
             appendAndMaybeStream: options.appendAndMaybeStream,
-            signal: options.signal,
+            signal,
             requireExistingParentsForAdds: typedExclusiveCreate,
             hostOperation: fileAdmission?.operation,
             recordCompactionBoundaryEvidence: options.recordCompactionBoundaryEvidence,
@@ -658,7 +660,9 @@ export function createRunApprovalHandler(options: {
       }
     }
 
-    const resolvedApproval = await waitForApprovalDecision(options.store, approval.id, options.signal);
+    const resolvedApproval = await waitForScopedApprovalDecision({ store: options.store, runId: options.run.id,
+      request, approval, sourceFence, runSignal: options.signal,
+      wait: () => waitForApprovalDecision(options.store, approval.id, signal) });
     const afterWaitRejection = rejectHost(resolvedApproval.status === "approved" ? resolvedApproval.id : undefined);
     if (afterWaitRejection) {
       approvalWait.resolve(resolvedApproval);
@@ -866,7 +870,7 @@ export function createRunApprovalHandler(options: {
           approvalId: resolvedApproval.id,
           effectivePolicySnapshot: options.effectivePolicySnapshot,
           appendAndMaybeStream: options.appendAndMaybeStream,
-          signal: options.signal,
+          signal,
           extraSecrets: options.extraSecrets,
           shellSnapshotEnabled: options.shellSnapshotEnabled,
           hostOperation: commandAdmission?.operation,
@@ -885,7 +889,7 @@ export function createRunApprovalHandler(options: {
           effectivePolicySnapshot: options.effectivePolicySnapshot,
           previewArtifactIds: previewArtifacts.map((artifact) => artifact.id),
           appendAndMaybeStream: options.appendAndMaybeStream,
-          signal: options.signal,
+          signal,
           requireExistingParentsForAdds: typedExclusiveCreate,
           hostOperation: fileAdmission?.operation,
           recordCompactionBoundaryEvidence: options.recordCompactionBoundaryEvidence,

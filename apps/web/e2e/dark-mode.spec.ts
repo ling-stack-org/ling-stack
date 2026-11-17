@@ -97,7 +97,7 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page },
   await captureDarkEvidence(page, testInfo, "04-computer-control-install-guide");
   await page.getByRole("dialog", { name: "安装 Cua Driver" }).getByRole("button", { name: "关闭" }).click();
 
-  await navigation.getByRole("button", { name: "自动化" }).click();
+  await navigation.getByRole("button", { name: "定时任务" }).click();
   await expect(page.locator(".automations-inbox-page")).toBeVisible();
   await expect(page.locator(".automation-execution-inspector")).toHaveCount(0);
   await page.locator('[data-automation-id="automation_dark_mode"]').click();

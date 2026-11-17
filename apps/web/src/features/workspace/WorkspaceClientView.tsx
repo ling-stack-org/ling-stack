@@ -3038,6 +3038,8 @@ export function WorkspaceClientView({
   </InlineFeedback> : (
     <ChannelComposer
       workspaceCwd={cwd}
+      threadId={activeChannelConversationThread?.id}
+      onOpenReview={(target) => openRightDockPage("review", undefined, target)}
       statusNode={channelActiveStatusStrip}
       runtimeMetrics={channelRuntimeMetrics}
       guidanceModeActive={guidanceModeActive}
