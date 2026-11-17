@@ -105,12 +105,14 @@ test("timing telemetry is independent of the mandatory quality gate", () => {
   assert.doesNotMatch(quality, /timing-telemetry|ci-telemetry|continue-on-error/u);
   assert.match(telemetry, /^    needs: \[scope, quality\]$/mu);
   assert.match(telemetry, /^    if: always\(\)$/mu);
-  assert.match(telemetry, /^    timeout-minutes: 3$/mu);
+  assert.match(telemetry, /^    timeout-minutes: 8$/mu);
   assert.match(telemetry, /^    continue-on-error: true$/mu);
   assert.match(telemetry, /permissions:\n      actions: read\n      contents: read/u);
   assert.match(telemetry, /GH_TOKEN: \$\{\{ github\.token \}\}/u);
   assert.match(telemetry, /actions\/runs\/\$\{GITHUB_RUN_ID\}/u);
   assert.match(telemetry, /\/attempts\/\$\{GITHUB_RUN_ATTEMPT\}\/jobs\?per_page=100/u);
+  assert.match(telemetryStep("Collect workflow timing metadata"), /for attempt in 1 2 3/u);
+  assert.match(telemetryStep("Collect workflow timing metadata"), /sleep "\$attempt"/u);
   assert.match(telemetry, /ci-telemetry\.mjs/u);
   assert.match(telemetry, /--reports-dir=\.codex-artifacts\/ci\/reports/u);
   assert.match(telemetry, /cat \.codex-artifacts\/ci\/ci-telemetry\.md >> "\$GITHUB_STEP_SUMMARY"/u);
@@ -125,7 +127,7 @@ test("timing telemetry is independent of the mandatory quality gate", () => {
 });
 
 test("workflow collection preserves unavailable observations on API and JSON failures", async t => {
-  for (const mode of ["success", "api-failure", "invalid-json", "invalid-pages"]) {
+  for (const mode of ["success", "retry-success", "api-failure", "invalid-json", "invalid-pages"]) {
     await t.test(mode, async () => {
       const directory = await mkdtemp(join(tmpdir(), "ci-telemetry-workflow-"));
       try {
@@ -133,6 +135,13 @@ test("workflow collection preserves unavailable observations on API and JSON fai
         await mkdir(bin);
         await writeFile(join(bin, "gh"), `#!/usr/bin/env node
 if (process.env.TELEMETRY_API_MODE === "api-failure") process.exit(1);
+if (process.env.TELEMETRY_API_MODE === "retry-success") {
+  const fs = require("node:fs");
+  const marker = process.env.TELEMETRY_RETRY_MARKER;
+  const count = Number(fs.existsSync(marker) ? fs.readFileSync(marker, "utf8") : 0);
+  fs.writeFileSync(marker, String(count + 1));
+  if (count < 2) process.exit(1);
+}
 if (process.argv.at(-1).includes("/jobs?")) {
   const mode = process.env.TELEMETRY_API_MODE;
   process.stdout.write(mode === "invalid-json" ? "{" : mode === "invalid-pages" ? "[{}]" : '[{"jobs":[{"id":1}]},{"jobs":[{"id":2}]}]');
@@ -141,15 +150,17 @@ if (process.argv.at(-1).includes("/jobs?")) {
         const result = spawnSync("bash", ["--noprofile", "--norc", "-eo", "pipefail", "-c", stepCommand("Collect workflow timing metadata")], {
           cwd: directory, encoding: "utf8", timeout: 10000,
           env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, TELEMETRY_API_MODE: mode,
-            GITHUB_REPOSITORY: "example/repo", GITHUB_RUN_ID: "42", GITHUB_RUN_ATTEMPT: "2" },
+            GITHUB_REPOSITORY: "example/repo", GITHUB_RUN_ID: "42", GITHUB_RUN_ATTEMPT: "2",
+            TELEMETRY_RETRY_MARKER: join(directory, "retry-count") },
         });
         assert.equal(result.status, 0, result.stderr);
         const jobs = JSON.parse(await readFile(join(directory, ".codex-artifacts/ci/telemetry-jobs.json"), "utf8"));
-        if (mode === "success") assert.deepEqual(jobs, { jobs: [{ id: 1 }, { id: 2 }] });
+        if (["success", "retry-success"].includes(mode)) assert.deepEqual(jobs, { jobs: [{ id: 1 }, { id: 2 }] });
         else assert.deepEqual(jobs, { jobs: [], telemetry_unavailable: true });
         const run = JSON.parse(await readFile(join(directory, ".codex-artifacts/ci/telemetry-run.json"), "utf8"));
         if (mode === "api-failure") assert.equal(run.telemetry_unavailable, true);
         else assert.equal(run.id, 42);
+        if (mode === "retry-success") assert.equal(await readFile(join(directory, "retry-count"), "utf8"), "4");
       } finally {
         await rm(directory, { recursive: true, force: true });
       }
