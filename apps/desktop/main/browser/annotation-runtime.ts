@@ -1,4 +1,5 @@
 import type { BrowserAnnotationAnchor } from "../../shared/browser-annotations.js";
+import { serializeBrowserScriptArgument } from "./script-serialization.js";
 
 type Request = { readonly action: "select"; readonly kind: "element" | "region" } | { readonly action: "cancel" } | { readonly action: "pointer"; readonly phase: "down" | "move" | "up"; readonly x: number; readonly y: number } | { readonly action: "locate"; readonly anchor: BrowserAnnotationAnchor };
 /** Selection runs in an isolated world; native input is consumed before it reaches page handlers. */
@@ -82,4 +83,4 @@ function annotationProgram(request: Request): Promise<BrowserAnnotationAnchor | 
     addEventListener("pagehide", cancel, { once: true }); document.documentElement.append(overlay);
   });
 }
-export function browserAnnotationScript(request: Request): string { return `(${annotationProgram.toString()})(${JSON.stringify(request)})`; }
+export function browserAnnotationScript(request: Request): string { return `(${annotationProgram.toString()})(${serializeBrowserScriptArgument(request)})`; }
