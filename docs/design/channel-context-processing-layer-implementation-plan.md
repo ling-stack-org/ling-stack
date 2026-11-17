@@ -2,7 +2,7 @@
 
 Status: active implementation plan
 Owner: channel context and Ling Agent session maintainers
-Last verified: 2026-11-18 (target branch: restart rehydration for channel reply/selector plus shared workflow projection scope)
+Last verified: 2026-11-18 (target branch: restart rehydration for channel/selector/role views plus shared workflow projection scope)
 
 ## Owning Contract
 
@@ -39,12 +39,13 @@ view lineage is now persisted in SQLite with a view-shape fingerprint, restart-r
 projection metadata and CAS/older-projection rejection. Daemon startup now reconstructs
 conversation projections from durable sources and reports current/reconstructed/stale/
 blocked lineage without rewriting an active Run's contextViewId. The recovery report now
-rehydrates private-chat, workflow-proposal, workflow-step, channel reply and selector views
-from durable records, preserving the persisted contextViewId and avoiding lineage write-back.
-Private, proposal and workflow-step shapes are fingerprint-checked; reply/selector freshness
-remains projection-owned because their prompt envelope is request-specific. Specialist/inspect
-views still rebuild their prompt-specific envelope on the next Host request; Web/security and
-packaged acceptance remain open.
+rehydrates private-chat, workflow-proposal, workflow-step, channel reply, selector, specialist
+and evidence-inspect views from durable records, preserving the persisted contextViewId and
+avoiding lineage write-back. Private, proposal, workflow-step, specialist and evidence-inspect
+shapes are fingerprint-checked; reply/selector freshness remains projection-owned because their
+prompt envelope is request-specific. Specialist recovery requires the exact consumer teammate;
+inspect recovery uses the operator projection and bounded summaries. Web/security and packaged
+acceptance remain open.
 
 Public workflow evidence now passes artifact descriptors through the shared public artifact
 projection and identifies memory candidates without exposing private or secret-adjacent bodies.
@@ -80,6 +81,11 @@ Run, Artifact or Memory records.
   durable messages, assignments, summaries and visibility policy. It leaves changed
   lineage untouched for Host-owned re-materialization, so active Runs cannot silently
   adopt a different contextViewId.
+- Specialist and evidence-inspect lineages rebuild their request envelope from the durable
+  source turn, role-scoped projection and protocol/active-work metadata. Specialist recovery
+  requires an exact consumer teammate; inspect recovery uses the operator projection and bounded
+  summaries. Neither path reads raw artifact bodies or writes a replacement lineage during
+  startup, and the persisted contextViewId remains the cache identity.
 - Keep migrations idempotent and backward compatible with existing channel and thread
   records.
 

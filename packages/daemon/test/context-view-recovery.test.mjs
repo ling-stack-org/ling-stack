@@ -12,6 +12,10 @@ import { buildPrivateChatContextView } from "../dist/features/channels/context-p
 import { buildWorkflowProposalContextView } from "../dist/features/channels/context-processing/proposals.js";
 import { buildWorkflowStepContextView } from "../dist/features/channels/context-processing/workflow-steps.js";
 import {
+  buildEvidenceInspectContextView,
+  buildSpecialistTaskContextView,
+} from "../dist/features/channels/context-processing/role-views.js";
+import {
   buildChannelIntentSelectorContextView,
   buildChannelProtocolContextSection,
   buildChannelReplyContextView,
@@ -409,4 +413,78 @@ test("startup reconciliation resolves a workflow-step view through its source me
   assert.equal(report.entries[0].view?.id, original.id);
   assert.equal(report.entries[0].view?.kind, "workflow_step_view");
   assert.equal(store.getConversationContextViewLineage(lineageKey)?.contextViewId, original.id);
+});
+
+test("startup reconciliation rebuilds specialist and evidence inspect prompt envelopes", async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), "ling-context-recovery-role-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  let store = createSqliteRunStore(cwd);
+  const channel = store.createChannel({ name: "Role recovery", boundPath: cwd }, firstAt);
+  const thread = store.resolveOrCreateConversationThread({
+    surfaceKind: "channel_root",
+    channelId: channel.id,
+    title: "Role recovery",
+    objective: "Role recovery test",
+  }, firstAt).thread;
+  const turn = store.appendConversationUserTurn({
+    channelId: channel.id,
+    threadId: thread.id,
+    title: "inspect the role envelope",
+    userInstruction: "inspect the role envelope",
+    payload: {
+      body: "inspect the role envelope",
+      format: "plain_text",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+    },
+    idempotencyKey: "context-recovery:role",
+  }, firstAt);
+  await assignContextSegmentForTurn({ store, sourceItemId: turn.item.id, now: firstAt });
+  const sourceMessage = projectConversationItemToChannelMessage(turn.item);
+  const teammateId = "teammate_builtin_engineer";
+  const specialist = buildSpecialistTaskContextView({
+    store,
+    channel,
+    sourceMessage,
+    consumerTeammateId: teammateId,
+  });
+  const inspect = buildEvidenceInspectContextView({ store, channel, sourceMessage });
+  assert.equal(specialist.sections.some((section) => section.id === "specialist_task_envelope"), true);
+  assert.equal(inspect.sections.some((section) => section.id === "inspect_metadata"), true);
+  assert.equal(inspect.sections.some((section) => section.id === "inspect_current_turn"), true);
+  const specialistLineageKey = contextViewLineageKey({
+    workspaceId: channel.workspaceId,
+    channelId: channel.id,
+    threadId: thread.id,
+    sourceItemId: turn.item.id,
+    kind: "specialist_task_view",
+    consumerTeammateId: teammateId,
+  });
+  const inspectLineageKey = contextViewLineageKey({
+    workspaceId: channel.workspaceId,
+    channelId: channel.id,
+    threadId: thread.id,
+    sourceItemId: turn.item.id,
+    kind: "evidence_inspect_view",
+  });
+  store.close();
+
+  store = createSqliteRunStore(cwd);
+  t.after(() => store.close());
+  const report = reconcileContextViewLineagesAtStartup({ store });
+  assert.equal(report.scanned, 2);
+  assert.equal(report.current, 2);
+  assert.equal(report.blocked, 0);
+  const recoveredSpecialist = report.entries.find((entry) => entry.lineageKey === specialistLineageKey);
+  const recoveredInspect = report.entries.find((entry) => entry.lineageKey === inspectLineageKey);
+  assert.equal(recoveredSpecialist?.view?.id, specialist.id);
+  assert.equal(recoveredSpecialist?.view?.kind, "specialist_task_view");
+  assert.equal(recoveredSpecialist?.view?.sections.some((section) => section.id === "specialist_task_envelope"), true);
+  assert.equal(recoveredInspect?.view?.id, inspect.id);
+  assert.equal(recoveredInspect?.view?.kind, "evidence_inspect_view");
+  assert.equal(recoveredInspect?.view?.sections.some((section) => section.id === "inspect_metadata"), true);
+  assert.equal(store.getConversationContextViewLineage(specialistLineageKey)?.contextViewId, specialist.id);
+  assert.equal(store.getConversationContextViewLineage(inspectLineageKey)?.contextViewId, inspect.id);
 });

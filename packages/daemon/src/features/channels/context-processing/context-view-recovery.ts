@@ -17,6 +17,10 @@ import {
 import { buildPrivateChatContextView } from "./private-chat.js";
 import { buildWorkflowProposalContextView } from "./proposals.js";
 import { buildWorkflowStepContextView } from "./workflow-steps.js";
+import {
+  buildEvidenceInspectContextView,
+  buildSpecialistTaskContextView,
+} from "./role-views.js";
 import { fingerprintContextViewShape } from "./context-view-lineage.js";
 import type { ChannelContextSection, ChannelContextView } from "./types.js";
 import { LING_AGENT_EXECUTOR_ID } from "../ling-agent-executor.js";
@@ -240,6 +244,10 @@ function rehydrateSurfaceView(
       }
       case "workflow_step_view":
         return rehydrateWorkflowStepView(store, lineage);
+      case "specialist_task_view":
+        return rehydrateSpecialistTaskView(store, lineage);
+      case "evidence_inspect_view":
+        return rehydrateEvidenceInspectView(store, lineage);
       default:
         // Channel reply and selector views are projection-owned here. Their
         // prompt-specific envelope is rebuilt by the next Host request.
@@ -251,6 +259,57 @@ function rehydrateSurfaceView(
   } catch (error) {
     return { status: "blocked", reason: safeRecoveryReason(error) };
   }
+}
+
+function rehydrateSpecialistTaskView(
+  store: RunStore,
+  lineage: ConversationContextViewLineage,
+): {
+  readonly status: "available";
+  readonly view: ChannelContextView;
+  readonly compareFingerprint: true;
+} | { readonly status: "blocked"; readonly reason: string } {
+  if (!lineage.consumerTeammateId) {
+    return { status: "blocked", reason: "specialist_lineage_missing_consumer" };
+  }
+  const source = channelSourceForLineage(store, lineage, "specialist_lineage_missing_source");
+  if (source.status === "blocked") return source;
+  return {
+    status: "available",
+    compareFingerprint: true,
+    view: buildSpecialistTaskContextView({
+      store,
+      channel: source.channel,
+      sourceMessage: source.sourceMessage,
+      consumerTeammateId: lineage.consumerTeammateId,
+      viewId: lineage.contextViewId,
+      persistLineage: false,
+    }),
+  };
+}
+
+function rehydrateEvidenceInspectView(
+  store: RunStore,
+  lineage: ConversationContextViewLineage,
+): {
+  readonly status: "available";
+  readonly view: ChannelContextView;
+  readonly compareFingerprint: true;
+} | { readonly status: "blocked"; readonly reason: string } {
+  const source = channelSourceForLineage(store, lineage, "inspect_lineage_missing_source");
+  if (source.status === "blocked") return source;
+  return {
+    status: "available",
+    compareFingerprint: true,
+    view: buildEvidenceInspectContextView({
+      store,
+      channel: source.channel,
+      sourceMessage: source.sourceMessage,
+      ...(lineage.consumerTeammateId ? { consumerTeammateId: lineage.consumerTeammateId } : {}),
+      viewId: lineage.contextViewId,
+      persistLineage: false,
+    }),
+  };
 }
 
 function rehydrateChannelReplyView(

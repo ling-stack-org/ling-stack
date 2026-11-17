@@ -181,8 +181,9 @@ lineage 已以 SQLite migration 225 持久化，并覆盖 reopen、旧投影和�
 重启时从 durable sources 重建 canonical projection，并对 private-chat、workflow-proposal、workflow-step、
 channel reply 和 selector 视图做只读复水；workflow/private/proposal 视图做 view fingerprint 复核，
 reply/selector 的 freshness 继续由 durable projection 判定，避免把 request-specific prompt envelope 当作持久事实。
-specialist/inspect 仍由下一次 Host 请求重建 prompt envelope。API/artifact redaction 已在公开
-artifact/workflow-evidence 投影层完成本地收口；Web/security 和平台验收仍未完成，本地定向测试通过不等于
+specialist/inspect 现在由 durable source turn、角色投影和协议/active-work 元数据重建 prompt envelope；
+specialist 必须带精确 consumer teammate，inspect 使用 operator projection，启动恢复不写回 lineage。
+API/artifact redaction 已在公开 artifact/workflow-evidence 投影层完成本地收口；Web/security 和平台验收仍未完成，本地定向测试通过不等于
 PR、合并、部署或发布验收。
 
 ### 4.3 多 Agent 与原生执行
