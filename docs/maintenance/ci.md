@@ -131,6 +131,8 @@ Draft 减少执行不改变改动范围。不能把大 PR 的范围伪装成 `do
 
 分类结果会在 CI Step Summary 和 `ci-scope-report` artifact 中输出命中文件数量、分类理由、受影响包、选中任务、Daemon 平台和每个跳过 lane 的原因，供 PR 摘要核对。scope 阶段同时用同一组变更路径生成一次强制 full scope，并由 [`scope-audit.mjs`](../../scripts/ci/scope-audit.mjs) 验证选择结果是 full scope 的子集；包、平台或任务越界，以及文档范围误选产品任务都会使 scope 失败。这是只读的选择器审计，不代替产品测试，也不放宽 unknown／root／workflow 路径的全量回退。`macos-required` 不能仅由当前的 `daemon=true` 或单个路径正则替代，需要包含共享契约和调用链的影响传播。
 
+scope 阶段还会用同一份 forced-full 分类生成完整测试计划，并将选择计划按 suite、平台、矩阵 lane 和测试文件逐项与之比较。任何选中项不在 forced-full 计划内都会使 scope 失败；分片编号可以因组合容量不同而变化，因此审计比较文件覆盖而不是硬编码 shard 编号。`ci-scope-report` 同时保留两份分类和 forced-full 计划，便于复核实际跳过了哪些测试入口。
+
 ### 平台测试清单
 
 工作区已接入受版本控制的通用与真实 Darwin 文件清单；其运行契约为：
@@ -169,6 +171,8 @@ Linux 每日回归仅在同一提交、同一检查方案已有有效的完整�
 独立的 `timing-telemetry` 任务在 `quality` 汇总结束后，尽力保存
 `ci-telemetry` artifact（保留 14 天）并写入 GitHub Step Summary。质量门
 不依赖该任务；采集、下载、解析、上传或观测任务失败都不改变原有门禁。
+任务使用 8 分钟的有界窗口；每个 Actions API 请求最多重试 3 次，短暂的
+502 或 runner 拥塞会记录为 unavailable，而不会把质量门误报成测试失败。
 质量门失败时仍下载可用分片报告，记录本次运行尝试的 run/job/step 观测、
 逐文件结果、Core/Daemon 最大分片文件累计耗时、分片不均衡比和可用报告中的
 timeout/leaked-process 计数。job 启动延迟包含依赖等待，不能当作纯 runner
