@@ -2,7 +2,7 @@ import { HTML_INTERACTIVE_SANDBOX, createInteractiveHtmlPreviewDocument } from "
 import { useState } from "react";
 import { CodeBlock } from "../blocks/CodeBlock.js";
 import { CopyActionButton } from "../feedback/CopyActionButton.js";
-import { ImageCompareViewer } from "./ImageCompareViewer.js";
+import { ImageReviewEditor } from "../review/ImageReviewEditor.js";
 import { MessageBodyRenderer } from "../blocks/MessageBodyRenderer.js";
 import { SpreadsheetGrid } from "./SpreadsheetGrid.js";
 import { useI18n } from "../../../i18n.js";
@@ -18,7 +18,7 @@ export function ArtifactPreview({ preview, cwd, onImageError }: ArtifactPreviewP
   const { t } = useI18n();
 
   if (preview.kind === "image" && preview.imageUrl) {
-    return <ImageCompareViewer current={{ label: preview.ref.label, imageUrl: preview.imageUrl }} compare={preview.compare} onImageError={onImageError} />;
+    return <ImageReviewEditor key={JSON.stringify([cwd, preview.ref.source, preview.ref.id])} preview={preview} cwd={cwd} onImageError={onImageError} />;
   }
 
   if (preview.kind === "spreadsheet") {

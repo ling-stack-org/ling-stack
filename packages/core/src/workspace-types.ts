@@ -1283,6 +1283,7 @@ export interface ChannelMention {
 export type ChannelMessageFileRefSource = "composer" | "explicit_text" | "api" | "inferred_text";
 
 export interface ChannelMessageFileRef {
+  readonly annotation?: import("@ling-stack/contracts").ReviewAnnotation;
   readonly path: string;
   readonly label?: string;
   readonly source?: ChannelMessageFileRefSource;
