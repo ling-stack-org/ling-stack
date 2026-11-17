@@ -1,8 +1,8 @@
 # Ling Companion
 
-Status: foundation, dialogue, memory bridge, proactive scheduler, surface contracts, adapter-selection acceptance, and Web renderer delivered
+Status: character renderer, streaming/recovery, proactive controls, and independent desktop window implemented
 Owner: repository maintainers
-Last verified: 2026-11-11
+Last verified: 2026-11-17
 Document type: product and architecture contract
 Code and test anchors: `packages/contracts/src/companions.ts`,
 `packages/core/src/companion-types.ts`, `packages/core/src/storage/sqlite/companion-store.ts`,
@@ -55,15 +55,18 @@ The manifest describes capabilities, not renderer implementation. An action such
 `greet` or `think` is a semantic event. A UI may map it to an animation, sound, or text
 decoration, but the daemon does not execute arbitrary local commands from model output.
 
-The first Ling web renderer uses the verified Codex-compatible v2 pet atlas for 澜星/Yui
-(`apps/web/public/companions/lanxing-spritesheet.png`). The atlas stays transparent and
-is rendered as CSS sprite frames: companion phases map to `idle`, `running`, `waiting`,
-`waving`, `jumping`, or `failed`, while manifest actions map `greet` to `waving`, `think`
-to `running`, and `celebrate` to `jumping`. The role-first surface is an independent
-fixed overlay and does not resize or restyle the Ling application surface. It has no
-enclosing card: the name, state, messages, actions, settings link, and composer are
-translucent controls that appear around the character on hover or focus. Text input and
-model execution remain separate from the visual asset.
+The Ling web renderer uses a transparent, non-pixel full-body pose atlas for 澜星/Yui
+(`apps/web/public/companions/yui-poses.png`). Its three columns and two rows contain
+idle, thinking, greeting, celebrating, waiting, and attention poses. Phases and manifest
+actions select a registered pose; `tired` and `sad` emotions select the waiting and
+attention poses while idle. Breathing and celebration motion use CSS transforms and
+respect reduced-motion preferences. The fixed companion surface contains separate character
+and conversation columns: messages, status, actions, settings, and the composer stay in the
+conversation column. Below 640 CSS pixels, the character occupies its own row above the
+conversation. Controls never overlap the character. Conversation surfaces use Ling's
+current semantic theme tokens with opaque reading backgrounds. System scheduler prompts
+are excluded from the rendered transcript. Text input and model execution remain separate
+from the visual asset.
 
 ## Contracts
 
@@ -137,6 +140,7 @@ GET    /companions/:id/events?cwd=...
 POST   /companions/:id/interactions?cwd=...
 POST   /companions/:id/proactive?cwd=...
 GET    /companions/:id/messages?cwd=...
+GET    /companions/:id/messages?cwd=...&idempotencyKey=...
 POST   /companions/:id/messages?cwd=...
 POST   /companions/:id/messages/stream?cwd=...
 ```
@@ -152,7 +156,10 @@ original array fields. Message writes accept an optional `idempotencyKey`; compl
 outcomes, including recorded reply failures, replay the existing user/AI pair. A failure
 before a reply is persisted permits a retry with the original user message, including
 after a daemon restart. Concurrent requests join the same in-flight result across JSON
-and streaming transports. A persisted pending reply returns `companion_message_in_progress`
+and streaming transports. Reusing a key with different text returns
+`409 companion_message_payload_mismatch`. A read with `idempotencyKey` returns an
+`accepted` or `unknown` submission receipt, its persisted user/reply messages when
+available, and current state; it does not dispatch a provider run. A persisted pending reply returns `companion_message_in_progress`
 instead of dispatching another run.
 
 The proactive scheduler is daemon-owned and uses the same direct-reply service as a user
@@ -180,20 +187,112 @@ hours only for that local trigger.
    durable idempotency, and single-flight execution through the existing direct-reply path.
 5. **Surface contract (delivered):** stable state, event, and message APIs with cursor
    pagination and idempotent writes for Web/Desktop clients.
-6. **Renderer acceptance (delivered for Web MVP):** render the transparent v2 pet atlas,
-   map semantic phases/actions to sprite rows, consume new action events and state/message
-   changes through the companion event surface, present the character on a frameless
-   role-first surface with translucent controls, and expose the surface from the sidebar
-   and Settings. Desktop-native packaging and reconnect coverage remain follow-up work.
-   Provider connectivity remains covered by Ling's existing model configuration and
-   provider acceptance flows.
+6. **Conversation renderer (implemented and locally verified):** render the transparent
+   six-pose character atlas beside the conversation, consume reply text through SSE, and
+   map validated semantic phases/actions to poses. Keep a pending idempotency key in
+   localStorage, scoped by workspace and Companion; message text stays in the daemon.
+   A reconnect or reload looks up the receipt before retrying the same message and key.
+   A restored key keeps the composer disabled until its original message is recovered;
+   a failed receipt lookup cannot bind newly typed text to an earlier submission.
+   Fetch 40 messages at a time and preserve the older-history cursor across background
+   synchronization. Abort streaming on surface disposal and ignore stale session results.
+   Sync state/history/events every five seconds when not sending, and resume on visibility
+   or online events. This is bounded polling for background semantic events, not a separate
+   live event transport.
+7. **Proactive controls (implemented and locally verified):** new UI-created Companions
+   default to proactive behavior off and a 15-minute minimum interval. Settings expose
+   enablement, 5/15/30/60/240-minute intervals, and optional hourly quiet periods using the
+   daemon computer's local time. Existing custom intervals remain selectable. Clearing a
+   quiet period writes `quietHours: null`; equal start/end is rejected by the UI.
+8. **Native surface (implemented and locally verified on macOS arm64):** the main window
+   opens a separate transparent, frameless, always-on-top Electron window, initially
+   760 by 680 pixels and clamped to the display. It can move, resize, close independently,
+   and open Companion Settings in the main window. Closing the owning main window closes
+   the Companion; hiding it leaves the Companion usable. The dedicated sandboxed preload
+   exposes only workspace/daemon context and close/settings commands, not `lingDesktop`.
+   IPC and opaque-origin request projection require the owned, trusted top-level document.
+   The desktop surface retries teammate discovery after a transient daemon failure so a
+   temporary startup outage does not leave the character on its fallback avatar until the
+   window is reopened.
 
-The daemon tests use deterministic configured-provider fixtures. They verify that the
-Companion does not add model settings and that the bound preset reaches the same direct
-execution path. External provider connectivity remains an environment-level concern of
-Ling's existing model configuration and provider acceptance flows.
-
+Deterministic daemon/provider fixtures cover recovery and policy boundaries. They are
+separate from the real-provider acceptance described below. There is no additional model
+or credential configuration for the Companion.
 Completion means a Companion can be created for any active teammate, converse through the
 same configured model path, preserve private history and memory boundaries, emit validated
 semantic events, pause/resume proactive behavior, and switch between any Ling provider
 without changing Companion data.
+
+## Completion work plan
+
+The following work tracks the Web and desktop companion surfaces. A milestone is
+complete only after its implementation and relevant acceptance checks pass.
+
+- [x] **Character resources:** use a transparent, non-pixel full-body Yui pose atlas based
+  on the supplied character reference. Register idle, thinking, greeting, celebration,
+  waiting, and attention poses; size the character for readable adult proportions on
+  desktop and smaller viewports. Respect reduced-motion preferences.
+- [x] **Conversation surface:** consume the existing streaming message endpoint, retain
+  one idempotency key per pending user message across retries and reloads, load older
+  history with the existing cursor, and reconcile messages/state after connectivity
+  returns. Isolate pending requests and drafts by workspace and companion.
+- [x] **Proactive controls:** expose proactive enablement, cooldown, and optional quiet
+  hours in Settings. Make creation defaults explicit and preserve the remaining policy
+  fields when editing one setting.
+- [x] **Independent desktop window:** provide a transparent companion window with its
+  own bounded preload/IPC authority, workspace/companion selection, native dragging and
+  close behavior. Keep it usable while the main Ling window is hidden. Include the
+  renderer, preload, and character assets in desktop builds.
+- [x] **Local acceptance:** cover streaming, retries, pagination, reconnection,
+  settings, and native-window boundaries with focused behavior tests; run production and
+  test typechecks, browser visual checks, a real-provider multi-turn session, a sustained
+  runtime check, and local desktop packaging/runtime checks.
+
+Integration is tracked in [PR #717](https://github.com/ling-stack-org/ling-stack/pull/717),
+which records the final source revision, CI gates, review threads and merge status.
+
+## Acceptance evidence and limits
+
+- Focused daemon Companion suites: 17 tests passed, including receipt lookup, retry
+  deduplication, changed-text rejection, restart recovery, memory, proactive scheduling,
+  quiet-hour clearing, and origin/access checks.
+- Production-build Web end-to-end acceptance: 13 tests passed, covering chunked SSE before completion,
+  truncated-stream retry, receipt recovery after reload, older-history pagination,
+  session changes during receipt recovery, delayed receipts after a newer submission,
+  composer locking while a restored key's receipt is unavailable,
+  proactive defaults and settings, refresh-safe unsaved settings, exact custom cooldown retention,
+  compiled Chinese controls, and non-overlapping character/chat layout.
+  Layout was exercised across all six built-in themes, a 1440 by 1000 desktop viewport, a 390 by 844 narrow
+  viewport, and reduced motion. These are configured mock-provider browser checks.
+- Actual Electron 45.3.1 on macOS arm64: a separate sandboxed window loaded packaged Web
+  build files, displayed history, sent a real-model reply, moved and resized, closed
+  without closing the main window, reopened, and was cleaned up when its owner closed.
+  The Companion renderer had no page errors and did not receive the main-window bridge.
+- An isolated daemon used the existing loopback provider with `gpt-5.6-sol` for real
+  multi-turn streaming, context recall, native-window dialogue, a daemon-owned proactive
+  tick, quiet-hour refusal, cooldown refusal, and idempotent replay. The original
+  workspace's credentials/model settings were not modified. Its configured `gpt-5.5`
+  model was unavailable at the proxy, so the available model was selected only in the
+  isolated acceptance workspace. After 41.7 minutes of continuous daemon operation, a
+  fresh request still recalled the initial test code correctly and completed in 2,817 ms.
+- Full macOS `package:mac` uses an
+  [independent native prerequisite review](../../native/office-local/reviewed-packaged-source-v1-review.md#companion-and-native-runtime-review-2026-11-17)
+  of the exact Apple-signed local compiler/SDK 27.2 profile and actual Electron
+  45.3.1 / Node 24.22.2 runtime, retaining all native source, OS and signing bounds.
+  Standard packaging produced an App, ZIP and DMG. Local checks matched the complete
+  archive payloads to the App, verified distribution materials, decoded the character
+  asset, checked native binary architecture and deep strict ad-hoc signatures, and
+  started the pinned embedded runtime. The package-owned browser passed first download,
+  interaction, offline cache reuse and restart with an unavailable proxy.
+- The complete macOS App started its own packaged daemon in an isolated workspace and
+  profile. Its Companion completed a real-model reply, wide/narrow layout, moving and
+  resizing, operation with the main window hidden, independent close/reopen, and owner
+  cleanup, with no renderer page errors. Existing native-messaging registrations were
+  restored after the check. Archive/runtime receipts bind their exact source snapshot
+  separately from the earlier sustained-model session.
+- These are local development artifacts with ad-hoc signatures. Developer ID,
+  notarization, clean-machine installation and Windows GUI acceptance remain unverified;
+  archive and CI results do not establish those acceptance scopes.
+
+Additional characters, speech, articulated Live2D animation, and work-event-driven
+proactive behavior remain separate enhancements.

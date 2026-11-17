@@ -1,8 +1,8 @@
 # Desktop 本地开发候选包
 
 本文说明如何准备 macOS Apple Silicon 和 Windows x64 的本地开发候选。
-命令以 `49554b07652c4311fade8ec8dee858dd364b85fe` 为基线核对，并包含本轮对 Electron Builder 启动方式的修复；
-构建时必须选取包含该修复的已审核提交。这份文档不代表已在 Windows 执行或验收。
+文中的 macOS 本机证据固定于历史 Companion 候选源码 `3661791aaad4065918b440f6c560da0e18db1742`，并包含 Electron Builder 启动方式的修复；当前候选必须另行选择并核对已审核的完整源码 SHA，不能把这份历史证据套用于移动中的 `main` 或其他提交。
+构建时必须选取对应的已审核提交。这份文档不代表已在 Windows 执行或验收。
 候选包只用于本机工程验证，不自动上传、创建 Release 或晋级为正式发行版。
 
 ## 发布命名
@@ -55,10 +55,10 @@ Office 原生打包还需要经过独立审核的本机编译器、macOS SDK、N
 `darwin + arm64 + unsigned_dev`，使用默认 ad-hoc signer，并拒绝同时打入 Cua Driver provider。
 它要求 `native/office-local/reviewed-packaged-source-v1.json`；上述历史基线没有这个文件，
 因此当时干净 checkout 的标准打包会遇到 `packaged_office_native_source_review_missing`。
-2026-10-12 开发候选补齐了有限范围的独立审查；2026-10-13 经独立原生与打包审查后，
-针对 PR #528 精确重绑定了 Office、sandbox/codesign 两份记录及锁文件指纹，见
+2026-11-17 的独立原生前置审查采用了本机实际 Apple 签名的 Xcode 27.2 / macOS SDK 27.2
+配置，并重绑定 Electron 45.3.1、Node 24.22.2 的运行时记录，见
 [审查记录](../../native/office-local/reviewed-packaged-source-v1-review.md)。该记录绑定本次实际
-Darwin 25.6.0、Electron 44.7.0 和本机工具链，不是任意机器或后续源码的通用批准。
+Darwin arm64、本机工具链和固定源码输入，不是任意机器或后续源码的通用批准。
 19 项 sandbox 源码和 15 项 Office 源码未变；原始 Host 运行时指纹必须同时匹配，
 ad-hoc 签名不会豁免这一要求。本次没有纳入 E6 或 PR #527。
 
@@ -86,7 +86,6 @@ fi
 LING_CUA_SIGNING_TIER=unsigned_dev \
 LING_CUA_DISTRIBUTION_CHANNEL=development \
 LING_CUA_DRIVER_PACKAGE_PROVIDER=0 \
-CSC_IDENTITY_AUTO_DISCOVERY=false \
 corepack pnpm --filter @ling-stack/desktop package:mac
 ```
 
@@ -96,7 +95,15 @@ corepack pnpm --filter @ling-stack/desktop package:mac
 
 成功后应检查 `apps/desktop/release/` 中本次生成的 arm64 `.app`、DMG 和 ZIP，
 逐一记录 SHA-256，验证 DMG/ZIP 完整性及解包后的 `codesign --verify --deep --strict`。
-随后在测试账号中验证安装、启动、真实模型任务、退出重启和卸载。
+在隔离测试账号中再验证启动、真实模型任务、退出重启、窗口生命周期和卸载。
+本次 `3661791a` 的本机证据已完成 App/ZIP/DMG 内容比对、分发材料核对、嵌入运行时启动、
+真实 Companion 对话、宽窄布局、独立窗口关闭/重开和 owner 清理；对应 SHA-256 为：
+
+```text
+Ling-Stack-0.4.0-macos-arm64.dmg  49b01074a070745b52181248bd87d1b4296bf87b762c115c91361c41e5adea16
+Ling-Stack-0.4.0-macos-arm64.zip  01c81d65a0b55cd878c78a8408a46dbd67a5715db5cde087f4e2aeaf33a5c53f
+```
+
 这些结果仍只属于本地 ad-hoc 候选，不代表公证、Gatekeeper 或完整 clean-machine 发布验收。
 
 若只需源码开发运行，可在 workspace 构建后执行：
