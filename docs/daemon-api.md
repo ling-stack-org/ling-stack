@@ -1623,6 +1623,61 @@ SSE events:
 Hidden `<ling_task_proposal>` blocks are not streamed as visible deltas. The daemon
 continues to extract and persist proposals through the channel proposal pipeline.
 
+### Review Annotations
+
+Channel Turn requests and `POST /conversations/stream` accept up to 12 `fileRefs`.
+Each reference may contain a user-authored `annotation`. Accepted canonical Items,
+message projections and queued follow-up payloads retain the same structured data.
+Multiple comments at the same path and line are distinct by annotation `id`.
+
+```json
+{
+  "fileRefs": [
+    {
+      "path": "src/main.ts",
+      "line": 18,
+      "source": "composer",
+      "annotation": {
+        "kind": "code",
+        "id": "comment_code_1",
+        "text": "Handle the empty input here.",
+        "side": "right",
+        "startLine": 15,
+        "revision": "turn:review-revision",
+        "diffHunk": "@@ -15,1 +15,1 @@\n-before\n+after"
+      }
+    },
+    {
+      "path": "figure.png",
+      "source": "composer",
+      "annotation": {
+        "kind": "image",
+        "id": "comment_image_1",
+        "text": "Move this label.",
+        "source": "artifact",
+        "sourceId": "artifact_image_1",
+        "x": 0.42,
+        "y": 0.61
+      }
+    }
+  ]
+}
+```
+
+`id` is nonempty and at most 160 characters; `text` is nonempty and at most
+8,000 characters. Code `line` is the inclusive end line; optional `startLine` is a
+positive integer no greater than `line`. `side` is `left` (original) or `right`
+(modified). Optional `revision` and `diffHunk` are bounded to 500 and 24,000
+characters. Image `source` is `artifact`, `attachment` or `workspace_file`;
+`sourceId` is bounded to 500 characters, and finite `x`/`y` coordinates are in
+`[0, 1]` relative to the image, independent of preview size.
+
+Annotations provide user feedback and location evidence, not file-read authority.
+Code access still follows the existing workspace policy. Image annotations remain
+metadata references; they do not automatically read a path or grant artifact access.
+The Web can upload a canvas snapshot through the existing attachment flow. Uploaded
+attachments keep the existing scope, size and lifecycle rules.
+
 ### Attachments
 
 ```http
@@ -3504,6 +3559,14 @@ Rules:
 - The provider preset must include the requested media operation in `capabilities`.
 - Chat provider presets return `unsupported_capability`.
 - Creation only records queued metadata. Live vendor calls happen only through explicit run execution after runtime readiness checks pass; billing and provider account charges are handled by the configured vendor account, not by a Ling approval gate.
+- `image_edit` accepts `input.imageUrl` and optional `input.maskUrl` as supported
+  HTTP(S) or `data:image/...;base64,...` inputs. The image editor supplies a PNG
+  source and, for repair, a black mask with white regions to replace. Background
+  removal uses an explicit prompt; transparent output depends on the provider.
+- This create route uses `DaemonConfig.maxMediaBodyBytes` (default 24 MiB) for the
+  whole JSON request, allowing bounded image/mask data URLs. Other JSON routes
+  retain `maxBodyBytes` (default 1 MiB). The Web limits combined source/mask URL
+  length to 23 MiB and asks the user to resize larger inputs.
 
 Response:
 

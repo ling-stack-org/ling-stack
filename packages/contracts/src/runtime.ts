@@ -956,6 +956,8 @@ export interface RunInterventionLinkPreviewPayload {
 }
 
 export interface RunInterventionWorkspaceFilePayload {
+  readonly line?: number;
+  readonly annotation?: import("./review-annotations.js").ReviewAnnotation;
   readonly path: string;
   readonly label?: string;
   readonly source?: ConversationWorkspaceFileRefSourceV1;

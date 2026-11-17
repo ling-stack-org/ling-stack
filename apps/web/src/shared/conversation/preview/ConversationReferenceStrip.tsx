@@ -14,6 +14,7 @@ export interface ConversationReferenceItem {
   readonly href?: string;
   readonly previewTitle?: string;
   readonly previewText?: string;
+  readonly annotationText?: string;
   /** Display-only or Host-issued ref. Raw paths never become navigation. */
   readonly sourceRef?: ConversationOperationSourceRef;
   readonly onOpen?: () => void;
@@ -78,6 +79,7 @@ export function ConversationReferenceStrip({
                 {content}
               </button>
             )}
+            {reference.annotationText ? <span className="conversation-review-comment">{reference.annotationText}</span> : null}
             {activePreviewId === reference.id && (reference.previewTitle || reference.previewText || reference.meta) ? (
               <span className="conversation-reference-preview" role="tooltip">
                 <strong>{reference.previewTitle ?? reference.label}</strong>

@@ -1,3 +1,4 @@
+import { parseReviewAnnotation } from "@ling-stack/contracts";
 import { isDeepStrictEqual } from "node:util";
 import {
   redactSecrets,
@@ -137,7 +138,8 @@ function validatePayload(value: unknown, expected: { threadId: string; turnId: s
     !request.conversationAttachmentIds.every((id) => typeof id === "string" && id.length > 0))) throw new Error("Invalid prepared attachment references");
   if (request.conversationFileRefs !== undefined && (!Array.isArray(request.conversationFileRefs) ||
     !request.conversationFileRefs.every((ref) => isRecord(ref) && typeof ref.path === "string" && ref.path.length > 0 &&
-      Object.keys(ref).every((key) => ["path", "label", "source", "line"].includes(key)) &&
+      Object.keys(ref).every((key) => ["path", "label", "source", "line", "annotation"].includes(key)) &&
+      (ref.annotation === undefined || isDeepStrictEqual(parseReviewAnnotation(ref.annotation), ref.annotation)) &&
       (ref.label === undefined || typeof ref.label === "string") &&
       (ref.source === undefined || isConversationFileRefSource(ref.source)) &&
       (ref.line === undefined || Number.isInteger(ref.line) && Number(ref.line) > 0)))) throw new Error("Invalid prepared file references");

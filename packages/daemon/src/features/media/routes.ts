@@ -43,7 +43,7 @@ export async function handleMediaJobsCollection(
     }
 
     if (request.method === "POST") {
-      const body = await readJsonBody(request, config.maxBodyBytes);
+      const body = await readJsonBody(request, config.maxMediaBodyBytes ?? config.maxBodyBytes);
       const input = parseCreateMediaJobInput(body);
       assertMediaJobProvider(store, input, secretResolver);
       const job = store.createMediaJob(input, new Date().toISOString());

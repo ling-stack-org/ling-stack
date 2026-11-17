@@ -1,3 +1,4 @@
+import { renderReviewAnnotation } from "@ling-stack/contracts";
 import type {
   ApprovalStoreFacet,
   Channel,
@@ -137,7 +138,7 @@ export function collectMaterializedInputSources(input: {
   }
   for (const fileRef of input.envelope.fileRefs) {
     sources.push({
-      id: `materialized_input:workspace_file_ref:${fileRef.path}`,
+      id: `materialized_input:workspace_file_ref:${fileRef.annotation?.id ?? fileRef.path}`,
       kind: "materialized_input",
       workspaceId,
       channelId: input.channel.id,
@@ -147,7 +148,7 @@ export function collectMaterializedInputSources(input: {
         ...(fileRef.materializationId ? [{ type: "materialization", id: fileRef.materializationId, label: fileRef.label ?? fileRef.path }] : []),
       ],
       title: fileRef.label ?? fileRef.path,
-      text: boundedPromptPreview(fileRef.previewText),
+      text: [fileRef.annotation ? renderReviewAnnotation(fileRef.annotation, fileRef.line) : "", boundedPromptPreview(fileRef.previewText)].filter(Boolean).join("\n"),
       metadata: {
         sourceKind: "workspace_file_ref",
         path: fileRef.path,
@@ -156,6 +157,7 @@ export function collectMaterializedInputSources(input: {
         rootRelation: fileRef.rootRelation,
         source: fileRef.source,
         line: fileRef.line,
+        annotation: fileRef.annotation,
         materializationStatus: fileRef.materializationStatus,
         materializationId: fileRef.materializationId,
         hasPromptContent: hasPromptContent(fileRef.materializationStatus, fileRef.previewText),
