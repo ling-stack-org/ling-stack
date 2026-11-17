@@ -129,7 +129,7 @@ Draft 减少执行不改变改动范围。不能把大 PR 的范围伪装成 `do
 | 固定 Office／codesign 审查清单（已实现） | 必需的 Daemon 构建及 macOS 发布契约 | 清单单独变化省去产品测试与 helper 编译；混合原生源码保留真实 helper smoke；未知路径全量 |
 | 根配置、workspace、锁文件、补丁、CI 工作流／脚本 | 保留全量 | 文档及明确登记的维护路径例外；未知路径仍全量 |
 
-分类结果应输出命中文件、理由、受影响包、选中任务和平台要求，供 PR 摘要核对。`macos-required` 不能仅由当前的 `daemon=true` 或单个路径正则替代，需要包含共享契约和调用链的影响传播。
+分类结果会在 CI Step Summary 和 `ci-scope-report` artifact 中输出命中文件数量、分类理由、受影响包、选中任务、Daemon 平台和每个跳过 lane 的原因，供 PR 摘要核对。scope 阶段同时用同一组变更路径生成一次强制 full scope，并由 [`scope-audit.mjs`](../../scripts/ci/scope-audit.mjs) 验证选择结果是 full scope 的子集；包、平台或任务越界，以及文档范围误选产品任务都会使 scope 失败。这是只读的选择器审计，不代替产品测试，也不放宽 unknown／root／workflow 路径的全量回退。`macos-required` 不能仅由当前的 `daemon=true` 或单个路径正则替代，需要包含共享契约和调用链的影响传播。
 
 ### 平台测试清单
 
