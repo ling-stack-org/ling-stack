@@ -497,6 +497,7 @@ export function createChannelWorkspaceSnapshot(channel: Channel, workspaceCwd: s
 }
 
 export interface WorkspaceSettings {
+  readonly desktopBrowserPolicy?: import("@ling-stack/contracts").DesktopBrowserPolicy;
   readonly schemaVersion: 1;
   readonly workspaceCwd?: string;
   readonly theme?: "light" | "dark" | "system";
@@ -517,6 +518,7 @@ export interface WorkspaceSettings {
 }
 
 export interface UpdateWorkspaceSettingsInput {
+  readonly desktopBrowserPolicy?: import("@ling-stack/contracts").DesktopBrowserPolicy | null;
   readonly schemaVersion?: 2;
   readonly workspaceCwd?: string | null;
   readonly theme?: "light" | "dark" | "system" | null;

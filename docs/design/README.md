@@ -174,6 +174,7 @@ part of the current product acceptance scope.
 - [Web E2E Acceptance Matrix](web-e2e-acceptance-matrix.md)
 - [Codex Window Shell Parity](codex-window-shell-parity.md)
 - [Desktop Shell](desktop-shell.md)
+- [Desktop 内置浏览器实施计划](desktop-browser-implementation-plan.md)
 - [Sidebar, Approval, And Proposal Dialogs Implementation Plan](sidebar-approval-proposal-dialogs-implementation-plan.md)
 - [Desktop Release](../release/desktop.md)
 

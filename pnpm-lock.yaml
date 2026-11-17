@@ -104,6 +104,9 @@ importers:
       '@napi-rs/keyring':
         specifier: 2.1.2
         version: 2.1.2
+      ajv:
+        specifier: 8.20.0
+        version: 8.20.0
       lucide-react:
         specifier: 1.70.0
         version: 1.70.0(@types/react@19.3.0)(react@19.3.1)
@@ -138,9 +141,6 @@ importers:
       '@types/react-dom':
         specifier: ^19.2.4
         version: 19.3.0(@types/react@19.3.0)
-      ajv:
-        specifier: 8.20.0
-        version: 8.20.0
       ajv-formats:
         specifier: 3.0.1
         version: 3.0.1(ajv@8.20.0)

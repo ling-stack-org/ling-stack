@@ -7,6 +7,9 @@ import { createWorkflowParallelCapabilityResolver } from "./features/runs/workfl
 import { MemorySemanticService } from "./features/memory/semantic-service.js";
 import { registerMemorySemanticService } from "./features/memory/semantic-registry.js";
 import { LearningReviewCoordinator } from "./features/learning/coordinator.js";
+import { DesktopBrowserController } from "./features/desktop-browser/controller.js";
+import { DesktopBrowserPluginService } from "./features/plugins/desktop-browser.js";
+import { createDesktopBrowserGenerationBroker } from "./features/plugins/desktop-browser-generation-broker.js";
 import { flushSkillDefinitionRevisionNotices } from "./features/skills/revision-notices.js";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
@@ -608,6 +611,8 @@ export function createDaemonServer(
     });
   });
   const officeDriverController = new OfficeDriverController();
+  const desktopBrowser = new DesktopBrowserController(resolvedConfig.defaultWorkspaceCwd);
+  const desktopBrowserPlugin = new DesktopBrowserPluginService({ controller: desktopBrowser, getStore: cwd => storeRegistry.getStore(cwd) });
   const officeDocumentsPlugin = new OfficeDocumentsPluginService({
     controller: officeDriverController,
     getStore: (cwd) => storeRegistry.getStore(cwd),
@@ -674,8 +679,10 @@ export function createDaemonServer(
     workspaceCwd: resolvedConfig.defaultWorkspaceCwd,
     controller: officeDriverController,
   });
+  const desktopBrowserMcpBroker = createDesktopBrowserGenerationBroker({ baseBroker: officeDocumentsMcpBroker,
+    workspaceCwd: resolvedConfig.defaultWorkspaceCwd, controller: desktopBrowser, getStore: cwd => storeRegistry.getStore(cwd) });
   const mcpBroker = createCuaDriverGenerationBroker({
-    baseBroker: officeDocumentsMcpBroker,
+    baseBroker: desktopBrowserMcpBroker,
     bundledEnabled: bundledCuaDriverEnabled,
     workspaceCwd: resolvedConfig.defaultWorkspaceCwd,
     leaseRegistry: cuaDriverDesktopBridgeAuthority.leaseRegistry,
@@ -1047,6 +1054,8 @@ export function createDaemonServer(
     engineManagement,
     nativeRunDispatcher,
     chromeBrowserSessions,
+    desktopBrowser,
+    desktopBrowserPlugin,
     chromeBrowserPlugin,
     officeDriverController,
     officeDocumentsPlugin,
@@ -1201,6 +1210,7 @@ export function createDaemonServer(
         lockedComputerControl?.close();
         chromeBrowserSessions.close();
         officeDriverController.close();
+        desktopBrowser.close();
         chromeBrowserWebSocketServer.close();
         rpcWebSocketServer.close();
         server.closeAllConnections();
@@ -1269,6 +1279,7 @@ export function createDaemonServer(
         workspaceCustodyReady = true;
         for (const [store, cwd] of [...pendingOwnedStores]) initializeOwnedStore(cwd, store);
         chromeBrowserPlugin.sync(resolvedConfig.defaultWorkspaceCwd);
+        desktopBrowserPlugin.sync(resolvedConfig.defaultWorkspaceCwd);
         officeDocumentsPlugin.sync(resolvedConfig.defaultWorkspaceCwd);
         await chromeBrowserNativeBroker?.start().catch(() => {
           chromeBrowserSessions.observeNativeState({

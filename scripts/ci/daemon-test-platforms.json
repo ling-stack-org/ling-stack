@@ -162,6 +162,8 @@
     "test/delegation-store-composition.test.mjs",
     "test/deliverables-api.test.mjs",
     "test/deliverables.test.mjs",
+    "test/desktop-browser-api.test.ts",
+    "test/desktop-browser-controller.test.ts",
     "test/diagnostics-api.test.mjs",
     "test/docker-sandbox.test.mjs",
     "test/edit-diff-preview.test.mjs",
