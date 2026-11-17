@@ -29,7 +29,8 @@ Code and test anchors: [实施方案](full-window-theme-background-implementatio
 | BG-04 场景缩略图 | 主题列表 | scene 主题显示与全窗一致的矢量缩略图；经典主题保留色板；选中/焦点/disabled 正常 | B |
 | BG-05 全窗场景 | 无自定义背景时选择 breeze/ocean/night/sakura/ember | 一张连续场景透出首页、侧栏、工作区；无独立面板裁切；角色和角落装饰可见但不遮挡操作 | B、D |
 | BG-06 场景配色 | 五个 scene 主题 | 左侧栏、按钮、选中态、焦点、链接和状态色与场景同色系；正文/输入保持可读 | U、B、D |
-| BG-07 保护路由 | settings、management、diagnostics、approvals、media-canvas、overlay | 实底；场景/媒体不透入正文、代码、输入、表格和审批 | B、D |
+| BG-07 保护路由 | settings、diagnostics、approvals、overlay | 实色画布；场景/媒体不透入正文、代码、输入、表格和审批 | B、D |
+| BG-07A 媒体生产保护面板 | media-canvas | 环境背景可见；空状态检查器透明，已选详情、卡片、输入和弹层保持实底 | B、D |
 | BG-08 主题切换状态 | 有草稿、焦点、滚动、dock、native pending/ready/blocked/error 时切换主题 | 状态保留，不触发 Run；场景和 tokens 同步更新 | B、D |
 | BG-09 自定义静态图片 | 选择/拖入 PNG、JPEG、静态 WebP | 预览、应用、替换、取消、恢复默认背景成功；图片规范化；失败保留旧配置 | U、W、N、B、D |
 | BG-10 连续可见度 | 拖动滑杆 20%–100% | 预览和全窗一致；默认值 60%；旧三档迁移为 45%/60%/75%；1180–1280 高值收敛到 60% | U、W、N、B |

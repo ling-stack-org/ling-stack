@@ -9,7 +9,7 @@ import { openMediaJobs } from "./support/media-jobs-fixtures";
 
 const photo = await readFile(new URL("./fixtures/fronalpstock-3840.jpg", import.meta.url));
 
-test("BG-25 themed background remains continuous through window chrome and settings", async ({ page }, testInfo) => {
+test("BG-25 ambient pages keep the backdrop while protected settings stay solid", async ({ page }, testInfo) => {
   test.setTimeout(60_000);
   await page.setViewportSize({ width: 1440, height: 960 });
   await prepare(page);
@@ -34,13 +34,11 @@ test("BG-25 themed background remains continuous through window chrome and setti
     await page.locator(`[data-theme-option-id="${themeId}"]`).click();
     await expect(page.locator("html")).toHaveAttribute("data-ui-theme", themeId);
     await expect(page.locator("html")).toHaveAttribute("data-user-background", "ready");
-    await expect(page.locator("html")).toHaveAttribute("data-ui-background-visible", "true");
-    await expect(page.locator("[data-background-layer] img")).toBeVisible();
+    await expect(page.locator("html")).toHaveAttribute("data-ui-background-visible", "false");
+    await expect(page.locator("[data-background-layer] img")).toBeHidden();
 
     const settingsMaterial = await readWindowMaterial(page, true);
-    expect(settingsMaterial.titlebarSurface).toBe(settingsMaterial.expectedTitlebar);
-    expect(settingsMaterial.titlebarLeading).toBe(settingsMaterial.expectedSidebar);
-    expect(isTransparent(settingsMaterial.settingsContent)).toBe(true);
+    expect(isTransparent(settingsMaterial.settingsContent)).toBe(false);
     expect(isTransparent(settingsMaterial.settingsCard)).toBe(false);
     await page.locator(".settings-content-stack").evaluate((element) => element.scrollTo({ top: 0 }));
     await capture(page, testInfo, `${themeId}-settings-full-window.png`);
@@ -89,9 +87,10 @@ test("BG-26 generation tasks keeps the ambient scene behind protected panels", a
   });
   await page.getByRole("button", { name: "Apply background", exact: true }).click();
   await expect(page.locator("[data-background-preview]")).toHaveAttribute("data-draft", "false");
-  await expect(page.locator("html")).toHaveAttribute("data-ui-background-visible", "true");
+  await expect(page.locator("html")).toHaveAttribute("data-ui-background-visible", "false");
 
   await page.getByRole("button", { name: "Back to app", exact: true }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-ui-background-visible", "true");
   await openMediaJobs(page);
   await expect(page.locator("html")).toHaveAttribute("data-ui-background-visible", "true");
   await expect(page.locator("[data-background-layer] img")).toBeVisible();
