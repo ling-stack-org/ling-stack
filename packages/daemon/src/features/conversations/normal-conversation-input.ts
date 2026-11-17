@@ -50,7 +50,7 @@ export function prepareNormalConversationInput(input: {
     }
     return attachment;
   });
-  const userInstruction = input.message.trim() || "User attached files.";
+  const userInstruction = input.message.trim() || (input.fileRefs.some(ref => ref.annotation) ? "Please address the review feedback." : "User attached files.");
   const appendInput: AppendConversationAcceptedInput = {
     threadId: thread.id,
     turnId,
@@ -64,7 +64,7 @@ export function prepareNormalConversationInput(input: {
     actorType: input.actorType ?? "local_user",
     payload: { body: userInstruction, format: "markdown", mentions: [], attachmentIds: attachments.map((attachment) => attachment.id),
       linkPreviewIds: [], fileRefs: input.fileRefs.map((ref) => ({ path: ref.path, source: ref.source ?? "explicit_text",
-        ...(ref.label ? { label: ref.label } : {}), ...(ref.line !== undefined ? { line: ref.line } : {}) })) },
+        ...(ref.label ? { label: ref.label } : {}), ...(ref.line !== undefined ? { line: ref.line } : {}), ...(ref.annotation ? { annotation: ref.annotation } : {}) })) },
     domainRefs: [{ type: "turn", id: turnId }],
     idempotencyKey,
   };

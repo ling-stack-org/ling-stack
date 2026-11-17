@@ -134,6 +134,7 @@ export function WorkspaceChangeReviewPage({
                 key={file.path}
                 cwd={cwd ?? changes?.repoRoot ?? changes?.cwd ?? ""}
                 file={file}
+                revision={review?.revision}
                 scoped={scoped}
                 selected={selectedPath === file.path}
                 setRef={(element) => {
@@ -199,12 +200,14 @@ function WorkspaceChangeFileSection({
   cwd,
   file,
   scoped,
+  revision,
   selected,
   setRef,
 }: {
   readonly cwd: string;
   readonly file: ReviewDisplayFile;
   readonly scoped: boolean;
+  readonly revision?: string;
   readonly selected: boolean;
   readonly setRef: (element: HTMLElement | null) => void;
 }): React.JSX.Element {
@@ -255,7 +258,7 @@ function WorkspaceChangeFileSection({
         {!scoped && file.kind !== "deleted" ? <WorkspaceFileOpenMenu cwd={cwd} path={file.path} compact placement="auto" /> : null}
       </header>
       {!collapsed ? (
-        change ? <DiffViewer change={change} maxCollapsedLines={220} showFoldMarkers={false} /> : (
+        change ? <DiffViewer change={change} revision={revision} maxCollapsedLines={220} showFoldMarkers={false} /> : (
           <div className="workspace-change-file-empty">{file.unavailableReason ?? (file.truncated ? t("Preview truncated") : t("Preview unavailable"))}</div>
         )
       ) : null}

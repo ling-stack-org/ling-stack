@@ -1,3 +1,4 @@
+import { ReviewDraftContext, ReviewDraftShelf, useReviewDraftController } from "../../shared/conversation/review/ReviewDraftContext.js";
 import { useNativeConversationSelection } from "./useNativeConversationSelection.js";
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
@@ -58,6 +59,8 @@ import { submitNormalConversationGuidance } from "./normal-conversation-guidance
 import { hasPendingNormalGuidance } from "./normal-conversation-guidance.js";
 import { createNormalConversationMessageEditController } from "./normal-conversation-message-edit-controller.js";
 import { useNormalConversationDropController } from "./useNormalConversationDropController.js";
+import { useConversationBrowserLinks } from "../browser/use-conversation-browser-links.js";
+import { InlineFeedback } from "../../shared/ui/index.js";
 
 export type {
   ConversationHomeDetailContext,
@@ -177,6 +180,10 @@ export function ConversationHome({
     translate: t,
   });
   const { pendingAttachments, readyAttachmentIds } = attachmentController;
+  const reviewDraft = useReviewDraftController(conversationIdentityController.ownerKey, async file => {
+    if (composerBusy || pendingAttachments.length >= 10) throw new Error(t("A conversation message can attach at most 10 files."));
+    await attachmentController.attachFiles([file]);
+  });
   const recoveryDraftRef = useRef<{ threadId: string; draft: string; attachments: typeof pendingAttachments } | undefined>(undefined);
   const composerDropController = useNormalConversationDropController({
     blocked: composerBusy,
@@ -188,6 +195,9 @@ export function ConversationHome({
     intentOpen: conversationDockOpen,
     resizeObserverKey: conversationIdentityController.ownerKey,
   });
+  const browserLinkError = useConversationBrowserLinks({ rootRef: conversationDockController.containerRef,
+    workspaceCwd: workspaceCwd.trim(), surface: "normal_conversation", ownerId: detailContext?.threadId,
+    onOpen: () => { setConversationSummaryOpen(false); setConversationDockOpen(true); conversationDockController.requestPage("browser"); } });
   const conversationBottomPanelResize = useWorkspaceBottomPanelResizeController({
     containerRef: conversationDockController.containerRef,
     resizeObserverKey: conversationIdentityController.ownerKey,
@@ -361,12 +371,12 @@ export function ConversationHome({
     [draft, project.projectPath, slashCommands],
   );
   const composerFileRefs = useMemo(
-    () => composerWorkspaceFileParts(composerSubmissionInputParts).map((part) => ({
+    () => [...reviewDraft.refs, ...composerWorkspaceFileParts(composerSubmissionInputParts).map((part) => ({
       path: part.path,
       ...(part.line !== undefined ? { line: part.line } : {}),
       source: "inferred_text" as const,
-    })),
-    [composerSubmissionInputParts],
+    }))],
+    [composerSubmissionInputParts, reviewDraft.refs],
   );
 
   useEffect(() => {
@@ -448,6 +458,10 @@ export function ConversationHome({
 
   async function submitDraft(): Promise<void> {
     const trimmedDraft = draft.trim();
+    const reviewSnapshot = reviewDraft.refs;
+    const reviewOwner = reviewDraft.owner;
+    if (reviewDraft.hasEmptyComments) { actionFeedback.report("validation", t("Add text to every review comment before sending.")); return; }
+    if (composerFileRefs.length > 12) { actionFeedback.report("validation", t("A message can include at most 12 review comments.")); return; }
     if (!guidancePending && !trimmedDraft && readyAttachmentIds.length === 0 && composerFileRefs.length === 0) {
       actionFeedback.report("validation", t("Type a message before sending."));
       return;
@@ -481,7 +495,7 @@ export function ConversationHome({
     const pendingUserMessage: ConversationHomeMessage = {
       id: createConversationHomeMessageId(),
       role: "user",
-      content: trimmedDraft || t("User attached files."),
+      content: trimmedDraft || t(reviewSnapshot.length ? "Please address the review feedback." : "User attached files."),
       attachments: pendingAttachments
         .map((item) => item.attachment)
         .filter((attachment): attachment is ConversationAttachment => Boolean(attachment)),
@@ -554,6 +568,7 @@ export function ConversationHome({
         },
         onThreadBound,
         shouldCommit,
+        onInputAccepted: acceptedFileRefs => reviewDraft.acknowledge(acceptedFileRefs, reviewOwner),
         onMessageAccepted: () => {
           sendLifecycle.accept(sendOperation);
         },
@@ -613,6 +628,7 @@ export function ConversationHome({
   }
 
   async function submitRunGuidance(body: string): Promise<void> {
+    const reviewOwner = reviewDraft.owner;
     await submitNormalConversationGuidance({
       activeReply,
       threadId: detailContext?.threadId,
@@ -624,6 +640,7 @@ export function ConversationHome({
       identityController: conversationIdentityController,
       operationOwner: guidanceOperation,
       actionFeedback,
+      onInputAccepted: acceptedFileRefs => reviewDraft.acknowledge(acceptedFileRefs, reviewOwner),
       onAccepted: (message) => {
         setMessages((current) => upsertConversationHomeMessage(current, message));
         setDraft(current => current.trim() === body ? "" : current);
@@ -733,6 +750,8 @@ export function ConversationHome({
   }
 
   const composerNode = (
+    <>
+    <ReviewDraftShelf onSend={submitDraft} disabled={composerBusy || pendingAttachments.some(item => item.state !== "ready") || !activeReply && !activeModelReady} />
     <NormalConversationComposer
       workspaceCwd={workspaceCwd}
       runtimeMetrics={runtimeMetrics}
@@ -839,6 +858,7 @@ export function ConversationHome({
       onSubmit={submitDraft}
       onStop={activeReply && onStopConversation ? () => onStopConversation(activeReply) : undefined}
     />
+    </>
   );
 
   const approvalGateNode = (
@@ -850,11 +870,12 @@ export function ConversationHome({
       onResolve={onResolveApproval}
     />
   );
-  const visibleComposerNode = inlineApprovalViews.length > 0 ? approvalGateNode : composerNode;
+  const visibleComposerNode = <>{browserLinkError ? <InlineFeedback tone="danger" role="alert">{browserLinkError}</InlineFeedback> : null}
+    {inlineApprovalViews.length > 0 ? approvalGateNode : composerNode}</>;
 
   if (messages.length > 0) {
     return (
-      <>
+      <ReviewDraftContext.Provider value={reviewDraft}>
         <NormalConversationPage
         onOpenSummaryChanges={(reviewCwd) => openConversationReview({ cwd: reviewCwd, baseline: "head" })}
         summaryOpen={conversationSummaryOpen}
@@ -921,6 +942,10 @@ export function ConversationHome({
         panelsProps={{
           workspaceCwd,
           currentThreadId: detailContext?.threadId,
+          onBrowserAnnotation: async ({ comment, files }) => {
+            setDraft(current => [current, comment].filter(Boolean).join("\n\n"));
+            await attachmentController.attachFiles(files);
+          },
           dockController: conversationDockController,
           dockViewModel: conversationDockViewModel,
           proposedPlans: proposedPlanArtifacts,
@@ -937,14 +962,14 @@ export function ConversationHome({
           onCloseTerminal: () => setConversationTerminalOpen(false),
         }}
         />
-      </>
+      </ReviewDraftContext.Provider>
     );
   }
 
   return (
-    <>
+    <ReviewDraftContext.Provider value={reviewDraft}>
       <NormalConversationEmptyState composerNode={visibleComposerNode} onApplyShortcut={applyShortcut} />
-    </>
+    </ReviewDraftContext.Provider>
   );
 }
 

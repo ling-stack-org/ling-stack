@@ -12,6 +12,7 @@
     "types": ["node", "vite/client"]
   },
   "include": [
+    "src/desktop-capabilities.d.ts",
     "test/**/*.ts",
     "e2e/conversation-position-layout.spec.ts",
     "e2e/conversation-run-feedback.spec.ts",

@@ -1,3 +1,4 @@
+import type { BrowserAnnotationHandler } from "../browser/browser-annotation-submission.js";
 import type { ProposedPlanArtifact } from "../../types.js";
 import { useI18n } from "../../i18n.js";
 import type { WorkspaceBottomPanelResizeController } from "./useWorkspaceBottomPanelResizeController.js";
@@ -17,6 +18,7 @@ import {
 import type { NormalConversationDockViewModel } from "./normal-conversation-dock-projections.js";
 
 export interface NormalConversationWorkspacePanelsProps {
+  readonly onBrowserAnnotation?: BrowserAnnotationHandler;
   readonly workspaceCwd: string;
   readonly currentThreadId?: string;
   readonly dockController: WorkspaceRightDockController;
@@ -33,6 +35,7 @@ export interface NormalConversationWorkspacePanelsProps {
 }
 
 export function NormalConversationWorkspacePanels({
+  onBrowserAnnotation,
   workspaceCwd,
   currentThreadId,
   dockController,
@@ -93,6 +96,8 @@ export function NormalConversationWorkspacePanels({
             proposedPlansLoading={proposedPlansLoading}
             proposedPlansError={proposedPlansError}
             currentPlanThreadId={currentThreadId}
+            browserScopeId={currentThreadId}
+            onBrowserAnnotation={onBrowserAnnotation}
             contextNode={<NormalConversationContextPage context={dockViewModel.context} />}
             contextLabel={t("Context")}
             contextDescription={t("Conversation context and workspace state")}

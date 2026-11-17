@@ -1,3 +1,7 @@
+import { CodeReviewCommentEditor } from "../review/CodeReviewCommentEditor.js";
+import { codeReviewDraftKey, readCodeReviewDraft, reviewDiffContext, type CodeReviewDraft } from "../review/code-review-draft.js";
+import { reviewStorage } from "../review/review-draft.js";
+import { useReviewDraft } from "../review/ReviewDraftContext.js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "../../../i18n.js";
 import { parseUnifiedDiffHunkRows, type ConversationDiffDisplayLine, type ConversationFileChange } from "../../../lib/diff-summary.js";
@@ -6,6 +10,7 @@ import "../../../styles/assessment-diff-layout.css";
 import { notifyConversationDeferredContentReady } from "./deferred-rendering.js";
 
 export interface DiffViewerProps {
+  readonly revision?: string;
   readonly change: ConversationFileChange;
   readonly maxCollapsedLines?: number;
   readonly showFoldMarkers?: boolean;
@@ -27,8 +32,19 @@ export interface DiffLineAnnotation {
 
 const defaultMaxCollapsedLines = 160;
 
-export function DiffViewer({ change, maxCollapsedLines = defaultMaxCollapsedLines, showFoldMarkers = true, annotations = [], selectedAnnotationId, onAnnotationClick, layout = "unified" }: DiffViewerProps): React.JSX.Element {
+export function DiffViewer(props: DiffViewerProps): React.JSX.Element {
+  const review = useReviewDraft();
+  const draftKey = review ? codeReviewDraftKey(review.owner, props.change.path, props.revision, props.change.diff) : undefined;
+  return <DiffViewerContent key={draftKey ?? props.change.id} {...props} draftKey={draftKey} />;
+}
+
+function DiffViewerContent({ change, revision, maxCollapsedLines = defaultMaxCollapsedLines, showFoldMarkers = true, annotations = [], selectedAnnotationId, onAnnotationClick, layout = "unified", draftKey }: DiffViewerProps & { readonly draftKey?: string }): React.JSX.Element {
   const { t } = useI18n();
+  const review = useReviewDraft();
+  const [pending, setPending] = useState<CodeReviewDraft | undefined>(() => readCodeReviewDraft(draftKey, reviewStorage()));
+  const selection = pending?.selection;
+  const [storageError, setStorageError] = useState(false);
+  const anchor = useRef<{ side: "left" | "right"; line: number; source: number } | undefined>(undefined);
   const rootRef = useRef<HTMLPreElement | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [containerWidth, setContainerWidth] = useState(0);
@@ -69,6 +85,16 @@ export function DiffViewer({ change, maxCollapsedLines = defaultMaxCollapsedLine
   }, [selectedAnnotationId, change.diff, expanded, resolvedLayout]);
 
   useEffect(() => {
+    if (!draftKey) return;
+    try {
+      const storage = reviewStorage();
+      if (!storage) throw new Error("Storage unavailable");
+      storage.setItem(draftKey, JSON.stringify(pending ?? null));
+      setStorageError(false);
+    } catch { setStorageError(true); }
+  }, [draftKey, pending]);
+
+  useEffect(() => {
     const frameId = globalThis.requestAnimationFrame(() => {
       notifyConversationDeferredContentReady(rootRef.current);
     });
@@ -82,10 +108,36 @@ export function DiffViewer({ change, maxCollapsedLines = defaultMaxCollapsedLine
       return number !== undefined && number >= annotation.startLine && number <= annotation.endLine;
     });
     const selected = marks.some(annotation => annotation.id === selectedAnnotationId);
-    return <span key={key} className={`diff-line ${line.kind}${side ? " diff-split-cell" : ""}${marks.length ? " annotated" : ""}${selected ? " selected" : ""}`}
+    const reviewSide = side === "old" || !side && line.kind === "delete" ? "left" : "right";
+    const lineNumber = side === "old" ? line.oldLineNumber : side === "new" ? line.newLineNumber : line.kind === "delete" ? line.oldLineNumber : line.newLineNumber;
+    const reviewSelected = selection && lineNumber !== undefined && selection.side === reviewSide && lineNumber >= selection.startLine && lineNumber <= selection.line;
+    const canSelectForReview = Boolean(review && diffRows.structured && lineNumber !== undefined && line.lineNumber !== undefined);
+
+    function selectLine(event: React.MouseEvent<HTMLButtonElement>): void {
+      if (!canSelectForReview || lineNumber === undefined || line.lineNumber === undefined) return;
+      const start = event.shiftKey && anchor.current?.side === reviewSide
+        ? anchor.current
+        : { line: lineNumber, source: line.lineNumber };
+      if (!event.shiftKey) anchor.current = { side: reviewSide, line: lineNumber, source: line.lineNumber };
+      setPending(current => ({
+        text: current?.text ?? "",
+        selection: {
+          side: reviewSide,
+          startLine: Math.min(start.line, lineNumber),
+          line: Math.max(start.line, lineNumber),
+          sourceStart: Math.min(start.source, line.lineNumber!),
+          sourceEnd: Math.max(start.source, line.lineNumber!),
+        },
+      }));
+    }
+
+    const numberLabel = lineNumber === undefined ? "" : String(lineNumber);
+    return <span key={key} className={`diff-line ${line.kind}${side ? " diff-split-cell" : ""}${marks.length ? " annotated" : ""}${selected ? " selected" : ""}${reviewSelected ? " review-selected" : ""}`}
       data-diff-side={side} data-old-line={side === "new" ? undefined : line.oldLineNumber} data-new-line={side === "old" ? undefined : line.newLineNumber}
       data-annotation-selected={selected || undefined} tabIndex={selected ? -1 : undefined}>
-      <span className="diff-line-number">{side ? String((side === "old" ? line.oldLineNumber : line.newLineNumber) ?? "") : lineNumberLabel(line)}</span>
+      {canSelectForReview
+        ? <button type="button" className="diff-line-number review-line-target" aria-label={t("Comment on line {line}", { line: numberLabel })} onClick={selectLine}>{numberLabel}</button>
+        : <span className="diff-line-number">{numberLabel}</span>}
       <span className="diff-gutter">{gutterForKind(line.kind)}</span>
       <code>{line.text || " "}{marks.map(annotation => <button key={annotation.id} type="button" className="diff-finding-marker" aria-label={annotation.label} title={annotation.label}
         onClick={() => onAnnotationClick?.(annotation.id)}>●</button>)}</code>
@@ -116,12 +168,13 @@ export function DiffViewer({ change, maxCollapsedLines = defaultMaxCollapsedLine
             );
           }
           if (row.type === "split") return <span key={row.id} className="diff-split-row">
-            {row.oldLine ? renderLine(row.oldLine, "old") : <span className="diff-split-empty" data-diff-side="old" aria-hidden="true" />}
-            {row.newLine ? renderLine(row.newLine, "new") : <span className="diff-split-empty" data-diff-side="new" aria-hidden="true" />}
+            {row.oldLine ? renderLine(row.oldLine, "old", `${row.id}:old`) : <span className="diff-split-empty" data-diff-side="old" aria-hidden="true" />}
+            {row.newLine ? renderLine(row.newLine, "new", `${row.id}:new`) : <span className="diff-split-empty" data-diff-side="new" aria-hidden="true" />}
           </span>;
           return renderLine(row.line, undefined, row.id);
         })}
       </pre>
+      {pending ? <CodeReviewCommentEditor path={change.path} selection={pending.selection} revision={revision} diffHunk={reviewDiffContext(change.diff, pending.selection)} text={pending.text} storageError={storageError} onTextChange={text => setPending({ ...pending, text })} onClose={() => setPending(undefined)} /> : null}
       {shouldCollapse ? (
         <button
           className="message-code-expand"
@@ -134,18 +187,6 @@ export function DiffViewer({ change, maxCollapsedLines = defaultMaxCollapsedLine
       ) : null}
     </>
   );
-}
-
-function lineNumberLabel(line: ConversationDiffDisplayLine): string {
-  if (line.kind === "delete") {
-    return line.oldLineNumber === undefined ? "" : String(line.oldLineNumber);
-  }
-  if (line.kind === "add") {
-    return line.newLineNumber === undefined ? "" : String(line.newLineNumber);
-  }
-  return line.newLineNumber === undefined && line.oldLineNumber === undefined
-    ? line.lineNumber === undefined ? "" : String(line.lineNumber)
-    : String(line.newLineNumber ?? line.oldLineNumber);
 }
 
 function gutterForKind(kind: ConversationDiffDisplayLine["kind"]): string {

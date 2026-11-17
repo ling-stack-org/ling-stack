@@ -116,6 +116,7 @@ export interface ConversationHomeSendInput {
   readonly failMessage: (message: string) => void;
   readonly onThreadBound: (threadId: string) => void;
   readonly shouldCommit: (threadId?: string) => boolean;
+  readonly onInputAccepted?: (fileRefs: readonly ChannelMessageFileRef[]) => void;
   readonly onMessageAccepted: () => void;
   readonly onSubmissionUnknown: (recoveryOnly?: boolean) => void;
   readonly onSubmissionRecovered: (threadId: string, originalBody: string) => void;

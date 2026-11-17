@@ -5,6 +5,7 @@ import type { useNormalConversationIdentityController } from "./useNormalConvers
 import type { useNormalConversationOperationOwner } from "./useNormalConversationOperationOwner.js";
 import type { ConversationHomeMessage } from "./normal-conversation-types.js";
 import { UnconfirmedConversationSubmissionError } from "../../shared/conversation/conversation-submission-recovery.js";
+import { reviewAnnotationVersion } from "../../shared/conversation/review/review-draft.js";
 import {
   projectNormalConversationGuidanceMessage,
   queueNormalConversationGuidance,
@@ -26,6 +27,7 @@ export async function submitNormalConversationGuidance(input: {
   readonly identityController: IdentityController;
   readonly operationOwner: OperationOwner;
   readonly actionFeedback: ActionFeedback;
+  readonly onInputAccepted?: (fileRefs: readonly ChannelMessageFileRef[]) => void;
   readonly onAccepted: (message: ConversationHomeMessage) => void;
   readonly onRecovered: (clearDraft: boolean) => void;
   readonly refresh: () => Promise<void>;
@@ -59,6 +61,9 @@ export async function submitNormalConversationGuidance(input: {
       notReadyMessage: input.notReadyMessage,
     });
     accepted = true;
+    const acceptedFileRefs = intervention.messagePayload?.fileRefs ?? (queryOnly ? [] : input.fileRefs);
+    // The server has accepted the intervention; the guard only protects presentation state after navigation.
+    input.onInputAccepted?.(acceptedFileRefs);
     if (!commitGuard(threadId)) {
       input.attachmentController.abandonSend(submittedAttachments);
       return;
@@ -72,7 +77,7 @@ export async function submitNormalConversationGuidance(input: {
       const sameFiles = attachments.length === (payload?.attachmentIds.length ?? 0)
         && attachments.every((item, index) => item.id === payload?.attachmentIds[index]);
       const sameRefs = input.fileRefs.length === (payload?.fileRefs?.length ?? 0)
-        && input.fileRefs.every((ref, index) => ref.path === payload?.fileRefs?.[index].path);
+        && input.fileRefs.every((ref, index) => ref.path === payload?.fileRefs?.[index].path && ref.line === payload?.fileRefs?.[index].line && reviewAnnotationVersion(ref.annotation) === reviewAnnotationVersion(payload?.fileRefs?.[index].annotation));
       input.onRecovered(input.body.trim() === (payload?.body ?? intervention.instruction).trim() && sameFiles && sameRefs);
     } else {
       input.attachmentController.markSendBound(submittedAttachments);

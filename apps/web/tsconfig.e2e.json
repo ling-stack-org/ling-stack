@@ -14,6 +14,9 @@
   "files": [
     "e2e/app.spec.ts",
     "e2e/code-assessments.spec.ts",
+    "e2e/review-annotations.spec.ts",
+    "e2e/review-annotation-recovery.spec.ts",
+    "e2e/image-review-tools.spec.ts",
     "e2e/channel-image-preview.spec.ts",
     "e2e/channel-work-cell.spec.ts",
     "e2e/computer-control.spec.ts",
@@ -30,6 +33,8 @@
     "e2e/ui2-conversation-work-cell-shell-artifacts.spec.ts"
   ],
   "include": [
+    "e2e/desktop-browser.spec.ts",
+    "e2e/support/desktop-browser-harness.tsx",
     "src/desktop-capabilities.d.ts",
     "src/qrcode.d.ts",
     "e2e/support/conversation-run-feedback-harness.tsx",

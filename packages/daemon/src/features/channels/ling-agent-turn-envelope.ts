@@ -1,3 +1,4 @@
+import { renderReviewAnnotation } from "@ling-stack/contracts";
 import { statSync } from "node:fs";
 import { isAbsolute, relative as relativePath, resolve as resolvePath } from "node:path";
 import type {
@@ -57,6 +58,7 @@ export interface LingTurnLinkPreviewRef {
 }
 
 export interface LingTurnWorkspaceFileRef {
+  readonly annotation?: ChannelMessageFileRef["annotation"];
   readonly path: string;
   readonly label?: string;
   readonly source?: ChannelMessageFileRef["source"];
@@ -98,7 +100,7 @@ export interface BuildLingAgentTurnEnvelopeInput {
 }
 
 const MAX_LINK_PREVIEW_CHARS = 1_200;
-const MAX_FILE_REFS = 8;
+const MAX_FILE_REFS = 12;
 
 type LingAgentTurnEnvelopeStore = ChannelStoreFacet & RunStorePathsFacet;
 
@@ -364,6 +366,7 @@ function renderWorkspaceFileRefsForPrompt(fileRefs: readonly LingTurnWorkspaceFi
     "Workspace file refs:",
     ...fileRefs.map((ref, index) => [
       `- ${index + 1}. ${ref.label ? `${ref.label}: ` : ""}${ref.path} (${ref.kind}, ${ref.rootRelation}, materialization=${ref.materializationStatus})`,
+      ref.annotation ? renderReviewAnnotation(ref.annotation, ref.line) : undefined,
       ref.line !== undefined ? `  line: ${ref.line}` : undefined,
       ref.source ? `  source: ${ref.source}` : undefined,
       ref.blockedReason ? `  statusReason: ${ref.blockedReason}` : undefined,
@@ -410,13 +413,14 @@ function buildWorkspaceFileRefs(
     if (!rawPath) {
       continue;
     }
-    const key = workspaceFileRefKey(rawPath, fileRef.line);
+    const key = fileRef.annotation?.id ?? workspaceFileRefKey(rawPath, fileRef.line);
     if (seen.has(key)) {
       continue;
     }
     seen.add(key);
     refs.push(buildWorkspaceFileRef(store, channelId, {
       path: rawPath,
+      annotation: fileRef.annotation,
       label: fileRef.label,
       source: fileRef.source ?? "composer",
       line: fileRef.line,
@@ -443,14 +447,16 @@ function buildWorkspaceFileRefs(
 function buildWorkspaceFileRef(
   store: LingAgentTurnEnvelopeStore,
   channelId: string,
-  input: Pick<ChannelMessageFileRef, "path" | "label" | "source" | "line">,
+  input: Pick<ChannelMessageFileRef, "path" | "label" | "source" | "line" | "annotation">,
 ): LingTurnWorkspaceFileRef {
   const normalizedPath = input.path.trim();
+  if (input.annotation?.kind === "image") return { ...input, rootRelation: "unknown", kind: "unknown", materializationStatus: "metadata_only" };
   const absolutePath = isAbsolute(normalizedPath) ? resolvePath(normalizedPath) : resolvePath(store.paths.cwd, normalizedPath);
   const rootRelation = workspaceRootRelation(store.paths.cwd, absolutePath);
   if (rootRelation === "outside_workspace") {
     return {
       path: normalizedPath,
+      annotation: input.annotation,
       label: input.label ?? normalizedPath,
       source: input.source,
       line: input.line,
@@ -463,6 +469,7 @@ function buildWorkspaceFileRef(
   const kind = resolveWorkspaceFileRefKind(absolutePath, normalizedPath);
   return withWorkspaceFileRefMaterialization(store, channelId, {
     path: normalizedPath,
+    annotation: input.annotation,
     label: input.label ?? normalizedPath,
     source: input.source,
     line: input.line,

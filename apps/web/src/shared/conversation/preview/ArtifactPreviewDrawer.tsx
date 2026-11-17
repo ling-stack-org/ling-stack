@@ -134,6 +134,7 @@ export function ArtifactPreviewDrawer({
   }
 
   function handleLightboxPointerDown(event: ReactPointerEvent<HTMLElement>): void {
+    if (event.target instanceof Element && event.target.closest(".image-review-editor")) return;
     if (variant !== "lightbox" || event.pointerType === "mouse") {
       return;
     }

@@ -67,6 +67,7 @@ import { findMentionsInText, mergeMentions } from "./channelMentionText.js";
 import type { ChannelStreamErrorOwner } from "../../shared/conversation/stream-error-ownership.js";
 
 interface ChannelComposerActionsInput {
+  readonly reviewDraft?: import("../../shared/conversation/review/ReviewDraftContext.js").ReviewDraftController;
   readonly cwd: string;
   readonly selectedChannelId: string;
   readonly composerOwnerKey: string;
@@ -131,6 +132,7 @@ interface ChannelComposerActionsInput {
     readonly requestAiReply: boolean;
     readonly streamOwner?: "channel-composer";
     readonly replyDisposition?: ChannelReplyDisposition;
+    readonly onInputAccepted?: (fileRefs: readonly ChannelMessageFileRef[]) => void;
     readonly onMessageAccepted?: (message: ChannelMessage) => void;
     readonly onReplyPending?: (pending: ChannelReplyPendingEvent) => void;
     readonly onReplyLinked?: (target: ConversationActiveReplyTarget) => void;
@@ -157,6 +159,7 @@ export interface ChannelComposerActionsController {
 }
 
 export function useChannelComposerActionsController({
+  reviewDraft,
   activeConversationTarget,
   activeConversationSourceRunId,
   visibleChannelMessageIds,
@@ -402,12 +405,16 @@ export function useChannelComposerActionsController({
     });
     const serializedInput = serializeComposerInputParts(liveInputParts);
     const body = serializedInput.body.trim();
-    const fileRefs = composerWorkspaceFileParts(liveInputParts).map((part): ChannelMessageFileRef => ({
+    const reviewSnapshot = reviewDraft?.refs ?? [];
+    const reviewOwner = reviewDraft?.owner ?? "";
+    if (reviewDraft?.hasEmptyComments) { setSendError(t("Add text to every review comment before sending.")); return; }
+    const fileRefs = [...reviewSnapshot, ...composerWorkspaceFileParts(liveInputParts).map((part): ChannelMessageFileRef => ({
       path: part.path,
       label: part.path,
       source: "inferred_text",
       ...(part.line !== undefined ? { line: part.line } : {}),
-    }));
+    }))];
+    if (fileRefs.length > 12) { setSendError(t("A message can include at most 12 review comments.")); return; }
     if (!body && serializedInput.attachmentIds.length === 0 && !pendingLinkPreviews.some((item) => item.preview) && fileRefs.length === 0) {
       return;
     }
@@ -607,6 +614,7 @@ export function useChannelComposerActionsController({
         requestAiReply: shouldRequestAi,
         streamOwner: "channel-composer",
         ...(replyDisposition ? { replyDisposition } : {}),
+        onInputAccepted: acceptedFileRefs => reviewDraft?.acknowledge(acceptedFileRefs, reviewOwner),
         onMessageAccepted: (message) => {
           acceptedSourceMessageId = message.id;
           if (!pendingAttachmentPreviewsReleased) {
@@ -798,6 +806,7 @@ export function useChannelComposerActionsController({
     onSetGoalObjective,
     onSetPlanMode,
     onSendMessage,
+    reviewDraft,
     isComposerCurrent,
     composerOwnerKey,
     pendingAttachments,

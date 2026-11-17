@@ -217,6 +217,7 @@ export interface WorkspaceClientViewProps {
     readonly requestAiReply: boolean;
     readonly streamOwner?: ChannelStreamErrorOwnerHint;
     readonly replyDisposition?: ChannelReplyDisposition;
+    readonly onInputAccepted?: (fileRefs: readonly ChannelMessageFileRef[]) => void;
     readonly onMessageAccepted?: (message: ChannelMessage) => void;
     readonly onReplyPending?: (pending: ChannelReplyPendingEvent) => void;
     readonly onReplyLinked?: (target: ConversationActiveReplyTarget) => void;
