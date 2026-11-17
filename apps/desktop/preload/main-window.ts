@@ -29,6 +29,7 @@ import { parseDesktopThemePackageFirstPaintArgument } from "../shared/theme-pack
 import { BACKGROUND_CHANNELS } from "../shared/background-capabilities.js";
 import { desktopPlatform } from "../main/platform.js";
 import { subscribeWithInitialRead } from "../shared/initial-state-subscription.js";
+import { createDesktopBrowserCapabilities } from "./browser.js";
 
 const daemonBaseUrl = process.argv
   .find((argument) => argument.startsWith("--ling-daemon-base-url="))
