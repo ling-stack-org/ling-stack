@@ -63,7 +63,6 @@ export function buildWorkflowStepContextView(input: BuildWorkflowStepContextView
     channel: input.channel,
     sourceItemId,
     view: "workflow_step",
-    consumerTeammateId: contextConsumerTeammateId,
     // Coordinator/progress/result Items from the same source Turn are products
     // of the workflow, not input facts. Keep the runtime stamp aligned with the
     // terminal freshness review while dependency evidence remains available via

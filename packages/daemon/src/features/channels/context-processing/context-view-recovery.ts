@@ -9,12 +9,17 @@ import {
   type ConversationContextProjection,
   type ConversationContextProjectionView,
 } from "./conversation-context-projector.js";
-import { buildChannelProtocolContextSection } from "../context-packs.js";
+import {
+  buildChannelIntentSelectorContextView,
+  buildChannelProtocolContextSection,
+  buildChannelReplyContextView,
+} from "../context-packs.js";
 import { buildPrivateChatContextView } from "./private-chat.js";
 import { buildWorkflowProposalContextView } from "./proposals.js";
 import { buildWorkflowStepContextView } from "./workflow-steps.js";
 import { fingerprintContextViewShape } from "./context-view-lineage.js";
 import type { ChannelContextSection, ChannelContextView } from "./types.js";
+import { LING_AGENT_EXECUTOR_ID } from "../ling-agent-executor.js";
 
 export type ContextViewLineageRecoveryStatus =
   | "current"
@@ -102,7 +107,12 @@ function reconcileLineage(
       store,
       sourceItemId: lineage.sourceItemId,
       view: projectionView,
-      ...(lineage.consumerTeammateId ? { consumerTeammateId: lineage.consumerTeammateId } : {}),
+      // Workflow-step projections are shared continuity facts. The consumer
+      // participant scopes role evidence and the surface identity, while the
+      // projection itself must remain identical across workflow participants.
+      ...(projectionView !== "workflow_step" && lineage.consumerTeammateId
+        ? { consumerTeammateId: lineage.consumerTeammateId }
+        : {}),
     });
     const status = sameProjectionMetadata(projection.metadata, lineage.projection)
       ? "current"
@@ -204,6 +214,10 @@ function rehydrateSurfaceView(
 } | { readonly status: "blocked"; readonly reason: string } {
   try {
     switch (lineage.kind) {
+      case "ling_agent_channel_view":
+        return rehydrateChannelReplyView(store, lineage);
+      case "selector_view":
+        return rehydrateChannelSelectorView(store, lineage);
       case "workflow_proposal_view": {
         if (!lineage.sourceItemId) return { status: "blocked", reason: "proposal_lineage_missing_source" };
         const item = store.getEffectiveConversationItem(lineage.sourceItemId);
@@ -237,6 +251,68 @@ function rehydrateSurfaceView(
   } catch (error) {
     return { status: "blocked", reason: safeRecoveryReason(error) };
   }
+}
+
+function rehydrateChannelReplyView(
+  store: RunStore,
+  lineage: ConversationContextViewLineage,
+): { readonly status: "available"; readonly view: ChannelContextView; readonly compareFingerprint: false }
+  | { readonly status: "blocked"; readonly reason: string } {
+  const source = channelSourceForLineage(store, lineage, "channel_reply_lineage_missing_source");
+  if (source.status === "blocked") return source;
+  const canonicalTeammateId = lineage.consumerTeammateId ?? LING_AGENT_EXECUTOR_ID;
+  return {
+    status: "available",
+    // The reply view contains request-time prompt/envelope material. The
+    // durable projection remains the restart-safe freshness contract.
+    compareFingerprint: false,
+    view: buildChannelReplyContextView({
+      store,
+      channel: source.channel,
+      sourceMessage: source.sourceMessage,
+      teammate: store.getAiTeammate(canonicalTeammateId),
+      canonicalTeammateId,
+      viewId: lineage.contextViewId,
+      persistLineage: false,
+    }),
+  };
+}
+
+function rehydrateChannelSelectorView(
+  store: RunStore,
+  lineage: ConversationContextViewLineage,
+): { readonly status: "available"; readonly view: ChannelContextView; readonly compareFingerprint: false }
+  | { readonly status: "blocked"; readonly reason: string } {
+  const source = channelSourceForLineage(store, lineage, "selector_lineage_missing_source");
+  if (source.status === "blocked") return source;
+  return {
+    status: "available",
+    // Selector instructions and role evidence are rebuilt for each request;
+    // only the durable projection can establish restart-time freshness.
+    compareFingerprint: false,
+    view: buildChannelIntentSelectorContextView({
+      store,
+      channel: source.channel,
+      sourceMessage: source.sourceMessage,
+      viewId: lineage.contextViewId,
+      persistLineage: false,
+    }),
+  };
+}
+
+function channelSourceForLineage(
+  store: RunStore,
+  lineage: ConversationContextViewLineage,
+  missingSourceReason: string,
+): { readonly status: "available"; readonly channel: NonNullable<ReturnType<RunStore["getChannel"]>>; readonly sourceMessage: ReturnType<typeof projectConversationItemToChannelMessage> }
+  | { readonly status: "blocked"; readonly reason: string } {
+  if (!lineage.sourceItemId) return { status: "blocked", reason: missingSourceReason };
+  const item = store.getEffectiveConversationItem(lineage.sourceItemId);
+  if (!item) return { status: "blocked", reason: "channel_source_message_missing" };
+  const sourceMessage = projectConversationItemToChannelMessage(item);
+  const channel = store.getChannel(lineage.channelId ?? sourceMessage.channelId);
+  if (!channel) return { status: "blocked", reason: "channel_source_missing" };
+  return { status: "available", channel, sourceMessage };
 }
 
 function rehydrateWorkflowStepView(

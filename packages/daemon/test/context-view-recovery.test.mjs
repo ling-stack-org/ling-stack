@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { createSqliteRunStore } from "@ling-stack/core";
+import { createSqliteRunStore, projectConversationItemToChannelMessage } from "@ling-stack/core";
 import { assignContextSegmentForTurn } from "../dist/features/channels/context-processing/context-segmentation-policy.js";
 import { buildProjectedConversationContextSlice } from "../dist/features/channels/context-processing/conversation-context-adapter.js";
 import { contextViewLineageKey } from "../dist/features/channels/context-processing/context-view-lineage.js";
@@ -11,7 +11,11 @@ import { buildChannelContextView } from "../dist/features/channels/context-proce
 import { buildPrivateChatContextView } from "../dist/features/channels/context-processing/private-chat.js";
 import { buildWorkflowProposalContextView } from "../dist/features/channels/context-processing/proposals.js";
 import { buildWorkflowStepContextView } from "../dist/features/channels/context-processing/workflow-steps.js";
-import { buildChannelProtocolContextSection } from "../dist/features/channels/context-packs.js";
+import {
+  buildChannelIntentSelectorContextView,
+  buildChannelProtocolContextSection,
+  buildChannelReplyContextView,
+} from "../dist/features/channels/context-packs.js";
 import { reconcileContextViewLineagesAtStartup } from "../dist/features/channels/context-processing/context-view-recovery.js";
 
 const firstAt = "2026-11-17T03:00:00.000Z";
@@ -144,6 +148,82 @@ test("startup reconciliation keeps invalid lineage fail-closed and does not writ
   assert.equal(report.blocked, 1);
   assert.match(report.entries[0].reason, /Conversation projection source/);
   assert.equal(store.getConversationContextViewLineage("invalid-lineage")?.contextViewId, "view_missing");
+});
+
+test("startup reconciliation rehydrates channel reply and selector views from durable turn inputs", async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), "ling-context-recovery-channel-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  let store = createSqliteRunStore(cwd);
+  const channel = store.createChannel({ name: "Channel recovery", boundPath: cwd }, firstAt);
+  const thread = store.resolveOrCreateConversationThread({
+    surfaceKind: "channel_root",
+    channelId: channel.id,
+    title: "Channel recovery",
+    objective: "Channel recovery test",
+  }, firstAt).thread;
+  const turn = store.appendConversationUserTurn({
+    channelId: channel.id,
+    threadId: thread.id,
+    title: "recover channel views",
+    userInstruction: "recover channel views",
+    payload: {
+      body: "recover channel views",
+      format: "plain_text",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+    },
+    idempotencyKey: "context-recovery:channel",
+  }, firstAt);
+  await assignContextSegmentForTurn({ store, sourceItemId: turn.item.id, now: firstAt });
+  const sourceMessage = projectConversationItemToChannelMessage(turn.item);
+  const teammate = store.getAiTeammate("teammate_builtin_engineer");
+  assert.ok(teammate);
+  const reply = buildChannelReplyContextView({
+    store,
+    channel,
+    sourceMessage,
+    teammate,
+    canonicalTeammateId: teammate.id,
+  });
+  const selector = buildChannelIntentSelectorContextView({
+    store,
+    channel,
+    sourceMessage,
+  });
+  const replyLineageKey = contextViewLineageKey({
+    workspaceId: channel.workspaceId,
+    channelId: channel.id,
+    threadId: thread.id,
+    sourceItemId: turn.item.id,
+    kind: "ling_agent_channel_view",
+    consumerTeammateId: teammate.id,
+  });
+  const selectorLineageKey = contextViewLineageKey({
+    workspaceId: channel.workspaceId,
+    channelId: channel.id,
+    threadId: thread.id,
+    sourceItemId: turn.item.id,
+    kind: "selector_view",
+  });
+  store.close();
+
+  store = createSqliteRunStore(cwd);
+  t.after(() => store.close());
+  const report = reconcileContextViewLineagesAtStartup({ store });
+  assert.equal(report.scanned, 2);
+  assert.equal(report.current, 2);
+  assert.equal(report.reconstructed, 0);
+  assert.equal(report.blocked, 0);
+  const recoveredReply = report.entries.find((entry) => entry.lineageKey === replyLineageKey);
+  const recoveredSelector = report.entries.find((entry) => entry.lineageKey === selectorLineageKey);
+  assert.equal(recoveredReply?.view?.id, reply.id);
+  assert.equal(recoveredReply?.view?.kind, "ling_agent_channel_view");
+  assert.equal(recoveredSelector?.view?.id, selector.id);
+  assert.equal(recoveredSelector?.view?.kind, "selector_view");
+  assert.equal(store.getConversationContextViewLineage(replyLineageKey)?.contextViewId, reply.id);
+  assert.equal(store.getConversationContextViewLineage(selectorLineageKey)?.contextViewId, selector.id);
 });
 
 test("startup reconciliation rehydrates the durable private-chat view without writing a replacement", async (t) => {
