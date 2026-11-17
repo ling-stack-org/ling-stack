@@ -88,6 +88,26 @@ fixed packaging aggregate is
 `48fb0d593fd30d3c612b141f1ac364e2235bf381f0601e46db1c60aa2de84d08`. All
 1,843 packaging and 15 Office native inputs match this record.
 
+Integration of main `44f7a0dd6` (#719) binds the conversation change-summary
+runtime closure already present on the base branch. It changes only these fixed
+Office packaging inputs: `packages/contracts/src/workspace-changes.ts`,
+`packages/daemon/src/features/runs/thread-routes.ts`, and
+`packages/daemon/src/server/routes.ts`. The change adds the conversation-file
+summary projection and its route wiring; it does not change Office native
+sources, packaging tools, runtime/toolchain/OS identities, signing, or trust
+fields. The three packaging digests are refreshed from
+`efb0337fe87c237e4cbc4df3cd05b2e5edd99e914177362c6238bdaec3e4c862`,
+`29c677132fe57f9b1709cbc1c3aa478c7ec00542c49146ab22fa2aa0157567ae`, and
+`ac8e5ea32b807995ffd2715da4e77f80f088c0b52a89bdd29653a14ccbf2a2ed` to
+`29d96be654be2c22c7b7429529de9cf67b80a8ae0e29990af932d21eff5a52c6`,
+`ac2e04146c264b564acac1ec4c032d5a7a6d3f0845e5278a4b01778ea3957056`, and
+`10a8e27a8ce2b8ba65ed6135c4117d76338c61f4da5036dd6d7efa5b83cad627`.
+The exact Office record SHA-256 is
+`860c9de9e463c9167f2e71459b018d2416f3333ee9b2c18db8856d519b5705f7` and the
+fixed packaging aggregate is
+`7f407ee163e0277b6e9b38b4ed7d9fa080526523b4e0140e1fae13e2ba38f21d`. All
+1,843 packaging and 15 Office native inputs match this record.
+
 ## Historical baseline, 2026-10-13
 
 Status: independently reviewed source prerequisite; final artifact acceptance separate
