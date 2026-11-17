@@ -117,7 +117,7 @@ export function ChannelSessionNavigation({ channel, cwd, active, status, statusI
         <Input autoFocus size="sm" value={title} data-session-rename="true" aria-label={t("Conversation title")} onChange={event => setTitle(event.target.value)} onKeyDown={event => { if (event.key === "Escape") setEditing(""); }} />
         <Button type="submit" size="sm" disabled={!title.trim() || [...title.trim()].length > 120 || busyId === session.id}>{t("Save")}</Button>
       </form> : <>
-        <button type="button" className="sidebar-branch-row" title={session.title} aria-label={active ? undefined : t("Conversation")} aria-current={selectedId === session.id ? "page" : undefined} onClick={() => { navigateOnClose.current = allOpen; onSelectSession(session); setAllOpen(false); }}>
+        <button type="button" className="sidebar-branch-row" title={session.title} aria-label={active ? undefined : session.title} aria-current={selectedId === session.id ? "page" : undefined} onClick={() => { navigateOnClose.current = allOpen; onSelectSession(session); setAllOpen(false); }}>
           <MessageSquare size={13} aria-hidden="true" />
           <span>{session.title === "Default conversation" ? t("Default conversation") : session.title === "New conversation" ? t("New channel conversation") : session.title}</span>
           {session.isDefault ? <small className="sidebar-session-default">{t("Default")}</small> : null}
