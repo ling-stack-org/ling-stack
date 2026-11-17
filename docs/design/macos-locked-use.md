@@ -25,6 +25,10 @@ builds without verified native acceptance, and for Windows/Linux. The
    signing identifier, hardened runtime and injection entitlements. Guardian
    and watchdog must cover every display and report healthy input interception
    before the authorization mechanism can claim and consume its permit.
+   The signed Client also verifies that its live parent is the signed Ling
+   Desktop process in the same user and audit session before it accepts any
+   task request; the Client's same-user approval alone cannot authorize a
+   fabricated task binding.
 4. Guardian requests authentication from the verified Apple loginwindow. It
    clears the unique selected field and submits only a bounded confirmation
    event; it never reads a password. Broker observes the original session

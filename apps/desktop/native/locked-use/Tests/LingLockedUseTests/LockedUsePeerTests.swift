@@ -31,4 +31,12 @@ final class LockedUsePeerTests: XCTestCase {
         defer { close(sockets[0]); close(sockets[1]) }
         XCTAssertThrowsError(try LockedUsePeerIdentity.verified(socket: sockets[0], requirement: "identifier \"dev.unapproved.client\""))
     }
+
+    func testDesktopParentRequirementUsesFixedProductIdentity() throws {
+        XCTAssertEqual(
+            try LockedUseSigningIdentity.desktopRequirement(teamIdentifier: "ABCDE12345"),
+            "identifier \"com.lingstack.desktop\" and anchor apple generic and certificate leaf[subject.OU] = \"ABCDE12345\"",
+        )
+        XCTAssertThrowsError(try LockedUseSigningIdentity.desktopRequirement(teamIdentifier: "ADHOC"))
+    }
 }

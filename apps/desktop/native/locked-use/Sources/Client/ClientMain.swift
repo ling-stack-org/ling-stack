@@ -22,6 +22,11 @@ private final class Client {
     private var binding: LockedUseTaskBinding?
     private var bindingDeadline: TimeInterval = 0
     private var descriptors: [Int32] = [-1, -1]
+    private let desktopParent: LockedUsePeerIdentity
+
+    init() throws {
+        desktopParent = try LockedUseSigningIdentity.verifiedDesktopParent()
+    }
 
     func disconnect() { connection?.end(disconnecting: true) }
     private func digest(_ session: LockedUseSession) throws -> String {
@@ -29,6 +34,9 @@ private final class Client {
     }
 
     func handle(_ value: [String: Any]) throws -> [String: Any] {
+        guard LockedUseSigningIdentity.parentIsStillTheSameProcess(desktopParent) else {
+            throw LockedUseError.stateUnavailable("Desktop caller is no longer authenticated")
+        }
         guard Set(value.keys).isSubset(of: ["command", "requestId", "binding", "providerProcessID", "actionTarget"]),
               let command = value["command"] as? String else { throw LockedUseError.message("Malformed request") }
         guard command == "provider-attach" || value["providerProcessID"] == nil else { throw LockedUseError.message("Unexpected provider identity") }
@@ -208,7 +216,8 @@ enum ClientMain {
             catch { fputs("Attended validation failed: \(error)\n", stderr); exit(1) }
         } else {
             guard !LockedUseBuildProfile.developmentValidation, CommandLine.arguments.count == 1 else { exit(64) }
-            Client().run()
+            do { try Client().run() }
+            catch { fputs("Locked Use Client startup denied: \(error)\n", stderr); exit(1) }
         }
     }
 }
