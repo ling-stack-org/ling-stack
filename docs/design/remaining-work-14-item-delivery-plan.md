@@ -3,8 +3,9 @@
 Status: active execution plan
 Owner: Ling maintainers; each delivery batch needs an integration owner and a platform contact
 Last verified: 2026-11-18
-Branch-cut baseline: `origin/main@81f216d7de8211257448451ddfecde94fcf0ec63`
-Execution branch: `codex/remaining-work-implementation`
+Initial branch-cut baseline (historical M0 snapshot): `origin/main@81f216d7de8211257448451ddfecde94fcf0ec63`
+Execution branch: `codex/automations-p2-completion`
+Current integrated main: `origin/main@d613e0ddaf0ef0575e691bef4418b6dbbaf62b36`
 Target worktree: `<isolated-worktree>`
 Release-candidate target: 2027-03-15, subject to platform resources and external acceptance
 
@@ -16,8 +17,8 @@ implementation never closes a platform gate by itself.
 
 - The protected root worktree `<workspace-root>` remains on `codex/ling-companion@65d2ed026`
   with uncommitted WIP. It is not used for this delivery and must not be reset, cleaned, or rebased.
-- The target worktree is clean and was cut from the latest observed `origin/main` commit above. It
-  contains the previously recorded F5, External Work, context processing and restart-recovery slices,
+- The target worktree is clean and contains a merge of the latest observed `origin/main@d613e0dd`.
+  It contains the previously recorded F5, External Work, context processing and restart-recovery slices,
   plus the policy-preview slice recorded below.
 - The target branch has not been pushed, has no PR, and has not been merged or deployed.
 - Known open PRs remain an external review queue: #729, #728, #727, #725, #722, #717 and #675.

@@ -4,7 +4,7 @@ Status: implemented locally; PR and hosted merge verification pending
 Owner: Automations domain
 Last verified: 2026-11-18
 Source branch: `codex/automations-p2-completion`
-Baseline: `origin/main@6e6168575`
+Baseline: `origin/main@d613e0ddaf0ef0575e691bef4418b6dbbaf62b36`
 Code anchors: `packages/daemon/src/features/automations`, `packages/contracts/src/automations.ts`, `packages/contracts/src/notifications.ts`, `apps/web/src/features/automations`
 
 ## Objective

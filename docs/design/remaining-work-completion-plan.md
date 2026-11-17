@@ -3,8 +3,8 @@
 Status: active execution plan; branch-local implementation and verification are recorded below
 Owner: Ling maintainers; one integration owner for each delivery batch
 Last verified: 2026-11-18
-Branch-cut baseline: `origin/main@81f216d7de8211257448451ddfecde94fcf0ec63`
-Current main integrated locally: `origin/main@81f216d7de8211257448451ddfecde94fcf0ec63`.
+Initial branch cut (historical M0 snapshot): `origin/main@81f216d7de8211257448451ddfecde94fcf0ec63`
+Current main integrated locally: `origin/main@d613e0ddaf0ef0575e691bef4418b6dbbaf62b36`.
 Target: 2027-03-15 release-candidate closure for the active delivery queue
 Canonical status source: [Implementation Status](implementation-status.md)
 Code and test anchors: each work package keeps its owning plan and contract
@@ -13,14 +13,14 @@ M0 audit packet: [Baseline And Decisions](remaining-work-m0-baseline-and-decisio
 
 ## 执行状态
 
-执行分支为 `codex/remaining-work-implementation`，实现保存在独立 Git worktree 中。当前目标由本工作线程推进，
+执行分支为 `codex/automations-p2-completion`，实现保存在独立 Git worktree 中。当前目标由本工作线程推进，
 整合责任由本线程承担；外部平台验收的人员与环境仍待落实。
 
 - M0 的 main 基线、隔离分支、计划索引、PR 快照、owner/平台资源审计表和六项决策包已记录在
   [M0 Baseline And Decisions](remaining-work-m0-baseline-and-decisions.md)。六项产品决策、每项 active
   work 的命名 owner/平台预约及 PR/CI 逐项闭环尚未完成，因此 M0 尚未整体完成。
-- 本次复核从 `origin/main@81f216d7de8211257448451ddfecde94fcf0ec63` 新建目标分支和独立
-  worktree；目标分支尚未推送、开 PR 或合并。提交 PR 前仍必须重新做 main 合并、迁移和受影响
+- 目标分支在 M0 初始快照上继续开发，并已通过提交 `5be7b12f5` 合入当前
+  `origin/main@d613e0ddaf0ef0575e691bef4418b6dbbaf62b36`；提交 PR 前仍必须重新做迁移和受影响
   测试复核。
 - 当前批次覆盖 External Work 8.0/8.1、Channel Context lineage/quote/redaction/startup reconstruction、F5
   rerun/approval/capacity/stop/recovery、Automation ingress、Goal supervision 和 Runner

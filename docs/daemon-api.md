@@ -1876,6 +1876,95 @@ Starting a step acquires a `workflow_step` lease. Duplicate starts return
 `409 resource_conflict` while the lease is active. Step `skip` and `cancel` only mutate
 workflow-step state; they do not mark linked task/run records terminal.
 
+## Automations
+
+Automation management is scoped by the required `cwd` query parameter. Management
+routes use the local workspace access checks. Event ingress is a separate
+authenticated path and never accepts a secret in the JSON payload.
+
+### List And Create Automations
+
+```text
+GET /automations?cwd=/path/to/project&status=enabled&kind=project_monitor&channelId=channel_...&includeArchived=false&scheduledOnly=true&limit=50
+POST /automations?cwd=/path/to/project
+```
+
+`GET` returns `{ cwd, automations, templates }`. `POST` accepts a validated
+automation definition and returns `201 { cwd, automation, thread }`. Supported
+automation kinds, triggers, execution policies, output policies and monitor
+conditions are defined by the contracts package; secret-like fields are rejected.
+
+### Inspect, Update, Archive, Preview, And Run An Automation
+
+```text
+GET    /automations/:automationId?cwd=/path/to/project
+PATCH  /automations/:automationId?cwd=/path/to/project
+DELETE /automations/:automationId?cwd=/path/to/project
+POST   /automations/:automationId/preview?cwd=/path/to/project
+POST   /automations/:automationId/run?cwd=/path/to/project
+```
+
+The detail response includes the automation, its source Thread and the latest
+automation runs. `DELETE` archives the definition and refreshes scheduler
+registration. `preview` builds context without starting a Run. `run` accepts an
+optional idempotency key, trigger type and scheduled time, returns `202`, and
+projects the linked public Run session. Monitor snapshots are scheduler-owned and
+cannot be supplied by HTTP callers.
+
+### Automation Drafts
+
+```text
+GET    /automation-drafts?cwd=/path/to/project&status=ready_for_confirmation&source=chat&limit=50
+POST   /automation-drafts?cwd=/path/to/project
+GET    /automation-drafts/:draftId?cwd=/path/to/project
+PATCH  /automation-drafts/:draftId?cwd=/path/to/project
+DELETE /automation-drafts/:draftId?cwd=/path/to/project
+POST   /automation-drafts/:draftId/preview?cwd=/path/to/project
+POST   /automation-drafts/:draftId/confirm?cwd=/path/to/project
+```
+
+Drafts may come from a built-in template, chat proposal or manual authoring.
+`preview` is read-only. `confirm` persists the definition and source Thread
+idempotently, then refreshes scheduler registration; a successful response
+identifies whether the draft was newly created or already confirmed.
+
+### Automation Runs And Scheduler
+
+```text
+GET  /automation-runs?cwd=/path/to/project&automationId=automation_...&runId=run_...&status=completed&limit=50
+GET  /automation-runs/:automationRunId?cwd=/path/to/project
+POST /automation-runs/:automationRunId/cancel?cwd=/path/to/project
+POST /automations/scheduler/start?cwd=/path/to/project
+GET  /automations/scheduler?cwd=/path/to/project
+POST /automations/scheduler/stop?cwd=/path/to/project
+```
+
+Run list and detail responses expose durable automation state and the linked
+public Run projection. Cancellation accepts an optional reason and is idempotent
+at the automation-run boundary. Scheduler start/stop are workspace-scoped;
+starting an already-running scheduler returns `duplicate: true`.
+
+### Automation Event Sources And Delivery Evidence
+
+```text
+GET  /automation-event-sources?cwd=/path/to/project
+POST /automation-event-sources?cwd=/path/to/project
+GET  /automation-event-sources/:sourceId?cwd=/path/to/project
+PUT  /automation-event-sources/:sourceId?cwd=/path/to/project
+POST /automation-event-sources/:sourceId/events?cwd=/path/to/project
+GET  /automation-events?cwd=/path/to/project
+GET  /automation-deliveries?cwd=/path/to/project
+POST /automation-deliveries/:deliveryId/reconcile?cwd=/path/to/project
+```
+
+Source create/update bodies contain the validated source and, for updates, an
+`expectedRevision`. Event ingress authenticates the raw request body using the
+configured source, stores the event with an idempotency identity and wakes the
+workspace worker; it returns `{ eventId, duplicate }`. Event and delivery list
+routes expose durable records. Delivery reconciliation accepts `decision` of
+`delivered`, `retry` or `failed`, a bounded `reason`, and the saved
+`expectedUpdatedAt` for compare-and-set protection.
+
 ## External Work
 
 Phase 1 adds a read-only GitHub manual import path. Phase 2 adds manual read-only
