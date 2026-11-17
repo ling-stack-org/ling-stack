@@ -119,7 +119,7 @@ jobs:
             --scope=.codex-artifacts/ci/scope.json \
             --full-scope=.codex-artifacts/ci/full-scope.json \
             --execution-tier="${{ steps.policy.outputs.execution-tier }}" \
-            --output=.codex-artifacts/ci/scope-report.md >> "$GITHUB_STEP_SUMMARY"
+            --output=.codex-artifacts/ci/scope-report.md > /dev/null
 
       - name: Restore timing hints once for the entire run
         if: steps.policy.outputs.execution-tier == 'complete' && (steps.classify.outputs.daemon == 'true' || contains(steps.classify.outputs.test-packages, '"@ling-stack/core"'))
@@ -152,6 +152,31 @@ jobs:
           const plan = JSON.parse(readFileSync(".codex-artifacts/ci/test-plan.json", "utf8"));
           console.log(`daemon-matrix=${JSON.stringify(plan.daemonMatrix)}`);
           NODE
+          full_test_packages="$(node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            process.stdout.write(JSON.stringify(JSON.parse(readFileSync(".codex-artifacts/ci/full-scope.json", "utf8")).testPackages));
+          ')"
+          full_daemon_platforms="$(node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            process.stdout.write(JSON.stringify(JSON.parse(readFileSync(".codex-artifacts/ci/full-scope.json", "utf8")).daemonPlatforms));
+          ')"
+          node scripts/ci/test-shard-plan.mjs \
+            --packages="$full_test_packages" \
+            --daemon-platforms="$full_daemon_platforms" \
+            --timings=.codex-artifacts/ci/timings.json \
+            --output=.codex-artifacts/ci/full-test-plan.json > /dev/null
+
+      - name: Audit selected test plan against forced full plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/ci/scope-audit.mjs \
+            --scope=.codex-artifacts/ci/scope.json \
+            --full-scope=.codex-artifacts/ci/full-scope.json \
+            --plan=.codex-artifacts/ci/test-plan.json \
+            --full-plan=.codex-artifacts/ci/full-test-plan.json \
+            --execution-tier="${{ steps.policy.outputs.execution-tier }}" \
+            --output=.codex-artifacts/ci/scope-report.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish the immutable test plan for every shard
         if: steps.policy.outputs.execution-tier == 'complete' && steps.classify.outputs.mode != 'docs'
@@ -174,6 +199,7 @@ jobs:
           path: |
             .codex-artifacts/ci/scope.json
             .codex-artifacts/ci/full-scope.json
+            .codex-artifacts/ci/full-test-plan.json
             .codex-artifacts/ci/scope-report.md
 
   common-fast:
@@ -962,7 +988,10 @@ jobs:
     needs: [scope, quality]
     if: always()
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    # Artifact download plus the Actions API can exceed three minutes on a
+    # busy hosted runner. Telemetry is best-effort, so give it a bounded window
+    # without extending the required quality gate.
+    timeout-minutes: 8
     continue-on-error: true
     permissions:
       actions: read
@@ -998,13 +1027,29 @@ jobs:
           set -u
           set +e
           mkdir -p .codex-artifacts/ci
+          api_with_retry() {
+            local output="$1"
+            shift
+            local attempt
+            for attempt in 1 2 3; do
+              if gh api "$@" > "$output"; then
+                return 0
+              fi
+              rm -f "$output"
+              if [ "$attempt" -lt 3 ]; then sleep "$attempt"; fi
+            done
+            return 1
+          }
           run_status=0
-          gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" > .codex-artifacts/ci/telemetry-run.json || run_status=$?
+          api_with_retry .codex-artifacts/ci/telemetry-run.json \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" || run_status=$?
           if [ "$run_status" -ne 0 ]; then
             printf '{"telemetry_unavailable":true,"reason":"workflow run API request failed"}\n' > .codex-artifacts/ci/telemetry-run.json
           fi
           jobs_status=0
-          gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}/jobs?per_page=100" > .codex-artifacts/ci/telemetry-jobs-pages.json || jobs_status=$?
+          api_with_retry .codex-artifacts/ci/telemetry-jobs-pages.json \
+            --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}/jobs?per_page=100" || jobs_status=$?
           if [ "$jobs_status" -ne 0 ]; then
             printf '{"telemetry_unavailable":true,"reason":"workflow jobs API request failed"}\n' > .codex-artifacts/ci/telemetry-jobs-pages.json
           else
