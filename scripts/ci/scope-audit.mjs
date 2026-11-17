@@ -28,6 +28,63 @@ const booleanFields = ["dependencyPolicy", "assurance", "daemon", "macosNative",
 /** @typedef {{mode: string, files: string[], packages: string[], testPackages: string[], typecheckPackages: string[], dependencyPolicy: boolean, assurance: boolean, daemon: boolean, daemonPlatforms: string[], macosNative: boolean, macosHelper: boolean, nativeRelease: boolean, web: boolean, reason: string}} Scope */
 
 /**
+ * Check that the selected test plan is a file-level subset of the forced full
+ * plan. Shard counts can differ when the planner reserves capacity for a
+ * combined Core/Daemon run, so the comparison deliberately follows suites,
+ * platforms, and assigned files instead of shard numbers.
+ * @param {{version?: number, suites?: Record<string, {platform?: string, files?: string[]}>, unitMatrix?: {include?: Array<{suite?: string}>}, daemonMatrix?: {include?: Array<{suite?: string}>}}} plan
+ * @param {{version?: number, suites?: Record<string, {platform?: string, files?: string[]}>, unitMatrix?: {include?: Array<{suite?: string}>}, daemonMatrix?: {include?: Array<{suite?: string}>}}} fullPlan
+ */
+export function auditTestPlanSubset(plan, fullPlan) {
+  const issues = [];
+  if (plan?.version !== 1) issues.push("selected test plan did not produce version=1");
+  if (fullPlan?.version !== 1) issues.push("forced full test plan did not produce version=1");
+  const selectedSuites = plan?.suites && typeof plan.suites === "object" ? plan.suites : {};
+  const fullSuites = fullPlan?.suites && typeof fullPlan.suites === "object" ? fullPlan.suites : {};
+  const selectedFiles = new Set();
+  const fullFiles = new Set();
+  for (const [name, suite] of Object.entries(fullSuites)) {
+    if (!Array.isArray(suite?.files)) continue;
+    for (const file of suite.files) fullFiles.add(`${name}:${file}`);
+  }
+  for (const [name, suite] of Object.entries(selectedSuites)) {
+    const fullSuite = fullSuites[name];
+    if (!fullSuite) {
+      issues.push(`test suite ${name} is outside the forced full plan`);
+      continue;
+    }
+    if (suite?.platform !== fullSuite.platform) {
+      issues.push(`test suite ${name} changes platform from ${String(fullSuite.platform)} to ${String(suite?.platform)}`);
+    }
+    const files = Array.isArray(suite?.files) ? suite.files : [];
+    const fullSuiteFiles = new Set(Array.isArray(fullSuite.files) ? fullSuite.files : []);
+    for (const file of files) {
+      const key = `${name}:${file}`;
+      if (selectedFiles.has(key)) issues.push(`test file ${key} is assigned more than once`);
+      selectedFiles.add(key);
+      if (!fullSuiteFiles.has(file)) issues.push(`test file ${key} is outside the forced full plan`);
+    }
+  }
+  for (const field of ["unitMatrix", "daemonMatrix"]) {
+    const selectedEntries = Array.isArray(plan?.[field]?.include) ? plan[field].include : [];
+    const fullEntries = Array.isArray(fullPlan?.[field]?.include) ? fullPlan[field].include : [];
+    const fullSuitesInMatrix = new Set(fullEntries.map(entry => entry?.suite).filter(Boolean));
+    for (const entry of selectedEntries) {
+      if (!fullSuitesInMatrix.has(entry?.suite)) issues.push(`${field} selects ${String(entry?.suite)} outside the forced full plan`);
+    }
+  }
+  return {
+    passed: issues.length === 0,
+    issues,
+    selectedSuiteCount: Object.keys(selectedSuites).length,
+    fullSuiteCount: Object.keys(fullSuites).length,
+    selectedTestFileCount: selectedFiles.size,
+    fullTestFileCount: fullFiles.size,
+    omittedTestFileCount: Math.max(0, fullFiles.size - selectedFiles.size),
+  };
+}
+
+/**
  * Check that the selected scope is a subset of the forced full scope.
  * This is an audit of the selector, not a replacement for product tests.
  * @param {Scope} scope
@@ -75,7 +132,7 @@ function list(values) {
   return values.length ? values.map(value => `\`${value}\``).join(", ") : "none";
 }
 
-/** @param {Scope} scope @param {Scope} fullScope @param {{executionTier?: string, audit?: ReturnType<typeof auditScope>}} [options] */
+/** @param {Scope} scope @param {Scope} fullScope @param {{executionTier?: string, audit?: ReturnType<typeof auditScope>, planAudit?: ReturnType<typeof auditTestPlanSubset>}} [options] */
 export function renderScopeSummary(scope, fullScope, options = {}) {
   const audit = options.audit ?? auditScope(scope, fullScope);
   const changedFiles = Array.isArray(scope.files) ? scope.files : [];
@@ -91,6 +148,7 @@ export function renderScopeSummary(scope, fullScope, options = {}) {
     `- Typecheck packages: ${list(scope.typecheckPackages ?? [])}`,
     `- Daemon platforms: ${list(scope.daemonPlatforms ?? [])}`,
     `- Scope audit: **${audit.passed ? "passed" : "failed"}**${audit.issues.length ? ` (${audit.issues.join("; ")})` : "; selected work is a subset of the forced full scope"}`,
+    ...(options.planAudit ? [`- Test plan audit: **${options.planAudit.passed ? "passed" : "failed"}**${options.planAudit.issues.length ? ` (${options.planAudit.issues.join("; ")})` : `; ${options.planAudit.selectedTestFileCount}/${options.planAudit.fullTestFileCount} planned test files selected`}`] : []),
     "",
     "### Selected and skipped lanes",
     "",
@@ -112,7 +170,7 @@ function parseArguments(argv) {
   const args = {};
   for (let index = 0; index < argv.length; index += 1) {
     const [key, ...rest] = argv[index].split("=");
-    if (!["--scope", "--full-scope", "--execution-tier", "--output"].includes(key) || Object.hasOwn(args, key)) {
+    if (!["--scope", "--full-scope", "--plan", "--full-plan", "--execution-tier", "--output"].includes(key) || Object.hasOwn(args, key)) {
       throw new Error(`Unknown or duplicate argument: ${key}`);
     }
     const value = rest.length ? rest.join("=") : argv[++index];
@@ -124,19 +182,23 @@ function parseArguments(argv) {
 
 async function main() {
   const args = parseArguments(process.argv.slice(2));
-  if (!args["--scope"] || !args["--full-scope"] || !args["--output"]) {
-    throw new Error("--scope, --full-scope, and --output are required");
+  if (!args["--scope"] || !args["--full-scope"] || !args["--output"]
+    || Boolean(args["--plan"]) !== Boolean(args["--full-plan"])) {
+    throw new Error("--scope, --full-scope, and --output are required; --plan and --full-plan must be provided together");
   }
-  const [scope, fullScope] = await Promise.all([
+  const [scope, fullScope, plan, fullPlan] = await Promise.all([
     readFile(args["--scope"], "utf8").then(JSON.parse),
     readFile(args["--full-scope"], "utf8").then(JSON.parse),
+    args["--plan"] ? readFile(args["--plan"], "utf8").then(JSON.parse) : undefined,
+    args["--full-plan"] ? readFile(args["--full-plan"], "utf8").then(JSON.parse) : undefined,
   ]);
   const audit = auditScope(scope, fullScope);
-  const report = renderScopeSummary(scope, fullScope, { executionTier: args["--execution-tier"], audit });
+  const planAudit = plan && fullPlan ? auditTestPlanSubset(plan, fullPlan) : undefined;
+  const report = renderScopeSummary(scope, fullScope, { executionTier: args["--execution-tier"], audit, planAudit });
   await mkdir(dirname(resolve(args["--output"])), { recursive: true });
   await writeFile(resolve(args["--output"]), report);
   console.log(report);
-  if (!audit.passed) process.exitCode = 1;
+  if (!audit.passed || planAudit && !planAudit.passed) process.exitCode = 1;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
