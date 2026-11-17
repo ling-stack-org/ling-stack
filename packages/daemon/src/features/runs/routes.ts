@@ -582,6 +582,7 @@ export function handleApprovalsCollection(
     const store = storeRegistry.getStore(cwd);
     expireStalePendingApprovals(store, {
       runId: url.searchParams.get("runId") ?? undefined,
+      nodeRerunIntentId: url.searchParams.get("nodeRerunIntentId") ?? undefined,
       mediaJobId: url.searchParams.get("mediaJobId") ?? undefined,
       externalWorkActionId: url.searchParams.get("externalWorkActionId") ?? undefined,
       workflowStepId: url.searchParams.get("workflowStepId") ?? undefined,
@@ -593,6 +594,7 @@ export function handleApprovalsCollection(
       approvals: store.listApprovalRequests({
         status: readOptionalApprovalStatusQuery(url),
         runId: url.searchParams.get("runId") ?? undefined,
+        nodeRerunIntentId: url.searchParams.get("nodeRerunIntentId") ?? undefined,
         mediaJobId: url.searchParams.get("mediaJobId") ?? undefined,
         externalWorkActionId: url.searchParams.get("externalWorkActionId") ?? undefined,
         workflowStepId: url.searchParams.get("workflowStepId") ?? undefined,

@@ -51,7 +51,7 @@ function fixture(options: { runStatus: string; unitStatus: string; held?: readon
 
 test("startup observation reattaches a crash-window receipt without releasing a live owner", () => {
   const f = fixture({ runStatus: "queued", unitStatus: "queued" });
-  assert.deepEqual(recoverHostCapacityReservations({ ...f, workspaceId: domainWorkspaceId, now: "2026-11-09T00:00:01.000Z" }), { observed: 1, released: 0 });
+  assert.deepEqual(recoverHostCapacityReservations({ ...f, workspaceId: domainWorkspaceId, now: "2026-11-09T00:00:01.000Z" }), { observed: 1, released: 0, unknown: 0 });
   assert.deepEqual(f.observed, ["intent"]);
   assert.deepEqual(f.observedWorkspaceIds, [domainWorkspaceId]);
   assert.deepEqual(f.released, []);
@@ -59,7 +59,7 @@ test("startup observation reattaches a crash-window receipt without releasing a 
 
 test("startup observation releases a proven pre-dispatch terminal owner", () => {
   const f = fixture({ runStatus: "cancelled", unitStatus: "cancelled" });
-  assert.deepEqual(recoverHostCapacityReservations({ ...f, workspaceId: domainWorkspaceId, now: "2026-11-09T00:00:01.000Z" }), { observed: 1, released: 1 });
+  assert.deepEqual(recoverHostCapacityReservations({ ...f, workspaceId: domainWorkspaceId, now: "2026-11-09T00:00:01.000Z" }), { observed: 1, released: 1, unknown: 0 });
   assert.deepEqual(f.released, ["intent"]);
   assert.deepEqual(f.releasedWorkspaceIds, [domainWorkspaceId]);
 });
@@ -70,7 +70,7 @@ test("startup recovery ignores another workspace and already dispatched receipts
     reservation("unrelated", { canonicalCwd: "/other", databasePath: "/other/db" }),
     reservation("dispatched"),
   ], dispatchedIds: ["dispatched"] });
-  assert.deepEqual(recoverHostCapacityReservations({ ...f, workspaceId: domainWorkspaceId, now: "2026-11-09T00:00:01.000Z" }), { observed: 1, released: 0 });
+  assert.deepEqual(recoverHostCapacityReservations({ ...f, workspaceId: domainWorkspaceId, now: "2026-11-09T00:00:01.000Z" }), { observed: 1, released: 0, unknown: 0 });
   assert.deepEqual(f.observed, ["dispatched"]);
   assert.deepEqual(f.released, []);
 });

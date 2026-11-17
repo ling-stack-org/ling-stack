@@ -51,18 +51,24 @@ const legacySchema = [
   )`,
   `CREATE INDEX ${index} ON ${reservations}(state,reservation_id)`,
 ];
+// Version 2 adds the two continuation owners and quotes the rebuilt marker and reservation tables.
+const continuationSchema = legacySchema.map(sql => sql.startsWith(`CREATE TABLE ${marker} `)
+  ? sql.replace(`CREATE TABLE ${marker}`, `CREATE TABLE "${marker}"`).replace(integer("version", 1, 1), integer("version", 2, 2))
+  : sql.startsWith(`CREATE TABLE ${reservations} `) ? sql.replace(`CREATE TABLE ${reservations}`, `CREATE TABLE "${reservations}"`)
+    .replace("'delegation_spawn'", "'delegation_spawn','approval_resume_pending','user_input_continuation'") : sql);
 const rows = (db: DatabaseSync, table: string) => db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all();
 const snapshot = (db: DatabaseSync) => {
   const objects = db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name").all();
   return { objects, data: Object.fromEntries(objects.filter(row => row.type === "table").map(row => [String(row.name), rows(db, String(row.name))])) };
 };
 
-function fixture(t: TestContext, { populated = true } = {}) {
+function fixture(t: TestContext, { populated = true, version = 1 } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "ling-global-host-upgrade-"))), globalDatabasePath = join(root, "global.sqlite");
   const db = new DatabaseSync(globalDatabasePath), stores: ReturnType<typeof createHostRunCapacityStore>[] = [];
   t.after(() => { for (const store of stores) if (store.database.isOpen) store.close(); if (db.isOpen) db.close(); rmSync(root, { recursive: true, force: true }); });
-  for (const definition of legacySchema) db.exec(definition);
-  db.exec(`INSERT INTO ${marker} VALUES(1,'host_run_capacity');
+  for (const definition of version === 1 ? legacySchema : continuationSchema) db.exec(definition);
+  db.prepare(`INSERT INTO ${marker} VALUES(?,'host_run_capacity')`).run(version);
+  db.exec(`
     CREATE TABLE sentinel(value TEXT); INSERT INTO sentinel VALUES('keep');
     CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY,name TEXT); INSERT INTO schema_migrations VALUES(900,'unrelated');`);
   const intent = (id: string, ownerKind: HostRunCapacityIntent["ownerKind"] = "attempt"): HostRunCapacityIntent => ({ intentId: id,
@@ -88,7 +94,7 @@ test("global v1 upgrade preserves credentials, held/released history, policy rev
   assert.deepEqual(rows(f.db, policy), before.data[policy]);
   assert.deepEqual(rows(f.db, "schema_migrations"), before.data.schema_migrations);
   assert.deepEqual(rows(f.db, "sentinel"), before.data.sentinel);
-  assert.deepEqual(rows(f.db, marker).map(row => ({ ...row })), [{ version: 2, name: "host_run_capacity" }]);
+  assert.deepEqual(rows(f.db, marker).map(row => ({ ...row })), [{ version: 3, name: "host_run_capacity" }]);
   assert.deepEqual(store.getPolicy(), { revision: 7, maxConcurrentRuns: 2, installedAt: now });
   assert.deepEqual(store.counts(), { held: 1, released: 1, total: 2 });
   assert.equal(store.database.prepare("PRAGMA foreign_keys").get()!.foreign_keys, 1);
@@ -117,7 +123,41 @@ test("global v1 with only its schema upgrades without manufacturing a policy or 
   assert.equal(store.getPolicy(), undefined);
   assert.deepEqual(store.counts(), { held: 0, released: 0, total: 0 });
   assert.equal(store.reserve({ intent: f.intent("answer", "user_input_continuation"), now }).status, "unconfigured");
-  assert.deepEqual(rows(f.db, marker).map(row => row.version), [2]);
+  assert.deepEqual(rows(f.db, marker).map(row => row.version), [3]);
+});
+
+test("global v2 upgrade preserves continuation reservations and binds rerun owners to the shared limit without reusing released intent IDs", t => {
+  const f = fixture(t, { version: 2 });
+  f.db.prepare(`UPDATE ${reservations} SET owner_kind='user_input_continuation' WHERE state='held'`).run();
+  f.db.prepare(`UPDATE ${reservations} SET owner_kind='approval_resume_pending' WHERE state='released'`).run();
+  const before = snapshot(f.db), store = f.open();
+  for (const table of [reservations, policy, "sentinel", "schema_migrations"]) assert.deepEqual(rows(f.db, table), before.data[table]);
+  assert.deepEqual(rows(f.db, marker).map(row => row.version), [3]);
+  assert.equal(store.reserve({ intent: f.intent("held", "user_input_continuation"), now: later }).status, "duplicate");
+  assert.equal(store.reserve({ intent: f.intent("released", "approval_resume_pending"), now: later }).status, "released");
+  const rerun = store.reserve({ intent: f.intent("rerun", "node_rerun_target"), now: later });
+  assert.equal(rerun.status, "reserved"); assert.ok("reservation" in rerun);
+  assert.equal(rerun.reservation.intent.ownerKind, "node_rerun_target");
+  assert.equal(store.reserve({ intent: f.intent("blocked"), now: later }).status, "full");
+  assert.equal(store.reserve({ intent: { ...rerun.reservation.intent, ownerKind: "attempt" }, now: later }).status, "conflict");
+  assert.equal(store.reserve({ intent: rerun.reservation.intent, now: later }).status, "duplicate");
+  const after = snapshot(f.db), peer = f.open();
+  assert.equal(peer.database.prepare("SELECT total_changes() n").get()!.n, 0); assert.deepEqual(snapshot(f.db), after);
+  assert.deepEqual(peer.getReservation(rerun.reservation.intent.workspaceKey, rerun.reservation.intent.intentId), rerun.reservation);
+  assert.equal(peer.release({ kind: "no_dispatch", proofDigest: "e".repeat(64), now: later,
+    reservationId: rerun.reservation.reservationId, token: rerun.reservation.token, intent: rerun.reservation.intent }).status, "released");
+  assert.equal(store.reserve({ intent: rerun.reservation.intent, now: later }).status, "released");
+  assert.equal(store.reserve({ intent: f.intent("successor", "node_rerun_target"), now: later }).status, "reserved");
+  assert.deepEqual(store.counts(), { held: 2, released: 2, total: 4 });
+});
+
+test("empty v2 upgrade manufactures neither policy nor capacity and rejects mixed v2/v3 schemas", t => {
+  const f = fixture(t, { version: 2, populated: false }), store = f.open();
+  assert.equal(store.getPolicy(), undefined); assert.deepEqual(store.counts(), { held: 0, released: 0, total: 0 });
+  assert.equal(store.reserve({ intent: f.intent("rerun", "node_rerun_target"), now }).status, "unconfigured");
+  f.db.exec(`PRAGMA ignore_check_constraints=ON; UPDATE ${marker} SET version=2`);
+  const before = snapshot(f.db);
+  assert.throws(() => f.open(), /host_run_capacity\.schema/u); assert.deepEqual(snapshot(f.db), before);
 });
 
 test("global upgrade rejects corrupt markers, mixed schemas, unmarked data and unexpected objects without repairs", async t => {
@@ -158,8 +198,9 @@ test("global upgrade rejects corrupt markers, mixed schemas, unmarked data and u
 });
 
 test("global upgrade rolls back copied tables, credentials, marker and index on DDL/postcondition/COMMIT faults", async t => {
-  for (const fault of ["create", "copy", "drop", "rename", "marker", "index", "postcondition", "commit"]) await t.test(fault, t => {
-    const f = fixture(t), before = snapshot(f.db), exec = DatabaseSync.prototype.exec;
+  for (const version of [1, 2]) for (const fault of ["create", "copy", "drop", "rename", "marker", "index", "postcondition", "commit"])
+    await t.test(`v${version}/${fault}`, t => {
+    const f = fixture(t, { version }), before = snapshot(f.db), exec = DatabaseSync.prototype.exec;
     let reached = false;
     const mock = t.mock.method(DatabaseSync.prototype, "exec", function (this: DatabaseSync, sql: string) {
       if (fault === "commit" && sql === "COMMIT") { reached = true; throw new Error("injected-global-upgrade-failure"); }
@@ -279,5 +320,5 @@ test("independent workers upgrading v1 admit only one continuation into the last
   Atomics.store(new Int32Array(gate), 0, 1); Atomics.notify(new Int32Array(gate), 0);
   assert.deepEqual((await Promise.all(workers.map(worker => worker.result))).sort(), ["full", "reserved"]);
   assert.deepEqual(f.open().counts(), { held: 2, released: 1, total: 3 });
-  assert.deepEqual(rows(f.db, marker).map(row => row.version), [2]);
+  assert.deepEqual(rows(f.db, marker).map(row => row.version), [3]);
 });

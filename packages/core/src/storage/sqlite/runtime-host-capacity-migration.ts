@@ -1,11 +1,14 @@
 import type { DatabaseSync } from "node:sqlite";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 import { RUNTIME_RUN_QUEUE_MIGRATION_VERSION, RUNTIME_RUN_QUEUE_MIGRATION_NAME } from "./runtime-run-queue-migration.js";
+import { NODE_RERUN_TARGET_MIGRATION_VERSION } from "./node-rerun-target-migration.js";
 
 export const RUNTIME_HOST_CAPACITY_MIGRATION_VERSION = 218;
 export const RUNTIME_HOST_CAPACITY_MIGRATION_NAME = "runtime_host_capacity";
 export const RUNTIME_HOST_CAPACITY_CONTINUATION_MIGRATION_VERSION = 220;
 export const RUNTIME_HOST_CAPACITY_CONTINUATION_MIGRATION_NAME = "runtime_host_capacity_continuations";
+export const RUNTIME_HOST_CAPACITY_NODE_RERUN_MIGRATION_VERSION = 229;
+export const RUNTIME_HOST_CAPACITY_NODE_RERUN_MIGRATION_NAME = "runtime_host_capacity_node_rerun";
 
 const text = (column: string) => `typeof(${column})='text' AND length(trim(${column}))>0 AND instr(${column},char(0))=0`;
 const digest = (column: string) => `${text(column)} AND length(${column})=64 AND length(CAST(${column} AS BLOB))=64 AND ${column} NOT GLOB '*[^0-9a-f]*'`;
@@ -64,6 +67,9 @@ export const runtimeHostCapacityContinuationIntentDefinition = definitions[0][1]
   .replace("CREATE TABLE runtime_host_capacity_intents", 'CREATE TABLE "runtime_host_capacity_intents"')
   .replace("owner_kind IN ('attempt','workflow_start','delegation_spawn')",
     "owner_kind IN ('attempt','workflow_start','delegation_spawn','approval_resume_pending','user_input_continuation')");
+export const runtimeHostCapacityNodeRerunIntentDefinition = runtimeHostCapacityContinuationIntentDefinition
+  .replace("'user_input_continuation'", "'user_input_continuation','node_rerun_target'")
+  .replace("owner_kind<>'attempt'", "owner_kind NOT IN ('attempt','node_rerun_target')");
 const normalize = (sql: string) => sql.trim().replace(/;$/u, "").replace(/\s+/gu, " ");
 
 export function applyRuntimeHostCapacityMigration(input: {
@@ -104,12 +110,27 @@ export function applyRuntimeHostCapacityMigration(input: {
         throw new Error("runtime_host_capacity.migration_predecessor_missing");
       }
     }
+    const reruns = database.prepare("SELECT version,name FROM schema_migrations WHERE version=? OR name=?")
+      .all(RUNTIME_HOST_CAPACITY_NODE_RERUN_MIGRATION_VERSION, RUNTIME_HOST_CAPACITY_NODE_RERUN_MIGRATION_NAME);
+    if (reruns.length > 1 || reruns.some(row => row.version !== RUNTIME_HOST_CAPACITY_NODE_RERUN_MIGRATION_VERSION
+      || row.name !== RUNTIME_HOST_CAPACITY_NODE_RERUN_MIGRATION_NAME)
+      || Boolean(reruns.length) !== input.hasMigration(RUNTIME_HOST_CAPACITY_NODE_RERUN_MIGRATION_VERSION)
+      || (reruns.length && !successors.length)) {
+      throw new Error("runtime_host_capacity.migration_marker_conflict");
+    }
+    if (reruns.length) {
+      const targets = database.prepare("SELECT version,name FROM schema_migrations WHERE version=? OR name='node_rerun_targets'")
+        .all(NODE_RERUN_TARGET_MIGRATION_VERSION);
+      if (targets.length !== 1 || targets[0]!.version !== NODE_RERUN_TARGET_MIGRATION_VERSION
+        || targets[0]!.name !== "node_rerun_targets" || !input.hasMigration(NODE_RERUN_TARGET_MIGRATION_VERSION))
+        throw new Error("runtime_host_capacity.migration_predecessor_missing");
+    }
     for (const [table, definition] of definitions) {
       const objects = database.prepare(`SELECT 'main' AS schema_name,type,name,sql FROM main.sqlite_master WHERE name=? COLLATE NOCASE
         UNION ALL SELECT 'temp' AS schema_name,type,name,sql FROM temp.sqlite_master WHERE name=? COLLATE NOCASE`).all(table, table);
       const actual = objects[0];
-      const expected = successors.length && table === "runtime_host_capacity_intents"
-        ? runtimeHostCapacityContinuationIntentDefinition : definition;
+      const expected = table !== "runtime_host_capacity_intents" ? definition : reruns.length
+        ? runtimeHostCapacityNodeRerunIntentDefinition : successors.length ? runtimeHostCapacityContinuationIntentDefinition : definition;
       if (objects.length > 1 || (actual && (actual.schema_name !== "main" || actual.name !== table
         || actual.type !== "table" || typeof actual.sql !== "string" || normalize(actual.sql) !== normalize(expected)))) {
         throw new Error("runtime_host_capacity.migration_schema_conflict");

@@ -1,6 +1,7 @@
 import type {
   ContextSegment,
   ContextSegmentState,
+  ConversationContextProjectionMetadata,
   ConversationContextSnapshot,
   ConversationContextSummary,
   ConversationContextSummaryScope,
@@ -124,3 +125,48 @@ export interface ListConversationContextSnapshotsOptions {
 export interface CreateConversationContextSnapshotResult {
   readonly snapshot: ConversationContextSnapshot;
 }
+
+/** Durable identity for a rebuildable context view. The prompt body remains a cache. */
+export interface ConversationContextViewLineage {
+  readonly lineageKey: string;
+  readonly workspaceId: string;
+  readonly channelId?: string;
+  readonly threadId?: string;
+  readonly sourceItemId?: string;
+  readonly kind: string;
+  readonly consumerTeammateId?: string;
+  readonly contextViewId: string;
+  readonly contextViewCreatedAt: string;
+  readonly projection?: ConversationContextProjectionMetadata;
+  readonly viewFingerprint: string;
+  readonly revision: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface UpsertConversationContextViewLineageInput {
+  readonly lineageKey: string;
+  readonly workspaceId: string;
+  readonly channelId?: string;
+  readonly threadId?: string;
+  readonly sourceItemId?: string;
+  readonly kind: string;
+  readonly consumerTeammateId?: string;
+  readonly contextViewId: string;
+  readonly contextViewCreatedAt: string;
+  readonly projection?: ConversationContextProjectionMetadata;
+  readonly viewFingerprint: string;
+  /** Required when replacing a view from a previously captured request. */
+  readonly expectedCurrentViewId?: string;
+}
+
+export type UpsertConversationContextViewLineageResult =
+  | {
+      readonly status: "created" | "updated" | "reused";
+      readonly lineage: ConversationContextViewLineage;
+    }
+  | {
+      readonly status: "rejected_stale";
+      readonly lineage?: ConversationContextViewLineage;
+      readonly reason: "current_view_changed" | "older_projection";
+    };

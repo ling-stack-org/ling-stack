@@ -213,7 +213,80 @@ function normalizeWorkspaceConfig(raw: Record<string, unknown> | undefined): Ext
     root: readOptionalString(raw?.root, "workspace.root"),
     mode,
     cleanupTerminalWorkItems: readOptionalBoolean(raw?.cleanupTerminalWorkItems, "workspace.cleanupTerminalWorkItems", false),
+    gitRemoteUrl: readOptionalGitRemoteUrl(raw?.gitRemoteUrl),
   };
+}
+
+const GIT_REMOTE_SENSITIVE_QUERY_KEYS = new Set(["token", "access_token", "private_token", "auth", "key"]);
+const GIT_REMOTE_CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f-\u009f]/u;
+const GIT_REMOTE_SHELL_FRAGMENT_PATTERN = /&&|[$`'";|<>]/u;
+const GIT_REMOTE_SCP_PATTERN = /^([A-Za-z0-9_][A-Za-z0-9._-]*)@(\[[A-Fa-f0-9:.]+\]|[A-Za-z0-9][A-Za-z0-9._-]*):([^?#]+)$/u;
+
+/**
+ * Validates a checkout-only Git remote without contacting Git, a provider, or the network.
+ * The returned value preserves the operator's spelling after surrounding whitespace is removed.
+ */
+export function normalizeGitRemoteUrl(value: string): string {
+  if (typeof value !== "string") {
+    throw new ExternalWorkflowValidationError("Unsupported workspace.gitRemoteUrl: value must be a string.");
+  }
+  if (GIT_REMOTE_CONTROL_CHARACTER_PATTERN.test(value)) {
+    throw new ExternalWorkflowValidationError("Unsupported workspace.gitRemoteUrl: control characters are not allowed.");
+  }
+  const remote = value.trim();
+  if (!remote) {
+    throw new ExternalWorkflowValidationError("Unsupported workspace.gitRemoteUrl: value must not be empty.");
+  }
+  if (GIT_REMOTE_SHELL_FRAGMENT_PATTERN.test(remote)) {
+    throw new ExternalWorkflowValidationError("Unsupported workspace.gitRemoteUrl: shell fragments are not allowed.");
+  }
+  if (/[\s\\]/u.test(remote)) {
+    throw new ExternalWorkflowValidationError("Unsupported workspace.gitRemoteUrl: whitespace and backslashes are not allowed.");
+  }
+  if (GIT_REMOTE_SCP_PATTERN.test(remote)) {
+    return remote;
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(remote);
+  } catch {
+    throw new ExternalWorkflowValidationError("Unsupported workspace.gitRemoteUrl: expected an SSH or HTTPS Git remote.");
+  }
+  if (!/^(?:ssh|https):\/\//iu.test(remote) || (parsed.protocol !== "ssh:" && parsed.protocol !== "https:")) {
+    throw new ExternalWorkflowValidationError("Unsupported workspace.gitRemoteUrl: only SSH and HTTPS schemes are allowed.");
+  }
+  if (!parsed.hostname || parsed.hostname.startsWith("-") || !parsed.pathname || parsed.pathname === "/") {
+    throw new ExternalWorkflowValidationError("Unsupported workspace.gitRemoteUrl: host and repository path are required.");
+  }
+  if (parsed.protocol === "https:" && (parsed.username || parsed.password)) {
+    throw new ExternalWorkflowValidationError("Unsupported workspace.gitRemoteUrl: credential-bearing HTTPS remotes are not allowed.");
+  }
+  if (parsed.password) {
+    throw new ExternalWorkflowValidationError("Unsupported workspace.gitRemoteUrl: embedded credentials are not allowed.");
+  }
+  if (parsed.protocol === "ssh:" && parsed.username && !/^[A-Za-z0-9_][A-Za-z0-9._-]*$/u.test(parsed.username)) {
+    throw new ExternalWorkflowValidationError("Unsupported workspace.gitRemoteUrl: invalid SSH user.");
+  }
+  if (parsed.hash) {
+    throw new ExternalWorkflowValidationError("Unsupported workspace.gitRemoteUrl: URL fragments are not supported.");
+  }
+  for (const key of parsed.searchParams.keys()) {
+    if (GIT_REMOTE_SENSITIVE_QUERY_KEYS.has(key.toLowerCase())) {
+      throw new ExternalWorkflowValidationError("Unsupported workspace.gitRemoteUrl: credential-bearing query parameters are not allowed.");
+    }
+  }
+  return remote;
+}
+
+function readOptionalGitRemoteUrl(value: unknown): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    throw new ExternalWorkflowValidationError("workspace.gitRemoteUrl must be a string.");
+  }
+  return normalizeGitRemoteUrl(value);
 }
 
 function normalizeHooksConfig(raw: Record<string, unknown> | undefined): ExternalWorkspaceHooks {

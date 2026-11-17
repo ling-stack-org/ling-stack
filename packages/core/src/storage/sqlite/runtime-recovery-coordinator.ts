@@ -94,7 +94,7 @@ export class SqliteRuntimeRecoveryCoordinator {
       // owns reconciliation. Preserve unknown effects and reserved capacity;
       // neither this exclusion nor an expired lease is authority to replay.
       const workUnit = runBeforeRecovery?.workUnitId ? this.ports.getWorkUnit(runBeforeRecovery.workUnitId) : undefined;
-      if (workUnit?.ownerType === "delegation_step") continue;
+      if (workUnit?.ownerType === "delegation_step" || workUnit?.ownerType === "node_rerun_intent") continue;
       const pendingAttempt = workUnit?.activeAttemptId ? this.ports.getWorkUnitAttempt(workUnit.activeAttemptId) : undefined;
       if (pendingAttempt && this.ports.hasPendingRunTerminalIntent({ runId,
         workUnitId: pendingAttempt.workUnitId, attemptId: pendingAttempt.id,

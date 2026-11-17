@@ -1,8 +1,11 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import type { SQLOutputValue } from "node:sqlite";
 import type { RunStore } from "../../run-types.js";
+import type { CreateResourceLeaseInput } from "../../channel-runtime-types.js";
+import type { AcquireRuntimeSemaphoreSlotInput } from "../../runtime-supervisor-types.js";
 import type { HostRunCapacityReservation } from "../../host-run-capacity-types.js";
 import type { HostOperationSource } from "../../host-operation-journal-types.js";
 import { isHostCapacityWorkspaceDatabaseConnectionCurrent,
@@ -12,18 +15,29 @@ import type { AttachRuntimeHostCapacityReservationResult, PrepareRuntimeHostCapa
   PrepareRuntimeHostCapacityWorkflowStartResult, PrepareRuntimeHostCapacityDelegationPendingResult, RuntimeHostCapacityIntentRecord,
   RuntimeHostCapacityPendingRecord,
   RuntimeHostCapacityReleaseRecord } from "../../runtime-host-capacity-types.js";
-import type { RuntimeHostCapacityApprovalResumePendingInput, RuntimeHostCapacityUserInputPendingInput } from "../../runtime-host-capacity-types.js";
+import type { RuntimeHostCapacityApprovalResumePendingInput, RuntimeHostCapacityUserInputPendingInput,
+  RuntimeHostCapacityNodeRerunTargetInput, PrepareRuntimeHostCapacityNodeRerunResourcesResult,
+  ConsumeRuntimeHostCapacityNodeRerunDispatchResult } from "../../runtime-host-capacity-types.js";
+import { SqliteNodeRerunReadinessStore } from "./node-rerun-readiness-store.js";
+import { hasCompleteNodeRerunCapacityReceipt, readNodeRerunCapacityAuthority } from "./node-rerun-capacity-authority.js";
+import { readNodeRerunCancellationEvidence } from "./node-rerun-cancellation-evidence.js";
 import { approvalResumeCapacityAuthority, userInputCapacityAuthority, continuationCapacityAuthority,
   type HostCapacityContinuationPorts } from "./runtime-host-capacity-continuations.js";
 import { readNumber, readString, rollbackOwnedSqliteTransaction } from "./helpers.js";
 import type { SqliteStoreContext } from "./store-context.js";
-import { withSqliteSnapshotParentTransaction } from "./read-snapshot.js";
+import { readSqliteSnapshot, readSqliteWithinTransaction, withSqliteSnapshotParentTransaction } from "./read-snapshot.js";
 import { assertUserInputDurableQuiescence } from "./user-input-durable-quiescence.js";
 import { readHostOperationBlockers } from "./host-operation-journal-store.js";
 import { isRuntimeHostCapacityPausedStopProof, readRuntimeHostCapacityPausedStopProof } from "./runtime-host-capacity-stop-proof.js";
 
 type Ports = Pick<RunStore, "getRun" | "getTask" | "getChannel" | "getHostAttemptCompletion"
-  | "releaseResourceLeasesForAttempt" | "releaseRuntimeSemaphoreSlotsForAttempt"> & HostCapacityContinuationPorts;
+  | "releaseResourceLeasesForAttempt" | "releaseRuntimeSemaphoreSlotsForAttempt" | "getNodeRerunIntent" | "getNodeRerunTarget"
+  | "getApprovalRequest" | "getWorkUnit" | "getWorkUnitAttempt" | "getRuntimeConcurrencyPolicy" | "listRuntimeEvents"
+  | "acquireResourceLease" | "expireRuntimeSemaphoreSlots"> & HostCapacityContinuationPorts & {
+    readonly ensureRuntimeSemaphoreSlotForAttemptWithinTransaction: (input: AcquireRuntimeSemaphoreSlotInput) =>
+      | { readonly status: "acquired" | "existing"; readonly slot: import("../../runtime-supervisor-types.js").RuntimeSemaphoreSlot }
+      | { readonly status: "full" | "changed" };
+  };
 type Row = Record<string, SQLOutputValue>;
 type LocalExecutionAdmission = Readonly<{
   readonly providerKey: string;
@@ -31,6 +45,7 @@ type LocalExecutionAdmission = Readonly<{
   readonly tools: readonly string[];
 }>;
 const hash = (value: unknown): string => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+const RUNTIME_RESOURCE_LEASE_TTL_MS = 6 * 60 * 60 * 1000;
 const sourceFields = ["runId", "workUnitId", "attemptId", "runtimeInstanceId", "fencingToken"] as const;
 const ownerKey = (source: HostOperationSource): string => hash(sourceFields.map(key => source[key]));
 function timestamp(value: unknown): asserts value is string {
@@ -111,6 +126,148 @@ export class SqliteRuntimeHostCapacityStore {
     if (!row) return undefined;
     const record = this.mapIntent(row);
     return isDeepStrictEqual(record.source, source) ? record : undefined;
+  }
+
+  /** Prepare a dedicated capacity identity from current facts without admitting resources or dispatching. */
+  prepareNodeRerunCapacity(input: RuntimeHostCapacityNodeRerunTargetInput): PrepareRuntimeHostCapacityAttemptResult {
+    text(input.recordId); timestamp(input.now);
+    return this.write<PrepareRuntimeHostCapacityAttemptResult>(() => {
+      const readiness = new SqliteNodeRerunReadinessStore(this.context, this.ports);
+      const current = readiness.readNodeRerunTargetCapacityReadiness(input, this.identity);
+      if (current?.decision !== "eligible_for_resource_admission") return { status: "changed" };
+      const authority = readNodeRerunCapacityAuthority(this.context, this.ports, input.recordId);
+      if (!authority || authority.target.workspaceId !== this.identity.workspaceId) return { status: "changed" };
+      const existing = this.context.database.prepare("SELECT intent_id FROM runtime_host_capacity_intents WHERE workspace_id=? AND owner_kind='node_rerun_target' AND owner_key=?")
+        .get(this.identity.workspaceId, authority.ownerKey);
+      if (existing) {
+        const record = this.getIntent(String(existing.intent_id));
+        return record && record.intent.authorityDigest === authority.authorityDigest && isDeepStrictEqual(record.source, authority.source)
+          ? { status: "duplicate", record } : { status: "changed" };
+      }
+      const intentId = randomUUID();
+      const inserted = this.context.database.prepare(`INSERT INTO runtime_host_capacity_intents
+        (intent_id,workspace_id,workspace_key,canonical_cwd,database_path,database_file_identity,owner_kind,owner_key,
+          authority_digest,run_id,work_unit_id,attempt_id,runtime_instance_id,fencing_token,created_at)
+        VALUES (?,?,?,?,?,?,'node_rerun_target',?,?,?,?,?,?,?,?)`).run(intentId, this.identity.workspaceId, this.identity.workspaceKey,
+          this.identity.canonicalCwd, this.identity.databasePath, this.identity.databaseFileIdentity, authority.ownerKey,
+          authority.authorityDigest, ...sourceFields.map(key => authority.source[key]), input.now);
+      const record = this.getIntent(intentId);
+      if (inserted.changes !== 1 || !record || record.intent.ownerKey !== authority.ownerKey
+        || record.intent.authorityDigest !== authority.authorityDigest || !isDeepStrictEqual(record.source, authority.source)
+        || readiness.readNodeRerunTargetCapacityReadiness(input, this.identity)?.decision !== "eligible_for_resource_admission")
+        throw new Error("runtime_host_capacity.node_rerun_preparation_unverified");
+      return { status: "prepared", record };
+    });
+  }
+
+  /** Read only the exact, never-dispatched capacity owner; foreign or ambiguous history is a veto. */
+  getNodeRerunUndispatchedCapacity(recordId: string, now?: string): RuntimeHostCapacityIntentRecord | false | undefined {
+    text(recordId); if (now !== undefined) timestamp(now);
+    this.assertIdentity();
+    return readSqliteSnapshot(this.context.database, () => {
+      const authority = readNodeRerunCapacityAuthority(this.context, this.ports, recordId);
+      if (!authority || authority.target.workspaceId !== this.identity.workspaceId) return false;
+      const rows = this.context.database.prepare(`SELECT * FROM runtime_host_capacity_intents
+        WHERE run_id=? OR work_unit_id=? OR attempt_id=? OR (workspace_id=? AND owner_kind='node_rerun_target' AND owner_key=?)`)
+        .all(authority.source.runId, authority.source.workUnitId, authority.source.attemptId, this.identity.workspaceId, authority.ownerKey);
+      if (!rows.length) return undefined;
+      if (rows.length !== 1 || rows[0]!.owner_kind !== "node_rerun_target" || !hasCompleteNodeRerunCapacityReceipt(rows[0]!)
+        || rows[0]!.dispatched_at !== null || rows[0]!.revoked_at !== null && !isTimestamp(rows[0]!.revoked_at)) return false;
+      const record = this.getIntent(String(rows[0]!.intent_id));
+      if (!record || record.intent.ownerKey !== authority.ownerKey || record.intent.authorityDigest !== authority.authorityDigest
+        || !isDeepStrictEqual(record.source, authority.source) || record.dispatchedAt || record.createdAt < authority.target.preparedAt
+        || now !== undefined && (record.createdAt > now || record.reservation && record.reservation.reservedAt > now
+          || record.revokedAt && record.revokedAt > now)) return false;
+      const releasedAt = this.context.database.prepare("SELECT released_at FROM node_rerun_targets WHERE intent_id=?").get(recordId)?.released_at;
+      if (releasedAt !== null && (!isTimestamp(releasedAt) || record.createdAt > releasedAt)) return false;
+      const release = this.getRelease(record.intent.intentId);
+      if (record.revokedAt ? release?.kind !== "no_dispatch" : !!release) return false;
+      if (now !== undefined && release && release.createdAt > now) return false;
+      return record;
+    });
+  }
+
+  /** Admit the exact local resource group for a rerun without consuming its Host dispatch gate. */
+  admitNodeRerunResources(input: RuntimeHostCapacityNodeRerunTargetInput): PrepareRuntimeHostCapacityNodeRerunResourcesResult {
+    text(input.recordId); timestamp(input.now);
+    return this.write<PrepareRuntimeHostCapacityNodeRerunResourcesResult>(() => {
+      const authority = readNodeRerunCapacityAuthority(this.context, this.ports, input.recordId);
+      const current = this.getNodeRerunUndispatchedCapacity(input.recordId, input.now);
+      const record = current !== false && current !== undefined ? current : undefined;
+      if (!authority || !record?.reservation || record.dispatchedAt || record.revokedAt || this.getRelease(record.intent.intentId)) {
+        return { status: "changed" };
+      }
+      if (record.intent.ownerKey !== authority.ownerKey || record.intent.authorityDigest !== authority.authorityDigest
+        || !isDeepStrictEqual(record.source, authority.source)) return { status: "changed" };
+      const readiness = new SqliteNodeRerunReadinessStore(this.context, this.ports)
+        .readNodeRerunTargetCapacityReadiness(input, this.identity);
+      if (!readiness || readiness.blockers.some(blocker => blocker !== "target_not_pristine")) return { status: "changed" };
+      const hasResources = this.hasNodeRerunResourceRows(authority.source);
+      if (hasResources) {
+        return readiness.blockers.includes("target_not_pristine") && this.hasCompleteLocalAdmission(authority.source, input.now, "node_rerun_target")
+          ? { status: "duplicate", record }
+          : { status: "changed" };
+      }
+      if (readiness.decision !== "eligible_for_resource_admission") return { status: "changed" };
+      const resources = this.nodeRerunResourceInputs(authority.source, input.now);
+      if (!resources) return { status: "changed" };
+      this.ports.expireRuntimeSemaphoreSlots(input.now);
+      for (const lease of resources.leases) if (!this.ports.acquireResourceLease(lease)) return { status: "changed" };
+      for (const semaphore of resources.semaphores) {
+        const acquired = this.ports.ensureRuntimeSemaphoreSlotForAttemptWithinTransaction(semaphore);
+        if (acquired.status !== "acquired") return { status: "changed" };
+      }
+      if (!this.hasCompleteLocalAdmission(authority.source, input.now, "node_rerun_target")) return { status: "changed" };
+      return { status: "admitted", record };
+    });
+  }
+
+  /** Consume the one-time Host gate only after the exact rerun resource group is present. */
+  consumeNodeRerunDispatchGate(input: { readonly recordId: string; readonly now: string }): ConsumeRuntimeHostCapacityNodeRerunDispatchResult {
+    text(input.recordId); timestamp(input.now);
+    return this.write(() => {
+      const record = this.getNodeRerunUndispatchedCapacity(input.recordId, input.now);
+      if (record === false || !record?.reservation || !record.dispatchToken || !record.source) return { status: "changed" as const };
+      return this.consumeDispatchGateWithinTransactionInternal({ intentId: record.intent.intentId, token: record.dispatchToken,
+        source: record.source, now: input.now }, true) ? { status: "consumed" as const } : { status: "changed" as const };
+    });
+  }
+
+  /**
+   * Joined writer used by the dedicated rerun receiver. The gate and the
+   * queued-to-claimed transition must commit together so a consumed gate can
+   * never outlive a missing local dispatch claim.
+   */
+  consumeNodeRerunDispatchGateWithinTransaction(input: {
+    readonly intentId: string;
+    readonly token: string;
+    readonly source: HostOperationSource;
+    readonly now: string;
+  }): boolean {
+    return this.consumeDispatchGateWithinTransactionInternal(input, true);
+  }
+
+  /** The cancellation owner joins this writer only after writing its exact terminal audit in the same transaction. */
+  prepareNodeRerunNoDispatchReleaseWithinTransaction(input: { readonly intentId: string; readonly now: string }): PrepareRuntimeHostCapacityReleaseResult {
+    text(input.intentId); timestamp(input.now);
+    if (!this.context.database.isTransaction) throw new Error("runtime_host_capacity.transaction_required");
+    this.assertIdentity();
+    const captured = readSqliteWithinTransaction(this.context.database, () => {
+      const record = this.getIntent(input.intentId), authority = record && this.nodeRerunAuthorityForCapacity(record);
+      if (!record?.reservation || !authority || record.dispatchedAt || record.reservation.reservedAt > input.now) return undefined;
+      const current = this.getNodeRerunUndispatchedCapacity(authority.target.recordId, input.now);
+      if (!current || current.intent.intentId !== input.intentId) return undefined;
+      const cancellation = readNodeRerunCancellationEvidence(this.context, this.ports, authority.target, input.intentId);
+      if (!cancellation || cancellation.releasedAt > input.now) return undefined;
+      return { record, cancellation, existing: this.getRelease(input.intentId) };
+    });
+    if (!captured) return { status: "changed" };
+    if (captured.existing) return { status: "duplicate", release: captured.existing };
+    const changed = this.context.database.prepare(`UPDATE runtime_host_capacity_intents SET revoked_at=?
+      WHERE intent_id=? AND dispatched_at IS NULL AND revoked_at IS NULL AND reservation_id IS NOT NULL`).run(input.now, input.intentId);
+    if (changed.changes !== 1) throw new Error("runtime_host_capacity.node_rerun_revocation_unverified");
+    return this.writeRelease(captured.record, "no_dispatch", { dispatchToken: captured.record.dispatchToken,
+      revokedAt: input.now, noHostLifetime: true, nodeRerunCancellation: captured.cancellation }, input.now);
   }
 
   prepareApprovalResumePending(input: RuntimeHostCapacityApprovalResumePendingInput): PrepareRuntimeHostCapacityDelegationPendingResult {
@@ -350,13 +507,18 @@ export class SqliteRuntimeHostCapacityStore {
   /** The admission owner must consume this in the same transaction as its complete local resource group. */
   consumeDispatchGateWithinTransaction(input: { readonly intentId: string; readonly token: string;
     readonly source: HostOperationSource; readonly now: string }): boolean {
+    return this.consumeDispatchGateWithinTransactionInternal(input, false);
+  }
+
+  private consumeDispatchGateWithinTransactionInternal(input: { readonly intentId: string; readonly token: string;
+    readonly source: HostOperationSource; readonly now: string }, allowNodeRerun: boolean): boolean {
     text(input.intentId); text(input.token); validateSource(input.source); timestamp(input.now);
     if (!this.context.database.isTransaction) throw new Error("runtime_host_capacity.transaction_required");
     this.assertIdentity();
     const record = this.getIntent(input.intentId), source = this.readSource(input.source);
     if (!record?.reservation || record.dispatchToken !== input.token || record.dispatchedAt || record.revokedAt
       || !record.source || !isDeepStrictEqual(record.source, input.source) || record.reservation.reservedAt > input.now
-      || this.getRelease(input.intentId) || !source || !this.isDispatchableSource(source, record.intent.ownerKind)
+      || this.getRelease(input.intentId) || !source || !this.isDispatchableSource(source, record.intent.ownerKind, allowNodeRerun)
       || !this.isPrestart(source, record.intent.ownerKind) || this.hasDispatchFacts(input.source)
       || !this.matchesAuthority(record, source, input.now)
       || !this.hasCompleteLocalAdmission(input.source, input.now, record.intent.ownerKind)) return false;
@@ -400,6 +562,7 @@ export class SqliteRuntimeHostCapacityStore {
     return this.write<PrepareRuntimeHostCapacityReleaseResult>(() => {
     const record = this.getIntent(input.intentId);
       if (!record?.reservation || record.dispatchedAt || record.reservation.reservedAt > input.now) return { status: "changed" };
+      if (record.intent.ownerKind === "node_rerun_target") return this.prepareNodeRerunNoDispatchReleaseWithinTransaction(input);
       const existing = this.getRelease(input.intentId);
       if (existing) return existing.kind === "no_dispatch" ? { status: "duplicate", release: existing } : { status: "changed" };
       if (!record.source) {
@@ -430,7 +593,8 @@ export class SqliteRuntimeHostCapacityStore {
       if (existing) return existing.kind === "stopped" ? { status: "duplicate", release: existing } : { status: "changed" };
       if (!record.source) return { status: "changed" };
       const source = this.readSource(record.source), completion = this.ports.getHostAttemptCompletion(record.source);
-      if (!source || !this.isDispatchableSource(source, record.intent.ownerKind)
+      if (!source || !this.isDispatchableSource(source, record.intent.ownerKind,
+        record.intent.ownerKind === "node_rerun_target")
         || !isTimestamp(source.attempt_started_at) || source.attempt_started_at < record.dispatchedAt
         || !isTimestamp(source.attempt_ended_at) || source.attempt_ended_at < source.attempt_started_at || source.attempt_ended_at > input.now
         || this.hasActiveResources(record.source)
@@ -477,6 +641,13 @@ export class SqliteRuntimeHostCapacityStore {
       if (record.dispatchedAt || record.revokedAt !== createdAt || evidence.revokedAt !== createdAt
         || evidence.dispatchToken !== record.dispatchToken || evidence.noHostLifetime !== true)
         throw new Error("runtime_host_capacity.release_invalid");
+      if (record.intent.ownerKind === "node_rerun_target") {
+        const authority = this.nodeRerunAuthorityForCapacity(record);
+        const cancellation = authority && readNodeRerunCancellationEvidence(this.context, this.ports, authority.target, intentId);
+        if (!cancellation || !authority || record.createdAt < authority.target.preparedAt || record.createdAt > cancellation.releasedAt
+          || cancellation.releasedAt > createdAt || !isDeepStrictEqual(evidence.nodeRerunCancellation, cancellation))
+          throw new Error("runtime_host_capacity.release_invalid");
+      }
     } else {
       if (!record.dispatchedAt || record.revokedAt || !record.source) throw new Error("runtime_host_capacity.release_invalid");
       const stopInput = { source: record.source, dispatchedAt: record.dispatchedAt, now: createdAt };
@@ -529,10 +700,12 @@ export class SqliteRuntimeHostCapacityStore {
     const reservation = record.reservation!;
     const proof = { schemaVersion: 1, kind, intent: record.intent, reservation, source: record.source,
       dispatchedAt: record.dispatchedAt ?? null, createdAt: now, evidence };
-    this.context.database.prepare(`INSERT INTO runtime_host_capacity_releases
+    const inserted = this.context.database.prepare(`INSERT INTO runtime_host_capacity_releases
       (intent_id,reservation_id,reservation_token,kind,proof_json,proof_digest,created_at) VALUES(?,?,?,?,?,?,?)`)
       .run(record.intent.intentId, reservation.reservationId, reservation.token, kind, JSON.stringify(proof), hash(proof), now);
-    return { status: "prepared", release: this.getRelease(record.intent.intentId)! };
+    const release = readSqliteWithinTransaction(this.context.database, () => this.getRelease(record.intent.intentId));
+    if (inserted.changes !== 1 || !release) throw new Error("runtime_host_capacity.release_receipt_missing");
+    return { status: "prepared", release };
   }
 
   private validReservation(reservation: NonNullable<RuntimeHostCapacityIntentRecord["reservation"]>): boolean {
@@ -540,6 +713,15 @@ export class SqliteRuntimeHostCapacityStore {
       && typeof reservation.token === "string" && /^[0-9a-f]{64}$/u.test(reservation.token)
       && Number.isSafeInteger(reservation.policyRevision) && reservation.policyRevision >= 1
       && isTimestamp(reservation.reservedAt);
+  }
+
+  private nodeRerunAuthorityForCapacity(record: RuntimeHostCapacityIntentRecord) {
+    const unit = record.source && this.ports.getWorkUnit(record.source.workUnitId);
+    const authority = unit?.ownerType === "node_rerun_intent" && unit.ownerId
+      ? readNodeRerunCapacityAuthority(this.context, this.ports, unit.ownerId) : undefined;
+    return authority && record.intent.ownerKind === "node_rerun_target" && record.intent.ownerKey === authority.ownerKey
+      && record.intent.authorityDigest === authority.authorityDigest && isDeepStrictEqual(record.source, authority.source)
+      ? authority : undefined;
   }
 
   private mapIntent(row: Row): RuntimeHostCapacityIntentRecord {
@@ -553,7 +735,7 @@ export class SqliteRuntimeHostCapacityStore {
     }
     const ownerKind = row.owner_kind;
     if (ownerKind !== "attempt" && ownerKind !== "workflow_start" && ownerKind !== "delegation_spawn"
-      && ownerKind !== "approval_resume_pending" && ownerKind !== "user_input_continuation") {
+      && ownerKind !== "approval_resume_pending" && ownerKind !== "user_input_continuation" && ownerKind !== "node_rerun_target") {
       throw new Error("runtime_host_capacity.intent_identity_changed");
     }
     const intent = Object.freeze({ intentId: readString(row, "intent_id"), workspaceKey: this.identity.workspaceKey,
@@ -579,7 +761,7 @@ export class SqliteRuntimeHostCapacityStore {
   private readSource(source: HostOperationSource): Row | undefined {
     return this.context.database.prepare(`SELECT r.id AS run_id,r.status AS run_status,r.request_snapshot_json,r.task_snapshot_json,
       r.provider_snapshot_json,r.workflow_step_id,r.parent_run_id,r.continuation_reason,r.intervention_id,
-      u.id AS work_unit_id,u.workspace_id,u.kind,u.owner_type,u.request_json,u.active_attempt_id,u.status AS unit_status,
+      u.id AS work_unit_id,u.workspace_id,u.kind,u.owner_type,u.owner_id,u.request_json,u.active_attempt_id,u.status AS unit_status,
       s.state AS step_state,
       a.id AS attempt_id,a.status AS attempt_status,a.started_at AS attempt_started_at,a.ended_at AS attempt_ended_at,
       a.abort_requested_at,a.attempt_number,COALESCE(a.effective_runner_id,a.runner_id) AS runner_id
@@ -610,14 +792,24 @@ export class SqliteRuntimeHostCapacityStore {
       && ["task_run", "conversation_run", "teammate_direct_reply"].includes(String(row.kind));
   }
 
-  private isDispatchableSource(row: Row, ownerKind: RuntimeHostCapacityIntentRecord["intent"]["ownerKind"]): boolean {
+  private isDispatchableSource(row: Row, ownerKind: RuntimeHostCapacityIntentRecord["intent"]["ownerKind"], allowNodeRerun = false): boolean {
     return ownerKind === "attempt" ? this.isOrdinaryExecutionSource(row, false)
       : ownerKind === "workflow_start" ? this.isWorkflowStartSource(row)
         : ownerKind === "delegation_spawn" ? this.isDelegationSpawnSource(row)
           : ownerKind === "user_input_continuation" ? this.isSupportedContinuationSource(row)
             && row.continuation_reason === "user_input_answer"
             : ownerKind === "approval_resume_pending" ? this.isSupportedContinuationSource(row)
-              && Number(row.attempt_number) >= 2 : false;
+              && Number(row.attempt_number) >= 2
+            : ownerKind === "node_rerun_target" ? allowNodeRerun && this.isNodeRerunSource(row) : false;
+  }
+
+  private isNodeRerunSource(row: Row): boolean {
+    if (row.owner_type !== "node_rerun_intent" || typeof row.owner_id !== "string" || row.runner_id !== "pi"
+      || row.attempt_number !== 1 || row.workflow_step_id !== null || row.continuation_reason !== null || row.intervention_id !== null
+      || !["task_run", "conversation_run", "teammate_direct_reply"].includes(String(row.kind))) return false;
+    const target = this.context.database.prepare(`SELECT run_id,work_unit_id,attempt_id,runtime_instance_id,fencing_token
+      FROM node_rerun_targets WHERE intent_id=? AND released_at IS NULL`).get(row.owner_id);
+    return !!target && target.run_id === row.run_id && target.work_unit_id === row.work_unit_id && target.attempt_id === row.attempt_id;
   }
 
   private isPrestart(row: Row, ownerKind: RuntimeHostCapacityIntentRecord["intent"]["ownerKind"] = "attempt"): boolean {
@@ -733,6 +925,7 @@ export class SqliteRuntimeHostCapacityStore {
       if (admission) return record.intent.authorityDigest === hash([admission.child_run_id, admission.work_unit_id,
         admission.step_id, admission.expected_step_revision, admission.runtime_instance_id]);
     }
+    if (record.intent.ownerKind === "node_rerun_target") return !!this.nodeRerunAuthorityForCapacity(record);
     return this.authorityDigest(row, record.intent.ownerKind === "workflow_start") === record.intent.authorityDigest;
   }
 
@@ -748,6 +941,56 @@ export class SqliteRuntimeHostCapacityStore {
   private hasActiveResources(source: HostOperationSource): boolean {
     return this.hasActiveAttemptSlots(source) || Boolean(this.context.database.prepare(
       "SELECT 1 FROM resource_leases WHERE attempt_id=? AND status='active' LIMIT 1").get(source.attemptId));
+  }
+
+  private hasNodeRerunResourceRows(source: HostOperationSource): boolean {
+    return Boolean(this.context.database.prepare(`SELECT 1 FROM resource_leases WHERE work_unit_id=? OR attempt_id=?
+      UNION ALL SELECT 1 FROM runtime_semaphore_slots WHERE work_unit_id=? OR attempt_id=? LIMIT 1`)
+      .get(source.workUnitId, source.attemptId, source.workUnitId, source.attemptId));
+  }
+
+  private nodeRerunResourceInputs(source: HostOperationSource, now: string): {
+    readonly leases: readonly CreateResourceLeaseInput[];
+    readonly semaphores: readonly AcquireRuntimeSemaphoreSlotInput[];
+  } | undefined {
+    const run = this.ports.getRun(source.runId), unit = this.ports.getWorkUnit(source.workUnitId), attempt = this.ports.getWorkUnitAttempt(source.attemptId);
+    if (!run || !unit || !attempt || unit.workspaceId !== this.identity.workspaceId
+      || attempt.workUnitId !== source.workUnitId || attempt.runtimeInstanceId !== source.runtimeInstanceId
+      || attempt.fencingToken !== source.fencingToken || !attempt.effectiveRunnerId) return undefined;
+    const request = object(run.requestSnapshot), execution = object(request?.runnerExecutionInput), executionInput = object(execution?.input);
+    const tools = executionInput?.tools;
+    if (!Array.isArray(tools) || tools.some(tool => typeof tool !== "string" || !tool.trim())) return undefined;
+    const channel = run.channelId ? this.ports.getChannel(run.channelId) : undefined;
+    if (run.channelId && (!channel || channel.status !== "active")) return undefined;
+    const expiresAt = new Date(Date.parse(now) + RUNTIME_RESOURCE_LEASE_TTL_MS).toISOString();
+    const base = { workspaceId: unit.workspaceId, ownerType: "run" as const, ownerId: source.runId,
+      acquiredAt: now, expiresAt, workUnitId: source.workUnitId, attemptId: source.attemptId,
+      runtimeInstanceId: source.runtimeInstanceId, fencingToken: source.fencingToken };
+    const leases: CreateResourceLeaseInput[] = [];
+    if (this.ports.getTask(run.taskId)) leases.push({ ...base, resourceType: "task", resourceKey: run.taskId });
+    if (tools.some(tool => ["write", "edit", "bash"].includes(tool))) {
+      const scope = channel?.runtimePolicy.writeLockScope ?? "boundPath";
+      if (scope === "workspace") leases.push({ ...base, resourceType: "workspace", resourceKey: unit.workspaceId });
+      else if (scope === "channel" && channel) leases.push({ ...base, resourceType: "channel", resourceKey: channel.id });
+      else if (scope === "channel") leases.push({ ...base, resourceType: "workspace", resourceKey: unit.workspaceId });
+      else {
+        let boundPath: string;
+        try { boundPath = realpathSync.native(resolvePath(run.cwd)); }
+        catch { boundPath = resolvePath(run.cwd); }
+        leases.push({ ...base, resourceType: "bound_path", resourceKey: boundPath });
+      }
+    }
+    const providerKey = run.providerPresetId ?? `${run.providerName}:${run.providerModel}`;
+    const semaphores: AcquireRuntimeSemaphoreSlotInput[] = [
+      { ...source, workspaceId: unit.workspaceId, resourceType: "provider", resourceKey: providerKey, limit: 4,
+        ownerType: "work_unit_attempt", ownerId: source.attemptId, acquiredAt: now, expiresAt },
+      { ...source, workspaceId: unit.workspaceId, resourceType: "runner", resourceKey: attempt.effectiveRunnerId, limit: 4,
+        ownerType: "work_unit_attempt", ownerId: source.attemptId, acquiredAt: now, expiresAt },
+    ];
+    if (channel) semaphores.push({ ...source, workspaceId: unit.workspaceId, resourceType: "channel_parallel", resourceKey: channel.id,
+      limit: Math.max(channel.runtimePolicy.maxConcurrentRuns, 1), ownerType: "work_unit_attempt", ownerId: source.attemptId,
+      acquiredAt: now, expiresAt });
+    return { leases, semaphores };
   }
 
   private hasActiveAttemptSlots(source: HostOperationSource): boolean {

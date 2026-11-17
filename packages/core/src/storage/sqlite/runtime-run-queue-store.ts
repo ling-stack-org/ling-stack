@@ -215,7 +215,8 @@ export class SqliteRuntimeRunQueueStore implements RuntimeRunQueueStore {
     const run = this.ports.getRun(runId), unit = this.ports.getWorkUnit(fence.workUnitId), attempt = this.ports.getWorkUnitAttempt(fence.attemptId);
     if (!run || !unit || !attempt || run.workUnitId !== unit.id || unit.linkedRunId !== run.id || unit.activeAttemptId !== attempt.id
       || unit.attemptCount !== 1 || attempt.attemptNumber !== 1 || !isDeepStrictEqual(toRuntimeAttemptFence(attempt), fence)
-      || !["task_run", "conversation_run", "teammate_direct_reply"].includes(unit.kind) || unit.ownerType === "delegation_step"
+      || !["task_run", "conversation_run", "teammate_direct_reply"].includes(unit.kind)
+      || unit.ownerType === "delegation_step" || unit.ownerType === "node_rerun_intent"
       || run.workflowStepId || run.parentRunId || run.continuationReason || run.interventionId
       || !record(run.requestSnapshot) || !record(unit.request) || !record(run.requestSnapshot.effectivePolicySnapshot)
       || !record(run.requestSnapshot.runnerExecutionInput) || run.requestSnapshot.runnerExecutionInput.schemaVersion !== 1

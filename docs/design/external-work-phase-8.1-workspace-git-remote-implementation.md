@@ -1,5 +1,8 @@
 # External Work Phase 8.1 Workspace Git Remote Implementation Plan
 
+Status: source implementation complete for Slices 1–5 on `codex/remaining-work-completion`; review, CI, merge, and packaged acceptance remain open
+Last verified: 2026-11-16
+
 ## Summary
 
 Phase 8.1 adds `workspace.gitRemoteUrl` as an explicit checkout hint for external work
@@ -133,6 +136,9 @@ Accept common non-credential forms:
 
 Phase 8.1 should accept SSH scp-like, `ssh://`, and plain `https://` remotes. It should
 reject `file://` by default because local path remotes complicate workspace confinement.
+SSH user and host fields must not begin with an option marker. Whitespace, backslashes,
+URL fragments and credential query parameters are rejected. Validation errors identify
+the field and reason without echoing the supplied remote.
 
 Reject:
 
@@ -207,6 +213,26 @@ Implementation should use `spawn("git", ["clone", "--", gitRemoteUrl, "."])` wit
 argument arrays, not shell string interpolation.
 
 If any condition does not pass, no clone happens. This is not an error.
+
+### Execution and recovery ownership
+
+Checkout and hooks share the existing `external_workspace`/`bound_path` leases and
+the exact Core `external_work_scheduler` process entry. Moving preparation into a
+focused module must preserve the exported entry's identity and Host refusal behavior.
+No checkout producer may bypass that entry or convert a branded no-start refusal into
+an ordinary scheduler retry.
+
+Clone failure, timeout, or an inability to persist checkout evidence blocks the work
+item with a checkout-specific error. The scheduler must not treat the retained path as
+a prepared workspace on the next poll. A failed per-subject checkout needs explicit
+workspace repair/reallocation; changing to a fresh per-attempt path can prepare a new
+workspace. Existing caller-managed paths remain untouched when no checkout failure is
+recorded. Restart retains the checkout failure and evidence through the existing
+scheduler state and artifact records; no new SQLite schema is required.
+
+Git is invoked without a shell and with terminal credential prompts disabled. The
+existing hook timeout bounds checkout, with termination escalation for a child that
+ignores `SIGTERM`. Ling does not disable SSH host-key verification.
 
 ## Hook Interaction
 
@@ -449,3 +475,37 @@ Phase 8.1 is complete when:
   no `afterCreate` hook owns checkout.
 - Checkout evidence is redacted and bounded.
 - Existing external-work tests pass.
+
+## Current implementation evidence
+
+The branch implementation covers the five slices above:
+
+- `ExternalWorkspaceConfig.gitRemoteUrl` is parsed by the Core `WORKFLOW.md` parser;
+  SSH scp-like, `ssh://`, and plain HTTPS remotes are accepted without provider lookup.
+- Empty, control-character, shell-looking, unsupported-scheme, fragment, option-marker,
+  and credential-bearing remotes fail closed without echoing the supplied value.
+- `redactGitRemoteUrl` and generic `redactSecrets` protect URL userinfo, sensitive query
+  parameters, status fields, hook/checkout evidence, and bounded command output.
+- Explicit workspace preparation runs `git clone -- <remote> .` through the original
+  Core scheduler process entry, with argument arrays, disabled terminal prompts, existing
+  workspace/bound-path leases, timeout termination, and no implicit network work when the
+  caller did not set `executeHooks: true`.
+- A successful checkout records a redacted bounded artifact before the scheduler becomes
+  `ready`. Checkout failure or evidence persistence failure records `blocked` with
+  `workspace_checkout_failed`; a retained per-subject path cannot be silently retried,
+  while a fresh per-attempt path can be prepared explicitly.
+- The read-only external-work status response includes `workspace.mode`,
+  `gitRemoteConfigured`, and a redacted `gitRemoteUrl` when the workflow parses.
+
+Focused evidence on 2026-11-16:
+
+```text
+@ling-stack/core: 60 external-work/redaction tests passed
+@ling-stack/daemon: 25 external-work import/status tests passed
+@ling-stack/daemon: 101 background/Host-source/workflow tests passed; 5 existing platform-injection cases skipped
+Core and Daemon typecheck: passed
+Daemon build, docs, license, public-repository and whitespace checks: passed
+```
+
+These results are branch-local source and automated evidence. They do not certify a
+real private remote, platform package, signed distribution, or a merged/deployed build.

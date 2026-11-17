@@ -16,6 +16,8 @@ import {
   collectTurnSource,
 } from "./sources.js";
 import { buildProjectedConversationContextSlice } from "./conversation-context-adapter.js";
+import { assessChannelContextViewSourceQuoteEligibility } from "./quote-eligibility.js";
+import { contextViewLineageKey } from "./context-view-lineage.js";
 import type { ChannelContextSection, ChannelContextSourceRef, ChannelContextView } from "./types.js";
 import { buildChannelContextView } from "./views.js";
 
@@ -84,6 +86,17 @@ export function buildWorkflowProposalContextView(input: BuildWorkflowProposalCon
       ...projectedContext.sourceRefs,
     ],
     contextProjection: projectedContext.projection.metadata,
+    lineage: {
+      store: input.store,
+      lineageKey: contextViewLineageKey({
+        workspaceId: input.channel.workspaceId,
+        channelId: input.channel.id,
+        threadId: projectedContext.projection.metadata.threadId,
+        sourceItemId: input.sourceMessage.id,
+        kind: "workflow_proposal_view",
+      }),
+      sourceItemId: input.sourceMessage.id,
+    },
     sources: [
       collectChannelStateSource({ channel: input.channel }),
       turnSource,
@@ -97,6 +110,9 @@ export function buildWorkflowProposalContextView(input: BuildWorkflowProposalCon
 export function proposalSourceRefsFromContextView(view: ChannelContextView): readonly ChannelProtocolSourceRef[] {
   return uniqueProtocolSourceRefs(
     view.sourceRefs.flatMap((ref) => {
+      if (assessChannelContextViewSourceQuoteEligibility({ view, sourceRef: ref }).status !== "eligible") {
+        return [];
+      }
       const mapped = protocolSourceRefFromContextSourceRef(ref);
       return mapped ? [mapped] : [];
     }),

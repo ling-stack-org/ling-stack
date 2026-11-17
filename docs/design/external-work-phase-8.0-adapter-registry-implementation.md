@@ -1,5 +1,8 @@
 # External Work Phase 8.0 Adapter Registry Implementation Plan
 
+Status: Slices 1–4 source implementation and focused regression complete on `codex/remaining-work-completion`; review, CI, merge, and platform acceptance remain open
+Last verified: 2026-11-16
+
 ## Summary
 
 Phase 8.0 turns the current external-work source adapter shape into an explicit
@@ -92,6 +95,26 @@ The current adapter shape is useful but not yet the platform boundary:
   terminal reconciliation.
 
 Phase 8.0 should tighten these seams without changing output shapes.
+
+## Module and compatibility boundaries
+
+- `external-work-source-adapters.ts` owns the existing GitHub REST and Linear GraphQL
+  readers. The scheduler re-exports both existing factories.
+- `external-work-source-registry.ts` owns the two fixed registrations, target resolution,
+  stable source keys, import normalization and secret-purpose metadata. Resolving a
+  registration or target performs no IO and does not inspect `workspace.gitRemoteUrl`.
+- The shared scheduler always passes an explicit `target`. Existing direct adapter
+  callers can temporarily pass `repository` through a mutually exclusive legacy input;
+  the compatibility input is removed before another provider is accepted.
+- Reconcile uses a registered capability and checks the state's source key before a
+  remote lookup. A workflow for one target cannot settle another target's state.
+- Daemon import routes share parsing, workflow/evidence creation and duplicate handling;
+  route-specific schema validation, status codes and source mismatch errors remain intact.
+- Secret status/configuration and poll use registration metadata. Linear reconcile stays
+  local-only and neither resolves a token nor creates a network adapter.
+
+This phase adds no schema, public endpoint, provider kind, background timer, or action
+executor. The checkout implementation remains independently owned by Phase 8.1.
 
 ## Adapter Registration Model
 
@@ -460,3 +483,29 @@ Phase 8.0 is complete when:
 - Existing GitHub and Linear external-work tests pass without changing expected
   behavior.
 - No new provider kind is accepted yet.
+
+## Implementation evidence
+
+The branch implements a fixed GitHub/Linear registry, source-neutral scheduler poll,
+shared daemon import path, registry-based reconcile, and centralized secret metadata.
+The existing adapter factories, source-specific poll wrappers, daemon routes, SDK and
+CLI contracts remain available. The scheduler always uses explicit targets; only direct
+factory callers retain the deprecated `repository` compatibility input.
+
+Focused TypeScript tests exercise target/key validation and unsupported kinds, generic
+poll/wrapper deduplication, lease conflict and cleanup after a failed read, remote
+reconcile target isolation, and Linear local-only completion. Real daemon HTTP tests
+exercise 201/200 import responses, retained evidence, source mismatch errors, registered
+token purposes, read-only status, GitHub terminal reads and Linear zero-network reconcile.
+
+Frozen-batch validation on 2026-11-16:
+
+```text
+Core: 67 external-work/checkout/registry/redaction tests passed
+Daemon: 83 import/status/registry/background/Host-source tests passed
+Core and Daemon: production and TypeScript-test typechecks passed
+Core and Daemon builds: passed (existing image-sanitizer asmjs warning)
+```
+
+These are local source and automated results, not live provider, CI, merge or package
+acceptance. No new provider, mutation path, database schema or background API is added.

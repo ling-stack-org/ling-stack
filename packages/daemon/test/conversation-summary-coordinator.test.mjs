@@ -9,6 +9,7 @@ import {
   assessConversationContextSummary,
   executeConversationSummaryPlan,
   planConversationContextSummary,
+  renderSummaryItem,
 } from "../dist/features/channels/context-processing/conversation-summary-coordinator.js";
 import { buildConversationContextProjection } from "../dist/features/channels/context-processing/conversation-context-projector.js";
 import { estimateTextTokens } from "../dist/features/channels/context-packs.js";
@@ -418,6 +419,25 @@ test("already cancelled generation cannot fall through to generator_unavailable"
   });
   assert.equal(result.status, "cancelled");
   assert.equal(result.error, reason);
+});
+
+test("summary source text and durable fields redact token-shaped secrets", async (t) => {
+  const fixture = await createFixture(t, "redaction");
+  const secret = "sk-live-1234567890abcdef";
+  const turn = addCompletedTurn(fixture, "redaction-source", `Decision keep this ${secret}`);
+  const trigger = addCompletedTurn(fixture, "redaction-trigger", "Decision trigger summary generation");
+  assert.doesNotMatch(renderSummaryItem(turn.item), new RegExp(secret, "u"));
+  const result = await coordinateConversationContextSummary({
+    store: fixture.store,
+    sourceItemId: trigger.item.id,
+    inputBudgetTokens: 16_000,
+    policy: { ...summaryPolicy, softCompletedTurnCount: 1, rawTailCompletedTurnCount: 1 },
+    generate: async () => ({ objective: secret, decisions: [secret], constraints: [], openQuestions: [] }),
+    now: nextTimestamp(fixture),
+  });
+  assert.equal(result.status, "completed");
+  assert.doesNotMatch(result.commit.summary.objective ?? "", new RegExp(secret, "u"));
+  assert.deepEqual(result.commit.summary.decisions, ["[REDACTED]"]);
 });
 
 async function createFixture(t, suffix) {

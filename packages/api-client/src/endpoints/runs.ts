@@ -43,7 +43,16 @@ import type {
   FrameworkAssuranceAssociationResult,
   FrameworkAssuranceEvidenceResponse,
   NodeRerunHostAdmissionResponseV1,
+  NodeRerunApprovalResponseV1,
   NodeRerunIntentV1,
+  NodeRerunIntentSubmissionV1,
+  NodeRerunIntentResponseV1,
+  NodeRerunTargetResponseV1,
+  NodeRerunTargetDispatchResponseV1,
+  NodeRerunGenerationResponseV1,
+  NodeRerunTargetCancellationResponseV1,
+  NodeRerunTargetStopResponseV1,
+  NodeRerunTargetReadinessResponseV1,
   RunCancelResponse,
   RunEventsResponse,
   RunInterventionListResponse,
@@ -343,6 +352,46 @@ export const runEndpoints = {
       input: NodeRerunIntentV1,
     ): Promise<NodeRerunHostAdmissionResponseV1> {
       return this._post(`/runs/${encodeURIComponent(runId)}/node-rerun/admission`, { cwd }, input);
+    },
+
+  async prepareNodeRerunIntent(this: LingDaemonEndpointContext, runId: string, cwd: string,
+      input: NodeRerunIntentSubmissionV1): Promise<NodeRerunIntentResponseV1> {
+      return this._post(`/runs/${encodeURIComponent(runId)}/node-rerun/intents`, { cwd }, input);
+    },
+
+  async getNodeRerunIntent(this: LingDaemonEndpointContext, runId: string, cwd: string,
+      recordId: string): Promise<NodeRerunIntentResponseV1> {
+      return this._get(`/runs/${encodeURIComponent(runId)}/node-rerun/intents/${encodeURIComponent(recordId)}`, { cwd });
+    },
+
+  async requestNodeRerunApproval(this: LingDaemonEndpointContext, runId: string, cwd: string,
+      recordId: string): Promise<NodeRerunApprovalResponseV1> {
+      return this._post(`/runs/${encodeURIComponent(runId)}/node-rerun/intents/${encodeURIComponent(recordId)}/approval`, { cwd }, {});
+    },
+
+  async prepareNodeRerunTarget(this: LingDaemonEndpointContext, runId: string, cwd: string,
+      recordId: string): Promise<NodeRerunTargetResponseV1> {
+      return this._post(`/runs/${encodeURIComponent(runId)}/node-rerun/intents/${encodeURIComponent(recordId)}/target`, { cwd }, {});
+    },
+
+  async dispatchNodeRerunTarget(this: LingDaemonEndpointContext, runId: string, cwd: string,
+      recordId: string): Promise<NodeRerunTargetDispatchResponseV1> {
+      return this._post(`/runs/${encodeURIComponent(runId)}/node-rerun/intents/${encodeURIComponent(recordId)}/target/dispatch`, { cwd }, {});
+    },
+
+  async getNodeRerunGeneration(this: LingDaemonEndpointContext, runId: string, cwd: string,
+      recordId: string): Promise<NodeRerunGenerationResponseV1> {
+      return this._get(`/runs/${encodeURIComponent(runId)}/node-rerun/intents/${encodeURIComponent(recordId)}/generation`, { cwd });
+    },
+
+  async cancelNodeRerunTarget(this: LingDaemonEndpointContext, runId: string, cwd: string,
+      recordId: string): Promise<NodeRerunTargetCancellationResponseV1 | NodeRerunTargetStopResponseV1> {
+      return this._post(`/runs/${encodeURIComponent(runId)}/node-rerun/intents/${encodeURIComponent(recordId)}/target/cancel`, { cwd }, {});
+    },
+
+  async getNodeRerunTargetReadiness(this: LingDaemonEndpointContext, runId: string, cwd: string,
+      recordId: string): Promise<NodeRerunTargetReadinessResponseV1> {
+      return this._get(`/runs/${encodeURIComponent(runId)}/node-rerun/intents/${encodeURIComponent(recordId)}/target/readiness`, { cwd });
     },
 
   async listRunShellSnapshots(this: LingDaemonEndpointContext, runId: string, cwd?: string, toolCallId?: string): Promise<ShellSnapshotListResponse> {

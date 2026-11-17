@@ -2,6 +2,7 @@ import { channelSessionNotificationEligibleSql } from "./channel-session-notific
 import { channelSessionWorkflowSourceSql, channelSessionRunSourceSql, channelSessionThreadSourceSql, channelSessionTopicLineageValidSql, channelSessionWorkSourceSql, channelSessionApprovalSourceSql, channelSessionInputWaitSourceSql } from "./channel-session-lineage.js";
 import { existsSync } from "node:fs";
 import type { DatabaseSync } from "node:sqlite";
+import { NODE_RERUN_APPROVAL_MIGRATION_VERSION } from "./node-rerun-approval-migration.js";
 
 export const CHANNEL_SESSION_MIGRATION_VERSION = 179;
 export const CHANNEL_SESSION_LINEAGE_MIGRATION_VERSION = 180;
@@ -14,12 +15,13 @@ export function applyChannelSessionMigration(input: {
   readonly hasMigration: (version: number) => boolean;
   readonly recordMigration: (version: number, name: string) => void;
 }): void {
+  const approvalOwners = { nodeRerun: input.hasMigration(NODE_RERUN_APPROVAL_MIGRATION_VERSION) };
   if (input.hasMigration(CHANNEL_SESSION_MIGRATION_VERSION)) {
     if (input.hasMigration(CHANNEL_SESSION_LINEAGE_MIGRATION_VERSION) && input.hasMigration(CHANNEL_SESSION_NOTIFICATION_MIGRATION_VERSION)) return;
     input.database.exec("SAVEPOINT channel_session_lineage_migration");
     try {
       if (!input.hasMigration(CHANNEL_SESSION_LINEAGE_MIGRATION_VERSION)) {
-        input.database.exec(channelSessionAdmissionTriggersSql());
+        input.database.exec(channelSessionAdmissionTriggersSql(approvalOwners));
         input.recordMigration(CHANNEL_SESSION_LINEAGE_MIGRATION_VERSION, "channel_session_topic_ownership");
       }
       if (!input.hasMigration(CHANNEL_SESSION_NOTIFICATION_MIGRATION_VERSION)) {
@@ -144,7 +146,7 @@ export function applyChannelSessionMigration(input: {
       END;
 
     `);
-    db.exec(channelSessionAdmissionTriggersSql());
+    db.exec(channelSessionAdmissionTriggersSql(approvalOwners));
     db.exec(channelSessionNotificationTriggersSql());
     input.recordMigration(CHANNEL_SESSION_MIGRATION_VERSION, "channel_independent_sessions");
     input.recordMigration(CHANNEL_SESSION_LINEAGE_MIGRATION_VERSION, "channel_session_topic_ownership");
@@ -196,7 +198,7 @@ function channelSessionNotificationTriggersSql(): string {
 }
 
 /** Refresh independently on 179 databases; never reruns directory classification or history backfill. */
-function channelSessionAdmissionTriggersSql(): string {
+function channelSessionAdmissionTriggersSql(approvalOwners: { readonly nodeRerun?: boolean } = {}): string {
   const archived = (source: string): string => `EXISTS (SELECT 1 FROM ling_threads t
     WHERE t.channel_id IS NOT NULL AND (t.archived_at IS NOT NULL OR t.status = 'archived') AND ${source})`;
   const trigger = (name: string, table: string, event: string, condition: string): string => `
@@ -206,7 +208,6 @@ function channelSessionAdmissionTriggersSql(): string {
   const threadArchived = archived(channelSessionThreadSourceSql("NEW.thread_id", "t.id"));
   const runArchived = archived(channelSessionRunSourceSql("NEW", "t.id"));
   const workArchived = archived(channelSessionWorkSourceSql("NEW", "t.id"));
-  const approvalArchived = archived(channelSessionApprovalSourceSql("NEW", "t.id"));
   const workflowArchived = archived(channelSessionWorkflowSourceSql("NEW", "t.id"));
   const stepArchived = archived(`EXISTS (SELECT 1 FROM channel_workflows workflow
     WHERE workflow.id = NEW.workflow_id AND workflow.workspace_id = NEW.workspace_id
@@ -225,9 +226,7 @@ function channelSessionAdmissionTriggersSql(): string {
     ${trigger("trg_channel_session_work_admission", "work_units", "INSERT", workArchived)}
     ${trigger("trg_channel_session_work_retry_admission", "work_units",
       "UPDATE OF status, owner_type, owner_id, linked_run_id, linked_message_id", `NEW.status NOT IN ('succeeded','failed','cancelled','expired') AND ${workArchived}`)}
-    ${trigger("trg_channel_session_approval_admission", "approval_requests", "INSERT", approvalArchived)}
-    ${trigger("trg_channel_session_approval_retry_admission", "approval_requests",
-      "UPDATE OF status, run_id, workflow_step_id, media_job_id", `NEW.status = 'pending' AND ${approvalArchived}`)}
+    ${channelSessionApprovalAdmissionTriggers(approvalOwners).map(trigger => `DROP TRIGGER IF EXISTS ${trigger.name}; ${trigger.sql};`).join("\n")}
     ${trigger("trg_channel_session_workflow_admission", "channel_workflows", "INSERT", workflowArchived)}
     ${trigger("trg_channel_session_workflow_retry_admission", "channel_workflows",
       "UPDATE OF status, metadata_json", `NEW.status NOT IN ('succeeded','failed','cancelled','expired') AND ${workflowArchived}`)}
@@ -238,4 +237,19 @@ function channelSessionAdmissionTriggersSql(): string {
     ${trigger("trg_channel_session_input_wait_retry_admission", "user_input_requests",
       "UPDATE OF wait_status, thread_id, source_run_id", `NEW.wait_status IN ('waiting','resuming','blocked') AND ${waitArchived}`)}
   `;
+}
+
+/** Approval lineage gains new owners only in the migration that installs their columns. */
+export function channelSessionApprovalAdmissionTriggers(options: { readonly nodeRerun?: boolean } = {}): readonly { name: string; sql: string }[] {
+  const archived = `EXISTS (SELECT 1 FROM ling_threads t WHERE t.channel_id IS NOT NULL
+    AND (t.archived_at IS NOT NULL OR t.status = 'archived') AND ${channelSessionApprovalSourceSql("NEW", "t.id", options)})`;
+  return [
+    { name: "trg_channel_session_approval_admission", sql: `CREATE TRIGGER trg_channel_session_approval_admission
+      BEFORE INSERT ON approval_requests WHEN ${archived}
+      BEGIN SELECT RAISE(ABORT, 'channel_session_archived'); END` },
+    { name: "trg_channel_session_approval_retry_admission", sql: `CREATE TRIGGER trg_channel_session_approval_retry_admission
+      BEFORE UPDATE OF status, run_id, workflow_step_id, media_job_id${options.nodeRerun ? ", node_rerun_intent_id" : ""} ON approval_requests
+      WHEN NEW.status = 'pending' AND ${archived}
+      BEGIN SELECT RAISE(ABORT, 'channel_session_archived'); END` },
+  ];
 }

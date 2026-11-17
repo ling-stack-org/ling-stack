@@ -2,7 +2,7 @@ export * from "./types.js";
 export * from "./code-intelligence-types.js";
 export * from "./hook-types.js";
 export { DELEGATION_TOOL_NAMES } from "./extensions/delegation.js";
-export { readPreparedPiInput, assertPreparedPiTaskInput, type PiRunnerPreparedInput } from "./prepared-input.js";
+export { readPreparedPiInput, assertPreparedPiTaskInput, rebindPreparedPiTaskInput, type PiRunnerPreparedInput } from "./prepared-input.js";
 export { readApprovedToolContinuation } from "./approved-tool-continuation.js";
 export { installCompactionRecoveryView, readCompactionRecoveryView } from "./compaction-recovery.js";
 export { PiRunnerYielded } from "./task-yield.js";

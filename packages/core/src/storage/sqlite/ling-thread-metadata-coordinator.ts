@@ -50,6 +50,13 @@ export class SqliteLingThreadMetadataCoordinator {
         approvalsById.set(approval.id, approval);
       }
     }
+    for (const row of this.context.database.prepare(`SELECT rerun.id FROM approval_requests approval
+      JOIN node_rerun_intents rerun ON rerun.id=approval.node_rerun_intent_id
+      JOIN run_sessions run ON run.id=rerun.source_run_id
+      WHERE run.thread_id=? AND rerun.workspace_id=? AND approval.channel_id IS run.channel_id`).all(threadId, thread.workspaceId)) {
+      for (const approval of this.ports.listApprovalRequests({ nodeRerunIntentId: String(row.id), limit: 1 }))
+        approvalsById.set(approval.id, approval);
+    }
     const approvals = [...approvalsById.values()];
     const artifacts = runs.flatMap((run) => this.ports.listArtifacts(run.id));
     const latestTurn = [...turns].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id))[0];
@@ -132,6 +139,10 @@ export class SqliteLingThreadMetadataCoordinator {
       return;
     }
     this.tryRebuildLingThreadMetadataForRun(approval.runId, now);
+    if (approval.nodeRerunIntentId) {
+      const source = this.context.database.prepare("SELECT source_run_id FROM node_rerun_intents WHERE id=?").get(approval.nodeRerunIntentId);
+      if (typeof source?.source_run_id === "string") this.tryRebuildLingThreadMetadataForRun(source.source_run_id, now);
+    }
     if (approval.workflowStepId) {
       try {
         for (const thread of this.ports.listLingThreads({ workflowStepId: approval.workflowStepId, includeArchived: true, limit: 500 })) {

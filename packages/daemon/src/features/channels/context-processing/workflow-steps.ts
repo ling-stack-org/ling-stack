@@ -13,6 +13,7 @@ import { buildProjectedConversationContextSlice } from "./conversation-context-a
 import type { ChannelContextBudgetSnapshot, ChannelContextSection, ChannelContextSourceRef, ChannelContextView } from "./types.js";
 import type { ChannelContextDroppedSource, ChannelContextSource } from "./types.js";
 import { buildChannelContextView } from "./views.js";
+import { contextViewLineageKey } from "./context-view-lineage.js";
 
 type WorkflowStepContextPackStore = RunStore;
 
@@ -187,6 +188,19 @@ export function buildWorkflowStepContextView(input: BuildWorkflowStepContextView
       ...(input.roleEvidence?.sourceRefs ?? []),
     ]),
     contextProjection: projectedContext?.projection.metadata,
+    lineage: projectedContext ? {
+      store: input.store,
+      lineageKey: contextViewLineageKey({
+        workspaceId: input.channel.workspaceId,
+        channelId: input.channel.id,
+        threadId: projectedContext.projection.metadata.threadId,
+        sourceItemId,
+        kind: "workflow_step_view",
+        consumerTeammateId: input.consumerTeammateId ?? input.step.toParticipantId,
+      }),
+      threadId: projectedContext.projection.metadata.threadId,
+      sourceItemId,
+    } : undefined,
     compactionIds: input.compactedDependencySummary ? [input.compactedDependencySummary.id] : undefined,
     budget: input.budget,
     sources: [

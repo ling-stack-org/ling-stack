@@ -265,6 +265,62 @@ test("summary source refs fail closed for private items outside the matching spe
   assert.deepEqual(specialist.metadata.summaryIds, ["summary_private_ref"]);
 });
 
+test("quoted items reject missing, superseded and private sources with id-only diagnostics", async (t) => {
+  const fixture = await createFixture(t);
+  const quoted = appendUserTurn(fixture, "public quoted source", firstAt);
+  await assignContextSegmentForTurn({ store: fixture.store, sourceItemId: quoted.item.id, now: firstAt });
+  const privateItem = fixture.store.appendConversationItem({
+    channelId: fixture.channel.id,
+    threadId: fixture.thread.id,
+    turnId: quoted.turnId,
+    kind: "system_event",
+    status: "committed",
+    actorType: "system",
+    visibility: "agent_private",
+    visibilityOwnerId: "other_teammate",
+    payload: { eventType: "private_note", summary: "private source" },
+  }, "2026-08-10T02:00:30.000Z");
+  const superseded = fixture.store.appendConversationItem({
+    channelId: fixture.channel.id,
+    threadId: fixture.thread.id,
+    kind: "assistant_message",
+    status: "committed",
+    actorType: "ling_agent",
+    actorId: "ling_agent",
+    visibility: "channel",
+    payload: { body: "old answer", format: "plain_text", streaming: false, deliveryStatus: "ready" },
+  }, "2026-08-10T02:00:40.000Z");
+  fixture.store.appendConversationItem({
+    channelId: fixture.channel.id,
+    threadId: fixture.thread.id,
+    kind: "assistant_message",
+    status: "committed",
+    actorType: "ling_agent",
+    actorId: "ling_agent",
+    visibility: "channel",
+    supersedesItemId: superseded.id,
+    payload: { body: "replacement answer", format: "plain_text", streaming: false, deliveryStatus: "ready" },
+  }, "2026-08-10T02:00:50.000Z");
+  const source = appendUserTurn(fixture, "continue with the references", secondAt, undefined, [
+    quoted.item.id,
+    privateItem.id,
+    superseded.id,
+    "missing_quote",
+  ]);
+  await assignContextSegmentForTurn({ store: fixture.store, sourceItemId: source.item.id, now: secondAt });
+
+  const projection = buildConversationContextProjection({ store: fixture.store, sourceItemId: source.item.id, view: "selector" });
+  assert.deepEqual(projection.quoteDiagnostics, [
+    { sourceId: quoted.item.id, status: "accepted" },
+    { sourceId: privateItem.id, status: "rejected", reason: "private" },
+    { sourceId: superseded.id, status: "rejected", reason: "stale" },
+    { sourceId: "missing_quote", status: "rejected", reason: "missing" },
+  ]);
+  assert.equal(projection.items.some((item) => item.id === quoted.item.id), true);
+  assert.equal(projection.items.some((item) => item.id === privateItem.id), false);
+  assert.equal(projection.items.some((item) => item.id === superseded.id), false);
+});
+
 async function createFixture(t) {
   const cwd = await mkdtemp(join(tmpdir(), "ling-context-projector-"));
   t.after(() => rm(cwd, { recursive: true, force: true }));
@@ -280,7 +336,7 @@ async function createFixture(t) {
   return { cwd, store, channel, thread };
 }
 
-function appendUserTurn(fixture, body, now, replyToItemId) {
+function appendUserTurn(fixture, body, now, replyToItemId, quotedItemIds = []) {
   return fixture.store.appendConversationUserTurn({
     channelId: fixture.channel.id,
     threadId: fixture.thread.id,
@@ -294,6 +350,7 @@ function appendUserTurn(fixture, body, now, replyToItemId) {
       linkPreviewIds: [],
       fileRefs: [],
       ...(replyToItemId ? { replyToItemId } : {}),
+      ...(quotedItemIds.length > 0 ? { quotedItemIds } : {}),
     },
     idempotencyKey: `projector:${body}`,
   }, now);

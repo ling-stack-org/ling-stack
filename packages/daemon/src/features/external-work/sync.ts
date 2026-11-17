@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import "../../runtime/sandbox/core-original-process-bridge.js";
 import {
+  getExternalSourceRegistration,
   parseExternalWorkflowMarkdown,
   pollGitHubExternalWork,
   pollLinearExternalWork,
@@ -22,7 +23,7 @@ import {
 import {
   readExternalWorkflowFile,
   resolveExternalGitHubToken,
-  resolveExternalSourceToken,
+  resolveExternalWorkToken,
 } from "./workflow.js";
 
 export async function handleExternalGitHubPoll(
@@ -113,7 +114,7 @@ export async function handleExternalLinearPoll(
       writeJson(response, 400, { error: "unsupported_source", message: `Unsupported external source kind: ${workflowDefinition.config.source.kind}` });
       return;
     }
-    const linearToken = resolveExternalSourceToken(workflowDefinition, secretResolver, "linear_token", "Linear");
+    const linearToken = resolveExternalWorkToken(workflowDefinition, secretResolver);
     const pollResponse: ExternalWorkPollResponse = await pollLinearExternalWork({
       store,
       cwd,
@@ -156,7 +157,7 @@ export async function handleExternalWorkReconcile(
     const body = await readJsonBody(request, config.maxBodyBytes);
     const input = parseExternalWorkReconcileRequest(body);
     let workflowDefinition: ExternalWorkflowDefinition | undefined;
-    let githubToken: string | undefined;
+    let token: string | undefined;
     if (input.workflowPath) {
       const channel = input.channelId ? store.getChannel(input.channelId) : undefined;
       if (input.channelId && !channel) {
@@ -165,15 +166,15 @@ export async function handleExternalWorkReconcile(
       }
       const workflowFile = readExternalWorkflowFile(input, channel, cwd);
       workflowDefinition = parseExternalWorkflowMarkdown(workflowFile.markdown);
-      githubToken = workflowDefinition.config.source.kind === "github"
-        ? resolveExternalGitHubToken(workflowDefinition, secretResolver)
+      token = getExternalSourceRegistration(workflowDefinition.config.source.kind).supportsRemoteTerminalReconcile
+        ? resolveExternalWorkToken(workflowDefinition, secretResolver)
         : undefined;
     }
     const reconcileResponse: ExternalWorkReconcileResponse = await reconcileExternalWork({
       store,
       channelId: input.channelId,
       workflowDefinition,
-      githubToken,
+      token,
       fetch: externalWorkFetch,
     });
     writeJson(response, 200, reconcileResponse);

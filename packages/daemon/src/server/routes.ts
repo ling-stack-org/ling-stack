@@ -36,8 +36,16 @@ export function parseRunRoute(
   | { kind: "artifacts"; runId: string }
   | { kind: "assurance-evidence"; runId: string }
   | { kind: "assurance-evaluation-association"; runId: string }
-  | { kind: "node-rerun-admission"; runId: string }
   | { kind: "node-rerun-submit"; runId: string }
+  | { kind: "node-rerun-admission"; runId: string }
+  | { kind: "node-rerun-intents"; runId: string }
+  | { kind: "node-rerun-intent"; runId: string; recordId: string }
+  | { kind: "node-rerun-intent-approval"; runId: string; recordId: string }
+  | { kind: "node-rerun-intent-target"; runId: string; recordId: string }
+  | { kind: "node-rerun-target-dispatch"; runId: string; recordId: string }
+  | { kind: "node-rerun-intent-generation"; runId: string; recordId: string }
+  | { kind: "node-rerun-target-cancel"; runId: string; recordId: string }
+  | { kind: "node-rerun-target-readiness"; runId: string; recordId: string }
   | { kind: "shell-snapshots"; runId: string }
   | { kind: "shell-snapshot"; runId: string; snapshotId: string }
   | { kind: "workspace-changes"; runId: string }
@@ -69,6 +77,24 @@ export function parseRunRoute(
   if (segments.length === 4 && segments[0] === "runs" && segments[2] === "node-rerun" && segments[3] === "admission") {
     return { kind: "node-rerun-admission", runId: segments[1] };
   }
+  if (segments.length === 4 && segments[0] === "runs" && segments[2] === "node-rerun" && segments[3] === "intents") {
+    return { kind: "node-rerun-intents", runId: segments[1] };
+  }
+  if (segments.length === 5 && segments[0] === "runs" && segments[2] === "node-rerun" && segments[3] === "intents") {
+    return { kind: "node-rerun-intent", runId: segments[1], recordId: segments[4] };
+  }
+  if (segments.length === 6 && segments[0] === "runs" && segments[2] === "node-rerun" && segments[3] === "intents"
+    && segments[5] === "approval") return { kind: "node-rerun-intent-approval", runId: segments[1], recordId: segments[4] };
+  if (segments.length === 6 && segments[0] === "runs" && segments[2] === "node-rerun" && segments[3] === "intents"
+    && segments[5] === "target") return { kind: "node-rerun-intent-target", runId: segments[1], recordId: segments[4] };
+  if (segments.length === 7 && segments[0] === "runs" && segments[2] === "node-rerun" && segments[3] === "intents"
+    && segments[5] === "target" && segments[6] === "dispatch") return { kind: "node-rerun-target-dispatch", runId: segments[1], recordId: segments[4] };
+  if (segments.length === 6 && segments[0] === "runs" && segments[2] === "node-rerun" && segments[3] === "intents"
+    && segments[5] === "generation") return { kind: "node-rerun-intent-generation", runId: segments[1], recordId: segments[4] };
+  if (segments.length === 7 && segments[0] === "runs" && segments[2] === "node-rerun" && segments[3] === "intents"
+    && segments[5] === "target" && segments[6] === "cancel") return { kind: "node-rerun-target-cancel", runId: segments[1], recordId: segments[4] };
+  if (segments.length === 7 && segments[0] === "runs" && segments[2] === "node-rerun" && segments[3] === "intents"
+    && segments[5] === "target" && segments[6] === "readiness") return { kind: "node-rerun-target-readiness", runId: segments[1], recordId: segments[4] };
   if (segments.length === 3 && segments[0] === "runs" && segments[2] === "shell-snapshots") {
     return { kind: "shell-snapshots", runId: segments[1] };
   }

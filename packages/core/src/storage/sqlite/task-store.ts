@@ -17,7 +17,7 @@ export class SqliteTaskStore {
 
   createTask(input: CreateTaskInput, now: string): Task {
     const task: Task = {
-      id: createTaskId(),
+      id: input.id ?? createTaskId(),
       workspaceId: DEFAULT_WORKSPACE_ID,
       channelId: input.channelId,
       title: input.title,

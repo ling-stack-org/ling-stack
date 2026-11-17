@@ -22,6 +22,7 @@ export type ApprovalActionType =
   | "provider_change"
   | "workflow_step"
   | "workflow_merge"
+  | "node_rerun"
   | "mcp_tool_call"
   | "host_capability"
   | "runtime_permission_request";
@@ -205,6 +206,7 @@ export type ApprovalPayload =
       readonly command?: string;
       readonly environment?: string;
     }
+  | import("@ling-stack/contracts").NodeRerunApprovalPayloadV1
   | MediaCostApprovalPayload
   | import("./workflow-merge-types.js").WorkflowMergeApprovalPayloadV1
   | {
@@ -244,6 +246,7 @@ export interface ApprovalRequest {
   readonly taskId?: string;
   readonly mediaJobId?: string;
   readonly externalWorkActionId?: string;
+  readonly nodeRerunIntentId?: string;
   readonly workflowStepId?: string;
   readonly channelId?: string;
   readonly toolCallId?: string;
@@ -269,6 +272,7 @@ export interface CreateApprovalRequestInput {
   readonly taskId?: string;
   readonly mediaJobId?: string;
   readonly externalWorkActionId?: string;
+  readonly nodeRerunIntentId?: string;
   readonly workflowStepId?: string;
   readonly channelId?: string;
   readonly toolCallId?: string;
@@ -335,6 +339,7 @@ export interface ListApprovalRequestsOptions {
   readonly runId?: string;
   readonly mediaJobId?: string;
   readonly externalWorkActionId?: string;
+  readonly nodeRerunIntentId?: string;
   readonly workflowStepId?: string;
   readonly limit?: number;
   /**
@@ -363,6 +368,7 @@ export const approvalActionTypes: readonly ApprovalActionType[] = [
   "provider_change",
   "workflow_step",
   "workflow_merge",
+  "node_rerun",
   "mcp_tool_call",
   "host_capability",
   "runtime_permission_request",

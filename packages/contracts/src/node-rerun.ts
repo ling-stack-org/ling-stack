@@ -166,6 +166,178 @@ export interface NodeRerunHostAdmissionResponseV1 {
   readonly plan: NodeRerunHostAdmissionPlanV1 | null;
 }
 
+export interface NodeRerunIntentSubmissionV1 {
+  readonly intent: NodeRerunIntentV1;
+  readonly planFingerprint: string;
+}
+
+export interface NodeRerunPreparedIntentV1 extends NodeRerunIntentSubmissionV1 {
+  readonly schemaVersion: 1;
+  readonly kind: "node_rerun_prepared_intent";
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly status: "prepared";
+  readonly policyFingerprint: string;
+  readonly preparedAt: string;
+  readonly executionAuthorized: false;
+}
+
+export interface NodeRerunIntentResponseV1 {
+  readonly schemaVersion: 1;
+  readonly kind: "node_rerun_intent_response";
+  readonly record: NodeRerunPreparedIntentV1;
+  readonly executionAuthorized: false;
+}
+
+/** Frozen consent for one Host-minted generation; never an execution permit. */
+export interface NodeRerunApprovalPayloadV1 extends NodeRerunIntentSubmissionV1 {
+  readonly schemaVersion: 1;
+  readonly type: "node_rerun";
+  readonly nodeRerunIntentId: string;
+  readonly generationId: string;
+  readonly policyFingerprint: string;
+  readonly expiresAt: string;
+  readonly fingerprint: string;
+}
+
+export interface NodeRerunApprovalResponseV1 {
+  readonly schemaVersion: 1;
+  readonly kind: "node_rerun_approval_response";
+  readonly record: NodeRerunPreparedIntentV1;
+  readonly approval: import("./approvals.js").ApprovalRequest;
+  readonly executionAuthorized: false;
+}
+
+/** Durable preparation receipt; dispatch still requires the dedicated Host admission boundary. */
+export interface NodeRerunPreparedTargetV1 {
+  readonly schemaVersion: 1;
+  readonly kind: "node_rerun_prepared_target";
+  readonly recordId: string;
+  readonly workspaceId: string;
+  readonly generationId: string;
+  readonly approvalId: string;
+  readonly source: NodeRerunSourceRefV1;
+  readonly runId: string;
+  readonly taskId: string;
+  readonly fence: import("./runtime.js").RuntimeAttemptFenceV1;
+  readonly frozenExecutionDigest: string;
+  readonly preparedAt: string;
+  readonly executionAuthorized: false;
+}
+
+export interface NodeRerunTargetResponseV1 {
+  readonly schemaVersion: 1;
+  readonly kind: "node_rerun_target_response";
+  readonly target: NodeRerunPreparedTargetV1;
+  readonly executionAuthorized: false;
+}
+
+/** Receipt returned after the dedicated Host receiver consumes a target gate. */
+export interface NodeRerunTargetDispatchResponseV1 {
+  readonly schemaVersion: 1;
+  readonly kind: "node_rerun_target_dispatch_response";
+  readonly target: NodeRerunPreparedTargetV1;
+  readonly runId: string;
+  readonly dispatchStatus: "dispatched" | "already_dispatched";
+  readonly executionAuthorized: true;
+}
+
+/** A generation-scoped dependency view rebuilt from durable preparation evidence. */
+export interface NodeRerunGenerationProjectionV1 {
+  readonly schemaVersion: 1;
+  readonly kind: "node_rerun_generation_projection";
+  readonly recordId: string;
+  readonly workspaceId: string;
+  readonly generationId: string;
+  readonly approvalId: string;
+  readonly graphVersionDigest: string;
+  readonly source: {
+    readonly runId: string;
+    readonly attemptId: string;
+    readonly nodeId: string;
+    readonly sourceSnapshotDigest: string;
+  };
+  readonly replacement: {
+    readonly nodeId: string;
+    readonly runId: string;
+    readonly taskId: string;
+    readonly fence: import("./runtime.js").RuntimeAttemptFenceV1;
+    readonly frozenExecutionDigest: string;
+  };
+  readonly reusedUpstream: readonly NodeRerunDependencyPinV1[];
+  readonly invalidatedDownstream: readonly {
+    readonly nodeId: string;
+    readonly status: "invalidated";
+    readonly executionAuthorized: false;
+  }[];
+  readonly preparedAt: string;
+  readonly evidenceBasis: "frozen_target_preparation";
+  readonly revalidateBeforeExecution: true;
+  readonly graphMutation: "none";
+  readonly downstreamDispatch: "disabled";
+  readonly executionAuthorized: false;
+}
+
+export interface NodeRerunGenerationResponseV1 {
+  readonly schemaVersion: 1;
+  readonly kind: "node_rerun_generation_response";
+  readonly generation: NodeRerunGenerationProjectionV1;
+  readonly executionAuthorized: false;
+}
+
+/** Exact-fence cancellation receipt for a target that never entered execution. */
+export interface NodeRerunTargetCancellationV1 {
+  readonly schemaVersion: 1;
+  readonly kind: "node_rerun_target_cancellation";
+  readonly recordId: string;
+  readonly generationId: string;
+  readonly runId: string;
+  readonly fence: import("./runtime.js").RuntimeAttemptFenceV1;
+  readonly releasedAt: string;
+  readonly stopEvidence: "never_dispatched";
+  readonly executionAuthorized: false;
+}
+
+export interface NodeRerunTargetCancellationResponseV1 {
+  readonly schemaVersion: 1;
+  readonly kind: "node_rerun_target_cancellation_response";
+  readonly cancellation: NodeRerunTargetCancellationV1;
+  readonly executionAuthorized: false;
+}
+
+/** Response after an already-dispatched target enters its exact-fence stop boundary. */
+export interface NodeRerunTargetStopResponseV1 {
+  readonly schemaVersion: 1;
+  readonly kind: "node_rerun_target_stop_response";
+  readonly target: NodeRerunPreparedTargetV1;
+  readonly runId: string;
+  readonly stopStatus: "requested" | "already_requested" | "awaiting_recovery";
+  readonly executionAuthorized: false;
+}
+
+export type NodeRerunTargetReadinessBlockerCode = "target_released" | "target_not_pristine"
+  | "approval_not_current" | "runtime_changed" | "source_not_current" | "source_plan_changed"
+  | "frozen_execution_unavailable" | "local_execution_unconfirmed";
+
+/** Current preconditions for resource admission; the observation cannot authorize dispatch. */
+export interface NodeRerunTargetReadinessV1 {
+  readonly schemaVersion: 1;
+  readonly kind: "node_rerun_target_readiness";
+  readonly target: NodeRerunPreparedTargetV1;
+  readonly observedAt: string;
+  readonly decision: "eligible_for_resource_admission" | "blocked";
+  readonly blockers: readonly NodeRerunTargetReadinessBlockerCode[];
+  readonly revalidateBeforeDispatch: true;
+  readonly executionAuthorized: false;
+}
+
+export interface NodeRerunTargetReadinessResponseV1 {
+  readonly schemaVersion: 1;
+  readonly kind: "node_rerun_target_readiness_response";
+  readonly readiness: NodeRerunTargetReadinessV1;
+  readonly executionAuthorized: false;
+}
+
 export class NodeRerunValidationError extends Error {
   readonly code = "node_rerun_invalid" as const;
 
@@ -314,6 +486,64 @@ export function parseNodeRerunIntent(value: unknown): NodeRerunIntentV1 {
     requestedBy: choice(input.requestedBy, ["local-user", "system"], "intent.requestedBy"),
     idempotencyKey: identifier(input.idempotencyKey, "intent.idempotencyKey"),
     createdAt: timestamp(input.createdAt, "intent.createdAt"),
+  };
+}
+
+export function parseNodeRerunIntentSubmission(value: unknown): NodeRerunIntentSubmissionV1 {
+  const input = record(value, ["intent", "planFingerprint"], "submission");
+  const planFingerprint = text(input.planFingerprint, "submission.planFingerprint", 23);
+  if (!/^nrhpv1_[0-9a-f]{16}$/u.test(planFingerprint)) invalid("submission.planFingerprint: invalid Host plan fingerprint");
+  return { intent: parseNodeRerunIntent(input.intent), planFingerprint };
+}
+
+/** Project frozen dependency evidence without changing source results or authorizing downstream work. */
+export function projectNodeRerunGenerationV1(input: {
+  readonly record: NodeRerunPreparedIntentV1;
+  readonly target: NodeRerunPreparedTargetV1;
+}): NodeRerunGenerationProjectionV1 {
+  const pair = record(input, ["record", "target"], "projection");
+  const saved = record(pair.record, ["schemaVersion", "kind", "id", "workspaceId", "status", "intent",
+    "planFingerprint", "policyFingerprint", "preparedAt", "executionAuthorized"], "record");
+  const target = record(pair.target, ["schemaVersion", "kind", "recordId", "workspaceId", "generationId", "approvalId",
+    "source", "runId", "taskId", "fence", "frozenExecutionDigest", "preparedAt", "executionAuthorized"], "target");
+  if (saved.schemaVersion !== 1 || saved.kind !== "node_rerun_prepared_intent" || saved.status !== "prepared"
+    || saved.executionAuthorized !== false || target.schemaVersion !== 1 || target.kind !== "node_rerun_prepared_target"
+    || target.executionAuthorized !== false) invalid("projection: invalid preparation evidence");
+  const submission = parseNodeRerunIntentSubmission({ intent: saved.intent, planFingerprint: saved.planFingerprint });
+  const policyFingerprint = digest(saved.policyFingerprint, "record.policyFingerprint");
+  if (submission.planFingerprint !== nodeRerunHostAdmissionPlanFingerprintV1({ intent: submission.intent,
+    source: submission.intent.source, sourcePolicyFingerprint: policyFingerprint, currentPolicyFingerprint: policyFingerprint }))
+    invalid("projection: invalid saved plan");
+  const recordId = identifier(saved.id, "record.id"), workspaceId = identifier(saved.workspaceId, "record.workspaceId");
+  const source = parseSourceRef(target.source, "target.source");
+  const preparedAt = timestamp(target.preparedAt, "target.preparedAt");
+  if (target.recordId !== recordId || target.workspaceId !== workspaceId || !sameSource(submission.intent.source, source)
+    || preparedAt < timestamp(saved.preparedAt, "record.preparedAt")) invalid("projection: preparation lineage mismatch");
+  const closure = source.dependencyClosure;
+  if (!closure.complete || closure.upstream.some(pin => pin.nodeId === source.nodeId
+    || closure.downstreamNodeIds.includes(pin.nodeId) || pin.outputArtifacts.length === 0
+    || new Set(pin.outputArtifacts.map(artifact => artifact.artifactId)).size !== pin.outputArtifacts.length))
+    invalid("projection: incomplete or overlapping dependency evidence");
+  const rawFence = record(target.fence, ["workUnitId", "attemptId", "runtimeInstanceId", "fencingToken"], "target.fence");
+  const fence = {
+    workUnitId: identifier(rawFence.workUnitId, "target.fence.workUnitId"),
+    attemptId: identifier(rawFence.attemptId, "target.fence.attemptId"),
+    runtimeInstanceId: identifier(rawFence.runtimeInstanceId, "target.fence.runtimeInstanceId"),
+    fencingToken: identifier(rawFence.fencingToken, "target.fence.fencingToken"),
+  };
+  const runId = identifier(target.runId, "target.runId");
+  if (runId === source.runId || fence.attemptId === source.attemptId) invalid("projection: replacement must have a new identity");
+  return {
+    schemaVersion: 1, kind: "node_rerun_generation_projection", recordId, workspaceId,
+    generationId: identifier(target.generationId, "target.generationId"), approvalId: identifier(target.approvalId, "target.approvalId"),
+    graphVersionDigest: source.graphVersionDigest,
+    source: { runId: source.runId, attemptId: source.attemptId, nodeId: source.nodeId, sourceSnapshotDigest: source.sourceSnapshotDigest },
+    replacement: { nodeId: source.nodeId, runId, taskId: identifier(target.taskId, "target.taskId"), fence,
+      frozenExecutionDigest: digest(target.frozenExecutionDigest, "target.frozenExecutionDigest") },
+    reusedUpstream: closure.upstream,
+    invalidatedDownstream: closure.downstreamNodeIds.map(nodeId => ({ nodeId, status: "invalidated", executionAuthorized: false })),
+    preparedAt, evidenceBasis: "frozen_target_preparation", revalidateBeforeExecution: true, graphMutation: "none",
+    downstreamDispatch: "disabled", executionAuthorized: false,
   };
 }
 

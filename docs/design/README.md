@@ -2,7 +2,7 @@
 
 Status: canonical documentation index
 Owner: repository maintainers
-Last verified: 2026-11-02 (safe-concurrency design/plan added; other delivery states retain their owners)
+Last verified: 2026-11-17 (remaining-work completion plan and M0 audit packet added)
 Document type: governance index
 Code and test anchors: each linked contract owns its anchors
 
@@ -19,6 +19,8 @@ Maintenance-only transition notes are kept in [Development Handoffs](../maintena
 ## Product And Architecture
 
 - [Implementation Status](implementation-status.md)
+- [Remaining Work Completion Plan](remaining-work-completion-plan.md)
+- [Remaining Work M0 Baseline And Decisions](remaining-work-m0-baseline-and-decisions.md)
 - [Agent Execution Capabilities](agent-execution-capabilities.md)
 - [Agent Execution Capabilities Implementation Plan](agent-execution-capabilities-implementation-plan.md)
 - [Official Scene Theme, Background And Interaction Motion Contract](theme-background-motion-contract.md)

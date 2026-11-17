@@ -175,6 +175,7 @@ function resolveApprovalOwner(approval: ApprovalRequest): { readonly type: strin
   if (approval.runId) return { type: "run", id: approval.runId };
   if (approval.mediaJobId) return { type: "media_job", id: approval.mediaJobId };
   if (approval.externalWorkActionId) return { type: "external_work_action", id: approval.externalWorkActionId };
+  if (approval.nodeRerunIntentId) return { type: "node_rerun_intent", id: approval.nodeRerunIntentId };
   if (approval.workflowStepId) return { type: "workflow_step", id: approval.workflowStepId };
   if (approval.taskId) return { type: "task", id: approval.taskId };
   if (approval.channelId) return { type: "channel", id: approval.channelId };

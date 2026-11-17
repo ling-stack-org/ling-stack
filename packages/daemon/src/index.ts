@@ -455,16 +455,17 @@ export function createDaemonServer(
       const capacity = runtimeHostCapacities.get(store);
       if (capacity) {
         try {
-          let observed = 0, released = 0;
+          let observed = 0, released = 0, unknown = 0;
           for (const workspaceId of store.listWorkspaceIds()) {
             runtimeSupervisor.getRuntimeForWorkspace(cwd, store, workspaceId);
             const recovery = recoverHostCapacityReservations({ store, workspaceId,
               host: hostRunCapacity, admission: capacity, now: recoveryNow });
             observed += recovery.observed;
             released += recovery.released;
+            unknown += recovery.unknown;
           }
-          if (observed || released) {
-            console.info(`runtime_host_capacity_startup_recovery: observed=${observed} released=${released}`);
+          if (observed || released || unknown) {
+            console.info(`runtime_host_capacity_startup_recovery: observed=${observed} released=${released} unknown=${unknown}`);
           }
         } catch {
           console.warn("runtime_host_capacity_startup_recovery_incomplete: held reservations remain recoverable");

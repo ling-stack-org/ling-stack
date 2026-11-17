@@ -11,6 +11,7 @@ import type {
 } from "@ling-stack/core";
 import type { ChannelContextDroppedSource, ChannelContextSection, ChannelContextSource, ChannelContextSourceRef, ChannelContextView } from "./types.js";
 import { buildChannelContextView } from "./views.js";
+import { contextViewLineageKey } from "./context-view-lineage.js";
 import { assertTeammateDirectMessageScope, resolveTeammateDirectRunOwner } from "../../teammates/direct-run-owner.js";
 
 export interface PrivateChatAttachmentMaterialization {
@@ -93,6 +94,18 @@ export function buildPrivateChatContextView(input: BuildPrivateChatContextViewIn
     sources: [...promptSources, ...(input.memorySources ?? [])],
     dropped: input.memoryDropped,
     now: input.now,
+    lineage: {
+      store: input.store,
+      lineageKey: contextViewLineageKey({
+        workspaceId: input.thread.workspaceId,
+        threadId: input.thread.id,
+        sourceItemId: input.sourceMessage.id,
+        kind: "private_chat_view",
+        consumerTeammateId: input.teammate.id,
+      }),
+      threadId: input.thread.id,
+      sourceItemId: input.sourceMessage.id,
+    },
   });
 }
 
