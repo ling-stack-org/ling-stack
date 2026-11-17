@@ -125,4 +125,3 @@ The 14-item plan can close only when every row has one of these outcomes:
 
 The target branch is not a Release Candidate, has no remote PR and has not been deployed until those
 facts are independently verified.
-
