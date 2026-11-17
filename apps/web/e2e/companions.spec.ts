@@ -211,9 +211,18 @@ test("does not resubmit while the original reply is still pending", async ({ pag
 test("desktop companion retries teammate discovery after a transient daemon failure", async ({ page }) => {
   const f = await fixture(page);
   let teammateReads = 0;
+  let companionReads = 0;
   await page.route(url => url.origin === "http://127.0.0.1:17891" && url.pathname === "/teammates", async route => {
     teammateReads++;
     if (teammateReads === 1) {
+      await route.fulfill({ status: 503, json: { error: "temporarily_unavailable" } });
+      return;
+    }
+    await route.fallback();
+  });
+  await page.route(url => url.origin === "http://127.0.0.1:17891" && url.pathname === "/companions", async route => {
+    companionReads++;
+    if (companionReads === 1) {
       await route.fulfill({ status: 503, json: { error: "temporarily_unavailable" } });
       return;
     }
@@ -235,6 +244,7 @@ test("desktop companion retries teammate discovery after a transient daemon fail
     const panel = page.getByRole("dialog", { name: "Intelligent companion" });
     await expect(panel.locator(".companion-mini-avatar-wrap .teammate-avatar-image")).toHaveCount(1, { timeout: 12_000 });
     expect(teammateReads).toBeGreaterThanOrEqual(2);
+    expect(companionReads).toBeGreaterThanOrEqual(2);
   } finally { await f.close(); }
 });
 

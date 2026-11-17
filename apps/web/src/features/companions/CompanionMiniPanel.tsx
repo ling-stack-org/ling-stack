@@ -16,6 +16,9 @@ import { TeammateAvatarView } from "../teammates/TeammateAvatarView.js";
 import { CompanionPetStage } from "./CompanionPetStage.js";
 import { useCompanionChat } from "./use-companion-chat.js";
 
+const companionRetryDelayMs = 5_000;
+const companionRetryLimit = 3;
+
 export function CompanionMiniPanel({
   cwd,
   teammates,
@@ -90,23 +93,35 @@ export function CompanionMiniPanel({
       return;
     }
     let cancelled = false;
-    setLoading(true);
-    setError("");
-    void listCompanions(cwd.trim())
-      .then((response) => {
-        if (cancelled) return;
-        const next = response.companions.filter((companion) => companion.status !== "disabled");
-        setCompanions(next);
-        setSelectedId((current) => next.some((companion) => companion.id === current) ? current : next[0]?.id ?? "");
-      })
-      .catch((caught) => {
-        if (!cancelled) setError(caught instanceof Error ? caught.message : String(caught));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+    let retryTimer: number | undefined;
+    let attempt = 0;
+    const load = (): void => {
+      if (cancelled) return;
+      attempt += 1;
+      setLoading(true);
+      setError("");
+      void listCompanions(cwd.trim())
+        .then((response) => {
+          if (cancelled) return;
+          const next = response.companions.filter((companion) => companion.status !== "disabled");
+          setCompanions(next);
+          setSelectedId((current) => next.some((companion) => companion.id === current) ? current : next[0]?.id ?? "");
+          setLoading(false);
+        })
+        .catch((caught) => {
+          if (cancelled) return;
+          if (attempt <= companionRetryLimit) {
+            retryTimer = window.setTimeout(load, companionRetryDelayMs);
+            return;
+          }
+          setError(caught instanceof Error ? caught.message : String(caught));
+          setLoading(false);
+        });
+    };
+    load();
     return () => {
       cancelled = true;
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
     };
   }, [cwd, open]);
 
