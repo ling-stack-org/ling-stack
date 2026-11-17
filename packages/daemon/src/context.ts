@@ -64,6 +64,8 @@ import type { EngineManagementFeature, EngineManagementFeatureOptions } from "./
 import type { NativeRunDispatcher, NativeRunTargetDispatcher } from "./features/runs/native-run-dispatcher.js";
 import type { CompanionReplyService } from "./features/companions/reply-service.js";
 import type { CompanionSchedulerRegistry } from "./features/companions/scheduler.js";
+import type { DesktopBrowserController } from "./features/desktop-browser/controller.js";
+import type { DesktopBrowserPluginService } from "./features/plugins/desktop-browser.js";
 
 export interface RunnerAdapter {
   /** Optional capability; absence must reject prepared execution, never fabricate evidence. */
@@ -260,6 +262,8 @@ export interface DaemonContext {
   readonly engineManagement: EngineManagementFeature;
   readonly nativeRunDispatcher?: NativeRunDispatcher;
   readonly chromeBrowserSessions: ChromeBrowserSessionController;
+  readonly desktopBrowser: DesktopBrowserController;
+  readonly desktopBrowserPlugin: DesktopBrowserPluginService;
   readonly chromeBrowserPlugin: ChromeBrowserPluginService;
   readonly officeDriverController: OfficeDriverController;
   readonly officeDocumentsPlugin: OfficeDocumentsPluginService;

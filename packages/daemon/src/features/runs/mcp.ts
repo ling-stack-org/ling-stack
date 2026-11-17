@@ -56,7 +56,8 @@ export function resolveMcpToolAccessForRun(
       .listMcpTools({ serverId: server.id, enabled: true, limit: 500 })
       .filter((tool) => isMcpToolAuthorizedForRun(server, binding, tool))
       .map((tool) => {
-        const approval = binding.approvalOverrides[tool.rawName] ?? tool.defaultApproval;
+        const configuredApproval = binding.approvalOverrides[tool.rawName] ?? tool.defaultApproval;
+        const approval = server.id === "mcp_browser" && configuredApproval !== "deny" ? "ask" : configuredApproval;
         return removeUndefined({
           rawName: tool.rawName,
           registeredName: createMcpRunnerToolName(server.id, tool.rawName),
