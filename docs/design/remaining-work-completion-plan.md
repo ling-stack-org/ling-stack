@@ -21,7 +21,7 @@ M0 audit packet: [Baseline And Decisions](remaining-work-m0-baseline-and-decisio
 - 本次复核从最新 `origin/main@1afb3a923a4d5af7750d385ac961eb2d0465c4ef` 新建目标分支和独立
   worktree；目标分支尚未推送、开 PR 或合并。提交 PR 前仍必须重新做 main 合并、迁移和受影响
   测试复核。
-- 当前批次覆盖 External Work 8.0/8.1、Channel Context lineage/quote/redaction、F5
+- 当前批次覆盖 External Work 8.0/8.1、Channel Context lineage/quote/redaction/startup reconstruction、F5
   rerun/approval/capacity/stop/recovery、Automation ingress、Goal supervision 和 Runner
   input rebind；这些是本地 branch implementation，不能写成远端合并或已发布。
 - F5-04 已在本地实现事务内 source/policy 复核、持久化幂等意图和 POST/GET caller；F5-05

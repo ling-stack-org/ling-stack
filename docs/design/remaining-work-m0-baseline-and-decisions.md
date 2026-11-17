@@ -175,7 +175,9 @@ The following evidence is already recorded on the target branch and in the ownin
 - Current branch verification: Core selected implementation suites `104/104`, Core runtime-host-capacity
   migration suite `114/114`, and Daemon selected implementation suites `341/341` passed on 2026-11-17.
   These runs include the F5 route/capacity/cancellation/readiness/dispatch/restart paths, Automation,
-  Goal supervision, Channel Context and External Work files listed in the local verification command.
+  Goal supervision, Channel Context and External Work files listed in the local verification command. The
+  follow-up Context lineage/projector/recovery set is `42/42`, with Core/Daemon production and test
+  typechecks plus the Daemon build passing after the startup reconciliation worker was added.
 - Core and Daemon production/test typechecks passed; Core and Daemon builds passed; `corepack pnpm check:docs`
   passed for 573 Markdown files. The full repository build and hosted CI remain separate gates and are not
   inferred from these package runs.
@@ -194,8 +196,8 @@ Evidence anchors:
 ## 6. Next authorized implementation step
 
 After the M0 decisions and owner/resource assignments are recorded, the next implementation slice is
-Channel Context Processing, while the F5 track continues with external Provider, stop-confirmation and
-A17/A18 evidence. The F5 receiver keeps the durable dispatch
+the remaining Web/session recovery and surface acceptance, while the F5 track continues with external
+Provider, stop-confirmation and A17/A18 evidence. The F5 receiver keeps the durable dispatch
 receipt read-only after release, preserves fail-closed unknown-outcome behavior, and does not open
 ordinary multi-agent write concurrency.
 
