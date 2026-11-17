@@ -407,7 +407,11 @@ function normalizeLinearIssue(
   const state = normalizeLinearState(issue.state);
   const updatedAt = readOptionalString(issue.updatedAt, "issue.updatedAt") ?? readOptionalString(issue.updated_at, "issue.updated_at");
   const project = readOptionalRecord(issue.project, "issue.project");
-  const projectSlug = readOptionalString(project?.slug, "issue.project.slug") ?? input.projectSlug;
+  const payloadProjectSlug = readOptionalString(project?.slug, "issue.project.slug");
+  if (payloadProjectSlug && input.projectSlug && payloadProjectSlug !== input.projectSlug) {
+    throw new ExternalWorkflowValidationError(`Linear project does not match configured source: ${payloadProjectSlug}`);
+  }
+  const projectSlug = payloadProjectSlug ?? input.projectSlug;
   const linearId = readOptionalString(issue.id, "issue.id") ?? identifier;
   const idempotencyKey = [
     "linear:issue",
@@ -458,7 +462,11 @@ function normalizeLinearLabels(raw: unknown): string[] {
 
 function normalizeGitHubRepository(raw: unknown, fallbackFullName: string | undefined): ExternalWorkRepositoryRef {
   const repository = isRecord(raw) ? raw : undefined;
-  const fullName = readOptionalString(repository?.full_name, "repository.full_name") ?? fallbackFullName;
+  const payloadFullName = readOptionalString(repository?.full_name, "repository.full_name");
+  if (payloadFullName && fallbackFullName && payloadFullName !== fallbackFullName) {
+    throw new ExternalWorkflowValidationError(`GitHub repository does not match configured source: ${payloadFullName}`);
+  }
+  const fullName = payloadFullName ?? fallbackFullName;
   if (!fullName) {
     throw new ExternalWorkflowValidationError("GitHub repository full name is required.");
   }
@@ -490,10 +498,11 @@ function normalizeGitHubLabels(raw: unknown): readonly string[] {
 }
 
 function splitRepositoryFullName(fullName: string): readonly [string, string] {
-  const [owner, name] = fullName.split("/");
-  if (!owner || !name) {
+  const parts = fullName.split("/");
+  if (parts.length !== 2 || parts.some((part) => !/^[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,99})$/.test(part))) {
     throw new ExternalWorkflowValidationError(`Invalid GitHub repository full name: ${fullName}`);
   }
+  const [owner, name] = parts;
   return [owner, name];
 }
 

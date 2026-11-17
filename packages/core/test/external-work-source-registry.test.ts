@@ -66,6 +66,48 @@ test("fixed registrations resolve provider targets, source keys and token purpos
   }
 });
 
+test("registered imports reject payloads from a different configured source", () => {
+  const github = getExternalSourceRegistration("github");
+  const githubWorkflow = parseExternalWorkflowMarkdown(markdown("github", "owner/repo"));
+  assert.throws(() => github.normalizeImport({
+    eventType: "issue.opened",
+    payload: {
+      repository: { full_name: "other/repo" },
+      issue: { number: 7, title: "Wrong repository", state: "open" },
+    },
+    workflowDefinition: githubWorkflow,
+  }), /does not match configured source/);
+
+  const linear = getExternalSourceRegistration("linear");
+  const linearWorkflow = parseExternalWorkflowMarkdown(markdown("linear", "project"));
+  assert.throws(() => linear.normalizeImport({
+    eventType: "issue.created",
+    payload: {
+      id: "lin-other",
+      identifier: "OTHER-7",
+      title: "Wrong project",
+      project: { slug: "other-project" },
+    },
+    workflowDefinition: linearWorkflow,
+  }), /does not match configured source/);
+});
+
+test("GitHub adapters reject repository values that could alter the API URL", async () => {
+  let fetchCalls = 0;
+  const adapter = getExternalSourceRegistration("github").createAdapter({
+    fetch: async () => {
+      fetchCalls += 1;
+      return Response.json([]);
+    },
+  });
+  await assert.rejects(adapter.loadCandidates({
+    repository: "owner/repo?state=closed",
+    events: ["issue.opened"],
+    activeStates: ["open"],
+  }), /Invalid GitHub repository full name/);
+  assert.equal(fetchCalls, 0);
+});
+
 for (const kind of ["github", "linear"] as const) {
   test(`${kind} generic poll and compatibility wrapper share scheduler identity and evidence`, async (t) => {
     const f = fixture(t);

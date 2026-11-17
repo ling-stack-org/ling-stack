@@ -254,10 +254,11 @@ function pickGitHubEvent(events: readonly string[], kind: "pull_request" | "issu
 }
 
 function parseRepositoryFullName(fullName: string): { readonly owner: string; readonly name: string } {
-  const [owner, name] = fullName.split("/");
-  if (!owner || !name) {
+  const parts = fullName.split("/");
+  if (parts.length !== 2 || parts.some((part) => !/^[A-Za-z0-9](?:[A-Za-z0-9_.-]{0,99})$/.test(part))) {
     throw new ExternalWorkflowValidationError(`Invalid GitHub repository full name: ${fullName}`);
   }
+  const [owner, name] = parts;
   return { owner, name };
 }
 
