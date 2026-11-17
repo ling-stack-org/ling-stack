@@ -525,7 +525,7 @@ test("manual workflow step start rejects a result after source context changes",
       stores.set(storeCwd, store);
       return store;
     },
-  });
+  }, { defaultWorkspaceCwd: cwd });
   try {
     const channel = await createWorkflowTestChannel(daemon.url, cwd, "Manual continuity workflow");
     const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
@@ -619,7 +619,7 @@ test("queued workflow runs keep private role memory out of durable snapshots", a
       stores.set(storeCwd, store);
       return store;
     },
-  });
+  }, { defaultWorkspaceCwd: cwd });
   try {
     const channel = await createWorkflowTestChannel(daemon.url, cwd, "Queued continuity workflow");
     const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
@@ -739,7 +739,7 @@ test("workflow handoff intents validate, accept, and stay visible as workflow ev
       stores.set(storeCwd, store);
       return store;
     },
-  });
+  }, { defaultWorkspaceCwd: cwd });
   try {
     const channel = await createChannel(daemon.url, cwd);
     const store = stores.get(cwd);
@@ -818,7 +818,7 @@ test("workflow collaboration card endpoints derive compact product cards", async
       stores.set(storeCwd, store);
       return store;
     },
-  });
+  }, { defaultWorkspaceCwd: cwd });
   try {
     const channel = await createChannel(daemon.url, cwd);
     const store = stores.get(cwd);
@@ -1219,7 +1219,7 @@ test(`workflow dependency compaction preserves the SDK budget gate at ${contextW
       stores.set(storeCwd, store);
       return store;
     },
-  });
+  }, { defaultWorkspaceCwd: cwd });
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd, {
       capabilities: ["chat", "reasoning", "tool_call"],
@@ -1429,7 +1429,7 @@ test("workflow post-step gate pauses downstream steps until approval", async () 
       stores.set(storeCwd, store);
       return store;
     },
-  });
+  }, { defaultWorkspaceCwd: cwd });
   try {
     const channel = await createWorkflowTestChannel(daemon.url, cwd, "Post gate workflow");
     const provider = (await createStaticChatProvider(daemon.url, cwd, {
@@ -1504,7 +1504,7 @@ test("workflow post-step gate resumes after daemon restart when approval was gra
       stores.set(storeCwd, store);
       return store;
     },
-  });
+  }, { defaultWorkspaceCwd: cwd });
   try {
     const channel = await createWorkflowTestChannel(daemon.url, cwd, "Post gate restart workflow");
     const provider = (await createStaticChatProvider(daemon.url, cwd, {
@@ -1659,7 +1659,7 @@ test("workflow skipped optional step allows downstream steps to start", async ()
       stores.set(storeCwd, store);
       return store;
     },
-  });
+  }, { defaultWorkspaceCwd: cwd });
   try {
     const channel = await createWorkflowTestChannel(daemon.url, cwd, "Skip optional workflow");
     const provider = (await createStaticChatProvider(daemon.url, cwd, {
@@ -2406,7 +2406,7 @@ test("workflow dependencyMode any_succeeded can start a fan-in after mixed termi
       stores.set(storeCwd, store);
       return store;
     },
-  });
+  }, { defaultWorkspaceCwd: cwd });
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd, {
       capabilities: ["chat", "reasoning", "tool_call"],
@@ -2586,7 +2586,7 @@ test("workflow fan-in creates summary artifact, memory candidate, selector decis
       stores.set(storeCwd, store);
       return store;
     },
-  });
+  }, { defaultWorkspaceCwd: cwd });
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd, {
       capabilities: ["chat", "reasoning", "tool_call"],
