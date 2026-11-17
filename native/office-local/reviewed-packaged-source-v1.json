@@ -1870,7 +1870,7 @@
     "packages/core/src/node-rerun-types.ts": "0b784e0c8f96dda9f332662e043adf6507483c47227a749bf7cd1b881c2cc234",
     "packages/core/src/storage/sqlite/agent-completion-migration.ts": "b89e20a315976037916d8e76bb994d1575a03f498174a0bbd548085707815ed4",
     "packages/core/src/storage/sqlite/automation-event-migration.ts": "5c61b597daf44f695d399ea02cf1147781ce45586cec76b5a9565114c3aab21b",
-    "packages/core/src/storage/sqlite/automation-event-store.ts": "deebb1b2160bbf04d92218f21ce50cbac0f919062d81710b563bf0b99e769a83",
+    "packages/core/src/storage/sqlite/automation-event-store.ts": "4d036ff18e2bbdd59e784baf44dda6c9ebfb4eee3812925802308233b098594c",
     "packages/core/src/storage/sqlite/goal-acceptance.ts": "05033376f2256e25a7eb13411eb6f122a70e88118fe61e2551f94a67dec78add",
     "packages/core/src/storage/sqlite/goal-supervision-store.ts": "b597096bc2c5411456062665151e7e6671fc4fd76291e8bd7c6a614efee91850",
     "packages/core/src/storage/sqlite/node-rerun-store.ts": "49c8147ed2df66427f2d9b03a8c624afea645696c678d6204e04d86591d46015",
@@ -1879,7 +1879,7 @@
     "packages/daemon/src/features/automations/event-worker.ts": "240dc8750aa4485b0132f7784438789bfe29e1ae26c3a2bfab429c8dea027ced",
     "packages/daemon/src/features/runs/approval-call-cancellation.ts": "bcc4a1e3486436eded10f19030ec97c9be8e8335f3de78778b3c249e089df750",
     "packages/daemon/src/features/runs/code-intelligence.ts": "d5380666a6624a443ee195e58f816d809d3c351f0bfd9e8037e0b13af7ef7c30",
-    "packages/daemon/src/features/runs/hooks-configuration.ts": "150e483415eea8460c85f3038a63d2bc0338dce5315f00ce8cec7c31c1e20db7",
+    "packages/daemon/src/features/runs/hooks-configuration.ts": "34cb0e6bc0cb64d47b8e7c709f2d31ffc554b3b5db6b4324b6424782b44f205d",
     "packages/daemon/src/features/runs/node-rerun-submission.ts": "561da5d354c8f1f7db5dc489e7fde6303ad27e038184cd7666a6649425b0f12c",
     "packages/daemon/src/features/runs/task-supervisor.ts": "400f080e363e06386264ae3da293e5bf2f5d160d92443e5f138fa48a0bfa4d74",
     "packages/daemon/src/runtime/code-intelligence/query.ts": "4189e7c44bd0a33a446b87940da7965e352a30308f0476cae563fe18af124e1d",
@@ -1892,7 +1892,7 @@
     "packages/runner-pi/src/hook-runtime.ts": "2d9384a979b6739d45b4873857d020b117e4097de286ece7ae93ae94dea0169e",
     "packages/runner-pi/src/hook-types.ts": "3b8cdbb20e656d1c98ed3dfbbbf8b1eedcb7ca64f53a9159fe3a0cfeb28bb41b",
     "packages/runner-pi/src/script-runtime.ts": "c728249257ad50abe1f8d3ad50ccaab75e0a8c5047198277e85a853f822026a7",
-    "apps/desktop/scripts/packaged-agent-runtime.mjs": "b308c9b1f201d80f161ce9aff653a5fa73ec2a572ee258b87c9c19f7e3c0e4bf"
+    "apps/desktop/scripts/packaged-agent-runtime.mjs": "56af14f8a806685e85001eb6d39405ffda6606430d7d8cd42aef42dd2f929c73"
   },
   "headers": {
     "selector": "local_environment_path",
