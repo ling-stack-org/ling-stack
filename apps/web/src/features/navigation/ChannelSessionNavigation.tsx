@@ -147,7 +147,7 @@ export function ChannelSessionNavigation({ channel, cwd, active, status, statusI
       }} />
       <SidebarObjectRow actionsLabel={t("Channel actions")} ariaLabel={channel.name} shellClassName={active ? "channel-contains-selection" : undefined} icon={<span className={`sidebar-channel-avatar ${avatar.tone}`} aria-hidden="true">{avatar.label}</span>} onSelect={onSelectChannel}
         status={status} statusId={statusId}
-        actions={<><IconButton className="sidebar-mini-action" icon={Plus} label={active ? t("New conversation in {channel}", { channel: channel.name }) : t("New conversation")} onClick={onNewSession} />{onArchiveChannel ? <SidebarSectionMenu open={channelMenuOpen} onOpenChange={setChannelMenuOpen} label={active ? `${t("Channel actions")}: ${channel.name}` : t("Channel actions")} items={[
+        actions={<><IconButton className="sidebar-mini-action" icon={Plus} label={t("New conversation in {channel}", { channel: channel.name })} onClick={onNewSession} />{onArchiveChannel ? <SidebarSectionMenu open={channelMenuOpen} onOpenChange={setChannelMenuOpen} label={`${t("Channel actions")}: ${channel.name}`} items={[
             ...(onChannelAction ? [
               { id: "settings", icon: SlidersHorizontal, label: t("Channel settings"), onSelect: () => onChannelAction("settings") },
               { id: "rename", icon: PencilLine, label: t("Rename channel"), onSelect: () => onChannelAction("rename") },

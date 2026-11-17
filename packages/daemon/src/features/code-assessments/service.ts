@@ -81,8 +81,7 @@ export function finishCodeAssessmentRun(store: RunStore, assessmentId: string, r
     const parsed = parseCodeAssessmentModelOutput(JSON.stringify(decoded), detail.snapshot);
     const availableAt = now();
     store.advanceCodeAssessmentPhase(assessmentId, { runId: run.id, phase: "synthesizing_findings", now: availableAt,
-      metrics: { timeToSummaryMs: Math.max(0, Date.parse(availableAt) - Date.parse(detail.assessment.createdAt)),
-        ...(parsed.findings.length ? { timeToFirstFindingMs: Math.max(0, Date.parse(availableAt) - Date.parse(detail.assessment.createdAt)) } : {}) } });
+      metrics: { timeToSummaryMs: Math.max(0, Date.parse(availableAt) - Date.parse(detail.assessment.createdAt)) } });
     const summary = safeText(parsed.summary);
     const findings: CodeAssessmentFinding[] = parsed.findings.map(finding => ({ ...finding,
       title: safeText(finding.title), body: safeText(finding.body), evidence: safeText(finding.evidence),

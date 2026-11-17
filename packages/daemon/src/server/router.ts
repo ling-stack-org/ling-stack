@@ -447,6 +447,14 @@ export async function routeRequest(
   } = context;
   setCorsHeaders(response);
 
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+
+  // A loopback daemon without a bearer token is only callable by the local
+  // Ling page, except for the authenticated automation event ingress.
+  if (!config.authToken && url.pathname !== "/health" && !isAutomationEventIngress(url.pathname, request.method)) {
+    if (!allowLocalServiceRequest(request, response)) return;
+  }
+
   if (request.method === "OPTIONS") {
     response.writeHead(204);
     response.end();
@@ -456,8 +464,7 @@ export async function routeRequest(
   // Cloud/self-host slice: non-loopback binds require a bearer token on every
   // request. /health stays open so lifecycle probes keep working.
   if (config.authToken) {
-    const pathname = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`).pathname;
-    if (pathname !== "/health" && !isAutomationEventIngress(pathname, request.method)) {
+    if (url.pathname !== "/health" && !isAutomationEventIngress(url.pathname, request.method)) {
       if (!daemonRequestIsAuthorized(config.authToken, request.headers.authorization)) {
         writeJson(response, 401, { error: "unauthorized", message: "A valid bearer token is required for non-loopback access." });
         return;
@@ -465,7 +472,6 @@ export async function routeRequest(
     }
   }
 
-  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const maybeContinueRunInterventions = async (terminalRun: RunSession): Promise<void> => {
     const sourceRunId = terminalRun.parentRunId ?? terminalRun.id;
     const workspaceCwd = readRunWorkspaceCwd(terminalRun) ?? terminalRun.cwd;

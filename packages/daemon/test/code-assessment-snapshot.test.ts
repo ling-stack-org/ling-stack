@@ -140,6 +140,25 @@ test("redacted snapshots retain raw-change identity without exposing secret valu
   } finally { await rm(cwd, { recursive: true, force: true }); }
 });
 
+test("redacted snapshots cover unquoted and non-pattern credential values", async () => {
+  const cwd = await repo();
+  try {
+    await writeFile(join(cwd, "config.ts"), [
+      "export const password = private-value-one;",
+      "export const access_token: opaque-token-one,",
+      "export const credentials = custom-credential-one;",
+    ].join("\n") + "\n");
+    const snapshot = await captureCodeAssessmentSnapshot(cwd, { type: "working_tree" });
+    const serialized = JSON.stringify(snapshot);
+    assert.equal(snapshot.coverage, "partial");
+    assert.equal(snapshot.files[0]?.redacted, true);
+    assert.doesNotMatch(serialized, /private-value-one|opaque-token-one|custom-credential-one/u);
+    assert.match(snapshot.files[0]?.diff ?? "", /password = \[REDACTED\]/u);
+    assert.match(snapshot.files[0]?.diff ?? "", /access_token: \[REDACTED\]/u);
+    assert.match(snapshot.files[0]?.diff ?? "", /credentials = \[REDACTED\]/u);
+  } finally { await rm(cwd, { recursive: true, force: true }); }
+});
+
 test("branch assessment excludes changes unique to a diverged base branch", async () => {
   const cwd = await repo();
   try {

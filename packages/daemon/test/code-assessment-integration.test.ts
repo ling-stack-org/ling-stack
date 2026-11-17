@@ -101,7 +101,7 @@ test("real Pi assessment persists reports, rejects foreign access, and handles f
   assert.ok(completed.assessment.phaseHistory.some(entry => entry.phase === "validating_candidates" && entry.status !== "skipped"));
   assert.ok(completed.assessment.metrics.captureDurationMs! >= 0);
   assert.ok(completed.assessment.metrics.timeToFinalMs! >= completed.assessment.metrics.timeToSummaryMs!);
-  assert.equal(completed.assessment.metrics.timeToFirstFindingMs, completed.assessment.metrics.timeToSummaryMs);
+  assert.equal(completed.assessment.metrics.timeToFirstFindingMs, undefined);
   assert.ok(completed.assessment.metrics.reportBytes! > 0);
   assert.ok(completed.assessment.reportArtifactId);
   assert.ok(completed.assessment.threatModelArtifactId);
