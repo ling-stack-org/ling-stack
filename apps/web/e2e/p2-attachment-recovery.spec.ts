@@ -345,6 +345,7 @@ test("private cleanup failure survives closing its draft and can be retried when
 for (const surface of ["private", "normal", "channel"] as const) {
   for (const theme of ["light", "dark"] as const) {
     test(`${surface} ${theme} long attachment controls stay aligned and retry restores keyboard focus`, async ({ page }) => {
+      await page.emulateMedia({ reducedMotion: "reduce" });
       await page.setViewportSize(theme === "light" ? { width: 1440, height: 960 } : { width: 1280, height: 800 });
       await page.addInitScript(theme => {
         const selection = JSON.stringify({ themeId: `ling-${theme}`, mode: "fixed" });
@@ -354,6 +355,7 @@ for (const surface of ["private", "normal", "channel"] as const) {
         localStorage.setItem("ling-stack.themeBootstrapPreference", theme);
       }, theme);
       const { composer } = await openSurface(page, surface);
+      await expect(page.locator("#root")).not.toHaveAttribute("inert", "");
       let attempt = 0;
       const endpoint = surface === "private" ? "**/teammates/p2_upload_teammate/direct-attachments**"
         : surface === "normal" ? "**/conversations/attachments**" : "**/channels/channel_engineering/attachments**";
@@ -377,7 +379,9 @@ for (const surface of ["private", "normal", "channel"] as const) {
       expect(geometry).toEqual({ overlap: false, controlsOverlap: false, overflow: false });
       await capture(page, `${surface}-${theme}-failed-controls`);
       const retry = card.getByRole("button", { name: "Retry upload" });
-      await retry.focus(); await retry.press("Enter");
+      await retry.focus();
+      await expect(retry).toBeFocused();
+      await retry.press("Enter");
       await expect(card).toHaveClass(/ready/);
       await expect(card.getByRole("button", { name: "Remove pending attachment" })).toBeFocused();
       await capture(page, `${surface}-${theme}-retry-ready`);

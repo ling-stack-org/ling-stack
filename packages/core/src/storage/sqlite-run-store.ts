@@ -640,6 +640,8 @@ import {
   readString,
 } from "./sqlite/helpers.js";
 import { SqliteAutomationStore } from "./sqlite/automation-store.js";
+import { SqliteAutomationEventStore } from "./sqlite/automation-event-store.js";
+import type { AutomationEventStore } from "../automation-event-types.js";
 import { SqliteProviderStore } from "./sqlite/provider-store.js";
 import { SqliteProviderCheckPublicationStore } from "./sqlite/provider-check-publication-store.js";
 import { applyProviderCheckMigration } from "./sqlite/provider-check-migration.js";
@@ -810,9 +812,13 @@ import { applyRuntimeRunQueueMigration } from "./sqlite/runtime-run-queue-migrat
 import { applyRuntimeHostCapacityMigration } from "./sqlite/runtime-host-capacity-migration.js";
 import { applyRuntimeDelegationSpawnAdmissionMigration } from "./sqlite/runtime-delegation-spawn-admission-migration.js";
 import { applyRuntimeHostCapacityContinuationMigration } from "./sqlite/runtime-host-capacity-continuation-migration.js";
+import { applyAutomationEventMigration } from "./sqlite/automation-event-migration.js";
+import { applyAgentCompletionMigration } from "./sqlite/agent-completion-migration.js";
 import { captureHostRunCapacityWorkspaceIdentity, openHostCapacityWorkspaceDatabase } from "../host-run-capacity-workspace-identity.js";
 import { registerSqliteWorkflowTemplateRegistryStore } from "./sqlite/workflow-template-registry-store.js";
 import { registerSqliteWorkflowConflictRecoveryStore } from "./sqlite/workflow-conflict-recovery-store.js";
+import { registerSqliteGoalSupervisionStore } from "./sqlite/goal-supervision-store.js";
+import { registerSqliteNodeRerunStore } from "./sqlite/node-rerun-store.js";
 import { registerSqliteWorkflowUserCreationStore } from "./sqlite/workflow-user-creation-store.js";
 import { createSqliteWorkflowIsolationStore, registerSqliteWorkflowIsolationStore } from "./sqlite/workflow-isolation-store.js";
 import { createSqliteWorkflowIntegrationCoordinatorStore, registerSqliteWorkflowIntegrationCoordinatorStore } from "./sqlite/workflow-integration-coordinator-store.js";
@@ -861,6 +867,7 @@ export class SqliteRunStore implements RunStore {
   private readonly learningReviews: SqliteLearningReviewStore;
   private readonly legacyContinuityFixtureMode: boolean;
   private readonly automations: SqliteAutomationStore;
+  private readonly automationEvents: SqliteAutomationEventStore;
   private readonly providers: SqliteProviderStore;
   private readonly providerChecks: SqliteProviderCheckPublicationStore;
   private readonly mcps: SqliteMcpStore;
@@ -1020,6 +1027,7 @@ export class SqliteRunStore implements RunStore {
     this.conversationAcceptedInput = new SqliteConversationAcceptedInputStore({ database: this.database }, this.conversationTurnIngest);
     this.teammateDirectInput = new SqliteTeammateDirectInputStore({ database: this.database }, this.conversationTurnIngest);
     this.conversationPreparedInput = new SqliteConversationPreparedInputStore({ database: this.database }, this.conversationAcceptedInput);
+    this.automationEvents = new SqliteAutomationEventStore({ database: this.database }, this);
     this.automations = new SqliteAutomationStore({ database: this.database }, {
       createLingThread: (input, now) => this.createLingThread(input, now),
       getLingThread: (id) => this.getLingThread(id),
@@ -1564,6 +1572,8 @@ export class SqliteRunStore implements RunStore {
     registerSqliteWorkflowIsolationStore(this, { database: this.database }, this, this.paths.cwd);
     registerSqliteWorkflowIntegrationCoordinatorStore(this, { database: this.database }, this, this.paths.cwd);
     registerSqliteWorkflowConflictRecoveryStore(this, { database: this.database });
+    registerSqliteNodeRerunStore(this, { database: this.database });
+    registerSqliteGoalSupervisionStore(this, { database: this.database });
     registerSqliteWorkflowUserCreationStore(this, { database: this.database }, {
       resolveThread: (input, now) => this.conversationThreadTopology.resolveOrCreateWithinTransaction(input, now),
       appendInput: (input, now) => this.conversationTurnIngest.appendUserTurnWithinTransaction(input, now),
@@ -2051,6 +2061,16 @@ export class SqliteRunStore implements RunStore {
           recordMigration: (version, name) => this.recordMigration(version, name),
         });
         applyRuntimeHostCapacityContinuationMigration({
+          database: this.database,
+          hasMigration: (version) => this.hasMigration(version),
+          recordMigration: (version, name) => this.recordMigration(version, name),
+        });
+        applyAutomationEventMigration({
+          database: this.database,
+          hasMigration: (version) => this.hasMigration(version),
+          recordMigration: (version, name) => this.recordMigration(version, name),
+        });
+        applyAgentCompletionMigration({
           database: this.database,
           hasMigration: (version) => this.hasMigration(version),
           recordMigration: (version, name) => this.recordMigration(version, name),
@@ -6130,6 +6150,55 @@ export class SqliteRunStore implements RunStore {
 
   updateAutomationRun(automationRunId: string, input: UpdateAutomationRunInput, now: string): AutomationRun | undefined {
     return this.automations.updateAutomationRun(automationRunId, input, now);
+  }
+
+  putAutomationEventSource(...args: Parameters<AutomationEventStore["putAutomationEventSource"]>): ReturnType<AutomationEventStore["putAutomationEventSource"]> {
+    return this.automationEvents.putAutomationEventSource(...args);
+  }
+  getAutomationEventSource(...args: Parameters<AutomationEventStore["getAutomationEventSource"]>): ReturnType<AutomationEventStore["getAutomationEventSource"]> {
+    return this.automationEvents.getAutomationEventSource(...args);
+  }
+  listAutomationEventSources(...args: Parameters<AutomationEventStore["listAutomationEventSources"]>): ReturnType<AutomationEventStore["listAutomationEventSources"]> {
+    return this.automationEvents.listAutomationEventSources(...args);
+  }
+  acceptAutomationEvent(...args: Parameters<AutomationEventStore["acceptAutomationEvent"]>): ReturnType<AutomationEventStore["acceptAutomationEvent"]> {
+    return this.automationEvents.acceptAutomationEvent(...args);
+  }
+  listAutomationEvents(...args: Parameters<AutomationEventStore["listAutomationEvents"]>): ReturnType<AutomationEventStore["listAutomationEvents"]> {
+    return this.automationEvents.listAutomationEvents(...args);
+  }
+  getAutomationEvent(...args: Parameters<AutomationEventStore["getAutomationEvent"]>): ReturnType<AutomationEventStore["getAutomationEvent"]> {
+    return this.automationEvents.getAutomationEvent(...args);
+  }
+  claimAutomationEventDispatch(...args: Parameters<AutomationEventStore["claimAutomationEventDispatch"]>): ReturnType<AutomationEventStore["claimAutomationEventDispatch"]> {
+    return this.automationEvents.claimAutomationEventDispatch(...args);
+  }
+  finishAutomationEventDispatch(...args: Parameters<AutomationEventStore["finishAutomationEventDispatch"]>): ReturnType<AutomationEventStore["finishAutomationEventDispatch"]> {
+    return this.automationEvents.finishAutomationEventDispatch(...args);
+  }
+  listAutomationEventDispatches(...args: Parameters<AutomationEventStore["listAutomationEventDispatches"]>): ReturnType<AutomationEventStore["listAutomationEventDispatches"]> {
+    return this.automationEvents.listAutomationEventDispatches(...args);
+  }
+  getAutomationEventDispatch(...args: Parameters<AutomationEventStore["getAutomationEventDispatch"]>): ReturnType<AutomationEventStore["getAutomationEventDispatch"]> {
+    return this.automationEvents.getAutomationEventDispatch(...args);
+  }
+  getAutomationRunResultText(...args: Parameters<AutomationEventStore["getAutomationRunResultText"]>): ReturnType<AutomationEventStore["getAutomationRunResultText"]> {
+    return this.automationEvents.getAutomationRunResultText(...args);
+  }
+  reconcileAutomationDeliveries(...args: Parameters<AutomationEventStore["reconcileAutomationDeliveries"]>): ReturnType<AutomationEventStore["reconcileAutomationDeliveries"]> {
+    return this.automationEvents.reconcileAutomationDeliveries(...args);
+  }
+  claimAutomationDelivery(...args: Parameters<AutomationEventStore["claimAutomationDelivery"]>): ReturnType<AutomationEventStore["claimAutomationDelivery"]> {
+    return this.automationEvents.claimAutomationDelivery(...args);
+  }
+  settleAutomationDelivery(...args: Parameters<AutomationEventStore["settleAutomationDelivery"]>): ReturnType<AutomationEventStore["settleAutomationDelivery"]> {
+    return this.automationEvents.settleAutomationDelivery(...args);
+  }
+  reconcileAutomationDelivery(...args: Parameters<AutomationEventStore["reconcileAutomationDelivery"]>): ReturnType<AutomationEventStore["reconcileAutomationDelivery"]> {
+    return this.automationEvents.reconcileAutomationDelivery(...args);
+  }
+  listAutomationDeliveries(...args: Parameters<AutomationEventStore["listAutomationDeliveries"]>): ReturnType<AutomationEventStore["listAutomationDeliveries"]> {
+    return this.automationEvents.listAutomationDeliveries(...args);
   }
 
   listManagedPlugins(options: ListManagedPluginsOptions = {}): ManagedPluginRecord[] {

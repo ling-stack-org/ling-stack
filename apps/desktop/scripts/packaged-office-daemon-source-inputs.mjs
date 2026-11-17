@@ -230,11 +230,14 @@ export function createReviewedOfficeDaemonSourceInputs() {
       });
     },
   };
-  function assertOriginalInputs(result) {
+  function assertOriginalInputs(result, workerResults = []) {
     requireSource(!complete && result.metafile?.inputs && used.size > 0);
-    requireSource(Object.keys(result.metafile.inputs).length <= 8192);
+    const results = [result, ...workerResults];
+    requireSource(results.length <= 3 && results.every(value => value.metafile?.inputs));
+    const inputs = Object.assign({}, ...results.map(value => value.metafile.inputs));
+    requireSource(Object.keys(inputs).length <= 8192);
     const observed = new Set();
-    for (const name of Object.keys(result.metafile.inputs)) {
+    for (const name of Object.keys(inputs)) {
       requireSource(!name.includes("\0") && (isAbsolute(name) || !name.includes(":")));
       const path = resolve(desktopRoot, name);
       if (!inside(path, resolve(repositoryRoot, "packages"))) {

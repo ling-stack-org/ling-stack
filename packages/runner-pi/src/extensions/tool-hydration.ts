@@ -165,6 +165,7 @@ function createHydratedToolCallDefinition(
       const serverId = readMcpServerId(tool);
       if (options.onApprovalRequired) {
         const decision = await options.onApprovalRequired({
+          signal,
           toolCallId,
           toolName: tool.name,
           input,

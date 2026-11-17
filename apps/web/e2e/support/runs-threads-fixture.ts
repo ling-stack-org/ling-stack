@@ -93,7 +93,7 @@ export async function openMainRunHistory(page: Page, taskTitle?: string): Promis
 
 export async function openThreadsPage(page: Page): Promise<void> {
   const sidebar = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/ });
-  await sidebar.getByRole("button", { name: /Automations|自动化/ }).click();
+  await sidebar.getByRole("button", { name: /Scheduled tasks|定时任务/ }).click();
   await page.locator('[data-automation-id="automation_ui2_threads_entry"]')
     .getByRole("button", { name: /Thread|会话/, exact: true })
     .click();

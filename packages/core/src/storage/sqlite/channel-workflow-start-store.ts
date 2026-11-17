@@ -47,6 +47,12 @@ export class SqliteChannelWorkflowStartStore {
         return { status: "conflict", code: "workflow_merge_apply_workspace_busy", resourceType: "workflow_resource", resourceKey: `workspace:${step.workspaceId}` };
       }
       const workflow = this.ports.getChannelWorkflow(step.workflowId);
+      const hasNodeRerunTable = this.context.database.prepare(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='node_rerun_submissions'",
+      ).get();
+      if (hasNodeRerunTable && this.context.database.prepare("SELECT 1 FROM node_rerun_submissions WHERE source_workflow_id=? LIMIT 1").get(step.workflowId)) {
+        return { status: "invalid", code: "node_rerun_source_retired" };
+      }
       const authorityBasis = workflowStepStartAuthorityBasis(this.ports, step);
       const plan = input.admission === undefined ? undefined : normalizeWorkflowStepAdmissionPlan(input.admission);
       const channel = this.ports.getChannel(step.channelId);
