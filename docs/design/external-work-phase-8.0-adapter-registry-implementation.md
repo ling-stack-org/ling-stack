@@ -1,6 +1,6 @@
 # External Work Phase 8.0 Adapter Registry Implementation Plan
 
-Status: Slices 1–4 source implementation and focused regression complete on `codex/remaining-work-completion`; review, CI, merge, and platform acceptance remain open
+Status: Slices 1–4 source implementation and focused regression complete on `codex/remaining-work-implementation`; review, CI, merge, and platform acceptance remain open
 Last verified: 2026-11-16
 
 ## Summary

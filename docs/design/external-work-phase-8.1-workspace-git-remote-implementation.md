@@ -1,6 +1,6 @@
 # External Work Phase 8.1 Workspace Git Remote Implementation Plan
 
-Status: source implementation complete for Slices 1–5 on `codex/remaining-work-completion`; review, CI, merge, and packaged acceptance remain open
+Status: source implementation complete for Slices 1–5 on `codex/remaining-work-implementation`; review, CI, merge, and packaged acceptance remain open
 Last verified: 2026-11-16
 
 ## Summary
