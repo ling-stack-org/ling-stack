@@ -1,3 +1,5 @@
+import { serializeBrowserScriptArgument } from "./script-serialization.js";
+
 /** This fixed program runs in Chromium's isolated world; no page script or model code is evaluated. */
 export function browserPageProgram(request: { readonly action: "snapshot" | "click" | "type" | "invalidate"; readonly revision?: string; readonly ref?: string; readonly text?: string }): unknown {
   type Entry = { readonly node: HTMLElement; readonly signature: string };
@@ -77,6 +79,6 @@ export function browserPageProgram(request: { readonly action: "snapshot" | "cli
 }
 
 export function browserPageScript(request: Parameters<typeof browserPageProgram>[0]): string {
-  return `(() => { try { return { ok: true, value: (${browserPageProgram.toString()})(${JSON.stringify(request)}) }; }
+  return `(() => { try { return { ok: true, value: (${browserPageProgram.toString()})(${serializeBrowserScriptArgument(request)}) }; }
     catch (error) { return { ok: false, error: error instanceof Error && /^browser_[a-z_]+$/.test(error.message) ? error.message : "browser_page_execution_failed" }; } })()`;
 }
