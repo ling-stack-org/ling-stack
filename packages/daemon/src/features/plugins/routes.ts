@@ -69,7 +69,8 @@ import {
 import { buildManagedPluginRuntimePreview } from "./runtime-injection.js";
 import { createTrustedLocalMcpPlugin } from "./create-local-plugin.js";
 import type { LockedComputerControlRegistry } from "../computer-use/locked-control-registry.js";
-import { CHROME_BROWSER_PLUGIN_ID, OFFICE_DOCUMENTS_PLUGIN_ID } from "@ling-stack/contracts";
+import { CHROME_BROWSER_PLUGIN_ID, OFFICE_DOCUMENTS_PLUGIN_ID, DESKTOP_BROWSER_PLUGIN_ID } from "@ling-stack/contracts";
+import type { DesktopBrowserPluginService } from "./desktop-browser.js";
 import type { ChromeBrowserPluginService } from "./chrome-browser.js";
 import type { OfficeDocumentsPluginService } from "./office-documents.js";
 
@@ -247,6 +248,7 @@ export async function handlePluginItem(
   route: ManagedPluginRoute,
   chromeBrowserPlugin?: ChromeBrowserPluginService,
   officeDocumentsPlugin?: OfficeDocumentsPluginService,
+  desktopBrowserPlugin?: DesktopBrowserPluginService,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -271,6 +273,17 @@ export async function handlePluginItem(
       }
     }
     const store = storeRegistry.getStore(cwd);
+    if (route.pluginId === DESKTOP_BROWSER_PLUGIN_ID && request.method === "POST" && route.action) {
+      if (!desktopBrowserPlugin) throw new HttpError(503, "browser_desktop_required", "Ling Desktop browser is unavailable.");
+      if (route.action !== "enable" && route.action !== "disable" && route.action !== "check") {
+        throw new HttpError(409, "browser_action_unsupported", "Ling Browser supports enable, disable and check.");
+      }
+      const health = route.action === "check" ? desktopBrowserPlugin.sync(cwd)
+        : desktopBrowserPlugin.setEnabled(cwd, route.action === "enable");
+      writeJson(response, 200, { plugin: getRequiredPluginView({ cwd, extensionRegistry, store, pluginId: route.pluginId,
+        includeEvents: true, cuaDriverRuntimeAuthority: mcpBroker.cuaDriverRuntimeAuthority, cuaDriverFeatureFlags: config.cuaDriver }), health });
+      return;
+    }
     if (route.pluginId === OFFICE_DOCUMENTS_PLUGIN_ID) {
       if (!officeDocumentsPlugin) {
         throw new HttpError(503, "office_documents_unavailable", "Office Documents plugin service is unavailable.");
