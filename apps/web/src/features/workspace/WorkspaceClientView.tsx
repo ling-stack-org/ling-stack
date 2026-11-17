@@ -1,3 +1,4 @@
+import { ReviewDraftContext, ReviewDraftShelf, useReviewDraftController } from "../../shared/conversation/review/ReviewDraftContext.js";
 import { channelActivityItemBelongsToSession, type ChannelSessionActivityScope } from "./channel-session-activity-scope.js";
 import { channelSessionWorkOwnership } from "./channel-session-work-ownership.js";
 import { useChannelWorkflowComposerController } from "./useChannelWorkflowComposerController.js";
@@ -2132,7 +2133,7 @@ export function WorkspaceClientView({
     composerSlashIntent,
     composerSlashCommandActive,
     composerSlashTargetLabel,
-    composerHasSendableContent,
+    composerHasSendableContent: inputHasSendableContent,
     assetOperationPending,
     pendingMessageAssetsVisible,
     focusComposerAt,
@@ -2187,6 +2188,11 @@ export function WorkspaceClientView({
     onCreateLinkPreview,
     t,
   });
+  const reviewDraft = useReviewDraftController(channelComposerOwnerKey, async file => {
+    if (composerBusy || pendingAttachments.length >= 10) throw new Error(t("A conversation message can attach at most 10 files."));
+    await attachFiles([file]);
+  });
+  const composerHasSendableContent = inputHasSendableContent || reviewDraft.refs.length > 0;
   const localTeammateById = useMemo(
     () => new Map(activeLocalTeammates.map((teammate) => [teammate.id, teammate])),
     [activeLocalTeammates],
@@ -2739,6 +2745,7 @@ export function WorkspaceClientView({
     handleChannelComposerSubmit,
     dismissSendError,
   } = useChannelComposerActionsController({
+    reviewDraft,
     composerOwnerKey: channelComposerOwnerKey,
     cwd,
     selectedChannelId,
@@ -3157,7 +3164,7 @@ export function WorkspaceClientView({
       onDeny={onCancelExecutionProposal}
       onOpenChannelSettings={openChannelSettingsPage}
     />
-  ) : <>{channelSessionDraft ? <ChannelSessionDraft {...channelSessionDraft} /> : null}{channelComposer}</>;
+  ) : <><ReviewDraftShelf onSend={() => sendMessage()} disabled={composerBusy || assetOperationPending || sendState === "sending"} />{channelSessionDraft ? <ChannelSessionDraft {...channelSessionDraft} /> : null}{channelComposer}</>;
 
   const channelHasChatContent = channelMessagesForDisplay.length > 0 || channelContextSummaries.length > 0;
   const collaborationTaskCards = useMemo(
@@ -3672,6 +3679,7 @@ export function WorkspaceClientView({
   const browserLinkError = useConversationBrowserLinks({ rootRef: taskWorkbenchMainRef, workspaceCwd: cwd.trim(),
     surface: "channel", ownerId: channelPlanModeThreadId, onOpen: () => openRightDockPage("browser") });
   return (
+    <ReviewDraftContext.Provider value={reviewDraft}>
     <div
       ref={taskWorkbenchWindowRef}
       className={[
@@ -4171,6 +4179,7 @@ export function WorkspaceClientView({
         />
       ) : null}
     </div>
+    </ReviewDraftContext.Provider>
   );
 }
 

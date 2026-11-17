@@ -24,6 +24,14 @@ Model Workbench owns that loop:
 
 Media jobs now have connected live paths for OpenAI Images and Seedream `image_generate`, Seedream URL/data-URL `image_edit`, and Seedance final video download. Jimeng live generation, billing, desktop packaging polish, and broader media-provider coverage remain downstream of the Model Workbench mainline.
 
+Normal and channel conversations share [code review annotations and image editing](design/review-annotations-and-image-editing.md).
+Users can select a diff line or Shift-select a range, comment on an image position,
+edit a batch of feedback, and send it through the existing conversation flow.
+Local drafts preserve review text, image drawings and dimensions. Canvas tools cover
+brush, line, arrow, rectangle, ellipse, text, transparent erasing and resizing;
+background removal and masked repair use a configured live image-editing model.
+Edited images are separate PNG exports or attachments; original resources remain available.
+
 ## Target Users
 
 - Developers who use multiple providers and want one local workspace.
