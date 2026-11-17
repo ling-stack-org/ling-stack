@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   readPendingCompanionSubmission, rememberPendingCompanionSubmission, forgetPendingCompanionSubmission,
+  markPendingCompanionSubmissionTerminal,
 } from "../src/features/companions/companion-submission-journal.ts";
 
 function storageFixture() {
@@ -28,6 +29,8 @@ test("pending keys are isolated by workspace and companion and stale completion 
     rememberPendingCompanionSubmission("/workspace/a", "yui", "second");
     forgetPendingCompanionSubmission("/workspace/a", "yui", "first");
     assert.equal(readPendingCompanionSubmission("/workspace/a", "yui")?.key, "second");
+    markPendingCompanionSubmissionTerminal("/workspace/a", "yui", "second");
+    assert.deepEqual(readPendingCompanionSubmission("/workspace/a", "yui"), { key: "second", terminal: true });
     forgetPendingCompanionSubmission("/workspace/a", "yui", "second");
     assert.equal(readPendingCompanionSubmission("/workspace/a", "yui"), undefined);
     assert.equal(readPendingCompanionSubmission("/workspace/b", "yui")?.key, "other-workspace");

@@ -7,7 +7,7 @@ import { createBaseState, createMockTeammate } from "./support/mock-state";
 
 test.setTimeout(60_000);
 
-async function fixture(page: Page, mode: "normal" | "interrupted" | "pending" | "same-session-race" = "normal", historyCount = 0,
+async function fixture(page: Page, mode: "normal" | "interrupted" | "pending" | "same-session-race" | "terminal-error" = "normal", historyCount = 0,
   options: { empty?: boolean; cooldownMs?: number; secondCompanion?: boolean; locale?: string } = {}) {
   page.on("pageerror", error => console.error("Companion page error:", error.message));
   const base = createBaseState({ approvalStatus: "pending" });
@@ -69,6 +69,9 @@ async function fixture(page: Page, mode: "normal" | "interrupted" | "pending" | 
       response.writeHead(200, { "Content-Type": "text/event-stream", "Access-Control-Allow-Origin": "*" });
       const frame = (event: string, data: unknown) => response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
       frame("accepted", { message: user, state: { ...state, phase: "thinking" } });
+      if (mode === "terminal-error" && keys.length === 1) {
+        frame("error", { message: user, error: "provider startup unavailable", state }); response.end(); return;
+      }
       frame("ready", { aiReply: reply }); frame("delta", { messageId: reply.id, body: "Streamed", delta: "Streamed" });
       if ((mode === "interrupted" && keys.length === 1)
         || (mode === "same-session-race" && keys.length <= 2)) { response.end(); return; }
@@ -208,6 +211,24 @@ test("does not resubmit while the original reply is still pending", async ({ pag
   } finally { await f.close(); }
 });
 
+test("retries an accepted startup error with the original submission key", async ({ page }) => {
+  const f = await fixture(page, "terminal-error");
+  try {
+    const panel = await openPanel(page);
+    await panel.getByRole("textbox").fill("Recover this startup error");
+    await panel.getByRole("button", { name: "Send", exact: true }).click();
+    await expect(panel.getByRole("alert")).toContainText("provider startup unavailable");
+    await expect(panel.getByRole("button", { name: "Recover or retry message" })).toBeVisible();
+    const key = f.keys[0];
+    await panel.getByRole("button", { name: "Recover or retry message" }).click();
+    await expect.poll(() => f.keys).toHaveLength(2);
+    expect(f.keys[1]).toBe(key);
+    f.finish();
+    await expect(panel.getByRole("log")).toContainText("Streamed reply.");
+    await expect(panel.getByRole("textbox")).toBeEnabled();
+  } finally { await f.close(); }
+});
+
 test("desktop companion retries teammate discovery after a transient daemon failure", async ({ page }) => {
   const f = await fixture(page);
   let teammateReads = 0;
@@ -286,7 +307,7 @@ test("an unknown restored receipt clears the stale submission and allows a new m
     await page.reload(); await page.locator(".companion-config-button").click();
     panel = page.getByRole("dialog", { name: "Intelligent companion" }); await panel.hover();
     await expect(panel.getByRole("alert")).toContainText("The reply was interrupted");
-    await expect(panel.getByRole("textbox")).toBeEnabled();
+    await expect(panel.getByRole("textbox")).toBeEnabled({ timeout: 30_000 });
     await panel.getByRole("textbox").fill("A new message");
     await panel.getByRole("button", { name: "Send", exact: true }).click();
     await expect.poll(() => f.keys).toHaveLength(2);

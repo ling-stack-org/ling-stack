@@ -8,13 +8,15 @@ import { readSseResponse } from "../../sse.js";
 import { useI18n } from "../../i18n.js";
 import { mergeCompanionMessages } from "./companion-messages.js";
 import {
-  forgetPendingCompanionSubmission, readPendingCompanionSubmission, rememberPendingCompanionSubmission,
+  forgetPendingCompanionSubmission, markPendingCompanionSubmissionTerminal,
+  readPendingCompanionSubmission, rememberPendingCompanionSubmission,
 } from "./companion-submission-journal.js";
 
 const pageSize = 40;
 const syncIntervalMs = 5_000;
+const receiptUnknownRetryLimit = 3;
 
-interface PendingSubmission { readonly key: string; readonly body?: string }
+interface PendingSubmission { readonly key: string; readonly body?: string; readonly terminal?: boolean }
 interface ChatSession {
   readonly cwd: string;
   readonly companionId: string;
@@ -24,6 +26,7 @@ interface ChatSession {
   sending: boolean;
   replyError?: string;
   reconnect?: () => Promise<void>;
+  unknownReceiptAttempts: number;
 }
 interface CompanionStreamEvent {
   readonly message?: TeammateDirectMessage;
@@ -84,9 +87,16 @@ export function useCompanionChat(input: {
     if (session.pending?.key !== submission.key) return false;
     session.receiptPending = false;
     if (receipt.status === "unknown") {
-      // The daemon has no durable record for this key, so retaining it would
-      // permanently disable the composer and cause every reconnect to repeat
-      // the same lookup.
+      session.unknownReceiptAttempts += 1;
+      if (session.unknownReceiptAttempts < receiptUnknownRetryLimit) {
+        session.receiptPending = true;
+        setConnection("reconnecting");
+        setError(t("The reply was interrupted. Reconnect to recover or retry the same message."));
+        return false;
+      }
+      // A few empty reads protect an accepted request from a network race. If
+      // the key is still unknown after the bounded grace period, it is safe to
+      // release the draft and let the user submit a new message.
       forgetPendingCompanionSubmission(session.cwd, session.companionId, submission.key);
       session.pending = undefined;
       setPending(undefined);
@@ -95,9 +105,10 @@ export function useCompanionChat(input: {
       setError(session.replyError);
       return true;
     }
+    session.unknownReceiptAttempts = 0;
     if (receipt.message) {
       setMessages((current) => mergeCompanionMessages(current, [receipt.message!]));
-      session.pending = { key: submission.key, body: receipt.message.body };
+      session.pending = { key: submission.key, body: receipt.message.body, ...(submission.terminal ? { terminal: true } : {}) };
       setPending(session.pending);
     }
     if (receipt.state) setState(receipt.state);
@@ -132,6 +143,7 @@ export function useCompanionChat(input: {
     const session: ChatSession = {
       cwd: input.cwd.trim(), companionId: input.companion.id,
       controller: new AbortController(), receiptPending: false, sending: false,
+      unknownReceiptAttempts: 0,
       pending: readPendingCompanionSubmission(input.cwd, input.companion.id),
     };
     sessionRef.current = session;
@@ -196,6 +208,7 @@ export function useCompanionChat(input: {
     const submission = { key: session.pending?.key ?? crypto.randomUUID(), body: session.pending?.body ?? body.trim() };
     session.pending = submission;
     session.receiptPending = false;
+    session.unknownReceiptAttempts = 0;
     session.sending = true;
     session.replyError = undefined;
     setPending(submission);
@@ -221,6 +234,11 @@ export function useCompanionChat(input: {
           terminal = true;
           callbacks.current.onActions(data.companionReply?.actionRequests?.map((action) => action.actionId) ?? []);
           if (data.aiReply && data.aiReply.status !== "pending") finish(session);
+          if (event.event === "error" && session.pending && !data.aiReply) {
+            session.pending = { ...session.pending, terminal: true };
+            setPending(session.pending);
+            markPendingCompanionSubmissionTerminal(session.cwd, session.companionId, session.pending.key);
+          }
           session.replyError = data.error ?? data.aiReply?.errorMessage;
           if (session.replyError) setError(session.replyError);
         }
@@ -254,6 +272,15 @@ export function useCompanionChat(input: {
     setError("");
     setConnection("reconnecting");
     try {
+      if (session.pending?.terminal) {
+        const key = session.pending.key;
+        if (!session.pending.body) await reconcile(session);
+        if (!isCurrent(session) || session.pending?.key !== key) return;
+        if (session.pending?.body) {
+          await send(session.pending.body);
+          return;
+        }
+      }
       if (session.pending) {
         const key = session.pending.key;
         const finished = await reconcile(session);

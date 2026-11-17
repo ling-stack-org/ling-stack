@@ -6,7 +6,7 @@ and the dated reviews below retain their historical evidence and scope.
 
 ## Companion and native runtime review, 2026-11-17
 
-The Companion source closure retains 43 roots and contains 1,843 fixed packaging
+The Companion source closure retains 44 roots and contains 1,872 fixed packaging
 inputs, including its explicit native window and capability modules. Scoped
 review covered the Companion changes and deterministic compilation of the 55
 locale catalogs before adopting their exact input bindings. The Office 15 and
@@ -68,7 +68,7 @@ for the exact candidate before adoption. Only that packaging input digest
 changes, to `ed97b6e2218a30e5bd17788c7a5a6a1498d490a68dbbadc35d730a5ce6ca093a`;
 the resulting Office record SHA-256 is
 `a3bb786d0f0b7147171fdb804423cf87c8c9d5ed375bdb066f501d8b54e607d2`.
-All 1,843 packaging and 15 Office native inputs match this record. The sandbox
+All 1,872 packaging and 15 Office native inputs match this record. The sandbox
 record and every runtime, toolchain, OS, signing and trust field retain the
 approved values above.
 
@@ -86,7 +86,7 @@ The exact Office record SHA-256 is
 `c1af02b777c71acde3bcfd222b04ba1035f0051f60fd6ed3d77f23b2617b26da` and the
 fixed packaging aggregate is
 `48fb0d593fd30d3c612b141f1ac364e2235bf381f0601e46db1c60aa2de84d08`. All
-1,843 packaging and 15 Office native inputs match this record.
+1,872 packaging and 15 Office native inputs match this record.
 
 Integration of main `44f7a0dd6` (#719) binds the conversation change-summary
 runtime closure already present on the base branch. It changes only these fixed
@@ -106,7 +106,7 @@ The exact Office record SHA-256 is
 `860c9de9e463c9167f2e71459b018d2416f3333ee9b2c18db8856d519b5705f7` and the
 fixed packaging aggregate is
 `7f407ee163e0277b6e9b38b4ed7d9fa080526523b4e0140e1fae13e2ba38f21d`. All
-1,843 packaging and 15 Office native inputs match this record.
+1,872 packaging and 15 Office native inputs match this record.
 
 ## Historical baseline, 2026-10-13
 

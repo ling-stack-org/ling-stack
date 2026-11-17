@@ -1,7 +1,7 @@
 # Desktop 本地开发候选包
 
 本文说明如何准备 macOS Apple Silicon 和 Windows x64 的本地开发候选。
-命令以本次 Companion 候选源码 `3661791aaad4065918b440f6c560da0e18db1742` 为示例核对，并包含 Electron Builder 启动方式的修复；
+文中的 macOS 本机证据固定于历史 Companion 候选源码 `3661791aaad4065918b440f6c560da0e18db1742`，并包含 Electron Builder 启动方式的修复；当前候选必须另行选择并核对已审核的完整源码 SHA，不能把这份历史证据套用于移动中的 `main` 或其他提交。
 构建时必须选取对应的已审核提交。这份文档不代表已在 Windows 执行或验收。
 候选包只用于本机工程验证，不自动上传、创建 Release 或晋级为正式发行版。
 

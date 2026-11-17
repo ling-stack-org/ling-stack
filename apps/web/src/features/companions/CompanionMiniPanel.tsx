@@ -359,7 +359,7 @@ export function CompanionMiniPanel({
                 {t("Send")}
               </Button>
             </form>
-            {chat.connection !== "connected" && !chat.sending ? <Button className="companion-mini-reconnect" size="sm" variant="secondary" onClick={() => void chat.reconnect()} disabled={busy !== undefined}>{chat.pending?.body ? t("Recover or retry message") : t("Reconnect")}</Button> : null}
+            {chat.connection !== "connected" && !chat.sending ? <Button className="companion-mini-reconnect" size="sm" variant="secondary" onClick={() => void chat.reconnect()} disabled={busy !== undefined}>{chat.pending?.body || chat.pending?.terminal ? t("Recover or retry message") : t("Reconnect")}</Button> : null}
 
           </>
         ) : null}
