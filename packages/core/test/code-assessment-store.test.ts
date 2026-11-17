@@ -33,8 +33,11 @@ test("snapshot and findings survive reopening; dispositions require digest and a
     assert.deepEqual(store.getCodeAssessment("assessment_store")?.findings, [finding]);
     assert.throws(() => store.setCodeFindingDisposition("assessment_store", finding.id, { snapshotDigest: "wrong", disposition: "dismissed", reason: "Reviewed", now }), /snapshot changed/u);
     assert.throws(() => store.setCodeFindingDisposition("assessment_store", finding.id, { snapshotDigest: snapshot.digest, disposition: "dismissed", now }), /reason/u);
-    store.setCodeFindingDisposition("assessment_store", finding.id, { snapshotDigest: snapshot.digest, disposition: "dismissed", closeReason: "out_of_scope", reason: "Not reachable for this input.", now });
+    const triagedAt = "2026-11-16T00:00:01Z";
+    store.setCodeFindingDisposition("assessment_store", finding.id, { snapshotDigest: snapshot.digest, disposition: "dismissed", closeReason: "out_of_scope", reason: "Not reachable for this input.", now: triagedAt });
     assert.equal(store.getCodeAssessment("assessment_store")?.findings[0]?.disposition, "dismissed");
+    assert.equal(store.getCodeAssessment("assessment_store")?.assessment.updatedAt, triagedAt);
+    assert.equal(store.listCodeAssessments({ updatedAfter: triagedAt }).assessments[0]?.id, "assessment_store");
     const reopened = store.setCodeFindingDisposition("assessment_store", finding.id, { snapshotDigest: snapshot.digest, disposition: "open", now });
     assert.equal(reopened.dispositionReason, undefined);
     assert.equal(store.finishCodeAssessment("assessment_store", { runId: "run_store", status: "failed", now }).status, "completed");

@@ -41,8 +41,10 @@ test("comments persist with immutable finding anchors and cannot cross assessmen
     }
     assert.throws(() => comments.createCodeAssessmentComment("assessment", "other_finding", input), /Finding not found/u);
     assert.throws(() => comments.listCodeAssessmentComments("other_assessment", "finding"), /Assessment not found/u);
-    const created = comments.createCodeAssessmentComment("assessment", "finding", input);
+    const commentAt = "2026-11-17T00:00:01Z";
+    const created = comments.createCodeAssessmentComment("assessment", "finding", { ...input, now: commentAt });
     assert.equal(created.body, "Confirmed this boundary.");
+    assert.equal(assessments.getCodeAssessment("assessment")?.assessment.updatedAt, commentAt);
     assert.throws(() => comments.createCodeAssessmentComment("assessment", "finding", input), /UNIQUE/u);
     database.close(); database = new DatabaseSync(path);
     assessments = new SqliteCodeAssessmentStore({ database }); comments = new SqliteCodeAssessmentCommentsStore({ database }, assessments);
@@ -50,6 +52,7 @@ test("comments persist with immutable finding anchors and cannot cross assessmen
     assert.equal(assessments.getCodeAssessment("assessment")?.findings[0]?.disposition, "open");
     for (let index = 1; index < 100; index++) comments.createCodeAssessmentComment("assessment", "finding", { ...input, id: `comment_${index}` });
     assert.throws(() => comments.createCodeAssessmentComment("assessment", "finding", { ...input, id: "comment_101" }), /at most 100/u);
+    assert.equal(assessments.getCodeAssessment("assessment")?.assessment.updatedAt, commentAt, "older activity must not move updatedAt backwards");
     assert.equal(comments.listCodeAssessmentComments("assessment", "finding").length, 100);
     assert.equal(database.prepare("SELECT COUNT(*) AS count FROM code_assessment_comments").get()?.count, 100);
   } finally { database.close(); await rm(cwd, { recursive: true, force: true }); }

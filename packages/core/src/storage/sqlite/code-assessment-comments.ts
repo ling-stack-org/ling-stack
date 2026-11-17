@@ -2,6 +2,7 @@ import { assertCodeAssessmentLineAnchor, parseCreateCodeAssessmentComment,
   type CodeAssessmentComment } from "@ling-stack/contracts";
 import type { CodeAssessmentCommentsStore } from "../../code-assessment-comments.js";
 import type { CodeAssessmentStore } from "../../code-assessment-store.js";
+import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 import type { SqliteStoreContext } from "./store-context.js";
 
 const maxCommentsPerFinding = 100;
@@ -14,16 +15,27 @@ export class SqliteCodeAssessmentCommentsStore implements CodeAssessmentComments
     const { id, now, ...request } = input;
     const parsed = parseCreateCodeAssessmentComment(request);
     if (!id || id.length > 200 || !Number.isFinite(Date.parse(now))) throw new Error("Comment identity or creation time is invalid.");
-    const { detail, finding } = this.requireFinding(assessmentId, findingId);
-    assertCodeAssessmentLineAnchor(parsed, detail.snapshot);
-    if (finding.snapshotDigest !== parsed.snapshotDigest || finding.path !== parsed.path || finding.side !== parsed.side
-      || finding.startLine !== parsed.startLine || finding.endLine !== parsed.endLine) throw new Error("Comment anchor does not match the finding.");
-    const comment: CodeAssessmentComment = { ...parsed, id, assessmentId, findingId, createdAt: now };
-    const result = this.context.database.prepare(`INSERT INTO code_assessment_comments(id,assessment_id,finding_id,created_at,body_json)
-      SELECT ?,?,?,?,? WHERE (SELECT COUNT(*) FROM code_assessment_comments WHERE assessment_id=? AND finding_id=?) < ?`)
-      .run(id, assessmentId, findingId, now, JSON.stringify(comment), assessmentId, findingId, maxCommentsPerFinding);
-    if (result.changes === 0) throw new Error("A finding supports at most 100 comments.");
-    return comment;
+    const db = this.context.database;
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      const { detail, finding } = this.requireFinding(assessmentId, findingId);
+      assertCodeAssessmentLineAnchor(parsed, detail.snapshot);
+      if (finding.snapshotDigest !== parsed.snapshotDigest || finding.path !== parsed.path || finding.side !== parsed.side
+        || finding.startLine !== parsed.startLine || finding.endLine !== parsed.endLine) throw new Error("Comment anchor does not match the finding.");
+      const comment: CodeAssessmentComment = { ...parsed, id, assessmentId, findingId, createdAt: now };
+      const result = db.prepare(`INSERT INTO code_assessment_comments(id,assessment_id,finding_id,created_at,body_json)
+        SELECT ?,?,?,?,? WHERE (SELECT COUNT(*) FROM code_assessment_comments WHERE assessment_id=? AND finding_id=?) < ?`)
+        .run(id, assessmentId, findingId, now, JSON.stringify(comment), assessmentId, findingId, maxCommentsPerFinding);
+      if (result.changes === 0) throw new Error("A finding supports at most 100 comments.");
+      const updatedAt = Date.parse(now) >= Date.parse(detail.assessment.updatedAt) ? now : detail.assessment.updatedAt;
+      db.prepare("UPDATE code_assessments SET body_json=? WHERE id=?")
+        .run(JSON.stringify({ ...detail.assessment, updatedAt }), assessmentId);
+      db.exec("COMMIT");
+      return comment;
+    } catch (error) {
+      rollbackOwnedSqliteTransaction(db);
+      throw error;
+    }
   }
 
   listCodeAssessmentComments(assessmentId: string, findingId: string): readonly CodeAssessmentComment[] {

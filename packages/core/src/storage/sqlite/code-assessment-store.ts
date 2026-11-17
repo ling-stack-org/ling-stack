@@ -238,18 +238,26 @@ export class SqliteCodeAssessmentStore implements CodeAssessmentStore {
 
   setCodeFindingDisposition(assessmentId: string, findingId: string, input: Parameters<CodeAssessmentStore["setCodeFindingDisposition"]>[2]): CodeAssessmentFinding {
     if (!["open", "acknowledged", "resolved", "dismissed"].includes(input.disposition)) throw new Error("Finding disposition is invalid.");
-    const detail = this.require(assessmentId);
-    if (input.snapshotDigest !== detail.snapshot.digest) throw new Error("Finding snapshot changed.");
-    const reason = input.reason?.trim();
-    const closing = input.disposition === "dismissed" || input.disposition === "resolved";
-    if ((closing && !reason) || (reason && reason.length > 2000)) throw new Error("Closing a finding requires a bounded reason.");
-    if (closing && !["false_positive", "accepted_risk", "not_reproducible", "duplicate", "out_of_scope"].includes(input.closeReason ?? "")) throw new Error("Closing a finding requires a typed close reason.");
-    if (input.disposition === "resolved" && detail.assessment.freshness?.state !== "current") throw new Error("Resolving a finding requires a current snapshot freshness check.");
-    const finding = detail.findings.find(item => item.id === findingId);
-    if (!finding) throw new Error("Finding not found.");
-    const next = { ...finding, disposition: input.disposition, dispositionReason: closing ? reason : undefined, closeReason: closing ? input.closeReason : undefined };
-    this.context.database.prepare("UPDATE code_assessment_findings SET body_json=? WHERE id=? AND assessment_id=?").run(JSON.stringify(next), findingId, assessmentId);
-    return next;
+    if (!Number.isFinite(Date.parse(input.now))) throw new Error("Finding update time is invalid.");
+    const db = this.context.database;
+    begin(db);
+    try {
+      const detail = this.require(assessmentId);
+      if (input.snapshotDigest !== detail.snapshot.digest) throw new Error("Finding snapshot changed.");
+      const reason = input.reason?.trim();
+      const closing = input.disposition === "dismissed" || input.disposition === "resolved";
+      if ((closing && !reason) || (reason && reason.length > 2000)) throw new Error("Closing a finding requires a bounded reason.");
+      if (closing && !["false_positive", "accepted_risk", "not_reproducible", "duplicate", "out_of_scope"].includes(input.closeReason ?? "")) throw new Error("Closing a finding requires a typed close reason.");
+      if (input.disposition === "resolved" && detail.assessment.freshness?.state !== "current") throw new Error("Resolving a finding requires a current snapshot freshness check.");
+      const finding = detail.findings.find(item => item.id === findingId);
+      if (!finding) throw new Error("Finding not found.");
+      const next = { ...finding, disposition: input.disposition, dispositionReason: closing ? reason : undefined, closeReason: closing ? input.closeReason : undefined };
+      db.prepare("UPDATE code_assessment_findings SET body_json=? WHERE id=? AND assessment_id=?").run(JSON.stringify(next), findingId, assessmentId);
+      const updatedAt = Date.parse(input.now) >= Date.parse(detail.assessment.updatedAt) ? input.now : detail.assessment.updatedAt;
+      this.write({ ...detail.assessment, updatedAt });
+      db.exec("COMMIT");
+      return next;
+    } catch (error) { return rollback(db, error); }
   }
 
   private require(id: string): CodeAssessmentDetail {
