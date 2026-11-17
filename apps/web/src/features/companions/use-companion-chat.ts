@@ -83,6 +83,18 @@ export function useCompanionChat(input: {
     // newer submission's recovery key or clear its pending state.
     if (session.pending?.key !== submission.key) return false;
     session.receiptPending = false;
+    if (receipt.status === "unknown") {
+      // The daemon has no durable record for this key, so retaining it would
+      // permanently disable the composer and cause every reconnect to repeat
+      // the same lookup.
+      forgetPendingCompanionSubmission(session.cwd, session.companionId, submission.key);
+      session.pending = undefined;
+      setPending(undefined);
+      session.replyError = t("The reply was interrupted. Reconnect to recover or retry the same message.");
+      setConnection("connected");
+      setError(session.replyError);
+      return true;
+    }
     if (receipt.message) {
       setMessages((current) => mergeCompanionMessages(current, [receipt.message!]));
       session.pending = { key: submission.key, body: receipt.message.body };

@@ -118,6 +118,7 @@ async function fixture(page: Page, mode: "normal" | "interrupted" | "pending" | 
     holdReceipts: () => { receiptGate = new Promise<void>(resolve => { releaseReceipt = resolve; }); },
     releaseReceipts: () => { releaseReceipt?.(); receiptGate = undefined; },
     setReceiptsUnavailable: (unavailable: boolean) => { receiptsUnavailable = unavailable; },
+    forgetSubmission: (key: string) => { submissions.delete(key); },
     holdReceiptKey: (key: string) => { heldReceiptKeys.add(key); },
     heldReceiptCount: (key: string) => heldReceiptWaiters.get(key)?.length ?? 0,
     releaseLatestReceipt: (key: string) => { heldReceiptWaiters.get(key)?.pop()?.(); },
@@ -256,6 +257,27 @@ test("a restored submission blocks new text until its unavailable receipt recove
     await panel.getByRole("button", { name: "Send", exact: true }).click();
     await expect.poll(() => f.keys).toHaveLength(2);
     expect(f.keys[1]).not.toBe(f.keys[0]);
+  } finally { await f.close(); }
+});
+
+test("an unknown restored receipt clears the stale submission and allows a new message", async ({ page }) => {
+  const f = await fixture(page, "pending");
+  try {
+    let panel = await openPanel(page);
+    await panel.getByRole("textbox").fill("Original message");
+    await panel.getByRole("button", { name: "Send", exact: true }).click();
+    await expect(panel.getByRole("button", { name: "Recover or retry message" })).toBeVisible();
+    const staleKey = f.keys[0]!;
+    f.forgetSubmission(staleKey);
+
+    await page.reload(); await page.locator(".companion-config-button").click();
+    panel = page.getByRole("dialog", { name: "Intelligent companion" }); await panel.hover();
+    await expect(panel.getByRole("alert")).toContainText("The reply was interrupted");
+    await expect(panel.getByRole("textbox")).toBeEnabled();
+    await panel.getByRole("textbox").fill("A new message");
+    await panel.getByRole("button", { name: "Send", exact: true }).click();
+    await expect.poll(() => f.keys).toHaveLength(2);
+    expect(f.keys[1]).not.toBe(staleKey);
   } finally { await f.close(); }
 });
 
