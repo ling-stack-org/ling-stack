@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { RunStoreRegistry } from "../runtime/store-registry.js";
-import { writeJson } from "./response.js";
+import { writeJson, writePrivateJson } from "./response.js";
 
 export function isAllowedLocalOrigin(originHeader: string | undefined): boolean {
   if (!originHeader) {
@@ -35,7 +35,7 @@ export function allowLocalServiceRequest(request: IncomingMessage, response: Ser
       || (headers["sec-fetch-mode"] !== undefined && headers["sec-fetch-mode"] !== "cors"));
   const forwarded = Object.keys(headers).some((name) => name === "forwarded" || name.startsWith("x-forwarded-"));
   if (!localPeer || !localHost || !localOrigin || missingBrowserOrigin || forwarded) {
-    writeJson(response, 403, { error: "local_service_forbidden", message: "This service requires a local Ling page or authenticated daemon access." });
+    writePrivateJson(response, 403, { error: "local_service_forbidden", message: "This service requires a local Ling page or authenticated daemon access." });
     return false;
   }
   return true;
