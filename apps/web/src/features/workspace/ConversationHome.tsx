@@ -754,6 +754,8 @@ export function ConversationHome({
     <ReviewDraftShelf onSend={submitDraft} disabled={composerBusy || pendingAttachments.some(item => item.state !== "ready") || !activeReply && !activeModelReady} />
     <NormalConversationComposer
       workspaceCwd={workspaceCwd}
+      threadId={conversationIdentityController.ready ? detailContext?.threadId : undefined}
+      onOpenReview={openConversationReview}
       runtimeMetrics={runtimeMetrics}
       draft={draft}
       inputRef={composerInputRef}

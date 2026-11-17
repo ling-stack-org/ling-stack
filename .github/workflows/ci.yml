@@ -435,6 +435,16 @@ jobs:
           LING_CAPTURE_UI2_EVIDENCE: "1"
         run: corepack pnpm exec playwright test e2e/companions.spec.ts --reporter=line
 
+      - name: Check production conversation change summaries
+        working-directory: apps/web
+        env:
+          LING_PLAYWRIGHT_PREVIEW: "1"
+          LING_PLAYWRIGHT_REUSE_SERVER: "0"
+          LING_CAPTURE_UI2_EVIDENCE: "1"
+        run: >-
+          corepack pnpm exec playwright test e2e/conversation-change-summary.spec.ts
+          --output=test-results/conversation-change-summary --reporter=line
+
       - name: Preserve Linux production Web smoke evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9

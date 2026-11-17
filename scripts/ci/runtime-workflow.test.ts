@@ -72,6 +72,7 @@ test("browser smoke starts after reusable outputs without delaying the core and 
     "The installed Playwright client must match the image's preinstalled browser revision");
   assert.doesNotMatch(smoke, /playwright install|apt-get/u);
   assert.match(smoke, /playwright test/u);
+  assert.match(smoke, /playwright test e2e\/conversation-change-summary\.spec\.ts\n\s+--output=test-results\/conversation-change-summary --reporter=line/u);
   assert.match(smoke, /name: ci-linux-source-web-smoke/u);
   assert.doesNotMatch(smoke, /continue-on-error/u);
   const quality = job("quality");

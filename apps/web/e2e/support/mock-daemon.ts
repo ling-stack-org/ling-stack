@@ -13959,6 +13959,12 @@ export async function handleDaemonRoute(
       await route.fulfill({ json: { cwd, thread: mockThreadReadModel(thread) } });
       return;
     }
+    if (request.method() === "GET" && action === "workspace-change-summary") {
+      const turn = state.turns.filter((item) => item.threadId === threadId)
+        .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id))[0];
+      await route.fulfill({ json: { cwd, threadId, turn: turn ? { id: turn.id, status: turn.status } : undefined } });
+      return;
+    }
     if (action === "mode") {
       if (request.method() === "GET") {
         await route.fulfill({ json: { cwd, threadId, mode: mockThreadReadModel(thread).conversationMode } });
