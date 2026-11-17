@@ -84,7 +84,15 @@ test("registered imports reject payloads from a different configured source", ()
     payload: { repository: { full_name: "owner/repo" }, issue: { number: 8, title: "Case variant", state: "open" } },
     workflowDefinition: caseVariantWorkflow,
   });
-  assert.equal(caseVariant.identifier, "owner/repo#8");
+  const configuredCasing = github.normalizeImport({
+    eventType: "issue.opened",
+    payload: { repository: { full_name: "Owner/Repo" }, issue: { number: 8, title: "Case variant", state: "open" } },
+    workflowDefinition: caseVariantWorkflow,
+  });
+  assert.equal(caseVariant.identifier, "Owner/Repo#8");
+  assert.equal(caseVariant.repository?.fullName, "Owner/Repo");
+  assert.equal(caseVariant.id, configuredCasing.id);
+  assert.equal(caseVariant.idempotencyKey, configuredCasing.idempotencyKey);
 
   const linear = getExternalSourceRegistration("linear");
   const linearWorkflow = parseExternalWorkflowMarkdown(markdown("linear", "project"));

@@ -466,7 +466,9 @@ function normalizeGitHubRepository(raw: unknown, fallbackFullName: string | unde
   if (payloadFullName && fallbackFullName && payloadFullName.toLowerCase() !== fallbackFullName.toLowerCase()) {
     throw new ExternalWorkflowValidationError(`GitHub repository does not match configured source: ${payloadFullName}`);
   }
-  const fullName = payloadFullName ?? fallbackFullName;
+  // The configured source is the durable identity. GitHub paths are case-insensitive,
+  // so payload casing must not split identifiers or idempotency keys for one source.
+  const fullName = fallbackFullName ?? payloadFullName;
   if (!fullName) {
     throw new ExternalWorkflowValidationError("GitHub repository full name is required.");
   }
