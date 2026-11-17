@@ -5329,6 +5329,12 @@ export class SqliteRunStore implements RunStore {
     return this.conversationContextViewLineage.getConversationContextViewLineage(lineageKey);
   }
 
+  listConversationContextViewLineages(
+    options: import("../conversation-context-store-types.js").ListConversationContextViewLineagesOptions = {},
+  ): readonly ConversationContextViewLineage[] {
+    return this.conversationContextViewLineage.listConversationContextViewLineages(options);
+  }
+
   upsertConversationContextViewLineage(
     input: UpsertConversationContextViewLineageInput,
     now: string,

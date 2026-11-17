@@ -144,6 +144,11 @@ export interface ConversationContextViewLineage {
   readonly updatedAt: string;
 }
 
+export interface ListConversationContextViewLineagesOptions {
+  readonly workspaceId?: string;
+  readonly limit?: number;
+}
+
 export interface UpsertConversationContextViewLineageInput {
   readonly lineageKey: string;
   readonly workspaceId: string;

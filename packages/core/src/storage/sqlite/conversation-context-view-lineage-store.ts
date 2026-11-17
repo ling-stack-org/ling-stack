@@ -5,6 +5,7 @@ import {
 } from "@ling-stack/contracts";
 import {
   type ConversationContextViewLineage,
+  type ListConversationContextViewLineagesOptions,
   type UpsertConversationContextViewLineageInput,
   type UpsertConversationContextViewLineageResult,
 } from "../../conversation-context-store-types.js";
@@ -19,6 +20,18 @@ export class SqliteConversationContextViewLineageStore {
   getConversationContextViewLineage(lineageKey: string): ConversationContextViewLineage | undefined {
     const row = this.context.database.prepare(`${lineageSelectSql} WHERE lineage_key = ?`).get(lineageKey);
     return row ? mapLineage(row as Record<string, SQLOutputValue>) : undefined;
+  }
+
+  listConversationContextViewLineages(
+    options: ListConversationContextViewLineagesOptions = {},
+  ): readonly ConversationContextViewLineage[] {
+    const limit = normalizeLimit(options.limit);
+    const rows = options.workspaceId
+      ? this.context.database.prepare(`${lineageSelectSql} WHERE workspace_id = ? ORDER BY updated_at DESC, lineage_key ASC LIMIT ?`)
+        .all(options.workspaceId, limit)
+      : this.context.database.prepare(`${lineageSelectSql} ORDER BY updated_at DESC, lineage_key ASC LIMIT ?`)
+        .all(limit);
+    return rows.map((row) => mapLineage(row as Record<string, SQLOutputValue>));
   }
 
   upsertConversationContextViewLineage(
@@ -102,6 +115,14 @@ const lineageSelectSql = `
          view_fingerprint, revision, created_at, updated_at
   FROM conversation_context_view_lineage
 `;
+
+function normalizeLimit(value: number | undefined): number {
+  if (value === undefined) return 500;
+  if (!Number.isSafeInteger(value) || value < 1 || value > 10_000) {
+    throw new Error("Context view lineage limit must be an integer between 1 and 10000");
+  }
+  return value;
+}
 
 function mapLineage(row: Record<string, SQLOutputValue>): ConversationContextViewLineage {
   const projectionJson = readNullableString(row, "projection_json");

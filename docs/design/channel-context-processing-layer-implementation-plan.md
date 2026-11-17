@@ -36,8 +36,10 @@ and returned as id-only diagnostics. The source-level quote policy helper is wir
 proposal source-reference projection and the channel/workflow context-pack callers, so
 dropped, influence-only and inspect-only sources do not become public evidence. Rebuildable
 view lineage is now persisted in SQLite with a view-shape fingerprint, restart-readable
-projection metadata and CAS/older-projection rejection. A restart worker that reconstructs
-views from that metadata, plus Web/security and packaged acceptance, remains open.
+projection metadata and CAS/older-projection rejection. Daemon startup now reconstructs
+conversation projections from durable sources and reports current/reconstructed/stale/
+blocked lineage without rewriting an active Run's contextViewId. Full surface-specific
+view rehydration, Web/security and packaged acceptance remain open.
 
 ## Remaining Work
 
@@ -62,9 +64,11 @@ views from that metadata, plus Web/security and packaged acceptance, remains ope
   reopen path now restore projection metadata without making a cached view the source of
   truth.
 - Ensure late materialization and stale requests cannot overwrite a newer context view;
-  the lineage store now rejects older projections and mismatched CAS writes. A daemon
-  restart reconciliation worker still needs to rebuild views from durable messages,
-  summaries and policies.
+  the lineage store now rejects older projections and mismatched CAS writes. The daemon
+  restart reconciliation worker rebuilds the canonical conversation projection from
+  durable messages, assignments, summaries and visibility policy. It leaves changed
+  lineage untouched for Host-owned re-materialization, so active Runs cannot silently
+  adopt a different contextViewId.
 - Keep migrations idempotent and backward compatible with existing channel and thread
   records.
 
@@ -92,6 +96,12 @@ views from that metadata, plus Web/security and packaged acceptance, remains ope
   scoped reads.
 - Web tests cover source detail, empty/stale/error states and channel/direct-message parity.
 - Security fixtures verify that secrets and private-scope sources do not cross boundaries.
+
+The target branch adds startup recovery coverage: Core/Daemon typechecks pass, the
+context lineage/projector/context-processing set is 42/42, and the recovery fixture
+covers SQLite reopen, current projection reconstruction, stale metadata detection and
+fail-closed missing-source handling. Startup recovery is a local source check; it does
+not replace browser, security, packaged or live-provider acceptance.
 
 ## Closure
 

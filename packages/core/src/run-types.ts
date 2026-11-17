@@ -2343,6 +2343,9 @@ export interface RunStore extends AutomationEventStore, MemoryWikiStore, MemoryD
   getConversationContextViewLineage(
     lineageKey: string,
   ): import("./conversation-context-store-types.js").ConversationContextViewLineage | undefined;
+  listConversationContextViewLineages(
+    options?: import("./conversation-context-store-types.js").ListConversationContextViewLineagesOptions,
+  ): readonly import("./conversation-context-store-types.js").ConversationContextViewLineage[];
   upsertConversationContextViewLineage(
     input: import("./conversation-context-store-types.js").UpsertConversationContextViewLineageInput,
     now: string,
@@ -3137,6 +3140,7 @@ export type ChannelStoreFacet = RunStoreFacet<
   | "listChannelContextSummaries"
   | "updateChannelContextSummary"
   | "getConversationContextViewLineage"
+  | "listConversationContextViewLineages"
   | "upsertConversationContextViewLineage"
   | "getChannelCollaborationProtocolOverride"
   | "upsertChannelCollaborationProtocolOverride"
