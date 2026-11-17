@@ -19,7 +19,7 @@ release versions will follow [Semantic Versioning](https://semver.org/spec/v2.0.
 
 ### Fixed
 
-- Assessment history timestamps now advance with finding triage and anchored comments, so updated-time filters include the latest review activity.
+- Assessment history timestamps now advance with finding triage, freshness checks, and anchored comments, so updated-time filters include the latest review activity.
 
 ## [0.4.0] - 2026-11-15
 

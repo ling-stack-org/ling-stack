@@ -38,6 +38,8 @@ test("snapshot and findings survive reopening; dispositions require digest and a
     assert.equal(store.getCodeAssessment("assessment_store")?.findings[0]?.disposition, "dismissed");
     assert.equal(store.getCodeAssessment("assessment_store")?.assessment.updatedAt, triagedAt);
     assert.equal(store.listCodeAssessments({ updatedAfter: triagedAt }).assessments[0]?.id, "assessment_store");
+    store.recordCodeAssessmentFreshness("assessment_store", { state: "unknown", checkedAt: now });
+    assert.equal(store.getCodeAssessment("assessment_store")?.assessment.updatedAt, triagedAt, "delayed freshness must not move updatedAt backwards");
     const reopened = store.setCodeFindingDisposition("assessment_store", finding.id, { snapshotDigest: snapshot.digest, disposition: "open", now });
     assert.equal(reopened.dispositionReason, undefined);
     assert.equal(store.finishCodeAssessment("assessment_store", { runId: "run_store", status: "failed", now }).status, "completed");
