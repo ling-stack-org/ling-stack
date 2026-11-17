@@ -121,6 +121,7 @@ export const conversationWorkspaceFileRefSourcesV1 = [
 export type ConversationWorkspaceFileRefSourceV1 = (typeof conversationWorkspaceFileRefSourcesV1)[number];
 
 export interface ConversationWorkspaceFileRefV1 {
+  readonly annotation?: import("./review-annotations.js").ReviewAnnotation;
   readonly path: string;
   readonly label?: string;
   readonly source?: ConversationWorkspaceFileRefSourceV1;

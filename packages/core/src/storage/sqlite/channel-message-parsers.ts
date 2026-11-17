@@ -1,3 +1,4 @@
+import { parseReviewAnnotation } from "@ling-stack/contracts";
 import {
   type ChannelMessageFileRef,
   type ChannelMessageFileRefSource,
@@ -16,13 +17,15 @@ export function normalizeChannelMessageFileRefs(fileRefs: readonly ChannelMessag
       continue;
     }
     const line = fileRef.line === undefined ? undefined : Math.max(1, Math.trunc(fileRef.line));
-    const key = `${path}\0${line ?? ""}`;
+    const annotation = parseReviewAnnotation(fileRef.annotation);
+    const key = annotation?.id ?? `${path}\0${line ?? ""}`;
     if (seen.has(key)) {
       continue;
     }
     seen.add(key);
     normalized.push({
       path,
+      ...(annotation ? { annotation } : {}),
       ...(fileRef.label?.trim() ? { label: fileRef.label.trim().slice(0, 240) } : {}),
       ...(fileRef.source && isChannelMessageFileRefSource(fileRef.source) ? { source: fileRef.source } : {}),
       ...(line !== undefined ? { line } : {}),
@@ -47,6 +50,7 @@ export function parseChannelMessageFileRefs(value: string): readonly ChannelMess
     const line = typeof item.line === "number" && Number.isFinite(item.line) ? item.line : undefined;
     return {
       path: readRecordString(item, "path"),
+      ...(item.annotation !== undefined ? { annotation: parseReviewAnnotation(item.annotation) } : {}),
       ...(typeof item.label === "string" ? { label: item.label } : {}),
       ...(source ? { source } : {}),
       ...(line !== undefined ? { line } : {}),

@@ -1,3 +1,4 @@
+import { parseReviewAnnotation } from "@ling-stack/contracts";
 import type { SQLOutputValue } from "node:sqlite";
 import {
   type RunIntervention,
@@ -154,6 +155,8 @@ function normalizeRunInterventionWorkspaceFilePayloads(
   }
   return fileRefs.map((ref) => ({
     path: ref.path.trim(),
+    ...(ref.line !== undefined ? { line: ref.line } : {}),
+    ...(ref.annotation ? { annotation: parseReviewAnnotation(ref.annotation) } : {}),
     ...(ref.label?.trim() ? { label: ref.label.trim() } : {}),
     ...(ref.source && isChannelMessageFileRefSource(ref.source) ? { source: ref.source } : {}),
     rootRelation: readRunInterventionWorkspaceFileRootRelation(ref.rootRelation),
@@ -257,6 +260,8 @@ function parseRunInterventionWorkspaceFilePayload(value: unknown): RunInterventi
   const source = readPayloadOptionalString(value, "source");
   return {
     path: readPayloadString(value, "path"),
+    ...(typeof value.line === "number" ? { line: value.line } : {}),
+    ...(value.annotation !== undefined ? { annotation: parseReviewAnnotation(value.annotation) } : {}),
     ...(label ? { label } : {}),
     ...(source && isChannelMessageFileRefSource(source) ? { source } : {}),
     rootRelation: readRunInterventionWorkspaceFileRootRelation(value.rootRelation),

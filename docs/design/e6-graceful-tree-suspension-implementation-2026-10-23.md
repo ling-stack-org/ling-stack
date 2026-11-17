@@ -52,6 +52,8 @@ finalizers全部完成之后，读取Core终止result及Host drain/effect/quiesc
   constructor 捕获的 observation reader。冻结 lineage、SDK view、canonical final/工具/effects、
   budget/usage 与 retained dependencies；只验证当前 source 实际执行的工具属于其 SDK inventory，
   不要求恢复 view 的历史工具在新 source 重执行。无动态预算的普通 Run 不凭空增加 charge 要求。
+  SDK usage 的 cost 金额必须为有限非负数；可选 `totalFromProvider` 只接受布尔值，原样保留
+  在冻结 SDK view 中，不作为金额或额外 Provider usage 计数。
 - witness 使用 `kind: settlement` / `.settlement`，不造 ordinary/compaction checkpoint。182 seal、
   183 physical stop、184/185 root activation/ACK、186 child activation/ACK 和 recovery pins 均验证
   原 ledger。final settlement 不是整树成功证明，不要求父保存 SDK view 时所有 required child

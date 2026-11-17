@@ -18,6 +18,7 @@ export interface ConversationComposerShellProps {
   readonly dropZoneClassName?: string;
   readonly dropZoneStyle?: CSSProperties;
   readonly statusNode?: ReactNode;
+  readonly aboveComposerNode?: ReactNode;
   readonly approvalNode?: ReactNode;
   readonly guidanceNode?: ReactNode;
   readonly previewNode?: ReactNode;
@@ -39,6 +40,7 @@ export interface ConversationComposerShellProps {
 export function ConversationComposerShell({
   ariaLabel,
   approvalNode,
+  aboveComposerNode,
   bottomStatusNode,
   className,
   density = "docked",
@@ -91,6 +93,7 @@ export function ConversationComposerShell({
 
   return (
     <div className="conversation-composer-frame" data-conversation-composer-frame={surface}>
+      {aboveComposerNode}
       <section
         ref={rootRef}
         className={rootClassName}

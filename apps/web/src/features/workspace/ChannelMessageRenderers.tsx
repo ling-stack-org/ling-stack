@@ -1,3 +1,4 @@
+import { renderReviewAnnotation } from "@ling-stack/contracts";
 import type { MutableRefObject, ReactNode, RefObject } from "react";
 import { terminalReportSourceRefs, visibleTerminalReportTimelineItem } from "@ling-stack/conversation-ui-core";
 import { createConversationTimelineMessageItem, projectConversationMessagePresentation, type ConversationProtocolAction, type ConversationTimelineApprovalItem, type ConversationTimelineItem, type ConversationTimelineProtocolEventItem, type ConversationTimelineTerminalReportItem } from "@ling-stack/conversation-ui-core";
@@ -1207,7 +1208,8 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
               label: fileRef.label ?? fileNameFromReferencePath(fileRef.path),
               meta: fileRef.line !== undefined ? `${fileRef.path}:${fileRef.line}` : fileRef.path,
               previewTitle: fileRef.label ?? fileNameFromReferencePath(fileRef.path),
-              previewText: fileRef.path,
+              previewText: fileRef.annotation ? renderReviewAnnotation(fileRef.annotation, fileRef.line) : fileRef.path,
+              annotationText: fileRef.annotation?.text,
               onOpen: input.onOpenFileReference,
             })),
             ...linkPreviews.map((preview) => ({

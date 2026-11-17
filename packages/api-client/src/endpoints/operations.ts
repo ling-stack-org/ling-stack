@@ -18,6 +18,7 @@ import type {
   WorkItemReleaseRequest,
   WorkItemRouteRequest,
   WorkspaceChangesResponse,
+  ThreadWorkspaceChangeSummaryResponse,
   WorkSummaryResponse,
   WorkspaceSnapshotManifest,
   WorkspaceSnapshotEntry,
@@ -35,6 +36,10 @@ import type {
 import type { LingDaemonEndpointContext, PublicEndpointGroup } from "../transport.js";
 
 export const operationEndpoints = {
+  async getThreadWorkspaceChangeSummary(this: LingDaemonEndpointContext, cwd: string, threadId: string): Promise<ThreadWorkspaceChangeSummaryResponse> {
+    return this._get(`/threads/${encodeURIComponent(threadId)}/workspace-change-summary`, { cwd });
+  },
+
   async getWorkSummaryChanges(this: LingDaemonEndpointContext, cwd: string): Promise<WorkspaceChangesResponse> {
     return this._get("/workspace/changes", { cwd, baseline: "head" });
   },

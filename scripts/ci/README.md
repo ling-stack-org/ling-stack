@@ -18,15 +18,34 @@ Mixed changes union their affected packages and required lanes.
 | Offline assurance tooling or fixtures | Assurance and actual package-level validation importers; no unrelated product shards |
 | Package source or local build/typecheck configuration | Owning package and transitive consumers |
 | Existing package manifest, with verified stable identity and unchanged complete script contents | Owner and consumers from the old/current graph, plus dependency policy |
+| Verified package-local Node/TypeScript validation migration with unchanged production metadata, build scripts and hooks | Complete owner tests/typecheck and dependency policy; shared test-support consumers remain selected |
+| The fixed Office/codesign source-review JSON records | Daemon build closure and macOS publication contracts; no unrelated product tests/typechecks |
 | Dependency-security regression tests | Owning package plus dependency policy |
 | Root manifest or TypeScript/build configuration, lockfile, workspace configuration, patches, CI workflows/scripts, unknown paths | Full regression |
-| New, deleted, renamed, or unverifiable package identity, or changed scripts | Full regression |
+| New, deleted, renamed, or unverifiable package identity, or unrecognized script changes | Full regression |
 | `full-ci`, manual dispatch, daily schedule | Full regression |
 
 Package manifests are compared with the base checkout before narrowing. The
 directory, name, test/typecheck entry presence and complete scripts fingerprint
-must match. Missing baseline identity or any added, removed or changed script
-forces full regression. Package-local tsconfig/build configuration selects the
+must match. Missing baseline identity, added/removed script entries, production
+script changes and opaque validation commands force full regression.
+[The validation recognizer](package-validation-scope.mjs) permits changes only to
+the existing `test`, `test:ci`, `typecheck` and `typecheck:ci` scripts when all other
+manifest fields and scripts are unchanged. It recognizes complete top-level
+`node --test` globs for `.test.mjs`/`.test.ts`, no-emit package-local `tsc`
+commands, and wrappers around those CI entries and unchanged build prefixes.
+Name filters, shell additions, no-op commands, omitted test languages and empty
+discovery retain full scope. Each test entrypoint discovered by the baseline glob
+must retain its directory and basename under the current glob; `.mjs`/`.ts`
+extension changes are allowed. Missing baseline inventories and deleted or renamed
+entrypoints retain full scope. A migration that rewrites an existing TypeScript
+configuration referenced by either typecheck command retains full scope; baseline
+configs without a command-line `--noEmit` must exist in the base inventory.
+An isolated `tsconfig.test.json`/`tsconfig.tests.json`
+is a test input only with explicit no-emit and test-only includes and no production
+script/config consumer; other package configuration remains a source input.
+Mixed source changes still expand to transitive consumers.
+Package-local tsconfig/build configuration selects the
 owner and consumers; equivalent root configuration remains full scope. Changed
 manifests propagate consumers over the union of old and current dependency edges.
 Web's catalog importer is an explicit consumer because it reads Web source,
@@ -44,7 +63,21 @@ Source, shared fixture, validation-import, unknown-path and full-scope changes
 retain both Daemon platforms. Daemon shards and Linux restricted-command contracts
 remain coupled to daemon selection. The standalone
 macOS helper smoke is selected only for the explicit native sandbox/Seatbelt
-surface; unknown paths and full-scope inputs still select it. A source change can
+surface; unknown paths and full-scope inputs still select it. The exact
+`native/office-local/reviewed-packaged-source-v1.json` and
+`native/sandbox/reviewed-codesign-source-v1.json` paths instead select the macOS
+job's serial codesign-publication, Office-publication and Office-daemon-source
+contracts. The Daemon build supplies their compiled inputs without selecting its
+unit tests, typecheck or Linux contracts. `macos-native` requires that shared job
+to succeed; `macos-helper` and `native-release` independently select its steps.
+Native source or mixed changes retain the union of required work. Unrecognized
+Office paths retain full scope; other Sandbox paths retain Daemon validation and
+real helper smoke. Publication contracts check the recorded
+source hashes and use explicit synthetic compiler/signature fixtures; they do
+not approve new review records or establish a real signed/package acceptance.
+Full regression retains real helper smoke; publication checks are selected when
+the PR changes a fixed review record, including when that PR has full scope.
+A source change can
 select additional consumers, so daemon source may still need the CLI unit entry.
 
 Offline assurance runs for its tooling/fixtures and source/configuration changes
@@ -89,7 +122,7 @@ a requested package via `--if-present`.
 - Other packages and Web checks: one Linux matrix entry only when at least one
   such package is selected, excluding core and daemon because their complete
   discovery runs in their own entries.
-- Daemon: [the platform manifest](daemon-test-platforms.json) assigns 505 portable
+- Daemon: [the platform manifest](daemon-test-platforms.json) assigns 509 portable
   files to eight Linux shards without Core or six alongside Core, with two workers,
   and 166 native/platform files to
   four `macos-26` shards with three workers. Full-scope runs add the separate
@@ -110,6 +143,12 @@ a requested package via `--if-present`.
   union must equal fresh daemon discovery; new, missing, duplicated or stale
   assignments fail before execution. Native source/fixture contract checks prevent
   silently moving Darwin cases to Linux.
+- Native release-review changes reuse the existing macOS job and build artifact.
+  They run the three complete publication/source-input contract files serially,
+  including their Darwin-only real-esbuild cases. Review-only changes omit helper
+  compilation and the Core/Daemon/product test matrices. A native source change
+  still requires the original real helper smoke. No additional runner is added
+  to the full matrix.
 - Combined Core/Daemon plans use eleven Linux shards and four macOS shards when both
   Daemon platforms are selected. A Linux-only Daemon test plan keeps the five Core
   and six Linux shard layout; a Darwin-only plan restores eight Core shards and
@@ -345,6 +384,11 @@ the owning `typecheck:ci` validates its new tests and imported TypeScript helper
 Desktop's Node test command discovers both `.test.mjs` and `.test.ts`; its preview
 renderer Playwright configuration selects `.spec.ts`. Desktop's `typecheck:ci`
 includes the strict, no-emit `tsconfig.test.json` for `tests/**/*.ts`.
+Remote Protocol's `test:ci` discovers its complete `.test.ts` suite with Node's
+existing test runner. Its `typecheck:ci` checks source and the strict, no-emit
+`packages/remote-protocol/tsconfig.test.json`, including the shared signing fixture
+helper; local `typecheck` builds dependencies and package declarations before
+running the same checks. Tests continue to import the package's `dist` output.
 
 Local fixture and package checks are not evidence of Linux/macOS hosted-runner
 latency. Compare queue, setup, test-file and total durations after the next

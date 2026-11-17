@@ -1,3 +1,4 @@
+import { renderReviewAnnotation } from "@ling-stack/contracts";
 import type {
   AiTeammate,
   ChannelMessageFileRef,
@@ -324,7 +325,8 @@ function collectDirectLinkPreviews(
 
 function renderPrivateFileRef(fileRef: ChannelMessageFileRef): string {
   const line = fileRef.line ? `:${fileRef.line}` : "";
-  return `${fileRef.label?.trim() || fileRef.path}${line}`;
+  const location = `${fileRef.label?.trim() || fileRef.path}${line}`;
+  return fileRef.annotation ? `${location}\n${renderReviewAnnotation(fileRef.annotation, fileRef.line)}` : location;
 }
 
 function hasPrivateAttachmentPromptContent(

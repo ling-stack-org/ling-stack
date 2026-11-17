@@ -1,3 +1,4 @@
+import type { ReviewAnnotation } from "./review-annotations.js";
 import type { ConversationPendingReplacement, RunTool, ToolName } from "./shared.js";
 import type { RunIntervention } from "./runtime.js";
 import type {
@@ -461,6 +462,7 @@ export interface ChannelMention {
 export type ChannelMessageFileRefSource = "composer" | "explicit_text" | "api" | "inferred_text";
 
 export interface ChannelMessageFileRef {
+  readonly annotation?: ReviewAnnotation;
   readonly path: string;
   readonly label?: string;
   readonly source?: ChannelMessageFileRefSource;

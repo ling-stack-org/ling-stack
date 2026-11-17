@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { createHash, createPublicKey, verify } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   authProofSigningBytes,
@@ -11,13 +10,9 @@ import {
   encodeBase64Url,
   fingerprintPublicJwk,
 } from "../dist/index.js";
+import { fixture } from "./canonical-signing-fixture.ts";
 
-const fixture = JSON.parse(await readFile(
-  new URL("../fixtures/v1/canonical-signing.json", import.meta.url),
-  "utf8",
-));
-
-const sha256 = (bytes) => createHash("sha256").update(bytes).digest();
+const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest();
 
 test("RFC 8785 canonical JSON matches the shared multilingual fixture", () => {
   assert.equal(canonicalizeJson(fixture.canonical.value), fixture.canonical.text);
@@ -57,7 +52,7 @@ test("canonicalization rejects non-I-JSON values", () => {
   assert.throws(() => canonicalizeJson({ value: undefined }), /undefined/);
   assert.throws(() => canonicalizeJson([, "sparse"]), /sparse/);
   assert.throws(() => canonicalizeJson({ value: "\ud800" }), /surrogate/);
-  const cyclic = {};
+  const cyclic: { self?: unknown } = {};
   cyclic.self = cyclic;
   assert.throws(() => canonicalizeJson(cyclic), /cycles/);
 });

@@ -16,6 +16,9 @@ acceptance, tray, updater, and full keychain UX remain incomplete or later shell
 - [Desktop Main Window Integrated Chrome](./ui2.0升级/modules/18-Desktop-Client-Shell.md)
 - [Desktop Local File Viewing](conversation-shared-capabilities.md#desktop-local-file-viewing)
 
+内置浏览器的 profile、runtime、共享 Browser 工作区与 Agent 工具边界见
+[Desktop 内置浏览器实施计划](desktop-browser-implementation-plan.md)。
+
 ## Purpose
 
 This document records the implemented Electron alpha and its remaining OS integration
@@ -48,6 +51,38 @@ must not fork Button, Dialog, Menu, Toast, form, status, or feature-page UI.
 - Reuse the shared conversation UI packages where practical:
   `packages/conversation-ui-core` for semantics and `packages/conversation-ui-react` for
   React renderer primitives.
+
+## In-App Browser
+
+The shared conversation's right-side Browser dock hosts the in-app browser. Normal
+conversations, channel conversations and private teammate chats share
+`apps/web/src/features/browser/BrowserWorkspace.tsx`, with conversation-scoped tabs,
+address and navigation controls, explicit user/Agent control and an expanded view.
+Desktop users can switch between the page and recorded browser evidence in the same dock;
+the native page detaches while evidence is shown and retains its tabs when reopened.
+The Web client keeps its browser-evidence surface when the Desktop capability is absent.
+
+`apps/desktop/main/browser` owns sandboxed `WebContentsView` pages and a persistent
+profile per admitted local workspace. It detaches pages for shared UI overlays and
+window transitions, and accepts geometry only from the trusted main document. Page
+content has no Desktop bridge, Node integration or generic evaluator. The runtime
+supports history, downloads, device rules, clearing, bookmark preview/import, unpacked
+MV3 session extensions, bounded diagnostics, tab-scoped CDP and the public WebMCP
+`document.modelContext` contract. Device use remains human-only; downloads, CDP and
+website tools have separate approvals and origin policy.
+
+Agent tools use `built-in:browser` / `mcp_browser` and the existing MCP binding,
+approval, Host operation and run-result path. The authenticated Desktop runtime
+claims each command once and verifies instance/generation, conversation and page
+revision. User takeover pauses control. Cancellation or connection loss after an
+action starts retains unknown effect and never replays the command automatically.
+The external Chrome plugin continues to use its own profile and transport.
+
+Source acceptance covers real Electron on macOS arm64, the shared dock and controlled
+local sites. Windows, signed packages, real-model annotation-to-edit acceptance and
+full daemon policy-revocation scenarios remain open. Profile storage and approved tab
+metadata persist; commands, refs and Agent leases do not. Detailed capability limits
+remain in the [implementation plan](desktop-browser-implementation-plan.md).
 
 ## Default Choice
 

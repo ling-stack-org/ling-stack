@@ -41,4 +41,6 @@ The parser must preserve line numbers for old and new files so review notes and 
 
 ## Future Slice
 
-Add a daemon-side live turn diff summary, similar to Codex app-server `turn/diff/updated`, so running sessions can show `Editing N files +A -D` before the final artifact is written.
+[Conversation Change Summary](conversation-change-summary.md) supplies `Editing N files +A -D`
+for running Turns through a polled daemon endpoint. A push stream equivalent to Codex
+app-server `turn/diff/updated` remains future work.

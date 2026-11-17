@@ -207,7 +207,7 @@ export async function handleConversationStream(
       : resolveConversationExecutionSelection(store, runnerRegistry, input);
     const thread = resolveConversationThread(store, input, now);
     const prepared = prepareNormalConversationInput({ store, thread, message: input.message,
-      title: conversationTitle(input.message.trim() || "User attached files."), attachmentIds: input.attachmentIds ?? [],
+      title: conversationTitle(input.message.trim() || (input.fileRefs?.some(ref => ref.annotation) ? "Please address the review feedback." : "User attached files.")), attachmentIds: input.attachmentIds ?? [],
       fileRefs: input.fileRefs ?? [], idempotencyKey: input.idempotencyKey, now });
     const { turn, attachments: conversationAttachments } = prepared;
     const attachmentMaterializations = prepared.replayRequest ? new Map<string, ConversationAttachmentMaterialization>() : await materializeInlineConversationAttachments({

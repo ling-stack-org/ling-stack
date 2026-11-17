@@ -13,7 +13,8 @@ CI 会先根据整个 Pull Request 的变更路径选择最小安全范围：
 - 只有文档、各级 `README.md`、已登记的 PR／Issue 模板、`CODEOWNERS`、`FUNDING.yml` 或维护脚本变更时，不选择产品任务，但仍运行公共检查和汇总门。完整执行档位即使是纯文档范围也扫描 Git 历史；只有 Draft preview 延后历史扫描。维护脚本白名单仅包含 `check-markdown-links.mjs`、`check-public-repo-safety.mjs` 和后者的测试，新增脚本仍保守处理。
 - 工作区源码或包内 TypeScript／构建配置变更时，[分类器](../../scripts/ci/classify-scope.mjs)选择所属包及直接、间接消费者；仅改测试时选择所属包，并补充已识别的跨包测试辅助文件使用方。Web 的目录导入器额外选择 localization 验证，实际依赖图也包含 CLI 对 Web 的依赖；为构建补齐依赖不等于选择这些依赖的测试分片。
 - 仅修改 `scripts/framework-assurance/` 或 `fixtures/framework-assurance/` 的非文档输入时，选择独立 assurance 任务及实际导入这些模块的包级测试消费者；没有消费者时，不选择产品构建、测试或原生 smoke。诊断模块保留 API Client 验证；共享 manifest、执行证据模块及其冻结 fixture 还保留 Daemon 验证。Assurance 仍执行离线测试、校准、真实 SDK 仓外消费验证和 CI 工具测试类型检查。混合产品改动取两者并集，未知路径仍回退全量。
-- 包级 `package.json` 只有在 base 与当前包目录、名称、测试／类型检查入口存在性及全部 scripts 内容可核验且不变时才允许收窄；使用新旧依赖边的并集扩大消费者，并选择依赖策略任务。新增、删除、重命名、无法核验或任意 script 增删改均回退全量。根 `package.json`、锁文件、workspace 配置、除上述工具路径和白名单以外的 `.github/`／`scripts/`、补丁、根 TypeScript／构建配置及未知路径仍全量；维护脚本与源码混合不豁免源码检查。
+- 包级 `package.json` 在 base 与当前包目录、名称、测试／类型检查入口及全部 scripts 内容可核验且不变时，使用新旧依赖边的并集扩大消费者，并选择依赖策略任务。已核验的 Node／TypeScript 测试迁移只选择所属包完整测试、类型检查及共享测试辅助文件的使用方，仍保留依赖策略检查：仅允许已有 `test`、`test:ci`、`typecheck`、`typecheck:ci` 变化，其他清单字段、构建脚本和生命周期 hook 必须不变；命令限于完整 Node 测试 glob、包内 no-emit TypeScript 检查及已核验的 CI／构建包装。带名称过滤、额外 shell 命令、空操作、遗漏测试语言或空发现结果时回退全量。基线 glob 发现的每个测试入口必须保留目录和同名文件，允许 `.mjs`／`.ts` 扩展名迁移；删除、重命名入口或无法核验基线清单时回退全量。迁移同时改写新旧类型检查命令引用的已有 TypeScript 配置时回退全量；基线命令没有显式 `--noEmit` 时，其配置必须存在于基线清单。仅在显式 no-emit、只包含测试且没有生产脚本／配置使用方时，将新增或未修改的 `tsconfig.test.json`／`tsconfig.tests.json` 视为测试输入；混合源码和其他配置改动仍扩大到消费者。新增、删除、重命名、无法核验的包、脚本入口增删及其他 script 改动均回退全量。根 `package.json`、锁文件、workspace 配置、除上述工具路径和白名单以外的 `.github/`／`scripts/`、补丁、根 TypeScript／构建配置及未知路径仍全量；维护脚本与源码混合不豁免源码检查。
+- 两份固定发布审查清单 `native/office-local/reviewed-packaged-source-v1.json`、`native/sandbox/reviewed-codesign-source-v1.json` 选择 Daemon 构建依赖图及现有 macOS 任务中的 codesign publication、Office publication、Office daemon source-input 三个完整契约文件，不选择无关包或 Daemon 的类型检查和测试分片。`macos-native` 仍要求该任务成功；`macos-helper`、`native-release` 分别选择真实 helper smoke 和发布契约步骤。清单单独变化不编译 helper，混合原生源码改动保留两者；未识别的 Office 路径仍全量，Sandbox 目录其他文件保留 Daemon 验证与真实 helper smoke。全量回归保留原有真实 helper smoke，PR 同时修改审查清单时还执行发布契约。契约核对清单与固定源码 hash，并用明确的模拟编译／签名 fixture 检查发布边界，不生成审批记录，也不代表真实签名或打包验收。复用任务不增加完整矩阵的 runner 数。
 - [工作流](../../.github/workflows/ci.yml)由 Pull Request、手动运行和每日定时触发，没有 `main` push 触发。定时为每天 UTC 03:17，即北京时间 11:17；手动和定时运行始终走现有完整 Linux/macOS 矩阵，即使当天没有提交也执行。GitHub 定时任务可能排队或延迟，不保证准点启动。没有启用成功证据去重或每日 Linux 单独分档。
 - 新增 `full-ci` 标签立即触发全量；已有标签让后续推送继续全量。无关标签事件不替换必需检查结果，也不取消当前验证；移除标签只影响下一次正常 PR 运行，不立即重跑。
 - [执行策略](../../scripts/ci/execution-policy.mjs)独立选择 `preview`／`complete`：无 `full-ci` 的 Draft 推送只跑公共检查，延后依赖安装、构建、类型检查、产品测试、历史密钥扫描及所有 macOS 任务；转正式评审、正式 PR 更新、手动或定时运行使用完整执行档位。
@@ -27,7 +28,7 @@ CI 会先根据整个 Pull Request 的变更路径选择最小安全范围：
 | 手动运行 | 目标分支上的完整验证 |
 | 定时运行 | 默认分支每天 UTC 03:17（北京时间 11:17）的完整验证 |
 
-[Daemon 平台清单](../../scripts/ci/daemon-test-platforms.json)将 505 个通用文件分到八个 Linux shard；同时选择 Core 时使用六个，每个使用两个 worker；166 个包含原生／平台约束的文件保留在四个 `macos-26` shard，每个使用三个 worker。仅修改已登记 Daemon 测试入口时，分类器按清单选择对应平台，Linux-only 或 Darwin-only 改动不会排另一平台的整套分片；源码、共享 fixture、验证导入、未知路径和完整回归仍保留双平台。独立 native smoke 只在原生 sandbox／Seatbelt 路径变更或完整回归时选择，普通 Daemon 改动不再额外占用一个 macOS runner；实际可用容量和排队仍由 GitHub 决定。每个文件保持 `--test-concurrency=1`、独立 runtime home／workspace 和 POSIX 进程组。Kimi Host read／terminal、delegation production tool surface、engine lifecycle installation、Kimi owned-execution、workflow repository-fence、signal-shutdown regression，以及 workflow conflict／isolated-delivery fixtures 保留所属分片的独占阶段，避免这些会大量创建原生进程、Git worktree 或临时资源的 fixture 互相争用；其余文件进入按估计耗时降序的共享队列。Linux restricted-command 拒绝契约仍随 Daemon 选择；真实 macOS helper／Seatbelt smoke 由显式原生路径映射选择，未知路径回退完整验证。
+[Daemon 平台清单](../../scripts/ci/daemon-test-platforms.json)将 509 个通用文件分到八个 Linux shard；同时选择 Core 时使用六个，每个使用两个 worker；166 个包含原生／平台约束的文件保留在四个 `macos-26` shard，每个使用三个 worker。仅修改已登记 Daemon 测试入口时，分类器按清单选择对应平台，Linux-only 或 Darwin-only 改动不会排另一平台的整套分片；源码、共享 fixture、验证导入、未知路径和完整回归仍保留双平台。独立 native smoke 只在原生 sandbox／Seatbelt 路径变更或完整回归时选择，普通 Daemon 改动不再额外占用一个 macOS runner；实际可用容量和排队仍由 GitHub 决定。每个文件保持 `--test-concurrency=1`、独立 runtime home／workspace 和 POSIX 进程组。Kimi Host read／terminal、delegation production tool surface、engine lifecycle installation、Kimi owned-execution、workflow repository-fence、signal-shutdown regression，以及 workflow conflict／isolated-delivery fixtures 保留所属分片的独占阶段，避免这些会大量创建原生进程、Git worktree 或临时资源的 fixture 互相争用；其余文件进入按估计耗时降序的共享队列。Linux restricted-command 拒绝契约仍随 Daemon 选择；真实 macOS helper／Seatbelt smoke 由显式原生路径映射选择，未知路径回退完整验证。
 
 Daemon 分片任务上限为 40 分钟，执行队列上限为 30 分钟。默认文件 watchdog 为五分钟，已登记的高耗时 workflow／recovery fixture 保留十分钟或十五分钟的独立上限，具体清单见[测试执行说明](../../scripts/ci/README.md)。超时或取消会终止所属进程并使任务失败，不重试或强制通过；watchdog 上限不是十分钟性能验收结果。
 
@@ -51,9 +52,9 @@ Daemon 专用的依赖安全测试由 `dependency-policy` 任务单独运行，�
 
 框架 assurance 是独立重建例外，不能用产品测试图的 `dist` artifact 代替实际 producer/tarball 消费证据。完整档位中，assurance 工具／fixture、Core 源码或 SDK producer 包 localization/contracts/plugin-sdk/api-client 的源码／配置改动会选择该任务；仅改这些产品包的测试，或只改其他产品包，不选择该任务。全量、手动和定时运行始终选择它。该任务执行离线测试、三任务九控制校准及真实 SDK consumer；零模型、无 secrets、不启动 daemon。Consumer 串行重建四个 producer，实际 pack 并仓外离线安装。`quality` 分别验证明确的 assurance 和 build selector：选中必须成功，未选中才允许跳过，失败、取消、缺失或无效 selector 均拒绝；Draft/full-ci 规则不变。报告和直属日志上传为 `ci-framework-assurance` 并保留七天，不上传 consumer/toolchain 树或 tarball。详见[补强实现记录](../design/ling-framework-complementary-implementation-plan.md#9-交付记录与完成判定)。
 
-Linux 构建任务在选中 CLI 时运行真实 daemon 生命周期和新工作区 doctor 检查；未配置 provider 的新工作区预期返回诊断退出码 4。选中 Web 时，独立 `web-smoke` 任务在下载共享构建产物后，使用生产构建的 Vite preview 运行六项 Playwright 回归，覆盖权限、内置技能元数据和中文角色。该任务使用按版本和 digest 固定的官方 Playwright Noble 镜像，浏览器与字体等系统依赖已预装，不执行 apt 或浏览器安装；工作流契约要求镜像版本与 Web 的 Playwright 依赖一致。Web 执行不阻塞其他测试获取 `ci-dist`；`quality` 根据 Web selector 强制要求该任务成功，失败、取消、缺失及意外跳过均拒绝。浏览器测试使用模拟 daemon 数据，不包含真实模型调用。当前运行的截图与测试结果上传为 `ci-linux-source-web-smoke` artifact，保留七天。
+Linux 构建任务在选中 CLI 时运行真实 daemon 生命周期和新工作区 doctor 检查；未配置 provider 的新工作区预期返回诊断退出码 4。选中 Web 时，独立 `web-smoke` 任务在下载共享构建产物后，使用生产构建的 Vite preview 运行六项权限、内置技能元数据和中文角色回归，以及九项 conversation change summary 回归。摘要用例覆盖三种会话入口、中英文、长列表、窄宽度、键盘导航、实时更新和最新 Turn 边界，输出到 `test-results/conversation-change-summary` 子目录，保留同一任务中其他用例的证据。该任务使用按版本和 digest 固定的官方 Playwright Noble 镜像，浏览器与字体等系统依赖已预装，不执行 apt 或浏览器安装；工作流契约要求镜像版本与 Web 的 Playwright 依赖一致。Web 执行不阻塞其他测试获取 `ci-dist`；`quality` 根据 Web selector 强制要求该任务成功，失败、取消、缺失及意外跳过均拒绝。浏览器测试使用模拟 daemon 数据，不包含真实模型调用。当前运行的截图与测试结果上传为 `ci-linux-source-web-smoke` artifact，保留七天。
 
-会话操作记录、复制、文件审查、归属与颜色层级场景可通过 `corepack pnpm --filter @ling-stack/web test:e2e:work-cell` 本地按需运行。会话样例由 E2E mock daemon 提供，不依赖开发模式；Web 的 `typecheck` 和 `typecheck:ci` 通过 `tsconfig.e2e.json` 检查所列用例及其辅助文件。
+会话操作记录、复制、文件审查、composer 变更摘要、归属与颜色层级场景可通过 `corepack pnpm --filter @ling-stack/web test:e2e:work-cell` 本地按需运行。会话样例由 E2E mock daemon 提供，不依赖开发模式；Web 的 `typecheck` 和 `typecheck:ci` 通过 `tsconfig.e2e.json` 检查所列用例及其辅助文件。
 
 本地化包的 `typecheck:ci` 和 `test:ci` 已补齐；前者在干净 runner 重新生成未跟踪的 TypeScript 目录文件后检查类型，后者执行翻译目录完整性、占位符检查及本地化单元测试，复用构建阶段的 `dist`。新增[入口覆盖契约](../../scripts/ci/package-script-coverage.test.mjs)，要求分类器选中的每个类型检查／测试包都有对应 CI 脚本，防止 `--if-present` 静默跳过漏配包。
 
@@ -81,7 +82,7 @@ Linux 构建任务在选中 CLI 时运行真实 daemon 生命周期和新工作�
 | CodeQL / Copilot Autofix | 工作区已包含上节的 PR 范围过滤、每小时检查和手动工作流；GitHub default setup 当前状态及扫描上传验收仍须单独核验。Autofix 建议仍须审查与测试，不自动合并 |
 | 仓库级密钥扫描／推送保护 | 2026-10-19 的历史评估记为开关关闭；本次未核验当前设置。现有完整执行档位包括纯文档 PR 都运行 Gitleaks 历史扫描，Draft preview 延后；上传后的扫描不能代替推送时拦截 |
 | 新披露的依赖漏洞 | 历史评估记录 Dependabot 告警及安全更新已配置，本次未核验服务端状态；仓库 `.github/dependabot.yml` 仍声明每周版本更新。CI 另测安全补丁与许可策略；新增严重性阻断前须核对现存告警、补丁及无上游修复的基线，不能将旧告警直接当作本次改动引入 |
-| 浏览器与桌面交互 | 选中 Web 时执行六项生产预览 Playwright smoke，使用模拟 daemon 数据并保留截图；Desktop 主要只有类型检查。后续可逐步扩大交互覆盖；不把每日现有矩阵成功视为桌面打包或设备验收 |
+| 浏览器与桌面交互 | 选中 Web 时执行十五项生产预览 Playwright smoke，使用模拟 daemon 数据并保留截图；Desktop 主要只有类型检查。后续可逐步扩大交互覆盖；不把每日现有矩阵成功视为桌面打包或设备验收 |
 
 本次文档整合未变更或核验 GitHub 安全设置、分支保护及服务端状态，也未修改 Dependabot 配置或发布流程。2026-10-19 的调度调整及其回退说明属于历史记录；当前主 CI 仍按上文每日完整矩阵运行，不能据此恢复每周运行。CodeQL 的切换、验收和回退按上节单独执行。
 
@@ -123,7 +124,9 @@ Draft 减少执行不改变改动范围。不能把大 PR 的范围伪装成 `do
 | 普通包源码 | 所属包、直接和间接使用方 | 构建继续补齐依赖闭包 |
 | 测试与共享夹具 | 所属包和夹具使用方 | 无法识别共享关系时扩大范围 |
 | `native/` 和已登记原生接线 | native、相关 Daemon／Host 测试与平台契约 | 涉及共享启动、权限、运行时契约时扩大；未知 native 路径仍全量 |
-| 包内 TypeScript／构建配置、可核验且全部 scripts 不变的包 manifest（已实现） | 所属包及消费者；manifest 另选依赖策略 | manifest 身份或 scripts 变化、无法核验时全量；新旧依赖边并集不能丢失消费者 |
+| 包内 TypeScript／构建配置、可核验且全部 scripts 不变的包 manifest（已实现） | 所属包及消费者；manifest 另选依赖策略 | manifest 身份变化、未识别的 scripts 变化或无法核验时全量；新旧依赖边并集不能丢失消费者 |
+| 已核验的包内 Node／TypeScript 测试迁移（已实现） | 所属包完整测试、类型检查和依赖策略；保留共享测试输入使用方 | 生产字段／构建 hook 不变；未知命令、空发现或遗漏测试语言回退全量；混合源码继续选择消费者 |
+| 固定 Office／codesign 审查清单（已实现） | 必需的 Daemon 构建及 macOS 发布契约 | 清单单独变化省去产品测试与 helper 编译；混合原生源码保留真实 helper smoke；未知路径全量 |
 | 根配置、workspace、锁文件、补丁、CI 工作流／脚本 | 保留全量 | 文档及明确登记的维护路径例外；未知路径仍全量 |
 
 分类结果应输出命中文件、理由、受影响包、选中任务和平台要求，供 PR 摘要核对。`macos-required` 不能仅由当前的 `daemon=true` 或单个路径正则替代，需要包含共享契约和调用链的影响传播。

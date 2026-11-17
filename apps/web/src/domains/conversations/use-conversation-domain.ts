@@ -59,6 +59,8 @@ export interface ConversationSendInput {
 
 export interface ConversationStreamHandlers {
   readonly onReady?: (event: ConversationStreamReadyEvent) => void;
+  /** Durable acceptance may arrive after the originating surface has been left. */
+  readonly onInputAccepted?: (fileRefs: readonly ChannelMessageFileRef[]) => void;
   readonly onMessageAccepted?: (event?: ConversationStreamReadyEvent) => void;
   readonly onSubmissionUnknown?: (recoveryOnly?: boolean) => void;
   readonly onSubmissionRecovered?: (threadId: string, originalBody: string) => void;
@@ -533,6 +535,7 @@ export function useConversationDomain(input: {
           return;
         }
         activeThreadId = receipt.threadId;
+        handlers.onInputAccepted?.(receipt.sourceItem.kind === "user_message" ? receipt.sourceItem.payload?.fileRefs ?? [] : []);
         const detail = await getConversation(workspaceCwd, activeThreadId);
         if (detail.thread.id !== activeThreadId) throw new Error("Conversation response scope mismatch.");
         assertObservationCurrent();
@@ -623,6 +626,7 @@ export function useConversationDomain(input: {
           messageAccepted = true;
           acceptedSourceItemId = event.userMessage.id;
           submissionLookupJournal.forget(submissionScope, idempotencyKey);
+          handlers.onInputAccepted?.(event.userMessage.fileRefs ?? message.fileRefs ?? []);
           handlers.onThreadBound?.(activeThreadId);
           retargetStreamOperation(activeThreadId);
           if (event.activeReply) {
@@ -777,6 +781,7 @@ export function useConversationDomain(input: {
           acceptedSourceItemId = receipt.sourceItemId;
           submissionLookupJournal.forget(submissionScope, idempotencyKey);
           activeThreadId = receipt.threadId;
+          handlers.onInputAccepted?.(receipt.sourceItem?.kind === "user_message" ? receipt.sourceItem.payload?.fileRefs ?? message.fileRefs ?? [] : []);
           handlers.onThreadBound?.(activeThreadId);
           retargetStreamOperation(activeThreadId);
           if (canCommitToSurface(activeThreadId)) {

@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const sourceRoot = fileURLToPath(new URL("../src", import.meta.url));
 
-async function sourceFiles(directory) {
+async function sourceFiles(directory: string): Promise<string[]> {
   const entries = await readdir(directory, { withFileTypes: true });
   const nested = await Promise.all(entries.map(async (entry) => {
     const absolute = path.join(directory, entry.name);
@@ -30,4 +30,13 @@ test("protocol runtime source has no Node-only or React dependency", async () =>
       );
     }
   }
+});
+
+test("CI scripts discover and type-check the TypeScript test suite", async () => {
+  const manifest = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+  const testConfig = JSON.parse(await readFile(new URL("../tsconfig.test.json", import.meta.url), "utf8"));
+
+  assert.match(manifest.scripts["test:ci"], /test\/\*\.test\.ts/u);
+  assert.match(manifest.scripts["typecheck:ci"], /tsconfig\.test\.json/u);
+  assert.deepEqual(testConfig.include, ["test/**/*.ts"]);
 });
