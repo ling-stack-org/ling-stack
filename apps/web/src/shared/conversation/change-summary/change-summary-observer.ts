@@ -10,13 +10,16 @@ export function createChangeSummaryObserver(options: {
   readonly publish: (response: ThreadWorkspaceChangeSummaryResponse | undefined) => void;
   readonly active: boolean;
   readonly pollMs?: number;
+  readonly failureRetryMs?: number;
   readonly debounceMs?: number;
 }) {
+  const maxFailureRetryMs = 30_000;
   let disposed = false;
   let paused = false;
   let epoch = 0;
   let inFlight = false;
   let dirty = false;
+  let failureCount = 0;
   let turnActive = false;
   let timerKind: "poll" | "invalidation" | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -32,16 +35,27 @@ export function createChangeSummaryObserver(options: {
     inFlight = true;
     dirty = false;
     const readEpoch = epoch;
+    let readFailed = false;
     void options.read().then((response) => {
       if (disposed || paused || readEpoch !== epoch) return;
+      failureCount = 0;
       turnActive = isChangeSummaryTurnActive(response.turn?.status);
       options.publish(response);
     }, () => {
-      if (!disposed && !paused && readEpoch === epoch) options.publish(undefined);
+      if (!disposed && !paused && readEpoch === epoch) {
+        readFailed = true;
+        failureCount += 1;
+        options.publish(undefined);
+      }
     }).finally(() => {
       inFlight = false;
       if (disposed || paused) return;
       if (dirty) schedule(options.debounceMs ?? 250, "invalidation");
+      else if (readFailed) {
+        const baseDelay = options.failureRetryMs ?? options.pollMs ?? 1500;
+        const retryDelay = Math.min(baseDelay * 2 ** (failureCount - 1), maxFailureRetryMs);
+        schedule(retryDelay, "poll");
+      }
       else if (options.active || turnActive) schedule(options.pollMs ?? 1500, "poll");
     });
   }

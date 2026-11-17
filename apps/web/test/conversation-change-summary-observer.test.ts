@@ -34,6 +34,37 @@ test("active Turn polling stops when its response becomes terminal", async (t) =
   assert.equal(isChangeSummaryTurnActive("cancelled"), false);
 });
 
+test("failed reads retry with backoff while inactive", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let reads = 0;
+  const pendingRejects: ((reason?: unknown) => void)[] = [];
+  const published: (ThreadWorkspaceChangeSummaryResponse | undefined)[] = [];
+  const observer = createChangeSummaryObserver({
+    active: false,
+    pollMs: 100,
+    read: () => {
+      reads += 1;
+      return new Promise<ThreadWorkspaceChangeSummaryResponse>((_, reject) => pendingRejects.push(reject));
+    },
+    publish: (value) => published.push(value),
+  });
+  t.after(() => observer.dispose());
+
+  observer.refresh();
+  pendingRejects.shift()!(new Error("offline"));
+  await flush();
+  assert.deepEqual(published, [undefined]);
+  t.mock.timers.tick(100);
+  assert.equal(reads, 2);
+
+  pendingRejects.shift()!(new Error("offline"));
+  await flush();
+  t.mock.timers.tick(199);
+  assert.equal(reads, 2);
+  t.mock.timers.tick(1);
+  assert.equal(reads, 3);
+});
+
 test("pausing drops in-flight results, performs no reads and refreshes on resume", async (t) => {
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const pending: ((value: ThreadWorkspaceChangeSummaryResponse) => void)[] = [];
