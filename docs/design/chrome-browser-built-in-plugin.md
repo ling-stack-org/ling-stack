@@ -13,6 +13,10 @@ Ling exposes Chrome as a product-managed built-in plugin. It contributes one log
 whose six tools operate the user's existing Google Chrome profile after the extension is installed,
 the plugin is enabled, and the normal MCP approval is granted.
 
+The Desktop in-app browser uses its own profile and runtime, tracked in the
+[Desktop Browser Implementation Plan](desktop-browser-implementation-plan.md). Its tools do not
+automatically reuse this external Chrome connection or signed-in profile.
+
 Version `0.1.2` uses Chrome Native Messaging for automatic local discovery and persistent MV3
 reconnection:
 

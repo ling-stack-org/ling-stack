@@ -19,6 +19,7 @@ export async function handleWorkspaceSettings(
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
   secretResolver: SecretResolver,
+  onBrowserPolicyChanged?: (cwd: string) => void,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -44,6 +45,7 @@ export async function handleWorkspaceSettings(
         targets: listConversationMediaGenerationTargets(store, secretResolver),
       });
       const settings = store.updateWorkspaceSettings(update, new Date().toISOString());
+      if (update.desktopBrowserPolicy !== undefined) onBrowserPolicyChanged?.(cwd);
       writeJson(response, 200, { cwd, settings });
       return;
     }

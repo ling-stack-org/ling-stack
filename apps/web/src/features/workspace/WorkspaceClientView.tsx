@@ -1,6 +1,7 @@
 import { channelActivityItemBelongsToSession, type ChannelSessionActivityScope } from "./channel-session-activity-scope.js";
 import { channelSessionWorkOwnership } from "./channel-session-work-ownership.js";
 import { useChannelWorkflowComposerController } from "./useChannelWorkflowComposerController.js";
+import { useConversationBrowserLinks } from "../browser/use-conversation-browser-links.js";
 import { isChannelSessionDraft } from "../../app/channel-session-state.js";
 import { useWorkSummaryContext } from "./work-summary/WorkSummaryProvider.js";
 import { useChannelPanelNavigation } from "./useChannelPanelNavigation.js";
@@ -3666,6 +3667,8 @@ export function WorkspaceClientView({
     onChannelCreateOpenChange(false);
   }
 
+  const browserLinkError = useConversationBrowserLinks({ rootRef: taskWorkbenchMainRef, workspaceCwd: cwd.trim(),
+    surface: "channel", ownerId: channelPlanModeThreadId, onOpen: () => openRightDockPage("browser") });
   return (
     <div
       ref={taskWorkbenchWindowRef}
@@ -3681,6 +3684,7 @@ export function WorkspaceClientView({
       style={taskWorkbenchWindowStyle}
       aria-label={t("Workspace")}
     >
+      {browserLinkError ? <InlineFeedback tone="danger" role="alert">{browserLinkError}</InlineFeedback> : null}
       <ChannelWorkspaceHeader
         channelName={selectedChannel?.name} sessionTitle={channelSessionTitle} channelSelected={Boolean(selectedChannelId)}
         session={channelSession} onUpdateSession={onUpdateChannelSession} sessionActionsDisabled={selectedChannel?.status === "archived"}
@@ -4100,6 +4104,11 @@ export function WorkspaceClientView({
               proposedPlansError={proposedPlanHistoryError}
               externalError={selectedDockError}
               currentPlanThreadId={channelPlanModeThreadId}
+              browserScopeId={channelPlanModeThreadId}
+              onBrowserAnnotation={async ({ comment, files }) => {
+                setMessageDraft(current => [current, comment].filter(Boolean).join("\n\n"));
+                await attachFiles(files);
+              }}
               planActionBusyId={proposedPlanActionBusyId}
               includeActivity
               activityNode={channelDockActivityNode}

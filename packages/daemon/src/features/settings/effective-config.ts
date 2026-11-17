@@ -1,3 +1,4 @@
+import { parseDesktopBrowserPolicy } from "@ling-stack/contracts";
 import { readFile } from "node:fs/promises";
 import { parseWorktreePolicy } from "../workspaces/worktree-policy.js";
 import {
@@ -189,6 +190,7 @@ export function parseWorkspaceSettingsUpdate(value: unknown): UpdateWorkspaceSet
     lingConversationTone: readNullableLingConversationTone(record.lingConversationTone),
     defaultReasoningSummary: readNullableReasoningSummaryMode(record.defaultReasoningSummary),
     defaultProviderPresetId: readNullableString(record.defaultProviderPresetId, "defaultProviderPresetId"),
+    desktopBrowserPolicy: record.desktopBrowserPolicy === undefined || record.desktopBrowserPolicy === null ? record.desktopBrowserPolicy : parseDesktopBrowserPolicy(record.desktopBrowserPolicy),
     mediaGenerationDefaults: readNullableMediaGenerationDefaults(record.mediaGenerationDefaults),
     defaultAuthorizationMode: readNullableAuthorizationMode(record.defaultAuthorizationMode),
     defaultWorkspaceAccessMode: readNullableWorkspaceAccessMode(record.defaultWorkspaceAccessMode),

@@ -1,3 +1,4 @@
+import { parseDesktopBrowserPolicy } from "@ling-stack/contracts";
 import type { SQLOutputValue } from "node:sqlite";
 import { isSupportedLocale } from "@ling-stack/localization";
 import {
@@ -51,6 +52,7 @@ export class SqliteWorkspaceSettingsStore {
       lingConversationTone: nullableUpdate(input.lingConversationTone, current.lingConversationTone),
       defaultReasoningSummary: nullableUpdate(input.defaultReasoningSummary, current.defaultReasoningSummary),
       defaultProviderPresetId: nullableUpdate(input.defaultProviderPresetId, current.defaultProviderPresetId),
+      desktopBrowserPolicy: input.desktopBrowserPolicy === undefined ? current.desktopBrowserPolicy : input.desktopBrowserPolicy === null ? undefined : parseDesktopBrowserPolicy(input.desktopBrowserPolicy),
       mediaGenerationDefaults: nullableUpdate(input.mediaGenerationDefaults, current.mediaGenerationDefaults),
       defaultAuthorizationMode: permissionDefaults.authorizationMode,
       defaultWorkspaceAccessMode: permissionDefaults.workspaceAccessMode,
@@ -129,6 +131,7 @@ function parseWorkspaceSettings(value: string, updatedAt: string): WorkspaceSett
     lingConversationTone: parseOptionalLingConversationTone(parsed.lingConversationTone),
     defaultReasoningSummary: parseOptionalReasoningSummaryMode(parsed.defaultReasoningSummary),
     defaultProviderPresetId: typeof parsed.defaultProviderPresetId === "string" && parsed.defaultProviderPresetId.trim() ? parsed.defaultProviderPresetId : undefined,
+    desktopBrowserPolicy: parsed.desktopBrowserPolicy === undefined ? undefined : parseDesktopBrowserPolicy(parsed.desktopBrowserPolicy),
     mediaGenerationDefaults: parseMediaGenerationDefaults(parsed.mediaGenerationDefaults),
     defaultAuthorizationMode: authorizationMode,
     defaultWorkspaceAccessMode: workspaceAccessMode,

@@ -26,6 +26,7 @@ export interface SkillGovernancePolicy {
 
 export interface WorkspaceSettings {
   readonly worktreePolicy?: import("./worktrees.js").WorktreePolicy;
+  readonly desktopBrowserPolicy?: import("./desktop-browser-policy.js").DesktopBrowserPolicy;
   readonly schemaVersion: 1;
   readonly workspaceCwd?: string;
   readonly theme?: "light" | "dark" | "system";
@@ -47,6 +48,7 @@ export interface WorkspaceSettings {
 
 export interface UpdateWorkspaceSettingsRequest {
   readonly worktreePolicy?: import("./worktrees.js").WorktreePolicy | null;
+  readonly desktopBrowserPolicy?: import("./desktop-browser-policy.js").DesktopBrowserPolicy | null;
   /** v2 writes only accept the independent authorization/access axes. */
   readonly schemaVersion?: 2;
   readonly workspaceCwd?: string | null;
