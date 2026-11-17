@@ -7,6 +7,7 @@ import {
 import {
   ConversationPermissionControl,
   ConversationComposerShell,
+  ConversationChangeSummary,
   ConversationBottomStatusStrip,
   ConversationGuidanceStrip,
   ConversationStatusStrip,
@@ -24,6 +25,9 @@ import {
 import type { TeammatePrivateComposerController } from "./useTeammatePrivateComposerController.js";
 
 export type TeammatePrivateChatComposerProps = Pick<TeammatePrivateChatSurfaceProps,
+  | "cwd"
+  | "changeSummaryThreadId"
+  | "onOpenReview"
   | "composerDragActive"
   | "composerModelLabel"
   | "runtimeMetrics"
@@ -70,6 +74,9 @@ export type TeammatePrivateChatComposerProps = Pick<TeammatePrivateChatSurfacePr
 };
 
 export function TeammatePrivateChatComposer({
+  cwd,
+  changeSummaryThreadId,
+  onOpenReview,
   composerDragActive,
   composerModelLabel,
   runtimeMetrics,
@@ -189,6 +196,15 @@ export function TeammatePrivateChatComposer({
         surface="teammate_direct"
         density="docked"
         className="teammate-direct-composer"
+        aboveComposerNode={changeSummaryThreadId && onOpenReview ? (
+          <ConversationChangeSummary
+            cwd={cwd}
+            threadId={changeSummaryThreadId}
+            active={directReplyActive || hasDirectRuntimeActivity}
+            submitting={privateComposerSending}
+            onOpenReview={onOpenReview}
+          />
+        ) : null}
         ariaLabel={t("Private chat composer")}
         bottomStatusNode={<ConversationBottomStatusStrip
           ariaLabel={t("Conversation status")}

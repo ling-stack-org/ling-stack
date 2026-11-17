@@ -14,6 +14,7 @@ import { useI18n } from "../../../i18n.js";
 import type { ProposedPlanArtifact, WorkspaceChangesResponse } from "../../../types.js";
 import type { WorkspaceChangeReview, WorkspaceFileCapabilityScope, WorkspaceFileCapabilityTarget } from "@ling-stack/contracts";
 import { useWorkspaceRecovery } from "../../../shared/conversation/blocks/workspace-recovery-resource.js";
+import { conversationChangeSummaryUpdated, type ConversationChangeSummaryUpdate } from "../../../shared/conversation/change-summary/useConversationChangeSummary.js";
 import {
   createDockPageEntry,
   EvidencePage,
@@ -83,6 +84,7 @@ export interface WorkspaceRightDockReviewTarget {
   readonly path?: string;
   readonly scope?: WorkspaceChangeReview["scope"];
   readonly review?: WorkspaceChangeReview;
+  readonly liveThreadId?: string;
 }
 
 export interface WorkspaceRightDockProps {
@@ -314,6 +316,18 @@ export function WorkspaceRightDock({
     : stack;
   const reviewPageActive = open && effectiveStack.at(-1)?.page === "review";
   const scopedResource = useWorkspaceRecovery(effectiveReviewCwd, reviewPageActive ? requestedWorkspaceReview?.scope : undefined, requestedWorkspaceReview?.review?.revision);
+  const liveReviewThreadId = requestedWorkspaceReview?.liveThreadId;
+  const liveReviewTurnId = requestedWorkspaceReview?.scope?.kind === "turn" ? requestedWorkspaceReview.scope.id : undefined;
+  const refreshScopedReview = scopedResource.refresh;
+  useEffect(() => {
+    if (!reviewPageActive || !liveReviewThreadId || !liveReviewTurnId) return;
+    const update = (event: Event) => {
+      const detail = (event as CustomEvent<ConversationChangeSummaryUpdate>).detail;
+      if (detail?.cwd === effectiveReviewCwd && detail.threadId === liveReviewThreadId && detail.turnId === liveReviewTurnId) refreshScopedReview();
+    };
+    window.addEventListener(conversationChangeSummaryUpdated, update);
+    return () => window.removeEventListener(conversationChangeSummaryUpdated, update);
+  }, [reviewPageActive, effectiveReviewCwd, liveReviewThreadId, liveReviewTurnId, refreshScopedReview]);
   const scopedReview = useMemo(() => {
     const initial = requestedWorkspaceReview?.review;
     const updated = scopedResource.recovery?.review;

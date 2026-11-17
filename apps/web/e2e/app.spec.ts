@@ -162,12 +162,12 @@ test("sidebar selection is exclusive and conversation sections stay below primar
   const commandButtonWidth = await newConversationButton.evaluate((button) => Math.round(button.getBoundingClientRect().width));
   expect(commandButtonWidth).toBeGreaterThan(100);
   expect(commandButtonWidth).toBeLessThan(320);
-  await expect(primaryNav.getByRole("button")).toHaveText(["Media Production", "Plugin Manager", "Automations"]);
+  await expect(primaryNav.getByRole("button")).toHaveText(["Media Production", "Plugin Manager", "Scheduled tasks"]);
   await expect(primaryNav.getByRole("button", { name: "Inbox" })).toHaveCount(0);
   await expect(primaryNav.getByRole("button", { name: "Work Board" })).toHaveCount(0);
   await expect(primaryNav.getByRole("button", { name: "AI Councils" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Workspace" })).toHaveCount(0);
-  await expect(navigation.getByRole("button", { name: "Tasks" })).toHaveCount(0);
+  await expect(navigation.getByRole("button", { name: "Tasks", exact: true })).toHaveCount(0);
   await expect(primaryNav.getByRole("button", { name: "AI Teammates" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "AI Teammates" })).toBeVisible();
   await expect(navigation.getByRole("button", { name: "Recent conversations", exact: true })).toBeVisible();
@@ -1841,7 +1841,7 @@ test("sidebar text entries route to context-aware inspectors", async ({ page }) 
   const primaryNav = navigation.locator(".primary-nav");
   await expect(navigation.getByRole("button", { name: "Search or start" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Run", exact: true })).toHaveCount(0);
-  await expect(primaryNav.getByRole("button")).toHaveText(["Media Production", "Plugin Manager", "Automations"]);
+  await expect(primaryNav.getByRole("button")).toHaveText(["Media Production", "Plugin Manager", "Scheduled tasks"]);
   await expect(primaryNav.getByRole("button", { name: "Inbox" })).toHaveCount(0);
   await expect(primaryNav.getByRole("button", { name: "AI Councils" })).toHaveCount(0);
   await expect(primaryNav.getByRole("button", { name: "AI Teammates" })).toHaveCount(0);
@@ -1903,8 +1903,8 @@ test("sidebar text entries route to context-aware inspectors", async ({ page }) 
   await expect(page.locator(".media-production-canvas-toolbar")).toContainText("Production studio");
   await expect(page.getByLabel("Run context")).toHaveCount(0);
 
-  await primaryNav.getByRole("button", { name: "Automations" }).click();
-  await expect(page.getByRole("heading", { name: "Automations", level: 1 })).toBeVisible();
+  await primaryNav.getByRole("button", { name: "Scheduled tasks" }).click();
+  await expect(page.getByRole("heading", { name: "Scheduled tasks", level: 1 })).toBeVisible();
 
 });
 

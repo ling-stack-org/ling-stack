@@ -54,6 +54,7 @@
 @import "./styles/channel-proposed-plan.css";
 @import "./styles/shared/conversation-work-cell-shell-artifacts.css";
 @import "./styles/shared/conversation-summary.css";
+@import "./styles/shared/conversation-change-summary.css";
 @import "./styles/shared/conversation-evidence.css";
 @import "./styles/shared/conversation-file-diff.css";
 @import "./styles/shared/conversation-work-cell-activity.css";

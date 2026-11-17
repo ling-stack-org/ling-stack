@@ -222,3 +222,4 @@ export type {
   ConversationSurface,
 } from "./tokens/conversation-types.js";
 export { ConversationPermissionControl } from "./ConversationPermissionControl.js";
+export { ConversationChangeSummary, type ConversationChangeReviewTarget } from "./change-summary/ConversationChangeSummary.js";

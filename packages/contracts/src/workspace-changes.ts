@@ -1,5 +1,6 @@
 import type { WorkspaceGitFileKind, WorkspaceGitStatusState } from "./channels.js";
 import type { ConversationDomainRef } from "./conversation-continuity.js";
+import type { LingTurnStatus } from "./turns.js";
 
 export interface WorkspaceChangeFile {
   readonly path: string;
@@ -66,6 +67,16 @@ export interface WorkspaceChangeReviewFile {
   readonly deletions?: number;
   readonly diff?: string;
   readonly unavailableReason?: string;
+}
+
+/** Latest public Turn's immutable net review, without diff bodies. */
+export interface ThreadWorkspaceChangeSummaryResponse {
+  readonly cwd: string;
+  readonly threadId: string;
+  readonly turn?: { readonly id: string; readonly status: LingTurnStatus };
+  readonly review?: Omit<WorkspaceChangeReview, "files"> & {
+    readonly files: readonly Omit<WorkspaceChangeReviewFile, "diff">[];
+  };
 }
 
 export interface RunWorkspaceChangeSummary {

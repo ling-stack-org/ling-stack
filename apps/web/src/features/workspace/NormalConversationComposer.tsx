@@ -5,6 +5,7 @@ import type { ConversationRuntimeMetrics } from "@ling-stack/contracts";
 import { useI18n } from "../../i18n.js";
 import {
   ConversationComposerShell,
+  ConversationChangeSummary,
   ConversationBottomStatusStrip,
   ConversationPermissionControl,
   ConversationStatusStrip,
@@ -25,9 +26,12 @@ import type { AuthorizationMode, ConversationAttachment, PermissionPreset, Provi
 import { normalConversationModelLabel } from "./normal-conversation-composer-options.js";
 import { ConversationModelControl } from "./ConversationModelControl.js";
 import type { ConversationHomeModelOption } from "./normal-conversation-types.js";
+import type { WorkspaceRightDockReviewTarget } from "./right-dock/WorkspaceRightDock.js";
 
 export interface NormalConversationComposerProps {
   readonly workspaceCwd: string;
+  readonly threadId?: string;
+  readonly onOpenReview?: (target: WorkspaceRightDockReviewTarget) => void;
   readonly draft: string;
   readonly runtimeMetrics?: ConversationRuntimeMetrics;
   readonly inputRef: RefObject<TokenizedComposerInputHandle | null>;
@@ -122,6 +126,8 @@ export function NormalConversationComposer({
   slashPicker,
   stopping,
   workspaceCwd,
+  threadId,
+  onOpenReview,
 }: NormalConversationComposerProps): React.JSX.Element {
   const { t, locale } = useI18n();
   const activeProviderPresetId = selectedProviderPresetId || defaultProviderPresetId;
@@ -167,6 +173,15 @@ export function NormalConversationComposer({
       surface="normal_conversation"
       density="floating"
       className="conversation-home-composer normal-conversation-composer"
+      aboveComposerNode={threadId && onOpenReview ? (
+        <ConversationChangeSummary
+          cwd={workspaceCwd}
+          threadId={threadId}
+          active={activeRun}
+          submitting={sendBusy}
+          onOpenReview={onOpenReview}
+        />
+      ) : null}
       ariaLabel={t("New conversation composer")}
       toolbarClassName="conversation-home-toolbar normal-conversation-composer-toolbar"
       leftToolsClassName="conversation-home-tools normal-conversation-composer-tools"
