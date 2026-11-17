@@ -108,6 +108,18 @@ test("GitHub adapters reject repository values that could alter the API URL", as
   assert.equal(fetchCalls, 0);
 });
 
+test("GitHub adapters preserve valid dot-prefixed repository names", async () => {
+  const calls: string[] = [];
+  const adapter = getExternalSourceRegistration("github").createAdapter({
+    fetch: async (url) => {
+      calls.push(url);
+      return Response.json([]);
+    },
+  });
+  await adapter.loadCandidates({ repository: "owner/.github", events: ["issue.opened"], activeStates: ["open"] });
+  assert.equal(calls[0], "https://api.github.com/repos/owner/.github/issues?state=open&per_page=50");
+});
+
 for (const kind of ["github", "linear"] as const) {
   test(`${kind} generic poll and compatibility wrapper share scheduler identity and evidence`, async (t) => {
     const f = fixture(t);
