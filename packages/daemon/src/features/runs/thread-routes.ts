@@ -1,3 +1,4 @@
+import { parseGoalAcceptanceCriteria, parseGoalAcceptanceEvidence, parseGoalSupervisionPolicy, type GoalAcceptanceCriterion, type GoalAcceptanceEvidence, type GoalSupervisionPolicy } from "@ling-stack/core";
 import { createHash, randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
@@ -68,11 +69,13 @@ import {
   projectPublicRunSession,
 } from "./public-execution-snapshots.js";
 import { projectPublicRunEventEnvelope, toPublicArtifactMetadata } from "./public-artifacts.js";
+import { handleGetThreadWorkspaceChangeSummary } from "./thread-workspace-change-summary.js";
 
 export type LingThreadRoute =
   | { readonly kind: "detail"; readonly threadId: string }
   | { readonly kind: "turns"; readonly threadId: string }
   | { readonly kind: "evidence"; readonly threadId: string }
+  | { readonly kind: "workspace-change-summary"; readonly threadId: string }
   | { readonly kind: "mode"; readonly threadId: string }
   | { readonly kind: "goal"; readonly threadId: string }
   | { readonly kind: "goal-complete"; readonly threadId: string }
@@ -244,6 +247,9 @@ export function handleLingThreadItem(
   route: LingThreadRoute,
   options?: HandleLingThreadRouteOptions,
 ): void | Promise<void> {
+  if (route.kind === "workspace-change-summary") {
+    return handleGetThreadWorkspaceChangeSummary(request, response, url, storeRegistry, route.threadId);
+  }
   if (route.kind === "resume") {
     return handleLingThreadResume(request, response, url, storeRegistry, route.threadId, options);
   }
@@ -385,8 +391,8 @@ async function handleLingThreadGoal(
       }
       const now = new Date().toISOString();
       const goal = existing
-        ? store.replaceLingThreadGoal({ threadId, objective: input.objective, tokenBudget: input.tokenBudget ?? undefined }, now)
-        : store.createLingThreadGoal({ threadId, objective: input.objective, tokenBudget: input.tokenBudget ?? undefined }, now);
+        ? store.replaceLingThreadGoal({ threadId, objective: input.objective, tokenBudget: input.tokenBudget ?? undefined, acceptanceCriteria: input.acceptanceCriteria, supervisionPolicy: input.supervisionPolicy }, now)
+        : store.createLingThreadGoal({ threadId, objective: input.objective, tokenBudget: input.tokenBudget ?? undefined, acceptanceCriteria: input.acceptanceCriteria, supervisionPolicy: input.supervisionPolicy }, now);
       writeJson(response, existing ? 200 : 201, { cwd, threadId, goal });
       return;
     }
@@ -446,7 +452,8 @@ async function handleLingThreadGoalComplete(
         completedBy: input.actor,
         completedReason: input.reason,
         completionVerificationSummary: input.completionVerificationSummary,
-        completionEvidenceRefs: mergeGoalEvidenceRefs(existing.completionEvidenceRefs, input.evidenceRefs),
+        acceptanceEvidence: input.acceptanceEvidence,
+        completionEvidenceRefs: input.evidenceRefs,
         blockedReason: null,
         continuationChainId: null,
         continuationDepth: 0,
@@ -2155,6 +2162,8 @@ function parsePutLingThreadGoalBody(value: unknown): {
   readonly objective: string;
   readonly tokenBudget?: number | null;
   readonly replaceExisting: boolean;
+  readonly acceptanceCriteria?: readonly GoalAcceptanceCriterion[];
+  readonly supervisionPolicy?: GoalSupervisionPolicy;
 } {
   if (!isRecord(value)) {
     throw new HttpError(400, "bad_request", "Thread goal request must be a JSON object.");
@@ -2167,6 +2176,8 @@ function parsePutLingThreadGoalBody(value: unknown): {
     objective,
     tokenBudget: readOptionalGoalNumber(value, "tokenBudget", true),
     replaceExisting: readOptionalBoolean(value, "replaceExisting") ?? false,
+    acceptanceCriteria: value.acceptanceCriteria === undefined ? undefined : parseGoalAcceptanceCriteria(value.acceptanceCriteria),
+    supervisionPolicy: value.supervisionPolicy === undefined ? undefined : parseGoalSupervisionPolicy(value.supervisionPolicy),
   };
 }
 
@@ -2195,6 +2206,9 @@ function parsePatchLingThreadGoalBody(value: unknown): UpdateLingThreadGoalInput
     blockedReason: readNullableStringField(value, "blockedReason"),
     completionEvidenceRefs: readOptionalGoalEvidenceRefs(value, "completionEvidenceRefs"),
     usageSource: readOptionalGoalUsageSource(value, "usageSource"),
+    acceptanceCriteria: value.acceptanceCriteria === undefined ? undefined : parseGoalAcceptanceCriteria(value.acceptanceCriteria),
+    supervisionPolicy: value.supervisionPolicy === undefined ? undefined : parseGoalSupervisionPolicy(value.supervisionPolicy),
+    ...(status === "active" ? { lastBlockerFingerprint: null, sameBlockerCount: 0, noEvidenceContinuationCount: 0 } : {}),
   };
 }
 
@@ -2203,6 +2217,7 @@ function parseCompleteLingThreadGoalBody(value: unknown): {
   readonly reason?: string;
   readonly evidenceRefs: readonly GoalEvidenceRef[];
   readonly completionVerificationSummary?: string;
+  readonly acceptanceEvidence?: readonly GoalAcceptanceEvidence[];
 } {
   if (value === undefined || value === null) {
     return {
@@ -2228,6 +2243,7 @@ function parseCompleteLingThreadGoalBody(value: unknown): {
     reason,
     evidenceRefs,
     completionVerificationSummary,
+    acceptanceEvidence: value.acceptanceEvidence === undefined ? undefined : parseGoalAcceptanceEvidence(value.acceptanceEvidence),
   };
 }
 
@@ -2525,23 +2541,6 @@ function readOptionalStringArray(record: Record<string, unknown>, key: string): 
     .filter(Boolean)
     .slice(0, 20);
   return items.length > 0 ? items : undefined;
-}
-
-function mergeGoalEvidenceRefs(
-  existing: readonly GoalEvidenceRef[],
-  next: readonly GoalEvidenceRef[],
-): readonly GoalEvidenceRef[] {
-  const seen = new Set(existing.map((ref) => `${ref.kind}:${ref.id}`));
-  const merged = [...existing];
-  for (const ref of next) {
-    const key = `${ref.kind}:${ref.id}`;
-    if (seen.has(key)) {
-      continue;
-    }
-    seen.add(key);
-    merged.push(ref);
-  }
-  return merged;
 }
 
 function readOptionalGoalCompletionActor(record: Record<string, unknown>, key: string): LingThreadGoalCompletionActor | undefined {

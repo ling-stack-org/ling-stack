@@ -1,3 +1,4 @@
+import { LingDaemonTransportError } from "@ling-stack/api-client";
 import { useWorkSummaryContext } from "../workspace/work-summary/WorkSummaryProvider.js";
 import { useTeammateObservationReads } from "./use-teammate-private-timeline.js";
 import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type UIEvent } from "react";
@@ -291,6 +292,7 @@ export function TeammateWorkspace({
   const [directExecutionActions, setDirectExecutionActions] = useState<readonly ExecutionAction[]>([]);
   const [directRuntime, setDirectRuntime] = useState<TeammateDirectRuntimeResponse | undefined>();
   const [directTimelineRuns, setDirectTimelineRuns] = useState<readonly RunSession[]>([]);
+  const [directCanonicalThreadId, setDirectCanonicalThreadId] = useState<string>();
   const [directWorkspace, setDirectWorkspace] = useState<DirectWorkspaceResponse | undefined>();
   const workspaceSnapshotCurrent = messageSnapshotIdentity === workspaceMessageIdentity;
   const currentMessages = workspaceSnapshotCurrent ? messages : emptyTeammateDirectMessages;
@@ -845,6 +847,7 @@ export function TeammateWorkspace({
     setTerminalReports([]);
     setDirectExecutionActions([]);
     setDirectWorkspace(undefined);
+    setDirectCanonicalThreadId(undefined);
     setDirectRuntime(undefined);
     setDirectGuidanceSubmitting("");
     setDirectGuidanceCancelingId("");
@@ -952,9 +955,11 @@ export function TeammateWorkspace({
         setHasMoreDirectMessages(Boolean(directResponse.hasMore));
         setNextDirectBeforeMessageId(directResponse.nextBeforeMessageId);
         setDirectRuntime(directRuntimeResponse);
-        setDirectTimelineRuns(directResponse.cwd === workspaceCwd && privateTimelineResponseIsOwned(directResponse, {
+        const timelineOwned = directResponse.cwd === workspaceCwd && privateTimelineResponseIsOwned(directResponse, {
           teammateId: request.teammateId, directThreadId: directRuntimeResponse.thread.id,
-        }) ? directResponse.timeline?.runs ?? [] : []);
+        });
+        setDirectTimelineRuns(timelineOwned ? directResponse.timeline?.runs ?? [] : []);
+        setDirectCanonicalThreadId(timelineOwned ? directResponse.timeline?.thread.id : undefined);
         setDirectWorkspace(directWorkspaceResponse);
         setDirectLinkPreviews(directLinkPreviewsResponse.linkPreviews);
         setPrivateAttachments(privateAttachmentsResponse.attachments);
@@ -1000,9 +1005,11 @@ export function TeammateWorkspace({
         setRuntimeMetrics(response.runtimeMetrics);
         setGeneratedMedia((current) => mergeConversationGeneratedMedia(current, response.generatedMedia));
         setMessageSnapshotIdentity(JSON.stringify([workspaceCwd, request.teammateId]));
-        setDirectTimelineRuns(response.cwd === workspaceCwd && privateTimelineResponseIsOwned(response, {
+        const timelineOwned = response.cwd === workspaceCwd && privateTimelineResponseIsOwned(response, {
           teammateId: request.teammateId,
-        }) ? response.timeline?.runs ?? [] : []);
+        });
+        setDirectTimelineRuns(timelineOwned ? response.timeline?.runs ?? [] : []);
+        setDirectCanonicalThreadId(timelineOwned ? response.timeline?.thread.id : undefined);
       });
       workspaceRequestOwner.clearError(request);
     } catch (error) {
@@ -1040,9 +1047,11 @@ export function TeammateWorkspace({
         setHasMoreDirectMessages(Boolean(directResponse.hasMore));
         setNextDirectBeforeMessageId(directResponse.nextBeforeMessageId);
         setDirectRuntime(runtimeResponse);
-        setDirectTimelineRuns(directResponse.cwd === workspaceCwd && privateTimelineResponseIsOwned(directResponse, {
+        const timelineOwned = directResponse.cwd === workspaceCwd && privateTimelineResponseIsOwned(directResponse, {
           teammateId: request.teammateId, directThreadId: runtimeResponse.thread.id,
-        }) ? directResponse.timeline?.runs ?? [] : []);
+        });
+        setDirectTimelineRuns(timelineOwned ? directResponse.timeline?.runs ?? [] : []);
+        setDirectCanonicalThreadId(timelineOwned ? directResponse.timeline?.thread.id : undefined);
         setDirectWorkspace(directWorkspaceResponse);
         setDirectLinkPreviews(linkPreviewsResponse.linkPreviews);
         setPrivateAttachments(privateAttachmentsResponse.attachments);
@@ -1395,8 +1404,13 @@ export function TeammateWorkspace({
         setMessageDraft(current => current || draftSnapshot);
         setPendingAttachments(current => current.length ? current : attachmentsSnapshot.map(item => ({ ...item, deleteOnRemove: false })));
         setPendingDirectLinkPreviewIds(current => current.length ? current : linkPreviewIdsSnapshot);
-        workspaceRequestOwner.reportError(operation, observationReads.shouldMergeTransport(error) || error instanceof UnconfirmedConversationSubmissionError
-          ? t("Pending confirmation") : error instanceof Error ? error.message : String(error));
+        // The durable lookup key is the only evidence available after an
+        // unconfirmed submission. A stream transport failure therefore stays
+        // pending; a synchronous business or parser error remains visible
+        // while the same lookup key is retained for later recovery.
+        workspaceRequestOwner.reportError(operation,
+          observationReads.shouldMergeTransport(error) || error instanceof LingDaemonTransportError || error instanceof UnconfirmedConversationSubmissionError
+            ? t("Pending confirmation") : error instanceof Error ? error.message : String(error));
         return;
       }
       const failure = directSendLifecycle.fail(sendOperation);
@@ -1822,6 +1836,7 @@ export function TeammateWorkspace({
           cwd={cwd}
           teammate={teammate}
           threadId={currentDirectWorkspace?.threadId}
+          changeSummaryThreadId={workspaceSnapshotCurrent ? directCanonicalThreadId : undefined}
           userProfile={userProfile}
           loading={loading}
           visibleMessages={visibleMessages}
@@ -1891,6 +1906,7 @@ export function TeammateWorkspace({
           onCopyMessageText={copyMessageText}
           onOpenRun={onOpenRun}
           onOpenFiles={(target) => openChatDockPage("files", target)}
+          onOpenBrowser={() => openChatDockPage("browser")}
           onOpenReview={(target) => openChatDockPage("review", undefined, target)}
           onCreateTaskFromMessage={tasksController.createFromMessage}
           onPromoteDirectGuidance={promoteDirectGuidance}

@@ -1,3 +1,5 @@
+import { handleAutomationEventRoute, isAutomationEventIngress } from "../features/automations/event-routes.js";
+import { handleNodeRerunSubmission } from "../features/runs/node-rerun-submission.js";
 import { handleChannelSessions, handleChannelSessionDirectoryRepair } from "../features/channels/session-routes.js";
 import { handleMemorySemanticRoute } from "../features/memory/semantic-routes.js";
 import { handleMemoryWikiRoute } from "../features/memory/wiki-routes.js";
@@ -204,6 +206,7 @@ import {
 } from "../features/plugins/routes.js";
 import { handleCuaDriverLeaseRoute } from "../features/plugins/cua-driver-lease-routes.js";
 import { handleOfficeDriverRoute } from "../features/office-documents/driver-routes.js";
+import { handleDesktopBrowserRoute } from "../features/desktop-browser/routes.js";
 import { handleChromeBrowserPair } from "../features/browser-extension/routes.js";
 import { handleWorkItemRoute, handleWorkItemsCollection } from "../features/work-items/routes.js";
 import { handleWorkspaceDirectorySelect, handleWorkspaceTerminalCommand, handleWorkspaceTerminalProfile } from "../features/workspace-directory/routes.js";
@@ -453,7 +456,7 @@ export async function routeRequest(
   // request. /health stays open so lifecycle probes keep working.
   if (config.authToken) {
     const pathname = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`).pathname;
-    if (pathname !== "/health") {
+    if (pathname !== "/health" && !isAutomationEventIngress(pathname, request.method)) {
       if (!daemonRequestIsAuthorized(config.authToken, request.headers.authorization)) {
         writeJson(response, 401, { error: "unauthorized", message: "A valid bearer token is required for non-loopback access." });
         return;
@@ -639,6 +642,7 @@ export async function routeRequest(
   if (await handleOfficeDriverRoute(request, response, context)) {
     return;
   }
+  if (await handleDesktopBrowserRoute(request, response, context)) return;
   if (request.method === "GET" && url.pathname === "/health") {
     writeJson(response, 200, {
       ok: true,
@@ -756,7 +760,7 @@ export async function routeRequest(
   }
 
   if (url.pathname === "/workspace-settings") {
-    await handleWorkspaceSettings(request, response, config, storeRegistry, secretResolver);
+    await handleWorkspaceSettings(request, response, config, storeRegistry, secretResolver, cwd => context.desktopBrowser.forWorkspace(cwd).cancelAll());
     return;
   }
 
@@ -821,6 +825,8 @@ export async function routeRequest(
     handleMcpToolsCollection(request, response, url, storeRegistry);
     return;
   }
+
+  if (await handleAutomationEventRoute(request, response, url, context)) return;
 
   if (url.pathname === "/automations") {
     await handleAutomationsCollection(request, response, config, storeRegistry, automationSchedulers);
@@ -957,6 +963,7 @@ export async function routeRequest(
       managedPluginRoute,
       context.chromeBrowserPlugin,
       context.officeDocumentsPlugin,
+      context.desktopBrowserPlugin,
     );
     return;
   }
@@ -1684,6 +1691,12 @@ export async function routeRequest(
       activeRuns,
       runRoute.runId,
     );
+    return;
+  }
+  if (runRoute?.kind === "node-rerun-submit") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) return;
+    await handleNodeRerunSubmission(request, response, url, config.maxBodyBytes, storeRegistry, activeRuns, runRoute.runId,
+      cwd => context.taskSupervisor.poke(cwd));
     return;
   }
   if (runRoute?.kind === "node-rerun-admission") {

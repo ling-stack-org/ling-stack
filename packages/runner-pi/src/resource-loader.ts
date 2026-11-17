@@ -13,6 +13,9 @@ import { createLingStackTaskContinuationExtension } from "./extensions/task-cont
 import { createLingStackUserInputExtension, isUserInputToolSurfaceEnabled } from "./extensions/user-input.js";
 import { createLingStackDelegationExtension, isDelegationToolSurfaceEnabled } from "./extensions/delegation.js";
 import { createLingStackToolBeforeExtension } from "./extensions/tool-before.js";
+import { createLingStackCodeIntelligenceExtension } from "./extensions/code-intelligence.js";
+import { createLingStackCodeModeExtension } from "./extensions/code-mode.js";
+import { createLingStackHooksExtension } from "./extensions/hooks.js";
 import { createLingStackModelContextBudgetExtension } from "./model-context-budget.js";
 import type { PiRunnerRunOptions } from "./types.js";
 import { formatTaskPrompt, getLingStackSystemPrompt } from "./utils.js";
@@ -25,6 +28,13 @@ export async function createLingStackResourceLoader(
   assertHostIsolatedFilesToolSurface(options);
   assertHostCapabilityToolSurface(options);
   assertHostReadonlyToolSurface(options);
+  if (options.mcpTools?.some(tool => ["code_mode", "code_intelligence"].includes(tool.registeredName))) {
+    throw new Error("Agent capability tool names are reserved.");
+  }
+  if ((options.isolatedToolsProfile || options.readonlyToolsProfile)
+    && (options.initialToolSurface?.codeMode || options.initialToolSurface?.codeIntelligence || options.hooks)) {
+    throw new Error("Agent capabilities are unavailable in the restricted workflow profiles.");
+  }
   const isolated = options.isolatedToolsProfile === "host_isolated_files_v1";
   // Adapter/boundary resolve this profile's safe defaults before session-factory selects SDK tools.
   if (isolated && options.tools === undefined) throw new Error("workflow_isolated_tool_selection_missing");
@@ -47,6 +57,9 @@ export async function createLingStackResourceLoader(
         ...(isUserInputToolSurfaceEnabled(options) ? [createLingStackUserInputExtension(options)] : []),
         ...(isDelegationToolSurfaceEnabled(options) ? [createLingStackDelegationExtension(options)] : []),
         ...(options.onToolBefore ? [createLingStackToolBeforeExtension(options)] : []),
+        ...(options.hooks?.hooks.length ? [createLingStackHooksExtension(options, "before")] : []),
+        ...(options.initialToolSurface?.codeIntelligence ? [createLingStackCodeIntelligenceExtension(options)] : []),
+        ...(options.initialToolSurface?.codeMode ? [createLingStackCodeModeExtension(options)] : []),
         ...(options.readonlyToolsProfile ? [createLingStackHostReadonlyExtension(options)] : []),
         createLingStackFileMutationToolExtension(options),
         // Bash always has a Host result. Feature flags cannot re-enable an unjournaled SDK spawn.
@@ -59,6 +72,7 @@ export async function createLingStackResourceLoader(
           ? [createLingStackMediaGenerationExtension(options)]
           : []),
         ...((options.initialToolSurface?.toolHydration ?? Boolean(options.onToolHydrationRequest)) ? [createLingStackToolHydrationExtension(options)] : []),
+        ...(options.hooks?.hooks.length ? [createLingStackHooksExtension(options, "after")] : []),
       ]),
     ],
   });

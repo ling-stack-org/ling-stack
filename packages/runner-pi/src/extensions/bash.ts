@@ -15,7 +15,7 @@ export function createLingStackBashToolExtension(options: PiRunnerRunOptions): E
       parameters: createCommandRuleAwareBashParameters(originalBash.parameters),
       async execute(toolCallId, params, signal) {
         signal?.throwIfAborted();
-        const decision = await requireDaemonHandledBash(options, toolCallId, params);
+        const decision = await requireDaemonHandledBash(options, toolCallId, params, signal);
         signal?.throwIfAborted();
         if (!decision.handledResult) {
           throw new Error("Ling Stack unified exec approved bash without a handled result.");
@@ -62,12 +62,14 @@ async function requireDaemonHandledBash(
   options: PiRunnerRunOptions,
   toolCallId: string,
   input: unknown,
+  signal?: AbortSignal,
 ): Promise<PiRunnerApprovalDecision> {
   if (!options.onApprovalRequired) {
     throw new Error("Ling Stack blocked bash: no approval handler is configured.");
   }
   const decision = await options.onApprovalRequired({
     toolCallId,
+    signal,
     toolName: "bash",
     input,
     task: options.task,

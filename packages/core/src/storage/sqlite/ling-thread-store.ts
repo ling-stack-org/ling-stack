@@ -1,3 +1,6 @@
+import { assertGoalCompletion } from "./goal-acceptance.js";
+import { parseGoalAcceptanceCriteria, parseGoalAcceptanceEvidence, parseGoalSupervisionPolicy } from "../../goal-supervision.js";
+import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 import type { SQLOutputValue } from "node:sqlite";
 import {
   createProposedPlanArtifactId,
@@ -335,8 +338,9 @@ export class SqliteLingThreadStore {
           same_blocker_count,
           last_continuation_stop_reason,
           last_continuation_stopped_at,
-          last_continuation_evidence_delta_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          last_continuation_evidence_delta_json,
+          acceptance_criteria_json, acceptance_evidence_json, supervision_policy_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         id,
@@ -367,6 +371,9 @@ export class SqliteLingThreadStore {
         null,
         null,
         null,
+        stringifyJson(parseGoalAcceptanceCriteria(input.acceptanceCriteria ?? [])),
+        stringifyJson(parseGoalAcceptanceEvidence(input.acceptanceEvidence ?? [])),
+        input.supervisionPolicy ? stringifyJson(parseGoalSupervisionPolicy(input.supervisionPolicy)) : null,
       );
     const goal = this.getLingThreadGoalById(id);
     if (!goal) {
@@ -421,8 +428,9 @@ export class SqliteLingThreadStore {
             same_blocker_count,
             last_continuation_stop_reason,
             last_continuation_stopped_at,
-            last_continuation_evidence_delta_json
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            last_continuation_evidence_delta_json,
+          acceptance_criteria_json, acceptance_evidence_json, supervision_policy_json
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `)
         .run(
           id,
@@ -453,6 +461,9 @@ export class SqliteLingThreadStore {
           null,
           null,
           null,
+          stringifyJson(parseGoalAcceptanceCriteria(input.acceptanceCriteria ?? [])),
+          stringifyJson(parseGoalAcceptanceEvidence(input.acceptanceEvidence ?? [])),
+          input.supervisionPolicy ? stringifyJson(parseGoalSupervisionPolicy(input.supervisionPolicy)) : null,
         );
       this.context.database.exec("COMMIT");
     } catch (error) {
@@ -467,10 +478,27 @@ export class SqliteLingThreadStore {
   }
 
   updateLingThreadGoal(goalId: string, input: UpdateLingThreadGoalInput, now: string): LingThreadGoal | undefined {
+    const db = this.context.database;
+    if (input.status !== "complete" || db.isTransaction) return this.writeLingThreadGoal(goalId, input, now);
+    db.exec("BEGIN IMMEDIATE");
+    try { const result = this.writeLingThreadGoal(goalId, input, now); db.exec("COMMIT"); return result; }
+    catch (error) { rollbackOwnedSqliteTransaction(db); throw error; }
+  }
+
+  private writeLingThreadGoal(goalId: string, input: UpdateLingThreadGoalInput, now: string): LingThreadGoal | undefined {
     const existing = this.getLingThreadGoalById(goalId);
     if (!existing) {
       return undefined;
     }
+    const criteria = parseGoalAcceptanceCriteria(input.acceptanceCriteria ?? existing.acceptanceCriteria ?? []);
+    const evidence = parseGoalAcceptanceEvidence(input.acceptanceEvidence ?? existing.acceptanceEvidence ?? []);
+    if (input.status === "complete" && existing.status !== "complete") {
+      assertGoalCompletion(this.context.database, { ...existing, acceptanceCriteria: criteria }, input);
+    }
+    const completionRefs = input.status === "complete" && input.completionEvidenceRefs
+      ? [...new Map([...existing.completionEvidenceRefs, ...input.completionEvidenceRefs].map(ref => [`${ref.kind}:${ref.id}`, ref])).values()]
+      : input.completionEvidenceRefs ?? existing.completionEvidenceRefs;
+    const policy = input.supervisionPolicy ?? existing.supervisionPolicy;
     const nextStatus = input.status ?? existing.status;
     const completedAt = nextStatus === "complete" ? existing.completedAt ?? now : existing.completedAt;
     const clearedAt = nextStatus === "cleared" ? existing.clearedAt ?? now : existing.clearedAt;
@@ -499,7 +527,8 @@ export class SqliteLingThreadStore {
             same_blocker_count = ?,
             last_continuation_stop_reason = ?,
             last_continuation_stopped_at = ?,
-            last_continuation_evidence_delta_json = ?
+            last_continuation_evidence_delta_json = ?,
+            acceptance_criteria_json = ?, acceptance_evidence_json = ?, supervision_policy_json = ?
         WHERE id = ?
       `)
       .run(
@@ -513,7 +542,7 @@ export class SqliteLingThreadStore {
         clearedAt ?? null,
         nullableUpdate(input.lastRunId, existing.lastRunId) ?? null,
         nullableUpdate(input.blockedReason, existing.blockedReason) ?? null,
-        stringifyJson(input.completionEvidenceRefs ?? existing.completionEvidenceRefs),
+        stringifyJson(completionRefs),
         nullableUpdate(input.completedBy, existing.completedBy) ?? null,
         nullableUpdate(input.completedReason, existing.completedReason) ?? null,
         nullableUpdate(input.completionVerificationSummary, existing.completionVerificationSummary) ?? null,
@@ -526,6 +555,7 @@ export class SqliteLingThreadStore {
         nullableUpdate(input.lastContinuationStopReason, existing.lastContinuationStopReason) ?? null,
         nullableUpdate(input.lastContinuationStoppedAt, existing.lastContinuationStoppedAt) ?? null,
         stringifyNullableJson(nullableUpdate(input.lastContinuationEvidenceDelta, existing.lastContinuationEvidenceDelta)),
+        stringifyJson(criteria), stringifyJson(evidence), policy ? stringifyJson(parseGoalSupervisionPolicy(policy)) : null,
         goalId,
       );
     return this.getLingThreadGoalById(goalId);

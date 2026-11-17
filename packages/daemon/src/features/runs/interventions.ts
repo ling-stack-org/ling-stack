@@ -1,8 +1,11 @@
+import { parseReviewAnnotation } from "@ling-stack/contracts";
 import { randomUUID } from "node:crypto";
 import { conversationWorkspaceFileRefSourcesV1 } from "@ling-stack/contracts";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   runInterventionModes,
+  createSqliteGoalSupervisionStore,
+  defaultGoalSupervisionPolicy,
   type GoalContinuationEvidenceDelta,
   type GoalContinuationStopReason,
   type LingThreadGoal,
@@ -418,6 +421,17 @@ export async function maybeStartNextRunInterventionContinuation(input: {
       failRunIntervention(input, starting.id, "continuation_source_attempt_changed");
       continue;
     }
+    if (starting.requestedBy === "system" && starting.idempotencyKey?.startsWith("goal_auto_continue:")) {
+      const goal = sourceRun.threadId ? input.store.getLingThreadGoal(sourceRun.threadId) : undefined;
+      const policy = goal?.supervisionPolicy ?? defaultGoalSupervisionPolicy;
+      if (!goal || !starting.idempotencyKey.startsWith(`goal_auto_continue:${goal.id}:`) || goal.status !== "active" || !policy.autoContinue
+        || goal.continuationDepth > policy.maxContinuations || goal.noEvidenceContinuationCount >= policy.maxNoEvidenceContinuations
+        || goal.tokenBudget !== undefined && goal.tokensUsed >= goal.tokenBudget
+        || policy.maxTimeSeconds !== undefined && goal.timeUsedSeconds >= policy.maxTimeSeconds
+        || input.store.getLingThreadConversationMode(goal.threadId)?.mode === "plan") {
+        failRunIntervention(input, starting.id, "goal_supervision_authority_changed"); continue;
+      }
+    }
     streamRunEventIfPossible(input.store, input.activeRuns, input.sourceRunId, "run_continuation_starting", {
       interventionId: starting.id,
       mode: starting.mode,
@@ -558,7 +572,7 @@ export function maybeQueueGoalContinuation(input: {
 }): RunIntervention | undefined {
   const run = input.terminalRun;
   const isAutomaticContinuationRun = run.continuationReason === "queue_followup";
-  if (run.status !== "succeeded" || !run.threadId) {
+  if (!["succeeded", "failed"].includes(run.status) || !run.threadId) {
     return undefined;
   }
   if ((run.parentRunId || run.continuationReason) && !isAutomaticContinuationRun) {
@@ -577,7 +591,6 @@ export function maybeQueueGoalContinuation(input: {
     return undefined;
   }
   const mode = input.store.getLingThreadConversationMode(thread.id);
-  const rootRunId = run.parentRunId ?? run.id;
   const currentRunHasEvidence = hasMeaningfulGoalProgressEvidence(input.store, run.id);
   const nextNoEvidenceContinuationCount = isAutomaticContinuationRun && !currentRunHasEvidence
     ? (goal?.noEvidenceContinuationCount ?? 0) + 1
@@ -589,6 +602,7 @@ export function maybeQueueGoalContinuation(input: {
     hasActiveRun: Boolean(thread.activeRunId && thread.activeRunId !== run.id && input.activeRuns.get(thread.activeRunId)),
     hasPendingIntervention: hasPendingRunIntervention(input.store, run.id),
     nextNoEvidenceContinuationCount,
+    runStatus: run.status,
   });
   if (guard.decision === "stopped") {
     if (goal) {
@@ -608,39 +622,12 @@ export function maybeQueueGoalContinuation(input: {
   const activeGoal = goal;
 
   const now = new Date().toISOString();
-  const sourceWorkUnit = run.workUnitId ? input.store.getWorkUnit(run.workUnitId) : undefined;
-  const instruction = renderGoalContinuationInstruction(activeGoal.objective);
-  const chainId = activeGoal.continuationChainId ?? `goal_chain_${activeGoal.id}_${rootRunId}`;
-  const nextDepth = activeGoal.continuationDepth + 1;
-  input.store.updateLingThreadGoal(
-    activeGoal.id,
-    {
-      continuationChainId: chainId,
-      continuationDepth: nextDepth,
-      noEvidenceContinuationCount: nextNoEvidenceContinuationCount,
-      lastContinuationStopReason: null,
-      lastContinuationStoppedAt: null,
-      lastContinuationEvidenceDelta: evidenceDelta,
-    },
-    now,
-  );
-  const intervention = input.store.createRunIntervention(
-    {
-      sourceRunId: run.id,
-      sourceWorkUnitId: run.workUnitId,
-      sourceAttemptId: sourceWorkUnit?.activeAttemptId ?? (run.workUnitId ? input.store.listWorkUnitAttempts(run.workUnitId).at(-1)?.id : undefined),
-      mode: "queue_followup",
-      instruction,
-      messagePayload: {
-        body: instruction,
-        attachmentIds: [],
-        linkPreviewIds: [],
-      },
-      requestedBy: "system",
-      idempotencyKey: `goal_auto_continue:${activeGoal.id}:${run.id}:${nextDepth}`,
-    },
-    now,
-  );
+  const instruction = renderGoalContinuationInstruction(activeGoal.objective, activeGoal.acceptanceCriteria);
+  const intervention = createSqliteGoalSupervisionStore(input.store).queue({ goalId: activeGoal.id, expectedUpdatedAt: activeGoal.updatedAt,
+    sourceRunId: run.id, instruction, noEvidenceCount: nextNoEvidenceContinuationCount, evidenceDelta, now });
+  if (!intervention) return undefined;
+  const updated = input.store.getLingThreadGoal(activeGoal.threadId)!;
+  const chainId = updated.continuationChainId!, nextDepth = updated.continuationDepth;
   streamRunEventIfPossible(input.store, input.activeRuns, run.id, "run_intervention_created", {
     interventionId: intervention.id,
     mode: intervention.mode,
@@ -661,8 +648,6 @@ export function maybeQueueGoalContinuation(input: {
   return intervention;
 }
 
-const MAX_GOAL_CONTINUATION_DEPTH = 3;
-const MAX_GOAL_NO_EVIDENCE_CONTINUATIONS = 2;
 
 type GoalContinuationGuardDecision =
   | { readonly decision: "started" }
@@ -679,6 +664,7 @@ function evaluateGoalContinuationGuard(input: {
   readonly hasActiveRun: boolean;
   readonly hasPendingIntervention: boolean;
   readonly nextNoEvidenceContinuationCount: number;
+  readonly runStatus: RunStatus;
 }): GoalContinuationGuardDecision {
   const { goal } = input;
   if (!goal) {
@@ -702,10 +688,13 @@ function evaluateGoalContinuationGuard(input: {
   if (input.hasActiveRun || input.hasPendingIntervention) {
     return { decision: "stopped", stopReason: "active_run_exists" };
   }
-  if (goal.continuationDepth >= MAX_GOAL_CONTINUATION_DEPTH) {
+  const policy = goal.supervisionPolicy ?? defaultGoalSupervisionPolicy;
+  if (!policy.autoContinue || input.runStatus === "failed" && !policy.retryFailedRuns) return { decision: "stopped", stopReason: "supervision_disabled" };
+  if (policy.maxTimeSeconds !== undefined && goal.timeUsedSeconds >= policy.maxTimeSeconds) return { decision: "stopped", stopReason: "time_budget" };
+  if (goal.continuationDepth >= policy.maxContinuations) {
     return { decision: "stopped", stopReason: "max_depth" };
   }
-  if (input.nextNoEvidenceContinuationCount >= MAX_GOAL_NO_EVIDENCE_CONTINUATIONS) {
+  if (input.nextNoEvidenceContinuationCount >= policy.maxNoEvidenceContinuations) {
     return {
       decision: "stopped",
       stopReason: "no_evidence_threshold",
@@ -722,6 +711,9 @@ function recordGoalContinuationStop(
   evidenceDelta: GoalContinuationEvidenceDelta,
   noEvidenceContinuationCount = goal.noEvidenceContinuationCount,
 ): void {
+  if (goal.lastContinuationStopReason === stopReason && goal.noEvidenceContinuationCount === noEvidenceContinuationCount
+    && (["usage_limited", "budget_limited", "same_blocker_threshold"].includes(stopReason)
+      || JSON.stringify(goal.lastContinuationEvidenceDelta) === JSON.stringify(evidenceDelta))) return;
   const now = new Date().toISOString();
   store.updateLingThreadGoal(
     goal.id,
@@ -781,12 +773,13 @@ function hasMeaningfulGoalProgressEvidence(store: RunStore, runId: string): bool
   return store.listApprovalRequests({ runId, limit: 1 }).length > 0;
 }
 
-function renderGoalContinuationInstruction(objective: string): string {
+function renderGoalContinuationInstruction(objective: string, criteria?: LingThreadGoal["acceptanceCriteria"]): string {
   return [
     `Continue working toward active goal: ${objective.trim()}`,
     "",
-    "Stop and report visibly if the goal appears complete, blocked, needs user input, or requires additional approval.",
-  ].join("\n");
+    criteria?.length ? `Acceptance criteria requiring persisted evidence:\n${criteria.map(item => `${item.id}: ${item.description} (${item.kind})`).join("\n")}` : undefined,
+    "Continue until acceptance is evidenced. Do not mark a goal complete based on a Run summary alone. Report blockers, missing input or required approval.",
+  ].filter(Boolean).join("\n");
 }
 
 function parseRunInterventionCreateRequest(value: unknown): {
@@ -912,6 +905,7 @@ function readOptionalRunInterventionWorkspaceFilePayloads(
   if (!Array.isArray(value)) {
     return undefined;
   }
+  if (value.length > 12) throw new Error("fileRefs must contain at most 12 references");
   return value.map((item) => {
     if (!isRecord(item)) {
       throw new Error(`${key} must contain objects`);
@@ -919,12 +913,17 @@ function readOptionalRunInterventionWorkspaceFilePayloads(
     const label = readOptionalString(item, "label");
     const previewText = readOptionalString(item, "previewText");
     const blockedReason = readOptionalString(item, "blockedReason");
+    const annotation = parseReviewAnnotation(item.annotation);
+    if (item.line !== undefined && (typeof item.line !== "number" || !Number.isSafeInteger(item.line) || item.line < 1)) throw new Error("Invalid file reference line");
+    if (annotation?.kind === "code" && (typeof item.line !== "number" || (annotation.startLine ?? item.line) > item.line)) throw new Error("Invalid review line range");
     const source = item.source;
     if (source !== undefined && source !== "composer" && source !== "explicit_text" && source !== "api" && source !== "inferred_text") {
       throw new Error(`fileRefs source must be one of ${conversationWorkspaceFileRefSourcesV1.join(", ")}`);
     }
     return {
       path: readString(item, "path"),
+      ...(typeof item.line === "number" && Number.isSafeInteger(item.line) && item.line > 0 ? { line: item.line } : {}),
+      ...(annotation ? { annotation } : {}),
       ...(label ? { label } : {}),
       ...(source ? { source } : {}),
       rootRelation: readRunInterventionWorkspaceFileRootRelation(item.rootRelation),

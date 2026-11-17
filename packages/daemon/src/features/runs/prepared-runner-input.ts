@@ -3,14 +3,14 @@ import { resolveAutomaticMemoryRecallScope } from "../memory/recall-service.js";
 import { isDeepStrictEqual } from "node:util";
 import { isHostCapabilityToolDefinitionV1 } from "@ling-stack/contracts";
 import { redactSecrets, type RunStore, type SkillDefinition, type SkillSourceRuntimeContext } from "@ling-stack/core";
-import { assertPreparedPiTaskInput, DELEGATION_TOOL_NAMES, readPreparedPiInput, type PiRunnerPreparedInput, type PiRunnerRunOptions } from "@ling-stack/runner-pi";
+import { assertPreparedPiTaskInput, DELEGATION_TOOL_NAMES, readPreparedPiInput, readHookSet, type PiRunnerPreparedInput, type PiRunnerRunOptions } from "@ling-stack/runner-pi";
 import { HttpError } from "../../errors.js";
 import { isRecord } from "../../shared/validation.js";
 import type { RunRequest } from "./schemas.js";
 import { inlineProviderDescriptor } from "../conversations/normal-conversation-prepared-provider.js";
 
 const inputKeys = ["cwd", "task", "provider", "tools", "mcpTools", "thinkingLevel", "reasoningSummary", "systemPrompt",
-  "appendSystemPrompt", "agentDir", "runtimePaths", "runtimeToolFeatures", "mediaGenerationTools", "initialToolSurface", "hostCapabilityTools", "readonlyToolsProfile", "isolatedToolsProfile"] as const;
+  "appendSystemPrompt", "agentDir", "runtimePaths", "runtimeToolFeatures", "mediaGenerationTools", "initialToolSurface", "hostCapabilityTools", "readonlyToolsProfile", "isolatedToolsProfile", "hooks"] as const;
 const isolatedToolNames = ["read", "grep", "find", "ls", "write", "edit"] as const;
 type PreparedOptions = Omit<Pick<PiRunnerRunOptions, (typeof inputKeys)[number]>, "tools"> & { readonly tools?: RunRequest["tools"] };
 export interface SkillDefinitionRuntimeSnapshot {
@@ -76,6 +76,9 @@ export function restorePreparedRunnerOptions(
   if (!isDeepStrictEqual(payload.input.provider, json(inlineProviderDescriptor(current.provider)))) {
     throw new HttpError(409, "prepared_provider_configuration_changed", "Prepared provider configuration changed; start a new turn.");
   }
+  if (!isDeepStrictEqual(payload.input.hooks, current.hooks)) {
+    throw new HttpError(409, "prepared_hooks_changed", "The prepared lifecycle Hooks configuration or trust changed; start a new turn.");
+  }
   const mcpTools = (payload.input.mcpTools ?? []).map((frozen) => {
     const live = current.mcpTools?.find((tool) => tool.registeredName === frozen.registeredName);
     // Default approval and side-effect risk are current Host policy, not model schema.
@@ -90,6 +93,8 @@ export function restorePreparedRunnerOptions(
   if (payload.toolHydrationEnabled && !(currentSurface?.toolHydration ?? Boolean(current.onToolHydrationRequest)) ||
     frozenSurface?.userInput === true && currentSurface?.userInput !== true ||
     frozenSurface?.delegation === true && currentSurface?.delegation !== true ||
+    frozenSurface?.codeIntelligence === true && currentSurface?.codeIntelligence !== true ||
+    frozenSurface?.codeMode === true && currentSurface?.codeMode !== true ||
     frozenSurface?.nativeFileCreate !== undefined && currentSurface?.nativeFileCreate !== frozenSurface.nativeFileCreate ||
     !requiredRuntimeToolFeaturesRemainAvailable(payload.input.runtimeToolFeatures, current.runtimeToolFeatures)) {
     throw new HttpError(409, "prepared_tool_capability_changed", "Prepared runtime tool capabilities changed.");
@@ -106,7 +111,7 @@ export function restorePreparedRunnerOptions(
       throw new HttpError(409, "prepared_host_capability_changed", "A prepared Host capability was revoked or its schema changed.");
     }
   }
-  return { ...current, ...payload.input, provider: current.provider, mcpTools, hostCapabilityTools: payload.input.hostCapabilityTools ?? [], preparedInput: payload.preparedInput,
+  return { ...current, ...payload.input, initialToolSurface: frozenSurface, provider: current.provider, mcpTools, hostCapabilityTools: payload.input.hostCapabilityTools ?? [], preparedInput: payload.preparedInput,
     onToolHydrationRequest: payload.toolHydrationEnabled ? current.onToolHydrationRequest : undefined };
 }
 
@@ -129,6 +134,7 @@ export function readPreparedRunnerInput(value: unknown, request: Pick<PiRunnerRu
     !isRecord(value.input.provider) || "apiKey" in value.input.provider || "headers" in value.input.provider ||
     !isDeepStrictEqual(redactSecrets(value), value)) throw new Error("Invalid prepared execution payload");
   const prepared = readPreparedPiInput(value.preparedInput);
+  if (value.input.hooks !== undefined) readHookSet(value.input.hooks);
   if (value.input.isolatedToolsProfile !== undefined && value.input.isolatedToolsProfile !== "host_isolated_files_v1") {
     throw new Error("Invalid prepared Host isolated-files profile");
   }
@@ -182,8 +188,10 @@ export function readPreparedRunnerInput(value: unknown, request: Pick<PiRunnerRu
       ? surfaceRecord?.nativeFileCreate === true
       : surfaceRecord?.nativeFileCreate === undefined || surfaceRecord?.nativeFileCreate === false;
     const delegationSurfaceRequired = delegationSelected.length > 0 && surfaceRecord?.delegation !== true;
-    if (!surfaceRecord || Object.keys(surfaceRecord).some(key => !['mediaGeneration', 'toolHydration', 'userInput', 'nativeFileCreate', 'delegation'].includes(key)) ||
+    if (!surfaceRecord || Object.keys(surfaceRecord).some(key => !['mediaGeneration', 'toolHydration', 'userInput', 'nativeFileCreate', 'delegation', 'codeIntelligence', 'codeMode'].includes(key)) ||
       Object.values(surfaceRecord).some(selected => typeof selected !== "boolean") ||
+      surfaceRecord.codeIntelligence !== undefined && prepared.tools.some(tool => tool.name === "code_intelligence") !== surfaceRecord.codeIntelligence ||
+      surfaceRecord.codeMode !== undefined && prepared.tools.some(tool => tool.name === "code_mode") !== surfaceRecord.codeMode ||
       surfaceRecord.userInput !== undefined && prepared.tools.some(tool => tool.name === "request_user_input") !== surfaceRecord.userInput ||
       !delegationSurfaceMatches || delegationSurfaceRequired || !nativeSurfaceMatches) {
       throw new Error("Invalid prepared user-input tool surface");
@@ -234,14 +242,14 @@ function assertLiveIsolatedOptions(options: PiRunnerRunOptions): void {
 }
 
 function isNarrowIsolatedSurface(input: unknown): boolean {
-  if (!isRecord(input) || input.readonlyToolsProfile !== undefined) return false;
+  if (!isRecord(input) || input.readonlyToolsProfile !== undefined || input.hooks !== undefined) return false;
   const tools = input.tools === undefined ? isolatedToolNames : input.tools;
   if (!Array.isArray(tools) || !tools.every(name => (isolatedToolNames as readonly unknown[]).includes(name)) ||
     new Set(tools).size !== tools.length) return false;
   if (["mcpTools", "hostCapabilityTools", "mediaGenerationTools"].some(key => input[key] !== undefined &&
     (!Array.isArray(input[key]) || input[key].length !== 0))) return false;
   for (const [key, allowed] of [
-    ["initialToolSurface", ["mediaGeneration", "toolHydration", "userInput", "nativeFileCreate", "delegation"]],
+    ["initialToolSurface", ["mediaGeneration", "toolHydration", "userInput", "nativeFileCreate", "delegation", "codeIntelligence", "codeMode"]],
     ["runtimeToolFeatures", ["requestPermissions", "unifiedExec", "shellSnapshot"]],
   ] as const) {
     const flags = input[key];

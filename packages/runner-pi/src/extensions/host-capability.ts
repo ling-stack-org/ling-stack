@@ -21,7 +21,7 @@ export function createLingStackHostCapabilityExtension(options: PiRunnerRunOptio
         const before = await options.onToolBefore(request);
         signal.throwIfAborted();
         if (!before.allowed) return adapt(toolCallId, tool.name, failure(before.code, before.reason));
-        const decision = await options.onApprovalRequired({ ...request, task: options.task, defaultApproval: "ask" });
+        const decision = await options.onApprovalRequired({ ...request, signal, task: options.task, defaultApproval: "ask" });
         signal.throwIfAborted();
         if (!decision.approved || !decision.approvalId || decision.handledResult) {
           return adapt(toolCallId, tool.name, failure("host_capability_approval_required", decision.reason ?? "A durable, scoped Host approval is required."));

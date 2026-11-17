@@ -117,6 +117,8 @@ function conversationFileRefsFromRunSnapshot(run: RunSession | undefined): reado
 function conversationFileRefsFromIntervention(intervention: RunIntervention): readonly ChannelMessageFileRef[] {
   return (intervention.messagePayload?.fileRefs ?? []).map((fileRef) => ({
     path: fileRef.path,
+    ...(fileRef.line !== undefined ? { line: fileRef.line } : {}),
+    ...(fileRef.annotation ? { annotation: fileRef.annotation } : {}),
     ...(fileRef.label ? { label: fileRef.label } : {}),
     source: fileRef.source ?? "api" as const,
   }));

@@ -19,6 +19,8 @@ Maintenance-only transition notes are kept in [Development Handoffs](../maintena
 ## Product And Architecture
 
 - [Implementation Status](implementation-status.md)
+- [Agent Execution Capabilities](agent-execution-capabilities.md)
+- [Agent Execution Capabilities Implementation Plan](agent-execution-capabilities-implementation-plan.md)
 - [Official Scene Theme, Background And Interaction Motion Contract](theme-background-motion-contract.md)
 - [Ling Core IP Design Contract](ling-core-ip-design.md)
 - [Official Scene Theme And Custom Media Background Implementation Plan](full-window-theme-background-implementation-plan.md)
@@ -58,6 +60,7 @@ Maintenance-only transition notes are kept in [Development Handoffs](../maintena
 - [频道下多会话](channel-sessions-detailed-design.md)
   （含侧栏与空白会话线框、全部会话目录、状态反馈和迁移边界；[实现计划](channel-sessions-implementation-plan.md)）
 - [Conversation Composer Unification](conversation-composer-unification.md)
+- [Conversation Change Summary](conversation-change-summary.md)
 - [Conversation Model Binding And Creation Validation](conversation-model-binding-and-creation-validation.md)
 - [Conversation Full Access Confirmation](conversation-session-full-access-confirmation.md)
 - [Conversation Right Dock Workspace Tools](conversation-right-dock-workspace-tools.md)
@@ -172,6 +175,7 @@ part of the current product acceptance scope.
 - [Web E2E Acceptance Matrix](web-e2e-acceptance-matrix.md)
 - [Codex Window Shell Parity](codex-window-shell-parity.md)
 - [Desktop Shell](desktop-shell.md)
+- [Desktop 内置浏览器实施计划](desktop-browser-implementation-plan.md)
 - [Sidebar, Approval, And Proposal Dialogs Implementation Plan](sidebar-approval-proposal-dialogs-implementation-plan.md)
 - [Desktop Release](../release/desktop.md)
 

@@ -1,3 +1,7 @@
+import { submitNodeRerun, assertNodeRerunReuseCurrent } from "../dist/features/runs/node-rerun-submission.js";
+import { createDaemonServer } from "../dist/index.js";
+import { startLoopbackPiProvider } from "./support/loopback-pi-provider-fixture.mjs";
+import { setTimeout as delay } from "node:timers/promises";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -7,6 +11,7 @@ import test, { type TestContext } from "node:test";
 import {
   applyConversationModeToEffectiveRunPolicySnapshot,
   createSqliteRunStore,
+  createSqliteNodeRerunStore,
   DEFAULT_WORKSPACE_ID,
   digestHarnessToolValue,
   resolveSessionRunPolicy,
@@ -51,12 +56,14 @@ function testDatabase(store: RunStore): TestDatabase {
 async function createFixture(t: TestContext, options: { readonly targetFileEffect?: boolean } = {}) {
   const cwd = await mkdtemp(join(tmpdir(), "ling-node-rerun-observation-"));
   const store = createSqliteRunStore(cwd);
+  const cleanup: { beforeClose?: () => Promise<void>; daemonOwnsStore?: boolean } = {};
   t.after(async () => {
-    store.close();
+    await cleanup.beforeClose?.();
+    if (!cleanup.daemonOwnsStore) store.close();
     await rm(cwd, { recursive: true, force: true });
   });
 
-  const channel = store.createChannel({ name: "Node rerun observation", boundPath: cwd }, NOW);
+  const channel = store.createChannel({ name: "Node rerun observation", boundPath: cwd, defaultTeammateId: "teammate_builtin_engineer" }, NOW);
   const policy = applyConversationModeToEffectiveRunPolicySnapshot(resolveSessionRunPolicy({
     workspacePolicy: store.getApprovalPolicy(),
     authorizationMode: "smart",
@@ -181,6 +188,7 @@ async function createFixture(t: TestContext, options: { readonly targetFileEffec
   return {
     cwd,
     store,
+    cleanup,
     activeRuns: new ActiveRunRegistry(),
     graph,
     workflow,
@@ -331,7 +339,14 @@ function makeIntent(f: Fixture) {
     outputArtifacts: [{ artifactId: f.upstreamOutput.id, contentSha256: f.upstreamOutput.contentSha256! }],
     permissionFingerprint: nodeRerunPermissionFingerprintV1(f.policy),
   };
-  const dependencyClosure = { complete: true, upstream: [upstreamPin], downstreamNodeIds: [] } as const;
+  const downstream = new Set<string>(), queue = ["target"];
+  while (queue.length) {
+    const id = queue.shift()!;
+    for (const edge of f.graph.edges.filter(edge => edge.fromNodeId === id)) if (!downstream.has(edge.toNodeId)) {
+      downstream.add(edge.toNodeId); queue.push(edge.toNodeId);
+    }
+  }
+  const dependencyClosure = { complete: true, upstream: [upstreamPin], downstreamNodeIds: [...downstream].sort() } as const;
   const sourceStep = targetStep;
   const sourceSnapshot = nodeRerunSourceSnapshotDigestV1({
     run: {
@@ -745,4 +760,112 @@ test("invalid persisted policy selectors block current policy resolution", async
   assert.equal(result.evaluationInvoked, false);
   assert.equal(result.blockers[0]?.code, "current_policy_unavailable");
   assert.equal(result.blockers[0]?.contractCode, "policy_unavailable");
+});
+
+
+function submissionRequest(f: Fixture) {
+  const intent = parseNodeRerunIntent(makeIntent(f));
+  const observed = observeNodeRerunAdmission({ store: f.store, activeRuns: f.activeRuns, intent, now: new Date().toISOString() });
+  assert.equal(observed.admission.decision, "eligible_for_host_admission", JSON.stringify(observed));
+  assert.ok(observed.observed);
+  const plan = createNodeRerunHostAdmissionPlanV1({ intent, observed: observed.observed, admission: observed.admission });
+  return { intent, planFingerprint: plan.planFingerprint };
+}
+
+async function branchFixture(f: Fixture) {
+  f.graph = { ...f.graph, nodes: [...f.graph.nodes,
+    { id: "dependent", kind: "step", name: "Dependent", prompt: "Consume target", teammateId: "teammate_builtin_engineer" },
+    { id: "independent", kind: "step", name: "Independent", prompt: "Keep branch result", teammateId: "teammate_builtin_engineer" }],
+    edges: [...f.graph.edges,
+      { id: "target-dependent", fromNodeId: "target", toNodeId: "dependent", condition: { kind: "all_succeeded" } },
+      { id: "upstream-independent", fromNodeId: "upstream", toNodeId: "independent", condition: { kind: "all_succeeded" } }] };
+  f.workflow = f.store.updateChannelWorkflow(f.workflow.id, { metadata: { ...f.workflow.metadata,
+    workflowGraph: f.graph, workflowGraphFingerprint: workflowGraphFingerprintV1(f.graph) } }, NOW)!;
+  for (const [position, nodeId] of ["dependent", "independent"].entries()) {
+    const node = f.graph.nodes.find(node => node.id === nodeId)!;
+    const step = f.store.createChannelWorkflowStep({ workflowId: f.workflow.id, title: node.name, prompt: node.prompt,
+      position: position + 2, toParticipantId: "teammate_builtin_engineer", toParticipantLabel: "Engineer", status: "succeeded",
+      metadata: { graphId: f.graph.id, graphNodeId: nodeId, dependsOnStepIds: [nodeId === "dependent" ? f.targetStep.id : f.upstreamStep.id] } }, NOW);
+    const terminal = await createTerminalRun(f.store, { id: `run-${nodeId}`, taskId: `task-${nodeId}`, stepId: step.id,
+      channelId: step.channelId, teammateId: step.toParticipantId, cwd: f.cwd, policy: f.policy, title: step.title, prompt: step.prompt });
+    const input = f.store.createArtifact({ runId: terminal.run.id, type: "json", path: `${nodeId}-input.json`, sealedPayload: { input: nodeId }, createdAt: NOW });
+    const output = f.store.createArtifact({ runId: terminal.run.id, type: "json", path: `${nodeId}-output.json`, sealedPayload: { output: nodeId }, createdAt: NOW });
+    f.store.updateChannelWorkflowStep(step.id, { runId: terminal.run.id, taskId: terminal.task.id,
+      metadata: { ...step.metadata, contextArtifactId: input.id, outputArtifactIds: [output.id] } }, ENDED_AT);
+  }
+}
+
+test("submission atomically creates a successor closure, preserves successful branches and deduplicates across reopen", async t => {
+  const f = await createFixture(t); await branchFixture(f);
+  const before = tableCounts(f.store), request = submissionRequest(f);
+  const result = submitNodeRerun(f.store, f.activeRuns, request);
+  assert.equal(result.duplicate, false);
+  assert.deepEqual(result.submission.invalidatedNodeIds, ["dependent", "target"]);
+  const steps = f.store.listChannelWorkflowSteps({ workflowId: result.submission.successorWorkflowId, complete: true });
+  assert.equal(steps.length, 4);
+  for (const step of steps) {
+    const reused = ["upstream", "independent"].includes(step.metadata!.graphNodeId!);
+    assert.equal(step.status, reused ? "succeeded" : "queued");
+    assert.equal(step.runId, undefined); assert.equal(step.taskId, undefined); assert.equal(step.metadata?.startOwner, undefined);
+    assert.equal(step.metadata?.preStepApprovalId, undefined);
+    if (reused) assert.ok(step.metadata?.outputArtifactIds?.length);
+    else assert.equal(step.metadata?.contextArtifactId, undefined);
+    assert.ok(step.metadata?.dependsOnStepIds?.every(id => steps.some(candidate => candidate.id === id)));
+  }
+  assert.equal(tableCounts(f.store).run_sessions, before.run_sessions, "normal Host dispatch owns fresh Run creation");
+  const reopened = createSqliteRunStore(f.cwd); t.after(() => reopened.close());
+  assert.deepEqual(submitNodeRerun(reopened, f.activeRuns, request), { ...result, duplicate: true });
+  assert.throws(() => submitNodeRerun(f.store, f.activeRuns, { ...request, intent: { ...request.intent, intentId: "different", idempotencyKey: "different" } }), /already_submitted/);
+  assert.throws(() => submitNodeRerun(f.store, f.activeRuns, { ...request, planFingerprint: "stale" }), /idempotency_conflict/);
+  f.store.updateChannelWorkflowStep(f.upstreamStep.id, { resultSummary: "Input changed" }, ENDED_AT);
+  assert.throws(() => assertNodeRerunReuseCurrent(f.store, result.submission), /reuse_stale/);
+});
+
+test("stale plans, source drift and settled non-idempotent effects never reserve a successor", async t => {
+  const f = await createFixture(t), request = submissionRequest(f), before = tableCounts(f.store);
+  assert.throws(() => submitNodeRerun(f.store, f.activeRuns, { ...request, planFingerprint: "stale" }), /plan_stale/);
+  assert.deepEqual(tableCounts(f.store), before);
+  f.store.updateChannelWorkflowStep(f.targetStep.id, { status: "running" }, ENDED_AT);
+  assert.throws(() => submitNodeRerun(f.store, f.activeRuns, request), /admission_blocked/);
+  assert.deepEqual(createSqliteNodeRerunStore(f.store).listPending(), []);
+  const effects = await createFixture(t, { targetFileEffect: true });
+  assert.throws(() => submitNodeRerun(effects.store, effects.activeRuns, { intent: makeIntent(effects), planFingerprint: "any" }), /admission_blocked/);
+  assert.deepEqual(createSqliteNodeRerunStore(effects.store).listPending(), []);
+});
+
+test("HTTP submission runs affected nodes through real Pi/Host execution with fresh identities", { timeout: 40_000 }, async t => {
+  const f = await createFixture(t); await branchFixture(f);
+  const provider = await startLoopbackPiProvider(() => ({ text: "Verified selective rerun result" }));
+  t.after(() => provider.close());
+  const preset = f.store.createProviderPreset({ kind: "glm", displayName: "Rerun loopback", providerId: "rerun-loopback", model: "static-tools",
+    api: "openai-completions", baseUrl: provider.baseUrl, authHeader: false, reasoning: false, capabilities: ["chat"] }, new Date().toISOString());
+  for (const step of f.store.listChannelWorkflowSteps({ workflowId: f.workflow.id, complete: true })) {
+    f.store.updateChannelWorkflowStep(step.id, { metadata: { ...step.metadata, providerPresetId: preset.id, requiredTools: ["read"] } }, ENDED_AT);
+  }
+  f.targetStep = f.store.getChannelWorkflowStep(f.targetStep.id)!;
+  const request = submissionRequest(f);
+  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, defaultWorkspaceCwd: f.cwd, harness: { toolBroker: { mode: "enforce" } },
+    channels: { autoRoute: false, intentSelector: false, terminalReports: false, teamObserverBus: false } },
+    { storeFactory: () => f.store, chromeBrowserNativeMessagingEnabled: false, remoteReplyDispatcher: null });
+  f.cleanup.daemonOwnsStore = true;
+  f.cleanup.beforeClose = async () => { await daemon.stop(); };
+  await daemon.start(); const address = daemon.server.address(); assert.ok(address && typeof address !== "string");
+  const response = await fetch(`http://127.0.0.1:${address.port}/runs/${f.target.run.id}/node-rerun/submit?cwd=${encodeURIComponent(f.cwd)}`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(request) });
+  const result = await response.json() as { submission: { successorWorkflowId: string }; error?: string };
+  assert.equal(response.status, 202, JSON.stringify(result));
+  const deadline = Date.now() + 25_000;
+  while (Date.now() < deadline && ["ready", "running"].includes(f.store.getChannelWorkflow(result.submission.successorWorkflowId)?.status ?? "")) await delay(25);
+  const workflow = f.store.getChannelWorkflow(result.submission.successorWorkflowId)!;
+  const steps = f.store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true });
+  assert.equal(workflow.status, "succeeded", JSON.stringify({ workflow, steps }));
+  const rerunSteps = steps.filter(step => step.runId); assert.equal(rerunSteps.length, 2); assert.ok(provider.requests.length >= 2);
+  for (const step of rerunSteps) {
+    assert.ok(step.runId && ![f.target.run.id, f.upstream.run.id].includes(step.runId));
+    const run = f.store.getRun(step.runId)!, unit = f.store.getWorkUnit(run.workUnitId!)!, attempt = f.store.getWorkUnitAttempt(unit.activeAttemptId!)!;
+    assert.notEqual(unit.id, f.target.unit.id); assert.notEqual(attempt.id, f.target.attempt.id);
+    assert.notEqual(attempt.runtimeInstanceId, f.target.attempt.runtimeInstanceId);
+    assert.notDeepEqual(toRuntimeAttemptFence(attempt), toRuntimeAttemptFence(f.target.attempt));
+    assert.equal(run.status, "succeeded");
+  }
 });

@@ -1,3 +1,4 @@
+import type { BrowserAnnotationHandler } from "../../browser/browser-annotation-submission.js";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Activity,
@@ -13,6 +14,7 @@ import { useI18n } from "../../../i18n.js";
 import type { ProposedPlanArtifact, WorkspaceChangesResponse } from "../../../types.js";
 import type { WorkspaceChangeReview, WorkspaceFileCapabilityScope, WorkspaceFileCapabilityTarget } from "@ling-stack/contracts";
 import { useWorkspaceRecovery } from "../../../shared/conversation/blocks/workspace-recovery-resource.js";
+import { conversationChangeSummaryUpdated, type ConversationChangeSummaryUpdate } from "../../../shared/conversation/change-summary/useConversationChangeSummary.js";
 import {
   createDockPageEntry,
   EvidencePage,
@@ -37,6 +39,7 @@ import {
   type PlanStatusFilter,
 } from "./PlanHistoryPage.js";
 import { reviewNeedsAction } from "./projections.js";
+import { BrowserWorkspace } from "../../browser/BrowserWorkspace.js";
 import { WorkspaceTerminalPanel, type WorkspaceTerminalSession } from "../WorkspaceTerminalPanel.js";
 import { WorkspaceChangeReviewPage } from "./WorkspaceChangeReviewPage.js";
 import { DockReviewItemDetail } from "./DockReviewItemDetail.js";
@@ -81,9 +84,12 @@ export interface WorkspaceRightDockReviewTarget {
   readonly path?: string;
   readonly scope?: WorkspaceChangeReview["scope"];
   readonly review?: WorkspaceChangeReview;
+  readonly liveThreadId?: string;
 }
 
 export interface WorkspaceRightDockProps {
+  readonly onBrowserAnnotation?: BrowserAnnotationHandler;
+  readonly browserScopeId?: string;
   readonly surface: DockSurfaceKind;
   readonly open: boolean;
   readonly collapsed?: boolean;
@@ -126,6 +132,8 @@ export interface WorkspaceRightDockProps {
 }
 
 export function WorkspaceRightDock({
+  browserScopeId,
+  onBrowserAnnotation,
   surface,
   open,
   collapsed,
@@ -308,6 +316,18 @@ export function WorkspaceRightDock({
     : stack;
   const reviewPageActive = open && effectiveStack.at(-1)?.page === "review";
   const scopedResource = useWorkspaceRecovery(effectiveReviewCwd, reviewPageActive ? requestedWorkspaceReview?.scope : undefined, requestedWorkspaceReview?.review?.revision);
+  const liveReviewThreadId = requestedWorkspaceReview?.liveThreadId;
+  const liveReviewTurnId = requestedWorkspaceReview?.scope?.kind === "turn" ? requestedWorkspaceReview.scope.id : undefined;
+  const refreshScopedReview = scopedResource.refresh;
+  useEffect(() => {
+    if (!reviewPageActive || !liveReviewThreadId || !liveReviewTurnId) return;
+    const update = (event: Event) => {
+      const detail = (event as CustomEvent<ConversationChangeSummaryUpdate>).detail;
+      if (detail?.cwd === effectiveReviewCwd && detail.threadId === liveReviewThreadId && detail.turnId === liveReviewTurnId) refreshScopedReview();
+    };
+    window.addEventListener(conversationChangeSummaryUpdated, update);
+    return () => window.removeEventListener(conversationChangeSummaryUpdated, update);
+  }, [reviewPageActive, effectiveReviewCwd, liveReviewThreadId, liveReviewTurnId, refreshScopedReview]);
   const scopedReview = useMemo(() => {
     const initial = requestedWorkspaceReview?.review;
     const updated = scopedResource.recovery?.review;
@@ -564,6 +584,19 @@ export function WorkspaceRightDock({
         ),
       });
     }
+    const browserEvidence = (
+      <EvidencePage
+        groups={browserGroups}
+        emptyTitle={t("No browser evidence")}
+        emptyDescription={t("Browser and web search evidence appears only after real tool evidence exists.")}
+        onOpenItem={(itemId) => {
+          const item = browserGroups.flatMap((group) => group.items).find((candidate) => candidate.id === itemId);
+          if (item) {
+            pushDetail(`evidence:${item.id}`, item.title, item.sourceLabel);
+          }
+        }}
+      />
+    );
     manifests.push({
       id: "browser",
       label: t("Browser"),
@@ -571,22 +604,13 @@ export function WorkspaceRightDock({
       launcherItem: {
         description: t("Search and browser evidence"),
         count: browserEvidenceCount,
-        statusLabel: browserEvidenceCount === 1 ? t("1 browser item") : browserEvidenceCount > 1 ? t("{count} browser items", { count: browserEvidenceCount }) : t("No browser evidence"),
+        statusLabel: window.lingDesktop?.browser && cwd && browserScopeId ? t("Ling Browser")
+          : browserEvidenceCount === 1 ? t("1 browser item") : browserEvidenceCount > 1 ? t("{count} browser items", { count: browserEvidenceCount }) : t("No browser evidence"),
         severity: browserEvidenceCount > 0 ? "info" : "neutral",
       },
-      render: () => (
-        <EvidencePage
-          groups={browserGroups}
-          emptyTitle={t("No browser evidence")}
-          emptyDescription={t("Browser and web search evidence appears only after real tool evidence exists.")}
-          onOpenItem={(itemId) => {
-            const item = browserGroups.flatMap((group) => group.items).find((candidate) => candidate.id === itemId);
-            if (item) {
-              pushDetail(`evidence:${item.id}`, item.title, item.sourceLabel);
-            }
-          }}
-        />
-      ),
+      render: () => window.lingDesktop?.browser && cwd && browserScopeId && (surface === "normal_conversation" || surface === "channel" || surface === "teammate_direct") ? (
+        <BrowserWorkspace key={`${cwd}:${surface}:${browserScopeId}`} workspaceCwd={cwd} surface={surface} ownerId={browserScopeId} onAnnotation={onBrowserAnnotation} evidence={browserEvidence} />
+      ) : browserEvidence,
     });
     manifests.push({
       id: "terminal",
@@ -641,6 +665,8 @@ export function WorkspaceRightDock({
     activityNode,
     browserEvidenceCount,
     browserGroups,
+    browserScopeId,
+    onBrowserAnnotation,
     contextCount,
     contextDescription,
     contextLabel,

@@ -1,3 +1,4 @@
+import type { TaskSupervisor } from "./features/runs/task-supervisor.js";
 import type { LearningReviewCoordinator } from "./features/learning/coordinator.js";
 import type {
   McpServer,
@@ -64,6 +65,8 @@ import type { EngineManagementFeature, EngineManagementFeatureOptions } from "./
 import type { NativeRunDispatcher, NativeRunTargetDispatcher } from "./features/runs/native-run-dispatcher.js";
 import type { CompanionReplyService } from "./features/companions/reply-service.js";
 import type { CompanionSchedulerRegistry } from "./features/companions/scheduler.js";
+import type { DesktopBrowserController } from "./features/desktop-browser/controller.js";
+import type { DesktopBrowserPluginService } from "./features/plugins/desktop-browser.js";
 
 export interface RunnerAdapter {
   /** Optional capability; absence must reject prepared execution, never fabricate evidence. */
@@ -240,6 +243,8 @@ export interface DaemonContext {
   readonly imageVisionSummarizer?: LingImageVisionSummarizer;
   readonly backgroundSchedulers: ExternalWorkBackgroundSchedulerRegistry;
   readonly automationSchedulers: AutomationSchedulerRegistry;
+  readonly automationEvents: AutomationEventWorker;
+  readonly taskSupervisor: TaskSupervisor;
   readonly controlPlaneEvents: ControlPlaneEventHub;
   readonly notificationHub: NotificationHub;
   readonly imDestinations: ImDestinationRegistry;
@@ -260,6 +265,8 @@ export interface DaemonContext {
   readonly engineManagement: EngineManagementFeature;
   readonly nativeRunDispatcher?: NativeRunDispatcher;
   readonly chromeBrowserSessions: ChromeBrowserSessionController;
+  readonly desktopBrowser: DesktopBrowserController;
+  readonly desktopBrowserPlugin: DesktopBrowserPluginService;
   readonly chromeBrowserPlugin: ChromeBrowserPluginService;
   readonly officeDriverController: OfficeDriverController;
   readonly officeDocumentsPlugin: OfficeDocumentsPluginService;
@@ -271,3 +278,4 @@ export interface DaemonContext {
   readonly companionReplyService: CompanionReplyService;
   readonly companionSchedulers: CompanionSchedulerRegistry;
 }
+import type { AutomationEventWorker } from "./features/automations/event-worker.js";

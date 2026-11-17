@@ -19,9 +19,11 @@ type Fixture = ReturnType<typeof fixture>;
 const table = "runtime_concurrency_policies", name = "runtime_concurrency_policy_activation";
 const successors = [{ version: 216, name: "runtime_delegation_capacity_admissions" }, { version: 217, name: "runtime_run_queue" },
   { version: 218, name: "runtime_host_capacity" }, { version: 219, name: "runtime_delegation_spawn_admissions" },
-  { version: 220, name: "runtime_host_capacity_continuations" }];
+  { version: 220, name: "runtime_host_capacity_continuations" }, { version: 221, name: "create_automation_event_ingress_and_delivery" },
+  { version: 222, name: "create_node_rerun_submissions_and_goal_supervision" }];
 const successorTables = (successor: typeof successors[number]) => successor.version === 218 ? ["runtime_host_capacity_intents", "runtime_host_capacity_releases"]
-  : successor.version === 220 ? [] : [successor.name];
+  : successor.version === 220 ? [] : successor.version === 221 ? ["automation_event_sources", "automation_events", "automation_event_dispatches", "automation_deliveries", "automation_delivery_receipts"]
+    : successor.version === 222 ? ["node_rerun_submissions"] : [successor.name];
 const successorOwned = (row: SchemaRow) => successors.flatMap(successorTables).includes(row.tbl_name);
 const successorVersion = (version: SQLOutputValue) => successors.some(successor => successor.version === version);
 const now = "2026-11-03T00:00:00.000Z", later = "2026-11-03T01:00:00.000Z";
@@ -65,8 +67,9 @@ function fixture(t: TestContext, { installed = false } = {}) {
     assert.deepEqual(markers(testDatabase(store)).filter(row => successorVersion(row.version)).map(({ version, name }) => ({ version, name })), successors);
     for (const table of successors.flatMap(successorTables)) {
       assert.deepEqual(rows(testDatabase(store), table), []);
-      assert.deepEqual(fullSchema.filter(row => row.tbl_name === table).map(row => row.name), [table]);
+      assert.deepEqual(fullSchema.filter(row => row.tbl_name === table && row.type === "table").map(row => row.name), [table]);
     }
+    for (const index of ["idx_automation_event_pending", "idx_automation_event_rate", "idx_automation_delivery_pending"]) testDatabase(store).exec(`DROP INDEX IF EXISTS ${index}`);
     testDatabase(store).exec("BEGIN IMMEDIATE");
     try {
       for (const successor of [...successors].reverse()) {

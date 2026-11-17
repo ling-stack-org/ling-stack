@@ -27,7 +27,7 @@ export interface CreateImDestinationInput {
   readonly enabled?: boolean;
 }
 
-type FetchLike = (url: string, init: { method: string; headers: Record<string, string>; body: string }) => Promise<{ ok: boolean; status: number }>;
+type FetchLike = (url: string, init: { method: string; headers: Record<string, string>; body: string; signal?: AbortSignal; redirect?: RequestRedirect }) => Promise<{ ok: boolean; status: number }>;
 
 /**
  * File-backed IM destination registry + dispatcher. Webhook URLs are resolved
@@ -121,7 +121,9 @@ export class ImDestinationRegistry {
    * Deliver a message to one destination. Egress-pinned, signed when a secret
    * ref is configured (DingTalk sign), and failures are returned — never thrown.
    */
-  async dispatch(destination: ImDestination, message: DestinationMessage): Promise<DestinationDispatchResult> {
+  async dispatch(destination: ImDestination, message: DestinationMessage, options: {
+    signal?: AbortSignal; idempotencyKey?: string; onDispatch?: () => void;
+  } = {}): Promise<DestinationDispatchResult> {
     try {
       await this.ensureLoaded();
       const resolved = this.secretResolver?.resolve(destination.webhookRef, "webhook_secret");
@@ -134,10 +136,14 @@ export class ImDestinationRegistry {
       }
       const url = await this.signedUrl(destination, webhookUrl);
       const payload = buildImPayload(destination.provider, message);
+      options.signal?.throwIfAborted();
+      options.onDispatch?.();
       const response = await this.fetchImpl(url, {
         method: "POST",
-        headers: { "content-type": payload.contentType },
+        headers: { "content-type": payload.contentType, ...(options.idempotencyKey ? { "idempotency-key": options.idempotencyKey } : {}) },
         body: payload.body,
+        signal: options.signal ?? AbortSignal.timeout(10_000),
+        redirect: "error",
       });
       return { ok: response.ok, status: response.status, error: response.ok ? undefined : `Webhook responded ${response.status}` };
     } catch (error) {

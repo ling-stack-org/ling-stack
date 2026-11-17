@@ -58,6 +58,7 @@
     "check:locked-use:mac": "./native/locked-use/script/build_and_run.sh --verify"
   },
   "dependencies": {
+    "ajv": "8.20.0",
     "@ling-stack/browser-host": "workspace:*",
     "@napi-rs/canvas": "1.1.0",
     "@ling-stack/api-client": "workspace:*",
@@ -79,7 +80,6 @@
     "@playwright/test": "1.65.0",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
-    "ajv": "8.20.0",
     "ajv-formats": "3.0.1",
     "electron": "45.3.1",
     "electron-builder": "26.18.0",

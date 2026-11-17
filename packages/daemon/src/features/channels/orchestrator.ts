@@ -1,3 +1,4 @@
+import { createSqliteNodeRerunStore } from "@ling-stack/core";
 import {
   type ApprovalRequest,
   type ChannelWorkflow,
@@ -151,6 +152,7 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
   if (!workflow) {
     throw new HttpError(404, "workflow_not_found", `Channel workflow not found: ${input.workflowId}`);
   }
+  if (createSqliteNodeRerunStore(input.store).getBySource(workflow.id)) return { status: "blocked", workflow, blocker: "node_rerun_source_retired" };
   assertWorkflowIsolationSelectionIntegrity(input.store, workflow.id, input.isolationHost);
   syncWorkflowSourceTurnProgress(input.store, workflow, new Date().toISOString());
   const planModeBlocker = getWorkflowPlanModeBlocker(input.store, workflow);

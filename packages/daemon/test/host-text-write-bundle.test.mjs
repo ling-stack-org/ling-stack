@@ -50,7 +50,7 @@ async function packagingOptions(sourceMode) {
   const tsconfigRaw = runInNewContext(`(${inputCode.slice(config.start, config.end)})`);
   const emptyPlugin = { name: "host-write-bundle-mechanism-only", setup() {} };
   const bindings = {
-    desktopRoot, gstack: { plugin: emptyPlugin }, definitions: [],
+    desktopRoot, gstack: { plugin: emptyPlugin }, agentRuntime: { plugin: emptyPlugin }, definitions: [],
     sourceInputs: sourceMode ? { entryPoint: "unused", tsconfigRaw, plugin: emptyPlugin } : undefined,
   };
   // esbuild validates plugin filters against its own realm's RegExp constructor.

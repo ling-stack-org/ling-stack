@@ -1,3 +1,4 @@
+import { renderReviewAnnotation } from "@ling-stack/contracts";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { ArrowDown, Copy, FileText, Pencil } from "lucide-react";
 import { attachmentContentUrl, daemonBaseUrl, submitUserInputAnswer } from "../../api.js";
@@ -397,7 +398,8 @@ function NormalConversationMessageRow({
               label: fileRef.label ?? fileRef.path.split(/[\\/]/u).filter(Boolean).at(-1) ?? fileRef.path,
               meta: fileRef.line !== undefined ? `${fileRef.path}:${fileRef.line}` : fileRef.path,
               previewTitle: fileRef.label,
-              previewText: fileRef.path,
+              previewText: fileRef.annotation ? renderReviewAnnotation(fileRef.annotation, fileRef.line) : fileRef.path,
+              annotationText: fileRef.annotation?.text,
             }))}
           />
         </>

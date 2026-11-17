@@ -1,3 +1,4 @@
+import { renderReviewAnnotation } from "@ling-stack/contracts";
 import {
   isAuthorizationMode,
   isWorkspaceAccessMode,
@@ -78,6 +79,7 @@ export function buildRunInterventionContinuationRequest(
         message: intervention.messagePayload?.body || intervention.instruction,
         attachmentIds: intervention.messagePayload?.attachmentIds ?? [],
         fileRefs: (intervention.messagePayload?.fileRefs ?? []).map((ref) => ({ path: ref.path,
+          ...(ref.line !== undefined ? { line: ref.line } : {}), ...(ref.annotation ? { annotation: ref.annotation } : {}),
           ...(ref.label ? { label: ref.label } : {}), ...(ref.source ? { source: ref.source } : {}) })),
         sourceTurnId: normalSource.id,
         interventionId: intervention.id, turnKind: intervention.mode === "interrupt_redirect" ? "interrupt_redirect" : "queued_followup",
@@ -245,6 +247,7 @@ function renderRunInterventionWorkspaceFileRefsForPrompt(payload: RunInterventio
     "Workspace file refs:",
     ...fileRefs.map((ref, index) => [
       `- ${index + 1}. ${ref.label ? `${ref.label}: ` : ""}${ref.path} (${ref.kind}, ${ref.rootRelation}, materialization=${ref.materializationStatus})`,
+      ref.annotation ? renderReviewAnnotation(ref.annotation, ref.line) : undefined,
       ref.blockedReason ? `  statusReason: ${ref.blockedReason}` : undefined,
       ref.previewText ? `  preview:\n${indentPromptBlock(ref.previewText)}` : undefined,
     ].filter((line): line is string => Boolean(line)).join("\n")),

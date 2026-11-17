@@ -18,6 +18,7 @@ const RUN_EVENT_TYPES = new Set<RunEventType>([
   "assistant_reasoning_summary",
   "tool_hydration_request",
   "tool_hydration_end",
+  "hook_execution",
   "message_end",
   "tool_start",
   "tool_update",
@@ -95,14 +96,24 @@ export function isRunEventData<K extends RunEventType>(
         && optionalNonNegativeSafeInteger(value.estimatedTokensAfter)
         && (value.usage === undefined || isRunTokenUsage(value.usage))
         && optionalNonEmptyString(value.attemptId);
+    case "hook_execution":
+      return typeof value.hookId === "string" && /^[a-zA-Z0-9_.:-]{1,80}$/.test(value.hookId)
+        && typeof value.configDigest === "string" && /^sha256:[a-f0-9]{64}$/.test(value.configDigest)
+        && ["run_start", "before_tool", "after_tool", "run_end"].includes(String(value.event))
+        && ["succeeded", "denied", "failed"].includes(String(value.status))
+        && Number.isSafeInteger(value.durationMs) && Number(value.durationMs) >= 0
+        && optionalNonEmptyString(value.toolCallId) && optionalString(value.message);
     case "tool_start":
       return typeof value.toolName === "string"
+        && optionalNonEmptyString(value.parentToolCallId)
         && optionalString(value.toolCallId);
     case "tool_update":
       return typeof value.toolName === "string"
+        && optionalNonEmptyString(value.parentToolCallId)
         && optionalString(value.toolCallId);
     case "tool_end":
       return typeof value.toolName === "string"
+        && optionalNonEmptyString(value.parentToolCallId)
         && typeof value.isError === "boolean"
         && optionalString(value.toolCallId);
     case "loop_detected":

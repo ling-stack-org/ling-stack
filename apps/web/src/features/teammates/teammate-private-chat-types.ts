@@ -52,6 +52,7 @@ export interface TeammatePrivateChatSurfaceProps {
   readonly teammate: AiTeammate;
   /** Verified LingThread scope for the private transcript. */
   readonly threadId?: string;
+  readonly changeSummaryThreadId?: string;
   readonly userProfile?: UserProfile;
   readonly loading: boolean;
   readonly visibleMessages: readonly TeammateDirectMessage[];
@@ -108,6 +109,7 @@ export interface TeammatePrivateChatSurfaceProps {
   readonly onCopyMessageText: (text: string) => void;
   readonly onOpenRun?: (runId: string) => void;
   readonly onOpenFiles: (target?: WorkspaceRightDockFileTarget) => void;
+  readonly onOpenBrowser?: () => void;
   readonly onOpenReview: (target: WorkspaceRightDockReviewTarget) => void;
   readonly onCreateTaskFromMessage: (message: TeammateDirectMessage) => void | Promise<void>;
   readonly onPromoteDirectGuidance: (interventionId: string) => void | Promise<void>;
