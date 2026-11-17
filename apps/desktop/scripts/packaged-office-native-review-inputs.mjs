@@ -245,6 +245,7 @@ export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   "apps/desktop/scripts/locked-use-release-build.ts",
   "apps/desktop/scripts/locked-use-release-evidence.ts",
   "apps/desktop/scripts/locked-use-release-files.ts",
+  "apps/desktop/scripts/locked-use-local-build.ts",
   "apps/desktop/scripts/locked-use-validation-build.ts",
   "apps/desktop/shared/locked-use-validation-contract.ts",
   "apps/desktop/scripts/engine-supervisor-package.mjs",
