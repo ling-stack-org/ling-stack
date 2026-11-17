@@ -82,7 +82,7 @@ function workingFile(cwd: string, path: string): { readonly content?: string; re
   const fd = openSync(full, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
   try {
     const opened = fstatSync(fd);
-    if (!opened.isFile() || opened.size > maxSourceBytes || opened.ino !== stat.ino || opened.dev !== stat.dev) {
+    if (!opened.isFile() || opened.nlink > 1 || opened.size > maxSourceBytes || opened.ino !== stat.ino || opened.dev !== stat.dev) {
       return { excluded: "unsupported" };
     }
     const buffer = Buffer.alloc(maxSourceBytes + 1);

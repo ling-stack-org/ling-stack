@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { link, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFile } from "node:child_process";
@@ -55,6 +55,22 @@ test("sensitive, binary, oversized and symlink files are explicit coverage exclu
     ]));
     assert.doesNotMatch(JSON.stringify(snapshot), /TOKEN=secret/u);
   } finally { await rm(cwd, { recursive: true, force: true }); }
+});
+
+test("untracked hard links are excluded before their contents enter the snapshot", async () => {
+  const cwd = await repo();
+  const outside = await mkdtemp(join(tmpdir(), "ling-assessment-hardlink-"));
+  try {
+    await writeFile(join(outside, "credential.txt"), "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\n");
+    await link(join(outside, "credential.txt"), join(cwd, "ordinary.ts"));
+    const snapshot = await captureCodeAssessmentSnapshot(cwd, { type: "working_tree" });
+    assert.equal(snapshot.files.length, 0);
+    assert.deepEqual(snapshot.exclusions, [{ path: "ordinary.ts", reason: "unsupported" }]);
+    assert.doesNotMatch(JSON.stringify(snapshot), /AKIAIOSFODNN7EXAMPLE/u);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
 });
 
 test("branch uses merge-base and pinned committed content, ignoring dirty worktree edits", async () => {

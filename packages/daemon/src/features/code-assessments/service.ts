@@ -19,6 +19,8 @@ function retainPending(store: RunStore, id: string): () => void {
   return () => { const count = pending!.get(id) ?? 0; if (count > 1) pending!.set(id, count - 1); else pending!.delete(id); };
 }
 const capturing = new WeakSet<RunStore>();
+const maxReconciliationRows = 100;
+const maxFreshnessRows = 200;
 const now = () => new Date().toISOString();
 const safeText = (value: string) => redactSecrets(value) as string;
 
@@ -98,9 +100,9 @@ export function finishCodeAssessmentRun(store: RunStore, assessmentId: string, r
 
 /** Reconnect materializes a terminal report; orphaned work stays in history and is never silently rerun. */
 export function reconcileCodeAssessments(store: RunStore, activeRuns: ActiveRunRegistry): void {
-  // Storage permits one active assessment, so it may be older than the first history page.
-  for (let offset = 0; ; offset += 100) {
-    const page = store.listCodeAssessments({ limit: 100, offset });
+  // Only active rows need recovery; terminal history is immutable until an explicit freshness check.
+  for (const status of ["queued", "analyzing"] as const) {
+    const page = store.listCodeAssessments({ status, limit: maxReconciliationRows });
     for (const item of page.assessments) {
       if (!isActiveCodeAssessment(item.status) || pendingByStore.get(store)?.has(item.id)) continue;
       const run = item.runId ? store.getRun(item.runId) : undefined;
@@ -110,7 +112,6 @@ export function reconcileCodeAssessments(store: RunStore, activeRuns: ActiveRunR
           errorMessage: "The analysis was interrupted. Run again to capture a fresh snapshot.", now: now() });
       }
     }
-    if (page.nextOffset === undefined) break;
   }
 }
 
@@ -135,9 +136,11 @@ export async function startCodeAssessment(store: RunStore, input: CreateCodeAsse
     }
     detail = store.createCodeAssessment({ id: `assessment_${randomUUID()}`, kind: input.kind, providerPresetId: input.providerPresetId, instructions: input.instructions, snapshot,
       preparedAt, captureStartedAt, metrics: { captureDurationMs: Math.max(0, Date.now() - Date.parse(captureStartedAt)) }, now: now() });
-    for (let offset = 0; ; offset += 100) {
+    let scanned = 0;
+    for (let offset = 0; scanned < maxFreshnessRows; offset += 100) {
       const page = store.listCodeAssessments({ targetType: snapshot.target.type, limit: 100, offset });
       for (const previous of page.assessments) {
+        scanned++;
         if (previous.id === detail.assessment.id || !["completed", "partial"].includes(previous.status)
           || JSON.stringify(previous.target) !== JSON.stringify(snapshot.target)) continue;
         store.recordCodeAssessmentFreshness(previous.id, {

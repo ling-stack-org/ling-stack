@@ -224,10 +224,12 @@ untrusted provider.
 Any exclusion or redaction makes coverage partial. Raw-content hashes distinguish two
 secret changes even if their displayed redacted Diff is identical. Partial captures
 always return freshness unknown because omitted content cannot certify equality.
-Freshness results describe the explicit check time, not continuous monitoring.
+Freshness results describe the explicit check time, not continuous monitoring. Request-driven
+reconciliation only inspects active rows, and creation refreshes a bounded recent history
+window; older terminal rows remain available through paginated history or an explicit freshness check.
 
-Untracked files are read through a bounded regular-file descriptor, with no-follow and
-inode/device checks plus parent realpath containment. Git capture disables fsmonitor,
+Untracked files are read through a bounded regular-file descriptor, with no-follow,
+single-link, inode/device checks plus parent realpath containment. Git capture disables fsmonitor,
 hooks, external Diff/textconv, submodule recursion and configured clean/smudge/process
 filters. Repository-configured content filters must not execute during this read path.
 These controls do not constitute an OS sandbox or protect against an attacker concurrently

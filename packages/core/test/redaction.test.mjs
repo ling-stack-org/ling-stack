@@ -30,3 +30,18 @@ test("repeated and alternating redaction calls do not retain global regex state"
     for (const [input, expected] of cases) assert.equal(redactSecrets(input), expected);
   }
 });
+
+test("cloud, repository and JWT credential formats are redacted from strings", () => {
+  const input = [
+    "AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE",
+    "github=ghp_123456789012345678901234567890123456",
+    "slack=xoxb-1234567890-1234567890-abcdefghijklmnop",
+    "jwt=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.signature-value",
+  ].join("\n");
+  assert.equal(redactSecrets(input), [
+    "AWS_ACCESS_KEY_ID=[REDACTED]",
+    "github=[REDACTED]",
+    "slack=[REDACTED]",
+    "jwt=[REDACTED]",
+  ].join("\n"));
+});
