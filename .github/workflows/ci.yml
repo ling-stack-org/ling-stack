@@ -83,7 +83,6 @@ jobs:
             scope_json="$(node scripts/ci/classify-scope.mjs --event="$GITHUB_EVENT_NAME")"
           fi
           echo "Scope: $scope_json"
-          printf 'Changed-file scope: `%s`\n' "$scope_json" >> "$GITHUB_STEP_SUMMARY"
           SCOPE_JSON="$scope_json" node --input-type=module <<'NODE' >> "$GITHUB_OUTPUT"
           const scope = JSON.parse(process.env.SCOPE_JSON);
           const outputs = {
@@ -104,6 +103,23 @@ jobs:
           };
           for (const [key, value] of Object.entries(outputs)) console.log(`${key}=${value}`);
           NODE
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            full_scope_json="$(node scripts/ci/classify-scope.mjs \
+              --event="$GITHUB_EVENT_NAME" \
+              --base="$BASE_SHA" \
+              --head=HEAD \
+              --force-full=true)"
+          else
+            full_scope_json="$scope_json"
+          fi
+          mkdir -p .codex-artifacts/ci
+          printf '%s\n' "$scope_json" > .codex-artifacts/ci/scope.json
+          printf '%s\n' "$full_scope_json" > .codex-artifacts/ci/full-scope.json
+          node scripts/ci/scope-audit.mjs \
+            --scope=.codex-artifacts/ci/scope.json \
+            --full-scope=.codex-artifacts/ci/full-scope.json \
+            --execution-tier="${{ steps.policy.outputs.execution-tier }}" \
+            --output=.codex-artifacts/ci/scope-report.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Restore timing hints once for the entire run
         if: steps.policy.outputs.execution-tier == 'complete' && (steps.classify.outputs.daemon == 'true' || contains(steps.classify.outputs.test-packages, '"@ling-stack/core"'))
@@ -146,6 +162,19 @@ jobs:
           if-no-files-found: error
           retention-days: 7
           path: .codex-artifacts/ci/test-plan.json
+
+      - name: Preserve the scope audit and selection report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: ci-scope-report
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
+          path: |
+            .codex-artifacts/ci/scope.json
+            .codex-artifacts/ci/full-scope.json
+            .codex-artifacts/ci/scope-report.md
 
   common-fast:
     name: Common checks (fast lane)

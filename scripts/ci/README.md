@@ -97,6 +97,15 @@ Failure, cancellation, missing or malformed results never pass as a skip. Docs
 must select no product lanes, and full scope must select all lanes. No workflow
 path filter suppresses the required aggregate or complete-tier history scan.
 
+The scope job writes a `ci-scope-report` artifact and appends the same report to
+the GitHub Step Summary. It shows the execution tier, classifier reason, changed
+file count, selected packages, Daemon platforms, and every selected or skipped
+lane. Before the report is published, `scope-audit.mjs` compares the normal
+selector with a forced full-scope classification for the same changed paths. It
+fails closed if a selected package, platform, or lane is outside that full
+scope, or if a documentation scope selects product work. This is a read-only
+selector audit; it does not turn the full regression into a skipped test.
+
 Other workflows retain their existing boundaries: installer/model-cache
 contracts use path filters covering their actual imports, installer assets and
 dependency inputs; translation automation uses catalog paths; desktop
@@ -247,6 +256,12 @@ that failure continues to fail the required quality gate. Missing, duplicate,
 failed or cancelled test reports never produce a new baseline, and PRs cannot
 publish timing hints.
 
+The forced full-scope comparison is deliberately separate from timing hints: a
+successful selective selector audit proves containment of the selected matrix,
+not equivalence of product behavior. Scheduled and manual complete runs still
+execute the full matrix, while the report makes any skipped PR lane visible for
+review.
+
 Recovery-discovery fixtures retain the real 500-row paging boundary and SQLite
 persistence. Stale blockers retain their shared Thread and Turn. Fixture seeding
 defers only derived thread-metadata rebuilding, then flushes once per affected
@@ -332,6 +347,20 @@ Generate a local plan without running tests:
 node scripts/ci/test-shard-plan.mjs \
   --packages='["@ling-stack/core","@ling-stack/daemon"]' \
   --output=.codex-artifacts/ci/test-plan.json
+```
+
+To audit a selector locally without running product tests, keep the normal and
+forced classifications in separate JSON files and render the same report used
+by CI:
+
+```sh
+node scripts/ci/classify-scope.mjs --files='["packages/core/src/index.ts"]' > .codex-artifacts/ci/scope.json
+node scripts/ci/classify-scope.mjs --files='["packages/core/src/index.ts"]' --force-full=true > .codex-artifacts/ci/full-scope.json
+node scripts/ci/scope-audit.mjs \
+  --scope=.codex-artifacts/ci/scope.json \
+  --full-scope=.codex-artifacts/ci/full-scope.json \
+  --execution-tier=complete \
+  --output=.codex-artifacts/ci/scope-report.md
 ```
 
 On the suite's required platform, run a shard with that immutable plan:
