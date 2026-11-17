@@ -623,6 +623,11 @@ import type {
   UpdateAutomationDraftInput,
   UpdateAutomationRunInput,
 } from "./automation-types.js";
+import type {
+  AutomationMonitorSnapshot,
+  RecordAutomationMonitorSnapshotInput,
+  RecordAutomationMonitorSnapshotResult,
+} from "./automation-monitor-types.js";
 
 export type RunStatus = "queued" | "running" | "waiting_for_approval" | "yielded" | "succeeded" | "failed" | "cancelled";
 
@@ -2732,6 +2737,11 @@ export interface RunStore extends AutomationEventStore, MemoryWikiStore, MemoryD
   findAutomationRunByIdempotencyKey(idempotencyKey: string): AutomationRun | undefined;
   listAutomationRuns(options?: ListAutomationRunsOptions): AutomationRun[];
   updateAutomationRun(automationRunId: string, input: UpdateAutomationRunInput, now: string): AutomationRun | undefined;
+  getAutomationMonitorSnapshot(automationId: string): AutomationMonitorSnapshot | undefined;
+  recordAutomationMonitorSnapshot(
+    input: RecordAutomationMonitorSnapshotInput,
+    now: string,
+  ): RecordAutomationMonitorSnapshotResult;
   listManagedPlugins(options?: ListManagedPluginsOptions): ManagedPluginRecord[];
   getManagedPlugin(pluginId: string): ManagedPluginRecord | undefined;
   upsertManagedPlugin(input: UpsertManagedPluginInput, now: string): ManagedPluginRecord;
@@ -3323,6 +3333,8 @@ export type AutomationStoreFacet = RunStoreFacet<
   | "findAutomationRunByIdempotencyKey"
   | "listAutomationRuns"
   | "updateAutomationRun"
+  | "getAutomationMonitorSnapshot"
+  | "recordAutomationMonitorSnapshot"
 >;
 
 export type ManagedPluginStoreFacet = RunStoreFacet<

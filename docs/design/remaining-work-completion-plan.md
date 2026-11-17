@@ -60,11 +60,13 @@ M0 audit packet: [Baseline And Decisions](remaining-work-m0-baseline-and-decisio
   daemon 进程共享临时 Host/SQLite 的本地重启回归已通过；真实 Runner/Provider 停止确认、外部
   Provider/Daemon 验收仍未完成。
 - 本分支的源码、定向验证、远端合并和发布验收分别记录，不能相互替代。
-- 2026-11-18 的 14 项状态复核已转成独立执行台账；当前第一项跨切片本地交付是权限预览
-  `POST /runs/policy-preview`。它复用实际 Run dispatch 的 `resolveSessionRunPolicy`，校验
-  channel/task 归属和 approval profile，标记 full access 的确认要求，并保证不创建 Run、Approval、
-  Artifact 或状态迁移。该切片的 Contracts/Core/API Client/Daemon 类型检查、Daemon build 和两项
-  HTTP 回归已通过；分支仍未推送、开 PR、合并或部署。
+- 2026-11-18 的 14 项状态复核已转成独立执行台账。权限预览
+  `POST /runs/policy-preview` 已完成本地切片：它复用实际 Run dispatch 的
+  `resolveSessionRunPolicy`，校验 channel/task 归属和 approval profile，标记 full access 的确认要求，
+  并保证不创建 Run、Approval、Artifact 或状态迁移。随后 Automations P2 已完成第一段本地切片：
+  monitor trigger 解析、doctor/runtime/approval/external-work/GitHub CI 的有界本地快照、SQLite
+  fingerprint CAS、condition 过滤、`record_noop`/`skip` 历史以及将变化快照作为不可信事实注入触发 Run
+  上下文均已接入；Core/Daemon 定向回归、类型检查和 Daemon build 通过。两条切片都仍未推送、开 PR、合并或部署。
 
 ## 1. 目标与完成定义
 
@@ -124,7 +126,7 @@ Mobile 继续保持在当前产品验收范围之外，除非安全评审和产�
 - Provider profile 清理、Keychain 迁移、Workspace State Storage rollout；
 - AI Councils、治理通知、会话记忆引用、活动摘要与 exploration batching、富输入物化；
 - Multi-Agent Requirement Shaping、Native Skill Recording 后续入口；
-- SQLite 继续模块化、Automations 的更丰富监控源/桌面通知/外部目的地。
+- SQLite 继续模块化、Automations 的 finding artifacts/桌面通知/外部目的地。
 
 这些事项在本轮末做一次重新排序；没有产品负责人、成功指标、依赖和验收方式的条目不进入开发。
 

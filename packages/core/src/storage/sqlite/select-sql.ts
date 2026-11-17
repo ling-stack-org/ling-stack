@@ -345,6 +345,18 @@ export function automationRunSelectSql(whereClause: string): string {
   `;
 }
 
+export function automationMonitorSnapshotSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      automation_id,
+      fingerprint,
+      snapshot_json,
+      updated_at
+    FROM automation_monitor_snapshots
+    ${whereClause}
+  `;
+}
+
 export function channelSelectSql(whereClause: string): string {
   return `
     SELECT

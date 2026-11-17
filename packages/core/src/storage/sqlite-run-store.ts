@@ -571,6 +571,11 @@ import {
   type UpdateAutomationDraftInput,
   type UpdateAutomationRunInput,
 } from "../automation-types.js";
+import type {
+  AutomationMonitorSnapshot,
+  RecordAutomationMonitorSnapshotInput,
+  RecordAutomationMonitorSnapshotResult,
+} from "../automation-monitor-types.js";
 import {
   type ListWorkItemsOptions,
   type UpsertWorkItemInput,
@@ -6272,6 +6277,17 @@ export class SqliteRunStore implements RunStore {
 
   updateAutomationRun(automationRunId: string, input: UpdateAutomationRunInput, now: string): AutomationRun | undefined {
     return this.automations.updateAutomationRun(automationRunId, input, now);
+  }
+
+  getAutomationMonitorSnapshot(automationId: string): AutomationMonitorSnapshot | undefined {
+    return this.automations.getAutomationMonitorSnapshot(automationId);
+  }
+
+  recordAutomationMonitorSnapshot(
+    input: RecordAutomationMonitorSnapshotInput,
+    now: string,
+  ): RecordAutomationMonitorSnapshotResult {
+    return this.automations.recordAutomationMonitorSnapshot(input, now);
   }
 
   putAutomationEventSource(...args: Parameters<AutomationEventStore["putAutomationEventSource"]>): ReturnType<AutomationEventStore["putAutomationEventSource"]> {

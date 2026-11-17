@@ -18,6 +18,7 @@ import {
   type AutomationTarget,
   type AutomationTrigger,
 } from "../../automation-types.js";
+import type { AutomationMonitorSnapshot } from "../../automation-monitor-types.js";
 import {
   omitUndefined,
   parseJson,
@@ -108,6 +109,15 @@ export function mapAutomationRun(row: Record<string, SQLOutputValue>): Automatio
     skipReason: readNullableString(row, "skip_reason"),
     errorMessage: readNullableString(row, "error_message"),
   });
+}
+
+export function mapAutomationMonitorSnapshot(row: Record<string, SQLOutputValue>): AutomationMonitorSnapshot {
+  return {
+    automationId: readString(row, "automation_id"),
+    fingerprint: readString(row, "fingerprint"),
+    snapshot: parseJsonObject(readString(row, "snapshot_json")),
+    updatedAt: readString(row, "updated_at"),
+  };
 }
 
 function parseAutomationTrigger(value: string): AutomationTrigger {

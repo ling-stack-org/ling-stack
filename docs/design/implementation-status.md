@@ -95,7 +95,7 @@ These are real gaps, but they must not be described as currently scheduled work.
 | [Multi-Agent Requirement Shaping](multi-agent-app-detailed-design.md) | Base shaping contract and projection exist; specialist contribution packets, collection/fan-in and detail route remain; safe concurrency is separately active above and ordinary write parallelism stays closed |
 | [Native Skill Recording](ling-native-skill-recording-p0-detailed-design.md) | Daemon, Run Inspector, artifact and Skill Library entry points exist; message-overflow source refs, Web E2E and accessibility remain |
 | [SQLite Modularization](sqlite-storage-modularization-next-slices.md) | Session/event/intervention/work-unit/semaphore/recovery stores are integrated; persistence, CAS, heartbeat, stale recovery and public API ownership verification remain |
-| [Automations](automations.md) | Durable definitions/runs, scheduler, approval and signed ingress exist; monitor fingerprint/no-op/history and external destinations remain |
+| [Automations](automations.md) | Durable definitions/runs, scheduler, approval and signed ingress exist; bounded monitor sources, fingerprint persistence and unchanged/no-op history are locally verified; finding artifacts, notifications and external destinations remain |
 
 ## Reference Contracts, Not Separate Queues
 

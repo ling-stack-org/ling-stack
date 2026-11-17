@@ -52,7 +52,7 @@ implementation never closes a platform gate by itself.
 | 11 | Multi-Agent Requirement Shaping | Code + verification | Implement specialist contribution packet, collection/fan-in validation and detail route | Existing safe-concurrency and packet ownership rules remain mandatory; ordinary write parallelism stays closed |
 | 12 | Native Skill Recording | Code + verification | Complete message-overflow source refs, draft entry and Web/accessibility regression | Settings remains the existing Skill Library entry; no parallel authority surface |
 | 13 | SQLite Modularization | Integration + verification | Verify persistence, CAS, heartbeat, stale recovery, reopen and stable public `RunStore` API | Further mechanical splitting is excluded without ownership design |
-| 14 | Automations | Code + verification | Deliver P2 monitor source/fingerprint/no-op/history, then separately scope P3 destinations and approval-backed actions | External destinations and live messaging need a separate acceptance record |
+| 14 | Automations | Code + verification | **In progress:** bounded local monitor sources, fingerprint persistence, condition evaluation and unchanged/no-op history are implemented and locally verified; next add finding artifacts/notifications, then separately scope P3 destinations and approval-backed actions | External destinations, desktop notifications and live messaging need separate acceptance records |
 
 The ledger is a plan, not a claim that all source bodies are currently complete. The owning design
 documents and tests remain authoritative for each row.

@@ -994,6 +994,27 @@ function resolveTemplate(
       outputPolicy: template.defaultOutputPolicy,
     };
   }
+  if (kind === "project_monitor") {
+    return {
+      description: "Watch a bounded local project signal and retain change history.",
+      trigger: {
+        type: "monitor",
+        pollIntervalMs: 300_000,
+        source: { kind: "doctor_summary" },
+        condition: { kind: "any_change" },
+        unchangedPolicy: "skip",
+      },
+      promptTemplate: promptTemplate ?? {
+        templateVersion: 1,
+        systemPurpose: "Summarize supplied local monitor facts only. Do not mutate files or external systems.",
+        promptMarkdown: "Summarize the project monitor change and identify the smallest next verification step.",
+        contextSelectors: [],
+        maxContextItems: 16,
+      },
+      executionPolicy: { allowedTools: ["read", "grep", "find", "ls"], approvalProfile: { mode: "none" } },
+      outputPolicy: { destinations: [{ type: "automation_thread" }, { type: "markdown_artifact" }], artifactFormat: "markdown" },
+    };
+  }
   if (!promptTemplate) {
     throw new Error("custom_prompt requires promptTemplate");
   }

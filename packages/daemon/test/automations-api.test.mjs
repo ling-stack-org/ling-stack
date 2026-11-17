@@ -51,8 +51,9 @@ test("automation API creates templates, previews context, runs once, deduplicate
         channelId: channel.id,
       },
     });
-    assert.equal(projectMonitor.status, 400);
-    assert.match(projectMonitor.body.message, /project_monitor_not_implemented/);
+    assert.equal(projectMonitor.status, 201);
+    assert.equal(projectMonitor.body.automation.kind, "project_monitor");
+    assert.equal(projectMonitor.body.automation.trigger.type, "monitor");
 
     const preview = await postJson(`${daemon.url}/automations/${encodeURIComponent(daily.automation.id)}/preview?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(preview.automation.id, daily.automation.id);
@@ -225,6 +226,67 @@ test("automation draft API persists template/manual/chat proposals and confirms 
     assert.equal(weeklyChatDraft.draft.trigger.schedule.timeOfDay, "09:00");
     const automationsAfterChatDraft = await getJson(`${daemon.url}/automations?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(automationsAfterChatDraft.automations.length, 1);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("automation monitor persists a bounded snapshot and records unchanged history without starting a run", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-automation-monitor-"));
+  const daemon = await startDaemonForTest(new RecordingRunner());
+  try {
+    const channel = (await createChannel(daemon.url, cwd)).channel;
+    const created = await postJson(`${daemon.url}/automations?cwd=${encodeURIComponent(cwd)}`, {
+      kind: "project_monitor",
+      title: "Local monitor",
+      channelId: channel.id,
+      trigger: {
+        type: "monitor",
+        pollIntervalMs: 1000,
+        source: { kind: "external_work" },
+        condition: { kind: "count_above", field: "count", threshold: 100000 },
+        unchangedPolicy: "record_noop",
+      },
+    });
+    assert.equal(created.automation.trigger.type, "monitor");
+    await waitForCondition(async () => {
+      const response = await getJson(`${daemon.url}/automation-runs?cwd=${encodeURIComponent(cwd)}&automationId=${encodeURIComponent(created.automation.id)}`);
+      return response.automationRuns.length >= 2;
+    }, "monitor no-op history", 5000);
+    const runs = await getJson(`${daemon.url}/automation-runs?cwd=${encodeURIComponent(cwd)}&automationId=${encodeURIComponent(created.automation.id)}`);
+    assert.ok(runs.automationRuns.length >= 2);
+    assert.ok(runs.automationRuns.every((run) => run.triggerType === "monitor" && run.status === "skipped"));
+    assert.ok(runs.automationRuns.some((run) => run.skipReason === "monitor_condition_not_met"));
+    assert.ok(runs.automationRuns.some((run) => run.skipReason === "monitor_unchanged"));
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("automation monitor includes the changed local snapshot in the triggered run context", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-automation-monitor-run-"));
+  const runner = new RecordingRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
+    const channel = (await createChannel(daemon.url, cwd, { defaultProviderPresetId: provider.id })).channel;
+    const created = await postJson(`${daemon.url}/automations?cwd=${encodeURIComponent(cwd)}`, {
+      kind: "project_monitor",
+      title: "Monitor report",
+      channelId: channel.id,
+      trigger: {
+        type: "monitor",
+        pollIntervalMs: 1000,
+        source: { kind: "doctor_summary" },
+        condition: { kind: "count_above", field: "activeCount", threshold: -1 },
+        unchangedPolicy: "skip",
+      },
+    });
+    await waitForCondition(() => runner.runs.length >= 1, "monitor run", 5000);
+    assert.match(runner.runs[0].task.prompt, /Monitor snapshot/);
+    assert.match(runner.runs[0].task.prompt, /"activeCount": 0/);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
