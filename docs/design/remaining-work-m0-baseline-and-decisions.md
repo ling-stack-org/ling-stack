@@ -2,7 +2,7 @@
 
 Status: active baseline audit; this document records evidence and pending decisions, not product approval
 Owner: Ling maintainers; one integration owner and one platform contact must be assigned for each active package
-Last verified: 2026-11-17
+Last verified: 2026-11-18
 Source branch: `codex/remaining-work-implementation`
 Remote: `https://github.com/ling-stack-org/ling-stack.git`
 
@@ -16,7 +16,7 @@ product decisions. A row is not complete merely because its source code exists l
 |---|---|---|
 | Protected source worktree | `/Users/tianxiao/ling-stack`, branch `codex/ling-companion`, `HEAD 65d2ed026` | Existing WIP is preserved and was not reset, cleaned, or rebased by this plan |
 | Target worktree | `/Users/tianxiao/.codex/worktrees/remaining-work-implementation` | Isolated implementation worktree for this delivery target |
-| Target branch | `codex/remaining-work-implementation` | Created from the latest `origin/main@81f216d7de8211257448451ddfecde94fcf0ec63`; local implementation remains unpushed |
+| Target branch | `codex/remaining-work-implementation` at `1ce2a969f` | Created from the latest `origin/main@81f216d7de8211257448451ddfecde94fcf0ec63`; role-view recovery is the latest local commit and the branch remains unpushed |
 | Plan branch cut | `origin/main@81f216d7de8211257448451ddfecde94fcf0ec63` | Refreshed on 2026-11-18 before continuing the target work |
 | Main currently integrated locally | `origin/main@81f216d7de8211257448451ddfecde94fcf0ec63` | Target starts at this mainline commit; no target-branch merge is claimed |
 | Target remote state | No `origin/codex/remaining-work-implementation` ref and no target PR | Local commits are not reviewable from GitHub until explicitly pushed and a PR is opened |
@@ -181,6 +181,9 @@ The following evidence is already recorded on the target branch and in the ownin
 - Core and Daemon production/test typechecks passed; Core and Daemon builds passed; `corepack pnpm check:docs`
   passed for 573 Markdown files. The full repository build and hosted CI remain separate gates and are not
   inferred from these package runs.
+- The targeted context processing, projection, memory and restart-recovery set is now `52/52` on
+  2026-11-18, including specialist and evidence-inspect prompt-envelope reconstruction after SQLite
+  reopen. This is local source evidence only; browser, security, packaged and provider gates remain open.
 - Hosted CI and remote merge are not inferred from these local results. Platform acceptance, real Provider
   smoke, signed packages, Windows/Office/Chrome, and accessibility remain open where the owning status says so.
 
@@ -196,8 +199,8 @@ Evidence anchors:
 ## 6. Next authorized implementation step
 
 After the M0 decisions and owner/resource assignments are recorded, the next implementation slice is
-the remaining Web/session recovery and surface acceptance, while the F5 track continues with external
-Provider, stop-confirmation and A17/A18 evidence. The F5 receiver keeps the durable dispatch
+Web/security/session surface acceptance, while the F5 track continues with external Provider,
+stop-confirmation and A17/A18 evidence. The F5 receiver keeps the durable dispatch
 receipt read-only after release, preserves fail-closed unknown-outcome behavior, and does not open
 ordinary multi-agent write concurrency.
 
