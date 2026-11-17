@@ -58,7 +58,10 @@ function shouldRedactKey(key: string): boolean {
     normalized.endsWith("apikey") ||
     normalized.includes("accesskey") ||
     normalized.includes("accesstoken") ||
-    normalized.includes("authorization") ||
+    normalized === "authorization" ||
+    normalized.endsWith("authorization") ||
+    normalized.includes("authorizationheader") ||
+    normalized.includes("authorizationvalue") ||
     normalized.includes("clientsecret") ||
     normalized.includes("databaseurl") ||
     normalized.includes("sessiontoken") ||

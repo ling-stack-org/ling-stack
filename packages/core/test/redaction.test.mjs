@@ -62,3 +62,17 @@ test("assignment redaction covers provider credentials and escaped quoted values
     'const password = "[REDACTED]"; console.log("safe");',
   ].join("\n"));
 });
+
+test("authorization modes remain usable while authorization credentials are redacted", () => {
+  assert.deepEqual(redactSecrets({
+    authorization: "Bearer secret-token",
+    authorizationHeader: "Bearer header-secret",
+    authorizationMode: "always",
+    defaultAuthorizationMode: "smart",
+  }), {
+    authorization: "[REDACTED]",
+    authorizationHeader: "[REDACTED]",
+    authorizationMode: "always",
+    defaultAuthorizationMode: "smart",
+  });
+});
