@@ -69,14 +69,17 @@ export class SqliteAutomationEventStore implements AutomationEventStore {
       const minute = new Date(Date.parse(now) - 60_000).toISOString();
       const recent = db.prepare("SELECT COUNT(*) AS count FROM automation_events WHERE source_id=? AND received_at>=?").get(source.id, minute);
       if (Number(recent?.count) >= 100) throw new Error("automation_event_rate_limit");
+      const eligibleRules = source.rules.flatMap(rule => {
+        if (!rule.types.includes(input.type) || !automationEventMatches(input.payload, rule.predicates)) return [];
+        const definition = this.ports.getAutomationDefinition(rule.automationId);
+        return !definition || definition.status !== "enabled" || definition.automationMode === "heartbeat"
+          ? [] : [{ rule, definition }];
+      });
       const pending = db.prepare("SELECT COUNT(*) AS count FROM automation_event_dispatches WHERE status IN ('queued','dispatching')").get();
-      if (Number(pending?.count) + source.rules.length > 5000) throw new Error("automation_event_inbox_capacity");
+      if (Number(pending?.count) + eligibleRules.length > 5000) throw new Error("automation_event_inbox_capacity");
       const event: AutomationEventEnvelope = { ...input, id: `ae_${randomUUID()}`, receivedAt: now };
       db.prepare("INSERT INTO automation_events VALUES(?,?,?,?,?,?)").run(event.id, source.id, event.externalId, event.payloadDigest, now, JSON.stringify(event));
-      for (const rule of source.rules) {
-        if (!rule.types.includes(event.type) || !automationEventMatches(event.payload, rule.predicates)) continue;
-        const definition = this.ports.getAutomationDefinition(rule.automationId);
-        if (!definition || definition.status !== "enabled" || definition.automationMode === "heartbeat") continue;
+      for (const { rule, definition } of eligibleRules) {
         db.prepare(`INSERT INTO automation_event_dispatches(id,event_id,source_id,source_revision,automation_id,definition_digest,destinations_json,status)
           VALUES(?,?,?,?,?,?,?,'queued')`).run(`aed_${randomUUID()}`, event.id, source.id, source.revision, definition.id,
             automationEventDigest(automationDefinitionDigestInput(definition)), JSON.stringify(rule.destinationIds ?? []));

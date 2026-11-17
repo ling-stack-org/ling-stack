@@ -72,6 +72,33 @@ test("event rate limits do not reject duplicate receipts or partially reserve ne
   assert.equal(f.store.listAutomationEvents().length, 100);
 });
 
+test("inbox capacity counts only eligible matching dispatches", async t => {
+  const f = await fixture(t);
+  const definitions = [f.definition];
+  for (let i = 1; i < 32; i++) definitions.push(f.store.createAutomationDefinition({
+    threadId: f.definition.threadId, title: `Event fixture ${i}`, kind: "custom_prompt", trigger: { type: "manual" },
+    target: { scope: "workspace", workspaceId: DEFAULT_WORKSPACE_ID, cwd: f.cwd }, promptTemplate: { templateVersion: 1,
+      promptMarkdown: "Handle the supplied event", contextSelectors: [] }, executionPolicy: {},
+    outputPolicy: { destinations: [{ type: "automation_thread" }], artifactFormat: "markdown" },
+  }, now));
+  const allRules = definitions.map(definition => ({ automationId: definition.id, types: ["alert.opened"],
+    predicates: [{ path: "priority", equals: "high" }], destinationIds: ["im_test"] }));
+  const { revision: originalRevision, createdAt: _created, updatedAt: _updated, ...sourceInput } = f.source;
+  const expanded = f.store.putAutomationEventSource({ ...sourceInput, rules: allRules }, originalRevision, later(1));
+  for (let i = 0; i < 156; i++) {
+    const id = `queued-${i}`, receivedAt = later(61 + i * 61), payload = { priority: "high" };
+    f.store.acceptAutomationEvent({ sourceId: expanded.id, externalId: id, type: "alert.opened", occurredAt: now,
+      payload, payloadDigest: automationEventDigest({ id, payload }) }, expanded.revision, receivedAt);
+  }
+  const selectiveRules = allRules.map((rule, index) => ({ ...rule, types: [index === 0 ? "alert.opened" : "issue.opened"] }));
+  const selective = f.store.putAutomationEventSource({ ...sourceInput, rules: selectiveRules }, expanded.revision, later(61 + 156 * 61));
+  const id = "eligible-after-capacity", payload = { priority: "high" }, receivedAt = later(61 + 157 * 61);
+  const accepted = f.store.acceptAutomationEvent({ sourceId: selective.id, externalId: id, type: "alert.opened", occurredAt: now,
+    payload, payloadDigest: automationEventDigest({ id, payload }) }, selective.revision, receivedAt);
+  assert.equal(accepted.duplicate, false);
+  assert.equal(f.store.listAutomationEventDispatches().find(dispatch => dispatch.eventId === accepted.event.id)?.automationId, definitions[0].id);
+});
+
 test("delivery materialization is idempotent and an interrupted send remains unknown until reconciled", async t => {
   const f = await fixture(t);
   f.store.acceptAutomationEvent(f.event("one"), f.source.revision, now);

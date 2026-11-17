@@ -10,7 +10,9 @@ async function readConfiguration(path: string, userOwned: boolean): Promise<stri
   let expected;
   try { expected = await lstat(path); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; }
-  const parent = await lstat(dirname(path));
+  let parent;
+  try { parent = await lstat(dirname(path)); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; }
   if (!parent.isDirectory() || parent.isSymbolicLink() || !expected.isFile() || expected.isSymbolicLink()
     || expected.nlink !== 1 || expected.size > 64 * 1024 || userOwned && (expected.mode & 0o022
       || typeof process.getuid === "function" && expected.uid !== process.getuid())) throw new Error("hooks_configuration_unsafe");
@@ -53,11 +55,14 @@ export async function loadAgentHooks(input: { cwd: string; userRoot?: string }):
   let projectText = "";
   const selected = trust.find(value => value.root === root);
   if (selected) {
-    projectText = await readConfiguration(join(root, ".ling", "hooks.json"), false) ?? "";
+    const projectContents = await readConfiguration(join(root, ".ling", "hooks.json"), false);
+    projectText = projectContents ?? "";
     if (digest(projectText) !== selected.digest) throw new Error("hooks_project_trust_changed");
-    const project = object(projectText);
-    if (project.schemaVersion !== 1 || Object.keys(project).some(key => !["schemaVersion", "hooks"].includes(key))) throw new Error("hooks_configuration_invalid");
-    hooks.push(...readHookDefinitions(project.hooks));
+    if (projectContents !== undefined) {
+      const project = object(projectContents);
+      if (project.schemaVersion !== 1 || Object.keys(project).some(key => !["schemaVersion", "hooks"].includes(key))) throw new Error("hooks_configuration_invalid");
+      hooks.push(...readHookDefinitions(project.hooks));
+    }
   }
   return { schemaVersion: 1, digest: digest(userText + "\0" + projectText), hooks: readHookDefinitions(hooks) };
 }

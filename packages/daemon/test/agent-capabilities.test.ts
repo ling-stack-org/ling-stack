@@ -144,6 +144,15 @@ test("project Hooks require an external user pin and changing their bytes revoke
   await assert.rejects(loadAgentHooks({ cwd, userRoot }), /hooks_project_trust_changed/);
 });
 
+test("a trusted workspace without a project Hooks directory uses the pinned empty configuration", async t => {
+  const { cwd, userRoot } = await fixture(t);
+  await rm(join(cwd, ".ling"), { recursive: true, force: true });
+  const emptyDigest = createHash("sha256").update("").digest("hex");
+  await writeFile(join(userRoot, "hooks.json"), JSON.stringify({ schemaVersion: 1, hooks: [],
+    trustedProjects: [{ root: cwd, digest: `sha256:${emptyDigest}` }] }));
+  assert.deepEqual((await loadAgentHooks({ cwd, userRoot }))?.hooks, []);
+});
+
 test("unsafe user configuration, invalid definitions and duplicate ids fail closed", async t => {
   const { cwd, userRoot } = await fixture(t);
   const path = join(userRoot, "hooks.json");

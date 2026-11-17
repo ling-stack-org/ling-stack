@@ -24,6 +24,7 @@ test(`bundled ${authored ? "authored" : "compiled"} Code Mode, script Hooks and 
     plugin: { name: "authored-test-inputs", setup() {} },
   } : undefined;
   const resources = await preparePackagedAgentRuntime({ sourceInputs });
+  assert.doesNotMatch(resources.workerResults[0].outputFiles[0].text, /createRequire|process\.execPath/u);
   const entry = join(root, "runtime.mjs");
   const directory = authored ? "src" : "dist", extension = authored ? "ts" : "js";
   await build({

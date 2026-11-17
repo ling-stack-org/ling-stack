@@ -42,7 +42,6 @@ export async function preparePackagedAgentRuntime({ sourceInputs } = {}) {
   const scriptWorker = await build({
     absWorkingDir: desktopRoot, entryPoints: [resolve(codemodeRoot, workerExport)], bundle: true,
     platform: "node", format: "esm", write: false, metafile: true, target: "es2022",
-    banner: { js: 'import { createRequire as __lingCreateRequire } from "node:module"; const require = __lingCreateRequire(process.execPath);' },
   });
   const intelligenceWorker = await build({
     absWorkingDir: desktopRoot, entryPoints: [ownedModule("daemon", "runtime/code-intelligence/worker")], bundle: true,
