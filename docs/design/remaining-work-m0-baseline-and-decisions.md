@@ -1,10 +1,14 @@
 # Remaining Work M0 Baseline And Decisions
 
-Status: active baseline audit; this document records evidence and pending decisions, not product approval
+Status: historical M0 baseline audit; current execution state is tracked by PR #732
 Owner: Ling maintainers; one integration owner and one platform contact must be assigned for each active package
 Last verified: 2026-11-18
 Source branch: `codex/remaining-work-implementation`
 Remote: `https://github.com/ling-stack-org/ling-stack.git`
+
+This document preserves the initial M0 snapshot. The active implementation moved to
+`codex/automations-p2-completion` and is tracked in [PR #732](https://github.com/ling-stack-org/ling-stack/pull/732)
+at head `a0b8e029bacbc9dd77c295810e7fbe1d83272784`; hosted review, merge and deployment remain separate gates.
 
 This is the evidence packet for M0 of the [Remaining Work Completion Plan](remaining-work-completion-plan.md).
 It separates repository facts, local implementation evidence, remote review state, platform acceptance, and
@@ -16,12 +20,14 @@ product decisions. A row is not complete merely because its source code exists l
 |---|---|---|
 | Protected source worktree | `<workspace-root>`, branch `codex/ling-companion`, `HEAD 65d2ed026` | Existing WIP is preserved and was not reset, cleaned, or rebased by this plan |
 | Target worktree | `<isolated-worktree>` | Isolated implementation worktree for this delivery target |
-| Target branch | `codex/remaining-work-implementation` | Created from the latest `origin/main@81f216d7de8211257448451ddfecde94fcf0ec63`; role-view recovery (`1ce2a969f`) and refreshed M0 evidence are local commits, and the branch remains unpushed |
+| Historical target branch at M0 | `codex/remaining-work-implementation` | Created from the latest `origin/main@81f216d7de8211257448451ddfecde94fcf0ec63`; role-view recovery (`1ce2a969f`) and refreshed M0 evidence were local commits at the snapshot |
 | Plan branch cut | `origin/main@81f216d7de8211257448451ddfecde94fcf0ec63` | Refreshed on 2026-11-18 before continuing the target work |
 | Main currently integrated locally | `origin/main@81f216d7de8211257448451ddfecde94fcf0ec63` | Target starts at this mainline commit; no target-branch merge is claimed |
-| Target remote state | No `origin/codex/remaining-work-implementation` ref and no target PR | Local commits are not reviewable from GitHub until explicitly pushed and a PR is opened |
+| Historical target remote state | No `origin/codex/remaining-work-implementation` ref and no target PR | This is the M0 snapshot; it does not describe the current execution branch |
+| Current execution branch | `codex/automations-p2-completion` at `a0b8e029bacbc9dd77c295810e7fbe1d83272784` | Pushed from the isolated implementation worktree; root `codex/ling-companion` WIP remains separate |
+| Current PR state | [#732](https://github.com/ling-stack-org/ling-stack/pull/732) open | Hosted checks/review and merge are pending; no deployment is claimed |
 | Deployment state | None | No source, package, daemon, or provider deployment is claimed |
-| CI state for this target | Not started on GitHub | The target branch is not pushed; local checks remain separate from hosted CI |
+| CI state for current target | Hosted CI pending on PR #732 | Local checks remain separate from hosted CI |
 | Latest observed main CI | GitHub Actions run `43986644173`, event `dynamic`, branch `main`, conclusion `success` | This is a mainline observation and does not validate the target branch |
 
 ### Remote PR audit snapshot
@@ -37,7 +43,7 @@ The following states were read from the GitHub pull request records on 2026-11-1
 | #695 | `codex/f5-rerun-contract` | merged | `542d8a451` | F5 contract preflight is merged |
 | #698 | `codex/f5-host-observation` | merged | `93fea5080` | Host admission observation is merged |
 | #714 | `codex/agent-capabilities` | open | — | Must not be described as merged; review/CI and the open findings remain external dependencies |
-| target branch | `codex/remaining-work-implementation` | no PR | — | Current F5, External Work, context, and plan changes are local only |
+| current execution branch | `codex/automations-p2-completion` | PR #732 open | `a0b8e029bacbc9dd77c295810e7fbe1d83272784` | Current F5, External Work, context, automation and plan changes are reviewable; merge and deployment remain open |
 
 The merge status above distinguishes “source merged” from “deployed,” “packaged,” and “field accepted.”
 The PR records are evidence for the listed PRs only; they do not close the M0 owner, platform, or decision gates.
@@ -210,5 +216,5 @@ stop-confirmation and A17/A18 evidence. The F5 receiver keeps the durable dispat
 receipt read-only after release, preserves fail-closed unknown-outcome behavior, and does not open
 ordinary multi-agent write concurrency.
 
-Until that evidence exists, the branch remains source-complete for the recorded local slices only. It is not
-a release candidate, has no remote PR, and has not been deployed.
+Until that evidence exists, the branch remains source-complete for the recorded local slices only. PR #732
+is open, the branch is not a release candidate, and no deployment is claimed.

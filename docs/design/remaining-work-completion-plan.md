@@ -1,10 +1,12 @@
 # Ling Stack 未完成工作收口计划
 
-Status: active execution plan; branch-local implementation and verification are recorded below
+Status: active execution plan; PR #732 is open and hosted review/merge verification is pending
 Owner: Ling maintainers; one integration owner for each delivery batch
 Last verified: 2026-11-18
 Initial branch cut (historical M0 snapshot): `origin/main@81f216d7de8211257448451ddfecde94fcf0ec63`
 Current main integrated locally: `origin/main@d613e0ddaf0ef0575e691bef4418b6dbbaf62b36`.
+Current execution PR: [#732](https://github.com/ling-stack-org/ling-stack/pull/732), head
+`a0b8e029bacbc9dd77c295810e7fbe1d83272784`.
 Target: 2027-03-15 release-candidate closure for the active delivery queue
 Canonical status source: [Implementation Status](implementation-status.md)
 Code and test anchors: each work package keeps its owning plan and contract
@@ -66,10 +68,13 @@ M0 audit packet: [Baseline And Decisions](remaining-work-m0-baseline-and-decisio
   并保证不创建 Run、Approval、Artifact 或状态迁移。随后 Automations P2 已完成第一段本地切片：
   monitor trigger 解析、doctor/runtime/approval/external-work/GitHub CI 的有界本地快照、SQLite
   fingerprint CAS、condition 过滤、`record_noop`/`skip` 历史以及将变化快照作为不可信事实注入触发 Run
-  上下文均已接入；Core/Daemon 定向回归、类型检查和 Daemon build 通过。两条切片都仍未推送、开 PR、合并或部署。
+  上下文均已接入；Core/Daemon 定向回归、类型检查和 Daemon build 通过。两条切片已推送到
+  [PR #732](https://github.com/ling-stack-org/ling-stack/pull/732)，当前 head 为
+  `a0b8e029bacbc9dd77c295810e7fbe1d83272784`；Hosted CI、review、合并、部署和平台验收仍分别记录。
 - Automations P2 的第二段本地收口已写入[专项计划](automations-p2-completion-plan-2026-11-18.md)：匹配监控条件现在创建
   finding artifact 并持久化到 `AutomationRun.outputArtifactIds`，通知 journal 增加 monitor finding 事件，scheduler
-  contract 和 Web 页面暴露最新 fingerprint/outcome。该批次的 PR、Hosted CI、合并、部署和真实 Provider/平台验收仍分别记录。
+  contract 和 Web 页面暴露最新 fingerprint/outcome。PR #732 的 Hosted CI、review、合并、部署和真实
+  Provider/平台验收仍分别记录。
 
 ## 1. 目标与完成定义
 

@@ -1,11 +1,13 @@
 # Remaining Work 14-Item Delivery Plan
 
-Status: active execution plan
+Status: active execution plan; PR #732 is open and hosted review/merge verification is pending
 Owner: Ling maintainers; each delivery batch needs an integration owner and a platform contact
 Last verified: 2026-11-18
 Initial branch-cut baseline (historical M0 snapshot): `origin/main@81f216d7de8211257448451ddfecde94fcf0ec63`
 Execution branch: `codex/automations-p2-completion`
 Current integrated main: `origin/main@d613e0ddaf0ef0575e691bef4418b6dbbaf62b36`
+Execution PR: [#732](https://github.com/ling-stack-org/ling-stack/pull/732), head
+`a0b8e029bacbc9dd77c295810e7fbe1d83272784`
 Target worktree: `<isolated-worktree>`
 Release-candidate target: 2027-03-15, subject to platform resources and external acceptance
 
@@ -20,7 +22,7 @@ implementation never closes a platform gate by itself.
 - The target worktree is clean and contains a merge of the latest observed `origin/main@d613e0dd`.
   It contains the previously recorded F5, External Work, context processing and restart-recovery slices,
   plus the policy-preview slice recorded below.
-- The target branch has not been pushed, has no PR, and has not been merged or deployed.
+- The target branch is pushed and has open PR #732. It has not been merged or deployed.
 - Known open PRs remain an external review queue: #729, #728, #727, #725, #722, #717 and #675.
   Their open state does not prove that any of the 14 items is complete.
 - PR #627 and PR #677 are merged into `main`; the merged Companion PR is #677 with merge commit
@@ -124,5 +126,5 @@ The 14-item plan can close only when every row has one of these outcomes:
 - a product/architecture decision is recorded as approve, defer or reject with rationale and date; or
 - the row is explicitly moved to the next-cycle follow-up pool with its contract and reason.
 
-The target branch is not a Release Candidate, has no remote PR and has not been deployed until those
-facts are independently verified.
+The target branch is not a Release Candidate. PR #732 remains open and the branch has not been deployed
+until hosted checks, review, merge, and the required platform evidence are independently verified.
