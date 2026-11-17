@@ -1,8 +1,17 @@
 # Scoped macOS Development Packaging Review
 
+Latest source-record rebind: [2026-11-18 final branch record rebind](#final-branch-record-rebind).
 Latest source prerequisite review: [2026-11-17 assessment source review](#assessment-source-prerequisite-review).
 Runtime/toolchain review: [2026-11-03 macOS development packaging review](../../docs/release/macos-source-review-2026-11-03.md).
 The dated reviews below retain their historical evidence and scope.
+
+## Final Branch Record Rebind
+
+Date: 2026-11-18. The final PR #731 source tree before this record-only update is `fd57e0099`. Four existing packaging inputs had stale recorded digests after the reviewed assessment implementation: `packages/core/src/storage/sqlite/code-assessment-comments-migration.ts` (`9c666d30b352ed25376b18f1db97edc1ee28ac905343c9ba6891444c6e627c22`), `packages/core/src/storage/sqlite/code-assessment-migration.ts` (`42c28069b828968295a9df9eb0d2ff1b1092a853d59eb71ca307f3481c1c1790`), `packages/daemon/src/features/code-assessments/service.ts` (`4711e54f974d08be54afd59d20983fd525e5ee91200f7f034427b9bb8c9ebb27`) and `packages/daemon/src/features/code-assessments/snapshot.ts` (`b0a20fa8c9c050da1ccf51880bfb768428376605cc1d74d1129df52a3726be48`). The previously recorded values for these four entries were stale; `packages/daemon/src/server/router.ts` remains bound to its already corrected final value `37ec78bb33e6fe91a3793ca5795f676e4e35447e47548a2243a8a499a8f5ea9d`.
+
+The record-only rebind changes four existing packaging digests and adds no paths. All other packaging and Office native digests, approval/trust values, toolchain profiles, runtime and signing fields remain unchanged. The reviewed JSON SHA-256 is `12182e90c1aeef51a03498144a25d459931538097672459faa2d27d2a704d3e9`; the fixed-order packaging aggregate is `98b388f47aa6fc577974b52a51e1b3e18da9754e05e04ddfc1a72288e196a67b`; the unchanged 15-input Office native aggregate is `9c5f6a1a05fe63ab96de941432ec13166af8974ec52730934d5ac348c41a854e`. Aggregates encode the record's fixed-order `[path, sha256]` pairs as JSON plus a newline.
+
+This update only restores the checked-in source record to the final branch bytes. It does not create an Office native grant, lease, publication or signing authority, and it does not establish App/archive, platform, signature or GUI acceptance.
 
 ## Assessment Source Prerequisite Review
 
