@@ -101,6 +101,30 @@ html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell
 html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell .media-jobs-heading-copy :is(strong, span) {
   text-shadow: 0 1px 2px var(--ling-bg-app), 0 0 12px color-mix(in srgb, var(--ling-bg-app) 78%, transparent);
 }
+/* The ambient media canvas already separates itself through spacing and
+   surface contrast. Keep legacy shell dividers from becoming bright hairlines
+   over the selected backdrop; semantic cards and controls keep their borders. */
+html[data-user-background="ready"][data-ui-background-visible="true"][data-ui-surface="media-canvas"] .app-shell .channel-left-drawer,
+html[data-user-background="ready"][data-ui-background-visible="true"][data-ui-surface="media-canvas"] .app-shell .left-nav,
+html[data-user-background="ready"][data-ui-background-visible="true"][data-ui-surface="media-canvas"] .app-shell .media-jobs-header,
+html[data-user-background="ready"][data-ui-background-visible="true"][data-ui-surface="media-canvas"] .app-shell .media-jobs-list-pane {
+  border-color: transparent;
+}
+html[data-user-background="ready"][data-ui-background-visible="true"][data-ui-surface="media-canvas"] .app-shell .channel-left-drawer,
+html[data-user-background="ready"][data-ui-background-visible="true"][data-ui-surface="media-canvas"] .app-shell .left-nav {
+  border-right-width: 0;
+}
+html[data-user-background="ready"][data-ui-background-visible="true"][data-ui-surface="media-canvas"] .app-shell .media-jobs-header {
+  border-bottom-width: 0;
+}
+html[data-user-background="ready"][data-ui-background-visible="true"][data-ui-surface="media-canvas"] .app-shell .media-jobs-list-pane {
+  border-right-width: 0;
+}
+html[data-user-background="ready"][data-ui-background-visible="true"][data-ui-surface="media-canvas"] .app-shell > .workspace,
+html[data-user-background="ready"][data-ui-background-visible="true"][data-ui-surface="media-canvas"] .app-shell .channel-left-drawer,
+html[data-user-background="ready"][data-ui-background-visible="true"][data-ui-surface="media-canvas"] .app-shell .left-nav {
+  box-shadow: none;
+}
 /* Empty split-pane states are layout surfaces, not content cards. Keep the
    ambient scene visible until the user selects something to inspect; populated
    inspectors retain their local readable panel material. */
