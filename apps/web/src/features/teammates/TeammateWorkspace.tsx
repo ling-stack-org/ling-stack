@@ -292,6 +292,7 @@ export function TeammateWorkspace({
   const [directExecutionActions, setDirectExecutionActions] = useState<readonly ExecutionAction[]>([]);
   const [directRuntime, setDirectRuntime] = useState<TeammateDirectRuntimeResponse | undefined>();
   const [directTimelineRuns, setDirectTimelineRuns] = useState<readonly RunSession[]>([]);
+  const [directCanonicalThreadId, setDirectCanonicalThreadId] = useState<string>();
   const [directWorkspace, setDirectWorkspace] = useState<DirectWorkspaceResponse | undefined>();
   const workspaceSnapshotCurrent = messageSnapshotIdentity === workspaceMessageIdentity;
   const currentMessages = workspaceSnapshotCurrent ? messages : emptyTeammateDirectMessages;
@@ -846,6 +847,7 @@ export function TeammateWorkspace({
     setTerminalReports([]);
     setDirectExecutionActions([]);
     setDirectWorkspace(undefined);
+    setDirectCanonicalThreadId(undefined);
     setDirectRuntime(undefined);
     setDirectGuidanceSubmitting("");
     setDirectGuidanceCancelingId("");
@@ -953,9 +955,11 @@ export function TeammateWorkspace({
         setHasMoreDirectMessages(Boolean(directResponse.hasMore));
         setNextDirectBeforeMessageId(directResponse.nextBeforeMessageId);
         setDirectRuntime(directRuntimeResponse);
-        setDirectTimelineRuns(directResponse.cwd === workspaceCwd && privateTimelineResponseIsOwned(directResponse, {
+        const timelineOwned = directResponse.cwd === workspaceCwd && privateTimelineResponseIsOwned(directResponse, {
           teammateId: request.teammateId, directThreadId: directRuntimeResponse.thread.id,
-        }) ? directResponse.timeline?.runs ?? [] : []);
+        });
+        setDirectTimelineRuns(timelineOwned ? directResponse.timeline?.runs ?? [] : []);
+        setDirectCanonicalThreadId(timelineOwned ? directResponse.timeline?.thread.id : undefined);
         setDirectWorkspace(directWorkspaceResponse);
         setDirectLinkPreviews(directLinkPreviewsResponse.linkPreviews);
         setPrivateAttachments(privateAttachmentsResponse.attachments);
@@ -1001,9 +1005,11 @@ export function TeammateWorkspace({
         setRuntimeMetrics(response.runtimeMetrics);
         setGeneratedMedia((current) => mergeConversationGeneratedMedia(current, response.generatedMedia));
         setMessageSnapshotIdentity(JSON.stringify([workspaceCwd, request.teammateId]));
-        setDirectTimelineRuns(response.cwd === workspaceCwd && privateTimelineResponseIsOwned(response, {
+        const timelineOwned = response.cwd === workspaceCwd && privateTimelineResponseIsOwned(response, {
           teammateId: request.teammateId,
-        }) ? response.timeline?.runs ?? [] : []);
+        });
+        setDirectTimelineRuns(timelineOwned ? response.timeline?.runs ?? [] : []);
+        setDirectCanonicalThreadId(timelineOwned ? response.timeline?.thread.id : undefined);
       });
       workspaceRequestOwner.clearError(request);
     } catch (error) {
@@ -1041,9 +1047,11 @@ export function TeammateWorkspace({
         setHasMoreDirectMessages(Boolean(directResponse.hasMore));
         setNextDirectBeforeMessageId(directResponse.nextBeforeMessageId);
         setDirectRuntime(runtimeResponse);
-        setDirectTimelineRuns(directResponse.cwd === workspaceCwd && privateTimelineResponseIsOwned(directResponse, {
+        const timelineOwned = directResponse.cwd === workspaceCwd && privateTimelineResponseIsOwned(directResponse, {
           teammateId: request.teammateId, directThreadId: runtimeResponse.thread.id,
-        }) ? directResponse.timeline?.runs ?? [] : []);
+        });
+        setDirectTimelineRuns(timelineOwned ? directResponse.timeline?.runs ?? [] : []);
+        setDirectCanonicalThreadId(timelineOwned ? directResponse.timeline?.thread.id : undefined);
         setDirectWorkspace(directWorkspaceResponse);
         setDirectLinkPreviews(linkPreviewsResponse.linkPreviews);
         setPrivateAttachments(privateAttachmentsResponse.attachments);
@@ -1828,6 +1836,7 @@ export function TeammateWorkspace({
           cwd={cwd}
           teammate={teammate}
           threadId={currentDirectWorkspace?.threadId}
+          changeSummaryThreadId={workspaceSnapshotCurrent ? directCanonicalThreadId : undefined}
           userProfile={userProfile}
           loading={loading}
           visibleMessages={visibleMessages}

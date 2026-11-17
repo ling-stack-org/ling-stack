@@ -437,6 +437,7 @@
     "test/terminal-report-synthesis.test.mjs",
     "test/terminal-report-verification-expectation.test.mjs",
     "test/thread-hard-delete-api.test.mjs",
+    "test/thread-workspace-change-summary.test.ts",
     "test/tool-context-budget.test.mjs",
     "test/tool-hydration-fence.test.mjs",
     "test/tool-surfaces-api.test.mjs",

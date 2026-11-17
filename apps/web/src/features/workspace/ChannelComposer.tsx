@@ -43,6 +43,7 @@ import {
 import {
   ConversationPermissionControl,
   ConversationComposerShell,
+  ConversationChangeSummary,
   ConversationBottomStatusStrip,
   ConversationGuidanceStrip,
   type ConversationGuidanceItem,
@@ -54,6 +55,7 @@ import type {
   LingThreadGoal,
   PermissionPreset,
 } from "../../types.js";
+import type { WorkspaceRightDockReviewTarget } from "./right-dock/WorkspaceRightDock.js";
 import { DesktopDictationButton } from "./DesktopDictationButton.js";
 import {
   ChannelComposerFeedback,
@@ -74,6 +76,8 @@ export interface ActiveMentionPicker {
 
 interface ChannelComposerProps {
   readonly workspaceCwd: string;
+  readonly threadId?: string;
+  readonly onOpenReview?: (target: WorkspaceRightDockReviewTarget) => void;
   readonly statusNode: ReactNode;
   readonly runtimeMetrics?: ConversationRuntimeMetrics;
   readonly guidanceModeActive: boolean;
@@ -165,6 +169,8 @@ interface ChannelComposerProps {
 }
 
 export function ChannelComposer({
+  threadId,
+  onOpenReview,
   composerBusy,
   composerDragActive,
   composerDropZoneStyle,
@@ -326,6 +332,15 @@ export function ChannelComposer({
       surface="channel"
       density="docked"
       className="channel-composer"
+      aboveComposerNode={threadId && onOpenReview ? (
+        <ConversationChangeSummary
+          cwd={workspaceCwd}
+          threadId={threadId}
+          active={composerBusy || Boolean(runGuidanceSubmitting) || isCancellingRun}
+          submitting={sendState === "sending"}
+          onOpenReview={onOpenReview}
+        />
+      ) : null}
       rootRef={composerRootRef}
       ariaLabel={t("Channel composer")}
       leftToolsAriaLabel={t("Message tools")}

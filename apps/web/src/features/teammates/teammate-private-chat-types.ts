@@ -52,6 +52,7 @@ export interface TeammatePrivateChatSurfaceProps {
   readonly teammate: AiTeammate;
   /** Verified LingThread scope for the private transcript. */
   readonly threadId?: string;
+  readonly changeSummaryThreadId?: string;
   readonly userProfile?: UserProfile;
   readonly loading: boolean;
   readonly visibleMessages: readonly TeammateDirectMessage[];

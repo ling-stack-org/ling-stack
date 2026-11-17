@@ -69,11 +69,13 @@ import {
   projectPublicRunSession,
 } from "./public-execution-snapshots.js";
 import { projectPublicRunEventEnvelope, toPublicArtifactMetadata } from "./public-artifacts.js";
+import { handleGetThreadWorkspaceChangeSummary } from "./thread-workspace-change-summary.js";
 
 export type LingThreadRoute =
   | { readonly kind: "detail"; readonly threadId: string }
   | { readonly kind: "turns"; readonly threadId: string }
   | { readonly kind: "evidence"; readonly threadId: string }
+  | { readonly kind: "workspace-change-summary"; readonly threadId: string }
   | { readonly kind: "mode"; readonly threadId: string }
   | { readonly kind: "goal"; readonly threadId: string }
   | { readonly kind: "goal-complete"; readonly threadId: string }
@@ -245,6 +247,9 @@ export function handleLingThreadItem(
   route: LingThreadRoute,
   options?: HandleLingThreadRouteOptions,
 ): void | Promise<void> {
+  if (route.kind === "workspace-change-summary") {
+    return handleGetThreadWorkspaceChangeSummary(request, response, url, storeRegistry, route.threadId);
+  }
   if (route.kind === "resume") {
     return handleLingThreadResume(request, response, url, storeRegistry, route.threadId, options);
   }
