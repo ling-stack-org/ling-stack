@@ -16,9 +16,9 @@ product decisions. A row is not complete merely because its source code exists l
 |---|---|---|
 | Protected source worktree | `/Users/tianxiao/ling-stack`, branch `codex/ling-companion`, `HEAD 65d2ed026` | Existing WIP is preserved and was not reset, cleaned, or rebased by this plan |
 | Target worktree | `/Users/tianxiao/.codex/worktrees/remaining-work-implementation` | Isolated implementation worktree for this delivery target |
-| Target branch | `codex/remaining-work-implementation` | Created from the latest `origin/main@1afb3a923a4d5af7750d385ac961eb2d0465c4ef`; local implementation remains unpushed |
-| Plan branch cut | `origin/main@1afb3a923a4d5af7750d385ac961eb2d0465c4ef` | Recorded as the current branch baseline |
-| Main currently integrated locally | `origin/main@1afb3a923a4d5af7750d385ac961eb2d0465c4ef` | Target starts at this mainline commit; no target-branch merge is claimed |
+| Target branch | `codex/remaining-work-implementation` | Created from the latest `origin/main@81f216d7de8211257448451ddfecde94fcf0ec63`; local implementation remains unpushed |
+| Plan branch cut | `origin/main@81f216d7de8211257448451ddfecde94fcf0ec63` | Refreshed on 2026-11-18 before continuing the target work |
+| Main currently integrated locally | `origin/main@81f216d7de8211257448451ddfecde94fcf0ec63` | Target starts at this mainline commit; no target-branch merge is claimed |
 | Target remote state | No `origin/codex/remaining-work-implementation` ref and no target PR | Local commits are not reviewable from GitHub until explicitly pushed and a PR is opened |
 | Deployment state | None | No source, package, daemon, or provider deployment is claimed |
 | CI state for this target | Not started on GitHub | The target branch is not pushed; local checks remain separate from hosted CI |

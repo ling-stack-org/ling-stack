@@ -46,6 +46,12 @@ remains projection-owned because their prompt envelope is request-specific. Spec
 views still rebuild their prompt-specific envelope on the next Host request; Web/security and
 packaged acceptance remain open.
 
+Public workflow evidence now passes artifact descriptors through the shared public artifact
+projection and identifies memory candidates without exposing private or secret-adjacent bodies.
+Normal candidate text is still pattern-redacted; scope-aware review remains on the memory
+review endpoints. This closes the local API/artifact redaction slice without changing durable
+Run, Artifact or Memory records.
+
 ## Remaining Work
 
 ### Condensation Ownership
@@ -80,7 +86,10 @@ packaged acceptance remain open.
 ### Redaction Ownership
 
 - Summary prompt rendering and durable summary fields use the shared evidence redactor.
-- Centralize the remaining prompt, API and artifact redaction policy.
+- Keep prompt, API and artifact redaction at their respective public projection boundaries.
+- Keep workflow evidence candidate bodies scope-safe: normal candidates are pattern-redacted,
+  private and secret-adjacent candidates are metadata-only until the memory review surface
+  establishes the caller scope.
 - Keep raw secrets, private teammate memory and unrelated channel context out of generated
   summaries, evidence and default UI.
 - Make redaction failures fail closed and observable without leaking the rejected value.
