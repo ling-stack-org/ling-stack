@@ -31,6 +31,7 @@ test("quiet hours within one day and invalid windows", () => {
 
 test("tone matching: failures-only keeps failed runs and approvals, drops successes", () => {
   assert.equal(notificationMatchesTone("automation_run_failed", "failures"), true);
+  assert.equal(notificationMatchesTone("automation_monitor_finding", "failures"), true);
   assert.equal(notificationMatchesTone("approval_required", "failures"), true);
   assert.equal(notificationMatchesTone("automation_run_finished", "failures"), false);
   assert.equal(notificationMatchesTone("automation_run_finished", "all"), true);

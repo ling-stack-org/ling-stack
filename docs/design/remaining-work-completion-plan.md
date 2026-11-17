@@ -67,6 +67,9 @@ M0 audit packet: [Baseline And Decisions](remaining-work-m0-baseline-and-decisio
   monitor trigger 解析、doctor/runtime/approval/external-work/GitHub CI 的有界本地快照、SQLite
   fingerprint CAS、condition 过滤、`record_noop`/`skip` 历史以及将变化快照作为不可信事实注入触发 Run
   上下文均已接入；Core/Daemon 定向回归、类型检查和 Daemon build 通过。两条切片都仍未推送、开 PR、合并或部署。
+- Automations P2 的第二段本地收口已写入[专项计划](automations-p2-completion-plan-2026-11-18.md)：匹配监控条件现在创建
+  finding artifact 并持久化到 `AutomationRun.outputArtifactIds`，通知 journal 增加 monitor finding 事件，scheduler
+  contract 和 Web 页面暴露最新 fingerprint/outcome。该批次的 PR、Hosted CI、合并、部署和真实 Provider/平台验收仍分别记录。
 
 ## 1. 目标与完成定义
 
@@ -126,7 +129,8 @@ Mobile 继续保持在当前产品验收范围之外，除非安全评审和产�
 - Provider profile 清理、Keychain 迁移、Workspace State Storage rollout；
 - AI Councils、治理通知、会话记忆引用、活动摘要与 exploration batching、富输入物化；
 - Multi-Agent Requirement Shaping、Native Skill Recording 后续入口；
-- SQLite 继续模块化、Automations 的 finding artifacts/桌面通知/外部目的地。
+- SQLite 继续模块化、Automations 的桌面通知/外部目的地；finding artifact、monitor 通知 journal 和 Web projection
+  已进入本轮本地实现批次，合并与平台验收仍按专项计划记录。
 
 这些事项在本轮末做一次重新排序；没有产品负责人、成功指标、依赖和验收方式的条目不进入开发。
 

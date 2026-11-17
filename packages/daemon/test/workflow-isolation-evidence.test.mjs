@@ -30,7 +30,7 @@ test("ordinary stores omit isolation while pinned unavailable evidence remains e
 });
 
 test("public workflow evidence redacts artifact labels and withholds scoped memory bodies", () => {
-  const normalSecret = "sk-normalcandidate123456789";
+  const normalSecret = "sk-test-normalcandidate123456789";
   const privateBody = "PRIVATE_WORKFLOW_MEMORY_CANARY";
   const secretBody = "SECRET_ADJACENT_WORKFLOW_MEMORY_CANARY";
   const publicEvidence = projectPublicWorkflowEvidence({

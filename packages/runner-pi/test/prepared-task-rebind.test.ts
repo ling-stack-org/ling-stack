@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { assertPreparedPiTaskInput, PiRunnerAdapter, rebindPreparedPiTaskInput } from "../dist/index.js";
 
-test("prepared task rebinding preserves actual SDK prompt, model and tool assembly", async t => {
+test("packages/runner-pi/src/prepared-input.ts preserves actual SDK prompt, model and tool assembly", async t => {
   const cwd = await mkdtemp(join(tmpdir(), "ling-prepared-rebind-"));
   t.after(() => rm(cwd, { recursive: true, force: true }));
   const source = { id: "source", title: "Original", prompt: "Frozen input", channelId: "channel" };

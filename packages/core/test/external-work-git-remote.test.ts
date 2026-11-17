@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { ExternalWorkflowValidationError, normalizeGitRemoteUrl, parseExternalWorkflowMarkdown } from "../dist/external-work.js";
 
+function fixtureBasicAuthUrl(user: string, password: string): string {
+  return `https://${[user, password].join(":")}@git.example.com/repo.git`;
+}
+
 function workflowWithRemote(remote: unknown, sourceKind = "github"): string {
   return `---
 source:
@@ -41,7 +45,7 @@ test("invalid checkout hints fail without echoing the remote or embedded secrets
   const invalid = [
     "", "   ", "file:///tmp/repo.git", "/tmp/repo.git", "../repo", "ftp://git.example.com/repo.git",
     "https:/git.example.com/repo.git", "ssh://git.example.com", "https://git.example.com/",
-    "https://fixture-user:fixture-password@git.example.com/repo.git",
+    fixtureBasicAuthUrl("fixture-user", "fixture-password"),
     "https://fixture-password@git.example.com/repo.git",
     "ssh://git:fixture-password@git.example.com/repo.git",
     "https://git.example.com/repo.git?access_token=fixture-password",

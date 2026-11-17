@@ -5,7 +5,7 @@ Owner: Ling maintainers; each delivery batch needs an integration owner and a pl
 Last verified: 2026-11-18
 Branch-cut baseline: `origin/main@81f216d7de8211257448451ddfecde94fcf0ec63`
 Execution branch: `codex/remaining-work-implementation`
-Target worktree: `/Users/tianxiao/.codex/worktrees/remaining-work-implementation`
+Target worktree: `<isolated-worktree>`
 Release-candidate target: 2027-03-15, subject to platform resources and external acceptance
 
 This plan turns the 14-item status review into an execution queue. It distinguishes source code,
@@ -14,7 +14,7 @@ implementation never closes a platform gate by itself.
 
 ## Current baseline
 
-- The protected root worktree `/Users/tianxiao/ling-stack` remains on `codex/ling-companion@65d2ed026`
+- The protected root worktree `<workspace-root>` remains on `codex/ling-companion@65d2ed026`
   with uncommitted WIP. It is not used for this delivery and must not be reset, cleaned, or rebased.
 - The target worktree is clean and was cut from the latest observed `origin/main` commit above. It
   contains the previously recorded F5, External Work, context processing and restart-recovery slices,

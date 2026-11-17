@@ -510,6 +510,11 @@ export class AutomationSchedulerRegistry {
         });
         lastAutomationRunId = result.automationRun.id;
         outcome = "changed";
+        await this.emitMonitorFindingNotification(
+          entry.state.cwd,
+          automation,
+          result.automationRun.runId,
+        );
       } else if (observation.changed) {
         outcome = "condition_not_met";
       }
@@ -561,6 +566,27 @@ export class AutomationSchedulerRegistry {
       if (this.isCurrentEntry(entry, entry.generation)) {
         this.refreshStateSummary(entry);
       }
+    }
+  }
+
+  private async emitMonitorFindingNotification(
+    cwd: string,
+    automation: AutomationDefinition,
+    runId?: string,
+  ): Promise<void> {
+    if (!this.notificationHub) return;
+    try {
+      await this.notificationHub.emit({
+        kind: "automation_monitor_finding",
+        title: "Automation monitor finding",
+        body: `${automation.title} detected a matching ${automation.trigger.type === "monitor" ? automation.trigger.source.kind : "monitor"} condition.`,
+        automationId: automation.id,
+        automationLabel: automation.title,
+        runId,
+        cwd,
+      });
+    } catch {
+      // Notification delivery is auxiliary to the durable monitor/run result.
     }
   }
 

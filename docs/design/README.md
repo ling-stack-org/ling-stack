@@ -165,6 +165,7 @@ part of the current product acceptance scope.
 - [Chrome Browser Built-in Plugin](chrome-browser-built-in-plugin.md)
 - [Chrome Native Messaging Implementation Plan](chrome-browser-built-in-plugin-implementation-plan.md)
 - [Automations](automations.md)
+- [Automations P2 Completion Plan](automations-p2-completion-plan-2026-11-18.md)
 - [External Work Orchestration](external-work-orchestration.md)
 
 ## Web, Desktop, And UI 2.0

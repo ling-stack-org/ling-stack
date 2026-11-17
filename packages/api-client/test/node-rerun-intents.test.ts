@@ -3,7 +3,7 @@ import test from "node:test";
 import type { NodeRerunIntentResponseV1, NodeRerunIntentSubmissionV1 } from "@ling-stack/contracts";
 import { LingDaemonClient } from "../dist/index.js";
 
-test("durable rerun prepare and read keep encoded source scope and no execution authority", async () => {
+test("packages/api-client/src/endpoints/admin.ts and packages/api-client/src/endpoints/runs.ts keep durable rerun routes scoped", async () => {
   const request: NodeRerunIntentSubmissionV1 = {
     intent: { schemaVersion: 1, kind: "node_rerun_intent", intentId: "intent", idempotencyKey: "rerun-key",
       requestedBy: "local-user", createdAt: "2026-11-16T00:00:00.000Z",

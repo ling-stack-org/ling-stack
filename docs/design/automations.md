@@ -10,9 +10,10 @@ Durable definitions, drafts, runs, templates, scheduler control, daemon routes, 
 Web management, manual execution and standard Run/Approval integration are implemented.
 Signed Webhook/GitHub/business ingress and destination-bound result outbox are locally
 implemented with controlled-transport tests. Remote CI/merge and live messaging
-acceptance remain open. Bounded local monitor sources, fingerprint persistence and
-unchanged/no-op history are locally verified; finding artifacts, desktop notifications
-and general external action proposals remain follow-ups.
+acceptance remain open. Bounded local monitor sources, fingerprint persistence,
+unchanged/no-op history, finding artifacts, monitor notifications and Web monitor
+projection are locally verified; desktop notifications and general external action
+proposals remain follow-ups.
 
 Related design docs:
 
@@ -99,7 +100,10 @@ Implemented foundations and product behavior:
   `unchangedPolicy=skip` creates no run; `record_noop` creates a durable skipped
   `AutomationRun` with `monitor_unchanged` or `monitor_condition_not_met`. A changed
   snapshot is appended to the triggered Run context as bounded, untrusted facts and is
-  retained in the context preview artifact.
+  retained in the context preview artifact. A matching condition also creates a
+  Markdown finding artifact, persists its ID in `outputArtifactIds`, journals a
+  monitor-finding notification and exposes the latest fingerprint/outcome to the Web
+  monitor projection.
 
 Event sources use the existing automation definition and Run owner; source rules
 explicitly authorize result relay to existing enabled IM destinations. The signed ingress,
@@ -884,7 +888,7 @@ Do not borrow:
 - Add tests for duplicate registration, sleep/wake burst idempotency, stop behavior, and
   no hidden side effects.
 
-### P2: Project monitor - local source/history slice implemented
+### P2: Project monitor - local closure implemented
 
 - Monitor trigger creation accepts a bounded polling interval, source, condition and
   `unchangedPolicy`.
@@ -894,8 +898,9 @@ Do not borrow:
   behavior under `BEGIN IMMEDIATE`.
 - Condition evaluation supports any change, count thresholds, status matching and error
   presence. Unchanged and condition-not-met ticks can remain as skipped run history.
-- Finding artifacts, desktop/local notification output, Web monitor cards and
-  approval-backed external actions remain open.
+- Finding artifacts, monitor-finding journal notifications and Web monitor cards are
+  implemented locally. Desktop OS delivery and approval-backed external actions remain
+  separate release follow-ups.
 
 ### A1/A2: Signed event ingress and scoped result delivery
 

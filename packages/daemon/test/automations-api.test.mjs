@@ -287,6 +287,21 @@ test("automation monitor includes the changed local snapshot in the triggered ru
     await waitForCondition(() => runner.runs.length >= 1, "monitor run", 5000);
     assert.match(runner.runs[0].task.prompt, /Monitor snapshot/);
     assert.match(runner.runs[0].task.prompt, /"activeCount": 0/);
+    const runs = await getJson(`${daemon.url}/automation-runs?cwd=${encodeURIComponent(cwd)}&automationId=${encodeURIComponent(created.automation.id)}`);
+    const triggered = runs.automationRuns.find((run) => run.status !== "skipped");
+    assert.ok(triggered?.outputArtifactIds.length, "monitor execution must retain a finding artifact id");
+    const artifacts = await getJson(`${daemon.url}/runs/${encodeURIComponent(triggered.runId)}/artifacts?cwd=${encodeURIComponent(cwd)}`);
+    assert.ok(artifacts.artifacts.some((artifact) => artifact.title === "Monitor finding: Monitor report"));
+    await waitForCondition(async () => {
+      const response = await getJson(`${daemon.url}/automations/scheduler?cwd=${encodeURIComponent(cwd)}`);
+      return response.schedulers[0]?.items.some((candidate) => candidate.automationId === created.automation.id && candidate.lastMonitorOutcome === "changed");
+    }, "monitor scheduler projection", 5000);
+    const scheduler = await getJson(`${daemon.url}/automations/scheduler?cwd=${encodeURIComponent(cwd)}`);
+    const item = scheduler.schedulers[0].items.find((candidate) => candidate.automationId === created.automation.id);
+    assert.equal(item.lastMonitorOutcome, "changed");
+    assert.ok(item.lastMonitorFingerprint);
+    const notifications = await getJson(`${daemon.url}/notifications?cwd=${encodeURIComponent(cwd)}`);
+    assert.ok(notifications.notifications.some((notification) => notification.kind === "automation_monitor_finding"));
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });

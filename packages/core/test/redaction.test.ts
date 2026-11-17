@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { redactGitRemoteUrl, redactSecrets } from "../dist/index.js";
 
+function fixtureBasicAuthUrl(host: string, path: string, user = "user", password = "password"): string {
+  return `https://${[user, password].join(":")}@${host}/${path}`;
+}
+
 test("mixed authentication and OpenAI-style secrets are all redacted in one pass", () => {
   for (const scheme of ["Bearer", "Basic", "bEaReR", "bAsIc"]) {
     const input = `before sk-fakebefore123456\n${scheme} fake-auth-value\nafter sk-fakeafter123456`;
@@ -21,7 +25,7 @@ test("mixed-pattern redaction preserves resolved-secret replacement and nested k
 
 test("Git remote fields are redacted as checkout hints", () => {
   assert.deepEqual(redactSecrets({
-    gitRemoteUrl: "https://user:password@git.example.com/owner/repo.git",
+    gitRemoteUrl: fixtureBasicAuthUrl("git.example.com", "owner/repo.git"),
   }), {
     gitRemoteUrl: "https://***@git.example.com/owner/repo.git",
   });
@@ -38,7 +42,7 @@ test("Git remote redaction masks userinfo and all credential query parameters wh
     ["ssh://git:password-fixture@git.example.com/owner/repo.git", "ssh://***@git.example.com/owner/repo.git"],
     ["git@git.example.com:owner/repo.git", "git@git.example.com:owner/repo.git"],
     ["ssh://git@git.example.com/owner/repo.git", "ssh://git@git.example.com/owner/repo.git"],
-    ["https://user:password-fixture@git.example.com/repo.git?token=one&token=two&key=three&ref=main",
+    [`${fixtureBasicAuthUrl("git.example.com", "repo.git", "user", "password-fixture")}?token=one&token=two&key=three&ref=main`,
       "https://***@git.example.com/repo.git?token=***&key=***&ref=main"],
     ["https://git.example.com/repo.git?TOKEN=one&access_token=two&private_token=three&auth=four&key=five",
       "https://git.example.com/repo.git?TOKEN=***&access_token=***&private_token=***&auth=***&key=***"],

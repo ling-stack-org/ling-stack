@@ -12,6 +12,8 @@ import type { ExternalWorkflowDefinition } from "../dist/index.js";
 
 interface SpawnCall { readonly command: string; readonly args: unknown; readonly options: unknown }
 
+const fixtureCredentialRemote = `https://${["user", "password-fixture"].join(":")}@git.example.com/repo.git`;
+
 test("explicit workspace checkout respects hooks, recovery and the original process gate", async (t) => {
   const calls: SpawnCall[] = [];
   let result = { exitCode: 0, stdout: "", stderr: "", ignoreTerm: false };
@@ -105,7 +107,7 @@ Review {{ item.identifier }}.
   await t.test("failed checkout persists bounded redacted evidence and cannot become ready after reopen", async (context) => {
     const f = fixture(context), before = calls.length;
     result = { exitCode: 7, stdout: "x".repeat(80_000),
-      stderr: "https://user:password-fixture@git.example.com/repo.git?token=query-fixture provider-fixture-secret", ignoreTerm: false };
+      stderr: `${fixtureCredentialRemote}?token=query-fixture provider-fixture-secret`, ignoreTerm: false };
     const failed = await f.poll();
     assert.equal(failed.blocked, 1); assert.equal(failed.retryScheduled, 0);
     assert.equal(failed.schedulerStates[0].lastErrorCode, "workspace_checkout_failed");

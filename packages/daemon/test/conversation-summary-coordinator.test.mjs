@@ -423,7 +423,7 @@ test("already cancelled generation cannot fall through to generator_unavailable"
 
 test("summary source text and durable fields redact token-shaped secrets", async (t) => {
   const fixture = await createFixture(t, "redaction");
-  const secret = "sk-live-1234567890abcdef";
+  const secret = "sk-test-1234567890abcdef";
   const turn = addCompletedTurn(fixture, "redaction-source", `Decision keep this ${secret}`);
   const trigger = addCompletedTurn(fixture, "redaction-trigger", "Decision trigger summary generation");
   assert.doesNotMatch(renderSummaryItem(turn.item), new RegExp(secret, "u"));

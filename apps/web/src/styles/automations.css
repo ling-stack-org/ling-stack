@@ -1,5 +1,6 @@
 @import "./automations/page.css";
 @import "./automations/toolbar-list.css";
 @import "./automations/scheduler.css";
+@import "./automations/monitor.css";
 @import "./automations/create-dialog.css";
 @import "./automations/inspector.css";

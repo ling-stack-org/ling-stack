@@ -10,6 +10,7 @@
 export type NotificationEventKind =
   | "automation_run_finished"
   | "automation_run_failed"
+  | "automation_monitor_finding"
   | "approval_required";
 
 export type NotificationDeliveryTone = "all" | "failures" | "off";
@@ -58,6 +59,7 @@ export function defaultNotificationPreferences(): NotificationPreferences {
     events: {
       automation_run_finished: "failures",
       automation_run_failed: "all",
+      automation_monitor_finding: "all",
       approval_required: "all",
     },
   };
@@ -91,6 +93,6 @@ export function notificationMatchesTone(
   if (tone === "off") return false;
   // Failed runs and approval requests are actionable; they deliver under both
   // "all" and "failures". Successful runs only deliver under "all".
-  if (kind === "automation_run_failed" || kind === "approval_required") return true;
+  if (kind === "automation_run_failed" || kind === "automation_monitor_finding" || kind === "approval_required") return true;
   return tone === "all";
 }
