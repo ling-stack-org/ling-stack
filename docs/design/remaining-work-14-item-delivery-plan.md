@@ -6,8 +6,8 @@ Last verified: 2026-11-18
 Initial branch-cut baseline (historical M0 snapshot): `origin/main@81f216d7de8211257448451ddfecde94fcf0ec63`
 Execution branch: `codex/automations-p2-completion`
 Current integrated main: `origin/main@d613e0ddaf0ef0575e691bef4418b6dbbaf62b36`
-Execution PR: [#732](https://github.com/ling-stack-org/ling-stack/pull/732), head
-`a8c2c482dadca2d871974f5a26cb44a5eac9e3a0`
+Execution PR: [#732](https://github.com/ling-stack-org/ling-stack/pull/732); exact head is re-read from GitHub
+at each hosted gate.
 Target worktree: `<isolated-worktree>`
 Release-candidate target: 2027-03-15, subject to platform resources and external acceptance
 

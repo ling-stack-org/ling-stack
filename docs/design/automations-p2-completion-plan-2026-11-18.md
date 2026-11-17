@@ -5,7 +5,7 @@ Owner: Automations domain
 Last verified: 2026-11-18
 Source branch: `codex/automations-p2-completion`
 Baseline: `origin/main@d613e0ddaf0ef0575e691bef4418b6dbbaf62b36`
-Current head: `a8c2c482dadca2d871974f5a26cb44a5eac9e3a0`
+Current head: the tip of PR #732, re-read from GitHub at each hosted gate
 Code anchors: `packages/daemon/src/features/automations`, `packages/contracts/src/automations.ts`, `packages/contracts/src/notifications.ts`, `apps/web/src/features/automations`
 
 ## Objective

@@ -7,8 +7,8 @@ Source branch: `codex/remaining-work-implementation`
 Remote: `https://github.com/ling-stack-org/ling-stack.git`
 
 This document preserves the initial M0 snapshot. The active implementation moved to
-`codex/automations-p2-completion` and is tracked in [PR #732](https://github.com/ling-stack-org/ling-stack/pull/732)
-at head `a8c2c482dadca2d871974f5a26cb44a5eac9e3a0`; hosted review, merge and deployment remain separate gates.
+`codex/automations-p2-completion` and is tracked in [PR #732](https://github.com/ling-stack-org/ling-stack/pull/732);
+hosted review, merge and deployment remain separate gates, and the exact head is re-read at each gate.
 
 This is the evidence packet for M0 of the [Remaining Work Completion Plan](remaining-work-completion-plan.md).
 It separates repository facts, local implementation evidence, remote review state, platform acceptance, and
@@ -24,7 +24,7 @@ product decisions. A row is not complete merely because its source code exists l
 | Plan branch cut | `origin/main@81f216d7de8211257448451ddfecde94fcf0ec63` | Refreshed on 2026-11-18 before continuing the target work |
 | Main currently integrated locally | `origin/main@81f216d7de8211257448451ddfecde94fcf0ec63` | Target starts at this mainline commit; no target-branch merge is claimed |
 | Historical target remote state | No `origin/codex/remaining-work-implementation` ref and no target PR | This is the M0 snapshot; it does not describe the current execution branch |
-| Current execution branch | `codex/automations-p2-completion` at `a8c2c482dadca2d871974f5a26cb44a5eac9e3a0` | Pushed from the isolated implementation worktree; root `codex/ling-companion` WIP remains separate |
+| Current execution branch | `codex/automations-p2-completion`, PR #732 open | Pushed from the isolated implementation worktree; root `codex/ling-companion` WIP remains separate |
 | Current PR state | [#732](https://github.com/ling-stack-org/ling-stack/pull/732) open | Hosted checks/review and merge are pending; no deployment is claimed |
 | Deployment state | None | No source, package, daemon, or provider deployment is claimed |
 | CI state for current target | Hosted CI pending on PR #732 | Local checks remain separate from hosted CI |
@@ -43,7 +43,7 @@ The following states were read from the GitHub pull request records on 2026-11-1
 | #695 | `codex/f5-rerun-contract` | merged | `542d8a451` | F5 contract preflight is merged |
 | #698 | `codex/f5-host-observation` | merged | `93fea5080` | Host admission observation is merged |
 | #714 | `codex/agent-capabilities` | open | — | Must not be described as merged; review/CI and the open findings remain external dependencies |
-| current execution branch | `codex/automations-p2-completion` | PR #732 open | `a8c2c482dadca2d871974f5a26cb44a5eac9e3a0` | Current F5, External Work, context, automation and plan changes are reviewable; merge and deployment remain open |
+| current execution branch | `codex/automations-p2-completion` | PR #732 open | head read from GitHub at each gate | Current F5, External Work, context, automation and plan changes are reviewable; merge and deployment remain open |
 
 The merge status above distinguishes “source merged” from “deployed,” “packaged,” and “field accepted.”
 The PR records are evidence for the listed PRs only; they do not close the M0 owner, platform, or decision gates.

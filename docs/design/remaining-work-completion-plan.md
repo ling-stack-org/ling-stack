@@ -5,8 +5,8 @@ Owner: Ling maintainers; one integration owner for each delivery batch
 Last verified: 2026-11-18
 Initial branch cut (historical M0 snapshot): `origin/main@81f216d7de8211257448451ddfecde94fcf0ec63`
 Current main integrated locally: `origin/main@d613e0ddaf0ef0575e691bef4418b6dbbaf62b36`.
-Current execution PR: [#732](https://github.com/ling-stack-org/ling-stack/pull/732), head
-`a8c2c482dadca2d871974f5a26cb44a5eac9e3a0`.
+Current execution PR: [#732](https://github.com/ling-stack-org/ling-stack/pull/732); the exact head is
+re-read from GitHub at every hosted gate.
 Target: 2027-03-15 release-candidate closure for the active delivery queue
 Canonical status source: [Implementation Status](implementation-status.md)
 Code and test anchors: each work package keeps its owning plan and contract
@@ -69,8 +69,8 @@ M0 audit packet: [Baseline And Decisions](remaining-work-m0-baseline-and-decisio
   monitor trigger 解析、doctor/runtime/approval/external-work/GitHub CI 的有界本地快照、SQLite
   fingerprint CAS、condition 过滤、`record_noop`/`skip` 历史以及将变化快照作为不可信事实注入触发 Run
   上下文均已接入；Core/Daemon 定向回归、类型检查和 Daemon build 通过。两条切片已推送到
-  [PR #732](https://github.com/ling-stack-org/ling-stack/pull/732)，当前 head 为
-  `a8c2c482dadca2d871974f5a26cb44a5eac9e3a0`；Hosted CI、review、合并、部署和平台验收仍分别记录。
+  [PR #732](https://github.com/ling-stack-org/ling-stack/pull/732)；Hosted CI、review、合并、部署和平台验收
+  仍分别记录，head 以 GitHub 当前读回为准。
 - Automations P2 的第二段本地收口已写入[专项计划](automations-p2-completion-plan-2026-11-18.md)：匹配监控条件现在创建
   finding artifact 并持久化到 `AutomationRun.outputArtifactIds`，通知 journal 增加 monitor finding 事件，scheduler
   contract 和 Web 页面暴露最新 fingerprint/outcome。PR #732 的 Hosted CI、review、合并、部署和真实
