@@ -76,3 +76,9 @@ test("authorization modes remain usable while authorization credentials are reda
     defaultAuthorizationMode: "smart",
   });
 });
+
+test("token-count prose remains intact while singular token assignments are redacted", () => {
+  assert.equal(redactSecrets("Estimated input tokens: 420/31232\nTotal tokens: 436"),
+    "Estimated input tokens: 420/31232\nTotal tokens: 436");
+  assert.equal(redactSecrets("token: bearer-secret"), "token: [REDACTED]");
+});
