@@ -195,6 +195,11 @@ export class SqliteCodeAssessmentStore implements CodeAssessmentStore {
     try {
       const detail = this.require(id);
       const state = freshness.state === "unknown" && detail.assessment.freshness?.state === "stale" ? "stale" : freshness.state;
+      const previousFreshness = detail.assessment.freshness;
+      if (previousFreshness && Date.parse(freshness.checkedAt) < Date.parse(previousFreshness.checkedAt)) {
+        db.exec("COMMIT");
+        return previousFreshness;
+      }
       const nextFreshness = { ...freshness, state };
       const updatedAt = Date.parse(freshness.checkedAt) >= Date.parse(detail.assessment.updatedAt) ? freshness.checkedAt : detail.assessment.updatedAt;
       this.write({ ...detail.assessment, freshness: nextFreshness, updatedAt });

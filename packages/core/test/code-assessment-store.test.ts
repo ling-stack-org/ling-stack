@@ -38,8 +38,13 @@ test("snapshot and findings survive reopening; dispositions require digest and a
     assert.equal(store.getCodeAssessment("assessment_store")?.findings[0]?.disposition, "dismissed");
     assert.equal(store.getCodeAssessment("assessment_store")?.assessment.updatedAt, triagedAt);
     assert.equal(store.listCodeAssessments({ updatedAfter: triagedAt }).assessments[0]?.id, "assessment_store");
-    store.recordCodeAssessmentFreshness("assessment_store", { state: "unknown", checkedAt: now });
-    assert.equal(store.getCodeAssessment("assessment_store")?.assessment.updatedAt, triagedAt, "delayed freshness must not move updatedAt backwards");
+    const freshnessAt = "2026-11-16T00:00:02Z";
+    const stale = store.recordCodeAssessmentFreshness("assessment_store", { state: "stale", checkedAt: freshnessAt });
+    assert.equal(store.getCodeAssessment("assessment_store")?.assessment.updatedAt, freshnessAt);
+    assert.equal(store.getCodeAssessment("assessment_store")?.findings[0]?.freshnessState, "stale");
+    assert.deepEqual(store.recordCodeAssessmentFreshness("assessment_store", { state: "current", checkedAt: triagedAt }), stale, "delayed freshness must not overwrite a newer result");
+    assert.equal(store.getCodeAssessment("assessment_store")?.assessment.freshness?.state, "stale");
+    assert.equal(store.getCodeAssessment("assessment_store")?.findings[0]?.freshnessState, "stale");
     const reopened = store.setCodeFindingDisposition("assessment_store", finding.id, { snapshotDigest: snapshot.digest, disposition: "open", now });
     assert.equal(reopened.dispositionReason, undefined);
     assert.equal(store.finishCodeAssessment("assessment_store", { runId: "run_store", status: "failed", now }).status, "completed");
