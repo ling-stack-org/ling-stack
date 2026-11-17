@@ -12,6 +12,7 @@ import { resolveSigningProfile } from "./cua-driver-signing/signing-contract.mjs
 import { preparePackagedGstackBuild, packagedGstackBuilderConfig } from "./packaged-gstack-resources.mjs";
 import { lockedUseReleaseBuilderConfig } from "./locked-use-release-build.ts";
 import { lockedUseValidationBuilderConfig } from "./locked-use-validation-build.ts";
+import { lockedUseLocalBuilderConfig } from "./locked-use-local-build.ts";
 
 const packageJson = JSON.parse(
   readFileSync(new URL("../package.json", import.meta.url), "utf8"),
@@ -58,6 +59,13 @@ const lockedUseValidationBuild = await lockedUseValidationBuilderConfig({
   signingTier: signingProfile.signingTier,
   providerExpected: packageHostAuthority.providerExpected && packageHostAuthority.platform === "darwin",
 });
+const lockedUseLocalBuild = await lockedUseLocalBuilderConfig({
+  localRoot: process.env.LING_LOCKED_USE_LOCAL_ROOT,
+  releaseRoot: process.env.LING_LOCKED_USE_RELEASE_ROOT,
+  validationRoot: process.env.LING_LOCKED_USE_VALIDATION_ROOT,
+  signingTier: signingProfile.signingTier,
+  providerExpected: packageHostAuthority.providerExpected && packageHostAuthority.platform === "darwin",
+});
 if (
   packageHostAuthority.providerExpected
   && (
@@ -77,6 +85,7 @@ export default {
     ...(gstackBuild.extraMetadata ?? {}),
     ...(lockedUseBuild.extraMetadata ?? {}),
     ...(lockedUseValidationBuild.extraMetadata ?? {}),
+    ...(lockedUseLocalBuild.extraMetadata ?? {}),
     [CUA_DRIVER_PACKAGE_AUTHORITY_METADATA_KEY]: packageHostAuthority,
   },
   electronFuses: {
@@ -95,6 +104,7 @@ export default {
     ...(gstackBuild.extraResources ?? []),
     ...(lockedUseBuild.extraResources ?? []),
     ...(lockedUseValidationBuild.extraResources ?? []),
+    ...(lockedUseLocalBuild.extraResources ?? []),
     ...(packageProvider
       ? [{ from: resolve(packageResourcesRoot), to: "providers/cua-driver" }]
       : []),

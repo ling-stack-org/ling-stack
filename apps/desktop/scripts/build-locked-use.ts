@@ -8,14 +8,22 @@ import { fileURLToPath } from "node:url";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../native/locked-use");
 const identity = process.argv.find((arg) => arg.startsWith("--identity="))?.slice(11) ?? "-";
 const developmentValidation = process.argv.includes("--validation-development");
+const localDevelopment = process.argv.includes("--local-development");
 if (process.platform !== "darwin") throw new Error("locked_use_build_requires_macos");
-if (process.argv.slice(2).some((arg) => !arg.startsWith("--identity=") && arg !== "--validation-development")
+if (process.argv.slice(2).some((arg) => !arg.startsWith("--identity=") && arg !== "--validation-development" && arg !== "--local-development")
   || process.argv.filter((arg) => arg.startsWith("--identity=")).length > 1
   || process.argv.filter((arg) => arg === "--validation-development").length > 1
-  || developmentValidation && (identity === "-" || !identity)) throw new Error("locked_use_build_argument_invalid");
-const swiftFlags = developmentValidation ? ["-Xswiftc", "-DLING_LOCKED_USE_DEVELOPMENT_VALIDATION"] : [];
-const verifierFlags = developmentValidation ? ["-DLING_LOCKED_USE_DEVELOPMENT_VALIDATION"] : [];
-const buildFlags = developmentValidation ? ["--scratch-path", resolve(root, ".build/development-validation"), ...swiftFlags] : [];
+  || process.argv.filter((arg) => arg === "--local-development").length > 1
+  || developmentValidation && localDevelopment
+  || (developmentValidation || localDevelopment) && (identity === "-" || !identity)) throw new Error("locked_use_build_argument_invalid");
+const profileFlag = developmentValidation
+  ? "-DLING_LOCKED_USE_DEVELOPMENT_VALIDATION"
+  : localDevelopment ? "-DLING_LOCKED_USE_LOCAL_DEVELOPMENT" : undefined;
+const swiftFlags = profileFlag ? ["-Xswiftc", profileFlag] : [];
+const verifierFlags = profileFlag ? [profileFlag] : [];
+const buildFlags = (developmentValidation || localDevelopment)
+  ? ["--scratch-path", resolve(root, developmentValidation ? ".build/development-validation" : ".build/local-development"), ...swiftFlags]
+  : [];
 
 function run(command: string, args: string[], capture = false): string {
   const result = spawnSync(command, args, { cwd: root, encoding: "utf8", stdio: capture ? "pipe" : "inherit" });
@@ -46,6 +54,9 @@ const team = metadata.stderr.match(/^TeamIdentifier=([A-Z0-9]{10})$/mu)?.[1] ?? 
 if (identity !== "-" && team === "0000000000") throw new Error("locked_use_signing_team_missing");
 if (developmentValidation && !/^Authority=Apple Development:/mu.test(metadata.stderr)) {
   throw new Error("locked_use_validation_requires_apple_development_identity");
+}
+if (localDevelopment && !/^Authority=Apple Development:/mu.test(metadata.stderr)) {
+  throw new Error("locked_use_local_requires_apple_development_identity");
 }
 
 function bundle(name: string, executable: string, identifier: string, kind = "APPL"): string {
@@ -129,14 +140,14 @@ run("xcrun", ["swiftc", "-target", target, "-framework", "Security", "-framework
   resolve(objects, "task-tests.o"), resolve(objects, "verifier.o"), resolve(objects, "diagnostics.o"), "-o", taskTests]);
 sign(taskTests, "com.lingstack.locked-use.broker");
 const developerID = /^Authority=Developer ID Application:/mu.test(metadata.stderr);
-run(taskTests, [developerID || developmentValidation ? "match" : "deny"]);
+run(taskTests, [developerID || developmentValidation || localDevelopment ? "match" : "deny"]);
 cpSync(resolve(root, "LICENSE"), resolve(output, "LICENSE"));
 const manifest = {
   schemaVersion: 1, platform: "darwin", architecture: process.arch, team,
-  signing: developmentValidation ? "development_validation" : identity === "-" ? "adhoc" : "local_identity",
+  signing: developmentValidation ? "development_validation" : localDevelopment ? "local_development" : identity === "-" ? "adhoc" : "local_identity",
   productCapability: "disabled_by_build", nativeAcceptance: "not_run",
   checks: { policy: "passed", authorizationPluginABI: "passed",
-    kernelTaskVerifier: developmentValidation ? "development_identity_passed" : developerID ? "identity_passed" : "denial_passed", xctest: "separate" },
+    kernelTaskVerifier: developmentValidation ? "development_identity_passed" : localDevelopment ? "local_development_identity_passed" : developerID ? "identity_passed" : "denial_passed", xctest: "separate" },
   upstreamCommit: "e25be21caa0ea489316f6be6635d2a4766c4cd0b",
   artifacts: Object.fromEntries(["LingLockBroker", "LingLockInstaller", "Ling Guardian.app/Contents/MacOS/LingGuardian",
     "Client.app/Contents/MacOS/LingLockedUseClient", "LingLockAuth.bundle/Contents/MacOS/LingLockAuth"]

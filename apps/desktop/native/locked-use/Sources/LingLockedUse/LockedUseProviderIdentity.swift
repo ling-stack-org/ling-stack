@@ -30,8 +30,12 @@ public struct LockedUseProviderIdentity: Codable, Equatable, Sendable {
         guard team.utf8.count == 10, team.utf8.allSatisfy({ (48...57).contains($0) || (65...90).contains($0) }) else {
             throw LockedUseBrokerCoordinator.Failure.denied
         }
-        let peer = try LockedUsePeerIdentity.verified(processID: processID,
-            requirement: "identifier \"com.lingstack.desktop.cua-driver\" and anchor apple generic and certificate leaf[subject.OU] = \"\(team)\" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists")
+        #if LING_LOCKED_USE_LOCAL_DEVELOPMENT
+        let requirement = "identifier \"com.lingstack.desktop.cua-driver\" and anchor apple generic and certificate leaf[subject.OU] = \"\(team)\""
+        #else
+        let requirement = "identifier \"com.lingstack.desktop.cua-driver\" and anchor apple generic and certificate leaf[subject.OU] = \"\(team)\" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists"
+        #endif
+        let peer = try LockedUsePeerIdentity.verified(processID: processID, requirement: requirement)
         guard peer.hardenedRuntime, !peer.permitsCodeInjection else { throw LockedUseBrokerCoordinator.Failure.denied }
         let identity = Self(processID: peer.processID, auditToken: peer.auditToken,
             codeHash: peer.codeDirectoryHash, userID: peer.userID, auditSessionID: peer.auditSessionID)
@@ -53,6 +57,10 @@ public struct LockedUseProviderIdentity: Codable, Equatable, Sendable {
             let requirement = try ProcessCodeRequirement.allOf {
                 CodeDirectoryHash(codeHash)
                 SigningIdentifier("com.lingstack.desktop.cua-driver")
+                TeamIdentifier(team)
+                #if LING_LOCKED_USE_LOCAL_DEVELOPMENT
+                ValidationCategory(.development)
+                #endif
                 ProcessCodeSigningFlags.isSuperset(of: [.isDynamicallyValid, .isSigned])
             }
             guard try SecTaskValidateForRequirement(task: task, requirement: requirement) else {

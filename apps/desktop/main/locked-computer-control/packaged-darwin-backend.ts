@@ -10,6 +10,7 @@ import {
 } from "@ling-stack/contracts";
 import {
   createInstalledDarwinLockedUseClientFactory,
+  type LockedUseInstalledProfile,
 } from "./installed-native-client.js";
 import type { DesktopLockedUseBackend } from "./runtime-composition.js";
 import {
@@ -30,9 +31,11 @@ export type InstalledDarwinLockedUseClientFactory = ReturnType<typeof createInst
 export async function loadInstalledDarwinLockedUseBackend(options: {
   readonly expectedTeamId: string;
   readonly expectedBuildManifestSha256: string;
+  readonly expectedProfile?: LockedUseInstalledProfile;
   readonly createFactory?: (input: {
     readonly expectedTeamId: string;
     readonly expectedBuildManifestSha256: string;
+    readonly expectedProfile?: LockedUseInstalledProfile;
   }) => InstalledDarwinLockedUseClientFactory;
   readonly readStatus?: (factory: InstalledDarwinLockedUseClientFactory) => Promise<LockedControlNativeStatusResponse>;
 }): Promise<DesktopLockedUseBackend | undefined> {
@@ -40,6 +43,7 @@ export async function loadInstalledDarwinLockedUseBackend(options: {
   const factory = createFactory({
     expectedTeamId: options.expectedTeamId,
     expectedBuildManifestSha256: options.expectedBuildManifestSha256,
+    ...(options.expectedProfile ? { expectedProfile: options.expectedProfile } : {}),
   });
   const status = await (options.readStatus ?? defaultReadStatus)(factory);
   if (!parseLockedControlNativeStatusResponse(status) || status.productCapability !== "supported_restricted") return undefined;

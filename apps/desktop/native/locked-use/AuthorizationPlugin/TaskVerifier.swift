@@ -18,7 +18,7 @@ public func verifyBrokerTask(_ bytes: UnsafeRawPointer?, _ teamBytes: UnsafePoin
         let requirement = try ProcessCodeRequirement.allOf {
             SigningIdentifier("com.lingstack.locked-use.broker")
             TeamIdentifier(team)
-            #if LING_LOCKED_USE_DEVELOPMENT_VALIDATION
+            #if LING_LOCKED_USE_DEVELOPMENT_VALIDATION || LING_LOCKED_USE_LOCAL_DEVELOPMENT
             ValidationCategory(.development)
             #else
             ValidationCategory(.developerID)

@@ -13,16 +13,18 @@ const CLIENT_ARTIFACT = "Client.app/Contents/MacOS/LingLockedUseClient";
 const ARTIFACTS = ["LingLockBroker", "LingLockInstaller", "Ling Guardian.app/Contents/MacOS/LingGuardian",
   CLIENT_ARTIFACT, "LingLockAuth.bundle/Contents/MacOS/LingLockAuth"];
 const HASH = /^[a-f0-9]{64}$/u;
+export type LockedUseInstalledProfile = "local_identity" | "local_development";
 
 /** Release composition supplies the independently accepted manifest digest. */
 export function createInstalledDarwinLockedUseClientFactory(options: {
   readonly expectedTeamId: string;
   readonly expectedBuildManifestSha256: string;
+  readonly expectedProfile?: LockedUseInstalledProfile;
   /** Trusted fixture dependencies; production uses the fixed system tools/files. */
   readonly runner?: DarwinIdentityCommandRunner;
   readonly readInstalledFile?: (path: string, maxBytes: number) => Promise<Buffer>;
 }) {
-  const { expectedTeamId, expectedBuildManifestSha256 } = options;
+  const { expectedTeamId, expectedBuildManifestSha256, expectedProfile = "local_identity" } = options;
   if (expectedTeamId.length !== 10 || !/^[A-Z0-9]{10}$/u.test(expectedTeamId) || expectedTeamId === "0000000000"
     || !isSha256(expectedBuildManifestSha256)) throw new Error("locked_use_release_identity_invalid");
   const runner = options.runner ?? createDarwinExecFileCommandRunner({
@@ -31,21 +33,30 @@ export function createInstalledDarwinLockedUseClientFactory(options: {
   });
   const read = options.readInstalledFile ?? readInstalledFile;
   const requirement = `identifier "com.lingstack.locked-use.client" and anchor apple generic`
-    + ` and certificate 1[field.1.2.840.113635.100.6.2.6] exists`
-    + ` and certificate leaf[field.1.2.840.113635.100.6.1.13] exists`
+    + (expectedProfile === "local_identity"
+      ? ` and certificate 1[field.1.2.840.113635.100.6.2.6] exists`
+        + ` and certificate leaf[field.1.2.840.113635.100.6.1.13] exists`
+      : "")
     + ` and certificate leaf[subject.OU] = "${expectedTeamId}"`;
   const verifyHelper = async (): Promise<void> => {
     const manifestBytes = await read(MANIFEST_PATH, 16 * 1024);
     if (digest(manifestBytes) !== expectedBuildManifestSha256) throw new Error("locked_use_manifest_digest_mismatch");
-    const helperHash = parseManifest(manifestBytes, expectedTeamId);
+    const helperHash = parseManifest(manifestBytes, expectedTeamId, expectedProfile);
     const verifyBytes = async (): Promise<void> => {
       if (digest(await read(CLIENT_PATH, 32 * 1024 * 1024)) !== helperHash) throw new Error("locked_use_helper_digest_mismatch");
     };
     await verifyBytes();
     await runner.run({ executable: "/usr/bin/codesign", args: ["--verify", "--strict", "--all-architectures",
-      "--test-requirement", requirement, CLIENT_BUNDLE] });
+      `-R=${requirement}`, CLIENT_BUNDLE] });
     const details = await runner.run({ executable: "/usr/bin/codesign", args: ["--display", "--verbose=4", CLIENT_PATH] });
     const metadata = `${details.stdout}\n${details.stderr}`;
+    const authorities = metadata.split(/\r?\n/u).filter((line) => line.startsWith("Authority="));
+    if (expectedProfile === "local_development" && !authorities.some((line) => line.startsWith("Authority=Apple Development:"))) {
+      throw new Error("locked_use_local_helper_requires_apple_development");
+    }
+    if (expectedProfile === "local_identity" && !authorities.some((line) => line.startsWith("Authority=Developer ID Application:"))) {
+      throw new Error("locked_use_helper_requires_developer_id");
+    }
     const one = (prefix: string): string | undefined => {
       const values = metadata.split(/\r?\n/u).filter((line) => line.startsWith(prefix)).map((line) => line.slice(prefix.length));
       return values.length === 1 ? values[0] : undefined;
@@ -80,17 +91,18 @@ export function createInstalledDarwinLockedUseClientFactory(options: {
   });
 }
 
-function parseManifest(bytes: Buffer, team: string): string {
+function parseManifest(bytes: Buffer, team: string, profile: LockedUseInstalledProfile): string {
   let value: unknown;
   try { value = JSON.parse(bytes.toString("utf8")); } catch { throw new Error("locked_use_manifest_invalid"); }
   if (!record(value) || !keys(value, ["schemaVersion", "platform", "architecture", "team", "signing", "productCapability", "nativeAcceptance", "checks", "upstreamCommit", "artifacts"])
     || value.schemaVersion !== 1 || value.platform !== "darwin" || value.architecture !== process.arch
-    || value.team !== team || value.signing !== "local_identity"
+    || value.team !== team || value.signing !== profile
     || value.productCapability !== "disabled_by_build" || value.nativeAcceptance !== "not_run"
     || typeof value.upstreamCommit !== "string" || value.upstreamCommit.length !== 40 || !/^[a-f0-9]{40}$/u.test(value.upstreamCommit)
     || !record(value.checks) || !keys(value.checks, ["policy", "authorizationPluginABI", "kernelTaskVerifier", "xctest"])
     || value.checks.policy !== "passed" || value.checks.authorizationPluginABI !== "passed"
-    || value.checks.kernelTaskVerifier !== "identity_passed" || value.checks.xctest !== "separate"
+    || value.checks.kernelTaskVerifier !== (profile === "local_development" ? "local_development_identity_passed" : "identity_passed")
+    || value.checks.xctest !== "separate"
     || !record(value.artifacts) || !keys(value.artifacts, ARTIFACTS)
     || Object.values(value.artifacts).some((hash) => !isSha256(hash))) {
     throw new Error("locked_use_manifest_invalid");

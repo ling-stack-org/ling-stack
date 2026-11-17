@@ -77,7 +77,8 @@ do {
         try LockedUseBuildManifest.clientSHA256(data: JSONSerialization.data(withJSONObject: manifest), team: "ABCDE12345", architecture: architecture)
     }
     try require(readManifest() == clientHash, "Signed client manifest must preserve the helper digest")
-    manifest["signing"] = LockedUseBuildProfile.developmentValidation ? "local_identity" : "development_validation"
+    manifest["signing"] = (LockedUseBuildProfile.developmentValidation || LockedUseBuildProfile.localDevelopment)
+        ? "local_identity" : "development_validation"
     try denies { _ = try readManifest() }
     manifest["signing"] = LockedUseBuildProfile.manifestSigning
     manifest["schemaVersion"] = true

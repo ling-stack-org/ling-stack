@@ -77,6 +77,17 @@ permits local development with an existing Apple Development identity without
 declaring production capability. Ad hoc builds supply only offline/negative
 identity evidence. Neither profile is installed by building it.
 
+The full local development lane is a third, explicit profile named
+`local_development`. It compiles the ordinary Client/Broker protocol with
+Apple's development validation category, binds the component manifest to a
+same-team Apple Development provider, and accepts only the `local` installer
+mode. A fresh `local-authority.json` is pinned into the packaged app as
+`lingLockedUseLocalAuthoritySha256`; the Desktop entrypoint reads it only when
+started with `--ling-locked-use-local-development`. This lane can be used for
+attended same-user lock/GUI testing after administrator installation and TCC
+grants, but it cannot use `promote`, produce release authority, pass
+Gatekeeper/notarization, or be treated as a package for another machine.
+
 ## Runtime boundary
 
 The Desktop coordinator owns provider generation reservations, fenced retirement,
@@ -93,6 +104,14 @@ self-promote. The authority's exact bytes must also match the SHA-256 pinned by
 `lingLockedUseReleaseAuthoritySha256` in the signed app.asar's `package.json`.
 A valid authority still has to pass the installed helper's live
 status probe before `supported_restricted` is published.
+
+When the explicit local-development launch argument is present, startup reads
+`locked-use/local-authority.json` instead. Its exact schema requires
+`profile: "local_development"`, `nativeAcceptance: "local_development"`, a
+same-team Apple Development helper and the pinned local manifest digest. A
+local authority is mutually exclusive with release/validation resources and is
+never accepted by the production release loader. Missing or altered local
+authority leaves the backend absent.
 
 When the backend is present, the Desktop publishes the content-free capability
 and then promotes the canonical daemon policy through the private

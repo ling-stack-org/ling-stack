@@ -4,10 +4,15 @@ import XCTest
 
 final class LockedUseBuildProfileTests: XCTestCase {
     func testServiceModeFollowsTheCompiledProfile() {
+        #if LING_LOCKED_USE_LOCAL_DEVELOPMENT
+        XCTAssertFalse(LockedUseBuildProfile.permitsService(validation: true))
+        XCTAssertFalse(LockedUseBuildProfile.permitsService(validation: false))
+        XCTAssertTrue(LockedUseBuildProfile.permitsService(validation: false, local: true))
+        #elseif LING_LOCKED_USE_DEVELOPMENT_VALIDATION
         XCTAssertTrue(LockedUseBuildProfile.permitsService(validation: true))
-        #if LING_LOCKED_USE_DEVELOPMENT_VALIDATION
         XCTAssertFalse(LockedUseBuildProfile.permitsService(validation: false))
         #else
+        XCTAssertTrue(LockedUseBuildProfile.permitsService(validation: true))
         XCTAssertTrue(LockedUseBuildProfile.permitsService(validation: false))
         #endif
     }
@@ -21,14 +26,19 @@ final class LockedUseBuildProfileTests: XCTestCase {
         let digest = String(repeating: "a", count: 64)
         let artifacts = ["LingLockBroker", "LingLockInstaller", "Ling Guardian.app/Contents/MacOS/LingGuardian",
             "Client.app/Contents/MacOS/LingLockedUseClient", "LingLockAuth.bundle/Contents/MacOS/LingLockAuth"]
-        for (signing, kernel) in [("local_identity", "identity_passed"), ("development_validation", "development_identity_passed")] {
+        for (signing, kernel) in [("local_identity", "identity_passed"),
+                                  ("development_validation", "development_identity_passed"),
+                                  ("local_development", "local_development_identity_passed")] {
             let manifest: [String: Any] = ["schemaVersion": 1, "platform": "darwin", "architecture": architecture,
                 "team": "ABCDE12345", "signing": signing, "productCapability": "disabled_by_build", "nativeAcceptance": "not_run",
                 "upstreamCommit": String(repeating: "a", count: 40),
                 "checks": ["policy": "passed", "authorizationPluginABI": "passed", "kernelTaskVerifier": kernel, "xctest": "separate"],
                 "artifacts": Dictionary(uniqueKeysWithValues: artifacts.map { ($0, digest) })]
             let data = try JSONSerialization.data(withJSONObject: manifest)
-            if (signing == "development_validation") == LockedUseBuildProfile.developmentValidation {
+            let matches = (signing == "development_validation" && LockedUseBuildProfile.developmentValidation)
+                || (signing == "local_development" && LockedUseBuildProfile.localDevelopment)
+                || (signing == "local_identity" && !LockedUseBuildProfile.developmentValidation && !LockedUseBuildProfile.localDevelopment)
+            if matches {
                 XCTAssertEqual(try LockedUseBuildManifest.clientSHA256(data: data, team: "ABCDE12345", architecture: architecture), digest)
             } else {
                 XCTAssertThrowsError(try LockedUseBuildManifest.clientSHA256(data: data, team: "ABCDE12345", architecture: architecture))

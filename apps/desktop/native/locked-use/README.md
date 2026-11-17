@@ -54,6 +54,36 @@ reject its `development_validation` evidence. The build still performs no
 installation or authentication evaluation. A successful identity check does not
 establish authorization-host plug-in loading or real lock behavior.
 
+For a local development build that exercises the full native Client/Broker path
+without a Developer ID certificate, use the separate `local_development` lane:
+
+```bash
+node apps/desktop/scripts/build-locked-use.ts \
+  --local-development \
+  --identity='Apple Development: NAME (TEAMID)'
+node apps/desktop/scripts/prepare-locked-use-local.ts \
+  --components=/absolute/apple-development-components \
+  --output=/absolute/fresh-local-authority
+```
+
+The local authority binds the exact Apple Development component manifest and
+team. Package it with an internal provider build by setting
+`LING_CUA_SIGNING_TIER=test_signed_internal`,
+`LING_CUA_DISTRIBUTION_CHANNEL=internal`,
+`LING_LOCKED_USE_LOCAL_ROOT=/absolute/fresh-local-authority`, and the same
+Apple Development identity in `LING_CUA_DARWIN_SIGNING_IDENTITY` plus its
+10-character Team ID in `LING_CUA_DARWIN_EXPECTED_TEAM_ID` while using the
+existing Cua Driver packaging command with its normal
+`LING_CUA_DRIVER_SOURCE_BUILD_ROOT`. Launch the packaged app with
+`--ling-locked-use-local-development` to select this lane. The native installer
+still requires an explicit administrator action, and Accessibility, Screen
+Recording and Input Monitoring grants remain necessary.
+
+This lane is machine-local: it is not a Developer ID release, is not notarized,
+does not pass Gatekeeper for distribution, cannot use `promote`, and never
+produces release authority or acceptance evidence for another machine. Building
+and packaging do not install the service or change authorization rules.
+
 ## Components
 
 | Component | Responsibility |
@@ -104,6 +134,7 @@ The installer command interface is:
 
 ```text
 LingLockInstaller install <root-owned-component-directory> <console-uid> validation
+LingLockInstaller install <root-owned-component-directory> <console-uid> local
 LingLockInstaller promote
 LingLockInstaller validation-report
 LingLockInstaller recover
@@ -118,6 +149,8 @@ are root-owned and readable/executable by the enrolled user; recovery journals
 remain private. Desktop independently pins the release-approved manifest digest
 and verifies the installed helper's digest, Developer ID, hardened runtime and
 empty entitlements before each spawn. This identity check supplies no GUI acceptance.
+The `local` mode is accepted only by a `local_development` binary and records a
+local profile; it never creates production validation or promotion evidence.
 Interrupted installation keeps
 its recovery plan. `recover` restores a matching recorded policy and removes owned
 artifacts; it refuses to overwrite concurrent policy changes. `uninstall` first

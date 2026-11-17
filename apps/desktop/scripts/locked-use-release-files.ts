@@ -49,11 +49,31 @@ export async function hashFile(path: string): Promise<string> {
     return hash.digest("hex");
   } finally { await handle.close(); }
 }
-export function signature(path: string, identifier: string, team: string): string {
-  run("/usr/bin/codesign", ["--verify", "--strict", "--all-architectures", "--test-requirement",
-    'identifier "' + identifier + '" and anchor apple generic and certificate leaf[subject.OU] = "' + team
-      + '" and certificate leaf[field.1.2.840.113635.100.6.1.13] exists', path]);
+export type LockedUseSignatureProfile = "developer_id" | "apple_development";
+
+/** Verify a component against the certificate family used by its lane. */
+export function signature(
+  path: string,
+  identifier: string,
+  team: string,
+  profile: LockedUseSignatureProfile = "developer_id",
+): string {
+  const certificate = profile === "apple_development"
+    ? `certificate leaf[subject.OU] = "${team}"`
+    : `certificate 1[field.1.2.840.113635.100.6.2.6] exists`
+      + ` and certificate leaf[field.1.2.840.113635.100.6.1.13] exists`;
+  // `-R` is codesign's documented requirement argument on macOS. The long
+  // `--test-requirement` spelling is not accepted by the system tool.
+  run("/usr/bin/codesign", ["--verify", "--strict", "--all-architectures",
+    `-R=identifier "${identifier}" and anchor apple generic and ${certificate}`, path]);
   const metadata = run("/usr/bin/codesign", ["--display", "--verbose=4", path]);
+  const authority = metadata.match(/^Authority=(.+)$/mu)?.[1];
+  if (profile === "apple_development" && !authority?.startsWith("Apple Development:")) {
+    throw new Error("locked_use_local_signature_identity_invalid");
+  }
+  if (profile === "developer_id" && !authority?.startsWith("Developer ID Application:")) {
+    throw new Error("locked_use_release_signature_identity_invalid");
+  }
   const hash = metadata.match(/^CDHash=([a-f0-9]{40,64})$/mu)?.[1];
   const flags = metadata.match(/\bflags=0x([a-f0-9]+)\b/iu)?.[1];
   if (!hash || !flags || !(Number.parseInt(flags, 16) & 0x10000)) throw new Error("locked_use_release_signature_invalid");

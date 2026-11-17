@@ -9,12 +9,14 @@ const root = "/Library/Application Support/LingStack/LockedUse";
 const clientArtifact = "Client.app/Contents/MacOS/LingLockedUseClient";
 const hash = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");
 
-function fixture(mutate?: (value: Record<string, unknown>) => void) {
+function fixture(profile: "local_identity" | "local_development" = "local_identity",
+  mutate?: (value: Record<string, unknown>) => void) {
   let helper = Buffer.from("fixture-signed-helper");
   const value: Record<string, unknown> = {
     schemaVersion: 1, platform: "darwin", architecture: process.arch, team,
-    signing: "local_identity", productCapability: "disabled_by_build", nativeAcceptance: "not_run",
-    checks: { policy: "passed", authorizationPluginABI: "passed", kernelTaskVerifier: "identity_passed", xctest: "separate" },
+    signing: profile, productCapability: "disabled_by_build", nativeAcceptance: "not_run",
+    checks: { policy: "passed", authorizationPluginABI: "passed",
+      kernelTaskVerifier: profile === "local_development" ? "local_development_identity_passed" : "identity_passed", xctest: "separate" },
     upstreamCommit: "e25be21caa0ea489316f6be6635d2a4766c4cd0b",
     artifacts: Object.fromEntries(["LingLockBroker", "LingLockInstaller", "Ling Guardian.app/Contents/MacOS/LingGuardian",
       clientArtifact, "LingLockAuth.bundle/Contents/MacOS/LingLockAuth"].map((path) => [path, hash(helper)])),
@@ -23,7 +25,7 @@ function fixture(mutate?: (value: Record<string, unknown>) => void) {
   let manifest = Buffer.from(JSON.stringify(value));
   const reads: string[] = [];
   const commands: DarwinIdentityCommandInput[] = [];
-  let metadata = `Identifier=com.lingstack.locked-use.client\nTeamIdentifier=${team}\nCodeDirectory v=20500 flags=0x12000(library-validation,runtime)`;
+  let metadata = `Authority=${profile === "local_development" ? "Apple Development: Fixture (ABCDE12345)" : "Developer ID Application: Fixture (ABCDE12345)"}\nIdentifier=com.lingstack.locked-use.client\nTeamIdentifier=${team}\nCodeDirectory v=20500 flags=0x12000(library-validation,runtime)`;
   let entitlements: Record<string, unknown> | undefined;
   let commandError: Error | undefined;
   let afterCommands: (() => void) | undefined;
@@ -65,7 +67,7 @@ test("installed factory verifies pinned bytes and Developer ID before each spawn
   await factory.verifyHelper(); await factory.verifyHelper();
   assert.equal(fx.reads.filter((path) => path.endsWith(".json")).length, 4);
   assert.equal(fx.reads.filter((path) => path.endsWith("LingLockedUseClient")).length, 4);
-  const verify = fx.commands.find((command) => command.args.includes("--test-requirement"))!;
+  const verify = fx.commands.find((command) => command.args.some((arg) => arg.startsWith("-R=")))!;
   assert.equal(verify.args.at(-1), `${root}/Client.app`);
   assert.match(verify.args.join(" "), /certificate leaf\[field\.1\.2\.840\.113635\.100\.6\.1\.13\] exists/u);
   assert.match(verify.args.join(" "), /ABCDE12345/u);
@@ -73,6 +75,17 @@ test("installed factory verifies pinned bytes and Developer ID before each spawn
   const client = factory.createClient(() => {});
   assert.equal(fx.commands.length, count);
   client.close();
+});
+
+test("local development profile accepts only Apple Development and its local manifest", async () => {
+  const fx = fixture("local_development");
+  const factory = createInstalledDarwinLockedUseClientFactory({ ...fx.options, expectedProfile: "local_development" });
+  await factory.verifyHelper();
+  const verify = fx.commands.find((command) => command.args.some((arg) => arg.startsWith("-R=")))!;
+  assert.match(verify.args.join(" "), /ABCDE12345/u);
+  assert.doesNotMatch(verify.args.join(" "), /1\.2\.840\.113635\.100\.6\.1\.13/u);
+  fx.metadata("Authority=Developer ID Application: Fixture (ABCDE12345)\nIdentifier=com.lingstack.locked-use.client\nTeamIdentifier=ABCDE12345\nCodeDirectory v=20500 flags=0x12000(library-validation,runtime)");
+  await assert.rejects(factory.verifyHelper(), /apple_development/u);
 });
 
 test("manifest and helper replacement fail before native execution", async () => {
@@ -98,7 +111,7 @@ test("expanded, ad hoc, cross-build and self-promoting manifests are rejected", 
     (value: Record<string, unknown>) => { (value.artifacts as Record<string, unknown>)[clientArtifact] = "a".repeat(64) + "\n"; },
   ];
   for (const mutate of mutations) {
-    const fx = fixture(mutate);
+    const fx = fixture("local_identity", mutate);
     await assert.rejects(createInstalledDarwinLockedUseClientFactory(fx.options).verifyHelper(), /manifest_invalid/u);
     assert.equal(fx.commands.length, 0);
   }
@@ -110,7 +123,7 @@ test("wrong signer, absent runtime and injection entitlements deny the helper", 
     "Identifier=com.lingstack.locked-use.client\nTeamIdentifier=OTHER12345\nCodeDirectory flags=0x10000(runtime)",
     `Identifier=com.lingstack.locked-use.client\nTeamIdentifier=${team}\nCodeDirectory flags=0x0(none)`,
   ]) {
-    const fx = fixture(); fx.metadata(metadata);
+    const fx = fixture(); fx.metadata(`Authority=Developer ID Application: Fixture (ABCDE12345)\n${metadata}`);
     await assert.rejects(createInstalledDarwinLockedUseClientFactory(fx.options).verifyHelper(), /signing_identity_mismatch/u);
   }
   for (const entitlements of [{ "com.apple.security.get-task-allow": true }, { "com.apple.security.cs.disable-library-validation": true }]) {

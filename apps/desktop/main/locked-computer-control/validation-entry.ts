@@ -138,8 +138,8 @@ async function main(): Promise<void> {
 
 async function signedCodeHash(path: string, identifier: string, team: string): Promise<string> {
   const runner = createDarwinExecFileCommandRunner({ timeoutMs: 10_000, baseEnvironment: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" } });
-  await runner.run({ executable: "/usr/bin/codesign", args: ["--verify", "--strict", "--all-architectures", "--test-requirement",
-    `identifier "${identifier}" and anchor apple generic and certificate leaf[subject.OU] = "${team}"`
+  await runner.run({ executable: "/usr/bin/codesign", args: ["--verify", "--strict", "--all-architectures",
+    `-R=identifier "${identifier}" and anchor apple generic and certificate leaf[subject.OU] = "${team}"`
       + " and certificate leaf[field.1.2.840.113635.100.6.1.13] exists", path] });
   const info = await runner.run({ executable: "/usr/bin/codesign", args: ["--display", "--verbose=4", path] });
   const text = info.stdout + "\n" + info.stderr;

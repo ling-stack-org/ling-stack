@@ -81,7 +81,10 @@ import { FileLockedTaskContinuationPreferenceStore } from "./locked-task-continu
 import { DesktopRendererThemeStore } from "./renderer-theme-store.js";
 import { resolveDesktopResourcePaths } from "./resource-paths.js";
 import { resolveDesktopResourcesWithStartupRecovery } from "./resource-startup-recovery.js";
-import { loadPackagedDarwinLockedUseBackend } from "./locked-computer-control/packaged-release-authority.js";
+import {
+  loadPackagedDarwinLockedUseBackend,
+  loadPackagedLocalDarwinLockedUseBackend,
+} from "./locked-computer-control/packaged-release-authority.js";
 import { installDesktopBrowserHostForLaunch } from "./qa-launch-profile.js";
 import { sendToLiveDesktopWindow } from "./safe-window-send.js";
 import { establishDesktopSingleInstanceAuthority } from "./single-instance.js";
@@ -97,6 +100,7 @@ import { builtInDesktopRendererThemeInput } from "../shared/renderer-theme.js";
 import { createDesktopThemePackageFirstPaintState } from "../shared/theme-package-first-paint.js";
 
 const daemonBaseUrl = process.env.LING_STACK_DAEMON_URL ?? "http://127.0.0.1:17891";
+const localLockedUseRequested = process.argv.includes("--ling-locked-use-local-development");
 let cuaDriverFeatureFlags: CuaDriverFeatureFlags | undefined;
 let cuaDriverPackagedStartupAuthority: DesktopCuaDriverPackagedStartupAuthority | undefined;
 const execFileAsync = promisify(execFile);
@@ -363,23 +367,34 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
     packagedDarwinLockedUseBackendResolved = true;
     if (app.isPackaged && process.platform === "darwin") {
       try {
-        packagedDarwinLockedUseBackend = await loadPackagedDarwinLockedUseBackend({
-          packaged: app.isPackaged,
-          platform: process.platform,
-          appPath: app.getAppPath(),
-          resourcesRoot: resources.resourcesRoot,
-        });
-        logStartup(packagedDarwinLockedUseBackend
-          ? "locked_control.packaged_backend_loaded"
-          : "locked_control.packaged_backend_unavailable", {
+        if (localLockedUseRequested) {
+          packagedDarwinLockedUseBackend = await loadPackagedLocalDarwinLockedUseBackend({
+            packaged: app.isPackaged,
             platform: process.platform,
-            reason: packagedDarwinLockedUseBackend ? undefined : "release_authority_missing_or_invalid",
+            appPath: app.getAppPath(),
+            resourcesRoot: resources.resourcesRoot,
+          });
+        } else {
+          packagedDarwinLockedUseBackend = await loadPackagedDarwinLockedUseBackend({
+            packaged: app.isPackaged,
+            platform: process.platform,
+            appPath: app.getAppPath(),
+            resourcesRoot: resources.resourcesRoot,
+          });
+        }
+        logStartup(packagedDarwinLockedUseBackend
+          ? localLockedUseRequested ? "locked_control.local_backend_loaded" : "locked_control.packaged_backend_loaded"
+          : localLockedUseRequested ? "locked_control.local_backend_unavailable" : "locked_control.packaged_backend_unavailable", {
+            platform: process.platform,
+            reason: packagedDarwinLockedUseBackend ? undefined : localLockedUseRequested
+              ? "local_authority_missing_or_invalid"
+              : "release_authority_missing_or_invalid",
           });
       } catch (error) {
         // A release authority or installed component failure disables only the
         // optional locked backend; ordinary Desktop startup remains available.
         packagedDarwinLockedUseBackend = undefined;
-        logStartup("locked_control.packaged_backend_unavailable", {
+        logStartup(localLockedUseRequested ? "locked_control.local_backend_unavailable" : "locked_control.packaged_backend_unavailable", {
           platform: process.platform,
           error: error instanceof Error ? error.message : String(error),
         });

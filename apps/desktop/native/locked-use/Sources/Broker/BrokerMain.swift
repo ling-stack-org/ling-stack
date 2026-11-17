@@ -11,14 +11,18 @@ enum BrokerMain {
     static func main() {
         do {
             guard CommandLine.arguments.count == 2,
-                  ["--serve", "--serve-validation"].contains(CommandLine.arguments[1]), geteuid() == 0 else {
-                throw BrokerError.message("Usage: LingLockBroker --serve | --serve-validation (administrator installed service only)")
+                  ["--serve", "--serve-validation", "--serve-local"].contains(CommandLine.arguments[1]), geteuid() == 0 else {
+                throw BrokerError.message("Usage: LingLockBroker --serve | --serve-validation | --serve-local (administrator installed service only)")
             }
             let approvals = try LockedUseClientApprovals.loadInstalled()
             let configuration = try LockedUseBrokerConfiguration.loadInstalled()
             let validation = CommandLine.arguments[1] == "--serve-validation"
-            guard LockedUseBuildProfile.permitsService(validation: validation) else {
+            let local = CommandLine.arguments[1] == "--serve-local"
+            guard LockedUseBuildProfile.permitsService(validation: validation, local: local) else {
                 throw BrokerError.message("Development validation components cannot serve production tasks")
+            }
+            guard !local || configuration.matchesLocalDevelopment() else {
+                throw BrokerError.message("Local development service requires a local installation profile")
             }
             guard let team = try LockedUseSigningIdentity.current().teamIdentifier else {
                 throw BrokerError.message("Signed Broker team unavailable")
@@ -28,7 +32,7 @@ enum BrokerMain {
                 brokerHash: evidence.brokerHash, guardianHash: evidence.guardianHash,
                 pluginHash: evidence.pluginHash, clientHash: evidence.clientHash)
             let server = try BrokerServer(approvals: approvals, enabled: configuration.enabled,
-                backendValidated: validation || validated, validationMode: validation)
+                backendValidated: validation || local || validated, validationMode: validation)
             try server.start()
             withExtendedLifetime(server) { dispatchMain() }
         } catch {

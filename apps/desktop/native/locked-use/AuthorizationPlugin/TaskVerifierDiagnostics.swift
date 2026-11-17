@@ -10,7 +10,7 @@ public func diagnoseBrokerTask(_ bytes: UnsafeRawPointer?, _ teamBytes: UnsafePo
     withUnsafeMutableBytes(of: &token) { $0.copyMemory(from: UnsafeRawBufferPointer(start: bytes, count: 32)) }
     guard let task = SecTaskCreateWithAuditToken(nil, token) else { return -2 }
     do {
-        #if LING_LOCKED_USE_DEVELOPMENT_VALIDATION
+        #if LING_LOCKED_USE_DEVELOPMENT_VALIDATION || LING_LOCKED_USE_LOCAL_DEVELOPMENT
         let category = ValidationCategory(.development)
         #else
         let category = ValidationCategory(.developerID)

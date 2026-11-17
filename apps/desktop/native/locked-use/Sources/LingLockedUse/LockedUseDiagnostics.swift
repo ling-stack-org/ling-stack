@@ -116,6 +116,7 @@ public struct LockedUseDiagnostics: Codable, Sendable {
             componentsValidated = configuration.matchesValidation(osBuild: evidence.osBuild,
                 brokerHash: evidence.brokerHash, guardianHash: evidence.guardianHash,
                 pluginHash: evidence.pluginHash, clientHash: evidence.clientHash)
+                || (LockedUseBuildProfile.localDevelopment && configuration.matchesLocalDevelopment())
             guardianPermissions = installedGuardianPermissions()
             available = componentsValidated && policyIntact && approved
                 && AXIsProcessTrusted() && CGPreflightScreenCaptureAccess()

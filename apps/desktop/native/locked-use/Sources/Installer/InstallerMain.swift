@@ -31,6 +31,11 @@ struct InstallerMain {
                 let maintenance = [["validation-report"], ["recover"], ["reconcile-stopped-guards"], ["uninstall"]].contains(args)
                 guard installingValidation || maintenance else { throw InstallError.invalidArguments }
             }
+            if LockedUseBuildProfile.localDevelopment {
+                let installingLocal = args.count == 4 && args[0] == "install" && args[3] == "local"
+                let maintenance = [["recover"], ["reconcile-stopped-guards"], ["uninstall"]].contains(args)
+                guard installingLocal || maintenance else { throw InstallError.invalidArguments }
+            }
             if args == ["validation-report"] {
                 let report = try LockedUseValidationReport.loadInstalled()
                 guard report.canPromote(current: try LockedUseComponentValidation.current(team: team)) else { throw InstallError.changedPolicy }
@@ -48,8 +53,8 @@ struct InstallerMain {
                   flock(lockFD, LOCK_EX | LOCK_NB) == 0 else { throw InstallError.existingInstallation }
             if args.count == 4, args[0] == "install" {
                 guard let uid = UInt32(args[2]), uid > 0,
-                      ["validation", "production"].contains(args[3]) else { throw InstallError.invalidArguments }
-                try install(source: URL(fileURLWithPath: args[1], isDirectory: true), uid: uid, team: team, validation: args[3] == "validation")
+                      ["validation", "local", "production"].contains(args[3]) else { throw InstallError.invalidArguments }
+                try install(source: URL(fileURLWithPath: args[1], isDirectory: true), uid: uid, team: team, mode: args[3])
             } else if args == ["uninstall"] { try uninstall(team: team) }
             else if args == ["recover"] { try recover(team: team) }
             else if args == ["reconcile-stopped-guards"] { try reconcileStoppedGuards() }
@@ -219,7 +224,14 @@ struct InstallerMain {
         }
     }
 
-    private static func install(source: URL, uid: UInt32, team: String, validation: Bool) throws {
+    private static func install(source: URL, uid: UInt32, team: String, mode: String) throws {
+        let validation = mode == "validation"
+        let local = mode == "local"
+        guard !validation || LockedUseBuildProfile.developmentValidation,
+              !local || LockedUseBuildProfile.localDevelopment,
+              mode != "production" || (!LockedUseBuildProfile.developmentValidation && !LockedUseBuildProfile.localDevelopment) else {
+            throw InstallError.untrusted
+        }
         try trustedTree(source)
         let broker = source.appendingPathComponent("LingLockBroker")
         _ = try verify(broker, id: service, team: team)
@@ -270,7 +282,7 @@ struct InstallerMain {
             .init(userID: uid, role: .guardian, signingIdentifier: "com.lingstack.locked-use.guardian.dev", teamIdentifier: team)
         ])
         try write(approvals, name: "clients.json")
-        try write(LockedUseBrokerConfiguration(enabled: true), name: "configuration.json")
+        try write(LockedUseBrokerConfiguration(enabled: true, profile: local ? "local_development" : nil), name: "configuration.json")
         for name in ["LingLockBroker", guardianName, "LingLockInstaller", "Client.app", "build-manifest.json"] {
             let destination = root.appendingPathComponent(name)
             try FileManager.default.copyItem(at: source.appendingPathComponent(name), to: destination)
@@ -290,13 +302,13 @@ struct InstallerMain {
             try setRight(screensaver, data: plan.installed, authorization: reference)
             guard try LockedUseAuthorizationRules.installationObserved(current: readRight(screensaver), plan: plan) else { throw InstallError.changedPolicy }
             let plist: [String: Any] = ["Label": service,
-                "ProgramArguments": [root.appendingPathComponent("LingLockBroker").path, validation ? "--serve-validation" : "--serve"],
+                "ProgramArguments": [root.appendingPathComponent("LingLockBroker").path, local ? "--serve-local" : validation ? "--serve-validation" : "--serve"],
                 "RunAtLoad": true, "KeepAlive": true, "ProcessType": "Interactive", "ThrottleInterval": 5]
             try makeDirectory(daemon.deletingLastPathComponent())
             try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0).write(to: daemon, options: [.withoutOverwriting])
             guard chmod(daemon.path, 0o644) == 0 else { throw InstallError.untrusted }
             try run("/bin/launchctl", ["bootstrap", "system", daemon.path])
-            print("Installed Locked Use with preserved native fallback. Profile: \(validation ? "explicit validation" : "enabled").")
+            print("Installed Locked Use with preserved native fallback. Profile: \(local ? "local development" : validation ? "explicit validation" : "enabled").")
         } catch {
             if let current = try? readRight(screensaver), let original = try? LockedUseAuthorizationRules.planUninstallation(current: current, plan: plan) {
                 try? setRight(screensaver, data: original, authorization: reference)
@@ -306,7 +318,7 @@ struct InstallerMain {
         }
     }
     private static func promote(team: String) throws {
-        guard !LockedUseBuildProfile.developmentValidation else { throw InstallError.untrusted }
+        guard !LockedUseBuildProfile.developmentValidation, !LockedUseBuildProfile.localDevelopment else { throw InstallError.untrusted }
         #if arch(arm64)
         let architecture = "arm64"
         #else
