@@ -109,8 +109,13 @@ export function useCompanionChat(input: {
         setError(session.replyError ?? "");
         return true;
       }
-      session.receiptPending = true;
     }
+    // The daemon records the user message before it creates the reply row.
+    // An accepted receipt without an AI reply is therefore still in progress;
+    // retrying during this gap would submit the same key a second time.
+    session.receiptPending = receipt.status === "accepted" && (
+      !receipt.aiReply || receipt.aiReply.status === "pending"
+    );
     setConnection("reconnecting");
     return false;
   }

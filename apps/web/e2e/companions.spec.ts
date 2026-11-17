@@ -163,14 +163,17 @@ test("streams reply text before completion and uses one durable submission key",
   } finally { await f.close(); }
 });
 
-test("retries a truncated stream with the same key and one user message", async ({ page }) => {
-  const f = await fixture(page, "interrupted"); f.finish();
+test("waits for a truncated accepted stream without resubmitting", async ({ page }) => {
+  const f = await fixture(page, "interrupted");
   try {
     const panel = await openPanel(page);
     await panel.getByRole("textbox").fill("Retry the original text"); await panel.getByRole("button", { name: "Send", exact: true }).click();
     await panel.getByRole("button", { name: "Recover or retry message" }).click();
-    await expect(panel.getByRole("log")).toContainText("Streamed reply.");
-    expect(f.keys).toHaveLength(2); expect(f.keys[1]).toBe(f.keys[0]);
+    await expect.poll(() => f.keys).toHaveLength(1);
+    f.finishPending();
+    await page.evaluate(() => window.dispatchEvent(new Event("online")));
+    await expect(panel.getByRole("log")).toContainText("Recovered after disconnect.");
+    expect(f.keys).toHaveLength(1);
     await expect(panel.locator(".companion-mini-message.user")).toHaveCount(1);
   } finally { await f.close(); }
 });
@@ -334,17 +337,16 @@ test("a delayed receipt cannot replace a newer pending message in the same sessi
     await expect.poll(() => f.keys).toHaveLength(2);
     await expect(panel.getByRole("button", { name: "Recover or retry message" })).toBeVisible();
 
+    f.finishPending();
     const delayedReceipt = page.waitForResponse(response => response.request().method() === "GET"
       && response.request().url().includes(`idempotencyKey=${keyA}`));
     f.releaseOldestReceipt(keyA);
     await delayedReceipt;
 
-    await expect(panel.getByRole("button", { name: "Recover or retry message" })).toBeVisible();
-    await panel.getByRole("button", { name: "Recover or retry message" }).click();
-    await expect.poll(() => f.keys).toHaveLength(3);
-    expect(f.keys[2]).toBe(f.keys[1]);
-    f.finish();
-    await expect(panel.getByRole("log")).toContainText("Streamed reply.");
+    await page.evaluate(() => window.dispatchEvent(new Event("online")));
+    await expect(panel.getByRole("log")).toContainText("Recovered after disconnect.");
+    await expect(panel.getByRole("textbox")).toBeEnabled();
+    expect(f.keys).toHaveLength(2);
     await expect(panel.locator(".companion-mini-message.user").filter({ hasText: "Message B" })).toHaveCount(1);
   } finally { await f.close(); }
 });
