@@ -143,7 +143,10 @@ enum AttendedValidation {
         var remaining = 128
         var visited: [AXUIElement] = []
         func visit(_ element: AXUIElement, depth: Int) -> AXUIElement? {
-            guard remaining > 0, depth <= 10, !visited.contains(where: { CFEqual($0, element) }) else { return nil }
+            guard remaining > 0, depth <= 10 else { return nil }
+            for existing in visited where CFEqual(existing, element) {
+                return nil
+            }
             remaining -= 1; visited.append(element)
             var value: CFTypeRef?
             if AXUIElementCopyAttributeValue(element, kAXIdentifierAttribute as CFString, &value) == .success,
