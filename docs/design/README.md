@@ -19,6 +19,8 @@ Maintenance-only transition notes are kept in [Development Handoffs](../maintena
 ## Product And Architecture
 
 - [Implementation Status](implementation-status.md)
+- [Agent Execution Capabilities](agent-execution-capabilities.md)
+- [Agent Execution Capabilities Implementation Plan](agent-execution-capabilities-implementation-plan.md)
 - [Official Scene Theme, Background And Interaction Motion Contract](theme-background-motion-contract.md)
 - [Ling Core IP Design Contract](ling-core-ip-design.md)
 - [Official Scene Theme And Custom Media Background Implementation Plan](full-window-theme-background-implementation-plan.md)

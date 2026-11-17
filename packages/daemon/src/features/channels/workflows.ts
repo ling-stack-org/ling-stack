@@ -1,3 +1,5 @@
+import { createSqliteNodeRerunStore } from "@ling-stack/core";
+import { assertNodeRerunReuseCurrent } from "../runs/node-rerun-submission.js";
 import { recallMemory } from "../memory/recall-service.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
@@ -731,6 +733,8 @@ export async function prepareWorkflowStepStart(
   if (!step) {
     return { kind: "error", statusCode: 404, code: "workflow_step_not_found", message: `Channel workflow step not found: ${workflowStepId}` };
   }
+  const rerun = createSqliteNodeRerunStore(store).getBySuccessor(step.workflowId);
+  if (rerun) assertNodeRerunReuseCurrent(store, rerun);
   let workflow = store.getChannelWorkflow(step.workflowId);
   if (!workflow) {
     return { kind: "error", statusCode: 404, code: "workflow_not_found", message: `Channel workflow not found: ${step.workflowId}` };

@@ -1,3 +1,5 @@
+import type { AutomationEventStore } from "./automation-event-types.js";
+import type { GoalAcceptanceCriterion, GoalAcceptanceEvidence, GoalSupervisionPolicy } from "./goal-supervision.js";
 import type { ChannelSessionPage, ChannelSessionSummary, CreateChannelSessionInput, ListChannelSessionsOptions, UpdateChannelSessionRequest } from "./channel-session-types.js";
 import type { MemoryWikiStore } from "./memory-wiki-types.js";
 import type { MemoryDerivativeStore } from "./memory-derivative-types.js";
@@ -791,6 +793,8 @@ export type LingThreadGoalCompletionActor = "local-user" | "ling-agent";
 export type GoalUsageSource = "provider" | "estimated" | "mixed";
 export type GoalContinuationStopReason =
   | "max_depth"
+  | "time_budget"
+  | "supervision_disabled"
   | "no_evidence_threshold"
   | "same_blocker_threshold"
   | "plan_mode_active"
@@ -867,6 +871,9 @@ export interface GoalContinuationEvent {
 }
 
 export interface LingThreadGoal {
+  readonly acceptanceCriteria?: readonly GoalAcceptanceCriterion[];
+  readonly acceptanceEvidence?: readonly GoalAcceptanceEvidence[];
+  readonly supervisionPolicy?: GoalSupervisionPolicy;
   readonly id: string;
   readonly workspaceId: string;
   readonly threadId: string;
@@ -898,6 +905,9 @@ export interface LingThreadGoal {
 }
 
 export interface CreateLingThreadGoalInput {
+  readonly acceptanceCriteria?: readonly GoalAcceptanceCriterion[];
+  readonly acceptanceEvidence?: readonly GoalAcceptanceEvidence[];
+  readonly supervisionPolicy?: GoalSupervisionPolicy;
   readonly id?: string;
   readonly threadId: string;
   readonly objective: string;
@@ -906,6 +916,9 @@ export interface CreateLingThreadGoalInput {
 }
 
 export interface UpdateLingThreadGoalInput {
+  readonly acceptanceCriteria?: readonly GoalAcceptanceCriterion[];
+  readonly acceptanceEvidence?: readonly GoalAcceptanceEvidence[];
+  readonly supervisionPolicy?: GoalSupervisionPolicy;
   readonly objective?: string;
   readonly status?: LingThreadGoalStatus;
   readonly tokenBudget?: number | null;
@@ -1588,7 +1601,7 @@ export interface ClaimSnapshotRestoreFenceInput {
   readonly now: string;
 }
 
-export interface RunStore extends MemoryWikiStore, MemoryDerivativeStore, LearningReviewStore, RuntimeRunQueueStore, NativeExecutionStore, HarnessProjectionStore, HarnessArtifactRetentionStore, DelegationQueryStore, HarnessDiagnosticsStore, RunEvaluationTaskStore, RunEvaluationQaStore, RunEvaluationHumanStore, RunEvaluationHumanReadStore {
+export interface RunStore extends AutomationEventStore, MemoryWikiStore, MemoryDerivativeStore, LearningReviewStore, RuntimeRunQueueStore, NativeExecutionStore, HarnessProjectionStore, HarnessArtifactRetentionStore, DelegationQueryStore, HarnessDiagnosticsStore, RunEvaluationTaskStore, RunEvaluationQaStore, RunEvaluationHumanStore, RunEvaluationHumanReadStore {
   getDelegationCompletionEvidence(input: GetDelegationCompletionEvidenceInput): DelegationCompletionEvidenceV1;
   listApprovalPostCommitEffects(options?: {
     readonly approvalId?: string;

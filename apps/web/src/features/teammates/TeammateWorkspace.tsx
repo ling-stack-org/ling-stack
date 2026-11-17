@@ -1,3 +1,4 @@
+import { LingDaemonTransportError } from "@ling-stack/api-client";
 import { useWorkSummaryContext } from "../workspace/work-summary/WorkSummaryProvider.js";
 import { useTeammateObservationReads } from "./use-teammate-private-timeline.js";
 import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type UIEvent } from "react";
@@ -1403,8 +1404,13 @@ export function TeammateWorkspace({
         setMessageDraft(current => current || draftSnapshot);
         setPendingAttachments(current => current.length ? current : attachmentsSnapshot.map(item => ({ ...item, deleteOnRemove: false })));
         setPendingDirectLinkPreviewIds(current => current.length ? current : linkPreviewIdsSnapshot);
-        workspaceRequestOwner.reportError(operation, observationReads.shouldMergeTransport(error) || error instanceof UnconfirmedConversationSubmissionError
-          ? t("Pending confirmation") : error instanceof Error ? error.message : String(error));
+        // The durable lookup key is the only evidence available after an
+        // unconfirmed submission. A stream transport failure therefore stays
+        // pending; a synchronous business or parser error remains visible
+        // while the same lookup key is retained for later recovery.
+        workspaceRequestOwner.reportError(operation,
+          observationReads.shouldMergeTransport(error) || error instanceof LingDaemonTransportError || error instanceof UnconfirmedConversationSubmissionError
+            ? t("Pending confirmation") : error instanceof Error ? error.message : String(error));
         return;
       }
       const failure = directSendLifecycle.fail(sendOperation);

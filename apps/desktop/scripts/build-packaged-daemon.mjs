@@ -9,6 +9,7 @@ import { buildFreshPackagedOfficeNativePublication, readOriginalPackagedOfficeNa
   readActiveOriginalPackagedOfficeNativePublication } from "./build-packaged-office-native.mjs";
 import { createReviewedOfficeDaemonSourceInputs } from "./packaged-office-daemon-source-inputs.mjs";
 import { preparePackagedGstackBuild, packagedGstackIdentityPlugin } from "./packaged-gstack-resources.mjs";
+import { preparePackagedAgentRuntime } from "./packaged-agent-runtime.mjs";
 
 const desktopRoot = realpathSync(fileURLToPath(new URL("../", import.meta.url)));
 const emittedCliPath = resolve(desktopRoot, "dist/daemon/cli.mjs");
@@ -198,6 +199,7 @@ async function buildOriginalDaemonBundle(codesignReceipt, officeReceipt, sourceI
     required: Boolean(officeReceipt) && process.env.LING_PACKAGED_RELEASE_REVIEW_REQUIRED === "1",
   });
   const gstack = packagedGstackIdentityPlugin({ identity: gstackIdentity, sourceInputs });
+  const agentRuntime = await preparePackagedAgentRuntime({ sourceInputs });
   const acpVersionModule = realpathSync(resolve(desktopRoot, "../../packages/daemon",
     sourceInputs ? "src/features/execution-engines/acp-sdk-version.ts" : "dist/features/execution-engines/acp-sdk-version.js"));
   const acpVersionMarker = `const embeddedBundledAcpSdkVersion${sourceInputs ? ": string" : ""} = "NO_PACKAGED_ACP_SDK_VERSION";`;
@@ -228,7 +230,7 @@ async function buildOriginalDaemonBundle(codesignReceipt, officeReceipt, sourceI
     bundle: true, platform: "node", format: "esm", outfile: "dist/daemon/cli.mjs",
     ...(sourceInputs ? { write: false, metafile: true, tsconfigRaw: sourceInputs.tsconfigRaw, target: "es2022" } : {}),
     banner: { js: 'import { createRequire as __lingCreateRequire } from "node:module"; const require = __lingCreateRequire(import.meta.url);' },
-    plugins: [gstack.plugin, {
+    plugins: [gstack.plugin, agentRuntime.plugin, {
       name: "build-owned-acp-sdk-version-literal",
       setup(plugin) {
         plugin.onLoad({ filter: /features[\\/]execution-engines[\\/]acp-sdk-version\.(?:ts|js)$/ }, async args => {
@@ -267,7 +269,8 @@ async function buildOriginalDaemonBundle(codesignReceipt, officeReceipt, sourceI
   if (acpVersionVisits !== 1) throw new Error("packaged_acp_sdk_version_not_bundled");
   if (readFileSync(acpManifest.path, "utf8") !== acpManifest.contents) throw new Error("packaged_acp_sdk_version_manifest_changed");
   gstack.assertIncluded();
-  sourceInputs?.assertOriginalInputs(result);
+  agentRuntime.assertIncluded();
+  sourceInputs?.assertOriginalInputs(result, agentRuntime.workerResults);
   for (const item of definitions) {
     if (item.receipt && item.visits !== 1) throw new Error(`packaged_${item.name}_review_module_not_bundled`);
     const after = item.receipt ? item.read(item.receipt) : undefined;

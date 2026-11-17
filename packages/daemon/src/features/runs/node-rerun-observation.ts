@@ -3,6 +3,7 @@ import {
   applyConversationModeToEffectiveRunPolicySnapshot,
   resolveSessionRunPolicy,
   toRuntimeAttemptFence,
+  createSqliteNodeRerunStore,
   type ChannelWorkflow,
   type ChannelWorkflowStep,
   type EffectiveRunPolicySnapshot,
@@ -503,7 +504,14 @@ function readDependencyClosure(
   const upstream: NodeRerunDependencyPinV1[] = [];
   for (const nodeId of ancestors) {
     const node = graph.nodes.find((candidate) => candidate.id === nodeId);
-    const step = stepByNode.get(nodeId);
+    let step = stepByNode.get(nodeId);
+    if (step && !step.runId) {
+      const inherited = createSqliteNodeRerunStore(store).getBySuccessor(workflow.id)?.steps
+        .find(pin => pin.successorStepId === step!.id && pin.reused);
+      const original = inherited && store.getChannelWorkflowStep(inherited.sourceStepId);
+      if (original && createHash("sha256").update(JSON.stringify(original)).digest("hex") === inherited!.sourceStepDigest
+        && inherited!.artifactPins.every(pin => store.getArtifact(pin.id)?.contentSha256 === pin.sha256)) step = original;
+    }
     if (!node || !step) {
       blockers.push(observationBlocker("dependency_step_missing", "dependency_closure_incomplete", "An upstream graph node has no materialized WorkflowStep."));
       continue;
@@ -739,7 +747,7 @@ function readRunLifecycle(
   return run.endedAt ? "unknown" : "active";
 }
 
-function readExternalEffectStatus(
+export function readExternalEffectStatus(
   store: RunStore,
   source: { readonly runId: string; readonly workUnitId: string; readonly attemptId: string; readonly runtimeInstanceId: string; readonly fencingToken: string },
   cwd: string,

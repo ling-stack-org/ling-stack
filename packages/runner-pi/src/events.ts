@@ -79,6 +79,7 @@ export function translatePiEvent(event: AgentSessionEvent): PiRunnerEvent | unde
     case "tool_execution_start":
       return {
         type: "tool_start",
+        ...(event.parentToolCallId ? { parentToolCallId: event.parentToolCallId } : {}),
         toolCallId: event.toolCallId,
         toolName: event.toolName,
         args: event.args,
@@ -86,6 +87,7 @@ export function translatePiEvent(event: AgentSessionEvent): PiRunnerEvent | unde
     case "tool_execution_update":
       return {
         type: "tool_update",
+        ...(event.parentToolCallId ? { parentToolCallId: event.parentToolCallId } : {}),
         toolCallId: event.toolCallId,
         toolName: event.toolName,
         partialResult: event.partialResult,
@@ -93,6 +95,7 @@ export function translatePiEvent(event: AgentSessionEvent): PiRunnerEvent | unde
     case "tool_execution_end":
       return {
         type: "tool_end",
+        ...(event.parentToolCallId ? { parentToolCallId: event.parentToolCallId } : {}),
         toolCallId: event.toolCallId,
         toolName: event.toolName,
         result: event.result,

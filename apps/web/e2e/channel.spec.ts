@@ -1278,12 +1278,21 @@ test("channel AI replies use the standard full conversation width", async ({ pag
   const standaloneAssistantReply = feed.locator(".channel-message-row.ai-teammate")
     .filter({ hasText: "This standalone AI reply must use the full channel conversation width" });
   const standaloneAssistantContent = standaloneAssistantReply.locator(":scope > .message-content");
+  const timeline = feed.locator('[data-conversation-timeline-depth="0"]').first();
+  const expectFullRowWidth = async (row: Locator): Promise<void> => {
+    await expect.poll(async () => {
+      const availableWidth = await timeline.evaluate(element => {
+        const style = getComputedStyle(element);
+        return element.clientWidth - Number.parseFloat(style.paddingLeft) - Number.parseFloat(style.paddingRight);
+      });
+      return Math.abs(((await row.boundingBox())?.width ?? 0) - availableWidth);
+    }).toBeLessThanOrEqual(1);
+  };
   await expect.poll(async () => Math.round((await composer.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(780);
   await expect.poll(async () => Math.round((await composer.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(820);
   await expect(sourceMessage).toHaveCount(1);
   await expect(assistantReply).toHaveCount(1);
-  await expect.poll(async () => Math.round((await sourceMessage.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(780);
-  await expect.poll(async () => Math.round((await sourceMessage.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(820);
+  await expectFullRowWidth(sourceMessage);
   await expect(sourceMessageContent.locator(".channel-message-user-actions")).toHaveCount(0);
   await expect(sourceMessageActionBar).toHaveCount(1);
   await expect(sourceMessageActionBar).toHaveCSS("opacity", "0");
@@ -1294,18 +1303,16 @@ test("channel AI replies use the standard full conversation width", async ({ pag
     const actionsBox = await sourceMessageActions.boundingBox();
     return contentBox && actionsBox ? Math.round(actionsBox.y - (contentBox.y + contentBox.height)) : -1;
   }).toBeGreaterThanOrEqual(0);
-  await expect.poll(async () => Math.round((await assistantReply.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(780);
-  await expect.poll(async () => Math.round((await assistantReply.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(820);
-  await expect.poll(async () => Math.round((await assistantContent.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(740);
-  await expect.poll(async () => Math.round((await assistantContent.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(780);
+  await expectFullRowWidth(assistantReply);
   await expect(regularAssistantReply).toHaveCount(1);
-  await expect.poll(async () => Math.round((await regularAssistantReply.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(780);
-  await expect.poll(async () => Math.round((await regularAssistantReply.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(820);
+  await expectFullRowWidth(regularAssistantReply);
   await expect(standaloneAssistantReply).toHaveCount(1);
-  await expect.poll(async () => Math.round((await standaloneAssistantReply.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(780);
-  await expect.poll(async () => Math.round((await standaloneAssistantReply.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(820);
-  await expect.poll(async () => Math.round((await standaloneAssistantContent.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(740);
-  await expect.poll(async () => Math.round((await standaloneAssistantContent.boundingBox())?.width ?? 0)).toBeLessThanOrEqual(780);
+  await expectFullRowWidth(standaloneAssistantReply);
+  for (const content of [assistantContent, standaloneAssistantContent]) {
+    await expect.poll(async () => Math.round((await content.boundingBox())?.width ?? 0)).toBeGreaterThan(680);
+    await expect.poll(() => content.evaluate(element => Math.abs(element.getBoundingClientRect().right
+      - element.parentElement!.getBoundingClientRect().right))).toBeLessThanOrEqual(1);
+  }
 });
 
 test("channel environment surface shows read-only context and opens review", async ({ page }) => {
@@ -10138,17 +10145,29 @@ test("typed Timeline protocol actions mutate their owning records and hide when 
   state.failNextWorkflowOrchestrate = {
     error: "workflow_conflict",
     message: "Mock workflow orchestration failed.",
-    delayMs: 150,
   };
+  let releaseFailureResponse!: () => void;
+  const failureResponse = new Promise<void>(resolve => { releaseFailureResponse = resolve; });
+  await page.route(/\/workflows\/workflow_timeline_failure\/orchestrate(?:\?|$)/u, async route => {
+    await failureResponse;
+    await route.fallback();
+  });
   await expandTimelineItem(failureWorkflow);
   const failureAction = failureWorkflow.getByRole("button", { name: "Advance workflow", exact: true });
   await expect(failureAction).toBeVisible();
-  await failureAction.evaluate((element) => {
-    element.click();
-    element.click();
-  });
-  await expect(failureWorkflow.getByLabel("Actions", { exact: true })).toHaveAttribute("aria-busy", "true");
+  try {
+    await failureAction.evaluate((element) => {
+      element.click();
+      element.click();
+    });
+    await expect(failureAction).toHaveCount(0);
+    await expect(failureWorkflow.getByRole("button", { name: "Cancel workflow", exact: true })).toHaveCount(0);
+    await expect(failureWorkflow).toHaveAttribute("data-conversation-timeline-status", "pending");
+  } finally {
+    releaseFailureResponse();
+  }
   await expect(failureWorkflow).toContainText("Mock workflow orchestration failed.");
+  await expect(failureAction).toBeEnabled();
   await expect(failureWorkflow.getByRole("button", { name: "Advance workflow", exact: true })).toHaveCount(1);
   await expect.poll(() => state.channelWorkflows.find((workflow) => isRecord(workflow) && workflow.id === "workflow_timeline_failure")?.status).toBe("ready");
 
@@ -12212,7 +12231,7 @@ test("runtime composer gate queues multiple local approvals and excludes review 
   await expect(gate).not.toContainText("pending approvals");
 });
 
-test("channel activity derives task run approval transition and workflow events", async ({ page }) => {
+async function openActivityTimeline(page: Page) {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
@@ -12358,6 +12377,35 @@ test("channel activity derives task run approval transition and workflow events"
   const stateTransitionItem = channelProtocolItem(page, "state-transition", "transition_task_timeline");
   const workflowStepItem = channelProtocolItem(page, "workflow-step", "workflow_step_activity");
   const activityDetails = page.getByLabel("Activity details");
+  const activityFilters = channelEventFilters(page);
+  const activityFeed = page.getByLabel("Channel message feed");
+  const searchInput = activityFilters.getByPlaceholder("Search activity");
+  const savedViewSelect = activityFilters.locator('select[aria-label="Saved views"]');
+  const savedViewOption = (label: string) => savedViewSelect.locator("option").filter({ hasText: label });
+  const selectSavedView = async (label: string) => {
+    await openChannelChatTools(page);
+    const value = await savedViewOption(label).getAttribute("value");
+    expect(value).toBeTruthy();
+    await savedViewSelect.selectOption(value ?? "");
+  };
+  const openFilterPanel = async () => {
+    if (await activityFilters.locator(".activity-filter-panel").count() === 0) {
+      await channelEventFilterToggle(activityFilters).click();
+    }
+  };
+  const categoryChip = (label: string) => activityFilters.getByLabel("Activity categories").locator(".activity-filter-chip").filter({ hasText: label });
+  const attentionChip = (label: string) => activityFilters.getByLabel("Activity attention filters").locator(".activity-filter-chip").filter({ hasText: label });
+
+  return {
+    messageBubble, inspectRun, inspectApproval, taskEventItem, runEventItem, approvalEventItem,
+    stateTransitionItem, workflowStepItem, activityDetails, activityFilters, activityFeed,
+    searchInput, savedViewSelect, savedViewOption, selectSavedView, openFilterPanel, categoryChip, attentionChip,
+  };
+}
+
+test("channel activity derives task run approval transition and workflow events", async ({ page }) => {
+  const { messageBubble, inspectRun, inspectApproval, taskEventItem, runEventItem, approvalEventItem,
+    stateTransitionItem, workflowStepItem, activityDetails } = await openActivityTimeline(page);
   const openDetailsFrom = async (item: Locator, expectedText: string) => {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
@@ -12438,26 +12486,13 @@ test("channel activity derives task run approval transition and workflow events"
 
   await expect(page.getByLabel("Channel message feed")).toBeVisible();
   await expect(activityDetails).toHaveCount(0);
+});
 
+test("channel activity filters event sources, categories and attention states", async ({ page }) => {
+  const { taskEventItem, runEventItem, approvalEventItem, stateTransitionItem, workflowStepItem,
+    activityFilters, activityFeed, searchInput, savedViewSelect, selectSavedView, openFilterPanel,
+    categoryChip, attentionChip } = await openActivityTimeline(page);
   await openChannelChatTools(page);
-  const activityFilters = channelEventFilters(page);
-  const activityFeed = page.getByLabel("Channel message feed");
-  const searchInput = activityFilters.getByPlaceholder("Search activity");
-  const savedViewSelect = activityFilters.locator('select[aria-label="Saved views"]');
-  const savedViewOption = (label: string) => savedViewSelect.locator("option").filter({ hasText: label });
-  const selectSavedView = async (label: string) => {
-    await openChannelChatTools(page);
-    const value = await savedViewOption(label).getAttribute("value");
-    expect(value).toBeTruthy();
-    await savedViewSelect.selectOption(value ?? "");
-  };
-  const openFilterPanel = async () => {
-    if (await activityFilters.locator(".activity-filter-panel").count() === 0) {
-      await channelEventFilterToggle(activityFilters).click();
-    }
-  };
-  const categoryChip = (label: string) => activityFilters.getByLabel("Activity categories").locator(".activity-filter-chip").filter({ hasText: label });
-  const attentionChip = (label: string) => activityFilters.getByLabel("Activity attention filters").locator(".activity-filter-chip").filter({ hasText: label });
 
   await expect(activityFilters).toBeVisible();
   await expect(activityFilters.locator(".activity-saved-views")).toHaveCount(0);
@@ -12552,7 +12587,13 @@ test("channel activity derives task run approval transition and workflow events"
   await expect(approvalEventItem).toHaveCount(0);
   await expect(taskEventItem).toHaveCount(0);
   await activityFilters.getByRole("button", { name: /Clear/ }).click();
+});
 
+test("channel activity saved views persist across reloads and remain channel scoped", async ({ page }) => {
+  const { taskEventItem, runEventItem, approvalEventItem, workflowStepItem, activityDetails,
+    activityFilters, activityFeed, searchInput, savedViewOption, selectSavedView, openFilterPanel,
+  } = await openActivityTimeline(page);
+  await openChannelChatTools(page);
   await searchInput.fill("definitely-not-present");
   await expect(page.getByText("No activity matches these filters")).toBeVisible();
   await expect(page.getByLabel("Channel composer")).toBeVisible();
@@ -12566,6 +12607,7 @@ test("channel activity derives task run approval transition and workflow events"
   await activityDetails.getByLabel("Close details").click();
   await expect(searchInput).toHaveValue("run_failed");
   await expect(page.locator(".channel-progress-popover")).toHaveCount(0);
+  await openFilterPanel();
   await activityFilters.getByRole("button", { name: "Save view" }).click();
   const saveViewDialog = page.getByRole("dialog", { name: "Save view" });
   await saveViewDialog.getByRole("textbox", { name: "Saved view name" }).fill("Run failures");

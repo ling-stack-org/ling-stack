@@ -1,8 +1,8 @@
 # Ling 框架补强实现计划书
 
-Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A/F4-01, F3-B admission evidence, F3-02 review-only preflight, and Host readiness entered main at `edb820f0` (PR #690), with `main@5dc138493` including the later CI merge; F5-01 A17 contract preflight, F5-02 Host-backed read-only observation, and F5-03 Host admission planning are implemented in isolated worktrees, while the F3-B real trial and F5 rerun execution remain blocked
+Status: F1/F2 merged in PR #653 (`47afcc47`); F3-A/F4-01, F3-B admission evidence, F3-02 review-only preflight, and Host readiness entered main at `edb820f0` (PR #690), with `main@5dc138493` including the later CI merge; F5-01 contract preflight, F5-02 Host observation and F5-03 admission planning are on the integration baseline; ordinary-graph F5 execution is implemented with source delivery tracked in PR #714; F3-B real trial remains blocked and installed/live acceptance remains separate
 Owner: Ling framework maintainers; one integration owner per implementation batch
-Last verified: 2026-11-13
+Last verified: 2026-11-17
 Document type: implementation plan / acceptance checklist
 Canonical replacement: none; retain while material work remains unfinished
 Code and test anchors: sections 7 and 9; live evidence is read-only, Host readiness is review-only, and no real task or GUI acceptance is claimed
@@ -13,7 +13,7 @@ Code and test anchors: sections 7 and 9; live evidence is read-only, Host readin
 
 按“离线评测与报告 + SDK 独立消费”先实施，再接真实执行和诊断。不要等待另一会话完成所有未来功能，也不要抢先改它正在拥有的安全并发、隔离执行、合并和恢复文件。
 
-用户确认开始后，F1/F2 已在独立工作区实现并合并到主线，合并提交为 `47afcc47b9063cd7a402a81cf1088caa695f3638`。F3-A/F4-01、F3-B 准入证据前置、F3-02 和 Host readiness 已进入 `main@edb820f0`，包含 #676、#685、#684、#688、#689 和 #690 的已合并增量；当前主线为 `main@878e422a`，包含 #691 文档同步。默认不产生付费模型请求，不启动生产 daemon、不修改共享数据库，不开放真实 F3-B 试点。实际证据见第 9 节。
+用户确认开始后，F1/F2 已在独立工作区实现并合并到主线，合并提交为 `47afcc47b9063cd7a402a81cf1088caa695f3638`。F3-A/F4-01、F3-B 准入证据前置、F3-02 和 Host readiness 已进入 `main@edb820f0`，包含 #676、#685、#684、#688、#689 和 #690 的已合并增量；当前交付分支已整合 `origin/main@27a9ccb23`，包含后续主线更新。默认不产生付费模型请求，不启动生产 daemon、不修改共享数据库，不开放真实 F3-B 试点。实际证据见第 9 节。
 
 | 里程碑 | 内容 | 当前状态 | 进入条件 |
 | --- | --- | --- | --- |
@@ -23,7 +23,7 @@ Code and test anchors: sections 7 and 9; live evidence is read-only, Host readin
 | F3-A | Run 证据适配与 fixture 回归 | fixture 适配及只读 Host 来源适配已实现；仍不代表真实评测通过 | F1 格式稳定、来源接口可核实 |
 | F3-B | 准入证据前置、普通 Run 真实试点及后续并发对比 | 准入证据前置已实现；真实试点仍 BLOCKED | 对应安全/隔离/恢复验收、可信验证、试点预算 |
 | F4 | 已有 Harness 诊断的只读消费 | F4-01 已实现分页报告；未改生产者 | F1 报告稳定、已有诊断合同可用 |
-| F5 | 节点重跑合同与 Host 观察 | F5-01 A17、F5-02 Host-backed 只读观察和 F5-03 Host admission plan endpoint 已实现；真实节点重跑仍未开放 | 新 Run/Attempt/fence/approval 的实际提交、下游失效、取消/重启/重复点击、Provider/Daemon 执行和真实验收 |
+| F5 | 节点重跑合同、观察与提交 | F5-01/02/03 保留只读前置；R1/R2 已实现普通物化图的原子提交、后继工作流、下游失效、成功产物复用及现有 Host 调度，本地脚本 Provider 链路通过 | 源码评审、回归、CI 与合并状态见 [PR #714](https://github.com/ling-stack-org/ling-stack/pull/714)；真实 Provider/平台另验收，模板编译、参与者/intent authority、delegated/safety/isolation profiles fail closed |
 
 ## 2. 开工前的隔离与分工
 
@@ -171,7 +171,7 @@ Code and test anchors: sections 7 and 9; live evidence is read-only, Host readin
 - **实施**：在 `packages/contracts/src/node-rerun.ts` 中严格拒绝未知字段、非 SHA-256 摘要、重复依赖和 accessor 输入；`evaluateNodeRerunAdmission()` fail-closed 检查源 Run/Attempt 是否结束、停止是否确认、lease/fence/effect 是否已收口、外部副作用是否可重放、依赖闭包是否完整、策略是否漂移和权限是否有效。
 - **授权边界**：合法结果只有 `eligible_for_host_admission`，不等于执行许可；返回固定 `executionAuthorized: false`，下一步必须由 Host 当前校验并生成新的 execution identity、fence 和 approval。
 - **回归**：`packages/contracts/test/node-rerun.test.ts` 覆盖合法前置、活动执行、未知/非幂等效果、依赖缺失、身份漂移、未知字段、无效摘要和 accessor 不执行；Contracts 的 `typecheck:ci` 与 `test:ci` 已纳入 TypeScript 测试。
-- **限制**：不增加 API、UI、数据库列、Run/Attempt 状态、审批动作、Store 写入、Provider/模型调用或真实 Daemon 接线；真实 Host 重跑仍保持 blocked。
+- **限制**：不增加 API、UI、数据库列、Run/Attempt 状态、审批动作、Store 写入、Provider/模型调用或真实 Daemon 接线；执行由后述 R1/R2 提交层接入，合同评估本身仍不授权执行。
 
 ### F5-02 Host-backed 节点重跑观察
 
@@ -179,7 +179,7 @@ Code and test anchors: sections 7 and 9; live evidence is read-only, Host readin
 - **实施**：`packages/daemon/src/features/runs/node-rerun-observation.ts` 在一个 SQLite `readSnapshot()` 内沿 Run/WorkUnit/Attempt/WorkflowStep/Workflow 校验 lineage；重算完整 graph/node digest，检查 graph 与物化步骤/DAG 一致；验证源及上游 artifact owner、SHA-256、依赖闭包、stop evidence、lease、semaphore、terminal fence audit、Host effect blocker 和当前 policy。
 - **授权边界**：源快照和 intent pins 不完全一致、事实缺失或解析失败时 fail-closed，且不调用合同评估器；合法观察才调用 `evaluateNodeRerunAdmission()`。无论结果如何，`executionAuthorized=false`，观察器不创建或更新 Run、Attempt、lease、fence、approval、artifact，不调用 Provider 或触发 recovery/dispatch。
 - **回归**：`packages/daemon/test/node-rerun-observation.test.ts` 的五项 TypeScript 回归覆盖完整 SQLite 观察和零写入、缺 Run/Attempt、graph/物化依赖漂移、源/依赖 artifact 缺失或无摘要、当前 policy 漂移；Daemon 生产类型检查、测试类型检查和 build 已通过。
-- **限制**：F5-02 本身不创建 API/UI caller、Host 新 Attempt/fence/approval 或真实执行；F5-03 只读 admission endpoint 仍不写 Store、不创建目标对象、不启动 Provider。下游失效传播、取消/重启/重复点击处理和 A17/A18 真实验收仍保持 blocked。
+- **限制**：F5-02 本身不创建 API/UI caller、Host 新 Attempt/fence/approval 或真实执行；F5-03 只读 admission endpoint 仍不写 Store、不创建目标对象、不启动 Provider。普通物化图的执行由后述 R1/R2 接入；高级 profile 和真实外部 Provider/平台验收仍未开放。
 
 ### F5-03 Host admission plan 接线
 
@@ -188,7 +188,22 @@ Code and test anchors: sections 7 and 9; live evidence is read-only, Host readin
 - **幂等与生命周期**：相同 intent、源快照和当前策略返回相同 plan；幂等键改变会产生不同 plan，源 snapshot 或 policy 漂移则 fail-closed。计划携带 `revalidateBeforeWrite: true`，未来真正提交必须在同一 Host 写事务内再次校验这些前置条件。
 - **授权边界**：响应只返回 admission 与 plan，`executionAuthorized` 始终为 `false`；本批不创建 Run/WorkUnit/Attempt、fence、approval 或 artifact，不修改 DAG，不调用 Provider，不触发下游失效、取消或重启。
 - **回归**：Contracts 覆盖确定性 plan、幂等键变化和 blocked admission；Daemon 覆盖计划零写入、源 snapshot 漂移、HTTP 重复提交和 route parser；API client 覆盖编码后的 Run scope 与 POST body。
-- **限制**：Host admission plan 不是执行提交凭证。实际目标对象 mint、当前 policy approval、Provider dispatch、下游失效和取消/重启/重复点击仍需后续独立阶段与 A17/A18 真实验收。
+- **限制**：Host admission plan 不是执行提交凭证。普通物化图的实际提交由 R1/R2 消费此计划并重新校验；远端 CI、真实 Provider 和跨平台验收单独记录。
+
+### R1/R2 执行接线
+
+`POST /runs/:id/node-rerun/submit?cwd=...` 接收 `{intent,planFingerprint}`，在一个
+Host writer transaction 内重做 F5 观察，检查已审阅 plan、终态且静止的源 workflow、
+完整依赖与产物 pin、停止/lease/fence/effect 和当前权限。事务只创建一个 successor
+workflow 及步骤映射；指定节点与下游重新 queued，其余成功结果保留不可变 artifact。
+原 workflow 永久退出调度，重复请求返回同一提交，变更请求与源漂移拒绝。
+
+普通 workflow orchestrator 创建新的 Run/WorkUnit/Attempt、当前策略审批及 fence；
+TaskSupervisor 持久化恢复后继调度并在执行前复核复用证据。未知/未结算效果，以及
+受影响节点已发生的外部效果均阻断重放。模板编译、required participant/intent authority、
+delegated requirement、execution plan 和 safety/isolation profile 当前 fail closed。
+本地回归包含原子 A→B→C/独立 D、重复/漂移/副作用、SQLite reopen 和真实 HTTP/Pi/Host
+脚本 Provider 运行。完整合同见[Agent Execution Capabilities](agent-execution-capabilities.md#selective-rerun)。
 
 ### F3-B 准入清单
 
@@ -203,7 +218,7 @@ Host readiness review gate 只把已捕获投影的五域完整性和跨域一�
 - [ ] Provider、总金额/币种、全部子调用和工具循环、grader、在途预留及超限停止均明确。
 - [ ] 本次数据目录、端口、输出位置与另一会话隔离，关键资源有余量。
 
-任一项不满足，只阻断受影响的真实执行阶段，F1/F2 可继续。F5-01/F5-02/F5-03 目前只提供合同、Host 只读观察和不写入的 admission plan 前置，不代表真实节点重跑已开放。
+任一项不满足，只阻断受影响的真实执行阶段，F1/F2 可继续。F5-01/F5-02/F5-03 目前只提供合同、Host 只读观察和不写入的 admission plan 前置，这些前置本身不授权执行；普通图提交能力及其限制见 R1/R2。
 
 2026-11-09 的只读准入审计基于旧主线快照，结论为 `F3-B BLOCKED`；2026-11-10 的增量审计确认准入证据前置已实现；2026-11-12 的合并基线复核确认 #690 已进入 `main@edb820f0`，当前主线为 `main@878e422a`，Host readiness review gate 已具备但真实试点仍为 `F3-B BLOCKED`。完整证据、八项核查和解阻顺序见[2026-11-12 合并基线审计](../testing/f3b-admission-audit-2026-11-12.md)，历史记录见[2026-11-10 准入审计增量](../testing/f3b-admission-audit-2026-11-10.md)和[2026-11-09 准入审计](../testing/f3b-admission-audit-2026-11-09.md)。
 
@@ -231,7 +246,7 @@ F0 -> 实施基线 -> E1 -> E2 -> E3 -----> B1 -> B2
        并发会话对应能力合并/验收 --------+
                         E3 -> O1
 
-F5-01 -> R1: 合同前置与 Host 只读观察已实现；新 Attempt/fence、审批和真实节点重跑执行仍不进入本轮依赖图
+F5-01/02/03 -> R1/R2: 普通物化图提交/后继/恢复本地实现；高级 profile 和外部验收保持独立门禁
 ```
 
 两个并行实现者提交明确文件清单与测试结果，集成负责人核对最终实际消费的 commit / fixture / tarball，而不是仅凭各自一次通过就汇总“全部通过”。共享 CLI、CI 和文档由单人集成。
@@ -336,7 +351,7 @@ corepack pnpm --filter @ling-stack/daemon exec node --test --test-concurrency=1 
 | 已合并 | 合并 commit，不以批准或 CI 通过代替 |
 | 已启用/发布 | 实际环境与版本；未发布时明确未发布 |
 
-F1/F2、F3-A fixture 适配、F4-01 只读报告、F3-B 准入证据前置和 F5-01/F5-02/F5-03 前置是分层交付；它们不等于 F3-B 真实执行或 F5 真实执行已完成。F5 即使合同、观察和 admission plan 通过评审，也不能列成“支持节点重跑”。
+F1/F2、F3-A fixture 适配、F4-01 只读报告、F3-B 准入证据前置和 F5-01/F5-02/F5-03 前置是分层交付；它们不等于 F3-B 真实执行或 F5 真实执行已完成。F5 合同、观察和 admission plan 本身不能列成“支持节点重跑”；R1/R2 的普通图执行边界与验收单独记录。
 
 ### 本批实施记录（2026-11-02）
 

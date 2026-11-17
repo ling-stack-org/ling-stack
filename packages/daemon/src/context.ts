@@ -1,3 +1,4 @@
+import type { TaskSupervisor } from "./features/runs/task-supervisor.js";
 import type { LearningReviewCoordinator } from "./features/learning/coordinator.js";
 import type {
   McpServer,
@@ -242,6 +243,8 @@ export interface DaemonContext {
   readonly imageVisionSummarizer?: LingImageVisionSummarizer;
   readonly backgroundSchedulers: ExternalWorkBackgroundSchedulerRegistry;
   readonly automationSchedulers: AutomationSchedulerRegistry;
+  readonly automationEvents: AutomationEventWorker;
+  readonly taskSupervisor: TaskSupervisor;
   readonly controlPlaneEvents: ControlPlaneEventHub;
   readonly notificationHub: NotificationHub;
   readonly imDestinations: ImDestinationRegistry;
@@ -275,3 +278,4 @@ export interface DaemonContext {
   readonly companionReplyService: CompanionReplyService;
   readonly companionSchedulers: CompanionSchedulerRegistry;
 }
+import type { AutomationEventWorker } from "./features/automations/event-worker.js";
