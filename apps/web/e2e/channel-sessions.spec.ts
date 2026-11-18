@@ -85,6 +85,25 @@ test("channel sessions create only on send, isolate drafts and history, and reta
   await expect(composer(page)).toBeVisible();
   await expect(group.locator(`[data-session-id="${sessionA.rootThreadId}"] .sidebar-branch-row`)).toHaveAttribute("aria-current", "page");
   await page.screenshot({ path: "/tmp/ling-channel-sessions-acceptance.png", fullPage: true });
+});
+
+test("channel session selection and history survive a dark theme reload", async ({ page }) => {
+  const state = createBaseState({ approvalStatus: "expired" });
+  await page.addInitScript(() => localStorage.setItem("ling-stack.locale", "en-US"));
+  await mockDaemon(page, state);
+  await page.goto("/");
+  const group = page.getByRole("complementary", { name: /Sidebar display/ })
+    .locator(".sidebar-channel-group").filter({ hasText: "Engineering" });
+  await group.getByRole("button", { name: "Engineering", exact: true }).click();
+  await group.getByRole("button", { name: "New conversation in Engineering", exact: true }).click();
+  await page.getByRole("textbox", { name: "Conversation name (optional)", exact: true }).fill("Reloaded session");
+  await composer(page).fill("Session history survives reloading");
+  await page.locator(".channel-composer").getByRole("button", { name: "Send", exact: true }).click();
+  await expect.poll(() => state.channelBranches.some(branch => (branch as { name?: string }).name === "Reloaded session")).toBe(true);
+  const session = state.channelBranches.find(branch => (branch as { name?: string }).name === "Reloaded session") as { rootThreadId: string };
+  const row = group.locator(`[data-session-id="${session.rootThreadId}"] .sidebar-branch-row`);
+  await expect(row).toHaveAttribute("aria-current", "page");
+  await expect(page.getByLabel("Channel message feed", { exact: true })).toContainText("Session history survives reloading");
   await page.evaluate(() => {
     const selection = JSON.stringify({ mode: "fixed", themeId: "ling-dark" });
     localStorage.setItem("ling-stack.themeSelection", selection);
@@ -94,8 +113,10 @@ test("channel sessions create only on send, isolate drafts and history, and reta
   });
   await page.reload();
   await expect(page.locator("body")).toHaveCSS("background-color", "rgb(31, 31, 31)");
+  await expect(row).toBeVisible();
   await group.getByRole("button", { name: "Engineering", exact: true }).click();
-  await expect(page.getByLabel("Channel message feed", { exact: true })).toContainText("A draft survives switching");
+  await expect(row).toHaveAttribute("aria-current", "page");
+  await expect(page.getByLabel("Channel message feed", { exact: true })).toContainText("Session history survives reloading");
   await page.screenshot({ path: "/tmp/ling-channel-sessions-acceptance-dark.png", fullPage: true });
 });
 

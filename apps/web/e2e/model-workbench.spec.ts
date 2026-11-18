@@ -459,7 +459,7 @@ test("model workbench localizes unsupported daemon model discovery errors", asyn
   await expect(unsupportedDetails).toBeVisible();
 });
 
-// Value: protects=provider-list transport failures render a localized actionable message instead of browser jargon; fails_when=Failed to fetch leaks into the Chinese model workbench; why_new=model-discovery error tests exercise a different API and mapper; seam=none; no_claim=real daemon recovery (request aborted by Playwright)
+// Value: protects=provider-list transport failures render a localized actionable message with collapsed technical details; fails_when=Failed to fetch is visible before disclosure in the Chinese model workbench; why_new=model-discovery error tests exercise a different API and mapper; seam=none; no_claim=real daemon recovery (request aborted by Playwright)
 test("model workbench productizes provider list transport failures", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "zh-CN");
@@ -477,9 +477,12 @@ test("model workbench productizes provider list transport failures", async ({ pa
   await openModelWorkbench(page);
   await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
   const error = page.locator(".provider-page-error");
-  await expect(error).toContainText("无法加载模型预设。请检查本地服务后重试。");
-  await expect(error).not.toContainText("Failed to fetch");
+  await expect(error.getByText("无法连接本地服务，请检查服务状态后重试。", { exact: true })).toBeVisible();
+  const technicalDetails = error.getByText("Failed to fetch", { exact: true });
+  await expect(technicalDetails).not.toBeVisible();
   await expect(error.getByRole("button", { name: "重试" })).toBeVisible();
+  await error.getByText("技术详情", { exact: true }).click();
+  await expect(technicalDetails).toBeVisible();
 });
 
 test("model workbench keeps model discovery network failures productized", async ({ page }) => {
@@ -909,7 +912,10 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await clickProviderRowMenuItem(reloadedOpenAiProxyRow, "Disable");
   await expect(reloadedOpenAiProxyRow.locator(".provider-state.disabled")).toHaveCount(0);
   await expect(page.locator(".provider-default-purpose-bar").getByLabel("Chat")).toHaveValue("provider_openai_proxy");
-  await expect(page.getByText(/Provider is still used by Workspace default model/)).toBeVisible();
+  const disableError = page.getByText(/Provider is still used by Workspace default model/);
+  await expect(disableError).not.toBeVisible();
+  await page.getByText("Technical details", { exact: true }).click();
+  await expect(disableError).toBeVisible();
   await expect.poll(() => state.workspaceSettings.defaultProviderPresetId).toBe("provider_openai_proxy");
   await expect(page.getByText(/Ready: .* passed preflight/)).toHaveCount(0);
   await expect(page.getByText("All saved chat providers are either preflight-ready or intentionally out of the run path.")).toHaveCount(0);

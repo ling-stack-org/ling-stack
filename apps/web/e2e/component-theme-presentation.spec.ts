@@ -300,9 +300,8 @@ test('theme surface details preserve control hits, focus and narrow-window layou
   await writeFile(resolve(directory, 'theme-surface-details.json'), JSON.stringify(signatures, null, 2));
 });
 
-test('theme card materials carry through teammate management and model tables', async ({ browser }, info) => {
-  test.setTimeout(60_000);
-  for (const [theme, radius] of [['ling-breeze', '14px'], ['ling-night', '8px'], ['ling-ocean', '14px'], ['ling-journey', '10px']] as const) {
+for (const [theme, radius] of [['ling-breeze', '14px'], ['ling-night', '8px'], ['ling-ocean', '14px'], ['ling-journey', '10px']] as const) {
+  test(`${theme}: theme card materials carry through teammate management and model tables`, async ({ browser }, info) => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 960 }, locale: 'en-US' });
     try {
       const page = await context.newPage();
@@ -322,5 +321,5 @@ test('theme card materials carry through teammate management and model tables', 
       await expect(page.locator('.provider-table tbody tr')).toHaveCount(1);
       await capture(page, info, `${theme}-models`);
     } finally { await context.close(); }
-  }
-});
+  });
+}

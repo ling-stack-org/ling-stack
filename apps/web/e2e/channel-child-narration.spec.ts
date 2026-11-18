@@ -25,6 +25,7 @@ test("channel child keeps live narration around its read, including a no-SSE ref
   state.channelWorkflowSteps = [step];
   state.runs = [{ ...state.runs[0]!, id: "run_child", status: "running", channelId: "channel_engineering", teammateId: "engineer",
     workflowStepId: step.id, taskSnapshot: { channelId: "channel_engineering" }, createdAt, updatedAt: createdAt }];
+  state.eventsByRun.run_child = [];
   state.executionActions = [{ id: "child_read", revision: 4, sourceEventSequence: 3, workspaceId: "workspace_default", runId: "run_child",
     attemptId: "attempt_child", participantId: "engineer", workflowStepId: step.id, actionType: "read", risk: "low", status: "succeeded",
     title: "Read file", summary: "Read file", targetRefs: [{ type: "file", path: "sample.ts" }], previewArtifactIds: [], resultArtifactIds: [],

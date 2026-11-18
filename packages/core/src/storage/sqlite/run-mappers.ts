@@ -1,3 +1,4 @@
+import { parseGoalAcceptanceCriteria, parseGoalAcceptanceEvidence, parseGoalSupervisionPolicy } from "../../goal-supervision.js";
 import type { SQLOutputValue } from "node:sqlite";
 import { isRunEventData, isRunEventType, type LingThreadRelationKindV2, type LingThreadSurfaceKindV2 } from "@ling-stack/contracts";
 import { conversationModeKinds, runContinuationReasons, type ConversationModeKind, type ConversationModeState, type GoalContinuationEvidenceDelta, type GoalContinuationStopReason, type GoalEvidenceRef, type GoalUsageSource, type LingThread, type LingThreadGoal, type LingThreadGoalCompletionActor, type LingThreadGoalStatus, type LingThreadKind, type LingThreadMetadata, type LingThreadStatus, type LingTurn, type LingTurnKind, type LingTurnRun, type LingTurnRunRole, type LingTurnStatus, type ProposedPlanArtifact, type ProposedPlanArtifactStatus, type RunContinuationReason, type RunEventEnvelope, type RunSession, type RunStatus } from "../../run-types.js";
@@ -40,6 +41,9 @@ export function mapLingThread(row: Record<string, SQLOutputValue>): LingThread {
 
 export function mapLingThreadGoal(row: Record<string, SQLOutputValue>): LingThreadGoal {
   return omitUndefined({
+    acceptanceCriteria: parseGoalAcceptanceCriteria(JSON.parse(String(row.acceptance_criteria_json ?? "[]"))),
+    acceptanceEvidence: parseGoalAcceptanceEvidence(JSON.parse(String(row.acceptance_evidence_json ?? "[]"))),
+    supervisionPolicy: row.supervision_policy_json ? parseGoalSupervisionPolicy(JSON.parse(String(row.supervision_policy_json))) : undefined,
     id: readString(row, "id"),
     workspaceId: readString(row, "workspace_id"),
     threadId: readString(row, "thread_id"),

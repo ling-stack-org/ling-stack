@@ -47,6 +47,11 @@ const overlays = [
   { version: 218, name: "runtime_host_capacity", tables: ["runtime_host_capacity_intents", "runtime_host_capacity_releases"], indexes: [], triggers: [] },
   { version: 219, name: "runtime_delegation_spawn_admissions", tables: ["runtime_delegation_spawn_admissions"], indexes: [], triggers: [] },
   { version: 220, name: "runtime_host_capacity_continuations", tables: [], indexes: [], triggers: [] },
+  { version: 221, name: "create_automation_event_ingress_and_delivery",
+    tables: ["automation_event_sources", "automation_events", "automation_event_dispatches", "automation_deliveries", "automation_delivery_receipts"],
+    indexes: ["idx_automation_event_pending", "idx_automation_event_rate", "idx_automation_delivery_pending"], triggers: [] },
+  { version: 222, name: "create_node_rerun_submissions_and_goal_supervision",
+    tables: ["node_rerun_submissions"], indexes: [], triggers: [] },
 ];
 const schema = db => db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all();
 const markers = db => db.prepare("SELECT * FROM schema_migrations ORDER BY version").all();

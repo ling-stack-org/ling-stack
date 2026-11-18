@@ -17,7 +17,7 @@ export function createLingStackFileMutationToolExtension(options: PiRunnerRunOpt
       parameters: createPatchableEditParameters(originalEdit.parameters),
       async execute(toolCallId, params, signal, onUpdate, ctx) {
         signal?.throwIfAborted();
-        const decision = await requireFileMutationApproval(options, "edit", toolCallId, params);
+        const decision = await requireFileMutationApproval(options, "edit", toolCallId, params, signal);
         signal?.throwIfAborted();
         if (decision.handledResult) {
           return adaptResult(toolCallId, "edit", {
@@ -41,7 +41,7 @@ export function createLingStackFileMutationToolExtension(options: PiRunnerRunOpt
       parameters: nativeCreate ? createNativeWriteParameters(originalWrite.parameters) : createPatchableWriteParameters(originalWrite.parameters),
       async execute(toolCallId, params, signal, onUpdate, ctx) {
         signal?.throwIfAborted();
-        const decision = await requireFileMutationApproval(options, "write", toolCallId, params);
+        const decision = await requireFileMutationApproval(options, "write", toolCallId, params, signal);
         signal?.throwIfAborted();
         if (decision.handledResult) {
           return adaptResult(toolCallId, "write", {
@@ -63,12 +63,14 @@ async function requireFileMutationApproval(
   toolName: "edit" | "write",
   toolCallId: string,
   input: unknown,
+  signal?: AbortSignal,
 ): Promise<PiRunnerApprovalDecision> {
   if (!options.onApprovalRequired) {
     throw new Error(`Ling Stack blocked ${toolName}: no approval handler is configured.`);
   }
   const decision = await options.onApprovalRequired({
     toolCallId,
+    signal,
     toolName,
     input,
     task: options.task,

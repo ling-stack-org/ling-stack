@@ -54,6 +54,8 @@ export async function createInitializedPiSession(options: PiRunnerRunOptions, bi
   throwIfAborted(options.signal);
   const activeTools = [
     ...(options.tools ?? DEFAULT_TOOLS),
+    ...(options.initialToolSurface?.codeIntelligence ? ["code_intelligence"] : []),
+    ...(options.initialToolSurface?.codeMode ? ["code_mode"] : []),
     ...(options.mcpTools?.map((tool) => tool.registeredName) ?? []),
     ...(options.hostCapabilityTools?.map(tool => tool.name) ?? []),
     ...(isUserInputToolSurfaceEnabled(options) ? ["request_user_input"] : []),

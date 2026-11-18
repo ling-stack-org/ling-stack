@@ -1,7 +1,7 @@
 import { LingDaemonClient, daemonBaseUrlFromEnv } from "@ling-stack/api-client";
 import { createDesktopLocalServiceFetch } from "../../../desktop/shared/local-service-capabilities.js";
 
-export const daemonBaseUrl = window.lingDesktop?.daemonBaseUrl ??
+export const daemonBaseUrl = window.lingCompanionDesktop?.daemonBaseUrl ?? window.lingDesktop?.daemonBaseUrl ??
   daemonBaseUrlFromEnv(import.meta.env as Record<string, string | undefined>);
 
 export const daemonClient = new LingDaemonClient({

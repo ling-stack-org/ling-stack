@@ -17,6 +17,7 @@ export type {
   CompanionInteractionResponse,
   CompanionManifest,
   CompanionMessageRequest,
+  CompanionMessageSubmissionReceipt,
   CompanionMessageResponse,
   CompanionMessagesResponse,
   CompanionProactiveResponse,
@@ -43,14 +44,14 @@ export interface CreateCompanionInput {
   readonly displayName: string;
   readonly description?: string;
   readonly manifest?: CompanionManifest;
-  readonly behaviorPolicy?: Partial<CompanionBehaviorPolicy>;
+  readonly behaviorPolicy?: Omit<Partial<CompanionBehaviorPolicy>, "quietHours"> & { readonly quietHours?: readonly [number, number] | null };
 }
 
 export interface UpdateCompanionInput {
   readonly displayName?: string;
   readonly description?: string;
   readonly manifest?: CompanionManifest;
-  readonly behaviorPolicy?: Partial<CompanionBehaviorPolicy>;
+  readonly behaviorPolicy?: Omit<Partial<CompanionBehaviorPolicy>, "quietHours"> & { readonly quietHours?: readonly [number, number] | null };
   readonly status?: CompanionProfile["status"];
 }
 
@@ -173,13 +174,13 @@ export function normalizeCompanionManifest(manifest?: CompanionManifest): Compan
 }
 
 export function normalizeCompanionBehaviorPolicy(
-  policy?: Partial<CompanionBehaviorPolicy>,
+  policy?: Omit<Partial<CompanionBehaviorPolicy>, "quietHours"> & { readonly quietHours?: readonly [number, number] | null },
 ): CompanionBehaviorPolicy {
   const cooldownMs = policy?.cooldownMs ?? defaultCompanionBehaviorPolicy.cooldownMs;
   if (!Number.isInteger(cooldownMs) || cooldownMs < 0) {
     throw new Error("Companion cooldownMs must be a non-negative integer");
   }
-  if (policy?.quietHours !== undefined) {
+  if (policy?.quietHours !== undefined && policy.quietHours !== null) {
     const [start, end] = policy.quietHours;
     if (![start, end].every((hour) => Number.isInteger(hour) && hour >= 0 && hour <= 23)) {
       throw new Error("Companion quietHours must contain hours from 0 through 23");

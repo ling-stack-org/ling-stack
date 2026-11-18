@@ -17,6 +17,7 @@ import { PiRunnerYielded } from "./task-yield.js";
 import { PiRunnerSuspended } from "./runtime-suspension.js";
 import { createPiToolBoundaryObservation } from "./tool-boundary-observation.js";
 import { DEFAULT_TOOLS } from "./constants.js";
+import { createHookRuntime } from "./hook-runtime.js";
 import type { PiProviderErrorDiagnostic } from "./provider-error-diagnostic.js";
 import type { PiRunnerEvent, PiRunnerProviderConfig, PiRunnerResult, PiRunnerRunOptions } from "./types.js";
 import { formatTaskPrompt, throwIfAborted } from "./utils.js";
@@ -127,6 +128,11 @@ export class PiRunnerAdapter {
 
     throwIfAborted(options.signal);
 
+    const dispatchHook = createHookRuntime({ ...options, onEvent: event => {
+      if (event.type === "tool_end") toolObservation?.completeTool(event.toolCallId, event.toolName);
+      emit(event);
+    } });
+    options = { ...options, onLifecycleHook: dispatchHook };
     session = await createInitializedPiSession(options, (modelRuntime) => {
       this.registerCustomProviderIfNeeded(modelRuntime, options.provider);
       boundary.bindModelRuntime(modelRuntime);
@@ -235,6 +241,12 @@ export class PiRunnerAdapter {
         boundary.assertOpen();
         assertPreparedPiSession(session, options, assertRestoredView);
       }
+      if (options.hooks && !recoveryMode && !options.approvedToolContinuation) {
+        await options.onTaskContinuationBoundary?.("before_agent_start");
+        boundary.assertOpen();
+        await dispatchHook({ event: "run_start" });
+        boundary.assertOpen();
+      }
       if (recoveryMode === "complete") {
         // Complete ordinary and compacted views both require current Host
         // authority after the actual receiver ACK, even with zero new I/O.
@@ -277,6 +289,10 @@ export class PiRunnerAdapter {
       const terminalFailure = findTerminalFailure(events);
       if (terminalFailure) {
         throw terminalFailure;
+      }
+      if (options.hooks && recoveryMode !== "complete") {
+        await dispatchHook({ event: "run_end" });
+        boundary.assertOpen();
       }
       if (options.onTaskSettledBoundary && recoveryMode !== "complete" && sdkSettlement && !sdkSettlement.aborted) {
         const settledModelView = captureTaskModelView();

@@ -73,6 +73,24 @@ export async function handleCompanionMessagesCollection(
     const thread = store.getOrCreateTeammateDirectThread(teammate.id, new Date().toISOString());
 
     if (request.method === "GET") {
+      const idempotencyKey = url.searchParams.get("idempotencyKey");
+      if (idempotencyKey !== null) {
+        const parsed = parseCompanionMessageRequest({ body: "lookup", idempotencyKey });
+        const message = store.getTeammateDirectMessage(companionMessageId(companion.id, parsed.idempotencyKey!));
+        const aiReply = message
+          ? store.getTeammateDirectMessage(companionReplyId(companion.id, parsed.idempotencyKey!))
+          : undefined;
+        writeJson(response, 200, {
+          cwd,
+          companionId: companion.id,
+          idempotencyKey: parsed.idempotencyKey,
+          status: message ? "accepted" : "unknown",
+          ...(message ? { message } : {}),
+          ...(aiReply ? { aiReply } : {}),
+          state: store.getCompanionState(companion.id),
+        });
+        return;
+      }
       const page = store.listTeammateDirectMessagesPage({
         teammateId: teammate.id,
         threadId: thread.id,
@@ -101,6 +119,7 @@ export async function handleCompanionMessagesCollection(
     const messageId = input.idempotencyKey ? companionMessageId(companion.id, input.idempotencyKey) : undefined;
     const inFlightKey = messageId ? companionMessageInFlightKey(cwd, messageId) : undefined;
     if (messageId) {
+      assertCompanionMessageBody(store, messageId, input.body);
       const pending = companionMessageInFlight.get(inFlightKey!);
       if (pending) {
         writeJson(response, 200, await pending);
@@ -182,6 +201,7 @@ export async function handleCompanionMessageStream(
     const messageId = input.idempotencyKey ? companionMessageId(companion.id, input.idempotencyKey) : undefined;
     const inFlightKey = messageId ? companionMessageInFlightKey(cwd, messageId) : undefined;
     if (messageId) {
+      assertCompanionMessageBody(store, messageId, input.body);
       const pending = companionMessageInFlight.get(inFlightKey!);
       if (pending) {
         try {
@@ -700,6 +720,13 @@ function companionReplyFromEvents(
 
 function companionMessageId(companionId: string, idempotencyKey: string): string {
   return `companion_msg_${stableHash(`${companionId}:${idempotencyKey}`)}`;
+}
+
+function assertCompanionMessageBody(store: RunStore, messageId: string, body: string): void {
+  const original = store.getTeammateDirectMessage(messageId);
+  if (original && original.body !== body) {
+    throw new HttpError(409, "companion_message_payload_mismatch", "The pending message has different text. Retry the original message.");
+  }
 }
 
 function companionMessageInFlightKey(cwd: string, messageId: string): string {

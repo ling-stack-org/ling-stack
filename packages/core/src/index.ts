@@ -231,3 +231,12 @@ export * from "./learning-review-types.js";
 export * from "./memory-derivative-types.js";
 
 export * from "./memory-wiki-types.js";
+export * from "./automation-event-types.js";
+export * from "./automation-event-source.js";
+
+export * from "./node-rerun-types.js";
+export { createSqliteNodeRerunStore } from "./storage/sqlite/node-rerun-store.js";
+
+export * from "./goal-supervision.js";
+
+export { createSqliteGoalSupervisionStore } from "./storage/sqlite/goal-supervision-store.js";
