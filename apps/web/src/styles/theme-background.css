@@ -95,11 +95,67 @@ html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell
 
 html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell :is(.normal-conversation-page, .normal-conversation-header, .conversation-home, .client-window, .task-workbench-main, .task-workbench-window, .workspace-right-dock-frame, .right-dock, .channel-side-panel, .workspace-automations-surface, .automation-ui2-page, .workspace-generation-surface, .media-production-page, .media-jobs-page) { background: transparent; }
 html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell .media-jobs-header {
-  background: color-mix(in srgb, var(--ling-bg-panel) var(--user-background-workspace, 100%), transparent);
+  background: color-mix(in srgb, var(--ling-bg-panel) 34%, transparent);
   border-color: var(--ling-surface-border-subtle);
 }
 html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell .media-jobs-heading-copy :is(strong, span) {
   text-shadow: 0 1px 2px var(--ling-bg-app), 0 0 12px color-mix(in srgb, var(--ling-bg-app) 78%, transparent);
+}
+/* The ambient media canvas already separates itself through spacing and
+   surface contrast. Keep legacy shell dividers from becoming bright hairlines
+   over the selected backdrop; semantic cards and controls keep their borders. */
+html[data-user-background="ready"][data-ui-background-visible="true"][data-ui-surface="media-canvas"] .app-shell .channel-left-drawer,
+html[data-user-background="ready"][data-ui-background-visible="true"][data-ui-surface="media-canvas"] .app-shell .left-nav,
+html[data-user-background="ready"][data-ui-background-visible="true"][data-ui-surface="media-canvas"] .app-shell .media-jobs-header,
+html[data-user-background="ready"][data-ui-background-visible="true"][data-ui-surface="media-canvas"] .app-shell .media-jobs-list-pane {
+  border-color: transparent;
+}
+html[data-user-background="ready"][data-ui-background-visible="true"][data-ui-surface="media-canvas"] .app-shell .channel-left-drawer,
+html[data-user-background="ready"][data-ui-background-visible="true"][data-ui-surface="media-canvas"] .app-shell .left-nav {
+  border-right-width: 0;
+}
+html[data-user-background="ready"][data-ui-background-visible="true"][data-ui-surface="media-canvas"] .app-shell .media-jobs-header {
+  border-bottom-width: 0;
+}
+html[data-user-background="ready"][data-ui-background-visible="true"][data-ui-surface="media-canvas"] .app-shell .media-jobs-list-pane {
+  border-right-width: 0;
+}
+html[data-user-background="ready"][data-ui-background-visible="true"][data-ui-surface="media-canvas"] .app-shell .media-jobs-layout {
+  background: color-mix(in srgb, var(--ling-bg-panel) 7%, transparent);
+}
+html[data-user-background="ready"][data-ui-background-visible="true"][data-ui-surface="media-canvas"] .app-shell > .workspace,
+html[data-user-background="ready"][data-ui-background-visible="true"][data-ui-surface="media-canvas"] .app-shell .channel-left-drawer,
+html[data-user-background="ready"][data-ui-background-visible="true"][data-ui-surface="media-canvas"] .app-shell .left-nav {
+  box-shadow: none;
+}
+/* Without an ambient backdrop, media production stays one opaque work canvas.
+   Use the canvas tone and spacing for hierarchy instead of shell hairlines. */
+html[data-ui-background-visible="false"][data-ui-surface="media-canvas"] .app-shell .media-jobs-page,
+html[data-ui-background-visible="false"][data-ui-surface="media-canvas"] .app-shell .media-jobs-layout {
+  background: var(--ling-bg-app);
+}
+html[data-ui-background-visible="false"][data-ui-surface="media-canvas"] .app-shell .media-jobs-header {
+  background: var(--ling-bg-panel);
+  border-bottom-width: 0;
+}
+html[data-ui-background-visible="false"][data-ui-surface="media-canvas"] .app-shell .media-jobs-list-pane {
+  border-right-width: 0;
+}
+/* Empty split-pane states are layout surfaces, not content cards. Keep the
+   ambient scene visible until the user selects something to inspect; populated
+   inspectors retain their local readable panel material. */
+html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell :is(
+  .media-job-inspector[aria-busy="true"],
+  .media-job-inspector:not([data-media-job-inspector]),
+  .scene-inspector:not([data-scene-id]),
+  .automation-ui2-inspector:has(> .ling-ui-empty-state),
+  .work-board-detail.empty,
+  .council-workspace-detail:has(> .ling-ui-empty-state),
+  .runs-detail-workspace:has(> .ling-ui-empty-state),
+  .approvals-ui2-detail.empty,
+  .inspector.empty-inspector
+) {
+  background: color-mix(in srgb, var(--ling-bg-panel) var(--user-background-workspace, 100%), transparent);
 }
 html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell :is(.normal-conversation-header, .workspace-right-dock-frame, .right-dock, .channel-side-panel) {
   border-color: var(--ling-surface-border-subtle);

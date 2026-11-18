@@ -163,7 +163,8 @@ for (const theme of themes) {
       await capture(page, info, `${theme}-${file}`);
     }
     await settings(page);
-    await expect(page.locator('[data-background-layer]')).toBeVisible();
+    await expect(page.locator('html')).toHaveAttribute('data-ui-background-visible', 'false');
+    await expect(page.locator('[data-background-layer]')).toBeHidden();
     const thumbnail = page.locator(`[data-theme-option-id="${theme}"] image`);
     await expect(thumbnail).toHaveAttribute('href', asset!.replace('.webp', '-thumb.webp'));
     await capture(page, info, `${theme}-settings`);

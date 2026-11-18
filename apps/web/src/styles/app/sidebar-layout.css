@@ -741,6 +741,10 @@
   border-top: 1px solid var(--ling-border-default);
 }
 
+.channel-left-drawer.media-sidebar .sidebar-bottom {
+  border-top: 0;
+}
+
 .channel-left-drawer .config-button {
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr);

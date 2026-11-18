@@ -27,6 +27,8 @@
 .plugin-table-header {
   position: relative;
   z-index: 1;
+  box-sizing: border-box;
+  padding-inline-end: var(--plugin-table-scrollbar-gutter, 0px);
   border-bottom: 1px solid var(--ling-border-strong);
   background: var(--ling-table-header-bg);
 }
@@ -36,7 +38,6 @@
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-gutter: stable;
 }
 
 .plugin-table-header tr,

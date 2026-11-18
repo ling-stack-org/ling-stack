@@ -45,6 +45,7 @@ export function MediaJobsPage(props: MediaJobsPageProps): React.JSX.Element {
     onOpenProviders: props.onOpenProviders,
   });
   const initialLoading = props.domainState.loadPhase === "initial";
+  const showInspector = initialLoading || Boolean(controller.selectedProjection);
   return (
     <section className="media-jobs-page" aria-labelledby="media-jobs-title" data-media-jobs-surface>
       <MediaJobsHeader
@@ -63,7 +64,7 @@ export function MediaJobsPage(props: MediaJobsPageProps): React.JSX.Element {
           <Button size="sm" onClick={() => void controller.refresh()}>{t("Retry")}</Button>
         </InlineFeedback>
       ) : null}
-      <div className="media-jobs-layout">
+      <div className={`media-jobs-layout${showInspector ? "" : " media-jobs-layout-empty"}`}>
         <div className="media-jobs-list-pane">
           <MediaJobList
             cwd={props.cwd}
@@ -80,15 +81,17 @@ export function MediaJobsPage(props: MediaJobsPageProps): React.JSX.Element {
             onShowAll={() => controller.setStatusFilter("all")}
           />
         </div>
-        <MediaJobInspector
-          cwd={props.cwd}
-          projection={controller.selectedProjection}
-          repair={controller.selectedRepair}
-          initialLoading={initialLoading}
-          copyError={controller.copyError}
-          onAction={(action, projection) => void controller.dispatchAction(action, projection)}
-          onRetryArtifacts={(jobId) => void controller.retryArtifacts(jobId)}
-        />
+        {showInspector ? (
+          <MediaJobInspector
+            cwd={props.cwd}
+            projection={controller.selectedProjection}
+            repair={controller.selectedRepair}
+            initialLoading={initialLoading}
+            copyError={controller.copyError}
+            onAction={(action, projection) => void controller.dispatchAction(action, projection)}
+            onRetryArtifacts={(jobId) => void controller.retryArtifacts(jobId)}
+          />
+        ) : null}
       </div>
       <MediaJobCreateDialog
         open={controller.createOpen}
