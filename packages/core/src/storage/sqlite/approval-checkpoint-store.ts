@@ -32,6 +32,7 @@ export class SqliteApprovalCheckpointStore {
       taskId: input.approval.taskId,
       mediaJobId: input.approval.mediaJobId,
       externalWorkActionId: input.approval.externalWorkActionId,
+      nodeRerunIntentId: input.approval.nodeRerunIntentId,
       workflowStepId: input.approval.workflowStepId,
       channelId: input.approval.channelId,
       toolCallId: input.approval.toolCallId,
@@ -60,6 +61,7 @@ export class SqliteApprovalCheckpointStore {
           task_id,
           media_job_id,
           external_work_action_id,
+          node_rerun_intent_id,
           workflow_step_id,
           channel_id,
           tool_call_id,
@@ -79,7 +81,7 @@ export class SqliteApprovalCheckpointStore {
           resolved_at,
           resumed_at,
           resume_failure_reason
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         checkpoint.id,
@@ -88,6 +90,7 @@ export class SqliteApprovalCheckpointStore {
         checkpoint.taskId ?? null,
         checkpoint.mediaJobId ?? null,
         checkpoint.externalWorkActionId ?? null,
+        checkpoint.nodeRerunIntentId ?? null,
         checkpoint.workflowStepId ?? null,
         checkpoint.channelId ?? null,
         checkpoint.toolCallId ?? null,
@@ -148,6 +151,10 @@ export class SqliteApprovalCheckpointStore {
     if (options.externalWorkActionId) {
       clauses.push("external_work_action_id = ?");
       params.push(options.externalWorkActionId);
+    }
+    if (options.nodeRerunIntentId) {
+      clauses.push("node_rerun_intent_id = ?");
+      params.push(options.nodeRerunIntentId);
     }
     if (options.workflowStepId) {
       clauses.push("workflow_step_id = ?");

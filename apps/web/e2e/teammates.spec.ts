@@ -1725,6 +1725,23 @@ test(`AI teammate private chat opens latest messages and loads older history fro
     element.scrollTop = Math.round(element.scrollHeight * 0.45);
     element.dispatchEvent(new Event("scroll", { bubbles: true }));
   });
+  if (earlyMeasurement) {
+    await page.screenshot({ path: testInfo.outputPath("reading-before-remeasurement.png") });
+  }
+  // Settle the scroll and the virtual window before resizing an offscreen row.
+  await feed.evaluate(async (element) => {
+    let previous = "";
+    let stableFrames = 0;
+    for (let frame = 0; frame < 60; frame++) {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      const firstRow = element.querySelector<HTMLElement>(".conversation-timeline-virtual-row");
+      const current = `${element.scrollTop}:${element.scrollHeight}:${firstRow?.dataset.feedItemId}:${firstRow?.getBoundingClientRect().top}`;
+      stableFrames = firstRow && current === previous ? stableFrames + 1 : 0;
+      if (stableFrames >= 4) return;
+      previous = current;
+    }
+    throw new Error("Private chat virtual window did not settle");
+  });
   const readFirstVisibleAnchor = async (): Promise<{ id: string; offsetTop: number } | undefined> => feed.evaluate((element) => {
     const feedRect = element.getBoundingClientRect();
     const row = Array.from(element.querySelectorAll<HTMLElement>(
@@ -1737,18 +1754,9 @@ test(`AI teammate private chat opens latest messages and loads older history fro
       ? { id: row.dataset.feedItemId, offsetTop: Math.round(row.getBoundingClientRect().top - feedRect.top) }
       : undefined;
   });
-  let anchorBefore = await readFirstVisibleAnchor();
-  await expect.poll(async () => {
-    const next = await readFirstVisibleAnchor();
-    const stable = Boolean(next && anchorBefore && next.id === anchorBefore.id && Math.abs(next.offsetTop - anchorBefore.offsetTop) <= 1);
-    anchorBefore = next;
-    return stable;
-  }).toBe(true);
-  if (!anchorBefore) throw new Error("Private conversation anchor did not stabilize");
-  if (earlyMeasurement) {
-    await installEarlyMeasurementScroll(feed);
-    await page.screenshot({ path: testInfo.outputPath("reading-before-remeasurement.png") });
-  }
+  const anchorBefore = await readFirstVisibleAnchor();
+  if (!anchorBefore) throw new Error("Private conversation has no visible anchor");
+  if (earlyMeasurement) await installEarlyMeasurementScroll(feed);
   const expandedAboveAnchor = await feed.evaluate((element) => {
     const feedRect = element.getBoundingClientRect();
     const row = Array.from(element.querySelectorAll<HTMLElement>(".conversation-timeline-virtual-row"))

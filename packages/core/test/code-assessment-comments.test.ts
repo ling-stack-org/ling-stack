@@ -67,7 +67,7 @@ test("comments migration is idempotent and detects marker, missing-index and sch
       applyCodeAssessmentCommentsMigration(input); applyCodeAssessmentCommentsMigration(input);
       assert.equal(database.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()?.count, 1);
       if (kind === "missing_index") database.exec("DROP INDEX code_assessment_comments_finding");
-      if (kind === "marker") database.exec("UPDATE schema_migrations SET name='unrelated' WHERE version=225");
+      if (kind === "marker") database.exec("UPDATE schema_migrations SET name='unrelated' WHERE version=232");
       if (kind === "schema") database.exec("DROP TABLE code_assessment_comments; CREATE TABLE code_assessment_comments(id TEXT)");
       assert.throws(() => applyCodeAssessmentCommentsMigration(input), new RegExp(`migration_${kind === "missing_index" ? "incomplete" : kind === "marker" ? "marker_conflict" : "schema_conflict"}`, "u"));
     } finally { database.close(); }

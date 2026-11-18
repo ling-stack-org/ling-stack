@@ -1,4 +1,4 @@
-import type { ApprovalToolDecision } from "./approvals.js";
+import type { ApprovalToolDecision, SkillApprovalProfile } from "./approvals.js";
 import type { ConversationModeKind } from "./threads.js";
 
 export type RunStatus = "queued" | "running" | "waiting_for_approval" | "yielded" | "succeeded" | "failed" | "cancelled";
@@ -55,6 +55,22 @@ export interface EffectiveRunPolicySnapshot {
   readonly allowedWritePaths: readonly string[];
   readonly workspacePolicyUpdatedAt?: string;
   readonly riskNotes: readonly EffectiveRunPolicyRiskNote[];
+}
+
+/** Read-only request for the daemon-owned policy preview used before a run starts. */
+export interface RunPolicyPreviewRequest {
+  readonly channelId?: string;
+  readonly taskId?: string;
+  readonly permissionPreset?: PermissionPreset;
+  readonly permissionMode?: SessionPermissionMode;
+  readonly approvalProfile?: SkillApprovalProfile;
+}
+
+export interface RunPolicyPreviewResponse {
+  readonly permissionPreset?: PermissionPreset;
+  readonly permissionMode: SessionPermissionMode;
+  readonly effectivePolicySnapshot: EffectiveRunPolicySnapshot;
+  readonly requiresConfirmation: boolean;
 }
 
 export type SecretRefKind = "env" | "keychain";

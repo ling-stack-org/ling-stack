@@ -91,7 +91,7 @@ export function channelSessionWorkSourceSql(work: string, threadId: string): str
         AND step.workspace_id = workflow.workspace_id AND ${channelSessionWorkflowSourceSql("workflow", threadId)})))`;
 }
 
-export function channelSessionApprovalSourceSql(approval: string, threadId: string): string {
+export function channelSessionApprovalSourceSql(approval: string, threadId: string, options: { readonly nodeRerun?: boolean } = {}): string {
   // Approvals have no workspace column; their durable Run/Work/Step/Item carries it.
   return `(EXISTS (SELECT 1 FROM ling_threads scope WHERE scope.id = ${threadId}
     AND (${approval}.channel_id IS NULL OR scope.channel_id = ${approval}.channel_id)) AND (
@@ -102,6 +102,11 @@ export function channelSessionApprovalSourceSql(approval: string, threadId: stri
         AND ${channelSessionThreadSourceSql("item.thread_id", threadId)})
     OR EXISTS (SELECT 1 FROM work_units work WHERE work.linked_media_job_id = ${approval}.media_job_id
       AND ${channelSessionWorkSourceSql("work", threadId)})
+    ${options.nodeRerun ? `OR EXISTS (SELECT 1 FROM node_rerun_intents rerun
+      JOIN run_sessions rerun_run ON rerun_run.id = rerun.source_run_id
+      WHERE rerun.id = ${approval}.node_rerun_intent_id
+        AND rerun.workspace_id = (SELECT workspace_id FROM ling_threads WHERE id = ${threadId})
+        AND ${channelSessionRunSourceSql("rerun_run", threadId)})` : ""}
     OR EXISTS (SELECT 1 FROM channel_workflow_steps step JOIN channel_workflows workflow ON workflow.id = step.workflow_id
       LEFT JOIN run_sessions run ON run.id = step.run_id
       WHERE step.id = ${approval}.workflow_step_id

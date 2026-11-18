@@ -26,6 +26,7 @@ export function assertCodeAssessmentRequest(store: RunStore, request: RunRequest
 export function restrictCodeAssessmentTools(request: RunRequest, options: PiRunnerRunOptions): PiRunnerRunOptions {
   if (!request.codeAssessment) return options;
   return { ...options, tools: [], mcpTools: [], hostCapabilityTools: [], mediaGenerationTools: [],
+    hooks: undefined,
     initialToolSurface: { toolHydration: false, mediaGeneration: false, userInput: false, delegation: false, nativeFileCreate: false },
     runtimeToolFeatures: { ...options.runtimeToolFeatures, requestPermissions: false, unifiedExec: false, shellSnapshot: false },
     readonlyToolsProfile: undefined, isolatedToolsProfile: undefined,

@@ -111,7 +111,7 @@ function parsePreferencesUpdate(raw: unknown): NotificationPreferencesUpdate {
     }
     const events: Record<string, "all" | "failures" | "off"> = {};
     for (const [kind, tone] of Object.entries(input.events as Record<string, unknown>)) {
-      if (!["automation_run_finished", "automation_run_failed", "approval_required"].includes(kind)) {
+      if (!["automation_run_finished", "automation_run_failed", "automation_monitor_finding", "approval_required"].includes(kind)) {
         throw new Error(`Unknown notification event kind: ${kind}`);
       }
       if (!["all", "failures", "off"].includes(String(tone))) {

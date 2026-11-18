@@ -10,6 +10,7 @@ import {
   HARNESS_TOOL_EXECUTION_MIGRATION_NAME,
   HARNESS_TOOL_EXECUTION_MIGRATION_VERSION,
 } from "../dist/storage/sqlite/harness-tool-execution-migration.js";
+import { rewindNodeRerunApprovalFixture } from "./support/node-rerun-approval-predecessor.ts";
 
 const appliedAt = "2026-09-13T00:00:00.000Z";
 
@@ -20,6 +21,7 @@ test("schema 135 upgrades to ToolExecution schema 136 while preserving later mig
   store.close();
   const path = resolveRuntimePaths(cwd).databasePath;
   let database = new DatabaseSync(path);
+  rewindNodeRerunApprovalFixture(database);
   database.exec(`
     DROP TABLE run_compaction_checkpoints;
     DELETE FROM schema_migrations WHERE version = 140;

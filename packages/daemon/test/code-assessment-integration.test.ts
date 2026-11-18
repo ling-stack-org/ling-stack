@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -16,7 +16,23 @@ type ScriptedRun = (options: PiRunnerRunOptions, reply: () => string | Promise<s
 const exec = promisify(execFile);
 
 test("real Pi assessment persists reports, rejects foreign access, and handles failure/cancel/reconnect", { timeout: 60000 }, async t => {
-  const cwd = await realpath(await mkdtemp(join(tmpdir(), "ling-assessment-integration-")));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "ling-assessment-integration-")));
+  const cwd = join(root, "workspace"), userRoot = join(root, "user");
+  await mkdir(cwd);
+  await mkdir(userRoot);
+  const previousUserRoot = process.env.LING_STACK_HOME;
+  process.env.LING_STACK_HOME = userRoot;
+  let stopDaemon: (() => Promise<void>) | undefined;
+  t.after(async () => {
+    try { await stopDaemon?.(); }
+    finally {
+      if (previousUserRoot === undefined) delete process.env.LING_STACK_HOME;
+      else process.env.LING_STACK_HOME = previousUserRoot;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+  // A broken agent Hooks configuration must not prevent an assessment Run.
+  await writeFile(join(userRoot, "hooks.json"), "{", { mode: 0o600 });
   await exec("git", ["init", "-q", "-b", "main"], { cwd });
   await exec("git", ["config", "user.email", "test@example.invalid"], { cwd });
   await exec("git", ["config", "user.name", "Ling Test"], { cwd });
@@ -40,6 +56,7 @@ test("real Pi assessment persists reports, rejects foreign access, and handles f
       assert.deepEqual(options.mcpTools, []);
       assert.deepEqual(options.hostCapabilityTools, []);
       assert.deepEqual(options.mediaGenerationTools, []);
+      assert.equal(options.hooks, undefined);
       assert.deepEqual(options.initialToolSurface, { toolHydration: false, mediaGeneration: false, userInput: false, delegation: false, nativeFileCreate: false });
       assert.equal(options.onMcpToolCall, undefined);
       assert.equal(options.onUserInputRequest, undefined);
@@ -67,7 +84,7 @@ test("real Pi assessment persists reports, rejects foreign access, and handles f
   }
   const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd,
     channels: { autoRoute: false, intentSelector: false, terminalReports: false, teamObserverBus: false } }, { runner: new AssessmentRunner(), storeFactory: () => store });
-  t.after(async () => { release?.(); await daemon.stop(); await rm(cwd, { recursive: true, force: true }); });
+  stopDaemon = async () => { release?.(); await daemon.stop(); };
   await daemon.start();
   const address = daemon.server.address(); assert.ok(address && typeof address === "object");
   const base = `http://127.0.0.1:${address.port}`;

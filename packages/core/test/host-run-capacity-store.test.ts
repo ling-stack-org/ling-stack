@@ -128,7 +128,7 @@ test("dedicated global schema preserves unrelated tables and configures its own 
   assert.equal(first.reserve({ intent: f.intent(), now }).status, "unconfigured");
   assert.deepEqual(first.counts(), { held: 0, released: 0, total: 0 });
   assert.deepEqual(first.listHeld(), { reservations: [] });
-  assert.deepEqual(rows(db, tables[0]).map(row => ({ ...row })), [{ version: 2, name: "host_run_capacity" }]);
+  assert.deepEqual(rows(db, tables[0]).map(row => ({ ...row })), [{ version: 3, name: "host_run_capacity" }]);
   const schema = ownedObjects(db), second = f.open({ busyTimeoutMs: 23 });
   assert.equal(second.database.prepare("PRAGMA busy_timeout").get()!.timeout, 23);
   assert.equal(changes(second.database), 0, "reopening does not rewrite the schema marker");
@@ -204,11 +204,11 @@ test("reopen and peer Stores recover the same frozen credentials and copied inte
 
 test("all owner kinds and workspaces share one held total; exact duplicate precedes lowered-capacity rejection", t => {
   const f = fixture(t), store = f.open();
-  const ownerKinds = ["attempt", "workflow_start", "delegation_spawn", "approval_resume_pending", "user_input_continuation"] as const;
+  const ownerKinds = ["attempt", "workflow_start", "delegation_spawn", "approval_resume_pending", "user_input_continuation", "node_rerun_target"] as const;
   install(store, ownerKinds.length);
   const accepted = ownerKinds.map((ownerKind, index) => reserve(store,
     f.intent(`intent-${index}`, { ownerKind, workspaceKey: `workspace-${index}:physical` })));
-  assert.deepEqual(store.counts(), { held: 5, released: 0, total: 5 });
+  assert.deepEqual(store.counts(), { held: ownerKinds.length, released: 0, total: ownerKinds.length });
   const before = data(store.database)[2];
   assert.equal(install(store, 1, 1, later).status, "installed");
   assert.deepEqual(data(store.database)[2], before, "lowering a policy never rewrites held rows");
@@ -221,7 +221,7 @@ test("all owner kinds and workspaces share one held total; exact duplicate prece
   assert.equal(store.reserve({ intent: f.intent("new"), now: future }).status, "full", "held equal to the new cap is still full");
   assert.equal(store.release(releaseInput(accepted.at(-1)!)).status, "released");
   assert.equal(reserve(store, f.intent("new"), future).policyRevision, 2);
-  assert.deepEqual(store.counts(), { held: 1, released: 5, total: 6 });
+  assert.deepEqual(store.counts(), { held: 1, released: ownerKinds.length, total: ownerKinds.length + 1 });
 });
 
 test("Workers contending for the final global slot admit exactly one workspace", { timeout: 15_000 }, async t => {
@@ -497,7 +497,7 @@ test("SQLite CHECK and UNIQUE constraints protect the stored protocol", async t 
 test("schema marker, table, view, index and trigger tampering fail closed without repairing or deleting data", async t => {
   const mutations = {
     "deleted marker": "DELETE FROM host_run_capacity_schema",
-    "wrong version": "PRAGMA ignore_check_constraints=ON; UPDATE host_run_capacity_schema SET version=3",
+    "wrong version": "PRAGMA ignore_check_constraints=ON; UPDATE host_run_capacity_schema SET version=4",
     "wrong marker name": "PRAGMA ignore_check_constraints=ON; UPDATE host_run_capacity_schema SET name='other'",
     "missing reservation table": "DROP TABLE host_run_capacity_reservations",
     "same-name view": "DROP TABLE host_run_capacity_policy; CREATE VIEW host_run_capacity_policy AS SELECT 1 AS singleton",

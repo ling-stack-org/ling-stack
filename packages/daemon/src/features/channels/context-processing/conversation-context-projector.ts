@@ -13,6 +13,13 @@ import {
   type ChannelMessage,
   type RunStore,
 } from "@ling-stack/core";
+import {
+  assessConversationItemQuoteEligibility,
+  type ContextQuoteDiagnostic,
+} from "./quote-eligibility.js";
+import { isConversationContextItemVisible } from "./visibility.js";
+
+export { isConversationContextItemVisible } from "./visibility.js";
 
 export const CONVERSATION_CONTEXT_PROJECTOR_POLICY_VERSION = "continuity-v2-projector-v1";
 
@@ -51,6 +58,8 @@ export interface ConversationContextProjection {
   readonly forkSnapshot?: ConversationContextSnapshot;
   readonly summaries: readonly ConversationContextSummary[];
   readonly items: readonly ConversationItemV1[];
+  /** Host diagnostics for explicit reply/quote references; contains ids only. */
+  readonly quoteDiagnostics: readonly ContextQuoteDiagnostic[];
   readonly sharedCore: {
     readonly objectives: readonly string[];
     readonly decisions: readonly string[];
@@ -117,13 +126,36 @@ export function buildConversationContextProjection(
     afterSequence: Math.min(coveredThroughSequence, sourceItem.sequence),
     limit: 500,
   });
+  const quoteItemIds = sourceItem.kind === "user_message"
+    ? uniqueStrings([
+      sourceItem.payload.replyToItemId,
+      ...(sourceItem.payload.quotedItemIds ?? []),
+    ].filter((id): id is string => Boolean(id)))
+    : [];
+  const quoteDiagnostics = quoteItemIds.map((itemId): ContextQuoteDiagnostic => {
+    const eligibility = assessConversationItemQuoteEligibility({
+      store: input.store,
+      sourceItem,
+      itemId,
+      view: input.view,
+      consumerTeammateId: input.consumerTeammateId,
+    });
+    return eligibility.status === "eligible"
+      ? { sourceId: itemId, status: "accepted" }
+      : { sourceId: itemId, status: "rejected", reason: eligibility.reason };
+  });
+  const rejectedQuoteIds = new Set(
+    quoteDiagnostics
+      .filter((diagnostic) => diagnostic.status === "rejected")
+      .map((diagnostic) => diagnostic.sourceId),
+  );
   const explicitItemIds = explicitProjectionItemIds(
     sourceItem,
     assignment,
     // Normal inheritance comes exclusively from frozen text, not today's parent anchor.
     normalForkSeed ? undefined : thread.anchorItemId,
     input.explicitItemIds,
-  );
+  ).filter((itemId) => !rejectedQuoteIds.has(itemId));
   const explicitItems = explicitItemIds.map((itemId) => {
     const item = input.store.getEffectiveConversationItem(itemId);
     if (!item || item.status !== "committed") {
@@ -258,6 +290,7 @@ export function buildConversationContextProjection(
     ...(forkSnapshot ? { forkSnapshot } : {}),
     summaries,
     items,
+    quoteDiagnostics,
     sharedCore: {
       objectives: uniqueStrings(summaries.flatMap((summary) => summary.objective ? [summary.objective] : [])),
       decisions: uniqueStrings(summaries.flatMap((summary) => summary.decisions)),
@@ -401,20 +434,6 @@ function historicalRunGuidanceItemIds(store: RunStore): ReadonlySet<string> {
     }
   }
   return itemIds;
-}
-
-/** Visibility only. Callers must separately establish source, owner, segment and budget admission. */
-export function isConversationContextItemVisible(
-  item: ConversationItemV1,
-  view: ConversationContextProjectionView,
-  consumerTeammateId: string | undefined,
-): boolean {
-  if (item.visibility === "channel" || item.visibility === "thread_participants") return true;
-  if (item.visibility === "operator") return view === "inspect";
-  return item.visibility === "agent_private"
-    && Boolean(consumerTeammateId)
-    && item.visibilityOwnerId === consumerTeammateId
-    && (view === "specialist" || view === "workflow_step" || view === "inspect");
 }
 
 function projectionVisibilityScope(

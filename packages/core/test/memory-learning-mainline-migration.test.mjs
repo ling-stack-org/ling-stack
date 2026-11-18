@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { createSqliteRunStore, resolveRuntimePaths } from "../dist/index.js";
 import { dropCodeAssessmentOverlay } from "./support/code-assessment-overlay-fixture.mjs";
+import { rewindRemainingWorkSuccessors } from "./support/remaining-work-predecessor.ts";
 
 const now = "2026-10-29T00:00:00.000Z";
 const later = "2026-10-29T00:01:00.000Z";
@@ -218,6 +219,7 @@ test("real mainline schema178 upgrades to188 without changing canonical settings
   await copyFile(sourcePath, upgradePath);
   const historical = f.own(new DatabaseSync(upgradePath));
   historical.handle.exec("PRAGMA foreign_keys=ON");
+  rewindRemainingWorkSuccessors(historical.handle);
   removeLearningOverlays(historical.handle);
   const oldMarkers = rows(historical.handle, "schema_migrations");
   assert.equal(Math.max(...oldMarkers.map(row => row.version)), 178);
@@ -261,14 +263,21 @@ test("real mainline schema178 upgrades to188 without changing canonical settings
   ];
   const stripOverlaySchema = rows => rows.filter(row =>
     !learningTables.has(row.tbl_name) && !learningTriggers.includes(row.name)
-    && !String(row.name).startsWith("code_assessment") && !String(row.tbl_name).startsWith("code_assessment")
     && !channelTables.has(row.tbl_name)
     && !channelTriggers.has(row.name)
     && !post178OverlayTables.has(row.tbl_name)
     && !post178OverlayNames.some(prefix => row.name.startsWith(prefix))
     && !(row.type === "trigger" && row.name.startsWith("trg_channel_session_"))
     && !(row.type === "table" && row.name === "ling_threads"));
-  assert.deepEqual(stripOverlaySchema(newSchema), stripOverlaySchema(oldSchema));
+  // Rebuild the exact pre-F5 shape on a copy; leave the upgraded database
+  // intact for the reopen and idempotency assertions below.
+  const comparisonPath = join(dirname(upgradePath), "pre-f5-comparison.sqlite");
+  database.handle.prepare("VACUUM INTO ?").run(comparisonPath);
+  const comparison = f.own(new DatabaseSync(comparisonPath));
+  rewindRemainingWorkSuccessors(comparison.handle);
+  dropCodeAssessmentOverlay(comparison.handle);
+  assert.deepEqual(stripOverlaySchema(schema(comparison.handle)), stripOverlaySchema(oldSchema));
+  comparison.close();
   assert.deepEqual(database.handle.prepare("SELECT version, name FROM schema_migrations WHERE version BETWEEN 179 AND 181 ORDER BY version").all()
     .map(row => [row.version, row.name]), [
     [179, "channel_independent_sessions"], [180, "channel_session_topic_ownership"], [181, "channel_session_topic_notifications"],

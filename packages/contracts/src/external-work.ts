@@ -35,6 +35,7 @@ export interface ExternalWorkspaceConfig {
   readonly root?: string;
   readonly mode: ExternalWorkspaceMode;
   readonly cleanupTerminalWorkItems: boolean;
+  readonly gitRemoteUrl?: string;
 }
 
 export interface ExternalWorkspaceHooks {
@@ -566,6 +567,12 @@ export interface ExternalWorkStatusSecretSummary {
   readonly message?: string;
 }
 
+export interface ExternalWorkStatusWorkspaceSummary {
+  readonly mode: ExternalWorkspaceMode;
+  readonly gitRemoteConfigured: boolean;
+  readonly gitRemoteUrl?: string;
+}
+
 export interface ExternalWorkStatusCounts {
   readonly externalWork: {
     readonly total: number;
@@ -614,6 +621,7 @@ export interface ExternalWorkStatusResponse {
   readonly cwd: string;
   readonly channel: ExternalWorkStatusChannelSummary;
   readonly workflow: ExternalWorkStatusWorkflowSummary;
+  readonly workspace?: ExternalWorkStatusWorkspaceSummary;
   readonly secret: ExternalWorkStatusSecretSummary;
   readonly records: ExternalWorkStatusCounts;
   readonly background: ExternalWorkStatusBackgroundSummary;

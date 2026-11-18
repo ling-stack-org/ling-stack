@@ -22,6 +22,12 @@ export function assertApprovalDecisionAvailable(
     }
     return;
   }
+  if (approval.actionType === "node_rerun" || approval.payload.type === "node_rerun") {
+    if (approval.actionType !== "node_rerun" || approval.payload.type !== "node_rerun" || decision !== "approve_once") {
+      throw new ApprovalDecisionUnavailableError();
+    }
+    return;
+  }
   const nativeScope = approval.payload.type === "native_permission_request";
   if (nativeScope || decision === "approve_permission_scope") {
     if (decision !== "approve_permission_scope" || approval.actionType !== "runtime_permission_request"

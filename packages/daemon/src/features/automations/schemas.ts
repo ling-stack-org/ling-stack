@@ -5,6 +5,9 @@ import type {
   AutomationExecutionPolicy,
   AutomationKind,
   AutomationMode,
+  AutomationMonitorCondition,
+  AutomationMonitorSnapshotBody,
+  AutomationMonitorSource,
   AutomationOutputPolicy,
   AutomationPromptTemplate,
   AutomationReasoningEffort,
@@ -65,6 +68,8 @@ export interface AutomationRunRequest {
   readonly idempotencyKey?: string;
   readonly triggerType?: AutomationTrigger["type"] | "event";
   readonly scheduledFor?: string;
+  /** Internal scheduler facts; HTTP callers cannot provide this field. */
+  readonly monitorSnapshot?: AutomationMonitorSnapshotBody;
 }
 
 export interface AutomationRunCancelRequest {
@@ -121,15 +126,16 @@ export function parseCreateAutomationRequest(value: unknown): CreateAutomationRe
     throw new Error("Automation create request must be an object");
   }
   const kind = parseAutomationKind(readString(value, "kind"));
-  if (kind === "project_monitor") {
-    throw new Error("project_monitor_not_implemented");
-  }
   const channelId = readOptionalString(value, "channelId");
   const target = parseOptionalAutomationTarget(value.target);
   const automationMode = parseOptionalAutomationMode(value.automationMode);
   const targetThreadId = readOptionalString(value, "targetThreadId");
   if (!channelId && !target && !(automationMode === "heartbeat" && targetThreadId)) {
     throw new Error("channelId or target is required");
+  }
+  const trigger = parseOptionalAutomationTrigger(value.trigger);
+  if (kind === "project_monitor" && trigger && trigger.type !== "monitor") {
+    throw new Error("project_monitor requires a monitor trigger");
   }
   return {
     kind,
@@ -138,7 +144,7 @@ export function parseCreateAutomationRequest(value: unknown): CreateAutomationRe
     channelId,
     description: readOptionalString(value, "description"),
     target,
-    trigger: parseOptionalAutomationTrigger(value.trigger),
+    trigger,
     rrule: validateAutomationRRule(readOptionalString(value, "rrule")),
     cwds: readOptionalStringArray(value, "cwds"),
     targetThreadId,
@@ -415,9 +421,80 @@ function parseOptionalAutomationTrigger(value: unknown): AutomationTrigger | und
     };
   }
   if (type === "monitor") {
-    throw new Error("monitor_not_implemented");
+    return parseMonitorAutomationTrigger(value);
   }
   throw new Error(`Unsupported automation trigger type: ${type}`);
+}
+
+function parseMonitorAutomationTrigger(value: Record<string, unknown>): AutomationTrigger {
+  const pollIntervalMs = readOptionalNumber(value, "pollIntervalMs");
+  if (pollIntervalMs === undefined || !Number.isInteger(pollIntervalMs) || pollIntervalMs < 1_000 || pollIntervalMs > 7 * 24 * 60 * 60_000) {
+    throw new Error("pollIntervalMs must be an integer from 1000 to 604800000");
+  }
+  const source = parseAutomationMonitorSource(value.source);
+  const condition = parseAutomationMonitorCondition(value.condition);
+  const unchangedPolicy = readOptionalString(value, "unchangedPolicy");
+  if (unchangedPolicy !== undefined && unchangedPolicy !== "skip" && unchangedPolicy !== "record_noop") {
+    throw new Error("unchangedPolicy must be skip or record_noop");
+  }
+  return {
+    type: "monitor",
+    pollIntervalMs,
+    source,
+    condition,
+    unchangedPolicy: unchangedPolicy === "record_noop" ? unchangedPolicy : "skip",
+  };
+}
+
+function parseAutomationMonitorSource(value: unknown): AutomationMonitorSource {
+  if (!isRecord(value)) {
+    throw new Error("monitor source must be an object");
+  }
+  const kind = readString(value, "kind");
+  if (kind === "doctor_summary" || kind === "runtime_stuck_work") {
+    return { kind };
+  }
+  if (kind === "pending_approvals") {
+    const olderThanMs = readOptionalNumber(value, "olderThanMs");
+    if (olderThanMs !== undefined && (!Number.isInteger(olderThanMs) || olderThanMs < 0 || olderThanMs > 365 * 24 * 60 * 60_000)) {
+      throw new Error("olderThanMs must be an integer from 0 to 31536000000");
+    }
+    return olderThanMs === undefined ? { kind } : { kind, olderThanMs };
+  }
+  if (kind === "external_work") {
+    const channelId = readOptionalString(value, "channelId");
+    return channelId === undefined ? { kind } : { kind, channelId };
+  }
+  if (kind === "github_ci") {
+    return { kind, channelId: readString(value, "channelId") };
+  }
+  throw new Error(`Unsupported automation monitor source: ${kind}`);
+}
+
+function parseAutomationMonitorCondition(value: unknown): AutomationMonitorCondition {
+  if (!isRecord(value)) {
+    throw new Error("monitor condition must be an object");
+  }
+  const kind = readString(value, "kind");
+  if (kind === "any_change" || kind === "error_present") {
+    return { kind };
+  }
+  if (kind === "count_above") {
+    const field = readString(value, "field");
+    const threshold = readOptionalNumber(value, "threshold");
+    if (!field.trim() || threshold === undefined || !Number.isFinite(threshold)) {
+      throw new Error("count_above requires a field and numeric threshold");
+    }
+    return { kind, field, threshold };
+  }
+  if (kind === "status_matches") {
+    const statuses = readOptionalStringArray(value, "statuses");
+    if (!statuses || statuses.length === 0) {
+      throw new Error("status_matches requires at least one status");
+    }
+    return { kind, statuses };
+  }
+  throw new Error(`Unsupported automation monitor condition: ${kind}`);
 }
 
 function parseAutomationSchedule(value: unknown): AutomationSchedule {

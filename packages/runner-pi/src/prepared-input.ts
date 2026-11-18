@@ -159,6 +159,17 @@ export function assertPreparedPiTaskInput(prepared: PiRunnerPreparedInput, task:
   }
 }
 
+/** Rebind transport identity while preserving the exact model-visible task and SDK assembly. */
+export function rebindPreparedPiTaskInput(value: PiRunnerPreparedInput, source: PiRunnerTask, target: PiRunnerTask): PiRunnerPreparedInput {
+  const prepared = readPreparedPiInput(value);
+  assertPreparedPiTaskInput(prepared, source);
+  if (!target.id || target.id === source.id || formatTaskPrompt(target) !== prepared.userPrompt
+    || !isDeepStrictEqual({ ...source, id: target.id }, target)) throw new Error("Prepared execution task rebind mismatch");
+  const { fingerprint: _fingerprint, ...body } = prepared;
+  const rebound = { ...body, taskId: target.id };
+  return readPreparedPiInput({ ...rebound, fingerprint: hash(rebound) });
+}
+
 /** Fail before prompting if initialization cannot reproduce the persisted input. */
 export function assertPreparedPiSession(session: AgentSession, options: PiRunnerRunOptions, assertRestoredView?: () => void): void {
   assertRestoredView?.();

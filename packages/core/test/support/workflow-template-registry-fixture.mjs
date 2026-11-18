@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createSqliteRunStore, createSqliteWorkflowTemplateRegistryStore, resolveRuntimePaths } from "../../dist/index.js";
 import { createSqliteRunStoreFixture } from "./sqlite-run-store-fixture.mjs";
+import { rewindRemainingWorkSuccessors } from "./remaining-work-predecessor.ts";
 
 export const at = n => new Date(Date.UTC(2026, 10, 3, 0, 0, n)).toISOString();
 export const template = (extra = {}) => ({ schemaVersion: 1, id: "review", name: "Review",
@@ -14,12 +15,12 @@ export const saveInput = (extra = {}) => ({ kind: "workflow_template", id: "revi
 export const registryTables = ["workflow_template_registry", "workflow_template_versions"];
 export const registryTriggers = ["trg_workflow_template_registry_created_draft", "trg_workflow_template_registry_immutable",
   "trg_workflow_template_registry_retained", "trg_workflow_template_versions_immutable", "trg_workflow_template_versions_retained"];
+const codeAssessmentTables = ["code_assessment_snapshots", "code_assessments", "code_assessment_findings", "code_assessment_comments"];
 export const registrySuccessorTables = ["workflow_conflict_recoveries", "runtime_concurrency_policies", "runtime_delegation_capacity_admissions", "runtime_run_queue",
   "runtime_host_capacity_intents", "runtime_host_capacity_releases", "runtime_delegation_spawn_admissions", "automation_event_sources",
-  "automation_events", "automation_event_dispatches", "automation_deliveries", "automation_delivery_receipts", "node_rerun_submissions"];
-const codeAssessmentTables = ["code_assessment_snapshots", "code_assessments", "code_assessment_findings", "code_assessment_comments"];
+  "automation_events", "automation_event_dispatches", "automation_deliveries", "automation_delivery_receipts", "node_rerun_submissions", ...codeAssessmentTables];
 const codeAssessmentMarkers = [
-  [223, "code_assessments"], [224, "code_assessment_lifecycle"], [225, "code_assessment_comments"], [226, "code_assessment_history_filters"],
+  [230, "code_assessments"], [231, "code_assessment_lifecycle"], [232, "code_assessment_comments"], [233, "code_assessment_history_filters"],
 ];
 const codeAssessmentIndexes = ["code_assessment_active", "code_assessment_history", "code_assessment_findings_owner", "code_assessment_comments_finding",
   "code_assessment_target_history", "code_assessment_snapshot_history", "code_assessment_status_history", "code_assessment_updated_history",
@@ -43,16 +44,18 @@ export function persistSkill(store, id = "review") {
 export function fixture(t, { fresh = false } = {}) {
   const root = mkdtempSync(join(tmpdir(), "ling-workflow-template-registry-")), paths = resolveRuntimePaths(root);
   let store = fresh ? createSqliteRunStore(root, paths) : createSqliteRunStoreFixture(root);
+  rewindRemainingWorkSuccessors(store.database);
   t.after(() => { try { store?.close(); } finally { rmSync(root, { recursive: true, force: true }); } });
   return { root, paths, get store() { return store; }, get db() { return store.database; },
     get registry() { return createSqliteWorkflowTemplateRegistryStore(store); },
     close() { store?.close(); store = undefined; },
-    reopen() { store?.close(); store = undefined; store = createSqliteRunStore(root, paths); return store; } };
+    reopen() { store?.close(); store = undefined; store = createSqliteRunStore(root, paths); rewindRemainingWorkSuccessors(store.database); return store; } };
 }
 
 /** Rewind only the new, empty overlay inside this fixture's own temporary database. */
 export function removeRegistryOverlay(f) {
   const db = f.db;
+  rewindRemainingWorkSuccessors(db);
   assert.equal(db.isTransaction, false);
   assert.deepEqual(markers(db).filter(row => row.version >= 212).map(({ version, name }) => ({ version, name })),
     [{ version: 212, name: "workflow_template_registry" }, { version: 213, name: "workflow_conflict_recoveries" },

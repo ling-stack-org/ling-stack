@@ -37,7 +37,7 @@ type Row = Record<string, SQLOutputValue>;
 const terminalStates = "'succeeded','failed','cancelled','expired'";
 const compare = (a: string, b: string): number => a < b ? -1 : a > b ? 1 : 0;
 // Sources are durable object links; UI selection is never an attribution signal.
-const approvalSource = channelSessionApprovalSourceSql("a", "t.id");
+const approvalSource = channelSessionApprovalSourceSql("a", "t.id", { nodeRerun: true });
 const workSource = channelSessionWorkSourceSql("w", "t.id");
 const activeWorkSource = `EXISTS (SELECT 1 FROM work_units w WHERE w.status NOT IN (${terminalStates}) AND ${workSource})`;
 const activeWorkflowSource = `EXISTS (SELECT 1 FROM channel_workflows workflow WHERE ${channelSessionWorkflowSourceSql("workflow", "t.id")}

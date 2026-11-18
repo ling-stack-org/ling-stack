@@ -150,6 +150,11 @@ test("External work status reports local workflow, token, counts, and background
     assert.equal(githubStatus.workflow.valid, true);
     assert.equal(githubStatus.workflow.sourceKind, "github");
     assert.equal(githubStatus.workflow.repository, "openclaw/openclaw");
+    assert.deepEqual(githubStatus.workspace, {
+      mode: "per_subject",
+      gitRemoteConfigured: true,
+      gitRemoteUrl: "https://github.com/openclaw/openclaw.git",
+    });
     assert.equal(githubStatus.secret.status, "missing");
     assert.equal(githubStatus.secret.ref, "env:GITHUB_TOKEN");
     assert.equal(githubStatus.records.externalWork.total, 1);
@@ -1471,6 +1476,8 @@ source:
   repository: openclaw/openclaw
 ${withSecret ? "  secretRef: env:GITHUB_TOKEN\n" : ""}scheduler:
   reconcileOnStartup: false
+workspace:
+  gitRemoteUrl: https://github.com/openclaw/openclaw.git
 agent:
   teammateId: engineer
 ---

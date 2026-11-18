@@ -1,4 +1,4 @@
-import type { ExecutionAction, RunArtifact, RunEventEnvelope } from "@ling-stack/core";
+import { redactSecrets, type ExecutionAction, type RunArtifact, type RunEventEnvelope } from "@ling-stack/core";
 
 /** These Host-only receipts are neither deliverables nor downloadable Run evidence. */
 export function isPrivateHostRecoveryArtifact(artifact: Pick<RunArtifact, "contentType">): boolean {
@@ -8,14 +8,16 @@ export function isPrivateHostRecoveryArtifact(artifact: Pick<RunArtifact, "conte
 
 /** Artifact metadata may cross HTTP; sealed Host recovery payloads may not. */
 export function toPublicArtifactMetadata({ sealedPayload: _sealedPayload, contentSha256: _contentSha256, ...artifact }: RunArtifact): Omit<RunArtifact, "sealedPayload" | "contentSha256"> {
-  return artifact;
+  // Paths and titles are user-controlled evidence labels. Redact them at the
+  // public boundary so a credential-shaped value cannot escape through an
+  // otherwise harmless artifact descriptor.
+  return redactSecrets(artifact) as Omit<RunArtifact, "sealedPayload" | "contentSha256">;
 }
 
 /** Project legacy and new Run events at every public egress, without rewriting Host history. */
 export function projectPublicRunEventEnvelope(envelope: RunEventEnvelope): RunEventEnvelope {
   if (envelope.type !== "artifact_created" || !isRecord(envelope.data.artifact)) return envelope;
-  const { sealedPayload: _sealedPayload, contentSha256: _contentSha256, ...artifact } = envelope.data.artifact;
-  return { ...envelope, data: { ...envelope.data, artifact } };
+  return { ...envelope, data: { ...envelope.data, artifact: toPublicArtifactMetadata(envelope.data.artifact as unknown as RunArtifact) } };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

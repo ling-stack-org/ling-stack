@@ -11,6 +11,8 @@ import type {
   ChannelContextViewKind,
 } from "./types.js";
 import type { ConversationContextProjectionMetadata } from "@ling-stack/contracts";
+import type { RunStore } from "@ling-stack/core";
+import { recordContextViewLineage } from "./context-view-lineage.js";
 
 export interface BuildChannelContextCondenserInput {
   readonly enabled?: boolean;
@@ -31,12 +33,21 @@ export interface BuildChannelContextViewInput {
   readonly contextProjection?: ConversationContextProjectionMetadata;
   readonly condenser?: BuildChannelContextCondenserInput;
   readonly compactionIds?: readonly string[];
+  /** Rehydration may preserve the durable identity instead of minting a new id. */
+  readonly viewId?: string;
   readonly now?: string;
+  readonly lineage?: {
+    readonly store: Pick<RunStore, "upsertConversationContextViewLineage">;
+    readonly lineageKey: string;
+    readonly threadId?: string;
+    readonly sourceItemId?: string;
+    readonly expectedCurrentViewId?: string;
+  };
 }
 
 export function buildChannelContextView(input: BuildChannelContextViewInput): ChannelContextView {
   const createdAt = input.now ?? new Date().toISOString();
-  const id = createChannelContextViewId();
+  const id = input.viewId ?? createChannelContextViewId();
   const keptSources: ChannelContextSource[] = [];
   const dropped: ChannelContextDroppedSource[] = [...(input.dropped ?? [])];
   for (const source of input.sources ?? []) {
@@ -76,7 +87,7 @@ export function buildChannelContextView(input: BuildChannelContextViewInput): Ch
       }
     : undefined;
 
-  return {
+  const view: ChannelContextView = {
     id,
     kind: input.kind,
     workspaceId: input.workspaceId,
@@ -110,6 +121,18 @@ export function buildChannelContextView(input: BuildChannelContextViewInput): Ch
       } : undefined,
     },
   };
+  if (input.lineage && typeof input.lineage.store.upsertConversationContextViewLineage === "function") {
+    recordContextViewLineage({
+      store: input.lineage.store,
+      view,
+      lineageKey: input.lineage.lineageKey,
+      ...(input.lineage.threadId ? { threadId: input.lineage.threadId } : {}),
+      ...(input.lineage.sourceItemId ? { sourceItemId: input.lineage.sourceItemId } : {}),
+      ...(input.lineage.expectedCurrentViewId ? { expectedCurrentViewId: input.lineage.expectedCurrentViewId } : {}),
+      now: createdAt,
+    });
+  }
+  return view;
 }
 
 export function createChannelContextViewId(): string {

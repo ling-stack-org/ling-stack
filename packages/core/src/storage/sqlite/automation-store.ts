@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { SQLOutputValue } from "node:sqlite";
 import { DEFAULT_WORKSPACE_ID } from "../../workspace-types.js";
 import { automationDraftToCreateRequest, validateAutomationDraft } from "../../automation-drafts.js";
 import { readAutomationContextItemBudget } from "../../automation-context-budget.js";
@@ -22,9 +23,16 @@ import {
   type UpdateAutomationDraftInput,
   type UpdateAutomationRunInput,
 } from "../../automation-types.js";
+import type {
+  AutomationMonitorSnapshot,
+  RecordAutomationMonitorSnapshotInput,
+  RecordAutomationMonitorSnapshotResult,
+} from "../../automation-monitor-types.js";
+import { serializeAutomationMonitorSnapshot } from "../../automation-monitor-types.js";
 import {
   nullableUpdate,
   omitUndefined,
+  parseJsonObject,
   readNullableString,
   rollbackOwnedSqliteTransaction,
   stringifyJson,
@@ -33,11 +41,13 @@ import {
   mapAutomationDefinition,
   mapAutomationDraft,
   mapAutomationRun,
+  mapAutomationMonitorSnapshot,
 } from "./automation-mappers.js";
 import {
   automationDefinitionSelectSql,
   automationDraftSelectSql,
   automationRunSelectSql,
+  automationMonitorSnapshotSelectSql,
 } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
 
@@ -168,6 +178,9 @@ export class SqliteAutomationStore {
     }
     if (options.scheduledOnly) {
       clauses.push("json_extract(trigger_json, '$.type') = 'schedule'");
+    }
+    if (options.timerOnly) {
+      clauses.push("json_extract(trigger_json, '$.type') IN ('schedule', 'monitor')");
     }
     const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
     params.push(limit);
@@ -658,6 +671,63 @@ export class SqliteAutomationStore {
       );
     }
     return stored;
+  }
+
+  getAutomationMonitorSnapshot(automationId: string): AutomationMonitorSnapshot | undefined {
+    const row = this.context.database
+      .prepare(automationMonitorSnapshotSelectSql("WHERE automation_id = ?"))
+      .get(automationId);
+    return row ? mapAutomationMonitorSnapshot(row as Record<string, SQLOutputValue>) : undefined;
+  }
+
+  recordAutomationMonitorSnapshot(
+    input: RecordAutomationMonitorSnapshotInput,
+    now: string,
+  ): RecordAutomationMonitorSnapshotResult {
+    if (!/^[\x00-\x7F]+$/.test(input.automationId) || !/^[a-f0-9]{64}$/.test(input.fingerprint)) {
+      throw new Error("Invalid automation monitor snapshot identity");
+    }
+    const snapshotJson = serializeAutomationMonitorSnapshot(input.snapshot);
+    if (snapshotJson.length > 512_000) {
+      throw new Error("Automation monitor snapshot is too large");
+    }
+    this.context.database.exec("BEGIN IMMEDIATE");
+    try {
+      const previousRow = this.context.database
+        .prepare(automationMonitorSnapshotSelectSql("WHERE automation_id = ?"))
+        .get(input.automationId);
+      const previous = previousRow
+        ? mapAutomationMonitorSnapshot(previousRow as Record<string, SQLOutputValue>)
+        : undefined;
+      if (previous?.fingerprint === input.fingerprint) {
+        this.context.database.exec("COMMIT");
+        return { changed: false, previous, snapshot: previous };
+      }
+      this.context.database
+        .prepare(`
+          INSERT INTO automation_monitor_snapshots (automation_id, fingerprint, snapshot_json, updated_at)
+          VALUES (?, ?, ?, ?)
+          ON CONFLICT(automation_id) DO UPDATE SET
+            fingerprint = excluded.fingerprint,
+            snapshot_json = excluded.snapshot_json,
+            updated_at = excluded.updated_at
+        `)
+        .run(input.automationId, input.fingerprint, snapshotJson, now);
+      this.context.database.exec("COMMIT");
+      return {
+        changed: true,
+        previous,
+        snapshot: {
+          automationId: input.automationId,
+          fingerprint: input.fingerprint,
+          snapshot: parseJsonObject(snapshotJson),
+          updatedAt: now,
+        },
+      };
+    } catch (error) {
+      rollbackOwnedSqliteTransaction(this.context.database);
+      throw error;
+    }
   }
 
   private writeAutomationDraft(draft: AutomationDraft): void {

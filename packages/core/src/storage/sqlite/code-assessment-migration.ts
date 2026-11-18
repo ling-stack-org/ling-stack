@@ -1,8 +1,8 @@
 import type { DatabaseSync } from "node:sqlite";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 
-export const CODE_ASSESSMENT_MIGRATION_VERSION = 223;
-export const CODE_ASSESSMENT_LIFECYCLE_MIGRATION_VERSION = 224;
+export const CODE_ASSESSMENT_MIGRATION_VERSION = 230;
+export const CODE_ASSESSMENT_LIFECYCLE_MIGRATION_VERSION = 231;
 const migrationName = "code_assessments";
 const definitions = [
   `CREATE TABLE code_assessment_snapshots (
@@ -102,7 +102,7 @@ function applyCodeAssessmentLifecycleMigration(input: Parameters<typeof applyCod
 
 function applyCodeAssessmentHistoryFiltersMigration(input: Parameters<typeof applyCodeAssessmentMigration>[0]): void {
   const db = input.database;
-  const version = 226;
+  const version = 233;
   const name = "code_assessment_history_filters";
   const indexes = [
     "CREATE INDEX code_assessment_target_history ON code_assessments(json_extract(body_json,'$.target.type'),created_at DESC,id DESC)",

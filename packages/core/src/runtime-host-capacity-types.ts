@@ -2,6 +2,9 @@ import type { HostRunCapacityIntent, HostRunCapacityReservation, HostRunCapacity
 import type { HostOperationSource } from "./host-operation-journal-types.js";
 import type { UserInputContinuationClaim, UserInputSnapshotRef } from "./user-input-host-continuation-types.js";
 
+/** Host-only callbacks revalidate persisted source and SDK input; callers supply no capacity authority fields. */
+export type RuntimeHostCapacityNodeRerunTargetInput = import("./node-rerun-store-types.js").ReadNodeRerunTargetReadinessInput;
+
 export interface RuntimeHostCapacityApprovalResumePendingInput {
   readonly checkpointId: string;
   readonly expectedCheckpointRevision: number;
@@ -51,6 +54,14 @@ export interface RuntimeHostCapacityReleaseRecord {
 
 export type PrepareRuntimeHostCapacityAttemptResult =
   | { readonly status: "prepared" | "duplicate"; readonly record: RuntimeHostCapacityIntentRecord }
+  | { readonly status: "changed" };
+
+export type PrepareRuntimeHostCapacityNodeRerunResourcesResult =
+  | { readonly status: "admitted" | "duplicate"; readonly record: RuntimeHostCapacityIntentRecord }
+  | { readonly status: "changed" };
+
+export type ConsumeRuntimeHostCapacityNodeRerunDispatchResult =
+  | { readonly status: "consumed" }
   | { readonly status: "changed" };
 
 export type PrepareRuntimeHostCapacityWorkflowStartResult = PrepareRuntimeHostCapacityAttemptResult;

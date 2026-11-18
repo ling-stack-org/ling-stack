@@ -1,8 +1,48 @@
 # Scoped macOS Development Packaging Review
 
-Current source prerequisite: [Assessment and Locked Use integration](#assessment-and-locked-use-integration).
+Current source prerequisite: [Main #732 integration source closure](#main-732-integration-source-closure).
 The [2026-11-03 dependency review](../../docs/release/macos-source-review-2026-11-03.md)
 and the dated reviews below retain their historical evidence and scope.
+
+## Main #732 Integration Source Closure
+
+Date: 2026-11-18. This scoped rebind follows the integration of main commit
+`bba53def82ff0278856722e793b854928e1b161d` into the code-assessment branch.
+It is limited to the fixed Office authored-source list, its digest record and
+this review narrative. It does not change Office native inputs, runtime,
+toolchain, SDK/header, signing, approval or trust fields.
+
+The AST closure uses the fixed 44 authored roots with Babel 7.29.12. It parsed
+1,855 authored files and resolved 6,147 literal authored edges with no unresolved
+imports or parse errors. Four non-literal optional/dynamic edges remain outside
+the literal closure: the signing artifact extractor's `require`, the macOS
+packaging script's dynamic import, and two optional LanceDB imports. They are
+not converted into packaging approval by this record.
+
+The fixed list contains 1,935 packaging inputs: 42 newly reachable
+authored paths, 141 changed digests including the list itself, 1,752 unchanged
+digests and no removals. The initial integration provenance review counts 116 main-tree
+bytes, 7 integrated bytes, 55 generated localization inputs, 2 branch bytes
+and the literal fixed-list update. All 15 Office native source digests are
+unchanged. The record is 260,563 bytes, below the reader's 262,144-byte bound.
+
+The review record SHA-256 is
+`dba559d7574cf707af255ec269f24e1fd31d9d976810a9ce56d8b67e1965944f`;
+the fixed-list SHA-256 is
+`577b71f79b847c24b99a6fe829a7e59f9b9fe69b80858ad92ad345698e24b4f9`;
+the fixed-order packaging aggregate is
+`5d76626c3a3ff141ef6b1eafedd5f555f2f9ec6a52fb4ae2fde5b8427ef6e988`;
+the unchanged 15-input native aggregate is
+`9c5f6a1a05fe63ab96de941432ec13166af8974ec52730934d5ac348c41a854e`.
+Aggregates encode the fixed-order `[path, sha256]` pairs as JSON plus a
+newline. The prior record SHA-256 was
+`27ebf5b1f0c9d5d498072b655cc050c440ca4f701b4e82770decdbc41d0ec4d7`.
+
+The Desktop bridge supplies a loopback Origin for absent or opaque Origin headers
+from the owned top-level file documents. The Companion request routes remain
+limited. Code assessment preparation skips lifecycle hook configuration and
+the tool-free runner policy excludes hooks at execution. These three inputs
+are captured by the same fixed source list.
 
 ## Assessment and Locked Use integration
 

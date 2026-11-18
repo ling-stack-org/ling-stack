@@ -12,6 +12,7 @@ import { applyRuntimeConcurrencyPolicyActivationMigration } from "../dist/storag
 import { applyRuntimeDelegationCapacityAdmissionMigration } from "../dist/storage/sqlite/runtime-delegation-capacity-admission-migration.js";
 import { applyRuntimeDelegationSpawnAdmissionMigration } from "../dist/storage/sqlite/runtime-delegation-spawn-admission-migration.js";
 import { dropCodeAssessmentOverlay } from "./support/code-assessment-overlay-fixture.mjs";
+import { rewindRemainingWorkSuccessors } from "./support/remaining-work-predecessor.ts";
 import { testDatabase } from "./support/sqlite-test-database.ts";
 
 type Connection = Pick<DatabaseSync, "exec" | "prepare"> & Partial<Pick<DatabaseSync, "isTransaction">>;
@@ -45,8 +46,8 @@ const record = (db: Connection) => (version: number, name: string) => db.prepare
 const input = (db: Connection, extra: Partial<MigrationInput> = {}): MigrationInput =>
   ({ database: db as DatabaseSync, hasMigration: has(db), recordMigration: record(db), ...extra });
 const migrate = (db: Connection, extra: Partial<MigrationInput> = {}) => applyRuntimeRunQueueMigration(input(db, extra));
-const schema = (db: Connection) => db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' AND name NOT LIKE 'code_assessment_%' ORDER BY type,name").all() as SchemaRow[];
-const markers = (db: Connection) => db.prepare("SELECT * FROM schema_migrations WHERE version < 223 ORDER BY version").all() as Marker[];
+const schema = (db: Connection) => db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all() as SchemaRow[];
+const markers = (db: Connection) => db.prepare("SELECT * FROM schema_migrations ORDER BY version").all() as Marker[];
 const rows = (db: Connection, name: string) => db.prepare(`SELECT * FROM ${name} ORDER BY rowid`).all();
 const changes = (db: Connection) => Number(db.prepare("SELECT total_changes() AS n").get()!.n);
 const dataTables = ["workspaces", "tasks", "run_sessions", "work_units", "work_unit_attempts", "runtime_events", "artifacts",
@@ -76,9 +77,8 @@ function fixture(t: TestContext, { installed = false } = {}) {
   store = createSqliteRunStore(cwd, paths);
   const db = testDatabase(store);
   dropCodeAssessmentOverlay(db);
-  // This suite exercises the 217/218 history in isolation. The current Core
-  // bootstrap also installs later migrations, so remove the later-owned overlays
-  // later-owned objects before taking the historical schema snapshot.
+  // Rewind later migrations before taking the historical 217/218 schema snapshot.
+  rewindRemainingWorkSuccessors(db);
   db.exec("PRAGMA foreign_keys=OFF");
   try {
     for (const table of ["node_rerun_submissions", "automation_delivery_receipts", "automation_deliveries", "automation_event_dispatches", "automation_events", "automation_event_sources"]) db.exec(`DROP TABLE IF EXISTS ${table}`);
@@ -153,6 +153,8 @@ function fixture(t: TestContext, { installed = false } = {}) {
       bootstrap.close();
       const next = createSqliteRunStore(cwd, paths);
       const nextDb = testDatabase(next);
+      dropCodeAssessmentOverlay(nextDb);
+      rewindRemainingWorkSuccessors(nextDb);
       nextDb.exec("PRAGMA foreign_keys=OFF");
       try {
         for (const table of ["node_rerun_submissions", "automation_delivery_receipts", "automation_deliveries", "automation_event_dispatches", "automation_events", "automation_event_sources"]) nextDb.exec(`DROP TABLE IF EXISTS ${table}`);

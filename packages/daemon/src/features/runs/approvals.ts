@@ -98,6 +98,7 @@ export function expireStalePendingApprovals(
     readonly runId?: string;
     readonly mediaJobId?: string;
     readonly externalWorkActionId?: string;
+    readonly nodeRerunIntentId?: string;
     readonly workflowStepId?: string;
     readonly cwd?: string;
     readonly controlPlaneEvents?: ControlPlaneEventHub;
@@ -111,6 +112,7 @@ export function expireStalePendingApprovals(
       runId: options.runId,
       mediaJobId: options.mediaJobId,
       externalWorkActionId: options.externalWorkActionId,
+      nodeRerunIntentId: options.nodeRerunIntentId,
       workflowStepId: options.workflowStepId,
       limit: 500,
     });

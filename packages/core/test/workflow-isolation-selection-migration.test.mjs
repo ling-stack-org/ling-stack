@@ -7,8 +7,8 @@ import { workflowMigrationPredecessorFixture } from "./support/workflow-migratio
 
 const table = "workflow_isolation_selections";
 const triggers = ["trg_workflow_isolation_selection_immutable", "trg_workflow_isolation_selection_retained"];
-const schema = db => db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' AND name NOT LIKE 'code_assessment_%' ORDER BY type,name").all();
-const markers = db => db.prepare("SELECT * FROM schema_migrations WHERE version < 223 ORDER BY version").all();
+const schema = db => db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all();
+const markers = db => db.prepare("SELECT * FROM schema_migrations ORDER BY version").all();
 const rows = (db, name) => db.prepare(`SELECT * FROM "${name}" ORDER BY rowid`).all();
 const exists = db => !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table);
 const snapshot = db => ({ schema: schema(db), markers: markers(db), selections: exists(db) ? rows(db, table) : [] });

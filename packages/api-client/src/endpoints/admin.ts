@@ -300,6 +300,7 @@ export const adminEndpoints = {
         cwd,
         status: options.status,
         runId: options.runId,
+        nodeRerunIntentId: options.nodeRerunIntentId,
         mediaJobId: options.mediaJobId,
         limit: options.limit,
       });

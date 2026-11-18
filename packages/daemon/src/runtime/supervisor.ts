@@ -432,7 +432,7 @@ export class RuntimeSupervisor {
       // ownership alone is not a stop/drain receipt: do not turn an unknown
       // child into a lost Attempt or release its resources through legacy
       // reconciliation. This preserves custody; it never authorizes resume.
-      if (workUnit.ownerType === "delegation_step") continue;
+      if (workUnit.ownerType === "delegation_step" || workUnit.ownerType === "node_rerun_intent") continue;
       if (workUnit.linkedRunId && store.hasRuntimeRunQueueCustody(workUnit.linkedRunId)) continue;
       const pendingAttempt = workUnit.activeAttemptId ? store.getWorkUnitAttempt(workUnit.activeAttemptId) : undefined;
       if (workUnit.linkedRunId && pendingAttempt && store.hasPendingRunTerminalIntent({ runId: workUnit.linkedRunId,

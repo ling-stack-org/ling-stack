@@ -1881,6 +1881,95 @@ Starting a step acquires a `workflow_step` lease. Duplicate starts return
 `409 resource_conflict` while the lease is active. Step `skip` and `cancel` only mutate
 workflow-step state; they do not mark linked task/run records terminal.
 
+## Automations
+
+Automation management is scoped by the required `cwd` query parameter. Management
+routes use the local workspace access checks. Event ingress is a separate
+authenticated path and never accepts a secret in the JSON payload.
+
+### List And Create Automations
+
+```text
+GET /automations?cwd=/path/to/project&status=enabled&kind=project_monitor&channelId=channel_...&includeArchived=false&scheduledOnly=true&limit=50
+POST /automations?cwd=/path/to/project
+```
+
+`GET` returns `{ cwd, automations, templates }`. `POST` accepts a validated
+automation definition and returns `201 { cwd, automation, thread }`. Supported
+automation kinds, triggers, execution policies, output policies and monitor
+conditions are defined by the contracts package; secret-like fields are rejected.
+
+### Inspect, Update, Archive, Preview, And Run An Automation
+
+```text
+GET    /automations/:automationId?cwd=/path/to/project
+PATCH  /automations/:automationId?cwd=/path/to/project
+DELETE /automations/:automationId?cwd=/path/to/project
+POST   /automations/:automationId/preview?cwd=/path/to/project
+POST   /automations/:automationId/run?cwd=/path/to/project
+```
+
+The detail response includes the automation, its source Thread and the latest
+automation runs. `DELETE` archives the definition and refreshes scheduler
+registration. `preview` builds context without starting a Run. `run` accepts an
+optional idempotency key, trigger type and scheduled time, returns `202`, and
+projects the linked public Run session. Monitor snapshots are scheduler-owned and
+cannot be supplied by HTTP callers.
+
+### Automation Drafts
+
+```text
+GET    /automation-drafts?cwd=/path/to/project&status=ready_for_confirmation&source=chat&limit=50
+POST   /automation-drafts?cwd=/path/to/project
+GET    /automation-drafts/:draftId?cwd=/path/to/project
+PATCH  /automation-drafts/:draftId?cwd=/path/to/project
+DELETE /automation-drafts/:draftId?cwd=/path/to/project
+POST   /automation-drafts/:draftId/preview?cwd=/path/to/project
+POST   /automation-drafts/:draftId/confirm?cwd=/path/to/project
+```
+
+Drafts may come from a built-in template, chat proposal or manual authoring.
+`preview` is read-only. `confirm` persists the definition and source Thread
+idempotently, then refreshes scheduler registration; a successful response
+identifies whether the draft was newly created or already confirmed.
+
+### Automation Runs And Scheduler
+
+```text
+GET  /automation-runs?cwd=/path/to/project&automationId=automation_...&runId=run_...&status=completed&limit=50
+GET  /automation-runs/:automationRunId?cwd=/path/to/project
+POST /automation-runs/:automationRunId/cancel?cwd=/path/to/project
+POST /automations/scheduler/start?cwd=/path/to/project
+GET  /automations/scheduler?cwd=/path/to/project
+POST /automations/scheduler/stop?cwd=/path/to/project
+```
+
+Run list and detail responses expose durable automation state and the linked
+public Run projection. Cancellation accepts an optional reason and is idempotent
+at the automation-run boundary. Scheduler start/stop are workspace-scoped;
+starting an already-running scheduler returns `duplicate: true`.
+
+### Automation Event Sources And Delivery Evidence
+
+```text
+GET  /automation-event-sources?cwd=/path/to/project
+POST /automation-event-sources?cwd=/path/to/project
+GET  /automation-event-sources/:sourceId?cwd=/path/to/project
+PUT  /automation-event-sources/:sourceId?cwd=/path/to/project
+POST /automation-event-sources/:sourceId/events?cwd=/path/to/project
+GET  /automation-events?cwd=/path/to/project
+GET  /automation-deliveries?cwd=/path/to/project
+POST /automation-deliveries/:deliveryId/reconcile?cwd=/path/to/project
+```
+
+Source create/update bodies contain the validated source and, for updates, an
+`expectedRevision`. Event ingress authenticates the raw request body using the
+configured source, stores the event with an idempotency identity and wakes the
+workspace worker; it returns `{ eventId, duplicate }`. Event and delivery list
+routes expose durable records. Delivery reconciliation accepts `decision` of
+`delivered`, `retry` or `failed`, a bounded `reason`, and the saved
+`expectedUpdatedAt` for compare-and-set protection.
+
 ## External Work
 
 Phase 1 adds a read-only GitHub manual import path. Phase 2 adds manual read-only
@@ -1945,6 +2034,11 @@ Response:
     "repository": "owner/repo",
     "events": ["pull_request.opened"],
     "secretRef": "env:GITHUB_TOKEN"
+  },
+  "workspace": {
+    "mode": "per_subject",
+    "gitRemoteConfigured": true,
+    "gitRemoteUrl": "git@github.com:owner/repo.git"
   },
   "secret": {
     "ref": "env:GITHUB_TOKEN",
@@ -3131,6 +3225,32 @@ The daemon loads the task and channel, rejects paused or archived channels, chec
 
 Conflicts return `409 resource_conflict` with the blocking resource in the message. v0.1 exposes conflict visibility; durable queued-attempt scheduling is a later slice.
 
+## Preview Run Policy
+
+```http
+POST /runs/policy-preview?cwd=/path/to/workspace
+Content-Type: application/json
+```
+
+The request is read-only and may include `channelId`, `taskId`, `permissionPreset`,
+`permissionMode` and an `approvalProfile`. If both a task and channel are supplied, they must
+refer to the same channel. Missing records and malformed permission values fail closed.
+
+```json
+{
+  "channelId": "channel_...",
+  "taskId": "task_...",
+  "permissionPreset": "workspace_collaboration",
+  "approvalProfile": { "mode": "strict", "requiredForTools": ["bash"] }
+}
+```
+
+The daemon resolves the effective policy with the same `resolveSessionRunPolicy` path used by
+run dispatch and returns `permissionPreset`, the resolved `permissionMode`, the effective tool
+decisions/write scope/risk notes, and `requiresConfirmation`. `full_access` always reports
+`requiresConfirmation: true`. The endpoint does not create or mutate a Run, Approval, Artifact,
+lease, or state transition. It does not check provider readiness or start a runner.
+
 ## Run Task
 
 ```http
@@ -3434,6 +3554,240 @@ continuation:
   }
 }
 ```
+
+### Prepare Node Rerun Intent
+
+```http
+POST /runs/:id/node-rerun/admission?cwd=/path/to/project
+POST /runs/:id/node-rerun/intents?cwd=/path/to/project
+GET /runs/:id/node-rerun/intents/:recordId?cwd=/path/to/project
+```
+
+These endpoints require an initialized Host Store and the local workspace Origin
+boundary. They do not initialize a cold workspace or dispatch a Provider.
+
+Admission accepts the strict `NodeRerunIntentV1` contract and returns a read-only
+Host plan when source lineage, graph, artifacts, dependencies, stop/effect facts
+and the current policy pass observation. It always reports `executionAuthorized: false`.
+
+Preparation accepts `{ intent, planFingerprint }`, where `planFingerprint` is the
+value from admission. The Host repeats observation within a SQLite writer transaction
+and stores one `prepared` record after comparing the current plan. It returns
+`NodeRerunIntentResponseV1` with HTTP `201` for creation or `200` for an identical
+retry. Both response and record report `executionAuthorized: false`. Reusing either
+the intent ID or idempotency key with different content returns `409`; source,
+policy or plan drift also returns `409` without saving a record. The plan fingerprint
+is a version check, not an execution permission.
+
+The GET endpoint returns the persisted record only under its original source Run;
+another Run receives `404`. A record survives SQLite reopen and remains prepared.
+Preparation creates no approval, target Run, WorkUnit, Attempt, lease or artifact.
+Fresh approval, target admission, downstream invalidation and dispatch are separate
+stages; this API does not yet enable node execution.
+
+### Request Node Rerun Approval
+
+```http
+POST /runs/:id/node-rerun/intents/:recordId/approval?cwd=/path/to/project
+Content-Type: application/json
+
+{}
+```
+
+The body must be an empty object. The prepared record must belong to the source
+Run in the URL and an initialized Host Store. Within one SQLite writer transaction,
+the Host revalidates the source, current policy and saved plan, then creates one
+approval with an independent generation ID, a complete consent fingerprint and a
+30-minute expiry. The approval uses `nodeRerunIntentId` as its sole owner and
+`node_rerun` as its action and payload type.
+
+The `NodeRerunApprovalResponseV1` response contains `schemaVersion: 1`,
+`kind: "node_rerun_approval_response"`, the prepared `record`, its `approval` and
+`executionAuthorized: false`. Creation returns `201`; an identical retry returns
+`200` with the same approval. Denied, cancelled or expired requests retain that
+approval and generation; a new consent cycle requires a new explicit intent.
+
+Only the local user may grant `approve_once` or deny through the existing approval
+decision endpoints. Automatic reviewers, command rules and permission-scope grants
+are unavailable. Approval records consent without creating or dispatching a target
+Run, WorkUnit, Attempt or fence, and does not resume the source Run or Workflow.
+
+Invalid bodies return `400`, a record outside the URL Run returns `404`, and source,
+policy or plan drift returns `409`. Missing or inconsistent Host storage returns
+`503`; the endpoint does not initialize a cold workspace.
+
+### Prepare Node Rerun Target
+
+```http
+POST /runs/:id/node-rerun/intents/:recordId/target?cwd=/path/to/project
+Content-Type: application/json
+
+{}
+```
+
+The body must be an empty object. The local workspace Origin boundary, initialized
+Host Store and source Run scope apply. The Host supplies the current runtime identity;
+callers cannot choose a target identity, execution input, approval or fence.
+
+Within one SQLite writer transaction, the Host verifies the saved consent basis,
+checkpoint, unexpired local `approve_once` decision and current source, graph,
+artifact, dependency, policy, stop and effect facts. The source Run must retain a
+complete, valid Pi SDK `runnerExecutionInput` matching its Task and Attempt. Only
+the Task identity is rebound; prompts, model, tools and tool order remain frozen.
+Missing or drifted snapshots block preparation instead of rebuilding live context.
+
+The Host creates an independent Task, WorkUnit, Run and Attempt/fence, stores the
+frozen execution input and records a unique consumption receipt. The original
+Run, WorkflowStep, DAG, artifacts and evaluations remain unchanged. A source
+Attempt/node permits only one unreleased target.
+
+The `NodeRerunTargetResponseV1` response contains `schemaVersion: 1`,
+`kind: "node_rerun_target_response"`, `target` and `executionAuthorized: false`.
+The target receipt includes `recordId`, `workspaceId`, `generationId`, `approvalId`,
+`source`, `runId`, `taskId`, the new `fence`, `frozenExecutionDigest` and `preparedAt`.
+Creation returns `201`; an identical retry returns `200` with the original receipt
+without consuming approval again. Neither response includes the frozen input body.
+
+Preparation acquires no execution lease or semaphore and dispatches no Provider.
+Ordinary Run execution, continuation, queue and recovery paths cannot execute this
+dedicated owner. Generation projection and dedicated execution/cancel/recovery are
+separate stages; this endpoint does not enable node execution.
+
+Invalid bodies return `400`, an intent outside the URL Run returns `404`, and
+unapproved, expired, drifted or conflicting preparation returns `409`. Missing or
+inconsistent Host storage returns `503`; a cold workspace is not initialized.
+
+### Dispatch Prepared Node Rerun Target
+
+```http
+POST /runs/:id/node-rerun/intents/:recordId/target/dispatch?cwd=/path/to/project
+Content-Type: application/json
+
+{}
+```
+
+Dispatch is a dedicated local-Origin Host receiver. It requires the prepared target,
+an initialized workspace Store and the exact source Run scope; callers cannot provide
+a Run, Attempt, fence, capacity receipt or execution input. The receiver rechecks the
+queued Run/WorkUnit, created Attempt, todo Task, frozen target lineage and the complete
+local resource group in one SQLite writer transaction. It consumes only the
+`node_rerun_target` Host gate, claims the Task and WorkUnit, writes the claim event and
+enters the existing Runner supervision path with the frozen SDK input.
+
+The first receiver returns `202` with `NodeRerunTargetDispatchResponseV1` and
+`dispatchStatus: "dispatched"`. A concurrent or repeated receiver returns the same
+durable target with `200` and `dispatchStatus: "already_dispatched"`; it never starts a
+second Attempt or consumes the ordinary queue gate. Drift before gate consumption
+returns `409` and retains the queued target, reservation and local resources for a
+retry or explicit dedicated cancellation. After gate consumption, Runner/Provider
+unknown-effect and stop handling follow the existing supervision contracts; this local
+implementation does not claim real Provider or packaged-platform acceptance.
+
+### Get Node Rerun Generation
+
+```http
+GET /runs/:id/node-rerun/intents/:recordId/generation?cwd=/path/to/project
+```
+
+This read requires the local workspace Origin boundary, an initialized Host Store
+and the original source Run scope. It does not initialize a cold workspace or start
+a runtime. A prepared intent without a target returns `404`.
+
+The `NodeRerunGenerationResponseV1` contains `schemaVersion: 1`,
+`kind: "node_rerun_generation_response"`, `generation` and `executionAuthorized: false`.
+The generation is reconstructed from the persisted intent and validated target
+receipt in one read snapshot. It binds `recordId`, `workspaceId`, `generationId`,
+`approvalId` and `graphVersionDigest`, identifies the replacement Run/Task/fence,
+lists `reusedUpstream` artifact/version/permission pins and marks only the frozen
+descendant closure as `invalidatedDownstream`. Each descendant appears once.
+
+Invalidation belongs to this generation. It does not change original WorkflowSteps,
+Runs, artifacts, evaluations or other branches, and completing the replacement does
+not start downstream work. The view reports `evidenceBasis: "frozen_target_preparation"`,
+`revalidateBeforeExecution: true`, `graphMutation: "none"`,
+`downstreamDispatch: "disabled"` and `executionAuthorized: false`. It is historical
+preparation evidence; later live policy or artifact changes cannot replace its pins
+or authorize their reuse. Dedicated execution must revalidate them.
+
+Repeated reads and SQLite reopen preserve the same projection without Store writes,
+new approvals, resources or Provider calls. Missing cwd returns `400`, unsupported
+methods return `405`, a missing or out-of-scope generation returns `404`, and cold or
+inconsistent storage returns a redacted `503`.
+
+### Cancel Prepared Node Rerun Target
+
+```http
+POST /runs/:id/node-rerun/intents/:recordId/target/cancel?cwd=/path/to/project
+Content-Type: application/json
+
+{}
+```
+
+This local-Origin endpoint requires an initialized Store and the original source
+Run scope. Its body must be an empty object. The Host captures the saved target
+fence; callers cannot substitute an execution identity.
+
+Only a never-dispatched target can be cancelled here. Under the existing SQLite
+cancellation writer fence, the Host verifies queued Run/WorkUnit, created Attempt,
+todo Task, the original preparation claim and the absence of execution, heartbeat,
+resource, Host completion/operation, native submission, Host capacity intent, tool,
+continuation and queue evidence, including historical rows. The active registry
+must also report no executor or retained callback lifetime for the exact Attempt. An expired lease or a logical terminal
+status does not establish this boundary.
+
+One transaction cancels the target identities, writes a terminal runtime audit and
+releases the source Attempt/node reservation. The audit's exact fence columns and
+SHA-256 receipt digest bind `never_dispatched` evidence; no Host completion record is
+fabricated. Missing audit, transition or release writes roll back the whole action.
+Original source results, consent and generation dependency projection remain intact.
+
+HTTP `200` returns `NodeRerunTargetCancellationResponseV1` with
+`kind: "node_rerun_target_cancellation_response"`, `schemaVersion: 1`, `cancellation`
+and `executionAuthorized: false`. The cancellation receipt contains `recordId`,
+`generationId`, `runId`, `fence`, `releasedAt`, `stopEvidence: "never_dispatched"`
+and `executionAuthorized: false`. Retries and SQLite reopen return the same receipt.
+Consent expiry and policy drift do not prevent stopping a never-dispatched target.
+
+After release, a new explicit intent and fresh approval may prepare another target;
+the old intent still returns its old target. Ordinary Run cancellation cannot release
+this reservation. Running-target cancellation, stop confirmation and execution/recovery
+remain separate stages, and this endpoint starts no runtime or Provider.
+
+Invalid bodies or missing cwd return `400`, unsupported methods return `405`, missing
+or out-of-scope intent/target returns `404`, and changed or unconfirmed execution returns
+`409` without releasing custody. Cold or inconsistent storage returns a redacted `503`.
+
+### Get Node Rerun Target Readiness
+
+```http
+GET /runs/:id/node-rerun/intents/:recordId/target/readiness?cwd=/path/to/project
+```
+
+This local-Origin read requires an initialized Store and the original source Run
+scope. One read-only SQLite snapshot verifies the saved target/consent binding,
+approval expiry, current runtime policy identity, pristine target lifecycle and
+execution/resource inventory, local callback lifetime, complete current source
+observation, saved plan/policy fingerprints and SDK input. It does not rebuild
+conversation context, start a runtime, reserve capacity or dispatch a Provider.
+
+HTTP `200` returns `NodeRerunTargetReadinessResponseV1` with `schemaVersion: 1`,
+`kind: "node_rerun_target_readiness_response"`, `readiness` and
+`executionAuthorized: false`. The readiness contains the original `target`,
+`observedAt`, `decision: "eligible_for_resource_admission" | "blocked"`, `blockers`,
+`revalidateBeforeDispatch: true` and `executionAuthorized: false`.
+
+Blockers are `target_released`, `target_not_pristine`, `approval_not_current`,
+`runtime_changed`, `source_not_current`, `source_plan_changed`,
+`frozen_execution_unavailable` and `local_execution_unconfirmed`. A blocked target
+still returns `200` so a caller can display its state. Missing cwd returns `400`,
+unsupported methods return `405`, missing or out-of-scope targets return `404`, and
+cold or inconsistent storage returns a redacted `503`.
+
+This is a current observation, not an execution permit. Eligibility can change as
+soon as the snapshot closes; dedicated resource/dispatch admission must repeat the
+checks in its writer transaction. Source/approval drift affects this read while
+the generation dependency endpoint continues to show its original frozen view.
+Ordinary queue, continuation and recovery callers remain unable to execute a rerun.
 
 ### Get Run Events
 
@@ -4580,6 +4934,7 @@ Optional query parameters:
 - `status`: one of `pending`, `approved`, `denied`, `expired`, `cancelled`.
 - `runId`: filter by run id.
 - `mediaJobId`: filter by media job id.
+- `nodeRerunIntentId`: filter by the persisted node rerun intent record ID.
 - `limit`: integer from `1` to `500`, default `100`.
 
 Response:

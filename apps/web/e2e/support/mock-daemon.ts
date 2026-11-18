@@ -7953,6 +7953,7 @@ export async function handleDaemonRoute(
           events: {
             automation_run_finished: "failures",
             automation_run_failed: "all",
+            automation_monitor_finding: "all",
             approval_required: "all",
           },
         },
@@ -7970,6 +7971,7 @@ export async function handleDaemonRoute(
           events: {
             automation_run_finished: "failures",
             automation_run_failed: "all",
+            automation_monitor_finding: "all",
             approval_required: "all",
           },
         },

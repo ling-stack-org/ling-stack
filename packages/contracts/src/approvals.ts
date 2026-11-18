@@ -18,13 +18,14 @@ export type ApprovalActionType =
   | "provider_change"
   | "workflow_step"
   | "workflow_merge"
+  | "node_rerun"
   | "mcp_tool_call"
   | "host_capability"
   | "runtime_permission_request";
 
 export const approvalActionTypes: readonly ApprovalActionType[] = [
   "read", "grep", "find", "ls", "write", "edit", "bash", "git_commit", "git_push", "external_send",
-  "deploy", "media_cost", "credential_change", "provider_change", "workflow_step", "workflow_merge",
+  "deploy", "media_cost", "credential_change", "provider_change", "workflow_step", "workflow_merge", "node_rerun",
   "mcp_tool_call", "host_capability", "runtime_permission_request",
 ];
 
@@ -103,6 +104,7 @@ export interface ApprovalRequest {
   readonly taskId?: string;
   readonly mediaJobId?: string;
   readonly externalWorkActionId?: string;
+  readonly nodeRerunIntentId?: string;
   readonly workflowStepId?: string;
   readonly channelId?: string;
   readonly toolCallId?: string;
@@ -130,6 +132,7 @@ export interface LingApprovalCheckpoint {
   readonly taskId?: string;
   readonly mediaJobId?: string;
   readonly externalWorkActionId?: string;
+  readonly nodeRerunIntentId?: string;
   readonly workflowStepId?: string;
   readonly channelId?: string;
   readonly toolCallId?: string;
@@ -162,7 +165,7 @@ export interface ApprovalDetailResponse {
   readonly postCommitEffects?: readonly {
     readonly approvalId: string;
     readonly effectKind: "decision_event" | "owner" | "control_plane_event";
-    readonly ownerKind?: "run" | "workflow_step" | "media_job" | "external_work_action";
+    readonly ownerKind?: "run" | "workflow_step" | "media_job" | "external_work_action" | "node_rerun_intent";
     readonly ownerId?: string;
     readonly status: "pending" | "claimed" | "completed" | "blocked" | "effect_unknown";
     readonly revision: number;
@@ -231,5 +234,6 @@ export interface ListApprovalsRequest {
   readonly runId?: string;
   readonly mediaJobId?: string;
   readonly externalWorkActionId?: string;
+  readonly nodeRerunIntentId?: string;
   readonly limit?: number;
 }

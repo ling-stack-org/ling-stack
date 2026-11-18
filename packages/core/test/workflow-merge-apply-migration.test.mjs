@@ -43,10 +43,11 @@ const reopen = f => {
   migrate(f.store.database);
 };
 
-async function fixture(t, { predecessor = false, terminal = false } = {}) {
+async function fixture(t, { predecessor = false, terminal = false, parents = false } = {}) {
   const f = terminal ? await workflowIsolationResultsFixture(t)
     : await workflowIsolationFixture(t, { create: false, pin: false });
   const db = f.store.database;
+  if (parents) seedParents(f);
   if (predecessor) {
     f.assertFullUpgrade = workflowMigrationPredecessorFixture(f, 208);
     assert.equal(schema(db).some(row => row.tbl_name === table), false);
@@ -162,11 +163,10 @@ test("fresh208 installs exact permit columns, unique keys, composite and immutab
 });
 
 test("actual207 upgrade preserves approval consent, immutable request, terminal evidence, lease and coordinator links", async t => {
-  const f = await fixture(t, { predecessor: true, terminal: true }), db = f.store.database;
-  seedParents(f);
+  const f = await fixture(t, { predecessor: true, terminal: true, parents: true }), db = f.store.database;
   for (const name of ["workflow_merge_approval_requests", "workflow_integration_effect_links", "workflow_integration_receipt_links", ...resultTables])
     assert.ok(rows(db, name).length > 0, `${name} must contain real predecessor data`);
-  assert.equal(f.store.getApprovalRequest(f.permitRow.approval_id).status, "approved");
+  assert.equal(db.prepare("SELECT status FROM approval_requests WHERE id=?").get(f.permitRow.approval_id).status, "approved");
   const before = snapshot(db), data = dataSnapshot(f);
   migrate(db);
   assert.deepEqual(schema(db).filter(row => row.tbl_name !== table), before.schema);
@@ -179,7 +179,10 @@ test("actual207 upgrade preserves approval consent, immutable request, terminal 
   reopen(f);
   f.assertFullUpgrade(f.store.database, installed);
   assert.deepEqual(snapshot(f.store.database).permits, installed.permits);
-  assert.deepEqual(dataSnapshot(f), data);
+  const upgradedData = { ...data, isolation: { ...data.isolation } };
+  for (const name of ["approval_requests", "approval_checkpoints"])
+    upgradedData.isolation[name] = data.isolation[name].map(row => Object.assign(Object.create(null), row, { node_rerun_intent_id: null }));
+  assert.deepEqual(dataSnapshot(f), upgradedData);
   assert.deepEqual(rows(f.store.database, table).map(row => ({ ...row })), [f.permitRow]);
 });
 
@@ -236,8 +239,7 @@ const rollbackFailures = {
 };
 for (const [failure, pattern] of Object.entries(rollbackFailures)) {
   test(`migration208 rolls back DDL, marker and predecessor writes on ${failure}`, async t => {
-    const f = await fixture(t, { predecessor: true, terminal: true }), db = f.store.database;
-    seedParents(f);
+    const f = await fixture(t, { predecessor: true, terminal: true, parents: true }), db = f.store.database;
     if (failure === "deferred-commit-fk") {
       db.exec("CREATE TABLE migration208_fault (id TEXT REFERENCES channel_workflows(id) DEFERRABLE INITIALLY DEFERRED)");
       db.exec(`CREATE TRIGGER migration208_fault_on_marker AFTER INSERT ON schema_migrations WHEN NEW.version=208

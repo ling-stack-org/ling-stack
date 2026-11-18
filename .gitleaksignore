@@ -650,6 +650,8 @@ cd9464909c2ef9eb78efa14d5143a608815b3db6:packages/core/test/support/workflow-ste
 84033c8c0370e6b6b538732c5dc6048050d733b3:packages/daemon/test/provider-runtime-consumers.test.mjs:generic-api-key:203
 84033c8c0370e6b6b538732c5dc6048050d733b3:packages/daemon/test/workspace-snapshot-queue-busy-request.test.mjs:generic-api-key:114
 bc10d5bae302476fbc3afd24f3e75e8e48a63081:packages/core/test/support/workflow-step-admission-fixture.mjs:generic-api-key:159
+6cb556893412f40de4279fd5731798af22315b24:packages/daemon/test/conversation-summary-coordinator.test.mjs:generic-api-key:426
+caebbdfa25927086fbda5f9b59973b287006c136:packages/daemon/test/conversation-summary-coordinator.test.mjs:generic-api-key:426
 
 # Synthetic credential-format redaction inputs introduced before the scanner-safe
 # fixture split; reviewed 2026-11-18 with Gitleaks v8.30.1.

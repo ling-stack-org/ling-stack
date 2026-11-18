@@ -2,12 +2,12 @@ import assert from "node:assert/strict";
 
 const tables = ["code_assessment_comments", "code_assessment_findings", "code_assessments", "code_assessment_snapshots"];
 const markers = [
-  [223, "code_assessments"], [224, "code_assessment_lifecycle"], [225, "code_assessment_comments"], [226, "code_assessment_history_filters"],
+  [230, "code_assessments"], [231, "code_assessment_lifecycle"], [232, "code_assessment_comments"], [233, "code_assessment_history_filters"],
 ];
 
-/** Remove the code-assessment overlay from an owned temporary database used by a pre-223 migration fixture. */
+/** Remove the code-assessment overlay from an owned temporary database used to exercise an older migration. */
 export function dropCodeAssessmentOverlay(database) {
-  const markerRows = database.prepare("SELECT version,name FROM schema_migrations WHERE version>=223 ORDER BY version").all();
+  const markerRows = database.prepare("SELECT version,name FROM schema_migrations WHERE version BETWEEN 230 AND 233 ORDER BY version").all();
   assert.deepEqual(markerRows.map(({ version, name }) => [version, name]), markers);
   for (const table of tables) assert.equal(database.prepare(`SELECT COUNT(*) AS n FROM "${table}"`).get().n, 0, `${table} must be empty`);
   database.exec("PRAGMA foreign_keys=OFF");

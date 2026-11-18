@@ -1,17 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createSqliteRunStore } from "../dist/index.js";
+import { rewindRemainingWorkSuccessors } from "./support/remaining-work-predecessor.ts";
 import { applyWorkflowTemplateRegistryMigration, WORKFLOW_TEMPLATE_REGISTRY_MIGRATION_VERSION }
   from "../dist/storage/sqlite/workflow-template-registry-migration.js";
-import { at, businessSnapshot, fixture, markers as allMarkers, persistSkill, registrySnapshot, registryTables, registryTriggers,
-  registrySuccessorTables, removeRegistryOverlay, rows, saveInput, schema as allSchema } from "./support/workflow-template-registry-fixture.mjs";
+import { at, businessSnapshot, fixture, markers, persistSkill, registrySnapshot, registryTables, registryTriggers,
+  registrySuccessorTables, removeRegistryOverlay, rows, saveInput, schema } from "./support/workflow-template-registry-fixture.mjs";
 
 const has = db => version => !!db.prepare("SELECT 1 FROM schema_migrations WHERE version=?").get(version);
 const record = db => (version, name) => db.prepare("INSERT INTO schema_migrations(version,name,applied_at) VALUES(?,?,?)").run(version, name, at(0));
 const migrate = (db, extra = {}) => applyWorkflowTemplateRegistryMigration({ database: db,
   hasMigration: has(db), recordMigration: record(db), ...extra });
-const schema = db => allSchema(db).filter(row => !row.name.startsWith("code_assessment"));
-const markers = db => allMarkers(db).filter(row => row.version < 223);
 const snapshot = db => ({ schema: schema(db), markers: markers(db), workspaces: rows(db, "workspaces"),
   ...Object.fromEntries(registryTables.filter(name => db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name))
     .map(name => [name, rows(db, name)])) });
@@ -26,7 +25,10 @@ function rejectUnchanged(f, pattern, extra = {}, reopen = true) {
   assert.deepEqual(snapshot(f.db), before);
   assert.deepEqual(businessSnapshot(f.db), data);
   if (reopen) {
-    assert.throws(() => createSqliteRunStore(f.root, f.paths), pattern);
+    let unexpected;
+    try { assert.throws(() => { unexpected = createSqliteRunStore(f.root, f.paths); }, pattern); }
+    finally { unexpected?.close(); }
+    rewindRemainingWorkSuccessors(f.db);
     assert.deepEqual(snapshot(f.db), before);
     assert.deepEqual(businessSnapshot(f.db), data);
   }
@@ -35,7 +37,7 @@ function rejectUnchanged(f, pattern, extra = {}, reopen = true) {
 test("fresh Core installs migration212 with exact owned tables, foreign keys and immutable retention guards", t => {
   const f = fixture(t, { fresh: true }), db = f.db;
   assert.equal(WORKFLOW_TEMPLATE_REGISTRY_MIGRATION_VERSION, 212);
-  assert.equal(db.prepare("SELECT MAX(version) AS v FROM schema_migrations").get().v, 226);
+  assert.equal(db.prepare("SELECT MAX(version) AS v FROM schema_migrations").get().v, 233);
   assert.deepEqual(db.prepare("SELECT version,name FROM schema_migrations WHERE version=212 OR name='workflow_template_registry'").all()
     .map(row => ({ ...row })), [{ version: 212, name: "workflow_template_registry" }]);
   assert.deepEqual(schema(db).filter(owned).map(row => row.name).sort(), [...registryTables, ...registryTriggers].sort());
@@ -92,7 +94,7 @@ test("Core constructor alone upgrades a real211 database exactly once", t => {
   const installed = snapshot(f.db);
   assert.deepEqual(installed.schema.filter(row => !owned(row) && !successorOwned(row)), before.schema);
   assert.deepEqual(installed.markers.filter(row => row.version < 212), before.markers);
-  assert.equal(installed.markers.at(-1).version, 222);
+  assert.equal(installed.markers.at(-1).version, 233);
   assert.deepEqual(installed.schema, fullSchema);
   assert.deepEqual(markerIdentity(f.db), fullMarkers);
   for (const table of registrySuccessorTables) assert.deepEqual(rows(f.db, table), []);

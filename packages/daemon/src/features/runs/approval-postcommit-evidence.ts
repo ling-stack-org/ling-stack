@@ -62,6 +62,8 @@ function verifyApprovalOwnerEvidence(store: RunStore, approval: ApprovalRequest)
     } catch { return blocked("approval_workflow_merge_evidence_unverified"); }
   }
   if (approval.externalWorkActionId) return verifyExternalWorkEvidence(store, approval);
+  if (approval.nodeRerunIntentId || approval.actionType === "node_rerun" || approval.payload.type === "node_rerun")
+    return verifyNodeRerunApprovalEvidence(store, approval);
   if (approval.mediaJobId) return verifyMediaEvidence(store, approval);
 
   if (approval.runId) {
@@ -76,6 +78,20 @@ function verifyApprovalOwnerEvidence(store: RunStore, approval: ApprovalRequest)
   }
 
   return applied("approval_owner_applied");
+}
+
+function verifyNodeRerunApprovalEvidence(store: RunStore, approval: ApprovalRequest): ApprovalPostCommitEvidence {
+  try {
+    const current = store.getApprovalRequest(approval.id);
+    const basis = store.getNodeRerunApprovalBasis(approval.id);
+    if (!basis || !current || current.status !== approval.status || current.nodeRerunIntentId !== approval.nodeRerunIntentId)
+      return blocked("approval_node_rerun_binding_invalid");
+    if (current.status === "pending") return pending("approval_node_rerun_pending");
+    if (current.status === "approved" && (current.decisionKind !== "approve_once" || current.resolvedBy !== "local-user"
+      || !current.resolvedAt || !Number.isFinite(Date.parse(current.resolvedAt)) || Date.parse(current.resolvedAt) < Date.parse(basis.createdAt)
+      || Date.parse(current.resolvedAt) >= Date.parse(basis.expiresAt))) return blocked("approval_node_rerun_decision_invalid");
+    return applied("approval_node_rerun_decision_recorded");
+  } catch { return blocked("approval_node_rerun_binding_invalid"); }
 }
 
 function verifyRunEvidence(store: RunStore, approval: ApprovalRequest): ApprovalPostCommitEvidence {

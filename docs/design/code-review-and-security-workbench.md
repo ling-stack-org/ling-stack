@@ -309,10 +309,10 @@ callbacks and cancellation before the second Run-ready callback cannot admit ext
 
 ## Storage And API
 
-SQLite migration 221 creates `code_assessment_snapshots`, `code_assessments` and
+SQLite migration 230 creates `code_assessment_snapshots`, `code_assessments` and
 `code_assessment_findings`, with history/ownership indexes and a unique active-assessment
-index. Migration 222 adds lifecycle/metrics projections to existing JSON rows; migration
-223 adds digest-bound finding comments and their ownership index; migration 224 indexes
+index. Migration 231 adds lifecycle/metrics projections to existing JSON rows; migration
+232 adds digest-bound finding comments and their ownership index; migration 233 indexes
 history and finding filters. Migration shape and marker checks are fail-closed and idempotent. Creation stores
 snapshot and assessment in one transaction. Finalization binds the Run and digest and
 stores all findings in one transaction. A duplicate or invalid insert rolls back the

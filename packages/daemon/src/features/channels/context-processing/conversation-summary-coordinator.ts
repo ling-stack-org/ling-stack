@@ -11,6 +11,7 @@ import type {
   ConversationItemV1,
 } from "@ling-stack/contracts";
 import { estimateTextTokens } from "../context-packs.js";
+import { redactEvidenceText } from "./evidence.js";
 import {
   buildConversationContextProjection,
   type ConversationContextProjection,
@@ -386,7 +387,7 @@ function chunkSummaryItems(items: readonly ConversationItemV1[], tokenBudget: nu
 }
 
 export function renderSummaryItem(item: ConversationItemV1, tokenBudget?: number): string {
-  const text = itemText(item).replace(/\s+/gu, " ").trim();
+  const text = redactEvidenceText(itemText(item)).replace(/\s+/gu, " ").trim();
   const rendered = `[${item.sequence}] ${item.actorType} ${item.kind} ${item.id}: ${text}`;
   return tokenBudget ? truncateTextToTokenBudget(rendered, tokenBudget) : rendered;
 }
@@ -450,7 +451,7 @@ function normalizeDraft(
   tokenBudget: number,
 ): ConversationSummaryDraft {
   const normalized = {
-    ...(draft.objective?.trim() ? { objective: draft.objective.trim().slice(0, 2_000) } : {}),
+    ...(draft.objective?.trim() ? { objective: redactEvidenceText(draft.objective).trim().slice(0, 2_000) } : {}),
     decisions: normalizeStrings(draft.decisions, 100),
     constraints: normalizeStrings(draft.constraints, 100),
     openQuestions: normalizeStrings(draft.openQuestions, 100),
@@ -467,7 +468,7 @@ function normalizeDraft(
 }
 
 function normalizeStrings(values: readonly string[], limit: number): string[] {
-  return [...new Set(values.map((value) => value.trim()).filter(Boolean))]
+  return [...new Set(values.map((value) => redactEvidenceText(value).trim()).filter(Boolean))]
     .slice(0, limit)
     .map((value) => value.slice(0, 2_000));
 }

@@ -16,6 +16,9 @@ test("assessment policy removes every executable tool surface after ordinary inj
   const calls: string[] = [];
   const options = {
     tools: ["read", "write"], mcpTools: ["mcp"], hostCapabilityTools: ["host"], mediaGenerationTools: ["media"],
+    hooks: { schemaVersion: 1, digest: `sha256:${"a".repeat(64)}`, hooks: [
+      { id: "start", event: "run_start", kind: "script", code: "return undefined;" },
+    ] },
     initialToolSurface: { toolHydration: true, mediaGeneration: true, userInput: true, delegation: true, nativeFileCreate: true },
     runtimeToolFeatures: { requestPermissions: true, unifiedExec: true, shellSnapshot: true },
     onReadonlyToolCall: () => calls.push("readonly"), onMcpToolCall: () => calls.push("mcp"), onDelegationToolCall: () => calls.push("delegation"),
@@ -25,6 +28,7 @@ test("assessment policy removes every executable tool surface after ordinary inj
   assert.deepEqual(restricted.tools, []); assert.deepEqual(restricted.mcpTools, []); assert.deepEqual(restricted.hostCapabilityTools, []); assert.deepEqual(restricted.mediaGenerationTools, []);
   assert.deepEqual(restricted.initialToolSurface, { toolHydration: false, mediaGeneration: false, userInput: false, delegation: false, nativeFileCreate: false });
   assert.deepEqual(restricted.runtimeToolFeatures, { requestPermissions: false, unifiedExec: false, shellSnapshot: false });
+  assert.equal(restricted.hooks, undefined);
   assert.equal(restricted.onReadonlyToolCall, undefined); assert.equal(restricted.onMcpToolCall, undefined); assert.equal(restricted.onDelegationToolCall, undefined); assert.equal(restricted.onUserInputRequest, undefined);
   assert.equal((await restricted.onToolBefore?.({} as never))?.allowed, false); assert.deepEqual(calls, []);
 });

@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
-import { realpathSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, sep } from "node:path";
+import { basename, dirname, join, sep } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { rewindNodeRerunApprovalFixture, rewindNodeRerunApprovalFixtureWithinTransaction } from "./node-rerun-approval-predecessor.ts";
 
 // Explicit ownership: dropping these empty tables also removes their listed indexes and triggers.
 const overlays = [
@@ -52,19 +54,46 @@ const overlays = [
     indexes: ["idx_automation_event_pending", "idx_automation_event_rate", "idx_automation_delivery_pending"], triggers: [] },
   { version: 222, name: "create_node_rerun_submissions_and_goal_supervision",
     tables: ["node_rerun_submissions"], indexes: [], triggers: [] },
-  { version: 223, name: "code_assessments",
+  { version: 225, name: "persist_rebuildable_context_view_lineage",
+    tables: ["conversation_context_view_lineage"],
+    indexes: ["idx_context_view_lineage_source", "idx_context_view_lineage_view"], triggers: [] },
+  { version: 226, name: "node_rerun_intents", tables: ["node_rerun_intents"], indexes: [], triggers: [] },
+  { version: 230, name: "code_assessments",
     tables: ["code_assessment_snapshots", "code_assessments", "code_assessment_findings"],
     indexes: ["code_assessment_active", "code_assessment_history", "code_assessment_findings_owner"], triggers: [] },
-  { version: 224, name: "code_assessment_lifecycle", tables: [], indexes: [], triggers: [] },
-  { version: 225, name: "code_assessment_comments", tables: ["code_assessment_comments"],
+  { version: 231, name: "code_assessment_lifecycle", tables: [], indexes: [], triggers: [] },
+  { version: 232, name: "code_assessment_comments", tables: ["code_assessment_comments"],
     indexes: ["code_assessment_comments_finding"], triggers: [] },
-  { version: 226, name: "code_assessment_history_filters", tables: [],
+  { version: 233, name: "code_assessment_history_filters", tables: [],
     indexes: ["code_assessment_target_history", "code_assessment_snapshot_history", "code_assessment_status_history",
       "code_assessment_updated_history", "code_assessment_finding_filters"], triggers: [] },
 ];
 const schema = db => db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all();
 const markers = db => db.prepare("SELECT * FROM schema_migrations ORDER BY version").all();
 const identity = rows => rows.map(({ version, name }) => ({ version, name }));
+function rewoundComparisonDatabase(db) {
+  // The production fixture uses WAL. node:sqlite cannot deserialize a WAL
+  // image into another connection, so materialize a consistent rollback-mode
+  // copy before applying the historical rewind.
+  const comparisonRoot = mkdtempSync(join(tmpdir(), "ling-migration-comparison-"));
+  const comparisonPath = join(comparisonRoot, "comparison.sqlite");
+  const escapedPath = comparisonPath.replaceAll("'", "''");
+  try {
+    db.exec(`VACUUM INTO '${escapedPath}'`);
+    const comparison = new DatabaseSync(comparisonPath);
+    const close = comparison.close.bind(comparison);
+    comparison.close = () => {
+      try { close(); }
+      finally { rmSync(comparisonRoot, { recursive: true, force: true }); }
+    };
+    comparison.exec(`PRAGMA foreign_keys=${db.prepare("PRAGMA foreign_keys").get().foreign_keys}`);
+    rewindNodeRerunApprovalFixture(comparison);
+    return comparison;
+  } catch (error) {
+    rmSync(comparisonRoot, { recursive: true, force: true });
+    throw error;
+  }
+}
 
 /** Remove only known empty overlays from an owned temporary fixture. */
 function removeOwnedOverlays(f, version) {
@@ -78,27 +107,32 @@ function removeOwnedOverlays(f, version) {
   assert.equal(db.isTransaction, false, "fixture must not adopt a caller transaction");
   assert.ok(overlays.some(overlay => overlay.version === version), "migration needs an explicit ownership inventory");
   const removed = overlays.filter(overlay => overlay.version >= version), tables = removed.flatMap(overlay => overlay.tables);
-  const fullSchema = schema(db), fullMarkers = markers(db);
-  assert.deepEqual(identity(fullMarkers.filter(row => row.version >= version)), identity(removed),
-    "later migration markers must match the explicit overlay inventory");
   const objects = new Map(removed.flatMap(overlay => [
     ...overlay.tables.map(name => [name, "table"]), ...overlay.indexes.map(name => [name, "index"]),
     ...overlay.triggers.map(name => [name, "trigger"]),
   ]));
-  for (const [name, type] of objects) {
-    const object = fullSchema.find(row => row.name === name);
-    assert.equal(object?.type, type, `expected owned ${type}: ${name}`);
-    assert.ok(tables.includes(object.tbl_name), `unexpected overlay owner: ${name}`);
-  }
-  for (const object of fullSchema.filter(row => tables.includes(row.tbl_name)))
-    assert.ok(objects.has(object.name), `unexpected overlay object: ${object.name}`);
-  for (const table of tables)
-    assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM "${table}"`).get().n, 0, `${table} must be empty`);
-
   const foreignKeys = db.prepare("PRAGMA foreign_keys").get().foreign_keys;
-  db.exec("PRAGMA foreign_keys=OFF");
+  const legacyAlter = db.prepare("PRAGMA legacy_alter_table").get().legacy_alter_table;
+  let fullSchema, fullMarkers;
+  db.exec("PRAGMA foreign_keys=OFF"); db.exec("PRAGMA legacy_alter_table=ON");
   try {
     db.exec("BEGIN IMMEDIATE");
+    // The current constructor installs the later F5 overlays after the
+    // historical workflow range. Rewind them in this transaction so any
+    // predecessor validation failure restores the exact original fixture.
+    rewindNodeRerunApprovalFixtureWithinTransaction(db);
+    fullSchema = schema(db); fullMarkers = markers(db);
+    assert.deepEqual(identity(fullMarkers.filter(row => row.version >= version)), identity(removed),
+      "later migration markers must match the explicit overlay inventory");
+    for (const [name, type] of objects) {
+      const object = fullSchema.find(row => row.name === name);
+      assert.equal(object?.type, type, `expected owned ${type}: ${name}`);
+      assert.ok(tables.includes(object.tbl_name), `unexpected overlay owner: ${name}`);
+    }
+    for (const object of fullSchema.filter(row => tables.includes(row.tbl_name)))
+      assert.ok(objects.has(object.name), `unexpected overlay object: ${object.name}`);
+    for (const table of tables)
+      assert.equal(db.prepare(`SELECT COUNT(*) AS n FROM "${table}"`).get().n, 0, `${table} must be empty`);
     for (const overlay of [...removed].reverse()) {
       for (const table of [...overlay.tables].reverse()) db.exec(`DROP TABLE "${table}"`);
       assert.equal(db.prepare("DELETE FROM schema_migrations WHERE version=? AND name=?").run(overlay.version, overlay.name).changes, 1);
@@ -111,7 +145,7 @@ function removeOwnedOverlays(f, version) {
   } catch (error) {
     if (db.isTransaction) db.exec("ROLLBACK");
     throw error;
-  } finally { db.exec(`PRAGMA foreign_keys=${foreignKeys}`); }
+  } finally { db.exec(`PRAGMA legacy_alter_table=${legacyAlter}`); db.exec(`PRAGMA foreign_keys=${foreignKeys}`); }
   assert.equal(db.prepare("PRAGMA foreign_keys").get().foreign_keys, foreignKeys);
   return { fullSchema, fullMarkers, objects, removed, tables };
 }
@@ -120,19 +154,28 @@ function removeOwnedOverlays(f, version) {
 export function workflowMigrationPredecessorFixture(f, version) {
   const { fullSchema, fullMarkers } = removeOwnedOverlays(f, version);
   return (upgradedDb, installed) => {
-    const laterTables = overlays.filter(overlay => overlay.version > version).flatMap(overlay => overlay.tables);
-    assert.deepEqual(schema(upgradedDb).filter(row => !laterTables.includes(row.tbl_name)),
-      installed.schema.filter(row => !laterTables.includes(row.tbl_name)),
-      "constructor upgrade must preserve every single-migration schema object");
-    assert.deepEqual(markers(upgradedDb).filter(row => row.version <= version),
-      installed.markers.filter(row => row.version <= version),
-      "constructor upgrade must preserve every installed marker, including its timestamp");
-    assert.deepEqual(schema(upgradedDb), fullSchema, "constructor must restore the exact complete overlay schema");
-    assert.deepEqual(identity(markers(upgradedDb)), identity(fullMarkers), "constructor must install every later marker exactly once");
-    for (const table of laterTables)
-      assert.equal(upgradedDb.prepare(`SELECT COUNT(*) AS n FROM "${table}"`).get().n, 0, `${table} must remain empty`);
-    assert.equal(upgradedDb.prepare("PRAGMA foreign_keys").get().foreign_keys, 1);
-    assert.deepEqual(upgradedDb.prepare("PRAGMA foreign_key_check").all(), []);
+    const comparisonDb = rewoundComparisonDatabase(upgradedDb);
+    try {
+      const laterTables = overlays.filter(overlay => overlay.version > version).flatMap(overlay => overlay.tables);
+      if (installed.markers.some(row => row.version === 227)) {
+        assert.deepEqual(schema(upgradedDb), installed.schema, "constructor must preserve the fully installed schema");
+      } else {
+        assert.deepEqual(schema(comparisonDb).filter(row => !laterTables.includes(row.tbl_name)),
+          installed.schema.filter(row => !laterTables.includes(row.tbl_name)),
+          "constructor upgrade must preserve every single-migration schema object");
+      }
+      assert.deepEqual(markers(comparisonDb).filter(row => row.version <= version),
+        installed.markers.filter(row => row.version <= version),
+        "constructor upgrade must preserve every installed marker, including its timestamp");
+      assert.deepEqual(schema(comparisonDb), fullSchema, "constructor must restore the exact complete overlay schema");
+      assert.deepEqual(identity(markers(comparisonDb)), identity(fullMarkers), "constructor must install every later marker exactly once");
+      for (const table of laterTables)
+        assert.equal(comparisonDb.prepare(`SELECT COUNT(*) AS n FROM "${table}"`).get().n, 0, `${table} must remain empty`);
+      assert.equal(comparisonDb.prepare("PRAGMA foreign_keys").get().foreign_keys, 1);
+      assert.deepEqual(comparisonDb.prepare("PRAGMA foreign_key_check").all(), []);
+      assert.equal(upgradedDb.prepare("PRAGMA foreign_keys").get().foreign_keys, 1);
+      assert.deepEqual(upgradedDb.prepare("PRAGMA foreign_key_check").all(), []);
+    } finally { comparisonDb.close(); }
   };
 }
 
@@ -140,13 +183,18 @@ export function workflowMigrationPredecessorFixture(f, version) {
 export function removeWorkflowMigrationOverlaysForLegacyFixture(f) {
   const { fullSchema, fullMarkers, objects, removed, tables } = removeOwnedOverlays(f, 204);
   return upgradedDb => {
-    assert.deepEqual(schema(upgradedDb).filter(row => objects.has(row.name)), fullSchema.filter(row => objects.has(row.name)));
-    assert.deepEqual(identity(markers(upgradedDb).filter(row => row.version >= 204)), identity(removed));
-    assert.deepEqual(identity(markers(upgradedDb).filter(row => row.version >= 204)),
-      identity(fullMarkers.filter(row => row.version >= 204)));
-    for (const table of tables)
-      assert.equal(upgradedDb.prepare(`SELECT COUNT(*) AS n FROM "${table}"`).get().n, 0, `${table} must remain empty`);
-    assert.equal(upgradedDb.prepare("PRAGMA foreign_keys").get().foreign_keys, 1);
-    assert.deepEqual(upgradedDb.prepare("PRAGMA foreign_key_check").all(), []);
+    const comparisonDb = rewoundComparisonDatabase(upgradedDb);
+    try {
+      assert.deepEqual(schema(comparisonDb).filter(row => objects.has(row.name)), fullSchema.filter(row => objects.has(row.name)));
+      assert.deepEqual(identity(markers(comparisonDb).filter(row => row.version >= 204)), identity(removed));
+      assert.deepEqual(identity(markers(comparisonDb).filter(row => row.version >= 204)),
+        identity(fullMarkers.filter(row => row.version >= 204)));
+      for (const table of tables)
+        assert.equal(comparisonDb.prepare(`SELECT COUNT(*) AS n FROM "${table}"`).get().n, 0, `${table} must remain empty`);
+      assert.equal(comparisonDb.prepare("PRAGMA foreign_keys").get().foreign_keys, 1);
+      assert.deepEqual(comparisonDb.prepare("PRAGMA foreign_key_check").all(), []);
+      assert.equal(upgradedDb.prepare("PRAGMA foreign_keys").get().foreign_keys, 1);
+      assert.deepEqual(upgradedDb.prepare("PRAGMA foreign_key_check").all(), []);
+    } finally { comparisonDb.close(); }
   };
 }

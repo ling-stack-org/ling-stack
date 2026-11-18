@@ -2,6 +2,7 @@ export * from "./runtime-paths.js";
 export * from "./code-assessment-store.js";
 export type * from "./code-assessment-comments.js";
 export * from "./automation-recurrence.js";
+export * from "./automation-monitor-types.js";
 export * from "./harness/common.js";
 export * from "./harness/continuations.js";
 export * from "./harness/tool-executions.js";
@@ -92,6 +93,7 @@ export * from "./channel-session-types.js";
 export * from "./runtime-resource-renewal.js";
 export * from "./channel-session-types.js";
 export * from "./runtime-supervisor-types.js";
+export * from "./node-rerun-store-types.js";
 export * from "./runtime-concurrency-policy.js";
 export * from "./runtime-run-queue-types.js";
 export * from "./runtime-host-capacity-types.js";
@@ -145,6 +147,7 @@ export * from "./external-work.js";
 export * from "./external-work-actions.js";
 export * from "./external-work-ci-triage.js";
 export * from "./external-work-scheduler.js";
+export * from "./external-work-source-registry.js";
 export * from "./work-item-types.js";
 export * from "./terminal-report-types.js";
 export * from "./terminal-report-validation.js";
@@ -192,6 +195,7 @@ export * from "./user-input-continuation-types.js";
 export * from "./user-input-host-continuation-types.js";
 export * from "./conversation-thread-topology-types.js";
 export * from "./conversation-context-store-types.js";
+export { SqliteConversationContextViewLineageStore } from "./storage/sqlite/conversation-context-view-lineage-store.js";
 export {
   isChannelMessageConversationItem,
   projectConversationItemToChannelMessage,

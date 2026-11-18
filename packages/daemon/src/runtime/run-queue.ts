@@ -5,6 +5,7 @@ import { RuntimeHostCapacityBridge, type HostRunCapacityStore,
   type RuntimeHostCapacityDispatchReference, type RuntimeHostCapacityJournal,
   type RuntimeHostCapacityApprovalResumePendingInput,
   type RuntimeHostCapacityUserInputPendingInput } from "@ling-stack/core/runtime-host-capacity-store-bridge";
+import type { RuntimeHostCapacityNodeRerunTargetInput } from "@ling-stack/core";
 import type { ExecuteRunRequestOptions } from "../features/runs/orchestrator.js";
 import type { ActiveRunRegistry } from "./active-runs.js";
 import type { RuntimeSupervisor } from "./supervisor.js";
@@ -27,8 +28,20 @@ export interface RuntimeHostCapacityAdmission {
   reserveUserInputContinuation(input: RuntimeHostCapacityUserInputPendingInput & { readonly workspaceId: string }):
     | { readonly status: "reserved" | "duplicate"; readonly reference: RuntimeHostCapacityDispatchReference }
     | { readonly status: "full" | "unconfigured" | "changed" };
+  reserveNodeRerunTarget(input: RuntimeHostCapacityNodeRerunTargetInput & { readonly workspaceId: string }):
+    | { readonly status: "reserved" | "duplicate"; readonly reference: RuntimeHostCapacityDispatchReference }
+    | { readonly status: "full" | "unconfigured" | "changed" | "retained" };
+  admitNodeRerunResources(input: RuntimeHostCapacityNodeRerunTargetInput & { readonly workspaceId: string }):
+    | { readonly status: "admitted" | "duplicate"; readonly reference: RuntimeHostCapacityDispatchReference }
+    | { readonly status: "changed" };
   getAttemptReference(input: { readonly workspaceId: string; readonly source: HostOperationSource }):
     { readonly reference: RuntimeHostCapacityDispatchReference; readonly dispatched: boolean } | undefined;
+  /**
+   * Read a durable dispatch fact after the live reservation has been released.
+   * This is a receipt only; it never grants capacity or execution authority.
+   */
+  readonly getDispatchedAttemptReference?: (input: { readonly workspaceId: string; readonly source: HostOperationSource }) =>
+    { readonly reference: RuntimeHostCapacityDispatchReference; readonly dispatchedAt: string; readonly releasedAt?: string } | undefined;
   consumeDispatch(input: { readonly workspaceId: string; readonly source: HostOperationSource;
     readonly reference: RuntimeHostCapacityDispatchReference; readonly now: string }): boolean;
   reserve(input: { readonly workspaceId: string; readonly source: HostOperationSource; readonly now: string }):
@@ -44,6 +57,7 @@ export interface RuntimeHostCapacityAdmission {
     | { readonly status: "reserved" | "duplicate"; readonly reference: RuntimeHostCapacityDispatchReference }
     | { readonly status: "full" | "unconfigured" | "changed" };
   releaseNoDispatch(input: { readonly workspaceId: string; readonly intentId: string; readonly now: string }): boolean;
+  readonly releaseNodeRerunNoDispatch?: (input: { readonly workspaceId: string; readonly recordId: string; readonly now: string }) => boolean;
   releaseStopped(input: { readonly workspaceId: string; readonly source: HostOperationSource;
     readonly intentId: string; readonly now: string }): boolean;
 }
@@ -79,10 +93,34 @@ export function createRuntimeHostCapacityAdmission(input: {
     reserveUserInputContinuation({ workspaceId, ...pending }) {
       return reservedReference(bridgeFor(workspaceId).reserveUserInputContinuation(pending));
     },
+    reserveNodeRerunTarget({ workspaceId, ...input }) {
+      const result = bridgeFor(workspaceId).reserveNodeRerunTarget(input);
+      if (result.status === "reserved" || result.status === "duplicate") {
+        const dispatchToken = result.record.dispatchToken;
+        if (!result.record.reservation || !dispatchToken) return { status: "changed" } as const;
+        return { status: result.status, reference: { intentId: result.record.intent.intentId, dispatchToken } };
+      }
+      return { status: result.status };
+    },
+    admitNodeRerunResources({ workspaceId, ...input }) {
+      const result = bridgeFor(workspaceId).admitNodeRerunResources(input);
+      if ((result.status === "admitted" || result.status === "duplicate") && result.record.intent && result.record.dispatchToken) {
+        return { status: result.status, reference: { intentId: result.record.intent.intentId, dispatchToken: result.record.dispatchToken } };
+      }
+      return { status: "changed" } as const;
+    },
     getAttemptReference({ workspaceId, source }) {
       const record = input.workspace(workspaceId).getAttemptIntent(source);
       if (!record?.reservation || !record.dispatchToken || record.revokedAt || input.workspace(workspaceId).getRelease(record.intent.intentId)) return undefined;
       return { reference: { intentId: record.intent.intentId, dispatchToken: record.dispatchToken }, dispatched: !!record.dispatchedAt };
+    },
+    getDispatchedAttemptReference({ workspaceId, source }) {
+      const workspace = input.workspace(workspaceId);
+      const record = workspace.getAttemptIntent(source);
+      if (!record?.reservation || !record.dispatchToken || !record.dispatchedAt || record.revokedAt) return undefined;
+      const release = workspace.getRelease(record.intent.intentId);
+      return { reference: { intentId: record.intent.intentId, dispatchToken: record.dispatchToken },
+        dispatchedAt: record.dispatchedAt, ...(release ? { releasedAt: release.createdAt } : {}) };
     },
     consumeDispatch({ workspaceId, source, reference, now }) {
       return input.workspace(workspaceId).consumeDispatchGate({ intentId: reference.intentId, token: reference.dispatchToken, source, now });
@@ -127,6 +165,15 @@ export function createRuntimeHostCapacityAdmission(input: {
       const journal = input.workspace(workspaceId), prepared = journal.prepareNoDispatchRelease({ intentId, now });
       if (prepared.status === "changed") return false;
       const released = bridgeFor(workspaceId).flushRelease(intentId, now);
+      if (released) input.onReleased?.();
+      return released;
+    },
+    releaseNodeRerunNoDispatch({ workspaceId, recordId, now }) {
+      const journal = input.workspace(workspaceId), record = journal.getNodeRerunUndispatchedCapacity(recordId, now);
+      if (!record || !record.reservation) return false;
+      const prepared = journal.prepareNoDispatchRelease({ intentId: record.intent.intentId, now });
+      if (prepared.status === "changed") return false;
+      const released = bridgeFor(workspaceId).flushRelease(record.intent.intentId, now);
       if (released) input.onReleased?.();
       return released;
     },

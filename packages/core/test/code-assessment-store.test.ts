@@ -127,7 +127,7 @@ test("lifecycle migration backfills persisted records without inventing executio
   };
   try {
     applyCodeAssessmentMigration(input);
-    database.exec("DELETE FROM schema_migrations WHERE version=224");
+    database.exec("DELETE FROM schema_migrations WHERE version=231");
     database.prepare("INSERT INTO code_assessment_snapshots VALUES (?,?,?)").run(snapshot.id, snapshot.digest, JSON.stringify(snapshot));
     database.prepare("INSERT INTO code_assessments VALUES (?,?,?,?,?,?)").run("legacy", "review", "completed", snapshot.id, now, JSON.stringify({ id: "legacy", status: "completed", updatedAt: now }));
     applyCodeAssessmentMigration(input);
@@ -136,7 +136,7 @@ test("lifecycle migration backfills persisted records without inventing executio
     assert.equal(saved.metrics.timeToSummaryMs, undefined);
     assert.ok(saved.metrics.snapshotBytes > 0);
     assert.equal(saved.validation.state, "inconclusive");
-    database.exec("UPDATE schema_migrations SET name='foreign' WHERE version=224");
+    database.exec("UPDATE schema_migrations SET name='foreign' WHERE version=231");
     assert.throws(() => applyCodeAssessmentMigration(input), /lifecycle_marker_conflict/u);
   } finally { database.close(); }
 });
@@ -153,7 +153,7 @@ test("migration is atomic, idempotent and rejects marker/schema conflicts", () =
     assert.equal(database.prepare("SELECT COUNT(*) AS count FROM schema_migrations").get()?.count, 3);
     database.exec("DROP INDEX code_assessment_active");
     assert.throws(() => applyCodeAssessmentMigration(input), /migration_incomplete/u);
-    database.exec("UPDATE schema_migrations SET name='conflict' WHERE version=223");
+    database.exec("UPDATE schema_migrations SET name='conflict' WHERE version=230");
     assert.throws(() => applyCodeAssessmentMigration(input), /migration_marker_conflict/u);
   } finally { database.close(); }
 });
@@ -217,12 +217,12 @@ test("history index migration upgrades populated assessments and rejects incompl
   try {
     applyCodeAssessmentMigration(input);
     for (const index of ["target_history", "snapshot_history", "status_history", "updated_history", "finding_filters"]) database.exec(`DROP INDEX code_assessment_${index}`);
-    database.exec("DELETE FROM schema_migrations WHERE version=226");
+    database.exec("DELETE FROM schema_migrations WHERE version=233");
     database.prepare("INSERT INTO code_assessment_snapshots VALUES (?,?,?)").run(snapshot.id, snapshot.digest, JSON.stringify(snapshot));
     database.prepare("INSERT INTO code_assessments VALUES (?,?,?,?,?,?)").run("existing", "review", "completed", snapshot.id, now, JSON.stringify({ id: "existing", target: snapshot.target, snapshotDigest: snapshot.digest, updatedAt: now }));
     applyCodeAssessmentMigration(input); applyCodeAssessmentMigration(input);
     assert.equal(database.prepare("SELECT COUNT(*) AS count FROM code_assessments").get()?.count, 1);
-    assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=226").get()?.name, "code_assessment_history_filters");
+    assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=233").get()?.name, "code_assessment_history_filters");
     const plan = database.prepare("EXPLAIN QUERY PLAN SELECT id FROM code_assessments WHERE json_extract(body_json,'$.target.type')=? ORDER BY created_at DESC,id DESC").all("working_tree");
     assert.ok(plan.some(row => String(row.detail).includes("code_assessment_target_history")));
     database.exec("DROP INDEX code_assessment_updated_history");
