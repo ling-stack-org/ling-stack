@@ -121,6 +121,6 @@ function redactSecretAssignments(value: string): string {
 
 function isTokenCountAssignment(prefix: string, assignedValue: string): boolean {
   const key = prefix.match(/["'`]?([A-Za-z_][A-Za-z0-9_.-]*)["'`]?\s*[:=]\s*$/)?.[1];
-  if (!key || !/(?:^|[_-])tokens?$/iu.test(key)) return false;
+  if (!key || (!/tokens$/iu.test(key) && !/(?:^|[_-])tokens?$/iu.test(key))) return false;
   return /^\s*\d+(?:\.\d+)?(?:\s*\/\s*\d+(?:\.\d+)?)?\s*$/u.test(assignedValue);
 }

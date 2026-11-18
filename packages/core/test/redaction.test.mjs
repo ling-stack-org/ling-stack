@@ -80,6 +80,10 @@ test("authorization modes remain usable while authorization credentials are reda
 test("token-count prose remains intact while singular token assignments are redacted", () => {
   assert.equal(redactSecrets("Estimated input tokens: 420/31232\nTotal tokens: 436"),
     "Estimated input tokens: 420/31232\nTotal tokens: 436");
+  assert.equal(redactSecrets('maxTokens: 16384\ncontextWindowTokens: 32768'),
+    'maxTokens: 16384\ncontextWindowTokens: 32768');
   assert.equal(redactSecrets("token: bearer-secret"), "token: [REDACTED]");
   assert.equal(redactSecrets("tokens: bearer-secret"), "tokens: [REDACTED]");
+  assert.equal(redactSecrets("maxTokens: bearer-secret"), "maxTokens: [REDACTED]");
+  assert.equal(redactSecrets("accessToken: 123"), "accessToken: [REDACTED]");
 });
