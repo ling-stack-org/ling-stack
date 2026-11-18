@@ -517,7 +517,7 @@ monitor timer fires
 -> compare with last durable monitor fingerprint
 -> unchanged or nonmatching: skip or record noop; store a changed nonmatching snapshot
 -> changed and matching: admit a normal Run for this poll slot
--> after its own Run is linked: advance fingerprint, link finding artifact and journal finding
+-> attach finding artifact to its own Run; advance fingerprint and journal finding once linked
 -> admission fails or is occupied: retain the previous fingerprint for the next poll
 ```
 

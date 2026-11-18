@@ -24,10 +24,10 @@ product decisions. A row is not complete merely because its source code exists l
 | Plan branch cut | `origin/main@81f216d7de8211257448451ddfecde94fcf0ec63` | Refreshed on 2026-11-18 before continuing the target work |
 | Main currently integrated locally | `origin/main@81f216d7de8211257448451ddfecde94fcf0ec63` | Target starts at this mainline commit; no target-branch merge is claimed |
 | Historical target remote state | No `origin/codex/remaining-work-implementation` ref and no target PR | This is the M0 snapshot; it does not describe the current execution branch |
-| Current execution branch | `codex/automations-p2-completion`, PR #732 open | Pushed from the isolated implementation worktree; root `codex/ling-companion` WIP remains separate |
-| Current PR state | [#732](https://github.com/ling-stack-org/ling-stack/pull/732) open | Hosted checks/review and merge are pending; no deployment is claimed |
+| Current execution branch | `codex/automations-p2-completion`, PR #732 | Pushed from the isolated implementation worktree; root `codex/ling-companion` WIP remains separate |
+| Current PR state | [#732](https://github.com/ling-stack-org/ling-stack/pull/732) | GitHub records checks, review and merge for the delivery head |
 | Deployment state | None | No source, package, daemon, or provider deployment is claimed |
-| CI state for current target | Hosted CI pending on PR #732 | Local checks remain separate from hosted CI |
+| CI state for current target | Hosted CI recorded on PR #732 | Local checks remain separate from hosted CI |
 | Latest observed main CI | GitHub Actions run `43986644173`, event `dynamic`, branch `main`, conclusion `success` | This is a mainline observation and does not validate the target branch |
 
 ### Remote PR audit snapshot
@@ -43,7 +43,7 @@ The following states were read from the GitHub pull request records on 2026-11-1
 | #695 | `codex/f5-rerun-contract` | merged | `542d8a451` | F5 contract preflight is merged |
 | #698 | `codex/f5-host-observation` | merged | `93fea5080` | Host admission observation is merged |
 | #714 | `codex/agent-capabilities` | open | — | Must not be described as merged; review/CI and the open findings remain external dependencies |
-| current execution branch | `codex/automations-p2-completion` | PR #732 open | head read from GitHub at each gate | Current F5, External Work, context, automation and plan changes are reviewable; merge and deployment remain open |
+| current execution branch | `codex/automations-p2-completion` | PR #732 | head read from GitHub at each gate | Current F5, External Work, context, automation and plan changes are reviewable; merge evidence and deployment evidence are tracked separately |
 
 The merge status above distinguishes “source merged” from “deployed,” “packaged,” and “field accepted.”
 The PR records are evidence for the listed PRs only; they do not close the M0 owner, platform, or decision gates.
@@ -216,5 +216,5 @@ stop-confirmation and A17/A18 evidence. The F5 receiver keeps the durable dispat
 receipt read-only after release, preserves fail-closed unknown-outcome behavior, and does not open
 ordinary multi-agent write concurrency.
 
-Until that evidence exists, the branch remains source-complete for the recorded local slices only. PR #732
-is open, the branch is not a release candidate, and no deployment is claimed.
+PR #732 carries the recorded local slices. Release Candidate and deployment still require
+their separate platform, Provider and operational evidence.
