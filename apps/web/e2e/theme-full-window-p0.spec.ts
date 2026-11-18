@@ -9,7 +9,7 @@ import { openMediaJobs } from "./support/media-jobs-fixtures";
 
 const photo = await readFile(new URL("./fixtures/fronalpstock-3840.jpg", import.meta.url));
 
-test("BG-25 themed background remains continuous through window chrome and settings", async ({ page }, testInfo) => {
+test("BG-25 ambient pages keep the backdrop while protected settings stay solid", async ({ page }, testInfo) => {
   test.setTimeout(60_000);
   await page.setViewportSize({ width: 1440, height: 960 });
   await prepare(page);
@@ -34,13 +34,11 @@ test("BG-25 themed background remains continuous through window chrome and setti
     await page.locator(`[data-theme-option-id="${themeId}"]`).click();
     await expect(page.locator("html")).toHaveAttribute("data-ui-theme", themeId);
     await expect(page.locator("html")).toHaveAttribute("data-user-background", "ready");
-    await expect(page.locator("html")).toHaveAttribute("data-ui-background-visible", "true");
-    await expect(page.locator("[data-background-layer] img")).toBeVisible();
+    await expect(page.locator("html")).toHaveAttribute("data-ui-background-visible", "false");
+    await expect(page.locator("[data-background-layer] img")).toBeHidden();
 
     const settingsMaterial = await readWindowMaterial(page, true);
-    expect(settingsMaterial.titlebarSurface).toBe(settingsMaterial.expectedTitlebar);
-    expect(settingsMaterial.titlebarLeading).toBe(settingsMaterial.expectedSidebar);
-    expect(isTransparent(settingsMaterial.settingsContent)).toBe(true);
+    expect(isTransparent(settingsMaterial.settingsContent)).toBe(false);
     expect(isTransparent(settingsMaterial.settingsCard)).toBe(false);
     await page.locator(".settings-content-stack").evaluate((element) => element.scrollTo({ top: 0 }));
     await capture(page, testInfo, `${themeId}-settings-full-window.png`);
@@ -89,29 +87,87 @@ test("BG-26 generation tasks keeps the ambient scene behind protected panels", a
   });
   await page.getByRole("button", { name: "Apply background", exact: true }).click();
   await expect(page.locator("[data-background-preview]")).toHaveAttribute("data-draft", "false");
-  await expect(page.locator("html")).toHaveAttribute("data-ui-background-visible", "true");
+  await expect(page.locator("html")).toHaveAttribute("data-ui-background-visible", "false");
 
   await page.getByRole("button", { name: "Back to app", exact: true }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-ui-background-visible", "true");
   await openMediaJobs(page);
   await expect(page.locator("html")).toHaveAttribute("data-ui-background-visible", "true");
   await expect(page.locator("[data-background-layer] img")).toBeVisible();
   await expect(page.locator(".media-jobs-page")).toBeVisible();
   const material = await page.evaluate(() => {
     const style = (selector: string): CSSStyleDeclaration => getComputedStyle(document.querySelector(selector)!);
+    const optionalStyle = (selector: string): CSSStyleDeclaration | undefined => {
+      const element = document.querySelector(selector);
+      return element ? getComputedStyle(element) : undefined;
+    };
     const probe = document.createElement("div");
-    probe.style.backgroundColor = "color-mix(in srgb, var(--ling-bg-panel) var(--user-background-workspace, 100%), transparent)";
+    probe.style.backgroundColor = "color-mix(in srgb, var(--ling-bg-panel) 34%, transparent)";
     document.body.append(probe);
     const expectedHeader = getComputedStyle(probe).backgroundColor;
     probe.remove();
     return {
       expectedHeader,
       header: style(".media-jobs-header").backgroundColor,
+      headerBorder: style(".media-jobs-header").borderBottomColor,
+      inspector: optionalStyle(".media-job-inspector")?.backgroundColor ?? null,
+      listBorder: style(".media-jobs-list-pane").borderRightColor,
       page: style(".media-jobs-page").backgroundColor,
+      sidebarBorder: style(".left-nav").borderRightColor,
+      sidebarBorderWidth: style(".left-nav").borderRightWidth,
+      headerBorderWidth: style(".media-jobs-header").borderBottomWidth,
+      listBorderWidth: style(".media-jobs-list-pane").borderRightWidth,
+      sidebarShadow: style(".left-nav").boxShadow,
+      workspaceShadow: style(".workspace").boxShadow,
     };
   });
   expect(isTransparent(material.page)).toBe(true);
   expect(material.header).toBe(material.expectedHeader);
+  expect(isTransparent(material.headerBorder)).toBe(true);
+  expect(material.headerBorderWidth).toBe("0px");
+  expect(material.inspector === null || isTransparent(material.inspector)).toBe(true);
+  expect(isTransparent(material.listBorder)).toBe(true);
+  expect(material.listBorderWidth).toBe("0px");
+  expect(material.sidebarBorderWidth).toBe("0px");
+  expect(material.sidebarShadow).toBe("none");
+  expect(material.workspaceShadow).toBe("none");
   await capture(page, testInfo, "generation-jobs-full-window.png");
+});
+
+test("BG-27 generation tasks keeps solid chrome when no backdrop is configured", async ({ page }, testInfo) => {
+  test.setTimeout(60_000);
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await prepare(page);
+
+  await openMediaJobs(page);
+  await expect(page.locator("html")).toHaveAttribute("data-ui-background-visible", "false");
+  await expect(page.locator("[data-background-layer]")).toBeHidden();
+  await expect(page.locator(".media-jobs-page")).toBeVisible();
+  const material = await page.evaluate(() => {
+    const style = (selector: string): CSSStyleDeclaration => getComputedStyle(document.querySelector(selector)!);
+    const optionalStyle = (selector: string): CSSStyleDeclaration | undefined => {
+      const element = document.querySelector(selector);
+      return element ? getComputedStyle(element) : undefined;
+    };
+    return {
+      header: style(".media-jobs-header").backgroundColor,
+      headerBorderWidth: style(".media-jobs-header").borderBottomWidth,
+      inspector: optionalStyle(".media-job-inspector")?.backgroundColor ?? null,
+      inspectorPresent: Boolean(document.querySelector(".media-job-inspector")),
+      listBorderWidth: style(".media-jobs-list-pane").borderRightWidth,
+      page: style(".media-jobs-page").backgroundColor,
+    };
+  });
+  expect(isTransparent(material.page)).toBe(false);
+  expect(isTransparent(material.header)).toBe(false);
+  expect(material.headerBorderWidth).toBe("0px");
+  if (material.inspectorPresent && material.inspector !== null) expect(isTransparent(material.inspector)).toBe(false);
+  expect(material.listBorderWidth).toBe("0px");
+  await page.setViewportSize({ width: 980, height: 680 });
+  const narrowColumns = await page.locator(".media-jobs-layout").evaluate((element) => getComputedStyle(element).gridTemplateColumns.trim().split(/\s+/u).length);
+  expect(narrowColumns).toBe(1);
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await capture(page, testInfo, "generation-jobs-solid-full-window.png");
 });
 
 async function prepare(page: Page): Promise<void> {
@@ -135,9 +191,8 @@ async function prepare(page: Page): Promise<void> {
 }
 
 async function openBackgroundSettings(page: Page): Promise<void> {
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })
-    .getByRole("button", { name: "Settings" })
-    .click();
+  const settingsButton = page.getByRole("button", { name: /^(Settings|设置)$/u }).last();
+  await settingsButton.click({ timeout: 60_000 });
   await page.getByLabel("Settings sections").getByRole("button", { name: "Interface preferences", exact: true }).click();
   await expect(page.locator("[data-background-settings]")).toBeVisible();
 }
