@@ -3,12 +3,12 @@ import type { ProviderModelCatalogManifest, ProviderModelCatalogRecord } from ".
 
 export const providerModelCatalogManifest = {
   "schemaVersion": 1,
-  "version": "models.dev:296fc0817b43",
+  "version": "models.dev:a14d28d55d3e",
   "source": "models.dev",
   "sourceUrl": "https://models.dev/api.json",
   "license": "MIT",
-  "generatedAt": "2026-11-13T14:41:55.682Z",
-  "updatedAt": "2026-11-12"
+  "generatedAt": "2026-11-18T18:53:28.136Z",
+  "updatedAt": "2026-11-17"
 } as const satisfies ProviderModelCatalogManifest;
 
 export const providerModelCatalogRecords = [
@@ -2184,6 +2184,22 @@ export const providerModelCatalogRecords = [
   },
   {
     "providerId": "google",
+    "id": "gemini-omni-flash-preview",
+    "displayName": "Gemini Omni Flash Preview",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "reasoning",
+      "vision"
+    ],
+    "contextWindow": 131072,
+    "maxTokens": 65536,
+    "updatedAt": "2026-06-30"
+  },
+  {
+    "providerId": "google",
     "id": "gemini-pro-latest",
     "displayName": "Gemini Pro Latest",
     "input": [
@@ -3993,6 +4009,56 @@ export const providerModelCatalogRecords = [
   },
   {
     "providerId": "openai",
+    "id": "gpt-6.2-astra",
+    "displayName": "GPT-6.2 Astra",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning",
+      "vision"
+    ],
+    "thinkingModes": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ],
+    "contextWindow": 1050000,
+    "maxTokens": 128000,
+    "updatedAt": "2026-11-17"
+  },
+  {
+    "providerId": "openai",
+    "id": "gpt-6.2-sol",
+    "displayName": "GPT-6.2 Sol",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning",
+      "vision"
+    ],
+    "thinkingModes": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ],
+    "contextWindow": 1050000,
+    "maxTokens": 128000,
+    "updatedAt": "2026-11-17"
+  },
+  {
+    "providerId": "openai",
     "id": "gpt-daybreak-blue-latest",
     "displayName": "Daybreak Blue",
     "input": [
@@ -5738,8 +5804,8 @@ export const providerModelCatalogRecords = [
       "xhigh",
       "max"
     ],
-    "contextWindow": 256000,
-    "maxTokens": 16384,
+    "contextWindow": 1024000,
+    "maxTokens": 256000,
     "updatedAt": "2026-06-23"
   },
   {

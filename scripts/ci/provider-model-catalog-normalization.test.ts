@@ -15,6 +15,27 @@ test("catalog token limits preserve output capacity that leaves room for model i
   });
 });
 
+test("catalog token limits cap Volcengine Seed 2.1 Pro at its documented context window", () => {
+  const pro = "doubao-seed-2-1-pro-260628";
+  const feedLimit = { context: 1_024_000, output: 256_000 };
+  assert.deepEqual(normalizeModelTokenLimits(feedLimit, "volcengine", pro), {
+    contextWindow: 256_000,
+    maxTokens: 16_384,
+  });
+  assert.deepEqual(normalizeModelTokenLimits({ context: 128_000, output: 8_192 }, "volcengine", pro), {
+    contextWindow: 128_000,
+    maxTokens: 8_192,
+  });
+  assert.deepEqual(normalizeModelTokenLimits(feedLimit, "volcengine", "doubao-seed-evolving"), {
+    contextWindow: 1_024_000,
+    maxTokens: 256_000,
+  });
+  assert.deepEqual(normalizeModelTokenLimits(feedLimit, "siliconflow", pro), {
+    contextWindow: 1_024_000,
+    maxTokens: 256_000,
+  });
+});
+
 test("catalog token limits bound invalid output capacity to leave a usable input budget", () => {
   for (const [context, output, expectedOutput] of [
     [8_192, 8_192, 6_656],
