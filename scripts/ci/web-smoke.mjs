@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { lstatSync, mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -73,7 +73,7 @@ function exactPattern(file) {
 }
 
 /** @param {ReturnType<typeof planWebSmoke>} plan @param {boolean} [listOnly] */
-export function runWebSmoke(plan, listOnly = false) {
+export async function runWebSmoke(plan, listOnly = false) {
   const { qa, smoke, changed } = plan;
   const all = [...qa, ...smoke, ...changed];
   if (!all.length || new Set(all).size !== all.length || all.some(file => !specPath.test(file) || !exists(file))) {
@@ -84,27 +84,52 @@ export function runWebSmoke(plan, listOnly = false) {
     mkdirSync(directory, { recursive: true });
     writeFileSync(resolve(directory, "ci-plan.json"), JSON.stringify(plan, null, 2) + "\n");
   }
-  const groups = [
+  const production = [
     { name: "qa", files: qa, preview: true, extra: ["--grep", qaCases] },
     { name: "smoke", files: smoke, preview: true, extra: [] },
-    { name: "changed", files: changed, preview: false, extra: [] },
   ];
+  const dev = [{ name: "changed", files: changed, preview: false, extra: ["--max-failures=1"] }];
+  if (listOnly || changed.length === 0 || qa.length + smoke.length === 0) {
+    return runGroups([...production, ...dev], listOnly);
+  }
+  const devPort = Number.parseInt(process.env.LING_PLAYWRIGHT_PORT ?? "4174", 10);
+  const previewPort = String(devPort === 65535 ? devPort - 1 : devPort + 1);
+  const results = await Promise.allSettled([runGroups(production, false, previewPort), runGroups(dev, false)]);
+  for (const result of results) {
+    if (result.status === "rejected") throw result.reason;
+    if (result.value !== 0) return result.value;
+  }
+  return 0;
+}
+
+/**
+ * @param {{ name: string, files: string[], preview: boolean, extra: string[] }[]} groups
+ * @param {boolean} listOnly
+ * @param {string} [port]
+ */
+async function runGroups(groups, listOnly, port = process.env.LING_PLAYWRIGHT_PORT) {
   for (const { name, files, preview, extra } of groups) {
     if (files.length === 0) continue;
     const baselineEvidence = preview && files.some(file => baseline.includes(file) || qaSpecs.includes(file));
     console.log("Web %s (%s): %s", name, preview ? "production" : "dev", files.join(", "));
-    const result = spawnSync("corepack", ["pnpm", "exec", "playwright", "test", ...files.map(exactPattern),
-      "--reporter=line", `--output=test-results/${name}`, ...extra, ...(listOnly ? ["--list"] : [])], {
-      cwd: web, stdio: "inherit",
-      env: { ...process.env, LING_PLAYWRIGHT_PREVIEW: preview ? "1" : "0", LING_PLAYWRIGHT_REUSE_SERVER: "0",
-        LING_CAPTURE_UI2_EVIDENCE: baselineEvidence ? "1" : "0" },
+    const args = ["pnpm", "exec", "playwright", "test", ...files.map(exactPattern),
+      "--reporter=line", `--output=test-results/${name}`, ...extra, ...(listOnly ? ["--list"] : [])];
+    /** @type {Promise<number>} */
+    const exit = new Promise((resolve, reject) => {
+      const child = spawn("corepack", args, {
+        cwd: web, stdio: "inherit",
+        env: { ...process.env, LING_PLAYWRIGHT_PORT: port, LING_PLAYWRIGHT_PREVIEW: preview ? "1" : "0",
+          LING_PLAYWRIGHT_REUSE_SERVER: "0", LING_CAPTURE_UI2_EVIDENCE: baselineEvidence ? "1" : "0" },
+      });
+      child.once("error", reject);
+      child.once("close", code => resolve(code ?? 1));
     });
-    if (result.error) throw result.error;
-    if (result.status !== 0) return result.status ?? 1;
+    const status = await exit;
+    if (status !== 0) return status;
   }
   return 0;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  process.exitCode = runWebSmoke(JSON.parse(process.env.WEB_SMOKE_PLAN ?? "null"), process.argv[2] === "--list");
+  process.exitCode = await runWebSmoke(JSON.parse(process.env.WEB_SMOKE_PLAN ?? "null"), process.argv[2] === "--list");
 }
