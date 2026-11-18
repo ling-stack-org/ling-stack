@@ -306,6 +306,7 @@ import type {
   ChannelMessageRouteDecision,
   ChannelCouncilPolicy,
   ChannelUpdateInput,
+  ChannelWorkspaceBinding,
   CloneAiCouncilInput,
   AssignConversationAttachmentInput,
   ConversationAttachment,
@@ -1122,6 +1123,7 @@ export interface UpdateLingThreadConversationModeInput {
 }
 
 export interface ListLingThreadsOptions {
+  readonly offset?: number;
   readonly q?: string;
   readonly kind?: LingThreadKind;
   readonly channelId?: string;
@@ -1925,6 +1927,15 @@ export interface RunStore extends AutomationEventStore, CodeAssessmentStore, Cod
   acquireWorkspaceSnapshotFence(workspaceId: string, ownerRequestId: string, now: string): number;
   getWorkspaceSnapshotFence(workspaceId: string): { readonly epoch: number; readonly ownerRequestId?: string };
   releaseWorkspaceSnapshotFence(workspaceId: string, ownerRequestId: string, now: string, expectedEpoch?: number): boolean;
+  /** Publish the lifecycle owner's binding while its matching workspace fence is held. */
+  finalizeManagedWorktreeBindingWithinFence(input: {
+    readonly ownerKind: "channel" | "teammate";
+    readonly ownerId: string;
+    readonly binding: ChannelWorkspaceBinding | DirectWorkspaceBinding;
+    readonly ownerRequestId: string;
+    readonly expectedEpoch: number;
+    readonly now: string;
+  }): boolean;
   expireWorkspaceSnapshotManifest(id: string, now: string): WorkspaceSnapshotManifest | undefined;
   deleteWorkspaceSnapshotManifest(id: string): boolean;
   deleteWorkspaceSnapshotBlob(sha256: string): boolean;

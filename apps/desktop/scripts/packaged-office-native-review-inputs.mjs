@@ -2050,4 +2050,17 @@ export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   "packages/daemon/src/features/runs/node-rerun-stop.ts",
   "packages/daemon/src/features/runs/node-rerun-targets.ts",
   "packages/daemon/src/features/runs/thread-workspace-change-summary.ts",
+  // Managed worktree daemon imports and explicit Desktop setup authorization inputs.
+  "packages/contracts/src/worktrees.ts",
+  "packages/daemon/src/features/workspaces/routes.ts",
+  "packages/daemon/src/features/workspaces/worktree-identity.ts",
+  "packages/daemon/src/features/workspaces/worktree-initialization.ts",
+  "packages/daemon/src/features/workspaces/worktree-management.ts",
+  "packages/daemon/src/features/workspaces/worktree-mutation.ts",
+  "packages/daemon/src/features/workspaces/worktree-policy.ts",
+  "packages/daemon/src/features/workspaces/worktree-recovery.ts",
+  "packages/daemon/src/features/workspaces/worktree-retention.ts",
+  "apps/desktop/main/worktrees/client.ts",
+  "apps/desktop/main/worktrees/ipc.ts",
+  "apps/desktop/shared/worktree-capabilities.ts",
 ]);

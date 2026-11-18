@@ -4,6 +4,7 @@ import { HttpError } from "../../errors.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery, readOptionalJsonBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
+import { allowLocalWorkspaceRequest } from "../../shared/local-workspace-access.js";
 import {
   parseCompanionInteractionRequest,
   parseCompanionProactiveRequest,
@@ -25,6 +26,8 @@ export async function handleCompanionsCollection(
     writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
     return;
   }
+  if (request.method !== "GET" && !allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) return;
+
   try {
     const store = storeRegistry.getStore(cwd);
     if (request.method === "GET") {
@@ -65,6 +68,8 @@ export async function handleCompanionItem(
     writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
     return;
   }
+  if (request.method !== "GET" && !allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) return;
+
   try {
     const store = storeRegistry.getStore(cwd);
     const companion = store.getCompanion(companionId);

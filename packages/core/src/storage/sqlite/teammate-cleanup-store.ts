@@ -9,9 +9,12 @@ import {
 } from "../../workspace-types.js";
 import { parseJsonStringArray, readNullableString, readNumber, readString, stringifyJson } from "./helpers.js";
 import type { SqliteStoreContext } from "./store-context.js";
+import { parseNullableDirectWorkspaceBinding } from "./workspace-binding-parsers.js";
 
 export interface SqliteTeammateCleanupStorePorts {
   readonly getAiTeammate: (id: string) => AiTeammate | undefined;
+  readonly assertWorkspaceSnapshotFence: () => void;
+  readonly listHostCommandWriteBlockers: (cwd: string) => readonly { readonly runId: string }[];
 }
 
 export class SqliteTeammateCleanupStore {
@@ -84,6 +87,7 @@ export class SqliteTeammateCleanupStore {
 
     this.context.database.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
+      this.assertDeletionAllowed(id);
       this.context.database
         .prepare(`
           INSERT INTO retention_tombstones (
@@ -126,6 +130,33 @@ export class SqliteTeammateCleanupStore {
       throw error;
     }
     return { tombstone, deletedAttachmentPaths };
+  }
+
+  private assertDeletionAllowed(teammateId: string): void {
+    this.ports.assertWorkspaceSnapshotFence();
+    const activeRun = this.context.database.prepare(`SELECT 1 FROM run_sessions
+      WHERE teammate_id = ? AND status IN ('queued', 'running', 'waiting_for_approval') LIMIT 1`).get(teammateId);
+    if (activeRun) {
+      throw new Error("AI teammate has active runs and cannot be deleted.");
+    }
+    const directThreads = this.context.database.prepare("SELECT workspace_binding_json FROM teammate_direct_threads WHERE teammate_id = ?")
+      .all(teammateId) as Record<string, SQLOutputValue>[];
+    if (directThreads.some((row) => parseNullableDirectWorkspaceBinding(readNullableString(row, "workspace_binding_json"))?.mode === "managed_worktree")) {
+      throw new Error("AI teammate owns a managed worktree. Resolve its worktree and recovery snapshots before deleting the teammate.");
+    }
+    const runs = this.context.database.prepare("SELECT id, cwd FROM run_sessions WHERE teammate_id = ?")
+      .all(teammateId) as Record<string, SQLOutputValue>[];
+    const runIds = new Set(runs.map((row) => readString(row, "id")));
+    const paths = new Set(runs.map((row) => readString(row, "cwd")));
+    if ([...paths].some((cwd) => this.ports.listHostCommandWriteBlockers(cwd).some((blocker) => runIds.has(blocker.runId)))) {
+      throw new Error("AI teammate has unsettled host commands and cannot be deleted.");
+    }
+    const activeWork = this.context.database.prepare(`SELECT 1 FROM work_units
+      WHERE (teammate_id = ? OR id IN (SELECT work_unit_id FROM run_sessions WHERE teammate_id = ?))
+        AND status NOT IN ('succeeded', 'failed', 'cancelled') LIMIT 1`).get(teammateId, teammateId);
+    if (activeWork) {
+      throw new Error("AI teammate has unfinished work and cannot be deleted.");
+    }
   }
 }
 

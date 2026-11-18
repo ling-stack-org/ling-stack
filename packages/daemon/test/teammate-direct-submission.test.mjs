@@ -13,7 +13,7 @@ async function fixture(t) {
   const cwd = await mkdtemp(join(tmpdir(), "ling-direct-submit-http-"));
   const f = { cwd, store: createSqliteRunStore(cwd), calls: 0 };
   const config = { host: "127.0.0.1", port: 0, maxBodyBytes: 1024 * 1024 };
-  const registry = { getStore: path => { assert.equal(path, cwd); return f.store; } };
+  const registry = { getStore: path => { assert.equal(path, cwd); return f.store; }, isTrustedWorkspaceRoot: path => path === cwd };
   const reply = async input => {
     f.calls++;
     const message = input.store.createTeammateDirectMessage({ id: input.replyMessageId,

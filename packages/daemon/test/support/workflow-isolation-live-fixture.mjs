@@ -213,16 +213,12 @@ async function startChild(root, options) {
     current = s;
     await Promise.all([mkdir(s.cwd), mkdir(s.worktreeRoot)]);
     s.git = async (...args) => (await exec("/usr/bin/git", args, { cwd: s.cwd, env: process.env })).stdout.trim();
-    await s.git("init", "--initial-branch=main");
     await writeFile(join(s.cwd, ".gitignore"), `*\n!.gitignore\n${s.trackedPaths.map(path => `!${path}\n`).join("")}`);
     for (const path of s.trackedPaths) await writeFile(join(s.cwd, path), `initial ${path}\n`);
-    await s.git("add", "--", ".gitignore", ...s.trackedPaths);
-    await s.git("commit", "-m", "initial isolated live inputs");
     s.target = async () => ({ head: await s.git("rev-parse", "HEAD"),
       status: await s.git("status", "--porcelain=v1", "--untracked-files=all"),
       files: await Promise.all(s.trackedPaths.map(path => readFile(join(s.cwd, path), "utf8"))),
       ...(options.conflictRecovery ? { paths: s.trackedPaths } : {}) });
-    s.initialTarget = await s.target();
     s.upstream = await startProvider(async (body, runId) => {
       const execution = s.executions.get(runId);
       s.providerRequests.push({ runId, workflowId: execution?.workflowId, stepId: execution?.stepId, body });
@@ -300,8 +296,12 @@ async function startChild(root, options) {
     s.channel = (await s.api("/channels", { name: options.authoring ? "P4 live authored workflow" : "P3 live isolated writing siblings", status: "active", boundPath: s.cwd,
       defaultProviderPresetId: provider.id, allowedTools: tools, autoReplyMode: "mentions_only",
       runtimePolicy: { maxConcurrentRuns: 2, schedulingMode: "smart", writeLockScope: "boundPath", allowReadOnlyParallel: false, queueOnConflict: true } })).channel;
-    await s.api(`/channels/${s.channel.id}/workspace/cleanup`, {});
-    await s.api(`/channels/${s.channel.id}/workspace/handoff`, { mode: "local" });
+    assert.equal(s.channel.workspaceBinding.mode, "local");
+    // Record Local ownership before Git initialization so only workflow-owned checkouts exist.
+    await s.git("init", "--initial-branch=main");
+    await s.git("add", "--", ".gitignore", ...s.trackedPaths);
+    await s.git("commit", "-m", "initial isolated live inputs");
+    s.initialTarget = await s.target();
     for (const branch of branches) await s.api(`/teammates/${branch.participantId}/channels`, { memberships: [{ channelId: s.channel.id }] }, "PUT");
     s.source = appendChannelItemFixture(s.store, { channelId: s.channel.id, authorType: "local-user",
       body: options.conflictRecovery ? "Write competing left and right changes to shared.txt in isolated branches; retain the target."

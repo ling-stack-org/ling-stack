@@ -25,6 +25,8 @@ import { registerExecutionEngineIpc } from "./execution-engines/ipc.js";
 import { createHostExecutionEngineClient } from "./execution-engines/client.js";
 import { registerLocalFileIpc } from "./local-files/ipc.js";
 import { registerLocalServiceIpc } from "./local-services.js";
+import { registerWorktreeIpc } from "./worktrees/ipc.js";
+import { DesktopWorktreeClient } from "./worktrees/client.js";
 import { registerLockedControlIpc } from "./locked-computer-control/ipc.js";
 
 const MAX_HOST_OBSTACLES = 128;
@@ -55,6 +57,7 @@ export function registerDesktopIpc(input: {
   readonly mobileAccess?: DesktopMobileAccessCapabilities;
   readonly executionEngines?: { readonly baseUrl: string; readonly trustedDocumentUrl: string;
     readonly getAuthority: Parameters<typeof createHostExecutionEngineClient>[1] };
+  readonly worktrees?: { readonly baseUrl: string; readonly bridgeToken: string };
   readonly windowControlsEnabled?: boolean;
   readonly fixedComputerUseConversationId?: string;
   readonly ipcMainImpl?: Pick<IpcMain, "handle" | "on" | "removeHandler" | "removeAllListeners">;
@@ -68,6 +71,10 @@ export function registerDesktopIpc(input: {
     ipcMainImpl: desktopIpcMain, getMainWindow: input.getMainWindow,
     trustedDocumentUrl: input.executionEngines.trustedDocumentUrl,
     getClient: () => createHostExecutionEngineClient(input.executionEngines!.baseUrl, input.executionEngines!.getAuthority),
+  }) : undefined;
+  const unregisterWorktrees = input.worktrees && input.trustedDocumentUrl ? registerWorktreeIpc({
+    ipcMain: desktopIpcMain, getMainWindow: input.getMainWindow, trustedDocumentUrl: input.trustedDocumentUrl,
+    client: new DesktopWorktreeClient(input.worktrees),
   }) : undefined;
   const navigationIntents = input.navigationIntents ?? new DesktopNavigationIntentStore();
   const unregisterLocalServices = input.executionEngines ? registerLocalServiceIpc({
@@ -512,6 +519,7 @@ export function registerDesktopIpc(input: {
   });
   return () => {
     unregisterLockedControl();
+    unregisterWorktrees?.();
     unregisterLocalServices?.();
     unregisterLocalFiles?.();
     unregisterExecutionEngines?.();

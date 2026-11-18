@@ -33,7 +33,7 @@ import {
 
 test("channel collaboration protocol resolver API patches existing channel fields and reverts to defaults", async () => {
   const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-protocol-settings-"));
-  const daemon = await startDaemonForTest(undefined, {}, { channels: { autoRoute: false } });
+  const daemon = await startDaemonForTest(undefined, {}, { defaultWorkspaceCwd: cwd, channels: { autoRoute: false } });
   try {
     await patchJson(`${daemon.url}/workspace-settings?cwd=${encodeURIComponent(cwd)}`, {
       responseLanguage: "zh-CN",
@@ -116,7 +116,7 @@ test("channel collaboration protocol resolver API patches existing channel field
 
 test("channel collaboration protocol drafts apply protocol-only overrides with source refs", async () => {
   const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-protocol-drafts-"));
-  const daemon = await startDaemonForTest();
+  const daemon = await startDaemonForTest(undefined, {}, { defaultWorkspaceCwd: cwd });
   try {
     const first = await createChannel(daemon.url, cwd);
     const second = await createChannel(daemon.url, cwd);
@@ -227,7 +227,7 @@ test("channel collaboration protocol drafts apply protocol-only overrides with s
 
 test("channel collaboration protocol endpoints persist state and reject cross-channel sources", async () => {
   const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-protocol-api-"));
-  const daemon = await startDaemonForTest();
+  const daemon = await startDaemonForTest(undefined, {}, { defaultWorkspaceCwd: cwd });
   try {
     const first = await createChannel(daemon.url, cwd);
     const second = await createChannel(daemon.url, cwd);
@@ -317,7 +317,7 @@ test("channel collaboration protocol endpoints persist state and reject cross-ch
 
 test("concurrent decision supersession accepts one successor, reuses exact retries, and rejects conflicts", async () => {
   const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-decision-supersession-api-"));
-  const daemon = await startDaemonForTest();
+  const daemon = await startDaemonForTest(undefined, {}, { defaultWorkspaceCwd: cwd });
   try {
     const channel = await createChannel(daemon.url, cwd);
     const source = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/decisions?cwd=${encodeURIComponent(cwd)}`, {
@@ -414,7 +414,7 @@ test("concurrent decision supersession accepts one successor, reuses exact retri
 
 test("channel handoff workflows start steps, create tasks, and expose blockers", async () => {
   const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-workflows-api-"));
-  const daemon = await startDaemonForTest();
+  const daemon = await startDaemonForTest(undefined, {}, { defaultWorkspaceCwd: cwd });
   try {
     const first = await createChannel(daemon.url, cwd);
     const second = await createChannel(daemon.url, cwd);
@@ -525,7 +525,7 @@ test("manual workflow step start rejects a result after source context changes",
       stores.set(storeCwd, store);
       return store;
     },
-  });
+  }, { defaultWorkspaceCwd: cwd });
   try {
     const channel = await createWorkflowTestChannel(daemon.url, cwd, "Manual continuity workflow");
     const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
@@ -619,7 +619,7 @@ test("queued workflow runs keep private role memory out of durable snapshots", a
       stores.set(storeCwd, store);
       return store;
     },
-  });
+  }, { defaultWorkspaceCwd: cwd });
   try {
     const channel = await createWorkflowTestChannel(daemon.url, cwd, "Queued continuity workflow");
     const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
@@ -739,7 +739,7 @@ test("workflow handoff intents validate, accept, and stay visible as workflow ev
       stores.set(storeCwd, store);
       return store;
     },
-  });
+  }, { defaultWorkspaceCwd: cwd });
   try {
     const channel = await createChannel(daemon.url, cwd);
     const store = stores.get(cwd);
@@ -818,7 +818,7 @@ test("workflow collaboration card endpoints derive compact product cards", async
       stores.set(storeCwd, store);
       return store;
     },
-  });
+  }, { defaultWorkspaceCwd: cwd });
   try {
     const channel = await createChannel(daemon.url, cwd);
     const store = stores.get(cwd);
@@ -1219,7 +1219,7 @@ test(`workflow dependency compaction preserves the SDK budget gate at ${contextW
       stores.set(storeCwd, store);
       return store;
     },
-  });
+  }, { defaultWorkspaceCwd: cwd });
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd, {
       capabilities: ["chat", "reasoning", "tool_call"],
@@ -1360,7 +1360,7 @@ test(`workflow dependency compaction preserves the SDK budget gate at ${contextW
 test("workflow planning failure follows policy and blocks for user repair", async () => {
   const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-workflow-planning-failure-"));
   const runner = new SelectiveFailingRunner(["Product Discovery"]);
-  const daemon = await startDaemonForTest(runner);
+  const daemon = await startDaemonForTest(runner, {}, { defaultWorkspaceCwd: cwd });
   try {
     const channel = await createWorkflowTestChannel(daemon.url, cwd, "Planning failure workflow");
     const provider = (await createStaticChatProvider(daemon.url, cwd, {
@@ -1429,7 +1429,7 @@ test("workflow post-step gate pauses downstream steps until approval", async () 
       stores.set(storeCwd, store);
       return store;
     },
-  });
+  }, { defaultWorkspaceCwd: cwd });
   try {
     const channel = await createWorkflowTestChannel(daemon.url, cwd, "Post gate workflow");
     const provider = (await createStaticChatProvider(daemon.url, cwd, {
@@ -1504,7 +1504,7 @@ test("workflow post-step gate resumes after daemon restart when approval was gra
       stores.set(storeCwd, store);
       return store;
     },
-  });
+  }, { defaultWorkspaceCwd: cwd });
   try {
     const channel = await createWorkflowTestChannel(daemon.url, cwd, "Post gate restart workflow");
     const provider = (await createStaticChatProvider(daemon.url, cwd, {
@@ -1551,7 +1551,7 @@ test("workflow post-step gate resumes after daemon restart when approval was gra
     });
 
     await daemon.close();
-    daemon = await startDaemonForTest(runner);
+    daemon = await startDaemonForTest(runner, {}, { defaultWorkspaceCwd: cwd });
 
     const resumedTick = await postJson(`${daemon.url}/workflows/${encodeURIComponent(compiled.workflow.id)}/orchestrate?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(resumedTick.status, "started");
@@ -1569,7 +1569,7 @@ test("workflow post-step gate resumes after daemon restart when approval was gra
 test("workflow run cancellation follows default policy and blocks for user", async () => {
   const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-workflow-cancellation-policy-"));
   const runner = new DelayedRunner();
-  const daemon = await startDaemonForTest(runner);
+  const daemon = await startDaemonForTest(runner, {}, { defaultWorkspaceCwd: cwd });
   try {
     const channel = await createWorkflowTestChannel(daemon.url, cwd, "Cancellation policy workflow");
     const provider = (await createStaticChatProvider(daemon.url, cwd, {
@@ -1610,7 +1610,7 @@ test("workflow run cancellation follows default policy and blocks for user", asy
 test("workflow approval denial follows onApprovalDenied policy and blocks", async () => {
   const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-workflow-approval-denial-policy-"));
   const runner = new RecordingRunner();
-  const daemon = await startDaemonForTest(runner);
+  const daemon = await startDaemonForTest(runner, {}, { defaultWorkspaceCwd: cwd });
   try {
     const channel = await createWorkflowTestChannel(daemon.url, cwd, "Approval denial policy workflow");
     const provider = (await createStaticChatProvider(daemon.url, cwd, {
@@ -1659,7 +1659,7 @@ test("workflow skipped optional step allows downstream steps to start", async ()
       stores.set(storeCwd, store);
       return store;
     },
-  });
+  }, { defaultWorkspaceCwd: cwd });
   try {
     const channel = await createWorkflowTestChannel(daemon.url, cwd, "Skip optional workflow");
     const provider = (await createStaticChatProvider(daemon.url, cwd, {
@@ -1794,7 +1794,7 @@ test("workflow orchestrator keeps legacy independent parallel-looking branches s
 
 test("custom workflow template compiles deterministic steps and dependencies", async () => {
   const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-custom-template-"));
-  const daemon = await startDaemonForTest();
+  const daemon = await startDaemonForTest(undefined, {}, { defaultWorkspaceCwd: cwd });
   try {
     const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
       name: "Custom template",
@@ -1859,7 +1859,7 @@ test("custom workflow template compiles deterministic steps and dependencies", a
 
 test("workflow councilSlotKey resolves through attached AI council specialists", async () => {
   const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-workflow-council-slot-"));
-  const daemon = await startDaemonForTest();
+  const daemon = await startDaemonForTest(undefined, {}, { defaultWorkspaceCwd: cwd });
   try {
     const channel = await createWorkflowTestChannel(daemon.url, cwd, "Council slot workflow");
     const developmentCouncilId = "council_builtin_development";
@@ -1955,7 +1955,7 @@ test("workflow councilSlotKey resolves through attached AI council specialists",
 
 test("custom workflow template rejects cycles and unknown runners at compile time", async () => {
   const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-custom-template-invalid-"));
-  const daemon = await startDaemonForTest();
+  const daemon = await startDaemonForTest(undefined, {}, { defaultWorkspaceCwd: cwd });
   try {
     const channel = await createChannel(daemon.url, cwd);
     const cyclic = await fetch(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workflows?cwd=${encodeURIComponent(cwd)}`, {
@@ -2000,7 +2000,7 @@ test("custom workflow template rejects cycles and unknown runners at compile tim
 
 test("custom workflow template unsafe autostart requires explicit confirmation", async () => {
   const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-custom-template-autostart-"));
-  const daemon = await startDaemonForTest();
+  const daemon = await startDaemonForTest(undefined, {}, { defaultWorkspaceCwd: cwd });
   try {
     const channel = await createWorkflowTestChannel(daemon.url, cwd, "Unsafe custom template");
     const body = {
@@ -2406,7 +2406,7 @@ test("workflow dependencyMode any_succeeded can start a fan-in after mixed termi
       stores.set(storeCwd, store);
       return store;
     },
-  });
+  }, { defaultWorkspaceCwd: cwd });
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd, {
       capabilities: ["chat", "reasoning", "tool_call"],
@@ -2477,7 +2477,7 @@ test("fan-in requireAllBranchesTerminal is a scheduling barrier even with any_su
       stores.set(storeCwd, store);
       return store;
     },
-  });
+  }, { defaultWorkspaceCwd: cwd });
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd, {
       capabilities: ["chat", "reasoning", "tool_call"],
@@ -2586,7 +2586,7 @@ test("workflow fan-in creates summary artifact, memory candidate, selector decis
       stores.set(storeCwd, store);
       return store;
     },
-  });
+  }, { defaultWorkspaceCwd: cwd });
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd, {
       capabilities: ["chat", "reasoning", "tool_call"],
@@ -2678,7 +2678,7 @@ test("workflow fan-in creates summary artifact, memory candidate, selector decis
 test("workflow cancel aborts active run, queued steps, and pending workflow approvals", async () => {
   const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-workflow-cancel-"));
   const runner = new DelayedRunner();
-  const daemon = await startDaemonForTest(runner);
+  const daemon = await startDaemonForTest(runner, {}, { defaultWorkspaceCwd: cwd });
   try {
     const channel = await createWorkflowTestChannel(daemon.url, cwd, "Cancel workflow");
     const provider = (await createStaticChatProvider(daemon.url, cwd, {
@@ -2713,7 +2713,7 @@ test("workflow cancel aborts active run, queued steps, and pending workflow appr
 test("workflow step retry starts a blocked step after configuration is repaired", async () => {
   const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-workflow-retry-"));
   const runner = new RecordingRunner();
-  const daemon = await startDaemonForTest(runner);
+  const daemon = await startDaemonForTest(runner, {}, { defaultWorkspaceCwd: cwd });
   try {
     const channel = await createWorkflowTestChannel(daemon.url, cwd, "Retry workflow");
     simulateLegacyChannelWithoutModel(cwd, channel.id);
@@ -2756,7 +2756,7 @@ test("workflow step retry starts a blocked step after configuration is repaired"
 
 test("channel link preview blocks localhost targets instead of fetching them", async () => {
   const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-links-"));
-  const daemon = await startDaemonForTest();
+  const daemon = await startDaemonForTest(undefined, {}, { defaultWorkspaceCwd: cwd });
   try {
     const channel = await createChannel(daemon.url, cwd);
     const preview = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/link-previews?cwd=${encodeURIComponent(cwd)}`, {

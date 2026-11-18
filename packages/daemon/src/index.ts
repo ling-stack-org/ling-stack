@@ -166,6 +166,7 @@ import { HostCapabilityBridgeController } from "./features/runs/host-capability-
 import { executeRunRequest, type RunExecutionSink } from "./features/runs/orchestrator.js";
 import { CompanionReplyService } from "./features/companions/reply-service.js";
 import { CompanionSchedulerRegistry } from "./features/companions/scheduler.js";
+import { WorktreeMaintenanceRegistry } from "./features/workspaces/worktree-retention.js";
 import { reconcileContextViewLineagesAtStartup } from "./features/channels/context-processing/context-view-recovery.js";
 
 export { defaultDaemonConfig } from "./config.js";
@@ -392,6 +393,7 @@ export function createDaemonServer(
   let channelTurnDispatchReady = false;
   let approvalResumeCoordinator: ApprovalResumeCoordinator | undefined;
   let companionSchedulers: CompanionSchedulerRegistry | undefined;
+  const worktreeMaintenance = new WorktreeMaintenanceRegistry();
   let userInputDeliveryWorker!: UserInputDeliveryWorker;
   const answerDeliveryStores = new Set<RunStore>();
   const approvalRecoveryStores = new Set<RunStore>();
@@ -556,6 +558,7 @@ export function createDaemonServer(
     reconcileHarnessProjections(store);
     if (channelTurnDispatchReady) channelTurnDispatchWorker?.start(store);
     companionSchedulers?.start(cwd);
+    worktreeMaintenance.registerStore(cwd, store);
     if (store.listAutomationEventSources().some(source => source.enabled)) automationEvents?.start(cwd);
     taskSupervisor?.start(cwd);
     learningReviewCoordinator?.registerStore(store);
@@ -1183,6 +1186,7 @@ export function createDaemonServer(
       automationEvents.stopAll();
       taskSupervisor.stopAll();
       companionSchedulers?.stopAll();
+      worktreeMaintenance.stopAll();
     },
     abortOwned: () => {
       approvalAutoReviewRecoveryCoordinator?.abortOwned();
@@ -1197,6 +1201,7 @@ export function createDaemonServer(
       automationSchedulers.waitForIdle(), backgroundSchedulers.waitForIdle(),
       automationEvents.waitForIdle(), taskSupervisor.waitForIdle(),
       companionSchedulers?.waitForIdle() ?? Promise.resolve(),
+      worktreeMaintenance.waitForIdle(),
       providerStartupRefresh.waitForIdle(), harnessProjectionReconciler.waitForIdle(),
       harnessArtifactRetention.waitForIdle(),
       learningReviewCoordinator?.drain() ?? Promise.resolve(),

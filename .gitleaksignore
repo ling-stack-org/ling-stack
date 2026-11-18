@@ -660,3 +660,7 @@ caebbdfa25927086fbda5f9b59973b287006c136:packages/daemon/test/conversation-summa
 
 # Historical workflow idempotency fixture in a merge commit, not a credential.
 ef143ae45c701ef1ac75e64ef8926ceff5edc0da:packages/core/test/support/workflow-step-admission-fixture.mjs:generic-api-key:159
+
+# Synthetic conversation summary redaction fixture.
+bba53def82ff0278856722e793b854928e1b161d:packages/daemon/test/conversation-summary-coordinator.test.mjs:generic-api-key:426
+49c4b9be2e370fd3bf154af5a47b148033b73245:packages/daemon/test/conversation-summary-coordinator.test.mjs:generic-api-key:426

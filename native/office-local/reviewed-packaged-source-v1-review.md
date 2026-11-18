@@ -1,8 +1,33 @@
 # Scoped macOS Development Packaging Review
 
-Current source prerequisite: [Main #732 integration source closure](#main-732-integration-source-closure).
+Current source prerequisite: [Managed worktree integration source closure](#managed-worktree-integration-source-closure).
 The [2026-11-03 dependency review](../../docs/release/macos-source-review-2026-11-03.md)
 and the dated reviews below retain their historical evidence and scope.
+
+## Managed Worktree Integration Source Closure
+
+Date: 2026-11-18. This source closure binds the integrated main commit
+`a56ea0a3f8addb57667a718b33a58ad217d37e72`. The 44 authored roots resolve
+6,206 literal authored edges across 1,864 parsed files.
+The source audit found zero unresolved literal imports and zero parse errors.
+
+The fixed inputs include nine reachable managed worktree runtime sources and
+three Desktop setup authorization sources. The new routes retain workspace
+and local-origin admission. Desktop script setup uses the existing Main
+confirmation and bridge-token flow. The loopback Origin projection applies
+to the owned file documents and the configured local daemon.
+
+The 1,947 packaging inputs include 12 added paths and 91 changed digests.
+The changed entries comprise 29 exact main inputs, 6 integrated inputs,
+55 generated locale catalogs, and the fixed input list. The 15 Office
+native inputs, toolchain profiles, headers, runtime and signing entries retain
+their existing digests and values. The record occupies 262,101 of 262,144
+bytes.
+
+Record SHA-256 `fc450f98173497ea0a6c73d37d32430bc551df30ac385749284e9411496993ca`.
+Packaging aggregate `47c4de4cc5c6eb09d8bb920d1bf3cc489496fd3e6a057cde82098bddfd055252`.
+Fixed-list SHA-256 `e3f919d536dea92f7310241f91839b8897b97abd4dac94450ff7dbca4f8aad38`.
+The prior record SHA-256 was `dba559d7574cf707af255ec269f24e1fd31d9d976810a9ce56d8b67e1965944f`.
 
 ## Main #732 Integration Source Closure
 

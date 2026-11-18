@@ -1,4 +1,10 @@
 import { resolve as resolvePath } from "node:path";
+import type { WorktreePolicy } from "@ling-stack/contracts";
+import { worktreeRoot } from "../workspaces/worktree-policy.js";
+import { coordinateWorktreeMutation, type WorktreeLifecycleStore } from "../workspaces/worktree-mutation.js";
+import { actOnManagedWorktreeLocked, WorktreeActionError } from "../workspaces/worktree-management.js";
+import { listWorktreeSnapshots } from "../workspaces/worktree-recovery.js";
+import { allowLocalWorkspaceRequest } from "../../shared/local-workspace-access.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   createChannelWorkspaceSnapshot,
@@ -11,7 +17,7 @@ import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { isAllowedLocalOrigin } from "../../shared/local-workspace-access.js";
 import { openLocalDirectory } from "../../shared/local-path-open.js";
-import { readJsonBody } from "../../shared/request.js";
+import { readJsonBody, readOptionalJsonBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import { buildUnavailableWorkspaceGitStatus, inspectWorkspaceGitStatus } from "./git-status.js";
 import {
@@ -19,9 +25,9 @@ import {
   createManagedGitWorktree,
   inspectManagedWorktree,
   isWorkspaceDirectory,
-  removeManagedWorktreeIfClean,
   resolveGitRepoRoot,
 } from "../workspaces/managed-worktrees.js";
+import { resolveWorktreeSource, type ManagedWorktreeOwner } from "../workspaces/worktree-identity.js";
 
 type ChannelWorktreeTarget = Pick<Channel, "id" | "boundPath" | "workspaceBinding">;
 
@@ -47,6 +53,18 @@ export function assertChannelWorkspaceReady(channel: Channel, workspaceCwd: stri
 }
 
 export async function handleChannelWorkspace(
+  request: IncomingMessage, response: ServerResponse, config: ResolvedDaemonConfig, storeRegistry: RunStoreRegistry,
+  channelId: string, action?: "create-worktree" | "handoff" | "refresh" | "cleanup" | "git-status" | "open",
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
+  const cwd = url.searchParams.get("cwd");
+  if (cwd && request.method !== "GET" && !allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) return;
+  if (!cwd || request.method === "GET") return handleChannelWorkspaceOnce(request, response, config, storeRegistry, channelId, action);
+  const store = storeRegistry.getStore(cwd);
+  return coordinateWorktreeMutation(store, () => handleChannelWorkspaceOnce(request, response, config, storeRegistry, channelId, action));
+}
+
+async function handleChannelWorkspaceOnce(
   request: IncomingMessage,
   response: ServerResponse,
   config: ResolvedDaemonConfig,
@@ -63,6 +81,7 @@ export async function handleChannelWorkspace(
 
   try {
     const store = storeRegistry.getStore(cwd);
+    if (request.method !== "GET") store.assertWorkspaceSnapshotFence(cwd);
     const channel = store.getChannel(channelId);
     if (!channel) {
       writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${channelId}` });
@@ -122,6 +141,9 @@ export async function handleChannelWorkspace(
 
     if (action === "handoff" && request.method === "POST") {
       const body = await readJsonBody(request, config.maxBodyBytes);
+      if ((await listWorktreeSnapshots(store.paths)).some((snapshot) => snapshot.ownerKind === "channel" && snapshot.ownerId === channelId)) {
+        throw new WorktreeActionError("worktree_snapshot_pending", "请先恢复工作树快照，再切换工作区归属。");
+      }
       const binding = await readHandoffBinding(body, channel, cwd, new Date().toISOString());
       const updated = store.updateChannel(channelId, { workspaceBinding: binding }, binding.updatedAt) ?? channel;
       writeJson(response, 200, buildChannelWorkspaceResponse(cwd, updated));
@@ -129,21 +151,10 @@ export async function handleChannelWorkspace(
     }
 
     if (action === "cleanup" && request.method === "POST") {
-      const result = await cleanupManagedChannelWorktree(channel, cwd, new Date().toISOString());
-      if (!result.ok) {
-        if (result.binding) {
-          const updated = store.updateChannel(channelId, { workspaceBinding: result.binding }, result.binding.updatedAt) ?? channel;
-          writeJson(response, result.code === "worktree_dirty" ? 409 : 400, {
-            error: result.code,
-            message: result.message,
-            ...buildChannelWorkspaceResponse(cwd, updated),
-          });
-          return;
-        }
-        writeJson(response, 400, { error: result.code, message: result.message });
-        return;
-      }
-      const updated = store.updateChannel(channelId, { workspaceBinding: result.binding }, result.binding.updatedAt) ?? channel;
+      const body = await readOptionalJsonBody(request, config.maxBodyBytes);
+      await actOnManagedWorktreeLocked(store, cwd, { ownerKind: "channel", ownerId: channelId, action: "cleanup",
+        confirmed: typeof body === "object" && body !== null && "confirmed" in body && body.confirmed === true });
+      const updated = store.getChannel(channelId) ?? channel;
       writeJson(response, 200, buildChannelWorkspaceResponse(cwd, updated));
       return;
     }
@@ -153,7 +164,7 @@ export async function handleChannelWorkspace(
       const baseBranch = typeof body === "object" && body !== null && !Array.isArray(body) && typeof (body as { baseBranch?: unknown }).baseBranch === "string"
         ? (body as { baseBranch: string }).baseBranch.trim()
         : "";
-      const result = await createManagedWorktreeBinding(channel, cwd, store.paths, baseBranch || undefined);
+      const result = await createManagedWorktreeBinding(channel, cwd, store.paths, baseBranch || undefined, store.getWorkspaceSettings().worktreePolicy, store);
       if (!result.ok) {
         writeJson(response, 400, { error: result.code, message: result.message });
         return;
@@ -165,8 +176,8 @@ export async function handleChannelWorkspace(
 
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel workspace` });
   } catch (error) {
-    writeJson(response, 400, {
-      error: "bad_request",
+    writeJson(response, error instanceof WorktreeActionError ? 409 : 400, {
+      error: error instanceof WorktreeActionError ? error.code : "bad_request",
       message: error instanceof Error ? error.message : String(error),
     });
   }
@@ -278,12 +289,18 @@ export async function createManagedWorktreeBinding(
   workspaceCwd: string,
   workspacePaths: LingStackRuntimePaths,
   requestedBaseBranch?: string,
+  policy?: WorktreePolicy,
+  lifecycleStore?: WorktreeLifecycleStore,
 ): Promise<
   | { readonly ok: true; readonly binding: ChannelWorkspaceBinding }
   | { readonly ok: false; readonly code: string; readonly message: string }
 > {
   const root = channel.boundPath ?? workspaceCwd;
-  const repo = await resolveGitRepoRoot(root);
+  const owner: ManagedWorktreeOwner = { kind: "channel", id: channel.id, boundPath: channel.boundPath };
+  const repo = await resolveWorktreeSource(workspacePaths, owner, channel.workspaceBinding);
+  if (!repo.ok && (!channel.workspaceBinding || channel.workspaceBinding.mode !== "managed_worktree")) {
+    return { ok: false, code: repo.code, message: repo.message };
+  }
   if (!repo.ok) {
     return {
       ok: false,
@@ -293,15 +310,20 @@ export async function createManagedWorktreeBinding(
         : repo.message,
     };
   }
-  const repoRoot = repo.repoRoot;
+  const repoRoot = repo.ok ? repo.repoRoot : root;
   const now = new Date().toISOString();
   const branchName = `ling/channel-${channel.id}`;
-  const worktreePath = resolvePath(workspacePaths.worktreesDir, "channels", channel.id);
+  const worktreePath = (channel.workspaceBinding?.createdAt ? channel.workspaceBinding.worktreePath : undefined)
+    ?? resolvePath(worktreeRoot(workspacePaths, policy), "channels", channel.id);
   const created = await createManagedGitWorktree({
     repoRoot,
     worktreePath,
     branchName,
     requestedBaseBranch,
+    fetchBeforeCreate: policy?.fetchBeforeCreate,
+    environment: policy?.environment,
+    expectedIdentity: channel.workspaceBinding?.worktreeIdentity,
+    recovery: lifecycleStore ? { store: lifecycleStore, owner } : undefined,
   });
   if (!created.ok) {
     return { ok: false, code: created.code, message: created.message.replace("创建 worktree", "创建频道 worktree") };
@@ -310,12 +332,14 @@ export async function createManagedWorktreeBinding(
     ok: true,
     binding: {
       mode: "managed_worktree",
-      status: "ready",
+      status: created.result.initializationError ? "blocked" : "ready",
+      errorMessage: created.result.initializationError,
       executionPath: worktreePath,
       worktreePath,
+      worktreeIdentity: created.result.identity,
       branchName,
-      baseBranch: created.result.baseBranch,
-      baseCommit: created.result.baseCommit,
+      baseBranch: channel.workspaceBinding?.baseBranch ?? created.result.baseBranch,
+      baseCommit: channel.workspaceBinding?.baseCommit ?? created.result.baseCommit,
       createdAt: channel.workspaceBinding?.createdAt ?? now,
       checkedAt: now,
       updatedAt: now,
@@ -327,12 +351,14 @@ export async function createInitialChannelWorkspaceBinding(
   channel: ChannelWorktreeTarget,
   workspaceCwd: string,
   workspacePaths: LingStackRuntimePaths,
+  policy?: WorktreePolicy,
+  lifecycleStore?: WorktreeLifecycleStore,
 ): Promise<
   | { readonly ok: true; readonly binding: ChannelWorkspaceBinding }
   | { readonly ok: false; readonly code: string; readonly message: string }
 > {
   return await createInitialWorkspaceBinding({
-    createManaged: () => createManagedWorktreeBinding(channel, workspaceCwd, workspacePaths),
+    createManaged: () => createManagedWorktreeBinding(channel, workspaceCwd, workspacePaths, undefined, policy, lifecycleStore),
     createLocal: () => {
       const now = new Date().toISOString();
       const executionPath = channel.boundPath ?? workspaceCwd;
@@ -356,55 +382,6 @@ export async function createInitialChannelWorkspaceBinding(
       } as const;
     },
   });
-}
-
-async function cleanupManagedChannelWorktree(
-  channel: Channel,
-  workspaceCwd: string,
-  now: string,
-): Promise<
-  | { readonly ok: true; readonly binding: ChannelWorkspaceBinding }
-  | { readonly ok: false; readonly code: string; readonly message: string; readonly binding?: ChannelWorkspaceBinding }
-> {
-  const binding = channel.workspaceBinding;
-  if (binding?.mode !== "managed_worktree" || !binding.worktreePath) {
-    return { ok: false, code: "workspace_not_managed", message: "频道工作区不是 Ling 管理的 worktree，无法清理。" };
-  }
-  const repo = await resolveGitRepoRoot(channel.boundPath ?? workspaceCwd);
-  if (!repo.ok) {
-    return { ok: false, code: repo.code, message: repo.message };
-  }
-  const cleanup = await removeManagedWorktreeIfClean({
-    repoRoot: repo.repoRoot,
-    worktreePath: binding.worktreePath,
-  });
-  if (!cleanup.ok) {
-    const status = statusFromManagedInspection(binding, cleanup.inspection);
-    return {
-      ok: false,
-      code: cleanup.code,
-      message: cleanup.message,
-      binding: {
-        ...binding,
-        executionPath: binding.worktreePath,
-        status,
-        errorMessage: managedInspectionMessage(status, cleanup.inspection, cleanup.message),
-        checkedAt: now,
-        updatedAt: now,
-      },
-    };
-  }
-  return {
-    ok: true,
-    binding: {
-      ...binding,
-      executionPath: binding.worktreePath,
-      status: "not_created",
-      errorMessage: undefined,
-      checkedAt: now,
-      updatedAt: now,
-    },
-  };
 }
 
 function statusFromManagedInspection(binding: ChannelWorkspaceBinding, inspection: { readonly status: "ready" | "missing" | "blocked" }): ChannelWorkspaceBinding["status"] {

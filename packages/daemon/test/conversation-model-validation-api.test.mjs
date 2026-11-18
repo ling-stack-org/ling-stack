@@ -38,7 +38,7 @@ test("public channel and teammate creation require a checked chat model", async 
     capabilities: ["chat"],
     enabled: true,
   }, "2026-07-30T00:00:00.000Z");
-  const daemon = await startDaemonForTest(stores);
+  const daemon = await startDaemonForTest(stores, cwd);
   try {
     const missingChannel = await postJsonResult(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, channelInput());
     assert.equal(missingChannel.status, 400);
@@ -133,7 +133,7 @@ test("only built-in teammates may switch back to workspace default binding", asy
     providerPresetId: provider.id,
     approvalProfile: { mode: "none" },
   }, "2026-07-30T00:00:00.000Z");
-  const daemon = await startDaemonForTest(stores);
+  const daemon = await startDaemonForTest(stores, cwd);
   try {
     const builtin = store.getAiTeammate("teammate_builtin_engineer");
     const builtinResult = await patchJsonResult(`${daemon.url}/teammates/${encodeURIComponent(builtin.id)}?cwd=${encodeURIComponent(cwd)}`, {
@@ -196,8 +196,8 @@ function teammateInput(providerPresetId) {
   };
 }
 
-async function startDaemonForTest(stores) {
-  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0 }, {
+async function startDaemonForTest(stores, defaultWorkspaceCwd) {
+  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, defaultWorkspaceCwd }, {
     storeFactory: (cwd) => {
       const existing = stores.get(cwd);
       if (existing) return existing;

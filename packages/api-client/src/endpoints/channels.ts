@@ -341,8 +341,8 @@ export const channelEndpoints = {
       return this._post(`/channels/${encodeURIComponent(channelId)}/workspace/open`, { cwd });
     },
 
-  async cleanupChannelWorkspace(this: LingDaemonEndpointContext, cwd: string, channelId: string): Promise<ChannelWorkspaceMutationResponse> {
-      return this._post(`/channels/${encodeURIComponent(channelId)}/workspace/cleanup`, { cwd });
+  async cleanupChannelWorkspace(this: LingDaemonEndpointContext, cwd: string, channelId: string, input?: { readonly confirmed?: boolean }): Promise<ChannelWorkspaceMutationResponse> {
+      return this._post(`/channels/${encodeURIComponent(channelId)}/workspace/cleanup`, { cwd }, input);
     },
 
   async listChannelConversationItems(this: LingDaemonEndpointContext,

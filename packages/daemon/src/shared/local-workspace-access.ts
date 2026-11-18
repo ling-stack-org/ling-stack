@@ -34,12 +34,7 @@ export function allowLocalServiceRequest(request: IncomingMessage, response: Ser
       localOrigin = isAllowedLocalOrigin(headers.origin) && new URL(headers.origin).origin === headers.origin;
     } catch { localOrigin = false; }
   }
-  // Native Node fetch supplies mode=cors alone. Browsers also supply site metadata;
-  // reject their missing-Origin navigations/subresource requests before any effects.
-  const missingBrowserOrigin = headers.origin === undefined
-    && (Object.keys(headers).some((name) => name.startsWith("sec-fetch-") && name !== "sec-fetch-mode")
-      || (headers["sec-fetch-mode"] !== undefined && headers["sec-fetch-mode"] !== "cors"));
-  if (!isDirectLoopbackRequest(request) || !localOrigin || missingBrowserOrigin) {
+  if (!isDirectLoopbackRequest(request) || !localOrigin || hasMissingBrowserOrigin(request)) {
     writePrivateJson(response, 403, { error: "local_service_forbidden", message: "This service requires a local Ling page or authenticated daemon access." });
     return false;
   }
@@ -52,7 +47,7 @@ export function allowLocalWorkspaceRequest(input: {
   readonly storeRegistry: RunStoreRegistry;
   readonly cwd?: string;
 }): boolean {
-  if (!isAllowedLocalOrigin(input.request.headers.origin)) {
+  if (!isAllowedLocalOrigin(input.request.headers.origin) || hasMissingBrowserOrigin(input.request)) {
     writeJson(input.response, 403, {
       error: "forbidden_origin",
       message: "Workspace file actions are only available from local Ling Stack pages.",
@@ -67,4 +62,13 @@ export function allowLocalWorkspaceRequest(input: {
     return false;
   }
   return true;
+}
+
+function hasMissingBrowserOrigin(request: IncomingMessage): boolean {
+  const headers = request.headers;
+  // Native Node fetch supplies mode=cors alone. Browser navigations and subresources
+  // also carry fetch metadata and must identify their Origin before causing effects.
+  return headers.origin === undefined
+    && (Object.keys(headers).some((name) => name.startsWith("sec-fetch-") && name !== "sec-fetch-mode")
+      || (headers["sec-fetch-mode"] !== undefined && headers["sec-fetch-mode"] !== "cors"));
 }
