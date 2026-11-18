@@ -4,6 +4,11 @@ Current source prerequisite: [Companion and native runtime review](#companion-an
 The [2026-11-03 dependency review](../../docs/release/macos-source-review-2026-11-03.md)
 and the dated reviews below retain their historical evidence and scope.
 
+The merged record carries the reviewed Companion closure plus six Locked Use
+build and validation inputs from the protected-control lane, for 1,878 fixed
+packaging inputs in total. The Companion review count below remains scoped to
+its 1,872-input subset.
+
 ## Companion and native runtime review, 2026-11-17
 
 The Companion source closure retains 44 roots and contains 1,872 fixed packaging

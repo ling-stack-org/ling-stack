@@ -91,7 +91,7 @@ export function ComputerControlSettingsPage({
 
       <DesktopComputerUsePreference sectionTitle="Control preview" />
 
-      <LockAwareComputerControlSection />
+      <LockAwareComputerControlSection computerControlReady={view.phase === "ready" && view.effectiveEnabled} />
 
       <section className="computer-control-section" aria-labelledby="computer-control-advanced-title">
         <SectionHeader icon={<Cpu />} title={t("Advanced details")} id="computer-control-advanced-title" />
