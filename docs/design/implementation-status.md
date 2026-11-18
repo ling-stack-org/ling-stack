@@ -2,7 +2,7 @@
 
 Status: current planning index
 Owner: repository maintainers
-Last verified: 2026-11-18 (remaining-work implementation branch merged `origin/main@d613e0dd`; PR #732 open, with head re-read from GitHub at each hosted gate; channel reply/selector restart rehydration and workflow projection scope regressions); 2026-11-17 (Agent Execution Capabilities C1–C3, A1/A2 and R1–R3; source review/CI/merge tracked in PR #714; Desktop in-app browser M0–M5 source implementation and macOS arm64 acceptance); 2026-11-13 (F5-03 Host admission plan; F5-02 Host-backed node rerun observation; F5-01 A17 contract preflight); 2026-11-10 (safe-concurrency complete-target local verification and controlled browser acceptance; release gates open); 2026-10-31 (Memory and Skill Learning closure); 2026-10-27 (external shared skill-source decision row); 2026-10-19 (Native Execution Engines row); 2026-10-17 (P2 and bundled GStack rows); other work retains its owning plan's verification date
+Last verified: 2026-11-18 (Ling Device Support Platform, Automations P2 Run admission and historical migration verification); 2026-11-17 (Agent Execution Capabilities C1–C3, A1/A2 and R1–R3; source review/CI/merge tracked in PR #714; Desktop in-app browser M0–M5 source implementation and macOS arm64 acceptance); 2026-11-13 (F5-03 Host admission plan; F5-02 Host-backed node rerun observation; F5-01 A17 contract preflight); 2026-11-10 (safe-concurrency complete-target local verification and controlled browser acceptance; release gates open); 2026-10-31 (Memory and Skill Learning closure); 2026-10-27 (external shared skill-source decision row); 2026-10-19 (Native Execution Engines row); 2026-10-17 (P2 and bundled GStack rows); other work retains its owning plan's verification date
 Document type: governance index
 
 ## Purpose
@@ -72,6 +72,7 @@ counts, screenshots, hashes and run diaries belong in CI or Release artifacts.
 | [External Agent Skill Discovery And Adoption](external-agent-skill-discovery.md) | Approve the **Local skill folders** section, fixed `.agents/skills` scope, client-local ignore, and the P16 boundary guards before the UI slice is accepted; implementation plan tracks remaining gates |
 | [Core Tools Runtime Boundary](core-tools-runtime-boundary-implementation-plan.md) | Approve removal of built-in tools from Plugin presentation while preserving approval and diagnostics ownership |
 | [Mobile Remote Access](mobile-remote-access-implementation-plan.md) | Mobile remains outside current acceptance until explicitly reopened after security review |
+| [Ling Device Support Platform](ling-device-support-platform-implementation-plan.md) | Architecture and slice tracking are recorded; implementation remains gated by the first adapter scope, capability/approval review, and real-device acceptance evidence |
 | [Work Board Reopening](ui2.0升级/modules/14-Work-Board-implementation-plan.md) | Reopen only after workspace projection and fresh browser acceptance |
 | [Startup And Diagnostics Reopening](ui2.0升级/modules/settings/08-Startup与Diagnostics-implementation-plan.md) | Reopen only after product-copy and current-state revalidation |
 | [Workspace Tools Embedded Reopening](ui2.0升级/modules/settings/09-Workspace-Tools嵌入态-implementation-plan.md) | Reopen only after shared shell, scroll and overlay revalidation |
@@ -95,7 +96,7 @@ These are real gaps, but they must not be described as currently scheduled work.
 | [Multi-Agent Requirement Shaping](multi-agent-app-detailed-design.md) | Base shaping contract and projection exist; specialist contribution packets, collection/fan-in and detail route remain; safe concurrency is separately active above and ordinary write parallelism stays closed |
 | [Native Skill Recording](ling-native-skill-recording-p0-detailed-design.md) | Daemon, Run Inspector, artifact and Skill Library entry points exist; message-overflow source refs, Web E2E and accessibility remain |
 | [SQLite Modularization](sqlite-storage-modularization-next-slices.md) | Session/event/intervention/work-unit/semaphore/recovery stores are integrated; persistence, CAS, heartbeat, stale recovery and public API ownership verification remain |
-| [Automations](automations.md) | Durable definitions/runs, scheduler, approval and signed ingress exist; bounded monitor sources, fingerprint persistence, unchanged/no-op history, finding artifacts, monitor notifications and Web projection are locally verified and included in open [PR #732](https://github.com/ling-stack-org/ling-stack/pull/732); desktop delivery and external destinations remain |
+| [Automations](automations.md) | Durable definitions/runs, scheduler, approval and signed ingress exist; bounded monitor sources, fingerprint persistence, unchanged/no-op history, finding artifacts, monitor notifications and Web projection are locally verified. Failed or occupied Run admission leaves a matching observation eligible at the next poll. Delivery is tracked in [PR #732](https://github.com/ling-stack-org/ling-stack/pull/732); desktop delivery and external destinations remain |
 
 ## Reference Contracts, Not Separate Queues
 

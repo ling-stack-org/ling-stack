@@ -36,6 +36,14 @@ license must fail review instead of being silently accepted.
 
 ## Native And Bundled Components
 
+The macOS Locked Use subsystem derives from
+[iFurySt/open-computer-use](https://github.com/iFurySt/open-computer-use) at commit
+`e25be21caa0ea489316f6be6635d2a4766c4cd0b`, under the
+[retained MIT license](apps/desktop/native/locked-use/LICENSE). Its
+[source inventory](apps/desktop/native/locked-use/UPSTREAM.md) records imported
+paths and Ling adaptations. The standalone component build includes that license;
+these components are not included in the default Desktop release package.
+
 Repository artwork, screenshots, and font provenance are tracked separately in the
 [asset provenance inventory](docs/maintenance/asset-provenance.md). Passing the dependency
 check does not establish the origin or publication rights of every media asset.

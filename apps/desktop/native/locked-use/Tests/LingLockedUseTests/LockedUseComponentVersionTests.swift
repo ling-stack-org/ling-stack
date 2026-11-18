@@ -1,0 +1,16 @@
+import XCTest
+@testable import LingLockedUse
+
+final class LockedUseComponentVersionTests: XCTestCase {
+    func testOldDevelopmentInstallationSuggestsExplicitReinstall() {
+        let advice = LockedUseDiagnostics.versionAdvice(installed: "0.0.1", bundled: "1.1.0")
+        XCTAssertTrue(advice?.contains("signed LingLockInstaller") == true)
+        XCTAssertTrue(advice?.contains("uninstall and reinstall") == true)
+        XCTAssertTrue(advice?.contains("finish recovery first") == true)
+    }
+    func testMatchingOrUnknownVersionsDoNotSuggestReplacingComponents() {
+        XCTAssertNil(LockedUseDiagnostics.versionAdvice(installed: "1.1.0", bundled: "1.1.0"))
+        XCTAssertNil(LockedUseDiagnostics.versionAdvice(installed: nil, bundled: "1.1.0"))
+        XCTAssertNil(LockedUseDiagnostics.versionAdvice(installed: "0.0.1", bundled: nil))
+    }
+}

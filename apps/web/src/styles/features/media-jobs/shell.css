@@ -83,6 +83,10 @@
   overflow: hidden;
 }
 
+.media-jobs-layout-empty {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .media-jobs-list-pane {
   min-width: 0;
   min-height: 0;
@@ -91,9 +95,17 @@
   overscroll-behavior: contain;
 }
 
+.media-jobs-layout-empty .media-jobs-list-pane {
+  border-right: 0;
+}
+
 @media (max-width: 1100px) {
   .media-jobs-layout {
     grid-template-columns: minmax(330px, .9fr) minmax(0, 1.1fr);
+  }
+
+  .media-jobs-layout.media-jobs-layout-empty {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .media-jobs-heading-row {

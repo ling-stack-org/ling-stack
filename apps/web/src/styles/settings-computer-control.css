@@ -134,6 +134,11 @@
   gap: 8px;
 }
 
+.locked-computer-control-section {
+  display: grid;
+  gap: 14px;
+}
+
 .locked-computer-control-section .ling-ui-data-row {
   align-items: flex-start;
 }

@@ -155,8 +155,9 @@ interface PendingAuditRetry {
 }
 
 export class LockedComputerControlRegistry {
-  private readonly policy: LockedComputerControlPolicyV1;
+  private policy: LockedComputerControlPolicyV1;
   private capability: LockedComputerControlCapabilityV1;
+  private capabilityBuildId: string | undefined;
   private readonly now: () => Date;
   private readonly monotonicNowMs: () => number;
   private readonly createId: () => string;
@@ -215,7 +216,37 @@ export class LockedComputerControlRegistry {
       ...(reason ? { reason } : {}),
     });
     this.capability = capability;
+    this.capabilityBuildId = buildId;
     this.transition(offProjection(capability, undefined, this.policy));
+    return { accepted: true, snapshot: this.currentSnapshot() };
+  }
+
+  /**
+   * Promote the daemon policy only after the trusted Desktop has supplied a
+   * live, accepted capability. Environment flags and renderer routes never
+   * call this method; a promoted policy is still fenced by every grant and
+   * attestation boundary below.
+   */
+  promotePolicy(policy: LockedComputerControlPolicyV1, buildId: string): LockedControlMutationResult {
+    if (!isLockedComputerControlPolicyV1(policy)
+      || policy.mode !== "task_grant_required"
+      || policy.lockedToolPolicyRevision !== CUA_DRIVER_LOCKED_TOOL_POLICY_REVISION
+      || policy.allowedLockedToolIdsSha256 !== CUA_DRIVER_LOCKED_ALLOWED_TOOL_IDS_SHA256
+      || policy.maxGrantTtlSeconds > 900
+      || !policy.requireLocalUserVerification
+      || !policy.consumeOnUnlock
+      || !policy.suspendRevokes
+      || this.capability.state !== "supported_restricted"
+      || this.capabilityBuildId === undefined || this.capabilityBuildId !== buildId) {
+      return this.denied(this.capability.state === "supported_restricted"
+        ? "locked_control_disabled_by_policy"
+        : "locked_control_probe_required");
+    }
+    if (this.intent || this.prepared || this.live) {
+      return this.denied("locked_control_commit_unconfirmed");
+    }
+    this.policy = Object.freeze({ ...policy });
+    this.transition(offProjection(this.capability, undefined, this.policy));
     return { accepted: true, snapshot: this.currentSnapshot() };
   }
 

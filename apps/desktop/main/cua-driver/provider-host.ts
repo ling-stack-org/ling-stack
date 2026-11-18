@@ -146,6 +146,8 @@ export interface CuaDriverProviderHostOptions {
   readonly maxMessageBytes?: number;
   readonly maxStderrBytes?: number;
   readonly preSpawn?: (signal: AbortSignal) => Promise<void>;
+  /** Complete process registration before any MCP message can reach this child. */
+  readonly registerProcess?: (pid: number, signal: AbortSignal) => Promise<void>;
   readonly telemetry?: CuaDriverTelemetrySink;
   readonly onTerminal?: (input: {
     readonly generation: number;
@@ -498,6 +500,17 @@ export class CuaDriverProviderHost {
       throw new CuaDriverProviderHostError("spawn_failed", "provider_stdio_unavailable");
     }
     this.attachChild(child, child.stdout, child.stderr);
+    try {
+      if (this.options.registerProcess) {
+        if (!child.pid || !Number.isSafeInteger(child.pid) || child.pid <= 0) throw new Error("provider_pid_unavailable");
+        await this.options.registerProcess(child.pid, signal);
+        this.assertStartCurrent(startEpoch, signal);
+      }
+    } catch (error) {
+      await this.stopInternal("provider_registration_failed", true);
+      this.notifyTerminal("provider_registration_failed", true, child.pid);
+      throw error;
+    }
     this.stateValue = "awaiting_initialize";
     this.telemetry.emit("info", "cua_driver.host.spawned", { generation: this.generation, pid: child.pid ?? null });
   }

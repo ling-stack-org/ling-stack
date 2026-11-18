@@ -41,7 +41,6 @@ export function MediaJobList({
         data-media-jobs-list-state="empty"
         icon={<ImageIcon size={24} />}
         title={t("No generation tasks yet")}
-        description={t("Create a task to generate an image or video for this workspace.")}
         action={<Button variant="primary" onClick={onCreate}>{hasRunnableModel ? t("New generation task") : t("Configure generation model")}</Button>}
       />
     );

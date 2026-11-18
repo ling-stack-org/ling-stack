@@ -5,6 +5,10 @@
 **Status:** Accepted, implemented and locally validated.
 **Parent policy:** [Lock-Aware Task Continuation and Computer Control Policy](locked-computer-control-policy.md).
 
+The separately installed Darwin protected-session backend is specified in
+[macOS protected Computer Use](macos-locked-use.md). This document describes the
+default continuation and Computer Control fence.
+
 ## Goals
 
 - Persist a default-On preference for non-visual task continuation.

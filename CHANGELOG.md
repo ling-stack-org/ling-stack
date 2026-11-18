@@ -6,7 +6,7 @@ open-source baseline onward.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and future
 release versions will follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.6.0] - 2026-11-18
+## [Unreleased]
 
 ### Added
 
@@ -18,8 +18,20 @@ release versions will follow [Semantic Versioning](https://semver.org/spec/v2.0.
 
 ### Changed
 
-- **Automation scheduling and run persistence are idempotent and recoverable**, preserving monitor history, paid-task deduplication, and durable run and artifact links.
+- **Automation scheduling and run persistence are idempotent and recoverable**, preserving monitor history, poll-slot deduplication, and durable Run and artifact links.
 - **Approval, capacity, and context migrations preserve existing execution facts** while adding the new durable surfaces needed by the completion plan.
+
+## [0.6.1] - 2026-11-18
+
+### Changed
+
+- **Ambient themes now fill ordinary app pages**, while Settings, diagnostics and approval surfaces stay solid and focused.
+- **Media production uses the full canvas for empty states**, with compact connection rows and no redundant explanatory copy.
+- **Plugin Manager keeps its header and rows aligned** while the list scrolls, including narrow-window layouts.
+
+### Fixed
+
+- Removed redundant media and sidebar divider lines that made the interface look cluttered.
 
 ## [0.4.0] - 2026-11-15
 

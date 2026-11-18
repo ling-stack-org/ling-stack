@@ -9,8 +9,7 @@ Last verified: 2026-11-18
 Durable definitions, drafts, runs, templates, scheduler control, daemon routes, API client,
 Web management, manual execution and standard Run/Approval integration are implemented.
 Signed Webhook/GitHub/business ingress and destination-bound result outbox are locally
-implemented with controlled-transport tests. Remote CI/merge and live messaging
-acceptance remain open. Bounded local monitor sources, fingerprint persistence,
+implemented with controlled-transport tests. Live messaging acceptance remains open. Bounded local monitor sources, fingerprint persistence,
 unchanged/no-op history, finding artifacts, monitor notifications and Web monitor
 projection are locally verified; desktop notifications and general external action
 proposals remain follow-ups.
@@ -95,8 +94,12 @@ Implemented foundations and product behavior:
 - A timer that wakes materially late after sleep or a wall-clock jump follows the
   persisted `skip`/`run_one` policy instead of dispatching an unbounded stale slot.
 - Monitor triggers use bounded local snapshots from doctor/runtime work, pending approvals,
-  external work and locally stored GitHub CI triage. The snapshot fingerprint is updated
-  under a SQLite write transaction, so concurrent pollers observe one changed fact set.
+  external work and locally stored GitHub CI triage. A matching snapshot advances the
+  stored fingerprint only after its own `AutomationRun` has a durable Run link. Failed
+  admission and another active Run leave the observation eligible at the next poll.
+  The poll slot and fingerprint identify an individual finding; a later return to the
+  same fingerprint is a distinct transition. A SQLite write compares the fingerprint
+  and the daemon journals a finding only when it actually changes.
   `unchangedPolicy=skip` creates no run; `record_noop` creates a durable skipped
   `AutomationRun` with `monitor_unchanged` or `monitor_condition_not_met`. A changed
   snapshot is appended to the triggered Run context as bounded, untrusted facts and is
@@ -512,9 +515,10 @@ Scheduled ticks use `setTimeout`, not `setInterval`, so slow runs cannot overlap
 monitor timer fires
 -> read source snapshot
 -> compare with last durable monitor fingerprint
--> if unchanged, skip or record noop
--> if changed, create AutomationRun
--> either write finding artifact only or start a normal Ling run according to policy
+-> unchanged or nonmatching: skip or record noop; store a changed nonmatching snapshot
+-> changed and matching: admit a normal Run for this poll slot
+-> after its own Run is linked: advance fingerprint, link finding artifact and journal finding
+-> admission fails or is occupied: retain the previous fingerprint for the next poll
 ```
 
 ### Authenticated Event
@@ -896,8 +900,9 @@ Do not borrow:
   work records and stored GitHub CI triage; no daemon-wide or live-provider crawl is used.
 - SQLite stores one fingerprint and JSON fact body per automation with compare-and-set
   behavior under `BEGIN IMMEDIATE`.
-- Condition evaluation supports any change, count thresholds, status matching and error
-  presence. Unchanged and condition-not-met ticks can remain as skipped run history.
+- Condition evaluation supports any change, count thresholds, status matching (including
+  positive doctor status counts) and error presence. Unchanged and condition-not-met
+  ticks can remain as skipped run history.
 - Finding artifacts, monitor-finding journal notifications and Web monitor cards are
   implemented locally. Desktop OS delivery and approval-backed external actions remain
   separate release follow-ups.

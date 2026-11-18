@@ -1,11 +1,11 @@
 # Remaining Work 14-Item Delivery Plan
 
-Status: active execution plan; PR #732 is open and hosted review/merge verification is pending
+Status: active execution plan; integration evidence recorded in [PR #732](https://github.com/ling-stack-org/ling-stack/pull/732)
 Owner: Ling maintainers; each delivery batch needs an integration owner and a platform contact
 Last verified: 2026-11-18
 Initial branch-cut baseline (historical M0 snapshot): `origin/main@81f216d7de8211257448451ddfecde94fcf0ec63`
 Execution branch: `codex/automations-p2-completion`
-Current integrated main: `origin/main@d613e0ddaf0ef0575e691bef4418b6dbbaf62b36`
+Integration baseline for PR #732: `origin/main@acf448a9c7e825ad362d5e4adaf5096100e1e8b5`
 Execution PR: [#732](https://github.com/ling-stack-org/ling-stack/pull/732); exact head is re-read from GitHub
 at each hosted gate.
 Target worktree: `<isolated-worktree>`
@@ -17,17 +17,13 @@ implementation never closes a platform gate by itself.
 
 ## Current baseline
 
-- The protected root worktree `<workspace-root>` remains on `codex/ling-companion@65d2ed026`
-  with uncommitted WIP. It is not used for this delivery and must not be reset, cleaned, or rebased.
-- The target worktree is clean and contains a merge of the latest observed `origin/main@d613e0dd`.
-  It contains the previously recorded F5, External Work, context processing and restart-recovery slices,
-  plus the policy-preview slice recorded below.
-- The target branch is pushed and has open PR #732. It has not been merged or deployed.
-- Known open PRs remain an external review queue: #729, #728, #727, #725, #722, #717 and #675.
-  Their open state does not prove that any of the 14 items is complete.
-- PR #627 and PR #677 are merged into `main`; the merged Companion PR is #677 with merge commit
-  `7cd5f3c6ad408959c1eec9481a3116d1dadfa952`. The local `codex/ling-companion` worktree is still
-  an independent dirty branch and is not treated as that merged ref.
+- The protected root worktree `<workspace-root>` remains on `codex/ling-companion`
+  with uncommitted WIP. Batch integration and verification use an isolated worktree.
+- PR #732 includes the F5, External Work, context processing, restart recovery, policy preview
+  and Automations slices. GitHub records hosted checks, review and merge state for the current head.
+- PR #717 merged the Companion character delivery into `main` as `9ba748f12`.
+  The root worktree's `codex/ling-companion` branch is independent and contains separate WIP.
+- Remaining cross-feature PRs and platform gates stay with their owning plans.
 
 ## Four completion classes
 
@@ -55,7 +51,7 @@ implementation never closes a platform gate by itself.
 | 11 | Multi-Agent Requirement Shaping | Code + verification | Implement specialist contribution packet, collection/fan-in validation and detail route | Existing safe-concurrency and packet ownership rules remain mandatory; ordinary write parallelism stays closed |
 | 12 | Native Skill Recording | Code + verification | Complete message-overflow source refs, draft entry and Web/accessibility regression | Settings remains the existing Skill Library entry; no parallel authority surface |
 | 13 | SQLite Modularization | Integration + verification | Verify persistence, CAS, heartbeat, stale recovery, reopen and stable public `RunStore` API | Further mechanical splitting is excluded without ownership design |
-| 14 | Automations | Code + verification | **In progress:** bounded local monitor sources, fingerprint persistence, condition evaluation and unchanged/no-op history are implemented and locally verified; next add finding artifacts/notifications, then separately scope P3 destinations and approval-backed actions | External destinations, desktop notifications and live messaging need separate acceptance records |
+| 14 | Automations | Integration + external acceptance | The [P2 slice](automations-p2-completion-plan-2026-11-18.md) implements monitor snapshots, admitted Run links, finding artifacts, notification history and the Web projection. Hosted status is tracked in PR #732; P3 destinations and approval-backed actions have their own scope. | Desktop notification permission, live messaging and real Provider acceptance need separate evidence. |
 
 The ledger is a plan, not a claim that all source bodies are currently complete. The owning design
 documents and tests remain authoritative for each row.
@@ -126,5 +122,5 @@ The 14-item plan can close only when every row has one of these outcomes:
 - a product/architecture decision is recorded as approve, defer or reject with rationale and date; or
 - the row is explicitly moved to the next-cycle follow-up pool with its contract and reason.
 
-The target branch is not a Release Candidate. PR #732 remains open and the branch has not been deployed
-until hosted checks, review, merge, and the required platform evidence are independently verified.
+PR #732 covers one delivery batch. Release Candidate and deployment status require independent
+evidence for the applicable work items and platforms.

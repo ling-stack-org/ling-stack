@@ -1,4 +1,6 @@
 export const enUS = {
+    "Ling temporarily unlocks your session behind protected screens. Local input stops control and relocks the computer.": "Ling temporarily unlocks your session behind protected screens. Local input stops control and relocks the computer.",
+    "The locked-control state could not be refreshed. Authorization is unavailable until it can be checked.": "The locked-control state could not be refreshed. Authorization is unavailable until it can be checked.",
     "Retrying automatically...": "Retrying automatically...",
     "Model response failed": "Model response failed",
     "Response failed": "Response failed",

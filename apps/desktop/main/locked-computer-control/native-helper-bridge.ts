@@ -16,12 +16,22 @@ export interface LockedControlNativeSessionResponse {
   readonly sessionLocked: boolean;
 }
 
+export interface LockedControlNativeStatusResponse {
+  readonly platform: "darwin";
+  readonly productCapability: "disabled_by_build" | "probe_required" | "supported_restricted";
+  readonly available: boolean;
+  readonly captureReady: boolean;
+  readonly inputReady: boolean;
+  readonly secureSurfaceExcluded: boolean;
+}
+
 export interface LockedControlNativeSessionBridge extends LockedControlNativeBridge {
   readSession(signal: AbortSignal): Promise<LockedControlNativeSessionResponse>;
+  readStatus(signal: AbortSignal): Promise<LockedControlNativeStatusResponse>;
 }
 
 interface NativeHelperRequest {
-  readonly command: "identity" | "session" | "attest";
+  readonly command: "identity" | "session" | "status" | "attest";
   readonly platform: LockedComputerControlPlatform;
   readonly requestId?: string;
   readonly localizedReason?: string;
@@ -76,7 +86,42 @@ export function createLockedControlNativeHelperBridge(options: {
       }
       return parsed;
     },
+    async readStatus(signal: AbortSignal): Promise<LockedControlNativeStatusResponse> {
+      const value = await invoke(options.helperPath, {
+        command: "status",
+        platform: options.platform,
+      }, signal);
+      const parsed = parseLockedControlNativeStatusResponse(value);
+      if (!parsed) throw new Error("locked_control_native_status_invalid");
+      return parsed;
+    },
   });
+}
+
+export function parseLockedControlNativeStatusResponse(
+  value: unknown,
+): LockedControlNativeStatusResponse | undefined {
+  if (!isRecord(value)
+    || !hasOnlyKeys(value, ["platform", "productCapability", "available", "captureReady", "inputReady", "secureSurfaceExcluded"])
+    || value.platform !== "darwin"
+    || (value.productCapability !== "disabled_by_build"
+      && value.productCapability !== "probe_required"
+      && value.productCapability !== "supported_restricted")
+    || !areBooleans(value, ["available", "captureReady", "inputReady", "secureSurfaceExcluded"])) {
+    return undefined;
+  }
+  const supported = value.productCapability === "supported_restricted";
+  if (supported !== value.available
+    || (supported && (!value.captureReady || !value.inputReady || !value.secureSurfaceExcluded))
+    || (!supported && (value.captureReady || value.inputReady || value.secureSurfaceExcluded))) return undefined;
+  return {
+    platform: "darwin",
+    productCapability: value.productCapability,
+    available: value.available as boolean,
+    captureReady: value.captureReady as boolean,
+    inputReady: value.inputReady as boolean,
+    secureSurfaceExcluded: value.secureSurfaceExcluded as boolean,
+  };
 }
 
 export function parseLockedControlNativeSessionResponse(
@@ -167,4 +212,8 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
 function hasOnlyKeys(value: Readonly<Record<string, unknown>>, keys: readonly string[]): boolean {
   const allowed = new Set(keys);
   return Object.keys(value).every((key) => allowed.has(key));
+}
+
+function areBooleans(value: Readonly<Record<string, unknown>>, keys: readonly string[]): boolean {
+  return keys.every((key) => typeof value[key] === "boolean");
 }

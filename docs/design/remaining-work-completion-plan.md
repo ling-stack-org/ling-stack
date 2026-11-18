@@ -1,10 +1,10 @@
 # Ling Stack 未完成工作收口计划
 
-Status: active execution plan; PR #732 is open and hosted review/merge verification is pending
+Status: active release-candidate plan; delivery evidence for this batch is tracked in [PR #732](https://github.com/ling-stack-org/ling-stack/pull/732)
 Owner: Ling maintainers; one integration owner for each delivery batch
 Last verified: 2026-11-18
 Initial branch cut (historical M0 snapshot): `origin/main@81f216d7de8211257448451ddfecde94fcf0ec63`
-Current main integrated locally: `origin/main@d613e0ddaf0ef0575e691bef4418b6dbbaf62b36`.
+Integration baseline for PR #732: `origin/main@acf448a9c7e825ad362d5e4adaf5096100e1e8b5`.
 Current execution PR: [#732](https://github.com/ling-stack-org/ling-stack/pull/732); the exact head is
 re-read from GitHub at every hosted gate.
 Target: 2027-03-15 release-candidate closure for the active delivery queue
@@ -21,9 +21,7 @@ M0 audit packet: [Baseline And Decisions](remaining-work-m0-baseline-and-decisio
 - M0 的 main 基线、隔离分支、计划索引、PR 快照、owner/平台资源审计表和六项决策包已记录在
   [M0 Baseline And Decisions](remaining-work-m0-baseline-and-decisions.md)。六项产品决策、每项 active
   work 的命名 owner/平台预约及 PR/CI 逐项闭环尚未完成，因此 M0 尚未整体完成。
-- 目标分支在 M0 初始快照上继续开发，并已通过提交 `5be7b12f5` 合入当前
-  `origin/main@d613e0ddaf0ef0575e691bef4418b6dbbaf62b36`；提交 PR 前仍必须重新做迁移和受影响
-  测试复核。
+- 本批次在隔离工作树集成 `origin/main@acf448a9`。PR #732 记录实际通过检查的提交和最终合并状态。
 - 当前批次覆盖 External Work 8.0/8.1、Channel Context lineage/quote/redaction/startup reconstruction、F5
   rerun/approval/capacity/stop/recovery、Automation ingress、Goal supervision 和 Runner
   input rebind；这些是本地 branch implementation，不能写成远端合并或已发布。
@@ -73,8 +71,9 @@ M0 audit packet: [Baseline And Decisions](remaining-work-m0-baseline-and-decisio
   仍分别记录，head 以 GitHub 当前读回为准。
 - Automations P2 的第二段本地收口已写入[专项计划](automations-p2-completion-plan-2026-11-18.md)：匹配监控条件现在创建
   finding artifact 并持久化到 `AutomationRun.outputArtifactIds`，通知 journal 增加 monitor finding 事件，scheduler
-  contract 和 Web 页面暴露最新 fingerprint/outcome。PR #732 的 Hosted CI、review、合并、部署和真实
-  Provider/平台验收仍分别记录。
+  contract 和 Web 页面暴露最新 fingerprint/outcome。匹配观测只在关联本轮 Run 后更新指纹；失败或已有
+  Run 占用时保留下轮重试机会。相同轮询时隙可幂等重放，A→B→A 会产生三次独立发现。PR #732
+  的 Hosted CI、review、合并、部署和真实 Provider/平台验收分别记录。
 - 2026-11-18 的本地回归刷新已修复后置 migration overlay 对历史 211–222 fixture 的污染：Channel Context
   lineage writer 现在使用可组合 savepoint，历史 predecessor fixture 会在构造器探针后恢复空 overlay，且
   225–229 的 schema/marker 不再被旧 migration 测试误当作 211–222 的一部分。受影响的 Core
