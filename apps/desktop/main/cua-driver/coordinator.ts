@@ -74,6 +74,7 @@ import {
 } from "./platform-binding.js";
 import type { CuaDriverAvailabilityPublisher } from "./availability-publisher.js";
 import { CuaDriverInputFenceError } from "./input-fence-client.js";
+import type { CuaDriverActionGate } from "./restricted-generation.js";
 
 export type CuaDriverCoordinatorLifecycle = "disabled" | "validating" | "included" | "starting" | "active" | "stopping" | "failed";
 
@@ -97,6 +98,12 @@ export interface CuaDriverCoordinatorSnapshot {
 }
 
 export interface CuaDriverCoordinatorOptions {
+  readonly generationFloor?: number;
+  readonly actionGate?: CuaDriverActionGate;
+  readonly providerLifetime?: {
+    readonly hostProcessId: number;
+    readonly registerProcess: (pid: number, signal: AbortSignal) => Promise<void>;
+  };
   readonly platform: BundledCuaDriverPlatform;
   readonly architecture: CuaDriverArchitecture;
   readonly resourcesPath: string;
@@ -184,6 +191,10 @@ export class CuaDriverDesktopCoordinator {
   private stopWindowsSessionRecoveryObserver: (() => void) | undefined;
 
   constructor(private readonly options: CuaDriverCoordinatorOptions) {
+    const generationFloor = options.generationFloor ?? 0;
+    if (!Number.isSafeInteger(generationFloor) || generationFloor < 0) throw new Error("cua_driver_generation_floor_invalid");
+    this.generation = generationFloor;
+    this.snapshotValue = { ...this.snapshotValue, generation: generationFloor };
     if (options.bridgeContext.workspaceCwd !== options.workspaceCwd) {
       throw new Error("cua_driver_bridge_workspace_mismatch");
     }
@@ -270,6 +281,23 @@ export class CuaDriverDesktopCoordinator {
 
   get providerHost(): CuaDriverProviderHost | undefined {
     return this.host;
+  }
+
+  /** Initialize a restricted generation's lazy provider while its action gate remains closed. */
+  async primeRestrictedSession(): Promise<void> {
+    if (!this.proxy) {
+      throw new Error("cua_driver_proxy_unavailable");
+    }
+    await this.proxy.primeRestrictedSession();
+  }
+
+  /** Reserve authority for a separate protected owner while normal control is retired. */
+  advanceGenerationFloor(generation: number): void {
+    if (!this.windowsSessionSuspended || this.host || this.enablePromise || this.cleanupDebt
+      || !Number.isSafeInteger(generation) || generation <= this.generation) {
+      throw new Error("cua_driver_generation_reservation_invalid");
+    }
+    this.generation = generation;
   }
 
   /** Synchronous admission fence used before the locked-control policy queue awaits. */
@@ -557,6 +585,8 @@ export class CuaDriverDesktopCoordinator {
         generation,
         platform: this.options.platform,
         lifecycle: this.processLifecycle,
+        hostProcessId: this.options.providerLifetime?.hostProcessId,
+        registerProcess: this.options.providerLifetime?.registerProcess,
         telemetry,
         preSpawn: async (signal) => {
           try {
@@ -619,7 +649,7 @@ export class CuaDriverDesktopCoordinator {
         generation,
         childInstanceNonce: host.childInstanceNonce,
         platform: this.options.platform,
-        hostProcessId: process.pid,
+        hostProcessId: this.options.providerLifetime?.hostProcessId ?? process.pid,
         providerProcessId: host.pid,
         requestControl: (method: `ling/${string}`, params: import("./provider-host.js").JsonRpcParams) => host.requestControl(method, params),
         requestCheckPermissions: () => host.requestCheckPermissions(),
@@ -628,6 +658,7 @@ export class CuaDriverDesktopCoordinator {
         host,
         context: proxyContext,
         telemetry,
+        actionGate: this.options.actionGate,
         onSessionClosed: (reason) => {
           if (this.host?.generation === generation) {
             this.scheduleRecovery(reason, generation);
@@ -913,6 +944,10 @@ export class CuaDriverDesktopCoordinator {
   }
 
   private scheduleRecovery(reason: string, generation: number): void {
+    if (this.options.actionGate) {
+      this.scheduleTerminalFailure(reason, generation, "platform_unavailable");
+      return;
+    }
     if (
       !this.requestedEnabled
       || this.stopped

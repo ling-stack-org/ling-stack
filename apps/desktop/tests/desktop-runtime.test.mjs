@@ -959,6 +959,7 @@ test("a lock received during provider enable is reasserted after enable complete
     "enable.begin",
     "gate:locked_control_session_mismatch",
     "suspend:system_lock",
+    "gate:locked_control_grant_consumed",
     "enable.end",
     "gate:system_lock",
     "suspend:system_lock",

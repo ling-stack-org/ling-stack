@@ -871,6 +871,13 @@ jobs:
           node packages/daemon/test/restricted-command-launch-unknown.contract.mjs "$ling_native_output/ling-sandbox-runner"
           node native/sandbox/tests/channel-command-smoke.mjs "$ling_native_output/ling-sandbox-runner"
 
+      - name: Build and test Locked Use without system installation
+        shell: bash
+        run: |
+          set -euo pipefail
+          swift test --package-path apps/desktop/native/locked-use --jobs 4 2>&1 | tee "${RUNNER_TEMP}/ling-locked-use-tests.log"
+          node apps/desktop/scripts/build-locked-use.ts 2>&1 | tee "${RUNNER_TEMP}/ling-locked-use-build.log"
+
       - name: Preserve native build diagnostics without certifying the packaged issuer
         if: always() && needs.scope.outputs.macos-helper == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
@@ -881,6 +888,8 @@ jobs:
           path: |
             ${{ runner.temp }}/ling-native-evidence/manifest.json
             ${{ runner.temp }}/ling-native-evidence/logs/**
+            ${{ runner.temp }}/ling-locked-use-*.log
+            apps/desktop/native/locked-use/dist/components-*/build-manifest.json
 
       - name: Collect fixed OS bootstrap source for review only
         if: always() && needs.scope.outputs.macos-helper == 'true'

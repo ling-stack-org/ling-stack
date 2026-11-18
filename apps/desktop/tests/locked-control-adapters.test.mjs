@@ -168,6 +168,8 @@ test("identity adapter discards a verified result after session or authority cha
 
 test("native identity prompt is single-flight and malformed output fails closed", async () => {
   let calls = 0;
+  let entered;
+  const started = new Promise((resolve) => { entered = resolve; });
   let release;
   const gate = new Promise((resolve) => { release = resolve; });
   const verifier = createLockedControlIdentityVerifier({
@@ -177,6 +179,7 @@ test("native identity prompt is single-flight and malformed output fails closed"
     nativeBridge: {
       async verifyIdentity() {
         calls += 1;
+        entered();
         await gate;
         return { status: "verified" };
       },
@@ -185,6 +188,7 @@ test("native identity prompt is single-flight and malformed output fails closed"
   });
   const first = verifier.verify("request-1");
   const second = verifier.verify("request-2");
+  await started;
   assert.equal(calls, 1);
   release();
   assert.deepEqual((await Promise.all([first, second])).map((result) => result.status), ["verified", "verified"]);
@@ -196,6 +200,33 @@ test("native identity prompt is single-flight and malformed output fails closed"
     nativeBridge: { async verifyIdentity() { return { status: "verified", credential: "forbidden" }; } },
   });
   assert.equal((await malformed.verify("request-malformed")).reason, "locked_control_identity_unavailable");
+});
+
+test("identity cancellation aborts the active native prompt and returns a closed result", async () => {
+  let entered;
+  const started = new Promise((resolve) => { entered = resolve; });
+  const verifier = createLockedControlIdentityVerifier({
+    platform: "darwin",
+    localizedReason: "Authorize Ling for this task",
+    readContext: () => identityContext,
+    nativeBridge: {
+      async verifyIdentity({ signal }) {
+        entered();
+        await new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true }));
+        return { status: "verified" };
+      },
+    },
+  });
+  const verifying = verifier.verify("request-cancel");
+  await started;
+  verifier.cancel?.();
+  assert.deepEqual(await verifying, {
+    schemaVersion: 1,
+    requestId: "request-cancel",
+    status: "cancelled",
+    method: "device_owner_authentication",
+    reason: "locked_control_identity_cancelled",
+  });
 });
 
 test("positive attestation binds the exact grant, epoch, generation and sequence", async () => {
