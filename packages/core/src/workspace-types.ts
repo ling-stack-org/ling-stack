@@ -265,11 +265,18 @@ export type ChannelWorkspaceMode = "local" | "managed_worktree" | "external_path
 
 export type ChannelWorkspaceStatus = "ready" | "not_created" | "missing" | "unsupported" | "blocked";
 
+export interface ManagedWorktreeIdentity {
+  readonly repoRoot: string;
+  readonly gitCommonDir: string;
+  readonly gitDir: string;
+}
+
 export interface ChannelWorkspaceBinding {
   readonly mode: ChannelWorkspaceMode;
   readonly status: ChannelWorkspaceStatus;
   readonly executionPath?: string;
   readonly worktreePath?: string;
+  readonly worktreeIdentity?: ManagedWorktreeIdentity;
   readonly branchName?: string;
   readonly baseBranch?: string;
   readonly baseCommit?: string;
@@ -301,6 +308,7 @@ export interface DirectWorkspaceBinding {
   readonly status: DirectWorkspaceStatus;
   readonly executionPath?: string;
   readonly worktreePath?: string;
+  readonly worktreeIdentity?: ManagedWorktreeIdentity;
   readonly branchName?: string;
   readonly baseBranch?: string;
   readonly baseCommit?: string;

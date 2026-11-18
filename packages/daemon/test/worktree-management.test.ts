@@ -11,7 +11,7 @@ import { createDaemonServer } from "../dist/index.js";
 import { createManagedWorktreeBinding } from "../dist/features/channels/workspace.js";
 import { ensureDirectWorkspaceReady } from "../dist/features/teammates/direct-workspace.js";
 import { createManagedGitWorktree, removeManagedWorktreeIfClean } from "../dist/features/workspaces/managed-worktrees.js";
-import { actOnManagedWorktree, listManagedWorktrees } from "../dist/features/workspaces/worktree-management.js";
+import { actOnManagedWorktree, completeManagedWorktreeInitialization, listManagedWorktrees, prepareManagedWorktreeInitialization } from "../dist/features/workspaces/worktree-management.js";
 import { archiveWorktree, recoverWorktreeOperations, listWorktreeSnapshots, restoreWorktreeSnapshot } from "../dist/features/workspaces/worktree-recovery.js";
 import { maintainManagedWorktrees, WorktreeMaintenanceRegistry } from "../dist/features/workspaces/worktree-retention.js";
 import { parseWorkspaceSettingsUpdate } from "../dist/features/settings/effective-config.js";
@@ -41,6 +41,13 @@ async function managedChannel(f: Awaited<ReturnType<typeof fixture>>, name = "En
   assert.ok(result.ok, JSON.stringify(result));
   f.store.updateChannel(channel.id, { workspaceBinding: result.binding }, now);
   return { channelId: channel.id, binding: result.binding, path: result.binding.worktreePath! };
+}
+
+const channelOwner = (ownerId: string) => ({ ownerKind: "channel" as const, ownerId });
+
+async function initializeChannel(store: ReturnType<typeof createSqliteRunStore>, cwd: string, ownerId: string) {
+  const { challengeId } = await prepareManagedWorktreeInitialization(store, cwd, channelOwner(ownerId));
+  await completeManagedWorktreeInitialization(store, cwd, challengeId, true);
 }
 
 test("cleanup redacts a Git move failure and preserves a locked worktree", async t => {
@@ -210,25 +217,53 @@ test("environment initialization is explicit, bounded, persisted and retryable w
   const reopened = createSqliteRunStore(f.cwd);
   try {
     assert.equal((await listManagedWorktrees(reopened, f.cwd)).entries[0]?.initialization?.status, "pending");
-    await assert.rejects(actOnManagedWorktree(reopened, f.cwd, { ownerKind: "channel", ownerId: managed.channelId, action: "initialize" }), { code: "worktree_confirmation_required" });
-    entry = (await listManagedWorktrees(reopened, f.cwd)).entries[0]!;
-    await actOnManagedWorktree(reopened, f.cwd, { ownerKind: "channel", ownerId: managed.channelId, action: "initialize", confirmed: true,
-      initializationFingerprint: entry.initialization?.fingerprint });
+    await assert.rejects(actOnManagedWorktree(reopened, f.cwd, { ...channelOwner(managed.channelId), action: "initialize", confirmed: true }), { code: "worktree_desktop_confirmation_required" });
+    await initializeChannel(reopened, f.cwd, managed.channelId);
     entry = (await listManagedWorktrees(reopened, f.cwd)).entries[0]!;
     assert.equal(entry.initialization?.status, "failed");
     assert.equal(entry.initialization?.output, "[redacted]");
     assert.equal(await readFile(join(managed.path, "initialized.txt"), "utf8"), "fixture-secret");
     reopened.updateWorkspaceSettings({ worktreePolicy: { fetchBeforeCreate: false, environment: { ...environment, setupScript: "printf done > retry.txt" } } }, now);
-    entry = (await listManagedWorktrees(reopened, f.cwd)).entries[0]!;
-    await actOnManagedWorktree(reopened, f.cwd, { ownerKind: "channel", ownerId: managed.channelId, action: "initialize", confirmed: true,
-      initializationFingerprint: entry.initialization?.fingerprint });
+    await initializeChannel(reopened, f.cwd, managed.channelId);
     entry = (await listManagedWorktrees(reopened, f.cwd)).entries[0]!;
     assert.equal(entry.status, "ready");
     assert.equal(entry.initialization?.status, "succeeded");
     assert.equal(await readFile(join(managed.path, "retry.txt"), "utf8"), "done");
     assert.equal(await readFile(join(managed.path, "initialized.txt"), "utf8"), "fixture-secret");
-    await assert.rejects(actOnManagedWorktree(reopened, f.cwd, { ownerKind: "channel", ownerId: managed.channelId, action: "initialize" }), { code: "worktree_already_initialized" });
+    await assert.rejects(prepareManagedWorktreeInitialization(reopened, f.cwd, channelOwner(managed.channelId)), { code: "worktree_already_initialized" });
   } finally { reopened.close(); }
+});
+
+test("expired or stale setup confirmations cannot start a script", async t => {
+  const f = await fixture(t);
+  const setupFile = "approved-setup.txt";
+  const environment = { enabled: true, setupScript: "printf old > approved-setup.txt", variables: {}, timeoutSeconds: 2 };
+  f.store.updateWorkspaceSettings({ worktreePolicy: { fetchBeforeCreate: false, environment } }, now);
+  const managed = await managedChannel(f);
+  const prepare = () => prepareManagedWorktreeInitialization(f.store, f.cwd, channelOwner(managed.channelId));
+  const complete = (id: string) => completeManagedWorktreeInitialization(f.store, f.cwd, id, true);
+
+  const expiring = await prepare();
+  const clock = t.mock.method(Date, "now", () => Date.parse(expiring.expiresAt));
+  try {
+    await assert.rejects(complete(expiring.challengeId), { code: "worktree_confirmation_expired" });
+  } finally { clock.mock.restore(); }
+
+  const stale = await prepare();
+  f.store.updateWorkspaceSettings({ worktreePolicy: { fetchBeforeCreate: false, environment: {
+    ...environment, setupScript: "printf current > approved-setup.txt",
+  } } }, now);
+  await assert.rejects(complete(stale.challengeId), { code: "worktree_initialization_changed" });
+  await assert.rejects(complete(stale.challengeId), { code: "worktree_confirmation_expired" });
+
+  const changedCheckout = await prepare();
+  await git(managed.path, "switch", "-c", "user/different");
+  await assert.rejects(complete(changedCheckout.challengeId), { code: "worktree_owner_mismatch" });
+  await assert.rejects(access(join(managed.path, setupFile)));
+
+  await git(managed.path, "switch", managed.binding.branchName!);
+  await initializeChannel(f.store, f.cwd, managed.channelId);
+  assert.equal(await readFile(join(managed.path, setupFile), "utf8"), "current");
 });
 
 test("enabling setup scripts does not add initialization work to existing worktrees", async t => {
@@ -248,10 +283,8 @@ test("initialization timeout terminates its process group and preserves a failed
   f.store.updateWorkspaceSettings({ worktreePolicy: { fetchBeforeCreate: false,
     environment: { enabled: true, setupScript: "trap '' TERM; sleep 20", variables: {}, timeoutSeconds: 1 } } }, now);
   const managed = await managedChannel(f, "Timeout");
-  let entry = (await listManagedWorktrees(f.store, f.cwd)).entries[0]!;
-  await actOnManagedWorktree(f.store, f.cwd, { ownerKind: "channel", ownerId: managed.channelId, action: "initialize", confirmed: true,
-    initializationFingerprint: entry.initialization?.fingerprint });
-  entry = (await listManagedWorktrees(f.store, f.cwd)).entries[0]!;
+  await initializeChannel(f.store, f.cwd, managed.channelId);
+  const entry = (await listManagedWorktrees(f.store, f.cwd)).entries[0]!;
   assert.equal(entry.initialization?.status, "failed");
   assert.match(entry.initialization?.errorMessage ?? "", /超时/);
   await access(managed.path);
@@ -337,16 +370,18 @@ test("managed lifecycle retains the original repository when a channel bound pat
   const environment = { enabled: true, setupScript: "printf initialized > lifecycle.txt", variables: {}, timeoutSeconds: 2 };
   f.store.updateWorkspaceSettings({ worktreePolicy: { fetchBeforeCreate: false, environment } }, now);
   const managed = await managedChannel(f, "Rebound");
-  const changedBoundPath = join(f.cwd, "changed-bound-path");
-  await mkdir(changedBoundPath);
-  f.store.updateChannel(managed.channelId, { boundPath: changedBoundPath }, now);
+  const other = await fixture(t);
+  f.store.updateChannel(managed.channelId, { boundPath: other.cwd }, now);
 
-  const entry = (await listManagedWorktrees(f.store, f.cwd)).entries[0]!;
-  await actOnManagedWorktree(f.store, f.cwd, { ownerKind: "channel", ownerId: managed.channelId, action: "initialize", confirmed: true,
-    initializationFingerprint: entry.initialization?.fingerprint });
+  assert.equal((await listManagedWorktrees(f.store, f.cwd)).entries[0]?.initialization?.status, "pending");
+  assert.equal(await actOnManagedWorktree(f.store, f.cwd, { ...channelOwner(managed.channelId), action: "open" }), managed.path);
+  await initializeChannel(f.store, f.cwd, managed.channelId);
   assert.equal(await readFile(join(managed.path, "lifecycle.txt"), "utf8"), "initialized");
   await actOnManagedWorktree(f.store, f.cwd, { ownerKind: "channel", ownerId: managed.channelId, action: "cleanup", confirmed: true });
-  assert.equal((await listWorktreeSnapshots(f.store.paths)).length, 1);
+  const [snapshot] = await listWorktreeSnapshots(f.store.paths);
+  assert.ok(snapshot);
+  await actOnManagedWorktree(f.store, f.cwd, { ...channelOwner(managed.channelId), action: "restore", snapshotId: snapshot.id });
+  assert.equal(await readFile(join(managed.path, "lifecycle.txt"), "utf8"), "initialized");
 });
 
 test("ownership pagination checks references beyond the first 500 channels", async t => {
@@ -390,6 +425,25 @@ test("cleanup refuses canonical and foreign repositories and unexpected branches
   await access(managed.path);
 });
 
+test("settings cannot open or archive a foreign checkout occupying an owned path", async t => {
+  const f = await fixture(t);
+  const managed = await managedChannel(f);
+  const relocated = join(f.cwd, "relocated-original");
+  await git(f.cwd, "worktree", "move", managed.path, relocated);
+
+  const other = await fixture(t);
+  await git(other.cwd, "worktree", "add", "-b", managed.binding.branchName!, managed.path);
+  const [entry] = (await listManagedWorktrees(f.store, f.cwd)).entries;
+  assert.equal(entry?.status, "blocked");
+  assert.equal(entry?.initialization, undefined);
+  for (const action of ["open", "cleanup"] as const) {
+    await assert.rejects(actOnManagedWorktree(f.store, f.cwd, { ...channelOwner(managed.channelId), action, confirmed: true }), { code: "worktree_owner_mismatch" });
+  }
+  await access(managed.path);
+  await access(relocated);
+  assert.deepEqual(await listWorktreeSnapshots(f.store.paths), []);
+});
+
 test("fetch updates remote refs without merging and a fetch error prevents creation", async t => {
   const f = await fixture(t);
   const remote = join(f.cwd, "remote.git");
@@ -421,33 +475,49 @@ test("fetch updates remote refs without merging and a fetch error prevents creat
 test("daemon and API client persist policy, list owned worktrees and validate actions", async t => {
   const f = await fixture(t);
   const managed = await managedChannel(f);
+  const previousHome = process.env.LING_STACK_HOME;
+  process.env.LING_STACK_HOME = join(f.cwd, ".ling-stack", "test-home");
+  t.after(() => {
+    if (previousHome === undefined) delete process.env.LING_STACK_HOME;
+    else process.env.LING_STACK_HOME = previousHome;
+  });
   const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, defaultWorkspaceCwd: f.cwd }, { storeFactory: () => f.store });
-  await daemon.start();
-  t.after(() => daemon.stop());
-  const address = daemon.server.address();
-  assert.ok(address && typeof address === "object");
-  const baseUrl = `http://127.0.0.1:${address.port}`;
-  const client = new LingDaemonClient({ baseUrl });
-  const policy = { rootDir: join(f.cwd, "custom"), fetchBeforeCreate: true };
-  assert.deepEqual((await client.updateWorkspaceSettings(f.cwd, { worktreePolicy: policy })).settings.worktreePolicy, policy);
-  assert.equal((await client.listManagedWorktrees(f.cwd)).entries[0]?.ownerId, managed.channelId);
-  for (const body of [{ ownerKind: "channel", ownerId: "missing", action: "cleanup", confirmed: true }, { ownerKind: "channel", ownerId: managed.channelId, action: "delete" }]) {
-    const response = await fetch(`${baseUrl}/worktrees/actions?cwd=${encodeURIComponent(f.cwd)}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-    assert.ok(response.status >= 400);
-  }
-  const invalid = await fetch(`${baseUrl}/workspace-settings?cwd=${encodeURIComponent(f.cwd)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ worktreePolicy: { rootDir: "relative", fetchBeforeCreate: true } }) });
-  assert.equal(invalid.status, 400);
-  for (const [path, options] of [
-    [`/worktrees?cwd=${encodeURIComponent(f.cwd)}`, { headers: { Origin: "https://foreign.invalid" } }],
-    [`/worktrees/actions?cwd=${encodeURIComponent(f.cwd)}`, { method: "POST", headers: { Origin: "https://foreign.invalid", "Content-Type": "application/json" }, body: JSON.stringify({ ownerKind: "channel", ownerId: managed.channelId, action: "cleanup", confirmed: true }) }],
-    [`/workspace-settings?cwd=${encodeURIComponent(f.cwd)}`, { method: "PATCH", headers: { Origin: "https://foreign.invalid", "Content-Type": "application/json" }, body: JSON.stringify({ worktreePolicy: null }) }],
-    [`/worktrees?cwd=${encodeURIComponent(join(f.cwd, "unknown"))}`, {}],
-    [`/workspace-settings?cwd=${encodeURIComponent(join(f.cwd, "unknown"))}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ worktreePolicy: null }) }],
-  ] as const) {
-    assert.equal((await fetch(`${baseUrl}${path}`, options)).status, 403);
-  }
-  await access(managed.path);
-  assert.deepEqual(f.store.getWorkspaceSettings().worktreePolicy, policy);
-  const cleaned = await client.actOnManagedWorktree(f.cwd, { ownerKind: "channel", ownerId: managed.channelId, action: "cleanup", confirmed: true });
-  assert.equal(cleaned.entries[0]?.status, "not_created");
+  try {
+    await daemon.start();
+    const address = daemon.server.address();
+    assert.ok(address && typeof address === "object");
+    const baseUrl = `http://127.0.0.1:${address.port}`;
+    const client = new LingDaemonClient({ baseUrl });
+    const policy = { rootDir: join(f.cwd, "custom"), fetchBeforeCreate: true };
+    assert.deepEqual((await client.updateWorkspaceSettings(f.cwd, { worktreePolicy: policy })).settings.worktreePolicy, policy);
+    assert.equal((await client.listManagedWorktrees(f.cwd)).entries[0]?.ownerId, managed.channelId);
+    await client.updateChannel(f.cwd, managed.channelId, { name: "Renamed", workspaceBinding: managed.binding });
+    assert.deepEqual(f.store.getChannel(managed.channelId)?.workspaceBinding?.worktreeIdentity, managed.binding.worktreeIdentity);
+    const anotherPath = join(f.cwd, "another-checkout");
+    const reassignment = await fetch(new URL(`/channels/${managed.channelId}?cwd=${encodeURIComponent(f.cwd)}`, baseUrl), {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ workspaceBinding: { ...managed.binding, worktreePath: anotherPath, executionPath: anotherPath } }),
+    });
+    assert.equal(reassignment.status, 409);
+    assert.equal((await client.listManagedWorktrees(f.cwd)).entries[0]?.path, managed.path);
+    for (const body of [{ ownerKind: "channel", ownerId: "missing", action: "cleanup", confirmed: true }, { ownerKind: "channel", ownerId: managed.channelId, action: "delete" }]) {
+      const response = await fetch(`${baseUrl}/worktrees/actions?cwd=${encodeURIComponent(f.cwd)}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      assert.ok(response.status >= 400);
+    }
+    const invalid = await fetch(`${baseUrl}/workspace-settings?cwd=${encodeURIComponent(f.cwd)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ worktreePolicy: { rootDir: "relative", fetchBeforeCreate: true } }) });
+    assert.equal(invalid.status, 400);
+    for (const [path, options] of [
+      [`/worktrees?cwd=${encodeURIComponent(f.cwd)}`, { headers: { Origin: "https://foreign.invalid" } }],
+      [`/worktrees/actions?cwd=${encodeURIComponent(f.cwd)}`, { method: "POST", headers: { Origin: "https://foreign.invalid", "Content-Type": "application/json" }, body: JSON.stringify({ ownerKind: "channel", ownerId: managed.channelId, action: "cleanup", confirmed: true }) }],
+      [`/workspace-settings?cwd=${encodeURIComponent(f.cwd)}`, { method: "PATCH", headers: { Origin: "https://foreign.invalid", "Content-Type": "application/json" }, body: JSON.stringify({ worktreePolicy: null }) }],
+      [`/worktrees?cwd=${encodeURIComponent(join(f.cwd, "unknown"))}`, {}],
+      [`/workspace-settings?cwd=${encodeURIComponent(join(f.cwd, "unknown"))}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ worktreePolicy: null }) }],
+    ] as const) {
+      assert.equal((await fetch(`${baseUrl}${path}`, options)).status, 403);
+    }
+    await access(managed.path);
+    assert.deepEqual(f.store.getWorkspaceSettings().worktreePolicy, policy);
+    const cleaned = await client.actOnManagedWorktree(f.cwd, { ownerKind: "channel", ownerId: managed.channelId, action: "cleanup", confirmed: true });
+    assert.equal(cleaned.entries[0]?.status, "not_created");
+  } finally { await daemon.stop(); }
 });

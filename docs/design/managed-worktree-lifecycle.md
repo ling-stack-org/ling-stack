@@ -69,7 +69,11 @@ Creation:
 Refresh:
 
 1. Local and external bindings only check path availability.
-2. Managed bindings check path existence and whether the path is a Git worktree.
+2. Settings checks that each recorded path is a linked worktree in the owning repo and
+   is registered on the branch assigned to that owner. New bindings record the source
+   repository and Git directories; changing a channel's bound path does not retarget
+   its existing worktree. Legacy bindings must match the owner's source checkout and
+   the default managed path before Settings can operate on them.
 3. A dirty managed worktree remains `ready`.
 4. A missing managed worktree becomes `missing` when it had previously been created, otherwise `not_created`.
 
@@ -119,12 +123,12 @@ orders retention; Git dirtiness and protected state are rechecked for each candi
 
 `GET /worktrees?cwd=...` returns policy, inventory, recovery snapshots and the last
 maintenance result. `POST /worktrees/actions?cwd=...` accepts `ownerKind`, `ownerId`, and
-`action`: `open`, `cleanup`, `restore`, `initialize`, `pin` or `unpin`. Manual cleanup
+`action`: `open`, `cleanup`, `restore`, `pin` or `unpin`. Manual cleanup
 requires `confirmed: true` while its confirmation policy is enabled; restore also names
 `snapshotId`. Targets are always resolved from server-owned records. Local-origin and
 trusted-workspace checks precede access to these routes, settings and effective-config
 responses. Mutable channel/direct-workspace and reply/continuation HTTP entries enforce
-the local-origin boundary because creation can launch a configured setup script.
+the local-origin boundary before opening a store or creating a worktree.
 Browser requests with fetch metadata and no Origin are rejected; native clients may
 omit Origin.
 Internal services and schedulers retain their existing admission paths. Legacy cleanup
@@ -179,8 +183,9 @@ storage has no automatic expiration or permanent deletion policy.
    either location. Restore retained snapshots before switching workspace ownership.
 5. Under **Environment**, enable initialization, enter the script, variables and
    timeout, and save before creating a worktree. New checkouts record a pending
-   setup checkpoint without executing the script. Use **Retry setup** to explicitly
-   approve and run it. A failed entry exposes redacted output and can be retried
+   setup checkpoint without executing the script. In Ling Desktop, use **Retry setup**
+   to review the script and approve it in the native dialog. A failed entry exposes
+   redacted output and can be retried
    after the policy is corrected; existing and restored checkouts do not rerun setup
    automatically.
 
@@ -188,16 +193,21 @@ storage has no automatic expiration or permanent deletion policy.
 
 Only the saved local policy selects a script; repository documents and discovered files
 do not authorize execution. Creating a worktree records a pending checkpoint and never
-executes the saved command. Initialization runs only after an explicit local
-`initialize` action from the Settings surface, using the existing manual
-workspace-terminal actor with the current OS shell and account permissions. Its
+executes the saved command. The Desktop main process requests a preview from the daemon
+and displays the exact saved script, target path, variable names and timeout before requesting
+approval. The daemon accepts the decision over the authenticated Desktop bridge and
+consumes the two-minute challenge on either decision. It rechecks the saved environment
+and the worktree identity before running the approved script. Browser requests cannot
+approve scripts. Initialization uses the existing manual workspace-terminal actor with
+the current OS shell and account permissions. Its
 variables apply to that script. It does not grant a native Runner sandbox or
 protected-stage proof. Existing worktrees and restored snapshots are not
 reinitialized automatically.
 
 A private marker in the linked worktree's Git administrative directory records pending,
 running, succeeded or failed state. Output is bounded and configured variable values are
-redacted from the retained output. Pending or failed setup retains the directory and
+redacted from the retained output. Ordinary settings and list responses use `[configured]`
+for variable values; the approval preview includes names only. Pending or failed setup retains the directory and
 blocks normal workspace readiness; the settings list exposes explicit retry with the
 current saved policy. On POSIX, timeout escalates from SIGTERM to SIGKILL for the process
 group and successful completion stops remaining children in that group. A retained running marker
@@ -228,9 +238,10 @@ policy validation and persistence, root selection, cleanup/recreation with retai
 commits, fetch without merging, fetch failure, active/shared/foreign worktree
 refusal, complete ownership pagination, staged/unstaged/ignored/untracked and symlink
 restoration, restart/fencing, retention protection, initialization retry and timeout and local-origin/workspace access checks.
-`worktree-http-boundary.test.ts` covers settings/effective-config disclosure and indirect
-initialization HTTP entries, including missing-Origin browser metadata and native-client
-compatibility. `managed-workspace-cleanup.test.ts` covers the optional legacy request
+`worktree-http-boundary.test.ts` covers redacted settings, rejected browser initialization,
+and an approved Desktop request with cancellation and replay checks. Desktop
+`worktree-ipc.test.ts` exercises the native confirmation handler and sender checks.
+`managed-workspace-cleanup.test.ts` covers the optional legacy request
 body with confirmation enabled and disabled. Core `workspace-binding-fence.test.ts` and
 `managed-workspace-admission.test.ts` cover cross-connection owner writes and stale Run
 snapshots, settled `yielded` history and unfinished work; `teammate-hard-delete-access.test.ts`

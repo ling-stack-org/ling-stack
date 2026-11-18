@@ -17,8 +17,6 @@ export interface WorktreeEnvironment {
 
 export interface WorktreeInitialization {
   readonly status: "pending" | "running" | "succeeded" | "failed";
-  /** Stable approval value for the exact persisted setup configuration. */
-  readonly fingerprint?: string;
   readonly output?: string;
   readonly completedAt?: string;
   readonly errorMessage?: string;
@@ -72,5 +70,13 @@ export interface ManagedWorktreeActionRequest {
   readonly action: "open" | "cleanup" | "restore" | "initialize" | "pin" | "unpin";
   readonly snapshotId?: string;
   readonly confirmed?: boolean;
-  readonly initializationFingerprint?: string;
+}
+
+/** Approval preview for Desktop Main. Environment values stay in the daemon. */
+export interface WorktreeInitializationChallenge {
+  readonly challengeId: string;
+  readonly expiresAt: string;
+  readonly path: string;
+  readonly ownerName: string;
+  readonly environment: (Omit<WorktreeEnvironment, "variables"> & { readonly variableNames: readonly string[] }) | undefined;
 }

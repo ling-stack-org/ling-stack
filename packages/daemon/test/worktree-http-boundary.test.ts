@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
-import { readdir, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { access, readFile, readdir, rm } from "node:fs/promises";
 import { request as requestHttp } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
+import type { ManagedWorktreeListResponse, WorktreeInitializationChallenge } from "@ling-stack/contracts";
 import { createSqliteRunStore } from "../../core/dist/index.js";
 import { createDaemonServer } from "../dist/index.js";
+import { createManagedWorktreeBinding } from "../dist/features/channels/workspace.js";
 import { createSqliteWorkspaceFixture } from "./test-support/sqlite-workspace-fixture.ts";
 import { ensureGitRepo } from "./git-test-helpers.mjs";
 
@@ -30,21 +33,33 @@ function browserRequest(url: string, input: { method: string; headers: Record<st
 
 async function fixture(t: TestContext) {
   const cwd = await createSqliteWorkspaceFixture(join(tmpdir(), "ling-worktree-http-boundary-"));
+  const previousHome = process.env.LING_STACK_HOME;
+  process.env.LING_STACK_HOME = join(cwd, ".ling-stack", "test-home");
+  let daemon: ReturnType<typeof createDaemonServer> | undefined;
+  t.after(async () => {
+    try { await daemon?.stop(); }
+    finally {
+      if (previousHome === undefined) delete process.env.LING_STACK_HOME;
+      else process.env.LING_STACK_HOME = previousHome;
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
   await ensureGitRepo(cwd);
   const store = createSqliteRunStore(cwd);
+  const bridgeToken = randomUUID();
   store.updateWorkspaceSettings({ worktreePolicy: { fetchBeforeCreate: false, environment: {
     enabled: true, setupScript: "printf initialized > setup-ran.txt", variables: { LING_FIXTURE_TOKEN: "fixture-value-private" }, timeoutSeconds: 10,
   } } }, new Date().toISOString());
   let storeOpens = 0;
-  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd }, {
+  daemon = createDaemonServer({ host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd }, {
+    desktopBridgeToken: bridgeToken,
     storeFactory: (selected) => { assert.equal(selected, cwd); storeOpens++; return store; },
   });
   await daemon.start();
-  t.after(async () => { await daemon.stop(); await rm(cwd, { recursive: true, force: true }); });
   const address = daemon.server.address();
   assert.ok(address && typeof address === "object");
   const base = `http://127.0.0.1:${address.port}`;
-  return { cwd, store, base, storeOpens: () => storeOpens,
+  return { cwd, store, base, bridgeToken, storeOpens: () => storeOpens,
     url: (path: string, selected = cwd) => `${base}${path}?cwd=${encodeURIComponent(selected)}` };
 }
 
@@ -89,6 +104,55 @@ test("redacted worktree settings preserve existing values on a browser round tri
     } } }) });
   assert.equal(update.status, 200);
   assert.equal(f.store.getWorkspaceSettings().worktreePolicy?.environment?.variables.LING_FIXTURE_TOKEN, "fixture-value-private");
+});
+
+test("setup requires the Desktop bridge and a single confirmed challenge", async t => {
+  const f = await fixture(t);
+  const now = new Date().toISOString();
+  const channel = f.store.createChannel({ name: "Setup fixture", boundPath: f.cwd }, now);
+  const managed = await createManagedWorktreeBinding(channel, f.cwd, f.store.paths, undefined, f.store.getWorkspaceSettings().worktreePolicy, f.store);
+  assert.ok(managed.ok);
+  f.store.updateChannel(channel.id, { workspaceBinding: managed.binding }, now);
+  const outputFile = join(managed.binding.worktreePath!, "setup-ran.txt");
+  const owner = { ownerKind: "channel", ownerId: channel.id };
+  const desktop = { "x-ling-desktop-bridge-token": f.bridgeToken };
+  const post = (path: string, body: object, headers: Record<string, string> = {}) => fetch(f.url(path), {
+    method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body),
+  });
+  const prepare = "/worktrees/initialization/prepare";
+  const complete = "/worktrees/initialization/complete";
+  assert.equal((await post(prepare, owner)).status, 403);
+  assert.equal((await post(prepare, owner, { ...desktop, Origin: "http://localhost:4310" })).status, 403);
+  const publicAction = await post("/worktrees/actions", { ...owner, action: "initialize", confirmed: true });
+  assert.equal(publicAction.status, 409);
+  assert.equal((await publicAction.json() as { error: string }).error, "worktree_desktop_confirmation_required");
+  await assert.rejects(access(outputFile));
+
+  async function requestChallenge() {
+    const response = await post(prepare, owner, desktop);
+    assert.equal(response.status, 200);
+    const serialized = await response.text();
+    assert.equal(serialized.includes("fixture-value-private"), false);
+    const challenge = JSON.parse(serialized) as WorktreeInitializationChallenge;
+    assert.equal(challenge.environment?.setupScript, "printf initialized > setup-ran.txt");
+    assert.deepEqual(challenge.environment?.variableNames, ["LING_FIXTURE_TOKEN"]);
+    return challenge.challengeId;
+  }
+  const cancelled = await requestChallenge();
+  assert.equal((await post(complete, { challengeId: cancelled, confirmed: false }, desktop)).status, 204);
+  assert.equal((await post(complete, { challengeId: cancelled, confirmed: true }, desktop)).status, 409);
+  await assert.rejects(access(outputFile));
+
+  const approved = await requestChallenge();
+  const result = await post(complete, { challengeId: approved, confirmed: true }, desktop);
+  assert.equal(result.status, 200);
+  const data = await result.json() as ManagedWorktreeListResponse;
+  const initialization = data.entries[0]?.initialization;
+  assert.equal(initialization?.status, "succeeded");
+  assert.ok(initialization.completedAt);
+  assert.deepEqual(Object.keys(initialization).sort(), ["completedAt", "output", "status"]);
+  assert.equal(await readFile(outputFile, "utf8"), "initialized");
+  assert.equal((await post(complete, { challengeId: approved, confirmed: true }, desktop)).status, 409);
 });
 
 test("foreign conversation requests cannot initialize worktrees or schedule continuations", async t => {

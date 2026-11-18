@@ -6,7 +6,7 @@ import { useI18n } from "../../i18n.js";
 import { useLingToast } from "../../shared/ui/index.js";
 
 export function useWorktreeSettings(cwd: string) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const { showToast } = useLingToast();
   const [data, setData] = useState<ManagedWorktreeListResponse>();
   const [rootDir, setRootDir] = useState("");
@@ -83,14 +83,21 @@ export function useWorktreeSettings(cwd: string) {
     finally { setBusy(""); }
   }
 
-  async function perform(entry: Pick<ManagedWorktreeEntry, "ownerKind" | "ownerId"> & Partial<Pick<ManagedWorktreeEntry, "initialization">>, action: ManagedWorktreeActionRequest["action"], snapshotId?: string): Promise<void> {
+  async function perform(entry: Pick<ManagedWorktreeEntry, "ownerKind" | "ownerId">, action: ManagedWorktreeActionRequest["action"], snapshotId?: string): Promise<void> {
     if (busy || loading) return;
     setBusy(`${action}:${entry.ownerKind}:${entry.ownerId}`);
     if (action === "cleanup") setCleanupError(""); else setError("");
     try {
+      if (action === "initialize") {
+        const desktop = window.lingDesktop?.worktrees;
+        if (!desktop) throw new Error(t("Use a supported macOS or Windows desktop client."));
+        const next = await desktop.initialize({ cwd, ownerKind: entry.ownerKind, ownerId: entry.ownerId, locale });
+        if (next) setData(next);
+        return;
+      }
+      const confirmed = action === "cleanup" && cleanupTarget?.ownerKind === entry.ownerKind && cleanupTarget.ownerId === entry.ownerId;
       const next = await actOnManagedWorktree(cwd, { ownerKind: entry.ownerKind, ownerId: entry.ownerId, action,
-        ...(action === "cleanup" || action === "initialize" ? { confirmed: true } : {}),
-        ...(action === "initialize" && entry.initialization?.fingerprint ? { initializationFingerprint: entry.initialization.fingerprint } : {}),
+        ...(confirmed ? { confirmed: true } : {}),
         ...(snapshotId ? { snapshotId } : {}) });
       setData(next);
       if (action === "cleanup") {

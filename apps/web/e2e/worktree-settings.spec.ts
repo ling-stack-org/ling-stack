@@ -53,7 +53,6 @@ async function prepare(page: Page, locale = "en-US", theme = "light", width = 14
     }
     if (input.action === "restore") current = { ...current, entries: current.entries.map(entry => entry.ownerId === input.ownerId ? { ...entry, status: "ready" } : entry), snapshots: current.snapshots?.filter(item => item.id !== input.snapshotId) };
     if (input.action === "pin" || input.action === "unpin") current = { ...current, entries: current.entries.map(entry => entry.ownerId === input.ownerId ? { ...entry, pinned: input.action === "pin", kept: input.action === "pin" } : entry) };
-    if (input.action === "initialize") current = { ...current, entries: current.entries.map(entry => entry.ownerId === input.ownerId ? { ...entry, status: "ready", initialization: { status: "succeeded", output: "Setup complete" } } : entry) };
     await route.fulfill({ json: current });
   });
   await page.route(/\/workspace-settings(?:\?.*)?$/u, async route => {
@@ -146,6 +145,7 @@ test("cleanup snapshots dirty worktrees, protects active worktrees and keeps con
   await surface.getByRole("button", { name: "Restore worktree" }).click();
   await expect(surface.locator('[aria-labelledby="managed-worktrees-heading"] li').filter({ hasText: "Engineering" }).getByRole("button", { name: "Clean up worktree" })).toBeEnabled();
   await expect(surface.getByRole("heading", { name: "Recovery snapshots" })).toHaveCount(0);
+  expect(harness.actions.filter(item => item.action === "cleanup").map(item => item.confirmed)).toEqual([true, true]);
 });
 
 test("retention, confirmation and environment settings persist and recovery actions remain usable", async ({ page }) => {
@@ -180,7 +180,18 @@ test("retention, confirmation and environment settings persist and recovery acti
   await screenshot(page, "recovery-light");
   await surface.getByRole("button", { name: "Restore worktree" }).click();
   await expect(owner.getByRole("button", { name: "Open path" })).toBeEnabled();
-  expect(harness.actions.find(item => item.action === "cleanup")?.confirmed).toBe(true);
+  expect(harness.actions.find(item => item.action === "cleanup")?.confirmed).toBeUndefined();
+  expect(harness.runtimeErrors).toEqual([]);
+});
+
+test("setup from a browser points to Desktop without invoking the action API", async ({ page }) => {
+  const harness = await prepare(page);
+  harness.current = { ...harness.current, entries: harness.current.entries.map(entry => entry.ownerId === "channel_engineering"
+    ? { ...entry, status: "blocked", initialization: { status: "pending" } } : entry) };
+  const surface = await open(page);
+  await surface.getByRole("button", { name: "Retry setup" }).click();
+  await expect(surface.getByText("Use a supported macOS or Windows desktop client.")).toBeVisible();
+  expect(harness.actions).toEqual([]);
   expect(harness.runtimeErrors).toEqual([]);
 });
 

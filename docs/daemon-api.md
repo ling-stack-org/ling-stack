@@ -282,21 +282,31 @@ of crashing the daemon.
 `worktreePolicy` stores workspace worktree settings; `null` clears the override.
 It includes `rootDir`, `fetchBeforeCreate`, `autoCleanup`, `retainCount`,
 `confirmBeforeDelete`, `protectedOwners` and `environment`. Settings and effective-config
-responses require a local Ling origin or native client and a daemon-known workspace
-because environment configuration can contain private values.
+responses require a local Ling origin or native client and a daemon-known workspace.
+Environment variable names remain visible; values are returned as `[configured]` and
+preserved when the same keys are submitted with that placeholder.
 
 ## Managed Worktrees
 
 | Request | Behavior |
 | --- | --- |
 | `GET /worktrees?cwd=...` | Return policy, recorded channel/private-chat worktrees, recovery snapshots and maintenance status. |
-| `POST /worktrees/actions?cwd=...` | Apply `open`, `cleanup`, `restore`, `initialize`, `pin` or `unpin` to a recorded owner. `initialize` is the explicit local approval step for a saved setup script; worktree creation never executes that script. |
+| `POST /worktrees/actions?cwd=...` | Apply `open`, `cleanup`, `restore`, `pin` or `unpin` to a recorded owner. |
 
 Actions specify `ownerKind` (`channel` or `teammate`) and `ownerId`. Manual cleanup
 requires `confirmed: true` while confirmation is enabled; restore requires `snapshotId`.
 The server resolves target paths from ownership records and checks local-origin and
 trusted-workspace access before opening the store. Cleanup moves the complete directory
 to a recovery snapshot, preserving Git state and files while retaining disk usage.
+
+Worktree creation records pending setup without running it. The Desktop main process
+uses `POST /worktrees/initialization/prepare` (owner fields) to display the stored script,
+path, timeout and variable names in a native dialog. It then sends
+`POST /worktrees/initialization/complete` with `challengeId` and `confirmed`.
+The daemon consumes the challenge on confirmation or cancellation. A challenge expires
+after two minutes and applies only to the saved environment and worktree shown in the
+dialog. Both endpoints require the Desktop bridge token and reject browser origins;
+the ordinary actions endpoint cannot authorize setup.
 
 See [Managed Worktree Lifecycle](design/managed-worktree-lifecycle.md) for defaults,
 initialization behavior, concurrency and recovery rules, and the Settings workflow.

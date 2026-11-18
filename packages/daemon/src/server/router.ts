@@ -765,8 +765,8 @@ export async function routeRequest(
     return;
   }
 
-  if (url.pathname === "/worktrees" || url.pathname === "/worktrees/actions") {
-    await handleManagedWorktrees(request, response, url, config, storeRegistry);
+  if (url.pathname === "/worktrees" || url.pathname === "/worktrees/actions" || url.pathname.startsWith("/worktrees/initialization/")) {
+    await handleManagedWorktrees(request, response, url, config, storeRegistry, context.desktopBridgeToken);
     return;
   }
 

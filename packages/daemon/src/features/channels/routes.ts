@@ -180,16 +180,24 @@ export async function handleChannelItem(
       validateChannelModelUpdate({ store, cwd, channel, update: input, secretResolver });
       const updated = await coordinateWorktreeMutation(store, async () => {
         const current = store.getChannel(channelId);
-        const binding = input.workspaceBinding;
+        const stored = current?.workspaceBinding;
+        let binding = input.workspaceBinding;
+        if (binding?.mode === "managed_worktree") {
+          if (stored?.mode !== "managed_worktree" || binding.worktreePath !== stored.worktreePath
+            || binding.executionPath !== stored.executionPath || binding.branchName !== stored.branchName) {
+            throw new HttpError(409, "worktree_owner_mismatch", "请使用工作树操作创建或更改托管工作树。");
+          }
+          binding = stored;
+        }
         const changesWorkspace = input.boundPath !== undefined && input.boundPath !== (current?.boundPath ?? null)
-          || binding !== undefined && (binding?.mode !== current?.workspaceBinding?.mode
-            || binding?.worktreePath !== current?.workspaceBinding?.worktreePath || binding?.branchName !== current?.workspaceBinding?.branchName
-            || binding?.executionPath !== current?.workspaceBinding?.executionPath);
+          || binding !== undefined && (binding?.mode !== stored?.mode
+            || binding?.worktreePath !== stored?.worktreePath || binding?.branchName !== stored?.branchName
+            || binding?.executionPath !== stored?.executionPath);
         if (changesWorkspace) store.assertWorkspaceSnapshotFence(cwd);
         if (changesWorkspace && (await listWorktreeSnapshots(store.paths)).some((snapshot) => snapshot.ownerKind === "channel" && snapshot.ownerId === channelId)) {
           throw new HttpError(409, "worktree_snapshot_pending", "请先恢复工作树快照，再切换工作区归属。");
         }
-        return store.updateChannel(channelId, input, new Date().toISOString());
+        return store.updateChannel(channelId, { ...input, workspaceBinding: binding }, new Date().toISOString());
       });
       writeJson(response, 200, { channel: updated });
       return;

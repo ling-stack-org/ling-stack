@@ -3,7 +3,7 @@ import type { WorktreePolicy } from "@ling-stack/contracts";
 import { worktreeRoot } from "../workspaces/worktree-policy.js";
 import { coordinateWorktreeMutation, type WorktreeLifecycleStore } from "../workspaces/worktree-mutation.js";
 import { actOnManagedWorktreeLocked, WorktreeActionError } from "../workspaces/worktree-management.js";
-import { findWorktreeRecoveryRepoRoot, listWorktreeSnapshots } from "../workspaces/worktree-recovery.js";
+import { listWorktreeSnapshots } from "../workspaces/worktree-recovery.js";
 import { allowLocalWorkspaceRequest } from "../../shared/local-workspace-access.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
@@ -27,10 +27,10 @@ import {
   inspectManagedWorktree,
   isWorkspaceDirectory,
   resolveGitRepoRoot,
-  resolveManagedWorktreeRepoRoot,
   safeGitBranchSegment,
   type WorkspaceBindingCreateResult,
 } from "../workspaces/managed-worktrees.js";
+import { resolveWorktreeSource, type ManagedWorktreeOwner } from "../workspaces/worktree-identity.js";
 
 type DirectWorktreeTarget = Pick<TeammateDirectThread, "id" | "teammateId" | "workspaceBinding">;
 type DirectWorkspaceStore = RunStorePathsFacet & TeammateStoreFacet & Pick<WorkspaceStoreFacet, "getWorkspaceSettings"> & WorktreeLifecycleStore;
@@ -406,15 +406,11 @@ async function createManagedDirectWorktreeBinding(
   | { readonly ok: true; readonly binding: DirectWorkspaceBinding }
   | { readonly ok: false; readonly code: string; readonly message: string }
 > {
-  const recordedRepoRoot = thread.workspaceBinding?.worktreePath && lifecycleStore
-    ? await findWorktreeRecoveryRepoRoot(lifecycleStore, thread.workspaceBinding.worktreePath, directWorktreeBranchName(thread.teammateId, thread.id))
-    : undefined;
-  const repo = recordedRepoRoot
-    ? { ok: true as const, repoRoot: recordedRepoRoot }
-    : thread.workspaceBinding?.worktreePath && isWorkspaceDirectory(thread.workspaceBinding.worktreePath)
-      ? await resolveManagedWorktreeRepoRoot(thread.workspaceBinding.worktreePath)
-        .then((repoRoot) => ({ ok: true as const, repoRoot }), () => resolveGitRepoRoot(workspaceCwd))
-      : await resolveGitRepoRoot(workspaceCwd);
+  const owner: ManagedWorktreeOwner = { kind: "teammate", id: thread.id, teammateId: thread.teammateId };
+  const repo = await resolveWorktreeSource(workspacePaths, owner, thread.workspaceBinding);
+  if (!repo.ok && (!thread.workspaceBinding || thread.workspaceBinding.mode !== "managed_worktree")) {
+    return { ok: false, code: repo.code, message: repo.message };
+  }
   if (!repo.ok) {
     return {
       ok: false,
@@ -424,7 +420,7 @@ async function createManagedDirectWorktreeBinding(
         : repo.message,
     };
   }
-  const repoRoot = repo.repoRoot;
+  const repoRoot = repo.ok ? repo.repoRoot : workspaceCwd;
   const now = new Date().toISOString();
   const branchName = directWorktreeBranchName(thread.teammateId, thread.id);
   const worktreePath = (thread.workspaceBinding?.createdAt ? thread.workspaceBinding.worktreePath : undefined)
@@ -436,7 +432,8 @@ async function createManagedDirectWorktreeBinding(
     requestedBaseBranch,
     fetchBeforeCreate: policy?.fetchBeforeCreate,
     environment: policy?.environment,
-    lifecycleStore,
+    expectedIdentity: thread.workspaceBinding?.worktreeIdentity,
+    recovery: lifecycleStore ? { store: lifecycleStore, owner } : undefined,
   });
   if (!created.ok) {
     return { ok: false, code: created.code, message: created.message.replace("创建 worktree", "创建私聊 worktree") };
@@ -449,6 +446,7 @@ async function createManagedDirectWorktreeBinding(
       errorMessage: created.result.initializationError,
       executionPath: worktreePath,
       worktreePath,
+      worktreeIdentity: created.result.identity,
       branchName,
       baseBranch: thread.workspaceBinding?.baseBranch ?? created.result.baseBranch,
       baseCommit: thread.workspaceBinding?.baseCommit ?? created.result.baseCommit,

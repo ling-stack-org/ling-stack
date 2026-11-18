@@ -1,15 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { closeSync, fsyncSync, mkdirSync, openSync, renameSync, writeFileSync } from "node:fs";
-import { lstat, readFile, readdir, realpath } from "node:fs/promises";
+import { lstat, readFile, readdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import type { ChannelWorkspaceBinding, LingStackRuntimePaths } from "@ling-stack/core";
+import type { ChannelWorkspaceBinding, LingStackRuntimePaths, ManagedWorktreeIdentity } from "@ling-stack/core";
 import type { WorktreeRecoverySnapshot } from "@ling-stack/contracts";
 import { isolatedGit as runGit, inspectManagedWorktree, redactGitError } from "./managed-worktrees.js";
+import { assertOwnedLinkedWorktree, resolveWorktreeSource, type ManagedWorktreeOwner } from "./worktree-identity.js";
 import { assertWorktreeIdle, type WorktreeLifecycleStore } from "./worktree-mutation.js";
 
 export const WORKTREE_FENCE_PREFIX = "worktree_lifecycle_";
 const workspaceId = "workspace_default";
-interface RecoveryRecord extends WorktreeRecoverySnapshot { readonly repoRoot: string; readonly gitDir: string }
+interface RecoveryRecord extends WorktreeRecoverySnapshot, ManagedWorktreeIdentity {}
 
 async function git(cwd: string, args: readonly string[]) {
   try { return await runGit(cwd, args); }
@@ -49,6 +50,8 @@ async function records(paths: LingStackRuntimePaths): Promise<RecoveryRecord[]> 
     const record = JSON.parse(raw) as RecoveryRecord;
     if (journalPath(paths, record.id) !== join(journalRoot(paths), name)
       || !["channel", "teammate"].includes(record.ownerKind) || typeof record.ownerId !== "string"
+      || typeof record.repoRoot !== "string" || typeof record.gitDir !== "string"
+      || typeof record.gitCommonDir !== "string" || typeof record.branchName !== "string"
       || typeof record.originalPath !== "string" || resolve(record.originalPath) !== record.originalPath
       || record.snapshotPath !== join(dirname(record.originalPath), ".ling-recovery", record.id)
       || !["prepared", "archived", "restoring", "restored", "blocked"].includes(record.state)) throw new Error("Invalid worktree snapshot record");
@@ -60,31 +63,22 @@ export async function listWorktreeSnapshots(paths: LingStackRuntimePaths): Promi
   const existing = await records(paths);
   const visible = await Promise.all(existing.map(async (record) => record.state === "prepared" && !await pathExists(record.snapshotPath) ? undefined : record));
   return visible.filter((record): record is RecoveryRecord => Boolean(record && record.state !== "restored")).sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-    .map(({ repoRoot: _repoRoot, gitDir: _gitDir, ...record }) => record);
-}
-
-export async function assertOwnedLinkedWorktree(repoRoot: string, path: string, branchName: string, expectedGitDir?: string): Promise<string> {
-  if ((await lstat(path)).isSymbolicLink()) throw new Error("Worktree root cannot be a symbolic link");
-  const common = await realpath(resolve(path, (await git(path, ["rev-parse", "--git-common-dir"])).stdout.trim()));
-  const sourceCommon = await realpath(resolve(repoRoot, (await git(repoRoot, ["rev-parse", "--git-common-dir"])).stdout.trim()));
-  const gitDir = await realpath((await git(path, ["rev-parse", "--absolute-git-dir"])).stdout.trim());
-  const top = await realpath((await git(path, ["rev-parse", "--show-toplevel"])).stdout.trim());
-  if (common !== sourceCommon || gitDir === common || top !== await realpath(path) || (expectedGitDir && gitDir !== expectedGitDir)
-    || (await git(path, ["branch", "--show-current"])).stdout.trim() !== branchName) throw new Error("Worktree repository, branch or identity does not match its owner");
-  return gitDir;
+    .map(({ repoRoot: _repoRoot, gitCommonDir: _common, gitDir: _gitDir, ...record }) => record);
 }
 
 export async function archiveWorktree(store: WorktreeLifecycleStore, input: {
   readonly repoRoot: string; readonly path: string; readonly branchName: string;
   readonly ownerKind: "channel" | "teammate"; readonly ownerId: string; readonly ownerName: string;
+  readonly expectedIdentity?: ManagedWorktreeIdentity;
   readonly assertIdle: () => void;
   readonly finalize?: (record: WorktreeRecoverySnapshot, fence: { readonly ownerRequestId: string; readonly epoch: number }) => void | Promise<void>;
 }): Promise<WorktreeRecoverySnapshot> {
-  const gitDir = await assertOwnedLinkedWorktree(input.repoRoot, input.path, input.branchName);
+  const identity = await assertOwnedLinkedWorktree(input.repoRoot, input.path, input.branchName, input.expectedIdentity);
   const id = `${WORKTREE_FENCE_PREFIX}${randomUUID()}`;
   let record: RecoveryRecord = { id, ownerKind: input.ownerKind, ownerId: input.ownerId, ownerName: input.ownerName,
     originalPath: resolve(input.path), snapshotPath: join(dirname(resolve(input.path)), ".ling-recovery", id), branchName: input.branchName,
-    repoRoot: input.repoRoot, gitDir, createdAt: new Date().toISOString(), state: "prepared" };
+    ...identity, createdAt: new Date().toISOString(), state: "prepared" };
+  await assertRecordMatchesOwner(store, record);
   persist(store.paths, record);
   let epoch: number;
   try { epoch = store.acquireWorkspaceSnapshotFence(workspaceId, id, new Date().toISOString()); }
@@ -93,13 +87,14 @@ export async function archiveWorktree(store: WorktreeLifecycleStore, input: {
   let finalizationFailed = false;
   try {
     input.assertIdle();
+    await assertOwnedLinkedWorktree(record.repoRoot, record.originalPath, record.branchName, record);
     mkdirSync(dirname(record.snapshotPath), { recursive: true, mode: 0o700 });
     if ((await lstat(dirname(record.snapshotPath))).isSymbolicLink()) throw new Error("Recovery directory cannot be a symbolic link");
-    await git(input.repoRoot, ["worktree", "move", input.path, record.snapshotPath]);
+    await git(record.repoRoot, ["worktree", "move", input.path, record.snapshotPath]);
     syncDirectory(dirname(input.path));
     syncDirectory(dirname(record.snapshotPath));
-    await assertOwnedLinkedWorktree(input.repoRoot, record.snapshotPath, input.branchName, gitDir);
-    await git(input.repoRoot, ["worktree", "lock", "--reason", id, record.snapshotPath]);
+    await assertOwnedLinkedWorktree(record.repoRoot, record.snapshotPath, record.branchName, record);
+    await git(record.repoRoot, ["worktree", "lock", "--reason", id, record.snapshotPath]);
     record = { ...record, state: "archived" };
     persist(store.paths, record);
     if (input.finalize) {
@@ -132,7 +127,8 @@ async function reconcileRecord(store: WorktreeLifecycleStore, record: RecoveryRe
   const snapshotExists = await pathExists(record.snapshotPath);
   if (originalExists === snapshotExists) throw new Error("Worktree recovery locations are ambiguous; both directories are preserved");
   const location = snapshotExists ? record.snapshotPath : record.originalPath;
-  await assertOwnedLinkedWorktree(record.repoRoot, location, record.branchName, record.gitDir);
+  await assertRecordMatchesOwner(store, record);
+  await assertOwnedLinkedWorktree(record.repoRoot, location, record.branchName, record);
   if (snapshotExists) {
     let lock: string | undefined;
     try { lock = (await readFile(join(record.gitDir, "locked"), "utf8")).trim(); }
@@ -145,25 +141,43 @@ async function reconcileRecord(store: WorktreeLifecycleStore, record: RecoveryRe
   return next;
 }
 
-async function finalizeRecordBinding(store: WorktreeLifecycleStore, record: RecoveryRecord, epoch: number): Promise<void> {
+async function assertRecordMatchesOwner(store: WorktreeLifecycleStore, record: RecoveryRecord): Promise<ChannelWorkspaceBinding> {
+  let owner: ManagedWorktreeOwner | undefined;
   let binding: ChannelWorkspaceBinding | undefined;
-  if (record.ownerKind === "channel") binding = store.getChannel(record.ownerId)?.workspaceBinding;
-  else {
+  if (record.ownerKind === "channel") {
+    const channel = store.getChannel(record.ownerId);
+    if (channel) {
+      owner = { kind: "channel", id: channel.id, boundPath: channel.boundPath };
+      binding = channel.workspaceBinding;
+    }
+  } else {
     for (let offset = 0; ; offset += 500) {
       const page = store.listTeammateDirectThreads({ offset, limit: 500 });
       const thread = page.find((item) => item.id === record.ownerId);
-      if (thread) { binding = thread.workspaceBinding; break; }
+      if (thread) {
+        owner = { kind: "teammate", id: thread.id, teammateId: thread.teammateId };
+        binding = thread.workspaceBinding;
+        break;
+      }
       if (page.length < 500) break;
     }
   }
-  if (binding?.mode !== "managed_worktree" || binding.worktreePath !== record.originalPath || binding.branchName !== record.branchName) {
-    throw new Error("Worktree recovery owner no longer matches its recorded path and branch; workspace remains fenced");
+  if (owner && binding?.mode === "managed_worktree" && binding.worktreePath === record.originalPath && binding.branchName === record.branchName) {
+    const source = await resolveWorktreeSource(store.paths, owner, binding);
+    if (source.ok && source.repoRoot === record.repoRoot && (!source.identity
+      || source.identity.gitCommonDir === record.gitCommonDir && source.identity.gitDir === record.gitDir)) return binding;
   }
+  throw new Error("Worktree recovery owner no longer matches its recorded repository, path and branch");
+}
+
+async function finalizeRecordBinding(store: WorktreeLifecycleStore, record: RecoveryRecord, epoch: number): Promise<void> {
+  const binding = await assertRecordMatchesOwner(store, record);
+  const { repoRoot, gitCommonDir, gitDir } = record;
   const inspection = await inspectManagedWorktree(record.originalPath);
   const now = new Date().toISOString();
   if (!store.finalizeManagedWorktreeBindingWithinFence({ ownerKind: record.ownerKind, ownerId: record.ownerId,
     ownerRequestId: record.id, expectedEpoch: epoch, now,
-    binding: { ...binding, status: inspection.exists ? inspection.status : "not_created",
+    binding: { ...binding, worktreeIdentity: { repoRoot, gitCommonDir, gitDir }, status: inspection.exists ? inspection.status : "not_created",
       errorMessage: inspection.exists ? inspection.errorMessage : undefined, checkedAt: now, updatedAt: now } })) {
     throw new Error("Worktree recovery owner no longer exists; workspace remains fenced");
   }
@@ -188,12 +202,13 @@ export async function restoreWorktreeSnapshot(
 ): Promise<string> {
   let record = (await records(store.paths)).find((item) => item.id === snapshotId);
   if (!record) throw new Error("Worktree recovery snapshot was not found");
+  await assertRecordMatchesOwner(store, record);
   if (record.state === "restored") {
-    await assertOwnedLinkedWorktree(record.repoRoot, record.originalPath, record.branchName, record.gitDir);
+    await assertOwnedLinkedWorktree(record.repoRoot, record.originalPath, record.branchName, record);
     return record.originalPath;
   }
   if (await pathExists(record.originalPath)) throw new Error("恢复目标已存在，已保留现有目录与恢复快照。");
-  await assertOwnedLinkedWorktree(record.repoRoot, record.snapshotPath, record.branchName, record.gitDir);
+  await assertOwnedLinkedWorktree(record.repoRoot, record.snapshotPath, record.branchName, record);
   record = { ...record, state: "restoring", errorMessage: undefined };
   const epoch = store.acquireWorkspaceSnapshotFence(workspaceId, record.id, new Date().toISOString());
   let verified = false;
@@ -201,6 +216,7 @@ export async function restoreWorktreeSnapshot(
   try {
     assertIdle();
     assertWorktreeIdle(store, record.snapshotPath);
+    await assertOwnedLinkedWorktree(record.repoRoot, record.snapshotPath, record.branchName, record);
     persist(store.paths, record);
     let lock: string | undefined;
     try { lock = (await readFile(join(record.gitDir, "locked"), "utf8")).trim(); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
@@ -209,7 +225,7 @@ export async function restoreWorktreeSnapshot(
     await git(record.repoRoot, ["worktree", "move", record.snapshotPath, record.originalPath]);
     syncDirectory(dirname(record.originalPath));
     syncDirectory(dirname(record.snapshotPath));
-    await assertOwnedLinkedWorktree(record.repoRoot, record.originalPath, record.branchName, record.gitDir);
+    await assertOwnedLinkedWorktree(record.repoRoot, record.originalPath, record.branchName, record);
     record = { ...record, state: "restored" };
     persist(store.paths, record);
     if (finalize) {
@@ -233,20 +249,13 @@ export async function restoreWorktreeSnapshot(
   }
 }
 
-export async function restoreWorktreeForCreation(store: WorktreeLifecycleStore, path: string, repoRoot: string, branchName: string): Promise<boolean> {
+export async function restoreWorktreeForCreation(store: WorktreeLifecycleStore, owner: ManagedWorktreeOwner, path: string): Promise<void> {
   const candidates = (await records(store.paths)).filter((item) => item.originalPath === resolve(path) && item.state !== "restored");
-  const record = (await Promise.all(candidates.map(async (item) => await pathExists(item.snapshotPath) ? item : undefined))).find(Boolean);
-  if (!record) return false;
-  if (await realpath(record.repoRoot) !== await realpath(repoRoot) || record.branchName !== branchName) throw new Error("Recovery snapshot belongs to a different repository or branch");
+  const snapshots = (await Promise.all(candidates.map(async (item) => await pathExists(item.snapshotPath) ? item : undefined))).filter(Boolean);
+  if (snapshots.length === 0) return;
+  const record = snapshots[0];
+  if (snapshots.length !== 1 || !record || record.ownerKind !== owner.kind || record.ownerId !== owner.id) {
+    throw new Error("Worktree recovery snapshot does not match its owner");
+  }
   await restoreWorktreeSnapshot(store, record.id, () => assertWorktreeIdle(store, path));
-  return true;
-}
-
-/** Return the repository recorded for a retained snapshot before the original path is restored. */
-export async function findWorktreeRecoveryRepoRoot(store: WorktreeLifecycleStore, path: string, branchName: string): Promise<string | undefined> {
-  const candidates = (await records(store.paths)).filter((item) => item.originalPath === resolve(path) && item.state !== "restored");
-  const record = (await Promise.all(candidates.map(async (item) => await pathExists(item.snapshotPath) ? item : undefined))).find(Boolean);
-  if (!record) return undefined;
-  if (record.branchName !== branchName) throw new Error("Recovery snapshot belongs to a different branch");
-  return record.repoRoot;
 }

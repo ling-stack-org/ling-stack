@@ -84,6 +84,7 @@ export async function runWorkspaceTerminalCommand(input: {
   readonly idFactory?: () => string;
   readonly environment?: Readonly<Record<string, string>>;
   readonly stopProcessGroup?: boolean;
+  readonly inheritEnvironment?: boolean;
   readonly onSpawn?: (pid: number | undefined) => void;
 }): Promise<WorkspaceTerminalCommandResponse> {
   const rawCwd = input.cwd.trim();
@@ -118,7 +119,7 @@ export async function runWorkspaceTerminalCommand(input: {
   const stderrBuffer = createOutputBuffer(outputLimitBytes);
   const launchOptions: SpawnOptions = {
     cwd: directory,
-    env: input.environment ? { ...process.env, ...input.environment } : process.env,
+    env: input.inheritEnvironment === false ? { ...input.environment } : input.environment ? { ...process.env, ...input.environment } : process.env,
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
     ...(input.stopProcessGroup && process.platform !== "win32" ? { detached: true } : {}),

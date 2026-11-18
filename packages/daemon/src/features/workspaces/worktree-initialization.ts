@@ -68,7 +68,7 @@ export async function initializeWorktree(
   let result: InitializationRecord;
   try {
     const command = environment?.enabled ? await runWorkspaceTerminalCommand({ cwd: path, command: environment.setupScript,
-      environment: environment.variables, timeoutMs: environment.timeoutSeconds * 1000, outputLimitBytes: 8000, stopProcessGroup: true,
+      environment: initializationProcessEnvironment(environment.variables), inheritEnvironment: false, timeoutMs: environment.timeoutSeconds * 1000, outputLimitBytes: 8000, stopProcessGroup: true,
       onSpawn: (pid) => writePrivateJson(markerPath, { status: "running", fingerprint, pid }) }) : undefined;
     let output = command ? [command.stdout, command.stderr].filter(Boolean).join("\n") : "";
     for (const secret of Object.values(environment?.variables ?? {})) if (secret) output = output.split(secret).join("[redacted]");
@@ -80,4 +80,14 @@ export async function initializeWorktree(
   }
   writePrivateJson(markerPath, result);
   return result;
+}
+
+/** Keep ordinary shell context without passing daemon or Desktop capabilities to scripts. */
+function initializationProcessEnvironment(variables: Readonly<Record<string, string>>): Readonly<Record<string, string>> {
+  const inherited: Record<string, string> = {};
+  const allowed = new Set(["PATH", "HOME", "USERPROFILE", "SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "TEMP", "TMP", "TMPDIR", "LANG", "LC_ALL", "TERM", "USER", "LOGNAME"]);
+  for (const [key, value] of Object.entries(process.env)) {
+    if (allowed.has(key.toUpperCase()) && typeof value === "string") inherited[key] = value;
+  }
+  return { ...inherited, ...variables };
 }

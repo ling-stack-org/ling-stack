@@ -465,7 +465,7 @@
     "test/user-input-transcript.test.mjs",
     "test/user-input-wait-cancellation.test.mjs",
     "test/web-evidence-service.regression-1.test.mjs",
-    "test/work-items-api.test.mjs",
+    "test/work-items-api.test.ts",
     "test/work-summary-routes.test.mjs",
     "test/work-summary.test.mjs",
     "test/workflow-branch-result.test.mjs",
