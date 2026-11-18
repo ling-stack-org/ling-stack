@@ -192,7 +192,9 @@ a requested package via `--if-present`.
   corresponding specs. Shared, unknown, or full-scope inputs retain the common
   QA, Companion and conversation-summary tests. Added and edited specs run in
   production when already in the smoke plan, or on Vite dev for spec-only
-  coverage including HTML harnesses. Specs that require local input are listed
+  coverage including HTML harnesses. The production QA and smoke groups run
+  serially, alongside the changed-spec group on a separate Vite server port.
+  The changed-spec group exits on its first failure. Specs that require local input are listed
   separately in the scope report. The aggregate requires the selected Web
   job to succeed.
 - Framework assurance: selected complete-tier runs add an Ubuntu / Node
