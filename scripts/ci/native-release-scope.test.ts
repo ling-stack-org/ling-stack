@@ -80,7 +80,7 @@ test("the aggregate rejects skipped, failed and cancelled release contracts and 
     LINUX_CONTRACT: "skipped", WEB_SMOKE: "skipped" };
   const check = (overrides: Record<string, string> = {}) => assertCiResults({ tier: "complete", mode: scope.mode,
     assurance: scope.assurance, build: scope.packages.length > 0, dependency: scope.dependencyPolicy,
-    typecheck: scope.typecheckPackages.length > 0, unit: false, daemon: scope.daemon, macosNative: scope.macosNative,
+    typecheck: scope.typecheckPackages.length > 0, unit: false, daemon: scope.daemon, linuxContract: scope.linuxContract, macosNative: scope.macosNative,
     web: scope.web, results: { ...results, ...overrides } });
   assert.equal(check(), true);
   for (const lane of ["BUILD", "MACOS_NATIVE"]) {

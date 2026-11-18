@@ -40,10 +40,12 @@ jobs:
       unit-selected: ${{ steps.test-plan.outputs.unit-selected }}
       daemon: ${{ steps.classify.outputs.daemon }}
       daemon-platforms: ${{ steps.classify.outputs.daemon-platforms }}
+      linux-contract: ${{ steps.classify.outputs.linux-contract }}
       macos-native: ${{ steps.classify.outputs.macos-native }}
       macos-helper: ${{ steps.classify.outputs.macos-helper }}
       native-release: ${{ steps.classify.outputs.native-release }}
       web: ${{ steps.classify.outputs.web }}
+      web-smoke-plan: ${{ steps.classify.outputs.web-smoke-plan }}
     steps:
       - name: Check out repository without retained credentials
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -96,10 +98,12 @@ jobs:
             "typecheck-selected": String(scope.typecheckPackages.length > 0),
             daemon: String(scope.daemon),
             "daemon-platforms": JSON.stringify(scope.daemonPlatforms),
+            "linux-contract": String(scope.linuxContract),
             "macos-native": String(scope.macosNative),
             "macos-helper": String(scope.macosHelper),
             "native-release": String(scope.nativeRelease),
             web: String(scope.web),
+            "web-smoke-plan": JSON.stringify(scope.webSmoke ?? null),
           };
           for (const [key, value] of Object.entries(outputs)) console.log(`${key}=${value}`);
           NODE
@@ -342,6 +346,7 @@ jobs:
         run: node --test scripts/framework-assurance/*.test.mjs scripts/framework-assurance/*.test.ts
 
       - name: Typecheck CI tooling tests
+        if: needs.scope.outputs.typecheck-selected == 'false'
         run: corepack pnpm typecheck:ci-tests
 
       - name: Calibrate frozen offline controls without a Provider
@@ -413,11 +418,6 @@ jobs:
           RUSTUP_TOOLCHAIN: 1.97.1
         run: corepack pnpm --filter @ling-stack/daemon test:image-sanitizer
 
-      - name: Check real source daemon lifecycle and fresh-workspace doctor on Linux
-        if: contains(needs.scope.outputs.packages, '"@ling-stack/cli"')
-        working-directory: packages/cli
-        run: node --test test/daemon-lifecycle.test.mjs
-
       - name: Upload reusable build outputs
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
@@ -469,36 +469,10 @@ jobs:
           name: ci-dist
           path: .
 
-      - name: Check production Web QA regressions on Linux
-        working-directory: apps/web
+      - name: Run the selected production and changed browser specs
         env:
-          LING_PLAYWRIGHT_PREVIEW: "1"
-          LING_PLAYWRIGHT_REUSE_SERVER: "0"
-          LING_CAPTURE_UI2_EVIDENCE: "1"
-        run: >-
-          corepack pnpm exec playwright test
-          e2e/ui2-shell-feedback-permission.spec.ts e2e/ui2-settings-skill-library.spec.ts
-          e2e/ui2-teammate-management-skills.spec.ts e2e/ui2-council-members.spec.ts
-          --grep 'without a configured model|full access confirmation|built-in skill timestamps|Chinese built-in skill|Chinese QA member'
-          --reporter=line
-
-      - name: Check Companion streaming, recovery, settings and character layout
-        working-directory: apps/web
-        env:
-          LING_PLAYWRIGHT_PREVIEW: "1"
-          LING_PLAYWRIGHT_REUSE_SERVER: "0"
-          LING_CAPTURE_UI2_EVIDENCE: "1"
-        run: corepack pnpm exec playwright test e2e/companions.spec.ts --reporter=line
-
-      - name: Check production conversation change summaries
-        working-directory: apps/web
-        env:
-          LING_PLAYWRIGHT_PREVIEW: "1"
-          LING_PLAYWRIGHT_REUSE_SERVER: "0"
-          LING_CAPTURE_UI2_EVIDENCE: "1"
-        run: >-
-          corepack pnpm exec playwright test e2e/conversation-change-summary.spec.ts
-          --output=test-results/conversation-change-summary --reporter=line
+          WEB_SMOKE_PLAN: ${{ needs.scope.outputs.web-smoke-plan }}
+        run: node scripts/ci/web-smoke.mjs
 
       - name: Preserve Linux production Web smoke evidence
         if: always()
@@ -686,14 +660,34 @@ jobs:
           name: ci-test-plan
           path: .codex-artifacts/ci
 
+      - name: Restore the macOS image codec cache
+        id: macos-codec-cache
+        if: matrix.runner == 'macos-26'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: packages/daemon/dist/native/image-sanitizer
+          key: ci-macos-image-codec-v1-${{ runner.arch }}-${{ hashFiles('packages/daemon/native/image-sanitizer/Cargo.toml', 'packages/daemon/native/image-sanitizer/Cargo.lock', 'packages/daemon/native/image-sanitizer/dependency-inventory.json', 'packages/daemon/native/image-sanitizer/upstream-provenance.json', 'packages/daemon/native/image-sanitizer/src/**', 'packages/daemon/native/image-sanitizer/vendor/**') }}
+          restore-keys: ci-macos-image-codec-v1-${{ runner.arch }}-
+
       # ci-dist comes from Ubuntu; native codecs must be rebuilt on this macOS host.
       - name: Build the host image codec
-        if: matrix.runner == 'macos-26'
+        if: matrix.runner == 'macos-26' && steps.macos-codec-cache.outputs.cache-hit != 'true'
         env:
           RUSTUP_TOOLCHAIN: 1.97.1
         run: |
           rustup toolchain install 1.97.1 --profile minimal
           corepack pnpm --filter @ling-stack/daemon build:image-sanitizer
+
+      - name: Save the macOS image codec cache
+        if: matrix.runner == 'macos-26' && steps.macos-codec-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: packages/daemon/dist/native/image-sanitizer
+          key: ci-macos-image-codec-v1-${{ runner.arch }}-${{ hashFiles('packages/daemon/native/image-sanitizer/Cargo.toml', 'packages/daemon/native/image-sanitizer/Cargo.lock', 'packages/daemon/native/image-sanitizer/dependency-inventory.json', 'packages/daemon/native/image-sanitizer/upstream-provenance.json', 'packages/daemon/native/image-sanitizer/src/**', 'packages/daemon/native/image-sanitizer/vendor/**') }}
+
+      - name: Verify the macOS image codec
+        if: matrix.runner == 'macos-26'
+        run: test -x packages/daemon/dist/native/image-sanitizer/ling-image-sanitizer
 
       - name: Restore the Linux codec executable permission after artifact extraction
         if: matrix.runner == 'ubuntu-latest'
@@ -734,7 +728,7 @@ jobs:
   daemon-linux-contracts:
     name: Linux restricted-command fail-closed contracts
     needs: [scope, build]
-    if: ${{ !cancelled() && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.daemon == 'true' && needs.build.result == 'success' }}
+    if: ${{ !cancelled() && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.linux-contract == 'true' && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -950,6 +944,7 @@ jobs:
           LINUX_CONTRACT_RESULT: ${{ needs.daemon-linux-contracts.result }}
           MACOS_NATIVE_RESULT: ${{ needs.restricted-command-macos.result }}
           DAEMON_SELECTED: ${{ needs.scope.outputs.daemon }}
+          LINUX_CONTRACT_SELECTED: ${{ needs.scope.outputs.linux-contract }}
           MACOS_NATIVE_SELECTED: ${{ needs.scope.outputs.macos-native }}
           WEB_SELECTED: ${{ needs.scope.outputs.web }}
           DEPENDENCY_SELECTED: ${{ needs.scope.outputs.dependency-policy }}
