@@ -283,8 +283,9 @@ of crashing the daemon.
 It includes `rootDir`, `fetchBeforeCreate`, `autoCleanup`, `retainCount`,
 `confirmBeforeDelete`, `protectedOwners` and `environment`. Settings and effective-config
 responses require a local Ling origin or native client and a daemon-known workspace.
-Environment variable names remain visible; values are returned as `[configured]` and
-preserved when the same keys are submitted with that placeholder.
+Environment variable names remain visible. The saved setup script and variable values
+are returned as `[configured]`. Submitting that placeholder retains the configured
+script or variable; submit new text to replace it.
 
 ## Managed Worktrees
 

@@ -5,7 +5,7 @@ import { request as requestHttp } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
-import type { ManagedWorktreeListResponse, WorktreeInitializationChallenge } from "@ling-stack/contracts";
+import { WORKTREE_CONFIGURATION_PLACEHOLDER, type ManagedWorktreeListResponse, type WorktreeInitializationChallenge, type WorktreePolicy } from "@ling-stack/contracts";
 import { createSqliteRunStore } from "../../core/dist/index.js";
 import { createDaemonServer } from "../dist/index.js";
 import { createManagedWorktreeBinding } from "../dist/features/channels/workspace.js";
@@ -17,6 +17,7 @@ const foreignHeaders: readonly Record<string, string>[] = [
   { "Sec-Fetch-Site": "cross-site", "Sec-Fetch-Mode": "no-cors", "Sec-Fetch-Dest": "image" },
   { "Sec-Fetch-Mode": "navigate" },
 ];
+const setupScript = "printf initialized > setup-ran.txt # private fixture script";
 
 function browserRequest(url: string, input: { method: string; headers: Record<string, string>; body?: string }) {
   return new Promise<{ status: number; text: () => Promise<string> }>((resolve, reject) => {
@@ -48,7 +49,7 @@ async function fixture(t: TestContext) {
   const store = createSqliteRunStore(cwd);
   const bridgeToken = randomUUID();
   store.updateWorkspaceSettings({ worktreePolicy: { fetchBeforeCreate: false, environment: {
-    enabled: true, setupScript: "printf initialized > setup-ran.txt", variables: { LING_FIXTURE_TOKEN: "fixture-value-private" }, timeoutSeconds: 10,
+    enabled: true, setupScript, variables: { LING_FIXTURE_TOKEN: "fixture-value-private" }, timeoutSeconds: 10,
   } } }, new Date().toISOString());
   let storeOpens = 0;
   daemon = createDaemonServer({ host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd }, {
@@ -63,7 +64,7 @@ async function fixture(t: TestContext) {
     url: (path: string, selected = cwd) => `${base}${path}?cwd=${encodeURIComponent(selected)}` };
 }
 
-test("workspace settings protect environment values on reads and unrelated updates", async t => {
+test("workspace reads hide saved setup scripts and environment values", async t => {
   const f = await fixture(t);
   const original = f.store.getWorkspaceSettings();
   const opens = f.storeOpens();
@@ -79,31 +80,44 @@ test("workspace settings protect environment values on reads and unrelated updat
     assert.equal(response.status, 403, `${method} ${path}`);
     assert.equal((await response.text()).includes("fixture-value-private"), false);
   }
-  for (const path of ["/workspace-settings", "/config/effective"]) {
+  for (const path of ["/workspace-settings", "/config/effective", "/worktrees"]) {
     assert.equal((await fetch(f.url(path, join(tmpdir(), "ling-unselected-workspace")))).status, 403);
-    const local = await fetch(f.url(path), { headers: { Origin: "http://localhost:4310" } });
-    assert.equal(local.status, 200);
-    const localText = await local.text();
-    assert.equal(localText.includes("fixture-value-private"), false);
-    assert.match(localText, /\[configured\]/u);
-    assert.equal((await fetch(f.url(path))).status, 200, "Native requests may omit Origin");
+    for (const headers of [{ Origin: "http://localhost:4310" }, undefined]) {
+      const local = await fetch(f.url(path), { headers });
+      assert.equal(local.status, 200);
+      const localText = await local.text();
+      assert.equal(localText.includes("fixture-value-private"), false);
+      assert.equal(localText.includes(setupScript), false);
+      assert.match(localText, /"setupScript":"\[configured\]"/u);
+    }
   }
   assert.equal(f.storeOpens(), opens);
   assert.deepEqual(f.store.getWorkspaceSettings(), original);
 });
 
-test("redacted worktree settings preserve existing values on a browser round trip", async t => {
+test("settings round trips retain a configured script or replace it with new input", async t => {
   const f = await fixture(t);
   const response = await fetch(f.url("/workspace-settings"));
   assert.equal(response.status, 200);
-  const payload = await response.json() as { settings: { worktreePolicy: { environment: { variables: Record<string, string> } } } };
-  assert.deepEqual(payload.settings.worktreePolicy.environment.variables, { LING_FIXTURE_TOKEN: "[configured]" });
-  const update = await fetch(f.url("/workspace-settings"), { method: "PATCH", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ worktreePolicy: { fetchBeforeCreate: false, environment: {
-      enabled: true, setupScript: "printf initialized > setup-ran.txt", variables: { LING_FIXTURE_TOKEN: "[configured]" }, timeoutSeconds: 10,
-    } } }) });
-  assert.equal(update.status, 200);
-  assert.equal(f.store.getWorkspaceSettings().worktreePolicy?.environment?.variables.LING_FIXTURE_TOKEN, "fixture-value-private");
+  const payload = await response.json() as { settings: { worktreePolicy: WorktreePolicy } };
+  const environment = payload.settings.worktreePolicy.environment!;
+  assert.equal(environment.setupScript, WORKTREE_CONFIGURATION_PLACEHOLDER);
+  assert.deepEqual(environment.variables, { LING_FIXTURE_TOKEN: WORKTREE_CONFIGURATION_PLACEHOLDER });
+  const update = (environment: WorktreePolicy["environment"]) => fetch(f.url("/workspace-settings"), {
+    method: "PATCH", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ worktreePolicy: { fetchBeforeCreate: false, environment } }),
+  });
+  assert.equal((await update({ ...environment, timeoutSeconds: 20 })).status, 200);
+  assert.deepEqual(f.store.getWorkspaceSettings().worktreePolicy?.environment, {
+    ...environment, setupScript, timeoutSeconds: 20, variables: { LING_FIXTURE_TOKEN: "fixture-value-private" },
+  });
+  const replacement = "printf replacement > setup-ran.txt";
+  const saved = await update({ ...environment, setupScript: replacement });
+  assert.equal(saved.status, 200);
+  assert.equal((await saved.text()).includes(replacement), false);
+  assert.equal(f.store.getWorkspaceSettings().worktreePolicy?.environment?.setupScript, replacement);
+  assert.equal((await update({ ...environment, enabled: false, setupScript: "" })).status, 200);
+  assert.equal((await update(environment)).status, 400, "A placeholder cannot become executable script text");
 });
 
 test("setup requires the Desktop bridge and a single confirmed challenge", async t => {
@@ -134,7 +148,7 @@ test("setup requires the Desktop bridge and a single confirmed challenge", async
     const serialized = await response.text();
     assert.equal(serialized.includes("fixture-value-private"), false);
     const challenge = JSON.parse(serialized) as WorktreeInitializationChallenge;
-    assert.equal(challenge.environment?.setupScript, "printf initialized > setup-ran.txt");
+    assert.equal(challenge.environment?.setupScript, setupScript);
     assert.deepEqual(challenge.environment?.variableNames, ["LING_FIXTURE_TOKEN"]);
     return challenge.challengeId;
   }
@@ -147,6 +161,7 @@ test("setup requires the Desktop bridge and a single confirmed challenge", async
   const result = await post(complete, { challengeId: approved, confirmed: true }, desktop);
   assert.equal(result.status, 200);
   const data = await result.json() as ManagedWorktreeListResponse;
+  assert.equal(data.policy.environment?.setupScript, WORKTREE_CONFIGURATION_PLACEHOLDER);
   const initialization = data.entries[0]?.initialization;
   assert.equal(initialization?.status, "succeeded");
   assert.ok(initialization.completedAt);

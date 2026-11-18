@@ -1,3 +1,6 @@
+/** Public worktree settings use this marker to retain a private configured value. */
+export const WORKTREE_CONFIGURATION_PLACEHOLDER = "[configured]";
+
 export interface WorktreePolicy {
   readonly rootDir?: string;
   readonly fetchBeforeCreate: boolean;

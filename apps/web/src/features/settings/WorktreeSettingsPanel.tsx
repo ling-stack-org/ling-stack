@@ -1,6 +1,6 @@
 import { FolderOpen, GitBranch, Pin, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
 import { useRef, useState } from "react";
-import type { ManagedWorktreeEntry } from "@ling-stack/contracts";
+import { WORKTREE_CONFIGURATION_PLACEHOLDER, type ManagedWorktreeEntry } from "@ling-stack/contracts";
 import { useI18n, type Translate } from "../../i18n.js";
 import { Button, DataRow, Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, Field, InlineFeedback, Input, SegmentedControl, SegmentedControlItem, Skeleton, StatusIndicator, Switch, Textarea } from "../../shared/ui/index.js";
 import { useWorktreeSettings } from "./useWorktreeSettings.js";
@@ -14,6 +14,7 @@ export function WorktreeSettingsPanel({ cwd }: { readonly cwd: string }): React.
   const refreshRef = useRef<HTMLButtonElement>(null);
   const disabled = state.loading || Boolean(state.busy);
   const target = state.cleanupTarget;
+  const scriptConfigured = state.environment.setupScript === WORKTREE_CONFIGURATION_PLACEHOLDER;
 
   return (
     <div className="settings-worktrees" data-worktree-settings="true" aria-busy={state.loading}>
@@ -60,8 +61,15 @@ export function WorktreeSettingsPanel({ cwd }: { readonly cwd: string }): React.
             <p>{t("The saved script runs locally on new worktrees with your account permissions. Existing worktrees are unchanged.")}</p>
             <DataRow identity={<RefreshCw size={18} aria-hidden="true" />} summary={<strong>{t("Run setup script on new worktrees")}</strong>}
               actions={<Switch aria-label={t("Run setup script on new worktrees")} checked={state.environment.enabled} disabled={disabled} onCheckedChange={(enabled) => state.setEnvironment({ ...state.environment, enabled })} />} />
-            <Field label={t("Setup script")}><Textarea aria-label={t("Setup script")} rows={8} value={state.environment.setupScript} disabled={disabled}
-              onChange={(event) => state.setEnvironment({ ...state.environment, setupScript: event.target.value })} /></Field>
+            <Field label={t("Setup script")}>
+              <div>
+                <Textarea aria-label={t("Setup script")} rows={8} value={scriptConfigured ? "" : state.environment.setupScript} disabled={disabled}
+                  placeholder={scriptConfigured ? WORKTREE_CONFIGURATION_PLACEHOLDER : undefined}
+                  onChange={(event) => state.setEnvironment({ ...state.environment, setupScript: event.target.value })} />
+                {scriptConfigured ? <Button size="sm" variant="ghost" disabled={disabled}
+                  onClick={() => state.setEnvironment({ ...state.environment, enabled: false, setupScript: "" })}>{t("Clear")}</Button> : null}
+              </div>
+            </Field>
             <Field label={t("Environment variables")} description={t("Use one unique NAME=value environment variable per line.")}><Textarea aria-label={t("Environment variables")} rows={4}
               value={state.variablesText} disabled={disabled} onChange={(event) => state.setVariablesText(event.target.value)} /></Field>
             <Field label={t("Setup timeout (seconds)")}><Input type="number" min={1} max={600} aria-label={t("Setup timeout (seconds)")} value={state.environment.timeoutSeconds} disabled={disabled}

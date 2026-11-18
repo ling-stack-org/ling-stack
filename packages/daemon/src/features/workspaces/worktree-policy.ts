@@ -1,17 +1,16 @@
 import { isAbsolute, join, resolve } from "node:path";
-import type { WorktreePolicy } from "@ling-stack/contracts";
+import { WORKTREE_CONFIGURATION_PLACEHOLDER, type WorktreePolicy } from "@ling-stack/contracts";
 import type { LingStackRuntimePaths } from "@ling-stack/core";
 
-export const REDACTED_WORKTREE_ENVIRONMENT_VALUE = "[configured]";
-
-/** Keep environment variable names visible while never returning their values. */
+/** Public projections keep variable names and mask private script and variable values. */
 export function redactWorktreePolicy(policy: WorktreePolicy | undefined): WorktreePolicy | undefined {
   if (!policy?.environment) return policy;
   return {
     ...policy,
     environment: {
       ...policy.environment,
-      variables: Object.fromEntries(Object.keys(policy.environment.variables).map((key) => [key, REDACTED_WORKTREE_ENVIRONMENT_VALUE])),
+      setupScript: policy.environment.setupScript?.trim() ? WORKTREE_CONFIGURATION_PLACEHOLDER : "",
+      variables: Object.fromEntries(Object.keys(policy.environment.variables).map((key) => [key, WORKTREE_CONFIGURATION_PLACEHOLDER])),
     },
   };
 }
@@ -21,15 +20,22 @@ export function restoreRedactedWorktreePolicy(
   policy: WorktreePolicy | null | undefined,
   current: WorktreePolicy | undefined,
 ): WorktreePolicy | null | undefined {
-  if (!policy?.environment || !current?.environment) return policy;
-  const currentVariables = current.environment.variables;
+  if (!policy?.environment) return policy;
+  const previous = current?.environment;
+  let setupScript = policy.environment.setupScript;
+  if (setupScript === WORKTREE_CONFIGURATION_PLACEHOLDER) {
+    if (!previous?.setupScript?.trim()) throw new Error("No saved worktree setup script to retain.");
+    setupScript = previous.setupScript;
+  }
+  const currentVariables = previous?.variables ?? {};
   return {
     ...policy,
     environment: {
       ...policy.environment,
+      setupScript,
       variables: Object.fromEntries(Object.entries(policy.environment.variables).map(([key, value]) => [
         key,
-        value === REDACTED_WORKTREE_ENVIRONMENT_VALUE && Object.hasOwn(currentVariables, key) ? currentVariables[key] : value,
+        value === WORKTREE_CONFIGURATION_PLACEHOLDER && Object.hasOwn(currentVariables, key) ? currentVariables[key] : value,
       ])),
     },
   };

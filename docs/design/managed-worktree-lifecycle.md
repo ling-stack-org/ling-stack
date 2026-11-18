@@ -182,7 +182,9 @@ storage has no automatic expiration or permanent deletion policy.
    occupied destination or active task before retrying; restoration does not overwrite
    either location. Restore retained snapshots before switching workspace ownership.
 5. Under **Environment**, enable initialization, enter the script, variables and
-   timeout, and save before creating a worktree. New checkouts record a pending
+   timeout, and save before creating a worktree. A saved script appears as configured
+   in Settings; enter new text to replace it, or use **Clear** and save to remove it
+   and disable setup. New checkouts record a pending
    setup checkpoint without executing the script. In Ling Desktop, use **Retry setup**
    to review the script and approve it in the native dialog. A failed entry exposes
    redacted output and can be retried
@@ -207,7 +209,8 @@ reinitialized automatically.
 A private marker in the linked worktree's Git administrative directory records pending,
 running, succeeded or failed state. Output is bounded and configured variable values are
 redacted from the retained output. Ordinary settings and list responses use `[configured]`
-for variable values; the approval preview includes names only. Pending or failed setup retains the directory and
+for the script and variable values. The Desktop approval preview includes the script
+and variable names. Pending or failed setup retains the directory and
 blocks normal workspace readiness; the settings list exposes explicit retry with the
 current saved policy. On POSIX, timeout escalates from SIGTERM to SIGKILL for the process
 group and successful completion stops remaining children in that group. A retained running marker

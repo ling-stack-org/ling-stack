@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
-import type { ManagedWorktreeActionRequest, ManagedWorktreeListResponse } from "@ling-stack/contracts";
+import { WORKTREE_CONFIGURATION_PLACEHOLDER, type ManagedWorktreeActionRequest, type ManagedWorktreeListResponse } from "@ling-stack/contracts";
 import { mockDaemon } from "./support/mock-daemon";
 import { createBaseState } from "./support/mock-state";
 
@@ -33,11 +33,19 @@ async function prepare(page: Page, locale = "en-US", theme = "light", width = 14
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await page.route(/\/notifications(?:\/stream)?(?:\?.*)?$/u, route => route.fulfill({ json: { notifications: [] } }));
   let current = snapshot();
+  const readInventory = (): ManagedWorktreeListResponse => {
+    const env = current.policy.environment;
+    if (!env) return current;
+    return { ...current, policy: { ...current.policy, environment: { ...env,
+      setupScript: env.setupScript ? WORKTREE_CONFIGURATION_PLACEHOLDER : "",
+      variables: Object.fromEntries(Object.keys(env.variables).map(key => [key, WORKTREE_CONFIGURATION_PLACEHOLDER])),
+    } } };
+  };
   let loadError = false;
   let cleanupError = false;
   const actions: ManagedWorktreeActionRequest[] = [];
   await page.route(/\/worktrees(?:\?.*)?$/u, async route => {
-    await route.fulfill(loadError ? { status: 503, json: { message: "Worktree list temporarily unavailable" } } : { json: current });
+    await route.fulfill(loadError ? { status: 503, json: { message: "Worktree list temporarily unavailable" } } : { json: readInventory() });
   });
   await page.route(/\/worktrees\/actions(?:\?.*)?$/u, async route => {
     const input = route.request().postDataJSON() as ManagedWorktreeActionRequest;
@@ -53,13 +61,21 @@ async function prepare(page: Page, locale = "en-US", theme = "light", width = 14
     }
     if (input.action === "restore") current = { ...current, entries: current.entries.map(entry => entry.ownerId === input.ownerId ? { ...entry, status: "ready" } : entry), snapshots: current.snapshots?.filter(item => item.id !== input.snapshotId) };
     if (input.action === "pin" || input.action === "unpin") current = { ...current, entries: current.entries.map(entry => entry.ownerId === input.ownerId ? { ...entry, pinned: input.action === "pin", kept: input.action === "pin" } : entry) };
-    await route.fulfill({ json: current });
+    await route.fulfill({ json: readInventory() });
   });
   await page.route(/\/workspace-settings(?:\?.*)?$/u, async route => {
     const input = route.request().method() === "PATCH" ? route.request().postDataJSON() as { worktreePolicy?: ManagedWorktreeListResponse["policy"] } : undefined;
     if (!input?.worktreePolicy) { await route.fallback(); return; }
-    current = { ...current, policy: input.worktreePolicy, effectiveRootDir: input.worktreePolicy.rootDir ? `${input.worktreePolicy.rootDir}/workspace_fixture` : current.defaultRootDir };
-    await route.fulfill({ json: { cwd: current.cwd, settings: { ...createBaseState({ approvalStatus: "expired" }).workspaceSettings, worktreePolicy: current.policy } } });
+    const env = input.worktreePolicy.environment;
+    const previous = current.policy.environment;
+    const policy = env ? { ...input.worktreePolicy, environment: { ...env,
+      setupScript: env.setupScript === WORKTREE_CONFIGURATION_PLACEHOLDER ? previous!.setupScript : env.setupScript,
+      variables: Object.fromEntries(Object.entries(env.variables).map(([key, value]) => [
+        key, value === WORKTREE_CONFIGURATION_PLACEHOLDER ? previous?.variables[key] ?? value : value,
+      ])),
+    } } : input.worktreePolicy;
+    current = { ...current, policy, effectiveRootDir: policy.rootDir ? `${policy.rootDir}/workspace_fixture` : current.defaultRootDir };
+    await route.fulfill({ json: { cwd: current.cwd, settings: { ...createBaseState({ approvalStatus: "expired" }).workspaceSettings, worktreePolicy: readInventory().policy } } });
   });
   return { actions, runtimeErrors, get current() { return current; }, set current(next) { current = next; },
     set loadError(value: boolean) { loadError = value; }, set cleanupError(value: boolean) { cleanupError = value; } };
@@ -170,7 +186,19 @@ test("retention, confirmation and environment settings persist and recovery acti
   await page.locator('[data-settings-section="personal-profile"]').click();
   await page.locator('[data-settings-section="worktrees"]').click();
   await surface.getByRole("radio", { name: "Environment", exact: true }).click();
-  await expect(surface.getByRole("textbox", { name: "Setup script", exact: true })).toHaveValue("printf ready > setup.txt");
+  const script = surface.getByRole("textbox", { name: "Setup script", exact: true });
+  await expect(script).toHaveValue("");
+  await expect(script).toHaveAttribute("placeholder", WORKTREE_CONFIGURATION_PLACEHOLDER);
+  await surface.getByRole("spinbutton", { name: "Setup timeout (seconds)" }).fill("25");
+  await surface.getByRole("button", { name: "Save", exact: true }).click();
+  await expect.poll(() => harness.current.policy.environment).toMatchObject({ setupScript: "printf ready > setup.txt", timeoutSeconds: 25 });
+  await script.fill("printf replacement > setup.txt");
+  await surface.getByRole("button", { name: "Save", exact: true }).click();
+  await expect.poll(() => harness.current.policy.environment?.setupScript).toBe("printf replacement > setup.txt");
+  await expect(script).toHaveAttribute("placeholder", WORKTREE_CONFIGURATION_PLACEHOLDER);
+  await surface.getByRole("button", { name: "Clear", exact: true }).click();
+  await surface.getByRole("button", { name: "Save", exact: true }).click();
+  await expect.poll(() => harness.current.policy.environment).toMatchObject({ enabled: false, setupScript: "" });
   const owner = surface.locator('[aria-labelledby="managed-worktrees-heading"] li').filter({ hasText: "Engineering" });
   await owner.getByRole("button", { name: "Keep worktree" }).click();
   await expect(owner.getByRole("button", { name: "Unpin worktree" })).toBeVisible();
