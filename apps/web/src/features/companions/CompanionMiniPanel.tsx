@@ -1,18 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Pause, Play, RefreshCw, Send, Sparkles, X, Zap } from "lucide-react";
+import { ArrowUp, ExternalLink, Pause, Play, RefreshCw, Send, Sparkles, X, Zap } from "lucide-react";
 import type {
   AiTeammate,
-  CompanionEvent,
   CompanionProfile,
   CompanionState,
-  TeammateDirectMessage,
 } from "../../types.js";
 import {
-  createCompanionMessage,
-  getCompanionState,
   interactWithCompanion,
-  listCompanionEvents,
-  listCompanionMessages,
   listCompanions,
   updateCompanion,
 } from "../../api.js";
@@ -20,8 +14,10 @@ import { useI18n } from "../../i18n.js";
 import { Button, Icon, IconButton, Select, Textarea } from "../../shared/ui/index.js";
 import { TeammateAvatarView } from "../teammates/TeammateAvatarView.js";
 import { CompanionPetStage } from "./CompanionPetStage.js";
+import { useCompanionChat } from "./use-companion-chat.js";
 
-const companionSyncIntervalMs = 1_000;
+const companionRetryDelayMs = 5_000;
+const companionRetryLimit = 3;
 
 export function CompanionMiniPanel({
   cwd,
@@ -29,27 +25,28 @@ export function CompanionMiniPanel({
   open,
   onClose,
   onOpenSettings,
+  desktop = false,
 }: {
   readonly cwd: string;
   readonly teammates: readonly AiTeammate[];
   readonly open: boolean;
   readonly onClose: () => void;
   readonly onOpenSettings: () => void;
+  readonly desktop?: boolean;
 }): React.JSX.Element | null {
   const { t } = useI18n();
   const [companions, setCompanions] = useState<readonly CompanionProfile[]>([]);
   const [selectedId, setSelectedId] = useState("");
-  const [state, setState] = useState<CompanionState | undefined>();
-  const [messages, setMessages] = useState<readonly TeammateDirectMessage[]>([]);
   const [input, setInput] = useState("");
+  const logRef = useRef<HTMLDivElement>(null);
+  const followMessagesRef = useRef(true);
   const [activeActionId, setActiveActionId] = useState<string | undefined>();
   const [loading, setLoading] = useState(false);
-  const [busy, setBusy] = useState<"send" | "action" | "status" | undefined>();
+  const [busy, setBusy] = useState<"action" | "status" | undefined>();
   const [error, setError] = useState("");
   const panelRef = useRef<HTMLElement>(null);
   const dragRef = useRef<{ pointerId: number; offsetX: number; offsetY: number } | undefined>(undefined);
   const actionQueueRef = useRef<string[]>([]);
-  const seenEventIdsRef = useRef<Set<string>>(new Set());
   const [floatingPosition, setFloatingPosition] = useState<{ left: number; top: number }>();
   const [dragging, setDragging] = useState(false);
 
@@ -59,20 +56,27 @@ export function CompanionMiniPanel({
   );
   const selected = activeCompanions.find((companion) => companion.id === selectedId) ?? activeCompanions[0];
   const teammate = selected ? teammates.find((item) => item.id === selected.teammateId) : undefined;
+  const chat = useCompanionChat({ cwd, companion: selected, open,
+    onActions: enqueueActionIds,
+    onDelivered: (body) => setInput((current) => current.trim() === body ? "" : current),
+  });
+  const { state, setState } = chat;
   const orderedMessages = useMemo(
-    () => [...messages].sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
-    [messages],
+    () => chat.messages.filter((message) => message.authorType !== "system")
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
+    [chat.messages],
   );
   const emotion = selected?.manifest.emotions.find((item) => item.id === state?.emotionId)
     ?? selected?.manifest.emotions.find((item) => item.id === selected.manifest.defaultEmotionId);
-  const latestAssistantMessage = [...orderedMessages]
-    .reverse()
-    .find((message) => message.authorType !== "local-user" && message.body.trim())?.body.trim();
-  const visiblePhase = state && (
+  const visiblePhase = chat.sending ? "thinking" : state && (
     state.phase === "error"
     || Boolean(activeActionId)
     || isRecentCompanionState(state.updatedAt)
   ) ? state.phase : "idle";
+
+  useEffect(() => {
+    if (followMessagesRef.current && logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+  }, [orderedMessages.at(-1)?.id, orderedMessages.at(-1)?.body]);
 
   useEffect(() => {
     if (activeActionId) {
@@ -89,81 +93,44 @@ export function CompanionMiniPanel({
       return;
     }
     let cancelled = false;
-    setLoading(true);
-    setError("");
-    void listCompanions(cwd.trim())
-      .then((response) => {
-        if (cancelled) return;
-        const next = response.companions.filter((companion) => companion.status !== "disabled");
-        setCompanions(next);
-        setSelectedId((current) => next.some((companion) => companion.id === current) ? current : next[0]?.id ?? "");
-      })
-      .catch((caught) => {
-        if (!cancelled) setError(caught instanceof Error ? caught.message : String(caught));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+    let retryTimer: number | undefined;
+    let attempt = 0;
+    const load = (): void => {
+      if (cancelled) return;
+      attempt += 1;
+      setLoading(true);
+      setError("");
+      void listCompanions(cwd.trim())
+        .then((response) => {
+          if (cancelled) return;
+          const next = response.companions.filter((companion) => companion.status !== "disabled");
+          setCompanions(next);
+          setSelectedId((current) => next.some((companion) => companion.id === current) ? current : next[0]?.id ?? "");
+          setLoading(false);
+        })
+        .catch((caught) => {
+          if (cancelled) return;
+          if (attempt <= companionRetryLimit) {
+            retryTimer = window.setTimeout(load, companionRetryDelayMs);
+            return;
+          }
+          setError(caught instanceof Error ? caught.message : String(caught));
+          setLoading(false);
+        });
+    };
+    load();
     return () => {
       cancelled = true;
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
     };
   }, [cwd, open]);
 
   useEffect(() => {
-    if (!open || !cwd.trim() || !selected) {
-      setMessages([]);
-      setState(undefined);
-      actionQueueRef.current = [];
-      seenEventIdsRef.current.clear();
-      return;
-    }
-    let cancelled = false;
-    let syncing = false;
-    let syncTimer: number | undefined;
-    const companionId = selected.id;
-
-    async function syncCompanion(initial: boolean): Promise<void> {
-      if (cancelled || syncing) return;
-      syncing = true;
-      try {
-        const [messageResponse, stateResponse, eventResponse] = await Promise.all([
-          listCompanionMessages(cwd.trim(), companionId, { limit: 40 }),
-          getCompanionState(cwd.trim(), companionId),
-          listCompanionEvents(cwd.trim(), companionId, { limit: 40 }),
-        ]);
-        if (cancelled) return;
-        setMessages((current) => initial ? messageResponse.messages : mergeCompanionMessages(current, messageResponse.messages));
-        setState(stateResponse.state);
-        const events = eventResponse.events;
-        if (initial) {
-          seenEventIdsRef.current = new Set(events.map((event) => event.id));
-        } else {
-          const unseenEvents = events.filter((event) => !seenEventIdsRef.current.has(event.id));
-          for (const event of events) seenEventIdsRef.current.add(event.id);
-          enqueueActionIds(unseenEvents.flatMap(readActionId));
-        }
-      } catch (caught) {
-        if (initial && !cancelled) setError(caught instanceof Error ? caught.message : String(caught));
-      } finally {
-        syncing = false;
-      }
-    }
-
     actionQueueRef.current = [];
     setActiveActionId(undefined);
-    setLoading(true);
-    setError("");
-    void syncCompanion(true).finally(() => {
-      if (!cancelled) {
-        setLoading(false);
-        syncTimer = window.setInterval(() => void syncCompanion(false), companionSyncIntervalMs);
-      }
-    });
-    return () => {
-      cancelled = true;
-      if (syncTimer !== undefined) window.clearInterval(syncTimer);
-    };
-  }, [cwd, open, selected?.id]);
+    setInput("");
+    followMessagesRef.current = true;
+  }, [cwd, selected?.id]);
 
   function enqueueActionIds(actionIds: readonly (string | undefined)[]): void {
     const validActionIds = actionIds.filter((actionId): actionId is string => (
@@ -196,25 +163,7 @@ export function CompanionMiniPanel({
 
   async function sendMessage(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
-    const body = input.trim();
-    if (!body || !selected || !cwd.trim() || busy) return;
-    setBusy("send");
-    setError("");
-    try {
-      const response = await createCompanionMessage(cwd.trim(), selected.id, { body });
-      setMessages((current) => [
-        ...current.filter((message) => message.id !== response.message.id && message.id !== response.aiReply?.id),
-        response.message,
-        ...(response.aiReply ? [response.aiReply] : []),
-      ]);
-      setState(response.state);
-      enqueueActionIds(response.companionReply?.actionRequests?.map((action) => action.actionId) ?? []);
-      setInput("");
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught));
-    } finally {
-      setBusy(undefined);
-    }
+    if (!busy) await chat.send(input.trim());
   }
 
   async function requestAction(actionId: string): Promise<void> {
@@ -252,7 +201,7 @@ export function CompanionMiniPanel({
   }
 
   function beginDrag(event: React.PointerEvent<HTMLElement>): void {
-    if (event.button !== 0 || !panelRef.current) return;
+    if (desktop || event.button !== 0 || !panelRef.current) return;
     const target = event.target as HTMLElement;
     if (target.closest("button, textarea, input, select, a")) return;
     const rect = panelRef.current.getBoundingClientRect();
@@ -289,7 +238,7 @@ export function CompanionMiniPanel({
   return (
     <aside
       ref={panelRef}
-      className={`companion-mini-panel${dragging ? " is-dragging" : ""}`}
+      className={`companion-mini-panel${desktop ? " companion-desktop-panel" : ""}${chat.connection !== "connected" ? " has-connection-issue" : ""}${dragging ? " is-dragging" : ""}`}
       role="dialog"
       aria-label={t("Intelligent companion")}
       style={floatingPosition ? {
@@ -302,113 +251,143 @@ export function CompanionMiniPanel({
       onPointerUp={endDrag}
       onPointerCancel={endDrag}
     >
-      <header className="companion-mini-header">
-        <div className="companion-mini-heading">
-          <span className="companion-mini-heading-icon" aria-hidden="true"><Icon icon={Sparkles} size="sm" /></span>
-          <div>
-            <strong>{t("Intelligent companion")}</strong>
-            <span>{selected ? selected.displayName : t("No companion selected")}</span>
+      <div className="companion-mini-conversation">
+        <header className="companion-mini-header">
+          <div className="companion-mini-heading">
+            <span className="companion-mini-heading-icon" aria-hidden="true"><Icon icon={Sparkles} size="sm" /></span>
+            <div>
+              <strong>{t("Intelligent companion")}</strong>
+              <span>{selected ? selected.displayName : t("No companion selected")}</span>
+            </div>
           </div>
-        </div>
-        <div className="companion-mini-header-actions">
-          <IconButton label={t("Refresh")} icon={RefreshCw} size="sm" onClick={() => void refresh()} disabled={loading} />
-          <IconButton label={t("Close")} icon={X} size="sm" onClick={onClose} />
-        </div>
-      </header>
+          <div className="companion-mini-header-actions">
+            {!desktop && window.lingDesktop?.companionWindow ? <IconButton label={t("Open desktop companion")} icon={ExternalLink} size="sm" onClick={() => {
+              void window.lingDesktop!.companionWindow!.open(cwd.trim()).then((result) => {
+                if (result.accepted) onClose();
+                else setError(result.reason ?? t("Unable to open desktop companion"));
+              }).catch((caught) => setError(caught instanceof Error ? caught.message : String(caught)));
+            }} /> : null}
+            <IconButton label={t("Refresh")} icon={RefreshCw} size="sm" onClick={() => void refresh()} disabled={loading} />
+            <IconButton label={t("Close")} icon={X} size="sm" onClick={onClose} />
+          </div>
+        </header>
 
-      {activeCompanions.length > 1 ? (
-        <label className="companion-mini-select-label">
-          <span>{t("Active companion")}</span>
-          <Select value={selected?.id ?? ""} onChange={(event) => setSelectedId(event.target.value)}>
-            {activeCompanions.map((companion) => <option key={companion.id} value={companion.id}>{companion.displayName}</option>)}
-          </Select>
-        </label>
-      ) : null}
+        {activeCompanions.length > 1 ? (
+          <label className="companion-mini-select-label">
+            <span>{t("Active companion")}</span>
+            <Select value={selected?.id ?? ""} onChange={(event) => setSelectedId(event.target.value)}>
+              {activeCompanions.map((companion) => <option key={companion.id} value={companion.id}>{companion.displayName}</option>)}
+            </Select>
+          </label>
+        ) : null}
 
-      {!cwd.trim() ? (
-        <div className="companion-mini-empty">
-          <span>{t("Choose a workspace before opening a companion.")}</span>
-        </div>
-      ) : activeCompanions.length === 0 ? (
-        <div className="companion-mini-empty">
-          <span>{t("Create a companion in Settings to start chatting.")}</span>
-          <Button size="sm" variant="primary" leadingIcon={<Sparkles />} onClick={onOpenSettings}>{t("Open companion settings")}</Button>
-        </div>
-      ) : selected ? (
-        <>
-          <CompanionPetStage
-            companionName={selected.displayName}
-            phase={visiblePhase}
-            actionId={activeActionId}
-            emotionLabel={emotion?.label ?? t("Ready")}
-            message={latestAssistantMessage ?? t("Say hello to your companion.")}
-            onPointerDown={beginDrag}
-          />
-          <form className="companion-mini-composer companion-mini-composer-under-stage" onSubmit={(event) => void sendMessage(event)}>
-            <Textarea
-              aria-label={t("Message companion")}
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              placeholder={t("Message your companion...")}
-              rows={1}
-              disabled={busy !== undefined}
-            />
-            <Button type="submit" size="sm" variant="primary" leadingIcon={<Send />} disabled={!input.trim() || busy !== undefined} loading={busy === "send"}>
-              {t("Send")}
-            </Button>
-          </form>
-          <section className="companion-mini-presence" aria-label={t("Companion status")}>
-            <div className="companion-mini-avatar-wrap">
-              {teammate ? <TeammateAvatarView teammate={teammate} cwd={cwd} /> : <span className="companion-mini-avatar-fallback" aria-hidden="true">🐾</span>}
-              <span className={`companion-mini-phase companion-mini-phase-${visiblePhase ?? "idle"}`} aria-label={visiblePhase ?? "idle"} />
-            </div>
-            <div className="companion-mini-presence-copy">
-              <strong>{emotion?.label ?? t("Ready")}</strong>
-              <span>{phaseLabel(visiblePhase, t)} · {t("Energy")} {Math.round(state?.energy ?? 100)}%</span>
-              <div className="companion-energy-bar" aria-label={t("Energy") }><span style={{ width: `${Math.max(0, Math.min(100, state?.energy ?? 100))}%` }} /></div>
-            </div>
-            <IconButton
-              label={selected.behaviorPolicy.proactiveEnabled ? t("Pause proactive behavior") : t("Resume proactive behavior")}
-              icon={selected.behaviorPolicy.proactiveEnabled ? Pause : Play}
-              size="sm"
-              disabled={busy === "status"}
-              onClick={() => void toggleProactive()}
-            />
-          </section>
-
-          <div className="companion-mini-messages" aria-live="polite">
-            {orderedMessages.length === 0 ? <p className="companion-mini-message-empty">{t("Say hello to your companion.")}</p> : null}
-            {orderedMessages.map((message) => (
-              <div key={message.id} className={`companion-mini-message ${message.authorType === "local-user" ? "user" : "assistant"}`}>
-                <span>{message.body || (message.status === "pending" ? t("Thinking...") : message.errorMessage ?? "")}</span>
+        {!cwd.trim() ? (
+          <div className="companion-mini-empty">
+            <span>{t("Choose a workspace before opening a companion.")}</span>
+          </div>
+        ) : activeCompanions.length === 0 ? (
+          <div className="companion-mini-empty">
+            <span>{t("Create a companion in Settings to start chatting.")}</span>
+            <Button size="sm" variant="primary" leadingIcon={<Sparkles />} onClick={onOpenSettings}>{t("Open companion settings")}</Button>
+          </div>
+        ) : selected ? (
+          <>
+            <section className="companion-mini-presence" aria-label={t("Companion status")}>
+              <div className="companion-mini-avatar-wrap">
+                {teammate ? <TeammateAvatarView teammate={teammate} cwd={cwd} /> : <span className="companion-mini-avatar-fallback" aria-hidden="true">🐾</span>}
+                <span className={`companion-mini-phase companion-mini-phase-${visiblePhase ?? "idle"}`} aria-label={visiblePhase ?? "idle"} />
               </div>
-            ))}
-          </div>
-
-          <div className="companion-mini-actions" aria-label={t("Companion actions")}>
-            {selected.manifest.actions.map((action) => (
-              <Button
-                key={action.id}
+              <div className="companion-mini-presence-copy">
+                <strong>{emotion ? companionLabel(emotion.label, t) : t("Ready")}</strong>
+                <span>{phaseLabel(visiblePhase, t)} · {t("Energy")} {Math.round(state?.energy ?? 100)}%</span>
+                <div className="companion-energy-bar" aria-label={t("Energy") }><span style={{ width: `${Math.max(0, Math.min(100, state?.energy ?? 100))}%` }} /></div>
+              </div>
+              <IconButton
+                label={selected.behaviorPolicy.proactiveEnabled ? t("Pause proactive behavior") : t("Resume proactive behavior")}
+                icon={selected.behaviorPolicy.proactiveEnabled ? Pause : Play}
                 size="sm"
-                variant="ghost"
-                leadingIcon={<Zap />}
-                disabled={busy !== undefined}
-                onClick={() => void requestAction(action.id)}
-              >
-                {action.label}
+                disabled={busy === "status"}
+                onClick={() => void toggleProactive()}
+              />
+            </section>
+
+            <div ref={logRef} className="companion-mini-messages" onScroll={(event) => {
+              const log = event.currentTarget;
+              followMessagesRef.current = log.scrollHeight - log.scrollTop - log.clientHeight < 32;
+            }} role="log" aria-label={t("Companion messages")} aria-live="polite">
+              {chat.hasEarlier ? <Button size="sm" variant="ghost" leadingIcon={<ArrowUp />} onClick={() => {
+                const log = logRef.current;
+                const height = log?.scrollHeight ?? 0;
+                followMessagesRef.current = false;
+                void chat.loadEarlier().then(() => requestAnimationFrame(() => {
+                  if (log) log.scrollTop += log.scrollHeight - height;
+                }));
+              }} loading={chat.loadingEarlier}>{t("Load earlier messages")}</Button> : null}
+              {orderedMessages.length === 0 ? <p className="companion-mini-message-empty">{t("Say hello to your companion.")}</p> : null}
+              {orderedMessages.map((message) => (
+                <div key={message.id} className={`companion-mini-message ${message.authorType === "local-user" ? "user" : "assistant"}`}>
+                  <span>{message.body || (message.status === "pending" ? t("Thinking...") : message.errorMessage ?? "")}</span>
+                </div>
+              ))}
+            </div>
+
+            <div className="companion-mini-actions" aria-label={t("Companion actions")}>
+              {selected.manifest.actions.map((action) => (
+                <Button
+                  key={action.id}
+                  size="sm"
+                  variant="ghost"
+                  leadingIcon={<Zap />}
+                  disabled={busy !== undefined}
+                  onClick={() => void requestAction(action.id)}
+                >
+                  {companionLabel(action.label, t)}
+                </Button>
+              ))}
+            </div>
+
+            <form className="companion-mini-composer" onSubmit={(event) => void sendMessage(event)}>
+              <Textarea
+                aria-label={t("Message companion")}
+                value={input}
+                onChange={(event) => setInput(event.target.value)}
+                placeholder={t("Message your companion...")}
+                rows={1}
+                disabled={busy !== undefined || chat.sending || Boolean(chat.pending)}
+              />
+              <Button type="submit" size="sm" variant="primary" leadingIcon={<Send />} disabled={!input.trim() || busy !== undefined || chat.sending || Boolean(chat.pending)} loading={chat.sending}>
+                {t("Send")}
               </Button>
-            ))}
-          </div>
+            </form>
+            {chat.connection !== "connected" && !chat.sending ? <Button className="companion-mini-reconnect" size="sm" variant="secondary" onClick={() => void chat.reconnect()} disabled={busy !== undefined}>{chat.pending?.body || chat.pending?.terminal ? t("Recover or retry message") : t("Reconnect")}</Button> : null}
 
-        </>
-      ) : null}
+          </>
+        ) : null}
 
-      {error ? <p className="companion-mini-error" role="alert">{error}</p> : null}
-      <footer className="companion-mini-footer">
-        <button type="button" className="companion-mini-settings-link" onClick={onOpenSettings}>{t("Manage companions in Settings")}</button>
-      </footer>
+        {error || chat.error ? <p className="companion-mini-error" role="alert">{error || chat.error}</p> : null}
+        <footer className="companion-mini-footer">
+          <Button size="sm" variant="ghost" className="companion-mini-settings-link" onClick={onOpenSettings}>{t("Manage companions in Settings")}</Button>
+        </footer>
+      </div>
+      {selected ? <CompanionPetStage companionName={selected.displayName} phase={visiblePhase}
+        actionId={activeActionId} emotionId={state?.emotionId} onPointerDown={beginDrag} /> : null}
     </aside>
   );
+}
+
+function companionLabel(label: string, t: (key: string) => string): string {
+  switch (label) {
+    case "Neutral": return t("Neutral");
+    case "Happy": return t("Happy");
+    case "Sad": return t("Sad");
+    case "Excited": return t("Excited");
+    case "Tired": return t("Tired");
+    case "Idle": return t("Idle");
+    case "Greet": return t("Greet");
+    case "Think": return t("Think");
+    case "Celebrate": return t("Celebrate");
+    default: return label;
+  }
 }
 
 function phaseLabel(phase: CompanionState["phase"] | undefined, t: (key: string) => string): string {
@@ -417,21 +396,6 @@ function phaseLabel(phase: CompanionState["phase"] | undefined, t: (key: string)
   if (phase === "reacting") return t("Reacting");
   if (phase === "error") return t("Needs attention");
   return t("Idle");
-}
-
-function readActionId(event: CompanionEvent): string | undefined {
-  if (event.type !== "action_requested") return undefined;
-  const actionId = event.payload.actionId;
-  return typeof actionId === "string" ? actionId : undefined;
-}
-
-function mergeCompanionMessages(
-  current: readonly TeammateDirectMessage[],
-  incoming: readonly TeammateDirectMessage[],
-): readonly TeammateDirectMessage[] {
-  const byId = new Map(current.map((message) => [message.id, message]));
-  for (const message of incoming) byId.set(message.id, message);
-  return [...byId.values()];
 }
 
 function isRecentCompanionState(updatedAt?: string): boolean {

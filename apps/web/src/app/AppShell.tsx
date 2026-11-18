@@ -189,6 +189,7 @@ import { useShellErrorFeedback } from "./use-shell-error-feedback.js";
 import { useNotificationBridge } from "../domains/notifications/use-notification-bridge.js";
 import { buildSidebarObjectContextSeeds } from "./sidebar-object-context.js";
 import { useSidebarObjectContexts } from "./use-sidebar-object-contexts.js";
+import { useDesktopCompanionSettings } from "../features/companions/use-desktop-companion-settings.js";
 import { CompanionMiniPanel } from "../features/companions/CompanionMiniPanel.js";
 import {
   acknowledgeSidebarConversationFailure,
@@ -256,6 +257,7 @@ export function AppShell(): React.JSX.Element {
     requestId: 0,
     scope: "actionable",
   });
+  useDesktopCompanionSettings(() => { setCompanionMiniOpen(false); openSettingsSection("companion"); });
   const [settingsWorkspaceToolView, setSettingsWorkspaceToolView] = useState<SettingsWorkspaceToolView>("");
   const [settingsInitialSection, setSettingsInitialSection] = useState<SettingsSectionId | undefined>();
   const [settingsRunDiagnosticsRunId, setSettingsRunDiagnosticsRunId] = useState<string | undefined>();
@@ -2641,6 +2643,7 @@ export function AppShell(): React.JSX.Element {
         />
       ) : null}
       <CompanionMiniPanel
+        key={form.cwd}
         cwd={form.cwd}
         teammates={aiTeammates}
         open={companionMiniOpen}

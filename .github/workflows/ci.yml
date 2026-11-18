@@ -482,6 +482,14 @@ jobs:
           --grep 'without a configured model|full access confirmation|built-in skill timestamps|Chinese built-in skill|Chinese QA member'
           --reporter=line
 
+      - name: Check Companion streaming, recovery, settings and character layout
+        working-directory: apps/web
+        env:
+          LING_PLAYWRIGHT_PREVIEW: "1"
+          LING_PLAYWRIGHT_REUSE_SERVER: "0"
+          LING_CAPTURE_UI2_EVIDENCE: "1"
+        run: corepack pnpm exec playwright test e2e/companions.spec.ts --reporter=line
+
       - name: Check production conversation change summaries
         working-directory: apps/web
         env:
@@ -863,6 +871,13 @@ jobs:
           node packages/daemon/test/restricted-command-launch-unknown.contract.mjs "$ling_native_output/ling-sandbox-runner"
           node native/sandbox/tests/channel-command-smoke.mjs "$ling_native_output/ling-sandbox-runner"
 
+      - name: Build and test Locked Use without system installation
+        shell: bash
+        run: |
+          set -euo pipefail
+          swift test --package-path apps/desktop/native/locked-use --jobs 4 2>&1 | tee "${RUNNER_TEMP}/ling-locked-use-tests.log"
+          node apps/desktop/scripts/build-locked-use.ts 2>&1 | tee "${RUNNER_TEMP}/ling-locked-use-build.log"
+
       - name: Preserve native build diagnostics without certifying the packaged issuer
         if: always() && needs.scope.outputs.macos-helper == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
@@ -873,6 +888,8 @@ jobs:
           path: |
             ${{ runner.temp }}/ling-native-evidence/manifest.json
             ${{ runner.temp }}/ling-native-evidence/logs/**
+            ${{ runner.temp }}/ling-locked-use-*.log
+            apps/desktop/native/locked-use/dist/components-*/build-manifest.json
 
       - name: Collect fixed OS bootstrap source for review only
         if: always() && needs.scope.outputs.macos-helper == 'true'
@@ -886,6 +903,10 @@ jobs:
           if-no-files-found: warn
           retention-days: 1
           path: ${{ runner.temp }}/macos-bootstrap-diagnostic.json
+
+      - name: Compile localization inputs for native release reviews
+        if: needs.scope.outputs.native-release == 'true'
+        run: corepack pnpm --filter @ling-stack/localization catalog:compile
 
       - name: Check changed native release reviews and publication boundaries
         if: needs.scope.outputs.native-release == 'true'

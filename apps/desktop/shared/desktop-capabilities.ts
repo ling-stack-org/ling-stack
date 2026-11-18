@@ -218,6 +218,14 @@ export interface ComputerControlDesktopCapability {
   readonly platform: "macos" | "windows";
   requestPermissions(): Promise<DesktopCommandResult>;
   openPermissionSettings(permission: ComputerControlPermissionKind): Promise<DesktopCommandResult>;
+  getLockedComputerControlState(): Promise<LockedComputerControlDesktopState>;
+  authorizeLockedComputerControl(): Promise<DesktopCommandResult>;
+  revokeLockedComputerControl(): Promise<DesktopCommandResult>;
+}
+
+export interface LockedComputerControlDesktopState {
+  readonly projection: import("@ling-stack/contracts").LockedComputerControlProjectionV1;
+  readonly activeTaskAvailable: boolean;
 }
 
 export interface LockedTaskContinuationDesktopCapability {
@@ -279,6 +287,7 @@ export interface ComputerUsePreviewPreferences {
 
 export interface LingDesktopCapabilities {
   readonly browser?: import("./browser-capabilities.js").DesktopBrowserCapabilities;
+  readonly companionWindow?: import("./companion-capabilities.js").DesktopCompanionWindowCapabilities;
   readonly localServices?: import("./local-service-capabilities.js").DesktopLocalServiceCapabilities;
   readonly localFiles?: import("./local-file-capabilities.js").DesktopLocalFileCapabilities;
   readonly backgrounds?: import("./background-capabilities.js").DesktopBackgroundCapabilities;

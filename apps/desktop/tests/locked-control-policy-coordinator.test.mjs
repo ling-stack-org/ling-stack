@@ -41,8 +41,8 @@ test("policy coordinator arms, rotates into one locked generation and consumes o
     "gate:locked_control_session_mismatch",
     "retire:locked_control_session_mismatch",
     "reserve:4",
-    "attest:4",
     "start:4",
+    "attest:4",
   ]);
 
   await fx.coordinator.handleUnlock();
@@ -166,7 +166,7 @@ test("failed input-fence retirement revokes and never starts a locked generation
   await fx.coordinator.shutdown();
 });
 
-test("unlock during locked attestation invalidates the late result before generation start", async () => {
+test("unlock during locked attestation revokes the gated provider before admission", async () => {
   const attestationStarted = deferred();
   const releaseAttestation = deferred();
   const fx = fixture({
@@ -187,7 +187,7 @@ test("unlock during locked attestation invalidates the late result before genera
 
   await locking;
   await unlocking;
-  assert.equal(fx.order.some((value) => value.startsWith("start:")), false);
+  assert.equal(fx.order.some((value) => value.startsWith("start:")), true);
   assert.equal(fx.coordinator.snapshot().phase, "off");
   assert.equal(fx.coordinator.snapshot().reason, "locked_control_grant_consumed");
   assert.ok(fx.order.includes("resume"));

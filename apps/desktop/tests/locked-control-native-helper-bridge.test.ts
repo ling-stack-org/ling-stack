@@ -3,12 +3,13 @@ import test from "node:test";
 import {
   createLockedControlNativeHelperBridge,
   parseLockedControlNativeSessionResponse,
+  parseLockedControlNativeStatusResponse,
 } from "../dist/main/locked-computer-control/native-helper-bridge.js";
 
 const digest = "a".repeat(64);
 
 test("native helper bridge emits closed content-free requests", async () => {
-  const calls = [];
+  const calls: Array<{ path: string; request: object; aborted: boolean }> = [];
   const bridge = createLockedControlNativeHelperBridge({
     helperPath: "/Applications/Ling.app/Contents/Helpers/ling-locked-control-helper",
     platform: "darwin",
@@ -82,4 +83,25 @@ test("native helper session parser rejects extra fields and platform confusion",
     localizedReason: "Authorize Ling",
     signal: new AbortController().signal,
   }), /platform_mismatch/);
+});
+
+test("native helper status parser requires a self-consistent capability tuple", () => {
+  const supported = {
+    platform: "darwin",
+    productCapability: "supported_restricted",
+    available: true,
+    captureReady: true,
+    inputReady: true,
+    secureSurfaceExcluded: true,
+  };
+  assert.deepEqual(parseLockedControlNativeStatusResponse(supported), supported);
+  for (const value of [
+    { ...supported, available: false },
+    { ...supported, captureReady: false },
+    { ...supported, productCapability: "probe_required", available: false },
+    { ...supported, productCapability: "probe_required", available: false, captureReady: true },
+    { ...supported, unexpected: true },
+  ]) {
+    assert.equal(parseLockedControlNativeStatusResponse(value), undefined);
+  }
 });

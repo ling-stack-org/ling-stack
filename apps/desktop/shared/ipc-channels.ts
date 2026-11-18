@@ -32,6 +32,10 @@ export const DESKTOP_THEME_PACKAGE_IPC_CHANNELS = {
 } as const satisfies Readonly<Record<DesktopThemePackageIpcChannelKey, string>>;
 
 export const DESKTOP_IPC_CHANNELS = {
+  companionWindowOpen: "ling-desktop:companion:open",
+  companionWindowClose: "ling-desktop:companion:close",
+  companionWindowSettings: "ling-desktop:companion:settings",
+  companionSettingsRequested: "ling-desktop:companion:settings-requested",
   localServiceRequest: "ling-desktop:local-service:request",
   executionEnginesList: "ling-desktop:execution-engines:list",
   executionEnginesDiscover: "ling-desktop:execution-engines:discover",
@@ -97,6 +101,9 @@ export const DESKTOP_IPC_CHANNELS = {
   computerUsePreviewHide: "ling-desktop:computer-use:preview-hide",
   computerControlRequestPermissions: "ling-desktop:computer-control:request-permissions",
   computerControlOpenPermissionSettings: "ling-desktop:computer-control:open-permission-settings",
+  computerControlLockedAuthorize: "ling-desktop:computer-control:locked-authorize",
+  computerControlLockedState: "ling-desktop:computer-control:locked-state",
+  computerControlLockedRevoke: "ling-desktop:computer-control:locked-revoke",
   computerControlLockedTaskContinuationGet: "ling-desktop:computer-control:locked-task-continuation-get",
   computerControlLockedTaskContinuationSet: "ling-desktop:computer-control:locked-task-continuation-set",
 } as const;

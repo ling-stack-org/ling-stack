@@ -3,6 +3,7 @@ import type {
   LockedComputerControlCapabilityV1,
   LockedComputerControlGrantV1,
   LockedComputerControlProjectionV1,
+  LockedComputerControlPolicyV1,
   LockedControlIdentityResultV1,
   LockedControlReasonCode,
 } from "@ling-stack/contracts";
@@ -83,6 +84,11 @@ export interface LockedControlDaemonClient {
     readonly capability: LockedComputerControlCapabilityV1;
     readonly buildId: string;
   }): Promise<LockedControlDaemonMutationResult>;
+  promotePolicy?(input: {
+    readonly authority: LockedControlDaemonHandshakeAuthority;
+    readonly policy: LockedComputerControlPolicyV1;
+    readonly buildId: string;
+  }): Promise<LockedControlDaemonMutationResult>;
   revoke(input: {
     readonly authority: LockedControlDaemonHandshakeAuthority;
     readonly reason?: LockedControlReasonCode;
@@ -103,7 +109,12 @@ export function createLockedControlDaemonClient(options: {
   readonly bridgeToken: string;
   readonly routeToken?: string;
   readonly fetch?: typeof globalThis.fetch;
-}): LockedControlDaemonClient {
+}): LockedControlDaemonClient & {
+  currentTask(authority: LockedControlDaemonHandshakeAuthority): Promise<{
+    readonly runId: string;
+    readonly computerUseSessionId: string;
+  } | undefined>;
+} {
   const fetchImpl = options.fetch ?? globalThis.fetch;
   const routeToken = options.routeToken ?? options.bridgeToken;
   const base = new URL(options.daemonBaseUrl);
@@ -130,7 +141,24 @@ export function createLockedControlDaemonClient(options: {
     body,
   );
 
-  const client: LockedControlDaemonClient = {
+  const client: LockedControlDaemonClient & {
+    currentTask(authority: LockedControlDaemonHandshakeAuthority): Promise<{
+      readonly runId: string;
+      readonly computerUseSessionId: string;
+    } | undefined>;
+  } = {
+    async currentTask(authority) {
+      const value = await desktopRequest("current-task", { authority: handshakeAuthorityBody(authority) });
+      if (!isRecord(value)) throw new LockedControlDaemonClientError("invalid_response");
+      if (Object.keys(value).length === 0) return undefined;
+      if (Object.keys(value).length !== 2 || typeof value.runId !== "string" || !value.runId
+        || value.runId.length > 256 || value.runId.trim() !== value.runId
+        || typeof value.computerUseSessionId !== "string" || !value.computerUseSessionId
+        || value.computerUseSessionId.length > 256 || value.computerUseSessionId.trim() !== value.computerUseSessionId) {
+        throw new LockedControlDaemonClientError("invalid_response");
+      }
+      return { runId: value.runId, computerUseSessionId: value.computerUseSessionId };
+    },
     async snapshot() {
       return parseSnapshot(await projectionRequest());
     },
@@ -181,6 +209,13 @@ export function createLockedControlDaemonClient(options: {
         authority: handshakeAuthorityBody(input.authority),
       }));
     },
+    async promotePolicy(input) {
+      return parseMutation(await desktopRequest("promote", {
+        authority: handshakeAuthorityBody(input.authority),
+        policy: input.policy,
+        buildId: input.buildId,
+      }));
+    },
     async revoke(input) {
       return parseMutation(await desktopRequest("revoke", {
         authority: handshakeAuthorityBody(input.authority),
@@ -227,6 +262,8 @@ async function requestJson(
   let response: Response;
   try {
     response = await fetchImpl(url, {
+      signal: AbortSignal.timeout(5_000),
+      redirect: "error",
       method: body === undefined ? "GET" : "POST",
       headers: {
         [tokenHeader]: token,
@@ -237,7 +274,27 @@ async function requestJson(
   } catch {
     throw new LockedControlDaemonClientError("request_failed");
   }
-  const value = await response.json().catch(() => undefined) as unknown;
+  const reader = response.body?.getReader();
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  try {
+    if (!reader) throw new Error("body_missing");
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      length += value.byteLength;
+      if (length > 64 * 1024) {
+        await reader.cancel();
+        throw new Error("body_oversized");
+      }
+      chunks.push(value);
+    }
+  } catch {
+    throw new LockedControlDaemonClientError("invalid_response");
+  } finally { reader?.releaseLock(); }
+  let value: unknown;
+  try { value = JSON.parse(Buffer.concat(chunks).toString("utf8")); }
+  catch { throw new LockedControlDaemonClientError("invalid_response"); }
   if (!response.ok && !isRecord(value)) {
     throw new LockedControlDaemonClientError("request_failed");
   }

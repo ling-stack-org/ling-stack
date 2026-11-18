@@ -2,25 +2,24 @@ import type { CompanionState } from "../../types.js";
 import { useI18n } from "../../i18n.js";
 import { publicAssetUrl } from "../../shared/ui/public-asset-url.js";
 
-const lanxingSpritesheet = publicAssetUrl("companions/lanxing-spritesheet.png");
+const yuiPoseAtlas = publicAssetUrl("companions/yui-poses.png");
 
 export function CompanionPetStage({
   companionName,
   phase,
   actionId,
-  emotionLabel,
-  message,
+  emotionId,
   onPointerDown,
 }: {
   readonly companionName: string;
   readonly phase?: CompanionState["phase"];
   readonly actionId?: string;
-  readonly emotionLabel: string;
-  readonly message: string;
+  readonly emotionId?: string;
   readonly onPointerDown?: React.PointerEventHandler<HTMLElement>;
 }): React.JSX.Element {
   const { t } = useI18n();
   const phaseName = phase ?? "idle";
+  const pose = characterPose(phase, actionId, emotionId);
 
   return (
     <section
@@ -29,20 +28,14 @@ export function CompanionPetStage({
       data-companion-drag-handle="true"
       onPointerDown={onPointerDown}
     >
-      <div className="companion-pet-stage-topline">
-        <span className="companion-pet-stage-name">{companionName}</span>
-        <span className="companion-pet-stage-emotion">{emotionLabel}</span>
-      </div>
       <div className="companion-pet-scene">
-        <div className="companion-pet-bubble" aria-live="polite">
-          {message}
-        </div>
         <div className="companion-pet-art-wrap">
           <span
-            className={`companion-pet-sprite companion-pet-sprite-${spriteStateForPhase(phase, actionId)}`}
+            className={`companion-character companion-character-${pose}`}
             role="img"
             aria-label={companionName}
-            style={{ backgroundImage: `url(${lanxingSpritesheet})` }}
+            data-companion-pose={pose}
+            style={{ backgroundImage: `url(${yuiPoseAtlas})` }}
           />
         </div>
         <span className="companion-pet-ground" aria-hidden="true" />
@@ -51,17 +44,19 @@ export function CompanionPetStage({
   );
 }
 
-function spriteStateForPhase(
+function characterPose(
   phase: CompanionState["phase"] | undefined,
   actionId?: string,
-): "idle" | "running" | "waiting" | "waving" | "jumping" | "failed" {
-  if (actionId === "greet") return "waving";
-  if (actionId === "think") return "running";
-  if (actionId === "celebrate") return "jumping";
+  emotionId?: string,
+): "idle" | "thinking" | "greeting" | "celebrating" | "waiting" | "attention" {
+  if (phase === "error") return "attention";
+  if (actionId === "greet") return "greeting";
+  if (actionId === "think") return "thinking";
+  if (actionId === "celebrate") return "celebrating";
   if (actionId === "idle") return "idle";
-  if (phase === "thinking") return "running";
-  if (phase === "speaking") return "waving";
-  if (phase === "reacting") return actionId ? "jumping" : "idle";
-  if (phase === "error") return "failed";
+  if (phase === "thinking") return "thinking";
+  if (phase === "speaking") return "greeting";
+  if (emotionId === "tired") return "waiting";
+  if (emotionId === "sad") return "attention";
   return "idle";
 }

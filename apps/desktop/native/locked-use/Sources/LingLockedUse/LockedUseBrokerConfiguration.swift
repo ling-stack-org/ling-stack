@@ -1,0 +1,43 @@
+import Foundation
+
+/// Administrator-owned configuration. Enabled and validation evidence are
+/// independent: installation/enrollment alone cannot validate session unlock.
+public struct LockedUseBrokerConfiguration: Codable, Sendable {
+    public let schemaVersion: Int
+    public let enabled: Bool
+    /// `local_development` is a machine-only lane signed by Apple Development.
+    /// Production validation remains represented by the hash fields below.
+    public let profile: String?
+    public let validatedOSBuild: String?
+    public let validatedBrokerHash: String?
+    public let validatedGuardianHash: String?
+    public let validatedPluginHash: String?
+    public let validatedClientHash: String?
+
+    public init(enabled: Bool, profile: String? = nil, validatedOSBuild: String? = nil,
+                validatedBrokerHash: String? = nil, validatedGuardianHash: String? = nil,
+                validatedPluginHash: String? = nil, validatedClientHash: String? = nil) {
+        schemaVersion = 1; self.enabled = enabled; self.profile = profile; self.validatedOSBuild = validatedOSBuild
+        self.validatedBrokerHash = validatedBrokerHash; self.validatedGuardianHash = validatedGuardianHash
+        self.validatedPluginHash = validatedPluginHash
+        self.validatedClientHash = validatedClientHash
+    }
+
+    public static func loadInstalled() throws -> Self {
+        let data = try LockedUseSecureStore.read(components: ["Library", "Application Support", "LingStack", "LockedUse", "configuration.json"])
+        let value = try JSONDecoder().decode(Self.self, from: data)
+        guard value.schemaVersion == 1 else { throw LockedUseClientApprovals.Failure.invalidRecord }
+        return value
+    }
+
+    public func matchesValidation(osBuild: String, brokerHash: String, guardianHash: String, pluginHash: String, clientHash: String) -> Bool {
+        enabled && profile != "local_development" && !osBuild.isEmpty && !brokerHash.isEmpty && !guardianHash.isEmpty && !pluginHash.isEmpty && !clientHash.isEmpty
+            && validatedOSBuild == osBuild && validatedBrokerHash == brokerHash
+            && validatedGuardianHash == guardianHash && validatedPluginHash == pluginHash
+            && validatedClientHash == clientHash
+    }
+
+    public func matchesLocalDevelopment() -> Bool {
+        enabled && profile == "local_development"
+    }
+}

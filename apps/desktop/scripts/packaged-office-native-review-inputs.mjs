@@ -178,11 +178,13 @@ export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   "packages/daemon/src/features/conversations/context-compaction-projection.ts",
   // Explicit cold resource-bootstrap delta; listing alone grants no approval.
   "apps/desktop/main/daemon-lifecycle.ts",
-  // Fixed local-service IPC and its exact integration inputs; listing is not approval.
+  // Fixed local-service and companion IPC integration inputs; listing is not approval.
   "apps/desktop/main/local-services.ts",
   "apps/desktop/main/main.ts",
+  "apps/desktop/main/companion-window.ts",
   "apps/desktop/main/ipc.ts",
   "apps/desktop/preload/main-window.ts",
+  "apps/desktop/preload/companion-window.ts",
   "apps/desktop/shared/ipc-channels.ts",
   "apps/desktop/shared/desktop-capabilities.ts",
   "apps/desktop/shared/local-service-capabilities.ts",
@@ -240,6 +242,14 @@ export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   "apps/desktop/scripts/packaged-office-native-review.mjs",
   "apps/desktop/scripts/packaged-office-native-toolchain.mjs",
   "apps/desktop/scripts/after-sign.mjs",
+  // Imported signing readers remain fixed review inputs without enabling
+  // Locked Use or approving their content.
+  "apps/desktop/scripts/locked-use-release-build.ts",
+  "apps/desktop/scripts/locked-use-release-evidence.ts",
+  "apps/desktop/scripts/locked-use-release-files.ts",
+  "apps/desktop/scripts/locked-use-local-build.ts",
+  "apps/desktop/scripts/locked-use-validation-build.ts",
+  "apps/desktop/shared/locked-use-validation-contract.ts",
   "apps/desktop/scripts/engine-supervisor-package.mjs",
   "LICENSE",
   "apps/desktop/main/resource-paths.ts",

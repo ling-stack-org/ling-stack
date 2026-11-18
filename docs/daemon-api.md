@@ -1377,6 +1377,7 @@ the Companion message body cannot override them.
 GET  /companions?cwd=/path/to/project
 POST /companions?cwd=/path/to/project
 GET  /companions/:id/messages?cwd=/path/to/project&limit=100
+GET  /companions/:id/messages?cwd=/path/to/project&idempotencyKey=client-message-1
 POST /companions/:id/messages?cwd=/path/to/project
 POST /companions/:id/messages/stream?cwd=/path/to/project
 GET  /companions/:id/state?cwd=/path/to/project
@@ -1405,14 +1406,18 @@ candidates remain event records until an explicit memory review flow accepts the
 Message reads support `limit` and `beforeMessageId`, and return `hasMore` plus
 `nextBeforeMessageId`. Repeating a POST with the same `idempotencyKey` returns the same
 durable user message and AI reply without dispatching another provider run. The key is
-scoped to the Companion. Memory candidates are persisted as teammate-scoped Memory objects
+scoped to the Companion; using it with different text returns
+`409 companion_message_payload_mismatch`. Reading with `idempotencyKey` returns an
+`accepted` or `unknown` receipt with the stored user message, optional AI reply, and
+current state. A pending reply remains pending; the receipt read never starts a run.
+Clients can use it after a stream interruption or reload before retrying. Memory candidates are persisted as teammate-scoped Memory objects
 in `candidate` state and appear in `GET /memory/promotion-inbox`; they become `active` only
 after the existing `POST /memory/:id/review` approval flow.
 
 `POST /companions/:id/proactive` accepts an optional `{ "force": true, "idempotencyKey": "..." }`.
 Manual calls without `force` obey `proactiveEnabled`, `quietHours`, and `cooldownMs`.
 The scheduler uses the same direct-reply/provider path and writes a durable
-`proactive_prompt` event before dispatch. A repeated key returns `duplicate`; a policy or
+`proactive_prompt` event after persisting the reply outcome. A repeated key returns `duplicate`; a policy or
 cooldown refusal returns `skipped` without a model run.
 
 The stream preserves the direct execution milestones and adds Companion data to terminal

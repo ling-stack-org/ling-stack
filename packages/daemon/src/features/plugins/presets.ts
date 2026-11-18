@@ -1,4 +1,8 @@
-import { createHash } from "node:crypto";
+import {
+  LOCKED_COMPUTER_CONTROL_ALLOWED_TOOL_IDS,
+  LOCKED_COMPUTER_CONTROL_ALLOWED_TOOL_IDS_SHA256,
+  LOCKED_COMPUTER_CONTROL_TOOL_POLICY_REVISION,
+} from "@ling-stack/contracts";
 import { accessSync, constants as fsConstants, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, extname, isAbsolute, join, posix, resolve } from "node:path";
@@ -80,33 +84,9 @@ const cuaDriverBundledReviewedTools = new Set([
   "zoom",
 ]);
 
-export const CUA_DRIVER_LOCKED_TOOL_POLICY_REVISION = "locked-cua-tools-v1" as const;
+export const CUA_DRIVER_LOCKED_TOOL_POLICY_REVISION = LOCKED_COMPUTER_CONTROL_TOOL_POLICY_REVISION;
 
-export const CUA_DRIVER_LOCKED_ALLOWED_TOOL_IDS = Object.freeze([
-  "bring_to_front",
-  "check_permissions",
-  "click",
-  "double_click",
-  "drag",
-  "end_session",
-  "get_accessibility_tree",
-  "get_cursor_position",
-  "get_desktop_state",
-  "get_screen_size",
-  "get_window_state",
-  "health_report",
-  "hotkey",
-  "list_apps",
-  "list_windows",
-  "move_cursor",
-  "page",
-  "press_key",
-  "right_click",
-  "scroll",
-  "set_value",
-  "start_session",
-  "type_text",
-] as const);
+export const CUA_DRIVER_LOCKED_ALLOWED_TOOL_IDS = LOCKED_COMPUTER_CONTROL_ALLOWED_TOOL_IDS;
 
 export const CUA_DRIVER_LOCKED_DENIED_TOOL_IDS = Object.freeze([
   "check_for_update",
@@ -129,9 +109,7 @@ export const CUA_DRIVER_LOCKED_DENIED_TOOL_IDS = Object.freeze([
 const cuaDriverLockedAllowedTools: ReadonlySet<string> = new Set(CUA_DRIVER_LOCKED_ALLOWED_TOOL_IDS);
 const cuaDriverLockedDeniedTools: ReadonlySet<string> = new Set(CUA_DRIVER_LOCKED_DENIED_TOOL_IDS);
 
-export const CUA_DRIVER_LOCKED_ALLOWED_TOOL_IDS_SHA256 = createHash("sha256")
-  .update(JSON.stringify(CUA_DRIVER_LOCKED_ALLOWED_TOOL_IDS), "utf8")
-  .digest("hex");
+export const CUA_DRIVER_LOCKED_ALLOWED_TOOL_IDS_SHA256 = LOCKED_COMPUTER_CONTROL_ALLOWED_TOOL_IDS_SHA256;
 
 export type CuaDriverLockedToolDecision = "allow_to_existing_approval" | "deny";
 
