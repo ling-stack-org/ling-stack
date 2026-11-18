@@ -3,8 +3,18 @@ const MINIMUM_INPUT_BUDGET_TOKENS = 1_024;
 const DEFAULT_CONTEXT_WINDOW_TOKENS = 128_000;
 const DEFAULT_OUTPUT_LIMIT_TOKENS = 16_384;
 
-export function normalizeModelTokenLimits(limit) {
+/**
+ * @param {{ context?: unknown, output?: unknown } | undefined} limit
+ * @param {string} [providerId]
+ * @param {string} [modelId]
+ */
+export function normalizeModelTokenLimits(limit, providerId, modelId) {
   let contextWindow = positiveInteger(limit?.context);
+  // Volcengine documents a 256K context window for this model.
+  // https://www.volcengine.com/docs/82379/1330310
+  if (providerId === "volcengine" && modelId === "doubao-seed-2-1-pro-260628" && contextWindow !== undefined) {
+    contextWindow = Math.min(contextWindow, 256_000);
+  }
   const outputLimit = positiveInteger(limit?.output);
   let maxTokens = outputLimit;
 

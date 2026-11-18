@@ -3,11 +3,11 @@ import type { ProviderModelCatalogManifest, ProviderModelCatalogRecord } from ".
 
 export const providerModelCatalogManifest = {
   "schemaVersion": 1,
-  "version": "models.dev:1f8a1c19def6",
+  "version": "models.dev:a14d28d55d3e",
   "source": "models.dev",
   "sourceUrl": "https://models.dev/api.json",
   "license": "MIT",
-  "generatedAt": "2026-11-18T10:22:01.812Z",
+  "generatedAt": "2026-11-18T18:53:28.136Z",
   "updatedAt": "2026-11-17"
 } as const satisfies ProviderModelCatalogManifest;
 
@@ -5725,8 +5725,8 @@ export const providerModelCatalogRecords = [
       "xhigh",
       "max"
     ],
-    "contextWindow": 1024000,
-    "maxTokens": 256000,
+    "contextWindow": 256000,
+    "maxTokens": 16384,
     "updatedAt": "2026-06-23"
   },
   {
