@@ -65,7 +65,7 @@
     "@ling-stack/contracts": "workspace:*",
     "@ling-stack/localization": "workspace:*",
     "@ling-stack/ui-react": "workspace:*",
-    "lucide-react": "1.70.0",
+    "lucide-react": "1.73.0",
     "mammoth": "1.13.0",
     "pdf-parse": "2.4.5",
     "react": "^19.2.8",
