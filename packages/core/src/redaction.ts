@@ -7,8 +7,11 @@ const CLOUD_ACCESS_KEY_PATTERN = /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g;
 const GITHUB_TOKEN_PATTERN = /\b(?:gh[pousr]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/g;
 const SLACK_TOKEN_PATTERN = /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g;
 const JWT_PATTERN = /\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\b/g;
-const SECRET_ASSIGNMENT_PREFIX_PATTERN = /(["'`]?(?=[A-Za-z_])[A-Za-z0-9_.-]*?(?:api[_-]?key|access[_-]?key|access[_-]?token|auth(?:orization|[_-]?token)?|client[_-]?secret|database[_-]?url|pass(?:word|phrase)?|private[_-]?key|secret|session[_-]?token|signing[_-]?key|token|credential(?:s)?)[A-Za-z0-9_.-]*["'`]?\s*[:=]\s*)(["'`])/giu;
-const SECRET_ASSIGNMENT_UNQUOTED_PATTERN = /(["'`]?(?=[A-Za-z_])[A-Za-z0-9_.-]*?(?:api[_-]?key|access[_-]?key|access[_-]?token|auth(?:orization|[_-]?token)?|client[_-]?secret|database[_-]?url|pass(?:word|phrase)?|private[_-]?key|secret|session[_-]?token|signing[_-]?key|token|credential(?:s)?)[A-Za-z0-9_.-]*["'`]?\s*[:=]\s*)([^\s,;{}\)\[\]"'\x60]+)/giu;
+// Inspect each key once. Searching for a secret substring inside an unbounded
+// regex prefix retries at every character of ordinary long output lines.
+const ASSIGNMENT_PREFIX_PATTERN = /(?<![A-Za-z0-9_.-])["'`]?([A-Za-z0-9_.-]+)["'`]?\s*[:=]\s*/gu;
+const SECRET_ASSIGNMENT_KEY_PATTERN = /api[_-]?key|access[_-]?key|access[_-]?token|auth(?:orization|[_-]?token)?|client[_-]?secret|database[_-]?url|pass(?:word|phrase)?|private[_-]?key|secret|session[_-]?token|signing[_-]?key|token|credentials?/iu;
+const UNQUOTED_VALUE_PATTERN = /[^\s,;{})\[\]"'`]+/yu;
 const URL_CREDENTIAL_PATTERN = /\b([a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:)[^\s@]+(@)/giu;
 
 export function redactSecrets(value: unknown, extraSecrets: readonly (string | undefined)[] = []): unknown {
@@ -67,8 +70,11 @@ function shouldRedactKey(key: string): boolean {
     normalized.includes("sessiontoken") ||
     normalized.includes("privatekey") ||
     normalized.includes("signingkey") ||
-    normalized.includes("credential") ||
-    normalized.includes("secret") ||
+    normalized.endsWith("credential") ||
+    normalized.endsWith("credentials") ||
+    normalized.endsWith("credentialvalue") ||
+    normalized.endsWith("secretvalue") ||
+    normalized.endsWith("secretkey") ||
     normalized.endsWith("token") ||
     normalized.endsWith("secret") ||
     normalized.endsWith("password")
@@ -93,34 +99,37 @@ function redactString(value: string, extraSecrets: readonly string[]): string {
 function redactSecretAssignments(value: string): string {
   let output = "";
   let cursor = 0;
-  SECRET_ASSIGNMENT_PREFIX_PATTERN.lastIndex = 0;
-  for (let match = SECRET_ASSIGNMENT_PREFIX_PATTERN.exec(value); match; match = SECRET_ASSIGNMENT_PREFIX_PATTERN.exec(value)) {
-    const prefix = match[1]!;
-    const quote = match[2]!;
-    let end = match.index + match[0].length;
-    let escaped = false;
-    while (end < value.length) {
-      const character = value[end]!;
-      if (escaped) escaped = false;
-      else if (character === "\\") escaped = true;
-      else if (character === quote) { end += 1; break; }
-      end += 1;
+  ASSIGNMENT_PREFIX_PATTERN.lastIndex = 0;
+  for (let match = ASSIGNMENT_PREFIX_PATTERN.exec(value); match; match = ASSIGNMENT_PREFIX_PATTERN.exec(value)) {
+    const key = match[1]!;
+    if (!SECRET_ASSIGNMENT_KEY_PATTERN.test(key)) continue;
+    const start = ASSIGNMENT_PREFIX_PATTERN.lastIndex;
+    const quote = value[start];
+    let end: number;
+    let assignedValue: string;
+    let replacement: string;
+    if (quote === '"' || quote === "'" || quote === "`") {
+      end = start + 1;
+      while (end < value.length && value[end] !== quote) end += value[end] === "\\" ? 2 : 1;
+      assignedValue = value.slice(start + 1, end);
+      end = Math.min(end + 1, value.length);
+      replacement = `${quote}${REDACTED}${quote}`;
+    } else {
+      UNQUOTED_VALUE_PATTERN.lastIndex = start;
+      const unquoted = UNQUOTED_VALUE_PATTERN.exec(value);
+      if (!unquoted) continue;
+      assignedValue = unquoted[0];
+      end = UNQUOTED_VALUE_PATTERN.lastIndex;
+      replacement = REDACTED;
     }
-    const quotedValue = value.slice(match.index + match[0].length, end - (value[end - 1] === quote ? 1 : 0));
-    output += isTokenCountAssignment(prefix, quotedValue)
-      ? value.slice(cursor, end)
-      : `${value.slice(cursor, match.index)}${prefix}${quote}${REDACTED}${quote}`;
+    output += isTokenCountAssignment(key, assignedValue) ? value.slice(cursor, end) : value.slice(cursor, start) + replacement;
     cursor = end;
-    SECRET_ASSIGNMENT_PREFIX_PATTERN.lastIndex = end;
+    ASSIGNMENT_PREFIX_PATTERN.lastIndex = end;
   }
-  output += value.slice(cursor);
-  SECRET_ASSIGNMENT_UNQUOTED_PATTERN.lastIndex = 0;
-  return output.replace(SECRET_ASSIGNMENT_UNQUOTED_PATTERN, (match, prefix: string, rawValue: string) =>
-    isTokenCountAssignment(prefix, rawValue) ? match : `${prefix}${REDACTED}`);
+  return output + value.slice(cursor);
 }
 
-function isTokenCountAssignment(prefix: string, assignedValue: string): boolean {
-  const key = prefix.match(/["'`]?([A-Za-z_][A-Za-z0-9_.-]*)["'`]?\s*[:=]\s*$/)?.[1];
-  if (!key || (!/tokens$/iu.test(key) && !/(?:^|[_-])tokens?$/iu.test(key))) return false;
-  return /^\s*\d+(?:\.\d+)?(?:\s*\/\s*\d+(?:\.\d+)?)?\s*$/u.test(assignedValue);
+function isTokenCountAssignment(key: string, assignedValue: string): boolean {
+  return /tokens$/iu.test(key) && !shouldRedactKey(key)
+    && /^\s*\d+(?:\.\d+)?(?:\s*\/\s*\d+(?:\.\d+)?)?\s*$/u.test(assignedValue);
 }

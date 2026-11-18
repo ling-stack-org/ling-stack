@@ -63,12 +63,26 @@ test("built-in Chrome plugin pairs an allowlisted extension and exposes six MCP 
       }),
     });
     assert.equal(forbidden.status, 403);
+    assert.equal(forbidden.headers.get("access-control-allow-origin"), null);
+
+    const extensionOrigin = `chrome-extension://${CHROME_BROWSER_PRODUCTION_EXTENSION_ID}`;
+    const preflight = await fetch(`${baseUrl}/browser-extension/v1/pair`, {
+      method: "OPTIONS",
+      headers: { origin: extensionOrigin, "access-control-request-method": "POST" },
+    });
+    assert.equal(preflight.status, 204);
+    assert.equal(preflight.headers.get("access-control-allow-origin"), extensionOrigin);
+    assert.equal(preflight.headers.get("access-control-allow-methods"), "POST, OPTIONS");
+    const ordinaryRoute = await fetch(`${baseUrl}/plugins?cwd=${encodeURIComponent(cwd)}`, {
+      headers: { origin: extensionOrigin },
+    });
+    assert.equal(ordinaryRoute.status, 403);
 
     const paired = await requestJson(`${baseUrl}/browser-extension/v1/pair?cwd=${encodeURIComponent(cwd)}`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        origin: `chrome-extension://${CHROME_BROWSER_PRODUCTION_EXTENSION_ID}`,
+        origin: extensionOrigin,
       },
       body: {
         protocol: CHROME_BROWSER_PROTOCOL,

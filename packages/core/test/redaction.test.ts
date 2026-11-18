@@ -91,4 +91,29 @@ test("token-count prose remains intact while singular token assignments are reda
   assert.equal(redactSecrets("tokens: bearer-secret"), "tokens: [REDACTED]");
   assert.equal(redactSecrets("maxTokens: bearer-secret"), "maxTokens: [REDACTED]");
   assert.equal(redactSecrets("accessToken: 123"), "accessToken: [REDACTED]");
+  assert.equal(redactSecrets("token: 123"), "token: [REDACTED]");
+});
+
+test("structured credential metadata remains usable without passing credential values through", () => {
+  assert.deepEqual(redactSecrets({
+    secretHeaderNames: ["Authorization"],
+    configuredSecretNames: ["Authorization"],
+    secretStatus: "configured",
+    secretRefKind: "env",
+    missingSecretCount: 1,
+    missingSecretRefs: [],
+    maxTokens: 16384,
+    nested: { secretHeaderNames: ["Bearer fixture-value"], clientCredential: "fixture-value", webhookSecret: "fixture-value" },
+    accessToken: 123,
+  }), {
+    secretHeaderNames: ["Authorization"],
+    configuredSecretNames: ["Authorization"],
+    secretStatus: "configured",
+    secretRefKind: "env",
+    missingSecretCount: 1,
+    missingSecretRefs: [],
+    maxTokens: 16384,
+    nested: { secretHeaderNames: ["[REDACTED]"], clientCredential: "[REDACTED]", webhookSecret: "[REDACTED]" },
+    accessToken: "[REDACTED]",
+  });
 });

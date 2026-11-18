@@ -448,14 +448,15 @@ export async function routeRequest(
   setCorsHeaders(response);
 
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const chromePairing = url.pathname === "/browser-extension/v1/pair";
 
   // A loopback daemon without a bearer token is only callable by the local
-  // Ling page, except for the authenticated automation event ingress.
-  if (!config.authToken && url.pathname !== "/health" && !isAutomationEventIngress(url.pathname, request.method)) {
+  // Ling page; pairing and automation ingress enforce their own origin boundary.
+  if (!config.authToken && !chromePairing && url.pathname !== "/health" && !isAutomationEventIngress(url.pathname, request.method)) {
     if (!allowLocalServiceRequest(request, response)) return;
   }
 
-  if (request.method === "OPTIONS") {
+  if (request.method === "OPTIONS" && !chromePairing) {
     response.writeHead(204);
     response.end();
     return;
@@ -463,13 +464,18 @@ export async function routeRequest(
 
   // Cloud/self-host slice: non-loopback binds require a bearer token on every
   // request. /health stays open so lifecycle probes keep working.
-  if (config.authToken) {
+  if (config.authToken && request.method !== "OPTIONS") {
     if (url.pathname !== "/health" && !isAutomationEventIngress(url.pathname, request.method)) {
       if (!daemonRequestIsAuthorized(config.authToken, request.headers.authorization)) {
         writeJson(response, 401, { error: "unauthorized", message: "A valid bearer token is required for non-loopback access." });
         return;
       }
     }
+  }
+
+  if (chromePairing) {
+    await handleChromeBrowserPair(request, response, config, context.chromeBrowserSessions);
+    return;
   }
 
   const maybeContinueRunInterventions = async (terminalRun: RunSession): Promise<void> => {
@@ -992,11 +998,6 @@ export async function routeRequest(
       context.officeDocumentsPlugin,
       context.desktopBrowserPlugin,
     );
-    return;
-  }
-
-  if (url.pathname === "/browser-extension/v1/pair") {
-    await handleChromeBrowserPair(request, response, config, context.chromeBrowserSessions);
     return;
   }
 

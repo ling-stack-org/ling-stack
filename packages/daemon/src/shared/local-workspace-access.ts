@@ -15,13 +15,19 @@ export function isAllowedLocalOrigin(originHeader: string | undefined): boolean 
   }
 }
 
-/** User-level services without bearer authentication must stay on the local listener. */
-export function allowLocalServiceRequest(request: IncomingMessage, response: ServerResponse): boolean {
+export function isDirectLoopbackRequest(request: IncomingMessage): boolean {
   const headers = request.headers;
   const port = request.socket.localPort;
   const localPeer = ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(request.socket.remoteAddress ?? "");
-  const localHost = port && ["127.0.0.1", "localhost", "[::1]"].some((host) =>
+  const localHost = port !== undefined && ["127.0.0.1", "localhost", "[::1]"].some((host) =>
     headers.host === `${host}:${port}` || (port === 80 && headers.host === host));
+  const forwarded = Object.keys(headers).some((name) => name === "forwarded" || name.startsWith("x-forwarded-"));
+  return localPeer && localHost && !forwarded;
+}
+
+/** User-level services without bearer authentication must stay on the local listener. */
+export function allowLocalServiceRequest(request: IncomingMessage, response: ServerResponse): boolean {
+  const headers = request.headers;
   let localOrigin = headers.origin === undefined;
   if (headers.origin !== undefined) {
     try {
@@ -33,8 +39,7 @@ export function allowLocalServiceRequest(request: IncomingMessage, response: Ser
   const missingBrowserOrigin = headers.origin === undefined
     && (Object.keys(headers).some((name) => name.startsWith("sec-fetch-") && name !== "sec-fetch-mode")
       || (headers["sec-fetch-mode"] !== undefined && headers["sec-fetch-mode"] !== "cors"));
-  const forwarded = Object.keys(headers).some((name) => name === "forwarded" || name.startsWith("x-forwarded-"));
-  if (!localPeer || !localHost || !localOrigin || missingBrowserOrigin || forwarded) {
+  if (!isDirectLoopbackRequest(request) || !localOrigin || missingBrowserOrigin) {
     writePrivateJson(response, 403, { error: "local_service_forbidden", message: "This service requires a local Ling page or authenticated daemon access." });
     return false;
   }
