@@ -120,6 +120,10 @@ function removeOwnedOverlays(f, version) {
 export function workflowMigrationPredecessorFixture(f, version) {
   const { fullSchema, fullMarkers } = removeOwnedOverlays(f, version);
   return (upgradedDb, installed) => {
+    // Reopen through the current Core constructor installs the later F5
+    // overlays again. Remove those empty successors before comparing this
+    // historical fixture with its recorded full-upgrade schema.
+    rewindNodeRerunApprovalFixture(upgradedDb);
     const laterTables = overlays.filter(overlay => overlay.version > version).flatMap(overlay => overlay.tables);
     assert.deepEqual(schema(upgradedDb).filter(row => !laterTables.includes(row.tbl_name)),
       installed.schema.filter(row => !laterTables.includes(row.tbl_name)),
