@@ -12,8 +12,8 @@ Code and test anchors: `packages/ui-react/src/theme/built-ins/`、`packages/ui-r
 把主题从“颜色主题 + 用户另配背景”升级为“官方场景主题 + 可选个人媒体覆盖”：
 
 1. Ling 只提供官方内置主题，不提供主题包导入或 Theme Studio 生成入口。
-2. 先建立 Ling Core IP，再新增 `ling-breeze`、`ling-ocean`、`ling-night`、`ling-sakura`、`ling-ember` 五套完整场景主题。
-3. 主题列表直接展示场景缩略图，用户选择的是完整氛围；五个场景共享同一个 Core IP，只改变材质、道具、姿态和场景。
+2. 先建立 Ling Core IP，再提供 `ling-breeze`、`ling-ocean`、`ling-night`、`ling-journey` 四套完整场景主题。
+3. 主题列表直接展示场景缩略图，用户选择的是完整氛围；四个场景共享同一个 Core IP，只改变材质、道具、姿态和场景。
 4. 自定义上传背景支持静态图片和本地 MP4/WebM 动态壁纸。
 5. 背景可见度从三档改为连续滑杆，并兼容旧偏好迁移。
 6. 在背景层稳定后，按[UI 视觉适配实施方案](ling-journey-ui-adaptation-implementation-plan.md)完成侧栏、顶栏、Composer、通用控件、弹层和设置页的完整主题表达。
@@ -28,7 +28,7 @@ Code and test anchors: `packages/ui-react/src/theme/built-ins/`、`packages/ui-r
 | 导入/生成主题 | 产品入口移除；历史数据保留但不展示为可用主题，历史选择回退到官方浅色/深色 |
 | 场景主题 | manifest 提供 tokens、scene metadata 和 Presentation Profile；场景渲染器由应用代码拥有 |
 | Core IP | 轮廓、脸部、比例、材质变体和场景使用规则由 [Ling Core IP 设计合同](ling-core-ip-design.md)拥有 |
-| 默认背景 | 经典主题为纯色；场景主题为应用内矢量插画 |
+| 默认背景 | 经典主题为纯色；场景主题为应用内受管场景资源 |
 | 自定义背景 | 用户显式上传本地图片或视频后覆盖主题默认画面 |
 | 清除背景 | 只移除用户媒体，回到当前主题默认画面；不重置主题 |
 | 可见度 | 连续 `opacity`，20%–100%，默认 60%；旧三档映射为 45% / 60% / 75% |
@@ -43,8 +43,7 @@ Code and test anchors: `packages/ui-react/src/theme/built-ins/`、`packages/ui-r
 | `ling-breeze` | Ling Breeze | 绿色、浅米白、自然清亮 | 天空、树枝、远近树层、小径、Ling 角色、角落枝叶 |
 | `ling-ocean` | Ling Ocean | 蓝色、天空白、海面 | 云、海平线、波浪、小船、Ling 角色 |
 | `ling-night` | Ling Night | 深蓝、紫色、青色极光 | 星空、极光、山层、月亮、Ling 角色 |
-| `ling-sakura` | Ling Sakura | 粉白、暖米、柔和叶绿 | 花枝、石台、花瓣、Sakura Ling |
-| `ling-ember` | Ling Ember | 暖橙、琥珀、可可棕 | 暮色丘陵、光路、草叶、Ember Ling |
+| `ling-journey` | Ling Journey | 墨蓝、暖金、远行问剑 | 受管静态母图、山谷、云海与远方光影 |
 
 每套主题必须通过现有 token 完整性和对比度验证。场景插画只能由应用代码注册，不能来自用户路径或远程资源；不包含可读文字、第三方 IP、伪控件或品牌替换。所有场景中的角色必须符合 Ling Core IP 合同，不能各自变成不同角色。
 
@@ -53,8 +52,8 @@ Code and test anchors: `packages/ui-react/src/theme/built-ins/`、`packages/ui-r
 | 模块 | 落点 | 职责 |
 |---|---|---|
 | 主题类型与验证 | `packages/ui-react/src/theme/types.ts`、`validate-theme.ts` | 增加可选 `scene` metadata；只允许已知内置 scene；保持 token 完整和对比度验证 |
-| Core IP | `docs/design/ling-core-ip-design.md`、后续受管视觉资产 | 先完成角色设定和五主题变体审核，再进入场景生产 |
-| 内置主题 | `packages/ui-react/src/theme/built-ins/` | 新增三套官方场景 manifests；经典 light/dark 保持无 scene |
+| Core IP | `docs/design/ling-core-ip-design.md`、后续受管视觉资产 | 先完成角色设定和四主题变体审核，再进入场景生产 |
+| 内置主题 | `packages/ui-react/src/theme/built-ins/` | 提供四套官方场景 manifests；经典 light/dark 保持无 scene |
 | 场景渲染 | `packages/ui-react/src/theme-scene/` | `SceneArtwork` 服务静态场景缩略图和全窗画面；`farbound-journey` 默认加载受管静态 WebP 母图 |
 | 主题选择器 | `packages/ui-react/src/theme-picker/` | scene 主题渲染大幅缩略图；经典主题保留色板 |
 | 主题设置 | `apps/web/src/features/settings/InterfaceThemeSettings.tsx` | 只展示 built-in 主题；移除导入、创建、修复、删除和预览入口 |
@@ -70,7 +69,7 @@ Code and test anchors: `packages/ui-react/src/theme/built-ins/`、`packages/ui-r
 ### 5.1 主题 scene
 
 ```ts
-type LingBuiltInSceneId = "forest-breeze" | "ocean-drift" | "midnight-aurora" | "sakura-bloom" | "ember-dusk";
+type LingBuiltInSceneId = "forest-breeze" | "ocean-drift" | "midnight-aurora" | "farbound-journey";
 
 interface LingThemeScene {
   readonly id: LingBuiltInSceneId;
@@ -113,7 +112,7 @@ type BackgroundAsset =
 
 ### 6.1 Core IP 与场景主题
 
-先完成 Ling Core IP turnaround 与五主题变体表，再重做正式场景。五张背景图必须共享同一角色轮廓和脸部规则，只改变材质、颜色、道具、姿态和光影。
+先完成 Ling Core IP turnaround 与四主题变体表，再重做正式场景。四张背景图必须共享同一角色轮廓和脸部规则，只改变材质、颜色、道具、姿态和光影。
 
 `SceneArtwork` 使用 inline SVG，按 16:9 设计并通过 `preserveAspectRatio="xMidYMid slice"` 覆盖全窗。Breeze、Ocean、Night 继续由 SVG 绘制；Journey 的 SVG 只加载受管静态母图，不渲染 rider、剑光或其它额外人物节点；scene definition 由应用注册，不让主题包传入 SVG。
 
@@ -147,10 +146,10 @@ Desktop prepare 不转码。主进程只接受 renderer 已验证的候选，重
 
 | 任务 | 依赖 | 完成条件 |
 |---|---|---|
-| S0-T1 Core IP 设计 | 本文档与 IP 合同 | V1.2 水墨灵台心印组件、三星错峰动效和 Web 首页截图已落地；待产品确认最终视觉，再补五主题变体并通过人工审核 |
+| S0-T1 Core IP 设计 | 本文档与 IP 合同 | V1.2 水墨灵台心印组件、三星错峰动效和 Web 首页截图已落地；待产品确认最终视觉，再补四主题变体并通过人工审核 |
 | S1-T1 文档与产品边界 | 无 | 统一合同、实施计划、验收矩阵和主题 docs 与新边界一致 |
-| S1-T2 scene 类型和内置主题 | S0-T1、S1-T1 | 五个 manifests 通过 validator；built-in 列表和 fallback 正确 |
-| S1-T3 SceneArtwork | S1-T2 | 五个场景可用于缩略图和全窗；无外部资源；reduced-motion 无动画 |
+| S1-T2 scene 类型和内置主题 | S0-T1、S1-T1 | 四个 manifests 通过 validator；built-in 列表和 fallback 正确 |
+| S1-T3 SceneArtwork | S1-T2 | 四个场景可用于缩略图和全窗；无外部资源；reduced-motion 无动画 |
 | S1-T4 主题选择器与设置入口 | S1-T3 | scene 缩略图、键盘/选中状态正常；导入/生成入口不可见 |
 | S1-T5 全窗场景接线 | S1-T3 | 无自定义背景时 scene 连续透出；切主题/保护路由/窄窗行为正确 |
 | S1-T6 UI 视觉合同与 token | S1-T1 | L0–L4 材质、组件矩阵、状态合同和 1440×960 基线截图通过评审 |

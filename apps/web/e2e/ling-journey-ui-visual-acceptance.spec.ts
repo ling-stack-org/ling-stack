@@ -141,8 +141,8 @@ test("Journey UI-06..UI-12: conversation dock, overlays, fallback modes and cont
   screenshots.push(await capture(page, testInfo, "ui-09-journey-toast.png"));
   screenshots.push(await capture(page, testInfo, "ui-10-journey-settings-ambient.png"));
   expect(await page.locator("html").getAttribute("data-ui-surface-recipe")).toBe("solid");
-  await expect(page.locator("html")).toHaveAttribute("data-ui-background-visible", "true");
-  await expect(page.locator("[data-background-layer]")).toBeVisible();
+  await expect(page.locator("html")).toHaveAttribute("data-ui-background-visible", "false");
+  await expect(page.locator("[data-background-layer]")).toBeHidden();
 
   await page.getByRole("button", { name: "Back to app", exact: true }).click();
   await page.emulateMedia({ forcedColors: "active" });

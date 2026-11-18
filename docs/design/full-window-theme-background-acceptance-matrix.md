@@ -24,11 +24,11 @@ Code and test anchors: [实施方案](full-window-theme-background-implementatio
 |---|---|---|---|
 | BG-01 主题来源边界 | 打开界面偏好 | 只展示 built-in 主题；无导入、创建、修复、重新导入、删除或预览主题包入口 | B |
 | BG-02 历史主题回退 | 历史 fixed selection 指向 local-import/local-generated | 首帧不闪回旧主题；registry ready 后按颜色模式回退官方浅色/深色；数据不被删除 | U、W、B |
-| BG-03 内置场景 manifests | 三个 scene manifests | tokens 完整、对比度通过、scene ID 已知、非 built-in scene 被拒绝 | U |
-| BG-03A Core IP 一致性 | Core turnaround 与五主题 variant sheet | 五个变体共享同一轮廓、脸部和比例；仅材质、道具、姿态和光影变化；无文字/水印/第三方 IP | 人工设计审核、B |
-| BG-04 场景缩略图 | 主题列表 | scene 主题显示与全窗一致的矢量缩略图；经典主题保留色板；选中/焦点/disabled 正常 | B |
-| BG-05 全窗场景 | 无自定义背景时选择 breeze/ocean/night/sakura/ember | 一张连续场景透出首页、侧栏、工作区；无独立面板裁切；角色和角落装饰可见但不遮挡操作 | B、D |
-| BG-06 场景配色 | 五个 scene 主题 | 左侧栏、按钮、选中态、焦点、链接和状态色与场景同色系；正文/输入保持可读 | U、B、D |
+| BG-03 内置场景 manifests | 四个 scene manifests | tokens 完整、对比度通过、scene ID 已知、非 built-in scene 被拒绝 | U |
+| BG-03A Core IP 一致性 | Core turnaround 与四主题 variant sheet | 四个变体共享同一轮廓、脸部和比例；仅材质、道具、姿态和光影变化；无文字/水印/第三方 IP | 人工设计审核、B |
+| BG-04 场景缩略图 | 主题列表 | scene 主题显示与全窗一致的同源缩略图；经典主题保留色板；选中/焦点/disabled 正常 | B |
+| BG-05 全窗场景 | 无自定义背景时选择 breeze/ocean/night/journey | 一张连续场景透出首页、侧栏、工作区；无独立面板裁切；角色和角落装饰可见但不遮挡操作 | B、D |
+| BG-06 场景配色 | 四个 scene 主题 | 左侧栏、按钮、选中态、焦点、链接和状态色与场景同色系；正文/输入保持可读 | U、B、D |
 | BG-07 保护路由 | settings、diagnostics、approvals、overlay | 实色画布；场景/媒体不透入正文、代码、输入、表格和审批 | B、D |
 | BG-07A 媒体生产保护面板 | media-canvas | 环境背景可见；空状态检查器透明，已选详情、卡片、输入和弹层保持实底 | B、D |
 | BG-08 主题切换状态 | 有草稿、焦点、滚动、dock、native pending/ready/blocked/error 时切换主题 | 状态保留，不触发 Run；场景和 tokens 同步更新 | B、D |

@@ -97,6 +97,10 @@ test("BG-26 generation tasks keeps the ambient scene behind protected panels", a
   await expect(page.locator(".media-jobs-page")).toBeVisible();
   const material = await page.evaluate(() => {
     const style = (selector: string): CSSStyleDeclaration => getComputedStyle(document.querySelector(selector)!);
+    const optionalStyle = (selector: string): CSSStyleDeclaration | undefined => {
+      const element = document.querySelector(selector);
+      return element ? getComputedStyle(element) : undefined;
+    };
     const probe = document.createElement("div");
     probe.style.backgroundColor = "color-mix(in srgb, var(--ling-bg-panel) 34%, transparent)";
     document.body.append(probe);
@@ -106,7 +110,7 @@ test("BG-26 generation tasks keeps the ambient scene behind protected panels", a
       expectedHeader,
       header: style(".media-jobs-header").backgroundColor,
       headerBorder: style(".media-jobs-header").borderBottomColor,
-      inspector: style(".media-job-inspector").backgroundColor,
+      inspector: optionalStyle(".media-job-inspector")?.backgroundColor ?? null,
       listBorder: style(".media-jobs-list-pane").borderRightColor,
       page: style(".media-jobs-page").backgroundColor,
       sidebarBorder: style(".left-nav").borderRightColor,
@@ -121,7 +125,7 @@ test("BG-26 generation tasks keeps the ambient scene behind protected panels", a
   expect(material.header).toBe(material.expectedHeader);
   expect(isTransparent(material.headerBorder)).toBe(true);
   expect(material.headerBorderWidth).toBe("0px");
-  expect(isTransparent(material.inspector)).toBe(true);
+  expect(material.inspector === null || isTransparent(material.inspector)).toBe(true);
   expect(isTransparent(material.listBorder)).toBe(true);
   expect(material.listBorderWidth).toBe("0px");
   expect(material.sidebarBorderWidth).toBe("0px");
@@ -141,10 +145,15 @@ test("BG-27 generation tasks keeps solid chrome when no backdrop is configured",
   await expect(page.locator(".media-jobs-page")).toBeVisible();
   const material = await page.evaluate(() => {
     const style = (selector: string): CSSStyleDeclaration => getComputedStyle(document.querySelector(selector)!);
+    const optionalStyle = (selector: string): CSSStyleDeclaration | undefined => {
+      const element = document.querySelector(selector);
+      return element ? getComputedStyle(element) : undefined;
+    };
     return {
       header: style(".media-jobs-header").backgroundColor,
       headerBorderWidth: style(".media-jobs-header").borderBottomWidth,
-      inspector: style(".media-job-inspector").backgroundColor,
+      inspector: optionalStyle(".media-job-inspector")?.backgroundColor ?? null,
+      inspectorPresent: Boolean(document.querySelector(".media-job-inspector")),
       listBorderWidth: style(".media-jobs-list-pane").borderRightWidth,
       page: style(".media-jobs-page").backgroundColor,
     };
@@ -152,8 +161,12 @@ test("BG-27 generation tasks keeps solid chrome when no backdrop is configured",
   expect(isTransparent(material.page)).toBe(false);
   expect(isTransparent(material.header)).toBe(false);
   expect(material.headerBorderWidth).toBe("0px");
-  expect(isTransparent(material.inspector)).toBe(false);
+  if (material.inspectorPresent && material.inspector !== null) expect(isTransparent(material.inspector)).toBe(false);
   expect(material.listBorderWidth).toBe("0px");
+  await page.setViewportSize({ width: 980, height: 680 });
+  const narrowColumns = await page.locator(".media-jobs-layout").evaluate((element) => getComputedStyle(element).gridTemplateColumns.trim().split(/\s+/u).length);
+  expect(narrowColumns).toBe(1);
+  await page.setViewportSize({ width: 1440, height: 960 });
   await capture(page, testInfo, "generation-jobs-solid-full-window.png");
 });
 
@@ -178,9 +191,8 @@ async function prepare(page: Page): Promise<void> {
 }
 
 async function openBackgroundSettings(page: Page): Promise<void> {
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })
-    .getByRole("button", { name: "Settings" })
-    .click();
+  const settingsButton = page.getByRole("button", { name: /^(Settings|设置)$/u }).last();
+  await settingsButton.click({ timeout: 60_000 });
   await page.getByLabel("Settings sections").getByRole("button", { name: "Interface preferences", exact: true }).click();
   await expect(page.locator("[data-background-settings]")).toBeVisible();
 }

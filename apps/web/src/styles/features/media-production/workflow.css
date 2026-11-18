@@ -207,6 +207,40 @@
   grid-template-columns: 240px minmax(0, 1fr);
 }
 
+.connection-workspace .ling-ui-data-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 3px 8px;
+  padding: 9px 8px;
+}
+
+.connection-workspace .ling-ui-data-row-identity {
+  display: flex;
+  grid-column: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.connection-workspace .ling-ui-data-row-identity strong,
+.connection-workspace .ling-ui-data-row-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connection-workspace .ling-ui-data-row-summary {
+  grid-column: 1;
+  padding-left: 22px;
+  font-size: 11px;
+}
+
+.connection-workspace .ling-ui-data-row-status {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: center;
+}
+
 .connection-workspace .media-workflow-connection-form {
   gap: 16px;
   padding: 20px 22px;

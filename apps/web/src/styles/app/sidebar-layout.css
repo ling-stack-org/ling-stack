@@ -738,7 +738,6 @@
   min-width: 0;
   margin: 0;
   padding-top: 10px;
-  border-top: 1px solid var(--ling-border-default);
 }
 
 .channel-left-drawer .config-button {
