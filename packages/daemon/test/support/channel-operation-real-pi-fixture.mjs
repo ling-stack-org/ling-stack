@@ -23,7 +23,7 @@ export async function startRealPiChannelFixture(cwd, respond, hostConfig = {}) {
     }
     return respond(request);
   });
-  const daemon = createDaemonServer({ ...hostConfig, host: "127.0.0.1", port: 0, channels: { intentSelector: true, terminalReports: true } }, {
+  const daemon = createDaemonServer({ ...hostConfig, defaultWorkspaceCwd: hostConfig.defaultWorkspaceCwd ?? cwd, host: "127.0.0.1", port: 0, channels: { intentSelector: true, terminalReports: true } }, {
     secretResolver: createCompositeSecretResolver({ env: { LING_TEST_LOOPBACK_KEY: "static-loopback-only" } }),
     storeFactory: (storeCwd) => { const store = createSqliteRunStore(storeCwd); stores.set(storeCwd, store); return store; },
   });

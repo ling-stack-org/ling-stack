@@ -48,7 +48,7 @@ test(`real Pi plus loopback SSE completes source-bound read and exclusive create
     return { text: "Read input.txt and created output.txt with SOURCE." };
   });
   const stores = new Map();
-  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, channels: { intentSelector: true, terminalReports: false },
+  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, defaultWorkspaceCwd: tmpdir(), channels: { intentSelector: true, terminalReports: false },
     harness: { continuations: { mode: continuationMode }, toolBroker: { mode: continuationMode } } }, {
     secretResolver: createCompositeSecretResolver({ env: { LING_TEST_LOOPBACK_KEY: "static-loopback-only" } }),
     storeFactory: (storeCwd) => { const store = createSqliteRunStore(storeCwd); stores.set(storeCwd, store); return store; },

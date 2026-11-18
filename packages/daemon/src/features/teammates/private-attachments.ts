@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
+import { allowLocalWorkspaceRequest } from "../../shared/local-workspace-access.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import {
@@ -11,6 +12,8 @@ import {
   persistTeammatePrivateAttachment,
 } from "../channels/attachments.js";
 import { parseHardDeleteAiTeammateRequest, parseTeammatePrivateAttachmentRequest } from "./schemas.js";
+import { coordinateWorktreeMutation } from "../workspaces/worktree-mutation.js";
+import { listWorktreeSnapshots } from "../workspaces/worktree-recovery.js";
 
 export async function handleTeammateDirectAttachments(
   request: IncomingMessage,
@@ -148,6 +151,7 @@ export async function handleTeammateHardDelete(
     return;
   }
 
+  if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) return;
   try {
     const store = storeRegistry.getStore(cwd);
     if (!store.getAiTeammate(teammateId)) {
@@ -162,7 +166,13 @@ export async function handleTeammateHardDelete(
 
     const body = await readJsonBody(request, config.maxBodyBytes);
     const input = parseHardDeleteAiTeammateRequest(body);
-    const result = store.hardDeleteAiTeammate(teammateId, input, new Date().toISOString());
+    const result = await coordinateWorktreeMutation(store, async () => {
+      const threadIds = new Set(store.listTeammateDirectThreads({ teammateId, limit: 500 }).map((thread) => thread.id));
+      if ((await listWorktreeSnapshots(store.paths)).some((snapshot) => snapshot.ownerKind === "teammate" && threadIds.has(snapshot.ownerId))) {
+        throw new HttpError(409, "worktree_recovery_pending", "AI teammate has worktree recovery snapshots and cannot be deleted.");
+      }
+      return store.hardDeleteAiTeammate(teammateId, input, new Date().toISOString());
+    });
     if (!result) {
       writeJson(response, 404, { error: "teammate_not_found", message: `AI teammate not found: ${teammateId}` });
       return;

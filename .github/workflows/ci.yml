@@ -474,6 +474,17 @@ jobs:
           WEB_SMOKE_PLAN: ${{ needs.scope.outputs.web-smoke-plan }}
         run: node scripts/ci/web-smoke.mjs
 
+      - name: Check worktree settings, cleanup and recovery in production Web
+        working-directory: apps/web
+        env:
+          LING_PLAYWRIGHT_PREVIEW: "1"
+          LING_PLAYWRIGHT_REUSE_SERVER: "0"
+          LING_CAPTURE_UI2_EVIDENCE: "1"
+        run: >-
+          corepack pnpm exec playwright test e2e/worktree-settings.spec.ts
+          --grep 'worktree settings persist|cleanup snapshots|retention, confirmation|setup from a browser'
+          --output=test-results/worktree-settings --reporter=line
+
       - name: Preserve Linux production Web smoke evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
@@ -525,6 +536,13 @@ jobs:
 
       - name: Typecheck selected packages without rebuilding dependencies
         run: node scripts/ci/run-packages.mjs --task=typecheck:ci --packages="$SELECTED_PACKAGES"
+
+      - name: Check Desktop worktree confirmation IPC
+        if: contains(needs.scope.outputs.typecheck-packages, '@ling-stack/desktop')
+        working-directory: apps/desktop
+        run: |
+          corepack pnpm exec tsc -p tsconfig.main.json
+          node --test tests/worktree-ipc.test.ts
 
       - name: Typecheck CI tool tests
         run: corepack pnpm typecheck:ci-tests

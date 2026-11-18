@@ -75,6 +75,8 @@ export type * from "./teammates.js";
 export type * from "./companions.js";
 export type * from "./ai-councils.js";
 export type * from "./settings.js";
+export type * from "./worktrees.js";
+export { WORKTREE_CONFIGURATION_PLACEHOLDER } from "./worktrees.js";
 export type * from "./workspace-directory.js";
 export type * from "./workspace-terminal.js";
 export * from "./workspace-changes.js";
