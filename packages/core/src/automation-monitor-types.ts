@@ -54,8 +54,19 @@ export function matchesAutomationMonitorCondition(
         return condition.statuses.includes(value);
       }
       const statuses = snapshot.statuses;
-      return Array.isArray(statuses)
-        && statuses.some((status): status is string => typeof status === "string" && condition.statuses.includes(status));
+      if (Array.isArray(statuses)
+        && statuses.some((status): status is string => typeof status === "string" && condition.statuses.includes(status))) {
+        return true;
+      }
+      const statusCounts = snapshot.statusCounts;
+      return statusCounts !== null
+        && typeof statusCounts === "object"
+        && !Array.isArray(statusCounts)
+        && Object.entries(statusCounts as Record<string, unknown>)
+          .some(([status, count]) => condition.statuses.includes(status)
+            && typeof count === "number"
+            && Number.isFinite(count)
+            && count > 0);
     }
     case "error_present": {
       const errorPresent = snapshot.errorPresent;

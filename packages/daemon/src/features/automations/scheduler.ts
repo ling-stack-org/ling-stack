@@ -99,8 +99,7 @@ export class AutomationSchedulerRegistry {
 
       const now = new Date().toISOString();
       const store = this.storeRegistry.getStore(cwd);
-      const automations = store.listAutomationDefinitions({ status: "enabled", limit: 500 })
-        .filter(isTimerAutomation);
+      const automations = store.listAutomationDefinitions({ status: "enabled", timerOnly: true, limit: 500 });
       const entry: AutomationSchedulerEntry = {
         state: {
           id: `automation_scheduler_${randomUUID()}`,
@@ -160,8 +159,7 @@ export class AutomationSchedulerRegistry {
     };
     try {
       const store = this.storeRegistry.getStore(cwd);
-      const automations = store.listAutomationDefinitions({ status: "enabled", limit: 500 })
-        .filter(isTimerAutomation);
+      const automations = store.listAutomationDefinitions({ status: "enabled", timerOnly: true, limit: 500 });
       for (const automation of automations) {
         if (existing.runningAutomationIds.has(automation.id)) {
           this.upsertItem(existing, {
@@ -492,38 +490,38 @@ export class AutomationSchedulerRegistry {
       }
       const snapshotBody = readAutomationMonitorSnapshot({ store, automation, now: firedAt });
       const fingerprint = automationMonitorFingerprint(automation.trigger.source, snapshotBody);
-      const observation = store.recordAutomationMonitorSnapshot({
-        automationId: automation.id,
-        fingerprint,
-        snapshot: snapshotBody,
-      }, firedAt);
-      const conditionMatches = observation.changed
-        && matchesAutomationMonitorCondition(automation.trigger.condition, snapshotBody);
+      const observation = { automationId: automation.id, fingerprint, snapshot: snapshotBody };
+      const changed = store.getAutomationMonitorSnapshot(automation.id)?.fingerprint !== fingerprint;
       let lastAutomationRunId: string | undefined;
-      let outcome: "changed" | "unchanged" | "condition_not_met" = "unchanged";
-      if (conditionMatches) {
-        const result = await this.executeAutomationRun(entry.state.cwd, automation.id, {
+      let outcome: AutomationSchedulerItem["lastMonitorOutcome"];
+      if (changed && matchesAutomationMonitorCondition(automation.trigger.condition, snapshotBody)) {
+        const idempotencyKey = monitorObservationId(automation.id, scheduledFor, fingerprint);
+        const { automationRun } = await this.executeAutomationRun(entry.state.cwd, automation.id, {
           triggerType: "monitor",
           scheduledFor,
-          idempotencyKey: `automation:${automation.id}:monitor:${fingerprint}`,
+          idempotencyKey,
           monitorSnapshot: snapshotBody,
         });
-        lastAutomationRunId = result.automationRun.id;
-        outcome = "changed";
-        await this.emitMonitorFindingNotification(
-          entry.state.cwd,
-          automation,
-          result.automationRun.runId,
-        );
-      } else if (observation.changed) {
-        outcome = "condition_not_met";
-      }
-      if (!observation.changed && automation.trigger.unchangedPolicy === "record_noop") {
-        const noop = this.createMonitorNoopRun(store, automation, scheduledFor, firedAt, "monitor_unchanged");
-        lastAutomationRunId = noop.id;
-      } else if (observation.changed && !conditionMatches && automation.trigger.unchangedPolicy === "record_noop") {
-        const noop = this.createMonitorNoopRun(store, automation, scheduledFor, firedAt, "monitor_condition_not_met");
-        lastAutomationRunId = noop.id;
+        // Another active execution can occupy this definition's only Run slot.
+        // Leave the observation pending until its own Run is durably linked.
+        if (automationRun.idempotencyKey === idempotencyKey) {
+          if (!automationRun.runId) {
+            throw new Error(automationRun.errorMessage ?? "Automation monitor run could not start.");
+          }
+          const recorded = store.recordAutomationMonitorSnapshot(observation, firedAt);
+          lastAutomationRunId = automationRun.id;
+          outcome = "changed";
+          if (recorded.changed) {
+            await this.emitMonitorFindingNotification(entry.state.cwd, automation, automationRun.runId);
+          }
+        }
+      } else {
+        if (changed) store.recordAutomationMonitorSnapshot(observation, firedAt);
+        outcome = changed ? "condition_not_met" : "unchanged";
+        if (automation.trigger.unchangedPolicy === "record_noop") {
+          const skipReason = changed ? "monitor_condition_not_met" : "monitor_unchanged";
+          lastAutomationRunId = this.createMonitorNoopRun(store, automation, scheduledFor, firedAt, skipReason).id;
+        }
       }
       if (!this.isCurrentEntry(entry, generation)) {
         return;
@@ -538,9 +536,11 @@ export class AutomationSchedulerRegistry {
         automationId: automation.id,
         title: automation.title,
         lastRunAt: firedAt,
-        lastAutomationRunId,
-        lastMonitorFingerprint: fingerprint,
-        lastMonitorOutcome: outcome,
+        ...(outcome === undefined ? {} : {
+          lastAutomationRunId,
+          lastMonitorFingerprint: fingerprint,
+          lastMonitorOutcome: outcome,
+        }),
         lastErrorMessage: undefined,
       });
     } catch (error) {
@@ -777,6 +777,12 @@ function automationScheduleIdentity(automation: AutomationDefinition): string {
   return JSON.stringify([automation.trigger, automation.rrule]);
 }
 
-function isTimerAutomation(automation: AutomationDefinition): boolean {
-  return automation.trigger.type === "schedule" || automation.trigger.type === "monitor";
+/**
+ * A poll slot is the durable identity of one observation. The fingerprint is
+ * deliberately included as well: a changed source must never reuse the Run
+ * from an earlier transition, while a retry of the same slot must remain
+ * idempotent.
+ */
+function monitorObservationId(automationId: string, scheduledFor: string, fingerprint: string): string {
+  return `automation:${automationId}:monitor:${scheduledFor}:${fingerprint}`;
 }

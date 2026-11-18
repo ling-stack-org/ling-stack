@@ -230,7 +230,8 @@ export async function handleAutomationDraftItem(
       } else if (confirmed.outcome === "created" || confirmed.outcome === "already_confirmed") {
         let schedulerRefreshPending = false;
         try {
-          const needsRegistration = confirmed.automation.status === "enabled" && confirmed.automation.trigger.type === "schedule";
+          const needsRegistration = confirmed.automation.status === "enabled"
+            && (confirmed.automation.trigger.type === "schedule" || confirmed.automation.trigger.type === "monitor");
           // A registered item may be executing, with no nextRunAt yet. Do not reset its timer on retries.
           const registered = confirmed.outcome === "already_confirmed" && needsRegistration
             && schedulerRegistry.list(cwd).some((state) => state.status === "running"

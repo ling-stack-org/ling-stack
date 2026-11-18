@@ -540,6 +540,7 @@
     "test/assurance-evidence-isolation.test.mjs",
     "test/attempt-host-office-directory-v2-settlement.test.mjs",
     "test/attempt-host-office-directory-v2.test.mjs",
+    "test/automation-monitor.test.ts",
     "test/automation-scheduler-timers.test.mjs",
     "test/bootstrap-original-source-hooks.test.mjs",
     "test/bundled-skill-startup.test.mjs",

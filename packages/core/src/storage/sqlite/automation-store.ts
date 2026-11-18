@@ -179,6 +179,9 @@ export class SqliteAutomationStore {
     if (options.scheduledOnly) {
       clauses.push("json_extract(trigger_json, '$.type') = 'schedule'");
     }
+    if (options.timerOnly) {
+      clauses.push("json_extract(trigger_json, '$.type') IN ('schedule', 'monitor')");
+    }
     const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
     params.push(limit);
     return this.context.database

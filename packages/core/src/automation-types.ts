@@ -286,6 +286,8 @@ export interface ListAutomationDefinitionsOptions {
   readonly providerPresetId?: string;
   readonly includeArchived?: boolean;
   readonly scheduledOnly?: boolean;
+  /** Restrict results in SQL to timer-backed triggers (schedule or monitor). */
+  readonly timerOnly?: boolean;
   readonly limit?: number;
 }
 
