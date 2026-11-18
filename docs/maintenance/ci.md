@@ -28,7 +28,7 @@ CI 会先根据整个 Pull Request 的变更路径选择最小安全范围：
 | 手动运行 | 目标分支上的完整验证 |
 | 定时运行 | 默认分支每天 UTC 03:17（北京时间 11:17）的完整验证 |
 
-[Daemon 平台清单](../../scripts/ci/daemon-test-platforms.json)将 509 个通用文件分到八个 Linux shard；同时选择 Core 时使用六个，每个使用两个 worker；166 个包含原生／平台约束的文件保留在四个 `macos-26` shard，每个使用三个 worker。仅修改已登记 Daemon 测试入口时，分类器按清单选择对应平台，Linux-only 或 Darwin-only 改动不会排另一平台的整套分片；源码、共享 fixture、验证导入、未知路径和完整回归仍保留双平台。独立 native smoke 只在原生 sandbox／Seatbelt 路径变更或完整回归时选择，普通 Daemon 改动不再额外占用一个 macOS runner；实际可用容量和排队仍由 GitHub 决定。每个文件保持 `--test-concurrency=1`、独立 runtime home／workspace 和 POSIX 进程组。Kimi Host read／terminal、delegation production tool surface、engine lifecycle installation、Kimi owned-execution、workflow repository-fence、signal-shutdown regression，以及 workflow conflict／isolated-delivery fixtures 保留所属分片的独占阶段，避免这些会大量创建原生进程、Git worktree 或临时资源的 fixture 互相争用；其余文件进入按估计耗时降序的共享队列。Linux restricted-command 拒绝契约仍随 Daemon 选择；真实 macOS helper／Seatbelt smoke 由显式原生路径映射选择，未知路径回退完整验证。
+[Daemon 平台清单](../../scripts/ci/daemon-test-platforms.json)将 519 个通用文件分到八个 Linux shard；同时选择 Core 时使用六个，每个使用两个 worker；166 个包含原生／平台约束的文件保留在四个 `macos-26` shard，每个使用三个 worker。仅修改已登记 Daemon 测试入口时，分类器按清单选择对应平台，Linux-only 或 Darwin-only 改动不会排另一平台的整套分片；源码、共享 fixture、验证导入、未知路径和完整回归仍保留双平台。独立 native smoke 只在原生 sandbox／Seatbelt 路径变更或完整回归时选择，普通 Daemon 改动不再额外占用一个 macOS runner；实际可用容量和排队仍由 GitHub 决定。每个文件保持 `--test-concurrency=1`、独立 runtime home／workspace 和 POSIX 进程组。Kimi Host read／terminal、delegation production tool surface、engine lifecycle installation、Kimi owned-execution、workflow repository-fence、signal-shutdown regression，以及 workflow conflict／isolated-delivery fixtures 保留所属分片的独占阶段，避免这些会大量创建原生进程、Git worktree 或临时资源的 fixture 互相争用；其余文件进入按估计耗时降序的共享队列。Linux restricted-command 拒绝契约仍随 Daemon 选择；真实 macOS helper／Seatbelt smoke 由显式原生路径映射选择，未知路径回退完整验证。
 
 Daemon 分片任务上限为 40 分钟，执行队列上限为 30 分钟。默认文件 watchdog 为五分钟，已登记的高耗时 workflow／recovery fixture 保留十分钟或十五分钟的独立上限，具体清单见[测试执行说明](../../scripts/ci/README.md)。超时或取消会终止所属进程并使任务失败，不重试或强制通过；watchdog 上限不是十分钟性能验收结果。
 
@@ -52,7 +52,7 @@ Daemon 专用的依赖安全测试由 `dependency-policy` 任务单独运行，�
 
 框架 assurance 是独立重建例外，不能用产品测试图的 `dist` artifact 代替实际 producer/tarball 消费证据。完整档位中，assurance 工具／fixture、Core 源码或 SDK producer 包 localization/contracts/plugin-sdk/api-client 的源码／配置改动会选择该任务；仅改这些产品包的测试，或只改其他产品包，不选择该任务。全量、手动和定时运行始终选择它。该任务执行离线测试、三任务九控制校准及真实 SDK consumer；零模型、无 secrets、不启动 daemon。Consumer 串行重建四个 producer，实际 pack 并仓外离线安装。`quality` 分别验证明确的 assurance 和 build selector：选中必须成功，未选中才允许跳过，失败、取消、缺失或无效 selector 均拒绝；Draft/full-ci 规则不变。报告和直属日志上传为 `ci-framework-assurance` 并保留七天，不上传 consumer/toolchain 树或 tarball。详见[补强实现记录](../design/ling-framework-complementary-implementation-plan.md#9-交付记录与完成判定)。
 
-Linux 构建任务在选中 CLI 时运行真实 daemon 生命周期和新工作区 doctor 检查；未配置 provider 的新工作区预期返回诊断退出码 4。选中 Web 时，独立 `web-smoke` 任务在下载共享构建产物后，使用生产构建的 Vite preview 运行六项权限、内置技能元数据和中文角色回归，以及九项 conversation change summary 回归。摘要用例覆盖三种会话入口、中英文、长列表、窄宽度、键盘导航、实时更新和最新 Turn 边界，输出到 `test-results/conversation-change-summary` 子目录，保留同一任务中其他用例的证据。该任务使用按版本和 digest 固定的官方 Playwright Noble 镜像，浏览器与字体等系统依赖已预装，不执行 apt 或浏览器安装；工作流契约要求镜像版本与 Web 的 Playwright 依赖一致。Web 执行不阻塞其他测试获取 `ci-dist`；`quality` 根据 Web selector 强制要求该任务成功，失败、取消、缺失及意外跳过均拒绝。浏览器测试使用模拟 daemon 数据，不包含真实模型调用。当前运行的截图与测试结果上传为 `ci-linux-source-web-smoke` artifact，保留七天。
+Linux 构建任务在选中 CLI 时运行真实 daemon 生命周期和新工作区 doctor 检查；未配置 provider 的新工作区预期返回诊断退出码 4。选中 Web 时，独立 `web-smoke` 任务在下载共享构建产物后，使用生产构建的 Vite preview 运行六项权限、内置技能元数据和中文角色回归、17 项 Companion streaming／recovery／settings／角色布局回归，以及九项 conversation change summary 回归。摘要用例覆盖三种会话入口、中英文、长列表、窄宽度、键盘导航、实时更新和最新 Turn 边界，输出到 `test-results/conversation-change-summary` 子目录，保留同一任务中其他用例的证据。该任务使用按版本和 digest 固定的官方 Playwright Noble 镜像，浏览器与字体等系统依赖已预装，不执行 apt 或浏览器安装；工作流契约要求镜像版本与 Web 的 Playwright 依赖一致。Web 执行不阻塞其他测试获取 `ci-dist`；`quality` 根据 Web selector 强制要求该任务成功，失败、取消、缺失及意外跳过均拒绝。浏览器测试使用模拟 daemon 数据，不包含真实模型调用。当前运行的截图与测试结果上传为 `ci-linux-source-web-smoke` artifact，保留七天。
 
 会话操作记录、复制、文件审查、composer 变更摘要、归属与颜色层级场景可通过 `corepack pnpm --filter @ling-stack/web test:e2e:work-cell` 本地按需运行。会话样例由 E2E mock daemon 提供，不依赖开发模式；Web 的 `typecheck` 和 `typecheck:ci` 通过 `tsconfig.e2e.json` 检查所列用例及其辅助文件。
 
@@ -82,7 +82,7 @@ Linux 构建任务在选中 CLI 时运行真实 daemon 生命周期和新工作�
 | CodeQL / Copilot Autofix | 工作区已包含上节的 PR 范围过滤、每小时检查和手动工作流；GitHub default setup 当前状态及扫描上传验收仍须单独核验。Autofix 建议仍须审查与测试，不自动合并 |
 | 仓库级密钥扫描／推送保护 | 2026-10-19 的历史评估记为开关关闭；本次未核验当前设置。现有完整执行档位包括纯文档 PR 都运行 Gitleaks 历史扫描，Draft preview 延后；上传后的扫描不能代替推送时拦截 |
 | 新披露的依赖漏洞 | 历史评估记录 Dependabot 告警及安全更新已配置，本次未核验服务端状态；仓库 `.github/dependabot.yml` 仍声明每周版本更新。CI 另测安全补丁与许可策略；新增严重性阻断前须核对现存告警、补丁及无上游修复的基线，不能将旧告警直接当作本次改动引入 |
-| 浏览器与桌面交互 | 选中 Web 时执行十五项生产预览 Playwright smoke，使用模拟 daemon 数据并保留截图；Desktop 主要只有类型检查。后续可逐步扩大交互覆盖；不把每日现有矩阵成功视为桌面打包或设备验收 |
+| 浏览器与桌面交互 | 选中 Web 时执行当前工作流中的 6 项筛选回归、17 项 Companion 回归和 9 项 conversation change summary 回归，使用模拟 daemon 数据并保留截图；Desktop 主要只有类型检查。后续可逐步扩大交互覆盖；不把每日现有矩阵成功视为桌面打包或设备验收 |
 
 本次文档整合未变更或核验 GitHub 安全设置、分支保护及服务端状态，也未修改 Dependabot 配置或发布流程。2026-10-19 的调度调整及其回退说明属于历史记录；当前主 CI 仍按上文每日完整矩阵运行，不能据此恢复每周运行。CodeQL 的切换、验收和回退按上节单独执行。
 
