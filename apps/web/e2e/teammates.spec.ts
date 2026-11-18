@@ -1833,6 +1833,8 @@ test("AI teammate private chat demotes recovered provider preflight history", as
 });
 
 test("AI teammate private chat exposes direct reply guidance and stop controls", async ({ page }) => {
+  // The scenario opens the workspace twice to exercise the composer after a reload.
+  test.setTimeout(45_000);
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "zh-CN");
   });
