@@ -11,6 +11,7 @@ import {
   applyRunEvaluationMigration,
   RUN_EVALUATION_MIGRATION_NAME,
 } from "../dist/storage/sqlite/run-evaluation-migration.js";
+import { rewindNodeRerunApprovalFixture } from "./support/node-rerun-approval-predecessor.ts";
 
 const appliedAt = "2026-09-14T00:00:00.000Z";
 
@@ -21,6 +22,7 @@ test("schema 136 upgrades to evaluation schema 137 while preserving later migrat
   store.close();
   const path = resolveRuntimePaths(cwd).databasePath;
   let database = new DatabaseSync(path);
+  rewindNodeRerunApprovalFixture(database);
   removeQaOverlayForLegacyFixture(database);
   for (const name of RUN_EVALUATION_TASK_SCHEMA_OBJECTS.filter(name => !name.startsWith("sqlite_autoindex_"))) {
     const object = database.prepare("SELECT type FROM sqlite_master WHERE name=?").get(name);

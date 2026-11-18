@@ -39,26 +39,30 @@ export class SqliteConversationContextViewLineageStore {
     now: string,
   ): UpsertConversationContextViewLineageResult {
     validateInput(input, now);
-    this.context.database.exec("BEGIN IMMEDIATE");
+    // This write is also performed while channel intent resolution owns the
+    // outer transaction. A savepoint commits standalone writes and composes
+    // with that caller-owned transaction without committing or rolling it
+    // back underneath the caller.
+    this.context.database.exec("SAVEPOINT conversation_context_view_lineage_upsert");
     try {
       const current = this.getConversationContextViewLineage(input.lineageKey);
       if (input.expectedCurrentViewId !== undefined
         && current?.contextViewId !== input.expectedCurrentViewId) {
-        this.context.database.exec("COMMIT");
+        this.context.database.exec("RELEASE conversation_context_view_lineage_upsert");
         return { status: "rejected_stale", lineage: current, reason: "current_view_changed" };
       }
 
       const incomingThrough = input.projection?.throughItemSequence ?? -1;
       const currentThrough = current?.projection?.throughItemSequence ?? -1;
       if (current && incomingThrough < currentThrough) {
-        this.context.database.exec("COMMIT");
+        this.context.database.exec("RELEASE conversation_context_view_lineage_upsert");
         return { status: "rejected_stale", lineage: current, reason: "older_projection" };
       }
 
       if (current && current.contextViewId === input.contextViewId
         && current.viewFingerprint === input.viewFingerprint
         && current.projection?.projectionVersion === input.projection?.projectionVersion) {
-        this.context.database.exec("COMMIT");
+        this.context.database.exec("RELEASE conversation_context_view_lineage_upsert");
         return { status: "reused", lineage: current };
       }
 
@@ -100,10 +104,13 @@ export class SqliteConversationContextViewLineageStore {
       );
       const lineage = this.getConversationContextViewLineage(input.lineageKey);
       if (!lineage) throw new Error(`Context view lineage was not persisted: ${input.lineageKey}`);
-      this.context.database.exec("COMMIT");
+      this.context.database.exec("RELEASE conversation_context_view_lineage_upsert");
       return { status: current ? "updated" : "created", lineage };
     } catch (error) {
-      try { this.context.database.exec("ROLLBACK"); } catch { /* preserve the original error */ }
+      try {
+        this.context.database.exec("ROLLBACK TO conversation_context_view_lineage_upsert");
+        this.context.database.exec("RELEASE conversation_context_view_lineage_upsert");
+      } catch { /* preserve the original error */ }
       throw error;
     }
   }

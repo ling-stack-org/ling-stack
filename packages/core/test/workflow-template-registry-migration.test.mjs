@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createSqliteRunStore } from "../dist/index.js";
+import { rewindRemainingWorkSuccessors } from "./support/remaining-work-predecessor.ts";
 import { applyWorkflowTemplateRegistryMigration, WORKFLOW_TEMPLATE_REGISTRY_MIGRATION_VERSION }
   from "../dist/storage/sqlite/workflow-template-registry-migration.js";
 import { at, businessSnapshot, fixture, markers, persistSkill, registrySnapshot, registryTables, registryTriggers,
@@ -24,7 +25,10 @@ function rejectUnchanged(f, pattern, extra = {}, reopen = true) {
   assert.deepEqual(snapshot(f.db), before);
   assert.deepEqual(businessSnapshot(f.db), data);
   if (reopen) {
-    assert.throws(() => createSqliteRunStore(f.root, f.paths), pattern);
+    let unexpected;
+    try { assert.throws(() => { unexpected = createSqliteRunStore(f.root, f.paths); }, pattern); }
+    finally { unexpected?.close(); }
+    rewindRemainingWorkSuccessors(f.db);
     assert.deepEqual(snapshot(f.db), before);
     assert.deepEqual(businessSnapshot(f.db), data);
   }

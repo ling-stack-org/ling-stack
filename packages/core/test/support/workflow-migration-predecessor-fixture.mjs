@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, sep } from "node:path";
+import { rewindNodeRerunApprovalFixture } from "./node-rerun-approval-predecessor.ts";
 
 // Explicit ownership: dropping these empty tables also removes their listed indexes and triggers.
 const overlays = [
@@ -52,6 +53,10 @@ const overlays = [
     indexes: ["idx_automation_event_pending", "idx_automation_event_rate", "idx_automation_delivery_pending"], triggers: [] },
   { version: 222, name: "create_node_rerun_submissions_and_goal_supervision",
     tables: ["node_rerun_submissions"], indexes: [], triggers: [] },
+  { version: 225, name: "persist_rebuildable_context_view_lineage",
+    tables: ["conversation_context_view_lineage"],
+    indexes: ["idx_context_view_lineage_source", "idx_context_view_lineage_view"], triggers: [] },
+  { version: 226, name: "node_rerun_intents", tables: ["node_rerun_intents"], indexes: [], triggers: [] },
 ];
 const schema = db => db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all();
 const markers = db => db.prepare("SELECT * FROM schema_migrations ORDER BY version").all();
@@ -67,6 +72,10 @@ function removeOwnedOverlays(f, version) {
   assert.ok(path.startsWith(`${root}${sep}`), "database must belong to the temporary fixture");
   assert.equal(realpathSync(db.prepare("PRAGMA database_list").all().find(row => row.name === "main").file), path);
   assert.equal(db.isTransaction, false, "fixture must not adopt a caller transaction");
+  // The current constructor installs the later F5 overlays after the
+  // historical workflow range. Rewind them before taking the full-schema
+  // snapshot so this fixture can exercise an older predecessor honestly.
+  rewindNodeRerunApprovalFixture(db);
   assert.ok(overlays.some(overlay => overlay.version === version), "migration needs an explicit ownership inventory");
   const removed = overlays.filter(overlay => overlay.version >= version), tables = removed.flatMap(overlay => overlay.tables);
   const fullSchema = schema(db), fullMarkers = markers(db);

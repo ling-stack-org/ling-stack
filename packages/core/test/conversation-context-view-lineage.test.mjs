@@ -90,3 +90,27 @@ test("context view lineage survives reopen and rejects stale or late materializa
   assert.equal(late.reason, "current_view_changed");
   assert.equal(store.getConversationContextViewLineage("lineage_1")?.contextViewId, "view_1");
 });
+
+test("context view lineage composes with a caller-owned transaction", async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), "ling-context-view-lineage-transaction-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const store = createSqliteRunStore(cwd);
+  t.after(() => store.close());
+  const database = store.database;
+
+  database.exec("BEGIN IMMEDIATE");
+  const result = store.upsertConversationContextViewLineage({
+    lineageKey: "lineage_transaction",
+    workspaceId: "workspace_default",
+    kind: "ling_agent_channel_view",
+    contextViewId: "view_transaction",
+    contextViewCreatedAt: firstAt,
+    projection: projection({ contextViewId: "view_transaction" }),
+    viewFingerprint: "view-shape-transaction",
+  }, firstAt);
+  assert.equal(result.status, "created");
+  assert.equal(database.isTransaction, true);
+  database.exec("COMMIT");
+
+  assert.equal(store.getConversationContextViewLineage("lineage_transaction")?.contextViewId, "view_transaction");
+});

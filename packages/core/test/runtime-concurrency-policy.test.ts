@@ -11,6 +11,7 @@ import { validateRuntimeConcurrencyLimits, type InstallRuntimeConcurrencyPolicyI
 import { SqliteRuntimeConcurrencyPolicyStore } from "../dist/storage/sqlite/runtime-concurrency-policy-store.js";
 import { applyRuntimeConcurrencyPolicyMigration, RUNTIME_CONCURRENCY_POLICY_MIGRATION_VERSION,
   RUNTIME_CONCURRENCY_POLICY_MIGRATION_NAME } from "../dist/storage/sqlite/runtime-concurrency-policy-migration.js";
+import { rewindRemainingWorkSuccessors } from "./support/remaining-work-predecessor.ts";
 import { testDatabase } from "./support/sqlite-test-database.ts";
 
 type Store = ReturnType<typeof createSqliteRunStore>;
@@ -63,9 +64,11 @@ function fixture(t: TestContext, { predecessor = false } = {}) {
     rmSync(directory, { recursive: true, force: true });
   });
   store = createSqliteRunStore(cwd, paths);
-  const fullSchema = schema(testDatabase(store));
+  let fullSchema = schema(testDatabase(store));
   assert.equal(testDatabase(store).prepare("SELECT name FROM schema_migrations WHERE version=213").get()!.name, "workflow_conflict_recoveries");
   if (predecessor) {
+    rewindRemainingWorkSuccessors(testDatabase(store));
+    fullSchema = schema(testDatabase(store));
     assert.equal(testDatabase(store).prepare(`SELECT COUNT(*) AS n FROM ${table}`).get()!.n, 0);
     assert.deepEqual(markers(testDatabase(store)).filter(row => successorVersion(row.version)).map(({ version, name }) => ({ version, name })), successors);
     for (const index of ["idx_automation_event_pending", "idx_automation_event_rate", "idx_automation_delivery_pending"]) testDatabase(store).exec(`DROP INDEX IF EXISTS ${index}`);
@@ -100,6 +103,7 @@ function fixture(t: TestContext, { predecessor = false } = {}) {
     reopen() {
       store.close();
       store = createSqliteRunStore(cwd, paths);
+      if (predecessor) rewindRemainingWorkSuccessors(testDatabase(store));
       migrate(testDatabase(store));
       return this.policy;
     },

@@ -75,6 +75,12 @@ M0 audit packet: [Baseline And Decisions](remaining-work-m0-baseline-and-decisio
   finding artifact 并持久化到 `AutomationRun.outputArtifactIds`，通知 journal 增加 monitor finding 事件，scheduler
   contract 和 Web 页面暴露最新 fingerprint/outcome。PR #732 的 Hosted CI、review、合并、部署和真实
   Provider/平台验收仍分别记录。
+- 2026-11-18 的本地回归刷新已修复后置 migration overlay 对历史 211–222 fixture 的污染：Channel Context
+  lineage writer 现在使用可组合 savepoint，历史 predecessor fixture 会在构造器探针后恢复空 overlay，且
+  225–229 的 schema/marker 不再被旧 migration 测试误当作 211–222 的一部分。受影响的 Core
+  context/runtime/registry/migration 定向测试 291/291、Daemon context/automation/F5/policy preview/External
+  Work 定向测试 315/315，Core/Daemon typecheck 与 Daemon build 均通过；这些是分支本地证据，Hosted required
+  CI、review、合并和平台验收仍待完成。
 
 ## 1. 目标与完成定义
 
