@@ -50,6 +50,11 @@ function redactAssessmentDiff(raw: string): string {
       block => block.split("\n").map(() => "[REDACTED]").join("\n"));
 }
 
+function preservesDiffLineMarkers(raw: string, redacted: string): boolean {
+  const before = raw.split("\n"), after = redacted.split("\n");
+  return before.length === after.length && before.every((line, index) => line[0] === after[index]?.[0]);
+}
+
 function parseNames(value: string): ChangedPath[] {
   const fields = value.split("\0");
   const result: ChangedPath[] = [];
@@ -156,6 +161,8 @@ async function capture(cwd: string, target: CodeAssessmentTarget): Promise<Omit<
     }
     if (/-----BEGIN [A-Z ]*PRIVATE KEY-----/u.test(raw)) { exclusions.push({ path: file.path, reason: "sensitive" }); continue; }
     const diff = redactAssessmentDiff(raw);
+    // Redaction may span source lines. Only publish hunks with their captured line numbers intact.
+    if (diff !== raw && !preservesDiffLineMarkers(raw, diff)) { exclusions.push({ path: file.path, reason: "sensitive" }); continue; }
     bytes += Buffer.byteLength(diff);
     files.push({ ...file, diff, contentDigest: hash(raw), redacted: raw !== diff });
   }

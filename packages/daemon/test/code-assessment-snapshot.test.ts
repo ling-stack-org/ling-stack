@@ -181,6 +181,24 @@ test("redacted snapshots cover conventional credentials in ordinary source files
   } finally { await rm(cwd, { recursive: true, force: true }); }
 });
 
+test("multiline redaction excludes a file if its Diff line anchors would shift", async () => {
+  const cwd = await repo();
+  try {
+    await writeFile(join(cwd, "config.ts"), [
+      "export const password = `fixture-first-line",
+      "fixture-second-line`;",
+      "export const nextSetting = true;",
+    ].join("\n") + "\n");
+    await writeFile(join(cwd, "app.ts"), "export const value = 2;\n");
+    const snapshot = await captureCodeAssessmentSnapshot(cwd, { type: "working_tree" });
+    assert.equal(snapshot.coverage, "partial");
+    assert.deepEqual(snapshot.exclusions, [{ path: "config.ts", reason: "sensitive" }]);
+    assert.deepEqual(snapshot.files.map(file => file.path), ["app.ts"]);
+    assert.equal(codeAssessmentHunkContent(snapshot.files[0]!.diff, "new").get(1), "export const value = 2;");
+    assert.doesNotMatch(JSON.stringify(snapshot), /fixture-(first|second)-line/u);
+  } finally { await rm(cwd, { recursive: true, force: true }); }
+});
+
 test("branch assessment excludes changes unique to a diverged base branch", async () => {
   const cwd = await repo();
   try {

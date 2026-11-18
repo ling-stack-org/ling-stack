@@ -217,9 +217,9 @@ This detects movement between captures; it is not a filesystem transaction.
 Binary files, symlinks/gitlinks, sensitive paths, oversized content and budget omissions
 are recorded as explicit exclusions. Private-key blocks cause file exclusion. Conventional
 credential filenames are excluded before reading content. Secret-like values in readable
-Diffs use existing redaction plus literal credential-assignment redaction. Redaction is
-best effort; repository owners should still avoid sending private material to an
-untrusted provider.
+Diffs use existing redaction plus literal credential-assignment redaction. Files are
+excluded when redaction would change Diff line anchors. Redaction is best effort;
+repository owners should still avoid sending private material to an untrusted provider.
 
 Any exclusion or redaction makes coverage partial. Raw-content hashes distinguish two
 secret changes even if their displayed redacted Diff is identical. Partial captures
