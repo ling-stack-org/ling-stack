@@ -16,20 +16,15 @@ export const MANAGED_WORKTREES_GIT_ACTOR_ENTRY = defineProtectedHostActorEntry("
   (cwd: string, args: readonly string[], workflow?: WorkflowGitCommandOptions) => {
     if (!workflow) return execFileAsync("git", args, { cwd, timeout: 15000, maxBuffer: 1024 * 1024,
       env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "never" } });
-    if (workflow.profile !== "workflow_isolation_v1" || !["darwin", "linux"].includes(process.platform)
+    if (workflow.profile !== "workflow_isolation_v1"
       || workflow.indexFile !== undefined && !isAbsolute(workflow.indexFile)
       || workflow.input !== undefined && (!Buffer.isBuffer(workflow.input) || workflow.input.length > 8 * 1024 * 1024)) {
       throw new Error("workflow_git_profile_unavailable");
     }
     // A second, environment-inheriting process source would bypass the original actor gate.
-    const result = execFileAsync("/usr/bin/git", [...isolatedGitArguments(workflow.network ?? "none"), ...args], {
+    const result = execFileAsync(isolatedGitExecutable(), [...isolatedGitArguments(workflow.network ?? "none"), ...args], {
       cwd, timeout: 15000, maxBuffer: 8 * 1024 * 1024, encoding: "buffer",
-      env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", LANG: "C", LC_ALL: "C", TZ: "UTC",
-        GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_SYSTEM: "/dev/null", GIT_CONFIG_GLOBAL: "/dev/null",
-        GIT_ATTR_NOSYSTEM: "1", GIT_NO_REPLACE_OBJECTS: "1", GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0",
-        GIT_PROTOCOL_FROM_USER: "0", GIT_SSH_COMMAND: "/usr/bin/ssh", GIT_AUTHOR_NAME: "Ling Workflow", GIT_AUTHOR_EMAIL: "workflow@ling.invalid",
-        GIT_COMMITTER_NAME: "Ling Workflow", GIT_COMMITTER_EMAIL: "workflow@ling.invalid",
-        ...(workflow.indexFile ? { GIT_INDEX_FILE: workflow.indexFile } : {}) },
+      env: isolatedGitEnvironment(workflow),
     });
     result.child?.stdin?.end(workflow.input);
     return result;
@@ -43,15 +38,40 @@ interface WorkflowGitCommandOptions {
 }
 
 function isolatedGitArguments(network: "none" | "fetch"): readonly string[] {
+  const nullPath = process.platform === "win32" ? "NUL" : "/dev/null";
   const protocols = network === "fetch"
     ? ["-c", "protocol.allow=never", "-c", "protocol.ext.allow=never", "-c", "protocol.file.allow=always",
       "-c", "protocol.http.allow=always", "-c", "protocol.https.allow=always", "-c", "protocol.ssh.allow=always", "-c", "protocol.git.allow=always"]
     : ["-c", "protocol.allow=never", "-c", "protocol.ext.allow=never"];
   return ["--no-pager", "--literal-pathspecs", "--no-optional-locks",
-    "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.attributesFile=/dev/null",
+    "-c", `core.hooksPath=${nullPath}`, "-c", "core.fsmonitor=false", "-c", `core.attributesFile=${nullPath}`,
     "-c", "core.autocrlf=false", "-c", "core.eol=lf", "-c", "gc.auto=0", "-c", "maintenance.auto=false",
     "-c", "submodule.recurse=false", ...protocols, "-c", "credential.helper=",
     "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"];
+}
+
+function isolatedGitExecutable(): string {
+  return process.platform === "win32" ? "git.exe" : "/usr/bin/git";
+}
+
+function isolatedGitEnvironment(workflow: WorkflowGitCommandOptions): NodeJS.ProcessEnv {
+  const windows = process.platform === "win32";
+  const nullPath = windows ? "NUL" : "/dev/null";
+  const path = windows ? process.env.Path ?? process.env.PATH ?? "" : "/usr/bin:/bin:/usr/sbin:/sbin";
+  return {
+    ...(windows ? {
+      Path: path,
+      SystemRoot: process.env.SystemRoot ?? process.env.SYSTEMROOT ?? "",
+    } : { PATH: path }),
+    LANG: "C", LC_ALL: "C", TZ: "UTC",
+    GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_SYSTEM: nullPath, GIT_CONFIG_GLOBAL: nullPath,
+    GIT_ATTR_NOSYSTEM: "1", GIT_NO_REPLACE_OBJECTS: "1", GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0",
+    GIT_PROTOCOL_FROM_USER: "0",
+    GIT_SSH_COMMAND: windows ? "ssh.exe" : "/usr/bin/ssh",
+    GIT_AUTHOR_NAME: "Ling Workflow", GIT_AUTHOR_EMAIL: "workflow@ling.invalid",
+    GIT_COMMITTER_NAME: "Ling Workflow", GIT_COMMITTER_EMAIL: "workflow@ling.invalid",
+    ...(workflow.indexFile ? { GIT_INDEX_FILE: workflow.indexFile } : {}),
+  };
 }
 
 /** Host-only Git plumbing. This profile is not a native Runner sandbox or a merge permit. */
