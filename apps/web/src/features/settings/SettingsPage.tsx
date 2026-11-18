@@ -31,6 +31,7 @@ import { NotificationsPreferencesCard } from "./NotificationsPreferencesCard.js"
 import { HumanQaSettingsPanel } from "./human-qa/HumanQaSettingsPanel.js";
 import { InterfacePreferencesSettingsPanel, PersonalSettingsPanel } from "./PersonalInterfaceSettingsPanel.js";
 import { PersonalizationSettingsPanel } from "./PersonalizationSettingsPanel.js";
+import { WorktreeSettingsPanel } from "./WorktreeSettingsPanel.js";
 import { SettingsRunDiagnosticsPanel } from "./SettingsRunDiagnosticsPanel.js";
 import { SettingsShell, type SettingsContentState, type SettingsShellGroup } from "./SettingsShell.js";
 import { SettingsWorkspaceToolSurface } from "./SettingsWorkspaceToolSurface.js";
@@ -326,6 +327,7 @@ export function SettingsPage({
         ) : null}
 
         {visibleActiveSection === "personalization" && !workspaceToolDetailOpen ? <PersonalizationSettingsPanel cwd={cwd} /> : null}
+        {visibleActiveSection === "worktrees" && !workspaceToolDetailOpen ? <WorktreeSettingsPanel key={cwd} cwd={cwd} /> : null}
 
         {visibleActiveSection === "interface-preferences" && !workspaceToolDetailOpen ? (
           <InterfacePreferencesSettingsPanel

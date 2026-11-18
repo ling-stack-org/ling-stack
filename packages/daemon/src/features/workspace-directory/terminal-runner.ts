@@ -82,6 +82,10 @@ export async function runWorkspaceTerminalCommand(input: {
   readonly timeoutMs?: number;
   readonly outputLimitBytes?: number;
   readonly idFactory?: () => string;
+  readonly environment?: Readonly<Record<string, string>>;
+  readonly stopProcessGroup?: boolean;
+  readonly inheritEnvironment?: boolean;
+  readonly onSpawn?: (pid: number | undefined) => void;
 }): Promise<WorkspaceTerminalCommandResponse> {
   const rawCwd = input.cwd.trim();
   const command = input.command.trim();
@@ -115,9 +119,10 @@ export async function runWorkspaceTerminalCommand(input: {
   const stderrBuffer = createOutputBuffer(outputLimitBytes);
   const launchOptions: SpawnOptions = {
     cwd: directory,
-    env: process.env,
+    env: input.inheritEnvironment === false ? { ...input.environment } : input.environment ? { ...process.env, ...input.environment } : process.env,
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
+    ...(input.stopProcessGroup && process.platform !== "win32" ? { detached: true } : {}),
   };
   const child = (input.spawnImpl
     ? input.spawnImpl(shell.command, [...shell.args], launchOptions)
@@ -125,8 +130,16 @@ export async function runWorkspaceTerminalCommand(input: {
 
   child.stdout?.on("data", (chunk) => stdoutBuffer.append(chunk));
   child.stderr?.on("data", (chunk) => stderrBuffer.append(chunk));
-
-  const result = await waitForCommand(child, timeoutMs);
+  const completion = waitForCommand(child, timeoutMs, input.stopProcessGroup === true);
+  try { input.onSpawn?.(child.pid); }
+  catch (error) {
+    if (input.stopProcessGroup && process.platform !== "win32" && child.pid) {
+      try { process.kill(-child.pid, "SIGKILL"); } catch (killError) { if ((killError as NodeJS.ErrnoException).code !== "ESRCH") throw killError; }
+    } else child.kill("SIGKILL");
+    await completion;
+    throw error;
+  }
+  const result = await completion;
   const completedAtDate = now();
   const status = result.timedOut
     ? "timed_out"
@@ -222,7 +235,7 @@ async function assertDirectory(directory: string, statImpl: StatImpl): Promise<v
   );
 }
 
-function waitForCommand(child: ChildProcessLike, timeoutMs: number): Promise<{
+function waitForCommand(child: ChildProcessLike, timeoutMs: number, stopProcessGroup = false): Promise<{
   readonly code: number | null;
   readonly signal: NodeJS.Signals | null;
   readonly timedOut: boolean;
@@ -230,9 +243,17 @@ function waitForCommand(child: ChildProcessLike, timeoutMs: number): Promise<{
   return new Promise((resolveCommand, rejectCommand) => {
     let settled = false;
     let timedOut = false;
+    let escalation: NodeJS.Timeout | undefined;
+    const stop = (signal: NodeJS.Signals): void => {
+      try {
+        if (stopProcessGroup && process.platform !== "win32" && child.pid) process.kill(-child.pid, signal);
+        else child.kill(signal);
+      } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
+    };
     const timeout = setTimeout(() => {
       timedOut = true;
-      child.kill("SIGTERM");
+      stop("SIGTERM");
+      escalation = setTimeout(() => stop("SIGKILL"), 1000);
     }, timeoutMs);
     const settle = (callback: () => void): void => {
       if (settled) {
@@ -240,6 +261,8 @@ function waitForCommand(child: ChildProcessLike, timeoutMs: number): Promise<{
       }
       settled = true;
       clearTimeout(timeout);
+      if (escalation) clearTimeout(escalation);
+      if (stopProcessGroup) stop("SIGKILL");
       callback();
     };
     child.once("error", (error) => {

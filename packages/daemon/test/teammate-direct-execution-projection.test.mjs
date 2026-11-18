@@ -275,7 +275,7 @@ test("private HTTP history and every SSE terminal path retain live narration seg
         : { kind: "terminal", status: message.status === "ready" ? "succeeded" : message.status },
     });
     const config = { maxBodyBytes: 10000 };
-    const registry = { getStore: () => store };
+    const registry = { getStore: () => store, isTrustedWorkspaceRoot: () => true };
     const response = new CapturedResponse();
     await handleTeammateDirectMessageStream(request("POST", { body: "Inspect." }), response, config, registry, "engineer", async ({ stream }) => {
       stream.onReady(fixture.message);
@@ -339,7 +339,7 @@ test("private HTTP media uses only owned Run IDs while preserving unanchored leg
     }, { readMessage: () => fixture.message, writeMessage: () => assert.fail("GET must not write"),
       state: () => ({ kind: "indeterminate", reason: "legacy_without_runtime_proof" }) });
     const response = new CapturedResponse();
-    await handleTeammateDirectMessagesCollection(request("GET"), response, { maxBodyBytes: 10000 }, { getStore: () => store }, "engineer", () => assert.fail("GET must not run"));
+    await handleTeammateDirectMessagesCollection(request("GET"), response, { maxBodyBytes: 10000 }, { getStore: () => store, isTrustedWorkspaceRoot: () => true }, "engineer", () => assert.fail("GET must not run"));
     assert.equal(response.status, 200, response.output);
     const payload = JSON.parse(response.output);
     assert.deepEqual(payload.messages.map((message) => message.id), ["reply-private", "legacy"]);
@@ -365,7 +365,7 @@ test("private HTTP preserves a pre-dispatch blocker without inventing an executi
   };
   const response = new CapturedResponse();
   await handleTeammateDirectMessageStream(request("POST", { body: "Inspect." }), response,
-    { maxBodyBytes: 10000 }, { getStore: () => store }, "engineer", async ({ stream }) => {
+    { maxBodyBytes: 10000 }, { getStore: () => store, isTrustedWorkspaceRoot: () => true }, "engineer", async ({ stream }) => {
       stream.onReady(fixture.message);
       stream.onBlocked(fixture.message);
       return fixture.message;

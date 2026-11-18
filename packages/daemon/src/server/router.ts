@@ -293,6 +293,7 @@ import {
 } from "../features/runs/workspace-change-recovery.js";
 import { handleWorkspaceSnapshotRoute, parseWorkspaceSnapshotRoute } from "../features/runs/workspace-snapshot-routes.js";
 import { handleEffectiveConfig, handleWorkspaceSettings } from "../features/settings/routes.js";
+import { handleManagedWorktrees } from "../features/workspaces/routes.js";
 import { handleSkillRoute } from "../features/skills/routes.js";
 import { handleWorkflowTemplateRoute } from "../features/channels/workflow-template-routes.js";
 import { handleTaskItem, handleTaskRun, handleTasksCollection } from "../features/tasks/routes.js";
@@ -767,6 +768,11 @@ export async function routeRequest(
 
   if (url.pathname === "/workspace-settings") {
     await handleWorkspaceSettings(request, response, config, storeRegistry, secretResolver, cwd => context.desktopBrowser.forWorkspace(cwd).cancelAll());
+    return;
+  }
+
+  if (url.pathname === "/worktrees" || url.pathname === "/worktrees/actions" || url.pathname.startsWith("/worktrees/initialization/")) {
+    await handleManagedWorktrees(request, response, url, config, storeRegistry, context.desktopBridgeToken);
     return;
   }
 

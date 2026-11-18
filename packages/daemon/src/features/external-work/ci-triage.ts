@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   buildExternalWorkCiTriageView,
   parseExternalWorkflowMarkdown,
+  resolveChannelExecutionCwd,
   triageGitHubExternalWorkCi,
   type ExternalWorkCiTriageDetailResponse,
   type ExternalWorkCiTriageListResponse,
@@ -189,7 +190,7 @@ export async function handleExternalWorkCiTriageRun(
     await executeRun(
       {
         workspaceCwd: cwd,
-        cwd: channel.boundPath ?? cwd,
+        cwd: resolveChannelExecutionCwd(channel, cwd),
         providerPresetId: input.providerPresetId,
         teammateId: task.assigneeTeammateId ?? channel.defaultTeammateId,
         skipProviderPreflight: input.skipProviderPreflight ?? false,

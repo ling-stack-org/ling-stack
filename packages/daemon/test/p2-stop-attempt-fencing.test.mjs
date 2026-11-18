@@ -29,7 +29,7 @@ const expiresAt = "2099-01-01T00:00:00.000Z";
 async function fixture(t, kind = "task_run", linked = true) {
   const cwd = await mkdtemp(join(tmpdir(), "ling-p2-stop-fence-"));
   const store = createSqliteRunStore(cwd);
-  const registry = new RunStoreRegistry(() => store);
+  const registry = new RunStoreRegistry(() => store, { trustedWorkspaceRoots: [cwd] });
   registry.getStore(cwd);
   const db = new DatabaseSync(resolveRuntimePaths(cwd).databasePath);
   db.exec("PRAGMA foreign_keys=ON; PRAGMA busy_timeout=50");

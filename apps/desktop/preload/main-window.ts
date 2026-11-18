@@ -44,6 +44,7 @@ const computerControlPlatform = process.argv
 const platform = desktopPlatform();
 
 const capabilities: LingDesktopCapabilities = {
+  worktrees: { initialize: (request) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.worktreeInitialize, request) },
   browser: createDesktopBrowserCapabilities(ipcRenderer),
   companionWindow: {
     open: (cwd) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.companionWindowOpen, cwd),

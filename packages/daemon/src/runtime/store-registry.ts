@@ -1,4 +1,4 @@
-import { realpathSync } from "node:fs";
+import { realpathSync, statSync } from "node:fs";
 import { isAbsolute, relative, resolve as resolvePath } from "node:path";
 import type { RunArtifact, RunStore } from "@ling-stack/core";
 import { MediaLocalExecutionRegistry } from "./media-local-executions.js";
@@ -286,5 +286,11 @@ function normalizeWorkspaceRoot(cwd: string): string {
 
 function isPathInsideRoot(root: string, candidate: string): boolean {
   const relation = relative(root, candidate);
-  return relation === "" || (!relation.startsWith("..") && !isAbsolute(relation));
+  if (relation === "") return true;
+  if (relation.startsWith("..") || isAbsolute(relation)) return false;
+  try {
+    return statSync(candidate).isDirectory();
+  } catch {
+    return false;
+  }
 }

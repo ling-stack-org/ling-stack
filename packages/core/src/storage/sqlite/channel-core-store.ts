@@ -111,8 +111,8 @@ export class SqliteChannelCoreStore {
       params.push(options.defaultProviderPresetId);
     }
     return this.context.database
-      .prepare(`${channelSelectSql(`WHERE ${whereParts.join(" AND ")}`)} ORDER BY created_at DESC LIMIT ?`)
-      .all(...params, limit)
+      .prepare(`${channelSelectSql(`WHERE ${whereParts.join(" AND ")}`)} ORDER BY created_at DESC, id ASC LIMIT ? OFFSET ?`)
+      .all(...params, limit, Math.max(0, Math.trunc(options.offset ?? 0)))
       .map((row) => mapChannel(row as Record<string, SQLOutputValue>));
   }
 
