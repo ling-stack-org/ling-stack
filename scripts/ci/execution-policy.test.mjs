@@ -9,9 +9,9 @@ import { assertCiResults, selectExecutionTier } from "./execution-policy.mjs";
 
 const script = fileURLToPath(new URL("./execution-policy.mjs", import.meta.url));
 const lanes = ["SCOPE", "COMMON", "DEPENDENCY", "ASSURANCE", "BUILD", "TYPECHECK", "UNIT", "DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE", "WEB_SMOKE"];
-const selectors = ["assurance", "build", "dependency", "typecheck", "unit", "daemon", "macosNative", "web"];
+const selectors = ["assurance", "build", "dependency", "typecheck", "unit", "daemon", "linuxContract", "macosNative", "web"];
 const unselected = Object.fromEntries(selectors.map((selector) => [selector, false]));
-const selectorEnvName = (selector) => selector === "macosNative" ? "MACOS_NATIVE_SELECTED" : `${selector.toUpperCase()}_SELECTED`;
+const selectorEnvName = (selector) => `${selector.replace(/[A-Z]/gu, letter => "_" + letter).toUpperCase()}_SELECTED`;
 
 function prEvent(action, { draft = false, labels = [], label } = {}) {
   return { action, pull_request: { draft, labels: labels.map((name) => ({ name })) }, ...(label === undefined ? {} : { label: { name: label } }) };
@@ -27,7 +27,7 @@ function results(overrides = {}) {
 
 function quality(overrides = {}) {
   return assertCiResults({ tier: "complete", mode: "full", assurance: true, build: true, dependency: true, typecheck: true, unit: true,
-    daemon: true, macosNative: true, web: true, results: results(), ...overrides });
+    daemon: true, linuxContract: true, macosNative: true, web: true, results: results(), ...overrides });
 }
 
 test("every Draft update previews while opened and ready PR updates run complete checks", () => {
@@ -108,15 +108,19 @@ test("documentation scope requires scope and common but permits every product la
 
 test("Web-only scope can skip platform lanes but requires every Linux product lane", () => {
   const platformSkips = results({ DAEMON: "skipped", LINUX_CONTRACT: "skipped", MACOS_NATIVE: "skipped" });
-  assert.equal(quality({ mode: "affected", daemon: false, macosNative: false, results: platformSkips }), true);
+  assert.equal(quality({ mode: "affected", daemon: false, linuxContract: false, macosNative: false, results: platformSkips }), true);
   for (const lane of ["DEPENDENCY", "ASSURANCE", "BUILD", "TYPECHECK", "UNIT"]) {
-    assert.throws(() => quality({ mode: "affected", daemon: false, macosNative: false, results: { ...platformSkips, [lane]: "skipped" } }), new RegExp(`${lane}=skipped`, "u"));
+    assert.throws(() => quality({ mode: "affected", daemon: false, linuxContract: false, macosNative: false, results: { ...platformSkips, [lane]: "skipped" } }), new RegExp(`${lane}=skipped`, "u"));
   }
 });
 
 test("affected scope permits every selector combination without skipping selected work", () => {
   for (let mask = 0; mask < 2 ** selectors.length; mask += 1) {
     const selected = Object.fromEntries(selectors.map((selector, index) => [selector, Boolean(mask & (1 << index))]));
+    if (selected.linuxContract && !selected.daemon) {
+      assert.throws(() => quality({ mode: "affected", ...selected }), /Linux contracts require Daemon validation/u);
+      continue;
+    }
     const outcomes = results({
       ASSURANCE: selected.assurance ? "success" : "skipped",
       BUILD: selected.build ? "success" : "skipped",
@@ -124,7 +128,7 @@ test("affected scope permits every selector combination without skipping selecte
       TYPECHECK: selected.typecheck ? "success" : "skipped",
       UNIT: selected.unit ? "success" : "skipped",
       DAEMON: selected.daemon ? "success" : "skipped",
-      LINUX_CONTRACT: selected.daemon ? "success" : "skipped",
+      LINUX_CONTRACT: selected.linuxContract ? "success" : "skipped",
       MACOS_NATIVE: selected.macosNative ? "success" : "skipped",
       WEB_SMOKE: selected.web ? "success" : "skipped",
     });
@@ -210,7 +214,7 @@ test("event-file CLI emits only the tier and rejects unreadable, invalid or ambi
 test("quality CLI enforces environment types and reports failures in the workflow log", () => {
   const env = { ...process.env, EXECUTION_TIER: "complete", SCOPE_MODE: "full", DAEMON_SELECTED: "true", WEB_SELECTED: "true",
     ASSURANCE_SELECTED: "true", BUILD_SELECTED: "true",
-    DEPENDENCY_SELECTED: "true", TYPECHECK_SELECTED: "true", UNIT_SELECTED: "true", MACOS_NATIVE_SELECTED: "true",
+    DEPENDENCY_SELECTED: "true", TYPECHECK_SELECTED: "true", UNIT_SELECTED: "true", LINUX_CONTRACT_SELECTED: "true", MACOS_NATIVE_SELECTED: "true",
     ...Object.fromEntries(lanes.map((lane) => [`${lane}_RESULT`, "success"])) };
   const run = (overrides = {}) => spawnSync(process.execPath, [script, "--check-quality"], { encoding: "utf8", env: { ...env, ...overrides } });
   assert.equal(run().status, 0);
@@ -224,7 +228,7 @@ test("quality CLI enforces environment types and reports failures in the workflo
   const skippedProducts = Object.fromEntries(lanes.slice(2).map((lane) => [`${lane}_RESULT`, "skipped"]));
   const unselectedEnv = Object.fromEntries(selectors.map((selector) => [selectorEnvName(selector), "false"]));
   assert.equal(run({ SCOPE_MODE: "docs", ...unselectedEnv, ...skippedProducts }).status, 0);
-  assert.equal(run({ SCOPE_MODE: "affected", DAEMON_SELECTED: "false", MACOS_NATIVE_SELECTED: "false", DAEMON_RESULT: "skipped", LINUX_CONTRACT_RESULT: "skipped", MACOS_NATIVE_RESULT: "skipped" }).status, 0);
+  assert.equal(run({ SCOPE_MODE: "affected", DAEMON_SELECTED: "false", LINUX_CONTRACT_SELECTED: "false", MACOS_NATIVE_SELECTED: "false", DAEMON_RESULT: "skipped", LINUX_CONTRACT_RESULT: "skipped", MACOS_NATIVE_RESULT: "skipped" }).status, 0);
   const affectedSkips = { SCOPE_MODE: "affected", ...unselectedEnv, ...skippedProducts, ASSURANCE_RESULT: "success", BUILD_RESULT: "success" };
   assert.equal(run(affectedSkips).status, 0);
   for (const lane of lanes.slice(2).filter((lane) => lane !== "BUILD" && lane !== "ASSURANCE")) {

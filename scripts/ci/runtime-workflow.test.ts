@@ -50,7 +50,7 @@ test("timings are restored once and every shard consumes one immutable plan", ()
     const source = job(name);
     assert.match(source, /name: ci-test-plan/u);
     assert.match(source, /--plan=\.codex-artifacts\/ci\/test-plan\.json/u);
-    assert.doesNotMatch(source, /actions\/cache\/restore/u);
+    assert.doesNotMatch(source, /ci-node-timings-v1-|\.codex-artifacts\/ci\/timings\.json/u);
     const suite = name === "unit-tests" ? "core" : "${{ matrix.suite }}";
     assert.ok(source.includes("name: ci-test-report-" + suite + "-${{ matrix.shard }}\n          include-hidden-files: true"));
     assert.match(source, /if-no-files-found: error/u);
@@ -71,8 +71,9 @@ test("browser smoke starts after reusable outputs without delaying the core and 
   assert.equal(image[1], `${webPackage.devDependencies["@playwright/test"]}-noble`,
     "The installed Playwright client must match the image's preinstalled browser revision");
   assert.doesNotMatch(smoke, /playwright install|apt-get/u);
-  assert.match(smoke, /playwright test/u);
-  assert.match(smoke, /playwright test e2e\/conversation-change-summary\.spec\.ts\n\s+--output=test-results\/conversation-change-summary --reporter=line/u);
+  assert.match(smoke, /name: Run the selected production and changed browser specs/u);
+  assert.match(smoke, /WEB_SMOKE_PLAN: \$\{\{ needs\.scope\.outputs\.web-smoke-plan \}\}/u);
+  assert.match(smoke, /run: node scripts\/ci\/web-smoke\.mjs/u);
   assert.match(smoke, /name: ci-linux-source-web-smoke/u);
   assert.doesNotMatch(smoke, /continue-on-error/u);
   const quality = job("quality");
@@ -83,7 +84,11 @@ test("browser smoke starts after reusable outputs without delaying the core and 
 
 test("daemon runners restore executable codec artifacts on their owning platform", () => {
   const daemon = job("daemon-tests");
+  assert.match(daemon, /name: Restore the macOS image codec cache\n        id: macos-codec-cache/u);
+  assert.match(daemon, /name: Save the macOS image codec cache/u);
   assert.match(daemon, /name: Build the host image codec\n        if: matrix\.runner == 'macos-26'/u);
+  assert.match(daemon, /steps\.macos-codec-cache\.outputs\.cache-hit != 'true'/u);
+  assert.match(daemon, /name: Verify the macOS image codec/u);
   assert.match(daemon, /if: matrix\.runner == 'ubuntu-latest'\n        run: chmod \+x packages\/daemon\/dist\/native\/image-sanitizer\/ling-image-sanitizer/u);
 });
 

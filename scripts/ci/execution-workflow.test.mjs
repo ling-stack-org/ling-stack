@@ -12,8 +12,8 @@ const workflow = readFileSync(new URL("../../.github/workflows/ci.yml", import.m
 const labelWorkflow = readFileSync(new URL("../../.github/workflows/full-ci-label.yml", import.meta.url), "utf8");
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const lanes = ["SCOPE", "COMMON", "DEPENDENCY", "ASSURANCE", "BUILD", "TYPECHECK", "UNIT", "DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE", "WEB_SMOKE"];
-const platformJobs = { "daemon-tests": "daemon", "daemon-linux-contracts": "daemon", "restricted-command-macos": "macos-native" };
-const selectorOutputs = { ASSURANCE: "assurance-selected", BUILD: "build-selected", DEPENDENCY: "dependency-policy", TYPECHECK: "typecheck-selected", UNIT: "unit-selected", DAEMON: "daemon", MACOS_NATIVE: "macos-native", WEB: "web" };
+const platformJobs = { "daemon-tests": "daemon", "daemon-linux-contracts": "linux-contract", "restricted-command-macos": "macos-native" };
+const selectorOutputs = { ASSURANCE: "assurance-selected", BUILD: "build-selected", DEPENDENCY: "dependency-policy", TYPECHECK: "typecheck-selected", UNIT: "unit-selected", DAEMON: "daemon", LINUX_CONTRACT: "linux-contract", MACOS_NATIVE: "macos-native", WEB: "web" };
 const unselected = Object.fromEntries(Object.keys(selectorOutputs).map((selector) => [`${selector}_SELECTED`, "false"]));
 
 /** Read a top-level job without matching similarly named steps. */
@@ -71,7 +71,8 @@ async function assertScopeOutputs(scope, { mode, packages, daemon, daemonPlatfor
     "typecheck-packages": JSON.stringify(packages), "dependency-policy": String(dependency),
     "assurance-selected": String(assurance), "build-selected": String(packages.length > 0),
     "typecheck-selected": String(packages.length > 0), daemon: String(daemon), "daemon-platforms": JSON.stringify(daemonPlatforms),
-    "macos-native": String(macosNative), web: String(web),
+    "linux-contract": String(daemonPlatforms.includes("linux")), "macos-native": String(macosNative), web: String(web),
+    "web-smoke-plan": JSON.stringify(scope.webSmoke ?? null),
     "macos-helper": String(macosNative), "native-release": "false",
   });
   const plan = await createTestPlan(JSON.parse(outputs["test-packages"]), { daemonPlatforms: JSON.parse(outputs["daemon-platforms"]) });
@@ -89,7 +90,7 @@ async function assertScopeOutputs(scope, { mode, packages, daemon, daemonPlatfor
   // must not turn a selected lane's skipped result into a passing quality gate.
   const required = ["SCOPE", "COMMON", ...(assurance ? ["ASSURANCE"] : []), ...(packages.length ? ["BUILD"] : []),
     ...(dependency ? ["DEPENDENCY"] : []), ...(packages.length ? ["TYPECHECK"] : []),
-    ...(matrix.length ? ["UNIT"] : []), ...(daemon ? ["DAEMON", "LINUX_CONTRACT"] : []), ...(macosNative ? ["MACOS_NATIVE"] : []),
+    ...(matrix.length ? ["UNIT"] : []), ...(daemon ? ["DAEMON"] : []), ...(daemonPlatforms.includes("linux") ? ["LINUX_CONTRACT"] : []), ...(macosNative ? ["MACOS_NATIVE"] : []),
     ...(web ? ["WEB_SMOKE"] : [])];
   for (const lane of required) gate[`${lane}_RESULT`] = "success";
   const passed = runQuality(gate);
@@ -263,7 +264,7 @@ test("workflow affected scope cannot hide skipped product work or selected Daemo
     assert.equal(check.status, 1, check.stderr);
     assert.match(check.stdout, new RegExp(`${lane}=skipped`, "u"));
   }
-  const web = runQuality({ SCOPE_MODE: "affected", DAEMON_SELECTED: "false", MACOS_NATIVE_SELECTED: "false", DAEMON_RESULT: "skipped", LINUX_CONTRACT_RESULT: "skipped", MACOS_NATIVE_RESULT: "skipped" });
+  const web = runQuality({ SCOPE_MODE: "affected", DAEMON_SELECTED: "false", LINUX_CONTRACT_SELECTED: "false", MACOS_NATIVE_SELECTED: "false", DAEMON_RESULT: "skipped", LINUX_CONTRACT_RESULT: "skipped", MACOS_NATIVE_RESULT: "skipped" });
   assert.equal(web.status, 0, web.stderr);
 });
 
