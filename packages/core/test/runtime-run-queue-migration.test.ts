@@ -11,6 +11,7 @@ import { applyRuntimeConcurrencyPolicyMigration } from "../dist/storage/sqlite/r
 import { applyRuntimeConcurrencyPolicyActivationMigration } from "../dist/storage/sqlite/runtime-concurrency-policy-activation-migration.js";
 import { applyRuntimeDelegationCapacityAdmissionMigration } from "../dist/storage/sqlite/runtime-delegation-capacity-admission-migration.js";
 import { applyRuntimeDelegationSpawnAdmissionMigration } from "../dist/storage/sqlite/runtime-delegation-spawn-admission-migration.js";
+import { rewindRemainingWorkSuccessors } from "./support/remaining-work-predecessor.ts";
 import { testDatabase } from "./support/sqlite-test-database.ts";
 
 type Connection = Pick<DatabaseSync, "exec" | "prepare"> & Partial<Pick<DatabaseSync, "isTransaction">>;
@@ -77,6 +78,7 @@ function fixture(t: TestContext, { installed = false } = {}) {
   // This suite exercises the 217/218 history in isolation. The current Core
   // bootstrap also installs later migrations, so remove the later-owned overlays
   // later-owned objects before taking the historical schema snapshot.
+  rewindRemainingWorkSuccessors(db);
   db.exec("PRAGMA foreign_keys=OFF");
   try {
     for (const table of ["node_rerun_submissions", "automation_delivery_receipts", "automation_deliveries", "automation_event_dispatches", "automation_events", "automation_event_sources"]) db.exec(`DROP TABLE IF EXISTS ${table}`);
@@ -151,6 +153,7 @@ function fixture(t: TestContext, { installed = false } = {}) {
       bootstrap.close();
       const next = createSqliteRunStore(cwd, paths);
       const nextDb = testDatabase(next);
+      rewindRemainingWorkSuccessors(nextDb);
       nextDb.exec("PRAGMA foreign_keys=OFF");
       try {
         for (const table of ["node_rerun_submissions", "automation_delivery_receipts", "automation_deliveries", "automation_event_dispatches", "automation_events", "automation_event_sources"]) nextDb.exec(`DROP TABLE IF EXISTS ${table}`);
