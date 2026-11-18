@@ -165,6 +165,13 @@ export interface RunRequest extends Omit<
   readonly userInputContinuationContext?: UserInputContinuationContext;
   /** Internal-only override used by trusted multi-reply channel orchestration. */
   readonly channelParallelLimit?: number;
+  /** Host-only lineage binding for a prepared node-rerun target. */
+  readonly nodeRerunTarget?: {
+    readonly recordId: string;
+    readonly generationId: string;
+    readonly approvalId: string;
+    readonly basisFingerprint: string;
+  };
 }
 
 export function parseRunRequest(value: unknown): RunRequest {

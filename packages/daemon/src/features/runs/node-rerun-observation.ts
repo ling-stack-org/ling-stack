@@ -49,6 +49,7 @@ const TERMINAL_RUNTIME_EVENTS = new Map([
 ] as const);
 
 export interface NodeRerunSourceSnapshotProjectionV1 {
+  readonly executionSnapshot: Pick<RunSession, "taskSnapshot" | "providerSnapshot" | "requestSnapshot">;
   readonly run: {
     readonly id: string;
     readonly status: RunSession["status"];
@@ -254,6 +255,7 @@ function observeWithinSnapshot(
 
   const dependencyClosure = closureResult.closure!;
   const sourceSnapshot = nodeRerunSourceSnapshotDigestV1({
+    executionSnapshot: { taskSnapshot: run.taskSnapshot, providerSnapshot: run.providerSnapshot, requestSnapshot: run.requestSnapshot },
     run: {
       id: run.id,
       status: run.status,
@@ -727,6 +729,7 @@ function readStopStatus(
   attemptStatus: WorkUnitAttempt["status"],
   localExecution: "draining" | "drained" | "unverified",
 ): NodeRerunObservedSourceV1["stopStatus"] {
+  if (localExecution === "draining") return "unconfirmed";
   if (attemptStatus === "succeeded" || attemptStatus === "failed") return "not_required";
   if (attemptStatus === "cancelled" || attemptStatus === "lost") {
     return localExecution === "drained" ? "confirmed" : localExecution === "unverified" ? "unknown" : "unconfirmed";

@@ -1,3 +1,6 @@
+import type { NodeRerunPreparedIntentV1 } from "@ling-stack/contracts";
+import type { NodeRerunApprovalBasisV1 } from "../../node-rerun-store-types.js";
+import { assertNodeRerunApprovalShape, isCanonicalTimestamp, readNodeRerunApprovalBasis } from "./node-rerun-approval-authority.js";
 import { isAbsolute, resolve } from "node:path";
 import {
   createApprovalCommandRuleId,
@@ -28,6 +31,7 @@ export interface SqliteApprovalRequestStorePorts {
   readonly hasRun: (id: string) => boolean;
   readonly hasMediaJob: (id: string) => boolean;
   readonly hasExternalWorkAction: (id: string) => boolean;
+  readonly getNodeRerunIntent: (id: string) => NodeRerunPreparedIntentV1 | undefined;
   readonly hasWorkflowStep: (id: string) => boolean;
   readonly createApprovalCheckpoint: (approval: ApprovalRequest, now: string) => void;
   readonly syncApprovalCheckpointForApproval: (approval: ApprovalRequest, now: string) => void;
@@ -59,25 +63,36 @@ export class SqliteApprovalRequestStore {
     }
   }
 
-  createApprovalRequest(input: CreateApprovalRequestInput, now: string, sourceFence?: RuntimeAttemptFenceV1): ApprovalRequest {
+  createNodeRerunApprovalRequest(input: CreateApprovalRequestInput, basis: NodeRerunApprovalBasisV1): ApprovalRequest {
+    assertNodeRerunApprovalShape(input, basis);
+    if (!this.context.database.isTransaction) throw new Error("node_rerun_approval.writer_required");
+    return this.createApprovalRequest(input, basis.createdAt, undefined, basis);
+  }
+
+  createApprovalRequest(input: CreateApprovalRequestInput, now: string, sourceFence?: RuntimeAttemptFenceV1,
+    nodeRerunBasis?: NodeRerunApprovalBasisV1): ApprovalRequest {
+    if ((input.nodeRerunIntentId !== undefined || input.actionType === "node_rerun" || input.payload.type === "node_rerun") && !nodeRerunBasis)
+      throw new Error("node_rerun_approval.prepared_intent_required");
     if ((input.actionType === "workflow_merge" || input.payload.type === "workflow_merge")
-      && [input.runId, input.taskId, input.mediaJobId, input.externalWorkActionId].some(owner => owner !== undefined)) {
+      && [input.runId, input.taskId, input.mediaJobId, input.externalWorkActionId, input.nodeRerunIntentId].some(owner => owner !== undefined)) {
       throw new Error("Workflow merge approvals require only a workflowStepId owner.");
     }
     const runId = normalizeOptionalOwnerId(input.runId);
     const taskId = normalizeOptionalOwnerId(input.taskId);
     const mediaJobId = normalizeOptionalOwnerId(input.mediaJobId);
     const externalWorkActionId = normalizeOptionalOwnerId(input.externalWorkActionId);
+    const nodeRerunIntentId = normalizeOptionalOwnerId(input.nodeRerunIntentId);
     const workflowStepId = normalizeOptionalOwnerId(input.workflowStepId);
     const hasRunOwner = Boolean(runId && taskId);
     const hasMediaOwner = Boolean(mediaJobId);
     const hasExternalWorkActionOwner = Boolean(externalWorkActionId);
+    const hasNodeRerunOwner = Boolean(nodeRerunIntentId);
     const hasWorkflowStepOwner = Boolean(workflowStepId);
     if (Boolean(runId) !== Boolean(taskId)) {
       throw new Error("Run approval requests require both runId and taskId.");
     }
-    if ([hasRunOwner, hasMediaOwner, hasExternalWorkActionOwner, hasWorkflowStepOwner].filter(Boolean).length !== 1) {
-      throw new Error("Approval requests require exactly one owner: runId/taskId, mediaJobId, externalWorkActionId, or workflowStepId.");
+    if ([hasRunOwner, hasMediaOwner, hasExternalWorkActionOwner, hasNodeRerunOwner, hasWorkflowStepOwner].filter(Boolean).length !== 1) {
+      throw new Error("Approval requests require exactly one owner: runId/taskId, mediaJobId, externalWorkActionId, nodeRerunIntentId, or workflowStepId.");
     }
     if (runId && !this.ports.hasRun(runId)) {
       throw new Error(`Run not found: ${runId}`);
@@ -92,6 +107,13 @@ export class SqliteApprovalRequestStore {
     if (externalWorkActionId && !this.ports.hasExternalWorkAction(externalWorkActionId)) {
       throw new Error(`External work action not found: ${externalWorkActionId}`);
     }
+    if (nodeRerunIntentId && !this.ports.getNodeRerunIntent(nodeRerunIntentId)) {
+      throw new Error(`Node rerun intent not found: ${nodeRerunIntentId}`);
+    }
+    if (nodeRerunIntentId && (input.actionType !== "node_rerun" || input.payload.type !== "node_rerun"
+      || input.payload.nodeRerunIntentId !== nodeRerunIntentId)) {
+      throw new Error("Node rerun approvals require the matching node_rerun action and payload owner.");
+    }
     if (workflowStepId && !this.ports.hasWorkflowStep(workflowStepId)) {
       throw new Error(`Workflow step not found: ${workflowStepId}`);
     }
@@ -102,6 +124,7 @@ export class SqliteApprovalRequestStore {
       taskId,
       mediaJobId,
       externalWorkActionId,
+      nodeRerunIntentId,
       workflowStepId,
       channelId: input.channelId,
       toolCallId: input.toolCallId,
@@ -120,6 +143,7 @@ export class SqliteApprovalRequestStore {
     this.context.database.exec("SAVEPOINT approval_request_creation");
     try {
       this.assertWorkflowMergeApproval(approval);
+      if (nodeRerunBasis) assertNodeRerunApprovalShape(approval, nodeRerunBasis);
       const inserted = this.context.database
         .prepare(`
           INSERT INTO approval_requests (
@@ -128,6 +152,7 @@ export class SqliteApprovalRequestStore {
             task_id,
             media_job_id,
             external_work_action_id,
+            node_rerun_intent_id,
             workflow_step_id,
             channel_id,
             tool_call_id,
@@ -146,7 +171,7 @@ export class SqliteApprovalRequestStore {
             proposed_command_rule_json,
             decision_kind,
             decision_rule_id
-          ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+          ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
           ${sourceFence ? `WHERE ${runExecutionOwnerSql} AND EXISTS (
             SELECT 1 FROM run_sessions WHERE id = ? AND task_id = ? AND channel_id IS ?
           )` : ""}
@@ -157,6 +182,7 @@ export class SqliteApprovalRequestStore {
           approval.taskId ?? null,
           approval.mediaJobId ?? null,
           approval.externalWorkActionId ?? null,
+          approval.nodeRerunIntentId ?? null,
           approval.workflowStepId ?? null,
           approval.channelId ?? null,
           approval.toolCallId ?? null,
@@ -220,13 +246,17 @@ export class SqliteApprovalRequestStore {
       clauses.push("external_work_action_id = ?");
       params.push(options.externalWorkActionId);
     }
+    if (options.nodeRerunIntentId) {
+      clauses.push("node_rerun_intent_id = ?");
+      params.push(options.nodeRerunIntentId);
+    }
     if (options.workflowStepId) {
       clauses.push("workflow_step_id = ?");
       params.push(options.workflowStepId);
     }
     const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
     if (options.complete) {
-      if (!options.runId && !options.mediaJobId && !options.externalWorkActionId && !options.workflowStepId) {
+      if (!options.runId && !options.mediaJobId && !options.externalWorkActionId && !options.nodeRerunIntentId && !options.workflowStepId) {
         throw new Error("Complete approval history requires a durable owner scope.");
       }
       return this.context.database
@@ -262,7 +292,8 @@ export class SqliteApprovalRequestStore {
     const existing = this.getApprovalRequest(input.approvalId);
     if (!existing) return { ok: false, code: "approval_not_found" };
     if (existing.status !== "pending") return { ok: false, code: "approval_not_pending" };
-    if (existing.actionType === "workflow_merge" || existing.payload.type === "workflow_merge") {
+    if (existing.actionType === "workflow_merge" || existing.payload.type === "workflow_merge"
+      || existing.actionType === "node_rerun" || existing.payload.type === "node_rerun") {
       return { ok: false, code: "approval_system_reviewer_disallowed" };
     }
     if (
@@ -296,6 +327,9 @@ export class SqliteApprovalRequestStore {
           decision_rule_id = NULL
         WHERE id = ?
           AND status = 'pending'
+          AND node_rerun_intent_id IS NULL
+          AND action_type <> 'node_rerun'
+          AND CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.type') END IS NOT 'node_rerun'
           AND action_type <> 'workflow_merge'
           AND CASE WHEN json_valid(payload_json) THEN json_extract(payload_json, '$.type') END IS NOT 'workflow_merge'
           AND created_at = ?
@@ -338,6 +372,7 @@ export class SqliteApprovalRequestStore {
           !latest ? "approval_not_found"
             : latest.status !== "pending" ? "approval_not_pending"
               : latest.actionType === "workflow_merge" || latest.payload.type === "workflow_merge"
+                || latest.actionType === "node_rerun" || latest.payload.type === "node_rerun"
                 ? "approval_system_reviewer_disallowed"
                 : latest.createdAt !== input.approvalCreatedAt || latest.runId !== input.runId || latest.toolCallId !== input.toolCallId
                   ? "approval_identity_changed"
@@ -541,6 +576,13 @@ export class SqliteApprovalRequestStore {
       const decisionKind = status === "approved"
         ? (input.decisionKind ?? "approve_once")
         : status === "denied" ? "deny" : undefined;
+      const nodeRerun = existing.nodeRerunIntentId !== undefined || existing.actionType === "node_rerun" || existing.payload.type === "node_rerun";
+      if (nodeRerun && (status === "approved" || status === "denied")) {
+        if ((input.resolvedBy ?? "local-user") !== "local-user" || !isCanonicalTimestamp(now)) throw new ApprovalDecisionUnavailableError();
+        const basis = readNodeRerunApprovalBasis(this.context.database, existing, id => this.ports.getNodeRerunIntent(id));
+        if (!basis || Date.parse(basis.createdAt) > Date.parse(now)
+          || status === "approved" && Date.parse(basis.expiresAt) <= Date.parse(now)) throw new ApprovalDecisionUnavailableError();
+      }
       if (status === "approved") {
         const merge = existing.actionType === "workflow_merge" || existing.payload.type === "workflow_merge";
         if (merge && input.resolvedBy === "system-reviewer") throw new ApprovalDecisionUnavailableError();

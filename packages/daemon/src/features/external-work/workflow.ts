@@ -2,6 +2,8 @@ import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { isAbsolute, resolve as resolvePath } from "node:path";
 import {
+  externalWorkSecretPurposeForSource,
+  getExternalSourceRegistration,
   parseExternalWorkflowMarkdown,
   parseSecretRef,
   updateExternalWorkflowSecretRef,
@@ -345,7 +347,7 @@ export function normalizeExternalWorkSecretRef(secretRef: string | undefined, wo
 }
 
 export function externalWorkSecretPurpose(sourceKind: ExternalSourceKind): "github_token" | "linear_token" {
-  return sourceKind === "github" ? "github_token" : "linear_token";
+  return externalWorkSecretPurposeForSource(sourceKind);
 }
 
 export function updateExternalWorkWorkflowSecretRefIfNeeded(path: string, markdown: string, secretRef: string, shouldUpdate: boolean): boolean {
@@ -402,7 +404,13 @@ export function readExternalWorkflowFile(
 }
 
 export function resolveExternalGitHubToken(workflowDefinition: ExternalWorkflowDefinition, secretResolver: SecretResolver): string | undefined {
-  return resolveExternalSourceToken(workflowDefinition, secretResolver, "github_token", "GitHub");
+  const registration = getExternalSourceRegistration("github");
+  return resolveExternalSourceToken(workflowDefinition, secretResolver, registration.secretPurpose, registration.displayName);
+}
+
+export function resolveExternalWorkToken(workflowDefinition: ExternalWorkflowDefinition, secretResolver: SecretResolver): string | undefined {
+  const registration = getExternalSourceRegistration(workflowDefinition.config.source.kind);
+  return resolveExternalSourceToken(workflowDefinition, secretResolver, registration.secretPurpose, registration.displayName);
 }
 
 export function resolveExternalSourceToken(
@@ -424,8 +432,8 @@ export function resolveExternalSourceToken(
 
 function defaultExternalWorkSecretName(workflowDefinition: ExternalWorkflowDefinition): string {
   const source = workflowDefinition.config.source;
-  const target = source.kind === "github" ? source.repository : source.projectSlug;
-  const suffix = (target ?? "default")
+  const target = getExternalSourceRegistration(source.kind).resolveTarget(source);
+  const suffix = target.id
     .replace(/[^A-Za-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "")
     .toUpperCase()

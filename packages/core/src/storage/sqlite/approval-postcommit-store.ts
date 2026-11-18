@@ -18,6 +18,7 @@ function ownerForApproval(approval: ApprovalRequest): { kind: ApprovalPostCommit
   const owners: { kind: ApprovalPostCommitOwnerKind; id: string }[] = [];
   if (approval.runId) owners.push({ kind: "run", id: approval.runId });
   if (approval.workflowStepId) owners.push({ kind: "workflow_step", id: approval.workflowStepId });
+  if (approval.nodeRerunIntentId) owners.push({ kind: "node_rerun_intent", id: approval.nodeRerunIntentId });
   if (approval.mediaJobId) owners.push({ kind: "media_job", id: approval.mediaJobId });
   if (approval.externalWorkActionId) owners.push({ kind: "external_work_action", id: approval.externalWorkActionId });
   if (owners.length > 1) throw new Error(`Approval has multiple effect owners: ${approval.id}`);

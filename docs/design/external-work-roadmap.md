@@ -92,8 +92,8 @@ There are three different "done" lines:
 | GA.2 | Planned | Recovery docs and audit export. |
 | GA.3 | Planned | Admin policy controls for sources, actions, hooks, and background operation. |
 | GA.4 | Planned | Security review, redaction review, and GA release checklist. |
-| 8.0 | Planned | Adapter registry refactor for GitHub and Linear with no behavior change. |
-| 8.1 | Planned | Explicit `workspace.gitRemoteUrl` checkout hint, separate from source provider identity. |
+| 8.0 | Source implemented on `codex/remaining-work-implementation`; review/CI/merge open | Fixed GitHub/Linear registry, shared poll/import, source keys, token metadata and target-scoped remote reconcile. |
+| 8.1 | Source implemented on `codex/remaining-work-implementation`; review/CI/merge and live checkout acceptance open | Explicit gated `workspace.gitRemoteUrl` checkout, separate from source provider identity; redacted evidence and blocked recovery on unconfirmed checkout. |
 | 8.2 | Planned | GitLab read-only merge request and issue adapter. |
 | 8.3 | Planned | Gitea/Forgejo read-only pull request and issue adapter. |
 | 8.4 | Planned | Bitbucket Cloud read-only pull request and issue adapter. |

@@ -23,10 +23,16 @@ export function ensureRunCancelled(input: {
   readonly active: boolean;
   readonly expectedAttemptId?: string | null;
   readonly expectedRunId?: string | null;
+  /** Dedicated F5 receiver only; ordinary cancellation must keep rejecting the owner. */
+  readonly allowNodeRerun?: boolean;
   readonly streamEnvelope?: (envelope: RunEventEnvelope) => void;
   readonly now?: () => string;
 }): { readonly event?: RunEventEnvelope; readonly inputWait?: RunCancelResponse["inputWait"] } {
   const current = input.store.getRun(input.runId);
+  const owner = current?.workUnitId ? input.store.getWorkUnit(current.workUnitId) : undefined;
+  if (owner?.ownerType === "node_rerun_intent" && !input.allowNodeRerun) {
+    throw new HttpError(409, "node_rerun_cancellation_required", "Node rerun targets require their dedicated cancellation boundary.");
+  }
   if (!current || current.status === "cancelled") {
     return {};
   }
@@ -83,7 +89,10 @@ function cancelCurrentRun(input: Parameters<typeof ensureRunCancelled>[0], curre
   // A pending required pause has not yet established physical safety. A
   // generic cancellation would otherwise release its retained attempt leases
   // and publish a terminal summary while the Host still has unknown effects.
-  assertNoUnsafeRequiredPause(input.store, current);
+  // The dedicated node-rerun finalizer has already required the captured Host
+  // completion and effect-coverage receipt, so it owns this separate stop
+  // boundary without borrowing the user-input recovery path.
+  if (!input.allowNodeRerun) assertNoUnsafeRequiredPause(input.store, current);
 
   const endedAt = input.now?.() ?? new Date().toISOString();
   for (const approval of input.store.listApprovalRequests({ runId: input.runId, status: "pending", limit: 500 })) {

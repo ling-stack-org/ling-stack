@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createSqliteRunStore, createSqliteWorkflowTemplateRegistryStore, resolveRuntimePaths } from "../../dist/index.js";
 import { createSqliteRunStoreFixture } from "./sqlite-run-store-fixture.mjs";
+import { rewindRemainingWorkSuccessors } from "./remaining-work-predecessor.ts";
 
 export const at = n => new Date(Date.UTC(2026, 10, 3, 0, 0, n)).toISOString();
 export const template = (extra = {}) => ({ schemaVersion: 1, id: "review", name: "Review",
@@ -36,16 +37,18 @@ export function persistSkill(store, id = "review") {
 export function fixture(t, { fresh = false } = {}) {
   const root = mkdtempSync(join(tmpdir(), "ling-workflow-template-registry-")), paths = resolveRuntimePaths(root);
   let store = fresh ? createSqliteRunStore(root, paths) : createSqliteRunStoreFixture(root);
+  rewindRemainingWorkSuccessors(store.database);
   t.after(() => { try { store?.close(); } finally { rmSync(root, { recursive: true, force: true }); } });
   return { root, paths, get store() { return store; }, get db() { return store.database; },
     get registry() { return createSqliteWorkflowTemplateRegistryStore(store); },
     close() { store?.close(); store = undefined; },
-    reopen() { store?.close(); store = undefined; store = createSqliteRunStore(root, paths); return store; } };
+    reopen() { store?.close(); store = undefined; store = createSqliteRunStore(root, paths); rewindRemainingWorkSuccessors(store.database); return store; } };
 }
 
 /** Rewind only the new, empty overlay inside this fixture's own temporary database. */
 export function removeRegistryOverlay(f) {
   const db = f.db;
+  rewindRemainingWorkSuccessors(db);
   assert.equal(db.isTransaction, false);
   assert.deepEqual(markers(db).filter(row => row.version >= 212).map(({ version, name }) => ({ version, name })),
     [{ version: 212, name: "workflow_template_registry" }, { version: 213, name: "workflow_conflict_recoveries" },

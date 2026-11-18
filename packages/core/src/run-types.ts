@@ -623,6 +623,11 @@ import type {
   UpdateAutomationDraftInput,
   UpdateAutomationRunInput,
 } from "./automation-types.js";
+import type {
+  AutomationMonitorSnapshot,
+  RecordAutomationMonitorSnapshotInput,
+  RecordAutomationMonitorSnapshotResult,
+} from "./automation-monitor-types.js";
 
 export type RunStatus = "queued" | "running" | "waiting_for_approval" | "yielded" | "succeeded" | "failed" | "cancelled";
 
@@ -1860,6 +1865,17 @@ export interface RunStore extends AutomationEventStore, MemoryWikiStore, MemoryD
   countEvents(runId: string): number;
   /** Synchronous, read-only database snapshot. Callbacks must not perform I/O or return a Promise. */
   readSnapshot<T>(read: () => T): T;
+  prepareNodeRerunIntent(input: import("./node-rerun-store-types.js").PrepareNodeRerunIntentInput): import("./node-rerun-store-types.js").PrepareNodeRerunIntentResult;
+  requestNodeRerunApproval(input: import("./node-rerun-store-types.js").RequestNodeRerunApprovalInput): import("./node-rerun-store-types.js").RequestNodeRerunApprovalResult;
+  getNodeRerunApprovalBasis(approvalId: string): import("./node-rerun-store-types.js").NodeRerunApprovalBasisV1 | undefined;
+  getNodeRerunIntent(id: string): import("@ling-stack/contracts").NodeRerunPreparedIntentV1 | undefined;
+  prepareNodeRerunTarget(input: import("./node-rerun-store-types.js").PrepareNodeRerunTargetInput): import("./node-rerun-store-types.js").PrepareNodeRerunTargetResult;
+  dispatchNodeRerunTarget(input: import("./node-rerun-store-types.js").DispatchNodeRerunTargetInput): import("./node-rerun-store-types.js").DispatchNodeRerunTargetResult;
+  getNodeRerunTarget(recordId: string): import("@ling-stack/contracts").NodeRerunPreparedTargetV1 | undefined;
+  getNodeRerunGeneration(recordId: string): import("@ling-stack/contracts").NodeRerunGenerationProjectionV1 | undefined;
+  cancelPreparedNodeRerunTarget(input: import("./node-rerun-store-types.js").CancelPreparedNodeRerunTargetInput): import("./node-rerun-store-types.js").CancelPreparedNodeRerunTargetResult;
+  requestDispatchedNodeRerunTargetStop(input: import("./node-rerun-store-types.js").RequestDispatchedNodeRerunTargetStopInput): import("./node-rerun-store-types.js").RequestDispatchedNodeRerunTargetStopResult;
+  readNodeRerunTargetReadiness(input: import("./node-rerun-store-types.js").ReadNodeRerunTargetReadinessInput): import("@ling-stack/contracts").NodeRerunTargetReadinessV1 | undefined;
   createWorkspaceMutationRecord(input: CreateWorkspaceMutationRecordInput): WorkspaceMutationRecord;
   createWorkspaceMutationRecords(inputs: readonly CreateWorkspaceMutationRecordInput[]): WorkspaceMutationRecord[];
   getWorkspaceMutationRecord(id: string): WorkspaceMutationRecord | undefined;
@@ -2329,6 +2345,16 @@ export interface RunStore extends AutomationEventStore, MemoryWikiStore, MemoryD
   listConversationContextSummaries(
     options: import("./conversation-context-store-types.js").ListConversationContextSummariesOptions,
   ): readonly import("@ling-stack/contracts").ConversationContextSummary[];
+  getConversationContextViewLineage(
+    lineageKey: string,
+  ): import("./conversation-context-store-types.js").ConversationContextViewLineage | undefined;
+  listConversationContextViewLineages(
+    options?: import("./conversation-context-store-types.js").ListConversationContextViewLineagesOptions,
+  ): readonly import("./conversation-context-store-types.js").ConversationContextViewLineage[];
+  upsertConversationContextViewLineage(
+    input: import("./conversation-context-store-types.js").UpsertConversationContextViewLineageInput,
+    now: string,
+  ): import("./conversation-context-store-types.js").UpsertConversationContextViewLineageResult;
   commitConversationContextSummary(
     input: import("./conversation-context-store-types.js").CommitConversationContextSummaryInput,
     now: string,
@@ -2711,6 +2737,11 @@ export interface RunStore extends AutomationEventStore, MemoryWikiStore, MemoryD
   findAutomationRunByIdempotencyKey(idempotencyKey: string): AutomationRun | undefined;
   listAutomationRuns(options?: ListAutomationRunsOptions): AutomationRun[];
   updateAutomationRun(automationRunId: string, input: UpdateAutomationRunInput, now: string): AutomationRun | undefined;
+  getAutomationMonitorSnapshot(automationId: string): AutomationMonitorSnapshot | undefined;
+  recordAutomationMonitorSnapshot(
+    input: RecordAutomationMonitorSnapshotInput,
+    now: string,
+  ): RecordAutomationMonitorSnapshotResult;
   listManagedPlugins(options?: ListManagedPluginsOptions): ManagedPluginRecord[];
   getManagedPlugin(pluginId: string): ManagedPluginRecord | undefined;
   upsertManagedPlugin(input: UpsertManagedPluginInput, now: string): ManagedPluginRecord;
@@ -3118,6 +3149,9 @@ export type ChannelStoreFacet = RunStoreFacet<
   | "getChannelContextSummary"
   | "listChannelContextSummaries"
   | "updateChannelContextSummary"
+  | "getConversationContextViewLineage"
+  | "listConversationContextViewLineages"
+  | "upsertConversationContextViewLineage"
   | "getChannelCollaborationProtocolOverride"
   | "upsertChannelCollaborationProtocolOverride"
   | "deleteChannelCollaborationProtocolOverride"
@@ -3299,6 +3333,8 @@ export type AutomationStoreFacet = RunStoreFacet<
   | "findAutomationRunByIdempotencyKey"
   | "listAutomationRuns"
   | "updateAutomationRun"
+  | "getAutomationMonitorSnapshot"
+  | "recordAutomationMonitorSnapshot"
 >;
 
 export type ManagedPluginStoreFacet = RunStoreFacet<

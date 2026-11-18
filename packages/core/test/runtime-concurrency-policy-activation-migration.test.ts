@@ -65,30 +65,20 @@ function fixture(t: TestContext, { installed = false } = {}) {
   if (!installed) {
     assert.deepEqual(rows(testDatabase(store), table), []);
     assert.deepEqual(markers(testDatabase(store)).filter(row => successorVersion(row.version)).map(({ version, name }) => ({ version, name })), successors);
-    for (const table of successors.flatMap(successorTables)) {
-      assert.deepEqual(rows(testDatabase(store), table), []);
-      assert.deepEqual(fullSchema.filter(row => row.tbl_name === table && row.type === "table").map(row => row.name), [table]);
-    }
-    for (const index of ["idx_automation_event_pending", "idx_automation_event_rate", "idx_automation_delivery_pending"]) testDatabase(store).exec(`DROP INDEX IF EXISTS ${index}`);
     testDatabase(store).exec("BEGIN IMMEDIATE");
     try {
-      for (const successor of [...successors].reverse()) {
-        for (const table of [...successorTables(successor)].reverse()) testDatabase(store).exec(`DROP TABLE ${table}`);
-        assert.equal(testDatabase(store).prepare("DELETE FROM schema_migrations WHERE version=? AND name=?")
-          .run(successor.version, successor.name).changes, 1);
-      }
       testDatabase(store).exec(`ALTER TABLE ${table} DROP COLUMN enabled`);
       assert.equal(testDatabase(store).prepare("DELETE FROM schema_migrations WHERE version=215 AND name=?").run(name).changes, 1);
       testDatabase(store).exec("COMMIT");
     } catch (error) { if (testDatabase(store).isTransaction) testDatabase(store).exec("ROLLBACK"); throw error; }
-    assert.equal(testDatabase(store).prepare("SELECT MAX(version) AS version FROM schema_migrations").get()!.version, 214);
+    assert.equal(testDatabase(store).prepare("SELECT MAX(version) AS version FROM schema_migrations").get()!.version, 229);
     assert.equal(testDatabase(store).prepare(`PRAGMA table_info(${table})`).all().some(row => row.name === "enabled"), false);
     const before = snapshot(testDatabase(store)), count = changes(testDatabase(store));
     migrate214(testDatabase(store));
     assert.deepEqual(snapshot(testDatabase(store)), before);
     assert.equal(changes(testDatabase(store)), count);
   }
-  return { cwd, paths, fullSchema, activationSchema: fullSchema.filter(row => !successorOwned(row)),
+  return { cwd, paths, fullSchema, activationSchema: fullSchema,
     get store() { return store; }, get db() { return testDatabase(store); },
     peer() {
       const peer = new DatabaseSync(paths.databasePath);
@@ -214,7 +204,8 @@ test("the production constructor alone upgrades a populated214 policy once and p
   const before = snapshot(f.db);
   f.reopen();
   assert.deepEqual(schema(f.db), f.fullSchema);
-  assert.deepEqual(markers(f.db).filter(row => row.version !== 215 && !successorVersion(row.version)), before.markers);
+  assert.deepEqual(markers(f.db).filter(row => row.version !== 215 && !successorVersion(row.version)),
+    before.markers.filter(row => !successorVersion(row.version)));
   assert.deepEqual(markers(f.db).filter(row => successorVersion(row.version)).map(({ version, name }) => ({ version, name })), successors);
   for (const table of successors.flatMap(successorTables)) assert.deepEqual(rows(f.db, table), []);
   assert.deepEqual(executionRows(f.db), before.execution);

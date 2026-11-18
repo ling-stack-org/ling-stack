@@ -1,3 +1,4 @@
+import { rewindNodeRerunApprovalFixture } from "./support/node-rerun-approval-predecessor.ts";
 import { appendChannelItemFixture, getChannelItemViewFixture, listChannelItemViewsFixture, updateChannelItemFixture } from "./channel-conversation-fixture.mjs";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
@@ -85,6 +86,7 @@ test("post-commit ledger repairs a colliding legacy migration version", async ()
     store.close();
     const database = new DatabaseSync(databasePath);
     try {
+      rewindNodeRerunApprovalFixture(database);
       database.exec("DROP TABLE approval_postcommit_effects;");
       database.exec("DELETE FROM schema_migrations WHERE version = 144;");
       database.exec(`

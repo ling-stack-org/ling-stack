@@ -16,7 +16,11 @@ import { testDatabase } from "./support/sqlite-test-database.ts";
 type Binding = ReturnType<typeof createRuntimeHostCapacityStoreBinding>;
 const denied = (operation: () => unknown) => assert.throws(operation, { message: "runtime_host_capacity.binding_invalid" });
 const methods = ["getWorkspaceIdentity", "assertOutsideTransaction", "prepareAttempt", "prepareExecution", "prepareWorkflowStart", "prepareDelegationSpawn",
-  "prepareDelegationPending", "prepareApprovalResumePending", "prepareUserInputContinuation", "getIntent", "getAttemptIntent", "attachReservation",
+  "prepareDelegationPending", "prepareApprovalResumePending", "prepareUserInputContinuation", "prepareNodeRerunCapacity", "getNodeRerunUndispatchedCapacity",
+  "admitNodeRerunResources",
+  "consumeNodeRerunDispatchGate",
+  "consumeNodeRerunDispatchGateWithinTransaction",
+  "getIntent", "getAttemptIntent", "attachReservation",
   "consumeDispatchGateWithinTransaction", "consumeDispatchGate", "bindDelegationSourceWithinTransaction",
   "bindApprovalResumeSourceWithinTransaction", "bindUserInputSourceWithinTransaction",
   "prepareNoDispatchRelease", "prepareStoppedRelease", "getRelease", "listPendingReleases", "acknowledgeRelease"] as const satisfies readonly (keyof RuntimeHostCapacityJournal)[];

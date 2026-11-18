@@ -54,6 +54,7 @@ export interface LingApprovalCheckpoint {
   readonly taskId?: string;
   readonly mediaJobId?: string;
   readonly externalWorkActionId?: string;
+  readonly nodeRerunIntentId?: string;
   readonly workflowStepId?: string;
   readonly channelId?: string;
   readonly toolCallId?: string;
@@ -104,6 +105,7 @@ export interface ListApprovalCheckpointsOptions {
   readonly runId?: string;
   readonly mediaJobId?: string;
   readonly externalWorkActionId?: string;
+  readonly nodeRerunIntentId?: string;
   readonly workflowStepId?: string;
   readonly limit?: number;
 }

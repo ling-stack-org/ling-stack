@@ -1,0 +1,78 @@
+.automation-monitor-summary {
+  display: grid;
+  gap: var(--ling-space-3);
+  padding: var(--ling-space-4) var(--ling-space-8);
+  border-top: 1px solid var(--ling-border-subtle);
+  background: var(--ling-bg-elevated);
+}
+
+.automation-monitor-summary-heading,
+.automation-monitor-summary-item,
+.automation-monitor-summary-item-state {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--ling-space-4);
+}
+
+.automation-monitor-summary-heading {
+  justify-content: space-between;
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+}
+
+.automation-monitor-summary-title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ling-space-2);
+  color: var(--ling-text-default);
+}
+
+.automation-monitor-summary-list {
+  display: grid;
+  gap: var(--ling-space-2);
+}
+
+.automation-monitor-summary-item {
+  justify-content: space-between;
+  padding: var(--ling-space-2) var(--ling-space-3);
+  border: 1px solid var(--ling-border-subtle);
+  border-radius: var(--ling-radius-md);
+  background: var(--ling-bg-subtle);
+}
+
+.automation-monitor-summary-item-main {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-1);
+}
+
+.automation-monitor-summary-item-main span,
+.automation-monitor-summary-item-state > span,
+.automation-monitor-summary-item-state time {
+  overflow: hidden;
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.automation-monitor-summary-item-state {
+  justify-content: flex-end;
+}
+
+@media (max-width: 900px) {
+  .automation-monitor-summary {
+    padding-inline: var(--ling-space-6);
+  }
+
+  .automation-monitor-summary-item {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .automation-monitor-summary-item-state {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+}

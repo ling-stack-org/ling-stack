@@ -38,6 +38,11 @@ export type ExternalSourceKind = "github" | "linear";
 Adding more forge providers should extend this explicit source adapter model. It should
 not introduce an untyped "git" source that guesses behavior from a remote URL.
 
+Phase 8.0/8.1 source implementation is available on `codex/remaining-work-implementation`:
+GitHub and Linear share a fixed registry and poll/import pipeline; workspace checkout
+uses a separately validated, explicitly gated remote hint. Review, CI, merge and live
+provider/package acceptance are tracked in the owning phase plans and are still open.
+
 ## Goals
 
 - Support GitLab, Gitea/Forgejo, and Bitbucket as first-class external work sources.

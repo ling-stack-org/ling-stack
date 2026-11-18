@@ -89,7 +89,8 @@ export function reconcileApprovalPostCommitEffects(input: {
       return false;
     }
     if (kind === "owner" && (approval.payload.type === "workflow_step" || approval.payload.type === "workflow_merge"
-      || approval.actionType === "workflow_merge")) {
+      || approval.actionType === "workflow_merge" || approval.nodeRerunIntentId !== undefined
+      || approval.actionType === "node_rerun" || approval.payload.type === "node_rerun")) {
       const existingEvidence = verifyApprovalPostCommitEvidence(store, approval, kind);
       if (existingEvidence.status === "applied") {
         try {

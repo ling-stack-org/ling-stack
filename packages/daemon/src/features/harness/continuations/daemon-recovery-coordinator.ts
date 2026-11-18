@@ -301,7 +301,7 @@ export class DaemonRunnerRecoveryCoordinator {
 function isDaemonOwnedRecoveryRun(store: RunStore, workUnit: WorkUnit, run: RunSession): boolean {
   // A task_run shape is not recovery authority for a delegated child. Ordinary
   // continuations have no OriginalDelegatedExecutionEntry or child budget port.
-  if (workUnit.ownerType === "delegation_step") return false;
+  if (workUnit.ownerType === "delegation_step" || workUnit.ownerType === "node_rerun_intent") return false;
   if (workUnit.kind !== "task_run" && workUnit.kind !== "conversation_run"
     && workUnit.kind !== "teammate_direct_reply") return false;
   if (workUnit.kind === "task_run") return true;

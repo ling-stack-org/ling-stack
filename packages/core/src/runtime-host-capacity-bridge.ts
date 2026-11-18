@@ -1,7 +1,8 @@
 import { isDeepStrictEqual } from "node:util";
 import type { HostOperationSource } from "./host-operation-journal-types.js";
 import type { RuntimeHostCapacityIntentRecord, RuntimeHostCapacityApprovalResumePendingInput,
-  RuntimeHostCapacityUserInputPendingInput, PrepareRuntimeHostCapacityDelegationPendingResult } from "./runtime-host-capacity-types.js";
+  RuntimeHostCapacityUserInputPendingInput } from "./runtime-host-capacity-types.js";
+import type { RuntimeHostCapacityNodeRerunTargetInput, PrepareRuntimeHostCapacityAttemptResult } from "./runtime-host-capacity-types.js";
 import type { HostRunCapacityStore } from "./storage/host-run-capacity-store.js";
 import type { RuntimeHostCapacityJournal } from "./runtime-host-capacity-store-bridge.js";
 
@@ -15,15 +16,30 @@ export class RuntimeHostCapacityBridge {
 
   reserveApprovalResumePending(input: RuntimeHostCapacityApprovalResumePendingInput): ReserveRuntimeHostCapacityAttemptResult {
     this.assertOutsideTransactions();
-    return this.reservePending(this.workspace.prepareApprovalResumePending(input), input.now);
+    return this.reservePrepared(this.workspace.prepareApprovalResumePending(input), input.now);
   }
 
   reserveUserInputContinuation(input: RuntimeHostCapacityUserInputPendingInput): ReserveRuntimeHostCapacityAttemptResult {
     this.assertOutsideTransactions();
-    return this.reservePending(this.workspace.prepareUserInputContinuation(input), input.now);
+    return this.reservePrepared(this.workspace.prepareUserInputContinuation(input), input.now);
   }
 
-  private reservePending(prepared: PrepareRuntimeHostCapacityDelegationPendingResult, now: string): ReserveRuntimeHostCapacityAttemptResult {
+  reserveNodeRerunTarget(input: RuntimeHostCapacityNodeRerunTargetInput): ReserveRuntimeHostCapacityAttemptResult {
+    this.assertOutsideTransactions();
+    return this.reservePrepared(this.workspace.prepareNodeRerunCapacity(input), input.now);
+  }
+
+  admitNodeRerunResources(input: RuntimeHostCapacityNodeRerunTargetInput): ReturnType<RuntimeHostCapacityJournal["admitNodeRerunResources"]> {
+    this.assertOutsideTransactions();
+    return this.workspace.admitNodeRerunResources(input);
+  }
+
+  consumeNodeRerunDispatchGate(input: { readonly recordId: string; readonly now: string }): ReturnType<RuntimeHostCapacityJournal["consumeNodeRerunDispatchGate"]> {
+    this.assertOutsideTransactions();
+    return this.workspace.consumeNodeRerunDispatchGate(input);
+  }
+
+  private reservePrepared(prepared: PrepareRuntimeHostCapacityAttemptResult, now: string): ReserveRuntimeHostCapacityAttemptResult {
     if (prepared.status === "changed") return prepared;
     const reserved = this.host.reserve({ intent: prepared.record.intent, now });
     if (reserved.status === "full" || reserved.status === "unconfigured") return { status: reserved.status };

@@ -12,6 +12,7 @@ import type {
 import {
   buildAutomationDefinitionViewModel,
   buildAutomationDraftViewModel,
+  buildAutomationMonitorViewModels,
   buildAutomationRunViewModel,
   buildAutomationTabs,
   buildSchedulerViewModel,
@@ -37,6 +38,7 @@ export interface AutomationsPageController {
   readonly draftViewModels: readonly AutomationDraftViewModel[];
   readonly discardDraft?: AutomationDraft;
   readonly recentRunViewModels: readonly AutomationRunViewModel[];
+  readonly monitorViewModels: ReturnType<typeof buildAutomationMonitorViewModels>;
   readonly scheduleAutomation?: AutomationDefinition;
   readonly schedulerViewModel: ReturnType<typeof buildSchedulerViewModel>;
   readonly search: string;
@@ -166,6 +168,10 @@ export function useAutomationsPageController(input: {
     () => buildSchedulerViewModel({ scheduler: input.schedulers[0], scheduledCount: summary.scheduledCount, t: input.t }),
     [input.schedulers, input.t, summary.scheduledCount],
   );
+  const monitorViewModels = useMemo(
+    () => buildAutomationMonitorViewModels({ automations: input.automations, scheduler: input.schedulers[0], t: input.t }),
+    [input.automations, input.schedulers, input.t],
+  );
   const visibleDefinitions = useMemo(
     () => definitionsForTab(definitionViewModels, activeTab).filter((item) => matchesAutomationSearch(item.searchableText, search)),
     [activeTab, definitionViewModels, search],
@@ -194,6 +200,7 @@ export function useAutomationsPageController(input: {
     draftViewModels,
     discardDraft: input.automationDrafts.find((draft) => draft.id === discardDraftId),
     recentRunViewModels,
+    monitorViewModels,
     scheduleAutomation: input.automations.find((automation) => automation.id === scheduleAutomationId),
     schedulerViewModel,
     search,

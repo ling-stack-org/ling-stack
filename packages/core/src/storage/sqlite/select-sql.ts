@@ -345,6 +345,18 @@ export function automationRunSelectSql(whereClause: string): string {
   `;
 }
 
+export function automationMonitorSnapshotSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      automation_id,
+      fingerprint,
+      snapshot_json,
+      updated_at
+    FROM automation_monitor_snapshots
+    ${whereClause}
+  `;
+}
+
 export function channelSelectSql(whereClause: string): string {
   return `
     SELECT
@@ -1538,6 +1550,7 @@ export function approvalRequestSelectSql(whereClause: string): string {
       task_id,
       media_job_id,
       external_work_action_id,
+      node_rerun_intent_id,
       workflow_step_id,
       channel_id,
       tool_call_id,
@@ -1589,6 +1602,7 @@ export function approvalCheckpointSelectSql(whereClause: string): string {
       task_id,
       media_job_id,
       external_work_action_id,
+      node_rerun_intent_id,
       workflow_step_id,
       channel_id,
       tool_call_id,

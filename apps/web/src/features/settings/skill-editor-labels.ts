@@ -69,6 +69,7 @@ export function approvalActionLabel(value: ApprovalActionType): string {
     provider_change: "Change model provider",
     workflow_step: "Run workflow steps",
     workflow_merge: "Apply workflow candidate",
+    node_rerun: "Rerun",
     mcp_tool_call: "Call MCP tools",
     host_capability: "Call Host capabilities",
     runtime_permission_request: "Request runtime permissions",

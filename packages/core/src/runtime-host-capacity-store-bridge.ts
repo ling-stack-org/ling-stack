@@ -14,7 +14,10 @@ export interface RuntimeHostCapacityStoreBinding { readonly [bindingBrand]: true
 
 export type RuntimeHostCapacityJournal = Pick<SqliteRuntimeHostCapacityStore,
   "getWorkspaceIdentity" | "assertOutsideTransaction" | "prepareAttempt" | "prepareExecution" | "prepareWorkflowStart" | "prepareDelegationSpawn" | "prepareDelegationPending"
-  | "prepareApprovalResumePending" | "prepareUserInputContinuation" | "getIntent" | "getAttemptIntent" | "attachReservation"
+  | "prepareApprovalResumePending" | "prepareUserInputContinuation" | "prepareNodeRerunCapacity" | "getNodeRerunUndispatchedCapacity"
+  | "admitNodeRerunResources"
+  | "consumeNodeRerunDispatchGate" | "consumeNodeRerunDispatchGateWithinTransaction"
+  | "getIntent" | "getAttemptIntent" | "attachReservation"
   | "consumeDispatchGateWithinTransaction" | "consumeDispatchGate" | "bindDelegationSourceWithinTransaction"
   | "bindApprovalResumeSourceWithinTransaction" | "bindUserInputSourceWithinTransaction"
   | "prepareNoDispatchRelease" | "prepareStoppedRelease" | "getRelease"
@@ -62,6 +65,11 @@ export function createRuntimeHostCapacityStoreBinding(): {
         prepareDelegationPending: invoke("prepareDelegationPending"),
         prepareApprovalResumePending: invoke("prepareApprovalResumePending"),
         prepareUserInputContinuation: invoke("prepareUserInputContinuation"),
+        prepareNodeRerunCapacity: invoke("prepareNodeRerunCapacity"),
+        getNodeRerunUndispatchedCapacity: invoke("getNodeRerunUndispatchedCapacity"),
+        admitNodeRerunResources: invoke("admitNodeRerunResources"),
+        consumeNodeRerunDispatchGate: invoke("consumeNodeRerunDispatchGate"),
+        consumeNodeRerunDispatchGateWithinTransaction: invoke("consumeNodeRerunDispatchGateWithinTransaction"),
         consumeDispatchGate: invoke("consumeDispatchGate"),
         consumeDispatchGateWithinTransaction: invoke("consumeDispatchGateWithinTransaction"),
         bindDelegationSourceWithinTransaction: invoke("bindDelegationSourceWithinTransaction"),

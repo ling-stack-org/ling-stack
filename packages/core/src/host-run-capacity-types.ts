@@ -19,7 +19,8 @@ export interface HostRunCapacityWorkspaceIdentity {
 
 export interface HostRunCapacityIntent extends HostRunCapacityWorkspaceIdentity {
   readonly intentId: string;
-  readonly ownerKind: "attempt" | "workflow_start" | "delegation_spawn" | "approval_resume_pending" | "user_input_continuation";
+  readonly ownerKind: "attempt" | "workflow_start" | "delegation_spawn" | "approval_resume_pending" | "user_input_continuation"
+    | "node_rerun_target";
   readonly ownerKey: string;
   readonly authorityDigest: string;
 }
