@@ -660,34 +660,64 @@ jobs:
           name: ci-test-plan
           path: .codex-artifacts/ci
 
+      - name: Identify macOS codec build inputs
+        id: macos-codec-inputs
+        if: matrix.runner == 'macos-26'
+        shell: bash
+        env:
+          RUSTUP_TOOLCHAIN: 1.97.1
+          CODEC_INPUTS: ${{ hashFiles('packages/daemon/native/image-sanitizer/**', 'packages/daemon/scripts/build-image-sanitizer.mjs', 'packages/daemon/scripts/image-codec-dependencies.mjs', 'packages/daemon/package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.cargo/**', 'packages/daemon/**/.cargo/**') }}
+        run: |
+          set -euo pipefail
+          test -n "$CODEC_INPUTS"
+          macos_build="$(sw_vers -buildVersion)"
+          sdk_build="$(xcrun --sdk macosx --show-sdk-build-version)"
+          compiler_revision="$(xcrun --sdk macosx clang --version | shasum -a 256 | cut -d ' ' -f 1)"
+          printf 'key=ci-macos-image-codec-v2-%s-%s-%s-%s-%s-%s\n' "$RUNNER_ARCH" "$macos_build" "$sdk_build" "$compiler_revision" "$RUSTUP_TOOLCHAIN" "$CODEC_INPUTS" >> "$GITHUB_OUTPUT"
+          printf 'rust-toolchain=%s\n' "$RUSTUP_TOOLCHAIN" >> "$GITHUB_OUTPUT"
+
       - name: Restore the macOS image codec cache
         id: macos-codec-cache
         if: matrix.runner == 'macos-26'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: packages/daemon/dist/native/image-sanitizer
-          key: ci-macos-image-codec-v1-${{ runner.arch }}-${{ hashFiles('packages/daemon/native/image-sanitizer/Cargo.toml', 'packages/daemon/native/image-sanitizer/Cargo.lock', 'packages/daemon/native/image-sanitizer/dependency-inventory.json', 'packages/daemon/native/image-sanitizer/upstream-provenance.json', 'packages/daemon/native/image-sanitizer/src/**', 'packages/daemon/native/image-sanitizer/vendor/**') }}
-          restore-keys: ci-macos-image-codec-v1-${{ runner.arch }}-
+          key: ${{ steps.macos-codec-inputs.outputs.key }}
 
-      # ci-dist comes from Ubuntu; native codecs must be rebuilt on this macOS host.
       - name: Build the host image codec
         if: matrix.runner == 'macos-26' && steps.macos-codec-cache.outputs.cache-hit != 'true'
         env:
-          RUSTUP_TOOLCHAIN: 1.97.1
+          RUSTUP_TOOLCHAIN: ${{ steps.macos-codec-inputs.outputs.rust-toolchain }}
         run: |
-          rustup toolchain install 1.97.1 --profile minimal
+          rustup toolchain install "$RUSTUP_TOOLCHAIN" --profile minimal
           corepack pnpm --filter @ling-stack/daemon build:image-sanitizer
-
-      - name: Save the macOS image codec cache
-        if: matrix.runner == 'macos-26' && steps.macos-codec-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: packages/daemon/dist/native/image-sanitizer
-          key: ci-macos-image-codec-v1-${{ runner.arch }}-${{ hashFiles('packages/daemon/native/image-sanitizer/Cargo.toml', 'packages/daemon/native/image-sanitizer/Cargo.lock', 'packages/daemon/native/image-sanitizer/dependency-inventory.json', 'packages/daemon/native/image-sanitizer/upstream-provenance.json', 'packages/daemon/native/image-sanitizer/src/**', 'packages/daemon/native/image-sanitizer/vendor/**') }}
 
       - name: Verify the macOS image codec
         if: matrix.runner == 'macos-26'
-        run: test -x packages/daemon/dist/native/image-sanitizer/ling-image-sanitizer
+        working-directory: packages/daemon/dist/native/image-sanitizer
+        run: |
+          test -x ling-image-sanitizer
+          node --input-type=module <<'NODE'
+          import assert from "node:assert/strict";
+          import { createHash } from "node:crypto";
+          import { readFileSync } from "node:fs";
+          const metadata = JSON.parse(readFileSync("build-metadata.json", "utf8"));
+          const digest = file => createHash("sha256").update(readFileSync(file)).digest("hex");
+          assert.equal(process.platform, "darwin");
+          assert.equal(process.arch, "arm64");
+          assert.equal(metadata.platform, "darwin-arm64");
+          assert.equal(metadata.target, "aarch64-apple-darwin");
+          assert.equal(metadata.executable, "ling-image-sanitizer");
+          assert.equal(metadata.sha256, digest("ling-image-sanitizer"));
+          assert.equal(metadata.noticesSha256, digest("THIRD_PARTY_LICENSES.txt"));
+          NODE
+
+      - name: Save the macOS image codec cache
+        if: matrix.runner == 'macos-26' && matrix.shard == 0 && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && steps.macos-codec-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: packages/daemon/dist/native/image-sanitizer
+          key: ${{ steps.macos-codec-inputs.outputs.key }}
 
       - name: Restore the Linux codec executable permission after artifact extraction
         if: matrix.runner == 'ubuntu-latest'

@@ -50,7 +50,7 @@ test("timings are restored once and every shard consumes one immutable plan", ()
     const source = job(name);
     assert.match(source, /name: ci-test-plan/u);
     assert.match(source, /--plan=\.codex-artifacts\/ci\/test-plan\.json/u);
-    assert.doesNotMatch(source, /actions\/cache\/restore/u);
+    assert.doesNotMatch(source, /ci-node-timings-v1-|\.codex-artifacts\/ci\/timings\.json/u);
     const suite = name === "unit-tests" ? "core" : "${{ matrix.suite }}";
     assert.ok(source.includes("name: ci-test-report-" + suite + "-${{ matrix.shard }}\n          include-hidden-files: true"));
     assert.match(source, /if-no-files-found: error/u);

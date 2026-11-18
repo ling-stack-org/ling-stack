@@ -157,6 +157,10 @@ a requested package via `--if-present`.
   and signal-shutdown regression fixtures also run in that phase so process and
   repository lifecycles do not overlap with other macOS files. All files retain their watchdogs and original
   test cases.
+- The macOS Daemon shards use an exact codec cache keyed by sources, build
+  scripts, dependencies, architecture, and toolchain. They verify the
+  executable and notices before testing. On a miss each shard builds locally;
+  only the first Darwin shard on the default branch can publish the cache.
 - Linux restricted-command contracts and real macOS native smoke remain separate
   lanes. The Linux contract is selected with the Linux Daemon suite; the standalone macOS smoke
   follows the explicit native sandbox/Seatbelt path map. Full-scope runs retain
