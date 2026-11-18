@@ -1,6 +1,7 @@
 import { parseDesktopBrowserPolicy } from "@ling-stack/contracts";
 import { readFile } from "node:fs/promises";
 import { parseWorktreePolicy } from "../workspaces/worktree-policy.js";
+import { redactWorktreePolicy } from "../workspaces/worktree-policy.js";
 import {
   DEFAULT_LING_CONVERSATION_TONE,
   DEFAULT_SKILL_GOVERNANCE_POLICY,
@@ -53,6 +54,7 @@ export async function buildEffectiveConfigResponse(input: {
     readUserSettingsLayer(paths.user.settingsPath, diagnostics),
   ]);
   const workspaceSettings = input.store.getWorkspaceSettings();
+  const publicWorkspaceSettings = { ...workspaceSettings, worktreePolicy: redactWorktreePolicy(workspaceSettings.worktreePolicy) };
   const runtimeResolution = loadWorkspaceRuntimeSettingsWithSources(input.store, input.runnerRegistry, {
     userConfigPath: paths.user.configPath,
     userRuntimeDefaults: userConfig?.runtimeDefaults,
@@ -169,7 +171,7 @@ export async function buildEffectiveConfigResponse(input: {
     layers: {
       userConfig: toOptionalRecord(userConfig),
       userSettings: toOptionalRecord(userSettings),
-      workspaceSettings,
+      workspaceSettings: publicWorkspaceSettings,
     },
     diagnostics,
   };

@@ -185,6 +185,7 @@ export async function handleChannelItem(
           || binding !== undefined && (binding?.mode !== current?.workspaceBinding?.mode
             || binding?.worktreePath !== current?.workspaceBinding?.worktreePath || binding?.branchName !== current?.workspaceBinding?.branchName
             || binding?.executionPath !== current?.workspaceBinding?.executionPath);
+        if (changesWorkspace) store.assertWorkspaceSnapshotFence(cwd);
         if (changesWorkspace && (await listWorktreeSnapshots(store.paths)).some((snapshot) => snapshot.ownerKind === "channel" && snapshot.ownerId === channelId)) {
           throw new HttpError(409, "worktree_snapshot_pending", "请先恢复工作树快照，再切换工作区归属。");
         }
@@ -196,6 +197,7 @@ export async function handleChannelItem(
 
     if (request.method === "DELETE") {
       await coordinateWorktreeMutation(store, async () => {
+        store.assertWorkspaceSnapshotFence(cwd);
         const tasks = store.listTasks({ channelId, limit: 1 });
         if (tasks.length > 0) throw new HttpError(409, "channel_has_tasks", `Channel has tasks and cannot be deleted: ${channelId}`);
         const current = store.getChannel(channelId);

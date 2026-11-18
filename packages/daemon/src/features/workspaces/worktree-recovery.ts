@@ -4,7 +4,7 @@ import { lstat, readFile, readdir, realpath } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import type { ChannelWorkspaceBinding, LingStackRuntimePaths } from "@ling-stack/core";
 import type { WorktreeRecoverySnapshot } from "@ling-stack/contracts";
-import { git as runGit, inspectManagedWorktree, redactGitError } from "./managed-worktrees.js";
+import { isolatedGit as runGit, inspectManagedWorktree, redactGitError } from "./managed-worktrees.js";
 import { assertWorktreeIdle, type WorktreeLifecycleStore } from "./worktree-mutation.js";
 
 export const WORKTREE_FENCE_PREFIX = "worktree_lifecycle_";

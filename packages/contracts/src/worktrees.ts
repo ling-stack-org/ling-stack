@@ -17,6 +17,8 @@ export interface WorktreeEnvironment {
 
 export interface WorktreeInitialization {
   readonly status: "pending" | "running" | "succeeded" | "failed";
+  /** Stable approval value for the exact persisted setup configuration. */
+  readonly fingerprint?: string;
   readonly output?: string;
   readonly completedAt?: string;
   readonly errorMessage?: string;
@@ -70,4 +72,5 @@ export interface ManagedWorktreeActionRequest {
   readonly action: "open" | "cleanup" | "restore" | "initialize" | "pin" | "unpin";
   readonly snapshotId?: string;
   readonly confirmed?: boolean;
+  readonly initializationFingerprint?: string;
 }

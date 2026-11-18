@@ -3,13 +3,17 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { WorktreeEnvironment, WorktreeInitialization } from "@ling-stack/contracts";
 import { runWorkspaceTerminalCommand } from "../workspace-directory/terminal-runner.js";
-import { git } from "./managed-worktrees.js";
+import { isolatedGit } from "./managed-worktrees.js";
 import { writePrivateJson } from "./worktree-recovery.js";
 
 interface InitializationRecord extends WorktreeInitialization { readonly fingerprint: string; readonly pid?: number }
 
+export function worktreeEnvironmentFingerprint(environment: WorktreeEnvironment | undefined): string {
+  return createHash("sha256").update(JSON.stringify(environment ?? {})).digest("hex");
+}
+
 export async function readWorktreeInitialization(path: string): Promise<InitializationRecord | undefined> {
-  const directory = (await git(path, ["rev-parse", "--absolute-git-dir"])).stdout.trim();
+  const directory = (await isolatedGit(path, ["rev-parse", "--absolute-git-dir"])).stdout.trim();
   try {
     const raw = await readFile(join(directory, "ling-worktree-initialization.json"), "utf8");
     if (raw.length > 64000) throw new Error("Worktree initialization record is too large");
@@ -26,9 +30,9 @@ export async function readWorktreeInitialization(path: string): Promise<Initiali
 export async function prepareWorktreeInitialization(path: string, environment: WorktreeEnvironment): Promise<WorktreeInitialization> {
   const existing = await readWorktreeInitialization(path);
   if (existing) return existing;
-  const directory = (await git(path, ["rev-parse", "--absolute-git-dir"])).stdout.trim();
+  const directory = (await isolatedGit(path, ["rev-parse", "--absolute-git-dir"])).stdout.trim();
   const markerPath = join(directory, "ling-worktree-initialization.json");
-  const fingerprint = createHash("sha256").update(JSON.stringify(environment)).digest("hex");
+  const fingerprint = worktreeEnvironmentFingerprint(environment);
   const pending: InitializationRecord = {
     status: "pending",
     fingerprint,
@@ -39,7 +43,13 @@ export async function prepareWorktreeInitialization(path: string, environment: W
 }
 
 /** Only a locally saved environment can select this manual terminal execution path. */
-export async function initializeWorktree(path: string, environment?: WorktreeEnvironment, retry = false): Promise<WorktreeInitialization | undefined> {
+export async function initializeWorktree(
+  path: string,
+  environment?: WorktreeEnvironment,
+  options: boolean | { readonly retry?: boolean; readonly approvalFingerprint?: string } = false,
+): Promise<WorktreeInitialization | undefined> {
+  const retry = typeof options === "boolean" ? options : options.retry === true;
+  const approvalFingerprint = typeof options === "boolean" ? undefined : options.approvalFingerprint;
   const existing = await readWorktreeInitialization(path);
   if (existing && !retry) return existing;
   if (existing?.status === "running" && retry) {
@@ -48,9 +58,12 @@ export async function initializeWorktree(path: string, environment?: WorktreeEnv
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
   }
   if (!environment?.enabled && !existing) return undefined;
-  const directory = (await git(path, ["rev-parse", "--absolute-git-dir"])).stdout.trim();
+  if (!existing) throw new Error("初始化记录不存在，请先准备工作树初始化确认。");
+  const fingerprint = worktreeEnvironmentFingerprint(environment);
+  if (existing.status === "running" && existing.fingerprint !== fingerprint) throw new Error("初始化配置已变化，请等待当前进程结束后重新确认。");
+  if (approvalFingerprint !== fingerprint) throw new Error("初始化确认 fingerprint 不匹配。");
+  const directory = (await isolatedGit(path, ["rev-parse", "--absolute-git-dir"])).stdout.trim();
   const markerPath = join(directory, "ling-worktree-initialization.json");
-  const fingerprint = createHash("sha256").update(JSON.stringify(environment ?? {})).digest("hex");
   writePrivateJson(markerPath, { status: "running", fingerprint });
   let result: InitializationRecord;
   try {

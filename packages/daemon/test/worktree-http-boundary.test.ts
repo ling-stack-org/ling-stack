@@ -68,11 +68,27 @@ test("workspace settings protect environment values on reads and unrelated updat
     assert.equal((await fetch(f.url(path, join(tmpdir(), "ling-unselected-workspace")))).status, 403);
     const local = await fetch(f.url(path), { headers: { Origin: "http://localhost:4310" } });
     assert.equal(local.status, 200);
-    assert.ok((await local.text()).includes("fixture-value-private"));
+    const localText = await local.text();
+    assert.equal(localText.includes("fixture-value-private"), false);
+    assert.match(localText, /\[configured\]/u);
     assert.equal((await fetch(f.url(path))).status, 200, "Native requests may omit Origin");
   }
   assert.equal(f.storeOpens(), opens);
   assert.deepEqual(f.store.getWorkspaceSettings(), original);
+});
+
+test("redacted worktree settings preserve existing values on a browser round trip", async t => {
+  const f = await fixture(t);
+  const response = await fetch(f.url("/workspace-settings"));
+  assert.equal(response.status, 200);
+  const payload = await response.json() as { settings: { worktreePolicy: { environment: { variables: Record<string, string> } } } };
+  assert.deepEqual(payload.settings.worktreePolicy.environment.variables, { LING_FIXTURE_TOKEN: "[configured]" });
+  const update = await fetch(f.url("/workspace-settings"), { method: "PATCH", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ worktreePolicy: { fetchBeforeCreate: false, environment: {
+      enabled: true, setupScript: "printf initialized > setup-ran.txt", variables: { LING_FIXTURE_TOKEN: "[configured]" }, timeoutSeconds: 10,
+    } } }) });
+  assert.equal(update.status, 200);
+  assert.equal(f.store.getWorkspaceSettings().worktreePolicy?.environment?.variables.LING_FIXTURE_TOKEN, "fixture-value-private");
 });
 
 test("foreign conversation requests cannot initialize worktrees or schedule continuations", async t => {

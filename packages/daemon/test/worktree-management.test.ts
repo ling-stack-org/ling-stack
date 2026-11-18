@@ -210,13 +210,18 @@ test("environment initialization is explicit, bounded, persisted and retryable w
   const reopened = createSqliteRunStore(f.cwd);
   try {
     assert.equal((await listManagedWorktrees(reopened, f.cwd)).entries[0]?.initialization?.status, "pending");
-    await actOnManagedWorktree(reopened, f.cwd, { ownerKind: "channel", ownerId: managed.channelId, action: "initialize" });
+    await assert.rejects(actOnManagedWorktree(reopened, f.cwd, { ownerKind: "channel", ownerId: managed.channelId, action: "initialize" }), { code: "worktree_confirmation_required" });
+    entry = (await listManagedWorktrees(reopened, f.cwd)).entries[0]!;
+    await actOnManagedWorktree(reopened, f.cwd, { ownerKind: "channel", ownerId: managed.channelId, action: "initialize", confirmed: true,
+      initializationFingerprint: entry.initialization?.fingerprint });
     entry = (await listManagedWorktrees(reopened, f.cwd)).entries[0]!;
     assert.equal(entry.initialization?.status, "failed");
     assert.equal(entry.initialization?.output, "[redacted]");
     assert.equal(await readFile(join(managed.path, "initialized.txt"), "utf8"), "fixture-secret");
     reopened.updateWorkspaceSettings({ worktreePolicy: { fetchBeforeCreate: false, environment: { ...environment, setupScript: "printf done > retry.txt" } } }, now);
-    await actOnManagedWorktree(reopened, f.cwd, { ownerKind: "channel", ownerId: managed.channelId, action: "initialize" });
+    entry = (await listManagedWorktrees(reopened, f.cwd)).entries[0]!;
+    await actOnManagedWorktree(reopened, f.cwd, { ownerKind: "channel", ownerId: managed.channelId, action: "initialize", confirmed: true,
+      initializationFingerprint: entry.initialization?.fingerprint });
     entry = (await listManagedWorktrees(reopened, f.cwd)).entries[0]!;
     assert.equal(entry.status, "ready");
     assert.equal(entry.initialization?.status, "succeeded");
@@ -226,13 +231,27 @@ test("environment initialization is explicit, bounded, persisted and retryable w
   } finally { reopened.close(); }
 });
 
+test("enabling setup scripts does not add initialization work to existing worktrees", async t => {
+  const f = await fixture(t);
+  const managed = await managedChannel(f, "Existing");
+  assert.equal((await listManagedWorktrees(f.store, f.cwd)).entries[0]?.initialization, undefined);
+  f.store.updateWorkspaceSettings({ worktreePolicy: { fetchBeforeCreate: false,
+    environment: { enabled: true, setupScript: "printf should-not-run > existing-setup.txt", variables: {}, timeoutSeconds: 2 } } }, now);
+  const entry = (await listManagedWorktrees(f.store, f.cwd)).entries[0]!;
+  assert.equal(entry.status, "ready");
+  assert.equal(entry.initialization, undefined);
+  await assert.rejects(access(join(managed.path, "existing-setup.txt")));
+});
+
 test("initialization timeout terminates its process group and preserves a failed worktree", { timeout: 10000 }, async t => {
   const f = await fixture(t);
   f.store.updateWorkspaceSettings({ worktreePolicy: { fetchBeforeCreate: false,
     environment: { enabled: true, setupScript: "trap '' TERM; sleep 20", variables: {}, timeoutSeconds: 1 } } }, now);
   const managed = await managedChannel(f, "Timeout");
-  await actOnManagedWorktree(f.store, f.cwd, { ownerKind: "channel", ownerId: managed.channelId, action: "initialize" });
-  const entry = (await listManagedWorktrees(f.store, f.cwd)).entries[0]!;
+  let entry = (await listManagedWorktrees(f.store, f.cwd)).entries[0]!;
+  await actOnManagedWorktree(f.store, f.cwd, { ownerKind: "channel", ownerId: managed.channelId, action: "initialize", confirmed: true,
+    initializationFingerprint: entry.initialization?.fingerprint });
+  entry = (await listManagedWorktrees(f.store, f.cwd)).entries[0]!;
   assert.equal(entry.initialization?.status, "failed");
   assert.match(entry.initialization?.errorMessage ?? "", /超时/);
   await access(managed.path);
@@ -322,7 +341,9 @@ test("managed lifecycle retains the original repository when a channel bound pat
   await mkdir(changedBoundPath);
   f.store.updateChannel(managed.channelId, { boundPath: changedBoundPath }, now);
 
-  await actOnManagedWorktree(f.store, f.cwd, { ownerKind: "channel", ownerId: managed.channelId, action: "initialize" });
+  const entry = (await listManagedWorktrees(f.store, f.cwd)).entries[0]!;
+  await actOnManagedWorktree(f.store, f.cwd, { ownerKind: "channel", ownerId: managed.channelId, action: "initialize", confirmed: true,
+    initializationFingerprint: entry.initialization?.fingerprint });
   assert.equal(await readFile(join(managed.path, "lifecycle.txt"), "utf8"), "initialized");
   await actOnManagedWorktree(f.store, f.cwd, { ownerKind: "channel", ownerId: managed.channelId, action: "cleanup", confirmed: true });
   assert.equal((await listWorktreeSnapshots(f.store.paths)).length, 1);

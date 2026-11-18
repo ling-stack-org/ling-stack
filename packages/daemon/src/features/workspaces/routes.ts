@@ -25,10 +25,12 @@ export async function handleManagedWorktrees(request: IncomingMessage, response:
       if ((record.ownerKind !== "channel" && record.ownerKind !== "teammate") || typeof record.ownerId !== "string" || !record.ownerId.trim()
         || !["open", "cleanup", "restore", "initialize", "pin", "unpin"].includes(String(record.action))
         || record.confirmed !== undefined && typeof record.confirmed !== "boolean"
-        || record.snapshotId !== undefined && typeof record.snapshotId !== "string") throw new Error("Invalid worktree action");
+        || record.snapshotId !== undefined && typeof record.snapshotId !== "string"
+        || record.initializationFingerprint !== undefined && typeof record.initializationFingerprint !== "string") throw new Error("Invalid worktree action");
       const path = await actOnManagedWorktree(store, cwd, { ownerKind: record.ownerKind, ownerId: record.ownerId,
         action: record.action as import("@ling-stack/contracts").ManagedWorktreeActionRequest["action"],
-        confirmed: record.confirmed as boolean | undefined, snapshotId: record.snapshotId as string | undefined });
+        confirmed: record.confirmed as boolean | undefined, snapshotId: record.snapshotId as string | undefined,
+        initializationFingerprint: record.initializationFingerprint as string | undefined });
       if (record.action === "open") await openLocalDirectory(path);
       writeJson(response, 200, await listManagedWorktrees(store, cwd)); return;
     }

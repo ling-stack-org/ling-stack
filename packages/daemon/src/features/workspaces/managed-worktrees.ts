@@ -22,16 +22,12 @@ export const MANAGED_WORKTREES_GIT_ACTOR_ENTRY = defineProtectedHostActorEntry("
       throw new Error("workflow_git_profile_unavailable");
     }
     // A second, environment-inheriting process source would bypass the original actor gate.
-    const result = execFileAsync("/usr/bin/git", ["--no-pager", "--literal-pathspecs", "--no-optional-locks",
-      "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.attributesFile=/dev/null",
-      "-c", "core.autocrlf=false", "-c", "core.eol=lf", "-c", "gc.auto=0", "-c", "maintenance.auto=false",
-      "-c", "submodule.recurse=false", "-c", "protocol.allow=never", "-c", "credential.helper=",
-      "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false", ...args], {
+    const result = execFileAsync("/usr/bin/git", [...isolatedGitArguments(workflow.network ?? "none"), ...args], {
       cwd, timeout: 15000, maxBuffer: 8 * 1024 * 1024, encoding: "buffer",
       env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", LANG: "C", LC_ALL: "C", TZ: "UTC",
         GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_SYSTEM: "/dev/null", GIT_CONFIG_GLOBAL: "/dev/null",
         GIT_ATTR_NOSYSTEM: "1", GIT_NO_REPLACE_OBJECTS: "1", GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0",
-        GIT_PROTOCOL_FROM_USER: "0", GIT_AUTHOR_NAME: "Ling Workflow", GIT_AUTHOR_EMAIL: "workflow@ling.invalid",
+        GIT_PROTOCOL_FROM_USER: "0", GIT_SSH_COMMAND: "/usr/bin/ssh", GIT_AUTHOR_NAME: "Ling Workflow", GIT_AUTHOR_EMAIL: "workflow@ling.invalid",
         GIT_COMMITTER_NAME: "Ling Workflow", GIT_COMMITTER_EMAIL: "workflow@ling.invalid",
         ...(workflow.indexFile ? { GIT_INDEX_FILE: workflow.indexFile } : {}) },
     });
@@ -43,6 +39,19 @@ interface WorkflowGitCommandOptions {
   readonly profile: "workflow_isolation_v1";
   readonly input?: Buffer;
   readonly indexFile?: string;
+  readonly network?: "none" | "fetch";
+}
+
+function isolatedGitArguments(network: "none" | "fetch"): readonly string[] {
+  const protocols = network === "fetch"
+    ? ["-c", "protocol.allow=never", "-c", "protocol.ext.allow=never", "-c", "protocol.file.allow=always",
+      "-c", "protocol.http.allow=always", "-c", "protocol.https.allow=always", "-c", "protocol.ssh.allow=always", "-c", "protocol.git.allow=always"]
+    : ["-c", "protocol.allow=never", "-c", "protocol.ext.allow=never"];
+  return ["--no-pager", "--literal-pathspecs", "--no-optional-locks",
+    "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.attributesFile=/dev/null",
+    "-c", "core.autocrlf=false", "-c", "core.eol=lf", "-c", "gc.auto=0", "-c", "maintenance.auto=false",
+    "-c", "submodule.recurse=false", ...protocols, "-c", "credential.helper=",
+    "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"];
 }
 
 /** Host-only Git plumbing. This profile is not a native Runner sandbox or a merge permit. */
@@ -51,6 +60,12 @@ export async function workflowGit(cwd: string, args: readonly string[], input?: 
   const result = await MANAGED_WORKTREES_GIT_ACTOR_ENTRY.invoke(undefined, cwd, args,
     { profile: "workflow_isolation_v1", ...input });
   return { stdout: Buffer.from(result.stdout), stderr: Buffer.from(result.stderr) };
+}
+
+/** Lifecycle Git operations use the fixed profile; public preview sources retain their original producer. */
+export async function isolatedGit(cwd: string, args: readonly string[], network: "none" | "fetch" = "none"): Promise<GitCommandResult> {
+  const result = await workflowGit(cwd, args, { network });
+  return { stdout: result.stdout.toString(), stderr: result.stderr.toString() };
 }
 
 export interface GitCommandResult {
@@ -116,7 +131,7 @@ export async function createInitialWorkspaceBinding<TBinding>(input: {
 
 export async function resolveGitRepoRoot(
   root: string,
-  runGit: typeof git = git,
+  runGit: typeof isolatedGit = isolatedGit,
 ): Promise<
   | { readonly ok: true; readonly repoRoot: string }
   | { readonly ok: false; readonly code: GitRepositoryResolutionErrorCode; readonly message: string }
@@ -153,14 +168,14 @@ export async function resolveManagedWorktreeRepoRoot(worktreePath: string): Prom
   if (!isWorkspaceDirectory(worktreePath)) {
     throw new Error("worktree 目录不存在、不是目录或不可访问。");
   }
-  const listing = await git(worktreePath, ["worktree", "list", "--porcelain"]);
+  const listing = await isolatedGit(worktreePath, ["worktree", "list", "--porcelain"]);
   const rootLine = listing.stdout.split(/\r?\n/).find((line) => line.startsWith("worktree "));
   const repoRoot = rootLine?.slice("worktree ".length).trim();
   if (!repoRoot || !isWorkspaceDirectory(repoRoot)) {
     throw new Error("无法从现有 worktree 解析所属 Git 仓库。");
   }
-  const sourceCommon = await realpath(resolve(repoRoot, (await git(repoRoot, ["rev-parse", "--git-common-dir"])).stdout.trim()));
-  const targetCommon = await realpath(resolve(worktreePath, (await git(worktreePath, ["rev-parse", "--git-common-dir"])).stdout.trim()));
+  const sourceCommon = await realpath(resolve(repoRoot, (await isolatedGit(repoRoot, ["rev-parse", "--git-common-dir"])).stdout.trim()));
+  const targetCommon = await realpath(resolve(worktreePath, (await isolatedGit(worktreePath, ["rev-parse", "--git-common-dir"])).stdout.trim()));
   if (sourceCommon !== targetCommon) {
     throw new Error("现有 worktree 不属于解析出的 Git 仓库。");
   }
@@ -183,7 +198,7 @@ export async function createManagedGitWorktree(input: {
   if (!existsSync(input.worktreePath) && input.lifecycleStore) {
     repoRoot = await findWorktreeRecoveryRepoRoot(input.lifecycleStore, input.worktreePath, input.branchName) ?? repoRoot;
   }
-  const baseCommit = await git(repoRoot, ["rev-parse", "HEAD"])
+  const baseCommit = await isolatedGit(repoRoot, ["rev-parse", "HEAD"])
     .then((result) => result.stdout.trim())
     .catch(() => "");
   if (!baseCommit) {
@@ -193,7 +208,7 @@ export async function createManagedGitWorktree(input: {
       message: "Git 仓库没有可用的 HEAD 提交，无法创建或管理独立 worktree。",
     };
   }
-  const currentBranch = (await git(repoRoot, ["branch", "--show-current"]).catch(() => ({ stdout: "" }))).stdout.trim();
+  const currentBranch = (await isolatedGit(repoRoot, ["branch", "--show-current"]).catch(() => ({ stdout: "" }))).stdout.trim();
   const baseBranch = input.requestedBaseBranch || currentBranch || baseCommit;
 
   if (!existsSync(input.worktreePath) && input.lifecycleStore) {
@@ -202,17 +217,17 @@ export async function createManagedGitWorktree(input: {
   if (!existsSync(input.worktreePath)) {
     if (input.fetchBeforeCreate) {
       try {
-        const remotes = (await git(repoRoot, ["remote"])).stdout.trim();
-        if (remotes) await git(repoRoot, ["fetch", "--no-tags"]);
+        const remotes = (await isolatedGit(repoRoot, ["remote"])).stdout.trim();
+        if (remotes) await isolatedGit(repoRoot, ["fetch", "--no-tags", "--upload-pack=git-upload-pack"], "fetch");
       } catch (error) {
         return { ok: false, code: "worktree_fetch_failed", message: `获取工作树上游更新失败：${redactGitError(error)}` };
       }
     }
     await mkdir(dirname(input.worktreePath), { recursive: true });
     try {
-      const branchExists = await git(repoRoot, ["show-ref", "--verify", `refs/heads/${input.branchName}`])
+      const branchExists = await isolatedGit(repoRoot, ["show-ref", "--verify", `refs/heads/${input.branchName}`])
         .then(() => true, () => false);
-      await git(repoRoot, branchExists
+      await isolatedGit(repoRoot, branchExists
         ? ["worktree", "add", input.worktreePath, input.branchName]
         : ["worktree", "add", "-b", input.branchName, input.worktreePath, baseBranch]);
     } catch (error) {
@@ -221,7 +236,7 @@ export async function createManagedGitWorktree(input: {
     if (!isWorkspaceDirectory(input.worktreePath)) {
       return { ok: false, code: "worktree_unavailable", message: "worktree 创建后目录不可用。" };
     }
-    const createdCommit = (await git(input.worktreePath, ["rev-parse", "HEAD"])).stdout.trim();
+    const createdCommit = (await isolatedGit(input.worktreePath, ["rev-parse", "HEAD"])).stdout.trim();
     const initialization = input.environment?.enabled
       ? await prepareWorktreeInitialization(input.worktreePath, input.environment)
       : undefined;
@@ -240,9 +255,7 @@ export async function createManagedGitWorktree(input: {
     };
   }
 
-  const initialization = input.environment?.enabled && !inspection.initialization
-    ? await prepareWorktreeInitialization(input.worktreePath, input.environment)
-    : inspection.initialization;
+  const initialization = inspection.initialization;
   return { ok: true, result: { baseBranch, baseCommit,
     ...(initialization && initialization.status !== "succeeded" ? { initializationError: initialization.errorMessage } : {}) } };
 }
@@ -260,15 +273,15 @@ export async function inspectManagedWorktree(worktreePath: string): Promise<Mana
   }
 
   try {
-    const inside = (await git(worktreePath, ["rev-parse", "--is-inside-work-tree"])).stdout.trim();
+    const inside = (await isolatedGit(worktreePath, ["rev-parse", "--is-inside-work-tree"])).stdout.trim();
     if (inside !== "true") {
       return blockedInspection(worktreePath, "worktree 路径存在，但不是 Git worktree。");
     }
-    const topLevel = (await git(worktreePath, ["rev-parse", "--show-toplevel"])).stdout.trim();
+    const topLevel = (await isolatedGit(worktreePath, ["rev-parse", "--show-toplevel"])).stdout.trim();
     if (await realpath(topLevel) !== await realpath(worktreePath)) {
       return blockedInspection(worktreePath, "worktree 路径存在，但不是该 Git 工作区根目录。");
     }
-    const porcelain = (await git(worktreePath, ["status", "--porcelain"])).stdout;
+    const porcelain = (await isolatedGit(worktreePath, ["status", "--porcelain"])).stdout;
     const initialization = await readWorktreeInitialization(worktreePath);
     return {
       exists: true,
@@ -315,9 +328,9 @@ export async function removeManagedWorktreeIfClean(input: {
   }
 
   try {
-    const sourceCommon = (await git(input.repoRoot, ["rev-parse", "--git-common-dir"])).stdout.trim();
-    const targetCommon = (await git(input.worktreePath, ["rev-parse", "--git-common-dir"])).stdout.trim();
-    const targetGit = (await git(input.worktreePath, ["rev-parse", "--git-dir"])).stdout.trim();
+    const sourceCommon = (await isolatedGit(input.repoRoot, ["rev-parse", "--git-common-dir"])).stdout.trim();
+    const targetCommon = (await isolatedGit(input.worktreePath, ["rev-parse", "--git-common-dir"])).stdout.trim();
+    const targetGit = (await isolatedGit(input.worktreePath, ["rev-parse", "--git-dir"])).stdout.trim();
     const [source, common, linked] = await Promise.all([
       realpath(resolve(input.repoRoot, sourceCommon)),
       realpath(resolve(input.worktreePath, targetCommon)),
@@ -330,7 +343,7 @@ export async function removeManagedWorktreeIfClean(input: {
 
   input.beforeRemove?.();
   try {
-    await git(input.repoRoot, ["worktree", "remove", input.worktreePath]);
+    await isolatedGit(input.repoRoot, ["worktree", "remove", input.worktreePath]);
   } catch (error) {
     return {
       ok: false,

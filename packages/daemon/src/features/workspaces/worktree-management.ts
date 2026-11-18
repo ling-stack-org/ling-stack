@@ -1,10 +1,10 @@
 import type { ChannelWorkspaceBinding, RunStore } from "@ling-stack/core";
 import type { ManagedWorktreeActionRequest, ManagedWorktreeEntry, ManagedWorktreeListResponse } from "@ling-stack/contracts";
-import { git, inspectManagedWorktree, resolveGitRepoRoot, resolveManagedWorktreeRepoRoot } from "./managed-worktrees.js";
-import { initializeWorktree } from "./worktree-initialization.js";
+import { isolatedGit, inspectManagedWorktree, resolveGitRepoRoot, resolveManagedWorktreeRepoRoot } from "./managed-worktrees.js";
+import { initializeWorktree, worktreeEnvironmentFingerprint } from "./worktree-initialization.js";
 import { archiveWorktree, listWorktreeSnapshots, recoverWorktreeOperations, restoreWorktreeSnapshot } from "./worktree-recovery.js";
 import { assertWorktreeIdle, coordinateWorktreeMutation, worktreeContains } from "./worktree-mutation.js";
-import { worktreeRoot } from "./worktree-policy.js";
+import { redactWorktreePolicy, worktreeRoot } from "./worktree-policy.js";
 
 interface OwnedWorktree {
   readonly kind: "channel" | "teammate"; readonly id: string; readonly name: string;
@@ -55,20 +55,23 @@ function inUse(store: RunStore, path: string): boolean { try { assertWorktreeIdl
 
 export async function listManagedWorktrees(store: RunStore, cwd: string): Promise<ManagedWorktreeListResponse> {
   const owned = owners(store, cwd);
+  const policy = store.getWorkspaceSettings().worktreePolicy ?? { fetchBeforeCreate: false };
+  const currentInitializationFingerprint = policy.environment?.enabled ? worktreeEnvironmentFingerprint(policy.environment) : undefined;
   const entries: ManagedWorktreeEntry[] = [];
   for (let i = 0; i < owned.entries.length; i += 4) {
     entries.push(...await Promise.all(owned.entries.slice(i, i + 4).map(async (owner): Promise<ManagedWorktreeEntry> => {
       const path = owner.binding.worktreePath!;
       const inspection = await inspectManagedWorktree(path);
+      const initialization = inspection.initialization && inspection.initialization.status !== "succeeded" && currentInitializationFingerprint
+        ? { ...inspection.initialization, fingerprint: currentInitializationFingerprint } : inspection.initialization;
       return { ownerKind: owner.kind, ownerId: owner.id, ownerName: owner.name, path, branchName: owner.binding.branchName,
         status: !inspection.exists && owner.binding.status === "not_created" ? "not_created" : inspection.status,
         isDirty: inspection.isDirty, inUse: inUse(store, path), pinned: owner.pinned,
         kept: (store.getWorkspaceSettings().worktreePolicy?.protectedOwners ?? []).some((item) => item.ownerKind === owner.kind && item.ownerId === owner.id), lastUsedAt: owner.lastUsedAt,
-        initialization: inspection.initialization, errorMessage: inspection.status === "blocked" ? inspection.errorMessage : undefined };
+        initialization, errorMessage: inspection.status === "blocked" ? inspection.errorMessage : undefined };
     })));
   }
-  const policy = store.getWorkspaceSettings().worktreePolicy ?? { fetchBeforeCreate: false };
-  return { cwd, policy, defaultRootDir: store.paths.worktreesDir, effectiveRootDir: worktreeRoot(store.paths, policy),
+  return { cwd, policy: redactWorktreePolicy(policy)!, defaultRootDir: store.paths.worktreesDir, effectiveRootDir: worktreeRoot(store.paths, policy),
     snapshots: await listWorktreeSnapshots(store.paths), entries, limitReached: owned.limitReached };
 }
 
@@ -117,7 +120,10 @@ export async function actOnManagedWorktreeLocked(store: RunStore, cwd: string, i
     const inspection = await inspectManagedWorktree(path);
     if (!inspection.initialization || inspection.initialization.status === "succeeded") throw new WorktreeActionError("worktree_already_initialized", "工作树不需要重试初始化。");
     assertIdle();
-    await initializeWorktree(path, policy.environment, true);
+    if (input.confirmed !== true || !input.initializationFingerprint) {
+      throw new WorktreeActionError("worktree_confirmation_required", "请确认当前初始化脚本，并提交其 fingerprint 后再重试。");
+    }
+    await initializeWorktree(path, policy.environment, { retry: true, approvalFingerprint: input.initializationFingerprint });
   } else {
     if (!automatic && policy.confirmBeforeDelete !== false && input.confirmed !== true) throw new WorktreeActionError("worktree_confirmation_required", "请确认清理工作树。");
     const inspection = await inspectManagedWorktree(path);
@@ -126,7 +132,7 @@ export async function actOnManagedWorktreeLocked(store: RunStore, cwd: string, i
     if (automatic && inspection.isDirty) throw new WorktreeActionError("worktree_dirty", "包含未提交改动的工作树保留。");
     const repo = await resolveOwnerRepository(owner);
     if (!repo.ok) throw new WorktreeActionError(repo.code, repo.message);
-    if (owner.binding.branchName && (await git(path, ["branch", "--show-current"])).stdout.trim() !== owner.binding.branchName) throw new WorktreeActionError("worktree_owner_mismatch", "工作树分支与记录不符，无法清理。");
+    if (owner.binding.branchName && (await isolatedGit(path, ["branch", "--show-current"])).stdout.trim() !== owner.binding.branchName) throw new WorktreeActionError("worktree_owner_mismatch", "工作树分支与记录不符，无法清理。");
     await archiveWorktree(store, { repoRoot: repo.repoRoot, path, branchName: owner.binding.branchName ?? "", ownerKind: owner.kind, ownerId: owner.id,
       ownerName: owner.name, assertIdle, finalize: assertIdle });
   }

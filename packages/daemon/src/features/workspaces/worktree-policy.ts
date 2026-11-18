@@ -2,6 +2,39 @@ import { isAbsolute, join, resolve } from "node:path";
 import type { WorktreePolicy } from "@ling-stack/contracts";
 import type { LingStackRuntimePaths } from "@ling-stack/core";
 
+export const REDACTED_WORKTREE_ENVIRONMENT_VALUE = "[configured]";
+
+/** Keep environment variable names visible while never returning their values. */
+export function redactWorktreePolicy(policy: WorktreePolicy | undefined): WorktreePolicy | undefined {
+  if (!policy?.environment) return policy;
+  return {
+    ...policy,
+    environment: {
+      ...policy.environment,
+      variables: Object.fromEntries(Object.keys(policy.environment.variables).map((key) => [key, REDACTED_WORKTREE_ENVIRONMENT_VALUE])),
+    },
+  };
+}
+
+/** Restore unchanged values from a redacted read response before persisting a write. */
+export function restoreRedactedWorktreePolicy(
+  policy: WorktreePolicy | null | undefined,
+  current: WorktreePolicy | undefined,
+): WorktreePolicy | null | undefined {
+  if (!policy?.environment || !current?.environment) return policy;
+  const currentVariables = current.environment.variables;
+  return {
+    ...policy,
+    environment: {
+      ...policy.environment,
+      variables: Object.fromEntries(Object.entries(policy.environment.variables).map(([key, value]) => [
+        key,
+        value === REDACTED_WORKTREE_ENVIRONMENT_VALUE && Object.hasOwn(currentVariables, key) ? currentVariables[key] : value,
+      ])),
+    },
+  };
+}
+
 export function parseWorktreePolicy(value: unknown): WorktreePolicy | null | undefined {
   if (value === undefined || value === null) return value;
   if (typeof value !== "object" || Array.isArray(value)) throw new Error("worktreePolicy must be an object or null");
