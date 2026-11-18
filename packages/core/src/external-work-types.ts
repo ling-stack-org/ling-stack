@@ -33,6 +33,8 @@ export interface ExternalWorkspaceConfig {
   readonly root?: string;
   readonly mode: ExternalWorkspaceMode;
   readonly cleanupTerminalWorkItems: boolean;
+  /** Optional checkout hint; it never selects or authorizes an external source adapter. */
+  readonly gitRemoteUrl?: string;
 }
 
 export interface ExternalWorkspaceHooks {
@@ -718,6 +720,12 @@ export interface ExternalWorkStatusSecretSummary {
   readonly message?: string;
 }
 
+export interface ExternalWorkStatusWorkspaceSummary {
+  readonly mode: ExternalWorkspaceMode;
+  readonly gitRemoteConfigured: boolean;
+  readonly gitRemoteUrl?: string;
+}
+
 export interface ExternalWorkStatusCounts {
   readonly externalWork: {
     readonly total: number;
@@ -766,6 +774,7 @@ export interface ExternalWorkStatusResponse {
   readonly cwd: string;
   readonly channel: ExternalWorkStatusChannelSummary;
   readonly workflow: ExternalWorkStatusWorkflowSummary;
+  readonly workspace?: ExternalWorkStatusWorkspaceSummary;
   readonly secret: ExternalWorkStatusSecretSummary;
   readonly records: ExternalWorkStatusCounts;
   readonly background: ExternalWorkStatusBackgroundSummary;
@@ -813,20 +822,44 @@ export interface ExternalWorkWorkflowMutationResponse {
   readonly workflowUpdated: boolean;
 }
 
-export interface ExternalWorkLoadCandidatesInput {
-  readonly repository: string;
+export interface ExternalSourceTarget {
+  readonly kind: ExternalSourceKind;
+  readonly id: string;
+  readonly label: string;
+}
+
+export type ExternalWorkFetchLike = (input: string, init?: {
+  readonly method?: string;
+  readonly headers?: Record<string, string>;
+  readonly body?: string;
+}) => Promise<{
+  readonly ok: boolean;
+  readonly status: number;
+  readonly statusText: string;
+  json(): Promise<unknown>;
+  text(): Promise<string>;
+}>;
+
+type ExternalWorkTargetInput =
+  | { readonly target: ExternalSourceTarget; readonly repository?: never }
+  | {
+      readonly target?: undefined;
+      /** @deprecated Direct adapter compatibility; scheduler callers use an explicit target. */
+      readonly repository: string;
+    };
+
+export type ExternalWorkLoadCandidatesInput = ExternalWorkTargetInput & {
   readonly events: readonly string[];
   readonly activeStates: readonly string[];
   readonly token?: string;
   readonly limit?: number;
-}
+};
 
-export interface ExternalWorkGetItemInput {
-  readonly repository: string;
-  readonly kind: Extract<ExternalWorkItemKind, "github_pull_request" | "github_issue">;
+export type ExternalWorkGetItemInput = ExternalWorkTargetInput & {
+  readonly kind: ExternalWorkItemKind;
   readonly number: number;
   readonly token?: string;
-}
+};
 
 export interface ExternalWorkSourceAdapter {
   readonly id: string;

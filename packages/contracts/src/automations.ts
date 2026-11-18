@@ -414,6 +414,8 @@ export interface AutomationSchedulerItem {
   readonly lastRunAt?: string;
   readonly lastAutomationRunId?: string;
   readonly lastErrorMessage?: string;
+  readonly lastMonitorFingerprint?: string;
+  readonly lastMonitorOutcome?: "changed" | "unchanged" | "condition_not_met";
 }
 
 export interface AutomationSchedulerState {

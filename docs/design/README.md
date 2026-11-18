@@ -2,7 +2,7 @@
 
 Status: canonical documentation index
 Owner: repository maintainers
-Last verified: 2026-11-18 (Ling Device Support Platform design/plan index added; 2026-11-02 safe-concurrency design/plan added; other delivery states retain their owners)
+Last verified: 2026-11-18 (Ling Device Support Platform, 14-item delivery plan and Automations P2 plan indexed; other delivery states retain their owners)
 Document type: governance index
 Code and test anchors: each linked contract owns its anchors
 
@@ -19,6 +19,9 @@ Maintenance-only transition notes are kept in [Development Handoffs](../maintena
 ## Product And Architecture
 
 - [Implementation Status](implementation-status.md)
+- [Remaining Work Completion Plan](remaining-work-completion-plan.md)
+- [Remaining Work 14-Item Delivery Plan](remaining-work-14-item-delivery-plan.md)
+- [Remaining Work M0 Baseline And Decisions](remaining-work-m0-baseline-and-decisions.md)
 - [Agent Execution Capabilities](agent-execution-capabilities.md)
 - [Agent Execution Capabilities Implementation Plan](agent-execution-capabilities-implementation-plan.md)
 - [Official Scene Theme, Background And Interaction Motion Contract](theme-background-motion-contract.md)
@@ -123,6 +126,8 @@ retains the detailed implementation brief and historical checkpoint.
 ## Runtime, Security, And Storage
 
 - [Approval Policy](approval-policy.md)
+- [Codex-Inspired Settings And Permission Presets](codex-inspired-settings-permission-presets.md)
+- [Codex-Inspired Settings And Permission Presets Implementation Plan](codex-inspired-settings-permission-presets-implementation-plan.md)
 - [Workspace Command Rule Approval Implementation Plan](workspace-command-rule-approval-implementation-plan.md)
 - [Inline Runtime Approval](inline-runtime-approval-detailed-design.md)
 - [State Machines And Recovery](state-machine-recovery.md)
@@ -162,6 +167,7 @@ part of the current product acceptance scope.
 - [Chrome Browser Built-in Plugin](chrome-browser-built-in-plugin.md)
 - [Chrome Native Messaging Implementation Plan](chrome-browser-built-in-plugin-implementation-plan.md)
 - [Automations](automations.md)
+- [Automations P2 Completion Plan](automations-p2-completion-plan-2026-11-18.md)
 - [External Work Orchestration](external-work-orchestration.md)
 
 ## Web, Desktop, And UI 2.0

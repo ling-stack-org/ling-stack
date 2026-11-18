@@ -13,8 +13,7 @@ import type {
 } from "./automation-types.js";
 
 const blockingWarningCodes = new Set([
-  "project_monitor_not_implemented",
-  "monitor_not_implemented",
+  "project_monitor_requires_monitor",
   "invalid_output_destination",
   "invalid_output_format",
   "invalid_target",
@@ -31,18 +30,19 @@ export function validateAutomationDraft(draft: AutomationDraft): AutomationDraft
   }
   if (!draft.kind) {
     missingFields.push("kind");
-  } else if (draft.kind === "project_monitor") {
-    warnings.push({
-      code: "project_monitor_not_implemented",
-      message: "Project monitor automations are not supported in P1.5.",
-      field: "kind",
-    });
   }
 
   if (!draft.trigger) {
     missingFields.push("trigger");
   } else {
     warnings.push(...validateTrigger(draft.trigger));
+    if (draft.kind === "project_monitor" && draft.trigger.type !== "monitor") {
+      warnings.push({
+        code: "project_monitor_requires_monitor",
+        message: "Project monitor automations require a monitor trigger.",
+        field: "trigger",
+      });
+    }
   }
 
   if (!draft.target) {
@@ -137,11 +137,20 @@ function deriveDraftStatus(
 
 function validateTrigger(trigger: AutomationTrigger): AutomationDraftWarning[] {
   if (trigger.type === "monitor") {
-    return [{
-      code: "monitor_not_implemented",
-      message: "Monitor triggers are not supported in P1.5.",
-      field: "trigger",
-    }];
+    const warnings: AutomationDraftWarning[] = [];
+    if (!Number.isSafeInteger(trigger.pollIntervalMs) || trigger.pollIntervalMs < 1_000) {
+      warnings.push({ code: "invalid_trigger", message: "Monitor polling must be at least one second.", field: "trigger" });
+    }
+    if (trigger.source.kind === "github_ci" && !trigger.source.channelId.trim()) {
+      warnings.push({ code: "invalid_trigger", message: "GitHub CI monitors require a channel id.", field: "trigger" });
+    }
+    if (trigger.condition.kind === "count_above" && (!trigger.condition.field.trim() || !Number.isFinite(trigger.condition.threshold))) {
+      warnings.push({ code: "invalid_trigger", message: "Count monitors require a field and numeric threshold.", field: "trigger" });
+    }
+    if (trigger.condition.kind === "status_matches" && trigger.condition.statuses.length === 0) {
+      warnings.push({ code: "invalid_trigger", message: "Status monitors require at least one status.", field: "trigger" });
+    }
+    return warnings;
   }
   if (trigger.type === "schedule") {
     if (!trigger.timezone.trim()) {

@@ -1,4 +1,5 @@
 import {
+  redactSecrets,
   type ChannelHandoff,
   type ChannelWorkflow,
   type ChannelWorkflowStep,
@@ -75,6 +76,29 @@ export function projectPublicWorkflowEvidence(evidence: WorkflowEvidence) {
       linkedArtifacts: item.linkedArtifacts.map(toPublicArtifactMetadata),
     })),
     artifacts: evidence.artifacts.map(toPublicArtifactMetadata),
+    memoryCandidates: evidence.memoryCandidates.map(projectPublicMemoryCandidate),
+  };
+}
+
+/**
+ * Workflow evidence identifies review candidates but is not the memory review
+ * surface. Keep ordinary candidate text useful after secret-pattern redaction,
+ * while withholding private and secret-adjacent bodies until the dedicated
+ * scope-aware memory endpoint is used.
+ */
+function projectPublicMemoryCandidate(
+  candidate: WorkflowEvidence["memoryCandidates"][number],
+): WorkflowEvidence["memoryCandidates"][number] {
+  const { body: _body, retrievalHandle: _retrievalHandle, retrievalProviderId: _retrievalProviderId, ...metadata } = candidate.memory;
+  const safeMetadata = redactSecrets(metadata) as Omit<MemoryObject, "body" | "retrievalHandle" | "retrievalProviderId">;
+  const body = candidate.memory.sensitivity === "normal"
+    ? String(redactSecrets(candidate.memory.body))
+    : candidate.memory.sensitivity === "private"
+      ? "[private memory candidate omitted]"
+      : "[secret-adjacent memory candidate omitted]";
+  return {
+    ...candidate,
+    memory: { ...safeMetadata, body },
   };
 }
 

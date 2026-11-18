@@ -41,6 +41,8 @@ import { buildProjectedConversationContextSlice } from "./context-processing/con
 import { channelOperationContinuationContext, channelOperationVisibleSources } from "./channel-operation-sources.js";
 import { channelPendingOperationForAnswer } from "./channel-pending-operation.js";
 import { buildChannelContextView } from "./context-processing/views.js";
+import { contextViewLineageKey } from "./context-processing/context-view-lineage.js";
+import { assessChannelContextViewSourceQuoteEligibility } from "./context-processing/quote-eligibility.js";
 import {
   buildWorkflowStepContextView,
   type WorkflowStepContextPackInput,
@@ -144,7 +146,7 @@ interface BuildContextPackInput {
   readonly agentContext?: WorkflowAgentContextStamp;
 }
 
-interface ChannelReplyContextPackInput {
+export interface ChannelReplyContextPackInput {
   readonly store: RunStore;
   readonly secretResolver?: SecretResolver;
   readonly channel: Channel;
@@ -157,9 +159,12 @@ interface ChannelReplyContextPackInput {
   readonly additionalContextMessages?: readonly ChannelMessage[];
   readonly compactedChannelSummary?: ChannelCompactedDiscussionSummary;
   readonly minimal?: boolean;
+  /** Startup rehydration supplies the persisted identity and skips the write-back. */
+  readonly viewId?: string;
+  readonly persistLineage?: boolean;
 }
 
-interface ChannelIntentSelectorContextPackInput {
+export interface ChannelIntentSelectorContextPackInput {
   readonly store: RunStore;
   readonly secretResolver?: SecretResolver;
   readonly channel: Channel;
@@ -168,6 +173,9 @@ interface ChannelIntentSelectorContextPackInput {
   readonly providerPresetId?: string;
   readonly compactedChannelSummary?: ChannelCompactedDiscussionSummary;
   readonly minimal?: boolean;
+  /** Startup rehydration supplies the persisted identity and skips the write-back. */
+  readonly viewId?: string;
+  readonly persistLineage?: boolean;
 }
 
 export interface ChannelAutoRouteCandidateContext {
@@ -335,6 +343,9 @@ function buildCompatContextView(input: {
   readonly sources?: readonly ChannelContextSource[];
   readonly compactionIds?: readonly string[];
   readonly contextProjection?: ConversationContextProjectionMetadata;
+  readonly sourceItemId?: string;
+  readonly viewId?: string;
+  readonly persistLineage?: boolean;
 }): CompatContextView {
   const budget = resolveProviderContextBudget(input.providerPreset, input.kind, input);
   return {
@@ -359,6 +370,23 @@ function buildCompatContextView(input: {
         capabilityConfidence: budget.capabilityConfidence,
       },
       contextProjection: input.contextProjection,
+      ...(input.viewId ? { viewId: input.viewId } : {}),
+      ...(input.persistLineage === false ? {} : {
+        lineage: {
+          store: input.store,
+          lineageKey: contextViewLineageKey({
+            workspaceId: input.channel.workspaceId,
+            channelId: input.channel.id,
+            threadId: input.contextProjection?.threadId,
+            sourceItemId: input.sourceItemId,
+            kind: input.viewKind,
+            consumerTeammateId: input.consumerTeammateId,
+          }),
+          ...(input.contextProjection?.threadId ? { threadId: input.contextProjection.threadId } : {}),
+          ...(input.sourceItemId ? { sourceItemId: input.sourceItemId } : {}),
+          ...(input.contextProjection?.contextViewId ? { expectedCurrentViewId: input.contextProjection.contextViewId } : {}),
+        },
+      }),
     }),
   };
 }
@@ -370,7 +398,7 @@ function buildContextPackFromContextView(input: CompatContextView): ContextPack 
     kind: input.kind,
     providerPreset: input.providerPreset,
     sections: promptSectionsFromContextView(input.view).map(channelContextSectionToContextSection),
-    sourceRefs: uniqueContextSourceRefs(input.legacySourceRefs),
+    sourceRefs: quoteEligibleLegacySourceRefsFromContextView(input.view, input.legacySourceRefs),
     compactionIds: input.view.metadata.compactionIds,
     contextProjection: input.view.contextProjection,
     agentContext: input.agentContext,
@@ -383,6 +411,9 @@ function legacyContextSourceRefsFromContextView(view: ChannelContextView): reado
       if (!isLegacyContextSourceRefType(ref.type)) {
         return [];
       }
+      if (assessChannelContextViewSourceQuoteEligibility({ view, sourceRef: ref }).status !== "eligible") {
+        return [];
+      }
       return [{
         type: ref.type,
         id: ref.id,
@@ -390,6 +421,14 @@ function legacyContextSourceRefsFromContextView(view: ChannelContextView): reado
       }];
     }),
   );
+}
+
+function quoteEligibleLegacySourceRefsFromContextView(
+  view: ChannelContextView,
+  sourceRefs: readonly ContextSourceRef[],
+): readonly ContextSourceRef[] {
+  return uniqueContextSourceRefs(sourceRefs.filter((ref) =>
+    assessChannelContextViewSourceQuoteEligibility({ view, sourceRef: ref }).status === "eligible"));
 }
 
 function isLegacyContextSourceRefType(type: string): type is ContextSourceRef["type"] {
@@ -444,7 +483,7 @@ function channelContextSectionToContextSection(section: ChannelContextSection): 
   };
 }
 
-export function buildChannelReplyContextPack(input: ChannelReplyContextPackInput): ContextPack {
+function buildChannelReplyContextCompatView(input: ChannelReplyContextPackInput): CompatContextView {
   const discussionPromptContext = buildChannelDiscussionPromptContext(input);
   const protocolSection = buildChannelProtocolContextSection(input);
   const kind: ContextPackKind = (input.visibleParticipantTeammateIds?.length ?? 0) > 0
@@ -499,6 +538,9 @@ export function buildChannelReplyContextPack(input: ChannelReplyContextPackInput
     sourceRefs,
     compactionIds: input.compactedChannelSummary ? [input.compactedChannelSummary.id] : undefined,
     contextProjection: projectedContext.projection.metadata,
+    sourceItemId: input.sourceMessage.id,
+    viewId: input.viewId,
+    persistLineage: input.persistLineage,
     sources: [
       collectChannelStateSource({ channel: input.channel, text: protocolSection.text, metadata: protocolSection.metadata }),
       collectTurnSource({ channel: input.channel, envelope }),
@@ -507,10 +549,18 @@ export function buildChannelReplyContextPack(input: ChannelReplyContextPackInput
       ...collectActiveWorkSources({ store: input.store, channel: input.channel, threadId: projectedContext.projection.metadata.threadId }),
     ],
   });
-  return buildContextPackFromContextView(view);
+  return view;
 }
 
-export function buildChannelIntentSelectorContextPack(input: ChannelIntentSelectorContextPackInput): ContextPack {
+export function buildChannelReplyContextView(input: ChannelReplyContextPackInput): ChannelContextView {
+  return buildChannelReplyContextCompatView(input).view;
+}
+
+export function buildChannelReplyContextPack(input: ChannelReplyContextPackInput): ContextPack {
+  return buildContextPackFromContextView(buildChannelReplyContextCompatView(input));
+}
+
+function buildChannelIntentSelectorCompatView(input: ChannelIntentSelectorContextPackInput): CompatContextView {
   const protocolSection = buildChannelProtocolContextSection(input);
   const envelope = resolveTurnEnvelope(input);
   const sourceMessage = contextSourceMessage(input.sourceMessage, input.minimal ? 1_200 : undefined);
@@ -627,6 +677,9 @@ export function buildChannelIntentSelectorContextPack(input: ChannelIntentSelect
     sourceRefs,
     compactionIds: input.compactedChannelSummary ? [input.compactedChannelSummary.id] : undefined,
     contextProjection: projectedContext.projection.metadata,
+    sourceItemId: input.sourceMessage.id,
+    viewId: input.viewId,
+    persistLineage: input.persistLineage,
     sources: [
       collectChannelStateSource({ channel: input.channel, text: protocolSection.text, metadata: protocolSection.metadata }),
       collectTurnSource({ channel: input.channel, envelope }),
@@ -635,7 +688,15 @@ export function buildChannelIntentSelectorContextPack(input: ChannelIntentSelect
       ...collectActiveWorkSources({ store: input.store, channel: input.channel, threadId: projectedContext.projection.metadata.threadId }),
     ],
   });
-  return buildContextPackFromContextView(view);
+  return view;
+}
+
+export function buildChannelIntentSelectorContextView(input: ChannelIntentSelectorContextPackInput): ChannelContextView {
+  return buildChannelIntentSelectorCompatView(input).view;
+}
+
+export function buildChannelIntentSelectorContextPack(input: ChannelIntentSelectorContextPackInput): ContextPack {
+  return buildContextPackFromContextView(buildChannelIntentSelectorCompatView(input));
 }
 
 export function buildChannelAutoRouteContextPack(input: ChannelAutoRouteContextPackInput): ContextPack {
@@ -697,9 +758,10 @@ export function buildChannelAutoRouteContextPack(input: ChannelAutoRouteContextP
     sourceRefs,
     compactionIds: input.compactedChannelSummary ? [input.compactedChannelSummary.id] : undefined,
     contextProjection: projectedContext.projection.metadata,
+    sourceItemId: input.sourceMessage.id,
     sources: [
       collectChannelStateSource({ channel: input.channel, text: protocolSection.text, metadata: protocolSection.metadata }),
-      collectTurnSource({ channel: input.channel, envelope }),
+      collectTurnSource({ channel: input.channel, envelope, includeConversationItemRef: true }),
       ...collectMaterializedInputSources({ channel: input.channel, envelope }),
       ...projectedContext.sources,
       ...collectActiveWorkSources({ store: input.store, channel: input.channel, threadId: projectedContext.projection.metadata.threadId }),

@@ -115,6 +115,7 @@ export class NotificationHub {
       events: {
         automation_run_finished: update.events?.automation_run_finished ?? this.preferences.events.automation_run_finished ?? defaults.events.automation_run_finished,
         automation_run_failed: update.events?.automation_run_failed ?? this.preferences.events.automation_run_failed ?? defaults.events.automation_run_failed,
+        automation_monitor_finding: update.events?.automation_monitor_finding ?? this.preferences.events.automation_monitor_finding ?? defaults.events.automation_monitor_finding,
         approval_required: update.events?.approval_required ?? this.preferences.events.approval_required ?? defaults.events.approval_required,
       },
     });
@@ -199,6 +200,7 @@ function sanitizePreferences(input: NotificationPreferences): NotificationPrefer
     events: {
       automation_run_finished: readTone(input.events?.automation_run_finished, defaults.events.automation_run_finished),
       automation_run_failed: readTone(input.events?.automation_run_failed, defaults.events.automation_run_failed),
+      automation_monitor_finding: readTone(input.events?.automation_monitor_finding, defaults.events.automation_monitor_finding),
       approval_required: readTone(input.events?.approval_required, defaults.events.approval_required),
     },
     quietHours,

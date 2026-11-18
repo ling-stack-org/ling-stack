@@ -24,6 +24,7 @@ import { AutomationCreateDialog } from "./AutomationCreateDialog.js";
 import { AutomationDiscardDraftDialog } from "./AutomationDiscardDraftDialog.js";
 import { AutomationExecutionInspector } from "./AutomationExecutionInspector.js";
 import { AutomationListPane } from "./AutomationListPane.js";
+import { AutomationMonitorSummary } from "./AutomationMonitorSummary.js";
 import { AutomationScheduleDialog } from "./AutomationScheduleDialog.js";
 import { AutomationSchedulerSummary } from "./AutomationSchedulerSummary.js";
 import { AutomationWorkbenchHeader } from "./AutomationWorkbenchHeader.js";
@@ -153,6 +154,7 @@ export function AutomationsPage(props: AutomationsPageProps): React.JSX.Element 
         onStart={() => void runScheduler("start")}
         onStop={() => void runScheduler("stop")}
       />
+      <AutomationMonitorSummary monitors={controller.monitorViewModels} t={t} />
       {props.refreshError ? (
         <InlineFeedback className="automation-ui2-stale" title={t("Could not refresh automations")} tone="warning">
           <span>{props.refreshError}</span>

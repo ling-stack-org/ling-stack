@@ -58,12 +58,13 @@ test("notification preferences round-trip through the API with validation", asyn
     const updated = await fetch(`${baseUrl}/notifications/preferences`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ globalEnabled: false, events: { automation_run_finished: "all" }, quietHours: { start: "22:00", end: "08:00" } }),
+      body: JSON.stringify({ globalEnabled: false, events: { automation_run_finished: "all", automation_monitor_finding: "all" }, quietHours: { start: "22:00", end: "08:00" } }),
     });
     assert.equal(updated.status, 200);
     const body = await updated.json();
     assert.equal(body.preferences.globalEnabled, false);
     assert.equal(body.preferences.events.automation_run_finished, "all");
+    assert.equal(body.preferences.events.automation_monitor_finding, "all");
     assert.equal(body.preferences.quietHours.start, "22:00");
 
     const rejected = await fetch(`${baseUrl}/notifications/preferences`, {

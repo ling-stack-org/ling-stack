@@ -10,6 +10,7 @@ import {
   RUNNER_CONTINUATION_MIGRATION_NAME,
   RUNNER_CONTINUATION_MIGRATION_VERSION,
 } from "../dist/storage/sqlite/runner-continuation-migration.js";
+import { rewindNodeRerunApprovalFixture } from "./support/node-rerun-approval-predecessor.ts";
 
 const appliedAt = "2026-09-13T00:00:00.000Z";
 
@@ -20,6 +21,7 @@ test("runner continuation 135 reinstalls with its newer recovery indexes and rer
   store.close();
   const path = resolveRuntimePaths(cwd).databasePath;
   let database = new DatabaseSync(path);
+  rewindNodeRerunApprovalFixture(database);
   // This is a row-free overlay reconstruction, not a full historical134 image.
   // Dropping135 also drops two180 indexes: remove the entire exact180 overlay
   // and marker, rather than asking production to silently repair marked damage.

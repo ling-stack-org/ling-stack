@@ -255,10 +255,16 @@ import {
   handleGetRunEvents,
   handleListRunArtifacts,
   handleListRuns,
+  handleRunPolicyPreview,
   handleRun,
 } from "../features/runs/routes.js";
 import { handleGetRunAssuranceEvidence } from "../features/runs/assurance-evidence.js";
 import { handlePostNodeRerunAdmission } from "../features/runs/node-rerun-admission.js";
+import { handleNodeRerunIntentApproval, handleNodeRerunIntents } from "../features/runs/node-rerun-intents.js";
+import { handleDispatchNodeRerunTarget, handleNodeRerunTarget } from "../features/runs/node-rerun-targets.js";
+import { handleGetNodeRerunGeneration } from "../features/runs/node-rerun-generation.js";
+import { handleCancelNodeRerunTarget } from "../features/runs/node-rerun-cancellation.js";
+import { handleGetNodeRerunTargetReadiness } from "../features/runs/node-rerun-readiness.js";
 import { handlePostRunAssuranceEvaluationAssociation } from "../features/harness/evaluations/assurance-association-route.js";
 import { handleUserInputAnswerSubmission } from "../features/runs/user-input-answer-routes.js";
 import { handleLingThreadItem, handleLingThreadsCollection } from "../features/runs/thread-routes.js";
@@ -1637,6 +1643,10 @@ export async function routeRequest(
       ));
     return;
   }
+  if (request.method === "POST" && url.pathname === "/runs/policy-preview") {
+    await handleRunPolicyPreview(request, response, config, url, storeRegistry);
+    return;
+  }
   if (request.method === "GET" && url.pathname === "/runs") {
     handleListRuns(response, url, storeRegistry);
     return;
@@ -1718,6 +1728,53 @@ export async function routeRequest(
       activeRuns,
       runRoute.runId,
     );
+    return;
+  }
+  if (runRoute?.kind === "node-rerun-intents" || runRoute?.kind === "node-rerun-intent") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) return;
+    await handleNodeRerunIntents(request, response, url, config.maxBodyBytes, storeRegistry, activeRuns,
+      runRoute.runId, runRoute.kind === "node-rerun-intent" ? runRoute.recordId : undefined);
+    return;
+  }
+  if (runRoute?.kind === "node-rerun-intent-approval") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) return;
+    await handleNodeRerunIntentApproval(request, response, url, config.maxBodyBytes, storeRegistry, activeRuns,
+      runRoute.runId, runRoute.recordId);
+    return;
+  }
+  if (runRoute?.kind === "node-rerun-intent-target") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) return;
+    await handleNodeRerunTarget(request, response, url, config.maxBodyBytes, storeRegistry, activeRuns, runtimeSupervisor,
+      runRoute.runId, runRoute.recordId);
+    return;
+  }
+  if (runRoute?.kind === "node-rerun-target-dispatch") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) return;
+    await handleDispatchNodeRerunTarget(request, response, url, config.maxBodyBytes, storeRegistry, activeRuns, runtimeSupervisor,
+      runnerRegistry, secretResolver, mcpBroker, runRoute.runId, runRoute.recordId, {
+        afterRunTerminal: maybeContinueRunInterventions,
+        controlPlaneEvents,
+        startupState,
+        computerUsePreviews,
+        hostCapabilityBridge: context.hostCapabilityBridge,
+        nativeRunDispatcher,
+      });
+    return;
+  }
+  if (runRoute?.kind === "node-rerun-intent-generation") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) return;
+    handleGetNodeRerunGeneration(request, response, url, storeRegistry, runRoute.runId, runRoute.recordId);
+    return;
+  }
+  if (runRoute?.kind === "node-rerun-target-cancel") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) return;
+    await handleCancelNodeRerunTarget(request, response, url, config.maxBodyBytes, storeRegistry, activeRuns,
+      runRoute.runId, runRoute.recordId, runtimeSupervisor);
+    return;
+  }
+  if (runRoute?.kind === "node-rerun-target-readiness") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) return;
+    handleGetNodeRerunTargetReadiness(request, response, url, storeRegistry, activeRuns, runRoute.runId, runRoute.recordId);
     return;
   }
   if (request.method === "GET" && runRoute?.kind === "shell-snapshots") {

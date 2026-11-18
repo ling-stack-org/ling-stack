@@ -277,6 +277,8 @@ const CHANNEL_EXECUTION_PROPOSAL_CAS_MIGRATION_NAME = "add_channel_execution_pro
 // available database-global version before the 144+ migration family.
 const COMPANIONS_MIGRATION_VERSION = 141;
 const COMPANIONS_MIGRATION_NAME = "create_companions";
+const AUTOMATION_MONITOR_SNAPSHOTS_MIGRATION_VERSION = 142;
+const AUTOMATION_MONITOR_SNAPSHOTS_MIGRATION_NAME = "create_automation_monitor_snapshots";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
   database.exec(`
@@ -3008,6 +3010,22 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
       }
       if (!hasAutomationCodexStyleFieldsMigration) {
         context.recordMigration(AUTOMATION_CODEX_STYLE_FIELDS_MIGRATION_VERSION, AUTOMATION_CODEX_STYLE_FIELDS_MIGRATION_NAME);
+      }
+    }
+
+    const hasAutomationMonitorSnapshotsMigration = context.hasMigration(AUTOMATION_MONITOR_SNAPSHOTS_MIGRATION_VERSION);
+    if (!hasAutomationMonitorSnapshotsMigration || !context.hasTable("automation_monitor_snapshots")) {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS automation_monitor_snapshots (
+          automation_id TEXT PRIMARY KEY,
+          fingerprint TEXT NOT NULL,
+          snapshot_json TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY(automation_id) REFERENCES automation_definitions(id) ON DELETE CASCADE
+        );
+      `);
+      if (!hasAutomationMonitorSnapshotsMigration) {
+        context.recordMigration(AUTOMATION_MONITOR_SNAPSHOTS_MIGRATION_VERSION, AUTOMATION_MONITOR_SNAPSHOTS_MIGRATION_NAME);
       }
     }
 

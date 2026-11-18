@@ -55,12 +55,16 @@ const legacyDefinitions = [
   { name: "host_run_capacity_reservations_by_state", type: "index",
     sql: `CREATE INDEX host_run_capacity_reservations_by_state ON ${reservationTable}(state,reservation_id)` },
 ] as const;
-const definitions = legacyDefinitions.map(definition => ({ ...definition, sql: (definition.name === markerTable
+const continuationDefinitions = legacyDefinitions.map(definition => ({ ...definition, sql: (definition.name === markerTable
   ? definition.sql.replace(integerSql("version", 1, 1), integerSql("version", 2, 2))
   : definition.name === reservationTable ? definition.sql.replace("owner_kind IN ('attempt','workflow_start','delegation_spawn')",
     "owner_kind IN ('attempt','workflow_start','delegation_spawn','approval_resume_pending','user_input_continuation')") : definition.sql)
   .replace(`CREATE TABLE ${definition.name}`, definition.name === markerTable || definition.name === reservationTable
     ? `CREATE TABLE "${definition.name}"` : `CREATE TABLE ${definition.name}`) }));
+const definitions = continuationDefinitions.map(definition => ({ ...definition, sql: definition.name === markerTable
+  ? definition.sql.replace(integerSql("version", 2, 2), integerSql("version", 3, 3))
+  : definition.name === reservationTable ? definition.sql.replace("'user_input_continuation'", "'user_input_continuation','node_rerun_target'")
+    : definition.sql }));
 const normalizeSql = (sql: string) => sql.trim().replace(/;$/u, "").replace(/\s+/gu, " ");
 
 function enableWal(database: DatabaseSync, busyTimeoutMs: number): void {
@@ -132,7 +136,7 @@ function intentFromInput(value: unknown): HostRunCapacityIntent {
   const input = dataObject(value, intentFields);
   const ownerKind = text(input.ownerKind);
   if (ownerKind !== "attempt" && ownerKind !== "workflow_start" && ownerKind !== "delegation_spawn"
-    && ownerKind !== "approval_resume_pending" && ownerKind !== "user_input_continuation") {
+    && ownerKind !== "approval_resume_pending" && ownerKind !== "user_input_continuation" && ownerKind !== "node_rerun_target") {
     throw new RangeError("Unknown Host capacity owner kind.");
   }
   return Object.freeze({ intentId: text(input.intentId), workspaceKey: text(input.workspaceKey),
@@ -182,14 +186,14 @@ export class HostRunCapacityStore {
       this.transaction(() => {
         if (!this.schemaObjects().length) {
           for (const definition of definitions) this.database.exec(definition.sql);
-          this.database.prepare(`INSERT INTO ${markerTable}(version,name) VALUES(2,'host_run_capacity')`).run();
-        } else if (this.assertSchema(true) === 1) {
+          this.database.prepare(`INSERT INTO ${markerTable}(version,name) VALUES(3,'host_run_capacity')`).run();
+        } else if (this.assertSchema(true) < 3) {
           for (const name of [reservationTable, markerTable]) {
             const definition = definitions.find(candidate => candidate.name === name)!;
             const replacement = `${name}_upgrade`;
             this.database.exec(definition.sql.replace(`CREATE TABLE "${name}"`, `CREATE TABLE ${replacement}`));
             if (name === markerTable) {
-              this.database.prepare(`INSERT INTO ${replacement}(version,name) VALUES(2,'host_run_capacity')`).run();
+              this.database.prepare(`INSERT INTO ${replacement}(version,name) VALUES(3,'host_run_capacity')`).run();
             } else this.database.exec(`INSERT INTO ${replacement} SELECT * FROM main.${name}`);
             this.database.exec(`DROP TABLE main.${name}`);
             this.database.exec(`ALTER TABLE ${replacement} RENAME TO ${name}`);
@@ -329,13 +333,16 @@ export class HostRunCapacityStore {
       .all(...names, ...names, ...names, ...names);
   }
 
-  private assertSchema(allowLegacy = false): 1 | 2 {
+  private assertSchema(allowLegacy = false): 1 | 2 | 3 {
     const objects = this.schemaObjects();
     if (objects.some(object => object.schema_name !== "main")) throw new Error("host_run_capacity.schema_invalid");
     const marker = objects.find(object => object.name === markerTable);
     const legacy = allowLegacy && typeof marker?.sql === "string"
       && normalizeSql(marker.sql) === normalizeSql(legacyDefinitions[0].sql);
-    const expectedDefinitions = legacy ? legacyDefinitions : definitions;
+    const continuation = allowLegacy && typeof marker?.sql === "string"
+      && normalizeSql(marker.sql) === normalizeSql(continuationDefinitions[0]!.sql);
+    const version = legacy ? 1 : continuation ? 2 : 3;
+    const expectedDefinitions = legacy ? legacyDefinitions : continuation ? continuationDefinitions : definitions;
     for (const definition of expectedDefinitions) {
       const matches = objects.filter(object => object.name === definition.name);
       if (matches.length !== 1 || matches[0]!.type !== definition.type || typeof matches[0]!.sql !== "string"
@@ -345,10 +352,10 @@ export class HostRunCapacityStore {
       && !(object.type === "index" && object.sql === null && typeof object.name === "string"
         && object.name.startsWith("sqlite_autoindex_")))) throw new Error("host_run_capacity.schema_invalid");
     const rows = this.database.prepare(`SELECT version,name FROM ${markerTable}`).all();
-    if (rows.length !== 1 || rows[0]!.version !== (legacy ? 1 : 2) || rows[0]!.name !== "host_run_capacity") {
+    if (rows.length !== 1 || rows[0]!.version !== version || rows[0]!.name !== "host_run_capacity") {
       throw new Error("host_run_capacity.schema_marker_invalid");
     }
-    return legacy ? 1 : 2;
+    return version;
   }
 
   private transaction<T>(operation: () => T): T {

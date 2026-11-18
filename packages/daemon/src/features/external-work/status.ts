@@ -2,7 +2,9 @@ import { readFileSync, realpathSync, statSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { isAbsolute, resolve as resolvePath } from "node:path";
 import {
+  externalWorkSecretPurposeForSource,
   parseExternalWorkflowMarkdown,
+  redactGitRemoteUrl,
   type Channel,
   type ExternalWorkBackgroundScheduler,
   type ExternalWorkStoreFacet,
@@ -61,7 +63,7 @@ export async function handleExternalWorkStatus(
     const parsed = parseExternalWorkflowStatus(workflowFile.markdown);
     const workflowDefinition = parsed.workflowDefinition;
     const sourceKind = workflowDefinition?.config.source.kind ?? "unknown";
-    const secretPurpose = sourceKind === "github" ? "github_token" : sourceKind === "linear" ? "linear_token" : undefined;
+    const secretPurpose = sourceKind === "unknown" ? undefined : externalWorkSecretPurposeForSource(sourceKind);
     const secretRef = workflowDefinition?.config.source.secretRef;
     const secret = buildExternalWorkStatusSecret(secretResolver, secretRef, secretPurpose);
     const backgroundScheduler = pickExternalWorkBackgroundScheduler(backgroundSchedulers?.list(cwd) ?? [], channel.id, workflowDefinition?.config.source.repository);
@@ -73,6 +75,7 @@ export async function handleExternalWorkStatus(
         ...(channel.boundPath ? { boundPath: channel.boundPath } : {}),
       },
       workflow: buildExternalWorkStatusWorkflowSummary(workflowFile, parsed),
+      ...(workflowDefinition ? { workspace: buildExternalWorkStatusWorkspaceSummary(workflowDefinition) } : {}),
       secret,
       records: buildExternalWorkStatusCounts(store, channel.id),
       background: buildExternalWorkStatusBackground(backgroundScheduler, sourceKind),
@@ -197,6 +200,17 @@ export function buildExternalWorkStatusSecret(
     purpose,
     status: mappedStatus,
     ...(status.message ? { message: status.message } : {}),
+  };
+}
+
+export function buildExternalWorkStatusWorkspaceSummary(
+  workflowDefinition: ExternalWorkflowDefinition,
+): ExternalWorkStatusResponse["workspace"] {
+  const gitRemoteUrl = workflowDefinition.config.workspace.gitRemoteUrl;
+  return {
+    mode: workflowDefinition.config.workspace.mode,
+    gitRemoteConfigured: Boolean(gitRemoteUrl),
+    ...(gitRemoteUrl ? { gitRemoteUrl: redactGitRemoteUrl(gitRemoteUrl) } : {}),
   };
 }
 

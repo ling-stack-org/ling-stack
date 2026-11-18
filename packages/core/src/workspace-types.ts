@@ -564,6 +564,7 @@ export interface Task {
 }
 
 export interface CreateTaskInput {
+  readonly id?: string;
   readonly channelId: string;
   readonly title: string;
   readonly prompt: string;

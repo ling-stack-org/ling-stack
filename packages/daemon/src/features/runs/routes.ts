@@ -5,21 +5,28 @@ import {
   approvalStatuses,
   approvalToolDecisions,
   defaultApprovalToolDecisions,
+  isPermissionPreset,
+  isSessionPermissionMode,
   isApprovalGrantDecisionKind,
+  permissionModeForPreset,
+  permissionPresetRequiresConfirmation,
+  resolveSessionRunPolicy,
   syncExternalWorkActionForApproval,
   type ApprovalPolicyUpdateInput,
   type ApprovalRequest,
   type ApprovalStatus,
   type ApprovalToolDecision,
   type MediaJob,
+  type PermissionPreset,
   type RunEventEnvelope,
   type RunStore,
   type RunStatus,
   type RunTool,
   type ResolveApprovalRequestInput,
+  type SessionPermissionMode,
 } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
-import type { ExecutionCancellationRequest } from "@ling-stack/contracts";
+import type { ExecutionCancellationRequest, RunPolicyPreviewRequest, RunPolicyPreviewResponse } from "@ling-stack/contracts";
 import { parseExecutionCancellationRequest } from "../../shared/cancellation-request.js";
 import type { ActiveRunRegistry } from "../../runtime/active-runs.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
@@ -27,6 +34,7 @@ import { HttpError } from "../../errors.js";
 import { readJsonBody, readOptionalIntegerQuery, readOptionalJsonBody } from "../../shared/request.js";
 import { setCorsHeaders, writeJson } from "../../shared/response.js";
 import { isRecord, readOptionalString, readOptionalStringArray } from "../../shared/validation.js";
+import { parseApprovalProfileObject } from "../../shared/approval-profile.js";
 import { expireStaleApproval, expireStalePendingApprovals } from "./approvals.js";
 import { reconcileApprovalPostCommitEffects } from "./approval-postcommit-effects.js";
 import type { ControlPlaneEventHub } from "../control-plane/events.js";
@@ -91,6 +99,111 @@ export function handleListRuns(response: ServerResponse, url: URL, storeRegistry
       message: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+/**
+ * Resolve the daemon-owned effective policy without creating a Run or any other
+ * durable execution record. The same core resolver is used by run dispatch.
+ */
+export async function handleRunPolicyPreview(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+  url: URL,
+  storeRegistry: RunStoreRegistry,
+): Promise<void> {
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+
+  try {
+    const body = await readJsonBody(request, config.maxBodyBytes);
+    const input = parseRunPolicyPreviewRequest(body);
+    const store = storeRegistry.getStore(cwd);
+    const task = input.taskId ? store.getTask(input.taskId) : undefined;
+    if (input.taskId && !task) {
+      throw new HttpError(404, "task_not_found", `Task not found: ${input.taskId}`);
+    }
+
+    const requestedChannel = input.channelId ? store.getChannel(input.channelId) : undefined;
+    if (input.channelId && !requestedChannel) {
+      throw new HttpError(404, "channel_not_found", `Channel not found: ${input.channelId}`);
+    }
+    if (task && requestedChannel && task.channelId !== requestedChannel.id) {
+      throw new HttpError(409, "policy_preview_scope_conflict", "taskId and channelId must refer to the same channel");
+    }
+
+    const channel = requestedChannel ?? (task ? store.getChannel(task.channelId) : undefined);
+    if (task && !channel) {
+      throw new HttpError(409, "task_channel_not_found", `Task channel not found: ${task.channelId}`);
+    }
+
+    const resolved = resolveSessionRunPolicy({
+      workspacePolicy: store.getApprovalPolicy(),
+      permissionPreset: input.permissionPreset,
+      permissionMode: input.permissionMode,
+      channelBoundPath: channel?.boundPath ?? cwd,
+      approvalProfile: input.approvalProfile,
+    });
+    const result: RunPolicyPreviewResponse = {
+      ...(input.permissionPreset ? { permissionPreset: input.permissionPreset } : {}),
+      permissionMode: resolved.snapshot.mode,
+      effectivePolicySnapshot: resolved.snapshot,
+      requiresConfirmation: (input.permissionPreset ? permissionPresetRequiresConfirmation(input.permissionPreset) : false)
+        || resolved.snapshot.mode === "full_access",
+    };
+    writeJson(response, 200, result);
+  } catch (error) {
+    const statusCode = error instanceof HttpError ? error.statusCode : 400;
+    writeJson(response, statusCode, {
+      error: error instanceof HttpError ? error.code : "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+function parseRunPolicyPreviewRequest(value: unknown): RunPolicyPreviewRequest & {
+  readonly approvalProfile?: import("@ling-stack/core").SkillApprovalProfile;
+} {
+  if (!isRecord(value)) {
+    throw new Error("Run policy preview request must be a JSON object");
+  }
+
+  const channelId = readOptionalString(value, "channelId");
+  const taskId = readOptionalString(value, "taskId");
+  const rawPreset = readOptionalString(value, "permissionPreset");
+  const permissionPreset: PermissionPreset | undefined = rawPreset === undefined
+    ? undefined
+    : isPermissionPreset(rawPreset) ? rawPreset : (() => {
+        throw new Error("permissionPreset must be one of: read_only, workspace_collaboration, full_access, custom");
+      })();
+  const rawMode = readOptionalString(value, "permissionMode");
+  const permissionMode: SessionPermissionMode | undefined = rawMode === undefined
+    ? undefined
+    : isSessionPermissionMode(rawMode) ? rawMode : (() => {
+        throw new Error("permissionMode must be one of: ask_everything, balanced, workspace_write, full_access, custom");
+      })();
+  if (permissionPreset !== undefined && permissionMode !== undefined && permissionPreset !== "custom"
+    && permissionMode !== permissionModeForPreset(permissionPreset)) {
+    throw new Error("permissionPreset and permissionMode must describe the same permission scope");
+  }
+
+  const rawApprovalProfile = value.approvalProfile;
+  const approvalProfile = rawApprovalProfile === undefined
+    ? undefined
+    : !isRecord(rawApprovalProfile)
+      ? (() => { throw new Error("approvalProfile must be an object"); })()
+      : parseApprovalProfileObject(rawApprovalProfile, "approvalProfile");
+
+  return {
+    ...(channelId !== undefined ? { channelId } : {}),
+    ...(taskId !== undefined ? { taskId } : {}),
+    ...(permissionPreset !== undefined ? { permissionPreset } : {}),
+    ...(permissionMode !== undefined ? { permissionMode } : {}),
+    ...(approvalProfile !== undefined ? { approvalProfile } : {}),
+  };
 }
 
 export function handleGetRun(
@@ -582,6 +695,7 @@ export function handleApprovalsCollection(
     const store = storeRegistry.getStore(cwd);
     expireStalePendingApprovals(store, {
       runId: url.searchParams.get("runId") ?? undefined,
+      nodeRerunIntentId: url.searchParams.get("nodeRerunIntentId") ?? undefined,
       mediaJobId: url.searchParams.get("mediaJobId") ?? undefined,
       externalWorkActionId: url.searchParams.get("externalWorkActionId") ?? undefined,
       workflowStepId: url.searchParams.get("workflowStepId") ?? undefined,
@@ -593,6 +707,7 @@ export function handleApprovalsCollection(
       approvals: store.listApprovalRequests({
         status: readOptionalApprovalStatusQuery(url),
         runId: url.searchParams.get("runId") ?? undefined,
+        nodeRerunIntentId: url.searchParams.get("nodeRerunIntentId") ?? undefined,
         mediaJobId: url.searchParams.get("mediaJobId") ?? undefined,
         externalWorkActionId: url.searchParams.get("externalWorkActionId") ?? undefined,
         workflowStepId: url.searchParams.get("workflowStepId") ?? undefined,

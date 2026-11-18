@@ -349,6 +349,11 @@ function makeIntent(f: Fixture) {
   const dependencyClosure = { complete: true, upstream: [upstreamPin], downstreamNodeIds: [...downstream].sort() } as const;
   const sourceStep = targetStep;
   const sourceSnapshot = nodeRerunSourceSnapshotDigestV1({
+    executionSnapshot: {
+      taskSnapshot: targetRun.taskSnapshot,
+      providerSnapshot: targetRun.providerSnapshot,
+      requestSnapshot: targetRun.requestSnapshot,
+    },
     run: {
       id: targetRun.id,
       status: targetRun.status,

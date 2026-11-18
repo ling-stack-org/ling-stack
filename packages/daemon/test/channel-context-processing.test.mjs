@@ -26,6 +26,8 @@ import { buildPrivateChatContextView } from "../dist/features/channels/context-p
 import { memoryEligibilityForView } from "../dist/features/channels/context-processing/memory.js";
 import { renderChannelContextView } from "../dist/features/channels/context-processing/render.js";
 import { buildChannelContextView } from "../dist/features/channels/context-processing/views.js";
+import { assessChannelContextSourceQuoteEligibility } from "../dist/features/channels/context-processing/quote-eligibility.js";
+import { assessChannelContextViewSourceQuoteEligibility } from "../dist/features/channels/context-processing/quote-eligibility.js";
 import { buildWorkflowStepContextPack } from "../dist/features/channels/context-packs.js";
 
 const now = "2026-06-13T00:00:00.000Z";
@@ -686,9 +688,58 @@ test("workflow proposal context view maps supported source refs for shaping evid
   assert.deepEqual(sourceRefs.map((ref) => `${ref.type}:${ref.id}`), [
     "message:msg_current",
     "message:msg_previous",
-    "workflow:workflow_1",
-    "workflow_step:step_1",
-    "run:run_1",
+  ]);
+});
+
+test("source citation wiring keeps influence-only and inspect-only context out of public proposal evidence", () => {
+  const source = (id, metadata = {}) => ({
+    id: `source:${id}`,
+    kind: "workspace_knowledge",
+    workspaceId: "workspace_1",
+    channelId: "channel_1",
+    sourceRefs: [{ type: "message", id }],
+    title: id,
+    text: `body ${id}`,
+    metadata,
+    sensitivity: "normal",
+    freshness: "durable",
+  });
+  const view = buildChannelContextView({
+    kind: "workflow_proposal_view",
+    workspaceId: "workspace_1",
+    channelId: "channel_1",
+    sections: [
+      { id: "public", role: "evidence", priority: "high", compactionSurvival: "summarize", title: "Public", text: "public", sourceRefIds: ["public_memory"], visibility: "prompt", quotePolicy: "public_ok" },
+      { id: "influence", role: "memory", priority: "medium", compactionSurvival: "summarize", title: "Influence", text: "influence", sourceRefIds: ["private_memory"], visibility: "prompt", quotePolicy: "influence_only" },
+      { id: "inspect", role: "evidence", priority: "low", compactionSurvival: "discard", title: "Inspect", text: "inspect", sourceRefIds: ["inspect_memory"], visibility: "inspect_only", quotePolicy: "inspect_only" },
+    ],
+    sourceRefs: [
+      { type: "message", id: "public_memory" },
+      { type: "message", id: "private_memory" },
+      { type: "message", id: "inspect_memory" },
+    ],
+    sources: [
+      source("public_memory", { quotePolicy: "public_ok" }),
+      source("private_memory", { quotePolicy: "influence_only" }),
+      source("inspect_memory", { quotePolicy: "public_ok" }),
+    ],
+    now,
+  });
+
+  assert.deepEqual(assessChannelContextViewSourceQuoteEligibility({
+    view,
+    sourceRef: { type: "message", id: "public_memory" },
+  }), { status: "eligible" });
+  assert.deepEqual(assessChannelContextViewSourceQuoteEligibility({
+    view,
+    sourceRef: { type: "message", id: "private_memory" },
+  }), { status: "rejected", reason: "policy_blocked" });
+  assert.deepEqual(assessChannelContextViewSourceQuoteEligibility({
+    view,
+    sourceRef: { type: "message", id: "inspect_memory" },
+  }), { status: "rejected", reason: "policy_blocked" });
+  assert.deepEqual(proposalSourceRefsFromContextView(view).map((ref) => `${ref.type}:${ref.id}`), [
+    "message:public_memory",
   ]);
 });
 
@@ -1245,6 +1296,37 @@ test("context view renderer hides inspect-only sections by default", () => {
   });
 
   assert.equal(renderChannelContextView(view), "Visible prompt text");
+});
+
+test("source quote policy separates public evidence from influence-only context", () => {
+  const base = {
+    id: "source:quote-policy",
+    kind: "recent_message",
+    workspaceId: "workspace_default",
+    channelId: "channel_quote_policy",
+    sourceRefs: [{ type: "message", id: "message_quote_policy" }],
+    title: "Quote policy source",
+    text: "A public decision",
+    metadata: {},
+    sensitivity: "normal",
+    freshness: "recent",
+  };
+  assert.deepEqual(assessChannelContextSourceQuoteEligibility({
+    source: base,
+    view: "ling_agent_channel_view",
+  }), { status: "eligible" });
+  assert.deepEqual(assessChannelContextSourceQuoteEligibility({
+    source: { ...base, metadata: { quotePolicy: "influence_only" } },
+    view: "ling_agent_channel_view",
+  }), { status: "rejected", reason: "policy_blocked" });
+  assert.deepEqual(assessChannelContextSourceQuoteEligibility({
+    source: { ...base, metadata: { quotePolicy: "influence_only" } },
+    view: "evidence_inspect_view",
+  }), { status: "eligible" });
+  assert.deepEqual(assessChannelContextSourceQuoteEligibility({
+    source: { ...base, metadata: { status: "stale" } },
+    view: "ling_agent_channel_view",
+  }), { status: "rejected", reason: "stale" });
 });
 
 function createChannel(overrides = {}) {

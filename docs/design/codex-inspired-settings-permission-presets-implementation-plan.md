@@ -2,7 +2,8 @@
 
 ## Status
 
-Design plan.
+Active implementation plan. Slice 5 is implemented locally on
+`codex/remaining-work-implementation`; the preset UI and run-audit slices remain open.
 
 This implementation plan breaks down
 [Codex-Inspired Settings And Permission Presets](codex-inspired-settings-permission-presets.md)
@@ -210,6 +211,8 @@ Verification:
 
 ## Slice 5: Daemon Policy Preview Endpoint
 
+Status: implemented locally; not pushed, reviewed, merged or deployed.
+
 Goal: make preview authoritative by using the same resolver as run execution.
 
 Route:
@@ -243,14 +246,11 @@ interface RunPolicyPreviewResponse {
 
 Files:
 
-- `packages/contracts/src/index.ts`
-- `packages/api-client/src/client.ts`
+- `packages/contracts/src/shared.ts`
+- `packages/api-client/src/endpoints/runs.ts`
 - `packages/daemon/src/features/runs/routes.ts`
 - `packages/daemon/src/server/router.ts`
-- `apps/web/src/api/runs.ts`
-- `apps/web/src/api.ts`
-- `apps/web/e2e/api-adapters.spec.ts`
-- `packages/daemon/test/approval-policy-run.test.mjs`
+- `packages/daemon/test/run-policy-preview.test.ts`
 
 Work:
 
@@ -267,6 +267,11 @@ Verification:
 - Endpoint returns 400 for unsupported modes or malformed approval profiles.
 - Endpoint has no side effects in store counts.
 - Full access preview marks confirmation required.
+
+Local evidence on 2026-11-18: the two HTTP regression tests pass; Contracts and Core builds,
+API Client typecheck, Daemon production/test typecheck and Daemon `build:ci` pass. The existing
+Rust `jpeg-decoder` `asmjs` check-cfg warning remains unrelated. Web UI integration and hosted
+CI/merge are still open.
 
 ## Slice 6: Run Snapshot And Audit Polish
 

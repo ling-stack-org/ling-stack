@@ -1,7 +1,7 @@
 # Conversation Media Generation Tools Implementation Plan
 
-Status: active implementation plan
-Date: 2026-08-11
+Status: source implementation complete for the recorded batches; real Provider, browser and packaged acceptance remain open
+Date: 2026-11-17
 Owning contract: [Conversation Media Generation Tools](conversation-media-generation-tools.md)
 
 ## Scope
@@ -282,6 +282,28 @@ Runner Pi 增加：
 - WorkUnit 表已有关联列，不新增数据库 migration。
 - API client 从 Contracts 获取新增类型，不复制 DTO。
 - 旧媒体任务、媒体生产项目、场景和工作流不迁移、不删除、不重写。
+
+## Current implementation evidence
+
+The recorded Core, Daemon and Runner-Pi batches are implemented on
+`codex/remaining-work-implementation`. The source provides one target inventory
+and tool-registration path, explicit and workspace-default target resolution,
+durable display snapshots, one child WorkUnit per conversation tool call,
+paid-task idempotency, cancellation, explicit retry, provider/workflow submission
+coalescing, and restart-safe projection/recovery.
+
+Focused validation on 2026-11-17:
+
+```text
+Core media-generation-routing: 3/3 passed
+Daemon conversation-media-generation: 25/25 passed
+Runner-Pi media-generation-extension: 6/6 passed
+```
+
+These results are local source and fixture evidence. Real paid Provider behavior,
+browser rendering across the three surfaces, cost/approval review, signed package
+acceptance and clean-host recovery remain release gates. They do not authorize a
+paid Provider call or imply that the branch is merged or deployed.
 
 ## Validation Order
 
