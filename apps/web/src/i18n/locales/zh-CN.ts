@@ -1,4 +1,6 @@
 export const zhCN = {
+  "Ling temporarily unlocks your session behind protected screens. Local input stops control and relocks the computer.": "Ling 会在屏幕遮罩保护下临时解锁当前会话。本机输入会停止控制并重新锁定电脑。",
+  "The locked-control state could not be refreshed. Authorization is unavailable until it can be checked.": "无法刷新锁定控制状态。状态核验恢复前，暂时无法授权。",
     "Retrying automatically...": "正在自动重试...",
     "Model response failed": "模型回复失败",
     "Response failed": "回复失败",

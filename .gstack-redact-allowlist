@@ -21,3 +21,8 @@ http://user:secret@localhost:4234
 # packages/contracts/test/desktop-browser.test.ts:18
 https://user:secret@example.com
 https://user:secret@example.com",
+
+# Negative Locked Use MCP endpoint fixture; URL credentials are rejected before
+# any connection and this loopback endpoint is never contacted.
+# apps/desktop/tests/locked-use-validation-transport.test.ts:41
+http://user:password@127.0.0.1

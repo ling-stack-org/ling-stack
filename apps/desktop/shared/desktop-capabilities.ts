@@ -218,6 +218,14 @@ export interface ComputerControlDesktopCapability {
   readonly platform: "macos" | "windows";
   requestPermissions(): Promise<DesktopCommandResult>;
   openPermissionSettings(permission: ComputerControlPermissionKind): Promise<DesktopCommandResult>;
+  getLockedComputerControlState(): Promise<LockedComputerControlDesktopState>;
+  authorizeLockedComputerControl(): Promise<DesktopCommandResult>;
+  revokeLockedComputerControl(): Promise<DesktopCommandResult>;
+}
+
+export interface LockedComputerControlDesktopState {
+  readonly projection: import("@ling-stack/contracts").LockedComputerControlProjectionV1;
+  readonly activeTaskAvailable: boolean;
 }
 
 export interface LockedTaskContinuationDesktopCapability {

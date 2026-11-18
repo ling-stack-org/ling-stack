@@ -4,6 +4,10 @@
 
 **Status:** Accepted for macOS and Windows Desktop.
 **Updated:** 2026-07-31.
+
+**Darwin extension:** [macOS protected Computer Use](macos-locked-use.md) defines
+the separately installed Locked Use backend. The policy below remains the
+default until that backend has exact-build native acceptance.
 **Supersedes:** the fixed always-continue task policy at this same path. It does not restore
 the superseded proposal to control the screen while locked.
 
