@@ -21,9 +21,16 @@ Mixed changes union their affected packages and required lanes.
 | Verified package-local Node/TypeScript validation migration with unchanged production metadata, build scripts and hooks | Complete owner tests/typecheck and dependency policy; shared test-support consumers remain selected |
 | The fixed Office/codesign source-review JSON records | Daemon build closure and macOS publication contracts; no unrelated product tests/typechecks |
 | Dependency-security regression tests | Owning package plus dependency policy |
+| Verified changes to `VERSION` and the root manifest's `version` field | Web build, its consumers, and checks for other changed inputs |
 | Root manifest or TypeScript/build configuration, lockfile, workspace configuration, patches, CI workflows/scripts, unknown paths | Full regression |
 | New, deleted, renamed, or unverifiable package identity, or unrecognized script changes | Full regression |
 | `full-ci`, manual dispatch, daily schedule | Full regression |
+
+The classifier reads root version inputs from the PR's comparison trees. It
+narrows only when `VERSION` and `package.json.version` agree in the candidate,
+the version is valid, and the rest of the root manifest is identical. Missing
+or mismatched values retain full scope. Desktop version inputs follow the
+normal package graph and Desktop release validation.
 
 Package manifests are compared with the base checkout before narrowing. The
 directory, name, test/typecheck entry presence and complete scripts fingerprint
@@ -60,8 +67,9 @@ daemon-only test changes have no Linux unit entry. A Daemon change set made only
 of directly edited test entrypoints follows the platform manifest: Linux-only
 edits plan only the Linux suite and Darwin-only edits plan only the Darwin suite.
 Source, shared fixture, validation-import, unknown-path and full-scope changes
-retain both Daemon platforms. Daemon shards and Linux restricted-command contracts
-remain coupled to daemon selection. The standalone
+retain both Daemon platforms. Linux restricted-command contracts follow Linux
+Daemon selection; a Darwin-only test edit doesn't select the Linux contract.
+The standalone
 macOS helper smoke is selected only for the explicit native sandbox/Seatbelt
 surface; unknown paths and full-scope inputs still select it. The exact
 `native/office-local/reviewed-packaged-source-v1.json` and
@@ -149,8 +157,12 @@ a requested package via `--if-present`.
   and signal-shutdown regression fixtures also run in that phase so process and
   repository lifecycles do not overlap with other macOS files. All files retain their watchdogs and original
   test cases.
+- The macOS Daemon shards use an exact codec cache keyed by sources, build
+  scripts, dependencies, architecture, and toolchain. They verify the
+  executable and notices before testing. On a miss each shard builds locally;
+  only the first Darwin shard on the default branch can publish the cache.
 - Linux restricted-command contracts and real macOS native smoke remain separate
-  lanes. The Linux contract is selected with Daemon; the standalone macOS smoke
+  lanes. The Linux contract is selected with the Linux Daemon suite; the standalone macOS smoke
   follows the explicit native sandbox/Seatbelt path map. Full-scope runs retain
   both lanes, and unknown paths fall back to full scope. The manifest's disjoint
   union must equal fresh daemon discovery; new, missing, duplicated or stale
@@ -176,8 +188,13 @@ a requested package via `--if-present`.
   pinned by version and digest, with browsers and OS dependencies preinstalled.
   The workflow contract checks its version against Web's Playwright dependency;
   the job does not run apt or install browsers. Playwright execution
-  does not delay the shared build artifact. The aggregate requires this lane when
-  Web is selected and rejects failure, cancellation, missing or unexpected skips.
+  does not delay the shared build artifact. Mapped feature changes select the
+  corresponding specs. Shared, unknown, or full-scope inputs retain the common
+  QA, Companion and conversation-summary tests. Added and edited specs run in
+  production when already in the smoke plan, or on Vite dev for spec-only
+  coverage including HTML harnesses. Specs that require local input are listed
+  separately in the scope report. The aggregate requires the selected Web
+  job to succeed.
 - Framework assurance: selected complete-tier runs add an Ubuntu / Node
   22.22.1 lane for the zero-model offline tests, frozen controls and real external
   SDK consumer. It checks out complete history and owns fresh serial builds and
