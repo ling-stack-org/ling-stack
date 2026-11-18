@@ -68,7 +68,8 @@ export function planWebSmoke({ files, full = false }) {
 
 /** @param {string} file */
 function exactPattern(file) {
-  return file.replace(/[.]/gu, "\\.") + "$";
+  const escapedPath = resolve(web, file).replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  return `^${escapedPath}$`;
 }
 
 /** @param {ReturnType<typeof planWebSmoke>} plan @param {boolean} [listOnly] */
