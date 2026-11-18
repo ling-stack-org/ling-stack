@@ -652,3 +652,6 @@ cd9464909c2ef9eb78efa14d5143a608815b3db6:packages/core/test/support/workflow-ste
 bc10d5bae302476fbc3afd24f3e75e8e48a63081:packages/core/test/support/workflow-step-admission-fixture.mjs:generic-api-key:159
 6cb556893412f40de4279fd5731798af22315b24:packages/daemon/test/conversation-summary-coordinator.test.mjs:generic-api-key:426
 caebbdfa25927086fbda5f9b59973b287006c136:packages/daemon/test/conversation-summary-coordinator.test.mjs:generic-api-key:426
+# Synthetic conversation summary redaction fixture.
+bba53def82ff0278856722e793b854928e1b161d:packages/daemon/test/conversation-summary-coordinator.test.mjs:generic-api-key:426
+49c4b9be2e370fd3bf154af5a47b148033b73245:packages/daemon/test/conversation-summary-coordinator.test.mjs:generic-api-key:426
