@@ -6,7 +6,7 @@ and the dated reviews below retain their historical evidence and scope.
 
 ## Assessment and Locked Use integration
 
-The record binds the packaging sources at `faa3a1220b63cf56dd734f8830dc053bd30a82a9`.
+The record binds the packaging sources at `cc25ca94429a26110f2ec6969434aeea6121dbc8`.
 The 1,893 fixed packaging inputs are the union of the assessment closure
 recorded at `109f54905` and the Locked Use integration at `7e1242c7b`.
 The six Locked Use entries retain the mainline digests. All 15 Office native
@@ -15,15 +15,16 @@ inputs keep their existing digests.
 Inputs unique to the integrated tree are the 55 catalogs generated from the
 combined message sources, the fixed input list, the two product version
 sources, shared redaction, the Chrome pairing route and controller, and the
-daemon router and loopback predicate. Pairing requires a directly connected
+daemon router and loopback predicate, and the assessment Diff capture. Pairing requires a directly connected
 loopback client and an allowed Chrome extension before preflight or pairing;
 bearer authentication still applies when configured. The redaction inputs
-preserve public status and counts while removing credential values.
+preserve public status and counts while removing credential values. Capture
+excludes files when redaction changes Diff line anchors.
 
 The record SHA-256 is
-`efc457bdc42489e36a941b0249b894a5e9c14ac90cf95d99904b4cbefc66b89c`.
+`27ebf5b1f0c9d5d498072b655cc050c440ca4f701b4e82770decdbc41d0ec4d7`.
 The fixed-order packaging aggregate is
-`69cb97905fae3747bd9056ca149c1670346e8c0ed92013c845b9612ba5681db8`;
+`a9de11c34e534c6336c2a00a2a463e73c94bdf292662ee5e6bf80c7cb09954bc`;
 the unchanged Office native aggregate is
 `9c5f6a1a05fe63ab96de941432ec13166af8974ec52730934d5ac348c41a854e`.
 The schema, review identity, approval and trust fields, runtime, toolchains,

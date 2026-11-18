@@ -1886,7 +1886,7 @@
     "packages/daemon/src/features/code-assessments/routes.ts": "90e42b15d0d9f266e94fadbf921f9b157723edb7a2224883e9144d7546c7f1fa",
     "packages/daemon/src/features/code-assessments/run-policy.ts": "cea647f99462ee86516bc52fa9ec9700a35c1d5c2ef05baf90681a052cb5e109",
     "packages/daemon/src/features/code-assessments/service.ts": "4711e54f974d08be54afd59d20983fd525e5ee91200f7f034427b9bb8c9ebb27",
-    "packages/daemon/src/features/code-assessments/snapshot.ts": "3e794b1eba4a32335b236547f42244f63ef5acef15a0d14dae9f2581bca3ebbc",
+    "packages/daemon/src/features/code-assessments/snapshot.ts": "cda52b46ba271088a768b67d8f0f7da4ce3f27cda6a30162c9ccdfddc3fe8894",
     "packages/core/src/automation-event-source.ts": "ee3184c0c8e04db9348c459c2076891e19b5c1bd5e3b9e1d963ded68c3e61f9a",
     "packages/core/src/automation-event-types.ts": "0b845252ce3285f792f80801f3406ef9f3742ba30dc350d5ae735e87875100a4",
     "packages/core/src/goal-supervision.ts": "be0eee371fb4d32868fb8745ecc11009cf20a57b13698df3f94eb5f2afd6d0fe",
