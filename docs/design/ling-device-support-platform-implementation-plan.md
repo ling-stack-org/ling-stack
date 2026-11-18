@@ -46,10 +46,11 @@ validation and the boundary of what remains unverified.
 | D6 | [ ] | Mobile device-task facade | Paired Mobile can inspect, approve, follow, and revoke a device task | Remote protocol fixtures and real-device acceptance |
 | D7 | [ ] | Playbooks and operator evidence | Common configuration/repair flows are explainable and replayable | Playbook fixtures and evidence review |
 | D8 | [ ] | Additional ecosystems | Each added adapter meets the same contract and support gates | Per-adapter simulator and field acceptance |
+| D9 | [ ] | Standalone Mobile execution | One phone restores a supported BLE device's network connection with no PC or Gateway and verifies the result | Shared contract fixtures and real phone/device acceptance |
 
 ## D0: Design baseline
 
-Completed in this documentation change.
+Recorded in [PR #730](https://github.com/ling-stack-org/ling-stack/pull/730).
 
 - [x] Define product scope and non-goals.
 - [x] Separate client, daemon, model runner, capability broker, adapter, transport, and
@@ -61,8 +62,7 @@ Completed in this documentation change.
 - [x] Define Home Assistant, PC, vehicle, and generic transport extension points.
 - [x] Add this plan to the design index and implementation-status index.
 
-Evidence: this PR and the linked design document. No runtime implementation or device
-acceptance is claimed by D0.
+D0 covers the design and the implementation plan.
 
 ## D1: Shared device contracts and adapter SDK
 
@@ -178,8 +178,8 @@ acceptance is claimed by D0.
 - [ ] Add mobile read-only device list, capability, task status, and evidence projection.
 - [ ] Add eligible approval and revoke flows with server-owned policy ceilings.
 - [ ] Keep raw commands, secrets, broad settings, and unrestricted execution out of Mobile.
-- [ ] Preserve PC as the authority for durable device tasks until a separate mobile-only
-  execution design is accepted.
+- [ ] Keep the daemon as the execution owner for tasks accessed through the Remote
+  Gateway. [D9](#d9-standalone-mobile-execution) covers tasks owned by the phone.
 
 ### Exit evidence
 
@@ -223,13 +223,41 @@ For each adapter, record its own contract, simulator, permissions, support matri
 version, real-device evidence, and known unsupported models. No adapter is complete based
 only on a successful install or a model response.
 
+## D9: Standalone Mobile execution
+
+### Scope
+
+- [ ] Reuse D1 device contracts and D3 task, approval, and recovery rules in a phone
+  execution module that works without Gateway pairing. D6 and D9 have independent
+  acceptance gates.
+- [ ] Add native BLE connection and capability discovery for one documented device
+  profile, including OS permission and device authorization checks.
+- [ ] Run one setup playbook that reconnects a supported smart home device to Wi-Fi
+  after explicit user confirmation. Verify that the device comes online.
+- [ ] Persist approval, action attempts, and redacted verification evidence on the
+  phone. Preserve an unknown result after interruption until state can be checked.
+- [ ] Record the tested phone OS, device model and firmware, and transport. Each later
+  phone platform or USB integration gets its own acceptance entry.
+
+### Exit evidence
+
+- Shared contract fixtures for capability checks, approval, and interpretation of
+  verified and unknown results.
+- A real phone and supported device complete the BLE flow with no PC or Gateway
+  available. The phone journal shows the approval, action and verified result.
+- On the accepted phone and device combination, denied permission, lost connection,
+  and app resume leave the task in an accurate state and do not repeat a write.
+- Evidence states whether the run used the local playbook or a model service and
+  identifies the phone OS, adapter, and device firmware. Other OS or transport coverage
+  requires its own evidence.
+
 ## Per-slice evidence ledger
 
 Update this table in the same PR that changes a slice status.
 
 | Slice | PR / commit | Validation command or run | Evidence link | Result boundary | Remaining work |
 | --- | --- | --- | --- | --- | --- |
-| D0 | This PR | Documentation and link checks | This PR | Architecture and tracking only | All runtime slices |
+| D0 | #730 | Documentation and link checks | [PR #730](https://github.com/ling-stack-org/ling-stack/pull/730) | Architecture and tracking only | All runtime slices |
 | D1 | — | — | — | Not started | Contracts and SDK |
 | D2 | — | — | — | Not started | Registry and broker |
 | D3 | — | — | — | Not started | Task recovery and evidence |
@@ -238,6 +266,7 @@ Update this table in the same PR that changes a slice status.
 | D6 | — | — | — | Not started | Mobile facade |
 | D7 | — | — | — | Not started | Playbooks |
 | D8 | — | — | — | Not started | Additional ecosystems |
+| D9 | — | — | [Design](ling-device-support-platform.md#111-standalone-mobile-execution) | Design recorded, implementation not started | Standalone BLE execution and device acceptance |
 
 ## Definition of platform completion
 
@@ -246,6 +275,8 @@ The platform is not complete until:
 - at least one non-PC adapter and one PC adapter pass their contract and real-device
   acceptance gates;
 - Mobile and PC show the same durable task state and evidence for a paired task;
+- at least one supported recovery task completes on a phone with no PC or Gateway,
+  with verification and local evidence;
 - read-only, reversible, mutating, and critical actions have distinct policy behavior;
 - adapter and capability versions are preserved in task history;
 - a failed or disconnected operation cannot silently repeat a potentially mutating action;
