@@ -49,11 +49,15 @@ test('BG-01/02 strict state, IDs, bounded predecode and animated containers',()=
 test('BG-05/06/07/08 opt-in surface policy and conservative material',()=>{
  const registry=new PresentationProfileRegistry();
  assert.equal(registry.resolveSurface('ling-standard','home',{userBackground:true,viewportWidth:1440}).surfaceRecipe,'translucent');
- for(const surface of ['settings','management','diagnostics','approvals','media-canvas']) {
+ for(const surface of ['settings','diagnostics','approvals']) {
   const policy=registry.resolveSurface('ling-standard',surface,{userBackground:true,viewportWidth:1440});
   assert.notEqual(policy.surfaceRecipe,'translucent');
-  assert.equal(policy.artwork,'ambient');
+  assert.equal(policy.artwork,'off');
  }
+ assert.equal(registry.resolveSurface('ling-standard','media-canvas',{userBackground:true,viewportWidth:1440}).surfaceRecipe,'translucent');
+ assert.equal(registry.resolveSurface('ling-standard','media-canvas',{userBackground:true,viewportWidth:1440}).artwork,'ambient');
+ assert.notEqual(registry.resolveSurface('ling-standard','management',{userBackground:true,viewportWidth:1440}).surfaceRecipe,'translucent');
+ assert.equal(registry.resolveSurface('ling-standard','management',{userBackground:true,viewportWidth:1440}).artwork,'off');
  assert.equal(registry.resolveSurface('ling-standard','management',{userBackground:true,ambientWorkspace:true,viewportWidth:1440}).surfaceRecipe,'translucent');
  for(const context of [{viewportWidth:1179},{forcedColors:true},{reducedTransparency:true}]) {
   const policy=registry.resolveSurface('ling-standard','home',{userBackground:true,...context});

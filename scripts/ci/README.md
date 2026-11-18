@@ -104,7 +104,11 @@ lane. Before the report is published, `scope-audit.mjs` compares the normal
 selector with a forced full-scope classification for the same changed paths. It
 fails closed if a selected package, platform, or lane is outside that full
 scope, or if a documentation scope selects product work. This is a read-only
-selector audit; it does not turn the full regression into a skipped test.
+selector audit; it does not turn the full regression into a skipped test. The
+scope job also plans the selected and forced-full test suites and fails closed
+if any selected suite, platform, matrix lane, or test file is absent from the
+forced-full plan. The report retains both the selected-file count and the
+forced-full plan for review.
 
 Other workflows retain their existing boundaries: installer/model-cache
 contracts use path filters covering their actual imports, installer assets and
@@ -131,7 +135,7 @@ a requested package via `--if-present`.
 - Other packages and Web checks: one Linux matrix entry only when at least one
   such package is selected, excluding core and daemon because their complete
   discovery runs in their own entries.
-- Daemon: [the platform manifest](daemon-test-platforms.json) assigns 509 portable
+- Daemon: [the platform manifest](daemon-test-platforms.json) assigns 519 portable
   files to eight Linux shards without Core or six alongside Core, with two workers,
   and 166 native/platform files to
   four `macos-26` shards with three workers. Full-scope runs add the separate
@@ -312,7 +316,9 @@ the current changes have passed complete hosted CI.
 ## Timing Telemetry
 
 The independent `timing-telemetry` job runs after `quality` and preserves a
-best-effort `ci-telemetry` artifact for complete and preview runs. The mandatory
+best-effort `ci-telemetry` artifact for complete and preview runs. It has an
+eight-minute bounded window and retries each Actions API request three times
+before marking the observation unavailable. The mandatory
 quality gate never depends on telemetry, so collection, download, parsing,
 upload, or telemetry job failures cannot change that gate. Available shard
 reports are downloaded even when the quality gate fails. The artifact retains
@@ -359,6 +365,8 @@ node scripts/ci/classify-scope.mjs --files='["packages/core/src/index.ts"]' --fo
 node scripts/ci/scope-audit.mjs \
   --scope=.codex-artifacts/ci/scope.json \
   --full-scope=.codex-artifacts/ci/full-scope.json \
+  --plan=.codex-artifacts/ci/test-plan.json \
+  --full-plan=.codex-artifacts/ci/full-test-plan.json \
   --execution-tier=complete \
   --output=.codex-artifacts/ci/scope-report.md
 ```

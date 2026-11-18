@@ -132,7 +132,7 @@ function parseBehaviorPolicy(value: Record<string, unknown>) {
   const cooldownMs = readOptionalNumber(value, "cooldownMs");
   const quietHours = value.quietHours;
   let parsedQuietHours: readonly [number, number] | undefined;
-  if (quietHours !== undefined) {
+  if (quietHours !== undefined && quietHours !== null) {
     if (!Array.isArray(quietHours) || quietHours.length !== 2 || quietHours.some((hour) => typeof hour !== "number")) {
       throw new Error("behaviorPolicy.quietHours must contain exactly two numbers");
     }
@@ -141,7 +141,7 @@ function parseBehaviorPolicy(value: Record<string, unknown>) {
   return {
     ...(proactiveEnabled === undefined ? {} : { proactiveEnabled }),
     ...(cooldownMs === undefined ? {} : { cooldownMs }),
-    ...(parsedQuietHours === undefined ? {} : { quietHours: parsedQuietHours }),
+    ...(quietHours === null ? { quietHours: null } : parsedQuietHours === undefined ? {} : { quietHours: parsedQuietHours }),
   };
 }
 

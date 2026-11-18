@@ -2,13 +2,14 @@ import { LockKeyhole } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useI18n } from "../../../i18n.js";
 import { Badge, DataRow, InlineFeedback, Switch } from "../../../shared/ui/index.js";
+import { LockedComputerControlAuthorization } from "./LockedComputerControlAuthorization.js";
 
 /**
- * Keeps the non-visual task preference separate from the fixed Computer
- * Control boundary: the preference can pause Agent work, but it can never
- * authorize input or capture while the system session is locked.
+ * The non-visual task preference does not grant capture or input authority.
  */
-export function LockAwareComputerControlSection(): React.JSX.Element {
+export function LockAwareComputerControlSection({ computerControlReady = false }: {
+  readonly computerControlReady?: boolean;
+}): React.JSX.Element {
   const { t } = useI18n();
   const desktopCapability = typeof window === "undefined"
     ? undefined
@@ -114,24 +115,7 @@ export function LockAwareComputerControlSection(): React.JSX.Element {
           {t("Ling could not apply the locked-task preference. The saved setting was reloaded.")}
         </InlineFeedback>
       ) : null}
-      <DataRow
-        identity={(
-          <span className="computer-control-row-copy">
-            <strong>{t("Computer Control pauses")}</strong>
-            <small>{t("Screen capture and input stop. Ling never interacts with the lock screen, login window, password fields, or secure desktop.")}</small>
-          </span>
-        )}
-        status={<Badge tone="warning">{t("Paused while locked")}</Badge>}
-      />
-      <DataRow
-        identity={(
-          <span className="computer-control-row-copy">
-            <strong>{t("Control resumes after unlock")}</strong>
-            <small>{t("Ling rechecks permissions, the interactive session, and a fresh Driver generation before restoring control.")}</small>
-          </span>
-        )}
-        status={<Badge tone="info">{t("Resumes automatically")}</Badge>}
-      />
+      <LockedComputerControlAuthorization computerControlReady={computerControlReady} />
     </section>
   );
 }

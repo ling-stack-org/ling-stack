@@ -241,15 +241,27 @@ test("renders six loading rows and keeps 100 plugins in an internal scroll owner
   const metrics = await page.evaluate(() => {
     const body = document.querySelector<HTMLElement>(".plugin-table-body");
     const table = document.querySelector<HTMLElement>(".plugin-table");
+    const headerCells = [...document.querySelectorAll<HTMLElement>(".plugin-table-header th")];
+    const firstRowCells = [...document.querySelectorAll<HTMLElement>(".plugin-table-row:not(.plugin-table-skeleton-row):first-of-type td")];
+    const columnAlignment = headerCells.map((headerCell, index) => {
+      const rowCell = firstRowCells[index];
+      if (!rowCell) return Number.POSITIVE_INFINITY;
+      return Math.max(
+        Math.abs(headerCell.getBoundingClientRect().left - rowCell.getBoundingClientRect().left),
+        Math.abs(headerCell.getBoundingClientRect().right - rowCell.getBoundingClientRect().right),
+      );
+    });
     return {
       bodyOverflow: (body?.scrollHeight ?? 0) - (body?.clientHeight ?? 0),
       documentOverflowX: document.documentElement.scrollWidth - document.documentElement.clientWidth,
       tableOverflowX: (table?.scrollWidth ?? 0) - (table?.clientWidth ?? 0),
+      maxColumnAlignmentDelta: Math.max(...columnAlignment),
     };
   });
   expect(metrics.bodyOverflow).toBeGreaterThan(0);
   expect(metrics.documentOverflowX).toBeLessThanOrEqual(1);
   expect(metrics.tableOverflowX).toBeLessThanOrEqual(1);
+  expect(metrics.maxColumnAlignmentDelta).toBeLessThanOrEqual(1);
   await assertNoBrowserFailures(page);
 });
 
@@ -268,6 +280,8 @@ test("keeps CUA setup and Windows repair semantics separate", async ({ page }) =
 });
 
 test("evidence: captures real Vite Plugin Manager states after functional gates", async ({ page }) => {
+  // Evidence capture includes delayed refresh failure, retry, filtering, and screenshot writes.
+  test.setTimeout(120_000);
   const plugins = createCatalog();
   const fixture = await setupPluginManager(page, plugins);
   await page.setViewportSize({ width: 1440, height: 960 });
@@ -474,8 +488,11 @@ async function setupPluginManager(
 async function openPluginManager(page: Page, waitForRows = true): Promise<void> {
   await page.goto("/");
   const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
-  await navigation.getByRole("button", { name: "Engineering", exact: true }).click();
-  await navigation.getByRole("button", { name: "Plugin Manager" }).click();
+  const pluginManager = navigation.getByRole("button", { name: /^(Plugin Manager|插件管理)$/u });
+  if (await pluginManager.count() === 0) {
+    await navigation.getByRole("button", { name: /^(Engineering|工程)$/u }).click();
+  }
+  await navigation.getByRole("button", { name: /^(Plugin Manager|插件管理)$/u }).click();
   await expect(page.locator(".plugin-manager-page .settings-plugin-manager")).toBeVisible();
   if (waitForRows) await expect(page.locator(".plugin-table-row").first()).toBeVisible();
 }
@@ -540,7 +557,7 @@ function acknowledgeExpectedPluginFailure(page: Page): void {
 }
 
 async function dismissErrorToast(page: Page): Promise<void> {
-  const toast = page.locator('.ling-ui-toast[data-tone="error"]');
+  const toast = page.locator('.ling-ui-toast[data-tone="error"][data-scope^="plugin:"]').last();
   await expect(toast).toBeVisible();
   await toast.locator(".ling-ui-toast-close").click({ force: true });
   await expect(toast).toHaveCount(0);

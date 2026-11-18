@@ -53,17 +53,15 @@ export class PresentationProfileRegistry {
     }
 
     if (context.userBackground) {
-      // The window background remains continuous across every route. Dense
-      // management surfaces keep their semantic content panels opaque while
-      // still allowing the themed backdrop and shared chrome to show through.
+      // Keep the backdrop on ordinary workspaces and media production while
+      // dense settings, diagnostics and approval routes stay solid.
       const ambientSurface = (
-        ["home", "sidebar", "conversation", "channel"].includes(surface)
+        ["home", "sidebar", "conversation", "channel", "media-canvas"].includes(surface)
         || (surface === "management" && context.ambientWorkspace === true)
       ) && (context.viewportWidth === undefined || context.viewportWidth >= MINIMUM_PRESENTATION_WIDTH);
-      const backgroundVisible = context.viewportWidth === undefined || context.viewportWidth >= MINIMUM_PRESENTATION_WIDTH;
       return Object.freeze({
         surfaceRecipe: ambientSurface ? "translucent" : policy.surfaceRecipe === "domain" ? "domain" : "solid",
-        artwork: backgroundVisible ? "ambient" : "off",
+        artwork: ambientSurface ? "ambient" : "off",
         decorations: false,
       });
     }

@@ -184,7 +184,9 @@ export function SidebarNavigation({
   }
 
   return (
-    <aside className={channelDrawer ? "left-nav channel-left-drawer" : "left-nav"} aria-label={t("Sidebar display")}>
+    <aside className={channelDrawer
+      ? `left-nav channel-left-drawer${activeSidebarTarget === "media" ? " media-sidebar" : ""}`
+      : "left-nav"} aria-label={t("Sidebar display")}>
       <div className="sidebar-fixed-top">
         <div className="sidebar-brand-row">
           <SidebarTooltip label={t("New conversation")}>

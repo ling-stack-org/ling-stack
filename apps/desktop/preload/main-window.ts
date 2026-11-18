@@ -45,6 +45,14 @@ const platform = desktopPlatform();
 
 const capabilities: LingDesktopCapabilities = {
   browser: createDesktopBrowserCapabilities(ipcRenderer),
+  companionWindow: {
+    open: (cwd) => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.companionWindowOpen, cwd),
+    onSettingsRequested: (listener) => {
+      const wrapped = () => listener();
+      ipcRenderer.on(DESKTOP_IPC_CHANNELS.companionSettingsRequested, wrapped);
+      return () => ipcRenderer.off(DESKTOP_IPC_CHANNELS.companionSettingsRequested, wrapped);
+    },
+  },
   platform,
   ...(productVersion ? { productVersion } : {}),
   daemonBaseUrl,
@@ -216,6 +224,15 @@ const capabilities: LingDesktopCapabilities = {
               DESKTOP_IPC_CHANNELS.computerControlOpenPermissionSettings,
               permission,
             ),
+          getLockedComputerControlState: () => ipcRenderer.invoke(
+            DESKTOP_IPC_CHANNELS.computerControlLockedState,
+          ),
+          authorizeLockedComputerControl: () => ipcRenderer.invoke(
+            DESKTOP_IPC_CHANNELS.computerControlLockedAuthorize,
+          ),
+          revokeLockedComputerControl: () => ipcRenderer.invoke(
+            DESKTOP_IPC_CHANNELS.computerControlLockedRevoke,
+          ),
         },
       }
     : {}),

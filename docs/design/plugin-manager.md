@@ -489,6 +489,10 @@ Plugin Manager.
   uninstall cleanup, and compatibility checks.
 - Consider marketplace only after the security model has production evidence.
 
+## 2026-11-17 P0 表格与壳层视觉收口
+
+Plugin Manager 继续使用紧凑 Header、筛选和内部滚动表格。无滚动内容时，表格正文不预留固定滚动条宽度，右侧铺满可用空间；只有实际溢出时才出现原生滚动条。左侧导航底部操作区不增加额外横线，避免用重复边界制造视觉噪声。
+
 ## Test Plan
 
 Required tests for stage 1:

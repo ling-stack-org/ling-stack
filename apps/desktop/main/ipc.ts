@@ -25,6 +25,7 @@ import { registerExecutionEngineIpc } from "./execution-engines/ipc.js";
 import { createHostExecutionEngineClient } from "./execution-engines/client.js";
 import { registerLocalFileIpc } from "./local-files/ipc.js";
 import { registerLocalServiceIpc } from "./local-services.js";
+import { registerLockedControlIpc } from "./locked-computer-control/ipc.js";
 
 const MAX_HOST_OBSTACLES = 128;
 const MAX_DESKTOP_COORDINATE = 1_000_000;
@@ -42,10 +43,13 @@ export function registerDesktopIpc(input: {
     | "openComputerControlPermissionSettings"
     | "getLockedTaskContinuationPreferences"
     | "setContinueTasksWhileLocked"
+    | "getLockedComputerControlState"
+    | "authorizeLockedComputerControl"
     | "revokeLockedComputerControl"
   >;
   readonly computerUse: ComputerUsePreviewCoordinator;
   readonly getMainWindow: () => BrowserWindow | undefined;
+  readonly trustedDocumentUrl?: string;
   readonly navigationIntents?: DesktopNavigationIntentStore;
   readonly themeStore?: DesktopRendererThemeStore;
   readonly mobileAccess?: DesktopMobileAccessCapabilities;
@@ -56,6 +60,10 @@ export function registerDesktopIpc(input: {
   readonly ipcMainImpl?: Pick<IpcMain, "handle" | "on" | "removeHandler" | "removeAllListeners">;
 }): () => void {
   const desktopIpcMain = input.ipcMainImpl ?? resolveIpcMain();
+  const unregisterLockedControl = registerLockedControlIpc({
+    ipcMain: desktopIpcMain, runtime: input.runtime,
+    getMainWindow: input.getMainWindow, trustedDocumentUrl: input.trustedDocumentUrl,
+  });
   const unregisterExecutionEngines = input.executionEngines ? registerExecutionEngineIpc({
     ipcMainImpl: desktopIpcMain, getMainWindow: input.getMainWindow,
     trustedDocumentUrl: input.executionEngines.trustedDocumentUrl,
@@ -503,6 +511,7 @@ export function registerDesktopIpc(input: {
     );
   });
   return () => {
+    unregisterLockedControl();
     unregisterLocalServices?.();
     unregisterLocalFiles?.();
     unregisterExecutionEngines?.();
