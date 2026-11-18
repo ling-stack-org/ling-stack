@@ -1,13 +1,34 @@
 # Scoped macOS Development Packaging Review
 
-Current source prerequisite: [Companion and native runtime review](#companion-and-native-runtime-review-2026-11-17).
+Current source prerequisite: [Assessment and Locked Use integration](#assessment-and-locked-use-integration).
 The [2026-11-03 dependency review](../../docs/release/macos-source-review-2026-11-03.md)
 and the dated reviews below retain their historical evidence and scope.
 
-The merged record carries the reviewed Companion closure plus six Locked Use
-build and validation inputs from the protected-control lane, for 1,878 fixed
-packaging inputs in total. The Companion review count below remains scoped to
-its 1,872-input subset.
+## Assessment and Locked Use integration
+
+The record binds the packaging sources at `faa3a1220b63cf56dd734f8830dc053bd30a82a9`.
+The 1,893 fixed packaging inputs are the union of the assessment closure
+recorded at `109f54905` and the Locked Use integration at `7e1242c7b`.
+The six Locked Use entries retain the mainline digests. All 15 Office native
+inputs keep their existing digests.
+
+Inputs unique to the integrated tree are the 55 catalogs generated from the
+combined message sources, the fixed input list, the two product version
+sources, shared redaction, the Chrome pairing route and controller, and the
+daemon router and loopback predicate. Pairing requires a directly connected
+loopback client and an allowed Chrome extension before preflight or pairing;
+bearer authentication still applies when configured. The redaction inputs
+preserve public status and counts while removing credential values.
+
+The record SHA-256 is
+`efc457bdc42489e36a941b0249b894a5e9c14ac90cf95d99904b4cbefc66b89c`.
+The fixed-order packaging aggregate is
+`69cb97905fae3747bd9056ca149c1670346e8c0ed92013c845b9612ba5681db8`;
+the unchanged Office native aggregate is
+`9c5f6a1a05fe63ab96de941432ec13166af8974ec52730934d5ac348c41a854e`.
+The schema, review identity, approval and trust fields, runtime, toolchains,
+headers and signing are unchanged. These hashes bind source inputs for the
+existing review reader. They confer no build, signing or publication authority.
 
 ## Companion and native runtime review, 2026-11-17
 
