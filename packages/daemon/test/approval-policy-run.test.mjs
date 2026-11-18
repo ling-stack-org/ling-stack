@@ -5373,7 +5373,7 @@ test("artifact APIs list metadata and serve content from the artifacts root", as
       headers: { origin: "https://evil.example" },
     });
     assert.equal(crossOrigin.status, 403);
-    assert.equal((await crossOrigin.json()).error, "forbidden_origin");
+    assert.equal((await crossOrigin.json()).error, "local_service_forbidden");
 
     const content = await fetch(`${daemon.url}/artifacts/artifact_api_markdown/content?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(content.status, 200);

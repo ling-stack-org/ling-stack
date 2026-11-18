@@ -19,6 +19,12 @@ import type { LearningReviewStore } from "../learning-review-types.js";
 import { drainSkillDefinitionRevisionNotices } from "./sqlite/skill-definition-revision-store.js";
 import { SqliteWorkSummaryStore } from "./sqlite/work-summary-store.js";
 import { applyWorkSummaryMigration } from "./sqlite/work-summary-migration.js";
+import { SqliteCodeAssessmentStore } from "./sqlite/code-assessment-store.js";
+import { SqliteCodeAssessmentCommentsStore } from "./sqlite/code-assessment-comments.js";
+import type { CodeAssessmentCommentsStore } from "../code-assessment-comments.js";
+import { applyCodeAssessmentCommentsMigration } from "./sqlite/code-assessment-comments-migration.js";
+import { applyCodeAssessmentMigration } from "./sqlite/code-assessment-migration.js";
+import type { CodeAssessmentStore } from "../code-assessment-store.js";
 import { applyWorkspacePermissionMigration } from "./sqlite/workspace-permission-migration.js";
 import { applyRunnerIdMigration } from "./sqlite/runner-id-migration.js";
 import { existsSync } from "node:fs";
@@ -992,6 +998,8 @@ export class SqliteRunStore implements RunStore {
   private readonly channelIntentDecisions: SqliteChannelIntentDecisionStore;
   private readonly channelProposals: SqliteChannelProposalStore;
   private readonly workSummary: SqliteWorkSummaryStore;
+  private readonly codeAssessments: SqliteCodeAssessmentStore;
+  private readonly codeAssessmentComments: SqliteCodeAssessmentCommentsStore;
   private readonly channelAssets: SqliteChannelAssetStore;
   private readonly conversationAssets: SqliteConversationAssetStore;
   private readonly channelCollaborations: SqliteChannelCollaborationStore;
@@ -1521,6 +1529,8 @@ export class SqliteRunStore implements RunStore {
       },
     );
     this.workSummary = new SqliteWorkSummaryStore({ database: this.database });
+    this.codeAssessments = new SqliteCodeAssessmentStore({ database: this.database });
+    this.codeAssessmentComments = new SqliteCodeAssessmentCommentsStore({ database: this.database }, this.codeAssessments);
     this.channelAssets = new SqliteChannelAssetStore(
       { database: this.database },
       {
@@ -2146,6 +2156,18 @@ export class SqliteRunStore implements RunStore {
           hasMigration: (version) => this.hasMigration(version),
           recordMigration: (version, name) => this.recordMigration(version, name),
         });
+        if (!options.deferContinuityV2MigrationForTest) {
+          applyCodeAssessmentMigration({
+            database: this.database,
+            hasMigration: (version) => this.hasMigration(version),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
+          applyCodeAssessmentCommentsMigration({
+            database: this.database,
+            hasMigration: (version) => this.hasMigration(version),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
+        }
       });
     } catch (error) {
       this.database.close();
@@ -2629,6 +2651,20 @@ export class SqliteRunStore implements RunStore {
   detachWorkSummaryPullRequest(url: string): void {
     this.workSummary.detachPullRequest(url);
   }
+
+  createCodeAssessment(input: Parameters<CodeAssessmentStore["createCodeAssessment"]>[0]) {
+    return this.codeAssessments.createCodeAssessment(input);
+  }
+  getCodeAssessment(id: string) { return this.codeAssessments.getCodeAssessment(id); }
+  listCodeAssessments(input?: Parameters<CodeAssessmentStore["listCodeAssessments"]>[0]) { return this.codeAssessments.listCodeAssessments(input); }
+  bindCodeAssessmentRun(id: string, runId: string, now: string, phase?: Parameters<CodeAssessmentStore["bindCodeAssessmentRun"]>[3]) { return this.codeAssessments.bindCodeAssessmentRun(id, runId, now, phase); }
+  completeCodeAssessmentThreatModel(id: string, input: Parameters<CodeAssessmentStore["completeCodeAssessmentThreatModel"]>[1]) { return this.codeAssessments.completeCodeAssessmentThreatModel(id, input); }
+  advanceCodeAssessmentPhase(id: string, input: Parameters<CodeAssessmentStore["advanceCodeAssessmentPhase"]>[1]) { return this.codeAssessments.advanceCodeAssessmentPhase(id, input); }
+  recordCodeAssessmentFreshness(id: string, freshness: Parameters<CodeAssessmentStore["recordCodeAssessmentFreshness"]>[1]) { return this.codeAssessments.recordCodeAssessmentFreshness(id, freshness); }
+  finishCodeAssessment(id: string, input: Parameters<CodeAssessmentStore["finishCodeAssessment"]>[1]) { return this.codeAssessments.finishCodeAssessment(id, input); }
+  setCodeFindingDisposition(assessmentId: string, findingId: string, input: Parameters<CodeAssessmentStore["setCodeFindingDisposition"]>[2]) { return this.codeAssessments.setCodeFindingDisposition(assessmentId, findingId, input); }
+  createCodeAssessmentComment(assessmentId: string, findingId: string, input: Parameters<CodeAssessmentCommentsStore["createCodeAssessmentComment"]>[2]) { return this.codeAssessmentComments.createCodeAssessmentComment(assessmentId, findingId, input); }
+  listCodeAssessmentComments(assessmentId: string, findingId: string) { return this.codeAssessmentComments.listCodeAssessmentComments(assessmentId, findingId); }
 
   listLingThreads(options: ListLingThreadsOptions = {}): LingThread[] {
     return this.lingThreads.listLingThreads(options);

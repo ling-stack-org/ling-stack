@@ -1,4 +1,6 @@
 export * from "./runtime-paths.js";
+export * from "./code-assessment-store.js";
+export type * from "./code-assessment-comments.js";
 export * from "./automation-recurrence.js";
 export * from "./automation-monitor-types.js";
 export * from "./harness/common.js";

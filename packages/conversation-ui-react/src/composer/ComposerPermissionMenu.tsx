@@ -28,6 +28,8 @@ export interface ComposerPermissionMenuProps {
   readonly disabledReason?: string;
   readonly selectedPermissionLabel?: string;
   readonly menuLabel?: string;
+  /** Optional compatibility aliases for changing the authorization mode. */
+  readonly authorizationModeOptions?: readonly { readonly label: string; readonly onSelect: () => void }[];
   readonly onPresetChange: (preset: ConversationPermissionPreset) => void;
 }
 
@@ -38,6 +40,7 @@ export function ComposerPermissionMenu({
   onPresetChange,
   options = defaultConversationPermissionPresetOptions,
   preset,
+  authorizationModeOptions,
   selectedPermissionLabel = "Selected permission preset {label}",
 }: ComposerPermissionMenuProps): React.JSX.Element {
   const [open, setOpen] = useState(false);
@@ -107,6 +110,21 @@ export function ComposerPermissionMenu({
               </MenuRadioItem>
             );
           })}
+          {authorizationModeOptions?.map((option) => (
+            <MenuRadioItem
+              key={`authorization:${option.label}`}
+              value={`authorization:${option.label}`}
+              title={option.label}
+              onSelect={(event) => {
+                event.preventDefault();
+                option.onSelect();
+                setOpen(false);
+              }}
+            >
+              <Shield size={14} />
+              <span>{option.label}</span>
+            </MenuRadioItem>
+          ))}
           </MenuRadioGroup>
         </MenuContent>
       </Menu>

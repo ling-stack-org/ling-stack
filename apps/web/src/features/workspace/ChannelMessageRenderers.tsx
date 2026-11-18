@@ -194,6 +194,7 @@ function channelProtocolTimelineItem(
       title: item.record.title,
       meta: item.record.status,
       status: channelDecisionTimelineStatus(item.record.status),
+      actionBusy: options?.actionBusy,
       availableActions: protocolActions(
         item.record.status === "active" && !options?.actionBusy ? "supersede_decision" : undefined,
         item.record.status === "active" && !options?.actionBusy ? "reject_decision" : undefined,
@@ -238,6 +239,7 @@ function channelProtocolTimelineItem(
       title: cleanGeneratedWorkflowText(item.record.title) ?? item.record.objective,
       meta: item.record.status,
       status: channelWorkflowTimelineStatus(item.record.status),
+      actionBusy: options?.actionBusy,
       availableActions: protocolActions(
         options?.workflowControls !== false && workflowCanAdvance(item.record.status) && !options?.actionBusy ? "advance_workflow" : undefined,
         options?.workflowControls !== false && options?.canRequestIsolation && !options.actionBusy ? "start_isolated_workflow" : undefined,
@@ -255,6 +257,7 @@ function channelProtocolTimelineItem(
       title: cleanGeneratedWorkflowText(item.record.title) ?? item.record.prompt,
       meta: item.record.status,
       status: channelWorkflowStepTimelineStatus(item.record.status),
+      actionBusy: options?.actionBusy,
       availableActions: protocolActions(
         options?.workflowControls !== false && workflowStepCanRetry(item.record.status) && !options?.actionBusy ? "retry_step" : undefined,
         "open_source",

@@ -38,7 +38,7 @@ test("T13-O.25-C light Channel Dock owns launcher, page, resize, and scroll geom
   const handle = page.getByRole("separator", { name: "Resize workspace dock" });
   await expect(panel).toHaveAttribute("data-ui2-right-dock", "true");
   await expect(main).toHaveClass(/with-channel-side-panel/u);
-  await expect(panel.locator("[data-ui2-dock-launcher-action]")).toHaveCount(6);
+  await expect(panel.locator("[data-ui2-dock-launcher-action]")).toHaveCount(7);
   await assertRuntimeOwnerSheet(page);
   await assertDockGeometry(main, frame, panel, handle);
 
@@ -270,8 +270,13 @@ async function assertProductionOwnershipContract(): Promise<void> {
   ]) {
     expect(shell.includes(packageSelector), `${packageSelector} must remain package-owned`).toBe(false);
   }
-  expect(shell).not.toContain("--ling-bg-panel");
-  expect(shell).not.toContain("--ling-border-default");
+  const presentationTokenOwners = [...shell.matchAll(/([^{}]+)\{([^{}]*)\}/gu)]
+    .filter(([, , declarations]) => /--ling-(?:bg-panel|border-default)\b/u.test(declarations ?? ""))
+    .map(([, selector]) => selector?.trim());
+  expect(presentationTokenOwners).toEqual([
+    ".task-workbench-window.with-channel-progress-popover > .task-workbench-main",
+    ".channel-side-panel-resize-handle::before",
+  ]);
 
   const deadFamilies = [
     /\bchannel-side-panel-(?:head|title|actions|nav|nav-item|body)\b/u,

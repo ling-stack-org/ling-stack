@@ -58,6 +58,15 @@ const overlays = [
     tables: ["conversation_context_view_lineage"],
     indexes: ["idx_context_view_lineage_source", "idx_context_view_lineage_view"], triggers: [] },
   { version: 226, name: "node_rerun_intents", tables: ["node_rerun_intents"], indexes: [], triggers: [] },
+  { version: 230, name: "code_assessments",
+    tables: ["code_assessment_snapshots", "code_assessments", "code_assessment_findings"],
+    indexes: ["code_assessment_active", "code_assessment_history", "code_assessment_findings_owner"], triggers: [] },
+  { version: 231, name: "code_assessment_lifecycle", tables: [], indexes: [], triggers: [] },
+  { version: 232, name: "code_assessment_comments", tables: ["code_assessment_comments"],
+    indexes: ["code_assessment_comments_finding"], triggers: [] },
+  { version: 233, name: "code_assessment_history_filters", tables: [],
+    indexes: ["code_assessment_target_history", "code_assessment_snapshot_history", "code_assessment_status_history",
+      "code_assessment_updated_history", "code_assessment_finding_filters"], triggers: [] },
 ];
 const schema = db => db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all();
 const markers = db => db.prepare("SELECT * FROM schema_migrations ORDER BY version").all();

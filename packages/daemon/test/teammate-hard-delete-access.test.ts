@@ -24,8 +24,8 @@ test("teammate hard delete rejects foreign origins and unknown roots before open
   const base = `http://127.0.0.1:${address.port}/teammates/${teammateId}/hard-delete`;
   const initial = opened;
   for (const [origin, root, error] of [
-    ["https://foreign.example.invalid", cwd, "forbidden_origin"],
-    ["null", cwd, "forbidden_origin"],
+    ["https://foreign.example.invalid", cwd, "local_service_forbidden"],
+    ["null", cwd, "local_service_forbidden"],
     ["http://localhost:4173", join(cwd, "untrusted"), "workspace_not_trusted"],
   ]) {
     const response = await fetch(`${base}?cwd=${encodeURIComponent(root)}`, {
@@ -34,6 +34,10 @@ test("teammate hard delete rejects foreign origins and unknown roots before open
     });
     assert.equal(response.status, 403);
     assert.equal((await response.json()).error, error);
+    if (error === "local_service_forbidden") {
+      assert.equal(response.headers.get("access-control-allow-origin"), null);
+      assert.equal(response.headers.get("cache-control"), "no-store");
+    }
   }
   assert.equal(opened, initial);
   assert.ok(store.getAiTeammate(teammateId));

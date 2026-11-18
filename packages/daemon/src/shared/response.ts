@@ -6,6 +6,17 @@ export function writeJson(response: ServerResponse, statusCode: number, body: un
   response.end(`${JSON.stringify(body)}\n`);
 }
 
+export function writePrivateJson(response: ServerResponse, statusCode: number, body: unknown): void {
+  for (const header of ["Access-Control-Allow-Origin", "Access-Control-Allow-Methods", "Access-Control-Allow-Headers"]) {
+    response.removeHeader?.(header);
+  }
+  response.writeHead(statusCode, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "no-store",
+  });
+  response.end(`${JSON.stringify(body)}\n`);
+}
+
 export function writeSseHead(response: ServerResponse): void {
   setCorsHeaders(response);
   response.writeHead(200, {

@@ -14,8 +14,9 @@ const evidenceDirectory = fileURLToPath(new URL(
 test("channel settings uses shared tabs and stable section boundaries", async ({ page }) => {
   await prepareSurface(page, "light", 1440, 960);
   const runtimeErrors = collectRuntimeErrors(page);
-  const state = createBaseState({ approvalStatus: "expired" });
-  state.workspaceSettings.channelNotifications = { channel_preserved: "all" };
+  const baseState = createBaseState({ approvalStatus: "expired" });
+  const channelNotifications: Record<string, string> = { channel_preserved: "all" };
+  const state = { ...baseState, workspaceSettings: { ...baseState.workspaceSettings, channelNotifications } };
   state.channelTeamMetricsByChannel.channel_engineering = detailedTeamMetricsFixture();
   await mockDaemon(page, state);
   await page.goto("/");
@@ -208,7 +209,7 @@ test("channel settings changes only the Ling Agent model and keeps teammate mode
   state.channels = state.channels.map((channel) => isRecord(channel)
     ? { ...channel, defaultProviderPresetId: "provider_ling" }
     : channel);
-  state.aiTeammates = [
+  const teammates = [
     createMockTeammate({
       id: "ling_agent",
       kind: "system_teammate",
@@ -229,7 +230,8 @@ test("channel settings changes only the Ling Agent model and keeps teammate mode
       providerPresetId: "provider_fixed",
     }),
   ];
-  state.teammateChannelMemberships = state.aiTeammates.map((teammate, index) => ({
+  state.aiTeammates = teammates;
+  state.teammateChannelMemberships = teammates.map((teammate, index) => ({
     teammateId: String(teammate.id),
     channelId: "channel_engineering",
     isDefault: index === 0,
@@ -259,7 +261,10 @@ test("channel settings changes only the Ling Agent model and keeps teammate mode
   await expect(settings).not.toContainText("gpt-ling-next · gpt-ling-next");
   await captureEvidence(page, "1440x960-ling-light-channel-members-model-labels.png");
   await expect(settings.locator(".channel-teammate-chip").getByRole("combobox")).toHaveCount(0);
-  expect(state.aiTeammates.map((teammate) => teammate.providerPresetId)).toEqual([undefined, undefined, "provider_fixed"]);
+  expect(state.aiTeammates.map((teammate) => {
+    if (!isRecord(teammate)) throw new Error("Expected a teammate record.");
+    return teammate.providerPresetId;
+  })).toEqual([undefined, undefined, "provider_fixed"]);
   await expectNoDocumentOverflow(page);
   expect(runtimeErrors).toEqual([]);
 });
@@ -310,9 +315,9 @@ test("channel dock uses shared controls across launcher and deep pages", async (
   const dock = page.getByRole("complementary", { name: "Channel workspace dock" });
   await expect(dock).toHaveAttribute("data-ui2-right-dock", "true");
   const launcherActions = dock.locator("[data-ui2-dock-launcher-action]");
-  await expect(launcherActions).toHaveCount(6);
+  await expect(launcherActions).toHaveCount(7);
   expect(await launcherActions.evaluateAll((elements) => elements.map((element) => element.getAttribute("data-ui2-dock-launcher-action"))))
-    .toEqual(["review", "plans", "files", "activity", "browser", "terminal"]);
+    .toEqual(["review", "security", "plans", "files", "activity", "browser", "terminal"]);
   await expect(launcherActions.first()).toHaveClass(/ling-ui-button/u);
   await expect.poll(async () => Math.round((await dock.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(300);
   await expect.poll(async () => Math.round((await page.locator(".channel-side-panel-frame").boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(300);
@@ -327,7 +332,7 @@ test("channel dock uses shared controls across launcher and deep pages", async (
   await expect(close).toHaveClass(/ling-ui-button/u);
   await back.click();
   await expect(dock.locator("[data-ui2-dock-page]")).toHaveCount(0);
-  await expect(dock.locator("[data-ui2-dock-launcher-action]")).toHaveCount(6);
+  await expect(dock.locator("[data-ui2-dock-launcher-action]")).toHaveCount(7);
 
   await close.click();
   await expect(dock).toHaveCount(0);

@@ -83,8 +83,8 @@ test("node rerun admission keeps workspace Origin authorization at the router bo
   const forbidden = await fetch(url, request);
   assert.equal(forbidden.status, 403);
   assert.deepEqual(await forbidden.json(), {
-    error: "forbidden_origin",
-    message: "Workspace file actions are only available from local Ling Stack pages.",
+    error: "local_service_forbidden",
+    message: "This service requires a local Ling page or authenticated daemon access.",
   });
 
   const local = await fetch(url, { ...request, headers: { ...request.headers, origin: "http://127.0.0.1:5173" } });

@@ -436,7 +436,8 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: mcr.microsoft.com/playwright:v1.65.0-noble@sha256:9beb546099e11f52d62e505537914870e01a67e0e6b00ae41da4775324e73dbe
-    timeout-minutes: 15
+    # Changed specs run in full on the same single-worker Playwright configuration.
+    timeout-minutes: ${{ fromJSON(needs.scope.outputs.web-smoke-plan).changed[0] && 40 || 15 }}
     steps:
       - name: Check out repository without retained credentials
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1

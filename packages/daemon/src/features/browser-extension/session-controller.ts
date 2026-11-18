@@ -526,9 +526,13 @@ export class ChromeBrowserSessionController {
     return this.options.getStore(cwd);
   }
 
+  isAllowedExtensionId(extensionId: string): boolean {
+    return this.allowedExtensionIds.has(extensionId);
+  }
+
   private assertAllowedExtensionId(extensionId: string): string {
     const normalized = normalizeExtensionId(extensionId);
-    if (!this.allowedExtensionIds.has(normalized)) {
+    if (!this.isAllowedExtensionId(normalized)) {
       throw new ChromeBrowserSessionError("chrome_browser_extension_forbidden", "Chrome extension is not trusted by this Ling build.");
     }
     return normalized;

@@ -317,13 +317,6 @@ export function projectTeammatePrivateTimelineItems(input: TeammatePrivateTimeli
   );
 }
 
-const safePrivateUnverifiedDiagnosticSummaries = new Set([
-  "Command batch lineage is incomplete.",
-  "Exploration batch lineage is incomplete.",
-  "Missing action, run, participant, or source lineage.",
-  "Execution evidence is missing required lineage.",
-]);
-
 function sanitizePrivateUnverifiedDiagnostics(
   facts: readonly ConversationTimelineItem[],
   messageId: string,
@@ -331,10 +324,7 @@ function sanitizePrivateUnverifiedDiagnostics(
   const summaries = new Set<string>();
   return facts.flatMap((item, index) => {
     if (item.kind !== "diagnostic" || item.status !== "blocked") return [];
-    const candidate = item.summary?.trim() || item.description?.trim() || "";
-    const summary = safePrivateUnverifiedDiagnosticSummaries.has(candidate)
-      ? candidate
-      : "Execution evidence is missing required lineage.";
+    const summary = "Execution evidence is missing required lineage.";
     if (summaries.has(summary)) return [];
     summaries.add(summary);
     return [{
