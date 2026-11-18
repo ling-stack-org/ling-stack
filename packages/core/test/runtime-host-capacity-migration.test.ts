@@ -8,6 +8,7 @@ import test, { type TestContext } from "node:test";
 import { pathToFileURL } from "node:url";
 import { DEFAULT_WORKSPACE_ID, createSqliteRunStore, resolveStoragePaths } from "../dist/index.js";
 import { applyRuntimeRunQueueMigration } from "../dist/storage/sqlite/runtime-run-queue-migration.js";
+import { dropCodeAssessmentOverlay } from "./support/code-assessment-overlay-fixture.mjs";
 import { testDatabase } from "./support/sqlite-test-database.ts";
 
 const migrationUrl = process.env.LING_CORE_MIGRATION_DIST
@@ -84,6 +85,7 @@ function fixture(t: TestContext, { installed = false } = {}) {
   });
   store = createSqliteRunStore(cwd, paths);
   const db = testDatabase(store);
+  dropCodeAssessmentOverlay(db);
   applyRuntimeRunQueueMigration(input(db));
   assert.equal(db.prepare("SELECT name FROM schema_migrations WHERE version=217").get()!.name, predecessor);
   migrate(db);
@@ -139,6 +141,7 @@ function fixture(t: TestContext, { installed = false } = {}) {
       store!.close(); store = undefined;
       const next = createSqliteRunStore(cwd, paths);
       const nextDb = testDatabase(next);
+      dropCodeAssessmentOverlay(nextDb);
       nextDb.exec("PRAGMA foreign_keys=OFF");
       try {
         for (const table of ["node_rerun_submissions", "automation_delivery_receipts", "automation_deliveries", "automation_event_dispatches", "automation_events", "automation_event_sources", "conversation_context_view_lineage"]) nextDb.exec(`DROP TABLE IF EXISTS ${table}`);

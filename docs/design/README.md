@@ -92,6 +92,15 @@ Maintenance-only transition notes are kept in [Development Handoffs](../maintena
 - [Ling Agent Terminal Report Protocol](ling-agent-terminal-report-protocol.md)
 - [Thread-First Work History](thread-first-work-history.md)
 
+## Code Review And Security Workbench
+
+- [Code Review And Security Scan Workbench](code-review-and-security-workbench.md)
+- [Conversation Right Dock Workspace Tools](conversation-right-dock-workspace-tools.md)
+- [Codex-style Hunk Diff Review](codex-style-hunk-diff-review.md)
+- [Workspace Change Review, Recovery, And Open Actions](workspace-change-review-recovery-and-open-actions.md)
+- [Work Board, Review Queue, And Inline Approval Boundaries](work-board-review-queue.md)
+- [GitHub Automation Design](github-automation.md)
+
 ### Typed Transcript
 
 Read the [data and recovery contract](conversation-typed-transcript-detailed-design.md),

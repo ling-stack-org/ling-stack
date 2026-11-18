@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { test } from "node:test";
@@ -83,8 +83,9 @@ test("startup status api returns readiness and refresh rereads user config", asy
     const baseUrl = `http://127.0.0.1:${address.port}`;
 
     const health = await getJson(`${baseUrl}/health`);
+    const productVersion = (await readFile(new URL("../../../VERSION", import.meta.url), "utf8")).trim();
     assert.equal(health.readiness, "ready");
-    assert.equal(health.productVersion, "0.4.0");
+    assert.equal(health.productVersion, productVersion);
     assert.equal(health.protocolVersion, 1);
 
     const initial = await getJson(`${baseUrl}/startup/status`);

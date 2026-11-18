@@ -10,7 +10,9 @@
   "scripts": {
     "build:ci": "tsc -p tsconfig.json && node scripts/build-image-sanitizer.mjs",
     "typecheck:ci": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
+    "typecheck:tests": "tsc -p tsconfig.test.json",
     "test:ci": "node --test --test-concurrency=1 test/*.test.mjs test/*.test.ts",
+    "eval:code-assessments": "LING_CODE_ASSESSMENT_QUALITY_RUN=1 node --experimental-strip-types --test test/code-assessment-quality.ts",
     "build": "corepack pnpm --filter @ling-stack/contracts build && corepack pnpm --filter @ling-stack/plugin-sdk build && corepack pnpm --filter @ling-stack/browser-host build && corepack pnpm --filter @ling-stack/core build && corepack pnpm --filter @ling-stack/runner-pi build && corepack pnpm --filter @ling-stack/providers build && corepack pnpm --filter @ling-stack/remote-protocol build && tsc -p tsconfig.json && node scripts/build-image-sanitizer.mjs",
     "typecheck": "corepack pnpm --filter @ling-stack/contracts build && corepack pnpm --filter @ling-stack/plugin-sdk build && corepack pnpm --filter @ling-stack/browser-host build && corepack pnpm --filter @ling-stack/core build && corepack pnpm --filter @ling-stack/runner-pi build && corepack pnpm --filter @ling-stack/providers build && corepack pnpm --filter @ling-stack/remote-protocol build && corepack pnpm typecheck:ci",
     "lint": "echo \"lint not configured yet\"",

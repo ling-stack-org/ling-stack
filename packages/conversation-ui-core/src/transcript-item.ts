@@ -352,6 +352,8 @@ export interface ConversationTimelineProtocolEventItem extends ConversationTimel
   readonly kind: "protocolEvent";
   readonly protocolKind: "decision" | "handoff" | "summary" | "workflow" | "workflow-step" | "task" | "run" | "state-transition";
   readonly availableActions?: readonly ConversationProtocolAction[];
+  /** Host-owned mutation state used while the backing record is updating. */
+  readonly actionBusy?: boolean;
   /** Host-validated block with separately labelled, unverified model explanation. */
   readonly blockedExplanation?: ConversationBlockedExplanation;
 }

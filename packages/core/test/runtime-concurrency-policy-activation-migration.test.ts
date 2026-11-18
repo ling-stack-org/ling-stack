@@ -8,6 +8,7 @@ import { DEFAULT_WORKSPACE_ID, createSqliteRunStore, resolveStoragePaths } from 
 import { applyRuntimeConcurrencyPolicyMigration } from "../dist/storage/sqlite/runtime-concurrency-policy-migration.js";
 import { applyRuntimeConcurrencyPolicyActivationMigration, RUNTIME_CONCURRENCY_POLICY_ACTIVATION_MIGRATION_VERSION,
   RUNTIME_CONCURRENCY_POLICY_ACTIVATION_MIGRATION_NAME } from "../dist/storage/sqlite/runtime-concurrency-policy-activation-migration.js";
+import { dropCodeAssessmentOverlay } from "./support/code-assessment-overlay-fixture.mjs";
 import { testDatabase } from "./support/sqlite-test-database.ts";
 
 type Store = ReturnType<typeof createSqliteRunStore>;
@@ -59,6 +60,7 @@ function fixture(t: TestContext, { installed = false } = {}) {
     rmSync(root, { recursive: true, force: true });
   });
   store = createSqliteRunStore(cwd, paths);
+  dropCodeAssessmentOverlay(testDatabase(store));
   assert.equal(testDatabase(store).prepare("SELECT name FROM schema_migrations WHERE version=214").get()!.name, table);
   assert.equal(testDatabase(store).prepare("SELECT name FROM schema_migrations WHERE version=215").get()!.name, name);
   const fullSchema = schema(testDatabase(store));
@@ -86,7 +88,12 @@ function fixture(t: TestContext, { installed = false } = {}) {
       peers.push(peer);
       return peer;
     },
-    reopen() { store.close(); store = createSqliteRunStore(cwd, paths); return store; } };
+    reopen() {
+      store.close();
+      store = createSqliteRunStore(cwd, paths);
+      dropCodeAssessmentOverlay(testDatabase(store));
+      return store;
+    } };
 }
 
 function assertReopenPreservesActivation(f: Fixture, before: ReturnType<typeof snapshot>) {

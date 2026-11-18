@@ -2,11 +2,12 @@ import { Archive, MoreHorizontal, PencilLine, RotateCcw } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import { Icon, IconButton, Menu, MenuContent, MenuItem, MenuTrigger } from "../ui/index.js";
 
-export function ChannelSessionActionsMenu({ title, isDefault, archived, disabled, onRename, onToggleArchived, onOpenChange }: {
+export function ChannelSessionActionsMenu({ title, isDefault, archived, disabled, label, onRename, onToggleArchived, onOpenChange }: {
   readonly title: string;
   readonly isDefault: boolean;
   readonly archived: boolean;
   readonly disabled?: boolean;
+  readonly label?: string;
   readonly onRename: () => void;
   readonly onToggleArchived: () => void;
   readonly onOpenChange?: (open: boolean) => void;
@@ -15,7 +16,7 @@ export function ChannelSessionActionsMenu({ title, isDefault, archived, disabled
   return <Menu modal={false} onOpenChange={onOpenChange}>
     <MenuTrigger asChild>
       <IconButton className="sidebar-mini-action" icon={MoreHorizontal} disabled={disabled}
-        label={t("Conversation actions: {title}", { title })} />
+        label={label ?? t("Conversation actions: {title}", { title })} />
     </MenuTrigger>
     <MenuContent align="end" onCloseAutoFocus={event => {
       // The inline rename input takes focus after the menu closes.

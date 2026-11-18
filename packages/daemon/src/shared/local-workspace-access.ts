@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { RunStoreRegistry } from "../runtime/store-registry.js";
-import { writeJson } from "./response.js";
+import { writeJson, writePrivateJson } from "./response.js";
 
 export function isAllowedLocalOrigin(originHeader: string | undefined): boolean {
   if (!originHeader) {
@@ -15,22 +15,27 @@ export function isAllowedLocalOrigin(originHeader: string | undefined): boolean 
   }
 }
 
-/** User-level services without bearer authentication must stay on the local listener. */
-export function allowLocalServiceRequest(request: IncomingMessage, response: ServerResponse): boolean {
+export function isDirectLoopbackRequest(request: IncomingMessage): boolean {
   const headers = request.headers;
   const port = request.socket.localPort;
   const localPeer = ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(request.socket.remoteAddress ?? "");
-  const localHost = port && ["127.0.0.1", "localhost", "[::1]"].some((host) =>
+  const localHost = port !== undefined && ["127.0.0.1", "localhost", "[::1]"].some((host) =>
     headers.host === `${host}:${port}` || (port === 80 && headers.host === host));
+  const forwarded = Object.keys(headers).some((name) => name === "forwarded" || name.startsWith("x-forwarded-"));
+  return localPeer && localHost && !forwarded;
+}
+
+/** User-level services without bearer authentication must stay on the local listener. */
+export function allowLocalServiceRequest(request: IncomingMessage, response: ServerResponse): boolean {
+  const headers = request.headers;
   let localOrigin = headers.origin === undefined;
   if (headers.origin !== undefined) {
     try {
       localOrigin = isAllowedLocalOrigin(headers.origin) && new URL(headers.origin).origin === headers.origin;
     } catch { localOrigin = false; }
   }
-  const forwarded = Object.keys(headers).some((name) => name === "forwarded" || name.startsWith("x-forwarded-"));
-  if (!localPeer || !localHost || !localOrigin || hasMissingBrowserOrigin(request) || forwarded) {
-    writeJson(response, 403, { error: "local_service_forbidden", message: "This service requires a local Ling page or authenticated daemon access." });
+  if (!isDirectLoopbackRequest(request) || !localOrigin || hasMissingBrowserOrigin(request)) {
+    writePrivateJson(response, 403, { error: "local_service_forbidden", message: "This service requires a local Ling page or authenticated daemon access." });
     return false;
   }
   return true;

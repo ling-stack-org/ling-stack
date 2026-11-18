@@ -60,6 +60,7 @@ import {
   LazyAiTeammatesPage as AiTeammatesPage,
   LazyApprovalsPage as ApprovalsPage,
   LazyCouncilWorkspacePage as CouncilWorkspacePage,
+  LazyCodeAssessmentPage as CodeAssessmentPage,
   LazyGlobalWorkBoardPage as GlobalWorkBoardPage,
   LazyMediaJobsPage as MediaJobsPage,
   LazyMediaProductionWorkspace as MediaProductionWorkspace,
@@ -2491,7 +2492,7 @@ export function AppShell(): React.JSX.Element {
     ) : undefined;
 
   const settingsFullscreen = activeView === "settings";
-  const showInspector = !["workspace", "providers", "plugins", "teammates", "councils", "threads", "automations", "approvals", "work_board", "media", "profile", "settings"].includes(activeView);
+  const showInspector = !["workspace", "providers", "plugins", "teammates", "councils", "threads", "automations", "approvals", "work_board", "code_assessments", "media", "profile", "settings"].includes(activeView);
   const selectedChannelForRun = channels.find((channel) => channel.id === selectedChannelId);
   const selectedProviderIdForRun =
     taskRunProviderId || selectedChannelForRun?.defaultProviderPresetId || workspaceDefaultProviderPresetId || "";
@@ -2674,6 +2675,8 @@ export function AppShell(): React.JSX.Element {
                 ? "workspace workspace-generation-surface"
               : activeView === "settings"
                 ? "workspace workspace-settings-surface"
+              : activeView === "code_assessments"
+                ? "workspace workspace-code-assessments-surface"
               : "workspace"
         }
       >
@@ -3106,7 +3109,7 @@ export function AppShell(): React.JSX.Element {
               )
             ) : (
               <>
-                {activeView === "providers" || activeView === "plugins" || activeView === "automations" || activeView === "profile" || activeView === "media" || activeView === "teammates" || activeView === "councils" || activeView === "settings" ? null : (
+                {activeView === "providers" || activeView === "plugins" || activeView === "automations" || activeView === "profile" || activeView === "media" || activeView === "teammates" || activeView === "councils" || activeView === "settings" || activeView === "code_assessments" ? null : (
                   <DesktopTitlebarSurface>
                   <div className="workspace-head" data-desktop-window-drag-region="true">
                     <div>
@@ -3371,6 +3374,8 @@ export function AppShell(): React.JSX.Element {
                       openSettingsSection("mcp-tools");
                     }}
                   />
+                ) : activeView === "code_assessments" ? (
+                  <CodeAssessmentPage key={form.cwd.trim()} cwd={form.cwd.trim()} providers={conversationChatProviders} defaultProviderPresetId={defaultConversationProviderPresetId} onOpenRun={runId => void openRunFromWorkspace(runId)} />
                 ) : activeView === "work_board" ? (
                   <GlobalWorkBoardPage
                     channels={channels}

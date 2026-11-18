@@ -903,6 +903,7 @@ test("AI teammate sidebar menu keeps create action without bulk archive", async 
 
 test("AI teammate private workspace sends blocked chat replies and persists settings", async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 900 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
   const runtimeErrors: string[] = [];
   page.on("console", (message) => {
     if (message.type() === "error") runtimeErrors.push(`${message.text()} @ ${message.location().url || "unknown"}`);
@@ -1148,10 +1149,14 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
     ...state.tasks,
   ];
   await mockDaemon(page, state);
+  await page.route(/\/notifications(?:\/stream)?(?:\?.*)?$/u, async (route) => {
+    await route.fulfill({ json: { schemaVersion: 1, notifications: [], nextSince: null } });
+  });
   await page.goto("/");
 
   const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await navigation.getByRole("button", { name: "Ling Engineer" }).click();
+  await page.emulateMedia({ reducedMotion: "no-preference" });
   await expect(page.getByRole("heading", { name: "Ling Engineer", level: 1 })).toBeVisible();
   await expect(page.locator(".brand-mark")).toHaveCount(0);
   await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: [], selectedRows: ["Ling Engineer"] });
@@ -1465,15 +1470,17 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect.poll(() => state.lastTeammateDirectMessageRequest?.workspaceAccessMode).toBe("workspace_write");
   await expect.poll(() => state.lastTeammateDirectMessageRequest?.permissionPreset).toBe("workspace_collaboration");
 
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Design" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Design", exact: true }).click();
   await openChannelTeammateManager(page);
   const channelTeammateManager = page.getByLabel("Channel teammates");
   const renamedEngineerChip = channelTeammateManager.locator(".channel-teammate-chip").filter({ hasText: "Renamed Engineer" });
   await expect(renamedEngineerChip).toBeVisible();
   await expect(renamedEngineerChip).not.toHaveClass(/default/);
 
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await page.reload();
   await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Renamed Engineer" }).click();
+  await page.emulateMedia({ reducedMotion: "no-preference" });
   await expect(page.getByRole("heading", { name: "Renamed Engineer", level: 1 })).toBeVisible();
   await expect(page.getByLabel("Private chat", { exact: true }).getByText("AI teammate is blocked: No provider preset is selected for this teammate.")).toBeVisible();
 
@@ -1523,7 +1530,7 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await page.getByRole("button", { name: "Back to app" }).click();
   await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })).toBeVisible();
 
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Design" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Design", exact: true }).click();
   await openChannelTeammateManager(page);
   const channelChipWithAvatar = page.getByLabel("Channel teammates").locator(".channel-teammate-chip").filter({ hasText: "Imported QA Persona" });
   await expect(channelChipWithAvatar.locator(".teammate-avatar-image")).toBeVisible();
@@ -1687,7 +1694,10 @@ test(`AI teammate private chat opens latest messages and loads older history fro
         && element.scrollHeight > element.clientHeight + 1;
     })
     .map((element) => element.className));
-  expect(scrollOwners).toEqual([expect.stringContaining("teammate-message-list")]);
+  const rail = privateChat.getByRole("complementary", { name: "Conversation navigation", exact: true });
+  await expect(rail).toBeVisible();
+  await expect(feed.getByRole("complementary", { name: "Conversation navigation", exact: true })).toHaveCount(0);
+  expect(scrollOwners).toEqual([expect.stringContaining("teammate-message-list"), "conversation-position-rail__marks"]);
   await feed.hover();
   await expect.poll(async () => {
     await page.mouse.wheel(0, -1800);
@@ -1715,6 +1725,23 @@ test(`AI teammate private chat opens latest messages and loads older history fro
     element.scrollTop = Math.round(element.scrollHeight * 0.45);
     element.dispatchEvent(new Event("scroll", { bubbles: true }));
   });
+  if (earlyMeasurement) {
+    await page.screenshot({ path: testInfo.outputPath("reading-before-remeasurement.png") });
+  }
+  // Settle the scroll and the virtual window before resizing an offscreen row.
+  await feed.evaluate(async (element) => {
+    let previous = "";
+    let stableFrames = 0;
+    for (let frame = 0; frame < 60; frame++) {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      const firstRow = element.querySelector<HTMLElement>(".conversation-timeline-virtual-row");
+      const current = `${element.scrollTop}:${element.scrollHeight}:${firstRow?.dataset.feedItemId}:${firstRow?.getBoundingClientRect().top}`;
+      stableFrames = firstRow && current === previous ? stableFrames + 1 : 0;
+      if (stableFrames >= 4) return;
+      previous = current;
+    }
+    throw new Error("Private chat virtual window did not settle");
+  });
   const readFirstVisibleAnchor = async (): Promise<{ id: string; offsetTop: number } | undefined> => feed.evaluate((element) => {
     const feedRect = element.getBoundingClientRect();
     const row = Array.from(element.querySelectorAll<HTMLElement>(
@@ -1727,18 +1754,9 @@ test(`AI teammate private chat opens latest messages and loads older history fro
       ? { id: row.dataset.feedItemId, offsetTop: Math.round(row.getBoundingClientRect().top - feedRect.top) }
       : undefined;
   });
-  let anchorBefore = await readFirstVisibleAnchor();
-  await expect.poll(async () => {
-    const next = await readFirstVisibleAnchor();
-    const stable = Boolean(next && anchorBefore && next.id === anchorBefore.id && Math.abs(next.offsetTop - anchorBefore.offsetTop) <= 1);
-    anchorBefore = next;
-    return stable;
-  }).toBe(true);
-  if (!anchorBefore) throw new Error("Private conversation anchor did not stabilize");
-  if (earlyMeasurement) {
-    await installEarlyMeasurementScroll(feed);
-    await page.screenshot({ path: testInfo.outputPath("reading-before-remeasurement.png") });
-  }
+  const anchorBefore = await readFirstVisibleAnchor();
+  if (!anchorBefore) throw new Error("Private conversation has no visible anchor");
+  if (earlyMeasurement) await installEarlyMeasurementScroll(feed);
   const expandedAboveAnchor = await feed.evaluate((element) => {
     const feedRect = element.getBoundingClientRect();
     const row = Array.from(element.querySelectorAll<HTMLElement>(".conversation-timeline-virtual-row"))
@@ -1815,6 +1833,8 @@ test("AI teammate private chat demotes recovered provider preflight history", as
 });
 
 test("AI teammate private chat exposes direct reply guidance and stop controls", async ({ page }) => {
+  // The scenario opens the workspace twice to exercise the composer after a reload.
+  test.setTimeout(45_000);
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "zh-CN");
   });

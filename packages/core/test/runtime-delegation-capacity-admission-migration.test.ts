@@ -10,6 +10,7 @@ import { applyRuntimeConcurrencyPolicyActivationMigration } from "../dist/storag
 import { applyRuntimeDelegationCapacityAdmissionMigration, RUNTIME_DELEGATION_CAPACITY_ADMISSION_MIGRATION_VERSION,
   RUNTIME_DELEGATION_CAPACITY_ADMISSION_MIGRATION_NAME } from "../dist/storage/sqlite/runtime-delegation-capacity-admission-migration.js";
 import { createBudgetHarness } from "./support/delegation-budget-fixture.mjs";
+import { dropCodeAssessmentOverlay } from "./support/code-assessment-overlay-fixture.mjs";
 import { rewindRemainingWorkSuccessors } from "./support/remaining-work-predecessor.ts";
 import { testDatabase } from "./support/sqlite-test-database.ts";
 
@@ -60,7 +61,10 @@ function fixture(t: TestContext, { installed = false } = {}) {
   });
   store = createSqliteRunStore(cwd, paths);
   const db = testDatabase(store);
-  if (!installed) rewindRemainingWorkSuccessors(db);
+  if (!installed) {
+    dropCodeAssessmentOverlay(db);
+    rewindRemainingWorkSuccessors(db);
+  }
   const fullSchema = schema(db), definition = fullSchema.find(row => row.name === table)?.sql;
   assert.equal(typeof definition, "string", "the production constructor must install216");
   assert.deepEqual(markers(db).filter(row => successorVersion(row.version) || row.version === 215 || row.version === 216)
@@ -100,7 +104,16 @@ function fixture(t: TestContext, { installed = false } = {}) {
       peers.push(peer);
       return peer;
     },
-    reopen() { store!.close(); store = undefined; store = createSqliteRunStore(cwd, paths); if (!installed) rewindRemainingWorkSuccessors(testDatabase(store)); return store; } };
+    reopen() {
+      store!.close();
+      store = undefined;
+      store = createSqliteRunStore(cwd, paths);
+      if (!installed) {
+        dropCodeAssessmentOverlay(testDatabase(store));
+        rewindRemainingWorkSuccessors(testDatabase(store));
+      }
+      return store;
+    } };
 }
 
 function assertReopenPreservesAdmissions(f: Fixture, before: ReturnType<typeof snapshot>) {

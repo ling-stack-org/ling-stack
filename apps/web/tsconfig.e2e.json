@@ -14,6 +14,7 @@
   "files": [
     "e2e/worktree-settings.spec.ts",
     "e2e/app.spec.ts",
+    "e2e/code-assessments.spec.ts",
     "e2e/review-annotations.spec.ts",
     "e2e/review-annotation-recovery.spec.ts",
     "e2e/image-review-tools.spec.ts",
@@ -26,6 +27,8 @@
     "e2e/conversation-terminal-response-actions.spec.ts",
     "e2e/conversation-transcript-color-hierarchy.spec.ts",
     "e2e/conversation-turn-change-review.spec.ts",
+    "e2e/ui2-channel-right-dock-legacy-writer.spec.ts",
+    "e2e/ui2-channel-settings-overlay-dock.spec.ts",
     "e2e/conversation-change-summary.spec.ts",
     "e2e/ui2-conversation-message-transcript-ownership.spec.ts",
     "e2e/ui2-conversation-work-cell-activity.spec.ts",

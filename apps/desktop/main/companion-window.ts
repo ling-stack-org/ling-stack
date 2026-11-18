@@ -1,4 +1,4 @@
-import type { BrowserWindow, BrowserWindowConstructorOptions, IpcMain, IpcMainInvokeEvent, WebRequest } from "electron";
+import type { BrowserWindow, BrowserWindowConstructorOptions, IpcMain, WebContents, WebFrameMain, WebRequest } from "electron";
 import { isAbsolute } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { DesktopCommandResult, DesktopRect } from "../shared/desktop-capabilities.js";
@@ -53,30 +53,31 @@ export function registerCompanionWindowIpc(input: {
     if (window && !window.isDestroyed()) window.destroy();
   };
   const ownerClosed = (): void => { close(); owner = undefined; };
-  const daemonOrigin = new URL(input.daemonBaseUrl).origin;
-  const networkFilter = {
-    urls: [`${daemonOrigin}/companions*`, `${daemonOrigin}/teammates*`, `${daemonOrigin}/ai-teammates*`],
-  };
-  // file:// has an opaque Origin. Only the two owned top-level documents may
-  // project their Companion fetches as local requests; other frames retain it.
-  input.webRequest.onBeforeSendHeaders(networkFilter, (details, callback) => {
-    const allowed = [[input.getMainWindow(), trustedMainUrl], [companion, companionUrl.href]] as const;
-    const url = new URL(details.url);
-    const routeAllowed = url.origin === daemonOrigin && (
-      url.pathname === "/companions" || url.pathname.startsWith("/companions/")
-      || ((url.pathname === "/teammates" || url.pathname === "/ai-teammates") && details.method === "GET")
-    );
-    const trusted = routeAllowed && allowed.some(([window, document]) => window && !window.isDestroyed()
-      && details.webContentsId === window.webContents.id
-      && details.webContents === window.webContents
-      && isOwner({ sender: details.webContents, senderFrame: details.frame } as IpcMainInvokeEvent, window, document));
-    const headers = { ...details.requestHeaders };
-    if (trusted) {
-      const key = Object.keys(headers).find((name) => name.toLowerCase() === "origin");
-      if (key && headers[key] === "null") headers[key] = daemonOrigin;
-    }
-    callback({ requestHeaders: headers });
-  });
+  const daemon = new URL(input.daemonBaseUrl);
+  const networkFilter = { urls: [`${daemon.origin}/*`] };
+  const localDaemon = ["http:", "https:"].includes(daemon.protocol) &&
+    ["127.0.0.1", "localhost", "[::1]"].includes(daemon.hostname);
+  if (localDaemon) {
+    // Electron can omit the Origin of a file-backed renderer. Project only
+    // the owned top-level documents onto the configured loopback daemon.
+    input.webRequest.onBeforeSendHeaders(networkFilter, (details, callback) => {
+      const url = new URL(details.url);
+      const sender = details.webContents;
+      const document = { sender, senderFrame: details.frame };
+      const companionRoute = url.pathname === "/companions" || url.pathname.startsWith("/companions/")
+        || ((url.pathname === "/teammates" || url.pathname === "/ai-teammates") && details.method === "GET");
+      const headers = details.requestHeaders;
+      const keys = Object.keys(headers).filter((name) => name.toLowerCase() === "origin");
+      const opaqueOrigin = keys.length === 0 || (keys.length === 1 && headers[keys[0]] === "null");
+      if (opaqueOrigin && url.origin === daemon.origin && sender?.id === details.webContentsId
+        && (isOwner(document, input.getMainWindow(), trustedMainUrl)
+          || (companionRoute && isOwner(document, companion, companionUrl.href)))) {
+        callback({ requestHeaders: { ...headers, [keys[0] ?? "Origin"]: daemon.origin } });
+      } else {
+        callback({ requestHeaders: headers });
+      }
+    });
+  }
 
   input.ipcMain.handle(DESKTOP_IPC_CHANNELS.companionWindowOpen, async (event, cwd: unknown): Promise<DesktopCommandResult> => {
     const main = input.getMainWindow();
@@ -130,14 +131,18 @@ export function registerCompanionWindowIpc(input: {
     return { accepted: true };
   });
   return () => {
-    input.webRequest.onBeforeSendHeaders(networkFilter, null);
+    if (localDaemon) input.webRequest.onBeforeSendHeaders(networkFilter, null);
     owner?.off("closed", ownerClosed);
     close();
     for (const channel of [DESKTOP_IPC_CHANNELS.companionWindowOpen, DESKTOP_IPC_CHANNELS.companionWindowClose, DESKTOP_IPC_CHANNELS.companionWindowSettings]) input.ipcMain.removeHandler(channel);
   };
 }
 
-function isOwner(event: IpcMainInvokeEvent, window: BrowserWindow | undefined, trustedUrl: string): boolean {
+function isOwner(
+  event: { readonly sender?: WebContents; readonly senderFrame?: WebFrameMain | null },
+  window: BrowserWindow | undefined,
+  trustedUrl: string,
+): boolean {
   if (!window || window.isDestroyed()) return false;
   const contents = window.webContents;
   if (contents.isDestroyed() || event.sender !== contents || !event.senderFrame

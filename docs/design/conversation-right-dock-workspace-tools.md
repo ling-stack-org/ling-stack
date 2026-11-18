@@ -126,8 +126,8 @@ inventing their own compact variants.
   capability.
 - `Details` opens the same workspace tool launcher used by channel. The launcher title is
   `Workspace tools`, the subtitle names the current channel/thread/teammate, and the
-  visible launcher order is `Review / Plans / Evidence / Files / Activity / Browser /
-  Terminal`. Normal conversation and private chat must not use separate visible titles
+  visible launcher order is `Review / Security scan / Plans / Evidence / Files / Activity /
+  Browser / Terminal`. Normal conversation and private chat must not use separate visible titles
   such as `Conversation tools` or `Private chat tools`.
 - Private or normal conversation context belongs inside the `Activity` page content. It
   must not appear as a separate first launcher row that breaks the channel baseline.
@@ -338,7 +338,7 @@ The dock `Review` page is a review workbench, not the approval form.
 | Browser page | Search/browser evidence only when present | Search/browser evidence only when present | Search/browser evidence only when present | Rich browser evidence |
 | Teammate activity page | Yes | No by default | Selected teammate only if useful | Contextual only |
 | Settings page | No; channel settings are full-page | No | No | No |
-| Model selector | No | Not in dock; composer owns it | No | No |
+| Conversation model selector | No; assessment setup selects its own chat model | Composer owns it; assessment setup selects its own chat model | No; assessment setup selects its own chat model | No |
 | `@` teammate routing | No; composer owns channel mentions | No | No | No |
 
 The dock follows the conversation surface rule: shared components, surface-specific
@@ -357,6 +357,7 @@ Recommended entries:
 | Entry | Shows when | Count/status source |
 | --- | --- | --- |
 | Review | Always | pending review items, warnings, confirmations |
+| Security scan | When workspace tools are available | local Diff assessment history and unverified candidates |
 | Evidence | Always | evidence bundles, work cells, source references |
 | Files | Always | attachments, references, artifacts |
 | Activity | Channel only by default | teammate notes, workflow activity, team metrics |
@@ -421,6 +422,16 @@ Rules:
   diff hunks.
 
 ### Implemented Review Workbench Notes
+
+The Web Review tool includes **Changed files** and **Code review** tabs. Changed files
+retains the current-workspace review surface. Code review and the separate **Security
+scan** tool use the shared local assessment feature defined in
+[Code Review And Security Scan Workbench](code-review-and-security-workbench.md).
+Assessment history, captured Diffs and findings are separate from approval/review-queue
+items. Both pages support working-tree/branch/commit targets, custom instructions,
+durable phases and stale state, finding triage/comments, lazy captured files and exact
+line markers with unified/split/auto layouts. Phase links use existing Run navigation.
+Finding disposition never authorizes an external action or verifies a fix.
 
 The first Web implementation uses `ReviewQueuePage` from
 `@ling-stack/conversation-ui-react` and shared dock view models from
@@ -586,6 +597,7 @@ export type DockSurfaceKind =
 export type DockPageKind =
   | "launcher"
   | "review"
+  | "security"
   | "evidence"
   | "files"
   | "activity"
@@ -808,7 +820,8 @@ Work:
 - add the same dock shell to normal conversation and teammate private chat,
 - expose Review, Evidence, Files, Terminal placeholder, Browser placeholder,
 - forbid teammate activity by default in normal conversation,
-- keep teammate private chat one-to-one with no `@` or model picker.
+- keep teammate private chat one-to-one with no `@` or conversation model picker;
+  assessment setup selects its own chat model.
 
 Validation:
 

@@ -1,13 +1,100 @@
 # Scoped macOS Development Packaging Review
 
-Current source prerequisite: [Companion and native runtime review](#companion-and-native-runtime-review-2026-11-17).
+Current source prerequisite: [Managed worktree integration source closure](#managed-worktree-integration-source-closure).
 The [2026-11-03 dependency review](../../docs/release/macos-source-review-2026-11-03.md)
 and the dated reviews below retain their historical evidence and scope.
 
-The merged record carries the reviewed Companion closure plus six Locked Use
-build and validation inputs from the protected-control lane, for 1,878 fixed
-packaging inputs in total. The Companion review count below remains scoped to
-its 1,872-input subset.
+## Managed Worktree Integration Source Closure
+
+Date: 2026-11-18. This source closure binds the integrated main commit
+`a56ea0a3f8addb57667a718b33a58ad217d37e72`. The 44 authored roots resolve
+6,206 literal authored edges across 1,864 parsed files.
+The source audit found zero unresolved literal imports and zero parse errors.
+
+The fixed inputs include nine reachable managed worktree runtime sources and
+three Desktop setup authorization sources. The new routes retain workspace
+and local-origin admission. Desktop script setup uses the existing Main
+confirmation and bridge-token flow. The loopback Origin projection applies
+to the owned file documents and the configured local daemon.
+
+The 1,947 packaging inputs include 12 added paths and 91 changed digests.
+The changed entries comprise 29 exact main inputs, 6 integrated inputs,
+55 generated locale catalogs, and the fixed input list. The 15 Office
+native inputs, toolchain profiles, headers, runtime and signing entries retain
+their existing digests and values. The record occupies 262,101 of 262,144
+bytes.
+
+Record SHA-256 `fc450f98173497ea0a6c73d37d32430bc551df30ac385749284e9411496993ca`.
+Packaging aggregate `47c4de4cc5c6eb09d8bb920d1bf3cc489496fd3e6a057cde82098bddfd055252`.
+Fixed-list SHA-256 `e3f919d536dea92f7310241f91839b8897b97abd4dac94450ff7dbca4f8aad38`.
+The prior record SHA-256 was `dba559d7574cf707af255ec269f24e1fd31d9d976810a9ce56d8b67e1965944f`.
+
+## Main #732 Integration Source Closure
+
+Date: 2026-11-18. This scoped rebind follows the integration of main commit
+`bba53def82ff0278856722e793b854928e1b161d` into the code-assessment branch.
+It is limited to the fixed Office authored-source list, its digest record and
+this review narrative. It does not change Office native inputs, runtime,
+toolchain, SDK/header, signing, approval or trust fields.
+
+The AST closure uses the fixed 44 authored roots with Babel 7.29.12. It parsed
+1,855 authored files and resolved 6,147 literal authored edges with no unresolved
+imports or parse errors. Four non-literal optional/dynamic edges remain outside
+the literal closure: the signing artifact extractor's `require`, the macOS
+packaging script's dynamic import, and two optional LanceDB imports. They are
+not converted into packaging approval by this record.
+
+The fixed list contains 1,935 packaging inputs: 42 newly reachable
+authored paths, 141 changed digests including the list itself, 1,752 unchanged
+digests and no removals. The initial integration provenance review counts 116 main-tree
+bytes, 7 integrated bytes, 55 generated localization inputs, 2 branch bytes
+and the literal fixed-list update. All 15 Office native source digests are
+unchanged. The record is 260,563 bytes, below the reader's 262,144-byte bound.
+
+The review record SHA-256 is
+`dba559d7574cf707af255ec269f24e1fd31d9d976810a9ce56d8b67e1965944f`;
+the fixed-list SHA-256 is
+`577b71f79b847c24b99a6fe829a7e59f9b9fe69b80858ad92ad345698e24b4f9`;
+the fixed-order packaging aggregate is
+`5d76626c3a3ff141ef6b1eafedd5f555f2f9ec6a52fb4ae2fde5b8427ef6e988`;
+the unchanged 15-input native aggregate is
+`9c5f6a1a05fe63ab96de941432ec13166af8974ec52730934d5ac348c41a854e`.
+Aggregates encode the fixed-order `[path, sha256]` pairs as JSON plus a
+newline. The prior record SHA-256 was
+`27ebf5b1f0c9d5d498072b655cc050c440ca4f701b4e82770decdbc41d0ec4d7`.
+
+The Desktop bridge supplies a loopback Origin for absent or opaque Origin headers
+from the owned top-level file documents. The Companion request routes remain
+limited. Code assessment preparation skips lifecycle hook configuration and
+the tool-free runner policy excludes hooks at execution. These three inputs
+are captured by the same fixed source list.
+
+## Assessment and Locked Use integration
+
+The record binds the packaging sources at `cc25ca94429a26110f2ec6969434aeea6121dbc8`.
+The 1,893 fixed packaging inputs are the union of the assessment closure
+recorded at `109f54905` and the Locked Use integration at `7e1242c7b`.
+The six Locked Use entries retain the mainline digests. All 15 Office native
+inputs keep their existing digests.
+
+Inputs unique to the integrated tree are the 55 catalogs generated from the
+combined message sources, the fixed input list, the two product version
+sources, shared redaction, the Chrome pairing route and controller, and the
+daemon router and loopback predicate, and the assessment Diff capture. Pairing requires a directly connected
+loopback client and an allowed Chrome extension before preflight or pairing;
+bearer authentication still applies when configured. The redaction inputs
+preserve public status and counts while removing credential values. Capture
+excludes files when redaction changes Diff line anchors.
+
+The record SHA-256 is
+`27ebf5b1f0c9d5d498072b655cc050c440ca4f701b4e82770decdbc41d0ec4d7`.
+The fixed-order packaging aggregate is
+`a9de11c34e534c6336c2a00a2a463e73c94bdf292662ee5e6bf80c7cb09954bc`;
+the unchanged Office native aggregate is
+`9c5f6a1a05fe63ab96de941432ec13166af8974ec52730934d5ac348c41a854e`.
+The schema, review identity, approval and trust fields, runtime, toolchains,
+headers and signing are unchanged. These hashes bind source inputs for the
+existing review reader. They confer no build, signing or publication authority.
 
 ## Companion and native runtime review, 2026-11-17
 
@@ -112,6 +199,28 @@ The exact Office record SHA-256 is
 fixed packaging aggregate is
 `7f407ee163e0277b6e9b38b4ed7d9fa080526523b4e0140e1fae13e2ba38f21d`. All
 1,872 packaging and 15 Office native inputs match this record.
+
+## Final Branch Record Rebind
+
+Date: 2026-11-18. The final PR #731 source tree before this record-only update is `fd57e0099`. Four existing packaging inputs had stale recorded digests after the reviewed assessment implementation: `packages/core/src/storage/sqlite/code-assessment-comments-migration.ts` (`9c666d30b352ed25376b18f1db97edc1ee28ac905343c9ba6891444c6e627c22`), `packages/core/src/storage/sqlite/code-assessment-migration.ts` (`42c28069b828968295a9df9eb0d2ff1b1092a853d59eb71ca307f3481c1c1790`), `packages/daemon/src/features/code-assessments/service.ts` (`4711e54f974d08be54afd59d20983fd525e5ee91200f7f034427b9bb8c9ebb27`) and `packages/daemon/src/features/code-assessments/snapshot.ts` (`b0a20fa8c9c050da1ccf51880bfb768428376605cc1d74d1129df52a3726be48`). The previously recorded values for these four entries were stale; `packages/daemon/src/server/router.ts` remains bound to its already corrected final value `37ec78bb33e6fe91a3793ca5795f676e4e35447e47548a2243a8a499a8f5ea9d`.
+
+The record-only rebind changes four existing packaging digests and adds no paths. All other packaging and Office native digests, approval/trust values, toolchain profiles, runtime and signing fields remain unchanged. The reviewed JSON SHA-256 is `12182e90c1aeef51a03498144a25d459931538097672459faa2d27d2a704d3e9`; the fixed-order packaging aggregate is `98b388f47aa6fc577974b52a51e1b3e18da9754e05e04ddfc1a72288e196a67b`; the unchanged 15-input Office native aggregate is `9c5f6a1a05fe63ab96de941432ec13166af8974ec52730934d5ac348c41a854e`. Aggregates encode the record's fixed-order `[path, sha256]` pairs as JSON plus a newline.
+
+This update only restores the checked-in source record to the final branch bytes. It does not create an Office native grant, lease, publication or signing authority, and it does not establish App/archive, platform, signature or GUI acceptance.
+
+
+## Assessment Source Prerequisite Review
+
+Date: 2026-11-17. Reviewed feature source: `d9bd55a20499fb442d3dd61280c3a0daf7034f0e`, tree `42ffd81985bcff7fae230c013bfce45bcf05de15`, against main `27a9ccb23c59bcb890d556767f175830717b94cc`.
+
+Two independent Codex contexts reviewed the assessment runtime closure and source semantics before the static record was adopted. The Babel 7.29.12 AST audit followed 43 authored roots, parsed 1,780 files and resolved 5,861 authored literal edges without unresolved imports or parse errors. The fixed list retains all 1,841 prior inputs and appends 15 assessment contract, persistence and daemon inputs. Explicit type-only edges remain excluded. Integrated main `86f057874596bb80ea372cfd9ec3210658e5f6e7` adds one reviewed Remote Protocol manifest digest change for its TypeScript test scripts; production exports, dependencies, build inputs and runtime sources are unchanged.
+
+The 1,856-entry packaging map has 15 added keys, 68 changed digests, 1,773 unchanged digests and no removals. The changes bind 12 tracked source/manifest/version inputs, 55 generated locale data files and the fixed list itself. Each locale adds 105 string messages without changing prior values. The final list is a literal-only extension with SHA-256 `8296f674934d844a9233df1d91a73d5aa8ae7075115cd6a2a2555b001995bbab`; its unchanged roots and prior path order were checked separately.
+
+The reviewed JSON SHA-256 is `f1ce942d92bb02aad97602c45d529631f401a76b20f8d899469d7175dd055a8d`. The fixed-order packaging aggregate is `965557151d41c13576c93e4d9d9989e655c20c54bd7ae20b876efda031baee82`; the unchanged 15-input native aggregate is `9c5f6a1a05fe63ab96de941432ec13166af8974ec52730934d5ac348c41a854e`. Aggregates encode the record's fixed-order `[path, sha256]` pairs as JSON plus a newline.
+
+Assessment execution uses tool-free text-model Runs and creates no Office native grant, lease, publication or signing authority. All native hashes, schema, approval/trust values, toolchain profiles, headers, runtime and signing fields retain their existing values. The reader, import containment, publication guards and test assertions are unchanged. This source prerequisite review does not establish final App/archive, platform, signature or GUI acceptance.
+
 
 ## Historical baseline, 2026-10-13
 
