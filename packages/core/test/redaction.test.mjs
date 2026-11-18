@@ -63,6 +63,11 @@ test("assignment redaction covers provider credentials and escaped quoted values
   ].join("\n"));
 });
 
+test("object-valued authority fields in serialized context remain intact", () => {
+  const input = '{"policyAuthority":{"kind":"channel_effective_policy_v1","workspaceId":"workspace_default"}}';
+  assert.equal(redactSecrets(input), input);
+});
+
 test("authorization modes remain usable while authorization credentials are redacted", () => {
   assert.deepEqual(redactSecrets({
     authorization: "Bearer secret-token",
