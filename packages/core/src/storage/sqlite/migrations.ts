@@ -12,7 +12,6 @@ import {
 import { applyWorkspaceProvenanceMigration } from "./workspace-provenance-migration.js";
 import { applyPostCompactionUndoMigration } from "./post-compaction-undo-migration.js";
 import { applyWorkspaceSnapshotMigration } from "./workspace-snapshot-migration.js";
-import { applyConversationContextViewLineageMigration } from "./conversation-context-view-lineage-migration.js";
 
 import { ensureHostCommandJournalIndex } from "./host-command-journal-migration.js";
 import { applyApprovalPostCommitMigration } from "./approval-postcommit-migration.js";
@@ -6088,9 +6087,4 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
   applyLearningReviewMigration(context);
   applyMemoryDerivativeMigration(context);
   applyMemoryWikiMigration(context);
-  applyConversationContextViewLineageMigration({
-    database,
-    hasMigration: context.hasMigration.bind(context),
-    recordMigration: context.recordMigration.bind(context),
-  });
 }

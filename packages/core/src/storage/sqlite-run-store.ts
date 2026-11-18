@@ -2115,6 +2115,11 @@ export class SqliteRunStore implements RunStore {
           hasMigration: (version) => this.hasMigration(version),
           recordMigration: (version, name) => this.recordMigration(version, name),
         });
+        applyConversationContextViewLineageMigration({
+          database: this.database,
+          hasMigration: (version) => this.hasMigration(version),
+          recordMigration: (version, name) => this.recordMigration(version, name),
+        });
         applyNodeRerunIntentMigration({
           database: this.database,
           hasMigration: (version) => this.hasMigration(version),

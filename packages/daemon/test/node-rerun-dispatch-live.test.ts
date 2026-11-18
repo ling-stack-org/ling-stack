@@ -89,7 +89,7 @@ test("F5 dispatches a prepared target through the real Pi adapter and a local Op
     const url = new URL(request.url ?? "/", "http://fixture");
     void handleDispatchNodeRerunTarget(request, response, url, 1_048_576, storeRegistry, f.activeRuns, supervisor,
       runnerRegistry, createCompositeSecretResolver({ env: {} }), {} as McpBroker, f.target.run.id, prepared.record.id)
-      .catch(error => { if (!response.headersSent) { response.writeHead(500); response.end(JSON.stringify({ error: String(error) })); } });
+      .catch(() => { if (!response.headersSent) { response.writeHead(500); response.end(JSON.stringify({ error: "node_rerun_dispatch_failed" })); } });
   });
   const address = await listen(server);
   t.after(async () => {
