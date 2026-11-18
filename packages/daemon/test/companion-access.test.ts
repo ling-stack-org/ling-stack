@@ -40,8 +40,8 @@ test("companion routes reject foreign origins and unknown workspaces before read
   ] as const;
   for (const [route, method] of routes) {
     for (const [origin, root, error] of [
-      ["https://foreign.example.invalid", cwd, "forbidden_origin"],
-      ["null", cwd, "forbidden_origin"],
+      ["https://foreign.example.invalid", cwd, "local_service_forbidden"],
+      ["null", cwd, "local_service_forbidden"],
       ["http://localhost:4173", resolve(cwd, "..", "untrusted-companion-workspace"), "workspace_not_trusted"],
     ]) {
       const response = await fetch(`${baseUrl}${route}?cwd=${encodeURIComponent(root)}`, {

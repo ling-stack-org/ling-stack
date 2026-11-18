@@ -89,18 +89,27 @@ test("only the owned main frame opens a companion; the companion closes and retu
   assert.equal(f.handlers.size, 0);
 });
 
-test("native Companion requests project opaque Origin only for owned documents and top-level frames", async () => {
+test("trusted native documents project loopback Origin for their daemon requests", async () => {
   const f = fixture();
+  const base = "http://127.0.0.1:17891";
   try {
-    assert.equal(f.headers(f.main)?.Origin, "http://127.0.0.1:17891");
+    assert.equal(f.headers(f.main)?.Origin, base);
     await f.call(channels.companionWindowOpen, f.main.event(), "/workspace");
-    assert.equal(f.headers(f.windows[0]!)?.Origin, "http://127.0.0.1:17891");
+    const companion = f.windows[0]!;
+    assert.equal(f.headers(companion)?.Origin, base);
+    assert.equal(f.headers(companion, { url: `${base}/teammates?cwd=%2Fw` })?.Origin, base);
+    assert.equal(f.headers(companion, { url: `${base}/teammates/teammate_1` })?.Origin, "null");
+    assert.equal(f.headers(companion, { url: `${base}/workspaces` })?.Origin, "null");
+    assert.equal(f.headers(f.main, { url: `${base}/workspaces`, requestHeaders: {} })?.Origin, base);
+    assert.equal(f.headers(f.main, { url: `${base}/workspace/code-assessments`, method: "POST" })?.Origin, base);
+    assert.equal(f.headers(f.main, { requestHeaders: { origin: "null" } })?.origin, base);
+    const remoteOrigin = { Origin: "https://foreign.invalid" };
+    assert.deepEqual(f.headers(f.main, { requestHeaders: remoteOrigin }), remoteOrigin);
     assert.equal(f.headers(f.main, { frame: null })?.Origin, "null");
     assert.equal(f.headers(f.main, { frame: { ...f.main.webContents.mainFrame } as Electron.WebFrameMain })?.Origin, "null");
     assert.equal(f.headers(f.main, { url: "https://foreign.invalid/companions" })?.Origin, "null");
-    assert.equal(f.headers(f.main, { url: "http://127.0.0.1:17891/teammates?cwd=%2Fw" })?.Origin, "http://127.0.0.1:17891");
-    assert.equal(f.headers(f.main, { url: "http://127.0.0.1:17891/teammates/teammate_1?cwd=%2Fw" })?.Origin, "null");
-    assert.equal(f.headers(f.main, { url: "http://127.0.0.1:17891/providers" })?.Origin, "null");
+    assert.equal(f.headers(f.main, { url: "http://127.0.0.1:17892/companions" })?.Origin, "null");
+    assert.equal(f.headers(f.main, { webContentsId: 99 })?.Origin, "null");
     f.main.url += "?untrusted=1"; f.main.webContents.mainFrame.url = f.main.url;
     assert.equal(f.headers(f.main)?.Origin, "null");
   } finally { f.dispose(); }

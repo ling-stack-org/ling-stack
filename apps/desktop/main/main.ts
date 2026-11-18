@@ -725,6 +725,7 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
         if (!desktopRuntime) throw new Error("engine_host_authority_unavailable");
         return desktopRuntime.getExecutionEngineAuthority();
       } },
+    worktrees: { baseUrl: daemonBaseUrl, bridgeToken },
     mobileAccess: new DesktopMobileAccessClient({
       daemonBaseUrl,
       desktopBridgeToken: bridgeToken,

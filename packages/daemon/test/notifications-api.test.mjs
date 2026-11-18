@@ -155,12 +155,14 @@ test("local service transport rejects rebinding, forwarding and missing browser 
 });
 
 test("service transport checks apply to actual HTTP requests", async () => {
-  await withDaemon(async (baseUrl) => {
+  await withDaemon(async (baseUrl, fixtureCwd) => {
+    // The run routes require an explicit workspace selector; keep the request
+    // on the daemon's fixture workspace while varying only the transport headers.
     for (const headers of [
       { host: "foreign.example:17891" }, { forwarded: "for=127.0.0.1" },
       { "sec-fetch-site": "cross-site" }, { origin: "null" },
     ]) {
-      for (const path of ["/notifications", "/im-destinations"]) {
+      for (const path of ["/notifications", "/im-destinations", `/runs?cwd=${encodeURIComponent(fixtureCwd ?? "")}`, `/runs/not-a-real-run/cancel?cwd=${encodeURIComponent(fixtureCwd ?? "")}`]) {
         const status = await new Promise((resolve, reject) => {
           // Node fetch rewrites Host. Use the HTTP transport to exercise the exact wire header.
           const request = httpRequest(`${baseUrl}${path}`, { headers }, (response) => {
@@ -173,6 +175,8 @@ test("service transport checks apply to actual HTTP requests", async () => {
         assert.equal(status, 403, JSON.stringify(headers));
       }
     }
+    assert.equal((await fetch(`${baseUrl}/runs?cwd=${encodeURIComponent(fixtureCwd ?? "")}`, { headers: { origin: "http://localhost:5173" } })).status, 200);
+    assert.notEqual((await fetch(`${baseUrl}/runs/not-a-real-run/cancel?cwd=${encodeURIComponent(fixtureCwd ?? "")}`, { method: "POST", headers: { origin: "http://localhost:5173" } })).status, 403);
   });
 });
 

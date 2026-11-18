@@ -305,6 +305,10 @@ function repositoryFixture(t: TestContext) {
   mkdirSync(join(root, "scripts/ci"), { recursive: true });
   const script = join(root, "scripts/ci/classify-scope.mjs");
   copyFileSync(new URL("./classify-scope.mjs", import.meta.url), script);
+  copyFileSync(new URL("./product-version-scope.mjs", import.meta.url), join(root, "scripts/ci/product-version-scope.mjs"));
+  copyFileSync(new URL("./web-smoke.mjs", import.meta.url), join(root, "scripts/ci/web-smoke.mjs"));
+  mkdirSync(join(root, "scripts/release"), { recursive: true });
+  copyFileSync(new URL("../release/desktop-release.mjs", import.meta.url), join(root, "scripts/release/desktop-release.mjs"));
   copyFileSync(new URL("./package-validation-scope.mjs", import.meta.url), join(root, "scripts/ci/package-validation-scope.mjs"));
   for (const entry of packageEntries) {
     write(`${entry.directory}/package.json`, JSON.stringify({
@@ -371,6 +375,53 @@ test("the real package graph keeps Web's CLI and catalog consumers without core 
   for (const name of ["@ling-stack/web", "@ling-stack/cli", "@ling-stack/localization"]) assert.ok(scope.packages.includes(name), name);
   assert.equal(scope.daemon, false);
   assert.ok(!scope.testPackages.includes("@ling-stack/core"));
+});
+
+test("a verified root version update adds the Web build without pulling in Daemon or assurance", t => {
+  const repo = repositoryFixture(t);
+  const manifest = { name: "ling-stack", private: true, version: "1.2.3", scripts: { build: "node build.mjs" } };
+  repo.write("VERSION", "1.2.3\n");
+  repo.write("package.json", JSON.stringify(manifest));
+  const base = repo.commit();
+  repo.write("VERSION", "1.2.4\n");
+  repo.write("package.json", JSON.stringify({ ...manifest, version: "1.2.4" }));
+  repo.write("docs/release-notes.md", "# Release notes\n");
+  repo.commit();
+  const scope = repo.classify(base);
+  assert.equal(scope.mode, "affected");
+  assert.equal(scope.productVersion, "1.2.4");
+  assert.deepEqual(scope.packages, ["@ling-stack/localization", "@ling-stack/web"]);
+  assert.equal(scope.dependencyPolicy, false);
+  assert.equal(scope.assurance, false);
+  assert.equal(scope.daemon, false);
+  assert.equal(scope.web, true);
+
+  repo.write("packages/core/src/probe.ts", "export const probe = true;\n");
+  repo.commit();
+  const mixed = repo.classify(base);
+  assert.equal(mixed.mode, "affected");
+  assert.equal(mixed.daemon, true);
+  assert.equal(mixed.linuxContract, true);
+  assert.equal(mixed.assurance, true);
+});
+
+test("root version files narrow only with matching valid values and an otherwise unchanged manifest", t => {
+  for (const variant of ["mismatch", "invalid", "scripts", "lockfile", "missing", "override"]) {
+    const repo = repositoryFixture(t);
+    const manifest = { name: "ling-stack", version: "1.2.3", scripts: { build: "node build.mjs" } };
+    repo.write("VERSION", "1.2.3\n");
+    repo.write("package.json", JSON.stringify(manifest));
+    const base = repo.commit();
+    const version = variant === "invalid" ? "1.2.4-alpha.01" : "1.2.4";
+    repo.write("package.json", JSON.stringify({ ...manifest, version,
+      ...(variant === "scripts" ? { scripts: { build: "node different.mjs" } } : {}),
+      ...(variant === "override" ? { pnpm: { overrides: { foo: "1.2.3" } } } : {}) }));
+    if (variant === "missing") repo.git("rm", "VERSION");
+    else if (variant !== "mismatch") repo.write("VERSION", version + "\n");
+    if (variant === "lockfile") repo.write("pnpm-lock.yaml", "lockfileVersion: '9.0'\n");
+    repo.commit();
+    assert.equal(repo.classify(base).mode, "full", variant);
+  }
 });
 
 function validationMigration(t: TestContext, additionalTests: string[] = [], baselineConfig?: object) {

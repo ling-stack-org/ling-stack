@@ -16,6 +16,7 @@ import { HttpError } from "../../errors.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
+import { allowLocalWorkspaceRequest } from "../../shared/local-workspace-access.js";
 import { createSseRunExecutionSink } from "../runs/run-execution-sink.js";
 import type { ActiveDirectReplyRegistry } from "./direct-reply-active-registry.js";
 import { assertDirectFileRefsWithinWorkspace, type DirectWorkspaceReady } from "./direct-workspace.js";
@@ -131,6 +132,8 @@ export async function handleTeammateDirectMessagesCollection(
     writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
     return;
   }
+
+  if (request.method === "POST" && !allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) return;
 
   try {
     const store = storeRegistry.getStore(cwd);
@@ -263,6 +266,8 @@ export async function handleTeammateDirectMessageStream(
     writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
     return;
   }
+
+  if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) return;
 
   const transport = createSseRunExecutionSink(response);
   try {

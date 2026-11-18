@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { createSqliteRunStore, resolveRuntimePaths } from "../dist/index.js";
+import { dropCodeAssessmentOverlay } from "./support/code-assessment-overlay-fixture.mjs";
 import { rewindRemainingWorkSuccessors } from "./support/remaining-work-predecessor.ts";
 
 const now = "2026-10-29T00:00:00.000Z";
@@ -115,6 +116,7 @@ function removeLearningOverlays(database) {
     "runtime_host_capacity_intents", "runtime_run_queue",
     "runtime_delegation_capacity_admissions", "runtime_concurrency_policies",
   ]) dropTable(table);
+  dropCodeAssessmentOverlay(database);
   for (const index of database.prepare("SELECT name FROM sqlite_master WHERE type='index' AND sql IS NOT NULL").all()) {
     const name = String(index.name);
     if (name.startsWith("idx_harness_") || name.startsWith("idx_run_suspension_")
@@ -273,6 +275,7 @@ test("real mainline schema178 upgrades to188 without changing canonical settings
   database.handle.prepare("VACUUM INTO ?").run(comparisonPath);
   const comparison = f.own(new DatabaseSync(comparisonPath));
   rewindRemainingWorkSuccessors(comparison.handle);
+  dropCodeAssessmentOverlay(comparison.handle);
   assert.deepEqual(stripOverlaySchema(schema(comparison.handle)), stripOverlaySchema(oldSchema));
   comparison.close();
   assert.deepEqual(database.handle.prepare("SELECT version, name FROM schema_migrations WHERE version BETWEEN 179 AND 181 ORDER BY version").all()

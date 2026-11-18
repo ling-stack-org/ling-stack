@@ -2,6 +2,8 @@ import type { AutomationEventStore } from "./automation-event-types.js";
 import type { GoalAcceptanceCriterion, GoalAcceptanceEvidence, GoalSupervisionPolicy } from "./goal-supervision.js";
 import type { ChannelSessionPage, ChannelSessionSummary, CreateChannelSessionInput, ListChannelSessionsOptions, UpdateChannelSessionRequest } from "./channel-session-types.js";
 import type { MemoryWikiStore } from "./memory-wiki-types.js";
+import type { CodeAssessmentStore } from "./code-assessment-store.js";
+import type { CodeAssessmentCommentsStore } from "./code-assessment-comments.js";
 import type { MemoryDerivativeStore } from "./memory-derivative-types.js";
 import type { LearningReviewStore } from "./learning-review-types.js";
 import type { RuntimeRunQueueStore } from "./runtime-run-queue-types.js";
@@ -304,6 +306,7 @@ import type {
   ChannelMessageRouteDecision,
   ChannelCouncilPolicy,
   ChannelUpdateInput,
+  ChannelWorkspaceBinding,
   CloneAiCouncilInput,
   AssignConversationAttachmentInput,
   ConversationAttachment,
@@ -1120,6 +1123,7 @@ export interface UpdateLingThreadConversationModeInput {
 }
 
 export interface ListLingThreadsOptions {
+  readonly offset?: number;
   readonly q?: string;
   readonly kind?: LingThreadKind;
   readonly channelId?: string;
@@ -1604,7 +1608,7 @@ export interface ClaimSnapshotRestoreFenceInput {
   readonly now: string;
 }
 
-export interface RunStore extends AutomationEventStore, MemoryWikiStore, MemoryDerivativeStore, LearningReviewStore, RuntimeRunQueueStore, NativeExecutionStore, HarnessProjectionStore, HarnessArtifactRetentionStore, DelegationQueryStore, HarnessDiagnosticsStore, RunEvaluationTaskStore, RunEvaluationQaStore, RunEvaluationHumanStore, RunEvaluationHumanReadStore {
+export interface RunStore extends AutomationEventStore, CodeAssessmentStore, CodeAssessmentCommentsStore, MemoryWikiStore, MemoryDerivativeStore, LearningReviewStore, RuntimeRunQueueStore, NativeExecutionStore, HarnessProjectionStore, HarnessArtifactRetentionStore, DelegationQueryStore, HarnessDiagnosticsStore, RunEvaluationTaskStore, RunEvaluationQaStore, RunEvaluationHumanStore, RunEvaluationHumanReadStore {
   getDelegationCompletionEvidence(input: GetDelegationCompletionEvidenceInput): DelegationCompletionEvidenceV1;
   listApprovalPostCommitEffects(options?: {
     readonly approvalId?: string;
@@ -1923,6 +1927,15 @@ export interface RunStore extends AutomationEventStore, MemoryWikiStore, MemoryD
   acquireWorkspaceSnapshotFence(workspaceId: string, ownerRequestId: string, now: string): number;
   getWorkspaceSnapshotFence(workspaceId: string): { readonly epoch: number; readonly ownerRequestId?: string };
   releaseWorkspaceSnapshotFence(workspaceId: string, ownerRequestId: string, now: string, expectedEpoch?: number): boolean;
+  /** Publish the lifecycle owner's binding while its matching workspace fence is held. */
+  finalizeManagedWorktreeBindingWithinFence(input: {
+    readonly ownerKind: "channel" | "teammate";
+    readonly ownerId: string;
+    readonly binding: ChannelWorkspaceBinding | DirectWorkspaceBinding;
+    readonly ownerRequestId: string;
+    readonly expectedEpoch: number;
+    readonly now: string;
+  }): boolean;
   expireWorkspaceSnapshotManifest(id: string, now: string): WorkspaceSnapshotManifest | undefined;
   deleteWorkspaceSnapshotManifest(id: string): boolean;
   deleteWorkspaceSnapshotBlob(sha256: string): boolean;

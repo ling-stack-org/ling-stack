@@ -21,7 +21,7 @@ export function AutomationWorkbenchHeader({
       data-desktop-window-drag-region="true"
     >
       <div className="automation-ui2-header-copy">
-        <h1 id="automations-title">{t("Scheduled tasks")}</h1>
+        <h1 id="automations-title" aria-label={`${t("Automations")} · ${t("Scheduled tasks")}`}>{t("Automations")}</h1>
         <p>{t("{count} tasks · {enabled} enabled · {scheduled} scheduled · {attention} need attention", {
           attention: summary.attentionCount,
           count: summary.totalCount,

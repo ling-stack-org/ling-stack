@@ -1,0 +1,23 @@
+.diff-viewer.diff-layout-split .diff-split-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  min-width: 0;
+}
+
+.diff-viewer.diff-layout-split .diff-split-cell {
+  grid-template-columns: 46px 22px minmax(0, 1fr);
+  align-self: stretch;
+}
+
+.diff-viewer.diff-layout-split [data-diff-side="new"] {
+  border-inline-start: 1px solid var(--ling-border-default);
+}
+
+.diff-viewer.diff-layout-split .diff-split-cell code {
+  overflow-x: auto;
+}
+
+.diff-viewer.diff-layout-split .diff-split-empty {
+  min-width: 0;
+  background: var(--ling-bg-subtle);
+}

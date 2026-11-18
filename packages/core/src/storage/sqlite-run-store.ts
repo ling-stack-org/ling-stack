@@ -19,6 +19,12 @@ import type { LearningReviewStore } from "../learning-review-types.js";
 import { drainSkillDefinitionRevisionNotices } from "./sqlite/skill-definition-revision-store.js";
 import { SqliteWorkSummaryStore } from "./sqlite/work-summary-store.js";
 import { applyWorkSummaryMigration } from "./sqlite/work-summary-migration.js";
+import { SqliteCodeAssessmentStore } from "./sqlite/code-assessment-store.js";
+import { SqliteCodeAssessmentCommentsStore } from "./sqlite/code-assessment-comments.js";
+import type { CodeAssessmentCommentsStore } from "../code-assessment-comments.js";
+import { applyCodeAssessmentCommentsMigration } from "./sqlite/code-assessment-comments-migration.js";
+import { applyCodeAssessmentMigration } from "./sqlite/code-assessment-migration.js";
+import type { CodeAssessmentStore } from "../code-assessment-store.js";
 import { applyWorkspacePermissionMigration } from "./sqlite/workspace-permission-migration.js";
 import { applyRunnerIdMigration } from "./sqlite/runner-id-migration.js";
 import { existsSync } from "node:fs";
@@ -858,6 +864,7 @@ import { SqliteWorkItemStore } from "./sqlite/work-item-store.js";
 import { SqliteWorkspaceProvenanceStore } from "./sqlite/workspace-provenance-store.js";
 import { SqlitePostCompactionUndoStore } from "./sqlite/post-compaction-undo-store.js";
 import { SqliteWorkspaceSnapshotStore } from "./sqlite/workspace-snapshot-store.js";
+import { parseNullableChannelWorkspaceBinding, parseNullableDirectWorkspaceBinding } from "./sqlite/workspace-binding-parsers.js";
 import { SqliteRunCompactionCheckpointStore } from "./sqlite/run-compaction-checkpoint-store.js";
 import { SqliteRunProgressCheckpointStore } from "./sqlite/run-progress-checkpoint-store.js";
 import { readRunCompactionSuspensionWitness } from "./sqlite/run-compaction-suspension-witness.js";
@@ -991,6 +998,8 @@ export class SqliteRunStore implements RunStore {
   private readonly channelIntentDecisions: SqliteChannelIntentDecisionStore;
   private readonly channelProposals: SqliteChannelProposalStore;
   private readonly workSummary: SqliteWorkSummaryStore;
+  private readonly codeAssessments: SqliteCodeAssessmentStore;
+  private readonly codeAssessmentComments: SqliteCodeAssessmentCommentsStore;
   private readonly channelAssets: SqliteChannelAssetStore;
   private readonly conversationAssets: SqliteConversationAssetStore;
   private readonly channelCollaborations: SqliteChannelCollaborationStore;
@@ -1431,7 +1440,11 @@ export class SqliteRunStore implements RunStore {
     );
     this.teammateCleanup = new SqliteTeammateCleanupStore(
       { database: this.database },
-      { getAiTeammate: (id) => this.getAiTeammate(id) },
+      {
+        getAiTeammate: (id) => this.getAiTeammate(id),
+        assertWorkspaceSnapshotFence: () => this.assertWorkspaceSnapshotFence(this.paths.cwd),
+        listHostCommandWriteBlockers: (cwd) => this.listHostCommandWriteBlockers(cwd),
+      },
     );
     this.aiCouncils = new SqliteAiCouncilStore(
       { database: this.database },
@@ -1516,6 +1529,8 @@ export class SqliteRunStore implements RunStore {
       },
     );
     this.workSummary = new SqliteWorkSummaryStore({ database: this.database });
+    this.codeAssessments = new SqliteCodeAssessmentStore({ database: this.database });
+    this.codeAssessmentComments = new SqliteCodeAssessmentCommentsStore({ database: this.database }, this.codeAssessments);
     this.channelAssets = new SqliteChannelAssetStore(
       { database: this.database },
       {
@@ -2141,6 +2156,18 @@ export class SqliteRunStore implements RunStore {
           hasMigration: (version) => this.hasMigration(version),
           recordMigration: (version, name) => this.recordMigration(version, name),
         });
+        if (!options.deferContinuityV2MigrationForTest) {
+          applyCodeAssessmentMigration({
+            database: this.database,
+            hasMigration: (version) => this.hasMigration(version),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
+          applyCodeAssessmentCommentsMigration({
+            database: this.database,
+            hasMigration: (version) => this.hasMigration(version),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
+        }
       });
     } catch (error) {
       this.database.close();
@@ -2624,6 +2651,20 @@ export class SqliteRunStore implements RunStore {
   detachWorkSummaryPullRequest(url: string): void {
     this.workSummary.detachPullRequest(url);
   }
+
+  createCodeAssessment(input: Parameters<CodeAssessmentStore["createCodeAssessment"]>[0]) {
+    return this.codeAssessments.createCodeAssessment(input);
+  }
+  getCodeAssessment(id: string) { return this.codeAssessments.getCodeAssessment(id); }
+  listCodeAssessments(input?: Parameters<CodeAssessmentStore["listCodeAssessments"]>[0]) { return this.codeAssessments.listCodeAssessments(input); }
+  bindCodeAssessmentRun(id: string, runId: string, now: string, phase?: Parameters<CodeAssessmentStore["bindCodeAssessmentRun"]>[3]) { return this.codeAssessments.bindCodeAssessmentRun(id, runId, now, phase); }
+  completeCodeAssessmentThreatModel(id: string, input: Parameters<CodeAssessmentStore["completeCodeAssessmentThreatModel"]>[1]) { return this.codeAssessments.completeCodeAssessmentThreatModel(id, input); }
+  advanceCodeAssessmentPhase(id: string, input: Parameters<CodeAssessmentStore["advanceCodeAssessmentPhase"]>[1]) { return this.codeAssessments.advanceCodeAssessmentPhase(id, input); }
+  recordCodeAssessmentFreshness(id: string, freshness: Parameters<CodeAssessmentStore["recordCodeAssessmentFreshness"]>[1]) { return this.codeAssessments.recordCodeAssessmentFreshness(id, freshness); }
+  finishCodeAssessment(id: string, input: Parameters<CodeAssessmentStore["finishCodeAssessment"]>[1]) { return this.codeAssessments.finishCodeAssessment(id, input); }
+  setCodeFindingDisposition(assessmentId: string, findingId: string, input: Parameters<CodeAssessmentStore["setCodeFindingDisposition"]>[2]) { return this.codeAssessments.setCodeFindingDisposition(assessmentId, findingId, input); }
+  createCodeAssessmentComment(assessmentId: string, findingId: string, input: Parameters<CodeAssessmentCommentsStore["createCodeAssessmentComment"]>[2]) { return this.codeAssessmentComments.createCodeAssessmentComment(assessmentId, findingId, input); }
+  listCodeAssessmentComments(assessmentId: string, findingId: string) { return this.codeAssessmentComments.listCodeAssessmentComments(assessmentId, findingId); }
 
   listLingThreads(options: ListLingThreadsOptions = {}): LingThread[] {
     return this.lingThreads.listLingThreads(options);
@@ -3325,6 +3366,27 @@ export class SqliteRunStore implements RunStore {
     return this.workspaceSnapshots.releaseFence(workspaceId, ownerRequestId, now, expectedEpoch);
   }
 
+  finalizeManagedWorktreeBindingWithinFence(input: Parameters<RunStore["finalizeManagedWorktreeBindingWithinFence"]>[0]): boolean {
+    return this.withWorkspaceBindingWrite(() => {
+      const fence = this.workspaceSnapshots.getFence(DEFAULT_WORKSPACE_ID);
+      if (!input.ownerRequestId || !Number.isSafeInteger(input.expectedEpoch) || input.expectedEpoch < 1
+        || fence.ownerRequestId !== input.ownerRequestId || fence.epoch !== input.expectedEpoch) {
+        throw new Error("Workspace worktree binding fence was superseded.");
+      }
+      const table = input.ownerKind === "channel" ? "channels" : "teammate_direct_threads";
+      const row = this.database.prepare(`SELECT workspace_binding_json FROM ${table} WHERE workspace_id = ? AND id = ?`)
+        .get(DEFAULT_WORKSPACE_ID, input.ownerId);
+      const storedBinding = row ? readNullableString(row, "workspace_binding_json") : undefined;
+      const current = input.ownerKind === "channel" ? parseNullableChannelWorkspaceBinding(storedBinding)
+        : parseNullableDirectWorkspaceBinding(storedBinding);
+      if (current?.mode !== "managed_worktree" || input.binding.mode !== "managed_worktree"
+        || current.worktreePath !== input.binding.worktreePath || current.branchName !== input.binding.branchName) return false;
+      return input.ownerKind === "channel"
+        ? Boolean(this.channelCore.updateChannel(input.ownerId, { workspaceBinding: input.binding }, input.now))
+        : Boolean(this.teammateDirect.updateTeammateDirectThreadWorkspace(input.ownerId, input.binding, input.now));
+    });
+  }
+
   expireWorkspaceSnapshotManifest(id: string, now: string): WorkspaceSnapshotManifest | undefined {
     return this.workspaceSnapshots.expireManifest(id, now);
   }
@@ -3338,8 +3400,29 @@ export class SqliteRunStore implements RunStore {
   }
 
   assertWorkspaceSnapshotFence(_cwd: string): void {
-    const fence = this.workspaceSnapshots.getFence("workspace_default");
+    const fence = this.workspaceSnapshots.getFence(DEFAULT_WORKSPACE_ID);
     if (fence.ownerRequestId) throw new Error(`Workspace restore fence is active at epoch ${fence.epoch}.`);
+  }
+
+  private withWorkspaceBindingWrite<T>(mutate: () => T): T {
+    this.database.exec("SAVEPOINT workspace_binding_write");
+    try {
+      // Hold the writer across fence reads and owner changes, including caller-owned transactions.
+      this.database.exec("UPDATE channels SET updated_at = updated_at WHERE 0");
+      const result = mutate();
+      this.database.exec("RELEASE workspace_binding_write");
+      return result;
+    } catch (error) {
+      this.database.exec("ROLLBACK TO workspace_binding_write; RELEASE workspace_binding_write");
+      throw error;
+    }
+  }
+
+  private withWorkspaceSnapshotFence<T>(mutate: () => T): T {
+    return this.withWorkspaceBindingWrite(() => {
+      this.assertWorkspaceSnapshotFence(this.paths.cwd);
+      return mutate();
+    });
   }
 
   createRunIntervention(input: CreateRunInterventionInput, now: string): RunIntervention {
@@ -4169,8 +4252,9 @@ export class SqliteRunStore implements RunStore {
   }
 
   createChannel(input: CreateChannelInput, now: string): Channel {
-    return this.hasMigration(CHANNEL_SESSION_MIGRATION_VERSION)
+    const create = () => this.hasMigration(CHANNEL_SESSION_MIGRATION_VERSION)
       ? this.channelSessions.createChannel(input, now) : this.channelCore.createChannel(input, now);
+    return input.workspaceBinding || input.boundPath ? this.withWorkspaceSnapshotFence(create) : create();
   }
 
   getChannel(id: string): Channel | undefined {
@@ -4182,11 +4266,16 @@ export class SqliteRunStore implements RunStore {
   }
 
   updateChannel(id: string, input: ChannelUpdateInput, now: string): Channel | undefined {
-    return this.channelCore.updateChannel(id, input, now);
+    return this.withWorkspaceSnapshotFence(() => this.channelCore.updateChannel(id, input, now));
   }
 
   deleteChannel(id: string): boolean {
-    return this.channelCore.deleteChannel(id);
+    return this.withWorkspaceSnapshotFence(() => {
+      if (this.channelCore.getChannel(id)?.workspaceBinding?.mode === "managed_worktree") {
+        throw new Error("Channel owns a managed worktree. Resolve its worktree and recovery snapshots before deleting the channel.");
+      }
+      return this.channelCore.deleteChannel(id);
+    });
   }
 
   createChannelBranch(input: CreateChannelBranchInput, now: string): ChannelBranch {
@@ -4944,7 +5033,7 @@ export class SqliteRunStore implements RunStore {
   }
 
   updateTeammateDirectThreadWorkspace(threadId: string, workspaceBinding: DirectWorkspaceBinding | null, now: string): TeammateDirectThread | undefined {
-    return this.teammateDirect.updateTeammateDirectThreadWorkspace(threadId, workspaceBinding, now);
+    return this.withWorkspaceSnapshotFence(() => this.teammateDirect.updateTeammateDirectThreadWorkspace(threadId, workspaceBinding, now));
   }
 
   listTeammateDirectMessages(options: ListTeammateDirectMessagesOptions): TeammateDirectMessage[] {

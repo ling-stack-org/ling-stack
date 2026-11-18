@@ -36,6 +36,7 @@ export const DESKTOP_IPC_CHANNELS = {
   companionWindowClose: "ling-desktop:companion:close",
   companionWindowSettings: "ling-desktop:companion:settings",
   companionSettingsRequested: "ling-desktop:companion:settings-requested",
+  worktreeInitialize: "ling-desktop:worktrees:initialize",
   localServiceRequest: "ling-desktop:local-service:request",
   executionEnginesList: "ling-desktop:execution-engines:list",
   executionEnginesDiscover: "ling-desktop:execution-engines:discover",

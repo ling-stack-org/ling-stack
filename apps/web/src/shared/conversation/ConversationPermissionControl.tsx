@@ -9,13 +9,14 @@ import type { AuthorizationMode, PermissionPreset } from "../../types.js";
 const authorizationIcons = { ask: Hand, smart: Shield, always: ShieldAlert };
 
 export function ConversationPermissionControl({
-  authorizationMode, permissionPreset, fullAccessConfirmed, disabled, disabledReason, onAuthorizationModeChange, onPermissionPresetChange,
+  authorizationMode, permissionPreset, fullAccessConfirmed, disabled, disabledReason, showAuthorizationModeOptions = false, onAuthorizationModeChange, onPermissionPresetChange,
 }: {
   readonly authorizationMode: AuthorizationMode;
   readonly permissionPreset: PermissionPreset;
   readonly fullAccessConfirmed: boolean;
   readonly disabled: boolean;
   readonly disabledReason?: string;
+  readonly showAuthorizationModeOptions?: boolean;
   readonly onAuthorizationModeChange: (mode: AuthorizationMode) => void;
   readonly onPermissionPresetChange: (preset: PermissionPreset) => void;
 }): React.JSX.Element {
@@ -78,6 +79,10 @@ export function ConversationPermissionControl({
       disabledReason={disabledReason}
       selectedPermissionLabel={t("Selected permission preset {label}")}
       menuLabel={t("Permission preset")}
+      authorizationModeOptions={showAuthorizationModeOptions ? authorizationModes.map((option) => ({
+        label: option.label,
+        onSelect: () => onAuthorizationModeChange(option.mode),
+      })) : undefined}
       onPresetChange={onPermissionPresetChange}
     />
   </>;

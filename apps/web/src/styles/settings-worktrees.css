@@ -1,0 +1,38 @@
+.settings-worktrees { display: grid; min-width: 0; gap: 24px; padding: var(--ling-space-7); border: 1px solid var(--ling-card-border); border-radius: var(--ling-card-radius); background: var(--ling-bg-panel); box-shadow: var(--ling-card-shadow); }
+.settings-worktrees-heading h1 { margin: 0 0 8px; color: var(--ling-text-strong); font-size: 24px; }
+.settings-worktrees p { margin: 6px 0 0; color: var(--ling-text-muted); font-size: var(--ling-font-sm); line-height: 1.6; }
+.settings-worktrees-section { display: grid; min-width: 0; gap: 16px; }
+.settings-worktrees-section h2 { margin: 0; color: var(--ling-text-strong); font-size: var(--ling-font-md); }
+.settings-worktrees-section h2 span { margin-left: 6px; color: var(--ling-text-muted); font-size: var(--ling-font-sm); font-weight: 500; }
+.settings-worktrees-rows { border-top: 1px solid var(--ling-border-default); }
+.settings-worktrees-rows > .ling-ui-data-row { grid-template-columns: 20px minmax(0, 1fr) auto; padding-block: 18px; }
+.settings-worktrees-rows .ling-ui-data-row-summary { grid-column: 2; }
+.settings-worktrees-rows .ling-ui-data-row-actions { grid-column: 3; }
+.settings-worktrees-save-row, .settings-worktrees-list-heading { display: flex; min-width: 0; justify-content: space-between; align-items: center; gap: 16px; }
+.settings-worktrees-save-row > div { display: grid; min-width: 0; gap: 4px; }
+.settings-worktrees-save-row > button { flex-shrink: 0; }
+.settings-worktrees-save-row small { color: var(--ling-text-muted); }
+.settings-worktrees code, .settings-worktree-confirm-target code { min-width: 0; overflow-wrap: anywhere; font-size: 12px; line-height: 1.6; }
+.settings-worktrees-save-row code { color: var(--ling-text-muted); }
+.settings-worktrees-list { display: grid; padding: 0; margin: 0; list-style: none; border-top: 1px solid var(--ling-border-default); }
+.settings-worktree-entry { display: grid; min-width: 0; gap: 8px; padding-block: 18px; border-bottom: 1px solid var(--ling-border-default); }
+.settings-worktree-entry-header { display: flex; min-width: 0; align-items: center; flex-wrap: wrap; justify-content: space-between; gap: 12px; }
+.settings-worktree-owner { display: flex; min-width: 0; align-items: center; flex-wrap: wrap; gap: 8px; }
+.settings-worktree-owner strong { overflow-wrap: anywhere; }
+.settings-worktree-owner svg { flex: 0 0 auto; color: var(--ling-text-muted); }
+.settings-worktree-owner small, .settings-worktree-path { color: var(--ling-text-muted); }
+.settings-worktree-branch { color: var(--ling-text-default); }
+.settings-worktree-status, .settings-worktree-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.settings-worktree-actions { margin-top: 4px; }
+.settings-worktrees-empty { display: grid; justify-items: center; gap: 10px; padding: 36px 20px; text-align: center; border: 1px dashed var(--ling-border-default); border-radius: var(--ling-card-radius); }
+.settings-worktrees-empty svg { color: var(--ling-text-muted); }
+.settings-worktrees-loading { display: grid; gap: 18px; }
+.settings-worktree-confirm-target { display: grid; gap: 8px; margin-bottom: 16px; }
+.settings-worktrees > .ling-ui-segmented-control { justify-self: start; }
+.settings-worktrees input[type="number"] { max-width: 160px; }
+.settings-worktree-output { max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ling-text-default); font-size: var(--ling-font-sm); }
+@media (max-width: 720px) {
+  .settings-worktrees { gap: 20px; padding: var(--ling-space-5); }
+  .settings-worktrees-save-row { align-items: flex-start; }
+  .settings-worktrees-heading h1 { font-size: 21px; }
+}

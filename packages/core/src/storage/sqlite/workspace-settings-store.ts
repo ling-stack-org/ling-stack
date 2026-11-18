@@ -44,6 +44,7 @@ export class SqliteWorkspaceSettingsStore {
     const permissionDefaults = resolvePermissionDefaults(current, input);
     const next: WorkspaceSettings = omitUndefined({
       schemaVersion: 1 as const,
+      worktreePolicy: nullableUpdate(input.worktreePolicy, current.worktreePolicy),
       workspaceCwd: nullableUpdate(input.workspaceCwd, current.workspaceCwd),
       theme: nullableUpdate(input.theme, current.theme),
       locale: nullableUpdate(input.locale, current.locale),
@@ -122,6 +123,7 @@ function parseWorkspaceSettings(value: string, updatedAt: string): WorkspaceSett
     parsed.theme === "light" || parsed.theme === "dark" || parsed.theme === "system" ? parsed.theme : undefined;
   return omitUndefined({
     schemaVersion: 1 as const,
+    worktreePolicy: parseWorktreePolicy(parsed.worktreePolicy),
     workspaceCwd: typeof parsed.workspaceCwd === "string" && parsed.workspaceCwd.trim() ? parsed.workspaceCwd : undefined,
     theme: parsedTheme,
     locale: isSupportedLocale(parsed.locale) ? parsed.locale : undefined,
@@ -150,6 +152,21 @@ function parseMediaGenerationDefaults(value: unknown): WorkspaceSettings["mediaG
   const image = parseMediaGenerationTargetRef(record.image);
   const video = parseMediaGenerationTargetRef(record.video);
   return image || video ? omitUndefined({ image, video }) : undefined;
+}
+
+function parseWorktreePolicy(value: unknown): WorkspaceSettings["worktreePolicy"] {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  return {
+    ...(typeof record.rootDir === "string" && record.rootDir.trim() ? { rootDir: record.rootDir.trim() } : {}),
+    fetchBeforeCreate: record.fetchBeforeCreate === true,
+    ...(typeof record.autoCleanup === "boolean" ? { autoCleanup: record.autoCleanup } : {}),
+    ...(typeof record.confirmBeforeDelete === "boolean" ? { confirmBeforeDelete: record.confirmBeforeDelete } : {}),
+    ...(Number.isSafeInteger(record.retainCount) && Number(record.retainCount) >= 1 && Number(record.retainCount) <= 100 ? { retainCount: Number(record.retainCount) } : {}),
+    ...(Array.isArray(record.protectedOwners) ? { protectedOwners: record.protectedOwners.filter((item): item is { ownerKind: "channel" | "teammate"; ownerId: string } => Boolean(item && typeof item === "object" && ["channel", "teammate"].includes(item.ownerKind) && typeof item.ownerId === "string")) } : {}),
+    ...(record.environment && typeof record.environment === "object" && !Array.isArray(record.environment)
+      ? { environment: record.environment as NonNullable<WorkspaceSettings["worktreePolicy"]>["environment"] } : {}),
+  };
 }
 
 function parseMediaGenerationTargetRef(

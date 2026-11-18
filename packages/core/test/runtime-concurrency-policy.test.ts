@@ -11,6 +11,7 @@ import { validateRuntimeConcurrencyLimits, type InstallRuntimeConcurrencyPolicyI
 import { SqliteRuntimeConcurrencyPolicyStore } from "../dist/storage/sqlite/runtime-concurrency-policy-store.js";
 import { applyRuntimeConcurrencyPolicyMigration, RUNTIME_CONCURRENCY_POLICY_MIGRATION_VERSION,
   RUNTIME_CONCURRENCY_POLICY_MIGRATION_NAME } from "../dist/storage/sqlite/runtime-concurrency-policy-migration.js";
+import { dropCodeAssessmentOverlay } from "./support/code-assessment-overlay-fixture.mjs";
 import { rewindRemainingWorkSuccessors } from "./support/remaining-work-predecessor.ts";
 import { testDatabase } from "./support/sqlite-test-database.ts";
 
@@ -67,6 +68,7 @@ function fixture(t: TestContext, { predecessor = false } = {}) {
   let fullSchema = schema(testDatabase(store));
   assert.equal(testDatabase(store).prepare("SELECT name FROM schema_migrations WHERE version=213").get()!.name, "workflow_conflict_recoveries");
   if (predecessor) {
+    dropCodeAssessmentOverlay(testDatabase(store));
     rewindRemainingWorkSuccessors(testDatabase(store));
     fullSchema = schema(testDatabase(store));
     assert.equal(testDatabase(store).prepare(`SELECT COUNT(*) AS n FROM ${table}`).get()!.n, 0);
@@ -103,7 +105,10 @@ function fixture(t: TestContext, { predecessor = false } = {}) {
     reopen() {
       store.close();
       store = createSqliteRunStore(cwd, paths);
-      if (predecessor) rewindRemainingWorkSuccessors(testDatabase(store));
+      if (predecessor) {
+        dropCodeAssessmentOverlay(testDatabase(store));
+        rewindRemainingWorkSuccessors(testDatabase(store));
+      }
       migrate(testDatabase(store));
       return this.policy;
     },

@@ -274,6 +274,7 @@ import { handleTraceItem, handleTracesCollection } from "../features/runs/traces
 import { resolveProviderForRun } from "../features/runs/providers.js";
 import { createWorkflowParallelCapabilityResolver } from "../features/runs/workflow-safety.js";
 import { handleGetWorkspaceChanges } from "../features/previews/workspace-changes.js";
+import { handleCodeAssessmentRoutes } from "../features/code-assessments/routes.js";
 import {
   handleGetWorkspaceFileContent,
   handleGetWorkspaceFileOpenIcon,
@@ -293,6 +294,7 @@ import {
 } from "../features/runs/workspace-change-recovery.js";
 import { handleWorkspaceSnapshotRoute, parseWorkspaceSnapshotRoute } from "../features/runs/workspace-snapshot-routes.js";
 import { handleEffectiveConfig, handleWorkspaceSettings } from "../features/settings/routes.js";
+import { handleManagedWorktrees } from "../features/workspaces/routes.js";
 import { handleSkillRoute } from "../features/skills/routes.js";
 import { handleWorkflowTemplateRoute } from "../features/channels/workflow-template-routes.js";
 import { handleTaskItem, handleTaskRun, handleTasksCollection } from "../features/tasks/routes.js";
@@ -452,7 +454,16 @@ export async function routeRequest(
   } = context;
   setCorsHeaders(response);
 
-  if (request.method === "OPTIONS") {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const chromePairing = url.pathname === "/browser-extension/v1/pair";
+
+  // A loopback daemon without a bearer token is only callable by the local
+  // Ling page; pairing and automation ingress enforce their own origin boundary.
+  if (!config.authToken && !chromePairing && url.pathname !== "/health" && !isAutomationEventIngress(url.pathname, request.method)) {
+    if (!allowLocalServiceRequest(request, response)) return;
+  }
+
+  if (request.method === "OPTIONS" && !chromePairing) {
     response.writeHead(204);
     response.end();
     return;
@@ -460,9 +471,8 @@ export async function routeRequest(
 
   // Cloud/self-host slice: non-loopback binds require a bearer token on every
   // request. /health stays open so lifecycle probes keep working.
-  if (config.authToken) {
-    const pathname = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`).pathname;
-    if (pathname !== "/health" && !isAutomationEventIngress(pathname, request.method)) {
+  if (config.authToken && request.method !== "OPTIONS") {
+    if (url.pathname !== "/health" && !isAutomationEventIngress(url.pathname, request.method)) {
       if (!daemonRequestIsAuthorized(config.authToken, request.headers.authorization)) {
         writeJson(response, 401, { error: "unauthorized", message: "A valid bearer token is required for non-loopback access." });
         return;
@@ -470,7 +480,11 @@ export async function routeRequest(
     }
   }
 
-  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  if (chromePairing) {
+    await handleChromeBrowserPair(request, response, config, context.chromeBrowserSessions);
+    return;
+  }
+
   const maybeContinueRunInterventions = async (terminalRun: RunSession): Promise<void> => {
     const sourceRunId = terminalRun.parentRunId ?? terminalRun.id;
     const workspaceCwd = readRunWorkspaceCwd(terminalRun) ?? terminalRun.cwd;
@@ -590,6 +604,26 @@ export async function routeRequest(
         controlPlaneEvents,
         startupState,
         computerUsePreviews,
+        nativeRunDispatcher,
+      },
+    );
+  const startCodeAssessmentRun = (runRequest: RunRequest, afterRunTerminal: (run: RunSession) => Promise<void>, onRunReady: (runId: string) => void): Promise<string | undefined> =>
+    executeRunRequest(
+      runRequest,
+      createDetachedRunExecutionSink(),
+      runnerRegistry,
+      storeRegistry,
+      activeRuns,
+      runtimeSupervisor,
+      secretResolver,
+      mcpBroker,
+      {
+        onRunReady,
+        afterRunTerminal,
+        controlPlaneEvents,
+        startupState,
+        computerUsePreviews,
+        hostCapabilityBridge,
         nativeRunDispatcher,
       },
     );
@@ -767,6 +801,11 @@ export async function routeRequest(
 
   if (url.pathname === "/workspace-settings") {
     await handleWorkspaceSettings(request, response, config, storeRegistry, secretResolver, cwd => context.desktopBrowser.forWorkspace(cwd).cancelAll());
+    return;
+  }
+
+  if (url.pathname === "/worktrees" || url.pathname === "/worktrees/actions" || url.pathname.startsWith("/worktrees/initialization/")) {
+    await handleManagedWorktrees(request, response, url, config, storeRegistry, context.desktopBridgeToken);
     return;
   }
 
@@ -971,11 +1010,6 @@ export async function routeRequest(
       context.officeDocumentsPlugin,
       context.desktopBrowserPlugin,
     );
-    return;
-  }
-
-  if (url.pathname === "/browser-extension/v1/pair") {
-    await handleChromeBrowserPair(request, response, config, context.chromeBrowserSessions);
     return;
   }
 
@@ -1636,6 +1670,9 @@ export async function routeRequest(
         },
       ));
     return;
+  }
+  if (url.pathname.startsWith("/workspace/code-assessments")) {
+    if (await handleCodeAssessmentRoutes(request, response, url, { storeRegistry, activeRuns, startRun: startCodeAssessmentRun })) return;
   }
   if (request.method === "POST" && url.pathname === "/runs/policy-preview") {
     await handleRunPolicyPreview(request, response, config, url, storeRegistry);

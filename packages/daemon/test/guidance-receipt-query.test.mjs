@@ -16,10 +16,10 @@ async function fixture(t) {
   const cwd = await mkdtemp(join(tmpdir(), "ling-guidance-receipt-"));
   const f = { cwd, store: createSqliteRunStore(cwd) };
   const config = resolveConfig({ host: "127.0.0.1", port: 0 });
-  let registry = new RunStoreRegistry(() => f.store);
+  let registry = new RunStoreRegistry(() => f.store, { trustedWorkspaceRoots: [cwd] });
   f.reopen = () => {
     f.store.close(); f.store = createSqliteRunStore(cwd);
-    registry = new RunStoreRegistry(() => f.store);
+    registry = new RunStoreRegistry(() => f.store, { trustedWorkspaceRoots: [cwd] });
   };
   const activeRuns = new ActiveRunRegistry();
   const directService = new DirectReplyControlService({});
