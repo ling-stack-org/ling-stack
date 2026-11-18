@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { Plug } from "lucide-react";
 import {
   Button,
@@ -38,9 +39,29 @@ export function PluginManagerTable({
   readonly t: Translate;
 }): React.JSX.Element {
   const initialLoading = isLoading && allRows.length === 0;
+  const bodyRef = useRef<HTMLTableSectionElement>(null);
+  const [scrollbarGutter, setScrollbarGutter] = useState(0);
+
+  useLayoutEffect(() => {
+    const body = bodyRef.current;
+    if (!body) return;
+    const updateGutter = () => {
+      const nextGutter = Math.max(0, body.offsetWidth - body.clientWidth);
+      setScrollbarGutter((current) => current === nextGutter ? current : nextGutter);
+    };
+    updateGutter();
+    const observer = new ResizeObserver(updateGutter);
+    observer.observe(body);
+    return () => observer.disconnect();
+  }, [allRows.length, isLoading, rows.length]);
+
+  const tableStyle = {
+    "--plugin-table-scrollbar-gutter": `${scrollbarGutter}px`,
+  } as CSSProperties;
+
   return (
     <TableContainer className="plugin-table" data-refreshing={isLoading && allRows.length > 0 ? "true" : undefined}>
-      <Table aria-label={t("Plugins")} className="plugin-table-grid">
+      <Table aria-label={t("Plugins")} className="plugin-table-grid" style={tableStyle}>
         <TableHead className="plugin-table-header">
           <TableRow>
             <TableHeaderCell>{t("Plugin")}</TableHeaderCell>
@@ -49,7 +70,7 @@ export function PluginManagerTable({
             <TableHeaderCell>{t("Actions")}</TableHeaderCell>
           </TableRow>
         </TableHead>
-        <TableBody className="plugin-table-body">
+        <TableBody className="plugin-table-body" ref={bodyRef}>
           {initialLoading ? <PluginSkeletonRows /> : rows.length ? rows.map((row) => (
             <PluginManagerRow key={row.id} handlers={handlers} row={row} t={t} />
           )) : (

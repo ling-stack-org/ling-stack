@@ -25,14 +25,16 @@ export function AppPresentationSurfaceBridge(props: {
     surface,
     {
       ...environment,
-      // Every route keeps the selected backdrop visible. Dense management and
-      // diagnostic surfaces still protect their own content panels.
+      // Ordinary workspaces and media production keep the selected backdrop;
+      // settings, diagnostics and approvals remain solid routes.
       ambientWorkspace: !["settings", "media", "runs", "threads", "approvals"].includes(props.activeView),
       userBackground: hasBackground,
     },
   ), [environment, hasBackground, props.activeView, resolved.presentationProfileId, surface]);
 
-  const backgroundVisible = hasBackground && policy.artwork !== "off";
+  const backgroundVisible = hasBackground
+    && policy.surfaceRecipe === "translucent"
+    && policy.artwork !== "off";
 
   useLayoutEffect(() => {
     const root = globalThis.document?.documentElement;

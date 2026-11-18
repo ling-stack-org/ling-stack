@@ -18,6 +18,12 @@ Plugin Manager 不静默安装或启用扩展。
 - refresh 保留已有列表并标 stale；筛选变化不发请求，也不强制关闭当前详情。
 - raw blocker、checksum、package hash、provider/tool/schema 明细进入折叠技术详情。
 
+### P0 Layout Refinement（2026-11-17）
+
+- 插件表格正文不在无滚动时预留固定滚动条槽，空白列表时右侧内容铺满可用宽度；
+- 列表出现实际溢出时仍由原生滚动容器承担滚动，不改变表格列和操作区的语义；
+- 页面底部的伙伴/设置操作区不再额外绘制横向边框，分组关系由间距和已有容器层级表达。
+
 ## Actions
 
 - Add/Create、check、enable/disable、install 和 uninstall 各自拥有 scoped busy/error。
