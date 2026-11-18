@@ -2,7 +2,7 @@
 
 Status: canonical documentation index
 Owner: repository maintainers
-Last verified: 2026-11-02 (safe-concurrency design/plan added; other delivery states retain their owners)
+Last verified: 2026-11-18 (Ling Device Support Platform design/plan index added; 2026-11-02 safe-concurrency design/plan added; other delivery states retain their owners)
 Document type: governance index
 Code and test anchors: each linked contract owns its anchors
 
@@ -37,6 +37,8 @@ Maintenance-only transition notes are kept in [Development Handoffs](../maintena
 - [Product Design](../product-design.md)
 - [Architecture](../architecture.md)
 - [Platform Architecture](platform-architecture.md)
+- [Ling Device Support Platform](ling-device-support-platform.md)
+- [Ling Device Support Platform Implementation Plan](ling-device-support-platform-implementation-plan.md)
 - [Ling Framework](ling-framework.md)
 - [Ling Framework Complementary Design](ling-framework-complementary-design.md)
 - [Ling Framework Complementary Detailed Design](ling-framework-complementary-detailed-design.md)
