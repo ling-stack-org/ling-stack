@@ -4,6 +4,7 @@ import type {
   CompanionInteractionResponse,
   CompanionListResponse,
   CompanionMessageRequest,
+  CompanionMessageSubmissionReceipt,
   CompanionMessageResponse,
   CompanionMessagesResponse,
   CompanionMutationResponse,
@@ -75,8 +76,17 @@ export function streamCompanionMessage(
   cwd: string,
   companionId: string,
   input: CompanionMessageRequest,
+  signal?: AbortSignal,
 ): Promise<Response> {
-  return daemonClient.streamCompanionMessage(cwd, companionId, input);
+  return daemonClient.streamCompanionMessage(cwd, companionId, input, signal);
+}
+
+export function getCompanionMessageSubmission(
+  cwd: string,
+  companionId: string,
+  idempotencyKey: string,
+): Promise<CompanionMessageSubmissionReceipt> {
+  return daemonClient.getCompanionMessageSubmission(cwd, companionId, idempotencyKey);
 }
 
 export function triggerCompanionProactive(

@@ -131,6 +131,7 @@
     "test/companion-access.test.ts",
     "test/companion-dialogue.test.mjs",
     "test/companion-memory.test.mjs",
+    "test/companion-policy.test.ts",
     "test/companion-proactive.test.mjs",
     "test/companion-recovery.test.ts",
     "test/companions-api.test.mjs",

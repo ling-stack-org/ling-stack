@@ -1,9 +1,112 @@
 # Scoped macOS Development Packaging Review
 
-Latest source-record rebind: [2026-11-18 final branch record rebind](#final-branch-record-rebind).
-Latest source prerequisite review: [2026-11-17 assessment source review](#assessment-source-prerequisite-review).
-Runtime/toolchain review: [2026-11-03 macOS development packaging review](../../docs/release/macos-source-review-2026-11-03.md).
-The dated reviews below retain their historical evidence and scope.
+Current source prerequisite: [Companion and native runtime review](#companion-and-native-runtime-review-2026-11-17).
+The [2026-11-03 dependency review](../../docs/release/macos-source-review-2026-11-03.md)
+and the dated reviews below retain their historical evidence and scope.
+
+## Companion and native runtime review, 2026-11-17
+
+The Companion source closure retains 44 roots and contains 1,872 fixed packaging
+inputs, including its explicit native window and capability modules. Scoped
+review covered the Companion changes and deterministic compilation of the 55
+locale catalogs before adopting their exact input bindings. The Office 15 and
+sandbox 19 native inputs remain byte-identical to their reviewed records.
+
+Independent Codex context `native_packaging_prerequisites` returned
+`SCOPED SOURCE-REVIEW PASS` for the exact native prerequisite proposal before
+either persistent record was changed. This is a separate context on the same
+model host, not human or cross-model approval, and is not a clean-review
+certificate for the full pull request.
+
+Both records bind Darwin arm64, Electron 45.3.1, embedded Node 24.22.2 and libuv
+1.52.1. The sandbox record changes only its Electron and Node fields. The Office
+record makes the same two changes, binds that sandbox record, and retains both
+SDK 26.5 profiles while adding this exact local profile:
+
+| Field | Reviewed value |
+| --- | --- |
+| Profile | `local-xcode27.2-sdk27.2-arm64` |
+| Compiler | `Apple clang version 21.0.0 (clang-2100.4.1.1)` |
+| Compiler SHA-256 | `fc5e3cbba6ad54059295cad716aacb05ace8235f5f7a6031f1d8c15d24bd6d66` |
+| SDK | `macosx27.2`, version `27.2` |
+| SDK settings SHA-256 | `82165b15ee21419d4cffaba8895797391b908ac9499ba70f561f3e1bd16758d6` |
+
+The reviewer compared the fixed native inputs, candidate field differences,
+Apple compiler signature and existing OS identities, and the native ABI and
+publication contracts. The compiler's strict signature verifies as
+`com.apple.clang` with the Apple Software Signing chain; the containing Xcode
+27.2 bundle also passes strict signature verification. All four N-API headers
+are unchanged. Office uses N-API 8, C++17 and deployment target 13.0; it does not
+link to Node's internal ABI. The local Darwin 27.0.0 backend, codesign and dyld
+profile identities match the existing `additionalOs` row.
+
+Fresh evidence covers 48/48 Office tests under standalone Node and 48/48 under
+the actual Electron runtime, with equal source fingerprints and no fixture
+residue. The fresh sandbox build passes 26 Rust tests with two existing ignored
+cases; process, input-read and codesign protocol suites pass 19/19, 10/10 and
+18/18. Restricted dispatch using the actual Electron executable and its exact
+resource digests passes 15/15, including write/network refusal. Launch-unknown
+contracts pass 2/2. No source, test, observer or approval mechanism was changed
+to obtain these results.
+
+The exact approved sandbox record SHA-256 is
+`3b6404b32c2e52166fb581744c4fccb1232e21e4cd847b0dd936032f7f1be3bf`;
+the approved Office record SHA-256 is
+`f888550f1a89ca8d3015372e9b019b72ae1c15130236c89d0443395252cee7f1`.
+The sandbox record is adopted first. All other source pins, OS rows, trust,
+signing and false/unbound safety axes are unchanged. This finite prerequisite
+review does not accept final App/archive bytes, public signing, notarization,
+clean-machine behavior, root-only capability observers or full Host protection.
+
+Integration of main `86f057874` (#715) changes only the fixed
+`packages/remote-protocol/package.json` input: four test/typecheck scripts select
+the migrated TypeScript suites. Its production build scripts, exports,
+dependencies, source and production compiler configuration are unchanged. The
+new test configuration uses `noEmit`; it does not add a runtime import edge.
+The same independent context separately returned `SCOPED SOURCE-REVIEW PASS`
+for the exact candidate before adoption. Only that packaging input digest
+changes, to `ed97b6e2218a30e5bd17788c7a5a6a1498d490a68dbbadc35d730a5ce6ca093a`;
+the resulting Office record SHA-256 is
+`a3bb786d0f0b7147171fdb804423cf87c8c9d5ed375bdb066f501d8b54e607d2`.
+All 1,872 packaging and 15 Office native inputs match this record. The sandbox
+record and every runtime, toolchain, OS, signing and trust field retain the
+approved values above.
+
+Integration of `eda498d93` (`fix(desktop): allow companion teammate lookup`)
+changes only the fixed `apps/desktop/main/companion-window.ts` input. Its network
+filter and route check allow the owned top-level Companion document to project
+GET `/teammates` requests while retaining null Origin for nested, non-GET,
+unowned and foreign requests. The paired `companion-window.test.ts` assertions
+cover the top-level positive and nested-path negative; the targeted suite passed
+3/3. There are no import, dependency, native input, runtime/toolchain/OS,
+signing/trust or false/unbound safety-field changes. Only the packaging digest
+changes from `3062e1ebb53f9810d6d3bf5739811ad56c22da71becc1876ac3513c816af5d4e`
+to `2d8a1e31745263876c573bb5d6a53c3fa38c9aa97ff6bb1518bf3684a800e43e`.
+The exact Office record SHA-256 is
+`c1af02b777c71acde3bcfd222b04ba1035f0051f60fd6ed3d77f23b2617b26da` and the
+fixed packaging aggregate is
+`48fb0d593fd30d3c612b141f1ac364e2235bf381f0601e46db1c60aa2de84d08`. All
+1,872 packaging and 15 Office native inputs match this record.
+
+Integration of main `44f7a0dd6` (#719) binds the conversation change-summary
+runtime closure already present on the base branch. It changes only these fixed
+Office packaging inputs: `packages/contracts/src/workspace-changes.ts`,
+`packages/daemon/src/features/runs/thread-routes.ts`, and
+`packages/daemon/src/server/routes.ts`. The change adds the conversation-file
+summary projection and its route wiring; it does not change Office native
+sources, packaging tools, runtime/toolchain/OS identities, signing, or trust
+fields. The three packaging digests are refreshed from
+`efb0337fe87c237e4cbc4df3cd05b2e5edd99e914177362c6238bdaec3e4c862`,
+`29c677132fe57f9b1709cbc1c3aa478c7ec00542c49146ab22fa2aa0157567ae`, and
+`ac8e5ea32b807995ffd2715da4e77f80f088c0b52a89bdd29653a14ccbf2a2ed` to
+`29d96be654be2c22c7b7429529de9cf67b80a8ae0e29990af932d21eff5a52c6`,
+`ac2e04146c264b564acac1ec4c032d5a7a6d3f0845e5278a4b01778ea3957056`, and
+`10a8e27a8ce2b8ba65ed6135c4117d76338c61f4da5036dd6d7efa5b83cad627`.
+The exact Office record SHA-256 is
+`860c9de9e463c9167f2e71459b018d2416f3333ee9b2c18db8856d519b5705f7` and the
+fixed packaging aggregate is
+`7f407ee163e0277b6e9b38b4ed7d9fa080526523b4e0140e1fae13e2ba38f21d`. All
+1,872 packaging and 15 Office native inputs match this record.
 
 ## Final Branch Record Rebind
 
@@ -12,6 +115,7 @@ Date: 2026-11-18. The final PR #731 source tree before this record-only update i
 The record-only rebind changes four existing packaging digests and adds no paths. All other packaging and Office native digests, approval/trust values, toolchain profiles, runtime and signing fields remain unchanged. The reviewed JSON SHA-256 is `12182e90c1aeef51a03498144a25d459931538097672459faa2d27d2a704d3e9`; the fixed-order packaging aggregate is `98b388f47aa6fc577974b52a51e1b3e18da9754e05e04ddfc1a72288e196a67b`; the unchanged 15-input Office native aggregate is `9c5f6a1a05fe63ab96de941432ec13166af8974ec52730934d5ac348c41a854e`. Aggregates encode the record's fixed-order `[path, sha256]` pairs as JSON plus a newline.
 
 This update only restores the checked-in source record to the final branch bytes. It does not create an Office native grant, lease, publication or signing authority, and it does not establish App/archive, platform, signature or GUI acceptance.
+
 
 ## Assessment Source Prerequisite Review
 
@@ -25,7 +129,8 @@ The reviewed JSON SHA-256 is `f1ce942d92bb02aad97602c45d529631f401a76b20f8d89946
 
 Assessment execution uses tool-free text-model Runs and creates no Office native grant, lease, publication or signing authority. All native hashes, schema, approval/trust values, toolchain profiles, headers, runtime and signing fields retain their existing values. The reader, import containment, publication guards and test assertions are unchanged. This source prerequisite review does not establish final App/archive, platform, signature or GUI acceptance.
 
-## Historical Reviews
+
+## Historical baseline, 2026-10-13
 
 Status: independently reviewed source prerequisite; final artifact acceptance separate
 Date: 2026-10-13

@@ -83,14 +83,14 @@ export interface CreateCompanionRequest {
   readonly displayName: string;
   readonly description?: string;
   readonly manifest?: CompanionManifest;
-  readonly behaviorPolicy?: Partial<CompanionBehaviorPolicy>;
+  readonly behaviorPolicy?: Omit<Partial<CompanionBehaviorPolicy>, "quietHours"> & { readonly quietHours?: readonly [number, number] | null };
 }
 
 export interface UpdateCompanionRequest {
   readonly displayName?: string;
   readonly description?: string;
   readonly manifest?: CompanionManifest;
-  readonly behaviorPolicy?: Partial<CompanionBehaviorPolicy>;
+  readonly behaviorPolicy?: Omit<Partial<CompanionBehaviorPolicy>, "quietHours"> & { readonly quietHours?: readonly [number, number] | null };
   readonly status?: CompanionStatus;
 }
 
@@ -154,6 +154,16 @@ export interface CompanionReply {
 export interface CompanionMessageRequest {
   readonly body: string;
   readonly idempotencyKey?: string;
+}
+
+export interface CompanionMessageSubmissionReceipt {
+  readonly cwd: string;
+  readonly companionId: string;
+  readonly idempotencyKey: string;
+  readonly status: "accepted" | "unknown";
+  readonly message?: TeammateDirectMessage;
+  readonly aiReply?: TeammateDirectMessage;
+  readonly state: CompanionState;
 }
 
 export interface CompanionProactiveRequest {
