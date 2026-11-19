@@ -65,11 +65,25 @@ jobs:
         run: corepack pnpm --filter @ling-stack/desktop exec node scripts/build-office-driver.mjs --platform=${{ matrix.platform }}-${{ matrix.arch }}
       - name: Stage plugin runtime
         if: matrix.plugin != 'cua-driver'
+        env:
+          PLUGIN_KIND: ${{ matrix.plugin }}
+          PLUGIN_PLATFORM: ${{ matrix.platform }}
+          PLUGIN_ARCH: ${{ matrix.arch }}
         run: |
-          node scripts/plugins/stage-runtime-plugin.mjs --kind ${{ matrix.plugin }} --platform ${{ matrix.platform }} --extension apps/chrome-extension/ling-for-chrome.zip --host packages/browser-host/dist/native/ling-browser-host${{ matrix.platform == 'win32' && '.exe' || '' }} --helper apps/desktop/dist/office-driver/${{ matrix.platform }}-${{ matrix.arch }}/${{ matrix.platform == 'darwin' && 'OfficeDriver.app/Contents/MacOS/ling-office-driver' || 'ling-office-driver.exe' }} --output plugins/staged/${{ matrix.plugin }}
-      - run: node scripts/plugins/package-plugin.mjs --root ${{ matrix.plugin == 'cua-driver' && format('packages/daemon/src/features/plugins/bundled/{0}', matrix.plugin) || format('plugins/staged/{0}', matrix.plugin) }} --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --channel stable --releaseTag ${{ inputs.release_tag }} --sourceSha ${{ inputs.source_sha }} --output plugins/dist
+          host_suffix=""
+          helper_path="ling-office-driver.exe"
+          if [ "$PLUGIN_PLATFORM" = "win32" ]; then host_suffix=".exe"; fi
+          if [ "$PLUGIN_PLATFORM" = "darwin" ]; then helper_path="OfficeDriver.app/Contents/MacOS/ling-office-driver"; fi
+          node scripts/plugins/stage-runtime-plugin.mjs --kind "$PLUGIN_KIND" --platform "$PLUGIN_PLATFORM" --extension apps/chrome-extension/ling-for-chrome.zip --host "packages/browser-host/dist/native/ling-browser-host${host_suffix}" --helper "apps/desktop/dist/office-driver/${PLUGIN_PLATFORM}-${PLUGIN_ARCH}/${helper_path}" --output "plugins/staged/${PLUGIN_KIND}"
+      - name: Package plugin artifact
         env:
           LING_PLUGIN_ARTIFACT_PRIVATE_KEY: ${{ secrets.LING_PLUGIN_ARTIFACT_PRIVATE_KEY }}
+          PLUGIN_ROOT: ${{ matrix.plugin == 'cua-driver' && format('packages/daemon/src/features/plugins/bundled/{0}', matrix.plugin) || format('plugins/staged/{0}', matrix.plugin) }}
+          PLUGIN_PLATFORM: ${{ matrix.platform }}
+          PLUGIN_ARCH: ${{ matrix.arch }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: node scripts/plugins/package-plugin.mjs --root "$PLUGIN_ROOT" --platform "$PLUGIN_PLATFORM" --arch "$PLUGIN_ARCH" --channel stable --releaseTag "$RELEASE_TAG" --sourceSha "$SOURCE_SHA" --output plugins/dist
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: plugin-${{ matrix.plugin }}-${{ matrix.platform }}-${{ matrix.arch }}
@@ -85,8 +99,13 @@ jobs:
           path: plugins/dist
           pattern: plugin-*
           merge-multiple: true
-      - run: corepack pnpm --filter @ling-stack/plugin-sdk build
-      - run: node scripts/plugins/generate-catalog.mjs --input plugins/dist --output plugins/catalog.json --releaseTag ${{ inputs.release_tag }} --sourceSha ${{ inputs.source_sha }}
+      - name: Build plugin SDK
+        run: corepack pnpm --filter @ling-stack/plugin-sdk build
+      - name: Generate catalog
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: node scripts/plugins/generate-catalog.mjs --input plugins/dist --output plugins/catalog.json --releaseTag "$RELEASE_TAG" --sourceSha "$SOURCE_SHA"
       - run: node scripts/plugins/verify-catalog-assets.mjs --input plugins/dist --catalog plugins/catalog.json
       - name: Sign catalog
         env:
@@ -95,6 +114,8 @@ jobs:
       - name: Create draft release and upload plugin assets
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
         run: |
-          gh release create "${{ inputs.release_tag }}" --draft --title "Ling plugins ${{ inputs.release_tag }}" --notes "Official Ling plugin artifacts for ${{ inputs.source_sha }}"
-          gh release upload "${{ inputs.release_tag }}" plugins/dist/*.ling-plugin.zip plugins/dist/*.ling-plugin.zip.json plugins/catalog.json plugins/catalog.sig
+          gh release create "$RELEASE_TAG" --draft --title "Ling plugins $RELEASE_TAG" --notes "Official Ling plugin artifacts for $SOURCE_SHA"
+          gh release upload "$RELEASE_TAG" plugins/dist/*.ling-plugin.zip plugins/dist/*.ling-plugin.zip.json plugins/catalog.json plugins/catalog.sig

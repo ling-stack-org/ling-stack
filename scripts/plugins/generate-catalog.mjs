@@ -17,7 +17,7 @@ for (const artifact of records) {
     pluginId: artifact.pluginId,
     displayName: artifact.pluginId,
     trustSummary: "Official Ling plugin distributed through the signed catalog.",
-    latestStableVersion: artifact.version,
+    latestStableVersion: artifact.channel === "stable" ? artifact.version : undefined,
     manifest: { contributions: [], requiredSecrets: [], defaultApprovals: [], healthChecks: [] },
     artifacts: [],
   };
@@ -36,8 +36,13 @@ for (const artifact of records) {
     healthChecks: manifest.healthChecks ?? [],
   };
   plugin.artifacts.push(artifact);
-  if (compare(artifact.version, plugin.latestStableVersion) > 0) plugin.latestStableVersion = artifact.version;
+  if (artifact.channel === "stable" && (!plugin.latestStableVersion || compare(artifact.version, plugin.latestStableVersion) > 0)) {
+    plugin.latestStableVersion = artifact.version;
+  }
   grouped.set(artifact.pluginId, plugin);
+}
+for (const plugin of grouped.values()) {
+  if (!plugin.latestStableVersion) throw new Error(`Plugin has no stable artifact: ${plugin.pluginId}`);
 }
 const catalog = {
   schemaVersion: 1,
