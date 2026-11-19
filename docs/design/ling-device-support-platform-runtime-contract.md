@@ -7,6 +7,7 @@ Document type: detailed device execution contract
 Related design: [Ling Device Support Platform](ling-device-support-platform.md)
 Delivery ledger: [Implementation Plan](ling-device-support-platform-implementation-plan.md)
 Related workflows and topology: [Device Developer Execution and Connectivity](ling-device-developer-execution.md)
+Cross-device execution model: [Ling Device Fabric](ling-device-fabric.md)
 
 ## 1. Execution owner
 
@@ -25,12 +26,14 @@ independently authorized host can supply read-only observations for reconciliati
 A follow-up write on a different host starts a separate task after the original outcome
 and target state are reconciled.
 
-Each device action addresses a task, external target, and owning execution host.
-Project workspace actions address their project executor separately. A remote planner
-can propose a device action and share its artifact reference. Only the task owner can
-bind the proposal to current capabilities and dispatch it. A paired peer projects the
-owner's task journal and resumes from its last accepted revision. The remote transport
-carries messages and receipts under Ling's authenticated pairing.
+Each device action addresses a task node, external target, and owning execution host.
+Project workspace actions address their project executor separately. The graph
+coordinator owns the parent revision and uses accepted owner receipts to update its
+progress. Each device node retains its own execution host, task journal, target
+binding and approval scope. Its owner validates the proposed action against current
+capabilities and records the attempt and verification. A paired peer resumes the
+authorized projection at the last accepted revision.
+[Cross-device task graph](ling-device-fabric.md#5-cross-device-task-graph)
 
 ## 2. Capability negotiation and freshness
 
@@ -237,6 +240,9 @@ capability snapshot, and verification rule.
 | D10 | Verify project build and deploy/test/log/retest with the selected app, bound artifact and target. Exercise native tools, job reattach, and a supported vendor maintenance handoff with readback. |
 | D11 | Have a paired PC assist a phone-owned task. Change the PC link and phone target separately. Verify projection, reattachment, and the owner's handling of stale or duplicate proposals. |
 | D12 | Sync over direct LAN, cross-network direct, and encrypted relay paths. Verify peer trust, reconnect, revocation, and task receipt continuity through path changes. |
+| D14–D15 | Resolve one shared semantic device graph and execute a parent task graph with nodes owned by different runtimes. Verify identity, twin freshness, owner leases, partial results, and recovery. |
+| D16–D18 | Enroll an edge runtime, project ordered events, install a signed resource, and roll back a failed resource revision. |
+| D19–D22 | Exercise physical preconditions, secret references, lifecycle changes, bounded model context, prompt-injection fixtures, trace continuity, and hardware-in-loop conformance. |
 
 The ledger distinguishes contract fixtures, supported OS or simulator runs, and
 physical device acceptance. Home Assistant exercises the shared adapter contract.
