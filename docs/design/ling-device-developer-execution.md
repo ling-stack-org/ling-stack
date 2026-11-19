@@ -10,6 +10,7 @@ Related documents:
 [Runtime Contract](ling-device-support-platform-runtime-contract.md) ·
 [Hardware Protocol Workbench](ling-hardware-protocol-workbench.md) ·
 [Ling Server Connectivity](ling-server-connectivity.md) ·
+[Ling Device Fabric](ling-device-fabric.md) ·
 [Implementation Plan](ling-device-support-platform-implementation-plan.md)
 
 ## 1. Device sessions
@@ -402,3 +403,4 @@ data and artifacts the user shared and the connected peer.
 | [D11](ling-device-support-platform-implementation-plan.md#d11-pc-assisted-mobile-execution) | PC submits analysis or a build for a phone-owned task. Link loss, duplicate proposals, and a different attached target preserve the owner and recorded attempts. |
 | [D12](ling-device-support-platform-implementation-plan.md#d12-ling-server-connectivity) | Paired peers sync over LAN, direct internet and encrypted relay. Test relay fallback, route switch, resync and revoke using the same task, sequence and authorization model. |
 | [D13](ling-device-support-platform-implementation-plan.md#d13-hardware-protocol-development-and-debugging) | Capture and decode a documented Modbus RTU bench device on supported PC and Mobile paths. Replay traces, verify a live change, and register the verified adapter for standard sessions. |
+| [D14–D22](ling-device-support-platform-implementation-plan.md#d14-semantic-device-graph-and-twin) | Connect semantic device state, cross-device task graphs, edge runtimes, event streams, signed resources, safety, fleet lifecycle, model context, and conformance evidence. |

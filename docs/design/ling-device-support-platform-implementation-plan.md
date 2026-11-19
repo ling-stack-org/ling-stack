@@ -2,12 +2,13 @@
 
 Status: tracking plan; implementation not started
 Owner: Ling platform maintainers
-Last verified: 2026-11-20 (D12 connectivity design)
+Last verified: 2026-11-20 (D12 and D14–D22 design)
 Document type: staged implementation and acceptance record
 Related design: [Ling Device Support Platform](ling-device-support-platform.md)
 Runtime contract: [Ling Device Support Platform Runtime Contract](ling-device-support-platform-runtime-contract.md)
 Developer workflows and topology: [Device Developer Execution and Connectivity](ling-device-developer-execution.md)
 Ling Server communication: [Ling Server Connectivity](ling-server-connectivity.md)
+Cross-device execution fabric: [Ling Device Fabric](ling-device-fabric.md)
 
 This plan records delivery one slice at a time. A slice is not complete because code
 compiles or a static package check passes. Each completed slice must record behavior
@@ -55,6 +56,15 @@ validation and the boundary of what remains unverified.
 | D11 | [ ] | PC-assisted Mobile execution | Paired PC contributes plans, artifacts, or analysis while Mobile owns the task and device link | Collaboration contract fixtures and physical device runs |
 | D12 | [ ] | Ling Server connectivity | Self-hosted control, direct peer paths, NAT traversal, encrypted relay fallback, and paired conversation/device-task sync work without third-party network services | Multi-network tests, peer identity, payload confidentiality, and reconnect evidence |
 | D13 | [ ] | Hardware protocol development and debugging | Capture, decode, replay, and verify a hardware protocol and register the tested adapter for standard use | Shared codec fixtures and physical PC and Mobile device runs |
+| D14 | [ ] | Semantic device graph and twin | PC, Mobile, vehicle, hardware, and smart-home identities and state views resolve through one semantic model | Identity, relationship, freshness, and twin fixtures |
+| D15 | [ ] | Cross-device task graph | One task can plan and execute nodes on different owners with approvals, partial results, recovery, and verification | Graph scheduler, owner leases, and cross-device acceptance |
+| D16 | [ ] | Edge Runtime and bridge contract | An enrolled Linux edge executor and a phone-owned bridge use the shared device contract | Enrollment, reconnect, local journal, capability, and bridge tests |
+| D17 | [ ] | Event and telemetry plane | Device, task, health, and evidence events use one envelope with ordering, freshness, backpressure, and snapshots | Stream fixtures, gap recovery, telemetry retention, and peer projection |
+| D18 | [ ] | Resource and adapter registry | Supported resources install, update, and roll back through their platform delivery channels | Manifest, license, dependency, digest, and rollback tests |
+| D19 | [ ] | Safety, policy, and secrets | Actions check device authority and current operating conditions and record their verification | Risk fixtures, controller boundaries, and target-specific acceptance |
+| D20 | [ ] | Fleet and lifecycle | Enrollment, ownership, health, credentials, upgrade, revoke, retire, and restore are durable | Lifecycle state machine and upgrade/recovery evidence |
+| D21 | [ ] | Model context and orchestration | Model context packs and cross-device plans use bounded evidence, local playbooks, and observation trust | Context budget, prompt-injection, planner, and offline fixtures |
+| D22 | [ ] | Observability and conformance | One trace links model, graph, runtime, adapter, protocol, target, and verification | Simulator, hardware-in-loop, chaos, field, and reproducible conformance report |
 
 ## D0: Design baseline
 
@@ -404,9 +414,190 @@ only on a successful install or a model response.
   session. Track later protocol families against their own field evidence.
   [Workbench design and sources](ling-hardware-protocol-workbench.md)
 
+## D14: Semantic device graph and twin
+
+### Scope
+
+- [ ] Add stable device, component, connection, relationship, location, and
+  ownership records. Keep transport aliases separate from stable identity.
+- [ ] Add semantic capability verbs with protocol implementations, support ranges,
+  freshness, side effects, approvals, prerequisites, and verification.
+- [ ] Add reported, desired, pending, and verified twin views with provenance and
+  freshness. Preserve unknown state after interrupted writes.
+- [ ] Add identity merge and split workflows with adapter evidence or local operator
+  confirmation.
+
+### Exit evidence
+
+- A PC, phone, Android head unit, vehicle bridge, hardware bridge, and smart-home
+  entity resolve through one fixture model with explicit relationships.
+- Stale, conflicting, revoked, and aliased identities remain distinct until their
+  merge evidence is accepted. Twin projections converge after reconnect.
+- A semantic verb maps to multiple adapters without changing task state or approval
+  contracts.
+
+## D15: Cross-device task graph
+
+### Scope
+
+- [ ] Add parent graph, node, edge, target binding, node owner, precondition,
+  approval, attempt, verification, recovery, and evidence contracts.
+- [ ] Coordinate PC, Mobile and Linux edge nodes over their authorized device links.
+  Preserve per-node ownership. Use the declared coordination mechanism for shared
+  target and bridge leases.
+- [ ] Support partial result, unknown outcome, graph cancellation, node retry,
+  route change, and recovery without duplicating a mutating action.
+
+### Exit evidence
+
+- The head-unit case exercises a PC artifact and a phone-owned app deployment.
+  The home case connects a home entity and local hardware observations through a
+  device identity and verifies the outcome. Both use the same graph contract.
+- A PC disconnect, phone foreground loss, target reboot, duplicate proposal, and
+  failed verification preserve graph ownership and node receipts.
+- The parent result distinguishes verified success, partial progress, failure, and
+  unresolved outcome.
+
+## D16: Edge Runtime and bridge contract
+
+### Scope
+
+- [ ] Define runtime enrollment, key proof, target discovery, local journal,
+  connection handles, health, cancel, capture, upgrade, and revoke.
+- [ ] Verify a Linux edge executor and a supported phone-owned hardware bridge.
+  Validate executor enrollment and each placement's connection, recovery, and task
+  ownership.
+- [ ] Support local execution and declared offline read or recovery behavior while
+  retaining task ownership and evidence.
+
+### Exit evidence
+
+- An edge runtime reconnects after process restart and resumes its journal without
+  replaying a mutating action.
+- Phone and PC can inspect the same runtime health, capability snapshot, and
+  verification evidence.
+- Revocation stops new dispatch and expires the runtime's active leases.
+
+## D17: Event and telemetry plane
+
+### Scope
+
+- [ ] Define the event envelope, stream owner, sequence, freshness, quality,
+  provenance, redaction class, and retention policy.
+- [ ] Add task, state, health, capability, action, verification, evidence, and
+  resource events. Keep high-rate telemetry separate from durable task events.
+- [ ] Add gap recovery, snapshot projection, backpressure, sampling, and peer
+  synchronization.
+
+### Exit evidence
+
+- A state gap recovers from a retained range or current snapshot. A duplicate
+  event does not change state.
+- High-rate sensor data is sampled or expired according to policy while task and
+  revocation events remain durable.
+- Model context receives the source, time, freshness, and provenance of each fact.
+
+## D18: Resource and adapter registry
+
+### Scope
+
+- [ ] Add signed resource manifests for adapters, transports, codecs, profiles,
+  vocabulary, playbooks, simulators, captures, documentation, firmware metadata,
+  and edge packages.
+- [ ] Validate digest, signature, license, dependency, platform, device, firmware,
+  permission, and Ling contract compatibility.
+- [ ] Install, health-check, disable, update, and roll back resources independently.
+
+### Exit evidence
+
+- Mobile activates a compatible data profile and fixture. Native Mobile
+  components enter through the signed app build. PC validates a supported native
+  adapter installation. Record resource revisions and artifact digests.
+- A failed update restores the last verified resource without deleting task evidence.
+- An unsupported license, dependency, platform, or firmware range blocks installation.
+
+## D19: Safety, policy, and secrets
+
+### Scope
+
+- [ ] Declare the physical and permission prerequisites of supported actions.
+  Validate the target state, adapter cancellation and recovery behavior.
+- [ ] Add a target-scoped secret broker and auditable secret use references.
+- [ ] Route safety-critical operations through the certified controller or the
+  authorized vendor maintenance workflow. Preserve operator evidence and readback.
+
+### Exit evidence
+
+- Parked head-unit app deployment and supported home and hardware configuration
+  fixtures exercise condition, authority and verification checks. Safety-critical
+  cases exercise the operator handoff and record the observable evidence.
+- Model-visible observations cannot grant authorization or reveal secret contents.
+- Cancellation, revoke, and failed recovery produce an auditable state.
+
+## D20: Fleet and lifecycle
+
+### Scope
+
+- [ ] Track enrollment and ownership revisions, profile and runtime versions,
+  operational health, maintenance and retirement.
+- [ ] Add ownership transfer, shared read-only access, developer scopes, credential
+  rotation, profile restore, upgrade, rollback, and retirement evidence.
+- [ ] Add fleet health and compatibility projections by runtime, adapter, profile,
+  firmware, and target.
+
+### Exit evidence
+
+- Transfer a device between users or workspaces without losing its task history.
+- Rotate credentials, revoke an edge runtime, upgrade an adapter, and restore the
+  previous verified revision.
+- Retired devices cannot receive new dispatch and retain the configured evidence
+  retention behavior.
+
+## D21: Model context and orchestration
+
+### Scope
+
+- [ ] Build bounded context packs from target relationships, capability snapshots,
+  state, evidence, policy, safety facts, freshness, and context budget.
+- [ ] Connect the existing runner and project executor to typed device proposals.
+  Record planning inputs and evidence. Support deterministic local playbooks.
+- [ ] Keep graph and node authority attached to the owning journals when PC or Mobile
+  changes planners. Rebuild the context pack for the selected provider.
+- [ ] Treat device output, logs, captures, and vendor text as untrusted observations.
+
+### Exit evidence
+
+- A cross-device goal produces a typed graph instead of unscoped tool calls.
+- Context budget and redaction fixtures exclude unrelated devices, credentials,
+  unbounded logs, and observation instructions.
+- The model service outage runs the declared local playbook and records the source.
+
+## D22: Observability and conformance
+
+### Scope
+
+- [ ] Propagate conversation, graph, node, attempt, device, runtime, connection,
+  adapter, resource, event, and model-turn identifiers.
+- [ ] Add simulator, protocol replay, hardware-in-loop, network interruption, process
+  restart, resource rollback, and physical acceptance reports.
+- [ ] Produce a reproducible conformance report for each runtime, target, adapter,
+  firmware, transport, model, and tested network.
+
+### Exit evidence
+
+- One trace links a user request to model plan, task node, runtime call, protocol
+  evidence, target state, and final verification.
+- Verify no duplicate dispatch and correct reconciliation after interrupted writes.
+- Verify the parked-head-unit and home sensor case set across PC, Mobile and edge
+  hosts, with each physical target result tied to its own attempt and evidence.
+
 ## Per-slice evidence ledger
 
 Update this table in the same PR that changes a slice status.
+
+D14–D22 share the design verification for Markdown links, license policy, public
+repository checks, and Mermaid rendering. Runtime and physical acceptance are
+recorded per slice as they complete. [Detailed design](ling-device-fabric.md)
 
 | Slice | PR / commit | Validation command or run | Evidence link | Result boundary | Remaining work |
 | --- | --- | --- | --- | --- | --- |
@@ -424,6 +615,15 @@ Update this table in the same PR that changes a slice status.
 | D11 | — | — | [PC collaboration](ling-device-developer-execution.md#22-pc-assisted-phone-execution) | Design recorded, implementation not started | Phone-owned collaboration and physical cases |
 | D12 | — | Documentation links, license and public checks plus diagram rendering | [Ling Server design](ling-server-connectivity.md) | Detailed self-hosted design recorded, implementation not started | WebRTC integration, self-hosted STUN/TURN, migration, and cross-network acceptance |
 | D13 | — | Documentation, license and public checks plus diagram rendering | [Workbench design and research](ling-hardware-protocol-workbench.md) | Proposed design documented, implementation not started | Runtime and library evaluation, offline fixtures, and physical acceptance |
+| D14 | — | — | [Device Fabric](ling-device-fabric.md) | Detailed design recorded, implementation not started | Semantic graph, identity merge, twin state |
+| D15 | — | — | [Device Fabric](ling-device-fabric.md#5-cross-device-task-graph) | Detailed design recorded, implementation not started | Graph scheduler, owners, recovery |
+| D16 | — | — | [Device Fabric](ling-device-fabric.md#6-edge-runtimes-and-bridge-contract) | Detailed design recorded, implementation not started | Runtime enrollment and bridge acceptance |
+| D17 | — | — | [Device Fabric](ling-device-fabric.md#7-event-and-telemetry-plane) | Detailed design recorded, implementation not started | Event streams, freshness, retention |
+| D18 | — | — | [Device Fabric](ling-device-fabric.md#9-resource-and-adapter-registry) | Detailed design recorded, implementation not started | Signed resources, updates, rollback |
+| D19 | — | — | [Device Fabric](ling-device-fabric.md#10-safety-security-and-secrets) | Detailed design recorded, implementation not started | Physical safety and secret broker |
+| D20 | — | — | [Device Fabric](ling-device-fabric.md#11-lifecycle-fleet-and-ownership) | Detailed design recorded, implementation not started | Fleet lifecycle, transfer, upgrades |
+| D21 | — | — | [Device Fabric](ling-device-fabric.md#8-model-context-and-ai-orchestration) | Detailed design recorded, implementation not started | Context packs, planner, local fallback |
+| D22 | — | — | [Device Fabric](ling-device-fabric.md#12-observability-simulation-and-conformance) | Detailed design recorded, implementation not started | Traces, simulation, chaos, field acceptance |
 
 ## Definition of platform completion
 
@@ -438,6 +638,10 @@ The platform is not complete until:
   combinations with recorded native-tool and interruption behavior;
 - paired PC assistance preserves Mobile ownership and verified results, including
   across direct and relayed peer connections;
+- the cross-device case set verifies common contracts across PC, Mobile, head unit,
+  hardware and smart home, with each participating node linked to its evidence;
+- device identity, twin state, capability, event, resource, runtime, and task graph
+  revisions remain reproducible across upgrades and reconnects;
 - read-only, reversible, mutating, and critical actions have distinct policy behavior;
 - adapter and capability versions are preserved in task history;
 - a failed or disconnected operation cannot silently repeat a potentially mutating action;

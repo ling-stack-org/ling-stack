@@ -2,7 +2,7 @@
 
 Status: approved architecture baseline; implementation not started
 Owner: Ling platform maintainers
-Last verified: 2026-11-19
+Last verified: 2026-11-20 (Ling Device Fabric design)
 Document type: canonical product and technical design
 Canonical replacement: none
 Code and test anchors: `docs/architecture.md`, `apps/mobile/README.md`,
@@ -19,6 +19,8 @@ case flows are specified in
 [Device Developer Execution and Connectivity](ling-device-developer-execution.md).
 [Ling Server Connectivity](ling-server-connectivity.md) defines the first-party
 control plane, direct peer paths, and relay fallback.
+[Ling Device Fabric](ling-device-fabric.md) defines the cross-device semantic graph,
+task graph, edge runtimes, event plane, resource registry, and model context.
 
 ## 1. Purpose
 
@@ -27,9 +29,11 @@ diagnose, repair, and understand external devices. A device can be a computer, a
 Assistant installation, a router, a printer, a NAS, an Android device or head unit, a
 vehicle interface, or another supported system.
 
-The daemon or the phone owns the task and its device connection. The selected model
-runner plans work through device capabilities. The owning host validates and executes
-the operation through an adapter.
+The daemon, phone, or edge executor owns a device task and its connection. For a
+cross-device goal, the coordinating host assigns each node to an eligible execution
+owner and records the result. The model plans with the device's typed capabilities
+and current observations. The owning broker validates and executes the node through
+its adapter. [Ling Device Fabric](ling-device-fabric.md)
 
 ```text
 Ling PC / Ling Mobile
@@ -113,6 +117,8 @@ bridges hardware. It does not need to contain a language model.
 | Mobile, Web, Desktop, CLI clients | Conversation, device selection, approval UI, progress, and result rendering | Protocol details, target credentials, or direct database authority |
 | Remote Gateway / daemon | Pairing, authenticated sessions, daemon-owned tasks, and scoped peer collaboration messages | Ownership of Mobile device tasks |
 | Mobile execution module | Local policy and approval, adapter dispatch, verification, and durable state for tasks owned by the phone | Daemon task authority or unrestricted access to device protocols |
+| Cross-device graph coordinator | Graph revisions, node dependencies, placement and progress based on owner receipts | Adapter sessions and target credentials |
+| Edge executor | Its enrolled runtime, supported connections, local broker and task journal | Another runtime's task authority |
 | `packages/core` | Device domain state, policy decisions, approvals, leases, and durable transitions | Adapter-specific protocol code |
 | `packages/contracts` | Public DTOs, wire schemas, capability and task contracts | Crypto implementation, UI, storage, or model prompts |
 | Model runner | Model turns, tool selection, planning, and explanation | Privileged device access or protocol encoding |
@@ -138,7 +144,7 @@ packages/contracts/
   device-contracts.ts             # public DTOs and schema versions
 
 packages/core/
-  device-domain/                  # registry, profiles, task state, policy facts
+  device-domain/                  # registry, device state, task graph, policy facts
   device-capabilities/            # normalized capability metadata
 
 packages/daemon/
@@ -160,6 +166,10 @@ apps/mobile/modules/
 The first adapters may live under the daemon while their contracts stabilize. Adapters
 must not import React, `apps/web`, `apps/mobile` screens, raw SQLite tables, or private
 runner internals.
+
+The device contracts support local and paired graph projections. PC project nodes use the
+existing runtime records. Mobile and enrolled edge hosts implement the same device
+execution interface with platform adapters. [Execution and state contracts](ling-device-fabric.md)
 
 ## 6. Device domain model
 
@@ -429,6 +439,7 @@ configuration operations must not be silently promoted to physical control.
 | --- | --- | --- |
 | Local PC | Ling daemon and adapter on one computer | PC diagnostics, local Home Assistant, NAS and router APIs |
 | Mobile remote | Mobile -> Remote Gateway -> daemon adapter | Phone as the user-facing control surface for daemon-owned tasks |
+| Linux edge | PC or Mobile coordinates a task node owned by an enrolled edge executor | Persistent hardware and local home-controller connections |
 | Standalone Mobile | Phone owns the task and uses a native transport | Supported peripherals that expose an authorized interface over BLE, USB, or a supported local network protocol |
 | PC-assisted Mobile | Phone owns the task and target link. Paired PC contributes plans, artifacts, or analysis. | Phone at the device with a remote PC build or planning workspace |
 | Target-side executor | Remote Gateway -> service installed on target | Windows software repair, privileged system checks |
@@ -598,6 +609,9 @@ for later review.
    device acceptance. Verify vehicle diagnostics against its own hardware and protocol.
 7. Verify developer sessions on each host and paired collaboration for phone-owned tasks.
 8. Validate Ling Server direct and relay connectivity using the same signed task sync.
+9. Implement the semantic device graph, twin, task graph, edge runtime, event plane,
+   resource registry, safety, fleet, model context, and conformance slices tracked
+   in [D14–D22](ling-device-support-platform-implementation-plan.md#d14-semantic-device-graph-and-twin).
 
 The detailed one-by-one record is maintained in the implementation plan linked at the
 top of this document. Each slice must record its code scope, validation commands,
