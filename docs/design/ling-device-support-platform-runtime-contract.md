@@ -6,14 +6,17 @@ Last verified: 2026-11-19
 Document type: detailed device execution contract
 Related design: [Ling Device Support Platform](ling-device-support-platform.md)
 Delivery ledger: [Implementation Plan](ling-device-support-platform-implementation-plan.md)
+Related workflows and topology: [Device Developer Execution and Connectivity](ling-device-developer-execution.md)
 
 ## 1. Execution owner
 
-The daemon owns tasks accessed through Ling PC or the Remote Gateway. The phone owns
-standalone Mobile tasks. Each task has one owner with a durable journal and a broker
-that checks device identity, current capabilities, and authorization. Both owners use
-the same schemas and acceptance fixtures. The runner can propose an operation using
-those schemas. The broker alone decides whether to dispatch it.
+The daemon owns tasks using its device adapter, including tasks controlled by a paired
+Mobile client through the Remote Gateway. The phone owns tasks using its local
+adapter, including tasks with PC assistance. Each task has one owner with a durable
+journal and a broker that checks device identity, current capabilities, and
+authorization. Both owners use the same schemas and acceptance fixtures. The runner
+can propose an operation using those schemas. The broker alone decides whether to
+dispatch it.
 
 Device reachability and the supported adapter determine which execution hosts Ling
 offers. A client reconnect reads the owning host's journal. A backend disconnect,
@@ -21,6 +24,13 @@ adapter restart, or model change leaves the task with its original owner. An
 independently authorized host can supply read-only observations for reconciliation.
 A follow-up write on a different host starts a separate task after the original outcome
 and target state are reconciled.
+
+Each device action addresses a task, external target, and owning execution host.
+Project workspace actions address their project executor separately. A remote planner
+can propose a device action and share its artifact reference. Only the task owner can
+bind the proposal to current capabilities and dispatch it. A paired peer projects the
+owner's task journal and resumes from its last accepted revision. The remote transport
+carries messages and receipts under Ling's authenticated pairing.
 
 ## 2. Capability negotiation and freshness
 
@@ -80,9 +90,12 @@ observation separately from an action failure.
 
 The approval view displays the intended device, execution host, proposed change,
 expected impact, verification method, and recovery option. Show the execution identity
-or privilege level when it affects the operation. The first repair and setup flows
+or privilege level when it affects the operation. Standard repair and setup flows
 require explicit confirmation for each mutating action, including reversible actions.
-The policy can allow read-only observations under its ordinary scope.
+A developer can confirm a specific plan containing individually displayed actions,
+with one target and bound artifact when applicable. Each approved plan action receives
+its own immutable dispatch scope and is subject to the same approval checks. The policy
+can allow read-only observations under its ordinary scope.
 
 1. Resolve the stable target and construct a typed action with normalized arguments,
    its capability/schema version, expected effect, and verification conditions.
@@ -111,6 +124,12 @@ Password, system authorization, and recovery credential entry belongs in the app
 system or vendor UI or a local protected input. The model receives the redacted result.
 A playbook may read another explicitly authorized device for diagnosis. Each write
 remains scoped to the affected target and its own approval.
+
+The operator's native workbench uses a separately authorized, target-pinned connection
+or vendor UI. Opening it for maintenance suspends broker writes to that target on the
+owning host until the session closes and the owner refreshes capability and target
+state. When recording a workbench result, the journal identifies the operator and
+tool and distinguishes their reported outcome from a readback observation.
 
 ## 4. Cancellation, verification, and recovery
 
@@ -175,6 +194,8 @@ the supported readback path and preserve an unknown result until verification.
 | Scenario | What can continue | Acceptance boundary |
 | --- | --- | --- |
 | Paired Mobile loses Gateway access | The daemon may continue work within existing approval and policy. Mobile shows last known state until it resyncs. | A client timeout neither cancels the daemon task nor dispatches it from the phone. |
+| Phone-owned task loses PC assistance | Mobile can continue locally where the action's prerequisites are met. The PC retains the last projected state. | Sync resumes from the owner's journal. A missing PC artifact or proposal pauses the affected step. |
+| Paired connection changes from direct to relay | The authenticated peers reconnect and resume conversation and task updates. | Replay of a message yields the recorded receipt. A transport acknowledgment cannot verify a device action. |
 | Target loses its network | A healthy on-target executor can still collect local observations where supported. An independently authenticated local transport can read the target when the device exposes one. | With only the failed connection, record incomplete evidence and recover access before further writes. |
 | A network change drops the control path | An approved target timer or verified alternate route can restore access. | Report the last verified outcome and require readback of the target after the change or rollback. |
 | Model service is unavailable | An owning host can run local read-only checks and a versioned local playbook within its capability and approval scope. It records evidence for later analysis. | A remote approval, required capability, or observation that is unavailable pauses the affected step. |
@@ -213,6 +234,9 @@ capability snapshot, and verification rule.
 | D5 and D7 | Use repeatable Windows network fault evidence for the diagnostic branch and post-action check. Include an incomplete-data case, injected instructions in observation text, and a local read-only flow with the model service unavailable. |
 | D6 | Reconnect a paired Mobile client to the same daemon task and confirm that disconnect and a duplicate command leave the owner and attempt unchanged. |
 | D9 | Verify one phone restores a supported device's network through official BLE setup with no PC or Gateway. Cover denied permission, link loss and resume, and a local playbook with the model service unavailable. Record the exact phone OS, device model, firmware, and adapter version. |
+| D10 | Verify project build and deploy/test/log/retest with the selected app, bound artifact and target. Exercise native tools, job reattach, and a supported vendor maintenance handoff with readback. |
+| D11 | Have a paired PC assist a phone-owned task. Change the PC link and phone target separately. Verify projection, reattachment, and the owner's handling of stale or duplicate proposals. |
+| D12 | Sync over direct LAN, cross-network direct, and encrypted relay paths. Verify peer trust, reconnect, revocation, and task receipt continuity through path changes. |
 
 The ledger distinguishes contract fixtures, supported OS or simulator runs, and
 physical device acceptance. Home Assistant exercises the shared adapter contract.
