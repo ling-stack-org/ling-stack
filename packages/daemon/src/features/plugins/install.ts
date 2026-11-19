@@ -54,11 +54,18 @@ export async function linkVerifiedPluginContributions(input: {
     const filePath = resolve(input.pluginPackage.packageRoot, contribution.path);
     const raw = JSON.parse(await readFile(filePath, "utf8")) as Record<string, unknown>;
     const transport = toMcpTransport(raw);
-    const existing = input.store.getMcpServer(contribution.id);
+    // Cua's declarative contribution keeps its manifest-facing id while the
+    // runtime uses the canonical server id shared by the provider lease and
+    // health checks. Every other remote contribution uses its own id.
+    const linkedResourceId = input.pluginPackage.manifest.id === CUA_DRIVER_PLUGIN_ID
+      && contribution.id === "mcp:cua-driver"
+      ? CUA_DRIVER_MCP_SERVER_ID
+      : contribution.id;
+    const existing = input.store.getMcpServer(linkedResourceId);
     const server = existing
       ? input.store.updateMcpServer(existing.id, { displayName: input.pluginPackage.manifest.displayName, transport, enabled: input.enabled }, input.now) && input.store.getMcpServer(existing.id)
       : input.store.createMcpServer({
-          id: contribution.id,
+          id: linkedResourceId,
           displayName: input.pluginPackage.manifest.displayName,
           transport,
           enabled: input.enabled,
