@@ -53,6 +53,7 @@ validation and the boundary of what remains unverified.
 | D10 | [ ] | Developer device sessions | Complete build, deploy, debug, verify, and native-tool workflows on supported host and target combinations | Project/device integration, native-tool and reattach acceptance |
 | D11 | [ ] | PC-assisted Mobile execution | Paired PC contributes plans, artifacts, or analysis while Mobile owns the task and device link | Collaboration contract fixtures and physical device runs |
 | D12 | [ ] | Ling Server connectivity | Paired conversation and device-task sync survive LAN, cross-network direct, and encrypted relay routes | Multi-network tests, peer identity and reconnect evidence |
+| D13 | [ ] | Hardware protocol development and debugging | Capture, decode, replay, and verify a hardware protocol and register the tested adapter for standard use | Shared codec fixtures and physical PC and Mobile device runs |
 
 ## D0: Design baseline
 
@@ -364,6 +365,33 @@ only on a successful install or a model response.
   Verify that the relay carries ciphertext and that reconnect resumes the same
   task without dispatching a second attempt.
 
+## D13: Hardware protocol development and debugging
+
+### Scope
+
+- [ ] Add a protocol workbench to the developer session, reusing D1–D3 device
+  contracts, ownership, approval, and evidence.
+- [ ] Keep the hardware transport, protocol codec, and versioned device profile
+  independently reusable. Record the verified host, adapter and firmware combination.
+- [ ] Capture request and response evidence, support offline decoder replay and
+  simulator fixtures, and preserve provenance and capture loss.
+- [ ] Register the verified profile and operations through the existing device
+  adapter catalog. Record supported devices and verified behavior.
+
+### Exit evidence
+
+- Test a documented RS-485 Modbus RTU device on supported PC, Android USB, and
+  iPhone local-bridge paths. Capture and decode a measurement, verify a documented
+  setting, and read back the exact target.
+- Replay normal and failed communications offline. Show the cause supported by
+  the trace, capture completeness, and the same decoded results across supported
+  hosts. Test disconnection and task reattachment.
+- Complete the external-device workflow on Mobile without a PC. In a paired
+  run, the PC analyzes shared evidence while Mobile owns the target connection.
+- Complete the same measurement through the registered adapter in a standard
+  session. Track later protocol families against their own field evidence.
+  [Workbench design and sources](ling-hardware-protocol-workbench.md)
+
 ## Per-slice evidence ledger
 
 Update this table in the same PR that changes a slice status.
@@ -383,6 +411,7 @@ Update this table in the same PR that changes a slice status.
 | D10 | — | — | [Developer sessions](ling-device-developer-execution.md#1-device-sessions) | Design recorded, implementation not started | Project, device, and native tool acceptance |
 | D11 | — | — | [PC collaboration](ling-device-developer-execution.md#22-pc-assisted-phone-execution) | Design recorded, implementation not started | Phone-owned collaboration and physical cases |
 | D12 | — | — | [Communication design](ling-device-developer-execution.md#3-communication-design) | Design recorded, implementation not started | Direct paths, relay, and reconnect acceptance |
+| D13 | — | Documentation, license and public checks plus diagram rendering | [Workbench design and research](ling-hardware-protocol-workbench.md) | Proposed design documented, implementation not started | Runtime and library evaluation, offline fixtures, and physical acceptance |
 
 ## Definition of platform completion
 

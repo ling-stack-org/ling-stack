@@ -2,7 +2,7 @@
 
 Status: canonical documentation index
 Owner: repository maintainers
-Last verified: 2026-11-19 (Ling Device Support Platform runtime, developer execution and connectivity designs indexed), 2026-11-18 (Ling Device Support Platform, 14-item delivery plan and Automations P2 plan indexed). Other delivery states retain their owners.
+Last verified: 2026-11-19 (Ling Device Support Platform runtime, developer execution, connectivity, and hardware protocol workbench designs indexed), 2026-11-18 (Ling Device Support Platform, 14-item delivery plan and Automations P2 plan indexed). Other delivery states retain their owners.
 Document type: governance index
 Code and test anchors: each linked contract owns its anchors
 
@@ -43,6 +43,7 @@ Maintenance-only transition notes are kept in [Development Handoffs](../maintena
 - [Ling Device Support Platform](ling-device-support-platform.md)
 - [Ling Device Support Platform Runtime Contract](ling-device-support-platform-runtime-contract.md)
 - [Ling Device Developer Execution and Connectivity](ling-device-developer-execution.md)
+- [Ling Hardware Protocol Workbench](ling-hardware-protocol-workbench.md)
 - [Ling Device Support Platform Implementation Plan](ling-device-support-platform-implementation-plan.md)
 - [Ling Framework](ling-framework.md)
 - [Ling Framework Complementary Design](ling-framework-complementary-design.md)

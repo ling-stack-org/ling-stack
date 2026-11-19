@@ -306,6 +306,11 @@ profile records the adapter version and capability snapshot used by each task. I
 an adapter is therefore a compatibility choice, not a grant of unrestricted device
 control.
 
+The hardware protocol workbench covers connection discovery, capture, decoding,
+offline replay, and validation of a device profile and adapter. Registered
+capabilities use the same device contracts in standard sessions.
+[Hardware Protocol Workbench](ling-hardware-protocol-workbench.md)
+
 ## 8. Model and tool boundary
 
 The model sees normalized device tools, for example:

@@ -8,6 +8,7 @@ Document type: developer sessions, communication, and device workflows
 Related documents:
 [Device Support Platform](ling-device-support-platform.md) ·
 [Runtime Contract](ling-device-support-platform-runtime-contract.md) ·
+[Hardware Protocol Workbench](ling-hardware-protocol-workbench.md) ·
 [Implementation Plan](ling-device-support-platform-implementation-plan.md)
 
 ## 1. Device sessions
@@ -407,3 +408,4 @@ data and artifacts the user shared and the connected peer.
 | [D10](ling-device-support-platform-implementation-plan.md#d10-developer-device-sessions) | Verify the install/test/log/retest loop for an authorized app, the user's native-tool session, job reattach, and the supported vendor maintenance receipt. Exercise injected device text, target mismatch, and loss of authorization. |
 | [D11](ling-device-support-platform-implementation-plan.md#d11-pc-assisted-mobile-execution) | PC submits analysis or a build for a phone-owned task. Link loss, duplicate proposals, and a different attached target preserve the owner and recorded attempts. |
 | [D12](ling-device-support-platform-implementation-plan.md#d12-ling-server-connectivity) | Paired peers sync over LAN, direct internet and encrypted relay. Test relay fallback, route switch, resync and revoke using the same task, sequence and authorization model. |
+| [D13](ling-device-support-platform-implementation-plan.md#d13-hardware-protocol-development-and-debugging) | Capture and decode a documented Modbus RTU bench device on supported PC and Mobile paths. Replay traces, verify a live change, and register the verified adapter for standard sessions. |
