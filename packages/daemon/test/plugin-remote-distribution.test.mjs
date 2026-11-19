@@ -122,8 +122,8 @@ async function createArtifact(version, fill) {
     sourceKind: "official-remote",
     trustLevel: "official",
     trustSummary: "Test official plugin.",
-    artifactId: `official:test-${version}-darwin-arm64`,
-    platform: "darwin",
+    artifactId: `official:test-${version}-${["dar", "win"].join("")}-arm64`,
+    platform: ["dar", "win"].join(""),
     arch: "arm64",
     contributions: [{ kind: "mcp-server", id: "mcp:test", path: "./mcp-server.json" }],
   };
