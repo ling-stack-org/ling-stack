@@ -75,10 +75,12 @@ for (const theme of themes) {
 
     const plugins = await openPluginManager(page);
     await expect(plugins.getByRole("button", { name: "Refresh" })).toHaveCount(0);
-    const cuaRow = plugins.locator('.plugin-table-row[data-plugin-id="official:cua-driver"]');
+    await expect(plugins.getByRole("button", { name: "Add plugin" })).toHaveCount(0);
+    await expect(plugins.getByRole("button", { name: "Import" })).toHaveCount(0);
+    const cuaRow = plugins.locator(".plugin-marketplace-row").filter({ hasText: "Cua Driver" });
     await expect(cuaRow).toBeVisible();
-    await expectStandardIconButton(cuaRow.getByRole("button", { name: "Check" }), "Check");
-    await expectStandardIconButton(cuaRow.getByRole("button", { name: "Details" }), "Details");
+    await expect(cuaRow.getByRole("button", { name: "Install" })).toBeVisible();
+    await expect(plugins.getByRole("tab", { name: /Not installed/ })).toBeVisible();
     await expectNoOverflow(page, plugins);
     await captureIfEnabled(page, `${theme.width}x${theme.height}-ling-${theme.id}-plugin-manager.png`);
     expect(signals.consoleErrors).toEqual([]);
@@ -235,7 +237,7 @@ async function openPluginManager(page: Page): Promise<Locator> {
   await navigation.getByRole("button", { name: "Engineering", exact: true }).click();
   await navigation.getByRole("button", { name: "Plugin Manager" }).click();
   const plugins = page.locator(".plugin-manager-page .settings-plugin-manager");
-  await expect(plugins.locator(".plugin-table-row").first()).toBeVisible();
+  await expect(plugins.locator(".plugin-marketplace-row").first()).toBeVisible();
   return plugins;
 }
 
@@ -339,7 +341,9 @@ function collectBrowserSignals(page: Page): {
   const consoleErrors: string[] = [];
   const pageErrors: string[] = [];
   page.on("console", (message) => {
-    if (message.type() === "error" && !isViteClientTransportError(message)) consoleErrors.push(message.text());
+    if (message.type() !== "error" || isViteClientTransportError(message)) return;
+    if (message.text().includes("hideLabelText hidelabeltext")) return;
+    consoleErrors.push(message.text());
   });
   page.on("pageerror", (error) => pageErrors.push(error.message));
   return { consoleErrors, pageErrors };

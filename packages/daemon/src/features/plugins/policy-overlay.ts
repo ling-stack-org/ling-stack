@@ -25,7 +25,8 @@ export function buildManagedPluginPolicyOverlays(input: {
   readonly descriptor: ManagedPluginDescriptor;
   readonly bundledEmbedded?: boolean;
 }): readonly ManagedPluginPolicyOverlayView[] {
-  if (input.descriptor.id !== "official:cua-driver" && !input.bundledEmbedded) {
+  const bundledCuaDriver = input.descriptor.id === "official:cua-driver" && input.bundledEmbedded === true;
+  if (!bundledCuaDriver) {
     return input.descriptor.defaultApprovals?.map((approval) => ({
       id: `${input.descriptor.id}:${approval.contributionId}`,
       pluginId: input.descriptor.id,

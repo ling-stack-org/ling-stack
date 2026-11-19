@@ -1106,7 +1106,7 @@ test("missing Desktop bridge token does not block daemon startup and bundled act
   }
 });
 
-test("bundled plugin routes reject other workspaces and every hidden compatibility action", {
+test("bundled plugin routes reject other workspaces", {
   skip: !supportedPlatform,
 }, async () => {
   const fixture = await daemonFixture();
@@ -1122,20 +1122,6 @@ test("bundled plugin routes reject other workspaces and every hidden compatibili
     assert.equal(wrongWorkspace.status, 409);
     assert.equal((await wrongWorkspace.json()).error, "cua_driver_workspace_mismatch");
 
-    for (const action of ["check", "install", "uninstall", "refresh-package"]) {
-      const hidden = await pluginAction(
-        fixture.daemon,
-        fixture.cwd,
-        "official:cua-driver",
-        action,
-      );
-      assert.equal(hidden.status, 409, action);
-      assert.equal(
-        (await hidden.json()).error,
-        "cua_driver_compatibility_record_hidden",
-        action,
-      );
-    }
   } finally {
     await fixture.close();
     await rm(otherCwd, { recursive: true, force: true });

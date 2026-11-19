@@ -85,19 +85,18 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page },
     ".workspace-plugins-surface",
     ".plugin-manager-page",
     ".settings-plugin-manager",
-    ".plugin-table",
-    ".plugin-table-header",
+    ".plugin-marketplace",
+    ".plugin-marketplace-toolbar",
+    ".plugin-marketplace-list",
   ]);
   await captureDarkEvidence(page, testInfo, "03-plugin-manager");
-  await page.locator('.plugin-table-row[data-plugin-id="official:cua-driver"]').getByRole("button", { name: "安装引导" }).click();
-  await assertDarkPage(page, "Cua Driver installation guide", [
-    ".cua-install-panel",
-    ".cua-install-command",
-  ]);
-  await captureDarkEvidence(page, testInfo, "04-computer-control-install-guide");
-  await page.getByRole("dialog", { name: "安装 Cua Driver" }).getByRole("button", { name: "关闭" }).click();
+  const official = page.getByRole("region", { name: "官方" });
+  await expect(official.getByRole("tab", { name: /未安装/ })).toBeVisible();
+  await expect(official.locator(".plugin-marketplace-row").filter({ hasText: "Cua Driver" })).toBeVisible();
+  await expect(official.getByRole("button", { name: "添加插件" })).toHaveCount(0);
+  await captureDarkEvidence(page, testInfo, "04-official-plugin-marketplace");
 
-  await navigation.getByRole("button", { name: "定时任务" }).click();
+  await navigation.getByRole("button", { name: /自动化|定时任务/u }).click();
   await expect(page.locator(".automations-inbox-page")).toBeVisible();
   await expect(page.locator(".automation-execution-inspector")).toHaveCount(0);
   await page.locator('[data-automation-id="automation_dark_mode"]').click();

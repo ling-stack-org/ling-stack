@@ -4141,8 +4141,65 @@ export function createMockManagedPlugins(): MockManagedPlugin[] {
       },
     },
     createMockCuaPlugin(),
-    createMockBundledCuaPlugin(),
   ];
+}
+
+function createMockOfficialCatalogEntries(): Array<Record<string, unknown>> {
+  return [
+    createMockOfficialCatalogEntry({
+      pluginId: "official:chrome-browser",
+      displayName: "Ling for Chrome",
+      description: "The signed Ling for Chrome extension and native messaging host.",
+      trustSummary: "Official browser extension package.",
+      version: "0.1.1",
+      sizeBytes: 1799,
+    }),
+    createMockOfficialCatalogEntry({
+      pluginId: "official:cua-driver",
+      displayName: "Cua Driver",
+      description: "Connects Ling to an already installed Cua Driver MCP server.",
+      trustSummary: "Official desktop automation plugin.",
+      version: "0.2.0",
+      sizeBytes: 2256,
+    }),
+    createMockOfficialCatalogEntry({
+      pluginId: "official:office-documents",
+      displayName: "Ling Office Documents",
+      description: "The official local Office helper.",
+      trustSummary: "Official Office helper package.",
+      version: "0.1.0",
+      sizeBytes: 2048,
+    }),
+  ];
+}
+
+function createMockOfficialCatalogEntry(input: {
+  readonly pluginId: string;
+  readonly displayName: string;
+  readonly description: string;
+  readonly trustSummary: string;
+  readonly version: string;
+  readonly sizeBytes: number;
+}): Record<string, unknown> {
+  return {
+    pluginId: input.pluginId,
+    displayName: input.displayName,
+    description: input.description,
+    trustSummary: input.trustSummary,
+    latestStableVersion: input.version,
+    manifest: { contributions: [], requiredSecrets: [], defaultApprovals: [], healthChecks: [] },
+    artifacts: [{
+      artifactId: `${input.pluginId}-${input.version}-darwin-arm64`,
+      pluginId: input.pluginId,
+      version: input.version,
+      platform: "darwin",
+      arch: "arm64",
+      channel: "stable",
+      url: `https://example.com/${encodeURIComponent(input.pluginId)}-${input.version}.ling-plugin.zip`,
+      sizeBytes: input.sizeBytes,
+      sha256: "a".repeat(64),
+    }],
+  };
 }
 
 export function createMockChromePlugin(overrides: Partial<MockManagedPlugin> = {}): MockManagedPlugin {
@@ -9004,9 +9061,7 @@ export async function handleDaemonRoute(
     await route.fulfill({
       json: {
         cwd,
-        plugins: state.managedPlugins.filter((plugin) =>
-          plugin.id !== "official:cua-driver" && plugin.id !== "runner:pi"
-        ),
+        plugins: state.managedPlugins.filter((plugin) => plugin.id !== "runner:pi"),
       },
     });
     return;
@@ -9076,6 +9131,32 @@ export async function handleDaemonRoute(
     });
     return;
   }
+  if (request.method() === "GET" && path === "/plugins/catalog") {
+    const allEntries = createMockOfficialCatalogEntries();
+    const query = (url.searchParams.get("query") ?? "").trim().toLocaleLowerCase();
+    const filtered = query
+      ? allEntries.filter((entry) => `${entry.displayName}\n${entry.description}\n${entry.trustSummary}`.toLocaleLowerCase().includes(query))
+      : allEntries;
+    const cursor = Math.max(Number.parseInt(url.searchParams.get("cursor") ?? "0", 10) || 0, 0);
+    const limit = Math.min(Math.max(Number.parseInt(url.searchParams.get("limit") ?? "50", 10) || 50, 1), 50);
+    const plugins = filtered.slice(cursor, cursor + limit);
+    await route.fulfill({
+      json: {
+        cwd,
+        catalog: {
+          schemaVersion: 1,
+          generatedAt: "2026-11-19T00:00:00.000Z",
+          source: { repository: "ling-stack-org/ling-stack", releaseTag: "mock-catalog", sourceSha: "mock" },
+          plugins,
+        },
+        catalogUrl: "https://example.com/plugins/catalog.json",
+        signatureVerified: true,
+        ...(cursor + plugins.length < filtered.length ? { nextCursor: String(cursor + plugins.length) } : {}),
+        pageSize: limit,
+      },
+    });
+    return;
+  }
   const pluginPackageMatch = /^\/plugins\/packages\/([^/]+)$/.exec(path);
   if (pluginPackageMatch && request.method() === "GET") {
     const packageId = decodeURIComponent(pluginPackageMatch[1]);
@@ -9090,7 +9171,35 @@ export async function handleDaemonRoute(
   if (pluginMatch) {
     const pluginId = decodeURIComponent(pluginMatch[1]);
     const action = pluginMatch[2];
-    const pluginIndex = state.managedPlugins.findIndex((plugin) => plugin.id === pluginId);
+    let pluginIndex = state.managedPlugins.findIndex((plugin) => plugin.id === pluginId);
+    if (pluginIndex < 0 && action === "install-remote") {
+      const entry = createMockOfficialCatalogEntries().find((candidate) => candidate.pluginId === pluginId);
+      if (entry) {
+        state.managedPlugins.push({
+          id: pluginId,
+          displayName: typeof entry.displayName === "string" ? entry.displayName : pluginId,
+          version: typeof entry.latestStableVersion === "string" ? entry.latestStableVersion : "0.1.0",
+          sourceKind: "official-remote",
+          status: "disabled",
+          description: typeof entry.description === "string" ? entry.description : undefined,
+          trustSummary: typeof entry.trustSummary === "string" ? entry.trustSummary : "Official plugin.",
+          contributions: [],
+          linkedResources: [],
+          events: [],
+          actions: {
+            canEnable: true,
+            canDisable: false,
+            canCheck: true,
+            canApplyPreset: false,
+            canInstall: true,
+            canUninstall: false,
+            canRefreshPackage: false,
+            canRuntimePreview: false,
+          },
+        });
+        pluginIndex = state.managedPlugins.length - 1;
+      }
+    }
     if (pluginIndex < 0) {
       await route.fulfill({ status: 404, json: { error: "plugin_not_found", message: `Plugin not found: ${pluginId}` } });
       return;
@@ -9126,6 +9235,32 @@ export async function handleDaemonRoute(
         events: appendMockPluginEvent(plugin, "connected", `Connected MCP server ${server.id}.`, { linkedResourceId: server.id }),
       });
       await route.fulfill({ json: { plugin: updated, linkedMcpServer: toPublicMockMcpServer(server, state) } });
+      return;
+    }
+    if (action === "install-remote" && request.method() === "POST") {
+      const entry = createMockOfficialCatalogEntries().find((candidate) => candidate.pluginId === plugin.id);
+      if (!entry) {
+        await route.fulfill({ status: 404, json: { error: "plugin_not_in_catalog" } });
+        return;
+      }
+      const version = typeof entry.latestStableVersion === "string" ? entry.latestStableVersion : plugin.version;
+      const packageRecord = {
+        pluginId: plugin.id,
+        sourceKind: "official-remote",
+        version,
+        status: "installed",
+        cacheRef: `remote/${plugin.id}/${version}/mock`,
+        packageHash: "a".repeat(64),
+        installedAt: "2026-11-19T00:00:00.000Z",
+        updatedAt: "2026-11-19T00:00:00.000Z",
+      };
+      const updated = updateMockPlugin(state, plugin.id, {
+        package: packageRecord,
+        version,
+        status: "disabled",
+        actions: { ...plugin.actions, canEnable: true, canDisable: false, canInstall: false, canUninstall: true, canRefreshPackage: true },
+      });
+      await route.fulfill({ json: { plugin: updated, package: packageRecord } });
       return;
     }
     if (action === "pairing" && request.method() === "POST" && plugin.id === "official:chrome-browser") {

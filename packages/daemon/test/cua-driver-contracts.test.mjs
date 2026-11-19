@@ -52,6 +52,7 @@ test("gate-off Cua Driver setup projection is byte-for-byte the legacy external 
     const store = {
       getMcpServer: () => undefined,
       getManagedPlugin: () => undefined,
+      getManagedPluginPackage: () => undefined,
       listManagedPluginContributions: () => [],
     };
     assert.deepEqual(

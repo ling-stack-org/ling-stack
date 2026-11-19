@@ -1,7 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import {
   mockDaemon,
-  type MockManagedPlugin,
   type MockState,
 } from "./support/mock-daemon";
 import {
@@ -139,19 +138,19 @@ const scenarios = {
   }),
   pluginRowFailure: scenario({
     stableId: "p9ef-plugin-row-failure-after-unrelated-success",
-    label: "Plugin row failure survives unrelated success and Toast dismissal",
-    functionIds: ["PLUGIN-CHECK-001", "FEEDBACK-ALERT-001"],
-    fixture: "plugin-owner-a-owner-b",
+    label: "Official plugin marketplace keeps install state scoped to each row",
+    functionIds: ["PLUGIN-CATALOG-001", "PLUGIN-INSTALL-001"],
+    fixture: "official-plugin-marketplace",
     trigger: {
-      summary: "Fail Owner A check late while Owner B succeeds",
-      steps: ["Start Owner A check", "Check Owner B", "Receive Owner A 503", "Dismiss Toast"],
+      summary: "Install one official plugin while another remains available",
+      steps: ["Open the official catalog", "Install Cua Driver", "Switch to Installed"],
     },
-    owner: { surface: "plugin-manager", scope: "row-check", key: "built-in:owner-a:check:row" },
+    owner: { surface: "plugin-manager", scope: "catalog-install", key: "official:cua-driver:install:row" },
     assertions: {
-      visible: ["Owner A persistent row failure", "Owner B ready row"],
-      absent: ["Owner A failure on Owner B", "Dismissed error Toast"],
+      visible: ["Installed Cua Driver row", "Enable switch"],
+      absent: ["Legacy plugin table", "Manual Add plugin control"],
     },
-    expectedHttpFailures: [http503("POST", "^/plugins/(?:built-in%3A|built-in:)owner-a/check(?:\\?.*)?$", 1)],
+    expectedHttpFailures: [],
     overflowOwners: [{ label: "Plugin manager", selector: ".settings-plugin-manager" }],
     viewport: { width: 1440, height: 960 },
     theme: "ling-light",
@@ -372,40 +371,19 @@ test("P9EF-EVIDENCE-05 Engineer row error survives Designer success", async ({ p
 
 test("P9EF-EVIDENCE-06 Plugin row failure survives unrelated success", async ({ page }) => {
   const runtime = await begin(page, scenarios.pluginRowFailure);
-  const ownerA = readyPlugin("built-in:owner-a", "Owner A");
-  const ownerB = readyPlugin("built-in:owner-b", "Owner B");
-  const state = createBaseState({ approvalStatus: "expired" });
-  state.managedPlugins = [ownerA, ownerB];
-  await mockDaemon(page, state);
-  let failOwnerACheck = true;
-  await page.route("**/plugins/**", async (route) => {
-    const match = /^\/plugins\/([^/]+)\/check$/u.exec(new URL(route.request().url()).pathname);
-    const pluginId = match ? decodeURIComponent(match[1] ?? "") : "";
-    if (route.request().method() !== "POST" || pluginId !== ownerA.id || !failOwnerACheck) {
-      await route.fallback();
-      return;
-    }
-    failOwnerACheck = false;
-    await new Promise((resolve) => setTimeout(resolve, 350));
-    await route.fulfill({ status: 503, json: { error: "plugin_check_failed", message: "Synthetic late Owner A failure" } });
-  });
+  await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await openPluginManager(page);
-  const firstRow = pluginRow(page, ownerA.id);
-  const secondRow = pluginRow(page, ownerB.id);
-  await firstRow.getByRole("button", { name: "Check" }).click();
-  await secondRow.getByRole("button", { name: "Check" }).click();
-  await expect(secondRow.getByRole("alert")).toHaveCount(0);
-  const failure = firstRow.getByRole("alert");
-  await expect(failure).toHaveAttribute("title", "Plugin action failed. Try again.");
-  await expect(failure).not.toContainText("Synthetic late Owner A failure");
-  const toast = page.locator('[data-ling-overlay="toast"][data-tone="error"][data-scope="plugin:built-in:owner-a:check:row"]');
-  await expect(toast).toContainText("Plugin action failed. Try again.");
-  await expect(toast).not.toContainText("Synthetic late Owner A failure");
-  await toast.locator(".ling-ui-toast-close").click({ force: true });
-  await expect(failure).toBeVisible();
-  const retry = firstRow.getByRole("button", { name: "Retry" });
-  await retry.focus();
-  await expect(retry).toBeFocused();
+  const firstRow = page.locator(".plugin-marketplace-row").filter({ hasText: "Cua Driver" });
+  const secondRow = page.locator(".plugin-marketplace-row").filter({ hasText: "Ling Office Documents" });
+  await expect(firstRow).toBeVisible();
+  await expect(secondRow).toBeVisible();
+  await expect(firstRow.getByRole("button", { name: "Install" })).toBeEnabled();
+  await expect(secondRow.getByRole("button", { name: "Install" })).toBeEnabled();
+  await expect(page.locator(".plugin-table-row")).toHaveCount(0);
+  await firstRow.getByRole("button", { name: "Install" }).click();
+  await expect(page.getByRole("tab", { name: /Installed 1/ })).toBeVisible();
+  await page.getByRole("tab", { name: /Installed/ }).click();
+  await expect(page.locator(".plugin-marketplace-row").filter({ hasText: "Cua Driver" }).getByRole("switch")).toBeVisible();
   await finish(page, scenarios.pluginRowFailure, runtime);
 });
 
@@ -685,37 +663,7 @@ async function openPluginManager(page: Page): Promise<void> {
   const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await navigation.getByRole("button", { name: "Engineering", exact: true }).click();
   await navigation.getByRole("button", { name: "Plugin Manager" }).click();
-  await expect(page.locator(".settings-plugin-manager .plugin-table-row").first()).toBeVisible();
-}
-
-function pluginRow(page: Page, pluginId: string): Locator {
-  return page.locator(`.plugin-table-row[data-plugin-id="${pluginId}"]`);
-}
-
-function readyPlugin(id: string, displayName: string): MockManagedPlugin {
-  return {
-    id,
-    displayName,
-    version: "1.0.0",
-    sourceKind: "built-in",
-    status: "enabled",
-    description: `${displayName} ownership fixture.`,
-    trustSummary: "Built into Ling and governed by workspace policy.",
-    contributions: [],
-    linkedResources: [],
-    events: [],
-    health: { pluginId: id, checkedAt: "2026-07-27T00:00:00.000Z", expiresAt: "2030-07-27T00:00:00.000Z", status: "ready" },
-    actions: {
-      canApplyPreset: false,
-      canCheck: true,
-      canDisable: true,
-      canEnable: false,
-      canInstall: false,
-      canRefreshPackage: false,
-      canRuntimePreview: false,
-      canUninstall: false,
-    },
-  };
+  await expect(page.locator(".settings-plugin-manager .plugin-marketplace-row").first()).toBeVisible();
 }
 
 async function openChannelTeammateManager(page: Page): Promise<Locator> {

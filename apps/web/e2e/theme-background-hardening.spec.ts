@@ -59,7 +59,7 @@ test('BG-H1/H2 one visible player, reading surfaces, reduced motion, recovery an
   await page.setViewportSize({width:1440,height:960});
   await expect.poll(()=>paused(page,'[data-background-layer] video')).toBe(false);
   await page.getByRole('button',{name:'Plugin Manager',exact:true}).click();
-  const row=page.locator('.plugin-table-row').first(); await expect(row).toBeVisible();
+  const row=page.locator('.plugin-marketplace-row').first(); await expect(row).toBeVisible();
   expect(await row.evaluate(e=>getComputedStyle(e).backgroundColor)).not.toBe('rgba(0, 0, 0, 0)');
   expect(await page.locator('html').evaluate(e=>getComputedStyle(e).getPropertyValue('--user-background-scrim'))).toBe('0.55');
   await page.screenshot({path:info.outputPath('plugins-reading-protection.png')});

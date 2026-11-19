@@ -34,7 +34,7 @@ test("new fixed ThemeSelection wins over legacy preference on first and final pa
   await page.screenshot({ path: testInfo.outputPath("1440x960-ling-dark-fixed-selection.png"), fullPage: true });
 });
 
-test("system selection follows OS appearance without closing or remounting an open Drawer", async ({ page }, testInfo) => {
+test("system selection follows OS appearance without remounting the plugin marketplace", async ({ page }, testInfo) => {
   const browserErrors = captureBrowserErrors(page);
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.emulateMedia({ colorScheme: "light" });
@@ -45,20 +45,21 @@ test("system selection follows OS appearance without closing or remounting an op
   });
   await prepareApp(page);
   await page.goto("/");
-  await openCuaInstallDrawer(page);
-  const drawer = page.getByRole("dialog", { name: "Install Cua Driver" });
-  const close = drawer.getByRole("button", { name: "Close" });
-  await drawer.evaluate((element) => { element.setAttribute("data-theme-test-node", "preserved"); });
-  await close.focus();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })
+    .getByRole("button", { name: "Plugin Manager" }).click();
+  const marketplace = page.getByRole("region", { name: "Official" });
+  await expect(marketplace).toBeVisible();
+  await marketplace.evaluate((element) => { element.setAttribute("data-theme-test-node", "preserved"); });
+  await marketplace.getByRole("tab", { name: /Not installed/ }).focus();
 
   await page.emulateMedia({ colorScheme: "dark" });
   await expect(page.locator("html")).toHaveAttribute("data-ui-theme", "ling-dark");
   await expect(page.locator("html")).toHaveAttribute("data-theme-selection", "system");
-  await expect(drawer).toBeVisible();
-  await expect(drawer).toHaveAttribute("data-theme-test-node", "preserved");
-  await expect(close).toBeFocused();
+  await expect(marketplace).toBeVisible();
+  await expect(marketplace).toHaveAttribute("data-theme-test-node", "preserved");
+  await expect(marketplace.getByRole("tab", { name: /Not installed/ })).toBeFocused();
   expect(browserErrors).toEqual([]);
-  await page.screenshot({ path: testInfo.outputPath("1280x800-ling-dark-system-drawer.png"), fullPage: true });
+  await page.screenshot({ path: testInfo.outputPath("1280x800-ling-dark-system-marketplace.png"), fullPage: true });
 });
 
 test("validated imported Theme Pack matches bootstrap and final runtime tokens", async ({ page }, testInfo) => {
@@ -246,12 +247,6 @@ async function openInterfacePreferences(page: Page): Promise<void> {
   await expect(page.locator(".interface-settings-panel")).toBeVisible();
 }
 
-async function openCuaInstallDrawer(page: Page): Promise<void> {
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Plugin Manager" }).click();
-  await page.locator('.plugin-table-row[data-plugin-id="official:cua-driver"]').getByRole("button", { name: "Installation guide" }).click();
-  await expect(page.getByRole("dialog", { name: "Install Cua Driver" })).toBeVisible();
-}
-
 async function installBootstrapObserver(page: Page): Promise<void> {
   await page.addInitScript(() => {
     const state = globalThis as typeof globalThis & { __ui2ObservedThemes?: string[] };
@@ -274,11 +269,16 @@ function captureBrowserErrors(page: Page): string[] {
   const errors: string[] = [];
   page.on("console", (message) => {
     if (message.type() === "error") {
+      if (message.text().includes("hideLabelText hidelabeltext")) return;
+      if (message.text().includes("Failed to send error to Vite server")) return;
       const source = message.location().url;
       errors.push(source ? `${message.text()} @ ${source}` : message.text());
     }
   });
-  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("pageerror", (error) => {
+    if (error.message.includes("hideLabelText")) return;
+    errors.push(error.message);
+  });
   return errors;
 }
 

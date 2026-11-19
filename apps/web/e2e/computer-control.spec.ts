@@ -212,7 +212,7 @@ test("bundled Computer Control recovers macOS permissions without external insta
 
   await page.getByRole("button", { name: "Back to app" }).click();
   await openPluginManager(page);
-  await expect(page.locator('.plugin-table-row[data-plugin-id="official:cua-driver"]')).toHaveCount(0);
+  await expect(page.locator(".plugin-marketplace-row").filter({ hasText: "Cua Driver" })).toBeVisible();
 });
 
 test("bundled Windows Computer Control localizes readiness and limitations", async ({ page }) => {
