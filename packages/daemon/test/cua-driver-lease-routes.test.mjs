@@ -614,7 +614,7 @@ test("lease routes require local Desktop bridge authentication and a completed h
       body: JSON.stringify(candidate),
     });
     assert.equal(remoteOrigin.status, 403);
-    assert.equal((await remoteOrigin.json()).error, "forbidden_origin");
+    assert.equal((await remoteOrigin.json()).error, "local_service_forbidden");
 
     const beforeHandshake = await putLease(daemon, candidate);
     assert.equal(beforeHandshake.status, 409);

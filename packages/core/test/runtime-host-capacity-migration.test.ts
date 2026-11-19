@@ -1,3 +1,4 @@
+import { rewindNodeRerunApprovalFixture, predecessorApprovalSchema } from "./support/node-rerun-approval-predecessor.ts";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -7,6 +8,7 @@ import test, { type TestContext } from "node:test";
 import { pathToFileURL } from "node:url";
 import { DEFAULT_WORKSPACE_ID, createSqliteRunStore, resolveStoragePaths } from "../dist/index.js";
 import { applyRuntimeRunQueueMigration } from "../dist/storage/sqlite/runtime-run-queue-migration.js";
+import { dropCodeAssessmentOverlay } from "./support/code-assessment-overlay-fixture.mjs";
 import { testDatabase } from "./support/sqlite-test-database.ts";
 
 const migrationUrl = process.env.LING_CORE_MIGRATION_DIST
@@ -83,27 +85,31 @@ function fixture(t: TestContext, { installed = false } = {}) {
   });
   store = createSqliteRunStore(cwd, paths);
   const db = testDatabase(store);
+  dropCodeAssessmentOverlay(db);
   applyRuntimeRunQueueMigration(input(db));
   assert.equal(db.prepare("SELECT name FROM schema_migrations WHERE version=217").get()!.name, predecessor);
   migrate(db);
   db.exec("PRAGMA foreign_keys=OFF");
   try {
-    for (const table of ["node_rerun_submissions", "automation_delivery_receipts", "automation_deliveries", "automation_event_dispatches", "automation_events", "automation_event_sources"]) db.exec(`DROP TABLE IF EXISTS ${table}`);
-    db.prepare("DELETE FROM schema_migrations WHERE version IN (221,222)").run();
+    for (const table of ["node_rerun_submissions", "automation_delivery_receipts", "automation_deliveries", "automation_event_dispatches", "automation_events", "automation_event_sources", "conversation_context_view_lineage"]) db.exec(`DROP TABLE IF EXISTS ${table}`);
+    db.prepare("DELETE FROM schema_migrations WHERE version IN (221,222,225)").run();
   } finally { db.exec("PRAGMA foreign_keys=ON"); }
   const successorTable = "runtime_delegation_spawn_admissions";
   const currentMarkers = markers(db).filter(row => row.version >= 218).map(({ version, name }) => [version, name]);
-  assert.deepEqual(currentMarkers, [[218, name], [219, successorTable], [220, "runtime_host_capacity_continuations"]]);
-  for (const table of [...tables, successorTable]) {
+  assert.deepEqual(currentMarkers, [[218, name], [219, successorTable], [220, "runtime_host_capacity_continuations"], [226, "node_rerun_intents"], [227, "node_rerun_approval_owner"], [228, "node_rerun_targets"], [229, "runtime_host_capacity_node_rerun"]]);
+  for (const table of [...tables, successorTable, "node_rerun_intents", "node_rerun_approval_requests", "node_rerun_targets"]) {
     assert.deepEqual(rows(db, table), [], "only empty owned fixture overlays may be removed");
-    assert.deepEqual(schema(db).filter(row => row.tbl_name === table).map(row => [row.type, row.name]), [["table", table]]);
+    assert.deepEqual(schema(db).filter(row => row.tbl_name === table).map(row => [row.type, row.name]),
+      table === "node_rerun_targets" ? [["index", "idx_node_rerun_targets_active_source"], ["table", table]] : [["table", table]]);
   }
+  rewindNodeRerunApprovalFixture(db);
   db.exec("BEGIN IMMEDIATE");
   try {
+    db.exec("DROP TABLE node_rerun_intents");
     db.exec(`DROP TABLE ${successorTable}`);
     for (const table of [...tables].reverse()) db.exec(`DROP TABLE ${table}`);
     for (const [version, markerName] of currentMarkers)
-      assert.equal(db.prepare("DELETE FROM schema_migrations WHERE version=? AND name=?").run(version, markerName).changes, 1);
+      if (version !== 227 && version !== 228 && version !== 229) assert.equal(db.prepare("DELETE FROM schema_migrations WHERE version=? AND name=?").run(version, markerName).changes, 1);
     db.exec("COMMIT");
   } catch (error) { if (db.isTransaction) db.exec("ROLLBACK"); throw error; }
   assert.equal(db.prepare("SELECT MAX(version) AS v FROM schema_migrations").get()!.v, 217);
@@ -135,10 +141,11 @@ function fixture(t: TestContext, { installed = false } = {}) {
       store!.close(); store = undefined;
       const next = createSqliteRunStore(cwd, paths);
       const nextDb = testDatabase(next);
+      dropCodeAssessmentOverlay(nextDb);
       nextDb.exec("PRAGMA foreign_keys=OFF");
       try {
-        for (const table of ["node_rerun_submissions", "automation_delivery_receipts", "automation_deliveries", "automation_event_dispatches", "automation_events", "automation_event_sources"]) nextDb.exec(`DROP TABLE IF EXISTS ${table}`);
-        nextDb.prepare("DELETE FROM schema_migrations WHERE version IN (221,222)").run();
+        for (const table of ["node_rerun_submissions", "automation_delivery_receipts", "automation_deliveries", "automation_event_dispatches", "automation_events", "automation_event_sources", "conversation_context_view_lineage"]) nextDb.exec(`DROP TABLE IF EXISTS ${table}`);
+        nextDb.prepare("DELETE FROM schema_migrations WHERE version IN (221,222,225)").run();
       } finally { nextDb.exec("PRAGMA foreign_keys=ON"); }
       try { migrate(nextDb); } catch (error) { next.close(); throw error; }
       store = next;
@@ -250,9 +257,16 @@ test("218 upgrades populated real 217 without altering execution facts or granti
   assert.deepEqual(reopened.sequences, installed.sequences);
   assert.deepEqual(reopened.markers.filter(row => row.version <= 218), installed.markers);
   assert.deepEqual(reopened.markers.filter(row => row.version > 218).map(({ version, name }) => [version, name]),
-    [[219, "runtime_delegation_spawn_admissions"], [220, "runtime_host_capacity_continuations"]]);
-  assert.deepEqual(reopened.schema.filter(row => ![intents, "runtime_delegation_spawn_admissions"].includes(row.tbl_name)),
-    installed.schema.filter(row => row.tbl_name !== intents));
+    [[219, "runtime_delegation_spawn_admissions"], [220, "runtime_host_capacity_continuations"], [226, "node_rerun_intents"], [227, "node_rerun_approval_owner"], [228, "node_rerun_targets"], [229, "runtime_host_capacity_node_rerun"]]);
+  assert.deepEqual(rows(f.db, "node_rerun_intents"), []);
+  assert.deepEqual(reopened.schema.filter(row => row.tbl_name === "node_rerun_intents").map(row => [row.type, row.name]), [["table", "node_rerun_intents"]]);
+  assert.deepEqual(rows(f.db, "node_rerun_approval_requests"), []);
+  assert.deepEqual(reopened.schema.filter(row => row.tbl_name === "node_rerun_approval_requests").map(row => [row.type, row.name]), [["table", "node_rerun_approval_requests"]]);
+  assert.deepEqual(rows(f.db, "node_rerun_targets"), []);
+  assert.deepEqual(reopened.schema.filter(row => row.tbl_name === "node_rerun_targets").map(row => [row.type, row.name]),
+    [["index", "idx_node_rerun_targets_active_source"], ["table", "node_rerun_targets"]]);
+  assert.deepEqual(predecessorApprovalSchema(reopened.schema.filter(row => ![intents, "runtime_delegation_spawn_admissions", "node_rerun_intents", "node_rerun_approval_requests", "node_rerun_targets"].includes(row.tbl_name))),
+    predecessorApprovalSchema(installed.schema.filter(row => row.tbl_name !== intents)));
   assert.equal(f.db.prepare("PRAGMA foreign_keys").get()!.foreign_keys, 1);
   assert.deepEqual(f.db.prepare("PRAGMA foreign_key_check").all(), []);
 });

@@ -1,6 +1,6 @@
 {
   "name": "@ling-stack/desktop",
-  "version": "0.4.0",
+  "version": "0.6.1",
   "description": "Ling Stack desktop shell with shared Web UI and Computer Use picture-in-picture.",
   "license": "MIT",
   "author": "Ling Stack contributors",
@@ -66,7 +66,7 @@
     "@ling-stack/contracts": "workspace:*",
     "@ling-stack/localization": "workspace:*",
     "@ling-stack/ui-react": "workspace:*",
-    "lucide-react": "1.70.0",
+    "lucide-react": "1.73.0",
     "mammoth": "1.13.0",
     "pdf-parse": "2.4.5",
     "react": "^19.2.8",

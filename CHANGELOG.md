@@ -6,6 +6,28 @@ open-source baseline onward.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and future
 release versions will follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Automation monitoring shows durable status and evidence**, including changed snapshots, triggered runs, output artifacts, notification history, scheduler outcomes, and a Web summary that can be inspected after restart.
+- **Failed workflow nodes can be rerun with their original lineage**, policy and approval checks, capacity admission, readiness evidence, cancellation, and scoped API routes.
+- **Channel context can recover after restart**, with durable context views, role-specific projections, quote eligibility, redacted sources, and explicit lineage for materialized views.
+- **External Work uses registered source adapters**, shared polling and reconciliation evidence, and workspace Git remote and checkout support for GitHub and Linear workflows.
+- **Run policy previews and notification journals** expose the Host decision and delivery history without starting work or granting execution authority.
+- **Local code review and security scans** now inspect working-tree, branch, or commit changes from an immutable snapshot, with review history, staged phases, confidence and severity filters, anchored findings, comments, custom instructions, and read-only boundaries.
+- **The review workbench** now provides a full page and compact Right Dock with bounded summaries, lazy file Diffs, unified or split views, narrow-screen layouts, durable stale and triage states, and cancellation or restart recovery.
+
+### Changed
+
+- **Automation scheduling and run persistence are idempotent and recoverable**, preserving monitor history, poll-slot deduplication, and durable Run and artifact links.
+- **Approval, capacity, and context migrations preserve existing execution facts** while adding the new durable surfaces needed by the completion plan.
+- **Review evidence and diagnostics** now retain bounded source references, scan metrics, and explicit unverified security findings while keeping GitHub, deep scanning, external scanners, and remediation as later stages.
+
+### Fixed
+
+- Assessment history timestamps now advance with finding triage, freshness checks, and anchored comments, so updated-time filters include the latest review activity.
+
 ## [0.6.1] - 2026-11-18
 
 ### Changed

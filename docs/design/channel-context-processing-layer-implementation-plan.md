@@ -2,7 +2,7 @@
 
 Status: active implementation plan
 Owner: channel context and Ling Agent session maintainers
-Last verified: 2026-08-03
+Last verified: 2026-11-18 (target branch: restart rehydration for channel/selector/role views plus shared workflow projection scope)
 
 ## Owning Contract
 
@@ -26,33 +26,76 @@ Implemented foundations include:
 - redaction and source filtering before prompt and UI projection;
 - daemon read models and shared Web context surfaces.
 
+The target branch also now has a single daemon summary coordinator boundary for generated
+summary replacement and checkpoint installation. It rejects a late summary through the
+existing source fence/CAS, renders source items through the shared evidence redactor, and
+redacts generated objective, decision, constraint and open-question fields before they are
+committed. Conversation reply/quote references are checked against the exact effective
+item, scope and consumer visibility; rejected references are omitted from prompt assembly
+and returned as id-only diagnostics. The source-level quote policy helper is wired into
+proposal source-reference projection and the channel/workflow context-pack callers, so
+dropped, influence-only and inspect-only sources do not become public evidence. Rebuildable
+view lineage is now persisted in SQLite with a view-shape fingerprint, restart-readable
+projection metadata and CAS/older-projection rejection. Daemon startup now reconstructs
+conversation projections from durable sources and reports current/reconstructed/stale/
+blocked lineage without rewriting an active Run's contextViewId. The recovery report now
+rehydrates private-chat, workflow-proposal, workflow-step, channel reply, selector, specialist
+and evidence-inspect views from durable records, preserving the persisted contextViewId and
+avoiding lineage write-back. Private, proposal, workflow-step, specialist and evidence-inspect
+shapes are fingerprint-checked; reply/selector freshness remains projection-owned because their
+prompt envelope is request-specific. Specialist recovery requires the exact consumer teammate;
+inspect recovery uses the operator projection and bounded summaries. Web/security and packaged
+acceptance remain open.
+
+Public workflow evidence now passes artifact descriptors through the shared public artifact
+projection and identifies memory candidates without exposing private or secret-adjacent bodies.
+Normal candidate text is still pattern-redacted; scope-aware review remains on the memory
+review endpoints. This closes the local API/artifact redaction slice without changing durable
+Run, Artifact or Memory records.
+
 ## Remaining Work
 
 ### Condensation Ownership
 
-- Define one owner for summary generation, replacement and invalidation.
+- Keep the summary coordinator as the only daemon owner for model summary generation,
+  replacement and checkpoint installation; storage remains the CAS and invalidation owner.
 - Keep source objects durable while allowing compact projections to be regenerated.
 - Record why content was condensed or dropped without storing secret-bearing raw output.
 
 ### Quote Eligibility
 
-- Apply one eligibility policy to quoted messages, direct-message context and channel
-  context sources.
-- Reject stale, deleted, private or policy-blocked sources before prompt assembly.
-- Preserve source references for accepted quotes and explicit rejection reasons for
-  diagnostics.
+- Conversation reply/quote item checks and id-only rejection diagnostics are implemented.
+- Proposal source-reference projection and channel/workflow context-pack callers now use the
+  source-level helper; private-chat views retain the same source policy and durable lineage.
+- Continue rejecting stale, deleted, private or policy-blocked sources before prompt
+  assembly, with accepted source references preserved.
 
 ### Persistence And Recovery
 
-- Reconcile generated context views after daemon restart without making a cached view the
-  source of truth.
-- Ensure late materialization and stale requests cannot overwrite a newer context view.
+- Persist rebuildable view lineage separately from prompt bodies; the SQLite migration and
+  reopen path now restore projection metadata and the private/proposal/workflow/channel surface views
+  without making a cached view the source of truth.
+- Ensure late materialization and stale requests cannot overwrite a newer context view;
+  the lineage store now rejects older projections and mismatched CAS writes. The daemon
+  restart reconciliation worker rebuilds the canonical conversation projection from
+  durable messages, assignments, summaries and visibility policy. It leaves changed
+  lineage untouched for Host-owned re-materialization, so active Runs cannot silently
+  adopt a different contextViewId.
+- Specialist and evidence-inspect lineages rebuild their request envelope from the durable
+  source turn, role-scoped projection and protocol/active-work metadata. Specialist recovery
+  requires an exact consumer teammate; inspect recovery uses the operator projection and bounded
+  summaries. Neither path reads raw artifact bodies or writes a replacement lineage during
+  startup, and the persisted contextViewId remains the cache identity.
 - Keep migrations idempotent and backward compatible with existing channel and thread
   records.
 
 ### Redaction Ownership
 
-- Centralize prompt, API and artifact redaction policy.
+- Summary prompt rendering and durable summary fields use the shared evidence redactor.
+- Keep prompt, API and artifact redaction at their respective public projection boundaries.
+- Keep workflow evidence candidate bodies scope-safe: normal candidates are pattern-redacted,
+  private and secret-adjacent candidates are metadata-only until the memory review surface
+  establishes the caller scope.
 - Keep raw secrets, private teammate memory and unrelated channel context out of generated
   summaries, evidence and default UI.
 - Make redaction failures fail closed and observable without leaking the rejected value.
@@ -67,10 +110,19 @@ Implemented foundations include:
 
 ## Verification
 
-- Core tests cover budget selection, source eligibility, compaction and redaction.
-- Daemon tests cover persistence, restart recovery, late-result rejection and scoped reads.
+- Core tests cover budget selection, source eligibility, compaction and redaction; the
+  lineage test covers SQLite reopen, older-projection rejection and matching-CAS rejection.
+- Daemon tests cover source citation filtering, persistence wiring, late-result rejection and
+  scoped reads.
 - Web tests cover source detail, empty/stale/error states and channel/direct-message parity.
 - Security fixtures verify that secrets and private-scope sources do not cross boundaries.
+
+The target branch adds startup recovery coverage: Core/Daemon typechecks pass, the
+context lineage/projector/context-processing set is green, and the recovery fixture
+covers SQLite reopen, current projection reconstruction, private/proposal/workflow/channel
+view rehydration, stale metadata detection and fail-closed missing-source handling. Startup
+recovery is a local source check; it does not replace browser, security, packaged or
+live-provider acceptance.
 
 ## Closure
 

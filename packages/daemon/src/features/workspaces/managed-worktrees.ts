@@ -1,34 +1,32 @@
 import { execFile } from "node:child_process";
 import { accessSync, constants, existsSync, statSync } from "node:fs";
 import { mkdir, realpath } from "node:fs/promises";
-import { dirname, isAbsolute } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
 import { promisify } from "node:util";
 import { defineProtectedHostActorEntry } from "../../runtime/sandbox/protected-host-actor-inventory.js";
+import type { ManagedWorktreeIdentity } from "@ling-stack/core";
+import type { WorktreeEnvironment, WorktreeInitialization } from "@ling-stack/contracts";
+import { prepareWorktreeInitialization, readWorktreeInitialization } from "./worktree-initialization.js";
+import { assertOwnedLinkedWorktree, type ManagedWorktreeOwner } from "./worktree-identity.js";
+import { restoreWorktreeForCreation } from "./worktree-recovery.js";
+import type { WorktreeLifecycleStore } from "./worktree-mutation.js";
 
 const execFileAsync = promisify(execFile);
 
 /** Shared original Git producer for repository reads and worktree mutations; neither family is certified by this hook. */
 export const MANAGED_WORKTREES_GIT_ACTOR_ENTRY = defineProtectedHostActorEntry("managed_worktrees_git",
   (cwd: string, args: readonly string[], workflow?: WorkflowGitCommandOptions) => {
-    if (!workflow) return execFileAsync("git", args, { cwd, timeout: 15000, maxBuffer: 1024 * 1024 });
-    if (workflow.profile !== "workflow_isolation_v1" || !["darwin", "linux"].includes(process.platform)
+    if (!workflow) return execFileAsync("git", args, { cwd, timeout: 15000, maxBuffer: 1024 * 1024,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GCM_INTERACTIVE: "never" } });
+    if (workflow.profile !== "workflow_isolation_v1"
       || workflow.indexFile !== undefined && !isAbsolute(workflow.indexFile)
       || workflow.input !== undefined && (!Buffer.isBuffer(workflow.input) || workflow.input.length > 8 * 1024 * 1024)) {
       throw new Error("workflow_git_profile_unavailable");
     }
     // A second, environment-inheriting process source would bypass the original actor gate.
-    const result = execFileAsync("/usr/bin/git", ["--no-pager", "--literal-pathspecs", "--no-optional-locks",
-      "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.attributesFile=/dev/null",
-      "-c", "core.autocrlf=false", "-c", "core.eol=lf", "-c", "gc.auto=0", "-c", "maintenance.auto=false",
-      "-c", "submodule.recurse=false", "-c", "protocol.allow=never", "-c", "credential.helper=",
-      "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false", ...args], {
+    const result = execFileAsync(isolatedGitExecutable(), [...isolatedGitArguments(workflow.network ?? "none"), ...args], {
       cwd, timeout: 15000, maxBuffer: 8 * 1024 * 1024, encoding: "buffer",
-      env: { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", LANG: "C", LC_ALL: "C", TZ: "UTC",
-        GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_SYSTEM: "/dev/null", GIT_CONFIG_GLOBAL: "/dev/null",
-        GIT_ATTR_NOSYSTEM: "1", GIT_NO_REPLACE_OBJECTS: "1", GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0",
-        GIT_PROTOCOL_FROM_USER: "0", GIT_AUTHOR_NAME: "Ling Workflow", GIT_AUTHOR_EMAIL: "workflow@ling.invalid",
-        GIT_COMMITTER_NAME: "Ling Workflow", GIT_COMMITTER_EMAIL: "workflow@ling.invalid",
-        ...(workflow.indexFile ? { GIT_INDEX_FILE: workflow.indexFile } : {}) },
+      env: isolatedGitEnvironment(workflow),
     });
     result.child?.stdin?.end(workflow.input);
     return result;
@@ -38,6 +36,44 @@ interface WorkflowGitCommandOptions {
   readonly profile: "workflow_isolation_v1";
   readonly input?: Buffer;
   readonly indexFile?: string;
+  readonly network?: "none" | "fetch";
+}
+
+function isolatedGitArguments(network: "none" | "fetch"): readonly string[] {
+  const nullPath = process.platform === "win32" ? "NUL" : "/dev/null";
+  const protocols = network === "fetch"
+    ? ["-c", "protocol.allow=never", "-c", "protocol.ext.allow=never", "-c", "protocol.file.allow=always",
+      "-c", "protocol.http.allow=always", "-c", "protocol.https.allow=always", "-c", "protocol.ssh.allow=always", "-c", "protocol.git.allow=always"]
+    : ["-c", "protocol.allow=never", "-c", "protocol.ext.allow=never"];
+  return ["--no-pager", "--literal-pathspecs", "--no-optional-locks",
+    "-c", `core.hooksPath=${nullPath}`, "-c", "core.fsmonitor=false", "-c", `core.attributesFile=${nullPath}`,
+    "-c", "core.autocrlf=false", "-c", "core.eol=lf", "-c", "gc.auto=0", "-c", "maintenance.auto=false",
+    "-c", "submodule.recurse=false", ...protocols, "-c", "credential.helper=",
+    "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false"];
+}
+
+function isolatedGitExecutable(): string {
+  return process.platform === "win32" ? "git.exe" : "/usr/bin/git";
+}
+
+function isolatedGitEnvironment(workflow: WorkflowGitCommandOptions): NodeJS.ProcessEnv {
+  const windows = process.platform === "win32";
+  const nullPath = windows ? "NUL" : "/dev/null";
+  const path = windows ? process.env.Path ?? process.env.PATH ?? "" : "/usr/bin:/bin:/usr/sbin:/sbin";
+  return {
+    ...(windows ? {
+      Path: path,
+      SystemRoot: process.env.SystemRoot ?? process.env.SYSTEMROOT ?? "",
+    } : { PATH: path }),
+    LANG: "C", LC_ALL: "C", TZ: "UTC",
+    GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_SYSTEM: nullPath, GIT_CONFIG_GLOBAL: nullPath,
+    GIT_ATTR_NOSYSTEM: "1", GIT_NO_REPLACE_OBJECTS: "1", GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0",
+    GIT_PROTOCOL_FROM_USER: "0",
+    GIT_SSH_COMMAND: windows ? "ssh.exe" : "/usr/bin/ssh",
+    GIT_AUTHOR_NAME: "Ling Workflow", GIT_AUTHOR_EMAIL: "workflow@ling.invalid",
+    GIT_COMMITTER_NAME: "Ling Workflow", GIT_COMMITTER_EMAIL: "workflow@ling.invalid",
+    ...(workflow.indexFile ? { GIT_INDEX_FILE: workflow.indexFile } : {}),
+  };
 }
 
 /** Host-only Git plumbing. This profile is not a native Runner sandbox or a merge permit. */
@@ -46,6 +82,12 @@ export async function workflowGit(cwd: string, args: readonly string[], input?: 
   const result = await MANAGED_WORKTREES_GIT_ACTOR_ENTRY.invoke(undefined, cwd, args,
     { profile: "workflow_isolation_v1", ...input });
   return { stdout: Buffer.from(result.stdout), stderr: Buffer.from(result.stderr) };
+}
+
+/** Lifecycle Git operations use the fixed profile; public preview sources retain their original producer. */
+export async function isolatedGit(cwd: string, args: readonly string[], network: "none" | "fetch" = "none"): Promise<GitCommandResult> {
+  const result = await workflowGit(cwd, args, { network });
+  return { stdout: result.stdout.toString(), stderr: result.stderr.toString() };
 }
 
 export interface GitCommandResult {
@@ -70,11 +112,14 @@ export interface ManagedWorktreeInspection {
   readonly porcelain: string;
   readonly status: "ready" | "missing" | "blocked";
   readonly errorMessage?: string;
+  readonly initialization?: WorktreeInitialization;
 }
 
 export interface ManagedWorktreeCreateResult {
+  readonly identity: ManagedWorktreeIdentity;
   readonly baseBranch: string;
   readonly baseCommit: string;
+  readonly initializationError?: string;
 }
 
 export interface ManagedWorktreeCleanupResult {
@@ -109,7 +154,7 @@ export async function createInitialWorkspaceBinding<TBinding>(input: {
 
 export async function resolveGitRepoRoot(
   root: string,
-  runGit: typeof git = git,
+  runGit: typeof isolatedGit = isolatedGit,
 ): Promise<
   | { readonly ok: true; readonly repoRoot: string }
   | { readonly ok: false; readonly code: GitRepositoryResolutionErrorCode; readonly message: string }
@@ -139,11 +184,16 @@ export async function createManagedGitWorktree(input: {
   readonly worktreePath: string;
   readonly branchName: string;
   readonly requestedBaseBranch?: string;
+  readonly fetchBeforeCreate?: boolean;
+  readonly environment?: WorktreeEnvironment;
+  readonly expectedIdentity?: ManagedWorktreeIdentity;
+  readonly recovery?: { readonly store: WorktreeLifecycleStore; readonly owner: ManagedWorktreeOwner };
 }): Promise<
   | { readonly ok: true; readonly result: ManagedWorktreeCreateResult }
-  | { readonly ok: false; readonly code: "git_inspection_failed" | "worktree_create_failed" | "worktree_unavailable"; readonly message: string }
+  | { readonly ok: false; readonly code: "git_inspection_failed" | "worktree_create_failed" | "worktree_fetch_failed" | "worktree_unavailable" | "worktree_initialization_failed"; readonly message: string }
 > {
-  const baseCommit = await git(input.repoRoot, ["rev-parse", "HEAD"])
+  const repoRoot = input.repoRoot;
+  const baseCommit = await isolatedGit(repoRoot, ["rev-parse", "HEAD"])
     .then((result) => result.stdout.trim())
     .catch(() => "");
   if (!baseCommit) {
@@ -153,24 +203,48 @@ export async function createManagedGitWorktree(input: {
       message: "Git 仓库没有可用的 HEAD 提交，无法创建或管理独立 worktree。",
     };
   }
-  const currentBranch = (await git(input.repoRoot, ["branch", "--show-current"]).catch(() => ({ stdout: "" }))).stdout.trim();
+  const currentBranch = (await isolatedGit(repoRoot, ["branch", "--show-current"]).catch(() => ({ stdout: "" }))).stdout.trim();
   const baseBranch = input.requestedBaseBranch || currentBranch || baseCommit;
 
+  if (!existsSync(input.worktreePath) && input.recovery) {
+    await restoreWorktreeForCreation(input.recovery.store, input.recovery.owner, input.worktreePath);
+  }
   if (!existsSync(input.worktreePath)) {
+    if (input.fetchBeforeCreate) {
+      try {
+        const remotes = (await isolatedGit(repoRoot, ["remote"])).stdout.trim();
+        if (remotes) await isolatedGit(repoRoot, ["fetch", "--no-tags", "--upload-pack=git-upload-pack"], "fetch");
+      } catch (error) {
+        return { ok: false, code: "worktree_fetch_failed", message: `获取工作树上游更新失败：${redactGitError(error)}` };
+      }
+    }
     await mkdir(dirname(input.worktreePath), { recursive: true });
     try {
-      await git(input.repoRoot, ["worktree", "add", "-B", input.branchName, input.worktreePath, baseBranch]);
+      const branchExists = await isolatedGit(repoRoot, ["show-ref", "--verify", `refs/heads/${input.branchName}`])
+        .then(() => true, () => false);
+      await isolatedGit(repoRoot, branchExists
+        ? ["worktree", "add", input.worktreePath, input.branchName]
+        : ["worktree", "add", "-b", input.branchName, input.worktreePath, baseBranch]);
     } catch (error) {
       return { ok: false, code: "worktree_create_failed", message: `创建 worktree 失败：${redactGitError(error)}` };
     }
     if (!isWorkspaceDirectory(input.worktreePath)) {
       return { ok: false, code: "worktree_unavailable", message: "worktree 创建后目录不可用。" };
     }
-    return { ok: true, result: { baseBranch, baseCommit } };
+    const identity = await assertOwnedLinkedWorktree(repoRoot, input.worktreePath, input.branchName);
+    const createdCommit = (await isolatedGit(input.worktreePath, ["rev-parse", "HEAD"])).stdout.trim();
+    const initialization = input.environment?.enabled
+      ? await prepareWorktreeInitialization(input.worktreePath, input.environment)
+      : undefined;
+    return { ok: true, result: { identity, baseBranch, baseCommit: createdCommit,
+      ...(initialization && initialization.status !== "succeeded" ? { initializationError: initialization.errorMessage ?? "工作树初始化尚未完成。" } : {}) } };
   }
 
+  let identity: ManagedWorktreeIdentity;
+  try { identity = await assertOwnedLinkedWorktree(repoRoot, input.worktreePath, input.branchName, input.expectedIdentity); }
+  catch { return { ok: false, code: "worktree_unavailable", message: "现有目录与工作树的仓库、分支或归属不符。" }; }
   const inspection = await inspectManagedWorktree(input.worktreePath);
-  if (inspection.status !== "ready") {
+  if (inspection.status !== "ready" && !inspection.initialization) {
     return {
       ok: false,
       code: "worktree_unavailable",
@@ -178,7 +252,9 @@ export async function createManagedGitWorktree(input: {
     };
   }
 
-  return { ok: true, result: { baseBranch, baseCommit } };
+  const initialization = inspection.initialization;
+  return { ok: true, result: { identity, baseBranch, baseCommit,
+    ...(initialization && initialization.status !== "succeeded" ? { initializationError: initialization.errorMessage } : {}) } };
 }
 
 export async function inspectManagedWorktree(worktreePath: string): Promise<ManagedWorktreeInspection> {
@@ -194,21 +270,24 @@ export async function inspectManagedWorktree(worktreePath: string): Promise<Mana
   }
 
   try {
-    const inside = (await git(worktreePath, ["rev-parse", "--is-inside-work-tree"])).stdout.trim();
+    const inside = (await isolatedGit(worktreePath, ["rev-parse", "--is-inside-work-tree"])).stdout.trim();
     if (inside !== "true") {
       return blockedInspection(worktreePath, "worktree 路径存在，但不是 Git worktree。");
     }
-    const topLevel = (await git(worktreePath, ["rev-parse", "--show-toplevel"])).stdout.trim();
+    const topLevel = (await isolatedGit(worktreePath, ["rev-parse", "--show-toplevel"])).stdout.trim();
     if (await realpath(topLevel) !== await realpath(worktreePath)) {
       return blockedInspection(worktreePath, "worktree 路径存在，但不是该 Git 工作区根目录。");
     }
-    const porcelain = (await git(worktreePath, ["status", "--porcelain"])).stdout;
+    const porcelain = (await isolatedGit(worktreePath, ["status", "--porcelain"])).stdout;
+    const initialization = await readWorktreeInitialization(worktreePath);
     return {
       exists: true,
       isGitWorktree: true,
       isDirty: porcelain.trim().length > 0,
       porcelain,
-      status: "ready",
+      status: initialization && initialization.status !== "succeeded" ? "blocked" : "ready",
+      initialization,
+      ...(initialization && initialization.status !== "succeeded" ? { errorMessage: initialization.errorMessage ?? "工作树初始化未结束；请检查脚本后重试。" } : {}),
     };
   } catch (error) {
     return blockedInspection(worktreePath, `无法检查 worktree 状态：${redactGitError(error)}`);
@@ -218,12 +297,14 @@ export async function inspectManagedWorktree(worktreePath: string): Promise<Mana
 export async function removeManagedWorktreeIfClean(input: {
   readonly repoRoot: string;
   readonly worktreePath: string;
+  readonly beforeRemove?: () => void;
 }): Promise<
   | { readonly ok: true; readonly result: ManagedWorktreeCleanupResult }
   | { readonly ok: false; readonly code: "worktree_dirty" | "worktree_blocked" | "worktree_cleanup_failed"; readonly message: string; readonly inspection: ManagedWorktreeInspection }
 > {
   const inspection = await inspectManagedWorktree(input.worktreePath);
   if (!inspection.exists) {
+    input.beforeRemove?.();
     return { ok: true, result: { removed: false, inspection } };
   }
   if (inspection.status === "blocked") {
@@ -244,7 +325,22 @@ export async function removeManagedWorktreeIfClean(input: {
   }
 
   try {
-    await git(input.repoRoot, ["worktree", "remove", input.worktreePath]);
+    const sourceCommon = (await isolatedGit(input.repoRoot, ["rev-parse", "--git-common-dir"])).stdout.trim();
+    const targetCommon = (await isolatedGit(input.worktreePath, ["rev-parse", "--git-common-dir"])).stdout.trim();
+    const targetGit = (await isolatedGit(input.worktreePath, ["rev-parse", "--git-dir"])).stdout.trim();
+    const [source, common, linked] = await Promise.all([
+      realpath(resolve(input.repoRoot, sourceCommon)),
+      realpath(resolve(input.worktreePath, targetCommon)),
+      realpath(resolve(input.worktreePath, targetGit)),
+    ]);
+    if (source !== common || common === linked) throw new Error("not_owned_linked_worktree");
+  } catch {
+    return { ok: false, code: "worktree_blocked", message: "该目录不是所属仓库的附属工作树，无法清理。", inspection };
+  }
+
+  input.beforeRemove?.();
+  try {
+    await isolatedGit(input.repoRoot, ["worktree", "remove", input.worktreePath]);
   } catch (error) {
     return {
       ok: false,

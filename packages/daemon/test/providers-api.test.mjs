@@ -159,7 +159,7 @@ test("POST /transcribe rejects cross-origin workspace requests before reading au
       body: form,
     });
     assert.equal(response.status, 403);
-    assert.equal((await response.json()).error, "forbidden_origin");
+    assert.equal((await response.json()).error, "local_service_forbidden");
     assert.equal(transcriptionServer.requests.length, 0);
   } finally {
     if (previousAsrKey === undefined) {

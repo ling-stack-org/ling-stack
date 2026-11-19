@@ -44,6 +44,9 @@ import {
 } from "./schemas.js";
 import { validateChannelModelUpdate } from "./model-binding-validation.js";
 import { createInitialChannelWorkspaceBinding } from "./workspace.js";
+import { coordinateWorktreeMutation } from "../workspaces/worktree-mutation.js";
+import { listWorktreeSnapshots } from "../workspaces/worktree-recovery.js";
+import { allowLocalWorkspaceRequest } from "../../shared/local-workspace-access.js";
 import { hydrateProposedPlanSourceStates } from "../runs/proposed-plan-source-state.js";
 import { assertRunnableConversationProvider } from "../providers/conversation-model-validation.js";
 import { buildChannelBranchOrigin } from "./channel-branch-origin.js";
@@ -62,6 +65,7 @@ export async function handleChannelsCollection(
     return;
   }
 
+  if (request.method === "POST" && !allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) return;
   try {
     const store = storeRegistry.getStore(cwd);
     if (request.method === "GET") {
@@ -96,29 +100,33 @@ export async function handleChannelsCollection(
         writeJson(response, 400, { error: "auto_route_disabled", message: "Channel auto_route is disabled." });
         return;
       }
-      const channelId = createChannelId();
-      const workspaceResult = await createInitialChannelWorkspaceBinding(
-        {
-          id: channelId,
-          boundPath: input.boundPath,
-          workspaceBinding: undefined,
-        },
-        cwd,
-        store.paths,
-      );
-      if (!workspaceResult.ok) {
-        writeJson(response, 400, { error: workspaceResult.code, message: workspaceResult.message });
-        return;
-      }
-      const channel = store.createChannel(
-        {
-          ...input,
-          defaultProviderPresetId,
-          id: channelId,
-          workspaceBinding: workspaceResult.binding,
-        },
-        new Date().toISOString(),
-      );
+      const channel = await coordinateWorktreeMutation(store, async () => {
+        store.assertWorkspaceSnapshotFence(cwd);
+        const channelId = createChannelId();
+        const workspaceResult = await createInitialChannelWorkspaceBinding(
+          {
+            id: channelId,
+            boundPath: input.boundPath,
+            workspaceBinding: undefined,
+          },
+          cwd,
+          store.paths,
+          store.getWorkspaceSettings().worktreePolicy,
+          store,
+        );
+        if (!workspaceResult.ok) {
+          throw new HttpError(400, workspaceResult.code, workspaceResult.message);
+        }
+        return store.createChannel(
+          {
+            ...input,
+            defaultProviderPresetId,
+            id: channelId,
+            workspaceBinding: workspaceResult.binding,
+          },
+          new Date().toISOString(),
+        );
+      });
       writeJson(response, 201, { channel });
       return;
     }
@@ -147,6 +155,8 @@ export async function handleChannelItem(
     return;
   }
 
+  if (request.method !== "GET" && !allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) return;
+
   try {
     const store = storeRegistry.getStore(cwd);
     const channel = store.getChannel(channelId);
@@ -168,18 +178,43 @@ export async function handleChannelItem(
         return;
       }
       validateChannelModelUpdate({ store, cwd, channel, update: input, secretResolver });
-      const updated = store.updateChannel(channelId, input, new Date().toISOString());
+      const updated = await coordinateWorktreeMutation(store, async () => {
+        const current = store.getChannel(channelId);
+        const stored = current?.workspaceBinding;
+        let binding = input.workspaceBinding;
+        if (binding?.mode === "managed_worktree") {
+          if (stored?.mode !== "managed_worktree" || binding.worktreePath !== stored.worktreePath
+            || binding.executionPath !== stored.executionPath || binding.branchName !== stored.branchName) {
+            throw new HttpError(409, "worktree_owner_mismatch", "请使用工作树操作创建或更改托管工作树。");
+          }
+          binding = stored;
+        }
+        const changesWorkspace = input.boundPath !== undefined && input.boundPath !== (current?.boundPath ?? null)
+          || binding !== undefined && (binding?.mode !== stored?.mode
+            || binding?.worktreePath !== stored?.worktreePath || binding?.branchName !== stored?.branchName
+            || binding?.executionPath !== stored?.executionPath);
+        if (changesWorkspace) store.assertWorkspaceSnapshotFence(cwd);
+        if (changesWorkspace && (await listWorktreeSnapshots(store.paths)).some((snapshot) => snapshot.ownerKind === "channel" && snapshot.ownerId === channelId)) {
+          throw new HttpError(409, "worktree_snapshot_pending", "请先恢复工作树快照，再切换工作区归属。");
+        }
+        return store.updateChannel(channelId, { ...input, workspaceBinding: binding }, new Date().toISOString());
+      });
       writeJson(response, 200, { channel: updated });
       return;
     }
 
     if (request.method === "DELETE") {
-      const tasks = store.listTasks({ channelId, limit: 1 });
-      if (tasks.length > 0) {
-        writeJson(response, 409, { error: "channel_has_tasks", message: `Channel has tasks and cannot be deleted: ${channelId}` });
-        return;
-      }
-      store.deleteChannel(channelId);
+      await coordinateWorktreeMutation(store, async () => {
+        store.assertWorkspaceSnapshotFence(cwd);
+        const tasks = store.listTasks({ channelId, limit: 1 });
+        if (tasks.length > 0) throw new HttpError(409, "channel_has_tasks", `Channel has tasks and cannot be deleted: ${channelId}`);
+        const current = store.getChannel(channelId);
+        if (current?.workspaceBinding?.mode === "managed_worktree"
+          || (await listWorktreeSnapshots(store.paths)).some((snapshot) => snapshot.ownerKind === "channel" && snapshot.ownerId === channelId)) {
+          throw new HttpError(409, "worktree_owner_in_use", "频道仍有关联工作树或恢复快照，请先处理工作树归属。");
+        }
+        store.deleteChannel(channelId);
+      });
       writeJson(response, 200, { ok: true });
       return;
     }

@@ -19,6 +19,20 @@ export const runExecutionOwnerSql = `EXISTS (
       OR (? = 1 AND execution_unit.status IN ('running','waiting_for_approval','cancelling')
         AND execution_attempt.status IN ('created','started','waiting_for_approval','cancelling'))
     )
+    AND (
+      execution_unit.owner_type <> 'node_rerun_intent'
+      OR EXISTS (
+        SELECT 1 FROM runtime_host_capacity_intents AS node_rerun_capacity
+        WHERE node_rerun_capacity.owner_kind = 'node_rerun_target'
+          AND node_rerun_capacity.run_id = execution_run.id
+          AND node_rerun_capacity.work_unit_id = execution_unit.id
+          AND node_rerun_capacity.attempt_id = execution_attempt.id
+          AND node_rerun_capacity.runtime_instance_id = execution_attempt.runtime_instance_id
+          AND node_rerun_capacity.fencing_token = execution_attempt.fencing_token
+          AND node_rerun_capacity.dispatched_at IS NOT NULL
+          AND node_rerun_capacity.revoked_at IS NULL
+      )
+    )
 )`;
 
 export function runExecutionOwnerParameters(runId: string, fence: RuntimeAttemptFenceV1, allowCleanup: boolean): readonly (string | number)[] {

@@ -1777,7 +1777,7 @@ class AssistantProviderErrorRunner {
 
 async function startDaemonForTest(runner, stores) {
   const daemon = createDaemonServer(
-    { host: "127.0.0.1", port: 0 },
+    { host: "127.0.0.1", port: 0, defaultWorkspaceCwd: tmpdir() },
     {
       runner,
       storeFactory(cwd) {

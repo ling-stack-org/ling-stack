@@ -10,6 +10,8 @@ export type IconButtonIcon = LucideIcon | ReactNode;
 export interface IconButtonProps extends Omit<ButtonProps, "aria-label" | "children" | "leadingIcon" | "trailingIcon"> {
   readonly icon: IconButtonIcon;
   readonly label: string;
+  /** Omit the duplicate text node when a parent surface supplies its own text locator. */
+  readonly hideLabelText?: boolean;
   readonly pressed?: boolean;
   readonly tooltip?: string;
 }
@@ -35,7 +37,7 @@ function isLucideIconComponent(icon: IconButtonIcon): icon is LucideIcon {
 }
 
 export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(function IconButton(
-  { icon, label, pressed, size = "sm", tooltip = label, variant = "ghost", ...props },
+  { icon, label, hideLabelText = false, pressed, size = "sm", tooltip = label, variant = "ghost", ...props },
   ref,
 ) {
   const usesTypedLucideIcon = isLucideIconComponent(icon);
@@ -57,7 +59,7 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(functio
       title={label}
       variant={variant}
     >
-      <span className="ling-ui-sr-only">{label}</span>
+      {hideLabelText ? null : <span className="ling-ui-sr-only">{label}</span>}
     </Button>
   );
 

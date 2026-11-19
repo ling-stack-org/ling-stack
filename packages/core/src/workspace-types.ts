@@ -265,11 +265,18 @@ export type ChannelWorkspaceMode = "local" | "managed_worktree" | "external_path
 
 export type ChannelWorkspaceStatus = "ready" | "not_created" | "missing" | "unsupported" | "blocked";
 
+export interface ManagedWorktreeIdentity {
+  readonly repoRoot: string;
+  readonly gitCommonDir: string;
+  readonly gitDir: string;
+}
+
 export interface ChannelWorkspaceBinding {
   readonly mode: ChannelWorkspaceMode;
   readonly status: ChannelWorkspaceStatus;
   readonly executionPath?: string;
   readonly worktreePath?: string;
+  readonly worktreeIdentity?: ManagedWorktreeIdentity;
   readonly branchName?: string;
   readonly baseBranch?: string;
   readonly baseCommit?: string;
@@ -301,6 +308,7 @@ export interface DirectWorkspaceBinding {
   readonly status: DirectWorkspaceStatus;
   readonly executionPath?: string;
   readonly worktreePath?: string;
+  readonly worktreeIdentity?: ManagedWorktreeIdentity;
   readonly branchName?: string;
   readonly baseBranch?: string;
   readonly baseCommit?: string;
@@ -456,6 +464,7 @@ export interface ChannelBranchUpdateInput {
 }
 
 export interface ListChannelsOptions {
+  readonly offset?: number;
   readonly archived?: boolean;
   readonly defaultProviderPresetId?: string;
   readonly limit?: number;
@@ -497,6 +506,7 @@ export function createChannelWorkspaceSnapshot(channel: Channel, workspaceCwd: s
 }
 
 export interface WorkspaceSettings {
+  readonly worktreePolicy?: import("@ling-stack/contracts").WorktreePolicy;
   readonly desktopBrowserPolicy?: import("@ling-stack/contracts").DesktopBrowserPolicy;
   readonly schemaVersion: 1;
   readonly workspaceCwd?: string;
@@ -518,6 +528,7 @@ export interface WorkspaceSettings {
 }
 
 export interface UpdateWorkspaceSettingsInput {
+  readonly worktreePolicy?: import("@ling-stack/contracts").WorktreePolicy | null;
   readonly desktopBrowserPolicy?: import("@ling-stack/contracts").DesktopBrowserPolicy | null;
   readonly schemaVersion?: 2;
   readonly workspaceCwd?: string | null;
@@ -553,6 +564,7 @@ export interface Task {
 }
 
 export interface CreateTaskInput {
+  readonly id?: string;
   readonly channelId: string;
   readonly title: string;
   readonly prompt: string;
@@ -989,6 +1001,7 @@ export interface TeammateDirectThread {
 }
 
 export interface ListTeammateDirectThreadsOptions {
+  readonly offset?: number;
   readonly teammateId?: string;
   readonly limit?: number;
 }

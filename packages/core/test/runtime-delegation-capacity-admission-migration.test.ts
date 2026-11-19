@@ -10,6 +10,8 @@ import { applyRuntimeConcurrencyPolicyActivationMigration } from "../dist/storag
 import { applyRuntimeDelegationCapacityAdmissionMigration, RUNTIME_DELEGATION_CAPACITY_ADMISSION_MIGRATION_VERSION,
   RUNTIME_DELEGATION_CAPACITY_ADMISSION_MIGRATION_NAME } from "../dist/storage/sqlite/runtime-delegation-capacity-admission-migration.js";
 import { createBudgetHarness } from "./support/delegation-budget-fixture.mjs";
+import { dropCodeAssessmentOverlay } from "./support/code-assessment-overlay-fixture.mjs";
+import { rewindRemainingWorkSuccessors } from "./support/remaining-work-predecessor.ts";
 import { testDatabase } from "./support/sqlite-test-database.ts";
 
 type Store = ReturnType<typeof createSqliteRunStore>;
@@ -58,9 +60,15 @@ function fixture(t: TestContext, { installed = false } = {}) {
     rmSync(root, { recursive: true, force: true });
   });
   store = createSqliteRunStore(cwd, paths);
-  const db = testDatabase(store), fullSchema = schema(db), definition = fullSchema.find(row => row.name === table)?.sql;
+  const db = testDatabase(store);
+  if (!installed) {
+    dropCodeAssessmentOverlay(db);
+    rewindRemainingWorkSuccessors(db);
+  }
+  const fullSchema = schema(db), definition = fullSchema.find(row => row.name === table)?.sql;
   assert.equal(typeof definition, "string", "the production constructor must install216");
-  assert.deepEqual(markers(db).filter(row => (row.version as number) >= 215).map(({ version, name }) => ({ version, name })),
+  assert.deepEqual(markers(db).filter(row => successorVersion(row.version) || row.version === 215 || row.version === 216)
+    .map(({ version, name }) => ({ version, name })),
     [{ version: 215, name: predecessor }, { version: 216, name: table }, ...successors]);
   if (!installed) {
     assert.equal(db.isTransaction, false);
@@ -88,7 +96,7 @@ function fixture(t: TestContext, { installed = false } = {}) {
     assert.deepEqual(snapshot(db), before);
     assert.equal(changes(db), count);
   }
-  return { cwd, paths, fullSchema, admissionSchema: fullSchema.filter(row => !successorOwned(row)), definition: definition!,
+  return { cwd, paths, fullSchema, historical: !installed, admissionSchema: fullSchema.filter(row => !successorOwned(row)), definition: definition!,
     get store() { return store!; }, get db() { return testDatabase(store!); },
     peer() {
       const peer = new DatabaseSync(paths.databasePath);
@@ -96,7 +104,16 @@ function fixture(t: TestContext, { installed = false } = {}) {
       peers.push(peer);
       return peer;
     },
-    reopen() { store!.close(); store = undefined; store = createSqliteRunStore(cwd, paths); return store; } };
+    reopen() {
+      store!.close();
+      store = undefined;
+      store = createSqliteRunStore(cwd, paths);
+      if (!installed) {
+        dropCodeAssessmentOverlay(testDatabase(store));
+        rewindRemainingWorkSuccessors(testDatabase(store));
+      }
+      return store;
+    } };
 }
 
 function assertReopenPreservesAdmissions(f: Fixture, before: ReturnType<typeof snapshot>) {
@@ -150,8 +167,10 @@ function rejectUnchanged(f: Fixture, pattern = migrationError, extra: Partial<Om
     let unexpected: Store | undefined;
     try { assert.throws(() => { unexpected = createSqliteRunStore(f.cwd, f.paths); }, pattern); }
     finally { unexpected?.close(); }
+    if (f.historical) rewindRemainingWorkSuccessors(f.db);
     assert.deepEqual(snapshot(f.db), before);
-    assert.equal(changes(f.db), count);
+    // Historical fixtures are rewound after the constructor probe, so the cleanup itself advances total_changes().
+    if (!f.historical) assert.equal(changes(f.db), count);
   }
 }
 
@@ -206,7 +225,8 @@ test("the production constructor alone upgrades215 once without synthesizing rec
   const before = snapshot(f.db);
   f.reopen();
   assert.deepEqual(schema(f.db), f.fullSchema);
-  assert.deepEqual(markers(f.db).filter(row => row.version !== 216 && !successorVersion(row.version)), before.markers);
+  assert.deepEqual(markers(f.db).filter(row => row.version !== 216 && !successorVersion(row.version)),
+    before.markers.filter(row => !successorVersion(row.version)));
   assert.deepEqual(markers(f.db).filter(row => successorVersion(row.version)).map(({ version, name }) => ({ version, name })), successors);
   for (const table of successorTables) assert.deepEqual(rows(f.db, table), []);
   assert.deepEqual(data(f.db), before.data);

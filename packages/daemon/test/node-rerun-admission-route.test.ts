@@ -11,8 +11,42 @@ test("the Daemon routes node rerun admission under the source Run", () => {
     kind: "node-rerun-admission",
     runId: "run/rerun",
   });
+  assert.deepEqual(parseRunRoute("/runs/run%2Frerun/node-rerun/submit"), {
+    kind: "node-rerun-submit",
+    runId: "run/rerun",
+  });
+  assert.equal(parseRunRoute("/runs/run%2Frerun/node-rerun/submit/extra"), undefined);
   assert.equal(parseRunRoute("/runs/run%2Frerun/node-rerun"), undefined);
   assert.equal(parseRunRoute("/runs/run%2Frerun/node-rerun/admission/extra"), undefined);
+  assert.deepEqual(parseRunRoute("/runs/run%2Frerun/node-rerun/intents"), { kind: "node-rerun-intents", runId: "run/rerun" });
+  assert.deepEqual(parseRunRoute("/runs/run%2Frerun/node-rerun/intents/record%2Fone"), {
+    kind: "node-rerun-intent", runId: "run/rerun", recordId: "record/one",
+  });
+  assert.deepEqual(parseRunRoute("/runs/run%2Frerun/node-rerun/intents/record%2Fone/approval"), {
+    kind: "node-rerun-intent-approval", runId: "run/rerun", recordId: "record/one",
+  });
+  assert.deepEqual(parseRunRoute("/runs/run%2Frerun/node-rerun/intents/record%2Fone/target"), {
+    kind: "node-rerun-intent-target", runId: "run/rerun", recordId: "record/one",
+  });
+  assert.deepEqual(parseRunRoute("/runs/run%2Frerun/node-rerun/intents/record%2Fone/target/dispatch"), {
+    kind: "node-rerun-target-dispatch", runId: "run/rerun", recordId: "record/one",
+  });
+  assert.deepEqual(parseRunRoute("/runs/run%2Frerun/node-rerun/intents/record%2Fone/generation"), {
+    kind: "node-rerun-intent-generation", runId: "run/rerun", recordId: "record/one",
+  });
+  assert.equal(parseRunRoute("/runs/run/node-rerun/intents/record/generation/extra"), undefined);
+  assert.deepEqual(parseRunRoute("/runs/run%2Frerun/node-rerun/intents/record%2Fone/target/cancel"), {
+    kind: "node-rerun-target-cancel", runId: "run/rerun", recordId: "record/one",
+  });
+  assert.equal(parseRunRoute("/runs/run/node-rerun/intents/record/target/cancel/extra"), undefined);
+  assert.deepEqual(parseRunRoute("/runs/run%2Frerun/node-rerun/intents/record%2Fone/target/readiness"), {
+    kind: "node-rerun-target-readiness", runId: "run/rerun", recordId: "record/one",
+  });
+  assert.equal(parseRunRoute("/runs/run/node-rerun/intents/record/target/readiness/extra"), undefined);
+  assert.deepEqual(parseRunRoute("/runs/run/node-rerun/intents/record%2Fapproval"), {
+    kind: "node-rerun-intent", runId: "run", recordId: "record/approval",
+  });
+  assert.equal(parseRunRoute("/runs/run%2Frerun/node-rerun/intents/record/extra"), undefined);
 });
 
 test("node rerun admission keeps workspace Origin authorization at the router boundary", async t => {
@@ -49,8 +83,8 @@ test("node rerun admission keeps workspace Origin authorization at the router bo
   const forbidden = await fetch(url, request);
   assert.equal(forbidden.status, 403);
   assert.deepEqual(await forbidden.json(), {
-    error: "forbidden_origin",
-    message: "Workspace file actions are only available from local Ling Stack pages.",
+    error: "local_service_forbidden",
+    message: "This service requires a local Ling page or authenticated daemon access.",
   });
 
   const local = await fetch(url, { ...request, headers: { ...request.headers, origin: "http://127.0.0.1:5173" } });
@@ -59,4 +93,33 @@ test("node rerun admission keeps workspace Origin authorization at the router bo
     error: "node_rerun_admission_invalid_request",
     message: "The node rerun admission request is invalid.",
   });
+  url.pathname = "/runs/run-1/node-rerun/intents";
+  const forbiddenSubmission = await fetch(url, request);
+  assert.equal(forbiddenSubmission.status, 403);
+  const localSubmission = await fetch(url, { ...request, headers: { ...request.headers, origin: "http://127.0.0.1:5173" } });
+  assert.equal(localSubmission.status, 400);
+  assert.equal((await localSubmission.json() as { error: string }).error, "node_rerun_intent_invalid_request");
+  url.pathname += "/record";
+  const forbiddenRead = await fetch(url, { headers: request.headers });
+  assert.equal(forbiddenRead.status, 403);
+  const coldRead = await fetch(url, { headers: { origin: "http://127.0.0.1:5173" } });
+  assert.equal(coldRead.status, 503);
+  url.pathname += "/approval";
+  assert.equal((await fetch(url, request)).status, 403);
+  assert.equal((await fetch(url, { ...request, headers: { origin: "http://127.0.0.1:5173", "content-type": "application/json" } })).status, 503);
+  url.pathname = url.pathname.replace(/approval$/u, "target");
+  assert.equal((await fetch(url, request)).status, 403);
+  assert.equal((await fetch(url, { ...request, headers: { origin: "http://127.0.0.1:5173", "content-type": "application/json" } })).status, 503);
+  url.pathname = url.pathname.replace(/target$/u, "target/dispatch");
+  assert.equal((await fetch(url, request)).status, 403);
+  assert.equal((await fetch(url, { ...request, headers: { origin: "http://127.0.0.1:5173", "content-type": "application/json" } })).status, 503);
+  url.pathname = url.pathname.replace(/target\/dispatch$/u, "generation");
+  assert.equal((await fetch(url, { headers: request.headers })).status, 403);
+  assert.equal((await fetch(url, { headers: { origin: "http://127.0.0.1:5173" } })).status, 503);
+  url.pathname = url.pathname.replace(/generation$/u, "target/cancel");
+  assert.equal((await fetch(url, request)).status, 403);
+  assert.equal((await fetch(url, { ...request, headers: { origin: "http://127.0.0.1:5173", "content-type": "application/json" } })).status, 503);
+  url.pathname = url.pathname.replace(/cancel$/u, "readiness");
+  assert.equal((await fetch(url, { headers: request.headers })).status, 403);
+  assert.equal((await fetch(url, { headers: { origin: "http://127.0.0.1:5173" } })).status, 503);
 });

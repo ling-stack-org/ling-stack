@@ -1,5 +1,6 @@
 import {
   permissionModeForPreset,
+  resolveChannelExecutionCwd,
   type AiTeammate,
   type Channel,
   type ChannelMessage,
@@ -34,7 +35,7 @@ export function buildChannelReplyRunRequest(input: {
   }
   const permissionPreset = "read_only" as const;
   return {
-    cwd: input.store.paths.cwd,
+    cwd: resolveChannelExecutionCwd(input.channel, input.store.paths.cwd),
     workspaceCwd: input.store.paths.cwd,
     providerPresetId: input.providerPresetId,
     teammateId: input.teammateId,

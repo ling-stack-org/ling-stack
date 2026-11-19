@@ -292,7 +292,7 @@ test("loaded canonical snapshot does not erase a sanitized unverified-link diagn
   const diagnostics = output.filter(item => item.kind === "diagnostic");
   assert.equal(diagnostics.length, 1);
   assert.equal(diagnostics[0].status, "blocked");
-  assert.equal(diagnostics[0].summary, "Command batch lineage is incomplete.");
+  assert.equal(diagnostics[0].summary, "Execution evidence is missing required lineage.");
   assert.deepEqual(diagnostics[0].sourceRefs, []);
   assert.equal(diagnostics[0].runId, undefined);
   assert.equal(diagnostics[0].actionId, undefined);

@@ -242,7 +242,7 @@ test("teammate direct messages default to latest page and load older history wit
 
 test("workspace settings API persists UI preferences in .ling-stack state", async () => {
   const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-workspace-settings-api-"));
-  const daemon = await startDaemonForTest();
+  const daemon = await startDaemonForTest(undefined, {}, { defaultWorkspaceCwd: cwd });
   try {
     const initial = await getJson(`${daemon.url}/workspace-settings?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(initial.settings.schemaVersion, 1);
@@ -436,115 +436,6 @@ test("managed channel and direct worktrees use resolved workspace worktrees dire
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
     await rm(userRoot, { recursive: true, force: true });
-  }
-});
-
-test("channel workspace cleanup removes clean managed worktrees and keeps the binding recreatable", async () => {
-  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-worktree-cleanup-"));
-  const daemon = await startDaemonForTest();
-  try {
-    const channel = await createChannel(daemon.url, cwd);
-    const worktreePath = channel.workspaceBinding?.worktreePath;
-    assert.ok(worktreePath);
-    await access(worktreePath);
-
-    const cleaned = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workspace/cleanup?cwd=${encodeURIComponent(cwd)}`, {});
-    assert.equal(cleaned.binding.mode, "managed_worktree");
-    assert.equal(cleaned.binding.status, "not_created");
-    assert.equal(cleaned.binding.worktreePath, worktreePath);
-    await assert.rejects(() => access(worktreePath), /ENOENT/);
-
-    const refreshed = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workspace/refresh?cwd=${encodeURIComponent(cwd)}`, {});
-    assert.equal(refreshed.binding.status, "not_created");
-
-    const recreated = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workspace/create-worktree?cwd=${encodeURIComponent(cwd)}`, {});
-    assert.equal(recreated.binding.status, "ready");
-    assert.equal(recreated.binding.worktreePath, worktreePath);
-    await access(worktreePath);
-  } finally {
-    await daemon.close();
-    await rm(cwd, { recursive: true, force: true });
-  }
-});
-
-test("channel workspace cleanup refuses dirty managed worktrees without blocking refresh", async () => {
-  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-channel-worktree-dirty-cleanup-"));
-  const daemon = await startDaemonForTest();
-  try {
-    const channel = await createChannel(daemon.url, cwd);
-    const worktreePath = channel.workspaceBinding?.worktreePath;
-    assert.ok(worktreePath);
-    await writeFile(resolve(worktreePath, "dirty.txt"), "dirty\n", "utf8");
-
-    const response = await fetch(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workspace/cleanup?cwd=${encodeURIComponent(cwd)}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
-    });
-    assert.equal(response.status, 409);
-    const body = await response.json();
-    assert.equal(body.error, "worktree_dirty");
-    assert.equal(body.binding.status, "ready");
-    await access(resolve(worktreePath, "dirty.txt"));
-
-    const refreshed = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workspace/refresh?cwd=${encodeURIComponent(cwd)}`, {});
-    assert.equal(refreshed.binding.status, "ready");
-    assert.equal(refreshed.binding.errorMessage, undefined);
-  } finally {
-    await daemon.close();
-    await rm(cwd, { recursive: true, force: true });
-  }
-});
-
-test("direct teammate workspace cleanup removes clean managed worktrees and can recreate them", async () => {
-  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-direct-worktree-cleanup-"));
-  const daemon = await startDaemonForTest();
-  try {
-    await ensureGitRepo(cwd);
-    const teammateId = "teammate_builtin_engineer";
-    const created = await postJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-workspace/create-worktree?cwd=${encodeURIComponent(cwd)}`, {});
-    const worktreePath = created.binding.worktreePath;
-    await access(worktreePath);
-
-    const cleaned = await postJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-workspace/cleanup?cwd=${encodeURIComponent(cwd)}`, {});
-    assert.equal(cleaned.binding.mode, "managed_worktree");
-    assert.equal(cleaned.binding.status, "not_created");
-    assert.equal(cleaned.binding.worktreePath, worktreePath);
-    await assert.rejects(() => access(worktreePath), /ENOENT/);
-
-    const recreated = await postJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-workspace/create-worktree?cwd=${encodeURIComponent(cwd)}`, {});
-    assert.equal(recreated.binding.status, "ready");
-    assert.equal(recreated.binding.worktreePath, worktreePath);
-    await access(worktreePath);
-  } finally {
-    await daemon.close();
-    await rm(cwd, { recursive: true, force: true });
-  }
-});
-
-test("direct teammate workspace cleanup refuses dirty managed worktrees", async () => {
-  const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-direct-worktree-dirty-cleanup-"));
-  const daemon = await startDaemonForTest();
-  try {
-    await ensureGitRepo(cwd);
-    const teammateId = "teammate_builtin_engineer";
-    const created = await postJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-workspace/create-worktree?cwd=${encodeURIComponent(cwd)}`, {});
-    const worktreePath = created.binding.worktreePath;
-    await writeFile(resolve(worktreePath, "dirty.txt"), "dirty\n", "utf8");
-
-    const response = await fetch(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-workspace/cleanup?cwd=${encodeURIComponent(cwd)}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
-    });
-    assert.equal(response.status, 409);
-    const body = await response.json();
-    assert.equal(body.error, "worktree_dirty");
-    assert.equal(body.binding.status, "ready");
-    await access(resolve(worktreePath, "dirty.txt"));
-  } finally {
-    await daemon.close();
-    await rm(cwd, { recursive: true, force: true });
   }
 });
 
@@ -2330,7 +2221,7 @@ test("procedure observation API routes structured observations before candidate 
 
 test("procedure observation job API records explicit jobs idempotently before candidate creation", async () => {
   const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-procedure-observation-job-api-"));
-  const daemon = await startDaemonForTest();
+  const daemon = await startDaemonForTest(undefined, {}, { defaultWorkspaceCwd: cwd });
   try {
     const jobPayload = {
       id: "procedure_observation_job_recording",

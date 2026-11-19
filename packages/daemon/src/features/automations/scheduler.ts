@@ -4,6 +4,10 @@ import type {
   RunSession,
   SecretResolver,
 } from "@ling-stack/core";
+import {
+  automationMonitorFingerprint,
+  matchesAutomationMonitorCondition,
+} from "@ling-stack/core";
 import type { McpBroker } from "../../context.js";
 import type { ActiveRunRegistry } from "../../runtime/active-runs.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
@@ -17,6 +21,7 @@ import { createDetachedRunExecutionSink, executeRunRequest } from "../runs/orche
 import type { NativeRunDispatcher } from "../runs/native-run-dispatcher.js";
 import { maybeStartNextRunInterventionContinuation } from "../runs/interventions.js";
 import { runAutomation } from "./run.js";
+import { readAutomationMonitorSnapshot } from "./monitor.js";
 import { AutomationRecurrenceCompleteError, AutomationRecurrenceError, computeNextAutomationRunAt } from "./recurrence.js";
 export { computeNextAutomationRunAt, computeNextRunAt, computeNextRunAtFromRRule } from "./recurrence.js";
 
@@ -36,6 +41,8 @@ export interface AutomationSchedulerItem {
   readonly lastRunAt?: string;
   readonly lastAutomationRunId?: string;
   readonly lastErrorMessage?: string;
+  readonly lastMonitorFingerprint?: string;
+  readonly lastMonitorOutcome?: "changed" | "unchanged" | "condition_not_met";
 }
 
 export interface AutomationSchedulerState {
@@ -92,7 +99,7 @@ export class AutomationSchedulerRegistry {
 
       const now = new Date().toISOString();
       const store = this.storeRegistry.getStore(cwd);
-      const automations = store.listAutomationDefinitions({ status: "enabled", scheduledOnly: true, limit: 500 });
+      const automations = store.listAutomationDefinitions({ status: "enabled", timerOnly: true, limit: 500 });
       const entry: AutomationSchedulerEntry = {
         state: {
           id: `automation_scheduler_${randomUUID()}`,
@@ -152,7 +159,7 @@ export class AutomationSchedulerRegistry {
     };
     try {
       const store = this.storeRegistry.getStore(cwd);
-      const automations = store.listAutomationDefinitions({ status: "enabled", scheduledOnly: true, limit: 500 });
+      const automations = store.listAutomationDefinitions({ status: "enabled", timerOnly: true, limit: 500 });
       for (const automation of automations) {
         if (existing.runningAutomationIds.has(automation.id)) {
           this.upsertItem(existing, {
@@ -210,7 +217,14 @@ export class AutomationSchedulerRegistry {
   }
 
   private scheduleAutomation(entry: AutomationSchedulerEntry, automation: AutomationDefinition, from: Date): void {
-    if (!this.isCurrentEntry(entry, entry.generation) || automation.status !== "enabled" || automation.trigger.type !== "schedule") {
+    if (!this.isCurrentEntry(entry, entry.generation) || automation.status !== "enabled") {
+      return;
+    }
+    if (automation.trigger.type === "monitor") {
+      this.scheduleMonitorAutomation(entry, automation, from);
+      return;
+    }
+    if (automation.trigger.type !== "schedule") {
       return;
     }
     const generation = entry.generation;
@@ -249,6 +263,44 @@ export class AutomationSchedulerRegistry {
     // Persist the real final due time, never the end of an intermediate segment.
     this.storeRegistry.getStore(entry.state.cwd).updateAutomationDefinition(automation.id, { nextRunAt }, new Date().toISOString());
     this.armAutomationTimer(entry, automation, nextRunAt, generation);
+  }
+
+  private scheduleMonitorAutomation(entry: AutomationSchedulerEntry, automation: AutomationDefinition, from: Date): void {
+    if (!this.isCurrentEntry(entry, entry.generation) || automation.trigger.type !== "monitor") {
+      return;
+    }
+    const generation = entry.generation;
+    const nextRunAt = new Date(from.getTime() + automation.trigger.pollIntervalMs).toISOString();
+    this.armMonitorTimer(entry, automation, nextRunAt, generation);
+  }
+
+  private armMonitorTimer(
+    entry: AutomationSchedulerEntry,
+    automation: AutomationDefinition,
+    scheduledFor: string,
+    generation: number,
+  ): void {
+    if (!this.isCurrentEntry(entry, generation)) {
+      return;
+    }
+    const delayMs = Math.min(Math.max(Date.parse(scheduledFor) - Date.now(), 1), MAX_TIMER_DELAY_MS);
+    const existingTimer = entry.timers.get(automation.id);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+    }
+    const timer = setTimeout(() => {
+      if (!this.isCurrentEntry(entry, generation) || entry.timers.get(automation.id) !== timer) {
+        return;
+      }
+      entry.timers.delete(automation.id);
+      clearTimeout(timer);
+      const task = this.fireMonitorAutomation(entry, automation.id, scheduledFor, generation);
+      this.inFlightTasks.add(task);
+      void task.then(() => this.inFlightTasks.delete(task), () => this.inFlightTasks.delete(task));
+    }, delayMs);
+    timer.unref?.();
+    entry.timers.set(automation.id, timer);
+    this.upsertItem(entry, { automationId: automation.id, title: automation.title, nextRunAt: scheduledFor });
   }
 
   private armAutomationTimer(
@@ -335,38 +387,10 @@ export class AutomationSchedulerRegistry {
         return;
       }
       executionEntered = true;
-      const result = await runAutomation({
-        cwd: entry.state.cwd,
-        automationId,
-        storeRegistry: this.storeRegistry,
-        request: {
-          triggerType: "schedule",
-          scheduledFor,
-          idempotencyKey: `automation:${automationId}:schedule:${scheduledFor}`,
-        },
-        notificationHub: this.notificationHub,
-        startRun: async (runRequest, hooks) =>
-          await executeRunRequest(
-            runRequest,
-            createDetachedRunExecutionSink(),
-            this.runnerRegistry,
-            this.storeRegistry,
-            this.activeRuns,
-            this.runtimeSupervisor,
-            this.secretResolver,
-            this.mcpBroker,
-            {
-              onRunReady: hooks.onRunReady,
-              afterRunTerminal: async (terminalRun) => {
-                await hooks.afterRunTerminal?.(terminalRun);
-                await this.maybeContinueRunInterventions(terminalRun);
-              },
-              controlPlaneEvents: this.controlPlaneEvents,
-              startupState: this.startupState,
-              computerUsePreviews: this.computerUsePreviews,
-              nativeRunDispatcher: this.nativeRunDispatcher,
-            },
-          ),
+      const result = await this.executeAutomationRun(entry.state.cwd, automationId, {
+        triggerType: "schedule",
+        scheduledFor,
+        idempotencyKey: `automation:${automationId}:schedule:${scheduledFor}`,
       });
       if (!this.isCurrentEntry(entry, generation)) {
         return;
@@ -442,6 +466,188 @@ export class AutomationSchedulerRegistry {
     }
   }
 
+  private async fireMonitorAutomation(
+    entry: AutomationSchedulerEntry,
+    automationId: string,
+    scheduledFor: string,
+    generation: number,
+  ): Promise<void> {
+    if (!this.isCurrentEntry(entry, generation) || entry.runningAutomationIds.has(automationId)) {
+      return;
+    }
+    entry.runningAutomationIds.add(automationId);
+    const firedAt = new Date().toISOString();
+    try {
+      const store = this.storeRegistry.getStore(entry.state.cwd);
+      const automation = store.getAutomationDefinition(automationId);
+      if (!automation || automation.status !== "enabled" || automation.trigger.type !== "monitor") {
+        this.removeTimer(entry, automationId);
+        return;
+      }
+      if (Date.now() < Date.parse(scheduledFor)) {
+        this.armMonitorTimer(entry, automation, scheduledFor, generation);
+        return;
+      }
+      const snapshotBody = readAutomationMonitorSnapshot({ store, automation, now: firedAt });
+      const fingerprint = automationMonitorFingerprint(automation.trigger.source, snapshotBody);
+      const observation = { automationId: automation.id, fingerprint, snapshot: snapshotBody };
+      const changed = store.getAutomationMonitorSnapshot(automation.id)?.fingerprint !== fingerprint;
+      let lastAutomationRunId: string | undefined;
+      let outcome: AutomationSchedulerItem["lastMonitorOutcome"];
+      if (changed && matchesAutomationMonitorCondition(automation.trigger.condition, snapshotBody)) {
+        const idempotencyKey = monitorObservationId(automation.id, scheduledFor, fingerprint);
+        const { automationRun } = await this.executeAutomationRun(entry.state.cwd, automation.id, {
+          triggerType: "monitor",
+          scheduledFor,
+          idempotencyKey,
+          monitorSnapshot: snapshotBody,
+        });
+        // Another active execution can occupy this definition's only Run slot.
+        // Leave the observation pending until its own Run is durably linked.
+        if (automationRun.idempotencyKey === idempotencyKey) {
+          if (!automationRun.runId) {
+            throw new Error(automationRun.errorMessage ?? "Automation monitor run could not start.");
+          }
+          const recorded = store.recordAutomationMonitorSnapshot(observation, firedAt);
+          lastAutomationRunId = automationRun.id;
+          outcome = "changed";
+          if (recorded.changed) {
+            await this.emitMonitorFindingNotification(entry.state.cwd, automation, automationRun.runId);
+          }
+        }
+      } else {
+        if (changed) store.recordAutomationMonitorSnapshot(observation, firedAt);
+        outcome = changed ? "condition_not_met" : "unchanged";
+        if (automation.trigger.unchangedPolicy === "record_noop") {
+          const skipReason = changed ? "monitor_condition_not_met" : "monitor_unchanged";
+          lastAutomationRunId = this.createMonitorNoopRun(store, automation, scheduledFor, firedAt, skipReason).id;
+        }
+      }
+      if (!this.isCurrentEntry(entry, generation)) {
+        return;
+      }
+      entry.state = {
+        ...entry.state,
+        tickCount: entry.state.tickCount + 1,
+        lastRunAt: firedAt,
+        lastErrorMessage: undefined,
+      };
+      this.upsertItem(entry, {
+        automationId: automation.id,
+        title: automation.title,
+        lastRunAt: firedAt,
+        ...(outcome === undefined ? {} : {
+          lastAutomationRunId,
+          lastMonitorFingerprint: fingerprint,
+          lastMonitorOutcome: outcome,
+        }),
+        lastErrorMessage: undefined,
+      });
+    } catch (error) {
+      if (!this.isCurrentEntry(entry, generation)) {
+        return;
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      entry.state = {
+        ...entry.state,
+        tickCount: entry.state.tickCount + 1,
+        lastRunAt: firedAt,
+        lastErrorMessage: message,
+      };
+      this.upsertItem(entry, {
+        automationId,
+        title: automationId,
+        lastRunAt: firedAt,
+        lastErrorMessage: message,
+      });
+    } finally {
+      entry.runningAutomationIds.delete(automationId);
+      this.rescheduleAutomationAfterRefresh(entry, automationId);
+      if (this.isCurrentEntry(entry, entry.generation)) {
+        this.refreshStateSummary(entry);
+      }
+    }
+  }
+
+  private async emitMonitorFindingNotification(
+    cwd: string,
+    automation: AutomationDefinition,
+    runId?: string,
+  ): Promise<void> {
+    if (!this.notificationHub) return;
+    try {
+      await this.notificationHub.emit({
+        kind: "automation_monitor_finding",
+        title: "Automation monitor finding",
+        body: `${automation.title} detected a matching ${automation.trigger.type === "monitor" ? automation.trigger.source.kind : "monitor"} condition.`,
+        automationId: automation.id,
+        automationLabel: automation.title,
+        runId,
+        cwd,
+      });
+    } catch {
+      // Notification delivery is auxiliary to the durable monitor/run result.
+    }
+  }
+
+  private createMonitorNoopRun(
+    store: ReturnType<RunStoreRegistry["getStore"]>,
+    automation: AutomationDefinition,
+    scheduledFor: string,
+    firedAt: string,
+    skipReason: string,
+  ) {
+    return store.createAutomationRun({
+      automationId: automation.id,
+      workspaceId: automation.workspaceId,
+      channelId: automation.channelId,
+      threadId: automation.threadId,
+      triggerType: "monitor",
+      scheduledFor,
+      firedAt,
+      completedAt: firedAt,
+      status: "skipped",
+      idempotencyKey: `automation:${automation.id}:monitor:${skipReason}:${scheduledFor}`,
+      skipReason,
+    }, firedAt);
+  }
+
+  private async executeAutomationRun(
+    cwd: string,
+    automationId: string,
+    request: import("./schemas.js").AutomationRunRequest,
+  ): Promise<Awaited<ReturnType<typeof runAutomation>>> {
+    return runAutomation({
+      cwd,
+      automationId,
+      storeRegistry: this.storeRegistry,
+      request,
+      notificationHub: this.notificationHub,
+      startRun: async (runRequest, hooks) =>
+        await executeRunRequest(
+          runRequest,
+          createDetachedRunExecutionSink(),
+          this.runnerRegistry,
+          this.storeRegistry,
+          this.activeRuns,
+          this.runtimeSupervisor,
+          this.secretResolver,
+          this.mcpBroker,
+          {
+            onRunReady: hooks.onRunReady,
+            afterRunTerminal: async (terminalRun) => {
+              await hooks.afterRunTerminal?.(terminalRun);
+              await this.maybeContinueRunInterventions(terminalRun);
+            },
+            controlPlaneEvents: this.controlPlaneEvents,
+            startupState: this.startupState,
+            computerUsePreviews: this.computerUsePreviews,
+            nativeRunDispatcher: this.nativeRunDispatcher,
+          },
+        ),
+    });
+  }
+
   private rescheduleAutomationAfterRefresh(entry: AutomationSchedulerEntry, automationId: string): void {
     if (
       !this.isCurrentEntry(entry, entry.generation)
@@ -453,7 +659,7 @@ export class AutomationSchedulerRegistry {
     const generation = entry.generation;
     try {
       const automation = this.storeRegistry.getStore(entry.state.cwd).getAutomationDefinition(automationId);
-      if (!automation || automation.status !== "enabled" || automation.trigger.type !== "schedule") {
+      if (!automation || automation.status !== "enabled" || (automation.trigger.type !== "schedule" && automation.trigger.type !== "monitor")) {
         return;
       }
       this.scheduleAutomation(entry, automation, new Date());
@@ -569,4 +775,14 @@ export class AutomationSchedulerRegistry {
 
 function automationScheduleIdentity(automation: AutomationDefinition): string {
   return JSON.stringify([automation.trigger, automation.rrule]);
+}
+
+/**
+ * A poll slot is the durable identity of one observation. The fingerprint is
+ * deliberately included as well: a changed source must never reuse the Run
+ * from an earlier transition, while a retry of the same slot must remain
+ * idempotent.
+ */
+function monitorObservationId(automationId: string, scheduledFor: string, fingerprint: string): string {
+  return `automation:${automationId}:monitor:${scheduledFor}:${fingerprint}`;
 }

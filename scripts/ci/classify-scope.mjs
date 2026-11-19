@@ -3,6 +3,8 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { packageValidationScope } from "./package-validation-scope.mjs";
+import { inspectProductVersionChange } from "./product-version-scope.mjs";
+import { planWebSmoke } from "./web-smoke.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -79,7 +81,7 @@ function isAssurancePath(file) {
  * The classifier is intentionally conservative: a path that is not recognized
  * as documentation, allowlisted maintenance, or a workspace package escalates
  * to the full CI lane.
- * @param {{files: string[], eventName?: string, forceFull?: boolean, packageEntries?: PackageEntry[], basePackageEntries?: PackageEntry[]}} input
+ * @param {{files: string[], eventName?: string, forceFull?: boolean, packageEntries?: PackageEntry[], basePackageEntries?: PackageEntry[], versionChange?: ReturnType<typeof inspectProductVersionChange>}} input
  * @returns {CiScope}
  */
 export function classifyChangedFiles(input) {
@@ -88,12 +90,14 @@ export function classifyChangedFiles(input) {
   const packages = input.packageEntries ?? discoverPackages(repositoryRoot);
   const nativeSurfaceChanged = files.some(isMacosNativePath);
   const nativeRelease = files.some(file => NATIVE_RELEASE_REVIEW_FILES.has(file));
+  const versionPaths = new Set(input.versionChange?.paths);
 
   if (eventName !== "pull_request" || input.forceFull || files.length === 0) {
     return buildScope("full", files, packages, "non-PR event or explicit full CI");
   }
 
   if (files.some((file) => !isDocumentationPath(file) && !isMaintenancePath(file) && !isAssurancePath(file)
+    && !versionPaths.has(file)
     && FORCE_FULL_PATTERNS.some((pattern) => pattern.test(file)))) {
     return buildScope("full", files, packages, "root, workflow, dependency, or build configuration change");
   }
@@ -135,6 +139,7 @@ export function classifyChangedFiles(input) {
 
   for (const file of files) {
     if (isDocumentationPath(file) || isMaintenancePath(file) || isAssurancePath(file)) continue;
+    if (versionPaths.has(file)) continue;
     if (NATIVE_RELEASE_REVIEW_FILES.has(file)) continue;
     if (isMacosNativePath(file)) continue;
     const entry = findOwningPackage(file, packages);
@@ -148,6 +153,15 @@ export function classifyChangedFiles(input) {
     } else {
       changedSourceEntries.add(entry.name);
     }
+  }
+
+  // The root release number is embedded in the production Web build.
+  if (versionPaths.size > 0) {
+    if (!packages.some(entry => entry.name === "@ling-stack/web")) {
+      return buildScope("full", files, packages, "a product version consumer could not be verified");
+    }
+    changedEntries.add("@ling-stack/web");
+    changedSourceEntries.add("@ling-stack/web");
   }
 
   // The native helper lives outside a workspace package, but its build and
@@ -203,6 +217,7 @@ export function classifyChangedFiles(input) {
   const daemonPlatforms = affectedNames.has("@ling-stack/daemon")
     ? selectDaemonPlatforms({ files, changedSourceEntries, testSupportImporters })
     : [];
+  const linuxContract = affectedNames.has("@ling-stack/daemon") && daemonPlatforms.includes("linux");
 
   return {
     mode: "affected",
@@ -215,11 +230,16 @@ export function classifyChangedFiles(input) {
     assurance: files.some(isAssurancePath) || sourceEntries.some(name => ASSURANCE_PACKAGES.has(name)),
     daemon: affectedNames.has("@ling-stack/daemon"),
     daemonPlatforms,
+    linuxContract,
     macosNative: nativeSurfaceChanged || nativeRelease,
     macosHelper: nativeSurfaceChanged,
     nativeRelease,
     web: affectedNames.has("@ling-stack/web"),
-    reason: nativeRelease && changedEntries.size === 0 ? "native release review inputs and build dependencies"
+    webSmoke: affectedNames.has("@ling-stack/web") ? planWebSmoke({ files: files.filter(file => !isDocumentationPath(file) && !isMaintenancePath(file)
+      && !versionPaths.has(file)) }) : undefined,
+    productVersion: versionPaths.size > 0 ? input.versionChange?.version : undefined,
+    reason: versionPaths.size > 0 ? "verified product version fields and affected workspace inputs"
+      : nativeRelease && changedEntries.size === 0 ? "native release review inputs and build dependencies"
       : changedEntries.size === 0 ? "offline assurance inputs and validation consumers" : changedSourceEntries.size === 0
       ? "test or test-support changes in affected workspace packages"
       : "workspace source change with transitive consumers",
@@ -227,7 +247,7 @@ export function classifyChangedFiles(input) {
 }
 
 /** @typedef {{name: string, directory: string, dependencies: string[], hasTestScript: boolean, hasTypecheckScript: boolean, scriptsFingerprint?: string, manifest?: object, files?: string[]}} PackageEntry */
-/** @typedef {{mode: "docs"|"affected"|"full", files: string[], packages: string[], testPackages: string[], typecheckPackages: string[], dependencyPolicy: boolean, assurance: boolean, daemon: boolean, daemonPlatforms: string[], macosNative: boolean, macosHelper: boolean, nativeRelease: boolean, web: boolean, reason: string}} CiScope */
+/** @typedef {{mode: "docs"|"affected"|"full", files: string[], packages: string[], testPackages: string[], typecheckPackages: string[], dependencyPolicy: boolean, assurance: boolean, daemon: boolean, daemonPlatforms: string[], linuxContract: boolean, macosNative: boolean, macosHelper: boolean, nativeRelease: boolean, web: boolean, webSmoke?: ReturnType<typeof planWebSmoke>, productVersion?: string, reason: string}} CiScope */
 
 /** @param {string} value */
 function normalizePath(value) {
@@ -474,10 +494,12 @@ function buildScope(mode, files, packages, reason) {
     assurance: mode === "full",
     daemon: mode === "full" || names.includes("@ling-stack/daemon"),
     daemonPlatforms: mode === "full" ? [...DAEMON_PLATFORMS] : [],
+    linuxContract: mode === "full",
     macosNative: mode === "full" || files.some(isMacosNativePath),
     macosHelper: mode === "full" || files.some(isMacosNativePath),
     nativeRelease: files.some(file => NATIVE_RELEASE_REVIEW_FILES.has(file)),
     web: mode === "full" || names.includes("@ling-stack/web"),
+    webSmoke: mode === "full" ? planWebSmoke({ files, full: true }) : undefined,
     reason,
   };
 }
@@ -498,13 +520,17 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const eventName = args.event ?? process.env.GITHUB_EVENT_NAME ?? "pull_request";
   let files;
   let basePackageEntries;
+  let versionChange;
   if (args.files) {
     files = JSON.parse(args.files);
   } else if (eventName === "pull_request" && args.base && args.head) {
-    files = execFileSync("git", ["diff", "--no-renames", "--name-only", "-z", `${args.base}...${args.head}`], { cwd: repositoryRoot, encoding: "utf8" }).split("\0").filter(Boolean);
-    if (files.some((file) => file.endsWith("/package.json"))) basePackageEntries = discoverPackages(repositoryRoot, args.base);
+    const git = (argv) => execFileSync("git", argv, { cwd: repositoryRoot, encoding: "utf8" });
+    const base = git(["merge-base", args.base, args.head]).trim();
+    files = git(["diff", "--no-renames", "--name-only", "-z", base, args.head, "--"]).split("\0").filter(Boolean);
+    if (files.some((file) => file.endsWith("/package.json"))) basePackageEntries = discoverPackages(repositoryRoot, base);
+    versionChange = inspectProductVersionChange({ root: repositoryRoot, base, head: args.head, files });
   } else {
     files = [];
   }
-  console.log(JSON.stringify(classifyChangedFiles({ files, eventName, forceFull: args["force-full"] === "true", basePackageEntries })));
+  console.log(JSON.stringify(classifyChangedFiles({ files, eventName, forceFull: args["force-full"] === "true", basePackageEntries, versionChange })));
 }

@@ -25,6 +25,7 @@ import type { ProviderStartupRefreshService } from "../providers/startup-refresh
 import type { LingImageVisionSummarizer } from "../channels/materialization/registry.js";
 import { readJsonBody, readOptionalJsonBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
+import { allowLocalWorkspaceRequest } from "../../shared/local-workspace-access.js";
 import { isRecord, readOptionalStringArray } from "../../shared/validation.js";
 import { readOptionalChannelMessageFileRefs } from "../channels/schemas.js";
 import { createAiTeammateDirectReply, type StartTeammateDirectRun } from "./direct-replies.js";
@@ -508,6 +509,8 @@ export async function handleTeammateDirectRuntime(
     writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
     return;
   }
+  if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) return;
+
   try {
     const store = storeRegistry.getStore(cwd);
     if (request.method === "GET") {
@@ -543,6 +546,8 @@ export async function handleTeammateDirectInterventions(
     writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
     return;
   }
+  if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) return;
+
   try {
     const store = storeRegistry.getStore(cwd);
     if (request.method === "GET") {
@@ -584,6 +589,8 @@ export async function handleTeammateDirectInterventionCancel(
     writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
     return;
   }
+  if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) return;
+
   try {
     const store = storeRegistry.getStore(cwd);
     if (request.method !== "POST") {
@@ -615,6 +622,8 @@ export async function handleTeammateDirectInterventionPromote(
     writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
     return;
   }
+  if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) return;
+
   try {
     const store = storeRegistry.getStore(cwd);
     if (request.method !== "POST") {
@@ -652,6 +661,8 @@ export async function handleTeammateDirectReplyCancel(
     writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
     return;
   }
+  if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) return;
+
   try {
     const store = storeRegistry.getStore(cwd);
     if (request.method !== "POST") {

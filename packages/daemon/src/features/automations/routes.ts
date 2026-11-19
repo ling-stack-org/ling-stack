@@ -230,7 +230,8 @@ export async function handleAutomationDraftItem(
       } else if (confirmed.outcome === "created" || confirmed.outcome === "already_confirmed") {
         let schedulerRefreshPending = false;
         try {
-          const needsRegistration = confirmed.automation.status === "enabled" && confirmed.automation.trigger.type === "schedule";
+          const needsRegistration = confirmed.automation.status === "enabled"
+            && (confirmed.automation.trigger.type === "schedule" || confirmed.automation.trigger.type === "monitor");
           // A registered item may be executing, with no nextRunAt yet. Do not reset its timer on retries.
           const registered = confirmed.outcome === "already_confirmed" && needsRegistration
             && schedulerRegistry.list(cwd).some((state) => state.status === "running"
@@ -992,6 +993,27 @@ function resolveTemplate(
       promptTemplate: template.defaultPromptTemplate,
       executionPolicy: template.defaultExecutionPolicy,
       outputPolicy: template.defaultOutputPolicy,
+    };
+  }
+  if (kind === "project_monitor") {
+    return {
+      description: "Watch a bounded local project signal and retain change history.",
+      trigger: {
+        type: "monitor",
+        pollIntervalMs: 300_000,
+        source: { kind: "doctor_summary" },
+        condition: { kind: "any_change" },
+        unchangedPolicy: "skip",
+      },
+      promptTemplate: promptTemplate ?? {
+        templateVersion: 1,
+        systemPurpose: "Summarize supplied local monitor facts only. Do not mutate files or external systems.",
+        promptMarkdown: "Summarize the project monitor change and identify the smallest next verification step.",
+        contextSelectors: [],
+        maxContextItems: 16,
+      },
+      executionPolicy: { allowedTools: ["read", "grep", "find", "ls"], approvalProfile: { mode: "none" } },
+      outputPolicy: { destinations: [{ type: "automation_thread" }, { type: "markdown_artifact" }], artifactFormat: "markdown" },
     };
   }
   if (!promptTemplate) {

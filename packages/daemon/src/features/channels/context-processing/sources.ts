@@ -36,10 +36,14 @@ export function collectTurnSource(input: {
   readonly workspaceId?: string;
   readonly channel: Channel;
   readonly envelope: LingAgentTurnEnvelope;
+  readonly includeConversationItemRef?: boolean;
 }): ChannelContextSource {
   const sourceRefs: ChannelContextSourceRef[] = [
     { type: "channel", id: input.channel.id, label: input.channel.name },
     { type: "message", id: input.envelope.sourceMessageId, label: "Current turn" },
+    ...(input.includeConversationItemRef
+      ? [{ type: "conversation_item", id: input.envelope.sourceMessageId, label: "Current turn item" }]
+      : []),
     ...input.envelope.attachments.map((attachment) => ({
       type: "attachment",
       id: attachment.id,

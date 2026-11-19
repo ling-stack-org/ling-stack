@@ -7,6 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import {
   DEFAULT_WORKSPACE_ID,
+  automationMonitorFingerprint,
   createSqliteRunStore,
   getBuiltinAutomationTemplate,
   resolveRuntimePaths,
@@ -791,6 +792,77 @@ async function withAutomationDraftRRuleFixture(rule, assertContract, now = "2026
     await rm(cwd, { recursive: true, force: true });
   }
 }
+
+test("sqlite automation monitor snapshots compare fingerprints and survive reopen", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-automation-monitor-store-"));
+  const now = "2026-06-06T03:00:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  try {
+    const channel = store.createChannel({ name: "Engineering", boundPath: cwd }, now);
+    const thread = store.createLingThread({ kind: "automation", channelId: channel.id, title: "Monitor", objective: "Monitor facts" }, now);
+    const template = getBuiltinAutomationTemplate("daily_brief");
+    const source = { kind: "pending_approvals" };
+    const automation = store.createAutomationDefinition({
+      channelId: channel.id,
+      threadId: thread.id,
+      title: "Monitor",
+      kind: "project_monitor",
+      trigger: { type: "monitor", pollIntervalMs: 60_000, source, condition: { kind: "any_change" }, unchangedPolicy: "record_noop" },
+      target: { scope: "channel", workspaceId: DEFAULT_WORKSPACE_ID, channelId: channel.id, cwd },
+      promptTemplate: template.defaultPromptTemplate,
+      executionPolicy: template.defaultExecutionPolicy,
+      outputPolicy: template.defaultOutputPolicy,
+    }, now);
+    const firstBody = { count: 1, ids: ["approval_a"], statuses: ["pending"] };
+    const first = store.recordAutomationMonitorSnapshot({
+      automationId: automation.id,
+      fingerprint: automationMonitorFingerprint(source, firstBody),
+      snapshot: firstBody,
+    }, now);
+    assert.equal(first.changed, true);
+    assert.equal(first.previous, undefined);
+    assert.deepEqual(first.snapshot.snapshot, firstBody);
+
+    const repeated = store.recordAutomationMonitorSnapshot({
+      automationId: automation.id,
+      fingerprint: automationMonitorFingerprint(source, firstBody),
+      snapshot: firstBody,
+    }, "2026-06-06T03:01:00.000Z");
+    assert.equal(repeated.changed, false);
+    assert.equal(repeated.snapshot.updatedAt, now);
+
+    const secondBody = { count: 2, ids: ["approval_a", "approval_b"], statuses: ["pending"] };
+    const second = store.recordAutomationMonitorSnapshot({
+      automationId: automation.id,
+      fingerprint: automationMonitorFingerprint(source, secondBody),
+      snapshot: secondBody,
+    }, "2026-06-06T03:02:00.000Z");
+    assert.equal(second.changed, true);
+    assert.equal(second.previous?.fingerprint, first.snapshot.fingerprint);
+
+    assert.throws(() => store.recordAutomationMonitorSnapshot({
+      automationId: automation.id,
+      fingerprint: "a".repeat(64),
+      snapshot: { count: Number.NaN },
+    }, now), /finite JSON numbers/);
+    assert.throws(() => store.recordAutomationMonitorSnapshot({
+      automationId: automation.id,
+      fingerprint: "b".repeat(64),
+      snapshot: { count: undefined },
+    }, now), /JSON values/);
+
+    store.close();
+    const reopened = createSqliteRunStore(cwd);
+    try {
+      assert.deepEqual(reopened.getAutomationMonitorSnapshot(automation.id)?.snapshot, secondBody);
+    } finally {
+      reopened.close();
+    }
+  } finally {
+    try { store.close(); } catch {}
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
 
 test("sqlite automation JSON corruption fails readably", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-automation-corrupt-json-"));

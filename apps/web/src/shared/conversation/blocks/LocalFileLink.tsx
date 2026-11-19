@@ -83,6 +83,9 @@ function localFilePrimaryLabel(reference: LocalFileReference): string {
 function localFileSecondaryLabel(reference: LocalFileReference): string | undefined {
   const location = reference.location;
   const withoutLocation = reference.displayPath.replace(location ?? "", "");
+  if (reference.label?.trim()) {
+    return `${withoutLocation}${location ?? ""}`;
+  }
   const parts = withoutLocation.split(/[\\/]/u).filter(Boolean);
   const folder = parts.length > 1 ? parts.slice(0, -1).join("/") : "";
   if (location && folder) {

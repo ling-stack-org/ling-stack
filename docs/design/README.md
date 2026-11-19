@@ -2,7 +2,7 @@
 
 Status: canonical documentation index
 Owner: repository maintainers
-Last verified: 2026-11-18 (Ling Device Support Platform design/plan index added; 2026-11-02 safe-concurrency design/plan added; other delivery states retain their owners)
+Last verified: 2026-11-19 (Ling Device Support Platform runtime contract indexed), 2026-11-18 (Ling Device Support Platform, 14-item delivery plan and Automations P2 plan indexed). Other delivery states retain their owners.
 Document type: governance index
 Code and test anchors: each linked contract owns its anchors
 
@@ -19,6 +19,9 @@ Maintenance-only transition notes are kept in [Development Handoffs](../maintena
 ## Product And Architecture
 
 - [Implementation Status](implementation-status.md)
+- [Remaining Work Completion Plan](remaining-work-completion-plan.md)
+- [Remaining Work 14-Item Delivery Plan](remaining-work-14-item-delivery-plan.md)
+- [Remaining Work M0 Baseline And Decisions](remaining-work-m0-baseline-and-decisions.md)
 - [Agent Execution Capabilities](agent-execution-capabilities.md)
 - [Agent Execution Capabilities Implementation Plan](agent-execution-capabilities-implementation-plan.md)
 - [Official Scene Theme, Background And Interaction Motion Contract](theme-background-motion-contract.md)
@@ -38,6 +41,7 @@ Maintenance-only transition notes are kept in [Development Handoffs](../maintena
 - [Architecture](../architecture.md)
 - [Platform Architecture](platform-architecture.md)
 - [Ling Device Support Platform](ling-device-support-platform.md)
+- [Ling Device Support Platform Runtime Contract](ling-device-support-platform-runtime-contract.md)
 - [Ling Device Support Platform Implementation Plan](ling-device-support-platform-implementation-plan.md)
 - [Ling Framework](ling-framework.md)
 - [Ling Framework Complementary Design](ling-framework-complementary-design.md)
@@ -89,6 +93,15 @@ Maintenance-only transition notes are kept in [Development Handoffs](../maintena
 - [Ling Agent Terminal Report Protocol](ling-agent-terminal-report-protocol.md)
 - [Thread-First Work History](thread-first-work-history.md)
 
+## Code Review And Security Workbench
+
+- [Code Review And Security Scan Workbench](code-review-and-security-workbench.md)
+- [Conversation Right Dock Workspace Tools](conversation-right-dock-workspace-tools.md)
+- [Codex-style Hunk Diff Review](codex-style-hunk-diff-review.md)
+- [Workspace Change Review, Recovery, And Open Actions](workspace-change-review-recovery-and-open-actions.md)
+- [Work Board, Review Queue, And Inline Approval Boundaries](work-board-review-queue.md)
+- [GitHub Automation Design](github-automation.md)
+
 ### Typed Transcript
 
 Read the [data and recovery contract](conversation-typed-transcript-detailed-design.md),
@@ -123,6 +136,8 @@ retains the detailed implementation brief and historical checkpoint.
 ## Runtime, Security, And Storage
 
 - [Approval Policy](approval-policy.md)
+- [Codex-Inspired Settings And Permission Presets](codex-inspired-settings-permission-presets.md)
+- [Codex-Inspired Settings And Permission Presets Implementation Plan](codex-inspired-settings-permission-presets-implementation-plan.md)
 - [Workspace Command Rule Approval Implementation Plan](workspace-command-rule-approval-implementation-plan.md)
 - [Inline Runtime Approval](inline-runtime-approval-detailed-design.md)
 - [State Machines And Recovery](state-machine-recovery.md)
@@ -162,6 +177,7 @@ part of the current product acceptance scope.
 - [Chrome Browser Built-in Plugin](chrome-browser-built-in-plugin.md)
 - [Chrome Native Messaging Implementation Plan](chrome-browser-built-in-plugin-implementation-plan.md)
 - [Automations](automations.md)
+- [Automations P2 Completion Plan](automations-p2-completion-plan-2026-11-18.md)
 - [External Work Orchestration](external-work-orchestration.md)
 
 ## Web, Desktop, And UI 2.0

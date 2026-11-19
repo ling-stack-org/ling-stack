@@ -4,14 +4,15 @@
 
 Status: implemented active product contract
 Owner: Automations domain
-Last verified: 2026-11-17
+Last verified: 2026-11-18
 
 Durable definitions, drafts, runs, templates, scheduler control, daemon routes, API client,
 Web management, manual execution and standard Run/Approval integration are implemented.
 Signed Webhook/GitHub/business ingress and destination-bound result outbox are locally
-implemented with controlled-transport tests. Remote CI/merge and live messaging
-acceptance remain open. Richer monitor sources, desktop notifications and general
-external action proposals remain follow-ups.
+implemented with controlled-transport tests. Live messaging acceptance remains open. Bounded local monitor sources, fingerprint persistence,
+unchanged/no-op history, finding artifacts, monitor notifications and Web monitor
+projection are locally verified; desktop notifications and general external action
+proposals remain follow-ups.
 
 Related design docs:
 
@@ -92,6 +93,20 @@ Implemented foundations and product behavior:
   daemon API; `--json` writes only the response JSON to stdout.
 - A timer that wakes materially late after sleep or a wall-clock jump follows the
   persisted `skip`/`run_one` policy instead of dispatching an unbounded stale slot.
+- Monitor triggers use bounded local snapshots from doctor/runtime work, pending approvals,
+  external work and locally stored GitHub CI triage. A matching snapshot advances the
+  stored fingerprint only after its own `AutomationRun` has a durable Run link. Failed
+  admission and another active Run leave the observation eligible at the next poll.
+  The poll slot and fingerprint identify an individual finding; a later return to the
+  same fingerprint is a distinct transition. A SQLite write compares the fingerprint
+  and the daemon journals a finding only when it actually changes.
+  `unchangedPolicy=skip` creates no run; `record_noop` creates a durable skipped
+  `AutomationRun` with `monitor_unchanged` or `monitor_condition_not_met`. A changed
+  snapshot is appended to the triggered Run context as bounded, untrusted facts and is
+  retained in the context preview artifact. A matching condition also creates a
+  Markdown finding artifact, persists its ID in `outputArtifactIds`, journals a
+  monitor-finding notification and exposes the latest fingerprint/outcome to the Web
+  monitor projection.
 
 Event sources use the existing automation definition and Run owner; source rules
 explicitly authorize result relay to existing enabled IM destinations. The signed ingress,
@@ -500,9 +515,10 @@ Scheduled ticks use `setTimeout`, not `setInterval`, so slow runs cannot overlap
 monitor timer fires
 -> read source snapshot
 -> compare with last durable monitor fingerprint
--> if unchanged, skip or record noop
--> if changed, create AutomationRun
--> either write finding artifact only or start a normal Ling run according to policy
+-> unchanged or nonmatching: skip or record noop; store a changed nonmatching snapshot
+-> changed and matching: admit a normal Run for this poll slot
+-> attach finding artifact to its own Run; advance fingerprint and journal finding once linked
+-> admission fails or is occupied: retain the previous fingerprint for the next poll
 ```
 
 ### Authenticated Event
@@ -645,7 +661,8 @@ Rules:
 - Commands must not require the Web UI.
 - Create and patch commands must not accept raw secret values.
 - `automations create` accepts explicit kind/title/channel/time/timezone and
-  `--rrule`/`--prompt`; unsupported monitor creation remains rejected by the daemon.
+  `--rrule`/`--prompt`. The CLI does not yet expose monitor-specific flags; the daemon
+  API accepts bounded monitor definitions with explicit source and condition fields.
 - `automations run` accepts `--idempotency-key`; callers retain that key for retries,
   while scheduled slots derive `automation:<id>:schedule:<scheduledFor>` durably.
 - `automations list` and `automations runs` expose the same status, target, schedule,
@@ -777,7 +794,7 @@ CREATE TABLE automation_runs (
 CREATE TABLE automation_monitor_snapshots (
   automation_id TEXT PRIMARY KEY,
   fingerprint TEXT NOT NULL,
-  snapshot_artifact_id TEXT,
+  snapshot_json TEXT NOT NULL,
   updated_at TEXT NOT NULL,
   FOREIGN KEY(automation_id) REFERENCES automation_definitions(id)
 );
@@ -875,14 +892,20 @@ Do not borrow:
 - Add tests for duplicate registration, sleep/wake burst idempotency, stop behavior, and
   no hidden side effects.
 
-### P2: Project monitor - partially implemented
+### P2: Project monitor - local closure implemented
 
-- Add monitor sources for doctor, runtime stuck work, pending approvals, and external work
-  summaries.
-- Add monitor fingerprint storage.
-- Add finding artifacts.
-- Add local notification output.
-- Add Web monitor cards and no-op history.
+- Monitor trigger creation accepts a bounded polling interval, source, condition and
+  `unchangedPolicy`.
+- Local snapshots cover doctor summary, stale runtime work, pending approvals, external
+  work records and stored GitHub CI triage; no daemon-wide or live-provider crawl is used.
+- SQLite stores one fingerprint and JSON fact body per automation with compare-and-set
+  behavior under `BEGIN IMMEDIATE`.
+- Condition evaluation supports any change, count thresholds, status matching (including
+  positive doctor status counts) and error presence. Unchanged and condition-not-met
+  ticks can remain as skipped run history.
+- Finding artifacts, monitor-finding journal notifications and Web monitor cards are
+  implemented locally. Desktop OS delivery and approval-backed external actions remain
+  separate release follow-ups.
 
 ### A1/A2: Signed event ingress and scoped result delivery
 

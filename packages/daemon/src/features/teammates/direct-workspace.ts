@@ -1,4 +1,10 @@
 import { isAbsolute, relative, resolve as resolvePath } from "node:path";
+import type { WorktreePolicy } from "@ling-stack/contracts";
+import { worktreeRoot } from "../workspaces/worktree-policy.js";
+import { coordinateWorktreeMutation, type WorktreeLifecycleStore } from "../workspaces/worktree-mutation.js";
+import { actOnManagedWorktreeLocked, WorktreeActionError } from "../workspaces/worktree-management.js";
+import { listWorktreeSnapshots } from "../workspaces/worktree-recovery.js";
+import { allowLocalWorkspaceRequest } from "../../shared/local-workspace-access.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   createDirectWorkspaceSnapshot,
@@ -7,26 +13,27 @@ import {
   type DirectWorkspaceSnapshot,
   type LingStackRuntimePaths,
   type RunStorePathsFacet,
+  type WorkspaceStoreFacet,
   type TeammateStoreFacet,
   type TeammateDirectThread,
 } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
-import { readJsonBody } from "../../shared/request.js";
+import { readJsonBody, readOptionalJsonBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import {
   createInitialWorkspaceBinding,
   createManagedGitWorktree,
   inspectManagedWorktree,
   isWorkspaceDirectory,
-  removeManagedWorktreeIfClean,
   resolveGitRepoRoot,
   safeGitBranchSegment,
   type WorkspaceBindingCreateResult,
 } from "../workspaces/managed-worktrees.js";
+import { resolveWorktreeSource, type ManagedWorktreeOwner } from "../workspaces/worktree-identity.js";
 
 type DirectWorktreeTarget = Pick<TeammateDirectThread, "id" | "teammateId" | "workspaceBinding">;
-type DirectWorkspaceStore = RunStorePathsFacet & TeammateStoreFacet;
+type DirectWorkspaceStore = RunStorePathsFacet & TeammateStoreFacet & Pick<WorkspaceStoreFacet, "getWorkspaceSettings"> & WorktreeLifecycleStore;
 type DirectWorkspaceEnsureResult =
   | { readonly ok: true; readonly workspace: DirectWorkspaceReady }
   | { readonly ok: false; readonly code: string; readonly message: string; readonly thread: TeammateDirectThread; readonly binding: DirectWorkspaceBinding };
@@ -36,7 +43,6 @@ interface DirectWorkspaceBindingFactory {
   readonly createManaged: () => Promise<WorkspaceBindingCreateResult<DirectWorkspaceBinding>>;
 }
 
-const directWorkspaceMutationTails = new WeakMap<DirectWorkspaceStore, Map<string, Promise<void>>>();
 
 export interface DirectWorkspaceReady {
   readonly thread: TeammateDirectThread;
@@ -104,34 +110,15 @@ export async function ensureDirectWorkspaceReady(input: {
   });
 }
 
-async function coordinateDirectWorkspaceMutation<T>(
+export async function coordinateDirectWorkspaceMutation<T>(
   store: DirectWorkspaceStore,
-  threadId: string,
+  _threadId: string,
   operation: () => Promise<T>,
 ): Promise<T> {
-  let tails = directWorkspaceMutationTails.get(store);
-  if (!tails) {
-    tails = new Map();
-    directWorkspaceMutationTails.set(store, tails);
-  }
-  const previous = tails.get(threadId) ?? Promise.resolve();
-  let release: (() => void) | undefined;
-  const current = new Promise<void>((resolve) => {
-    release = resolve;
+  return coordinateWorktreeMutation(store, async () => {
+    store.assertWorkspaceSnapshotFence(store.paths.cwd);
+    return operation();
   });
-  tails.set(threadId, current);
-  await previous;
-  try {
-    return await operation();
-  } finally {
-    release?.();
-    if (tails.get(threadId) === current) {
-      tails.delete(threadId);
-    }
-    if (tails.size === 0) {
-      directWorkspaceMutationTails.delete(store);
-    }
-  }
 }
 
 async function ensureDirectWorkspaceReadyOnce(input: {
@@ -173,8 +160,8 @@ async function ensureDirectWorkspaceReadyOnce(input: {
   }
 
   const bindingFactory = input.bindingFactory ?? {
-    createInitial: () => createInitialDirectWorkspaceBinding(input.thread, input.workspaceCwd, input.store.paths),
-    createManaged: () => createManagedDirectWorktreeBinding(input.thread, input.workspaceCwd, input.store.paths),
+    createInitial: () => createInitialDirectWorkspaceBinding(input.thread, input.workspaceCwd, input.store.paths, input.store.getWorkspaceSettings().worktreePolicy, input.store),
+    createManaged: () => createManagedDirectWorktreeBinding(input.thread, input.workspaceCwd, input.store.paths, undefined, input.store.getWorkspaceSettings().worktreePolicy, input.store),
   };
   const created = input.thread.workspaceBinding?.createdAt
     ? await bindingFactory.createManaged()
@@ -191,6 +178,7 @@ async function ensureDirectWorkspaceReadyOnce(input: {
     return { ok: false, code: created.code, message: created.message, thread: updated, binding: failed };
   }
   const updated = input.store.updateTeammateDirectThreadWorkspace(input.thread.id, created.binding, created.binding.updatedAt) ?? input.thread;
+  if (created.binding.status !== "ready") return { ok: false, code: "worktree_initialization_failed", message: created.binding.errorMessage ?? "工作树初始化失败。", thread: updated, binding: created.binding };
   return { ok: true, workspace: buildDirectWorkspaceReady(input.workspaceCwd, updated, created.binding) };
 }
 
@@ -209,6 +197,7 @@ export async function handleTeammateDirectWorkspace(
     return;
   }
 
+  if (request.method !== "GET" && !allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) return;
   try {
     const store = storeRegistry.getStore(cwd);
     const teammate = store.getAiTeammate(teammateId);
@@ -237,6 +226,9 @@ export async function handleTeammateDirectWorkspace(
       const body = await readJsonBody(request, config.maxBodyBytes);
       const updated = await coordinateDirectWorkspaceMutation(store, thread.id, async () => {
         const current = store.getOrCreateTeammateDirectThread(teammate.id, new Date().toISOString());
+        if ((await listWorktreeSnapshots(store.paths)).some((snapshot) => snapshot.ownerKind === "teammate" && snapshot.ownerId === current.id)) {
+          throw new WorktreeActionError("worktree_snapshot_pending", "请先恢复工作树快照，再切换工作区归属。");
+        }
         const binding = await readHandoffBinding(body, current, cwd, store.paths, new Date().toISOString());
         return store.updateTeammateDirectThreadWorkspace(current.id, binding, binding.updatedAt) ?? current;
       });
@@ -245,30 +237,12 @@ export async function handleTeammateDirectWorkspace(
     }
 
     if (action === "cleanup" && request.method === "POST") {
-      const outcome = await coordinateDirectWorkspaceMutation(store, thread.id, async () => {
-        const current = store.getOrCreateTeammateDirectThread(teammate.id, new Date().toISOString());
-        const result = await cleanupManagedDirectWorktree(current, cwd, store.paths, new Date().toISOString());
-        let updated = current;
-        if (result.ok) {
-          updated = store.updateTeammateDirectThreadWorkspace(current.id, result.binding, result.binding.updatedAt) ?? current;
-        } else if (result.binding) {
-          updated = store.updateTeammateDirectThreadWorkspace(current.id, result.binding, result.binding.updatedAt) ?? current;
-        }
-        return { result, updated };
-      });
-      const { result, updated } = outcome;
-      if (!result.ok) {
-        if (result.binding) {
-          writeJson(response, result.code === "worktree_dirty" ? 409 : 400, {
-            error: result.code,
-            message: result.message,
-            ...buildDirectWorkspaceResponse(cwd, teammate.id, updated, store.paths),
-          });
-          return;
-        }
-        writeJson(response, 400, { error: result.code, message: result.message });
-        return;
-      }
+      const body = await readOptionalJsonBody(request, config.maxBodyBytes);
+      await coordinateDirectWorkspaceMutation(store, thread.id, () => actOnManagedWorktreeLocked(store, cwd, {
+        ownerKind: "teammate", ownerId: thread.id, action: "cleanup",
+        confirmed: typeof body === "object" && body !== null && "confirmed" in body && body.confirmed === true,
+      }));
+      const updated = store.getOrCreateTeammateDirectThread(teammate.id, new Date().toISOString());
       writeJson(response, 200, buildDirectWorkspaceResponse(cwd, teammate.id, updated, store.paths));
       return;
     }
@@ -280,7 +254,7 @@ export async function handleTeammateDirectWorkspace(
         : "";
       const outcome = await coordinateDirectWorkspaceMutation(store, thread.id, async () => {
         const current = store.getOrCreateTeammateDirectThread(teammate.id, new Date().toISOString());
-        const result = await createManagedDirectWorktreeBinding(current, cwd, store.paths, baseBranch || undefined);
+        const result = await createManagedDirectWorktreeBinding(current, cwd, store.paths, baseBranch || undefined, store.getWorkspaceSettings().worktreePolicy, store);
         const updated = result.ok
           ? store.updateTeammateDirectThreadWorkspace(current.id, result.binding, result.binding.updatedAt) ?? current
           : current;
@@ -297,8 +271,8 @@ export async function handleTeammateDirectWorkspace(
 
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for teammate direct workspace` });
   } catch (error) {
-    writeJson(response, 400, {
-      error: "bad_request",
+    writeJson(response, error instanceof WorktreeActionError ? 409 : 400, {
+      error: error instanceof WorktreeActionError ? error.code : "bad_request",
       message: error instanceof Error ? error.message : String(error),
     });
   }
@@ -426,11 +400,17 @@ async function createManagedDirectWorktreeBinding(
   workspaceCwd: string,
   workspacePaths: LingStackRuntimePaths,
   requestedBaseBranch?: string,
+  policy?: WorktreePolicy,
+  lifecycleStore?: WorktreeLifecycleStore,
 ): Promise<
   | { readonly ok: true; readonly binding: DirectWorkspaceBinding }
   | { readonly ok: false; readonly code: string; readonly message: string }
 > {
-  const repo = await resolveGitRepoRoot(workspaceCwd);
+  const owner: ManagedWorktreeOwner = { kind: "teammate", id: thread.id, teammateId: thread.teammateId };
+  const repo = await resolveWorktreeSource(workspacePaths, owner, thread.workspaceBinding);
+  if (!repo.ok && (!thread.workspaceBinding || thread.workspaceBinding.mode !== "managed_worktree")) {
+    return { ok: false, code: repo.code, message: repo.message };
+  }
   if (!repo.ok) {
     return {
       ok: false,
@@ -440,15 +420,20 @@ async function createManagedDirectWorktreeBinding(
         : repo.message,
     };
   }
-  const repoRoot = repo.repoRoot;
+  const repoRoot = repo.ok ? repo.repoRoot : workspaceCwd;
   const now = new Date().toISOString();
   const branchName = directWorktreeBranchName(thread.teammateId, thread.id);
-  const worktreePath = directWorktreePath(workspaceCwd, thread.teammateId, thread.id, workspacePaths);
+  const worktreePath = (thread.workspaceBinding?.createdAt ? thread.workspaceBinding.worktreePath : undefined)
+    ?? resolvePath(worktreeRoot(workspacePaths, policy), "teammates", thread.teammateId, thread.id);
   const created = await createManagedGitWorktree({
     repoRoot,
     worktreePath,
     branchName,
     requestedBaseBranch,
+    fetchBeforeCreate: policy?.fetchBeforeCreate,
+    environment: policy?.environment,
+    expectedIdentity: thread.workspaceBinding?.worktreeIdentity,
+    recovery: lifecycleStore ? { store: lifecycleStore, owner } : undefined,
   });
   if (!created.ok) {
     return { ok: false, code: created.code, message: created.message.replace("创建 worktree", "创建私聊 worktree") };
@@ -457,12 +442,14 @@ async function createManagedDirectWorktreeBinding(
     ok: true,
     binding: {
       mode: "managed_worktree",
-      status: "ready",
+      status: created.result.initializationError ? "blocked" : "ready",
+      errorMessage: created.result.initializationError,
       executionPath: worktreePath,
       worktreePath,
+      worktreeIdentity: created.result.identity,
       branchName,
-      baseBranch: created.result.baseBranch,
-      baseCommit: created.result.baseCommit,
+      baseBranch: thread.workspaceBinding?.baseBranch ?? created.result.baseBranch,
+      baseCommit: thread.workspaceBinding?.baseCommit ?? created.result.baseCommit,
       createdAt: thread.workspaceBinding?.createdAt ?? now,
       checkedAt: now,
       updatedAt: now,
@@ -474,9 +461,11 @@ async function createInitialDirectWorkspaceBinding(
   thread: DirectWorktreeTarget,
   workspaceCwd: string,
   workspacePaths: LingStackRuntimePaths,
+  policy?: WorktreePolicy,
+  lifecycleStore?: WorktreeLifecycleStore,
 ): Promise<WorkspaceBindingCreateResult<DirectWorkspaceBinding>> {
   return await createInitialWorkspaceBinding({
-    createManaged: () => createManagedDirectWorktreeBinding(thread, workspaceCwd, workspacePaths),
+    createManaged: () => createManagedDirectWorktreeBinding(thread, workspaceCwd, workspacePaths, undefined, policy, lifecycleStore),
     createLocal: () => {
       const now = new Date().toISOString();
       if (!isWorkspaceDirectory(workspaceCwd)) {
@@ -532,56 +521,6 @@ function uniquePaths(paths: readonly string[]): readonly string[] {
 function isPathInside(basePath: string, targetPath: string): boolean {
   const relation = relative(resolvePath(basePath), resolvePath(targetPath));
   return relation === "" || (!relation.startsWith("..") && !isAbsolute(relation));
-}
-
-async function cleanupManagedDirectWorktree(
-  thread: TeammateDirectThread,
-  workspaceCwd: string,
-  workspacePaths: LingStackRuntimePaths,
-  now: string,
-): Promise<
-  | { readonly ok: true; readonly binding: DirectWorkspaceBinding }
-  | { readonly ok: false; readonly code: string; readonly message: string; readonly binding?: DirectWorkspaceBinding }
-> {
-  const binding = thread.workspaceBinding ?? defaultDirectWorkspaceBinding(thread, workspaceCwd, workspacePaths);
-  if (binding.mode !== "managed_worktree" || !binding.worktreePath) {
-    return { ok: false, code: "workspace_not_managed", message: "私聊工作区不是 Ling 管理的 worktree，无法清理。" };
-  }
-  const repo = await resolveGitRepoRoot(workspaceCwd);
-  if (!repo.ok) {
-    return { ok: false, code: repo.code, message: repo.message };
-  }
-  const cleanup = await removeManagedWorktreeIfClean({
-    repoRoot: repo.repoRoot,
-    worktreePath: binding.worktreePath,
-  });
-  if (!cleanup.ok) {
-    const status = statusFromManagedInspection(binding, cleanup.inspection);
-    return {
-      ok: false,
-      code: cleanup.code,
-      message: cleanup.message,
-      binding: {
-        ...binding,
-        executionPath: binding.worktreePath,
-        status,
-        errorMessage: managedInspectionMessage(status, cleanup.inspection, cleanup.message),
-        checkedAt: now,
-        updatedAt: now,
-      },
-    };
-  }
-  return {
-    ok: true,
-    binding: {
-      ...binding,
-      executionPath: binding.worktreePath,
-      status: "not_created",
-      errorMessage: undefined,
-      checkedAt: now,
-      updatedAt: now,
-    },
-  };
 }
 
 function statusFromManagedInspection(binding: DirectWorkspaceBinding, inspection: { readonly status: "ready" | "missing" | "blocked" }): DirectWorkspaceBinding["status"] {

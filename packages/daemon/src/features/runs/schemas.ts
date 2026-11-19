@@ -93,6 +93,8 @@ export interface RunRequest extends Omit<
   | "onMediaGenerationToolCall"
 > {
   readonly schemaVersion?: 2;
+  /** Daemon-owned snapshot assessment binding. Public request parsing never accepts this field. */
+  readonly codeAssessment?: { readonly id: string; readonly snapshotDigest: string; readonly phase?: "threat_model" | "reviewing_code" };
   readonly workspaceCwd?: string;
   readonly providerPresetId?: string;
   readonly executionBinding?: ExecutionBindingRequest;
@@ -165,6 +167,13 @@ export interface RunRequest extends Omit<
   readonly userInputContinuationContext?: UserInputContinuationContext;
   /** Internal-only override used by trusted multi-reply channel orchestration. */
   readonly channelParallelLimit?: number;
+  /** Host-only lineage binding for a prepared node-rerun target. */
+  readonly nodeRerunTarget?: {
+    readonly recordId: string;
+    readonly generationId: string;
+    readonly approvalId: string;
+    readonly basisFingerprint: string;
+  };
 }
 
 export function parseRunRequest(value: unknown): RunRequest {

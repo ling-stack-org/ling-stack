@@ -1,5 +1,14 @@
 import { applyChannelSessionMigration, CHANNEL_SESSION_MIGRATION_VERSION } from "./sqlite/channel-session-migration.js";
 import { SqliteChannelSessionStore } from "./sqlite/channel-session-store.js";
+import { applyNodeRerunIntentMigration } from "./sqlite/node-rerun-intent-migration.js";
+import { applyNodeRerunApprovalMigration } from "./sqlite/node-rerun-approval-migration.js";
+import { SqliteNodeRerunApprovalStore } from "./sqlite/node-rerun-approval-store.js";
+import { SqliteNodeRerunIntentStore } from "./sqlite/node-rerun-intent-store.js";
+import { applyNodeRerunTargetMigration } from "./sqlite/node-rerun-target-migration.js";
+import { SqliteNodeRerunTargetStore } from "./sqlite/node-rerun-target-store.js";
+import { SqliteNodeRerunCancellationStore } from "./sqlite/node-rerun-cancellation-store.js";
+import { SqliteNodeRerunReadinessStore } from "./sqlite/node-rerun-readiness-store.js";
+import { applyRuntimeHostCapacityNodeRerunMigration } from "./sqlite/runtime-host-capacity-node-rerun-migration.js";
 import type { CreateChannelSessionInput, ListChannelSessionsOptions, UpdateChannelSessionRequest } from "../channel-session-types.js";
 import { SqliteMemoryWikiStore } from "./sqlite/memory-wiki-store.js";
 import type { MemoryWikiStore } from "../memory-wiki-types.js";
@@ -10,6 +19,12 @@ import type { LearningReviewStore } from "../learning-review-types.js";
 import { drainSkillDefinitionRevisionNotices } from "./sqlite/skill-definition-revision-store.js";
 import { SqliteWorkSummaryStore } from "./sqlite/work-summary-store.js";
 import { applyWorkSummaryMigration } from "./sqlite/work-summary-migration.js";
+import { SqliteCodeAssessmentStore } from "./sqlite/code-assessment-store.js";
+import { SqliteCodeAssessmentCommentsStore } from "./sqlite/code-assessment-comments.js";
+import type { CodeAssessmentCommentsStore } from "../code-assessment-comments.js";
+import { applyCodeAssessmentCommentsMigration } from "./sqlite/code-assessment-comments-migration.js";
+import { applyCodeAssessmentMigration } from "./sqlite/code-assessment-migration.js";
+import type { CodeAssessmentStore } from "../code-assessment-store.js";
 import { applyWorkspacePermissionMigration } from "./sqlite/workspace-permission-migration.js";
 import { applyRunnerIdMigration } from "./sqlite/runner-id-migration.js";
 import { existsSync } from "node:fs";
@@ -249,6 +264,11 @@ import {
   type WorkflowPacketSourceRef,
   type WorkflowSelectorDecision,
 } from "../workspace-types.js";
+import type {
+  ConversationContextViewLineage,
+  UpsertConversationContextViewLineageInput,
+  UpsertConversationContextViewLineageResult,
+} from "../conversation-context-store-types.js";
 import type {
   CompanionEvent,
   CompanionEventPage,
@@ -557,6 +577,11 @@ import {
   type UpdateAutomationDraftInput,
   type UpdateAutomationRunInput,
 } from "../automation-types.js";
+import type {
+  AutomationMonitorSnapshot,
+  RecordAutomationMonitorSnapshotInput,
+  RecordAutomationMonitorSnapshotResult,
+} from "../automation-monitor-types.js";
 import {
   type ListWorkItemsOptions,
   type UpsertWorkItemInput,
@@ -782,6 +807,7 @@ import { SqliteChannelAssetStore } from "./sqlite/channel-asset-store.js";
 import { SqliteConversationAssetStore } from "./sqlite/conversation-asset-store.js";
 import { SqliteConversationRevisionStore } from "./sqlite/conversation-revision-store.js";
 import { SqliteConversationContextStore } from "./sqlite/conversation-context-store.js";
+import { SqliteConversationContextViewLineageStore } from "./sqlite/conversation-context-view-lineage-store.js";
 import { SqliteRemoteAccessStore } from "./sqlite/remote-access-store.js";
 import { SqliteChannelCollaborationStore } from "./sqlite/channel-collaboration-store.js";
 import { SqliteConversationContextSummaryStore } from "./sqlite/conversation-context-summary-store.js";
@@ -812,11 +838,11 @@ import { applyRuntimeRunQueueMigration } from "./sqlite/runtime-run-queue-migrat
 import { applyRuntimeHostCapacityMigration } from "./sqlite/runtime-host-capacity-migration.js";
 import { applyRuntimeDelegationSpawnAdmissionMigration } from "./sqlite/runtime-delegation-spawn-admission-migration.js";
 import { applyRuntimeHostCapacityContinuationMigration } from "./sqlite/runtime-host-capacity-continuation-migration.js";
-import { applyAutomationEventMigration } from "./sqlite/automation-event-migration.js";
-import { applyAgentCompletionMigration } from "./sqlite/agent-completion-migration.js";
 import { captureHostRunCapacityWorkspaceIdentity, openHostCapacityWorkspaceDatabase } from "../host-run-capacity-workspace-identity.js";
 import { registerSqliteWorkflowTemplateRegistryStore } from "./sqlite/workflow-template-registry-store.js";
 import { registerSqliteWorkflowConflictRecoveryStore } from "./sqlite/workflow-conflict-recovery-store.js";
+import { applyAutomationEventMigration } from "./sqlite/automation-event-migration.js";
+import { applyAgentCompletionMigration } from "./sqlite/agent-completion-migration.js";
 import { registerSqliteGoalSupervisionStore } from "./sqlite/goal-supervision-store.js";
 import { registerSqliteNodeRerunStore } from "./sqlite/node-rerun-store.js";
 import { registerSqliteWorkflowUserCreationStore } from "./sqlite/workflow-user-creation-store.js";
@@ -838,10 +864,12 @@ import { SqliteWorkItemStore } from "./sqlite/work-item-store.js";
 import { SqliteWorkspaceProvenanceStore } from "./sqlite/workspace-provenance-store.js";
 import { SqlitePostCompactionUndoStore } from "./sqlite/post-compaction-undo-store.js";
 import { SqliteWorkspaceSnapshotStore } from "./sqlite/workspace-snapshot-store.js";
+import { parseNullableChannelWorkspaceBinding, parseNullableDirectWorkspaceBinding } from "./sqlite/workspace-binding-parsers.js";
 import { SqliteRunCompactionCheckpointStore } from "./sqlite/run-compaction-checkpoint-store.js";
 import { SqliteRunProgressCheckpointStore } from "./sqlite/run-progress-checkpoint-store.js";
 import { readRunCompactionSuspensionWitness } from "./sqlite/run-compaction-suspension-witness.js";
 import { applyRunProgressCheckpointMigration } from "./sqlite/run-progress-checkpoint-migration.js";
+import { applyConversationContextViewLineageMigration } from "./sqlite/conversation-context-view-lineage-migration.js";
 import { captureOriginalOfficeHostBridgeReader, type OriginalOfficeHostBridgeReader } from "../original-office-host-bridge.js";
 
 export interface SqliteRunStoreOptions {
@@ -912,6 +940,11 @@ export class SqliteRunStore implements RunStore {
   private readonly runtimeRunQueue: SqliteRuntimeRunQueueStore;
   private readonly runtimeRecovery: SqliteRuntimeRecoveryCoordinator;
   private readonly runtimeWorkUnits: SqliteRuntimeWorkUnitStore;
+  private readonly nodeRerunApprovals: SqliteNodeRerunApprovalStore;
+  private readonly nodeRerunIntents: SqliteNodeRerunIntentStore;
+  private readonly nodeRerunTargets: SqliteNodeRerunTargetStore;
+  private readonly nodeRerunCancellation: SqliteNodeRerunCancellationStore;
+  private readonly nodeRerunReadiness: SqliteNodeRerunReadinessStore;
   private readonly runnerContinuations: SqliteRunnerContinuationStore;
   private readonly harnessToolExecutions: SqliteHarnessToolExecutionStore;
   private readonly harnessDiagnostics: SqliteHarnessDiagnosticsStore;
@@ -960,10 +993,13 @@ export class SqliteRunStore implements RunStore {
   private readonly userInputPrestartRecovery: SqliteUserInputPrestartRecoveryStore;
   private readonly conversationThreadTopology: SqliteConversationThreadTopologyStore;
   private readonly conversationContext: SqliteConversationContextStore;
+  private readonly conversationContextViewLineage: SqliteConversationContextViewLineageStore;
   private readonly channelRouteDecisions: SqliteChannelRouteDecisionStore;
   private readonly channelIntentDecisions: SqliteChannelIntentDecisionStore;
   private readonly channelProposals: SqliteChannelProposalStore;
   private readonly workSummary: SqliteWorkSummaryStore;
+  private readonly codeAssessments: SqliteCodeAssessmentStore;
+  private readonly codeAssessmentComments: SqliteCodeAssessmentCommentsStore;
   private readonly channelAssets: SqliteChannelAssetStore;
   private readonly conversationAssets: SqliteConversationAssetStore;
   private readonly channelCollaborations: SqliteChannelCollaborationStore;
@@ -1024,6 +1060,7 @@ export class SqliteRunStore implements RunStore {
       },
     );
     this.conversationContext = new SqliteConversationContextStore({ database: this.database });
+    this.conversationContextViewLineage = new SqliteConversationContextViewLineageStore({ database: this.database });
     this.conversationAcceptedInput = new SqliteConversationAcceptedInputStore({ database: this.database }, this.conversationTurnIngest);
     this.teammateDirectInput = new SqliteTeammateDirectInputStore({ database: this.database }, this.conversationTurnIngest);
     this.conversationPreparedInput = new SqliteConversationPreparedInputStore({ database: this.database }, this.conversationAcceptedInput);
@@ -1034,6 +1071,12 @@ export class SqliteRunStore implements RunStore {
       getChannel: (id) => this.getChannel(id),
     });
     this.providers = new SqliteProviderStore({ database: this.database });
+    this.nodeRerunIntents = new SqliteNodeRerunIntentStore({ database: this.database }, this);
+    this.nodeRerunApprovals = new SqliteNodeRerunApprovalStore({ database: this.database }, {
+      getNodeRerunIntent: id => this.getNodeRerunIntent(id),
+      getApprovalRequest: id => this.getApprovalRequest(id),
+      createApproval: (input, basis) => this.approvalRequests.createNodeRerunApprovalRequest(input, basis),
+    });
     this.mcps = new SqliteMcpStore(
       { database: this.database },
       { getAiTeammate: (id) => this.getAiTeammate(id) },
@@ -1056,6 +1099,7 @@ export class SqliteRunStore implements RunStore {
         hasRun: (id) => Boolean(this.getRun(id)),
         hasMediaJob: (id) => Boolean(this.getMediaJob(id)),
         hasExternalWorkAction: (id) => Boolean(this.getExternalWorkAction(id)),
+        getNodeRerunIntent: (id) => this.getNodeRerunIntent(id),
         hasWorkflowStep: (id) => Boolean(this.getChannelWorkflowStep(id)),
         createApprovalCheckpoint: (approval, now) => {
           this.approvalCheckpoints.createApprovalCheckpoint({ approval }, now);
@@ -1286,6 +1330,11 @@ export class SqliteRunStore implements RunStore {
         getDelegationCompletionEvidence: (input) => this.getDelegationCompletionEvidence(input),
       },
     );
+    this.nodeRerunTargets = new SqliteNodeRerunTargetStore({ database: this.database }, this,
+      this.runSessions, this.runtimeWorkUnits, this.paths.cwd,
+      runtimeHostCapacity ? hostCapacityJournal : undefined);
+    this.nodeRerunCancellation = new SqliteNodeRerunCancellationStore({ database: this.database }, this, this.runtimeWorkUnits, hostCapacityJournal);
+    this.nodeRerunReadiness = new SqliteNodeRerunReadinessStore({ database: this.database }, this);
     this.userInputContinuation = new SqliteUserInputHostContinuationStore({ database: this.database }, this,
       this.userInputDelivery, this.userInputPreparation, this.runSessions, this.runtimeWorkUnits, this.controlPlane,
       runtimeHostCapacity ? hostCapacityJournal : undefined);
@@ -1391,7 +1440,11 @@ export class SqliteRunStore implements RunStore {
     );
     this.teammateCleanup = new SqliteTeammateCleanupStore(
       { database: this.database },
-      { getAiTeammate: (id) => this.getAiTeammate(id) },
+      {
+        getAiTeammate: (id) => this.getAiTeammate(id),
+        assertWorkspaceSnapshotFence: () => this.assertWorkspaceSnapshotFence(this.paths.cwd),
+        listHostCommandWriteBlockers: (cwd) => this.listHostCommandWriteBlockers(cwd),
+      },
     );
     this.aiCouncils = new SqliteAiCouncilStore(
       { database: this.database },
@@ -1476,6 +1529,8 @@ export class SqliteRunStore implements RunStore {
       },
     );
     this.workSummary = new SqliteWorkSummaryStore({ database: this.database });
+    this.codeAssessments = new SqliteCodeAssessmentStore({ database: this.database });
+    this.codeAssessmentComments = new SqliteCodeAssessmentCommentsStore({ database: this.database }, this.codeAssessments);
     this.channelAssets = new SqliteChannelAssetStore(
       { database: this.database },
       {
@@ -2075,6 +2130,44 @@ export class SqliteRunStore implements RunStore {
           hasMigration: (version) => this.hasMigration(version),
           recordMigration: (version, name) => this.recordMigration(version, name),
         });
+        applyConversationContextViewLineageMigration({
+          database: this.database,
+          hasMigration: (version) => this.hasMigration(version),
+          recordMigration: (version, name) => this.recordMigration(version, name),
+        });
+        applyNodeRerunIntentMigration({
+          database: this.database,
+          hasMigration: (version) => this.hasMigration(version),
+          recordMigration: (version, name) => this.recordMigration(version, name),
+        });
+        applyNodeRerunApprovalMigration({
+          database: this.database,
+          hasMigration: (version) => this.hasMigration(version),
+          hasColumn: (tableName, columnName) => this.hasColumn(tableName, columnName),
+          recordMigration: (version, name) => this.recordMigration(version, name),
+        });
+        applyNodeRerunTargetMigration({
+          database: this.database,
+          hasMigration: (version) => this.hasMigration(version),
+          recordMigration: (version, name) => this.recordMigration(version, name),
+        });
+        applyRuntimeHostCapacityNodeRerunMigration({
+          database: this.database,
+          hasMigration: (version) => this.hasMigration(version),
+          recordMigration: (version, name) => this.recordMigration(version, name),
+        });
+        if (!options.deferContinuityV2MigrationForTest) {
+          applyCodeAssessmentMigration({
+            database: this.database,
+            hasMigration: (version) => this.hasMigration(version),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
+          applyCodeAssessmentCommentsMigration({
+            database: this.database,
+            hasMigration: (version) => this.hasMigration(version),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
+        }
       });
     } catch (error) {
       this.database.close();
@@ -2559,6 +2652,20 @@ export class SqliteRunStore implements RunStore {
     this.workSummary.detachPullRequest(url);
   }
 
+  createCodeAssessment(input: Parameters<CodeAssessmentStore["createCodeAssessment"]>[0]) {
+    return this.codeAssessments.createCodeAssessment(input);
+  }
+  getCodeAssessment(id: string) { return this.codeAssessments.getCodeAssessment(id); }
+  listCodeAssessments(input?: Parameters<CodeAssessmentStore["listCodeAssessments"]>[0]) { return this.codeAssessments.listCodeAssessments(input); }
+  bindCodeAssessmentRun(id: string, runId: string, now: string, phase?: Parameters<CodeAssessmentStore["bindCodeAssessmentRun"]>[3]) { return this.codeAssessments.bindCodeAssessmentRun(id, runId, now, phase); }
+  completeCodeAssessmentThreatModel(id: string, input: Parameters<CodeAssessmentStore["completeCodeAssessmentThreatModel"]>[1]) { return this.codeAssessments.completeCodeAssessmentThreatModel(id, input); }
+  advanceCodeAssessmentPhase(id: string, input: Parameters<CodeAssessmentStore["advanceCodeAssessmentPhase"]>[1]) { return this.codeAssessments.advanceCodeAssessmentPhase(id, input); }
+  recordCodeAssessmentFreshness(id: string, freshness: Parameters<CodeAssessmentStore["recordCodeAssessmentFreshness"]>[1]) { return this.codeAssessments.recordCodeAssessmentFreshness(id, freshness); }
+  finishCodeAssessment(id: string, input: Parameters<CodeAssessmentStore["finishCodeAssessment"]>[1]) { return this.codeAssessments.finishCodeAssessment(id, input); }
+  setCodeFindingDisposition(assessmentId: string, findingId: string, input: Parameters<CodeAssessmentStore["setCodeFindingDisposition"]>[2]) { return this.codeAssessments.setCodeFindingDisposition(assessmentId, findingId, input); }
+  createCodeAssessmentComment(assessmentId: string, findingId: string, input: Parameters<CodeAssessmentCommentsStore["createCodeAssessmentComment"]>[2]) { return this.codeAssessmentComments.createCodeAssessmentComment(assessmentId, findingId, input); }
+  listCodeAssessmentComments(assessmentId: string, findingId: string) { return this.codeAssessmentComments.listCodeAssessmentComments(assessmentId, findingId); }
+
   listLingThreads(options: ListLingThreadsOptions = {}): LingThread[] {
     return this.lingThreads.listLingThreads(options);
   }
@@ -3023,6 +3130,50 @@ export class SqliteRunStore implements RunStore {
     return readSqliteSnapshot(this.database, read);
   }
 
+  prepareNodeRerunIntent(input: Parameters<RunStore["prepareNodeRerunIntent"]>[0]) {
+    return this.nodeRerunIntents.prepareNodeRerunIntent(input);
+  }
+
+  requestNodeRerunApproval(input: Parameters<RunStore["requestNodeRerunApproval"]>[0]) {
+    return this.nodeRerunApprovals.requestNodeRerunApproval(input);
+  }
+
+  getNodeRerunApprovalBasis(approvalId: string) {
+    return this.nodeRerunApprovals.getNodeRerunApprovalBasis(approvalId);
+  }
+
+  getNodeRerunIntent(id: string) {
+    return this.nodeRerunIntents.getNodeRerunIntent(id);
+  }
+
+  prepareNodeRerunTarget(input: Parameters<RunStore["prepareNodeRerunTarget"]>[0]) {
+    return this.nodeRerunTargets.prepareNodeRerunTarget(input);
+  }
+
+  dispatchNodeRerunTarget(input: Parameters<RunStore["dispatchNodeRerunTarget"]>[0]) {
+    return this.nodeRerunTargets.dispatchNodeRerunTarget(input);
+  }
+
+  getNodeRerunTarget(recordId: string) {
+    return this.nodeRerunTargets.getNodeRerunTarget(recordId);
+  }
+
+  getNodeRerunGeneration(recordId: string) {
+    return this.nodeRerunTargets.getNodeRerunGeneration(recordId);
+  }
+
+  cancelPreparedNodeRerunTarget(input: Parameters<RunStore["cancelPreparedNodeRerunTarget"]>[0]) {
+    return this.nodeRerunCancellation.cancelPreparedNodeRerunTarget(input);
+  }
+
+  requestDispatchedNodeRerunTargetStop(input: Parameters<RunStore["requestDispatchedNodeRerunTargetStop"]>[0]) {
+    return this.nodeRerunCancellation.requestDispatchedNodeRerunTargetStop(input);
+  }
+
+  readNodeRerunTargetReadiness(input: Parameters<RunStore["readNodeRerunTargetReadiness"]>[0]) {
+    return this.nodeRerunReadiness.readNodeRerunTargetReadiness(input);
+  }
+
   countEvents(runId: string): number {
     return this.runEvents.countEvents(runId);
   }
@@ -3215,6 +3366,27 @@ export class SqliteRunStore implements RunStore {
     return this.workspaceSnapshots.releaseFence(workspaceId, ownerRequestId, now, expectedEpoch);
   }
 
+  finalizeManagedWorktreeBindingWithinFence(input: Parameters<RunStore["finalizeManagedWorktreeBindingWithinFence"]>[0]): boolean {
+    return this.withWorkspaceBindingWrite(() => {
+      const fence = this.workspaceSnapshots.getFence(DEFAULT_WORKSPACE_ID);
+      if (!input.ownerRequestId || !Number.isSafeInteger(input.expectedEpoch) || input.expectedEpoch < 1
+        || fence.ownerRequestId !== input.ownerRequestId || fence.epoch !== input.expectedEpoch) {
+        throw new Error("Workspace worktree binding fence was superseded.");
+      }
+      const table = input.ownerKind === "channel" ? "channels" : "teammate_direct_threads";
+      const row = this.database.prepare(`SELECT workspace_binding_json FROM ${table} WHERE workspace_id = ? AND id = ?`)
+        .get(DEFAULT_WORKSPACE_ID, input.ownerId);
+      const storedBinding = row ? readNullableString(row, "workspace_binding_json") : undefined;
+      const current = input.ownerKind === "channel" ? parseNullableChannelWorkspaceBinding(storedBinding)
+        : parseNullableDirectWorkspaceBinding(storedBinding);
+      if (current?.mode !== "managed_worktree" || input.binding.mode !== "managed_worktree"
+        || current.worktreePath !== input.binding.worktreePath || current.branchName !== input.binding.branchName) return false;
+      return input.ownerKind === "channel"
+        ? Boolean(this.channelCore.updateChannel(input.ownerId, { workspaceBinding: input.binding }, input.now))
+        : Boolean(this.teammateDirect.updateTeammateDirectThreadWorkspace(input.ownerId, input.binding, input.now));
+    });
+  }
+
   expireWorkspaceSnapshotManifest(id: string, now: string): WorkspaceSnapshotManifest | undefined {
     return this.workspaceSnapshots.expireManifest(id, now);
   }
@@ -3228,8 +3400,29 @@ export class SqliteRunStore implements RunStore {
   }
 
   assertWorkspaceSnapshotFence(_cwd: string): void {
-    const fence = this.workspaceSnapshots.getFence("workspace_default");
+    const fence = this.workspaceSnapshots.getFence(DEFAULT_WORKSPACE_ID);
     if (fence.ownerRequestId) throw new Error(`Workspace restore fence is active at epoch ${fence.epoch}.`);
+  }
+
+  private withWorkspaceBindingWrite<T>(mutate: () => T): T {
+    this.database.exec("SAVEPOINT workspace_binding_write");
+    try {
+      // Hold the writer across fence reads and owner changes, including caller-owned transactions.
+      this.database.exec("UPDATE channels SET updated_at = updated_at WHERE 0");
+      const result = mutate();
+      this.database.exec("RELEASE workspace_binding_write");
+      return result;
+    } catch (error) {
+      this.database.exec("ROLLBACK TO workspace_binding_write; RELEASE workspace_binding_write");
+      throw error;
+    }
+  }
+
+  private withWorkspaceSnapshotFence<T>(mutate: () => T): T {
+    return this.withWorkspaceBindingWrite(() => {
+      this.assertWorkspaceSnapshotFence(this.paths.cwd);
+      return mutate();
+    });
   }
 
   createRunIntervention(input: CreateRunInterventionInput, now: string): RunIntervention {
@@ -3755,6 +3948,11 @@ export class SqliteRunStore implements RunStore {
     return this.runtimeSemaphores.acquireRuntimeSemaphoreSlot(input);
   }
 
+  ensureRuntimeSemaphoreSlotForAttemptWithinTransaction(input: AcquireRuntimeSemaphoreSlotInput):
+    ReturnType<SqliteRuntimeSemaphoreStore["ensureRuntimeSemaphoreSlotForAttemptWithinTransaction"]> {
+    return this.runtimeSemaphores.ensureRuntimeSemaphoreSlotForAttemptWithinTransaction(input);
+  }
+
   acquireRuntimeSemaphoreSlots(inputs: readonly AcquireRuntimeSemaphoreSlotInput[]): AcquireRuntimeSemaphoreSlotsResult {
     return this.runtimeSemaphores.acquireRuntimeSemaphoreSlots(inputs);
   }
@@ -4054,8 +4252,9 @@ export class SqliteRunStore implements RunStore {
   }
 
   createChannel(input: CreateChannelInput, now: string): Channel {
-    return this.hasMigration(CHANNEL_SESSION_MIGRATION_VERSION)
+    const create = () => this.hasMigration(CHANNEL_SESSION_MIGRATION_VERSION)
       ? this.channelSessions.createChannel(input, now) : this.channelCore.createChannel(input, now);
+    return input.workspaceBinding || input.boundPath ? this.withWorkspaceSnapshotFence(create) : create();
   }
 
   getChannel(id: string): Channel | undefined {
@@ -4067,11 +4266,16 @@ export class SqliteRunStore implements RunStore {
   }
 
   updateChannel(id: string, input: ChannelUpdateInput, now: string): Channel | undefined {
-    return this.channelCore.updateChannel(id, input, now);
+    return this.withWorkspaceSnapshotFence(() => this.channelCore.updateChannel(id, input, now));
   }
 
   deleteChannel(id: string): boolean {
-    return this.channelCore.deleteChannel(id);
+    return this.withWorkspaceSnapshotFence(() => {
+      if (this.channelCore.getChannel(id)?.workspaceBinding?.mode === "managed_worktree") {
+        throw new Error("Channel owns a managed worktree. Resolve its worktree and recovery snapshots before deleting the channel.");
+      }
+      return this.channelCore.deleteChannel(id);
+    });
   }
 
   createChannelBranch(input: CreateChannelBranchInput, now: string): ChannelBranch {
@@ -4829,7 +5033,7 @@ export class SqliteRunStore implements RunStore {
   }
 
   updateTeammateDirectThreadWorkspace(threadId: string, workspaceBinding: DirectWorkspaceBinding | null, now: string): TeammateDirectThread | undefined {
-    return this.teammateDirect.updateTeammateDirectThreadWorkspace(threadId, workspaceBinding, now);
+    return this.withWorkspaceSnapshotFence(() => this.teammateDirect.updateTeammateDirectThreadWorkspace(threadId, workspaceBinding, now));
   }
 
   listTeammateDirectMessages(options: ListTeammateDirectMessagesOptions): TeammateDirectMessage[] {
@@ -5218,6 +5422,23 @@ export class SqliteRunStore implements RunStore {
     options: import("../conversation-context-store-types.js").ListConversationContextSnapshotsOptions,
   ): readonly import("@ling-stack/contracts").ConversationContextSnapshot[] {
     return this.conversationContext.listConversationContextSnapshots(options);
+  }
+
+  getConversationContextViewLineage(lineageKey: string): ConversationContextViewLineage | undefined {
+    return this.conversationContextViewLineage.getConversationContextViewLineage(lineageKey);
+  }
+
+  listConversationContextViewLineages(
+    options: import("../conversation-context-store-types.js").ListConversationContextViewLineagesOptions = {},
+  ): readonly ConversationContextViewLineage[] {
+    return this.conversationContextViewLineage.listConversationContextViewLineages(options);
+  }
+
+  upsertConversationContextViewLineage(
+    input: UpsertConversationContextViewLineageInput,
+    now: string,
+  ): UpsertConversationContextViewLineageResult {
+    return this.conversationContextViewLineage.upsertConversationContextViewLineage(input, now);
   }
 
   createChannelMessageRouteDecision(input: CreateChannelMessageRouteDecisionInput, now: string): ChannelMessageRouteDecision {
@@ -6150,6 +6371,17 @@ export class SqliteRunStore implements RunStore {
 
   updateAutomationRun(automationRunId: string, input: UpdateAutomationRunInput, now: string): AutomationRun | undefined {
     return this.automations.updateAutomationRun(automationRunId, input, now);
+  }
+
+  getAutomationMonitorSnapshot(automationId: string): AutomationMonitorSnapshot | undefined {
+    return this.automations.getAutomationMonitorSnapshot(automationId);
+  }
+
+  recordAutomationMonitorSnapshot(
+    input: RecordAutomationMonitorSnapshotInput,
+    now: string,
+  ): RecordAutomationMonitorSnapshotResult {
+    return this.automations.recordAutomationMonitorSnapshot(input, now);
   }
 
   putAutomationEventSource(...args: Parameters<AutomationEventStore["putAutomationEventSource"]>): ReturnType<AutomationEventStore["putAutomationEventSource"]> {

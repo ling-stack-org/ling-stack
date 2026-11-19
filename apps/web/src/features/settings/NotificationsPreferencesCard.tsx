@@ -5,9 +5,9 @@ import { daemonClient } from "../../api/client.js";
 import { useI18n } from "../../i18n.js";
 import { Button, Field, InlineFeedback, Input, InspectorSection, Select, Switch } from "../../shared/ui/index.js";
 
-type EventKind = "automation_run_finished" | "automation_run_failed" | "approval_required";
+type EventKind = "automation_run_finished" | "automation_run_failed" | "automation_monitor_finding" | "approval_required";
 
-const EVENT_KINDS: readonly EventKind[] = ["automation_run_finished", "automation_run_failed", "approval_required"];
+const EVENT_KINDS: readonly EventKind[] = ["automation_run_finished", "automation_run_failed", "automation_monitor_finding", "approval_required"];
 
 interface NotificationsPreferencesCardProps {
   readonly cwd: string;
@@ -155,6 +155,7 @@ function notificationKindLabel(kind: EventKind, t: (key: string) => string): str
   switch (kind) {
     case "automation_run_finished": return t("Automation run finished");
     case "automation_run_failed": return t("Automation run failed");
+    case "automation_monitor_finding": return t("Automation monitor finding");
     case "approval_required": return t("Approval required");
   }
 }

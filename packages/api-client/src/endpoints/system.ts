@@ -1,4 +1,6 @@
 import type {
+  ManagedWorktreeActionRequest,
+  ManagedWorktreeListResponse,
   ControlPlaneDomain,
   ControlPlaneEventsRequest,
   ControlPlaneEventsResponse,
@@ -28,6 +30,13 @@ import { readErrorMessage } from "../transport.js";
 import type { LingDaemonEndpointContext, PublicEndpointGroup } from "../transport.js";
 
 export const systemEndpoints = {
+  async listManagedWorktrees(this: LingDaemonEndpointContext, cwd: string): Promise<ManagedWorktreeListResponse> {
+    return this._get("/worktrees", { cwd });
+  },
+
+  async actOnManagedWorktree(this: LingDaemonEndpointContext, cwd: string, input: ManagedWorktreeActionRequest): Promise<ManagedWorktreeListResponse> {
+    return this._post("/worktrees/actions", { cwd }, input);
+  },
   async getHealth(this: LingDaemonEndpointContext): Promise<DaemonHealthResponse> {
       const response = await this._fetch(this._url("/health"));
       if (!response.ok) {

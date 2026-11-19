@@ -6,7 +6,9 @@ import {
   NodeRerunValidationError,
   nodeRerunHostAdmissionPlanFingerprintV1,
   parseNodeRerunIntent,
+  parseNodeRerunIntentSubmission,
   parseNodeRerunObservedSource,
+  projectNodeRerunGenerationV1,
 } from "../src/node-rerun.ts";
 
 const digest = (character: string): string => character.repeat(64);
@@ -65,6 +67,89 @@ function validObserved() {
     permissionStatus: "current",
   };
 }
+
+function preparedGeneration(): Parameters<typeof projectNodeRerunGenerationV1>[0] {
+  const intent = parseNodeRerunIntent(validIntent());
+  const observed = parseNodeRerunObservedSource(validObserved());
+  const plan = createNodeRerunHostAdmissionPlanV1({ intent, observed, admission: evaluateNodeRerunAdmission({ intent, observed }) });
+  return {
+    record: { schemaVersion: 1, kind: "node_rerun_prepared_intent", id: "record-1", workspaceId: "workspace-1",
+      status: "prepared", intent, planFingerprint: plan.planFingerprint, policyFingerprint: observed.currentPolicyFingerprint!,
+      preparedAt: intent.createdAt, executionAuthorized: false },
+    target: { schemaVersion: 1, kind: "node_rerun_prepared_target", recordId: "record-1", workspaceId: "workspace-1",
+      generationId: "generation-1", approvalId: "approval-1", source: structuredClone(intent.source),
+      runId: "run-new", taskId: "task-new", fence: { workUnitId: "unit-new", attemptId: "attempt-new",
+        runtimeInstanceId: "runtime-new", fencingToken: "9007199254740993" }, frozenExecutionDigest: digest("9"),
+      preparedAt: intent.createdAt, executionAuthorized: false },
+  };
+}
+
+test("F5-07 projects only frozen generation dependencies and returns detached evidence", () => {
+  const pair = preparedGeneration(), before = structuredClone(pair);
+  const view = projectNodeRerunGenerationV1(pair);
+  assert.equal(view.generationId, pair.target.generationId);
+  assert.equal(view.graphVersionDigest, pair.record.intent.source.graphVersionDigest);
+  assert.equal(view.replacement.runId, "run-new");
+  assert.equal(view.replacement.fence.fencingToken, "9007199254740993");
+  assert.deepEqual(view.reusedUpstream, pair.record.intent.source.dependencyClosure.upstream);
+  assert.deepEqual(view.invalidatedDownstream, [{ nodeId: "node-3", status: "invalidated", executionAuthorized: false }]);
+  assert.equal(view.evidenceBasis, "frozen_target_preparation");
+  assert.equal(view.revalidateBeforeExecution, true);
+  assert.equal(view.graphMutation, "none");
+  assert.equal(view.downstreamDispatch, "disabled");
+  assert.equal(view.executionAuthorized, false);
+  (view.reusedUpstream[0]!.inputArtifact as { artifactId: string }).artifactId = "consumer-local-change";
+  assert.deepEqual(pair, before);
+  assert.deepEqual(projectNodeRerunGenerationV1(pair), projectNodeRerunGenerationV1(structuredClone(pair)));
+  const other = projectNodeRerunGenerationV1({ ...pair, target: { ...pair.target,
+    generationId: "generation-2", approvalId: "approval-2", runId: "run-other", taskId: "task-other",
+    fence: { ...pair.target.fence, attemptId: "attempt-other", workUnitId: "unit-other" } } });
+  assert.equal(other.generationId, "generation-2");
+  assert.equal(other.replacement.runId, "run-other");
+  assert.equal(projectNodeRerunGenerationV1(pair).replacement.runId, "run-new");
+});
+
+test("F5-07 rejects crossed lineage, invalid receipts and incomplete or overlapping evidence", () => {
+  const pair = preparedGeneration();
+  const invalidTargets: readonly unknown[] = [
+    { ...pair.target, recordId: "other" }, { ...pair.target, workspaceId: "other" },
+    { ...pair.target, source: { ...pair.target.source, graphVersionDigest: digest("9") } },
+    { ...pair.target, source: { ...pair.target.source, sourceSnapshotDigest: digest("9") } },
+    { ...pair.target, runId: pair.target.source.runId },
+    { ...pair.target, fence: { ...pair.target.fence, attemptId: pair.target.source.attemptId } },
+    { ...pair.target, executionAuthorized: true }, { ...pair.target, frozenExecutionDigest: "invalid" },
+    { ...pair.target, preparedAt: "2026-11-12T00:00:00.000Z" }, { ...pair.target, prompt: "private" },
+  ];
+  for (const target of invalidTargets) assert.throws(() => projectNodeRerunGenerationV1({ ...pair, target } as typeof pair), NodeRerunValidationError);
+  assert.throws(() => projectNodeRerunGenerationV1({ ...pair,
+    record: { ...pair.record, planFingerprint: "nrhpv1_0000000000000000" } }), NodeRerunValidationError);
+  for (const closure of [
+    { ...pair.record.intent.source.dependencyClosure, complete: false },
+    { ...pair.record.intent.source.dependencyClosure, downstreamNodeIds: ["node-1"] },
+    { ...pair.record.intent.source.dependencyClosure, upstream: [{ ...pair.record.intent.source.dependencyClosure.upstream[0]!, outputArtifacts: [] }] },
+  ]) {
+    const intent = { ...pair.record.intent, source: { ...pair.record.intent.source, dependencyClosure: closure } };
+    const fingerprint = nodeRerunHostAdmissionPlanFingerprintV1({ intent, source: intent.source,
+      sourcePolicyFingerprint: pair.record.policyFingerprint, currentPolicyFingerprint: pair.record.policyFingerprint });
+    assert.throws(() => projectNodeRerunGenerationV1({ record: { ...pair.record, intent, planFingerprint: fingerprint },
+      target: { ...pair.target, source: intent.source } }), NodeRerunValidationError);
+  }
+});
+
+test("durable intent submission accepts only the frozen intent and Host plan fingerprint", () => {
+  const input = { intent: validIntent(), planFingerprint: "nrhpv1_0123456789abcdef" };
+  assert.deepEqual(parseNodeRerunIntentSubmission(input), input);
+  for (const extra of ["observed", "approvalId", "workspaceId", "runId", "fence", "prompt"]) {
+    assert.throws(() => parseNodeRerunIntentSubmission({ ...input, [extra]: "caller-supplied" }), NodeRerunValidationError);
+  }
+  for (const fingerprint of ["", "a".repeat(64), "nrhpv1_0123456789abcdeF", "nrhpv1_0123456789abcdef\n"]) {
+    assert.throws(() => parseNodeRerunIntentSubmission({ ...input, planFingerprint: fingerprint }), NodeRerunValidationError);
+  }
+  let reads = 0;
+  assert.throws(() => parseNodeRerunIntentSubmission({ intent: input.intent,
+    get planFingerprint() { reads++; return input.planFingerprint; } }), NodeRerunValidationError);
+  assert.equal(reads, 0);
+});
 
 test("A17 valid intent is only eligible for Host admission and never authorized", () => {
   const result = evaluateNodeRerunAdmission({ intent: validIntent(), observed: validObserved() });

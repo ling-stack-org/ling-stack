@@ -29,6 +29,58 @@ test("ordinary stores omit isolation while pinned unavailable evidence remains e
   assert.equal(buildWorkflowIsolationEvidence(f.store, scope.workflow.id).reasonCode, "workflow_isolation.round_evidence_missing");
 });
 
+test("public workflow evidence redacts artifact labels and withholds scoped memory bodies", () => {
+  const normalSecret = "sk-test-normalcandidate123456789";
+  const privateBody = "PRIVATE_WORKFLOW_MEMORY_CANARY";
+  const secretBody = "SECRET_ADJACENT_WORKFLOW_MEMORY_CANARY";
+  const publicEvidence = projectPublicWorkflowEvidence({
+    workflow: {},
+    steps: [],
+    selectorDecisions: [],
+    handoffIntents: [],
+    handoffs: [],
+    approvals: [],
+    approvalCheckpoints: [],
+    actions: [],
+    artifacts: [{
+      id: "artifact_public",
+      type: "file",
+      path: `reports/${normalSecret}.txt`,
+      title: `Report ${normalSecret}`,
+      createdAt: "2026-11-18T00:00:00.000Z",
+    }],
+    memoryCandidates: [
+      { memory: {
+        id: "memory_normal", workspaceId: "workspace_default", scopeType: "channel", ownerId: "channel",
+        title: "Normal candidate", body: `Result ${normalSecret}`, tags: [], sourceRefs: [], reviewState: "candidate",
+        enabled: true, sensitivity: "normal", verifyBeforeUse: true, createdAt: "2026-11-18T00:00:00.000Z",
+        updatedAt: "2026-11-18T00:00:00.000Z", retrievalHandle: "provider-handle-secret",
+      }, sourceWorkflowId: "workflow", sourceWorkflowStepIds: [] },
+      { memory: {
+        id: "memory_private", workspaceId: "workspace_default", scopeType: "teammate", ownerId: "teammate",
+        title: "Private candidate", body: privateBody, tags: [], sourceRefs: [], reviewState: "candidate",
+        enabled: true, sensitivity: "private", verifyBeforeUse: true, createdAt: "2026-11-18T00:00:00.000Z",
+        updatedAt: "2026-11-18T00:00:00.000Z",
+      }, sourceWorkflowId: "workflow", sourceWorkflowStepIds: [] },
+      { memory: {
+        id: "memory_secret", workspaceId: "workspace_default", scopeType: "workspace", ownerId: "workspace_default",
+        title: "Secret candidate", body: secretBody, tags: [], sourceRefs: [], reviewState: "candidate",
+        enabled: false, sensitivity: "secret-adjacent", verifyBeforeUse: true, createdAt: "2026-11-18T00:00:00.000Z",
+        updatedAt: "2026-11-18T00:00:00.000Z",
+      }, sourceWorkflowId: "workflow", sourceWorkflowStepIds: [] },
+    ],
+  });
+
+  assert.equal(JSON.stringify(publicEvidence).includes(normalSecret), false);
+  assert.equal(JSON.stringify(publicEvidence).includes(privateBody), false);
+  assert.equal(JSON.stringify(publicEvidence).includes(secretBody), false);
+  assert.equal(publicEvidence.artifacts[0].path.includes(normalSecret), false);
+  assert.equal(publicEvidence.memoryCandidates[0].memory.body, "Result [REDACTED]");
+  assert.equal(publicEvidence.memoryCandidates[1].memory.body, "[private memory candidate omitted]");
+  assert.equal(publicEvidence.memoryCandidates[2].memory.body, "[secret-adjacent memory candidate omitted]");
+  assert.equal("retrievalHandle" in publicEvidence.memoryCandidates[0].memory, false);
+});
+
 test("running isolation is a read-only whitelisted observation, not completion or write authority", nativeGit, async t => {
   const f = await workflowIntegrationCoordinatorFixture(t, { stage: "running" });
   const before = await f.integrationSnapshot(), changes = f.store.database.prepare("SELECT total_changes() n").get().n;

@@ -163,9 +163,10 @@ async function trackedDiffLayer(cwd: string, mode: readonly string[], paths: rea
   };
 }
 
-function boundedGitDiff(cwd: string, args: readonly string[]): Promise<{ readonly diff: string; readonly truncated: boolean }> {
+export function boundedGitDiff(cwd: string, args: readonly string[]): Promise<{ readonly diff: string; readonly truncated: boolean }> {
   return new Promise((resolve, reject) => {
     const child = WORKSPACE_CHANGES_GIT_ACTOR_ENTRY.invoke(undefined, cwd, args);
+    const timer = setTimeout(() => child.kill("SIGKILL"), 15000);
     const chunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
     let capturedBytes = 0;
@@ -191,8 +192,9 @@ function boundedGitDiff(cwd: string, args: readonly string[]): Promise<{ readonl
         stderrBytes += captured.length;
       }
     });
-    child.once("error", reject);
+    child.once("error", (error) => { clearTimeout(timer); reject(error); });
     child.once("close", (code) => {
+      clearTimeout(timer);
       if (code !== 0) {
         reject(new Error(Buffer.concat(stderrChunks).toString("utf8").trim() || `git diff exited with code ${code ?? "unknown"}`));
         return;

@@ -163,6 +163,15 @@ and remaining platform acceptance are still follow-up work. The owning contract 
 [Desktop Release And Acceptance](release/desktop.md) and the
 [Desktop package guide](../apps/desktop/README.md) for current implementation and open gates.
 
+The [code review and security workbench](design/code-review-and-security-workbench.md)
+uses shared assessment contracts, a Core SQLite slice and daemon-owned Git snapshots.
+Local review uses an ordinary tool-free Pi Run; security uses sequential threat-model
+and code-review Runs over one captured snapshot, with sealed artifacts and durable phase
+history. Working-tree/branch/commit targets, instructions, snapshot-bound findings,
+triage and comments share that storage slice. Web reads overview metadata and loads the
+selected captured Diff separately, through the full workbench and compact Right Dock.
+It cannot directly invoke Git, models or persistence.
+
 ## Storage
 
 Use SQLite for metadata and files for bulky session artifacts.

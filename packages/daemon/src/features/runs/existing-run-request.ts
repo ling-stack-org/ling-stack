@@ -38,11 +38,24 @@ export function rebuildQueuedRunRequest(run: RunSession): RunRequest {
   return { ...rebuildStoredRunRequest(run), harnessContinuationOrigin: undefined };
 }
 
-function rebuildStoredRunRequest(run: RunSession): RunRequest {
-  if (!isRecord(run.requestSnapshot)) {
+/** Rebuild a frozen node-rerun target for its private Host receiver. */
+export function rebuildNodeRerunRunRequest(run: RunSession): RunRequest {
+  const request = rebuildStoredRunRequest(run, true);
+  if (!isRecord(request.nodeRerunTarget)) {
+    throw new Error("Node rerun target binding is missing.");
+  }
+  return { ...request, harnessContinuationOrigin: undefined };
+}
+
+function rebuildStoredRunRequest(run: RunSession, allowNodeRerunTarget = false): RunRequest {
+  const storedSnapshot = run.requestSnapshot;
+  if (!isRecord(storedSnapshot)) {
     throw new Error("Existing Run request snapshot is missing.");
   }
-  const snapshot = structuredClone(run.requestSnapshot);
+  if (!allowNodeRerunTarget && storedSnapshot.nodeRerunTarget !== undefined) {
+    throw new Error("Node rerun targets require their dedicated Host execution boundary.");
+  }
+  const snapshot = structuredClone(storedSnapshot);
   const task = readStoredRunTask(run);
   const workspaceCwd = readOptionalNonEmptyString(snapshot.workspaceCwd) ?? run.cwd;
   const storedExecutionCwd = readOptionalNonEmptyString(snapshot.executionCwd)

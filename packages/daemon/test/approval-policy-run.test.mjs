@@ -2087,7 +2087,7 @@ test("plan mode denies file writes without offering a pending approval", async (
     toolName: "write",
     input: { path: "docs/plan-mode.txt", content: "blocked" },
   });
-  const daemon = await startDaemonForTest(runner);
+  const daemon = await startDaemonForTest(runner, {}, { defaultWorkspaceCwd: cwd });
   try {
     const { thread } = await createPlanModeThread(daemon.url, cwd);
     await patchPolicy(daemon.url, cwd, { toolDecisions: { write: "allow" } });
@@ -2121,7 +2121,7 @@ test("plan mode denies mutating shell commands without offering a pending approv
     toolName: "bash",
     input: { command: "git commit -m plan-mode-should-not-commit" },
   });
-  const daemon = await startDaemonForTest(runner);
+  const daemon = await startDaemonForTest(runner, {}, { defaultWorkspaceCwd: cwd });
   try {
     const { thread } = await createPlanModeThread(daemon.url, cwd);
     await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "allow" } });
@@ -4473,7 +4473,7 @@ test("task run endpoint rejects paused channels before runner start", async () =
     toolName: "read",
     input: { path: "README.md" },
   });
-  const daemon = await startDaemonForTest(runner);
+  const daemon = await startDaemonForTest(runner, {}, { defaultWorkspaceCwd: cwd });
   try {
     const provider = await createStaticChatProvider(daemon.url, cwd);
     const channel = await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
@@ -4511,7 +4511,7 @@ test("task run endpoint rejects paused channels before runner start", async () =
 test("same idempotency key returns the original task run without starting a duplicate", async () => {
   const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-idempotent-run-"));
   const runner = new BlockingRunner();
-  const daemon = await startDaemonForTest(runner);
+  const daemon = await startDaemonForTest(runner, {}, { defaultWorkspaceCwd: cwd });
   try {
     const provider = await createStaticChatProvider(daemon.url, cwd);
     const channel = await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
@@ -4557,7 +4557,7 @@ test("same idempotency key returns the original task run without starting a dupl
 test("write runs in newly created channels use isolated worktrees and do not conflict", async () => {
   const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-bound-path-lock-"));
   const runner = new BlockingRunner();
-  const daemon = await startDaemonForTest(runner);
+  const daemon = await startDaemonForTest(runner, {}, { defaultWorkspaceCwd: cwd });
   try {
     const provider = await createStaticChatProvider(daemon.url, cwd);
     const firstChannel = await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
@@ -4642,7 +4642,7 @@ test("write runs in newly created channels use isolated worktrees and do not con
 test("queueOnConflict persists a queued run for channels explicitly handed off to Local", async () => {
   const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-bound-path-queue-"));
   const runner = new BlockingRunner();
-  const daemon = await startDaemonForTest(runner);
+  const daemon = await startDaemonForTest(runner, {}, { defaultWorkspaceCwd: cwd });
   try {
     const provider = await createStaticChatProvider(daemon.url, cwd);
     const firstChannel = await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
@@ -4727,7 +4727,7 @@ test("queueOnConflict persists a queued run for channels explicitly handed off t
 test("runtime diagnostics expose the same daemon-owned work unit to web and desktop-style clients", async () => {
   const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-runtime-diagnostics-"));
   const runner = new BlockingRunner();
-  const daemon = await startDaemonForTest(runner);
+  const daemon = await startDaemonForTest(runner, {}, { defaultWorkspaceCwd: cwd });
   try {
     const provider = await createStaticChatProvider(daemon.url, cwd);
     const channel = await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
@@ -4798,7 +4798,7 @@ test("runtime diagnostics expose the same daemon-owned work unit to web and desk
 test("work unit cancel cancels a linked active run without late success overwrite", async () => {
   const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-work-unit-cancel-"));
   const runner = new BlockingRunner();
-  const daemon = await startDaemonForTest(runner);
+  const daemon = await startDaemonForTest(runner, {}, { defaultWorkspaceCwd: cwd });
   try {
     const provider = await createStaticChatProvider(daemon.url, cwd);
     const channel = await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
@@ -4882,7 +4882,7 @@ test("run cancel cancels pending approvals for a waiting run", async () => {
 test("queued run guidance starts FIFO continuation after the source run finishes", async () => {
   const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-run-guidance-"));
   const runner = new BlockingRunner({ verifyToolFree: true });
-  const daemon = await startDaemonForTest(runner);
+  const daemon = await startDaemonForTest(runner, {}, { defaultWorkspaceCwd: cwd });
   let sse;
   let sseDrained = false;
   try {
@@ -4997,7 +4997,7 @@ test("queued run guidance starts FIFO continuation after the source run finishes
 test("interrupt redirect cancels the source run and starts a linked continuation", async () => {
   const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-run-redirect-"));
   const runner = new BlockingRunner({ verifyToolFree: true });
-  const daemon = await startDaemonForTest(runner);
+  const daemon = await startDaemonForTest(runner, {}, { defaultWorkspaceCwd: cwd });
   let sse;
   let sseDrained = false;
   try {
@@ -5065,7 +5065,7 @@ test("interrupt redirect cancels the source run and starts a linked continuation
 test("queued run guidance promote cancels the active run without duplicating the intervention", async () => {
   const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-run-promote-"));
   const runner = new BlockingRunner({ verifyToolFree: true });
-  const daemon = await startDaemonForTest(runner);
+  const daemon = await startDaemonForTest(runner, {}, { defaultWorkspaceCwd: cwd });
   let sse;
   let sseDrained = false;
   try {
@@ -5225,7 +5225,7 @@ test("work unit retry and reconcile APIs operate on durable supervisor state", a
 test("cancelled runs are not overwritten when a late runner reports success", async () => {
   const cwd = await createSqliteWorkspaceFixture(resolve(tmpdir(), "ling-stack-daemon-cancel-race-"));
   const runner = new BlockingRunner();
-  const daemon = await startDaemonForTest(runner);
+  const daemon = await startDaemonForTest(runner, {}, { defaultWorkspaceCwd: cwd });
   try {
     const provider = await createStaticChatProvider(daemon.url, cwd);
     const channel = await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
@@ -5373,7 +5373,7 @@ test("artifact APIs list metadata and serve content from the artifacts root", as
       headers: { origin: "https://evil.example" },
     });
     assert.equal(crossOrigin.status, 403);
-    assert.equal((await crossOrigin.json()).error, "forbidden_origin");
+    assert.equal((await crossOrigin.json()).error, "local_service_forbidden");
 
     const content = await fetch(`${daemon.url}/artifacts/artifact_api_markdown/content?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(content.status, 200);

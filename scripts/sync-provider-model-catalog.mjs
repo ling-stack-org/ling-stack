@@ -86,6 +86,7 @@ function normalizeModel(providerId, value) {
   if (!isRecord(value) || typeof value.id !== "string" || !value.id.trim()) {
     return undefined;
   }
+  const id = value.id.trim();
   const modalities = isRecord(value.modalities) ? value.modalities : undefined;
   const input = stringArray(modalities?.input).filter((item) => item === "text" || item === "image");
   const output = stringArray(modalities?.output);
@@ -97,10 +98,10 @@ function normalizeModel(providerId, value) {
 
   const thinkingModes = normalizeThinkingModes(value.reasoning_options);
   const limit = isRecord(value.limit) ? value.limit : undefined;
-  const tokenLimits = normalizeModelTokenLimits(limit);
+  const tokenLimits = normalizeModelTokenLimits(limit, providerId, id);
   return omitUndefined({
     providerId,
-    id: value.id.trim(),
+    id,
     displayName: typeof value.name === "string" && value.name.trim() ? value.name.trim() : undefined,
     input: input.length > 0 ? input : undefined,
     capabilities,

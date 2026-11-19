@@ -1,6 +1,8 @@
+import { isAbsolute } from "node:path";
 import {
   type ChannelWorkspaceBinding,
   type DirectWorkspaceBinding,
+  type ManagedWorktreeIdentity,
 } from "../../workspace-types.js";
 import { omitUndefined, parseJsonObject } from "./helpers.js";
 
@@ -36,6 +38,7 @@ function normalizeChannelWorkspaceBinding(value: Record<string, unknown>): Chann
     status: normalizedStatus,
     executionPath: typeof value.executionPath === "string" && value.executionPath.trim() ? value.executionPath : undefined,
     worktreePath: typeof value.worktreePath === "string" && value.worktreePath.trim() ? value.worktreePath : undefined,
+    worktreeIdentity: normalizedMode === "managed_worktree" ? readWorktreeIdentity(value.worktreeIdentity) : undefined,
     branchName: typeof value.branchName === "string" && value.branchName.trim() ? value.branchName : undefined,
     baseBranch: typeof value.baseBranch === "string" && value.baseBranch.trim() ? value.baseBranch : undefined,
     baseCommit: typeof value.baseCommit === "string" && value.baseCommit.trim() ? value.baseCommit : undefined,
@@ -44,4 +47,12 @@ function normalizeChannelWorkspaceBinding(value: Record<string, unknown>): Chann
     checkedAt: typeof value.checkedAt === "string" && value.checkedAt.trim() ? value.checkedAt : undefined,
     updatedAt: typeof value.updatedAt === "string" && value.updatedAt.trim() ? value.updatedAt : new Date().toISOString(),
   });
+}
+
+function readWorktreeIdentity(value: unknown): ManagedWorktreeIdentity | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const { repoRoot, gitCommonDir, gitDir } = value as Partial<ManagedWorktreeIdentity>;
+  if (typeof repoRoot !== "string" || !isAbsolute(repoRoot) || typeof gitCommonDir !== "string" || !isAbsolute(gitCommonDir)
+    || typeof gitDir !== "string" || !isAbsolute(gitDir)) return undefined;
+  return { repoRoot, gitCommonDir, gitDir };
 }

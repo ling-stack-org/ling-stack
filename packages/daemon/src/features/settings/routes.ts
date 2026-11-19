@@ -4,9 +4,11 @@ import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
 import { HttpError } from "../../errors.js";
+import { allowLocalWorkspaceRequest } from "../../shared/local-workspace-access.js";
 import { readJsonBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import { buildEffectiveConfigResponse, parseWorkspaceSettingsUpdate } from "./effective-config.js";
+import { redactWorktreePolicy, restoreRedactedWorktreePolicy } from "../workspaces/worktree-policy.js";
 import {
   assertMediaGenerationDefaultUpdate,
   listConversationMediaGenerationTargets,
@@ -27,15 +29,20 @@ export async function handleWorkspaceSettings(
     return;
   }
 
+  if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) return;
+
   try {
+    const body = request.method === "PATCH" ? await readJsonBody(request, config.maxBodyBytes) : undefined;
     const store = storeRegistry.getStore(cwd);
     if (request.method === "GET") {
-      writeJson(response, 200, { cwd, settings: store.getWorkspaceSettings() });
+      const settings = store.getWorkspaceSettings();
+      writeJson(response, 200, { cwd, settings: { ...settings, worktreePolicy: redactWorktreePolicy(settings.worktreePolicy) } });
       return;
     }
     if (request.method === "PATCH") {
-      const body = await readJsonBody(request, config.maxBodyBytes);
-      const update = parseWorkspaceSettingsUpdate(body);
+      const current = store.getWorkspaceSettings();
+      const parsed = parseWorkspaceSettingsUpdate(body);
+      const update = { ...parsed, worktreePolicy: restoreRedactedWorktreePolicy(parsed.worktreePolicy, current.worktreePolicy) };
       assertMediaGenerationDefaultUpdate({
         current: store.getWorkspaceSettings().mediaGenerationDefaults,
         next: update.mediaGenerationDefaults,
@@ -43,7 +50,7 @@ export async function handleWorkspaceSettings(
       });
       const settings = store.updateWorkspaceSettings(update, new Date().toISOString());
       if (update.desktopBrowserPolicy !== undefined) onBrowserPolicyChanged?.(cwd);
-      writeJson(response, 200, { cwd, settings });
+      writeJson(response, 200, { cwd, settings: { ...settings, worktreePolicy: redactWorktreePolicy(settings.worktreePolicy) } });
       return;
     }
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for workspace settings` });
@@ -72,6 +79,8 @@ export async function handleEffectiveConfig(
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for effective config` });
     return;
   }
+
+  if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) return;
 
   try {
     const store = storeRegistry.getStore(cwd);

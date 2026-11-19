@@ -166,6 +166,8 @@ import { HostCapabilityBridgeController } from "./features/runs/host-capability-
 import { executeRunRequest, type RunExecutionSink } from "./features/runs/orchestrator.js";
 import { CompanionReplyService } from "./features/companions/reply-service.js";
 import { CompanionSchedulerRegistry } from "./features/companions/scheduler.js";
+import { WorktreeMaintenanceRegistry } from "./features/workspaces/worktree-retention.js";
+import { reconcileContextViewLineagesAtStartup } from "./features/channels/context-processing/context-view-recovery.js";
 
 export { defaultDaemonConfig } from "./config.js";
 export type { DaemonConfig, HarnessFeatureConfig, ResolvedDaemonConfig } from "./config.js";
@@ -259,6 +261,12 @@ export { ChromeBrowserPluginService, createChromeBrowserDescriptor, normalizeChr
 export { createChromeBrowserGenerationBroker, chromeBrowserTools } from "./features/plugins/chrome-browser-generation-broker.js";
 export { OfficeDriverController } from "./features/office-documents/driver-controller.js";
 export { OfficeDocumentsPluginService, createOfficeDocumentsDescriptor } from "./features/plugins/office-documents.js";
+export {
+  reconcileContextViewLineagesAtStartup,
+  type ContextViewLineageRecoveryEntry,
+  type ContextViewLineageRecoveryReport,
+  type ContextViewLineageRecoveryStatus,
+} from "./features/channels/context-processing/context-view-recovery.js";
 export {
   createOfficeDocumentsGenerationBroker,
   officeAllTools,
@@ -385,6 +393,7 @@ export function createDaemonServer(
   let channelTurnDispatchReady = false;
   let approvalResumeCoordinator: ApprovalResumeCoordinator | undefined;
   let companionSchedulers: CompanionSchedulerRegistry | undefined;
+  const worktreeMaintenance = new WorktreeMaintenanceRegistry();
   let userInputDeliveryWorker!: UserInputDeliveryWorker;
   const answerDeliveryStores = new Set<RunStore>();
   const approvalRecoveryStores = new Set<RunStore>();
@@ -451,20 +460,39 @@ export function createDaemonServer(
     const recoveryNow = new Date().toISOString();
     store.recoverStaleRuns(recoveryNow);
     store.recoverStaleChannelWorkflows(recoveryNow);
+    try {
+      const contextRecovery = reconcileContextViewLineagesAtStartup({ store, limit: 500 });
+      if (contextRecovery.scanned > 0 && (contextRecovery.reconstructed > 0
+        || contextRecovery.stale > 0 || contextRecovery.blocked > 0 || contextRecovery.unsupported > 0)) {
+        console.info(
+          `conversation_context_view_startup_recovery: scanned=${contextRecovery.scanned}`
+          + ` current=${contextRecovery.current}`
+          + ` reconstructed=${contextRecovery.reconstructed}`
+          + ` stale=${contextRecovery.stale}`
+          + ` blocked=${contextRecovery.blocked}`
+          + ` unsupported=${contextRecovery.unsupported}`,
+        );
+      }
+    } catch {
+      // Context views are rebuildable projections. A failed sweep must remain
+      // observable without preventing unrelated Run recovery from starting.
+      console.warn("conversation_context_view_startup_recovery_incomplete: lineage remains rebuildable");
+    }
     if (resolvedConfig.concurrency.enabled) {
       const capacity = runtimeHostCapacities.get(store);
       if (capacity) {
         try {
-          let observed = 0, released = 0;
+          let observed = 0, released = 0, unknown = 0;
           for (const workspaceId of store.listWorkspaceIds()) {
             runtimeSupervisor.getRuntimeForWorkspace(cwd, store, workspaceId);
             const recovery = recoverHostCapacityReservations({ store, workspaceId,
               host: hostRunCapacity, admission: capacity, now: recoveryNow });
             observed += recovery.observed;
             released += recovery.released;
+            unknown += recovery.unknown;
           }
-          if (observed || released) {
-            console.info(`runtime_host_capacity_startup_recovery: observed=${observed} released=${released}`);
+          if (observed || released || unknown) {
+            console.info(`runtime_host_capacity_startup_recovery: observed=${observed} released=${released} unknown=${unknown}`);
           }
         } catch {
           console.warn("runtime_host_capacity_startup_recovery_incomplete: held reservations remain recoverable");
@@ -530,6 +558,7 @@ export function createDaemonServer(
     reconcileHarnessProjections(store);
     if (channelTurnDispatchReady) channelTurnDispatchWorker?.start(store);
     companionSchedulers?.start(cwd);
+    worktreeMaintenance.registerStore(cwd, store);
     if (store.listAutomationEventSources().some(source => source.enabled)) automationEvents?.start(cwd);
     taskSupervisor?.start(cwd);
     learningReviewCoordinator?.registerStore(store);
@@ -1157,6 +1186,7 @@ export function createDaemonServer(
       automationEvents.stopAll();
       taskSupervisor.stopAll();
       companionSchedulers?.stopAll();
+      worktreeMaintenance.stopAll();
     },
     abortOwned: () => {
       approvalAutoReviewRecoveryCoordinator?.abortOwned();
@@ -1171,6 +1201,7 @@ export function createDaemonServer(
       automationSchedulers.waitForIdle(), backgroundSchedulers.waitForIdle(),
       automationEvents.waitForIdle(), taskSupervisor.waitForIdle(),
       companionSchedulers?.waitForIdle() ?? Promise.resolve(),
+      worktreeMaintenance.waitForIdle(),
       providerStartupRefresh.waitForIdle(), harnessProjectionReconciler.waitForIdle(),
       harnessArtifactRetention.waitForIdle(),
       learningReviewCoordinator?.drain() ?? Promise.resolve(),

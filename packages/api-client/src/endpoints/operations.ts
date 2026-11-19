@@ -32,10 +32,48 @@ import type {
   WorkspaceFileCapabilityRequest,
   WorkspaceFileCapabilityResponse,
   WorkspaceFileCapabilityPreviewRequest,
+  CodeAssessmentDetail,
+  CodeAssessmentList,
+  CodeAssessmentListOptions,
+  CreateCodeAssessmentRequest,
 } from "@ling-stack/contracts";
 import type { LingDaemonEndpointContext, PublicEndpointGroup } from "../transport.js";
 
 export const operationEndpoints = {
+  async getCodeAssessmentOverview(this: LingDaemonEndpointContext, cwd: string, assessmentId: string): Promise<import("@ling-stack/contracts").CodeAssessmentOverview> {
+    return this._get(`/workspace/code-assessments/${encodeURIComponent(assessmentId)}`, { cwd, view: "overview" });
+  },
+  async createCodeAssessmentOverview(this: LingDaemonEndpointContext, cwd: string, input: CreateCodeAssessmentRequest): Promise<import("@ling-stack/contracts").CodeAssessmentOverview> {
+    return this._post("/workspace/code-assessments", { cwd, view: "overview" }, input);
+  },
+  async getCodeAssessmentFile(this: LingDaemonEndpointContext, cwd: string, assessmentId: string, path: string): Promise<import("@ling-stack/contracts").CodeAssessmentFilePreview> {
+    return this._get(`/workspace/code-assessments/${encodeURIComponent(assessmentId)}/snapshot-file`, { cwd, path });
+  },
+  async listCodeAssessments(this: LingDaemonEndpointContext, cwd: string, kindOrOptions?: "review" | "security" | CodeAssessmentListOptions, offset = 0): Promise<CodeAssessmentList> {
+    const options = typeof kindOrOptions === "string" ? { kind: kindOrOptions, offset } : { offset, ...kindOrOptions };
+    return this._get("/workspace/code-assessments", { cwd, ...options });
+  },
+  async getCodeAssessment(this: LingDaemonEndpointContext, cwd: string, assessmentId: string): Promise<CodeAssessmentDetail> {
+    return this._get(`/workspace/code-assessments/${encodeURIComponent(assessmentId)}`, { cwd });
+  },
+  async createCodeAssessment(this: LingDaemonEndpointContext, cwd: string, input: CreateCodeAssessmentRequest): Promise<CodeAssessmentDetail> {
+    return this._post("/workspace/code-assessments", { cwd }, input);
+  },
+  async cancelCodeAssessment(this: LingDaemonEndpointContext, cwd: string, assessmentId: string): Promise<CodeAssessmentDetail> {
+    return this._post(`/workspace/code-assessments/${encodeURIComponent(assessmentId)}/cancel`, { cwd }, {});
+  },
+  async checkCodeAssessmentFreshness(this: LingDaemonEndpointContext, cwd: string, assessmentId: string): Promise<import("@ling-stack/contracts").CodeAssessmentFreshness> {
+    return this._post(`/workspace/code-assessments/${encodeURIComponent(assessmentId)}/freshness`, { cwd }, {});
+  },
+  async setCodeFindingDisposition(this: LingDaemonEndpointContext, cwd: string, assessmentId: string, findingId: string, input: { readonly snapshotDigest: string; readonly disposition: import("@ling-stack/contracts").CodeFindingDisposition; readonly closeReason?: import("@ling-stack/contracts").CodeFindingCloseReason; readonly reason?: string }): Promise<import("@ling-stack/contracts").CodeAssessmentFinding> {
+    return this._post(`/workspace/code-assessments/${encodeURIComponent(assessmentId)}/findings/${encodeURIComponent(findingId)}`, { cwd }, input);
+  },
+  async listCodeAssessmentComments(this: LingDaemonEndpointContext, cwd: string, assessmentId: string, findingId: string): Promise<{ readonly comments: readonly import("@ling-stack/contracts").CodeAssessmentComment[] }> {
+    return this._get(`/workspace/code-assessments/${encodeURIComponent(assessmentId)}/findings/${encodeURIComponent(findingId)}/comments`, { cwd });
+  },
+  async createCodeAssessmentComment(this: LingDaemonEndpointContext, cwd: string, assessmentId: string, findingId: string, input: import("@ling-stack/contracts").CreateCodeAssessmentCommentRequest): Promise<import("@ling-stack/contracts").CodeAssessmentComment> {
+    return this._post(`/workspace/code-assessments/${encodeURIComponent(assessmentId)}/findings/${encodeURIComponent(findingId)}/comments`, { cwd }, input);
+  },
   async getThreadWorkspaceChangeSummary(this: LingDaemonEndpointContext, cwd: string, threadId: string): Promise<ThreadWorkspaceChangeSummaryResponse> {
     return this._get(`/threads/${encodeURIComponent(threadId)}/workspace-change-summary`, { cwd });
   },

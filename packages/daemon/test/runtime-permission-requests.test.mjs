@@ -172,7 +172,7 @@ class PermissionProbeRunner {
 }
 
 async function startDaemonForTest(runner) {
-  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0 }, { runner });
+  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, defaultWorkspaceCwd: tmpdir() }, { runner });
   await daemon.start();
   const address = daemon.server.address();
   assert.ok(address && typeof address === "object");

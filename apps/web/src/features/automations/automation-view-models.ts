@@ -82,6 +82,17 @@ export interface AutomationSchedulerViewModel {
   readonly summary: string;
 }
 
+export interface AutomationMonitorViewModel {
+  readonly automationId: string;
+  readonly title: string;
+  readonly sourceLabel: string;
+  readonly statusLabel: string;
+  readonly statusTone: StatusTone;
+  readonly summary: string;
+  readonly lastRunAt?: string;
+  readonly lastAutomationRunId?: string;
+}
+
 export function latestRunByAutomationId(runs: readonly AutomationRun[]): ReadonlyMap<string, AutomationRun> {
   const map = new Map<string, AutomationRun>();
   for (const run of [...runs].sort((left, right) => right.firedAt.localeCompare(left.firedAt))) {
@@ -256,6 +267,30 @@ export function buildSchedulerViewModel(input: {
   };
 }
 
+export function buildAutomationMonitorViewModels(input: {
+  readonly automations: readonly AutomationDefinition[];
+  readonly scheduler?: AutomationSchedulerState;
+  readonly t: AutomationTranslate;
+}): readonly AutomationMonitorViewModel[] {
+  const items = new Map(input.scheduler?.items.map((item) => [item.automationId, item] as const));
+  return input.automations
+    .filter((automation) => automation.status !== "archived" && automation.trigger.type === "monitor")
+    .map((automation) => {
+      const item = items.get(automation.id);
+      const state = monitorState(item?.lastMonitorOutcome, input.t);
+      return {
+        automationId: automation.id,
+        title: automation.title,
+        sourceLabel: automation.trigger.type === "monitor" ? automation.trigger.source.kind : "monitor",
+        statusLabel: state.label,
+        statusTone: state.tone,
+        summary: state.summary,
+        lastRunAt: item?.lastRunAt,
+        lastAutomationRunId: item?.lastAutomationRunId,
+      };
+    });
+}
+
 export function automationScheduleLabel(trigger: AutomationTrigger | undefined, t: AutomationTranslate, rrule?: string): string {
   const parsedRrule = rrule ? rruleScheduleLabel(rrule, t) : undefined;
   if (parsedRrule) return parsedRrule;
@@ -287,6 +322,22 @@ function derivePrimaryState(automation: AutomationDefinition, latestRun: Automat
   if (latestRun && isRunInProgress(latestRun)) return "running";
   if (isScheduledTrigger(automation.trigger, automation.rrule)) return "scheduled";
   return "ready";
+}
+
+function monitorState(
+  outcome: AutomationSchedulerState["items"][number]["lastMonitorOutcome"],
+  t: AutomationTranslate,
+): { readonly label: string; readonly tone: StatusTone; readonly summary: string } {
+  switch (outcome) {
+    case "changed":
+      return { label: t("Monitor changed"), tone: "warning", summary: t("Monitor finding detected") };
+    case "condition_not_met":
+      return { label: t("Monitor condition not met"), tone: "neutral", summary: t("No monitor findings yet.") };
+    case "unchanged":
+      return { label: t("Monitor unchanged"), tone: "info", summary: t("No monitor findings yet.") };
+    default:
+      return { label: t("Monitor run"), tone: "neutral", summary: t("Waiting for first monitor poll.") };
+  }
 }
 
 function derivePrimaryAction(state: AutomationPrimaryState, latestRun?: AutomationRun): AutomationPrimaryAction {

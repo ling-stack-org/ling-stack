@@ -6,6 +6,10 @@ export const LazyWorkspaceClientView = lazy(() =>
   })),
 );
 
+export const LazyCodeAssessmentPage = lazy(() =>
+  import("../features/code-assessments/CodeAssessmentPage.js").then((module) => ({ default: module.CodeAssessmentPage })),
+);
+
 export const LazyRunHistory = lazy(() =>
   import("../features/runs/RunHistory.js").then((module) => ({
     default: module.RunHistory,

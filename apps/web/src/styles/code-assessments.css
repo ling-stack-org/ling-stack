@@ -1,0 +1,75 @@
+.code-assessment-page { display: flex; flex-direction: column; gap: 20px; padding: 24px; min-width: 0; color: var(--ling-text-default); background: var(--ling-bg-panel); }
+.workspace-code-assessments-surface { overflow: auto; }
+.code-assessment-header, .code-assessment-result-heading, .code-assessment-history-heading { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.code-assessment-header h1 { margin: 0 0 6px; font-size: 22px; }
+.code-assessment-header p, .code-assessment-result-heading p { margin: 0; color: var(--ling-text-muted); }
+.code-assessment-grid { display: grid; grid-template-columns: minmax(245px, 300px) minmax(0, 1fr); gap: 24px; min-height: 0; }
+.code-assessment-sidebar { min-width: 0; border-right: 1px solid var(--ling-border-default); padding-right: 20px; }
+.code-assessment-start { display: flex; flex-direction: column; gap: 12px; padding-bottom: 18px; }
+.code-assessment-tabs, .code-assessment-actions, .code-assessment-filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.code-assessment-tabs > * { flex: 1; }
+.code-assessment-muted { color: var(--ling-text-muted); font-size: 12px; line-height: 1.6; }
+.code-assessment-list { border-top: 1px solid var(--ling-border-default); padding-top: 14px; }
+.code-assessment-list [role="listbox"] { max-height: 420px; overflow-y: auto; }
+.code-assessment-list .ling-ui-data-row { grid-template-columns: minmax(0, 1fr) auto; }
+.code-assessment-list .ling-ui-data-row-summary { grid-column: 1 / -1; grid-row: 2; }
+.code-assessment-list h2 { font-size: 14px; margin: 0 0 10px; }
+.code-assessment-detail { min-width: 0; }
+.code-assessment-empty { display: grid; justify-items: center; align-content: center; min-height: 340px; padding: 24px; text-align: center; color: var(--ling-text-muted); }
+.code-assessment-empty h2 { font-size: 17px; }
+.code-assessment-empty p { max-width: 320px; }
+.code-assessment-result { display: flex; flex-direction: column; gap: 16px; min-width: 0; max-width: 1040px; }
+.code-assessment-result > * { min-width: 0; }
+.code-assessment-result h2 { font-size: 20px; margin: 8px 0 6px; }
+.code-assessment-result h3 { margin: 0 0 10px; font-size: 14px; }
+.code-assessment-result p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.code-assessment-phases { display: flex; flex-wrap: wrap; gap: 6px 24px; padding: 12px 12px 12px 28px; margin: 0; background: var(--ling-bg-subtle); border-radius: var(--ling-card-radius); color: var(--ling-text-muted); font-size: 12px; }
+.code-assessment-summary { border-left: 2px solid var(--ling-border-strong); padding-left: 14px; }
+.code-assessment-summary p { margin-bottom: 0; }
+.code-assessment-filters { margin-bottom: 12px; }
+.code-assessment-filters > * { flex: 1; min-width: 110px; }
+.code-assessment-finding { border: 1px solid var(--ling-border-default); border-left: 3px solid var(--ling-status-warning); border-radius: var(--ling-card-radius); padding: 14px; margin: 12px 0; background: var(--ling-bg-panel); }
+.code-assessment-finding.severity-high, .code-assessment-finding.severity-critical { border-left-color: var(--ling-status-danger); }
+.code-assessment-finding-heading { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+.code-assessment-finding.selected, .code-assessment-finding:focus-visible { outline: 2px solid var(--ling-action-accent); outline-offset: 2px; }
+.code-assessment-phase-reason { display: block; margin-top: 4px; overflow-wrap: anywhere; }
+.code-assessment-files { display: grid; gap: 6px; max-height: 220px; overflow: auto; margin: 12px 0; }
+.code-assessment-files details { min-width: 0; }
+.code-assessment-files summary { cursor: pointer; overflow-wrap: anywhere; }
+.code-assessment-files .ling-ui-button { max-width: 100%; margin: 3px; }
+.code-assessment-files .ling-ui-button-label { overflow-wrap: anywhere; white-space: normal; }
+.code-assessment-files .ling-ui-button span { color: var(--ling-text-muted); }
+.code-assessment-diff { min-width: 0; overflow: hidden; }
+.code-assessment-diff .diff-viewer { max-width: 100%; overflow: auto; }
+.code-assessment-diff.wrap .diff-viewer code { white-space: pre-wrap; overflow-wrap: anywhere; }
+.code-assessment-diff .diff-line.annotated { box-shadow: inset 3px 0 var(--ling-status-warning); }
+.code-assessment-diff .diff-line.selected { background: color-mix(in srgb, var(--ling-action-accent) 16%, var(--ling-bg-panel)); outline: 1px solid var(--ling-action-accent); outline-offset: -1px; }
+.diff-finding-marker { border: 0; background: transparent; color: var(--ling-status-warning); cursor: pointer; margin-left: 8px; padding: 2px 6px; font: inherit; }
+.diff-finding-marker:focus-visible { outline: 2px solid var(--ling-action-accent); outline-offset: 2px; }
+.code-assessment-comments { margin-top: 12px; border-top: 1px solid var(--ling-border-default); padding-top: 8px; }
+.code-assessment-comments ol { max-height: 260px; overflow: auto; padding-left: 20px; }
+.code-assessment-comments li { border-bottom: 1px solid var(--ling-border-default); padding: 8px 0; }
+.code-assessment-comments small { color: var(--ling-text-muted); }
+.code-assessment-comments form, .code-assessment-dismiss { display: grid; gap: 8px; }
+.code-assessment-finding-heading h4 { margin: 0; font-size: 14px; overflow-wrap: anywhere; }
+.code-assessment-finding > .ling-ui-button { max-width: 100%; white-space: normal; text-align: left; }
+.code-assessment-finding pre { white-space: pre-wrap; overflow-wrap: anywhere; padding: 10px; background: var(--ling-bg-code); border-radius: var(--ling-code-radius); font-size: 12px; }
+.code-assessment-dismiss { display: grid; gap: 10px; }
+.code-assessment-snapshot { min-width: 0; }
+.code-assessment-snapshot .diff-viewer { max-height: 420px; overflow: auto; margin-top: 12px; }
+.code-assessment-technical { font-size: 12px; color: var(--ling-text-muted); overflow-wrap: anywhere; }
+.code-assessment-technical summary { cursor: pointer; padding: 8px 0; }
+.code-assessment-technical dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 12px; }
+.code-assessment-technical dd { margin: 0; }
+.code-assessment-page.compact { padding: 12px; gap: 12px; }
+.code-assessment-page.compact .code-assessment-grid { grid-template-columns: 1fr; gap: 16px; }
+.code-assessment-page.compact .code-assessment-sidebar { border-right: 0; padding-right: 0; }
+.code-assessment-page.compact .code-assessment-list [role="listbox"] { max-height: 180px; }
+.code-assessment-page.compact .code-assessment-result-heading { flex-wrap: wrap; }
+@media (max-width: 1050px) {
+  .code-assessment-page { padding: 16px; }
+  .code-assessment-grid { grid-template-columns: 1fr; }
+  .code-assessment-sidebar { border-right: 0; padding-right: 0; }
+  .code-assessment-list [role="listbox"] { max-height: 220px; }
+  .code-assessment-header { flex-wrap: wrap; }
+}

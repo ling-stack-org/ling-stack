@@ -8,13 +8,17 @@ import type {
 import { useI18n } from "../../../i18n.js";
 
 type ProtocolActionItem = ConversationTimelineProtocolEventItem | ConversationTimelineApprovalItem;
+const minimumBusyFeedbackMs = 300;
 
 export function ConversationTimelineProtocolActions<TItem extends ProtocolActionItem>({
   item,
   onInvoke,
+  busy = false,
 }: {
   readonly item: TItem;
   readonly onInvoke?: (item: TItem, action: ConversationProtocolAction) => void | Promise<void>;
+  /** Host-owned mutation state survives Timeline item projection updates. */
+  readonly busy?: boolean;
 }): React.JSX.Element | null {
   const { t } = useI18n();
   const invocationInFlightRef = useRef(false);
@@ -26,9 +30,14 @@ export function ConversationTimelineProtocolActions<TItem extends ProtocolAction
     if (invocationInFlightRef.current) return;
     invocationInFlightRef.current = true;
     setInvocationInFlight(true);
+    const startedAt = Date.now();
     try {
       await onInvoke?.(item, action);
     } finally {
+      const remaining = minimumBusyFeedbackMs - (Date.now() - startedAt);
+      if (remaining > 0) {
+        await new Promise<void>((resolve) => setTimeout(resolve, remaining));
+      }
       invocationInFlightRef.current = false;
       setInvocationInFlight(false);
     }
@@ -38,14 +47,14 @@ export function ConversationTimelineProtocolActions<TItem extends ProtocolAction
     <div
       className="conversation-timeline-protocol-actions"
       aria-label={t("Actions")}
-      aria-busy={invocationInFlight || undefined}
+      aria-busy={invocationInFlight || busy || undefined}
     >
       {actions.map((action) => (
         <button
           key={action}
           className="secondary-button compact-button"
           type="button"
-          disabled={invocationInFlight}
+          disabled={invocationInFlight || busy}
           data-workflow-conflict-recovery={action === "recover_workflow_conflict" ? item.sourceRefs.find(ref => ref.kind === "workflow")?.id : undefined}
           onClick={() => void invoke(action)}
         >

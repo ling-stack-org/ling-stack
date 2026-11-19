@@ -31,6 +31,7 @@ export function mapApprovalRequest(row: Record<string, SQLOutputValue>): Approva
     taskId: readNullableString(row, "task_id"),
     mediaJobId: readNullableString(row, "media_job_id"),
     externalWorkActionId: readNullableString(row, "external_work_action_id"),
+    nodeRerunIntentId: readNullableString(row, "node_rerun_intent_id"),
     workflowStepId: readNullableString(row, "workflow_step_id"),
     channelId: readNullableString(row, "channel_id"),
     toolCallId: readNullableString(row, "tool_call_id"),

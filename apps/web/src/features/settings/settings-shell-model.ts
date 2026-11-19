@@ -7,6 +7,7 @@ import {
   CircuitBoard,
   Database,
   GitBranch,
+  GitFork,
   Palette,
   MonitorCog,
   Sparkles,
@@ -31,6 +32,7 @@ export type SettingsSectionId =
   | "computer-control"
   | "mobile-access"
   | "external-work"
+  | "worktrees"
   | "mcp-tools"
   | "skill-library"
   | "archived-items"
@@ -83,6 +85,7 @@ export const settingsSectionGroups: readonly SettingsSectionGroupDefinition[] = 
       },
       { id: "interface-preferences", label: "Interface preferences", icon: Palette },
       { id: "external-work", label: "External work", icon: GitBranch },
+      { id: "worktrees", label: "Worktrees", icon: GitFork },
       { id: "mcp-tools", label: "MCP tool servers", icon: Wrench },
       {
         id: "skill-library",
