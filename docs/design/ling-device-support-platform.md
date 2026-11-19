@@ -2,7 +2,7 @@
 
 Status: approved architecture baseline; implementation not started
 Owner: Ling platform maintainers
-Last verified: 2026-11-18
+Last verified: 2026-11-19
 Document type: canonical product and technical design
 Canonical replacement: none
 Code and test anchors: `docs/architecture.md`, `apps/mobile/README.md`,
@@ -11,6 +11,9 @@ Code and test anchors: `docs/architecture.md`, `apps/mobile/README.md`,
 
 The delivery checklist is maintained in
 [Ling Device Support Platform Implementation Plan](ling-device-support-platform-implementation-plan.md).
+The [Runtime Contract](ling-device-support-platform-runtime-contract.md) specifies
+capability negotiation, approvals, failure handling, and acceptance for both
+execution hosts.
 
 ## 1. Purpose
 
@@ -195,9 +198,10 @@ CapabilityDescriptor
   support: device kinds, models, firmware ranges, adapter versions
 ```
 
-The capability descriptor is the contract consumed by the model runner and policy
-engine. An adapter may expose a capability only after it has verified that the target
-supports it.
+The capability descriptor defines the operation the model runner and policy engine
+understand. The broker derives current availability and authorization from a fresh
+device snapshot and the selected execution context. See
+[capability negotiation and freshness](ling-device-support-platform-runtime-contract.md#2-capability-negotiation-and-freshness).
 
 ### 6.3 Observation and evidence
 
@@ -234,7 +238,7 @@ requiredRuntime and platform
 authentication methods
 configuration schema
 supported models and firmware ranges
-capability catalog
+capability catalog and supported contract majors
 health-check behavior
 minimum Ling contract version
 ```
@@ -346,16 +350,19 @@ Rules:
   snapshot, policy snapshot, input, and idempotency key.
 - A reconnecting client reads durable state; it does not infer cancellation from a lost
   stream.
-- An action may be retried only when the adapter declares it idempotent or the task has a
-  safe retry policy.
+- Read-only operations can retry within their declared policy and task budget.
 - Verification is a separate step. An adapter returning without an error is not proof of
   a repaired device.
 - Unknown outcomes are preserved when the transport fails after dispatch. The system
   must not automatically repeat a possibly mutating action.
-- Cancellation is best effort and remains visible as a distinct result.
+- Cancellation closes pending dispatch. An action already in flight may still affect
+  the device, so the task preserves the distinction between the stop request and its
+  verified outcome.
 
 Both execution hosts follow the same task state, approval, verification, and recovery
-rules.
+rules. See
+[cancellation, verification, and recovery](ling-device-support-platform-runtime-contract.md#4-cancellation-verification-and-recovery)
+for dispatch intent, readback, and recovery behavior.
 
 ## 10. Security and permissions
 
@@ -391,6 +398,8 @@ The run snapshot records the effective capabilities and decisions.
 - Keep raw evidence local unless the user explicitly authorizes remote transfer.
 - Do not send full device inventories or logs to a provider when a bounded excerpt is
   sufficient.
+- Treat device data as observation. Target selection, permission changes, and approvals
+  require authenticated Ling commands or policy decisions.
 
 ### 10.4 Physical and safety-sensitive devices
 
@@ -409,13 +418,18 @@ configuration operations must not be silently promoted to physical control.
 | Hardware bridge | Mobile/Remote Gateway -> OBD/CAN/BLE/USB module | Vehicle and devices without a network API |
 | Cloud relay | Mobile -> relay -> user gateway | Deferred; requires a separate privacy and availability design |
 
+The [failure matrix](ling-device-support-platform-runtime-contract.md#5-failure-and-placement-matrix)
+specifies what the owning host can still observe or execute when a link, model service,
+or target is unavailable.
+
 ### 11.1 Standalone Mobile execution
 
 The daemon owns tasks started through Ling PC or the Remote Gateway. For a standalone
 task, the phone owns the task and runs the adapter over a native transport without a PC
 or Gateway. At task creation, Ling offers the hosts that can reach the target and run
 the requested capability. The selected host retains ownership after a connection failure.
-Another host may start a separate task after the previous outcome has been checked.
+An independently authorized host can read the device to help reconcile the outcome.
+Any follow-up write on a different host starts a separate task after reconciliation.
 
 The phone uses the same schemas for target identity, capabilities, approval, task state,
 and evidence. Its execution module checks the capability snapshot, binds user approval
@@ -497,6 +511,9 @@ new protocol adapter.
 ### 13.2 Versioning
 
 - Contracts use explicit `schemaVersion` values.
+- The broker selects a shared contract major before dispatch. Strict manifest and
+  action validation use the selected schema, while display-only metadata can be
+  additive within a supported version.
 - Adapters use independent semantic versions.
 - Capabilities are additive by default; removing or changing input/output requires a new
   capability version.
@@ -525,6 +542,7 @@ Ling should reuse or wrap existing projects rather than duplicate their low-leve
 | MCP | Model-facing tool exposure where it fits |
 | Matter, ESPHome, Zigbee and BLE libraries | Device and transport implementations |
 | OpenXC / OVMS / OBD libraries | Vehicle interface and diagnostic adapters |
+| dsh-Go | Architectural reference for capability negotiation, native approval, and interrupted actions |
 
 No external project becomes a required dependency of the core until a concrete adapter
 needs it and its license, maintenance, security, and deployment cost are reviewed.
@@ -546,10 +564,10 @@ device_evidence_created
 device_task_finished
 ```
 
-The user-facing transcript shows a compact operation and a final explanation. Raw
-protocol frames, command output, adapter diagnostics, and redacted artifacts remain
-expandable evidence. The event source, adapter version, target id, and task id must be
-preserved for later review.
+The user-facing transcript shows a compact operation and a final explanation. Redacted
+adapter diagnostics, action output, and verification artifacts remain expandable
+evidence. The event source, adapter version, target id, and task id must be preserved
+for later review.
 
 ## 16. Recommended delivery order
 
