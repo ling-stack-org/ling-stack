@@ -41,7 +41,8 @@ test('BG-H1/H2 one visible player, reading surfaces, reduced motion, recovery an
   const failures:string[]=[]; page.on('pageerror',e=>failures.push(e.message));
   await prepare(page); await upload(page);
   await page.locator('[data-background-preview]').scrollIntoViewIfNeeded();
-  await expect.poll(()=>paused(page,'[data-background-layer] video')).toBe(false);
+  // Settings keeps the global layer paused so the preview is the only active player.
+  await expect.poll(()=>paused(page,'[data-background-layer] video')).toBe(true);
   await expect.poll(()=>paused(page,'.background-preview video')).toBe(false);
   await page.emulateMedia({reducedMotion:'reduce'});
   await expect.poll(()=>paused(page,'.background-preview video')).toBe(true);

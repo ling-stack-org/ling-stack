@@ -26,8 +26,8 @@ html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell
   --conversation-document-width: fit-content;
 }
 /* Protect populated table rows, keeping its empty layout area transparent. */
-html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell .plugin-table-row { background: var(--ling-card-bg); }
-html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell .plugin-table-row:hover { background: var(--ling-row-hover-bg); }
+html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell :is(.plugin-table-row, .plugin-marketplace-row) { background: var(--ling-card-bg); }
+html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell :is(.plugin-table-row, .plugin-marketplace-row):hover { background: var(--ling-row-hover-bg); }
 html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell.desktop-window-shell > .desktop-window-chrome {
   background: transparent;
   box-shadow: none;
