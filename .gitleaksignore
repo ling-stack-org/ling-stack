@@ -665,3 +665,6 @@ ef143ae45c701ef1ac75e64ef8926ceff5edc0da:packages/core/test/support/workflow-ste
 bba53def82ff0278856722e793b854928e1b161d:packages/daemon/test/conversation-summary-coordinator.test.mjs:generic-api-key:426
 49c4b9be2e370fd3bf154af5a47b148033b73245:packages/daemon/test/conversation-summary-coordinator.test.mjs:generic-api-key:426
 c3b2c4c5b3b4eff9f67de3948aca6b1e036d65d1:packages/daemon/test/conversation-summary-coordinator.test.mjs:generic-api-key:426
+
+# Synthetic conversation summary redaction fixture introduced by the main sync commit.
+7e5e998ca0b281de433c807362392724195ed9a9:packages/daemon/test/conversation-summary-coordinator.test.mjs:generic-api-key:426
