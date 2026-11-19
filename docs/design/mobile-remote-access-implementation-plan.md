@@ -9,6 +9,7 @@ Related documents:
 
 - [Ling Mobile Remote Access](mobile-remote-access.md)
 - [Mobile Remote Access Detailed Design](mobile-remote-access-detailed-design.md)
+- [Ling Server Connectivity](ling-server-connectivity.md)
 - [Mobile Conversation UI 2.0 Detailed Design](mobile-conversation-ui2-detailed-design.md)
 - [Mobile Approval and Creation Detailed Design](mobile-approval-and-creation-detailed-design.md)
 - [Platform Architecture](platform-architecture.md)
@@ -19,8 +20,8 @@ Related documents:
 
 Deliver an opt-in local Remote Gateway and first-party iOS/Android client that let one
 paired phone read and send text in approved Ling channels, normal conversations, and
-teammate-direct conversations over an encrypted tailnet path, resolve a server-approved
-subset of durable approvals, and perform narrow conversation/channel/existing-teammate
+teammate-direct conversations over the Ling Server direct or relayed peer path, resolve
+a server-approved subset of durable approvals, and perform conversation/channel/existing-teammate
 creation actions.
 The PC daemon remains authoritative. The implementation must not expose the existing
 daemon router, accept remote filesystem paths, or merge to `main` before the Mobile shared
@@ -30,7 +31,9 @@ boundary and security review is complete.
 
 - Mobile is a React Native app under `apps/mobile`, using an Expo development build unless
   the native secure-key spike proves Expo cannot meet the release security requirements.
-- V1 networking uses Tailscale Serve to a loopback-only Gateway listener.
+- D12 provides Ling Server enrollment and signaling, direct WebRTC paths and
+  encrypted TURN fallback. The Gateway receives typed traffic through a private
+  transport adapter. [D12 connectivity](ling-server-connectivity.md)
 - Remote Gateway runs in the daemon process on a separate listener and receives a narrow
   service facade; it never mounts the general daemon router.
 - V1 permits synchronized list/open/read and plain-text send for channels, normal
@@ -314,8 +317,8 @@ Modules:
 
 Work:
 
-1. Start a loopback-only listener on a separate port behind explicit Tailscale Serve
-   configuration. Reject wildcard/plaintext external binding.
+1. Keep the Gateway isolated from the general daemon router. For D12, enroll the PC
+   transport with Ling Server and pass authenticated peer traffic to the Gateway.
 2. Implement pairing reservation, QR rotation/expiry, PC confirmation, challenge-response,
    Gateway pin verification, replay protection, one-device compare-and-swap, session
    replacement, revoke, and disable.
@@ -423,7 +426,7 @@ days.
 
 Modules:
 
-- real daemon + Gateway + Tailscale Serve
+- real daemon + Gateway + self-hosted Ling Server
 - real iPhone development build
 - Android emulator build
 - CI/package workflows isolated from unrelated jobs
@@ -439,7 +442,7 @@ pair -> initial list -> open all three kinds -> mark read -> send each kind
 Required evidence:
 
 - real iPhone Secure Enclave and changed-Gateway rejection;
-- Tailscale direct and relay path, Wi-Fi/cellular switch, background/foreground;
+- Ling Server direct and relay paths, Wi-Fi/cellular switch, background/foreground;
 - second-device rejection, QR expiry/rotation, auth replay, unsafe binding failure;
 - large transcript pagination, bounded slow-client queue, and memory/scroll stability;
 - Mobile conversational-reply eval proving useful text replies while tools, proposals, and
@@ -600,7 +603,7 @@ lockfile.
     conversation/profile services.
   - Verify: store crash/race tests, daemon integration tests, authority eval.
 - [ ] **T4 (P1, human: ~3.5 days / Codex-assisted: ~2 days)** — Gateway and PC surface —
-  add loopback listener, pairing/auth/session/projection, Tailscale checks, local management
+  add loopback listener, pairing/auth/session/projection, Ling Server path checks, local management
   capability/Origin/CSRF guards, and Device settings UI.
   - Surfaced by: no live Gateway or PC pairing surface exists yet.
   - Files: daemon remote access, `apps/web/src/features/settings/mobile-access/`, settings
@@ -623,7 +626,7 @@ lockfile.
 - [ ] **T7 (P1, human: ~4 days / Codex-assisted: ~2.5 days)** — Live acceptance — connect
   the real iPhone to the real PC and close security, retry, reconnect, performance,
   rollback, and internal signing evidence.
-  - Surfaced by: simulator/unit evidence cannot prove Tailscale or hardware-key behavior.
+  - Surfaced by: simulator/unit evidence cannot prove direct/relay behavior or hardware-key behavior.
   - Files: cross-module integration tests, Mobile E2E evidence, isolated CI/package jobs.
   - Verify: the complete P6 acceptance path and final repository-wide gates.
 - [ ] **T8 (P1, human: ~2 days / Codex-assisted: ~1 day)** — Shared message semantics —
@@ -901,7 +904,7 @@ Scope:
   generic conversation, read-state, and profile DTOs before live integration;
 - build a minimal iOS/Android native-key spike that generates, signs, and verifies a
   P-256 key without exporting the release private key;
-- verify that Gateway application-key pinning and Tailscale Serve TLS work on both mobile
+- verify that Gateway application-key pinning and Ling Server TLS work on both mobile
   platforms;
 - add import guards proving protocol code has no Node-only or React dependency unless a
   platform adapter explicitly supplies it.
@@ -948,7 +951,7 @@ simulators may prove compile/autolink and fail-closed behavior but are not hardw
 
 The iOS half of this gate is recorded in the
 [Mobile real-device evidence](../../apps/mobile/README.md#recorded-slice-1-device-evidence).
-Android physical-device and real Tailscale Serve transport evidence remain pending, so S1
+Android physical-device and real Ling Server transport evidence remain pending, so S1
 is not yet release-closed.
 
 Checkpoint: this slice is safe to implement while UI 2.0 is active. Any change to an
@@ -1027,9 +1030,9 @@ Scope:
 
 - add `remoteAccess` daemon config with `enabled=false`, loopback host, separate port, and
   explicit supported network mode;
-- create the independent HTTP/WebSocket listener; allow loopback HTTP/WS only as the
-  backend of explicitly configured Tailscale Serve, and refuse wildcard or externally
-  reachable plaintext configuration;
+- retain the local Gateway listener and add the D12 peer transport through the
+  private Gateway interface. Reject wildcard Gateway bindings and external
+  plaintext configuration;
 - expose only minimal unauthenticated health and pairing/session WebSocket paths;
 - implement Gateway identity creation, pairing-window lifecycle, HMAC/device proof, local
   confirmation, single-candidate reservation/QR rotation, active-device compare-and-swap,
@@ -1040,8 +1043,8 @@ Scope:
 - add CLI `enable/status/pair/revoke/disable` commands;
 - add the UI 2.0 PC companion surface under `Settings -> Device -> Mobile Access` for
   enable, QR generation, candidate confirmation/rejection, paired status, and revoke;
-- add a Tailscale Serve setup/status check without automatically changing the user's
-  tailnet configuration.
+- add a Ling Server setup/status check without automatically changing the user's
+  server configuration.
 
 Hard guards:
 
@@ -1191,7 +1194,7 @@ UI 2.0 boundary:
 
 Scope:
 
-- pair a real phone with a real PC through Tailscale Serve;
+- pair a real phone with a real PC through Ling Server;
 - list locally allowed channels, normal conversations, and teammate-direct conversations;
 - open snapshot and consume live deltas from PC-originated and mobile-originated messages;
 - send plain text with durable command receipts;
@@ -1201,7 +1204,7 @@ Scope:
 - retry before/after the signed deadline and after full-receipt compaction, proving the
   tombstone prevents a duplicate and expired commands cannot restart work;
 - test Wi-Fi/cellular changes, background/foreground, PC sleep/wake, daemon restart,
-  Tailscale direct/relay paths, revoke online/offline, and second-device rejection;
+  Ling Server direct/relay paths, revoke online/offline, and second-device rejection;
 - add safe diagnostics for user-visible connection errors.
 - run a conversational-reply eval/fixture suite proving normal questions still receive a
   useful reply while tool calls, hidden proposals, and workflow auto-start remain blocked;
@@ -1255,7 +1258,8 @@ Scope:
 - add user-facing CLI/Desktop diagnostics for enabled, reachable, paired, online, and
   revoked states;
 - build signed iOS internal/TestFlight and Android internal/AAB artifacts;
-- document Tailscale prerequisite and setup verification;
+- document Ling Server deployment, DNS/TLS, direct-path, relay, and firewall
+  verification;
 - keep mobile CI jobs isolated from normal Web/daemon jobs so mobile signing/runners or
   account billing limits cannot block unrelated checks;
 - conduct focused security review and real-device acceptance;
@@ -1489,7 +1493,7 @@ than hiding them in one end-to-end script:
 | Remote creation | `packages/daemon/test/remote-creation-facade.test.mjs` | Atomic normal/direct/channel create, server defaults, catalog, additive member, forbidden fields |
 | Client | `packages/remote-client/test/client.test.mjs` | State machine, reconnect, cold-start snapshot, sequence gap, retry deadline, busy, binding change |
 | Mobile unit | `apps/mobile/test/remote-connection-state.test.ts` plus approval/creation contract tests | Secure-key boundary, UI states, shared message adapter, approval/local-auth/race, drafts/forms/pickers |
-| Real-device E2E | `apps/mobile/e2e/remote-access.real-device.md` plus the selected iOS/Android harness | Tailscale Serve, Wi-Fi/cellular, background/foreground, PC restart, revoke |
+| Real-device E2E | `apps/mobile/e2e/remote-access.real-device.md` plus the selected iOS/Android harness | Ling Server direct/relay, Wi-Fi/cellular, background/foreground, PC restart, revoke |
 
 The real-device artifact is a release checklist, not a substitute for the unit and
 integration tests. If the Mobile framework uses a different test runner, preserve these
@@ -1570,7 +1574,7 @@ Android client as release-ready.
 - Creating/configuring AI teammates; channel rename/archive/delete; teammate removal,
   default selection, or broad membership replacement.
 - PC theme creation/import, remote PC-theme mutation, or user activity/Token analytics.
-- Multiple phones, multiple PCs, Ling accounts, cloud relay, or offline mutation queue.
+- Multiple phones, multiple PCs, hosted Ling accounts, or offline mutation queue.
 - A shared native component package before a second native consumer exists.
 - Public port-forwarding support.
 - Reliable background approval push without an APNs-capable service.
@@ -1584,6 +1588,7 @@ and adds only redacted `allow_once` approval plus narrow server-default creation
 
 Implementation is still gated by work, not a choice: finish the shared Mobile message
 adapter/renderer, land atomic shared approval resolution, implement bounded approval and
-creation facades/UI, prove real Tailscale transport, and complete the iOS E2E matrix.
+creation facades/UI, prove the self-hosted Ling Server direct and relay paths, and
+complete the iOS E2E matrix.
 Physical Android hardware evidence remains the public Android release gate. A failed
 native-key or local-auth gate is not permission to weaken authentication.

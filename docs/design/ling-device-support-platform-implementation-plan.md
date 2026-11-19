@@ -2,11 +2,12 @@
 
 Status: tracking plan; implementation not started
 Owner: Ling platform maintainers
-Last verified: 2026-11-19
+Last verified: 2026-11-20 (D12 connectivity design)
 Document type: staged implementation and acceptance record
 Related design: [Ling Device Support Platform](ling-device-support-platform.md)
 Runtime contract: [Ling Device Support Platform Runtime Contract](ling-device-support-platform-runtime-contract.md)
 Developer workflows and topology: [Device Developer Execution and Connectivity](ling-device-developer-execution.md)
+Ling Server communication: [Ling Server Connectivity](ling-server-connectivity.md)
 
 This plan records delivery one slice at a time. A slice is not complete because code
 compiles or a static package check passes. Each completed slice must record behavior
@@ -52,7 +53,7 @@ validation and the boundary of what remains unverified.
 | D9 | [ ] | Standalone Mobile execution | One phone restores a supported BLE device's network connection with no PC or Gateway and verifies the result | Shared contract fixtures and real phone/device acceptance |
 | D10 | [ ] | Developer device sessions | Complete build, deploy, debug, verify, and native-tool workflows on supported host and target combinations | Project/device integration, native-tool and reattach acceptance |
 | D11 | [ ] | PC-assisted Mobile execution | Paired PC contributes plans, artifacts, or analysis while Mobile owns the task and device link | Collaboration contract fixtures and physical device runs |
-| D12 | [ ] | Ling Server connectivity | Paired conversation and device-task sync survive LAN, cross-network direct, and encrypted relay routes | Multi-network tests, peer identity and reconnect evidence |
+| D12 | [ ] | Ling Server connectivity | Self-hosted control, direct peer paths, NAT traversal, encrypted relay fallback, and paired conversation/device-task sync work without third-party network services | Multi-network tests, peer identity, payload confidentiality, and reconnect evidence |
 | D13 | [ ] | Hardware protocol development and debugging | Capture, decode, replay, and verify a hardware protocol and register the tested adapter for standard use | Shared codec fixtures and physical PC and Mobile device runs |
 
 ## D0: Design baseline
@@ -347,23 +348,34 @@ only on a successful install or a model response.
 
 ### Scope
 
-- [ ] Add outbound enrollment, peer rendezvous, route selection, and encrypted relay
-  for paired phone and PC connections. Retain local PC pairing confirmation and
-  peer identity checks across all routes.
-- [ ] Carry the Gateway's eligible application messages across LAN, authenticated
-  internet direct, and encrypted relay routes. Preserve protocol version
-  negotiation, command receipts, and session resumption.
-- [ ] Measure path establishment, relay use, and recovery after network changes.
-  Track service availability, resource limits, and redacted connection diagnostics.
+- [ ] Implement the self-hosted Ling Server control API, enrollment, presence,
+  rendezvous, server identity, peer epochs, revocation, and metadata persistence.
+- [ ] Implement signed WebRTC signaling and direct LAN or cross-network ICE paths on
+  PC and Mobile. Use Ling Server's configured STUN endpoint for discovery.
+- [ ] Integrate self-hosted coturn for fallback, with scoped credential issuance, UDP
+  relay and TURN/TLS on TCP 443. Verify allocation limits and expiry on the chosen stack.
+- [ ] Carry Gateway conversation, developer-collaboration, and device-task messages
+  over the same peer session contract. Preserve cursors, receipts, idempotency,
+  artifact chunking, route migration, and session resumption.
+- [ ] Package single-node self-hosting with SQLite and define a scaled deployment
+  with PostgreSQL, stateless control workers, and relay affinity.
+- [ ] Add diagnostics for control reachability, candidate paths, selected route,
+  peer handshake, cursor resume, relay quotas, and revocation.
+- [ ] Migrate existing pairings through local confirmation and an explicitly
+  versioned routing profile. Exercise key mismatch and retained receipts at cutover.
 
 ### Exit evidence
 
 - Test a reachable LAN, a direct connection across networks, and a NAT/firewall
-  fixture requiring relay. Include route switching during live conversation and
-  device-task sync and an outage with local execution available.
-- Verify peer-key mismatch, unauthorized relay access, expiry, and revocation.
-  Verify that the relay carries ciphertext and that reconnect resumes the same
-  task without dispatching a second attempt.
+  fixture requiring the Ling Relay. Include route switching during live conversation
+  and device-task sync and a server outage with local execution available.
+- Verify peer-key mismatch, unauthorized relay access, credential expiry, peer epoch
+  revocation, malformed frames, and oversized data. Verify that the relay cannot
+  read peer payloads and that reconnect resumes the same task without dispatching
+  a second attempt.
+- Run the complete acceptance matrix in the
+  [Ling Server Connectivity design](ling-server-connectivity.md) with no Tailscale,
+  Headscale, NetBird, or hosted relay account installed.
 
 ## D13: Hardware protocol development and debugging
 
@@ -410,7 +422,7 @@ Update this table in the same PR that changes a slice status.
 | D9 | — | — | [Design](ling-device-support-platform.md#111-standalone-mobile-execution) | Design recorded, implementation not started | Standalone BLE execution and device acceptance |
 | D10 | — | — | [Developer sessions](ling-device-developer-execution.md#1-device-sessions) | Design recorded, implementation not started | Project, device, and native tool acceptance |
 | D11 | — | — | [PC collaboration](ling-device-developer-execution.md#22-pc-assisted-phone-execution) | Design recorded, implementation not started | Phone-owned collaboration and physical cases |
-| D12 | — | — | [Communication design](ling-device-developer-execution.md#3-communication-design) | Design recorded, implementation not started | Direct paths, relay, and reconnect acceptance |
+| D12 | — | Documentation links, license and public checks plus diagram rendering | [Ling Server design](ling-server-connectivity.md) | Detailed self-hosted design recorded, implementation not started | WebRTC integration, self-hosted STUN/TURN, migration, and cross-network acceptance |
 | D13 | — | Documentation, license and public checks plus diagram rendering | [Workbench design and research](ling-hardware-protocol-workbench.md) | Proposed design documented, implementation not started | Runtime and library evaluation, offline fixtures, and physical acceptance |
 
 ## Definition of platform completion

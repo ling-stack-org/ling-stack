@@ -4,6 +4,7 @@ Status: generic conversation protocol implemented on the isolated branch; approv
 creation amendment designed, implementation pending
 Date: 2026-08-01
 Parent: [Ling Mobile Remote Access](mobile-remote-access.md)
+Connectivity authority: [Ling Server Connectivity](ling-server-connectivity.md)
 
 ## Purpose
 
@@ -13,13 +14,13 @@ resume behavior, storage, and validation requirements.
 
 The design assumes that remote conversation content is sensitive and that an attacker may:
 
-- be another authenticated member of the same tailnet;
+- be another authenticated peer on the same Ling Server installation;
 - observe, delay, reorder, duplicate, or reconnect network traffic;
 - obtain an expired or photographed pairing QR;
 - send arbitrary WebSocket frames and oversized payloads;
 - race a legitimate phone during pairing or reconnection;
 - steal a paired phone without unlocking the PC;
-- know the PC tailnet name and Gateway endpoint;
+- know the Ling Server origin and Gateway endpoint;
 - exploit accidental route reuse or a permissive CORS configuration.
 
 The design does not claim to protect a rooted/jailbroken phone, a fully compromised PC,
@@ -41,8 +42,9 @@ Therefore Remote Access must not:
 - change the main daemon host to `0.0.0.0`;
 - forward arbitrary remote paths to the daemon router;
 - attach authentication to only a few existing routes and assume the rest are safe;
-- expose `/rpc/stream` through Tailscale Serve, NetBird, LAN, or port forwarding;
-- trust tailnet membership as sufficient Ling authorization.
+- expose `/rpc/stream` through the general daemon listener, Ling Server, LAN,
+  or public port forwarding;
+- trust network membership as sufficient Ling authorization.
 
 ## Security Invariants
 
@@ -116,46 +118,36 @@ new protocol version rather than silently changing a released strict event union
 
 ## Network Topology
 
-V0 uses this topology:
+The D12 design uses Ling Server signaling and a WebRTC DataChannel:
 
 ```text
-Mobile app
-   |
-   | wss://<pc-tailnet-name>/remote/v1/session
-   | TLS plus the tailnet's encrypted transport
-   v
-Tailscale Serve
-   |
-   | loopback proxy only
-   v
-127.0.0.1:17892  Remote Gateway
-
-127.0.0.1:17891  General daemon API (not proxied)
+Control      Mobile <----- Ling Server signaling -----> PC transport
+Direct       Mobile <-------- DataChannel ------------> PC transport
+Relay        Mobile <----- Ling Server TURN ----------> PC transport
+PC transport -> private typed channel -> Remote Gateway facade
+General daemon API -> loopback-only local clients
 ```
 
-The external leg is always HTTPS/WSS. In the supported Tailscale Serve mode, Serve
-terminates TLS and forwards its loopback backend over HTTP/WS; that backend hop is allowed
-only because the Gateway is bound to `127.0.0.1` and still performs the full Ling device
-challenge. It is not a substitute for authentication.
+HTTPS/WSS protects the control connection. The PC and phone verify the signed
+negotiation and the Gateway challenge before handling any application data. The
+existing Gateway-origin QR, HTTP challenge and WebSocket schemas below describe the
+implemented transport profile. D12 introduces explicit server and Gateway identities
+in a negotiated profile and migrates installed pairings through local confirmation.
+[D12 Gateway integration and migration](ling-server-connectivity.md#61-gateway-integration-and-migration)
 
 Required deployment rules:
 
-- Gateway binds only to loopback when Tailscale Serve is used.
-- Tailscale Serve forwards only the Remote Gateway listener, never the general daemon.
-- Public Funnel mode is unsupported.
-- Plain `ws://` and `http://` are accepted in production only for the loopback backend of
-  an explicitly selected `tailscale_serve` mode; they are rejected on any non-loopback
-  interface and in direct-overlay mode.
-- Production startup fails if configured with external plaintext transport, wildcard host,
-  an unrecognized proxy mode, or the same port/router as the daemon.
-- A process connecting directly to the loopback Gateway cannot bypass device auth; proxy
-  headers and source IP are never treated as a Ling principal.
-- Gateway does not rely on Tailscale identity headers for Ling device authorization.
+- Bind existing Gateway HTTP/WS access to its configured local transport. D12 passes
+  authenticated peer traffic through the private Gateway transport adapter.
+- Keep the general daemon router bound to loopback.
+- Reject external plaintext transport, wildcard Gateway binding, and attempts to use
+  the same router as the daemon API.
+- Check Gateway session authentication using the active pairing. Peer reachability
+  and relay admission give routing eligibility.
 
-The QR pins a long-lived Gateway application identity key, not a rotating public TLS
-certificate. The mobile app still performs normal TLS validation, then verifies the signed
-Gateway handshake against the QR fingerprint. A later direct-overlay adapter may pin a
-dedicated TLS SPKI, but it cannot silently replace application-level verification.
+The QR pins a long-lived Gateway application identity key. D12 also pins the Ling
+Server application key for control. Mobile verifies the configured TLS trust and both
+application identities using their respective signed handshakes.
 
 ## Identity and Key Material
 
@@ -379,7 +371,7 @@ On accept, one SQLite transaction:
 
 On reject, timeout, or daemon restart, the pending candidate and usable secret are cleared
 from memory and the pairing UI generates a fresh pairing id/secret. Rate limits and the
-short reservation window bound a tailnet peer's ability to hold the PC in a pending state.
+short reservation window bound a Ling peer's ability to hold the PC in a pending state.
 
 The Gateway returns a `pair.accepted` frame signed by its identity key. The phone verifies
 that signature against the fingerprint in the QR before persisting the pairing.
@@ -996,7 +988,7 @@ body, raw payload, local path, or transcript content.
 
 | Threat | Control | Residual risk |
 | --- | --- | --- |
-| Another device on the tailnet calls Gateway | Device challenge signature and active-device record | Compromised paired phone remains trusted until revoke. |
+| Another peer on the Ling Server route calls Gateway | Device challenge signature and active-device record | Compromised paired phone remains trusted until revoke. |
 | QR is photographed | Five-minute candidate reservation, QR rotation on reject, plus PC-local device confirmation | Owner can approve the wrong device if they ignore the phrase/name. |
 | Captured auth proof is replayed | Fresh single-use server challenge, origin/session/epoch binding | Compromised Gateway process can issue valid challenges. |
 | Command is replayed after disconnect | Expiry, session sequence, durable command receipt | Retention must exceed retry horizon. |
@@ -1118,10 +1110,10 @@ available only in local safe diagnostics.
 - iOS release build proves the private key is hardware/Keychain backed and non-exportable;
 - Android release build proves Keystore-backed key generation and signing;
 - both platforms reject a changed Gateway identity fingerprint;
-- a third device in the same tailnet cannot authenticate to Ling;
+- a third device on the same Ling Server installation cannot authenticate to Ling;
 - local revoke works while the phone is online and while it is offline;
 - proxy inspection confirms no credentials are placed in URLs, no plaintext traffic leaves
-  loopback, and the external phone-to-Serve leg is HTTPS/WSS;
+  loopback, and the external phone-to-Ling-Server leg is HTTPS/WSS;
 - a focused penetration test covers pairing race, replay, frame fuzzing, downgrade, route
   confusion, rate-limit bypass, and log/diagnostic leakage.
 - iOS Release verifies the high-risk approval screen invokes local Face ID/Touch ID/

@@ -17,6 +17,8 @@ execution hosts.
 Session modes, PC-assisted Mobile execution, self-hosted connectivity, and device
 case flows are specified in
 [Device Developer Execution and Connectivity](ling-device-developer-execution.md).
+[Ling Server Connectivity](ling-server-connectivity.md) defines the first-party
+control plane, direct peer paths, and relay fallback.
 
 ## 1. Purpose
 
@@ -431,7 +433,7 @@ configuration operations must not be silently promoted to physical control.
 | PC-assisted Mobile | Phone owns the task and target link. Paired PC contributes plans, artifacts, or analysis. | Phone at the device with a remote PC build or planning workspace |
 | Target-side executor | Remote Gateway -> service installed on target | Windows software repair, privileged system checks |
 | Hardware bridge | Mobile/Remote Gateway -> OBD/CAN/BLE/USB module | Vehicle and devices without a network API |
-| Ling Server relay | Paired phone and PC use an end-to-end encrypted relayed connection | Cross-network sync when a direct path is unavailable. Proposed in [D12](ling-device-support-platform-implementation-plan.md#d12-ling-server-connectivity). |
+| Ling Server direct or relay | Paired phone and PC use an authenticated direct path or an end-to-end encrypted Ling relay | Cross-network sync without a third-party VPN or hosted relay. [Ling Server design](ling-server-connectivity.md) |
 
 The [failure matrix](ling-device-support-platform-runtime-contract.md#5-failure-and-placement-matrix)
 specifies what the owning host can still observe or execute when a link, model service,

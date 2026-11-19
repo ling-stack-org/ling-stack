@@ -2,13 +2,14 @@
 
 Status: proposed design and acceptance criteria
 Owner: Ling platform maintainers
-Last verified: 2026-11-19
+Last verified: 2026-11-20 (D12 communication paths)
 Document type: developer sessions, communication, and device workflows
 
 Related documents:
 [Device Support Platform](ling-device-support-platform.md) ·
 [Runtime Contract](ling-device-support-platform-runtime-contract.md) ·
 [Hardware Protocol Workbench](ling-hardware-protocol-workbench.md) ·
+[Ling Server Connectivity](ling-server-connectivity.md) ·
 [Implementation Plan](ling-device-support-platform-implementation-plan.md)
 
 ## 1. Device sessions
@@ -191,27 +192,21 @@ confirmed state until the phone publishes a new receipt or observation.
 
 ### 3.1 Phone and PC
 
-The Mobile Remote Access design uses Tailscale Serve to reach the opt-in PC Gateway
-over HTTPS/WSS. Ling's remote protocol defines pairing identity, signed frames, command receipts, and reconnect
-semantics. D6 adds the PC-owned device task facade. PC assistance to a phone-owned
-task adds scoped proposal and evidence messages over a Mobile-initiated Gateway
-connection. [Mobile Remote Access design](mobile-remote-access-detailed-design.md)
-
-The proposed Ling Server provides a Ling-operated alternative for connectivity. A
-paired phone and PC can sync through an outbound encrypted relay even when direct
-connectivity fails. For direct paths, test LAN reachability and exchange candidates
-for cross-network peer connectivity. The design uses an established NAT traversal
-implementation such as ICE. Select the library and track supported network paths
-during D12. Every path carries the same authenticated application messages under
-the Gateway allowlist.
+Ling Server provides first-party enrollment, presence, signaling, and STUN/TURN.
+Paired phones and PCs carry the Ling application protocol over an authenticated
+WebRTC DataChannel. A direct ICE route carries data when available. The
+installation's TURN relay is the fallback. D6 adds the PC-owned task facade.
+D11 carries scoped proposals and evidence for phone-owned tasks.
+[Mobile Remote Access design](mobile-remote-access-detailed-design.md) ·
+[Ling Server design](ling-server-connectivity.md)
 
 ```mermaid
 flowchart LR
   Phone["Ling Mobile"]
   Gateway["PC Remote Gateway"]
-  Server["Ling Server: rendezvous, presence and relay"]
-  Phone <-->|"TLS signaling and relay registration"| Server
-  Gateway <-->|"TLS signaling and relay registration"| Server
+  Server["Ling Server signaling, STUN and TURN"]
+  Phone <-->|"HTTPS/WSS signaling"| Server
+  Gateway <-->|"HTTPS/WSS signaling"| Server
   Phone <-->|"1. Authenticated LAN path"| Gateway
   Phone <-->|"2. Authenticated cross-network direct path"| Gateway
   Phone <-->|"3. End-to-end encrypted relay traffic"| Server
@@ -221,10 +216,10 @@ flowchart LR
 | Responsibility | Design |
 | --- | --- |
 | Pairing and endpoint authentication | Keep local PC confirmation and pinned Ling peer identity. Authenticate both peers before accepting application messages. Bind a relayed channel to the same peer keys as a direct channel. |
-| Signaling and presence | Peers register outbound with the server and receive scoped rendezvous information and short-lived relay authorization for an allowed peer. Presence carries a last-seen time. |
+| Signaling and presence | Peers register outbound and exchange signed negotiation messages. Presence carries a last-seen time. The server issues expiring TURN credentials for an eligible relay attempt. |
 | Path selection and fallback | Reuse a reachable authenticated LAN path. Try authenticated internet direct connectivity with bounded traversal attempts. Use the encrypted relay when the direct path is unavailable. Reauthenticate route changes and measure fallback and reconnect time. |
 | Sync and resume | The owner publishes ordered events and durable receipts. A client resumes from its last observed revision or loads a current snapshot if history has expired. A duplicate action reference returns its recorded disposition. |
-| Data and operations | The server handles online and routing metadata, relay traffic and resource quotas. Private keys, target credentials and conversation, command and artifact plaintext stay at the participating endpoints. Track route choice, failures and capacity using redacted metadata. |
+| Data and operations | Ling Server handles online and routing metadata, relay traffic and resource quotas. Private keys, target credentials and conversation, command and artifact plaintext stay at the participating endpoints. Track route choice, failures and capacity using redacted metadata. |
 
 ```mermaid
 sequenceDiagram
@@ -233,16 +228,15 @@ sequenceDiagram
   participant P as PC Gateway
   M->>S: Register outbound and request the paired endpoint
   P->>S: Register outbound
-  S-->>M: Return rendezvous and scoped relay authorization
-  S-->>P: Return peer route information
+  S-->>M: Forward signed negotiation messages
+  S-->>P: Forward signed negotiation messages
   alt Authenticated LAN or cross-network path is reachable
     M->>P: Establish an authenticated peer channel
   else Network requires relay
-    M->>S: Request relay for the paired peer
-    M->>S: Open end-to-end peer channel
-    S->>P: Forward channel bytes
-    P->>S: Return channel response
-    S->>M: Forward channel bytes
+    M->>S: Request TURN credentials for the paired peer
+    S-->>M: Issue expiring relay credentials
+    S-->>P: Issue expiring relay credentials
+    M<<->>P: Establish DataChannel through TURN
   end
   Note over M,P: Peers verify paired identity before accepting signed messages
   M->>P: Exchange conversation and task cursors
@@ -250,16 +244,15 @@ sequenceDiagram
   M-->>P: Resume shared Mobile-owned task state
 ```
 
-Bind the encrypted channel to the existing Ling pairing before accepting application
-messages. Carry only Gateway protocol traffic over this channel. Support outbound
-relay transport over TLS for networks where UDP direct connectivity is unavailable.
-Gateway and Mobile peers enforce revocation on the currently active path. The server
-expires relay authorization and terminates affected relay routes.
+The Gateway checks the pairing and the authenticated peer channel before accepting
+application messages. TURN/TLS supports relay transport when UDP from the client is
+unavailable. Endpoints enforce peer revocation on the active path. Ling Server
+controls new relay admission and bounds the lifetime of existing allocations.
 
-Local execution and already authorized LAN peer connectivity work during a Ling Server
-outage. Remote reachability across networks depends on an available direct or relay
-path. Release acceptance includes pair/revoke, peer identity change, NAT and relay
-fallback, reconnect on a network change, and route migration during a live task.
+Local execution and an already established direct peer route can work during a Ling
+Server outage. Remote reachability across networks depends on an available direct or
+relay path. Release acceptance includes pair/revoke, peer identity change, NAT and
+relay fallback, reconnect on a network change, and route migration during a live task.
 Conversation and device-task updates use the same reachability layer while retaining
 their own permissions, event sequence, and owner.
 
