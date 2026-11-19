@@ -59,11 +59,13 @@ import type {
   ManagedPluginListResponse,
   ManagedPluginMutationResponse,
   ManagedPluginRefreshPackageResponse,
+  ManagedPluginUpdateCheckResponse,
   ManagedPluginRuntimePreviewResponse,
   ManagedPluginUninstallRequest,
   ManagedPluginUninstallResponse,
   PluginPackageDetailResponse,
   PluginPackageValidationResponse,
+  ManagedPluginCatalogResponse,
   PluginSourceListResponse,
   ProviderCheckResult,
   ProviderDraftCheckRequest,
@@ -263,6 +265,14 @@ export const adminEndpoints = {
       return this._post(`/plugins/${encodeURIComponent(pluginId)}/install`, { cwd }, input);
     },
 
+  async installManagedPluginRemote(this: LingDaemonEndpointContext,
+      cwd: string,
+      pluginId: string,
+      input: { readonly version?: string; readonly channel?: "stable" | "beta" | "dev" } = {},
+    ): Promise<ManagedPluginInstallResponse> {
+      return this._post(`/plugins/${encodeURIComponent(pluginId)}/install-remote`, { cwd }, input);
+    },
+
   async uninstallManagedPlugin(this: LingDaemonEndpointContext,
       cwd: string,
       pluginId: string,
@@ -279,12 +289,28 @@ export const adminEndpoints = {
       return this._post(`/plugins/${encodeURIComponent(pluginId)}/refresh-package`, { cwd }, input);
     },
 
+  async rollbackManagedPlugin(this: LingDaemonEndpointContext, cwd: string, pluginId: string): Promise<ManagedPluginRefreshPackageResponse> {
+      return this._post(`/plugins/${encodeURIComponent(pluginId)}/rollback`, { cwd }, {});
+    },
+
+  async checkManagedPluginUpdate(this: LingDaemonEndpointContext, cwd: string, pluginId: string): Promise<ManagedPluginUpdateCheckResponse> {
+      return this._post(`/plugins/${encodeURIComponent(pluginId)}/check-update`, { cwd }, {});
+  },
+
   async getManagedPluginRuntimePreview(this: LingDaemonEndpointContext, cwd: string, pluginId: string): Promise<ManagedPluginRuntimePreviewResponse> {
       return this._get(`/plugins/${encodeURIComponent(pluginId)}/runtime-preview`, { cwd });
     },
 
   async listPluginSources(this: LingDaemonEndpointContext, cwd: string): Promise<PluginSourceListResponse> {
       return this._get("/plugins/sources", { cwd });
+    },
+
+  async getOfficialPluginCatalog(
+    this: LingDaemonEndpointContext,
+    cwd: string,
+    options: { readonly cursor?: string; readonly limit?: number; readonly query?: string } = {},
+  ): Promise<ManagedPluginCatalogResponse> {
+      return this._get("/plugins/catalog", { cwd, cursor: options.cursor, limit: options.limit, query: options.query });
     },
 
   async getPluginPackage(this: LingDaemonEndpointContext, cwd: string, pluginId: string): Promise<PluginPackageDetailResponse> {

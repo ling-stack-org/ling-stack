@@ -246,7 +246,7 @@ async function waitForBundledProviderActivation({
   timeoutMs,
 }) {
   const url = new URL(
-    `/plugins/${encodeURIComponent("trusted-local:cua-driver")}/enable`,
+    `/plugins/${encodeURIComponent("official:cua-driver")}/enable`,
     `http://127.0.0.1:${daemonPort}`,
   );
   url.searchParams.set("cwd", workspaceCwd);

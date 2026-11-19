@@ -145,14 +145,16 @@ export function AutomationsPage(props: AutomationsPageProps): React.JSX.Element 
         t={t}
         onCreate={() => controller.openCreate("template")}
       />
-      <AutomationSchedulerSummary
-        busy={Boolean(props.schedulerAction)}
-        error={props.schedulerError}
-        scheduler={controller.schedulerViewModel}
-        t={t}
-        onStart={() => void runScheduler("start")}
-        onStop={() => void runScheduler("stop")}
-      />
+      {controller.summary.totalCount > 0 || props.schedulerError ? (
+        <AutomationSchedulerSummary
+          busy={Boolean(props.schedulerAction)}
+          error={props.schedulerError}
+          scheduler={controller.schedulerViewModel}
+          t={t}
+          onStart={() => void runScheduler("start")}
+          onStop={() => void runScheduler("stop")}
+        />
+      ) : null}
       {props.refreshError ? (
         <InlineFeedback className="automation-ui2-stale" title={t("Could not refresh automations")} tone="warning">
           <span>{props.refreshError}</span>

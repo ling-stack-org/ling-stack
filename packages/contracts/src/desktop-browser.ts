@@ -1,5 +1,5 @@
 export const DESKTOP_BROWSER_PROTOCOL = "ling.desktop-browser.v1";
-export const DESKTOP_BROWSER_PLUGIN_ID = "built-in:browser";
+export const DESKTOP_BROWSER_PLUGIN_ID = "official:ling-browser";
 export const DESKTOP_BROWSER_MCP_SERVER_ID = "mcp_browser";
 export const DESKTOP_BROWSER_MAX_TABS = 12;
 export const DESKTOP_BROWSER_MAX_RESULT_BYTES = 2 * 1024 * 1024;

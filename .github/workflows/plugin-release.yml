@@ -1,0 +1,100 @@
+name: Plugin release artifacts
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Plugin release tag
+        required: true
+        type: string
+      source_sha:
+        description: Reviewed source SHA
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - plugin: cua-driver
+            platform: darwin
+            arch: arm64
+          - plugin: cua-driver
+            platform: darwin
+            arch: x64
+          - plugin: cua-driver
+            platform: win32
+            arch: x64
+          - plugin: chrome-browser
+            platform: darwin
+            arch: arm64
+          - plugin: chrome-browser
+            platform: win32
+            arch: x64
+          - plugin: office-documents
+            platform: darwin
+            arch: arm64
+          - plugin: office-documents
+            platform: win32
+            arch: x64
+    runs-on: ${{ matrix.platform == 'darwin' && 'macos-14' || matrix.platform == 'win32' && 'windows-2025' || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 22.22.1
+          cache: pnpm
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.0.0
+      - run: corepack pnpm install --frozen-lockfile
+      - name: Build Chrome extension
+        if: matrix.plugin == 'chrome-browser'
+        run: |
+          corepack pnpm --filter @ling-stack/chrome-extension build
+          corepack pnpm --filter @ling-stack/browser-host build:native
+      - name: Build Office helper
+        if: matrix.plugin == 'office-documents'
+        run: corepack pnpm --filter @ling-stack/desktop exec node scripts/build-office-driver.mjs --platform=${{ matrix.platform }}-${{ matrix.arch }}
+      - name: Stage plugin runtime
+        if: matrix.plugin != 'cua-driver'
+        run: |
+          node scripts/plugins/stage-runtime-plugin.mjs --kind ${{ matrix.plugin }} --platform ${{ matrix.platform }} --extension apps/chrome-extension/ling-for-chrome.zip --host packages/browser-host/dist/native/ling-browser-host${{ matrix.platform == 'win32' && '.exe' || '' }} --helper apps/desktop/dist/office-driver/${{ matrix.platform }}-${{ matrix.arch }}/${{ matrix.platform == 'darwin' && 'OfficeDriver.app/Contents/MacOS/ling-office-driver' || 'ling-office-driver.exe' }} --output plugins/staged/${{ matrix.plugin }}
+      - run: node scripts/plugins/package-plugin.mjs --root ${{ matrix.plugin == 'cua-driver' && format('packages/daemon/src/features/plugins/bundled/{0}', matrix.plugin) || format('plugins/staged/{0}', matrix.plugin) }} --platform ${{ matrix.platform }} --arch ${{ matrix.arch }} --channel stable --releaseTag ${{ inputs.release_tag }} --sourceSha ${{ inputs.source_sha }} --output plugins/dist
+        env:
+          LING_PLUGIN_ARTIFACT_PRIVATE_KEY: ${{ secrets.LING_PLUGIN_ARTIFACT_PRIVATE_KEY }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: plugin-${{ matrix.plugin }}-${{ matrix.platform }}-${{ matrix.arch }}
+          path: plugins/dist/*
+
+  publish:
+    needs: package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: plugins/dist
+          pattern: plugin-*
+          merge-multiple: true
+      - run: corepack pnpm --filter @ling-stack/plugin-sdk build
+      - run: node scripts/plugins/generate-catalog.mjs --input plugins/dist --output plugins/catalog.json --releaseTag ${{ inputs.release_tag }} --sourceSha ${{ inputs.source_sha }}
+      - run: node scripts/plugins/verify-catalog-assets.mjs --input plugins/dist --catalog plugins/catalog.json
+      - name: Sign catalog
+        env:
+          LING_PLUGIN_CATALOG_PRIVATE_KEY: ${{ secrets.LING_PLUGIN_CATALOG_PRIVATE_KEY }}
+        run: node scripts/plugins/sign-catalog.mjs --input plugins/catalog.json --output plugins/catalog.sig
+      - name: Create draft release and upload plugin assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ inputs.release_tag }}" --draft --title "Ling plugins ${{ inputs.release_tag }}" --notes "Official Ling plugin artifacts for ${{ inputs.source_sha }}"
+          gh release upload "${{ inputs.release_tag }}" plugins/dist/*.ling-plugin.zip plugins/dist/*.ling-plugin.zip.json plugins/catalog.json plugins/catalog.sig

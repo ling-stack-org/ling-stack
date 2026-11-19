@@ -28,7 +28,7 @@ export function createChromeBrowserDescriptor(): ManagedPluginDescriptor {
     id: CHROME_BROWSER_PLUGIN_ID,
     displayName: "Chrome",
     version: "0.1.1",
-    sourceKind: "built-in",
+    sourceKind: "official-remote",
     description: "Control Chrome with Ling.",
     trustSummary: "Uses the allowlisted local Ling Native Messaging Host and existing MCP approvals.",
     contributions: [{

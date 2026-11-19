@@ -664,7 +664,7 @@ export function parseManagedPluginRoute(
   pathname: string,
 ): {
   readonly pluginId: string;
-  readonly action?: "enable" | "disable" | "check" | "connect" | "pairing" | "revoke" | "repair-browser-host" | "apply-preset" | "validate-package" | "install" | "uninstall" | "refresh-package" | "runtime-preview";
+  readonly action?: "enable" | "disable" | "check" | "check-update" | "connect" | "pairing" | "revoke" | "repair-browser-host" | "apply-preset" | "validate-package" | "install" | "install-remote" | "uninstall" | "refresh-package" | "rollback" | "runtime-preview";
 } | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 2 && segments[0] === "plugins") {
@@ -677,6 +677,7 @@ export function parseManagedPluginRoute(
       segments[2] === "enable" ||
       segments[2] === "disable" ||
       segments[2] === "check" ||
+      segments[2] === "check-update" ||
       segments[2] === "connect" ||
       segments[2] === "pairing" ||
       segments[2] === "revoke" ||
@@ -684,8 +685,10 @@ export function parseManagedPluginRoute(
       segments[2] === "apply-preset" ||
       segments[2] === "validate-package" ||
       segments[2] === "install" ||
+      segments[2] === "install-remote" ||
       segments[2] === "uninstall" ||
       segments[2] === "refresh-package" ||
+      segments[2] === "rollback" ||
       segments[2] === "runtime-preview"
     )
   ) {

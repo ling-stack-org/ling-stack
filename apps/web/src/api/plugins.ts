@@ -7,6 +7,7 @@ import type {
   ManagedPluginApplyPresetRequest,
   ManagedPluginApplyPresetResponse,
   ManagedPluginCheckResponse,
+  ManagedPluginCatalogResponse,
   ManagedPluginConnectRequest,
   ManagedPluginConnectResponse,
   ManagedPluginCreateRequest,
@@ -90,6 +91,18 @@ export async function installManagedPlugin(
   return daemonClient.installManagedPlugin(cwd, pluginId, input);
 }
 
+export async function installManagedPluginRemote(cwd: string, pluginId: string, input: { readonly version?: string; readonly channel?: "stable" | "beta" | "dev" } = {}): Promise<ManagedPluginInstallResponse> {
+  return daemonClient.installManagedPluginRemote(cwd, pluginId, input);
+}
+
+export async function rollbackManagedPlugin(cwd: string, pluginId: string): Promise<ManagedPluginRefreshPackageResponse> {
+  return daemonClient.rollbackManagedPlugin(cwd, pluginId);
+}
+
+export async function checkManagedPluginUpdate(cwd: string, pluginId: string) {
+  return daemonClient.checkManagedPluginUpdate(cwd, pluginId);
+}
+
 export async function uninstallManagedPlugin(
   cwd: string,
   pluginId: string,
@@ -112,6 +125,13 @@ export async function getManagedPluginRuntimePreview(cwd: string, pluginId: stri
 
 export async function listPluginSources(cwd: string): Promise<PluginSourceListResponse> {
   return daemonClient.listPluginSources(cwd);
+}
+
+export async function getOfficialPluginCatalog(
+  cwd: string,
+  options: { readonly cursor?: string; readonly limit?: number; readonly query?: string } = {},
+): Promise<ManagedPluginCatalogResponse> {
+  return daemonClient.getOfficialPluginCatalog(cwd, options);
 }
 
 export async function getPluginPackage(cwd: string, pluginId: string): Promise<PluginPackageDetailResponse> {

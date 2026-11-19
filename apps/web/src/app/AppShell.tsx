@@ -739,6 +739,11 @@ export function AppShell(): React.JSX.Element {
   useNotificationBridge({ cwd: form.cwd.trim() });
   const {
     plugins,
+    catalog: pluginCatalog,
+    catalogLoading: pluginCatalogLoading,
+    catalogLoadingMore: pluginCatalogLoadingMore,
+    catalogHasMore: pluginCatalogHasMore,
+    catalogError: pluginCatalogError,
     pluginsLoading,
     pluginPendingActions,
     pluginActionErrors,
@@ -746,6 +751,7 @@ export function AppShell(): React.JSX.Element {
   const pluginsLoadError = pluginsDomain.error?.scope === "load" ? pluginsDomain.error.message : "";
   const {
     refreshPlugins,
+    refreshCatalog,
     createPlugin,
     previewPluginImport,
     applyPluginImport,
@@ -754,8 +760,10 @@ export function AppShell(): React.JSX.Element {
     checkPlugin,
     validatePackage,
     installPlugin,
+    installRemotePlugin,
     uninstallPlugin,
     refreshPluginPackage,
+    rollbackPlugin,
     previewPluginRuntime,
     enablePlugin,
     disablePlugin,
@@ -1946,6 +1954,7 @@ export function AppShell(): React.JSX.Element {
     }
     if (activeView === "plugins") {
       void refreshPlugins();
+      void refreshCatalog();
     }
     if (activeView === "runs") {
       void refreshRuns();
@@ -3345,11 +3354,17 @@ export function AppShell(): React.JSX.Element {
                 ) : activeView === "plugins" ? (
                   <PluginManagerPage
                     plugins={pluginManagerPlugins}
+                    catalog={pluginCatalog}
+                    catalogLoading={pluginCatalogLoading}
+                    catalogLoadingMore={pluginCatalogLoadingMore}
+                    catalogHasMore={pluginCatalogHasMore}
+                    catalogError={pluginCatalogError}
                     isLoading={pluginsLoading}
                     loadError={pluginsLoadError}
                     pendingActions={pluginManagerPendingActions}
                     actionErrors={pluginManagerActionErrors}
-                    onRefresh={() => void refreshPlugins()}
+                    onRefresh={() => void Promise.all([refreshPlugins(), refreshCatalog()])}
+                    onLoadMoreCatalog={() => pluginsDomain.actions.loadMoreCatalog()}
                     onCreate={createPlugin}
                     onImportPreview={previewPluginImport}
                     onImportApply={applyPluginImport}
@@ -3358,8 +3373,10 @@ export function AppShell(): React.JSX.Element {
                     onCheck={checkPlugin}
                     onValidatePackage={validatePackage}
                     onInstall={installPlugin}
+                    onInstallRemote={installRemotePlugin}
                     onUninstall={uninstallPlugin}
                     onRefreshPackage={refreshPluginPackage}
+                    onRollback={rollbackPlugin}
                     onRuntimePreview={previewPluginRuntime}
                     onEnable={enablePlugin}
                     onDisable={disablePlugin}

@@ -6,7 +6,7 @@ import { createMcpStatusSnapshot, createMcpAuthStatus, deriveMcpServerStatus } f
 
 type Store = ManagedPluginStoreFacet & McpStoreFacet;
 export function createDesktopBrowserDescriptor(): ManagedPluginDescriptor {
-  return { id: DESKTOP_BROWSER_PLUGIN_ID, displayName: "Ling Browser", version: "0.1.0", sourceKind: "built-in",
+  return { id: DESKTOP_BROWSER_PLUGIN_ID, displayName: "Ling Browser", version: "0.1.0", sourceKind: "official-remote",
     description: "Browse websites and local development pages inside Ling Desktop.",
     trustSummary: "Uses an isolated workspace browser profile and existing MCP approvals. Page content cannot authorize actions.",
     contributions: [{ kind: "mcp-server", id: DESKTOP_BROWSER_MCP_SERVER_ID, label: "Ling browser tools",
@@ -21,7 +21,7 @@ export class DesktopBrowserPluginService {
 
   sync(cwd: string, now = new Date().toISOString()): ManagedPluginHealthSnapshot {
     const store = this.options.getStore(cwd), descriptor = this.descriptor;
-    if (!store.getManagedPlugin(descriptor.id)) store.upsertManagedPlugin({ id: descriptor.id, sourceKind: "built-in", version: descriptor.version, enabled: false, descriptor }, now);
+    if (!store.getManagedPlugin(descriptor.id)) store.upsertManagedPlugin({ id: descriptor.id, sourceKind: descriptor.sourceKind, version: descriptor.version, enabled: false, descriptor }, now);
     const enabled = store.getManagedPlugin(descriptor.id)?.enabled === true;
     const connected = this.options.controller.forWorkspace(cwd).snapshot().connected;
     const effective = enabled && connected;
@@ -49,7 +49,7 @@ export class DesktopBrowserPluginService {
 
   setEnabled(cwd: string, enabled: boolean, reason?: string): ManagedPluginHealthSnapshot {
     const store = this.options.getStore(cwd), now = new Date().toISOString();
-    store.upsertManagedPlugin({ id: this.descriptor.id, sourceKind: "built-in", version: this.descriptor.version, enabled,
+    store.upsertManagedPlugin({ id: this.descriptor.id, sourceKind: this.descriptor.sourceKind, version: this.descriptor.version, enabled,
       descriptor: this.descriptor, ...(!enabled && reason ? { disabledReason: reason } : {}) }, now);
     if (!enabled) this.options.controller.forWorkspace(cwd).cancelAll();
     store.appendManagedPluginEvent({ pluginId: this.descriptor.id, actor: "local-user", type: enabled ? "enabled" : "disabled", message: enabled ? "Ling Browser tools enabled." : "Ling Browser tools disabled." }, now);

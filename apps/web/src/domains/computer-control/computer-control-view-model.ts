@@ -6,7 +6,7 @@ import type {
 import type { ComputerControlDesktopCapability } from "../../../../desktop/shared/desktop-capabilities.js";
 import type { PluginActionError, PluginPendingAction } from "../plugins/use-plugins-domain.js";
 
-export const CUA_DRIVER_PLUGIN_ID = "trusted-local:cua-driver" as const;
+export const CUA_DRIVER_PLUGIN_ID = "official:cua-driver" as const;
 export const CUA_DRIVER_MCP_SERVER_ID = "mcp_cua_driver" as const;
 
 export type ComputerControlSurfaceMode =

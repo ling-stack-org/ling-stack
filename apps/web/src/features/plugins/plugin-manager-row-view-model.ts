@@ -41,7 +41,7 @@ export function buildPluginRowView(
   return {
     id: plugin.id,
     name: office?.name ?? plugin.displayName,
-    description: chrome?.description ?? office?.description ?? bundledCua?.description ?? (plugin.id === "trusted-local:cua-driver"
+    description: chrome?.description ?? office?.description ?? bundledCua?.description ?? (plugin.id === "official:cua-driver"
       ? t("Controls desktop apps through the local Cua Driver.")
       : plugin.description?.trim() ?? ""),
     sourceKind: plugin.sourceKind,
@@ -142,6 +142,9 @@ function deriveActions(
   if (plugin.actions.canRefreshPackage) {
     menuActions.push(action("refresh-package", t("Refresh package"), "secondary"));
   }
+  if (plugin.actions.canRollback) {
+    menuActions.push(action("rollback", t("Roll back"), "secondary"));
+  }
   if (plugin.actions.canUninstall) {
     menuActions.push(action("uninstall", t("Uninstall"), "danger"));
   }
@@ -160,6 +163,7 @@ function action(id: PluginActionView["id"], label: string, tone: PluginActionVie
 function pluginSourceLabel(sourceKind: ManagedPluginView["sourceKind"], t: Translate): string {
   if (sourceKind === "built-in") return t("Built-in");
   if (sourceKind === "bundled") return t("Bundled");
+  if (sourceKind === "official-remote") return t("Official");
   return t("Trusted local");
 }
 

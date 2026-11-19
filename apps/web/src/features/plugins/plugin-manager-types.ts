@@ -4,6 +4,7 @@ import type {
   ManagedPluginImportPreviewResponse,
   ManagedPluginImportSource,
   ManagedPluginView,
+  ManagedPluginCatalogResponse,
 } from "../../types.js";
 import type {
   PluginActionError,
@@ -64,6 +65,7 @@ export type PluginActionId =
   | "details"
   | "runtime-preview"
   | "refresh-package"
+  | "rollback"
   | "validate"
   | "uninstall";
 
@@ -155,6 +157,7 @@ export interface PluginActionHandlers {
   readonly onInstall: (pluginId: string) => void;
   readonly onRequestUninstall: (pluginId: string) => void;
   readonly onRefreshPackage: (pluginId: string) => void;
+  readonly onRollback: (pluginId: string) => void;
   readonly onRuntimePreview: (pluginId: string) => void;
   readonly onEnable: (pluginId: string) => void;
   readonly onDisable: (pluginId: string) => void;
@@ -165,11 +168,17 @@ export interface PluginActionHandlers {
 
 export interface PluginManagerPageProps {
   readonly plugins: readonly ManagedPluginView[];
+  readonly catalog?: ManagedPluginCatalogResponse;
+  readonly catalogLoading: boolean;
+  readonly catalogLoadingMore: boolean;
+  readonly catalogHasMore: boolean;
+  readonly catalogError: string;
   readonly isLoading: boolean;
   readonly loadError: string;
   readonly pendingActions: readonly PluginPendingAction[];
   readonly actionErrors: readonly PluginActionError[];
   readonly onRefresh: () => void;
+  readonly onLoadMoreCatalog: () => Promise<void>;
   readonly onCreate: (input: ManagedPluginCreateRequest, request: PluginActionRequest) => Promise<ManagedPluginView | undefined>;
   readonly onImportPreview: (source: ManagedPluginImportSource) => Promise<ManagedPluginImportPreviewResponse>;
   readonly onImportApply: (source: ManagedPluginImportSource, names: readonly string[]) => Promise<ManagedPluginImportApplyResponse>;
@@ -178,8 +187,10 @@ export interface PluginManagerPageProps {
   readonly onCheck: (pluginId: string, request: PluginActionRequest) => Promise<void>;
   readonly onValidatePackage: (pluginId: string, request: PluginActionRequest) => Promise<void>;
   readonly onInstall: (pluginId: string, request: PluginActionRequest) => Promise<void>;
+  readonly onInstallRemote: (pluginId: string, request: PluginActionRequest, version?: string) => Promise<void>;
   readonly onUninstall: (pluginId: string, request: PluginActionRequest) => Promise<void>;
   readonly onRefreshPackage: (pluginId: string, request: PluginActionRequest) => Promise<void>;
+  readonly onRollback: (pluginId: string, request: PluginActionRequest) => Promise<void>;
   readonly onRuntimePreview: (pluginId: string, request: PluginActionRequest) => Promise<void>;
   readonly onEnable: (pluginId: string, request: PluginActionRequest) => Promise<void>;
   readonly onDisable: (pluginId: string, request: PluginActionRequest) => Promise<void>;

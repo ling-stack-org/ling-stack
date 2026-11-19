@@ -18,7 +18,6 @@ import {
   isBundledEmbeddedCuaDriverRuntime,
   isBundledEmbeddedCuaDriverSelected,
 } from "./cua-driver-runtime-mode.js";
-import { BUNDLED_CUA_DRIVER_PLUGIN_ID } from "./bundled-index.js";
 import { CUA_DRIVER_PLUGIN_ID } from "./presets.js";
 
 type ManagedPluginRuntimeStore =
@@ -59,7 +58,7 @@ export function buildManagedPluginRuntimePreview(input: {
   }
   const health = input.store.getManagedPluginHealthSnapshot(input.descriptor.id, input.now);
   if (
-    (input.descriptor.id === "bundled:cua-driver" || bundledEmbedded)
+    (input.descriptor.id === "official:cua-driver" || bundledEmbedded)
     && health?.status !== "ready"
   ) {
     blockers.push(
@@ -134,12 +133,12 @@ export function createManagedPluginRuntimeSnapshot(input: {
       input.cuaDriverRuntimeAuthority,
       input.store.paths.cwd,
     )
-    && input.descriptors.some((descriptor) => descriptor.id === BUNDLED_CUA_DRIVER_PLUGIN_ID)
+    && input.descriptors.some((descriptor) => descriptor.id === CUA_DRIVER_PLUGIN_ID)
   ) {
     // Preserve package selection in the run snapshot even when the current
     // Desktop lease blocks injection. Do not mark every disabled descriptor
     // as selected merely because it exists in the bundled source index.
-    selectedPluginIds.add(BUNDLED_CUA_DRIVER_PLUGIN_ID);
+    selectedPluginIds.add(CUA_DRIVER_PLUGIN_ID);
   }
   const pluginIds = [...new Set(
     input.descriptors
@@ -168,6 +167,12 @@ export function toManagedPluginPackageView(packageRecord: ManagedPluginPackageRe
     installedAt: packageRecord.installedAt,
     updatedAt: packageRecord.updatedAt,
     uninstalledAt: packageRecord.uninstalledAt,
+    artifactId: packageRecord.artifactId,
+    platform: packageRecord.platform,
+    arch: packageRecord.arch,
+    sourceUrl: packageRecord.sourceUrl,
+    catalogVersion: packageRecord.catalogVersion,
+    previousVersion: packageRecord.previousVersion,
   };
 }
 

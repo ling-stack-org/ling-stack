@@ -1,6 +1,5 @@
-import { Search, Timer, X } from "lucide-react";
+import { Search, X } from "lucide-react";
 import {
-  EmptyState,
   IconButton,
   Input,
   Skeleton,
@@ -78,7 +77,7 @@ export function AutomationListPane({
   readonly onTabChange: (tab: AutomationTab) => void;
 }): React.JSX.Element {
   const hasContent = activeTab === "history" ? runs.length > 0 : definitions.length > 0 || drafts.length > 0;
-  const listLabel = activeTab === "history" ? t("Recent history") : t("Scheduled tasks");
+  const listLabel = activeTab === "history" ? t("Recent history") : t("Automation");
   return (
     <section className="automation-current-pane automation-ui2-list-pane" aria-label={listLabel} data-automation-list-pane>
       <div className="automation-ui2-toolbar">
@@ -155,14 +154,7 @@ export function AutomationListPane({
               />
             ) : null}
           </>
-        ) : (
-          <EmptyState
-            className="automation-ui2-empty"
-            compact
-            icon={search ? <Search size={18} /> : <Timer size={18} />}
-            title={activeTab === "history" ? t("No runs yet") : activeTab === "scheduled" ? t("No scheduled tasks yet") : t("No automations yet")}
-          />
-        )}
+        ) : null}
       </div>
     </section>
   );

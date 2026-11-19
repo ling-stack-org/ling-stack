@@ -1,13 +1,9 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Clock3, FileText, Globe2, Puzzle, Search } from "lucide-react";
 import { useI18n } from "../../i18n.js";
-import { useDesktopTitlebarPlacement } from "../../app/DesktopTitlebarSurface.js";
-import { PLUGIN_DRAFT_ID } from "../../domains/plugins/use-plugins-domain.js";
+import { Field, Input, Switch, Tabs, TabsList, TabsTrigger } from "../../shared/ui/index.js";
 import { CuaDriverInstallDrawer } from "./CuaDriverInstallDrawer.js";
-import { PluginCreateDialog } from "./PluginCreateDialog.js";
-import { PluginImportDialog } from "./PluginImportDialog.js";
 import { PluginDetailDrawer } from "./PluginDetailDrawer.js";
-import { PluginManagerHeader } from "./PluginManagerHeader.js";
-import { PluginManagerTable } from "./PluginManagerTable.js";
 import { buildPluginManagerCopy } from "./plugin-manager-copy.js";
 import type { PluginActionHandlers, PluginManagerPageProps } from "./plugin-manager-types.js";
 import { PluginUninstallDialog } from "./PluginUninstallDialog.js";
@@ -18,8 +14,8 @@ export type { PluginManagerPageProps } from "./plugin-manager-types.js";
 
 export function PluginManagerPage(props: PluginManagerPageProps): React.JSX.Element {
   const { t } = useI18n();
-  const titlebarPlacement = useDesktopTitlebarPlacement();
-  const [importOpen, setImportOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<"installed" | "available">("installed");
+  const [tabTouched, setTabTouched] = useState(false);
   const copy = useMemo(() => buildPluginManagerCopy(t), [t]);
   const controller = usePluginManagerController({
     plugins: props.plugins,
@@ -64,6 +60,12 @@ export function PluginManagerPage(props: PluginManagerPageProps): React.JSX.Elem
       owner,
       mutate: (request) => props.onRefreshPackage(pluginId, request),
     }),
+    onRollback: (pluginId) => controller.runMutation({
+      pluginId,
+      action: "refresh-package",
+      owner,
+      mutate: (request) => props.onRollback(pluginId, request),
+    }),
     onRuntimePreview: (pluginId) => controller.runMutation({
       pluginId,
       action: "runtime-preview",
@@ -96,7 +98,6 @@ export function PluginManagerPage(props: PluginManagerPageProps): React.JSX.Elem
       mutate: (request) => props.onRevokeChrome(pluginId, request),
     }),
   });
-  const rowHandlers = buildHandlers("row");
   const detailHandlers = buildHandlers("detail");
   const detailPlugin = props.plugins.find((plugin) => plugin.id === controller.detailPluginId);
   const detailRow = controller.rows.find((row) => row.id === controller.detailPluginId);
@@ -112,33 +113,147 @@ export function PluginManagerPage(props: PluginManagerPageProps): React.JSX.Elem
     ? controller.pendingActionFor(chromeConnectPlugin.id, "chrome-connect")
     : undefined;
 
+  const catalogEntries = useMemo(() => {
+    const query = controller.filters.query.trim().toLocaleLowerCase();
+    return (props.catalog?.catalog.plugins ?? []).filter((entry) => !query
+      || `${entry.displayName}\n${entry.description ?? entry.trustSummary}`.toLocaleLowerCase().includes(query));
+  }, [controller.filters.query, props.catalog]);
+  const installedPlugins = useMemo(
+    () => new Map(props.plugins.filter((plugin) => plugin.package?.status === "installed").map((plugin) => [plugin.id, plugin])),
+    [props.plugins],
+  );
+  const installedEntries = useMemo(
+    () => catalogEntries.filter((entry) => installedPlugins.has(entry.pluginId)),
+    [catalogEntries, installedPlugins],
+  );
+  const availableEntries = useMemo(
+    () => catalogEntries.filter((entry) => !installedPlugins.has(entry.pluginId)),
+    [catalogEntries, installedPlugins],
+  );
+  useEffect(() => {
+    if (!tabTouched && props.plugins.length > 0 && installedEntries.length === 0) setActiveTab("available");
+  }, [installedEntries.length, props.plugins.length, tabTouched]);
+  const visibleEntries = activeTab === "installed" ? installedEntries : availableEntries;
+  const catalogListRef = useRef<HTMLDivElement>(null);
+  function handleCatalogScroll(event: React.UIEvent<HTMLDivElement>): void {
+    const element = event.currentTarget;
+    if (element.scrollHeight - element.scrollTop - element.clientHeight < 160
+      && props.catalogHasMore
+      && !props.catalogLoadingMore) {
+      void props.onLoadMoreCatalog();
+    }
+  }
   return (
     <div className="plugin-manager-page">
       <section
-        className={`settings-plugin-manager titlebar-${titlebarPlacement}`}
-        aria-labelledby="plugin-manager-title"
+        className="settings-plugin-manager plugin-manager-no-titlebar plugin-manager-marketplace-only"
+        aria-label={t("Plugins")}
         data-retained-refresh={controller.retainedRefreshError ? "true" : undefined}
       >
-        <PluginManagerHeader
-          busyCreating={Boolean(controller.pendingActionFor(PLUGIN_DRAFT_ID, "create", "create"))}
-          controller={controller}
-          copy={copy}
-          isLoading={props.isLoading}
-          onRefresh={props.onRefresh}
-          t={t}
-                onOpenImport={() => setImportOpen(true)}
-      />
-        <PluginManagerTable
-          allRows={controller.rows}
-          copy={copy}
-          handlers={rowHandlers}
-          hasActiveFilters={controller.hasActiveFilters}
-          isLoading={props.isLoading}
-          onAdd={controller.openCreate}
-          onClearFilters={controller.clearFilters}
-          rows={controller.visibleRows}
-          t={t}
-        />
+        <section className="plugin-marketplace plugin-marketplace-view-official" aria-label={t("Official")}>
+          <div className="plugin-marketplace-content">
+            <div className="plugin-marketplace-toolbar">
+              <Tabs
+                value={activeTab}
+                onValueChange={(value) => {
+                  setTabTouched(true);
+                  setActiveTab(value as "installed" | "available");
+                }}
+              >
+                <TabsList aria-label={t("Plugin status")} className="plugin-marketplace-tabs" size="sm">
+                  <TabsTrigger value="installed">{t("Installed")} <span>{installedEntries.length}</span></TabsTrigger>
+                  <TabsTrigger value="available">{t("Not installed")} <span>{availableEntries.length}</span></TabsTrigger>
+                </TabsList>
+              </Tabs>
+              <Field className="plugin-marketplace-search" label={t("Search plugins")}>
+                <Input
+                  aria-label={t("Search plugins")}
+                  onChange={(event) => controller.setQuery(event.target.value)}
+                  placeholder={t("Search plugins")}
+                  prefix={<Search aria-hidden="true" />}
+                  size="sm"
+                  value={controller.filters.query}
+                />
+              </Field>
+            </div>
+            <div className="plugin-marketplace-list" onScroll={handleCatalogScroll} ref={catalogListRef}>
+              {visibleEntries.map((entry) => {
+                const installed = installedPlugins.get(entry.pluginId);
+                const artifact = entry.artifacts.find((candidate) => candidate.channel === "stable") ?? entry.artifacts[0];
+                const icon = entry.pluginId.includes("chrome")
+                  ? <Globe2 />
+                  : entry.pluginId.includes("office")
+                    ? <FileText />
+                    : entry.pluginId.includes("automation")
+                      ? <Clock3 />
+                      : <Puzzle />;
+                const pendingToggle = installed
+                  ? controller.pendingActionFor(installed.id, "row", "enable") ?? controller.pendingActionFor(installed.id, "row", "disable")
+                  : undefined;
+                const canToggle = installed
+                  ? installed.status === "enabled" ? installed.actions.canDisable : installed.actions.canEnable
+                  : false;
+                return (
+                  <article className="plugin-marketplace-row" key={entry.pluginId}>
+                    <span className="plugin-marketplace-icon" aria-hidden="true">{icon}</span>
+                    <div className="plugin-marketplace-copy">
+                      <div className="plugin-marketplace-name"><strong>{entry.displayName}</strong></div>
+                      <span>{entry.description ?? entry.trustSummary}</span>
+                      <small>{entry.latestStableVersion} · {t("Available for this device")} · {formatArtifactSize(artifact?.sizeBytes)}</small>
+                    </div>
+                    {installed ? (
+                      <div className="plugin-marketplace-toggle">
+                        <Switch
+                          aria-label={`${entry.displayName} ${installed.status === "enabled" ? t("Disable") : t("Enable")}`}
+                          checked={installed.status === "enabled"}
+                          disabled={!canToggle || Boolean(pendingToggle)}
+                          loading={Boolean(pendingToggle)}
+                          onCheckedChange={(checked) => void controller.runMutation({
+                            pluginId: installed.id,
+                            action: checked ? "enable" : "disable",
+                            owner: "row",
+                            mutate: (request) => checked
+                              ? props.onEnable(installed.id, request)
+                              : props.onDisable(installed.id, request),
+                          })}
+                        />
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        className="plugin-marketplace-action plugin-marketplace-action-primary"
+                        disabled={!artifact}
+                        onClick={() => artifact && void props.onInstallRemote(entry.pluginId, {
+                          owner: "row",
+                          requestId: `catalog-install:${entry.pluginId}:${Date.now()}`,
+                        }, artifact.version)}
+                      >
+                        {artifact ? t("Install") : t("Awaiting source")}
+                      </button>
+                    )}
+                  </article>
+                );
+              })}
+                  {!props.catalog && !props.catalogLoading ? (
+                    <div className="plugin-marketplace-empty" role="status">
+                      <strong>{props.catalogError ? t("Official plugin source unavailable") : t("No plugin source connected")}</strong>
+                      <span>{props.catalogError ?? t("Connect the local service to load the official plugin list.")}</span>
+                      <button type="button" onClick={props.onRefresh}>{t("Retry")}</button>
+                    </div>
+                  ) : null}
+                  {props.catalogLoading ? (
+                    <div className="plugin-marketplace-empty" role="status" aria-live="polite">
+                      <span>{t("Loading official plugin source")}</span>
+                    </div>
+                  ) : null}
+                  {props.catalogLoadingMore ? (
+                    <div className="plugin-marketplace-load-more" role="status" aria-live="polite">
+                      <span>{t("Loading more plugins")}</span>
+                    </div>
+                  ) : null}
+            </div>
+          </div>
+        </section>
       </section>
       <PluginDetailDrawer
         busyAction={detailPending?.action}
@@ -150,30 +265,6 @@ export function PluginManagerPage(props: PluginManagerPageProps): React.JSX.Elem
         onOpenMcpSettings={props.onOpenMcpSettings}
         plugin={detailPlugin}
         row={detailRow}
-      />
-      <PluginCreateDialog
-        actionFailure={controller.actionFailureFor(PLUGIN_DRAFT_ID, "create", "create")}
-        busy={Boolean(controller.pendingActionFor(PLUGIN_DRAFT_ID, "create", "create"))}
-        onClose={controller.closeCreate}
-        onCreate={(createInput) => controller.runMutation({
-          pluginId: PLUGIN_DRAFT_ID,
-          action: "create",
-          owner: "create",
-          mutate: (request) => props.onCreate(createInput, request),
-        })}
-        onDismissFailure={() => props.onClearActionErrors({
-          pluginId: PLUGIN_DRAFT_ID,
-          action: "create",
-          owner: "create",
-        })}
-        open={controller.createOpen}
-      />
-      <PluginImportDialog
-        busy={false}
-        onClose={() => setImportOpen(false)}
-        onApply={props.onImportApply}
-        onPreview={props.onImportPreview}
-        open={importOpen}
       />
       <CuaDriverInstallDrawer
         actionFailure={guidePlugin ? controller.actionFailureFor(guidePlugin.id, "guide", "connect") : undefined}
@@ -218,4 +309,10 @@ export function PluginManagerPage(props: PluginManagerPageProps): React.JSX.Elem
       />
     </div>
   );
+}
+
+function formatArtifactSize(sizeBytes: number | undefined): string {
+  if (!sizeBytes || !Number.isFinite(sizeBytes)) return "";
+  if (sizeBytes < 1024 * 1024) return `${Math.max(1, Math.round(sizeBytes / 1024))} KB`;
+  return `${(sizeBytes / (1024 * 1024)).toFixed(0)} MB`;
 }

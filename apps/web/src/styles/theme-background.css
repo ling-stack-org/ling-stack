@@ -56,6 +56,15 @@ html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell
   .workspace-plugins-surface,
   .plugin-manager-page,
   .plugin-manager-page > .settings-plugin-manager,
+  .workspace-automations-surface,
+  .automation-ui2-page,
+  .workspace-generation-surface,
+  .media-production-page,
+  .media-jobs-page
+) {
+  background: var(--ling-bg-panel);
+}
+html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell :is(
   .workspace-teammates-surface,
   .teammates-page,
   .workspace-teammate-private-surface,
@@ -70,7 +79,7 @@ html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell
   .work-board-page,
   .profile-page
 ) {
-  background: transparent;
+  background: var(--ling-bg-panel);
 }
 html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell :is(
   .teammate-workspace.chat-mode .teammate-message-list,
@@ -93,7 +102,12 @@ html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell
 }
 
 
-html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell :is(.normal-conversation-page, .normal-conversation-header, .conversation-home, .client-window, .task-workbench-main, .task-workbench-window, .workspace-right-dock-frame, .right-dock, .channel-side-panel, .workspace-automations-surface, .automation-ui2-page, .workspace-generation-surface, .media-production-page, .media-jobs-page) { background: transparent; }
+html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell :is(.normal-conversation-page, .normal-conversation-header, .conversation-home, .client-window, .task-workbench-main, .task-workbench-window, .workspace-right-dock-frame, .right-dock, .channel-side-panel) { background: transparent; }
+html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell.desktop-window-shell > .desktop-window-chrome > .desktop-window-titlebar-surface:has(> .plugin-manager-header),
+html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell.desktop-window-shell > .desktop-window-chrome > .desktop-window-titlebar-surface:has(> .automation-ui2-header),
+html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell.desktop-window-shell > .desktop-window-chrome > .desktop-window-titlebar-surface:has(> .media-production-canvas-toolbar) {
+  background: var(--ling-bg-panel);
+}
 html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell .media-jobs-header {
   background: color-mix(in srgb, var(--ling-bg-panel) 34%, transparent);
   border-color: var(--ling-surface-border-subtle);

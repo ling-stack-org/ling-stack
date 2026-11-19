@@ -23,11 +23,9 @@ import {
   isCuaDriverPlatformSupported,
   listTrustedLocalPresetDescriptors,
 } from "./presets.js";
-import { BUNDLED_CUA_DRIVER_PLUGIN_ID } from "./bundled-index.js";
 import { buildCuaDriverSetupView } from "./cua-driver.js";
 import { createDesktopBrowserDescriptor } from "./desktop-browser.js";
 import { readBundledCuaDriverSetupMetadata } from "./cua-driver-catalog-projection.js";
-import { listBundledPackageDescriptors } from "./source-index.js";
 import { buildManagedPluginRuntimePreview, toManagedPluginPackageView } from "./runtime-injection.js";
 import { isBundledEmbeddedCuaDriverRuntime } from "./cua-driver-runtime-mode.js";
 import { CHROME_BROWSER_PLUGIN_ID, OFFICE_DOCUMENTS_PLUGIN_ID } from "@ling-stack/contracts";
@@ -43,7 +41,8 @@ import {
 const sourceOrder = new Map([
   ["built-in", 0],
   ["bundled", 1],
-  ["trusted-local-preset", 2],
+  ["official-remote", 2],
+  ["trusted-local-preset", 3],
 ]);
 
 type ManagedPluginCatalogStore =
@@ -84,7 +83,6 @@ export function listManagedPluginViews(input: {
       lockedControlProjection: input.lockedControlProjection,
     }));
   return views
-    .filter((view) => input.includeHidden || view.id !== BUNDLED_CUA_DRIVER_PLUGIN_ID)
     .sort(compareManagedPluginViews);
 }
 
@@ -157,9 +155,6 @@ function buildDescriptorMap(
 ): Map<string, ManagedPluginDescriptor> {
   const descriptors = new Map<string, ManagedPluginDescriptor>();
   for (const descriptor of listProductManagedBuiltInPluginDescriptors(extensionRegistry)) {
-    descriptors.set(descriptor.id, descriptor);
-  }
-  for (const descriptor of listBundledPackageDescriptors()) {
     descriptors.set(descriptor.id, descriptor);
   }
   for (const descriptor of listTrustedLocalPresetDescriptors()) {
@@ -361,7 +356,8 @@ function createManagedPluginView(input: {
   }
   const packageRecord = input.store.getManagedPluginPackage(input.descriptor.id);
   const packageView = packageRecord ? toManagedPluginPackageView(packageRecord) : undefined;
-  const runtimePreview = input.descriptor.sourceKind === "bundled"
+  const packagedPlugin = input.descriptor.sourceKind === "bundled" || input.descriptor.sourceKind === "official-remote";
+  const runtimePreview = packagedPlugin
     ? buildManagedPluginRuntimePreview({
         cwd: input.cwd,
         store: input.store,
@@ -401,12 +397,15 @@ function createManagedPluginView(input: {
         ? !blocked && !requestedEnabled
         : !blocked && status !== "enabled" && (input.descriptor.id !== CUA_DRIVER_PLUGIN_ID || setup?.state === "connected"),
       canDisable: bundledProjection ? requestedEnabled : status === "enabled",
-      canCheck: input.descriptor.id === CUA_DRIVER_PLUGIN_ID || linkedResources.length > 0 || input.descriptor.sourceKind === "built-in" || input.descriptor.sourceKind === "bundled",
+      canCheck: input.descriptor.id === CUA_DRIVER_PLUGIN_ID || linkedResources.length > 0 || input.descriptor.sourceKind === "built-in" || input.descriptor.sourceKind === "bundled" || input.descriptor.sourceKind === "official-remote",
+      canCheckUpdate: input.descriptor.sourceKind === "official-remote",
       canApplyPreset: !bundledProjection && !blocked && input.descriptor.id === CUA_DRIVER_PLUGIN_ID,
-      canInstall: !blocked && input.descriptor.sourceKind === "bundled" && packageView?.status !== "installed",
-      canUninstall: !blocked && input.descriptor.sourceKind === "bundled" && packageView?.status === "installed",
-      canRefreshPackage: !blocked && input.descriptor.sourceKind === "bundled" && packageView?.status === "installed",
-      canRuntimePreview: input.descriptor.sourceKind === "bundled",
+      canInstall: !blocked && input.descriptor.sourceKind === "official-remote" && packageView?.status !== "installed",
+      canInstallRemote: !blocked && input.descriptor.sourceKind === "official-remote" && packageView?.status !== "installed",
+      canUninstall: !blocked && packagedPlugin && packageView?.status === "installed",
+      canRefreshPackage: !blocked && packagedPlugin && packageView?.status === "installed",
+      canRollback: !blocked && input.descriptor.sourceKind === "official-remote" && Boolean(packageView?.previousVersion),
+      canRuntimePreview: packagedPlugin,
     },
   };
 }

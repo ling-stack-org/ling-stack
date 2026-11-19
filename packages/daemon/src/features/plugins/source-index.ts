@@ -12,21 +12,12 @@ export interface PluginSourceView {
 
 export interface PluginPackageView {
   readonly id: string;
-  readonly sourceKind: "bundled" | "trusted-local";
+  readonly sourceKind: "built-in" | "bundled" | "official-remote" | "trusted-local";
   readonly manifest: LoadedPluginPackage["manifest"];
 }
 
 export function listPluginSourceViews(): readonly PluginSourceView[] {
-  const entries = listBundledPluginIndexEntries();
-  return [
-    {
-      id: "bundled",
-      sourceKind: "bundled",
-      displayName: "Bundled plugins",
-      pluginCount: entries.length,
-      pluginIds: entries.map((entry) => entry.id),
-    },
-  ];
+  return [];
 }
 
 export function listBundledPluginPackages(): readonly LoadedPluginPackage[] {
@@ -40,8 +31,8 @@ export function listBundledPackageDescriptors(): readonly ManagedPluginDescripto
 }
 
 export function getBundledPluginPackage(pluginId: string): LoadedPluginPackage | undefined {
-  const entry = listBundledPluginIndexEntries().find((candidate) => candidate.id === pluginId);
-  return entry ? loadBundledPackage(entry) : undefined;
+  void pluginId;
+  return undefined;
 }
 
 export function toPluginPackageView(pluginPackage: LoadedPluginPackage): PluginPackageView {

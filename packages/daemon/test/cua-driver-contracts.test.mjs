@@ -7,7 +7,6 @@ import { resolveConfig } from "../dist/config.js";
 import { assertBundledCuaDriverRuntimeAvailable } from "../dist/features/plugins/routes.js";
 import { buildCuaDriverSetupView } from "../dist/features/plugins/cua-driver.js";
 import { CUA_DRIVER_MCP_SERVER_ID, CUA_DRIVER_PLUGIN_ID } from "../dist/features/plugins/presets.js";
-import { BUNDLED_CUA_DRIVER_PLUGIN_ID } from "../dist/features/plugins/bundled-index.js";
 
 test("Cua Driver feature config defaults off and explicit config wins over env", () => {
   const keys = [
@@ -119,9 +118,7 @@ test("effective packaged gate honors the explicit platform before external conne
   assert.doesNotThrow(() => assertBundledCuaDriverRuntimeAvailable(config, "win32"));
 });
 
-test("canonical external and hidden bundled IDs remain distinct and stable", () => {
-  assert.equal(CUA_DRIVER_PLUGIN_ID, "trusted-local:cua-driver");
+test("official Cua Driver ID is stable", () => {
+  assert.equal(CUA_DRIVER_PLUGIN_ID, "official:cua-driver");
   assert.equal(CUA_DRIVER_MCP_SERVER_ID, "mcp_cua_driver");
-  assert.equal(BUNDLED_CUA_DRIVER_PLUGIN_ID, "bundled:cua-driver");
-  assert.notEqual(CUA_DRIVER_PLUGIN_ID, BUNDLED_CUA_DRIVER_PLUGIN_ID);
 });

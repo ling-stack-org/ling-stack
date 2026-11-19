@@ -277,6 +277,8 @@ const CHANNEL_EXECUTION_PROPOSAL_CAS_MIGRATION_NAME = "add_channel_execution_pro
 // available database-global version before the 144+ migration family.
 const COMPANIONS_MIGRATION_VERSION = 141;
 const COMPANIONS_MIGRATION_NAME = "create_companions";
+const PLUGIN_DISTRIBUTION_FIELDS_MIGRATION_VERSION = 142;
+const PLUGIN_DISTRIBUTION_FIELDS_MIGRATION_NAME = "add_plugin_distribution_fields";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
   database.exec(`
@@ -2449,6 +2451,33 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
 
       if (!hasManagedPluginPackagesMigration) {
         context.recordMigration(MANAGED_PLUGIN_PACKAGES_MIGRATION_VERSION, MANAGED_PLUGIN_PACKAGES_MIGRATION_NAME);
+      }
+    }
+
+    const hasPluginDistributionFieldsMigration = context.hasMigration(PLUGIN_DISTRIBUTION_FIELDS_MIGRATION_VERSION);
+    if (!hasPluginDistributionFieldsMigration || !context.hasTable("managed_plugin_packages")) {
+      if (context.hasTable("managed_plugin_packages")) {
+        if (!context.hasColumn("managed_plugin_packages", "artifact_id")) {
+          database.exec("ALTER TABLE managed_plugin_packages ADD COLUMN artifact_id TEXT;");
+        }
+        if (!context.hasColumn("managed_plugin_packages", "platform")) {
+          database.exec("ALTER TABLE managed_plugin_packages ADD COLUMN platform TEXT;");
+        }
+        if (!context.hasColumn("managed_plugin_packages", "arch")) {
+          database.exec("ALTER TABLE managed_plugin_packages ADD COLUMN arch TEXT;");
+        }
+        if (!context.hasColumn("managed_plugin_packages", "source_url")) {
+          database.exec("ALTER TABLE managed_plugin_packages ADD COLUMN source_url TEXT;");
+        }
+        if (!context.hasColumn("managed_plugin_packages", "catalog_version")) {
+          database.exec("ALTER TABLE managed_plugin_packages ADD COLUMN catalog_version TEXT;");
+        }
+        if (!context.hasColumn("managed_plugin_packages", "previous_version")) {
+          database.exec("ALTER TABLE managed_plugin_packages ADD COLUMN previous_version TEXT;");
+        }
+      }
+      if (!hasPluginDistributionFieldsMigration) {
+        context.recordMigration(PLUGIN_DISTRIBUTION_FIELDS_MIGRATION_VERSION, PLUGIN_DISTRIBUTION_FIELDS_MIGRATION_NAME);
       }
     }
 
@@ -5108,7 +5137,7 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
         )
         SELECT id, enabled, 0, 0, updated_at
         FROM managed_plugins
-        WHERE id = 'trusted-local:cua-driver'
+        WHERE id = 'official:cua-driver'
         ON CONFLICT(plugin_id) DO NOTHING;
       `);
 

@@ -1,6 +1,7 @@
 export * from "./automation.js";
 export * from "./channel-source.js";
 export * from "./manifest.js";
+export * from "./distribution.js";
 export * from "./memory.js";
 export * from "./provider.js";
 export * from "./registry.js";
