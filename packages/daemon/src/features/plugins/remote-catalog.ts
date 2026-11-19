@@ -11,6 +11,9 @@ import type {
 import { validateLingPluginCatalog } from "@ling-stack/plugin-sdk";
 
 export const DEFAULT_PLUGIN_CATALOG_URL = "https://github.com/ling-stack-org/ling-stack/releases/latest/download/catalog.json";
+export const DEFAULT_PLUGIN_CATALOG_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEA7ua9pbZ24GNj4qwssYOMEiwu7ypghh3pzluiMAX2xXw=
+-----END PUBLIC KEY-----`;
 
 export interface PluginCatalogFetchOptions {
   readonly url?: string;
@@ -53,7 +56,9 @@ export async function fetchOfficialPluginCatalog(options: PluginCatalogFetchOpti
     throw new Error(`Plugin catalog is not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
   }
   validateLingPluginCatalog(catalog);
-  const publicKey = options.publicKey ?? process.env.LING_PLUGIN_CATALOG_PUBLIC_KEY;
+  const publicKey = options.publicKey
+    ?? process.env.LING_PLUGIN_CATALOG_PUBLIC_KEY
+    ?? (url === DEFAULT_PLUGIN_CATALOG_URL ? DEFAULT_PLUGIN_CATALOG_PUBLIC_KEY : undefined);
   if (!publicKey) return { catalog, url, signatureVerified: false };
   const signatureUrl = options.signatureUrl ?? `${url.slice(0, url.lastIndexOf("/") + 1)}catalog.sig`;
   const signatureResponse = await (options.fetchImpl ?? fetch)(signatureUrl, { redirect: "error" });

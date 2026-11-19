@@ -17,7 +17,15 @@ export interface PluginPackageView {
 }
 
 export function listPluginSourceViews(): readonly PluginSourceView[] {
-  return [];
+  const packages = listBundledPluginPackages();
+  if (packages.length === 0) return [];
+  return [{
+    id: "bundled:official",
+    sourceKind: "bundled",
+    displayName: "Ling bundled plugins",
+    pluginCount: packages.length,
+    pluginIds: packages.map((pluginPackage) => pluginPackage.id),
+  }];
 }
 
 export function listBundledPluginPackages(): readonly LoadedPluginPackage[] {
@@ -31,8 +39,7 @@ export function listBundledPackageDescriptors(): readonly ManagedPluginDescripto
 }
 
 export function getBundledPluginPackage(pluginId: string): LoadedPluginPackage | undefined {
-  void pluginId;
-  return undefined;
+  return listBundledPluginPackages().find((pluginPackage) => pluginPackage.id === pluginId);
 }
 
 export function toPluginPackageView(pluginPackage: LoadedPluginPackage): PluginPackageView {

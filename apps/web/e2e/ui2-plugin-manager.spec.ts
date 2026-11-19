@@ -36,7 +36,7 @@ test("projects four-column plugin rows, local filters, one state and stable acti
   await expect(table.locator(".plugin-table-source-header")).toHaveText("Source");
   await expect(pluginRow(page, "built-in:runner-ready").locator(".plugin-table-status")).toHaveCount(1);
   await expect(pluginRow(page, "built-in:runner-ready").locator(".plugin-table-status")).toHaveText("Enabled");
-  await expect(pluginRow(page, "bundled:cua-driver").locator("[data-plugin-column='source']")).toHaveText("Bundled");
+  await expect(pluginRow(page, "official:cua-driver").locator("[data-plugin-column='source']")).toHaveText("Bundled");
 
   const sourceFilter = page.getByLabel("Source filter");
   await sourceFilter.selectOption("bundled");
@@ -268,7 +268,7 @@ test("renders six loading rows and keeps 100 plugins in an internal scroll owner
 test("keeps CUA setup and Windows repair semantics separate", async ({ page }) => {
   await setupPluginManager(page, [createMockCuaPlugin()]);
   await openPluginManager(page);
-  await pluginRow(page, "trusted-local:cua-driver").getByRole("button", { name: "Installation guide" }).click();
+  await pluginRow(page, "official:cua-driver").getByRole("button", { name: "Installation guide" }).click();
   const guide = page.getByRole("dialog", { name: "Install Cua Driver" });
   await expect(guide).toContainText("Ling will only detect and connect the local driver");
   await guide.getByText("Use a custom executable path").click();
@@ -312,7 +312,7 @@ test("evidence: captures real Vite Plugin Manager states after functional gates"
   await page.setViewportSize({ width: 1280, height: 800 });
   await openPluginManager(page);
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-  await pluginRow(page, "bundled:cua-driver").getByRole("button", { name: "Details" }).click();
+  await pluginRow(page, "official:cua-driver").getByRole("button", { name: "Details" }).click();
   let detail = page.getByRole("dialog", { name: /Desktop Bridge/ });
   await detail.getByText("Runtime preview", { exact: true }).first().click();
   await expect(detail.getByText("Not ready for new runs")).toBeVisible();
@@ -321,7 +321,7 @@ test("evidence: captures real Vite Plugin Manager states after functional gates"
 
   const packageRecord = createMockBundledCuaPackageRecord();
   const linkedResources = [{ kind: "mcp-server" as const, id: "mcp_desktop", present: true, enabled: true, displayName: "Desktop MCP" }];
-  const bundledIndex = fixture.state.managedPlugins.findIndex((plugin) => plugin.id === "bundled:cua-driver");
+  const bundledIndex = fixture.state.managedPlugins.findIndex((plugin) => plugin.id === "official:cua-driver");
   fixture.state.managedPlugins[bundledIndex] = createMockBundledCuaPlugin({
     ...fixture.state.managedPlugins[bundledIndex],
     status: "enabled",
@@ -330,10 +330,10 @@ test("evidence: captures real Vite Plugin Manager states after functional gates"
     runtimePreview: createMockBundledRuntimePreview({ status: "injectable", packageRecord, linkedResources }),
   });
   await triggerFocusRevalidation(page);
-  await pluginRow(page, "bundled:cua-driver").getByRole("button", { name: "Details" }).click();
+  await pluginRow(page, "official:cua-driver").getByRole("button", { name: "Details" }).click();
   detail = page.getByRole("dialog", { name: /Desktop Bridge/ });
   await detail.getByText("Runtime preview", { exact: true }).first().click();
-  fixture.failNextMutation("bundled:cua-driver", "runtime-preview", 250);
+  fixture.failNextMutation("official:cua-driver", "runtime-preview", 250);
   await detail.getByRole("button", { name: "Runtime preview" }).click();
   await expect(detail.locator('[data-plugin-action-failure="runtime-preview"]')).toBeVisible();
   acknowledgeExpectedPluginFailure(page);
@@ -346,7 +346,7 @@ test("evidence: captures real Vite Plugin Manager states after functional gates"
   await page.setViewportSize({ width: 1440, height: 960 });
   await openPluginManager(page);
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
-  await pluginRow(page, "bundled:cua-driver").getByRole("button", { name: /More actions for Desktop Bridge/ }).click();
+  await pluginRow(page, "official:cua-driver").getByRole("button", { name: /More actions for Desktop Bridge/ }).click();
   await page.getByRole("menuitem", { name: "Uninstall" }).click();
   await expect(page.getByRole("dialog", { name: "Uninstall Desktop Bridge?" })).toBeVisible();
   await capture(page, "1440x960-ling-light-uninstall-confirm.png");
@@ -359,7 +359,7 @@ test("evidence: captures real Vite Plugin Manager states after functional gates"
   await page.getByLabel("Status filter").selectOption("needs-action");
   await capture(page, "1280x800-ling-dark-list-needs-action.png");
   await page.getByLabel("Status filter").selectOption("all");
-  await pluginRow(page, "trusted-local:cua-driver").getByRole("button", { name: "Installation guide" }).click();
+  await pluginRow(page, "official:cua-driver").getByRole("button", { name: "Installation guide" }).click();
   await expect(page.getByRole("dialog", { name: "Install Cua Driver" })).toBeVisible();
   await capture(page, "1280x800-ling-dark-cua-repair.png");
   await assertNoBrowserFailures(page);

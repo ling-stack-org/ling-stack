@@ -8,6 +8,11 @@ import {
   type LingPluginArtifactDescriptor,
 } from "@ling-stack/plugin-sdk";
 import { loadPluginPackageFromRoot, type LoadedPluginPackage } from "./manifest.js";
+import { DEFAULT_PLUGIN_CATALOG_URL } from "./remote-catalog.js";
+
+const DEFAULT_PLUGIN_ARTIFACT_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAzc6EyHekMm92MzFte3V2PxzAkaDtSNpJxkpiHqjjiZQ=
+-----END PUBLIC KEY-----`;
 
 const DEFAULT_MAX_PACKAGE_BYTES = 1024 * 1024 * 1024;
 
@@ -72,7 +77,11 @@ export async function installRemotePluginArtifact(input: RemotePluginInstallInpu
   if (packageHash !== input.artifact.sha256) {
     throw new Error("Plugin package SHA-256 verification failed.");
   }
-  const artifactPublicKey = input.artifactPublicKey ?? process.env.LING_PLUGIN_ARTIFACT_PUBLIC_KEY;
+  const artifactPublicKey = input.artifactPublicKey
+    ?? process.env.LING_PLUGIN_ARTIFACT_PUBLIC_KEY
+    ?? (input.artifact.url.startsWith("https://github.com/ling-stack-org/ling-stack/releases/")
+      ? DEFAULT_PLUGIN_ARTIFACT_PUBLIC_KEY
+      : undefined);
   if (artifactPublicKey) {
     if (!input.artifact.signature) throw new Error("Plugin package signature is required but missing.");
     const encoded = input.artifact.signature.replace(/^ed25519:/u, "");

@@ -1130,7 +1130,7 @@ test("bundled embedded private source revalidates ownership through the canonica
     assert.ok(address && typeof address === "object");
     const baseUrl = `http://127.0.0.1:${address.port}`;
     const requested = await fetch(
-      `${baseUrl}/plugins/${encodeURIComponent("trusted-local:cua-driver")}/enable?cwd=${encodeURIComponent(cwd)}`,
+      `${baseUrl}/plugins/${encodeURIComponent("official:cua-driver")}/enable?cwd=${encodeURIComponent(cwd)}`,
       { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" },
     );
     assert.equal(requested.status, 202);

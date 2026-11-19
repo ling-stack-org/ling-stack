@@ -75,7 +75,7 @@ for (const theme of themes) {
 
     const plugins = await openPluginManager(page);
     await expect(plugins.getByRole("button", { name: "Refresh" })).toHaveCount(0);
-    const cuaRow = plugins.locator('.plugin-table-row[data-plugin-id="trusted-local:cua-driver"]');
+    const cuaRow = plugins.locator('.plugin-table-row[data-plugin-id="official:cua-driver"]');
     await expect(cuaRow).toBeVisible();
     await expectStandardIconButton(cuaRow.getByRole("button", { name: "Check" }), "Check");
     await expectStandardIconButton(cuaRow.getByRole("button", { name: "Details" }), "Details");

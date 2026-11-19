@@ -89,7 +89,7 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page },
     ".plugin-table-header",
   ]);
   await captureDarkEvidence(page, testInfo, "03-plugin-manager");
-  await page.locator('.plugin-table-row[data-plugin-id="trusted-local:cua-driver"]').getByRole("button", { name: "安装引导" }).click();
+  await page.locator('.plugin-table-row[data-plugin-id="official:cua-driver"]').getByRole("button", { name: "安装引导" }).click();
   await assertDarkPage(page, "Cua Driver installation guide", [
     ".cua-install-panel",
     ".cua-install-command",
@@ -389,7 +389,7 @@ test("packaged Computer Control follows the same dark surface hierarchy", async 
     });
   });
   const state = createDarkThemeState();
-  state.managedPlugins = state.managedPlugins.filter((plugin) => plugin.id !== "trusted-local:cua-driver");
+  state.managedPlugins = state.managedPlugins.filter((plugin) => plugin.id !== "official:cua-driver");
   state.managedPlugins.push(createMockBundledEmbeddedCuaPlugin({
     providerState: "included",
     platform: "darwin",

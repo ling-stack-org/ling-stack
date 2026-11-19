@@ -572,18 +572,6 @@ export async function handlePluginItem(
     if (!descriptor) {
       throw new HttpError(404, "plugin_not_found", `Plugin not found: ${route.pluginId}`);
     }
-    if (
-      bundledEmbeddedCuaDriverGateEnabled(config, process.platform)
-      && route.pluginId === "official:cua-driver"
-      && route.action
-    ) {
-      throw new HttpError(
-        409,
-        "cua_driver_compatibility_record_hidden",
-        "The hidden bundled compatibility record is not a second Cua Driver runtime surface.",
-      );
-    }
-
     if (request.method === "GET" && !route.action) {
       writeJson(response, 200, {
         plugin: getRequiredPluginView({ cwd, extensionRegistry, store, pluginId: route.pluginId, includeEvents: true, cuaDriverRuntimeAuthority: mcpBroker.cuaDriverRuntimeAuthority, cuaDriverFeatureFlags: config.cuaDriver }),

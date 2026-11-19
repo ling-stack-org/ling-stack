@@ -166,7 +166,7 @@ test("T13-O.32-D Quiet Ocean 1440 keeps CUA and Create overlays theme-owned, key
   await expectUsesToken(pluginPage, "backgroundColor", "--ling-bg-app");
   await expectUsesToken(manager, "backgroundColor", "--ling-bg-panel");
 
-  const guideTrigger = pluginRow(page, "trusted-local:cua-driver")
+  const guideTrigger = pluginRow(page, "official:cua-driver")
     .getByRole("button", { name: "Installation guide" });
   await guideTrigger.focus();
   await page.keyboard.press("Enter");
@@ -180,7 +180,7 @@ test("T13-O.32-D Quiet Ocean 1440 keeps CUA and Create overlays theme-owned, key
   await copy.click();
   await expect(copy).toHaveAttribute("data-cua-copy-state", "copied");
   await expectTypedIconAction(page, copy, "Copy install command", false);
-  const copyToast = page.locator('[data-ling-overlay="toast"][data-scope="plugin:cua:trusted-local:cua-driver:copy"]');
+  const copyToast = page.locator('[data-ling-overlay="toast"][data-scope="plugin:cua:official:cua-driver:copy"]');
   await expect(copyToast).toHaveCount(1);
   await expect(copyToast).toContainText("Command copied");
   await expect(guide.getByText("Command copied", { exact: true })).toHaveCount(0);
@@ -231,7 +231,7 @@ test("T13-P.8C Dark 1280 keeps CUA copy failure persistent and clears it on cont
   const workspace = page.locator(".workspace.workspace-plugins-surface");
   const manager = page.locator(".settings-plugin-manager");
   const openGuide = async (): Promise<Locator> => {
-    await pluginRow(page, "trusted-local:cua-driver")
+    await pluginRow(page, "official:cua-driver")
       .getByRole("button", { name: "Installation guide" })
       .click();
     const drawer = page.getByRole("dialog", { name: "Install Cua Driver" });
@@ -248,7 +248,7 @@ test("T13-P.8C Dark 1280 keeps CUA copy failure persistent and clears it on cont
   await expect(failure).toBeVisible();
   await page.waitForTimeout(3_100);
   await expect(failure).toBeVisible();
-  await expect(page.locator('[data-ling-overlay="toast"][data-scope="plugin:cua:trusted-local:cua-driver:copy"]'))
+  await expect(page.locator('[data-ling-overlay="toast"][data-scope="plugin:cua:official:cua-driver:copy"]'))
     .toHaveCount(0);
 
   await guide.getByText("Use a custom executable path", { exact: true }).click();
@@ -263,7 +263,7 @@ test("T13-P.8C Dark 1280 keeps CUA copy failure persistent and clears it on cont
   await copy.click();
   await expect(guide.locator('[data-cua-copy-feedback="failure"]')).toHaveCount(0);
   await expect(copy).toHaveAttribute("data-cua-copy-state", "copied");
-  const copyToast = page.locator('[data-ling-overlay="toast"][data-scope="plugin:cua:trusted-local:cua-driver:copy"]');
+  const copyToast = page.locator('[data-ling-overlay="toast"][data-scope="plugin:cua:official:cua-driver:copy"]');
   await expect(copyToast).toHaveCount(1);
   await expect(copyToast).toContainText("Command copied");
   await expect(guide.getByText("Command copied", { exact: true })).toHaveCount(0);

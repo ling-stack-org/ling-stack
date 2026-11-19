@@ -9,7 +9,7 @@ test("sqlite persists managed plugin state, linked contributions, health, and re
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-plugin-store-"));
   const store = createSqliteRunStore(cwd);
   const descriptor = {
-    id: "trusted-local:cua-driver",
+    id: "official:cua-driver",
     displayName: "Cua Driver",
     version: "1.0.0",
     sourceKind: "trusted-local-preset",
@@ -110,12 +110,12 @@ test("sqlite persists managed plugin package records and runtime snapshots", asy
   try {
     store.upsertManagedPlugin(
       {
-        id: "bundled:cua-driver",
+        id: "official:cua-driver",
         sourceKind: "bundled",
         version: "0.1.0",
         enabled: false,
         descriptor: {
-          id: "bundled:cua-driver",
+          id: "official:cua-driver",
           displayName: "Cua Driver",
           version: "0.1.0",
           sourceKind: "bundled",
@@ -127,13 +127,13 @@ test("sqlite persists managed plugin package records and runtime snapshots", asy
     );
     const installed = store.upsertManagedPluginPackage(
       {
-        pluginId: "bundled:cua-driver",
+        pluginId: "official:cua-driver",
         sourceKind: "bundled",
         version: "0.1.0",
         status: "installed",
         cacheRef: "bundled/cua-driver/0.1.0/hash123",
         packageHash: "hash123",
-        manifestJson: JSON.stringify({ id: "bundled:cua-driver" }),
+        manifestJson: JSON.stringify({ id: "official:cua-driver" }),
       },
       "2026-06-06T00:10:00.000Z",
     );
@@ -141,7 +141,7 @@ test("sqlite persists managed plugin package records and runtime snapshots", asy
     assert.equal(installed.installedAt, "2026-06-06T00:10:00.000Z");
     assert.equal(store.listManagedPluginPackages({ status: "installed" }).length, 1);
 
-    const uninstalled = store.markManagedPluginPackageUninstalled("bundled:cua-driver", "2026-06-06T00:11:00.000Z");
+    const uninstalled = store.markManagedPluginPackageUninstalled("official:cua-driver", "2026-06-06T00:11:00.000Z");
     assert.equal(uninstalled?.status, "uninstalled");
     assert.equal(uninstalled?.uninstalledAt, "2026-06-06T00:11:00.000Z");
     assert.equal(store.listManagedPluginPackages({ status: "installed" }).length, 0);
@@ -149,7 +149,7 @@ test("sqlite persists managed plugin package records and runtime snapshots", asy
     store.appendManagedPluginEvent(
       {
         id: "plugin_event_package_test",
-        pluginId: "bundled:cua-driver",
+        pluginId: "official:cua-driver",
         type: "installed",
         actor: "local-user",
         message: "Plugin package installed.",
@@ -161,7 +161,7 @@ test("sqlite persists managed plugin package records and runtime snapshots", asy
       },
       "2026-06-06T00:12:00.000Z",
     );
-    const eventJson = JSON.stringify(store.listManagedPluginEvents({ pluginId: "bundled:cua-driver" }));
+    const eventJson = JSON.stringify(store.listManagedPluginEvents({ pluginId: "official:cua-driver" }));
     assert.equal(eventJson.includes("secret-token"), false);
     assert.equal(eventJson.includes("/Users/example"), false);
     assert.match(eventJson, /\[REDACTED\]/);
@@ -172,10 +172,10 @@ test("sqlite persists managed plugin package records and runtime snapshots", asy
       cwd,
       capabilities: [
         {
-          pluginId: "bundled:cua-driver",
+          pluginId: "official:cua-driver",
           status: "injectable",
           package: {
-            pluginId: "bundled:cua-driver",
+            pluginId: "official:cua-driver",
             sourceKind: "bundled",
             version: "0.1.0",
             status: "installed",
@@ -190,8 +190,8 @@ test("sqlite persists managed plugin package records and runtime snapshots", asy
           hooks: [],
           policyOverlays: [
             {
-              id: "bundled:cua-driver:mcp_cua_driver:list_windows",
-              pluginId: "bundled:cua-driver",
+              id: "official:cua-driver:mcp_cua_driver:list_windows",
+              pluginId: "official:cua-driver",
               contributionId: "mcp_cua_driver",
               targetKind: "mcp-tool",
               targetId: "mcp_cua_driver:list_windows",
@@ -205,8 +205,8 @@ test("sqlite persists managed plugin package records and runtime snapshots", asy
       ],
       policyOverlays: [
         {
-          id: "bundled:cua-driver:mcp_cua_driver:list_windows",
-          pluginId: "bundled:cua-driver",
+          id: "official:cua-driver:mcp_cua_driver:list_windows",
+          pluginId: "official:cua-driver",
           contributionId: "mcp_cua_driver",
           targetKind: "mcp-tool",
           targetId: "mcp_cua_driver:list_windows",
@@ -217,20 +217,20 @@ test("sqlite persists managed plugin package records and runtime snapshots", asy
       ],
       createdAt: "2026-06-06T00:13:00.000Z",
     });
-    assert.deepEqual(snapshot.pluginIds, ["bundled:cua-driver"]);
+    assert.deepEqual(snapshot.pluginIds, ["official:cua-driver"]);
     assert.equal(store.getManagedPluginRuntimeSnapshot("plugin_runtime_snapshot_test")?.runId, "run_plugin_runtime_test");
-    assert.equal(store.getManagedPluginRuntimeSnapshotForRun("run_plugin_runtime_test")?.capabilities[0]?.pluginId, "bundled:cua-driver");
+    assert.equal(store.getManagedPluginRuntimeSnapshotForRun("run_plugin_runtime_test")?.capabilities[0]?.pluginId, "official:cua-driver");
 
     const selectedButBlocked = store.createManagedPluginRuntimeSnapshot({
       id: "plugin_runtime_snapshot_selected_blocked",
       runId: "run_plugin_runtime_selected_blocked",
       cwd,
-      pluginIds: ["trusted-local:cua-driver"],
+      pluginIds: ["official:cua-driver"],
       capabilities: [],
       policyOverlays: [],
       createdAt: "2026-06-06T00:14:00.000Z",
     });
-    assert.deepEqual(selectedButBlocked.pluginIds, ["trusted-local:cua-driver"]);
+    assert.deepEqual(selectedButBlocked.pluginIds, ["official:cua-driver"]);
     assert.deepEqual(selectedButBlocked.capabilities, []);
     assert.deepEqual(
       store.getManagedPluginRuntimeSnapshotForRun("run_plugin_runtime_selected_blocked"),
@@ -240,7 +240,7 @@ test("sqlite persists managed plugin package records and runtime snapshots", asy
     store.close();
     const reopened = createSqliteRunStore(cwd);
     try {
-      assert.equal(reopened.getManagedPluginPackage("bundled:cua-driver")?.status, "uninstalled");
+      assert.equal(reopened.getManagedPluginPackage("official:cua-driver")?.status, "uninstalled");
       assert.equal(reopened.getManagedPluginRuntimeSnapshotForRun("run_plugin_runtime_test")?.policyOverlays[0]?.defaultApproval, "allow");
     } finally {
       reopened.close();

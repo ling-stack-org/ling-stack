@@ -12,7 +12,7 @@ import {
 } from "../dist/features/plugins/presets.js";
 
 const now = "2026-07-20T00:00:00.000Z";
-const pluginId = "trusted-local:cua-driver";
+const pluginId = "official:cua-driver";
 const serverId = "mcp_cua_driver";
 const supportedPlatform = process.platform === "darwin" || process.platform === "win32";
 const featureFlags = {

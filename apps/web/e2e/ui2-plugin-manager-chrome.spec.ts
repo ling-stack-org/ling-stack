@@ -13,7 +13,7 @@ test("Chrome built-in plugin uses automatic Native Host states without pairing U
   await mockDaemon(page, state);
   await openPluginManager(page, "/");
 
-  const row = page.locator('[data-plugin-id="built-in:chrome"]');
+  const row = page.locator('[data-plugin-id="official:chrome-browser"]');
   await expect(row).toBeVisible();
   await expect(row.locator(".plugin-table-chrome-icon")).toBeVisible();
   await expect(row).toContainText("Control Chrome with Ling.");
@@ -85,7 +85,7 @@ test("Chrome built-in plugin keeps compact Chinese dark presentation", async ({ 
   await mockDaemon(page, state);
   await openPluginManager(page, "/");
 
-  const row = page.locator('[data-plugin-id="built-in:chrome"]');
+  const row = page.locator('[data-plugin-id="official:chrome-browser"]');
   await expect(row.locator(".plugin-table-chrome-icon")).toBeVisible();
   await expect(row).toContainText("使用 Ling 控制 Chrome。");
   await expect(row).toContainText("已连接");
@@ -103,7 +103,7 @@ function updateChromeFixture(
   state: ReturnType<typeof createBaseState>,
   mode: "host_missing" | "paused" | "ready" | "incompatible",
 ): void {
-  const index = state.managedPlugins.findIndex((plugin) => plugin.id === "built-in:chrome");
+  const index = state.managedPlugins.findIndex((plugin) => plugin.id === "official:chrome-browser");
   const connected = mode === "ready";
   const browserState = mode === "incompatible" ? "incompatible" : mode;
   state.managedPlugins[index] = createMockChromePlugin({

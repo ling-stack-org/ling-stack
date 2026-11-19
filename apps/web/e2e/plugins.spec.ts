@@ -51,7 +51,7 @@ test("Cua Driver uses one table row, global toasts, and a separate detail drawer
 
   const pluginsPanel = page.locator(".settings-plugin-manager");
   const table = page.getByRole("table", { name: "Plugins" });
-  const cuaRow = pluginRow(page, "trusted-local:cua-driver");
+  const cuaRow = pluginRow(page, "official:cua-driver");
   await expect(page.locator(".workspace-plugins-surface > .workspace-head")).toHaveCount(0);
   await expect(table.getByRole("columnheader")).toHaveText(["Plugin", "Status", "Actions"]);
   await expect(table.locator(".plugin-table-row")).toHaveCount(1);
@@ -69,7 +69,7 @@ test("Cua Driver uses one table row, global toasts, and a separate detail drawer
   await expect(installDrawer.locator("code")).toContainText("https://cua.ai/driver/install.sh");
   await installDrawer.getByRole("button", { name: "Copy install command" }).click();
   const copyToast = page.locator(
-    '[data-ling-overlay="toast"][data-scope="plugin:cua:trusted-local:cua-driver:copy"]',
+    '[data-ling-overlay="toast"][data-scope="plugin:cua:official:cua-driver:copy"]',
   );
   await expect(copyToast).toContainText("Command copied");
   await expect(installDrawer.getByText("Command copied", { exact: true })).toHaveCount(0);
@@ -116,7 +116,7 @@ test("Cua Driver uses one table row, global toasts, and a separate detail drawer
   const detailDrawer = page.getByRole("dialog", { name: "Cua Driver" });
   await expect(detailDrawer).toBeVisible();
   await expect(detailDrawer).toContainText("Trusted local");
-  await expect(detailDrawer).toContainText("trusted-local:cua-driver");
+  await expect(detailDrawer).toContainText("official:cua-driver");
   await expect(detailDrawer).toContainText("/Applications/Cua Driver.app/Contents/MacOS/cua-driver");
   await expect(detailDrawer.getByText("Last check", { exact: true })).toHaveCount(0);
   await expect(detailDrawer.getByText("Failure reason", { exact: true })).toHaveCount(0);
@@ -142,7 +142,7 @@ test("Windows Cua Driver health uses one product status and keeps raw checks in 
     localStorage.setItem("ling-stack.locale", "en-US");
   });
   const state = createBaseState({ approvalStatus: "expired" });
-  const index = state.managedPlugins.findIndex((plugin) => plugin.id === "trusted-local:cua-driver");
+  const index = state.managedPlugins.findIndex((plugin) => plugin.id === "official:cua-driver");
   state.managedPlugins[index] = createMockCuaPlugin({
     status: "enabled",
     setup: {
@@ -152,7 +152,7 @@ test("Windows Cua Driver health uses one product status and keeps raw checks in 
       detectedCommand: "C:\\Program Files\\Cua Driver\\cua-driver.exe",
     },
     health: {
-      pluginId: "trusted-local:cua-driver",
+      pluginId: "official:cua-driver",
       checkedAt: "2026-07-18T02:00:00.000Z",
       expiresAt: "2026-07-18T02:05:00.000Z",
       status: "failed",
@@ -169,7 +169,7 @@ test("Windows Cua Driver health uses one product status and keeps raw checks in 
   await page.goto("/");
   await openPluginManager(page);
 
-  const row = pluginRow(page, "trusted-local:cua-driver");
+  const row = pluginRow(page, "official:cua-driver");
   await expect(row.locator(".plugin-table-status")).toHaveText("Update required");
   await expect(row.getByRole("button", { name: "View repair steps" })).toBeVisible();
   await expect(row.getByRole("button", { name: "Check" })).toBeVisible();
@@ -302,7 +302,7 @@ test("detected Cua Driver auto-connects once and remains disabled", async ({ pag
     localStorage.setItem("ling-stack.locale", "en-US");
   });
   const state = createBaseState({ approvalStatus: "expired" });
-  const index = state.managedPlugins.findIndex((plugin) => plugin.id === "trusted-local:cua-driver");
+  const index = state.managedPlugins.findIndex((plugin) => plugin.id === "official:cua-driver");
   state.managedPlugins[index] = createMockCuaPlugin({
     setup: {
       kind: "local_binary",
@@ -321,7 +321,7 @@ test("detected Cua Driver auto-connects once and remains disabled", async ({ pag
   await page.goto("/");
   await openPluginManager(page);
 
-  const cuaRow = pluginRow(page, "trusted-local:cua-driver");
+  const cuaRow = pluginRow(page, "official:cua-driver");
   await expect(cuaRow.locator(".plugin-table-status")).toHaveText("Awaiting enable");
   await expect(cuaRow.getByRole("button", { name: "Installation guide" })).toHaveCount(0);
   await expect.poll(() => connectCount).toBe(1);
@@ -410,7 +410,7 @@ test("plugin table and both drawers stay within desktop widths", async ({ page }
   await page.goto("/");
   await openPluginManager(page);
 
-  const cuaRow = pluginRow(page, "trusted-local:cua-driver");
+  const cuaRow = pluginRow(page, "official:cua-driver");
   for (const width of [1280, 1440, 1920]) {
     await page.setViewportSize({ width, height: 900 });
     const layout = await page.evaluate(() => {
@@ -463,7 +463,7 @@ test("plugin table, detail drawer, and installation guide use dark theme surface
   await page.goto("/");
   await openPluginManager(page);
 
-  const cuaRow = pluginRow(page, "trusted-local:cua-driver");
+  const cuaRow = pluginRow(page, "official:cua-driver");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await cuaRow.getByRole("button", { name: "Details" }).click();
   await expect(page.locator(".plugin-detail-panel")).toBeVisible();

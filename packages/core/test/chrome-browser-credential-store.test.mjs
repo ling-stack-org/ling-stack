@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { createSqliteRunStore } from "../dist/index.js";
 
 const workspaceId = "workspace_default";
-const pluginId = "built-in:chrome";
+const pluginId = "official:chrome-browser";
 const extensionId = "abcdefghijklmnopabcdefghijklmnop";
 const now = "2026-08-17T00:00:00.000Z";
 

@@ -3,7 +3,7 @@ import { materializeBundledPluginPackage } from "../dist/features/plugins/packag
 import { getBundledPluginPackage } from "../dist/features/plugins/source-index.js";
 import { createCuaDriverDescriptor } from "../dist/features/plugins/presets.js";
 
-export const BUNDLED_CUA_PLUGIN_ID = "bundled:cua-driver";
+export const BUNDLED_CUA_PLUGIN_ID = "official:cua-driver";
 export const CUA_MCP_SERVER_ID = "mcp_cua_driver";
 
 export function approvedWindowsCuaHealthDetails(driverVersion = "0.8.3") {
