@@ -14,6 +14,9 @@ The delivery checklist is maintained in
 The [Runtime Contract](ling-device-support-platform-runtime-contract.md) specifies
 capability negotiation, approvals, failure handling, and acceptance for both
 execution hosts.
+Session modes, PC-assisted Mobile execution, self-hosted connectivity, and device
+case flows are specified in
+[Device Developer Execution and Connectivity](ling-device-developer-execution.md).
 
 ## 1. Purpose
 
@@ -22,17 +25,18 @@ diagnose, repair, and understand external devices. A device can be a computer, a
 Assistant installation, a router, a printer, a NAS, an Android device or head unit, a
 vehicle interface, or another supported system.
 
-The daemon can host device tasks for Ling PC or paired Ling Mobile. The model uses
-device capabilities while the adapter handles device communication.
+The daemon or the phone owns the task and its device connection. The selected model
+runner plans work through device capabilities. The owning host validates and executes
+the operation through an adapter.
 
 ```text
-Paired Ling Mobile / Ling PC
+Ling PC / Ling Mobile
         |
         v
-Ling Gateway and daemon control plane
+Daemon or Mobile task owner
         |
         +-- task orchestration, policy, approvals, audit, recovery
-        +-- model runner (Pi first, other runners later)
+        +-- planning through Runner-Pi, the Mobile loop, or a local playbook
         |
         v
 Unified device capability broker
@@ -50,12 +54,10 @@ Protocol and transport implementations
 External device or target-side executor
 ```
 
-An adapter translates a stable Ling capability into a protocol-specific operation. The
-model never needs to construct raw CAN frames, USB packets, arbitrary shell commands, or
-vendor-specific payloads.
-
-[Standalone Mobile execution](#111-standalone-mobile-execution) uses the same capability
-contract for tasks that run on a directly connected phone.
+An adapter translates a stable Ling capability into a protocol-specific operation.
+The same capability contract works on a directly connected phone or PC. Paired
+clients use authenticated sync to follow the task and collaborate.
+[Execution architecture](ling-device-developer-execution.md#2-execution-architecture)
 
 ## 2. Product boundary
 
@@ -67,6 +69,9 @@ contract for tasks that run on a directly connected phone.
 - Keep planning, permissions, execution, verification, and evidence separate.
 - Support daemon tasks from Ling PC and paired Ling Mobile, and let Ling Mobile run
   supported tasks on devices it can reach directly.
+- Support developer workflows from project build and test through target deployment,
+  debugging, and verification. Offer authorized native workbenches for developers.
+- Let a remote PC contribute analysis or build artifacts to a phone-owned task.
 - Allow a new device family to be added as an adapter without changing the core task
   model or client UI.
 - Preserve local-first operation where the target and adapter can run locally.
@@ -79,9 +84,7 @@ contract for tasks that run on a directly connected phone.
 - Providing a universal protocol that can control devices with no exposed interface.
 - Letting the model bypass vendor authentication, device locks, safety interlocks, or
   firmware signing.
-- Exposing arbitrary remote shell or raw vehicle-bus writes as a default product tool.
 - Claiming that a hardware failure can be repaired remotely.
-- Supporting every model and firmware version in the first delivery slice.
 
 ## 3. Terminology
 
@@ -106,7 +109,7 @@ bridges hardware. It does not need to contain a language model.
 | Layer | Owns | Must not own |
 | --- | --- | --- |
 | Mobile, Web, Desktop, CLI clients | Conversation, device selection, approval UI, progress, and result rendering | Protocol details, target credentials, or direct database authority |
-| Remote Gateway / daemon | Pairing, authenticated sessions, and routing for tasks owned by the daemon | Standalone Mobile task state |
+| Remote Gateway / daemon | Pairing, authenticated sessions, daemon-owned tasks, and scoped peer collaboration messages | Ownership of Mobile device tasks |
 | Mobile execution module | Local policy and approval, adapter dispatch, verification, and durable state for tasks owned by the phone | Daemon task authority or unrestricted access to device protocols |
 | `packages/core` | Device domain state, policy decisions, approvals, leases, and durable transitions | Adapter-specific protocol code |
 | `packages/contracts` | Public DTOs, wire schemas, capability and task contracts | Crypto implementation, UI, storage, or model prompts |
@@ -321,6 +324,12 @@ The model does not see raw adapter transport methods. A capability broker valida
 target, input schema, current device snapshot, policy, approval state, lease, and action
 idempotency before dispatching an adapter call.
 
+Developer sessions add project and authorized device capabilities such as artifact
+deployment, app launch and testing, and scoped diagnostics. Operator-controlled
+native terminals and vendor tools use the target's platform permissions. Their
+controls are outside the model's capability broker.
+[Developer workflow](ling-device-developer-execution.md#11-developer-workflow-and-native-tools)
+
 MCP may be used as a model-facing tool transport because Ling already has an MCP broker,
 but MCP is not the device protocol. Device identity, capability versions, transport
 authentication, approval, and recovery remain Ling-owned contracts.
@@ -412,11 +421,12 @@ configuration operations must not be silently promoted to physical control.
 | Topology | Execution location | Typical use |
 | --- | --- | --- |
 | Local PC | Ling daemon and adapter on one computer | PC diagnostics, local Home Assistant, NAS and router APIs |
-| Mobile remote | Mobile -> Remote Gateway -> daemon adapter | Phone as the user-facing control surface |
+| Mobile remote | Mobile -> Remote Gateway -> daemon adapter | Phone as the user-facing control surface for daemon-owned tasks |
 | Standalone Mobile | Phone owns the task and uses a native transport | Supported peripherals that expose an authorized interface over BLE, USB, or a supported local network protocol |
+| PC-assisted Mobile | Phone owns the task and target link. Paired PC contributes plans, artifacts, or analysis. | Phone at the device with a remote PC build or planning workspace |
 | Target-side executor | Remote Gateway -> service installed on target | Windows software repair, privileged system checks |
 | Hardware bridge | Mobile/Remote Gateway -> OBD/CAN/BLE/USB module | Vehicle and devices without a network API |
-| Cloud relay | Mobile -> relay -> user gateway | Deferred; requires a separate privacy and availability design |
+| Ling Server relay | Paired phone and PC use an end-to-end encrypted relayed connection | Cross-network sync when a direct path is unavailable. Proposed in [D12](ling-device-support-platform-implementation-plan.md#d12-ling-server-connectivity). |
 
 The [failure matrix](ling-device-support-platform-runtime-contract.md#5-failure-and-placement-matrix)
 specifies what the owning host can still observe or execute when a link, model service,
@@ -424,10 +434,11 @@ or target is unavailable.
 
 ### 11.1 Standalone Mobile execution
 
-The daemon owns tasks started through Ling PC or the Remote Gateway. For a standalone
-task, the phone owns the task and runs the adapter over a native transport without a PC
-or Gateway. At task creation, Ling offers the hosts that can reach the target and run
-the requested capability. The selected host retains ownership after a connection failure.
+The daemon owns tasks using a PC adapter. For a Mobile-owned task, the phone owns
+the task and runs the adapter over a native transport. It can run independently or
+invite a paired PC to assist. At task creation, Ling offers the hosts that can reach
+the target and run the requested capability. The selected host retains ownership
+after a connection failure.
 An independently authorized host can read the device to help reconcile the outcome.
 Any follow-up write on a different host starts a separate task after reconciliation.
 
@@ -442,17 +453,16 @@ receives only permitted, redacted observations, while the phone checks and runs 
 action locally. A bounded playbook can also run with no model service available.
 
 The support matrix records the phone OS, transport, adapter version, and target model
-and firmware. An adapter advertises a recovery capability only if the target exposes
-the corresponding interface in its current state and the phone can use it. The first
-flow runs in the foreground and reconnects a supported smart home device through its
-documented BLE setup mode. Success requires reading the device's network status or
-checking it through an equivalent local health check. The implementation and device
-evidence are tracked in
-[D9](ling-device-support-platform-implementation-plan.md#d9-standalone-mobile-execution).
+and firmware. An adapter advertises a recovery capability when the target exposes
+the corresponding interface in its current state and the phone can use it. D9 uses
+a foreground smart-home BLE setup and network readback to verify phone independence.
+Linux and Android workflows cover their own transports and verification.
+[D9](ling-device-support-platform-implementation-plan.md#d9-standalone-mobile-execution) ·
+[Device case flows](ling-device-developer-execution.md#4-case-flow-linux-device-with-wi-fi-trouble)
 
 ## 12. Storage and API shape
 
-Daemon-owned tasks use workspace SQLite and artifact storage. Standalone Mobile tasks
+Daemon-owned tasks use workspace SQLite and artifact storage. Mobile-owned tasks
 persist their state and redacted evidence in app storage. Before dispatching a write,
 the phone saves the approved attempt. On resume after app suspension or disconnect, it
 checks the target state and records `unknown` if it cannot verify the outcome.
@@ -575,11 +585,12 @@ for later review.
 2. Implement a read-only Home Assistant adapter and a small set of diagnosis playbooks.
 3. Implement the PC adapter and target-side executor for software diagnostics.
 4. Extend the mobile Remote Gateway with device task projection and approvals.
-5. Validate a standalone Mobile BLE workflow once the shared contracts and task rules
-   are ready. This work can run alongside Remote Gateway delivery.
-6. Add routers, NAS, printers, Android, and other external systems.
-7. Add vehicle adapters only after diagnostic hardware, protocol, and safety acceptance
-   are defined.
+5. Validate standalone Mobile and its recovery workflow against the shared
+   contracts. This work can run alongside Remote Gateway delivery.
+6. Add Linux, Android, routers, NAS, printers, and other adapters with individual
+   device acceptance. Verify vehicle diagnostics against its own hardware and protocol.
+7. Verify developer sessions on each host and paired collaboration for phone-owned tasks.
+8. Validate Ling Server direct and relay connectivity using the same signed task sync.
 
 The detailed one-by-one record is maintained in the implementation plan linked at the
 top of this document. Each slice must record its code scope, validation commands,

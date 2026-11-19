@@ -6,6 +6,7 @@ Last verified: 2026-11-19
 Document type: staged implementation and acceptance record
 Related design: [Ling Device Support Platform](ling-device-support-platform.md)
 Runtime contract: [Ling Device Support Platform Runtime Contract](ling-device-support-platform-runtime-contract.md)
+Developer workflows and topology: [Device Developer Execution and Connectivity](ling-device-developer-execution.md)
 
 This plan records delivery one slice at a time. A slice is not complete because code
 compiles or a static package check passes. Each completed slice must record behavior
@@ -26,7 +27,8 @@ validation and the boundary of what remains unverified.
    verification behavior.
 3. Use simulators and fixtures before real hardware. Hardware and field acceptance remain
    separate evidence categories.
-4. Do not expose raw shell, CAN, USB, or vendor commands directly to the model.
+4. Use typed broker capabilities for model actions. The operator uses native
+   development and vendor tools through the authorized workbench.
 5. Do not add an adapter to the product catalog until its manifest, health behavior,
    permission profile, support matrix, contract tests, and removal path exist.
 6. Record the exact adapter version, device profile, capability snapshot, and the
@@ -48,6 +50,9 @@ validation and the boundary of what remains unverified.
 | D7 | [ ] | Playbooks and operator evidence | Common configuration/repair flows are explainable and replayable | Playbook fixtures and evidence review |
 | D8 | [ ] | Additional ecosystems | Each added adapter meets the same contract and support gates | Per-adapter simulator and field acceptance |
 | D9 | [ ] | Standalone Mobile execution | One phone restores a supported BLE device's network connection with no PC or Gateway and verifies the result | Shared contract fixtures and real phone/device acceptance |
+| D10 | [ ] | Developer device sessions | Complete build, deploy, debug, verify, and native-tool workflows on supported host and target combinations | Project/device integration, native-tool and reattach acceptance |
+| D11 | [ ] | PC-assisted Mobile execution | Paired PC contributes plans, artifacts, or analysis while Mobile owns the task and device link | Collaboration contract fixtures and physical device runs |
+| D12 | [ ] | Ling Server connectivity | Paired conversation and device-task sync survive LAN, cross-network direct, and encrypted relay routes | Multi-network tests, peer identity and reconnect evidence |
 
 ## D0: Design baseline
 
@@ -202,9 +207,10 @@ D0 covers the design and the implementation plan.
 - [ ] Reuse secure pairing, device identity, replay protection, and signed frames.
 - [ ] Add mobile read-only device list, capability, task status, and evidence projection.
 - [ ] Add eligible approval and revoke flows with server-owned policy ceilings.
-- [ ] Keep raw commands, secrets, broad settings, and unrestricted execution out of Mobile.
-- [ ] Keep the daemon as the execution owner for tasks accessed through the Remote
-  Gateway. [D9](#d9-standalone-mobile-execution) covers tasks owned by the phone.
+- [ ] Route eligible device-task messages through the Gateway allowlist and keep
+  target credentials with the executing host.
+- [ ] Keep the daemon as the execution owner for this facade. D9 covers standalone
+  Mobile and D11 covers collaboration on a phone-owned task.
 
 ### Exit evidence
 
@@ -247,7 +253,11 @@ that support exists:
 - [ ] Router and NAS APIs.
 - [ ] Printer discovery, queue, driver, and network diagnosis.
 - [ ] Matter, ESPHome, Zigbee, and BLE devices.
-- [ ] Android and head-unit diagnostics through authorized APIs or ADB where available.
+- [ ] Linux network diagnosis through an authorized SSH adapter, with real LAN and
+  phone-hotspot reachability and fault evidence.
+- [ ] Android and head-unit deployment and diagnostics through authorized APIs or
+  ADB where available. Verify DiPlay on a compatible parked vehicle using
+  the [installation case](ling-device-developer-execution.md#5-case-flow-install-diplay-on-an-older-head-unit).
 - [ ] OBD/OpenXC vehicle read and diagnostic operations.
 - [ ] Any vendor-specific adapter with a documented support matrix and authorization path.
 
@@ -286,6 +296,74 @@ only on a successful install or a model response.
   identifies the phone OS, adapter, and device firmware. Other OS or transport coverage
   requires its own evidence.
 
+## D10: Developer device sessions
+
+### Scope
+
+- [ ] Add standard and developer session entry points to PC and Mobile. Show the
+  current workspace, external target, owner, and effective device authorization.
+- [ ] Use the shared device contract for deploy, launch, test, and scoped diagnostics
+  on an authorized development target. Bind package identity and the verified
+  artifact to the approved device action.
+- [ ] Connect the operator's native workbench to supported, authorized SSH, ADB,
+  and vendor maintenance tools. Record tool status, relevant evidence selected by
+  the user, and readback after native maintenance.
+- [ ] Persist job identity and reconnect to running build or test work. Record
+  the runtime and device outcome separately.
+
+### Exit evidence
+
+- A supported app project completes build, install, launch, log collection, test,
+  and retest through the developer entry point. Standard and developer sessions
+  use the same task journal and outcome rules.
+- Exercise an operator's target-pinned terminal session and a supported vendor
+  maintenance handoff on a suitable device or vendor test fixture. Record the
+  real-device evidence when available.
+- Exercise a different artifact or target, expired authorization, injected device
+  output, and a client disconnect while a supported job runs.
+
+## D11: PC-assisted Mobile execution
+
+### Scope
+
+- [ ] Extend the signed remote protocol for an opted-in phone-owned task
+  projection, PC proposals, scoped artifact transfer, and Mobile receipts.
+- [ ] Keep project actions bound to the PC workspace and device actions bound to
+  the phone's verified target and local authorization.
+- [ ] Resume the owner's journal from an acknowledged revision or a refreshed
+  snapshot. Preserve known and uncertain attempt outcomes after either link fails.
+
+### Exit evidence
+
+- Physical Linux SSH diagnosis and compatible head-unit installation exercise the
+  phone-only and paired PC assistance cases. Include a PC build or artifact
+  transfer verified by the phone.
+- Changing the connected target, revoking collaboration, or replaying a proposal
+  leaves accepted actions and their execution ownership intact. Both peers show
+  the phone's eventual verification state.
+
+## D12: Ling Server connectivity
+
+### Scope
+
+- [ ] Add outbound enrollment, peer rendezvous, route selection, and encrypted relay
+  for paired phone and PC connections. Retain local PC pairing confirmation and
+  peer identity checks across all routes.
+- [ ] Carry the Gateway's eligible application messages across LAN, authenticated
+  internet direct, and encrypted relay routes. Preserve protocol version
+  negotiation, command receipts, and session resumption.
+- [ ] Measure path establishment, relay use, and recovery after network changes.
+  Track service availability, resource limits, and redacted connection diagnostics.
+
+### Exit evidence
+
+- Test a reachable LAN, a direct connection across networks, and a NAT/firewall
+  fixture requiring relay. Include route switching during live conversation and
+  device-task sync and an outage with local execution available.
+- Verify peer-key mismatch, unauthorized relay access, expiry, and revocation.
+  Verify that the relay carries ciphertext and that reconnect resumes the same
+  task without dispatching a second attempt.
+
 ## Per-slice evidence ledger
 
 Update this table in the same PR that changes a slice status.
@@ -302,6 +380,9 @@ Update this table in the same PR that changes a slice status.
 | D7 | — | — | — | Not started | Playbooks |
 | D8 | — | — | — | Not started | Additional ecosystems |
 | D9 | — | — | [Design](ling-device-support-platform.md#111-standalone-mobile-execution) | Design recorded, implementation not started | Standalone BLE execution and device acceptance |
+| D10 | — | — | [Developer sessions](ling-device-developer-execution.md#1-device-sessions) | Design recorded, implementation not started | Project, device, and native tool acceptance |
+| D11 | — | — | [PC collaboration](ling-device-developer-execution.md#22-pc-assisted-phone-execution) | Design recorded, implementation not started | Phone-owned collaboration and physical cases |
+| D12 | — | — | [Communication design](ling-device-developer-execution.md#3-communication-design) | Design recorded, implementation not started | Direct paths, relay, and reconnect acceptance |
 
 ## Definition of platform completion
 
@@ -312,6 +393,10 @@ The platform is not complete until:
 - Mobile and PC show the same durable task state and evidence for a paired task;
 - at least one supported recovery task completes on a phone with no PC or Gateway,
   with verification and local evidence;
+- the developer project-to-device workflow passes on supported PC and phone
+  combinations with recorded native-tool and interruption behavior;
+- paired PC assistance preserves Mobile ownership and verified results, including
+  across direct and relayed peer connections;
 - read-only, reversible, mutating, and critical actions have distinct policy behavior;
 - adapter and capability versions are preserved in task history;
 - a failed or disconnected operation cannot silently repeat a potentially mutating action;
