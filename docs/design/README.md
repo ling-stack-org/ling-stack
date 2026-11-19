@@ -2,7 +2,7 @@
 
 Status: canonical documentation index
 Owner: repository maintainers
-Last verified: 2026-11-20 (Ling Device Fabric and D14–D22 design indexed), 2026-11-20 (Ling Server connectivity), 2026-11-19 (Ling Device Support Platform runtime, developer execution, and hardware protocol workbench designs indexed), 2026-11-18 (Ling Device Support Platform, 14-item delivery plan and Automations P2 plan indexed). Other delivery states retain their owners.
+Last verified: 2026-11-20 (Ling App Server, Ling Device Fabric and D14–D22, Ling Server Connectivity), 2026-11-19 (Ling Device Support Platform runtime, developer execution, and hardware protocol workbench designs indexed), 2026-11-18 (Ling Device Support Platform, 14-item delivery plan and Automations P2 plan indexed). Other delivery states retain their owners.
 Document type: governance index
 Code and test anchors: each linked contract owns its anchors
 
@@ -51,6 +51,9 @@ Maintenance-only transition notes are kept in [Development Handoffs](../maintena
 - [Ling Framework Complementary Design](ling-framework-complementary-design.md)
 - [Ling Framework Complementary Detailed Design](ling-framework-complementary-detailed-design.md)
 - [Ling Framework Complementary Implementation Plan](ling-framework-complementary-implementation-plan.md)
+- [Ling App Server](ling-app-server.md)
+- [Ling App Server Detailed Design](ling-app-server-detailed-design.md)
+- [Ling App Server Implementation Plan](ling-app-server-implementation-plan.md)
 - [Contracts And API Client](contracts-api-client.md)
 - [Business Data And API Compatibility Cutover](business-data-api-compatibility-cutover.md)
 - [Business Data And API Compatibility Implementation Plan](business-data-api-compatibility-implementation-plan.md)
