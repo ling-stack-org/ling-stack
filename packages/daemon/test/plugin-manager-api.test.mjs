@@ -311,18 +311,19 @@ test("daemon installs the official Cua package cache and previews runtime inject
     const preview = await getJson(`${daemon.url}/plugins/${encodeURIComponent(cuaPluginId)}/runtime-preview?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(preview.preview.status, "injectable");
     assert.deepEqual(preview.preview.mcpServers.map((server) => [server.id, server.enabled]), [["mcp_cua_driver", true]]);
-    const overlayByTarget = new Map(preview.preview.policyOverlays.map((overlay) => [overlay.targetId, overlay.defaultApproval]));
-    assert.equal(overlayByTarget.get("mcp_cua_driver:check_permissions"), "allow");
-    assert.equal(overlayByTarget.get("mcp_cua_driver:list_windows"), "allow");
-    assert.equal(overlayByTarget.get("mcp_cua_driver:click"), "ask");
+    assert.equal(preview.preview.policyOverlays.every((overlay) =>
+      overlay.targetId === "mcp:cua-driver"
+      && overlay.defaultApproval === "ask"
+      && overlay.targetKind === "mcp-server"
+    ), true);
 
     const { runId } = await postRunAndCollectEvents(daemon.url, runBody(cwd, "task_plugin_runtime_snapshot"));
     assert.ok(runId);
     const run = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}?cwd=${encodeURIComponent(cwd)}`);
     assert.deepEqual(run.requestSnapshot.managedPluginRuntime.pluginIds, [cuaPluginId]);
     assert.equal(run.requestSnapshot.managedPluginRuntime.capabilities[0].status, "injectable");
-    assert.equal(run.requestSnapshot.managedPluginRuntime.policyOverlays.some((overlay) =>
-      overlay.targetId === "mcp_cua_driver:click" && overlay.defaultApproval === "ask"
+    assert.equal(run.requestSnapshot.managedPluginRuntime.policyOverlays.every((overlay) =>
+      overlay.targetId === "mcp:cua-driver" && overlay.defaultApproval === "ask"
     ), true);
 
     const uninstalled = await postJson(`${daemon.url}/plugins/${encodeURIComponent(cuaPluginId)}/uninstall?cwd=${encodeURIComponent(cwd)}`, {

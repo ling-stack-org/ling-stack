@@ -4181,6 +4181,12 @@ function createMockOfficialCatalogEntry(input: {
   readonly version: string;
   readonly sizeBytes: number;
 }): Record<string, unknown> {
+  const platforms = [
+    ["darwin", "arm64"],
+    ["darwin", "x64"],
+    ["linux", "x64"],
+    ["win32", "x64"],
+  ] as const;
   return {
     pluginId: input.pluginId,
     displayName: input.displayName,
@@ -4188,17 +4194,17 @@ function createMockOfficialCatalogEntry(input: {
     trustSummary: input.trustSummary,
     latestStableVersion: input.version,
     manifest: { contributions: [], requiredSecrets: [], defaultApprovals: [], healthChecks: [] },
-    artifacts: [{
-      artifactId: `${input.pluginId}-${input.version}-darwin-arm64`,
+    artifacts: platforms.map(([platform, arch]) => ({
+      artifactId: `${input.pluginId}-${input.version}-${platform}-${arch}`,
       pluginId: input.pluginId,
       version: input.version,
-      platform: "darwin",
-      arch: "arm64",
+      platform,
+      arch,
       channel: "stable",
-      url: `https://example.com/${encodeURIComponent(input.pluginId)}-${input.version}.ling-plugin.zip`,
+      url: `https://example.com/${encodeURIComponent(input.pluginId)}-${input.version}-${platform}-${arch}.ling-plugin.zip`,
       sizeBytes: input.sizeBytes,
       sha256: "a".repeat(64),
-    }],
+    })),
   };
 }
 

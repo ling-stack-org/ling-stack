@@ -109,7 +109,7 @@ html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell
   background: var(--ling-bg-panel);
 }
 html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell .media-jobs-header {
-  background: color-mix(in srgb, var(--ling-bg-panel) 34%, transparent);
+  background: var(--ling-bg-panel);
   border-color: var(--ling-surface-border-subtle);
 }
 html[data-user-background="ready"][data-ui-background-visible="true"] .app-shell .media-jobs-heading-copy :is(strong, span) {
@@ -135,7 +135,7 @@ html[data-user-background="ready"][data-ui-background-visible="true"][data-ui-su
   border-right-width: 0;
 }
 html[data-user-background="ready"][data-ui-background-visible="true"][data-ui-surface="media-canvas"] .app-shell .media-jobs-layout {
-  background: color-mix(in srgb, var(--ling-bg-panel) 7%, transparent);
+  background: var(--ling-bg-panel);
 }
 html[data-user-background="ready"][data-ui-background-visible="true"][data-ui-surface="media-canvas"] .app-shell > .workspace,
 html[data-user-background="ready"][data-ui-background-visible="true"][data-ui-surface="media-canvas"] .app-shell .channel-left-drawer,

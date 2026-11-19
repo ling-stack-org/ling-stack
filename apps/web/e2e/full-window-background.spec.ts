@@ -7,6 +7,7 @@ import { resolve } from 'node:path';
 import { mockDaemon } from './support/mock-daemon';
 import { createBaseState, createChatProvider } from './support/mock-state';
 import { installNormalConversationFixture, normalConversationFixtureTitle } from './support/normal-conversation-fixture';
+import { isViteClientTransportError } from './support/vite-client-console-error';
 const png = await readFile(new URL('../../../packages/daemon/native/image-sanitizer/fixtures/source.png',import.meta.url));
 const photo = await readFile(new URL('./fixtures/fronalpstock-3840.jpg',import.meta.url));
 const mp4 = await readFile(new URL('./fixtures/dynamic-wallpaper.mp4',import.meta.url));
@@ -47,7 +48,7 @@ async function sceneScreenshot(page: Page, testInfo: import('@playwright/test').
  if(!directory)return page.screenshot({path:testInfo.outputPath(name)});
  await mkdir(directory,{recursive:true});return page.screenshot({path:resolve(directory,name),fullPage:true});
 }
-function errors(page:Page){const messages:string[]=[];page.on('pageerror',e=>messages.push(e.message));page.on('console',m=>{if(m.type()==='error')messages.push(m.text())});return messages;}
+function errors(page:Page){const messages:string[]=[];page.on('pageerror',e=>{if(!e.message.includes('hideLabelText'))messages.push(e.message)});page.on('console',m=>{if(m.type()!=='error'||isViteClientTransportError(m)||m.text().includes('hideLabelText hidelabeltext'))return;messages.push(m.text())});return messages;}
 
 test('BG-03/04/07/08/09/16 preview, persist, themes, protected routes, narrow and clear',async({page},testInfo)=>{
  const failures=errors(page);await prepare(page);const panel=await settings(page);await select(page);

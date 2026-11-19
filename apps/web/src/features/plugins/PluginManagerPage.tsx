@@ -131,8 +131,8 @@ export function PluginManagerPage(props: PluginManagerPageProps): React.JSX.Elem
     [catalogEntries, installedPlugins],
   );
   useEffect(() => {
-    if (!tabTouched && props.plugins.length > 0 && installedEntries.length === 0) setActiveTab("available");
-  }, [installedEntries.length, props.plugins.length, tabTouched]);
+    if (!tabTouched && installedEntries.length === 0 && availableEntries.length > 0) setActiveTab("available");
+  }, [availableEntries.length, installedEntries.length, tabTouched]);
   const visibleEntries = activeTab === "installed" ? installedEntries : availableEntries;
   const catalogListRef = useRef<HTMLDivElement>(null);
   function handleCatalogScroll(event: React.UIEvent<HTMLDivElement>): void {
