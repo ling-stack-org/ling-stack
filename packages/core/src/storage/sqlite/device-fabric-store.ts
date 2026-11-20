@@ -5,8 +5,12 @@ import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
 
 import type {
   DeviceEventEnvelopeV1,
+  DeviceGraphNodeV1,
+  DeviceGraphRelationshipV1,
   DeviceLifecycleRecordV1,
   DeviceResourceManifestV1,
+  DeviceTaskGraphV1,
+  DeviceTwinV1,
   JsonValue,
 } from "@ling-stack/contracts";
 
@@ -171,6 +175,76 @@ export class SqliteDeviceFabricStore {
     return { manifest: parseJson<DeviceResourceManifestV1>(row.manifest_json, "resource manifest"), payloadDigest: readString(row, "payload_digest"), installedAt: readString(row, "installed_at") };
   }
 
+  upsertGraphNode(node: DeviceGraphNodeV1): DeviceGraphNodeV1 {
+    if (!node.nodeId.trim() || node.revision < 0) throw new DeviceFabricError("revision_conflict", "graph node identity is invalid");
+    const current = this.getGraphNode(node.nodeId);
+    if (current && node.revision < current.revision) throw new DeviceFabricError("revision_conflict", "graph node revision regressed");
+    if (node.parentNodeId && !this.getGraphNode(node.parentNodeId)) throw new DeviceFabricError("target_missing", "graph parent node is missing");
+    this.database.prepare("INSERT INTO device_fabric_graph_nodes(node_id,revision,node_json) VALUES(?,?,?) ON CONFLICT(node_id) DO UPDATE SET revision=excluded.revision,node_json=excluded.node_json")
+      .run(node.nodeId, node.revision, JSON.stringify(node));
+    return node;
+  }
+
+  getGraphNode(nodeId: string): DeviceGraphNodeV1 | undefined {
+    const row = this.database.prepare("SELECT node_json FROM device_fabric_graph_nodes WHERE node_id=?").get(nodeId) as Row | undefined;
+    return row ? parseJson<DeviceGraphNodeV1>(row.node_json, "graph node") : undefined;
+  }
+
+  listGraphNodes(): readonly DeviceGraphNodeV1[] {
+    return (this.database.prepare("SELECT node_json FROM device_fabric_graph_nodes ORDER BY node_id").all() as Row[])
+      .map(row => parseJson<DeviceGraphNodeV1>(row.node_json, "graph node"));
+  }
+
+  addGraphRelationship(relationship: DeviceGraphRelationshipV1): DeviceGraphRelationshipV1 {
+    if (!relationship.relationshipId.trim() || relationship.fromNodeId === relationship.toNodeId) throw new DeviceFabricError("invalid_graph", "graph relationship identity is invalid");
+    if (!this.getGraphNode(relationship.fromNodeId) || !this.getGraphNode(relationship.toNodeId)) throw new DeviceFabricError("target_missing", "relationship endpoint is missing");
+    const existing = this.getGraphRelationship(relationship.relationshipId);
+    if (existing && relationship.revision < existing.revision) throw new DeviceFabricError("revision_conflict", "relationship revision regressed");
+    if (["contains", "part_of"].includes(relationship.type) && this.wouldCreateContainmentCycle(relationship.fromNodeId, relationship.toNodeId, relationship.relationshipId)) {
+      throw new DeviceFabricError("invalid_graph", "relationship would create a containment cycle");
+    }
+    this.database.prepare("INSERT INTO device_fabric_graph_relationships(relationship_id,revision,relationship_json) VALUES(?,?,?) ON CONFLICT(relationship_id) DO UPDATE SET revision=excluded.revision,relationship_json=excluded.relationship_json")
+      .run(relationship.relationshipId, relationship.revision, JSON.stringify(relationship));
+    return relationship;
+  }
+
+  getGraphRelationship(relationshipId: string): DeviceGraphRelationshipV1 | undefined {
+    const row = this.database.prepare("SELECT relationship_json FROM device_fabric_graph_relationships WHERE relationship_id=?").get(relationshipId) as Row | undefined;
+    return row ? parseJson<DeviceGraphRelationshipV1>(row.relationship_json, "graph relationship") : undefined;
+  }
+
+  listGraphRelationships(): readonly DeviceGraphRelationshipV1[] {
+    return (this.database.prepare("SELECT relationship_json FROM device_fabric_graph_relationships ORDER BY relationship_id").all() as Row[])
+      .map(row => parseJson<DeviceGraphRelationshipV1>(row.relationship_json, "graph relationship"));
+  }
+
+  saveTwin(twin: DeviceTwinV1): DeviceTwinV1 {
+    const current = this.getTwin(twin.deviceId);
+    if (current && twin.revision <= current.revision) throw new DeviceFabricError("revision_conflict", "device twin revision must advance");
+    this.database.prepare("INSERT INTO device_fabric_twins(device_id,revision,twin_json) VALUES(?,?,?) ON CONFLICT(device_id) DO UPDATE SET revision=excluded.revision,twin_json=excluded.twin_json")
+      .run(twin.deviceId, twin.revision, JSON.stringify(twin));
+    return twin;
+  }
+
+  getTwin(deviceId: string): DeviceTwinV1 | undefined {
+    const row = this.database.prepare("SELECT twin_json FROM device_fabric_twins WHERE device_id=?").get(deviceId) as Row | undefined;
+    return row ? parseJson<DeviceTwinV1>(row.twin_json, "device twin") : undefined;
+  }
+
+  saveTaskGraph(graph: DeviceTaskGraphV1): DeviceTaskGraphV1 {
+    validateTaskGraph(graph);
+    const current = this.getTaskGraph(graph.graphId);
+    if (current && graph.revision <= current.revision) throw new DeviceFabricError("revision_conflict", "task graph revision must advance");
+    this.database.prepare("INSERT INTO device_fabric_task_graphs(graph_id,revision,graph_json) VALUES(?,?,?) ON CONFLICT(graph_id) DO UPDATE SET revision=excluded.revision,graph_json=excluded.graph_json")
+      .run(graph.graphId, graph.revision, JSON.stringify(graph));
+    return graph;
+  }
+
+  getTaskGraph(graphId: string): DeviceTaskGraphV1 | undefined {
+    const row = this.database.prepare("SELECT graph_json FROM device_fabric_task_graphs WHERE graph_id=?").get(graphId) as Row | undefined;
+    return row ? parseJson<DeviceTaskGraphV1>(row.graph_json, "task graph") : undefined;
+  }
+
   transitionLifecycle(record: DeviceLifecycleRecordV1): DeviceLifecycleRecordV1 {
     const current = this.getLifecycle(record.deviceId);
     if (!current && record.status !== "discovered") throw new DeviceFabricError("lifecycle_invalid", "device lifecycle must start at discovered");
@@ -188,6 +262,26 @@ export class SqliteDeviceFabricStore {
   }
 
   close(): void { this.database.close(); }
+
+  private wouldCreateContainmentCycle(fromNodeId: string, toNodeId: string, replacingRelationshipId: string): boolean {
+    const children = new Map<string, string[]>();
+    for (const relationship of this.listGraphRelationships()) {
+      if (relationship.relationshipId === replacingRelationshipId || !["contains", "part_of"].includes(relationship.type)) continue;
+      const values = children.get(relationship.fromNodeId) ?? [];
+      values.push(relationship.toNodeId);
+      children.set(relationship.fromNodeId, values);
+    }
+    const stack = [toNodeId];
+    const visited = new Set<string>();
+    while (stack.length) {
+      const current = stack.pop()!;
+      if (current === fromNodeId) return true;
+      if (visited.has(current)) continue;
+      visited.add(current);
+      stack.push(...(children.get(current) ?? []));
+    }
+    return false;
+  }
 
   private applySchema(): void {
     this.database.exec(`
@@ -224,6 +318,26 @@ export class SqliteDeviceFabricStore {
         installed_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_device_resource_history_resource ON device_resource_history(resource_id,revision_id);
+      CREATE TABLE IF NOT EXISTS device_fabric_graph_nodes (
+        node_id TEXT PRIMARY KEY NOT NULL,
+        revision INTEGER NOT NULL,
+        node_json TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS device_fabric_graph_relationships (
+        relationship_id TEXT PRIMARY KEY NOT NULL,
+        revision INTEGER NOT NULL,
+        relationship_json TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS device_fabric_twins (
+        device_id TEXT PRIMARY KEY NOT NULL,
+        revision INTEGER NOT NULL,
+        twin_json TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS device_fabric_task_graphs (
+        graph_id TEXT PRIMARY KEY NOT NULL,
+        revision INTEGER NOT NULL,
+        graph_json TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS device_lifecycle_state (
         device_id TEXT PRIMARY KEY NOT NULL,
         revision INTEGER NOT NULL,
@@ -247,6 +361,30 @@ function validateResourceManifest(manifest: DeviceResourceManifestV1): void {
   if (manifest.dependencies.includes(manifest.resourceId) || new Set(manifest.dependencies).size !== manifest.dependencies.length) {
     throw new DeviceFabricError("resource_conflict", "resource manifest has invalid dependencies");
   }
+}
+
+function validateTaskGraph(graph: DeviceTaskGraphV1): void {
+  const nodeIds = new Set<string>();
+  for (const node of graph.nodes) {
+    if (!node.nodeId.trim() || nodeIds.has(node.nodeId)) throw new DeviceFabricError("invalid_graph", "task graph node ids must be unique");
+    nodeIds.add(node.nodeId);
+  }
+  const dependencies = new Map(graph.nodes.map(node => [node.nodeId, node.dependencies]));
+  for (const node of graph.nodes) {
+    if (node.dependencies.some(dependency => dependency === node.nodeId || !nodeIds.has(dependency))) throw new DeviceFabricError("invalid_graph", "task graph dependency is invalid");
+  }
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  const visit = (nodeId: string): boolean => {
+    if (visiting.has(nodeId)) return true;
+    if (visited.has(nodeId)) return false;
+    visiting.add(nodeId);
+    for (const dependency of dependencies.get(nodeId) ?? []) if (visit(dependency)) return true;
+    visiting.delete(nodeId);
+    visited.add(nodeId);
+    return false;
+  };
+  if (graph.nodes.some(node => visit(node.nodeId))) throw new DeviceFabricError("invalid_graph", "task graph contains a cycle");
 }
 
 type Row = Record<string, SQLOutputValue>;

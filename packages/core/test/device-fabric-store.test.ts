@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { createHash } from "node:crypto";
-import type { DeviceEventEnvelopeV1, DeviceResourceManifestV1 } from "@ling-stack/contracts";
+import type { DeviceEventEnvelopeV1, DeviceGraphNodeV1, DeviceResourceManifestV1, DeviceTaskGraphV1 } from "@ling-stack/contracts";
 import { DeviceFabricError } from "../dist/device-fabric.js";
 import { SqliteDeviceFabricStore } from "../dist/storage/sqlite/device-fabric-store.js";
 
@@ -95,5 +95,30 @@ test("fabric store persists lifecycle revisions and rejects invalid transitions"
   assert.equal(store.getLifecycle("device-1")?.status, "identified");
   assert.throws(() => store.transitionLifecycle({ deviceId: "device-1", status: "healthy", revision: 3, reason: "skip", authority: "adapter", changedAt: now }), (error: unknown) => error instanceof DeviceFabricError && error.code === "lifecycle_invalid");
   assert.throws(() => store.transitionLifecycle({ deviceId: "device-1", status: "enrolled", revision: 2, reason: "replay", authority: "adapter", changedAt: now }), (error: unknown) => error instanceof DeviceFabricError && error.code === "lifecycle_invalid");
+  store.close();
+});
+
+test("fabric store persists graph, twin, and task graph revisions", () => {
+  const store = new SqliteDeviceFabricStore();
+  const device: DeviceGraphNodeV1 = { nodeId: "device-1", kind: "device", deviceId: "device-1", label: "Linux board", identityRefs: ["ssh:board"], properties: {}, revision: 1 };
+  const component: DeviceGraphNodeV1 = { nodeId: "component-1", kind: "component", parentNodeId: "device-1", label: "Wi-Fi", identityRefs: [], properties: {}, revision: 1 };
+  store.upsertGraphNode(device);
+  store.upsertGraphNode(component);
+  store.addGraphRelationship({ relationshipId: "contains-1", fromNodeId: "device-1", toNodeId: "component-1", type: "contains", provenance: ["adapter"], revision: 1 });
+  assert.throws(() => store.addGraphRelationship({ relationshipId: "contains-cycle", fromNodeId: "component-1", toNodeId: "device-1", type: "contains", provenance: [], revision: 1 }), (error: unknown) => error instanceof DeviceFabricError && error.code === "invalid_graph");
+  store.saveTwin({ deviceId: "device-1", revision: 1, updatedAt: now, values: [] });
+  assert.throws(() => store.saveTwin({ deviceId: "device-1", revision: 1, updatedAt: now, values: [] }), (error: unknown) => error instanceof DeviceFabricError && error.code === "revision_conflict");
+  const graph: DeviceTaskGraphV1 = {
+    graphId: "graph-1",
+    revision: 1,
+    status: "planned",
+    createdAt: now,
+    updatedAt: now,
+    nodes: [{ nodeId: "node-1", targetDeviceId: "device-1", ownerKind: "edge", ownerId: "edge-1", capabilityId: "linux.inspect.network", capabilitySnapshotId: "snapshot-1", dependencies: [], status: "planning" }],
+  };
+  store.saveTaskGraph(graph);
+  assert.equal(store.getGraphNode("component-1")?.parentNodeId, "device-1");
+  assert.equal(store.getTwin("device-1")?.revision, 1);
+  assert.equal(store.getTaskGraph("graph-1")?.nodes[0]?.ownerId, "edge-1");
   store.close();
 });
