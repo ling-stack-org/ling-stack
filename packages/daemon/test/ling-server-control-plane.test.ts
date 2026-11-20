@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import { LingServerControlPlane } from "../dist/features/ling-server/control-plane.js";
@@ -22,5 +25,30 @@ test("self-hosted Ling Server control plane requires auth and preserves route fa
     assert.equal((await failover.json()).preferred, "relay");
   } finally {
     await control.stop();
+  }
+});
+
+test("self-hosted Ling Server restores control metadata after restart", async () => {
+  const root = mkdtempSync(join(tmpdir(), "ling-server-control-"));
+  const databasePath = join(root, "server.sqlite");
+  const first = new LingServerControlPlane({ authToken: "server-token", databasePath, now: () => "2026-11-21T00:00:00.000Z" });
+  const firstAddress = await first.start();
+  const headers = { authorization: "Bearer server-token", "content-type": "application/json" };
+  try {
+    const installation = await fetch(`http://${firstAddress.host}:${firstAddress.port}/v1/installations`, { method: "POST", headers, body: JSON.stringify({ installationId: "install-1", serverOrigin: "https://ling.example", applicationKeyFingerprint: "server-fp", revision: 1, status: "active" }) });
+    assert.equal(installation.status, 200);
+    const binding = await fetch(`http://${firstAddress.host}:${firstAddress.port}/v1/bindings`, { method: "POST", headers, body: JSON.stringify({ bindingId: "binding-1", installationId: "install-1", gatewayId: "gateway-1", mobileDeviceId: "mobile-1", gatewayKeyFingerprint: "gateway-fp", mobileKeyFingerprint: "mobile-fp", epoch: 1, revision: 1, status: "active" }) });
+    assert.equal(binding.status, 200);
+  } finally {
+    await first.stop();
+  }
+
+  const second = new LingServerControlPlane({ authToken: "server-token", databasePath, now: () => "2026-11-21T00:00:00.000Z" });
+  const secondAddress = await second.start();
+  try {
+    const route = await fetch(`http://${secondAddress.host}:${secondAddress.port}/v1/routes`, { method: "POST", headers, body: JSON.stringify({ action: "begin", route: { routeAttemptId: "route-1", bindingId: "binding-1", preferred: "direct", status: "checking", expiresAt: "2026-11-21T00:05:00.000Z" } }) });
+    assert.equal(route.status, 200);
+  } finally {
+    await second.stop();
   }
 });

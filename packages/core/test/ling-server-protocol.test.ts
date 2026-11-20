@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
-import { HardwareProtocolWorkbench, LingServerPeerRegistry } from "../dist/index.js";
+import { HardwareProtocolWorkbench, LingServerPeerRegistry, SqliteLingServerStore } from "../dist/index.js";
 
 const now = "2026-11-21T00:00:00.000Z";
 
@@ -26,4 +29,21 @@ test("hardware workbench captures, validates, decodes and replays protocol frame
   const replayed: string[] = [];
   workbench.replay(capture, frame => replayed.push(frame.digest));
   assert.deepEqual(replayed, [capture.frames[0].digest]);
+});
+
+test("Ling Server peer registry restores installation, binding and route state from SQLite", () => {
+  const root = mkdtempSync(join(tmpdir(), "ling-server-store-"));
+  const path = join(root, "server.sqlite");
+  const firstStore = new SqliteLingServerStore({ databasePath: path });
+  const first = new LingServerPeerRegistry({ store: firstStore });
+  first.registerInstallation({ installationId: "install-1", serverOrigin: "https://ling.example", applicationKeyFingerprint: "server-fp", revision: 1, status: "active" });
+  first.bindPeers({ bindingId: "binding-1", installationId: "install-1", gatewayId: "gateway-1", mobileDeviceId: "mobile-1", gatewayKeyFingerprint: "gateway-fp", mobileKeyFingerprint: "mobile-fp", epoch: 1, revision: 1, status: "active" });
+  first.beginRoute({ routeAttemptId: "route-1", bindingId: "binding-1", preferred: "direct", status: "checking", expiresAt: "2026-11-21T00:05:00.000Z" });
+  firstStore.close();
+
+  const secondStore = new SqliteLingServerStore({ databasePath: path });
+  const second = new LingServerPeerRegistry({ store: secondStore });
+  assert.equal(second.selectRoute("route-1", "direct", now).selected, "direct");
+  assert.equal(second.revokeBinding("binding-1", 2).epoch, 2);
+  secondStore.close();
 });

@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { LingServerPeerRegistry } from "@ling-stack/core";
+import { LingServerPeerRegistry, SqliteLingServerStore } from "@ling-stack/core";
 import type { LingServerInstallationV1, LingServerPeerBindingV1, LingServerRouteAttemptV1 } from "@ling-stack/contracts";
 
 const MAX_BODY_BYTES = 256 * 1024;
@@ -10,6 +10,8 @@ export interface LingServerControlPlaneOptions {
   readonly authToken: string;
   readonly now?: () => string;
   readonly registry?: LingServerPeerRegistry;
+  readonly databasePath?: string;
+  readonly store?: SqliteLingServerStore;
 }
 
 export class LingServerControlPlane {
@@ -18,11 +20,16 @@ export class LingServerControlPlane {
   readonly #port: number;
   readonly #authToken: string;
   readonly #now: () => string;
+  readonly #store?: SqliteLingServerStore;
+  readonly #ownsStore: boolean;
+  #storeClosed = false;
   #server?: Server;
 
   constructor(options: LingServerControlPlaneOptions) {
     if (!options.authToken.trim()) throw new Error("Ling Server control auth token is required");
-    this.registry = options.registry ?? new LingServerPeerRegistry();
+    this.#store = options.store ?? (options.databasePath ? new SqliteLingServerStore({ databasePath: options.databasePath }) : undefined);
+    this.#ownsStore = options.store === undefined && this.#store !== undefined;
+    this.registry = options.registry ?? new LingServerPeerRegistry({ store: this.#store });
     this.#host = options.host ?? "127.0.0.1";
     this.#port = options.port ?? 0;
     this.#authToken = options.authToken;
@@ -43,8 +50,11 @@ export class LingServerControlPlane {
   async stop(): Promise<void> {
     const server = this.#server;
     this.#server = undefined;
-    if (!server) return;
-    await new Promise<void>(resolve => { server.close(() => resolve()); server.closeAllConnections(); });
+    if (server) await new Promise<void>(resolve => { server.close(() => resolve()); server.closeAllConnections(); });
+    if (this.#ownsStore && !this.#storeClosed) {
+      this.#store?.close();
+      this.#storeClosed = true;
+    }
   }
 
   address(): { readonly host: string; readonly port: number } {
