@@ -159,6 +159,43 @@ test("App Server lists, reads, and controls a Work Item with revision and idempo
   }
 });
 
+test("App Server creates a Thread, accepts a Turn, and lists its durable history", { timeout: 10_000 }, async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "ling-app-server-thread-"));
+  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd });
+  await daemon.start();
+  const address = daemon.server.address();
+  assert.ok(address && typeof address === "object");
+  const socket = new WebSocket(`ws://127.0.0.1:${address.port}/app-server/rpc?cwd=${encodeURIComponent(cwd)}`);
+  const messages = [];
+  socket.on("message", data => messages.push(JSON.parse(String(data))));
+  const send = (id, method, params) => socket.send(JSON.stringify({ jsonrpc: "2.0", id, method, params }));
+  try {
+    await once(socket, "open");
+    send(1, "initialize", { protocolVersions: ["ling-app-server/1"], clientInfo: { name: "test", version: "1" } });
+    await waitFor(messages, message => message.id === 1);
+    send(2, "thread/start", { cwd, kind: "conversation", title: "Protocol thread", objective: "Exercise durable thread state" });
+    const started = await waitFor(messages, message => message.id === 2);
+    assert.equal(started.result.thread.title, "Protocol thread");
+    const threadId = started.result.thread.id;
+
+    send(3, "turn/start", { cwd, threadId, kind: "initial_request", title: "First turn", userInstruction: "Record this turn" });
+    const turnStarted = await waitFor(messages, message => message.id === 3);
+    assert.equal(turnStarted.result.turn.threadId, threadId);
+    assert.equal(turnStarted.result.turn.status, "open");
+
+    send(4, "thread/read", { cwd, threadId });
+    const read = await waitFor(messages, message => message.id === 4);
+    assert.equal(read.result.thread.id, threadId);
+    send(5, "thread/turns/list", { cwd, threadId });
+    const turns = await waitFor(messages, message => message.id === 5);
+    assert.equal(turns.result.turns.length, 1);
+  } finally {
+    socket.terminate();
+    await daemon.stop();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 async function waitFor(messages, predicate) {
   for (const message of messages) {
     if (predicate(message)) return message;

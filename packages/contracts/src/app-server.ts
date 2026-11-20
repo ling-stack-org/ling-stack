@@ -30,6 +30,7 @@ export type LingAppServerCapability = (typeof LING_APP_SERVER_CAPABILITIES)[numb
 /** Capabilities backed by the currently shipped App Server adapter. */
 export const LING_APP_SERVER_IMPLEMENTED_CAPABILITIES = [
   "server/ping",
+  "thread.events",
   "workItem.read",
   "workItem.control",
 ] as const satisfies readonly LingAppServerCapability[];

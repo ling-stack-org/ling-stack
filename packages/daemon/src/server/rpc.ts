@@ -44,6 +44,7 @@ import { appendControlPlaneEvent } from "../features/control-plane/events.js";
 import { executeRunRequest, type RunExecutionSink } from "../features/runs/orchestrator.js";
 import { parseRunRequest } from "../features/runs/schemas.js";
 import { projectPublicRunSession } from "../features/runs/public-execution-snapshots.js";
+import { projectPublicLingThread, projectPublicLingTurn } from "../features/runs/public-execution-snapshots.js";
 import { maybeQueueGoalContinuation, maybeStartNextRunInterventionContinuation } from "../features/runs/interventions.js";
 import { RpcOutboundWriter, type RpcOutboundFrame } from "./rpc-outbound.js";
 
@@ -253,6 +254,16 @@ class RpcConnection {
           methods: LING_APP_SERVER_METHODS,
           notifications: LING_APP_SERVER_NOTIFICATION_METHODS,
         };
+      case "thread/start":
+        return this.startThread(params);
+      case "thread/read":
+        return this.readThread(params);
+      case "thread/list":
+        return this.listThreads(params);
+      case "thread/turns/list":
+        return this.listThreadTurns(params);
+      case "turn/start":
+        return this.startTurn(params);
       case "daemon.health":
         return {
           ok: true,
@@ -327,6 +338,90 @@ class RpcConnection {
       limit: readOptionalIntegerField(record, "limit"),
     }, new Date().toISOString());
     return { cwd, workItems: items.map(item => projectWorkItemSnapshot(item)) };
+  }
+
+  private startThread(params: unknown): unknown {
+    const record = readParamsRecord(params);
+    const cwd = readRpcCwd(record, this.defaultCwd);
+    const store = this.context.storeRegistry.getStore(cwd);
+    const title = readOptionalStringField(record, "title") ?? "Ling App Server thread";
+    const objective = readOptionalStringField(record, "objective") ?? title;
+    const kind = readOptionalStringField(record, "kind") ?? "conversation";
+    const thread = store.createLingThread({
+      id: readOptionalStringField(record, "threadId"),
+      kind: readLingThreadKind(kind),
+      title,
+      objective,
+      status: "open",
+    }, new Date().toISOString());
+    return { cwd, thread: projectPublicLingThread(thread) };
+  }
+
+  private readThread(params: unknown): unknown {
+    const record = readParamsRecord(params);
+    const cwd = readRpcCwd(record, this.defaultCwd);
+    const threadId = readStringField(record, "threadId");
+    const store = this.context.storeRegistry.getStore(cwd);
+    const thread = store.getLingThread(threadId);
+    if (!thread) throw rpcError(-32040, "workspace_binding_invalid", `Thread was not found: ${threadId}`);
+    return {
+      cwd,
+      thread: projectPublicLingThread(thread),
+      goal: store.getLingThreadGoal(threadId) ?? null,
+    };
+  }
+
+  private listThreads(params: unknown): unknown {
+    const record = readParamsRecord(params);
+    const cwd = readRpcCwd(record, this.defaultCwd);
+    const store = this.context.storeRegistry.getStore(cwd);
+    return {
+      cwd,
+      threads: store.listLingThreads({ limit: readOptionalIntegerField(record, "limit") }).map(projectPublicLingThread),
+    };
+  }
+
+  private listThreadTurns(params: unknown): unknown {
+    const record = readParamsRecord(params);
+    const cwd = readRpcCwd(record, this.defaultCwd);
+    const threadId = readStringField(record, "threadId");
+    const store = this.context.storeRegistry.getStore(cwd);
+    const thread = store.getLingThread(threadId);
+    if (!thread) throw rpcError(-32040, "workspace_binding_invalid", `Thread was not found: ${threadId}`);
+    const turns = store.listLingTurns({ threadId, limit: readOptionalIntegerField(record, "limit") });
+    return {
+      cwd,
+      threadId,
+      turns: turns.map((turn) => projectPublicLingTurn(turn, thread)),
+      runLinks: turns.flatMap((turn) => store.listLingTurnRuns(turn.id)),
+    };
+  }
+
+  private startTurn(params: unknown): unknown {
+    const record = readParamsRecord(params);
+    const cwd = readRpcCwd(record, this.defaultCwd);
+    const threadId = readStringField(record, "threadId");
+    const store = this.context.storeRegistry.getStore(cwd);
+    const thread = store.getLingThread(threadId);
+    if (!thread) throw rpcError(-32040, "workspace_binding_invalid", `Thread was not found: ${threadId}`);
+    const instruction = readOptionalStringField(record, "userInstruction") ?? readOptionalStringField(record, "message");
+    if (!instruction?.trim()) throw rpcError(-32602, "invalid_params", "userInstruction or message is required.");
+    const turn = store.createLingTurn({
+      id: readOptionalStringField(record, "turnId"),
+      threadId,
+      kind: readLingTurnKind(readOptionalStringField(record, "kind") ?? "initial_request"),
+      title: readOptionalStringField(record, "title") ?? instruction.slice(0, 120),
+      userInstruction: instruction,
+      createdByActor: "local-user",
+    }, new Date().toISOString());
+    const shouldRun = record.execute === true || record.task !== undefined || record.providerPresetId !== undefined || record.provider !== undefined;
+    if (!shouldRun) {
+      return { cwd, thread: projectPublicLingThread(thread), turn: projectPublicLingTurn(turn, thread) };
+    }
+    const task = record.task ?? { id: `task_${turn.id}`, title: turn.title, prompt: instruction };
+    const runRequest = { ...record, cwd, threadId, turnId: turn.id, task };
+    const accepted = this.startRun(runRequest);
+    return { cwd, thread: projectPublicLingThread(thread), turn: projectPublicLingTurn(turn, thread), run: accepted };
   }
 
   private readWorkItem(params: unknown): unknown {
@@ -830,6 +925,22 @@ function readOptionalWorkItemSourceType(value: unknown): WorkItemSourceType | un
     throw rpcError(-32602, "invalid_params", "sourceType is not a supported Work Item source type.");
   }
   return value as WorkItemSourceType;
+}
+
+function readLingThreadKind(value: string): import("@ling-stack/core").LingThreadKind {
+  const kinds = ["task", "channel_discussion", "teammate_direct", "workflow_step", "external_work", "automation", "conversation"] as const;
+  if (!kinds.includes(value as (typeof kinds)[number])) {
+    throw rpcError(-32602, "invalid_params", "kind is not a supported Ling Thread kind.");
+  }
+  return value as import("@ling-stack/core").LingThreadKind;
+}
+
+function readLingTurnKind(value: string): import("@ling-stack/core").LingTurnKind {
+  const kinds = ["initial_request", "manual_followup", "queued_followup", "interrupt_redirect", "workflow_step", "external_work_update", "automation_tick", "review_queue_action"] as const;
+  if (!kinds.includes(value as (typeof kinds)[number])) {
+    throw rpcError(-32602, "invalid_params", "kind is not a supported Ling Turn kind.");
+  }
+  return value as import("@ling-stack/core").LingTurnKind;
 }
 
 function jsonRpcIdKey(id: JsonRpcId): string {
