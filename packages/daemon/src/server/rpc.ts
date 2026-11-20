@@ -277,6 +277,12 @@ class RpcConnection {
         return this.listThreadTurns(params);
       case "turn/start":
         return this.startTurn(params);
+      case "turn/queue":
+        return this.queueTurn(params);
+      case "turn/interrupt":
+        return this.interruptTurn(params);
+      case "turn/steer":
+        throw rpcError(-32032, "steer_unsupported", "In-turn steering is not available on this Runner connection; queue or interrupt the Turn.");
       case "turn/resume":
         return this.resumeTurn(params);
       case "daemon.health":
@@ -456,6 +462,25 @@ class RpcConnection {
     const runRequest = { ...record, cwd, threadId, turnId: turn.id, task };
     const accepted = this.startRun(runRequest);
     return { cwd, thread: projectPublicLingThread(thread), turn: projectPublicLingTurn(turn, thread), run: accepted };
+  }
+
+  private queueTurn(params: unknown): unknown {
+    const record = readParamsRecord(params);
+    return this.startTurn({ ...record, kind: "queued_followup", execute: false });
+  }
+
+  private interruptTurn(params: unknown): unknown {
+    const record = readParamsRecord(params);
+    const cwd = readRpcCwd(record, this.defaultCwd);
+    const turnId = readStringField(record, "turnId");
+    const store = this.context.storeRegistry.getStore(cwd);
+    const turn = store.getLingTurn(turnId);
+    if (!turn) throw rpcError(-32040, "workspace_binding_invalid", `Turn was not found: ${turnId}`);
+    if (!turn.activeRunId) {
+      const thread = store.getLingThread(turn.threadId);
+      return { cwd, turn: projectPublicLingTurn(turn, thread) };
+    }
+    return this.cancelRun({ cwd, runId: turn.activeRunId });
   }
 
   private readWorkItem(params: unknown): unknown {
