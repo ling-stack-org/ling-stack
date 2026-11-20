@@ -9,6 +9,7 @@ import type {
   DeviceGraphRelationshipV1,
   DeviceLifecycleRecordV1,
   DeviceResourceManifestV1,
+  DeviceSecretUseV1,
   DeviceTaskGraphV1,
   DeviceTraceSpanV1,
   DeviceTwinV1,
@@ -282,6 +283,21 @@ export class SqliteDeviceFabricStore {
       .map(row => parseJson<DeviceTraceSpanV1>(row.span_json, "trace span"));
   }
 
+  recordSecretUse(use: DeviceSecretUseV1): void {
+    if (!use.useId.trim() || !use.taskId.trim() || !use.targetDeviceId.trim() || !use.secretRef.trim() || !use.purpose.trim() || !use.policyRevision.trim()) {
+      throw new DeviceFabricError("safety_denied", "secret use identity is invalid");
+    }
+    this.database.prepare("INSERT INTO device_secret_uses(use_id,task_id,attempt_id,target_device_id,secret_ref,purpose,policy_revision,used_at,use_json) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(use_id) DO NOTHING")
+      .run(use.useId, use.taskId, use.attemptId ?? null, use.targetDeviceId, use.secretRef, use.purpose, use.policyRevision, use.usedAt, JSON.stringify(use));
+  }
+
+  listSecretUses(targetDeviceId?: string): readonly DeviceSecretUseV1[] {
+    const rows = targetDeviceId
+      ? this.database.prepare("SELECT use_json FROM device_secret_uses WHERE target_device_id=? ORDER BY used_at,use_id").all(targetDeviceId) as Row[]
+      : this.database.prepare("SELECT use_json FROM device_secret_uses ORDER BY used_at,use_id").all() as Row[];
+    return rows.map(row => parseJson<DeviceSecretUseV1>(row.use_json, "device secret use"));
+  }
+
   transitionLifecycle(record: DeviceLifecycleRecordV1): DeviceLifecycleRecordV1 {
     const current = this.getLifecycle(record.deviceId);
     if (!current && record.status !== "discovered") throw new DeviceFabricError("lifecycle_invalid", "device lifecycle must start at discovered");
@@ -386,6 +402,18 @@ export class SqliteDeviceFabricStore {
         span_json TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_device_trace_spans_trace ON device_trace_spans(trace_id,span_id);
+      CREATE TABLE IF NOT EXISTS device_secret_uses (
+        use_id TEXT PRIMARY KEY NOT NULL,
+        task_id TEXT NOT NULL,
+        attempt_id TEXT,
+        target_device_id TEXT NOT NULL,
+        secret_ref TEXT NOT NULL,
+        purpose TEXT NOT NULL,
+        policy_revision TEXT NOT NULL,
+        used_at TEXT NOT NULL,
+        use_json TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_device_secret_uses_target ON device_secret_uses(target_device_id,used_at,use_id);
       CREATE TABLE IF NOT EXISTS device_lifecycle_state (
         device_id TEXT PRIMARY KEY NOT NULL,
         revision INTEGER NOT NULL,

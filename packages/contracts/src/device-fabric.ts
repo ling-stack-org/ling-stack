@@ -131,6 +131,17 @@ export interface DeviceSafetyContextV1 {
   readonly observedAt: string;
 }
 
+export interface DeviceSecretUseV1 {
+  readonly useId: string;
+  readonly taskId: string;
+  readonly attemptId?: string;
+  readonly targetDeviceId: string;
+  readonly secretRef: string;
+  readonly purpose: string;
+  readonly policyRevision: string;
+  readonly usedAt: string;
+}
+
 export interface DeviceLifecycleRecordV1 {
   readonly deviceId: string;
   readonly status: "discovered" | "identified" | "enrolled" | "healthy" | "degraded" | "offline" | "maintenance" | "upgraded" | "recovered" | "revoked" | "retired";

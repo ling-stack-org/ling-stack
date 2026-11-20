@@ -7,6 +7,7 @@ import test from "node:test";
 import { createHash } from "node:crypto";
 import type { DeviceEventEnvelopeV1, DeviceGraphNodeV1, DeviceResourceManifestV1, DeviceTaskGraphV1, DeviceTraceSpanV1, EdgeRuntimeEnrollmentV1 } from "@ling-stack/contracts";
 import { DeviceFabricError } from "../dist/device-fabric.js";
+import { DeviceSecretBroker } from "../dist/device-secrets.js";
 import { SqliteDeviceFabricStore } from "../dist/storage/sqlite/device-fabric-store.js";
 
 const now = "2026-11-21T00:00:00.000Z";
@@ -134,5 +135,19 @@ test("fabric store persists edge enrollment and trace spans", () => {
   store.saveTraceSpan({ ...span, finishedAt: now, status: "ok" });
   assert.equal(store.listTraceSpans("trace-1")[0]?.status, "ok");
   assert.throws(() => store.saveTraceSpan(span), (error: unknown) => error instanceof DeviceFabricError && error.code === "revision_conflict");
+  store.close();
+});
+
+test("target-scoped secret broker resolves only authorized references and records redacted use metadata", async () => {
+  const store = new SqliteDeviceFabricStore();
+  const broker = new DeviceSecretBroker({
+    resolver: { resolve: async ({ secretRef }) => secretRef === "ssh-key" ? "private-key-material" : undefined },
+    recorder: store,
+    now: () => now,
+  });
+  broker.allowReference("device-1", "ssh-key");
+  assert.equal(await broker.resolve({ useId: "use-1", taskId: "task-1", attemptId: "attempt-1", targetDeviceId: "device-1", secretRef: "ssh-key", purpose: "ssh diagnosis", policyRevision: "policy-1" }), "private-key-material");
+  assert.deepEqual(store.listSecretUses(), [{ useId: "use-1", taskId: "task-1", attemptId: "attempt-1", targetDeviceId: "device-1", secretRef: "ssh-key", purpose: "ssh diagnosis", policyRevision: "policy-1", usedAt: now }]);
+  await assert.rejects(() => broker.resolve({ useId: "use-2", taskId: "task-1", targetDeviceId: "device-2", secretRef: "ssh-key", purpose: "ssh diagnosis", policyRevision: "policy-1" }), (error: unknown) => error instanceof DeviceFabricError && error.code === "safety_denied");
   store.close();
 });
