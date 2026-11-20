@@ -263,7 +263,7 @@ function normalizeFiles(files) {
 function isDocumentationPath(file) {
   return file.startsWith("docs/")
     || DOCUMENTATION_ROOT_FILES.has(file)
-    || /^README\.[a-z]{2}-[A-Z]{2}\.md$/u.test(file)
+    || /^README\.[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*\.md$/u.test(file)
     || /(?:^|\/)README\.md$/iu.test(file)
     || /^\.github\/(?:PULL_REQUEST_TEMPLATE\.md|PULL_REQUEST_TEMPLATE\/[^/]+\.md|CODEOWNERS|FUNDING\.yml)$/u.test(file);
 }

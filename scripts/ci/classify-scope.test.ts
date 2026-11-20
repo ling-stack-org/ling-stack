@@ -33,8 +33,18 @@ function classify(files: string[], extra: Partial<ScopeInput> = {}) {
 
 test("documentation-only changes use the fast lane", () => {
   assert.equal(classify([
-    "README.md", "README.zh-CN.md", "packages/core/README.md", "docs/assets/preview.png",
+    "README.md", "README.en.md", "README.zh-CN.md", "README.sr-Latn.md", "README.es-419.md",
+    "packages/core/README.md", "docs/assets/preview.png",
   ]).mode, "docs");
+});
+
+test("root localized READMEs accept BCP 47 language tags without accepting malformed names", () => {
+  for (const file of ["README.en.md", "README.sr-Latn.md", "README.es-419.md", "README.zh-Hant-TW.md"]) {
+    assert.equal(classify([file]).mode, "docs", file);
+  }
+  for (const file of ["README.zh_CN.md", "README.中文.md", "README.1.md", "README.en.ts"]) {
+    assert.equal(classify([file]).mode, "full", file);
+  }
 });
 
 test("review templates and nested READMEs are documentation before broad infrastructure rules", () => {
