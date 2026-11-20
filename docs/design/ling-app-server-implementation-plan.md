@@ -49,9 +49,9 @@ App Server 之外的团队、任务、外部 Agent 和 GitHub 设计不能各自
 
 | 工作包 | 依赖 | 交付 | 合并前验收 |
 | --- | --- | --- | --- |
-| O1 Agent Work Item 与团队运营 | A2、D1、现有 Channel Team Operating System | `AgentWorkItem`、source identity、Goal/acceptance 绑定、claim/lease、speaker/observer projection、task inbox 方法和事件。 | Channel、Automation、GitHub、External Agent、Device node 的重复源只产生一个当前 Work Item。并发 claim、过期、重指派和取消留下可恢复事实。 |
+| O1 Agent Work Item 与团队运营 | A2、D1、现有 Channel Team Operating System | `AgentWorkItem`、来源与 Goal 绑定、现有分配与派发回执、speaker/observer 投影和收件箱事件。 | 同一来源与版本关联一次初始派发。显式分配、活跃会话追问和 Workflow 步骤各走既有入口。过期、重指派与取消回到原运行所有者恢复。 |
 | O2 External Agent Federation | C2、现有 External Agent Runner Adapters | 外部 Agent 注册、能力握手、Work Item 提交、双向事件、审批/提问、重连、递归防止和 unknown outcome。 | Codex、Claude Code、LobeHub 或 ACP adapter 的 capability mismatch、断线、审批、取消、事件回放和重复 dispatch 均有结果。 |
-| O3 Task Inbox 与自治策略 | O1、Automations、Channel Team Operating System | 来源准入、主动接活、优先级、quiet hours、预算、重复领取、follow-up、source revision 和用户暂停。 | 自动 claim 只在当前策略和能力满足时发生。无关消息、重复 webhook、旧 source revision 和预算耗尽不会创建第二次执行。 |
+| O3 Task Inbox 与自治策略 | O1、Automations、Channel Team Operating System | 按来源配置人工、建议或自动送入主 Agent，应用筛选、优先级、安静时段、预算和暂停策略。 | 默认人工接入。符合规则的建议可手动接受，显式启用的来源可以自动提交。暂停和预算限制阻止新接入，重复来源关联已有执行。 |
 | O4 GitHub Delivery Loop | O1、E2、GitHub Automation | Issue/PR/CI source identity、head SHA 绑定、Verify/Review、PR update、merge acceptance、CI/review feedback 和 delivery reconciliation。 | 旧 head 的验证或 review 无法完成新 head。CI 失败形成同 Work Item 后续，merge 只在当前证据满足时完成 Goal。 |
 | O5 Memory/Skill Feedback | O1、E2、Memory/Skill review owners | Work Item provenance、Experience candidate、Memory/Skill/Channel review 和失效策略。 | 候选能追溯源 Run 与证据，拒绝/过期可见，推广不能扩大工具、审批、Provider 或工作区范围。 |
 | O6 Device Work Item Bridge | O1、Ling Device Fabric | 项目 Work Item 与设备图节点、owner host、WorkUnit、receipt 和跨设备反馈的映射。 | 项目协调者可显示设备节点进度，实际设备动作仍由 owner host 记录和恢复。设备断线不伪造项目成功。 |
@@ -108,7 +108,7 @@ corepack pnpm --filter @ling-stack/api-client typecheck:ci
 | 真实 Codex | 现成客户端 + 本机 MCP，另测 Typed Client 双向流 | 从 Codex 提交和控制授权任务，Ling 能打开同一会话。卡审批时提示用户，桥接重连保持游标，Typed Client 验证实时推送。 |
 | 平台与安装 | macOS/Linux 的 stdio/Unix socket/WS，Windows 的 stdio/WS。覆盖声明的远程 WSS 与实际发布客户端 | 记录目标 OS、架构、安装包、传输和认证方式、退出和资源清理结果。安装、签名、命令沙箱和真实远程路由结果各有证据。 |
 | 项目自研 | 以下三个真实任务，稳定工具链与候选实例隔离 | 代码行为和运行状态都能复核。记录任务完成、约束遗漏、人工纠正、使用的模型和验证结果。 |
-| Agent Work Item | 频道、GitHub、Automation、外部 Agent 和设备节点的统一收件箱 | source revision、claim、Goal、Run、Delivery 和反馈的事件顺序一致。重复源、并发认领、取消和回放覆盖同一 Work Item。 |
+| Agent Work Item | 频道、GitHub、Automation、外部 Agent 和设备节点的统一收件箱 | 来源版本、现有派发回执、Goal、Run、Delivery 和反馈可追溯。重复源与并发提交返回同一回执。Workflow 内的授权并行步骤各自持有执行记录。 |
 | External Agent Federation | Typed Client、Codex bridge、受控 external runner | 能力、权限、Worktree、审批和事件回放保持一致。断线和 unknown outcome 不触发隐式重试。 |
 | GitHub Delivery | 临时仓库或受控测试仓库，固定 base/head SHA | Verify、Review、CI、PR update、merge acceptance 和失败反馈围绕当前 head SHA 形成闭环。 |
 

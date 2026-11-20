@@ -9,20 +9,21 @@
 
 ## 1. Purpose
 
-Ling 已经拥有 Channel、Teammate、Task、Goal、Workflow、Run、Approval、Worktree、Review、Memory、Skill 和 Device Fabric。它们目前分别由各自合同负责。本设计补足它们之间的产品整合边界，让用户可以从一条消息、一个 GitHub 事件或一个定时任务开始，得到一条可交接、可验证、可审计的 Agent 工作流。
+Ling 已有 Channel、Teammate、Task、Goal、Workflow、Run、Approval、Worktree、Review、Memory 和 Skill。Device Fabric 定义跨设备工作流的目标。本设计补足它们之间的整合边界，让用户可以从一条消息、一个 GitHub 事件或一个定时任务开始，得到一条可交接、可验证、可审计的 Agent 工作流。
 
-本合同不替换已有单域状态机。它定义跨域对象、选择顺序、所有权转移、交付反馈和客户端投影。既有领域仍负责自己的事务和执行事实。
+本合同定义跨域工作项、派发归属、交付反馈和客户端投影。各领域负责自己的事务和执行事实。
 
 ## 2. Product Decision
 
-Ling 的产品主语是一个 **Agent Work Item**。它可以来自用户对话、团队频道、GitHub Issue/PR、定时 Automation、外部 Agent 或设备任务。一个 Work Item 可以包含多个 Goal、Workflow Step、Run 和 Delivery，但只能有一个当前协调者。
+**Agent Work Item** 用于跟踪来自用户对话、团队频道、GitHub Issue/PR、定时 Automation、外部 Agent 或设备任务的工作。Work Item 可关联 Goal、多个 Workflow Step、Run 与 Delivery，当前协调权来自其既有工作入口。
 
 ```text
 Source event
   -> Task Intake
   -> Goal and acceptance
-  -> Coordinator and claim
-  -> Team attention / delegation
+  -> Coordinator decision and accepted assignment
+  -> Record the dispatch once
+  -> Team attention / delegated execution
   -> WorkUnit and Run
   -> Approval / Worktree / Device lease
   -> Verify and Review
@@ -30,15 +31,15 @@ Source event
   -> Feedback, Memory and Learning review
 ```
 
-Ling Agent 是产品级协调者。Teammate 是具有角色、技能、模型、工具和审批配置的参与者。Workflow 是有依赖的执行图。Run 是一次执行尝试。Delivery 是对外或对用户可确认的交付结果。任何单个 Agent 都不能跳过协调、审批、证据或交付状态。
+Ling Agent 协调项目会话，Teammate 带自己的角色、技能、模型、工具和审批配置参与执行。Workflow 表达步骤依赖，Run 记录执行，WorkUnit 和 Attempt 管理实际派发与资源归属。Delivery 表示对外或对用户可确认的交付结果。
 
 ## 3. Existing Contracts and Integration Boundary
 
 | Existing contract | Continues to own | This design adds |
 | --- | --- | --- |
-| Channel Team Operating System | observer mode、speaker lease、Risk Review、single narrator | Task intake and claim inputs, team participation projection |
-| Ling Agent Session | active-session routing、clarification、follow-up、final report | Cross-source Work Item identity and delivery feedback |
-| Multi-Agent Orchestrator | workflow graph、step、fan-out/fan-in、owner、capacity | Work Item-to-workflow binding and claim lifecycle |
+| Channel Team Operating System | observer mode、speaker lease、Risk Review、single narrator | Scoped team participation for the accepted work |
+| Ling Agent Session | active-session routing、clarification、assignment、follow-up、final report | Cross-source Work Item identity and delivery feedback |
+| Multi-Agent Orchestrator | workflow graph、step assignment、fan-out/fan-in、owner、capacity | Link the accepted Workflow and its execution evidence |
 | Automations | schedule、monitor、external event and AutomationRun | Task intake source and duplicate subject identity |
 | GitHub Automation | webhook/poll normalization and GitHub action policy | PR delivery acceptance and feedback loop to the source Thread |
 | External Agent adapters | provider/runner-specific lifecycle | Federated Agent identity, capabilities and event mapping |
@@ -62,6 +63,7 @@ interface AgentWorkItem {
   readonly owner?: AgentOwner;
   readonly coordinatorId: "ling_agent";
   readonly threadId?: string;
+  readonly taskId?: string;
   readonly goalId?: string;
   readonly workflowId?: string;
   readonly deliveryIds: readonly string[];
@@ -78,25 +80,25 @@ Sources include `channel_message`, `direct_message`, `github_issue`, `github_pul
 
 Every implementation Work Item has a Goal or a typed reason why no Goal is required. Acceptance criteria are immutable per revision and map to Run, Workflow, Artifact, Verification, Review, CI, or user decision evidence. A Goal can have several Work Items over time, while a Work Item belongs to one current Goal revision.
 
-### 4.3 Owner and claim
+### 4.3 Assignment and dispatch claim
 
-There is one active owner claim. The owner can be Ling Agent, a Teammate, a Workflow participant, an External Agent, or a Device Fabric host. Claim ownership is separate from speaker identity. An observer can review a Work Item without owning it. A claim expires only through the persisted lease and recovery rules.
+The existing coordinator decides who handles the work, including explicit user assignment and the follow-up path for an active session. An accepted Workflow owns the assignment of its steps. The Work Item shows the resulting owner and links the original Task, Turn, or Workflow.
+
+A claim records or references the first dispatch of an accepted Work Item revision. If the source already owns a Task, Turn, or Workflow, use that owner's dispatch record. Each authorized WorkUnit and Attempt retains its own execution lease. One intake dispatch can therefore start a Workflow with multiple authorized participants. [Ling Agent Session](ling-agent-session.md#coordinator-decision-contract) · [Runtime Supervisor](runtime-supervisor.md)
 
 ## 5. Intake and Autonomous Work
 
-Task intake normalizes a source into a Work Item candidate. It performs source authentication, duplicate detection, workspace resolution, scope checks, priority calculation, and eligibility evaluation. Intake never starts a Run by itself.
+Task intake normalizes work from configured sources and checks identity, scope and duplicates. Autonomous work lets a workspace bring an eligible item to Ling Agent without a new user message for every item. Configure it per source, such as one GitHub repository and a required label, an opted-in channel, or an automation trigger.
 
-The following policies are explicit workspace settings:
+| Source setting | Behavior |
+| --- | --- |
+| `manual` | The user brings an item in explicitly. This is the default for a new intake source. |
+| `suggest` | A matching event creates a visible inbox suggestion. User acceptance sends it to the existing coordinator. |
+| `auto_start` | The workspace opts in to submit matching, sufficiently scoped items to the coordinator automatically, within the configured budget, hours and concurrency. |
 
-- whether unmentioned channel messages may become candidates;
-- which Agent roles may claim each source type;
-- whether a user confirmation is required before claim or before execution;
-- priority, quiet hours, budgets and maximum concurrent claims;
-- behavior for stale, superseded, failed and returned items;
-- whether an external Agent may create a follow-up or only observe;
-- whether a GitHub merge or CI failure can change Goal state.
+For example, an issue tagged `agent-ready` can enter a configured repository's inbox. In `auto_start`, Ling Agent scopes the job and chooses an eligible Teammate or Workflow through the existing assignment path. The dispatch is recorded once even if both polling and webhook see the issue. Ambiguity leads to a clarification. Tool, file and GitHub actions follow their ordinary approval and verification policies. Progress and delivery link back to the work item and its authorized destination.
 
-Autonomous claim requires a matching capability, an available execution profile, a current workspace binding, a valid budget, no conflicting claim, and a source policy that allows automatic intake. Ambiguous requests become clarification items. A claim is visible before the first side effect.
+Pausing a source stops admission of new work from it. Accepted work is managed through the existing Run and Workflow controls. Previously configured automations and direct user requests keep their existing entry points.
 
 ## 6. Team Participation
 
@@ -108,9 +110,9 @@ The current team contract remains **single narrator, many observers**. A Work It
 - one speaker lease for a visible Agent response;
 - one review owner for a required review gate.
 
-Agent selection uses explicit mentions, structured task type, capabilities, current workload, source policy, and historical evidence. Semantic recall can discover candidates but cannot grant access, tools, or execution authority.
+The existing coordinator and Workflow selector use explicit mentions, structured task type and current capability. Inbox suggestions and observer notes can contribute context. The accepted assignment and runtime policy authorize execution.
 
-No Agent can claim a Work Item merely because it saw a message. The claim transaction records the candidate revision, owner identity, capability snapshot, expiry, and source event. A second claimant receives the current owner and a retry or review reason.
+When two intake attempts target the same revision, they resolve against one accepted dispatch. The receipt shows the assigned owner and the current execution reference.
 
 ## 7. External Agent Federation
 
@@ -190,8 +192,8 @@ The product can expose a task inbox, but it must preserve the same Thread, Goal,
 ## 12. Acceptance Criteria
 
 1. A channel, GitHub, automation, external-agent or device event can produce one deduplicated Work Item.
-2. Only one owner claim is active, and claim conflicts are durable and visible.
-3. Ling Agent remains the coordinator while Teammates and External Agents use bounded roles.
+2. A Work Item revision resolves to one initial dispatch, including when two intake attempts arrive concurrently.
+3. The existing coordinator and Workflow assignment decide who runs. Explicit assignment, active follow-ups and authorized parallel steps retain their current semantics.
 4. A Work Item can resume after connection loss without duplicating a known side effect.
 5. PR, CI and Review events reconcile against the current head SHA.
 6. A user can follow the same Work Item from source conversation to Run, Verification, Review and Delivery.

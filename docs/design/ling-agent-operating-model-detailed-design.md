@@ -12,8 +12,9 @@
 | Object | Canonical owner | Integration projection |
 | --- | --- | --- |
 | Source event | Channel, GitHub, Automation, External Work, Device Fabric owner | `WorkItemSource` with immutable external identity |
-| Work Item | Core/Daemon work-item service | Intake, claim, Goal, Delivery and feedback index |
-| Claim | Core transaction and lease owner | Owner, capability snapshot, expiry and conflict |
+| Work Item | Core/Daemon work-item service | Intake, accepted dispatch, Goal, Delivery and feedback index |
+| Assignment | Ling Agent Session, existing Task assignee or accepted Workflow | Selected route and assignee, with the source decision reference |
+| Dispatch claim | The existing Task, Turn, Workflow or Automation dispatch owner | Reference to its receipt. A source without an existing dispatch records its first accepted handoff once. |
 | Goal | Goal store and acceptance validator | Work Item acceptance revision and completion audit |
 | Team participation | Channel Team Operating System | Observer, speaker, reviewer and execution projections |
 | Workflow | Multi-Agent Orchestrator | Work Item graph and WorkUnit references |
@@ -64,17 +65,17 @@ interface WorkItemSource {
 }
 ```
 
-The state machine is integration state. Domain owners retain their own state.
+Work Item shows intake and delivery state. Once accepted work has an execution owner, the running, waiting, failure and cancellation states are projected from that owner's facts.
 
 ```text
 candidate
   -> clarification_required | unclaimed | superseded
 unclaimed
-  -> claimed | cancelled | superseded
-claimed
-  -> planning | queued | blocked | cancelled
+  -> planning | claimed | cancelled | superseded
 planning
-  -> queued | clarification_required | blocked
+  -> claimed | clarification_required | blocked
+claimed
+  -> queued | blocked | cancelled
 queued
   -> running | cancelled | blocked
 running
@@ -88,11 +89,11 @@ delivered -> archived | candidate
 
 `delivered -> candidate` represents a new source revision or explicit follow-up. It does not reopen historical execution.
 
-Every state transition carries `workItemRevision`, `actor`, `sourceEventId`, `claimId`, optional `goalId`, and an idempotency key. A stale state transition is rejected with the current projection.
+An intake state transition carries `workItemRevision`, `actor`, `sourceEventId`, an idempotency key, and claim or Goal references when present. A stale transition returns the current projection.
 
 ## 3. Intake Normalization
 
-The intake path is a pure bounded decision followed by a durable claim or candidate write.
+The intake path normalizes a bounded event, persists a candidate or returns an existing work item, and passes an accepted item to the existing coordinator. A source event already linked to a Task, Turn, Workflow or AutomationRun uses the existing record.
 
 ```text
 receive source
@@ -115,52 +116,35 @@ Source normalization rules:
 
 Normalization preserves untrusted content as bounded source data. It does not execute commands, parse source prose as policy, or grant tools.
 
-## 4. Claim and Arbitration
+### 3.1 Autonomous intake policy
 
-### 4.1 Eligibility
+Each configured source declares `manual`, `suggest`, or `auto_start`, defaulting to `manual`. The rule binds a workspace and an authorized source scope, such as a repository and label or a designated channel. `suggest` registers a candidate for the user to accept. `auto_start` submits a matching candidate to the existing coordinator within the configured time window, budget and concurrency. That decision may route to a clarification, a proposal, a direct run or a workflow. Scoped tools, approvals and actual dispatch still use normal admission.
 
-An Agent claim requires:
+Qualification and dispatch recheck the source policy and revision. Paused sources keep their history and pending suggestions. Direct user requests and existing automation dispatch keep their existing entry paths. Where an enabled source already started a Task or AutomationRun, link that dispatch to the inbox item.
 
-1. the Work Item is in `unclaimed`;
-2. the source revision is current;
-3. the Agent capability snapshot matches the required role and task kind;
-4. the workspace and Worktree or Device host are available;
-5. the caller has the required read and execution scopes;
-6. the budget and concurrency policy admit the claim;
-7. no active claim exists for the current revision;
-8. the source policy allows automatic or explicit claim.
+## 4. Assignment and Dispatch Claim
 
-The eligibility result is a candidate explanation. A claim transaction repeats all checks against current rows.
+### 4.1 Assignment authority
 
-### 4.2 Claim transaction
+Ling Agent Session handles unassigned intake work, explicit user intent and active-session follow-ups. The existing Task assignee or accepted Workflow step provides an assignment when present. A device node remains assigned by its own graph coordinator. Work Item uses the accepted route and assignee, including their revision and scope. If the assignee or source becomes stale, the owning route decides how to clarify, block or reassign. [Coordinator entry](../../packages/daemon/src/features/channels/messages.ts) · [Workflow selection](../../packages/daemon/src/features/channels/channel-intent-selector.ts)
+
+### 4.2 Dispatch admission and deduplication
+
+The claim records one first dispatch for a workspace, logical work item and accepted intake revision. Reuse the original dispatch receipt when it already exists. Otherwise record one accepted handoff with the source owner and link it to the normal dispatch path. Validate the accepted route, source revision and current policy together when committing the record. Capabilities, capacity, Worktree and permissions are also checked at the existing execution gate.
 
 ```text
-BEGIN IMMEDIATE
-  read WorkItem current revision and status
-  read current claims and leases
-  read Agent capability and policy snapshot
-  read budget and workspace admission
-  CAS WorkItem status unclaimed -> claimed
-  insert claim with expiry and owner snapshot
-  append WorkItem claim event and idempotency receipt
-COMMIT
+normalize and deduplicate the source
+  -> obtain or reference the existing assignment decision
+  -> check revision, policy and prior receipt in the dispatch owner's transaction
+  -> link existing dispatch, or record and enqueue this first dispatch once
+  -> let the existing Task, Workflow and Runtime Supervisor admit execution
 ```
 
-Claim expiry is an observation that creates a recovery candidate. A scheduler or client may release a claim only after verifying no active Run, pending Approval, owned Worktree mutation, or unresolved external effect remains. Forced user cancellation records the reason and preserves evidence.
+Concurrent deliveries or controller retries return the same receipt when the logical input matches. A different input or decision on an already accepted revision returns a conflict and current assignment. [Channel dispatch owner](../../packages/daemon/src/features/channels/channel-turn-dispatch-lifecycle.ts) · [Task claim at Run admission](../../packages/daemon/src/features/runs/concurrency.ts)
 
-### 4.3 Conflict resolution
+### 4.3 Execution recovery and reassignment
 
-Claims use deterministic order for automatic candidates:
-
-```text
-explicit user assignment
-  -> active source-thread owner
-  -> required workflow participant
-  -> matching specialist with available capacity
-  -> Ling Agent coordinator
-```
-
-Equal candidates use Work Item creation time, priority, and stable Agent id. The order only chooses an owner among eligible candidates. It does not bypass approval or verification.
+Work Item recovery follows the original dispatch reference. Expiry identifies a handoff to reconcile. Before another execution can start, the owning path checks the active Run, pending approval, leases and known or unknown effects. Use normal Session and Workflow operations for explicit reassignments, retries and cancellations. Each Workflow step keeps its own owner and execution lease. The inbox may prioritize which item to consider next, while assignment and recovery use the selected item's owning path.
 
 ## 5. Team Attention and Speaker Leases
 
@@ -239,7 +223,7 @@ interface GitHubDeliverySubject {
 
 The current head SHA is part of every Review, Verify, CI and Delivery acceptance. A result for an old SHA remains historical evidence and cannot approve or complete the current Work Item.
 
-### 7.2 PR Work Item states
+### 7.2 GitHub delivery projection
 
 ```text
 unclaimed
@@ -300,12 +284,13 @@ Promotion uses Memory, Skill or Channel review. No candidate may change the curr
 
 The App Server adds these protocol projections to the existing Thread/Turn methods.
 
+`workItem/accept` submits an authorized request for the current item revision through the coordinator and returns its receipt. `workItem/cancel` calls the existing owner for active work. External runner dispatch requires the assigned route and its receipt.
+
 ```text
 workItem/create
 workItem/read
 workItem/list
-workItem/claim
-workItem/release
+workItem/accept
 workItem/clarify
 workItem/cancel
 workItem/subscribe
@@ -345,24 +330,23 @@ Candidate tables or records:
 
 ```text
 agent_work_items
-agent_work_item_claims
 agent_work_item_events
 agent_deliveries
 external_agent_registrations
 external_agent_submissions
 ```
 
-Every record includes workspace scope, owner, revision, created/updated times, source identity, and retention policy. Work Item event append participates in the source transaction for deduplication. External Delivery and unknown outcomes use their own intent/receipt/reconciliation records.
+Every record includes workspace scope, owner, revision, created/updated times, source identity, and retention policy. Work Item stores the accepted dispatch reference or a first-intake receipt where the source has no existing dispatch. The existing owner owns its execution claim and lease. Work Item event append participates in the source or dispatch transaction for deduplication. External Delivery and unknown outcomes use their own intent/receipt/reconciliation records.
 
 Recovery rules:
 
 - a duplicate source returns the existing Work Item;
-- a stale claim becomes a visible recovery candidate;
+- a stale dispatch reference is visible and follows the source owner's recovery;
 - a Run continues through Runtime Supervisor recovery;
 - an external Agent disconnect does not retry the effect;
 - a GitHub head change supersedes old pending checks;
 - a Delivery with unknown outcome waits for reconciliation;
-- a Work Item with no evidence can be continued only through explicit claim or user action;
+- follow-up uses the explicit accepted Task, Turn or Workflow and its normal continuation path;
 - archived Work Items retain source, delivery and evidence references.
 
 ## 11. Detailed Acceptance Matrix
@@ -370,7 +354,8 @@ Recovery rules:
 | Area | Required test |
 | --- | --- |
 | Intake | duplicate channel edit, duplicate webhook, monitor fingerprint, external submission and device node all create one current Work Item |
-| Claim | two Agents race, claim expiry, manual reassignment, budget block and revoked capability |
+| Dispatch | webhook or client retries share one receipt, explicit assignment and active follow-up stay with the current coordinator, a parallel Workflow retains per-step leases, and stale or unknown dispatch waits for reconciliation |
+| Autonomous intake | default manual, user acceptance of suggestions, opted-in scoped auto-start, pause, quiet hours and budget limits, and an existing AutomationRun linked without launching twice |
 | Team | observer cannot speak, speaker lease expiry, late reply, reviewer read lease and execution ownership |
 | External Agent | handshake, capability mismatch, approval request, reconnect, replay, cancel, unknown effect and recursion rejection |
 | GitHub | new head supersedes old review, duplicate event, CI failure follow-up, merge acceptance, stale review and unknown comment delivery |
