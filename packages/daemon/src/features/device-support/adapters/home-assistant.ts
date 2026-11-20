@@ -9,7 +9,8 @@ import type {
   DeviceActionResultV1,
   DeviceVerificationResultV1,
 } from "@ling-stack/contracts";
-import type { DeviceAdapter, DeviceAdapterDiscoveryInput } from "@ling-stack/core";
+import type { DeviceAdapter, DeviceAdapterDiscoveryInput, DeviceAdapterExecutionResult } from "@ling-stack/core";
+import type { JsonValue } from "@ling-stack/contracts";
 
 export interface HomeAssistantEntityRead {
   readonly entityId: string;
@@ -159,18 +160,34 @@ export class HomeAssistantAdapter implements DeviceAdapter {
     return { entityId, state, attributes, availability: "available", quality: "good", observedAt };
   }
 
-  async execute(input: { readonly profile: DeviceProfileV1; readonly capability: { readonly id: string }; readonly request: DeviceActionRequestV1; readonly signal?: AbortSignal }): Promise<DeviceActionResultV1> {
+  async execute(input: { readonly profile: DeviceProfileV1; readonly capability: { readonly id: string }; readonly request: DeviceActionRequestV1; readonly signal?: AbortSignal }): Promise<DeviceActionResultV1 | DeviceAdapterExecutionResult> {
     const startedAt = this.#now();
     const args = asObject(input.request.normalizedInput);
     if (input.capability.id === "home_assistant.read_entity") {
       const entity = await this.readEntity(requireString(args.entityId, "entityId"), input.signal);
-      return {
+      const action: DeviceActionResultV1 = {
         actionId: input.request.actionId,
         status: entity.availability === "absent" ? "rejected" : "completed",
         errorCode: entity.availability === "absent" ? "missing_target" : undefined,
         startedAt,
         finishedAt: this.#now(),
         observationIds: [`${input.request.actionId}:entity`],
+      };
+      if (entity.availability === "absent") return action;
+      return {
+        action,
+        observations: [{
+          id: `${input.request.actionId}:entity`,
+          subjectId: entity.entityId,
+          source: "home_assistant",
+          value: { entityId: entity.entityId, state: entity.state ?? null, availability: entity.availability, attributes: entity.attributes as Record<string, JsonValue> },
+          observedAt: entity.observedAt,
+          receivedAt: this.#now(),
+          freshnessUntil: new Date(Date.parse(entity.observedAt) + 30_000).toISOString(),
+          quality: entity.quality,
+          provenance: [this.#baseUrl, entity.entityId],
+          redactionClass: "public",
+        }],
       };
     }
     if (input.capability.id !== "home_assistant.reload_config_entry") {

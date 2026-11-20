@@ -239,6 +239,40 @@ export class DeviceContextBuilder {
     if (Buffer.byteLength(JSON.stringify(pack), "utf8") > input.maxBytes) throw new DeviceFabricError("revision_conflict", "device context pack exceeds its bound");
     return pack;
   }
+
+  buildFromObservations(input: {
+    readonly contextId: string;
+    readonly taskId: string;
+    readonly maxBytes: number;
+    readonly observations: readonly {
+      readonly id: string;
+      readonly value: unknown;
+      readonly quality: "good" | "degraded" | "stale" | "unknown";
+      readonly redactionClass: "public" | "sensitive" | "secret_adjacent";
+      readonly source: string;
+    }[];
+    readonly generatedAt: string;
+  }): DeviceContextPackV1 {
+    const facts: unknown[] = [];
+    const untrustedTextRefs: string[] = [];
+    const observationRefs = input.observations.map(observation => observation.id);
+    for (const observation of input.observations) {
+      const textual = typeof observation.value === "string";
+      const trusted = observation.quality === "good" && observation.redactionClass === "public" && !textual;
+      if (trusted) facts.push(observation.value);
+      else untrustedTextRefs.push(observation.id);
+    }
+    return this.build({
+      contextId: input.contextId,
+      taskId: input.taskId,
+      maxBytes: input.maxBytes,
+      facts,
+      hypotheses: [],
+      observations: observationRefs,
+      untrustedTextRefs,
+      generatedAt: input.generatedAt,
+    });
+  }
 }
 
 export class DeviceTraceRecorder {

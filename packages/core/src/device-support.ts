@@ -41,7 +41,7 @@ export interface DeviceAdapter {
     readonly capability: CapabilityDescriptorV1;
     readonly request: DeviceActionRequestV1;
     readonly signal?: AbortSignal;
-  }): Promise<DeviceActionResultV1>;
+  }): Promise<DeviceActionResultV1 | DeviceAdapterExecutionResult>;
   verify?(input: {
     readonly profile: DeviceProfileV1;
     readonly capability: CapabilityDescriptorV1;
@@ -49,6 +49,11 @@ export interface DeviceAdapter {
     readonly action: DeviceActionResultV1;
     readonly signal?: AbortSignal;
   }): Promise<DeviceVerificationResultV1>;
+}
+
+export interface DeviceAdapterExecutionResult {
+  readonly action: DeviceActionResultV1;
+  readonly observations?: readonly DeviceObservationV1[];
 }
 
 export interface DeviceSupportStoreAttemptRecord {
@@ -154,7 +159,7 @@ export class DeviceCapabilityBroker {
   }
 
   createTask(task: DeviceTaskV1): DeviceTaskV1 {
-    return this.store.createTask(task, this.now());
+    return this.store.createTask(task.policyRevision ? task : { ...task, policyRevision: this.policyRevision }, this.now());
   }
 
   async execute(request: DeviceActionRequestV1, signal?: AbortSignal, options: DeviceExecuteOptions = {}): Promise<DeviceSupportStoreAttemptRecord> {
@@ -214,11 +219,15 @@ export class DeviceCapabilityBroker {
     this.store.transitionTask(request.taskId, "executing", { currentActionId: request.actionId }, this.now());
     try {
       this.store.updateAttempt(attempt.attemptId, { status: "dispatched" }, this.now());
-      let action: DeviceActionResultV1;
+      let execution: DeviceActionResultV1 | DeviceAdapterExecutionResult;
       try {
-        action = await adapterExecute(this.requireAdapter(profile.adapterId), profile, capability, request, signal);
+        execution = await adapterExecute(this.requireAdapter(profile.adapterId), profile, capability, request, signal);
       } catch (error) {
-        action = uncertainActionResult(request.actionId, this.now(), error);
+        execution = uncertainActionResult(request.actionId, this.now(), error);
+      }
+      const action = "action" in execution ? execution.action : execution;
+      if ("action" in execution) {
+        for (const observation of execution.observations ?? []) this.store.appendObservation(request.taskId, observation, this.now());
       }
       const attemptStatus = action.status === "completed" ? "completed"
         : action.status === "uncertain" ? "unknown" : "failed";
@@ -318,7 +327,7 @@ async function adapterExecute(
   capability: CapabilityDescriptorV1,
   request: DeviceActionRequestV1,
   signal?: AbortSignal,
-): Promise<DeviceActionResultV1> {
+): Promise<DeviceActionResultV1 | DeviceAdapterExecutionResult> {
   return adapter.execute({ profile, capability, request, signal });
 }
 
