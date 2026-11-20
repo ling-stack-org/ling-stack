@@ -1,6 +1,6 @@
 # Ling Device Support Platform Implementation Plan
 
-Status: tracking plan; D1–D3 core, D4/D5/D7/D8 adapters, D6/D9 execution slices, and D10–D22 domain foundations landed, field and platform acceptance remain queued
+Status: tracking plan; D1–D3 core, D4/D5/D7/D8 adapters, D6/D9 execution slices, D10–D22 domain foundations, and the first durable fabric stores landed, field and platform acceptance remain queued
 Owner: Ling platform maintainers
 Last verified: 2026-11-21 (D1–D13 execution foundations plus D14–D22 fabric, safety, lifecycle, context, resource and conformance fixtures)
 Document type: staged implementation and acceptance record
@@ -482,8 +482,10 @@ only on a successful install or a model response.
 
 ### Scope
 
-- [ ] Define the event envelope, stream owner, sequence, freshness, quality,
-  provenance, redaction class, and retention policy.
+- [x] Define the event envelope fields for stream ownership, generation, sequence,
+  freshness, quality, provenance, redaction class, evidence references, and retention class.
+- [x] Persist bounded owner event streams with replay-by-event-id, stale-cursor
+  rejection, gap reporting, and a materialized snapshot cursor.
 - [ ] Add task, state, health, capability, action, verification, evidence, and
   resource events. Keep high-rate telemetry separate from durable task events.
 - [ ] Add gap recovery, snapshot projection, backpressure, sampling, and peer
@@ -501,9 +503,10 @@ only on a successful install or a model response.
 
 ### Scope
 
-- [ ] Add signed resource manifests for adapters, transports, codecs, profiles,
-  vocabulary, playbooks, simulators, captures, documentation, firmware metadata,
-  and edge packages.
+- [x] Add digest-bound resource installation, optional signature verification,
+  active revision persistence, and rollback history for adapter resources.
+- [ ] Add signed resource manifests for transports, codecs, profiles, vocabulary,
+  playbooks, simulators, captures, documentation, firmware metadata, and edge packages.
 - [ ] Validate digest, signature, license, dependency, platform, device, firmware,
   permission, and Ling contract compatibility.
 - [ ] Install, health-check, disable, update, and roll back resources independently.
@@ -538,6 +541,8 @@ only on a successful install or a model response.
 
 ### Scope
 
+- [x] Persist revisioned lifecycle transitions and reject invalid or regressing
+  state changes.
 - [ ] Track enrollment and ownership revisions, profile and runtime versions,
   operational health, maintenance and retirement.
 - [ ] Add ownership transfer, shared read-only access, developer scopes, credential
@@ -618,10 +623,10 @@ recorded per slice as they complete. [Detailed design](ling-device-fabric.md)
 | D14 | `775950225` | `node --test packages/core/test/device-fabric.test.ts` | [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Semantic graph, identity merge/split, relationships, twin revisions and freshness projection are implemented | Persistent graph store and multi-domain field evidence remain |
 | D15 | `775950225` | `node --test packages/core/test/device-fabric.test.ts` | [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Dependency validation, ready nodes, owner leases and aggregate node results are implemented | Durable graph scheduler integration and cross-runtime recovery remain |
 | D16 | `9f2cc943b` | `node --test packages/core/test/device-fabric.test.ts` | [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Edge enrollment, revocation, and contiguous bridge sequence session are implemented | Linux edge process, bridge transport, local journal and reconnect acceptance remain |
-| D17 | `775950225` | `node --test packages/core/test/device-fabric.test.ts` | [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Ordered bounded event bus and stale cursor rejection are implemented | Persistent telemetry retention, snapshots, backpressure and peer projection remain |
-| D18 | `775950225` | `node --test packages/core/test/device-fabric.test.ts` | [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Digest-bound resource install and rollback are implemented | Signed delivery channels, license verification and production adapter registry remain |
+| D17 | `19b665d79` | `corepack pnpm --filter @ling-stack/core build:ci`; `corepack pnpm --filter @ling-stack/core typecheck:ci`; `node --test packages/core/test/device-fabric-store.test.ts packages/core/test/device-fabric.test.ts` | [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Durable owner streams, replay-by-event-id, bounded retention, stale-cursor rejection, gap reporting, and snapshot cursors are implemented | Task/state event projections, telemetry sampling, backpressure and peer synchronization remain |
+| D18 | `19b665d79` | `node --test packages/core/test/device-fabric-store.test.ts` | [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts) | Digest-bound resource installation, optional signature verification, active revision persistence and rollback history are implemented | Signed delivery channels, full compatibility/license checks, health activation and production adapter registry remain |
 | D19 | `775950225` | `node --test packages/core/test/device-fabric.test.ts` | [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Physical preconditions, emergency stop and secret-reference authorization are implemented | Target controllers, secret broker integration and physical safety acceptance remain |
-| D20 | `775950225` | `node --test packages/core/test/device-fabric.test.ts` | [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Revisioned lifecycle transition rules are implemented | Fleet persistence, credentials, upgrade, transfer and restore acceptance remain |
+| D20 | `19b665d79` | `node --test packages/core/test/device-fabric-store.test.ts packages/core/test/device-fabric.test.ts` | [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Revisioned lifecycle transitions are persisted and invalid or regressing states are rejected | Ownership transfer, credentials, fleet projections, upgrade, restore and retirement acceptance remain |
 | D21 | `76541f5e7` | `node --test packages/core/test/device-fabric.test.ts` | [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Bounded context packs preserve facts, hypotheses, provenance refs, untrusted text refs, and prompt-injection text is kept outside facts | Model planner integration and offline execution remain |
 | D22 | `775950225` | `node --test packages/core/test/device-fabric.test.ts` | [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Cross-layer trace spans and conformance report construction are implemented | Simulator, hardware-in-loop, chaos, field and reproducible release reports remain |
 
