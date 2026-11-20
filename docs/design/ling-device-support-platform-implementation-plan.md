@@ -1,8 +1,8 @@
 # Ling Device Support Platform Implementation Plan
 
-Status: tracking plan; D1–D3 core, D4/D5/D7/D8 adapters, and D6 device-task protocol groundwork landed, later slices remain queued
+Status: tracking plan; D1–D3 core, D4/D5/D7/D8 adapters, D6 protocol groundwork, and D9 mobile execution core landed, later slices remain queued
 Owner: Ling platform maintainers
-Last verified: 2026-11-21 (D1–D3 core, D4/D5/D7/D8 adapters, D6 remote device-task protocol and facade fixtures)
+Last verified: 2026-11-21 (D1–D3 core, D4/D5/D7/D8 adapters, D6 remote device-task protocol, D9 mobile journal and execution fixtures)
 Document type: staged implementation and acceptance record
 Related design: [Ling Device Support Platform](ling-device-support-platform.md)
 Runtime contract: [Ling Device Support Platform Runtime Contract](ling-device-support-platform-runtime-contract.md)
@@ -51,7 +51,7 @@ validation and the boundary of what remains unverified.
 | D6 | [~] | Mobile device-task facade | Paired Mobile can inspect, approve, follow, and revoke through a typed Gateway surface | Remote protocol and facade fixtures |
 | D7 | [~] | Playbooks and operator evidence | Bounded read-only playbook validation and replayable task attempts are implemented | Core playbook fixture tests |
 | D8 | [~] | Additional ecosystems | Linux/SSH typed network and Wi-Fi adapter is implemented under the shared contract | Daemon Linux adapter fixture tests |
-| D9 | [ ] | Standalone Mobile execution | One phone restores a supported BLE device's network connection with no PC or Gateway and verifies the result | Shared contract fixtures and real phone/device acceptance |
+| D9 | [~] | Standalone Mobile execution | Phone-owned typed execution, local journal, foreground gate, exact approval, and resume recovery are implemented | Mobile source fixtures |
 | D10 | [ ] | Developer device sessions | Complete build, deploy, debug, verify, and native-tool workflows on supported host and target combinations | Project/device integration, native-tool and reattach acceptance |
 | D11 | [ ] | PC-assisted Mobile execution | Paired PC contributes plans, artifacts, or analysis while Mobile owns the task and device link | Collaboration contract fixtures and physical device runs |
 | D12 | [ ] | Ling Server connectivity | Self-hosted control, direct peer paths, NAT traversal, encrypted relay fallback, and paired conversation/device-task sync work without third-party network services | Multi-network tests, peer identity, payload confidentiality, and reconnect evidence |
@@ -281,18 +281,18 @@ only on a successful install or a model response.
 
 ### Scope
 
-- [ ] Reuse D1 device contracts and D3 task, approval, and recovery rules in a phone
+- [x] Reuse D1 device contracts and D3 task, approval, and recovery rules in a phone
   execution module that works without Gateway pairing. D6 and D9 have independent
   acceptance gates.
-- [ ] Add native BLE connection and capability discovery for one documented device
+- [~] Add native BLE connection and capability discovery for one documented device
   profile, including OS permission and device authorization checks.
-- [ ] Run one setup playbook that reconnects a supported smart home device to Wi-Fi
+- [~] Run one setup playbook that reconnects a supported smart home device to Wi-Fi
   after explicit user confirmation. Verify that the device comes online.
-- [ ] Persist approval, action attempts, and redacted verification evidence on the
+- [x] Persist approval, action attempts, and redacted verification evidence on the
   phone. Preserve an unknown result after interruption until state can be checked.
-- [ ] Stop new dispatch after foreground authorization ends or the app is suspended.
+- [x] Stop new dispatch after foreground authorization ends or the app is suspended.
   Recheck the target state and permissions on resume.
-- [ ] Record the tested phone OS, device model and firmware, and transport. Each later
+- [~] Record the tested phone OS, device model and firmware, and transport. Each later
   phone platform or USB integration gets its own acceptance entry.
 
 ### Exit evidence
@@ -610,7 +610,7 @@ recorded per slice as they complete. [Detailed design](ling-device-fabric.md)
 | D6 | `pending` | `corepack pnpm --filter @ling-stack/remote-protocol test:ci`; `node --test packages/daemon/test/device-remote-facade.test.ts` | [device-facade.ts](../../packages/daemon/src/features/remote-access/device-facade.ts), [remote-device.ts](../../packages/contracts/src/remote-device.ts) | Gateway allowlist, strict command/event schemas, workspace-scoped device projections, revoke, and approval callback boundary are implemented | Daemon composition with a live device owner, Mobile UI, reconnect receipts, and physical iOS/Android acceptance remain |
 | D7 | `pending` | `node --test packages/core/test/device-support.test.ts` | [device-playbooks.ts](../../packages/core/src/device-playbooks.ts) | Bounded read-only playbooks validate closed metadata, execute ordered typed capabilities, and leave durable attempts | HA/PC report templates, provenance projection, and full terminal-outcome fixtures remain |
 | D8 | `pending` | `node --test packages/daemon/test/device-support-adapters.test.ts` | [linux-ssh.ts](../../packages/daemon/src/features/device-support/adapters/linux-ssh.ts) | Linux/SSH adapter exposes fixed network, Wi-Fi, and restart operations through the shared contract | Real LAN/hotspot and head-unit acceptance remain |
-| D9 | — | — | [Design](ling-device-support-platform.md#111-standalone-mobile-execution) | Design recorded, implementation not started | Standalone BLE execution and device acceptance |
+| D9 | `pending` | `node --experimental-strip-types --test apps/mobile/test/device-execution.test.mjs` | [execution.ts](../../apps/mobile/src/device/execution.ts), [journal.ts](../../apps/mobile/src/device/journal.ts) | Phone-owned journal, typed transport boundary, exact approvals, foreground gate, idempotent replay, and interrupted-dispatch recovery are implemented | Native BLE/USB transport, local playbook wiring, real phone/device acceptance, and physical OS evidence remain |
 | D10 | — | — | [Developer sessions](ling-device-developer-execution.md#1-device-sessions) | Design recorded, implementation not started | Project, device, and native tool acceptance |
 | D11 | — | — | [PC collaboration](ling-device-developer-execution.md#22-pc-assisted-phone-execution) | Design recorded, implementation not started | Phone-owned collaboration and physical cases |
 | D12 | — | Documentation links, license and public checks plus diagram rendering | [Ling Server design](ling-server-connectivity.md) | Detailed self-hosted design recorded, implementation not started | WebRTC integration, self-hosted STUN/TURN, migration, and cross-network acceptance |
