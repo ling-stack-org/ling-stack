@@ -18,7 +18,7 @@ import {
   type DeviceAdapter,
   digestRequest,
 } from "../dist/device-support.js";
-import { isDevicePlaybookV1, runDeviceReadOnlyPlaybook } from "../dist/device-playbooks.js";
+import { createHomeAssistantOfflinePlaybook, createPcSoftwareDiagnosisPlaybook, isDevicePlaybookV1, runDeviceReadOnlyPlaybook } from "../dist/device-playbooks.js";
 import { SqliteDeviceSupportStore } from "../dist/storage/sqlite/device-support-store.js";
 
 const now = "2026-11-21T00:00:00.000Z";
@@ -282,6 +282,18 @@ test("read-only playbooks execute a bounded capability sequence and reject injec
   assert.equal(result.attempts.length, 2);
   assert.equal(store.getTask("playbook-task")?.status, "succeeded");
   store.close();
+});
+
+test("built-in diagnosis playbooks keep their device scope and read-only fallback contract", () => {
+  const home = createHomeAssistantOfflinePlaybook("sensor.garage");
+  assert.equal(isDevicePlaybookV1(home), true);
+  assert.equal(home.riskClass, "read_only");
+  assert.deepEqual(home.supportedDeviceKinds, ["home_assistant"]);
+  assert.throws(() => createHomeAssistantOfflinePlaybook("garage"), /Invalid Home Assistant entity id/);
+  const pc = createPcSoftwareDiagnosisPlaybook();
+  assert.equal(isDevicePlaybookV1(pc), true);
+  assert.equal(pc.localFallback, true);
+  assert.deepEqual(pc.steps.map(step => step.capabilityId), ["pc.inspect.network", "pc.inspect.services"]);
 });
 
 test("broker persists a pending action proposal for the remote approval facade", () => {

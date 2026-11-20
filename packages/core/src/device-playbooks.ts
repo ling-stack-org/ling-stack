@@ -32,6 +32,34 @@ export interface DevicePlaybookRunResultV1 {
   readonly failedStepId?: string;
 }
 
+export function createHomeAssistantOfflinePlaybook(entityId: string): DevicePlaybookV1 {
+  if (!/^([a-z0-9_]+)\.([a-z0-9_]+)$/u.test(entityId)) throw new Error("Invalid Home Assistant entity id");
+  return {
+    id: "home-assistant-offline-diagnosis",
+    version: "1.0.0",
+    displayName: "Home Assistant offline entity diagnosis",
+    supportedDeviceKinds: ["home_assistant"],
+    riskClass: "read_only",
+    localFallback: true,
+    steps: [{ id: "read-entity", capabilityId: "home_assistant.read_entity", input: { entityId } }],
+  };
+}
+
+export function createPcSoftwareDiagnosisPlaybook(): DevicePlaybookV1 {
+  return {
+    id: "pc-software-diagnosis",
+    version: "1.0.0",
+    displayName: "PC software and network diagnosis",
+    supportedDeviceKinds: ["pc", "linux"],
+    riskClass: "read_only",
+    localFallback: true,
+    steps: [
+      { id: "inspect-network", capabilityId: "pc.inspect.network", input: {} },
+      { id: "inspect-services", capabilityId: "pc.inspect.services", input: {} },
+    ],
+  };
+}
+
 export function isDevicePlaybookV1(value: unknown): value is DevicePlaybookV1 {
   if (!isRecord(value) || !hasOnlyKeys(value, ["id", "version", "displayName", "supportedDeviceKinds", "riskClass", "localFallback", "steps"])) return false;
   if (!isBoundedString(value.id) || !isBoundedString(value.version) || !isBoundedString(value.displayName)
