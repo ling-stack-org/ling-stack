@@ -32,7 +32,25 @@ function classify(files: string[], extra: Partial<ScopeInput> = {}) {
 }
 
 test("documentation-only changes use the fast lane", () => {
-  assert.equal(classify(["README.md", "packages/core/README.md", "docs/assets/preview.png"]).mode, "docs");
+  assert.equal(classify([
+    "README.md", "README.en.md", "README.zh-CN.md", "README.sr-Latn.md", "README.es-419.md",
+    "packages/core/README.md", "docs/assets/preview.png",
+  ]).mode, "docs");
+});
+
+test("root localized READMEs accept BCP 47 language tags without accepting malformed names", () => {
+  for (const file of [
+    "README.en.md", "README.sr-Latn.md", "README.es-419.md", "README.zh-Hant-TW.md",
+    "README.en-US-u-ca-gregory.md", "README.en-x-sample.md",
+  ]) {
+    assert.equal(classify([file]).mode, "docs", file);
+  }
+  for (const file of [
+    "README.zh_CN.md", "README.中文.md", "README.1.md", "README.en.ts",
+    "README.en-foo.md", "README.en-x.md", "README.en-US-u.md", "scripts/ci/README.en.md",
+  ]) {
+    assert.equal(classify([file]).mode, "full", file);
+  }
 });
 
 test("review templates and nested READMEs are documentation before broad infrastructure rules", () => {
@@ -114,7 +132,7 @@ test("maintenance exceptions do not weaken unknown paths or explicit full runs",
 });
 
 test("documentation mixed with source changes uses affected packages", () => {
-  const scope = classify(["docs/ci.md", "packages/providers/src/index.ts"]);
+  const scope = classify(["docs/ci.md", "README.zh-CN.md", "packages/providers/src/index.ts"]);
   assert.equal(scope.mode, "affected");
   assert.deepEqual(scope.packages, ["@ling-stack/cli", "@ling-stack/daemon", "@ling-stack/providers"]);
 });
