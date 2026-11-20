@@ -5,6 +5,9 @@ import {
   MobileNativeTransportError,
   MobileNativeTransportFactory,
 } from "../src/device/native-transport.ts";
+import { MobileDeviceExecution } from "../src/device/execution.ts";
+import { createAsyncStorageMobileDeviceJournal } from "../src/device/journal.ts";
+import { runMobileReadOnlyPlaybook } from "../src/device/playbook.ts";
 
 const now = "2026-11-21T00:00:00.000Z";
 const descriptor = {
@@ -67,4 +70,18 @@ test("native mobile transport maps a granted platform session to shared device c
 test("native mobile transport refuses a device without OS authorization", async () => {
   const factory = new MobileNativeTransportFactory({ bridge: bridge(), ownerScope: "workspace-1", ownerId: "mobile-1", now: () => now });
   await assert.rejects(() => factory.connect({ device: { ...descriptor, permissionState: "denied" }, requiredPermissions: ["ble"] }), error => error instanceof MobileNativeTransportError && error.code === "permission_denied");
+});
+
+test("mobile runs a deterministic read-only playbook through the native transport", async () => {
+  const factory = new MobileNativeTransportFactory({ bridge: bridge(), ownerScope: "workspace-1", ownerId: "mobile-1", now: () => now });
+  const profile = (await factory.discover())[0];
+  const transport = await factory.connect({ device: descriptor, requiredPermissions: ["ble"] });
+  const snapshot = await factory.snapshot({ profile, connectionRevision: transport.connectionRevision, capabilities: await transport.getCapabilities() });
+  const storage = { values: new Map(), async getItem(key) { return this.values.get(key) ?? null; }, async setItem(key, value) { this.values.set(key, value); } };
+  const journal = createAsyncStorageMobileDeviceJournal(storage, "mobile-1");
+  const task = { id: "playbook-task", ownerKind: "mobile", ownerId: "mobile-1", targetDeviceIds: [profile.device.id], status: "planning", capabilitySnapshotIds: [snapshot.snapshotId], createdAt: now, updatedAt: now };
+  await journal.saveTask(task);
+  const result = await runMobileReadOnlyPlaybook({ playbookId: "network-diagnosis", profile, snapshot, task, transport, execution: new MobileDeviceExecution({ ownerId: "mobile-1", journal, now: () => now }), steps: [{ stepId: "status", capabilityId: capability.id, capabilitySchemaVersion: "1.0", normalizedInput: {} }, { stepId: "status-replay", capabilityId: capability.id, capabilitySchemaVersion: "1.0", normalizedInput: {} }] });
+  assert.equal(result.status, "succeeded");
+  assert.equal(result.attempts.length, 2);
 });
