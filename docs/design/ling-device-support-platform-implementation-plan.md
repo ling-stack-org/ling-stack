@@ -573,6 +573,9 @@ only on a successful install or a model response.
 
 - [ ] Build bounded context packs from target relationships, capability snapshots,
   state, evidence, policy, safety facts, freshness, and context budget.
+- [x] Preserve trusted fact provenance, observation time, freshness cutoff, quality,
+  and redaction metadata while keeping stale, sensitive, and textual output outside
+  model facts.
 - [ ] Connect the existing runner and project executor to typed device proposals.
   Record planning inputs and evidence. Support deterministic local playbooks.
 - [ ] Keep graph and node authority attached to the owning journals when PC or Mobile
@@ -638,7 +641,7 @@ recorded per slice as they complete. [Detailed design](ling-device-fabric.md)
 | D18 | `19b665d79` | `node --test packages/core/test/device-fabric-store.test.ts` | [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts) | Digest-bound resource installation, optional signature verification, active revision persistence and rollback history are implemented | Signed delivery channels, full compatibility/license checks, health activation and production adapter registry remain |
 | D19 | `137d06478` | `node --test packages/core/test/device-fabric-store.test.ts packages/core/test/device-fabric.test.ts` | [device-secrets.ts](../../packages/core/src/device-secrets.ts), [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts) | Physical preconditions, emergency stop, target-scoped secret resolution and redacted secret-use records are implemented | Target controllers, policy integration and physical safety acceptance remain |
 | D20 | `19b665d79` | `node --test packages/core/test/device-fabric-store.test.ts packages/core/test/device-fabric.test.ts` | [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Revisioned lifecycle transitions are persisted and invalid or regressing states are rejected | Ownership transfer, credentials, fleet projections, upgrade, restore and retirement acceptance remain |
-| D21 | `76541f5e7` | `node --test packages/core/test/device-fabric.test.ts` | [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Bounded context packs preserve facts, hypotheses, provenance refs, untrusted text refs, and prompt-injection text is kept outside facts | Model planner integration and offline execution remain |
+| D21 | `b544c5511` | `node --test packages/core/test/device-fabric.test.ts` | [device-fabric.ts](../../packages/core/src/device-fabric.ts), [device-fabric.ts contracts](../../packages/contracts/src/device-fabric.ts) | Bounded context packs preserve trusted fact provenance and freshness metadata while keeping prompt-injection text and stale observations outside facts | Target-scoped context selection, model planner integration and offline execution remain |
 | D22 | `d58112948` | `node --test packages/core/test/device-fabric-store.test.ts packages/core/test/device-fabric.test.ts` | [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Cross-layer trace spans are persisted and can be read by trace identity; conformance report construction remains available | Simulator, hardware-in-loop, chaos, field and reproducible release reports remain |
 
 ## Definition of platform completion
