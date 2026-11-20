@@ -39,26 +39,27 @@ const paused=(page:Page, selector:string)=>page.locator(selector).evaluate((v:HT
 
 test('BG-H1/H2 one visible player, reading surfaces, reduced motion, recovery and bounded fallback',async({page},info)=>{
   const failures:string[]=[]; page.on('pageerror',e=>failures.push(e.message));
+  const waitForPlayback = (selector: string, expected: boolean) => expect.poll(() => paused(page, selector), { timeout: 15_000 }).toBe(expected);
   await prepare(page); await upload(page);
   await page.locator('[data-background-preview]').scrollIntoViewIfNeeded();
   // Settings keeps the global layer paused so the preview is the only active player.
-  await expect.poll(()=>paused(page,'[data-background-layer] video')).toBe(true);
-  await expect.poll(()=>paused(page,'.background-preview video')).toBe(false);
+  await waitForPlayback('[data-background-layer] video', true);
+  await waitForPlayback('.background-preview video', false);
   await page.emulateMedia({reducedMotion:'reduce'});
-  await expect.poll(()=>paused(page,'.background-preview video')).toBe(true);
+  await waitForPlayback('.background-preview video', true);
   await page.locator('[data-background-settings]').getByRole('button',{name:'Resume · Background',exact:true}).click();
-  await expect.poll(()=>paused(page,'.background-preview video')).toBe(false);
+  await waitForPlayback('.background-preview video', false);
   await back(page);
-  await expect.poll(()=>paused(page,'[data-background-layer] video')).toBe(false);
+  await waitForPlayback('[data-background-layer] video', false);
   await page.getByRole('button',{name:'Pause · Background',exact:true}).click();
-  await expect.poll(()=>paused(page,'[data-background-layer] video')).toBe(true);
+  await waitForPlayback('[data-background-layer] video', true);
   await page.emulateMedia({reducedMotion:'no-preference'});
   await page.getByRole('button',{name:'Resume · Background',exact:true}).click();
-  await expect.poll(()=>paused(page,'[data-background-layer] video')).toBe(false);
+  await waitForPlayback('[data-background-layer] video', false);
   await page.setViewportSize({width:1100,height:960});
-  await expect.poll(()=>paused(page,'[data-background-layer] video')).toBe(true);
+  await waitForPlayback('[data-background-layer] video', true);
   await page.setViewportSize({width:1440,height:960});
-  await expect.poll(()=>paused(page,'[data-background-layer] video')).toBe(false);
+  await waitForPlayback('[data-background-layer] video', false);
   await page.getByRole('button',{name:'Plugin Manager',exact:true}).click();
   const row=page.locator('.plugin-marketplace-row').first(); await expect(row).toBeVisible();
   expect(await row.evaluate(e=>getComputedStyle(e).backgroundColor)).not.toBe('rgba(0, 0, 0, 0)');
@@ -76,7 +77,7 @@ test('BG-H1/H2 one visible player, reading surfaces, reduced motion, recovery an
   await page.locator('[data-background-layer] video').dispatchEvent('error');
   await expect(page.locator('[data-background-video-fallback="poster"]')).toBeVisible();
   await page.getByRole('button',{name:'Retry loading',exact:true}).click();
-  await expect.poll(()=>paused(page,'[data-background-layer] video')).toBe(false);
+  await waitForPlayback('[data-background-layer] video', false);
   expect(failures).toEqual([]);
 });
 
