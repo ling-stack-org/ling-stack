@@ -74,11 +74,12 @@ App Server 目标协议为标准 JSON-RPC 2.0，支持 stdio JSONL、本机 Unix
 | 代码导航 | 复用 Host 管理的 TS/JS 代码智能和命令诊断。包边界、依赖与忽略范围在结果中明确。原生组件用对应平台的编译和运行工具提供验证。 |
 | Review | 复用代码审查工作台和不可变 diff。由基线上的仓库审查规则确定重点，与项目的确定性检查配合。 |
 | 协作审议 | 在开发工作项中按需发起提案、质疑和投票。共享证据板汇集与当前方案或候选改动对应的意见、检查结果和决策记录。可从会话中查看证据和未解分歧。 |
+| Agent 协作节奏 | 按开工、阶段验收、阻塞和复盘事件给参与任务的 Agent 提供简报。支持父子消息、同级问答和交接回执。项目可为指定工作项配置每日或每周轮次。 |
 | Handoff | 用持久化 Goal、已确认决定、worktree、当前候选和检查结果生成交接。新会话先查版本和状态，再决定可继续的工作。 |
 
 项目文件与 skill 负责解释项目做法。执行动作由 Daemon 的工作区、工具、命令、沙箱和审批规则授权。Hook 复用现有受信任配置和执行边界，适合调用确定性检查。可查看的计划、实际工具回执和验证结果为长任务提供诊断依据。
 
-工作项审议由 Ling Agent 分配参与者，Workflow 编排并行分析和汇合，Daemon 按冻结规则计票并保存建议。决策由获授权的用户或已有决策策略的协调者记录，Verify、Review、Approval 与交付各自核对实际证据。共享证据板可以独立用于故障排查和跨会话交接。 [审议与共享证据设计](ling-agent-operating-model.md#61-deliberation-and-shared-evidence)
+主 Agent 可建议对仍有实质取舍的方案发起审议。项目或已接受的 Workflow 可以预先授权在指定检查点自动开启。Workflow 编排提案和质疑，需要投票时由 Daemon 按冻结规则计票，获授权的决策者记录取舍和理由。Verify、Review、Approval 与交付各自核对实际证据。共享证据板也供日常故障排查和跨会话交接使用。 [审议与共享证据](ling-agent-operating-model.md#61-deliberation-and-shared-evidence) · [协作轮次与消息](ling-agent-operating-model.md#63-coordination-cadence-and-agent-messages)
 
 ### 工作树、并行和恢复
 

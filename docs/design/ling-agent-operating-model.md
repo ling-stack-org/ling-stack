@@ -137,6 +137,14 @@ Assigned participants can ask each other a specific question while their tasks a
 
 For example, when P01 freezes the replay contract, the P02 implementer receives the protocol decisions and QA receives the replay cases it can prepare. If P02 finds a transcript linked to an older candidate, it requests an updated check and can proceed with work that does not depend on it. A verified result can resolve a factual disagreement. If two compatible implementations remain and the choice materially affects delivery or maintenance, the coordinator can bring that specific decision to deliberation.
 
+### 6.3 Coordination Cadence and Agent Messages
+
+A `CoordinationRound` gives the Agents on a Work Item a shared checkpoint for kickoff, stage progress, acceptance, blockers or retrospective. Committed work events provide the default cadence. Projects can also configure daily or weekly checkpoints through Automations for a specified Work Item. Ling Agent or the recorded Workflow coordinator can invite participants by role and context lease. The resulting brief is available to the assigned Agents as scoped input for their next step, with progress, evidence, unresolved questions and accountable owners. [Round contract](ling-agent-operating-model-detailed-design.md#58-coordination-rounds-and-agent-messages)
+
+A parent can send a child a targeted note, and assigned Agents can ask each other a question during work. Each message identifies its work item, subject version, sender and recipients. An open question can continue after a checkpoint ends. When a question blocks a required input or a handoff is returned, the Workflow holds the affected dependency while independent steps continue. The original Workflow admits downstream work after the receiving participant's handoff receipt and the current readiness checks.
+
+Ling Agent coordinates changes to scope, assignment and authority. It receives a blocker when a question expires or Agents are waiting on each other. It can ask the user for required intent, send a disputed fact for verification or request handoff repair. An unresolved choice between viable options can lead to a deliberation suggestion. Automatic admission requires explicit project or Workflow authorization, current evidence and a bounded budget. [Trigger policy](ling-agent-operating-model-detailed-design.md#52-deliberation-workflow)
+
 ## 7. External Agent Federation
 
 External Agents are registered as execution participants with a stable identity, adapter kind, protocol version, workspace scope, tool profile, approval mode, and event capabilities. Codex, Claude Code, LobeHub and other hosts use the same federation boundary.
@@ -204,10 +212,10 @@ The default surface shows one coordinator summary, one active Work Item status, 
 - intake source and claim owner;
 - acceptance checklist;
 - running Agents and WorkUnits;
-- stage briefs, pending participant questions and handoff receipts;
+- stage and coordination briefs, scoped messages, pending questions and handoff receipts;
 - approvals and user questions;
 - Diff, Verify and Review evidence;
-- shared evidence, deliberation rounds and the recorded decision;
+- shared evidence, deliberation rationale, rounds and the recorded decision;
 - Delivery status and external receipts;
 - Handoff and next action;
 - Memory or Skill candidates awaiting review.
@@ -230,3 +238,5 @@ The product can expose a task inbox, but it must preserve the same Thread, Goal,
 12. Authorized contributors can add and correct evidence on the same Work Item without losing concurrent contributions. The board respects source visibility, and approvals and delivery acceptance continue to use their original owners.
 13. A stage can hand its accepted result to the implementation and QA roles with the applicable context for each. A peer question or returned handoff holds only work that depends on the missing input. Replay returns the same accepted dispatch.
 14. An enabled policy can start a scoped deliberation once for the current decision. Authoritative evidence can resolve the issue before ballot admission. An authorized decision after a tie preserves the tally and rationale.
+15. Work events and authorized schedules create deduplicated rounds. Closing a round publishes one replayable brief with scoped evidence, blockers and action owners. Workflow admission governs any follow-up execution.
+16. Participants can exchange a scoped message or question and recover its receipt on reconnect. Timeouts and dependency cycles route to the coordinator, and downstream readiness uses the current subject and evidence.
