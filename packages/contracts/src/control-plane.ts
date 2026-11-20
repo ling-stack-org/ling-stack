@@ -2,6 +2,7 @@ import type { RunnerToolHydrationCapability } from "./tool-surfaces.js";
 
 export type ControlPlaneDomain =
   | "runs"
+  | "work_items"
   | "work_units"
   | "memory"
   | "skills"
@@ -126,6 +127,26 @@ export interface WorkUnitsDomainSnapshot {
   readonly active: readonly WorkUnitSummary[];
   readonly queued: readonly WorkUnitSummary[];
   readonly stale: readonly WorkUnitSummary[];
+}
+
+export interface WorkItemsDomainSnapshot {
+  readonly counts: {
+    readonly total: number;
+    readonly active: number;
+    readonly blocked: number;
+    readonly terminal: number;
+  };
+  readonly workItems: readonly WorkItemSummary[];
+}
+
+export interface WorkItemSummary {
+  readonly id: string;
+  readonly status: string;
+  readonly sourceType: string;
+  readonly title: string;
+  readonly revision: number;
+  readonly controlState: string;
+  readonly updatedAt: string;
 }
 
 export interface WorkUnitSummary {

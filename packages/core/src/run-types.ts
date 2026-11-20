@@ -1536,6 +1536,7 @@ export interface CreateRunArtifactInput {
 
 export type ControlPlaneDomain =
   | "runs"
+  | "work_items"
   | "work_units"
   | "memory"
   | "skills"

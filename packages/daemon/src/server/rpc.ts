@@ -40,6 +40,7 @@ import {
   listControlPlaneEventsForResponse,
   parseControlPlaneDomains,
 } from "../features/control-plane/processors.js";
+import { appendControlPlaneEvent } from "../features/control-plane/events.js";
 import { executeRunRequest, type RunExecutionSink } from "../features/runs/orchestrator.js";
 import { parseRunRequest } from "../features/runs/schemas.js";
 import { projectPublicRunSession } from "../features/runs/public-execution-snapshots.js";
@@ -59,6 +60,8 @@ interface RpcSubscription {
   readonly id: string;
   readonly cwd: string;
   readonly domains: readonly ControlPlaneDomain[];
+  readonly entityType?: string;
+  readonly entityId?: string;
   readonly closeHub: () => void;
   readonly queue: { readonly event: ControlPlaneEvent; readonly frame: RpcOutboundFrame }[];
   readonly upstreamKey: string;
@@ -187,6 +190,19 @@ class RpcConnection {
         if (this.send({ jsonrpc: "2.0", id, result: prepared.result })) prepared.activate?.();
         return;
       }
+      if (request.method === "workItem/subscribe") {
+        if (request.id === undefined) {
+          throw rpcError(-32600, "subscription_response_required", "workItem/subscribe requires a request id.");
+        }
+        const record = readParamsRecord(request.params);
+        const workItemId = readStringField(record, "workItemId");
+        const prepared = this.prepareControlPlaneSubscription({ ...record, domains: ["work_items"] }, {
+          entityType: "work_item",
+          entityId: workItemId,
+        });
+        if (this.send({ jsonrpc: "2.0", id, result: prepared.result })) prepared.activate?.();
+        return;
+      }
       const result = await this.dispatch(request.method, request.params);
       if (request.id !== undefined && !this.cancelledRequests.has(requestKey!)) {
         this.send({ jsonrpc: "2.0", id, result });
@@ -269,6 +285,8 @@ class RpcConnection {
         return this.controlWorkItem("resume", params);
       case "workItem/cancel":
         return this.controlWorkItem("cancel", params);
+      case "workItem/unsubscribe":
+        return this.unsubscribeControlPlane(params);
       default:
         throw rpcError(-32601, "method_not_found", `Unsupported RPC method: ${method}`);
     }
@@ -367,6 +385,22 @@ class RpcConnection {
       throw rpcError(-32061, "resume_blocked", `Work Item cannot accept ${action} while control state is ${existing.control.state}.`);
     }
     const projected = projectWorkItemSnapshot(workItem);
+    appendControlPlaneEvent(store, this.context.controlPlaneEvents, {
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      cwd,
+      domain: "work_items",
+      entityType: "work_item",
+      entityId: workItemId,
+      action: `work_item.control.${action}`,
+      idempotencyKey,
+      data: {
+        workItemId,
+        revision: projected.revision,
+        controlState: projected.control.state,
+        controlGeneration: projected.control.generation,
+        receiptId: projected.control.receipt?.id,
+      },
+    });
     this.send({
       jsonrpc: "2.0",
       method: "workItem/control/updated",
@@ -398,7 +432,7 @@ class RpcConnection {
     };
   }
 
-  private prepareControlPlaneSubscription(params: unknown): {
+  private prepareControlPlaneSubscription(params: unknown, filter?: { readonly entityType?: string; readonly entityId?: string }): {
     readonly result: ControlPlaneSubscribeResult;
     readonly activate?: () => void;
   } {
@@ -413,6 +447,7 @@ class RpcConnection {
       id: subscriptionId,
       cwd: parsed.cwd,
       domains: parsed.domains,
+      ...filter,
       closeHub: () => hubSubscription?.close(),
       queue: [],
       upstreamKey: `${subscriptionId}:hub`,
@@ -436,6 +471,7 @@ class RpcConnection {
         throw rpcError(-32000, "connection_closed", "The outbound connection is closed.");
       }
       const replay = listControlPlaneEventsForResponse(this.context, parsed);
+      const filteredReplay = replay.events.filter((event) => subscriptionMatchesEvent(subscription, event));
       if (replay.window.disposition === "snapshot_required") {
         this.closeSubscription(subscription);
         return {
@@ -451,7 +487,7 @@ class RpcConnection {
           subscriptionId,
           window: replay.window,
         },
-        activate: () => hubSubscription?.activate(replay.events),
+        activate: () => hubSubscription?.activate(filteredReplay),
       };
     } catch (error) {
       this.closeSubscription(subscription);
@@ -581,7 +617,7 @@ class RpcConnection {
   }
 
   private enqueueControlPlaneEvent(subscription: RpcSubscription, event: ControlPlaneEvent): void {
-    if (this.closed || subscription.closed) {
+    if (this.closed || subscription.closed || !subscriptionMatchesEvent(subscription, event)) {
       return;
     }
     const frame = this.outbound.prepare(controlPlaneNotification(subscription.id, event));
@@ -901,6 +937,12 @@ function normalizeRpcError(error: unknown): { readonly jsonRpcCode: number; read
 
 function controlPlaneNotification(subscriptionId: string, event: ControlPlaneEvent): unknown {
   return { jsonrpc: "2.0", method: "$/control_plane_event", params: { subscriptionId, event } };
+}
+
+function subscriptionMatchesEvent(subscription: RpcSubscription, event: ControlPlaneEvent): boolean {
+  if (subscription.entityType && event.entityType !== subscription.entityType) return false;
+  if (subscription.entityId && event.entityId !== subscription.entityId) return false;
+  return true;
 }
 
 function controlPlaneEnvelopeBytes(subscriptionId: string): number {
