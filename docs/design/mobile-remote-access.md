@@ -1,11 +1,12 @@
 # Ling Mobile Remote Access
 
-Status: proposed; architecture locked for isolated implementation, not approved for `main`
+Status: remote conversation design with proposed D12 connectivity
 Date: 2026-08-01
 
 Related documents:
 
 - [Mobile Remote Access Detailed Design](mobile-remote-access-detailed-design.md)
+- [Ling Server Connectivity](ling-server-connectivity.md)
 - [Mobile Remote Access Implementation Plan](mobile-remote-access-implementation-plan.md)
 - [Mobile Conversation UI 2.0 Detailed Design](mobile-conversation-ui2-detailed-design.md)
 - [Mobile Approval and Creation Detailed Design](mobile-approval-and-creation-detailed-design.md)
@@ -23,8 +24,9 @@ remains the authority for workspaces, channels, runs, approvals, and artifacts.
 
 The mobile app must not connect to the existing daemon HTTP server directly. A dedicated
 Remote Gateway runs locally on the PC as a second, opt-in listener with a small remote
-allowlist. The default V0 connection uses Tailscale networking and HTTPS/WSS. It does not
-require a Ling-hosted cloud service.
+allowlist. D12 uses Ling Server for enrollment, HTTPS/WSS signaling, and self-hosted
+STUN/TURN. Paired endpoints carry the Ling protocol over a WebRTC DataChannel.
+[Ling Server design and migration](ling-server-connectivity.md)
 
 V0 enforces a one-device trust relationship for each PC Gateway:
 
@@ -54,10 +56,12 @@ Keeping execution on the PC preserves the existing workspace, tools, credentials
 approvals, and session history. The phone becomes another trusted surface over the same
 daemon-owned state.
 
-A cloud-hosted Ling relay is not required for the first version. Tailscale normally forms
-an encrypted peer-to-peer path and may fall back to an encrypted DERP relay when direct
-NAT traversal fails. The relay cannot decrypt the tailnet payload. A self-hosted control
-plane can be evaluated later with Headscale or NetBird.
+Ling Server follows the established control-plane, candidate exchange, and relay
+patterns used by projects such as Headscale, NetBird, coturn, Pion ICE, and libp2p.
+Ling keeps its own peer identity, application frames, task ownership, and cursor
+semantics. The server-operated relay forwards opaque endpoint traffic and does not
+replace the PC daemon or Mobile task owner.
+[Detailed design](ling-server-connectivity.md)
 
 ## Current Repository Baseline
 
@@ -110,7 +114,9 @@ boundary, not a host-binding change to the current daemon server.
 
 ## Non-Goals for V0
 
-- No Ling-hosted account, cloud database, or mandatory Ling relay.
+- No mandatory hosted account or external network service. A user-operated Ling Server
+  is the connectivity authority for the paired installation.
+- No dependency on Tailscale, Headscale, NetBird, or an external relay provider.
 - No direct exposure of `17891`, `/rpc/stream`, or the broad daemon API.
 - No arbitrary `cwd`, file path, shell, provider, MCP, broad settings, or secret endpoints.
 - No remote permission-preset, workspace-policy, persistent-tool, or arbitrary-path
@@ -129,37 +135,18 @@ boundary, not a host-binding change to the current daemon server.
 ## Architecture
 
 ```text
- iOS / Android
- apps/mobile
-      |
-      | HTTPS/WSS + device challenge signature
-      | inside an encrypted tailnet path
-      v
- Tailscale / Headscale-compatible network
-      |
-      | tailscale serve -> 127.0.0.1:17892
-      v
- Remote Gateway listener (opt-in, remote allowlist only)
- packages/daemon/src/features/remote-access
-      |
-      | typed RemoteAccessService facade
-      | no reuse of the general daemon router
-      v
- Ling daemon authority
- channels / transcripts / control-plane events / runs / approvals
-      |
-      v
- Local workspace, runners, tools, credentials, and artifacts
+Control   Mobile <-------- Ling Server signaling --------> PC transport
+Direct    Mobile <----------- WebRTC DataChannel --------> PC transport
+Relay     Mobile <---------- Ling Server TURN -----------> PC transport
+
+PC transport -> private channel -> Remote Gateway -> RemoteAccessService
+                                    -> daemon-owned conversations and approvals
 ```
 
-The first implementation keeps the Gateway in the daemon process but on a distinct
-listener. This avoids a second service lifecycle while preventing a Tailscale proxy
-mistake from exposing the general daemon router. The Gateway receives a restricted
-`RemoteAccessService`, not the complete `DaemonContext`.
-
-If remote access later includes file transfer, Computer Use, or multiple users, the
-Gateway should be reconsidered as a separate least-privilege process with an authenticated
-local daemon capability. That added isolation is not needed for the communication-only V0.
+The Gateway receives a restricted `RemoteAccessService` in the daemon process.
+The peer transport hands it authenticated sessions through a private channel.
+Device-task collaboration has its own artifact and capability scope.
+[Developer execution and connectivity](ling-device-developer-execution.md)
 
 ## Ownership Boundaries
 
@@ -175,18 +162,17 @@ local daemon capability. That added isolation is not needed for the communicatio
 
 ## Connectivity Modes
 
-| Mode | V0 support | Server requirement | Notes |
+| Mode | D12 support | Server requirement | Notes |
 | --- | --- | --- | --- |
-| Tailscale Serve inside one tailnet | Required path | No Ling server | Gateway remains loopback-only; HTTPS/WSS is exposed only to the tailnet. |
-| Headscale with compatible tailnet clients | Evaluation path | Self-hosted control plane | Keeps coordination under user control; compatibility must be tested. |
-| NetBird | Later adapter | Managed or self-hosted control plane | Requires a separate TLS/listener recipe; not part of the first acceptance path. |
-| Same-LAN direct TLS | Development only | None | Requires certificate pinning and safe interface binding; not the default Internet solution. |
-| Public port forwarding | Unsupported | None | Too easy to expose the Gateway or daemon incorrectly. |
-| Ling cloud relay | Deferred | Ling infrastructure | Only justified for zero-setup onboarding or offline message delivery later. |
+| Ling Server direct LAN or cross-network path | Required path | User-operated Ling Server | Peer candidates and application identity are checked before the Gateway facade accepts data. |
+| Ling Server encrypted relay | Required fallback | Ling Server installation | Expiring TURN credentials authorize a relay allocation. DTLS protects the peer DataChannel. |
+| TURN/TLS on TCP 443 | Required network fallback | Ling Server installation | Covers networks that block client UDP and allow TURN/TLS on TCP 443. |
+| Same-LAN direct path during server outage | Supported when already authorized | No new server request | Existing direct session can continue until its lease or session expires. |
+| Public port forwarding to daemon | Unsupported | None | The general daemon and Gateway remain separate listeners. |
 
-The PC can connect directly to the phone when the network permits it. “No Ling server”
-does not mean “no network coordination at all”: an overlay network still uses a control
-plane for peer discovery and may use an encrypted relay for difficult networks.
+The PC can connect directly to the phone when the network permits it. A direct route
+still uses Ling Server for enrollment and candidate exchange unless the peers already
+have a valid local route. The same application protocol works through the Ling relay.
 
 ## Mobile App and Reuse
 
@@ -267,7 +253,7 @@ an endpoint for them.
 1. The PC owner enables Remote Access locally.
 2. The PC opens a short pairing window and displays a QR code plus a local confirmation.
 3. The phone scans the QR, creates a device key in platform secure storage, and submits a
-   signed pairing request over the tailnet.
+   signed pairing request through Ling Server.
 4. The PC displays the phone name and a short verification phrase.
 5. The owner confirms locally; the Gateway records the phone public key as the only active
    device and closes the pairing window.
@@ -275,7 +261,8 @@ an endpoint for them.
 
 ### Connect and Converse
 
-1. The app reconnects to the saved Gateway origin.
+1. The app reconnects through the configured routing profile and opens a channel to
+   the pinned Gateway.
 2. The Gateway sends a fresh challenge; the phone signs it with the paired device key.
 3. The Gateway sends a workspace/channel summary; the phone supplies an acknowledged
    event cursor only when the current process still has its matching snapshot baseline,
@@ -379,7 +366,7 @@ V0 distribution must include the whole path, not only source code:
 - Desktop packaging includes the Gateway because it is part of the daemon bundle.
 - iOS builds go through an internal TestFlight track first.
 - Android builds go through an internal testing track or signed internal APK/AAB.
-- Release notes state that the phone and PC must join the same supported tailnet.
+- Release notes state that the phone and PC must join the same Ling Server installation and supported route.
 - Diagnostics expose safe connection state, protocol version, and paired device id, but
   never private keys, pairing secrets, transcript content, or raw IP credentials.
 
@@ -398,10 +385,10 @@ authentication required for Internet-facing access.
 Rejected as the primary path. It weakens device-key storage, background behavior,
 notifications, and one-device enforcement, and it couples the mobile release to UI 2.0.
 
-### Build a Ling Cloud Account and Relay First
+### Hosted account and conversation storage
 
-Rejected for V0. It adds identity, hosting, retention, abuse, compliance, and operations
-before proving the local remote-channel use case.
+Ling Server handles peer enrollment and live transport. The devices hold their
+authoritative conversation and task history.
 
 ### Copy Web Conversation Components into Mobile
 
@@ -423,8 +410,8 @@ create two diverging product models during UI 2.0.
 
 ## Acceptance Criteria
 
-- Remote Gateway is opt-in, loopback-only behind the supported overlay-network recipe,
-  and cannot route arbitrary daemon requests.
+- Remote Gateway is opt-in. D12 delivers only typed peer traffic to its authorized
+  application facade over the local transport boundary.
 - The existing daemon listener remains `127.0.0.1` by default.
 - Pairing is local, expiring, reserved to one candidate, consumed once, and locally
   confirmed; rejection rotates the QR secret.

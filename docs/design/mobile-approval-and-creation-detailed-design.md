@@ -318,8 +318,8 @@ Conversation Detail
 
 ## Background and Notification Boundary
 
-Without a Ling-hosted relay/APNs provider, iOS may suspend the app and its WebSocket. The
-PC cannot rely on a direct tailnet socket to wake it. Therefore:
+Without a push provider, iOS may suspend the app and its WebSocket. The PC cannot rely
+on a direct Ling peer socket to wake it. Therefore:
 
 - an approval received while the app is connected in foreground may trigger a local,
   content-free notification or foreground attention treatment;
