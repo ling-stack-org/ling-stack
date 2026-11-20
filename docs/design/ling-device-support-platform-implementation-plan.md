@@ -468,6 +468,8 @@ only on a successful install or a model response.
 
 - [x] Define runtime enrollment, key proof, target discovery, local journal,
   connection handles, health, cancel, capture, upgrade, and revoke.
+- [x] Persist edge runtime enrollment revisions and cross-layer trace spans in the
+  device fabric store.
 - [ ] Verify a Linux edge executor and a supported phone-owned hardware bridge.
   Validate executor enrollment and each placement's connection, recovery, and task
   ownership.
@@ -587,6 +589,8 @@ only on a successful install or a model response.
 
 - [ ] Propagate conversation, graph, node, attempt, device, runtime, connection,
   adapter, resource, event, and model-turn identifiers.
+- [x] Persist runtime trace spans by trace identity so a daemon restart can rebuild
+  the recorded execution path.
 - [~] Add simulator, protocol replay, hardware-in-loop, network interruption, process
   restart, resource rollback, and physical acceptance reports.
 - [ ] Produce a reproducible conformance report for each runtime, target, adapter,
@@ -626,13 +630,13 @@ recorded per slice as they complete. [Detailed design](ling-device-fabric.md)
 | D13 | `775950225` | `node --test packages/core/test/ling-server-protocol.test.ts` | [device-protocol.ts](../../packages/core/src/device-protocol.ts) | Capture provenance, digest validation, codec registration, decode and replay are implemented | Physical USB/BLE/CAN capture and adapter registration acceptance remain |
 | D14 | `1c79e5bc5` | `node --test packages/core/test/device-fabric-store.test.ts packages/core/test/device-fabric.test.ts` | [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Semantic graph, identity merge/split, relationships, Twin revisions, freshness projection, and persistent graph/Twin state are implemented | Multi-domain identity evidence and field convergence remain |
 | D15 | `1c79e5bc5` | `node --test packages/core/test/device-fabric-store.test.ts packages/core/test/device-fabric.test.ts` | [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Dependency validation, ready nodes, owner leases, aggregate node results, and persistent task graph revisions are implemented | Durable scheduler ownership integration and cross-runtime recovery remain |
-| D16 | `9f2cc943b` | `node --test packages/core/test/device-fabric.test.ts` | [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Edge enrollment, revocation, and contiguous bridge sequence session are implemented | Linux edge process, bridge transport, local journal and reconnect acceptance remain |
+| D16 | `d58112948` | `node --test packages/core/test/device-fabric-store.test.ts packages/core/test/device-fabric.test.ts` | [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Edge enrollment revisions and trace state are persisted alongside enrollment, revocation, and contiguous bridge sequence rules | Linux edge process, bridge transport, local journal and reconnect acceptance remain |
 | D17 | `19b665d79` | `corepack pnpm --filter @ling-stack/core build:ci`; `corepack pnpm --filter @ling-stack/core typecheck:ci`; `node --test packages/core/test/device-fabric-store.test.ts packages/core/test/device-fabric.test.ts` | [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Durable owner streams, replay-by-event-id, bounded retention, stale-cursor rejection, gap reporting, and snapshot cursors are implemented | Task/state event projections, telemetry sampling, backpressure and peer synchronization remain |
 | D18 | `19b665d79` | `node --test packages/core/test/device-fabric-store.test.ts` | [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts) | Digest-bound resource installation, optional signature verification, active revision persistence and rollback history are implemented | Signed delivery channels, full compatibility/license checks, health activation and production adapter registry remain |
 | D19 | `775950225` | `node --test packages/core/test/device-fabric.test.ts` | [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Physical preconditions, emergency stop and secret-reference authorization are implemented | Target controllers, secret broker integration and physical safety acceptance remain |
 | D20 | `19b665d79` | `node --test packages/core/test/device-fabric-store.test.ts packages/core/test/device-fabric.test.ts` | [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Revisioned lifecycle transitions are persisted and invalid or regressing states are rejected | Ownership transfer, credentials, fleet projections, upgrade, restore and retirement acceptance remain |
 | D21 | `76541f5e7` | `node --test packages/core/test/device-fabric.test.ts` | [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Bounded context packs preserve facts, hypotheses, provenance refs, untrusted text refs, and prompt-injection text is kept outside facts | Model planner integration and offline execution remain |
-| D22 | `775950225` | `node --test packages/core/test/device-fabric.test.ts` | [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Cross-layer trace spans and conformance report construction are implemented | Simulator, hardware-in-loop, chaos, field and reproducible release reports remain |
+| D22 | `d58112948` | `node --test packages/core/test/device-fabric-store.test.ts packages/core/test/device-fabric.test.ts` | [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Cross-layer trace spans are persisted and can be read by trace identity; conformance report construction remains available | Simulator, hardware-in-loop, chaos, field and reproducible release reports remain |
 
 ## Definition of platform completion
 
