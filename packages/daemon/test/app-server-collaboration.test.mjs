@@ -78,7 +78,7 @@ test("App Server persists and replays Work Item collaboration records", { timeou
     send(5, "workItem/deliberation/read", { cwd, workItemId: item.id });
     const read = await waitFor(messages, message => message.id === 5);
     assert.equal(read.result.records.length, 1);
-    assert.equal(read.result.records[0].recordId, undefined);
+    assert.equal(typeof read.result.records[0].id, "string");
     assert.equal(read.result.records[0].action, "started");
   } finally {
     socket.terminate();
