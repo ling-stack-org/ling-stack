@@ -10,7 +10,9 @@ import type {
   DeviceLifecycleRecordV1,
   DeviceResourceManifestV1,
   DeviceTaskGraphV1,
+  DeviceTraceSpanV1,
   DeviceTwinV1,
+  EdgeRuntimeEnrollmentV1,
   JsonValue,
 } from "@ling-stack/contracts";
 
@@ -245,6 +247,41 @@ export class SqliteDeviceFabricStore {
     return row ? parseJson<DeviceTaskGraphV1>(row.graph_json, "task graph") : undefined;
   }
 
+  saveEdgeRuntime(runtime: EdgeRuntimeEnrollmentV1): EdgeRuntimeEnrollmentV1 {
+    if (!runtime.runtimeId.trim() || !runtime.publicKeyFingerprint.trim() || runtime.revision < 1) {
+      throw new DeviceFabricError("revision_conflict", "edge runtime identity is invalid");
+    }
+    const current = this.getEdgeRuntime(runtime.runtimeId);
+    if (current && runtime.revision <= current.revision) throw new DeviceFabricError("revision_conflict", "edge runtime revision must advance");
+    this.database.prepare("INSERT INTO device_edge_runtimes(runtime_id,revision,runtime_json) VALUES(?,?,?) ON CONFLICT(runtime_id) DO UPDATE SET revision=excluded.revision,runtime_json=excluded.runtime_json")
+      .run(runtime.runtimeId, runtime.revision, JSON.stringify(runtime));
+    return runtime;
+  }
+
+  getEdgeRuntime(runtimeId: string): EdgeRuntimeEnrollmentV1 | undefined {
+    const row = this.database.prepare("SELECT runtime_json FROM device_edge_runtimes WHERE runtime_id=?").get(runtimeId) as Row | undefined;
+    return row ? parseJson<EdgeRuntimeEnrollmentV1>(row.runtime_json, "edge runtime enrollment") : undefined;
+  }
+
+  saveTraceSpan(span: DeviceTraceSpanV1): DeviceTraceSpanV1 {
+    if (!span.spanId.trim() || !span.traceId.trim() || !span.sourceId.trim()) throw new DeviceFabricError("revision_conflict", "trace span identity is invalid");
+    const current = this.getTraceSpan(span.spanId);
+    if (current?.finishedAt && !span.finishedAt) throw new DeviceFabricError("revision_conflict", "finished trace span cannot return to running");
+    this.database.prepare("INSERT INTO device_trace_spans(span_id,trace_id,span_json) VALUES(?,?,?) ON CONFLICT(span_id) DO UPDATE SET trace_id=excluded.trace_id,span_json=excluded.span_json")
+      .run(span.spanId, span.traceId, JSON.stringify(span));
+    return span;
+  }
+
+  getTraceSpan(spanId: string): DeviceTraceSpanV1 | undefined {
+    const row = this.database.prepare("SELECT span_json FROM device_trace_spans WHERE span_id=?").get(spanId) as Row | undefined;
+    return row ? parseJson<DeviceTraceSpanV1>(row.span_json, "trace span") : undefined;
+  }
+
+  listTraceSpans(traceId: string): readonly DeviceTraceSpanV1[] {
+    return (this.database.prepare("SELECT span_json FROM device_trace_spans WHERE trace_id=? ORDER BY span_id").all(traceId) as Row[])
+      .map(row => parseJson<DeviceTraceSpanV1>(row.span_json, "trace span"));
+  }
+
   transitionLifecycle(record: DeviceLifecycleRecordV1): DeviceLifecycleRecordV1 {
     const current = this.getLifecycle(record.deviceId);
     if (!current && record.status !== "discovered") throw new DeviceFabricError("lifecycle_invalid", "device lifecycle must start at discovered");
@@ -338,6 +375,17 @@ export class SqliteDeviceFabricStore {
         revision INTEGER NOT NULL,
         graph_json TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS device_edge_runtimes (
+        runtime_id TEXT PRIMARY KEY NOT NULL,
+        revision INTEGER NOT NULL,
+        runtime_json TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS device_trace_spans (
+        span_id TEXT PRIMARY KEY NOT NULL,
+        trace_id TEXT NOT NULL,
+        span_json TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_device_trace_spans_trace ON device_trace_spans(trace_id,span_id);
       CREATE TABLE IF NOT EXISTS device_lifecycle_state (
         device_id TEXT PRIMARY KEY NOT NULL,
         revision INTEGER NOT NULL,

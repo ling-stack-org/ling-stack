@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { createHash } from "node:crypto";
-import type { DeviceEventEnvelopeV1, DeviceGraphNodeV1, DeviceResourceManifestV1, DeviceTaskGraphV1 } from "@ling-stack/contracts";
+import type { DeviceEventEnvelopeV1, DeviceGraphNodeV1, DeviceResourceManifestV1, DeviceTaskGraphV1, DeviceTraceSpanV1, EdgeRuntimeEnrollmentV1 } from "@ling-stack/contracts";
 import { DeviceFabricError } from "../dist/device-fabric.js";
 import { SqliteDeviceFabricStore } from "../dist/storage/sqlite/device-fabric-store.js";
 
@@ -120,5 +120,19 @@ test("fabric store persists graph, twin, and task graph revisions", () => {
   assert.equal(store.getGraphNode("component-1")?.parentNodeId, "device-1");
   assert.equal(store.getTwin("device-1")?.revision, 1);
   assert.equal(store.getTaskGraph("graph-1")?.nodes[0]?.ownerId, "edge-1");
+  store.close();
+});
+
+test("fabric store persists edge enrollment and trace spans", () => {
+  const store = new SqliteDeviceFabricStore();
+  const runtime: EdgeRuntimeEnrollmentV1 = { runtimeId: "edge-1", displayName: "Linux edge", publicKeyFingerprint: "fp-1", contractMajor: 1, supportedTransports: ["ssh"], status: "enrolled", revision: 1, lastSeenAt: now };
+  store.saveEdgeRuntime(runtime);
+  store.saveEdgeRuntime({ ...runtime, status: "revoked", revision: 2 });
+  assert.equal(store.getEdgeRuntime("edge-1")?.status, "revoked");
+  const span: DeviceTraceSpanV1 = { spanId: "span-1", traceId: "trace-1", kind: "runtime", sourceId: "edge-1", startedAt: now, status: "running", metadata: { taskId: "task-1" } };
+  store.saveTraceSpan(span);
+  store.saveTraceSpan({ ...span, finishedAt: now, status: "ok" });
+  assert.equal(store.listTraceSpans("trace-1")[0]?.status, "ok");
+  assert.throws(() => store.saveTraceSpan(span), (error: unknown) => error instanceof DeviceFabricError && error.code === "revision_conflict");
   store.close();
 });
