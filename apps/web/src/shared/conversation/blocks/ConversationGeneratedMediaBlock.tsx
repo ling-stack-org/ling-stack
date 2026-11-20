@@ -22,17 +22,19 @@ export function ConversationGeneratedMediaBlock({
     <div className="conversation-generated-media-list" aria-label={t("Generated media")}>
       {items.map((item) => {
         const video = item.operation === "video_generate";
-        const pending = item.status === "queued" || item.status === "running" || item.status === "waiting_for_approval";
+        const active = item.status === "queued" || item.status === "running";
+        const pending = active || item.status === "waiting_for_approval";
+        const imagePending = !video && active;
         const mediaArtifacts = displayableGeneratedMediaArtifacts(item);
         return (
           <section
-            className={`conversation-generated-media status-${item.status}`}
+            className={`conversation-generated-media status-${item.status}${imagePending ? " image-pending" : ""}`}
             data-media-job-id={item.mediaJobId}
             data-media-job-status={item.status}
             key={item.mediaJobId}
           >
             {item.status !== "succeeded" ? (
-              <header className="conversation-generated-media-header">
+              <header className="conversation-generated-media-header" role={pending ? "status" : undefined}>
                 <span className="conversation-generated-media-kind" aria-hidden="true">
                   {video ? <Video size={16} /> : <ImageIcon size={16} />}
                 </span>
