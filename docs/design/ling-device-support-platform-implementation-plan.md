@@ -43,6 +43,7 @@ validation and the boundary of what remains unverified.
 | ID | Status | Scope | Exit condition | Primary validation |
 | --- | --- | --- | --- | --- |
 | D0 | [x] | Architecture, boundaries, and tracking plan | Design indexed and linked from implementation status | Markdown/link checks, review of current architecture |
+| D0.5 | [x] | Implementation readiness freeze | Package ownership, storage, coordinator placement, runtime enrollment, resource delivery, target matrix, dependency choices, and conformance fixtures are recorded | Design review and fixture inventory |
 | D1 | [ ] | Shared device contracts and adapter manifest | Strict schemas compile and reject invalid inputs | Contracts typecheck and contract tests |
 | D2 | [ ] | Device registry and capability broker | A fake device can register, discover, observe, and execute a read-only capability | Daemon tests plus fake-adapter integration |
 | D3 | [ ] | Task state, approval, verification, and evidence | A task survives reconnect and distinguishes unknown outcome from success | State/recovery tests and evidence inspection |
@@ -81,6 +82,59 @@ Recorded in [PR #730](https://github.com/ling-stack-org/ling-stack/pull/730).
 - [x] Add this plan to the design index and implementation-status index.
 
 D0 covers the design and the implementation plan.
+
+## D0.5: Implementation readiness freeze
+
+This slice freezes the decisions needed to begin implementation. It does not claim
+that any runtime slice is implemented or that a physical device has passed acceptance.
+
+### Decision register
+
+| Area | Decision for implementation | Owner and acceptance |
+| --- | --- | --- |
+| Contract ownership | Public device DTOs and schema versions live in `packages/contracts`. Portable domain and policy types live in `packages/core`. Adapter-specific protocol code stays outside both. | D1 contract typecheck, strict fixtures, and import-boundary checks |
+| Initial storage | Daemon-owned device records, task journals, graph revisions, receipts, and event outbox use the existing SQLite authority. Mobile and Edge keep their local journals in platform storage. A broker such as NATS remains an optional transport after measured workload evidence. | D2/D3 restart, migration, outbox, and reconnect tests |
+| Graph coordinator | A PC-created graph is coordinated by the daemon. A standalone phone graph is coordinated by Mobile. An Edge-created local graph stays on Edge. A paired peer can project or propose nodes, while node execution remains with the host holding the target connection. | D15 coordinator restart, owner lease, and cross-peer projection fixtures |
+| Runtime enrollment | PC, Mobile, and Edge runtimes use installation-scoped key proof, an expiring operator grant, displayed identity confirmation, revisioned binding, credential rotation, and immediate revoke. Target credentials remain separate from Ling peer credentials. | D16 enrollment, rotation, revoke, stale-lease, and reconnect fixtures |
+| Identity merge | Network address, serial port, BLE address, VIN, Android serial, and Home Assistant entity IDs are aliases. A merge requires adapter identity evidence or local operator confirmation. Historical task records retain the original identity and redirect revision. | D14 merge, split, conflict, and historical receipt fixtures |
+| Resource delivery | Data-only profiles, codecs, fixtures, and documentation indexes can be installed after signature, digest, license, platform, and compatibility checks. Mobile native modules ship through signed app builds. PC and Edge native packages use the authorized runtime installation path. Firmware and vendor tools retain a separate operator handoff. | D18 manifest, license, activation, rollback, and platform matrix |
+| Ling Server transport | D12 uses signed WebRTC signaling, Pion WebRTC on PC where supported, the native React Native WebRTC path on Mobile, and self-hosted coturn for STUN/TURN. Exact dependency versions are pinned in the owning package before implementation. | D12 direct, TURN, TURN/TLS, migration, revoke, and payload confidentiality tests |
+| Event implementation | Task, approval, action, verification, revocation, and resource events are durable owner-journal/outbox records. High-rate telemetry and raw captures have bounded retention and may be sampled. All projections use the shared event envelope and cursor rules. | D17 gap, snapshot, duplicate, backpressure, retention, and peer projection fixtures |
+| Target matrix | The initial physical matrix is Linux over SSH, Android head unit with the DiPlay installation path, Home Assistant, and an RS-485/Modbus device. Each matrix row records host OS, phone OS, target model, firmware, transport, adapter, and evidence class. | D5, D8, D9, D13, and D15 field reports |
+| Conformance harness | Every adapter has a manifest fixture, fake adapter, capability snapshot, action/verification fixture, error fixture, reconnect case, and redaction case. Protocol adapters also have capture replay and simulator fixtures. | D1–D3 and D13 shared fixture runner |
+
+### Package and file ownership
+
+| Area | Initial implementation location |
+| --- | --- |
+| Public device schemas | `packages/contracts/src/device/` |
+| Device domain, policy facts, identity, and twin projections | `packages/core/src/device/` |
+| Registry, broker, task service, graph coordinator, and event outbox | `packages/daemon/src/features/device-support/` and `packages/daemon/src/features/device-fabric/` |
+| Remote projection and paired collaboration | `packages/daemon/src/features/remote-access/` and `packages/remote-protocol/` |
+| Mobile task owner and native transport adapters | `apps/mobile/src/features/device-execution/` and `apps/mobile/src/platform/device-transport/` |
+| Edge executor and hardware bridge | Separate runtime package or executable only after a second consumer exists. Until then, keep the adapter behind the declared external-process boundary. |
+| Resource manifests and installation policy | `packages/core/src/device/resources/` with platform-specific installers owned by PC, Mobile, and Edge runtimes |
+
+The paths are ownership boundaries for the initial implementation. Extraction into
+new packages requires a second real consumer and a contract fixture that proves the
+boundary. Adapters must not import UI screens, raw SQLite tables, provider internals,
+or private Runner-Pi implementation details.
+
+### Development entry criteria
+
+The implementation can start when:
+
+- D0.5 is reviewed and its decision register is not marked open;
+- D1 has the shared DTO and schema fixture skeleton;
+- D2 and D3 agree on the SQLite records, outbox, cursor, attempt, and receipt shape;
+- the target matrix has at least one reachable fixture or physical target for the
+  selected vertical slice;
+- dependency versions and license records are pinned for the selected transport;
+- the conformance harness can run a fake adapter without a model service.
+
+Open questions discovered during implementation become a decision record linked from
+this plan. They do not silently change the public contract or move authority between
+hosts.
 
 ## D1: Shared device contracts and adapter SDK
 

@@ -2,7 +2,7 @@
 
 Status: canonical documentation index
 Owner: repository maintainers
-Last verified: 2026-11-20 (Ling Device Fabric and D14–D22 design indexed), 2026-11-20 (Ling Server connectivity), 2026-11-19 (Ling Device Support Platform runtime, developer execution, and hardware protocol workbench designs indexed), 2026-11-18 (Ling Device Support Platform, 14-item delivery plan and Automations P2 plan indexed). Other delivery states retain their owners.
+Last verified: 2026-11-21 (Ling Device Support Platform implementation readiness freeze), 2026-11-20 (Ling Device Fabric and D14–D22 design indexed, Ling Server connectivity), 2026-11-19 (Ling Device Support Platform runtime, developer execution, and hardware protocol workbench designs indexed), 2026-11-18 (Ling Device Support Platform, 14-item delivery plan and Automations P2 plan indexed). Other delivery states retain their owners.
 Document type: governance index
 Code and test anchors: each linked contract owns its anchors
 
