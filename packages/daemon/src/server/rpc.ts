@@ -1552,6 +1552,8 @@ class RpcConnection {
     const frame = this.outbound.prepare(controlPlaneNotification(subscription.id, event));
     if (!frame) return;
     if (this.appServer) {
+      const serverRequest = appServerServerRequestForEvent(event);
+      if (serverRequest) this.send(serverRequest);
       const notification = appServerEventNotification(subscription.id, event);
       if (notification) this.send(notification);
     }
@@ -2018,6 +2020,26 @@ function appServerEventNotification(subscriptionId: string, event: ControlPlaneE
       payload: event.data,
     },
   };
+}
+
+function appServerServerRequestForEvent(event: ControlPlaneEvent): unknown | undefined {
+  if (event.action === "approval.created") {
+    return {
+      jsonrpc: "2.0",
+      id: `approval:${event.entityId}:${event.seq}`,
+      method: "approval/requestDecision",
+      params: { approvalId: event.entityId, ...event.data },
+    };
+  }
+  if (event.action === "input.requested" || event.action === "user_input.requested") {
+    return {
+      jsonrpc: "2.0",
+      id: `input:${event.entityId}:${event.seq}`,
+      method: "input/requestAnswer",
+      params: { requestId: event.entityId, ...event.data },
+    };
+  }
+  return undefined;
 }
 
 function appServerEventMethod(event: ControlPlaneEvent): string | undefined {
