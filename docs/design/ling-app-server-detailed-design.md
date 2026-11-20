@@ -67,6 +67,7 @@ App Server 作为 Daemon 的会话协议入口，以 `ling-app-server/1` 发布�
 | 分支和上下文 | `thread/fork`、`thread/compact/start`、`thread/revert`、`context/inspect`、`handoff/create`、`handoff/read`、`handoff/resume` | 从指定可恢复边界分支、压缩或交接。历史变更与实际文件回退各用自己的权限、预览和预期版本。 |
 | 改动和产物 | `changes/capture`、`changes/read`、`changes/apply/preview`、`changes/apply`、`artifact/read` | 以候选、选中 hunk、工作树版本和审批为边界。应用、回退、重放沿用现有 patch 所有者。产物可分页，内容读取限范围和大小。 |
 | 开发验证与审查 | `verify/plan`、`verify/start`、`verify/status`、`verify/cancel`、`review/start`、`review/status`、`review/finding/update`、`simplify/start`、`doctor/run`、`instructions/init` | 指定候选和已配置的规则或配方。运行类返回操作 ID，草案类返回可审阅差异，读取类返回有限证据投影。 |
+| 工作项证据与审议 | `workItem/evidence/read`、`workItem/evidence/append`、`workItem/deliberation/start`、`workItem/deliberation/read`、`workItem/deliberation/cancel`、`workItem/deliberation/decide` | 通过可选能力协商启用。按 Thread 和工作项授权读取快照与分页。写方法使用工作项修订、操作权限和受理收据。 [整合协议](ling-agent-operating-model-detailed-design.md#9-events-and-app-server-methods) |
 | 可用能力 | `provider/list`、`model/list`、`skill/list`、`skill/read`、`permissionProfile/list` | 返回可选能力、限制及缺失原因。Provider 凭据绑定在 Daemon 的配置上。 |
 
 服务器声明每个方法的必需范围。基本范围为会话读取、发送/控制、管理 worktree、运行验证、发起审查、应答输入、决策审批。授予读取时只可见授权范围内的历史、产物与事件。审查只读范围可以细化到当前候选。方法发现额外标注副作用和是否要求本机用户确认。
@@ -105,6 +106,7 @@ type DurableNotice = {
 | Turn 与执行 | `turn/started`、`turn/status/changed`、`turn/completed`、`turn/plan/updated`、`turn/diff/updated` | Turn 状态、Run 事实、计划与候选引用。 |
 | 可见内容 | `item/started`、`item/delta`、`item/completed` | 现有公开会话 Item 与 Run 动作的有界投影。 |
 | 请求与证据 | `serverRequest/resolved`、`verification/updated`、`review/updated`、`handoff/created` | 审批、提问、Check、Code Assessment 和交接记录。 |
+| 工作项协作 | `workItem/evidence/updated`、`workItem/deliberation/updated` | 已提交的证据与审议记录。通知携带受权限过滤的实体引用和修订，由客户端按需读取可见投影。 |
 | 订阅 | `thread/replay/ready`、`thread/resync/required`、`server/warning` | 订阅可用水位、重建原因和此连接状态。 |
 
 Item 具有稳定 ID、类型、状态、版本和来源引用。包括用户输入、助手文本、公开摘要、计划、命令、工具调用、变更、待审批、用户提问、产物、验证、审查发现、交接、压缩和诊断。命令和工具结果的完整内容按权限与长度读取。最终 Item 携带可渲染摘要及完整结果引用，客户端用较新完整版本替换预览。
@@ -213,7 +215,7 @@ Goal 使用已接受的验收项。代码工作可以指定候选检查、检查
 
 ### 3.4 Handoff、多 Agent 与自研运行环境
 
-- Handoff 保存源 Thread/Turn/Goal、接受的目标与设计决定、候选和 worktree、已验证证据、待决请求/副作用、变更范围、阻塞及下一步。持久记录通过现有 artifact 与 Goal/Turn 归属。摘要引用原始任务及验收项。
+- Handoff 保存源 Thread/Turn/Goal、接受的目标与设计决定、候选和 worktree、已验证证据、待决请求/副作用、变更范围、阻塞及下一步。持久记录通过现有 artifact 与 Goal/Turn 归属。摘要引用原始任务及验收项。有审议时保存证据板修订、封存的审议结果和已记录的决定引用。
 - `handoff/resume` 在新会话检查源是否可交接、worktree 版本与写入租约、候选、证据修订和当前授权。兼容则带版本接手，漂移则显示差异和需要重新验证的项。Runner 重启走已有 checkpoint 恢复，交接走普通 Turn 的新派发。多 Agent 使用现有 Workflow 归属、独立授权和可核对的产物合并。
 - 每个开发任务记录 Provider、Runner、工作树和构建输入。调试长任务可看模型调用预算、失速原因和最近一个有证据的阶段。正常开发从稳定 Ling 使用独立 worktree 和 Agent 环境。候选 Daemon 和 UI 用独立数据、端口和测试配置启动。代码或配置需要换模型或 Runner 时，交接优先从明确的候选快照进入普通新任务。
 - Codex 持续连接通过有类型的客户端或本机 CLI。MCP 桥接使用配好的工作区及受限凭据转发结构化操作，工具结果只返回有限事件页、进度和下一游标。它由同一 App Server 权限裁定。对桥接派发的 Turn 冻结调用链，拒绝把相同任务重新递归派发给来源控制器。客户端后台重连与工具调用超时只恢复观察，派发通过原逻辑凭据和收据。

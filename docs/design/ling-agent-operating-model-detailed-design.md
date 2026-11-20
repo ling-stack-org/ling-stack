@@ -18,6 +18,8 @@
 | Goal | Goal store and acceptance validator | Work Item acceptance revision and completion audit |
 | Team participation | Channel Team Operating System | Observer, speaker, reviewer and execution projections |
 | Workflow | Multi-Agent Orchestrator | Work Item graph and WorkUnit references |
+| Shared evidence | Core Work Item evidence store and original evidence owners | Scoped board entries, their revisions and source references |
+| Deliberation | Accepted Workflow, Runtime Supervisor and its decision owner | Phase, recommendation and recorded decision on the Work Item |
 | Run/Attempt | Runtime Supervisor and Run store | Execution status and evidence |
 | External Agent | External runner adapter and App Server | Federated identity, capability and lineage |
 | Delivery | Destination-specific owner plus Core receipt | Target identity, digest, outcome and reconciliation |
@@ -155,6 +157,56 @@ The Speaker Lease is a short-lived durable projection tied to a Thread Turn. It 
 Execution ownership never follows a Speaker Lease automatically. The coordinator must create or select a Workflow/Run and the Daemon must perform normal admission.
 
 Observer context levels remain those in Channel Team Operating System. Work Item source content is untrusted and scoped. A reviewer may see a captured Diff or artifact without seeing unrelated channel history.
+
+### 5.1 Shared Evidence Board
+
+The board is a Work Item view with an ordered log of contributions. Channel evidence, Verify, Code Assessment, CI and artifacts stay with their current stores. The board stores typed links to them and its own authored observations, proposals and challenges. References include the exact source ID, revision and digest where available. They are resolved by the source owner at the viewer's current scope. A board can collect evidence before a deliberation is started. [Team evidence store](../../packages/core/src/storage/sqlite/channel-team-evidence-store.ts) · [Channel context visibility](channel-context-processing-layer.md)
+
+| Record | Required fields and ownership |
+| --- | --- |
+| Subject | Workspace, Work Item, accepted Work Item revision, linked Thread where present, Goal acceptance revision when applicable, and the frozen input digest. A code subject also carries the App Server candidate reference and digest. |
+| Entry | Stable ID, entry revision, sequence within the Work Item, subject revision, kind, actor, source references, visibility, bounded summary and server timestamp. The server attaches Run, Attempt and Workflow step references for participant output. |
+| Evidence link | Source owner and stable reference to an Artifact, Specialist Note, Verify result, Review finding or other authorized record. The owner supplies the result, evidence grade and applicability. |
+| Correction | Target entry and expected entry revision, reason and replacement or withdrawal. The author or an authorized moderator can append it. A reader can inspect earlier revisions within the current visibility policy. |
+| Decision link | The outcome and the source owner's accepted decision receipt. A reference points to the receipt for the accepted revision. |
+
+Entry kinds are `observation`, `proposal`, `challenge`, `evidence_ref`, `correction`, `recommendation` and `decision_ref`. A proposal has an option ID and stated tradeoffs. A challenge points to an option or entry revision and records the objection. The recommendation references a sealed outcome. Ballots are stored as scoped round records. The read projection joins them after tally only for entitled viewers. Recommendation and decision records come from their respective owners. Claims inherit verified status only through matching source-owner evidence.
+
+- Append checks the current Work Item revision, actor grant, referenced source scope and sender binding. Workflow output also checks the exact participant, step and current Attempt fence. Independent appends receive successive board sequence values in a transaction. A correction uses compare-and-set against the target entry revision. An identical retry returns the original receipt, and a conflicting payload using the same key returns `idempotency_conflict`.
+- Contributions use the intersection of the Work Item, participant, source and caller scopes. The Context Processing Layer treats contribution text as data and builds prompt and reader views from scoped summaries and references. Synthesis, tally details, exports and replay follow those same scopes. A missing or withdrawn source has an unavailable reference. Where a summary cannot be safely projected with its permitted sources, the view withholds the summary.
+- Each accepted mutation appends a content-minimal Control Plane event in the SQLite transaction. Board sequence orders entries within a Work Item. The App Server cursor covers the authorized projection across events. Clients can rebuild from a snapshot and apply entry revisions idempotently. A revoked client must renew authorization before receiving a new view.
+
+### 5.2 Deliberation Workflow
+
+The coordinator starts a deliberation from an authorized user request or a stage selected in an accepted Workflow template. A standalone request enters through the normal Work Item dispatch. A stage in an active Workflow uses that Workflow's assignment and step leases. The frozen inputs are the subject, question, acceptance criteria, participant identities and roles, policies, context scopes, round limit, deadline and token budget. The start receipt binds the selected template revision and current Work Item revision to the Workflow and roster. Required participants are resolved before admission. The daemon captures each effective Provider and model through the existing Runtime path.
+
+The template materializes a bounded graph with admitted read-only participant steps and explicit fan-in points. Challenge rounds have a finite count declared at start. A further round after the graph closes requires a new accepted request linked to the earlier outcome. Typical roles are proposer, challenger and voter. The roster records each participant once and can allow one participant to serve several roles. Runtime Supervisor admits every step with the appropriate scope and capacity. Source evidence that needs an actual command or a browser check is produced through the existing Verify and Tool Broker path under its normal policy.
+
+| Phase | Frozen inputs and committed output |
+| --- | --- |
+| Propose | Participants see the same authorized question and criteria and submit independent options with evidence and tradeoffs. A fan-in step seals the eligible options and references for challenge. |
+| Challenge | Each participant submits bounded objections, alternatives or evidence against those options. The final fan-in seals the option IDs, relevant evidence versions, subject digest and criteria in a ballot snapshot. It uses the common authorized context of the eligible voters. If required evidence falls outside this context, the round reports the missing scope or evidence. |
+| Vote | A vote-enabled template admits one ballot step per eligible voter using the same sealed snapshot. Each ballot has the snapshot digest, authorized voter, one option or abstention, and a bounded rationale with evidence references. Ballot choices and tallies remain sealed from other voters while the round is open. |
+| Tally and summarize | The host closes the ballot set and computes the outcome. A synthesis step can explain the result and retain dissent with its source references. A template without voting can synthesize directly from the sealed proposals and challenges. |
+| Decide | The authorized owner records how to proceed with the current subject. The result contributes to Plan or Goal context. Any follow-up with side effects is admitted through its normal Turn or Workflow, with that action's authority and acceptance checks. |
+
+The phase is a view of Workflow steps and sealed outputs. Run status, cancellation and recovery retain their original owners. An exhausted stage budget, deadline, missing participant or invalidated snapshot is reported with a typed reason and the evidence collected so far. The Workflow applies its accepted required-participant and failure policy. A late result from an expired or superseded Attempt can be examined in its Run history and cannot enter a closed ballot set.
+
+### 5.3 Tally, Decision and Applicability
+
+- The host validates the exact round, ballot snapshot digest, voter identity and logical ballot receipt. A unique constraint on the round and canonical voter permits one accepted ballot. Exact retries retrieve the original receipt. A different ballot for the same voter reports the committed entry to that voter within scope. The host uses stable roster identities even when the display name or transport changes.
+- The default weight is one per eligible voter. The default quorum is a majority of the frozen roster by voter count. An eligible abstention contributes to quorum and adds no support to an option. A recommendation requires support from more than half of the total eligible weight. A template may set positive integer weights or a stricter minimum quorum or support threshold before start. The host uses integer arithmetic and records the tally, missing ballots and abstentions.
+- After all ballot steps resolve or the deadline arrives, the host closes and tallies the round in one store transaction. Ballot admission uses the server deadline and the current open state in that store. The close transaction first checks cancellation and current subject applicability. It reports `cancelled` or `stale` as applicable, then `insufficient_evidence` for missing required ballots, missing quorum or inaccessible required evidence. A tie or support below threshold yields `no_consensus`. If the supported option fails a required check or has an active required review blocker, the outcome is `blocked` with references to those records. An eligible option that meets the rule yields a `recommendation`. The sealed result includes the policy revision, input digest, tally and dissent references. Further deliberation uses a new round that links the earlier result.
+- The decision owner is an authorized user or Ling Agent acting under the accepted decision policy. The normal owner validates the selected option and its criteria and records one decision per accepted outcome. A different choice or a deferral records the reason and evidence. No-consensus and insufficient-evidence results can request clarification or new checks. If a decision requires changes to accepted scope or criteria, the owner records a new acceptance revision through the existing Plan or Goal path. Approvals, Tool Broker, Verify, Review, CI and Delivery continue to evaluate their own evidence.
+- Subject changes, candidate drift, a changed acceptance revision or correction/withdrawal of evidence referenced by the sealed input makes the result stale for current use. Additional unrelated observations remain available on the board. Close and decision transactions compare the current subject and relevant source revisions to the sealed input. History retains the earlier options, result and receipt under their original scope.
+
+### 5.4 Recovery and Projected Access
+
+When the daemon restarts, it reloads the subject, admitted Workflow, stage snapshots, accepted ballots, stored receipts and remaining deadline and budget. The existing Runtime reconciles interrupted Runs. Phase, canonical tally and decision are recovered from records with unique keys for the round and accepted receipt. Cancel stops new stage admission and uses the existing stop and terminal evidence for active steps. Handoff records the current Work Item and board revision, sealed outcome when present, open question and original Workflow reference.
+
+App Server and Ling clients use the same evidence projection. A protocol-visible board is bound to the Work Item's authorized Thread. A client reads a filtered snapshot and uses the work item or Thread subscription to catch up. Snapshots and retention follow the existing workspace store and cursor rules. If related evidence body retention expires, a remaining reference identifies it as unavailable. A stale or unauthorized reference cannot support a new recommendation or decision. Archive retains permitted decision and source references according to the Work Item and source retention policies.
+
+While a ballot is sealed, its public Run and Item projections expose authorized phase and progress. Ballot text, rationale and intermediate results use the ballot scope across live deltas, artifacts and replay. The voter can retrieve its own accepted receipt. Closing the round publishes the scoped tally and dissent, with individual records available according to the accepted visibility policy.
 
 ## 6. External Agent Federation Protocol
 
@@ -306,6 +358,17 @@ github/subject/read
 github/delivery/reconcile
 ```
 
+Evidence and deliberation methods are optional negotiated capabilities. All methods check the linked Thread and Work Item scope. Mutations require the expected Work Item revision and an idempotency key, and return the committed revision and entity reference. Agent ballots and Workflow result packets enter through their dispatched step and fence. [App Server receipts and scopes](ling-app-server-detailed-design.md#2-协议标识方法与结果)
+
+| Method | Additional input and effect |
+| --- | --- |
+| `workItem/evidence/read` | Work Item ID and optional page cursor. Returns visible entries, board revision and a resume cursor for the authorized view. |
+| `workItem/evidence/append` | Subject digest and bounded contribution. Corrections include target ID and expected entry revision. Requires a contribution grant. |
+| `workItem/deliberation/start` | Authorized template revision, subject digest and accepted question or stage reference. The coordinator returns the round and Workflow receipt after admission. |
+| `workItem/deliberation/read` | Round ID and optional page cursor. Returns the visible phase, budget state, sealed outcome and decision when available. |
+| `workItem/deliberation/cancel` | Round ID and expected round revision. The Workflow owner returns its stop request receipt. |
+| `workItem/deliberation/decide` | Round ID, expected sealed outcome revision and the decision with its reason when required. The decision owner checks the current subject and commits the accepted receipt. |
+
 Notifications use the existing event envelope and include `workItemId`, `workItemRevision`, `claimId`, `sourceRevision`, and `deliveryId` where applicable.
 
 ```text
@@ -315,12 +378,16 @@ workItem/status/changed
 workItem/claim/expired
 workItem/delivery/updated
 workItem/feedback/received
+workItem/evidence/updated
+workItem/deliberation/updated
 externalAgent/registered
 externalAgent/task/started
 externalAgent/task/reconnected
 externalAgent/task/unknown
 github/subject/updated
 ```
+
+Evidence and deliberation notifications carry IDs and versions for an authorized read. Replay applies the same scope and redaction as live delivery. A reconnect reads the final board snapshot and phase or decision without starting work.
 
 ## 10. Persistence and Recovery
 
@@ -337,6 +404,8 @@ external_agent_submissions
 ```
 
 Every record includes workspace scope, owner, revision, created/updated times, source identity, and retention policy. Work Item stores the accepted dispatch reference or a first-intake receipt where the source has no existing dispatch. The existing owner owns its execution claim and lease. Work Item event append participates in the source or dispatch transaction for deduplication. External Delivery and unknown outcomes use their own intent/receipt/reconciliation records.
+
+Evidence entries, sealed rounds, ballots and decision receipts use Work Item-scoped relations in the same workspace SQLite store. Their lifecycle migrations cover opening existing work items with an empty board, replay across restart and concurrent submission. Workflow and source evidence stay addressable through their existing keys. Section 5 defines the commit and recovery rules for these relations.
 
 Recovery rules:
 
@@ -357,6 +426,9 @@ Recovery rules:
 | Dispatch | webhook or client retries share one receipt, explicit assignment and active follow-up stay with the current coordinator, a parallel Workflow retains per-step leases, and stale or unknown dispatch waits for reconciliation |
 | Autonomous intake | default manual, user acceptance of suggestions, opted-in scoped auto-start, pause, quiet hours and budget limits, and an existing AutomationRun linked without launching twice |
 | Team | observer cannot speak, speaker lease expiry, late reply, reviewer read lease and execution ownership |
+| Shared evidence | simultaneous appends both survive, correction CAS rejects a stale revision, retries return the same receipt, restricted refs and derived text stay scoped through live read, replay, reconnect and revocation |
+| Deliberation | frozen subject, same ballot snapshot, roster/quorum and weights, sealed ballot visibility on live and replay, abstention, tie, missing evidence, late or duplicate ballot, bounded termination, source or candidate drift, and restart during vote and tally |
+| Decision handoff | recorded recommendation and dissent can be inspected, a required failing check blocks a highly supported option, an explicit decision routes through the original owner, and a vote cannot grant tools or satisfy an Approval, Verify or Delivery condition |
 | External Agent | handshake, capability mismatch, approval request, reconnect, replay, cancel, unknown effect and recursion rejection |
 | GitHub | new head supersedes old review, duplicate event, CI failure follow-up, merge acceptance, stale review and unknown comment delivery |
 | Memory/Skill | evidence-bound candidate, review, reject, expire and authority-preserving promotion |
