@@ -323,6 +323,10 @@ class RpcConnection {
         return this.acceptWorkItem(params);
       case "workItem/clarify":
         return this.clarifyWorkItem(params);
+      case "workItem/evidence/read":
+        return this.readWorkItemEvidence(params);
+      case "workItem/evidence/append":
+        return this.appendWorkItemEvidence(params);
       case "workItem/read":
         return this.readWorkItem(params);
       case "workItem/pause":
@@ -450,6 +454,54 @@ class RpcConnection {
         question: readOptionalStringField(record, "question") ?? "Please clarify the Work Item target or acceptance criteria.",
       },
     };
+  }
+
+  private readWorkItemEvidence(params: unknown): unknown {
+    const record = readParamsRecord(params);
+    const cwd = readRpcCwd(record, this.defaultCwd);
+    const workItemId = readStringField(record, "workItemId");
+    const store = this.context.storeRegistry.getStore(cwd);
+    if (!store.getWorkItem(workItemId)) throw rpcError(-32040, "workspace_binding_invalid", `Work Item was not found: ${workItemId}`);
+    const afterSequence = readOptionalIntegerField(record, "afterSequence") ?? 0;
+    const evidence = store.listWorkItemEvidence({ workItemId, afterSequence, limit: readOptionalIntegerField(record, "limit") });
+    return { cwd, workItemId, evidence, nextAfterSequence: evidence.at(-1)?.sequence ?? afterSequence };
+  }
+
+  private appendWorkItemEvidence(params: unknown): unknown {
+    const record = readParamsRecord(params);
+    const cwd = readRpcCwd(record, this.defaultCwd);
+    const workItemId = readStringField(record, "workItemId");
+    const store = this.context.storeRegistry.getStore(cwd);
+    const idempotencyKey = readStringField(record, "idempotencyKey");
+    const actorId = readStringField(record, "actorId");
+    const subjectRevision = readStringField(record, "subjectRevision");
+    const kind = readStringField(record, "kind") as import("@ling-stack/core").WorkItemEvidenceKind;
+    const content = readStringField(record, "content");
+    const sourceRefs = Array.isArray(record.sourceRefs) ? record.sourceRefs : [];
+    const result = store.appendWorkItemEvidence({
+      workItemId,
+      expectedWorkItemRevision: readOptionalIntegerField(record, "expectedWorkItemRevision"),
+      expectedEvidenceRevision: readOptionalIntegerField(record, "expectedEvidenceRevision"),
+      idempotencyKey,
+      actorId,
+      subjectRevision,
+      kind,
+      content,
+      sourceRefs: sourceRefs as import("@ling-stack/core").WorkItemEvidenceSourceRef[],
+      visibility: readOptionalStringField(record, "visibility") as import("@ling-stack/core").WorkItemEvidenceVisibility | undefined,
+    }, new Date().toISOString());
+    if (!result) throw rpcError(-32030, "stale_revision", "The Work Item or evidence revision is stale.");
+    appendControlPlaneEvent(store, this.context.controlPlaneEvents, {
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      cwd,
+      domain: "work_items",
+      entityType: "work_item",
+      entityId: workItemId,
+      action: "work_item.evidence.updated",
+      idempotencyKey,
+      data: { workItemId, evidenceId: result.entry.id, sequence: result.entry.sequence, workItemRevision: result.workItemRevision },
+    });
+    return { cwd, workItemId, ...result };
   }
 
   private startThread(params: unknown): unknown {

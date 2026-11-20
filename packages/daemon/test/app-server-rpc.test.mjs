@@ -105,10 +105,27 @@ test("App Server lists, reads, and controls a Work Item with revision and idempo
     const read = await waitFor(messages, message => message.id === 4);
     assert.equal(read.result.workItem.control.state, "active");
 
-    send(5, "workItem/pause", {
+    send(40, "workItem/evidence/append", {
       cwd,
       workItemId: item.id,
       expectedWorkItemRevision: item.revision,
+      expectedEvidenceRevision: 0,
+      idempotencyKey: "evidence-1",
+      actorId: "agent:test",
+      subjectRevision: String(item.revision),
+      kind: "observation",
+      content: "The candidate is ready for review.",
+    });
+    const evidence = await waitFor(messages, message => message.id === 40);
+    assert.equal(evidence.result.entry.sequence, 1);
+    send(41, "workItem/evidence/read", { cwd, workItemId: item.id });
+    const evidenceRead = await waitFor(messages, message => message.id === 41);
+    assert.equal(evidenceRead.result.evidence.length, 1);
+
+    send(5, "workItem/pause", {
+      cwd,
+      workItemId: item.id,
+      expectedWorkItemRevision: Number(evidence.result.workItemRevision),
       expectedControlGeneration: 0,
       actorId: "user:test",
       idempotencyKey: "pause-1",
@@ -125,7 +142,7 @@ test("App Server lists, reads, and controls a Work Item with revision and idempo
     send(6, "workItem/pause", {
       cwd,
       workItemId: item.id,
-      expectedWorkItemRevision: item.revision,
+      expectedWorkItemRevision: Number(evidence.result.workItemRevision),
       expectedControlGeneration: 0,
       actorId: "user:test",
       idempotencyKey: "pause-1",
