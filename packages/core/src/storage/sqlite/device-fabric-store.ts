@@ -70,7 +70,7 @@ export class SqliteDeviceFabricStore {
     const streamId = event.streamId ?? `${event.sourceKind}:${event.sourceId}`;
     const generation = event.generation ?? 1;
     validateEvent(event, streamId, generation);
-    const normalized = { ...event, streamId, generation } satisfies DeviceEventEnvelopeV1;
+    const normalized = { ...event, streamId, generation, retentionClass: event.retentionClass ?? "bounded" } satisfies DeviceEventEnvelopeV1;
 
     const byId = this.database.prepare("SELECT stream_id,generation,sequence,envelope_json FROM device_fabric_events WHERE event_id=?").get(event.eventId) as Row | undefined;
     if (byId) {
@@ -95,7 +95,7 @@ export class SqliteDeviceFabricStore {
 
     this.database.prepare("INSERT INTO device_fabric_events(stream_id,generation,sequence,event_id,envelope_json,occurred_at,created_at) VALUES(?,?,?,?,?,?,?)")
       .run(streamId, generation, event.sequence, event.eventId, JSON.stringify(normalized), event.occurredAt, now);
-    this.database.prepare("DELETE FROM device_fabric_events WHERE stream_id=? AND generation=? AND sequence <= ?")
+    this.database.prepare("DELETE FROM device_fabric_events WHERE stream_id=? AND generation=? AND sequence <= ? AND COALESCE(json_extract(envelope_json,'$.retentionClass'),'bounded') <> 'durable'")
       .run(streamId, generation, event.sequence - this.#maxEventsPerStream);
     return { event: normalized, replayed: false };
   }

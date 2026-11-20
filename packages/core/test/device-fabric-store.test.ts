@@ -67,6 +67,12 @@ test("fabric store retains bounded event streams and resumes from a durable snap
       createdAt: now,
     });
     second.close();
+
+    const durable = new SqliteDeviceFabricStore({ databasePath: path, maxEventsPerStream: 1 });
+    durable.appendEvent(event(4, { eventId: "event-durable", retentionClass: "durable" }), now);
+    durable.appendEvent(event(5, { eventId: "event-bounded", retentionClass: "bounded" }), now);
+    assert.deepEqual(durable.readEvents("task:task-1", 1, 3).events.map(item => item.eventId), ["event-durable", "event-bounded"]);
+    durable.close();
   } finally {
     rmSync(path, { force: true });
     rmSync(path.replace(/\/fabric\.sqlite$/u, ""), { recursive: true, force: true });
