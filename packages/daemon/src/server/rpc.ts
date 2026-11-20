@@ -204,6 +204,17 @@ class RpcConnection {
         if (this.send({ jsonrpc: "2.0", id, result: prepared.result })) prepared.activate?.();
         return;
       }
+      if (request.method === "thread/subscribe") {
+        if (request.id === undefined) {
+          throw rpcError(-32600, "subscription_response_required", "thread/subscribe requires a request id.");
+        }
+        const prepared = this.prepareControlPlaneSubscription({
+          ...readParamsRecord(request.params),
+          domains: ["runs", "work_items", "work_units"],
+        });
+        if (this.send({ jsonrpc: "2.0", id, result: prepared.result })) prepared.activate?.();
+        return;
+      }
       const result = await this.dispatch(request.method, request.params);
       if (request.id !== undefined && !this.cancelledRequests.has(requestKey!)) {
         this.send({ jsonrpc: "2.0", id, result });
@@ -258,12 +269,16 @@ class RpcConnection {
         return this.startThread(params);
       case "thread/read":
         return this.readThread(params);
+      case "thread/resume":
+        return this.readThread(params);
       case "thread/list":
         return this.listThreads(params);
       case "thread/turns/list":
         return this.listThreadTurns(params);
       case "turn/start":
         return this.startTurn(params);
+      case "turn/resume":
+        return this.resumeTurn(params);
       case "daemon.health":
         return {
           ok: true,
@@ -394,6 +409,25 @@ class RpcConnection {
       threadId,
       turns: turns.map((turn) => projectPublicLingTurn(turn, thread)),
       runLinks: turns.flatMap((turn) => store.listLingTurnRuns(turn.id)),
+    };
+  }
+
+  private resumeTurn(params: unknown): unknown {
+    const record = readParamsRecord(params);
+    const cwd = readRpcCwd(record, this.defaultCwd);
+    const turnId = readStringField(record, "turnId");
+    const store = this.context.storeRegistry.getStore(cwd);
+    const turn = store.getLingTurn(turnId);
+    if (!turn) throw rpcError(-32040, "workspace_binding_invalid", `Turn was not found: ${turnId}`);
+    const thread = store.getLingThread(turn.threadId);
+    if (!thread) throw rpcError(-32040, "workspace_binding_invalid", `Thread was not found: ${turn.threadId}`);
+    const run = turn.activeRunId ? store.getRun(turn.activeRunId) : turn.lastRunId ? store.getRun(turn.lastRunId) : undefined;
+    return {
+      cwd,
+      thread: projectPublicLingThread(thread),
+      turn: projectPublicLingTurn(turn, thread),
+      run: run ? projectPublicRunSession(run, store) : null,
+      runLinks: store.listLingTurnRuns(turn.id),
     };
   }
 
