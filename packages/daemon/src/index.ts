@@ -173,6 +173,7 @@ import { reconcileContextViewLineagesAtStartup } from "./features/channels/conte
 export { defaultDaemonConfig } from "./config.js";
 export type { DaemonConfig, HarnessFeatureConfig, ResolvedDaemonConfig } from "./config.js";
 export * from "./features/harness/index.js";
+export { LingServerControlPlane } from "./features/ling-server/control-plane.js";
 export type { DaemonDependencies, ExternalSecretStore, McpBroker, RunnerAdapter, RunnerNativeResumeInputV1 } from "./context.js";
 export {
   createRunnerRegistry,
