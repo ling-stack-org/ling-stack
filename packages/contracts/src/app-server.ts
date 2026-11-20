@@ -500,6 +500,29 @@ export interface LingAppServerDeliberationTriggerPolicyV1 {
   readonly maxRounds: number;
 }
 
+export type LingAppServerDeliberationTriggerKindV1 =
+  | "plan_formation"
+  | "declared_decision_point"
+  | "conflicting_recommendations"
+  | "material_requirement_change"
+  | "manual_request";
+
+export interface LingAppServerDeliberationTriggerSignalV1 {
+  readonly kind: LingAppServerDeliberationTriggerKindV1;
+  readonly workItemRevision: number;
+  readonly sourceRefs?: readonly LingAppServerWorkItemSourceRef[];
+  readonly conflictCount?: number;
+  readonly materiality?: "low" | "medium" | "high";
+  readonly requestedBy?: string;
+}
+
+export interface LingAppServerDeliberationTriggerDecisionV1 {
+  readonly shouldOpen: boolean;
+  readonly requiresHumanDecision: boolean;
+  readonly reason: string;
+  readonly triggerKind: LingAppServerDeliberationTriggerKindV1;
+}
+
 export interface LingAppServerServerRequest<Params = unknown> {
   readonly jsonrpc: "2.0";
   readonly id: LingAppServerJsonRpcId;
