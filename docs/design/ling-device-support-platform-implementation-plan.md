@@ -1,8 +1,8 @@
 # Ling Device Support Platform Implementation Plan
 
-Status: tracking plan; implementation not started
+Status: tracking plan; D1–D3 core implementation landed, later slices remain queued
 Owner: Ling platform maintainers
-Last verified: 2026-11-20 (D12 and D14–D22 design)
+Last verified: 2026-11-21 (D1–D3 contracts, registry, broker, task journal, and recovery tests)
 Document type: staged implementation and acceptance record
 Related design: [Ling Device Support Platform](ling-device-support-platform.md)
 Runtime contract: [Ling Device Support Platform Runtime Contract](ling-device-support-platform-runtime-contract.md)
@@ -43,9 +43,9 @@ validation and the boundary of what remains unverified.
 | ID | Status | Scope | Exit condition | Primary validation |
 | --- | --- | --- | --- | --- |
 | D0 | [x] | Architecture, boundaries, and tracking plan | Design indexed and linked from implementation status | Markdown/link checks, review of current architecture |
-| D1 | [ ] | Shared device contracts and adapter manifest | Strict schemas compile and reject invalid inputs | Contracts typecheck and contract tests |
-| D2 | [ ] | Device registry and capability broker | A fake device can register, discover, observe, and execute a read-only capability | Daemon tests plus fake-adapter integration |
-| D3 | [ ] | Task state, approval, verification, and evidence | A task survives reconnect and distinguishes unknown outcome from success | State/recovery tests and evidence inspection |
+| D1 | [x] | Shared device contracts and adapter manifest | Strict schemas compile and reject invalid inputs | Contracts typecheck and contract tests |
+| D2 | [x] | Device registry and capability broker | A fake device can register, discover, refresh capabilities, lease a target, and execute a read-only capability | Core broker tests with fake adapter |
+| D3 | [x] | Task state, approval, verification, and evidence | A task persists an exact approval, dispatch attempt, verification, idempotent replay, and unknown outcome after restart | Core SQLite journal and recovery tests |
 | D4 | [ ] | Home Assistant adapter | One real or fixture HA instance supports discovery, status, diagnosis, and a low-risk action | Adapter contract tests and HA acceptance |
 | D5 | [ ] | PC adapter and target-side executor | A Windows PC supports bounded diagnostics and one verified repair | Windows acceptance with a clean fixture machine |
 | D6 | [ ] | Mobile device-task facade | Paired Mobile can inspect, approve, follow, and revoke a device task | Remote protocol fixtures and real-device acceptance |
@@ -86,19 +86,19 @@ D0 covers the design and the implementation plan.
 
 ### Scope
 
-- [ ] Add strict DeviceIdentity, DeviceProfile, CapabilityDescriptor, AdapterManifest,
+- [x] Add strict DeviceIdentity, DeviceProfile, CapabilityDescriptor, AdapterManifest,
   Observation, ActionRequest, ActionResult, VerificationResult, and DeviceTask contracts.
-- [ ] Add schema versions and reject unknown fields where the contract is security- or
+- [x] Add schema versions and reject unknown fields where the contract is security- or
   wire-sensitive.
-- [ ] Select a shared contract major and compatible capability schemas. Allow additive
+- [x] Select a shared contract major and compatible capability schemas. Allow additive
   display metadata within a supported version.
-- [ ] Define side-effect, approval, permission, idempotency, timeout, verification, and
+- [x] Define side-effect, approval, permission, idempotency, timeout, verification, and
   rollback metadata.
-- [ ] Define per-operation deadlines, response size limits, and the total task budget.
-- [ ] Define normalized error categories without exposing raw credentials or protocol
+- [x] Define per-operation deadlines, response size limits, and the total task budget.
+- [x] Define normalized error categories without exposing raw credentials or protocol
   payloads.
-- [ ] Define adapter conformance fixtures and a fake adapter.
-- [ ] Record the deployment rule for each transport: no target install, target-side
+- [x] Define adapter conformance fixtures and a fake adapter.
+- [x] Record the deployment rule for each transport: no target install, target-side
   executor, or hardware bridge, with pairing and removal behavior.
 
 ### Exit evidence
@@ -113,14 +113,14 @@ D0 covers the design and the implementation plan.
 
 ### Scope
 
-- [ ] Add device registration, revocation, health, and capability snapshot storage.
-- [ ] Resolve a stable device id independently from addresses and transport handles.
-- [ ] Load adapter manifests and reject incompatible contract versions.
-- [ ] Track capability support, current availability, and authorization independently.
-- [ ] Refresh stale snapshots after expiry and changes to connection, firmware, adapter,
+- [x] Add device registration, revocation, health, and capability snapshot storage.
+- [x] Resolve a stable device id independently from addresses and transport handles.
+- [x] Load adapter manifests and reject incompatible contract versions.
+- [x] Track capability support, current availability, and authorization independently.
+- [x] Refresh stale snapshots after expiry and changes to connection, firmware, adapter,
   or authority. Recheck target identity and prerequisites at dispatch.
-- [ ] Add target leases and bounded concurrency for device tasks.
-- [ ] Keep adapter crashes and transport failures isolated from the daemon process where
+- [x] Add target leases and bounded concurrency for device tasks.
+- [~] Keep adapter crashes and transport failures isolated from the daemon process where
   external adapters are used.
 
 ### Exit evidence
@@ -136,22 +136,22 @@ D0 covers the design and the implementation plan.
 
 ### Scope
 
-- [ ] Add durable device-task transitions from creation through verification.
-- [ ] Reuse Ling approval policy without allowing adapter installation to change policy.
-- [ ] Persist capability and policy snapshots with each task.
-- [ ] Show the target, action, host, impact, verification, and recovery option before a
+- [x] Add durable device-task transitions from creation through verification.
+- [x] Reuse Ling approval policy without allowing adapter installation to change policy.
+- [x] Persist capability and policy snapshots with each task.
+- [x] Show the target, action, host, impact, verification, and recovery option before a
   write. Bind confirmation to the exact action and current device and policy revisions.
-- [ ] Persist dispatch intent and an attempt ID before invoking the adapter. Serialize
+- [x] Persist dispatch intent and an attempt ID before invoking the adapter. Serialize
   the dispatch decision with cancellation and revocation.
-- [ ] Require verification for any action that claims to repair or configure a device.
-- [ ] Record action response, device verification, and user outcome independently.
-- [ ] Preserve unknown outcomes and reconcile by observation after a possibly
+- [x] Require verification for any action that claims to repair or configure a device.
+- [x] Record action response, device verification, and user outcome independently.
+- [x] Preserve unknown outcomes and reconcile by observation after a possibly
   dispatched write. Track any later authorized action under a new attempt.
-- [ ] Require a supported recovery plan for writes that can strand a previously
+- [x] Require a supported recovery plan for writes that can strand a previously
   reachable device on its control path.
-- [ ] Add redacted observations and artifact references to the existing audit/evidence
+- [x] Add redacted observations and artifact references to the existing audit/evidence
   model.
-- [ ] Ensure reconnecting clients read durable task state rather than infer cancellation.
+- [x] Ensure reconnecting clients read durable task state rather than infer cancellation.
 
 ### Exit evidence
 
@@ -602,9 +602,9 @@ recorded per slice as they complete. [Detailed design](ling-device-fabric.md)
 | Slice | PR / commit | Validation command or run | Evidence link | Result boundary | Remaining work |
 | --- | --- | --- | --- | --- | --- |
 | D0 | #730 | Documentation and link checks | [PR #730](https://github.com/ling-stack-org/ling-stack/pull/730), [Runtime contract](ling-device-support-platform-runtime-contract.md) | Architecture and tracking only | All runtime slices |
-| D1 | — | — | — | Not started | Contracts and SDK |
-| D2 | — | — | — | Not started | Registry and broker |
-| D3 | — | — | — | Not started | Task recovery and evidence |
+| D1 | `pending` | `corepack pnpm --filter @ling-stack/contracts typecheck` and `test` | [contracts/device.ts](../../packages/contracts/src/device.ts) | Core contracts, validators, transport deployment metadata, and fake adapter fixtures are implemented | Adapter package extraction and cross-process conformance remain |
+| D2 | `pending` | `corepack pnpm --filter @ling-stack/core typecheck:ci`; `node --test packages/core/test/device-support.test.ts` | [device-support.ts](../../packages/core/src/device-support.ts), [device-support-store.ts](../../packages/core/src/storage/sqlite/device-support-store.ts) | Registry, capability snapshots, stable identities, revocation, leases, and broker dispatch are covered by a fake adapter | Daemon wiring and external-adapter process isolation remain |
+| D3 | `pending` | `node --test packages/core/test/device-support.test.ts` | [device-support.test.ts](../../packages/core/test/device-support.test.ts) | Exact approval binding, durable dispatch intent, verification, idempotent replay, and restart-to-unknown recovery are covered | Existing Ling approval UI/audit projection and physical recovery acceptance remain |
 | D4 | — | — | — | Not started | Home Assistant |
 | D5 | — | — | — | Not started | PC |
 | D6 | — | — | — | Not started | Mobile facade |

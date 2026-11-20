@@ -246,3 +246,5 @@ export { createSqliteNodeRerunStore } from "./storage/sqlite/node-rerun-store.js
 export * from "./goal-supervision.js";
 
 export { createSqliteGoalSupervisionStore } from "./storage/sqlite/goal-supervision-store.js";
+export * from "./device-support.js";
+export * from "./storage/sqlite/device-support-store.js";
