@@ -50,7 +50,12 @@ export class DeviceSecretBroker {
   }): Promise<string | Uint8Array> {
     if (!this.#allowed.get(input.targetDeviceId)?.has(input.secretRef)) throw new DeviceFabricError("safety_denied", "secret reference is not authorized for this target");
     if (!input.useId.trim() || !input.taskId.trim() || !input.purpose.trim() || !input.policyRevision.trim()) throw new DeviceFabricError("safety_denied", "secret use identity is invalid");
-    const secret = await this.#resolver.resolve({ targetDeviceId: input.targetDeviceId, secretRef: input.secretRef });
+    let secret: string | Uint8Array | undefined;
+    try {
+      secret = await this.#resolver.resolve({ targetDeviceId: input.targetDeviceId, secretRef: input.secretRef });
+    } catch {
+      throw new DeviceFabricError("safety_denied", "secret reference could not be resolved");
+    }
     if (secret === undefined) throw new DeviceFabricError("safety_denied", "secret reference could not be resolved");
     const use: DeviceSecretUseV1 = {
       useId: input.useId,
