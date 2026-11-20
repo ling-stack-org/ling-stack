@@ -122,3 +122,16 @@ test("federation preserves unknown cancellation outcome and rejects conflicting 
   const secondTask = start(service, registrationId, { idempotencyKey: "submission_2" }).task;
   await assert.rejects(() => service.cancelTask({ registrationId, taskId: secondTask.taskId, idempotencyKey: "cancel_unknown" }), (error: unknown) => error instanceof ExternalAgentFederationError && error.code === "idempotency_conflict");
 });
+
+test("federation turns a revoked registration into an authorization resync", () => {
+  const service = createService();
+  const registrationId = register(service);
+  const task = start(service, registrationId).task;
+  service.revokeRegistration(registrationId);
+  assert.throws(() => service.readCapabilities(registrationId), (error: unknown) => error instanceof ExternalAgentFederationError && error.code === "authorization_changed");
+  assert.deepEqual(service.reconnectTask({
+    registrationId,
+    taskId: task.taskId,
+    submissionId: task.submissionId,
+  }), { task, resyncRequired: true, reason: "authorization_changed" });
+});

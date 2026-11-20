@@ -200,6 +200,9 @@ export class ExternalAgentFederationService {
 
   readCapabilities(registrationId: string): LingAppServerExternalAgentCapabilitiesResult {
     const record = this.requireRegistration(registrationId);
+    if (record.revokedAt) {
+      throw new ExternalAgentFederationError("authorization_changed", `External Agent authorization changed: ${registrationId}`);
+    }
     return {
       registrationId: record.registrationId,
       capabilities: record.acceptedCapabilities,
@@ -267,12 +270,15 @@ export class ExternalAgentFederationService {
   }
 
   reconnectTask(params: LingAppServerExternalAgentTaskReconnectParams): LingAppServerExternalAgentTaskReconnectResult {
-    const registration = this.requireRegistration(params.registrationId);
-    assertCapability(registration, [EXTERNAL_AGENT_TASK_RECONNECT_CAPABILITY], EXTERNAL_AGENT_TASK_RECONNECT_CAPABILITY);
+    const registration = this.requireRegistration(params.registrationId, true);
     const task = this.requireTask(params.taskId);
     if (task.registrationId !== params.registrationId || task.task.submissionId !== params.submissionId) {
       throw new ExternalAgentFederationError("task_conflict", "Task does not belong to this registration or submission.");
     }
+    if (registration.revokedAt) {
+      return { task: task.task, resyncRequired: true, reason: "authorization_changed" };
+    }
+    assertCapability(registration, [EXTERNAL_AGENT_TASK_RECONNECT_CAPABILITY], EXTERNAL_AGENT_TASK_RECONNECT_CAPABILITY);
     const eventList = this.events.get(task.task.taskId) ?? [];
     const requestedCursor = params.eventCursor;
     const resyncRequired = requestedCursor !== undefined && !isCursorAvailable(eventList, requestedCursor);
@@ -410,9 +416,16 @@ export class ExternalAgentFederationService {
   }
 
   private requireRegistration(registrationId: string): ExternalAgentFederationRegistrationRecord {
+    return this.requireRegistration(registrationId, false);
+  }
+
+  private requireRegistration(registrationId: string, allowRevoked: boolean): ExternalAgentFederationRegistrationRecord {
     const record = this.registrations.get(registrationId);
-    if (!record || record.revokedAt) {
+    if (!record) {
       throw new ExternalAgentFederationError("registration_not_found", `External Agent registration was not found: ${registrationId}`);
+    }
+    if (record.revokedAt && !allowRevoked) {
+      throw new ExternalAgentFederationError("authorization_changed", `External Agent authorization changed: ${registrationId}`);
     }
     return record;
   }
