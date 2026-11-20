@@ -64,6 +64,10 @@ export interface DeviceSupportBrokerOptions {
   readonly policyRevision?: string;
 }
 
+export interface DeviceExecuteOptions {
+  readonly finalizeTask?: boolean;
+}
+
 export class DeviceBrokerError extends Error {
   constructor(
     readonly code: DeviceErrorCodeV1,
@@ -153,7 +157,7 @@ export class DeviceCapabilityBroker {
     return this.store.createTask(task, this.now());
   }
 
-  async execute(request: DeviceActionRequestV1, signal?: AbortSignal): Promise<DeviceSupportStoreAttemptRecord> {
+  async execute(request: DeviceActionRequestV1, signal?: AbortSignal, options: DeviceExecuteOptions = {}): Promise<DeviceSupportStoreAttemptRecord> {
     if (!isDeviceActionRequestV1(request)) {
       throw new DeviceBrokerError("invalid_request", "device action request is invalid");
     }
@@ -224,14 +228,17 @@ export class DeviceCapabilityBroker {
         return this.store.getAttemptByIdempotency(request.taskId, request.idempotencyKey)!;
       }
 
+      const finalizeTask = options.finalizeTask ?? true;
       if (action.status === "completed" && this.shouldVerify(capability, request)) {
-        this.store.transitionTask(request.taskId, "verifying", {}, this.now());
+        if (finalizeTask) this.store.transitionTask(request.taskId, "verifying", {}, this.now());
         const verification = await this.verifyAction(this.requireAdapter(profile.adapterId), profile, capability, request, action, signal);
         this.store.updateAttempt(attempt.attemptId, { verification }, this.now());
-        this.store.transitionTask(request.taskId, verification.status === "verified" ? "succeeded" : "failed", {
-          lastVerificationId: `${request.actionId}:verification`,
-        }, this.now());
-      } else {
+        if (finalizeTask) {
+          this.store.transitionTask(request.taskId, verification.status === "verified" ? "succeeded" : "failed", {
+            lastVerificationId: `${request.actionId}:verification`,
+          }, this.now());
+        }
+      } else if (finalizeTask) {
         this.store.transitionTask(request.taskId, action.status === "completed" ? "succeeded" : "failed", {}, this.now());
       }
       return this.store.getAttemptByIdempotency(request.taskId, request.idempotencyKey)!;

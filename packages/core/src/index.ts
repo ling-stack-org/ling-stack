@@ -247,4 +247,5 @@ export * from "./goal-supervision.js";
 
 export { createSqliteGoalSupervisionStore } from "./storage/sqlite/goal-supervision-store.js";
 export * from "./device-support.js";
+export * from "./device-playbooks.js";
 export * from "./storage/sqlite/device-support-store.js";

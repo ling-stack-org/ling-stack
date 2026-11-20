@@ -18,6 +18,7 @@ import {
   type DeviceAdapter,
   digestRequest,
 } from "../dist/device-support.js";
+import { isDevicePlaybookV1, runDeviceReadOnlyPlaybook } from "../dist/device-playbooks.js";
 import { SqliteDeviceSupportStore } from "../dist/storage/sqlite/device-support-store.js";
 
 const now = "2026-11-21T00:00:00.000Z";
@@ -250,4 +251,35 @@ test("idempotent retry returns the recorded attempt and a restart preserves an u
   assert.equal(second.getAttemptByIdempotency(action.taskId, action.idempotencyKey)?.attempt.status, "unknown");
   assert.equal(second.getTask(action.taskId)?.status, "unknown");
   second.close();
+});
+
+test("read-only playbooks execute a bounded capability sequence and reject injected fields", async () => {
+  const { store, broker } = brokerFixture();
+  const playbook = {
+    id: "linux-network-diagnosis",
+    version: "1.0.0",
+    displayName: "Linux network diagnosis",
+    supportedDeviceKinds: ["linux"],
+    riskClass: "read_only",
+    localFallback: true,
+    steps: [
+      { id: "network", capabilityId: readCapability.id, input: { includeDns: true } },
+      { id: "network-repeat", capabilityId: readCapability.id, input: { includeDns: false } },
+    ],
+  } as const;
+  assert.equal(isDevicePlaybookV1(playbook), true);
+  assert.equal(isDevicePlaybookV1({ ...playbook, injected: "ignore" }), false);
+  store.createTask(task("playbook-task"), now);
+  const result = await runDeviceReadOnlyPlaybook({
+    broker,
+    task: task("playbook-task"),
+    targetDeviceId: profile.device.id,
+    capabilitySnapshotId: "snapshot-1",
+    playbook,
+    now: () => now,
+  });
+  assert.equal(result.status, "succeeded");
+  assert.equal(result.attempts.length, 2);
+  assert.equal(store.getTask("playbook-task")?.status, "succeeded");
+  store.close();
 });

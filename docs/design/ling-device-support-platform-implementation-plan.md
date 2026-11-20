@@ -1,8 +1,8 @@
 # Ling Device Support Platform Implementation Plan
 
-Status: tracking plan; D1–D3 core implementation landed, later slices remain queued
+Status: tracking plan; D1–D3 core and D4/D5/D7/D8 adapter groundwork landed, later slices remain queued
 Owner: Ling platform maintainers
-Last verified: 2026-11-21 (D1–D3 contracts, registry, broker, task journal, and recovery tests)
+Last verified: 2026-11-21 (D1–D3 core plus Home Assistant, PC, Linux/SSH adapters and bounded playbook fixtures)
 Document type: staged implementation and acceptance record
 Related design: [Ling Device Support Platform](ling-device-support-platform.md)
 Runtime contract: [Ling Device Support Platform Runtime Contract](ling-device-support-platform-runtime-contract.md)
@@ -46,11 +46,11 @@ validation and the boundary of what remains unverified.
 | D1 | [x] | Shared device contracts and adapter manifest | Strict schemas compile and reject invalid inputs | Contracts typecheck and contract tests |
 | D2 | [x] | Device registry and capability broker | A fake device can register, discover, refresh capabilities, lease a target, and execute a read-only capability | Core broker tests with fake adapter |
 | D3 | [x] | Task state, approval, verification, and evidence | A task persists an exact approval, dispatch attempt, verification, idempotent replay, and unknown outcome after restart | Core SQLite journal and recovery tests |
-| D4 | [ ] | Home Assistant adapter | One real or fixture HA instance supports discovery, status, diagnosis, and a low-risk action | Adapter contract tests and HA acceptance |
-| D5 | [ ] | PC adapter and target-side executor | A Windows PC supports bounded diagnostics and one verified repair | Windows acceptance with a clean fixture machine |
+| D4 | [~] | Home Assistant adapter | Fixture adapter supports discovery, entity availability classification, and a low-risk service action | Daemon adapter fixture tests |
+| D5 | [~] | PC adapter and target-side executor | Typed PC inventory, network/services observations, and one reversible repair are implemented | Daemon adapter fixture tests |
 | D6 | [ ] | Mobile device-task facade | Paired Mobile can inspect, approve, follow, and revoke a device task | Remote protocol fixtures and real-device acceptance |
-| D7 | [ ] | Playbooks and operator evidence | Common configuration/repair flows are explainable and replayable | Playbook fixtures and evidence review |
-| D8 | [ ] | Additional ecosystems | Each added adapter meets the same contract and support gates | Per-adapter simulator and field acceptance |
+| D7 | [~] | Playbooks and operator evidence | Bounded read-only playbook validation and replayable task attempts are implemented | Core playbook fixture tests |
+| D8 | [~] | Additional ecosystems | Linux/SSH typed network and Wi-Fi adapter is implemented under the shared contract | Daemon Linux adapter fixture tests |
 | D9 | [ ] | Standalone Mobile execution | One phone restores a supported BLE device's network connection with no PC or Gateway and verifies the result | Shared contract fixtures and real phone/device acceptance |
 | D10 | [ ] | Developer device sessions | Complete build, deploy, debug, verify, and native-tool workflows on supported host and target combinations | Project/device integration, native-tool and reattach acceptance |
 | D11 | [ ] | PC-assisted Mobile execution | Paired PC contributes plans, artifacts, or analysis while Mobile owns the task and device link | Collaboration contract fixtures and physical device runs |
@@ -167,16 +167,16 @@ D0 covers the design and the implementation plan.
 
 ### Scope
 
-- [ ] Register a Home Assistant adapter with explicit URL, authentication, and instance
+- [x] Register a Home Assistant adapter with explicit URL, authentication, and instance
   health configuration.
-- [ ] Discover devices, entities, services, and current availability.
-- [ ] Normalize state and service metadata into Ling capabilities.
-- [ ] Use a read-only Home Assistant flow to verify discovery, version selection, and
+- [x] Discover devices, entities, services, and current availability.
+- [x] Normalize state and service metadata into Ling capabilities.
+- [~] Use a read-only Home Assistant flow to verify discovery, version selection, and
   diagnosis for unavailable entities, stale state, integration failure, and automation
   failure.
-- [ ] Add a small set of low-risk, verified actions such as reload integration or
+- [x] Add a small set of low-risk, verified actions such as reload integration or
   re-enable a bounded automation where supported.
-- [ ] Preserve Home Assistant entity and service identifiers in evidence without exposing
+- [x] Preserve Home Assistant entity and service identifiers in evidence without exposing
   credentials.
 
 ### Exit evidence
@@ -190,12 +190,12 @@ D0 covers the design and the implementation plan.
 
 ### Scope
 
-- [ ] Define the Windows/Linux/macOS target-side executor boundary.
-- [ ] Implement inventory, process/service, network, log, and software-version
+- [x] Define the Windows/Linux/macOS target-side executor boundary.
+- [~] Implement inventory, process/service, network, log, and software-version
   observations.
-- [ ] Expose typed repair actions instead of arbitrary shell execution.
-- [ ] Add least-privilege installation, pairing, update, revoke, and uninstall behavior.
-- [ ] Implement one low-risk repair flow with explicit verification.
+- [x] Expose typed repair actions instead of arbitrary shell execution.
+- [~] Add least-privilege installation, pairing, update, revoke, and uninstall behavior.
+- [x] Implement one low-risk repair flow with explicit verification.
 - [ ] Establish a reproducible Windows network fault on a test PC or VM. Reproduce the
   diagnosis with read-only checks before exercising an approved reversible repair and
   retesting the original symptom.
@@ -238,17 +238,17 @@ D0 covers the design and the implementation plan.
 
 ### Scope
 
-- [ ] Define playbook metadata, required capabilities, risk profile, expected evidence,
+- [x] Define playbook metadata, required capabilities, risk profile, expected evidence,
   and supported device profiles.
 - [ ] Add one Home Assistant offline-device playbook.
-- [ ] Add one PC software-diagnosis playbook.
+- [~] Add one PC software-diagnosis playbook.
 - [ ] Add structured explanation templates that separate facts, hypotheses, actions,
   verification, and remaining uncertainty.
-- [ ] Validate freshness and provenance for observations used by a branch. Treat
+- [~] Validate freshness and provenance for observations used by a branch. Treat
   arbitrary instructions in device outputs as observation content.
-- [ ] Provide a bounded local read-only flow that can collect redacted evidence when the
+- [x] Provide a bounded local read-only flow that can collect redacted evidence when the
   model service is unavailable.
-- [ ] Add replayable fixtures for successful, failed, partial, and unknown outcomes.
+- [~] Add replayable fixtures for successful, failed, partial, and unknown outcomes.
 
 ### Exit evidence
 
@@ -265,7 +265,7 @@ that support exists:
 - [ ] Router and NAS APIs.
 - [ ] Printer discovery, queue, driver, and network diagnosis.
 - [ ] Matter, ESPHome, Zigbee, and BLE devices.
-- [ ] Linux network diagnosis through an authorized SSH adapter, with real LAN and
+- [~] Linux network diagnosis through an authorized SSH adapter, with real LAN and
   phone-hotspot reachability and fault evidence.
 - [ ] Android and head-unit deployment and diagnostics through authorized APIs or
   ADB where available. Verify DiPlay on a compatible parked vehicle using
@@ -605,11 +605,11 @@ recorded per slice as they complete. [Detailed design](ling-device-fabric.md)
 | D1 | `pending` | `corepack pnpm --filter @ling-stack/contracts typecheck` and `test` | [contracts/device.ts](../../packages/contracts/src/device.ts) | Core contracts, validators, transport deployment metadata, and fake adapter fixtures are implemented | Adapter package extraction and cross-process conformance remain |
 | D2 | `pending` | `corepack pnpm --filter @ling-stack/core typecheck:ci`; `node --test packages/core/test/device-support.test.ts` | [device-support.ts](../../packages/core/src/device-support.ts), [device-support-store.ts](../../packages/core/src/storage/sqlite/device-support-store.ts) | Registry, capability snapshots, stable identities, revocation, leases, and broker dispatch are covered by a fake adapter | Daemon wiring and external-adapter process isolation remain |
 | D3 | `pending` | `node --test packages/core/test/device-support.test.ts` | [device-support.test.ts](../../packages/core/test/device-support.test.ts) | Exact approval binding, durable dispatch intent, verification, idempotent replay, and restart-to-unknown recovery are covered | Existing Ling approval UI/audit projection and physical recovery acceptance remain |
-| D4 | — | — | — | Not started | Home Assistant |
-| D5 | — | — | — | Not started | PC |
+| D4 | `pending` | `node --test packages/daemon/test/device-support-adapters.test.ts` | [home-assistant.ts](../../packages/daemon/src/features/device-support/adapters/home-assistant.ts) | Fixture Home Assistant adapter supports discovery, entity available/unavailable/absent classification, and a bounded reload action without persisting the token | Real Home Assistant instance, observation persistence, and field action acceptance remain |
+| D5 | `pending` | `node --test packages/daemon/test/device-support-adapters.test.ts` | [pc.ts](../../packages/daemon/src/features/device-support/adapters/pc.ts) | Typed PC executor contract covers inventory, network/services reads, reversible network repair, and post-action verification | Windows/Linux/macOS target implementations and clean-machine acceptance remain |
 | D6 | — | — | — | Not started | Mobile facade |
-| D7 | — | — | — | Not started | Playbooks |
-| D8 | — | — | — | Not started | Additional ecosystems |
+| D7 | `pending` | `node --test packages/core/test/device-support.test.ts` | [device-playbooks.ts](../../packages/core/src/device-playbooks.ts) | Bounded read-only playbooks validate closed metadata, execute ordered typed capabilities, and leave durable attempts | HA/PC report templates, provenance projection, and full terminal-outcome fixtures remain |
+| D8 | `pending` | `node --test packages/daemon/test/device-support-adapters.test.ts` | [linux-ssh.ts](../../packages/daemon/src/features/device-support/adapters/linux-ssh.ts) | Linux/SSH adapter exposes fixed network, Wi-Fi, and restart operations through the shared contract | Real LAN/hotspot and head-unit acceptance remain |
 | D9 | — | — | [Design](ling-device-support-platform.md#111-standalone-mobile-execution) | Design recorded, implementation not started | Standalone BLE execution and device acceptance |
 | D10 | — | — | [Developer sessions](ling-device-developer-execution.md#1-device-sessions) | Design recorded, implementation not started | Project, device, and native tool acceptance |
 | D11 | — | — | [PC collaboration](ling-device-developer-execution.md#22-pc-assisted-phone-execution) | Design recorded, implementation not started | Phone-owned collaboration and physical cases |
