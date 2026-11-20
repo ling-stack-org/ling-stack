@@ -118,6 +118,10 @@ test("App Server lists, reads, and controls a Work Item with revision and idempo
     assert.equal(paused.result.workItem.control.state, "paused");
     assert.equal(paused.result.workItem.control.generation, "1");
 
+    send(50, "workItem/subscribe", { cwd, workItemId: item.id, afterSeq: 0 });
+    const subscription = await waitFor(messages, message => message.id === 50);
+    assert.equal(subscription.result.disposition, "complete");
+
     send(6, "workItem/pause", {
       cwd,
       workItemId: item.id,
@@ -152,6 +156,8 @@ test("App Server lists, reads, and controls a Work Item with revision and idempo
     });
     const cancelled = await waitFor(messages, message => message.id === 8);
     assert.equal(cancelled.result.workItem.control.state, "cancelled");
+    const event = await waitFor(messages, message => message.method === "$/control_plane_event" && message.params?.event?.entityId === item.id);
+    assert.equal(event.params.event.domain, "work_items");
   } finally {
     socket.terminate();
     await daemon.stop();
