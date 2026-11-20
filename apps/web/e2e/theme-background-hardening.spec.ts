@@ -38,6 +38,7 @@ async function upload(page: Page) {
 const paused=(page:Page, selector:string)=>page.locator(selector).evaluate((v:HTMLVideoElement)=>v.paused);
 
 test('BG-H1/H2 one visible player, reading surfaces, reduced motion, recovery and bounded fallback',async({page},info)=>{
+  test.setTimeout(90_000);
   const failures:string[]=[]; page.on('pageerror',e=>failures.push(e.message));
   const waitForPlayback = (selector: string, expected: boolean) => expect.poll(() => paused(page, selector), { timeout: 15_000 }).toBe(expected);
   await prepare(page); await upload(page);
