@@ -60,7 +60,8 @@ test("edge enrollment, ordered event recovery, resource rollback, safety and lif
   events.append({ eventId: "event-1", traceId: "trace-1", sourceKind: "runtime", sourceId: "edge-1", sequence: 1, kind: "connected", payload: {}, occurredAt: now });
   events.append({ eventId: "event-2", traceId: "trace-1", sourceKind: "adapter", sourceId: "linux-ssh", sequence: 2, kind: "snapshot", payload: {}, occurredAt: now });
   assert.equal(events.read(1).length, 1);
-  assert.throws(() => events.append({ eventId: "event-3", traceId: "trace-2", sourceKind: "target", sourceId: "device-1", sequence: 3, kind: "changed", payload: {}, occurredAt: now }), /monotonic/);
+  events.append({ eventId: "event-3", traceId: "trace-2", sourceKind: "target", sourceId: "device-1", sequence: 3, kind: "changed", payload: {}, occurredAt: now });
+  assert.throws(() => events.append({ eventId: "event-4", traceId: "trace-2", sourceKind: "target", sourceId: "device-1", sequence: 3, kind: "changed", payload: {}, occurredAt: now }), /monotonic/);
 
   const resources = new DeviceResourceRegistry();
   const payload = new TextEncoder().encode("adapter");

@@ -84,6 +84,7 @@ export class DeviceCollaborationCoordinator {
   accept(proposalId: string, ownerId: string, now: string): DeviceCollaborationProposalV1 {
     const proposal = this.requireProposal(proposalId);
     if (proposal.ownerId !== ownerId) throw new DeviceFabricError("safety_denied", "proposal owner does not match");
+    if (proposal.status !== "proposed") throw new DeviceFabricError("safety_denied", "proposal is no longer actionable");
     if (Date.parse(proposal.expiresAt) <= Date.parse(now)) throw new DeviceFabricError("safety_denied", "proposal has expired");
     const next = { ...proposal, status: "accepted" as const };
     this.#proposals.set(proposalId, next);

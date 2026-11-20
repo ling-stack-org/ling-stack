@@ -51,8 +51,12 @@ export class LingServerPeerRegistry {
   failoverRoute(routeAttemptId: string, now: string): LingServerRouteAttemptV1 {
     const route = this.#routes.get(routeAttemptId);
     if (!route) throw new DeviceFabricError("target_missing", "route attempt is missing");
-    if (Date.parse(route.expiresAt) <= Date.parse(now)) return { ...route, status: "expired" };
-    if (route.selected === "lan" || route.selected === "direct" || !route.selected) return { ...route, preferred: "relay", status: "checking" };
-    return { ...route, status: "failed" };
+    const next = Date.parse(route.expiresAt) <= Date.parse(now)
+      ? { ...route, status: "expired" as const }
+      : route.selected === "lan" || route.selected === "direct" || !route.selected
+        ? { ...route, preferred: "relay" as const, status: "checking" as const }
+        : { ...route, status: "failed" as const };
+    this.#routes.set(routeAttemptId, next);
+    return next;
   }
 }

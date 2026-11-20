@@ -174,7 +174,7 @@ export class DeviceEventBus {
 
   append(event: DeviceEventEnvelopeV1): DeviceEventEnvelopeV1 {
     const last = this.#events.at(-1);
-    if (last && (event.sequence <= last.sequence || event.traceId !== last.traceId)) throw new DeviceFabricError("revision_conflict", "device event sequence is not monotonic");
+    if (last && event.sequence <= last.sequence) throw new DeviceFabricError("revision_conflict", "device event sequence is not monotonic");
     this.#events.push(event);
     while (this.#events.length > this.maxEvents) this.#events.shift();
     return event;
@@ -191,6 +191,10 @@ export class DeviceResourceRegistry {
   readonly #history = new Map<string, { manifest: DeviceResourceManifestV1; payloadDigest: string }[]>();
 
   install(manifest: DeviceResourceManifestV1, payload: Uint8Array): void {
+    if (!manifest.resourceId || !manifest.version || !manifest.license || !manifest.signature || !manifest.entrypoint
+      || manifest.dependencies.includes(manifest.resourceId) || new Set(manifest.dependencies).size !== manifest.dependencies.length) {
+      throw new DeviceFabricError("resource_conflict", "resource manifest is incomplete or has invalid dependencies");
+    }
     const digest = createHash("sha256").update(payload).digest("hex");
     if (digest !== manifest.digest) throw new DeviceFabricError("resource_conflict", "resource digest does not match manifest");
     const current = this.#installed.get(manifest.resourceId);
@@ -225,6 +229,7 @@ export class DeviceLifecycleManager {
 
   transition(input: DeviceLifecycleRecordV1): DeviceLifecycleRecordV1 {
     const current = this.#records.get(input.deviceId);
+    if (!current && input.status !== "discovered") throw new DeviceFabricError("lifecycle_invalid", "device lifecycle must start at discovered");
     if (current && (input.revision <= current.revision || !allowedLifecycleTransition(current.status, input.status))) throw new DeviceFabricError("lifecycle_invalid", "device lifecycle transition is invalid");
     this.#records.set(input.deviceId, input);
     return input;
