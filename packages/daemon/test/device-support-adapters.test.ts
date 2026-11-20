@@ -62,7 +62,7 @@ test("PC adapter uses typed executor operations for diagnosis and repair", async
       idempotencyKey: "task-1:action-1",
     },
   });
-  assert.equal(action.status, "completed");
+  assert.equal("action" in action ? action.action.status : action.status, "completed");
   assert.deepEqual(operations, ["inventory", "repairNetwork"]);
 });
 

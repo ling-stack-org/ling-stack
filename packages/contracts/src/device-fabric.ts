@@ -92,12 +92,22 @@ export interface DeviceBridgeFrameV1 {
 export interface DeviceEventEnvelopeV1 {
   readonly eventId: string;
   readonly traceId: string;
+  /** Stable owner stream used for cursor and snapshot synchronization. */
+  readonly streamId?: string;
+  /** Stream generation changes when an owner replaces its journal. */
+  readonly generation?: number;
   readonly sourceKind: "model" | "graph" | "runtime" | "adapter" | "protocol" | "target" | "verification";
   readonly sourceId: string;
   readonly sequence: number;
   readonly kind: string;
   readonly payload: JsonValue;
   readonly occurredAt: string;
+  readonly observedAt?: string;
+  readonly provenance?: readonly string[];
+  readonly quality?: "good" | "degraded" | "stale" | "unknown";
+  readonly redactionClass?: "public" | "sensitive" | "secret_adjacent";
+  readonly evidenceRefs?: readonly string[];
+  readonly retentionClass?: "durable" | "bounded" | "telemetry";
 }
 
 export interface DeviceResourceManifestV1 {

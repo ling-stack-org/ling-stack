@@ -264,7 +264,7 @@ export class DeviceLifecycleManager {
   transition(input: DeviceLifecycleRecordV1): DeviceLifecycleRecordV1 {
     const current = this.#records.get(input.deviceId);
     if (!current && input.status !== "discovered") throw new DeviceFabricError("lifecycle_invalid", "device lifecycle must start at discovered");
-    if (current && (input.revision <= current.revision || !allowedLifecycleTransition(current.status, input.status))) throw new DeviceFabricError("lifecycle_invalid", "device lifecycle transition is invalid");
+    if (current && (input.revision <= current.revision || !isAllowedDeviceLifecycleTransition(current.status, input.status))) throw new DeviceFabricError("lifecycle_invalid", "device lifecycle transition is invalid");
     this.#records.set(input.deviceId, input);
     return input;
   }
@@ -346,7 +346,7 @@ function hasCycle(nodes: readonly DeviceTaskGraphNodeV1[]): boolean {
   return nodes.some(node => visit(node.nodeId));
 }
 
-function allowedLifecycleTransition(from: DeviceLifecycleRecordV1["status"], to: DeviceLifecycleRecordV1["status"]): boolean {
+export function isAllowedDeviceLifecycleTransition(from: DeviceLifecycleRecordV1["status"], to: DeviceLifecycleRecordV1["status"]): boolean {
   const transitions: Record<DeviceLifecycleRecordV1["status"], readonly DeviceLifecycleRecordV1["status"][]> = {
     discovered: ["identified", "revoked", "retired"],
     identified: ["enrolled", "revoked", "retired"],

@@ -1,0 +1,99 @@
+import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+
+import { createHash } from "node:crypto";
+import type { DeviceEventEnvelopeV1, DeviceResourceManifestV1 } from "@ling-stack/contracts";
+import { DeviceFabricError } from "../dist/device-fabric.js";
+import { SqliteDeviceFabricStore } from "../dist/storage/sqlite/device-fabric-store.js";
+
+const now = "2026-11-21T00:00:00.000Z";
+
+function event(sequence: number, overrides: Partial<DeviceEventEnvelopeV1> = {}): DeviceEventEnvelopeV1 {
+  return {
+    eventId: `event-${sequence}`,
+    traceId: "trace-1",
+    streamId: "task:task-1",
+    generation: 1,
+    sourceKind: "runtime",
+    sourceId: "runtime-1",
+    sequence,
+    kind: "state.changed",
+    payload: { sequence },
+    occurredAt: now,
+    ...overrides,
+  };
+}
+
+function manifest(version: string, digest: string, signature = `signature-${version}`): DeviceResourceManifestV1 {
+  return {
+    resourceId: "adapter-linux",
+    version,
+    kind: "adapter",
+    digest,
+    license: "MIT",
+    dependencies: [],
+    signature,
+    supportedDeviceKinds: ["linux"],
+    entrypoint: "index.js",
+  };
+}
+
+test("fabric store retains bounded event streams and resumes from a durable snapshot", () => {
+  const path = join(mkdtempSync(join(tmpdir(), "ling-device-fabric-")), "fabric.sqlite");
+  try {
+    const first = new SqliteDeviceFabricStore({ databasePath: path, maxEventsPerStream: 2 });
+    assert.equal(first.appendEvent(event(1), now).replayed, false);
+    assert.equal(first.appendEvent(event(2), now).replayed, false);
+    assert.equal(first.appendEvent(event(3), now).replayed, false);
+    assert.equal(first.appendEvent(event(3), now).replayed, true);
+    assert.throws(() => first.appendEvent(event(3, { eventId: "conflicting-event" })), (error: unknown) => error instanceof DeviceFabricError && error.code === "revision_conflict");
+    assert.throws(() => first.readEvents("task:task-1", 1, 0), (error: unknown) => error instanceof DeviceFabricError && error.code === "revision_conflict");
+    first.saveSnapshot({ streamId: "task:task-1", generation: 1, sequence: 3, snapshot: { status: "executing" }, createdAt: now });
+    first.close();
+
+    const second = new SqliteDeviceFabricStore({ databasePath: path, maxEventsPerStream: 2 });
+    const read = second.readEvents("task:task-1", 1, 1);
+    assert.deepEqual(read.events.map(item => item.sequence), [2, 3]);
+    assert.equal(read.hasGap, false);
+    assert.deepEqual(second.getSnapshot("task:task-1"), {
+      streamId: "task:task-1",
+      generation: 1,
+      sequence: 3,
+      snapshot: { status: "executing" },
+      createdAt: now,
+    });
+    second.close();
+  } finally {
+    rmSync(path, { force: true });
+    rmSync(path.replace(/\/fabric\.sqlite$/u, ""), { recursive: true, force: true });
+  }
+});
+
+test("fabric store installs signed resources, preserves the previous revision, and rolls back", () => {
+  const store = new SqliteDeviceFabricStore({ verifyResourceSignature: manifestValue => manifestValue.signature.startsWith("signature-") });
+  const payload = new TextEncoder().encode("adapter-v1");
+  const digest = createHash("sha256").update(payload).digest("hex");
+  const first = store.installResource(manifest("1.0.0", digest), payload, now);
+  assert.equal(first.replayed, false);
+  assert.equal(store.installResource(manifest("1.0.0", digest), payload, now).replayed, true);
+  const secondPayload = new TextEncoder().encode("adapter-v2");
+  const secondDigest = createHash("sha256").update(secondPayload).digest("hex");
+  store.installResource(manifest("2.0.0", secondDigest), secondPayload, "2026-11-21T00:01:00.000Z");
+  assert.equal(store.getResource("adapter-linux")?.manifest.version, "2.0.0");
+  assert.equal(store.rollbackResource("adapter-linux").manifest.version, "1.0.0");
+  assert.throws(() => store.installResource(manifest("3.0.0", digest, "untrusted"), payload), (error: unknown) => error instanceof DeviceFabricError && error.code === "resource_conflict");
+  store.close();
+});
+
+test("fabric store persists lifecycle revisions and rejects invalid transitions", () => {
+  const store = new SqliteDeviceFabricStore();
+  store.transitionLifecycle({ deviceId: "device-1", status: "discovered", revision: 1, reason: "found", authority: "adapter", changedAt: now });
+  store.transitionLifecycle({ deviceId: "device-1", status: "identified", revision: 2, reason: "fingerprint", authority: "operator", changedAt: now });
+  assert.equal(store.getLifecycle("device-1")?.status, "identified");
+  assert.throws(() => store.transitionLifecycle({ deviceId: "device-1", status: "healthy", revision: 3, reason: "skip", authority: "adapter", changedAt: now }), (error: unknown) => error instanceof DeviceFabricError && error.code === "lifecycle_invalid");
+  assert.throws(() => store.transitionLifecycle({ deviceId: "device-1", status: "enrolled", revision: 2, reason: "replay", authority: "adapter", changedAt: now }), (error: unknown) => error instanceof DeviceFabricError && error.code === "lifecycle_invalid");
+  store.close();
+});
