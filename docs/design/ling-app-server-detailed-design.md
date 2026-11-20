@@ -68,6 +68,7 @@ App Server 作为 Daemon 的会话协议入口，以 `ling-app-server/1` 发布�
 | 改动和产物 | `changes/capture`、`changes/read`、`changes/apply/preview`、`changes/apply`、`artifact/read` | 以候选、选中 hunk、工作树版本和审批为边界。应用、回退、重放沿用现有 patch 所有者。产物可分页，内容读取限范围和大小。 |
 | 开发验证与审查 | `verify/plan`、`verify/start`、`verify/status`、`verify/cancel`、`review/start`、`review/status`、`review/finding/update`、`simplify/start`、`doctor/run`、`instructions/init` | 指定候选和已配置的规则或配方。运行类返回操作 ID，草案类返回可审阅差异，读取类返回有限证据投影。 |
 | 工作项快照与订阅 | `workItem/list`、`workItem/read`、`workItem/subscribe`、`workItem/unsubscribe` | 按工作区和 Work Item 授权分页发现、读取快照及订阅。订阅接收同一范围的恢复游标，取消使用此连接上的订阅 ID。 [工作项方法](ling-agent-operating-model-detailed-design.md#9-events-and-app-server-methods) |
+| 工作项控制 | `workItem/pause`、`workItem/resume`、`workItem/cancel` | 协商可选能力 `workItem.control`。暂停、恢复或取消当前 Work Item lineage，使用控制代次和原所有者的收尾回执。独立 effort 不受影响。 [控制合同](ling-agent-operating-model-detailed-design.md#46-work-item-control) |
 | 工作项接入与受理 | `workItem/create`、`workItem/accept` | 可携带明确 Work Item 或可核验的 GitHub 目标，按授权返回来源回执和可见的默认工作项。接受独立执行时绑定其单独的客体与范围。 [目标身份与受理](ling-agent-operating-model-detailed-design.md#32-work-item-target-identity) |
 | GitHub 证据与对账 | `github/subject/read`、`github/delivery/reconcile` | 按当前授权读取 PR 修订、检查适用性、交付状态和证据引用。对账读取提供方原记录并更新已有交付意图及其回执。 [CI 证据与合并保护](ling-agent-operating-model-detailed-design.md#74-ci-evidence-and-merge-guard) |
 | 工作项证据与审议 | `workItem/evidence/read`、`workItem/evidence/append`、`workItem/deliberation/start`、`workItem/deliberation/read`、`workItem/deliberation/cancel`、`workItem/deliberation/decide` | 协商可选能力 `workItem.evidence`、`workItem.deliberation`。读取工作项证据、触发评估和审议回执。 [整合协议](ling-agent-operating-model-detailed-design.md#9-events-and-app-server-methods) |
@@ -79,6 +80,8 @@ App Server 作为 Daemon 的会话协议入口，以 `ling-app-server/1` 发布�
 服务器声明每个方法的必需范围。基本范围为会话读取、发送/控制、管理 worktree、运行验证、发起审查、应答输入、决策审批。授予读取时只可见授权范围内的历史、产物与事件。审查只读范围可以细化到当前候选。方法发现额外标注副作用和是否要求本机用户确认。
 
 工作项协作写入携带 `expectedWorkItemRevision`、`idempotencyKey` 和适用的阶段、目标实体或候选修订。Daemon 从已认证主体或当前 Attempt 推导写入者。先校验当前读取和操作权限，再查同一作用域的幂等回执。已授权的相同请求可以取回旧回执，新写入核对当前修订和执行归属。候选变化、问答过期或接手条件缺失时，调用方可沿工作项读取当前阻塞及其负责人。 [工作项方法的输入和效果](ling-agent-operating-model-detailed-design.md#9-events-and-app-server-methods)
+
+Work Item control uses the optional `workItem.control` capability. Its mutations carry expectedWorkItemRevision, expectedControlGeneration and an idempotency key. Pause and cancel persist the control latch before invoking original owners. Resume revalidates current Plan, Goal, Worktree, grants, unresolved effects and independent holds. Control responses never claim that an accepted external effect was reversed. [Work Item control](ling-agent-operating-model-detailed-design.md#46-work-item-control)
 
 ### 2.1 Thread、Turn 和干预语义
 
@@ -135,6 +138,7 @@ type DurableNotice = {
 | 可见内容 | `item/started`、`item/delta`、`item/completed` | 现有公开会话 Item 与 Run 动作的有界投影。 |
 | 请求与证据 | `serverRequest/resolved`、`verification/updated`、`review/updated`、`handoff/created` | 审批、提问、Check、Code Assessment 和交接记录。 |
 | 工作项状态 | `workItem/created`、`workItem/claimed`、`workItem/status/changed`、`workItem/claim/expired`、`workItem/thread/linked`、`workItem/delivery/updated`、`workItem/feedback/received` | 工作项及原所有者提供的状态标识和修订。关联通知携带可见的绑定修订。 |
+| 工作项控制 | `workItem/control/updated` | 控制代次、暂停/恢复/取消动作、当前阶段、阻塞 owner 和未确认效果的受权限投影。 |
 | 工作项协作 | `workItem/evidence/updated`、`workItem/deliberation/updated`、`workItem/stage/updated`、`workItem/brief/updated`、`workItem/coordination/updated`、`workItem/message/updated`、`workItem/question/updated`、`workItem/handoff/updated` | 已授权的实体 ID 和修订。简报带阶段或轮次引用，审议带决定修订以及已受理的轮次引用。客户端按需读取正文和回执。 |
 | 订阅控制 | `thread/replay/ready`、`thread/resync/required`、`workItem/replay/ready`、`workItem/resync/required`、`server/warning` | 对应订阅的可用水位、重建原因和此连接状态。 |
 
@@ -243,6 +247,9 @@ type CheckEvidence = {
   planRevision: string
   recipeDigest: string
   environmentDigest: string
+  verifierBasisRef?: string
+  coverageDigest?: string
+  producerRefs: readonly string[]
   attemptId: string
   status: CheckStatus
   evidenceRefs: readonly string[]
@@ -256,6 +263,12 @@ type CheckEvidence = {
 - Bug 修复记录复现或明确的直接行为证据、现象与根因。适用时保留回归用例，并核对修复前失败和修复后通过。已有等价覆盖可直接引用。环境无法复现时显示缺失条件，能完成的代码定位和诊断仍可保存。
 
 ### 3.3 Review、交付和 CI
+
+验收依据独立性规则如下。Goal/Plan 接受时冻结必需断言、覆盖要求、检查选择依据和可信验证器来源。验证器依据包含脚本入口、选择器、测试发现配置、固定 fixture、关键断言或受信 CI workflow 的引用。候选可以修改测试和配方，但这些修改只形成待审查的替代依据，不能凭同一命令名和零退出码自动替换已接受依据。
+
+CheckEvidence 另带 verifierBasisRef、coverageDigest 和 producerRefs。producerRefs 覆盖实际影响执行和断言的脚本、选择器、fixture、workflow 与环境输入。候选导致这些来源变化、来源不可读或选择结果不确定时，旧绿证据对当前 Goal 不适用，状态保持 blocked 或 unknown。独立可信验证器可在同一候选上重跑，或授权人通过新的 Plan/Goal 接受版本记录等价覆盖。
+
+审批运行候选测试不等于批准候选改变验收标准。人工结案继续使用现有 Goal 的明确授权和理由字段，并单独标记为例外。它不会把缺失的 Verify、Review、CI 或 Delivery 证据改写成通过。
 
 `review/start` 消费候选引用、原始任务、基线指令和可信检查记录，启动独立的只读运行。现有 Code Assessment 保留其 Diff-only 和 findings contract。新增的上下文也采用有边界的只读输入引用，按配置提供对应调用路径。作者上下文的推理和自评保留在原会话。审查发现含候选、捕获位置、触发条件和可见证据。修正走正常 Turn，再计算新候选和保留结果的适用性。`simplify/start` 产出当前 diff 的可行动建议，可委托普通编辑 Turn 应用。 [代码审查工作台](code-review-and-security-workbench.md)
 
@@ -282,6 +295,22 @@ F2 的实时显示验收使用可编程宿主的任务视图，现成 Codex 跟�
 
 优先复用 SQLite 既有状态、控制面日志、收据、运行证据和产物。需要补充客户端授权、候选/配方/验证记录、回放作用域或结构化交接时，在对应所有者中扩展可选字段或新增关联表。旧记录用缺证据、旧策略或快照重建状态展示。迁移覆盖旧库、升级重启、过期游标和跨客户端同时读写。存储版本升级按仓库迁移合同测试。正式降级策略使用独立候选数据和备份。
 
+### 4.1 自研切换与回退
+
+正式用 Ling 开发 Ling 时，稳定控制端与候选 Daemon 使用独立 worktree、数据目录、端口和凭据。切换前暂停新的 Work Item 受理、Automation 调度和外部 Delivery，等待可安全结束的 Run 到达边界，或把未确认的外部效果转入原所有者的 reconciliation。切换清单冻结稳定版和候选版可执行文件、数据库 schema/migration、工作区快照、Control Plane 水位、授权 epoch、幂等回执水位、活跃 Work Item/Run 及未知效果。
+
+迁移使用活动 WAL 数据库的一致性备份，不允许旧二进制直接写入新 schema。优先采用向前兼容的追加迁移和 feature gate。不可兼容的回退使用旧二进制与切换前快照，并保留切换期间单独的 effect、receipt 和 revocation journal。该 journal 记录候选版已提交或可能已提交的外部操作、授权撤销、Work Item 派发和事件水位。恢复旧版后，先导入可表达的回执或逐项标记 unknown outcome，再开放重连和新派发。
+
+回退或恢复快照会生成新的 store incarnation 和 authorization epoch。旧 cursor、订阅和控制凭据必须重新握手，不能把恢复前的游标当成当前事实。候选版期间撤销的授权和已发生的外部效果在 journal 完成核对前保持阻塞。重放只恢复观察，不能隐式重试 GitHub、Delivery、Tool 或 Workflow 动作。旧版本恢复失败时继续使用候选版进行对账，不能删除候选版的原始收据来制造可回退状态。
+
+切换验收故意在候选版已经写入一个外部操作收据后终止 Daemon，再恢复旧版和切换前快照。验收必须看到一次且仅一次的外部效果归属、旧游标得到 resync、已撤销控制器不能恢复控制、同一 Work Item 在 reconciliation 完成前不能再次派发。对于同 schema 的功能开关，回退只关闭新功能并保留当前数据库和收据，不执行破坏性恢复。
+
+### 4.2 发行版本组合与兼容窗口
+
+协议版本、DTO schema、数据库 migration 和客户端包版本分别声明。每个发行版本发布实际支持的 Daemon、TypeScript SDK、CLI、MCP bridge 和可编程 Codex host 组合。Ling 不承诺笼统的 N-1 兼容。能力缺失、废弃方法或 cursor/schema 不兼容时，握手返回结构化的 unsupported 结果，禁止新副作用，现有 Run、审批和逻辑收据仍由 Daemon 保留并可通过受支持的客户端或 CLI 恢复。
+
+发布回归使用冻结的实际产物覆盖两种升级顺序。先升级 Daemon，再连接上一版 SDK/CLI/MCP bridge。先升级 bridge，再连接上一版 Daemon。每种顺序都包含一个已受理但尚未返回的控制请求、一个待决审批、一个断线 cursor、一个 unknown outcome 和一个授权撤销。若组合不在该发行版的支持矩阵内，客户端必须停在重新授权或升级提示，不能降级为猜测性的普通输入或重复派发。现有控制请求仍能查询原收据，更新后的客户端恢复同一 Run 或明确显示恢复阻塞。
+
 | 故障 | 显示与恢复 |
 | --- | --- |
 | 已受理，响应未收到 | 以逻辑请求收据查询，返回原目标与现态。 |
@@ -291,6 +320,8 @@ F2 的实时显示验收使用可编程宿主的任务视图，现成 Codex 跟�
 | 审批与中断同时到达 | 已持久提交的有效决策和停止归属有明确顺序。迟到结果通过来源 fence 判断可见性。 |
 | 已排队输入遇到停止或需求变更 | 根据提交顺序和消费点的接受版本确定适用性，保留受影响输入的原收据和重新提交入口。 |
 | 订阅中的 Work Item 关联 Thread | 原身份与恢复游标可继续定位 Work Item。同一提交可被两个获准视图接收，各自更新游标。Thread 内容以实时授予的范围读取。 |
+| Work Item 暂停或取消 | 控制代次先挡住新准入，再由原 Task、Workflow、Run、Approval、Delivery 和 Automation 所有者安全收尾。未知效果保持阻塞。重启先恢复控制 latch，resume 不清除其他 holds。 |
+| Thread hard-delete | 预览和提交重新检查当前 Work Item、Goal、Plan、审批、证据和 Delivery 依赖。未 rehome 或 settle 时拒绝删除，允许历史引用变成受限 tombstone。 |
 | 验证与编辑相撞 | 候选发生漂移，记录原结果及变更，当前候选重新安排受影响检查。 |
 
 协议实现从 Contracts 生成 TypeScript 和 JSON Schema。每个方法记录 input、output、通知、权限、幂等键及错误类型。端到端验收需覆盖双向请求、竞态、落盘后断线重传、旧客户端、真实 Provider 和目标传输，见[实施矩阵](ling-app-server-implementation-plan.md#验收矩阵)。

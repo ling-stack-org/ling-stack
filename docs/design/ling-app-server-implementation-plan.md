@@ -65,6 +65,17 @@ O7 在工作项、候选和事件合同可用后可与 E1、E2 并行。O4 使�
 
 接口变更的代码所有权以现有目录为准。Contracts 管公共类型和解析，Core 管事务和证据索引，Daemon feature 管领域行为，`server` 管协议及传输，API Client/CLI 管连接及消费。前端控制与证据视图沿用共享会话组件和本地化目录。新文件按实际职责拆分。
 
+## 补充可靠性准入工作包
+
+这四项不是新的执行系统。它们把现有验证、控制、迁移和协议所有者接到自研准入条件。
+
+| 工作包 | 交付 | 合并前验收 |
+| --- | --- | --- |
+| E1/E2 Trusted Verification Basis | Plan/Goal 冻结可信验证器来源、覆盖和 producerRefs。候选修改测试、脚本、发现配置或 CI 规则时，重新计算适用性。 | 用同一 pnpm test 命令制造断言被删除或选择器被改写的绿测，Goal 不能完成。独立可信检查或新接受版本替代后才可继续。人工结案保留单独例外。 |
+| O1/O9 Work Item Control | `workItem.control`、pause/resume/cancel、控制代次、跨 Workflow/Automation/Delivery admission latch，Thread hard-delete 依赖检查。 | linked Workflow、审议、静默 Automation、待投递 Delivery 同时存在时暂停只挡新准入。重启、未知外部效果、恢复、删除预览竞态都不能重开或重复派发。 |
+| G1 Cutover and Rollback | 稳定版/候选版切换清单、迁移快照、effect/receipt/revocation journal、store/auth epoch 和回退后 reconciliation。 | 候选版写入外部回执后崩溃，旧版从切换前快照启动。旧游标和撤销凭据失效，原回执被核对前不允许新派发，外部效果只归属一次。 |
+| C2/F2 Compatibility Matrix | 按发布版本声明 Daemon、SDK、CLI、MCP bridge、Codex host 支持组合。 | 实际上一版/候选版产物双向连接，覆盖待决控制、审批、cursor、unknown outcome 和撤权。未支持组合拒绝新副作用而保留原收据恢复。 |
+
 ## 跟着代码开工
 
 ### A1 与 A2 的实施入口
@@ -121,6 +132,7 @@ corepack pnpm --filter @ling-stack/api-client typecheck:ci
 | 回放与阻塞 | 临时 SQLite，有限缓冲，故意断开父客户端或 Daemon | 滞后/过期游标后有快照。待决审批、活跃/终态 Run 和未知外部结果均可重新查看。已执行动作凭 Host 回执保持单次。 |
 | 权限与隐私 | 本地和认证远程配置，受限/撤销调用方 | 工作区和 worktree 越权、错误凭据、过期会话、跨线程审批、敏感内容投影、重放旧决定被正确处理。 |
 | 项目规则和验证 | 多包 Git 仓库与受控环境 | 按路径载入有效规则，能查实际执行版本。识别 docs-only、测试变更、Web 行为和运行时变化。检查超时、少跑、失败或候选变化保持可见。 |
+| Trusted Verification Basis | 同一候选、候选修改测试/脚本/发现配置的受控夹具 | 同一命令返回成功但可信断言或选择器发生变化时，旧证据不满足 Goal。验证器来源、覆盖 digest 和 producer refs 可回查，独立替代或新接受版本才能解除阻塞。 |
 | 交付与审查 | 同一候选、独立审查和 CI 回执 | 修复可追溯到发现和实际回归。Goal 逐项核对候选和必需发现处置，通过当前适用的检查结果确认 CI 条件。 |
 | 真实 Codex | 现成客户端 + 本机 MCP，以及连接两端服务的可编程宿主 | 现成 Codex 可提交、按游标读取和控制任务。宿主视图在真实 Codex 与 Ling 同时连接时持续显示 Ling 事件，可提交明确干预并在重连后补齐。记下实际宿主、入口、可观察界面和版本。 |
 | 平台与安装 | macOS/Linux 的 stdio/Unix socket/WS，Windows 的 stdio/WS。覆盖声明的远程 WSS 与实际发布客户端 | 记录目标 OS、架构、安装包、传输和认证方式、退出和资源清理结果。安装、签名、命令沙箱和真实远程路由结果各有证据。 |
@@ -133,8 +145,11 @@ corepack pnpm --filter @ling-stack/api-client typecheck:ci
 | 共享证据板 | 临时 SQLite，两个写入者，一个受限读者 | 并行提交、重复请求、冲突更正、来源权限变化、快照与跨客户端回放均可复核。无权读取的原始材料和派生摘要不进入投影。 |
 | 阶段简报与 Agent 交接 | 已接受的多阶段 Workflow，工程和 QA，实际 Daemon | P01 验收后向 P02 和 QA 提供各自所需的材料。同级问答只等待受影响的依赖。旧候选交接可退回，补齐后按当前证据接手。重连后不会重复派发。 |
 | 跨 Run 停滞与恢复 | 同一工作项、多个 Agent、可重复的失败与新证据 | 多来源报告归并，临时审议、重连或重试保有该工作项的已消耗预算。达到停滞阈值后记录阻塞，取得相关新证据或接受后续计划才重新判断。 |
+| Work Item 控制与删除 | linked Workflow、Deliberation、Automation、Delivery、Thread hard-delete 和真实 Daemon | pause/cancel 阻止新准入并等待原所有者收尾。resume 不清除其他 holds。unknown effect、重启、删除 preview→commit 竞态和独立 effort 均有正确结果。 |
 | Agent 协作节奏与消息 | 临时 SQLite，`CoordinationRound`，两个 Agent 和一个协调者 | 覆盖五种轮次、原子关闭、取消、失效、父子投递、跨轮次问答、超时、互等和重放。所有后续执行使用原派发回执。 |
 | 定时轮次原子受理 | 临时 SQLite、受控时钟、真实 scheduler，配置 Thread 与无自身 Thread 的 Work Item，注入提交前及提交后应答前退出 | 提交前退出由未受理时段策略处理。提交后核对一次终态 `succeeded` 及同事务的轮次和事件，或一次终态 `skipped` 及稳定原因。重复调度复用原回执，轮次恢复原截止时间。覆盖工作项目标不可用和权限撤销，轮次创建的 Runner 启动计数为零。 |
+| 自研切换与回退 | 候选 Daemon、稳定 Daemon、SQLite 一致性快照和故障注入 | 候选操作回执、撤权、store/auth epoch、旧 cursor、unknown outcome 在回退后可对账。未完成对账前不重派发，外部效果无重复。 |
+| 发行版本组合 | 冻结的上一版/候选版 Daemon、SDK、CLI、MCP bridge 和 Codex host | 双向升级顺序、待决请求、审批、cursor 和撤权均有证据。未支持组合拒绝新副作用并保留原收据恢复。 |
 | 审议与执行边界 | 固定候选、scripted Provider、真实 Daemon 和两个客户端 | 按配置开启审议后能查触发依据，事实解决则直接汇总。开票时封存候选与证据，平票后保留结果和裁决依据。覆盖票不足、必需检查失败、重启、取消和候选变化。审批、Verify、Review 和交付保持各自的证据要求。 |
 
 ### 三个实际开发任务
@@ -166,5 +181,9 @@ corepack pnpm --filter @ling-stack/api-client typecheck:ci
 | 7 | 在不同 Run 重复报告同一个失败并尝试换 Agent 继续。随后提交一份相关新证据。 | 同一个阻塞和决策保持统一归属。重试、用量和停滞计数跨 Run 可查，达到限额后留下负责人与恢复条件。收到新证据时重新判断剩余预算和可继续的步骤。 |
 | 8 | 日/周调度在事务提交前或提交后回复前崩溃，重启并重放同一个 `automationId + scheduledFor`。 | 错过时段策略仅作用于未受理时段。已提交时段返回同一回执和轮次或跳过理由，既有轮次按原截止时间恢复。以数据库记录和实际启动计数核对全部效果。 |
 | 9 | 客户端在状态已持久化、回复尚未到达时断开，随后从原游标或当前快照接回。 | 两端可以核对简报、当前计划、消息、交接、票数和决定。重发复用原逻辑回执，实际派发计数以原 Workflow 受理记录为准。 |
+| 10 | 一个 Work Item 同时有 P02、QA、临时审议、静默 Automation 和待投递 Delivery。用户提交 pause，随后 Daemon 重启，再提交 resume。 | pause 先挡住所有新准入，原所有者分别安全收尾。unknown effect 和旧 Plan hold 保留。resume 只恢复当前可准入步骤，不重复派发独立 effort。 |
+| 11 | 候选修改测试选择器和断言但让同一 pnpm test 退出成功。另以冻结可信验证器运行当前候选。 | 旧验证不满足 Goal。验证器 basis、coverage 和 producer refs 可查，可信检查或新接受版本替代后才解除阻塞。人工结案单独标记。 |
+| 12 | 候选版本写入 GitHub 操作回执后终止，恢复稳定版和切换前 SQLite 快照。用旧 cursor 和已撤销控制器连接。 | 恢复时旋转 store/auth epoch，旧 cursor 和撤销控制器失效。effect/receipt/revocation journal 先完成 reconciliation，同一外部效果只归属一次。 |
+| 13 | 用上一版/候选版 Daemon、SDK、CLI、MCP bridge 双向连接，制造待决控制和审批后断线。 | 支持矩阵决定能否继续控制。未支持组合拒绝新副作用，原 Run、审批和收据仍能由受支持版本恢复。 |
 
-同组回归覆盖问答互等、过期或越权、轮次关闭并发、候选漂移、必需检查仍失败、审批待处理和外部副作用结果未知。单独覆盖停止与在途指导在同一 Turn 的并发顺序、提议改动被撤回及后继计划已接受时旧输入的处理。跨 Thread 接手时，验证仅有旧 Thread 授权的客户端按原范围回放，新的执行引用和内容由相应授权决定。按授权记录工作项、阶段和接受版本、候选摘要、源证据、投递、交接、裁决、调度和派发回执，作为 G 的联合发布证据。
+同组回归覆盖问答互等、过期或越权、轮次关闭并发、候选漂移、必需检查仍失败、审批待处理和外部副作用结果未知。单独覆盖停止与在途指导在同一 Turn 的并发顺序、提议改动被撤回及后继计划已接受时旧输入的处理。跨 Thread 接手时，验证仅有旧 Thread 授权的客户端按原范围回放，新的执行引用和内容由相应授权决定。按授权记录工作项、阶段和接受版本、候选摘要、源证据、投递、交接、裁决、调度和派发回执，作为 G 的联合发布证据。O9 还必须完成第 10 至 13 项控制、验证、回退和兼容性回归。

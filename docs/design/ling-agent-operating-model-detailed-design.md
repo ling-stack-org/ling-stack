@@ -239,6 +239,24 @@ When the next automatic step exceeds the allowance, or the blocker needs a user 
 
 ## 5. Team Attention and Speaker Leases
 
+### 4.6 Work Item Control
+
+Work Item control is a durable admission latch over the current accepted Work Item lineage. It reuses the existing Task, Turn, Workflow, Run, Approval, Delivery and Automation owners. It does not create a second execution state machine.
+
+The control owner stores one control receipt, control generation, requested action and reason for the current Work Item revision. Actions are pause, resume and cancel. A pause blocks new Tool, Run, Workflow, continuation, paid deliberation, Delivery and Automation admissions that target the paused lineage. Existing owners are asked to reach safe boundaries. A cancel blocks the same admissions and settles or reconciles already accepted effects before the lineage becomes cancelled. An independent effort with its own accepted scope is not stopped unless its own control is addressed.
+
+The effective projection is active, pausing, paused, cancelling, cancelled or blocked. A control request returns its receipt after the latch is committed. It includes unresolved owner receipts, pending approvals, unknown effects, queued deliveries and the recovery owner. Every admission checks the current Work Item revision and control generation. A stale control or old queue item returns the current projection and cannot clear a newer hold.
+
+Pause and cancel use idempotent requests with the Work Item, expected revision, expected control generation and caller grant. The control transaction appends the Control Plane event before asking each original owner to stop or reconcile. The owners keep their existing fence and effect semantics. Restart restores the latch before any new admission. Resume creates a new control generation only after the current Plan, Goal, Worktree, permissions, unresolved effect and independent requirement holds are revalidated. Resume does not clear a Plan admission hold, restart a cancelled step or replay an unknown external action.
+
+The App Server capability is workItem.control. It exposes workItem/pause, workItem/resume and workItem/cancel plus workItem/control/updated. A client can inspect the current control receipt and blocker through workItem/read. The user-visible state distinguishes a requested stop, a safe drain, a settled cancellation and an unresolved effect.
+
+### 4.7 Work Item and Thread Retention
+
+Thread hard-delete preview and commit must recheck the current Work Item relationships in one transaction. The delete is blocked when a current Plan, Goal acceptance, pending approval, active continuation, required evidence, accepted Workflow, Delivery or unknown effect still relies on that Thread. The caller must first rehome the current basis to another authorized Thread, archive the Work Item, or settle the owner effect. Historical references can become unavailable tombstones under the source retention policy, with their content and grants removed from projections.
+
+The delete transaction compares the preview revision with the current Thread and Work Item dependency revisions. A stale preview cannot delete a newly linked successor or active delivery. A permitted delete emits a scoped tombstone and revokes Thread-derived projections while keeping the Work Item receipt and source identity addressable to callers that still have Work Item authority.
+
 The Attention Graph reads Work Item type, source, explicit mentions, active owner, Agent capability, current workload, risk and policy. It writes an `AttentionPlan` with observers, context depth, latency budget and review requirement.
 
 The Speaker Lease is a short-lived durable projection tied to a Thread Turn. It contains speaker Agent id, source Turn, expected message revision and expiry. A speaker can publish one visible reply through the normal conversation input owner. Late or duplicate replies become folded observer evidence.
@@ -718,6 +736,8 @@ workItem/list
 workItem/accept
 workItem/clarify
 workItem/cancel
+workItem/pause
+workItem/resume
 workItem/subscribe
 workItem/unsubscribe
 workItem/delivery/read
@@ -763,6 +783,7 @@ Notifications use the existing event envelope and include `workItemId`, `workIte
 
 ```text
 workItem/created
+workItem/control/updated
 workItem/thread/linked
 workItem/claimed
 workItem/status/changed

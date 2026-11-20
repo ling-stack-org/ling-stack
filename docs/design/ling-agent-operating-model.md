@@ -96,6 +96,12 @@ An explicit authorized change to the running scope holds affected new writes and
 
 ## 5. Intake and Autonomous Work
 
+### 4.6 Work Item Control
+
+A Work Item can be paused, resumed or cancelled as one durable control action. Pause blocks new work in the current lineage while existing owners reach safe boundaries. Cancel keeps the lineage closed until accepted effects settle or are reconciled. The user sees the control receipt, remaining owners and unknown effects. Independently accepted work has its own control.
+
+Thread deletion checks current Work Item, Plan, Goal, approval, evidence and Delivery dependencies before removing the conversation basis. Historical references can remain as scoped tombstones.
+
 Task intake normalizes work from configured sources and checks identity, scope and duplicates. Autonomous work lets a workspace bring an eligible item to Ling Agent without a new user message for every item. Configure it per source, such as one GitHub repository and a required label, an opted-in channel, or an automation trigger.
 
 | Source setting | Behavior |
@@ -263,3 +269,5 @@ The product can expose a task inbox, but it must preserve the same Thread, Goal,
 19. A message receives a delivery milestone from verified input acceptance. A handoff shows separate acceptance, admission and start milestones, and recovery resumes the same target owner across either crash window.
 20. Repeated reports of a blocker share one progress record. Cross-Run retries use the current continuation budget and pause with a recovery condition when it is exhausted.
 21. Authorized inputs from distinct sources that explicitly target the same work share one default Work Item and initial dispatch. Independent work for the same target carries its own accepted scope and receipt.
+22. Work Item pause, resume and cancellation stop new admissions across linked Workflow, deliberation, Automation and Delivery owners, preserve in-flight effect reconciliation, and recover the control generation after restart.
+23. A Thread hard-delete preview and commit cannot remove the current basis of an active or pending Work Item. Permitted deletion leaves scoped historical tombstones.
