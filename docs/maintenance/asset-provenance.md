@@ -2,7 +2,7 @@
 
 Status: source publication inventory; project artwork origin confirmed by maintainer
 Owner: repository maintainers
-Last verified: 2026-10-10
+Last verified: 2026-11-20
 Document type: repository governance
 
 This inventory covers tracked images, icons, and font files. The MIT source license and
@@ -12,9 +12,9 @@ still confirm authority to publish the underlying artwork.
 
 ## Inventory
 
-The reviewed source baseline contains 67 image/icon files and no tracked font files in
-the surveyed extensions (`png`, `jpg`, `jpeg`, `svg`, `webp`, `ico`, `icns`, `woff`,
-`woff2`, `ttf`, `otf`). The new public homepage capture brings this batch to 68 files.
+The original review covered 67 image/icon files and no tracked font files in the
+surveyed extensions (`png`, `jpg`, `jpeg`, `svg`, `webp`, `ico`, `icns`, `woff`,
+`woff2`, `ttf`, `otf`). The public homepage capture brought that batch to 68 files.
 Dependency and generated build fonts are covered by the license and binary inventories,
 not by this tracked-file count.
 
@@ -29,11 +29,15 @@ not by this tracked-file count.
 | Desktop preview test baselines | 34 | Visual acceptance fixtures under `apps/desktop/tests/screenshots/computer-use-preview/darwin-arm64/`; preserve these as test evidence. They are not end-user feature acceptance or a product demo. |
 | Web design evidence | 7 | Theme/profile screenshots under `docs/design/ui2.0升级/evidence/`; historical visual evidence, not a current product demo. |
 | Public homepage screenshot | 1 | [Fresh workspace capture](../assets/ling-workspace-home.jpg), recaptured on 2026-10-17 from the local Web UI at merge commit `cd7d9d83bf3b13ac3b8b68c99f343e51a01a6e56`, with the English interface, Ling Light theme, and a non-secret demonstration model selected. No real task, personal workspace path, API key, or external model request is shown. |
+| Homepage promotional artwork | 3 | [README banner](../assets/ling-stack-banner.jpg), [English share card](../assets/ling-stack-share-en.jpg), and [Chinese share card](../assets/ling-stack-share-zh-CN.jpg). The layered glass illustration was generated with OpenAI ImageGen in Codex on 2026-11-20. The exports pair it with the project mark and typeset copy. |
+| Project review explainer | 3 | [Channel screenshot](../assets/ling-project-review-channel-fixture.jpg), [English explainer](../assets/ling-project-review-en.jpg), and [Chinese explainer](../assets/ling-project-review-zh-CN.jpg). The screenshot was captured from the English Web UI with Playwright mock-daemon messages based on the [public Team Notes sample](../../examples/project-review/README.md) on 2026-11-20. The explainers place the capture and typeset labels on a dark glass backdrop generated with OpenAI ImageGen in Codex. |
+| Companion illustration | 1 | [Yui character concept](../assets/ling-stack-companion-banner.jpg). The portrait was generated with OpenAI ImageGen in Codex on 2026-11-20 using artwork derived from the supplied character design. The banner pairs the illustration with the project mark and typeset name. |
+| Companion character design template | 1 | [Yui character design template](../design/assets/yui-character-design-template.png), supplied by the maintainer on 2026-11-20. The repository retains the original 1536 × 1024 PNG as the visual reference for future companion artwork. |
 | Current scene backgrounds | 6 | Breeze: generated in-house on 2026-10-29 (`forest-clearing-v1.webp`, 1672×941, 317870 bytes) to replace a user-supplied forest illustration whose author and public redistribution license were never established; the generated artwork carries no third-party attribution obligation and both `forest-sky-v3*` files were deleted. Previous Wikimedia photo and rejected StockCake candidate retain their historical CC BY-SA 4.0/CC0 records. Ocean: existing StockCake summer manga (source-declared CC0). Night: user-selected Titanfall 2 valley artwork, downloaded 3840×2160 without upscaling; copyrighted, public redistribution clearance open. Three complete static WebP files and same-source thumbnails. Exact dimensions, hashes, prompt and processing: [`scene-themes-v7.sources.json`](../../apps/web/public/themes/scene-themes-v7.sources.json); Ocean/Night detail remains in [`scene-themes-v6.sources.json`](../../apps/web/public/themes/scene-themes-v6.sources.json). Theme-code MIT does not cover supplied or game artwork. |
 | Historical Night photographic background | 2 | `rain-window-v2.webp` and its thumbnail are retained with Marrik / CC BY-SA 4.0 attribution; historical source/export hashes remain in [`scene-themes-v3.sources.json`](../../apps/web/public/themes/scene-themes-v3.sources.json). |
 | Historical Ocean photographic background | 2 | `salt-coast-v1.webp` and its thumbnail are retained with CC BY-SA 4.0 attribution; their hashes and author remain in [`photographic-scenes-v2.sources.json`](../../apps/web/public/themes/photographic-scenes-v2.sources.json). These files no longer provide the current Ocean scene. |
 
-The current homepage image is an unedited browser capture at 1280 x 800, taken from
+The fresh-workspace image is an unedited browser capture at 1280 x 800, taken from
 source commit `cd7d9d83bf3b13ac3b8b68c99f343e51a01a6e56` using an isolated fresh
 workspace. Product language was changed through Settings > Interface preferences >
 Product language. The selected model uses a public service label without a real API key,
