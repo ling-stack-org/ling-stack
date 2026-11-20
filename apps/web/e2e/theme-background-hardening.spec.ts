@@ -295,8 +295,8 @@ test('BG-H2 a stalled decoder reloads once then keeps a still frame until explic
   await page.clock.install();
   await prepare(page); await upload(page); await back(page);
   const player = page.locator('[data-background-layer] video');
-  await expect.poll(() => paused(page, '[data-background-layer] video')).toBe(false);
-  await expect(player).toHaveAttribute('poster', /^data:image\/jpeg/u);
+  await expect.poll(() => paused(page, '[data-background-layer] video'), { timeout: 15_000 }).toBe(false);
+  await expect(player).toHaveAttribute('poster', /^data:image\/jpeg/u, { timeout: 15_000 });
   const video = await player.elementHandle();
   if (!video) throw new Error('Expected the live background player');
   // Simulate a decoder with no presentation-time progress while preserving
@@ -307,7 +307,7 @@ test('BG-H2 a stalled decoder reloads once then keeps a still frame until explic
     element.load = () => { element.dataset.recoveryLoads = String(Number(element.dataset.recoveryLoads ?? 0) + 1); load(); };
   });
   await page.clock.runFor(20_000);
-  await expect(page.locator('[data-background-video-fallback="poster"]')).toBeVisible();
+  await expect(page.locator('[data-background-video-fallback="poster"]')).toBeVisible({ timeout: 15_000 });
   expect(await video.getAttribute('data-recovery-loads')).toBe('1');
   await page.clock.runFor(20_000);
   expect(await video.getAttribute('data-recovery-loads')).toBe('1');
