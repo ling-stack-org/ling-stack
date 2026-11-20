@@ -10,6 +10,9 @@
     <a href="README.es-ES.md">Español</a> · Português (Brasil)
   </p>
   <p>
+    <a href="#roteiro-entre-dispositivos">Roteiro entre dispositivos</a>
+  </p>
+  <p>
     <img alt="Alpha a partir do código-fonte" src="https://img.shields.io/badge/Status-source_alpha-5964a0.svg" />
     <a href="LICENSE"><img alt="Licença: MIT" src="https://img.shields.io/badge/License-MIT-08765d.svg" /></a>
     <img alt="Node.js 22.22.1+" src="https://img.shields.io/badge/Node.js-22.22.1%2B-3c873a.svg" />
@@ -34,6 +37,22 @@ Você precisa configurar seu próprio provedor e fornecer sua chave de API. Os c
 
 Esta captura real mostra a interface em inglês de um espaço local novo, antes da configuração de um modelo.
 Ela ilustra o layout, não uma tarefa concluída. Siga o guia acima para experimentar sua primeira colaboração.
+
+## Roteiro entre dispositivos
+
+O roteiro leva as tarefas de dispositivos para uma conversa do Ling. Um PC, telefone ou host de borda pode coordenar a tarefa, enquanto o host com uma conexão autorizada ao dispositivo executa e verifica o trabalho.
+
+![Cena conceitual azul-violeta com notebook, telefone, unidade principal, sensor doméstico e placa de desenvolvimento](docs/assets/ling-device-roadmap.jpg)
+
+*Conceito de teste de conexão da unidade principal. Peça uma verificação no PC e aprove o teste em um telefone emparelhado.*
+
+- No **PC**, crie e teste projetos ou diagnostique um sistema compatível.
+- No **celular**, acompanhe e aprove tarefas de um PC emparelhado ou conecte periféricos compatíveis diretamente.
+- Em uma **casa inteligente**, consulte o estado dos dispositivos e diagnostique problemas pelo Home Assistant.
+- Em uma **unidade principal Android** compatível, instale e valide aplicativos com o veículo estacionado.
+- Em uma **bancada de hardware**, capture e decodifique dados de protocolo e verifique a resposta do dispositivo.
+
+**Fase de design.** Consulte o [design entre dispositivos](docs/design/ling-device-fabric.md) e o [plano de implementação e aceitação de dispositivos](docs/design/ling-device-support-platform-implementation-plan.md).
 
 ## Para quem é o Ling Stack?
 

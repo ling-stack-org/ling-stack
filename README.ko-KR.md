@@ -10,6 +10,9 @@
     <a href="README.es-ES.md">Español</a> · <a href="README.pt-BR.md">Português (Brasil)</a>
   </p>
   <p>
+    <a href="#크로스-디바이스-로드맵">크로스 디바이스 로드맵</a>
+  </p>
+  <p>
     <img alt="소스 코드 알파" src="https://img.shields.io/badge/Status-source_alpha-5964a0.svg" />
     <a href="LICENSE"><img alt="라이선스: MIT" src="https://img.shields.io/badge/License-MIT-08765d.svg" /></a>
     <img alt="Node.js 22.22.1+" src="https://img.shields.io/badge/Node.js-22.22.1%2B-3c873a.svg" />
@@ -34,6 +37,22 @@ Ling Stack은 이를 프로젝트 채널에 모읍니다. 팀원에게 모델과
 
 모델 설정 전의 로컬 작업 공간을 실제로 촬영한 영어 UI입니다. 이 이미지는 작업 공간의 배치를 보여 주며, 작업이 완료되었다는 증거는 아닙니다.
 위의 검토 가이드로 첫 협업을 시작할 수 있습니다.
+
+## 크로스 디바이스 로드맵
+
+이 로드맵은 디바이스 작업을 Ling 대화로 가져옵니다. PC, 휴대폰 또는 엣지 호스트가 작업을 조정하고, 디바이스에 인증된 연결을 가진 호스트가 실행과 검증을 담당합니다.
+
+![노트북, 휴대폰, 헤드 유닛, 스마트 홈 센서와 개발 보드가 있는 청보라색 콘셉트 장면](docs/assets/ling-device-roadmap.jpg)
+
+*헤드 유닛 연결 테스트 콘셉트입니다. PC에서 연결 확인을 요청하고 페어링된 휴대폰에서 테스트를 승인합니다.*
+
+- **PC**에서 프로젝트를 빌드하고 테스트하거나 지원되는 시스템을 진단합니다.
+- **모바일**에서 페어링된 PC의 작업을 확인하고 승인하거나 지원되는 주변 장치에 직접 연결합니다.
+- **스마트 홈**에서 Home Assistant로 디바이스 상태를 확인하고 문제를 진단합니다.
+- 호환되는 **Android 헤드 유닛**에 차량을 정차한 상태에서 앱을 설치하고 검증합니다.
+- **하드웨어 벤치**에서 프로토콜 데이터를 캡처하고 디코딩하여 디바이스 응답을 검증합니다.
+
+**설계 단계입니다.** [크로스 디바이스 설계](docs/design/ling-device-fabric.md)와 [구현 및 디바이스 인수 계획](docs/design/ling-device-support-platform-implementation-plan.md)을 확인하세요.
 
 ## 누구를 위한 도구인가요?
 

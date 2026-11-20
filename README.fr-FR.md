@@ -10,6 +10,9 @@
     <a href="README.es-ES.md">Español</a> · <a href="README.pt-BR.md">Português (Brasil)</a>
   </p>
   <p>
+    <a href="#feuille-de-route-multi-appareil">Feuille de route multi-appareil</a>
+  </p>
+  <p>
     <img alt="Alpha depuis les sources" src="https://img.shields.io/badge/Status-source_alpha-5964a0.svg" />
     <a href="LICENSE"><img alt="Licence : MIT" src="https://img.shields.io/badge/License-MIT-08765d.svg" /></a>
     <img alt="Node.js 22.22.1+" src="https://img.shields.io/badge/Node.js-22.22.1%2B-3c873a.svg" />
@@ -34,6 +37,22 @@ Votre propre configuration de fournisseur et votre clé API sont nécessaires. L
 
 Cette capture réelle montre l'interface anglaise d'un espace local neuf, avant la configuration d'un modèle.
 Elle illustre l'organisation de l'espace, pas une tâche achevée. Suivez le guide ci-dessus pour votre première collaboration.
+
+## Feuille de route multi-appareil
+
+La feuille de route fait entrer les tâches liées aux appareils dans une conversation Ling. Un PC, un téléphone ou un hôte périphérique peut coordonner la tâche, tandis que l'hôte disposant d'une connexion autorisée à l'appareil l'exécute et la vérifie.
+
+![Scène conceptuelle bleu-violet avec un ordinateur portable, un téléphone, une unité principale, un capteur domestique et une carte de développement](docs/assets/ling-device-roadmap.jpg)
+
+*Concept de test de connexion de l'unité principale. Demandez une vérification depuis le PC, puis approuvez le test sur un téléphone associé.*
+
+- Sur un **PC**, construisez et testez un projet ou diagnostiquez un système pris en charge.
+- Sur **mobile**, suivez et approuvez les tâches d'un PC associé ou connectez directement des périphériques pris en charge.
+- Dans une **maison connectée**, consultez l'état des appareils et diagnostiquez les problèmes avec Home Assistant.
+- Pour une **unité principale Android** compatible, installez et validez des applications lorsque le véhicule est à l'arrêt.
+- Sur un **banc matériel**, capturez et décodez les données de protocole et vérifiez la réponse de l'appareil.
+
+**Phase de conception.** Consultez la [conception multi-appareil](docs/design/ling-device-fabric.md) et le [plan d'implémentation et d'acceptation des appareils](docs/design/ling-device-support-platform-implementation-plan.md).
 
 ## À qui s'adresse Ling Stack ?
 
