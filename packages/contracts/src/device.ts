@@ -3,6 +3,15 @@ export type JsonValue = null | boolean | number | string | readonly JsonValue[] 
 export const DEVICE_CONTRACT_MAJOR_V1 = 1 as const;
 export const DEVICE_CONTRACT_VERSION_V1 = "1.0" as const;
 
+export function negotiateDeviceContractMajor(
+  localSupported: readonly number[],
+  remoteSupported: readonly number[],
+): typeof DEVICE_CONTRACT_MAJOR_V1 | undefined {
+  return localSupported.includes(DEVICE_CONTRACT_MAJOR_V1) && remoteSupported.includes(DEVICE_CONTRACT_MAJOR_V1)
+    ? DEVICE_CONTRACT_MAJOR_V1
+    : undefined;
+}
+
 export const DEVICE_KINDS_V1 = [
   "pc",
   "linux",

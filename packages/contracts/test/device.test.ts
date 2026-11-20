@@ -7,6 +7,7 @@ import {
   isDeviceActionRequestV1,
   isDeviceCapabilitySnapshotV1,
   isDeviceIdentityV1,
+  negotiateDeviceContractMajor,
 } from "../dist/device.js";
 
 const identity = {
@@ -125,4 +126,9 @@ test("display metadata is additive while unknown wire fields remain rejected", (
     removalBehavior: "revoke_and_disconnect",
     displayMetadata: { unexpected: true },
   }), false);
+});
+
+test("device contract negotiation selects only the supported major", () => {
+  assert.equal(negotiateDeviceContractMajor([1, 2], [1]), 1);
+  assert.equal(negotiateDeviceContractMajor([2], [1]), undefined);
 });
