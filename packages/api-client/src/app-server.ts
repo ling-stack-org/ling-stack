@@ -1,11 +1,31 @@
 import type {
+  LingAppServerDoctorRunParams,
+  LingAppServerDoctorRunResult,
   LingAppServerCapability,
   LingAppServerInitializeParams,
   LingAppServerInitializeResult,
   LingAppServerJsonRpcId,
   LingAppServerNotificationMethod,
+  LingAppServerInstructionsInitParams,
+  LingAppServerInstructionsInitResult,
+  LingAppServerReviewFindingUpdateParams,
+  LingAppServerReviewFindingUpdateResult,
+  LingAppServerReviewStartParams,
+  LingAppServerReviewStartResult,
+  LingAppServerReviewStatusParams,
+  LingAppServerReviewStatusResult,
+  LingAppServerSimplifyStartParams,
+  LingAppServerSimplifyStartResult,
   LingAppServerSubscriptionParams,
   LingAppServerSubscriptionResult,
+  LingAppServerVerifyCancelParams,
+  LingAppServerVerifyCancelResult,
+  LingAppServerVerifyOperation,
+  LingAppServerVerifyPlanParams,
+  LingAppServerVerifyPlanResult,
+  LingAppServerVerifyStartParams,
+  LingAppServerVerifyStatusParams,
+  LingAppServerVerifyStatusResult,
   LingAppServerWorkItemSnapshot,
 } from "@ling-stack/contracts";
 
@@ -104,6 +124,56 @@ export class LingAppServerClient {
   async interruptTurn(params: Record<string, unknown>): Promise<unknown> {
     await this.connect();
     return await this.request("turn/interrupt", params);
+  }
+
+  async planVerification(params: LingAppServerVerifyPlanParams): Promise<LingAppServerVerifyPlanResult> {
+    await this.connect();
+    return await this.request("verify/plan", params);
+  }
+
+  async startVerification(params: LingAppServerVerifyStartParams): Promise<LingAppServerVerifyOperation> {
+    await this.connect();
+    return await this.request("verify/start", params);
+  }
+
+  async getVerificationStatus(params: LingAppServerVerifyStatusParams): Promise<LingAppServerVerifyStatusResult> {
+    await this.connect();
+    return await this.request("verify/status", params);
+  }
+
+  async cancelVerification(params: LingAppServerVerifyCancelParams): Promise<LingAppServerVerifyCancelResult> {
+    await this.connect();
+    return await this.request("verify/cancel", params);
+  }
+
+  async startReview(params: LingAppServerReviewStartParams): Promise<LingAppServerReviewStartResult> {
+    await this.connect();
+    return await this.request("review/start", params);
+  }
+
+  async getReviewStatus(params: LingAppServerReviewStatusParams): Promise<LingAppServerReviewStatusResult> {
+    await this.connect();
+    return await this.request("review/status", params);
+  }
+
+  async updateReviewFinding(params: LingAppServerReviewFindingUpdateParams): Promise<LingAppServerReviewFindingUpdateResult> {
+    await this.connect();
+    return await this.request("review/finding/update", params);
+  }
+
+  async startSimplify(params: LingAppServerSimplifyStartParams): Promise<LingAppServerSimplifyStartResult> {
+    await this.connect();
+    return await this.request("simplify/start", params);
+  }
+
+  async runDoctor(params: LingAppServerDoctorRunParams = {}): Promise<LingAppServerDoctorRunResult> {
+    await this.connect();
+    return await this.request("doctor/run", params);
+  }
+
+  async initializeInstructions(params: LingAppServerInstructionsInitParams): Promise<LingAppServerInstructionsInitResult> {
+    await this.connect();
+    return await this.request("instructions/init", params);
   }
 
   async readWorkItem(workspaceId: string, workItemId: string): Promise<LingAppServerWorkItemSnapshot> {
