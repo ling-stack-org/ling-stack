@@ -160,6 +160,7 @@ import { createCuaDriverGenerationBroker } from "./features/plugins/cua-driver-g
 import { WorkspaceFileCapabilityRegistry } from "./features/previews/workspace-file-capabilities.js";
 import { createCuaDriverDescriptor } from "./features/plugins/presets.js";
 import { RemoteAccessController } from "./features/remote-access/controller.js";
+import { createDeviceSupportRuntime } from "./features/device-support/runtime.js";
 import { EngineManagementFeature } from "./features/execution-engines/feature.js";
 import { DefaultRemoteReplyDispatcher } from "./features/remote-access/default-reply-dispatcher.js";
 import { HostCapabilityBridgeController } from "./features/runs/host-capability-bridge-controller.js";
@@ -1000,10 +1001,12 @@ export function createDaemonServer(
   const remoteAccessManagementCapability = dependencies.remoteAccessManagementCapability
     ?? process.env.LING_MOBILE_ACCESS_MANAGEMENT_CAPABILITY
     ?? randomBytes(32).toString("base64url");
+  const defaultWorkspaceStore = storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd);
+  const deviceSupport = createDeviceSupportRuntime({ databasePath: defaultWorkspaceStore.paths.databasePath });
   const remoteReplyDispatcher = dependencies.remoteReplyDispatcher === null
     ? undefined
     : dependencies.remoteReplyDispatcher ?? new DefaultRemoteReplyDispatcher({
-      store: storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd),
+      store: defaultWorkspaceStore,
       storeRegistry,
       runnerRegistry,
       activeRuns,
@@ -1017,13 +1020,14 @@ export function createDaemonServer(
       nativeRunDispatcher,
     });
   const remoteAccess = new RemoteAccessController({
-    store: storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd),
+    store: defaultWorkspaceStore,
     stateDir: dependencies.remoteAccessStateDir ?? defaultStoragePaths.user.stateDir,
     listenerPort: resolvedConfig.remoteAccess.listenerPort,
     workspaceDisplayName: defaultStoragePaths.workspace.identity.displayName,
     managementCapability: remoteAccessManagementCapability,
     managementAllowedOrigins: resolvedConfig.remoteAccess.managementAllowedOrigins,
     dispatcher: remoteReplyDispatcher,
+    deviceFacade: deviceSupport.remoteFacade,
   });
   const workspaceFileCapabilities = new WorkspaceFileCapabilityRegistry();
   // Terminal-QA human authority is independent of CU gate, live Run or lease.
@@ -1080,6 +1084,7 @@ export function createDaemonServer(
       ?? process.env.LING_DESKTOP_BRIDGE_TOKEN,
     computerUseTargetOwnershipTimeoutMs: dependencies.computerUseTargetOwnershipTimeoutMs,
     remoteAccess,
+    deviceSupport,
     engineManagement,
     nativeRunDispatcher,
     chromeBrowserSessions,
@@ -1168,6 +1173,7 @@ export function createDaemonServer(
     closeResources: async () => {
       await engineManagement.close();
       runtimeSupervisor.releaseAll();
+      deviceSupport.close();
       storeRegistry.closeAll();
       closeHostRunCapacity();
       harnessProjectionStores.clear();
