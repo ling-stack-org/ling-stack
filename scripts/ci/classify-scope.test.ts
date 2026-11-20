@@ -39,10 +39,16 @@ test("documentation-only changes use the fast lane", () => {
 });
 
 test("root localized READMEs accept BCP 47 language tags without accepting malformed names", () => {
-  for (const file of ["README.en.md", "README.sr-Latn.md", "README.es-419.md", "README.zh-Hant-TW.md"]) {
+  for (const file of [
+    "README.en.md", "README.sr-Latn.md", "README.es-419.md", "README.zh-Hant-TW.md",
+    "README.en-US-u-ca-gregory.md", "README.en-x-sample.md",
+  ]) {
     assert.equal(classify([file]).mode, "docs", file);
   }
-  for (const file of ["README.zh_CN.md", "README.中文.md", "README.1.md", "README.en.ts"]) {
+  for (const file of [
+    "README.zh_CN.md", "README.中文.md", "README.1.md", "README.en.ts",
+    "README.en-foo.md", "README.en-x.md", "README.en-US-u.md", "scripts/ci/README.en.md",
+  ]) {
     assert.equal(classify([file]).mode, "full", file);
   }
 });

@@ -261,11 +261,22 @@ function normalizeFiles(files) {
 
 /** @param {string} file */
 function isDocumentationPath(file) {
-  return file.startsWith("docs/")
+  if (file.startsWith("docs/")
     || DOCUMENTATION_ROOT_FILES.has(file)
-    || /^README\.[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*\.md$/u.test(file)
     || /(?:^|\/)README\.md$/iu.test(file)
-    || /^\.github\/(?:PULL_REQUEST_TEMPLATE\.md|PULL_REQUEST_TEMPLATE\/[^/]+\.md|CODEOWNERS|FUNDING\.yml)$/u.test(file);
+    || /^\.github\/(?:PULL_REQUEST_TEMPLATE\.md|PULL_REQUEST_TEMPLATE\/[^/]+\.md|CODEOWNERS|FUNDING\.yml)$/u.test(file)) {
+    return true;
+  }
+
+  const locale = /^README\.([A-Za-z0-9-]+)\.md$/u.exec(file)?.[1];
+  if (locale === undefined) return false;
+  try {
+    Intl.getCanonicalLocales(locale);
+    return true;
+  } catch (error) {
+    if (error instanceof RangeError) return false;
+    throw error;
+  }
 }
 
 /** @param {string} file */
