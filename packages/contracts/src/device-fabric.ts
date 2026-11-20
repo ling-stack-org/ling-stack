@@ -159,7 +159,17 @@ export interface DeviceContextPackV1 {
   readonly hypotheses: readonly JsonValue[];
   readonly observations: readonly string[];
   readonly untrustedTextRefs: readonly string[];
+  readonly factMetadata?: readonly DeviceContextFactMetadataV1[];
   readonly generatedAt: string;
+}
+
+export interface DeviceContextFactMetadataV1 {
+  readonly observationId: string;
+  readonly source: string;
+  readonly observedAt?: string;
+  readonly freshnessUntil?: string;
+  readonly quality: "good" | "degraded" | "stale" | "unknown";
+  readonly redactionClass: "public" | "sensitive" | "secret_adjacent";
 }
 
 export interface DeviceTraceSpanV1 {

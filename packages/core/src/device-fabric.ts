@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type {
   DeviceConformanceReportV1,
+  DeviceContextFactMetadataV1,
   DeviceContextPackV1,
   DeviceEventEnvelopeV1,
   DeviceBridgeFrameV1,
@@ -273,8 +274,18 @@ export class DeviceLifecycleManager {
 }
 
 export class DeviceContextBuilder {
-  build(input: { readonly contextId: string; readonly taskId: string; readonly maxBytes: number; readonly facts: readonly unknown[]; readonly hypotheses: readonly unknown[]; readonly observations: readonly string[]; readonly untrustedTextRefs: readonly string[]; readonly generatedAt: string }): DeviceContextPackV1 {
-    const pack: DeviceContextPackV1 = { contextId: input.contextId, taskId: input.taskId, maxBytes: input.maxBytes, facts: input.facts as DeviceContextPackV1["facts"], hypotheses: input.hypotheses as DeviceContextPackV1["hypotheses"], observations: input.observations, untrustedTextRefs: input.untrustedTextRefs, generatedAt: input.generatedAt };
+  build(input: { readonly contextId: string; readonly taskId: string; readonly maxBytes: number; readonly facts: readonly unknown[]; readonly hypotheses: readonly unknown[]; readonly observations: readonly string[]; readonly untrustedTextRefs: readonly string[]; readonly factMetadata?: readonly DeviceContextFactMetadataV1[]; readonly generatedAt: string }): DeviceContextPackV1 {
+    const pack: DeviceContextPackV1 = {
+      contextId: input.contextId,
+      taskId: input.taskId,
+      maxBytes: input.maxBytes,
+      facts: input.facts as DeviceContextPackV1["facts"],
+      hypotheses: input.hypotheses as DeviceContextPackV1["hypotheses"],
+      observations: input.observations,
+      untrustedTextRefs: input.untrustedTextRefs,
+      ...(input.factMetadata && input.factMetadata.length > 0 ? { factMetadata: input.factMetadata } : {}),
+      generatedAt: input.generatedAt,
+    };
     if (Buffer.byteLength(JSON.stringify(pack), "utf8") > input.maxBytes) throw new DeviceFabricError("revision_conflict", "device context pack exceeds its bound");
     return pack;
   }
@@ -289,16 +300,25 @@ export class DeviceContextBuilder {
       readonly quality: "good" | "degraded" | "stale" | "unknown";
       readonly redactionClass: "public" | "sensitive" | "secret_adjacent";
       readonly source: string;
+      readonly observedAt?: string;
+      readonly freshnessUntil?: string;
     }[];
     readonly generatedAt: string;
   }): DeviceContextPackV1 {
     const facts: unknown[] = [];
     const untrustedTextRefs: string[] = [];
+    const factMetadata: DeviceContextFactMetadataV1[] = [];
     const observationRefs = input.observations.map(observation => observation.id);
     for (const observation of input.observations) {
       const textual = typeof observation.value === "string";
-      const trusted = observation.quality === "good" && observation.redactionClass === "public" && !textual;
-      if (trusted) facts.push(observation.value);
+      const fresh = observation.freshnessUntil === undefined
+        ? true
+        : Number.isFinite(Date.parse(observation.freshnessUntil)) && Date.parse(observation.freshnessUntil) > Date.parse(input.generatedAt);
+      const trusted = observation.quality === "good" && observation.redactionClass === "public" && !textual && fresh;
+      if (trusted) {
+        facts.push(observation.value);
+        factMetadata.push({ observationId: observation.id, source: observation.source, ...(observation.observedAt ? { observedAt: observation.observedAt } : {}), ...(observation.freshnessUntil ? { freshnessUntil: observation.freshnessUntil } : {}), quality: observation.quality, redactionClass: observation.redactionClass });
+      }
       else untrustedTextRefs.push(observation.id);
     }
     return this.build({
@@ -309,6 +329,7 @@ export class DeviceContextBuilder {
       hypotheses: [],
       observations: observationRefs,
       untrustedTextRefs,
+      factMetadata,
       generatedAt: input.generatedAt,
     });
   }
