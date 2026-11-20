@@ -2,7 +2,7 @@
 
 Status: canonical documentation index
 Owner: repository maintainers
-Last verified: 2026-11-20 (Ling App Server, Ling Device Fabric and D14–D22, Ling Server Connectivity), 2026-11-19 (Ling Device Support Platform runtime, developer execution, and hardware protocol workbench designs indexed), 2026-11-18 (Ling Device Support Platform, 14-item delivery plan and Automations P2 plan indexed). Other delivery states retain their owners.
+Last verified: 2026-11-20 (Ling App Server and Agent Operating Model, Ling Device Fabric and D14–D22, Ling Server Connectivity), 2026-11-19 (Ling Device Support Platform runtime, developer execution, and hardware protocol workbench designs indexed), 2026-11-18 (Ling Device Support Platform, 14-item delivery plan and Automations P2 plan indexed). Other delivery states retain their owners.
 Document type: governance index
 Code and test anchors: each linked contract owns its anchors
 
@@ -96,6 +96,8 @@ Maintenance-only transition notes are kept in [Development Handoffs](../maintena
 - [Post-Compaction Workspace Undo](post-compaction-undo.md)
 - [Post-Compaction Snapshot Restore](post-compaction-snapshot-restore.md)
 - [Channel Team Operating System](channel-team-operating-system.md)
+- [Ling Agent Operating Model](ling-agent-operating-model.md)
+- [Ling Agent Operating Model Detailed Design](ling-agent-operating-model-detailed-design.md)
 - [Ling Agent Session](ling-agent-session.md)
 - [Ling Agent Terminal Report Protocol](ling-agent-terminal-report-protocol.md)
 - [Thread-First Work History](thread-first-work-history.md)

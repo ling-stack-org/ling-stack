@@ -6,6 +6,7 @@
 - **类型** 协议、执行、存储与恢复合同
 - **上位合同** [Ling App Server 与开发工作流](ling-app-server.md)
 - **交付计划** [实施计划与验收](ling-app-server-implementation-plan.md)
+- **跨域整合** [Ling Agent Operating Model](ling-agent-operating-model.md) · [整合详细设计](ling-agent-operating-model-detailed-design.md)
 - **代码锚点** [RPC](../../packages/daemon/src/server/rpc.ts) · [事件 Hub](../../packages/daemon/src/features/control-plane/events.ts) · [回放存储](../../packages/core/src/storage/sqlite/control-plane-store.ts) · [Thread 路由](../../packages/daemon/src/features/runs/thread-routes.ts) · [普通会话输入](../../packages/daemon/src/features/conversations/normal-conversation-input.ts)
 
 ## 1. 运行结构和兼容性

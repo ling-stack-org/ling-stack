@@ -43,6 +43,21 @@ flowchart LR
 | F2 Codex 接入与会话界面 | C2、E2、F1 | 给现成 Codex 提供本机 MCP 桥接和 CLI/skill 入口，并给富客户端提供直接订阅。用现有会话组件显示调用者、进度、审批、验证和交接。 | 从真实 Codex 发起和追踪任务，Ling 打开同一 Thread。审批可由用户操作，断线续订阅，跨客户端看到一致状态，递归委派拦截。 |
 | G 自研和发布验收 | C2、E2、F1、F2 | 执行下文矩阵，形成带候选版本的发布和自研准入证据。 | 真实 Provider 与代码任务、协议恢复、平台、安装和远程声明均有对应证据。 |
 
+## 补充整合工作包
+
+App Server 之外的团队、任务、外部 Agent 和 GitHub 设计不能各自形成第二套状态机。它们作为整合层接入已有合同，交付顺序如下。
+
+| 工作包 | 依赖 | 交付 | 合并前验收 |
+| --- | --- | --- | --- |
+| O1 Agent Work Item 与团队运营 | A2、D1、现有 Channel Team Operating System | `AgentWorkItem`、source identity、Goal/acceptance 绑定、claim/lease、speaker/observer projection、task inbox 方法和事件。 | Channel、Automation、GitHub、External Agent、Device node 的重复源只产生一个当前 Work Item。并发 claim、过期、重指派和取消留下可恢复事实。 |
+| O2 External Agent Federation | C2、现有 External Agent Runner Adapters | 外部 Agent 注册、能力握手、Work Item 提交、双向事件、审批/提问、重连、递归防止和 unknown outcome。 | Codex、Claude Code、LobeHub 或 ACP adapter 的 capability mismatch、断线、审批、取消、事件回放和重复 dispatch 均有结果。 |
+| O3 Task Inbox 与自治策略 | O1、Automations、Channel Team Operating System | 来源准入、主动接活、优先级、quiet hours、预算、重复领取、follow-up、source revision 和用户暂停。 | 自动 claim 只在当前策略和能力满足时发生。无关消息、重复 webhook、旧 source revision 和预算耗尽不会创建第二次执行。 |
+| O4 GitHub Delivery Loop | O1、E2、GitHub Automation | Issue/PR/CI source identity、head SHA 绑定、Verify/Review、PR update、merge acceptance、CI/review feedback 和 delivery reconciliation。 | 旧 head 的验证或 review 无法完成新 head。CI 失败形成同 Work Item 后续，merge 只在当前证据满足时完成 Goal。 |
+| O5 Memory/Skill Feedback | O1、E2、Memory/Skill review owners | Work Item provenance、Experience candidate、Memory/Skill/Channel review 和失效策略。 | 候选能追溯源 Run 与证据，拒绝/过期可见，推广不能扩大工具、审批、Provider 或工作区范围。 |
+| O6 Device Work Item Bridge | O1、Ling Device Fabric | 项目 Work Item 与设备图节点、owner host、WorkUnit、receipt 和跨设备反馈的映射。 | 项目协调者可显示设备节点进度，实际设备动作仍由 owner host 记录和恢复。设备断线不伪造项目成功。 |
+
+这些工作包对应 [Ling Agent Operating Model](ling-agent-operating-model.md) 和 [详细设计](ling-agent-operating-model-detailed-design.md)。它们补充 App Server 的协议方法，但不新增替代 Thread、Goal、Workflow、Run、Approval 或 Device Fabric 的独立执行系统。
+
 接口变更的代码所有权以现有目录为准。Contracts 管公共类型和解析，Core 管事务和证据索引，Daemon feature 管领域行为，`server` 管协议及传输，API Client/CLI 管连接及消费。前端控制与证据视图沿用共享会话组件和本地化目录。新文件按实际职责拆分。
 
 ## 跟着代码开工
@@ -93,6 +108,9 @@ corepack pnpm --filter @ling-stack/api-client typecheck:ci
 | 真实 Codex | 现成客户端 + 本机 MCP，另测 Typed Client 双向流 | 从 Codex 提交和控制授权任务，Ling 能打开同一会话。卡审批时提示用户，桥接重连保持游标，Typed Client 验证实时推送。 |
 | 平台与安装 | macOS/Linux 的 stdio/Unix socket/WS，Windows 的 stdio/WS。覆盖声明的远程 WSS 与实际发布客户端 | 记录目标 OS、架构、安装包、传输和认证方式、退出和资源清理结果。安装、签名、命令沙箱和真实远程路由结果各有证据。 |
 | 项目自研 | 以下三个真实任务，稳定工具链与候选实例隔离 | 代码行为和运行状态都能复核。记录任务完成、约束遗漏、人工纠正、使用的模型和验证结果。 |
+| Agent Work Item | 频道、GitHub、Automation、外部 Agent 和设备节点的统一收件箱 | source revision、claim、Goal、Run、Delivery 和反馈的事件顺序一致。重复源、并发认领、取消和回放覆盖同一 Work Item。 |
+| External Agent Federation | Typed Client、Codex bridge、受控 external runner | 能力、权限、Worktree、审批和事件回放保持一致。断线和 unknown outcome 不触发隐式重试。 |
+| GitHub Delivery | 临时仓库或受控测试仓库，固定 base/head SHA | Verify、Review、CI、PR update、merge acceptance 和失败反馈围绕当前 head SHA 形成闭环。 |
 
 ### 三个实际开发任务
 

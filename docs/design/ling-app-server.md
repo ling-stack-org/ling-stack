@@ -6,7 +6,7 @@
 - **类型** 产品与架构合同
 - **代码锚点** [Daemon RPC](../../packages/daemon/src/server/rpc.ts) · [普通会话入口](../../packages/daemon/src/features/conversations/routes.ts) · [Goal 验收](../../packages/core/src/storage/sqlite/goal-acceptance.ts)
 
-[协议与运行时详细设计](ling-app-server-detailed-design.md) · [实施计划与验收](ling-app-server-implementation-plan.md)
+[协议与运行时详细设计](ling-app-server-detailed-design.md) · [实施计划与验收](ling-app-server-implementation-plan.md) · [Agent Operating Model](ling-agent-operating-model.md) · [整合详细设计](ling-agent-operating-model-detailed-design.md)
 
 ## 用户可以做什么
 
