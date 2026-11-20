@@ -485,6 +485,43 @@ export class ExternalAgentFederationService {
   }
 }
 
+const federationByContext = new WeakMap<object, ExternalAgentFederationService>();
+
+/** Keep one federation ledger per daemon context so reconnecting App Server
+ * connections observe the same registration/task receipts. The daemon may
+ * replace this factory with a durable store-backed owner at composition time. */
+export function getExternalAgentFederation(context: object): ExternalAgentFederationService {
+  const existing = federationByContext.get(context);
+  if (existing) return existing;
+  const created = new ExternalAgentFederationService();
+  federationByContext.set(context, created);
+  return created;
+}
+
+export function externalAgentRpcError(error: unknown): Error & { readonly jsonRpcCode: number; readonly code: string } {
+  if (error instanceof ExternalAgentFederationError) {
+    const codeMap: Record<ExternalAgentFederationErrorCode, { readonly jsonRpcCode: number; readonly code: string }> = {
+      registration_not_found: { jsonRpcCode: -32040, code: "workspace_binding_invalid" },
+      registration_conflict: { jsonRpcCode: -32602, code: "invalid_params" },
+      capability_denied: { jsonRpcCode: -32021, code: "capability_denied" },
+      workspace_scope_denied: { jsonRpcCode: -32020, code: "authorization_required" },
+      task_not_found: { jsonRpcCode: -32040, code: "workspace_binding_invalid" },
+      task_conflict: { jsonRpcCode: -32030, code: "stale_revision" },
+      dispatch_depth_exceeded: { jsonRpcCode: -32021, code: "capability_denied" },
+      cursor_unavailable: { jsonRpcCode: -32070, code: "snapshot_required" },
+      authorization_changed: { jsonRpcCode: -32020, code: "authorization_required" },
+      unknown_outcome: { jsonRpcCode: -32060, code: "unknown_outcome" },
+      idempotency_conflict: { jsonRpcCode: -32031, code: "idempotency_conflict" },
+    };
+    const mapped = codeMap[error.code];
+    return Object.assign(new Error(error.message), mapped);
+  }
+  return Object.assign(new Error(error instanceof Error ? error.message : String(error)), {
+    jsonRpcCode: -32000,
+    code: "external_agent_error",
+  });
+}
+
 function validateRegistration(input: LingAppServerExternalAgentRegistration): LingAppServerExternalAgentRegistration {
   if (!input || typeof input !== "object") throw new ExternalAgentFederationError("registration_conflict", "External Agent registration is required.");
   for (const [name, value] of [["agentId", input.agentId], ["protocolVersion", input.protocolVersion], ["displayName", input.displayName], ["version", input.version]] as const) {
