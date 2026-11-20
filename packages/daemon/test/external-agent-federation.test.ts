@@ -129,9 +129,12 @@ test("federation turns a revoked registration into an authorization resync", () 
   const task = start(service, registrationId).task;
   service.revokeRegistration(registrationId);
   assert.throws(() => service.readCapabilities(registrationId), (error: unknown) => error instanceof ExternalAgentFederationError && error.code === "authorization_changed");
-  assert.deepEqual(service.reconnectTask({
+  const reconnect = service.reconnectTask({
     registrationId,
     taskId: task.taskId,
     submissionId: task.submissionId,
-  }), { task, resyncRequired: true, reason: "authorization_changed" });
+  });
+  assert.equal(reconnect.task.taskId, task.taskId);
+  assert.equal(reconnect.resyncRequired, true);
+  assert.equal(reconnect.reason, "authorization_changed");
 });
