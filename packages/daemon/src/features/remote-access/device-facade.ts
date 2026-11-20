@@ -88,6 +88,29 @@ function snapshotForTask(store: SqliteDeviceSupportStore, workspaceId: string, t
       ...(task.lastVerificationId ? { lastVerificationId: task.lastVerificationId } : {}),
       updatedAt: task.updatedAt,
       attemptIds: store.listAttempts(task.id).map(record => record.attempt.attemptId),
+      ...pendingApprovalPreview(store, task),
+    },
+  };
+}
+
+function pendingApprovalPreview(store: SqliteDeviceSupportStore, task: NonNullable<ReturnType<SqliteDeviceSupportStore["getTask"]>>): { readonly pendingApproval?: import("@ling-stack/contracts").RemoteDeviceApprovalPreviewV1 } {
+  const proposal = store.getActionProposal(task.id);
+  if (!proposal) return {};
+  const snapshot = store.getCapabilitySnapshot(proposal.request.capabilitySnapshotId);
+  const capability = snapshot?.capabilities.find(item => item.id === proposal.request.capabilityId);
+  if (!snapshot || !capability || capability.sideEffect === "read_only") return {};
+  return {
+    pendingApproval: {
+      actionId: proposal.request.actionId,
+      targetDeviceId: proposal.request.targetDeviceId,
+      capabilityId: proposal.request.capabilityId,
+      capabilitySchemaVersion: proposal.request.capabilitySchemaVersion,
+      capabilitySnapshotId: proposal.request.capabilitySnapshotId,
+      connectionRevision: snapshot.connectionRevision,
+      policyRevision: task.policyRevision ?? "device-policy-v1",
+      normalizedInputDigest: proposal.requestDigest,
+      sideEffect: capability.sideEffect,
+      ...(proposal.request.expectedVerification === undefined ? {} : { expectedVerification: proposal.request.expectedVerification }),
     },
   };
 }

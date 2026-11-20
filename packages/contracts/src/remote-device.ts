@@ -1,7 +1,9 @@
 import type {
+  CapabilitySideEffectV1,
   DeviceApprovalBindingV1,
   DeviceKindV1,
   DeviceTaskStatusV1,
+  JsonValue,
 } from "./device.js";
 
 export interface RemoteDeviceSummaryV1 {
@@ -30,6 +32,20 @@ export interface RemoteDeviceTaskSummaryV1 {
   readonly lastVerificationId?: string;
   readonly updatedAt: string;
   readonly attemptIds: readonly string[];
+  readonly pendingApproval?: RemoteDeviceApprovalPreviewV1;
+}
+
+export interface RemoteDeviceApprovalPreviewV1 {
+  readonly actionId: string;
+  readonly targetDeviceId: string;
+  readonly capabilityId: string;
+  readonly capabilitySchemaVersion: string;
+  readonly capabilitySnapshotId: string;
+  readonly connectionRevision: string;
+  readonly policyRevision: string;
+  readonly normalizedInputDigest: string;
+  readonly sideEffect: CapabilitySideEffectV1;
+  readonly expectedVerification?: JsonValue;
 }
 
 export interface RemoteDeviceTaskSnapshotV1 {

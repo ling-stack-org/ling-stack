@@ -10,6 +10,7 @@ import {
   type RemoteDeviceTaskStatusCommandV1,
   type RemoteDeviceSummaryV1,
   type RemoteDeviceTaskSummaryV1,
+  type RemoteDeviceApprovalPreviewV1,
   type JsonValue,
 } from "@ling-stack/contracts";
 import { RemoteProtocolError } from "../errors.js";
@@ -108,7 +109,7 @@ function validateDeviceSummary(value: unknown, path: string): RemoteDeviceSummar
 
 function validateDeviceTaskSummary(value: unknown, path: string): RemoteDeviceTaskSummaryV1 {
   const record = expectRecord(value, path);
-  assertStrictKeys(record, ["taskId", "ownerKind", "ownerId", "targetDeviceIds", "status", "updatedAt", "attemptIds"], ["currentActionId", "lastVerificationId"], path);
+  assertStrictKeys(record, ["taskId", "ownerKind", "ownerId", "targetDeviceIds", "status", "updatedAt", "attemptIds"], ["currentActionId", "lastVerificationId", "pendingApproval"], path);
   const targetDeviceIds = boundedIdentifierArray(record.targetDeviceIds, `${path}.targetDeviceIds`);
   const attemptIds = boundedIdentifierArray(record.attemptIds, `${path}.attemptIds`);
   return {
@@ -121,6 +122,24 @@ function validateDeviceTaskSummary(value: unknown, path: string): RemoteDeviceTa
     ...(record.lastVerificationId === undefined ? {} : { lastVerificationId: expectIdentifier(record.lastVerificationId, `${path}.lastVerificationId`) }),
     updatedAt: expectRfc3339(record.updatedAt, `${path}.updatedAt`),
     attemptIds,
+    ...(record.pendingApproval === undefined ? {} : { pendingApproval: validateApprovalPreview(record.pendingApproval, `${path}.pendingApproval`) }),
+  };
+}
+
+function validateApprovalPreview(value: unknown, path: string): RemoteDeviceApprovalPreviewV1 {
+  const record = expectRecord(value, path);
+  assertStrictKeys(record, ["actionId", "targetDeviceId", "capabilityId", "capabilitySchemaVersion", "capabilitySnapshotId", "connectionRevision", "policyRevision", "normalizedInputDigest", "sideEffect"], ["expectedVerification"], path);
+  return {
+    actionId: expectIdentifier(record.actionId, `${path}.actionId`),
+    targetDeviceId: expectIdentifier(record.targetDeviceId, `${path}.targetDeviceId`),
+    capabilityId: expectIdentifier(record.capabilityId, `${path}.capabilityId`),
+    capabilitySchemaVersion: expectIdentifier(record.capabilitySchemaVersion, `${path}.capabilitySchemaVersion`),
+    capabilitySnapshotId: expectIdentifier(record.capabilitySnapshotId, `${path}.capabilitySnapshotId`),
+    connectionRevision: expectIdentifier(record.connectionRevision, `${path}.connectionRevision`),
+    policyRevision: expectIdentifier(record.policyRevision, `${path}.policyRevision`),
+    normalizedInputDigest: expectIdentifier(record.normalizedInputDigest, `${path}.normalizedInputDigest`),
+    sideEffect: expectEnum(record.sideEffect, ["read_only", "reversible", "mutating", "irreversible", "critical"] as const, `${path}.sideEffect`),
+    ...(record.expectedVerification === undefined ? {} : { expectedVerification: validateJsonValue(record.expectedVerification, `${path}.expectedVerification`) }),
   };
 }
 
