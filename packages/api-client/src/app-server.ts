@@ -2,6 +2,16 @@ import type {
   LingAppServerDoctorRunParams,
   LingAppServerDoctorRunResult,
   LingAppServerCapability,
+  LingAppServerExternalAgentCapabilitiesParams,
+  LingAppServerExternalAgentCapabilitiesResult,
+  LingAppServerExternalAgentRegisterParams,
+  LingAppServerExternalAgentRegisterResult,
+  LingAppServerExternalAgentTaskCancelParams,
+  LingAppServerExternalAgentTaskCancelResult,
+  LingAppServerExternalAgentTaskReconnectParams,
+  LingAppServerExternalAgentTaskReconnectResult,
+  LingAppServerExternalAgentTaskStartParams,
+  LingAppServerExternalAgentTaskStartResult,
   LingAppServerInitializeParams,
   LingAppServerInitializeResult,
   LingAppServerJsonRpcId,
@@ -27,6 +37,10 @@ import type {
   LingAppServerVerifyStatusParams,
   LingAppServerVerifyStatusResult,
   LingAppServerWorkItemSnapshot,
+  LingAppServerWorkItemCollaborationAppendParams,
+  LingAppServerWorkItemCollaborationAppendResult,
+  LingAppServerWorkItemCollaborationReadParams,
+  LingAppServerWorkItemCollaborationReadResult,
 } from "@ling-stack/contracts";
 
 export interface LingAppServerSocket {
@@ -197,9 +211,52 @@ export class LingAppServerClient {
     return await this.request(`workItem/${action}`, input);
   }
 
+  async readWorkItemCollaboration(params: LingAppServerWorkItemCollaborationReadParams): Promise<LingAppServerWorkItemCollaborationReadResult> {
+    await this.connect();
+    return await this.request("workItem/collaboration/read", params);
+  }
+
+  async appendWorkItemCollaboration(params: LingAppServerWorkItemCollaborationAppendParams): Promise<LingAppServerWorkItemCollaborationAppendResult> {
+    await this.connect();
+    return await this.request("workItem/collaboration/append", params);
+  }
+
+  async readWorkItemDeliberation(params: Omit<LingAppServerWorkItemCollaborationReadParams, "kind">): Promise<LingAppServerWorkItemCollaborationReadResult> {
+    return await this.readWorkItemCollaboration({ ...params, kind: "deliberation" });
+  }
+
+  async readWorkItemCoordination(params: Omit<LingAppServerWorkItemCollaborationReadParams, "kind">): Promise<LingAppServerWorkItemCollaborationReadResult> {
+    return await this.readWorkItemCollaboration({ ...params, kind: "coordination" });
+  }
+
   async subscribe(params: LingAppServerSubscriptionParams): Promise<LingAppServerSubscriptionResult> {
     await this.connect();
     return await this.request("workItem/subscribe", params);
+  }
+
+  async registerExternalAgent(params: LingAppServerExternalAgentRegisterParams): Promise<LingAppServerExternalAgentRegisterResult> {
+    await this.connect();
+    return await this.request("externalAgent/register", params);
+  }
+
+  async readExternalAgentCapabilities(params: LingAppServerExternalAgentCapabilitiesParams): Promise<LingAppServerExternalAgentCapabilitiesResult> {
+    await this.connect();
+    return await this.request("externalAgent/capabilities/read", params);
+  }
+
+  async startExternalAgentTask(params: LingAppServerExternalAgentTaskStartParams): Promise<LingAppServerExternalAgentTaskStartResult> {
+    await this.connect();
+    return await this.request("externalAgent/task/start", params);
+  }
+
+  async reconnectExternalAgentTask(params: LingAppServerExternalAgentTaskReconnectParams): Promise<LingAppServerExternalAgentTaskReconnectResult> {
+    await this.connect();
+    return await this.request("externalAgent/task/reconnect", params);
+  }
+
+  async cancelExternalAgentTask(params: LingAppServerExternalAgentTaskCancelParams): Promise<LingAppServerExternalAgentTaskCancelResult> {
+    await this.connect();
+    return await this.request("externalAgent/task/cancel", params);
   }
 
   onNotification(listener: (notification: LingAppServerNotification) => void): () => void {

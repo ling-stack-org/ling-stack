@@ -120,6 +120,8 @@ export const LING_APP_SERVER_METHODS = [
   "github/delivery/reconcile",
   "workItem/evidence/read",
   "workItem/evidence/append",
+  "workItem/collaboration/read",
+  "workItem/collaboration/append",
   "workItem/deliberation/start",
   "workItem/deliberation/read",
   "workItem/deliberation/cancel",
@@ -180,6 +182,7 @@ export const LING_APP_SERVER_NOTIFICATION_METHODS = [
   "workItem/feedback/received",
   "workItem/control/updated",
   "workItem/evidence/updated",
+  "workItem/collaboration/updated",
   "workItem/deliberation/updated",
   "workItem/stage/updated",
   "workItem/brief/updated",
@@ -398,6 +401,103 @@ export interface LingAppServerWorkItemSnapshot {
   readonly holds: readonly LingWorkItemHold[];
   readonly currentExecutionRefs: readonly string[];
   readonly eventCursor?: string;
+}
+
+/** Durable collaboration records are append-only facts attached to a Work Item.
+ * The payload is owned by the record kind and is intentionally opaque to the
+ * transport so older clients can preserve records they do not understand. */
+export const LING_APP_SERVER_COLLABORATION_KINDS = [
+  "deliberation",
+  "stage",
+  "brief",
+  "coordination",
+  "message",
+  "question",
+  "handoff",
+] as const;
+
+export type LingAppServerCollaborationKind = (typeof LING_APP_SERVER_COLLABORATION_KINDS)[number];
+
+export const LING_APP_SERVER_COLLABORATION_ACTIONS = [
+  "created",
+  "updated",
+  "accepted",
+  "returned",
+  "closed",
+  "decided",
+  "cancelled",
+  "replied",
+  "started",
+] as const;
+
+export type LingAppServerCollaborationAction = (typeof LING_APP_SERVER_COLLABORATION_ACTIONS)[number];
+
+export interface LingAppServerWorkItemSourceRef {
+  readonly type: string;
+  readonly id: string;
+  readonly revision?: string;
+  readonly digest?: string;
+}
+
+export interface LingAppServerWorkItemCollaborationRecord {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly workItemId: string;
+  readonly collaborationRevision: number;
+  readonly workItemRevision: number;
+  readonly kind: LingAppServerCollaborationKind;
+  readonly action: LingAppServerCollaborationAction;
+  readonly actorId: string;
+  readonly payload: unknown;
+  readonly parentRecordId?: string;
+  readonly sourceRefs: readonly LingAppServerWorkItemSourceRef[];
+  readonly idempotencyKey: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface LingAppServerWorkItemCollaborationReadParams {
+  readonly cwd?: string;
+  readonly workItemId: string;
+  readonly kind?: LingAppServerCollaborationKind;
+  readonly afterRevision?: number;
+  readonly limit?: number;
+}
+
+export interface LingAppServerWorkItemCollaborationReadResult {
+  readonly workItemId: string;
+  readonly records: readonly LingAppServerWorkItemCollaborationRecord[];
+  readonly nextAfterRevision: number;
+}
+
+export interface LingAppServerWorkItemCollaborationAppendParams {
+  readonly cwd?: string;
+  readonly workItemId: string;
+  readonly expectedWorkItemRevision?: number;
+  readonly expectedCollaborationRevision?: number;
+  readonly kind: LingAppServerCollaborationKind;
+  readonly action: LingAppServerCollaborationAction;
+  readonly actorId: string;
+  readonly payload: unknown;
+  readonly parentRecordId?: string;
+  readonly sourceRefs?: readonly LingAppServerWorkItemSourceRef[];
+  readonly idempotencyKey: string;
+}
+
+export interface LingAppServerWorkItemCollaborationAppendResult {
+  readonly status: "appended" | "replayed";
+  readonly record: LingAppServerWorkItemCollaborationRecord;
+  readonly workItemRevision: number;
+}
+
+export interface LingAppServerDeliberationTriggerPolicyV1 {
+  readonly enabled: boolean;
+  readonly onPlanFormation: boolean;
+  readonly onDeclaredDecisionPoint: boolean;
+  readonly onConflictingRecommendations: boolean;
+  readonly onMaterialRequirementChange: boolean;
+  readonly minimumParticipants: number;
+  readonly maxRounds: number;
 }
 
 export interface LingAppServerServerRequest<Params = unknown> {

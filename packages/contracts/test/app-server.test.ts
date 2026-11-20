@@ -16,6 +16,8 @@ import type {
   LingAppServerExternalAgentRegistration,
   LingAppServerExternalAgentTaskSubmission,
   LingAppServerVerifyPlanResult,
+  LingAppServerWorkItemCollaborationAppendParams,
+  LingAppServerWorkItemCollaborationRecord,
 } from "../src/app-server.ts";
 
 test("App Server V1 exposes a unique method and notification registry", () => {
@@ -83,4 +85,37 @@ test("typed development and federation DTOs retain candidate and authorization l
   assert.equal(doctor.checks[0]?.category, "instructions");
   assert.equal(registration.workspaceScopes[0], "workspace-1");
   assert.equal(submission.workItemRevision, "rev-1");
+});
+
+test("collaboration DTOs preserve typed record lineage and CAS inputs", () => {
+  const record: LingAppServerWorkItemCollaborationRecord = {
+    id: "collab-record-1",
+    workspaceId: "workspace-1",
+    workItemId: "work-item-1",
+    collaborationRevision: 2,
+    workItemRevision: 4,
+    kind: "handoff",
+    action: "accepted",
+    actorId: "agent-b",
+    payload: { expectedOutput: "verification report" },
+    parentRecordId: "collab-record-0",
+    sourceRefs: [{ type: "run", id: "run-1", revision: "3" }],
+    idempotencyKey: "handoff-accept-1",
+    createdAt: "2026-11-21T00:00:00.000Z",
+    updatedAt: "2026-11-21T00:00:00.000Z",
+  };
+  const input: LingAppServerWorkItemCollaborationAppendParams = {
+    workItemId: record.workItemId,
+    expectedWorkItemRevision: record.workItemRevision,
+    expectedCollaborationRevision: record.collaborationRevision,
+    kind: record.kind,
+    action: record.action,
+    actorId: record.actorId,
+    payload: record.payload,
+    parentRecordId: record.parentRecordId,
+    sourceRefs: record.sourceRefs,
+    idempotencyKey: record.idempotencyKey,
+  };
+  assert.equal(input.expectedCollaborationRevision, 2);
+  assert.equal(record.sourceRefs[0]?.type, "run");
 });
