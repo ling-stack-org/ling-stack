@@ -34,6 +34,8 @@ const workItemStatuses = [
   "review",
   "blocked",
   "done",
+  "cancelled",
+  "superseded",
   "archived",
 ] as const satisfies readonly WorkItemStatus[];
 
