@@ -32,7 +32,9 @@ function classify(files: string[], extra: Partial<ScopeInput> = {}) {
 }
 
 test("documentation-only changes use the fast lane", () => {
-  assert.equal(classify(["README.md", "packages/core/README.md", "docs/assets/preview.png"]).mode, "docs");
+  assert.equal(classify([
+    "README.md", "README.zh-CN.md", "packages/core/README.md", "docs/assets/preview.png",
+  ]).mode, "docs");
 });
 
 test("review templates and nested READMEs are documentation before broad infrastructure rules", () => {
@@ -114,7 +116,7 @@ test("maintenance exceptions do not weaken unknown paths or explicit full runs",
 });
 
 test("documentation mixed with source changes uses affected packages", () => {
-  const scope = classify(["docs/ci.md", "packages/providers/src/index.ts"]);
+  const scope = classify(["docs/ci.md", "README.zh-CN.md", "packages/providers/src/index.ts"]);
   assert.equal(scope.mode, "affected");
   assert.deepEqual(scope.packages, ["@ling-stack/cli", "@ling-stack/daemon", "@ling-stack/providers"]);
 });
