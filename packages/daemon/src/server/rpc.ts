@@ -265,6 +265,14 @@ class RpcConnection {
           methods: LING_APP_SERVER_METHODS,
           notifications: LING_APP_SERVER_NOTIFICATION_METHODS,
         };
+      case "workspace/list":
+        return { workspaces: [{ workspaceId: DEFAULT_WORKSPACE_ID, cwd: this.defaultCwd }] };
+      case "workspace/read":
+        return { workspaceId: DEFAULT_WORKSPACE_ID, cwd: readRpcCwd(readParamsRecord(params), this.defaultCwd) };
+      case "provider/list":
+        return this.readControlPlaneDomain(params, "providers");
+      case "skill/list":
+        return this.readControlPlaneDomain(params, "skills");
       case "thread/start":
         return this.startThread(params);
       case "thread/read":
@@ -365,6 +373,13 @@ class RpcConnection {
       limit: readOptionalIntegerField(record, "limit"),
     }, new Date().toISOString());
     return { cwd, workItems: items.map(item => projectWorkItemSnapshot(item)) };
+  }
+
+  private readControlPlaneDomain(params: unknown, domain: ControlPlaneDomain): unknown {
+    const record = readParamsRecord(params);
+    const cwd = readRpcCwd(record, this.defaultCwd);
+    const snapshot = buildControlPlaneSnapshot(this.context, { cwd, domains: [domain] });
+    return { cwd, workspaceId: snapshot.workspaceId, domain, snapshot: snapshot.domains[domain] };
   }
 
   private createWorkItem(params: unknown): unknown {
