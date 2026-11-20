@@ -162,6 +162,11 @@ export class DeviceCapabilityBroker {
     return this.store.createTask(task.policyRevision ? task : { ...task, policyRevision: this.policyRevision }, this.now());
   }
 
+  proposeAction(request: DeviceActionRequestV1): void {
+    if (!isDeviceActionRequestV1(request)) throw new DeviceBrokerError("invalid_request", "device action request is invalid");
+    this.store.saveActionProposal(request, digestRequest(request), this.now());
+  }
+
   async execute(request: DeviceActionRequestV1, signal?: AbortSignal, options: DeviceExecuteOptions = {}): Promise<DeviceSupportStoreAttemptRecord> {
     if (!isDeviceActionRequestV1(request)) {
       throw new DeviceBrokerError("invalid_request", "device action request is invalid");

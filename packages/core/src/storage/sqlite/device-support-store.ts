@@ -135,6 +135,22 @@ export class SqliteDeviceSupportStore {
     return task;
   }
 
+  saveActionProposal(request: DeviceActionRequestV1, requestDigest: string, now: string): void {
+    assertValid(isDeviceActionRequestV1(request), "device action request");
+    this.requireTask(request.taskId);
+    this.database.prepare(`
+      INSERT INTO device_task_proposals(task_id,action_id,idempotency_key,request_digest,request_json,created_at,updated_at)
+      VALUES(?,?,?,?,?,?,?)
+      ON CONFLICT(task_id) DO UPDATE SET action_id=excluded.action_id,idempotency_key=excluded.idempotency_key,request_digest=excluded.request_digest,request_json=excluded.request_json,updated_at=excluded.updated_at
+    `).run(request.taskId, request.actionId, request.idempotencyKey, requestDigest, JSON.stringify(request), now, now);
+  }
+
+  getActionProposal(taskId: string): { readonly request: DeviceActionRequestV1; readonly requestDigest: string } | undefined {
+    const row = this.database.prepare("SELECT request_json,request_digest FROM device_task_proposals WHERE task_id=?").get(taskId) as Row | undefined;
+    if (!row) return undefined;
+    return { request: parseJson<DeviceActionRequestV1>(row.request_json, isDeviceActionRequestV1, "device action request"), requestDigest: readString(row, "request_digest") };
+  }
+
   getTask(taskId: string): DeviceTaskV1 | undefined {
     const row = this.database.prepare("SELECT task_json FROM device_tasks WHERE task_id=?").get(taskId) as Row | undefined;
     return row ? parseJson<DeviceTaskV1>(row.task_json, isDeviceTaskV1, "device task") : undefined;
@@ -319,6 +335,15 @@ export class SqliteDeviceSupportStore {
         revision INTEGER NOT NULL,
         status TEXT NOT NULL,
         task_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS device_task_proposals (
+        task_id TEXT PRIMARY KEY NOT NULL REFERENCES device_tasks(task_id),
+        action_id TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        request_digest TEXT NOT NULL,
+        request_json TEXT NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );

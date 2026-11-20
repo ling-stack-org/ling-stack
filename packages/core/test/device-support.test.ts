@@ -283,3 +283,12 @@ test("read-only playbooks execute a bounded capability sequence and reject injec
   assert.equal(store.getTask("playbook-task")?.status, "succeeded");
   store.close();
 });
+
+test("broker persists a pending action proposal for the remote approval facade", () => {
+  const { store, broker } = brokerFixture();
+  store.createTask(task("proposal-task"), now);
+  const proposed = request(readCapability.id, "proposal-task");
+  broker.proposeAction(proposed);
+  assert.equal(store.getActionProposal(proposed.taskId)?.request.actionId, proposed.actionId);
+  store.close();
+});

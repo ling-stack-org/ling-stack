@@ -48,8 +48,15 @@ export function createRemoteDeviceFacade(options: RemoteDeviceFacadeOptions): Re
     async approveTask(input) {
       const task = options.store.getTask(input.taskId);
       assertTaskWorkspace(options.store, task, input.workspaceId);
-      if (!options.approve) throw new RemoteAccessError("pc_unavailable", "Device approval executor is not attached.", true);
-      await options.approve(input);
+      if (options.approve) {
+        await options.approve(input);
+      } else if (options.broker) {
+        const proposal = options.store.getActionProposal(input.taskId);
+        if (!proposal) throw new RemoteAccessError("pc_unavailable", "Device task has no pending action proposal.", true);
+        await options.broker.execute({ ...proposal.request, approvalId: input.approval.approvalId, approval: input.approval });
+      } else {
+        throw new RemoteAccessError("pc_unavailable", "Device approval executor is not attached.", true);
+      }
       return snapshotForTask(options.store, input.workspaceId, input.taskId, now());
     },
     revokeTask(input) {
