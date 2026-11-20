@@ -60,7 +60,7 @@ App Server 作为 Daemon 的会话协议入口，以 `ling-app-server/1` 发布�
 | --- | --- | --- |
 | 连接 | `initialize`、`initialized`、`server/capabilities` | 返回已协商版本、可用功能与限制。各方法仍检查所在工作区的有效能力。 |
 | 工作区 | `workspace/list`、`workspace/read`、`worktree/list`、`worktree/create`、`worktree/refresh`、`worktree/cleanup/preview`、`worktree/cleanup` | 使用 opaque workspace/worktree ID 和预期版本。清理路线沿用当前确认、归属和恢复校验。 |
-| Thread | `thread/start`、`thread/resume`、`thread/read`、`thread/list`、`thread/name/set`、`thread/archive`、`thread/unarchive`、`thread/delete/preview`、`thread/delete` | 返回标识、状态、版本、绑定、最新可见 Turn、有效规则来源和历史游标。永久删除使用现有管理权限与用户确认。 |
+| Thread | `thread/start`、`thread/resume`、`thread/read`、`thread/list`、`thread/name/set`、`thread/archive`、`thread/unarchive`、`thread/delete/preview`、`thread/delete` | 返回标识、状态、版本、绑定、最新可见 Turn、有效规则来源和历史游标。永久删除使用现有管理权限与用户确认，并在预览和提交时核对当前 Work Item、Plan、Goal、审批、证据和 Delivery 依赖。 |
 | 历史和订阅 | `thread/turns/list`、`thread/items/list`、`item/read`、`thread/subscribe`、`thread/unsubscribe`、`thread/snapshot`、`submission/read` | 游标持久化，订阅 ID 只在连接有效。重连与历史读取没有执行副作用。 |
 | 计划和目标 | `thread/mode/get`、`thread/mode/set`、`plan/read`、`plan/accept`、`thread/goal/get`、`thread/goal/set`、`thread/goal/pause`、`thread/goal/resume`、`thread/goal/clear`、`thread/goal/complete` | 复用现有模式、计划、Goal 版本和完成证据。工作内容发生实质变化时生成新的接受版本。 |
 | Turn | `turn/start`、`turn/steer`、`turn/queue`、`turn/interrupt`、`turn/retry`、`turn/resume` | 返回持久受理回执与状态。实际 Run、Attempt 和证据通过订阅或快照查询。 |
