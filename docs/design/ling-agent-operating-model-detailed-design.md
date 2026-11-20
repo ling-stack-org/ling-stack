@@ -108,7 +108,8 @@ receive source
   -> authenticate source
   -> normalize identity and revision
   -> resolve workspace and an authorized Thread when present
-  -> check duplicate subject and current revision
+  -> resolve any explicit target and check its current binding
+  -> check occurrence receipt and applicable revision
   -> parse objective and source facts
   -> apply source policy and safety classification
   -> create candidate or return existing Work Item
@@ -116,8 +117,8 @@ receive source
 
 Source normalization rules:
 
-- Channel messages use channel, thread, message and attachment identity. An edited message produces a new source revision and keeps the previous Work Item as history.
-- GitHub subjects use repository, subject kind, number, base SHA, head SHA or event delivery id. A new head SHA always creates a new source revision for the same PR Work Item.
+- Channel messages use channel, thread, message and attachment identity. An edit has its own input revision and can propose a change to the already linked Work Item.
+- GitHub sources preserve provider delivery IDs and source revisions. Repository ID, subject kind and number identify the stable subject. Base and head SHA describe the PR revision and its evidence basis.
 - Automations use definition id, scheduled occurrence or monitor fingerprint and source revision. One occurrence or fingerprint can create at most one Work Item.
 - External Agents use caller id, caller task id, submission key and context digest. The same caller submission can be observed through more than one transport without duplication.
 - Device Fabric nodes use graph id, node id, graph revision and owner-host execution id. The project Work Item references the owner journal instead of owning device effects.
@@ -130,6 +131,43 @@ Each configured source declares `manual`, `suggest`, or `auto_start`, defaulting
 
 Qualification and dispatch recheck the source policy and revision. Paused sources keep their history and pending suggestions. Direct user requests and existing automation dispatch keep their existing entry paths. Where an enabled source already started a Task or AutomationRun, link that dispatch to the inbox item.
 
+### 3.2 Work Item Target Identity
+
+Each workspace has one default Work Item binding for an exact target. The target is either a resolved Work Item ID or a GitHub subject identified by the verified GitHub instance, immutable repository ID, subject kind and number. An existing Work Item ID addresses that item directly. For GitHub, the adapter resolves an authorized repository-qualified URL, structured submission or an explicit Issue/PR number in a conversation with a single repository binding. An unresolved or ambiguous target uses clarification or an authorization outcome before implementation dispatch. Titles, matching descriptions, labels, branches and references copied from issue bodies are context for a proposal. Automatic binding requires an explicit target from authorized input or a verified source event.
+
+    type WorkItemTarget =
+      | { readonly kind: "work_item"; readonly workItemId: string }
+      | {
+          readonly kind: "github"
+          readonly githubInstanceId: string
+          readonly repositoryId: string
+          readonly subjectKind: "issue" | "pull_request"
+          readonly subjectNumber: number
+        }
+
+    interface WorkItemTargetIdentity {
+      readonly workspaceId: string
+      readonly target: WorkItemTarget
+      readonly effort:
+        | { readonly kind: "primary" }
+        | { readonly kind: "independent"; readonly acceptanceReceiptId: string }
+    }
+
+Use the primary effort by default. An accepted independent-effort proposal supplies its own objective, Worktree, acceptance basis and receipt ID. Source delivery IDs and head revisions identify occurrences and revisions of this same target.
+
+| Input | Owner route |
+| --- | --- |
+| Repeated occurrence or exact API retry | Resolve the existing source or request receipt. Project the same binding and accepted dispatch within the caller's current scope. |
+| New request for a target with active work | Preserve the new source and requested intent on that Work Item. The current coordinator routes questions, follow-ups or a Plan change through the existing input and change rules. |
+| Request for a completed target or a provider reopen | Resolve the same Work Item and preserve its completed receipts. A verified reopen supplies a new source revision. Another implementation proceeds through a newly accepted execution revision under the applicable source policy and original-owner reconciliation. |
+| Explicit independent work for the same target | Require an authorized acceptance with its own objective, worktree and execution scope. The acceptance identifies one related Work Item and links it to the default binding. It has its own dispatch key and normal authorization. |
+
+Source receipts remain distinct for webhook, poll, chat and client submissions. Append their provenance and authorized target links on the shared Work Item so each source can follow its own accepted result. GitHub Issue and PR identities remain independently addressable. A confirmed Delivery or an authorized typed relation can bind a PR's feedback to the implementing Work Item. An available default PR binding can point to that Work Item. Where a different live PR Work Item already exists, retain both ownership records, project the relationship only within its grant and route the conflict to the coordinator before accepting another dispatch. A close or reopen event updates source facts in provider order. Goal and Delivery outcomes continue to use their actual evidence owners.
+
+Check source authority, credentials and the requested action grant before binding or dispatch. Apply current Work Item and Thread grants before returning an existing target or receipt. A denied or unavailable explicit target uses the same bounded target-unavailable projection. Thread, assignee, history and receipt references require their own grants. Access to one source authorizes only that source's projection. A repository transfer, redirected issue or cross-workspace reference is resolved and authorized by its provider owner before an existing binding can apply.
+
+Use the existing source-key Work Item upsert for source-local observations. Add the unique workspace target binding and its accepted owner in the Work Item store. In one workspace-store transaction, check current source policy and target revision, resolve or create the default binding, attach the occurrence and commit any first accepted dispatch intent. Readiness and actual dispatch follow section 4.2. [Current source-key store](../../packages/core/src/storage/sqlite/work-item-store.ts) · [Automation event intake](../../packages/daemon/src/features/automations/event-worker.ts) · [External Work admission](../../packages/core/src/external-work-scheduler.ts)
+
 ## 4. Assignment and Dispatch Claim
 
 ### 4.1 Assignment authority
@@ -138,17 +176,17 @@ Ling Agent Session handles unassigned intake work, explicit user intent and acti
 
 ### 4.2 Dispatch admission and deduplication
 
-The claim records one first dispatch for a workspace, logical work item and accepted intake revision. Reuse the original dispatch receipt when it already exists. Otherwise record one accepted handoff with the source owner and link it to the normal dispatch path. Validate the accepted route, source revision and current policy together when committing the record. Capabilities, capacity, Worktree and permissions are also checked at the existing execution gate.
+The claim records one first dispatch for a workspace, logical Work Item and accepted execution revision. Every entry path resolves the target before creating an implementation Task, Turn or Run. Reuse an authoritative dispatch receipt when it already exists. Otherwise the target binding's owner records one accepted dispatch intent with the accepted route, input revision and policy. The dispatch owner uses that receipt's logical identity for admission, including after restart. Capabilities, capacity, Worktree and permissions are checked at the existing execution gate.
 
 ```text
-normalize and deduplicate the source
+normalize the source and resolve the target binding
   -> obtain or reference the existing assignment decision
   -> check revision, policy and prior receipt in the dispatch owner's transaction
-  -> link existing dispatch, or record and enqueue this first dispatch once
+  -> link existing dispatch, or persist and enqueue this first dispatch once
   -> let the existing Task, Workflow and Runtime Supervisor admit execution
 ```
 
-Concurrent deliveries or controller retries return the same receipt when the logical input matches. A different input or decision on an already accepted revision returns a conflict and current assignment. [Channel dispatch owner](../../packages/daemon/src/features/channels/channel-turn-dispatch-lifecycle.ts) · [Task claim at Run admission](../../packages/daemon/src/features/runs/concurrency.ts)
+Concurrent deliveries or controller retries return the same receipt when the logical input matches. Distinct occurrences for the same target link to the current assignment and use the follow-up or scope-change path for their new intent. If the execution owner is on another host, the Work Item store retains the admitted intent and its logical identity while the adapter reconciles the exact owner receipt. An unconfirmed outcome holds another dispatch. In a legacy conflict with multiple live owners, expose the conflict within scope and reconcile their outstanding effects before a further dispatch can be accepted. [Channel dispatch owner](../../packages/daemon/src/features/channels/channel-turn-dispatch-lifecycle.ts) · [Task claim at Run admission](../../packages/daemon/src/features/runs/concurrency.ts)
 
 ### 4.3 Execution recovery and reassignment
 
@@ -443,7 +481,7 @@ On unavailability or revocation, the coordinator records the reason and proposes
 | `incident_sync` | A new or changed canonical blocker, including handoff return or unknown outcome. The affected owners and coordinator receive the relevant facts. | Missing input or unresolved effect, affected dependencies, recovery owner and next checkpoint. |
 | `retrospective` | A terminal Workflow state or an explicitly configured schedule. Contributors and the coordinator review outcomes. | Evidence-backed observations and action items with one accountable owner and a tracking reference. |
 
-A committed event starts at most one round of its configured kind for the Work Item. Automation schedules may provide daily or weekly checkpoints or retrospectives. A Workflow or Goal schedule references its explicitly bound Work Item. An unresolved binding yields a skipped Automation result with a reason. Use the existing `AutomationRun` receipt and the occurrence identity `automationId` plus `scheduledFor` for deduplication. The scheduled action is limited to the coordination command. The accepted Plan controls which checks gate execution. Additional invited Agent turns use the existing participant, budget and Runtime admission paths. [Automation occurrence admission](../../packages/daemon/src/features/automations/run.ts)
+A committed event starts at most one round of its configured kind for the Work Item. Automation schedules may provide daily or weekly checkpoints or retrospectives through the admission in section 5.9. The accepted Plan controls which checks gate execution. Additional invited Agent turns use the existing participant, budget and Runtime admission paths.
 
 The coordinator and the configured deadline use the same close transition. Closing checks the open round revision, current subject and policy, and seals the message sequence and evidence references for the brief. One transaction writes the terminal round, brief reference, action references and their Control Plane events. At a deadline, the brief records missing responses and unresolved questions. Cancellation or invalidation commits the terminal reason and retains authorized input and message history. Only the publish operation creates a current brief. A question linked to the round keeps its own deadline and applicability. A later reply is a Work Item message linked to the question, with the brief preserving the state captured at close. The brief references committed stage packets, results and decisions. It includes progress, blockers, open decisions and owned next steps, with the caller's current scope applied to each source and summary.
 
@@ -482,6 +520,19 @@ Daemon binds the sender to the authenticated actor or admitted Attempt. It resol
 Each recipient's delivery is identified by message ID and recipient ID and binds the admitted assignment and subject when dispatched. Recheck grant, applicability and the target's input authority before reaching the safe input boundary. An idle participant can receive a new Turn only through an authorized follow-up. The message body enters prompt context as scoped task data.
 
 Message acceptance commits the message and makes its recipient delivery `queued`. `delivered` requires a durable receiver receipt for inclusion in the actual input accepted by the target Runner, tied to the Run/Attempt and prepared input basis. With a verified in-turn steering path, use its equivalent input receipt. Work Item observation or successful publication is a separate fact. If an adapter cannot establish delivery after an ambiguous call, report `delivery_unconfirmed` and reconcile with that adapter. Retry the same queued delivery only with current authorization and proof it is safe to do so. Pending delivery can close as `expired`, `superseded` or `scope_revoked`; a completed delivery remains a historical fact. A reply is a separate question-owner receipt. [Prepared input receiver](../../packages/daemon/src/features/runs/user-input-continuation-receiver.ts)
+
+### 5.9 Scheduled Coordination Admission
+
+An Automation with the `coordination_round` action configures a checkpoint or retrospective for one explicit Work Item in the same workspace store. A Workflow or Goal selection resolves to that Work Item when configuring the schedule. Keep the Automation's real, authorized Thread as the home for managing its definition and occurrence log. The target Work Item uses its own scope and can be observed before it has a linked Thread. The home Thread grants neither Work Item access nor execution authority. Check both bindings at admission and expose each projection under its own grants.
+
+Reuse the existing recurrence, time zone and missed-run calculation. The occurrence key is `(workspaceId, automationId, scheduledFor)`, where `scheduledFor` is the scheduler's canonical UTC instant. At a due timer, enter the coordination action before generic Automation run preparation. Use the same SQLite transaction and existing AutomationRun idempotency key for the following operations.
+
+1. Look up the terminal occurrence receipt. An exact retry returns its authorized result, including the original round ID when applicable. Its identity survives schedule edits and process restarts.
+2. Compare the enabled definition, expected revision and due instant. An eligible tick checks the current target, policy, subject revision and coordinator authority. A temporarily failed store operation rolls back and follows the scheduler's error and retry path.
+3. On admission write a terminal `succeeded` AutomationRun with a completion time, the open `CoordinationRound` referencing that run, its deadline and its content-minimal Control Plane event. Set the deadline once from the actual admission time and configured round duration. Uniqueness on the occurrence and its round linkage preserves one result. The terminal AutomationRun receipt means the round was created, and the round owns its later messages, deadline and close. Its result is presented through existing Automation history and the authorized Work Item projection.
+4. If the enabled tick reaches a target or policy that cannot currently admit a round, write a terminal `skipped` AutomationRun with a typed reason such as `coordination_target_unavailable`, `coordination_policy_denied` or `coordination_subject_unavailable`. Skip reason visibility follows the owner grant. A pause or edit that superseded the dispatched timer is handled by the current scheduler generation.
+
+This action writes a terminal occurrence directly. Agent participation, when authorized, is admitted independently through the existing Workflow and Runtime paths. A user-triggered Run now uses the same atomic action and the existing manual Automation receipt key. Schedule advancement follows the committed scheduled occurrence. If the process stops before commit, any remaining due slot follows the existing `skip` or `run_one` policy for unadmitted occurrences. If it stops after commit, a repeat tick sees the original terminal receipt and startup reopens the existing round projection and restores its deadline. An already expired open round uses the ordinary close or invalidation path. Transport replay consumes the committed event and its existing identity. [Automation scheduler](../../packages/daemon/src/features/automations/scheduler.ts) · [AutomationRun store](../../packages/core/src/storage/sqlite/automation-store.ts) · [Transactional Control Plane append](../../packages/core/src/storage/sqlite/control-plane-store.ts)
 
 ## 6. External Agent Federation Protocol
 
@@ -539,16 +590,19 @@ The adapter retains the original submission and Run fence. A connection loss cha
 
 ```ts
 interface GitHubDeliverySubject {
+  readonly githubInstanceId: string;
+  readonly repositoryId: string;
   readonly repository: string;
   readonly kind: "issue" | "pull_request" | "check" | "review" | "comment" | "release";
   readonly numberOrName: string;
+  readonly baseRef?: string;
   readonly baseSha?: string;
   readonly headSha?: string;
   readonly sourceRevision: string;
 }
 ```
 
-The current head SHA is part of every Review, Verify, CI and Delivery acceptance. A result for an old SHA remains historical evidence and cannot approve or complete the current Work Item.
+PR acceptance pins the current head SHA and the target branch with its base SHA. The provider adapter supplies both from the authorized repository. Each evidence record declares its applicable basis. A head or base update changes that basis in place on the same PR lineage and retains its earlier observations. [Work Item identity](#32-work-item-target-identity)
 
 ### 7.2 GitHub delivery projection
 
@@ -570,21 +624,61 @@ failed -> queued | blocked
 stale -> queued
 ```
 
-The GitHub adapter normalizes webhook, poll and manual import into one source identity. Duplicate deliveries return the existing Work Item and AutomationRun. A new head SHA supersedes pending review and verification for the old SHA while retaining their evidence.
+The GitHub adapter normalizes webhook, poll and manual import into one target identity and their respective occurrence receipts. Exact retries return the committed records. Confirm the current subject with the provider before applying out-of-order or conflicting updates. A new head supersedes candidate-bound review and verification. A base update re-evaluates the evidence that depended on the previous base, including the affected baseline rules and integration checks.
 
 ### 7.3 Acceptance
 
 Merge acceptance requires:
 
-- current Work Item and PR head SHA;
+- current Work Item, candidate and provider-observed PR revision;
 - all required Goal criteria;
 - required Verify results for the current candidate;
 - required Review disposition;
-- current CI result or an explicit repository policy exception;
+- applicable evidence for each required check or a recorded policy exception for that check;
 - no pending Approval, unknown external effect, or active conflicting Worktree owner;
 - an authorized user or repository policy decision.
 
-The adapter records a merge receipt and lets Goal completion perform its normal evidence audit. A merge webhook after completion produces a source update, not a second completion.
+Ling-initiated merges also require the provider guard in section 7.4. For a merge performed directly on GitHub, reconcile the actual result and independently evaluate applicable evidence under the accepted policy. The adapter records a verified merge receipt and lets Goal completion perform its normal evidence audit. A repeated merge observation follows the original receipt.
+
+### 7.4 CI Evidence and Merge Guard
+
+    interface GitHubCiEvidence {
+      readonly githubInstanceId: string
+      readonly repositoryId: string
+      readonly pullRequestNumber: number
+      readonly workItemAcceptanceRevision: string
+      readonly candidateRef: string
+      readonly baseRef: string
+      readonly baseOid: string
+      readonly headOid: string
+      readonly basis: "head" | "integration" | "merge_group"
+      readonly testedObject: { readonly kind: "commit" | "tree"; readonly oid: string }
+      readonly proofRef: string
+      readonly mergeGroup?: { readonly oid: string; readonly membershipProofRef: string }
+      readonly requiredPolicyRevision: string
+      readonly checkIdentity: string
+      readonly providerRecordRef: string
+      readonly runId?: string
+      readonly runAttempt?: number
+      readonly outcome: string
+      readonly coverageRefs: readonly string[]
+    }
+
+Freeze the repository, PR, current `baseRef`, base and PR head OIDs, Work Item acceptance and candidate, and effective required-check policy revision. The policy names each required check, trusted App or integration identity and applicable workflow or ruleset, test coverage and accepted basis. Match source identity and the provider's effective run and attempt. Record the check identity, run ID, `run_attempt` when available, outcome and proof of the actual tested commit or tree. A configured trusted CI workflow can supply that proof. A provider-attested check subject is sufficient where the trusted execution contract establishes that the job tested that subject. The event type, job title and reported `head_sha` locate evidence for further checks.
+
+| Required check basis | Applicability |
+| --- | --- |
+| Head | The repository policy explicitly declares the check independent of base. The job tests the current PR head, and its source, policy, effective attempt and coverage are current. A base advance alone preserves that result. |
+| Integration | Test the current integration commit or tree for the exact base and PR head, such as the provider's current PR preview. A new base or a changed tested integration object reopens the required check even with the same PR head. |
+| Merge group | Test the provider-created current merge group commit or tree. Bind the group and target queue entry using provider-owned evidence, including the group base and authorized PR membership. A rebuilt group needs its own evidence even with the same PR head. |
+
+Require the current applicable outcome for each required check. A rerun that changes the effective attempt reopens the gate until the current result is known. Where GitHub carries job results across attempts, use the trusted current aggregate and prove coverage for the same tested basis. Deduplicate observations by provider record and attempt and reconcile conflicting or late notifications against the provider's current state. Missing or ambiguous subject, origin, policy or coverage is `ci_pending` with a typed reason. Draft preview and scoped-out jobs use the accepted policy's coverage rules. A prior result stays visible with its own check basis. CI summaries and failure triage support diagnosis. [Actions event and checkout subjects](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows) · [Run attempt jobs](https://docs.github.com/en/rest/actions/workflow-jobs#list-jobs-for-a-workflow-run-attempt) · [Current CI triage](../../packages/core/src/external-work-ci-triage.ts)
+
+Record the accepted merge intent and re-read current subject and effective repository protections at dispatch. The provider must enforce the accepted check policy at execution time for Ling to initiate a merge. For a policy that requires a tested integration or group, use an enforced merge queue with the required group checks or a verified provider operation that atomically checks the tested basis. Queue admission can precede evidence for the generated group. GitHub then creates the group and enforces its checks before updating the target. Establish the queue capability and its required workflows on the actual repository before selecting that path.
+
+For a policy that explicitly accepts current, up-to-date head evidence, strict up-to-date branch protection and effective provider-required checks can guard a direct merge. Pin the expected head in the provider request. GitHub's direct merge `sha` compares the PR head. Exact integration acceptance uses the integration guard above. The authenticated principal must use the enforced path with bypass disabled. Where the provider's effective rules cannot enforce part of the accepted policy, use a configured provider-required trusted gate for that proof. Until such a guard is verified, the work item waits for repository-side action and can reconcile an externally observed merge as a separate fact. [Direct merge head guard](https://docs.github.com/en/rest/pulls/pulls#merge-a-pull-request) · [Required checks](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches#require-status-checks-before-merging) · [Merge queue](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/managing-a-merge-queue)
+
+Keep request acceptance, enqueue and actual merge as separate provider facts. Discover queue API support for the configured host and API version. Where GitHub exposes `merge-async`, select explicit `merge_queue`, pin the expected head and disable rules bypass. Repositories can also use their authorized queue entry and report that provider receipt. Record available request or queue identifiers, and after a timeout use the original intent and provider state to reconcile the result before another request can be admitted. An actual merge receipt binds the PR and applicable provider evidence to the committed result. If the repository reports a merge with insufficient evidence for the applicable guard or tested basis, keep the merge fact and the separate CI or Goal blocker visible. [Asynchronous merge lifecycle](https://docs.github.com/en/rest/pulls/pulls#merge-a-pull-request-asynchronously)
 
 ## 8. Memory, Skills and Experience Candidates
 
@@ -611,7 +705,11 @@ Promotion uses Memory, Skill or Channel review. No candidate may change the curr
 
 The App Server adds these protocol projections to the existing Thread/Turn methods.
 
+`workItem/create` and external submission may supply an explicit Work Item ID or repository-qualified GitHub target. The Daemon resolves stable identity from the authorized source. A request for an independent effort carries its own proposal through the existing acceptance path. An existing binding returns the visible Work Item and the caller's occurrence receipt. Applicable intent changes follow the existing input owner.
+
 `workItem/accept` submits an authorized request for the current item revision through the coordinator and returns its receipt. `workItem/cancel` calls the existing owner for active work. External runner dispatch requires the assigned route and its receipt.
+
+`github/subject/read` returns the visible current PR revision, per-check applicability and delivery readiness, with source proof references. `github/delivery/reconcile` re-reads the authorized provider and updates the original delivery intent and outcome. Reconciliation reports pending, enqueued, merged or unresolved under the original receipt and scope.
 
 ```text
 workItem/create
@@ -648,7 +746,7 @@ Mutations carry `expectedWorkItemRevision` and `idempotencyKey`, plus the applic
 | `workItem/deliberation/decide` | Round ID, expected sealed outcome revision and the decision with its reason when required. The decision owner checks the current subject and commits the accepted receipt. |
 | `workItem/stage/read` | Stage ID and optional revision. Returns the accepted stage contract, owner, dependencies, status and applicable admission hold or continuation blocker. |
 | `workItem/stage/brief/read` | Stage ID and optional brief ID. Returns the currently visible projection of that brief, or the latest brief, with source revisions and applicability. |
-| `workItem/coordination/start` | Kind, subject revision, stage if applicable, requested participant roles, agenda and deadline within the accepted policy. The coordinator receives the round receipt. Scheduled starts enter through the linked Automation occurrence. |
+| `workItem/coordination/start` | Kind, subject revision, stage if applicable, requested participant roles, agenda and deadline within the accepted policy. The coordinator receives the round receipt. Scheduled starts enter through the atomic Automation admission in section 5.9. |
 | `workItem/coordination/read` | Round ID. Returns the visible roster, status and revision, sealed brief and action items when published. Messages are available by round. |
 | `workItem/coordination/close` | Round ID, expected round revision and subject, plus publish or cancel disposition. Requires the coordinator grant. Publish returns the committed brief ID. Cancel takes a reason and commits the terminal receipt. |
 | `workItem/message/send` | Recipient IDs or authorized role selectors, stage when applicable, subject revision, kind (`note`, `status`, `blocker`, `decision_candidate` or `action_update`), bounded summary and source refs. Include the round ID and expected open round revision for a contribution. Returns the message receipt and delivery references within scope. |
@@ -706,6 +804,8 @@ external_agent_submissions
 
 Every record includes workspace scope, owner, revision, created/updated times, source identity, and retention policy. Work Item stores the accepted dispatch reference or a first-intake receipt where the source has no existing dispatch. The existing owner owns its execution claim and lease. Work Item event append participates in the source or dispatch transaction for deduplication. External Delivery and unknown outcomes use their own intent/receipt/reconciliation records.
 
+Enforce a unique default Work Item per verified GitHub target and workspace and preserve independent source occurrence receipts. Approved separate efforts have their own acceptance identities and related targets. Retain a scoped binding or tombstone according to the owner retention policy so delayed source delivery continues through reconciliation. The Work Item store and execution owner use the same durable dispatch intent and compare its accepted revision when linking an execution receipt.
+
 Evidence entries, sealed rounds, ballots and decision receipts use Work Item-scoped relations in the same workspace SQLite store. Their lifecycle migrations cover opening existing work items with an empty board, replay across restart and concurrent submission. Workflow and source evidence stay addressable through their existing keys. Section 5 defines the commit and recovery rules for these relations.
 
 Coordination rounds, messages, stage briefs and peer questions use Work Item-scoped relations. Enforce unique occurrence keys for round admission and one brief per applicable stage event or published round. Enforce unique message sequences and receipts, plus one delivery per message and recipient. Extend the existing Workflow handoff intent and acceptance receipt for stage and candidate binding. A migration can open existing Work Items with empty coordination projections. Persist deadlines and pending deliveries so Daemon can resume them through their owners after restart. Round close, brief publication and their content-minimal Control Plane events share one transaction. An interrupted delivery retries with the existing input receipt key after checking current scope and applicability.
@@ -714,11 +814,12 @@ Scope change holds bind their source input and acceptance revision to affected o
 
 Recovery rules:
 
-- a duplicate source returns the existing Work Item;
+- a duplicate source returns its original scoped receipt and a new explicit source for the same target inherits the current Work Item binding;
 - a stale dispatch reference is visible and follows the source owner's recovery;
 - a Run continues through Runtime Supervisor recovery;
 - an external Agent disconnect does not retry the effect;
-- a GitHub head change supersedes old pending checks;
+- a GitHub head, base, merge group or effective check-attempt change re-evaluates its applicable evidence;
+- a committed scheduled coordination occurrence restores the same round and deadline or its skipped reason;
 - a Delivery with unknown outcome waits for reconciliation;
 - follow-up uses the explicit accepted Task, Turn or Workflow and its normal continuation path;
 - archived Work Items retain source, delivery and evidence references.
@@ -728,6 +829,7 @@ Recovery rules:
 | Area | Required test |
 | --- | --- |
 | Intake | duplicate channel edit, duplicate webhook, monitor fingerprint, external submission and device node all create one current Work Item |
+| Target identity | concurrent webhook, poll, chat and Codex references to the same Issue or PR resolve one default Work Item and one dispatch intent, exact retries return the original receipts, independent effort uses explicit acceptance, private duplicate targets keep scoped privacy, and close/reopen or an authorized PR link preserves history and owner fences |
 | Dispatch | webhook or client retries share one receipt, explicit assignment and active follow-up stay with the current coordinator, a parallel Workflow retains per-step leases, and stale or unknown dispatch waits for reconciliation |
 | In-flight input and change | ordinary follow-up leaves accepted scope intact, explicit P01 change holds affected P02/QA admissions, old running effects and uncommitted patches survive safely, independent QA work continues, a duplicate acceptance resolves once, stale approvals and old outcomes stay outside new acceptance, and a candidate-only change repeats only its bound checks |
 | Progress across Runs | one failure observed by QA, Review and the brief is one blocker, switches and restarts preserve continuation counts, genuine applicable progress changes the affected condition, exhausted retries park automatic work with the responsible owner and a recovery condition |
@@ -736,6 +838,7 @@ Recovery rules:
 | Shared evidence | simultaneous appends both survive, correction CAS rejects a stale revision, retries return the same receipt, restricted refs and derived text stay scoped through live read, replay, reconnect and revocation |
 | Stage and peer coordination | stage identity binds the accepted Plan, required parallel results close the stage, the role-scoped brief reaches the proper successor, a question holds only its dependency, and timeout and mutual wait produce one blocker with a recovery owner |
 | Coordination cadence and messages | event and scheduled occurrence deduplication, concurrent contribution and close ordering, atomic brief publication, cancellation and stale history, a reply after close, duplicate delivery after restart, and current scope checks on receipt retry including revoked roles |
+| Scheduled coordination admission | crash before and after occurrence transaction, repeated timer and committed skip with no round, same-workspace target without its own Thread, late slot follows the missed-run policy, and restart restores the original round and deadline with zero Runner dispatches from the scheduled action |
 | Returned handoff | a stale candidate or missing input is returned with its reason, corrected evidence is revalidated, concurrent acceptance resolves to one receipt, one current dispatch follows from the original dependency, and an unknown effect stays with its original owner |
 | Delivery and handoff recovery | queued message lacks prompt-delivery proof until the receiver accepts it, unknown delivery reconciles without replay, a crash between acceptance and dispatch or between dispatch and observation restores the same eligible owner, and reassignment revalidates grants and pending questions without transferring approvals |
 | Deliberation admission | clarification, verification and repair precede consideration of viable choices, default suggests and authorized automatic admission uses one receipt, materiality and role thresholds, cooldown and budget are enforced, and new relevant evidence can supersede an earlier decision revision |
@@ -743,7 +846,7 @@ Recovery rules:
 | Decision handoff | recorded recommendation and dissent can be inspected, a required failing check blocks a highly supported option, an explicit decision routes through the original owner, and a vote cannot grant tools or satisfy an Approval, Verify or Delivery condition |
 | Deliberation placement | read-only shaping in Plan Mode, predeclared decision receipt, unexpected linked read-only Workflow with the original graph preserved, and an accepted successor for a material change |
 | External Agent | handshake, capability mismatch, approval request, reconnect, replay, cancel, unknown effect and recursion rejection |
-| GitHub | new head supersedes old review, duplicate event, CI failure follow-up, merge acceptance, stale review and unknown comment delivery |
+| GitHub | new head supersedes old review, same-head base advance preserves head-only evidence and reopens integrated checks, regenerated group and effective run attempt require current proof, wrong-source check and unknown basis stay pending, provider protects the read-to-merge race, enqueue differs from merge, and request timeout reconciles the original intent |
 | Memory/Skill | evidence-bound candidate, review, reject, expire and authority-preserving promotion |
 | Recovery | Daemon restart, client reconnect, source change, Worktree conflict and active claim reconciliation |
 | App Server | event replay, Work Item methods, delivery methods, scope checks, cursor resync and redaction |

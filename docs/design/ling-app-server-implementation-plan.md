@@ -38,10 +38,10 @@ flowchart LR
 | D1 仓库指令与技能 | A2 | 在 Daemon 的输入准备接入项目规则解析、来源显示、`instructions/init`、Doctor 项目诊断及内置技能入口。扩展 Context Inspect。 | 根与子目录优先级、多工作树、安全路径、文件更新、导入冲突和预算可见。旧 Run 使用实际封存版本。 |
 | D2 开发环境与候选 | A2 | 扩展现有受管 worktree 所有者，纳入环境就绪、写入租约、补丁冲突和恢复。共享候选捕获及文件覆盖信息。 | 并行写入各自工作树。主 checkout 的脏文件、用户外部编辑和候选变动有可复核保护证据。 |
 | E1 Verify 与运行配方 | B1、D1、D2 | 确定性检查计划、信任和配方版本、Host 执行、Web/平台运行证据、结果与快照绑定。将实际状态纳入既有 Run/Terminal Report。 | 按 diff 选定向检查。命令失败、UI 断言失败、取消、输入漂移、日志截断和清理不确定均有准确结果。 |
-| E2 Review 与交付 | D1、D2、E1 | 复用 Code Assessment，加载基线审查规则，接入 `simplify` 与修正 Turn。扩展 Goal 验收与 PR/CI 证据关联。 | 审查输入、独立上下文、旧发现版本和候选身份可见。测试未跑、其他 head 的 CI、旧候选或不匹配的结果均无法满足当前条件。 |
+| E2 Review 与交付 | D1、D2、E1 | 复用 Code Assessment，加载基线审查规则，接入 `simplify` 与修正 Turn。扩展 Goal 验收，提供校验候选与 CI 证据适用范围的入口。 | 审查输入、独立上下文、旧发现版本和候选身份可见。只有适用当前候选和验收依据的证据可以满足对应条件。 |
 | F1 长任务交接 | B2、D2、E2 | 将阶段、候选、决策、证据、阻塞和未决动作封存为 Handoff。沿用 Goal 监督和执行循环，在压缩、换会话或换执行人后重建原目标和已兑现的进展。 | 恢复后核对最新已接受的目标和候选。同一缺项、负责人和重试消耗可查。受理、派发、开工状态可区分，已执行的动作和结果未知的动作由原所有者核对。 |
 | F2 Codex 接入与会话界面 | C2、E2、F1 | 给现成 Codex 提供本机 MCP 桥接和 CLI/skill 入口。可编程宿主分别连接 Codex App Server 和 Ling App Server，使用 Ling SDK 处理持续推送、在途干预和重连，并在宿主自己的会话视图呈现进度。 | 实际 Codex 经 MCP 提交、读取和控制同一 Ling Thread。可编程宿主经两端真实连接显示实时状态、提交干预、处理审批提醒和丢线重订阅。递归委派和重复消费有端到端结果。 |
-| G 自研和发布验收 | C2、E2、F1、F2。联合交付纳入 O9 的验收结果。 | 执行下文矩阵，形成带候选版本的发布和自研准入证据。 | 真实 Provider 与代码任务、协议恢复、平台、安装和远程声明均有对应证据。联合交付涵盖团队审议和共享证据。 |
+| G 自研和发布验收 | C2、E2、F1、F2、O4、O9 | 执行下文矩阵，形成带候选版本的发布和自研准入证据。 | 真实 Provider 与代码任务、协议恢复、平台、安装和远程声明均有对应证据。联合交付纳入跨入口受理、CI 依据、调度恢复和团队协作的验收结果。 |
 
 ## 补充整合工作包
 
@@ -49,19 +49,19 @@ App Server 之外的团队、任务、外部 Agent 和 GitHub 设计不能各自
 
 | 工作包 | 依赖 | 交付 | 合并前验收 |
 | --- | --- | --- | --- |
-| O1 Agent Work Item 与团队运营 | A2、D1、现有 Channel Team Operating System | `AgentWorkItem`、来源与 Goal 绑定、现有分配与派发回执、speaker/observer 投影和收件箱事件。计划阶段映射到 Workflow 步骤，观察事件按角色选择。 | 同一来源与版本关联一次初始派发。阶段绑定验收条件和依赖。显式分配、活跃会话追问和 Workflow 步骤各走既有入口。过期、重指派与取消由原运行所有者恢复。 |
+| O1 Agent Work Item 与团队运营 | A2、D1、现有 Channel Team Operating System、外部来源身份合同 | `AgentWorkItem`、来源与 Goal 绑定、现有分配与派发回执、speaker/observer 投影和收件箱事件。按授权的结构化 Work Item 或 GitHub 对象标识归并入口，在工作区内原子确认来源绑定、默认 Work Item 及首次派发意图。现有所有者负责派发。计划阶段映射到 Workflow 步骤。 | 同一任务由 GitHub、会话和 Codex 同时提出时取得一个默认主执行。重复受理可追溯至同一派发回执，另行执行需显式授权，相关 PR 使用受信关联。过期、重指派与取消由原运行所有者恢复。 |
 | O2 External Agent Federation | C2、现有 External Agent Runner Adapters | 外部 Agent 注册、能力握手、Work Item 提交、双向事件、审批/提问、重连、递归防止和 unknown outcome。 | Codex、Claude Code、LobeHub 或 ACP adapter 的 capability mismatch、断线、审批、取消、事件回放和重复 dispatch 均有结果。 |
 | O3 Task Inbox 与自治策略 | O1、Automations、Channel Team Operating System | 按来源配置人工、建议或自动送入主 Agent，应用筛选、优先级、安静时段、预算和暂停策略。 | 默认人工接入。符合规则的建议可手动接受，显式启用的来源可以自动提交。暂停和预算限制阻止新接入，重复来源关联已有执行。 |
-| O4 GitHub Delivery Loop | O1、E2、GitHub Automation | Issue/PR/CI source identity、head SHA 绑定、Verify/Review、PR update、merge acceptance、CI/review feedback 和 delivery reconciliation。 | 旧 head 的验证或 review 无法完成新 head。CI 失败形成同 Work Item 后续，merge 只在当前证据满足时完成 Goal。 |
+| O4 GitHub Delivery Loop | O1、E2、GitHub Automation 与 GitHub 合并策略 | 关联 Issue、PR 和 CI，记录实际验证对象、检查来源及运行尝试。精确集成证据依赖合并队列或等效的执行时校验。严格保护适用于允许 up-to-date head 证据且执行身份受必需检查约束的策略。外部合并按实际结果对账。 | head 固定且 base 推进时，旧集成证据只能用于历史对象，适用的 head 检查按政策保留。覆盖同名检查的来源差异、迟到结果及读取证据后发生的 base 变化。以实际合并结果和适用证据完成 Goal。 |
 | O5 Memory/Skill Feedback | O1、E2、Memory/Skill review owners | Work Item provenance、Experience candidate、Memory/Skill/Channel review 和失效策略。 | 候选能追溯源 Run 与证据，拒绝/过期可见，推广不能扩大工具、审批、Provider 或工作区范围。 |
 | O6 Device Work Item Bridge | O1、Ling Device Fabric | 项目 Work Item 与设备图节点、owner host、WorkUnit、receipt 和跨设备反馈的映射。 | 项目协调者可显示设备节点进度，实际设备动作仍由 owner host 记录和恢复。设备断线不伪造项目成功。 |
-| O7 共享证据板与阶段协作 | O1、B1、D2、现有 Automations | 按来源、候选和权限投影共享证据。复用 Workflow 结果包与交接意图，接入角色简报、`CoordinationRound` 及日/周调度、直接消息和同级问答。处理新计划版本的依赖影响、交接接手和跨 Run 进展。 | 并发贡献和轮次关闭原子提交，问答跨轮次继续。验证旧证据适用性、计划修订期间受影响阶段等待、定向投递回执、换人和 Daemon 重启后的单次派发。复制失败报告、重连或换 Run 时累计进展记录与预算可核对。 |
+| O7 共享证据板与阶段协作 | O1、B1、D2、现有 Automations | 按来源、候选和权限投影共享证据。复用 Workflow 结果包与交接意图，接入角色简报、轮次、直接消息和同级问答。日/周协调动作原子提交终态 Automation 回执和轮次事件，或提交带类型化原因的跳过结果。接入新计划、交接和跨 Run 进展。 | 日/周轮次在提交边界崩溃后可用原调度身份核对，恢复已提交轮次的截止时间。验证并发贡献、关闭、跨轮次问答、旧证据、计划修订、定向投递及接手恢复。重试和换 Run 时累计进展与预算可核对。 |
 | O8 审议与投票 | O7、E2、现有 Workflow 和团队参与合同 | 实现 `DeliberationTriggerPolicyV1` 和角色判定。在计划形成、已声明决策点和运行中临时决策使用各自的准入路径。复用 Workflow 编排提案、质疑、条件投票和汇总，向原依赖提交有版本的决策回执。 | 同一争议从多个来源到达时关联同一决策。同一决定修订只受理一轮。验证父工作流图保持原接受版本、只有当前有权裁决能解除相应依赖，以及改范围走新计划接受。保留平票、预算、缺证据、取消和换候选回归。 |
 | O9 协作界面、协议与联调 | O8、F2 | 通过 App Server 方法、事件、SDK、CLI 与客户端视图交付阶段、简报、消息、问答、交接、审议和当前阻塞。接入无 Thread 工作项的预接单订阅和有权限的轮次配置。 | 在同一工作项验证接单前订阅、P01 到 P02 与 QA 的交付、在途消息和改计划、接手重建、审议回接和空转停止。重连后核对原回执、当前候选及实际派发次数。 |
 
 这些工作包对应 [Ling Agent Operating Model](ling-agent-operating-model.md) 和 [详细设计](ling-agent-operating-model-detailed-design.md)。它们补充 App Server 的协议方法，但不新增替代 Thread、Goal、Workflow、Run、Approval 或 Device Fabric 的独立执行系统。
 
-O7 在工作项、候选和事件合同可用后可与 E1、E2 并行。O8 使用 E2 的审查证据和验收规则。O9 复用 F2 的会话组件和传输，其联合验收结果进入 G 的发布验收。 [阶段协作](ling-agent-operating-model-detailed-design.md#55-plan-stages-and-stage-briefs) · [审议触发](ling-agent-operating-model-detailed-design.md#52-deliberation-workflow) · [O9 联合验收](#o9-联合验收)
+O7 在工作项、候选和事件合同可用后可与 E1、E2 并行。O4 使用 E2 的证据适用性接口，把 GitHub 的来源、验证对象和合并回执交回同一验收所有者。O8 使用 E2 的审查证据和验收规则。O9 复用 F2 的会话组件和传输。O4 和 O9 的结果进入 G 的发布验收。 [阶段协作](ling-agent-operating-model-detailed-design.md#55-plan-stages-and-stage-briefs) · [审议触发](ling-agent-operating-model-detailed-design.md#52-deliberation-workflow) · [O9 联合验收](#o9-联合验收)
 
 接口变更的代码所有权以现有目录为准。Contracts 管公共类型和解析，Core 管事务和证据索引，Daemon feature 管领域行为，`server` 管协议及传输，API Client/CLI 管连接及消费。前端控制与证据视图沿用共享会话组件和本地化目录。新文件按实际职责拆分。
 
@@ -74,11 +74,17 @@ O7 在工作项、候选和事件合同可用后可与 E1、E2 并行。O8 使�
 3. 先用临时 SQLite、临时 Git worktree 和可重复的本地 scripted Provider 实现往返、延迟回复、待决审批和终态案例。所选测试用例继续作为回归。以真实 API 和正常 tool authority 走完链路。
 4. 从现有回放、出站背压和断连 Run 测试接力。设置 commit 之后、回执返回之前的断线检查，并核对解析后的终态和已写入的效果计数。追加 Work Item 关联 Thread 前后、订阅重叠及授权修订导致游标失效的夹具。 [回放 API](../../packages/daemon/test/control-plane-api.test.mjs) · [出站背压](../../packages/daemon/test/rpc-stream-backpressure.test.mjs) · [断线 Run](../../packages/daemon/test/rpc-run-detach-backpressure.test.mjs)
 
+### O1 与 O4 的实施入口
+
+1. 复用外部来源规范化和现有分派入口。通过结构化引用解析同一工作区内有权访问的 Work Item 或规范 GitHub 对象。受理在同一事务内绑定来源，确定默认 Work Item，复用已有派发身份或记录唯一的首次派发意图。该意图由现有所有者消费。按获准的显式引用和受信 PR 关联匹配，覆盖并发首次接单、失去响应后的重试、授权隔离、相似文字和显式另起执行。 [目标身份](ling-agent-operating-model-detailed-design.md#32-work-item-target-identity) · [Work Item 存储](../../packages/core/src/storage/sqlite/work-item-store.ts) · [外部来源](../../packages/core/src/external-work.ts) · [会话派发](../../packages/daemon/src/features/channels/channel-turn-dispatch-lifecycle.ts)
+2. 在 GitHub 证据入口保留仓库、PR、head、base、验证基准（`head`、`integration` 或 `merge_group`）、实际被测对象、检查来源和 run attempt。需要精确集成证据时，由仓库强制的合并队列或等效机制在合并时核对已验证的集成基准。允许 up-to-date head 证据时，由启用严格保护的仓库在合并时为该调用身份校验当前性和必需检查。外部完成的合并通过读取实际被合并对象及适用证据对账。保持 head 固定，分别演练 base 推进后旧检查到达和合并操作竞态。 [CI 证据与合并合同](ling-agent-operating-model-detailed-design.md#74-ci-evidence-and-merge-guard) · [CI 来源](../../packages/core/src/external-work-ci-triage.ts) · [外部动作](../../packages/core/src/external-work-actions.ts)
+
 ### O7–O9 的实施入口
 
-1. 从团队证据存储、步骤结果包、交接和 Automation 受理入口接入证据、阶段简报、角色投影、轮次和消息。复用 Workflow 启动归属和恢复入口恢复已接受的交接。覆盖接受后尚未受理派发，以及派发已受理而客户端尚未看到状态两个断点。 [证据存储](../../packages/core/src/storage/sqlite/channel-team-evidence-store.ts) · [步骤结果包](../../packages/daemon/src/features/channels/workflow-step-packets.ts) · [Workflow 交接](../../packages/daemon/src/features/channels/workflow-handoffs.ts) · [步骤派发](../../packages/daemon/src/features/runs/workflow-step-start-admission.ts) · [Automation 受理](../../packages/daemon/src/features/automations/run.ts)
-2. 接入 `DeliberationTriggerPolicyV1`、独立准入的只读审议和原依赖的决策消费。用 scripted Provider 验证三种入口、意见被证据解决、开票、平票、迟到裁决和改范围。以现有 Goal 和执行循环为基础验证跨 Run 的进展归并、阻塞与预算。 [Workflow 调度](../../packages/daemon/src/features/channels/orchestrator.ts) · [汇合证据](../../packages/daemon/src/features/channels/workflow-fanin.ts) · [Goal 监督](../../packages/core/src/goal-supervision.ts) · [执行循环](../../packages/daemon/src/features/runs/execution-loop-detector.ts)
-3. 用 Web 和有类型客户端打开同一 Work Item，在关联 Thread 前建立订阅。关联后从两端提交普通消息与显式干预，并核对两种订阅的实体投影。以同一工作项运行下方验收，重开后恢复最新已接受版本和当前可执行的步骤。
+1. 从团队证据存储、步骤结果包和交接接入证据、阶段简报、角色投影、轮次和消息。复用 Workflow 启动归属和恢复入口恢复已接受的交接。覆盖接受后尚未受理派发，以及派发已受理而客户端尚未看到状态两个断点。 [证据存储](../../packages/core/src/storage/sqlite/channel-team-evidence-store.ts) · [步骤结果包](../../packages/daemon/src/features/channels/workflow-step-packets.ts) · [Workflow 交接](../../packages/daemon/src/features/channels/workflow-handoffs.ts) · [步骤派发](../../packages/daemon/src/features/runs/workflow-step-start-admission.ts)
+2. 接入 Automation 调度和工作区 SQLite 存储。配置和 `AutomationRun` 账本使用既有 Automation Thread。`coordination_round` 以显式绑定的同工作区 `workItemId` 为目标，接单前的无 Thread 工作项也可受理。按 `automationId + scheduledFor` 在同一事务内核对定义、目标和授权，提交终态 `succeeded`、`CoordinationRound` 和事件，或提交终态 `skipped` 和稳定原因。轮次创建本身是存储动作。`skip` 和 `run_one` 只处理未受理时段。已提交时段重放原回执，由轮次所有者恢复原截止时间。测试事务提交前后退出，核对回执、轮次、事件和 Runner 实际启动计数。 [定时受理合同](ling-agent-operating-model-detailed-design.md#59-scheduled-coordination-admission) · [调度入口](../../packages/daemon/src/features/automations/scheduler.ts) · [Automation 存储](../../packages/core/src/storage/sqlite/automation-store.ts) · [计时器回归](../../packages/daemon/test/automation-scheduler-timers.test.mjs)
+3. 接入 `DeliberationTriggerPolicyV1`、独立准入的只读审议和原依赖的决策消费。用 scripted Provider 验证三种入口、意见被证据解决、开票、平票、迟到裁决和改范围。以现有 Goal 和执行循环为基础验证跨 Run 的进展归并、阻塞与预算。 [Workflow 调度](../../packages/daemon/src/features/channels/orchestrator.ts) · [汇合证据](../../packages/daemon/src/features/channels/workflow-fanin.ts) · [Goal 监督](../../packages/core/src/goal-supervision.ts) · [执行循环](../../packages/daemon/src/features/runs/execution-loop-detector.ts)
+4. 用 Web 和有类型客户端打开同一 Work Item，在关联 Thread 前建立订阅。关联后从两端提交普通消息与显式干预，并核对两种订阅的实体投影。以同一工作项运行下方验收，重开后恢复最新已接受版本和当前可执行的步骤。
 
 源代码实现和测试可从这里开始。发布跟踪按 [贡献流程](../../CONTRIBUTING.md#before-you-start) 建立，关联设计和工作包。开放 Issue 和 PR 以仓库搜索及外部发布授权为准。
 
@@ -115,18 +121,20 @@ corepack pnpm --filter @ling-stack/api-client typecheck:ci
 | 回放与阻塞 | 临时 SQLite，有限缓冲，故意断开父客户端或 Daemon | 滞后/过期游标后有快照。待决审批、活跃/终态 Run 和未知外部结果均可重新查看。已执行动作凭 Host 回执保持单次。 |
 | 权限与隐私 | 本地和认证远程配置，受限/撤销调用方 | 工作区和 worktree 越权、错误凭据、过期会话、跨线程审批、敏感内容投影、重放旧决定被正确处理。 |
 | 项目规则和验证 | 多包 Git 仓库与受控环境 | 按路径载入有效规则，能查实际执行版本。识别 docs-only、测试变更、Web 行为和运行时变化。检查超时、少跑、失败或候选变化保持可见。 |
-| 交付与审查 | 同一候选 + 独立审查 + CI 回执 | 旧检查、非当前候选和未处置必需发现无法补足 Goal。修复可追溯到发现和实际回归。CI 证据与候选 PR head 对应。 |
+| 交付与审查 | 同一候选、独立审查和 CI 回执 | 修复可追溯到发现和实际回归。Goal 逐项核对候选和必需发现处置，通过当前适用的检查结果确认 CI 条件。 |
 | 真实 Codex | 现成客户端 + 本机 MCP，以及连接两端服务的可编程宿主 | 现成 Codex 可提交、按游标读取和控制任务。宿主视图在真实 Codex 与 Ling 同时连接时持续显示 Ling 事件，可提交明确干预并在重连后补齐。记下实际宿主、入口、可观察界面和版本。 |
 | 平台与安装 | macOS/Linux 的 stdio/Unix socket/WS，Windows 的 stdio/WS。覆盖声明的远程 WSS 与实际发布客户端 | 记录目标 OS、架构、安装包、传输和认证方式、退出和资源清理结果。安装、签名、命令沙箱和真实远程路由结果各有证据。 |
 | 项目自研 | 以下三个真实任务，稳定工具链与候选实例隔离 | 代码行为和运行状态都能复核。记录任务完成、约束遗漏、人工纠正、使用的模型和验证结果。 |
 | Agent Work Item | 频道、GitHub、Automation、外部 Agent 和设备节点的统一收件箱 | 来源版本、现有派发回执、Goal、Run、Delivery 和反馈可追溯。重复源与并发提交返回同一回执。Workflow 内的授权并行步骤各自持有执行记录。 |
+| 跨入口归并与首次受理 | 临时 SQLite、GitHub webhook、两个分别从对话和 Codex 提交结构化引用的获准调用方，以及一个受限调用方 | 打乱 webhook、对话和 Codex 的到达及重试顺序，工作区内只有一个默认主执行及初始派发，各入口回执可追溯。另测受信 PR 关联、相似文字、越权引用、先受理后断线，以及获准另行执行后默认归属的读取。 |
 | Work Item 接单前订阅 | 无初始 Thread 的 GitHub 或 Automation 工作项，两个不同范围的客户端 | 获授权的客户端能查询、订阅及恢复游标。关联 Thread 前后 Work Item 身份一致。重叠订阅的事件只应用一次，作用域变化重新取授权快照。 |
 | External Agent Federation | Typed Client、Codex bridge、受控 external runner | 能力、权限、Worktree、审批和事件回放保持一致。断线和 unknown outcome 不触发隐式重试。 |
-| GitHub Delivery | 临时仓库或受控测试仓库，固定 base/head SHA | Verify、Review、CI、PR update、merge acceptance 和失败反馈围绕当前 head SHA 形成闭环。 |
+| GitHub Delivery | 受控 GitHub 夹具和获准测试仓库，固定 PR head 并推进 base，构造仅验证 head 及验证集成对象的检查 | 能检查来源 App、工作流、运行尝试和实际被测对象。base 推进使旧集成证据失去适用性，仍适用的 head 证据按政策保留。比较同名异源结果、迟到尝试、合并预检后 base 推进及队列集成对象的变化。用真实 GitHub 测试仓库确认声明的合并保护在执行时约束当前调用身份。外部合并按实际回执及适用证据对账。 |
 | 共享证据板 | 临时 SQLite，两个写入者，一个受限读者 | 并行提交、重复请求、冲突更正、来源权限变化、快照与跨客户端回放均可复核。无权读取的原始材料和派生摘要不进入投影。 |
 | 阶段简报与 Agent 交接 | 已接受的多阶段 Workflow，工程和 QA，实际 Daemon | P01 验收后向 P02 和 QA 提供各自所需的材料。同级问答只等待受影响的依赖。旧候选交接可退回，补齐后按当前证据接手。重连后不会重复派发。 |
 | 跨 Run 停滞与恢复 | 同一工作项、多个 Agent、可重复的失败与新证据 | 多来源报告归并，临时审议、重连或重试保有该工作项的已消耗预算。达到停滞阈值后记录阻塞，取得相关新证据或接受后续计划才重新判断。 |
-| Agent 协作节奏与消息 | 临时 SQLite，`CoordinationRound`，两个 Agent 和一个协调者 | 覆盖五种轮次、原子关闭、取消、失效、日/周调度去重、父子投递、跨轮次问答、超时、互等和重放。所有后续执行使用原派发回执。 |
+| Agent 协作节奏与消息 | 临时 SQLite，`CoordinationRound`，两个 Agent 和一个协调者 | 覆盖五种轮次、原子关闭、取消、失效、父子投递、跨轮次问答、超时、互等和重放。所有后续执行使用原派发回执。 |
+| 定时轮次原子受理 | 临时 SQLite、受控时钟、真实 scheduler，配置 Thread 与无自身 Thread 的 Work Item，注入提交前及提交后应答前退出 | 提交前退出由未受理时段策略处理。提交后核对一次终态 `succeeded` 及同事务的轮次和事件，或一次终态 `skipped` 及稳定原因。重复调度复用原回执，轮次恢复原截止时间。覆盖工作项目标不可用和权限撤销，轮次创建的 Runner 启动计数为零。 |
 | 审议与执行边界 | 固定候选、scripted Provider、真实 Daemon 和两个客户端 | 按配置开启审议后能查触发依据，事实解决则直接汇总。开票时封存候选与证据，平票后保留结果和裁决依据。覆盖票不足、必需检查失败、重启、取消和候选变化。审批、Verify、Review 和交付保持各自的证据要求。 |
 
 ### 三个实际开发任务
@@ -149,13 +157,14 @@ corepack pnpm --filter @ling-stack/api-client typecheck:ci
 
 | 顺序 | 操作 | 必须观察到的结果 |
 | --- | --- | --- |
-| 1 | 在 GitHub 工作项尚未关联 Thread 时用工作项身份读取并订阅，接单后关联 Thread。引入另一授权范围及重叠订阅。 | Work Item ID 和既有事件身份贯穿关联前后。客户端依范围接收事件，只应用一次重叠事件。作用域变化时从当前授权快照恢复。 |
+| 1 | 在 GitHub 工作项尚未关联 Thread 时读取并订阅。同一 GitHub 对象从会话和 Codex 并发明确提出，接单后关联 Thread。引入另一授权范围及重叠订阅。 | 两个获准入口归入同一个默认主执行和初始派发，Work Item ID 贯穿关联前后。客户端依范围接收事件，只应用一次重叠事件。作用域变化时从当前授权快照恢复。 |
 | 2 | 在计划阶段评估接口方案，接受计划并完成 P01 的必要检查。 | 计划阶段的只读分析可回查，派发由接受后的原 Workflow 负责。开工和阶段评审各有简报。P02 获取被接受的接口和输入，QA 获取对应断言及候选引用。 |
 | 3 | P02 执行期间，用户询问进度、发送普通补充并提交一次显式指导。主 Agent 与 P02 定向交换状态。QA 在检查轮次关闭前发问，并在轮次关闭后收到答复。 | 进度问题从当前授权快照答复。普通消息和当前 Turn 指导按各自入口受理，按回执核对入队、进入模型输入和答复。原验收版本仍适用。QA 只等待被该问题影响的依赖，独立准备继续。 |
 | 4 | P02 修改实现但保留接口，随后用户明确要求改已接受的 P01 兼容合同。在计划接受竞态中提交一条绑定旧版本的外部控制指令。 | 首次改动只重验受候选影响的证据。明确改需求后，受影响的新动作等待，已受理的动作在原所有者下确认结果。新计划只替代受影响阶段的输入，保留独立成果及原工作树。旧指令和迟到输出可追溯，新的完成事实绑定当前版本。 |
 | 5 | 交接时给 QA 提供引用上一候选的验证结果，退回并补齐证据。测试交接已接受、派发尚未受理时 Daemon 崩溃，以及派发已受理、开工状态尚未投影时重启。再模拟接手人不可用。 | 退回标明缺项和修复人。复用同一接受回执和步骤派发身份，恢复后只启动一个当前步骤。替换接手人使用受权分配，待答问题重新投递时核对版本和范围，旧接手人的迟到回信保留为历史。 |
 | 6 | 在 Verify、Review 和交接报告中先产生对回放行为的不同判断。追加一次足以解决争议的 Verify。对另一个有实质取舍的决定先检查默认建议，再按授权开启临时审议并构造平票。 | 事实查证解决问题后直接汇总。默认建议等待接受，自动策略对同一决定修订只受理一轮。临时审议关联同一个工作项。封存票数、授权裁决和适用版本可查，原工作流按决策回执处理受影响依赖。过期裁决保留在原记录中。Verify、Review、Approval 和 Delivery 各核对自己的实际证据。 |
-| 7 | 在不同 Run 重复报告同一个失败，重放同一日/周调度并尝试换 Agent 继续。随后提交一份相关新证据。 | 同一个阻塞和决策保持统一归属。重试、用量和停滞计数跨 Run 可查，达到限额后留下负责人与恢复条件。收到新证据时重新判断剩余预算和可继续的步骤。 |
-| 8 | 客户端在状态已持久化、回复尚未到达时断开，随后从原游标或当前快照接回。 | 两端可以核对简报、当前计划、消息、交接、票数和决定。重发复用原逻辑回执，实际派发计数以原 Workflow 受理记录为准。 |
+| 7 | 在不同 Run 重复报告同一个失败并尝试换 Agent 继续。随后提交一份相关新证据。 | 同一个阻塞和决策保持统一归属。重试、用量和停滞计数跨 Run 可查，达到限额后留下负责人与恢复条件。收到新证据时重新判断剩余预算和可继续的步骤。 |
+| 8 | 日/周调度在事务提交前或提交后回复前崩溃，重启并重放同一个 `automationId + scheduledFor`。 | 错过时段策略仅作用于未受理时段。已提交时段返回同一回执和轮次或跳过理由，既有轮次按原截止时间恢复。以数据库记录和实际启动计数核对全部效果。 |
+| 9 | 客户端在状态已持久化、回复尚未到达时断开，随后从原游标或当前快照接回。 | 两端可以核对简报、当前计划、消息、交接、票数和决定。重发复用原逻辑回执，实际派发计数以原 Workflow 受理记录为准。 |
 
 同组回归覆盖问答互等、过期或越权、轮次关闭并发、候选漂移、必需检查仍失败、审批待处理和外部副作用结果未知。单独覆盖停止与在途指导在同一 Turn 的并发顺序、提议改动被撤回及后继计划已接受时旧输入的处理。跨 Thread 接手时，验证仅有旧 Thread 授权的客户端按原范围回放，新的执行引用和内容由相应授权决定。按授权记录工作项、阶段和接受版本、候选摘要、源证据、投递、交接、裁决、调度和派发回执，作为 G 的联合发布证据。

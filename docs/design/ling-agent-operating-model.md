@@ -106,6 +106,8 @@ Task intake normalizes work from configured sources and checks identity, scope a
 
 For example, an issue tagged `agent-ready` can enter a configured repository's inbox. In `auto_start`, Ling Agent scopes the job and chooses an eligible Teammate or Workflow through the existing assignment path. The dispatch is recorded once even if both polling and webhook see the issue. Ambiguity leads to a clarification. Tool, file and GitHub actions follow their ordinary approval and verification policies. Progress and delivery link back to the work item and its authorized destination.
 
+When a GitHub event, a chat message and a Codex submission explicitly address the same authorized Issue, PR or Work Item in one workspace, they share the default Work Item and its current dispatch. Each source keeps its own receipt and access scope. Matching titles or descriptions can suggest a relationship for review. An independent execution for the same target is an explicit accepted decision. [Target binding and admission](ling-agent-operating-model-detailed-design.md#32-work-item-target-identity)
+
 Pausing a source stops admission of new work from it. Accepted work is managed through the existing Run and Workflow controls. Previously configured automations and direct user requests keep their existing entry points.
 
 ## 6. Team Participation
@@ -149,7 +151,7 @@ For example, when P01 freezes the replay contract, the P02 implementer receives 
 
 ### 6.3 Coordination Cadence and Agent Messages
 
-A `CoordinationRound` gives the Agents on a Work Item a shared checkpoint for kickoff, stage progress, acceptance, blockers or retrospective. Committed work events provide the default cadence. Projects can also configure daily or weekly checkpoints through Automations for a specified Work Item. Ling Agent or the recorded Workflow coordinator can invite participants by role and context lease. The resulting brief is available to the assigned Agents as scoped input for their next step, with progress, evidence, unresolved questions and accountable owners. [Round contract](ling-agent-operating-model-detailed-design.md#58-coordination-rounds-and-agent-messages)
+A `CoordinationRound` gives the Agents on a Work Item a shared checkpoint for kickoff, stage progress, acceptance, blockers or retrospective. Committed work events provide the default cadence. Daily or weekly checkpoints use Automations for a specified Work Item. A scheduled occurrence commits its receipt and round together, so restart recovers the same round and deadline. Ling Agent or the recorded Workflow coordinator admits any participant follow-up under its normal scope and budget. The resulting brief is available to the assigned Agents with progress, evidence, unresolved questions and accountable owners. [Scheduled coordination](ling-agent-operating-model-detailed-design.md#59-scheduled-coordination-admission)
 
 A parent can send a child a targeted note, and assigned Agents can ask each other a question during work. Each message identifies its work item, subject version, sender and recipients. An open question can continue after a checkpoint ends. When a question blocks a required input or a handoff is returned, the Workflow holds the affected dependency while independent steps continue. The original Workflow admits downstream work after the receiving participant's handoff receipt and the current readiness checks.
 
@@ -180,7 +182,7 @@ An external Agent receives a bounded context projection. It does not receive raw
 
 ## 8. GitHub Development Delivery
 
-GitHub is a Work Item source and a Delivery target. The canonical identity for a PR is repository, PR number, base SHA, head SHA, and source update revision.
+GitHub is a Work Item source and a Delivery target. The canonical PR target is the verified repository and PR number within its GitHub instance. Base, head and source update revisions describe the current work and evidence.
 
 ```text
 Issue or PR event
@@ -190,11 +192,11 @@ Issue or PR event
   -> Verify and Review
   -> PR update or comment
   -> CI / review event
-  -> reconcile current head SHA
+  -> reconcile the current tested basis and required checks
   -> accept, revise, supersede or block
 ```
 
-Merge is a user or repository-policy acceptance signal. It can complete a Goal only when the required criteria and current head evidence are satisfied. CI or review failure creates a follow-up on the same Work Item lineage. Evidence from an old head SHA never approves a newer head SHA.
+Required CI checks declare whether they apply to the head, a specific integration result or the current merge group. If base advances with the same head, applicable head-only checks can carry forward and integration checks need evidence for the new result. Ling initiates merges through verified repository protections that enforce the required basis at merge time. The Goal completes after the verified merge receipt and its own required evidence are satisfied. CI or review failure creates a follow-up on the same Work Item lineage. [CI evidence and merge guard](ling-agent-operating-model-detailed-design.md#74-ci-evidence-and-merge-guard)
 
 ## 9. Delivery and Feedback
 
@@ -244,7 +246,7 @@ The product can expose a task inbox, but it must preserve the same Thread, Goal,
 2. A Work Item revision resolves to one initial dispatch, including when two intake attempts arrive concurrently.
 3. The existing coordinator and Workflow assignment decide who runs. Explicit assignment, active follow-ups and authorized parallel steps retain their current semantics.
 4. A Work Item can resume after connection loss without duplicating a known side effect.
-5. PR, CI and Review events reconcile against the current head SHA.
+5. PR, CI and Review events reconcile against the current applicable head, integration or merge group basis. Provider enforcement protects an authorized merge from basis changes.
 6. A user can follow the same Work Item from source conversation to Run, Verification, Review and Delivery.
 7. Learning candidates retain provenance and cannot expand authority.
 8. The App Server and external-agent adapters expose Work Item, claim, delivery and feedback events through the existing event replay contract.
@@ -254,9 +256,10 @@ The product can expose a task inbox, but it must preserve the same Thread, Goal,
 12. Authorized contributors can add and correct evidence on the same Work Item without losing concurrent contributions. The board respects source visibility, and approvals and delivery acceptance continue to use their original owners.
 13. A stage can hand its accepted result to the implementation and QA roles with the applicable context for each. A peer question or returned handoff holds only work that depends on the missing input. Replay returns the same accepted dispatch.
 14. An enabled policy can start a scoped deliberation once for the current decision. Authoritative evidence can resolve the issue before ballot admission. An authorized decision after a tie preserves the tally and rationale.
-15. Work events and authorized schedules create deduplicated rounds. Closing a round publishes one replayable brief with scoped evidence, blockers and action owners. Workflow admission governs any follow-up execution.
+15. Work events and authorized schedules create deduplicated rounds. A committed scheduled occurrence recovers the same round and deadline or its skipped result. Closing publishes one replayable brief with scoped evidence, blockers and action owners.
 16. Participants can exchange a scoped message or question and recover its receipt on reconnect. Timeouts and dependency cycles route to the coordinator, and downstream readiness uses the current subject and evidence.
 17. A user can send a follow-up during execution, or request a change that holds only affected new work. An accepted successor carries applicable evidence and independent stage references forward. The original owners settle in-flight effects and preserve work in progress.
 18. Deliberation uses read-only shaping or the applicable Workflow placement. An unexpected decision returns a typed receipt for the original dependency or a successor Plan.
 19. A message receives a delivery milestone from verified input acceptance. A handoff shows separate acceptance, admission and start milestones, and recovery resumes the same target owner across either crash window.
 20. Repeated reports of a blocker share one progress record. Cross-Run retries use the current continuation budget and pause with a recovery condition when it is exhausted.
+21. Authorized inputs from distinct sources that explicitly target the same work share one default Work Item and initial dispatch. Independent work for the same target carries its own accepted scope and receipt.

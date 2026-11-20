@@ -68,6 +68,8 @@ App Server 作为 Daemon 的会话协议入口，以 `ling-app-server/1` 发布�
 | 改动和产物 | `changes/capture`、`changes/read`、`changes/apply/preview`、`changes/apply`、`artifact/read` | 以候选、选中 hunk、工作树版本和审批为边界。应用、回退、重放沿用现有 patch 所有者。产物可分页，内容读取限范围和大小。 |
 | 开发验证与审查 | `verify/plan`、`verify/start`、`verify/status`、`verify/cancel`、`review/start`、`review/status`、`review/finding/update`、`simplify/start`、`doctor/run`、`instructions/init` | 指定候选和已配置的规则或配方。运行类返回操作 ID，草案类返回可审阅差异，读取类返回有限证据投影。 |
 | 工作项快照与订阅 | `workItem/list`、`workItem/read`、`workItem/subscribe`、`workItem/unsubscribe` | 按工作区和 Work Item 授权分页发现、读取快照及订阅。订阅接收同一范围的恢复游标，取消使用此连接上的订阅 ID。 [工作项方法](ling-agent-operating-model-detailed-design.md#9-events-and-app-server-methods) |
+| 工作项接入与受理 | `workItem/create`、`workItem/accept` | 可携带明确 Work Item 或可核验的 GitHub 目标，按授权返回来源回执和可见的默认工作项。接受独立执行时绑定其单独的客体与范围。 [目标身份与受理](ling-agent-operating-model-detailed-design.md#32-work-item-target-identity) |
+| GitHub 证据与对账 | `github/subject/read`、`github/delivery/reconcile` | 按当前授权读取 PR 修订、检查适用性、交付状态和证据引用。对账读取提供方原记录并更新已有交付意图及其回执。 [CI 证据与合并保护](ling-agent-operating-model-detailed-design.md#74-ci-evidence-and-merge-guard) |
 | 工作项证据与审议 | `workItem/evidence/read`、`workItem/evidence/append`、`workItem/deliberation/start`、`workItem/deliberation/read`、`workItem/deliberation/cancel`、`workItem/deliberation/decide` | 协商可选能力 `workItem.evidence`、`workItem.deliberation`。读取工作项证据、触发评估和审议回执。 [整合协议](ling-agent-operating-model-detailed-design.md#9-events-and-app-server-methods) |
 | 工作项阶段与轮次 | `workItem/stage/read`、`workItem/stage/brief/read`、`workItem/coordination/start`、`workItem/coordination/read`、`workItem/coordination/close` | 协商可选能力 `workItem.coordination`。读取阶段、角色简报和 `CoordinationRound`。协调者关闭轮次时原子发布简报或记录取消。 [轮次合同](ling-agent-operating-model-detailed-design.md#58-coordination-rounds-and-agent-messages) |
 | Agent 消息与问答 | `workItem/message/send`、`workItem/message/read`、`workItem/message/list`、`workItem/question/ask`、`workItem/question/read`、`workItem/question/reply` | 使用 `workItem.coordination`。按工作项、阶段和收件范围发送及读取消息，轮次 ID 可作为消息来源或查询条件。问答使用独立期限与修订。 |
@@ -257,7 +259,7 @@ type CheckEvidence = {
 
 `review/start` 消费候选引用、原始任务、基线指令和可信检查记录，启动独立的只读运行。现有 Code Assessment 保留其 Diff-only 和 findings contract。新增的上下文也采用有边界的只读输入引用，按配置提供对应调用路径。作者上下文的推理和自评保留在原会话。审查发现含候选、捕获位置、触发条件和可见证据。修正走正常 Turn，再计算新候选和保留结果的适用性。`simplify/start` 产出当前 diff 的可行动建议，可委托普通编辑 Turn 应用。 [代码审查工作台](code-review-and-security-workbench.md)
 
-Goal 使用已接受的验收项。代码工作可以指定候选检查、检查具体断言、审查处置或外部 CI 证据。完成事务同时核对候选、记录归属、执行状态、证据类型和覆盖范围。改动包含测试、CI 或验证配方时，独立审查核对其行为覆盖及基线验收要求。已授权的 PR 流程用自己的接收回执。CI 按实际 PR head 和对应 workflow run 核对，Draft preview 仅表示预览验证。提交、推送、合并和部署由各自的适用权限和门槛控制。 [现有 Goal 验收](../../packages/core/src/storage/sqlite/goal-acceptance.ts) · [CI 范围与档位](../maintenance/ci.md)
+Goal 使用已接受的验收项。代码工作可以指定候选检查、检查具体断言、审查处置或外部 CI 证据。完成事务同时核对候选、记录归属、执行状态、证据类型和覆盖范围。改动包含测试、CI 或验证配方时，独立审查核对其行为覆盖及基线验收要求。CI 按检查声明的 head、集成结果或 merge group 核对实际被测对象、检查来源及有效运行尝试。Draft 预览按对应覆盖范围记录。Ling 发起合并时使用能在执行时约束证据基准的仓库保护，交付记录区分受理、入队和实际合并。 [现有 Goal 验收](../../packages/core/src/storage/sqlite/goal-acceptance.ts) · [CI 范围与档位](../maintenance/ci.md) · [CI 与合并合同](ling-agent-operating-model-detailed-design.md#74-ci-evidence-and-merge-guard)
 
 ### 3.4 Handoff、多 Agent 与自研运行环境
 
