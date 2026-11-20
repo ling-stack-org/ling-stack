@@ -9,6 +9,7 @@ export const LING_APP_SERVER_SUPPORTED_PROTOCOL_VERSIONS = [
 ] as const;
 
 export const LING_APP_SERVER_CAPABILITIES = [
+  "server/ping",
   "thread.events",
   "turn.control",
   "approval.respond",
@@ -25,6 +26,15 @@ export const LING_APP_SERVER_CAPABILITIES = [
 ] as const;
 
 export type LingAppServerCapability = (typeof LING_APP_SERVER_CAPABILITIES)[number];
+
+/** Capabilities backed by the currently shipped App Server adapter. */
+export const LING_APP_SERVER_IMPLEMENTED_CAPABILITIES = [
+  "server/ping",
+  "workItem.read",
+  "workItem.control",
+] as const satisfies readonly LingAppServerCapability[];
+
+export type LingAppServerImplementedCapability = (typeof LING_APP_SERVER_IMPLEMENTED_CAPABILITIES)[number];
 
 export const LING_APP_SERVER_METHODS = [
   "initialize",
