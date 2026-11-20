@@ -309,6 +309,12 @@ class RpcConnection {
         return this.cancelRun(params);
       case "workItem/list":
         return this.listWorkItems(params);
+      case "workItem/create":
+        return this.createWorkItem(params);
+      case "workItem/accept":
+        return this.acceptWorkItem(params);
+      case "workItem/clarify":
+        return this.clarifyWorkItem(params);
       case "workItem/read":
         return this.readWorkItem(params);
       case "workItem/pause":
@@ -359,6 +365,76 @@ class RpcConnection {
       limit: readOptionalIntegerField(record, "limit"),
     }, new Date().toISOString());
     return { cwd, workItems: items.map(item => projectWorkItemSnapshot(item)) };
+  }
+
+  private createWorkItem(params: unknown): unknown {
+    const record = readParamsRecord(params);
+    const cwd = readRpcCwd(record, this.defaultCwd);
+    const sourceType = readOptionalWorkItemSourceType(record.sourceType) ?? "manual";
+    const sourceId = readStringField(record, "sourceId");
+    const title = readStringField(record, "title");
+    const store = this.context.storeRegistry.getStore(cwd);
+    const workItem = store.upsertWorkItem({
+      id: readOptionalStringField(record, "workItemId"),
+      sourceType,
+      sourceId,
+      title,
+      description: readOptionalStringField(record, "description"),
+      priority: readOptionalWorkItemPriority(record.priority),
+      labels: Array.isArray(record.labels) && record.labels.every((value) => typeof value === "string") ? record.labels as string[] : undefined,
+    }, new Date().toISOString());
+    const idempotencyKey = readOptionalStringField(record, "idempotencyKey");
+    appendControlPlaneEvent(store, this.context.controlPlaneEvents, {
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      cwd,
+      domain: "work_items",
+      entityType: "work_item",
+      entityId: workItem.id,
+      action: "work_item.created",
+      ...(idempotencyKey ? { idempotencyKey } : {}),
+      data: { workItemId: workItem.id, revision: workItem.revision, status: workItem.status },
+    });
+    return { cwd, workItem: projectWorkItemSnapshot(workItem) };
+  }
+
+  private acceptWorkItem(params: unknown): unknown {
+    const record = readParamsRecord(params);
+    const cwd = readRpcCwd(record, this.defaultCwd);
+    const workItemId = readStringField(record, "workItemId");
+    const store = this.context.storeRegistry.getStore(cwd);
+    const workItem = store.getWorkItem(workItemId);
+    if (!workItem) throw rpcError(-32040, "workspace_binding_invalid", `Work Item was not found: ${workItemId}`);
+    const expectedRevision = readOptionalIntegerField(record, "expectedWorkItemRevision");
+    if (expectedRevision !== undefined && expectedRevision !== workItem.revision) {
+      throw rpcError(-32030, "stale_revision", "The Work Item revision is stale.");
+    }
+    appendControlPlaneEvent(store, this.context.controlPlaneEvents, {
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      cwd,
+      domain: "work_items",
+      entityType: "work_item",
+      entityId: workItem.id,
+      action: "work_item.accepted",
+      data: { workItemId: workItem.id, revision: workItem.revision, actorId: readOptionalStringField(record, "actorId") },
+    });
+    return { cwd, accepted: true, workItem: projectWorkItemSnapshot(workItem) };
+  }
+
+  private clarifyWorkItem(params: unknown): unknown {
+    const record = readParamsRecord(params);
+    const cwd = readRpcCwd(record, this.defaultCwd);
+    const workItemId = readStringField(record, "workItemId");
+    const store = this.context.storeRegistry.getStore(cwd);
+    const workItem = store.getWorkItem(workItemId);
+    if (!workItem) throw rpcError(-32040, "workspace_binding_invalid", `Work Item was not found: ${workItemId}`);
+    return {
+      cwd,
+      workItem: projectWorkItemSnapshot(workItem),
+      clarification: {
+        status: "required",
+        question: readOptionalStringField(record, "question") ?? "Please clarify the Work Item target or acceptance criteria.",
+      },
+    };
   }
 
   private startThread(params: unknown): unknown {
@@ -984,6 +1060,15 @@ function readOptionalWorkItemSourceType(value: unknown): WorkItemSourceType | un
     throw rpcError(-32602, "invalid_params", "sourceType is not a supported Work Item source type.");
   }
   return value as WorkItemSourceType;
+}
+
+function readOptionalWorkItemPriority(value: unknown): WorkItem["priority"] | undefined {
+  if (value === undefined) return undefined;
+  const priorities = ["low", "normal", "high", "urgent"] as const;
+  if (typeof value !== "string" || !priorities.includes(value as (typeof priorities)[number])) {
+    throw rpcError(-32602, "invalid_params", "priority is not a supported Work Item priority.");
+  }
+  return value as WorkItem["priority"];
 }
 
 function readLingThreadKind(value: string): import("@ling-stack/core").LingThreadKind {
