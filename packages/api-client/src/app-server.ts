@@ -62,6 +62,9 @@ export interface LingAppServerClientOptions {
   readonly requiredCapabilities?: readonly LingAppServerCapability[];
   readonly optionalCapabilities?: readonly LingAppServerCapability[];
   readonly workspaceScope?: readonly string[];
+  readonly autoReconnect?: boolean;
+  readonly reconnectDelayMs?: number;
+  readonly maxReconnectDelayMs?: number;
 }
 
 export interface LingAppServerNotification {
@@ -82,6 +85,13 @@ interface PendingRequest {
   readonly reject: (error: Error) => void;
 }
 
+interface TrackedSubscription {
+  readonly method: "thread/subscribe" | "workItem/subscribe";
+  readonly params: LingAppServerSubscriptionParams;
+  subscriptionId?: string;
+  cursor?: string;
+}
+
 export class LingAppServerClient {
   private readonly options: LingAppServerClientOptions;
   private readonly pending = new Map<string, PendingRequest>();
@@ -89,14 +99,20 @@ export class LingAppServerClient {
   private socket?: LingAppServerSocket;
   private nextId = 1;
   private connectPromise?: Promise<LingAppServerInitializeResult>;
+  private manuallyClosed = false;
+  private reconnectTimer?: ReturnType<typeof setTimeout>;
+  private reconnectAttempt = 0;
+  private readonly subscriptions = new Map<string, TrackedSubscription>();
 
   constructor(options: LingAppServerClientOptions) {
     this.options = options;
   }
 
   connect(): Promise<LingAppServerInitializeResult> {
+    this.manuallyClosed = false;
     if (this.connectPromise) return this.connectPromise;
     this.connectPromise = this.openAndInitialize();
+    this.connectPromise.catch(() => this.scheduleReconnect());
     return this.connectPromise;
   }
 
@@ -138,6 +154,16 @@ export class LingAppServerClient {
   async interruptTurn(params: Record<string, unknown>): Promise<unknown> {
     await this.connect();
     return await this.request("turn/interrupt", params);
+  }
+
+  async respondApproval(params: Record<string, unknown>): Promise<unknown> {
+    await this.connect();
+    return await this.request("approval/respond", params);
+  }
+
+  async respondInput(params: Record<string, unknown>): Promise<unknown> {
+    await this.connect();
+    return await this.request("input/respond", params);
   }
 
   async planVerification(params: LingAppServerVerifyPlanParams): Promise<LingAppServerVerifyPlanResult> {
@@ -231,7 +257,16 @@ export class LingAppServerClient {
 
   async subscribe(params: LingAppServerSubscriptionParams): Promise<LingAppServerSubscriptionResult> {
     await this.connect();
-    return await this.request("workItem/subscribe", params);
+    const method = params.threadId ? "thread/subscribe" : "workItem/subscribe";
+    const result = await this.request<LingAppServerSubscriptionResult>(method, params);
+    const key = subscriptionKey(method, params);
+    this.subscriptions.set(key, {
+      method,
+      params,
+      ...(result.subscriptionId ? { subscriptionId: result.subscriptionId } : {}),
+      ...(result.cursor ? { cursor: result.cursor } : params.cursor ? { cursor: params.cursor } : {}),
+    });
+    return result;
   }
 
   async registerExternalAgent(params: LingAppServerExternalAgentRegisterParams): Promise<LingAppServerExternalAgentRegisterResult> {
@@ -265,6 +300,9 @@ export class LingAppServerClient {
   }
 
   close(): void {
+    this.manuallyClosed = true;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = undefined;
     const socket = this.socket;
     this.socket = undefined;
     this.connectPromise = undefined;
@@ -282,13 +320,16 @@ export class LingAppServerClient {
     attachSocketListener(socket, "close", () => this.handleClose());
     attachSocketListener(socket, "error", () => this.handleClose());
     await opened;
-    return await this.request("initialize", {
+    const initialized = await this.request<LingAppServerInitializeResult>("initialize", {
       protocolVersions: ["ling-app-server/1"],
       clientInfo: this.options.clientInfo,
       requiredCapabilities: this.options.requiredCapabilities,
       optionalCapabilities: this.options.optionalCapabilities,
       workspaceScope: this.options.workspaceScope,
     });
+    this.reconnectAttempt = 0;
+    await this.replaySubscriptions();
+    return initialized;
   }
 
   private request<T>(method: string, params: unknown): Promise<T> {
@@ -328,6 +369,7 @@ export class LingAppServerClient {
       return;
     }
     if ("method" in parsed) {
+      this.updateSubscriptionCursor(parsed as LingAppServerNotification);
       for (const listener of this.notificationListeners) listener(parsed as LingAppServerNotification);
     }
   }
@@ -338,7 +380,58 @@ export class LingAppServerClient {
     const error = new Error("Ling App Server connection closed.");
     for (const pending of this.pending.values()) pending.reject(error);
     this.pending.clear();
+    this.connectPromise = undefined;
+    this.scheduleReconnect();
   }
+
+  private updateSubscriptionCursor(notification: LingAppServerNotification): void {
+    const params = notification.params;
+    if (typeof params !== "object" || params === null || Array.isArray(params)) return;
+    const record = params as Record<string, unknown>;
+    const subscriptionId = typeof record.subscriptionId === "string" ? record.subscriptionId : undefined;
+    const cursor = typeof record.cursor === "string" ? record.cursor : undefined;
+    if (!subscriptionId || !cursor) return;
+    for (const [key, subscription] of this.subscriptions) {
+      if (subscription.subscriptionId === subscriptionId) this.subscriptions.set(key, { ...subscription, cursor });
+    }
+  }
+
+  private scheduleReconnect(): void {
+    if (this.manuallyClosed || this.options.autoReconnect === false || this.reconnectTimer) return;
+    const base = Math.max(10, this.options.reconnectDelayMs ?? 250);
+    const max = Math.max(base, this.options.maxReconnectDelayMs ?? 10_000);
+    const delay = Math.min(max, base * 2 ** Math.min(this.reconnectAttempt, 6));
+    this.reconnectAttempt += 1;
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = undefined;
+      void this.connect().catch(() => undefined);
+    }, delay);
+  }
+
+  private async replaySubscriptions(): Promise<void> {
+    const tracked = [...this.subscriptions.entries()];
+    for (const [key, subscription] of tracked) {
+      const params = subscription.cursor ? { ...subscription.params, cursor: subscription.cursor } : subscription.params;
+      try {
+        const result = await this.request<LingAppServerSubscriptionResult>(subscription.method, params);
+        this.subscriptions.set(key, {
+          ...subscription,
+          ...(result.subscriptionId ? { subscriptionId: result.subscriptionId } : {}),
+          ...(result.cursor ? { cursor: result.cursor } : {}),
+        });
+        if (result.disposition === "snapshot_required") {
+          const method = subscription.method === "thread/subscribe" ? "thread/resync/required" : "workItem/resync/required";
+          for (const listener of this.notificationListeners) listener({ jsonrpc: "2.0", method, params: result });
+        }
+      } catch {
+        // A failed replay remains tracked and will be retried on the next reconnect.
+      }
+    }
+  }
+}
+
+function subscriptionKey(method: TrackedSubscription["method"], params: LingAppServerSubscriptionParams): string {
+  return `${method}:${params.workspaceId ?? ""}:${params.threadId ?? ""}:${params.workItemId ?? ""}`;
 }
 
 function attachSocketListener(socket: LingAppServerSocket, type: "open" | "message" | "close" | "error", listener: (event: unknown) => void): void {

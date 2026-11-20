@@ -1,11 +1,17 @@
 # Ling App Server 与开发工作流实施计划
 
-- **状态** 设计与实施计划，生产实现待开始
+- **状态** App Server 与 Agent Operating Model 的实现分支，核心协议与协作切片已落地，联合发布验收仍在进行
 - **维护者** Contracts、Daemon、Runtime、API Client、CLI 与开发工具维护者
-- **核对基线** 2026-11-21，`origin/main@50f73b852`
+- **核对基线** 2026-11-21，`origin/main@1ac260606`
 - **类型** 开发准备、依赖顺序和验收计划
 - **合同** [产品与架构设计](ling-app-server.md) · [详细设计](ling-app-server-detailed-design.md)
 - **代码与测试锚点** [Daemon RPC](../../packages/daemon/src/server/rpc.ts) · [控制面往返测试](../../packages/daemon/test/control-plane-api.test.mjs) · [会话受理收据](../../packages/daemon/test/conversation-submission-receipts.test.mjs) · [框架验收](ling-framework-complementary-implementation-plan.md)
+
+## 当前实现证据
+
+实现分支已经把协议合同、WebSocket 协商、Thread/Turn 生命周期、Work Item 控制与证据、开发工作流入口、协作记录、审议触发策略、外部 Agent 注册与任务受理接入同一个 App Server RPC。协作记录复用 Work Item 证据板的持久 CAS 与幂等边界，外部 Agent 任务在派发前核对 Work Item 当前 revision 和 control state。
+
+已验证的关键回归包括 App Server WebSocket、Work Item 控制与证据、协作记录回放、开发工作流服务、外部 Agent federation 与 API Client。当前实现仍把开发验证操作和 federation ledger 保存在 daemon context 内，提供快照/恢复接口但尚未接入 SQLite 重启恢复；外部任务也停在受理和事件账本边界，由原有 Runner/Workflow owner 继续实际派发。联合重连、真实 Provider、跨进程持久化和发布矩阵属于 G 阶段验收。
 
 ## 目标与开工顺序
 

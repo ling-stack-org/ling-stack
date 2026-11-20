@@ -73,6 +73,7 @@ export type ControlPlaneSubscribeResult =
   | {
       readonly disposition: "complete";
       readonly subscriptionId: string;
+      readonly cursor?: string;
       readonly window: ControlPlaneReplayWindow;
     }
   | {

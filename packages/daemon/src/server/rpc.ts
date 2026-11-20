@@ -1,8 +1,10 @@
 import type { Server } from "node:http";
 import type { Duplex } from "node:stream";
 import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
 import {
   DEFAULT_WORKSPACE_ID,
+  evaluateDeliberationTrigger,
   type ControlPlaneDomain,
   type ControlPlaneEvent,
   type RunEventEnvelope,
@@ -47,6 +49,18 @@ import { projectPublicRunSession } from "../features/runs/public-execution-snaps
 import { projectPublicLingThread, projectPublicLingTurn } from "../features/runs/public-execution-snapshots.js";
 import { maybeQueueGoalContinuation, maybeStartNextRunInterventionContinuation } from "../features/runs/interventions.js";
 import { RpcOutboundWriter, type RpcOutboundFrame } from "./rpc-outbound.js";
+import { AppServerDevelopmentService } from "./app-server-development.js";
+import {
+  ExternalAgentFederationService,
+  externalAgentRpcError,
+  getExternalAgentFederation,
+  type ExternalAgentFederationEvent,
+} from "../runtime/external-agent/federation.js";
+import {
+  AppServerCollaborationError,
+  appendAppServerWorkItemCollaboration,
+  readAppServerWorkItemCollaboration,
+} from "./app-server-collaboration.js";
 
 type JsonRpcId = string | number | null;
 
@@ -129,6 +143,8 @@ export function attachRpcWebSocketServer(server: Server, context: DaemonContext)
 class RpcConnection {
   private readonly subscriptions = new Map<string, RpcSubscription>();
   private readonly outbound: RpcOutboundWriter;
+  private readonly development: AppServerDevelopmentService;
+  private readonly externalAgents: ExternalAgentFederationService;
   private readonly runCloseListeners = new Set<() => void>();
   private nextSubscriptionId = 1;
   private initialized = false;
@@ -136,6 +152,8 @@ class RpcConnection {
   private readonly connectionId = `conn_${randomUUID()}`;
   private readonly pendingRequests = new Set<string>();
   private readonly cancelledRequests = new Set<string>();
+  private readonly externalTaskIds = new Set<string>();
+  private readonly externalAgentUnsubscribe: () => void;
   private readonly onMessage = (data: RawData): void => { void this.handleMessage(data); };
   private readonly onConnectionClose = (): void => this.close();
   private readonly onConnectionError = (): void => this.close();
@@ -147,6 +165,9 @@ class RpcConnection {
     private readonly appServer: boolean,
   ) {
     this.outbound = new RpcOutboundWriter(ws, { onClose: () => this.close() });
+    this.development = getAppServerDevelopmentService(context);
+    this.externalAgents = getExternalAgentFederation(context);
+    this.externalAgentUnsubscribe = this.externalAgents.subscribe((event) => this.handleExternalAgentEvent(event));
   }
 
   start(): void {
@@ -208,10 +229,12 @@ class RpcConnection {
         if (request.id === undefined) {
           throw rpcError(-32600, "subscription_response_required", "thread/subscribe requires a request id.");
         }
+        const record = readParamsRecord(request.params);
+        const threadId = readOptionalStringField(record, "threadId");
         const prepared = this.prepareControlPlaneSubscription({
-          ...readParamsRecord(request.params),
+          ...record,
           domains: ["runs", "work_items", "work_units"],
-        });
+        }, threadId ? { entityType: "thread", entityId: threadId } : undefined);
         if (this.send({ jsonrpc: "2.0", id, result: prepared.result })) prepared.activate?.();
         return;
       }
@@ -281,10 +304,68 @@ class RpcConnection {
         return this.readThread(params);
       case "thread/list":
         return this.listThreads(params);
+      case "thread/name/set":
+        return this.setThreadName(params);
+      case "thread/archive":
+        return this.archiveThread(params, true);
+      case "thread/unarchive":
+        return this.archiveThread(params, false);
+      case "thread/delete/preview":
+        return this.previewThreadDelete(params);
+      case "thread/delete":
+        return this.deleteThread(params);
       case "thread/turns/list":
         return this.listThreadTurns(params);
+      case "thread/items/list":
+        return this.listThreadItems(params);
+      case "thread/mode/get":
+        return this.getThreadMode(params);
+      case "thread/mode/set":
+        return this.setThreadMode(params);
+      case "thread/goal/get":
+        return this.getThreadGoal(params);
+      case "thread/goal/set":
+        return this.setThreadGoal(params);
+      case "thread/goal/pause":
+        return this.updateThreadGoalStatus(params, "paused");
+      case "thread/goal/resume":
+        return this.updateThreadGoalStatus(params, "active");
+      case "thread/goal/clear":
+        return this.clearThreadGoal(params);
+      case "thread/goal/complete":
+        return this.completeThreadGoal(params);
+      case "plan/read":
+        return this.readPlan(params);
+      case "plan/accept":
+        return this.acceptPlan(params);
+      case "thread/unsubscribe":
+        return this.unsubscribeControlPlane(params);
+      case "verify/plan":
+        return await this.development.planVerification(params as never);
+      case "verify/start":
+        return await this.development.startVerification(params as never);
+      case "verify/status":
+        return this.development.getVerification(params as never);
+      case "verify/cancel":
+        return this.development.cancelVerification(params as never);
+      case "review/start":
+        return await this.development.startReview(params as never);
+      case "review/status":
+        return this.development.getReviewStatus(params as never);
+      case "review/finding/update":
+        return await this.development.updateReviewFinding(params as never);
+      case "simplify/start":
+        return this.development.startSimplify(params as never);
+      case "doctor/run":
+        return await this.development.runDoctor(params as never);
+      case "instructions/init":
+        return await this.development.initInstructions(params as never);
       case "turn/start":
         return this.startTurn(params);
+      case "approval/respond":
+        return this.respondApproval(params);
+      case "input/respond":
+        return this.respondInput(params);
       case "turn/queue":
         return this.queueTurn(params);
       case "turn/interrupt":
@@ -327,6 +408,10 @@ class RpcConnection {
         return this.readWorkItemEvidence(params);
       case "workItem/evidence/append":
         return this.appendWorkItemEvidence(params);
+      case "workItem/collaboration/read":
+        return this.readCollaboration(undefined, params);
+      case "workItem/collaboration/append":
+        return this.appendCollaborationFromParams(params);
       case "workItem/read":
         return this.readWorkItem(params);
       case "workItem/pause":
@@ -335,6 +420,53 @@ class RpcConnection {
         return this.controlWorkItem("resume", params);
       case "workItem/cancel":
         return this.controlWorkItem("cancel", params);
+      case "workItem/deliberation/start":
+        return this.appendCollaboration("deliberation", "started", params);
+      case "workItem/deliberation/decide":
+        return this.appendCollaboration("deliberation", "decided", params);
+      case "workItem/deliberation/cancel":
+        return this.appendCollaboration("deliberation", "cancelled", params);
+      case "workItem/deliberation/read":
+        return this.readCollaboration("deliberation", params);
+      case "workItem/stage/read":
+        return this.readCollaboration("stage", params);
+      case "workItem/stage/brief/read":
+        return this.readCollaboration("brief", params);
+      case "workItem/coordination/start":
+        return this.appendCollaboration("coordination", "started", params);
+      case "workItem/coordination/close":
+        return this.appendCollaboration("coordination", "closed", params);
+      case "workItem/coordination/read":
+        return this.readCollaboration("coordination", params);
+      case "workItem/message/send":
+        return this.appendCollaboration("message", "created", params);
+      case "workItem/message/read":
+      case "workItem/message/list":
+        return this.readCollaboration("message", params);
+      case "workItem/question/ask":
+        return this.appendCollaboration("question", "created", params);
+      case "workItem/question/reply":
+        return this.appendCollaboration("question", "replied", params);
+      case "workItem/question/read":
+        return this.readCollaboration("question", params);
+      case "workItem/handoff/accept":
+        return this.appendCollaboration("handoff", "accepted", params);
+      case "workItem/handoff/return":
+        return this.appendCollaboration("handoff", "returned", params);
+      case "workItem/handoff/read":
+        return this.readCollaboration("handoff", params);
+      case "workItem/feedback/add":
+        return this.appendCollaboration("message", "updated", params);
+      case "externalAgent/register":
+        return this.registerExternalAgent(params);
+      case "externalAgent/capabilities/read":
+        return this.externalAgents.readCapabilities(readStringField(readParamsRecord(params), "registrationId"));
+      case "externalAgent/task/start":
+        return this.startExternalAgentTask(params);
+      case "externalAgent/task/reconnect":
+        return this.reconnectExternalAgentTask(params);
+      case "externalAgent/task/cancel":
+        return await this.cancelExternalAgentTask(params);
       case "workItem/unsubscribe":
         return this.unsubscribeControlPlane(params);
       default:
@@ -504,6 +636,151 @@ class RpcConnection {
     return { cwd, workItemId, ...result };
   }
 
+  private readCollaboration(kind: import("@ling-stack/contracts").LingAppServerCollaborationKind | undefined, params: unknown): unknown {
+    const record = readParamsRecord(params);
+    const cwd = readRpcCwd(record, this.defaultCwd);
+    try {
+      const result = readAppServerWorkItemCollaboration(this.context.storeRegistry.getStore(cwd), {
+        workItemId: readStringField(record, "workItemId"),
+        ...(kind ? { kind } : {}),
+        afterRevision: readOptionalIntegerField(record, "afterRevision"),
+        limit: readOptionalIntegerField(record, "limit"),
+      });
+      return { cwd, ...result };
+    } catch (error) {
+      throw collaborationRpcError(error);
+    }
+  }
+
+  private appendCollaborationFromParams(params: unknown): unknown {
+    const record = readParamsRecord(params);
+    const kind = readStringField(record, "kind") as import("@ling-stack/contracts").LingAppServerCollaborationKind;
+    const action = readStringField(record, "action") as import("@ling-stack/contracts").LingAppServerCollaborationAction;
+    return this.appendCollaboration(kind, action, params);
+  }
+
+  private appendCollaboration(
+    kind: import("@ling-stack/contracts").LingAppServerCollaborationKind,
+    action: import("@ling-stack/contracts").LingAppServerCollaborationAction,
+    params: unknown,
+  ): unknown {
+    const record = readParamsRecord(params);
+    const cwd = readRpcCwd(record, this.defaultCwd);
+    const workItemId = readStringField(record, "workItemId");
+    try {
+      let payload = record.payload;
+      if (kind === "deliberation" && record.trigger !== undefined) {
+        const decision = evaluateDeliberationTrigger(record.trigger as never, (record.policy ?? {}) as never);
+        if (!decision.shouldOpen) throw rpcError(-32061, "resume_blocked", decision.reason);
+        payload = { ...(typeof payload === "object" && payload !== null && !Array.isArray(payload) ? payload as Record<string, unknown> : { value: payload }), triggerDecision: decision };
+      }
+      const result = appendAppServerWorkItemCollaboration(this.context.storeRegistry.getStore(cwd), {
+        ...record,
+        cwd,
+        workItemId,
+        kind,
+        action,
+        payload,
+      } as never, new Date().toISOString());
+      const store = this.context.storeRegistry.getStore(cwd);
+      appendControlPlaneEvent(store, this.context.controlPlaneEvents, {
+        workspaceId: DEFAULT_WORKSPACE_ID,
+        cwd,
+        domain: "work_items",
+        entityType: "work_item",
+        entityId: workItemId,
+        action: `work_item.collaboration.${kind}.${action}`,
+        idempotencyKey: readStringField(record, "idempotencyKey"),
+        data: { workItemId, collaborationId: result.record.id, collaborationRevision: result.record.collaborationRevision },
+      });
+      if (this.appServer) {
+        this.send({
+          jsonrpc: "2.0",
+          method: collaborationNotificationMethod(kind),
+          params: { cwd, workItemId, record: result.record },
+        });
+      }
+      return { cwd, ...result };
+    } catch (error) {
+      throw collaborationRpcError(error);
+    }
+  }
+
+  private registerExternalAgent(params: unknown): unknown {
+    try {
+      const result = this.externalAgents.register(params as never);
+      if (this.appServer) {
+        this.send({ jsonrpc: "2.0", method: "externalAgent/registered", params: result });
+      }
+      return result;
+    } catch (error) {
+      throw externalAgentRpcError(error);
+    }
+  }
+
+  private startExternalAgentTask(params: unknown): unknown {
+    const record = readParamsRecord(params);
+    const registrationId = readStringField(record, "registrationId");
+    try {
+      const submission = readParamsRecord(record.submission);
+      const cwd = readRpcCwd(record, this.defaultCwd);
+      const store = this.context.storeRegistry.getStore(cwd);
+      const workItemId = readStringField(submission, "workItemId");
+      const workItem = store.getWorkItem(workItemId);
+      if (!workItem) throw rpcError(-32040, "workspace_binding_invalid", `Work Item was not found: ${workItemId}`);
+      if (readStringField(submission, "workItemRevision") !== String(workItem.revision)) {
+        throw rpcError(-32030, "stale_revision", "The external Agent Work Item revision is stale.");
+      }
+      if (workItem.control.state !== "active") {
+        throw rpcError(-32061, "resume_blocked", `Work Item cannot dispatch an external Agent while control state is ${workItem.control.state}.`);
+      }
+      const result = this.externalAgents.startTask(params as never);
+      const task = result.task;
+      this.externalTaskIds.add(task.taskId);
+      appendControlPlaneEvent(store, this.context.controlPlaneEvents, {
+        workspaceId: DEFAULT_WORKSPACE_ID,
+        cwd,
+        domain: "runners",
+        entityType: "external_agent_task",
+        entityId: task.taskId,
+        action: "external_agent.task.started",
+        idempotencyKey: readStringField(readParamsRecord(record.submission), "idempotencyKey"),
+        data: { registrationId, workItemId: task.workItemId, status: task.status, dispatchDepth: task.dispatchDepth },
+      });
+      if (this.appServer) {
+        this.send({ jsonrpc: "2.0", method: "externalAgent/task/started", params: result });
+      }
+      return result;
+    } catch (error) {
+      throw externalAgentRpcError(error);
+    }
+  }
+
+  private reconnectExternalAgentTask(params: unknown): unknown {
+    try {
+      const result = this.externalAgents.reconnectTask(params as never);
+      this.externalTaskIds.add(result.task.taskId);
+      if (this.appServer) this.send({ jsonrpc: "2.0", method: "externalAgent/task/reconnected", params: result });
+      return result;
+    } catch (error) {
+      throw externalAgentRpcError(error);
+    }
+  }
+
+  private async cancelExternalAgentTask(params: unknown): Promise<unknown> {
+    try {
+      const result = await this.externalAgents.cancelTask(params as never);
+      if (this.appServer) this.send({
+        jsonrpc: "2.0",
+        method: result.status === "unknown" ? "externalAgent/task/unknown" : "externalAgent/task/updated",
+        params: result,
+      });
+      return result;
+    } catch (error) {
+      throw externalAgentRpcError(error);
+    }
+  }
+
   private startThread(params: unknown): unknown {
     const record = readParamsRecord(params);
     const cwd = readRpcCwd(record, this.defaultCwd);
@@ -552,6 +829,270 @@ class RpcConnection {
       cwd,
       threads: store.listLingThreads({ limit: readOptionalIntegerField(record, "limit") }).map(projectPublicLingThread),
     };
+  }
+
+  private setThreadName(params: unknown): unknown {
+    const record = readParamsRecord(params);
+    const cwd = readRpcCwd(record, this.defaultCwd);
+    const threadId = readStringField(record, "threadId");
+    const title = readStringField(record, "title");
+    const store = this.context.storeRegistry.getStore(cwd);
+    const thread = store.updateLingThread(threadId, { title }, new Date().toISOString());
+    if (!thread) throw rpcError(-32040, "workspace_binding_invalid", `Thread was not found: ${threadId}`);
+    appendControlPlaneEvent(store, this.context.controlPlaneEvents, {
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      cwd,
+      domain: "runs",
+      entityType: "thread",
+      entityId: threadId,
+      action: "thread.updated",
+      data: { threadId, title: thread.title, revision: thread.updatedAt },
+    });
+    return { cwd, thread: projectPublicLingThread(thread) };
+  }
+
+  private archiveThread(params: unknown, archived: boolean): unknown {
+    const record = readParamsRecord(params);
+    const cwd = readRpcCwd(record, this.defaultCwd);
+    const threadId = readStringField(record, "threadId");
+    const store = this.context.storeRegistry.getStore(cwd);
+    const existing = store.getLingThread(threadId);
+    if (!existing) throw rpcError(-32040, "workspace_binding_invalid", `Thread was not found: ${threadId}`);
+    const expectedRevision = readOptionalStringField(record, "expectedRevision");
+    if (expectedRevision !== undefined && expectedRevision !== existing.updatedAt) {
+      throw rpcError(-32030, "stale_revision", "The Thread revision is stale.");
+    }
+    const now = new Date().toISOString();
+    const thread = store.updateLingThread(threadId, archived
+      ? { status: "archived", archivedAt: now, archivedReason: readOptionalStringField(record, "reason") ?? "app_server" }
+      : { status: "open", archivedAt: null, archivedReason: null }, now);
+    if (!thread) throw rpcError(-32040, "workspace_binding_invalid", `Thread was not found: ${threadId}`);
+    appendControlPlaneEvent(store, this.context.controlPlaneEvents, {
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      cwd,
+      domain: "runs",
+      entityType: "thread",
+      entityId: threadId,
+      action: archived ? "thread.archived" : "thread.updated",
+      data: { threadId, status: thread.status, archivedAt: thread.archivedAt },
+    });
+    return { cwd, thread: projectPublicLingThread(thread) };
+  }
+
+  private previewThreadDelete(params: unknown): unknown {
+    const record = readParamsRecord(params);
+    const cwd = readRpcCwd(record, this.defaultCwd);
+    const threadId = readStringField(record, "threadId");
+    const store = this.context.storeRegistry.getStore(cwd);
+    const thread = store.getLingThread(threadId);
+    if (!thread) throw rpcError(-32040, "workspace_binding_invalid", `Thread was not found: ${threadId}`);
+    const blockers: string[] = [];
+    if (thread.kind !== "conversation") blockers.push("only conversation threads can be deleted");
+    if (!thread.archivedAt && thread.status !== "archived") blockers.push("thread must be archived before delete");
+    const turns = store.listLingTurns({ threadId, limit: 500 });
+    const goal = store.getLingThreadGoal(threadId);
+    const plans = store.listProposedPlanArtifacts({ threadId, limit: 200 });
+    if (goal && ["active", "paused", "blocked", "usage_limited", "budget_limited"].includes(goal.status)) blockers.push("active goal depends on thread");
+    if (plans.some((plan) => plan.status === "accepted")) blockers.push("accepted plan depends on thread");
+    return {
+      cwd,
+      threadId,
+      revision: thread.updatedAt,
+      allowed: blockers.length === 0,
+      blockers,
+      dependencies: { turnCount: turns.length, goalId: goal?.id, planIds: plans.filter((plan) => plan.status === "accepted").map((plan) => plan.id) },
+    };
+  }
+
+  private deleteThread(params: unknown): unknown {
+    const record = readParamsRecord(params);
+    const cwd = readRpcCwd(record, this.defaultCwd);
+    const threadId = readStringField(record, "threadId");
+    const store = this.context.storeRegistry.getStore(cwd);
+    const preview = this.previewThreadDelete({ ...record, cwd, threadId }) as {
+      readonly allowed: boolean;
+      readonly blockers: readonly string[];
+    };
+    if (!preview.allowed) throw rpcError(-32061, "resume_blocked", `Thread deletion is blocked: ${preview.blockers.join("; ")}`);
+    const result = store.hardDeleteLingThread(threadId, { reason: readOptionalStringField(record, "reason") }, new Date().toISOString());
+    if (!result) throw rpcError(-32040, "workspace_binding_invalid", `Thread was not found: ${threadId}`);
+    appendControlPlaneEvent(store, this.context.controlPlaneEvents, {
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      cwd,
+      domain: "runs",
+      entityType: "thread",
+      entityId: threadId,
+      action: "thread.removed",
+      data: { threadId, tombstoneId: result.tombstone.id },
+    });
+    return { cwd, deleted: true, tombstone: result.tombstone };
+  }
+
+  private listThreadItems(params: unknown): unknown {
+    const record = readParamsRecord(params);
+    const cwd = readRpcCwd(record, this.defaultCwd);
+    const threadId = readStringField(record, "threadId");
+    const store = this.context.storeRegistry.getStore(cwd);
+    if (!store.getLingThread(threadId)) throw rpcError(-32040, "workspace_binding_invalid", `Thread was not found: ${threadId}`);
+    const page = store.listConversationItemsPage({
+      threadId,
+      beforeSequence: readOptionalIntegerField(record, "beforeSequence"),
+      effectiveOnly: record.effectiveOnly === true,
+      limit: readOptionalIntegerField(record, "limit"),
+    });
+    return { cwd, threadId, ...page };
+  }
+
+  private getThreadMode(params: unknown): unknown {
+    const record = readParamsRecord(params);
+    const cwd = readRpcCwd(record, this.defaultCwd);
+    const threadId = readStringField(record, "threadId");
+    const store = this.context.storeRegistry.getStore(cwd);
+    if (!store.getLingThread(threadId)) throw rpcError(-32040, "workspace_binding_invalid", `Thread was not found: ${threadId}`);
+    return { cwd, threadId, mode: store.getLingThreadConversationMode(threadId) ?? { mode: "default" } };
+  }
+
+  private setThreadMode(params: unknown): unknown {
+    const record = readParamsRecord(params);
+    const cwd = readRpcCwd(record, this.defaultCwd);
+    const threadId = readStringField(record, "threadId");
+    const mode = readStringField(record, "mode");
+    if (mode !== "default" && mode !== "plan") throw rpcError(-32602, "invalid_params", "mode must be default or plan.");
+    const store = this.context.storeRegistry.getStore(cwd);
+    const updated = store.updateLingThreadConversationMode(threadId, { mode }, new Date().toISOString());
+    if (!updated) throw rpcError(-32040, "workspace_binding_invalid", `Thread was not found: ${threadId}`);
+    appendControlPlaneEvent(store, this.context.controlPlaneEvents, {
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      cwd,
+      domain: "runs",
+      entityType: "thread",
+      entityId: threadId,
+      action: "thread.mode.updated",
+      data: { threadId, mode: updated.mode },
+    });
+    return { cwd, threadId, mode: updated };
+  }
+
+  private getThreadGoal(params: unknown): unknown {
+    const record = readParamsRecord(params);
+    const cwd = readRpcCwd(record, this.defaultCwd);
+    const threadId = readStringField(record, "threadId");
+    const store = this.context.storeRegistry.getStore(cwd);
+    if (!store.getLingThread(threadId)) throw rpcError(-32040, "workspace_binding_invalid", `Thread was not found: ${threadId}`);
+    return { cwd, threadId, goal: store.getLingThreadGoal(threadId) ?? null };
+  }
+
+  private setThreadGoal(params: unknown): unknown {
+    const record = readParamsRecord(params);
+    const cwd = readRpcCwd(record, this.defaultCwd);
+    const threadId = readStringField(record, "threadId");
+    const objective = readStringField(record, "objective");
+    const store = this.context.storeRegistry.getStore(cwd);
+    if (!store.getLingThread(threadId)) throw rpcError(-32040, "workspace_binding_invalid", `Thread was not found: ${threadId}`);
+    const tokenBudget = readOptionalIntegerField(record, "tokenBudget");
+    const now = new Date().toISOString();
+    const existing = store.getLingThreadGoal(threadId);
+    const goal = existing
+      ? store.updateLingThreadGoal(existing.id, { objective, ...(tokenBudget === undefined ? {} : { tokenBudget }) }, now)
+      : store.createLingThreadGoal({ threadId, objective, ...(tokenBudget === undefined ? {} : { tokenBudget }) }, now);
+    if (!goal) throw rpcError(-32040, "workspace_binding_invalid", `Goal was not found for Thread: ${threadId}`);
+    appendControlPlaneEvent(store, this.context.controlPlaneEvents, {
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      cwd,
+      domain: "runs",
+      entityType: "thread_goal",
+      entityId: goal.id,
+      action: "thread.goal.updated",
+      data: { threadId, goalId: goal.id, status: goal.status },
+    });
+    return { cwd, threadId, goal };
+  }
+
+  private updateThreadGoalStatus(params: unknown, status: "active" | "paused"): unknown {
+    const record = readParamsRecord(params);
+    const cwd = readRpcCwd(record, this.defaultCwd);
+    const threadId = readStringField(record, "threadId");
+    const store = this.context.storeRegistry.getStore(cwd);
+    const goal = store.getLingThreadGoal(threadId);
+    if (!goal) throw rpcError(-32040, "workspace_binding_invalid", `Goal was not found for Thread: ${threadId}`);
+    const updated = store.updateLingThreadGoal(goal.id, { status }, new Date().toISOString());
+    if (!updated) throw rpcError(-32040, "workspace_binding_invalid", `Goal was not found: ${goal.id}`);
+    appendControlPlaneEvent(store, this.context.controlPlaneEvents, {
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      cwd,
+      domain: "runs",
+      entityType: "thread_goal",
+      entityId: goal.id,
+      action: "thread.goal.updated",
+      data: { threadId, goalId: goal.id, status: updated.status },
+    });
+    return { cwd, threadId, goal: updated };
+  }
+
+  private clearThreadGoal(params: unknown): unknown {
+    const record = readParamsRecord(params);
+    const cwd = readRpcCwd(record, this.defaultCwd);
+    const threadId = readStringField(record, "threadId");
+    const store = this.context.storeRegistry.getStore(cwd);
+    const goal = store.clearLingThreadGoal(threadId, new Date().toISOString());
+    if (!goal) throw rpcError(-32040, "workspace_binding_invalid", `Goal was not found for Thread: ${threadId}`);
+    return { cwd, threadId, goal };
+  }
+
+  private completeThreadGoal(params: unknown): unknown {
+    const record = readParamsRecord(params);
+    const cwd = readRpcCwd(record, this.defaultCwd);
+    const threadId = readStringField(record, "threadId");
+    const store = this.context.storeRegistry.getStore(cwd);
+    const goal = store.getLingThreadGoal(threadId);
+    if (!goal) throw rpcError(-32040, "workspace_binding_invalid", `Goal was not found for Thread: ${threadId}`);
+    const updated = store.updateLingThreadGoal(goal.id, {
+      status: "complete",
+      completedBy: readOptionalStringField(record, "completedBy") as "local-user" | "ling-agent" | undefined ?? "local-user",
+      completedReason: readOptionalStringField(record, "reason") ?? "completed_by_app_server",
+      completionVerificationSummary: readOptionalStringField(record, "verificationSummary"),
+    }, new Date().toISOString());
+    if (!updated) throw rpcError(-32040, "workspace_binding_invalid", `Goal was not found: ${goal.id}`);
+    return { cwd, threadId, goal: updated };
+  }
+
+  private readPlan(params: unknown): unknown {
+    const record = readParamsRecord(params);
+    const cwd = readRpcCwd(record, this.defaultCwd);
+    const store = this.context.storeRegistry.getStore(cwd);
+    const planId = readOptionalStringField(record, "planId");
+    const threadId = readOptionalStringField(record, "threadId");
+    if (!planId && !threadId) throw rpcError(-32602, "invalid_params", "planId or threadId is required.");
+    if (planId) {
+      const plan = store.getProposedPlanArtifact(planId);
+      if (!plan) throw rpcError(-32040, "workspace_binding_invalid", `Plan was not found: ${planId}`);
+      return { cwd, plan };
+    }
+    return { cwd, threadId, plans: store.listProposedPlanArtifacts({ threadId, limit: readOptionalIntegerField(record, "limit") }) };
+  }
+
+  private acceptPlan(params: unknown): unknown {
+    const record = readParamsRecord(params);
+    const cwd = readRpcCwd(record, this.defaultCwd);
+    const planId = readStringField(record, "planId");
+    const threadId = readStringField(record, "threadId");
+    const store = this.context.storeRegistry.getStore(cwd);
+    const result = store.applyProposedPlanArtifactAction(planId, {
+      threadId,
+      action: "accept",
+      expectedRevision: readOptionalIntegerField(record, "expectedRevision"),
+      createdBy: readOptionalStringField(record, "createdBy") ?? "local-user",
+    }, new Date().toISOString());
+    appendControlPlaneEvent(store, this.context.controlPlaneEvents, {
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      cwd,
+      domain: "runs",
+      entityType: "plan",
+      entityId: planId,
+      action: "plan.accepted",
+      data: { planId, threadId, revision: result.plan.revision },
+    });
+    return { cwd, ...result };
   }
 
   private listThreadTurns(params: unknown): unknown {
@@ -623,6 +1164,78 @@ class RpcConnection {
     const runRequest = { ...record, cwd, threadId, turnId: turn.id, task };
     const accepted = this.startRun(runRequest);
     return { cwd, thread: projectPublicLingThread(thread), turn: projectPublicLingTurn(turn, thread), run: accepted };
+  }
+
+  private respondApproval(params: unknown): unknown {
+    const record = readParamsRecord(params);
+    const cwd = readRpcCwd(record, this.defaultCwd);
+    const approvalId = readStringField(record, "approvalId");
+    const decision = readStringField(record, "decision");
+    if (decision !== "approve" && decision !== "deny") {
+      throw rpcError(-32602, "invalid_params", "decision must be approve or deny.");
+    }
+    const store = this.context.storeRegistry.getStore(cwd);
+    const existing = store.getApprovalRequest(approvalId);
+    if (!existing) throw rpcError(-32040, "workspace_binding_invalid", `Approval request was not found: ${approvalId}`);
+    const reason = readOptionalStringField(record, "reason");
+    const now = new Date().toISOString();
+    const input = {
+      reason,
+      resolvedBy: "local-user" as const,
+      ...(decision === "approve" ? { decisionKind: readOptionalStringField(record, "decisionKind") as never ?? "approve_once" } : {}),
+      ...(readOptionalStringField(record, "proposedRuleFingerprint") ? { proposedRuleFingerprint: readOptionalStringField(record, "proposedRuleFingerprint") } : {}),
+    };
+    const resolved = decision === "approve"
+      ? store.approveApprovalRequest(approvalId, input, now)
+      : store.denyApprovalRequest(approvalId, input, now);
+    if (!resolved) throw rpcError(-32051, "request_already_resolved", `Approval request is no longer pending: ${approvalId}`);
+    const continuation = decision === "approve"
+      ? this.context.approvalResumeCoordinator.resumeAfterApproval({ store, approval: resolved })
+      : this.context.approvalResumeCoordinator.finalizeSuspendedApprovalDenial({ store, approval: resolved });
+    appendControlPlaneEvent(store, this.context.controlPlaneEvents, {
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      cwd,
+      domain: "approvals",
+      entityType: "approval",
+      entityId: approvalId,
+      action: "approval.resolved",
+      data: { approvalId, status: resolved.status, decision, continuation },
+    });
+    return { cwd, approval: resolved, continuation };
+  }
+
+  private respondInput(params: unknown): unknown {
+    const record = readParamsRecord(params);
+    const cwd = readRpcCwd(record, this.defaultCwd);
+    const threadId = readStringField(record, "threadId");
+    const requestId = readStringField(record, "requestId");
+    const answers = record.answers;
+    if (!Array.isArray(answers)) throw rpcError(-32602, "invalid_params", "answers must be an array.");
+    const submission = {
+      requestId,
+      expectedVersion: readOptionalIntegerField(record, "expectedVersion") ?? readOptionalIntegerField(record, "requestVersion"),
+      expectedStatusRevision: readOptionalIntegerField(record, "expectedStatusRevision") ?? 0,
+      idempotencyKey: readStringField(record, "idempotencyKey"),
+      answers,
+    };
+    const store = this.context.storeRegistry.getStore(cwd);
+    try {
+      const receipt = store.submitUserInputAnswer({ threadId, submission: submission as never }, new Date().toISOString());
+      this.context.userInputDeliveryWorker.wake(store);
+      appendControlPlaneEvent(store, this.context.controlPlaneEvents, {
+        workspaceId: DEFAULT_WORKSPACE_ID,
+        cwd,
+        domain: "runs",
+        entityType: "user_input",
+        entityId: requestId,
+        action: "input.answer.accepted",
+        idempotencyKey: submission.idempotencyKey,
+        data: { threadId, requestId, deliveryId: receipt.deliveryId, replayed: receipt.replayed },
+      });
+      return { cwd, receipt };
+    } catch (error) {
+      throw rpcError(-32030, "stale_revision", error instanceof Error ? error.message : "The user input request is stale.");
+    }
   }
 
   private queueTurn(params: unknown): unknown {
@@ -742,7 +1355,7 @@ class RpcConnection {
     const record = readParamsRecord(params);
     return {
       ...this.readControlPlaneParams(record),
-      afterSeq: readRpcAfterSeq(record.afterSeq),
+      afterSeq: readRpcAfterSeq(record.afterSeq ?? record.cursor),
       limit: readRpcLimit(record.limit),
     };
   }
@@ -800,6 +1413,7 @@ class RpcConnection {
         result: {
           disposition: "complete",
           subscriptionId,
+          cursor: String(replay.window.nextAfterSeq),
           window: replay.window,
         },
         activate: () => hubSubscription?.activate(filteredReplay),
@@ -937,6 +1551,10 @@ class RpcConnection {
     }
     const frame = this.outbound.prepare(controlPlaneNotification(subscription.id, event));
     if (!frame) return;
+    if (this.appServer) {
+      const notification = appServerEventNotification(subscription.id, event);
+      if (notification) this.send(notification);
+    }
     subscription.queue.push({ event, frame });
     if (subscription.queue.length >= CONTROL_PLANE_SSE_QUEUE_WARNING_THRESHOLD) {
       const coalesced = coalesceAndSortControlPlaneEvents(subscription.queue.map(pending => pending.event));
@@ -984,6 +1602,20 @@ class RpcConnection {
     });
   }
 
+  private handleExternalAgentEvent(event: ExternalAgentFederationEvent): void {
+    if (!this.appServer || !this.externalTaskIds.has(event.taskId)) return;
+    const method = event.type === "task_started"
+      ? "externalAgent/task/started"
+      : event.type === "task_unknown"
+        ? "externalAgent/task/unknown"
+        : "externalAgent/task/updated";
+    this.send({
+      jsonrpc: "2.0",
+      method,
+      params: { taskId: event.taskId, cursor: event.cursor, eventType: event.type, payload: event.payload, createdAt: event.createdAt },
+    });
+  }
+
   private sendError(id: JsonRpcId, jsonRpcCode: number, code: string, message: string): void {
     this.send({
       jsonrpc: "2.0",
@@ -1004,6 +1636,7 @@ class RpcConnection {
     this.ws.off("message", this.onMessage);
     this.ws.off("close", this.onConnectionClose);
     this.ws.off("error", this.onConnectionError);
+    this.externalAgentUnsubscribe();
     for (const subscription of [...this.subscriptions.values()]) {
       this.closeSubscription(subscription);
     }
@@ -1214,6 +1847,13 @@ function readRpcAfterSeq(value: unknown): number {
   if (value === undefined || value === null || value === "") {
     return 0;
   }
+  if (typeof value === "string") {
+    const match = /^(?:seq:)?(\d+)$/u.exec(value);
+    if (!match) throw new ControlPlaneBadRequestError("cursor must be a numeric sequence cursor");
+    const parsed = Number(match[1]);
+    if (!Number.isSafeInteger(parsed) || parsed < 0) throw new ControlPlaneBadRequestError("cursor is outside the supported range");
+    return parsed;
+  }
   if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
     throw new ControlPlaneBadRequestError("afterSeq must be an integer greater than or equal to 0");
   }
@@ -1275,8 +1915,137 @@ function normalizeRpcError(error: unknown): { readonly jsonRpcCode: number; read
   };
 }
 
+async function executeAppServerVerificationCheck(input: {
+  readonly cwd: string;
+  readonly check: import("@ling-stack/contracts").LingAppServerVerificationCheckPlan;
+  readonly candidate: import("@ling-stack/contracts").LingAppServerCandidateReference;
+  readonly signal?: AbortSignal;
+}): Promise<import("@ling-stack/contracts").LingAppServerVerificationCheckStatus> {
+  const command = input.check.command;
+  if (!command) return "blocked";
+  if (input.signal?.aborted) return "cancelled";
+  return await new Promise((resolve) => {
+    let settled = false;
+    const finish = (status: import("@ling-stack/contracts").LingAppServerVerificationCheckStatus): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      input.signal?.removeEventListener("abort", abort);
+      resolve(status);
+    };
+    const child = spawn(command, { cwd: input.cwd, shell: true, stdio: "ignore", env: process.env });
+    const abort = (): void => {
+      child.kill("SIGTERM");
+      finish("cancelled");
+    };
+    const timeout = setTimeout(() => {
+      child.kill("SIGTERM");
+      finish("unknown");
+    }, 5 * 60 * 1000);
+    input.signal?.addEventListener("abort", abort, { once: true });
+    child.once("error", () => finish("failed"));
+    child.once("close", (code) => finish(code === 0 ? "passed" : "failed"));
+  });
+}
+
+function collaborationRpcError(error: unknown): Error & { readonly jsonRpcCode: number; readonly code: string } {
+  if (error instanceof AppServerCollaborationError) {
+    const mapped = error.code === "work_item_not_found"
+      ? { jsonRpcCode: -32040, code: "workspace_binding_invalid" }
+      : error.code === "stale_revision"
+        ? { jsonRpcCode: -32030, code: "stale_revision" }
+        : error.code === "idempotency_conflict"
+          ? { jsonRpcCode: -32031, code: "idempotency_conflict" }
+          : { jsonRpcCode: -32602, code: "invalid_params" };
+    return Object.assign(new Error(error.message), mapped);
+  }
+  return Object.assign(new Error(error instanceof Error ? error.message : String(error)), {
+    jsonRpcCode: -32000,
+    code: "collaboration_error",
+  });
+}
+
+function collaborationNotificationMethod(kind: import("@ling-stack/contracts").LingAppServerCollaborationKind): string {
+  switch (kind) {
+    case "deliberation": return "workItem/deliberation/updated";
+    case "stage": return "workItem/stage/updated";
+    case "brief": return "workItem/brief/updated";
+    case "coordination": return "workItem/coordination/updated";
+    case "message": return "workItem/message/updated";
+    case "question": return "workItem/question/updated";
+    case "handoff": return "workItem/handoff/updated";
+  }
+}
+
+const developmentByContext = new WeakMap<DaemonContext, AppServerDevelopmentService>();
+
+function getAppServerDevelopmentService(context: DaemonContext): AppServerDevelopmentService {
+  const existing = developmentByContext.get(context);
+  if (existing) return existing;
+  const created = new AppServerDevelopmentService({
+    context,
+    storeRegistry: context.storeRegistry,
+    activeRuns: context.activeRuns,
+    startCodeAssessmentRun: context.startCodeAssessmentRun,
+    executeVerificationCheck: executeAppServerVerificationCheck,
+  });
+  developmentByContext.set(context, created);
+  return created;
+}
+
 function controlPlaneNotification(subscriptionId: string, event: ControlPlaneEvent): unknown {
   return { jsonrpc: "2.0", method: "$/control_plane_event", params: { subscriptionId, event } };
+}
+
+function appServerEventNotification(subscriptionId: string, event: ControlPlaneEvent): unknown | undefined {
+  const method = appServerEventMethod(event);
+  if (!method) return undefined;
+  return {
+    jsonrpc: "2.0",
+    method,
+    params: {
+      subscriptionId,
+      cursor: String(event.seq),
+      eventId: `${event.workspaceId}:${event.seq}`,
+      workspaceId: event.workspaceId,
+      subject: event.entityType === "thread"
+        ? { kind: "thread", threadId: event.entityId }
+        : event.entityType === "work_item"
+          ? { kind: "workItem", workItemId: event.entityId }
+          : { kind: "thread", threadId: event.data.threadId as string | undefined },
+      revision: String(event.data.revision ?? event.ts),
+      event,
+      payload: event.data,
+    },
+  };
+}
+
+function appServerEventMethod(event: ControlPlaneEvent): string | undefined {
+  if (event.entityType === "thread") {
+    if (event.action === "thread.started") return "thread/started";
+    if (event.action === "thread.archived") return "thread/archived";
+    if (event.action === "thread.removed") return "thread/removed";
+    if (event.action.startsWith("thread.")) return "thread/updated";
+  }
+  if (event.entityType === "turn") {
+    if (event.action === "turn.started") return "turn/started";
+    if (event.action === "turn.completed") return "turn/completed";
+    if (event.action.includes("plan")) return "turn/plan/updated";
+    if (event.action.includes("diff")) return "turn/diff/updated";
+    if (event.action.startsWith("turn.")) return "turn/status/changed";
+  }
+  if (event.entityType === "work_item") {
+    if (event.action === "work_item.created") return "workItem/created";
+    if (event.action.includes("evidence")) return "workItem/evidence/updated";
+    if (event.action.includes("control")) return "workItem/control/updated";
+    if (event.action.includes("collaboration")) return "workItem/collaboration/updated";
+    if (event.action.includes("delivery")) return "workItem/delivery/updated";
+    if (event.action.includes("feedback")) return "workItem/feedback/received";
+    if (event.action.includes("handoff")) return "workItem/handoff/updated";
+    return "workItem/status/changed";
+  }
+  if (event.entityType === "approval" || event.entityType === "user_input") return "serverRequest/resolved";
+  return undefined;
 }
 
 function subscriptionMatchesEvent(subscription: RpcSubscription, event: ControlPlaneEvent): boolean {
