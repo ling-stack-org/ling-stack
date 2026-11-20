@@ -407,6 +407,328 @@ export interface LingAppServerServerRequest<Params = unknown> {
   readonly params: Params;
 }
 
+export interface LingAppServerCandidateReference {
+  readonly workspaceId: string;
+  readonly worktreeId?: string;
+  readonly baseCommit?: string;
+  readonly headCommit?: string;
+  readonly candidateDigest: string;
+  readonly filePaths?: readonly string[];
+}
+
+export type LingAppServerVerificationCheckKind = "command" | "test" | "typecheck" | "browser" | "platform";
+export type LingAppServerVerificationCheckStatus =
+  | "pending"
+  | "running"
+  | "passed"
+  | "failed"
+  | "not_run"
+  | "blocked"
+  | "cancelled"
+  | "unknown";
+
+export interface LingAppServerVerificationCheckPlan {
+  readonly checkId: string;
+  readonly kind: LingAppServerVerificationCheckKind;
+  readonly label: string;
+  readonly command?: string;
+  readonly recipeDigest: string;
+  readonly verifierBasisRef?: string;
+  readonly required: boolean;
+  readonly estimatedDurationMs?: number;
+}
+
+export interface LingAppServerVerifyPlanParams {
+  readonly cwd?: string;
+  readonly workItemId?: string;
+  readonly candidate: LingAppServerCandidateReference;
+  readonly planRevision?: string;
+  readonly requestedChecks?: readonly string[];
+  readonly idempotencyKey?: string;
+}
+
+export interface LingAppServerVerifyPlanResult {
+  readonly planId: string;
+  readonly planRevision: string;
+  readonly candidate: LingAppServerCandidateReference;
+  readonly checks: readonly LingAppServerVerificationCheckPlan[];
+  readonly rationale: readonly string[];
+  readonly requiredApproval?: string;
+  readonly environmentRequirements: readonly string[];
+}
+
+export interface LingAppServerVerifyStartParams {
+  readonly planId: string;
+  readonly planRevision: string;
+  readonly candidateDigest: string;
+  readonly idempotencyKey: string;
+}
+
+export interface LingAppServerCheckEvidence {
+  readonly checkId: string;
+  readonly candidateDigest: string;
+  readonly planRevision: string;
+  readonly recipeDigest: string;
+  readonly environmentDigest: string;
+  readonly verifierBasisRef?: string;
+  readonly coverageDigest?: string;
+  readonly producerRefs: readonly string[];
+  readonly attemptId: string;
+  readonly status: LingAppServerVerificationCheckStatus;
+  readonly evidenceRefs: readonly string[];
+}
+
+export interface LingAppServerVerifyOperation {
+  readonly operationId: string;
+  readonly planId: string;
+  readonly candidateDigest: string;
+  readonly status: "queued" | "running" | "passed" | "failed" | "blocked" | "cancelled" | "unknown";
+  readonly checks: readonly LingAppServerCheckEvidence[];
+  readonly startedAt?: string;
+  readonly completedAt?: string;
+  readonly blocker?: string;
+}
+
+export interface LingAppServerVerifyStatusParams {
+  readonly operationId: string;
+}
+
+export interface LingAppServerVerifyStatusResult {
+  readonly operation: LingAppServerVerifyOperation;
+}
+
+export interface LingAppServerVerifyCancelParams {
+  readonly operationId: string;
+  readonly expectedRevision?: string;
+  readonly idempotencyKey: string;
+}
+
+export interface LingAppServerVerifyCancelResult {
+  readonly operationId: string;
+  readonly status: "cancel_requested" | "cancelled" | "already_terminal" | "unknown";
+}
+
+export interface LingAppServerReviewStartParams {
+  readonly cwd?: string;
+  readonly workItemId?: string;
+  readonly candidate: LingAppServerCandidateReference;
+  readonly baseInstructions?: string;
+  readonly reviewRulesRefs?: readonly string[];
+  readonly providerPresetId?: string;
+  readonly idempotencyKey: string;
+}
+
+export interface LingAppServerReviewStartResult {
+  readonly operationId: string;
+  readonly assessmentId: string;
+  readonly candidateDigest: string;
+  readonly status: "queued" | "running" | "completed" | "partial" | "failed" | "cancelled";
+}
+
+export interface LingAppServerReviewStatusParams {
+  readonly operationId?: string;
+  readonly assessmentId?: string;
+}
+
+export interface LingAppServerReviewStatusResult {
+  readonly operationId: string;
+  readonly assessmentId: string;
+  readonly candidateDigest: string;
+  readonly status: LingAppServerReviewStartResult["status"];
+  readonly findingIds: readonly string[];
+  readonly summary?: string;
+}
+
+export interface LingAppServerReviewFindingUpdateParams {
+  readonly assessmentId: string;
+  readonly findingId: string;
+  readonly disposition: "open" | "acknowledged" | "resolved" | "dismissed";
+  readonly reason?: string;
+  readonly expectedRevision?: string;
+  readonly idempotencyKey: string;
+}
+
+export interface LingAppServerReviewFindingUpdateResult {
+  readonly assessmentId: string;
+  readonly findingId: string;
+  readonly revision: string;
+  readonly disposition: LingAppServerReviewFindingUpdateParams["disposition"];
+}
+
+export interface LingAppServerSimplifyStartParams {
+  readonly cwd?: string;
+  readonly workItemId?: string;
+  readonly candidate: LingAppServerCandidateReference;
+  readonly idempotencyKey: string;
+}
+
+export interface LingAppServerSimplifyStartResult {
+  readonly operationId: string;
+  readonly candidateDigest: string;
+  readonly status: "queued" | "running" | "completed" | "failed" | "cancelled";
+  readonly suggestionArtifactId?: string;
+}
+
+export interface LingAppServerDoctorRunParams {
+  readonly cwd?: string;
+  readonly includeLogTail?: boolean;
+  readonly scope?: "workspace" | "project" | "candidate";
+}
+
+export interface LingAppServerDoctorRunResult {
+  readonly doctorVersion: 1;
+  readonly cwd: string;
+  readonly overallStatus: "ok" | "warning" | "fail";
+  readonly checks: readonly LingAppServerDoctorCheck[];
+  readonly generatedAt: string;
+  readonly logTail?: { readonly truncated: boolean; readonly lines: readonly string[] };
+}
+
+export interface LingAppServerDoctorCheck {
+  readonly id: string;
+  readonly category: "workspace" | "startup" | "logs" | "config" | "instructions" | "verification";
+  readonly status: "ok" | "warning" | "fail" | "unchecked";
+  readonly summary: string;
+  readonly details?: string;
+  readonly remediation?: string;
+}
+
+export interface LingAppServerInstructionsInitParams {
+  readonly cwd?: string;
+  readonly taskPath?: string;
+  readonly sources?: readonly ("README" | "CI" | "package_scripts" | "existing_rules")[];
+  readonly mode?: "preview" | "apply";
+  readonly expectedWorkspaceRevision?: string;
+  readonly idempotencyKey: string;
+}
+
+export interface LingAppServerInstructionSource {
+  readonly path: string;
+  readonly digest: string;
+  readonly scope: string;
+  readonly applicable: boolean;
+}
+
+export interface LingAppServerInstructionsInitResult {
+  readonly proposalId: string;
+  readonly status: "draft" | "applied" | "blocked";
+  readonly sources: readonly LingAppServerInstructionSource[];
+  readonly patchArtifactId?: string;
+  readonly workspaceRevision?: string;
+  readonly conflicts: readonly string[];
+}
+
+export const LING_APP_SERVER_EXTERNAL_AGENT_ADAPTER_KINDS = [
+  "ling-app-server",
+  "codex-app-server",
+  "claude-agent",
+  "acp",
+  "mcp",
+  "custom",
+] as const;
+
+export type LingAppServerExternalAgentAdapterKind = (typeof LING_APP_SERVER_EXTERNAL_AGENT_ADAPTER_KINDS)[number];
+
+export const LING_APP_SERVER_EXTERNAL_AGENT_SOURCES = ["local", "workspace", "managed"] as const;
+export type LingAppServerExternalAgentSource = (typeof LING_APP_SERVER_EXTERNAL_AGENT_SOURCES)[number];
+
+export interface LingAppServerExternalAgentRegistration {
+  readonly agentId: string;
+  readonly adapterKind: LingAppServerExternalAgentAdapterKind;
+  readonly protocolVersion: string;
+  readonly displayName: string;
+  readonly capabilities: readonly string[];
+  readonly workspaceScopes: readonly string[];
+  readonly toolScopes: readonly string[];
+  readonly approvalModes: readonly string[];
+  readonly source: LingAppServerExternalAgentSource;
+  readonly version: string;
+}
+
+export interface LingAppServerExternalAgentRegisterParams {
+  readonly registration: LingAppServerExternalAgentRegistration;
+  readonly idempotencyKey: string;
+}
+
+export interface LingAppServerExternalAgentRegisterResult {
+  readonly registrationId: string;
+  readonly agentId: string;
+  readonly acceptedCapabilities: readonly string[];
+  readonly deniedCapabilities: readonly string[];
+  readonly authorizationEpoch: string;
+}
+
+export interface LingAppServerExternalAgentCapabilitiesParams {
+  readonly registrationId: string;
+}
+
+export interface LingAppServerExternalAgentCapabilitiesResult {
+  readonly registrationId: string;
+  readonly capabilities: readonly string[];
+  readonly effectiveWorkspaceScopes: readonly string[];
+  readonly effectiveToolScopes: readonly string[];
+  readonly approvalModes: readonly string[];
+  readonly authorizationEpoch: string;
+}
+
+export interface LingAppServerExternalAgentTaskSubmission {
+  readonly workItemId: string;
+  readonly workItemRevision: string;
+  readonly objective: string;
+  readonly acceptanceSnapshot: unknown;
+  readonly workspaceId: string;
+  readonly worktreeId?: string;
+  readonly instructionManifestDigest: string;
+  readonly skillSnapshot?: unknown;
+  readonly parentLineage?: readonly string[];
+  readonly idempotencyKey: string;
+}
+
+export interface LingAppServerExternalAgentTaskStartParams {
+  readonly registrationId: string;
+  readonly submission: LingAppServerExternalAgentTaskSubmission;
+}
+
+export interface LingAppServerExternalAgentTaskReceipt {
+  readonly taskId: string;
+  readonly submissionId: string;
+  readonly workItemId: string;
+  readonly workItemRevision: string;
+  readonly status: "accepted" | "queued" | "running" | "waiting_for_approval" | "cancelled" | "unknown";
+  readonly eventCursor?: string;
+  readonly parentRunId?: string;
+  readonly dispatchDepth: number;
+}
+
+export interface LingAppServerExternalAgentTaskStartResult {
+  readonly task: LingAppServerExternalAgentTaskReceipt;
+}
+
+export interface LingAppServerExternalAgentTaskReconnectParams {
+  readonly registrationId: string;
+  readonly taskId: string;
+  readonly submissionId: string;
+  readonly eventCursor?: string;
+}
+
+export interface LingAppServerExternalAgentTaskReconnectResult {
+  readonly task: LingAppServerExternalAgentTaskReceipt;
+  readonly resyncRequired: boolean;
+  readonly reason?: "cursor_unavailable" | "submission_conflict" | "authorization_changed";
+}
+
+export interface LingAppServerExternalAgentTaskCancelParams {
+  readonly registrationId: string;
+  readonly taskId: string;
+  readonly expectedTaskRevision?: string;
+  readonly idempotencyKey: string;
+}
+
+export interface LingAppServerExternalAgentTaskCancelResult {
+  readonly taskId: string;
+  readonly status: "cancel_requested" | "cancelled" | "already_terminal" | "unknown";
+}
+
 export function isLingAppServerMethod(value: unknown): value is LingAppServerMethod {
   return typeof value === "string" && (LING_APP_SERVER_METHODS as readonly string[]).includes(value);
 }
