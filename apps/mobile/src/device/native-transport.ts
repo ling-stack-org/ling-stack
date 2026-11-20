@@ -4,7 +4,6 @@ import type {
   DeviceActionResultV1,
   DeviceCapabilitySnapshotV1,
   DeviceKindV1,
-  DeviceObservationV1,
   DeviceProfileV1,
   DeviceVerificationResultV1,
   DeviceTransportV1,
@@ -127,8 +126,4 @@ export class MobileNativeTransportFactory {
       source: "adapter",
     };
   }
-}
-
-export function observationFromNativeResult(input: { readonly id: string; readonly subjectId: string; readonly source: string; readonly value: DeviceObservationV1["value"]; readonly observedAt: string; readonly receivedAt: string; readonly freshnessUntil: string }): DeviceObservationV1 {
-  return { ...input, quality: "good", provenance: [input.source, input.subjectId], redactionClass: "public" };
 }
