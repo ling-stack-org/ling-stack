@@ -68,6 +68,13 @@ current semantic theme tokens with opaque reading backgrounds. System scheduler 
 are excluded from the rendered transcript. Text input and model execution remain separate
 from the visual asset.
 
+## Character design template
+
+The [Yui character design template](assets/yui-character-design-template.png)
+records the full-body silhouette, facial expressions, profile and back views,
+crystal ornaments, rain-feather cape, and palette. Use it to match Yui's appearance
+across future poses and illustrations.
+
 ## Contracts
 
 The public contract is in `packages/contracts/src/companions.ts`.
