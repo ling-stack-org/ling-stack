@@ -5,10 +5,11 @@ import { LingAppServerClient, type LingAppServerSocket } from "../dist/app-serve
 class FakeSocket implements LingAppServerSocket {
   readonly readyState = 1;
   private readonly listeners = new Map<string, Set<(event: unknown) => void>>();
-  readonly sent: unknown[] = [];
+  readonly sent: Array<{ readonly id: number; readonly method: string; readonly params?: Record<string, unknown> }> = [];
+  enableSubscriptionResponses = false;
 
   send(data: string): void {
-    const request = JSON.parse(data) as { readonly id: number; readonly method: string };
+    const request = JSON.parse(data) as { readonly id: number; readonly method: string; readonly params?: Record<string, unknown> };
     this.sent.push(request);
     queueMicrotask(() => {
       if (request.method === "initialize") {
@@ -43,6 +44,12 @@ class FakeSocket implements LingAppServerSocket {
             holds: [],
             currentExecutionRefs: [],
           },
+        }));
+      } else if (request.method === "workItem/subscribe" && this.enableSubscriptionResponses) {
+        this.emit("message", JSON.stringify({
+          jsonrpc: "2.0",
+          id: request.id,
+          result: { disposition: "complete", subscriptionId: "sub_fixture", cursor: request.params?.cursor ?? "0" },
         }));
       }
     });
@@ -86,3 +93,40 @@ test("Ling App Server client negotiates, pings, reads and receives notifications
   assert.deepEqual(notifications, ["workItem/control/updated"]);
   client.close();
 });
+
+test("Ling App Server client reconnects and resumes subscriptions from the latest cursor", async () => {
+  const sockets: FakeSocket[] = [];
+  const client = new LingAppServerClient({
+    url: "ws://fixture/app-server/rpc",
+    createSocket: () => {
+      const socket = new FakeSocket();
+      sockets.push(socket);
+      return socket;
+    },
+    clientInfo: { name: "fixture-client", version: "1" },
+    requiredCapabilities: ["workItem.read"],
+    reconnectDelayMs: 1,
+    maxReconnectDelayMs: 5,
+  });
+
+  await client.connect();
+  const first = sockets[0]!;
+  first.enableSubscriptionResponses = true;
+  const initial = await client.subscribe({ workItemId: "item" });
+  assert.equal(initial.subscriptionId, "sub_fixture");
+  first.emit("message", JSON.stringify({ jsonrpc: "2.0", method: "workItem/status/changed", params: { subscriptionId: "sub_fixture", cursor: "1" } }));
+  first.emit("close", {});
+
+  await waitForCondition(() => sockets.length === 2 && sockets[1]!.sent.some((request) => request.method === "workItem/subscribe"));
+  const replay = sockets[1]!.sent.find((request) => request.method === "workItem/subscribe");
+  assert.equal(replay?.params.cursor, "1");
+  client.close();
+});
+
+async function waitForCondition(predicate: () => boolean): Promise<void> {
+  const deadline = Date.now() + 1_000;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error("Timed out waiting for reconnect");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
