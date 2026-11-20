@@ -105,6 +105,15 @@ export class DeviceSemanticGraph {
 
 export class DeviceTaskGraphCoordinator {
   readonly #leases = new Map<string, string>();
+  readonly #persistence?: DeviceTaskGraphPersistence;
+  readonly #now: () => string;
+  readonly #leaseMs: number;
+
+  constructor(options: { readonly persistence?: DeviceTaskGraphPersistence; readonly now?: () => string; readonly leaseMs?: number } = {}) {
+    this.#persistence = options.persistence;
+    this.#now = options.now ?? (() => new Date().toISOString());
+    this.#leaseMs = options.leaseMs ?? 30_000;
+  }
 
   validateGraph(graph: DeviceTaskGraphV1): void {
     const ids = new Set<string>();
@@ -128,24 +137,39 @@ export class DeviceTaskGraphCoordinator {
   acquireOwnerLease(targetDeviceId: string, ownerId: string): void {
     const current = this.#leases.get(targetDeviceId);
     if (current && current !== ownerId) throw new DeviceFabricError("lease_busy", "task graph target is leased by another owner");
+    if (this.#persistence && !this.#persistence.acquireTaskGraphLease(targetDeviceId, ownerId, this.#now(), this.#leaseMs)) {
+      throw new DeviceFabricError("lease_busy", "task graph target is leased by another owner");
+    }
     this.#leases.set(targetDeviceId, ownerId);
   }
 
   releaseOwnerLease(targetDeviceId: string, ownerId: string): void {
     if (this.#leases.get(targetDeviceId) === ownerId) this.#leases.delete(targetDeviceId);
+    this.#persistence?.releaseTaskGraphLease(targetDeviceId, ownerId);
   }
 
   recordNodeResult(graph: DeviceTaskGraphV1, nodeId: string, status: DeviceTaskGraphNodeV1["status"], resultRef?: string): DeviceTaskGraphV1 {
-    this.validateGraph(graph);
-    const node = graph.nodes.find(item => item.nodeId === nodeId);
+    const currentGraph = this.#persistence?.getTaskGraph(graph.graphId) ?? graph;
+    this.validateGraph(currentGraph);
+    if (currentGraph.revision !== graph.revision) throw new DeviceFabricError("revision_conflict", "task graph revision is stale");
+    const node = currentGraph.nodes.find(item => item.nodeId === nodeId);
     if (!node) throw new DeviceFabricError("target_missing", "task graph node is missing");
-    const nodes = graph.nodes.map(item => item.nodeId === nodeId ? { ...item, status, ...(resultRef ? { resultRef } : {}) } : item);
-    const graphStatus = nodes.some(item => item.status === "unknown") ? "unknown"
+    const nodes = currentGraph.nodes.map(item => item.nodeId === nodeId ? { ...item, status, ...(resultRef ? { resultRef } : {}) } : item);
+    const graphStatus: DeviceTaskGraphV1["status"] = nodes.some(item => item.status === "unknown") ? "unknown"
       : nodes.some(item => item.status === "failed") ? "failed"
       : nodes.every(item => item.status === "succeeded") ? "succeeded"
       : nodes.some(item => ["executing", "verifying"].includes(item.status)) ? "executing" : "partial";
-    return { ...graph, revision: graph.revision + 1, status: graphStatus, nodes, updatedAt: new Date().toISOString() };
+    const next = { ...currentGraph, revision: currentGraph.revision + 1, status: graphStatus, nodes, updatedAt: this.#now() };
+    this.#persistence?.saveTaskGraph(next);
+    return next;
   }
+}
+
+export interface DeviceTaskGraphPersistence {
+  getTaskGraph(graphId: string): DeviceTaskGraphV1 | undefined;
+  saveTaskGraph(graph: DeviceTaskGraphV1): DeviceTaskGraphV1;
+  acquireTaskGraphLease(targetDeviceId: string, ownerId: string, now: string, leaseMs: number): boolean;
+  releaseTaskGraphLease(targetDeviceId: string, ownerId: string): void;
 }
 
 export class EdgeRuntimeRegistry {

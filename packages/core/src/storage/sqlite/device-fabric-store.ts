@@ -248,6 +248,20 @@ export class SqliteDeviceFabricStore {
     return row ? parseJson<DeviceTaskGraphV1>(row.graph_json, "task graph") : undefined;
   }
 
+  acquireTaskGraphLease(targetDeviceId: string, ownerId: string, now: string, leaseMs: number): boolean {
+    if (!targetDeviceId.trim() || !ownerId.trim() || !Number.isInteger(leaseMs) || leaseMs < 1) throw new DeviceFabricError("lease_busy", "task graph lease input is invalid");
+    const expiresAt = new Date(Date.parse(now) + leaseMs).toISOString();
+    const existing = this.database.prepare("SELECT owner_id,expires_at FROM device_task_graph_leases WHERE target_device_id=?").get(targetDeviceId) as Row | undefined;
+    if (existing && readString(existing, "owner_id") !== ownerId && Date.parse(readString(existing, "expires_at")) > Date.parse(now)) return false;
+    this.database.prepare("INSERT INTO device_task_graph_leases(target_device_id,owner_id,expires_at,updated_at) VALUES(?,?,?,?) ON CONFLICT(target_device_id) DO UPDATE SET owner_id=excluded.owner_id,expires_at=excluded.expires_at,updated_at=excluded.updated_at")
+      .run(targetDeviceId, ownerId, expiresAt, now);
+    return true;
+  }
+
+  releaseTaskGraphLease(targetDeviceId: string, ownerId: string): void {
+    this.database.prepare("DELETE FROM device_task_graph_leases WHERE target_device_id=? AND owner_id=?").run(targetDeviceId, ownerId);
+  }
+
   saveEdgeRuntime(runtime: EdgeRuntimeEnrollmentV1): EdgeRuntimeEnrollmentV1 {
     if (!runtime.runtimeId.trim() || !runtime.publicKeyFingerprint.trim() || runtime.revision < 1) {
       throw new DeviceFabricError("revision_conflict", "edge runtime identity is invalid");
@@ -390,6 +404,12 @@ export class SqliteDeviceFabricStore {
         graph_id TEXT PRIMARY KEY NOT NULL,
         revision INTEGER NOT NULL,
         graph_json TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS device_task_graph_leases (
+        target_device_id TEXT PRIMARY KEY NOT NULL,
+        owner_id TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
       );
       CREATE TABLE IF NOT EXISTS device_edge_runtimes (
         runtime_id TEXT PRIMARY KEY NOT NULL,

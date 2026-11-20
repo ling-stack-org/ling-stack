@@ -6,7 +6,7 @@ import test from "node:test";
 
 import { createHash } from "node:crypto";
 import type { DeviceEventEnvelopeV1, DeviceGraphNodeV1, DeviceResourceManifestV1, DeviceTaskGraphV1, DeviceTraceSpanV1, EdgeRuntimeEnrollmentV1 } from "@ling-stack/contracts";
-import { DeviceFabricError } from "../dist/device-fabric.js";
+import { DeviceFabricError, DeviceTaskGraphCoordinator } from "../dist/device-fabric.js";
 import { DeviceSecretBroker } from "../dist/device-secrets.js";
 import { SqliteDeviceFabricStore } from "../dist/storage/sqlite/device-fabric-store.js";
 
@@ -155,5 +155,28 @@ test("target-scoped secret broker resolves only authorized references and record
   assert.equal(await broker.resolve({ useId: "use-1", taskId: "task-1", attemptId: "attempt-1", targetDeviceId: "device-1", secretRef: "ssh-key", purpose: "ssh diagnosis", policyRevision: "policy-1" }), "private-key-material");
   assert.deepEqual(store.listSecretUses(), [{ useId: "use-1", taskId: "task-1", attemptId: "attempt-1", targetDeviceId: "device-1", secretRef: "ssh-key", purpose: "ssh diagnosis", policyRevision: "policy-1", usedAt: now }]);
   await assert.rejects(() => broker.resolve({ useId: "use-2", taskId: "task-1", targetDeviceId: "device-2", secretRef: "ssh-key", purpose: "ssh diagnosis", policyRevision: "policy-1" }), (error: unknown) => error instanceof DeviceFabricError && error.code === "safety_denied");
+  store.close();
+});
+
+test("task graph coordinator persists owner leases and rejects stale graph revisions", () => {
+  const store = new SqliteDeviceFabricStore();
+  const graph: DeviceTaskGraphV1 = {
+    graphId: "graph-persisted",
+    revision: 1,
+    status: "planned",
+    createdAt: now,
+    updatedAt: now,
+    nodes: [{ nodeId: "node-1", targetDeviceId: "device-1", ownerKind: "edge", ownerId: "edge-1", capabilityId: "linux.inspect.network", capabilitySnapshotId: "snapshot-1", dependencies: [], status: "planning" }],
+  };
+  store.saveTaskGraph(graph);
+  const first = new DeviceTaskGraphCoordinator({ persistence: store, now: () => now });
+  first.acquireOwnerLease("device-1", "edge-1");
+  const updated = first.recordNodeResult(graph, "node-1", "succeeded", "result-1");
+  assert.equal(updated.revision, 2);
+  const second = new DeviceTaskGraphCoordinator({ persistence: store, now: () => now });
+  assert.throws(() => second.recordNodeResult(graph, "node-1", "failed"), (error: unknown) => error instanceof DeviceFabricError && error.code === "revision_conflict");
+  assert.throws(() => second.acquireOwnerLease("device-1", "mobile-1"), (error: unknown) => error instanceof DeviceFabricError && error.code === "lease_busy");
+  first.releaseOwnerLease("device-1", "edge-1");
+  second.acquireOwnerLease("device-1", "mobile-1");
   store.close();
 });
