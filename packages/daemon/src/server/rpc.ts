@@ -1,8 +1,24 @@
 import type { Server } from "node:http";
 import type { Duplex } from "node:stream";
 import { randomUUID } from "node:crypto";
-import { DEFAULT_WORKSPACE_ID, type ControlPlaneDomain, type ControlPlaneEvent, type RunEventEnvelope, type RunSession } from "@ling-stack/core";
-import { LING_PRODUCT_VERSION, type ControlPlaneSubscribeResult } from "@ling-stack/contracts";
+import {
+  DEFAULT_WORKSPACE_ID,
+  type ControlPlaneDomain,
+  type ControlPlaneEvent,
+  type RunEventEnvelope,
+  type RunSession,
+  type WorkItem,
+  type WorkItemSourceType,
+  type WorkItemStatus,
+} from "@ling-stack/core";
+import {
+  LING_APP_SERVER_IMPLEMENTED_CAPABILITIES,
+  LING_APP_SERVER_METHODS,
+  LING_APP_SERVER_NOTIFICATION_METHODS,
+  LING_APP_SERVER_PROTOCOL_VERSION,
+  LING_PRODUCT_VERSION,
+  type ControlPlaneSubscribeResult,
+} from "@ling-stack/contracts";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 import type { DaemonContext } from "../context.js";
 import { daemonRequestIsAuthorized } from "./request-auth.js";
@@ -56,14 +72,6 @@ export interface RpcWebSocketServerHandle {
 }
 
 const APP_SERVER_RPC_PATH = "/app-server/rpc";
-const APP_SERVER_PROTOCOL_VERSION = "ling-app-server/1";
-const APP_SERVER_CAPABILITIES = [
-  "controlPlane.events",
-  "runs.start",
-  "runs.cancel",
-  "server/ping",
-] as const;
-
 export function attachRpcWebSocketServer(server: Server, context: DaemonContext): RpcWebSocketServerHandle {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
   let closed = false;
@@ -202,11 +210,11 @@ class RpcConnection {
         this.validateInitializeParams(params);
         this.initialized = true;
         return this.appServer ? {
-          protocolVersion: APP_SERVER_PROTOCOL_VERSION,
+          protocolVersion: LING_APP_SERVER_PROTOCOL_VERSION,
           serverInfo: { name: "ling-stack-daemon", version: LING_PRODUCT_VERSION },
           connectionId: this.connectionId,
           effectiveScopes: ["controlPlane.read", "runs.control"],
-          capabilities: APP_SERVER_CAPABILITIES,
+          capabilities: LING_APP_SERVER_IMPLEMENTED_CAPABILITIES,
           limits: {
             maxInboundFrameBytes: 1024 * 1024,
             maxOutboundFrameBytes: 128 * 1024,
@@ -222,6 +230,13 @@ class RpcConnection {
         };
       case "server/ping":
         return { ok: true, connectionId: this.connectionId, serverTime: new Date().toISOString() };
+      case "server/capabilities":
+        return {
+          protocolVersion: LING_APP_SERVER_PROTOCOL_VERSION,
+          capabilities: LING_APP_SERVER_IMPLEMENTED_CAPABILITIES,
+          methods: LING_APP_SERVER_METHODS,
+          notifications: LING_APP_SERVER_NOTIFICATION_METHODS,
+        };
       case "daemon.health":
         return {
           ok: true,
@@ -244,6 +259,16 @@ class RpcConnection {
         return this.startRun(params);
       case "runs.cancel":
         return this.cancelRun(params);
+      case "workItem/list":
+        return this.listWorkItems(params);
+      case "workItem/read":
+        return this.readWorkItem(params);
+      case "workItem/pause":
+        return this.controlWorkItem("pause", params);
+      case "workItem/resume":
+        return this.controlWorkItem("resume", params);
+      case "workItem/cancel":
+        return this.controlWorkItem("cancel", params);
       default:
         throw rpcError(-32601, "method_not_found", `Unsupported RPC method: ${method}`);
     }
@@ -256,7 +281,7 @@ class RpcConnection {
     if (versions !== undefined && (!Array.isArray(versions) || !versions.every(value => typeof value === "string"))) {
       throw rpcError(-32602, "invalid_params", "protocolVersions must be an array of strings.");
     }
-    if (Array.isArray(versions) && !versions.includes(APP_SERVER_PROTOCOL_VERSION)) {
+    if (Array.isArray(versions) && !versions.includes(LING_APP_SERVER_PROTOCOL_VERSION)) {
       throw rpcError(-32010, "protocol_version_unsupported", "The requested protocol versions are not supported.");
     }
     const requiredCapabilities = record.requiredCapabilities;
@@ -265,11 +290,89 @@ class RpcConnection {
       throw rpcError(-32602, "invalid_params", "requiredCapabilities must be an array of strings.");
     }
     const missing = Array.isArray(requiredCapabilities)
-      ? requiredCapabilities.filter(value => !(APP_SERVER_CAPABILITIES as readonly string[]).includes(value))
+      ? requiredCapabilities.filter(value => !(LING_APP_SERVER_IMPLEMENTED_CAPABILITIES as readonly string[]).includes(value))
       : [];
     if (missing.length > 0) {
       throw rpcError(-32011, "required_capability_unavailable", `Required capabilities are unavailable: ${missing.join(", ")}`);
     }
+  }
+
+  private listWorkItems(params: unknown): unknown {
+    const record = readParamsRecord(params);
+    const cwd = readRpcCwd(record, this.defaultCwd);
+    const store = this.context.storeRegistry.getStore(cwd);
+    const items = store.listWorkItems({
+      channelId: readOptionalStringField(record, "channelId"),
+      status: readOptionalWorkItemStatus(record.status),
+      sourceType: readOptionalWorkItemSourceType(record.sourceType),
+      assigneeTeammateId: readOptionalStringField(record, "assigneeTeammateId"),
+      limit: readOptionalIntegerField(record, "limit"),
+    }, new Date().toISOString());
+    return { cwd, workItems: items.map(item => projectWorkItemSnapshot(item)) };
+  }
+
+  private readWorkItem(params: unknown): unknown {
+    const record = readParamsRecord(params);
+    const cwd = readRpcCwd(record, this.defaultCwd);
+    const workItemId = readStringField(record, "workItemId");
+    const workItem = this.context.storeRegistry.getStore(cwd).getWorkItem(workItemId);
+    if (!workItem) {
+      throw rpcError(-32040, "workspace_binding_invalid", `Work Item was not found: ${workItemId}`);
+    }
+    return { cwd, workItem: projectWorkItemSnapshot(workItem) };
+  }
+
+  private controlWorkItem(action: "pause" | "resume" | "cancel", params: unknown): unknown {
+    const record = readParamsRecord(params);
+    const cwd = readRpcCwd(record, this.defaultCwd);
+    const workItemId = readStringField(record, "workItemId");
+    const actorId = readStringField(record, "actorId");
+    const idempotencyKey = readStringField(record, "idempotencyKey");
+    const expectedRevision = readIntegerField(record, "expectedWorkItemRevision", "expectedRevision");
+    const expectedControlGeneration = readIntegerField(record, "expectedControlGeneration", "controlGeneration");
+    const store = this.context.storeRegistry.getStore(cwd);
+    const existing = store.getWorkItem(workItemId);
+    if (!existing) {
+      throw rpcError(-32040, "workspace_binding_invalid", `Work Item was not found: ${workItemId}`);
+    }
+    const prior = existing.control.receipt;
+    const reason = readOptionalStringField(record, "reason");
+    const sameRequest = prior?.idempotencyKey === idempotencyKey && prior.action === action &&
+      prior.actorId === actorId && prior.reason === reason;
+    if (prior?.idempotencyKey === idempotencyKey && !sameRequest) {
+      throw rpcError(-32031, "idempotency_conflict", "The idempotency key was already used for a different Work Item control request.");
+    }
+    if (sameRequest) {
+      return { cwd, workItem: projectWorkItemSnapshot(existing) };
+    }
+    if (existing.revision !== expectedRevision || existing.control.generation !== expectedControlGeneration) {
+      throw rpcError(-32030, "stale_revision", "The Work Item revision or control generation is stale.");
+    }
+    const input = {
+      expectedRevision,
+      expectedControlGeneration,
+      actorId,
+      ...(reason === undefined ? {} : { reason }),
+      idempotencyKey,
+    };
+    const workItem = action === "pause"
+      ? store.pauseWorkItem(workItemId, input, new Date().toISOString())
+      : action === "resume"
+        ? store.resumeWorkItem(workItemId, input, new Date().toISOString())
+        : store.cancelWorkItem(workItemId, input, new Date().toISOString());
+    if (!workItem) {
+      throw rpcError(-32030, "stale_revision", "The Work Item changed before the control request committed.");
+    }
+    if (workItem.revision === existing.revision && prior?.idempotencyKey !== idempotencyKey) {
+      throw rpcError(-32061, "resume_blocked", `Work Item cannot accept ${action} while control state is ${existing.control.state}.`);
+    }
+    const projected = projectWorkItemSnapshot(workItem);
+    this.send({
+      jsonrpc: "2.0",
+      method: "workItem/control/updated",
+      params: { cwd, workItemId, workItem: projected },
+    });
+    return { cwd, workItem: projected };
   }
 
   private readControlPlaneParams(params: unknown): { readonly cwd: string; readonly domains: readonly ControlPlaneDomain[] } {
@@ -616,6 +719,81 @@ function parseJsonRpcRequest(data: RawData): JsonRpcRequest | undefined {
   } catch {
     return undefined;
   }
+}
+
+function projectWorkItemSnapshot(workItem: WorkItem) {
+  const currentExecutionRefs = [
+    workItem.taskId,
+    workItem.runId,
+    workItem.workflowId,
+    workItem.workflowStepId,
+    workItem.approvalId,
+  ].filter((value): value is string => typeof value === "string" && value.length > 0);
+  return {
+    workspaceId: workItem.workspaceId,
+    workItemId: workItem.id,
+    revision: String(workItem.revision),
+    status: workItem.status,
+    ...(workItem.planRevision ? { planRevision: workItem.planRevision } : {}),
+    control: {
+      state: workItem.control.state,
+      generation: String(workItem.control.generation),
+      ...(workItem.control.receipt ? {
+        receipt: {
+          id: workItem.control.receipt.id,
+          action: workItem.control.receipt.action,
+          generation: String(workItem.control.receipt.generation),
+          requestedAt: workItem.control.receipt.requestedAt,
+          actorId: workItem.control.receipt.actorId,
+          ...(workItem.control.receipt.reason ? { reason: workItem.control.receipt.reason } : {}),
+          outcome: workItem.control.receipt.outcome,
+        },
+      } : {}),
+      unresolvedEffectIds: workItem.control.unresolvedEffectIds,
+      ...(workItem.control.recoveryOwner ? { recoveryOwner: workItem.control.recoveryOwner } : {}),
+    },
+    holds: workItem.holds,
+    currentExecutionRefs,
+  };
+}
+
+function readOptionalIntegerField(record: Record<string, unknown>, key: string): number | undefined {
+  const value = record[key];
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isSafeInteger(value)) {
+    throw rpcError(-32602, "invalid_params", `${key} must be a safe integer.`);
+  }
+  return value;
+}
+
+function readIntegerField(record: Record<string, unknown>, primaryKey: string, fallbackKey: string): number {
+  const value = record[primaryKey] ?? record[fallbackKey];
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw rpcError(-32602, "invalid_params", `${primaryKey} must be a non-negative safe integer.`);
+  }
+  return value;
+}
+
+function readOptionalWorkItemStatus(value: unknown): WorkItemStatus | undefined {
+  if (value === undefined) return undefined;
+  const statuses: readonly WorkItemStatus[] = [
+    "intake", "triage", "backlog", "ready", "running", "waiting", "review", "blocked", "done", "cancelled", "superseded", "archived",
+  ];
+  if (typeof value !== "string" || !statuses.includes(value as WorkItemStatus)) {
+    throw rpcError(-32602, "invalid_params", "status is not a supported Work Item status.");
+  }
+  return value as WorkItemStatus;
+}
+
+function readOptionalWorkItemSourceType(value: unknown): WorkItemSourceType | undefined {
+  if (value === undefined) return undefined;
+  const sourceTypes: readonly WorkItemSourceType[] = [
+    "channel_task", "channel_workflow_step", "external_work", "external_work_action", "approval", "run", "manual",
+  ];
+  if (typeof value !== "string" || !sourceTypes.includes(value as WorkItemSourceType)) {
+    throw rpcError(-32602, "invalid_params", "sourceType is not a supported Work Item source type.");
+  }
+  return value as WorkItemSourceType;
 }
 
 function jsonRpcIdKey(id: JsonRpcId): string {
