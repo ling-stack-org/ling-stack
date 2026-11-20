@@ -415,11 +415,7 @@ export class ExternalAgentFederationService {
     };
   }
 
-  private requireRegistration(registrationId: string): ExternalAgentFederationRegistrationRecord {
-    return this.requireRegistration(registrationId, false);
-  }
-
-  private requireRegistration(registrationId: string, allowRevoked: boolean): ExternalAgentFederationRegistrationRecord {
+  private requireRegistration(registrationId: string, allowRevoked = false): ExternalAgentFederationRegistrationRecord {
     const record = this.registrations.get(registrationId);
     if (!record) {
       throw new ExternalAgentFederationError("registration_not_found", `External Agent registration was not found: ${registrationId}`);
