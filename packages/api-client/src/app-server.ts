@@ -111,9 +111,13 @@ export class LingAppServerClient {
   connect(): Promise<LingAppServerInitializeResult> {
     this.manuallyClosed = false;
     if (this.connectPromise) return this.connectPromise;
-    this.connectPromise = this.openAndInitialize();
-    this.connectPromise.catch(() => this.scheduleReconnect());
-    return this.connectPromise;
+    const promise = this.openAndInitialize();
+    this.connectPromise = promise;
+    promise.catch(() => {
+      if (this.connectPromise === promise) this.connectPromise = undefined;
+      this.scheduleReconnect();
+    });
+    return promise;
   }
 
   async ping(): Promise<{ readonly ok: boolean; readonly connectionId: string; readonly serverTime: string }> {
