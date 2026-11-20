@@ -1,3 +1,7 @@
+import {
+  LING_APP_SERVER_COLLABORATION_ACTIONS,
+  LING_APP_SERVER_COLLABORATION_KINDS,
+} from "@ling-stack/contracts";
 import type {
   LingAppServerCollaborationAction,
   LingAppServerCollaborationKind,
@@ -121,7 +125,9 @@ function decodeCollaborationRecord(
 ): WorkItemCollaborationRecord {
   if (!content.startsWith(WORK_ITEM_COLLABORATION_CONTENT_PREFIX)) throw new Error("not_work_item_collaboration_record");
   const parsed = JSON.parse(content.slice(WORK_ITEM_COLLABORATION_CONTENT_PREFIX.length)) as Record<string, unknown>;
-  if (parsed.schemaVersion !== 1 || typeof parsed.kind !== "string" || typeof parsed.action !== "string") {
+  if (parsed.schemaVersion !== 1 || typeof parsed.kind !== "string" || typeof parsed.action !== "string"
+    || !(LING_APP_SERVER_COLLABORATION_KINDS as readonly string[]).includes(parsed.kind)
+    || !(LING_APP_SERVER_COLLABORATION_ACTIONS as readonly string[]).includes(parsed.action)) {
     throw new Error("invalid_work_item_collaboration_record");
   }
   if (!Array.isArray(entry.sourceRefs)) throw new Error("invalid_work_item_collaboration_source_refs");
