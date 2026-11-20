@@ -306,6 +306,9 @@ export interface DeviceTaskAttemptV1 {
   readonly ownerId: string;
   readonly targetDeviceId: string;
   readonly dispatchIntentAt: string;
+  readonly connectionRevision?: string;
+  readonly requestDigest?: string;
+  readonly approvalId?: string;
   readonly status: "prepared" | "dispatched" | "completed" | "failed" | "unknown" | "cancelled";
   readonly receipt?: DeviceActionResultV1;
   readonly verification?: DeviceVerificationResultV1;
@@ -579,7 +582,7 @@ export function isDeviceTaskV1(value: unknown): value is DeviceTaskV1 {
 export function isDeviceTaskAttemptV1(value: unknown): value is DeviceTaskAttemptV1 {
   if (!isRecord(value) || !hasOnlyKeys(value, [
     "attemptId", "taskId", "actionId", "ownerKind", "ownerId", "targetDeviceId",
-    "dispatchIntentAt", "status", "receipt", "verification",
+    "dispatchIntentAt", "connectionRevision", "requestDigest", "approvalId", "status", "receipt", "verification",
   ])) return false;
   return isNonEmptyString(value.attemptId)
     && isNonEmptyString(value.taskId)
@@ -588,6 +591,9 @@ export function isDeviceTaskAttemptV1(value: unknown): value is DeviceTaskAttemp
     && isNonEmptyString(value.ownerId)
     && isNonEmptyString(value.targetDeviceId)
     && isIsoTimestamp(value.dispatchIntentAt)
+    && (value.connectionRevision === undefined || isNonEmptyString(value.connectionRevision))
+    && (value.requestDigest === undefined || isNonEmptyString(value.requestDigest))
+    && (value.approvalId === undefined || isNonEmptyString(value.approvalId))
     && isEnum(value.status, ["prepared", "dispatched", "completed", "failed", "unknown", "cancelled"] as const)
     && (value.receipt === undefined || isDeviceActionResultV1(value.receipt))
     && (value.verification === undefined || isDeviceVerificationResultV1(value.verification));

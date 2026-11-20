@@ -205,6 +205,9 @@ export class DeviceCapabilityBroker {
       ownerId: profile.device.runtimeOwnerId ?? "daemon",
       targetDeviceId: profile.device.id,
       dispatchIntentAt: this.now(),
+      connectionRevision: snapshot.connectionRevision,
+      requestDigest,
+      ...(request.approvalId ? { approvalId: request.approvalId } : {}),
       status: "prepared",
     };
     const created = this.store.createAttempt({ attempt, request, requestDigest }, this.now());

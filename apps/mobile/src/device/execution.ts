@@ -127,6 +127,9 @@ export class MobileDeviceExecution {
       ownerId: this.#ownerId,
       targetDeviceId: input.profile.device.id,
       dispatchIntentAt: this.#now(),
+      connectionRevision: input.snapshot.connectionRevision,
+      requestDigest,
+      ...(input.request.approvalId ? { approvalId: input.request.approvalId } : {}),
       status: "prepared",
     };
     const record: MobileAttemptRecord = { attempt, request: input.request, requestDigest };
