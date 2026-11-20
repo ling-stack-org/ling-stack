@@ -28,6 +28,7 @@
 - [英文分享图](../assets/ling-stack-share-en.jpg)（1280 × 640），适合 GitHub Social Preview 或英文社区配图。
 - [中文分享图](../assets/ling-stack-share-zh-CN.jpg)（1280 × 640），可配合下方中文首发稿使用。
 - 项目评审介绍图使用真实 Web 界面和预置示例对话。[英文版](../assets/ling-project-review-en.jpg) · [中文版](../assets/ling-project-review-zh-CN.jpg)
+- 跨设备路线图以车机联调为例，电脑发起连接检查，手机确认测试。[概念图](../assets/ling-device-roadmap.jpg) · [实现与实机验收计划](../design/ling-device-support-platform-implementation-plan.md)
 
 ## V2EX 首发稿
 

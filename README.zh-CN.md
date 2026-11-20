@@ -5,6 +5,7 @@
   <p>
     <a href="docs/community/first-project-review.md#中文快速说明"><strong>试一次项目评审</strong></a> ·
     <a href="#从源码启动">从源码启动</a> ·
+    <a href="#跨设备路线图">设备路线图</a> ·
     <a href="CONTRIBUTING.md">参与贡献</a>
   </p>
   <p>源码 Alpha · <a href="LICENSE">MIT 许可证</a></p>
@@ -31,11 +32,27 @@
 按[第一次项目评审指南](docs/community/first-project-review.md#中文快速说明)完成一次仅讨论的评审。
 使用自己的模型配置和 API key，模型费用由供应商计收。
 
+## 跨设备路线图
+
+路线图计划把设备任务带进 Ling 的对话。PC、手机或边缘主机可以协调任务，由持有授权连接的主机执行操作和验证结果。
+
+![蓝紫色概念场景中的笔记本、手机、车机、家居传感器和开发板](docs/assets/ling-device-roadmap.jpg)
+
+*车机联调概念图。在电脑上发起连接检查，再用配对的手机确认测试。*
+
+- 在 **PC** 上构建和测试项目，或诊断受支持的系统。
+- 用**手机**跟进和审批配对电脑上的任务，或直接连接受支持的外设。
+- 在**智能家居**中通过 Home Assistant 查看设备状态、定位故障。
+- 在停车状态下，为兼容的 **Android 车机**安装和验证应用。
+- 在**硬件工作台**采集和解码协议数据，并验证设备响应。
+
+**当前处于设计阶段。** [跨设备设计](docs/design/ling-device-fabric.md) · [实现与实机验收计划](docs/design/ling-device-support-platform-implementation-plan.md)
+
 ## 智能伙伴 Yui
 
 Yui（雨光羽衣）是 Ling Stack 的智能伙伴角色概念。[查看角色设计模板](docs/design/assets/yui-character-design-template.png)。
 
-<a href="docs/assets/ling-stack-companion-banner.jpg"><img src="docs/assets/ling-stack-companion-banner.jpg" alt="雨光羽衣 Yui 的角色插画" width="640" /></a>
+<a href="docs/assets/ling-stack-companion-banner.jpg"><img src="docs/assets/ling-stack-companion-banner.jpg" alt="雨光羽衣 Yui 的角色插画" /></a>
 
 ## 适合谁
 

@@ -10,6 +10,9 @@
     <a href="README.es-ES.md">Español</a> · <a href="README.pt-BR.md">Português (Brasil)</a>
   </p>
   <p>
+    <a href="#クロスデバイスロードマップ">クロスデバイスロードマップ</a>
+  </p>
+  <p>
     <img alt="ソースコード版アルファ" src="https://img.shields.io/badge/Status-source_alpha-5964a0.svg" />
     <a href="LICENSE"><img alt="ライセンス: MIT" src="https://img.shields.io/badge/License-MIT-08765d.svg" /></a>
     <img alt="Node.js 22.22.1+" src="https://img.shields.io/badge/Node.js-22.22.1%2B-3c873a.svg" />
@@ -35,6 +38,22 @@ Ling Stack はそれらをプロジェクトチャンネルにまとめます。
 
 モデル設定前のローカルワークスペースを実際に撮影した英語 UI の画像です。レイアウトを示すもので、タスクの完了を示す画像ではありません。
 上記のガイドで、最初の共同作業を試せます。
+
+## クロスデバイスロードマップ
+
+このロードマップでは、デバイスに関する作業を Ling の会話に持ち込みます。PC、スマートフォン、エッジホストがタスクを調整し、デバイスへの認証済み接続を持つホストが実行と検証を担当します。
+
+![ノートパソコン、スマートフォン、車載機、スマートホームセンサー、開発ボードを配置した青紫色のコンセプトシーン](docs/assets/ling-device-roadmap.jpg)
+
+*車載機の接続テストのコンセプトです。PC で接続確認を依頼し、ペアリングしたスマートフォンでテストを承認します。*
+
+- **PC** でプロジェクトをビルド・テストしたり、対応システムを診断したりできます。
+- **モバイル** でペアリングした PC のタスクを確認・承認したり、対応する周辺機器に直接接続したりできます。
+- **スマートホーム** で Home Assistant を通じてデバイスの状態を確認し、問題を診断できます。
+- 対応する **Android 車載機** に、車両を停車した状態でアプリをインストールして検証できます。
+- **ハードウェアベンチ** でプロトコルデータを取得・デコードし、デバイスの応答を検証できます。
+
+**設計段階です。** [クロスデバイス設計](docs/design/ling-device-fabric.md)と[実装・デバイス受け入れ計画](docs/design/ling-device-support-platform-implementation-plan.md)をご覧ください。
 
 ## どのような人向けか
 
