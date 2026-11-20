@@ -21,6 +21,7 @@ import {
 import { RemoteProjectionOutboxWorker } from "./projection-outbox-worker.js";
 import { RemoteGatewaySession } from "./session.js";
 import { RemoteAccessStateStore } from "./state-store.js";
+import type { RemoteDeviceFacade } from "./device-facade.js";
 
 const LOOPBACK_HOST = "127.0.0.1";
 const MANAGEMENT_PREFIX = "/v1/mobile-access";
@@ -33,6 +34,7 @@ export interface RemoteAccessControllerOptions {
   readonly managementCapability: string;
   readonly managementAllowedOrigins: readonly string[];
   readonly dispatcher?: RemoteReplyDispatcher;
+  readonly deviceFacade?: RemoteDeviceFacade;
   readonly now?: () => string;
 }
 
@@ -278,6 +280,7 @@ export class RemoteAccessController {
               authenticated,
               gatewayId: this.auth.identity.gatewayId,
               facade,
+              deviceFacade: this.options.deviceFacade,
               policy: facade.policySummary(capabilities),
               now: this.now,
               onMutation: () => this.scheduleDrain(),
@@ -361,6 +364,7 @@ export class RemoteAccessController {
       "profile.read",
       "profile.update",
       "security.unpair",
+      ...(this.options.deviceFacade ? ["device.read" as const, "device.approve" as const, "device.revoke" as const] : []),
     ];
   }
 

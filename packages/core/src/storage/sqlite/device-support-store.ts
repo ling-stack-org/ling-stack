@@ -193,6 +193,11 @@ export class SqliteDeviceSupportStore {
     return row ? this.parseAttempt(row) : undefined;
   }
 
+  listAttempts(taskId: string): readonly DeviceSupportStoreAttemptRecord[] {
+    return (this.database.prepare("SELECT attempt_json,request_json,request_digest FROM device_task_attempts WHERE task_id=? ORDER BY created_at,attempt_id").all(taskId) as Row[])
+      .map(row => this.parseAttempt(row));
+  }
+
   updateAttempt(attemptId: string, patch: DeviceAttemptPatch, now: string): DeviceSupportStoreAttemptRecord {
     const row = this.database.prepare("SELECT attempt_json,request_json,request_digest FROM device_task_attempts WHERE attempt_id=?").get(attemptId) as Row | undefined;
     if (!row) throw new Error(`Unknown device attempt: ${attemptId}`);

@@ -1,8 +1,8 @@
 # Ling Device Support Platform Implementation Plan
 
-Status: tracking plan; D1–D3 core and D4/D5/D7/D8 adapter groundwork landed, later slices remain queued
+Status: tracking plan; D1–D3 core, D4/D5/D7/D8 adapters, and D6 device-task protocol groundwork landed, later slices remain queued
 Owner: Ling platform maintainers
-Last verified: 2026-11-21 (D1–D3 core plus Home Assistant, PC, Linux/SSH adapters and bounded playbook fixtures)
+Last verified: 2026-11-21 (D1–D3 core, D4/D5/D7/D8 adapters, D6 remote device-task protocol and facade fixtures)
 Document type: staged implementation and acceptance record
 Related design: [Ling Device Support Platform](ling-device-support-platform.md)
 Runtime contract: [Ling Device Support Platform Runtime Contract](ling-device-support-platform-runtime-contract.md)
@@ -48,7 +48,7 @@ validation and the boundary of what remains unverified.
 | D3 | [x] | Task state, approval, verification, and evidence | A task persists an exact approval, dispatch attempt, verification, idempotent replay, and unknown outcome after restart | Core SQLite journal and recovery tests |
 | D4 | [~] | Home Assistant adapter | Fixture adapter supports discovery, entity availability classification, and a low-risk service action | Daemon adapter fixture tests |
 | D5 | [~] | PC adapter and target-side executor | Typed PC inventory, network/services observations, and one reversible repair are implemented | Daemon adapter fixture tests |
-| D6 | [ ] | Mobile device-task facade | Paired Mobile can inspect, approve, follow, and revoke a device task | Remote protocol fixtures and real-device acceptance |
+| D6 | [~] | Mobile device-task facade | Paired Mobile can inspect, approve, follow, and revoke through a typed Gateway surface | Remote protocol and facade fixtures |
 | D7 | [~] | Playbooks and operator evidence | Bounded read-only playbook validation and replayable task attempts are implemented | Core playbook fixture tests |
 | D8 | [~] | Additional ecosystems | Linux/SSH typed network and Wi-Fi adapter is implemented under the shared contract | Daemon Linux adapter fixture tests |
 | D9 | [ ] | Standalone Mobile execution | One phone restores a supported BLE device's network connection with no PC or Gateway and verifies the result | Shared contract fixtures and real phone/device acceptance |
@@ -215,11 +215,11 @@ D0 covers the design and the implementation plan.
 
 ### Scope
 
-- [ ] Extend the Remote Gateway with a narrow device-task capability surface.
-- [ ] Reuse secure pairing, device identity, replay protection, and signed frames.
-- [ ] Add mobile read-only device list, capability, task status, and evidence projection.
-- [ ] Add eligible approval and revoke flows with server-owned policy ceilings.
-- [ ] Route eligible device-task messages through the Gateway allowlist and keep
+- [x] Extend the Remote Gateway with a narrow device-task capability surface.
+- [x] Reuse secure pairing, device identity, replay protection, and signed frames.
+- [x] Add mobile read-only device list, capability, task status, and evidence projection.
+- [~] Add eligible approval and revoke flows with server-owned policy ceilings.
+- [x] Route eligible device-task messages through the Gateway allowlist and keep
   target credentials with the executing host.
 - [ ] Keep the daemon as the execution owner for this facade. D9 covers standalone
   Mobile and D11 covers collaboration on a phone-owned task.
@@ -607,7 +607,7 @@ recorded per slice as they complete. [Detailed design](ling-device-fabric.md)
 | D3 | `pending` | `node --test packages/core/test/device-support.test.ts` | [device-support.test.ts](../../packages/core/test/device-support.test.ts) | Exact approval binding, durable dispatch intent, verification, idempotent replay, and restart-to-unknown recovery are covered | Existing Ling approval UI/audit projection and physical recovery acceptance remain |
 | D4 | `pending` | `node --test packages/daemon/test/device-support-adapters.test.ts` | [home-assistant.ts](../../packages/daemon/src/features/device-support/adapters/home-assistant.ts) | Fixture Home Assistant adapter supports discovery, entity available/unavailable/absent classification, and a bounded reload action without persisting the token | Real Home Assistant instance, observation persistence, and field action acceptance remain |
 | D5 | `pending` | `node --test packages/daemon/test/device-support-adapters.test.ts` | [pc.ts](../../packages/daemon/src/features/device-support/adapters/pc.ts) | Typed PC executor contract covers inventory, network/services reads, reversible network repair, and post-action verification | Windows/Linux/macOS target implementations and clean-machine acceptance remain |
-| D6 | — | — | — | Not started | Mobile facade |
+| D6 | `pending` | `corepack pnpm --filter @ling-stack/remote-protocol test:ci`; `node --test packages/daemon/test/device-remote-facade.test.ts` | [device-facade.ts](../../packages/daemon/src/features/remote-access/device-facade.ts), [remote-device.ts](../../packages/contracts/src/remote-device.ts) | Gateway allowlist, strict command/event schemas, workspace-scoped device projections, revoke, and approval callback boundary are implemented | Daemon composition with a live device owner, Mobile UI, reconnect receipts, and physical iOS/Android acceptance remain |
 | D7 | `pending` | `node --test packages/core/test/device-support.test.ts` | [device-playbooks.ts](../../packages/core/src/device-playbooks.ts) | Bounded read-only playbooks validate closed metadata, execute ordered typed capabilities, and leave durable attempts | HA/PC report templates, provenance projection, and full terminal-outcome fixtures remain |
 | D8 | `pending` | `node --test packages/daemon/test/device-support-adapters.test.ts` | [linux-ssh.ts](../../packages/daemon/src/features/device-support/adapters/linux-ssh.ts) | Linux/SSH adapter exposes fixed network, Wi-Fi, and restart operations through the shared contract | Real LAN/hotspot and head-unit acceptance remain |
 | D9 | — | — | [Design](ling-device-support-platform.md#111-standalone-mobile-execution) | Design recorded, implementation not started | Standalone BLE execution and device acceptance |

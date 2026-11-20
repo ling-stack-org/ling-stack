@@ -7,6 +7,12 @@ import {
 
 import { RemoteProtocolError } from "../errors.js";
 import {
+  validateDeviceListCommand,
+  validateDeviceTaskApproveCommand,
+  validateDeviceTaskRevokeCommand,
+  validateDeviceTaskStatusCommand,
+} from "./device.js";
+import {
   assertStrictKeys,
   expectAvatarDataUrl,
   expectEnum,
@@ -168,6 +174,18 @@ export function validateClientPayload<TType extends RemoteClientCommandTypeV1>(
       };
       break;
     }
+    case "device.list":
+      payload = validateDeviceListCommand(value, path);
+      break;
+    case "device.task.status":
+      payload = validateDeviceTaskStatusCommand(value, path);
+      break;
+    case "device.task.approve":
+      payload = validateDeviceTaskApproveCommand(value, path);
+      break;
+    case "device.task.revoke":
+      payload = validateDeviceTaskRevokeCommand(value, path);
+      break;
   }
   return payload as RemoteClientCommandPayloadMapV1[TType];
 }

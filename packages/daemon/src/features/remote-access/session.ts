@@ -25,6 +25,7 @@ import {
   sha256,
 } from "@ling-stack/remote-protocol";
 import type { RemoteConversationFacade, RemoteProjectedEvent } from "./conversation-facade.js";
+import type { RemoteDeviceFacade } from "./device-facade.js";
 import { RemoteAccessError } from "./errors.js";
 import type { AuthenticatedRemoteSession } from "./pairing-auth-service.js";
 
@@ -44,6 +45,7 @@ export interface RemoteGatewaySessionOptions {
   readonly authenticated: AuthenticatedRemoteSession;
   readonly gatewayId: string;
   readonly facade: RemoteConversationFacade;
+  readonly deviceFacade?: RemoteDeviceFacade;
   readonly policy: RemoteAccessPolicySummaryV1;
   readonly now?: () => string;
   readonly onMutation?: () => void;
@@ -253,6 +255,34 @@ export class RemoteGatewaySession {
         this.complete(frame, { kind: "device_unpaired" });
         this.options.onSelfUnpair?.();
         return;
+      case "device.list": {
+        if (!this.options.deviceFacade) throw new RemoteAccessError("pc_unavailable", "Device support is unavailable.", true);
+        this.complete(frame, { kind: "device_list_requested" });
+        this.sendEvent("device.list_snapshot", this.options.deviceFacade.listDevices(frame.payload.workspaceId), this.workspaceStream(), frame.messageId);
+        return;
+      }
+      case "device.task.status": {
+        if (!this.options.deviceFacade) throw new RemoteAccessError("pc_unavailable", "Device support is unavailable.", true);
+        this.complete(frame, { kind: "device_task_status_requested", taskId: frame.payload.taskId });
+        this.sendEvent("device.task.snapshot", this.options.deviceFacade.taskSnapshot(frame.payload), this.workspaceStream(), frame.messageId);
+        return;
+      }
+      case "device.task.approve": {
+        if (!this.options.deviceFacade) throw new RemoteAccessError("pc_unavailable", "Device support is unavailable.", true);
+        const snapshot = await this.options.deviceFacade.approveTask(frame.payload);
+        this.complete(frame, { kind: "device_task_approved", taskId: frame.payload.taskId });
+        this.sendEvent("device.task.snapshot", snapshot, this.workspaceStream(), frame.messageId);
+        this.options.onMutation?.();
+        return;
+      }
+      case "device.task.revoke": {
+        if (!this.options.deviceFacade) throw new RemoteAccessError("pc_unavailable", "Device support is unavailable.", true);
+        const snapshot = this.options.deviceFacade.revokeTask(frame.payload);
+        this.complete(frame, { kind: "device_task_revoked", taskId: frame.payload.taskId });
+        this.sendEvent("device.task.snapshot", snapshot, this.workspaceStream(), frame.messageId);
+        this.options.onMutation?.();
+        return;
+      }
       default:
         throw new RemoteAccessError("protocol_incompatible", `Unsupported command: ${(payload as { commandId: string }).commandId}`);
     }
@@ -292,6 +322,9 @@ export class RemoteGatewaySession {
       this.sendEvent("workspace.summary", this.options.facade.workspaceSummary(), stream);
       this.sendEvent("conversation.list_snapshot", this.options.facade.listConversations(stream.scope.workspaceId), stream);
       this.sendEvent("profile.snapshot", this.options.facade.readProfile(stream.scope.workspaceId), stream);
+      if (this.options.deviceFacade) {
+        this.sendEvent("device.list_snapshot", this.options.deviceFacade.listDevices(stream.scope.workspaceId), stream);
+      }
     } else {
       this.sendEvent("conversation.snapshot", this.options.facade.openConversation(
         stream.scope.workspaceId,
@@ -442,6 +475,15 @@ function commandCapability(
   }
   if (commandType === "security.unpair") {
     return "security.unpair";
+  }
+  if (commandType === "device.list" || commandType === "device.task.status") {
+    return "device.read";
+  }
+  if (commandType === "device.task.approve") {
+    return "device.approve";
+  }
+  if (commandType === "device.task.revoke") {
+    return "device.revoke";
   }
   return undefined;
 }

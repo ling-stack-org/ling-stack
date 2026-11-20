@@ -87,6 +87,7 @@ export type * from "./profile.js";
 export * from "./computer-use.js";
 export * from "./computer-use-validation.js";
 export * from "./remote-access.js";
+export * from "./remote-device.js";
 export * from "./device.js";
 export { isCommittedRunNarrationV1, type CommittedRunNarrationV1 } from "./committed-run-narration.js";
 export type * from "./harness-diagnostics.js";
