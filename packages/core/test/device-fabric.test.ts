@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   DeviceContextBuilder,
+  EdgeBridgeSession,
   DeviceEventBus,
   DeviceFabricError,
   DeviceLifecycleManager,
@@ -55,6 +56,10 @@ test("edge enrollment, ordered event recovery, resource rollback, safety and lif
   const edge = new EdgeRuntimeRegistry();
   assert.equal(edge.enroll({ runtimeId: "edge-1", displayName: "Linaro", publicKeyFingerprint: "fp-1", contractMajor: 1, supportedTransports: ["ssh"], status: "pending", revision: 1 }).status, "enrolled");
   assert.equal(edge.revoke("edge-1", 2).status, "revoked");
+  const bridge = new EdgeBridgeSession("edge-1", "task-1");
+  const bridgeFrame = bridge.next("request", { capabilityId: "linux.inspect.network" }, now);
+  assert.equal(bridge.accept(bridgeFrame).sequence, 1);
+  assert.throws(() => bridge.accept({ ...bridgeFrame, sequence: 3 }), /contiguous/);
 
   const events = new DeviceEventBus(2);
   events.append({ eventId: "event-1", traceId: "trace-1", sourceKind: "runtime", sourceId: "edge-1", sequence: 1, kind: "connected", payload: {}, occurredAt: now });

@@ -3,6 +3,7 @@ import type {
   DeviceConformanceReportV1,
   DeviceContextPackV1,
   DeviceEventEnvelopeV1,
+  DeviceBridgeFrameV1,
   DeviceGraphNodeV1,
   DeviceGraphRelationshipV1,
   DeviceLifecycleRecordV1,
@@ -166,6 +167,39 @@ export class EdgeRuntimeRegistry {
   }
 
   get(runtimeId: string): EdgeRuntimeEnrollmentV1 | undefined { return this.#runtimes.get(runtimeId); }
+}
+
+export class EdgeBridgeSession {
+  readonly #runtimeId: string;
+  readonly #ownerTaskId: string;
+  #lastReceivedSequence = 0;
+  #lastSentSequence = 0;
+
+  constructor(runtimeId: string, ownerTaskId: string) {
+    this.#runtimeId = runtimeId;
+    this.#ownerTaskId = ownerTaskId;
+  }
+
+  accept(frame: DeviceBridgeFrameV1): DeviceBridgeFrameV1 {
+    if (frame.runtimeId !== this.#runtimeId || frame.ownerTaskId !== this.#ownerTaskId) throw new DeviceFabricError("safety_denied", "edge bridge frame authority does not match the session");
+    if (frame.sequence !== this.#lastReceivedSequence + 1) throw new DeviceFabricError("revision_conflict", "edge bridge sequence is not contiguous");
+    this.#lastReceivedSequence = frame.sequence;
+    return frame;
+  }
+
+  next(direction: DeviceBridgeFrameV1["direction"], payload: DeviceBridgeFrameV1["payload"], sentAt: string): DeviceBridgeFrameV1 {
+    const frame: DeviceBridgeFrameV1 = {
+      frameId: `${this.#runtimeId}:${this.#ownerTaskId}:${this.#lastSentSequence + 1}`,
+      runtimeId: this.#runtimeId,
+      ownerTaskId: this.#ownerTaskId,
+      direction,
+      sequence: this.#lastSentSequence + 1,
+      payload,
+      sentAt,
+    };
+    this.#lastSentSequence += 1;
+    return frame;
+  }
 }
 
 export class DeviceEventBus {
