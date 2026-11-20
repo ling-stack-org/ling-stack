@@ -2,7 +2,7 @@
 
 - **Status** 目标态整合设计，待实施
 - **Owner** Conversation、Teammate、Workflow、External Agent、GitHub Automation 与开发工具维护者
-- **Last verified** 2026-11-20 against `origin/main@b8e76d858`
+- **Last verified** 2026-11-21 against `origin/main@50f73b852`
 - **Document type** 产品整合合同
 - **Detailed design** [Ling Agent Operating Model Detailed Design](ling-agent-operating-model-detailed-design.md)
 - **Related contracts** [Channel Team Operating System](channel-team-operating-system.md) · [Ling Agent Session](ling-agent-session.md) · [Ling 多 Agent 完整目标设计](ling-multi-agent-complete-target.md) · [Automations](automations.md) · [GitHub Automation](github-automation.md) · [Ling App Server](ling-app-server.md)
@@ -62,6 +62,7 @@ interface AgentWorkItem {
   readonly priority: "low" | "normal" | "high" | "urgent";
   readonly owner?: AgentOwner;
   readonly coordinatorId: "ling_agent";
+  readonly revision: string;
   readonly threadId?: string;
   readonly taskId?: string;
   readonly goalId?: string;
@@ -69,8 +70,45 @@ interface AgentWorkItem {
   readonly deliveryIds: readonly string[];
   readonly acceptanceRevision: string;
   readonly claimRevision: string;
+  readonly planRevision?: string;
+  readonly control: WorkItemControlProjection;
+  readonly holds: readonly WorkItemHold[];
   readonly createdAt: string;
   readonly updatedAt: string;
+}
+
+type WorkItemControlState =
+  | "active"
+  | "pausing"
+  | "paused"
+  | "cancelling"
+  | "cancelled"
+  | "blocked";
+
+interface WorkItemControlProjection {
+  readonly state: WorkItemControlState;
+  readonly generation: string;
+  readonly receipt?: WorkItemControlReceipt;
+  readonly unresolvedEffectIds: readonly string[];
+  readonly recoveryOwner?: AgentOwner;
+}
+
+interface WorkItemControlReceipt {
+  readonly id: string;
+  readonly action: "pause" | "resume" | "cancel";
+  readonly generation: string;
+  readonly requestedAt: string;
+  readonly actorId: string;
+  readonly reason?: string;
+  readonly outcome: "accepted" | "settling" | "settled" | "blocked";
+}
+
+interface WorkItemHold {
+  readonly id: string;
+  readonly kind: "plan" | "control" | "approval" | "unknown_effect" | "scope" | "dependency";
+  readonly ownerRef: string;
+  readonly reason: string;
+  readonly blocksNewAdmission: boolean;
 }
 ```
 
@@ -96,7 +134,7 @@ An explicit authorized change to the running scope holds affected new writes and
 
 ## 5. Intake and Autonomous Work
 
-### 4.6 Work Item Control
+### 5.1 Work Item Control
 
 A Work Item can be paused, resumed or cancelled as one durable control action. Pause blocks new work in the current lineage while existing owners reach safe boundaries. Cancel keeps the lineage closed until accepted effects settle or are reconciled. The user sees the control receipt, remaining owners and unknown effects. Independently accepted work has its own control.
 
@@ -132,16 +170,16 @@ When two intake attempts target the same revision, they resolve against one acce
 
 ### 6.1 Deliberation and Shared Evidence
 
-A user can start a deliberation for a Work Item, or accept a Workflow with an explicit deliberation stage. Ling Agent can also suggest a round when an open decision has viable options with materially different consequences. An enabled project or Workflow policy can authorize a bounded round at a declared checkpoint. The entry shows the question, subject version, roster, read scope and budget. Architecture choices and conflicting review recommendations are typical subjects. Competing root-cause claims can lead to scoped verification. An AI Council can supply eligible specialists. Ling Agent assigns participants through the existing coordinator, with the Workflow owning its admitted steps. Visible replies follow the speaker lease. [AI Councils](ai-councils.md) · [Deliberation triggers](ling-agent-operating-model-detailed-design.md#52-deliberation-workflow)
+A user can start a deliberation for a Work Item, or accept a Workflow with an explicit deliberation stage. Ling Agent can also suggest a round when an open decision has viable options with materially different consequences. An enabled project or Workflow policy can authorize a bounded round at a declared checkpoint. The entry shows the question, subject version, roster, read scope and budget. Architecture choices and conflicting review recommendations are typical subjects. Competing root-cause claims can lead to scoped verification. An AI Council can supply eligible specialists. Ling Agent assigns participants through the existing coordinator, with the Workflow owning its admitted steps. Visible replies follow the speaker lease. [AI Councils](ai-councils.md) · [Deliberation triggers](ling-agent-operating-model-detailed-design.md#54-deliberation-workflow)
 
 1. Participants submit independent proposals. Each proposal identifies its option, tradeoffs and relevant evidence.
 2. Assigned reviewers challenge the proposals against the accepted criteria. They can cite a Verify result, a Review finding or a scoped reproduction. Requests for further checks go through their normal execution and approval paths.
 3. The accepted template can choose direct synthesis when the challenge resolves the issue. A vote is available when viable conflicting options remain and the template permits it. Participants submit independent ballots for the same frozen options and evidence. The host counts eligible ballots against the frozen quorum and support rule.
 4. The coordinator shows the recommendation, reasons and unresolved dissent. An authorized decision owner records the chosen course. Any follow-up work enters the normal Turn or Workflow path with its accepted criteria and authorization.
 
-Before Plan acceptance, deliberation uses the coordinator's read-only requirement-shaping path. An accepted Plan can declare a decision step. An unexpected decision during execution can use a linked, read-only deliberation Workflow on the same Work Item. Its typed decision receipt returns to the original dependency, which checks applicability and the accepted gate before admitting downstream work. A choice that changes scope or dependencies goes through acceptance of a successor Plan. [Deliberation placement and decision receipts](ling-agent-operating-model-detailed-design.md#52-deliberation-workflow)
+Before Plan acceptance, deliberation uses the coordinator's read-only requirement-shaping path. An accepted Plan can declare a decision step. An unexpected decision during execution can use a linked, read-only deliberation Workflow on the same Work Item. Its typed decision receipt returns to the original dependency, which checks applicability and the accepted gate before admitting downstream work. A choice that changes scope or dependencies goes through acceptance of a successor Plan. [Deliberation placement and decision receipts](ling-agent-operating-model-detailed-design.md#54-deliberation-workflow)
 
-The shared evidence board groups proposals, observations, challenges, references to trusted results and decision records by Work Item. Participants can consult and contribute within their granted scope. Entries show their author, subject version and sources. Corrections and conflicting observations have their own history. A prior decision stays visible with its original subject when the code or evidence changes. The board is useful for an ordinary investigation with several contributors as well as for a formal vote. Daemon stores and projects the board, and the original owners supply the status of Goal, Verify, Review and Delivery. [Shared evidence contract](ling-agent-operating-model-detailed-design.md#51-shared-evidence-board)
+The shared evidence board groups proposals, observations, challenges, references to trusted results and decision records by Work Item. Participants can consult and contribute within their granted scope. Entries show their author, subject version and sources. Corrections and conflicting observations have their own history. A prior decision stays visible with its original subject when the code or evidence changes. The board is useful for an ordinary investigation with several contributors as well as for a formal vote. Daemon stores and projects the board, and the original owners supply the status of Goal, Verify, Review and Delivery. [Shared evidence contract](ling-agent-operating-model-detailed-design.md#53-shared-evidence-board)
 
 For example, two teammates may favor an API simplification while a required compatibility check still fails on the candidate. Ling can display the vote and the failing check together. The acceptance rule keeps the candidate blocked until the verifier records a passing check for the applicable candidate.
 
@@ -149,21 +187,21 @@ The scheduling references are AutoGen AgentChat's participant selection, fan-in 
 
 ### 6.2 Stage Briefs and Participant Coordination
 
-An accepted multi-Agent plan identifies stages, their owners, dependencies, outputs and acceptance checks. At start, each assigned Agent receives its scope and the inputs it needs. When a stage passes acceptance, changes, or becomes blocked, the Work Item carries a brief linked to the committed evidence. Downstream Agents receive the parts they need to continue. Observers receive the events relevant to their role and can submit a scoped note or recommendation. [Stage contract](ling-agent-operating-model-detailed-design.md#55-plan-stages-and-stage-briefs)
+An accepted multi-Agent plan identifies stages, their owners, dependencies, outputs and acceptance checks. At start, each assigned Agent receives its scope and the inputs it needs. When a stage passes acceptance, changes, or becomes blocked, the Work Item carries a brief linked to the committed evidence. Downstream Agents receive the parts they need to continue. Observers receive the events relevant to their role and can submit a scoped note or recommendation. [Stage contract](ling-agent-operating-model-detailed-design.md#57-plan-stages-and-stage-briefs)
 
-Assigned participants can ask each other a specific question while their tasks are running. Answers can point to a decision, artifact or check. The existing owner handles changes to scope, authorization or the assignment. A receiving Agent can identify a missing input on a handoff and request its correction. The authoritative handoff receipt identifies the accepted source revision and downstream owner. [Participant questions and handoff](ling-agent-operating-model-detailed-design.md#56-role-based-observation-and-peer-questions)
+Assigned participants can ask each other a specific question while their tasks are running. Answers can point to a decision, artifact or check. The existing owner handles changes to scope, authorization or the assignment. A receiving Agent can identify a missing input on a handoff and request its correction. The authoritative handoff receipt identifies the accepted source revision and downstream owner. [Participant questions and handoff](ling-agent-operating-model-detailed-design.md#58-role-based-observation-and-peer-questions)
 
 For example, when P01 freezes the replay contract, the P02 implementer receives the protocol decisions and QA receives the replay cases it can prepare. If P02 finds a transcript linked to an older candidate, it requests an updated check and can proceed with work that does not depend on it. A verified result can resolve a factual disagreement. If two compatible implementations remain and the choice materially affects delivery or maintenance, the coordinator can bring that specific decision to deliberation.
 
 ### 6.3 Coordination Cadence and Agent Messages
 
-A `CoordinationRound` gives the Agents on a Work Item a shared checkpoint for kickoff, stage progress, acceptance, blockers or retrospective. Committed work events provide the default cadence. Daily or weekly checkpoints use Automations for a specified Work Item. A scheduled occurrence commits its receipt and round together, so restart recovers the same round and deadline. Ling Agent or the recorded Workflow coordinator admits any participant follow-up under its normal scope and budget. The resulting brief is available to the assigned Agents with progress, evidence, unresolved questions and accountable owners. [Scheduled coordination](ling-agent-operating-model-detailed-design.md#59-scheduled-coordination-admission)
+A `CoordinationRound` gives the Agents on a Work Item a shared checkpoint for kickoff, stage progress, acceptance, blockers or retrospective. Committed work events provide the default cadence. Daily or weekly checkpoints use Automations for a specified Work Item. A scheduled occurrence commits its receipt and round together, so restart recovers the same round and deadline. Ling Agent or the recorded Workflow coordinator admits any participant follow-up under its normal scope and budget. The resulting brief is available to the assigned Agents with progress, evidence, unresolved questions and accountable owners. [Scheduled coordination](ling-agent-operating-model-detailed-design.md#511-scheduled-coordination-admission)
 
 A parent can send a child a targeted note, and assigned Agents can ask each other a question during work. Each message identifies its work item, subject version, sender and recipients. An open question can continue after a checkpoint ends. When a question blocks a required input or a handoff is returned, the Workflow holds the affected dependency while independent steps continue. The original Workflow admits downstream work after the receiving participant's handoff receipt and the current readiness checks.
 
-Users can inspect message queueing, delivery to the target's actual input and the reply. Handoff acceptance, downstream admission and Run start each have evidence from their owning path. After interruption the owner reconciles the same step and receipts before starting work. When a participant becomes unavailable, authorized reassignment checks their active work and gives the successor the applicable evidence and pending questions with their current grant. [Handoff and reassignment](ling-agent-operating-model-detailed-design.md#57-handoff-acceptance-and-repair)
+Users can inspect message queueing, delivery to the target's actual input and the reply. Handoff acceptance, downstream admission and Run start each have evidence from their owning path. After interruption the owner reconciles the same step and receipts before starting work. When a participant becomes unavailable, authorized reassignment checks their active work and gives the successor the applicable evidence and pending questions with their current grant. [Handoff and reassignment](ling-agent-operating-model-detailed-design.md#59-handoff-acceptance-and-repair)
 
-Ling Agent coordinates changes to scope, assignment and authority. It receives a blocker when a question expires or Agents are waiting on each other. It can ask the user for required intent, send a disputed fact for verification or request handoff repair. An unresolved choice between viable options can lead to a deliberation suggestion. Automatic admission requires explicit project or Workflow authorization, current evidence and a bounded budget. [Trigger policy](ling-agent-operating-model-detailed-design.md#52-deliberation-workflow)
+Ling Agent coordinates changes to scope, assignment and authority. It receives a blocker when a question expires or Agents are waiting on each other. It can ask the user for required intent, send a disputed fact for verification or request handoff repair. An unresolved choice between viable options can lead to a deliberation suggestion. Automatic admission requires explicit project or Workflow authorization, current evidence and a bounded budget. [Trigger policy](ling-agent-operating-model-detailed-design.md#54-deliberation-workflow)
 
 ### 6.4 Progress and Intervention
 

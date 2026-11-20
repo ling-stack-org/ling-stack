@@ -2,7 +2,7 @@
 
 - **状态** 目标态详细设计，待实施
 - **维护者** Contracts、Daemon、API Client、Runner 与开发工具维护者
-- **核对基线** 2026-11-20，`origin/main@b8e76d858`
+- **核对基线** 2026-11-21，`origin/main@50f73b852`
 - **类型** 协议、执行、存储与恢复合同
 - **上位合同** [Ling App Server 与开发工作流](ling-app-server.md)
 - **交付计划** [实施计划与验收](ling-app-server-implementation-plan.md)
@@ -40,6 +40,14 @@ App Server 作为 Daemon 的会话协议入口，以 `ling-app-server/1` 发布�
 
 对每个连接限制帧大小、未完成请求数、订阅数和总出站字节。基线复用现有 RPC 的 1 MiB 入站、128 KiB 出站帧、1 MiB 或 500 帧积压、5 秒写入期限，实际支持值在握手中返回。较大内容用已授权的分页或分段读取。限制覆盖启动回放、live 队列和 transport buffer。选择 `server_overloaded` 时请求尚未入队。慢客户端断开后以最后成功应用的游标追赶。断开释放本连接的订阅与请求句柄，执行状态仍由 Daemon 维护。健康探针只提供存活、就绪与协议信息。 [现有出站边界](control-plane-outbound-backpressure-2026-10-15.md)
 
+### 1.2 保活、优雅停机与请求取消
+
+连接层提供 `server/ping` 与 `server/pong` 的协议级保活，供 stdio 和回环 WebSocket 使用。WebSocket 原生 ping 只作为传输优化，不能替代协议保活。服务端维护最近一次成功读写和最后确认的游标，超出连接配置的空闲期限后发送 `server/warning` 并关闭连接。重连使用原有授权和游标恢复，不能把心跳当成执行续租。
+
+计划停机先广播 `server/draining`，携带 `drainId`、原因、预计截止时间、最后可接受副作用请求的时间和建议的恢复游标。进入 draining 后拒绝新的 Work Item 派发、Run/Workflow/External Agent/Delivery 副作用和新的控制宿主写入，返回 `server_draining` 与原幂等键可重试标记。读取、快照、回放、审批查询、对账和已受理 owner 的收尾请求继续工作到截止时间。Daemon 在截止前等待协议请求和连接出站队列排空，不等待任意 Run 无限结束。Run、审批、未知效果和订阅由 Daemon 持久化后再关闭连接。
+
+客户端可发送标准 JSON-RPC `$/cancelRequest`，取消尚未完成的传输请求或读取等待。它只改变该请求的等待结果，不撤销已经提交的 Work Item、Run、Tool、Delivery 或 Approval 副作用。需要停止实际工作时，客户端必须调用对应的 `turn/interrupt`、`workItem/pause`、`workItem/cancel` 或 owner 控制方法。服务端发送 `server/restarted` 时携带新的 `storeIncarnation`、授权 epoch 和建议的 resync 原因。非计划崩溃不会伪造该通知，客户端在重新 `initialize` 时比较实例和游标并按 `snapshot_required` 恢复。
+
 ## 2. 协议标识、方法与结果
 
 客户端在 `initialize` 请求声明 `protocolVersions`、`clientInfo`、`requiredCapabilities`、`optionalCapabilities` 和请求的工作区范围。响应提供 `protocolVersion`、`serverInfo`、`connectionId`、有效授权、可用能力与限制。服务端根据配置与运行环境选择能力，客户端发送 `initialized` 后进入可用状态。版本不相容或必需能力缺失时，返回结构化原因并关闭该连接。现有客户端可以忽略附加输出字段，命令参数按选定版本严格解析。支持的消息为独立的 JSON-RPC request、response 和 notification。幂等请求回放返回同一结果内容和本次请求的 JSON-RPC ID。
@@ -58,7 +66,7 @@ App Server 作为 Daemon 的会话协议入口，以 `ling-app-server/1` 发布�
 
 | 方法组 | 方法 | 输入、输出与权限 |
 | --- | --- | --- |
-| 连接 | `initialize`、`initialized`、`server/capabilities` | 返回已协商版本、可用功能与限制。各方法仍检查所在工作区的有效能力。 |
+| 连接 | `initialize`、`initialized`、`server/capabilities`、`server/ping`、`$/cancelRequest` | 返回已协商版本、可用功能与限制。`server/ping` 只做协议保活，`$/cancelRequest` 只取消未完成请求的等待，不撤销已提交副作用。各方法仍检查所在工作区的有效能力。 |
 | 工作区 | `workspace/list`、`workspace/read`、`worktree/list`、`worktree/create`、`worktree/refresh`、`worktree/cleanup/preview`、`worktree/cleanup` | 使用 opaque workspace/worktree ID 和预期版本。清理路线沿用当前确认、归属和恢复校验。 |
 | Thread | `thread/start`、`thread/resume`、`thread/read`、`thread/list`、`thread/name/set`、`thread/archive`、`thread/unarchive`、`thread/delete/preview`、`thread/delete` | 返回标识、状态、版本、绑定、最新可见 Turn、有效规则来源和历史游标。永久删除使用现有管理权限与用户确认，并在预览和提交时核对当前 Work Item、Plan、Goal、审批、证据和 Delivery 依赖。 |
 | 历史和订阅 | `thread/turns/list`、`thread/items/list`、`item/read`、`thread/subscribe`、`thread/unsubscribe`、`thread/snapshot`、`submission/read` | 游标持久化，订阅 ID 只在连接有效。重连与历史读取没有执行副作用。 |
@@ -68,11 +76,13 @@ App Server 作为 Daemon 的会话协议入口，以 `ling-app-server/1` 发布�
 | 改动和产物 | `changes/capture`、`changes/read`、`changes/apply/preview`、`changes/apply`、`artifact/read` | 以候选、选中 hunk、工作树版本和审批为边界。应用、回退、重放沿用现有 patch 所有者。产物可分页，内容读取限范围和大小。 |
 | 开发验证与审查 | `verify/plan`、`verify/start`、`verify/status`、`verify/cancel`、`review/start`、`review/status`、`review/finding/update`、`simplify/start`、`doctor/run`、`instructions/init` | 指定候选和已配置的规则或配方。运行类返回操作 ID，草案类返回可审阅差异，读取类返回有限证据投影。 |
 | 工作项快照与订阅 | `workItem/list`、`workItem/read`、`workItem/subscribe`、`workItem/unsubscribe` | 按工作区和 Work Item 授权分页发现、读取快照及订阅。订阅接收同一范围的恢复游标，取消使用此连接上的订阅 ID。 [工作项方法](ling-agent-operating-model-detailed-design.md#9-events-and-app-server-methods) |
-| 工作项控制 | `workItem/pause`、`workItem/resume`、`workItem/cancel` | 协商可选能力 `workItem.control`。暂停、恢复或取消当前 Work Item lineage，使用控制代次和原所有者的收尾回执。独立 effort 不受影响。 [控制合同](ling-agent-operating-model-detailed-design.md#46-work-item-control) |
-| 工作项接入与受理 | `workItem/create`、`workItem/accept` | 可携带明确 Work Item 或可核验的 GitHub 目标，按授权返回来源回执和可见的默认工作项。接受独立执行时绑定其单独的客体与范围。 [目标身份与受理](ling-agent-operating-model-detailed-design.md#32-work-item-target-identity) |
+| 工作项控制 | `workItem/pause`、`workItem/resume`、`workItem/cancel` | 协商可选能力 `workItem.control`。暂停、恢复或取消当前 Work Item lineage，使用控制代次和原所有者的收尾回执。独立 effort 不受影响。 [控制合同](ling-agent-operating-model-detailed-design.md#51-work-item-control) |
+| 工作项接入与受理 | `workItem/create`、`workItem/accept`、`workItem/clarify` | 可携带明确 Work Item 或可核验的 GitHub 目标，按授权返回来源回执和可见的默认工作项。接受独立执行时绑定其单独的客体与范围。澄清沿用来源、目标和授权回执。 [目标身份与受理](ling-agent-operating-model-detailed-design.md#32-work-item-target-identity) |
+| 工作项投递与反馈 | `workItem/delivery/read`、`workItem/feedback/add`、`delivery/read` | 按当前授权读取投递状态和来源反馈。反馈追加到原 Work Item 事件链，未知投递仍由原所有者对账。 |
+| External Agent Federation | `externalAgent/register`、`externalAgent/capabilities/read`、`externalAgent/task/start`、`externalAgent/task/reconnect`、`externalAgent/task/cancel` | 使用 `externalAgent.federation` 能力。注册、能力握手、任务接入、重连和取消均返回外部任务回执，副作用仍由受理的 WorkUnit/Attempt 所有者控制。 |
 | GitHub 证据与对账 | `github/subject/read`、`github/delivery/reconcile` | 按当前授权读取 PR 修订、检查适用性、交付状态和证据引用。对账读取提供方原记录并更新已有交付意图及其回执。 [CI 证据与合并保护](ling-agent-operating-model-detailed-design.md#74-ci-evidence-and-merge-guard) |
 | 工作项证据与审议 | `workItem/evidence/read`、`workItem/evidence/append`、`workItem/deliberation/start`、`workItem/deliberation/read`、`workItem/deliberation/cancel`、`workItem/deliberation/decide` | 协商可选能力 `workItem.evidence`、`workItem.deliberation`。读取工作项证据、触发评估和审议回执。 [整合协议](ling-agent-operating-model-detailed-design.md#9-events-and-app-server-methods) |
-| 工作项阶段与轮次 | `workItem/stage/read`、`workItem/stage/brief/read`、`workItem/coordination/start`、`workItem/coordination/read`、`workItem/coordination/close` | 协商可选能力 `workItem.coordination`。读取阶段、角色简报和 `CoordinationRound`。协调者关闭轮次时原子发布简报或记录取消。 [轮次合同](ling-agent-operating-model-detailed-design.md#58-coordination-rounds-and-agent-messages) |
+| 工作项阶段与轮次 | `workItem/stage/read`、`workItem/stage/brief/read`、`workItem/coordination/start`、`workItem/coordination/read`、`workItem/coordination/close` | 协商可选能力 `workItem.coordination`。读取阶段、角色简报和 `CoordinationRound`。协调者关闭轮次时原子发布简报或记录取消。 [轮次合同](ling-agent-operating-model-detailed-design.md#510-coordination-rounds-and-agent-messages) |
 | Agent 消息与问答 | `workItem/message/send`、`workItem/message/read`、`workItem/message/list`、`workItem/question/ask`、`workItem/question/read`、`workItem/question/reply` | 使用 `workItem.coordination`。按工作项、阶段和收件范围发送及读取消息，轮次 ID 可作为消息来源或查询条件。问答使用独立期限与修订。 |
 | Agent 交接 | `workItem/handoff/read`、`workItem/handoff/accept`、`workItem/handoff/return` | 使用 `workItem.coordination`。按源材料、目标阶段、候选和授权接手人核对，接受或退回均返回当前交接回执。原 Workflow 核对派发条件。 |
 | 可用能力 | `provider/list`、`model/list`、`skill/list`、`skill/read`、`permissionProfile/list` | 返回可选能力、限制及缺失原因。Provider 凭据绑定在 Daemon 的配置上。 |
@@ -81,7 +91,7 @@ App Server 作为 Daemon 的会话协议入口，以 `ling-app-server/1` 发布�
 
 工作项协作写入携带 `expectedWorkItemRevision`、`idempotencyKey` 和适用的阶段、目标实体或候选修订。Daemon 从已认证主体或当前 Attempt 推导写入者。先校验当前读取和操作权限，再查同一作用域的幂等回执。已授权的相同请求可以取回旧回执，新写入核对当前修订和执行归属。候选变化、问答过期或接手条件缺失时，调用方可沿工作项读取当前阻塞及其负责人。 [工作项方法的输入和效果](ling-agent-operating-model-detailed-design.md#9-events-and-app-server-methods)
 
-Work Item control uses the optional `workItem.control` capability. Its mutations carry expectedWorkItemRevision, expectedControlGeneration and an idempotency key. Pause and cancel persist the control latch before invoking original owners. Resume revalidates current Plan, Goal, Worktree, grants, unresolved effects and independent holds. Control responses never claim that an accepted external effect was reversed. [Work Item control](ling-agent-operating-model-detailed-design.md#46-work-item-control)
+Work Item control uses the optional `workItem.control` capability. Its mutations carry expectedWorkItemRevision, expectedControlGeneration and an idempotency key. Pause and cancel persist the control latch before invoking original owners. Resume revalidates current Plan, Goal, Worktree, grants, unresolved effects and independent holds. Control responses never claim that an accepted external effect was reversed. The resulting `WorkItemControlProjection` is included in authorized `workItem/read`, snapshot and control update projections. [Work Item control](ling-agent-operating-model-detailed-design.md#51-work-item-control)
 
 ### 2.1 Thread、Turn 和干预语义
 
@@ -140,7 +150,8 @@ type DurableNotice = {
 | 工作项状态 | `workItem/created`、`workItem/claimed`、`workItem/status/changed`、`workItem/claim/expired`、`workItem/thread/linked`、`workItem/delivery/updated`、`workItem/feedback/received` | 工作项及原所有者提供的状态标识和修订。关联通知携带可见的绑定修订。 |
 | 工作项控制 | `workItem/control/updated` | 控制代次、暂停/恢复/取消动作、当前阶段、阻塞 owner 和未确认效果的受权限投影。 |
 | 工作项协作 | `workItem/evidence/updated`、`workItem/deliberation/updated`、`workItem/stage/updated`、`workItem/brief/updated`、`workItem/coordination/updated`、`workItem/message/updated`、`workItem/question/updated`、`workItem/handoff/updated` | 已授权的实体 ID 和修订。简报带阶段或轮次引用，审议带决定修订以及已受理的轮次引用。客户端按需读取正文和回执。 |
-| 订阅控制 | `thread/replay/ready`、`thread/resync/required`、`workItem/replay/ready`、`workItem/resync/required`、`server/warning` | 对应订阅的可用水位、重建原因和此连接状态。 |
+| 外部 Agent 与 GitHub | `externalAgent/registered`、`externalAgent/task/started`、`externalAgent/task/reconnected`、`externalAgent/task/unknown`、`github/subject/updated` | 外部任务注册、重连、未知结果和 GitHub 对象修订的有权限投影。 |
+| 订阅与服务生命周期 | `thread/replay/ready`、`thread/resync/required`、`workItem/replay/ready`、`workItem/resync/required`、`server/warning`、`server/draining`、`server/restarted` | 对应订阅的可用水位、重建原因、停机期限和新服务实例信息。 |
 
 Item 具有稳定 ID、类型、状态、版本和来源引用。包括用户输入、助手文本、公开摘要、计划、命令、工具调用、变更、待审批、用户提问、产物、验证、审查发现、交接、压缩和诊断。命令和工具结果的完整内容按权限与长度读取。最终 Item 携带可渲染摘要及完整结果引用，客户端用较新完整版本替换预览。
 
@@ -162,7 +173,7 @@ GitHub Issue、Automation 或外部请求的入箱工作项可以先有 `workspa
 | 接口 | 受理与恢复 |
 | --- | --- |
 | `workItem/list` | 接受 `workspaceId` 和可选分页游标，列出当前可见的工作项摘要。分页游标与事件游标分别绑定过滤条件。 |
-| `workItem/read` | 接受 `workspaceId`、`workItemId`。同一读快照返回可见修订、主会话绑定状态、获准查看的当前执行引用、阶段简报、轮次、待答问题、交接、审议的引用和本工作项范围的事件游标。消息正文可按实体或轮次分页。 |
+| `workItem/read` | 接受 `workspaceId`、`workItemId`。同一读快照返回可见修订、主会话绑定状态、当前 Plan/Goal 引用、`WorkItemControlProjection`、活动 holds、获准查看的当前执行引用、阶段简报、轮次、待答问题、交接、审议的引用和本工作项范围的事件游标。消息正文可按实体或轮次分页。 |
 | `workItem/subscribe` | 接受同一对标识和可选事件游标。暂存监听后读取同一授权视图的水位，发送该范围的回放，再用 `workItem/replay/ready` 释放 live 队列。首次订阅可用 `workItem/read` 的游标接续。没有游标时，响应返回可见快照及其水位。 |
 | `workItem/unsubscribe` | 接受连接内的订阅 ID，释放此订阅。客户端可再次用本范围已应用的游标接入。 |
 
@@ -218,6 +229,7 @@ sequenceDiagram
 | `steer_unsupported` / `turn_busy` | `-32032` / `-32033` | 等待、排队或明确中断。 |
 | `workspace_binding_invalid` / `worktree_conflict` | `-32040` / `-32041` | 检查当前工作区、候选或写入所有者。 |
 | `request_expired` / `request_already_resolved` | `-32050` / `-32051` | 刷新审批或提问事实。 |
+| `server_draining` / `request_cancelled` | `-32002` / `-32003` | 等待服务恢复或重新读取原收据。请求取消只取消传输等待，不撤销已提交副作用。 |
 | `unknown_outcome` / `resume_blocked` | `-32060` / `-32061` | 查看行动归属和阻塞原因再继续。 |
 | `snapshot_required` | `-32070` | 重取有效快照及游标。 |
 | `goal_acceptance_incomplete` / `candidate_stale` | `-32080` / `-32081` | 返回缺失验收项或改动漂移以及可重跑检查。 |
@@ -276,7 +288,7 @@ Goal 使用已接受的验收项。代码工作可以指定候选检查、检查
 
 ### 3.4 Handoff、多 Agent 与自研运行环境
 
-- Handoff 保存源 Thread/Turn/Goal、接受的目标与设计决定、候选和 worktree、已验证证据、待决请求/副作用、变更范围、阻塞及下一步。持久记录通过现有 artifact 与 Goal/Turn 归属。摘要引用原始任务及验收项。跨会话接手可以引用当前阶段简报、未决问答、工作项交接回执与所属 Workflow。审议引用证据板修订、封存结果和已记录的决定。 [阶段简报与交接](ling-agent-operating-model-detailed-design.md#55-plan-stages-and-stage-briefs)
+- Handoff 保存源 Thread/Turn/Goal、接受的目标与设计决定、候选和 worktree、已验证证据、待决请求/副作用、变更范围、阻塞及下一步。持久记录通过现有 artifact 与 Goal/Turn 归属。摘要引用原始任务及验收项。跨会话接手可以引用当前阶段简报、未决问答、工作项交接回执与所属 Workflow。审议引用证据板修订、封存结果和已记录的决定。 [阶段简报与交接](ling-agent-operating-model-detailed-design.md#57-plan-stages-and-stage-briefs)
 - `handoff/resume` 在新会话检查源是否可交接、worktree 版本与写入租约、候选、证据修订和当前授权。兼容则带版本接手，漂移则显示差异和需要重新验证的项。Runner 重启走已有 checkpoint 恢复，交接走普通 Turn 的新派发。多 Agent 使用现有 Workflow 归属、独立授权和可核对的产物合并。
 - 每个开发任务记录 Provider、Runner、工作树和构建输入。调试长任务可看模型调用预算、失速原因和最近一个有证据的阶段。正常开发从稳定 Ling 使用独立 worktree 和 Agent 环境。候选 Daemon 和 UI 用独立数据、端口和测试配置启动。代码或配置需要换模型或 Runner 时，交接优先从明确的候选快照进入普通新任务。
 

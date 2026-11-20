@@ -2,7 +2,7 @@
 
 - **Status** 目标态详细设计，待实施
 - **Owner** Conversation、Core、Daemon、External Agent、GitHub Automation 与开发工具维护者
-- **Last verified** 2026-11-20 against `origin/main@b8e76d858`
+- **Last verified** 2026-11-21 against `origin/main@50f73b852`
 - **Document type** 跨域状态、授权、事件与恢复详细设计
 - **Contract** [Ling Agent Operating Model](ling-agent-operating-model.md)
 - **Related contracts** [Ling Agent Session](ling-agent-session.md) · [Channel Team Operating System](channel-team-operating-system.md) · [Ling App Server Detailed Design](ling-app-server-detailed-design.md) · [GitHub Automation](github-automation.md) · [Ling Device Fabric](ling-device-fabric.md)
@@ -89,13 +89,19 @@ queued
 running
   -> waiting_for_approval | waiting_for_input | verification_required
   -> review_required | delivery_pending | blocked | failed | cancelled
+waiting_for_approval -> running | blocked | cancelled
+waiting_for_input -> running | blocked | cancelled
 verification_required -> running | review_required | blocked | failed
 review_required -> running | delivery_pending | blocked | failed
 delivery_pending -> delivered | blocked | failed
+blocked -> planning | queued | running | verification_required | review_required | delivery_pending | cancelled | superseded
+failed -> queued | blocked | cancelled | superseded
+cancelled -> archived | candidate
+superseded -> archived | candidate
 delivered -> archived | candidate
 ```
 
-`delivered -> candidate` represents a new source revision or explicit follow-up. It does not reopen historical execution.
+`blocked` and `failed` return to an executable state only through an owner receipt that identifies new applicable evidence, an accepted successor Plan, or an explicitly authorized retry. `cancelled` and `superseded` close the current execution lineage. Their transition to `candidate` represents a new source revision or explicit follow-up with a new lineage and acceptance basis. It does not reopen historical execution or replay an old dispatch.
 
 An intake state transition carries `workItemRevision`, `actor`, `sourceEventId`, an idempotency key, and claim or Goal references when present. A stale transition returns the current projection.
 
@@ -128,6 +134,35 @@ Normalization preserves untrusted content as bounded source data. It does not ex
 ### 3.1 Autonomous intake policy
 
 Each configured source declares `manual`, `suggest`, or `auto_start`, defaulting to `manual`. The rule binds a workspace and an authorized source scope, such as a repository and label or a designated channel. `suggest` registers a candidate for the user to accept. `auto_start` submits a matching candidate to the existing coordinator within the configured time window, budget and concurrency. That decision may route to a clarification, a proposal, a direct run or a workflow. Scoped tools, approvals and actual dispatch still use normal admission.
+
+The source rule is a versioned record rather than free-form configuration. Its public shape is:
+
+```ts
+interface AutonomousIntakePolicyV1 {
+  readonly id: string;
+  readonly revision: string;
+  readonly workspaceId: string;
+  readonly sourceKind: WorkItemSource["kind"];
+  readonly sourceScope: string;
+  readonly mode: "manual" | "suggest" | "auto_start";
+  readonly enabled: boolean;
+  readonly priority: "low" | "normal" | "high" | "urgent";
+  readonly quietHours?: { readonly timeZone: string; readonly start: string; readonly end: string };
+  readonly budget: { readonly maxConcurrent: number; readonly maxStartsPerWindow: number; readonly windowMs: number };
+  readonly pauseReason?: string;
+}
+
+interface AutonomousIntakeEvaluation {
+  readonly policyId: string;
+  readonly policyRevision: string;
+  readonly sourceEventId: string;
+  readonly outcome: "manual" | "suggested" | "accepted" | "suppressed" | "paused" | "deduplicated";
+  readonly reasonCode: string;
+  readonly receiptId: string;
+}
+```
+
+An evaluation freezes the policy revision, source scope and occurrence identity. `auto_start` can only produce a first dispatch intent after this receipt commits. Quiet hours, source pause, concurrency and budget produce a durable suppressed result that can be inspected and retried under a current policy. Scheduled daily or weekly coordination continues to use the existing Automation policy and its occurrence receipt, while this type governs whether the resulting Work Item may enter the coordinator.
 
 Qualification and dispatch recheck the source policy and revision. Paused sources keep their history and pending suggestions. Direct user requests and existing automation dispatch keep their existing entry paths. Where an enabled source already started a Task or AutomationRun, link that dispatch to the inbox item.
 
@@ -239,11 +274,11 @@ When the next automatic step exceeds the allowance, or the blocker needs a user 
 
 ## 5. Team Attention and Speaker Leases
 
-### 4.6 Work Item Control
+### 5.1 Work Item Control
 
 Work Item control is a durable admission latch over the current accepted Work Item lineage. It reuses the existing Task, Turn, Workflow, Run, Approval, Delivery and Automation owners. It does not create a second execution state machine.
 
-The control owner stores one control receipt, control generation, requested action and reason for the current Work Item revision. Actions are pause, resume and cancel. A pause blocks new Tool, Run, Workflow, continuation, paid deliberation, Delivery and Automation admissions that target the paused lineage. Existing owners are asked to reach safe boundaries. A cancel blocks the same admissions and settles or reconciles already accepted effects before the lineage becomes cancelled. An independent effort with its own accepted scope is not stopped unless its own control is addressed.
+The control owner stores one control receipt, control generation, requested action and reason for the current Work Item revision. Actions are pause, resume and cancel. A pause blocks new Tool, Run, Workflow, WorkUnit, External Agent task, device-node action, continuation, paid deliberation, Delivery, Automation and coordination-round admissions that target the paused lineage. Existing owners are asked to reach safe boundaries. A cancel blocks the same admissions and settles or reconciles already accepted effects before the lineage becomes cancelled. An independent effort with its own accepted scope is not stopped unless its own control is addressed.
 
 The effective projection is active, pausing, paused, cancelling, cancelled or blocked. A control request returns its receipt after the latch is committed. It includes unresolved owner receipts, pending approvals, unknown effects, queued deliveries and the recovery owner. Every admission checks the current Work Item revision and control generation. A stale control or old queue item returns the current projection and cannot clear a newer hold.
 
@@ -251,7 +286,11 @@ Pause and cancel use idempotent requests with the Work Item, expected revision, 
 
 The App Server capability is workItem.control. It exposes workItem/pause, workItem/resume and workItem/cancel plus workItem/control/updated. A client can inspect the current control receipt and blocker through workItem/read. The user-visible state distinguishes a requested stop, a safe drain, a settled cancellation and an unresolved effect.
 
-### 4.7 Work Item and Thread Retention
+Control does not make the Work Item unreadable. During `pausing`, `paused` or `cancelling`, the following operations remain admissible when their caller has the ordinary grant and they do not start new execution: status/read, snapshot, subscribe/replay, evidence read, deliberation read/cancel, reconciliation, diagnostics, control retry, and owner-driven close or settle. Existing coordination rounds may accept a bounded status or blocker message, answer an already-open question, return a handoff, append evidence needed for reconciliation, or publish a closing brief. These writes carry the current control generation and are marked as drain activity. `coordination/start`, a new deliberation, a new question or handoff admission, a new recipient delivery, and any decision that would release downstream execution are rejected with the current control receipt. An owner may commit a decision needed to close an already admitted read-only round, but its consumer remains held until resume and revalidation. `deliberation/read` is always observational. This split lets Agents report and repair a handoff without silently reopening the work.
+
+The `WorkItemControlProjection` in the public Work Item contract is the read model for this latch. Its generation, receipt, unresolved effects and recovery owner are part of every authorized Work Item snapshot. Control writes use `expectedWorkItemRevision` and `expectedControlGeneration`; an old receipt cannot clear a newer hold.
+
+### 5.2 Work Item and Thread Retention
 
 Thread hard-delete preview and commit must recheck the current Work Item relationships in one transaction. The delete is blocked when a current Plan, Goal acceptance, pending approval, active continuation, required evidence, accepted Workflow, Delivery or unknown effect still relies on that Thread. The caller must first rehome the current basis to another authorized Thread, archive the Work Item, or settle the owner effect. Historical references can become unavailable tombstones under the source retention policy, with their content and grants removed from projections.
 
@@ -265,7 +304,7 @@ Execution ownership never follows a Speaker Lease automatically. The coordinator
 
 Observer context levels remain those in Channel Team Operating System. Work Item source content is untrusted and scoped. A reviewer may see a captured Diff or artifact without seeing unrelated channel history.
 
-### 5.1 Shared Evidence Board
+### 5.3 Shared Evidence Board
 
 The board is a Work Item view with an ordered log of contributions. Channel evidence, Verify, Code Assessment, CI and artifacts stay with their current stores. The board stores typed links to them and its own authored observations, proposals and challenges. References include the exact source ID, revision and digest where available. They are resolved by the source owner at the viewer's current scope. A board can collect evidence before a deliberation is started. [Team evidence store](../../packages/core/src/storage/sqlite/channel-team-evidence-store.ts) · [Channel context visibility](channel-context-processing-layer.md)
 
@@ -283,7 +322,7 @@ Entry kinds are `observation`, `proposal`, `challenge`, `evidence_ref`, `correct
 - Contributions use the intersection of the Work Item, participant, source and caller scopes. The Context Processing Layer treats contribution text as data and builds prompt and reader views from scoped summaries and references. Synthesis, tally details, exports and replay follow those same scopes. A missing or withdrawn source has an unavailable reference. Where a summary cannot be safely projected with its permitted sources, the view withholds the summary.
 - Each accepted mutation appends a content-minimal Control Plane event in the SQLite transaction. Board sequence orders entries within a Work Item. The App Server cursor covers the authorized projection across events. Clients can rebuild from a snapshot and apply entry revisions idempotently. A revoked client must renew authorization before receiving a new view.
 
-### 5.2 Deliberation Workflow
+### 5.4 Deliberation Workflow
 
 The coordinator starts deliberation under the configured admission policy and the current work phase.
 
@@ -390,7 +429,7 @@ The decision receipt records the Work Item, decision and decision revision, seal
 
 A recommendation informs the coordinator. An applicable `selected` receipt can satisfy a declared decision dependency only when that dependency accepts the receipt's evidence contract and its remaining requirements pass. The original Workflow still owns dispatch. A `deferred` or `replan_required` receipt leaves a required dependency blocked with its reason. Changing the authorized work uses the Plan/Goal acceptance transition in section 4.4 and the next dispatch uses its own authority. For example, after a linked review of two P02 compatibility strategies, the coordinator can record an applicable choice for the P02 decision point. A proposal to change the promised P01 response fields instead goes through a successor Plan. Existing Verify, Review and tool controls still evaluate the candidate and action.
 
-### 5.3 Tally, Decision and Applicability
+### 5.5 Tally, Decision and Applicability
 
 - The host validates the exact round, ballot snapshot digest, voter identity and logical ballot receipt. A unique constraint on the round and canonical voter permits one accepted ballot. Exact retries retrieve the original receipt. A different ballot for the same voter reports the committed entry to that voter within scope. The host uses stable roster identities even when the display name or transport changes.
 - The default weight is one per eligible voter. The default quorum is a majority of the frozen roster by voter count. An eligible abstention contributes to quorum and adds no support to an option. A recommendation requires support from more than half of the total eligible weight. A template may set positive integer weights or a stricter minimum quorum or support threshold before start. The host uses integer arithmetic and records the tally, missing ballots and abstentions.
@@ -398,7 +437,7 @@ A recommendation informs the coordinator. An applicable `selected` receipt can s
 - Resolve the accepted decision policy to an authorized user, Ling Agent or one explicitly assigned role before admission. Check that actor's current authority and the selected option against the outcome revision at decision time. An authorized owner can select an eligible option after a tie or defer the decision. Preserve the original tally and dissent and record the rationale and current evidence for a selection after a tie, an override or a deferral. If authority, user preference or required evidence is missing, wait for the applicable owner, input or check. Changes to accepted scope or criteria follow the existing Plan or Goal acceptance path. Approvals, Tool Broker, Verify, Review, CI and Delivery evaluate their own evidence.
 - Close and decision transactions check the sealed subject and the relevant input revisions and evidence scope. A change to that basis makes the result stale for current use. Candidate-bound decisions require the matching candidate. A carry-forward decision follows the applicability checks in section 4.4. History retains previous options, results, receipts and additional board observations under their authorized scope.
 
-### 5.4 Recovery and Projected Access
+### 5.6 Recovery and Projected Access
 
 When the daemon restarts, it reloads the subject, admitted shaping operation or Workflow, stage snapshots, accepted ballots, stored receipts and remaining deadline and budget. The existing Runtime reconciles interrupted Runs. Phase, canonical tally and decision are recovered from records with unique keys for the round and accepted receipt. Cancel stops new admission to the shaping operation or Workflow and uses its existing stop and terminal evidence. Handoff records the current Work Item and board revision, sealed outcome when present, open question and applicable shaping or Workflow reference.
 
@@ -406,7 +445,7 @@ App Server and Ling clients use the same evidence projection. Workspace and Work
 
 While a ballot is sealed, its public Run and Item projections expose authorized phase and progress. Ballot text, rationale and intermediate results use the ballot scope across live deltas, artifacts and replay. The voter can retrieve its own accepted receipt. Closing the round publishes the scoped tally and dissent, with individual records available according to the accepted visibility policy.
 
-### 5.5 Plan Stages and Stage Briefs
+### 5.7 Plan Stages and Stage Briefs
 
 Plan preview binds each proposed stage, such as P01, to an explicit stable stage ID, goal and acceptance revision, required Workflow steps, dependencies, owner, recipients, expected outputs and acceptance conditions. On acceptance, the Workflow owns the steps and the Work Item projects their progress. A stage with several steps completes through the accepted fan-in conditions and required evidence for those steps. A display title or a checkbox in model text is descriptive input to this process. [Plan conversion](../../packages/core/src/storage/sqlite/proposed-plan-action-store.ts) · [Workflow completion](multi-agent-orchestrator.md)
 
@@ -418,7 +457,7 @@ Plan preview binds each proposed stage, such as P01, to an explicit stable stage
 
 Derive the brief from committed owner records and reuse Workflow output and context packets. The brief includes Work Item, accepted Plan and stage identity, subject and candidate references, source step or Run revision, scoped evidence, outstanding conditions and the next owner. For parallel work it references each accepted required result. An optional prose summary cites those records. Create one brief per Work Item, Plan revision, stage and committed source event. Deliver each role's projection once per brief and recipient. For example, implementation receives the accepted interface and input artifacts while QA receives the contract assertions and the candidate to verify. A changed Plan or candidate revalidates the affected dependency and preserves the earlier brief as history. The Workflow edge or existing assignment owns dispatch. [Step output packet](../../packages/daemon/src/features/channels/workflow-step-packets.ts) · [Successor context](../../packages/daemon/src/features/channels/context-processing/workflow-steps.ts)
 
-### 5.6 Role-based Observation and Peer Questions
+### 5.8 Role-based Observation and Peer Questions
 
 The existing Attention Plan can match role, accepted stage and event. For example, QA can receive a candidate-ready or acceptance-change signal, and the Plan owner can receive a question about scope. Each receiver gets the relevant authorized brief and source references. Observer Bus supplies scoped signals and recommendations. An admitted read-only review or an execution step follows the accepted assignment. Replay reprojects the signal without another paid observation or execution. [Observer Bus](../../packages/daemon/src/features/channels/observer-bus.ts) · [Observer scopes](channel-team-operating-system.md)
 
@@ -426,7 +465,7 @@ An assigned participant can send a targeted question to another participant in t
 
 The Workflow validates any wait against a required dependency of the affected step. A wait that would create a dependency cycle is rejected and escalated. An unreachable respondent or expired deadline also produces an escalation. The Workflow records one blocker for the question with its reason, affected edge and recovery owner. Ling Agent can route the blocker to a participant, request a check or ask the user. A reply with a superseded subject or an expired deadline stays in the originating history when available. The current dependency requires an applicable answer or an accepted resolution and the Workflow's ordinary readiness checks. On reconnect the question, blocker and any accepted reply use their original identities.
 
-### 5.7 Handoff Acceptance and Repair
+### 5.9 Handoff Acceptance and Repair
 
 The Workflow prepares a handoff for the downstream dependency using the accepted source brief, required inputs and expected output, source candidate and evidence, source and target stage revisions, and the assigned receiving participant. It records the material on its existing handoff intent. Daemon derives the receiver from the authenticated grant or the bound Workflow step and current Attempt. A declared automated handoff can use the same Workflow acceptance path when its checks pass. [Existing handoff acceptance](../../packages/daemon/src/features/channels/workflow-handoffs.ts)
 
@@ -446,7 +485,7 @@ Commit the accepted handoff and durable eligibility for downstream reconciliatio
 
 On unavailability or revocation, the coordinator records the reason and proposes reassignment through the existing Task or Workflow owner. An authorized reassignment compares the current assignment and stage revisions and resolves the old lease, approval and effect status. A change to an immutable participant requirement uses a successor Plan. The new participant receives a current scoped brief, assignment and handoff receipt through ordinary admission. Pending questions that remain applicable are linked to a fresh question revision and delivery for that participant. Superseded work, expired or inaccessible questions and unconfirmed effects keep their blockers and history for the appropriate owner. The old respondent can supply historical evidence within their grant, while current replies and writes require the current assignment and Attempt. An expired connection alone gives the existing owner time to reconcile. During deliberation, use the frozen roster and ballot failure policy, or open a successor round with a fresh authorized roster.
 
-### 5.8 Coordination Rounds and Agent Messages
+### 5.10 Coordination Rounds and Agent Messages
 
 `CoordinationRound` records a scoped checkpoint for the Agents assigned to a Work Item. It reuses Automation scheduling, Attention Plan visibility and Control Plane events. Ling Agent or the recorded Workflow coordinator owns the round. The execution owner retains assignment and dispatch.
 
@@ -539,7 +578,7 @@ Each recipient's delivery is identified by message ID and recipient ID and binds
 
 Message acceptance commits the message and makes its recipient delivery `queued`. `delivered` requires a durable receiver receipt for inclusion in the actual input accepted by the target Runner, tied to the Run/Attempt and prepared input basis. With a verified in-turn steering path, use its equivalent input receipt. Work Item observation or successful publication is a separate fact. If an adapter cannot establish delivery after an ambiguous call, report `delivery_unconfirmed` and reconcile with that adapter. Retry the same queued delivery only with current authorization and proof it is safe to do so. Pending delivery can close as `expired`, `superseded` or `scope_revoked`; a completed delivery remains a historical fact. A reply is a separate question-owner receipt. [Prepared input receiver](../../packages/daemon/src/features/runs/user-input-continuation-receiver.ts)
 
-### 5.9 Scheduled Coordination Admission
+### 5.11 Scheduled Coordination Admission
 
 An Automation with the `coordination_round` action configures a checkpoint or retrospective for one explicit Work Item in the same workspace store. A Workflow or Goal selection resolves to that Work Item when configuring the schedule. Keep the Automation's real, authorized Thread as the home for managing its definition and occurrence log. The target Work Item uses its own scope and can be observed before it has a linked Thread. The home Thread grants neither Work Item access nor execution authority. Check both bindings at admission and expose each projection under its own grants.
 
@@ -720,6 +759,8 @@ interface ExperienceCandidate {
 Promotion uses Memory, Skill or Channel review. No candidate may change the current Work Item's permission profile, approval policy, provider, tool set, or Worktree scope.
 
 ## 9. Events and App Server Methods
+
+The canonical public method and notification registry is the table in [Ling App Server 详细设计](ling-app-server-detailed-design.md#2-协议标识方法与结果). The list below groups the Work Item-facing methods by domain. Methods marked by an optional capability remain public App Server methods, not private domain RPCs. The App Server table and generated schema must be updated together.
 
 The App Server adds these protocol projections to the existing Thread/Turn methods.
 

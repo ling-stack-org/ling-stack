@@ -2,7 +2,7 @@
 
 - **状态** 设计与实施计划，生产实现待开始
 - **维护者** Contracts、Daemon、Runtime、API Client、CLI 与开发工具维护者
-- **核对基线** 2026-11-20，`origin/main@b8e76d858`
+- **核对基线** 2026-11-21，`origin/main@50f73b852`
 - **类型** 开发准备、依赖顺序和验收计划
 - **合同** [产品与架构设计](ling-app-server.md) · [详细设计](ling-app-server-detailed-design.md)
 - **代码与测试锚点** [Daemon RPC](../../packages/daemon/src/server/rpc.ts) · [控制面往返测试](../../packages/daemon/test/control-plane-api.test.mjs) · [会话受理收据](../../packages/daemon/test/conversation-submission-receipts.test.mjs) · [框架验收](ling-framework-complementary-implementation-plan.md)
@@ -51,7 +51,7 @@ App Server 之外的团队、任务、外部 Agent 和 GitHub 设计不能各自
 | --- | --- | --- | --- |
 | O1 Agent Work Item 与团队运营 | A2、D1、现有 Channel Team Operating System、外部来源身份合同 | `AgentWorkItem`、来源与 Goal 绑定、现有分配与派发回执、speaker/observer 投影和收件箱事件。按授权的结构化 Work Item 或 GitHub 对象标识归并入口，在工作区内原子确认来源绑定、默认 Work Item 及首次派发意图。现有所有者负责派发。计划阶段映射到 Workflow 步骤。 | 同一任务由 GitHub、会话和 Codex 同时提出时取得一个默认主执行。重复受理可追溯至同一派发回执，另行执行需显式授权，相关 PR 使用受信关联。过期、重指派与取消由原运行所有者恢复。 |
 | O2 External Agent Federation | C2、现有 External Agent Runner Adapters | 外部 Agent 注册、能力握手、Work Item 提交、双向事件、审批/提问、重连、递归防止和 unknown outcome。 | Codex、Claude Code、LobeHub 或 ACP adapter 的 capability mismatch、断线、审批、取消、事件回放和重复 dispatch 均有结果。 |
-| O3 Task Inbox 与自治策略 | O1、Automations、Channel Team Operating System | 按来源配置人工、建议或自动送入主 Agent，应用筛选、优先级、安静时段、预算和暂停策略。 | 默认人工接入。符合规则的建议可手动接受，显式启用的来源可以自动提交。暂停和预算限制阻止新接入，重复来源关联已有执行。 |
+| O3 Task Inbox 与自治策略 | O1、Automations、Channel Team Operating System | 按版本化的 `AutonomousIntakePolicyV1` 配置人工、建议或自动送入主 Agent，应用筛选、优先级、安静时段、预算和暂停策略，并为每次评估保存 receipt。 | 默认人工接入。符合规则的建议可手动接受，显式启用的来源可以自动提交。暂停和预算限制产生可回查的 suppressed/paused 结果，重复来源关联已有执行。 |
 | O4 GitHub Delivery Loop | O1、E2、GitHub Automation 与 GitHub 合并策略 | 关联 Issue、PR 和 CI，记录实际验证对象、检查来源及运行尝试。精确集成证据依赖合并队列或等效的执行时校验。严格保护适用于允许 up-to-date head 证据且执行身份受必需检查约束的策略。外部合并按实际结果对账。 | head 固定且 base 推进时，旧集成证据只能用于历史对象，适用的 head 检查按政策保留。覆盖同名检查的来源差异、迟到结果及读取证据后发生的 base 变化。以实际合并结果和适用证据完成 Goal。 |
 | O5 Memory/Skill Feedback | O1、E2、Memory/Skill review owners | Work Item provenance、Experience candidate、Memory/Skill/Channel review 和失效策略。 | 候选能追溯源 Run 与证据，拒绝/过期可见，推广不能扩大工具、审批、Provider 或工作区范围。 |
 | O6 Device Work Item Bridge | O1、Ling Device Fabric | 项目 Work Item 与设备图节点、owner host、WorkUnit、receipt 和跨设备反馈的映射。 | 项目协调者可显示设备节点进度，实际设备动作仍由 owner host 记录和恢复。设备断线不伪造项目成功。 |
@@ -61,7 +61,7 @@ App Server 之外的团队、任务、外部 Agent 和 GitHub 设计不能各自
 
 这些工作包对应 [Ling Agent Operating Model](ling-agent-operating-model.md) 和 [详细设计](ling-agent-operating-model-detailed-design.md)。它们补充 App Server 的协议方法，但不新增替代 Thread、Goal、Workflow、Run、Approval 或 Device Fabric 的独立执行系统。
 
-O7 在工作项、候选和事件合同可用后可与 E1、E2 并行。O4 使用 E2 的证据适用性接口，把 GitHub 的来源、验证对象和合并回执交回同一验收所有者。O8 使用 E2 的审查证据和验收规则。O9 复用 F2 的会话组件和传输。O4 和 O9 的结果进入 G 的发布验收。 [阶段协作](ling-agent-operating-model-detailed-design.md#55-plan-stages-and-stage-briefs) · [审议触发](ling-agent-operating-model-detailed-design.md#52-deliberation-workflow) · [O9 联合验收](#o9-联合验收)
+O7 在工作项、候选和事件合同可用后可与 E1、E2 并行。O4 使用 E2 的证据适用性接口，把 GitHub 的来源、验证对象和合并回执交回同一验收所有者。O8 使用 E2 的审查证据和验收规则。O9 复用 F2 的会话组件和传输。O4 和 O9 的结果进入 G 的发布验收。 [阶段协作](ling-agent-operating-model-detailed-design.md#57-plan-stages-and-stage-briefs) · [审议触发](ling-agent-operating-model-detailed-design.md#54-deliberation-workflow) · [O9 联合验收](#o9-联合验收)
 
 接口变更的代码所有权以现有目录为准。Contracts 管公共类型和解析，Core 管事务和证据索引，Daemon feature 管领域行为，`server` 管协议及传输，API Client/CLI 管连接及消费。前端控制与证据视图沿用共享会话组件和本地化目录。新文件按实际职责拆分。
 
@@ -93,7 +93,7 @@ O7 在工作项、候选和事件合同可用后可与 E1、E2 并行。O4 使�
 ### O7–O9 的实施入口
 
 1. 从团队证据存储、步骤结果包和交接接入证据、阶段简报、角色投影、轮次和消息。复用 Workflow 启动归属和恢复入口恢复已接受的交接。覆盖接受后尚未受理派发，以及派发已受理而客户端尚未看到状态两个断点。 [证据存储](../../packages/core/src/storage/sqlite/channel-team-evidence-store.ts) · [步骤结果包](../../packages/daemon/src/features/channels/workflow-step-packets.ts) · [Workflow 交接](../../packages/daemon/src/features/channels/workflow-handoffs.ts) · [步骤派发](../../packages/daemon/src/features/runs/workflow-step-start-admission.ts)
-2. 接入 Automation 调度和工作区 SQLite 存储。配置和 `AutomationRun` 账本使用既有 Automation Thread。`coordination_round` 以显式绑定的同工作区 `workItemId` 为目标，接单前的无 Thread 工作项也可受理。按 `automationId + scheduledFor` 在同一事务内核对定义、目标和授权，提交终态 `succeeded`、`CoordinationRound` 和事件，或提交终态 `skipped` 和稳定原因。轮次创建本身是存储动作。`skip` 和 `run_one` 只处理未受理时段。已提交时段重放原回执，由轮次所有者恢复原截止时间。测试事务提交前后退出，核对回执、轮次、事件和 Runner 实际启动计数。 [定时受理合同](ling-agent-operating-model-detailed-design.md#59-scheduled-coordination-admission) · [调度入口](../../packages/daemon/src/features/automations/scheduler.ts) · [Automation 存储](../../packages/core/src/storage/sqlite/automation-store.ts) · [计时器回归](../../packages/daemon/test/automation-scheduler-timers.test.mjs)
+2. 接入 Automation 调度和工作区 SQLite 存储。配置和 `AutomationRun` 账本使用既有 Automation Thread。`coordination_round` 以显式绑定的同工作区 `workItemId` 为目标，接单前的无 Thread 工作项也可受理。按 `automationId + scheduledFor` 在同一事务内核对定义、目标和授权，提交终态 `succeeded`、`CoordinationRound` 和事件，或提交终态 `skipped` 和稳定原因。轮次创建本身是存储动作。`skip` 和 `run_one` 只处理未受理时段。已提交时段重放原回执，由轮次所有者恢复原截止时间。测试事务提交前后退出，核对回执、轮次、事件和 Runner 实际启动计数。 [定时受理合同](ling-agent-operating-model-detailed-design.md#511-scheduled-coordination-admission) · [调度入口](../../packages/daemon/src/features/automations/scheduler.ts) · [Automation 存储](../../packages/core/src/storage/sqlite/automation-store.ts) · [计时器回归](../../packages/daemon/test/automation-scheduler-timers.test.mjs)
 3. 接入 `DeliberationTriggerPolicyV1`、独立准入的只读审议和原依赖的决策消费。用 scripted Provider 验证三种入口、意见被证据解决、开票、平票、迟到裁决和改范围。以现有 Goal 和执行循环为基础验证跨 Run 的进展归并、阻塞与预算。 [Workflow 调度](../../packages/daemon/src/features/channels/orchestrator.ts) · [汇合证据](../../packages/daemon/src/features/channels/workflow-fanin.ts) · [Goal 监督](../../packages/core/src/goal-supervision.ts) · [执行循环](../../packages/daemon/src/features/runs/execution-loop-detector.ts)
 4. 用 Web 和有类型客户端打开同一 Work Item，在关联 Thread 前建立订阅。关联后从两端提交普通消息与显式干预，并核对两种订阅的实体投影。以同一工作项运行下方验收，重开后恢复最新已接受版本和当前可执行的步骤。
 
@@ -116,10 +116,10 @@ corepack pnpm --filter @ling-stack/api-client typecheck:ci
 
 | 项目 | 状态 |
 | --- | --- |
-| 隔离开发分支 | `codex/ling-app-server-design` 基于远端 `main@b8e76d858`。 |
+| 隔离开发分支 | `codex/ling-app-server-design` 保留设计快照基线 `main@b8e76d858`。当前远端 `main@50f73b852` 比该基线多 3 个主线提交，开始实现前先在干净的实现 worktree 中重放并重新核对设计锚点。 |
 | 目标态、协议、验收与索引 | 本组设计文档，按上表的真实代码入口接入。 |
 | 重叠工作搜索 | 核对主线的 Ling Server Connectivity、Ling Device Fabric、原生执行引擎和现有 RPC，GitHub 开放 Issue/PR 的 “app server” 搜索均为空。 |
-| 依赖及源码基线 | macOS arm64，Node 24.22.1、pnpm 10.0.0、Rust 1.97.1。过滤安装时 Web 构建缺少 Desktop 共享代码的依赖链接。以完整锁文件安装重试后，CLI 依赖图的 `build:ci` 通过。主线由 `2d51c23d4` 到 `b8e76d858` 的差异限于设计文档。 |
+| 依赖及源码基线 | macOS arm64，Node 24.22.1、pnpm 10.0.0、Rust 1.97.1。过滤安装时 Web 构建缺少 Desktop 共享代码的依赖链接。以完整锁文件安装重试后，CLI 依赖图的 `build:ci` 通过。设计快照记录的是 `2d51c23d4` 到 `b8e76d858` 的差异，当前主线新增提交必须在实现前重新做范围和代码锚点核对。 |
 | 包与现有协议回归 | Contracts、API Client、Daemon、CLI 的 `typecheck:ci` 通过。Contracts 和 API Client 的 `test:ci` 通过。Daemon 五个相关文件通过，覆盖 RPC 认证、Control Plane、RPC 背压与断线后 Run、会话受理收据。CLI 返回产品版本 0.6.1 与既有 Daemon 协议版本 1。 |
 | 端到端目标验收 | 随工作包实施，见下方矩阵。当前 Framework Assurance 的 F3-B 真实试点为 BLOCKED，试点准入以其所有者公布的状态为准。 |
 
@@ -128,6 +128,7 @@ corepack pnpm --filter @ling-stack/api-client typecheck:ci
 | 验收 | 环境与入口 | 必须观察到的行为 |
 | --- | --- | --- |
 | 协议合同 | 生成 schemas、Node SDK、CLI 与 scripted client | 握手、能力选择、完整命令/通知表、合法和非法请求、版本、分页、稳定错误。旧 HTTP/SSE 与 `/rpc/stream` 用例继续通过。 |
+| 连接生命周期 | 真实 Daemon，stdio、Unix socket 或回环 WS，故障注入客户端 | `server/ping` 保活、`server/draining` 优雅停机、`server/restarted` 重连提示和 `$/cancelRequest` 均有可回查结果。请求级取消不撤销已提交副作用，停机期间不接受新的副作用派发。 |
 | 双向控制与在途输入 | 真实 Daemon，支持与不支持在途输入的 Runner，两个客户端 | 运行中普通输入有持久回执。指导在支持的模型边界投递，否则按已选择的排队或停止路径处理。用户改需求时受影响步骤按接受版本暂停及接回。延迟输入和重复投递的处理可核对。 |
 | 回放与阻塞 | 临时 SQLite，有限缓冲，故意断开父客户端或 Daemon | 滞后/过期游标后有快照。待决审批、活跃/终态 Run 和未知外部结果均可重新查看。已执行动作凭 Host 回执保持单次。 |
 | 权限与隐私 | 本地和认证远程配置，受限/撤销调用方 | 工作区和 worktree 越权、错误凭据、过期会话、跨线程审批、敏感内容投影、重放旧决定被正确处理。 |
@@ -145,7 +146,7 @@ corepack pnpm --filter @ling-stack/api-client typecheck:ci
 | 共享证据板 | 临时 SQLite，两个写入者，一个受限读者 | 并行提交、重复请求、冲突更正、来源权限变化、快照与跨客户端回放均可复核。无权读取的原始材料和派生摘要不进入投影。 |
 | 阶段简报与 Agent 交接 | 已接受的多阶段 Workflow，工程和 QA，实际 Daemon | P01 验收后向 P02 和 QA 提供各自所需的材料。同级问答只等待受影响的依赖。旧候选交接可退回，补齐后按当前证据接手。重连后不会重复派发。 |
 | 跨 Run 停滞与恢复 | 同一工作项、多个 Agent、可重复的失败与新证据 | 多来源报告归并，临时审议、重连或重试保有该工作项的已消耗预算。达到停滞阈值后记录阻塞，取得相关新证据或接受后续计划才重新判断。 |
-| Work Item 控制与删除 | linked Workflow、Deliberation、Automation、Delivery、Thread hard-delete 和真实 Daemon | pause/cancel 阻止新准入并等待原所有者收尾。resume 不清除其他 holds。unknown effect、重启、删除 preview→commit 竞态和独立 effort 均有正确结果。 |
+| Work Item 控制与删除 | linked Workflow、Deliberation、Automation、Delivery、External Agent、Device WorkUnit、Thread hard-delete 和真实 Daemon | pause/cancel 阻止新的执行、副作用、轮次和交接派发，但允许授权读取、对账、已有轮次的状态/阻塞收尾和必要证据追加。resume 不清除其他 holds。unknown effect、重启、删除 preview→commit 竞态和独立 effort 均有正确结果。 |
 | Agent 协作节奏与消息 | 临时 SQLite，`CoordinationRound`，两个 Agent 和一个协调者 | 覆盖五种轮次、原子关闭、取消、失效、父子投递、跨轮次问答、超时、互等和重放。所有后续执行使用原派发回执。 |
 | 定时轮次原子受理 | 临时 SQLite、受控时钟、真实 scheduler，配置 Thread 与无自身 Thread 的 Work Item，注入提交前及提交后应答前退出 | 提交前退出由未受理时段策略处理。提交后核对一次终态 `succeeded` 及同事务的轮次和事件，或一次终态 `skipped` 及稳定原因。重复调度复用原回执，轮次恢复原截止时间。覆盖工作项目标不可用和权限撤销，轮次创建的 Runner 启动计数为零。 |
 | 自研切换与回退 | 候选 Daemon、稳定 Daemon、SQLite 一致性快照和故障注入 | 候选操作回执、撤权、store/auth epoch、旧 cursor、unknown outcome 在回退后可对账。未完成对账前不重派发，外部效果无重复。 |
