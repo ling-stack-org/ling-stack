@@ -1,7 +1,8 @@
 import type { Server } from "node:http";
 import type { Duplex } from "node:stream";
+import { randomUUID } from "node:crypto";
 import { DEFAULT_WORKSPACE_ID, type ControlPlaneDomain, type ControlPlaneEvent, type RunEventEnvelope, type RunSession } from "@ling-stack/core";
-import type { ControlPlaneSubscribeResult } from "@ling-stack/contracts";
+import { LING_PRODUCT_VERSION, type ControlPlaneSubscribeResult } from "@ling-stack/contracts";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 import type { DaemonContext } from "../context.js";
 import { daemonRequestIsAuthorized } from "./request-auth.js";
@@ -54,12 +55,21 @@ export interface RpcWebSocketServerHandle {
   close(): void;
 }
 
+const APP_SERVER_RPC_PATH = "/app-server/rpc";
+const APP_SERVER_PROTOCOL_VERSION = "ling-app-server/1";
+const APP_SERVER_CAPABILITIES = [
+  "controlPlane.events",
+  "runs.start",
+  "runs.cancel",
+  "server/ping",
+] as const;
+
 export function attachRpcWebSocketServer(server: Server, context: DaemonContext): RpcWebSocketServerHandle {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
   let closed = false;
   const handleUpgrade: Parameters<Server["on"]>[1] = (request, socket, head) => {
     const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${context.config.host}:${context.config.port}`}`);
-    if (url.pathname !== "/rpc/stream") {
+    if (url.pathname !== "/rpc/stream" && url.pathname !== APP_SERVER_RPC_PATH) {
       return;
     }
     if (!context.config.transports.localWebSocketRpc) {
@@ -81,7 +91,12 @@ export function attachRpcWebSocketServer(server: Server, context: DaemonContext)
   server.on("upgrade", handleUpgrade);
   wss.on("connection", (ws, request) => {
     const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${context.config.host}:${context.config.port}`}`);
-    const connection = new RpcConnection(ws, url.searchParams.get("cwd") ?? context.config.defaultWorkspaceCwd, context);
+    const connection = new RpcConnection(
+      ws,
+      url.searchParams.get("cwd") ?? context.config.defaultWorkspaceCwd,
+      context,
+      url.pathname === APP_SERVER_RPC_PATH,
+    );
     connection.start();
   });
   const closeAll = (): void => {
@@ -106,6 +121,9 @@ class RpcConnection {
   private nextSubscriptionId = 1;
   private initialized = false;
   private closed = false;
+  private readonly connectionId = `conn_${randomUUID()}`;
+  private readonly pendingRequests = new Set<string>();
+  private readonly cancelledRequests = new Set<string>();
   private readonly onMessage = (data: RawData): void => { void this.handleMessage(data); };
   private readonly onConnectionClose = (): void => this.close();
   private readonly onConnectionError = (): void => this.close();
@@ -114,6 +132,7 @@ class RpcConnection {
     private readonly ws: WebSocket,
     private readonly defaultCwd: string,
     private readonly context: DaemonContext,
+    private readonly appServer: boolean,
   ) {
     this.outbound = new RpcOutboundWriter(ws, { onClose: () => this.close() });
   }
@@ -141,7 +160,17 @@ class RpcConnection {
       return;
     }
 
+    const requestKey = request.id === undefined ? undefined : jsonRpcIdKey(request.id);
+    if (requestKey) this.pendingRequests.add(requestKey);
     try {
+      if (request.method === "$/cancelRequest") {
+        const target = readParamsRecord(request.params).requestId;
+        if ((typeof target === "string" || typeof target === "number" || target === null) &&
+          this.pendingRequests.has(jsonRpcIdKey(target))) {
+          this.cancelledRequests.add(jsonRpcIdKey(target));
+        }
+        return;
+      }
       if (request.method === "controlPlane.subscribe") {
         if (request.id === undefined) {
           throw rpcError(-32600, "subscription_response_required", "controlPlane.subscribe requires a request id.");
@@ -151,20 +180,38 @@ class RpcConnection {
         return;
       }
       const result = await this.dispatch(request.method, request.params);
-      if (request.id !== undefined) {
+      if (request.id !== undefined && !this.cancelledRequests.has(requestKey!)) {
         this.send({ jsonrpc: "2.0", id, result });
       }
     } catch (error) {
       const normalized = normalizeRpcError(error);
-      this.sendError(id, normalized.jsonRpcCode, normalized.code, normalized.message);
+      if (request.id === undefined || !this.cancelledRequests.has(requestKey!)) {
+        this.sendError(id, normalized.jsonRpcCode, normalized.code, normalized.message);
+      }
+    } finally {
+      if (requestKey) {
+        this.pendingRequests.delete(requestKey);
+        this.cancelledRequests.delete(requestKey);
+      }
     }
   }
 
   private async dispatch(method: string, params: unknown): Promise<unknown> {
     switch (method) {
       case "initialize":
+        this.validateInitializeParams(params);
         this.initialized = true;
-        return {
+        return this.appServer ? {
+          protocolVersion: APP_SERVER_PROTOCOL_VERSION,
+          serverInfo: { name: "ling-stack-daemon", version: LING_PRODUCT_VERSION },
+          connectionId: this.connectionId,
+          effectiveScopes: ["controlPlane.read", "runs.control"],
+          capabilities: APP_SERVER_CAPABILITIES,
+          limits: {
+            maxInboundFrameBytes: 1024 * 1024,
+            maxOutboundFrameBytes: 128 * 1024,
+          },
+        } : {
           ok: true,
           transport: "websocket",
           cwd: this.defaultCwd,
@@ -173,6 +220,8 @@ class RpcConnection {
             channels: this.context.config.channels,
           },
         };
+      case "server/ping":
+        return { ok: true, connectionId: this.connectionId, serverTime: new Date().toISOString() };
       case "daemon.health":
         return {
           ok: true,
@@ -197,6 +246,29 @@ class RpcConnection {
         return this.cancelRun(params);
       default:
         throw rpcError(-32601, "method_not_found", `Unsupported RPC method: ${method}`);
+    }
+  }
+
+  private validateInitializeParams(params: unknown): void {
+    if (!this.appServer || params === undefined) return;
+    const record = readParamsRecord(params);
+    const versions = record.protocolVersions;
+    if (versions !== undefined && (!Array.isArray(versions) || !versions.every(value => typeof value === "string"))) {
+      throw rpcError(-32602, "invalid_params", "protocolVersions must be an array of strings.");
+    }
+    if (Array.isArray(versions) && !versions.includes(APP_SERVER_PROTOCOL_VERSION)) {
+      throw rpcError(-32010, "protocol_version_unsupported", "The requested protocol versions are not supported.");
+    }
+    const requiredCapabilities = record.requiredCapabilities;
+    if (requiredCapabilities !== undefined && (!Array.isArray(requiredCapabilities) ||
+      !requiredCapabilities.every(value => typeof value === "string"))) {
+      throw rpcError(-32602, "invalid_params", "requiredCapabilities must be an array of strings.");
+    }
+    const missing = Array.isArray(requiredCapabilities)
+      ? requiredCapabilities.filter(value => !(APP_SERVER_CAPABILITIES as readonly string[]).includes(value))
+      : [];
+    if (missing.length > 0) {
+      throw rpcError(-32011, "required_capability_unavailable", `Required capabilities are unavailable: ${missing.join(", ")}`);
     }
   }
 
@@ -544,6 +616,10 @@ function parseJsonRpcRequest(data: RawData): JsonRpcRequest | undefined {
   } catch {
     return undefined;
   }
+}
+
+function jsonRpcIdKey(id: JsonRpcId): string {
+  return `${typeof id}:${String(id)}`;
 }
 
 function readParamsRecord(params: unknown): Record<string, unknown> {
