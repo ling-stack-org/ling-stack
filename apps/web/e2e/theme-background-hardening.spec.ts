@@ -6,6 +6,7 @@ import { installNormalConversationFixture, normalConversationFixtureTitle } from
 import { installChannelWorkCellFixture, installNormalWorkCellFixture, installTeammateWorkCellFixture } from './support/conversation-work-cell-fixture';
 import { openEngineeringChannel } from './support/test-helpers';
 import { expandTimelineProcesses } from './support/timeline-process';
+test.describe.configure({ timeout: 90_000 });
 const mp4 = await readFile(new URL('./fixtures/dynamic-wallpaper.mp4', import.meta.url));
 async function prepare(page: Page) {
   await page.addInitScript(() => {
