@@ -1,8 +1,8 @@
 # Ling Device Support Platform Implementation Plan
 
-Status: tracking plan; D1–D3 core, D4/D5/D7/D8 adapters, D6 protocol groundwork, and D9 mobile execution core landed, later slices remain queued
+Status: tracking plan; D1–D3 core, D4/D5/D7/D8 adapters, D6/D9 execution slices, and D10–D22 domain foundations landed, field and platform acceptance remain queued
 Owner: Ling platform maintainers
-Last verified: 2026-11-21 (D1–D3 core, D4/D5/D7/D8 adapters, D6 remote device-task protocol, D9 mobile journal and execution fixtures)
+Last verified: 2026-11-21 (D1–D13 execution foundations plus D14–D22 fabric, safety, lifecycle, context, resource and conformance fixtures)
 Document type: staged implementation and acceptance record
 Related design: [Ling Device Support Platform](ling-device-support-platform.md)
 Runtime contract: [Ling Device Support Platform Runtime Contract](ling-device-support-platform-runtime-contract.md)
@@ -52,19 +52,19 @@ validation and the boundary of what remains unverified.
 | D7 | [~] | Playbooks and operator evidence | Bounded read-only playbook validation and replayable task attempts are implemented | Core playbook fixture tests |
 | D8 | [~] | Additional ecosystems | Linux/SSH typed network and Wi-Fi adapter is implemented under the shared contract | Daemon Linux adapter fixture tests |
 | D9 | [~] | Standalone Mobile execution | Phone-owned typed execution, local journal, foreground gate, exact approval, and resume recovery are implemented | Mobile source fixtures |
-| D10 | [ ] | Developer device sessions | Complete build, deploy, debug, verify, and native-tool workflows on supported host and target combinations | Project/device integration, native-tool and reattach acceptance |
-| D11 | [ ] | PC-assisted Mobile execution | Paired PC contributes plans, artifacts, or analysis while Mobile owns the task and device link | Collaboration contract fixtures and physical device runs |
-| D12 | [ ] | Ling Server connectivity | Self-hosted control, direct peer paths, NAT traversal, encrypted relay fallback, and paired conversation/device-task sync work without third-party network services | Multi-network tests, peer identity, payload confidentiality, and reconnect evidence |
-| D13 | [ ] | Hardware protocol development and debugging | Capture, decode, replay, and verify a hardware protocol and register the tested adapter for standard use | Shared codec fixtures and physical PC and Mobile device runs |
-| D14 | [ ] | Semantic device graph and twin | PC, Mobile, vehicle, hardware, and smart-home identities and state views resolve through one semantic model | Identity, relationship, freshness, and twin fixtures |
-| D15 | [ ] | Cross-device task graph | One task can plan and execute nodes on different owners with approvals, partial results, recovery, and verification | Graph scheduler, owner leases, and cross-device acceptance |
-| D16 | [ ] | Edge Runtime and bridge contract | An enrolled Linux edge executor and a phone-owned bridge use the shared device contract | Enrollment, reconnect, local journal, capability, and bridge tests |
-| D17 | [ ] | Event and telemetry plane | Device, task, health, and evidence events use one envelope with ordering, freshness, backpressure, and snapshots | Stream fixtures, gap recovery, telemetry retention, and peer projection |
-| D18 | [ ] | Resource and adapter registry | Supported resources install, update, and roll back through their platform delivery channels | Manifest, license, dependency, digest, and rollback tests |
-| D19 | [ ] | Safety, policy, and secrets | Actions check device authority and current operating conditions and record their verification | Risk fixtures, controller boundaries, and target-specific acceptance |
-| D20 | [ ] | Fleet and lifecycle | Enrollment, ownership, health, credentials, upgrade, revoke, retire, and restore are durable | Lifecycle state machine and upgrade/recovery evidence |
-| D21 | [ ] | Model context and orchestration | Model context packs and cross-device plans use bounded evidence, local playbooks, and observation trust | Context budget, prompt-injection, planner, and offline fixtures |
-| D22 | [ ] | Observability and conformance | One trace links model, graph, runtime, adapter, protocol, target, and verification | Simulator, hardware-in-loop, chaos, field, and reproducible conformance report |
+| D10 | [~] | Developer device sessions | Typed developer sessions bind artifacts to targets and reattach jobs | Core developer-session fixtures |
+| D11 | [~] | PC-assisted Mobile execution | Phone-owned collaboration proposals and chunked artifacts preserve owner and target binding | Core collaboration fixtures |
+| D12 | [~] | Ling Server connectivity | Self-hosted installation, binding, route selection, relay failover, and revocation state are modeled | Core route-registry fixtures |
+| D13 | [~] | Hardware protocol development and debugging | Capture, digest, decode, and replay workbench is implemented | Core protocol fixtures |
+| D14 | [~] | Semantic device graph and twin | Graph identity, relationships, merge/split, and freshness-aware twin views are implemented | Core graph/twin fixtures |
+| D15 | [~] | Cross-device task graph | Dependency validation, ready-node placement, owner leases, partial aggregation, and result lineage are implemented | Core task-graph fixtures |
+| D16 | [~] | Edge Runtime and bridge contract | Enrollment and revocation registry foundation is implemented | Core edge registry fixtures |
+| D17 | [~] | Event and telemetry plane | Ordered bounded event bus and stale-cursor rejection are implemented | Core event fixtures |
+| D18 | [~] | Resource and adapter registry | Digest-bound install and rollback registry is implemented | Core resource fixtures |
+| D19 | [~] | Safety, policy, and secrets | Physical preconditions, emergency stop, and secret-reference checks are implemented | Core safety fixtures |
+| D20 | [~] | Fleet and lifecycle | Revisioned lifecycle transitions are implemented | Core lifecycle fixtures |
+| D21 | [~] | Model context and orchestration | Bounded facts, hypotheses, observation refs, and untrusted text refs are implemented | Core context fixtures |
+| D22 | [~] | Observability and conformance | Cross-layer trace spans and conformance report construction are implemented | Core trace fixtures |
 
 ## D0: Design baseline
 
@@ -312,15 +312,15 @@ only on a successful install or a model response.
 
 ### Scope
 
-- [ ] Add standard and developer session entry points to PC and Mobile. Show the
+- [~] Add standard and developer session entry points to PC and Mobile. Show the
   current workspace, external target, owner, and effective device authorization.
-- [ ] Use the shared device contract for deploy, launch, test, and scoped diagnostics
+- [x] Use the shared device contract for deploy, launch, test, and scoped diagnostics
   on an authorized development target. Bind package identity and the verified
   artifact to the approved device action.
 - [ ] Connect the operator's native workbench to supported, authorized SSH, ADB,
   and vendor maintenance tools. Record tool status, relevant evidence selected by
   the user, and readback after native maintenance.
-- [ ] Persist job identity and reconnect to running build or test work. Record
+- [x] Persist job identity and reconnect to running build or test work. Record
   the runtime and device outcome separately.
 
 ### Exit evidence
@@ -338,11 +338,11 @@ only on a successful install or a model response.
 
 ### Scope
 
-- [ ] Extend the signed remote protocol for an opted-in phone-owned task
+- [x] Extend the signed remote protocol for an opted-in phone-owned task
   projection, PC proposals, scoped artifact transfer, and Mobile receipts.
-- [ ] Keep project actions bound to the PC workspace and device actions bound to
+- [x] Keep project actions bound to the PC workspace and device actions bound to
   the phone's verified target and local authorization.
-- [ ] Resume the owner's journal from an acknowledged revision or a refreshed
+- [~] Resume the owner's journal from an acknowledged revision or a refreshed
   snapshot. Preserve known and uncertain attempt outcomes after either link fails.
 
 ### Exit evidence
@@ -358,11 +358,11 @@ only on a successful install or a model response.
 
 ### Scope
 
-- [ ] Implement the self-hosted Ling Server control API, enrollment, presence,
+- [~] Implement the self-hosted Ling Server control API, enrollment, presence,
   rendezvous, server identity, peer epochs, revocation, and metadata persistence.
-- [ ] Implement signed WebRTC signaling and direct LAN or cross-network ICE paths on
+- [~] Implement signed WebRTC signaling and direct LAN or cross-network ICE paths on
   PC and Mobile. Use Ling Server's configured STUN endpoint for discovery.
-- [ ] Integrate self-hosted coturn for fallback, with scoped credential issuance, UDP
+- [~] Integrate self-hosted coturn for fallback, with scoped credential issuance, UDP
   relay and TURN/TLS on TCP 443. Verify allocation limits and expiry on the chosen stack.
 - [ ] Carry Gateway conversation, developer-collaboration, and device-task messages
   over the same peer session contract. Preserve cursors, receipts, idempotency,
@@ -391,13 +391,13 @@ only on a successful install or a model response.
 
 ### Scope
 
-- [ ] Add a protocol workbench to the developer session, reusing D1–D3 device
+- [x] Add a protocol workbench to the developer session, reusing D1–D3 device
   contracts, ownership, approval, and evidence.
 - [ ] Keep the hardware transport, protocol codec, and versioned device profile
   independently reusable. Record the verified host, adapter and firmware combination.
-- [ ] Capture request and response evidence, support offline decoder replay and
+- [x] Capture request and response evidence, support offline decoder replay and
   simulator fixtures, and preserve provenance and capture loss.
-- [ ] Register the verified profile and operations through the existing device
+- [~] Register the verified profile and operations through the existing device
   adapter catalog. Record supported devices and verified behavior.
 
 ### Exit evidence
@@ -418,11 +418,11 @@ only on a successful install or a model response.
 
 ### Scope
 
-- [ ] Add stable device, component, connection, relationship, location, and
+- [x] Add stable device, component, connection, relationship, location, and
   ownership records. Keep transport aliases separate from stable identity.
 - [ ] Add semantic capability verbs with protocol implementations, support ranges,
   freshness, side effects, approvals, prerequisites, and verification.
-- [ ] Add reported, desired, pending, and verified twin views with provenance and
+- [x] Add reported, desired, pending, and verified twin views with provenance and
   freshness. Preserve unknown state after interrupted writes.
 - [ ] Add identity merge and split workflows with adapter evidence or local operator
   confirmation.
@@ -440,9 +440,9 @@ only on a successful install or a model response.
 
 ### Scope
 
-- [ ] Add parent graph, node, edge, target binding, node owner, precondition,
+- [x] Add parent graph, node, edge, target binding, node owner, precondition,
   approval, attempt, verification, recovery, and evidence contracts.
-- [ ] Coordinate PC, Mobile and Linux edge nodes over their authorized device links.
+- [~] Coordinate PC, Mobile and Linux edge nodes over their authorized device links.
   Preserve per-node ownership. Use the declared coordination mechanism for shared
   target and bridge leases.
 - [ ] Support partial result, unknown outcome, graph cancellation, node retry,
@@ -462,7 +462,7 @@ only on a successful install or a model response.
 
 ### Scope
 
-- [ ] Define runtime enrollment, key proof, target discovery, local journal,
+- [x] Define runtime enrollment, key proof, target discovery, local journal,
   connection handles, health, cancel, capture, upgrade, and revoke.
 - [ ] Verify a Linux edge executor and a supported phone-owned hardware bridge.
   Validate executor enrollment and each placement's connection, recovery, and task
@@ -578,7 +578,7 @@ only on a successful install or a model response.
 
 - [ ] Propagate conversation, graph, node, attempt, device, runtime, connection,
   adapter, resource, event, and model-turn identifiers.
-- [ ] Add simulator, protocol replay, hardware-in-loop, network interruption, process
+- [~] Add simulator, protocol replay, hardware-in-loop, network interruption, process
   restart, resource rollback, and physical acceptance reports.
 - [ ] Produce a reproducible conformance report for each runtime, target, adapter,
   firmware, transport, model, and tested network.
@@ -611,19 +611,19 @@ recorded per slice as they complete. [Detailed design](ling-device-fabric.md)
 | D7 | `pending` | `node --test packages/core/test/device-support.test.ts` | [device-playbooks.ts](../../packages/core/src/device-playbooks.ts) | Bounded read-only playbooks validate closed metadata, execute ordered typed capabilities, and leave durable attempts | HA/PC report templates, provenance projection, and full terminal-outcome fixtures remain |
 | D8 | `pending` | `node --test packages/daemon/test/device-support-adapters.test.ts` | [linux-ssh.ts](../../packages/daemon/src/features/device-support/adapters/linux-ssh.ts) | Linux/SSH adapter exposes fixed network, Wi-Fi, and restart operations through the shared contract | Real LAN/hotspot and head-unit acceptance remain |
 | D9 | `pending` | `node --experimental-strip-types --test apps/mobile/test/device-execution.test.mjs` | [execution.ts](../../apps/mobile/src/device/execution.ts), [journal.ts](../../apps/mobile/src/device/journal.ts) | Phone-owned journal, typed transport boundary, exact approvals, foreground gate, idempotent replay, and interrupted-dispatch recovery are implemented | Native BLE/USB transport, local playbook wiring, real phone/device acceptance, and physical OS evidence remain |
-| D10 | — | — | [Developer sessions](ling-device-developer-execution.md#1-device-sessions) | Design recorded, implementation not started | Project, device, and native tool acceptance |
-| D11 | — | — | [PC collaboration](ling-device-developer-execution.md#22-pc-assisted-phone-execution) | Design recorded, implementation not started | Phone-owned collaboration and physical cases |
-| D12 | — | Documentation links, license and public checks plus diagram rendering | [Ling Server design](ling-server-connectivity.md) | Detailed self-hosted design recorded, implementation not started | WebRTC integration, self-hosted STUN/TURN, migration, and cross-network acceptance |
-| D13 | — | Documentation, license and public checks plus diagram rendering | [Workbench design and research](ling-hardware-protocol-workbench.md) | Proposed design documented, implementation not started | Runtime and library evaluation, offline fixtures, and physical acceptance |
-| D14 | — | — | [Device Fabric](ling-device-fabric.md) | Detailed design recorded, implementation not started | Semantic graph, identity merge, twin state |
-| D15 | — | — | [Device Fabric](ling-device-fabric.md#5-cross-device-task-graph) | Detailed design recorded, implementation not started | Graph scheduler, owners, recovery |
-| D16 | — | — | [Device Fabric](ling-device-fabric.md#6-edge-runtimes-and-bridge-contract) | Detailed design recorded, implementation not started | Runtime enrollment and bridge acceptance |
-| D17 | — | — | [Device Fabric](ling-device-fabric.md#7-event-and-telemetry-plane) | Detailed design recorded, implementation not started | Event streams, freshness, retention |
-| D18 | — | — | [Device Fabric](ling-device-fabric.md#9-resource-and-adapter-registry) | Detailed design recorded, implementation not started | Signed resources, updates, rollback |
-| D19 | — | — | [Device Fabric](ling-device-fabric.md#10-safety-security-and-secrets) | Detailed design recorded, implementation not started | Physical safety and secret broker |
-| D20 | — | — | [Device Fabric](ling-device-fabric.md#11-lifecycle-fleet-and-ownership) | Detailed design recorded, implementation not started | Fleet lifecycle, transfer, upgrades |
-| D21 | — | — | [Device Fabric](ling-device-fabric.md#8-model-context-and-ai-orchestration) | Detailed design recorded, implementation not started | Context packs, planner, local fallback |
-| D22 | — | — | [Device Fabric](ling-device-fabric.md#12-observability-simulation-and-conformance) | Detailed design recorded, implementation not started | Traces, simulation, chaos, field acceptance |
+| D10 | `pending` | `corepack pnpm --filter @ling-stack/core typecheck:ci`; `node --test packages/core/test/device-developer.test.ts` | [device-developer.ts](../../packages/core/src/device-developer.ts) | Developer session, artifact binding, typed jobs, and reattach state are implemented | Real PC/mobile project build, native workbench and packaged target acceptance remain |
+| D11 | `pending` | `node --test packages/core/test/device-developer.test.ts` | [device-developer.ts](../../packages/core/src/device-developer.ts) | Phone-owned proposals, owner checks, idempotency and chunked artifact transfer are implemented | Signed peer transport, live PC assistance and physical head-unit acceptance remain |
+| D12 | `pending` | `node --test packages/core/test/ling-server-protocol.test.ts` | [ling-server.ts](../../packages/core/src/ling-server.ts) | Self-hosted installation, peer binding, route selection, relay failover and revocation state are implemented | WebRTC/libwebrtc, coturn deployment, encrypted network paths and multi-network acceptance remain |
+| D13 | `pending` | `node --test packages/core/test/ling-server-protocol.test.ts` | [device-protocol.ts](../../packages/core/src/device-protocol.ts) | Capture provenance, digest validation, codec registration, decode and replay are implemented | Physical USB/BLE/CAN capture and adapter registration acceptance remain |
+| D14 | `pending` | `node --test packages/core/test/device-fabric.test.ts` | [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Semantic graph, identity merge/split, relationships, twin revisions and freshness projection are implemented | Persistent graph store and multi-domain field evidence remain |
+| D15 | `pending` | `node --test packages/core/test/device-fabric.test.ts` | [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Dependency validation, ready nodes, owner leases and aggregate node results are implemented | Durable graph scheduler integration and cross-runtime recovery remain |
+| D16 | `pending` | `node --test packages/core/test/device-fabric.test.ts` | [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Edge enrollment and revocation identity foundation is implemented | Linux edge process, bridge transport, local journal and reconnect acceptance remain |
+| D17 | `pending` | `node --test packages/core/test/device-fabric.test.ts` | [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Ordered bounded event bus and stale cursor rejection are implemented | Persistent telemetry retention, snapshots, backpressure and peer projection remain |
+| D18 | `pending` | `node --test packages/core/test/device-fabric.test.ts` | [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Digest-bound resource install and rollback are implemented | Signed delivery channels, license verification and production adapter registry remain |
+| D19 | `pending` | `node --test packages/core/test/device-fabric.test.ts` | [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Physical preconditions, emergency stop and secret-reference authorization are implemented | Target controllers, secret broker integration and physical safety acceptance remain |
+| D20 | `pending` | `node --test packages/core/test/device-fabric.test.ts` | [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Revisioned lifecycle transition rules are implemented | Fleet persistence, credentials, upgrade, transfer and restore acceptance remain |
+| D21 | `pending` | `node --test packages/core/test/device-fabric.test.ts` | [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Bounded context packs preserve facts, hypotheses, provenance refs and untrusted text refs | Model planner integration, prompt-injection fixtures and offline execution remain |
+| D22 | `pending` | `node --test packages/core/test/device-fabric.test.ts` | [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Cross-layer trace spans and conformance report construction are implemented | Simulator, hardware-in-loop, chaos, field and reproducible release reports remain |
 
 ## Definition of platform completion
 
