@@ -451,6 +451,15 @@ class RpcConnection {
       objective,
       status: "open",
     }, new Date().toISOString());
+    appendControlPlaneEvent(store, this.context.controlPlaneEvents, {
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      cwd,
+      domain: "runs",
+      entityType: "thread",
+      entityId: thread.id,
+      action: "thread.started",
+      data: { threadId: thread.id, status: thread.status },
+    });
     return { cwd, thread: projectPublicLingThread(thread) };
   }
 
@@ -530,6 +539,15 @@ class RpcConnection {
       userInstruction: instruction,
       createdByActor: "local-user",
     }, new Date().toISOString());
+    appendControlPlaneEvent(store, this.context.controlPlaneEvents, {
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      cwd,
+      domain: "runs",
+      entityType: "turn",
+      entityId: turn.id,
+      action: "turn.started",
+      data: { threadId, turnId: turn.id, status: turn.status },
+    });
     const shouldRun = record.execute === true || record.task !== undefined || record.providerPresetId !== undefined || record.provider !== undefined;
     if (!shouldRun) {
       return { cwd, thread: projectPublicLingThread(thread), turn: projectPublicLingTurn(turn, thread) };
