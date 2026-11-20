@@ -420,6 +420,8 @@ only on a successful install or a model response.
 
 - [x] Add stable device, component, connection, relationship, location, and
   ownership records. Keep transport aliases separate from stable identity.
+- [x] Persist graph nodes, relationships, and Twin revisions in the device fabric
+  store, with containment-cycle and revision checks.
 - [ ] Add semantic capability verbs with protocol implementations, support ranges,
   freshness, side effects, approvals, prerequisites, and verification.
 - [x] Add reported, desired, pending, and verified twin views with provenance and
@@ -442,6 +444,8 @@ only on a successful install or a model response.
 
 - [x] Add parent graph, node, edge, target binding, node owner, precondition,
   approval, attempt, verification, recovery, and evidence contracts.
+- [x] Persist validated task graph revisions and restore graph state after a store
+  reopen.
 - [~] Coordinate PC, Mobile and Linux edge nodes over their authorized device links.
   Preserve per-node ownership. Use the declared coordination mechanism for shared
   target and bridge leases.
@@ -620,8 +624,8 @@ recorded per slice as they complete. [Detailed design](ling-device-fabric.md)
 | D11 | `775950225` | `node --test packages/core/test/device-developer.test.ts` | [device-developer.ts](../../packages/core/src/device-developer.ts) | Phone-owned proposals, owner checks, idempotency and chunked artifact transfer are implemented | Signed peer transport, live PC assistance and physical head-unit acceptance remain |
 | D12 | `aa2101463` | `node --test packages/core/test/ling-server-protocol.test.ts packages/daemon/test/ling-server-control-plane.test.ts` | [control-plane.ts](../../packages/daemon/src/features/ling-server/control-plane.ts), [ling-server.ts](../../packages/core/src/ling-server.ts) | Authenticated self-hosted control endpoints, installation enrollment, peer binding, route selection, relay failover and revocation state are implemented | TLS/WSS deployment, WebRTC/libwebrtc, coturn deployment, encrypted network paths and multi-network acceptance remain |
 | D13 | `775950225` | `node --test packages/core/test/ling-server-protocol.test.ts` | [device-protocol.ts](../../packages/core/src/device-protocol.ts) | Capture provenance, digest validation, codec registration, decode and replay are implemented | Physical USB/BLE/CAN capture and adapter registration acceptance remain |
-| D14 | `775950225` | `node --test packages/core/test/device-fabric.test.ts` | [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Semantic graph, identity merge/split, relationships, twin revisions and freshness projection are implemented | Persistent graph store and multi-domain field evidence remain |
-| D15 | `775950225` | `node --test packages/core/test/device-fabric.test.ts` | [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Dependency validation, ready nodes, owner leases and aggregate node results are implemented | Durable graph scheduler integration and cross-runtime recovery remain |
+| D14 | `1c79e5bc5` | `node --test packages/core/test/device-fabric-store.test.ts packages/core/test/device-fabric.test.ts` | [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Semantic graph, identity merge/split, relationships, Twin revisions, freshness projection, and persistent graph/Twin state are implemented | Multi-domain identity evidence and field convergence remain |
+| D15 | `1c79e5bc5` | `node --test packages/core/test/device-fabric-store.test.ts packages/core/test/device-fabric.test.ts` | [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Dependency validation, ready nodes, owner leases, aggregate node results, and persistent task graph revisions are implemented | Durable scheduler ownership integration and cross-runtime recovery remain |
 | D16 | `9f2cc943b` | `node --test packages/core/test/device-fabric.test.ts` | [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Edge enrollment, revocation, and contiguous bridge sequence session are implemented | Linux edge process, bridge transport, local journal and reconnect acceptance remain |
 | D17 | `19b665d79` | `corepack pnpm --filter @ling-stack/core build:ci`; `corepack pnpm --filter @ling-stack/core typecheck:ci`; `node --test packages/core/test/device-fabric-store.test.ts packages/core/test/device-fabric.test.ts` | [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Durable owner streams, replay-by-event-id, bounded retention, stale-cursor rejection, gap reporting, and snapshot cursors are implemented | Task/state event projections, telemetry sampling, backpressure and peer synchronization remain |
 | D18 | `19b665d79` | `node --test packages/core/test/device-fabric-store.test.ts` | [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts) | Digest-bound resource installation, optional signature verification, active revision persistence and rollback history are implemented | Signed delivery channels, full compatibility/license checks, health activation and production adapter registry remain |
