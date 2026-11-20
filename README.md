@@ -5,6 +5,7 @@
   <p>
     <a href="docs/community/first-project-review.md"><strong>Try a project review</strong></a> ·
     <a href="#quick-start-from-source">Run from source</a> ·
+    <a href="#cross-device-roadmap">Device roadmap</a> ·
     <a href="CONTRIBUTING.md">Contribute</a>
   </p>
   <p>Source-first alpha · <a href="LICENSE">MIT License</a></p>
@@ -32,12 +33,31 @@ app that tracks and exports meeting action items. Review it in one project chann
 Follow the [project review guide](docs/community/first-project-review.md) for a
 discussion-only trial using your own model configuration and API key. Provider charges apply.
 
+## Cross-Device Roadmap
+
+The roadmap brings device work into a Ling conversation. A PC, phone, or edge
+host can coordinate the task, with execution and verification handled by the
+host that has an authorized connection to the device.
+
+![Blue-violet concept scene with a laptop, phone, head unit, home sensor, and development board](docs/assets/ling-device-roadmap.jpg)
+
+*Head unit connection test concept. Request a connection check on a PC, then approve the test on a paired phone.*
+
+- On a **PC**, build and test a project or diagnose a supported system.
+- On **mobile**, follow and approve tasks from a paired PC or connect directly to supported peripherals.
+- In a **smart home**, check device status and diagnose issues through Home Assistant.
+- For a compatible **Android head unit**, install and validate apps while the vehicle is parked.
+- At a **hardware bench**, capture and decode protocol data and verify the device response.
+
+**Design stage.** See the [cross-device design](docs/design/ling-device-fabric.md)
+and the [implementation and device acceptance plan](docs/design/ling-device-support-platform-implementation-plan.md).
+
 ## Meet Yui
 
 Yui is a character concept for Ling Stack's intelligent companion.
 [View the character design template](docs/design/assets/yui-character-design-template.png).
 
-<a href="docs/assets/ling-stack-companion-banner.jpg"><img src="docs/assets/ling-stack-companion-banner.jpg" alt="Yui, the Rainlight Fairy character concept" width="640" /></a>
+<a href="docs/assets/ling-stack-companion-banner.jpg"><img src="docs/assets/ling-stack-companion-banner.jpg" alt="Yui, the Rainlight Fairy character concept" /></a>
 
 ## Who Is It For?
 
