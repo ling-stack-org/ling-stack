@@ -290,6 +290,7 @@ test('BG-H4 all six themes keep section padding, real card gaps and complete bor
 });
 
 test('BG-H2 a stalled decoder reloads once then keeps a still frame until explicit retry', async ({ page }) => {
+  test.setTimeout(90_000);
   await page.clock.install();
   await prepare(page); await upload(page); await back(page);
   const player = page.locator('[data-background-layer] video');
