@@ -199,7 +199,7 @@ export class HomeAssistantAdapter implements DeviceAdapter {
       signal: input.signal,
       body: JSON.stringify({ entry_id: entryId }),
     });
-    await response.arrayBuffer();
+    await readBoundedText(response, 64 * 1024);
     return { actionId: input.request.actionId, status: response.ok ? "completed" : "rejected", errorCode: response.ok ? undefined : "service_unavailable", startedAt, finishedAt: this.#now(), observationIds: [] };
   }
 
@@ -234,10 +234,36 @@ export function homeAssistantAdapterManifest(): AdapterManifestV1 {
 }
 
 async function readJson(response: Response): Promise<Record<string, unknown>> {
-  const text = await response.text();
-  if (new TextEncoder().encode(text).byteLength > 256 * 1024) throw new Error("Home Assistant response exceeds the adapter limit");
+  const text = await readBoundedText(response, 256 * 1024);
   const parsed: unknown = JSON.parse(text);
   return isRecord(parsed) ? parsed : {};
+}
+
+async function readBoundedText(response: Response, maxBytes: number): Promise<string> {
+  const declared = response.headers.get("content-length");
+  if (declared && Number(declared) > maxBytes) throw new Error("Home Assistant response exceeds the adapter limit");
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const part = await reader.read();
+      if (part.done) break;
+      total += part.value.byteLength;
+      if (total > maxBytes) throw new Error("Home Assistant response exceeds the adapter limit");
+      chunks.push(part.value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const body = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(body);
 }
 
 function asObject(value: unknown): Record<string, unknown> {

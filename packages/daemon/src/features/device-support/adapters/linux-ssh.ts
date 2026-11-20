@@ -5,8 +5,10 @@ import type {
   DeviceCapabilitySnapshotV1,
   DeviceProfileV1,
   DeviceVerificationResultV1,
+  DeviceObservationV1,
+  JsonValue,
 } from "@ling-stack/contracts";
-import type { DeviceAdapter, DeviceAdapterDiscoveryInput } from "@ling-stack/core";
+import type { DeviceAdapter, DeviceAdapterDiscoveryInput, DeviceAdapterExecutionResult } from "@ling-stack/core";
 
 export interface LinuxNetworkObservation {
   readonly connected: boolean;
@@ -146,11 +148,11 @@ export class LinuxSshAdapter implements DeviceAdapter {
     };
   }
 
-  async execute(input: { readonly profile: DeviceProfileV1; readonly capability: { readonly id: string }; readonly request: DeviceActionRequestV1; readonly signal?: AbortSignal }): Promise<DeviceActionResultV1> {
+  async execute(input: { readonly profile: DeviceProfileV1; readonly capability: { readonly id: string }; readonly request: DeviceActionRequestV1; readonly signal?: AbortSignal }): Promise<DeviceActionResultV1 | DeviceAdapterExecutionResult> {
     const startedAt = this.#now();
-    if (input.capability.id === "linux.inspect.network") await this.#executor.readNetwork(input.signal);
-    else if (input.capability.id === "linux.inspect.wifi") await this.#executor.readWifi(input.signal);
-    else if (input.capability.id === "linux.repair.network") {
+    if (input.capability.id === "linux.inspect.network") return completedObservation(input, startedAt, await this.#executor.readNetwork(input.signal) as unknown as JsonValue, "linux.network");
+    if (input.capability.id === "linux.inspect.wifi") return completedObservation(input, startedAt, await this.#executor.readWifi(input.signal) as unknown as JsonValue, "linux.wifi");
+    if (input.capability.id === "linux.repair.network") {
       const result = await this.#executor.restartNetwork({ signal: input.signal });
       if (!result.accepted) return { actionId: input.request.actionId, status: "rejected", errorCode: "permission_denied", startedAt, finishedAt: this.#now(), observationIds: [] };
     } else return { actionId: input.request.actionId, status: "rejected", errorCode: "unsupported_capability", startedAt, finishedAt: this.#now(), observationIds: [] };
@@ -162,6 +164,28 @@ export class LinuxSshAdapter implements DeviceAdapter {
     const verified = network.connected && network.gatewayReachable !== false;
     return { actionId: input.request.actionId, status: verified ? "verified" : "failed", rule: input.request.expectedVerification ?? { connected: true }, observationIds: [`${input.request.actionId}:verification`], checkedAt: this.#now(), reason: verified ? undefined : network.linkError ?? "network is not reachable" };
   }
+}
+
+function completedObservation(
+  input: { readonly profile: DeviceProfileV1; readonly request: DeviceActionRequestV1 },
+  startedAt: string,
+  value: JsonValue,
+  source: string,
+): DeviceAdapterExecutionResult {
+  const observationId = `${input.request.actionId}:result`;
+  const observation: DeviceObservationV1 = {
+    id: observationId,
+    subjectId: input.profile.device.id,
+    source,
+    value,
+    observedAt: startedAt,
+    receivedAt: startedAt,
+    freshnessUntil: new Date(Date.parse(startedAt) + 30_000).toISOString(),
+    quality: "good",
+    provenance: [source, input.profile.device.id],
+    redactionClass: "public",
+  };
+  return { action: { actionId: input.request.actionId, status: "completed", startedAt, finishedAt: startedAt, observationIds: [observationId] }, observations: [observation] };
 }
 
 export function linuxSshAdapterManifest(): AdapterManifestV1 {

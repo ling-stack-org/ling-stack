@@ -3,10 +3,12 @@ import type {
   DeviceActionRequestV1,
   DeviceActionResultV1,
   DeviceCapabilitySnapshotV1,
+  DeviceObservationV1,
+  JsonValue,
   DeviceProfileV1,
   DeviceVerificationResultV1,
 } from "@ling-stack/contracts";
-import type { DeviceAdapter, DeviceAdapterDiscoveryInput } from "@ling-stack/core";
+import type { DeviceAdapter, DeviceAdapterDiscoveryInput, DeviceAdapterExecutionResult } from "@ling-stack/core";
 
 export interface PcNetworkStatus {
   readonly connected: boolean;
@@ -154,11 +156,17 @@ export class PcAdapter implements DeviceAdapter {
     };
   }
 
-  async execute(input: { readonly profile: DeviceProfileV1; readonly capability: { readonly id: string }; readonly request: DeviceActionRequestV1; readonly signal?: AbortSignal }): Promise<DeviceActionResultV1> {
+  async execute(input: { readonly profile: DeviceProfileV1; readonly capability: { readonly id: string }; readonly request: DeviceActionRequestV1; readonly signal?: AbortSignal }): Promise<DeviceActionResultV1 | DeviceAdapterExecutionResult> {
     const startedAt = this.#now();
-    if (input.capability.id === "pc.inspect.network") await this.#executor.readNetwork(input.signal);
-    else if (input.capability.id === "pc.inspect.services") await this.#executor.readServices(input.signal);
-    else if (input.capability.id === "pc.repair.network") {
+    if (input.capability.id === "pc.inspect.network") {
+      const value = await this.#executor.readNetwork(input.signal);
+      return completedObservation(input, startedAt, value as unknown as JsonValue, "pc.network");
+    }
+    if (input.capability.id === "pc.inspect.services") {
+      const value = await this.#executor.readServices(input.signal);
+      return completedObservation(input, startedAt, { services: value } as unknown as JsonValue, "pc.services");
+    }
+    if (input.capability.id === "pc.repair.network") {
       const mode = isNetworkRepairMode(input.request.normalizedInput);
       const result = await this.#executor.repairNetwork({ mode, signal: input.signal });
       if (!result.accepted) return { actionId: input.request.actionId, status: "rejected", errorCode: "permission_denied", startedAt, finishedAt: this.#now(), observationIds: [] };
@@ -171,6 +179,28 @@ export class PcAdapter implements DeviceAdapter {
     const connected = network.connected && network.gatewayReachable !== false && network.dnsReachable !== false;
     return { actionId: input.request.actionId, status: connected ? "verified" : "failed", rule: input.request.expectedVerification ?? { connected: true }, observationIds: [`${input.request.actionId}:verification`], checkedAt: this.#now(), reason: connected ? undefined : "network remains unavailable" };
   }
+}
+
+function completedObservation(
+  input: { readonly profile: DeviceProfileV1; readonly request: DeviceActionRequestV1 },
+  startedAt: string,
+  value: JsonValue,
+  source: string,
+): DeviceAdapterExecutionResult {
+  const observationId = `${input.request.actionId}:result`;
+  const observation: DeviceObservationV1 = {
+    id: observationId,
+    subjectId: input.profile.device.id,
+    source,
+    value,
+    observedAt: startedAt,
+    receivedAt: startedAt,
+    freshnessUntil: new Date(Date.parse(startedAt) + 30_000).toISOString(),
+    quality: "good",
+    provenance: [source, input.profile.device.id],
+    redactionClass: "public",
+  };
+  return { action: { actionId: input.request.actionId, status: "completed", startedAt, finishedAt: startedAt, observationIds: [observationId] }, observations: [observation] };
 }
 
 export function pcAdapterManifest(): AdapterManifestV1 {
