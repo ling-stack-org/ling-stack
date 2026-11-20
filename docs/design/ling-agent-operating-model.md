@@ -116,11 +116,11 @@ When two intake attempts target the same revision, they resolve against one acce
 
 ### 6.1 Deliberation and Shared Evidence
 
-A user can start a deliberation for a Work Item, or accept a Workflow with an explicit deliberation stage. The entry shows the question, subject version, roster, read scope and budget. Architecture choices, root-cause hypotheses and conflicting review findings can use the same flow. An AI Council can supply eligible specialists. Ling Agent selects and assigns participants through the existing coordinator, with the Workflow owning its admitted steps. Ordinary channel replies use the existing speaker rules. [AI Councils](ai-councils.md) · [Deliberation details](ling-agent-operating-model-detailed-design.md#52-deliberation-workflow)
+A user can start a deliberation for a Work Item, or accept a Workflow with an explicit deliberation stage. Ling Agent can also suggest a round when an open decision has viable options with materially different consequences. An enabled project or Workflow policy can authorize a bounded round at a declared checkpoint. The entry shows the question, subject version, roster, read scope and budget. Architecture choices and conflicting review recommendations are typical subjects. Competing root-cause claims can lead to scoped verification. An AI Council can supply eligible specialists. Ling Agent assigns participants through the existing coordinator, with the Workflow owning its admitted steps. Visible replies follow the speaker lease. [AI Councils](ai-councils.md) · [Deliberation triggers](ling-agent-operating-model-detailed-design.md#52-deliberation-workflow)
 
 1. Participants submit independent proposals. Each proposal identifies its option, tradeoffs and relevant evidence.
 2. Assigned reviewers challenge the proposals against the accepted criteria. They can cite a Verify result, a Review finding or a scoped reproduction. Requests for further checks go through their normal execution and approval paths.
-3. When the selected policy calls for a vote, participants submit independent ballots for the same frozen set of options and evidence. The host counts eligible ballots against the frozen quorum and support rule. The result can record no consensus, missing evidence or a blocking dissent.
+3. The accepted template can choose direct synthesis when the challenge resolves the issue. A vote is available when viable conflicting options remain and the template permits it. Participants submit independent ballots for the same frozen options and evidence. The host counts eligible ballots against the frozen quorum and support rule.
 4. The coordinator shows the recommendation, reasons and unresolved dissent. An authorized decision owner records the chosen course. Any follow-up work enters the normal Turn or Workflow path with its accepted criteria and authorization.
 
 The shared evidence board groups proposals, observations, challenges, references to trusted results and decision records by Work Item. Participants can consult and contribute within their granted scope. Entries show their author, subject version and sources. Corrections and conflicting observations have their own history. A prior decision stays visible with its original subject when the code or evidence changes. The board is useful for an ordinary investigation with several contributors as well as for a formal vote. Daemon stores and projects the board, and the original owners supply the status of Goal, Verify, Review and Delivery. [Shared evidence contract](ling-agent-operating-model-detailed-design.md#51-shared-evidence-board)
@@ -128,6 +128,14 @@ The shared evidence board groups proposals, observations, challenges, references
 For example, two teammates may favor an API simplification while a required compatibility check still fails on the candidate. Ling can display the vote and the failing check together. The acceptance rule keeps the candidate blocked until the verifier records a passing check for the applicable candidate.
 
 The scheduling references are AutoGen AgentChat's participant selection, fan-in and bounded termination, LangGraph's typed state reducers and checkpoint recovery, and Magentic-One's records of the task and its progress. Ling implements these patterns with its existing Workflow, Goal, evidence and recovery owners. [AutoGen AgentChat](https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/selector-group-chat.html) · [AutoGen GraphFlow](https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/graph-flow.html) · [LangGraph reducers](https://docs.langchain.com/oss/python/langgraph/graph-api#reducers) · [LangGraph persistence](https://docs.langchain.com/oss/python/langgraph/persistence) · [Magentic-One](https://microsoft.github.io/autogen/stable/user-guide/agentchat-user-guide/magentic-one.html)
+
+### 6.2 Stage Briefs and Participant Coordination
+
+An accepted multi-Agent plan identifies stages, their owners, dependencies, outputs and acceptance checks. At start, each assigned Agent receives its scope and the inputs it needs. When a stage passes acceptance, changes, or becomes blocked, the Work Item carries a brief linked to the committed evidence. Downstream Agents receive the parts they need to continue. Observers receive the events relevant to their role and can submit a scoped note or recommendation. [Stage contract](ling-agent-operating-model-detailed-design.md#55-plan-stages-and-stage-briefs)
+
+Assigned participants can ask each other a specific question while their tasks are running. Answers can point to a decision, artifact or check. The existing owner handles changes to scope, authorization or the assignment. A receiving Agent can identify a missing input on a handoff and request its correction. The authoritative handoff receipt identifies the accepted source revision and downstream owner. [Participant questions and handoff](ling-agent-operating-model-detailed-design.md#56-role-based-observation-and-peer-questions)
+
+For example, when P01 freezes the replay contract, the P02 implementer receives the protocol decisions and QA receives the replay cases it can prepare. If P02 finds a transcript linked to an older candidate, it requests an updated check and can proceed with work that does not depend on it. A verified result can resolve a factual disagreement. If two compatible implementations remain and the choice materially affects delivery or maintenance, the coordinator can bring that specific decision to deliberation.
 
 ## 7. External Agent Federation
 
@@ -196,6 +204,7 @@ The default surface shows one coordinator summary, one active Work Item status, 
 - intake source and claim owner;
 - acceptance checklist;
 - running Agents and WorkUnits;
+- stage briefs, pending participant questions and handoff receipts;
 - approvals and user questions;
 - Diff, Verify and Review evidence;
 - shared evidence, deliberation rounds and the recorded decision;
@@ -219,3 +228,5 @@ The product can expose a task inbox, but it must preserve the same Thread, Goal,
 10. LobeHub, Codex and Ling Web can act as clients without sharing persistence or bypassing Daemon authority.
 11. A user can start a scoped deliberation and inspect its options, evidence, tally, dissent and decision after reconnecting. A tie, incomplete quorum or stale subject is visible and keeps its own outcome.
 12. Authorized contributors can add and correct evidence on the same Work Item without losing concurrent contributions. The board respects source visibility, and approvals and delivery acceptance continue to use their original owners.
+13. A stage can hand its accepted result to the implementation and QA roles with the applicable context for each. A peer question or returned handoff holds only work that depends on the missing input. Replay returns the same accepted dispatch.
+14. An enabled policy can start a scoped deliberation once for the current decision. Authoritative evidence can resolve the issue before ballot admission. An authorized decision after a tie preserves the tally and rationale.

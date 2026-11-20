@@ -215,7 +215,7 @@ Goal 使用已接受的验收项。代码工作可以指定候选检查、检查
 
 ### 3.4 Handoff、多 Agent 与自研运行环境
 
-- Handoff 保存源 Thread/Turn/Goal、接受的目标与设计决定、候选和 worktree、已验证证据、待决请求/副作用、变更范围、阻塞及下一步。持久记录通过现有 artifact 与 Goal/Turn 归属。摘要引用原始任务及验收项。有审议时保存证据板修订、封存的审议结果和已记录的决定引用。
+- Handoff 保存源 Thread/Turn/Goal、接受的目标与设计决定、候选和 worktree、已验证证据、待决请求/副作用、变更范围、阻塞及下一步。持久记录通过现有 artifact 与 Goal/Turn 归属。摘要引用原始任务及验收项。多 Agent 接手使用当前阶段简报、未决问答和接受或退回的交接记录。有审议时保存证据板修订、封存的审议结果和已记录的决定引用。 [阶段简报与交接](ling-agent-operating-model-detailed-design.md#55-plan-stages-and-stage-briefs)
 - `handoff/resume` 在新会话检查源是否可交接、worktree 版本与写入租约、候选、证据修订和当前授权。兼容则带版本接手，漂移则显示差异和需要重新验证的项。Runner 重启走已有 checkpoint 恢复，交接走普通 Turn 的新派发。多 Agent 使用现有 Workflow 归属、独立授权和可核对的产物合并。
 - 每个开发任务记录 Provider、Runner、工作树和构建输入。调试长任务可看模型调用预算、失速原因和最近一个有证据的阶段。正常开发从稳定 Ling 使用独立 worktree 和 Agent 环境。候选 Daemon 和 UI 用独立数据、端口和测试配置启动。代码或配置需要换模型或 Runner 时，交接优先从明确的候选快照进入普通新任务。
 - Codex 持续连接通过有类型的客户端或本机 CLI。MCP 桥接使用配好的工作区及受限凭据转发结构化操作，工具结果只返回有限事件页、进度和下一游标。它由同一 App Server 权限裁定。对桥接派发的 Turn 冻结调用链，拒绝把相同任务重新递归派发给来源控制器。客户端后台重连与工具调用超时只恢复观察，派发通过原逻辑凭据和收据。
