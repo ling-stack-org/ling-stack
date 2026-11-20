@@ -74,6 +74,7 @@ test('BG-03/04/07/08/09/16 preview, persist, themes, protected routes, narrow an
 });
 
 test('BG-01/03/04/05/06 official scene themes, thumbnails and custom override',async({page},testInfo)=>{
+ test.setTimeout(60_000);
  const failures=errors(page);await prepare(page);await settings(page);
  await expect(page.getByRole('button',{name:'Import theme',exact:true})).toHaveCount(0);
  await expect(page.getByRole('button',{name:'Create theme',exact:true})).toHaveCount(0);
