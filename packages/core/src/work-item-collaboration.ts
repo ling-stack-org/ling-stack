@@ -99,7 +99,7 @@ export function findWorkItemCollaborationById(
     const page = listWorkItemCollaboration(store, { workItemId, afterRevision, limit: 500 });
     const found = page.records.find((record) => record.id === recordId);
     if (found) return found;
-    if (page.nextAfterRevision <= afterRevision || page.records.length < 500) return undefined;
+    if (page.nextAfterRevision <= afterRevision) return undefined;
     afterRevision = page.nextAfterRevision;
   }
 }
