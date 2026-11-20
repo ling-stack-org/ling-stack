@@ -10,6 +10,8 @@ export type WorkItemStatus =
   | "review"
   | "blocked"
   | "done"
+  | "cancelled"
+  | "superseded"
   | "archived";
 
 export type WorkItemSourceType =
@@ -25,6 +27,36 @@ export type WorkItemWaitingReason = "approval" | "external" | "handoff" | "resou
 
 export type WorkItemPriority = "low" | "normal" | "high" | "urgent";
 
+export type WorkItemControlState = "active" | "pausing" | "paused" | "cancelling" | "cancelled" | "blocked";
+export type WorkItemControlAction = "pause" | "resume" | "cancel";
+
+export interface WorkItemControlReceipt {
+  readonly id: string;
+  readonly action: WorkItemControlAction;
+  readonly generation: number;
+  readonly requestedAt: string;
+  readonly actorId: string;
+  readonly reason?: string;
+  readonly idempotencyKey: string;
+  readonly outcome: "accepted" | "settling" | "settled" | "blocked";
+}
+
+export interface WorkItemHold {
+  readonly id: string;
+  readonly kind: "plan" | "control" | "approval" | "unknown_effect" | "scope" | "dependency";
+  readonly ownerRef: string;
+  readonly reason: string;
+  readonly blocksNewAdmission: boolean;
+}
+
+export interface WorkItemControlProjection {
+  readonly state: WorkItemControlState;
+  readonly generation: number;
+  readonly receipt?: WorkItemControlReceipt;
+  readonly unresolvedEffectIds: readonly string[];
+  readonly recoveryOwner?: string;
+}
+
 export interface WorkItemClaim {
   readonly ownerId: string;
   readonly token: string;
@@ -39,6 +71,7 @@ export interface WorkItem {
   readonly channelId?: string;
   readonly sourceType: WorkItemSourceType;
   readonly sourceId: string;
+  readonly revision: number;
   readonly title: string;
   readonly description?: string;
   readonly status: WorkItemStatus;
@@ -56,6 +89,9 @@ export interface WorkItem {
   readonly artifactIds: readonly string[];
   readonly proofArtifactIds: readonly string[];
   readonly dependencyIds: readonly string[];
+  readonly planRevision?: string;
+  readonly control: WorkItemControlProjection;
+  readonly holds: readonly WorkItemHold[];
   readonly claim?: WorkItemClaim;
   readonly attemptCount: number;
   readonly retryBudget: number;
@@ -118,7 +154,7 @@ export interface WorkItemHeartbeatRequest {
 }
 
 export interface WorkItemClaimBlocker {
-  readonly code: "dependency_blocked" | "already_claimed" | "retry_budget_exhausted" | "terminal";
+  readonly code: "dependency_blocked" | "already_claimed" | "retry_budget_exhausted" | "terminal" | "control_blocked";
   readonly message: string;
   readonly dependencyIds?: readonly string[];
   readonly claimedBy?: string;
@@ -158,6 +194,14 @@ export interface WorkItemFailRequest {
   readonly claimToken: string;
   readonly reason: string;
   readonly retry?: boolean;
+}
+
+export interface WorkItemControlRequest {
+  readonly expectedRevision: number;
+  readonly expectedControlGeneration: number;
+  readonly actorId: string;
+  readonly reason?: string;
+  readonly idempotencyKey: string;
 }
 
 export function createWorkItemId(): string {

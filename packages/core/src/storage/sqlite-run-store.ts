@@ -589,6 +589,7 @@ import {
   type WorkItemClaimBlocker,
   type WorkItemClaimRequest,
   type WorkItemCompleteRequest,
+  type WorkItemControlRequest,
   type WorkItemFailRequest,
   type WorkItemHeartbeatRequest,
   type WorkItemReleaseRequest,
@@ -6109,6 +6110,18 @@ export class SqliteRunStore implements RunStore {
 
   failWorkItem(id: string, input: WorkItemFailRequest, now: string): WorkItem | undefined {
     return this.workItems.failWorkItem(id, input, now);
+  }
+
+  pauseWorkItem(id: string, input: WorkItemControlRequest, now: string): WorkItem | undefined {
+    return this.workItems.pauseWorkItem(id, input, now);
+  }
+
+  resumeWorkItem(id: string, input: WorkItemControlRequest, now: string): WorkItem | undefined {
+    return this.workItems.resumeWorkItem(id, input, now);
+  }
+
+  cancelWorkItem(id: string, input: WorkItemControlRequest, now: string): WorkItem | undefined {
+    return this.workItems.cancelWorkItem(id, input, now);
   }
 
   createProviderPreset(input: ProviderPresetInput, now: string): ProviderPreset {

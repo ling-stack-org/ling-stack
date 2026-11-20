@@ -475,6 +475,7 @@ import type {
   WorkItemClaimBlocker,
   WorkItemClaimRequest,
   WorkItemCompleteRequest,
+  WorkItemControlRequest,
   WorkItemFailRequest,
   WorkItemHeartbeatRequest,
   WorkItemReleaseRequest,
@@ -2695,6 +2696,9 @@ export interface RunStore extends AutomationEventStore, CodeAssessmentStore, Cod
   releaseWorkItem(id: string, input: WorkItemReleaseRequest, now: string): WorkItem | undefined;
   completeWorkItem(id: string, input: WorkItemCompleteRequest, now: string): WorkItem | undefined;
   failWorkItem(id: string, input: WorkItemFailRequest, now: string): WorkItem | undefined;
+  pauseWorkItem(id: string, input: WorkItemControlRequest, now: string): WorkItem | undefined;
+  resumeWorkItem(id: string, input: WorkItemControlRequest, now: string): WorkItem | undefined;
+  cancelWorkItem(id: string, input: WorkItemControlRequest, now: string): WorkItem | undefined;
   createMcpServer(input: CreateMcpServerInput, now: string): McpServer;
   getMcpServer(id: string): McpServer | undefined;
   getMcpAuthorityRevision(serverId: string): McpAuthorityRevision | undefined;
@@ -3287,6 +3291,9 @@ export type WorkItemStoreFacet = RunStoreFacet<
   | "releaseWorkItem"
   | "completeWorkItem"
   | "failWorkItem"
+  | "pauseWorkItem"
+  | "resumeWorkItem"
+  | "cancelWorkItem"
 >;
 
 export type McpMetadataStoreFacet = RunStoreFacet<"beginMcpMetadataRequest" | "commitMcpMetadataResult">;

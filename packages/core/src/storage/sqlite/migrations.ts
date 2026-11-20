@@ -279,6 +279,8 @@ const COMPANIONS_MIGRATION_VERSION = 141;
 const COMPANIONS_MIGRATION_NAME = "create_companions";
 const AUTOMATION_MONITOR_SNAPSHOTS_MIGRATION_VERSION = 142;
 const AUTOMATION_MONITOR_SNAPSHOTS_MIGRATION_NAME = "create_automation_monitor_snapshots";
+const WORK_ITEM_CONTROL_MIGRATION_VERSION = 235;
+const WORK_ITEM_CONTROL_MIGRATION_NAME = "add_work_item_control_projection";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
   database.exec(`
@@ -3097,6 +3099,7 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
           channel_id TEXT,
           source_type TEXT NOT NULL,
           source_id TEXT NOT NULL,
+          revision INTEGER NOT NULL DEFAULT 1,
           title TEXT NOT NULL,
           description TEXT,
           status TEXT NOT NULL,
@@ -3113,6 +3116,13 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
           approval_id TEXT,
           artifact_ids_json TEXT NOT NULL,
           proof_artifact_ids_json TEXT NOT NULL,
+          plan_revision TEXT,
+          control_state TEXT NOT NULL DEFAULT 'active',
+          control_generation INTEGER NOT NULL DEFAULT 0,
+          control_receipt_json TEXT,
+          control_unresolved_effect_ids_json TEXT NOT NULL DEFAULT '[]',
+          control_recovery_owner TEXT,
+          holds_json TEXT NOT NULL DEFAULT '[]',
           claim_owner_id TEXT,
           claim_token TEXT,
           claimed_at TEXT,
@@ -6087,4 +6097,38 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
   applyLearningReviewMigration(context);
   applyMemoryDerivativeMigration(context);
   applyMemoryWikiMigration(context);
+
+  if (!context.hasMigration(WORK_ITEM_CONTROL_MIGRATION_VERSION)
+    || (context.hasTable("work_items") && !context.hasColumn("work_items", "control_state"))) {
+    database.exec("SAVEPOINT work_item_control_migration");
+    try {
+      if (context.hasTable("work_items")) {
+        const columns: readonly [string, string][] = [
+          ["revision", "INTEGER NOT NULL DEFAULT 1"],
+          ["plan_revision", "TEXT"],
+          ["control_state", "TEXT NOT NULL DEFAULT 'active'"],
+          ["control_generation", "INTEGER NOT NULL DEFAULT 0"],
+          ["control_receipt_json", "TEXT"],
+          ["control_unresolved_effect_ids_json", "TEXT NOT NULL DEFAULT '[]'"],
+          ["control_recovery_owner", "TEXT"],
+          ["holds_json", "TEXT NOT NULL DEFAULT '[]'"],
+        ];
+        for (const [name, definition] of columns) {
+          if (!context.hasColumn("work_items", name)) {
+            database.exec(`ALTER TABLE work_items ADD COLUMN ${name} ${definition}`);
+          }
+        }
+      }
+      if (!context.hasMigration(WORK_ITEM_CONTROL_MIGRATION_VERSION)) {
+        context.recordMigration(WORK_ITEM_CONTROL_MIGRATION_VERSION, WORK_ITEM_CONTROL_MIGRATION_NAME);
+      }
+      database.exec("RELEASE work_item_control_migration");
+    } catch (error) {
+      try {
+        database.exec("ROLLBACK TO work_item_control_migration");
+        database.exec("RELEASE work_item_control_migration");
+      } catch { /* Preserve the original migration failure. */ }
+      throw error;
+    }
+  }
 }
