@@ -2697,6 +2697,9 @@ export interface RunStore extends AutomationEventStore, CodeAssessmentStore, Cod
   releaseWorkItem(id: string, input: WorkItemReleaseRequest, now: string): WorkItem | undefined;
   completeWorkItem(id: string, input: WorkItemCompleteRequest, now: string): WorkItem | undefined;
   failWorkItem(id: string, input: WorkItemFailRequest, now: string): WorkItem | undefined;
+  appendWorkItemEvidence(input: import("./work-item-evidence-types.js").AppendWorkItemEvidenceInput, now: string): import("./work-item-evidence-types.js").AppendWorkItemEvidenceResult | undefined;
+  getWorkItemEvidence(id: string): import("./work-item-evidence-types.js").WorkItemEvidenceEntry | undefined;
+  listWorkItemEvidence(options: import("./work-item-evidence-types.js").ListWorkItemEvidenceOptions): import("./work-item-evidence-types.js").WorkItemEvidenceEntry[];
   pauseWorkItem(id: string, input: WorkItemControlRequest, now: string): WorkItem | undefined;
   resumeWorkItem(id: string, input: WorkItemControlRequest, now: string): WorkItem | undefined;
   cancelWorkItem(id: string, input: WorkItemControlRequest, now: string): WorkItem | undefined;
@@ -3295,6 +3298,9 @@ export type WorkItemStoreFacet = RunStoreFacet<
   | "pauseWorkItem"
   | "resumeWorkItem"
   | "cancelWorkItem"
+  | "appendWorkItemEvidence"
+  | "getWorkItemEvidence"
+  | "listWorkItemEvidence"
 >;
 
 export type McpMetadataStoreFacet = RunStoreFacet<"beginMcpMetadataRequest" | "commitMcpMetadataResult">;

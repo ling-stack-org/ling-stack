@@ -862,6 +862,7 @@ import { SqliteExternalWorkCiTriageStore } from "./sqlite/external-work-ci-triag
 import { SqliteExternalWorkSchedulerStore } from "./sqlite/external-work-scheduler-store.js";
 import { SqliteExternalWorkWorkflowCoordinator } from "./sqlite/external-work-workflow-coordinator.js";
 import { SqliteWorkItemStore } from "./sqlite/work-item-store.js";
+import { SqliteWorkItemEvidenceStore } from "./sqlite/work-item-evidence-store.js";
 import { SqliteWorkspaceProvenanceStore } from "./sqlite/workspace-provenance-store.js";
 import { SqlitePostCompactionUndoStore } from "./sqlite/post-compaction-undo-store.js";
 import { SqliteWorkspaceSnapshotStore } from "./sqlite/workspace-snapshot-store.js";
@@ -1023,6 +1024,7 @@ export class SqliteRunStore implements RunStore {
   private readonly externalWorkScheduler: SqliteExternalWorkSchedulerStore;
   private readonly externalWorkWorkflows: SqliteExternalWorkWorkflowCoordinator;
   private readonly workItems: SqliteWorkItemStore;
+  private readonly workItemEvidence: SqliteWorkItemEvidenceStore;
   private readonly workspaceProvenance: SqliteWorkspaceProvenanceStore;
   private readonly postCompactionUndo: SqlitePostCompactionUndoStore;
   private readonly workspaceSnapshots: SqliteWorkspaceSnapshotStore;
@@ -1737,6 +1739,7 @@ export class SqliteRunStore implements RunStore {
         hasAiTeammate: (id) => Boolean(this.getAiTeammate(id)),
       },
     );
+    this.workItemEvidence = new SqliteWorkItemEvidenceStore({ database: this.database });
     this.approvalResumes = new SqliteApprovalResumeStore(
       { database: this.database },
       {
@@ -6110,6 +6113,18 @@ export class SqliteRunStore implements RunStore {
 
   failWorkItem(id: string, input: WorkItemFailRequest, now: string): WorkItem | undefined {
     return this.workItems.failWorkItem(id, input, now);
+  }
+
+  appendWorkItemEvidence(input: import("../work-item-evidence-types.js").AppendWorkItemEvidenceInput, now: string): import("../work-item-evidence-types.js").AppendWorkItemEvidenceResult | undefined {
+    return this.workItemEvidence.appendWorkItemEvidence(input, now);
+  }
+
+  getWorkItemEvidence(id: string): import("../work-item-evidence-types.js").WorkItemEvidenceEntry | undefined {
+    return this.workItemEvidence.getWorkItemEvidence(id);
+  }
+
+  listWorkItemEvidence(options: import("../work-item-evidence-types.js").ListWorkItemEvidenceOptions): import("../work-item-evidence-types.js").WorkItemEvidenceEntry[] {
+    return this.workItemEvidence.listWorkItemEvidence(options);
   }
 
   pauseWorkItem(id: string, input: WorkItemControlRequest, now: string): WorkItem | undefined {

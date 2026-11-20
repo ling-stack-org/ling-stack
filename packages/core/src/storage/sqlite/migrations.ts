@@ -281,6 +281,8 @@ const AUTOMATION_MONITOR_SNAPSHOTS_MIGRATION_VERSION = 142;
 const AUTOMATION_MONITOR_SNAPSHOTS_MIGRATION_NAME = "create_automation_monitor_snapshots";
 const WORK_ITEM_CONTROL_MIGRATION_VERSION = 235;
 const WORK_ITEM_CONTROL_MIGRATION_NAME = "add_work_item_control_projection";
+const WORK_ITEM_EVIDENCE_MIGRATION_VERSION = 236;
+const WORK_ITEM_EVIDENCE_MIGRATION_NAME = "create_work_item_evidence";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
   database.exec(`
@@ -6130,5 +6132,33 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
       } catch { /* Preserve the original migration failure. */ }
       throw error;
     }
+  }
+
+  if (!context.hasMigration(WORK_ITEM_EVIDENCE_MIGRATION_VERSION)) {
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS work_item_evidence (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        work_item_id TEXT NOT NULL,
+        revision INTEGER NOT NULL,
+        sequence INTEGER NOT NULL,
+        subject_revision TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        actor_id TEXT NOT NULL,
+        content TEXT NOT NULL,
+        option_id TEXT,
+        source_refs_json TEXT NOT NULL,
+        visibility TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(workspace_id, work_item_id, idempotency_key),
+        UNIQUE(workspace_id, work_item_id, sequence),
+        FOREIGN KEY(work_item_id) REFERENCES work_items(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_work_item_evidence_item_sequence
+        ON work_item_evidence(workspace_id, work_item_id, sequence);
+    `);
+    context.recordMigration(WORK_ITEM_EVIDENCE_MIGRATION_VERSION, WORK_ITEM_EVIDENCE_MIGRATION_NAME);
   }
 }

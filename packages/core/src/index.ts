@@ -149,6 +149,8 @@ export * from "./external-work-ci-triage.js";
 export * from "./external-work-scheduler.js";
 export * from "./external-work-source-registry.js";
 export * from "./work-item-types.js";
+export * from "./work-item-evidence-types.js";
+export * from "./work-item-evidence-types.js";
 export * from "./terminal-report-types.js";
 export * from "./terminal-report-validation.js";
 export * from "./terminal-report-fallback.js";

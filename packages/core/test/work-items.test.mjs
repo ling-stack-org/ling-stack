@@ -202,3 +202,33 @@ test("work item control persists revision, generation, idempotency, and admissio
     await rm(cwd, { recursive: true, force: true });
   }
 });
+
+test("work item evidence appends with CAS and idempotent replay", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-work-item-evidence-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const item = store.upsertWorkItem({ sourceType: "manual", sourceId: "evidence-1", title: "Evidence work" }, "2026-06-01T00:00:00.000Z");
+    const input = {
+      workItemId: item.id,
+      expectedWorkItemRevision: item.revision,
+      expectedEvidenceRevision: 0,
+      idempotencyKey: "evidence-1",
+      actorId: "agent-a",
+      subjectRevision: String(item.revision),
+      kind: "observation",
+      content: "The current candidate starts cleanly.",
+      sourceRefs: [{ type: "run", id: "run-1", revision: "1" }],
+    };
+    const appended = store.appendWorkItemEvidence(input, "2026-06-01T00:01:00.000Z");
+    assert.equal(appended.status, "appended");
+    assert.equal(appended.entry.sequence, 1);
+    assert.equal(appended.workItemRevision, item.revision + 1);
+    const replayed = store.appendWorkItemEvidence(input, "2026-06-01T00:02:00.000Z");
+    assert.equal(replayed.status, "replayed");
+    assert.equal(replayed.entry.id, appended.entry.id);
+    assert.equal(store.listWorkItemEvidence({ workItemId: item.id }).length, 1);
+    assert.equal(store.appendWorkItemEvidence({ ...input, idempotencyKey: "evidence-2", expectedWorkItemRevision: item.revision }, "2026-06-01T00:03:00.000Z"), undefined);
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
