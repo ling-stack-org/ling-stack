@@ -76,6 +76,36 @@ export class LingAppServerClient {
     return await this.request("workItem/list", params);
   }
 
+  async createWorkItem(params: Record<string, unknown>): Promise<unknown> {
+    await this.connect();
+    return await this.request("workItem/create", params);
+  }
+
+  async acceptWorkItem(params: Record<string, unknown>): Promise<unknown> {
+    await this.connect();
+    return await this.request("workItem/accept", params);
+  }
+
+  async startThread(params: Record<string, unknown>): Promise<unknown> {
+    await this.connect();
+    return await this.request("thread/start", params);
+  }
+
+  async startTurn(params: Record<string, unknown>): Promise<unknown> {
+    await this.connect();
+    return await this.request("turn/start", params);
+  }
+
+  async queueTurn(params: Record<string, unknown>): Promise<unknown> {
+    await this.connect();
+    return await this.request("turn/queue", params);
+  }
+
+  async interruptTurn(params: Record<string, unknown>): Promise<unknown> {
+    await this.connect();
+    return await this.request("turn/interrupt", params);
+  }
+
   async readWorkItem(workspaceId: string, workItemId: string): Promise<LingAppServerWorkItemSnapshot> {
     await this.connect();
     return await this.request("workItem/read", { workspaceId, workItemId });
@@ -89,7 +119,7 @@ export class LingAppServerClient {
       readonly expectedWorkItemRevision: number;
       readonly expectedControlGeneration: number;
       readonly idempotencyKey: string;
-      readonly actorId?: string;
+      readonly actorId: string;
       readonly reason?: string;
     },
   ): Promise<LingAppServerWorkItemSnapshot> {

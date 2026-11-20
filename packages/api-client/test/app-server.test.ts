@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { LingAppServerClient, type LingAppServerSocket } from "../src/app-server.ts";
+import { LingAppServerClient, type LingAppServerSocket } from "../dist/app-server.js";
 
 class FakeSocket implements LingAppServerSocket {
   readonly readyState = 1;
