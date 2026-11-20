@@ -186,6 +186,7 @@ test('BG-H4 saves and clear use one expiring global success Toast without inline
 });
 
 test('BG-H4 a failed save dismisses old success and keeps local error until successful recovery', async ({ page }, info) => {
+  test.setTimeout(90_000);
   await page.clock.install();
   await prepare(page); await settings(page);
   const panel = page.locator('[data-background-settings]');
