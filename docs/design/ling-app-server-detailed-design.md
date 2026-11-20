@@ -32,11 +32,11 @@ App Server 作为 Daemon 的会话协议入口，以 `ling-app-server/1` 发布�
 | Unix socket | macOS/Linux 上本机连接，使用相同 JSONL framing。运行目录和 socket 限制给拥有者，重启时核对旧 socket 所有者和服务状态。 | 本机 OS 边界结合客户端授权。适用范围以平台报告为准。 |
 | 回环 WS / WSS | 一条文本帧对应一个 JSON-RPC 消息。App Server 使用独立的升级路径 `/app-server/rpc`。Windows 也用 stdio 和回环 WS。 | 回环连接同样校验客户端凭据。远程 WSS 显式开启，TLS 和客户端认证在握手前完成。Daemon 通用 HTTP/WS 保持在有权限的管理网络。 |
 
-用户通过本机受信管理入口创建连接配置，选定允许的工作区、操作范围、过期时间及可选 Thread 范围。配置名标记操作者与用途。服务端颁发独立、可撤销的凭据，仅返回授权摘要。存放凭据用现有本机秘密管理，运行日志和 URL 只记录公开配置 ID。WSS 客户端在 Upgrade 使用认证头。需要浏览器集成的宿主通过自己的受信后端或 Desktop 桥接保持认证。监听器校验配置的 Host/Origin，认证与 TLS 终止的位置随部署明确。现有移动端配对凭据按其自身用途管理。
+用户通过本机受信管理入口创建连接配置，选定允许的工作区、操作范围、过期时间及适用的 Thread 或 Work Item 范围。配置名标记操作者与用途。服务端颁发独立、可撤销的凭据，仅返回授权摘要。存放凭据用现有本机秘密管理，运行日志和 URL 只记录公开配置 ID。WSS 客户端在 Upgrade 使用认证头。需要浏览器集成的宿主通过自己的受信后端或 Desktop 桥接保持认证。监听器校验配置的 Host/Origin，认证与 TLS 终止的位置随部署明确。现有移动端配对凭据按其自身用途管理。
 
 [Ling Device Fabric](ling-device-fabric.md#5-cross-device-task-graph) 的项目节点继续引用其执行主机的 WorkUnit 与证据。App Server 的游标与权限绑定本 Daemon 的工作区。远端设备动作及其状态由对应主机的日志、授权与配对投影管理。
 
-绑定以 Daemon 解析的规范化仓库、worktree 和当前授权版本为准。请求 ID 及客户端展示名用于关联与审计，可信 Actor 来自连接凭据。授权范围取连接、工作区、Thread 和运行政策的交集。在受理、执行和提交决策前分别核对当前权属。撤销关闭对应订阅和新动作入口，已受理工作交由 Daemon 按其取消和恢复策略处置。
+绑定以 Daemon 解析的规范化仓库、worktree 和当前授权版本为准。请求 ID 及客户端展示名用于关联与审计，可信 Actor 来自连接凭据。按操作取连接、工作区、目标 Work Item 或 Thread 和运行政策的交集。进入关联 Thread 的上下文还要核对它的访问授权。在受理、执行和提交决策前分别核对当前权属。撤销关闭对应订阅和新动作入口，已受理工作交由 Daemon 按其取消和恢复策略处置。
 
 对每个连接限制帧大小、未完成请求数、订阅数和总出站字节。基线复用现有 RPC 的 1 MiB 入站、128 KiB 出站帧、1 MiB 或 500 帧积压、5 秒写入期限，实际支持值在握手中返回。较大内容用已授权的分页或分段读取。限制覆盖启动回放、live 队列和 transport buffer。选择 `server_overloaded` 时请求尚未入队。慢客户端断开后以最后成功应用的游标追赶。断开释放本连接的订阅与请求句柄，执行状态仍由 Daemon 维护。健康探针只提供存活、就绪与协议信息。 [现有出站边界](control-plane-outbound-backpressure-2026-10-15.md)
 
@@ -52,7 +52,7 @@ App Server 作为 Daemon 的会话协议入口，以 `ling-app-server/1` 发布�
 {"jsonrpc":"2.0","id":2,"result":{"status":"accepted","threadId":"thr_123","turnId":"turn_123","submissionId":"sub_123"}}
 ```
 
-每个修改方法带逻辑 `idempotencyKey`，状态敏感的操作还带目标 ID 和预期版本或快照。作用域、方法和规范化参数共同构成收据身份。优先复用会话输入收据、Run interventions 和各所有者的唯一性约束。需要补充收据时，与受理同事务写入，文件系统或外部动作使用各自的执行意图和归属记录。复用 key 且输入相同返回已受理结果，输入不同返回冲突。断线后优先查询收据，已过收据保存期限且结果不明时先查目标状态。传输请求 ID 仅用于匹配同一连接内的消息。
+每个修改方法带逻辑 `idempotencyKey`，状态敏感的操作还带目标 ID 和预期版本或快照。使用工作区、可信 Actor、方法和逻辑 key 查找收据，在有效授权下比较规范化请求指纹。优先复用会话输入收据、Run interventions 和各所有者的唯一性约束。需要补充收据时，与受理同事务写入，文件系统或外部动作使用各自的执行意图和归属记录。当 key 与输入吻合时返回原受理结果，输入不同时返回冲突。断线后优先查询收据，已过收据保存期限且结果不明时先查目标状态。传输请求 ID 仅用于匹配同一连接内的消息。
 
 已建立订阅的客户端可能先看到状态通知，再收到命令回执。通知通过持久实体 ID 与版本合并，命令通过请求 ID 和受理收据确认。订阅建立的响应与回放有明确的顺序屏障。
 
@@ -67,7 +67,7 @@ App Server 作为 Daemon 的会话协议入口，以 `ling-app-server/1` 发布�
 | 分支和上下文 | `thread/fork`、`thread/compact/start`、`thread/revert`、`context/inspect`、`handoff/create`、`handoff/read`、`handoff/resume` | 从指定可恢复边界分支、压缩或交接。历史变更与实际文件回退各用自己的权限、预览和预期版本。 |
 | 改动和产物 | `changes/capture`、`changes/read`、`changes/apply/preview`、`changes/apply`、`artifact/read` | 以候选、选中 hunk、工作树版本和审批为边界。应用、回退、重放沿用现有 patch 所有者。产物可分页，内容读取限范围和大小。 |
 | 开发验证与审查 | `verify/plan`、`verify/start`、`verify/status`、`verify/cancel`、`review/start`、`review/status`、`review/finding/update`、`simplify/start`、`doctor/run`、`instructions/init` | 指定候选和已配置的规则或配方。运行类返回操作 ID，草案类返回可审阅差异，读取类返回有限证据投影。 |
-| 工作项快照与订阅 | `workItem/read`、`workItem/subscribe` | 提供工作项 ID 和可选恢复游标。读取当前授权快照及关联实体，按同一范围继续订阅。 [工作项方法](ling-agent-operating-model-detailed-design.md#9-events-and-app-server-methods) |
+| 工作项快照与订阅 | `workItem/list`、`workItem/read`、`workItem/subscribe`、`workItem/unsubscribe` | 按工作区和 Work Item 授权分页发现、读取快照及订阅。订阅接收同一范围的恢复游标，取消使用此连接上的订阅 ID。 [工作项方法](ling-agent-operating-model-detailed-design.md#9-events-and-app-server-methods) |
 | 工作项证据与审议 | `workItem/evidence/read`、`workItem/evidence/append`、`workItem/deliberation/start`、`workItem/deliberation/read`、`workItem/deliberation/cancel`、`workItem/deliberation/decide` | 协商可选能力 `workItem.evidence`、`workItem.deliberation`。读取工作项证据、触发评估和审议回执。 [整合协议](ling-agent-operating-model-detailed-design.md#9-events-and-app-server-methods) |
 | 工作项阶段与轮次 | `workItem/stage/read`、`workItem/stage/brief/read`、`workItem/coordination/start`、`workItem/coordination/read`、`workItem/coordination/close` | 协商可选能力 `workItem.coordination`。读取阶段、角色简报和 `CoordinationRound`。协调者关闭轮次时原子发布简报或记录取消。 [轮次合同](ling-agent-operating-model-detailed-design.md#58-coordination-rounds-and-agent-messages) |
 | Agent 消息与问答 | `workItem/message/send`、`workItem/message/read`、`workItem/message/list`、`workItem/question/ask`、`workItem/question/read`、`workItem/question/reply` | 使用 `workItem.coordination`。按工作项、阶段和收件范围发送及读取消息，轮次 ID 可作为消息来源或查询条件。问答使用独立期限与修订。 |
@@ -83,21 +83,41 @@ App Server 作为 Daemon 的会话协议入口，以 `ling-app-server/1` 发布�
 - `thread/start` 接受 `workspaceId`、可用的已存执行配置、可选目标工作目录和 `worktreeMode`。创建空会话后可立即读取。写入会话用受管 worktree，创建和环境初始化状态可观察。已有本地 checkout 可以作为显式授权的读取来源。收据与分配记录绑定会话 ID，重试返回同一分配结果。
 - `thread/resume` 返回 `ThreadView`、待处理请求与历史游标。`turn/resume` 接受源 Turn/Run 和有效预览，校验 checkpoint、候选、工作树、执行配置和权限后请求恢复。已确认完成的外部动作从回执恢复。遇到执行结果未知时返回具体的恢复阻塞原因。
 - `turn/start` 接受有界结构化输入、附件引用、可选 Skill、Goal 的接受版本和 `expectedThreadRevision`。Daemon 选择已保存的 Pi Provider 或原生执行配置，记录生效的初始化规则、工具、权限和候选版本，再派发。外部提交以授权 Actor 进入普通会话。并发写入用当前版本和执行租约裁决。
-- `turn/steer`、`turn/queue` 和 `turn/interrupt` 都带 `expectedTurnId` 和输入来源。只有声明并验证通过同 Turn 干预能力的 Runner 才在下一安全模型边界接收追加输入。其他情形返回 `steer_unsupported` 或 `turn_busy`，客户端可以显式选择排队或中断后继续。Pi 保留原始任务锚点，使用已有队列和 interrupt redirect 语义。
-- 排队产生持久待执行指令，绑定源 Turn。中断返回请求回执，最终状态以原 Attempt 的停止与已执行动作证据为准。换方向的后继 Run 继承明确的来源，在已确认的写入边界之后开始。`turn/retry` 创建新尝试并核对已发生的副作用。外部结果不确定时显示待核对。
+- `turn/steer`、`turn/queue` 和 `turn/interrupt` 都带 `expectedTurnId`、`expectedTurnRevision` 和输入来源。Turn 版本覆盖当前执行归属、控制状态及接受目标，流式输出使用自己的增量序号。`turn/retry` 创建新尝试并核对已发生的副作用。外部结果不确定时显示待核对。
 - `thread/fork` 使用明确的已完成 Turn 与历史快照。写入型 Fork 绑定新 worktree 和已确认要包含的提交或补丁来源，读取型 Fork 可以引用父候选。Fork 保存历史来源与任务版本，后继执行通过正常准入。`thread/revert` 使用现有历史替换/清理语义和墓碑，实际文件恢复由 changes 方法显式发起。
 
 Turn 状态沿用 `LingTurnStatus`。前端可另外投影等待报告、停止请求已受理、停止待确认和候选验证未完成。Run、Goal 和候选交付各显示自身状态。断线、认证失效与流程失败使用不同的协议结果。
+
+#### 2.1.1 运行中新增消息与变更要求
+
+已认证用户输入先经普通会话入口，保存作者身份、输入 Item、目标 Thread、当前 Turn（如有）、提交顺序和适用的已接受 Plan/Goal 版本。原所有者优先路由明确的进度查询、显式控制和来自授权用户的明确需求变更。归属或意图待确定时保留消息并走普通澄清。复用提交收据和 Run intervention 协调执行。HTTP/SSE 按其既有请求与结果语义调用同一输入所有者。输入中的引用、Agent 输出和外部事件保有自己的来源类型。
+
+| 用户操作 | 接入与执行 |
+| --- | --- |
+| 查询当前进度 | `thread/read`、`workItem/read` 和提交后的阶段简报提供当前已提交、授权可见的事实。会话中明确的「现在进度呢」保留用户 Item，经相同投影即时回报当前阶段、最近验收和阻塞。收据携带来源与所读版本。当前模型仍在执行时也可完成这次只读查询。 |
+| 普通追加消息 | App Server 的普通输入按 Thread 接收。无活跃执行时经 `turn/start` 开始普通 Turn。有活跃执行时默认保存为持久后续输入，按受理顺序在原 Turn 到达可继续的边界后创建后继 Turn。收据显示排队及源 Turn。 |
+| 明确指导当前 Turn | `turn/steer` 在当前 Runner 已验证的同 Turn 干预能力内，于下一安全模型输入边界应用。在途已受理工具处置由原 Attempt 驱动。能力缺失或状态冲突时返回 `steer_unsupported` 或 `turn_busy`，客户端可显式改用排队或中断。Pi 使用既有后续队列与 interrupt redirect。 |
+| 明确停止或换方向 | `turn/interrupt` 提交停止意图，实际终止以原 Run/Attempt 的回执为准。带续接输入的中断沿用 `interrupt_redirect`。后继保留输入、目标和停止来源，在前驱副作用核对及正常准入后开始。 |
+| 变更已接受的需求 | Daemon 结合已认证来源与当前目标路由明确变更意图。Work Item/Workflow 对受影响的阶段和依赖记录准入暂停，继续核对已经开始的动作与审批。影响尚待确定时先暂停包含可能受影响步骤的最小范围。新范围进入 Plan 修订预览，`plan/accept` 比较原接受版本、有效草案版本及受影响资源的预期版本后提交。生效后以新接受版本准入受影响工作。取消草案或撤回请求后，由原所有者重核旧范围再解除暂停。 [运行中需求变更合同](ling-agent-operating-model-detailed-design.md#44-in-flight-inputs-and-accepted-plan-revisions) |
+| 处理用户提问或工具审批 | 用户澄清绑定原待决问题、修订和当前来源。工具审批由 §2.4 的授权操作消费冻结请求。普通消息和 Agent 间问答作为上下文保存。 [澄清续接合同](channel-confirmed-request-continuation-2026-10-25.md) |
+
+受理时在会话所有者的事务内核对目标、版本、控制状态和当前授权，再记录收据及排队或停止意图。已受理的输入在注入、续接或派发时再核对活跃 Turn、当时的接受范围和当前 Attempt fence。暂停期间队列可见，消费等待原所有者重新准入。停止、替换或受影响范围变更先提交时，后到的旧版本命令返回冲突。明确停止会冻结原 Turn 关联的未消费队列，只有用户基于当前目标重新提交或明确续接后才再次准入。受需求变更影响的旧输入使用原收据记录重新确认原因。重试原请求可在当前授权下读回原受理结果，消费进度则通过 `submission/read` 及关联 Turn/Item 读取。
+
+例如用户在 Ling 对 P02 提交已知 Stage 的接口变更时，与同一 Turn 并发的 Codex 指导使用各自观察到的预期版本。先提交的变更暂停受影响的新动作。旧指导在消费点重新核对范围，适用时用原收据完成，受影响时记录需重新确认。已启动工具由原执行所有者核对停止或未知结果。QA 对与该接口无关的准备工作可继续。新 Plan 接受后，客户端可从已接受版本追踪后继工作。
 
 ### 2.2 通知与 Item
 
 ```ts
 type EventCursor = string // Opaque, scoped to workspace incarnation and subscription filter
+type EventSubject =
+  | { kind: "thread"; threadId: string }
+  | { kind: "workItem"; workItemId: string; threadId?: string }
 type DurableNotice = {
   subscriptionId: string
   cursor: EventCursor
+  workspaceId: string
   eventId: string
-  threadId: string
+  subject: EventSubject
   turnId?: string
   runId?: string
   itemId?: string
@@ -112,8 +132,9 @@ type DurableNotice = {
 | Turn 与执行 | `turn/started`、`turn/status/changed`、`turn/completed`、`turn/plan/updated`、`turn/diff/updated` | Turn 状态、Run 事实、计划与候选引用。 |
 | 可见内容 | `item/started`、`item/delta`、`item/completed` | 现有公开会话 Item 与 Run 动作的有界投影。 |
 | 请求与证据 | `serverRequest/resolved`、`verification/updated`、`review/updated`、`handoff/created` | 审批、提问、Check、Code Assessment 和交接记录。 |
+| 工作项状态 | `workItem/created`、`workItem/claimed`、`workItem/status/changed`、`workItem/claim/expired`、`workItem/thread/linked`、`workItem/delivery/updated`、`workItem/feedback/received` | 工作项及原所有者提供的状态标识和修订。关联通知携带可见的绑定修订。 |
 | 工作项协作 | `workItem/evidence/updated`、`workItem/deliberation/updated`、`workItem/stage/updated`、`workItem/brief/updated`、`workItem/coordination/updated`、`workItem/message/updated`、`workItem/question/updated`、`workItem/handoff/updated` | 已授权的实体 ID 和修订。简报带阶段或轮次引用，审议带决定修订以及已受理的轮次引用。客户端按需读取正文和回执。 |
-| 订阅 | `thread/replay/ready`、`thread/resync/required`、`server/warning` | 订阅可用水位、重建原因和此连接状态。 |
+| 订阅控制 | `thread/replay/ready`、`thread/resync/required`、`workItem/replay/ready`、`workItem/resync/required`、`server/warning` | 对应订阅的可用水位、重建原因和此连接状态。 |
 
 Item 具有稳定 ID、类型、状态、版本和来源引用。包括用户输入、助手文本、公开摘要、计划、命令、工具调用、变更、待审批、用户提问、产物、验证、审查发现、交接、压缩和诊断。命令和工具结果的完整内容按权限与长度读取。最终 Item 携带可渲染摘要及完整结果引用，客户端用较新完整版本替换预览。
 
@@ -128,7 +149,24 @@ Item 具有稳定 ID、类型、状态、版本和来源引用。包括用户输
 
 基线行为参考 [Control Plane 回放窗口](runtime-control-plane-detailed-design.md#replay-and-subscription-recovery) 和 [保留水位存储](../../packages/core/src/storage/sqlite/control-plane-store.ts)。
 
-工作项协作沿用 `workItem/subscribe` 或已授权的 Thread 订阅。工作项快照包含可见的阶段简报、轮次、待答问题、交接和审议引用。消息使用实体 ID 读取或按轮次分页。重连使用同一授权范围的游标和当前实体版本。Agent 实际接收消息时按消息 ID 与收件人核对投递回执。
+#### 2.3.1 Work Item 的原生订阅范围
+
+GitHub Issue、Automation 或外部请求的入箱工作项可以先有 `workspaceId` 和 `workItemId`，在获准派发时再关联 Thread。Work Item 的读取、订阅和回放使用这一对标识。工作项方法核对连接操作权、工作区、工作项和相关来源授权。Thread 引用、文本及需要 Thread 的操作，还要核对当前 Thread 授权。连接被限于指定 Thread 时，工作项事件还须处在该 Thread 当前可见的关联范围。未关联工作项由其明确授予的工作项范围访问。
+
+| 接口 | 受理与恢复 |
+| --- | --- |
+| `workItem/list` | 接受 `workspaceId` 和可选分页游标，列出当前可见的工作项摘要。分页游标与事件游标分别绑定过滤条件。 |
+| `workItem/read` | 接受 `workspaceId`、`workItemId`。同一读快照返回可见修订、主会话绑定状态、获准查看的当前执行引用、阶段简报、轮次、待答问题、交接、审议的引用和本工作项范围的事件游标。消息正文可按实体或轮次分页。 |
+| `workItem/subscribe` | 接受同一对标识和可选事件游标。暂存监听后读取同一授权视图的水位，发送该范围的回放，再用 `workItem/replay/ready` 释放 live 队列。首次订阅可用 `workItem/read` 的游标接续。没有游标时，响应返回可见快照及其水位。 |
+| `workItem/unsubscribe` | 接受连接内的订阅 ID，释放此订阅。客户端可再次用本范围已应用的游标接入。 |
+
+原派发或交接所有者提交工作项绑定修订和一个以 Work Item 为主体的 `workItem/thread/linked` 持久事件。首次绑定确定主 Thread。后继计划、跨会话交接或审议可增加带接受版本和来源的执行引用。各 Thread 的关联投影从自身绑定提交的水位开始，关联前的事件由获准的 Work Item 视图重放。关联前后沿用 Work Item ID 和原事件身份。当前许可和订阅范围相同时，原 Work Item 游标可以跨关联使用。
+
+持有 Work Item 授权的读者按该范围看修订和绑定状态。每条会话、执行与产物引用独立核对对应的当前权限，包括 `subject.threadId`、`turnId`、`runId`、`itemId` 及 payload 里的引用。只有原 Thread 授权的客户端可以重放其获准的旧投影，后继 Thread 的正文和操作需要自身授权。有效授权或过滤范围变化时，以当前授权快照替换失效的视图缓存。 [Work Item 归属](ling-agent-operating-model-detailed-design.md#2-work-item-schema-and-state)
+
+同一个 Control Plane 提交使用同一个 `(workspaceId, eventId)`，其中 `eventId` 包含存储代次和持久序列的身份。对同时可见的 Thread 与 Work Item 订阅，客户端可按此身份合并事件引起的同实体刷新。两个订阅各自应用和保存游标，视图缓存按授权范围保留各自投影。每个通知和重新读取都用当前授权投影，迟到的旧快照按实体修订处理。共享工作项事件通过授权的关联关系进入 Thread 订阅，来自候选的描述文字与会话回执引用仍由其原所有者投影。
+
+游标校验绑定存储代次、可信 Actor、工作区、订阅种类、具体目标和当前授权/过滤修订。游标过期、store 变化或范围不匹配时，获准的调用方从 `snapshot_required` 或 `workItem/resync/required` 重取快照。权限丢失时结束对应订阅，以公开错误提示受信客户端清除旧视图。消息进入 Agent 输入由原执行所有者按消息 ID 与收件人核对实际投递回执。
 
 发布给外部客户端的通知使用现有公开投影和脱敏函数。日志、事件重放与诊断只使用当前调用方可见的路径和引用。命令完整输出、diff 和二进制产物以对象 ID 及受限 range 取得，服务端逐次核对对象归属和读取权限。公开产物描述包含可读范围、完整性及截断标记。模型可见的文件、日志和工具输出仅作为数据读入。私有推理、提供方凭据、原始模型上下文和未授权路径留在原所有者。
 
@@ -226,7 +264,17 @@ Goal 使用已接受的验收项。代码工作可以指定候选检查、检查
 - Handoff 保存源 Thread/Turn/Goal、接受的目标与设计决定、候选和 worktree、已验证证据、待决请求/副作用、变更范围、阻塞及下一步。持久记录通过现有 artifact 与 Goal/Turn 归属。摘要引用原始任务及验收项。跨会话接手可以引用当前阶段简报、未决问答、工作项交接回执与所属 Workflow。审议引用证据板修订、封存结果和已记录的决定。 [阶段简报与交接](ling-agent-operating-model-detailed-design.md#55-plan-stages-and-stage-briefs)
 - `handoff/resume` 在新会话检查源是否可交接、worktree 版本与写入租约、候选、证据修订和当前授权。兼容则带版本接手，漂移则显示差异和需要重新验证的项。Runner 重启走已有 checkpoint 恢复，交接走普通 Turn 的新派发。多 Agent 使用现有 Workflow 归属、独立授权和可核对的产物合并。
 - 每个开发任务记录 Provider、Runner、工作树和构建输入。调试长任务可看模型调用预算、失速原因和最近一个有证据的阶段。正常开发从稳定 Ling 使用独立 worktree 和 Agent 环境。候选 Daemon 和 UI 用独立数据、端口和测试配置启动。代码或配置需要换模型或 Runner 时，交接优先从明确的候选快照进入普通新任务。
-- Codex 持续连接通过有类型的客户端或本机 CLI。MCP 桥接使用配好的工作区及受限凭据转发结构化操作，工具结果只返回有限事件页、进度和下一游标。它由同一 App Server 权限裁定。对桥接派发的 Turn 冻结调用链，拒绝把相同任务重新递归派发给来源控制器。客户端后台重连与工具调用超时只恢复观察，派发通过原逻辑凭据和收据。
+
+### 3.5 Codex 控制宿主
+
+| 接入 | 通道与交互 |
+| --- | --- |
+| 现成 Codex | 本机 MCP 桥接以受限凭据连接 Ling App Server，转发获准的读取和控制操作。工具返回有限事件页、进度和下一游标。配套 CLI 能执行同一结构化操作。Codex 可通过后续工具调用继续跟踪。 |
+| 可编程控制宿主 | 交付可运行的本机参考宿主，使用 Ling SDK 和官方 Codex App Server。宿主分别握手和授权，登记用户明确选定的 Ling Work Item/Thread 与 Codex thread，保存 Ling 订阅游标。宿主界面用统一任务视图呈现 Ling 的阶段、待审批入口、候选和验收进度，可在同一 Ling 连接中再次下达获权控制。 |
+
+控制宿主消费 Ling 推送时更新观察视图。用户明确选择或已接受的宿主策略允许补充 Codex 当前任务时，宿主可在支持的 Codex 版本上调用 `turn/steer`，使用当前 Codex thread、`expectedTurnId` 和已授权的简短证据引用。若需新 Turn，则走宿主的正常明确输入入口。用 Ling 事件身份和目标 Codex Turn 记录一次投递。收到可验证的应答后记录完成，结果未知时核对目标当前状态并保留待确认原因。候选证据只作为上下文。真正的 Ling 设置、审批和派发始终由 Ling 侧原权限所有者决定。对桥接派发的 Turn 冻结调用链，防止同一任务沿原路径递归回派。重连和工具读取超时后用原游标恢复观察。 [Codex App Server 的 Turn 指导](https://learn.chatgpt.com/docs/app-server#steer-an-active-turn) · [Codex MCP](https://developers.openai.com/codex/mcp)
+
+F2 的实时显示验收使用可编程宿主的任务视图，现成 Codex 跟踪验收使用 MCP/CLI。若另外接入现成 Codex 自身界面的嵌入显示，需要指定当前客户端版本支持的呈现入口并实测。公开协议的 `mcpAppUi` 说明了受信 MCP 应用的调用 Item 如何引用嵌入视图。持续显示还需在该宿主版本验证视图授权、连接存续、断线还原和关闭清理。涉及后续模型输入时，另核对该宿主的受权输入路径。 [Codex App Server](https://learn.chatgpt.com/docs/app-server)
 
 ## 4. 兼容性、迁移与故障边界
 
@@ -239,6 +287,8 @@ Goal 使用已接受的验收项。代码工作可以指定候选检查、检查
 | Daemon 或执行主机重启 | 由当前 Attempt 和封存恢复点决策。恢复阻塞或外部结果未知会保留证据及责任方。 |
 | 权限撤销、worktree 被换或目标版本改变 | 本次授权重新核对。请求返回当前冲突，对已受理工作应用对应所有者的停止或处置规则。 |
 | 审批与中断同时到达 | 已持久提交的有效决策和停止归属有明确顺序。迟到结果通过来源 fence 判断可见性。 |
+| 已排队输入遇到停止或需求变更 | 根据提交顺序和消费点的接受版本确定适用性，保留受影响输入的原收据和重新提交入口。 |
+| 订阅中的 Work Item 关联 Thread | 原身份与恢复游标可继续定位 Work Item。同一提交可被两个获准视图接收，各自更新游标。Thread 内容以实时授予的范围读取。 |
 | 验证与编辑相撞 | 候选发生漂移，记录原结果及变更，当前候选重新安排受影响检查。 |
 
 协议实现从 Contracts 生成 TypeScript 和 JSON Schema。每个方法记录 input、output、通知、权限、幂等键及错误类型。端到端验收需覆盖双向请求、竞态、落盘后断线重传、旧客户端、真实 Provider 和目标传输，见[实施矩阵](ling-app-server-implementation-plan.md#验收矩阵)。

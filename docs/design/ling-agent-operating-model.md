@@ -76,6 +76,8 @@ interface AgentWorkItem {
 
 Sources include `channel_message`, `direct_message`, `github_issue`, `github_pull_request`, `github_check`, `automation`, `external_agent`, `device_graph_node`, and `local_user`. The source keeps the immutable external identity and a safe display projection. A source update never silently changes a Work Item objective. It creates a new intake revision or a follow-up.
 
+The optional `threadId` and `workflowId` identify the Work Item's primary conversation and primary execution lineage. Handoff to another conversation, an accepted successor Plan and a temporary deliberation add related execution references. The current owner and executable stages come from the accepted revision and dispatch records. Each related conversation uses its own access scope.
+
 ### 4.2 Goal and acceptance
 
 Every implementation Work Item has a Goal or a typed reason why no Goal is required. Acceptance criteria are immutable per revision and map to Run, Workflow, Artifact, Verification, Review, CI, or user decision evidence. A Goal can have several Work Items over time, while a Work Item belongs to one current Goal revision.
@@ -85,6 +87,12 @@ Every implementation Work Item has a Goal or a typed reason why no Goal is requi
 The existing coordinator decides who handles the work, including explicit user assignment and the follow-up path for an active session. An accepted Workflow owns the assignment of its steps. The Work Item shows the resulting owner and links the original Task, Turn, or Workflow.
 
 A claim records or references the first dispatch of an accepted Work Item revision. If the source already owns a Task, Turn, or Workflow, use that owner's dispatch record. Each authorized WorkUnit and Attempt retains its own execution lease. One intake dispatch can therefore start a Workflow with multiple authorized participants. [Ling Agent Session](ling-agent-session.md#coordinator-decision-contract) · [Runtime Supervisor](runtime-supervisor.md)
+
+### 4.4 In-flight User Changes
+
+Users can ask for status, add context, answer a question, stop execution or change a requirement while work runs. The latest authorized progress and brief can answer a status request immediately. Ordinary follow-ups enter the durable queue by default, and explicit steering uses the current Turn's supported input path. A pending user question uses its own answer receipt. An explicit stop uses the active execution owner's controls.
+
+An explicit authorized change to the running scope holds affected new writes and dispatches while Ling Agent prepares a successor Plan. The user can see which stages are affected, which old work has stopped at a safe boundary, and which effects await reconciliation. The existing Plan and Goal acceptance path authorizes the successor. Independent eligible work can continue with its original owner, and retained artifacts and uncommitted work remain available for revalidation. A change to P01's interface can hold P02 implementation and dependent QA. When the P01 interface still applies, a new P02 code candidate requires current candidate checks. [Revision and applicability contract](ling-agent-operating-model-detailed-design.md#44-in-flight-inputs-and-accepted-plan-revisions)
 
 ## 5. Intake and Autonomous Work
 
@@ -123,6 +131,8 @@ A user can start a deliberation for a Work Item, or accept a Workflow with an ex
 3. The accepted template can choose direct synthesis when the challenge resolves the issue. A vote is available when viable conflicting options remain and the template permits it. Participants submit independent ballots for the same frozen options and evidence. The host counts eligible ballots against the frozen quorum and support rule.
 4. The coordinator shows the recommendation, reasons and unresolved dissent. An authorized decision owner records the chosen course. Any follow-up work enters the normal Turn or Workflow path with its accepted criteria and authorization.
 
+Before Plan acceptance, deliberation uses the coordinator's read-only requirement-shaping path. An accepted Plan can declare a decision step. An unexpected decision during execution can use a linked, read-only deliberation Workflow on the same Work Item. Its typed decision receipt returns to the original dependency, which checks applicability and the accepted gate before admitting downstream work. A choice that changes scope or dependencies goes through acceptance of a successor Plan. [Deliberation placement and decision receipts](ling-agent-operating-model-detailed-design.md#52-deliberation-workflow)
+
 The shared evidence board groups proposals, observations, challenges, references to trusted results and decision records by Work Item. Participants can consult and contribute within their granted scope. Entries show their author, subject version and sources. Corrections and conflicting observations have their own history. A prior decision stays visible with its original subject when the code or evidence changes. The board is useful for an ordinary investigation with several contributors as well as for a formal vote. Daemon stores and projects the board, and the original owners supply the status of Goal, Verify, Review and Delivery. [Shared evidence contract](ling-agent-operating-model-detailed-design.md#51-shared-evidence-board)
 
 For example, two teammates may favor an API simplification while a required compatibility check still fails on the candidate. Ling can display the vote and the failing check together. The acceptance rule keeps the candidate blocked until the verifier records a passing check for the applicable candidate.
@@ -143,7 +153,13 @@ A `CoordinationRound` gives the Agents on a Work Item a shared checkpoint for ki
 
 A parent can send a child a targeted note, and assigned Agents can ask each other a question during work. Each message identifies its work item, subject version, sender and recipients. An open question can continue after a checkpoint ends. When a question blocks a required input or a handoff is returned, the Workflow holds the affected dependency while independent steps continue. The original Workflow admits downstream work after the receiving participant's handoff receipt and the current readiness checks.
 
+Users can inspect message queueing, delivery to the target's actual input and the reply. Handoff acceptance, downstream admission and Run start each have evidence from their owning path. After interruption the owner reconciles the same step and receipts before starting work. When a participant becomes unavailable, authorized reassignment checks their active work and gives the successor the applicable evidence and pending questions with their current grant. [Handoff and reassignment](ling-agent-operating-model-detailed-design.md#57-handoff-acceptance-and-repair)
+
 Ling Agent coordinates changes to scope, assignment and authority. It receives a blocker when a question expires or Agents are waiting on each other. It can ask the user for required intent, send a disputed fact for verification or request handoff repair. An unresolved choice between viable options can lead to a deliberation suggestion. Automatic admission requires explicit project or Workflow authorization, current evidence and a bounded budget. [Trigger policy](ling-agent-operating-model-detailed-design.md#52-deliberation-workflow)
+
+### 6.4 Progress and Intervention
+
+Ling tracks whether Runs advance the current acceptance criteria, meet a prerequisite or materially narrow a known blocker. Repeated reports or retries for the same unresolved condition share a blocker and continuation budget. If the work stalls or the next step needs a decision, Ling pauses the affected automatic path and shows the last verified progress, the responsible owner and the condition for continuing. [Progress across Runs](ling-agent-operating-model-detailed-design.md#45-progress-across-runs)
 
 ## 7. External Agent Federation
 
@@ -211,13 +227,13 @@ The default surface shows one coordinator summary, one active Work Item status, 
 
 - intake source and claim owner;
 - acceptance checklist;
-- running Agents and WorkUnits;
+- running Agents and WorkUnits, affected stage holds, the accepted Plan revision and any proposed change;
 - stage and coordination briefs, scoped messages, pending questions and handoff receipts;
 - approvals and user questions;
 - Diff, Verify and Review evidence;
 - shared evidence, deliberation rationale, rounds and the recorded decision;
 - Delivery status and external receipts;
-- Handoff and next action;
+- Handoff milestones, last verified progress and next action;
 - Memory or Skill candidates awaiting review.
 
 The product can expose a task inbox, but it must preserve the same Thread, Goal, Run and evidence projections. A marketplace or external channel is a source and delivery surface, not a second authority system.
@@ -240,3 +256,7 @@ The product can expose a task inbox, but it must preserve the same Thread, Goal,
 14. An enabled policy can start a scoped deliberation once for the current decision. Authoritative evidence can resolve the issue before ballot admission. An authorized decision after a tie preserves the tally and rationale.
 15. Work events and authorized schedules create deduplicated rounds. Closing a round publishes one replayable brief with scoped evidence, blockers and action owners. Workflow admission governs any follow-up execution.
 16. Participants can exchange a scoped message or question and recover its receipt on reconnect. Timeouts and dependency cycles route to the coordinator, and downstream readiness uses the current subject and evidence.
+17. A user can send a follow-up during execution, or request a change that holds only affected new work. An accepted successor carries applicable evidence and independent stage references forward. The original owners settle in-flight effects and preserve work in progress.
+18. Deliberation uses read-only shaping or the applicable Workflow placement. An unexpected decision returns a typed receipt for the original dependency or a successor Plan.
+19. A message receives a delivery milestone from verified input acceptance. A handoff shows separate acceptance, admission and start milestones, and recovery resumes the same target owner across either crash window.
+20. Repeated reports of a blocker share one progress record. Cross-Run retries use the current continuation budget and pause with a recovery condition when it is exhausted.
