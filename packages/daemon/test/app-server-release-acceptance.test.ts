@@ -1189,7 +1189,7 @@ test("App Server replay cursors survive restart and stay bound to the workspace,
   const differentKind = await client.call<LingAppServerSubscriptionResult>("workItem/subscribe", { workItemId: thread.id, cursor });
   assert.equal(differentKind.disposition, "snapshot_required");
 
-  const secondCwd = join(fixture.root, "other-workspace");
+  const secondCwd = join(fixture.cwd, "other-workspace");
   await mkdir(secondCwd);
   const secondWorkspace = await fixture.connect("/app-server/rpc", secondCwd);
   await secondWorkspace.call("thread/start", { threadId: thread.id, title: "Same ID in another workspace" });

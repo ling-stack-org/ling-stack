@@ -97,6 +97,29 @@ test("App Server rejects unsupported protocol versions before serving methods", 
   }
 });
 
+test("App Server rejects a workspace outside the daemon-authorized roots at upgrade", { timeout: 10_000 }, async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "ling-app-server-authorized-"));
+  const outside = await mkdtemp(join(tmpdir(), "ling-app-server-outside-"));
+  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd });
+  await daemon.start();
+  const address = daemon.server.address();
+  assert.ok(address && typeof address === "object");
+  const socket = new WebSocket(`ws://127.0.0.1:${address.port}/app-server/rpc?cwd=${encodeURIComponent(outside)}`);
+  try {
+    const status = await new Promise((resolve, reject) => {
+      socket.once("error", reject);
+      socket.once("unexpected-response", (_request, response) => { response.resume(); resolve(response.statusCode); });
+      socket.once("open", () => reject(new Error("App Server accepted an unauthorized workspace.")));
+    });
+    assert.equal(status, 403);
+  } finally {
+    socket.terminate();
+    await daemon.stop();
+    await rm(cwd, { recursive: true, force: true });
+    await rm(outside, { recursive: true, force: true });
+  }
+});
+
 test("App Server lists, reads, and controls a Work Item with revision and idempotency guards", { timeout: 10_000 }, async () => {
   const cwd = await mkdtemp(join(tmpdir(), "ling-app-server-work-item-"));
   const stores = new Map();

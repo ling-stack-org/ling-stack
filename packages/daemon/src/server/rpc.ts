@@ -182,6 +182,10 @@ export function attachRpcWebSocketServer(server: Server, context: DaemonContext)
       rejectUpgrade(socket, 400, "cwd query parameter is required");
       return;
     }
+    if (url.pathname === APP_SERVER_RPC_PATH && !context.storeRegistry.isTrustedWorkspaceRoot(url.searchParams.get("cwd")!)) {
+      rejectUpgrade(socket, 403, "App Server access is limited to daemon-authorized workspaces.");
+      return;
+    }
     wss.handleUpgrade(request, socket, head, (ws) => {
       wss.emit("connection", ws, request);
     });
