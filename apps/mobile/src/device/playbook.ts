@@ -51,10 +51,19 @@ export async function runMobileReadOnlyPlaybook(input: MobileReadOnlyPlaybookInp
       request,
       capabilitySideEffect: "read_only",
       transport: input.transport,
+      finalizeTask: false,
     });
     attempts.push(attempt);
-    if (attempt.attempt.status === "unknown") return { playbookId: input.playbookId, attempts, status: "unknown" };
-    if (attempt.attempt.status === "failed") return { playbookId: input.playbookId, attempts, status: attempts.length === 1 ? "failed" : "partial" };
+    if (attempt.attempt.status === "unknown") {
+      await input.execution.finishReadOnlyPlaybook(input.task.id, "failed").catch(() => undefined);
+      return { playbookId: input.playbookId, attempts, status: "unknown" };
+    }
+    if (attempt.attempt.status === "failed") {
+      const status = attempts.length === 1 ? "failed" : "partial";
+      await input.execution.finishReadOnlyPlaybook(input.task.id, status);
+      return { playbookId: input.playbookId, attempts, status };
+    }
   }
+  await input.execution.finishReadOnlyPlaybook(input.task.id, "succeeded");
   return { playbookId: input.playbookId, attempts, status: "succeeded" };
 }
