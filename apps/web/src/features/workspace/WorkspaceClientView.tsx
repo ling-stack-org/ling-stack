@@ -274,7 +274,8 @@ export function WorkspaceClientView({
   userProfile,
   channels,
   selectedChannelId,
-  conversationLocateTarget,
+  companionSourceTarget,
+  onCompanionSourceTargetHandled,
   selectedChannelBranchRootThreadId,
   channelSessionThreadId,
   channelUtilityRequest,
@@ -2303,31 +2304,37 @@ export function WorkspaceClientView({
   );
 
   useEffect(() => {
-    const sourceItemId = conversationLocateTarget?.sourceItemId;
-    if (!sourceItemId || (conversationLocateTarget.threadId && conversationLocateTarget.threadId !== activeChannelConversationThread?.id)) return;
+    if (!companionSourceTarget || (companionSourceTarget.threadId && companionSourceTarget.threadId !== channelSessionThreadId)) return;
+    const { intentId, sourceItemId, reportId } = companionSourceTarget;
+    if (!sourceItemId && !reportId) return;
+    const targetFeedItemIds = [
+      ...(reportId ? [`terminal-report:${reportId}`] : []),
+      ...(sourceItemId ? [sourceItemId, `user-input:${sourceItemId}`, `message:user:${sourceItemId}`, `message:agent:${sourceItemId}`, `message:${sourceItemId}`] : []),
+    ];
     let cancelled = false;
-    let timer: number | undefined;
     let attempts = 0;
-    const locate = (): void => {
+    async function locate(): Promise<void> {
+      const result = await conversationTimelineItemLocatorRef.current?.revealFirstMatchingItem(
+        targetFeedItemIds, revealConversationTarget, () => !cancelled,
+      );
       if (cancelled) return;
-      const locator = conversationTimelineItemLocatorRef.current;
-      if (!locator) {
-        if (attempts < 50) {
-          attempts += 1;
-          timer = window.setTimeout(locate, 100);
-        }
+      if (result === "revealed") {
+        onCompanionSourceTargetHandled?.(intentId);
         return;
       }
-      const targetFeedItemIds = [sourceItemId, `message:user:${sourceItemId}`, `message:agent:${sourceItemId}`, `message:${sourceItemId}`];
-      messageFeedState.onLocateIntent();
-      void locator.revealFirstMatchingItem(targetFeedItemIds, revealConversationTarget, () => !cancelled);
-    };
-    timer = window.setTimeout(locate, 80);
+      if (++attempts < 50) {
+        timer = window.setTimeout(() => void locate(), 100);
+      } else {
+        onCompanionSourceTargetHandled?.(intentId);
+      }
+    }
+    messageFeedState.onLocateIntent();
+    let timer = window.setTimeout(() => void locate(), 80);
     return () => {
       cancelled = true;
-      if (timer !== undefined) window.clearTimeout(timer);
+      window.clearTimeout(timer);
     };
-  }, [activeChannelConversationThread?.id, conversationLocateTarget?.sourceItemId, conversationLocateTarget?.threadId, messageFeedState.onLocateIntent]);
+  }, [channelSessionThreadId, companionSourceTarget, messageFeedState.onLocateIntent, onCompanionSourceTargetHandled]);
 
   const channelPlanModeThreadId = isChannelSessionDraft(selectedChannelBranchRootThreadId ?? "") ? "" : activeChannelConversationThread?.id ?? selectedChannelBranchRootThreadId ?? "";
   const channelPlanModeActive = activeChannelConversationThread?.conversationMode.mode === "plan";
@@ -3378,6 +3385,15 @@ export function WorkspaceClientView({
     channelRightDock.requestPage(page, workspaceFile, workspaceReview);
   }
 
+  const companionInspectorSource = companionSourceTarget?.handoffId ?? companionSourceTarget?.workflowStepId ?? companionSourceTarget?.workUnitId;
+  useEffect(() => {
+    if (!companionInspectorSource || !selectedChannel || companionSourceTarget?.sourceItemId || companionSourceTarget?.reportId) return;
+    setInspectorMode(companionSourceTarget?.handoffId ? "handoffs" : "runtime");
+    openRightDockPage("activity");
+    if (companionSourceTarget?.workUnitId) onRefreshRuntime();
+    else onRefreshChannelProtocol();
+  }, [companionSourceTarget, companionInspectorSource, selectedChannel?.id]);
+
   function openSidePanelView(view: ChannelSidePanelView): void {
     if (view === "settings") {
       openChannelSettingsPage();
@@ -3527,6 +3543,12 @@ export function WorkspaceClientView({
     <div className="channel-protocol-tab-content">
       <ChannelInspector
         cwd={cwd}
+        sourceTarget={companionInspectorSource && companionSourceTarget ? {
+          id: companionInspectorSource,
+          intentId: companionSourceTarget.intentId,
+          workUnitId: companionSourceTarget.workUnitId,
+        } : undefined}
+        onSourceTargetHandled={onCompanionSourceTargetHandled}
         mode={inspectorMode}
         onModeChange={setInspectorMode}
         channel={selectedChannel}

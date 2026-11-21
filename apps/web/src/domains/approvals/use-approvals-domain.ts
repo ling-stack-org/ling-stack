@@ -65,7 +65,7 @@ interface ApprovalObservation {
 
 type ApprovalObservationUpdate =
   | { readonly type: "reset" }
-  | { readonly type: "snapshot"; readonly approvals: readonly ApprovalRequest[]; readonly runId?: string }
+  | { readonly type: "snapshot"; readonly approvals: readonly ApprovalRequest[]; readonly runId?: string; readonly retainApprovalId?: string }
   | { readonly type: "upsert"; readonly approval: ApprovalRequest };
 
 function emptyApprovalObservation(): ApprovalObservation {
@@ -79,15 +79,19 @@ function observeApprovals(current: ApprovalObservation, update: ApprovalObservat
     update.type === "snapshot" ? update.approvals : [update.approval]);
   const visible = update.type === "upsert" ? upsertApproval(current.visible, incoming[0]!)
     : update.runId ? mergeApprovalsForRun(current.visible, incoming, update.runId) : incoming;
+  const retained = update.type === "snapshot" && update.retainApprovalId
+    ? current.visible.find(approval => approval.id === update.retainApprovalId && !visible.some(item => item.id === approval.id))
+    : undefined;
   const resolved = new Map(current.resolved);
   for (const approval of incoming) {
     if (approval.status !== "pending") resolved.set(approval.id, approval);
   }
-  return { visible, resolved };
+  return { visible: retained ? upsertApproval(visible, retained) : visible, resolved };
 }
 
 export function useApprovalsDomain(input: {
   readonly cwd: string;
+  readonly retainApprovalId?: string;
   readonly emitEvent: (event: DomainEvent) => Promise<void>;
 }): ApprovalsController {
   const { t } = useI18n();
@@ -103,6 +107,7 @@ export function useApprovalsDomain(input: {
   const resolvingApprovalsRef = useRef<Set<string>>(new Set());
   const emitEventRef = useRef(input.emitEvent);
   const cwdRef = useRef(input.cwd.trim());
+  const retainApprovalIdRef = useRef(input.retainApprovalId);
   const previousCwdRef = useRef(input.cwd.trim());
   const listRequestSequenceRef = useRef(0);
   const listRequestCwdRef = useRef("");
@@ -117,6 +122,7 @@ export function useApprovalsDomain(input: {
   const mountedRef = useRef(true);
 
   cwdRef.current = input.cwd.trim();
+  retainApprovalIdRef.current = input.retainApprovalId;
   emitEventRef.current = input.emitEvent;
 
   useEffect(() => {
@@ -164,7 +170,7 @@ export function useApprovalsDomain(input: {
       setError(undefined);
       const response = await listApprovals(workspaceCwd, { runId });
       if (!isCurrentListRequest(workspaceCwd, requestId) || response.cwd !== workspaceCwd) return;
-      updateApprovals({ type: "snapshot", approvals: response.approvals, runId });
+      updateApprovals({ type: "snapshot", approvals: response.approvals, runId, retainApprovalId: retainApprovalIdRef.current });
       await recoverDecisionLookups(workspaceCwd, requestId);
       if (!isCurrentListRequest(workspaceCwd, requestId)) return;
       await refreshExternalActionDetails(workspaceCwd, response.approvals);

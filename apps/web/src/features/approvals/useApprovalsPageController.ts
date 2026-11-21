@@ -15,6 +15,7 @@ export function useApprovalsPageController(input: {
   readonly externalActionDetails: Readonly<Record<string, ExternalWorkActionView>>;
   readonly inlineApprovalIds?: ReadonlySet<string>;
   readonly selectedApprovalId: string;
+  readonly requestedApprovalId?: string;
   readonly isLoading: boolean;
   readonly errorMessage: string;
   readonly onSelectApproval: (approvalId: string) => void;
@@ -33,21 +34,25 @@ export function useApprovalsPageController(input: {
   const allRows = useMemo(() => buildApprovalQueueRows({
     approvals: input.approvals,
     externalActionDetails: input.externalActionDetails,
-    inlineApprovalIds: input.repairRunId ? undefined : input.inlineApprovalIds,
+    inlineApprovalIds: input.repairRunId ? undefined : input.requestedApprovalId && input.inlineApprovalIds
+      ? new Set([...input.inlineApprovalIds].filter(id => id !== input.requestedApprovalId))
+      : input.inlineApprovalIds,
     runsById,
-  }), [input.approvals, input.externalActionDetails, input.inlineApprovalIds, input.repairRunId, runsById]);
+  }), [input.approvals, input.externalActionDetails, input.inlineApprovalIds, input.repairRunId, input.requestedApprovalId, runsById]);
   const scopedRows = useMemo(
     () => input.repairRunId ? allRows.filter((row) => row.approval.runId === input.repairRunId) : allRows,
     [allRows, input.repairRunId],
   );
-  const visibleRows = useMemo(
+  const filteredRows = useMemo(
     () => input.repairRunId ? scopedRows : filterApprovalQueueRows({ rows: scopedRows, mode, category, risk, search }),
     [category, input.repairRunId, mode, risk, scopedRows, search],
   );
-  const selectedRow = visibleRows.find((row) => row.id === input.selectedApprovalId) ?? visibleRows[0];
+  const requestedRow = scopedRows.find(row => row.id === input.requestedApprovalId);
+  const visibleRows = requestedRow && !filteredRows.includes(requestedRow) ? [requestedRow, ...filteredRows] : filteredRows;
+  const selectedRow = input.requestedApprovalId ? requestedRow : visibleRows.find((row) => row.id === input.selectedApprovalId) ?? visibleRows[0];
 
   useEffect(() => {
-    if (selectedRow && selectedRow.id !== input.selectedApprovalId) input.onSelectApproval(selectedRow.id);
+    if (!input.requestedApprovalId && selectedRow && selectedRow.id !== input.selectedApprovalId) input.onSelectApproval(selectedRow.id);
   }, [input, selectedRow]);
 
   useEffect(() => {

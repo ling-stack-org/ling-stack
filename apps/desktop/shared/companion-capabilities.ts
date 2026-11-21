@@ -27,6 +27,10 @@ export interface CompanionNavigationRequest {
   readonly sourceId?: string;
   readonly approvalId?: string;
   readonly runId?: string;
+  readonly reportId?: string;
+  readonly workflowStepId?: string;
+  readonly handoffId?: string;
+  readonly workUnitId?: string;
 }
 
 export interface DesktopCompanionWindowCapabilities {

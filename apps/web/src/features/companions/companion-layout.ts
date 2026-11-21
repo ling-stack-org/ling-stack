@@ -58,6 +58,11 @@ export function sourceNavigationRequest(source: CompanionAttentionSource): Compa
     sourceId: source.id,
     ...(source.approvalId ? { approvalId: source.approvalId } : {}),
     ...(source.runId ? { runId: source.runId } : {}),
+    ...(source.reportId ? { reportId: source.reportId } : {}),
+    ...(source.workflowStepId ? { workflowStepId: source.workflowStepId } : {}),
+    ...(source.kind === "handoff" ? { handoffId: source.id } : {}),
+    ...((source.kind === "blocker" || source.kind === "progress") && !source.workflowStepId
+      ? { workUnitId: source.id } : {}),
   };
 }
 

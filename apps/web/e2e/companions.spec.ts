@@ -1,16 +1,17 @@
 import { createServer, type ServerResponse } from "node:http";
 import { test, expect, type Page } from "@playwright/test";
 import { defaultCompanionManifest } from "@ling-stack/core";
-import type { AiTeammate, CompanionProfile, CompanionState, TeammateDirectMessage } from "@ling-stack/contracts";
-import { mockDaemon } from "./support/mock-daemon";
-import { createBaseState, createMockTeammate } from "./support/mock-state";
+import type { AiTeammate, CompanionAttentionItem, CompanionProfile, CompanionState, TeammateDirectMessage } from "@ling-stack/contracts";
+import { createChannelBranchFromBody, mockDaemon } from "./support/mock-daemon";
+import { createBaseState, createMockTeammate, cwd, type MockState } from "./support/mock-state";
+import { attachCommittedChannelReportItem, completedTerminalReport, installChannelWorkCellFixture } from "./support/conversation-work-cell-fixture";
 
 test.setTimeout(60_000);
 
 async function fixture(page: Page, mode: "normal" | "interrupted" | "pending" | "same-session-race" | "terminal-error" = "normal", historyCount = 0,
-  options: { empty?: boolean; cooldownMs?: number; secondCompanion?: boolean; locale?: string } = {}) {
+  options: { empty?: boolean; cooldownMs?: number; secondCompanion?: boolean; locale?: string; base?: MockState } = {}) {
   page.on("pageerror", error => console.error("Companion page error:", error.message));
-  const base = createBaseState({ approvalStatus: "pending" });
+  const base = options.base ?? createBaseState({ approvalStatus: "pending" });
   const teammate = createMockTeammate({ id: "teammate_companion" }) as unknown as AiTeammate; base.aiTeammates = [teammate];
   await mockDaemon(page, base);
   await page.addInitScript(locale => localStorage.setItem("ling-stack.locale", locale), options.locale ?? "en-US");
@@ -149,6 +150,141 @@ async function openPanel(page: Page) {
   await panel.locator(".companion-talk-button").evaluate((element) => (element as HTMLButtonElement).click());
   return panel;
 }
+
+async function mockAttentionCard(page: Page, card: Pick<CompanionAttentionItem, "source" | "priority" | "status" | "payload" | "summary">) {
+  const now = new Date().toISOString();
+  const item: CompanionAttentionItem = {
+    ...card,
+    schemaVersion: 1,
+    id: `${card.source.kind}:${card.source.id}`,
+    actor: { kind: "system", label: "Ling" },
+    title: card.summary,
+    revision: 1,
+    createdAt: now,
+    updatedAt: now,
+    action: { kind: "open_source", enabled: true, source: card.source },
+  };
+  await page.route("http://127.0.0.1:17891/companion-attention*", route => route.fulfill({
+    json: { schemaVersion: 1, cwd, generatedAt: now, items: [item] },
+  }));
+}
+
+async function openAttentionSource(page: Page): Promise<void> {
+  await page.goto("/");
+  await page.locator(".companion-config-button").click();
+  const panel = page.getByRole("dialog", { name: "Intelligent companion" });
+  await panel.getByRole("button", { name: "Open source" }).click({ timeout: 5000 });
+}
+
+test("opens the selected approval even when the request belongs to a channel and run", async ({ page }) => {
+  const base = createBaseState({ approvalStatus: "pending" });
+  const existing = base.approvals[0]!;
+  const approval = { ...existing, id: "approval_release", title: "Review release permission" };
+  const f = await fixture(page, "normal", 0, { base });
+  try {
+    const isApprovalDetail = (url: URL) => url.pathname === `/approvals/${approval.id}`;
+    await page.route(isApprovalDetail, route => route.fulfill({ json: { approval } }));
+    await mockAttentionCard(page, {
+      source: {
+        workspaceId: "workspace_default", cwd, kind: "approval", id: approval.id,
+        channelId: "channel_engineering", approvalId: approval.id, runId: approval.runId,
+      },
+      priority: "approval",
+      status: "pending",
+      payload: { kind: "approval", approvalId: approval.id, status: "pending", risk: "medium" },
+      summary: approval.title,
+    });
+    await Promise.all([
+      page.waitForResponse(response => isApprovalDetail(new URL(response.url())) && response.ok(), { timeout: 15000 }),
+      openAttentionSource(page),
+    ]);
+    await expect(page.getByRole("complementary", { name: "Review item detail" })).toHaveAttribute("data-approval-detail-id", approval.id);
+  } finally { await f.close(); }
+});
+
+test("opens and locates a result in its own channel conversation", async ({ page }) => {
+  const base = createBaseState({ approvalStatus: "expired" });
+  const channelId = "channel_engineering";
+  const { threadId, runId } = installChannelWorkCellFixture(base, "companion-result");
+  const thread = base.threads.find((entry) => entry.id === threadId)!;
+  thread.surfaceKind = "channel_session";
+  base.threads.unshift({ ...thread, id: `thread_channel_${channelId}`, title: "Default conversation", surfaceKind: "channel_root" });
+  base.channelBranches.push(createChannelBranchFromBody({ name: thread.title, rootThreadId: threadId }, "branch_companion_result", channelId));
+  const turnId = base.turnRunLinks.find((entry) => entry.runId === runId)!.turnId;
+  const report = { ...completedTerminalReport({ id: "report_companion_result", runId, threadId, turnId, title: "Release check complete" }), channelId };
+  base.terminalReports = [report];
+  attachCommittedChannelReportItem(base, report);
+  const f = await fixture(page, "normal", 0, { base });
+  try {
+    await mockAttentionCard(page, {
+      source: {
+        workspaceId: "workspace_default", cwd, kind: "terminal_report", id: report.id,
+        channelId, threadId, reportId: report.id, sourceItemId: report.resultItemId,
+      },
+      priority: "result",
+      status: "resolved",
+      payload: { kind: "terminal_report", reportId: report.id, outcomeStatus: "succeeded" },
+      summary: report.outcome.title,
+    });
+    await openAttentionSource(page);
+    const timeline = page.locator(`[data-conversation-timeline][data-conversation-thread-id="${threadId}"]`);
+    const reportRow = timeline.locator('.conversation-timeline-locate-pulse').filter({ has: page.locator(`[data-conversation-timeline-item-id="terminal-report:${report.id}"]`) });
+    await expect(reportRow).toBeVisible();
+  } finally { await f.close(); }
+});
+
+test("opens a specific handoff in the channel inspector", async ({ page }) => {
+  const base = createBaseState({ approvalStatus: "expired" });
+  const channelId = "channel_engineering";
+  const handoff = {
+    id: "handoff_release", workspaceId: "workspace_default", channelId, createdBy: "local-user",
+    fromParticipantId: "teammate_companion", fromParticipantLabel: "QA",
+    toParticipantId: "engineer", toParticipantLabel: "Engineer",
+    reason: "Release verification is ready", requiredInput: "", expectedOutput: "Publish results",
+    status: "accepted", createdAt: "2026-11-20T10:00:00Z", updatedAt: "2026-11-20T10:00:00Z",
+  };
+  base.channelHandoffs = [{ ...handoff, id: "handoff_other", reason: "Review another task" }, handoff];
+  const f = await fixture(page, "normal", 0, { base });
+  try {
+    await mockAttentionCard(page, {
+      source: { workspaceId: "workspace_default", cwd, kind: "handoff", id: handoff.id, channelId },
+      priority: "handoff",
+      status: "active",
+      payload: { kind: "handoff", handoffId: handoff.id, fromParticipant: "QA", toParticipant: "Engineer" },
+      summary: handoff.expectedOutput,
+    });
+    await openAttentionSource(page);
+    const inspector = page.getByRole("region", { name: "Channel inspector" });
+    await expect(inspector.locator(".conversation-timeline-locate-pulse")).toContainText(handoff.reason);
+  } finally { await f.close(); }
+});
+
+test("locates a blocked workflow step before it has a run", async ({ page }) => {
+  const base = createBaseState({ approvalStatus: "expired" });
+  const channelId = "channel_engineering";
+  const timestamp = "2026-11-20T10:00:00Z";
+  const scope = { workspaceId: "workspace_default", channelId, createdAt: timestamp, updatedAt: timestamp };
+  const workflow = { ...scope, id: "workflow_release", title: "Release review", objective: "Verify the release", status: "running", createdBy: "local-user" };
+  const step = {
+    ...scope, id: "step_release", workflowId: workflow.id, title: "Verify the bundle", prompt: "Check the bundle contents",
+    toParticipantId: "teammate_companion", toParticipantLabel: "QA", position: 2, status: "blocked", blocker: "Bundle is missing",
+  };
+  base.channelWorkflows = [workflow];
+  base.channelWorkflowSteps = [{ ...step, id: "step_other", title: "Inspect the manifest", position: 1 }, step];
+  const f = await fixture(page, "normal", 0, { base });
+  try {
+    await mockAttentionCard(page, {
+      source: { workspaceId: scope.workspaceId, cwd, kind: "blocker", id: step.id, channelId, workflowStepId: step.id },
+      priority: "blocker",
+      status: "pending",
+      payload: { kind: "blocker", nextAction: "Open the blocked step" },
+      summary: step.blocker,
+    });
+    await openAttentionSource(page);
+    const inspector = page.getByRole("region", { name: "Channel inspector" });
+    await expect(inspector.locator(".conversation-timeline-locate-pulse")).toContainText(step.title);
+  } finally { await f.close(); }
+});
 
 test("streams reply text before completion and uses one durable submission key", async ({ page }) => {
   const f = await fixture(page);

@@ -333,13 +333,15 @@ html[data-companion-window="true"] #root {
   grid-row: 1 / span 2;
   min-height: 360px;
 }
-.companion-overlay > .companion-attention-card-slot { grid-column: 2; grid-row: 1; }
 .companion-overlay > .companion-attention-card-slot,
 .companion-overlay > .companion-pet-stage-slot { min-width: 0; }
 .companion-overlay > .companion-pet-stage-slot { pointer-events: none; }
 .companion-overlay > .companion-pet-stage-slot { height: 100%; }
 .companion-overlay > .companion-attention-card-slot {
   position: absolute;
+  top: 44px;
+  left: max(12px, calc(100% - 372px));
+  width: min(360px, calc(100% - 24px));
   z-index: 2;
   min-width: 0;
 }
@@ -559,9 +561,7 @@ html[data-companion-window="true"] #root {
   .companion-overlay > .companion-mini-conversation.is-open { grid-row: 3; }
   .companion-overlay > .companion-attention-card-slot {
     position: static;
-    width: auto !important;
-    height: auto !important;
-    transform: none;
+    width: auto;
   }
 }
 .companion-settings-page {

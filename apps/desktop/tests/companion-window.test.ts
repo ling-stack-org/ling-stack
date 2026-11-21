@@ -155,6 +155,21 @@ test("desktop companion returns geometry and accepts bounded transparent layout"
       approvalId: "approval-1",
       runId: "run-1",
     }]);
+
+    const reportSource = {
+      workspace: "/workspace",
+      kind: "source",
+      sourceId: "report-1",
+      reportId: "report-1",
+      channelId: "channel-1",
+      threadId: "thread-1",
+      sourceItemId: "result_terminal_report:report-1",
+    };
+    assert.deepEqual(await f.call(channels.companionWindowNavigate, companion.event(), reportSource), { accepted: true });
+    assert.deepEqual(f.main.sent.at(-1), [channels.companionNavigationRequested, reportSource]);
+    assert.deepEqual(await f.call(channels.companionWindowNavigate, companion.event(), {
+      ...reportSource, workflowStepId: ["invalid"],
+    }), { accepted: false, reason: "invalid_companion_navigation" });
   } finally {
     f.dispose();
   }

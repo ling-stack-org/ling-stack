@@ -59,3 +59,19 @@ test("source navigation forwards the owning approval and run without channel con
     runId: "run-1",
   });
 });
+
+test("source navigation retains a workflow step and distinguishes standalone work units", () => {
+  const source = {
+    workspaceId: "workspace_default",
+    cwd: "/workspace",
+    kind: "blocker",
+    id: "work-1",
+    channelId: "channel-1",
+  } as const;
+  assert.deepEqual(sourceNavigationRequest({ ...source, workflowStepId: "step-1" }), {
+    workspace: "/workspace", kind: "source", channelId: "channel-1", sourceId: "work-1", workflowStepId: "step-1",
+  });
+  assert.deepEqual(sourceNavigationRequest(source), {
+    workspace: "/workspace", kind: "source", channelId: "channel-1", sourceId: "work-1", workUnitId: "work-1",
+  });
+});

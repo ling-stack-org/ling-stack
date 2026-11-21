@@ -252,6 +252,7 @@ function parseCompanionNavigationRequest(value: unknown, workspace: string | und
   const strings = [
     candidate.workspace, candidate.conversationId, candidate.channelId, candidate.threadId,
     candidate.sourceItemId, candidate.sourceId, candidate.approvalId, candidate.runId,
+    candidate.reportId, candidate.workflowStepId, candidate.handoffId, candidate.workUnitId,
   ];
   if (strings.some((item) => item !== undefined && (typeof item !== "string" || item.length === 0 || item.length > 512 || /[\u0000-\u001f\u007f]/u.test(item)))) return undefined;
   if (candidate.kind === "conversation" && typeof candidate.conversationId !== "string") return undefined;
@@ -266,6 +267,10 @@ function parseCompanionNavigationRequest(value: unknown, workspace: string | und
     ...(candidate.sourceId ? { sourceId: candidate.sourceId } : {}),
     ...(candidate.approvalId ? { approvalId: candidate.approvalId } : {}),
     ...(candidate.runId ? { runId: candidate.runId } : {}),
+    ...(candidate.reportId ? { reportId: candidate.reportId } : {}),
+    ...(candidate.workflowStepId ? { workflowStepId: candidate.workflowStepId } : {}),
+    ...(candidate.handoffId ? { handoffId: candidate.handoffId } : {}),
+    ...(candidate.workUnitId ? { workUnitId: candidate.workUnitId } : {}),
   };
 }
 

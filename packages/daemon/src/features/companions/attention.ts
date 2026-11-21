@@ -186,6 +186,7 @@ export function buildCompanionAttentionProjection(input: {
       workspaceId,
       threadId: report.threadId,
       turnId: report.turnId,
+      sourceItemId: record.resultItemId,
       reportId: report.id,
       revision: record.generation,
     });

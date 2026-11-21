@@ -608,7 +608,6 @@ export function CompanionMiniPanel({
           style={cardPlacement ? {
             left: `${cardPlacement.rect.left}px`,
             top: `${cardPlacement.rect.top}px`,
-            width: `${cardPlacement.rect.width}px`,
           } : undefined}
         >
           <CompanionAttentionCard
