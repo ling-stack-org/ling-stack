@@ -28,6 +28,7 @@ test("mixed, incomplete and secret-bearing execution bindings are rejected witho
     { ...native, nativeModelId: "bad\nvalue" }, { ...native, nativeModelId: "x".repeat(513) },
     { ...native, nativeModelId: null }, { ...native, apiKey: "secret-fixture" }, { ...native, executablePath: "/forged" }]) {
     assert.throws(() => contracts.parseExecutionBindingRequest(input), (error) => {
+      assert.ok(error instanceof contracts.ExecutionBindingError);
       assert.equal(error.code, "execution_binding_invalid");
       assert.equal(error.message, "execution_binding_invalid");
       return true;

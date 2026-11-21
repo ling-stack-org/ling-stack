@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { parseChannelWorkflowStepStartResponse } from "../dist/index.js";
+import { parseChannelWorkflowStepStartResponse, type ChannelWorkflowStepStartResponseContext } from "../dist/index.js";
 
 const trustedStep = {
   id: "step-1",
@@ -52,7 +52,7 @@ const waitingResponse = {
   workflowStep: { ...trustedStep, status: "waiting_for_approval" },
   approval,
 };
-const waitingExpected = {
+const waitingExpected: ChannelWorkflowStepStartResponseContext = {
   mode: "create_and_run_task",
   workflowId: trustedStep.workflowId,
   channelId: trustedStep.channelId,
@@ -68,7 +68,10 @@ const waitingExpected = {
 test("workflow-step admission accepts only the caller's frozen step and execution permit", () => {
   assert.deepEqual(parseChannelWorkflowStepStartResponse(waitingResponse, waitingExpected), waitingResponse);
 
-  const cases = [
+  type ResponseFixture = typeof waitingResponse & {
+    approval: { runId?: string; taskId?: string; payload: { runId?: string } };
+  };
+  const cases: [string, (value: ResponseFixture) => void][] = [
     ["response mode", (value) => { value.mode = "create_task"; }],
     ["workflow id", (value) => { value.workflow.id = "foreign-workflow"; }],
     ["workflow channel", (value) => { value.workflow.channelId = "foreign-channel"; }],
@@ -97,11 +100,11 @@ test("workflow-step admission accepts only the caller's frozen step and executio
 test("workflow-step admission rejects provider or runner injection when the trusted request omitted them", () => {
   const expected = { ...waitingExpected, providerPresetId: undefined, runnerId: undefined };
   const withoutRuntimeSelection = structuredClone(waitingResponse);
-  delete withoutRuntimeSelection.approval.payload.preGateBasis.executionPermit.providerPresetId;
-  delete withoutRuntimeSelection.approval.payload.preGateBasis.executionPermit.runnerId;
+  delete (withoutRuntimeSelection.approval.payload.preGateBasis.executionPermit as Partial<typeof executionPermit>).providerPresetId;
+  delete (withoutRuntimeSelection.approval.payload.preGateBasis.executionPermit as Partial<typeof executionPermit>).runnerId;
   assert.deepEqual(parseChannelWorkflowStepStartResponse(withoutRuntimeSelection, expected), withoutRuntimeSelection);
 
-  for (const field of ["providerPresetId", "runnerId"]) {
+  for (const field of ["providerPresetId", "runnerId"] as const) {
     const injected = structuredClone(withoutRuntimeSelection);
     injected.approval.payload.preGateBasis.executionPermit[field] = `foreign-${field}`;
     assert.equal(parseChannelWorkflowStepStartResponse(injected, expected), undefined, field);
@@ -109,7 +112,7 @@ test("workflow-step admission rejects provider or runner injection when the trus
 });
 
 test("create-task success requires one task, no run, and exact task semantics", () => {
-  const expected = { ...waitingExpected, mode: "create_task", providerPresetId: undefined, runnerId: undefined };
+  const expected = { ...waitingExpected, mode: "create_task" as const, providerPresetId: undefined, runnerId: undefined };
   const response = {
     status: "started",
     mode: "create_task",
@@ -125,13 +128,18 @@ test("create-task success requires one task, no run, and exact task semantics", 
   };
   assert.deepEqual(parseChannelWorkflowStepStartResponse(response, expected), response);
 
-  const cases = [
+  type ResponseFixture = Omit<typeof response, "task"> & {
+    task?: typeof response.task;
+    run?: { id: string };
+    workflowStep: typeof response.workflowStep & { runId?: string };
+  };
+  const cases: [string, (value: ResponseFixture) => void][] = [
     ["missing task", (value) => { delete value.task; }],
     ["top-level run", (value) => { value.run = { id: "run-1" }; }],
     ["step run", (value) => { value.workflowStep.runId = "run-1"; }],
-    ["task title", (value) => { value.task.title = "Foreign title"; }],
-    ["task prompt", (value) => { value.task.prompt = "Foreign prompt"; }],
-    ["task participant", (value) => { value.task.assigneeTeammateId = "foreign-participant"; }],
+    ["task title", (value) => { value.task!.title = "Foreign title"; }],
+    ["task prompt", (value) => { value.task!.prompt = "Foreign prompt"; }],
+    ["task participant", (value) => { value.task!.assigneeTeammateId = "foreign-participant"; }],
   ];
   for (const [label, mutate] of cases) {
     const changed = structuredClone(response);
