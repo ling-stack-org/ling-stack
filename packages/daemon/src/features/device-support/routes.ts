@@ -20,12 +20,17 @@ export async function handleDeviceSupportRoute(
   if (url.pathname.startsWith("/v1/device-support/resources")) return await handleDeviceResourceRoute(url, request, response, runtime);
   if (url.pathname.startsWith("/v1/device-support/protocol/")) return await handleDeviceProtocolRoute(url, request, response, runtime);
   const taskPath = /^\/v1\/device-support\/tasks\/([^/]+)\/(events|trace)$/u.exec(url.pathname);
+  const dispatchStop = /^\/v1\/device-support\/devices\/([^/]+)\/dispatch-stop$/u.exec(url.pathname)?.[1];
   const linuxAction = /^\/v1\/device-support\/linux\/(targets|enroll|diagnose)$/u.exec(url.pathname)?.[1];
   const fleetHealth = url.pathname === "/v1/device-support/fleet/health";
-  if (url.pathname !== "/v1/device-support/pc/diagnose" && !taskPath && !linuxAction && !fleetHealth) return false;
+  if (url.pathname !== "/v1/device-support/pc/diagnose" && !taskPath && !dispatchStop && !linuxAction && !fleetHealth) return false;
   if (!allowLocalServiceRequest(request, response)) return true;
   if (taskPath) {
     writeTaskProjection(url, taskPath[1]!, taskPath[2] === "trace", request, response, runtime);
+    return true;
+  }
+  if (dispatchStop) {
+    await handleDispatchStop(dispatchStop, request, response, runtime);
     return true;
   }
   if (linuxAction) {
@@ -63,6 +68,40 @@ export async function handleDeviceSupportRoute(
     writeDeviceOperationError(response, error);
   }
   return true;
+}
+
+async function handleDispatchStop(
+  encodedDeviceId: string, request: IncomingMessage, response: ServerResponse, runtime: DeviceSupportRuntime,
+): Promise<void> {
+  if (request.method !== "GET" && request.method !== "PUT") {
+    response.setHeader("Allow", "GET, PUT");
+    writePrivateJson(response, 405, { error: "method_not_allowed" });
+    return;
+  }
+  try {
+    const deviceId = decodeURIComponent(encodedDeviceId);
+    if (!validBoundedText(deviceId, 512) || deviceId.trim() !== deviceId) {
+      throw new DeviceBrokerError("invalid_request", "invalid device reference");
+    }
+    if (request.method === "GET") {
+      if (runtime.store.getDevice(deviceId)?.device.ownerScope !== DEFAULT_WORKSPACE_ID) {
+        throw new DeviceBrokerError("missing_target", "device is unavailable in this workspace");
+      }
+      writePrivateJson(response, 200, runtime.store.getDispatchStop(deviceId));
+      return;
+    }
+    const body = await readJsonBody(request, 1024).catch(() => undefined);
+    if (!isRecord(body) || Object.keys(body).length !== 2 || typeof body.active !== "boolean"
+      || typeof body.expectedRevision !== "number" || !Number.isSafeInteger(body.expectedRevision) || body.expectedRevision < 0) {
+      throw new DeviceBrokerError("invalid_request", "invalid device dispatch stop");
+    }
+    writePrivateJson(response, 200, runtime.broker.setDispatchStop({
+      deviceId, workspaceId: DEFAULT_WORKSPACE_ID, active: body.active, expectedRevision: body.expectedRevision,
+    }));
+  } catch (error) {
+    if (error instanceof URIError) writePrivateJson(response, 400, { error: "invalid_request" });
+    else writeDeviceOperationError(response, error);
+  }
 }
 
 async function handleLinuxSshRequest(

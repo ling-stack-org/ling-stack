@@ -1,5 +1,6 @@
 import {
   DEVICE_KINDS_V1,
+  type CapabilitySideEffectV1,
   type DeviceKindV1,
   type DeviceLifecycleStatusV1,
   type DeviceTaskStatusV1,
@@ -216,8 +217,9 @@ export type DeviceSafetyControllerKindV1 = "adapter" | "vendor_workflow" | "cert
 export interface DeviceSafetyActionPolicyV1 {
   readonly policyRevision: string;
   readonly capabilityId: string;
-  readonly sideEffect: "read_only" | "reversible" | "mutating" | "irreversible" | "critical";
+  readonly sideEffect: CapabilitySideEffectV1;
   readonly requiredPhysicalState: DeviceSafetyContextV1["physicalState"];
+  readonly maxObservationAgeMs?: number;
   readonly requiredSecretRefs: readonly string[];
   readonly controller: DeviceSafetyControllerKindV1;
   readonly operatorHandoffRequired: boolean;
@@ -229,7 +231,7 @@ export interface DeviceSafetyDecisionV1 {
   readonly targetDeviceId: string;
   readonly capabilityId: string;
   readonly policyRevision: string;
-  readonly status: "authorized" | "denied";
+  readonly status: "authorized" | "handoff_ready" | "denied";
   readonly reason?: string;
   readonly evaluatedAt: string;
 }

@@ -486,28 +486,18 @@ export class DeviceResourceRegistry {
 
 export class DeviceSafetyBroker {
   authorize(context: DeviceSafetyContextV1, requiredPhysicalState: DeviceSafetyContextV1["physicalState"], secretRefs: readonly string[]): void {
-    const decision = this.evaluate({
-      decisionId: `safety:${context.targetDeviceId}:${context.observedAt}`,
-      context,
-      policy: {
-        policyRevision: context.policyRevision,
-        capabilityId: "legacy",
-        sideEffect: "mutating",
-        requiredPhysicalState,
-        requiredSecretRefs: secretRefs,
-        controller: "adapter",
-        operatorHandoffRequired: false,
-        cancellationSupported: true,
-      },
-      controllerReady: true,
-      operatorHandoffConfirmed: true,
-      cancellationRequested: false,
-    });
-    if (decision.status === "denied") throw new DeviceFabricError("safety_denied", decision.reason ?? "device safety policy denied the action");
+    if (context.emergencyStop) throw new DeviceFabricError("safety_denied", "emergency stop is active");
+    if (requiredPhysicalState !== "unknown" && context.physicalState !== requiredPhysicalState) {
+      throw new DeviceFabricError("safety_denied", "physical precondition is not satisfied");
+    }
+    if (secretRefs.some(secretRef => !context.requiredSecretRefs.includes(secretRef))) {
+      throw new DeviceFabricError("safety_denied", "required secret reference is not authorized");
+    }
   }
 
   evaluate(input: {
     readonly decisionId: string;
+    readonly targetDeviceId: string;
     readonly context: DeviceSafetyContextV1;
     readonly policy: DeviceSafetyActionPolicyV1;
     readonly controllerReady: boolean;
@@ -516,22 +506,27 @@ export class DeviceSafetyBroker {
     readonly evaluatedAt?: string;
   }): DeviceSafetyDecisionV1 {
     const evaluatedAt = input.evaluatedAt ?? new Date().toISOString();
+    const age = Date.parse(evaluatedAt) - Date.parse(input.context.observedAt);
+    const maxAge = input.policy.maxObservationAgeMs ?? 30_000;
+    const vendorHandoff = input.policy.controller === "vendor_workflow";
     let reason: string | undefined;
     if (!input.decisionId.trim() || !input.policy.policyRevision.trim() || !input.policy.capabilityId.trim()) reason = "invalid_safety_identity";
-    else if (input.context.targetDeviceId.trim() === "") reason = "missing_target";
+    else if (!input.targetDeviceId.trim() || input.targetDeviceId !== input.context.targetDeviceId) reason = "physical_target_mismatch";
+    else if (input.context.policyRevision !== input.policy.policyRevision) reason = "policy_revision_changed";
+    else if (!Number.isSafeInteger(maxAge) || maxAge < 1 || !(age >= 0 && age <= maxAge)) reason = "safety_observation_stale";
     else if (input.context.emergencyStop) reason = "emergency_stop_active";
     else if (input.policy.requiredPhysicalState !== "unknown" && input.context.physicalState !== input.policy.requiredPhysicalState) reason = "physical_precondition_unsatisfied";
     else if (input.policy.requiredSecretRefs.some(secretRef => !input.context.requiredSecretRefs.includes(secretRef))) reason = "secret_reference_unauthorized";
     else if (!input.controllerReady) reason = "safety_controller_unavailable";
-    else if (input.policy.sideEffect === "critical" && input.policy.controller !== "certified_controller") reason = "critical_action_requires_certified_controller";
-    else if (input.policy.operatorHandoffRequired && !input.operatorHandoffConfirmed) reason = "operator_handoff_required";
+    else if (input.policy.sideEffect === "critical" && input.policy.controller === "adapter") reason = "critical_action_requires_controller_or_handoff";
+    else if ((vendorHandoff || input.policy.operatorHandoffRequired) && !input.operatorHandoffConfirmed) reason = "operator_handoff_required";
     else if (input.cancellationRequested && !input.policy.cancellationSupported) reason = "cancellation_unsupported";
     return {
       decisionId: input.decisionId,
-      targetDeviceId: input.context.targetDeviceId,
+      targetDeviceId: input.targetDeviceId,
       capabilityId: input.policy.capabilityId,
       policyRevision: input.policy.policyRevision,
-      status: reason ? "denied" : "authorized",
+      status: reason ? "denied" : vendorHandoff ? "handoff_ready" : "authorized",
       ...(reason ? { reason } : {}),
       evaluatedAt,
     };

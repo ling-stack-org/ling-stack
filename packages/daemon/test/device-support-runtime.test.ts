@@ -336,6 +336,20 @@ test("the local daemon exposes its PC report and sequenced task journal only on 
   assert.ok(adapterSpans.every(span => span.status === "ok" && span.parentSpanId === graph.spanId
     && span.lineage?.graphId === report.taskId && span.lineage.nodeId && span.lineage.connectionRevision));
 
+  const deviceId = adapterSpans[0]?.lineage?.deviceId;
+  assert.ok(deviceId);
+  const stopUrl = `http://127.0.0.1:${address.port}/v1/device-support/devices/${encodeURIComponent(deviceId)}/dispatch-stop`;
+  const setStop = (active: boolean, expectedRevision: number, extraHeaders: Record<string, string> = {}) => fetch(stopUrl, {
+    method: "PUT", headers: { ...headers, ...extraHeaders, "Content-Type": "application/json" },
+    body: JSON.stringify({ active, expectedRevision }),
+  });
+  assert.equal((await fetch(stopUrl)).status, 401);
+  assert.equal((await setStop(true, 0, { Origin: "https://example.invalid" })).status, 403);
+  assert.equal((await setStop(true, 0)).status, 200);
+  assert.equal((await (await fetch(stopUrl, { headers })).json()).active, true);
+  assert.equal((await setStop(false, 0)).status, 409);
+  assert.equal((await setStop(false, 1)).status, 200);
+
   const journal = new SqliteDeviceSupportStore({ databasePath: workspace.paths.databasePath });
   try {
     const tasks = journal.listRecentDaemonTasks(DEFAULT_WORKSPACE_ID, 10);

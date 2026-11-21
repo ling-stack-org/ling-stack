@@ -7,6 +7,7 @@ import {
   type DeviceActionRequestV1,
   type DeviceActionResultV1,
   type DeviceCapabilitySnapshotV1,
+  type DeviceDispatchStopV1,
   type DeviceObservationV1,
   type DevicePlannerAcceptanceV1,
   type DeviceProfileV1,
@@ -379,20 +380,62 @@ export class SqliteDeviceSupportStore {
       .run(targetDeviceId, taskId, attemptId ?? null);
   }
 
-  stopDaemonTask(taskId: string, now: string): DeviceTaskV1 {
-    return this.withWriteTransaction(() => {
-      const task = this.requireTask(taskId);
-      if (task.ownerKind !== "daemon") throw new Error("Device task belongs to another runtime");
-      if (["succeeded", "failed", "cancelled", "unknown"].includes(task.status)) return task;
+  getDispatchStop(deviceId: string): DeviceDispatchStopV1 {
+    const row = this.database.prepare("SELECT active,revision,changed_at FROM device_dispatch_stops WHERE device_id=?")
+      .get(deviceId) as Row | undefined;
+    return row ? { deviceId, active: row.active === 1, revision: Number(row.revision), changedAt: readString(row, "changed_at") }
+      : { deviceId, active: false, revision: 0 };
+  }
 
-      const leased = this.getLeasedAttempt(taskId);
-      const attempt = leased?.attempt ?? this.getActiveAttempt(taskId)?.attempt;
-      const intentRecorded = attempt?.status === "prepared" || attempt?.status === "dispatched";
-      const status = leased || intentRecorded || attempt?.status === "unknown" || task.status === "verifying" ? "unknown" : "cancelled";
-      if (intentRecorded) this.updateAttempt(attempt.attemptId, { status: "unknown" }, now);
-      this.appendEvent(taskId, "task_stop_requested", { attemptId: attempt?.attemptId, status });
-      return this.writeTaskTransition(task, status, {}, now);
+  setDispatchStop(input: {
+    readonly deviceId: string;
+    readonly workspaceId: string;
+    readonly active: boolean;
+    readonly expectedRevision: number;
+    readonly now: string;
+  }): { readonly stop: DeviceDispatchStopV1; readonly stoppingTaskId?: string } {
+    return this.withWriteTransaction(() => {
+      if (this.getDevice(input.deviceId)?.device.ownerScope !== input.workspaceId) {
+        throw new DeviceBrokerError("missing_target", "device is unavailable in this workspace");
+      }
+      const current = this.getDispatchStop(input.deviceId);
+      if (current.revision !== input.expectedRevision) throw new DeviceBrokerError("target_changed", "device dispatch stop revision changed");
+      if (typeof input.active !== "boolean" || !Number.isFinite(Date.parse(input.now))) {
+        throw new DeviceBrokerError("invalid_request", "device dispatch stop is invalid");
+      }
+      const stop = current.active === input.active ? current : {
+        deviceId: input.deviceId, active: input.active, revision: current.revision + 1, changedAt: input.now,
+      };
+      if (stop !== current) {
+        this.database.prepare(`
+          INSERT INTO device_dispatch_stops(device_id,active,revision,changed_at) VALUES(?,?,?,?)
+          ON CONFLICT(device_id) DO UPDATE SET active=excluded.active,revision=excluded.revision,changed_at=excluded.changed_at
+        `).run(stop.deviceId, stop.active ? 1 : 0, stop.revision, input.now);
+      }
+      if (!stop.active) return { stop };
+      const row = this.database.prepare("SELECT task_id FROM device_target_leases WHERE target_device_id=? AND attempt_id IS NOT NULL")
+        .get(stop.deviceId) as Row | undefined;
+      const task = row ? this.getTask(readString(row, "task_id")) : undefined;
+      if (task?.ownerKind !== "daemon") return { stop };
+      this.stopDaemonTaskInTransaction(task, input.now);
+      return { stop, stoppingTaskId: task.id };
     });
+  }
+
+  stopDaemonTask(taskId: string, now: string): DeviceTaskV1 {
+    return this.withWriteTransaction(() => this.stopDaemonTaskInTransaction(this.requireTask(taskId), now));
+  }
+
+  private stopDaemonTaskInTransaction(task: DeviceTaskV1, now: string): DeviceTaskV1 {
+    if (task.ownerKind !== "daemon") throw new Error("Device task belongs to another runtime");
+    if (["succeeded", "failed", "cancelled", "unknown"].includes(task.status)) return task;
+    const leased = this.getLeasedAttempt(task.id);
+    const attempt = leased?.attempt ?? this.getActiveAttempt(task.id)?.attempt;
+    const intentRecorded = attempt?.status === "prepared" || attempt?.status === "dispatched";
+    const status = leased || intentRecorded || attempt?.status === "unknown" || task.status === "verifying" ? "unknown" : "cancelled";
+    if (intentRecorded) this.updateAttempt(attempt.attemptId, { status: "unknown" }, now);
+    this.appendEvent(task.id, "task_stop_requested", { attemptId: attempt?.attemptId, status });
+    return this.writeTaskTransition(task, status, {}, now);
   }
 
   recordReconciliation(record: DeviceTaskReconciliationV1): void {
@@ -568,6 +611,12 @@ export class SqliteDeviceSupportStore {
         expires_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         attempt_id TEXT
+      );
+      CREATE TABLE IF NOT EXISTS device_dispatch_stops (
+        device_id TEXT PRIMARY KEY NOT NULL REFERENCES device_registry(device_id),
+        active INTEGER NOT NULL CHECK(active IN (0, 1)),
+        revision INTEGER NOT NULL,
+        changed_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_device_task_attempts_task ON device_task_attempts(task_id,created_at);
       CREATE INDEX IF NOT EXISTS idx_device_task_events_task ON device_task_events(task_id,sequence);

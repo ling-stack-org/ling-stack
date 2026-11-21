@@ -380,6 +380,14 @@ A changed or unavailable condition prevents additional writes for that step. A S
 request follows the owning adapter's cancel semantics and verifies the effect where
 the target exposes one.
 
+The local Daemon exposes `GET /v1/device-support/devices/:deviceId/dispatch-stop`
+for the current stop state. The operator activates or clears it with `PUT` and
+the fields `active` and `expectedRevision`. Activation journals a stop for the
+currently leased task and requests cancellation from its adapter. New writes are
+blocked while diagnostics can run once the active lease drains. A device-side
+result remains unknown until readback establishes what happened.
+[Daemon device routes](../../packages/daemon/src/features/device-support/routes.ts)
+
 Support normal device controls and documented configuration actions through their
 typed capabilities. Ling uses authorized vehicle observations and head-unit app
 maintenance for the vehicle cases. Safety-critical vehicle, lock, alarm, power and

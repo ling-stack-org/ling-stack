@@ -436,6 +436,66 @@ test("stopping during verification preserves late evidence and excludes another 
   assert.equal((await broker.execute(request(readCapability.id, "next-read"))).attempt.status, "completed");
 });
 
+test("a target dispatch stop survives restart and preserves the in-flight attempt through clear", { timeout: 5000 }, async t => {
+  const root = mkdtempSync(join(tmpdir(), "ling-device-dispatch-stop-"));
+  const databasePath = join(root, "workspace.sqlite");
+  const store = new SqliteDeviceSupportStore({ databasePath });
+  const broker = new DeviceCapabilityBroker({ store, now: () => now });
+  t.after(() => {
+    store.close();
+    rmSync(root, { recursive: true, force: true });
+  });
+  const adapter = createAdapter();
+  let entered!: (signal: AbortSignal | undefined) => void;
+  const dispatched = new Promise<AbortSignal | undefined>(resolve => { entered = resolve; });
+  let release!: () => void;
+  const drain = new Promise<void>(resolve => { release = resolve; });
+  broker.registerAdapter({
+    ...adapter,
+    async execute(input) {
+      if (input.request.capabilityId === writeCapability.id) {
+        entered(input.signal);
+        await drain;
+      }
+      return adapter.execute(input);
+    },
+  });
+  broker.registerDevice(manifest.adapterId, profile);
+  store.saveCapabilitySnapshot(snapshot(), now);
+  broker.createTask(task("stopped-write"));
+  broker.createTask(task("later-write"));
+  broker.createTask(task("stop-diagnosis"));
+  const activeRequest = approveNetworkRepair(request(writeCapability.id, "stopped-write"));
+  const execution = broker.execute(activeRequest);
+  const scope = { workspaceId: profile.device.ownerScope, deviceId: profile.device.id };
+  try {
+    const signal = await dispatched;
+    assert.throws(() => broker.setDispatchStop({ ...scope, workspaceId: "other", active: true, expectedRevision: 0 }), /workspace/);
+    assert.equal(broker.setDispatchStop({ ...scope, active: true, expectedRevision: 0 }).revision, 1);
+    assert.equal(signal?.aborted, true);
+    assert.equal(store.getTask(activeRequest.taskId)?.status, "unknown");
+    assert.ok(store.getLeasedAttempt(activeRequest.taskId));
+    const reopened = new SqliteDeviceSupportStore({ databasePath });
+    try {
+      assert.deepEqual(reopened.getDispatchStop(scope.deviceId), { deviceId: scope.deviceId, active: true, revision: 1, changedAt: now });
+      assert.throws(() => broker.setDispatchStop({ ...scope, active: false, expectedRevision: 0 }), /revision changed/);
+      assert.equal(broker.setDispatchStop({ ...scope, active: false, expectedRevision: 1 }).revision, 2);
+    } finally {
+      reopened.close();
+    }
+  } finally {
+    release();
+    await execution;
+  }
+  assert.equal((await execution).attempt.status, "unknown");
+  assert.equal((await execution).attempt.receipt?.status, "completed");
+  broker.setDispatchStop({ ...scope, active: true, expectedRevision: 2 });
+  const nextWrite = approveNetworkRepair(request(writeCapability.id, "later-write"));
+  await assert.rejects(() => broker.execute(nextWrite), /device dispatch is stopped/);
+  assert.deepEqual(store.listAttempts(nextWrite.taskId), []);
+  assert.equal((await broker.execute(request(readCapability.id, "stop-diagnosis"))).attempt.status, "completed");
+});
+
 test("invalid adapter receipts and thrown transport errors retain a redacted unknown outcome", async (t) => {
   const { store, broker } = brokerFixture();
   t.after(() => store.close());

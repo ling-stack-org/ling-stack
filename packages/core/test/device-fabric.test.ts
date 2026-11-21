@@ -132,15 +132,18 @@ test("edge enrollment, ordered event recovery, resource rollback, safety and lif
     requiredPhysicalState: "maintenance", requiredSecretRefs: ["vendor-key"], controller: "certified_controller",
     operatorHandoffRequired: true, cancellationSupported: false,
   } as const;
-  const denied = safety.evaluate({
-    decisionId: "decision-1", context: { targetDeviceId: "vehicle-1", policyRevision: criticalPolicy.policyRevision, physicalState: "maintenance", emergencyStop: false, requiredSecretRefs: ["vendor-key"], observedAt: now },
-    policy: criticalPolicy, controllerReady: true, operatorHandoffConfirmed: false, cancellationRequested: false, evaluatedAt: now,
-  });
-  assert.deepEqual({ status: denied.status, reason: denied.reason }, { status: "denied", reason: "operator_handoff_required" });
-  assert.equal(safety.evaluate({
-    decisionId: "decision-2", context: { targetDeviceId: "vehicle-1", policyRevision: criticalPolicy.policyRevision, physicalState: "maintenance", emergencyStop: false, requiredSecretRefs: ["vendor-key"], observedAt: now },
+  const safetyInput = {
+    decisionId: "decision-1", targetDeviceId: "vehicle-1",
+    context: { targetDeviceId: "vehicle-1", policyRevision: criticalPolicy.policyRevision, physicalState: "maintenance", emergencyStop: false, requiredSecretRefs: ["vendor-key"], observedAt: now },
     policy: criticalPolicy, controllerReady: true, operatorHandoffConfirmed: true, cancellationRequested: false, evaluatedAt: now,
-  }).status, "authorized");
+  } as const;
+  const denied = safety.evaluate({ ...safetyInput, operatorHandoffConfirmed: false });
+  assert.deepEqual({ status: denied.status, reason: denied.reason }, { status: "denied", reason: "operator_handoff_required" });
+  assert.equal(safety.evaluate(safetyInput).status, "authorized");
+  assert.equal(safety.evaluate({ ...safetyInput, targetDeviceId: "other" }).reason, "physical_target_mismatch");
+  assert.equal(safety.evaluate({ ...safetyInput, context: { ...safetyInput.context, policyRevision: "old" } }).reason, "policy_revision_changed");
+  assert.equal(safety.evaluate({ ...safetyInput, evaluatedAt: "2026-11-21T00:01:00.000Z" }).reason, "safety_observation_stale");
+  assert.equal(safety.evaluate({ ...safetyInput, policy: { ...criticalPolicy, controller: "vendor_workflow" } }).status, "handoff_ready");
 
   const lifecycle = new DeviceLifecycleManager();
   lifecycle.transition({ deviceId: "device-1", status: "discovered", revision: 1, reason: "found", authority: "adapter", changedAt: now });

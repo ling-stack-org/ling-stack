@@ -304,6 +304,13 @@ export interface DeviceTaskReconciliationV1 {
   readonly recordedAt: string;
 }
 
+export interface DeviceDispatchStopV1 {
+  readonly deviceId: string;
+  readonly active: boolean;
+  readonly revision: number;
+  readonly changedAt?: string;
+}
+
 export interface DeviceTaskV1 {
   readonly id: string;
   readonly ownerKind: "daemon" | "mobile" | "edge";

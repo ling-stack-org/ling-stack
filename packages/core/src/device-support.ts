@@ -8,6 +8,7 @@ import {
   type DeviceActionResultV1,
   type DeviceApprovalBindingV1,
   type DeviceCapabilitySnapshotV1,
+  type DeviceDispatchStopV1,
   type DeviceErrorCodeV1,
   type DeviceObservationV1,
   type DevicePlanningNodeRefV1,
@@ -238,6 +239,10 @@ export class DeviceCapabilityBroker {
     try {
       let execution: DeviceActionResultV1 | DeviceAdapterExecutionResult;
       try {
+        operationSignal.throwIfAborted();
+        if (capability.sideEffect !== "read_only" && this.store.getDispatchStop(attempt.targetDeviceId).active) {
+          throw new DeviceBrokerError("permission_denied", "device dispatch is stopped");
+        }
         execution = await adapter.execute({ profile, capability, request, signal: operationSignal });
       } catch (error) {
         execution = uncertainActionResult(request.actionId, this.now(), error);
@@ -279,6 +284,17 @@ export class DeviceCapabilityBroker {
     const task = this.store.stopDaemonTask(taskId, this.now());
     if (task.status === "unknown") this.activeDispatches.get(taskId)?.abort();
     return task;
+  }
+
+  setDispatchStop(input: {
+    readonly deviceId: string;
+    readonly workspaceId: string;
+    readonly active: boolean;
+    readonly expectedRevision: number;
+  }): DeviceDispatchStopV1 {
+    const { stop, stoppingTaskId } = this.store.setDispatchStop({ ...input, now: this.now() });
+    if (stoppingTaskId) this.activeDispatches.get(stoppingTaskId)?.abort();
+    return stop;
   }
 
   getReconciliationPreview(taskId: string): { attemptId: string; targetDeviceId: string; capabilitySnapshotId: string } | undefined {
@@ -443,6 +459,9 @@ export class DeviceCapabilityBroker {
     signal?.throwIfAborted();
     const binding = this.resolveCapability(request);
     const { profile, snapshot, capability } = binding;
+    if (capability.sideEffect !== "read_only" && this.store.getDispatchStop(profile.device.id).active) {
+      throw new DeviceBrokerError("permission_denied", "device dispatch is stopped");
+    }
     const planningNode = options.planningNode;
     if (planningNode) {
       const plan = this.store.listPlanningAcceptances(task.id).at(-1);
@@ -590,6 +609,7 @@ export class DeviceCapabilityBroker {
     const snapshot = this.store.getCurrentCapabilitySnapshot(attempt.targetDeviceId);
     if (!profile || ["offline", "retired", "revoked"].includes(profile.device.lifecycleStatus)
       || snapshot?.snapshotId !== snapshotId || snapshot?.connectionRevision !== attempt.connectionRevision
+      || (capability.sideEffect !== "read_only" && this.store.getDispatchStop(attempt.targetDeviceId).active)
       || !this.taskAccessIsCurrent(task, attempt.targetDeviceId, capability, attempt.accessGrantRevision)) {
       this.store.transitionTask(task.id, "unknown", {}, now);
       return false;
