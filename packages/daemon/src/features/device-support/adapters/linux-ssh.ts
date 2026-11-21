@@ -4,19 +4,23 @@ import type {
   DeviceActionResultV1,
   DeviceCapabilitySnapshotV1,
   DeviceProfileV1,
-  DeviceVerificationResultV1,
   DeviceObservationV1,
   JsonValue,
 } from "@ling-stack/contracts";
-import type { DeviceAdapter, DeviceAdapterDiscoveryInput, DeviceAdapterExecutionResult } from "@ling-stack/core";
+import type {
+  DeviceAdapter, DeviceAdapterDiscoveryInput, DeviceAdapterExecutionResult, DeviceAdapterVerificationInput, DeviceAdapterVerificationResult,
+} from "@ling-stack/core";
 
 export interface LinuxNetworkObservation {
   readonly connected: boolean;
   readonly interfaceName?: string;
   readonly ipv4?: string;
+  readonly routeAvailable?: boolean;
   readonly gatewayReachable?: boolean;
   readonly dnsReachable?: boolean;
   readonly ssid?: string;
+  readonly wifiInterfaceName?: string;
+  readonly wifiAssociated?: boolean;
   readonly linkError?: string;
 }
 
@@ -150,42 +154,73 @@ export class LinuxSshAdapter implements DeviceAdapter {
 
   async execute(input: { readonly profile: DeviceProfileV1; readonly capability: { readonly id: string }; readonly request: DeviceActionRequestV1; readonly signal?: AbortSignal }): Promise<DeviceActionResultV1 | DeviceAdapterExecutionResult> {
     const startedAt = this.#now();
-    if (input.capability.id === "linux.inspect.network") return completedObservation(input, startedAt, await this.#executor.readNetwork(input.signal) as unknown as JsonValue, "linux.network");
-    if (input.capability.id === "linux.inspect.wifi") return completedObservation(input, startedAt, await this.#executor.readWifi(input.signal) as unknown as JsonValue, "linux.wifi");
+    if (input.capability.id === "linux.inspect.network" || input.capability.id === "linux.inspect.wifi") {
+      const wifi = input.capability.id === "linux.inspect.wifi";
+      const reading = wifi ? await this.#executor.readWifi(input.signal) : await this.#executor.readNetwork(input.signal);
+      const finishedAt = this.#now();
+      const observation = makeObservation(
+        input.profile, `${input.request.actionId}:result`, finishedAt, reading, wifi ? "linux.wifi" : "linux.network",
+      );
+      return {
+        action: { actionId: input.request.actionId, status: "completed", startedAt, finishedAt, observationIds: [observation.id] },
+        observations: [observation],
+      };
+    }
     if (input.capability.id === "linux.repair.network") {
       const result = await this.#executor.restartNetwork({ signal: input.signal });
       if (!result.accepted) return { actionId: input.request.actionId, status: "rejected", errorCode: "permission_denied", startedAt, finishedAt: this.#now(), observationIds: [] };
     } else return { actionId: input.request.actionId, status: "rejected", errorCode: "unsupported_capability", startedAt, finishedAt: this.#now(), observationIds: [] };
-    return { actionId: input.request.actionId, status: "completed", startedAt, finishedAt: this.#now(), observationIds: [`${input.request.actionId}:result`] };
+    return { actionId: input.request.actionId, status: "completed", startedAt, finishedAt: this.#now(), observationIds: [] };
   }
 
-  async verify(input: { readonly profile: DeviceProfileV1; readonly request: DeviceActionRequestV1; readonly action: DeviceActionResultV1 }): Promise<DeviceVerificationResultV1> {
-    const network = await this.#executor.readNetwork();
-    const verified = network.connected && network.gatewayReachable !== false;
-    return { actionId: input.request.actionId, status: verified ? "verified" : "failed", rule: input.request.expectedVerification ?? { connected: true }, observationIds: [`${input.request.actionId}:verification`], checkedAt: this.#now(), reason: verified ? undefined : network.linkError ?? "network is not reachable" };
+  async verify(input: DeviceAdapterVerificationInput): Promise<DeviceAdapterVerificationResult> {
+    const wifi = input.capability.id === "linux.inspect.wifi";
+    const rule = input.request.expectedVerification ?? (wifi ? { wifiAssociated: true } : { connected: true, routeAvailable: true });
+    const network = wifi ? await this.#executor.readWifi(input.signal) : await this.#executor.readNetwork(input.signal);
+    const checkedAt = this.#now();
+    const status = evaluateNetworkRule(rule, network);
+    const observation = makeObservation(input.profile, input.evidenceId, checkedAt, network, wifi ? "linux.wifi" : "linux.network");
+    return {
+      verification: {
+        actionId: input.request.actionId, status, rule, observationIds: [observation.id], checkedAt,
+        ...(status === "not_evaluable" ? { reason: "required Linux readback facts are unavailable" } : {}),
+      },
+      observations: [observation],
+    };
   }
 }
 
-function completedObservation(
-  input: { readonly profile: DeviceProfileV1; readonly request: DeviceActionRequestV1 },
-  startedAt: string,
-  value: JsonValue,
-  source: string,
-): DeviceAdapterExecutionResult {
-  const observationId = `${input.request.actionId}:result`;
-  const observation: DeviceObservationV1 = {
-    id: observationId,
-    subjectId: input.profile.device.id,
+function makeObservation(profile: DeviceProfileV1, id: string, timestamp: string, reading: LinuxNetworkObservation, source: string): DeviceObservationV1 {
+  return {
+    id,
+    subjectId: profile.device.id,
     source,
-    value,
-    observedAt: startedAt,
-    receivedAt: startedAt,
-    freshnessUntil: new Date(Date.parse(startedAt) + 30_000).toISOString(),
-    quality: "good",
-    provenance: [source, input.profile.device.id],
+    value: Object.fromEntries(Object.entries(reading).filter(([, value]) => value !== undefined)),
+    observedAt: timestamp,
+    receivedAt: timestamp,
+    freshnessUntil: new Date(Date.parse(timestamp) + 30_000).toISOString(),
+    quality: reading.linkError ? "degraded" : "good",
+    provenance: [source, profile.device.id],
     redactionClass: "public",
   };
-  return { action: { actionId: input.request.actionId, status: "completed", startedAt, finishedAt: startedAt, observationIds: [observationId] }, observations: [observation] };
+}
+
+function evaluateNetworkRule(rule: JsonValue, current: LinuxNetworkObservation): "verified" | "failed" | "not_evaluable" {
+  if (!rule || typeof rule !== "object" || Array.isArray(rule)) return "not_evaluable";
+  const observations = {
+    connected: current.connected,
+    routeAvailable: current.routeAvailable,
+    gatewayReachable: current.gatewayReachable,
+    dnsReachable: current.dnsReachable,
+    wifiAssociated: current.wifiAssociated,
+  };
+  const expected = Object.entries(rule);
+  if (expected.length === 0 || expected.some(([key, value]) => typeof value !== "boolean" || !Object.hasOwn(observations, key))) {
+    return "not_evaluable";
+  }
+  const readings = expected.map(([key, value]) => ({ actual: observations[key as keyof typeof observations], value }));
+  if (readings.some(({ actual, value }) => actual !== undefined && actual !== value)) return "failed";
+  return readings.every(({ actual }) => actual !== undefined) ? "verified" : "not_evaluable";
 }
 
 export function linuxSshAdapterManifest(): AdapterManifestV1 {

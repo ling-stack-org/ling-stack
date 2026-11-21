@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { isAdapterManifestV1 } from "@ling-stack/contracts";
-import { createHomeAssistantOfflinePlaybook, DeviceCapabilityBroker, runDeviceReadOnlyPlaybook, SqliteDeviceSupportStore } from "@ling-stack/core";
+import { isAdapterManifestV1, type DeviceActionRequestV1 } from "@ling-stack/contracts";
+import { createHomeAssistantOfflinePlaybook, DeviceCapabilityBroker, digestRequest, runDeviceReadOnlyPlaybook, SqliteDeviceSupportStore } from "@ling-stack/core";
 import {
   AndroidAdbAdapter,
   HomeAssistantAdapter,
@@ -112,6 +112,72 @@ test("Linux SSH adapter exposes diagnosis and network repair through a fixed ope
     idempotencyKey: "wifi-task:wifi-action",
   } });
   assert.deepEqual(operations, ["inventory", "readWifi"]);
+});
+
+test("Linux network repair reconciles with fresh observations without repeating the restart", async t => {
+  const store = new SqliteDeviceSupportStore();
+  t.after(() => store.close());
+  const broker = new DeviceCapabilityBroker({ store, now: () => now });
+  let restartCount = 0;
+  let dnsReachable: boolean | undefined;
+  broker.registerAdapter(new LinuxSshAdapter({
+    now: () => now,
+    executor: {
+      async inventory() { return { hostname: "fixture-target", kernel: "6.6" }; },
+      async readNetwork() { return { connected: true, routeAvailable: true, dnsReachable }; },
+      async readWifi() { return { connected: true }; },
+      async restartNetwork() { restartCount += 1; throw new Error("SSH interrupted"); },
+    },
+  }));
+  const target = await broker.discover("linux-ssh", { connectionRef: "ssh:fixture-target", ownerId: "workspace" });
+  const targetDeviceId = target.device.id;
+  const snapshot = store.getCurrentCapabilitySnapshot(targetDeviceId);
+  assert.ok(snapshot);
+  const task = broker.createTask({
+    id: "linux-recover", ownerKind: "daemon", ownerId: "pc", targetDeviceIds: [targetDeviceId],
+    status: "planning", capabilitySnapshotIds: [snapshot.snapshotId], createdAt: now, updatedAt: now,
+  });
+  const request: DeviceActionRequestV1 = {
+    taskId: task.id, targetDeviceId, actionId: "restart", capabilityId: "linux.repair.network",
+    capabilitySchemaVersion: "1.0", capabilitySnapshotId: snapshot.snapshotId, idempotencyKey: "restart",
+    normalizedInput: {}, expectedVerification: { connected: true, routeAvailable: true, dnsReachable: true },
+  };
+  const approved: DeviceActionRequestV1 = {
+    ...request, approvalId: "restart-approval",
+    approval: {
+      approvalId: "restart-approval", taskId: task.id, targetDeviceId, actionId: request.actionId,
+      capabilitySnapshotId: snapshot.snapshotId, connectionRevision: snapshot.connectionRevision,
+      policyRevision: broker.policyRevision, normalizedInputDigest: digestRequest(request),
+      expiresAt: "2026-11-21T00:01:00.000Z",
+    },
+  };
+  const { attempt } = await broker.execute(approved);
+  assert.equal(attempt.status, "unknown");
+  assert.equal(attempt.receipt?.status, "uncertain");
+  const readback = { taskId: task.id, attemptId: attempt.attemptId, capabilitySnapshotId: snapshot.snapshotId };
+  const missing = await broker.reconcileTask(readback);
+  assert.equal(missing.status, "unresolved");
+  assert.equal(missing.verification.status, "not_evaluable");
+  assert.equal(store.getTask(task.id)?.status, "unknown");
+
+  dnsReachable = false;
+  const mismatch = await broker.reconcileTask(readback);
+  assert.equal(mismatch.status, "unresolved");
+  assert.equal(mismatch.verification.status, "failed");
+
+  dnsReachable = true;
+  const recovered = await broker.reconcileTask(readback);
+  assert.equal(recovered.status, "verified");
+  assert.deepEqual(recovered.verification.observationIds, [recovered.reconciliationId]);
+  assert.equal(store.getTask(task.id)?.status, "succeeded");
+  const observations = new Map(store.listObservations(task.id).map(observation => [observation.id, observation.value]));
+  assert.deepEqual(observations, new Map([
+    [missing.reconciliationId, { connected: true, routeAvailable: true }],
+    [mismatch.reconciliationId, { connected: true, routeAvailable: true, dnsReachable: false }],
+    [recovered.reconciliationId, { connected: true, routeAvailable: true, dnsReachable: true }],
+  ]));
+  assert.deepEqual((await broker.execute(approved)).attempt, attempt);
+  assert.equal(restartCount, 1);
 });
 
 test("Android ADB adapter exposes fixed head-unit operations and verifies artifact installation", async () => {
