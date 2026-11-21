@@ -28,6 +28,7 @@ are not published here. The relay URL and temporary development checkout are exa
 
 - [Device Support Platform checkpoint, 2026-11-21](#device-support-platform-checkpoint-2026-11-21)
 - [Device Support Platform continuation, 2026-11-22](#device-support-platform-continuation-2026-11-22)
+- [Device Support Platform adapter isolation, 2026-11-22](#device-support-platform-adapter-isolation-2026-11-22)
 - [Typed transcript handoff](#typed-transcript-handoff)
 - [Office writer verification, 2026-10-04](#office-writer-verification-2026-10-04)
 - [Office no-start checkpoint, 2026-10-05](#office-no-start-checkpoint-2026-10-05)
@@ -138,6 +139,34 @@ The platform ledger remains the authority for D1–D22 status and the exact
 remaining PC, Mobile, Edge, hardware, vehicle, smart-home, Ling Server and
 field acceptance work.
 [Implementation ledger](../design/ling-device-support-platform-implementation-plan.md#per-slice-evidence-ledger)
+
+## Device Support Platform adapter isolation 2026-11-22
+
+The `codex/device-platform-complete` branch remains based on `origin/main@4eb8798b0`.
+Commit `0bc068955` adds the external adapter process boundary. A trusted adapter
+resource can be registered with the Daemon as a newline-delimited JSON child
+process. The host uses explicit argv execution, bounded frames and request
+deadlines. A child exit, malformed response, oversized frame, timeout or write
+failure rejects the pending operation with a category-only error, terminates the
+child and permits the next operation to start a fresh child. The broker therefore
+retains its existing uncertain-outcome behavior for interrupted writes while a
+third-party adapter cannot crash the Daemon process.
+
+The real child-process fixture passed the external discovery, capability,
+execution, crash and restart path. The runtime accepts trusted external adapters
+through `createDeviceSupportRuntime({ externalAdapters })` and closes them during
+runtime shutdown. Resource signing, production activation and physical adapter
+acceptance remain separate gates.
+
+### Verification
+
+- `corepack pnpm --filter @ling-stack/core build:ci`
+- `corepack pnpm --filter @ling-stack/daemon build:ci`
+- `corepack pnpm --filter @ling-stack/daemon typecheck:ci`
+- `node --test packages/core/test/device-support.test.ts packages/daemon/test/device-support-adapters.test.ts`
+
+The focused run passed 35 tests. The native image-sanitizer build emits existing
+`asmjs` check-cfg warnings and completed successfully.
 
 ## Typed Transcript Handoff
 
