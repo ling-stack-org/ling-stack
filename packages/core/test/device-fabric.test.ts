@@ -89,6 +89,20 @@ test("edge enrollment, ordered event recovery, resource rollback, safety and lif
   const safety = new DeviceSafetyBroker();
   safety.authorize({ targetDeviceId: "vehicle-1", policyRevision: "policy-1", physicalState: "stationary", emergencyStop: false, requiredSecretRefs: ["secret-1"], observedAt: now }, "stationary", ["secret-1"]);
   assert.throws(() => safety.authorize({ targetDeviceId: "vehicle-1", policyRevision: "policy-1", physicalState: "moving", emergencyStop: false, requiredSecretRefs: [], observedAt: now }, "stationary", []), error => error instanceof DeviceFabricError && error.code === "safety_denied");
+  const criticalPolicy = {
+    policyRevision: "policy-critical-2", capabilityId: "vehicle.flash.firmware", sideEffect: "critical",
+    requiredPhysicalState: "maintenance", requiredSecretRefs: ["vendor-key"], controller: "certified_controller",
+    operatorHandoffRequired: true, cancellationSupported: false,
+  } as const;
+  const denied = safety.evaluate({
+    decisionId: "decision-1", context: { targetDeviceId: "vehicle-1", policyRevision: criticalPolicy.policyRevision, physicalState: "maintenance", emergencyStop: false, requiredSecretRefs: ["vendor-key"], observedAt: now },
+    policy: criticalPolicy, controllerReady: true, operatorHandoffConfirmed: false, cancellationRequested: false, evaluatedAt: now,
+  });
+  assert.deepEqual({ status: denied.status, reason: denied.reason }, { status: "denied", reason: "operator_handoff_required" });
+  assert.equal(safety.evaluate({
+    decisionId: "decision-2", context: { targetDeviceId: "vehicle-1", policyRevision: criticalPolicy.policyRevision, physicalState: "maintenance", emergencyStop: false, requiredSecretRefs: ["vendor-key"], observedAt: now },
+    policy: criticalPolicy, controllerReady: true, operatorHandoffConfirmed: true, cancellationRequested: false, evaluatedAt: now,
+  }).status, "authorized");
 
   const lifecycle = new DeviceLifecycleManager();
   lifecycle.transition({ deviceId: "device-1", status: "discovered", revision: 1, reason: "found", authority: "adapter", changedAt: now });

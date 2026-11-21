@@ -196,6 +196,29 @@ export interface DeviceSafetyContextV1 {
   readonly observedAt: string;
 }
 
+export type DeviceSafetyControllerKindV1 = "adapter" | "vendor_workflow" | "certified_controller";
+
+export interface DeviceSafetyActionPolicyV1 {
+  readonly policyRevision: string;
+  readonly capabilityId: string;
+  readonly sideEffect: "read_only" | "reversible" | "mutating" | "irreversible" | "critical";
+  readonly requiredPhysicalState: DeviceSafetyContextV1["physicalState"];
+  readonly requiredSecretRefs: readonly string[];
+  readonly controller: DeviceSafetyControllerKindV1;
+  readonly operatorHandoffRequired: boolean;
+  readonly cancellationSupported: boolean;
+}
+
+export interface DeviceSafetyDecisionV1 {
+  readonly decisionId: string;
+  readonly targetDeviceId: string;
+  readonly capabilityId: string;
+  readonly policyRevision: string;
+  readonly status: "authorized" | "denied";
+  readonly reason?: string;
+  readonly evaluatedAt: string;
+}
+
 export interface DeviceSecretUseV1 {
   readonly useId: string;
   readonly taskId: string;
