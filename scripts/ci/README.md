@@ -40,7 +40,9 @@ script changes and opaque validation commands force full regression.
 the existing `test`, `test:ci`, `typecheck` and `typecheck:ci` scripts when all other
 manifest fields and scripts are unchanged. It recognizes complete top-level
 `node --test` globs for `.test.mjs`/`.test.ts`, no-emit package-local `tsc`
-commands, and wrappers around those CI entries and unchanged build prefixes.
+commands, and wrappers around those CI entries and unchanged builds, including
+`corepack pnpm run build`. A local `test` script can call an already verified
+`corepack pnpm typecheck` before its test command.
 Name filters, shell additions, no-op commands, omitted test languages and empty
 discovery retain full scope. Each test entrypoint discovered by the baseline glob
 must retain its directory and basename under the current glob; `.mjs`/`.ts`
