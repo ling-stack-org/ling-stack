@@ -347,7 +347,7 @@ export class AppServerDevelopmentService {
         },
       };
       this.verifications.set(operationId, recovered);
-      this.persistState("verify_operation", operationId, recovered, value.plan.candidate.workspaceId, record?.idempotencyKey);
+      this.persistState("verify_operation", operationId, recovered, value.plan.candidate.workspaceId, record ? record.idempotencyKey : undefined);
       return recovered;
     }
     this.verifications.set(operationId, value);

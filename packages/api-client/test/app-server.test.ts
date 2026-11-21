@@ -119,7 +119,7 @@ test("Ling App Server client reconnects and resumes subscriptions from the lates
 
   await waitForCondition(() => sockets.length === 2 && sockets[1]!.sent.some((request) => request.method === "workItem/subscribe"));
   const replay = sockets[1]!.sent.find((request) => request.method === "workItem/subscribe");
-  assert.equal(replay?.params.cursor, "1");
+  assert.equal(replay?.params?.cursor, "1");
   client.close();
 });
 

@@ -64,6 +64,7 @@ export async function dispatchExternalAgentTask(input: ExternalAgentDispatchRequ
   };
   try {
     const result = await input.runner.adapter.runTask(options);
+    input.federation.markCompleted(input.taskId);
     input.federation.appendEvent(input.taskId, {
       type: "dispatch_completed",
       taskId: input.taskId,

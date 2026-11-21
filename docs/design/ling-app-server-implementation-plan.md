@@ -11,7 +11,7 @@
 
 实现分支已经把协议合同、WebSocket 协商、Thread/Turn 生命周期、Work Item 控制与证据、开发工作流入口、协作记录、审议触发策略、外部 Agent 注册与任务受理接入同一个 App Server RPC。协作记录复用 Work Item 证据板的持久 CAS 与幂等边界，外部 Agent 任务在派发前核对 Work Item 当前 revision 和 control state。
 
-已验证的关键回归包括 App Server WebSocket、Work Item 控制与证据、协作记录回放、开发工作流服务、外部 Agent federation 与 API Client。当前实现仍把开发验证操作和 federation ledger 保存在 daemon context 内，提供快照/恢复接口但尚未接入 SQLite 重启恢复；外部任务也停在受理和事件账本边界，由原有 Runner/Workflow owner 继续实际派发。联合重连、真实 Provider、跨进程持久化和发布矩阵属于 G 阶段验收。
+已验证的关键回归包括 App Server WebSocket、Work Item 控制与证据、协作记录回放、开发工作流服务、外部 Agent federation 与 API Client。Verify plan/operation 和 Federation ledger 已接入工作区 SQLite 的 `app_server_state`，Daemon 重启后会恢复终态记录，并把无法确认的 queued/running Verify 标记为 `unknown`，要求重新核对。外部任务在 Work Item revision/control、Runner external boundary、工具 conformance 和 admission fence 通过后调用已配置的真实 Adapter，Adapter 失败保留 `unknown`，未配置可执行 Runner 时保留受理回执并等待 owner dispatch。联合重连、真实 Provider 和发布矩阵已纳入定向验收，完整 hosted CI 与人工合并仍属于 PR 阶段。
 
 ## 目标与开工顺序
 

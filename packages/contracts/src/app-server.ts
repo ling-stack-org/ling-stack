@@ -829,7 +829,7 @@ export interface LingAppServerExternalAgentTaskReceipt {
   readonly submissionId: string;
   readonly workItemId: string;
   readonly workItemRevision: string;
-  readonly status: "accepted" | "queued" | "running" | "waiting_for_approval" | "cancelled" | "unknown";
+  readonly status: "accepted" | "queued" | "running" | "waiting_for_approval" | "completed" | "failed" | "cancelled" | "unknown";
   readonly eventCursor?: string;
   readonly parentRunId?: string;
   readonly dispatchDepth: number;

@@ -96,6 +96,10 @@ export interface ExternalAgentFederationOptions {
   readonly maxEventsPerTask?: number;
   readonly now?: () => string;
   readonly idFactory?: () => string;
+  readonly persistence?: {
+    readonly load: () => ExternalAgentFederationSnapshot | undefined;
+    readonly save: (snapshot: ExternalAgentFederationSnapshot) => void;
+  };
 }
 
 interface IdempotencyRecord {
@@ -127,6 +131,7 @@ export class ExternalAgentFederationService {
   private readonly maxEventsPerTask: number;
   private readonly now: () => string;
   private readonly idFactory: () => string;
+  private readonly persistence?: ExternalAgentFederationOptions["persistence"];
 
   constructor(options: ExternalAgentFederationOptions = {}) {
     this.allowedCapabilities = options.allowedCapabilities ?? [
@@ -155,6 +160,9 @@ export class ExternalAgentFederationService {
     this.maxEventsPerTask = options.maxEventsPerTask ?? 256;
     this.now = options.now ?? (() => new Date().toISOString());
     this.idFactory = options.idFactory ?? randomUUID;
+    this.persistence = options.persistence;
+    const snapshot = this.persistence?.load();
+    if (snapshot) this.restore(snapshot);
   }
 
   register(params: LingAppServerExternalAgentRegisterParams): LingAppServerExternalAgentRegisterResult {
@@ -195,6 +203,7 @@ export class ExternalAgentFederationService {
     this.registrationsByAgent.set(registration.agentId, record.registrationId);
     const result = this.registrationResult(record);
     this.idempotency.set(idempotencyKey, { kind: "register", fingerprint, result });
+    this.persist();
     return result;
   }
 
@@ -211,6 +220,10 @@ export class ExternalAgentFederationService {
       approvalModes: record.registration.approvalModes,
       authorizationEpoch: record.authorizationEpoch,
     };
+  }
+
+  getRegistration(registrationId: string): ExternalAgentFederationRegistrationRecord | undefined {
+    return this.registrations.get(registrationId);
   }
 
   startTask(params: LingAppServerExternalAgentTaskStartParams): LingAppServerExternalAgentTaskStartResult {
@@ -266,6 +279,7 @@ export class ExternalAgentFederationService {
     const result = { task } satisfies LingAppServerExternalAgentTaskStartResult;
     this.idempotency.set(idempotencyKey, { kind: "start", fingerprint, result });
     this.publish(task.taskId, "task_started", { workItemId: task.workItemId, workItemRevision: task.workItemRevision });
+    this.persist();
     return result;
   }
 
@@ -306,14 +320,16 @@ export class ExternalAgentFederationService {
     if (params.expectedTaskRevision !== undefined && params.expectedTaskRevision !== String(task.statusRevision)) {
       throw new ExternalAgentFederationError("task_conflict", `Task revision is stale: expected ${params.expectedTaskRevision}, current ${task.statusRevision}`);
     }
-    if (task.task.status === "cancelled") {
+    if (task.task.status === "cancelled" || task.task.status === "completed" || task.task.status === "failed") {
       const result = { taskId: task.task.taskId, status: "already_terminal" as const };
       this.idempotency.set(params.idempotencyKey, { kind: "cancel", fingerprint, result });
+      this.persist();
       return result;
     }
     if (task.task.status === "unknown") {
       const result = { taskId: task.task.taskId, status: "unknown" as const };
       this.idempotency.set(params.idempotencyKey, { kind: "cancel", fingerprint, result });
+      this.persist();
       return result;
     }
     const outcome = settle ? await settle(task) : "cancelled";
@@ -322,12 +338,14 @@ export class ExternalAgentFederationService {
       this.publish(task.task.taskId, "task_unknown", { reason: "cancellation_outcome_unknown" });
       const result = { taskId: task.task.taskId, status: "unknown" as const };
       this.idempotency.set(params.idempotencyKey, { kind: "cancel", fingerprint, result });
+      this.persist();
       return result;
     }
     this.replaceTask(task, "cancelled");
     this.publish(task.task.taskId, "task_cancelled");
     const result = { taskId: task.task.taskId, status: "cancelled" as const };
     this.idempotency.set(params.idempotencyKey, { kind: "cancel", fingerprint, result });
+    this.persist();
     return result;
   }
 
@@ -336,6 +354,7 @@ export class ExternalAgentFederationService {
     if (task.task.status === "accepted") {
       this.replaceTask(task, "running");
       this.publish(taskId, "task_status", { status: "running" });
+      this.persist();
     }
     return this.requireTask(taskId).task;
   }
@@ -344,12 +363,23 @@ export class ExternalAgentFederationService {
     const task = this.requireTask(taskId);
     this.replaceTask(task, "unknown");
     this.publish(taskId, "task_unknown", { reason });
+    this.persist();
+    return this.requireTask(taskId).task;
+  }
+
+  markCompleted(taskId: string): LingAppServerExternalAgentTaskReceipt {
+    const task = this.requireTask(taskId);
+    this.replaceTask(task, "completed");
+    this.publish(taskId, "task_status", { status: "completed" });
+    this.persist();
     return this.requireTask(taskId).task;
   }
 
   appendEvent(taskId: string, payload: unknown): ExternalAgentFederationEvent {
     this.requireTask(taskId);
-    return this.publish(taskId, "task_event", payload);
+    const event = this.publish(taskId, "task_event", payload);
+    this.persist();
+    return event;
   }
 
   getTask(taskId: string): ExternalAgentFederationTaskRecord | undefined {
@@ -369,6 +399,7 @@ export class ExternalAgentFederationService {
       revokedAt: this.now(),
     };
     this.registrations.set(registrationId, revoked);
+    this.persist();
   }
 
   snapshot(): ExternalAgentFederationSnapshot {
@@ -403,6 +434,10 @@ export class ExternalAgentFederationService {
     for (const entry of snapshot.idempotency) {
       this.idempotency.set(entry.key, { kind: entry.kind, fingerprint: entry.fingerprint, result: entry.result });
     }
+  }
+
+  private persist(): void {
+    this.persistence?.save(this.snapshot());
   }
 
   private registrationResult(record: ExternalAgentFederationRegistrationRecord): LingAppServerExternalAgentRegisterResult {
@@ -484,12 +519,26 @@ export class ExternalAgentFederationService {
 const federationByContext = new WeakMap<object, ExternalAgentFederationService>();
 
 /** Keep one federation ledger per daemon context so reconnecting App Server
- * connections observe the same registration/task receipts. The daemon may
- * replace this factory with a durable store-backed owner at composition time. */
+ * connections observe the same registration/task receipts. Persist the ledger
+ * through the workspace RunStore when the host exposes the App Server state API. */
 export function getExternalAgentFederation(context: object): ExternalAgentFederationService {
   const existing = federationByContext.get(context);
   if (existing) return existing;
-  const created = new ExternalAgentFederationService();
+  const host = context as {
+    readonly config?: { readonly defaultWorkspaceCwd?: string };
+    readonly storeRegistry?: { readonly getStore?: (cwd: string) => {
+      readonly getAppServerState?: (kind: "external_federation", recordId: string) => { readonly payload: unknown } | undefined;
+      readonly putAppServerState?: (input: { readonly kind: "external_federation"; readonly recordId: string; readonly payload: unknown }, now: string) => unknown;
+    } };
+  };
+  const cwd = host.config?.defaultWorkspaceCwd;
+  const store = cwd && host.storeRegistry?.getStore ? host.storeRegistry.getStore(cwd) : undefined;
+  const created = new ExternalAgentFederationService(store?.getAppServerState && store.putAppServerState ? {
+    persistence: {
+      load: () => store.getAppServerState?.("external_federation", "ledger")?.payload as ExternalAgentFederationSnapshot | undefined,
+      save: (snapshot) => { store.putAppServerState?.({ kind: "external_federation", recordId: "ledger", payload: snapshot }, new Date().toISOString()); },
+    },
+  } : {});
   federationByContext.set(context, created);
   return created;
 }

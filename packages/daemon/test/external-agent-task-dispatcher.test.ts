@@ -100,7 +100,7 @@ test("external federation dispatches through a verified adapter and records even
   });
   assert.equal(result.outcome, "completed");
   assert.deepEqual(events, ["run_start", "assistant_text_delta"]);
-  assert.equal(federation.getTask(taskId)?.task.status, "running");
+  assert.equal(federation.getTask(taskId)?.task.status, "completed");
   assert.ok((federation.snapshot().events.filter((event) => event.taskId === taskId)).length >= 4);
 });
 

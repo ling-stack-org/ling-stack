@@ -56,6 +56,7 @@ import {
   getExternalAgentFederation,
   type ExternalAgentFederationEvent,
 } from "../runtime/external-agent/federation.js";
+import { dispatchExternalAgentTask } from "../runtime/external-agent/task-dispatcher.js";
 import {
   AppServerCollaborationError,
   appendAppServerWorkItemCollaboration,
@@ -718,7 +719,7 @@ class RpcConnection {
     }
   }
 
-  private startExternalAgentTask(params: unknown): unknown {
+  private async startExternalAgentTask(params: unknown): Promise<unknown> {
     const record = readParamsRecord(params);
     const registrationId = readStringField(record, "registrationId");
     try {
@@ -747,13 +748,75 @@ class RpcConnection {
         idempotencyKey: readStringField(readParamsRecord(record.submission), "idempotencyKey"),
         data: { registrationId, workItemId: task.workItemId, status: task.status, dispatchDepth: task.dispatchDepth },
       });
-      if (this.appServer) {
-        this.send({ jsonrpc: "2.0", method: "externalAgent/task/started", params: result });
-      }
-      return result;
+      const current = await this.maybeDispatchExternalAgentTask({
+        cwd,
+        registrationId,
+        taskId: task.taskId,
+        submission,
+        workItemId,
+        workItemRevision: String(workItem.revision),
+      });
+      const response = { task: current ?? this.externalAgents.getTask(task.taskId)?.task ?? task };
+      if (this.appServer) this.send({ jsonrpc: "2.0", method: "externalAgent/task/started", params: response });
+      return response;
     } catch (error) {
       throw externalAgentRpcError(error);
     }
+  }
+
+  private async maybeDispatchExternalAgentTask(input: {
+    readonly cwd: string;
+    readonly registrationId: string;
+    readonly taskId: string;
+    readonly submission: Record<string, unknown>;
+    readonly workItemId: string;
+    readonly workItemRevision: string;
+  }): Promise<import("@ling-stack/contracts").LingAppServerExternalAgentTaskReceipt | undefined> {
+    const registration = this.externalAgents.getRegistration(input.registrationId)?.registration;
+    if (!registration) return undefined;
+    const runnerId = registration.adapterKind === "codex-app-server"
+      ? "codex-app-server"
+      : registration.adapterKind === "acp"
+        ? "openclaw-acp"
+        : registration.adapterKind;
+    const runner = this.context.runnerRegistry.get(runnerId);
+    const acceptance = typeof input.submission.acceptanceSnapshot === "object" && input.submission.acceptanceSnapshot !== null
+      ? input.submission.acceptanceSnapshot as Record<string, unknown>
+      : {};
+    const provider = typeof acceptance.provider === "object" && acceptance.provider !== null
+      ? acceptance.provider as Record<string, unknown>
+      : undefined;
+    if (!runner || runner.status !== "enabled" || !provider
+      || typeof provider.provider !== "string" || typeof provider.model !== "string") {
+      return undefined;
+    }
+    const objective = readStringField(input.submission, "objective");
+    const options = {
+      cwd: input.cwd,
+      task: { id: input.taskId, title: objective.slice(0, 120), prompt: objective },
+      provider: {
+        provider: provider.provider,
+        model: provider.model,
+        ...(typeof provider.api === "string" ? { api: provider.api as never } : {}),
+      },
+      tools: registration.toolScopes,
+    } as import("@ling-stack/runner-pi").PiRunnerRunOptions;
+    void dispatchExternalAgentTask({
+      federation: this.externalAgents,
+      taskId: input.taskId,
+      runner,
+      options,
+      assertAdmission: () => {
+        const store = this.context.storeRegistry.getStore(input.cwd);
+        const workItem = store.getWorkItem(input.workItemId);
+        if (!workItem || String(workItem.revision) !== input.workItemRevision || workItem.control.state !== "active") {
+          throw new Error("external_agent_work_item_admission_changed");
+        }
+      },
+    }).catch((error) => {
+      try { this.externalAgents.markUnknown(input.taskId, error instanceof Error ? error.message.slice(0, 500) : String(error)); } catch { /* retain the original unknown outcome */ }
+    });
+    return this.externalAgents.getTask(input.taskId)?.task;
   }
 
   private reconnectExternalAgentTask(params: unknown): unknown {
