@@ -4,6 +4,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test, { type TestContext } from "node:test";
+import { PROVIDER_MODEL_CATALOG_PATH, providerModelCatalogVersion, renderProviderModelCatalog } from "../provider-model-catalog-format.mjs";
 import { classifyChangedFiles } from "./classify-scope.mjs";
 
 type ScopeInput = Parameters<typeof classifyChangedFiles>[0];
@@ -316,6 +317,7 @@ function repositoryFixture(t: TestContext) {
   mkdirSync(join(root, "scripts/ci"), { recursive: true });
   const script = join(root, "scripts/ci/classify-scope.mjs");
   copyFileSync(new URL("./classify-scope.mjs", import.meta.url), script);
+  copyFileSync(new URL("../provider-model-catalog-format.mjs", import.meta.url), join(root, "scripts/provider-model-catalog-format.mjs"));
   copyFileSync(new URL("./product-version-scope.mjs", import.meta.url), join(root, "scripts/ci/product-version-scope.mjs"));
   mkdirSync(join(root, "scripts/release"), { recursive: true });
   copyFileSync(new URL("../release/desktop-release.mjs", import.meta.url), join(root, "scripts/release/desktop-release.mjs"));
@@ -430,25 +432,50 @@ test("the real package graph keeps Web's CLI and catalog consumers without build
   assert.ok(!scope.testPackages.includes("@ling-stack/core"));
 });
 
-test("generated provider model catalog refreshes stay on Core validation", () => {
-  const scope = classify(["packages/core/src/provider-model-catalog.generated.ts", "docs/ci.md"]);
+test("Git verifies provider catalog data before selecting focused Core validation", t => {
+  const repo = repositoryFixture(t);
+  const render = (id: string) => {
+    const records = [{ providerId: "openai", id, capabilities: ["chat"] }];
+    return renderProviderModelCatalog({ records, version: providerModelCatalogVersion(records),
+      generatedAt: "2026-11-21T00:00:00.000Z", updatedAt: "2026-11-21" });
+  };
+  repo.write(PROVIDER_MODEL_CATALOG_PATH, render("baseline"));
+  const base = repo.commit();
+  const refreshed = render("candidate");
+  repo.write(PROVIDER_MODEL_CATALOG_PATH, refreshed);
+  repo.write("docs/ci.md", "# Catalog refresh\n");
+  repo.commit();
+  const scope = repo.classify(base);
   assert.equal(scope.mode, "affected");
   assert.deepEqual(scope.packages, ["@ling-stack/core"]);
-  assert.deepEqual(scope.testPackages, ["@ling-stack/core"]);
+  assert.deepEqual(scope.testPackages, []);
   assert.deepEqual(scope.typecheckPackages, ["@ling-stack/core"]);
+  assert.equal(scope.providerModelCatalog, true);
   assert.equal(scope.dependencyPolicy, false);
   assert.equal(scope.assurance, false);
   assert.equal(scope.daemon, false);
   assert.deepEqual(scope.daemonPlatforms, []);
   assert.equal(scope.macosNative, false);
   assert.match(scope.reason, /generated provider model catalog/u);
+
+  for (const candidate of [
+    refreshed.replace('"candidate"', '"digest-mismatch"'),
+    refreshed.replace("export const providerModelCatalogRecords", "void 0;\nexport const providerModelCatalogRecords"),
+  ]) {
+    repo.write(PROVIDER_MODEL_CATALOG_PATH, candidate);
+    repo.commit();
+    const rejected = repo.classify(base);
+    assert.equal(rejected.providerModelCatalog, undefined);
+    assert.equal(rejected.daemon, true);
+    assert.equal(rejected.assurance, true);
+  }
 });
 
 test("provider catalog refreshes mixed with resolver source retain transitive consumers", () => {
   const scope = classify([
-    "packages/core/src/provider-model-catalog.generated.ts",
+    PROVIDER_MODEL_CATALOG_PATH,
     "packages/core/src/provider-model-catalog.ts",
-  ]);
+  ], { generatedProviderCatalog: true });
   assert.equal(scope.mode, "affected");
   for (const name of ["@ling-stack/core", "@ling-stack/daemon", "@ling-stack/cli"]) {
     assert.ok(scope.packages.includes(name), name);
@@ -577,6 +604,58 @@ test("validated build and typecheck wrappers preserve package-only migration sco
   assert.equal(scope.dependencyPolicy, true);
   assert.equal(scope.assurance, false);
   assert.equal(scope.daemon, false);
+});
+
+test("Localization test migrations retain catalog checks and scope private declarations to the package", t => {
+  const repo = repositoryFixture(t);
+  const root = "packages/localization";
+  const audit = "node scripts/check-catalogs.mjs && ";
+  const compile = "node scripts/compile-catalogs.mjs && ";
+  const manifest = { name: "@ling-stack/localization", type: "module", scripts: {
+    build: compile + "tsc -p tsconfig.json",
+    "test:ci": audit + "node --test test/*.test.mjs",
+    "typecheck:ci": compile + "tsc -p tsconfig.json --noEmit",
+    test: audit + compile + "tsc -p tsconfig.json && node --test test/*.test.mjs",
+    typecheck: compile + "tsc -p tsconfig.json --noEmit",
+  } };
+  const saveManifest = () => repo.write(`${root}/package.json`, JSON.stringify(manifest));
+  const runtime = "export const probe = true;\n";
+  saveManifest();
+  repo.write(`${root}/scripts/catalog-utils.mjs`, runtime);
+  repo.write(`${root}/test/probe.test.mjs`, "import { probe } from '../scripts/catalog-utils.mjs'; void probe;\n");
+  const base = repo.commit();
+
+  repo.git("mv", `${root}/test/probe.test.mjs`, `${root}/test/probe.test.ts`);
+  Object.assign(manifest.scripts, {
+    "test:ci": audit + "node --test test/*.test.ts",
+    "typecheck:ci": compile + "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
+    test: "corepack pnpm typecheck && corepack pnpm test:ci",
+    typecheck: "corepack pnpm build && corepack pnpm typecheck:ci",
+  });
+  saveManifest();
+  repo.write(`${root}/scripts/catalog-utils.d.mts`, "export declare const probe: boolean;\n");
+  repo.write(`${root}/tsconfig.test.json`, JSON.stringify({
+    compilerOptions: { noEmit: true }, include: ["test/**/*.ts"],
+  }));
+  repo.commit();
+  const scope = repo.classify(base);
+  assert.equal(scope.mode, "affected");
+  assert.deepEqual(scope.packages, ["@ling-stack/localization"]);
+  assert.deepEqual(scope.testPackages, ["@ling-stack/localization"]);
+  assert.deepEqual(scope.typecheckPackages, ["@ling-stack/localization"]);
+  assert.equal(scope.dependencyPolicy, true);
+  assert.equal(scope.assurance, false);
+  assert.deepEqual(scope.daemonPlatforms, []);
+
+  repo.write(`${root}/scripts/catalog-utils.mjs`, "export const probe = false;\n");
+  repo.commit();
+  assert.equal(repo.classify(base).assurance, true);
+
+  repo.write(`${root}/scripts/catalog-utils.mjs`, runtime);
+  manifest.scripts["test:ci"] = "node --test test/*.test.ts";
+  saveManifest();
+  repo.commit();
+  assert.equal(repo.classify(base).mode, "full");
 });
 
 test("workspace dependency builds and the owning package build closure retain package-only validation", t => {

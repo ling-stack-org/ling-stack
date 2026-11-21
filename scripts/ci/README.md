@@ -17,7 +17,7 @@ Mixed changes union their affected packages and required lanes.
 | Verified deletions under the root `output/` | Common fast checks only for an archive cleanup |
 | Package tests and test support | Owning package; shared test-support importers are included |
 | Offline assurance tooling or fixtures | Assurance and actual package-level validation importers; no unrelated product shards |
-| Generated provider model catalog (`packages/core/src/provider-model-catalog.generated.ts`) | Core build, typecheck, and tests only |
+| Verified generated provider model catalog refresh | Core build, typecheck, and focused provider catalog tests |
 | Package source or local build/typecheck configuration | Owning package and transitive consumers |
 | Existing package manifest, with verified stable identity and unchanged complete script contents | Owner and consumers from the old/current graph, plus dependency policy |
 | Verified package-local Node/TypeScript validation migration with unchanged production metadata, build scripts and hooks | Complete owner tests/typecheck and dependency policy; shared test-support consumers remain selected |
@@ -33,6 +33,11 @@ narrows only when `VERSION` and `package.json.version` agree in the candidate,
 the version is valid, and the rest of the root manifest is identical. Missing
 or mismatched values retain full scope. Desktop version inputs follow the
 normal package graph and Desktop release validation.
+
+A catalog refresh must match the generator's structure and version digest in
+both comparison trees. The required typecheck job runs the Core provider
+catalog tests. Resolver, generator and mixed source changes follow the normal
+consumer graph.
 
 Package manifests are compared with the base checkout before narrowing. The
 directory, name, test/typecheck entry presence and complete scripts fingerprint
@@ -446,6 +451,9 @@ typecheck before executing the suite.
 Plugin SDK's `test:ci` discovers its two `.test.ts` files with Node's existing
 test runner. Its `typecheck:ci` checks source and the strict, no-emit
 `packages/plugin-sdk/tsconfig.test.json`.
+Localization's validation entries retain catalog compilation and auditing.
+Its private catalog script declarations can accompany a verified test migration
+when their runtime modules stay unchanged.
 
 Local fixture and package checks are not evidence of Linux/macOS hosted-runner
 latency. Compare queue, setup, test-file and total durations after the next

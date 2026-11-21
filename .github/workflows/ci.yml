@@ -35,6 +35,7 @@ jobs:
       assurance-selected: ${{ steps.classify.outputs.assurance-selected }}
       build-selected: ${{ steps.classify.outputs.build-selected }}
       typecheck-selected: ${{ steps.classify.outputs.typecheck-selected }}
+      provider-model-catalog: ${{ steps.classify.outputs.provider-model-catalog }}
       unit-matrix: ${{ steps.test-plan.outputs.unit-matrix }}
       daemon-matrix: ${{ steps.test-plan.outputs.daemon-matrix }}
       unit-selected: ${{ steps.test-plan.outputs.unit-selected }}
@@ -94,6 +95,7 @@ jobs:
             "assurance-selected": String(scope.assurance),
             "build-selected": String(scope.packages.length > 0),
             "typecheck-selected": String(scope.typecheckPackages.length > 0),
+            "provider-model-catalog": String(scope.providerModelCatalog === true),
             daemon: String(scope.daemon),
             "daemon-platforms": JSON.stringify(scope.daemonPlatforms),
             "linux-contract": String(scope.linuxContract),
@@ -466,6 +468,13 @@ jobs:
 
       - name: Typecheck selected packages without rebuilding dependencies
         run: node scripts/ci/run-packages.mjs --task=typecheck:ci --packages="$SELECTED_PACKAGES"
+
+      - name: Test Core provider model catalog consumers
+        if: needs.scope.outputs.provider-model-catalog == 'true'
+        working-directory: packages/core
+        run: >-
+          node --test test/provider-check.test.mjs
+          test/provider-model-capabilities.test.mjs test/provider-thinking-levels.test.mjs
 
       - name: Check Desktop worktree confirmation IPC
         if: contains(needs.scope.outputs.typecheck-packages, '@ling-stack/desktop')

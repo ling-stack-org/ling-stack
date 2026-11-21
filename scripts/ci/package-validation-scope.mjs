@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from "node:fs";
+import { lstatSync, readFileSync, readdirSync } from "node:fs";
 import { join, matchesGlob } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
@@ -6,6 +6,11 @@ const validationScripts = new Set(["test", "test:ci", "typecheck", "typecheck:ci
 const testCommand = /^node --test(?: --test-concurrency=\d+)? ((?:(?:test|tests)\/\*\.test\.(?:mjs|ts) ?)+)$/u;
 const typecheckCommand = /^tsc -p (tsconfig(?:\.[\w-]+)?\.json)( --noEmit)?$/u;
 const workspacePackageName = /^@ling-stack\/[a-z0-9-]+$/u;
+const localizationTestDeclarations = [
+  "scripts/catalog-locales.d.mts",
+  "scripts/catalog-utils.d.mts",
+  "scripts/protected-tokens.d.mts",
+];
 
 /**
  * Recognize package-local Node/TypeScript validation migrations. Production
@@ -34,10 +39,19 @@ export function packageValidationScope({ current, previous, directory, root, rep
   const previousPaths = new Set(previousFiles);
   const testConfigs = new Set();
   const typedTestIncludes = new Set();
+  const localization = directory === "packages/localization" && metadata.name === "@ling-stack/localization";
+  const testPrelude = localization ? "node scripts/check-catalogs.mjs && " : "";
+  const typecheckPrelude = localization ? "node scripts/compile-catalogs.mjs && " : "";
+  const testPatterns = [];
   for (const candidate of [oldScripts, scripts]) {
-    const tests = testCommand.exec(candidate["test:ci"]);
+    const testEntry = candidate["test:ci"];
+    const typecheckEntry = candidate["typecheck:ci"];
+    if (!testEntry.startsWith(testPrelude) || !typecheckEntry.startsWith(typecheckPrelude)) return undefined;
+    const nodeTest = testEntry.slice(testPrelude.length);
+    const tests = testCommand.exec(nodeTest);
     if (!tests) return undefined;
-    const checks = candidate["typecheck:ci"].split(" && ");
+    testPatterns.push(tests[1].trim().split(" "));
+    const checks = typecheckEntry.slice(typecheckPrelude.length).split(" && ");
     for (const command of checks) {
       const match = typecheckCommand.exec(command);
       if (!match) return undefined;
@@ -71,12 +85,12 @@ export function packageValidationScope({ current, previous, directory, root, rep
       const prefixes = task === "test" ? [...buildPrefixes, "corepack pnpm typecheck && "] : buildPrefixes;
       const suffixes = [candidate[`${task}:ci`], `corepack pnpm ${task}:ci`];
       if (!prefixes.some(prefix => suffixes.some(suffix =>
-        matchesValidationCommand(candidate[task], prefix + suffix, workspaceBuilds)))) return undefined;
+        matchesValidationCommand(candidate[task], prefix + suffix, workspaceBuilds))
+        || (localization && task === "test" && candidate[task] === testPrelude + prefix + nodeTest))) return undefined;
     }
   }
   // A migration cannot narrow discovery by leaving another test language out.
-  const patterns = testCommand.exec(scripts["test:ci"])[1].trim().split(" ");
-  const oldPatterns = testCommand.exec(oldScripts["test:ci"])[1].trim().split(" ");
+  const [oldPatterns, patterns] = testPatterns;
   const testIdentities = new Set();
   let testCount = 0;
   for (const directoryName of new Set([...patterns, ...oldPatterns].map(pattern => pattern.split("/")[0]))) {
@@ -95,7 +109,19 @@ export function packageValidationScope({ current, previous, directory, root, rep
   const baselineTests = previousFiles.filter(file => oldPatterns.some(pattern => matchesGlob(file, `${directory}/${pattern}`)));
   if (baselineTests.length === 0 || baselineTests.some(file =>
     !testIdentities.has(file.replace(/\.(?:mjs|ts)$/u, "")))) return undefined;
-  return { testConfigs: [...testConfigs] };
+  const testInputs = [...testConfigs];
+  if (localization && typedTestIncludes.size > 0) {
+    // These private script declarations accompany the no-emit test config.
+    // Changes to their runtime counterparts retain the consumer graph.
+    for (const declaration of localizationTestDeclarations) {
+      const file = `${directory}/${declaration}`;
+      const implementation = file.replace(/\.d\.mts$/u, ".mjs");
+      if (changedFiles.includes(file) && !previousPaths.has(file)
+        && previousPaths.has(implementation) && !changedFiles.includes(implementation)
+        && lstatSync(join(root, file), { throwIfNoEntry: false })?.isFile()) testInputs.push(file);
+    }
+  }
+  return { testInputs };
 }
 
 function matchesValidationCommand(command, validation, workspaceBuilds) {

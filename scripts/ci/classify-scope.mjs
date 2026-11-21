@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { isGeneratedProviderModelCatalog, PROVIDER_MODEL_CATALOG_PATH } from "../provider-model-catalog-format.mjs";
 import { packageValidationScope } from "./package-validation-scope.mjs";
 import { inspectProductVersionChange } from "./product-version-scope.mjs";
 
@@ -9,7 +10,6 @@ const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..")
 const LOCAL_OUTPUT_DIRECTORY = "output/";
 const WEB_PACKAGE = "@ling-stack/web";
 const CORE_PACKAGE = "@ling-stack/core";
-const PROVIDER_MODEL_CATALOG_PATH = "packages/core/src/provider-model-catalog.generated.ts";
 
 const DOCUMENTATION_ROOT_FILES = new Set([
   "README.md",
@@ -84,7 +84,7 @@ function isAssurancePath(file) {
  * The classifier is intentionally conservative: a path that is not recognized
  * as documentation, allowlisted maintenance, verified local output cleanup, or
  * a workspace package escalates to the full CI lane.
- * @param {{files: string[], deletedOutputFiles?: string[], eventName?: string, forceFull?: boolean, packageEntries?: PackageEntry[], basePackageEntries?: PackageEntry[], versionChange?: ReturnType<typeof inspectProductVersionChange>}} input
+ * @param {{files: string[], deletedOutputFiles?: string[], eventName?: string, forceFull?: boolean, packageEntries?: PackageEntry[], basePackageEntries?: PackageEntry[], versionChange?: ReturnType<typeof inspectProductVersionChange>, generatedProviderCatalog?: boolean}} input
  * @returns {CiScope}
  */
 export function classifyChangedFiles(input) {
@@ -116,20 +116,22 @@ export function classifyChangedFiles(input) {
     return buildScope("docs", files, packages, reason);
   }
 
-  // The generated provider catalog is data consumed by Core's catalog resolver.
-  // Keep its own refreshes on Core validation. A runtime resolver change, a
-  // generator change, or any mixed source edit follows the normal dependency
-  // graph below.
-  const productFiles = scopeFiles.filter(file => !isDocumentationPath(file) && !isMaintenancePath(file));
-  if (productFiles.length > 0 && productFiles.every(file => file === PROVIDER_MODEL_CATALOG_PATH)) {
-    if (!packages.some(entry => entry.name === CORE_PACKAGE)) {
+  if (input.generatedProviderCatalog && scopeFiles.includes(PROVIDER_MODEL_CATALOG_PATH)
+    && scopeFiles.every(file => file === PROVIDER_MODEL_CATALOG_PATH || isDocumentationPath(file) || isMaintenancePath(file))) {
+    if (!packages.some(entry => entry.directory === "packages/core" && entry.name === CORE_PACKAGE
+      && entry.hasTestScript && entry.hasTypecheckScript)) {
       return buildScope("full", files, packages, "provider catalog requires the Core package");
     }
-    return buildProviderModelCatalogScope(files);
+    return {
+      ...buildScope("affected", files, packages, "verified generated provider model catalog refresh"),
+      packages: [CORE_PACKAGE],
+      typecheckPackages: [CORE_PACKAGE],
+      providerModelCatalog: true,
+    };
   }
 
   const validationManifests = new Set();
-  const validationConfigs = new Set();
+  const validationInputs = new Set();
   for (const file of scopeFiles.filter((file) => file.endsWith("/package.json"))) {
     const directory = dirname(file);
     const current = packages.find((entry) => entry.directory === directory);
@@ -147,7 +149,7 @@ export function classifyChangedFiles(input) {
         return buildScope("full", files, packages, "unverified or changed workspace package identity or validation scripts");
       }
       validationManifests.add(file);
-      for (const config of validation.testConfigs) validationConfigs.add(config);
+      for (const input of validation.testInputs) validationInputs.add(input);
     }
   }
 
@@ -167,7 +169,7 @@ export function classifyChangedFiles(input) {
       continue;
     }
     changedEntries.add(entry.name);
-    if (isTestPath(file) || validationManifests.has(file) || validationConfigs.has(file)) {
+    if (isTestPath(file) || validationManifests.has(file) || validationInputs.has(file)) {
       changedTestEntries.add(entry.name);
     } else {
       changedSourceEntries.add(entry.name);
@@ -263,7 +265,7 @@ export function classifyChangedFiles(input) {
 }
 
 /** @typedef {{name: string, directory: string, dependencies: string[], hasTestScript: boolean, hasTypecheckScript: boolean, scriptsFingerprint?: string, manifest?: object, files?: string[]}} PackageEntry */
-/** @typedef {{mode: "docs"|"affected"|"full", files: string[], packages: string[], testPackages: string[], typecheckPackages: string[], dependencyPolicy: boolean, assurance: boolean, daemon: boolean, daemonPlatforms: string[], linuxContract: boolean, macosNative: boolean, macosHelper: boolean, nativeRelease: boolean, productVersion?: string, reason: string}} CiScope */
+/** @typedef {{mode: "docs"|"affected"|"full", files: string[], packages: string[], testPackages: string[], typecheckPackages: string[], dependencyPolicy: boolean, assurance: boolean, daemon: boolean, daemonPlatforms: string[], linuxContract: boolean, macosNative: boolean, macosHelper: boolean, nativeRelease: boolean, productVersion?: string, providerModelCatalog?: boolean, reason: string}} CiScope */
 
 /** @param {string} value */
 function normalizePath(value) {
@@ -531,26 +533,6 @@ function buildScope(mode, files, packages, reason) {
   };
 }
 
-/** @param {string[]} files */
-function buildProviderModelCatalogScope(files) {
-  return {
-    mode: "affected",
-    files,
-    packages: [CORE_PACKAGE],
-    testPackages: [CORE_PACKAGE],
-    typecheckPackages: [CORE_PACKAGE],
-    dependencyPolicy: false,
-    assurance: false,
-    daemon: false,
-    daemonPlatforms: [],
-    linuxContract: false,
-    macosNative: false,
-    macosHelper: false,
-    nativeRelease: false,
-    reason: "verified generated provider model catalog refresh",
-  };
-}
-
 function parseArgs(argv) {
   const args = {};
   for (let index = 0; index < argv.length; index += 1) {
@@ -569,6 +551,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   let deletedOutputFiles;
   let basePackageEntries;
   let versionChange;
+  let generatedProviderCatalog;
   if (args.files) {
     files = JSON.parse(args.files);
   } else if (eventName === "pull_request" && args.base && args.head) {
@@ -581,9 +564,14 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     }
     if (files.some((file) => file.endsWith("/package.json"))) basePackageEntries = discoverPackages(repositoryRoot, base);
     versionChange = inspectProductVersionChange({ root: repositoryRoot, base, head: args.head, files });
+    if (args["force-full"] !== "true" && files.includes(PROVIDER_MODEL_CATALOG_PATH)) {
+      generatedProviderCatalog = [base, args.head].every(ref =>
+        /^100644 blob /u.test(git(["ls-tree", ref, "--", PROVIDER_MODEL_CATALOG_PATH]))
+        && isGeneratedProviderModelCatalog(git(["show", `${ref}:${PROVIDER_MODEL_CATALOG_PATH}`])));
+    }
   } else {
     files = [];
   }
   console.log(JSON.stringify(classifyChangedFiles({ files, deletedOutputFiles, eventName,
-    forceFull: args["force-full"] === "true", basePackageEntries, versionChange })));
+    forceFull: args["force-full"] === "true", basePackageEntries, versionChange, generatedProviderCatalog })));
 }
