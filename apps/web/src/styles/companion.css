@@ -528,8 +528,7 @@ html[data-companion-window="true"] #root {
   padding: 10px;
 }
 .companion-desktop-panel > .companion-pet-stage-slot { min-height: 320px; }
-.companion-desktop-panel .companion-mini-heading,
-.companion-desktop-panel .companion-pet-stage { -webkit-app-region: drag; }
+.companion-desktop-panel .companion-mini-heading { -webkit-app-region: drag; }
 .companion-desktop-panel button,
 .companion-desktop-panel textarea,
 .companion-desktop-panel select,

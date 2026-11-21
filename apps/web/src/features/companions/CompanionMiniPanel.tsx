@@ -316,7 +316,7 @@ export function CompanionMiniPanel({
             return { x: rect.left - current.left, y: rect.top - current.top, width: rect.width, height: rect.height };
           };
           const regionElements = [
-            stageRef.current,
+            ...(desktop ? [] : [stageRef.current]),
             attentionCardRef.current,
             conversationRef.current,
           ].filter((element): element is HTMLDivElement => element !== null);
