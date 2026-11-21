@@ -442,7 +442,12 @@ test("root version files narrow only with matching valid values and an otherwise
   }
 });
 
-function validationMigration(t: TestContext, additionalTests: string[] = [], baselineConfig?: object) {
+function validationMigration(t: TestContext, options: {
+  additionalTests?: string[];
+  baselineConfig?: object;
+  baselineTest?: string;
+} = {}) {
+  const { additionalTests = [], baselineConfig, baselineTest } = options;
   const repo = repositoryFixture(t);
   const manifest = {
     name: "@ling-stack/core", type: "module",
@@ -450,7 +455,7 @@ function validationMigration(t: TestContext, additionalTests: string[] = [], bas
     scripts: {
       build: "corepack pnpm --filter @ling-stack/contracts build && tsc -p tsconfig.json",
       "build:ci": "tsc -p tsconfig.json",
-      test: "corepack pnpm --filter @ling-stack/contracts build && tsc -p tsconfig.json && node --test test/*.test.mjs",
+      test: baselineTest ?? "corepack pnpm --filter @ling-stack/contracts build && tsc -p tsconfig.json && node --test test/*.test.mjs",
       "test:ci": "node --test test/*.test.mjs",
       typecheck: "corepack pnpm --filter @ling-stack/contracts build && tsc -p tsconfig.json --noEmit",
       "typecheck:ci": "tsc -p tsconfig.json --noEmit",
@@ -495,9 +500,27 @@ test("a verified Node/TypeScript test migration retains complete owner validatio
   assert.match(scope.reason, /test/u);
 });
 
+test("validated build and typecheck wrappers preserve package-only migration scope", t => {
+  const repo = validationMigration(t, {
+    baselineTest: "corepack pnpm run build && node --test test/*.test.mjs",
+  });
+  repo.manifest.scripts.test = "corepack pnpm typecheck && corepack pnpm test:ci";
+  repo.saveManifest();
+  repo.commit();
+  const scope = repo.classify(repo.base);
+  assert.equal(scope.mode, "affected");
+  assert.deepEqual(scope.packages, ["@ling-stack/core"]);
+  assert.deepEqual(scope.testPackages, ["@ling-stack/core"]);
+  assert.deepEqual(scope.typecheckPackages, ["@ling-stack/core"]);
+  assert.equal(scope.dependencyPolicy, true);
+  assert.equal(scope.assurance, false);
+  assert.equal(scope.daemon, false);
+  assert.equal(scope.web, false);
+});
+
 test("validation migrations cannot discard baseline test entrypoints", t => {
   for (const replacement of [undefined, "different.test.ts"]) {
-    const repo = validationMigration(t, ["retained.test.mjs"]);
+    const repo = validationMigration(t, { additionalTests: ["retained.test.mjs"] });
     rmSync(join(repo.root, "packages/core/test/retained.test.mjs"));
     if (replacement) repo.write(`packages/core/test/${replacement}`, "import test from 'node:test'; test('different', () => {});\n");
     repo.commit();
@@ -514,7 +537,7 @@ test("validation migrations cannot reinterpret an existing TypeScript configurat
     { compilerOptions: { noEmit: false }, include: ["test/**/*.ts"] },
     { compilerOptions: { noEmit: true }, include: ["test/**/*"] },
   ]) {
-    const repo = validationMigration(t, [], baselineConfig);
+    const repo = validationMigration(t, { baselineConfig });
     repo.commit();
     const scope = repo.classify(repo.base);
     assert.equal(scope.mode, "full", JSON.stringify(baselineConfig));
@@ -527,7 +550,7 @@ test("validation migrations can reuse an unchanged isolated TypeScript configura
   const baselineConfig = {
     extends: "./tsconfig.json", compilerOptions: { noEmit: true }, include: ["test/**/*"],
   };
-  const repo = validationMigration(t, [], baselineConfig);
+  const repo = validationMigration(t, { baselineConfig });
   repo.write("packages/core/tsconfig.test.json", JSON.stringify(baselineConfig));
   repo.commit();
   const scope = repo.classify(repo.base);
@@ -570,6 +593,11 @@ test("opaque commands, build hooks, metadata changes and incomplete test discove
   const mutations: ((repo: ReturnType<typeof validationMigration>) => void)[] = [
     repo => { repo.manifest.scripts["test:ci"] = "echo omitted"; },
     repo => { repo.manifest.scripts.typecheck = "echo omitted"; },
+    repo => {
+      repo.manifest.scripts.test = "corepack pnpm typecheck && corepack pnpm test:ci";
+      repo.manifest.scripts.typecheck = "corepack pnpm test && corepack pnpm typecheck:ci";
+    },
+    repo => { repo.manifest.scripts.test = "corepack pnpm typecheck && corepack pnpm test:ci && node ../../scripts/check.mjs"; },
     repo => {
       repo.manifest.scripts["typecheck:ci"] = "tsc -p tsconfig.json --noEmit";
       repo.manifest.scripts.typecheck = "corepack pnpm build && corepack pnpm typecheck:ci";
