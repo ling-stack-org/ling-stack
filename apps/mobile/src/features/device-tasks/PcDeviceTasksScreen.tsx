@@ -1,6 +1,6 @@
-import type { DeviceTaskStatusV1 } from "@ling-stack/contracts";
-import { useEffect, useState } from "react";
-import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
+import type { DeviceTaskStatusV1, RemoteDeviceApprovalPreviewV1 } from "@ling-stack/contracts";
+import { useEffect, useRef, useState } from "react";
+import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { useMobileRemote } from "../../remote/MobileRemoteProvider";
@@ -22,17 +22,23 @@ const taskStatusLabels: Record<DeviceTaskStatusV1, string> = {
   unknown: "结果待确认",
 };
 
+type DeviceTaskAction = "approve" | "revoke";
+type DeviceTaskDecision = { readonly kind: "approve"; readonly preview: RemoteDeviceApprovalPreviewV1 } | { readonly kind: "revoke" };
+
 export function PcDeviceTasksScreen() {
   const { client, remoteState } = useMobileRemote();
   const { theme } = useMobileTheme();
   const styles = createStyles(theme);
-  const { connection, deviceOverview, deviceOverviewCurrent, deviceTask } = remoteState;
+  const { connection, deviceOverview, deviceOverviewCurrent, deviceTask, deviceTaskCurrent } = remoteState;
   const canRead = remoteState.policy?.capabilities.includes("device.read") === true;
+  const canApprove = remoteState.policy?.capabilities.includes("device.approve") === true;
+  const canRevoke = remoteState.policy?.capabilities.includes("device.revoke") === true;
   const [selectedTaskId, setSelectedTaskId] = useState<string>();
   const [refreshing, setRefreshing] = useState(false);
   const [refreshFailed, setRefreshFailed] = useState(false);
   const [failedTaskId, setFailedTaskId] = useState<string>();
-  const [actionTaskId, setActionTaskId] = useState<string>();
+  const runningActions = useRef<Partial<Record<DeviceTaskAction, string>>>({});
+  const [actionTaskIds, setActionTaskIds] = useState(runningActions.current);
   const [actionFailed, setActionFailed] = useState<string>();
   const detail = deviceTask?.task.taskId === selectedTaskId ? deviceTask?.task : undefined;
   const connected = connection === "connected";
@@ -65,17 +71,30 @@ export function PcDeviceTasksScreen() {
   const deviceName = (deviceId: string) =>
     deviceOverview?.devices.find(device => device.deviceId === deviceId)?.displayName ?? deviceId;
 
-  const runTaskAction = async (taskId: string, action: () => Promise<unknown>) => {
-    if (actionTaskId) return;
-    setActionTaskId(taskId);
+  const runTaskAction = async (taskId: string, decision: DeviceTaskDecision) => {
+    const { kind } = decision;
+    if (!client || runningActions.current[kind]) return;
+    runningActions.current = { ...runningActions.current, [kind]: taskId };
+    setActionTaskIds(runningActions.current);
     setActionFailed(undefined);
     try {
-      await action();
+      const handle = decision.kind === "approve"
+        ? await client.approveDeviceTask(taskId, decision.preview)
+        : await client.revokeDeviceTask(taskId);
+      await handle.completion;
     } catch {
       setActionFailed(taskId);
     } finally {
-      setActionTaskId(undefined);
+      runningActions.current = { ...runningActions.current, [kind]: undefined };
+      setActionTaskIds(runningActions.current);
     }
+  };
+
+  const confirmApproval = (taskId: string, preview: RemoteDeviceApprovalPreviewV1) => {
+    Alert.alert("批准设备操作", `${deviceName(preview.targetDeviceId)}\n${preview.capabilityId}\n由 PC 执行，可能更改设备状态。`, [
+      { text: "返回", style: "cancel" },
+      { text: "批准执行", onPress: () => void runTaskAction(taskId, { kind: "approve", preview }) },
+    ]);
   };
 
   return (
@@ -107,6 +126,9 @@ export function PcDeviceTasksScreen() {
                 {deviceOverview.recentTasks === undefined ? <Text style={styles.note}>当前 PC 未提供任务列表。</Text> : null}
                 {deviceOverview.recentTasks?.map(task => {
                   const currentDetail = detail && detail.taskId === task.taskId && detail.updatedAt >= task.updatedAt ? detail : undefined;
+                  const liveDetail = connected && deviceOverviewCurrent && deviceTaskCurrent ? currentDetail : undefined;
+                  const preview = liveDetail?.pendingApproval;
+                  const stoppable = liveDetail && !["failed", "succeeded", "cancelled", "unknown"].includes(liveDetail.status);
                   return (
                   <View key={task.taskId} style={styles.row}>
                     <Pressable
@@ -126,41 +148,32 @@ export function PcDeviceTasksScreen() {
                             <Text style={styles.note}>执行主机 PC · {currentDetail.ownerId}</Text>
                             <Text style={styles.note}>执行记录 {currentDetail.attemptIds.length} 条</Text>
                             {currentDetail.lastVerificationId ? <Text selectable style={styles.note}>复测记录 {currentDetail.lastVerificationId}</Text> : null}
-                            {currentDetail.pendingApproval ? (
+                            {preview || (canRevoke && stoppable) ? (
                               <View style={styles.approval}>
-                                <Text style={styles.note}>待确认操作 {currentDetail.pendingApproval.capabilityId} · {currentDetail.pendingApproval.sideEffect}</Text>
-                                {currentDetail.pendingApproval.expectedVerification ? <Text style={styles.note}>复测条件已绑定</Text> : null}
+                                {preview ? <Text style={styles.note}>待确认操作 {preview.capabilityId} · {deviceName(preview.targetDeviceId)}</Text> : null}
                                 <View style={styles.actions}>
-                                  <Pressable
+                                  {preview && canApprove ? <Pressable
                                     accessibilityRole="button"
-                                    accessibilityState={{ disabled: actionTaskId !== undefined }}
-                                    disabled={actionTaskId !== undefined}
-                                    onPress={() => void runTaskAction(task.taskId, async () => {
-                                      const handle = await client?.approveDeviceTask(task.taskId, currentDetail.pendingApproval!);
-                                      if (!handle) throw new Error("remote_device_approval_unavailable");
-                                      await handle.completion;
-                                    })}
+                                    accessibilityState={{ disabled: actionTaskIds.approve !== undefined || actionTaskIds.revoke === task.taskId }}
+                                    disabled={actionTaskIds.approve !== undefined || actionTaskIds.revoke === task.taskId}
+                                    onPress={() => confirmApproval(task.taskId, preview)}
                                     style={styles.primaryAction}
                                   >
-                                    <Text style={styles.primaryActionText}>{actionTaskId === task.taskId ? "提交中…" : "批准执行"}</Text>
-                                  </Pressable>
-                                  <Pressable
+                                    <Text style={styles.primaryActionText}>{actionTaskIds.approve === task.taskId ? "已请求批准" : "批准执行"}</Text>
+                                  </Pressable> : null}
+                                  {canRevoke && stoppable ? <Pressable
                                     accessibilityRole="button"
-                                    accessibilityState={{ disabled: actionTaskId !== undefined }}
-                                    disabled={actionTaskId !== undefined}
-                                    onPress={() => void runTaskAction(task.taskId, async () => {
-                                      const handle = await client?.revokeDeviceTask(task.taskId);
-                                      if (!handle) throw new Error("remote_device_revoke_unavailable");
-                                      await handle.completion;
-                                    })}
+                                    accessibilityState={{ disabled: actionTaskIds.revoke !== undefined }}
+                                    disabled={actionTaskIds.revoke !== undefined}
+                                    onPress={() => void runTaskAction(task.taskId, { kind: "revoke" })}
                                     style={styles.secondaryAction}
                                   >
                                     <Text style={styles.secondaryActionText}>撤销</Text>
-                                  </Pressable>
+                                  </Pressable> : null}
                                 </View>
-                                {actionFailed === task.taskId ? <Text accessibilityRole="alert" style={styles.note}>操作失败，请刷新后重试。</Text> : null}
                               </View>
                             ) : null}
+                            {actionFailed === task.taskId ? <Text accessibilityRole="alert" style={styles.note}>操作请求失败，请刷新任务状态。</Text> : null}
                           </>
                         ) : <Text style={styles.note}>
                           {!connected ? "连接 PC 后读取执行记录" : failedTaskId === task.taskId ? "读取失败，请重新打开此任务。" : "正在读取执行记录…"}

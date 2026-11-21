@@ -190,8 +190,11 @@ test("device overview is restored offline and refreshed from the same PC task wi
   assert.equal(client.state.deviceTask?.task.pendingApproval?.actionId, "action-1");
   assert.equal(harness.cache?.state.deviceTask?.task.pendingApproval, undefined);
   assert.equal(client.state.deviceOverviewCurrent, true);
+  await assert.rejects(() => client.approveDeviceTask(task.taskId, client.state.deviceTask!.task.pendingApproval!), /remote_device_mutation_unavailable/);
+  await assert.rejects(() => client.revokeDeviceTask(task.taskId), /remote_device_mutation_unavailable/);
   client.disconnect();
   assert.equal(client.state.deviceOverviewCurrent, false);
+  assert.equal(client.state.deviceTaskCurrent, false);
 
   const resumed = harness.createClient();
   await resumed.restoreCachedState();
@@ -233,16 +236,27 @@ test("device overview is restored offline and refreshed from the same PC task wi
   resumed.disconnect();
 });
 
-test("device approval and revoke commands bind the exact preview to typed Gateway frames", async () => {
+test("device approval and revoke commands bind the current preview and paired session to typed Gateway frames", async () => {
   const harness = createHarness();
   const client = harness.createClient();
-  const socket = await harness.connect(client, [...legacyCapabilities, "device.read"] as const);
+  const socket = await harness.connect(client, [...legacyCapabilities, "device.read", "device.approve", "device.revoke"] as const);
   const preview = {
     actionId: "action-1", targetDeviceId: "pc-1", capabilityId: "pc.repair.network", capabilitySchemaVersion: "1.0",
     capabilitySnapshotId: "snapshot-1", connectionRevision: "connection-1", policyRevision: "device-policy-v1",
     normalizedInputDigest: "digest-1", sideEffect: "reversible",
   } as const;
-  const approved = await client.approveDeviceTask("task-1", preview);
+  await assert.rejects(() => client.approveDeviceTask("task-1", preview), /remote_device_approval_changed/);
+  socket.message("device.task.snapshot", {
+    workspaceId: "default", generatedAt: now,
+    task: {
+      taskId: "task-1", ownerKind: "daemon", ownerId: "pc-runtime", targetDeviceIds: ["pc-1"], status: "awaiting_approval",
+      updatedAt: now, attemptIds: [], pendingApproval: preview,
+    },
+  }, 1, "workspace-1");
+  await waitFor(() => client.state.deviceTaskCurrent === true);
+  const current = client.state.deviceTask!.task.pendingApproval!;
+  await assert.rejects(() => client.approveDeviceTask("other-task", current), /remote_device_approval_changed/);
+  const approved = await client.approveDeviceTask("task-1", current);
   const approvalFrame = socket.frames().find(frame => frame.type === "device.task.approve");
   assert.ok(approvalFrame);
   assert.equal(approvalFrame.payload.taskId, "task-1");
@@ -265,6 +279,7 @@ test("device approval and revoke commands bind the exact preview to typed Gatewa
   }, 3);
   assert.deepEqual(await revoked.completion, { kind: "device_task_revoked", taskId: "task-1" });
   client.disconnect();
+  await assert.rejects(() => client.approveDeviceTask("task-1", current), /remote_session_not_ready/);
 });
 
 async function waitFor(predicate: () => boolean) {

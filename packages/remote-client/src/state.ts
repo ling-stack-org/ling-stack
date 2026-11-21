@@ -47,6 +47,7 @@ export interface RemoteClientState {
   readonly deviceOverview?: RemoteDeviceListSnapshotV1;
   readonly deviceOverviewCurrent?: boolean;
   readonly deviceTask?: RemoteDeviceTaskSnapshotV1;
+  readonly deviceTaskCurrent?: boolean;
   readonly pendingSends: Readonly<Record<string, RemotePendingSend>>;
   readonly lastError?: string;
 }
@@ -79,7 +80,7 @@ export function createInitialRemoteClientState(): RemoteClientState {
 export function reduceRemoteClientState(state: RemoteClientState, action: RemoteStateAction): RemoteClientState {
   switch (action.type) {
     case "connection":
-      return { ...state, connection: action.status, deviceOverviewCurrent: false, lastError: action.error };
+      return { ...state, connection: action.status, deviceOverviewCurrent: false, deviceTaskCurrent: false, lastError: action.error };
     case "session_ready":
       return {
         ...state,
@@ -88,6 +89,7 @@ export function reduceRemoteClientState(state: RemoteClientState, action: Remote
         ...(action.policy.capabilities.includes("device.read") && state.deviceTask?.workspaceId === action.policy.workspaceId
           ? {} : { deviceTask: undefined }),
         deviceOverviewCurrent: false,
+        deviceTaskCurrent: false,
         connection: "connected",
         policy: action.policy,
         workspaceBindingId: action.policy.workspaceBindingId,
@@ -110,7 +112,7 @@ export function reduceRemoteClientState(state: RemoteClientState, action: Remote
     case "device_overview":
       return { ...state, deviceOverview: action.snapshot, deviceOverviewCurrent: true };
     case "device_task":
-      return { ...state, deviceTask: action.snapshot };
+      return { ...state, deviceTask: action.snapshot, deviceTaskCurrent: true };
     case "send_started":
       return { ...state, pendingSends: { ...state.pendingSends, [action.send.commandId]: action.send } };
     case "send_accepted": {
