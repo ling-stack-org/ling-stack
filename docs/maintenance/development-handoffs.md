@@ -2,7 +2,7 @@
 
 Status: retained implementation handoffs; historical checkpoints are not current acceptance
 Owner: repository maintainers
-Last verified: 2026-11-21 (Device Support Platform implementation checkpoint)
+Last verified: 2026-11-22 (Device Support Platform paired journal and signed resources)
 Document type: maintenance handoff
 Code and test anchors: the owning plans and source modules linked below
 
@@ -27,6 +27,7 @@ are not published here. The relay URL and temporary development checkout are exa
 ## Contents
 
 - [Device Support Platform checkpoint, 2026-11-21](#device-support-platform-checkpoint-2026-11-21)
+- [Device Support Platform continuation, 2026-11-22](#device-support-platform-continuation-2026-11-22)
 - [Typed transcript handoff](#typed-transcript-handoff)
 - [Office writer verification, 2026-10-04](#office-writer-verification-2026-10-04)
 - [Office no-start checkpoint, 2026-10-05](#office-no-start-checkpoint-2026-10-05)
@@ -93,6 +94,40 @@ smart-home, hardware and Edge runs remain on the acceptance ledger.
    per-slice gates. Capture direct and relayed workflows and keep each physical
    result linked to its owner, adapter version, target and verification attempt.
    [Developer, connectivity and field gates](../design/ling-device-support-platform-implementation-plan.md#per-slice-evidence-ledger)
+
+## Device Support Platform Continuation 2026-11-22
+
+The new `codex/device-platform-complete` branch starts from the current
+`origin/main` at `75ad8920f` and keeps the earlier implementation through merge
+commit `d6f5c5250`. The branch now records the paired Mobile owner-journal path,
+resource activation policy, and access-grant fencing.
+
+### Delivered evidence
+
+- `8f6c65870` adds the `ling.device-tasks.v3` journal command. Paired Mobile
+  pages the PC-owned task journal, resumes by task-local sequence after reconnect,
+  and requests the current generation after a stale cursor. Gateway tests reject
+  v2 journal access, cross-workspace targets, phone-owned tasks, private
+  observations and internal task fields.
+- `f6008cf37` adds a startup trust policy for Ed25519 resource publishers,
+  digest-bound local import, update, disable and rollback routes, and signed
+  resource integration tests. Core activation verifies the current trust policy
+  again for active reads and rollback.
+- `0652965e4` binds each dispatched attempt to the access-grant revision.
+  Revoking a grant during verification leaves the result unknown and blocks
+  reconciliation. A read-only grant cannot dispatch a write.
+- `d6f5c5250` merges the latest mainline changes after the branch was created.
+
+Focused checks passed for Contracts, Core, Daemon, Remote Protocol, Remote
+Client and Mobile. The Mobile JS export completed for iOS and Android. Android
+native Gradle and physical-device acceptance remain separate evidence gates
+because this environment has no connected Android device and the default SDK
+installation is incomplete.
+
+The platform ledger remains the authority for D1–D22 status and the exact
+remaining PC, Mobile, Edge, hardware, vehicle, smart-home, Ling Server and
+field acceptance work.
+[Implementation ledger](../design/ling-device-support-platform-implementation-plan.md#per-slice-evidence-ledger)
 
 ## Typed Transcript Handoff
 
