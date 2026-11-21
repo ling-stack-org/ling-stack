@@ -10,6 +10,9 @@
     <a href="README.es-ES.md">Español</a> · <a href="README.pt-BR.md">Português (Brasil)</a>
   </p>
   <p>
+    <a href="#geräte-roadmap">Geräte-Roadmap</a>
+  </p>
+  <p>
     <img alt="Quellcode-Alpha" src="https://img.shields.io/badge/Status-source_alpha-5964a0.svg" />
     <a href="LICENSE"><img alt="Lizenz: MIT" src="https://img.shields.io/badge/License-MIT-08765d.svg" /></a>
     <img alt="Node.js 22.22.1+" src="https://img.shields.io/badge/Node.js-22.22.1%2B-3c873a.svg" />
@@ -34,6 +37,22 @@ Du benötigst eine eigene Anbieterkonfiguration und einen eigenen API-Schlüssel
 
 Die Aufnahme zeigt die tatsächliche englische Oberfläche eines neuen lokalen Arbeitsbereichs vor der Modellkonfiguration.
 Sie veranschaulicht das Layout, nicht eine abgeschlossene Aufgabe. Der oben verlinkte Leitfaden hilft beim ersten gemeinsamen Versuch.
+
+## Geräte-Roadmap
+
+Die Roadmap bringt Geräteaufgaben in eine Ling-Konversation. Ein PC, ein Telefon oder ein Edge-Host kann die Aufgabe koordinieren. Ausführung und Verifizierung übernimmt der Host mit autorisierter Verbindung zum Gerät.
+
+![Blau-violettes Konzeptbild mit Laptop, Telefon, Headunit, Smart-Home-Sensor und Entwicklungsboard](docs/assets/ling-device-roadmap.jpg)
+
+*Konzept für einen Verbindungstest des Fahrzeugs. Eine Verbindungsprüfung am PC anfordern und den Test auf einem gekoppelten Telefon bestätigen.*
+
+- Auf einem **PC** Projekte bauen und testen oder ein unterstütztes System diagnostizieren.
+- Auf dem **Mobilgerät** Aufgaben eines gekoppelten PCs verfolgen und freigeben oder unterstützte Peripheriegeräte direkt verbinden.
+- Im **Smart Home** den Gerätestatus prüfen und Probleme über Home Assistant diagnostizieren.
+- Für eine kompatible **Android-Headunit** Apps installieren und prüfen, während das Fahrzeug steht.
+- An einer **Hardware-Teststation** Protokolldaten erfassen und decodieren sowie die Geräterückmeldung prüfen.
+
+**Designphase.** Siehe den [Geräteentwurf](docs/design/ling-device-fabric.md) und den [Implementierungs- und Geräteabnahmeplan](docs/design/ling-device-support-platform-implementation-plan.md).
 
 ## Für wen ist Ling Stack gedacht?
 

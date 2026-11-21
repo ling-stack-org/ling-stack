@@ -10,6 +10,9 @@
     Español · <a href="README.pt-BR.md">Português (Brasil)</a>
   </p>
   <p>
+    <a href="#hoja-de-ruta-multidispositivo">Hoja de ruta multidispositivo</a>
+  </p>
+  <p>
     <img alt="Alfa desde el código fuente" src="https://img.shields.io/badge/Status-source_alpha-5964a0.svg" />
     <a href="LICENSE"><img alt="Licencia: MIT" src="https://img.shields.io/badge/License-MIT-08765d.svg" /></a>
     <img alt="Node.js 22.22.1+" src="https://img.shields.io/badge/Node.js-22.22.1%2B-3c873a.svg" />
@@ -34,6 +37,22 @@ Debes aportar tu propia configuración de proveedor y clave API. Los costes del 
 
 Esta captura real muestra la interfaz inglesa de un espacio local nuevo, antes de configurar un modelo.
 Ilustra la distribución del espacio, no una tarea terminada. Sigue la guía anterior para probar tu primera colaboración.
+
+## Hoja de ruta multidispositivo
+
+La hoja de ruta lleva las tareas de dispositivos a una conversación de Ling. Un PC, un teléfono o un host perimetral puede coordinar la tarea, mientras que el host con una conexión autorizada al dispositivo se encarga de ejecutarla y verificarla.
+
+![Escena conceptual azul y violeta con un portátil, un teléfono, una unidad principal, un sensor doméstico y una placa de desarrollo](docs/assets/ling-device-roadmap.jpg)
+
+*Concepto de prueba de conexión de la unidad principal. Solicita una comprobación desde el PC y aprueba la prueba en un teléfono emparejado.*
+
+- En un **PC**, crea y prueba proyectos o diagnostica un sistema compatible.
+- En el **móvil**, sigue y aprueba tareas de un PC emparejado o conecta directamente periféricos compatibles.
+- En un **hogar inteligente**, consulta el estado de los dispositivos y diagnostica problemas mediante Home Assistant.
+- En una **unidad principal Android** compatible, instala y valida aplicaciones con el vehículo estacionado.
+- En un **banco de hardware**, captura y decodifica datos de protocolo y verifica la respuesta del dispositivo.
+
+**Fase de diseño.** Consulta el [diseño multidispositivo](docs/design/ling-device-fabric.md) y el [plan de implementación y aceptación de dispositivos](docs/design/ling-device-support-platform-implementation-plan.md).
 
 ## ¿Para quién es Ling Stack?
 

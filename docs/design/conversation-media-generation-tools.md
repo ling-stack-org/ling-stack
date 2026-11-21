@@ -266,8 +266,10 @@ Control Plane 使用现有 domain，不新增 `media` domain：
 
 三种会话使用一个 `ConversationGeneratedMediaBlock`：
 
-- queued/running：稳定占位、目标显示名和“生成中”，使用共享 `Spinner` 的持续旋转动画，不展示 raw
-  轮询信息，也不得用无动画的静态 loading 图标造成卡死错觉；
+- 排队和生成中的图片任务显示方形点阵占位。底部状态栏显示任务状态、目标名称和共享 `Spinner`。
+  开启系统的减少动态效果选项时，点阵保持静止。
+- 排队和生成中的视频任务以及等待确认的媒体任务使用紧凑状态栏，显示任务状态、目标名称和共享 `Spinner`。
+  原始轮询信息留在媒体执行层。
 - succeeded：只显示真实图片或视频预览；与 assistant 正文左边缘对齐，不重复显示“图片已生成”、
   生成目标和 artifact 内部标题。打开和下载作为媒体右上角悬浮操作层，默认隐藏，媒体 hover 或
   操作获得键盘 focus 时显示，不得在预览下方占据额外高度；
@@ -379,7 +381,8 @@ approval, artifact and recovery authorities remain the implementation source of 
 - Runner 工具重放不会重复创建或提交付费任务。
 - 刷新、SSE 重连和应用重启后，会话仍能恢复生成中、成功或失败投影。
 - 普通对话、频道和队友私聊显示同一媒体块和状态文案。
-- queued/running 的共享 Spinner 实际持续旋转，不以静态 loading 图标表示运行中。
+- 排队和生成中的图片任务展示方形占位，成功后在同一媒体块中显示图片预览。
+- queued/running 的共享 `Spinner` 持续旋转。
 - 普通 `channel_ai_reply` 在实时路径和启动恢复后都不会追加重复的 Terminal Report；升级前的错误报告
   保留在存储中但不再投影到会话或报告 API。
 - 上游成功响应但缺少图片或视频数据时显示脱敏的上游空结果提示，不误报模型未配置。

@@ -20,6 +20,16 @@
 
 口径来源：[README](../../README.md)、[入门指南](../getting-started.md)、[支持范围](../../SUPPORT.md)、[实现状态](../design/implementation-status.md)和[桌面开发包说明](../release/development-packages.md)。
 
+## 宣传图
+
+- [README 横幅](../assets/ling-stack-banner.jpg)（1600 × 540）。
+- [伙伴角色概念图](../assets/ling-stack-companion-banner.jpg)（1600 × 540），单独展示智能伙伴 Yui。
+- [Yui 角色设计模板](../design/assets/yui-character-design-template.png)，用于后续伙伴视觉设计。
+- [英文分享图](../assets/ling-stack-share-en.jpg)（1280 × 640），适合 GitHub Social Preview 或英文社区配图。
+- [中文分享图](../assets/ling-stack-share-zh-CN.jpg)（1280 × 640），可配合下方中文首发稿使用。
+- 项目评审介绍图使用真实 Web 界面和预置示例对话。[英文版](../assets/ling-project-review-en.jpg) · [中文版](../assets/ling-project-review-zh-CN.jpg)
+- 跨设备路线图以车机联调为例，电脑发起连接检查，手机确认测试。[概念图](../assets/ling-device-roadmap.jpg) · [实现与实机验收计划](../design/ling-device-support-platform-implementation-plan.md)
+
 ## V2EX 首发稿
 
 **标题：** 我开源了 Ling Stack：在一个本地项目里组织不同模型的 AI 队友

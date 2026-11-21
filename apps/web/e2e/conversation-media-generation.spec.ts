@@ -452,10 +452,14 @@ function channelMessage(id: string, linkedRunId: string): Record<string, unknown
 
 async function expectPendingMediaBlock(block: Locator): Promise<void> {
   await expect(block).toBeVisible();
-  await expect(block).toContainText("Generating Image");
-  await expect(block).toContainText("Using Seedream Studio");
-  await expect(block.locator('[data-media-job-status="running"]')).toHaveCount(1);
-  const spinner = block.locator(".conversation-generated-media-spinner");
+  const card = block.locator('[data-media-job-status="running"]');
+  const status = card.getByRole("status");
+  await expect(status).toContainText("Generating Image");
+  await expect(status).toContainText("Using Seedream Studio");
+  await expect(card).toHaveCSS("aspect-ratio", "1 / 1");
+  const initialDotPosition = await card.evaluate((element) => getComputedStyle(element, "::before").backgroundPosition);
+  await expect.poll(() => card.evaluate((element) => getComputedStyle(element, "::before").backgroundPosition)).not.toBe(initialDotPosition);
+  const spinner = card.locator(".conversation-generated-media-spinner");
   await expect(spinner).toBeVisible();
   await expect(spinner.locator("svg")).toHaveCSS("animation-name", "ling-ui-spinner-rotate");
   await expect(spinner.locator("svg")).toHaveCSS("animation-iteration-count", "infinite");
