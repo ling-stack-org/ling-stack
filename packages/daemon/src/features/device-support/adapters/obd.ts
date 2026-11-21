@@ -9,6 +9,8 @@ import type {
 } from "@ling-stack/contracts";
 import type { DeviceAdapter, DeviceAdapterDiscoveryInput, DeviceAdapterExecutionResult } from "@ling-stack/core";
 
+import { createAdapterCapabilitySnapshot } from "./capability-snapshot.js";
+
 export interface ObdVehicleInfo { readonly vin?: string; readonly protocol?: string; readonly make?: string; readonly model?: string; }
 export interface ObdExecutor {
   readVehicleInfo(signal?: AbortSignal): Promise<ObdVehicleInfo>;
@@ -52,7 +54,7 @@ export class ObdVehicleAdapter implements DeviceAdapter {
 
   async getCapabilities(input: { readonly profile: DeviceProfileV1; readonly connectionRevision: string; readonly signal?: AbortSignal }): Promise<DeviceCapabilitySnapshotV1> {
     await this.#executor.readVehicleInfo(input.signal);
-    return { snapshotId: `${input.profile.device.id}:${input.connectionRevision}:${this.#now()}`, deviceId: input.profile.device.id, adapterId: this.manifest.adapterId, adapterVersion: this.manifest.adapterVersion, contractMajor: 1, connectionRevision: input.connectionRevision, capabilities: this.manifest.capabilities, observedAt: this.#now(), freshnessUntil: new Date(Date.parse(this.#now()) + 30_000).toISOString() };
+    return createAdapterCapabilitySnapshot(this.manifest, input, this.#now());
   }
 
   async execute(input: { readonly profile: DeviceProfileV1; readonly capability: { readonly id: string }; readonly request: DeviceActionRequestV1; readonly signal?: AbortSignal }): Promise<DeviceActionResultV1 | DeviceAdapterExecutionResult> {

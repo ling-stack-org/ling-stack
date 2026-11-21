@@ -23,6 +23,7 @@ import {
 import { DeviceAccessManager } from "../dist/device-access.js";
 import { createHomeAssistantOfflinePlaybook, createPcSoftwareDiagnosisPlaybook, isDevicePlaybookV1, runDeviceReadOnlyPlaybook } from "../dist/device-playbooks.js";
 import { readOwnedDeviceTaskJournal } from "../dist/device-task-event-projector.js";
+import { readOwnedDeviceTaskTrace } from "../dist/device-task-trace.js";
 import { SqliteDeviceFabricStore } from "../dist/storage/sqlite/device-fabric-store.js";
 import { SqliteDeviceSupportStore } from "../dist/storage/sqlite/device-support-store.js";
 
@@ -209,6 +210,82 @@ test("registry discovers a device and broker executes a fresh read-only capabili
   store.close();
 });
 
+test("a task retains its original capability facts across refresh and restart without reopening stale dispatch authority", async t => {
+  const root = mkdtempSync(join(tmpdir(), "ling-device-capability-history-"));
+  const databasePath = join(root, "device.sqlite");
+  let store = new SqliteDeviceSupportStore({ databasePath });
+  t.after(() => { store.close(); rmSync(root, { recursive: true, force: true }); });
+  const broker = new DeviceCapabilityBroker({ store, now: () => now });
+  broker.registerAdapter(createAdapter());
+  broker.registerDevice(manifest.adapterId, profile);
+  const before = {
+    ...snapshot(),
+    capabilities: [{ ...readCapability, inputSchema: { type: "object", description: "fixture-adapter-private-schema" } }, writeCapability],
+  };
+  store.saveCapabilitySnapshot(before, now);
+  store.saveCapabilitySnapshot(structuredClone(before), now);
+  assert.throws(() => store.saveCapabilitySnapshot({ ...before, capabilities: [writeCapability] }, now), (error: unknown) =>
+    error instanceof DeviceBrokerError && error.code === "stale_snapshot");
+  assert.deepEqual(store.getCurrentCapabilitySnapshot(profile.device.id), before);
+  broker.createTask(task());
+  const original = await broker.execute(request());
+
+  broker.registerDevice(manifest.adapterId, {
+    ...profile, profileRevision: "profile-2", device: { ...profile.device, profileRevision: "profile-2" }, connectionRefs: ["connection-2"],
+  });
+  assert.equal(store.getCurrentCapabilitySnapshot(profile.device.id), undefined);
+  assert.throws(() => store.saveCapabilitySnapshot(before, later), /snapshot id is already bound/u);
+  assert.equal(store.getCurrentCapabilitySnapshot(profile.device.id), undefined);
+  const after: DeviceCapabilitySnapshotV1 = {
+    ...snapshot(), snapshotId: "snapshot-2", connectionRevision: "connection-2", capabilities: [readCapability], observedAt: later,
+  };
+  store.saveCapabilitySnapshot(after, later);
+  broker.createTask(task("stale-plan"));
+  await assert.rejects(() => broker.execute(request(readCapability.id, "stale-plan")), (error: unknown) =>
+    error instanceof DeviceBrokerError && error.code === "stale_snapshot");
+  assert.deepEqual(store.listAttempts("stale-plan"), []);
+
+  store.close();
+  store = new SqliteDeviceSupportStore({ databasePath });
+  assert.deepEqual(store.getCurrentCapabilitySnapshot(profile.device.id), after);
+  assert.deepEqual(store.getRecordedCapabilitySnapshot(profile.device.id, before.snapshotId), {
+    workspaceId: "workspace-1", profileRevision: "profile-1", snapshot: before,
+  });
+  assert.deepEqual(store.getAttempt("task-1", original.attempt.attemptId)?.attempt, original.attempt);
+  const trace = readOwnedDeviceTaskTrace({ store, workspaceId: "workspace-1", taskId: "task-1" });
+  const [evidence] = trace.capabilitySnapshots ?? [];
+  assert.ok(evidence?.state === "recorded");
+  assert.equal(evidence.profileRevision, "profile-1");
+  assert.deepEqual(evidence.capabilities.map(capability => capability.id), [readCapability.id, writeCapability.id]);
+  assert.equal(evidence.connectionRevision, "connection-1");
+  assert.doesNotMatch(JSON.stringify(trace), /fixture-adapter-private-schema/u);
+});
+
+test("upgrading a legacy device journal preserves the surviving snapshot and reports missing earlier evidence", t => {
+  const root = mkdtempSync(join(tmpdir(), "ling-device-snapshot-migration-"));
+  const databasePath = join(root, "device.sqlite");
+  let upgraded: SqliteDeviceSupportStore | undefined;
+  t.after(() => { upgraded?.close(); rmSync(root, { recursive: true, force: true }); });
+  const legacy = new SqliteDeviceSupportStore({ databasePath });
+  legacy.registerDevice(profile, now);
+  legacy.createTask({ ...task(), capabilitySnapshotIds: ["prior-snapshot", snapshot().snapshotId] }, now);
+  legacy.database.exec("DROP TABLE device_capability_snapshots");
+  legacy.database.prepare("UPDATE device_registry SET capability_snapshot_json=? WHERE device_id=?")
+    .run(JSON.stringify(snapshot()), profile.device.id);
+  legacy.close();
+
+  upgraded = new SqliteDeviceSupportStore({ databasePath });
+  const scope = { store: upgraded, workspaceId: "workspace-1", taskId: "task-1" };
+  assert.deepEqual(upgraded.getCurrentCapabilitySnapshot(profile.device.id), snapshot());
+  assert.deepEqual(upgraded.getRecordedCapabilitySnapshot(profile.device.id, snapshot().snapshotId)?.snapshot, snapshot());
+  assert.deepEqual(readOwnedDeviceTaskTrace(scope).capabilitySnapshots?.map(evidence => [evidence.state, evidence.snapshotId]), [
+    ["unavailable", "prior-snapshot"], ["recorded", "snapshot-1"],
+  ]);
+  upgraded.markDeviceOffline(profile.device.id, later);
+  assert.equal(upgraded.getCurrentCapabilitySnapshot(profile.device.id), undefined);
+  assert.equal(readOwnedDeviceTaskTrace(scope).capabilitySnapshots?.[1]?.state, "recorded");
+});
+
 test("task journal cursors use a task-local sequence when multiple tasks interleave", () => {
   const store = new SqliteDeviceSupportStore();
   store.registerDevice(profile, now);
@@ -232,7 +309,7 @@ test("broker binds dispatch to a current grant and blocks writes under a read-on
   broker.registerAdapter(createAdapter());
   broker.registerDevice(manifest.adapterId, profile);
   store.saveCapabilitySnapshot(snapshot(), now);
-  fabric.saveAccessGrant({ grantId: "grant-1", targetDeviceId: profile.device.id, principalId: "daemon-1", scope: "read_only", capabilityIds: [readCapability.id, writeCapability.id], revision: 1, status: "active", expiresAt: "2026-11-21T00:05:00.000Z", authority: "operator", changedAt: now });
+  const grant = fabric.saveAccessGrant({ grantId: "grant-1", targetDeviceId: profile.device.id, principalId: "daemon-1", scope: "read_only", capabilityIds: [readCapability.id, writeCapability.id], revision: 1, status: "active", expiresAt: "2026-11-21T00:05:00.000Z", authority: "operator", changedAt: now });
   store.createTask({ ...task("grant-task"), accessGrantId: "grant-1" }, now);
   const result = await broker.execute(request(readCapability.id, "grant-task"));
   assert.equal(result.attempt.status, "completed");
@@ -242,6 +319,13 @@ test("broker binds dispatch to a current grant and blocks writes under a read-on
   await assert.rejects(() => broker.execute(write), /read-only access grant/u);
   assert.deepEqual(store.listAttempts(write.taskId), []);
   fabric.revokeAccessGrant("grant-1", 2, now);
+  assert.deepEqual(store.getAttempt("grant-task", result.attempt.attemptId)?.attempt.authority?.accessGrant, grant);
+  const trace = readOwnedDeviceTaskTrace({ store, workspaceId: "workspace-1", taskId: "grant-task" });
+  const admitted = trace.spans.find(span => span.lineage?.attemptId === result.attempt.attemptId);
+  assert.deepEqual((admitted?.metadata as { authority?: unknown })?.authority, {
+    state: "recorded", policyRevision: broker.policyRevision, dispatchStop: { active: false, revision: 0 },
+    accessGrant: { grantId: grant.grantId, scope: grant.scope, revision: grant.revision, expiresAt: grant.expiresAt },
+  });
   store.createTask({ ...task("revoked-task"), accessGrantId: "grant-1" }, now);
   await assert.rejects(() => broker.execute(request(readCapability.id, "revoked-task")), /device access grant denied/u);
   const noAccessResolver = new DeviceCapabilityBroker({ store, now: () => now });
@@ -674,8 +758,8 @@ test("diagnosis reports project journaled PC facts and keep terminal outcomes re
     await t.test(status, async t => {
       const { store, broker } = brokerFixture();
       t.after(() => store.close());
-      const diagnosis = task(`diagnosis-${status}`);
-      const fixtureSnapshot = { ...snapshot(), capabilities: [network, services] };
+      const fixtureSnapshot = { ...snapshot(), snapshotId: "pc-diagnosis-snapshot", capabilities: [network, services] };
+      const diagnosis = { ...task(`diagnosis-${status}`), capabilitySnapshotIds: [fixtureSnapshot.snapshotId] };
       let dispatches = 0;
       broker.registerAdapter({
         ...createAdapter(),

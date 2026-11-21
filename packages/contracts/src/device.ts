@@ -1,3 +1,5 @@
+import type { DeviceAccessGrantV1 } from "./device-fabric.js";
+
 export type JsonValue = null | boolean | number | string | readonly JsonValue[] | { readonly [key: string]: JsonValue };
 
 export const DEVICE_CONTRACT_MAJOR_V1 = 1 as const;
@@ -299,6 +301,8 @@ export interface DeviceTaskReconciliationV1 {
   readonly attemptId: string;
   readonly capabilitySnapshotId: string;
   readonly connectionRevision: string;
+  readonly readCapabilityId?: string;
+  readonly authority?: DeviceActionAuthorityV1;
   readonly verification: DeviceVerificationResultV1;
   readonly status: "verified" | "unresolved";
   readonly recordedAt: string;
@@ -309,6 +313,22 @@ export interface DeviceDispatchStopV1 {
   readonly active: boolean;
   readonly revision: number;
   readonly changedAt?: string;
+}
+
+/** Authority observed by the owning broker at admission. */
+export interface DeviceActionAuthorityV1 {
+  readonly workspaceId: string;
+  readonly policyRevision: string;
+  readonly dispatchStop: DeviceDispatchStopV1;
+  readonly accessGrant?: DeviceAccessGrantV1;
+  readonly approvalPrincipal?: DeviceApprovalPrincipalV1;
+}
+
+export interface DeviceApprovalPrincipalV1 {
+  readonly kind: "paired_mobile";
+  readonly deviceId: string;
+  readonly deviceEpoch: number;
+  readonly sessionId: string;
 }
 
 export interface DeviceTaskV1 {
@@ -339,6 +359,7 @@ export interface DeviceTaskAttemptV1 {
   readonly ownerId: string;
   readonly targetDeviceId: string;
   readonly dispatchIntentAt: string;
+  readonly authority?: DeviceActionAuthorityV1;
   readonly accessGrantRevision?: number;
   readonly connectionRevision?: string;
   readonly requestDigest?: string;
@@ -623,7 +644,7 @@ export function isDeviceTaskV1(value: unknown): value is DeviceTaskV1 {
 export function isDeviceTaskAttemptV1(value: unknown): value is DeviceTaskAttemptV1 {
   if (!isRecord(value) || !hasOnlyKeys(value, [
     "attemptId", "taskId", "actionId", "ownerKind", "ownerId", "targetDeviceId",
-    "dispatchIntentAt", "accessGrantRevision", "connectionRevision", "requestDigest", "approvalId", "adapterBinding",
+    "dispatchIntentAt", "authority", "accessGrantRevision", "connectionRevision", "requestDigest", "approvalId", "adapterBinding",
     "planningNode", "status", "receipt", "verification",
   ])) return false;
   return isNonEmptyString(value.attemptId)
@@ -633,6 +654,13 @@ export function isDeviceTaskAttemptV1(value: unknown): value is DeviceTaskAttemp
     && isNonEmptyString(value.ownerId)
     && isNonEmptyString(value.targetDeviceId)
     && isIsoTimestamp(value.dispatchIntentAt)
+    && (value.authority === undefined || (isDeviceActionAuthorityV1(value.authority)
+      && value.authority.dispatchStop.deviceId === value.targetDeviceId
+      && value.authority.accessGrant?.revision === value.accessGrantRevision
+      && (value.authority.approvalPrincipal === undefined || isNonEmptyString(value.approvalId))
+      && (value.authority.accessGrant === undefined || (
+        value.authority.accessGrant.targetDeviceId === value.targetDeviceId && value.authority.accessGrant.principalId === value.ownerId
+      ))))
     && (value.accessGrantRevision === undefined || isPositiveInteger(value.accessGrantRevision))
     && (value.connectionRevision === undefined || isNonEmptyString(value.connectionRevision))
     && (value.requestDigest === undefined || isNonEmptyString(value.requestDigest))
@@ -647,4 +675,24 @@ export function isDeviceTaskAttemptV1(value: unknown): value is DeviceTaskAttemp
     && isEnum(value.status, ["prepared", "dispatched", "completed", "failed", "unknown", "cancelled"] as const)
     && (value.receipt === undefined || isDeviceActionResultV1(value.receipt))
     && (value.verification === undefined || isDeviceVerificationResultV1(value.verification));
+}
+
+function isDeviceActionAuthorityV1(value: unknown): value is DeviceActionAuthorityV1 {
+  if (!isRecord(value) || !hasOnlyKeys(value, ["workspaceId", "policyRevision", "dispatchStop", "accessGrant", "approvalPrincipal"])
+    || !isNonEmptyString(value.workspaceId) || !isNonEmptyString(value.policyRevision)) return false;
+  const stop = value.dispatchStop;
+  if (!isRecord(stop) || !hasOnlyKeys(stop, ["deviceId", "active", "revision", "changedAt"]) || !isNonEmptyString(stop.deviceId)
+    || typeof stop.active !== "boolean" || typeof stop.revision !== "number" || !Number.isSafeInteger(stop.revision) || stop.revision < 0
+    || (stop.changedAt !== undefined && !isIsoTimestamp(stop.changedAt))) return false;
+  const principal = value.approvalPrincipal;
+  if (principal !== undefined && (!isRecord(principal) || !hasOnlyKeys(principal, ["kind", "deviceId", "deviceEpoch", "sessionId"])
+    || principal.kind !== "paired_mobile" || !isNonEmptyString(principal.deviceId) || !isNonEmptyString(principal.sessionId)
+    || !isPositiveInteger(principal.deviceEpoch) || !Number.isSafeInteger(principal.deviceEpoch))) return false;
+  const grant = value.accessGrant;
+  return grant === undefined || (isRecord(grant) && hasOnlyKeys(grant, [
+    "grantId", "targetDeviceId", "principalId", "scope", "capabilityIds", "revision", "status", "expiresAt", "authority", "changedAt",
+  ]) && isNonEmptyString(grant.grantId) && isNonEmptyString(grant.targetDeviceId) && isNonEmptyString(grant.principalId)
+    && isEnum(grant.scope, ["read_only", "developer", "owner"] as const) && isStringArray(grant.capabilityIds)
+    && Number.isSafeInteger(grant.revision) && isPositiveInteger(grant.revision) && grant.status === "active"
+    && isIsoTimestamp(grant.expiresAt) && isNonEmptyString(grant.authority) && isIsoTimestamp(grant.changedAt));
 }

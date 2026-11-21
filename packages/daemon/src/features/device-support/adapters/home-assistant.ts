@@ -18,6 +18,8 @@ import type {
 } from "@ling-stack/core";
 import type { JsonValue } from "@ling-stack/contracts";
 
+import { createAdapterCapabilitySnapshot } from "./capability-snapshot.js";
+
 export interface HomeAssistantEntityRead {
   readonly entityId: string;
   readonly state?: string;
@@ -137,17 +139,7 @@ export class HomeAssistantAdapter implements DeviceAdapter {
 
   async getCapabilities(input: { readonly profile: DeviceProfileV1; readonly connectionRevision: string; readonly signal?: AbortSignal }): Promise<DeviceCapabilitySnapshotV1> {
     await this.request("/api/config", { method: "GET", signal: input.signal });
-    return {
-      snapshotId: `${input.profile.device.id}:${input.connectionRevision}:${this.#now()}`,
-      deviceId: input.profile.device.id,
-      adapterId: this.manifest.adapterId,
-      adapterVersion: this.manifest.adapterVersion,
-      contractMajor: 1,
-      connectionRevision: input.connectionRevision,
-      capabilities: this.manifest.capabilities,
-      observedAt: this.#now(),
-      freshnessUntil: new Date(Date.parse(this.#now()) + 30_000).toISOString(),
-    };
+    return createAdapterCapabilitySnapshot(this.manifest, input, this.#now());
   }
 
   async readEntity(entityId: string, signal?: AbortSignal): Promise<HomeAssistantEntityRead> {

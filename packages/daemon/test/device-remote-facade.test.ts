@@ -172,6 +172,7 @@ test("authenticated Gateway sessions recover PC tasks, reconcile writes and resu
     let clientSeq = 0;
     return {
       ready: ready.payload,
+      sessionId: ready.sessionId,
       async send<T extends "device.list" | "device.task.status" | "device.task.approve" | "device.task.revoke" | "device.task.reconcile" | "device.task.journal" | "stream.subscribe">(type: T, payload: RemoteClientCommandPayloadMapV1[T]) {
         clientSeq += 1;
         const messageId = `message-${clientSeq}`;
@@ -348,10 +349,24 @@ test("authenticated Gateway sessions recover PC tasks, reconcile writes and resu
   const trace = readOwnedDeviceTaskTrace({ store: deviceStore, taskId: active.taskId, workspaceId: DEFAULT_WORKSPACE_ID });
   const originalDispatch = trace.spans.find(span => span.kind === "adapter");
   assert.equal(originalDispatch?.status, "unknown");
+  assert.deepEqual((originalDispatch?.metadata as { authority?: unknown })?.authority, {
+    state: "recorded", policyRevision: broker.policyRevision, dispatchStop: { active: false, revision: 0 },
+    approval: {
+      approvalId: active.approval.approvalId, normalizedInputDigest: active.approval.normalizedInputDigest, expiresAt: active.approval.expiresAt,
+      principal: { kind: "paired_mobile", deviceId, deviceEpoch: 1, sessionId: reconnected.sessionId },
+    },
+  });
+  assert.deepEqual(trace.capabilitySnapshots?.map(record => [record.snapshotId, record.state]), [
+    [capability.snapshotId, "recorded"], [refreshedSnapshotId, "recorded"],
+  ]);
   const readbacks = trace.spans.filter(span => span.kind === "verification");
   assert.deepEqual(readbacks.map(span => [span.status, span.parentSpanId]), [["unknown", originalDispatch?.spanId], ["ok", originalDispatch?.spanId]]);
   assert.equal(readbacks[1]?.lineage?.connectionRevision, "reconnected-target-connection");
-  assert.deepEqual(readbacks[1]?.metadata, { verificationStatus: "verified", evidenceRefs: [reconciled.payload.task.lastVerificationId] });
+  assert.deepEqual(readbacks[1]?.metadata, {
+    verificationStatus: "verified", evidenceRefs: [reconciled.payload.task.lastVerificationId],
+    capabilitySnapshotId: refreshedSnapshotId, capabilityId: "pc.inspect.network",
+    authority: { state: "recorded", policyRevision: broker.policyRevision, dispatchStop: { active: false, revision: 0 } },
+  });
   const replayReadback = await modern.send("device.task.reconcile", {
     commandId: "second-recheck", ...binding, capabilitySnapshotId: refreshedSnapshotId,
   });

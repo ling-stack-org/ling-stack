@@ -296,7 +296,10 @@ export class RemoteGatewaySession {
         return;
       }
       case "device.task.approve": {
-        const snapshot = await this.requireDeviceFacade(frame.payload.workspaceId).approveTask(frame.payload);
+        const snapshot = await this.requireDeviceFacade(frame.payload.workspaceId).approveTask(frame.payload, {
+          kind: "paired_mobile", deviceId: this.deviceId, deviceEpoch: this.options.authenticated.device.deviceEpoch,
+          sessionId: this.sessionId,
+        });
         this.complete(frame, { kind: "device_task_approved", taskId: frame.payload.taskId });
         this.sendDeviceTaskSnapshot(snapshot, frame.messageId);
         this.options.onMutation?.();

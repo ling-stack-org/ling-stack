@@ -73,6 +73,15 @@ check. At dispatch, recheck the current target and relevant prerequisites even i
 snapshot has time remaining. Retain the original planning snapshot and link any
 refreshed snapshot used to dispatch the action.
 
+The Daemon retains each capability snapshot under its device and snapshot IDs
+with its workspace and profile revision. Refresh changes the current pointer.
+A historical ID stays bound to its original facts. Dispatch and reconciliation
+admit work using the current snapshot. The task trace identifies the snapshots
+used for planning, dispatch and readback, with versioned capability summaries.
+Upgrading an existing journal preserves each retained current snapshot. A task
+that references an earlier snapshot missing from storage reports that evidence
+as unavailable.
+
 ### 2.3 Errors and budgets
 
 Expose stable categories for unsupported contract, unsupported capability, missing
@@ -117,6 +126,13 @@ can allow read-only observations under its ordinary scope.
    action arguments or scope.
 5. Use the configured adapter capability within the owner's lease and record its
    response. Verification reads the target state after the action.
+
+The Daemon records the policy, operator-stop revision and access grant applied
+at each dispatch and reconciliation read. The task trace exposes the authorized
+scope, revisions and exact approval digest. A paired Mobile approval also records
+the authenticated device ID, epoch, and Gateway session that presented it.
+Request arguments, credential references and adapter payloads stay in their
+owning records.
 
 The lease serializes access on the owning host. Capabilities that require exclusive
 access across hosts need a documented target session or conditional write that checks

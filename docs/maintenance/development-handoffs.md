@@ -2,7 +2,7 @@
 
 Status: retained implementation handoffs; historical checkpoints are not current acceptance
 Owner: repository maintainers
-Last verified: 2026-11-22 (Gateway authentication and PC task journal over Ling Server relay, signed resources)
+Last verified: 2026-11-22 (device capability and approval history, Gateway PC task journal over Ling Server relay)
 Document type: maintenance handoff
 Code and test anchors: the owning plans and source modules linked below
 
@@ -115,6 +115,11 @@ commit `d6f5c5250`. Merge `9b95db2df` advances the baseline to `20ec1c528`.
 - `0652965e4` binds each dispatched attempt to the access-grant revision.
   Revoking a grant during verification leaves the result unknown and blocks
   reconciliation. A read-only grant cannot dispatch a write.
+- The Daemon retains historical capability snapshots and the authority applied to
+  each dispatch and readback. The local trace links the original approval, paired
+  session, and later verification to their corresponding snapshots. A Linux SSH
+  reconnect fixture reads the same historical trace after a Daemon restart.
+  [D3 task and recovery evidence](../design/ling-device-support-platform-implementation-plan.md#d3-task-state-approval-verification-and-evidence)
 - `51c48dd84` starts Ling Server with TLS peer signaling and private loopback
   administration. The shared Remote Client negotiates a signed WebRTC channel
   and authenticates with the PC Gateway using that route and the paired keys.

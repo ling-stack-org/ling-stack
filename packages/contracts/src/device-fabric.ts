@@ -1,5 +1,6 @@
 import {
   DEVICE_KINDS_V1,
+  type CapabilityDescriptorV1,
   type CapabilitySideEffectV1,
   type DeviceKindV1,
   type DeviceLifecycleStatusV1,
@@ -376,7 +377,27 @@ export interface DeviceTaskTraceV1 {
   readonly taskId: string;
   readonly taskStatus: DeviceTaskStatusV1;
   readonly spans: readonly DeviceTraceSpanV1[];
+  readonly capabilitySnapshots?: readonly DeviceTaskTraceCapabilitySnapshotV1[];
 }
+
+export type DeviceTaskTraceCapabilitySnapshotV1 = {
+  readonly deviceId: string;
+  readonly snapshotId: string;
+} & (
+  | { readonly state: "unavailable" }
+  | {
+      readonly state: "recorded";
+      readonly profileRevision: string;
+      readonly adapterId: string;
+      readonly adapterVersion: string;
+      readonly contractMajor: number;
+      readonly connectionRevision: string;
+      readonly observedAt: string;
+      readonly freshnessUntil: string;
+      readonly capabilities: readonly Pick<CapabilityDescriptorV1,
+        "id" | "schemaVersion" | "sideEffect" | "approvalClass" | "verificationCapabilityId">[];
+    }
+);
 
 export interface DeviceConformanceReportV1 {
   readonly reportId: string;

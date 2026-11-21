@@ -341,6 +341,11 @@ test("the local daemon exposes its PC report and sequenced task journal only on 
   assert.deepEqual(adapterSpans.map(span => span.lineage?.attemptId).sort(), report.actions.map(action => action.attemptId).sort());
   assert.ok(adapterSpans.every(span => span.status === "ok" && span.parentSpanId === graph.spanId
     && span.lineage?.graphId === report.taskId && span.lineage.nodeId && span.lineage.connectionRevision));
+  const [snapshotEvidence] = trace.capabilitySnapshots ?? [];
+  assert.ok(snapshotEvidence?.state === "recorded");
+  assert.equal(snapshotEvidence.snapshotId, liveFleet.items[0]?.capabilitySnapshotId);
+  assert.ok(snapshotEvidence.capabilities.some(capability => capability.id === "pc.inspect.network" && capability.sideEffect === "read_only"));
+  assert.ok(adapterSpans.every(span => (span.metadata as { authority?: { state?: string } }).authority?.state === "recorded"));
 
   const deviceId = adapterSpans[0]?.lineage?.deviceId;
   assert.ok(deviceId);

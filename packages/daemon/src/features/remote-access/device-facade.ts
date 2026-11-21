@@ -1,6 +1,7 @@
 import {
   REMOTE_DEVICE_RECENT_TASK_LIMIT_V1,
   REMOTE_PROTOCOL_LIMITS,
+  type DeviceApprovalPrincipalV1,
   type DeviceTaskV1,
   type RemoteDeviceListSnapshotV1,
   type RemoteDeviceTaskApproveCommandV1,
@@ -18,7 +19,7 @@ export interface RemoteDeviceFacade {
   listDevices(workspaceId: string): RemoteDeviceListSnapshotV1;
   taskSnapshot(input: RemoteDeviceTaskStatusCommandV1): RemoteDeviceTaskSnapshotV1;
   taskJournal(input: RemoteDeviceTaskJournalCommandV1): RemoteDeviceTaskJournalV1;
-  approveTask(input: RemoteDeviceTaskApproveCommandV1): Promise<RemoteDeviceTaskSnapshotV1>;
+  approveTask(input: RemoteDeviceTaskApproveCommandV1, principal?: DeviceApprovalPrincipalV1): Promise<RemoteDeviceTaskSnapshotV1>;
   revokeTask(input: RemoteDeviceTaskRevokeCommandV1): RemoteDeviceTaskSnapshotV1;
   reconcileTask(input: RemoteDeviceTaskReconcileCommandV1): Promise<{
     readonly status: "verified" | "unresolved";
@@ -30,7 +31,7 @@ export interface RemoteDeviceFacadeOptions {
   readonly store: SqliteDeviceSupportStore;
   readonly broker?: DeviceCapabilityBroker;
   readonly now?: () => string;
-  readonly approve?: (input: RemoteDeviceTaskApproveCommandV1) => Promise<void>;
+  readonly approve?: (input: RemoteDeviceTaskApproveCommandV1, principal?: DeviceApprovalPrincipalV1) => Promise<void>;
 }
 
 export function createRemoteDeviceFacade(options: RemoteDeviceFacadeOptions): RemoteDeviceFacade {
@@ -80,17 +81,17 @@ export function createRemoteDeviceFacade(options: RemoteDeviceFacadeOptions): Re
       }
       return journal;
     },
-    async approveTask(input) {
+    async approveTask(input, principal) {
       requireDaemonTask(options.store, input.taskId, input.workspaceId);
       if (options.approve) {
-        await options.approve(input);
+        await options.approve(input, principal);
       } else if (options.broker) {
         const proposal = options.store.getActionProposal(input.taskId);
         if (!proposal) throw new RemoteAccessError("pc_unavailable", "Device task has no pending action proposal.", true);
         await options.broker.execute(
           { ...proposal.request, approvalId: input.approval.approvalId, approval: input.approval },
           undefined,
-          { requireCurrentProposal: true },
+          { requireCurrentProposal: true, ...(principal ? { approvalPrincipal: principal } : {}) },
         );
       } else {
         throw new RemoteAccessError("pc_unavailable", "Device approval executor is not attached.", true);

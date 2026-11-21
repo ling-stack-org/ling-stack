@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import type { DeviceDiagnosisReportV1, DeviceProfileV1, DeviceTaskJournalPageV1 } from "@ling-stack/contracts";
+import type { DeviceDiagnosisReportV1, DeviceProfileV1, DeviceTaskJournalPageV1, DeviceTaskTraceV1 } from "@ling-stack/contracts";
 import { createSqliteRunStore, DEFAULT_WORKSPACE_ID, SqliteDeviceSupportStore } from "@ling-stack/core";
 import { createDaemonServer, type DaemonServer } from "../dist/index.js";
 import type { LocalProcessRunner } from "../dist/features/device-support/adapters/local-pc-executor.js";
@@ -130,6 +130,11 @@ test("Linux SSH enrollment, diagnosis, and reconnection use the exact configured
     assert.match(response.headers.get("cache-control") ?? "", /no-store/u);
     return await response.json() as { status: string; report: DeviceDiagnosisReportV1 };
   };
+  const trace = async (taskId: string) => {
+    const response = await fetch(baseUrl + "/tasks/" + encodeURIComponent(taskId) + "/trace", { headers });
+    assert.equal(response.status, 200);
+    return await response.json() as DeviceTaskTraceV1;
+  };
 
   await start();
   assert.equal((await fetch(baseUrl + "/linux/targets")).status, 401);
@@ -164,6 +169,10 @@ test("Linux SSH enrollment, diagnosis, and reconnection use the exact configured
   assert.deepEqual(journal.task.targetDeviceIds, [enrolledA.device.id]);
   assert.equal(journal.task.ownerId, "daemon:" + DEFAULT_WORKSPACE_ID);
   assert.ok(journal.events.some(event => event.evidenceRefs?.includes(taskA.report.facts[0]!.observationId)));
+  const originalTrace = await trace(taskA.report.taskId);
+  const [originalSnapshot] = originalTrace.capabilitySnapshots ?? [];
+  assert.ok(originalSnapshot?.state === "recorded");
+  assert.equal(originalSnapshot.profileRevision, enrolledA.profileRevision);
 
   disconnected.add(alpha.host);
   const failed = await diagnose(enrolledA.device.id);
@@ -187,6 +196,13 @@ test("Linux SSH enrollment, diagnosis, and reconnection use the exact configured
   assert.ok(calls.length > nextCall);
   assert.ok(calls.slice(nextCall).every(call => call.host === movedHost));
   assert.equal((await post("diagnose", { deviceId: enrolledB.device.id })).status, 404);
+  assert.deepEqual(await trace(taskA.report.taskId), originalTrace);
+  const [resumedSnapshot] = (await trace(resumed.report.taskId)).capabilitySnapshots ?? [];
+  assert.ok(resumedSnapshot?.state === "recorded");
+  assert.equal(resumedSnapshot.deviceId, originalSnapshot.deviceId);
+  assert.notEqual(resumedSnapshot.snapshotId, originalSnapshot.snapshotId);
+  assert.notEqual(resumedSnapshot.connectionRevision, originalSnapshot.connectionRevision);
+  assert.doesNotMatch(JSON.stringify(originalTrace), /identityFile|hostKey|192\.0\.2\./u);
 
   const store = new SqliteDeviceSupportStore({ databasePath });
   try {

@@ -4,9 +4,12 @@ import {
   DEVICE_CONTRACT_MAJOR_V1,
   type AdapterManifestV1,
   type CapabilityDescriptorV1,
+  type DeviceAccessGrantV1,
+  type DeviceActionAuthorityV1,
   type DeviceActionRequestV1,
   type DeviceActionResultV1,
   type DeviceApprovalBindingV1,
+  type DeviceApprovalPrincipalV1,
   type DeviceCapabilitySnapshotV1,
   type DeviceDispatchStopV1,
   type DeviceErrorCodeV1,
@@ -91,6 +94,7 @@ export interface DeviceExecuteOptions {
   readonly requireCurrentProposal?: boolean;
   readonly onlyUnattendedReads?: boolean;
   readonly planningNode?: DevicePlanningNodeRefV1;
+  readonly approvalPrincipal?: DeviceApprovalPrincipalV1;
 }
 
 type DeviceDispatchAdmission =
@@ -309,7 +313,7 @@ export class DeviceCapabilityBroker {
     try {
       const binding = this.resolveCapability({ ...record.request, capabilitySnapshotId: snapshot.snapshotId }, true);
       const reader = this.requireReconciliationReader(binding);
-      this.taskAccessRevision(task, record.attempt.targetDeviceId, reader);
+      this.taskAccessGrant(task, record.attempt.targetDeviceId, reader);
     } catch (error) {
       if (error instanceof DeviceBrokerError) return undefined;
       throw error;
@@ -335,7 +339,7 @@ export class DeviceCapabilityBroker {
       const request = { ...record.request, capabilitySnapshotId: input.capabilitySnapshotId };
       const binding = this.resolveCapability(request, input.refreshExpiredSnapshot);
       const reader = this.requireReconciliationReader(binding);
-      const grantRevision = this.taskAccessRevision(task, request.targetDeviceId, reader);
+      const grantRevision = this.taskAccessGrant(task, request.targetDeviceId, reader)?.revision;
       input.signal?.throwIfAborted();
       if (this.store.getLeasedAttempt(task.id)
         || !this.store.acquireTargetLease(request.targetDeviceId, task.id, task.ownerId, this.now(), this.leaseMs, record.attempt.attemptId)) {
@@ -362,9 +366,11 @@ export class DeviceCapabilityBroker {
       }
       signal.throwIfAborted();
       const task = this.requireTaskTarget(request);
-      if (!this.taskAccessIsCurrent(task, attempt.targetDeviceId, reader, grantRevision)) {
+      const grant = this.taskAccessGrant(task, attempt.targetDeviceId, reader);
+      if (grant?.revision !== grantRevision) {
         throw new DeviceBrokerError("permission_denied", "device readback access grant changed");
       }
+      const authority = this.actionAuthority(binding.profile.device.ownerScope, this.store.getDispatchStop(attempt.targetDeviceId), grant);
       const readbackStartedAt = this.now();
       const result = await this.verifyAction({
         ...binding,
@@ -405,6 +411,8 @@ export class DeviceCapabilityBroker {
           attemptId: attempt.attemptId,
           capabilitySnapshotId: binding.snapshot.snapshotId,
           connectionRevision: binding.snapshot.connectionRevision,
+          readCapabilityId: reader.id,
+          authority,
           verification,
           status: verified ? "verified" : "unresolved",
           recordedAt: now,
@@ -459,7 +467,8 @@ export class DeviceCapabilityBroker {
     signal?.throwIfAborted();
     const binding = this.resolveCapability(request);
     const { profile, snapshot, capability } = binding;
-    if (capability.sideEffect !== "read_only" && this.store.getDispatchStop(profile.device.id).active) {
+    const dispatchStop = this.store.getDispatchStop(profile.device.id);
+    if (capability.sideEffect !== "read_only" && dispatchStop.active) {
       throw new DeviceBrokerError("permission_denied", "device dispatch is stopped");
     }
     const planningNode = options.planningNode;
@@ -472,9 +481,9 @@ export class DeviceCapabilityBroker {
         throw new DeviceBrokerError("target_changed", "device action does not match the accepted plan node");
       }
     }
-    const accessGrantRevision = this.taskAccessRevision(task, profile.device.id, capability);
-    if (accessGrantRevision !== undefined && capability.verificationCapabilityId) {
-      this.taskAccessRevision(task, profile.device.id, this.requireReconciliationReader(binding));
+    const accessGrant = this.taskAccessGrant(task, profile.device.id, capability);
+    if (accessGrant && capability.verificationCapabilityId) {
+      this.taskAccessGrant(task, profile.device.id, this.requireReconciliationReader(binding));
     }
     if (options.onlyUnattendedReads && (capability.sideEffect !== "read_only" || capability.approvalClass !== "allow")) {
       throw new DeviceBrokerError("permission_denied", "the playbook requires an unattended read capability");
@@ -494,6 +503,8 @@ export class DeviceCapabilityBroker {
     }
 
     const now = this.now();
+    const approval = capability.sideEffect !== "read_only" ? request.approval : undefined;
+    const approvalPrincipal = approval ? options.approvalPrincipal : undefined;
     const attempt: DeviceTaskAttemptV1 = {
       attemptId: `${request.taskId}:${request.actionId}`,
       taskId: request.taskId,
@@ -502,12 +513,16 @@ export class DeviceCapabilityBroker {
       ownerId: task.ownerId,
       targetDeviceId: profile.device.id,
       dispatchIntentAt: now,
-      ...(accessGrantRevision === undefined ? {} : { accessGrantRevision }),
+      authority: {
+        ...this.actionAuthority(profile.device.ownerScope, dispatchStop, accessGrant),
+        ...(approvalPrincipal ? { approvalPrincipal } : {}),
+      },
+      ...(accessGrant ? { accessGrantRevision: accessGrant.revision } : {}),
       connectionRevision: snapshot.connectionRevision,
       requestDigest,
       adapterBinding: { adapterId: snapshot.adapterId, adapterVersion: snapshot.adapterVersion, profileRevision: profile.profileRevision },
       ...(planningNode ? { planningNode } : {}),
-      ...(request.approvalId ? { approvalId: request.approvalId } : {}),
+      ...(approval ? { approvalId: approval.approvalId } : {}),
       status: "prepared",
     };
     if (!this.store.acquireTargetLease(profile.device.id, task.id, task.ownerId, now, this.leaseMs, attempt.attemptId)) {
@@ -539,7 +554,11 @@ export class DeviceCapabilityBroker {
     return { profile, snapshot, capability, adapter: this.requireAdapter(profile.adapterId) };
   }
 
-  private taskAccessRevision(task: DeviceTaskV1, targetDeviceId: string, capability: CapabilityDescriptorV1): number | undefined {
+  private actionAuthority(workspaceId: string, dispatchStop: DeviceDispatchStopV1, accessGrant?: DeviceAccessGrantV1): DeviceActionAuthorityV1 {
+    return { workspaceId, policyRevision: this.policyRevision, dispatchStop, ...(accessGrant ? { accessGrant } : {}) };
+  }
+
+  private taskAccessGrant(task: DeviceTaskV1, targetDeviceId: string, capability: CapabilityDescriptorV1): DeviceAccessGrantV1 | undefined {
     if (!task.accessGrantId) return undefined;
     if (!this.accessManager) throw new DeviceBrokerError("permission_denied", "device access grant resolver is unavailable");
     try {
@@ -553,7 +572,7 @@ export class DeviceCapabilityBroker {
       if (grant.scope === "read_only" && capability.sideEffect !== "read_only") {
         throw new DeviceBrokerError("permission_denied", "read-only access grant cannot dispatch a device write");
       }
-      return grant.revision;
+      return grant;
     } catch (error) {
       if (!(error instanceof DeviceFabricError) || error.code !== "safety_denied") throw error;
       throw new DeviceBrokerError("permission_denied", "device access grant denied");
@@ -564,7 +583,7 @@ export class DeviceCapabilityBroker {
     task: DeviceTaskV1, targetDeviceId: string, capability: CapabilityDescriptorV1, revision: number | undefined,
   ): boolean {
     try {
-      return this.taskAccessRevision(task, targetDeviceId, capability) === revision;
+      return this.taskAccessGrant(task, targetDeviceId, capability)?.revision === revision;
     } catch (error) {
       if (error instanceof DeviceBrokerError && error.code === "permission_denied") return false;
       throw error;

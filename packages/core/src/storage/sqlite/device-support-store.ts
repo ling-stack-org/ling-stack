@@ -53,6 +53,12 @@ export type RecordedDevicePlan = DevicePlannerAcceptanceV1 & {
   readonly fallbackReason?: "runner_unavailable";
 };
 
+export interface RecordedDeviceCapabilitySnapshot {
+  readonly workspaceId: string;
+  readonly profileRevision: string;
+  readonly snapshot: DeviceCapabilitySnapshotV1;
+}
+
 export interface DeviceAttemptPatch {
   readonly status?: DeviceTaskAttemptV1["status"];
   readonly receipt?: DeviceActionResultV1;
@@ -145,13 +151,48 @@ export class SqliteDeviceSupportStore {
 
   saveCapabilitySnapshot(snapshot: DeviceCapabilitySnapshotV1, now: string): void {
     assertValid(isDeviceCapabilitySnapshotV1(snapshot), "capability snapshot");
-    const result = this.database.prepare(`
-      UPDATE device_registry
-      SET connection_revision=?, capability_snapshot_json=?, lifecycle_status='healthy', updated_at=?
-      WHERE device_id=? AND adapter_id=? AND adapter_version=?
-        AND lifecycle_status NOT IN ('revoked', 'retired')
-    `).run(snapshot.connectionRevision, JSON.stringify(snapshot), now, snapshot.deviceId, snapshot.adapterId, snapshot.adapterVersion);
-    if (result.changes !== 1) throw new Error("Device capability snapshot no longer matches an active registration");
+    this.database.exec("SAVEPOINT device_capability_snapshot");
+    try {
+      const profile = this.requireDevice(snapshot.deviceId);
+      const workspaceId = profile.device.ownerScope;
+      const profileRevision = profile.profileRevision;
+      const json = JSON.stringify(snapshot);
+      const previous = this.getRecordedCapabilitySnapshot(snapshot.deviceId, snapshot.snapshotId);
+      if (previous && (previous.workspaceId !== workspaceId || previous.profileRevision !== profileRevision
+        || !isDeepStrictEqual(previous.snapshot, JSON.parse(json))
+        || this.getCurrentCapabilitySnapshot(snapshot.deviceId)?.snapshotId !== snapshot.snapshotId)) {
+        throw new DeviceBrokerError("stale_snapshot", "capability snapshot id is already bound to historical evidence");
+      }
+      const result = this.database.prepare(`
+        UPDATE device_registry
+        SET connection_revision=?, capability_snapshot_json=?, lifecycle_status='healthy', updated_at=?
+        WHERE device_id=? AND adapter_id=? AND adapter_version=?
+          AND lifecycle_status NOT IN ('revoked', 'retired')
+      `).run(snapshot.connectionRevision, json, now, snapshot.deviceId, snapshot.adapterId, snapshot.adapterVersion);
+      if (result.changes !== 1) throw new DeviceBrokerError("target_changed", "device capability snapshot no longer matches an active registration");
+      if (!previous) {
+        this.database.prepare(`
+          INSERT INTO device_capability_snapshots(device_id,snapshot_id,workspace_id,profile_revision,snapshot_json)
+          VALUES (?,?,?,?,?)
+        `).run(snapshot.deviceId, snapshot.snapshotId, workspaceId, profileRevision, json);
+      }
+      this.database.exec("RELEASE device_capability_snapshot");
+    } catch (error) {
+      this.database.exec("ROLLBACK TO device_capability_snapshot; RELEASE device_capability_snapshot");
+      throw error;
+    }
+  }
+
+  getRecordedCapabilitySnapshot(deviceId: string, snapshotId: string): RecordedDeviceCapabilitySnapshot | undefined {
+    const row = this.database.prepare(`
+      SELECT workspace_id,profile_revision,snapshot_json FROM device_capability_snapshots WHERE device_id=? AND snapshot_id=?
+    `).get(deviceId, snapshotId) as Row | undefined;
+    if (!row) return undefined;
+    return {
+      workspaceId: readString(row, "workspace_id"),
+      profileRevision: readString(row, "profile_revision"),
+      snapshot: parseJson(row.snapshot_json, isDeviceCapabilitySnapshotV1, "capability snapshot"),
+    };
   }
 
   getCurrentCapabilitySnapshot(deviceId: string): DeviceCapabilitySnapshotV1 | undefined {
@@ -561,6 +602,14 @@ export class SqliteDeviceSupportStore {
         updated_at TEXT NOT NULL,
         revoked_at TEXT
       );
+      CREATE TABLE IF NOT EXISTS device_capability_snapshots (
+        device_id TEXT NOT NULL REFERENCES device_registry(device_id),
+        snapshot_id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        profile_revision TEXT NOT NULL,
+        snapshot_json TEXT NOT NULL,
+        PRIMARY KEY(device_id,snapshot_id)
+      );
       CREATE TABLE IF NOT EXISTS device_tasks (
         task_id TEXT PRIMARY KEY NOT NULL,
         revision INTEGER NOT NULL,
@@ -627,6 +676,14 @@ export class SqliteDeviceSupportStore {
         this.database.exec("ALTER TABLE device_target_leases ADD COLUMN attempt_id TEXT");
       }
       this.database.exec("CREATE INDEX IF NOT EXISTS idx_device_target_leases_task ON device_target_leases(task_id)");
+      this.database.exec(`
+        INSERT INTO device_capability_snapshots(device_id,snapshot_id,workspace_id,profile_revision,snapshot_json)
+        SELECT device_id, json_extract(capability_snapshot_json, '$.snapshotId'),
+          json_extract(profile_json, '$.device.ownerScope'), json_extract(profile_json, '$.profileRevision'), capability_snapshot_json
+        FROM device_registry
+        WHERE capability_snapshot_json IS NOT NULL
+        ON CONFLICT(device_id,snapshot_id) DO NOTHING
+      `);
     });
   }
 }

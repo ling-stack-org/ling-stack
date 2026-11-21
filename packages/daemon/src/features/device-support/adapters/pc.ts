@@ -16,6 +16,8 @@ import type {
   DeviceAdapterVerificationResult,
 } from "@ling-stack/core";
 
+import { createAdapterCapabilitySnapshot } from "./capability-snapshot.js";
+
 export interface PcNetworkStatus {
   readonly connected: boolean;
   readonly interfaceName?: string;
@@ -149,17 +151,7 @@ export class PcAdapter implements DeviceAdapter {
   }
 
   async getCapabilities(input: { readonly profile: DeviceProfileV1; readonly connectionRevision: string }): Promise<DeviceCapabilitySnapshotV1> {
-    return {
-      snapshotId: `${input.profile.device.id}:${input.connectionRevision}:${this.#now()}`,
-      deviceId: input.profile.device.id,
-      adapterId: this.manifest.adapterId,
-      adapterVersion: this.manifest.adapterVersion,
-      contractMajor: 1,
-      connectionRevision: input.connectionRevision,
-      capabilities: this.manifest.capabilities,
-      observedAt: this.#now(),
-      freshnessUntil: new Date(Date.parse(this.#now()) + 30_000).toISOString(),
-    };
+    return createAdapterCapabilitySnapshot(this.manifest, input, this.#now());
   }
 
   async execute(input: { readonly profile: DeviceProfileV1; readonly capability: { readonly id: string }; readonly request: DeviceActionRequestV1; readonly signal?: AbortSignal }): Promise<DeviceActionResultV1 | DeviceAdapterExecutionResult> {
