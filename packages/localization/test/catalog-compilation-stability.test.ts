@@ -4,8 +4,16 @@ import { copyFileSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import type { TestContext } from "node:test";
 
-function fixture(t) {
+type CatalogFixture = {
+  root: string;
+  catalog: (locale: string, message: string) => void;
+  compile: () => string;
+  generated: string;
+};
+
+function fixture(t: TestContext): CatalogFixture {
   const root = mkdtempSync(path.join(tmpdir(), "ling-catalog-compilation-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   mkdirSync(path.join(root, "scripts"));
@@ -13,17 +21,17 @@ function fixture(t) {
   for (const name of ["compile-catalogs.mjs", "catalog-utils.mjs"]) {
     copyFileSync(new URL(`../scripts/${name}`, import.meta.url), path.join(root, "scripts", name));
   }
-  const catalog = (locale, message) => writeFileSync(path.join(root, "catalogs", `${locale}.json`), JSON.stringify({
+  const catalog = (locale: string, message: string): void => writeFileSync(path.join(root, "catalogs", `${locale}.json`), JSON.stringify({
     locale, sourceRevision: "fixture", messages: { "daemon.fixture": message },
   }));
-  const compile = () => execFileSync(process.execPath, [path.join(root, "scripts/compile-catalogs.mjs")], { encoding: "utf8" });
+  const compile = (): string => execFileSync(process.execPath, [path.join(root, "scripts/compile-catalogs.mjs")], { encoding: "utf8" });
   const generated = path.join(root, "src/generated");
   catalog("en-US", "First");
   compile();
   return { root, catalog, compile, generated };
 }
 
-function snapshot(file) {
+function snapshot(file: string) {
   const stat = lstatSync(file, { bigint: true });
   return { dev: stat.dev, ino: stat.ino, mode: stat.mode, mtimeNs: stat.mtimeNs, bytes: readFileSync(file) };
 }
