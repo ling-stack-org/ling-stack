@@ -4,6 +4,7 @@ import test from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MessageActionBar } from "../dist/index.js";
+import type { MessageActionBarAction, MessageActionKind } from "../dist/index.js";
 
 test("message action bar filters actions by surface policy", () => {
   const html = renderToStaticMarkup(createElement(MessageActionBar, {
@@ -91,10 +92,10 @@ test("message action bar CSS owns 32px icon controls without pseudo tooltips", a
   assert.doesNotMatch(styles, /\[data-theme/u);
 });
 
-function action(id, kind, overrides = {}) {
+function action(id: string, kind: MessageActionKind, overrides: Partial<MessageActionBarAction> = {}): MessageActionBarAction {
   return { id, kind, label: label(id), onClick: () => undefined, ...overrides };
 }
 
-function label(value) {
+function label(value: string): string {
   return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;
 }
