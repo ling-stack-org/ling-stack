@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { generateKeyPairSync, sign } from "node:crypto";
+import { createPublicKey, generateKeyPairSync, sign, verify } from "node:crypto";
 import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:net";
@@ -15,18 +15,23 @@ import {
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3,
   type DeviceActionRequestV1,
   type DeviceTaskV1,
+  type LingServerGatewayRouteV1,
   type RemoteAuthProofV1,
   type RemoteClientCommandPayloadMapV1,
   type RemoteServerFrameV1,
 } from "@ling-stack/contracts";
 import { createSqliteRunStore, DEFAULT_WORKSPACE_ID, DeviceCapabilityBroker, digestRequest, readOwnedDeviceTaskJournal, readOwnedDeviceTaskTrace, SqliteDeviceSupportStore } from "@ling-stack/core";
 import {
+  authChallengeSigningBytes,
+  authChallengeSigningInput,
   authProofSigningBytes,
   authProofSigningInput,
   encodeBase64Url,
   fingerprintPublicJwkSync,
   parseRemoteServerFrameV1,
   sha256,
+  type RemoteMessageChannel,
+  type RemoteMessageReceiver,
   validateRemoteAuthChallengeV1,
   validateRemoteP256PublicJwkV1,
 } from "@ling-stack/remote-protocol";
@@ -398,9 +403,129 @@ test("authenticated Gateway sessions recover PC tasks, reconcile writes and resu
   assert.equal((await waitForFrame(resumed.frames, "command.failed", crossWorkspace)).payload.error.code, "workspace_not_allowed");
   const wrongOwner = await resumed.send("device.task.journal", { ...cursor, taskId: "phone-owned-task", commandId: "journal-phone-owned" });
   assert.equal((await waitForFrame(resumed.frames, "command.failed", wrongOwner)).payload.error.code, "pc_unavailable");
+
+  const identity = state.readOrCreateIdentity();
+  const route: LingServerGatewayRouteV1 = {
+    version: 1, installationId: "ling-server", instanceId: "server-instance", applicationKeyFingerprint: encodeBase64Url(sha256(new Uint8Array([1]))),
+    serverOrigin: "https://ling-server.example", bindingId: "peer-binding", preferredRoute: "relay", routeAttemptId: "route-1",
+    gatewayId: identity.gatewayId, mobileDeviceId: deviceId, peerEpoch: 1,
+    gatewayKeyFingerprint: identity.publicKeyFingerprint, mobileKeyFingerprint: fingerprintPublicJwkSync(publicKeyJwk),
+    protocolMajor: 1, features: ["ordered-channel"], expiresAt: new Date(Date.parse(clock) + 60_000).toISOString(),
+    offerDigest: encodeBase64Url(sha256(new Uint8Array([2]))), answerDigest: encodeBase64Url(sha256(new Uint8Array([3]))),
+  };
+  function attach(peerRoute: LingServerGatewayRouteV1) {
+    const transport = peerFixture();
+    controller.attachLingServerPeer({ route: peerRoute, channel: transport.channel });
+    const challenge = validateRemoteAuthChallengeV1(JSON.parse(transport.outbound[0]), { nowMs: Date.parse(clock) });
+    const { gatewaySignature, ...unsigned } = challenge;
+    const expected = authChallengeSigningBytes(authChallengeSigningInput(gatewayOrigin, unsigned), peerRoute);
+    assert.ok(verify("sha256", expected, {
+      key: createPublicKey({ format: "jwk", key: identity.publicKeyJwk }), dsaEncoding: "ieee-p1363",
+    }, Buffer.from(gatewaySignature, "base64url")));
+    return {
+      ...transport, challenge,
+      async proof(signedRoute: LingServerGatewayRouteV1) {
+        const unsignedProof: Omit<RemoteAuthProofV1, "signature"> = {
+          version: 1, gatewayId: challenge.gatewayId, challengeId: challenge.challengeId, candidateSessionId: challenge.candidateSessionId,
+          deviceId, deviceEpoch: challenge.deviceEpoch, clientNonce: encodeBase64Url(new Uint8Array(32).fill(3)), protocolVersion: 1, resume: [],
+        };
+        const input = await authProofSigningInput(gatewayOrigin, unsigned, unsignedProof, sha256);
+        const signature = encodeBase64Url(sign("sha256", authProofSigningBytes(input, signedRoute), { key: privateKey, dsaEncoding: "ieee-p1363" }));
+        return JSON.stringify({ ...unsignedProof, signature });
+      },
+      async journal(afterSequence: number, commandId: string) {
+        transport.receive(JSON.stringify({
+          version: 1, type: "device.task.journal", gatewayId: challenge.gatewayId, sessionId: challenge.candidateSessionId,
+          messageId: commandId, clientSeq: 1, sentAt: clock, expiresAt: new Date(Date.parse(clock) + 10_000).toISOString(),
+          payload: { ...cursor, afterSequence, limit: 25, commandId },
+        }));
+        const completed = await waitForFrame(transport.events, "command.completed", commandId);
+        assert.equal(completed.payload.commandType, "device.task.journal");
+        return completed.payload.result.journal;
+      },
+    };
+  }
+
+  const rejected = attach(route);
+  rejected.receive(await rejected.proof({ ...route, routeAttemptId: "other-route" }));
+  assert.match(await rejected.closed, /signature is invalid/u);
+  assert.equal(rejected.outbound.length, 1);
+  assert.equal(controller.status().pairedDevice?.deviceId, deviceId);
+  const stillConnected = await resumed.send("device.task.status", { commandId: "still-connected", workspaceId: DEFAULT_WORKSPACE_ID, taskId: active.taskId });
+  await waitForFrame(resumed.frames, "command.completed", stillConnected);
+
+  const routed = attach(route);
+  const proof = await routed.proof(route);
+  routed.receive(proof);
+  const routedReady = await waitForFrame(routed.events, "session.ready");
+  assert.ok(routedReady.payload.policy.capabilities.includes("device.journal"));
+  assert.equal(routedReady.sessionId, routed.challenge.candidateSessionId);
+  assert.deepEqual((await routed.journal(1, "relay-journal")).events, rest.events);
+
+  const nextRoute = { ...route, routeAttemptId: "route-2", preferredRoute: "direct" } as const;
+  const replayed = attach(nextRoute);
+  replayed.receive(proof);
+  assert.match(await replayed.closed, /missing, used, or expired/u);
+  assert.equal(routed.channel.readyState, 1);
+  const replacementPeer = attach(nextRoute);
+  replacementPeer.receive(await replacementPeer.proof(nextRoute));
+  await waitForFrame(replacementPeer.events, "session.ready");
+  assert.equal(await routed.closed, "replaced");
+  assert.equal(controller.status().pairedDevice?.deviceId, deviceId);
+  assert.deepEqual((await replacementPeer.journal(1, "replacement-journal")).events, rest.events);
+  clock = nextRoute.expiresAt;
+  replacementPeer.receive(JSON.stringify({ type: "device.task.journal" }));
+  assert.equal(await replacementPeer.closed, "peer_route_expired");
+  const duringShutdown = { ...nextRoute, routeAttemptId: "route-shutdown", expiresAt: new Date(Date.parse(clock) + 60_000).toISOString() };
+  const shutdownPeer = attach(duringShutdown);
+  shutdownPeer.receive(await shutdownPeer.proof(duringShutdown));
+  await waitForFrame(shutdownPeer.events, "session.ready");
+  await controller.stop();
+  assert.equal(await shutdownPeer.closed, "gateway_stopping");
+  assert.equal(shutdownPeer.events.some(event => event.type === "security.revoked"), false);
+  assert.equal(controller.status().pairedDevice?.deviceId, deviceId);
+  await controller.startIfEnabled();
+  const afterRestart = { ...duringShutdown, routeAttemptId: "route-after-restart" };
+  const restartedPeer = attach(afterRestart);
+  restartedPeer.receive(await restartedPeer.proof(afterRestart));
+  await waitForFrame(restartedPeer.events, "session.ready");
+  assert.deepEqual((await restartedPeer.journal(1, "restart-journal")).events, rest.events);
   assert.equal(repairCalls, 1);
   assert.equal(networkReads, 4);
 });
+
+function peerFixture() {
+  const outbound: string[] = [];
+  const events: RemoteServerFrameV1[] = [];
+  let receiver: RemoteMessageReceiver | undefined;
+  let readyState = 1;
+  let resolveClosed!: (reason: string) => void;
+  const closed = new Promise<string>(resolve => { resolveClosed = resolve; });
+  const channel: RemoteMessageChannel = {
+    get readyState() { return readyState; },
+    bufferedAmount: 0,
+    send(data) {
+      if (outbound.length > 0) events.push(parseRemoteServerFrameV1(data));
+      outbound.push(data);
+    },
+    close(code, reason) {
+      readyState = 3;
+      resolveClosed(reason ?? "");
+      queueMicrotask(() => receiver?.closed({ code, reason }));
+    },
+    subscribe(next) {
+      assert.equal(receiver, undefined);
+      receiver = next;
+      return () => {
+        if (next === receiver) receiver = undefined;
+      };
+    },
+  };
+  return {
+    channel, outbound, events, closed,
+    receive(data: string) { queueMicrotask(() => receiver?.received(data)); },
+  };
+}
 
 async function waitForFrame<T extends RemoteServerFrameV1["type"]>(frames: readonly RemoteServerFrameV1[], type: T, requestId?: string) {
   const deadline = Date.now() + 3_000;

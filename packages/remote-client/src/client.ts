@@ -1,12 +1,7 @@
 import {
   REMOTE_DEVICE_JOURNAL_PAGE_LIMIT_V1,
-  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1,
-  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2,
-  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3,
   REMOTE_PROTOCOL_VERSION,
   type DeviceApprovalBindingV1,
-  type RemoteAuthChallengeV1,
-  type RemoteAuthProofV1,
   type RemoteClientCommandPayloadMapV1,
   type RemoteClientCommandTypeV1,
   type RemoteClientFrameV1,
@@ -23,15 +18,13 @@ import {
   type RemoteServerFrameV1,
 } from "@ling-stack/contracts";
 import {
-  authChallengeSigningBytes,
-  authChallengeSigningInput,
-  authProofSigningBytes,
-  authProofSigningInput,
-  encodeBase64Url,
+  parseRemoteAuthFrameV1,
   parseRemoteServerFrameV1,
-  sha256,
-  validateRemoteAuthChallengeV1,
+  type RemoteMessageChannel,
 } from "@ling-stack/remote-protocol";
+import {
+  createRemoteSessionProof, openRemoteSessionChannel, type RemoteSessionAuthentication, type RemoteSessionConnectionOptions,
+} from "./session-authentication.js";
 import {
   createInitialRemoteClientState,
   reduceRemoteClientState,
@@ -40,16 +33,12 @@ import {
   type RemoteStateAction,
 } from "./state.js";
 import {
-  remoteWebSocketUrl,
   type RemoteBindingStore,
   type RemoteBindingV1,
   type RemoteCacheStore,
   type RemoteClock,
   type RemoteDeviceKeyAdapter,
   type RemoteEntropy,
-  type RemoteHttpClient,
-  type RemoteWebSocketFactory,
-  type RemoteWebSocketLike,
 } from "./types.js";
 
 type CommandType = Exclude<RemoteClientCommandTypeV1, "stream.ack">;
@@ -68,17 +57,17 @@ interface PendingCommand<TResult = unknown> {
   readonly reject: (error: Error) => void;
 }
 
-export interface RemoteSessionClientOptions {
+interface RemoteSessionClientBaseOptions {
   readonly binding: RemoteBindingV1;
   readonly bindingStore: RemoteBindingStore;
   readonly cacheStore: RemoteCacheStore<RemoteClientState>;
-  readonly http: RemoteHttpClient;
   readonly keys: RemoteDeviceKeyAdapter;
   readonly entropy: RemoteEntropy;
   readonly clock: RemoteClock;
-  readonly webSocketFactory: RemoteWebSocketFactory;
   readonly autoReconnect?: boolean;
 }
+
+export type RemoteSessionClientOptions = RemoteSessionClientBaseOptions & RemoteSessionConnectionOptions;
 
 export class RemoteSessionClient {
   private binding: RemoteBindingV1;
@@ -88,7 +77,9 @@ export class RemoteSessionClient {
   private readonly outboundByMessage = new Map<string, PendingCommand>();
   private readonly streamSequences = new Map<string, number>();
   private readonly streamSnapshots = new Map<string, string>();
-  private socket?: RemoteWebSocketLike;
+  private socket?: RemoteMessageChannel;
+  private detachSocket?: () => void;
+  private authenticationAttempt?: AbortController;
   private connectPromise?: Promise<void>;
   private frameQueue = Promise.resolve();
   private bindingMutation = Promise.resolve();
@@ -99,6 +90,7 @@ export class RemoteSessionClient {
   private connectionGeneration = 0;
   private readyResolve?: () => void;
   private readyReject?: (error: Error) => void;
+  private expectedSessionId?: string;
 
   constructor(private readonly options: RemoteSessionClientOptions) {
     this.binding = options.binding;
@@ -398,43 +390,65 @@ export class RemoteSessionClient {
       type: "connection",
       status: this.reconnectAttempts > 0 ? "reconnecting" : "connecting",
     });
-    const proof = await this.createAuthProof(generation);
-    this.assertConnectionActive(generation);
-    this.clientSeq = 0;
-    this.streamSequences.clear();
-    this.streamSnapshots.clear();
-    const socket = this.options.webSocketFactory(remoteWebSocketUrl(this.binding.gatewayOrigin), [
-      REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3,
-      REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2,
-      REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1,
-    ]);
+    const attempt = new AbortController();
+    this.authenticationAttempt = attempt;
+    try {
+      const { channel, authentication } = await openRemoteSessionChannel(this.options, this.authenticationContext(generation), attempt.signal);
+      await this.runSession(generation, channel, authentication);
+    } finally {
+      if (this.authenticationAttempt === attempt) this.authenticationAttempt = undefined;
+    }
+  }
+
+  private async runSession(
+    generation: number,
+    socket: RemoteMessageChannel,
+    authentication: RemoteSessionAuthentication,
+  ): Promise<void> {
     if (!this.isConnectionActive(generation)) {
       socket.close(1000, "stale_connection");
       throw new Error("remote_connection_invalidated");
     }
+    this.clientSeq = 0;
+    this.streamSequences.clear();
+    this.streamSnapshots.clear();
     this.socket = socket;
-    this.assertConnectionActive(generation);
+    this.expectedSessionId = "proof" in authentication ? authentication.proof.candidateSessionId : undefined;
+    let challengeRoute = "route" in authentication ? authentication.route : undefined;
     const ready = new Promise<void>((resolve, reject) => {
       this.readyResolve = resolve;
       this.readyReject = reject;
     });
-    socket.addEventListener("open", () => {
-      if (!this.isCurrentSocket(generation, socket)) {
-        socket.close(1000, "stale_connection");
-        return;
-      }
-      socket.send(JSON.stringify(proof));
+    this.detachSocket = socket.subscribe({
+      opened: () => {
+        if (!this.isCurrentSocket(generation, socket) || !("proof" in authentication)) return;
+        try {
+          socket.send(JSON.stringify(authentication.proof));
+        } catch (error) {
+          this.failSession(error, generation, socket);
+        }
+      },
+      received: raw => {
+        if (!this.isCurrentSocket(generation, socket)) return;
+        this.frameQueue = this.frameQueue
+          .then(async () => {
+            if (!challengeRoute) return await this.handleRawFrame(raw, generation, socket);
+            this.assertCurrentSocket(generation, socket);
+            if (typeof raw !== "string") throw new Error("remote_binary_frame_not_supported");
+            const route = challengeRoute;
+            challengeRoute = undefined;
+            const proof = await createRemoteSessionProof(this.authenticationContext(generation), parseRemoteAuthFrameV1(raw), route);
+            this.assertCurrentSocket(generation, socket);
+            this.expectedSessionId = proof.candidateSessionId;
+            socket.send(JSON.stringify(proof));
+          })
+          .catch(error => this.failSession(error, generation, socket));
+      },
+      failed: () => this.failSession(new Error("remote_socket_error"), generation, socket),
+      closed: event => {
+        this.frameQueue = this.frameQueue.then(() => this.handleClose(event.code, event.reason, generation, socket));
+      },
     });
-    socket.addEventListener("message", (event) => {
-      if (!this.isCurrentSocket(generation, socket)) {
-        return;
-      }
-      this.frameQueue = this.frameQueue
-        .then(async () => await this.handleRawFrame(event.data, generation, socket))
-        .catch((error) => this.failSession(error, generation, socket));
-    });
-    socket.addEventListener("error", () => this.failSession(new Error("remote_socket_error"), generation, socket));
-    socket.addEventListener("close", (event) => this.handleClose(event.code, event.reason, generation, socket));
     const timeout = setTimeout(() => this.failSession(new Error("remote_session_ready_timeout"), generation, socket), 10_000);
     try {
       await ready;
@@ -449,63 +463,18 @@ export class RemoteSessionClient {
     }
   }
 
-  private async createAuthProof(generation: number): Promise<RemoteAuthProofV1> {
-    const binding = this.binding;
-    const response = await this.options.http.postJson<unknown>(binding.gatewayOrigin, "/v1/auth/challenge", {
-      deviceId: binding.deviceId,
-    });
-    this.assertConnectionActive(generation);
-    const challenge: RemoteAuthChallengeV1 = validateRemoteAuthChallengeV1(response.body, {
-      nowMs: Date.parse(this.options.clock.now()),
-    });
-    if (
-      challenge.gatewayId !== binding.gatewayId
-      || challenge.deviceEpoch !== binding.deviceEpoch
-      || !challenge.supportedProtocolVersions.includes(REMOTE_PROTOCOL_VERSION)
-    ) {
-      throw new Error("remote_auth_challenge_identity_mismatch");
-    }
-    const { gatewaySignature: _gatewaySignature, ...unsignedChallenge } = challenge;
-    const challengeValid = await this.options.keys.verify(
-      binding.gatewayIdentityPublicKeyJwk,
-      authChallengeSigningBytes(authChallengeSigningInput(binding.gatewayOrigin, unsignedChallenge)),
-      challenge.gatewaySignature,
-    );
-    this.assertConnectionActive(generation);
-    if (!challengeValid) {
-      throw new Error("remote_auth_gateway_signature_invalid");
-    }
-    const resume = await this.readResumeCursors();
-    this.assertConnectionActive(generation);
-    const clientNonce = encodeBase64Url(await this.options.entropy.randomBytes(32));
-    this.assertConnectionActive(generation);
-    const unsignedProof: Omit<RemoteAuthProofV1, "signature"> = {
-      version: REMOTE_PROTOCOL_VERSION,
-      gatewayId: binding.gatewayId,
-      challengeId: challenge.challengeId,
-      candidateSessionId: challenge.candidateSessionId,
-      deviceId: binding.deviceId,
-      deviceEpoch: binding.deviceEpoch,
-      clientNonce,
-      protocolVersion: REMOTE_PROTOCOL_VERSION,
-      resume,
-    };
-    const signingInput = await authProofSigningInput(
-      binding.gatewayOrigin,
-      unsignedChallenge,
-      unsignedProof,
-      sha256,
-    );
-    this.assertConnectionActive(generation);
-    const signature = await this.options.keys.sign(binding.deviceKeyId, authProofSigningBytes(signingInput));
-    this.assertConnectionActive(generation);
+  private authenticationContext(generation: number) {
     return {
-      ...unsignedProof,
-      signature,
+      binding: this.binding,
+      keys: this.options.keys,
+      entropy: this.options.entropy,
+      clock: this.options.clock,
+      assertCurrent: () => this.assertConnectionActive(generation),
+      readResumeCursors: () => this.readResumeCursors(),
     };
   }
 
-  private async handleRawFrame(raw: unknown, generation: number, socket: RemoteWebSocketLike): Promise<void> {
+  private async handleRawFrame(raw: unknown, generation: number, socket: RemoteMessageChannel): Promise<void> {
     this.assertCurrentSocket(generation, socket);
     if (typeof raw !== "string") {
       throw new Error("remote_binary_frame_not_supported");
@@ -518,7 +487,7 @@ export class RemoteSessionClient {
       throw new Error("remote_session_identity_mismatch");
     }
     if (!this.currentSessionId) {
-      if (frame.type !== "session.ready") {
+      if (frame.type !== "session.ready" || frame.sessionId !== this.expectedSessionId) {
         throw new Error("remote_session_ready_required");
       }
       this.currentSessionId = frame.sessionId;
@@ -544,7 +513,7 @@ export class RemoteSessionClient {
     this.assertCurrentSocket(generation, socket);
   }
 
-  private async applyFrame(frame: RemoteServerFrameV1, generation: number, socket: RemoteWebSocketLike): Promise<void> {
+  private async applyFrame(frame: RemoteServerFrameV1, generation: number, socket: RemoteMessageChannel): Promise<void> {
     switch (frame.type) {
       case "session.ready": {
         if (frame.sessionId === "" || frame.payload.deviceId !== this.binding.deviceId) {
@@ -614,6 +583,10 @@ export class RemoteSessionClient {
         await this.requestFullResync();
         return;
       case "security.revoked":
+        if (frame.payload.reason === "replaced") {
+          this.disconnect();
+          return;
+        }
         await this.revokeLocal(frame.payload.reason);
         return;
     }
@@ -695,7 +668,7 @@ export class RemoteSessionClient {
   private async activateWorkspaceBinding(
     workspaceBindingId: string,
     generation: number,
-    socket: RemoteWebSocketLike,
+    socket: RemoteMessageChannel,
   ): Promise<void> {
     const previous = this.binding.workspaceBindingId;
     if (previous && previous !== workspaceBindingId) {
@@ -803,14 +776,14 @@ export class RemoteSessionClient {
 
   private currentSessionId?: string;
 
-  private requireConnectedSocket(): RemoteWebSocketLike {
+  private requireConnectedSocket(): RemoteMessageChannel {
     if (!this.socket || this.socket.readyState !== 1) {
       throw new Error("remote_socket_not_connected");
     }
     return this.socket;
   }
 
-  private failSession(error: unknown, generation: number, socket: RemoteWebSocketLike): void {
+  private failSession(error: unknown, generation: number, socket: RemoteMessageChannel): void {
     if (!this.isCurrentSocket(generation, socket)) {
       return;
     }
@@ -820,14 +793,17 @@ export class RemoteSessionClient {
     this.dispatch({ type: "connection", status: "disconnected", error: normalized.message });
   }
 
-  private handleClose(code: number | undefined, reason: string | undefined, generation: number, socket: RemoteWebSocketLike): void {
+  private handleClose(code: number | undefined, reason: string | undefined, generation: number, socket: RemoteMessageChannel): void {
     if (!this.isCurrentSocket(generation, socket)) {
       return;
     }
     const closeMessage = reason || `remote_socket_closed_${code ?? 0}`;
     this.readyReject?.(new Error(closeMessage));
+    this.detachSocket?.();
+    this.detachSocket = undefined;
     this.socket = undefined;
     this.currentSessionId = undefined;
+    this.expectedSessionId = undefined;
     this.rejectPendingCommands(closeMessage);
     if (this.intentionalClose || this.binding.status !== "active") {
       return;
@@ -883,9 +859,14 @@ export class RemoteSessionClient {
     this.readyReject?.(new Error("remote_connection_invalidated"));
     this.readyResolve = undefined;
     this.readyReject = undefined;
+    this.authenticationAttempt?.abort();
+    this.authenticationAttempt = undefined;
+    this.detachSocket?.();
+    this.detachSocket = undefined;
     const socket = this.socket;
     this.socket = undefined;
     this.currentSessionId = undefined;
+    this.expectedSessionId = undefined;
     this.connectPromise = undefined;
     this.rejectPendingCommands(reason);
     socket?.close(code, reason);
@@ -897,11 +878,11 @@ export class RemoteSessionClient {
       && !this.intentionalClose;
   }
 
-  private isCurrentSocket(generation: number, socket: RemoteWebSocketLike): boolean {
+  private isCurrentSocket(generation: number, socket: RemoteMessageChannel): boolean {
     return this.isConnectionActive(generation) && this.socket === socket;
   }
 
-  private assertCurrentSocket(generation: number, socket: RemoteWebSocketLike): void {
+  private assertCurrentSocket(generation: number, socket: RemoteMessageChannel): void {
     if (!this.isCurrentSocket(generation, socket)) {
       throw new Error("remote_connection_invalidated");
     }

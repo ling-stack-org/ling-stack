@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { WebSocket } from "ws";
 import {
   REMOTE_PROTOCOL_VERSION,
   type RemoteAccessPolicySummaryV1,
@@ -24,6 +23,7 @@ import {
   isRemoteProtocolError,
   parseRemoteClientFrameV1,
   sha256,
+  type RemoteMessageChannel,
 } from "@ling-stack/remote-protocol";
 import type { RemoteConversationFacade, RemoteProjectedEvent } from "./conversation-facade.js";
 import type { RemoteDeviceFacade } from "./device-facade.js";
@@ -42,13 +42,14 @@ interface RemoteStreamState {
 }
 
 export interface RemoteGatewaySessionOptions {
-  readonly socket: WebSocket;
+  readonly channel: RemoteMessageChannel;
   readonly authenticated: AuthenticatedRemoteSession;
   readonly gatewayId: string;
   readonly facade: RemoteConversationFacade;
   readonly deviceFacade?: RemoteDeviceFacade;
   readonly policy: RemoteAccessPolicySummaryV1;
   readonly now?: () => string;
+  readonly routeExpiresAt?: string;
   readonly onMutation?: () => void;
   readonly onSelfUnpair?: () => void;
   readonly onClosed?: (session: RemoteGatewaySession) => void;
@@ -60,6 +61,9 @@ export class RemoteGatewaySession {
   private readonly now: () => string;
   private readonly controlStream: RemoteStreamState;
   private readonly streams = new Map<string, RemoteStreamState>();
+  private readonly detach: () => void;
+  private readonly routeExpiryMs?: number;
+  private readonly routeTimer?: NodeJS.Timeout;
   private lastClientSeq = 0;
   private commandWindowStartedAt = 0;
   private commandCount = 0;
@@ -78,23 +82,23 @@ export class RemoteGatewaySession {
       ackServerSeq: 0,
     };
     this.streams.set(this.controlStream.id, this.controlStream);
-    options.socket.on("message", (data, isBinary) => {
-      if (isBinary) {
-        this.closePolicyViolation("Binary frames are not supported.");
-        return;
-      }
-      this.messageQueue = this.messageQueue
-        .then(async () => await this.handleRawFrame(data.toString()))
-        .catch(() => this.closePolicyViolation("Remote command processing failed."));
-    });
-    options.socket.on("close", () => {
-      if (!this.closed) {
-        this.closed = true;
-        options.onClosed?.(this);
-      }
-    });
-    options.socket.on("error", () => {
-      this.close(1011, "Remote session transport failed.");
+    if (options.routeExpiresAt) {
+      this.routeExpiryMs = Date.parse(options.routeExpiresAt);
+      this.routeTimer = setTimeout(() => this.close(1008, "peer_route_expired"), Math.max(0, this.routeExpiryMs - Date.parse(this.now())));
+      this.routeTimer.unref();
+    }
+    this.detach = options.channel.subscribe({
+      received: data => {
+        if (typeof data !== "string") {
+          this.closePolicyViolation("Binary frames are not supported.");
+          return;
+        }
+        this.messageQueue = this.messageQueue
+          .then(async () => await this.handleRawFrame(data))
+          .catch(() => this.closePolicyViolation("Remote command processing failed."));
+      },
+      closed: () => this.finish(),
+      failed: () => this.close(1011, "Remote session transport failed."),
     });
     this.sendEvent("session.ready", {
       deviceId: this.deviceId,
@@ -102,6 +106,10 @@ export class RemoteGatewaySession {
       policy: options.policy,
       connectedAt: options.authenticated.authenticatedAt,
     }, this.controlStream);
+  }
+
+  get isClosed(): boolean {
+    return this.closed;
   }
 
   publish(event: RemoteProjectedEvent): void {
@@ -136,8 +144,12 @@ export class RemoteGatewaySession {
     this.close(4001, reason);
   }
 
+  disconnect(): void {
+    this.close(1001, "gateway_stopping");
+  }
+
   private async handleRawFrame(raw: string): Promise<void> {
-    if (this.closed) {
+    if (!this.checkAuthority()) {
       return;
     }
     this.consumeRateLimit();
@@ -382,10 +394,10 @@ export class RemoteGatewaySession {
     stream: RemoteStreamState,
     requestId?: string,
   ): void {
-    if (this.closed || this.options.socket.readyState !== WebSocket.OPEN) {
+    if (!this.checkAuthority() || this.options.channel.readyState !== 1) {
       return;
     }
-    if (this.options.socket.bufferedAmount > MAX_BUFFERED_BYTES) {
+    if (this.options.channel.bufferedAmount > MAX_BUFFERED_BYTES) {
       this.close(1013, "Remote client is too slow; resync required.");
       return;
     }
@@ -405,7 +417,11 @@ export class RemoteGatewaySession {
       serverSeq: stream.serverSeq,
       occurredAt,
     } as RemoteServerFrameV1;
-    this.options.socket.send(JSON.stringify(frame));
+    try {
+      this.options.channel.send(JSON.stringify(frame));
+    } catch {
+      this.close(1011, "Remote session transport failed.");
+    }
   }
 
   private handleAck(streamId: string, ackServerSeq: number): void {
@@ -481,13 +497,26 @@ export class RemoteGatewaySession {
     this.close(1008, reason.slice(0, 120));
   }
 
+  private checkAuthority(): boolean {
+    if (!this.closed && this.routeExpiryMs !== undefined && Date.parse(this.now()) >= this.routeExpiryMs) {
+      this.close(1008, "peer_route_expired");
+    }
+    return !this.closed;
+  }
+
   private close(code: number, reason: string): void {
+    if (this.finish()) this.options.channel.close(code, reason.slice(0, 120));
+  }
+
+  private finish(): boolean {
     if (this.closed) {
-      return;
+      return false;
     }
     this.closed = true;
-    this.options.socket.close(code, reason.slice(0, 120));
+    clearTimeout(this.routeTimer);
+    this.detach();
     this.options.onClosed?.(this);
+    return true;
   }
 }
 

@@ -1,4 +1,6 @@
-import { LING_SERVER_SIGNAL_LANE_LIMIT_V1, type LingServerSignalingResponseV1 } from "@ling-stack/contracts";
+import { LING_SERVER_SIGNAL_LANE_LIMIT_V1, type LingServerGatewayRouteV1, type LingServerSignalingResponseV1 } from "@ling-stack/contracts";
+import { encodeBase64Url, encodeUtf8, sha256, type RemoteMessageChannel } from "@ling-stack/remote-protocol";
+import { lingServerMessageChannel } from "./ling-server-message-channel.js";
 import { LingServerSignalingClient, type LingServerSignalingClientOptions } from "./ling-server-signaling.js";
 
 const channelLabel = "ling-peer";
@@ -12,6 +14,8 @@ export interface LingServerDataChannelOptions extends LingServerSignalingClientO
 
 export interface LingServerDataChannel {
   readonly channel: RTCDataChannel;
+  readonly transport: RemoteMessageChannel;
+  readonly route: LingServerGatewayRouteV1;
   close(): void;
 }
 
@@ -34,9 +38,7 @@ export async function connectLingServerDataChannel(options: LingServerDataChanne
     const config = await signaling.transportConfig();
     const createPeer = options.createPeerConnection ?? (configuration => new RTCPeerConnection(configuration));
     peer = createPeer(iceConfiguration(config));
-    const channel = await negotiate(peer, signaling, options.role, controller);
-    const connection = peer;
-    return { channel, close: () => connection.close() };
+    return await negotiate(peer, signaling, options.role, controller);
   } catch (error) {
     peer?.close();
     throw controller.signal.aborted ? controller.signal.reason : error;
@@ -51,14 +53,16 @@ async function negotiate(
   signaling: LingServerSignalingClient,
   role: LingServerSignalingClientOptions["role"],
   controller: AbortController,
-): Promise<RTCDataChannel> {
+): Promise<LingServerDataChannel> {
   const signal = controller.signal;
   const gateway = role === "gateway";
   let channel: RTCDataChannel | undefined;
+  let transport: RemoteMessageChannel | undefined;
   let nextSequence = 1;
   let remoteSequence = 0;
   let hasRemoteDescription = false;
   let gatheredCandidates = 0;
+  const descriptionDigests: Partial<Record<"offer" | "answer", string>> = {};
   const localCandidates: RTCIceCandidateInit[] = [];
   const gatherCandidate = (event: RTCPeerConnectionIceEvent) => {
     if (!event.candidate?.candidate) return;
@@ -78,6 +82,7 @@ async function negotiate(
       return;
     }
     channel = incoming;
+    transport = lingServerMessageChannel(peer, incoming);
   };
   const checkState = () => {
     if (peer.connectionState === "failed" || peer.connectionState === "closed") {
@@ -94,6 +99,7 @@ async function negotiate(
       throw new Error("ling_server_local_description_invalid");
     }
     await publish(description.type, description.sdp);
+    descriptionDigests[description.type] = digestDescription(description.sdp);
   };
 
   peer.addEventListener("icecandidate", gatherCandidate);
@@ -102,12 +108,22 @@ async function negotiate(
   try {
     if (gateway) {
       channel = peer.createDataChannel(channelLabel, { ordered: true, protocol: channelProtocol });
+      transport = lingServerMessageChannel(peer, channel);
       await describe(await peer.createOffer());
     }
 
     for (;;) {
       signal.throwIfAborted();
-      if (channel?.readyState === "open") return channel;
+      if (channel?.readyState === "open") {
+        const { offer, answer } = descriptionDigests;
+        if (!transport || !offer || !answer) throw new Error("ling_server_gateway_route_incomplete");
+        return {
+          channel,
+          transport,
+          route: signaling.gatewayRoute({ offerDigest: offer, answerDigest: answer }),
+          close: () => transport?.close(),
+        };
+      }
       if (channel?.readyState === "closing" || channel?.readyState === "closed") {
         throw new Error("ling_server_data_channel_closed");
       }
@@ -120,6 +136,7 @@ async function negotiate(
         } else {
           if (hasRemoteDescription) throw new Error("ling_server_peer_description_duplicate");
           await peer.setRemoteDescription({ type: message.messageType, sdp: message.payload });
+          descriptionDigests[message.messageType] = digestDescription(message.payload);
           hasRemoteDescription = true;
           if (!gateway) await describe(await peer.createAnswer());
         }
@@ -132,6 +149,10 @@ async function negotiate(
     peer.removeEventListener("datachannel", receiveChannel);
     peer.removeEventListener("connectionstatechange", checkState);
   }
+}
+
+function digestDescription(sdp: string): string {
+  return encodeBase64Url(sha256(encodeUtf8(sdp)));
 }
 
 function iceConfiguration(config: Extract<LingServerSignalingResponseV1, { kind: "transport_config" }>): RTCConfiguration {

@@ -2,6 +2,9 @@ import type {
   RemoteP256PublicJwkV1,
   RemoteResumeCursorV1,
 } from "@ling-stack/contracts";
+import type { RemoteWebSocketLike } from "@ling-stack/remote-protocol";
+
+export type { RemoteSocketCloseEvent, RemoteSocketMessageEvent, RemoteWebSocketLike } from "@ling-stack/remote-protocol";
 
 export interface RemoteDeviceKeyInfo {
   readonly keyId: string;
@@ -37,25 +40,6 @@ export interface RemoteHttpClient {
 }
 
 type RemoteHttpRequestOptions = Pick<RequestInit, "signal" | "redirect">;
-
-export interface RemoteSocketMessageEvent {
-  readonly data: unknown;
-}
-
-export interface RemoteSocketCloseEvent {
-  readonly code?: number;
-  readonly reason?: string;
-}
-
-export interface RemoteWebSocketLike {
-  readonly readyState: number;
-  send(data: string): void;
-  close(code?: number, reason?: string): void;
-  addEventListener(type: "open", listener: () => void): void;
-  addEventListener(type: "message", listener: (event: RemoteSocketMessageEvent) => void): void;
-  addEventListener(type: "close", listener: (event: RemoteSocketCloseEvent) => void): void;
-  addEventListener(type: "error", listener: () => void): void;
-}
 
 export type RemoteWebSocketFactory = (url: string, subprotocols?: string | string[]) => RemoteWebSocketLike;
 

@@ -1,6 +1,6 @@
 import {
   LING_SERVER_SIGNAL_ROUTE_LIFETIME_MS_V1, REMOTE_PROTOCOL_VERSION,
-  type LingServerInstallationV1, type LingServerPeerBindingV1, type LingServerPeerRoleV1,
+  type LingServerGatewayRouteV1, type LingServerInstallationV1, type LingServerPeerBindingV1, type LingServerPeerRoleV1,
   type LingServerRouteAttemptV1, type LingServerSignalingInputV1, type LingServerSignalingOperationV1,
   type LingServerSignalingResponseV1, type LingServerSignedSignalingV1,
 } from "@ling-stack/contracts";
@@ -77,6 +77,12 @@ export class LingServerSignalingClient {
     const response = await this.exchange(signal);
     if (response.kind !== "published" || response.sequence !== sequence) throw new Error("ling_server_signaling_receipt_mismatch");
     return { replayed: response.replayed };
+  }
+
+  gatewayRoute(digests: Pick<LingServerGatewayRouteV1, "offerDigest" | "answerDigest">): LingServerGatewayRouteV1 {
+    const { role: _role, ...scope } = this.scope;
+    const { gatewayKeyFingerprint, mobileKeyFingerprint } = this.options.binding;
+    return { ...scope, serverOrigin: this.origin, gatewayKeyFingerprint, mobileKeyFingerprint, ...digests };
   }
 
   async poll(afterSequence: number): Promise<{

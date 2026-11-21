@@ -2,7 +2,7 @@
 
 Status: retained implementation handoffs; historical checkpoints are not current acceptance
 Owner: repository maintainers
-Last verified: 2026-11-22 (Device Support Platform signed peer channel, paired journal and signed resources)
+Last verified: 2026-11-22 (Gateway authentication and PC task journal over Ling Server relay, signed resources)
 Document type: maintenance handoff
 Code and test anchors: the owning plans and source modules linked below
 
@@ -116,10 +116,11 @@ commit `d6f5c5250`. Merge `9b95db2df` advances the baseline to `20ec1c528`.
   Revoking a grant during verification leaves the result unknown and blocks
   reconciliation. A read-only grant cannot dispatch a write.
 - `51c48dd84` starts Ling Server with TLS peer signaling and private loopback
-  administration. The shared Remote Client negotiates a signed, route-bound
-  WebRTC channel. Two isolated Chromium contexts exchanged ordered messages through
-  a local Pion TURN/UDP relay. The PC and phone integration still needs to bind
-  Gateway authentication and owner-journal resume to the new transport.
+  administration. The shared Remote Client negotiates a signed WebRTC channel
+  and authenticates with the PC Gateway using that route and the paired keys.
+  The Chromium loopback relay run returned the Gateway's workspace snapshot and
+  two consecutive events from the PC-owned SQLite journal. Packaged desktop and
+  mobile clients still need adapters to select and open the first-party route.
   [D12 checks and outstanding acceptance](../design/ling-device-support-platform-implementation-plan.md#d12-ling-server-connectivity)
 
 Focused checks passed for Contracts, Core, Daemon, Remote Protocol, Remote

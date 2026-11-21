@@ -114,6 +114,15 @@ export interface LingServerSignedSignalingV1 {
   readonly signature: string;
 }
 
+/** Locally derived identity of the DTLS connection used for Gateway authentication. */
+export type LingServerGatewayRouteV1 = Omit<LingServerSignalingInputV1, "role" | "operation"> & {
+  readonly serverOrigin: string;
+  readonly gatewayKeyFingerprint: string;
+  readonly mobileKeyFingerprint: string;
+  readonly offerDigest: string;
+  readonly answerDigest: string;
+};
+
 export type LingServerSignalingResponseV1 =
   | { readonly kind: "published"; readonly sequence: number; readonly replayed: boolean }
   | { readonly kind: "signals"; readonly messages: readonly LingServerSignedSignalingV1[]; readonly latestSequence: number; readonly hasMore: boolean }

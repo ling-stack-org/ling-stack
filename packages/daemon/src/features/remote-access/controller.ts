@@ -11,8 +11,11 @@ import {
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3,
   REMOTE_PROTOCOL_LIMITS,
+  type LingServerGatewayRouteV1,
+  type RemoteAuthChallengeV1,
   type RemoteCapabilityV1,
 } from "@ling-stack/contracts";
+import { parseRemoteAuthFrameV1, remoteWebSocketChannel, type RemoteMessageChannel } from "@ling-stack/remote-protocol";
 import type { RemoteReplyDispatcher } from "./dispatch-worker.js";
 import { RemoteDispatchWorker } from "./dispatch-worker.js";
 import { RemoteConversationFacade } from "./conversation-facade.js";
@@ -20,6 +23,7 @@ import { RemoteAccessError } from "./errors.js";
 import {
   createRemoteGatewayIdentity,
   RemotePairingAuthService,
+  type AuthenticatedRemoteSession,
 } from "./pairing-auth-service.js";
 import { RemoteProjectionOutboxWorker } from "./projection-outbox-worker.js";
 import { RemoteGatewaySession } from "./session.js";
@@ -71,6 +75,8 @@ export class RemoteAccessController {
   private remoteServer?: Server;
   private webSocketServer?: WebSocketServer;
   private activeSession?: RemoteGatewaySession;
+  private readonly pendingAuthentications = new Set<() => void>();
+  private stopped = false;
   private pollTimer?: NodeJS.Timeout;
   private drainPromise?: Promise<void>;
 
@@ -93,10 +99,9 @@ export class RemoteAccessController {
       stateStore: this.stateStore,
       now: this.now,
       onSecurityStateChanged: (reason) => {
-        if (reason === "disabled") {
-          this.activeSession?.revoke("disabled");
-        } else if (reason === "revoked") {
-          this.activeSession?.revoke("revoked");
+        if (reason !== "paired") {
+          this.cancelPendingAuthentication();
+          this.activeSession?.revoke(reason);
         }
       },
     });
@@ -109,8 +114,10 @@ export class RemoteAccessController {
   }
 
   async stop(): Promise<void> {
+    this.stopped = true;
     this.stopPolling();
-    this.activeSession?.revoke("disabled");
+    this.cancelPendingAuthentication();
+    this.activeSession?.disconnect();
     this.activeSession = undefined;
     const server = this.remoteServer;
     const webSocketServer = this.webSocketServer;
@@ -124,6 +131,22 @@ export class RemoteAccessController {
       server.close(() => resolve());
       server.closeAllConnections();
     });
+  }
+
+  /** Accept an open channel and route context from the local, authenticated peer transport. */
+  attachLingServerPeer(input: { readonly route: LingServerGatewayRouteV1; readonly channel: RemoteMessageChannel }): void {
+    const { channel, route } = input;
+    try {
+      if (this.stopped || channel.readyState !== 1) throw new Error("Peer transport is unavailable.");
+      const authentication = this.auth.createRoutedAuthentication(route);
+      this.acceptSessionChannel(channel, authentication.verify, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3, {
+        challenge: authentication.challenge,
+        routeExpiresAt: route.expiresAt,
+      });
+    } catch (error) {
+      channel.close(1008, "Peer authentication unavailable.");
+      throw error;
+    }
   }
 
   status(): RemoteAccessStatus {
@@ -258,60 +281,7 @@ export class RemoteAccessController {
         return;
       }
       webSocketServer.handleUpgrade(request, socket, head, (webSocket) => {
-        const authenticationTimeout = setTimeout(() => webSocket.close(1008, "Authentication proof required."), 10_000);
-        authenticationTimeout.unref();
-        webSocket.once("message", (data, isBinary) => {
-          clearTimeout(authenticationTimeout);
-          if (isBinary) {
-            webSocket.close(1008, "Authentication proof must be JSON.");
-            return;
-          }
-          let proof: unknown;
-          try {
-            proof = JSON.parse(data.toString()) as unknown;
-          } catch {
-            webSocket.close(1008, "Authentication proof is invalid JSON.");
-            return;
-          }
-          void this.auth.verifyAuthProof(proof).then((authenticated) => {
-            this.activeSession?.revoke("replaced");
-            const currentState = this.auth.state();
-            const deviceFacade = deviceTaskProtocols.includes(webSocket.protocol) ? this.options.deviceFacade : undefined;
-            const capabilities = this.capabilities(deviceFacade ? webSocket.protocol : "");
-            const facade = new RemoteConversationFacade({
-              store: this.options.store,
-              workspaceId: DEFAULT_WORKSPACE_ID,
-              workspaceBindingId: currentState.workspaceBindingId,
-              workspaceDisplayName: this.options.workspaceDisplayName,
-              conversationAccess: currentState.conversationAccess,
-              policyVersion: currentState.policyVersion,
-              now: this.now,
-            });
-            const session = new RemoteGatewaySession({
-              socket: webSocket,
-              authenticated,
-              gatewayId: this.auth.identity.gatewayId,
-              facade,
-              deviceFacade,
-              policy: facade.policySummary(capabilities),
-              now: this.now,
-              onMutation: () => this.scheduleDrain(),
-              onSelfUnpair: () => {
-                setTimeout(() => this.auth.revokeDevice(), 0).unref();
-              },
-              onClosed: (closed) => {
-                if (this.activeSession === closed) {
-                  this.activeSession = undefined;
-                }
-              },
-            });
-            this.activeSession = session;
-            this.startPolling();
-            this.scheduleDrain();
-          }).catch((error) => {
-            webSocket.close(1008, error instanceof Error ? error.message.slice(0, 120) : "Authentication failed.");
-          });
-        });
+        this.acceptSessionChannel(remoteWebSocketChannel(webSocket), proof => this.auth.verifyAuthProof(proof), webSocket.protocol);
       });
     });
     await new Promise<void>((resolve, reject) => {
@@ -323,7 +293,112 @@ export class RemoteAccessController {
     });
     this.remoteServer = server;
     this.webSocketServer = webSocketServer;
+    this.stopped = false;
     this.startPolling();
+  }
+
+  private acceptSessionChannel(
+    channel: RemoteMessageChannel,
+    verify: (value: unknown) => Promise<AuthenticatedRemoteSession>,
+    protocol: string,
+    peer?: { readonly challenge: RemoteAuthChallengeV1; readonly routeExpiresAt: string },
+  ): void {
+    let pending = true;
+    let verifying = false;
+    let detach: (() => void) | undefined;
+    const finish = (): boolean => {
+      if (!pending) return false;
+      pending = false;
+      detach?.();
+      clearTimeout(timeout);
+      this.pendingAuthentications.delete(cancel);
+      return true;
+    };
+    const reject = (reason: string) => {
+      if (finish()) channel.close(1008, reason.slice(0, 120));
+    };
+    const cancel = () => reject("Authentication cancelled.");
+    const timeout = setTimeout(() => reject("Authentication proof required."), 10_000);
+    timeout.unref();
+    this.pendingAuthentications.add(cancel);
+    try {
+      detach = channel.subscribe({
+        received: data => {
+          if (verifying || typeof data !== "string") {
+            reject("One JSON authentication proof is required.");
+            return;
+          }
+          verifying = true;
+          void (async () => {
+            const authenticated = await verify(parseRemoteAuthFrameV1(data));
+            if (!finish() || channel.readyState !== 1) return;
+            try {
+              this.activateSession(channel, authenticated, protocol, peer?.routeExpiresAt);
+            } catch {
+              channel.close(1008, "Authentication no longer current.");
+            }
+          })().catch(error => reject(error instanceof Error ? error.message : "Authentication failed."));
+        },
+        closed: finish,
+        failed: () => reject("Authentication transport failed."),
+      });
+      if (peer) channel.send(JSON.stringify(peer.challenge));
+    } catch {
+      reject("Authentication transport failed.");
+    }
+  }
+
+  private activateSession(
+    channel: RemoteMessageChannel,
+    authenticated: AuthenticatedRemoteSession,
+    protocol: string,
+    routeExpiresAt?: string,
+  ): void {
+    const current = this.auth.state();
+    const device = current.pairedDevice;
+    if (this.stopped || !current.enabled || !device || device.deviceId !== authenticated.device.deviceId
+      || device.deviceEpoch !== authenticated.device.deviceEpoch || device.publicKeyFingerprint !== authenticated.device.publicKeyFingerprint
+      || (routeExpiresAt && Date.parse(routeExpiresAt) <= Date.parse(this.now()))) {
+      throw new Error("Authentication no longer current.");
+    }
+    const deviceFacade = deviceTaskProtocols.includes(protocol) ? this.options.deviceFacade : undefined;
+    const capabilities = this.capabilities(deviceFacade ? protocol : "");
+    const facade = new RemoteConversationFacade({
+      store: this.options.store,
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      workspaceBindingId: current.workspaceBindingId,
+      workspaceDisplayName: this.options.workspaceDisplayName,
+      conversationAccess: current.conversationAccess,
+      policyVersion: current.policyVersion,
+      now: this.now,
+    });
+    const session = new RemoteGatewaySession({
+      channel,
+      authenticated,
+      gatewayId: this.auth.identity.gatewayId,
+      facade,
+      deviceFacade,
+      routeExpiresAt,
+      policy: facade.policySummary(capabilities),
+      now: this.now,
+      onMutation: () => this.scheduleDrain(),
+      onSelfUnpair: () => {
+        setTimeout(() => this.auth.revokeDevice(), 0).unref();
+      },
+      onClosed: closed => {
+        if (this.activeSession === closed) this.activeSession = undefined;
+      },
+    });
+    if (session.isClosed) return;
+    const prior = this.activeSession;
+    this.activeSession = session;
+    prior?.revoke("replaced");
+    this.startPolling();
+    this.scheduleDrain();
+  }
+
+  private cancelPendingAuthentication(): void {
+    for (const cancel of this.pendingAuthentications) cancel();
   }
 
   private async handleRemoteHttp(request: IncomingMessage, response: ServerResponse): Promise<void> {

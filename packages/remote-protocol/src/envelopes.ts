@@ -1,4 +1,6 @@
+import { REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3 } from "@ling-stack/contracts";
 import type {
+  LingServerGatewayRouteV1,
   RemoteAuthChallengeV1,
   RemoteAuthProofV1,
   RemotePairingAcceptedV1,
@@ -152,11 +154,21 @@ export function pairingAcceptedSigningBytes(input: RemotePairingAcceptedSigningI
   return domainSeparatedCanonicalBytes(REMOTE_SIGNING_DOMAINS_V1.pairingAccepted, input);
 }
 
-export function authChallengeSigningBytes(input: RemoteAuthChallengeSigningInputV1): Uint8Array {
+export function authChallengeSigningBytes(input: RemoteAuthChallengeSigningInputV1, route?: LingServerGatewayRouteV1): Uint8Array {
+  if (route) {
+    return domainSeparatedCanonicalBytes("ling.server.gateway.challenge.v1", {
+      subprotocol: REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3, route, input,
+    });
+  }
   return domainSeparatedCanonicalBytes(REMOTE_SIGNING_DOMAINS_V1.authChallenge, input);
 }
 
-export function authProofSigningBytes(input: RemoteAuthProofSigningInputV1): Uint8Array {
+export function authProofSigningBytes(input: RemoteAuthProofSigningInputV1, route?: LingServerGatewayRouteV1): Uint8Array {
+  if (route) {
+    return domainSeparatedCanonicalBytes("ling.server.gateway.proof.v1", {
+      subprotocol: REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3, route, input,
+    });
+  }
   return domainSeparatedCanonicalBytes(REMOTE_SIGNING_DOMAINS_V1.authProof, input);
 }
 

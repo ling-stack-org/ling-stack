@@ -266,8 +266,27 @@ separate signaling and app protocol versions. The server origin locates the cont
 plane. The pinned Gateway identity identifies the application peer. Update the QR and
 authentication transcripts explicitly for the new route profile. Reuse the existing
 validation, pairing primitives and session handler through typed transport adapters
-in the client and daemon. Existing endpoint paths and routing are a code baseline
-until D12 is implemented and accepted.
+in the client and daemon.
+
+The application session on a verified DataChannel uses the Gateway challenge,
+device proof and application frames from Remote Access. The endpoints derive the
+route context locally from their pinned installation, binding and peer records,
+the route and signaling instance, and the SHA-256 digests of the signed offer and
+answer they installed. Both application signatures cover this context under
+Ling Server signing domains. The route uses the `ling.device-tasks.v3` capability
+profile. The Gateway issues the challenge on the ready channel and accepts its
+proof once on that channel. Challenge lifetime is bounded by the route deadline.
+The Gateway rechecks the local pairing and epoch before activating the session.
+
+The Gateway starts sending application frames after authentication. A replacement
+session closes the earlier connection and retains the device pairing. An expired
+route or a Daemon shutdown ends its connection. Revoking the pairing ends pending
+and active sessions and invalidates the pairing. The original Gateway WebSocket
+uses its existing proof and subprotocol negotiation. On reconnect the client
+reloads the workspace projection and queries the same PC task journal by its
+task-local cursor.
+[Gateway channel admission](../../packages/daemon/src/features/remote-access/controller.ts)
+[Remote Client authentication](../../packages/remote-client/src/session-authentication.ts)
 
 To switch an existing pairing, the PC owner opts in locally, the PC signs a new
 server-bound peer record using its existing Gateway identity, and the phone verifies
