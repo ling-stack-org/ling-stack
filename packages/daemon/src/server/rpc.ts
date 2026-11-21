@@ -1415,6 +1415,10 @@ class RpcConnection {
         replayed: true,
       };
     }
+    const idempotencyKey = readOptionalStringField(record, "idempotencyKey");
+    if (!idempotencyKey?.trim() || idempotencyKey.length > 200 || idempotencyKey.includes("\n") || idempotencyKey.includes("\r")) {
+      throw rpcError(-32602, "invalid_params", "An idempotency key of up to 200 characters is required to resume a terminal Turn.");
+    }
     const resume = buildLingThreadResumeContext({ store, thread, body: record, mode: "execute" });
     const runId = await new Promise<string>((resolve, reject) => {
       let settled = false;
