@@ -1,6 +1,6 @@
 import { once } from "node:events";
 import { chmod, link, lstat, mkdtemp, rmdir, unlink } from "node:fs/promises";
-import { createServer, type Socket } from "node:net";
+import { createConnection, createServer, type Socket } from "node:net";
 import { dirname, isAbsolute, join } from "node:path";
 import type { Readable, Writable } from "node:stream";
 import { LingAppServerClient, type LingAppServerSocket } from "@ling-stack/api-client";
@@ -118,6 +118,7 @@ export async function listenLingAppServerSocket(
   if (!directory.isDirectory() || directory.uid !== process.getuid?.() || (directory.mode & 0o077) !== 0) {
     throw new Error("The App Server socket directory must be private and owned by the current user.");
   }
+  await recoverStalePublishedSocket(socketPath);
   // The socket server unlinks its bind path on close. Publish a separate
   // name so that a replacement at the client path survives shutdown.
   const bindingDirectory = await mkdtemp(join(dirname(socketPath), ".s"));
@@ -164,4 +165,37 @@ export async function listenLingAppServerSocket(
     await unlink(bindPath).catch(() => undefined);
     await rmdir(bindingDirectory);
   }
+}
+
+async function recoverStalePublishedSocket(socketPath: string): Promise<void> {
+  const existing = await lstat(socketPath).catch(() => undefined);
+  if (!existing) return;
+  if (!existing.isSocket()) throw new Error("The App Server socket path is occupied: " + socketPath);
+  const live = await probeUnixSocket(socketPath);
+  const current = await lstat(socketPath).catch(() => undefined);
+  if (!current || current.dev !== existing.dev || current.ino !== existing.ino) {
+    throw new Error("The App Server socket path changed while it was being checked: " + socketPath);
+  }
+  if (live) throw new Error("The App Server socket is already in use: " + socketPath);
+  await unlink(socketPath);
+}
+
+function probeUnixSocket(socketPath: string): Promise<boolean> {
+  return new Promise(resolve => {
+    const socket = createConnection(socketPath);
+    let settled = false;
+    const finish = (live: boolean): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      socket.destroy();
+      resolve(live);
+    };
+    const timeout = setTimeout(() => finish(true), 1_000);
+    socket.once("connect", () => finish(true));
+    socket.once("error", error => {
+      const code = (error as NodeJS.ErrnoException).code;
+      finish(code !== "ECONNREFUSED" && code !== "ENOENT" && code !== "ENOTSOCK");
+    });
+  });
 }
