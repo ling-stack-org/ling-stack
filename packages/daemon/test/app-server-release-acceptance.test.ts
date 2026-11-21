@@ -29,7 +29,7 @@ import type {
   ControlPlaneEventsResponse,
 } from "@ling-stack/contracts";
 import { LingAppServerClient, type LingAppServerSocket, type LingDaemonClient } from "@ling-stack/api-client";
-import { createSqliteRunStore, resolveStoragePaths, type LingThreadGoal, type SqliteRunStore } from "@ling-stack/core";
+import { createSqliteRunStore, resolveStoragePaths, type LingThreadGoal, type RunIntervention, type SqliteRunStore } from "@ling-stack/core";
 import { WebSocket } from "ws";
 import { createDaemonServer, listenLingAppServerSocket, probeLingAppServer, runLingAppServerMcp, runLingAppServerStdio } from "../dist/index.js";
 import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
@@ -144,6 +144,65 @@ test("App Server submits a durable Turn through the configured Pi Runner and rep
   assert.deepEqual(completed.acceptanceEvidence, withEvidence(result.run.id).acceptanceEvidence);
   await waitFor(() => second.notices.find(notice => notice.method === "thread/goal/updated"
     && notice.params?.subject?.threadId === request.threadId));
+});
+
+test("a queued Turn reaches Pi once after the source Run finishes and keeps its receipt", { timeout: 30_000 }, async t => {
+  let releaseFirstResponse: () => void = () => undefined;
+  const firstResponse = new Promise<void>(resolve => { releaseFirstResponse = resolve; });
+  const provider = await startLoopbackPiProvider(async (_body: unknown, count: number) => {
+    if (count === 1) await firstResponse;
+    return { text: count === 1 ? "First Turn finished" : "Follow-up finished" };
+  });
+  t.after(async () => {
+    releaseFirstResponse();
+    await provider.close();
+  });
+  const fixture = await releaseFixture(t);
+  const client = await fixture.connect();
+  const { thread } = await client.call<ThreadRead>("thread/start", { title: "Follow-up test" });
+  const preset = addLoopbackPreset(fixture.getStore(), provider.baseUrl);
+  const started = await client.call<{ run: { id: string } }>("turn/start", {
+    threadId: thread.id, message: "Wait before finishing the source Turn", providerPresetId: preset.id, idempotencyKey: "queue-source",
+  });
+  await waitFor(() => provider.requests.length === 1 ? true : undefined);
+  const { turn } = await client.call<LingAppServerThreadSnapshotResult>("thread/snapshot", { threadId: thread.id });
+  assert.ok(turn);
+  const request = { threadId: thread.id, expectedTurnId: turn.id, expectedTurnRevision: turn.updatedAt,
+    message: "Check the follow-up candidate", idempotencyKey: "queue-next" };
+  await assert.rejects(client.call("turn/queue", { ...request, expectedTurnRevision: "stale" }), { code: "stale_revision" });
+  const current = await client.call<LingAppServerThreadSnapshotResult>("thread/snapshot", { threadId: thread.id });
+  request.expectedTurnRevision = current.turn!.updatedAt;
+  type QueueReceipt = { intervention: RunIntervention; replayed: boolean };
+  const queued = await client.call<QueueReceipt>("turn/queue", request);
+  assert.equal(queued.replayed, false);
+  assert.equal(queued.intervention.sourceRunId, started.run.id);
+  assert.equal(queued.intervention.status, "queued");
+  assert.equal(provider.requests.length, 1);
+  client.close();
+  const peer = await fixture.connect();
+  const replay = await peer.call<QueueReceipt>("turn/queue", request);
+  assert.equal(replay.replayed, true);
+  assert.equal(replay.intervention.id, queued.intervention.id);
+  await assert.rejects(peer.call("turn/queue", { ...request, message: "Different follow-up" }), { code: "idempotency_conflict" });
+
+  releaseFirstResponse();
+  const store = fixture.getStore();
+  const delivered = await waitFor(() => {
+    const receipt = store.getRunIntervention(queued.intervention.id);
+    return receipt?.continuationRunId && store.getRun(receipt.continuationRunId)?.status === "succeeded" ? receipt : undefined;
+  });
+  const followUp = store.getLingTurnForRun(delivered.continuationRunId!);
+  assert.equal(followUp?.kind, "queued_followup");
+  assert.equal(followUp?.sourceTurnId, turn.id);
+  assert.equal(provider.requests.length, 2);
+  assert.match(JSON.stringify(provider.requests[1]), /Check the follow-up candidate/u);
+  await assert.rejects(peer.call("turn/queue", { ...request, idempotencyKey: "late-follow-up" }), { code: "stale_revision" });
+  await fixture.restart();
+  const restored = await fixture.connect();
+  const result = await restored.call<QueueReceipt>("turn/queue", request);
+  assert.equal(result.intervention.id, delivered.id);
+  assert.equal(result.intervention.continuationRunId, delivered.continuationRunId);
+  assert.equal(provider.requests.length, 2);
 });
 
 test("a completed Review binds its candidate and replays the same assessment after daemon restart", { timeout: 30_000 }, async t => {

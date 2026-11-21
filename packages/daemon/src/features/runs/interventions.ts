@@ -4,6 +4,7 @@ import { conversationWorkspaceFileRefSourcesV1 } from "@ling-stack/contracts";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   runInterventionModes,
+  createRunInterventionId,
   createSqliteGoalSupervisionStore,
   defaultGoalSupervisionPolicy,
   type GoalContinuationEvidenceDelta,
@@ -120,31 +121,9 @@ export async function handleRunInterventions(
   }
 
   const now = new Date().toISOString();
-  const sourceWorkUnit = sourceRun.workUnitId ? store.getWorkUnit(sourceRun.workUnitId) : undefined;
-  const intervention = store.createRunIntervention(
-    {
-      sourceRunId,
-      sourceWorkUnitId: sourceRun.workUnitId,
-      sourceAttemptId: sourceWorkUnit?.activeAttemptId ?? (sourceRun.workUnitId ? store.listWorkUnitAttempts(sourceRun.workUnitId).at(-1)?.id : undefined),
-      mode: input.mode,
-      instruction: input.instruction,
-      messagePayload: input.messagePayload,
-      requestedBy: "local-user",
-      idempotencyKey: input.idempotencyKey,
-    },
-    now,
-  );
-  streamRunEventIfPossible(store, activeRuns, sourceRunId, "run_intervention_created", {
-    interventionId: intervention.id,
-    mode: intervention.mode,
-    status: intervention.status,
-  });
+  const { intervention } = recordUserRunIntervention(store, activeRuns, sourceRun, input, now);
 
   if (input.mode === "queue_followup") {
-    streamRunEventIfPossible(store, activeRuns, sourceRunId, "run_followup_queued", {
-      interventionId: intervention.id,
-      instruction: intervention.instruction,
-    });
     if (isTerminalRunStatus(sourceRun.status)) {
       await maybeStartNextRunInterventionContinuation({
         sourceRunId,
@@ -203,6 +182,33 @@ export async function handleRunInterventions(
     run: projectPublicRunSession(store.getRun(sourceRunId), store),
     event: cancellation.event,
   });
+}
+
+export function recordUserRunIntervention(
+  store: RunStore, activeRuns: ActiveRunRegistry, sourceRun: RunSession,
+  input: Pick<RunIntervention, "mode" | "instruction" | "messagePayload" | "idempotencyKey">, now: string,
+): { readonly intervention: RunIntervention; readonly replayed: boolean } {
+  const id = createRunInterventionId();
+  const sourceRunId = sourceRun.id;
+  const workUnitId = sourceRun.workUnitId;
+  const sourceUnit = workUnitId ? store.getWorkUnit(workUnitId) : undefined;
+  const intervention = store.createRunIntervention({
+    ...input, id, sourceRunId, sourceWorkUnitId: workUnitId,
+    sourceAttemptId: sourceUnit?.activeAttemptId ?? (workUnitId ? store.listWorkUnitAttempts(workUnitId).at(-1)?.id : undefined),
+    requestedBy: "local-user",
+  }, now);
+  const replayed = intervention.id !== id;
+  if (!replayed) {
+    streamRunEventIfPossible(store, activeRuns, sourceRunId, "run_intervention_created", {
+      interventionId: intervention.id, mode: intervention.mode, status: intervention.status,
+    });
+    if (intervention.mode === "queue_followup") {
+      streamRunEventIfPossible(store, activeRuns, sourceRunId, "run_followup_queued", {
+        interventionId: intervention.id, instruction: intervention.instruction,
+      });
+    }
+  }
+  return { intervention, replayed };
 }
 
 export function handleRunInterventionItem(

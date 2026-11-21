@@ -17,7 +17,7 @@ export async function startLoopbackPiProvider(respond) {
       for await (const chunk of request) chunks.push(Buffer.from(chunk));
       const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
       requests.push(body);
-      const answer = respond(body, requests.length);
+      const answer = await respond(body, requests.length);
       const delta = answer.tool ? { role: "assistant", tool_calls: [{ index: 0, id: `static-tool-${requests.length}`,
         type: "function", function: { name: answer.tool, arguments: JSON.stringify(answer.input) } }] }
         : { role: "assistant", content: answer.text };

@@ -61,7 +61,7 @@ import { parseRunRequest, type RunRequest } from "../features/runs/schemas.js";
 import { parseCompleteLingThreadGoalBody, parsePutLingThreadGoalBody } from "../features/runs/thread-routes.js";
 import { projectPublicRunSession } from "../features/runs/public-execution-snapshots.js";
 import { projectPublicLingThread, projectPublicLingTurn } from "../features/runs/public-execution-snapshots.js";
-import { maybeQueueGoalContinuation, maybeStartNextRunInterventionContinuation } from "../features/runs/interventions.js";
+import { maybeQueueGoalContinuation, maybeStartNextRunInterventionContinuation, recordUserRunIntervention } from "../features/runs/interventions.js";
 import { RpcOutboundWriter, type RpcOutboundFrame } from "./rpc-outbound.js";
 import { AppServerDevelopmentService } from "./app-server-development.js";
 import { executeAppServerVerificationCheck } from "./app-server-verification-recipes.js";
@@ -1594,9 +1594,44 @@ class RpcConnection {
     }
   }
 
-  private queueTurn(params: unknown): Promise<unknown> {
-    const record = readParamsRecord(params);
-    return this.startTurn({ ...record, kind: "queued_followup", execute: false });
+  private queueTurn(params: unknown): unknown {
+    const { cwd, ...record } = this.workspaceParams(params);
+    const threadId = readStringField(record, "threadId");
+    const turnId = readStringField(record, "expectedTurnId");
+    const expectedRevision = readStringField(record, "expectedTurnRevision");
+    const instruction = (readOptionalStringField(record, "message") ?? readStringField(record, "userInstruction")).trim();
+    const idempotencyKey = readStringField(record, "idempotencyKey");
+    if (!instruction || instruction.length > 16_384 || idempotencyKey.length > 200 || /[\r\n]/u.test(idempotencyKey)) {
+      throw rpcError(-32602, "invalid_params", "Supply a message of up to 16384 characters and an idempotency key of up to 200 characters.");
+    }
+    const store = this.context.storeRegistry.getStore(cwd);
+    const thread = store.getLingThread(threadId);
+    const turn = store.getLingTurn(turnId);
+    if (!thread || thread.kind !== "conversation" || thread.channelId || thread.status === "archived" || turn?.threadId !== threadId) {
+      throw rpcError(-32040, "workspace_binding_invalid", "The source Turn does not belong to an open conversation Thread.");
+    }
+    const runId = turn.activeRunId ?? turn.lastRunId;
+    const run = runId ? store.getRun(runId) : undefined;
+    const sourceRun = run?.parentRunId ? store.getRun(run.parentRunId) : run;
+    if (!run || !sourceRun || sourceRun.threadId !== threadId || run.threadId !== threadId) {
+      throw rpcError(-32061, "resume_blocked", "The source Turn has no Run available for follow-up.");
+    }
+    const retainedKey = `app-server:${turn.id}:${idempotencyKey}`;
+    const prior = store.listRunInterventions({ sourceRunId: sourceRun.id, idempotencyKey: retainedKey, limit: 1 })[0];
+    if (prior) {
+      if (prior.mode !== "queue_followup" || prior.instruction !== instruction) {
+        throw rpcError(-32031, "idempotency_conflict", "The Turn input key was reused with a different message.");
+      }
+      return { cwd, threadId, turnId, intervention: prior, replayed: true };
+    }
+    if (turn.updatedAt !== expectedRevision || turn.activeRunId !== run.id || thread.activeRunId !== run.id
+      || !["queued", "running", "waiting_for_approval"].includes(run.status)) {
+      throw rpcError(-32030, "stale_revision", "The expected Turn is no longer the active revision.");
+    }
+    const result = recordUserRunIntervention(store, this.context.activeRuns, sourceRun, {
+      instruction, mode: "queue_followup", idempotencyKey: retainedKey,
+    }, new Date().toISOString());
+    return { cwd, threadId, turnId, ...result };
   }
 
   private interruptTurn(params: unknown): unknown {
