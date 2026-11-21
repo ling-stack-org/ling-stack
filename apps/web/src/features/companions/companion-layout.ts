@@ -65,6 +65,23 @@ export function sourceNavigationRequest(source: CompanionAttentionSource): {
   };
 }
 
+export function companionSourceFallback(source: CompanionAttentionSource): {
+  readonly scope: "global" | "history";
+  readonly itemId?: string;
+} {
+  const itemId = source.kind === "approval"
+    ? `approval:${source.approvalId ?? source.id}`
+    : source.workflowStepId
+      ? `workflow-step:${source.workflowStepId}`
+      : source.runId
+        ? `run:${source.runId}`
+        : undefined;
+  return {
+    scope: source.kind === "terminal_report" ? "history" : "global",
+    ...(itemId ? { itemId } : {}),
+  };
+}
+
 function candidateRect(
   side: CompanionCardSide,
   anchor: CompanionLayoutRect,

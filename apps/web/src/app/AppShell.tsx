@@ -35,6 +35,7 @@ import type {
   TaskRunActionState,
   UserProfile,
   WorkspaceAccessMode,
+  CompanionAttentionSource,
 } from "../types.js";
 import {
   channelSidebarTarget,
@@ -192,6 +193,7 @@ import { buildSidebarObjectContextSeeds } from "./sidebar-object-context.js";
 import { useSidebarObjectContexts } from "./use-sidebar-object-contexts.js";
 import { useDesktopCompanionSettings } from "../features/companions/use-desktop-companion-settings.js";
 import { CompanionMiniPanel } from "../features/companions/CompanionMiniPanel.js";
+import { companionSourceFallback } from "../features/companions/companion-layout.js";
 import {
   acknowledgeSidebarConversationFailure,
   hasAcknowledgedSidebarConversationFailure,
@@ -1604,6 +1606,8 @@ export function AppShell(): React.JSX.Element {
         setThreadPageTargetId(request.threadId);
         setActiveView("threads");
         setActiveSidebarTarget("threads");
+      } else if (!request.conversationId) {
+        openWorkBoard("global");
       }
       if (request.conversationId) void openConversationThread(request.conversationId);
     });
@@ -1680,6 +1684,24 @@ export function AppShell(): React.JSX.Element {
       itemId: itemId || undefined,
     }));
     openPlainView("work_board");
+  }
+
+  function openCompanionSource(source: CompanionAttentionSource): void {
+    setCompanionSourceTarget({
+      ...(source.channelId ? { channelId: source.channelId } : {}),
+      ...(source.threadId ? { threadId: source.threadId } : {}),
+      ...(source.sourceItemId ? { sourceItemId: source.sourceItemId } : {}),
+    });
+    if (source.channelId) {
+      selectWorkspaceChannel(source.channelId);
+    } else if (source.threadId) {
+      setThreadPageTargetId(source.threadId);
+      setActiveView("threads");
+      setActiveSidebarTarget("threads");
+    } else {
+      const fallback = companionSourceFallback(source);
+      openWorkBoard(fallback.scope, fallback.itemId ?? "");
+    }
   }
 
   function openTaskInWorkBoard(task: Task): void {
@@ -2690,19 +2712,7 @@ export function AppShell(): React.JSX.Element {
           setCompanionMiniOpen(false);
           openSettingsSection("companion");
         }}
-        onOpenSource={(source) => {
-          setCompanionSourceTarget({
-            ...(source.channelId ? { channelId: source.channelId } : {}),
-            ...(source.threadId ? { threadId: source.threadId } : {}),
-            ...(source.sourceItemId ? { sourceItemId: source.sourceItemId } : {}),
-          });
-          if (source.channelId) selectWorkspaceChannel(source.channelId);
-          else if (source.threadId) {
-            setThreadPageTargetId(source.threadId);
-            setActiveView("threads");
-            setActiveSidebarTarget("threads");
-          }
-        }}
+        onOpenSource={openCompanionSource}
       />
       <section
         ref={workspaceSurfaceRef}
