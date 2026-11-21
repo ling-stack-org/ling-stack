@@ -65,7 +65,8 @@ jobs:
           permission-contents: write
           permission-pull-requests: write
 
-      - name: Refresh reviewed catalog data
+      - name: Generate reviewed catalog data
+        id: candidate
         shell: bash
         env:
           GH_TOKEN: ${{ steps.catalog-app.outputs.token }}
@@ -89,6 +90,35 @@ jobs:
             echo "Catalog is already current."
             exit 0
           fi
+          catalog_digest="$(node --input-type=module -e '
+            import { readFileSync } from "node:fs";
+            import { providerModelCatalogDigest, PROVIDER_MODEL_CATALOG_PATH } from "./scripts/provider-model-catalog-format.mjs";
+            process.stdout.write(providerModelCatalogDigest(readFileSync(PROVIDER_MODEL_CATALOG_PATH)));
+          ')"
+          printf 'catalog-digest=%s\n' "$catalog_digest" >> "$GITHUB_OUTPUT"
+
+      - name: Record generated catalog before publishing the PR
+        if: steps.candidate.outputs.catalog-digest != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        continue-on-error: true
+        with:
+          name: provider-model-catalog-${{ steps.candidate.outputs.catalog-digest }}
+          path: packages/core/src/provider-model-catalog.generated.ts
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Refresh reviewed catalog data
+        if: steps.candidate.outputs.catalog-digest != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.catalog-app.outputs.token }}
+          APP_SLUG: ${{ steps.catalog-app.outputs.app-slug }}
+        run: |
+          set -euo pipefail
+          git() {
+            command git -c credential.helper= -c 'credential.helper=!gh auth git-credential' "$@"
+          }
+          branch="automation/provider-model-catalog"
           bot_id="$(gh api "users/${APP_SLUG}[bot]" --jq .id)"
           if ! [[ "$bot_id" =~ ^[1-9][0-9]*$ ]]; then
             echo "::error::Unable to resolve the catalog App bot identity; refusing to push."
@@ -112,4 +142,8 @@ jobs:
             fi
           fi
           head_commit="$(git rev-parse HEAD)"
-          gh pr merge "$pull_request" --auto --squash --match-head-commit "$head_commit"
+          if [[ "$(gh api "repos/$GITHUB_REPOSITORY" --jq .allow_auto_merge)" == "true" ]]; then
+            gh pr merge "$pull_request" --auto --squash --match-head-commit "$head_commit"
+          else
+            echo "Catalog PR #$pull_request is ready for review."
+          fi

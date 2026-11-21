@@ -4,7 +4,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test, { type TestContext } from "node:test";
-import { PROVIDER_MODEL_CATALOG_PATH, providerModelCatalogVersion, renderProviderModelCatalog } from "../provider-model-catalog-format.mjs";
+import { PROVIDER_MODEL_CATALOG_PATH, providerModelCatalogDigest, providerModelCatalogVersion, renderProviderModelCatalog } from "../provider-model-catalog-format.mjs";
 import { classifyChangedFiles } from "./classify-scope.mjs";
 
 type ScopeInput = Parameters<typeof classifyChangedFiles>[0];
@@ -533,7 +533,8 @@ test("Git verifies provider catalog data before selecting focused Core validatio
   repo.write(PROVIDER_MODEL_CATALOG_PATH, refreshed);
   repo.write("docs/ci.md", "# Catalog refresh\n");
   repo.commit();
-  const scope = repo.classify(base, "--catalog-automation=true");
+  const proof = (source: string) => `--catalog-proof=${providerModelCatalogDigest(source)}`;
+  const scope = repo.classify(base, proof(refreshed));
   assert.equal(scope.mode, "affected");
   assert.deepEqual(scope.packages, ["@ling-stack/core"]);
   assert.deepEqual(scope.testPackages, []);
@@ -546,6 +547,7 @@ test("Git verifies provider catalog data before selecting focused Core validatio
   assert.equal(scope.macosNative, false);
   assert.match(scope.reason, /generated provider model catalog/u);
   assert.equal(repo.classify(base).providerModelCatalog, undefined);
+  assert.equal(repo.classify(base, proof(render("baseline"))).providerModelCatalog, undefined);
 
   const bulkRecords = ["new-a", "new-b", "new-c"].map(id => ({ providerId: "openai", id, capabilities: ["chat"] }));
   const bulkRefresh = renderProviderModelCatalog({ records: bulkRecords, version: providerModelCatalogVersion(bulkRecords),
@@ -565,7 +567,7 @@ test("Git verifies provider catalog data before selecting focused Core validatio
   ]) {
     repo.write(PROVIDER_MODEL_CATALOG_PATH, candidate);
     repo.commit();
-    const rejected = repo.classify(base, "--catalog-automation=true");
+    const rejected = repo.classify(base, proof(candidate));
     assert.equal(rejected.providerModelCatalog, undefined);
     assert.equal(rejected.daemon, true);
     assert.equal(rejected.assurance, true);

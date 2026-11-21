@@ -30,7 +30,11 @@ const catalogCapabilities = ["chat", "tool_call", "reasoning", "vision"];
 const catalogFields = new Set(["providerId", "id", "capabilities", "displayName", "input", "thinkingModes", "contextWindow", "maxTokens", "updatedAt"]);
 
 export function providerModelCatalogVersion(records) {
-  return `models.dev:${createHash("sha256").update(JSON.stringify(records)).digest("hex").slice(0, 12)}`;
+  return `models.dev:${providerModelCatalogDigest(JSON.stringify(records)).slice(0, 12)}`;
+}
+
+export function providerModelCatalogDigest(source) {
+  return createHash("sha256").update(source).digest("hex");
 }
 
 export function renderProviderModelCatalog({ generatedAt, records, version }) {

@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { isGeneratedProviderModelCatalogRefresh, PROVIDER_MODEL_CATALOG_PATH } from "../provider-model-catalog-format.mjs";
+import { isGeneratedProviderModelCatalogRefresh, PROVIDER_MODEL_CATALOG_PATH, providerModelCatalogDigest } from "../provider-model-catalog-format.mjs";
 import { packageValidationScope } from "./package-validation-scope.mjs";
 import { inspectProductVersionChange } from "./product-version-scope.mjs";
 import { planSecretScan } from "./secret-scan.mjs";
@@ -644,10 +644,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       }
     }
     versionChange = inspectProductVersionChange({ root: repositoryRoot, base, head: args.head, files });
-    if (args["force-full"] !== "true" && args["catalog-automation"] === "true" && files.includes(PROVIDER_MODEL_CATALOG_PATH)) {
-      generatedProviderCatalog = [base, args.head].every(ref => /^100644 blob /u.test(git(["ls-tree", ref, "--", PROVIDER_MODEL_CATALOG_PATH])))
-        && isGeneratedProviderModelCatalogRefresh(git(["show", `${base}:${PROVIDER_MODEL_CATALOG_PATH}`]),
-          git(["show", `${args.head}:${PROVIDER_MODEL_CATALOG_PATH}`]));
+    if (args["force-full"] !== "true" && /^[a-f0-9]{64}$/u.test(args["catalog-proof"])
+      && files.includes(PROVIDER_MODEL_CATALOG_PATH) && [base, args.head].every(ref =>
+        /^100644 blob /u.test(git(["ls-tree", ref, "--", PROVIDER_MODEL_CATALOG_PATH])))) {
+      const after = git(["show", `${args.head}:${PROVIDER_MODEL_CATALOG_PATH}`]);
+      generatedProviderCatalog = args["catalog-proof"] === providerModelCatalogDigest(after)
+        && isGeneratedProviderModelCatalogRefresh(git(["show", `${base}:${PROVIDER_MODEL_CATALOG_PATH}`]), after);
     }
   } else {
     files = [];

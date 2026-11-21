@@ -39,9 +39,11 @@ normal package graph and Desktop release validation.
 
 Small catalog refreshes by the repository's catalog automation use the focused
 Core catalog tests in the required typecheck job. The classifier verifies the
-normalized fields, provider IDs and digest in both trees. Bulk record changes,
-resolver edits, generator edits and mixed source changes follow the normal
-consumer graph.
+normalized fields, provider IDs and digest in both trees. The main-branch
+generator records the exact file's SHA-256 in the name of a GitHub artifact
+before publishing the PR. CI verifies the artifact's producer and checksum.
+Missing proof, bulk record changes, resolver and generator edits, and mixed
+source changes follow the normal consumer graph.
 
 Package manifests are compared with the base checkout before narrowing. The
 directory, name, test/typecheck entry presence and complete scripts fingerprint
