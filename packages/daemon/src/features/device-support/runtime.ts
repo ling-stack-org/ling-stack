@@ -14,6 +14,7 @@ import {
   DeviceDeveloperSessionCoordinator,
   DeviceCollaborationCoordinator,
   DeviceFleetProjection,
+  EdgeRuntimeJournal,
   EdgeRuntimeRegistry,
   HardwareProtocolWorkbench,
   HardwareProtocolProfileRegistry,
@@ -49,6 +50,7 @@ export interface DeviceSupportRuntime {
   readonly developerSessions: DeviceDeveloperSessionCoordinator;
   readonly collaboration: DeviceCollaborationCoordinator;
   readonly edgeRuntimes: EdgeRuntimeRegistry;
+  readonly edgeJournal: EdgeRuntimeJournal;
   readonly access: DeviceAccessManager;
   readonly resourceTrustConfigured: boolean;
   readonly broker: DeviceCapabilityBroker;
@@ -128,6 +130,7 @@ export function createDeviceSupportRuntime(options: {
   const developerSessions = new DeviceDeveloperSessionCoordinator({ store: developerStore });
   const collaboration = new DeviceCollaborationCoordinator({ store: developerStore });
   const edgeRuntimes = new EdgeRuntimeRegistry({ persistence: fabricStore });
+  const edgeJournal = new EdgeRuntimeJournal({ persistence: fabricStore });
   const fleetProjection = new DeviceFleetProjection();
   let localDiagnosis: Promise<DevicePlaybookRunResultV1> | undefined;
   const diagnosingLinux = new Set<string>();
@@ -216,6 +219,7 @@ export function createDeviceSupportRuntime(options: {
     developerSessions,
     collaboration,
     edgeRuntimes,
+    edgeJournal,
     access,
     resourceTrustConfigured: options.resourceTrust !== undefined,
     broker,

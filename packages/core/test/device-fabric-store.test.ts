@@ -6,7 +6,7 @@ import test from "node:test";
 
 import { createHash } from "node:crypto";
 import type { DeviceConformanceReportV1, DeviceEventEnvelopeV1, DeviceGraphNodeV1, DeviceResourceManifestV1, DeviceTaskGraphV1, DeviceTraceSpanV1, EdgeRuntimeEnrollmentV1 } from "@ling-stack/contracts";
-import { DeviceFabricError, DeviceTaskGraphCoordinator } from "../dist/device-fabric.js";
+import { DeviceFabricError, DeviceTaskGraphCoordinator, EdgeRuntimeJournal } from "../dist/device-fabric.js";
 import { DeviceSecretBroker } from "../dist/device-secrets.js";
 import { DeviceEventProjector, DevicePeerEventSynchronizer } from "../dist/device-event-projection.js";
 import { LingServerPeerRegistry, LingServerPeerSessionCoordinator } from "../dist/ling-server.js";
@@ -233,6 +233,29 @@ test("fabric store persists edge enrollment and trace spans", () => {
   assert.equal(store.listTraceSpans("trace-1")[0]?.status, "ok");
   assert.throws(() => store.saveTraceSpan(span), (error: unknown) => error instanceof DeviceFabricError && error.code === "revision_conflict");
   store.close();
+});
+
+test("edge runtime journal resumes ordered unknown outcomes without redispatch", () => {
+  const root = mkdtempSync(join(tmpdir(), "ling-edge-journal-"));
+  const path = join(root, "fabric.sqlite");
+  const first = new SqliteDeviceFabricStore({ databasePath: path });
+  const journal = new EdgeRuntimeJournal({ persistence: first });
+  const base = { runtimeId: "edge-1", ownerTaskId: "task-1", operationId: "operation-1", recordedAt: now } as const;
+  const started = { ...base, entryId: "edge-entry-1", sequence: 1, kind: "task_started", outcome: "pending" } as const;
+  assert.equal(journal.append(started).replayed, false);
+  assert.equal(journal.append(started).replayed, true);
+  assert.throws(() => journal.append({ ...started, entryId: "edge-entry-3", sequence: 3 }), /not contiguous/);
+  journal.append({ ...base, entryId: "edge-entry-2", sequence: 2, kind: "task_unknown", outcome: "unknown" });
+  first.close();
+  const reopened = new SqliteDeviceFabricStore({ databasePath: path });
+  try {
+    const recovered = new EdgeRuntimeJournal({ persistence: reopened });
+    assert.deepEqual(recovered.read("edge-1", "task-1", 1).map(entry => entry.outcome), ["unknown"]);
+    assert.equal(recovered.append(started).replayed, true);
+  } finally {
+    reopened.close();
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("target-scoped secret broker resolves only authorized references and records redacted use metadata", async () => {

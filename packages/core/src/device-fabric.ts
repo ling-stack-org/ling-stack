@@ -5,6 +5,7 @@ import type {
   DeviceContextPackV1,
   DeviceEventEnvelopeV1,
   DeviceBridgeFrameV1,
+  EdgeRuntimeJournalEntryV1,
   DeviceFleetHealthItemV1,
   DeviceFleetHealthProjectionV1,
   DeviceFleetHealthStatusV1,
@@ -376,6 +377,49 @@ export class EdgeBridgeSession {
   }
 }
 
+export interface EdgeRuntimeJournalPersistence {
+  appendEdgeRuntimeJournalEntry(entry: EdgeRuntimeJournalEntryV1): { readonly entry: EdgeRuntimeJournalEntryV1; readonly replayed: boolean };
+  listEdgeRuntimeJournalEntries(runtimeId: string, ownerTaskId: string, afterSequence?: number, limit?: number): readonly EdgeRuntimeJournalEntryV1[];
+}
+
+/** Durable per-task edge evidence. Unknown outcomes remain visible after reconnect. */
+export class EdgeRuntimeJournal {
+  readonly #persistence?: EdgeRuntimeJournalPersistence;
+  readonly #entries = new Map<string, EdgeRuntimeJournalEntryV1[]>();
+
+  constructor(options: { readonly persistence?: EdgeRuntimeJournalPersistence } = {}) {
+    this.#persistence = options.persistence;
+  }
+
+  append(entry: EdgeRuntimeJournalEntryV1): { readonly entry: EdgeRuntimeJournalEntryV1; readonly replayed: boolean } {
+    validateEdgeRuntimeJournalEntry(entry);
+    const key = `${entry.runtimeId}:${entry.ownerTaskId}`;
+    const existing = this.#persistence?.listEdgeRuntimeJournalEntries(entry.runtimeId, entry.ownerTaskId, 0, 10_000)
+      ?? this.#entries.get(key) ?? [];
+    const byId = existing.find(item => item.entryId === entry.entryId);
+    if (byId) {
+      if (JSON.stringify(byId) !== JSON.stringify(entry)) throw new DeviceFabricError("revision_conflict", "edge journal entry id is bound to another entry");
+      return { entry: byId, replayed: true };
+    }
+    const latest = existing.at(-1);
+    if (latest && entry.sequence !== latest.sequence + 1) throw new DeviceFabricError("revision_conflict", "edge journal sequence is not contiguous");
+    if (!latest && entry.sequence !== 1) throw new DeviceFabricError("revision_conflict", "edge journal must start at sequence one");
+    const stored = this.#persistence?.appendEdgeRuntimeJournalEntry(entry) ?? { entry, replayed: false };
+    const memory = this.#entries.get(key) ?? [];
+    if (!stored.replayed) memory.push(stored.entry);
+    this.#entries.set(key, memory);
+    return stored;
+  }
+
+  read(runtimeId: string, ownerTaskId: string, afterSequence = 0, limit = 100): readonly EdgeRuntimeJournalEntryV1[] {
+    if (!Number.isSafeInteger(afterSequence) || afterSequence < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 10_000) {
+      throw new DeviceFabricError("revision_conflict", "edge journal cursor is invalid");
+    }
+    return this.#persistence?.listEdgeRuntimeJournalEntries(runtimeId, ownerTaskId, afterSequence, limit)
+      ?? (this.#entries.get(`${runtimeId}:${ownerTaskId}`) ?? []).filter(entry => entry.sequence > afterSequence).slice(0, limit);
+  }
+}
+
 export class DeviceEventBus {
   readonly #events: DeviceEventEnvelopeV1[] = [];
   constructor(readonly maxEvents = 2_000) {}
@@ -602,6 +646,16 @@ function hasCycle(nodes: readonly DeviceTaskGraphNodeV1[]): boolean {
     return false;
   };
   return nodes.some(node => visit(node.nodeId));
+}
+
+function validateEdgeRuntimeJournalEntry(entry: EdgeRuntimeJournalEntryV1): void {
+  if (!entry.entryId.trim() || !entry.runtimeId.trim() || !entry.ownerTaskId.trim() || !entry.operationId.trim()
+    || !Number.isSafeInteger(entry.sequence) || entry.sequence < 1 || !Number.isFinite(Date.parse(entry.recordedAt))
+    || !["task_started", "frame_sent", "frame_received", "task_completed", "task_unknown", "task_cancelled"].includes(entry.kind)
+    || !["pending", "sent", "received", "completed", "unknown", "cancelled"].includes(entry.outcome)
+    || entry.payloadDigest !== undefined && !/^[0-9a-f]{64}$/u.test(entry.payloadDigest)) {
+    throw new DeviceFabricError("revision_conflict", "edge journal entry is invalid");
+  }
 }
 
 export function isAllowedDeviceLifecycleTransition(from: DeviceLifecycleRecordV1["status"], to: DeviceLifecycleRecordV1["status"]): boolean {

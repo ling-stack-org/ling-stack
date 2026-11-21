@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
+import { isDeepStrictEqual } from "node:util";
 
 import {
   isDeviceResourceManifestV1,
@@ -19,6 +20,7 @@ import {
   type DeviceTraceSpanV1,
   type DeviceTwinV1,
   type EdgeRuntimeEnrollmentV1,
+  type EdgeRuntimeJournalEntryV1,
   type JsonValue,
 } from "@ling-stack/contracts";
 
@@ -428,6 +430,32 @@ export class SqliteDeviceFabricStore {
       .map(row => parseJson<EdgeRuntimeEnrollmentV1>(row.runtime_json, "edge runtime enrollment"));
   }
 
+  appendEdgeRuntimeJournalEntry(entry: EdgeRuntimeJournalEntryV1): { readonly entry: EdgeRuntimeJournalEntryV1; readonly replayed: boolean } {
+    if (!entry.entryId.trim() || !entry.runtimeId.trim() || !entry.ownerTaskId.trim() || !Number.isSafeInteger(entry.sequence) || entry.sequence < 1) {
+      throw new DeviceFabricError("revision_conflict", "edge journal entry identity is invalid");
+    }
+    const byId = this.database.prepare("SELECT entry_json FROM device_edge_runtime_journal WHERE entry_id=?").get(entry.entryId) as Row | undefined;
+    if (byId) {
+      const existing = parseJson<EdgeRuntimeJournalEntryV1>(byId.entry_json, "edge journal entry");
+      if (!isDeepStrictEqual(existing, entry)) throw new DeviceFabricError("revision_conflict", "edge journal entry id is bound to another entry");
+      return { entry: existing, replayed: true };
+    }
+    const latest = this.database.prepare("SELECT sequence FROM device_edge_runtime_journal WHERE runtime_id=? AND owner_task_id=? ORDER BY sequence DESC LIMIT 1").get(entry.runtimeId, entry.ownerTaskId) as Row | undefined;
+    const latestSequence = latest ? Number(latest.sequence) : 0;
+    if (entry.sequence !== latestSequence + 1) throw new DeviceFabricError("revision_conflict", "edge journal sequence is not contiguous");
+    this.database.prepare("INSERT INTO device_edge_runtime_journal(runtime_id,owner_task_id,sequence,entry_id,entry_json,recorded_at) VALUES(?,?,?,?,?,?)")
+      .run(entry.runtimeId, entry.ownerTaskId, entry.sequence, entry.entryId, JSON.stringify(entry), entry.recordedAt);
+    return { entry, replayed: false };
+  }
+
+  listEdgeRuntimeJournalEntries(runtimeId: string, ownerTaskId: string, afterSequence = 0, limit = 100): readonly EdgeRuntimeJournalEntryV1[] {
+    if (!runtimeId.trim() || !ownerTaskId.trim() || !Number.isSafeInteger(afterSequence) || afterSequence < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 10_000) {
+      throw new DeviceFabricError("revision_conflict", "edge journal cursor is invalid");
+    }
+    return (this.database.prepare("SELECT entry_json FROM device_edge_runtime_journal WHERE runtime_id=? AND owner_task_id=? AND sequence>? ORDER BY sequence LIMIT ?")
+      .all(runtimeId, ownerTaskId, afterSequence, limit) as Row[]).map(row => parseJson<EdgeRuntimeJournalEntryV1>(row.entry_json, "edge journal entry"));
+  }
+
   saveTraceSpan(span: DeviceTraceSpanV1): DeviceTraceSpanV1 {
     if (!span.spanId.trim() || !span.traceId.trim() || !span.sourceId.trim()) throw new DeviceFabricError("revision_conflict", "trace span identity is invalid");
     if (!Number.isFinite(Date.parse(span.startedAt)) || span.finishedAt !== undefined && (!Number.isFinite(Date.parse(span.finishedAt)) || Date.parse(span.finishedAt) < Date.parse(span.startedAt))) {
@@ -677,6 +705,16 @@ export class SqliteDeviceFabricStore {
         revision INTEGER NOT NULL,
         runtime_json TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS device_edge_runtime_journal (
+        runtime_id TEXT NOT NULL,
+        owner_task_id TEXT NOT NULL,
+        sequence INTEGER NOT NULL,
+        entry_id TEXT NOT NULL UNIQUE,
+        entry_json TEXT NOT NULL,
+        recorded_at TEXT NOT NULL,
+        PRIMARY KEY(runtime_id,owner_task_id,sequence)
+      );
+      CREATE INDEX IF NOT EXISTS idx_device_edge_runtime_journal_lane ON device_edge_runtime_journal(runtime_id,owner_task_id,sequence);
       CREATE TABLE IF NOT EXISTS device_trace_spans (
         span_id TEXT PRIMARY KEY NOT NULL,
         trace_id TEXT NOT NULL,

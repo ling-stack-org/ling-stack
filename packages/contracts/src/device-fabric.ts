@@ -92,6 +92,20 @@ export interface DeviceBridgeFrameV1 {
   readonly sentAt: string;
 }
 
+export type EdgeRuntimeJournalOutcomeV1 = "pending" | "sent" | "received" | "completed" | "unknown" | "cancelled";
+
+export interface EdgeRuntimeJournalEntryV1 {
+  readonly entryId: string;
+  readonly runtimeId: string;
+  readonly ownerTaskId: string;
+  readonly sequence: number;
+  readonly operationId: string;
+  readonly kind: "task_started" | "frame_sent" | "frame_received" | "task_completed" | "task_unknown" | "task_cancelled";
+  readonly outcome: EdgeRuntimeJournalOutcomeV1;
+  readonly payloadDigest?: string;
+  readonly recordedAt: string;
+}
+
 export interface DeviceEventEnvelopeV1 {
   readonly eventId: string;
   readonly traceId: string;

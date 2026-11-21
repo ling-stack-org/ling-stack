@@ -24,6 +24,7 @@ test("daemon device-support runtime composes the durable store, broker and remot
   assert.equal(runtime.broker.store, runtime.store);
   assert.ok(runtime.collaboration);
   assert.ok(runtime.edgeRuntimes);
+  assert.equal(runtime.edgeJournal.read("edge-fixture", "task-fixture").length, 0);
   assert.ok(runtime.access);
   assert.equal(runtime.remoteFacade.listDevices("workspace-1").devices.length, 0);
   const now = new Date().toISOString();
