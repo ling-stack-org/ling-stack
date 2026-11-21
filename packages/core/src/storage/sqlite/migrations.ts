@@ -279,12 +279,6 @@ const COMPANIONS_MIGRATION_VERSION = 141;
 const COMPANIONS_MIGRATION_NAME = "create_companions";
 const AUTOMATION_MONITOR_SNAPSHOTS_MIGRATION_VERSION = 142;
 const AUTOMATION_MONITOR_SNAPSHOTS_MIGRATION_NAME = "create_automation_monitor_snapshots";
-const WORK_ITEM_CONTROL_MIGRATION_VERSION = 235;
-const WORK_ITEM_CONTROL_MIGRATION_NAME = "add_work_item_control_projection";
-const WORK_ITEM_EVIDENCE_MIGRATION_VERSION = 236;
-const WORK_ITEM_EVIDENCE_MIGRATION_NAME = "create_work_item_evidence";
-const APP_SERVER_STATE_MIGRATION_VERSION = 237;
-const APP_SERVER_STATE_MIGRATION_NAME = "create_app_server_state";
 const PLUGIN_DISTRIBUTION_FIELDS_MIGRATION_VERSION = 143;
 const PLUGIN_DISTRIBUTION_FIELDS_MIGRATION_NAME = "add_plugin_distribution_fields";
 
@@ -3132,7 +3126,6 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
           channel_id TEXT,
           source_type TEXT NOT NULL,
           source_id TEXT NOT NULL,
-          revision INTEGER NOT NULL DEFAULT 1,
           title TEXT NOT NULL,
           description TEXT,
           status TEXT NOT NULL,
@@ -3149,13 +3142,6 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
           approval_id TEXT,
           artifact_ids_json TEXT NOT NULL,
           proof_artifact_ids_json TEXT NOT NULL,
-          plan_revision TEXT,
-          control_state TEXT NOT NULL DEFAULT 'active',
-          control_generation INTEGER NOT NULL DEFAULT 0,
-          control_receipt_json TEXT,
-          control_unresolved_effect_ids_json TEXT NOT NULL DEFAULT '[]',
-          control_recovery_owner TEXT,
-          holds_json TEXT NOT NULL DEFAULT '[]',
           claim_owner_id TEXT,
           claim_token TEXT,
           claimed_at TEXT,
@@ -6231,85 +6217,4 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
   applyLearningReviewMigration(context);
   applyMemoryDerivativeMigration(context);
   applyMemoryWikiMigration(context);
-
-  if (!context.hasMigration(WORK_ITEM_CONTROL_MIGRATION_VERSION)
-    || (context.hasTable("work_items") && !context.hasColumn("work_items", "control_state"))) {
-    database.exec("SAVEPOINT work_item_control_migration");
-    try {
-      if (context.hasTable("work_items")) {
-        const columns: readonly [string, string][] = [
-          ["revision", "INTEGER NOT NULL DEFAULT 1"],
-          ["plan_revision", "TEXT"],
-          ["control_state", "TEXT NOT NULL DEFAULT 'active'"],
-          ["control_generation", "INTEGER NOT NULL DEFAULT 0"],
-          ["control_receipt_json", "TEXT"],
-          ["control_unresolved_effect_ids_json", "TEXT NOT NULL DEFAULT '[]'"],
-          ["control_recovery_owner", "TEXT"],
-          ["holds_json", "TEXT NOT NULL DEFAULT '[]'"],
-        ];
-        for (const [name, definition] of columns) {
-          if (!context.hasColumn("work_items", name)) {
-            database.exec(`ALTER TABLE work_items ADD COLUMN ${name} ${definition}`);
-          }
-        }
-      }
-      if (!context.hasMigration(WORK_ITEM_CONTROL_MIGRATION_VERSION)) {
-        context.recordMigration(WORK_ITEM_CONTROL_MIGRATION_VERSION, WORK_ITEM_CONTROL_MIGRATION_NAME);
-      }
-      database.exec("RELEASE work_item_control_migration");
-    } catch (error) {
-      try {
-        database.exec("ROLLBACK TO work_item_control_migration");
-        database.exec("RELEASE work_item_control_migration");
-      } catch { /* Preserve the original migration failure. */ }
-      throw error;
-    }
-  }
-
-  if (!context.hasMigration(WORK_ITEM_EVIDENCE_MIGRATION_VERSION)) {
-    database.exec(`
-      CREATE TABLE IF NOT EXISTS work_item_evidence (
-        id TEXT PRIMARY KEY,
-        workspace_id TEXT NOT NULL,
-        work_item_id TEXT NOT NULL,
-        revision INTEGER NOT NULL,
-        sequence INTEGER NOT NULL,
-        subject_revision TEXT NOT NULL,
-        kind TEXT NOT NULL,
-        actor_id TEXT NOT NULL,
-        content TEXT NOT NULL,
-        option_id TEXT,
-        source_refs_json TEXT NOT NULL,
-        visibility TEXT NOT NULL,
-        idempotency_key TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        UNIQUE(workspace_id, work_item_id, idempotency_key),
-        UNIQUE(workspace_id, work_item_id, sequence),
-        FOREIGN KEY(work_item_id) REFERENCES work_items(id) ON DELETE CASCADE
-      );
-      CREATE INDEX IF NOT EXISTS idx_work_item_evidence_item_sequence
-        ON work_item_evidence(workspace_id, work_item_id, sequence);
-    `);
-    context.recordMigration(WORK_ITEM_EVIDENCE_MIGRATION_VERSION, WORK_ITEM_EVIDENCE_MIGRATION_NAME);
-  }
-  if (!context.hasMigration(APP_SERVER_STATE_MIGRATION_VERSION)) {
-    database.exec(`
-      CREATE TABLE IF NOT EXISTS app_server_state (
-        workspace_id TEXT NOT NULL,
-        kind TEXT NOT NULL,
-        record_id TEXT NOT NULL,
-        revision INTEGER NOT NULL,
-        idempotency_key TEXT,
-        payload_json TEXT NOT NULL,
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        PRIMARY KEY (workspace_id, kind, record_id),
-        UNIQUE (workspace_id, kind, idempotency_key)
-      );
-      CREATE INDEX IF NOT EXISTS idx_app_server_state_kind_updated
-        ON app_server_state(workspace_id, kind, updated_at);
-    `);
-    context.recordMigration(APP_SERVER_STATE_MIGRATION_VERSION, APP_SERVER_STATE_MIGRATION_NAME);
-  }
 }

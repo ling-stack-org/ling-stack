@@ -24,6 +24,7 @@ import { SqliteCodeAssessmentCommentsStore } from "./sqlite/code-assessment-comm
 import type { CodeAssessmentCommentsStore } from "../code-assessment-comments.js";
 import { applyCodeAssessmentCommentsMigration } from "./sqlite/code-assessment-comments-migration.js";
 import { applyCodeAssessmentMigration } from "./sqlite/code-assessment-migration.js";
+import { applyAppServerMigrations } from "./sqlite/app-server-migration.js";
 import type { CodeAssessmentStore } from "../code-assessment-store.js";
 import { applyWorkspacePermissionMigration } from "./sqlite/workspace-permission-migration.js";
 import { applyRunnerIdMigration } from "./sqlite/runner-id-migration.js";
@@ -2175,6 +2176,13 @@ export class SqliteRunStore implements RunStore {
             recordMigration: (version, name) => this.recordMigration(version, name),
           });
         }
+        applyAppServerMigrations({
+          database: this.database,
+          hasMigration: (version) => this.hasMigration(version),
+          hasColumn: (tableName, columnName) => this.hasColumn(tableName, columnName),
+          hasTable: (tableName) => this.hasTable(tableName),
+          recordMigration: (version, name) => this.recordMigration(version, name),
+        });
       });
     } catch (error) {
       this.database.close();
