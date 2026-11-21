@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
+import { isDeepStrictEqual } from "node:util";
 
 import {
   type DeviceActionRequestV1,
@@ -45,6 +46,8 @@ export interface DeviceTaskEvent {
   readonly body: Record<string, unknown>;
   readonly createdAt: string;
 }
+
+export type RecordedDevicePlan = DevicePlannerAcceptanceV1 & { readonly source: "runner" | "local_playbook" };
 
 export interface DeviceAttemptPatch {
   readonly status?: DeviceTaskAttemptV1["status"];
@@ -173,8 +176,21 @@ export class SqliteDeviceSupportStore {
           || !task.targetDeviceIds.includes(node.targetDeviceId) || !task.capabilitySnapshotIds.includes(node.capabilitySnapshotId))) {
         throw new Error("Device plan is outside the task's current owner and target binding");
       }
-      this.appendEvent(task.id, "device_plan_accepted", { source, ...acceptance });
+      const record = { source, ...acceptance } satisfies RecordedDevicePlan;
+      const prior = this.listPlanningAcceptances(task.id).find(plan => plan.proposalId === acceptance.proposalId);
+      if (prior) {
+        if (!isDeepStrictEqual(prior, record)) throw new Error("Device plan proposal id is already bound");
+        return;
+      }
+      this.appendEvent(task.id, "device_plan_accepted", record);
     });
+  }
+
+  listPlanningAcceptances(taskId: string): readonly RecordedDevicePlan[] {
+    const rows = this.database.prepare(`
+      SELECT body_json FROM device_task_events WHERE task_id=? AND type='device_plan_accepted' ORDER BY sequence
+    `).all(taskId) as Row[];
+    return rows.map(row => JSON.parse(readString(row, "body_json")) as RecordedDevicePlan);
   }
 
   saveActionProposal(request: DeviceActionRequestV1, requestDigest: string, now: string): void {
@@ -371,6 +387,13 @@ export class SqliteDeviceSupportStore {
         lastVerificationId: record.reconciliationId,
       }, record.recordedAt);
     }
+  }
+
+  listReconciliations(taskId: string): readonly DeviceTaskReconciliationV1[] {
+    const rows = this.database.prepare(`
+      SELECT body_json FROM device_task_events WHERE task_id=? AND type='attempt_reconciled' ORDER BY sequence
+    `).all(taskId) as Row[];
+    return rows.map(row => JSON.parse(readString(row, "body_json")) as DeviceTaskReconciliationV1);
   }
 
   recoverAfterRestart(now: string): readonly string[] {

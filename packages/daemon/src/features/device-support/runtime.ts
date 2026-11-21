@@ -173,7 +173,7 @@ export function createDeviceSupportRuntime(options: {
     store.recordPlanningAcceptance(plan.acceptance, plan.source);
     return await runDeviceReadOnlyPlaybook({
       broker, task, targetDeviceId: target.device.id, capabilitySnapshotId: snapshot.snapshotId,
-      playbook,
+      playbook, proposalId: plan.acceptance.proposalId,
     });
   }
 

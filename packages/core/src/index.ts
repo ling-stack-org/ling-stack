@@ -254,6 +254,7 @@ export * from "./device-event-projection.js";
 export * from "./device-orchestration.js";
 export * from "./device-task-planning-context.js";
 export * from "./device-task-event-projector.js";
+export * from "./device-task-trace.js";
 export * from "./device-runner.js";
 export * from "./device-access.js";
 export * from "./device-developer.js";

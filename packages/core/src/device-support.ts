@@ -10,6 +10,7 @@ import {
   type DeviceCapabilitySnapshotV1,
   type DeviceErrorCodeV1,
   type DeviceObservationV1,
+  type DevicePlanningNodeRefV1,
   type DeviceProfileV1,
   type DeviceTaskAttemptV1,
   type DeviceTaskReconciliationV1,
@@ -88,6 +89,7 @@ export interface DeviceExecuteOptions {
   readonly finalizeTask?: boolean;
   readonly requireCurrentProposal?: boolean;
   readonly onlyUnattendedReads?: boolean;
+  readonly planningNode?: DevicePlanningNodeRefV1;
 }
 
 type DeviceDispatchAdmission =
@@ -441,6 +443,16 @@ export class DeviceCapabilityBroker {
     signal?.throwIfAborted();
     const binding = this.resolveCapability(request);
     const { profile, snapshot, capability } = binding;
+    const planningNode = options.planningNode;
+    if (planningNode) {
+      const plan = this.store.listPlanningAcceptances(task.id).at(-1);
+      const node = plan?.graph.nodes.find(candidate => candidate.nodeId === planningNode.nodeId);
+      if (!node || plan?.proposalId !== planningNode.proposalId || node.targetDeviceId !== profile.device.id
+        || node.ownerId !== task.ownerId || node.ownerKind !== task.ownerKind
+        || node.capabilityId !== capability.id || node.capabilitySnapshotId !== snapshot.snapshotId) {
+        throw new DeviceBrokerError("target_changed", "device action does not match the accepted plan node");
+      }
+    }
     const accessGrantRevision = this.taskAccessRevision(task, profile.device.id, capability);
     if (accessGrantRevision !== undefined && capability.verificationCapabilityId) {
       this.taskAccessRevision(task, profile.device.id, this.requireReconciliationReader(binding));
@@ -474,6 +486,8 @@ export class DeviceCapabilityBroker {
       ...(accessGrantRevision === undefined ? {} : { accessGrantRevision }),
       connectionRevision: snapshot.connectionRevision,
       requestDigest,
+      adapterBinding: { adapterId: snapshot.adapterId, adapterVersion: snapshot.adapterVersion, profileRevision: profile.profileRevision },
+      ...(planningNode ? { planningNode } : {}),
       ...(request.approvalId ? { approvalId: request.approvalId } : {}),
       status: "prepared",
     };

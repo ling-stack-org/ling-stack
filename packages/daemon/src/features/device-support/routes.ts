@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-import { DEFAULT_WORKSPACE_ID, DeviceBrokerError, readOwnedDeviceTaskJournal } from "@ling-stack/core";
+import { DEFAULT_WORKSPACE_ID, DeviceBrokerError, readOwnedDeviceTaskJournal, readOwnedDeviceTaskTrace } from "@ling-stack/core";
 import { allowLocalServiceRequest } from "../../shared/local-workspace-access.js";
 import { readJsonBody } from "../../shared/request.js";
 import { writePrivateJson } from "../../shared/response.js";
@@ -14,13 +14,13 @@ export async function handleDeviceSupportRoute(
   runtime: DeviceSupportRuntime,
 ): Promise<boolean> {
   if (url.pathname.startsWith("/v1/device-support/resources")) return await handleDeviceResourceRoute(url, request, response, runtime);
-  const eventsPath = /^\/v1\/device-support\/tasks\/([^/]+)\/events$/u.exec(url.pathname);
+  const taskPath = /^\/v1\/device-support\/tasks\/([^/]+)\/(events|trace)$/u.exec(url.pathname);
   const linuxAction = /^\/v1\/device-support\/linux\/(targets|enroll|diagnose)$/u.exec(url.pathname)?.[1];
   const fleetHealth = url.pathname === "/v1/device-support/fleet/health";
-  if (url.pathname !== "/v1/device-support/pc/diagnose" && !eventsPath && !linuxAction && !fleetHealth) return false;
+  if (url.pathname !== "/v1/device-support/pc/diagnose" && !taskPath && !linuxAction && !fleetHealth) return false;
   if (!allowLocalServiceRequest(request, response)) return true;
-  if (eventsPath) {
-    writeTaskEvents(url, eventsPath[1]!, request, response, runtime);
+  if (taskPath) {
+    writeTaskProjection(url, taskPath[1]!, taskPath[2] === "trace", request, response, runtime);
     return true;
   }
   if (linuxAction) {
@@ -89,8 +89,8 @@ async function handleLinuxSshRequest(
   }
 }
 
-function writeTaskEvents(
-  url: URL, encodedTaskId: string, request: IncomingMessage, response: ServerResponse, runtime: DeviceSupportRuntime,
+function writeTaskProjection(
+  url: URL, encodedTaskId: string, trace: boolean, request: IncomingMessage, response: ServerResponse, runtime: DeviceSupportRuntime,
 ): void {
   if (request.method !== "GET") {
     response.setHeader("Allow", "GET");
@@ -102,13 +102,11 @@ function writeTaskEvents(
     if (!taskId.trim() || Buffer.byteLength(taskId, "utf8") > 256) {
       throw new DeviceBrokerError("invalid_request", "device task id is invalid");
     }
-    const page = readOwnedDeviceTaskJournal({
-      store: runtime.store, workspaceId: DEFAULT_WORKSPACE_ID, taskId,
-      afterSequence: optionalCursorNumber(url, "afterSequence"),
-      generation: optionalCursorNumber(url, "generation"),
-      limit: optionalCursorNumber(url, "limit"),
-    });
-    writePrivateJson(response, 200, page);
+    const scope = { store: runtime.store, workspaceId: DEFAULT_WORKSPACE_ID, taskId };
+    writePrivateJson(response, 200, trace ? readOwnedDeviceTaskTrace(scope) : readOwnedDeviceTaskJournal({
+      ...scope, afterSequence: optionalCursorNumber(url, "afterSequence"),
+      generation: optionalCursorNumber(url, "generation"), limit: optionalCursorNumber(url, "limit"),
+    }));
   } catch (error) {
     if (error instanceof URIError || (error instanceof DeviceBrokerError && error.code === "invalid_request")) {
       writePrivateJson(response, 400, { error: "invalid_request" });

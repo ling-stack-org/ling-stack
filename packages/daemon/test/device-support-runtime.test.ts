@@ -5,10 +5,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import type { DeviceActionRequestV1, DeviceDiagnosisReportV1, DeviceResourceManifestV1, DeviceTaskAttemptV1, DeviceTaskJournalPageV1, DeviceTaskStatusV1 } from "@ling-stack/contracts";
+import type {
+  DeviceActionRequestV1, DeviceDiagnosisReportV1, DeviceResourceManifestV1,
+  DeviceTaskAttemptV1, DeviceTaskJournalPageV1, DeviceTaskStatusV1, DeviceTaskTraceV1,
+} from "@ling-stack/contracts";
 import {
   buildOwnedDevicePlanningInput, createSqliteRunStore, DEFAULT_WORKSPACE_ID, DeviceBrokerError, digestRequest,
-  modbusRtuRegisterCodec, SqliteDeviceSupportStore,
+  modbusRtuRegisterCodec, readOwnedDeviceTaskTrace, SqliteDeviceSupportStore,
 } from "@ling-stack/core";
 import { canonicalJsonBytes } from "@ling-stack/remote-protocol";
 import { createDeviceSupportRuntime } from "../dist/features/device-support/runtime.js";
@@ -243,6 +246,22 @@ test("the local daemon exposes its PC report and sequenced task journal only on 
   assert.equal(remainder.task.status, "succeeded");
   assert.ok(remainder.events.some(event => event.kind === "device_plan_accepted"));
 
+  const traceUrl = new URL("trace", eventsUrl).href;
+  assert.equal((await fetch(traceUrl)).status, 401);
+  assert.equal((await fetch(traceUrl, { headers: { ...headers, Origin: "https://example.invalid" } })).status, 403);
+  const traceResponse = await fetch(traceUrl, { headers });
+  assert.equal(traceResponse.status, 200);
+  assert.match(traceResponse.headers.get("cache-control") ?? "", /no-store/u);
+  const trace = await traceResponse.json() as DeviceTaskTraceV1;
+  assert.equal(trace.traceId, remainder.events[0]?.traceId);
+  assert.equal(trace.taskStatus, "succeeded");
+  const graph = trace.spans.find(span => span.kind === "graph");
+  assert.ok(graph);
+  const adapterSpans = trace.spans.filter(span => span.kind === "adapter");
+  assert.deepEqual(adapterSpans.map(span => span.lineage?.attemptId).sort(), report.actions.map(action => action.attemptId).sort());
+  assert.ok(adapterSpans.every(span => span.status === "ok" && span.parentSpanId === graph.spanId
+    && span.lineage?.graphId === report.taskId && span.lineage.nodeId && span.lineage.connectionRevision));
+
   const journal = new SqliteDeviceSupportStore({ databasePath: workspace.paths.databasePath });
   try {
     const tasks = journal.listRecentDaemonTasks(DEFAULT_WORKSPACE_ID, 10);
@@ -256,6 +275,9 @@ test("the local daemon exposes its PC report and sequenced task journal only on 
     assert.ok(planIndex >= 0 && firstDispatch > planIndex);
     assert.equal(events[planIndex]?.body.source, "local_playbook");
     assert.equal(events[planIndex]?.body.taskId, report.taskId);
+    const traceScope = { store: journal, taskId: report.taskId, workspaceId: DEFAULT_WORKSPACE_ID };
+    assert.deepEqual(readOwnedDeviceTaskTrace(traceScope), trace);
+    assert.throws(() => readOwnedDeviceTaskTrace({ ...traceScope, workspaceId: "elsewhere" }), /unavailable in this workspace/);
     const input = {
       store: journal, taskId: report.taskId, ownerId: tasks[0]!.ownerId, workspaceId: DEFAULT_WORKSPACE_ID,
       contextId: "fixture-context", maxBytes: 4096, now: new Date().toISOString(),

@@ -1,6 +1,6 @@
 import {
   DEVICE_TASK_JOURNAL_PUBLIC_EVENTS_V1, isDeviceTaskV1,
-  type DeviceEventEnvelopeV1, type DeviceTaskJournalPageV1, type JsonValue,
+  type DeviceEventEnvelopeV1, type DeviceTaskJournalPageV1, type DeviceTaskV1, type JsonValue,
 } from "@ling-stack/contracts";
 
 import { DeviceBrokerError } from "./device-support.js";
@@ -24,11 +24,7 @@ export function readOwnedDeviceTaskJournal(input: {
     throw new DeviceBrokerError("invalid_request", "device journal cursor or page size is invalid");
   }
   return readSqliteSnapshot(store.database, () => {
-    const task = store.getTask(taskId);
-    if (!task || task.ownerKind !== "daemon" || task.targetDeviceIds.length === 0
-      || task.targetDeviceIds.some(id => store.getDevice(id)?.device.ownerScope !== workspaceId)) {
-      throw new DeviceBrokerError("missing_target", "device journal is unavailable in this workspace");
-    }
+    const task = requireWorkspaceDeviceTask(store, taskId, workspaceId);
     const streamId = `device-task:${task.id}`;
     const latestSequence = store.countEvents(task.id);
     const requiresSnapshot = generation !== 1 || afterSequence > latestSequence;
@@ -40,6 +36,15 @@ export function readOwnedDeviceTaskJournal(input: {
       requiresSnapshot,
     };
   });
+}
+
+export function requireWorkspaceDeviceTask(store: SqliteDeviceSupportStore, taskId: string, workspaceId: string): DeviceTaskV1 {
+  const task = store.getTask(taskId);
+  if (!task || task.ownerKind !== "daemon" || task.targetDeviceIds.length === 0
+    || task.targetDeviceIds.some(id => store.getDevice(id)?.device.ownerScope !== workspaceId)) {
+    throw new DeviceBrokerError("missing_target", "device task is unavailable in this workspace");
+  }
+  return task;
 }
 
 type EventView = Pick<DeviceEventEnvelopeV1, "kind" | "sourceKind" | "payload" | "evidenceRefs">;

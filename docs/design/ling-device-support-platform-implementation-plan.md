@@ -64,7 +64,7 @@ validation and the boundary of what remains unverified.
 | D19 | [~] | Safety, policy, and secrets | Physical preconditions, emergency stop, secret references, and action-level controller/handoff decisions are implemented | Core safety fixtures |
 | D20 | [~] | Fleet and lifecycle | Revisioned lifecycle transitions are implemented | Core lifecycle fixtures |
 | D21 | [~] | Model context and orchestration | Bounded facts, hypotheses, observation refs, and untrusted text refs are implemented | Core context fixtures |
-| D22 | [~] | Observability and conformance | Cross-layer trace spans, lineage fencing, and conformance report construction are implemented | Core trace fixtures |
+| D22 | [~] | Observability and conformance | Daemon task traces link accepted plans, adapter attempts and readback evidence | Local diagnosis, Gateway reconciliation and Core trace fixtures |
 
 ## D0: Design baseline
 
@@ -757,12 +757,16 @@ only on a successful install or a model response.
 ### Scope
 
 - [~] Propagate conversation, graph, node, attempt, device, runtime, connection,
-  adapter, resource, event, and model-turn identifiers. Device trace spans now carry
-  optional cross-layer lineage and reject missing or cross-trace parents.
+  adapter, resource, event, and model-turn identifiers. Daemon dispatch persists
+  the adapter and profile revisions. The PC and Linux diagnosis paths bind each
+  step to a recorded plan node before dispatch.
 - [x] Persist runtime trace spans by trace identity so a daemon restart can rebuild
   the recorded execution path.
 - [x] Persist validated conformance reports with unique checks and evidence refs for
   reproducible runtime and adapter verification.
+- [x] Project the Daemon task trace from the durable owner journal. The local
+  workspace-scoped read preserves interrupted attempts and links any later
+  readback to the same attempt.
 - [~] Add simulator, protocol replay, hardware-in-loop, network interruption, process
   restart, resource rollback, and physical acceptance reports.
 - [ ] Produce a reproducible conformance report for each runtime, target, adapter,
@@ -808,7 +812,7 @@ recorded per slice as they complete. [Detailed design](ling-device-fabric.md)
 | D19 | access-bound dispatch + action safety policy | Core device support tests plus Daemon runtime fixtures and action-policy regression | [device-secrets.ts](../../packages/core/src/device-secrets.ts), [device-fabric.ts](../../packages/core/src/device-fabric.ts), [device-fabric.ts contracts](../../packages/contracts/src/device-fabric.ts) | Physical preconditions, emergency stop, target-scoped secret resolution, redacted secret-use records, and reusable action-level decisions for certified controllers and operator handoff are implemented. A task carries a target-scoped access grant, and the broker binds the attempt to its grant revision. Revocation during verification leaves the result unknown and blocks reconciliation | Target-controller integration and physical safety acceptance remain |
 | D20 | current grant binding + Fleet health projection | Core/Daemon builds and typechecks. `node --test packages/core/test/device-fabric.test.ts` and Daemon device-support runtime HTTP fixture | [device-access.ts](../../packages/core/src/device-access.ts), [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [device-fabric.ts contracts](../../packages/contracts/src/device-fabric.ts), [runtime.ts](../../packages/daemon/src/features/device-support/runtime.ts) | Revisioned lifecycle transitions, ownership transfer history, target-scoped shared/developer access grants, credential rotation/revocation metadata, and a workspace-scoped Fleet projection joining adapter/profile and Edge Runtime health are implemented | Upgrade, restore, retirement and field transfer acceptance remain |
 | D21 | `aa8a54cf8` and owner-scoped PC planning | Core and Daemon `build:ci` and `typecheck:ci`. Core orchestration, Fabric, broker and Daemon runtime fixtures (34 passed) | [Owner context](../../packages/core/src/device-task-planning-context.ts), [Proposal admission](../../packages/core/src/device-orchestration.ts), [Planner bridge](../../packages/core/src/device-runner.ts), [Daemon runtime test](../../packages/daemon/test/device-support-runtime.test.ts) | PC diagnosis records its local plan before dispatch. The builder projects typed facts from current task evidence. Plan admission verifies each node's owner, snapshot, capability and planning references. Cancelled model requests preserve cancellation | Concrete Pi/project-executor integration, cross-runtime planning evidence and provider switching remain |
-| D22 | `a9c0f3c54` + trace lineage fencing | Contracts/Core build and typecheck. `node --test packages/core/test/device-fabric-store.test.ts packages/core/test/device-fabric.test.ts` | [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [device-fabric.ts](../../packages/core/src/device-fabric.ts), [device-fabric.ts contracts](../../packages/contracts/src/device-fabric.ts) | Cross-layer trace spans carry optional task/device/runtime lineage, parent spans are same-trace only, finish is idempotent, and validated conformance reports remain persisted by identity | Simulator, hardware-in-loop, chaos, field and reproducible release reports remain |
+| D22 | Daemon owner-journal trace | Contracts/Core/Daemon build and typecheck plus Daemon device runtime and Gateway reconciliation tests | [Trace projection](../../packages/core/src/device-task-trace.ts), [Local diagnosis route test](../../packages/daemon/test/device-support-runtime.test.ts), [Reconciliation fixture](../../packages/daemon/test/device-remote-facade.test.ts) | A live local PC diagnosis yields a trace with plan, node, target, adapter and connection revisions, reproducible from reopened SQLite. Gateway readback links an unresolved and a verified result to the original unknown attempt | Model turn, protocol capture and Mobile/Edge trace integration, cross-runtime and field conformance remain |
 
 ## Definition of platform completion
 

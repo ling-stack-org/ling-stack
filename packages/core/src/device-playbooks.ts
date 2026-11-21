@@ -94,12 +94,17 @@ export function isDevicePlaybookV1(value: unknown): value is DevicePlaybookV1 {
   });
 }
 
+export function devicePlaybookNodeId(playbookId: string, stepId: string): string {
+  return `${playbookId}:${stepId}`;
+}
+
 export async function runDeviceReadOnlyPlaybook(input: {
   readonly broker: DeviceCapabilityBroker;
   readonly task: DeviceTaskV1;
   readonly targetDeviceId: string;
   readonly capabilitySnapshotId: string;
   readonly playbook: DevicePlaybookV1;
+  readonly proposalId?: string;
   readonly now?: () => string;
 }): Promise<DevicePlaybookRunResultV1> {
   if (!isDevicePlaybookV1(input.playbook)) throw new Error("Invalid device playbook");
@@ -164,7 +169,10 @@ export async function runDeviceReadOnlyPlaybook(input: {
     };
     let attempt: DeviceSupportStoreAttemptRecord;
     try {
-      attempt = await input.broker.execute(request, undefined, { finalizeTask: false, onlyUnattendedReads: true });
+      attempt = await input.broker.execute(request, undefined, {
+        finalizeTask: false, onlyUnattendedReads: true,
+        ...(input.proposalId ? { planningNode: { proposalId: input.proposalId, nodeId: devicePlaybookNodeId(input.playbook.id, step.id) } } : {}),
+      });
     } catch (error) {
       if (!(error instanceof DeviceBrokerError) || error.code === "target_busy") throw error;
       return finish(completedSteps ? "partial" : "failed", step.id);

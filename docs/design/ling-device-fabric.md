@@ -414,6 +414,15 @@ retains provenance at the host. A shared trace carries authorized references and
 redacted status across hosts. Use OpenTelemetry conventions where they fit existing
 observability.
 
+The local operator reads a Daemon-owned trace through
+`GET /v1/device-support/tasks/:taskId/trace` on the authenticated loopback API.
+The projection uses the same workspace and trace identity as the owner journal.
+It links the accepted plan, the exact adapter/profile and connection used for each
+attempt, and the public evidence references from verification or reconciliation.
+An interrupted dispatch keeps its status when a later readback verifies the
+target. Each readback records its own connection revision.
+[Trace projection](../../packages/core/src/device-task-trace.ts)
+
 | Test layer | Evidence |
 | --- | --- |
 | Contract and state | Identity aliases, allowed exposure, profile/schema compatibility, revision changes, ordered journal replay and stale evidence. |

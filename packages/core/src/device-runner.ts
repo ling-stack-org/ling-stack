@@ -6,7 +6,7 @@ import type {
   DeviceTaskGraphV1,
   DeviceTaskStatusV1,
 } from "@ling-stack/contracts";
-import { isDevicePlaybookV1, type DevicePlaybookV1 } from "./device-playbooks.js";
+import { devicePlaybookNodeId, isDevicePlaybookV1, type DevicePlaybookV1 } from "./device-playbooks.js";
 import { DeviceModelOrchestrator, type DevicePlanningTarget } from "./device-orchestration.js";
 
 export interface DevicePlanningRunnerInput {
@@ -103,13 +103,13 @@ export function createLocalPlaybookProposal(input: {
 }): DevicePlannerProposalV1 {
   const now = input.now ?? input.context.generatedAt;
   const nodes: DeviceTaskGraphNodeV1[] = input.playbook.steps.map((step, index) => ({
-    nodeId: `${input.playbook.id}:${step.id}`,
+    nodeId: devicePlaybookNodeId(input.playbook.id, step.id),
     targetDeviceId: input.targetDeviceId,
     ownerKind: input.ownerKind,
     ownerId: input.ownerId,
     capabilityId: step.capabilityId,
     capabilitySnapshotId: input.capabilitySnapshotId,
-    dependencies: index === 0 ? [] : [`${input.playbook.id}:${input.playbook.steps[index - 1]!.id}`],
+    dependencies: index === 0 ? [] : [devicePlaybookNodeId(input.playbook.id, input.playbook.steps[index - 1]!.id)],
     status: "planning" as DeviceTaskStatusV1,
   }));
   const graph: DeviceTaskGraphV1 = { graphId: input.context.taskId, revision: 1, status: "planned", nodes, createdAt: now, updatedAt: now };

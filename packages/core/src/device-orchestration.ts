@@ -76,6 +76,8 @@ export class DeviceModelOrchestrator {
       contextDigest,
       requiredApprovalNodeIds,
       acceptedAt: now,
+      ...(proposal.source === "model" && proposal.modelTurnId ? { modelTurnId: proposal.modelTurnId } : {}),
+      ...(proposal.source === "model" && proposal.providerId ? { providerId: proposal.providerId } : {}),
       ...(proposal.runnerId ? { runnerId: proposal.runnerId } : {}),
       ...(proposal.runnerCapabilityRevision ? { runnerCapabilityRevision: proposal.runnerCapabilityRevision } : {}),
     };

@@ -19,7 +19,7 @@ import {
   type RemoteClientCommandPayloadMapV1,
   type RemoteServerFrameV1,
 } from "@ling-stack/contracts";
-import { createSqliteRunStore, DEFAULT_WORKSPACE_ID, DeviceCapabilityBroker, digestRequest, readOwnedDeviceTaskJournal, SqliteDeviceSupportStore } from "@ling-stack/core";
+import { createSqliteRunStore, DEFAULT_WORKSPACE_ID, DeviceCapabilityBroker, digestRequest, readOwnedDeviceTaskJournal, readOwnedDeviceTaskTrace, SqliteDeviceSupportStore } from "@ling-stack/core";
 import {
   authProofSigningBytes,
   authProofSigningInput,
@@ -340,6 +340,13 @@ test("authenticated Gateway sessions recover PC tasks, reconcile writes and resu
   assert.equal(journaledReadback?.body.reconciliationId, reconciled.payload.task.lastVerificationId);
   assert.ok(deviceStore.listObservations(active.taskId).some(observation => observation.id === reconciled.payload.task.lastVerificationId));
   assert.deepEqual(deviceStore.getAttempt(active.taskId, attempt.attemptId)?.attempt, attempt);
+  const trace = readOwnedDeviceTaskTrace({ store: deviceStore, taskId: active.taskId, workspaceId: DEFAULT_WORKSPACE_ID });
+  const originalDispatch = trace.spans.find(span => span.kind === "adapter");
+  assert.equal(originalDispatch?.status, "unknown");
+  const readbacks = trace.spans.filter(span => span.kind === "verification");
+  assert.deepEqual(readbacks.map(span => [span.status, span.parentSpanId]), [["unknown", originalDispatch?.spanId], ["ok", originalDispatch?.spanId]]);
+  assert.equal(readbacks[1]?.lineage?.connectionRevision, "reconnected-target-connection");
+  assert.deepEqual(readbacks[1]?.metadata, { verificationStatus: "verified", evidenceRefs: [reconciled.payload.task.lastVerificationId] });
   const replayReadback = await modern.send("device.task.reconcile", {
     commandId: "second-recheck", ...binding, capabilitySnapshotId: refreshedSnapshotId,
   });

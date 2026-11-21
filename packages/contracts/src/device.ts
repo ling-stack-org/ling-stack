@@ -319,6 +319,11 @@ export interface DeviceTaskV1 {
   readonly lastVerificationId?: string;
 }
 
+export interface DevicePlanningNodeRefV1 {
+  readonly proposalId: string;
+  readonly nodeId: string;
+}
+
 export interface DeviceTaskAttemptV1 {
   readonly attemptId: string;
   readonly taskId: string;
@@ -331,6 +336,12 @@ export interface DeviceTaskAttemptV1 {
   readonly connectionRevision?: string;
   readonly requestDigest?: string;
   readonly approvalId?: string;
+  readonly adapterBinding?: {
+    readonly adapterId: string;
+    readonly adapterVersion: string;
+    readonly profileRevision: string;
+  };
+  readonly planningNode?: DevicePlanningNodeRefV1;
   readonly status: "prepared" | "dispatched" | "completed" | "failed" | "unknown" | "cancelled";
   readonly receipt?: DeviceActionResultV1;
   readonly verification?: DeviceVerificationResultV1;
@@ -605,7 +616,8 @@ export function isDeviceTaskV1(value: unknown): value is DeviceTaskV1 {
 export function isDeviceTaskAttemptV1(value: unknown): value is DeviceTaskAttemptV1 {
   if (!isRecord(value) || !hasOnlyKeys(value, [
     "attemptId", "taskId", "actionId", "ownerKind", "ownerId", "targetDeviceId",
-    "dispatchIntentAt", "accessGrantRevision", "connectionRevision", "requestDigest", "approvalId", "status", "receipt", "verification",
+    "dispatchIntentAt", "accessGrantRevision", "connectionRevision", "requestDigest", "approvalId", "adapterBinding",
+    "planningNode", "status", "receipt", "verification",
   ])) return false;
   return isNonEmptyString(value.attemptId)
     && isNonEmptyString(value.taskId)
@@ -618,6 +630,13 @@ export function isDeviceTaskAttemptV1(value: unknown): value is DeviceTaskAttemp
     && (value.connectionRevision === undefined || isNonEmptyString(value.connectionRevision))
     && (value.requestDigest === undefined || isNonEmptyString(value.requestDigest))
     && (value.approvalId === undefined || isNonEmptyString(value.approvalId))
+    && (value.adapterBinding === undefined || (isRecord(value.adapterBinding)
+      && hasOnlyKeys(value.adapterBinding, ["adapterId", "adapterVersion", "profileRevision"])
+      && isNonEmptyString(value.adapterBinding.adapterId) && isNonEmptyString(value.adapterBinding.adapterVersion)
+      && isNonEmptyString(value.adapterBinding.profileRevision)))
+    && (value.planningNode === undefined || (isRecord(value.planningNode)
+      && hasOnlyKeys(value.planningNode, ["proposalId", "nodeId"])
+      && isNonEmptyString(value.planningNode.proposalId) && isNonEmptyString(value.planningNode.nodeId)))
     && isEnum(value.status, ["prepared", "dispatched", "completed", "failed", "unknown", "cancelled"] as const)
     && (value.receipt === undefined || isDeviceActionResultV1(value.receipt))
     && (value.verification === undefined || isDeviceVerificationResultV1(value.verification));
