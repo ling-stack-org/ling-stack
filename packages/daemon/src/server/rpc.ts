@@ -138,7 +138,7 @@ const legacyRpcMethods = new Set([
 ]);
 const UNIMPLEMENTED_APP_SERVER_METHODS = new Set([
   "worktree/create", "worktree/refresh", "worktree/cleanup/preview", "worktree/cleanup",
-  "turn/retry", "turn/steer", "thread/fork", "thread/compact/start", "thread/revert",
+  "turn/retry", "thread/fork", "thread/compact/start", "thread/revert",
   "handoff/create", "handoff/read", "handoff/resume", "changes/read",
   "changes/apply/preview", "changes/apply", "artifact/read", "workItem/delivery/read", "delivery/read",
   "github/subject/read", "github/delivery/reconcile", "model/list", "skill/read", "permissionProfile/list",
@@ -146,7 +146,7 @@ const UNIMPLEMENTED_APP_SERVER_METHODS = new Set([
 const activeExternalDispatches = new WeakMap<DaemonContext, Map<string, AbortController>>();
 const operatorMethods = new Set([
   "approval/respond", "input/respond", "verify/start", "verify/cancel", "review/start", "review/finding/update",
-  "simplify/start", "simplify/status", "runs.start", "runs.cancel", "turn/queue", "turn/interrupt",
+  "simplify/start", "simplify/status", "runs.start", "runs.cancel", "turn/queue", "turn/interrupt", "turn/steer",
   "thread/delete", "thread/goal/set", "thread/goal/pause", "thread/goal/resume",
   "thread/goal/clear", "thread/goal/complete", "plan/accept",
 ]);
@@ -311,6 +311,10 @@ class RpcConnection {
         return;
       }
       if (this.appServer && request.method === "initialized" && request.id === undefined) return;
+      if (this.appServer && !IMPLEMENTED_APP_SERVER_METHODS.includes(request.method as typeof IMPLEMENTED_APP_SERVER_METHODS[number])
+        && !operatorMethods.has(request.method)) {
+        throw rpcError(-32601, "method_not_found", `Unsupported App Server method: ${request.method}`);
+      }
       const params = this.appServer ? this.workspaceParams(request.params, operatorMethods.has(request.method)) : request.params;
       if (request.method === "controlPlane.subscribe") {
         if (request.id === undefined) {
@@ -1832,10 +1836,17 @@ class RpcConnection {
         throw rpcError(-32061, "resume_blocked", `Work Item cannot accept ${action} while control state is ${result.workItem.control.state}.`);
       case "applied":
       case "replayed": {
-        const workItem = projectWorkItemSnapshot(result.workItem);
+        const replayScope = this.replayIdentity(cwd, store).scope("workItem", workItemId);
+        const workItem = {
+          ...projectWorkItemSnapshot(result.workItem),
+          eventCursor: replayScope.issue(store.getLatestControlPlaneEventSeq(DEFAULT_WORKSPACE_ID)),
+        };
         if (result.event) {
           this.context.controlPlaneEvents.publish(trimOversizedEvent(result.event));
-          this.send({ jsonrpc: "2.0", method: "workItem/control/updated", params: { cwd, workItemId, workItem } });
+          this.send({ jsonrpc: "2.0", method: "workItem/control/updated", params: {
+            cwd, workItemId, workItem, eventId: replayScope.eventId(result.event.workspaceId, result.event.seq),
+            cursor: replayScope.issue(result.event.seq),
+          } });
         }
         return { cwd, workItem, controlReceipt: projectWorkItemControlReceipt(result.receipt), replayed: result.status === "replayed" };
       }

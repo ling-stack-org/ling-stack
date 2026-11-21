@@ -66,6 +66,8 @@ test("App Server WebSocket negotiates the Ling protocol and supports ping", { ti
       socket.send(JSON.stringify({ jsonrpc: "2.0", id, method, params: {} }));
       assert.equal((await waitFor(messages, message => message.id === id)).error.data.code, "authorization_required");
     }
+    socket.send(JSON.stringify({ jsonrpc: "2.0", id: 20, method: "controlPlane.subscribe", params: { domains: ["runs"] } }));
+    assert.equal((await waitFor(messages, message => message.id === 20)).error.data.code, "method_not_found");
   } finally {
     socket.terminate();
     await daemon.stop();
