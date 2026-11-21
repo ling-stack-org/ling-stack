@@ -8,6 +8,7 @@ class FakeSocket implements LingAppServerSocket {
   readonly sent: Array<{ readonly id: number; readonly method: string; readonly params?: Record<string, unknown> }> = [];
   enableSubscriptionResponses = false;
   subscriptionWatermark?: string;
+  subscriptionWindow?: { readonly requestedAfterSeq: number; readonly nextAfterSeq: number };
   subscriptionId = "sub_fixture";
   replayEvents: readonly { readonly cursor: string; readonly seq?: number }[] = [];
 
@@ -55,7 +56,8 @@ class FakeSocket implements LingAppServerSocket {
         this.emit("message", JSON.stringify({
           jsonrpc: "2.0",
           id: request.id,
-          result: { disposition: "complete", subscriptionId: this.subscriptionId, cursor: this.subscriptionWatermark ?? request.params?.cursor ?? "0" },
+          result: { disposition: "complete", subscriptionId: this.subscriptionId,
+            cursor: this.subscriptionWatermark ?? request.params?.cursor ?? "0", window: this.subscriptionWindow },
         }));
         for (const { cursor, seq } of this.replayEvents) {
           this.emit("message", JSON.stringify({
@@ -131,6 +133,7 @@ test("Ling App Server client reconnects and resumes subscriptions from the lates
   const first = sockets[0]!;
   first.enableSubscriptionResponses = true;
   first.subscriptionWatermark = "5";
+  first.subscriptionWindow = { requestedAfterSeq: 1, nextAfterSeq: 5 };
   first.replayEvents = [{ cursor: "3" }];
   const initial = await client.subscribe({ workItemId: "item", cursor: "1" });
   assert.equal(initial.subscriptionId, "sub_fixture");

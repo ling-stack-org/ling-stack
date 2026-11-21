@@ -79,9 +79,13 @@ test("verification persists a single start receipt and recovers in its originati
   const { cwd, context, storeRegistry, restart } = await verificationFixture(t);
   const project = join(cwd, "project");
   await mkdir(project);
+  let starts = 0;
   const first = new AppServerDevelopmentService({
     context,
-    executeVerificationCheck: () => new Promise(() => undefined),
+    executeVerificationCheck: () => {
+      starts++;
+      return new Promise(() => undefined);
+    },
   });
   const candidate = { workspaceId: project, candidateDigest: "restart-candidate" };
   const plan = await first.planVerification({ cwd: project, candidate, idempotencyKey: "plan" });
@@ -89,10 +93,17 @@ test("verification persists a single start receipt and recovers in its originati
   const input = { cwd: project, planId: plan.planId, planRevision: plan.planRevision, candidateDigest: candidate.candidateDigest, idempotencyKey: "restart" };
   const operation = await first.startVerification(input);
   assert.equal((await first.startVerification(input)).operationId, operation.operationId);
+  const store = storeRegistry.getStore(project);
+  const staleLookup = t.mock.method(store, "findAppServerStateByIdempotencyKey", () => undefined);
+  const competing = await first.startVerification(input);
+  assert.equal(competing.operationId, operation.operationId);
+  assert.equal(competing.status, "running");
   assert.equal(first.getVerification({ cwd: project, operationId: operation.operationId }).operation.status, "running");
   const otherPlan = await first.planVerification({ cwd: project, candidate, requestedChecks: ["test"] });
   await assert.rejects(first.startVerification({ ...input, planId: otherPlan.planId, planRevision: otherPlan.planRevision }), { code: "idempotency_conflict" });
-  assert.equal(storeRegistry.getStore(project).listAppServerState("verify_operation").length, 1);
+  staleLookup.mock.restore();
+  assert.equal(starts, 1);
+  assert.equal(store.listAppServerState("verify_operation").length, 1);
 
   const restored = new AppServerDevelopmentService({ context: restart() });
   assert.throws(() => restored.getVerification({ operationId: operation.operationId }), /not found/u);
@@ -101,6 +112,30 @@ test("verification persists a single start receipt and recovers in its originati
   assert.equal(recovered.status, "unknown");
   assert.equal(recovered.blocker, "daemon_restart_reconciliation_required");
   assert.deepEqual(recovered.checks.map(check => check.status), ["unknown", "not_run"]);
+});
+
+test("verification keeps cancellation unconfirmed when the executor aborts without confirming exit", async t => {
+  const { cwd, context, restart } = await verificationFixture(t);
+  const service = new AppServerDevelopmentService({
+    context,
+    executeVerificationCheck: ({ signal }) => new Promise((_, reject) => {
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    }),
+  });
+  const plan = await service.planVerification({ candidate: { workspaceId: cwd, candidateDigest: "abort-fixture" } });
+  const start = { planId: plan.planId, planRevision: plan.planRevision, candidateDigest: plan.candidate.candidateDigest, idempotencyKey: "start" };
+  const { operationId } = await service.startVerification(start);
+  const cancel = { operationId, idempotencyKey: "cancel" };
+  const receipt = service.cancelVerification(cancel);
+  assert.equal(receipt.status, "cancel_requested");
+  await setImmediate();
+  const restored = new AppServerDevelopmentService({ context: restart() });
+  const result = restored.getVerification({ operationId }).operation;
+  assert.equal(result.status, "unknown");
+  assert.equal(result.blocker, "verification_cancellation_unconfirmed");
+  assert.deepEqual(result.checks.map(check => check.status), ["unknown", "not_run"]);
+  assert.deepEqual(restored.cancelVerification(cancel), receipt);
+  assert.deepEqual(await restored.startVerification(start), result);
 });
 
 test("verification passes cancellation to the active check and ignores remaining work", async t => {

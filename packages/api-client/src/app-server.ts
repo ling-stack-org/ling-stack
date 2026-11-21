@@ -558,8 +558,7 @@ export class LingAppServerClient {
         this.subscriptions.delete(key);
       } else {
         this.subscriptions.set(key, { ...subscription, subscriptionId: result.subscriptionId,
-          cursor: result.cursor ?? subscription.cursor,
-          afterSeq: result.window?.nextAfterSeq ?? subscription.afterSeq });
+          afterSeq: result.window?.requestedAfterSeq ?? subscription.afterSeq });
       }
     });
   }

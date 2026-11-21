@@ -21,6 +21,8 @@ export interface PutAppServerStateInput {
   readonly recordId: string;
   readonly expectedRevision?: number;
   readonly idempotencyKey?: string;
+  /** When set, return the committed row for this key so the caller can validate the request identity. */
+  readonly replayByIdempotencyKey?: boolean;
   readonly payload: unknown;
 }
 

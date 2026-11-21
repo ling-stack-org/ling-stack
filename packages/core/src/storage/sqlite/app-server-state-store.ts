@@ -38,7 +38,9 @@ export class SqliteAppServerStateStore {
   put(input: PutAppServerStateInput, now: string, publication?: AppendControlPlaneEventInput): PutAppServerStateResult | undefined {
     this.context.database.exec("BEGIN IMMEDIATE");
     try {
-      const result = this.putWithinTransaction(input, now);
+      const retained = input.replayByIdempotencyKey && input.idempotencyKey
+        ? this.findByIdempotencyKey(input.kind, input.idempotencyKey, input.workspaceId) : undefined;
+      const result = retained ? { status: "replayed", record: retained } as const : this.putWithinTransaction(input, now);
       const event = result && result.status !== "replayed" && publication
         ? this.events.appendControlPlaneEventWithinTransaction(publication, now) : undefined;
       this.context.database.exec("COMMIT");

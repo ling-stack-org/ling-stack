@@ -138,7 +138,7 @@ const legacyRpcMethods = new Set([
 ]);
 const UNIMPLEMENTED_APP_SERVER_METHODS = new Set([
   "worktree/create", "worktree/refresh", "worktree/cleanup/preview", "worktree/cleanup",
-  "turn/retry", "thread/fork", "thread/compact/start", "thread/revert",
+  "turn/retry", "turn/steer", "thread/fork", "thread/compact/start", "thread/revert",
   "handoff/create", "handoff/read", "handoff/resume", "changes/read",
   "changes/apply/preview", "changes/apply", "artifact/read", "workItem/delivery/read", "delivery/read",
   "github/subject/read", "github/delivery/reconcile", "model/list", "skill/read", "permissionProfile/list",
@@ -146,11 +146,12 @@ const UNIMPLEMENTED_APP_SERVER_METHODS = new Set([
 const activeExternalDispatches = new WeakMap<DaemonContext, Map<string, AbortController>>();
 const operatorMethods = new Set([
   "approval/respond", "input/respond", "verify/start", "verify/cancel", "review/start", "review/finding/update",
-  "simplify/start", "simplify/status", "runs.start", "runs.cancel", "turn/queue", "turn/interrupt", "turn/steer",
+  "simplify/start", "simplify/status", "runs.start", "runs.cancel", "turn/queue", "turn/interrupt",
   "thread/delete", "thread/goal/set", "thread/goal/pause", "thread/goal/resume",
   "thread/goal/clear", "thread/goal/complete", "plan/accept",
 ]);
 const IMPLEMENTED_APP_SERVER_METHODS = LING_APP_SERVER_METHODS.filter(method => !UNIMPLEMENTED_APP_SERVER_METHODS.has(method));
+const appServerMethods = new Set<string>([...IMPLEMENTED_APP_SERVER_METHODS, "runs.start", "runs.cancel", "turn/steer"]);
 export function attachRpcWebSocketServer(server: Server, context: DaemonContext): RpcWebSocketServerHandle {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
   const appServerConnections = new Set<RpcConnection>();
@@ -311,8 +312,7 @@ class RpcConnection {
         return;
       }
       if (this.appServer && request.method === "initialized" && request.id === undefined) return;
-      if (this.appServer && !IMPLEMENTED_APP_SERVER_METHODS.includes(request.method as typeof IMPLEMENTED_APP_SERVER_METHODS[number])
-        && !operatorMethods.has(request.method)) {
+      if (this.appServer && !appServerMethods.has(request.method)) {
         throw rpcError(-32601, "method_not_found", `Unsupported App Server method: ${request.method}`);
       }
       const params = this.appServer ? this.workspaceParams(request.params, operatorMethods.has(request.method)) : request.params;
@@ -389,7 +389,7 @@ class RpcConnection {
       case "initialize": {
         this.validateInitializeParams(params);
         const cwd = this.appServer ? this.workspaceParams(params).cwd : undefined;
-        const store = cwd === undefined ? undefined : this.context.storeRegistry.getStore(cwd);
+        const store = cwd === undefined ? undefined : this.context.storeRegistry.getInitializedStore(cwd);
         const identity = cwd !== undefined && store ? this.replayIdentity(cwd, store) : undefined;
         this.initialized = true;
         return this.appServer ? {
@@ -1821,6 +1821,7 @@ class RpcConnection {
     const expectedRevision = readIntegerField(record, "expectedWorkItemRevision", "expectedRevision");
     const expectedControlGeneration = readIntegerField(record, "expectedControlGeneration", "controlGeneration");
     const store = this.context.storeRegistry.getStore(cwd);
+    const replayScope = this.replayIdentity(cwd, store).scope("workItem", workItemId);
     const reason = readOptionalStringField(record, "reason");
     const result = store.applyWorkItemControl(workItemId, action, {
       expectedRevision, expectedControlGeneration, actorId, reason, idempotencyKey,
@@ -1836,11 +1837,7 @@ class RpcConnection {
         throw rpcError(-32061, "resume_blocked", `Work Item cannot accept ${action} while control state is ${result.workItem.control.state}.`);
       case "applied":
       case "replayed": {
-        const replayScope = this.replayIdentity(cwd, store).scope("workItem", workItemId);
-        const workItem = {
-          ...projectWorkItemSnapshot(result.workItem),
-          eventCursor: replayScope.issue(store.getLatestControlPlaneEventSeq(DEFAULT_WORKSPACE_ID)),
-        };
+        const workItem = projectWorkItemSnapshot(result.workItem);
         if (result.event) {
           this.context.controlPlaneEvents.publish(trimOversizedEvent(result.event));
           this.send({ jsonrpc: "2.0", method: "workItem/control/updated", params: {

@@ -35,7 +35,7 @@ import type {
 import type { DaemonContext } from "../context.js";
 import { HttpError } from "../errors.js";
 import type { ActiveRunRegistry } from "../runtime/active-runs.js";
-import { DEFAULT_WORKSPACE_ID, type AppServerStateRecord, type RunStore } from "@ling-stack/core";
+import { DEFAULT_WORKSPACE_ID, type AppServerStateRecord, type PutAppServerStateResult, type RunStore } from "@ling-stack/core";
 import type { RunStoreRegistry } from "../runtime/store-registry.js";
 import { captureCodeAssessmentSnapshot } from "../features/code-assessments/snapshot.js";
 import { reconcileCodeAssessments, startCodeAssessment, type StartCodeAssessmentRun } from "../features/code-assessments/service.js";
@@ -118,14 +118,13 @@ export class AppServerDevelopmentService {
       rationale: ["Selected deterministic workspace checks for the candidate."],
       environmentRequirements: ["workspace_store", "authorized_host_execution"],
     };
-    const prior = input.idempotencyKey && store.findAppServerStateByIdempotencyKey("verify_plan", input.idempotencyKey);
-    if (prior) {
-      const retained = prior.payload as LingAppServerVerifyPlanResult;
-      if (retained.planRevision !== plan.planRevision) throw verificationConflict();
-      return retained;
-    }
-    store.putAppServerState({ kind: "verify_plan", recordId: plan.planId, payload: plan, idempotencyKey: input.idempotencyKey }, new Date().toISOString());
-    return plan;
+    const result = store.putAppServerState({
+      kind: "verify_plan", recordId: plan.planId, expectedRevision: 0, payload: plan,
+      idempotencyKey: input.idempotencyKey, replayByIdempotencyKey: true,
+    }, new Date().toISOString());
+    const retained = result?.record.payload as LingAppServerVerifyPlanResult | undefined;
+    if (!retained || retained.planRevision !== plan.planRevision) throw verificationConflict();
+    return retained;
   }
 
   async startVerification(input: LingAppServerVerifyStartParams): Promise<LingAppServerVerifyOperation> {
@@ -137,8 +136,7 @@ export class AppServerDevelopmentService {
     assertVerificationKey(input.idempotencyKey);
     const existing = store.findAppServerStateByIdempotencyKey("verify_operation", input.idempotencyKey);
     if (existing) {
-      const value = existing.payload as VerifyRecord;
-      if (value.plan.planId !== plan.planId || value.plan.planRevision !== plan.planRevision) throw verificationConflict();
+      assertVerificationPlan(existing, plan);
       return this.readVerification(store, existing).operation;
     }
     if (plan.workItemId) {
@@ -180,7 +178,10 @@ export class AppServerDevelopmentService {
       })),
     };
     const payload: VerifyRecord = { operation, plan, cancelRequested: false };
-    this.persistVerification(store, 0, payload, input.idempotencyKey);
+    const saved = this.persistVerification(store, 0, payload, input.idempotencyKey);
+    if (saved.status === "replayed") {
+      return assertVerificationPlan(saved.record, plan).operation;
+    }
     if (this.options.executeVerificationCheck) {
       const controller = new AbortController();
       this.activeVerifications.set(operationId, controller);
@@ -457,11 +458,11 @@ export class AppServerDevelopmentService {
     return { ...record, operation: { ...record.operation, revision: String(stored.revision) } };
   }
 
-  private persistVerification(store: RunStore, expectedRevision: number, record: VerifyRecord, idempotencyKey?: string): AppServerStateRecord {
+  private persistVerification(store: RunStore, expectedRevision: number, record: VerifyRecord, idempotencyKey?: string): PutAppServerStateResult {
     const operation = { ...record.operation, revision: String(expectedRevision + 1) };
     const result = store.putAppServerState({
       kind: "verify_operation", recordId: operation.operationId, expectedRevision,
-      payload: { ...record, operation }, idempotencyKey,
+      payload: { ...record, operation }, idempotencyKey, replayByIdempotencyKey: Boolean(idempotencyKey),
     }, new Date().toISOString(), {
       workspaceId: DEFAULT_WORKSPACE_ID, cwd: store.paths.cwd, domain: operation.workItemId ? "work_items" : "runs",
       entityType: "verify_operation", entityId: operation.operationId, action: "verification.updated",
@@ -475,11 +476,11 @@ export class AppServerDevelopmentService {
     });
     if (!result) throw Object.assign(new Error("Verification operation revision is stale."), { jsonRpcCode: -32030, code: "stale_revision" });
     if (result.event) this.options.context.controlPlaneEvents?.publish(trimOversizedEvent(result.event));
-    return result.record;
+    return result;
   }
 
   private updateVerification(store: RunStore, stored: AppServerStateRecord, record: VerifyRecord): AppServerStateRecord {
-    return this.persistVerification(store, stored.revision, record);
+    return this.persistVerification(store, stored.revision, record).record;
   }
 
   private async executeVerification(
@@ -508,13 +509,21 @@ export class AppServerDevelopmentService {
       if (record.cancelRequested || signal.aborted) break;
     }
     const statuses = record.operation.checks.map(check => check.status);
+    const stopRequested = record.cancelRequested || signal.aborted;
     const status = statuses.includes("unknown") ? "unknown"
-      : record.cancelRequested || signal.aborted || statuses.includes("cancelled") ? "cancelled"
+      : stopRequested || statuses.includes("cancelled") ? "cancelled"
       : statuses.includes("failed") ? "failed"
       : statuses.every(status => status === "passed") ? "passed"
       : "blocked";
-    this.updateVerification(store, stored, finishVerification(record, status));
+    const blocker = status === "unknown" && stopRequested ? "verification_cancellation_unconfirmed" : undefined;
+    this.updateVerification(store, stored, finishVerification(record, status, blocker));
   }
+}
+
+function assertVerificationPlan(stored: AppServerStateRecord, plan: LingAppServerVerifyPlanResult): VerifyRecord {
+  const record = stored.payload as VerifyRecord;
+  if (record.plan.planId !== plan.planId || record.plan.planRevision !== plan.planRevision) throw verificationConflict();
+  return record;
 }
 
 function verificationConflict(): Error {

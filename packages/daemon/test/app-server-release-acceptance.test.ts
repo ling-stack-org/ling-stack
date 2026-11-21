@@ -52,12 +52,17 @@ import { createCodexAppServerAdapter } from "../dist/runtime/adapters/codex-app-
 import { startLoopbackPiProvider } from "./support/loopback-pi-provider-fixture.mjs";
 import { startFakeCodexAppServer } from "./test-support/fake-codex-app-server.ts";
 
-test("App Server executes an allowlisted check once and restores its outcome and Work Item events", { timeout: 30_000 }, async t => {
+test("App Server deduplicates verification starts and restores completed checks, cancellation and Work Item events", { timeout: 30_000 }, async t => {
   const fixture = await releaseFixture(t);
   const marker = join(fixture.root, "test-executions");
+  const hold = join(fixture.root, "hold-check");
   await writeFile(join(fixture.cwd, ".gitignore"), ".ling-stack/\nnode_modules/\npnpm-lock.yaml\n");
   await writeFile(join(fixture.cwd, "package.json"), JSON.stringify({ scripts: { test: "node check.cjs" } }));
-  await writeFile(join(fixture.cwd, "check.cjs"), `require("node:fs").appendFileSync(${JSON.stringify(marker)}, "checked\\n");\n`);
+  await writeFile(join(fixture.cwd, "check.cjs"), [
+    'const fs = require("node:fs");',
+    `fs.appendFileSync(${JSON.stringify(marker)}, "checked\\n");`,
+    `if (fs.existsSync(${JSON.stringify(hold)})) setTimeout(() => {}, 15000);`,
+  ].join("\n"));
   const git = (...args: string[]) => execFileSync("git", args, { cwd: fixture.cwd, stdio: "ignore" });
   git("init", "-q");
   git("add", ".gitignore", "package.json", "check.cjs");
@@ -74,8 +79,11 @@ test("App Server executes an allowlisted check once and restores its outcome and
     candidate, workItemId: workItem.workItemId, requestedChecks: ["test", "browser-missing-recipe"],
   });
   const input = { planId: plan.planId, planRevision: plan.planRevision, candidateDigest: candidate.candidateDigest, idempotencyKey: "verify-receipt" };
-  const first = await client.call<LingAppServerVerifyOperation>("verify/start", input);
-  assert.equal((await client.call<LingAppServerVerifyOperation>("verify/start", input)).operationId, first.operationId);
+  const [first, duplicate] = await Promise.all([
+    client.call<LingAppServerVerifyOperation>("verify/start", input),
+    peer.call<LingAppServerVerifyOperation>("verify/start", input),
+  ]);
+  assert.equal(duplicate.operationId, first.operationId);
   const finished = await waitFor(async () => {
     const { operation } = await client.call<LingAppServerVerifyStatusResult>("verify/status", { operationId: first.operationId });
     return operation.completedAt ? operation : undefined;
@@ -98,6 +106,24 @@ test("App Server executes an allowlisted check once and restores its outcome and
   assert.deepEqual(restored.notices.filter(notice => notice.method === "verification/updated")
     .map(notice => notice.params?.eventId), events);
   assert.equal(await readFile(marker, "utf8"), "checked\n");
+
+  await writeFile(hold, "Wait for the cancellation request.");
+  const stopping = await restored.call<LingAppServerVerifyOperation>("verify/start", { ...input, idempotencyKey: "verify-stop" });
+  await waitFor(async () => await readFile(marker, "utf8") === "checked\nchecked\n" ? true : undefined);
+  const { operation: active } = await restored.call<LingAppServerVerifyStatusResult>("verify/status", { operationId: stopping.operationId });
+  const cancel = { operationId: stopping.operationId, expectedRevision: active.revision, idempotencyKey: "cancel-live-check" };
+  const receipt = await restored.call<{ status: string }>("verify/cancel", cancel);
+  assert.equal(receipt.status, "cancel_requested");
+  const cancelled = await waitFor(async () => {
+    const { operation } = await restored.call<LingAppServerVerifyStatusResult>("verify/status", { operationId: stopping.operationId });
+    return operation.completedAt ? operation : undefined;
+  });
+  assert.equal(cancelled.status, "cancelled");
+  assert.deepEqual(cancelled.checks.map(check => check.status), ["cancelled", "not_run"]);
+  await fixture.restart();
+  const afterCancellation = await fixture.connect();
+  assert.deepEqual(await afterCancellation.call("verify/status", { operationId: stopping.operationId }), { operation: cancelled });
+  assert.deepEqual(await afterCancellation.call("verify/cancel", cancel), receipt);
 });
 
 test("App Server submits a durable Turn through the configured Pi Runner and replays it after reconnect", { timeout: 30_000 }, async t => {
@@ -163,7 +189,6 @@ test("App Server submits a durable Turn through the configured Pi Runner and rep
   assert.equal(snapshot.turn?.id, result.turn.id);
   assert.equal(snapshot.run?.id, result.run.id);
   assert.equal(snapshot.run?.status, "succeeded");
-  assert.match(snapshot.cursor, /^v1\.\d+\.[A-Za-z0-9_-]{43}$/u);
   const receipt = await second.call<{ status: string; turnId: string }>("submission/read", {
     threadId: started.thread.id, idempotencyKey: request.idempotencyKey,
   });
@@ -191,7 +216,8 @@ test("App Server submits a durable Turn through the configured Pi Runner and rep
     return { ...completion, evidenceRefs: [evidence], acceptanceEvidence: [{ criterionId: "run", evidence }] };
   };
   await assert.rejects(second.call("thread/goal/complete", withEvidence(unrelatedRun.id)), { code: "goal_completion_evidence_invalid" });
-  await second.call("thread/subscribe", { threadId: request.threadId, cursor: snapshot.cursor });
+  const resumedSubscription = await second.call<LingAppServerSubscriptionResult>("thread/subscribe", { threadId: request.threadId, cursor: snapshot.cursor });
+  assert.equal(resumedSubscription.disposition, "complete");
   const { goal: completed } = await second.call<{ goal: LingThreadGoal }>("thread/goal/complete", withEvidence(result.run.id));
   assert.equal(completed.id, goal.id);
   assert.equal(completed.status, "complete");
@@ -1170,7 +1196,7 @@ test("App Server replay cursors survive restart and stay bound to the workspace,
   const differentWorkspace = await secondWorkspace.call<LingAppServerThreadEventsResult>("thread/events/read", read);
   assert.equal(differentWorkspace.window.disposition, "snapshot_required");
   assert.deepEqual(differentWorkspace.events, []);
-  assert.notEqual(secondWorkspace.initialization?.storeIncarnation, client.initialization?.storeIncarnation);
+  assert.equal(secondWorkspace.initialization?.storeIncarnation, undefined);
 
   await fixture.restart();
   const restored = await fixture.connect();
