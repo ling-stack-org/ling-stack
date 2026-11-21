@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import type { RemotePairingQrV1 } from "@ling-stack/contracts";
+import { REMOTE_DEVICE_JOURNAL_PAGE_LIMIT_V1, type RemotePairingQrV1 } from "@ling-stack/contracts";
 import test from "node:test";
 import {
   decodeRemotePairingQrV1,
@@ -53,6 +53,50 @@ const validClientFrame = {
     retryUntil: "2026-07-19T11:00:00.000Z",
   },
 };
+
+test("device journal frames bind cursor ranges to public events from the task owner", () => {
+  const command = {
+    ...validClientFrame,
+    type: "device.task.journal",
+    payload: { commandId: "read-journal", workspaceId: "workspace-1", taskId: "task-1", generation: 1, afterSequence: 2, limit: 1 },
+  };
+  assert.deepEqual(parseRemoteClientFrameV1(JSON.stringify(command), { nowMs }), command);
+  assert.throws(() => parseRemoteClientFrameV1(JSON.stringify({
+    ...command, payload: { ...command.payload, limit: REMOTE_DEVICE_JOURNAL_PAGE_LIMIT_V1 + 1 },
+  }), { nowMs }), /allowed range/u);
+
+  const streamId = "device-task:task-1";
+  const event = {
+    eventId: streamId + ":40", traceId: streamId, streamId, generation: 1, sequence: 3, sourceId: "runtime-1",
+    kind: "observation_recorded", sourceKind: "adapter", payload: { observationId: "observation-1" },
+    occurredAt: now, evidenceRefs: ["observation-1"], redactionClass: "public", retentionClass: "durable",
+  };
+  const page = {
+    streamId, generation: 1, afterSequence: 2, latestSequence: 3, events: [event], hasMore: false, requiresSnapshot: false,
+    workspaceId: "workspace-1", task: { taskId: "task-1", ownerId: "runtime-1", status: "succeeded", updatedAt: now },
+  };
+  function completed(journal: unknown) {
+    return {
+      version: 1, type: "command.completed", messageId: "result-1", gatewayId: "gateway-1", sessionId: "session-1",
+      sentAt: now, streamId: "control-stream", eventId: "control-event-1", serverSeq: 2, occurredAt: now,
+      payload: {
+        commandId: command.payload.commandId, commandType: command.type, completedAt: now,
+        result: { kind: "device_task_journal_read", journal },
+      },
+    };
+  }
+  assert.deepEqual(parseRemoteServerFrameV1(JSON.stringify(completed(page))), completed(page));
+  assert.throws(() => parseRemoteServerFrameV1(JSON.stringify(completed({ ...page, hasMore: true }))), /projection is invalid/u);
+  for (const altered of [
+    { ...event, sequence: 2 },
+    { ...event, sourceId: "runtime-2" },
+    { ...event, redactionClass: "sensitive" },
+    { ...event, evidenceRefs: ["observation-2"] },
+    { ...event, payload: { ...event.payload, rawText: "private device log" } },
+  ]) {
+    assert.throws(() => parseRemoteServerFrameV1(JSON.stringify(completed({ ...page, events: [altered] }))));
+  }
+});
 
 test("pairing QR round-trips canonical wire encoding and rejects extra fields", () => {
   assert.deepEqual(validateRemotePairingQrV1(pairingQr, { nowMs }), pairingQr);

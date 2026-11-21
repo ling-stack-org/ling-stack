@@ -39,6 +39,7 @@ export interface DeviceTaskPatch {
 
 export interface DeviceTaskEvent {
   readonly sequence: number;
+  readonly rowSequence: number;
   readonly taskId: string;
   readonly type: string;
   readonly body: Record<string, unknown>;
@@ -410,17 +411,18 @@ export class SqliteDeviceSupportStore {
   }
 
   listEvents(taskId: string, page?: { readonly offset: number; readonly limit: number }): readonly DeviceTaskEvent[] {
-    const rows = this.database.prepare(
-      "SELECT sequence,task_id,type,body_json,created_at FROM device_task_events WHERE task_id=? ORDER BY sequence",
-    ).all(taskId) as Row[];
-    const selected = page ? rows.slice(page.offset, page.offset + page.limit) : rows;
-    return selected.map((row, index) => ({
-        sequence: (page?.offset ?? 0) + index + 1,
-        taskId: readString(row, "task_id"),
-        type: readString(row, "type"),
-        body: JSON.parse(readString(row, "body_json")) as Record<string, unknown>,
-        createdAt: readString(row, "created_at"),
-      }));
+    const statement = this.database.prepare(
+      `SELECT sequence,task_id,type,body_json,created_at FROM device_task_events WHERE task_id=? ORDER BY sequence${page ? " LIMIT ? OFFSET ?" : ""}`,
+    );
+    const rows = (page ? statement.all(taskId, page.limit, page.offset) : statement.all(taskId)) as Row[];
+    return rows.map((row, index) => ({
+      sequence: (page?.offset ?? 0) + index + 1,
+      rowSequence: Number(row.sequence),
+      taskId: readString(row, "task_id"),
+      type: readString(row, "type"),
+      body: JSON.parse(readString(row, "body_json")) as Record<string, unknown>,
+      createdAt: readString(row, "created_at"),
+    }));
   }
 
   countEvents(taskId: string): number {

@@ -12,13 +12,14 @@ import { WebSocket } from "ws";
 import {
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2,
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3,
   type DeviceActionRequestV1,
   type DeviceTaskV1,
   type RemoteAuthProofV1,
   type RemoteClientCommandPayloadMapV1,
   type RemoteServerFrameV1,
 } from "@ling-stack/contracts";
-import { createSqliteRunStore, DEFAULT_WORKSPACE_ID, DeviceCapabilityBroker, digestRequest, SqliteDeviceSupportStore } from "@ling-stack/core";
+import { createSqliteRunStore, DEFAULT_WORKSPACE_ID, DeviceCapabilityBroker, digestRequest, readOwnedDeviceTaskJournal, SqliteDeviceSupportStore } from "@ling-stack/core";
 import {
   authProofSigningBytes,
   authProofSigningInput,
@@ -81,7 +82,7 @@ test("remote device facade projects workspace-scoped devices and task attempts",
   store.close();
 });
 
-test("authenticated Gateway sessions recover PC tasks, stop active writes and reconcile with fresh readback", { timeout: 10_000 }, async t => {
+test("authenticated Gateway sessions recover PC tasks, reconcile writes and resume owner journals", { timeout: 10_000 }, async t => {
   let clock = now;
   const readClock = () => clock;
   const root = await mkdtemp(join(tmpdir(), "ling-device-gateway-"));
@@ -166,7 +167,7 @@ test("authenticated Gateway sessions recover PC tasks, stop active writes and re
     let clientSeq = 0;
     return {
       ready: ready.payload,
-      async send<T extends "device.list" | "device.task.status" | "device.task.approve" | "device.task.revoke" | "device.task.reconcile" | "stream.subscribe">(type: T, payload: RemoteClientCommandPayloadMapV1[T]) {
+      async send<T extends "device.list" | "device.task.status" | "device.task.approve" | "device.task.revoke" | "device.task.reconcile" | "device.task.journal" | "stream.subscribe">(type: T, payload: RemoteClientCommandPayloadMapV1[T]) {
         clientSeq += 1;
         const messageId = `message-${clientSeq}`;
         socket.send(JSON.stringify({
@@ -299,6 +300,7 @@ test("authenticated Gateway sessions recover PC tasks, stop active writes and re
   clock = "2026-11-21T00:00:31.000Z";
   const modern = await connect([REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1]);
   assert.ok(modern.ready.policy.capabilities.includes("device.reconcile"));
+  assert.equal(modern.ready.policy.capabilities.includes("device.journal"), false);
   const status = await modern.send("device.task.status", { commandId: "current-status", ...taskScope });
   const preview = (await waitForFrame(modern.frames, "device.task.snapshot", status)).payload.task.pendingReconciliation;
   assert.deepEqual(preview, {
@@ -342,6 +344,53 @@ test("authenticated Gateway sessions recover PC tasks, stop active writes and re
     commandId: "second-recheck", ...binding, capabilitySnapshotId: refreshedSnapshotId,
   });
   assert.equal((await waitForFrame(modern.frames, "command.failed", replayReadback)).payload.error.code, "resync_required");
+  const cursor = { workspaceId: DEFAULT_WORKSPACE_ID, taskId: active.taskId, generation: 1, afterSequence: 0, limit: 1 };
+  const oldJournal = await modern.send("device.task.journal", { ...cursor, commandId: "journal-v2" });
+  assert.equal((await waitForFrame(modern.frames, "command.failed", oldJournal)).payload.error.code, "capability_not_allowed");
+  await modern.close();
+
+  deviceStore.appendObservation(active.taskId, {
+    id: "private-observation", subjectId: target.device.id, source: "pc.private", value: { text: "owner-only-output" },
+    observedAt: clock, receivedAt: clock, freshnessUntil: clock,
+    quality: "good", provenance: [target.device.id], redactionClass: "sensitive",
+  }, clock);
+  deviceStore.createTask(deviceTask("other-workspace-task", ["other-board"]), clock);
+  deviceStore.createTask(deviceTask("phone-owned-task", [target.device.id], { ownerKind: "mobile" }), clock);
+
+  async function readJournal(peer: Awaited<ReturnType<typeof connect>>, payload: RemoteClientCommandPayloadMapV1["device.task.journal"]) {
+    const requestId = await peer.send("device.task.journal", payload);
+    const frame = await waitForFrame(peer.frames, "command.completed", requestId);
+    assert.equal(frame.payload.commandType, "device.task.journal");
+    return frame.payload.result.journal;
+  }
+
+  const v3 = await connect([REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2]);
+  assert.ok(v3.ready.policy.capabilities.includes("device.journal"));
+  const firstJournal = await readJournal(v3, { ...cursor, commandId: "journal-first" });
+  assert.equal(firstJournal.events[0]?.kind, "task_created");
+  assert.equal(firstJournal.events[0]?.sequence, 1);
+  assert.equal(firstJournal.hasMore, true);
+  assert.equal(firstJournal.task.lastVerificationId, reconciled.payload.task.lastVerificationId);
+  await v3.close();
+
+  const resumed = await connect(REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3);
+  const rest = await readJournal(resumed, { ...cursor, commandId: "journal-resume", limit: 25, afterSequence: 1 });
+  const local = readOwnedDeviceTaskJournal({ ...cursor, store: deviceStore, afterSequence: 1, limit: 25 });
+  assert.deepEqual(rest.events, local.events);
+  assert.equal(rest.events[0]?.sequence, 2);
+  assert.ok(rest.events.some(event => event.kind === "attempt_reconciled"));
+  assert.doesNotMatch(JSON.stringify(rest), /private-observation|owner-only-output|connectionRevision|capabilitySnapshotIds/u);
+  const stalePage = await readJournal(resumed, { ...cursor, commandId: "journal-stale", generation: 2, afterSequence: 1 });
+  assert.equal(stalePage.requiresSnapshot, true);
+  assert.equal(stalePage.generation, 1);
+  assert.equal(stalePage.task.status, "succeeded");
+  assert.deepEqual(stalePage.events, []);
+  const replacement = await readJournal(resumed, { ...cursor, commandId: "journal-reset", generation: stalePage.generation });
+  assert.deepEqual(replacement.events, firstJournal.events);
+  const crossWorkspace = await resumed.send("device.task.journal", { ...cursor, taskId: "other-workspace-task", commandId: "journal-cross-workspace" });
+  assert.equal((await waitForFrame(resumed.frames, "command.failed", crossWorkspace)).payload.error.code, "workspace_not_allowed");
+  const wrongOwner = await resumed.send("device.task.journal", { ...cursor, taskId: "phone-owned-task", commandId: "journal-phone-owned" });
+  assert.equal((await waitForFrame(resumed.frames, "command.failed", wrongOwner)).payload.error.code, "pc_unavailable");
   assert.equal(repairCalls, 1);
   assert.equal(networkReads, 4);
 });

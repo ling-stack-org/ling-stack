@@ -3,6 +3,8 @@ import type {
   RemoteDeviceListSnapshotV1,
   RemoteDeviceTaskApproveCommandV1,
   RemoteDeviceTaskApprovedV1,
+  RemoteDeviceTaskJournalCommandV1,
+  RemoteDeviceTaskJournalReadV1,
   RemoteDeviceTaskListRequestedV1,
   RemoteDeviceTaskRecheckedV1,
   RemoteDeviceTaskReconcileCommandV1,
@@ -53,6 +55,7 @@ export const REMOTE_CAPABILITIES_V1 = [
   "profile.update",
   "security.unpair",
   "device.read",
+  "device.journal",
   "device.approve",
   "device.revoke",
   "device.reconcile",
@@ -75,6 +78,7 @@ export const REMOTE_CLIENT_COMMAND_TYPES_V1 = [
   "security.unpair",
   "device.list",
   "device.task.status",
+  "device.task.journal",
   "device.task.approve",
   "device.task.revoke",
   "device.task.reconcile",
@@ -96,6 +100,7 @@ export const REMOTE_LIFECYCLE_COMMAND_TYPES_V1 = [
   "security.unpair",
   "device.list",
   "device.task.status",
+  "device.task.journal",
   "device.task.approve",
   "device.task.revoke",
   "device.task.reconcile",
@@ -491,6 +496,7 @@ export interface RemoteCommandResultMapV1 {
   readonly "security.unpair": { readonly kind: "device_unpaired" };
   readonly "device.list": RemoteDeviceTaskListRequestedV1;
   readonly "device.task.status": RemoteDeviceTaskStatusRequestedV1;
+  readonly "device.task.journal": RemoteDeviceTaskJournalReadV1;
   readonly "device.task.approve": RemoteDeviceTaskApprovedV1;
   readonly "device.task.revoke": RemoteDeviceTaskRevokedV1;
   readonly "device.task.reconcile": RemoteDeviceTaskRecheckedV1;
@@ -564,6 +570,7 @@ export interface RemoteClientCommandPayloadMapV1 {
   readonly "security.unpair": RemoteSecurityUnpairCommandV1;
   readonly "device.list": RemoteDeviceListCommandV1;
   readonly "device.task.status": RemoteDeviceTaskStatusCommandV1;
+  readonly "device.task.journal": RemoteDeviceTaskJournalCommandV1;
   readonly "device.task.approve": RemoteDeviceTaskApproveCommandV1;
   readonly "device.task.revoke": RemoteDeviceTaskRevokeCommandV1;
   readonly "device.task.reconcile": RemoteDeviceTaskReconcileCommandV1;

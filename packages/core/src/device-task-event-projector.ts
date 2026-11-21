@@ -1,4 +1,7 @@
-import { isDeviceTaskV1, type DeviceEventEnvelopeV1, type DeviceTaskJournalPageV1, type JsonValue } from "@ling-stack/contracts";
+import {
+  DEVICE_TASK_JOURNAL_PUBLIC_EVENTS_V1, isDeviceTaskV1,
+  type DeviceEventEnvelopeV1, type DeviceTaskJournalPageV1, type JsonValue,
+} from "@ling-stack/contracts";
 
 import { DeviceBrokerError } from "./device-support.js";
 import type { DeviceTaskEvent, SqliteDeviceSupportStore } from "./storage/sqlite/device-support-store.js";
@@ -30,7 +33,7 @@ export function readOwnedDeviceTaskJournal(input: {
     const latestSequence = store.countEvents(task.id);
     const requiresSnapshot = generation !== 1 || afterSequence > latestSequence;
     const events = requiresSnapshot ? [] : store.listEvents(task.id, { offset: afterSequence, limit })
-      .map(event => projectEvent(store, event, streamId, task.ownerId, event.sequence));
+      .map(event => projectEvent(store, event, streamId, task.ownerId));
     return {
       streamId, generation: 1, latestSequence, task, events,
       hasMore: !requiresSnapshot && afterSequence + events.length < latestSequence,
@@ -42,42 +45,33 @@ export function readOwnedDeviceTaskJournal(input: {
 type EventView = Pick<DeviceEventEnvelopeV1, "kind" | "sourceKind" | "payload" | "evidenceRefs">;
 
 function projectEvent(
-  store: SqliteDeviceSupportStore, event: DeviceTaskEvent, streamId: string, ownerId: string, sequence: number,
+  store: SqliteDeviceSupportStore, event: DeviceTaskEvent, streamId: string, ownerId: string,
 ): DeviceEventEnvelopeV1 {
   return {
-    eventId: `${streamId}:${event.sequence}`, traceId: streamId, streamId, generation: 1,
-    sourceId: ownerId, sequence, occurredAt: event.createdAt, redactionClass: "public", retentionClass: "durable",
+    eventId: `${streamId}:${event.rowSequence}`, traceId: streamId, streamId, generation: 1,
+    sourceId: ownerId, sequence: event.sequence, occurredAt: event.createdAt, redactionClass: "public", retentionClass: "durable",
     ...publicEventView(store, event),
   };
 }
 
 function publicEventView(store: SqliteDeviceSupportStore, event: DeviceTaskEvent): EventView {
   const { type: kind, body } = event;
-  switch (kind) {
-    case "task_created":
-      return { kind, sourceKind: "runtime", payload: isDeviceTaskV1(body.task) ? { status: body.task.status } : {} };
-    case "task_transition":
-      return { kind, sourceKind: "runtime", payload: fields(body, "from", "to") };
-    case "device_plan_accepted":
-      return { kind, sourceKind: "graph", payload: fields(body, "proposalId", "contextId", "source") };
-    case "attempt_prepared":
-      return { kind, sourceKind: "runtime", payload: fields(body, "attemptId", "actionId") };
-    case "attempt_updated":
-      return { kind, sourceKind: "runtime", payload: fields(body, "attemptId", "status", "receiptStatus", "verificationStatus") };
-    case "task_stop_requested":
-      return { kind, sourceKind: "runtime", payload: fields(body, "attemptId", "status") };
-    case "attempt_reconciled":
-      return { kind, sourceKind: "verification", payload: fields(body, "attemptId", "status", "reconciliationId") };
-    case "observation_recorded":
-      if (typeof body.observationId === "string" && store.hasPublicObservation(event.taskId, body.observationId)) {
-        return { kind, sourceKind: "adapter", payload: { observationId: body.observationId }, evidenceRefs: [body.observationId] };
-      }
-      break;
+  const publicEvents = DEVICE_TASK_JOURNAL_PUBLIC_EVENTS_V1;
+  if (kind === "task_created") {
+    return { kind, sourceKind: publicEvents[kind].sourceKind, payload: isDeviceTaskV1(body.task) ? { status: body.task.status } : {} };
+  }
+  if (kind === "observation_recorded") {
+    if (typeof body.observationId === "string" && store.hasPublicObservation(event.taskId, body.observationId)) {
+      return { kind, sourceKind: publicEvents[kind].sourceKind, payload: { observationId: body.observationId }, evidenceRefs: [body.observationId] };
+    }
+  } else if (Object.hasOwn(publicEvents, kind)) {
+    const schema = publicEvents[kind as keyof typeof publicEvents];
+    return { kind, sourceKind: schema.sourceKind, payload: fields(body, schema.fields) };
   }
   return { kind: "journal_changed", sourceKind: "runtime", payload: {} };
 }
 
-function fields(body: Record<string, unknown>, ...keys: string[]): JsonValue {
+function fields(body: Record<string, unknown>, keys: readonly string[]): JsonValue {
   const result: Record<string, string> = {};
   for (const key of keys) {
     if (typeof body[key] === "string") result[key] = body[key];

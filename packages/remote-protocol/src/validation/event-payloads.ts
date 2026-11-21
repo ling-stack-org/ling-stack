@@ -36,7 +36,7 @@ import {
   expectSafeInteger,
   expectString,
 } from "./primitives.js";
-import { validateDeviceListSnapshot, validateDeviceTaskSnapshot } from "./device.js";
+import { validateDeviceListSnapshot, validateDeviceTaskJournal, validateDeviceTaskSnapshot } from "./device.js";
 
 function validateCommandResult(value: unknown, path: string): RemoteCommandResultV1 {
   const record = expectRecord(value, path);
@@ -54,6 +54,7 @@ function validateCommandResult(value: unknown, path: string): RemoteCommandResul
     "device_unpaired",
     "device_list_requested",
     "device_task_status_requested",
+    "device_task_journal_read",
     "device_task_approved",
     "device_task_revoked",
     "device_task_rechecked",
@@ -98,6 +99,9 @@ function validateCommandResult(value: unknown, path: string): RemoteCommandResul
     case "device_task_status_requested":
       assertStrictKeys(record, ["kind", "taskId"], [], path);
       return { kind, taskId: expectIdentifier(record.taskId, `${path}.taskId`) };
+    case "device_task_journal_read":
+      assertStrictKeys(record, ["kind", "journal"], [], path);
+      return { kind, journal: validateDeviceTaskJournal(record.journal, `${path}.journal`) };
     case "device_task_approved":
     case "device_task_revoked":
       assertStrictKeys(record, ["kind", "taskId"], [], path);
@@ -160,6 +164,7 @@ const EXPECTED_RESULT_KINDS: Record<RemoteLifecycleCommandTypeV1, RemoteCommandR
   "security.unpair": "device_unpaired",
   "device.list": "device_list_requested",
   "device.task.status": "device_task_status_requested",
+  "device.task.journal": "device_task_journal_read",
   "device.task.approve": "device_task_approved",
   "device.task.revoke": "device_task_revoked",
   "device.task.reconcile": "device_task_rechecked",

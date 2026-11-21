@@ -6,6 +6,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useMobileRemote } from "../../remote/MobileRemoteProvider";
 import type { MobileThemeTokens } from "../../theme/mobile-theme";
 import { useMobileTheme } from "../../theme/mobile-theme-provider";
+import { PcDeviceTaskJournal } from "./PcDeviceTaskJournal";
 
 const taskStatusLabels: Record<DeviceTaskStatusV1, string> = {
   created: "待处理",
@@ -34,6 +35,7 @@ export function PcDeviceTasksScreen() {
   const styles = createStyles(theme);
   const { connection, deviceOverview, deviceOverviewCurrent, deviceTask, deviceTaskCurrent } = remoteState;
   const canRead = remoteState.policy?.capabilities.includes("device.read") === true;
+  const canReadJournal = remoteState.policy?.capabilities.includes("device.journal") === true;
   const canApprove = remoteState.policy?.capabilities.includes("device.approve") === true;
   const canRevoke = remoteState.policy?.capabilities.includes("device.revoke") === true;
   const canReconcile = remoteState.policy?.capabilities.includes("device.reconcile") === true;
@@ -213,6 +215,13 @@ export function PcDeviceTasksScreen() {
                         ) : <Text style={styles.note}>
                           {!connected ? "连接 PC 后读取执行记录" : failedTaskId === task.taskId ? "读取失败，请重新打开此任务。" : "正在读取执行记录…"}
                         </Text>}
+                        {canReadJournal && client ? (
+                          <PcDeviceTaskJournal
+                            key={remoteState.workspaceBindingId}
+                            client={client} taskId={task.taskId} connected={connected && deviceOverviewCurrent === true}
+                            updatedAt={currentDetail?.updatedAt ?? task.updatedAt} theme={theme}
+                          />
+                        ) : null}
                       </View>
                     ) : null}
                   </View>

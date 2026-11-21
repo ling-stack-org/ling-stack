@@ -1,12 +1,17 @@
 import {
   DEVICE_KINDS_V1,
   DEVICE_LIFECYCLE_STATUSES_V1,
+  DEVICE_TASK_JOURNAL_PUBLIC_EVENTS_V1,
   DEVICE_TASK_STATUSES_V1,
+  REMOTE_DEVICE_JOURNAL_PAGE_LIMIT_V1,
   REMOTE_DEVICE_RECENT_TASK_LIMIT_V1,
+  type DeviceEventEnvelopeV1,
   type RemoteDeviceListCommandV1,
   type RemoteDeviceListSnapshotV1,
   type RemoteDeviceRecentTaskV1,
   type RemoteDeviceTaskApproveCommandV1,
+  type RemoteDeviceTaskJournalCommandV1,
+  type RemoteDeviceTaskJournalV1,
   type RemoteDeviceTaskReconcileCommandV1,
   type RemoteDeviceTaskRevokeCommandV1,
   type RemoteDeviceTaskSnapshotV1,
@@ -19,10 +24,13 @@ import {
 import { RemoteProtocolError } from "../errors.js";
 import {
   assertStrictKeys,
+  expectBoolean,
   expectEnum,
   expectIdentifier,
+  expectLiteral,
   expectRecord,
   expectRfc3339,
+  expectSafeInteger,
   expectString,
 } from "./primitives.js";
 
@@ -39,6 +47,19 @@ export function validateDeviceTaskStatusCommand(value: unknown, path: string): R
     commandId: expectIdentifier(record.commandId, `${path}.commandId`),
     workspaceId: expectIdentifier(record.workspaceId, `${path}.workspaceId`),
     taskId: expectIdentifier(record.taskId, `${path}.taskId`),
+  };
+}
+
+export function validateDeviceTaskJournalCommand(value: unknown, path: string): RemoteDeviceTaskJournalCommandV1 {
+  const record = expectRecord(value, path);
+  assertStrictKeys(record, ["commandId", "workspaceId", "taskId", "generation", "afterSequence", "limit"], [], path);
+  return {
+    commandId: expectIdentifier(record.commandId, `${path}.commandId`),
+    workspaceId: expectIdentifier(record.workspaceId, `${path}.workspaceId`),
+    taskId: expectIdentifier(record.taskId, `${path}.taskId`),
+    generation: expectSafeInteger(record.generation, `${path}.generation`, { minimum: 1 }),
+    afterSequence: expectSafeInteger(record.afterSequence, `${path}.afterSequence`, { minimum: 0 }),
+    limit: expectSafeInteger(record.limit, `${path}.limit`, { minimum: 1, maximum: REMOTE_DEVICE_JOURNAL_PAGE_LIMIT_V1 }),
   };
 }
 
@@ -125,6 +146,89 @@ export function validateDeviceTaskSnapshot(value: unknown, path: string): Remote
     workspaceId: expectIdentifier(record.workspaceId, `${path}.workspaceId`),
     task: validateDeviceTaskSummary(record.task, `${path}.task`),
     generatedAt: expectRfc3339(record.generatedAt, `${path}.generatedAt`),
+  };
+}
+
+export function validateDeviceTaskJournal(value: unknown, path: string): RemoteDeviceTaskJournalV1 {
+  const record = expectRecord(value, path);
+  assertStrictKeys(record, [
+    "workspaceId", "task", "streamId", "generation", "afterSequence", "latestSequence", "events", "hasMore", "requiresSnapshot",
+  ], [], path);
+  const taskPath = `${path}.task`;
+  const task = expectRecord(record.task, taskPath);
+  assertStrictKeys(task, ["taskId", "ownerId", "status", "updatedAt"], ["lastVerificationId"], taskPath);
+  const taskId = expectIdentifier(task.taskId, `${taskPath}.taskId`);
+  const ownerId = expectIdentifier(task.ownerId, `${taskPath}.ownerId`);
+  const streamId = expectLiteral(record.streamId, `device-task:${taskId}`, `${path}.streamId`);
+  const generation = expectSafeInteger(record.generation, `${path}.generation`, { minimum: 1 });
+  const afterSequence = expectSafeInteger(record.afterSequence, `${path}.afterSequence`, { minimum: 0 });
+  const latestSequence = expectSafeInteger(record.latestSequence, `${path}.latestSequence`, { minimum: 0 });
+  const hasMore = expectBoolean(record.hasMore, `${path}.hasMore`);
+  const requiresSnapshot = expectBoolean(record.requiresSnapshot, `${path}.requiresSnapshot`);
+  if (!Array.isArray(record.events) || record.events.length > REMOTE_DEVICE_JOURNAL_PAGE_LIMIT_V1) return invalid(`${path}.events`);
+  const endSequence = afterSequence + record.events.length;
+  if (requiresSnapshot ? (record.events.length !== 0 || hasMore)
+    : (endSequence > latestSequence || hasMore !== (endSequence < latestSequence) || (hasMore && record.events.length === 0))) {
+    return invalid(path);
+  }
+  const events = record.events.map((event, index) => validateJournalEvent(
+    event, `${path}.events[${index}]`, { streamId, generation, ownerId, sequence: afterSequence + index + 1 },
+  ));
+  if (new Set(events.map(event => event.eventId)).size !== events.length) return invalid(`${path}.events`);
+  return {
+    workspaceId: expectIdentifier(record.workspaceId, `${path}.workspaceId`),
+    task: {
+      taskId, ownerId,
+      status: expectEnum(task.status, DEVICE_TASK_STATUSES_V1, `${taskPath}.status`),
+      updatedAt: expectRfc3339(task.updatedAt, `${taskPath}.updatedAt`),
+      ...(task.lastVerificationId === undefined ? {} : { lastVerificationId: expectIdentifier(task.lastVerificationId, `${taskPath}.lastVerificationId`) }),
+    },
+    streamId, generation, afterSequence, latestSequence, events, hasMore, requiresSnapshot,
+  };
+}
+
+function validateJournalEvent(
+  value: unknown, path: string,
+  binding: { readonly streamId: string; readonly generation: number; readonly ownerId: string; readonly sequence: number },
+): DeviceEventEnvelopeV1 {
+  const record = expectRecord(value, path);
+  assertStrictKeys(record, [
+    "eventId", "traceId", "streamId", "generation", "sourceKind", "sourceId", "sequence",
+    "kind", "payload", "occurredAt", "redactionClass", "retentionClass",
+  ], ["evidenceRefs"], path);
+  const kinds = DEVICE_TASK_JOURNAL_PUBLIC_EVENTS_V1;
+  const kind = expectIdentifier(record.kind, `${path}.kind`);
+  if (!Object.hasOwn(kinds, kind)) return invalid(`${path}.kind`);
+  const schema = kinds[kind as keyof typeof kinds];
+  const payloadPath = `${path}.payload`;
+  const body = expectRecord(record.payload, payloadPath);
+  assertStrictKeys(body, [], schema.fields, payloadPath);
+  const payload = Object.fromEntries(Object.entries(body).map(([key, field]) => [
+    key, expectString(field, `${payloadPath}.${key}`, { maxBytes: 2048 }),
+  ]));
+  const eventId = expectString(record.eventId, `${path}.eventId`, { maxBytes: 320 });
+  const prefix = binding.streamId + ":";
+  if (!eventId.startsWith(prefix) || !/^[1-9][0-9]*$/u.test(eventId.slice(prefix.length))) return invalid(`${path}.eventId`);
+  const evidenceRefs = record.evidenceRefs;
+  if (kind === "observation_recorded") {
+    if (!payload.observationId || !Array.isArray(evidenceRefs) || evidenceRefs.length !== 1 || evidenceRefs[0] !== payload.observationId) {
+      return invalid(`${path}.evidenceRefs`);
+    }
+  } else if (evidenceRefs !== undefined) {
+    return invalid(`${path}.evidenceRefs`);
+  }
+  return {
+    eventId, kind, payload,
+    traceId: expectLiteral(record.traceId, binding.streamId, `${path}.traceId`),
+    streamId: expectLiteral(record.streamId, binding.streamId, `${path}.streamId`),
+    generation: expectLiteral(record.generation, binding.generation, `${path}.generation`),
+    sourceKind: expectLiteral(record.sourceKind, schema.sourceKind, `${path}.sourceKind`),
+    sourceId: expectLiteral(record.sourceId, binding.ownerId, `${path}.sourceId`),
+    sequence: expectLiteral(record.sequence, binding.sequence, `${path}.sequence`),
+    occurredAt: expectRfc3339(record.occurredAt, `${path}.occurredAt`),
+    redactionClass: expectLiteral(record.redactionClass, "public", `${path}.redactionClass`),
+    retentionClass: expectLiteral(record.retentionClass, "durable", `${path}.retentionClass`),
+    ...(kind === "observation_recorded" ? { evidenceRefs: [payload.observationId!] } : {}),
   };
 }
 

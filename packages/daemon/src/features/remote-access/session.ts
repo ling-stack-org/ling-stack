@@ -278,6 +278,11 @@ export class RemoteGatewaySession {
         this.complete(frame, { kind: "device_task_status_requested", taskId: frame.payload.taskId });
         return;
       }
+      case "device.task.journal": {
+        const journal = this.requireDeviceFacade(frame.payload.workspaceId).taskJournal(frame.payload);
+        this.complete(frame, { kind: "device_task_journal_read", journal });
+        return;
+      }
       case "device.task.approve": {
         const snapshot = await this.requireDeviceFacade(frame.payload.workspaceId).approveTask(frame.payload);
         this.complete(frame, { kind: "device_task_approved", taskId: frame.payload.taskId });
@@ -509,6 +514,9 @@ function commandCapability(
   }
   if (commandType === "device.list" || commandType === "device.task.status") {
     return "device.read";
+  }
+  if (commandType === "device.task.journal") {
+    return "device.journal";
   }
   if (commandType === "device.task.approve") {
     return "device.approve";

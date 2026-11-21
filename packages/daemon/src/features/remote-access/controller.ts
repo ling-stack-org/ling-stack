@@ -9,6 +9,7 @@ import {
 import {
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2,
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3,
   REMOTE_PROTOCOL_LIMITS,
   type RemoteCapabilityV1,
 } from "@ling-stack/contracts";
@@ -24,6 +25,10 @@ import { RemoteProjectionOutboxWorker } from "./projection-outbox-worker.js";
 import { RemoteGatewaySession } from "./session.js";
 import { RemoteAccessStateStore } from "./state-store.js";
 import type { RemoteDeviceFacade } from "./device-facade.js";
+
+const deviceTaskProtocols = [
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1,
+];
 
 const LOOPBACK_HOST = "127.0.0.1";
 const MANAGEMENT_PREFIX = "/v1/mobile-access";
@@ -244,9 +249,7 @@ export class RemoteAccessController {
     const webSocketServer = new WebSocketServer({
       noServer: true,
       maxPayload: REMOTE_PROTOCOL_LIMITS.maxFrameBytes,
-      handleProtocols: protocols => protocols.has(REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2)
-        ? REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2
-        : protocols.has(REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1) && REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1,
+      handleProtocols: protocols => deviceTaskProtocols.find(protocol => protocols.has(protocol)) ?? false,
     });
     server.on("upgrade", (request, socket, head) => {
       const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "127.0.0.1"}`);
@@ -273,11 +276,8 @@ export class RemoteAccessController {
           void this.auth.verifyAuthProof(proof).then((authenticated) => {
             this.activeSession?.revoke("replaced");
             const currentState = this.auth.state();
-            const supportsReconciliation = webSocket.protocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2;
-            const deviceFacade = supportsReconciliation || webSocket.protocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1
-              ? this.options.deviceFacade
-              : undefined;
-            const capabilities = this.capabilities(deviceFacade !== undefined, supportsReconciliation);
+            const deviceFacade = deviceTaskProtocols.includes(webSocket.protocol) ? this.options.deviceFacade : undefined;
+            const capabilities = this.capabilities(deviceFacade ? webSocket.protocol : "");
             const facade = new RemoteConversationFacade({
               store: this.options.store,
               workspaceId: DEFAULT_WORKSPACE_ID,
@@ -368,7 +368,8 @@ export class RemoteAccessController {
     }
   }
 
-  private capabilities(deviceTasks: boolean, supportsReconciliation: boolean): readonly RemoteCapabilityV1[] {
+  private capabilities(deviceTaskProtocol: string): readonly RemoteCapabilityV1[] {
+    const supportsJournal = deviceTaskProtocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3;
     return [
       "conversation.read",
       ...(this.options.dispatcher ? ["conversation.send_text" as const] : []),
@@ -376,8 +377,9 @@ export class RemoteAccessController {
       "profile.read",
       "profile.update",
       "security.unpair",
-      ...(deviceTasks ? ["device.read" as const, "device.approve" as const, "device.revoke" as const] : []),
-      ...(deviceTasks && supportsReconciliation ? ["device.reconcile" as const] : []),
+      ...(deviceTaskProtocol ? ["device.read" as const, "device.approve" as const, "device.revoke" as const] : []),
+      ...(supportsJournal || deviceTaskProtocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2 ? ["device.reconcile" as const] : []),
+      ...(supportsJournal ? ["device.journal" as const] : []),
     ];
   }
 

@@ -5,10 +5,13 @@ import type {
   DeviceTaskStatusV1,
   JsonValue,
 } from "./device.js";
+import type { DeviceEventEnvelopeV1 } from "./device-fabric.js";
 
 export const REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1 = "ling.device-tasks.v1";
 export const REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2 = "ling.device-tasks.v2";
+export const REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3 = "ling.device-tasks.v3";
 export const REMOTE_DEVICE_RECENT_TASK_LIMIT_V1 = 20;
+export const REMOTE_DEVICE_JOURNAL_PAGE_LIMIT_V1 = 25;
 
 export interface RemoteDeviceSummaryV1 {
   readonly deviceId: string;
@@ -84,6 +87,29 @@ export interface RemoteDeviceTaskStatusCommandV1 {
   readonly taskId: string;
 }
 
+export interface RemoteDeviceTaskJournalCommandV1 extends RemoteDeviceTaskStatusCommandV1 {
+  readonly generation: number;
+  readonly afterSequence: number;
+  readonly limit: number;
+}
+
+export interface RemoteDeviceTaskJournalV1 {
+  readonly workspaceId: string;
+  readonly task: Pick<RemoteDeviceTaskSummaryV1, "taskId" | "ownerId" | "status" | "updatedAt" | "lastVerificationId">;
+  readonly streamId: string;
+  readonly generation: number;
+  readonly afterSequence: number;
+  readonly latestSequence: number;
+  readonly events: readonly DeviceEventEnvelopeV1[];
+  readonly hasMore: boolean;
+  readonly requiresSnapshot: boolean;
+}
+
+export interface RemoteDeviceTaskJournalReadV1 {
+  readonly kind: "device_task_journal_read";
+  readonly journal: RemoteDeviceTaskJournalV1;
+}
+
 export interface RemoteDeviceTaskApproveCommandV1 {
   readonly commandId: string;
   readonly workspaceId: string;
@@ -130,6 +156,7 @@ export interface RemoteDeviceTaskRecheckedV1 {
 export type RemoteDeviceCommandResultV1 =
   | RemoteDeviceTaskListRequestedV1
   | RemoteDeviceTaskStatusRequestedV1
+  | RemoteDeviceTaskJournalReadV1
   | RemoteDeviceTaskApprovedV1
   | RemoteDeviceTaskRevokedV1
   | RemoteDeviceTaskRecheckedV1;

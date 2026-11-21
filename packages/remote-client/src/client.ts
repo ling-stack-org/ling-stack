@@ -1,6 +1,8 @@
 import {
+  REMOTE_DEVICE_JOURNAL_PAGE_LIMIT_V1,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2,
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3,
   REMOTE_PROTOCOL_VERSION,
   type DeviceApprovalBindingV1,
   type RemoteAuthChallengeV1,
@@ -11,6 +13,7 @@ import {
   type RemoteCommandFailedV1,
   type RemoteCommandResultMapV1,
   type RemoteDeviceApprovalPreviewV1,
+  type RemoteDeviceTaskJournalV1,
   type RemoteDeviceReconciliationPreviewV1,
   type RemoteConversationOpenCommandV1,
   type RemoteMarkConversationReadCommandV1,
@@ -252,6 +255,32 @@ export class RemoteSessionClient {
     });
   }
 
+  async readDeviceTaskJournal(taskId: string, cursor: {
+    readonly generation: number;
+    readonly afterSequence: number;
+    readonly limit?: number;
+  }): Promise<RemoteDeviceTaskJournalV1> {
+    const { workspaceId, assertCurrent } = this.deviceTaskAuthority("device.journal");
+    const { generation, afterSequence, limit = REMOTE_DEVICE_JOURNAL_PAGE_LIMIT_V1 } = cursor;
+    if (!Number.isSafeInteger(generation) || generation < 1 || !Number.isSafeInteger(afterSequence) || afterSequence < 0
+      || !Number.isSafeInteger(limit) || limit < 1 || limit > REMOTE_DEVICE_JOURNAL_PAGE_LIMIT_V1) {
+      throw new Error("remote_device_journal_invalid_cursor");
+    }
+    const handle = await this.sendCommand("device.task.journal", {
+      commandId: await this.options.entropy.randomId("device_task_journal"),
+      workspaceId, taskId, generation, afterSequence, limit,
+    }, assertCurrent);
+    const result = await handle.completion;
+    assertCurrent();
+    if (result.kind !== "device_task_journal_read"
+      || result.journal.workspaceId !== workspaceId || result.journal.task.taskId !== taskId
+      || result.journal.afterSequence !== afterSequence || result.journal.events.length > limit
+      || result.journal.requiresSnapshot !== (result.journal.generation !== generation || afterSequence > result.journal.latestSequence)) {
+      throw new Error("remote_device_journal_binding_mismatch");
+    }
+    return result.journal;
+  }
+
   async approveDeviceTask(taskId: string, preview: RemoteDeviceApprovalPreviewV1): Promise<RemoteCommandHandle<RemoteCommandResultMapV1["device.task.approve"]>> {
     const authority = this.deviceTaskAuthority("device.approve");
     const assertApprovalCurrent = () => {
@@ -375,6 +404,7 @@ export class RemoteSessionClient {
     this.streamSequences.clear();
     this.streamSnapshots.clear();
     const socket = this.options.webSocketFactory(remoteWebSocketUrl(this.binding.gatewayOrigin), [
+      REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3,
       REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2,
       REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1,
     ]);
@@ -750,13 +780,13 @@ export class RemoteSessionClient {
     if (workspaceId !== this.requireDeviceWorkspaceId()) throw new Error("remote_device_workspace_mismatch");
   }
 
-  private deviceTaskAuthority(capability: "device.approve" | "device.revoke" | "device.reconcile") {
+  private deviceTaskAuthority(capability: "device.approve" | "device.revoke" | "device.reconcile" | "device.journal") {
     const sessionId = this.requireSessionId();
     const workspaceId = this.requireDeviceWorkspaceId();
     const assertCurrent = () => {
       if (this.requireSessionId() !== sessionId || this.requireDeviceWorkspaceId() !== workspaceId
         || !this.stateValue.policy?.capabilities.includes(capability)) {
-        throw new Error("remote_device_mutation_unavailable");
+        throw new Error(capability === "device.journal" ? "remote_device_journal_unavailable" : "remote_device_mutation_unavailable");
       }
     };
     assertCurrent();

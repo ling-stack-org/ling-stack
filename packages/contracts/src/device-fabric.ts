@@ -121,6 +121,18 @@ export interface DeviceTaskJournalPageV1 {
   readonly requiresSnapshot: boolean;
 }
 
+export const DEVICE_TASK_JOURNAL_PUBLIC_EVENTS_V1 = {
+  task_created: { sourceKind: "runtime", fields: ["status"] },
+  task_transition: { sourceKind: "runtime", fields: ["from", "to"] },
+  device_plan_accepted: { sourceKind: "graph", fields: ["proposalId", "contextId", "source"] },
+  attempt_prepared: { sourceKind: "runtime", fields: ["attemptId", "actionId"] },
+  attempt_updated: { sourceKind: "runtime", fields: ["attemptId", "status", "receiptStatus", "verificationStatus"] },
+  task_stop_requested: { sourceKind: "runtime", fields: ["attemptId", "status"] },
+  attempt_reconciled: { sourceKind: "verification", fields: ["attemptId", "status", "reconciliationId"] },
+  observation_recorded: { sourceKind: "adapter", fields: ["observationId"] },
+  journal_changed: { sourceKind: "runtime", fields: [] },
+} as const;
+
 export interface DeviceResourceManifestV1 {
   readonly resourceId: string;
   readonly version: string;

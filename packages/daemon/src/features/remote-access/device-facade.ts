@@ -1,19 +1,23 @@
 import {
   REMOTE_DEVICE_RECENT_TASK_LIMIT_V1,
+  REMOTE_PROTOCOL_LIMITS,
   type DeviceTaskV1,
   type RemoteDeviceListSnapshotV1,
   type RemoteDeviceTaskApproveCommandV1,
+  type RemoteDeviceTaskJournalCommandV1,
+  type RemoteDeviceTaskJournalV1,
   type RemoteDeviceTaskReconcileCommandV1,
   type RemoteDeviceTaskSnapshotV1,
   type RemoteDeviceTaskRevokeCommandV1,
   type RemoteDeviceTaskStatusCommandV1,
 } from "@ling-stack/contracts";
-import { DeviceBrokerError, type DeviceCapabilityBroker, type SqliteDeviceSupportStore } from "@ling-stack/core";
+import { DeviceBrokerError, readOwnedDeviceTaskJournal, type DeviceCapabilityBroker, type SqliteDeviceSupportStore } from "@ling-stack/core";
 import { RemoteAccessError } from "./errors.js";
 
 export interface RemoteDeviceFacade {
   listDevices(workspaceId: string): RemoteDeviceListSnapshotV1;
   taskSnapshot(input: RemoteDeviceTaskStatusCommandV1): RemoteDeviceTaskSnapshotV1;
+  taskJournal(input: RemoteDeviceTaskJournalCommandV1): RemoteDeviceTaskJournalV1;
   approveTask(input: RemoteDeviceTaskApproveCommandV1): Promise<RemoteDeviceTaskSnapshotV1>;
   revokeTask(input: RemoteDeviceTaskRevokeCommandV1): RemoteDeviceTaskSnapshotV1;
   reconcileTask(input: RemoteDeviceTaskReconcileCommandV1): Promise<{
@@ -59,6 +63,23 @@ export function createRemoteDeviceFacade(options: RemoteDeviceFacadeOptions): Re
       };
     },
     taskSnapshot: snapshot,
+    taskJournal(input) {
+      requireDaemonTask(options.store, input.taskId, input.workspaceId);
+      const { task, ...page } = readOwnedDeviceTaskJournal({ store: options.store, ...input });
+      const journal: RemoteDeviceTaskJournalV1 = {
+        ...page,
+        workspaceId: input.workspaceId,
+        afterSequence: input.afterSequence,
+        task: {
+          taskId: task.id, ownerId: task.ownerId, status: task.status, updatedAt: task.updatedAt,
+          ...(task.lastVerificationId ? { lastVerificationId: task.lastVerificationId } : {}),
+        },
+      };
+      if (Buffer.byteLength(JSON.stringify(journal)) > REMOTE_PROTOCOL_LIMITS.maxFrameBytes - 4096) {
+        throw new RemoteAccessError("payload_too_large", "The device journal page exceeds the remote frame limit.");
+      }
+      return journal;
+    },
     async approveTask(input) {
       requireDaemonTask(options.store, input.taskId, input.workspaceId);
       if (options.approve) {

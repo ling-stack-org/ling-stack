@@ -6,10 +6,12 @@ import test from "node:test";
 import {
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1,
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2,
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3,
   type RemoteAuthProofV1,
   type RemoteCapabilityV1,
   type RemoteClientFrameV1,
   type RemoteDeviceListSnapshotV1,
+  type RemoteDeviceTaskJournalV1,
   type RemoteServerEventPayloadMapV1,
   type RemoteServerEventTypeV1,
 } from "@ling-stack/contracts";
@@ -116,7 +118,9 @@ function createHarness() {
         },
         webSocketFactory: (url, subprotocol) => {
           assert.equal(url, "wss://ling-pc.example.ts.net/v1/session");
-          assert.deepEqual(subprotocol, [REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1]);
+          assert.deepEqual(subprotocol, [
+            REMOTE_DEVICE_TASKS_SUBPROTOCOL_V3, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1,
+          ]);
           const socket = new FakeSocket();
           sockets.push(socket);
           return socket;
@@ -307,6 +311,54 @@ test("device reconciliation sends only the current preview of an unknown task", 
   assert.deepEqual(await handle.completion, { kind: "device_task_rechecked", taskId: "task-1", status: "unresolved" });
   client.disconnect();
   await assert.rejects(() => client.reconcileDeviceTask("task-1", current), /remote_session_not_ready/);
+});
+
+test("device journal pages resume after reconnect and must match the requested task and cursor", async () => {
+  const harness = createHarness();
+  const client = harness.createClient();
+  await harness.connect(client, [...legacyCapabilities, "device.read", "device.reconcile"]);
+  await assert.rejects(() => client.readDeviceTaskJournal("task-1", { generation: 1, afterSequence: 1 }), /journal_unavailable/u);
+  client.disconnect();
+
+  const capabilities = [...legacyCapabilities, "device.read", "device.journal"] as const;
+  const socket = await harness.connect(client, capabilities);
+  await assert.rejects(() => client.readDeviceTaskJournal("task-1", { generation: 1, afterSequence: -1 }), /invalid_cursor/u);
+  const first = client.readDeviceTaskJournal("task-1", { generation: 1, afterSequence: 0, limit: 1 });
+  const journal: RemoteDeviceTaskJournalV1 = {
+    workspaceId: "default", task: { taskId: "task-1", ownerId: "pc-runtime", status: "succeeded", updatedAt: now },
+    streamId: "device-task:task-1", generation: 1, afterSequence: 0, latestSequence: 1,
+    events: [{
+      eventId: "device-task:task-1:9", traceId: "device-task:task-1", streamId: "device-task:task-1",
+      generation: 1, sourceId: "pc-runtime", sourceKind: "runtime", sequence: 1, occurredAt: now,
+      kind: "task_created", payload: { status: "planning" }, redactionClass: "public", retentionClass: "durable",
+    }],
+    hasMore: false, requiresSnapshot: false,
+  };
+  async function respond(s: FakeSocket, page: RemoteDeviceTaskJournalV1, sequence: number) {
+    await waitFor(() => s.frames().filter(frame => frame.type === "device.task.journal").length >= sequence - 1);
+    const frame = s.frames().filter(frame => frame.type === "device.task.journal").at(-1)!;
+    s.message("command.completed", {
+      commandId: frame.payload.commandId, commandType: "device.task.journal", completedAt: now,
+      result: { kind: "device_task_journal_read", journal: page },
+    }, sequence);
+    return frame.payload;
+  }
+
+  assert.equal((await respond(socket, journal, 2)).afterSequence, 0);
+  assert.deepEqual(await first, journal);
+  client.disconnect();
+
+  const reconnected = await harness.connect(client, capabilities);
+  const cursor = { generation: journal.generation, afterSequence: journal.events[0]!.sequence };
+  const resumed = client.readDeviceTaskJournal("task-1", cursor);
+  const resumedPage = { ...journal, afterSequence: 1, events: [] };
+  assert.equal((await respond(reconnected, resumedPage, 2)).afterSequence, 1);
+  assert.deepEqual(await resumed, resumedPage);
+  const misbound = client.readDeviceTaskJournal("task-1", cursor);
+  const rejection = assert.rejects(misbound, /journal_binding_mismatch/u);
+  await respond(reconnected, { ...resumedPage, workspaceId: "other-workspace" }, 3);
+  await rejection;
+  client.disconnect();
 });
 
 async function waitFor(predicate: () => boolean) {
