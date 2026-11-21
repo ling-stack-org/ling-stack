@@ -162,6 +162,7 @@ import { createCuaDriverDescriptor } from "./features/plugins/presets.js";
 import { RemoteAccessController } from "./features/remote-access/controller.js";
 import { createDeviceSupportRuntime } from "./features/device-support/runtime.js";
 import { readLinuxSshTargets } from "./features/device-support/linux-ssh-targets.js";
+import { readDeviceResourceTrustPolicy } from "./features/device-support/resource-trust.js";
 import { EngineManagementFeature } from "./features/execution-engines/feature.js";
 import { DefaultRemoteReplyDispatcher } from "./features/remote-access/default-reply-dispatcher.js";
 import { HostCapabilityBridgeController } from "./features/runs/host-capability-bridge-controller.js";
@@ -300,6 +301,7 @@ export function createDaemonServer(
 ): DaemonServer {
   const resolvedConfig = resolveConfig(config);
   const linuxSshTargets = readLinuxSshTargets(config.deviceSupport?.linuxSshTargetsFile ?? process.env.LING_STACK_DEVICE_SSH_TARGETS_FILE);
+  const deviceResourceTrust = readDeviceResourceTrustPolicy(config.deviceSupport?.resourceTrustFile ?? process.env.LING_STACK_DEVICE_RESOURCE_TRUST_FILE);
   const runnerRegistry = dependencies.runnerRegistry ?? createDefaultRunnerRegistry(dependencies.runner, resolvedConfig);
   const extensionRegistry = dependencies.extensionRegistry ?? createDefaultLingExtensionRegistry();
   const externalSecretStore = dependencies.externalSecretStore ?? createSystemKeychainSecretStore();
@@ -1007,6 +1009,7 @@ export function createDaemonServer(
   const defaultWorkspaceStore = storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd);
   const deviceSupport = createDeviceSupportRuntime({
     databasePath: defaultWorkspaceStore.paths.databasePath, linuxSshTargets, linuxSshRunner: dependencies.linuxSshProcessRunner,
+    resourceTrust: deviceResourceTrust,
   });
   const remoteReplyDispatcher = dependencies.remoteReplyDispatcher === null
     ? undefined

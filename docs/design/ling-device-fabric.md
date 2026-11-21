@@ -336,6 +336,32 @@ the target and policy. When supported, restore the previous compatible resource 
 activation fails. The lifecycle records both the activation outcome and any verification
 still required. [Protocol profiles and captures](ling-hardware-protocol-workbench.md)
 
+### Daemon resource imports
+
+The daemon reads the resource publisher trust file at startup from
+`deviceSupport.resourceTrustFile` or `LING_STACK_DEVICE_RESOURCE_TRUST_FILE`.
+The version 1 JSON document contains an `allowedLicenses` array of license
+identifiers and a `signingKeys` array. Each key has a `keyId` and
+`publicKeyPem` containing an Ed25519 public key in SPKI PEM format.
+
+Publishers sign the canonical JSON bytes of
+`{ purpose: "ling.device-resource-manifest.v1", keyId, manifest }`. The signed
+`manifest` object contains every manifest field except `signature`, including
+the SHA-256 digest of the file. Its signature field uses
+`ed25519:<keyId>:<base64url-signature>`.
+
+The local operator imports a manifest and its base64url-encoded bytes through
+`POST /v1/device-support/resources` with the JSON keys `manifest` and
+`payloadBase64Url`. The JSON import accepts up to 4 MiB of resource bytes. The
+registry exposes the active record through `GET /v1/device-support/resources/:resourceId`.
+Append `/disable` or `/rollback` and use POST to change its active state.
+The daemon checks publisher trust, license, digest, dependencies and host
+compatibility before activation. Active payload reads and rollbacks recheck the
+current trust policy. An unavailable rollback leaves the current revision active.
+Adapter installation and applying a profile to a particular device remain
+separate operations owned by the relevant runtime.
+[Resource routes](../../packages/daemon/src/features/device-support/resource-routes.ts)
+
 ## 10. Safety, security, and secrets
 
 The device broker evaluates actual target permissions, current capability and physical

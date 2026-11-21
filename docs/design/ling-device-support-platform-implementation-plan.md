@@ -2,7 +2,7 @@
 
 Status: tracking plan; D1–D3 core, D4/D5/D7/D8 adapters, D6/D9 execution slices, D10–D22 domain foundations, and the first durable fabric stores landed, field and platform acceptance remain queued
 Owner: Ling platform maintainers
-Last verified: 2026-11-22 (paired Mobile PC task journal)
+Last verified: 2026-11-22 (paired Mobile PC task journal and signed Daemon resources)
 Document type: staged implementation and acceptance record
 Related design: [Ling Device Support Platform](ling-device-support-platform.md)
 Runtime contract: [Ling Device Support Platform Runtime Contract](ling-device-support-platform-runtime-contract.md)
@@ -60,7 +60,7 @@ validation and the boundary of what remains unverified.
 | D15 | [~] | Cross-device task graph | Dependency validation, ready-node placement, owner leases, partial aggregation, and result lineage are implemented | Core task-graph fixtures |
 | D16 | [~] | Edge Runtime and bridge contract | Enrollment and revocation registry foundation is implemented | Core edge registry fixtures |
 | D17 | [~] | Event and telemetry plane | The owning Daemon journal exposes resumable event pages to local and paired Mobile clients | Core journal, authenticated Gateway and Remote Client fixtures |
-| D18 | [~] | Resource and adapter registry | Digest-bound install and rollback registry is implemented | Core resource fixtures |
+| D18 | [~] | Resource and adapter registry | Daemon imports, updates, disables and rolls back signed resources through its local operator API | Core resource fixtures and Daemon HTTP integration |
 | D19 | [~] | Safety, policy, and secrets | Physical preconditions, emergency stop, and secret-reference checks are implemented | Core safety fixtures |
 | D20 | [~] | Fleet and lifecycle | Revisioned lifecycle transitions are implemented | Core lifecycle fixtures |
 | D21 | [~] | Model context and orchestration | Bounded facts, hypotheses, observation refs, and untrusted text refs are implemented | Core context fixtures |
@@ -635,11 +635,13 @@ only on a successful install or a model response.
   the payload and active revision together. Verify the active payload digest on read.
 - [x] Enforce declared contract, license, platform, device, firmware and permission
   compatibility where runtime facts are available, and persist disable/health state.
-- [ ] Add signed resource manifests for transports, codecs, profiles, vocabulary,
+- [~] Add signed resource manifests for transports, codecs, profiles, vocabulary,
   playbooks, simulators, captures, documentation, firmware metadata, and edge packages.
-- [ ] Validate digest, signature, license, dependency, platform, device, firmware,
+- [~] Validate digest, signature, license, dependency, platform, device, firmware,
   permission, and Ling contract compatibility.
-- [ ] Install, health-check, disable, update, and roll back resources independently.
+- [~] Import, update, disable, and roll back signed resources through the local
+  Daemon API. Runtime health checks and activation for Mobile, native adapters
+  and Edge packages remain open.
 
 ### Exit evidence
 
@@ -651,6 +653,11 @@ only on a successful install or a model response.
   On reopen, rollback requires the retained bytes and their matching digest.
   Importing the original verified payload fills an older metadata-only active record.
 - An unsupported license, dependency, platform, or firmware range blocks installation.
+- The local Daemon fixture signs real bytes with Ed25519, activates and replays
+  a valid import, installs a second revision, and rolls back to the original
+  digest. Altered manifests, altered bytes, unknown signers, disallowed licenses,
+  incompatible platforms and missing dependencies are rejected. Core fixtures
+  verify that a revoked signer blocks reads and rollback.
 
 ## D19: Safety, policy, and secrets
 
@@ -785,7 +792,7 @@ recorded per slice as they complete. [Detailed design](ling-device-fabric.md)
 | D15 | `f0f9c0b2a` | Core build/typecheck plus `node --test packages/core/test/device-fabric-store.test.ts packages/core/test/device-fabric.test.ts` (20 passed) | [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Dependency validation, ready-node placement, persistent target owner leases, stale graph revision rejection, aggregate node results, and persistent task graph revisions are implemented. In-memory lease state now honors its expiry before blocking a different owner | Cross-runtime scheduler recovery and full graph cancellation/retry reconciliation remain |
 | D16 | `e1412cc76` | Core build/typecheck plus `node --test packages/core/test/device-fabric-store.test.ts packages/core/test/device-fabric.test.ts` (19 passed) | [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [device-fabric.ts](../../packages/core/src/device-fabric.ts), [runtime.ts](../../packages/daemon/src/features/device-support/runtime.ts) | Edge enrollment and revocation now use the durable Fabric store when the Daemon runtime creates its registry, so a new registry instance observes the current revision | Linux edge process, bridge transport, local journal and reconnect acceptance remain |
 | D17 | Paired owner-journal paging | Contracts/Core focused tests (33 passed), Daemon runtime and Gateway tests (11 passed), Remote Protocol and Remote Client tests (43 and 13 passed) | [Task event projection](../../packages/core/src/device-task-event-projector.ts), [Gateway fixture](../../packages/daemon/test/device-remote-facade.test.ts), [Mobile journal](../../apps/mobile/src/features/device-tasks/PcDeviceTaskJournal.tsx) | Local and paired reads share the owner's journal projection. Indexed pages keep a per-task cursor and stable event identities. The authenticated fixture resumes after reconnect, reloads a stale generation and rejects out-of-scope tasks | Live subscription, cross-runtime snapshot exchange, telemetry sampling, backpressure and physical acceptance remain |
-| D18 | `e25216a21` and atomic resource payload activation | Core `build:ci` and `typecheck:ci`. `node --test packages/core/test/device-fabric-store.test.ts` (14 passed) | [Resource store](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [Activation tests](../../packages/core/test/device-fabric-store.test.ts) | SQLite commits the verified payload with its active revision. Active reads and rollback verify the digest. A missing or corrupted rollback payload leaves the current version active | Signed delivery channels, compatibility policy integration and production adapter installation remain |
+| D18 | Signed Daemon resource imports | Contracts, Core and Daemon builds and typechecks. Core resource and Daemon runtime tests (19 passed) | [Resource store](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [Daemon trust and import configuration](ling-device-fabric.md#daemon-resource-imports), [Local integration test](../../packages/daemon/test/device-support-runtime.test.ts) | Daemon validates an Ed25519-signed manifest and its payload before committing the active revision. Local import, replay, update, rollback and disable are exercised end to end. A corrupted, incompatible or untrusted rollback leaves the active revision intact | Remote signed delivery, platform-specific runtime activation, production adapter installation and physical acceptance remain |
 | D19 | `10620d6e2` and safety foundations | Core/Daemon builds and typechecks plus device support and runtime fixtures (31 passed) | [device-secrets.ts](../../packages/core/src/device-secrets.ts), [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [device-support.ts](../../packages/core/src/device-support.ts) | Physical preconditions, emergency stop, target-scoped secret resolution and redacted secret-use records are implemented. A task can carry a target-scoped access grant, and the broker checks principal, target, capability, expiry and revocation before dispatch | Target controllers, policy integration and physical safety acceptance remain |
 | D20 | `10620d6e2` | Core/Daemon builds and typechecks plus device support and runtime fixtures (31 passed) | [device-access.ts](../../packages/core/src/device-access.ts), [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [device-fabric.ts contracts](../../packages/contracts/src/device-fabric.ts), [device.ts task contract](../../packages/contracts/src/device.ts) | Revisioned lifecycle transitions, ownership transfer history, target-scoped shared/developer access grants and credential rotation/revocation metadata are persisted. The Daemon runtime supplies the access manager to the broker, and a revoked grant blocks later dispatch | Fleet projections, upgrade, restore, retirement and field transfer acceptance remain |
 | D21 | `aa8a54cf8` and owner-scoped PC planning | Core and Daemon `build:ci` and `typecheck:ci`. Core orchestration, Fabric, broker and Daemon runtime fixtures (34 passed) | [Owner context](../../packages/core/src/device-task-planning-context.ts), [Proposal admission](../../packages/core/src/device-orchestration.ts), [Planner bridge](../../packages/core/src/device-runner.ts), [Daemon runtime test](../../packages/daemon/test/device-support-runtime.test.ts) | PC diagnosis records its local plan before dispatch. The builder projects typed facts from current task evidence. Plan admission verifies each node's owner, snapshot, capability and planning references. Cancelled model requests preserve cancellation | Concrete Pi/project-executor integration, cross-runtime planning evidence and provider switching remain |

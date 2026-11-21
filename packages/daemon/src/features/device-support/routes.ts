@@ -4,6 +4,7 @@ import { DEFAULT_WORKSPACE_ID, DeviceBrokerError, readOwnedDeviceTaskJournal } f
 import { allowLocalServiceRequest } from "../../shared/local-workspace-access.js";
 import { readJsonBody } from "../../shared/request.js";
 import { writePrivateJson } from "../../shared/response.js";
+import { handleDeviceResourceRoute } from "./resource-routes.js";
 import type { DeviceSupportRuntime } from "./runtime.js";
 
 export async function handleDeviceSupportRoute(
@@ -12,6 +13,7 @@ export async function handleDeviceSupportRoute(
   response: ServerResponse,
   runtime: DeviceSupportRuntime,
 ): Promise<boolean> {
+  if (url.pathname.startsWith("/v1/device-support/resources")) return await handleDeviceResourceRoute(url, request, response, runtime);
   const eventsPath = /^\/v1\/device-support\/tasks\/([^/]+)\/events$/u.exec(url.pathname);
   const linuxAction = /^\/v1\/device-support\/linux\/(targets|enroll|diagnose)$/u.exec(url.pathname)?.[1];
   if (url.pathname !== "/v1/device-support/pc/diagnose" && !eventsPath && !linuxAction) return false;

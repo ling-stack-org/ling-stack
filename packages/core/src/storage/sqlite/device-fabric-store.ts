@@ -3,22 +3,23 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
 
-import type {
-  DeviceConformanceReportV1,
-  DeviceCredentialRevisionV1,
-  DeviceAccessGrantV1,
-  DeviceEventEnvelopeV1,
-  DeviceGraphNodeV1,
-  DeviceGraphRelationshipV1,
-  DeviceLifecycleRecordV1,
-  DeviceOwnershipRevisionV1,
-  DeviceResourceManifestV1,
-  DeviceSecretUseV1,
-  DeviceTaskGraphV1,
-  DeviceTraceSpanV1,
-  DeviceTwinV1,
-  EdgeRuntimeEnrollmentV1,
-  JsonValue,
+import {
+  isDeviceResourceManifestV1,
+  type DeviceConformanceReportV1,
+  type DeviceCredentialRevisionV1,
+  type DeviceAccessGrantV1,
+  type DeviceEventEnvelopeV1,
+  type DeviceGraphNodeV1,
+  type DeviceGraphRelationshipV1,
+  type DeviceLifecycleRecordV1,
+  type DeviceOwnershipRevisionV1,
+  type DeviceResourceManifestV1,
+  type DeviceSecretUseV1,
+  type DeviceTaskGraphV1,
+  type DeviceTraceSpanV1,
+  type DeviceTwinV1,
+  type EdgeRuntimeEnrollmentV1,
+  type JsonValue,
 } from "@ling-stack/contracts";
 
 import { DeviceFabricError, isAllowedDeviceLifecycleTransition } from "../../device-fabric.js";
@@ -169,24 +170,22 @@ export class SqliteDeviceFabricStore {
   }
 
   installResource(manifest: DeviceResourceManifestV1, payload: Uint8Array, installedAt = new Date().toISOString(), compatibility: DeviceResourceCompatibility = {}): { readonly record: DeviceResourceRecord; readonly replayed: boolean } {
-    validateResourceManifest(manifest);
-    validateResourceCompatibility(manifest, compatibility, this.#resourceContractMajor, this.#allowedResourceLicenses);
+    this.assertResourcePolicy(manifest, compatibility);
     const bytes = Buffer.from(payload);
     const payloadDigest = createHash("sha256").update(bytes).digest("hex");
     if (payloadDigest !== manifest.digest) throw new DeviceFabricError("resource_conflict", "resource digest does not match manifest");
-    if (this.#verifyResourceSignature && !this.#verifyResourceSignature(manifest)) throw new DeviceFabricError("resource_conflict", "resource signature is not valid");
     return this.withWriteTransaction(() => {
-      for (const dependency of manifest.dependencies) {
-        if (this.getResource(dependency)?.status !== "active") {
-          throw new DeviceFabricError("resource_conflict", `resource dependency is not active: ${dependency}`);
-        }
+      this.assertResourceDependencies(manifest);
+      const current = this.getResource(manifest.resourceId);
+      if (current?.manifest.version === manifest.version && (current.payloadDigest !== payloadDigest
+        || (this.#verifyResourceSignature !== undefined && current.manifest.signature !== manifest.signature))) {
+        throw new DeviceFabricError("resource_conflict", "resource version is bound to another signed manifest or payload");
       }
       const payloadWrite = this.database.prepare(`
         INSERT INTO device_resource_payloads(resource_id,payload_digest,payload_bytes) VALUES(?,?,?)
         ON CONFLICT(resource_id,payload_digest) DO NOTHING
       `).run(manifest.resourceId, payloadDigest, bytes);
       if (payloadWrite.changes === 0) this.readResourcePayload(manifest.resourceId, payloadDigest);
-      const current = this.getResource(manifest.resourceId);
       if (current?.manifest.version === manifest.version && current.payloadDigest === payloadDigest) return { record: current, replayed: true };
       if (current) {
         this.database.prepare("INSERT INTO device_resource_history(resource_id,manifest_json,payload_digest,installed_at) VALUES(?,?,?,?)")
@@ -198,7 +197,7 @@ export class SqliteDeviceFabricStore {
     });
   }
 
-  rollbackResource(resourceId: string): DeviceResourceRecord {
+  rollbackResource(resourceId: string, compatibility: DeviceResourceCompatibility = {}): DeviceResourceRecord {
     return this.withWriteTransaction(() => {
       const row = this.database.prepare(`
         SELECT revision_id,manifest_json,payload_digest,installed_at FROM device_resource_history
@@ -214,6 +213,8 @@ export class SqliteDeviceFabricStore {
       if (record.manifest.resourceId !== resourceId || record.manifest.digest !== record.payloadDigest) {
         throw new DeviceFabricError("resource_conflict", "resource rollback manifest does not match its payload");
       }
+      this.assertResourcePolicy(record.manifest, compatibility);
+      this.assertResourceDependencies(record.manifest);
       if (!this.readResourcePayload(resourceId, record.payloadDigest)) {
         throw new DeviceFabricError("resource_conflict", "resource rollback payload is missing");
       }
@@ -231,14 +232,38 @@ export class SqliteDeviceFabricStore {
     return { manifest: parseJson<DeviceResourceManifestV1>(row.manifest_json, "resource manifest"), payloadDigest: readString(row, "payload_digest"), installedAt: readString(row, "installed_at"), status, ...(typeof row.status_reason === "string" ? { statusReason: row.status_reason } : {}) };
   }
 
-  readActiveResourcePayload(resourceId: string): Uint8Array | undefined {
+  readActiveResourcePayload(resourceId: string, compatibility: DeviceResourceCompatibility = {}): Uint8Array | undefined {
     const row = this.database.prepare(`
-      SELECT p.payload_bytes,a.payload_digest FROM device_resource_active a
+      SELECT p.payload_bytes,a.payload_digest,a.manifest_json FROM device_resource_active a
       JOIN device_resource_payloads p ON p.resource_id=a.resource_id AND p.payload_digest=a.payload_digest
       LEFT JOIN device_resource_state s ON s.resource_id=a.resource_id
       WHERE a.resource_id=? AND COALESCE(s.status,'active')='active'
     `).get(resourceId) as Row | undefined;
-    return row ? verifyResourcePayload(row.payload_bytes, readString(row, "payload_digest")) : undefined;
+    if (!row) return undefined;
+    const digest = readString(row, "payload_digest");
+    const manifest = parseJson<DeviceResourceManifestV1>(row.manifest_json, "resource manifest");
+    if (manifest.resourceId !== resourceId || manifest.digest !== digest) {
+      throw new DeviceFabricError("resource_conflict", "active resource manifest does not match its payload");
+    }
+    this.assertResourcePolicy(manifest, compatibility);
+    this.assertResourceDependencies(manifest);
+    return verifyResourcePayload(row.payload_bytes, digest);
+  }
+
+  private assertResourcePolicy(manifest: DeviceResourceManifestV1, compatibility: DeviceResourceCompatibility): void {
+    if (!isDeviceResourceManifestV1(manifest)) throw new DeviceFabricError("resource_conflict", "resource manifest is invalid");
+    validateResourceCompatibility(manifest, compatibility, this.#resourceContractMajor, this.#allowedResourceLicenses);
+    if (this.#verifyResourceSignature && !this.#verifyResourceSignature(manifest)) {
+      throw new DeviceFabricError("resource_conflict", "resource signature is not valid");
+    }
+  }
+
+  private assertResourceDependencies(manifest: DeviceResourceManifestV1): void {
+    for (const dependency of manifest.dependencies) {
+      if (this.getResource(dependency)?.status !== "active") {
+        throw new DeviceFabricError("resource_conflict", `resource dependency is not active: ${dependency}`);
+      }
+    }
   }
 
   private readResourcePayload(resourceId: string, digest: string): Uint8Array | undefined {
@@ -730,15 +755,6 @@ function verifyResourcePayload(bytes: SQLOutputValue | undefined, digest: string
     throw new DeviceFabricError("resource_conflict", "stored resource payload digest does not match");
   }
   return bytes;
-}
-
-function validateResourceManifest(manifest: DeviceResourceManifestV1): void {
-  if (!manifest.resourceId.trim() || !manifest.version.trim() || !manifest.license.trim() || !manifest.signature.trim() || !manifest.entrypoint.trim() || !manifest.digest.trim()) {
-    throw new DeviceFabricError("resource_conflict", "resource manifest is incomplete");
-  }
-  if (manifest.dependencies.includes(manifest.resourceId) || new Set(manifest.dependencies).size !== manifest.dependencies.length) {
-    throw new DeviceFabricError("resource_conflict", "resource manifest has invalid dependencies");
-  }
 }
 
 function validateResourceCompatibility(

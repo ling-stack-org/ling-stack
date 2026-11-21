@@ -1,14 +1,16 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import type { DeviceActionRequestV1, DeviceDiagnosisReportV1, DeviceTaskAttemptV1, DeviceTaskJournalPageV1, DeviceTaskStatusV1 } from "@ling-stack/contracts";
+import type { DeviceActionRequestV1, DeviceDiagnosisReportV1, DeviceResourceManifestV1, DeviceTaskAttemptV1, DeviceTaskJournalPageV1, DeviceTaskStatusV1 } from "@ling-stack/contracts";
 import {
   buildOwnedDevicePlanningInput, createSqliteRunStore, DEFAULT_WORKSPACE_ID, DeviceBrokerError, digestRequest,
   modbusRtuRegisterCodec, SqliteDeviceSupportStore,
 } from "@ling-stack/core";
+import { canonicalJsonBytes } from "@ling-stack/remote-protocol";
 import { createDeviceSupportRuntime } from "../dist/features/device-support/runtime.js";
 import { createDaemonServer } from "../dist/index.js";
 
@@ -113,6 +115,76 @@ test("daemon runtime registers the Modbus codec and restores offline captures wi
   } finally {
     reopened.close();
   }
+});
+
+test("the local daemon activates and rolls back Ed25519-signed resource imports", async t => {
+  const root = mkdtempSync(join(tmpdir(), "ling-device-resource-policy-"));
+  const workspace = createSqliteRunStore(root);
+  const trustPath = join(root, "device-resource-trust.json");
+  const { publicKey, privateKey } = generateKeyPairSync("ed25519");
+  const keyId = "fixture-release";
+  writeFileSync(trustPath, JSON.stringify({
+    version: 1, allowedLicenses: ["MIT"],
+    signingKeys: [{ keyId, publicKeyPem: publicKey.export({ type: "spki", format: "pem" }) }],
+  }));
+  const authToken = "fixture-daemon-authority";
+  const headers = { Authorization: "Bearer " + authToken, "Content-Type": "application/json" };
+  const daemon = createDaemonServer({
+    host: "127.0.0.1", port: 0, authToken, defaultWorkspaceCwd: root, deviceSupport: { resourceTrustFile: trustPath },
+  }, { storeFactory: () => workspace });
+  t.after(async () => {
+    await daemon.stop();
+    rmSync(root, { recursive: true, force: true });
+  });
+  await daemon.start();
+  const address = daemon.server.address();
+  assert.ok(address && typeof address === "object");
+  const url = "http://127.0.0.1:" + address.port + "/v1/device-support/resources";
+  const resourceUrl = url + "/profile-fixture";
+  const post = (value: unknown, extraHeaders: Record<string, string> = {}) => fetch(url, {
+    method: "POST", headers: { ...headers, ...extraHeaders }, body: JSON.stringify(value),
+  });
+  const manifestBase = {
+    resourceId: "profile-fixture", version: "1.0.0", kind: "schema", license: "MIT",
+    dependencies: [], supportedDeviceKinds: ["linux"], entrypoint: "profile.json", contractMajor: 1,
+  } as const;
+  function signedFile(text: string, changes: Partial<Omit<DeviceResourceManifestV1, "signature" | "digest">> = {}) {
+    const payload = Buffer.from(text);
+    const unsigned = { ...manifestBase, ...changes, digest: createHash("sha256").update(payload).digest("hex") };
+    const bytes = canonicalJsonBytes({ purpose: "ling.device-resource-manifest.v1", keyId, manifest: unsigned });
+    return {
+      manifest: { ...unsigned, signature: "ed25519:" + keyId + ":" + sign(null, bytes, privateKey).toString("base64url") },
+      payloadBase64Url: payload.toString("base64url"),
+    };
+  }
+  const original = signedFile('{"profile":"original"}');
+  assert.equal((await post(original, { Origin: "https://elsewhere.example" })).status, 403);
+  assert.equal((await fetch(resourceUrl)).status, 401);
+  assert.equal((await fetch(resourceUrl, { headers })).status, 404);
+  assert.equal((await post({ ...original, manifest: { ...original.manifest, version: "2.0.0" } })).status, 409);
+  assert.equal((await post({ ...original, payloadBase64Url: Buffer.from("altered").toString("base64url") })).status, 409);
+  const fakeKey = { ...original.manifest, signature: original.manifest.signature.replace(keyId, "unknown-key") };
+  assert.equal((await post({ ...original, manifest: fakeKey })).status, 409);
+  assert.equal((await post(signedFile("unsupported", { license: "Unapproved" }))).status, 409);
+  assert.equal((await post(signedFile("unsupported", { supportedPlatforms: ["ios"] }))).status, 409);
+  assert.equal((await post(signedFile("unsupported", { dependencies: ["missing-profile"] }))).status, 409);
+  assert.equal((await post({ ...original, manifest: { ...original.manifest, extra: "unknown" } })).status, 400);
+  const activated = await post(original);
+  assert.equal(activated.status, 201);
+  assert.match(activated.headers.get("cache-control") ?? "", /no-store/u);
+  assert.equal((await post(original)).status, 200);
+  assert.equal((await post(signedFile('{"profile":"conflicting content"}'))).status, 409);
+  const update = signedFile('{"profile":"replacement"}', { version: "2.0.0" });
+  assert.equal((await post(update)).status, 201);
+  const rollback = await fetch(resourceUrl + "/rollback", { method: "POST", headers });
+  assert.equal(rollback.status, 200);
+  const { record } = await rollback.json() as { record: { manifest: DeviceResourceManifestV1; payloadDigest: string; status: string } };
+  assert.deepEqual(record.manifest, original.manifest);
+  assert.equal(record.payloadDigest, original.manifest.digest);
+  const disabled = await fetch(resourceUrl + "/disable", { method: "POST", headers });
+  assert.equal(disabled.status, 200);
+  const status = await (await fetch(resourceUrl, { headers })).json() as { record: { status: string } };
+  assert.equal(status.record.status, "disabled");
 });
 
 test("the local daemon exposes its PC report and sequenced task journal only on direct loopback", { timeout: 15_000 }, async t => {

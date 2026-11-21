@@ -28,6 +28,7 @@ import { LinuxSshAdapter, linuxSshDeviceId } from "./adapters/linux-ssh.js";
 import { LocalPcTargetExecutor, type LocalProcessRunner } from "./adapters/local-pc-executor.js";
 import { PcAdapter } from "./adapters/pc.js";
 import { bindLinuxSshTargets, type BoundLinuxSshTarget, type ConfiguredLinuxSshTarget } from "./linux-ssh-targets.js";
+import type { DeviceResourceTrustPolicy } from "./resource-trust.js";
 
 interface LinuxSshTargetSummary {
   readonly connectionId: string;
@@ -46,6 +47,7 @@ export interface DeviceSupportRuntime {
   readonly collaboration: DeviceCollaborationCoordinator;
   readonly edgeRuntimes: EdgeRuntimeRegistry;
   readonly access: DeviceAccessManager;
+  readonly resourceTrustConfigured: boolean;
   readonly broker: DeviceCapabilityBroker;
   readonly remoteFacade: RemoteDeviceFacade;
   diagnoseLocalPc(): Promise<DevicePlaybookRunResultV1>;
@@ -58,6 +60,7 @@ export interface DeviceSupportRuntime {
 export function createDeviceSupportRuntime(options: {
   readonly databasePath: string;
   readonly now?: () => string;
+  readonly resourceTrust?: DeviceResourceTrustPolicy;
   readonly linuxSshTargets?: readonly ConfiguredLinuxSshTarget[];
   readonly linuxSshRunner?: LocalProcessRunner;
 }): DeviceSupportRuntime {
@@ -69,7 +72,11 @@ export function createDeviceSupportRuntime(options: {
     store.close();
     throw error;
   }
-  const fabricStore = new SqliteDeviceFabricStore({ databasePath: options.databasePath });
+  const fabricStore = new SqliteDeviceFabricStore({
+    databasePath: options.databasePath,
+    verifyResourceSignature: options.resourceTrust?.verifyManifest,
+    allowedResourceLicenses: options.resourceTrust?.allowedLicenses,
+  });
   const developerStore = new SqliteDeviceDeveloperStore({ databasePath: options.databasePath });
   const protocolStore = new SqliteDeviceProtocolStore({ databasePath: options.databasePath });
   const protocolWorkbench = new HardwareProtocolWorkbench();
@@ -193,6 +200,7 @@ export function createDeviceSupportRuntime(options: {
     collaboration,
     edgeRuntimes,
     access,
+    resourceTrustConfigured: options.resourceTrust !== undefined,
     broker,
     remoteFacade,
     diagnoseLocalPc: () => {

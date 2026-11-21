@@ -106,7 +106,11 @@ test("peer event synchronization preserves owner stream identity and idempotent 
 });
 
 test("fabric store installs signed resources, preserves the previous revision, and rolls back", () => {
-  const store = new SqliteDeviceFabricStore({ verifyResourceSignature: manifestValue => manifestValue.signature.startsWith("signature-"), allowedResourceLicenses: ["MIT"] });
+  let revokedSignature: string | undefined;
+  const store = new SqliteDeviceFabricStore({
+    verifyResourceSignature: manifestValue => manifestValue.signature.startsWith("signature-") && manifestValue.signature !== revokedSignature,
+    allowedResourceLicenses: ["MIT"],
+  });
   const payload = new TextEncoder().encode("adapter-v1");
   const digest = createHash("sha256").update(payload).digest("hex");
   const first = store.installResource(manifest("1.0.0", digest), payload, now);
@@ -116,6 +120,10 @@ test("fabric store installs signed resources, preserves the previous revision, a
   const secondDigest = createHash("sha256").update(secondPayload).digest("hex");
   store.installResource(manifest("2.0.0", secondDigest), secondPayload, "2026-11-21T00:01:00.000Z");
   assert.equal(store.getResource("adapter-linux")?.manifest.version, "2.0.0");
+  revokedSignature = "signature-1.0.0";
+  assert.throws(() => store.rollbackResource("adapter-linux"), /signature is not valid/u);
+  assert.deepEqual(store.readActiveResourcePayload("adapter-linux"), secondPayload);
+  revokedSignature = undefined;
   assert.equal(store.rollbackResource("adapter-linux").manifest.version, "1.0.0");
   assert.deepEqual(store.readActiveResourcePayload("adapter-linux"), payload);
   assert.throws(() => store.installResource(manifest("3.0.0", digest, "untrusted"), payload), (error: unknown) => error instanceof DeviceFabricError && error.code === "resource_conflict");
@@ -123,6 +131,8 @@ test("fabric store installs signed resources, preserves the previous revision, a
   assert.equal(store.healthCheckResource("adapter-linux", () => false).status, "disabled");
   assert.equal(store.readActiveResourcePayload("adapter-linux"), undefined);
   assert.equal(store.healthCheckResource("adapter-linux", () => true).status, "active");
+  revokedSignature = "signature-1.0.0";
+  assert.throws(() => store.readActiveResourcePayload("adapter-linux"), /signature is not valid/u);
   store.close();
 });
 

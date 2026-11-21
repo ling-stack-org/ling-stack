@@ -1,8 +1,9 @@
-import type {
-  DeviceKindV1,
-  DeviceTaskStatusV1,
-  DeviceTaskV1,
-  JsonValue,
+import {
+  DEVICE_KINDS_V1,
+  type DeviceKindV1,
+  type DeviceTaskStatusV1,
+  type DeviceTaskV1,
+  type JsonValue,
 } from "./device.js";
 
 export type DeviceGraphNodeKindV1 = "device" | "component" | "connection" | "location";
@@ -133,10 +134,13 @@ export const DEVICE_TASK_JOURNAL_PUBLIC_EVENTS_V1 = {
   journal_changed: { sourceKind: "runtime", fields: [] },
 } as const;
 
+const deviceResourceKinds = ["adapter", "playbook", "codec", "firmware", "schema"] as const;
+const deviceResourcePlatforms = ["ios", "android", "macos", "windows", "linux"] as const;
+
 export interface DeviceResourceManifestV1 {
   readonly resourceId: string;
   readonly version: string;
-  readonly kind: "adapter" | "playbook" | "codec" | "firmware" | "schema";
+  readonly kind: (typeof deviceResourceKinds)[number];
   readonly digest: string;
   readonly license: string;
   readonly dependencies: readonly string[];
@@ -144,9 +148,42 @@ export interface DeviceResourceManifestV1 {
   readonly supportedDeviceKinds: readonly DeviceKindV1[];
   readonly entrypoint: string;
   readonly contractMajor?: number;
-  readonly supportedPlatforms?: readonly ("ios" | "android" | "macos" | "windows" | "linux")[];
+  readonly supportedPlatforms?: readonly (typeof deviceResourcePlatforms)[number][];
   readonly supportedFirmwareRanges?: readonly string[];
   readonly requiredPermissions?: readonly string[];
+}
+
+export function isDeviceResourceManifestV1(value: unknown): value is DeviceResourceManifestV1 {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const manifest = value as Record<string, unknown>;
+  const fields = [
+    "resourceId", "version", "kind", "digest", "license", "dependencies", "signature", "supportedDeviceKinds",
+    "entrypoint", "contractMajor", "supportedPlatforms", "supportedFirmwareRanges", "requiredPermissions",
+  ];
+  return Object.keys(manifest).every(key => fields.includes(key))
+    && typeof manifest.resourceId === "string" && /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/u.test(manifest.resourceId)
+    && isResourceString(manifest.version, 128)
+    && deviceResourceKinds.some(kind => manifest.kind === kind)
+    && typeof manifest.digest === "string" && /^[0-9a-f]{64}$/u.test(manifest.digest)
+    && isResourceString(manifest.license, 128)
+    && isResourceList(manifest.dependencies, item => typeof item === "string" && /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/u.test(item))
+    && !manifest.dependencies.includes(manifest.resourceId)
+    && isResourceString(manifest.signature, 512)
+    && isResourceList(manifest.supportedDeviceKinds, item => DEVICE_KINDS_V1.some(kind => item === kind))
+    && isResourceString(manifest.entrypoint, 512)
+    && (manifest.contractMajor === undefined || (Number.isSafeInteger(manifest.contractMajor) && Number(manifest.contractMajor) > 0))
+    && (manifest.supportedPlatforms === undefined || isResourceList(manifest.supportedPlatforms, item => deviceResourcePlatforms.some(platform => item === platform)))
+    && (manifest.supportedFirmwareRanges === undefined || isResourceList(manifest.supportedFirmwareRanges, item => isResourceString(item, 128)))
+    && (manifest.requiredPermissions === undefined || isResourceList(manifest.requiredPermissions, item => isResourceString(item, 128)));
+}
+
+function isResourceString(value: unknown, maxLength: number): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= maxLength && value.trim() === value
+    && !/[\u0000-\u001f\u007f]/u.test(value);
+}
+
+function isResourceList(value: unknown, validate: (item: unknown) => boolean): value is readonly string[] {
+  return Array.isArray(value) && value.length <= 64 && value.every(validate) && new Set(value).size === value.length;
 }
 
 export interface DeviceSafetyContextV1 {
