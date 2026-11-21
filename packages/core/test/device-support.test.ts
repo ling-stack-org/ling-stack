@@ -390,7 +390,9 @@ test("reconciliation requires a current capability and fresh readback evidence",
   const noObservation = await broker.reconcileTask(binding);
   assert.equal(noObservation.status, "unresolved");
   assert.equal(store.getTask(action.taskId)?.status, "unknown");
-  assert.deepEqual(await broker.execute(action), original);
+  const replay = await broker.execute(action);
+  assert.equal(replay.attempt.attemptId, original.attempt.attemptId);
+  assert.equal(replay.attempt.verification?.status, "not_evaluable");
   assert.equal(dispatches, 1);
 });
 

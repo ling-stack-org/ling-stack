@@ -327,13 +327,20 @@ export class DeviceCapabilityBroker {
           && Date.parse(binding.snapshot.freshnessUntil) > Date.parse(now)
           && this.store.getCurrentCapabilitySnapshot(attempt.targetDeviceId)?.snapshotId === binding.snapshot.snapshotId
           && this.store.getLeasedAttempt(attempt.taskId)?.attempt.attemptId === attempt.attemptId;
+        const verification = verified || result.verification.status !== "verified"
+          ? result.verification
+          : {
+              ...result.verification,
+              status: "not_evaluable" as const,
+              reason: "fresh readback evidence was not accepted",
+            };
         const record: DeviceTaskReconciliationV1 = {
           reconciliationId,
           taskId: attempt.taskId,
           attemptId: attempt.attemptId,
           capabilitySnapshotId: binding.snapshot.snapshotId,
           connectionRevision: binding.snapshot.connectionRevision,
-          verification: result.verification,
+          verification,
           status: verified ? "verified" : "unresolved",
           recordedAt: now,
         };
@@ -538,7 +545,8 @@ export class DeviceCapabilityBroker {
           && (request.expectedVerification === undefined || canonicalJson(request.expectedVerification) === canonicalJson(verification.rule))
           && (observations === undefined || (Array.isArray(observations)
             && observations.every(item => isDeviceObservationV1(item) && verification.observationIds.includes(item.id))
-            && new Set(observations.map(item => item.id)).size === observations.length))) {
+            && new Set(observations.map(item => item.id)).size === observations.length
+            && (verification.status !== "verified" || observations.length > 0)))) {
           return result;
         }
         reason = "adapter verification did not match the dispatched action";
