@@ -105,7 +105,7 @@ export class DeviceSemanticGraph {
 }
 
 export class DeviceTaskGraphCoordinator {
-  readonly #leases = new Map<string, string>();
+  readonly #leases = new Map<string, { readonly ownerId: string; readonly expiresAt: string }>();
   readonly #persistence?: DeviceTaskGraphPersistence;
   readonly #now: () => string;
   readonly #leaseMs: number;
@@ -136,16 +136,19 @@ export class DeviceTaskGraphCoordinator {
   }
 
   acquireOwnerLease(targetDeviceId: string, ownerId: string): void {
+    const now = this.#now();
     const current = this.#leases.get(targetDeviceId);
-    if (current && current !== ownerId) throw new DeviceFabricError("lease_busy", "task graph target is leased by another owner");
-    if (this.#persistence && !this.#persistence.acquireTaskGraphLease(targetDeviceId, ownerId, this.#now(), this.#leaseMs)) {
+    if (current && current.ownerId !== ownerId && Date.parse(current.expiresAt) > Date.parse(now)) {
       throw new DeviceFabricError("lease_busy", "task graph target is leased by another owner");
     }
-    this.#leases.set(targetDeviceId, ownerId);
+    if (this.#persistence && !this.#persistence.acquireTaskGraphLease(targetDeviceId, ownerId, now, this.#leaseMs)) {
+      throw new DeviceFabricError("lease_busy", "task graph target is leased by another owner");
+    }
+    this.#leases.set(targetDeviceId, { ownerId, expiresAt: new Date(Date.parse(now) + this.#leaseMs).toISOString() });
   }
 
   releaseOwnerLease(targetDeviceId: string, ownerId: string): void {
-    if (this.#leases.get(targetDeviceId) === ownerId) this.#leases.delete(targetDeviceId);
+    if (this.#leases.get(targetDeviceId)?.ownerId === ownerId) this.#leases.delete(targetDeviceId);
     this.#persistence?.releaseTaskGraphLease(targetDeviceId, ownerId);
   }
 

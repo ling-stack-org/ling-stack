@@ -53,6 +53,15 @@ test("cross-device task graph exposes ready nodes, leases owners, and aggregates
   assert.deepEqual(coordinator.readyNodes(afterA).map(node => node.nodeId), ["node-b"]);
 });
 
+test("expired in-memory task graph leases can be acquired by a new owner", () => {
+  let current = now;
+  const coordinator = new DeviceTaskGraphCoordinator({ now: () => current, leaseMs: 1_000 });
+  coordinator.acquireOwnerLease("pc-1", "daemon-1");
+  assert.throws(() => coordinator.acquireOwnerLease("pc-1", "mobile-1"), /leased/);
+  current = "2026-11-21T00:00:02.000Z";
+  coordinator.acquireOwnerLease("pc-1", "mobile-1");
+});
+
 test("edge enrollment, ordered event recovery, resource rollback, safety and lifecycle are durable domain rules", () => {
   const edge = new EdgeRuntimeRegistry();
   assert.equal(edge.enroll({ runtimeId: "edge-1", displayName: "Linaro", publicKeyFingerprint: "fp-1", contractMajor: 1, supportedTransports: ["ssh"], status: "pending", revision: 1 }).status, "enrolled");
