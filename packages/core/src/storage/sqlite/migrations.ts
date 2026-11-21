@@ -245,7 +245,9 @@ const MEDIA_EXTERNAL_WORKFLOWS_MIGRATION_VERSION = 104;
 const MEDIA_EXTERNAL_WORKFLOWS_MIGRATION_NAME = "create_media_external_workflows";
 const CUA_DRIVER_ACTIVATION_MIGRATION_VERSION = 105;
 const CUA_DRIVER_ACTIVATION_MIGRATION_NAME = "create_cua_driver_activation_state";
-const CUA_DRIVER_ID_MIGRATION_VERSION = 144;
+// Keep this after the current code-assessment migrations. Migration versions
+// are database-global; 144 is owned by approval post-commit effects.
+const CUA_DRIVER_ID_MIGRATION_VERSION = 234;
 const CUA_DRIVER_ID_MIGRATION_NAME = "migrate_cua_driver_ids";
 const MCP_AUTHORITY_REVISIONS_MIGRATION_VERSION = 106;
 const MCP_AUTHORITY_REVISIONS_MIGRATION_NAME = "add_mcp_authority_revisions";
