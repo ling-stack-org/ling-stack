@@ -4,9 +4,11 @@ name: Full CI label
 # latest CI run on each head, and label runs must never exist without it.
 # pull_request_target keeps a workflow-dispatch-capable token for fork pull
 # requests; this workflow must never check out or execute pull-request code.
+# Synchronize events keep an existing full-ci label effective even when the
+# normal CI workflow filters a documentation-only PR before it starts.
 on:
   pull_request_target:
-    types: [labeled]
+    types: [labeled, synchronize]
 
 permissions:
   contents: read
@@ -14,7 +16,9 @@ permissions:
 jobs:
   dispatch:
     name: Dispatch full CI for full-ci label
-    if: github.event.label.name == 'full-ci'
+    if: >-
+      (github.event.action == 'labeled' && github.event.label.name == 'full-ci') ||
+      (github.event.action == 'synchronize' && contains(github.event.pull_request.labels.*.name, 'full-ci'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:

@@ -170,6 +170,22 @@ test("package-local manifests and tooling configurations select their own consum
   assert.equal(desktop.daemon, false);
 });
 
+test("a new workspace module gets the same owner-only source scope after registration", () => {
+  const moduleEntry = entry("@ling-stack/new-module", "packages/new-module", [], true, true);
+  const entries = [...packageEntries, moduleEntry];
+  const scope = classifyChangedFiles({
+    files: ["packages/new-module/src/index.ts"],
+    packageEntries: entries,
+    basePackageEntries: entries,
+  });
+  assert.equal(scope.mode, "affected");
+  assert.deepEqual(scope.packages, ["@ling-stack/new-module"]);
+  assert.deepEqual(scope.testPackages, ["@ling-stack/new-module"]);
+  assert.deepEqual(scope.typecheckPackages, ["@ling-stack/new-module"]);
+  assert.equal(scope.daemon, false);
+  assert.equal(scope.assurance, false);
+});
+
 test("package identity changes, removal, or an unavailable baseline keep the full lane", () => {
   const renamed = packageEntries.map((entry) => entry.directory === "packages/core" ? { ...entry, name: "@ling-stack/core-v2" } : entry);
   for (const extra of [{ basePackageEntries: undefined }, { packageEntries: renamed },
@@ -461,6 +477,11 @@ test("Git verifies provider catalog data before selecting focused Core validatio
   for (const candidate of [
     refreshed.replace('"candidate"', '"digest-mismatch"'),
     refreshed.replace("export const providerModelCatalogRecords", "void 0;\nexport const providerModelCatalogRecords"),
+    renderProviderModelCatalog({
+      records: [{ providerId: "untrusted-provider", id: "candidate", capabilities: ["chat"] }],
+      version: providerModelCatalogVersion([{ providerId: "untrusted-provider", id: "candidate", capabilities: ["chat"] }]),
+      generatedAt: "2026-11-21T00:00:00.000Z", updatedAt: "2026-11-21",
+    }),
   ]) {
     repo.write(PROVIDER_MODEL_CATALOG_PATH, candidate);
     repo.commit();
@@ -656,6 +677,46 @@ test("Localization test migrations retain catalog checks and scope private decla
   saveManifest();
   repo.commit();
   assert.equal(repo.classify(base).mode, "full");
+});
+
+test("UI React migrations accept the existing strip-types runner and test typecheck wrapper", t => {
+  const repo = repositoryFixture(t);
+  const root = "packages/ui-react";
+  const manifest = {
+    name: "@ling-stack/ui-react", type: "module",
+    scripts: {
+      build: "tsc -p tsconfig.json",
+      "build:ci": "tsc -p tsconfig.json",
+      "typecheck:ci": "tsc -p tsconfig.json --noEmit && corepack pnpm typecheck:tests",
+      "typecheck:tests": "tsc -p tsconfig.test.json",
+      typecheck: "tsc -p tsconfig.json --noEmit && corepack pnpm typecheck:tests",
+      test: "corepack pnpm build && node --experimental-strip-types --test test/*.test.mjs test/*.test.ts",
+      "test:ci": "node --experimental-strip-types --test test/*.test.mjs test/*.test.ts",
+    },
+  };
+  repo.write(`${root}/package.json`, JSON.stringify(manifest));
+  repo.write(`${root}/tsconfig.test.json`, JSON.stringify({
+    compilerOptions: { noEmit: true }, include: ["test/**/*.ts"],
+  }));
+  repo.write(`${root}/test/probe.test.mjs`, "import test from 'node:test'; test('probe', () => {});\\n");
+  const base = repo.commit();
+
+  repo.git("mv", `${root}/test/probe.test.mjs`, `${root}/test/probe.test.ts`);
+  Object.assign(manifest.scripts, {
+    "test:ci": "node --test test/*.test.ts",
+    typecheck: "corepack pnpm build && corepack pnpm typecheck:ci",
+    test: "corepack pnpm typecheck && corepack pnpm test:ci",
+  });
+  repo.write(`${root}/package.json`, JSON.stringify(manifest));
+  repo.commit();
+  const scope = repo.classify(base);
+  assert.equal(scope.mode, "affected");
+  assert.deepEqual(scope.packages, ["@ling-stack/ui-react"]);
+  assert.deepEqual(scope.testPackages, ["@ling-stack/ui-react"]);
+  assert.deepEqual(scope.typecheckPackages, ["@ling-stack/ui-react"]);
+  assert.equal(scope.dependencyPolicy, true);
+  assert.equal(scope.assurance, false);
+  assert.equal(scope.daemon, false);
 });
 
 test("workspace dependency builds and the owning package build closure retain package-only validation", t => {

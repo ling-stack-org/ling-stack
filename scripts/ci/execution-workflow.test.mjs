@@ -9,6 +9,7 @@ import { classifyChangedFiles } from "./classify-scope.mjs";
 import { createTestPlan } from "./test-shard-plan.mjs";
 
 const workflow = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
+const codeqlWorkflow = readFileSync(new URL("../../.github/workflows/codeql.yml", import.meta.url), "utf8");
 const labelWorkflow = readFileSync(new URL("../../.github/workflows/full-ci-label.yml", import.meta.url), "utf8");
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const lanes = ["SCOPE", "COMMON", "DEPENDENCY", "ASSURANCE", "BUILD", "TYPECHECK", "UNIT", "DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE"];
@@ -175,10 +176,12 @@ test("workflow transformations require every lane for a bounded full package gra
 
 test("PR transitions and full-ci labels trigger validation while full regression is daily", () => {
   assert.match(workflow, /types: \[opened, synchronize, reopened, ready_for_review, converted_to_draft\]/u);
-  assert.match(labelWorkflow, /pull_request_target:\n    types: \[labeled\]/u);
+  assert.match(workflow, /paths-ignore:\n      - "\*\*\/\*\.md"\n      - "docs\/\*\*"\n      - "LICENSE"\n      - "\.github\/CODEOWNERS"\n      - "\.github\/FUNDING\.yml"/u);
+  assert.match(codeqlWorkflow, /paths-ignore:\n      - "\*\*\/\*\.md"\n      - "docs\/\*\*"\n      - "LICENSE"\n      - "\.github\/CODEOWNERS"\n      - "\.github\/FUNDING\.yml"/u);
+  assert.match(labelWorkflow, /pull_request_target:\n    types: \[labeled, synchronize\]/u);
   assert.match(labelWorkflow, /gh workflow run ci\.yml --ref "\$HEAD_REF" --repo "\$GITHUB_REPOSITORY"/u);
   assert.match(workflow, /cron: "17 3 \* \* \*"/u);
-  assert.doesNotMatch(workflow, /^  (?:push|paths|paths-ignore):/mu);
+  assert.doesNotMatch(workflow, /^  (?:push|paths):/mu);
   assert.match(jobSource("scope"), /--event-file "\$GITHUB_EVENT_PATH"/u);
   assert.match(jobSource("scope"), /--base="\$BASE_SHA"/u);
   assert.match(jobSource("scope"), /execution-tier: \$\{\{ steps\.policy\.outputs\.execution-tier \}\}/u);
@@ -216,7 +219,8 @@ test("label events never create CI runs so the latest run always publishes the r
   assert.match(jobSource("quality"), /^    name: Typecheck, unit tests, and Web build$/mu);
   assert.doesNotMatch(jobSource("quality"), /IGNORED_LABEL_EVENT/u);
   assert.doesNotMatch(jobSource("scope"), /^    if:/mu);
-  assert.match(labelWorkflow, /if: github\.event\.label\.name == 'full-ci'/u);
+  assert.match(labelWorkflow, /github\.event\.action == 'labeled' && github\.event\.label\.name == 'full-ci'/u);
+  assert.match(labelWorkflow, /github\.event\.action == 'synchronize' && contains\(github\.event\.pull_request\.labels\.\*\.name, 'full-ci'\)/u);
   assert.match(labelWorkflow, /actions: write/u);
   assert.match(labelWorkflow, /pull_request\.head\.ref/u);
   // The dispatch job holds a write token on pull_request_target; it must stay a

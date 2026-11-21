@@ -4,27 +4,11 @@ import { fileURLToPath } from "node:url";
 import {
   PROVIDER_MODEL_CATALOG_PATH,
   PROVIDER_MODEL_CATALOG_SOURCE,
+  TRUSTED_PROVIDER_IDS,
   providerModelCatalogVersion,
   renderProviderModelCatalog,
 } from "./provider-model-catalog-format.mjs";
 import { normalizeModelTokenLimits, normalizeThinkingModes } from "./provider-model-catalog-normalization.mjs";
-
-const TRUSTED_PROVIDER_IDS = [
-  "alibaba",
-  "anthropic",
-  "deepseek",
-  "google",
-  "minimax",
-  "mistral",
-  "moonshotai",
-  "openai",
-  "siliconflow",
-  "stepfun",
-  "volcengine",
-  "xai",
-  "zai",
-  "zhipuai",
-];
 
 const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const outputPath = resolve(rootDir, PROVIDER_MODEL_CATALOG_PATH);

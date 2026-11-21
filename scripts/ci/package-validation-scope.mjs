@@ -2,8 +2,12 @@ import { lstatSync, readFileSync, readdirSync } from "node:fs";
 import { join, matchesGlob } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
-const validationScripts = new Set(["test", "test:ci", "typecheck", "typecheck:ci"]);
-const testCommand = /^node --test(?: --test-concurrency=\d+)? ((?:(?:test|tests)\/\*\.test\.(?:mjs|ts) ?)+)$/u;
+// Keep package-local test helpers inside the validation boundary. A helper is
+// still verified below through its exact no-emit TypeScript command, so adding
+// this standard entry does not make arbitrary package scripts opaque.
+const requiredValidationScripts = new Set(["test", "test:ci", "typecheck", "typecheck:ci"]);
+const validationScripts = new Set([...requiredValidationScripts, "typecheck:tests"]);
+const testCommand = /^node (?:--experimental-strip-types )?--test(?: --test-concurrency=\d+)? ((?:(?:test|tests)\/\*\.test\.(?:mjs|ts) ?)+)$/u;
 const typecheckCommand = /^tsc -p (tsconfig(?:\.[\w-]+)?\.json)( --noEmit)?$/u;
 const workspacePackageName = /^@ling-stack\/[a-z0-9-]+$/u;
 const localizationTestDeclarations = [
@@ -26,7 +30,7 @@ export function packageValidationScope({ current, previous, directory, root, rep
     || !isDeepStrictEqual(Object.keys(scripts).sort(), Object.keys(oldScripts).sort())) return undefined;
   const productionScripts = value => Object.fromEntries(Object.entries(value).filter(([name]) => !validationScripts.has(name)));
   if (!isDeepStrictEqual(productionScripts(scripts), productionScripts(oldScripts))) return undefined;
-  if ([scripts, oldScripts].some(value => [...validationScripts].some(name => typeof value[name] !== "string" || !value[name].trim()))) return undefined;
+  if ([scripts, oldScripts].some(value => [...requiredValidationScripts].some(name => typeof value[name] !== "string" || !value[name].trim()))) return undefined;
 
   const packageRoot = join(root, directory);
   const production = Object.values(productionScripts(scripts));
@@ -53,7 +57,7 @@ export function packageValidationScope({ current, previous, directory, root, rep
     testPatterns.push(tests[1].trim().split(" "));
     const checks = typecheckEntry.slice(typecheckPrelude.length).split(" && ");
     for (const command of checks) {
-      const match = typecheckCommand.exec(command);
+      const match = typecheckCommand.exec(resolveTypecheckCommand(command, candidate));
       if (!match) return undefined;
       const configPath = `${directory}/${match[1]}`;
       // Reading the checkout can verify a baseline config only when its tracked
@@ -122,6 +126,11 @@ export function packageValidationScope({ current, previous, directory, root, rep
     }
   }
   return { testInputs };
+}
+
+function resolveTypecheckCommand(command, scripts) {
+  if (!["corepack pnpm typecheck:tests", "corepack pnpm run typecheck:tests"].includes(command)) return command;
+  return scripts["typecheck:tests"] === "tsc -p tsconfig.test.json" ? scripts["typecheck:tests"] : command;
 }
 
 function matchesValidationCommand(command, validation, workspaceBuilds) {

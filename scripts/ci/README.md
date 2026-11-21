@@ -1,8 +1,10 @@
 # CI Test Execution
 
-The existing quality check remains the required merge gate. Ready PRs run the
-selected package graph. Draft previews retain the common fast lane; promotion,
-`full-ci`, manual and scheduled runs retain their complete execution policy.
+The existing quality check remains the required merge gate for PRs that enter
+the workflow. Ready PRs run the selected package graph. Documentation-only PRs
+are filtered before a hosted runner starts. Draft previews retain the common
+fast lane; promotion, `full-ci`, manual and scheduled runs retain their
+complete execution policy.
 
 ## Scope And Required Checks
 
@@ -12,7 +14,7 @@ Mixed changes union their affected packages and required lanes.
 
 | Changed inputs | Selected product checks |
 | --- | --- |
-| Docs, nested READMEs, PR/Issue templates, CODEOWNERS, FUNDING | None; common checks and the required quality gate still run |
+| Docs, nested READMEs, PR/Issue templates, CODEOWNERS, FUNDING | No hosted PR CI run; the workflow path filter applies only when every changed path is documentation |
 | Allowlisted Markdown-link and public-repository checks | Common fast checks only |
 | Verified deletions under the root `output/` | Common fast checks only for an archive cleanup |
 | Package tests and test support | Owning package; shared test-support importers are included |
@@ -44,10 +46,10 @@ directory, name, test/typecheck entry presence and complete scripts fingerprint
 must match. Missing baseline identity, added/removed script entries, production
 script changes and opaque validation commands force full regression.
 [The validation recognizer](package-validation-scope.mjs) permits changes only to
-the existing `test`, `test:ci`, `typecheck` and `typecheck:ci` scripts when all other
-manifest fields and scripts are unchanged. It recognizes complete top-level
+the existing `test`, `test:ci`, `typecheck`, `typecheck:ci` and `typecheck:tests`
+scripts when all other manifest fields and scripts are unchanged. It recognizes complete top-level
 `node --test` globs for `.test.mjs`/`.test.ts`, no-emit package-local `tsc`
-commands, and wrappers around those CI entries and unchanged builds, including
+commands, the standard `typecheck:tests` wrapper for an isolated test config, and wrappers around those CI entries and unchanged builds, including
 `corepack pnpm run build`. A local `test` script can call an already verified
 `corepack pnpm typecheck` before its test command.
 Name filters, shell additions, no-op commands, omitted test languages and empty
@@ -68,6 +70,16 @@ Web's catalog importer is an explicit consumer because it reads Web source,
 AST helpers and tsconfig without declaring a workspace dependency. The real
 manifest graph also includes CLI's dependency on Web. Selecting those consumers
 does not select core/daemon test shards just because a build needs their outputs.
+
+New workspace packages use the same contract. Place the package under one
+`packages/<name>` or `apps/<name>` directory, keep stable `build`, `build:ci`,
+`typecheck`, `typecheck:ci`, `test`, and `test:ci` entries, and put tests under
+`test/*.test.mjs` or `test/*.test.ts`. A test-only `tsconfig.test.json` must be
+no-emit and include only test inputs. The package's initial addition retains
+full validation for the new graph. After it is on the base branch, source,
+test, and test-config changes select the owner and proven consumers without
+expanding to unrelated packages. Shared test helpers need traceable relative
+imports so their real consumers can be selected.
 
 Dependency policy runs for dependency inputs and its own regression tests, not
 for every source/test edit. Typecheck and Linux unit jobs run only for nonempty
@@ -111,8 +123,10 @@ changes retain the union of required checks, and unknown paths remain full scope
 The aggregate validates explicit assurance/build/dependency/typecheck/unit/daemon/Linux-contract/macOS-native selectors.
 Selected checks must succeed; only genuinely unselected checks may be skipped.
 Failure, cancellation, missing or malformed results never pass as a skip. Docs
-must select no product lanes, and full scope must select all lanes. No workflow
-path filter suppresses the required aggregate or complete-tier history scan.
+that enter the workflow must select no product lanes, and full scope must select
+all lanes. Pure documentation Pull Requests are filtered before the workflow
+allocates a runner; manual, scheduled and `full-ci` runs still use the
+complete-tier policy.
 
 The scope job writes a `ci-scope-report` artifact and appends the same report to
 the GitHub Step Summary. It shows the execution tier, classifier reason, changed
@@ -405,10 +419,10 @@ without Core uses eight Linux Daemon shards; runner arguments must match its pla
 ## Secret Scans
 
 Complete-tier PRs scan every commit after the unique merge-base, including merged
-branches and merge-resolution patches. Docs-only scope and the final file diff
-never disable these history scans: an introduced-then-deleted secret is still
-scanned. Draft preview runs continue to defer the scan; a Draft promoted to
-complete by `full-ci` runs it.
+branches and merge-resolution patches. A documentation-only Pull Request does
+not start this workflow, while a mixed or explicitly complete run still scans
+the full history. Draft preview runs continue to defer the scan; a Draft
+promoted to complete by `full-ci` runs it.
 
 Missing/ambiguous history or changes to scanner configuration/ignore policy
 select full history. Scheduled/manual runs scan full reachable history. Checkout

@@ -3,6 +3,12 @@ name: CodeQL
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "LICENSE"
+      - ".github/CODEOWNERS"
+      - ".github/FUNDING.yml"
   schedule:
     - cron: "23 * * * *"
   workflow_dispatch:

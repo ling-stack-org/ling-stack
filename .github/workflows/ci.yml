@@ -3,6 +3,15 @@ name: CI
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
+    # Documentation-only PRs do not need a hosted CI run. A PR that mixes
+    # documentation with code still matches the workflow and is classified by
+    # the complete diff below.
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+      - "LICENSE"
+      - ".github/CODEOWNERS"
+      - ".github/FUNDING.yml"
   workflow_dispatch:
   schedule:
     # Daily full Linux/macOS regression at 11:17 Asia/Shanghai (03:17 UTC).
