@@ -22,6 +22,14 @@ export async function runLingAppServerMcp(
     inputSchema: z.strictObject({ threadId: objectId }),
     annotations: { readOnlyHint: true },
   }, async ({ threadId }) => describe(await client.readThread(threadId)));
+  server.registerTool("ling_thread_snapshot", {
+    description: "Read the active Ling Turn revision, Run status, and event cursor.",
+    inputSchema: z.strictObject({ threadId: objectId }),
+    annotations: { readOnlyHint: true },
+  }, async params => {
+    const { turn, run, cursor } = await client.readThreadSnapshot(params);
+    return describe({ turn, run, cursor });
+  });
   server.registerTool("ling_thread_events", {
     description: "Read a page of Ling Thread events. Use window.nextAfterSeq as the next cursor.",
     inputSchema: z.strictObject({ threadId: objectId, cursor: z.string().regex(/^\d+$/u).optional() }),
@@ -29,6 +37,8 @@ export async function runLingAppServerMcp(
   }, async ({ threadId, cursor }) => describe(await client.readThreadEvents({ threadId, cursor, limit: 1 })));
 
   if (options.authToken) {
+    const followupInput = z.strictObject({ threadId: objectId, expectedTurnId: objectId, expectedTurnRevision: objectId,
+      message: z.string().min(1).max(16_384), idempotencyKey: requestKey });
     server.registerTool("ling_thread_start", {
       description: "Create a Ling Thread in the connected workspace. Use the same request key when retrying.",
       inputSchema: z.strictObject({ title: z.string().min(1).max(200), idempotencyKey: requestKey }),
@@ -43,10 +53,20 @@ export async function runLingAppServerMcp(
       }),
       annotations: { idempotentHint: true },
     }, async params => describe(await client.startTurn(params)));
+    server.registerTool("ling_turn_queue", {
+      description: "Queue a follow-up for the active Ling Turn from ling_thread_snapshot. Retry with the same request key.",
+      inputSchema: followupInput,
+      annotations: { idempotentHint: true, destructiveHint: false },
+    }, async params => describe(await client.queueTurn(params)));
     server.registerTool("ling_turn_interrupt", {
       description: "Request a stop for the current Run on a Ling Turn.",
       inputSchema: z.strictObject({ turnId: objectId }),
     }, async ({ turnId }) => describe(await client.interruptTurn({ turnId })));
+    server.registerTool("ling_turn_redirect", {
+      description: "Stop the observed Ling Turn and submit a follow-up after its Run settles. Retry with the same request key.",
+      inputSchema: followupInput,
+      annotations: { idempotentHint: true, destructiveHint: true },
+    }, async params => describe(await client.interruptTurn(params)));
   }
 
   const transport = new StdioServerTransport(input, output, { maxBufferSize: 1024 * 1024 });

@@ -632,6 +632,7 @@ export interface LingAppServerCheckEvidence {
 
 export interface LingAppServerVerifyOperation {
   readonly operationId: string;
+  readonly revision?: string;
   readonly planId: string;
   readonly candidateDigest: string;
   readonly status: "queued" | "running" | "passed" | "failed" | "blocked" | "cancelled" | "unknown";

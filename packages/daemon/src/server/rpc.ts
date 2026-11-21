@@ -61,7 +61,8 @@ import { parseRunRequest, type RunRequest } from "../features/runs/schemas.js";
 import { parseCompleteLingThreadGoalBody, parsePutLingThreadGoalBody } from "../features/runs/thread-routes.js";
 import { projectPublicRunSession } from "../features/runs/public-execution-snapshots.js";
 import { projectPublicLingThread, projectPublicLingTurn } from "../features/runs/public-execution-snapshots.js";
-import { maybeQueueGoalContinuation, maybeStartNextRunInterventionContinuation, recordUserRunIntervention } from "../features/runs/interventions.js";
+import { maybeQueueGoalContinuation, maybeStartNextRunInterventionContinuation, recordUserRunIntervention, requestRunInterventionRedirect } from "../features/runs/interventions.js";
+import { assertNoUnsafeRequiredPause } from "../features/runs/user-input-cancellation-guard.js";
 import { RpcOutboundWriter, type RpcOutboundFrame } from "./rpc-outbound.js";
 import { AppServerDevelopmentService } from "./app-server-development.js";
 import { executeAppServerVerificationCheck } from "./app-server-verification-recipes.js";
@@ -494,7 +495,7 @@ class RpcConnection {
       case "input/respond":
         return this.respondInput(params);
       case "turn/queue":
-        return this.queueTurn(params);
+        return this.submitTurnIntervention(params, "queue_followup");
       case "turn/interrupt":
         return this.interruptTurn(params);
       case "turn/steer":
@@ -1594,7 +1595,7 @@ class RpcConnection {
     }
   }
 
-  private queueTurn(params: unknown): unknown {
+  private submitTurnIntervention(params: unknown, mode: "queue_followup" | "interrupt_redirect"): unknown {
     const { cwd, ...record } = this.workspaceParams(params);
     const threadId = readStringField(record, "threadId");
     const turnId = readStringField(record, "expectedTurnId");
@@ -1607,7 +1608,7 @@ class RpcConnection {
     const store = this.context.storeRegistry.getStore(cwd);
     const thread = store.getLingThread(threadId);
     const turn = store.getLingTurn(turnId);
-    if (!thread || thread.kind !== "conversation" || thread.channelId || thread.status === "archived" || turn?.threadId !== threadId) {
+    if (!thread || thread.kind !== "conversation" || thread.channelId || thread.archivedAt || thread.status === "archived" || turn?.threadId !== threadId) {
       throw rpcError(-32040, "workspace_binding_invalid", "The source Turn does not belong to an open conversation Thread.");
     }
     const runId = turn.activeRunId ?? turn.lastRunId;
@@ -1619,28 +1620,47 @@ class RpcConnection {
     const retainedKey = `app-server:${turn.id}:${idempotencyKey}`;
     const prior = store.listRunInterventions({ sourceRunId: sourceRun.id, idempotencyKey: retainedKey, limit: 1 })[0];
     if (prior) {
-      if (prior.mode !== "queue_followup" || prior.instruction !== instruction) {
+      if (prior.mode !== mode || prior.instruction !== instruction) {
         throw rpcError(-32031, "idempotency_conflict", "The Turn input key was reused with a different message.");
       }
       return { cwd, threadId, turnId, intervention: prior, replayed: true };
     }
     if (turn.updatedAt !== expectedRevision || turn.activeRunId !== run.id || thread.activeRunId !== run.id
-      || !["queued", "running", "waiting_for_approval"].includes(run.status)) {
+      || !["queued", "running", "waiting_for_approval"].includes(run.status) && !(mode === "interrupt_redirect" && run.status === "yielded")) {
       throw rpcError(-32030, "stale_revision", "The expected Turn is no longer the active revision.");
     }
-    const result = recordUserRunIntervention(store, this.context.activeRuns, sourceRun, {
-      instruction, mode: "queue_followup", idempotencyKey: retainedKey,
-    }, new Date().toISOString());
-    return { cwd, threadId, turnId, ...result };
+    if (mode === "interrupt_redirect" && run.status !== "yielded") assertNoUnsafeRequiredPause(store, run);
+    const now = new Date().toISOString();
+    const created = recordUserRunIntervention(store, this.context.activeRuns, sourceRun, {
+      instruction, mode, idempotencyKey: retainedKey,
+    }, now);
+    if (mode === "interrupt_redirect" && !created.replayed) {
+      try {
+        requestRunInterventionRedirect(store, this.context.activeRuns, run, created.intervention, now);
+      } catch (error) {
+        store.cancelRunIntervention(created.intervention.id, now, "source_cancellation_rejected");
+        throw error;
+      }
+      this.context.taskSupervisor.poke(cwd);
+    }
+    return { cwd, threadId, turnId, ...created, intervention: store.getRunIntervention(created.intervention.id) ?? created.intervention };
   }
 
   private interruptTurn(params: unknown): unknown {
     const record = readParamsRecord(params);
+    if (record.message !== undefined || record.userInstruction !== undefined) return this.submitTurnIntervention(record, "interrupt_redirect");
     const cwd = readRpcCwd(record, this.defaultCwd);
-    const turnId = readStringField(record, "turnId");
+    const turnId = readOptionalStringField(record, "turnId") ?? readStringField(record, "expectedTurnId");
     const store = this.context.storeRegistry.getStore(cwd);
     const turn = store.getLingTurn(turnId);
     if (!turn) throw rpcError(-32040, "workspace_binding_invalid", `Turn was not found: ${turnId}`);
+    if (record.threadId !== undefined && record.threadId !== turn.threadId) {
+      throw rpcError(-32040, "workspace_binding_invalid", "The Turn does not belong to the supplied Thread.");
+    }
+    if (record.expectedTurnId !== undefined && record.expectedTurnId !== turn.id
+      || record.expectedTurnRevision !== undefined && record.expectedTurnRevision !== turn.updatedAt) {
+      throw rpcError(-32030, "stale_revision", "The expected Turn revision is stale.");
+    }
     if (!turn.activeRunId) {
       const thread = store.getLingThread(turn.threadId);
       return { cwd, turn: projectPublicLingTurn(turn, thread) };
@@ -2437,7 +2457,8 @@ function appServerEventNotification(subscriptionId: string, event: ControlPlaneE
         ? { kind: "thread", threadId: event.entityId }
         : event.entityType === "work_item"
           ? { kind: "workItem", workItemId: event.entityId }
-          : { kind: "thread", threadId: event.data.threadId as string | undefined },
+          : { kind: "thread", threadId: event.data.threadId as string | undefined,
+              ...(typeof event.data.turnId === "string" ? { turnId: event.data.turnId } : {}) },
       revision: String(event.data.revision ?? event.ts),
       event,
       payload: event.data,
@@ -2467,6 +2488,10 @@ function appServerServerRequestForEvent(event: ControlPlaneEvent): unknown | und
 
 function appServerEventMethod(event: ControlPlaneEvent): string | undefined {
   if (event.action === "thread.goal.updated") return "thread/goal/updated";
+  if (event.entityType === "run" && typeof event.data.turnId === "string" && typeof event.data.interventionId === "string") {
+    if (event.action === "run.created") return "turn/started";
+    if (event.action === "run.completed" || event.action === "run.cancelled") return "turn/completed";
+  }
   if (event.entityType === "thread") {
     if (event.action === "thread.started") return "thread/started";
     if (event.action === "thread.archived") return "thread/archived";

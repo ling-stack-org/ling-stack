@@ -1946,6 +1946,7 @@ export interface RunStore extends AutomationEventStore, CodeAssessmentStore, Cod
   createRunIntervention(input: CreateRunInterventionInput, now: string): RunIntervention;
   getRunIntervention(interventionId: string): RunIntervention | undefined;
   listRunInterventions(options?: ListRunInterventionsOptions): RunIntervention[];
+  listPendingConversationInterventionSources(): string[];
   claimNextRunIntervention(input: ClaimNextRunInterventionInput): RunIntervention | undefined;
   listPriorRunInterventionReplyMessages(input: ListPriorRunInterventionReplyMessagesInput): ChannelMessage[];
   updateRunInterventionStatus(input: UpdateRunInterventionStatusInput): RunIntervention | undefined;

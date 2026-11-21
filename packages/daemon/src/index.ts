@@ -889,6 +889,9 @@ export function createDaemonServer(
       .find(item => item.requestedBy === "system" && item.idempotencyKey?.startsWith("goal_auto_continue:"));
     if (pending) await maybeStartNextRunInterventionContinuation({ sourceRunId: run.id, store, runnerRegistry, storeRegistry,
       activeRuns, runtimeSupervisor, secretResolver, mcpBroker, computerUsePreviews, controlPlaneEvents, startupState, nativeRunDispatcher });
+  }, async (store, sourceRunId) => {
+    await maybeStartNextRunInterventionContinuation({ sourceRunId, store, runnerRegistry, storeRegistry,
+      activeRuns, runtimeSupervisor, secretResolver, mcpBroker, computerUsePreviews, controlPlaneEvents, startupState, nativeRunDispatcher });
   });
   // Explicit typed Host startup selection. No HTTP/model request can add an
   // ID, and a normal installation leaves dynamic producers closed by default.

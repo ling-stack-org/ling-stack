@@ -165,7 +165,7 @@ test("a queued Turn reaches Pi once after the source Run finishes and keeps its 
     threadId: thread.id, message: "Wait before finishing the source Turn", providerPresetId: preset.id, idempotencyKey: "queue-source",
   });
   await waitFor(() => provider.requests.length === 1 ? true : undefined);
-  const { turn } = await client.call<LingAppServerThreadSnapshotResult>("thread/snapshot", { threadId: thread.id });
+  const { turn, cursor } = await client.call<LingAppServerThreadSnapshotResult>("thread/snapshot", { threadId: thread.id });
   assert.ok(turn);
   const request = { threadId: thread.id, expectedTurnId: turn.id, expectedTurnRevision: turn.updatedAt,
     message: "Check the follow-up candidate", idempotencyKey: "queue-next" };
@@ -185,24 +185,84 @@ test("a queued Turn reaches Pi once after the source Run finishes and keeps its 
   assert.equal(replay.intervention.id, queued.intervention.id);
   await assert.rejects(peer.call("turn/queue", { ...request, message: "Different follow-up" }), { code: "idempotency_conflict" });
 
-  releaseFirstResponse();
   const store = fixture.getStore();
-  const delivered = await waitFor(() => {
-    const receipt = store.getRunIntervention(queued.intervention.id);
-    return receipt?.continuationRunId && store.getRun(receipt.continuationRunId)?.status === "succeeded" ? receipt : undefined;
-  });
-  const followUp = store.getLingTurnForRun(delivered.continuationRunId!);
-  assert.equal(followUp?.kind, "queued_followup");
-  assert.equal(followUp?.sourceTurnId, turn.id);
-  assert.equal(provider.requests.length, 2);
-  assert.match(JSON.stringify(provider.requests[1]), /Check the follow-up candidate/u);
-  await assert.rejects(peer.call("turn/queue", { ...request, idempotencyKey: "late-follow-up" }), { code: "stale_revision" });
+  let reachedClaim = false;
+  store.claimNextRunIntervention = () => {
+    reachedClaim = true;
+    return undefined;
+  };
+  releaseFirstResponse();
+  await waitFor(() => reachedClaim ? true : undefined);
+  assert.equal(store.getRun(started.run.id)?.status, "succeeded");
+  assert.equal(store.getRunIntervention(queued.intervention.id)?.status, "queued");
+  assert.equal(provider.requests.length, 1);
   await fixture.restart();
   const restored = await fixture.connect();
+  await restored.call("thread/subscribe", { threadId: thread.id, cursor });
+  const recoveredStore = fixture.getStore();
+  const delivered = await waitFor(() => {
+    const receipt = recoveredStore.getRunIntervention(queued.intervention.id);
+    return receipt?.completedAt && receipt.continuationRunId && recoveredStore.getRun(receipt.continuationRunId)?.status === "succeeded" ? receipt : undefined;
+  });
+  const followUp = recoveredStore.getLingTurnForRun(delivered.continuationRunId!);
+  assert.equal(followUp?.kind, "queued_followup");
+  assert.equal(followUp?.sourceTurnId, turn.id);
+  await waitFor(() => restored.notices.find(notice => notice.method === "turn/completed"
+    && notice.params?.subject?.turnId === followUp.id));
+  assert.equal(provider.requests.length, 2);
+  assert.match(JSON.stringify(provider.requests[1]), /Check the follow-up candidate/u);
+  const events = await restored.call<ControlPlaneEventsResponse>("thread/events/read", { threadId: thread.id, cursor });
+  assert.deepEqual(events.events.filter(event => event.entityId === delivered.continuationRunId && event.action === "run.completed")
+    .map(event => event.data.status), ["succeeded"]);
+  await assert.rejects(restored.call("turn/queue", { ...request, idempotencyKey: "late-follow-up" }), { code: "stale_revision" });
   const result = await restored.call<QueueReceipt>("turn/queue", request);
   assert.equal(result.intervention.id, delivered.id);
   assert.equal(result.intervention.continuationRunId, delivered.continuationRunId);
   assert.equal(provider.requests.length, 2);
+});
+
+test("interrupt with a message cancels the source and delivers one redirect continuation", { timeout: 30_000 }, async t => {
+  let releaseFirstResponse: () => void = () => undefined;
+  const firstResponse = new Promise<void>(resolve => { releaseFirstResponse = resolve; });
+  const provider = await startLoopbackPiProvider(async (_body: unknown, count: number) => {
+    if (count === 1) await firstResponse;
+    return { text: count === 1 ? "Source Turn finished" : "Redirect finished" };
+  });
+  t.after(async () => {
+    releaseFirstResponse();
+    await provider.close();
+  });
+  const fixture = await releaseFixture(t);
+  const client = await fixture.connect();
+  const { thread } = await client.call<ThreadRead>("thread/start", { title: "Redirect test" });
+  const preset = addLoopbackPreset(fixture.getStore(), provider.baseUrl);
+  const started = await client.call<{ turn: { id: string }; run: { id: string } }>("turn/start", {
+    threadId: thread.id, message: "Start a long-running Turn", providerPresetId: preset.id, idempotencyKey: "steer-source",
+  });
+  await waitFor(() => provider.requests.length === 1 ? true : undefined);
+  const snapshot = await client.call<LingAppServerThreadSnapshotResult>("thread/snapshot", { threadId: thread.id });
+  assert.equal(snapshot.turn?.id, started.turn.id);
+  const request = {
+    threadId: thread.id, expectedTurnId: snapshot.turn!.id, expectedTurnRevision: snapshot.turn!.updatedAt,
+    message: "Stop the current approach and use the safer implementation", idempotencyKey: "steer-redirect",
+  };
+  await assert.rejects(client.call("turn/steer", request), { code: "steer_unsupported" });
+  assert.equal(fixture.getStore().getRun(started.run.id)?.status, "running");
+  const redirected = await client.call<{ intervention: RunIntervention; replayed: boolean }>("turn/interrupt", request);
+  assert.equal(redirected.replayed, false);
+  assert.equal(redirected.intervention.mode, "interrupt_redirect");
+  const replay = await client.call<{ intervention: RunIntervention; replayed: boolean }>("turn/interrupt", request);
+  assert.equal(replay.replayed, true);
+  assert.equal(replay.intervention.id, redirected.intervention.id);
+  releaseFirstResponse();
+  const delivered = await waitFor(() => {
+    const receipt = fixture.getStore().getRunIntervention(redirected.intervention.id);
+    return receipt?.continuationRunId && fixture.getStore().getRun(receipt.continuationRunId)?.status === "succeeded" ? receipt : undefined;
+  });
+  assert.equal(fixture.getStore().getRun(started.run.id)?.status, "cancelled");
+  assert.equal(provider.requests.length, 2);
+  assert.match(JSON.stringify(provider.requests[1]), /safer implementation/u);
+  assert.equal(fixture.getStore().getLingTurnForRun(delivered.continuationRunId!)?.kind, "interrupt_redirect");
 });
 
 test("a completed Review binds its candidate and replays the same assessment after daemon restart", { timeout: 30_000 }, async t => {
@@ -284,8 +344,13 @@ const codexExecutable = process.env.LING_APP_SERVER_CODEX_EXECUTABLE;
 test("installed Codex calls the CLI MCP bridge while a Ling subscription receives the same Turn", {
   skip: !codexExecutable, timeout: 45_000,
 }, async t => {
-  const provider = await startLoopbackPiProvider(() => ({ text: "Codex submission reached Ling" }));
-  t.after(() => provider.close());
+  let finishSource: () => void = () => undefined;
+  const sourceCanFinish = new Promise<void>(resolve => { finishSource = resolve; });
+  const provider = await startLoopbackPiProvider(async (_body: unknown, count: number) => {
+    if (count === 1) await sourceCanFinish;
+    return { text: "Codex submission reached Ling" };
+  });
+  t.after(async () => { finishSource(); await provider.close(); });
   const fixture = await releaseFixture(t);
   const ling = await fixture.connect();
   const { daemonUrl, authToken } = fixture.transportOptions();
@@ -321,9 +386,26 @@ test("installed Codex calls the CLI MCP bridge while a Ling subscription receive
     const request = { threadId: thread.id, message: "Test the installed Codex MCP bridge", providerPresetId: preset.id, idempotencyKey: "real-codex-turn" };
     const accepted = await call<{ turn: { id: string }; run: { id: string } }>("ling_turn_start", request);
     await waitFor(() => ling.notices.find(notice => notice.method === "turn/started" && notice.params?.subject?.threadId === thread.id));
-    await waitFor(() => fixture.getStore().getRun(accepted.run.id)?.status === "succeeded" ? true : undefined);
+    await waitFor(() => provider.requests.length === 1 ? true : undefined);
+    const snapshot = await call<Pick<LingAppServerThreadSnapshotResult, "turn">>("ling_thread_snapshot", { threadId: thread.id });
+    assert.equal(snapshot.turn?.id, accepted.turn.id);
+    const queuedInput = { threadId: thread.id, expectedTurnId: accepted.turn.id, expectedTurnRevision: snapshot.turn!.updatedAt,
+      message: "Codex sent the next instruction", idempotencyKey: "real-codex-followup" };
+    const queued = await call<{ intervention: RunIntervention }>("ling_turn_queue", queuedInput);
+    assert.equal(queued.intervention.status, "queued");
+    assert.equal((await call<typeof queued>("ling_turn_queue", queuedInput)).intervention.id, queued.intervention.id);
+    finishSource();
+    const store = fixture.getStore();
+    const followUp = await waitFor(() => {
+      const receipt = store.getRunIntervention(queued.intervention.id);
+      return receipt?.completedAt && receipt.continuationRunId ? store.getLingTurnForRun(receipt.continuationRunId) : undefined;
+    });
+    assert.equal(followUp.status, "succeeded");
+    await waitFor(() => ling.notices.find(notice => notice.method === "turn/completed"
+      && notice.params?.subject?.turnId === followUp.id));
     assert.equal((await call<typeof accepted>("ling_turn_start", request)).run.id, accepted.run.id);
-    assert.equal(provider.requests.length, 1);
+    assert.equal(provider.requests.length, 2);
+    assert.match(JSON.stringify(provider.requests[1]), /Codex sent the next instruction/u);
     let cursor = subscription.cursor;
     let seen = false;
     for (let page = 0; page < 30 && !seen; page++) {
@@ -675,7 +757,7 @@ type JsonLine = {
   method?: string;
   result?: unknown;
   error?: { message: string };
-  params?: { eventId?: string; subject?: { threadId?: string; workItemId?: string } };
+  params?: { eventId?: string; subject?: { threadId?: string; turnId?: string; workItemId?: string } };
 };
 
 function jsonLines(input: Writable, output: Readable) {

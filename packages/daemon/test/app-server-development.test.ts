@@ -14,10 +14,12 @@ test("development verification plans bind allowlisted checks and leave unconfigu
   const plan = await service.planVerification({
     cwd,
     candidate: { workspaceId: cwd, candidateDigest: "candidate-a" },
+    planRevision: "goal-revision-fixture",
     requestedChecks: ["typecheck", "browser-smoke"],
   });
   assert.equal(plan.checks.length, 2);
   assert.equal(plan.checks[0]?.kind, "typecheck");
+  assert.equal(plan.checks[0]?.verifierBasisRef, undefined);
   assert.equal(plan.checks[1]?.kind, "browser");
   assert.equal(plan.checks[1]?.command, undefined);
   assert.match(plan.checks[0]?.recipeDigest ?? "", /^[a-f0-9]{64}$/u);
@@ -117,7 +119,13 @@ test("verification passes cancellation to the active check and ignores remaining
   const plan = await service.planVerification({ candidate: { workspaceId: cwd, candidateDigest: "cancel-fixture" } });
   const start = { planId: plan.planId, planRevision: plan.planRevision, candidateDigest: plan.candidate.candidateDigest, idempotencyKey: "start" };
   const { operationId } = await service.startVerification(start);
-  assert.equal(service.cancelVerification({ operationId, idempotencyKey: "cancel" }).status, "cancel_requested");
+  const revision = service.getVerification({ operationId }).operation.revision;
+  assert.ok(revision);
+  const cancel = { operationId, expectedRevision: revision, idempotencyKey: "cancel" };
+  assert.throws(() => service.cancelVerification({ ...cancel, expectedRevision: "stale" }), { code: "stale_revision" });
+  assert.equal(checkSignal?.aborted, false);
+  const receipt = service.cancelVerification(cancel);
+  assert.equal(receipt.status, "cancel_requested");
   assert.equal(checkSignal?.aborted, true);
   finishCheck("passed");
   await setImmediate();
@@ -126,6 +134,8 @@ test("verification passes cancellation to the active check and ignores remaining
   const result = restored.getVerification({ operationId }).operation;
   assert.equal(result.status, "cancelled");
   assert.deepEqual(result.checks.map(check => check.status), ["passed", "not_run"]);
+  assert.deepEqual(restored.cancelVerification(cancel), receipt);
+  assert.throws(() => restored.cancelVerification({ ...cancel, expectedRevision: result.revision }), { code: "idempotency_conflict" });
   assert.deepEqual(await restored.startVerification(start), result);
 });
 

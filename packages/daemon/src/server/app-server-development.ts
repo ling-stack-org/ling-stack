@@ -46,6 +46,7 @@ type VerifyRecord = {
   readonly operation: LingAppServerVerifyOperation;
   readonly plan: LingAppServerVerifyPlanResult;
   readonly cancelRequested: boolean;
+  readonly cancellation?: { readonly key: string; readonly expectedRevision?: string };
 };
 
 export interface AppServerDevelopmentOptions {
@@ -80,13 +81,12 @@ export class AppServerDevelopmentService {
         label,
         ...(argv.length ? { command: argv.join(" ") } : {}),
         recipeDigest: digest(JSON.stringify({ id, kind, argv, candidateDigest: candidate.candidateDigest })),
-        ...(input.planRevision ? { verifierBasisRef: input.planRevision } : {}),
         required,
       } satisfies LingAppServerVerificationCheckPlan;
     });
     const plan: LingAppServerVerifyPlanResult = {
       planId: `verify_plan_${randomUUID()}`,
-      planRevision: digest(JSON.stringify({ candidate, checks })),
+      planRevision: digest(JSON.stringify({ candidate, checks, acceptedPlanRevision: input.planRevision })),
       candidate,
       checks,
       rationale: ["Selected deterministic workspace checks for the candidate."],
@@ -108,7 +108,7 @@ export class AppServerDevelopmentService {
     if (!plan || plan.planRevision !== input.planRevision || plan.candidate.candidateDigest !== input.candidateDigest) {
       throw Object.assign(new Error("Verification plan is stale or unavailable."), { jsonRpcCode: -32030, code: "stale_revision" });
     }
-    if (!input.idempotencyKey?.trim()) throw Object.assign(new Error("An idempotency key is required."), { jsonRpcCode: -32602, code: "invalid_params" });
+    assertVerificationKey(input.idempotencyKey);
     const existing = store.findAppServerStateByIdempotencyKey("verify_operation", input.idempotencyKey);
     if (existing) {
       const value = existing.payload as VerifyRecord;
@@ -119,6 +119,7 @@ export class AppServerDevelopmentService {
     const queued = Boolean(this.options.executeVerificationCheck);
     const operation: LingAppServerVerifyOperation = {
       operationId,
+      revision: "1",
       planId: plan.planId,
       candidateDigest: plan.candidate.candidateDigest,
       status: queued ? "queued" : "blocked",
@@ -129,7 +130,6 @@ export class AppServerDevelopmentService {
         planRevision: plan.planRevision,
         recipeDigest: check.recipeDigest,
         environmentDigest: digest(JSON.stringify({ cwd: plan.candidate.workspaceId, check: check.checkId })),
-        ...(check.verifierBasisRef ? { verifierBasisRef: check.verifierBasisRef } : {}),
         producerRefs: [],
         attemptId: `verify_attempt_${randomUUID()}`,
         status: queued ? "pending" : "not_run",
@@ -157,15 +157,27 @@ export class AppServerDevelopmentService {
   }
 
   cancelVerification(input: LingAppServerVerifyCancelParams): LingAppServerVerifyCancelResult {
+    assertVerificationKey(input.idempotencyKey);
     const store = this.workspaceStore(input.cwd);
     const stored = store.getAppServerState("verify_operation", input.operationId);
     if (!stored) return { operationId: input.operationId, status: "unknown" };
     const record = this.readVerification(store, stored);
+    if (record.cancellation?.key === input.idempotencyKey) {
+      if (record.cancellation.expectedRevision !== input.expectedRevision) throw verificationConflict();
+      return { operationId: input.operationId, status: "cancel_requested" };
+    }
+    if (input.expectedRevision !== undefined && input.expectedRevision !== record.operation.revision) {
+      throw Object.assign(new Error("Verification operation revision is stale."), { jsonRpcCode: -32030, code: "stale_revision" });
+    }
     if (record.operation.status === "unknown") return { operationId: input.operationId, status: "unknown" };
     if (!verificationInFlight(record)) {
       return { operationId: input.operationId, status: "already_terminal" };
     }
-    if (!record.cancelRequested) this.updateVerification(store, stored, { ...record, cancelRequested: true });
+    if (record.cancellation) {
+      throw Object.assign(new Error("A cancellation request is already recorded."), { jsonRpcCode: -32051, code: "request_already_resolved" });
+    }
+    this.updateVerification(store, stored, { ...record, cancelRequested: true,
+      cancellation: { key: input.idempotencyKey, expectedRevision: input.expectedRevision } });
     this.activeVerifications.get(input.operationId)?.abort();
     return { operationId: input.operationId, status: "cancel_requested" };
   }
@@ -356,17 +368,17 @@ export class AppServerDevelopmentService {
     const record = stored.payload as VerifyRecord;
     if (verificationInFlight(record) && !this.activeVerifications.has(stored.recordId)) {
       const recovered = finishVerification(record, "unknown", "daemon_restart_reconciliation_required");
-      this.updateVerification(store, stored, recovered);
-      return recovered;
+      return this.updateVerification(store, stored, recovered).payload as VerifyRecord;
     }
-    return record;
+    return { ...record, operation: { ...record.operation, revision: String(stored.revision) } };
   }
 
   private updateVerification(store: RunStore, stored: AppServerStateRecord, record: VerifyRecord): AppServerStateRecord {
+    const next = { ...record, operation: { ...record.operation, revision: String(stored.revision + 1) } };
     const result = store.putAppServerState({
-      kind: "verify_operation", recordId: stored.recordId, expectedRevision: stored.revision, payload: record,
+      kind: "verify_operation", recordId: stored.recordId, expectedRevision: stored.revision, payload: next,
     }, new Date().toISOString());
-    if (!result) throw new Error("Verification operation revision changed.");
+    if (!result) throw Object.assign(new Error("Verification operation revision is stale."), { jsonRpcCode: -32030, code: "stale_revision" });
     return result.record;
   }
 
@@ -405,6 +417,12 @@ export class AppServerDevelopmentService {
 
 function verificationConflict(): Error {
   return Object.assign(new Error("Verification idempotency key was reused with a different request."), { jsonRpcCode: -32031, code: "idempotency_conflict" });
+}
+
+function assertVerificationKey(key: unknown): void {
+  if (typeof key !== "string" || !key.trim() || key.length > 200 || /[\r\n]/u.test(key)) {
+    throw new HttpError(400, "invalid_params", "Supply a verification idempotency key of up to 200 characters.");
+  }
 }
 
 function verificationInFlight(record: VerifyRecord): boolean {

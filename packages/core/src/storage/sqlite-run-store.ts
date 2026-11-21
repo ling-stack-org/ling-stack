@@ -3452,6 +3452,10 @@ export class SqliteRunStore implements RunStore {
     return this.runInterventions.listRunInterventions(options);
   }
 
+  listPendingConversationInterventionSources(): string[] {
+    return this.runInterventions.listPendingConversationInterventionSources();
+  }
+
   claimNextRunIntervention(input: ClaimNextRunInterventionInput): RunIntervention | undefined {
     return this.runInterventions.claimNextRunIntervention(input);
   }

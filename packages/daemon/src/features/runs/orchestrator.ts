@@ -4815,6 +4815,7 @@ export function appendRunCreatedControlPlaneEvent(
     action: "run.created",
     idempotencyKey,
     data: {
+      ...runInterventionEventScope(store, run),
       status: run.status,
       taskId: run.taskId,
       channelId: run.channelId ?? null,
@@ -4847,6 +4848,7 @@ export function appendRunCompletedControlPlaneEvent(
     entityId: run.id,
     action: "run.completed",
     data: {
+      ...runInterventionEventScope(store, run),
       previousStatus,
       status,
       terminalAt,
@@ -4874,11 +4876,20 @@ export function appendRunCancelledControlPlaneEvent(
     entityId: run.id,
     action: "run.cancelled",
     data: {
+      ...runInterventionEventScope(store, run),
       previousStatus,
       status: "cancelled",
       reasonCode: "cancelled",
     },
   }, now);
+}
+
+function runInterventionEventScope(store: RunStore, run: RunSession) {
+  const turn = run.interventionId && !run.channelId ? store.getLingTurnForRun(run.id) : undefined;
+  if (turn?.kind === "queued_followup" || turn?.kind === "interrupt_redirect") {
+    return { threadId: turn.threadId, turnId: turn.id, interventionId: run.interventionId };
+  }
+  return {};
 }
 
 export function appendWorkUnitCreatedControlPlaneEvent(

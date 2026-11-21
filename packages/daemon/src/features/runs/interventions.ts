@@ -144,44 +144,36 @@ export async function handleRunInterventions(
     return;
   }
 
-  const updated = store.updateRunInterventionStatus({
-    interventionId: intervention.id,
-    expectedStatuses: ["queued"],
-    status: "cancelling_source",
-    now,
-  });
-  if (!updated) {
-    writeJson(response, 409, {
-      error: "run_intervention_state_changed",
-      message: "Run intervention state changed before redirect cancellation could start.",
-      intervention: store.getRunIntervention(intervention.id) ?? intervention,
-    });
-    return;
-  }
-  streamRunEventIfPossible(store, activeRuns, sourceRunId, "run_interrupt_requested", {
-    interventionId: updated.id,
-    instruction: updated.instruction,
-  });
-
   let cancellation;
   try {
-    cancellation = runControlService.cancelRunForRedirect({
-      store,
-      run: sourceRun,
-      activeRun: activeRuns.get(sourceRunId),
-    });
+    cancellation = requestRunInterventionRedirect(store, activeRuns, sourceRun, intervention, now);
   } catch (error) {
     if (!(error instanceof HttpError)) throw error;
-    writeJson(response, error.statusCode, { error: error.code, message: error.message });
+    writeJson(response, error.statusCode, { error: error.code, message: error.message,
+      ...(error.code === "run_intervention_state_changed" ? { intervention: store.getRunIntervention(intervention.id) ?? intervention } : {}) });
     return;
   }
 
   writeJson(response, 201, {
     cwd: store.paths.cwd,
-    intervention: store.getRunIntervention(intervention.id) ?? updated,
+    intervention: store.getRunIntervention(intervention.id) ?? intervention,
     run: projectPublicRunSession(store.getRun(sourceRunId), store),
     event: cancellation.event,
   });
+}
+
+export function requestRunInterventionRedirect(
+  store: RunStore, activeRuns: ActiveRunRegistry, run: RunSession, intervention: RunIntervention, now: string,
+) {
+  const cancelling = store.updateRunInterventionStatus({
+    interventionId: intervention.id, expectedStatuses: ["queued"], status: "cancelling_source", now,
+  });
+  if (!cancelling) throw new HttpError(409, "run_intervention_state_changed",
+    "Run intervention state changed before redirect cancellation could start.");
+  streamRunEventIfPossible(store, activeRuns, intervention.sourceRunId, "run_interrupt_requested", {
+    interventionId: cancelling.id, instruction: cancelling.instruction,
+  });
+  return runControlService.cancelRunForRedirect({ store, run, activeRun: activeRuns.get(run.id) });
 }
 
 export function recordUserRunIntervention(
@@ -395,6 +387,7 @@ export async function maybeStartNextRunInterventionContinuation(input: {
   if (input.terminalRun?.interventionId) {
     completeTerminalRunIntervention(input.store, input.terminalRun);
   }
+  if (input.activeRuns.isShuttingDown()) return;
   const sourceRun = input.store.getRun(input.sourceRunId);
   if (!sourceRun || !isTerminalRunStatus(sourceRun.status)) {
     return;
@@ -407,9 +400,14 @@ export async function maybeStartNextRunInterventionContinuation(input: {
   if (predecessor?.continuationRunId) {
     const previousRun = input.store.getRun(predecessor.continuationRunId);
     const previousUnit = previousRun?.workUnitId ? input.store.getWorkUnit(previousRun.workUnitId) : undefined;
-    if (!previousUnit || !continuationSourceReady(input.store, previousUnit, input.activeRuns, "run-interventions",
+    if (!previousRun || !previousUnit || !continuationSourceReady(input.store, previousUnit, input.activeRuns, "run-interventions",
       () => maybeStartNextRunInterventionContinuation(input))) return;
+    completeTerminalRunIntervention(input.store, previousRun);
   }
+  const thread = sourceRun.threadId ? input.store.getLingThread(sourceRun.threadId) : undefined;
+  if (thread?.archivedAt || thread?.status === "archived") return;
+  const activeRun = thread?.activeRunId ? input.store.getRun(thread.activeRunId) : undefined;
+  if (activeRun && !isTerminalRunStatus(activeRun.status)) return;
   while (true) {
     const now = new Date().toISOString();
     const starting = input.store.claimNextRunIntervention({
@@ -539,7 +537,7 @@ function failRunIntervention(
 }
 
 function completeTerminalRunIntervention(store: RunStore, terminalRun: RunSession): void {
-  if (!terminalRun.interventionId) {
+  if (!terminalRun.interventionId || !isTerminalRunStatus(terminalRun.status)) {
     return;
   }
   const intervention = store.getRunIntervention(terminalRun.interventionId);
@@ -606,7 +604,8 @@ export function maybeQueueGoalContinuation(input: {
     modeKind: mode?.mode,
     hasPendingApproval: input.store.listApprovalRequests({ runId: run.id, status: "pending", limit: 1 }).length > 0,
     hasActiveRun: Boolean(thread.activeRunId && thread.activeRunId !== run.id && input.activeRuns.get(thread.activeRunId)),
-    hasPendingIntervention: hasPendingRunIntervention(input.store, run.id),
+    hasPendingIntervention: hasPendingRunIntervention(input.store, run.id)
+      || Boolean(run.parentRunId && hasPendingRunIntervention(input.store, run.parentRunId)),
     nextNoEvidenceContinuationCount,
     runStatus: run.status,
   });

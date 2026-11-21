@@ -17,7 +17,9 @@
 
 | 工作包 | 已验证场景与证据边界 |
 | --- | --- |
+| B2 在途输入 | `turn/queue` 将输入交给持久 Run intervention。前驱已记录执行结束及副作用收敛时，Daemon 可在重启后用同一收据启动后继 Turn。用配置 Pi Runner 核对实际投递一次、重连事件及新旧 Turn 的关联。`turn/interrupt` 可携带明确的重定向输入。`turn/steer` 在当前 Runner 无同 Turn 安全注入能力时返回 `steer_unsupported`。已安装的 Codex 通过 MCP 验证了快照、追加消息和事件读取。 |
 | C2/F2 版本兼容 | 用 `v0.6.1@3fe77440e` 源码构建在 macOS 上创建 Thread、Turn、待决审批和游标，候选 Daemon 接手原 SQLite，旧 SDK 可读取 Thread 和处置后的审批。候选 SDK 向旧 `/rpc/stream` 尝试提交时，在协商阶段返回 `protocol_version_unsupported`。候选 CLI probe 和本机 Codex MCP 已通过。v0.6.1 未提供 App Server 协议。发布安装包、远程连接及回退对账另行验收。 |
+| E1 Verify 恢复 | `verify/status` 提供操作版本。取消受理与停止意图一起写入原操作，同键重试可在重启后读取原受理结果。实际退出通过 `verify/status` 查看，结果无法核实时保留 `unknown`。 |
 | E2 交付前验收 | App Server 与 HTTP 使用同一套 Goal 验收解析和证据检查。实际 Pi Run 通过后，可用同 Thread 证据完成 Goal。缺证据和引用其他 Thread 的 Run 会被拒绝。Review 已验证候选绑定、发现项处置重放及 freshness 持久化。可信验证器来源与 GitHub CI 交付证据仍需接入 Goal。 |
 | O1/O9 接单和协作 | 接单、证据和协作记录各自与对应的 Control Plane 事件同事务提交。两个客户端加 Daemon 重启的场景核对了幂等、冲突错误和游标回放。阶段运行、定时轮次、交接、裁决与恢复的联合验收仍待下方矩阵。 |
 
