@@ -522,10 +522,10 @@ test("the real package graph keeps Web's CLI and catalog consumers without build
 
 test("Git verifies provider catalog data before selecting focused Core validation", t => {
   const repo = repositoryFixture(t);
-  const render = (id: string, providerId = "openai", capabilities = ["chat"]) => {
-    const records = [{ providerId: "google", id: "tts", input: ["text"], capabilities: [] }, { providerId, id, capabilities }];
+  const render = (id: string, providerId = "openai", capabilities = ["chat"], updatedAt = "2026-11-20") => {
+    const records = [{ providerId: "google", id: "tts", input: ["text"], capabilities: [] }, { providerId, id, capabilities, updatedAt }];
     return renderProviderModelCatalog({ records, version: providerModelCatalogVersion(records),
-      generatedAt: "2026-11-21T00:00:00.000Z", updatedAt: "2026-11-21" });
+      generatedAt: "2026-11-21T00:00:00.000Z" });
   };
   repo.write(PROVIDER_MODEL_CATALOG_PATH, render("baseline"));
   const base = repo.commit();
@@ -553,6 +553,9 @@ test("Git verifies provider catalog data before selecting focused Core validatio
     render("candidate", "openai", ["chat", "web_search"]),
     render("candidate", "openai", []),
     render("baseline", "openai", []),
+    refreshed.replace('"updatedAt": "2026-11-20"', '"updatedAt": "2026-11-21"'),
+    render("candidate", "openai", ["chat"], "2026-11-31"),
+    render("candidate", "openai", ["chat"], "2026-11-22"),
   ]) {
     repo.write(PROVIDER_MODEL_CATALOG_PATH, candidate);
     repo.commit();

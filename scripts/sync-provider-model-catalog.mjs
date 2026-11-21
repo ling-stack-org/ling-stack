@@ -5,6 +5,7 @@ import {
   PROVIDER_MODEL_CATALOG_PATH,
   PROVIDER_MODEL_CATALOG_SOURCE,
   TRUSTED_PROVIDER_IDS,
+  isProviderModelDate,
   providerModelCatalogVersion,
   renderProviderModelCatalog,
 } from "./provider-model-catalog-format.mjs";
@@ -41,10 +42,9 @@ if (duplicateKeys.length > 0) {
 }
 
 const version = providerModelCatalogVersion(records);
-const updatedAt = records.map((record) => record.updatedAt).filter(Boolean).sort().at(-1) ?? new Date().toISOString();
 const previous = await readExistingOutput();
 const generatedAt = previous?.version === version ? previous.generatedAt : new Date().toISOString();
-const output = renderProviderModelCatalog({ generatedAt, records, updatedAt, version });
+const output = renderProviderModelCatalog({ generatedAt, records, version });
 
 if (checkOnly) {
   if (previous?.content !== output) {
@@ -95,7 +95,7 @@ function normalizeModel(providerId, value) {
     thinkingModes: thinkingModes.length > 0 ? thinkingModes : undefined,
     contextWindow: tokenLimits.contextWindow,
     maxTokens: tokenLimits.maxTokens,
-    updatedAt: normalizedDate(value.last_updated),
+    updatedAt: isProviderModelDate(value.last_updated) ? value.last_updated : undefined,
   });
 }
 
@@ -109,11 +109,6 @@ async function readExistingOutput() {
     if (error?.code === "ENOENT") return undefined;
     throw error;
   }
-}
-
-function normalizedDate(value) {
-  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return undefined;
-  return value;
 }
 
 function stringArray(value) {

@@ -33,7 +33,8 @@ export function providerModelCatalogVersion(records) {
   return `models.dev:${createHash("sha256").update(JSON.stringify(records)).digest("hex").slice(0, 12)}`;
 }
 
-export function renderProviderModelCatalog({ generatedAt, records, updatedAt, version }) {
+export function renderProviderModelCatalog({ generatedAt, records, version }) {
+  const latestRecordDate = records.map(record => record.updatedAt).filter(Boolean).sort().at(-1);
   const manifest = {
     schemaVersion: 1,
     version,
@@ -41,7 +42,7 @@ export function renderProviderModelCatalog({ generatedAt, records, updatedAt, ve
     sourceUrl: PROVIDER_MODEL_CATALOG_SOURCE,
     license: "MIT",
     generatedAt,
-    updatedAt,
+    updatedAt: latestRecordDate ?? generatedAt,
   };
   return header + JSON.stringify(manifest, null, 2) + separator + JSON.stringify(records, null, 2) + footer;
 }
@@ -64,13 +65,13 @@ function readGeneratedRecords(source) {
   try {
     const manifest = JSON.parse(source.slice(header.length, separatorAt));
     const records = JSON.parse(source.slice(separatorAt + separator.length, -footer.length));
-    if (typeof manifest?.generatedAt !== "string" || typeof manifest.updatedAt !== "string"
+    if (!isCanonicalTimestamp(manifest?.generatedAt)
       || !Array.isArray(records) || records.length === 0 || !records.every(isGeneratedRecord)) return undefined;
+    if (records.some(record => record.updatedAt > manifest.generatedAt.slice(0, 10))) return undefined;
     if (new Set(records.map(recordKey)).size !== records.length) return undefined;
     const canonical = renderProviderModelCatalog({
       generatedAt: manifest.generatedAt,
       records,
-      updatedAt: manifest.updatedAt,
       version: providerModelCatalogVersion(records),
     });
     return source === canonical ? records : undefined;
@@ -90,7 +91,7 @@ function isGeneratedRecord(record) {
     || !TRUSTED_PROVIDER_IDS.includes(record.providerId)
     || !isNormalizedString(record.id)
     || (record.displayName !== undefined && !isNormalizedString(record.displayName))
-    || (record.updatedAt !== undefined && (typeof record.updatedAt !== "string" || !/^\d{4}-\d{2}-\d{2}$/u.test(record.updatedAt)))
+    || (record.updatedAt !== undefined && !isProviderModelDate(record.updatedAt))
     || !Array.isArray(record.capabilities)
     || !isDeepStrictEqual(record.capabilities, catalogCapabilities.filter(value => record.capabilities.includes(value)))) return false;
   if (record.input !== undefined && (!Array.isArray(record.input) || record.input.length === 0
@@ -104,4 +105,15 @@ function isGeneratedRecord(record) {
 
 function isNormalizedString(value) {
   return typeof value === "string" && value.length > 0 && value === value.trim();
+}
+
+function isCanonicalTimestamp(value) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(value)) return false;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value;
+}
+
+export function isProviderModelDate(value) {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/u.test(value)
+    && isCanonicalTimestamp(`${value}T00:00:00.000Z`);
 }
