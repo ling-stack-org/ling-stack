@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { CompanionNavigationRequest } from "../../../../desktop/shared/companion-capabilities.js";
 import { ArrowUp, ExternalLink, Pause, Play, RefreshCw, Send, Sparkles, X, Zap } from "lucide-react";
 import type {
   AiTeammate,
@@ -42,7 +43,7 @@ export function CompanionMiniPanel({
   readonly open: boolean;
   readonly onClose: () => void;
   readonly onOpenSettings: () => void;
-  readonly onOpenSource?: (source: CompanionAttentionSource) => void;
+  readonly onOpenSource?: (request: CompanionNavigationRequest) => void;
   readonly desktop?: boolean;
 }): React.JSX.Element | null {
   const { t } = useI18n();
@@ -503,13 +504,16 @@ export function CompanionMiniPanel({
   }
 
   function openSource(source: CompanionAttentionSource): void {
+    const request = sourceNavigationRequest(source);
     if (desktop && window.lingCompanionDesktop) {
-      void window.lingCompanionDesktop.navigate(sourceNavigationRequest(source)).catch((caught) => {
+      void window.lingCompanionDesktop.navigate(request).then((result) => {
+        if (!result.accepted) setError(t("Source unavailable"));
+      }).catch((caught) => {
         setError(caught instanceof Error ? caught.message : String(caught));
       });
       return;
     }
-    onOpenSource?.(source);
+    onOpenSource?.(request);
   }
 
   function advanceAttention(): void {

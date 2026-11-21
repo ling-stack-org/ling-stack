@@ -343,6 +343,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function truncate(value: string, max: number): string {
-  const compact = value.replace(/\\s+/gu, " ").trim();
+  const compact = value.replace(/\s+/gu, " ").trim();
   return compact.length > max ? `${compact.slice(0, max - 1)}…` : compact;
 }

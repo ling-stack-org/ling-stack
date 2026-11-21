@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { chooseCompanionCardPlacement, companionSourceFallback, sourceNavigationRequest } from "../src/features/companions/companion-layout.ts";
+import { chooseCompanionCardPlacement, sourceNavigationRequest } from "../src/features/companions/companion-layout.ts";
 
 test("companion cards keep the preferred side while it fits", () => {
   const result = chooseCompanionCardPlacement({
@@ -43,19 +43,19 @@ test("source navigation prefers the canonical conversation item anchor", () => {
   });
 });
 
-test("source navigation falls back to a work board item when no channel context exists", () => {
-  assert.deepEqual(companionSourceFallback({
+test("source navigation forwards the owning approval and run without channel context", () => {
+  assert.deepEqual(sourceNavigationRequest({
     workspaceId: "workspace_default",
     cwd: "/workspace",
     kind: "approval",
     id: "approval-1",
     approvalId: "approval-1",
-  }), { scope: "global", itemId: "approval:approval-1" });
-  assert.deepEqual(companionSourceFallback({
-    workspaceId: "workspace_default",
-    cwd: "/workspace",
-    kind: "terminal_report",
-    id: "report-1",
-    reportId: "report-1",
-  }), { scope: "history" });
+    runId: "run-1",
+  }), {
+    workspace: "/workspace",
+    kind: "source",
+    sourceId: "approval-1",
+    approvalId: "approval-1",
+    runId: "run-1",
+  });
 });

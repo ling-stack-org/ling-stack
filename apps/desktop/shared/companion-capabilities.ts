@@ -25,6 +25,8 @@ export interface CompanionNavigationRequest {
   readonly threadId?: string;
   readonly sourceItemId?: string;
   readonly sourceId?: string;
+  readonly approvalId?: string;
+  readonly runId?: string;
 }
 
 export interface DesktopCompanionWindowCapabilities {

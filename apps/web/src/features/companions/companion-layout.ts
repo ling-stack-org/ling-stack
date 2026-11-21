@@ -1,4 +1,5 @@
 import type { CompanionAttentionSource } from "@ling-stack/contracts";
+import type { CompanionNavigationRequest } from "../../../../desktop/shared/companion-capabilities.js";
 
 export interface CompanionLayoutRect {
   readonly left: number;
@@ -47,14 +48,7 @@ export function chooseCompanionCardPlacement(input: {
   return { side: best.side, rect: best.rect };
 }
 
-export function sourceNavigationRequest(source: CompanionAttentionSource): {
-  readonly workspace: string;
-  readonly kind: "source";
-  readonly channelId?: string;
-  readonly threadId?: string;
-  readonly sourceItemId?: string;
-  readonly sourceId: string;
-} {
+export function sourceNavigationRequest(source: CompanionAttentionSource): CompanionNavigationRequest {
   return {
     workspace: source.cwd,
     kind: "source",
@@ -62,23 +56,8 @@ export function sourceNavigationRequest(source: CompanionAttentionSource): {
     ...(source.threadId ? { threadId: source.threadId } : {}),
     ...(source.sourceItemId ? { sourceItemId: source.sourceItemId } : {}),
     sourceId: source.id,
-  };
-}
-
-export function companionSourceFallback(source: CompanionAttentionSource): {
-  readonly scope: "global" | "history";
-  readonly itemId?: string;
-} {
-  const itemId = source.kind === "approval"
-    ? `approval:${source.approvalId ?? source.id}`
-    : source.workflowStepId
-      ? `workflow-step:${source.workflowStepId}`
-      : source.runId
-        ? `run:${source.runId}`
-        : undefined;
-  return {
-    scope: source.kind === "terminal_report" ? "history" : "global",
-    ...(itemId ? { itemId } : {}),
+    ...(source.approvalId ? { approvalId: source.approvalId } : {}),
+    ...(source.runId ? { runId: source.runId } : {}),
   };
 }
 

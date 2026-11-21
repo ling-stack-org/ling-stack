@@ -3,6 +3,7 @@ import { channelSessionThreadId, isChannelSessionDraft } from "./channel-session
 import { WorkSummaryProvider } from "../features/workspace/work-summary/WorkSummaryProvider.js";
 import { DaemonObservationProvider, useDaemonObservationState, DaemonObservationDeferredError } from "../shared/conversation/observation/daemon-observation.js";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import type { CompanionNavigationRequest } from "../../../desktop/shared/companion-capabilities.js";
 import {
   PanelRightClose,
   PanelRightOpen,
@@ -35,7 +36,6 @@ import type {
   TaskRunActionState,
   UserProfile,
   WorkspaceAccessMode,
-  CompanionAttentionSource,
 } from "../types.js";
 import {
   channelSidebarTarget,
@@ -193,7 +193,6 @@ import { buildSidebarObjectContextSeeds } from "./sidebar-object-context.js";
 import { useSidebarObjectContexts } from "./use-sidebar-object-contexts.js";
 import { useDesktopCompanionSettings } from "../features/companions/use-desktop-companion-settings.js";
 import { CompanionMiniPanel } from "../features/companions/CompanionMiniPanel.js";
-import { companionSourceFallback } from "../features/companions/companion-layout.js";
 import {
   acknowledgeSidebarConversationFailure,
   hasAcknowledgedSidebarConversationFailure,
@@ -1590,29 +1589,6 @@ export function AppShell(): React.JSX.Element {
     return true;
   }
 
-  useEffect(() => {
-    const companionWindow = window.lingDesktop?.companionWindow;
-    if (!companionWindow) return undefined;
-    return companionWindow.onSourceRequested((request) => {
-      if (request.channelId) {
-        setCompanionSourceTarget({
-          channelId: request.channelId,
-          ...(request.threadId ? { threadId: request.threadId } : {}),
-          ...(request.sourceItemId ? { sourceItemId: request.sourceItemId } : {}),
-        });
-        selectWorkspaceChannel(request.channelId);
-      } else if (request.threadId) {
-        setCompanionSourceTarget(request.sourceItemId ? { threadId: request.threadId, sourceItemId: request.sourceItemId } : { threadId: request.threadId });
-        setThreadPageTargetId(request.threadId);
-        setActiveView("threads");
-        setActiveSidebarTarget("threads");
-      } else if (!request.conversationId) {
-        openWorkBoard("global");
-      }
-      if (request.conversationId) void openConversationThread(request.conversationId);
-    });
-  }, [openConversationThread, selectWorkspaceChannel]);
-
   function selectRecentConversation(conversation: SidebarRecentConversation): void {
     void openConversationThread(conversation.id);
   }
@@ -1686,23 +1662,31 @@ export function AppShell(): React.JSX.Element {
     openPlainView("work_board");
   }
 
-  function openCompanionSource(source: CompanionAttentionSource): void {
-    setCompanionSourceTarget({
-      ...(source.channelId ? { channelId: source.channelId } : {}),
-      ...(source.threadId ? { threadId: source.threadId } : {}),
-      ...(source.sourceItemId ? { sourceItemId: source.sourceItemId } : {}),
-    });
-    if (source.channelId) {
-      selectWorkspaceChannel(source.channelId);
-    } else if (source.threadId) {
-      setThreadPageTargetId(source.threadId);
+  function openCompanionSource(request: CompanionNavigationRequest): void {
+    if (request.conversationId) {
+      void openConversationThread(request.conversationId);
+    } else if (request.channelId) {
+      setCompanionSourceTarget({
+        channelId: request.channelId,
+        threadId: request.threadId,
+        sourceItemId: request.sourceItemId,
+      });
+      selectWorkspaceChannel(request.channelId);
+    } else if (request.threadId) {
+      setThreadPageTargetId(request.threadId);
       setActiveView("threads");
       setActiveSidebarTarget("threads");
+    } else if (request.approvalId) {
+      setSelectedApprovalId(request.approvalId);
+      openPlainView("approvals");
+    } else if (request.runId) {
+      void openRunFromWorkspace(request.runId);
     } else {
-      const fallback = companionSourceFallback(source);
-      openWorkBoard(fallback.scope, fallback.itemId ?? "");
+      openWorkBoard("global");
     }
   }
+
+  useEffect(() => window.lingDesktop?.companionWindow?.onSourceRequested(openCompanionSource), [openCompanionSource]);
 
   function openTaskInWorkBoard(task: Task): void {
     const terminal = task.status === "done" || task.status === "failed" || task.status === "cancelled";

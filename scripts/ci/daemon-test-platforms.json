@@ -129,7 +129,7 @@
     "test/command-working-directory.regression-1.test.mjs",
     "test/command-write-risk-gate.test.mjs",
     "test/companion-access.test.ts",
-    "test/companion-attention-api.test.mjs",
+    "test/companion-attention-api.test.ts",
     "test/companion-dialogue.test.mjs",
     "test/companion-memory.test.mjs",
     "test/companion-policy.test.ts",

@@ -139,6 +139,22 @@ test("desktop companion returns geometry and accepts bounded transparent layout"
     assert.deepEqual(result, { accepted: true });
     assert.equal(companion.ignoredMouseEvents, true);
     assert.deepEqual(companion.bounds, { x: 0, y: 0, width: 1440, height: 900 });
+
+    const navigation = await f.call(channels.companionWindowNavigate, companion.event(), {
+      workspace: "/workspace",
+      kind: "source",
+      sourceId: "approval-1",
+      approvalId: "approval-1",
+      runId: "run-1",
+    });
+    assert.deepEqual(navigation, { accepted: true });
+    assert.deepEqual(f.main.sent.at(-1), [channels.companionNavigationRequested, {
+      workspace: "/workspace",
+      kind: "source",
+      sourceId: "approval-1",
+      approvalId: "approval-1",
+      runId: "run-1",
+    }]);
   } finally {
     f.dispose();
   }

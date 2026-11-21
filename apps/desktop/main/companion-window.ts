@@ -249,7 +249,10 @@ function parseCompanionNavigationRequest(value: unknown, workspace: string | und
   if (!workspace || !value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const candidate = value as Partial<CompanionNavigationRequest>;
   if (candidate.workspace !== workspace || (candidate.kind !== "conversation" && candidate.kind !== "source")) return undefined;
-  const strings = [candidate.workspace, candidate.conversationId, candidate.channelId, candidate.threadId, candidate.sourceItemId, candidate.sourceId];
+  const strings = [
+    candidate.workspace, candidate.conversationId, candidate.channelId, candidate.threadId,
+    candidate.sourceItemId, candidate.sourceId, candidate.approvalId, candidate.runId,
+  ];
   if (strings.some((item) => item !== undefined && (typeof item !== "string" || item.length === 0 || item.length > 512 || /[\u0000-\u001f\u007f]/u.test(item)))) return undefined;
   if (candidate.kind === "conversation" && typeof candidate.conversationId !== "string") return undefined;
   if (candidate.kind === "source" && typeof candidate.sourceId !== "string" && typeof candidate.sourceItemId !== "string") return undefined;
@@ -261,6 +264,8 @@ function parseCompanionNavigationRequest(value: unknown, workspace: string | und
     ...(candidate.threadId ? { threadId: candidate.threadId } : {}),
     ...(candidate.sourceItemId ? { sourceItemId: candidate.sourceItemId } : {}),
     ...(candidate.sourceId ? { sourceId: candidate.sourceId } : {}),
+    ...(candidate.approvalId ? { approvalId: candidate.approvalId } : {}),
+    ...(candidate.runId ? { runId: candidate.runId } : {}),
   };
 }
 
