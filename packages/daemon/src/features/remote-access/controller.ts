@@ -8,6 +8,7 @@ import {
 } from "@ling-stack/core";
 import {
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1,
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2,
   REMOTE_PROTOCOL_LIMITS,
   type RemoteCapabilityV1,
 } from "@ling-stack/contracts";
@@ -243,7 +244,9 @@ export class RemoteAccessController {
     const webSocketServer = new WebSocketServer({
       noServer: true,
       maxPayload: REMOTE_PROTOCOL_LIMITS.maxFrameBytes,
-      handleProtocols: protocols => protocols.has(REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1) && REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1,
+      handleProtocols: protocols => protocols.has(REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2)
+        ? REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2
+        : protocols.has(REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1) && REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1,
     });
     server.on("upgrade", (request, socket, head) => {
       const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "127.0.0.1"}`);
@@ -270,10 +273,11 @@ export class RemoteAccessController {
           void this.auth.verifyAuthProof(proof).then((authenticated) => {
             this.activeSession?.revoke("replaced");
             const currentState = this.auth.state();
-            const deviceFacade = webSocket.protocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1
+            const supportsReconciliation = webSocket.protocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2;
+            const deviceFacade = supportsReconciliation || webSocket.protocol === REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1
               ? this.options.deviceFacade
               : undefined;
-            const capabilities = this.capabilities(deviceFacade !== undefined);
+            const capabilities = this.capabilities(deviceFacade !== undefined, supportsReconciliation);
             const facade = new RemoteConversationFacade({
               store: this.options.store,
               workspaceId: DEFAULT_WORKSPACE_ID,
@@ -364,7 +368,7 @@ export class RemoteAccessController {
     }
   }
 
-  private capabilities(deviceTasks: boolean): readonly RemoteCapabilityV1[] {
+  private capabilities(deviceTasks: boolean, supportsReconciliation: boolean): readonly RemoteCapabilityV1[] {
     return [
       "conversation.read",
       ...(this.options.dispatcher ? ["conversation.send_text" as const] : []),
@@ -373,6 +377,7 @@ export class RemoteAccessController {
       "profile.update",
       "security.unpair",
       ...(deviceTasks ? ["device.read" as const, "device.approve" as const, "device.revoke" as const] : []),
+      ...(deviceTasks && supportsReconciliation ? ["device.reconcile" as const] : []),
     ];
   }
 

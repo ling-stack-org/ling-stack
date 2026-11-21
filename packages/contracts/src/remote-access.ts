@@ -4,6 +4,8 @@ import type {
   RemoteDeviceTaskApproveCommandV1,
   RemoteDeviceTaskApprovedV1,
   RemoteDeviceTaskListRequestedV1,
+  RemoteDeviceTaskRecheckedV1,
+  RemoteDeviceTaskReconcileCommandV1,
   RemoteDeviceTaskRevokeCommandV1,
   RemoteDeviceTaskRevokedV1,
   RemoteDeviceTaskSnapshotV1,
@@ -53,6 +55,7 @@ export const REMOTE_CAPABILITIES_V1 = [
   "device.read",
   "device.approve",
   "device.revoke",
+  "device.reconcile",
 ] as const;
 
 export type RemoteCapabilityV1 = (typeof REMOTE_CAPABILITIES_V1)[number];
@@ -74,6 +77,7 @@ export const REMOTE_CLIENT_COMMAND_TYPES_V1 = [
   "device.task.status",
   "device.task.approve",
   "device.task.revoke",
+  "device.task.reconcile",
 ] as const;
 
 export type RemoteClientCommandTypeV1 = (typeof REMOTE_CLIENT_COMMAND_TYPES_V1)[number];
@@ -94,6 +98,7 @@ export const REMOTE_LIFECYCLE_COMMAND_TYPES_V1 = [
   "device.task.status",
   "device.task.approve",
   "device.task.revoke",
+  "device.task.reconcile",
 ] as const;
 
 export type RemoteLifecycleCommandTypeV1 = (typeof REMOTE_LIFECYCLE_COMMAND_TYPES_V1)[number];
@@ -488,6 +493,7 @@ export interface RemoteCommandResultMapV1 {
   readonly "device.task.status": RemoteDeviceTaskStatusRequestedV1;
   readonly "device.task.approve": RemoteDeviceTaskApprovedV1;
   readonly "device.task.revoke": RemoteDeviceTaskRevokedV1;
+  readonly "device.task.reconcile": RemoteDeviceTaskRecheckedV1;
 }
 
 export type RemoteCommandResultV1 = RemoteCommandResultMapV1[RemoteLifecycleCommandTypeV1];
@@ -560,6 +566,7 @@ export interface RemoteClientCommandPayloadMapV1 {
   readonly "device.task.status": RemoteDeviceTaskStatusCommandV1;
   readonly "device.task.approve": RemoteDeviceTaskApproveCommandV1;
   readonly "device.task.revoke": RemoteDeviceTaskRevokeCommandV1;
+  readonly "device.task.reconcile": RemoteDeviceTaskReconcileCommandV1;
 }
 
 export type RemoteClientCommandFrameV1<

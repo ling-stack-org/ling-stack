@@ -9,6 +9,7 @@ import { RemoteProtocolError } from "../errors.js";
 import {
   validateDeviceListCommand,
   validateDeviceTaskApproveCommand,
+  validateDeviceTaskReconcileCommand,
   validateDeviceTaskRevokeCommand,
   validateDeviceTaskStatusCommand,
 } from "./device.js";
@@ -185,6 +186,9 @@ export function validateClientPayload<TType extends RemoteClientCommandTypeV1>(
       break;
     case "device.task.revoke":
       payload = validateDeviceTaskRevokeCommand(value, path);
+      break;
+    case "device.task.reconcile":
+      payload = validateDeviceTaskReconcileCommand(value, path);
       break;
   }
   return payload as RemoteClientCommandPayloadMapV1[TType];

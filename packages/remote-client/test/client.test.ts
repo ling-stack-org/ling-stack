@@ -6,6 +6,7 @@ import test from "node:test";
 
 import {
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1,
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2,
   type RemoteAuthProofV1,
   type RemoteCapabilityV1,
   type RemoteClientFrameV1,
@@ -121,7 +122,7 @@ function createHarness() {
         },
         webSocketFactory: (url, subprotocol) => {
           assert.equal(url, "wss://ling-pc.example.ts.net/v1/session");
-          assert.equal(subprotocol, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1);
+          assert.deepEqual(subprotocol, [REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2, REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1]);
           const socket = new FakeSocket();
           sockets.push(socket);
           return socket;
@@ -280,6 +281,35 @@ test("device approval and revoke commands bind the current preview and paired se
   assert.deepEqual(await revoked.completion, { kind: "device_task_revoked", taskId: "task-1" });
   client.disconnect();
   await assert.rejects(() => client.approveDeviceTask("task-1", current), /remote_session_not_ready/);
+});
+
+test("device reconciliation sends only the current preview of an unknown task", async () => {
+  const harness = createHarness();
+  const client = harness.createClient();
+  const socket = await harness.connect(client, [...legacyCapabilities, "device.read", "device.reconcile"]);
+  const preview = { attemptId: "attempt-1", targetDeviceId: "pc-1", capabilitySnapshotId: "snapshot-2" };
+  await assert.rejects(() => client.reconcileDeviceTask("task-1", preview), /remote_device_reconciliation_changed/);
+  const task = {
+    taskId: "task-1", ownerKind: "daemon", ownerId: "pc-runtime", targetDeviceIds: ["pc-1"],
+    status: "unknown", updatedAt: now, attemptIds: ["attempt-1"], pendingReconciliation: preview,
+  } as const;
+  socket.message("device.task.snapshot", { workspaceId: "default", generatedAt: now, task }, 1, "workspace-1");
+  await waitFor(() => client.state.deviceTaskCurrent === true);
+  const current = client.state.deviceTask!.task.pendingReconciliation!;
+  await assert.rejects(() => client.reconcileDeviceTask("wrong-task", current), /remote_device_reconciliation_changed/);
+
+  const handle = await client.reconcileDeviceTask("task-1", current);
+  const frame = socket.frames().find(item => item.type === "device.task.reconcile");
+  assert.deepEqual(frame?.payload, {
+    commandId: handle.commandId, taskId: "task-1", workspaceId: "default", attemptId: "attempt-1", capabilitySnapshotId: "snapshot-2",
+  });
+  socket.message("command.completed", {
+    commandId: handle.commandId, commandType: "device.task.reconcile",
+    result: { kind: "device_task_rechecked", taskId: "task-1", status: "unresolved" }, completedAt: now,
+  }, 2);
+  assert.deepEqual(await handle.completion, { kind: "device_task_rechecked", taskId: "task-1", status: "unresolved" });
+  client.disconnect();
+  await assert.rejects(() => client.reconcileDeviceTask("task-1", current), /remote_session_not_ready/);
 });
 
 async function waitFor(predicate: () => boolean) {

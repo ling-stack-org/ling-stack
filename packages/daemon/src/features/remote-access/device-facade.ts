@@ -3,11 +3,12 @@ import {
   type DeviceTaskV1,
   type RemoteDeviceListSnapshotV1,
   type RemoteDeviceTaskApproveCommandV1,
+  type RemoteDeviceTaskReconcileCommandV1,
   type RemoteDeviceTaskSnapshotV1,
   type RemoteDeviceTaskRevokeCommandV1,
   type RemoteDeviceTaskStatusCommandV1,
 } from "@ling-stack/contracts";
-import type { DeviceCapabilityBroker, SqliteDeviceSupportStore } from "@ling-stack/core";
+import { DeviceBrokerError, type DeviceCapabilityBroker, type SqliteDeviceSupportStore } from "@ling-stack/core";
 import { RemoteAccessError } from "./errors.js";
 
 export interface RemoteDeviceFacade {
@@ -15,6 +16,10 @@ export interface RemoteDeviceFacade {
   taskSnapshot(input: RemoteDeviceTaskStatusCommandV1): RemoteDeviceTaskSnapshotV1;
   approveTask(input: RemoteDeviceTaskApproveCommandV1): Promise<RemoteDeviceTaskSnapshotV1>;
   revokeTask(input: RemoteDeviceTaskRevokeCommandV1): RemoteDeviceTaskSnapshotV1;
+  reconcileTask(input: RemoteDeviceTaskReconcileCommandV1): Promise<{
+    readonly status: "verified" | "unresolved";
+    readonly snapshot: RemoteDeviceTaskSnapshotV1;
+  }>;
 }
 
 export interface RemoteDeviceFacadeOptions {
@@ -26,6 +31,8 @@ export interface RemoteDeviceFacadeOptions {
 
 export function createRemoteDeviceFacade(options: RemoteDeviceFacadeOptions): RemoteDeviceFacade {
   const now = options.now ?? (() => new Date().toISOString());
+  const snapshot = (input: RemoteDeviceTaskStatusCommandV1) =>
+    snapshotForTask(options.store, input.workspaceId, input.taskId, now(), options.broker);
   return {
     listDevices(workspaceId) {
       return {
@@ -51,9 +58,7 @@ export function createRemoteDeviceFacade(options: RemoteDeviceFacadeOptions): Re
           })),
       };
     },
-    taskSnapshot(input) {
-      return snapshotForTask(options.store, input.workspaceId, input.taskId, now());
-    },
+    taskSnapshot: snapshot,
     async approveTask(input) {
       requireDaemonTask(options.store, input.taskId, input.workspaceId);
       if (options.approve) {
@@ -69,19 +74,46 @@ export function createRemoteDeviceFacade(options: RemoteDeviceFacadeOptions): Re
       } else {
         throw new RemoteAccessError("pc_unavailable", "Device approval executor is not attached.", true);
       }
-      return snapshotForTask(options.store, input.workspaceId, input.taskId, now());
+      return snapshot(input);
     },
     revokeTask(input) {
       requireDaemonTask(options.store, input.taskId, input.workspaceId);
       if (options.broker) options.broker.cancelTask(input.taskId);
       else options.store.stopDaemonTask(input.taskId, now());
-      return snapshotForTask(options.store, input.workspaceId, input.taskId, now());
+      return snapshot(input);
+    },
+    async reconcileTask(input) {
+      requireDaemonTask(options.store, input.taskId, input.workspaceId);
+      if (!options.broker) throw new RemoteAccessError("pc_unavailable", "Device verification executor is not attached.", true);
+      const preview = options.broker.getReconciliationPreview(input.taskId);
+      if (!preview || preview.attemptId !== input.attemptId || preview.capabilitySnapshotId !== input.capabilitySnapshotId) {
+        throw new RemoteAccessError("resync_required", "The device verification binding changed. Refresh the task.", true);
+      }
+      try {
+        const result = await options.broker.reconcileTask({
+          taskId: input.taskId,
+          attemptId: input.attemptId,
+          capabilitySnapshotId: input.capabilitySnapshotId,
+          refreshExpiredSnapshot: true,
+        });
+        return { status: result.status, snapshot: snapshot(input) };
+      } catch (error) {
+        if (error instanceof RemoteAccessError) throw error;
+        throw new RemoteAccessError("pc_unavailable", "The PC could not verify the current device state.", error instanceof DeviceBrokerError);
+      }
     },
   };
 }
 
-function snapshotForTask(store: SqliteDeviceSupportStore, workspaceId: string, taskId: string, generatedAt: string): RemoteDeviceTaskSnapshotV1 {
+function snapshotForTask(
+  store: SqliteDeviceSupportStore,
+  workspaceId: string,
+  taskId: string,
+  generatedAt: string,
+  broker?: DeviceCapabilityBroker,
+): RemoteDeviceTaskSnapshotV1 {
   const task = requireDaemonTask(store, taskId, workspaceId);
+  const pendingReconciliation = broker?.getReconciliationPreview(task.id);
   return {
     workspaceId,
     generatedAt,
@@ -96,6 +128,7 @@ function snapshotForTask(store: SqliteDeviceSupportStore, workspaceId: string, t
       updatedAt: task.updatedAt,
       attemptIds: store.listAttempts(task.id).map(record => record.attempt.attemptId),
       ...pendingApprovalPreview(store, task),
+      ...(pendingReconciliation ? { pendingReconciliation } : {}),
     },
   };
 }

@@ -7,6 +7,7 @@ import {
   type RemoteDeviceListSnapshotV1,
   type RemoteDeviceRecentTaskV1,
   type RemoteDeviceTaskApproveCommandV1,
+  type RemoteDeviceTaskReconcileCommandV1,
   type RemoteDeviceTaskRevokeCommandV1,
   type RemoteDeviceTaskSnapshotV1,
   type RemoteDeviceTaskStatusCommandV1,
@@ -78,6 +79,18 @@ export function validateDeviceTaskRevokeCommand(value: unknown, path: string): R
   };
 }
 
+export function validateDeviceTaskReconcileCommand(value: unknown, path: string): RemoteDeviceTaskReconcileCommandV1 {
+  const record = expectRecord(value, path);
+  assertStrictKeys(record, ["commandId", "workspaceId", "taskId", "attemptId", "capabilitySnapshotId"], [], path);
+  return {
+    commandId: expectIdentifier(record.commandId, `${path}.commandId`),
+    workspaceId: expectIdentifier(record.workspaceId, `${path}.workspaceId`),
+    taskId: expectIdentifier(record.taskId, `${path}.taskId`),
+    attemptId: expectIdentifier(record.attemptId, `${path}.attemptId`),
+    capabilitySnapshotId: expectIdentifier(record.capabilitySnapshotId, `${path}.capabilitySnapshotId`),
+  };
+}
+
 export function validateDeviceListSnapshot(value: unknown, path: string): RemoteDeviceListSnapshotV1 {
   const record = expectRecord(value, path);
   assertStrictKeys(record, ["workspaceId", "generatedAt", "devices"], ["recentTasks"], path);
@@ -131,20 +144,35 @@ function validateDeviceSummary(value: unknown, path: string): RemoteDeviceSummar
 
 function validateDeviceTaskSummary(value: unknown, path: string): RemoteDeviceTaskSummaryV1 {
   const record = expectRecord(value, path);
-  assertStrictKeys(record, ["taskId", "ownerKind", "ownerId", "targetDeviceIds", "status", "updatedAt", "attemptIds"], ["currentActionId", "lastVerificationId", "pendingApproval"], path);
+  assertStrictKeys(record, ["taskId", "ownerKind", "ownerId", "targetDeviceIds", "status", "updatedAt", "attemptIds"], ["currentActionId", "lastVerificationId", "pendingApproval", "pendingReconciliation"], path);
   const targetDeviceIds = boundedIdentifierArray(record.targetDeviceIds, `${path}.targetDeviceIds`);
   const attemptIds = boundedIdentifierArray(record.attemptIds, `${path}.attemptIds`);
+  const status = expectEnum(record.status, DEVICE_TASK_STATUSES_V1, `${path}.status`);
+  let pendingReconciliation: RemoteDeviceTaskSummaryV1["pendingReconciliation"];
+  if (record.pendingReconciliation !== undefined) {
+    const previewPath = `${path}.pendingReconciliation`;
+    const preview = expectRecord(record.pendingReconciliation, previewPath);
+    assertStrictKeys(preview, ["attemptId", "targetDeviceId", "capabilitySnapshotId"], [], previewPath);
+    const attemptId = expectIdentifier(preview.attemptId, `${previewPath}.attemptId`);
+    const targetDeviceId = expectIdentifier(preview.targetDeviceId, `${previewPath}.targetDeviceId`);
+    if (status !== "unknown" || !attemptIds.includes(attemptId) || !targetDeviceIds.includes(targetDeviceId)) return invalid(previewPath);
+    pendingReconciliation = {
+      attemptId, targetDeviceId,
+      capabilitySnapshotId: expectIdentifier(preview.capabilitySnapshotId, `${previewPath}.capabilitySnapshotId`),
+    };
+  }
   return {
     taskId: expectIdentifier(record.taskId, `${path}.taskId`),
     ownerKind: expectEnum(record.ownerKind, ["daemon", "mobile", "edge"] as const, `${path}.ownerKind`),
     ownerId: expectIdentifier(record.ownerId, `${path}.ownerId`),
     targetDeviceIds,
-    status: expectEnum(record.status, DEVICE_TASK_STATUSES_V1, `${path}.status`),
+    status,
     ...(record.currentActionId === undefined ? {} : { currentActionId: expectIdentifier(record.currentActionId, `${path}.currentActionId`) }),
     ...(record.lastVerificationId === undefined ? {} : { lastVerificationId: expectIdentifier(record.lastVerificationId, `${path}.lastVerificationId`) }),
     updatedAt: expectRfc3339(record.updatedAt, `${path}.updatedAt`),
     attemptIds,
     ...(record.pendingApproval === undefined ? {} : { pendingApproval: validateApprovalPreview(record.pendingApproval, `${path}.pendingApproval`) }),
+    ...(pendingReconciliation ? { pendingReconciliation } : {}),
   };
 }
 

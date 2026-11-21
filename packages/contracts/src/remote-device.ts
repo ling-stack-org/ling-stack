@@ -7,6 +7,7 @@ import type {
 } from "./device.js";
 
 export const REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1 = "ling.device-tasks.v1";
+export const REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2 = "ling.device-tasks.v2";
 export const REMOTE_DEVICE_RECENT_TASK_LIMIT_V1 = 20;
 
 export interface RemoteDeviceSummaryV1 {
@@ -44,6 +45,13 @@ export interface RemoteDeviceTaskSummaryV1 {
   readonly updatedAt: string;
   readonly attemptIds: readonly string[];
   readonly pendingApproval?: RemoteDeviceApprovalPreviewV1;
+  readonly pendingReconciliation?: RemoteDeviceReconciliationPreviewV1;
+}
+
+export interface RemoteDeviceReconciliationPreviewV1 {
+  readonly attemptId: string;
+  readonly targetDeviceId: string;
+  readonly capabilitySnapshotId: string;
 }
 
 export interface RemoteDeviceApprovalPreviewV1 {
@@ -89,6 +97,11 @@ export interface RemoteDeviceTaskRevokeCommandV1 {
   readonly taskId: string;
 }
 
+export interface RemoteDeviceTaskReconcileCommandV1 extends RemoteDeviceTaskStatusCommandV1 {
+  readonly attemptId: string;
+  readonly capabilitySnapshotId: string;
+}
+
 export interface RemoteDeviceTaskListRequestedV1 {
   readonly kind: "device_list_requested";
 }
@@ -108,8 +121,15 @@ export interface RemoteDeviceTaskRevokedV1 {
   readonly taskId: string;
 }
 
+export interface RemoteDeviceTaskRecheckedV1 {
+  readonly kind: "device_task_rechecked";
+  readonly taskId: string;
+  readonly status: "verified" | "unresolved";
+}
+
 export type RemoteDeviceCommandResultV1 =
   | RemoteDeviceTaskListRequestedV1
   | RemoteDeviceTaskStatusRequestedV1
   | RemoteDeviceTaskApprovedV1
-  | RemoteDeviceTaskRevokedV1;
+  | RemoteDeviceTaskRevokedV1
+  | RemoteDeviceTaskRecheckedV1;

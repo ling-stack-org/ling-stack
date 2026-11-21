@@ -56,6 +56,7 @@ function validateCommandResult(value: unknown, path: string): RemoteCommandResul
     "device_task_status_requested",
     "device_task_approved",
     "device_task_revoked",
+    "device_task_rechecked",
   ] as const, `${path}.kind`);
   switch (kind) {
     case "pong":
@@ -101,6 +102,13 @@ function validateCommandResult(value: unknown, path: string): RemoteCommandResul
     case "device_task_revoked":
       assertStrictKeys(record, ["kind", "taskId"], [], path);
       return { kind, taskId: expectIdentifier(record.taskId, `${path}.taskId`) };
+    case "device_task_rechecked":
+      assertStrictKeys(record, ["kind", "taskId", "status"], [], path);
+      return {
+        kind,
+        taskId: expectIdentifier(record.taskId, `${path}.taskId`),
+        status: expectEnum(record.status, ["verified", "unresolved"] as const, `${path}.status`),
+      };
   }
 }
 
@@ -154,6 +162,7 @@ const EXPECTED_RESULT_KINDS: Record<RemoteLifecycleCommandTypeV1, RemoteCommandR
   "device.task.status": "device_task_status_requested",
   "device.task.approve": "device_task_approved",
   "device.task.revoke": "device_task_revoked",
+  "device.task.reconcile": "device_task_rechecked",
 };
 
 function validateCommandCompleted(value: unknown, path: string): RemoteCommandCompletedV1 {

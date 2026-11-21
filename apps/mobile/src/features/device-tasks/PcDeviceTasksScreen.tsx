@@ -1,4 +1,4 @@
-import type { DeviceTaskStatusV1, RemoteDeviceApprovalPreviewV1 } from "@ling-stack/contracts";
+import type { DeviceTaskStatusV1, RemoteDeviceApprovalPreviewV1, RemoteDeviceReconciliationPreviewV1 } from "@ling-stack/contracts";
 import { useEffect, useRef, useState } from "react";
 import { Alert, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -22,8 +22,11 @@ const taskStatusLabels: Record<DeviceTaskStatusV1, string> = {
   unknown: "结果待确认",
 };
 
-type DeviceTaskAction = "approve" | "revoke";
-type DeviceTaskDecision = { readonly kind: "approve"; readonly preview: RemoteDeviceApprovalPreviewV1 } | { readonly kind: "revoke" };
+type DeviceTaskDecision =
+  | { readonly kind: "approve"; readonly preview: RemoteDeviceApprovalPreviewV1 }
+  | { readonly kind: "revoke" }
+  | { readonly kind: "reconcile"; readonly preview: RemoteDeviceReconciliationPreviewV1 };
+type DeviceTaskAction = DeviceTaskDecision["kind"];
 
 export function PcDeviceTasksScreen() {
   const { client, remoteState } = useMobileRemote();
@@ -33,6 +36,7 @@ export function PcDeviceTasksScreen() {
   const canRead = remoteState.policy?.capabilities.includes("device.read") === true;
   const canApprove = remoteState.policy?.capabilities.includes("device.approve") === true;
   const canRevoke = remoteState.policy?.capabilities.includes("device.revoke") === true;
+  const canReconcile = remoteState.policy?.capabilities.includes("device.reconcile") === true;
   const [selectedTaskId, setSelectedTaskId] = useState<string>();
   const [refreshing, setRefreshing] = useState(false);
   const [refreshFailed, setRefreshFailed] = useState(false);
@@ -40,6 +44,7 @@ export function PcDeviceTasksScreen() {
   const runningActions = useRef<Partial<Record<DeviceTaskAction, string>>>({});
   const [actionTaskIds, setActionTaskIds] = useState(runningActions.current);
   const [actionFailed, setActionFailed] = useState<string>();
+  const [unresolvedTaskId, setUnresolvedTaskId] = useState<string>();
   const detail = deviceTask?.task.taskId === selectedTaskId ? deviceTask?.task : undefined;
   const connected = connection === "connected";
   const selectedTask = deviceOverview?.recentTasks?.find(task => task.taskId === selectedTaskId);
@@ -78,10 +83,20 @@ export function PcDeviceTasksScreen() {
     setActionTaskIds(runningActions.current);
     setActionFailed(undefined);
     try {
-      const handle = decision.kind === "approve"
-        ? await client.approveDeviceTask(taskId, decision.preview)
-        : await client.revokeDeviceTask(taskId);
-      await handle.completion;
+      switch (decision.kind) {
+        case "approve":
+          await (await client.approveDeviceTask(taskId, decision.preview)).completion;
+          break;
+        case "revoke":
+          await (await client.revokeDeviceTask(taskId)).completion;
+          break;
+        case "reconcile": {
+          setUnresolvedTaskId(undefined);
+          const result = await (await client.reconcileDeviceTask(taskId, decision.preview)).completion;
+          if (result.status === "unresolved") setUnresolvedTaskId(taskId);
+          break;
+        }
+      }
     } catch {
       setActionFailed(taskId);
     } finally {
@@ -128,6 +143,7 @@ export function PcDeviceTasksScreen() {
                   const currentDetail = detail && detail.taskId === task.taskId && detail.updatedAt >= task.updatedAt ? detail : undefined;
                   const liveDetail = connected && deviceOverviewCurrent && deviceTaskCurrent ? currentDetail : undefined;
                   const preview = liveDetail?.pendingApproval;
+                  const reconciliation = canReconcile ? liveDetail?.pendingReconciliation : undefined;
                   const stoppable = liveDetail && !["failed", "succeeded", "cancelled", "unknown"].includes(liveDetail.status);
                   return (
                   <View key={task.taskId} style={styles.row}>
@@ -148,6 +164,25 @@ export function PcDeviceTasksScreen() {
                             <Text style={styles.note}>执行主机 PC · {currentDetail.ownerId}</Text>
                             <Text style={styles.note}>执行记录 {currentDetail.attemptIds.length} 条</Text>
                             {currentDetail.lastVerificationId ? <Text selectable style={styles.note}>复测记录 {currentDetail.lastVerificationId}</Text> : null}
+                            {reconciliation ? (
+                              <View style={styles.approval}>
+                                <Text style={styles.note}>由 PC 读取 {deviceName(reconciliation.targetDeviceId)} 的当前状态。</Text>
+                                <View style={styles.actions}>
+                                  <Pressable
+                                    accessibilityRole="button"
+                                    accessibilityState={{ disabled: actionTaskIds.reconcile !== undefined }}
+                                    disabled={actionTaskIds.reconcile !== undefined}
+                                    onPress={() => void runTaskAction(task.taskId, { kind: "reconcile", preview: reconciliation })}
+                                    style={styles.secondaryAction}
+                                  >
+                                    <Text style={styles.secondaryActionText}>{actionTaskIds.reconcile === task.taskId ? "正在复测…" : "复测设备"}</Text>
+                                  </Pressable>
+                                </View>
+                              </View>
+                            ) : null}
+                            {unresolvedTaskId === task.taskId && currentDetail.status === "unknown" ? (
+                              <Text accessibilityLiveRegion="polite" style={styles.note}>本次复测未能确认设备状态。</Text>
+                            ) : null}
                             {preview || (canRevoke && stoppable) ? (
                               <View style={styles.approval}>
                                 {preview ? <Text style={styles.note}>待确认操作 {preview.capabilityId} · {deviceName(preview.targetDeviceId)}</Text> : null}

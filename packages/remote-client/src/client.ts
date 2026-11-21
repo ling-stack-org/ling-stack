@@ -1,5 +1,6 @@
 import {
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1,
+  REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2,
   REMOTE_PROTOCOL_VERSION,
   type DeviceApprovalBindingV1,
   type RemoteAuthChallengeV1,
@@ -10,6 +11,7 @@ import {
   type RemoteCommandFailedV1,
   type RemoteCommandResultMapV1,
   type RemoteDeviceApprovalPreviewV1,
+  type RemoteDeviceReconciliationPreviewV1,
   type RemoteConversationOpenCommandV1,
   type RemoteMarkConversationReadCommandV1,
   type RemoteProfileUpdateCommandV1,
@@ -251,7 +253,7 @@ export class RemoteSessionClient {
   }
 
   async approveDeviceTask(taskId: string, preview: RemoteDeviceApprovalPreviewV1): Promise<RemoteCommandHandle<RemoteCommandResultMapV1["device.task.approve"]>> {
-    const authority = this.deviceMutationAuthority("device.approve");
+    const authority = this.deviceTaskAuthority("device.approve");
     const assertApprovalCurrent = () => {
       authority.assertCurrent();
       const task = this.stateValue.deviceTask?.task;
@@ -283,12 +285,32 @@ export class RemoteSessionClient {
   }
 
   async revokeDeviceTask(taskId: string): Promise<RemoteCommandHandle<RemoteCommandResultMapV1["device.task.revoke"]>> {
-    const authority = this.deviceMutationAuthority("device.revoke");
+    const authority = this.deviceTaskAuthority("device.revoke");
     return await this.sendCommand("device.task.revoke", {
       commandId: await this.options.entropy.randomId("device_task_revoke"),
       workspaceId: authority.workspaceId,
       taskId,
     }, authority.assertCurrent);
+  }
+
+  async reconcileDeviceTask(taskId: string, preview: RemoteDeviceReconciliationPreviewV1): Promise<RemoteCommandHandle<RemoteCommandResultMapV1["device.task.reconcile"]>> {
+    const authority = this.deviceTaskAuthority("device.reconcile");
+    const assertReconciliationCurrent = () => {
+      authority.assertCurrent();
+      const task = this.stateValue.deviceTask?.task;
+      if (!this.stateValue.deviceTaskCurrent || task?.taskId !== taskId || task.status !== "unknown"
+        || task.pendingReconciliation !== preview) {
+        throw new Error("remote_device_reconciliation_changed");
+      }
+    };
+    assertReconciliationCurrent();
+    return await this.sendCommand("device.task.reconcile", {
+      commandId: await this.options.entropy.randomId("device_task_reconcile"),
+      workspaceId: authority.workspaceId,
+      taskId,
+      attemptId: preview.attemptId,
+      capabilitySnapshotId: preview.capabilitySnapshotId,
+    }, assertReconciliationCurrent);
   }
 
   async requestFullResync(): Promise<void> {
@@ -352,7 +374,10 @@ export class RemoteSessionClient {
     this.clientSeq = 0;
     this.streamSequences.clear();
     this.streamSnapshots.clear();
-    const socket = this.options.webSocketFactory(remoteWebSocketUrl(this.binding.gatewayOrigin), REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1);
+    const socket = this.options.webSocketFactory(remoteWebSocketUrl(this.binding.gatewayOrigin), [
+      REMOTE_DEVICE_TASKS_SUBPROTOCOL_V2,
+      REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1,
+    ]);
     if (!this.isConnectionActive(generation)) {
       socket.close(1000, "stale_connection");
       throw new Error("remote_connection_invalidated");
@@ -725,7 +750,7 @@ export class RemoteSessionClient {
     if (workspaceId !== this.requireDeviceWorkspaceId()) throw new Error("remote_device_workspace_mismatch");
   }
 
-  private deviceMutationAuthority(capability: "device.approve" | "device.revoke") {
+  private deviceTaskAuthority(capability: "device.approve" | "device.revoke" | "device.reconcile") {
     const sessionId = this.requireSessionId();
     const workspaceId = this.requireDeviceWorkspaceId();
     const assertCurrent = () => {

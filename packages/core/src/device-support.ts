@@ -176,12 +176,14 @@ export class DeviceCapabilityBroker {
     }
   }
 
-  async refreshCapabilities(deviceId: string, connectionRevision: string): Promise<DeviceCapabilitySnapshotV1> {
+  async refreshCapabilities(deviceId: string, connectionRevision: string, signal?: AbortSignal): Promise<DeviceCapabilitySnapshotV1> {
     const profile = this.requireDevice(deviceId);
     this.assertCapabilityRefreshAllowed(profile);
     const adapter = this.requireAdapter(profile.adapterId);
     const previousSnapshotId = this.store.getCurrentCapabilitySnapshot(deviceId)?.snapshotId;
-    const snapshot = await adapter.getCapabilities({ profile, connectionRevision });
+    signal?.throwIfAborted();
+    const snapshot = await adapter.getCapabilities({ profile, connectionRevision, signal });
+    signal?.throwIfAborted();
     if (!isDeviceCapabilitySnapshotV1(snapshot)
       || snapshot.deviceId !== deviceId
       || snapshot.adapterId !== profile.adapterId
@@ -194,6 +196,7 @@ export class DeviceCapabilityBroker {
       this.assertCapabilityRefreshAllowed(current);
       if (current.profileRevision !== profile.profileRevision
         || current.device.profileRevision !== profile.device.profileRevision
+        || current.device.ownerScope !== profile.device.ownerScope
         || current.adapterId !== profile.adapterId || current.adapterVersion !== profile.adapterVersion
         || canonicalJson(current.connectionRefs) !== canonicalJson(profile.connectionRefs)
         || this.store.getCurrentCapabilitySnapshot(deviceId)?.snapshotId !== previousSnapshotId) {
@@ -270,13 +273,33 @@ export class DeviceCapabilityBroker {
     return task;
   }
 
+  getReconciliationPreview(taskId: string): { attemptId: string; targetDeviceId: string; capabilitySnapshotId: string } | undefined {
+    const task = this.store.getTask(taskId);
+    if (task?.status !== "unknown" || task.ownerKind !== "daemon" || this.store.getLeasedAttempt(taskId)) return undefined;
+    const record = task.currentActionId
+      ? this.store.getAttempt(taskId, `${taskId}:${task.currentActionId}`)
+      : this.store.getActiveAttempt(taskId);
+    if (!record || record.attempt.ownerId !== task.ownerId || !task.targetDeviceIds.includes(record.attempt.targetDeviceId)) return undefined;
+    const snapshot = this.store.getCurrentCapabilitySnapshot(record.attempt.targetDeviceId);
+    if (!snapshot) return undefined;
+    try {
+      const binding = this.resolveCapability({ ...record.request, capabilitySnapshotId: snapshot.snapshotId }, true);
+      this.requireReconciliationReader(binding);
+    } catch (error) {
+      if (error instanceof DeviceBrokerError) return undefined;
+      throw error;
+    }
+    return { attemptId: record.attempt.attemptId, targetDeviceId: record.attempt.targetDeviceId, capabilitySnapshotId: snapshot.snapshotId };
+  }
+
   async reconcileTask(input: {
     readonly taskId: string;
     readonly attemptId: string;
     readonly capabilitySnapshotId: string;
     readonly signal?: AbortSignal;
+    readonly refreshExpiredSnapshot?: boolean;
   }): Promise<DeviceTaskReconciliationV1> {
-    const { attempt, request, binding, timeoutMs } = this.store.withWriteTransaction(() => {
+    const { attempt, request: admittedRequest, binding: admittedBinding, timeoutMs } = this.store.withWriteTransaction(() => {
       const record = this.store.getAttempt(input.taskId, input.attemptId);
       if (!record) throw new DeviceBrokerError("invalid_request", "the device attempt does not belong to this task");
       const task = this.requireTaskTarget(record.request);
@@ -285,11 +308,8 @@ export class DeviceCapabilityBroker {
         throw new DeviceBrokerError("invalid_request", "task has no matching outcome to reconcile");
       }
       const request = { ...record.request, capabilitySnapshotId: input.capabilitySnapshotId };
-      const binding = this.resolveCapability(request);
-      const reader = binding.snapshot.capabilities.find(item => item.id === binding.capability.verificationCapabilityId);
-      if (!binding.adapter.verify || !reader || reader.sideEffect !== "read_only" || reader.approvalClass !== "allow") {
-        throw new DeviceBrokerError("unsupported_capability", "device action has no current authorized verification capability");
-      }
+      const binding = this.resolveCapability(request, input.refreshExpiredSnapshot);
+      const reader = this.requireReconciliationReader(binding);
       input.signal?.throwIfAborted();
       if (this.store.getLeasedAttempt(task.id)
         || !this.store.acquireTargetLease(request.targetDeviceId, task.id, task.ownerId, this.now(), this.leaseMs, record.attempt.attemptId)) {
@@ -304,6 +324,16 @@ export class DeviceCapabilityBroker {
     this.activeDispatches.set(attempt.taskId, controller);
     const reconciliationId = `device_reconciliation_${randomUUID()}`;
     try {
+      let request = admittedRequest;
+      let binding = admittedBinding;
+      if (Date.parse(binding.snapshot.freshnessUntil) <= Date.parse(this.now())) {
+        if (!input.refreshExpiredSnapshot) throw new DeviceBrokerError("stale_snapshot", "capability snapshot has expired");
+        const snapshot = await this.refreshCapabilities(attempt.targetDeviceId, binding.snapshot.connectionRevision, signal);
+        request = { ...request, capabilitySnapshotId: snapshot.snapshotId };
+        binding = this.resolveCapability(request);
+        this.requireReconciliationReader(binding);
+      }
+      signal.throwIfAborted();
       const readbackStartedAt = this.now();
       const result = await this.verifyAction({
         ...binding,
@@ -323,6 +353,9 @@ export class DeviceCapabilityBroker {
           && Date.parse(observation.observedAt) <= Date.parse(now) && Date.parse(observation.freshnessUntil) > Date.parse(now));
         const verified = !signal.aborted && observed && result.verification.status === "verified"
           && current?.status === "unknown" && profile !== undefined
+          && current.ownerKind === attempt.ownerKind && current.ownerId === attempt.ownerId
+          && (current.currentActionId === undefined || current.currentActionId === attempt.actionId)
+          && profile.device.ownerScope === binding.profile.device.ownerScope
           && !["offline", "revoked", "retired"].includes(profile.device.lifecycleStatus)
           && Date.parse(binding.snapshot.freshnessUntil) > Date.parse(now)
           && this.store.getCurrentCapabilitySnapshot(attempt.targetDeviceId)?.snapshotId === binding.snapshot.snapshotId
@@ -352,6 +385,14 @@ export class DeviceCapabilityBroker {
       this.activeDispatches.delete(attempt.taskId);
       this.store.releaseTargetLease(attempt.targetDeviceId, attempt.taskId, attempt.attemptId);
     }
+  }
+
+  private requireReconciliationReader(binding: DeviceCapabilityBinding): CapabilityDescriptorV1 {
+    const reader = binding.snapshot.capabilities.find(item => item.id === binding.capability.verificationCapabilityId);
+    if (!binding.adapter.verify || !reader || reader.sideEffect !== "read_only" || reader.approvalClass !== "allow") {
+      throw new DeviceBrokerError("unsupported_capability", "device action has no current authorized verification capability");
+    }
+    return reader;
   }
 
   private admitDispatch(request: DeviceActionRequestV1, signal: AbortSignal | undefined, options: DeviceExecuteOptions): DeviceDispatchAdmission {
@@ -426,7 +467,7 @@ export class DeviceCapabilityBroker {
     return { kind: "dispatch", attempt: dispatched.attempt, ...binding };
   }
 
-  private resolveCapability(request: DeviceActionRequestV1): DeviceCapabilityBinding {
+  private resolveCapability(request: DeviceActionRequestV1, allowExpired = false): DeviceCapabilityBinding {
     const profile = this.requireDevice(request.targetDeviceId);
     if (["revoked", "retired", "offline"].includes(profile.device.lifecycleStatus)) {
       throw new DeviceBrokerError("device_offline", `device ${profile.device.id} is unavailable`);
@@ -436,7 +477,7 @@ export class DeviceCapabilityBroker {
       || snapshot.adapterId !== profile.adapterId || snapshot.adapterVersion !== profile.adapterVersion) {
       throw new DeviceBrokerError("stale_snapshot", "capability snapshot is outside the current device registration");
     }
-    if (Date.parse(snapshot.freshnessUntil) <= Date.parse(this.now())) {
+    if (!allowExpired && Date.parse(snapshot.freshnessUntil) <= Date.parse(this.now())) {
       throw new DeviceBrokerError("stale_snapshot", "capability snapshot has expired");
     }
     const capability = snapshot.capabilities.find(item => item.id === request.capabilityId);

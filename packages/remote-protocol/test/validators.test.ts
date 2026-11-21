@@ -393,6 +393,16 @@ test("device task commands and projections stay workspace-scoped and strictly ty
     ...command,
     payload: { ...command.payload, approval: { ...command.payload.approval, unexpected: true } },
   }), { nowMs }), /unknown field/);
+  const reconcile = {
+    ...command,
+    type: "device.task.reconcile",
+    payload: { commandId: "reconcile-command", workspaceId: "workspace-1", taskId: "task-1", attemptId: "attempt-1", capabilitySnapshotId: "snapshot-2" },
+  } as const;
+  assert.deepEqual(parseRemoteClientFrameV1(JSON.stringify(reconcile), { nowMs }), reconcile);
+  assert.throws(() => parseRemoteClientFrameV1(JSON.stringify({
+    ...reconcile,
+    payload: { ...reconcile.payload, normalizedInput: { repair: true } },
+  }), { nowMs }), /unknown field/);
 
   const event = {
     version: 1,
@@ -420,6 +430,23 @@ test("device task commands and projections stay workspace-scoped and strictly ty
     },
   } as const;
   assert.deepEqual(parseRemoteServerFrameV1(JSON.stringify(event)), event);
+  const unresolved = {
+    ...event,
+    payload: {
+      ...event.payload,
+      task: {
+        ...event.payload.task,
+        status: "unknown",
+        attemptIds: ["attempt-1"],
+        pendingReconciliation: { attemptId: "attempt-1", targetDeviceId: "device-1", capabilitySnapshotId: "snapshot-2" },
+      },
+    },
+  };
+  assert.deepEqual(parseRemoteServerFrameV1(JSON.stringify(unresolved)), unresolved);
+  assert.throws(() => parseRemoteServerFrameV1(JSON.stringify({
+    ...unresolved,
+    payload: { ...unresolved.payload, task: { ...unresolved.payload.task, attemptIds: [] } },
+  })), /Device projection is invalid/u);
 
   const overview = {
     ...event,
