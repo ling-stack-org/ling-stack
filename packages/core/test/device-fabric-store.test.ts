@@ -251,7 +251,12 @@ test("edge runtime journal resumes ordered unknown outcomes without redispatch",
   try {
     const recovered = new EdgeRuntimeJournal({ persistence: reopened });
     assert.deepEqual(recovered.read("edge-1", "task-1", 1).map(entry => entry.outcome), ["unknown"]);
-    assert.equal(recovered.append(started).replayed, true);
+    assert.equal(recovered.append({ ...started, payloadDigest: undefined }).replayed, true);
+    assert.throws(() => recovered.append({ ...started, ownerTaskId: "another-task" }), /bound to another entry/);
+    assert.throws(() => recovered.append({ ...started, entryId: "other", outcome: "completed" }), /invalid/);
+    const late = { ...base, entryId: "edge-entry-3", sequence: 3, kind: "task_completed", outcome: "completed" } as const;
+    assert.equal(recovered.append(late).entry.sequence, 3);
+    assert.deepEqual(recovered.read("edge-1", "task-1", 2), [late]);
   } finally {
     reopened.close();
     rmSync(root, { recursive: true, force: true });

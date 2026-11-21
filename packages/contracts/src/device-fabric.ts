@@ -67,6 +67,7 @@ export interface DeviceTaskGraphV1 {
   readonly revision: number;
   readonly status: "planned" | "executing" | "partial" | "succeeded" | "failed" | "unknown" | "cancelled";
   readonly nodes: readonly DeviceTaskGraphNodeV1[];
+  readonly cancellationRequestedAt?: string;
   readonly createdAt: string;
   readonly updatedAt: string;
 }

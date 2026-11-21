@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import type {
   DeviceConformanceReportV1,
   DeviceContextFactMetadataV1,
@@ -137,6 +138,7 @@ export class DeviceTaskGraphCoordinator {
 
   readyNodes(graph: DeviceTaskGraphV1): readonly DeviceTaskGraphNodeV1[] {
     this.validateGraph(graph);
+    if (graph.cancellationRequestedAt || graph.status === "cancelled") return [];
     const nodes = new Map(graph.nodes.map(node => [node.nodeId, node]));
     return graph.nodes.filter(node => node.status === "planning" || node.status === "created")
       .filter(node => node.dependencies.every(dependency => nodes.get(dependency)?.status === "succeeded"));
@@ -144,11 +146,14 @@ export class DeviceTaskGraphCoordinator {
 
   acquireOwnerLease(targetDeviceId: string, ownerId: string): void {
     const now = this.#now();
+    if (this.#persistence) {
+      if (!this.#persistence.acquireTaskGraphLease(targetDeviceId, ownerId, now, this.#leaseMs)) {
+        throw new DeviceFabricError("lease_busy", "task graph target is leased by another owner");
+      }
+      return;
+    }
     const current = this.#leases.get(targetDeviceId);
     if (current && current.ownerId !== ownerId && Date.parse(current.expiresAt) > Date.parse(now)) {
-      throw new DeviceFabricError("lease_busy", "task graph target is leased by another owner");
-    }
-    if (this.#persistence && !this.#persistence.acquireTaskGraphLease(targetDeviceId, ownerId, now, this.#leaseMs)) {
       throw new DeviceFabricError("lease_busy", "task graph target is leased by another owner");
     }
     this.#leases.set(targetDeviceId, { ownerId, expiresAt: new Date(Date.parse(now) + this.#leaseMs).toISOString() });
@@ -165,8 +170,13 @@ export class DeviceTaskGraphCoordinator {
     if (currentGraph.revision !== graph.revision) throw new DeviceFabricError("revision_conflict", "task graph revision is stale");
     const node = currentGraph.nodes.find(item => item.nodeId === nodeId);
     if (!node) throw new DeviceFabricError("target_missing", "task graph node is missing");
+    if (currentGraph.cancellationRequestedAt && (node.status !== "unknown"
+      || !resultRef || !["succeeded", "failed", "cancelled"].includes(status))) {
+      throw new DeviceFabricError("safety_denied", "a stopped graph only accepts terminal evidence for unresolved nodes");
+    }
     const nodes = currentGraph.nodes.map(item => item.nodeId === nodeId ? { ...item, status, ...(resultRef ? { resultRef } : {}) } : item);
     const graphStatus: DeviceTaskGraphV1["status"] = nodes.some(item => item.status === "unknown") ? "unknown"
+      : currentGraph.cancellationRequestedAt ? "cancelled"
       : nodes.some(item => item.status === "failed") ? "failed"
       : nodes.every(item => item.status === "succeeded") ? "succeeded"
       : nodes.some(item => ["executing", "verifying"].includes(item.status)) ? "executing" : "partial";
@@ -179,16 +189,20 @@ export class DeviceTaskGraphCoordinator {
     const currentGraph = this.#persistence?.getTaskGraph(graph.graphId) ?? graph;
     this.validateGraph(currentGraph);
     if (currentGraph.revision !== graph.revision) throw new DeviceFabricError("revision_conflict", "task graph revision is stale");
-    if (["succeeded", "failed", "cancelled"].includes(currentGraph.status)) return currentGraph;
-    const nodes = currentGraph.nodes.map(node => node.status === "unknown" || node.status === "succeeded" || node.status === "failed"
-      ? node : { ...node, status: "cancelled" as const });
-    for (const node of nodes) if (node.status !== "unknown") this.releaseOwnerLease(node.targetDeviceId, node.ownerId);
+    if (currentGraph.cancellationRequestedAt || currentGraph.status === "succeeded" || currentGraph.status === "cancelled") return currentGraph;
+    const nodes = currentGraph.nodes.map(node => {
+      if (["unknown", "succeeded", "failed", "cancelled"].includes(node.status)) return node;
+      const mayHaveDispatched = node.attemptId !== undefined || ["executing", "verifying", "partial"].includes(node.status);
+      return { ...node, status: mayHaveDispatched ? "unknown" as const : "cancelled" as const };
+    });
+    const now = this.#now();
     const next: DeviceTaskGraphV1 = {
       ...currentGraph,
       revision: currentGraph.revision + 1,
       status: nodes.some(node => node.status === "unknown") ? "unknown" : "cancelled",
       nodes,
-      updatedAt: this.#now(),
+      cancellationRequestedAt: now,
+      updatedAt: now,
     };
     this.#persistence?.saveTaskGraph(next);
     return next;
@@ -200,14 +214,16 @@ export class DeviceTaskGraphCoordinator {
     if (currentGraph.revision !== graph.revision) throw new DeviceFabricError("revision_conflict", "task graph revision is stale");
     const target = currentGraph.nodes.find(node => node.nodeId === nodeId);
     if (!target) throw new DeviceFabricError("target_missing", "task graph node is missing");
-    if (target.status === "unknown") throw new DeviceFabricError("safety_denied", "unknown task graph outcome requires reconciliation before retry");
+    if (currentGraph.cancellationRequestedAt || currentGraph.status === "cancelled"
+      || currentGraph.nodes.some(node => node.targetDeviceId === target.targetDeviceId
+        && ["unknown", "executing", "verifying", "partial"].includes(node.status))) {
+      throw new DeviceFabricError("safety_denied", "the graph is stopped or the target has an unresolved attempt");
+    }
     if (target.status !== "failed") throw new DeviceFabricError("invalid_graph", "only a failed task graph node can be retried");
-    const nodes = currentGraph.nodes.map(node => {
-      if (node.nodeId !== nodeId) return node;
-      const { attemptId: _attemptId, ...withoutAttempt } = node;
-      return { ...withoutAttempt, status: "planning" as const };
-    });
-    const next: DeviceTaskGraphV1 = { ...currentGraph, revision: currentGraph.revision + 1, status: "planned", nodes, updatedAt: this.#now() };
+    if (target.attemptId || target.resultRef) throw new DeviceFabricError("safety_denied", "retry requires a failure before dispatch");
+    const nodes = currentGraph.nodes.map(node => node.nodeId === nodeId ? { ...node, status: "planning" as const } : node);
+    const status = nodes.some(node => node.status === "failed") ? "failed" : "planned";
+    const next: DeviceTaskGraphV1 = { ...currentGraph, revision: currentGraph.revision + 1, status, nodes, updatedAt: this.#now() };
     this.#persistence?.saveTaskGraph(next);
     return next;
   }
@@ -386,37 +402,37 @@ export interface EdgeRuntimeJournalPersistence {
 export class EdgeRuntimeJournal {
   readonly #persistence?: EdgeRuntimeJournalPersistence;
   readonly #entries = new Map<string, EdgeRuntimeJournalEntryV1[]>();
+  readonly #entryIds = new Map<string, EdgeRuntimeJournalEntryV1>();
 
   constructor(options: { readonly persistence?: EdgeRuntimeJournalPersistence } = {}) {
     this.#persistence = options.persistence;
   }
 
   append(entry: EdgeRuntimeJournalEntryV1): { readonly entry: EdgeRuntimeJournalEntryV1; readonly replayed: boolean } {
-    validateEdgeRuntimeJournalEntry(entry);
-    const key = `${entry.runtimeId}:${entry.ownerTaskId}`;
-    const existing = this.#persistence?.listEdgeRuntimeJournalEntries(entry.runtimeId, entry.ownerTaskId, 0, 10_000)
-      ?? this.#entries.get(key) ?? [];
-    const byId = existing.find(item => item.entryId === entry.entryId);
+    if (this.#persistence) return this.#persistence.appendEdgeRuntimeJournalEntry(entry);
+    assertEdgeRuntimeJournalEntry(entry);
+    const key = JSON.stringify([entry.runtimeId, entry.ownerTaskId]);
+    const existing = this.#entries.get(key) ?? [];
+    const saved = JSON.parse(JSON.stringify(entry)) as EdgeRuntimeJournalEntryV1;
+    const byId = this.#entryIds.get(entry.entryId);
     if (byId) {
-      if (JSON.stringify(byId) !== JSON.stringify(entry)) throw new DeviceFabricError("revision_conflict", "edge journal entry id is bound to another entry");
-      return { entry: byId, replayed: true };
+      if (!isDeepStrictEqual(byId, saved)) throw new DeviceFabricError("revision_conflict", "edge journal entry id is bound to another entry");
+      return { entry: structuredClone(byId), replayed: true };
     }
-    const latest = existing.at(-1);
-    if (latest && entry.sequence !== latest.sequence + 1) throw new DeviceFabricError("revision_conflict", "edge journal sequence is not contiguous");
-    if (!latest && entry.sequence !== 1) throw new DeviceFabricError("revision_conflict", "edge journal must start at sequence one");
-    const stored = this.#persistence?.appendEdgeRuntimeJournalEntry(entry) ?? { entry, replayed: false };
-    const memory = this.#entries.get(key) ?? [];
-    if (!stored.replayed) memory.push(stored.entry);
-    this.#entries.set(key, memory);
-    return stored;
+    if (entry.sequence !== existing.length + 1) throw new DeviceFabricError("revision_conflict", "edge journal sequence is not contiguous");
+    existing.push(saved);
+    this.#entries.set(key, existing);
+    this.#entryIds.set(entry.entryId, saved);
+    return { entry, replayed: false };
   }
 
   read(runtimeId: string, ownerTaskId: string, afterSequence = 0, limit = 100): readonly EdgeRuntimeJournalEntryV1[] {
-    if (!Number.isSafeInteger(afterSequence) || afterSequence < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 10_000) {
+    if (!runtimeId.trim() || !ownerTaskId.trim() || !Number.isSafeInteger(afterSequence) || afterSequence < 0
+      || !Number.isSafeInteger(limit) || limit < 1 || limit > 10_000) {
       throw new DeviceFabricError("revision_conflict", "edge journal cursor is invalid");
     }
-    return this.#persistence?.listEdgeRuntimeJournalEntries(runtimeId, ownerTaskId, afterSequence, limit)
-      ?? (this.#entries.get(`${runtimeId}:${ownerTaskId}`) ?? []).filter(entry => entry.sequence > afterSequence).slice(0, limit);
+    if (this.#persistence) return this.#persistence.listEdgeRuntimeJournalEntries(runtimeId, ownerTaskId, afterSequence, limit);
+    return structuredClone((this.#entries.get(JSON.stringify([runtimeId, ownerTaskId])) ?? []).slice(afterSequence, afterSequence + limit));
   }
 }
 
@@ -648,11 +664,17 @@ function hasCycle(nodes: readonly DeviceTaskGraphNodeV1[]): boolean {
   return nodes.some(node => visit(node.nodeId));
 }
 
-function validateEdgeRuntimeJournalEntry(entry: EdgeRuntimeJournalEntryV1): void {
-  if (!entry.entryId.trim() || !entry.runtimeId.trim() || !entry.ownerTaskId.trim() || !entry.operationId.trim()
+const edgeJournalOutcomes = {
+  task_started: "pending", frame_sent: "sent", frame_received: "received",
+  task_completed: "completed", task_unknown: "unknown", task_cancelled: "cancelled",
+} as const;
+
+export function assertEdgeRuntimeJournalEntry(entry: EdgeRuntimeJournalEntryV1): void {
+  const fields = ["entryId", "runtimeId", "ownerTaskId", "operationId", "sequence", "recordedAt", "kind", "outcome", "payloadDigest"];
+  if (Object.keys(entry).some(key => !fields.includes(key))
+    || [entry.entryId, entry.runtimeId, entry.ownerTaskId, entry.operationId].some(id => typeof id !== "string" || !id.trim() || id.length > 512)
     || !Number.isSafeInteger(entry.sequence) || entry.sequence < 1 || !Number.isFinite(Date.parse(entry.recordedAt))
-    || !["task_started", "frame_sent", "frame_received", "task_completed", "task_unknown", "task_cancelled"].includes(entry.kind)
-    || !["pending", "sent", "received", "completed", "unknown", "cancelled"].includes(entry.outcome)
+    || !Object.hasOwn(edgeJournalOutcomes, entry.kind) || edgeJournalOutcomes[entry.kind] !== entry.outcome
     || entry.payloadDigest !== undefined && !/^[0-9a-f]{64}$/u.test(entry.payloadDigest)) {
     throw new DeviceFabricError("revision_conflict", "edge journal entry is invalid");
   }

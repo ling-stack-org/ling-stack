@@ -63,25 +63,42 @@ test("expired in-memory task graph leases can be acquired by a new owner", () =>
   coordinator.acquireOwnerLease("pc-1", "mobile-1");
 });
 
-test("task graph cancellation preserves unknown outcomes and failed nodes can be retried", () => {
-  const coordinator = new DeviceTaskGraphCoordinator();
+test("stopping a graph preserves in-flight ownership until the owner supplies terminal evidence", () => {
+  const coordinator = new DeviceTaskGraphCoordinator({ now: () => now });
   const graph: DeviceTaskGraphV1 = {
     graphId: "recoverable-graph", revision: 1, status: "executing", createdAt: now, updatedAt: now,
     nodes: [
-      { nodeId: "unknown", targetDeviceId: "vehicle-1", ownerKind: "mobile", ownerId: "phone-1", capabilityId: "vehicle.flash", capabilitySnapshotId: "snap-1", dependencies: [], status: "unknown" },
-      { nodeId: "failed", targetDeviceId: "pc-1", ownerKind: "daemon", ownerId: "pc-1", capabilityId: "pc.repair", capabilitySnapshotId: "snap-2", dependencies: [], status: "failed", resultRef: "failed-result", attemptId: "attempt-1" },
-      { nodeId: "pending", targetDeviceId: "pc-1", ownerKind: "daemon", ownerId: "pc-1", capabilityId: "pc.inspect", capabilitySnapshotId: "snap-2", dependencies: ["failed"], status: "executing" },
+      { nodeId: "running", targetDeviceId: "pc-1", ownerKind: "daemon", ownerId: "pc-1", capabilityId: "pc.repair", capabilitySnapshotId: "snap-1", dependencies: [], status: "verifying", attemptId: "attempt-1" },
+      { nodeId: "pending", targetDeviceId: "pc-1", ownerKind: "daemon", ownerId: "pc-1", capabilityId: "pc.inspect", capabilitySnapshotId: "snap-1", dependencies: ["running"], status: "planning" },
     ],
   };
+  coordinator.acquireOwnerLease("pc-1", "pc-1");
   const cancelled = coordinator.cancelGraph(graph);
   assert.equal(cancelled.status, "unknown");
-  assert.equal(cancelled.nodes.find(node => node.nodeId === "unknown")?.status, "unknown");
+  assert.equal(cancelled.nodes.find(node => node.nodeId === "running")?.status, "unknown");
+  assert.equal(cancelled.nodes.find(node => node.nodeId === "running")?.attemptId, "attempt-1");
   assert.equal(cancelled.nodes.find(node => node.nodeId === "pending")?.status, "cancelled");
-  assert.throws(() => coordinator.retryNode(cancelled, "unknown"), error => error instanceof DeviceFabricError && error.code === "safety_denied");
-  const failedRetry = coordinator.retryNode(cancelled, "failed");
-  assert.equal(failedRetry.status, "planned");
-  assert.equal(failedRetry.nodes.find(node => node.nodeId === "failed")?.status, "planning");
-  assert.equal(failedRetry.nodes.find(node => node.nodeId === "failed")?.attemptId, undefined);
+  assert.throws(() => coordinator.acquireOwnerLease("pc-1", "phone-1"), /leased/);
+  assert.throws(() => coordinator.retryNode(cancelled, "running"), /stopped/);
+  assert.throws(() => coordinator.recordNodeResult(cancelled, "running", "succeeded"), /terminal evidence/);
+  const settled = coordinator.recordNodeResult(cancelled, "running", "succeeded", "readback-1");
+  assert.equal(settled.status, "cancelled");
+  assert.equal(settled.nodes[0]?.resultRef, "readback-1");
+  assert.deepEqual(coordinator.readyNodes(settled), []);
+  assert.equal(coordinator.cancelGraph(settled), settled);
+});
+
+test("graph retry is limited to a failed admission without an attempt or result", () => {
+  const coordinator = new DeviceTaskGraphCoordinator({ now: () => now });
+  const node = {
+    nodeId: "node", targetDeviceId: "pc", ownerKind: "daemon", ownerId: "pc",
+    capabilityId: "pc.repair", capabilitySnapshotId: "snapshot", dependencies: [], status: "failed",
+  } as const;
+  const graph = {
+    graphId: "retry-graph", revision: 1, status: "failed", createdAt: now, updatedAt: now, nodes: [node],
+  } as const;
+  assert.deepEqual(coordinator.readyNodes(coordinator.retryNode(graph, node.nodeId)).map(item => item.nodeId), [node.nodeId]);
+  assert.throws(() => coordinator.retryNode({ ...graph, nodes: [{ ...node, attemptId: "attempt" }] }, node.nodeId), /before dispatch/);
 });
 
 test("edge enrollment, ordered event recovery, resource rollback, safety and lifecycle are durable domain rules", () => {

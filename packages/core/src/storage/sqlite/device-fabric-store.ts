@@ -24,7 +24,7 @@ import {
   type JsonValue,
 } from "@ling-stack/contracts";
 
-import { DeviceFabricError, isAllowedDeviceLifecycleTransition } from "../../device-fabric.js";
+import { assertEdgeRuntimeJournalEntry, DeviceFabricError, isAllowedDeviceLifecycleTransition } from "../../device-fabric.js";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 import { withSqliteSnapshotParentTransaction } from "./read-snapshot.js";
 
@@ -383,10 +383,13 @@ export class SqliteDeviceFabricStore {
 
   saveTaskGraph(graph: DeviceTaskGraphV1): DeviceTaskGraphV1 {
     validateTaskGraph(graph);
-    const current = this.getTaskGraph(graph.graphId);
-    if (current && graph.revision <= current.revision) throw new DeviceFabricError("revision_conflict", "task graph revision must advance");
-    this.database.prepare("INSERT INTO device_fabric_task_graphs(graph_id,revision,graph_json) VALUES(?,?,?) ON CONFLICT(graph_id) DO UPDATE SET revision=excluded.revision,graph_json=excluded.graph_json")
+    const result = this.database.prepare(`
+      INSERT INTO device_fabric_task_graphs(graph_id,revision,graph_json) VALUES(?,?,?)
+      ON CONFLICT(graph_id) DO UPDATE SET revision=excluded.revision,graph_json=excluded.graph_json
+      WHERE excluded.revision > device_fabric_task_graphs.revision
+    `)
       .run(graph.graphId, graph.revision, JSON.stringify(graph));
+    if (result.changes === 0) throw new DeviceFabricError("revision_conflict", "task graph revision must advance");
     return graph;
   }
 
@@ -396,13 +399,16 @@ export class SqliteDeviceFabricStore {
   }
 
   acquireTaskGraphLease(targetDeviceId: string, ownerId: string, now: string, leaseMs: number): boolean {
-    if (!targetDeviceId.trim() || !ownerId.trim() || !Number.isInteger(leaseMs) || leaseMs < 1) throw new DeviceFabricError("lease_busy", "task graph lease input is invalid");
-    const expiresAt = new Date(Date.parse(now) + leaseMs).toISOString();
-    const existing = this.database.prepare("SELECT owner_id,expires_at FROM device_task_graph_leases WHERE target_device_id=?").get(targetDeviceId) as Row | undefined;
-    if (existing && readString(existing, "owner_id") !== ownerId && Date.parse(readString(existing, "expires_at")) > Date.parse(now)) return false;
-    this.database.prepare("INSERT INTO device_task_graph_leases(target_device_id,owner_id,expires_at,updated_at) VALUES(?,?,?,?) ON CONFLICT(target_device_id) DO UPDATE SET owner_id=excluded.owner_id,expires_at=excluded.expires_at,updated_at=excluded.updated_at")
-      .run(targetDeviceId, ownerId, expiresAt, now);
-    return true;
+    const nowMs = Date.parse(now);
+    if (!targetDeviceId.trim() || !ownerId.trim() || !Number.isSafeInteger(leaseMs) || leaseMs < 1 || !Number.isFinite(nowMs)) {
+      throw new DeviceFabricError("lease_busy", "task graph lease input is invalid");
+    }
+    const result = this.database.prepare(`
+      INSERT INTO device_task_graph_leases(target_device_id,owner_id,expires_at,updated_at) VALUES(?,?,?,?)
+      ON CONFLICT(target_device_id) DO UPDATE SET owner_id=excluded.owner_id,expires_at=excluded.expires_at,updated_at=excluded.updated_at
+      WHERE device_task_graph_leases.owner_id=excluded.owner_id OR device_task_graph_leases.expires_at<=excluded.updated_at
+    `).run(targetDeviceId, ownerId, new Date(nowMs + leaseMs).toISOString(), new Date(nowMs).toISOString());
+    return result.changes !== 0;
   }
 
   releaseTaskGraphLease(targetDeviceId: string, ownerId: string): void {
@@ -431,21 +437,28 @@ export class SqliteDeviceFabricStore {
   }
 
   appendEdgeRuntimeJournalEntry(entry: EdgeRuntimeJournalEntryV1): { readonly entry: EdgeRuntimeJournalEntryV1; readonly replayed: boolean } {
-    if (!entry.entryId.trim() || !entry.runtimeId.trim() || !entry.ownerTaskId.trim() || !Number.isSafeInteger(entry.sequence) || entry.sequence < 1) {
-      throw new DeviceFabricError("revision_conflict", "edge journal entry identity is invalid");
-    }
-    const byId = this.database.prepare("SELECT entry_json FROM device_edge_runtime_journal WHERE entry_id=?").get(entry.entryId) as Row | undefined;
-    if (byId) {
-      const existing = parseJson<EdgeRuntimeJournalEntryV1>(byId.entry_json, "edge journal entry");
-      if (!isDeepStrictEqual(existing, entry)) throw new DeviceFabricError("revision_conflict", "edge journal entry id is bound to another entry");
-      return { entry: existing, replayed: true };
-    }
-    const latest = this.database.prepare("SELECT sequence FROM device_edge_runtime_journal WHERE runtime_id=? AND owner_task_id=? ORDER BY sequence DESC LIMIT 1").get(entry.runtimeId, entry.ownerTaskId) as Row | undefined;
-    const latestSequence = latest ? Number(latest.sequence) : 0;
-    if (entry.sequence !== latestSequence + 1) throw new DeviceFabricError("revision_conflict", "edge journal sequence is not contiguous");
-    this.database.prepare("INSERT INTO device_edge_runtime_journal(runtime_id,owner_task_id,sequence,entry_id,entry_json,recorded_at) VALUES(?,?,?,?,?,?)")
-      .run(entry.runtimeId, entry.ownerTaskId, entry.sequence, entry.entryId, JSON.stringify(entry), entry.recordedAt);
-    return { entry, replayed: false };
+    assertEdgeRuntimeJournalEntry(entry);
+    const serialized = JSON.stringify(entry);
+    return this.withWriteTransaction(() => {
+      const byId = this.database.prepare("SELECT entry_json FROM device_edge_runtime_journal WHERE entry_id=?").get(entry.entryId) as Row | undefined;
+      if (byId) {
+        const existing = parseJson<EdgeRuntimeJournalEntryV1>(byId.entry_json, "edge journal entry");
+        if (!isDeepStrictEqual(existing, JSON.parse(serialized))) {
+          throw new DeviceFabricError("revision_conflict", "edge journal entry id is bound to another entry");
+        }
+        return { entry: existing, replayed: true };
+      }
+      const latest = this.database.prepare(`
+        SELECT sequence FROM device_edge_runtime_journal
+        WHERE runtime_id=? AND owner_task_id=? ORDER BY sequence DESC LIMIT 1
+      `).get(entry.runtimeId, entry.ownerTaskId) as Row | undefined;
+      if (entry.sequence !== Number(latest?.sequence ?? 0) + 1) {
+        throw new DeviceFabricError("revision_conflict", "edge journal sequence is not contiguous");
+      }
+      this.database.prepare("INSERT INTO device_edge_runtime_journal(runtime_id,owner_task_id,sequence,entry_id,entry_json,recorded_at) VALUES(?,?,?,?,?,?)")
+        .run(entry.runtimeId, entry.ownerTaskId, entry.sequence, entry.entryId, serialized, entry.recordedAt);
+      return { entry, replayed: false };
+    });
   }
 
   listEdgeRuntimeJournalEntries(runtimeId: string, ownerTaskId: string, afterSequence = 0, limit = 100): readonly EdgeRuntimeJournalEntryV1[] {
@@ -714,7 +727,6 @@ export class SqliteDeviceFabricStore {
         recorded_at TEXT NOT NULL,
         PRIMARY KEY(runtime_id,owner_task_id,sequence)
       );
-      CREATE INDEX IF NOT EXISTS idx_device_edge_runtime_journal_lane ON device_edge_runtime_journal(runtime_id,owner_task_id,sequence);
       CREATE TABLE IF NOT EXISTS device_trace_spans (
         span_id TEXT PRIMARY KEY NOT NULL,
         trace_id TEXT NOT NULL,
