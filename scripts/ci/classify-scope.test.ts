@@ -357,6 +357,49 @@ test("the Git boundary retains the entire PR and both sides of source-to-doc ren
   assert.ok(scope.packages.includes("@ling-stack/daemon"));
 });
 
+test("verified local output deletions keep the changed paths and use the fast lane", t => {
+  const repo = repositoryFixture(t);
+  const report = "output/qa/result.json";
+  const script = "output/qa/capture.mjs";
+  const scriptSource = "export const capture = true;\n";
+  repo.write(report, "{}");
+  repo.write(script, scriptSource);
+  const base = repo.commit();
+  repo.git("rm", report, script);
+  repo.commit();
+  const scope = repo.classify(base);
+  assert.equal(scope.mode, "docs");
+  assert.deepEqual(scope.files, [script, report]);
+  assert.deepEqual(scope.packages, []);
+  assert.equal(scope.assurance, false);
+  assert.match(scope.reason, /output cleanup/u);
+  assert.equal(classify([report]).mode, "full");
+  assert.equal(classify([report], { deletedOutputFiles: [report], forceFull: true }).mode, "full");
+
+  repo.write("packages/providers/src/capture.mjs", scriptSource);
+  repo.commit();
+  const moved = repo.classify(base);
+  assert.equal(moved.mode, "affected");
+  assert.deepEqual(moved.packages, ["@ling-stack/cli", "@ling-stack/daemon", "@ling-stack/providers"]);
+  assert.deepEqual(moved.daemonPlatforms, ["linux", "darwin"]);
+});
+
+test("local output additions and modifications retain full regression", t => {
+  const repo = repositoryFixture(t);
+  const report = "output/qa/result.json";
+  const notes = "output/qa/README.md";
+  repo.write(report, "{}");
+  const base = repo.commit();
+  repo.write(report, '{"updated":true}');
+  repo.commit();
+  assert.equal(repo.classify(base).mode, "full");
+
+  repo.git("rm", report);
+  repo.write(notes, "# QA notes\n");
+  repo.commit();
+  assert.equal(repo.classify(base).mode, "full");
+});
+
 test("the Git boundary verifies old manifest identity before narrowing package edits", (t) => {
   const repo = repositoryFixture(t);
   const base = repo.commit();
@@ -446,8 +489,9 @@ function validationMigration(t: TestContext, options: {
   additionalTests?: string[];
   baselineConfig?: object;
   baselineTest?: string;
+  baselineTypecheck?: string;
 } = {}) {
-  const { additionalTests = [], baselineConfig, baselineTest } = options;
+  const { additionalTests = [], baselineConfig, baselineTest, baselineTypecheck } = options;
   const repo = repositoryFixture(t);
   const manifest = {
     name: "@ling-stack/core", type: "module",
@@ -457,7 +501,7 @@ function validationMigration(t: TestContext, options: {
       "build:ci": "tsc -p tsconfig.json",
       test: baselineTest ?? "corepack pnpm --filter @ling-stack/contracts build && tsc -p tsconfig.json && node --test test/*.test.mjs",
       "test:ci": "node --test test/*.test.mjs",
-      typecheck: "corepack pnpm --filter @ling-stack/contracts build && tsc -p tsconfig.json --noEmit",
+      typecheck: baselineTypecheck ?? "corepack pnpm --filter @ling-stack/contracts build && tsc -p tsconfig.json --noEmit",
       "typecheck:ci": "tsc -p tsconfig.json --noEmit",
     } as Record<string, string>,
   };
@@ -504,6 +548,25 @@ test("validated build and typecheck wrappers preserve package-only migration sco
   const repo = validationMigration(t, {
     baselineTest: "corepack pnpm run build && node --test test/*.test.mjs",
   });
+  repo.manifest.scripts.test = "corepack pnpm typecheck && corepack pnpm test:ci";
+  repo.saveManifest();
+  repo.commit();
+  const scope = repo.classify(repo.base);
+  assert.equal(scope.mode, "affected");
+  assert.deepEqual(scope.packages, ["@ling-stack/core"]);
+  assert.deepEqual(scope.testPackages, ["@ling-stack/core"]);
+  assert.deepEqual(scope.typecheckPackages, ["@ling-stack/core"]);
+  assert.equal(scope.dependencyPolicy, true);
+  assert.equal(scope.assurance, false);
+  assert.equal(scope.daemon, false);
+  assert.equal(scope.web, false);
+});
+
+test("workspace dependency builds and the owning package build closure retain package-only validation", t => {
+  const repo = validationMigration(t, {
+    baselineTypecheck: "corepack pnpm --filter @ling-stack/plugin-sdk build && corepack pnpm --filter @ling-stack/contracts build && tsc -p tsconfig.json --noEmit",
+  });
+  repo.manifest.scripts.typecheck = "corepack pnpm --filter @ling-stack/core... run build:ci && corepack pnpm typecheck:ci";
   repo.manifest.scripts.test = "corepack pnpm typecheck && corepack pnpm test:ci";
   repo.saveManifest();
   repo.commit();
@@ -593,6 +656,8 @@ test("opaque commands, build hooks, metadata changes and incomplete test discove
   const mutations: ((repo: ReturnType<typeof validationMigration>) => void)[] = [
     repo => { repo.manifest.scripts["test:ci"] = "echo omitted"; },
     repo => { repo.manifest.scripts.typecheck = "echo omitted"; },
+    repo => { repo.manifest.scripts.typecheck = "corepack pnpm --filter @ling-stack/daemon build && corepack pnpm typecheck:ci"; },
+    repo => { repo.manifest.scripts.typecheck = "corepack pnpm --filter @ling-stack/contracts... run build:ci && corepack pnpm typecheck:ci"; },
     repo => {
       repo.manifest.scripts.test = "corepack pnpm typecheck && corepack pnpm test:ci";
       repo.manifest.scripts.typecheck = "corepack pnpm test && corepack pnpm typecheck:ci";
