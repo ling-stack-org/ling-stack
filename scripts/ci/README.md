@@ -448,7 +448,8 @@ running the same checks. Tests continue to import the package's `dist` output.
 Remote Client's `test:ci` discovers its four `.test.ts` files with the same Node
 test runner. Its `typecheck:ci` checks source and the strict, no-emit
 `packages/remote-client/tsconfig.test.json`, including the typed signing fixture
-helper; package tests build Contracts and Remote Protocol before running the suite.
+helper. The local `test` command builds package declarations and runs the same
+typecheck before executing the suite.
 
 Local fixture and package checks are not evidence of Linux/macOS hosted-runner
 latency. Compare queue, setup, test-file and total durations after the next
