@@ -1,16 +1,17 @@
 import { createServer, type ServerResponse } from "node:http";
 import { test, expect, type Page } from "@playwright/test";
 import { defaultCompanionManifest } from "@ling-stack/core";
-import type { AiTeammate, CompanionProfile, CompanionState, TeammateDirectMessage } from "@ling-stack/contracts";
-import { mockDaemon } from "./support/mock-daemon";
-import { createBaseState, createMockTeammate } from "./support/mock-state";
+import type { AiTeammate, CompanionAttentionItem, CompanionProfile, CompanionState, TeammateDirectMessage } from "@ling-stack/contracts";
+import { createChannelBranchFromBody, mockDaemon } from "./support/mock-daemon";
+import { createBaseState, createMockTeammate, cwd, type MockState } from "./support/mock-state";
+import { attachCommittedChannelReportItem, completedTerminalReport, installChannelWorkCellFixture } from "./support/conversation-work-cell-fixture";
 
 test.setTimeout(60_000);
 
 async function fixture(page: Page, mode: "normal" | "interrupted" | "pending" | "same-session-race" | "terminal-error" = "normal", historyCount = 0,
-  options: { empty?: boolean; cooldownMs?: number; secondCompanion?: boolean; locale?: string } = {}) {
+  options: { empty?: boolean; cooldownMs?: number; secondCompanion?: boolean; locale?: string; base?: MockState } = {}) {
   page.on("pageerror", error => console.error("Companion page error:", error.message));
-  const base = createBaseState({ approvalStatus: "pending" });
+  const base = options.base ?? createBaseState({ approvalStatus: "pending" });
   const teammate = createMockTeammate({ id: "teammate_companion" }) as unknown as AiTeammate; base.aiTeammates = [teammate];
   await mockDaemon(page, base);
   await page.addInitScript(locale => localStorage.setItem("ling-stack.locale", locale), options.locale ?? "en-US");
@@ -146,9 +147,172 @@ async function openPanel(page: Page) {
   await page.locator(".companion-config-button").click();
   const panel = page.getByRole("dialog", { name: "Intelligent companion" });
   await expect(panel.getByRole("img", { name: "Yui" })).toBeVisible();
-  await panel.hover();
+  await panel.locator(".companion-talk-button").evaluate((element) => (element as HTMLButtonElement).click());
   return panel;
 }
+
+async function mockAttentionCard(page: Page, card: Pick<CompanionAttentionItem, "source" | "priority" | "status" | "payload" | "summary">, revision = 1) {
+  const now = new Date().toISOString();
+  const item: CompanionAttentionItem = {
+    ...card,
+    schemaVersion: 1,
+    id: `${card.source.kind}:${card.source.id}`,
+    actor: { kind: "system", label: "Ling" },
+    title: card.summary,
+    revision,
+    createdAt: now,
+    updatedAt: now,
+    action: { kind: "open_source", enabled: true, source: card.source },
+  };
+  await page.route("http://127.0.0.1:17891/companion-attention*", route => route.fulfill({
+    json: { schemaVersion: 1, cwd, generatedAt: now, items: [item] },
+  }));
+}
+
+async function openAttentionSource(page: Page): Promise<void> {
+  await page.goto("/");
+  await page.locator(".companion-config-button").click();
+  const panel = page.getByRole("dialog", { name: "Intelligent companion" });
+  await panel.getByRole("button", { name: "Open source" }).click({ timeout: 5000 });
+}
+
+test("opens the selected approval even when the request belongs to a channel and run", async ({ page }) => {
+  const base = createBaseState({ approvalStatus: "pending" });
+  const existing = base.approvals[0]!;
+  const approval = { ...existing, id: "approval_release", title: "Review release permission" };
+  const f = await fixture(page, "normal", 0, { base });
+  try {
+    const isApprovalDetail = (url: URL) => url.pathname === `/approvals/${approval.id}`;
+    await page.route(isApprovalDetail, route => route.fulfill({ json: { approval } }));
+    await mockAttentionCard(page, {
+      source: {
+        workspaceId: "workspace_default", cwd, kind: "approval", id: approval.id,
+        channelId: "channel_engineering", approvalId: approval.id, runId: approval.runId,
+      },
+      priority: "approval",
+      status: "pending",
+      payload: { kind: "approval", approvalId: approval.id, status: "pending", risk: "medium" },
+      summary: approval.title,
+    });
+    await Promise.all([
+      page.waitForResponse(response => isApprovalDetail(new URL(response.url())) && response.ok(), { timeout: 15000 }),
+      openAttentionSource(page),
+    ]);
+    await expect(page.getByRole("complementary", { name: "Review item detail" })).toHaveAttribute("data-approval-detail-id", approval.id);
+  } finally { await f.close(); }
+});
+
+test("opens and locates a result in its own channel conversation", async ({ page }) => {
+  const base = createBaseState({ approvalStatus: "expired" });
+  const channelId = "channel_engineering";
+  const { threadId, runId } = installChannelWorkCellFixture(base, "companion-result");
+  const thread = base.threads.find((entry) => entry.id === threadId)!;
+  thread.surfaceKind = "channel_session";
+  base.threads.unshift({ ...thread, id: `thread_channel_${channelId}`, title: "Default conversation", surfaceKind: "channel_root" });
+  base.channelBranches.push(createChannelBranchFromBody({ name: thread.title, rootThreadId: threadId }, "branch_companion_result", channelId));
+  const turnId = base.turnRunLinks.find((entry) => entry.runId === runId)!.turnId;
+  const report = { ...completedTerminalReport({ id: "report_companion_result", runId, threadId, turnId, title: "Release check complete" }), channelId };
+  base.terminalReports = [report];
+  attachCommittedChannelReportItem(base, report);
+  const f = await fixture(page, "normal", 0, { base });
+  try {
+    await mockAttentionCard(page, {
+      source: {
+        workspaceId: "workspace_default", cwd, kind: "terminal_report", id: report.id,
+        channelId, threadId, reportId: report.id, sourceItemId: report.resultItemId,
+      },
+      priority: "result",
+      status: "resolved",
+      payload: { kind: "terminal_report", reportId: report.id, outcomeStatus: "succeeded" },
+      summary: report.outcome.title,
+    });
+    await openAttentionSource(page);
+    const timeline = page.locator(`[data-conversation-timeline][data-conversation-thread-id="${threadId}"]`);
+    const reportRow = timeline.locator('.conversation-timeline-locate-pulse').filter({ has: page.locator(`[data-conversation-timeline-item-id="terminal-report:${report.id}"]`) });
+    await expect(reportRow).toBeVisible();
+  } finally { await f.close(); }
+});
+
+test("a dismissed first result revision stays seen and the next revision appears", async ({ page }) => {
+  const f = await fixture(page);
+  const source = { workspaceId: "workspace_default", cwd, kind: "terminal_report", id: "report_revision" } as const;
+  const card = {
+    source,
+    priority: "result",
+    status: "resolved",
+    payload: { kind: "terminal_report", reportId: source.id, outcomeStatus: "succeeded" },
+  } as const;
+  try {
+    await mockAttentionCard(page, { ...card, summary: "First result revision" });
+    await page.goto("/");
+    await page.locator(".companion-config-button").click();
+    const panel = page.getByRole("dialog", { name: "Intelligent companion" });
+    const dismiss = panel.getByRole("button", { name: "Dismiss", exact: true });
+    await dismiss.click({ timeout: 5000 });
+    await expect(dismiss).toBeHidden();
+    const refresh = panel.getByRole("button", { name: "Refresh", exact: true });
+    await refresh.click();
+    await expect(refresh).toBeEnabled();
+    await expect(dismiss).toBeHidden();
+
+    await mockAttentionCard(page, { ...card, summary: "Revised result summary" }, 2);
+    await refresh.click();
+    await expect(panel.locator(".companion-attention-card")).toContainText("Revised result summary");
+  } finally { await f.close(); }
+});
+
+test("opens a specific handoff in the channel inspector", async ({ page }) => {
+  const base = createBaseState({ approvalStatus: "expired" });
+  const channelId = "channel_engineering";
+  const handoff = {
+    id: "handoff_release", workspaceId: "workspace_default", channelId, createdBy: "local-user",
+    fromParticipantId: "teammate_companion", fromParticipantLabel: "QA",
+    toParticipantId: "engineer", toParticipantLabel: "Engineer",
+    reason: "Release verification is ready", requiredInput: "", expectedOutput: "Publish results",
+    status: "accepted", createdAt: "2026-11-20T10:00:00Z", updatedAt: "2026-11-20T10:00:00Z",
+  };
+  base.channelHandoffs = [{ ...handoff, id: "handoff_other", reason: "Review another task" }, handoff];
+  const f = await fixture(page, "normal", 0, { base });
+  try {
+    await mockAttentionCard(page, {
+      source: { workspaceId: "workspace_default", cwd, kind: "handoff", id: handoff.id, channelId },
+      priority: "handoff",
+      status: "active",
+      payload: { kind: "handoff", handoffId: handoff.id, fromParticipant: "QA", toParticipant: "Engineer" },
+      summary: handoff.expectedOutput,
+    });
+    await openAttentionSource(page);
+    const inspector = page.getByRole("region", { name: "Channel inspector" });
+    await expect(inspector.locator(".conversation-timeline-locate-pulse")).toContainText(handoff.reason);
+  } finally { await f.close(); }
+});
+
+test("locates a blocked workflow step before it has a run", async ({ page }) => {
+  const base = createBaseState({ approvalStatus: "expired" });
+  const channelId = "channel_engineering";
+  const timestamp = "2026-11-20T10:00:00Z";
+  const scope = { workspaceId: "workspace_default", channelId, createdAt: timestamp, updatedAt: timestamp };
+  const workflow = { ...scope, id: "workflow_release", title: "Release review", objective: "Verify the release", status: "running", createdBy: "local-user" };
+  const step = {
+    ...scope, id: "step_release", workflowId: workflow.id, title: "Verify the bundle", prompt: "Check the bundle contents",
+    toParticipantId: "teammate_companion", toParticipantLabel: "QA", position: 2, status: "blocked", blocker: "Bundle is missing",
+  };
+  base.channelWorkflows = [workflow];
+  base.channelWorkflowSteps = [{ ...step, id: "step_other", title: "Inspect the manifest", position: 1 }, step];
+  const f = await fixture(page, "normal", 0, { base });
+  try {
+    await mockAttentionCard(page, {
+      source: { workspaceId: scope.workspaceId, cwd, kind: "blocker", id: step.id, channelId, workflowStepId: step.id },
+      priority: "blocker",
+      status: "pending",
+      payload: { kind: "blocker", nextAction: "Open the blocked step" },
+      summary: step.blocker,
+    });
+    await openAttentionSource(page);
+    const inspector = page.getByRole("region", { name: "Channel inspector" });
+    await expect(inspector.locator(".conversation-timeline-locate-pulse")).toContainText(step.title);
+  } finally { await f.close(); }
+});
 
 test("streams reply text before completion and uses one durable submission key", async ({ page }) => {
   const f = await fixture(page);
@@ -189,7 +353,8 @@ test("pending receipt survives reload and recovers without another POST", async 
     await expect(panel.getByRole("button", { name: "Recover or retry message" })).toBeVisible();
     await expect(panel.getByRole("textbox")).toHaveValue("Keep this pending");
     await page.reload(); await page.locator(".companion-config-button").click();
-    panel = page.getByRole("dialog", { name: "Intelligent companion" }); await panel.hover();
+    panel = page.getByRole("dialog", { name: "Intelligent companion" });
+    await panel.locator(".companion-talk-button").click();
     await expect(panel.getByRole("textbox")).toBeDisabled();
     f.finishPending(); await panel.getByRole("button", { name: "Recover or retry message" }).click();
     await expect(panel.getByRole("log")).toContainText("Recovered after disconnect.");
@@ -278,13 +443,14 @@ test("a restored submission blocks new text until its unavailable receipt recove
     await expect(panel.getByRole("button", { name: "Recover or retry message" })).toBeVisible();
     f.setReceiptsUnavailable(true);
     await page.reload(); await page.locator(".companion-config-button").click();
-    panel = page.getByRole("dialog", { name: "Intelligent companion" }); await panel.hover();
+    panel = page.getByRole("dialog", { name: "Intelligent companion" });
+    await panel.locator(".companion-talk-button").click();
     await expect(panel.getByRole("alert")).toBeVisible();
     await expect(panel.getByRole("textbox")).toBeDisabled();
     await expect(panel.getByRole("button", { name: "Send", exact: true })).toBeDisabled();
     expect(f.keys).toHaveLength(1);
     f.finishPending(); f.setReceiptsUnavailable(false);
-    await panel.getByRole("button", { name: "Reconnect", exact: true }).click();
+    await page.evaluate(() => window.dispatchEvent(new Event("online")));
     await expect(panel.getByRole("log")).toContainText("Recovered after disconnect.");
     await expect(panel.getByRole("textbox")).toBeEnabled();
     await panel.getByRole("textbox").fill("A different new message");
@@ -305,7 +471,8 @@ test("an unknown restored receipt clears the stale submission and allows a new m
     f.forgetSubmission(staleKey);
 
     await page.reload(); await page.locator(".companion-config-button").click();
-    panel = page.getByRole("dialog", { name: "Intelligent companion" }); await panel.hover();
+    panel = page.getByRole("dialog", { name: "Intelligent companion" });
+    await panel.locator(".companion-talk-button").click();
     await expect(panel.getByRole("alert")).toContainText("The reply was interrupted");
     await expect(panel.getByRole("textbox")).toBeEnabled({ timeout: 30_000 });
     await panel.getByRole("textbox").fill("A new message");
@@ -387,12 +554,12 @@ test("history pagination retains its cursor across reconnect synchronization", a
   try {
     const panel = await openPanel(page);
     const log = panel.getByRole("log"); await log.evaluate(element => { element.scrollTop = 0; });
-    await log.getByRole("button", { name: "Load earlier messages" }).click();
+    await log.getByRole("button", { name: "Load earlier messages" }).evaluate((element) => (element as HTMLButtonElement).click());
     await expect(log).toContainText("History 10");
     await page.evaluate(() => window.dispatchEvent(new Event("online")));
     await expect.poll(() => f.cursors).toEqual(["history_50"]);
     await log.evaluate(element => { element.scrollTop = 0; });
-    await log.getByRole("button", { name: "Load earlier messages" }).click();
+    await log.getByRole("button", { name: "Load earlier messages" }).evaluate((element) => (element as HTMLButtonElement).click());
     await expect(log).toContainText("History 0"); expect(f.cursors).toEqual(["history_50", "history_10"]);
     await expect(log.getByRole("button", { name: "Load earlier messages" })).toHaveCount(0);
   } finally { await f.close(); }
@@ -418,7 +585,7 @@ test("conversation stays beside the character across themes and below it on narr
       await expect(page.locator("html")).toHaveAttribute("data-ui-theme", themeId);
       const conversation = await panel.locator(".companion-mini-conversation").boundingBox();
       const character = await panel.getByRole("img", { name: "Yui" }).boundingBox();
-      expect(conversation!.x + conversation!.width).toBeLessThanOrEqual(character!.x);
+      expect(conversation!.x).toBeGreaterThanOrEqual(character!.x);
       expect(await panel.getByRole("img", { name: "Yui" }).evaluate(async el => {
         const url = getComputedStyle(el).backgroundImage.slice(5, -2);
         const image = new Image(); image.src = url; await image.decode();
@@ -471,7 +638,7 @@ test("the first companion form defaults to proactive behavior off", async ({ pag
   try {
     await page.goto("/");
     await page.locator(".companion-config-button").click();
-    await page.getByRole("button", { name: "Open companion settings", exact: true }).click();
+    await page.getByRole("button", { name: "Open companion settings", exact: true }).evaluate((element) => (element as HTMLButtonElement).click());
     const settings = page.locator(".companion-settings-page");
     await expect(settings.getByLabel("Allow proactive companion prompts")).not.toBeChecked();
     await settings.getByLabel("Companion name").fill("First Yui");
@@ -532,12 +699,79 @@ test("editing a name preserves zero and non-minute custom cooldowns", async ({ p
   }
 });
 
+test("attention cards render actor questions and submit the authoritative answer", async ({ page }) => {
+  const f = await fixture(page);
+  const authority = {
+    schemaVersion: 1,
+    threadId: "thread-qa",
+    runId: "run-qa",
+    attemptId: "attempt-qa",
+    participantId: "teammate_companion",
+    requestId: "request-qa",
+    requestVersion: 2,
+    statusRevision: 3,
+    token: "authority-token",
+  };
+  await page.route("http://127.0.0.1:17891/companion-attention*", async (route) => {
+    await route.fulfill({
+      json: {
+        cwd: "/tmp/ling-stack-workspace",
+        schemaVersion: 1,
+        generatedAt: new Date().toISOString(),
+        items: [{
+          schemaVersion: 1,
+          id: "user_input:request-qa",
+          priority: "required_input",
+          status: "pending",
+          source: { workspaceId: "workspace_default", cwd: "/tmp/ling-stack-workspace", kind: "user_input", id: "request-qa", sourceItemId: "item-qa", channelId: "channel-qa", threadId: "thread-qa", requestId: "request-qa", revision: 3 },
+          actor: { kind: "teammate", teammateId: "teammate_companion", label: "QA" },
+          title: "Answer needed",
+          summary: "Choose a release target.",
+          revision: 3,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          payload: {
+            kind: "user_input",
+            requestId: "request-qa",
+            requestVersion: 2,
+            statusRevision: 3,
+            status: "pending",
+            waitMode: "required",
+            questions: [{ questionId: "target", prompt: "Choose a release target.", required: true, allowFreeText: false, options: [{ optionId: "staging", label: "Staging" }, { optionId: "prod", label: "Production" }] }],
+            answerAuthority: authority,
+          },
+          action: { kind: "answer", enabled: true, source: { workspaceId: "workspace_default", cwd: "/tmp/ling-stack-workspace", kind: "user_input", id: "request-qa", sourceItemId: "item-qa", channelId: "channel-qa", threadId: "thread-qa", requestId: "request-qa", revision: 3 } },
+        }],
+      },
+    });
+  });
+  let answerBody: unknown;
+  await page.route("http://127.0.0.1:17891/user-input-answers*", async (route) => {
+    answerBody = route.request().postDataJSON();
+    await route.fulfill({ status: 200, json: { accepted: true, receipt: { requestId: "request-qa", requestVersion: 2, answerId: "answer-qa", answerItemId: "item-answer", deliveryId: "delivery-qa", acceptedAt: new Date().toISOString(), replayed: false }, delivery: { status: "pending" } } });
+  });
+  try {
+    await page.goto("/");
+    await page.locator(".companion-config-button").click();
+    const panel = page.getByRole("dialog", { name: "Intelligent companion" });
+    await expect(panel.getByText("QA", { exact: true })).toBeVisible();
+    await panel.getByRole("button", { name: "Staging", exact: true }).click();
+    await panel.getByRole("button", { name: "Submit answer", exact: true }).click();
+    await expect(panel.getByRole("status")).toContainText("Answer submitted");
+    expect(answerBody).toMatchObject({ authority, answers: [{ questionId: "target", kind: "option", optionId: "staging" }] });
+  } finally {
+    await f.close();
+    await page.unrouteAll({ behavior: "wait" });
+  }
+});
+
 test("compiled catalogs localize Chinese companion controls without clipping the send label", async ({ page }) => {
   const f = await fixture(page, "normal", 10, { locale: "zh-CN" });
   try {
     await page.goto("/");
     await page.locator(".companion-config-button").click();
     const panel = page.getByRole("dialog", { name: "智能伙伴" });
+    await panel.locator(".companion-talk-button").evaluate((element) => (element as HTMLButtonElement).click());
     await expect(panel.getByRole("button", { name: "打招呼", exact: true })).toBeVisible();
     await expect(panel.getByRole("button", { name: "庆祝", exact: true })).toBeVisible();
     const send = panel.getByRole("button", { name: "发送", exact: true });

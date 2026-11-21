@@ -1,4 +1,5 @@
 import type {
+  CompanionAttentionProjectionResponse,
   CompanionEventsResponse,
   CompanionInteractionRequest,
   CompanionInteractionResponse,
@@ -19,6 +20,14 @@ import { readErrorMessage } from "../transport.js";
 import { LingDaemonError } from "../errors.js";
 
 export const companionEndpoints = {
+  async getCompanionAttention(
+    this: LingDaemonEndpointContext,
+    cwd: string,
+    options: { readonly limit?: number } = {},
+  ): Promise<CompanionAttentionProjectionResponse> {
+    return this._get("/companion-attention", { cwd, limit: options.limit });
+  },
+
   async listCompanions(this: LingDaemonEndpointContext, cwd: string): Promise<CompanionListResponse> {
     return this._get("/companions", { cwd });
   },

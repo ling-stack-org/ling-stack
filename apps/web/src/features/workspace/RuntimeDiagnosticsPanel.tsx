@@ -14,6 +14,7 @@ import {
 export function RuntimeDiagnosticsPanel({
   diagnostics,
   workUnits,
+  targetWorkUnitId,
   loading,
   actionWorkUnitId,
   onRefresh,
@@ -23,6 +24,7 @@ export function RuntimeDiagnosticsPanel({
 }: {
   readonly diagnostics: RuntimeDiagnosticsResponse | undefined;
   readonly workUnits: readonly WorkUnit[];
+  readonly targetWorkUnitId?: string;
   readonly loading: boolean;
   readonly actionWorkUnitId: string;
   readonly onRefresh: () => void;
@@ -37,7 +39,9 @@ export function RuntimeDiagnosticsPanel({
   const stale = diagnostics?.stale ?? workUnits.filter((unit) => unit.status === "stale");
   const leases = diagnostics?.leases ?? [];
   const semaphoreSlots = diagnostics?.semaphoreSlots ?? [];
-  const visibleUnits = uniqueWorkUnits([...stuck, ...active, ...queued, ...stale, ...workUnits]).slice(0, 8);
+  const allUnits = uniqueWorkUnits([...stuck, ...active, ...queued, ...stale, ...workUnits]);
+  const targetUnit = allUnits.find((unit) => unit.id === targetWorkUnitId);
+  const visibleUnits = (targetUnit ? [targetUnit, ...allUnits.filter((unit) => unit !== targetUnit)] : allUnits).slice(0, 8);
 
   return (
     <section className="runtime-diagnostics-panel" aria-label={t("Runtime diagnostics")}>
@@ -151,7 +155,7 @@ function WorkUnitDiagnosticsRow({
   const canReconcile = ["claimed", "running", "waiting_for_approval", "cancelling", "stale"].includes(workUnit.status);
   const status = workUnitStatusPresentation(workUnit.status);
   return (
-    <div className="runtime-diagnostics-row runtime-work-unit-row" aria-busy={busy || undefined}>
+    <div className="runtime-diagnostics-row runtime-work-unit-row" data-channel-inspector-source-id={workUnit.id} aria-busy={busy || undefined}>
       <span className="runtime-diagnostics-copy">
         <strong>{workUnit.kind} · {workUnit.id}</strong>
         <small>

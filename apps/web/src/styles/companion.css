@@ -311,6 +311,259 @@ html[data-companion-window="true"] #root {
   .companion-mini-conversation { grid-row: 2; margin: 0; padding: 10px; gap: 6px; }
 }
 
+/* Floating collaboration layer */
+.companion-overlay {
+  position: fixed;
+  z-index: 100;
+  right: 20px;
+  bottom: 20px;
+  display: grid;
+  grid-template-columns: minmax(220px, 300px) minmax(280px, 420px);
+  grid-template-rows: auto auto;
+  gap: 10px;
+  align-items: end;
+  width: min(760px, calc(100vw - 32px));
+  min-height: 360px;
+  color: var(--ling-text-default);
+  pointer-events: none;
+}
+.companion-overlay > * { pointer-events: auto; }
+.companion-overlay > .companion-pet-stage-slot {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  min-height: 360px;
+}
+.companion-overlay > .companion-attention-card-slot,
+.companion-overlay > .companion-pet-stage-slot { min-width: 0; }
+.companion-overlay > .companion-pet-stage-slot { pointer-events: none; }
+.companion-overlay > .companion-pet-stage-slot { height: 100%; }
+.companion-overlay > .companion-attention-card-slot {
+  position: absolute;
+  top: 44px;
+  left: max(12px, calc(100% - 372px));
+  width: min(360px, calc(100% - 24px));
+  z-index: 2;
+  min-width: 0;
+}
+.companion-overlay > .companion-mini-conversation.is-open { grid-column: 2; grid-row: 2; }
+.companion-overlay .companion-mini-conversation {
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 12px;
+  border: 0;
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--ling-bg-panel) 92%, transparent);
+  box-shadow: 0 16px 42px color-mix(in srgb, #000 22%, transparent);
+  backdrop-filter: blur(18px);
+}
+.companion-overlay .companion-mini-conversation.is-collapsed {
+  position: absolute;
+  z-index: 10;
+  top: 0;
+  left: 0;
+  display: block;
+  width: 260px;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+  pointer-events: auto;
+}
+.companion-overlay .companion-mini-conversation.is-collapsed > :not(.companion-mini-header):not(.companion-overlay-role-menu) {
+  opacity: 0;
+  pointer-events: none;
+  max-height: 0;
+  overflow: hidden;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+.companion-overlay .companion-mini-conversation.is-collapsed .companion-mini-empty {
+  max-height: none;
+  overflow: visible;
+  margin: 8px 0 0 !important;
+  padding: 10px !important;
+  opacity: 1;
+  pointer-events: auto;
+}
+.companion-overlay .companion-mini-conversation.is-collapsed .companion-mini-header {
+  padding: 4px 6px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--ling-bg-panel) 82%, transparent);
+  backdrop-filter: blur(14px);
+}
+.companion-overlay .companion-mini-conversation.is-collapsed .companion-mini-heading-icon { display: none; }
+.companion-overlay .companion-mini-conversation.is-collapsed .companion-mini-heading span { display: none; }
+.companion-talk-button {
+  pointer-events: auto !important;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--ling-action-selection);
+  color: var(--ling-text-default);
+  font-size: 12px;
+}
+.companion-overlay > .companion-pet-stage-slot { width: 100%; }
+.companion-overlay .companion-pet-stage { width: 100%; height: 100%; cursor: grab; pointer-events: auto; }
+.companion-overlay.is-dragging .companion-pet-stage { cursor: grabbing; }
+.companion-attention-card {
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+  max-height: min(360px, calc(100dvh - 32px));
+  overflow: auto;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--ling-action-accent) 30%, var(--ling-overlay-border));
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--ling-bg-panel) 94%, transparent);
+  box-shadow: 0 16px 42px color-mix(in srgb, #000 24%, transparent);
+  backdrop-filter: blur(18px);
+}
+.companion-attention-header,
+.companion-attention-header-actions,
+.companion-attention-actions { display: flex; align-items: center; }
+.companion-attention-header { justify-content: space-between; gap: 12px; }
+.companion-attention-header > div:first-child { display: grid; gap: 3px; min-width: 0; }
+.companion-attention-kicker {
+  color: var(--ling-action-accent);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+.companion-attention-actor {
+  color: var(--ling-text-muted);
+  font-size: 11px;
+}
+.companion-attention-header strong,
+.companion-attention-summary { overflow-wrap: anywhere; }
+.companion-attention-header strong { font-size: 14px; line-height: 1.3; }
+.companion-attention-summary { margin: 0; color: var(--ling-text-muted); font-size: 13px; line-height: 1.45; }
+.companion-attention-source,
+.companion-attention-detail { margin: 0; color: var(--ling-text-muted); font-size: 11px; line-height: 1.4; }
+.companion-attention-detail { color: var(--ling-text-default); }
+.companion-attention-header-actions,
+.companion-attention-actions { flex-wrap: wrap; gap: 6px; }
+.companion-attention-count {
+  min-width: 24px;
+  height: 24px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--ling-action-selection);
+  color: var(--ling-text-default);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.companion-attention-notice { margin: 0; color: var(--ling-status-success); font-size: 12px; }
+.companion-question-list,
+.companion-question { display: grid; gap: 8px; }
+.companion-question strong { font-size: 12px; line-height: 1.4; }
+.companion-question-options { display: flex; flex-wrap: wrap; gap: 6px; }
+.companion-question-option {
+  padding: 7px 10px;
+  border: 1px solid var(--ling-border-default);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ling-text-default);
+  font-size: 12px;
+  text-align: left;
+}
+.companion-question-option:hover,
+.companion-question-option.selected { border-color: var(--ling-action-accent); background: var(--ling-action-selection); }
+.companion-overlay-role-menu {
+  position: absolute;
+  z-index: 4;
+  top: 42px;
+  left: 8px;
+  display: grid;
+  gap: 2px;
+  min-width: 220px;
+  padding: 6px;
+  border: 1px solid var(--ling-overlay-border);
+  border-radius: 12px;
+  background: var(--ling-bg-panel);
+  box-shadow: var(--ling-overlay-shadow);
+}
+.companion-overlay-role-option {
+  display: grid;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ling-text-default);
+  text-align: left;
+}
+.companion-overlay-role-option:hover,
+.companion-overlay-role-option.selected { background: var(--ling-action-selection); }
+.companion-overlay-role-option small,
+.companion-overlay-role-empty { color: var(--ling-text-muted); font-size: 11px; }
+.companion-overlay-idle {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: end;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--ling-bg-panel) 85%, transparent);
+  color: var(--ling-text-muted);
+  font-size: 12px;
+  backdrop-filter: blur(14px);
+}
+.companion-overlay-idle small { display: block; margin-top: 4px; color: var(--ling-status-danger); }
+.companion-overlay-error {
+  grid-column: 2;
+  grid-row: 2;
+  margin: 0;
+  padding: 6px 10px;
+  color: var(--ling-status-danger);
+  font-size: 12px;
+}
+.companion-desktop-panel {
+  inset: 0;
+  right: auto;
+  bottom: auto;
+  width: 100%;
+  height: 100dvh;
+  min-height: 0;
+  padding: 10px;
+}
+.companion-desktop-panel > .companion-pet-stage-slot { min-height: 320px; }
+.companion-desktop-panel .companion-mini-heading { -webkit-app-region: drag; }
+.companion-desktop-panel button,
+.companion-desktop-panel textarea,
+.companion-desktop-panel select,
+.companion-desktop-panel .companion-mini-messages,
+.companion-desktop-panel .companion-attention-card { -webkit-app-region: no-drag; }
+@media (max-width: 640px) {
+  .companion-overlay {
+    right: 12px;
+    bottom: 12px;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(260px, auto) auto auto;
+    width: calc(100vw - 24px);
+    min-height: 0;
+  }
+  .companion-overlay > .companion-pet-stage-slot,
+  .companion-overlay > .companion-attention-card-slot,
+  .companion-overlay > .companion-mini-conversation.is-open,
+  .companion-overlay > .companion-overlay-idle { grid-column: 1; }
+  .companion-overlay > .companion-pet-stage-slot { grid-row: 1; }
+  .companion-overlay > .companion-pet-stage-slot,
+  .companion-overlay .companion-pet-stage {
+    height: 260px;
+    min-height: 260px;
+    max-height: 260px;
+  }
+  .companion-overlay > .companion-attention-card-slot,
+  .companion-overlay > .companion-overlay-idle { grid-row: 2; }
+  .companion-overlay > .companion-mini-conversation.is-open { grid-row: 3; }
+  .companion-overlay > .companion-attention-card-slot {
+    position: static;
+    width: auto;
+  }
+}
 .companion-settings-page {
   display: grid;
   gap: 20px;

@@ -11,7 +11,7 @@ import type { ApprovalResolution } from "./types.js";
 import { useApprovalsPageController } from "./useApprovalsPageController.js";
 
 export function ApprovalsPage({
-  cwd, approvals, repairRunId, repairRun, selectedApprovalId, externalActionDetails, externalActionBusy,
+  cwd, approvals, repairRunId, repairRun, selectedApprovalId, requestedApprovalId, externalActionDetails, externalActionBusy,
   isLoading, resolvingApprovals, errorMessage, approvalErrors = {}, onRefresh, onSelectApproval, onRefreshRepair, onResolve,
   onExecuteExternalAction, onCancelExternalAction, onOpenRun, onOpenWorkBoard, onClearRepair, channels,
   onRouteExternalWork, routingExternalWorkId, inlineApprovalIds,
@@ -21,6 +21,7 @@ export function ApprovalsPage({
   readonly repairRunId: string;
   readonly repairRun: RunSession | undefined;
   readonly selectedApprovalId: string;
+  readonly requestedApprovalId?: string;
   readonly externalActionDetails: Readonly<Record<string, ExternalWorkActionView>>;
   readonly externalActionBusy: Readonly<Record<string, ExternalActionBusyState>>;
   readonly isLoading: boolean;
@@ -42,7 +43,7 @@ export function ApprovalsPage({
   readonly inlineApprovalIds?: ReadonlySet<string>;
 }): React.JSX.Element {
   const { t } = useI18n();
-  const controller = useApprovalsPageController({ approvals, repairRun, repairRunId, externalActionDetails, inlineApprovalIds, selectedApprovalId, isLoading, errorMessage, onSelectApproval });
+  const controller = useApprovalsPageController({ approvals, repairRun, repairRunId, externalActionDetails, inlineApprovalIds, selectedApprovalId, requestedApprovalId, isLoading, errorMessage, onSelectApproval });
   const refresh = repairRunId ? () => onRefreshRepair(repairRunId) : onRefresh;
   const runRefresh = () => controller.runRefresh(refresh);
   const initialLoading = isLoading && approvals.length === 0;
