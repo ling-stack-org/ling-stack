@@ -171,6 +171,8 @@ import { handleConversationSubmissionReceipt } from "../features/conversations/s
 import { startDetachedRunAndResolveReady } from "../features/runs/detached.js";
 import { handleConversationMessageEdit } from "../features/conversations/message-edits.js";
 import { handleUserInputAnswer } from "../features/conversations/user-input-answer-route.js";
+import type { UserInputAnswerAcceptedHook } from "../features/runs/user-input-answer.js";
+import { publishUserInputAnswerAcceptance } from "../features/runs/user-input-events.js";
 import { dispatchMediaJobExecution, handleRunMediaJob, syncMediaJobForApprovalDecision, type RunMediaJobHooks } from "../features/media/executor.js";
 import { publishConversationMediaProjectionChange } from "../features/media/conversation-events.js";
 import { handleConversationMediaGenerationTargets } from "../features/media/conversation-target-routes.js";
@@ -1316,8 +1318,12 @@ export async function routeRequest(
     return;
   }
 
+  const onUserInputAnswerAccepted: UserInputAnswerAcceptedHook = (store, threadId, receipt) => {
+    publishUserInputAnswerAcceptance(store, controlPlaneEvents, threadId, receipt);
+    userInputDeliveryWorker.wake(store);
+  };
   if (url.pathname === "/user-input-answers") {
-    await handleUserInputAnswer(request, response, config, storeRegistry, (store) => userInputDeliveryWorker.wake(store));
+    await handleUserInputAnswer(request, response, config, storeRegistry, onUserInputAnswerAccepted);
     return;
   }
 
@@ -1396,7 +1402,7 @@ export async function routeRequest(
       storeRegistry,
       config.maxBodyBytes,
       userInputAnswerRoute,
-      (store) => userInputDeliveryWorker.wake(store),
+      onUserInputAnswerAccepted,
     );
     return;
   }
@@ -1698,7 +1704,8 @@ export async function routeRequest(
 
   const runRoute = parseRunRoute(url.pathname);
   if (request.method === "POST" && runRoute?.kind === "cancel") {
-    await handleCancelRunRequest(request, response, config, url, storeRegistry, activeRuns, runRoute.runId, ensureRunCancelled);
+    await handleCancelRunRequest(request, response, config, url, storeRegistry, activeRuns, runRoute.runId,
+      (input) => ensureRunCancelled({ ...input, controlPlaneEvents }));
     return;
   }
   if (runRoute?.kind === "interventions") {

@@ -3106,6 +3106,7 @@ async function executeAdmittedRunRequest(
       executorGroup: hostOperationTracker.executorGroup,
       signal: abortController.signal,
       now: executionNow,
+      controlPlaneEvents: options.controlPlaneEvents,
     });
   }
   const loopDetector = new ExecutionLoopDetector(attempt.id);

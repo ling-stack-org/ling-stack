@@ -20,6 +20,8 @@ import type {
   LingAppServerExternalAgentTaskStartResult,
   LingAppServerInitializeParams,
   LingAppServerInitializeResult,
+  LingAppServerInputRespondParams,
+  LingAppServerInputRespondResult,
   LingAppServerJsonRpcId,
   LingAppServerNotificationMethod,
   LingAppServerInstructionsInitParams,
@@ -203,7 +205,7 @@ export class LingAppServerClient {
     return await this.request("approval/respond", params);
   }
 
-  async respondInput(params: Record<string, unknown>): Promise<unknown> {
+  async respondInput(params: LingAppServerInputRespondParams): Promise<LingAppServerInputRespondResult> {
     await this.connect();
     return await this.request("input/respond", params);
   }

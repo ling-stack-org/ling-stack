@@ -104,7 +104,7 @@ export interface HandleLingThreadRouteOptions {
   readonly startForkRun?: StartLingThreadForkRun;
 }
 
-interface ResumeContextPreview {
+export interface ResumeContextPreview {
   readonly title: string;
   readonly instruction: string;
   readonly sourceRunId: string;
@@ -1542,7 +1542,7 @@ function readOptionalLingTurnActor(record: Record<string, unknown>, key: string)
   return value as LingTurnCreatedByActor;
 }
 
-function buildLingThreadResumeContext(input: {
+export function buildLingThreadResumeContext(input: {
   readonly store: RunStore;
   readonly thread: LingThread;
   readonly body: unknown;

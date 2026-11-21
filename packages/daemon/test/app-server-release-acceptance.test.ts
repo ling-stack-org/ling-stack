@@ -11,12 +11,15 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import test, { type TestContext } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
+import { parseUserInputAnswerCommandV1 } from "@ling-stack/contracts";
 import type {
   LingAppServerCandidateReference,
   LingAppServerContextInspectResult,
   LingAppServerExternalAgentRegisterResult,
   LingAppServerExternalAgentTaskReconnectResult,
   LingAppServerExternalAgentTaskStartResult,
+  LingAppServerInputRespondParams,
+  LingAppServerInputRespondResult,
   LingAppServerVerifyOperation,
   LingAppServerVerifyPlanResult,
   LingAppServerVerifyStatusResult,
@@ -31,7 +34,7 @@ import type {
 import { LingAppServerClient, type LingAppServerSocket, type LingDaemonClient } from "@ling-stack/api-client";
 import { createSqliteRunStore, resolveStoragePaths, type LingThreadGoal, type RunIntervention, type SqliteRunStore } from "@ling-stack/core";
 import { WebSocket } from "ws";
-import { createDaemonServer, listenLingAppServerSocket, probeLingAppServer, runLingAppServerMcp, runLingAppServerStdio } from "../dist/index.js";
+import { createDaemonServer, listenLingAppServerSocket, probeLingAppServer, runLingAppServerMcp, runLingAppServerStdio, type DaemonConfig } from "../dist/index.js";
 import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
 import { createRunnerRegistry, type RunnerRegistrationInput } from "../dist/runtime/runners.js";
 import { startLoopbackPiProvider } from "./support/loopback-pi-provider-fixture.mjs";
@@ -451,7 +454,7 @@ test("a second App Server connection cancels the same external dispatch and reco
       },
     },
   };
-  const fixture = await releaseFixture(t, runner);
+  const fixture = await releaseFixture(t, { runner });
   const first = await fixture.connect();
   const peer = await fixture.connect();
   const created = await first.call<{ workItem: LingAppServerWorkItemSnapshot }>("workItem/create", { sourceId: "federation", title: "Inspect project" });
@@ -588,6 +591,70 @@ test("Work Item acceptance, evidence and collaboration retries keep one event pe
   assert.equal((await sdk.readWorkItem(workItem.workspaceId, workItemId)).revision, resumed.revision);
 });
 
+test("a Pi question is pushed live, accepts the current Host authority once and replays its resolution", { timeout: 30_000 }, async t => {
+  const answerText = "Use the repository contract.";
+  const provider = await startLoopbackPiProvider((_: unknown, count: number) => count === 1 ? {
+    tool: "request_user_input",
+    input: { schemaVersion: 1, waitMode: "required", questions: [
+      { questionId: "scope", prompt: "Which contract should I use?", required: true, allowFreeText: true, options: [] },
+    ] },
+  } : { text: "Used the selected contract." });
+  t.after(() => provider.close());
+  const fixture = await releaseFixture(t, { harness: { toolBroker: { mode: "enforce" } } });
+  const client = await fixture.connect();
+  const { thread } = await client.call<ThreadRead>("thread/start", { title: "Host question" });
+  const { cursor } = await client.call<LingAppServerThreadSnapshotResult>("thread/snapshot", { threadId: thread.id });
+  await client.call("thread/subscribe", { threadId: thread.id, cursor });
+  const preset = addLoopbackPreset(fixture.getStore(), provider.baseUrl);
+  const { run, turn } = await client.call<{ run: { id: string }; turn: { id: string } }>("turn/start", {
+    threadId: thread.id, message: "Ask which contract applies.", idempotencyKey: "question-turn", providerPresetId: preset.id,
+  });
+  const request = await waitFor(() => client.notices.find(notice => notice.method === "input/requestAnswer"));
+  assert.match(JSON.stringify(request), /Which contract should I use\?/u);
+  assert.doesNotMatch(JSON.stringify(request), /answerAuthority/u);
+  await waitFor(() => fixture.getStore().getRun(run.id)?.status === "yielded" ? true : undefined);
+  const state = await client.call<LingAppServerThreadSnapshotResult>("thread/snapshot", { threadId: thread.id });
+  const authority = state.pendingInputs[0]?.answerAuthority;
+  assert.ok(authority);
+  assert.equal(authority.runId, run.id);
+  assert.equal(request.params?.requestId, authority.requestId);
+  assert.equal(state.pendingInputs[0]?.source.turnId, turn.id);
+  await fixture.restart();
+  const resumed = await fixture.connect();
+  await resumed.call("thread/subscribe", { threadId: thread.id, cursor });
+  await waitFor(() => resumed.notices.find(notice => notice.method === "input/requestAnswer"));
+  const command: LingAppServerInputRespondParams = {
+    schemaVersion: 1, authority, idempotencyKey: "question-answer",
+    answers: [{ questionId: "scope", kind: "text", text: answerText }],
+  };
+  const parsed = parseUserInputAnswerCommandV1(command);
+  if (!parsed.ok) assert.fail(JSON.stringify(parsed.error));
+  await assert.rejects(resumed.call("input/respond", { ...command, cwd: fixture.root }), { code: "workspace_binding_invalid" });
+  await assert.rejects(resumed.call("input/respond", { ...command, authority: { ...authority, statusRevision: authority.statusRevision + 1 } }),
+    { code: "stale_revision" });
+  await assert.rejects(resumed.call("input/respond", { ...command, authority: { ...authority, runId: "different-run" } }), { code: "stale_revision" });
+  const accepted = await resumed.call<LingAppServerInputRespondResult>("input/respond", command);
+  assert.equal(accepted.receipt.replayed, false);
+  assert.equal(accepted.receipt.requestId, authority.requestId);
+  const resolution = await waitFor(() => resumed.notices.find(notice =>
+    notice.method === "serverRequest/resolved" && notice.params?.event?.entityId === authority.requestId));
+  assert.equal(resolution.params?.event?.action, "answered");
+  assert.doesNotMatch(JSON.stringify(resolution), new RegExp(answerText, "u"));
+  const replay = await resumed.call<LingAppServerInputRespondResult>("input/respond", command);
+  assert.deepEqual(replay.receipt, { ...accepted.receipt, replayed: true });
+  await assert.rejects(resumed.call("input/respond", { ...command, idempotencyKey: "different-answer" }), { code: "idempotency_conflict" });
+  await waitFor(() => fixture.getStore().getUserInputDelivery(thread.id, accepted.receipt.deliveryId)?.status === "applied" ? true : undefined);
+  await waitFor(() => fixture.getStore().getLingTurn(turn.id)?.status === "succeeded" ? true : undefined);
+  assert.equal(provider.requests.length, 2);
+  assert.match(JSON.stringify(provider.requests[1]), /Use the repository contract/u);
+  const observer = await fixture.connect();
+  await observer.call("thread/subscribe", { threadId: thread.id, cursor });
+  await waitFor(() => observer.notices.find(notice => notice.method === "thread/replay/ready"));
+  assert.equal(observer.notices.some(notice => notice.method === "input/requestAnswer"), false);
+  assert.deepEqual(observer.notices.filter(notice => notice.method === "serverRequest/resolved"
+    && notice.params?.event?.entityId === authority.requestId).map(notice => notice.params?.eventId), [resolution.params?.eventId]);
+});
+
 test("an authenticated connection can decide its Run approval and rejects a different workspace binding", { timeout: 20_000 }, async t => {
   const fixture = await releaseFixture(t);
   const client = await fixture.connect();
@@ -700,7 +767,7 @@ test("candidate App Server recovers v0.6.1 Thread state and preserves legacy cli
     import(previousModule("core/dist/index.js")) as Promise<Omit<ReleaseRuntime, "createDaemonServer">>,
     import(previousModule("api-client/dist/index.js")) as Promise<{ LingDaemonClient: typeof LingDaemonClient }>,
   ]);
-  const fixture = await releaseFixture(t, undefined, { ...core, ...daemon });
+  const fixture = await releaseFixture(t, { initialRuntime: { ...core, ...daemon } });
   const legacyClient = () => {
     const { daemonUrl, authToken } = fixture.transportOptions();
     return new sdk.LingDaemonClient({ baseUrl: daemonUrl, fetch(input, init) {
@@ -778,7 +845,8 @@ type JsonLine = {
   method?: string;
   result?: unknown;
   error?: { message: string };
-  params?: { eventId?: string; subject?: { threadId?: string; turnId?: string; workItemId?: string } };
+  params?: { eventId?: string; requestId?: string; event?: { entityId: string; action: string };
+    subject?: { threadId?: string; turnId?: string; workItemId?: string } };
 };
 
 function jsonLines(input: Writable, output: Readable) {
@@ -814,7 +882,9 @@ type ReleaseRuntime = {
 };
 const candidateRuntime: ReleaseRuntime = { createDaemonServer, createSqliteRunStore, resolveStoragePaths };
 
-async function releaseFixture(t: TestContext, runner?: RunnerRegistrationInput, initialRuntime = candidateRuntime) {
+async function releaseFixture(t: TestContext, {
+  runner, initialRuntime = candidateRuntime, harness,
+}: { runner?: RunnerRegistrationInput; initialRuntime?: ReleaseRuntime; harness?: DaemonConfig["harness"] } = {}) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "ling-as-")));
   const cwd = join(root, "workspace");
   await mkdir(cwd);
@@ -823,7 +893,9 @@ async function releaseFixture(t: TestContext, runner?: RunnerRegistrationInput, 
   process.env.LING_STACK_HOME = join(root, "fixture-home");
   const stores = new Map<string, SqliteRunStore>();
   const clients = new Set<WebSocket>();
-  const makeDaemon = (runtime: ReleaseRuntime) => runtime.createDaemonServer({ host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd, authToken }, {
+  const makeDaemon = (runtime: ReleaseRuntime) => runtime.createDaemonServer({
+    host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd, authToken, harness,
+  }, {
     ...(runner ? { runnerRegistry: createRunnerRegistry([runner]) } : {}),
     chromeBrowserNativeMessagingEnabled: false,
     remoteReplyDispatcher: null,

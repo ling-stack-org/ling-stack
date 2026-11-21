@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { UserInputStoreError, type RunStore, type UserInputAnswerReceipt } from "@ling-stack/core";
+import { UserInputStoreError, type UserInputAnswerReceipt } from "@ling-stack/core";
+import type { UserInputAnswerAcceptedHook } from "./user-input-answer.js";
 import type { UserInputAnswerSubmissionResponseV1 } from "@ling-stack/contracts";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { allowLocalWorkspaceRequest } from "../../shared/local-workspace-access.js";
@@ -14,7 +15,7 @@ export async function handleUserInputAnswerSubmission(
   storeRegistry: RunStoreRegistry,
   maxBodyBytes: number,
   route: { readonly threadId: string; readonly requestId: string },
-  onAccepted?: (store: RunStore) => void,
+  onAccepted?: UserInputAnswerAcceptedHook,
 ): Promise<void> {
   const cwd = url.searchParams.get("cwd") ?? undefined;
   if (!cwd) {
@@ -41,7 +42,11 @@ export async function handleUserInputAnswerSubmission(
       submission,
     }, new Date().toISOString());
     writeJson(response, receipt.replayed ? 200 : 201, projectReceipt(receipt));
-    onAccepted?.(store);
+    try {
+      onAccepted?.(store, route.threadId, receipt);
+    } catch {
+      // The delivery worker can recover the committed answer from its outbox.
+    }
   } catch (error) {
     writeSubmissionError(response, error);
   }

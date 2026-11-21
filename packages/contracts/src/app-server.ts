@@ -4,6 +4,7 @@ import type { ConversationContextProjectionMetadata } from "./conversation-conti
 import type { RunSession } from "./runtime.js";
 import type { LingThread, LingThreadGoal } from "./threads.js";
 import type { LingTurn } from "./turns.js";
+import type { UserInputAnswerAcceptedResponseV1, UserInputAnswerCommandV1 } from "./user-input.js";
 import type { UserInputRequestTranscriptV1 } from "./user-input-transcript.js";
 
 /** Public Ling App Server protocol contract. Transport implementations may add
@@ -561,6 +562,15 @@ export interface LingAppServerServerRequest<Params = unknown> {
   readonly id: LingAppServerJsonRpcId;
   readonly method: "approval/requestDecision" | "input/requestAnswer";
   readonly params: Params;
+}
+
+export interface LingAppServerInputRespondParams extends UserInputAnswerCommandV1 {
+  readonly cwd?: string;
+}
+
+export interface LingAppServerInputRespondResult {
+  readonly cwd: string;
+  readonly receipt: UserInputAnswerAcceptedResponseV1["receipt"];
 }
 
 export interface LingAppServerCandidateReference {

@@ -4,12 +4,14 @@ import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 import {
   DEFAULT_WORKSPACE_ID,
+  UserInputStoreError,
   evaluateDeliberationTrigger,
   type ControlPlaneDomain,
   type ControlPlaneEvent,
   type LingThreadGoal,
   type RunEventEnvelope,
   type RunSession,
+  type RunStore,
   type WorkItem,
   type WorkItemSourceType,
   type WorkItemStatus,
@@ -20,9 +22,12 @@ import {
   LING_APP_SERVER_NOTIFICATION_METHODS,
   LING_APP_SERVER_PROTOCOL_VERSION,
   LING_PRODUCT_VERSION,
+  parseUserInputAnswerCommandV1,
   type ControlPlaneSubscribeResult,
   type ControlPlaneEventsResponse,
   type LingAppServerContextInspectResult,
+  type LingAppServerInputRespondResult,
+  type LingAppServerJsonRpcId,
   type LingAppServerThreadSnapshotResult,
   type LingAppServerWorkItemResult,
 } from "@ling-stack/contracts";
@@ -59,11 +64,13 @@ import { appendControlPlaneEvent } from "../features/control-plane/events.js";
 import { toApprovalSummary } from "../features/control-plane/snapshots.js";
 import { executeRunRequest, type RunExecutionSink } from "../features/runs/orchestrator.js";
 import { parseRunRequest, type RunRequest } from "../features/runs/schemas.js";
-import { parseCompleteLingThreadGoalBody, parsePutLingThreadGoalBody } from "../features/runs/thread-routes.js";
+import { buildLingThreadResumeContext, parseCompleteLingThreadGoalBody, parsePutLingThreadGoalBody } from "../features/runs/thread-routes.js";
 import { projectPublicRunSession } from "../features/runs/public-execution-snapshots.js";
 import { projectPublicLingThread, projectPublicLingTurn } from "../features/runs/public-execution-snapshots.js";
 import { maybeQueueGoalContinuation, maybeStartNextRunInterventionContinuation, recordUserRunIntervention, requestRunInterventionRedirect } from "../features/runs/interventions.js";
 import { assertNoUnsafeRequiredPause } from "../features/runs/user-input-cancellation-guard.js";
+import { submitAuthorizedUserInputAnswer } from "../features/runs/user-input-answer.js";
+import { publishUserInputAnswerAcceptance } from "../features/runs/user-input-events.js";
 import { RpcOutboundWriter, type RpcOutboundFrame } from "./rpc-outbound.js";
 import { AppServerDevelopmentService } from "./app-server-development.js";
 import { executeAppServerVerificationCheck } from "./app-server-verification-recipes.js";
@@ -323,7 +330,11 @@ class RpcConnection {
       }
       const result = await this.dispatch(request.method, params);
       if (request.id !== undefined && !this.cancelledRequests.has(requestKey!)) {
-        this.send({ jsonrpc: "2.0", id, result });
+        if (this.appServer && this.authenticated && request.method === "thread/snapshot") {
+          this.outbound.sendThreadSnapshot(id as LingAppServerJsonRpcId, result as LingAppServerThreadSnapshotResult);
+        } else {
+          this.send({ jsonrpc: "2.0", id, result });
+        }
       }
     } catch (error) {
       const normalized = normalizeRpcError(error);
@@ -502,7 +513,7 @@ class RpcConnection {
       case "turn/steer":
         throw rpcError(-32032, "steer_unsupported", "In-turn steering is not available on this Runner connection; queue or interrupt the Turn.");
       case "turn/resume":
-        return this.resumeTurn(params);
+        return await this.resumeTurn(params);
       case "daemon.health":
         return {
           ok: true,
@@ -1384,9 +1395,9 @@ class RpcConnection {
     };
   }
 
-  private resumeTurn(params: unknown): unknown {
-    const record = readParamsRecord(params);
-    const cwd = readRpcCwd(record, this.defaultCwd);
+  private async resumeTurn(params: unknown): Promise<unknown> {
+    const record = this.workspaceParams(params);
+    const cwd = record.cwd;
     const turnId = readStringField(record, "turnId");
     const store = this.context.storeRegistry.getStore(cwd);
     const turn = store.getLingTurn(turnId);
@@ -1394,12 +1405,39 @@ class RpcConnection {
     const thread = store.getLingThread(turn.threadId);
     if (!thread) throw rpcError(-32040, "workspace_binding_invalid", `Thread was not found: ${turn.threadId}`);
     const run = turn.activeRunId ? store.getRun(turn.activeRunId) : turn.lastRunId ? store.getRun(turn.lastRunId) : undefined;
+    if (run && !["failed", "cancelled"].includes(run.status)) {
+      return {
+        cwd,
+        thread: projectPublicLingThread(thread),
+        turn: projectPublicLingTurn(turn, thread),
+        run: projectPublicRunSession(run, store),
+        runLinks: store.listLingTurnRuns(turn.id),
+        replayed: true,
+      };
+    }
+    const resume = buildLingThreadResumeContext({ store, thread, body: record, mode: "execute" });
+    const runId = await new Promise<string>((resolve, reject) => {
+      let settled = false;
+      const finish = (operation: () => void): void => { if (!settled) { settled = true; operation(); } };
+      void this.executeRun(resume.runRequest, (data) => {
+        const ready = readParamsRecord(data).runId;
+        if (typeof ready === "string") finish(() => resolve(ready));
+      }, (statusCode, body) => finish(() => reject(new HttpError(statusCode,
+        typeof body.error === "string" ? body.error : "turn_resume_failed",
+        typeof body.message === "string" ? body.message : "The Turn could not be resumed."))))
+        .then(id => { if (typeof id === "string") finish(() => resolve(id)); else finish(() => reject(rpcError(-32061, "resume_blocked", "The resumed Turn has no Run."))); },
+          error => finish(() => reject(error)));
+    });
+    const currentThread = store.getLingThread(thread.id) ?? thread;
+    const currentTurn = store.getLingTurn(resume.runRequest.turnId ?? turn.id) ?? turn;
+    const currentRun = store.getRun(runId);
     return {
       cwd,
-      thread: projectPublicLingThread(thread),
-      turn: projectPublicLingTurn(turn, thread),
-      run: run ? projectPublicRunSession(run, store) : null,
-      runLinks: store.listLingTurnRuns(turn.id),
+      thread: projectPublicLingThread(currentThread),
+      turn: projectPublicLingTurn(currentTurn, currentThread),
+      run: currentRun ? projectPublicRunSession(currentRun, store) : null,
+      runLinks: store.listLingTurnRuns(currentTurn.id),
+      resumedFromTurnId: turn.id,
     };
   }
 
@@ -1562,40 +1600,19 @@ class RpcConnection {
     return { cwd, approval: resolved, ...(deferred ? { postCommit: { status: "deferred" } } : {}) };
   }
 
-  private respondInput(params: unknown): unknown {
-    const record = this.workspaceParams(params, true);
-    const { cwd } = record;
-    const threadId = readStringField(record, "threadId");
-    const requestId = readStringField(record, "requestId");
-    const answers = record.answers;
-    if (!Array.isArray(answers)) throw rpcError(-32602, "invalid_params", "answers must be an array.");
-    const submission = {
-      requestId,
-      expectedVersion: readOptionalIntegerField(record, "expectedVersion") ?? readOptionalIntegerField(record, "requestVersion"),
-      expectedStatusRevision: readOptionalIntegerField(record, "expectedStatusRevision") ?? 0,
-      idempotencyKey: readStringField(record, "idempotencyKey"),
-      answers,
-    };
+  private respondInput(params: unknown): LingAppServerInputRespondResult {
+    const { cwd, ...record } = this.workspaceParams(params, true);
+    const command = parseUserInputAnswerCommandV1(record);
+    if (!command.ok) throw rpcError(-32602, "invalid_params", "The answer command is invalid.");
     const store = this.context.storeRegistry.getStore(cwd);
+    const receipt = submitAuthorizedUserInputAnswer(store, command.value, new Date().toISOString());
+    publishUserInputAnswerAcceptance(store, this.context.controlPlaneEvents, command.value.authority.threadId, receipt);
     try {
-      const receipt = store.submitUserInputAnswer({ threadId, submission: submission as never }, new Date().toISOString());
       this.context.userInputDeliveryWorker.wake(store);
-      if (!receipt.replayed) {
-        appendControlPlaneEvent(store, this.context.controlPlaneEvents, {
-          workspaceId: DEFAULT_WORKSPACE_ID,
-          cwd,
-          domain: "runs",
-          entityType: "user_input",
-          entityId: requestId,
-          action: "input.answer.accepted",
-          idempotencyKey: submission.idempotencyKey,
-          data: { threadId, requestId, deliveryId: receipt.deliveryId, replayed: false },
-        });
-      }
-      return { cwd, receipt };
-    } catch (error) {
-      throw rpcError(-32030, "stale_revision", error instanceof Error ? error.message : "The user input request is stale.");
+    } catch {
+      // The delivery worker scans the durable outbox after an interrupted wake.
     }
+    return { cwd, receipt };
   }
 
   private submitTurnIntervention(params: unknown, mode: "queue_followup" | "interrupt_redirect"): unknown {
@@ -1932,6 +1949,7 @@ class RpcConnection {
         startupState: this.context.startupState,
         computerUsePreviews: this.context.computerUsePreviews,
         hostCapabilityBridge: this.context.hostCapabilityBridge,
+        enableUserInputPause: this.appServer && runRequest.normalConversationPreparedRequestRef !== undefined,
         nativeRunDispatcher: this.context.nativeRunDispatcher,
       },
     );
@@ -1964,6 +1982,7 @@ class RpcConnection {
         reason: "user_requested",
         active: Boolean(activeRun),
         streamEnvelope: activeRun?.streamEnvelope,
+        controlPlaneEvents: this.context.controlPlaneEvents,
       });
     } catch (error) {
       if (error instanceof HttpError && error.statusCode === 409) throw rpcError(-32009, error.code, error.message);
@@ -2017,7 +2036,7 @@ class RpcConnection {
     const frame = this.outbound.prepare(controlPlaneNotification(subscription.id, event));
     if (!frame) return;
     if (this.appServer) {
-      const serverRequest = appServerServerRequestForEvent(event);
+      const serverRequest = appServerServerRequestForEvent(event, () => this.context.storeRegistry.getStore(subscription.cwd));
       if (serverRequest) this.send(serverRequest);
       const notification = appServerEventNotification(subscription.id, event);
       if (notification) this.send(notification);
@@ -2386,6 +2405,18 @@ function normalizeRpcError(error: unknown): { readonly jsonRpcCode: number; read
   if (error instanceof HttpError) {
     return { jsonRpcCode: error.statusCode === 400 ? -32602 : -32061, code: error.code, message: error.message };
   }
+  if (error instanceof UserInputStoreError) {
+    const message = "The answer could not be accepted for the current question.";
+    switch (error.code) {
+      case "not_found": return { jsonRpcCode: -32040, code: "workspace_binding_invalid", message };
+      case "idempotency_conflict": return { jsonRpcCode: -32031, code: "idempotency_conflict", message };
+      case "stale_request":
+      case "source_conflict": return { jsonRpcCode: -32030, code: "stale_revision", message };
+      case "request_not_pending":
+      case "request_expired": return { jsonRpcCode: -32051, code: "request_already_resolved", message };
+      default: return { jsonRpcCode: -32602, code: "invalid_params", message };
+    }
+  }
   if (error instanceof Error && error.message === "work_item_evidence_idempotency_conflict") {
     return { jsonRpcCode: -32031, code: "idempotency_conflict", message: "The evidence key was reused with different input." };
   }
@@ -2462,14 +2493,14 @@ function appServerEventNotification(subscriptionId: string, event: ControlPlaneE
           ? { kind: "workItem", workItemId: event.entityId }
           : { kind: "thread", threadId: event.data.threadId as string | undefined,
               ...(typeof event.data.turnId === "string" ? { turnId: event.data.turnId } : {}) },
-      revision: String(event.data.revision ?? event.ts),
+      revision: String(event.data.revision ?? event.data.statusRevision ?? event.ts),
       event,
       payload: event.data,
     },
   };
 }
 
-function appServerServerRequestForEvent(event: ControlPlaneEvent): unknown | undefined {
+function appServerServerRequestForEvent(event: ControlPlaneEvent, readStore: () => RunStore): unknown | undefined {
   if (event.action === "approval.created") {
     return {
       jsonrpc: "2.0",
@@ -2478,15 +2509,19 @@ function appServerServerRequestForEvent(event: ControlPlaneEvent): unknown | und
       params: { approvalId: event.entityId, ...event.data },
     };
   }
-  if (event.action === "input.requested" || event.action === "user_input.requested") {
-    return {
-      jsonrpc: "2.0",
-      id: `input:${event.entityId}:${event.seq}`,
-      method: "input/requestAnswer",
-      params: { requestId: event.entityId, ...event.data },
-    };
-  }
-  return undefined;
+  if (event.entityType !== "user_input_request" || event.action !== "pending") return undefined;
+  const { threadId, itemId, statusRevision } = event.data;
+  if (typeof threadId !== "string" || typeof itemId !== "string") return undefined;
+  const [request] = readStore().readUserInputTranscript({ threadId, itemIds: [itemId] });
+  if (request?.availability !== "available" || request.kind !== "user_input_request" || request.status !== "pending"
+    || request.statusRevision !== statusRevision || request.requestId !== event.entityId || !request.answerAuthority) return undefined;
+  const { answerAuthority: _authority, ...preview } = request;
+  return {
+    jsonrpc: "2.0",
+    id: `input:${event.entityId}:${event.seq}`,
+    method: "input/requestAnswer",
+    params: { ...event.data, pendingId: event.entityId, request: preview },
+  };
 }
 
 function appServerEventMethod(event: ControlPlaneEvent): string | undefined {
@@ -2518,7 +2553,10 @@ function appServerEventMethod(event: ControlPlaneEvent): string | undefined {
     if (event.action.includes("handoff")) return "workItem/handoff/updated";
     return "workItem/status/changed";
   }
-  if (event.entityType === "approval" || event.entityType === "user_input") return "serverRequest/resolved";
+  if (event.entityType === "user_input_request") return event.action === "pending" ? undefined : "serverRequest/resolved";
+  if (event.entityType === "user_input" || (event.entityType === "approval" && event.action !== "approval.created")) {
+    return "serverRequest/resolved";
+  }
   return undefined;
 }
 

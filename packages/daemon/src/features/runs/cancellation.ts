@@ -13,6 +13,8 @@ import { writeTerminalSummary } from "./terminal.js";
 import { syncLingThreadForRunEvent, syncLingThreadForTerminalRun } from "./threads.js";
 import { assertNoUnsafeRequiredPause } from "./user-input-cancellation-guard.js";
 import { withCancellationFence } from "../../runtime/cancellation-fence.js";
+import type { ControlPlaneEventHub } from "../control-plane/events.js";
+import { publishUserInputRequestChange } from "./user-input-events.js";
 
 export function ensureRunCancelled(input: {
   readonly store: RunStore;
@@ -26,6 +28,7 @@ export function ensureRunCancelled(input: {
   /** Dedicated F5 receiver only; ordinary cancellation must keep rejecting the owner. */
   readonly allowNodeRerun?: boolean;
   readonly streamEnvelope?: (envelope: RunEventEnvelope) => void;
+  readonly controlPlaneEvents?: ControlPlaneEventHub;
   readonly now?: () => string;
 }): { readonly event?: RunEventEnvelope; readonly inputWait?: RunCancelResponse["inputWait"] } {
   const current = input.store.getRun(input.runId);
@@ -41,6 +44,9 @@ export function ensureRunCancelled(input: {
     try {
       const result = input.store.cancelUserInputWait({ threadId: current.threadId, sourceRunId: current.id },
         input.now?.() ?? new Date().toISOString());
+      if (!result.replayed && result.request.status === "cancelled") {
+        publishUserInputRequestChange(input.store, input.controlPlaneEvents, result.request);
+      }
       return { inputWait: { requestId: result.request.requestId, requestVersion: result.request.requestVersion,
         waitRevision: result.wait.revision, workUnitId: result.request.source.fence.workUnitId,
         turnId: result.request.source.turnId, status: "cancelled" } };
