@@ -216,6 +216,38 @@ test("broker distinguishes stale snapshots, target leases, and revoked devices",
   store.close();
 });
 
+test("an in-flight refresh or repeat discovery cannot restore a revoked registration", async t => {
+  const { store, broker } = brokerFixture();
+  t.after(() => store.close());
+  let finishRefresh!: (snapshot: DeviceCapabilitySnapshotV1) => void;
+  const refreshGate = new Promise<DeviceCapabilitySnapshotV1>(resolve => { finishRefresh = resolve; });
+  broker.registerAdapter({ ...createAdapter(), getCapabilities: () => refreshGate });
+  const refresh = broker.refreshCapabilities(profile.device.id, snapshot().connectionRevision);
+  store.revokeDevice(profile.device.id, later);
+  finishRefresh(snapshot());
+  await assert.rejects(() => refresh, (error: unknown) =>
+    error instanceof DeviceBrokerError && error.code === "permission_denied");
+  await assert.rejects(() => broker.discover(manifest.adapterId, { connectionRef: "connection-1", ownerId: profile.device.ownerScope }),
+    (error: unknown) => error instanceof DeviceBrokerError && error.code === "permission_denied");
+  assert.equal(store.getDevice(profile.device.id)?.device.lifecycleStatus, "revoked");
+});
+
+test("rediscovery invalidates the previous capability snapshot before an approved write", async t => {
+  const { store, broker } = brokerFixture();
+  t.after(() => store.close());
+  broker.createTask(task());
+  const action = approveNetworkRepair(request(writeCapability.id));
+  broker.registerDevice(manifest.adapterId, {
+    ...profile,
+    device: { ...profile.device, profileRevision: "profile-2" },
+    profileRevision: "profile-2",
+    connectionRefs: ["connection-2"],
+  });
+  await assert.rejects(() => broker.execute(action), (error: unknown) =>
+    error instanceof DeviceBrokerError && error.code === "stale_snapshot");
+  assert.deepEqual(store.listAttempts(action.taskId), []);
+});
+
 test("mutating capability requires an exact, unexpired approval and records verification", async () => {
   const { store, broker } = brokerFixture();
   const mutatingTask = task("task-write");

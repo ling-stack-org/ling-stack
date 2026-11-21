@@ -72,9 +72,9 @@ export class SqliteDeviceSupportStore {
     }
   }
 
-  registerDevice(profile: DeviceProfileV1, now: string): void {
+  registerDevice(profile: DeviceProfileV1, now: string): boolean {
     assertValid(isDeviceProfileV1(profile), "device profile");
-    this.database.prepare(`
+    const result = this.database.prepare(`
       INSERT INTO device_registry (
         device_id, adapter_id, adapter_version, lifecycle_status, connection_revision,
         profile_json, capability_snapshot_json, registered_at, updated_at, revoked_at
@@ -85,8 +85,11 @@ export class SqliteDeviceSupportStore {
         lifecycle_status = excluded.lifecycle_status,
         connection_revision = excluded.connection_revision,
         profile_json = excluded.profile_json,
+        capability_snapshot_json = NULL,
         updated_at = excluded.updated_at,
         revoked_at = NULL
+      WHERE device_registry.lifecycle_status NOT IN ('revoked', 'retired')
+        AND json_extract(device_registry.profile_json, '$.device.ownerScope') = ?
     `).run(
       profile.device.id,
       profile.adapterId,
@@ -96,7 +99,9 @@ export class SqliteDeviceSupportStore {
       JSON.stringify(profile),
       now,
       now,
+      profile.device.ownerScope,
     );
+    return result.changes === 1;
   }
 
   getDevice(deviceId: string): DeviceProfileV1 | undefined {
@@ -123,17 +128,18 @@ export class SqliteDeviceSupportStore {
 
   saveCapabilitySnapshot(snapshot: DeviceCapabilitySnapshotV1, now: string): void {
     assertValid(isDeviceCapabilitySnapshotV1(snapshot), "capability snapshot");
-    if (!this.getDevice(snapshot.deviceId)) throw new Error(`Unknown device: ${snapshot.deviceId}`);
-    this.database.prepare(`
+    const result = this.database.prepare(`
       UPDATE device_registry
       SET connection_revision=?, capability_snapshot_json=?, lifecycle_status='healthy', updated_at=?
-      WHERE device_id=?
-    `).run(snapshot.connectionRevision, JSON.stringify(snapshot), now, snapshot.deviceId);
+      WHERE device_id=? AND adapter_id=? AND adapter_version=?
+        AND lifecycle_status NOT IN ('revoked', 'retired')
+    `).run(snapshot.connectionRevision, JSON.stringify(snapshot), now, snapshot.deviceId, snapshot.adapterId, snapshot.adapterVersion);
+    if (result.changes !== 1) throw new Error("Device capability snapshot no longer matches an active registration");
   }
 
-  getCapabilitySnapshot(snapshotId: string): DeviceCapabilitySnapshotV1 | undefined {
-    const row = this.database.prepare("SELECT capability_snapshot_json FROM device_registry WHERE json_extract(capability_snapshot_json,'$.snapshotId')=?")
-      .get(snapshotId) as Row | undefined;
+  getCurrentCapabilitySnapshot(deviceId: string): DeviceCapabilitySnapshotV1 | undefined {
+    const row = this.database.prepare("SELECT capability_snapshot_json FROM device_registry WHERE device_id=?")
+      .get(deviceId) as Row | undefined;
     if (!row || row.capability_snapshot_json === null) return undefined;
     return parseJson<DeviceCapabilitySnapshotV1>(row.capability_snapshot_json, isDeviceCapabilitySnapshotV1, "capability snapshot");
   }

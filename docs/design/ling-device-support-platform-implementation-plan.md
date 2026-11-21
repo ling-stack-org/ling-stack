@@ -142,9 +142,10 @@ D0 covers the design and the implementation plan.
 - [x] Persist capability and policy snapshots with each task.
 - [x] Show the target, action, host, impact, verification, and recovery option before a
   write. Bind confirmation to the exact action and current device and policy revisions.
-- [~] Persist dispatch intent and an attempt ID before invoking the adapter. Admission
-  checks the task owner, scope, status and pending attempt. Gateway revoke, concurrent
-  dispatch and late completion still need shared fencing.
+- [x] Persist dispatch intent and an attempt ID before invoking the adapter. The owning
+  daemon checks task scope, current proposal, approval, and lease in the admission
+  transaction. A stop before admission cancels the task. A stop after admission
+  preserves the attempt as potentially effective and requests adapter cancellation.
 - [x] Require verification for any action that claims to repair or configure a device.
 - [x] Record action response, device verification, and user outcome independently.
 - [~] Preserve unknown outcomes from interrupted dispatch, missing readback and daemon
@@ -162,6 +163,12 @@ D0 covers the design and the implementation plan.
 - Recovery fixtures for daemon restart, client disconnect, cancel or revoke before
   dispatch, and stop or timeout after dispatch intent. Assert the dispatch count and
   subsequent outcome evidence.
+- A signed Gateway session revokes a task while its approval command is waiting on
+  the adapter. The stop persists immediately. Replaying the approval returns the
+  recorded attempt. Its late receipt remains visible, and the task remains unknown.
+- SQLite fixtures cover legacy lease migration and target exclusion during late
+  verification. Thrown transport errors keep their stable error category and redact
+  the transport exception text.
 - Evidence fixture showing before and after state, verification, and user outcome. For
   each supported automatic recovery path, verify restoration of the recorded baseline
   after a simulated connection loss.
@@ -228,7 +235,7 @@ D0 covers the design and the implementation plan.
 - [x] Route eligible device-task messages through the Gateway allowlist and keep
   target credentials with the executing host. Legacy clients use the conversation
   protocol over the same Gateway.
-- [ ] Keep the daemon as the execution owner for this facade. D9 covers standalone
+- [x] Keep the daemon as the execution owner for this facade. D9 covers standalone
   Mobile and D11 covers collaboration on a phone-owned task.
 
 ### Exit evidence
@@ -672,7 +679,7 @@ recorded per slice as they complete. [Detailed design](ling-device-fabric.md)
 | D0 | #730 | Documentation and link checks | [PR #730](https://github.com/ling-stack-org/ling-stack/pull/730), [Runtime contract](ling-device-support-platform-runtime-contract.md) | Architecture and tracking only | All runtime slices |
 | D1 | `66ee1fbdb` | `corepack pnpm --filter @ling-stack/contracts typecheck` and `test` | [contracts/device.ts](../../packages/contracts/src/device.ts) | Core contracts, validators, transport deployment metadata, and fake adapter fixtures are implemented | Adapter package extraction and cross-process conformance remain |
 | D2 | `e0d2c104e` | `corepack pnpm --filter @ling-stack/core typecheck:ci`; `node --test packages/core/test/device-support.test.ts`; `node --test packages/daemon/test/device-support-runtime.test.ts` | [device-support.ts](../../packages/core/src/device-support.ts), [device-support-store.ts](../../packages/core/src/storage/sqlite/device-support-store.ts), [runtime.ts](../../packages/daemon/src/features/device-support/runtime.ts) | Registry, capability snapshots, stable identities, revocation, leases, broker dispatch, and daemon runtime composition are covered by fake/runtime fixtures | External-adapter process isolation remains |
-| D3 | `c6903796a` | `corepack pnpm --filter @ling-stack/core build:ci`; `corepack pnpm --filter @ling-stack/daemon build:ci`; Core and Daemon `typecheck:ci`; `node --test packages/core/test/device-support.test.ts packages/daemon/test/device-support-runtime.test.ts` | [device-support.test.ts](../../packages/core/test/device-support.test.ts), [device-support-runtime.test.ts](../../packages/daemon/test/device-support-runtime.test.ts) | Exact task/target admission, idempotent attempt replay, missing or mismatched readback, and daemon startup recovery preserve dispatch and verification receipts. The fixtures reopen SQLite and assert that replay does not dispatch a second action | Shared cancellation and revoke fencing, observation-driven reconciliation, approval UI/audit projection and physical recovery acceptance remain |
+| D3 | `ec3a1d87e` | Core and Daemon `build:ci` and `typecheck:ci`. `node --test packages/core/test/device-support.test.ts packages/daemon/test/device-support-runtime.test.ts packages/daemon/test/device-remote-facade.test.ts packages/daemon/test/remote-gateway-security.test.mjs` (20 passed) | [device-support.test.ts](../../packages/core/test/device-support.test.ts), [device-support-runtime.test.ts](../../packages/daemon/test/device-support-runtime.test.ts), [device-remote-facade.test.ts](../../packages/daemon/test/device-remote-facade.test.ts) | Atomic approval admission, scoped target leases, revocation, late receipts, redacted transport failures, and daemon restart recovery preserve the dispatch journal. The fixtures reopen SQLite and assert a single dispatch across revoke and exact replay | Observation-driven reconciliation, approval UI/audit projection and physical recovery acceptance remain |
 | D4 | `4a83acfb8` | `node --test packages/daemon/test/device-support-adapters.test.ts` | [home-assistant.ts](../../packages/daemon/src/features/device-support/adapters/home-assistant.ts) | Fixture Home Assistant adapter supports discovery, entity available/unavailable/absent classification, evidence observations, bounded response sizes, and a reload action without persisting the token | Real Home Assistant instance and field action acceptance remain |
 | D5 | `c6d76f419` | `node --test packages/daemon/test/device-support-adapters.test.ts packages/daemon/test/local-pc-executor.test.ts` | [pc.ts](../../packages/daemon/src/features/device-support/adapters/pc.ts), [local-pc-executor.ts](../../packages/daemon/src/features/device-support/adapters/local-pc-executor.ts) | Typed PC executor contract covers inventory, network/services reads, reversible network repair, post-action verification, redacted observations, and fixed local OS command mappings | Windows/Linux/macOS clean-machine and field acceptance remain |
 | D6 | `995c6aa37` | `corepack pnpm --filter @ling-stack/remote-protocol typecheck:ci`; `corepack pnpm --filter @ling-stack/remote-protocol test:ci`; `corepack pnpm --filter @ling-stack/remote-client build:ci`; `corepack pnpm --filter @ling-stack/remote-client typecheck:ci`; `corepack pnpm --filter @ling-stack/remote-client test:ci`; `corepack pnpm --filter @ling-stack/mobile typecheck:ci`; `corepack pnpm --filter @ling-stack/daemon typecheck:ci`; `node --test packages/daemon/test/device-remote-facade.test.ts packages/daemon/test/remote-gateway-security.test.mjs`; `node --test scripts/ci/daemon-test-platforms.test.ts`; `corepack pnpm check:docs` | [device-facade.ts](../../packages/daemon/src/features/remote-access/device-facade.ts), [remote-device.ts](../../packages/contracts/src/remote-device.ts), [PcDeviceTasksScreen.tsx](../../apps/mobile/src/features/device-tasks/PcDeviceTasksScreen.tsx), [client.ts](../../packages/remote-client/src/client.ts) | Negotiated device-task subprotocol, strict task projections with recent PC-owned task state, workspace isolation, Mobile offline cache and refresh, signed Gateway reconnect evidence, legacy-session capability isolation, and a broker-backed read/verify task recovery path are implemented | Mutating approval UI and dispatch receipts, physical iOS/Android acceptance, and real PC/mobile packaged acceptance remain |

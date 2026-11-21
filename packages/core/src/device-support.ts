@@ -145,8 +145,10 @@ export class DeviceCapabilityBroker {
   async discover(adapterId: string, input: DeviceAdapterDiscoveryInput): Promise<DeviceProfileV1> {
     const adapter = this.requireAdapter(adapterId);
     const profile = await adapter.discover(input);
-    this.assertProfileSupported(adapter, profile);
-    this.store.registerDevice(profile, this.now());
+    if (!isDeviceProfileV1(profile) || profile.device.ownerScope !== input.ownerId) {
+      throw new DeviceBrokerError("permission_denied", "discovered device is outside the requested workspace");
+    }
+    this.registerDevice(adapterId, profile);
     await this.refreshCapabilities(profile.device.id, profile.device.profileRevision);
     return this.store.getDevice(profile.device.id) ?? profile;
   }
@@ -154,12 +156,16 @@ export class DeviceCapabilityBroker {
   registerDevice(adapterId: string, profile: DeviceProfileV1): void {
     const adapter = this.requireAdapter(adapterId);
     this.assertProfileSupported(adapter, profile);
-    this.store.registerDevice(profile, this.now());
+    if (!this.store.registerDevice(profile, this.now())) {
+      throw new DeviceBrokerError("permission_denied", "device registration is revoked or belongs to another workspace");
+    }
   }
 
   async refreshCapabilities(deviceId: string, connectionRevision: string): Promise<DeviceCapabilitySnapshotV1> {
     const profile = this.requireDevice(deviceId);
+    this.assertCapabilityRefreshAllowed(profile);
     const adapter = this.requireAdapter(profile.adapterId);
+    const previousSnapshotId = this.store.getCurrentCapabilitySnapshot(deviceId)?.snapshotId;
     const snapshot = await adapter.getCapabilities({ profile, connectionRevision });
     if (!isDeviceCapabilitySnapshotV1(snapshot)
       || snapshot.deviceId !== deviceId
@@ -168,7 +174,18 @@ export class DeviceCapabilityBroker {
       || snapshot.connectionRevision !== connectionRevision) {
       throw new DeviceBrokerError("invalid_request", "adapter returned an invalid capability snapshot");
     }
-    this.store.saveCapabilitySnapshot(snapshot, this.now());
+    this.store.withWriteTransaction(() => {
+      const current = this.requireDevice(deviceId);
+      this.assertCapabilityRefreshAllowed(current);
+      if (current.profileRevision !== profile.profileRevision
+        || current.device.profileRevision !== profile.device.profileRevision
+        || current.adapterId !== profile.adapterId || current.adapterVersion !== profile.adapterVersion
+        || canonicalJson(current.connectionRefs) !== canonicalJson(profile.connectionRefs)
+        || this.store.getCurrentCapabilitySnapshot(deviceId)?.snapshotId !== previousSnapshotId) {
+        throw new DeviceBrokerError("target_changed", "device registration changed during capability refresh");
+      }
+      this.store.saveCapabilitySnapshot(snapshot, this.now());
+    });
     return snapshot;
   }
 
@@ -268,9 +285,10 @@ export class DeviceCapabilityBroker {
     if (["revoked", "retired", "offline"].includes(profile.device.lifecycleStatus)) {
       throw new DeviceBrokerError("device_offline", `device ${profile.device.id} is unavailable`);
     }
-    const snapshot = this.store.getCapabilitySnapshot(request.capabilitySnapshotId);
-    if (!snapshot || snapshot.deviceId !== profile.device.id) {
-      throw new DeviceBrokerError("stale_snapshot", "capability snapshot is missing or targets another device");
+    const snapshot = this.store.getCurrentCapabilitySnapshot(profile.device.id);
+    if (!snapshot || snapshot.snapshotId !== request.capabilitySnapshotId
+      || snapshot.adapterId !== profile.adapterId || snapshot.adapterVersion !== profile.adapterVersion) {
+      throw new DeviceBrokerError("stale_snapshot", "capability snapshot is outside the current device registration");
     }
     if (Date.parse(snapshot.freshnessUntil) <= Date.parse(this.now())) {
       throw new DeviceBrokerError("stale_snapshot", "capability snapshot has expired");
@@ -367,6 +385,12 @@ export class DeviceCapabilityBroker {
       || !adapter.manifest.supportedDeviceKinds.includes(profile.device.kind)
       || profile.transports.some(transport => !adapter.manifest.supportedTransports.includes(transport))) {
       throw new DeviceBrokerError("unsupported_capability", "device profile is not supported by the adapter");
+    }
+  }
+
+  private assertCapabilityRefreshAllowed(profile: DeviceProfileV1): void {
+    if (profile.device.lifecycleStatus === "revoked" || profile.device.lifecycleStatus === "retired") {
+      throw new DeviceBrokerError("permission_denied", "device registration is no longer active");
     }
   }
 

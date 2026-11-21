@@ -104,9 +104,10 @@ function pendingApprovalPreview(store: SqliteDeviceSupportStore, task: NonNullab
   if (task.status !== "awaiting_approval") return {};
   const proposal = store.getActionProposal(task.id);
   if (!proposal) return {};
-  const snapshot = store.getCapabilitySnapshot(proposal.request.capabilitySnapshotId);
+  const snapshot = store.getCurrentCapabilitySnapshot(proposal.request.targetDeviceId);
+  if (snapshot?.snapshotId !== proposal.request.capabilitySnapshotId) return {};
   const capability = snapshot?.capabilities.find(item => item.id === proposal.request.capabilityId);
-  if (!snapshot || !capability || capability.sideEffect === "read_only") return {};
+  if (!capability || capability.sideEffect === "read_only") return {};
   return {
     pendingApproval: {
       actionId: proposal.request.actionId,
