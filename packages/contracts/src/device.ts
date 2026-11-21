@@ -607,4 +607,3 @@ export function isDeviceTaskAttemptV1(value: unknown): value is DeviceTaskAttemp
     && (value.receipt === undefined || isDeviceActionResultV1(value.receipt))
     && (value.verification === undefined || isDeviceVerificationResultV1(value.verification));
 }
-

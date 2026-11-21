@@ -218,4 +218,3 @@ function assertApproval(request: DeviceActionRequestV1, approval: DeviceApproval
     throw new MobileDeviceExecutionError("permission_denied", "device write lacks an exact current approval");
   }
 }
-

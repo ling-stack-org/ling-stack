@@ -132,4 +132,3 @@ export function createLocalPlaybookProposal(input: {
     createdAt: now,
   };
 }
-
