@@ -315,6 +315,14 @@ Node journals and attempts belong to their owners. If the model service is unava
 run a supported deterministic local playbook using available evidence and current
 authorization. Mark what remains pending for a later model turn or operator.
 
+The local PC diagnosis route and the enrolled Linux diagnosis route accept an
+optional `providerPresetId` and `symptom`. The Daemon uses Pi to select an ordered
+set of available diagnosis steps. It validates the output, binds it to the owner
+and current capability snapshot, and records it before dispatch. The same routes
+run the local playbook when the operator leaves the preset unselected or the model call is interrupted
+by a provider outage. The task trace records the source and any fallback.
+[Diagnosis routes](../../packages/daemon/src/features/device-support/routes.ts)
+
 ## 9. Resource and adapter registry
 
 The catalog indexes versioned device profiles, codecs, protocol descriptions, register

@@ -1,9 +1,12 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-import { DEFAULT_WORKSPACE_ID, DeviceBrokerError, readOwnedDeviceTaskJournal, readOwnedDeviceTaskTrace } from "@ling-stack/core";
+import { DEFAULT_WORKSPACE_ID, DeviceBrokerError, DeviceFabricError, readOwnedDeviceTaskJournal, readOwnedDeviceTaskTrace } from "@ling-stack/core";
+import { HttpError } from "../../errors.js";
 import { allowLocalServiceRequest } from "../../shared/local-workspace-access.js";
-import { readJsonBody } from "../../shared/request.js";
+import { readJsonBody, readOptionalJsonBody } from "../../shared/request.js";
 import { writePrivateJson } from "../../shared/response.js";
+import { isRecord } from "../../shared/validation.js";
+import type { DeviceDiagnosisRequest } from "./diagnosis-planner.js";
 import { handleDeviceResourceRoute } from "./resource-routes.js";
 import type { DeviceSupportRuntime } from "./runtime.js";
 
@@ -46,11 +49,16 @@ export async function handleDeviceSupportRoute(
     return true;
   }
   try {
-    const { status, report } = await runtime.diagnoseLocalPc();
+    let requestBody: unknown;
+    try {
+      requestBody = await readOptionalJsonBody(request, 4096);
+    } catch {
+      throw new DeviceBrokerError("invalid_request", "invalid PC diagnosis request");
+    }
+    const { status, report } = await runtime.diagnoseLocalPc(readDiagnosisOptions(requestBody));
     writePrivateJson(response, 200, { status, report });
   } catch (error) {
-    const code = error instanceof DeviceBrokerError ? error.code : "service_unavailable";
-    writePrivateJson(response, code === "target_busy" ? 409 : 503, { error: code });
+    writeDeviceOperationError(response, error);
   }
   return true;
 }
@@ -71,22 +79,55 @@ async function handleLinuxSshRequest(
     }
     const body = await readJsonBody(request, 4096).catch(() => { throw new DeviceBrokerError("invalid_request", "Invalid Linux SSH request"); });
     const key = action === "enroll" ? "connectionId" : "deviceId";
-    const id = body !== null && typeof body === "object" && !Array.isArray(body) && Object.keys(body).length === 1
-      ? (body as Record<string, unknown>)[key] : undefined;
-    if (typeof id !== "string" || id.trim().length === 0 || Buffer.byteLength(id, "utf8") > 256) {
+    const id = isRecord(body) ? body[key] : undefined;
+    if (!isRecord(body) || !validBoundedText(id, 256) || id.trim() !== id) {
       throw new DeviceBrokerError("invalid_request", "Linux SSH request requires a target reference");
     }
     if (action === "enroll") {
+      if (Object.keys(body).length !== 1) throw new DeviceBrokerError("invalid_request", "invalid Linux SSH enrollment request");
       writePrivateJson(response, 200, { profile: await runtime.enrollLinuxSshTarget(id) });
       return;
     }
-    const { status, report } = await runtime.diagnoseLinuxSshTarget(id);
+    const { deviceId: _deviceId, ...options } = body;
+    const { status, report } = await runtime.diagnoseLinuxSshTarget(id, readDiagnosisOptions(options));
     writePrivateJson(response, 200, { status, report });
   } catch (error) {
-    const code = error instanceof DeviceBrokerError ? error.code : "service_unavailable";
-    const statuses = { invalid_request: 400, missing_target: 404, permission_denied: 403, target_changed: 409, target_busy: 409 };
-    writePrivateJson(response, Object.hasOwn(statuses, code) ? statuses[code as keyof typeof statuses] : 503, { error: code });
+    writeDeviceOperationError(response, error);
   }
+}
+
+function readDiagnosisOptions(value: unknown): DeviceDiagnosisRequest {
+  if (value === undefined) return {};
+  if (!isRecord(value) || Object.keys(value).some(key => key !== "providerPresetId" && key !== "symptom")) {
+    throw new DeviceBrokerError("invalid_request", "invalid device diagnosis options");
+  }
+  const { providerPresetId, symptom } = value;
+  if (providerPresetId !== undefined && (!validBoundedText(providerPresetId, 256) || providerPresetId.trim() !== providerPresetId)) {
+    throw new DeviceBrokerError("invalid_request", "invalid diagnosis provider");
+  }
+  if (symptom !== undefined && (providerPresetId === undefined || !validBoundedText(symptom, 2048))) {
+    throw new DeviceBrokerError("invalid_request", "invalid diagnosis symptom");
+  }
+  return { providerPresetId, symptom };
+}
+
+function validBoundedText(value: unknown, maxBytes: number): value is string {
+  return typeof value === "string" && value.trim().length > 0 && Buffer.byteLength(value, "utf8") <= maxBytes;
+}
+
+function writeDeviceOperationError(response: ServerResponse, error: unknown): void {
+  if (error instanceof HttpError) {
+    writePrivateJson(response, error.statusCode, { error: error.code });
+    return;
+  }
+  if (error instanceof DeviceFabricError && error.code === "invalid_graph") {
+    writePrivateJson(response, 422, { error: "invalid_device_plan" });
+    return;
+  }
+  const code = error instanceof DeviceBrokerError || (error instanceof DeviceFabricError && error.code === "target_changed")
+    ? error.code : "service_unavailable";
+  const statuses = { invalid_request: 400, missing_target: 404, permission_denied: 403, target_changed: 409, target_busy: 409 };
+  writePrivateJson(response, Object.hasOwn(statuses, code) ? statuses[code as keyof typeof statuses] : 503, { error: code });
 }
 
 function writeTaskProjection(

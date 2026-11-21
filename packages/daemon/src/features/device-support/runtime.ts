@@ -8,6 +8,7 @@ import {
   createPcSoftwareDiagnosisPlaybook,
   DEFAULT_WORKSPACE_ID,
   DeviceBrokerError,
+  devicePlaybookNodeId,
   DeviceAccessManager,
   DeviceCapabilityBroker,
   DeviceRunnerPlanningBridge,
@@ -31,6 +32,7 @@ import { LinuxSshAdapter, linuxSshDeviceId } from "./adapters/linux-ssh.js";
 import { LocalPcTargetExecutor, type LocalProcessRunner } from "./adapters/local-pc-executor.js";
 import { PcAdapter } from "./adapters/pc.js";
 import { bindLinuxSshTargets, type BoundLinuxSshTarget, type ConfiguredLinuxSshTarget } from "./linux-ssh-targets.js";
+import { DEVICE_DIAGNOSIS_MODEL_TIMEOUT_MS, type DeviceDiagnosisPlanner, type DeviceDiagnosisRequest } from "./diagnosis-planner.js";
 import type { DeviceResourceTrustPolicy } from "./resource-trust.js";
 
 interface LinuxSshTargetSummary {
@@ -55,10 +57,10 @@ export interface DeviceSupportRuntime {
   readonly resourceTrustConfigured: boolean;
   readonly broker: DeviceCapabilityBroker;
   readonly remoteFacade: RemoteDeviceFacade;
-  diagnoseLocalPc(): Promise<DevicePlaybookRunResultV1>;
+  diagnoseLocalPc(request?: DeviceDiagnosisRequest): Promise<DevicePlaybookRunResultV1>;
   listLinuxSshTargets(): readonly LinuxSshTargetSummary[];
   enrollLinuxSshTarget(connectionId: string): Promise<DeviceProfileV1>;
-  diagnoseLinuxSshTarget(deviceId: string): Promise<DevicePlaybookRunResultV1>;
+  diagnoseLinuxSshTarget(deviceId: string, request?: DeviceDiagnosisRequest): Promise<DevicePlaybookRunResultV1>;
   fleetHealth(workspaceId?: string): DeviceFleetHealthProjectionV1;
   close(): void;
 }
@@ -69,6 +71,7 @@ export function createDeviceSupportRuntime(options: {
   readonly resourceTrust?: DeviceResourceTrustPolicy;
   readonly linuxSshTargets?: readonly ConfiguredLinuxSshTarget[];
   readonly linuxSshRunner?: LocalProcessRunner;
+  readonly createDiagnosisPlanner?: DeviceDiagnosisPlanner;
 }): DeviceSupportRuntime {
   const now = options.now ?? (() => new Date().toISOString());
   const store = new SqliteDeviceSupportStore({ databasePath: options.databasePath });
@@ -132,20 +135,27 @@ export function createDeviceSupportRuntime(options: {
   const edgeRuntimes = new EdgeRuntimeRegistry({ persistence: fabricStore });
   const edgeJournal = new EdgeRuntimeJournal({ persistence: fabricStore });
   const fleetProjection = new DeviceFleetProjection();
-  let localDiagnosis: Promise<DevicePlaybookRunResultV1> | undefined;
+  let localDiagnosis: { readonly key: string; readonly pending: Promise<DevicePlaybookRunResultV1> } | undefined;
   const diagnosingLinux = new Set<string>();
 
-  async function diagnosePc(): Promise<DevicePlaybookRunResultV1> {
+  async function diagnosePc(request: DeviceDiagnosisRequest): Promise<DevicePlaybookRunResultV1> {
     const registered = store.listDevices().find(profile => profile.device.ownerScope === DEFAULT_WORKSPACE_ID
       && profile.adapterId === adapter.manifest.adapterId && profile.transports.includes("local_process"));
     const target = registered
       ?? await broker.discover(adapter.manifest.adapterId, { ownerId: DEFAULT_WORKSPACE_ID, connectionRef: "local_process" });
-    return runDiagnosis(target, target.device.id, createPcSoftwareDiagnosisPlaybook());
+    return runDiagnosis(target, target.device.id, createPcSoftwareDiagnosisPlaybook(), request);
   }
 
-  async function runDiagnosis(target: DeviceProfileV1, ownerId: string, playbook: DevicePlaybookV1): Promise<DevicePlaybookRunResultV1> {
+  async function runDiagnosis(
+    target: DeviceProfileV1, ownerId: string, playbook: DevicePlaybookV1, request: DeviceDiagnosisRequest,
+  ): Promise<DevicePlaybookRunResultV1> {
+    const runner = request.providerPresetId
+      ? options.createDiagnosisPlanner?.({ ...request, providerPresetId: request.providerPresetId }, playbook)
+      : undefined;
+    if (request.providerPresetId && !runner) throw new DeviceBrokerError("service_unavailable", "device diagnosis planner is unavailable");
     const current = store.getCurrentCapabilitySnapshot(target.device.id);
-    const snapshot = current && Date.parse(current.freshnessUntil) > Date.parse(now()) ? current
+    const planningWindowMs = runner ? DEVICE_DIAGNOSIS_MODEL_TIMEOUT_MS : 0;
+    const snapshot = current && Date.parse(current.freshnessUntil) > Date.parse(now()) + planningWindowMs ? current
       : await broker.refreshCapabilities(target.device.id, target.device.profileRevision);
     const timestamp = now();
     const task = broker.createTask({
@@ -158,22 +168,41 @@ export function createDeviceSupportRuntime(options: {
       createdAt: timestamp,
       updatedAt: timestamp,
     });
-    const planningInput = buildOwnedDevicePlanningInput({
-      store, taskId: task.id, ownerId: task.ownerId, workspaceId: DEFAULT_WORKSPACE_ID,
-      contextId: `device_context_${randomUUID()}`, maxBytes: 32 * 1024, now: timestamp,
-    });
-    const plan = await planner.plan({
-      ...planningInput,
-      localPlaybook: {
-        playbook, targetDeviceId: target.device.id, ownerKind: task.ownerKind, ownerId: task.ownerId,
-        capabilitySnapshotId: snapshot.snapshotId,
-      },
-      now: timestamp,
-    });
-    store.recordPlanningAcceptance(plan.acceptance, plan.source);
+    let proposalId: string;
+    let selectedPlaybook = playbook;
+    try {
+      const contextScope = {
+        store, taskId: task.id, ownerId: task.ownerId, workspaceId: DEFAULT_WORKSPACE_ID,
+        contextId: `device_context_${randomUUID()}`, maxBytes: 32 * 1024,
+      };
+      const plan = await planner.plan({
+        ...buildOwnedDevicePlanningInput({ ...contextScope, now: timestamp }),
+        localPlaybook: {
+          playbook, targetDeviceId: target.device.id, ownerKind: task.ownerKind, ownerId: task.ownerId,
+          capabilitySnapshotId: snapshot.snapshotId,
+        },
+        nowAtAcceptance: now,
+      }, runner);
+      if (plan.source === "runner") {
+        const stepsByNodeId = new Map(playbook.steps.map(step => [devicePlaybookNodeId(playbook.id, step.id), step]));
+        const steps = plan.acceptance.graph.nodes.map(node => {
+          const step = stepsByNodeId.get(node.nodeId);
+          if (!step || step.capabilityId !== node.capabilityId) throw new DeviceBrokerError("invalid_request", "device plan does not match the diagnosis playbook");
+          return step;
+        });
+        selectedPlaybook = { ...playbook, steps };
+      }
+      store.recordPlanningAcceptance(plan.acceptance, plan.source, plan.fallbackReason);
+      proposalId = plan.acceptance.proposalId;
+    } catch (error) {
+      store.withWriteTransaction(() => {
+        if (store.getTask(task.id)?.status === "planning") store.transitionTask(task.id, "failed", {}, now());
+      });
+      throw error;
+    }
     return await runDeviceReadOnlyPlaybook({
       broker, task, targetDeviceId: target.device.id, capabilitySnapshotId: snapshot.snapshotId,
-      playbook, proposalId: plan.acceptance.proposalId,
+      playbook: selectedPlaybook, proposalId,
     });
   }
 
@@ -224,9 +253,11 @@ export function createDeviceSupportRuntime(options: {
     resourceTrustConfigured: options.resourceTrust !== undefined,
     broker,
     remoteFacade,
-    diagnoseLocalPc: () => {
-      localDiagnosis ??= diagnosePc().finally(() => { localDiagnosis = undefined; });
-      return localDiagnosis;
+    async diagnoseLocalPc(request = {}) {
+      const key = JSON.stringify([request.providerPresetId, request.symptom]);
+      if (localDiagnosis && localDiagnosis.key !== key) throw new DeviceBrokerError("target_busy", "PC diagnosis is active");
+      localDiagnosis ??= { key, pending: diagnosePc(request).finally(() => { localDiagnosis = undefined; }) };
+      return await localDiagnosis.pending;
     },
     listLinuxSshTargets: () => Array.from(linuxTargets, ([deviceId, target]) => {
       const profile = store.getDevice(deviceId);
@@ -242,7 +273,7 @@ export function createDeviceSupportRuntime(options: {
       }
       throw new DeviceBrokerError("missing_target", "Linux SSH connection is unavailable");
     },
-    async diagnoseLinuxSshTarget(deviceId) {
+    async diagnoseLinuxSshTarget(deviceId, request = {}) {
       const sshTarget = linuxTargets.get(deviceId);
       const profile = store.getDevice(deviceId);
       if (!sshTarget || profile?.device.ownerScope !== DEFAULT_WORKSPACE_ID || profile.adapterId !== linuxAdapter.manifest.adapterId) {
@@ -251,7 +282,7 @@ export function createDeviceSupportRuntime(options: {
       return withLinuxTarget(deviceId, async () => {
         const target = hasCurrentLinuxConnection(profile) && profile.device.lifecycleStatus === "healthy"
           ? profile : await enrollLinuxTarget(deviceId, sshTarget);
-        const result = await runDiagnosis(target, target.device.runtimeOwnerId!, createLinuxWifiDiagnosisPlaybook());
+        const result = await runDiagnosis(target, target.device.runtimeOwnerId!, createLinuxWifiDiagnosisPlaybook(), request);
         if (result.attempts.some(record => record.attempt.receipt?.errorCode === "connection_failed")) {
           store.markDeviceOffline(deviceId, now());
         }

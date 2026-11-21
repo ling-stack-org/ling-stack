@@ -25,7 +25,7 @@ import {
   isDeviceVerificationResultV1,
 } from "@ling-stack/contracts";
 
-import type { DeviceSupportStoreAttemptRecord } from "../../device-support.js";
+import { DeviceBrokerError, type DeviceSupportStoreAttemptRecord } from "../../device-support.js";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 import { withSqliteSnapshotParentTransaction } from "./read-snapshot.js";
 
@@ -47,7 +47,10 @@ export interface DeviceTaskEvent {
   readonly createdAt: string;
 }
 
-export type RecordedDevicePlan = DevicePlannerAcceptanceV1 & { readonly source: "runner" | "local_playbook" };
+export type RecordedDevicePlan = DevicePlannerAcceptanceV1 & {
+  readonly source: "runner" | "local_playbook";
+  readonly fallbackReason?: "runner_unavailable";
+};
 
 export interface DeviceAttemptPatch {
   readonly status?: DeviceTaskAttemptV1["status"];
@@ -168,7 +171,9 @@ export class SqliteDeviceSupportStore {
     return task;
   }
 
-  recordPlanningAcceptance(acceptance: DevicePlannerAcceptanceV1, source: "runner" | "local_playbook"): void {
+  recordPlanningAcceptance(
+    acceptance: DevicePlannerAcceptanceV1, source: RecordedDevicePlan["source"], fallbackReason?: RecordedDevicePlan["fallbackReason"],
+  ): void {
     this.withWriteTransaction(() => {
       const task = this.requireTask(acceptance.taskId);
       if (task.status !== "planning" || acceptance.graph.graphId !== task.id
@@ -176,7 +181,18 @@ export class SqliteDeviceSupportStore {
           || !task.targetDeviceIds.includes(node.targetDeviceId) || !task.capabilitySnapshotIds.includes(node.capabilitySnapshotId))) {
         throw new Error("Device plan is outside the task's current owner and target binding");
       }
-      const record = { source, ...acceptance } satisfies RecordedDevicePlan;
+      const acceptedAt = Date.parse(acceptance.acceptedAt);
+      for (const node of acceptance.graph.nodes) {
+        const profile = this.getDevice(node.targetDeviceId);
+        const snapshot = this.getCurrentCapabilitySnapshot(node.targetDeviceId);
+        if (!profile || ["offline", "retired", "revoked"].includes(profile.device.lifecycleStatus)
+          || !snapshot || snapshot.snapshotId !== node.capabilitySnapshotId || !snapshot.capabilities.some(cap => cap.id === node.capabilityId)
+          || snapshot.adapterId !== profile.adapterId || snapshot.adapterVersion !== profile.adapterVersion
+          || !(Date.parse(snapshot.observedAt) <= acceptedAt && acceptedAt < Date.parse(snapshot.freshnessUntil))) {
+          throw new DeviceBrokerError("target_changed", "device target changed before the plan was recorded");
+        }
+      }
+      const record = { source, ...acceptance, ...(fallbackReason ? { fallbackReason } : {}) } satisfies RecordedDevicePlan;
       const prior = this.listPlanningAcceptances(task.id).find(plan => plan.proposalId === acceptance.proposalId);
       if (prior) {
         if (!isDeepStrictEqual(prior, record)) throw new Error("Device plan proposal id is already bound");

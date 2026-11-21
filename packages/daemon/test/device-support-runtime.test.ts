@@ -16,6 +16,7 @@ import {
 import { canonicalJsonBytes } from "@ling-stack/remote-protocol";
 import { createDeviceSupportRuntime } from "../dist/features/device-support/runtime.js";
 import { createDaemonServer } from "../dist/index.js";
+import { startLoopbackPiProvider } from "./support/loopback-pi-provider-fixture.mjs";
 
 test("daemon device-support runtime composes the durable store, broker and remote facade", () => {
   const root = mkdtempSync(join(tmpdir(), "ling-device-runtime-"));
@@ -289,4 +290,88 @@ test("the local daemon exposes its PC report and sequenced task journal only on 
   } finally {
     journal.close();
   }
+});
+
+test("the Daemon reuses Pi for typed diagnosis and preserves provider, fallback and invalid-plan evidence", { timeout: 30_000 }, async t => {
+  const cwd = mkdtempSync(join(tmpdir(), "ling-device-pi-diagnosis-"));
+  let secondPlan = '{"stepIds":["inspect-network"]}';
+  const firstProvider = await startLoopbackPiProvider(() => ({ text: '{"stepIds":["inspect-services"]}' }));
+  const secondProvider = await startLoopbackPiProvider(() => ({ text: secondPlan }));
+  let secondOnline = true;
+  const workspace = createSqliteRunStore(cwd);
+  const authToken = "fixture-daemon-authority";
+  const headers = { Authorization: `Bearer ${authToken}`, "Content-Type": "application/json" };
+  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, authToken, defaultWorkspaceCwd: cwd }, {
+    storeFactory: () => workspace, chromeBrowserNativeMessagingEnabled: false, remoteReplyDispatcher: null,
+  });
+  t.after(async () => {
+    await daemon.stop();
+    await firstProvider.close();
+    if (secondOnline) await secondProvider.close();
+    rmSync(cwd, { recursive: true, force: true });
+  });
+  const preset = (providerId: string, baseUrl: string) => {
+    const at = new Date().toISOString();
+    const row = workspace.createProviderPreset({
+      kind: "openai-compatible", displayName: providerId, providerId, baseUrl, model: "static-tools",
+      api: "openai-completions", capabilities: ["chat"], authHeader: false, reasoning: false,
+    }, at);
+    workspace.recordProviderCheckResult(row.id, { ok: true, code: "ready", message: "Loopback ready", checkedAt: at });
+    return row.id;
+  };
+  const firstPreset = preset("first-loopback", firstProvider.baseUrl);
+  const secondPreset = preset("second-loopback", secondProvider.baseUrl);
+  await daemon.start();
+  const address = daemon.server.address();
+  assert.ok(address && typeof address === "object");
+  const origin = `http://127.0.0.1:${address.port}/v1/device-support`;
+  const diagnose = (providerPresetId: string) => fetch(origin + "/pc/diagnose", {
+    method: "POST", headers, body: JSON.stringify({ providerPresetId, symptom: "Check a local PC service" }),
+  });
+  async function checkDiagnosis(providerPresetId: string, expectedCapabilities: readonly string[], source: "model" | "graph") {
+    const response = await diagnose(providerPresetId);
+    const body = await response.json() as { status: string; report: DeviceDiagnosisReportV1 };
+    assert.equal(response.status, 200, JSON.stringify(body));
+    assert.equal(body.status, "succeeded");
+    assert.deepEqual(body.report.actions.map(action => action.capabilityId), expectedCapabilities);
+    const traceResponse = await fetch(`${origin}/tasks/${body.report.taskId}/trace`, { headers });
+    assert.equal(traceResponse.status, 200);
+    const trace = await traceResponse.json() as DeviceTaskTraceV1;
+    const planning = trace.spans.find(span => span.kind === source);
+    assert.ok(planning);
+    return { planning, adapters: trace.spans.filter(span => span.kind === "adapter") };
+  }
+  const first = await checkDiagnosis(firstPreset, ["pc.inspect.services"], "model");
+  assert.match(first.planning.lineage?.modelTurnId ?? "", /^device_plan_turn_/u);
+  assert.equal(first.adapters[0]?.lineage?.modelTurnId, first.planning.lineage?.modelTurnId);
+  assert.match(JSON.stringify(first.planning.metadata), new RegExp(firstPreset, "u"));
+  const second = await checkDiagnosis(secondPreset, ["pc.inspect.network"], "model");
+  assert.notEqual(second.planning.lineage?.modelTurnId, first.planning.lineage?.modelTurnId);
+  assert.match(JSON.stringify(second.planning.metadata), new RegExp(secondPreset, "u"));
+  for (const provider of [firstProvider, secondProvider]) {
+    const streamed = provider.requests.filter((request: { readonly stream?: boolean }) => request.stream);
+    assert.equal(streamed.length, 1);
+    assert.equal(streamed[0]?.tools?.length ?? 0, 0);
+    assert.match(JSON.stringify(streamed[0]?.messages), /Check a local PC service/u);
+    assert.doesNotMatch(JSON.stringify(streamed[0]?.messages), /android\.install|ssh\.write|expectedVerification/u);
+  }
+
+  secondPlan = '{"stepIds":["unknown-step"]}';
+  const invalid = await diagnose(secondPreset);
+  assert.equal(invalid.status, 422);
+  assert.deepEqual(await invalid.json(), { error: "invalid_device_plan" });
+  const journal = new SqliteDeviceSupportStore({ databasePath: workspace.paths.databasePath });
+  try {
+    const rejected = journal.listRecentDaemonTasks(DEFAULT_WORKSPACE_ID, 10).find(task => task.status === "failed");
+    assert.ok(rejected);
+    assert.deepEqual(journal.listAttempts(rejected.id), []);
+    assert.deepEqual(journal.listPlanningAcceptances(rejected.id), []);
+  } finally {
+    journal.close();
+  }
+  await secondProvider.close();
+  secondOnline = false;
+  const fallback = await checkDiagnosis(secondPreset, ["pc.inspect.network", "pc.inspect.services"], "graph");
+  assert.match(JSON.stringify(fallback.planning.metadata), /runner_unavailable/u);
+  assert.equal((await diagnose("missing-provider")).status, 404);
 });

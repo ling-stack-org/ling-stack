@@ -31,7 +31,13 @@ export function readOwnedDeviceTaskTrace(input: {
         kind: plan.source === "runner" ? "model" : "graph", sourceId: plan.proposalId,
         startedAt: plan.acceptedAt, finishedAt: plan.acceptedAt, status: "ok",
         lineage: { ...taskLineage, graphId: plan.graph.graphId, ...(plan.modelTurnId ? { modelTurnId: plan.modelTurnId } : {}) },
-        metadata: { source: plan.source, contextId: plan.contextId, ...(plan.providerId ? { providerId: plan.providerId } : {}) },
+        metadata: {
+          source: plan.source, contextId: plan.contextId,
+          ...(plan.providerId ? { providerId: plan.providerId } : {}),
+          ...(plan.fallbackReason ? { fallbackReason: plan.fallbackReason } : {}),
+          ...(plan.runnerId ? { runnerId: plan.runnerId } : {}),
+          ...(plan.runnerCapabilityRevision ? { runnerCapabilityRevision: plan.runnerCapabilityRevision } : {}),
+        },
       });
     }
     const attempts = new Map<string, { readonly spanId: string; readonly lineage: TaskTraceLineage }>();

@@ -7,6 +7,7 @@ import type {
   DeviceTaskStatusV1,
 } from "@ling-stack/contracts";
 import { devicePlaybookNodeId, isDevicePlaybookV1, type DevicePlaybookV1 } from "./device-playbooks.js";
+import { DeviceFabricError } from "./device-fabric.js";
 import { DeviceModelOrchestrator, type DevicePlanningTarget } from "./device-orchestration.js";
 
 export interface DevicePlanningRunnerInput {
@@ -32,6 +33,7 @@ export interface DeviceRunnerPlanInput extends DevicePlanningRunnerInput {
     readonly now?: string;
   };
   readonly now?: string;
+  readonly nowAtAcceptance?: () => string;
 }
 
 export interface DeviceRunnerPlanResult {
@@ -58,7 +60,7 @@ export class DeviceRunnerPlanningBridge {
         proposal = await runner.plan({ context, targets, planningInputRefs, signal });
       } catch (error) {
         input.signal?.throwIfAborted();
-        if (!input.localPlaybook || (error instanceof Error && error.name === "AbortError")) throw error;
+        if (!input.localPlaybook || error instanceof DeviceFabricError || (error instanceof Error && error.name === "AbortError")) throw error;
         return this.planLocal(input, "runner_unavailable");
       }
       input.signal?.throwIfAborted();
@@ -70,6 +72,7 @@ export class DeviceRunnerPlanningBridge {
           proposal,
           runnerId: runner.runnerId,
           runnerCapabilityRevision: runner.capabilityRevision,
+          now: input.nowAtAcceptance?.() ?? input.now,
         }),
       };
     }
@@ -85,7 +88,7 @@ export class DeviceRunnerPlanningBridge {
     return {
       source: "local_playbook",
       proposal,
-      acceptance: this.#orchestrator.acceptProposal({ ...input, proposal }),
+      acceptance: this.#orchestrator.acceptProposal({ ...input, proposal, now: input.nowAtAcceptance?.() ?? input.now }),
       ...(fallbackReason ? { fallbackReason } : {}),
     };
   }

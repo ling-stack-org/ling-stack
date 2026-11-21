@@ -1,6 +1,7 @@
 import { AutomationEventWorker } from "./features/automations/event-worker.js";
 import { startDetachedRunAndResolveReady } from "./features/runs/detached.js";
 import { resolveProviderForRun } from "./features/runs/providers.js";
+import { createDeviceDiagnosisPlanner } from "./features/device-support/diagnosis-planner.js";
 import { TaskSupervisor } from "./features/runs/task-supervisor.js";
 import { orchestrateChannelWorkflow } from "./features/channels/orchestrator.js";
 import { createWorkflowParallelCapabilityResolver } from "./features/runs/workflow-safety.js";
@@ -1010,6 +1011,7 @@ export function createDaemonServer(
   const deviceSupport = createDeviceSupportRuntime({
     databasePath: defaultWorkspaceStore.paths.databasePath, linuxSshTargets, linuxSshRunner: dependencies.linuxSshProcessRunner,
     resourceTrust: deviceResourceTrust,
+    createDiagnosisPlanner: createDeviceDiagnosisPlanner({ store: defaultWorkspaceStore, runnerRegistry, secretResolver }),
   });
   const remoteReplyDispatcher = dependencies.remoteReplyDispatcher === null
     ? undefined
