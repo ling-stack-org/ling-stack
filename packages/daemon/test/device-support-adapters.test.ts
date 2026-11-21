@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
+import { dirname } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { isAdapterManifestV1, type DeviceActionRequestV1 } from "@ling-stack/contracts";
 import { createHomeAssistantOfflinePlaybook, DeviceCapabilityBroker, digestRequest, runDeviceReadOnlyPlaybook, SqliteDeviceSupportStore } from "@ling-stack/core";
 import {
   AndroidAdbAdapter,
+  ExternalDeviceAdapter,
   HomeAssistantAdapter,
   LinuxSshAdapter,
   ObdVehicleAdapter,
@@ -12,6 +15,44 @@ import {
 } from "../dist/features/device-support/adapters/index.js";
 
 const now = "2026-11-21T00:00:00.000Z";
+
+test("external adapters are isolated behind a bounded JSON process and restart after a child crash", async t => {
+  const fixture = `${dirname(fileURLToPath(import.meta.url))}/support/external-device-adapter-fixture.mjs`;
+  const adapter = new ExternalDeviceAdapter({
+    command: process.execPath,
+    args: [fixture],
+    manifest: {
+      adapterId: "external-fixture", adapterVersion: "1.0.0", contractMajor: 1,
+      supportedDeviceKinds: ["linux"], supportedTransports: ["local_process"],
+      transportDeployments: [{ transport: "local_process", mode: "target_executor", pairing: "user_confirmation", removal: "remove_target_executor" }],
+      requiredRuntime: "edge", authenticationMethods: ["fixture"],
+      capabilities: [{
+        id: "external.inspect", schemaVersion: "1.0", semanticVerb: "device.inspect", inputSchema: {}, outputSchema: {},
+        sideEffect: "read_only", approvalClass: "allow", requiredPermissions: [], prerequisites: [], timeoutMs: 5000,
+        responseBytesLimit: 4096, idempotency: "request", supportedDeviceKinds: ["linux"], supportedTransports: ["local_process"],
+      }],
+      removalBehavior: "revoke_and_disconnect",
+    },
+    requestTimeoutMs: 2000,
+  });
+  t.after(() => adapter.close());
+  const profile = await adapter.discover({ connectionRef: "fixture:ok", ownerId: "workspace" });
+  assert.equal(profile.device.id, "external-fixture-device");
+  const snapshot = await adapter.getCapabilities({ profile, connectionRevision: "connection-1" });
+  assert.equal(snapshot.capabilities[0]?.id, "external.inspect");
+  const result = await adapter.execute({
+    profile,
+    capability: snapshot.capabilities[0]!,
+    request: {
+      actionId: "external-action", taskId: "external-task", targetDeviceId: profile.device.id,
+      capabilityId: "external.inspect", capabilitySchemaVersion: "1.0", capabilitySnapshotId: snapshot.snapshotId,
+      normalizedInput: {}, idempotencyKey: "external-task:external-action",
+    },
+  });
+  assert.equal("action" in result ? result.action.status : result.status, "completed");
+  await assert.rejects(() => adapter.discover({ connectionRef: "fixture:crash", ownerId: "workspace" }), /external adapter process adapter_exited|adapter_process_error/);
+  assert.equal((await adapter.discover({ connectionRef: "fixture:restarted", ownerId: "workspace" })).device.id, "external-fixture-device");
+});
 
 test("Home Assistant adapter keeps credentials out of the profile and distinguishes entity states", async t => {
   const calls: { url: string; method: string; authorization?: string }[] = [];

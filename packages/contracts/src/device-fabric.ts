@@ -144,6 +144,7 @@ export const DEVICE_TASK_JOURNAL_PUBLIC_EVENTS_V1 = {
   task_created: { sourceKind: "runtime", fields: ["status"] },
   task_transition: { sourceKind: "runtime", fields: ["from", "to"] },
   device_plan_accepted: { sourceKind: "graph", fields: ["proposalId", "contextId", "source"] },
+  approval_recorded: { sourceKind: "runtime", fields: ["approvalId", "actionId", "targetDeviceId", "capabilitySnapshotId", "policyRevision"] },
   attempt_prepared: { sourceKind: "runtime", fields: ["attemptId", "actionId"] },
   attempt_updated: { sourceKind: "runtime", fields: ["attemptId", "status", "receiptStatus", "verificationStatus"] },
   task_stop_requested: { sourceKind: "runtime", fields: ["attemptId", "status"] },

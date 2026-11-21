@@ -26,6 +26,7 @@ import {
   SqliteDeviceProtocolStore,
   SqliteDeviceSupportStore,
   type DevicePlaybookRunResultV1,
+  type DeviceAdapter,
 } from "@ling-stack/core";
 import { createRemoteDeviceFacade, type RemoteDeviceFacade } from "../remote-access/device-facade.js";
 import { LinuxSshAdapter, linuxSshDeviceId } from "./adapters/linux-ssh.js";
@@ -72,6 +73,8 @@ export function createDeviceSupportRuntime(options: {
   readonly linuxSshTargets?: readonly ConfiguredLinuxSshTarget[];
   readonly linuxSshRunner?: LocalProcessRunner;
   readonly createDiagnosisPlanner?: DeviceDiagnosisPlanner;
+  /** Trusted resource-activated adapters. Each adapter still executes behind its own process boundary when configured as external. */
+  readonly externalAdapters?: readonly (DeviceAdapter & { readonly close?: () => void })[];
 }): DeviceSupportRuntime {
   const now = options.now ?? (() => new Date().toISOString());
   const store = new SqliteDeviceSupportStore({ databasePath: options.databasePath });
@@ -113,6 +116,7 @@ export function createDeviceSupportRuntime(options: {
     ssh = bindLinuxSshTargets(options.linuxSshTargets ?? [], options.linuxSshRunner);
     linuxAdapter = new LinuxSshAdapter({ now, connections: ssh.targets });
     broker.registerAdapter(linuxAdapter);
+    for (const externalAdapter of options.externalAdapters ?? []) broker.registerAdapter(externalAdapter);
     for (const target of ssh.targets) linuxTargets.set(linuxSshDeviceId(DEFAULT_WORKSPACE_ID, target.hostKeyFingerprint), target);
     store.withWriteTransaction(() => {
       for (const profile of store.listDevices()) {
@@ -121,6 +125,7 @@ export function createDeviceSupportRuntime(options: {
       }
     });
   } catch (error) {
+    for (const externalAdapter of options.externalAdapters ?? []) externalAdapter.close?.();
     ssh?.close();
     protocolStore.close();
     developerStore.close();
@@ -305,6 +310,7 @@ export function createDeviceSupportRuntime(options: {
       });
     },
     close: () => {
+      for (const externalAdapter of options.externalAdapters ?? []) externalAdapter.close?.();
       ssh?.close();
       fabricStore.close();
       developerStore.close();

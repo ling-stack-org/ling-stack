@@ -500,6 +500,18 @@ export class DeviceCapabilityBroker {
         throw new DeviceBrokerError("target_changed", "device task policy has changed");
       }
       this.assertApproval(request, snapshot.connectionRevision, requestDigest);
+      this.store.recordApproval(request.taskId, {
+        approvalId: request.approval!.approvalId,
+        actionId: request.actionId,
+        targetDeviceId: request.targetDeviceId,
+        capabilitySnapshotId: request.capabilitySnapshotId,
+        connectionRevision: snapshot.connectionRevision,
+        policyRevision: request.approval!.policyRevision,
+        normalizedInputDigest: request.approval!.normalizedInputDigest,
+        expiresAt: request.approval!.expiresAt,
+        ...(options.approvalPrincipal?.deviceId ? { principalDeviceId: options.approvalPrincipal.deviceId } : {}),
+        ...(options.approvalPrincipal?.sessionId ? { principalSessionId: options.approvalPrincipal.sessionId } : {}),
+      }, this.now());
     }
 
     const now = this.now();

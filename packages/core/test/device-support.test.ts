@@ -430,9 +430,19 @@ test("mutating capability requires an exact, unexpired approval and records veri
   store.createTask(mutatingTask, now);
   const base = request(writeCapability.id, mutatingTask.id);
   await assert.rejects(() => broker.execute(base), (error: unknown) => error instanceof DeviceBrokerError && error.code === "permission_denied");
-  const result = await broker.execute(approveNetworkRepair(base));
+  const result = await broker.execute(approveNetworkRepair(base), undefined, {
+    approvalPrincipal: { kind: "paired_mobile", deviceId: "mobile-1", deviceEpoch: 3, sessionId: "paired-session-1" },
+  });
   assert.equal(result.attempt.verification?.status, "verified");
   assert.equal(store.getTask(mutatingTask.id)?.status, "succeeded");
+  const approvalEvent = store.listEvents(mutatingTask.id).find(event => event.type === "approval_recorded");
+  assert.deepEqual(approvalEvent?.body, {
+    approvalId: "approval-1", actionId: base.actionId, targetDeviceId: base.targetDeviceId,
+    capabilitySnapshotId: base.capabilitySnapshotId, connectionRevision: snapshot().connectionRevision,
+    policyRevision: broker.policyRevision, normalizedInputDigest: digestRequest(approveNetworkRepair(base)),
+    expiresAt: "2026-11-21T00:05:00.000Z", principalDeviceId: "mobile-1", principalSessionId: "paired-session-1",
+    recordedAt: now,
+  });
   store.close();
 });
 

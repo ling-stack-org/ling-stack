@@ -261,6 +261,34 @@ export class SqliteDeviceSupportStore {
     `).run(request.taskId, request.actionId, request.idempotencyKey, requestDigest, JSON.stringify(request), now, now);
   }
 
+  recordApproval(taskId: string, approval: {
+    readonly approvalId: string;
+    readonly actionId: string;
+    readonly targetDeviceId: string;
+    readonly capabilitySnapshotId: string;
+    readonly connectionRevision: string;
+    readonly policyRevision: string;
+    readonly normalizedInputDigest: string;
+    readonly expiresAt: string;
+    readonly principalDeviceId?: string;
+    readonly principalSessionId?: string;
+  }, now: string): void {
+    const task = this.requireTask(taskId);
+    this.appendEvent(task.id, "approval_recorded", {
+      approvalId: approval.approvalId,
+      actionId: approval.actionId,
+      targetDeviceId: approval.targetDeviceId,
+      capabilitySnapshotId: approval.capabilitySnapshotId,
+      connectionRevision: approval.connectionRevision,
+      policyRevision: approval.policyRevision,
+      normalizedInputDigest: approval.normalizedInputDigest,
+      expiresAt: approval.expiresAt,
+      ...(approval.principalDeviceId ? { principalDeviceId: approval.principalDeviceId } : {}),
+      ...(approval.principalSessionId ? { principalSessionId: approval.principalSessionId } : {}),
+      recordedAt: now,
+    });
+  }
+
   getActionProposal(taskId: string): { readonly request: DeviceActionRequestV1; readonly requestDigest: string } | undefined {
     const row = this.database.prepare("SELECT request_json,request_digest FROM device_task_proposals WHERE task_id=?").get(taskId) as Row | undefined;
     if (!row) return undefined;
