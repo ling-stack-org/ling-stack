@@ -6,6 +6,7 @@ import {
   LING_THEME_CSS_VARIABLES,
   analyzeThemeImage,
   compileLingTheme,
+  type CompileLingThemeInput,
 } from "../dist/index.js";
 
 const imageFixture = new Uint8ClampedArray([
@@ -67,7 +68,7 @@ test("local theme image analysis is deterministic and keeps the quiet side avail
 
 test("theme compiler deterministically produces a complete validated generated manifest", () => {
   const analysis = analyzeThemeImage({ width: 4, height: 2, pixels: imageFixture });
-  const input = {
+  const input: CompileLingThemeInput = {
     identity: { id: "quiet-canvas", name: "Quiet Canvas", description: "Generated from a local reference." },
     colorScheme: "light",
     presentation: { profileId: "ling-immersive", surfaceIntensity: "balanced", artworkIntensity: "balanced" },
@@ -99,7 +100,7 @@ test("theme compiler blocks unsafe palette and unregistered presentation input i
   const compiled = compileLingTheme({
     identity: { id: "ling-user-injected", name: "Unsafe Theme" },
     colorScheme: "dark",
-    presentation: { profileId: "theme-owned-layout" },
+    presentation: { profileId: "theme-owned-layout" as CompileLingThemeInput["presentation"]["profileId"] },
     paletteCandidate: {
       background: "url(https://invalid.example/background.png)",
       accent: "var(--provider-color)",
@@ -204,7 +205,7 @@ test("theme compiler repairs extreme Light and Dark palette candidates into vali
   for (const fixture of [
     { id: "extreme-light", colorScheme: "light", background: "#000000", accent: "#ffffff" },
     { id: "extreme-dark", colorScheme: "dark", background: "#ffffff", accent: "#000000" },
-  ]) {
+  ] as const) {
     const compiled = compileLingTheme({
       identity: { id: fixture.id, name: fixture.id },
       colorScheme: fixture.colorScheme,

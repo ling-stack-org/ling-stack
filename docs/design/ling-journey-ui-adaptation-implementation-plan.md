@@ -258,8 +258,8 @@ Code and test anchors：`packages/ui-react/src/styles/themes/built-in-themes.css
 - `apps/web/e2e/full-window-background.spec.ts`：场景背景与资源边界断言。
 - `apps/web/e2e/ling-journey-ui-visual-acceptance.spec.ts`：Journey UI-01–UI-12 视觉和状态断言及截图证据。
 - `apps/web/e2e/dark-photo-visual-acceptance.spec.ts`：补充 Journey 首页、Composer 和侧栏截图。
-- `packages/ui-react/test/styles.test.mjs`：token 完整性、对比度、状态和无主题 ID 分支检查。
-- `packages/ui-react/test/theme-registry.test.mjs`：manifest、presentation profile 和 fallback 检查。
+- `packages/ui-react/test/styles.test.ts`：token 完整性、对比度、状态和无主题 ID 分支检查。
+- `packages/ui-react/test/theme-registry.test.ts`：manifest、presentation profile 和 fallback 检查。
 
 ## 8. 本地实施检查点（2026-10-27）
 
