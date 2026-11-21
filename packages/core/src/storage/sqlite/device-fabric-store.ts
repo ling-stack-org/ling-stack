@@ -5,6 +5,7 @@ import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
 
 import type {
   DeviceConformanceReportV1,
+  DeviceAccessGrantV1,
   DeviceEventEnvelopeV1,
   DeviceGraphNodeV1,
   DeviceGraphRelationshipV1,
@@ -399,6 +400,26 @@ export class SqliteDeviceFabricStore {
     return row ? parseJson<DeviceConformanceReportV1>(row.report_json, "device conformance report") : undefined;
   }
 
+  saveAccessGrant(grant: DeviceAccessGrantV1): DeviceAccessGrantV1 {
+    const current = this.getAccessGrant(grant.grantId);
+    if (current && grant.revision <= current.revision) throw new DeviceFabricError("revision_conflict", "device access grant revision must advance");
+    this.database.prepare("INSERT INTO device_access_grants(grant_id,target_device_id,principal_id,revision,grant_json) VALUES(?,?,?,?,?) ON CONFLICT(grant_id) DO UPDATE SET target_device_id=excluded.target_device_id,principal_id=excluded.principal_id,revision=excluded.revision,grant_json=excluded.grant_json")
+      .run(grant.grantId, grant.targetDeviceId, grant.principalId, grant.revision, JSON.stringify(grant));
+    this.database.prepare("INSERT INTO device_access_history(grant_id,revision,grant_json,changed_at) VALUES(?,?,?,?)").run(grant.grantId, grant.revision, JSON.stringify(grant), grant.changedAt);
+    return grant;
+  }
+
+  getAccessGrant(grantId: string): DeviceAccessGrantV1 | undefined {
+    const row = this.database.prepare("SELECT grant_json FROM device_access_grants WHERE grant_id=?").get(grantId) as Row | undefined;
+    return row ? parseJson<DeviceAccessGrantV1>(row.grant_json, "device access grant") : undefined;
+  }
+
+  revokeAccessGrant(grantId: string, revision: number, changedAt: string): DeviceAccessGrantV1 {
+    const current = this.getAccessGrant(grantId);
+    if (!current) throw new DeviceFabricError("target_missing", "device access grant is missing");
+    return this.saveAccessGrant({ ...current, status: "revoked", revision, changedAt });
+  }
+
   close(): void { this.database.close(); }
 
   private wouldCreateContainmentCycle(fromNodeId: string, toNodeId: string, replacingRelationshipId: string): boolean {
@@ -540,6 +561,20 @@ export class SqliteDeviceFabricStore {
         transport TEXT NOT NULL,
         report_json TEXT NOT NULL,
         generated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS device_access_grants (
+        grant_id TEXT PRIMARY KEY NOT NULL,
+        target_device_id TEXT NOT NULL,
+        principal_id TEXT NOT NULL,
+        revision INTEGER NOT NULL,
+        grant_json TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS device_access_history (
+        history_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        grant_id TEXT NOT NULL,
+        revision INTEGER NOT NULL,
+        grant_json TEXT NOT NULL,
+        changed_at TEXT NOT NULL
       );
     `);
   }

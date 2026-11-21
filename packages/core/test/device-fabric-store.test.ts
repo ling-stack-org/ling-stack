@@ -9,6 +9,7 @@ import type { DeviceConformanceReportV1, DeviceEventEnvelopeV1, DeviceGraphNodeV
 import { DeviceFabricError, DeviceTaskGraphCoordinator } from "../dist/device-fabric.js";
 import { DeviceSecretBroker } from "../dist/device-secrets.js";
 import { DeviceEventProjector } from "../dist/device-event-projection.js";
+import { DeviceAccessManager } from "../dist/device-access.js";
 import { SqliteDeviceFabricStore } from "../dist/storage/sqlite/device-fabric-store.js";
 
 const now = "2026-11-21T00:00:00.000Z";
@@ -241,5 +242,17 @@ test("conformance reports are validated, persisted, and replayable by report ide
   store.saveConformanceReport(report);
   assert.deepEqual(store.getConformanceReport("report-1"), report);
   assert.throws(() => store.saveConformanceReport({ ...report, checks: [{ id: "duplicate", status: "pass" }, { id: "duplicate", status: "skip" }] }), (error: unknown) => error instanceof DeviceFabricError && error.code === "revision_conflict");
+  store.close();
+});
+
+test("device access grants enforce target, principal, capability scope, expiry and revocation", () => {
+  const store = new SqliteDeviceFabricStore();
+  const access = new DeviceAccessManager(store);
+  access.grant({ grantId: "grant-1", targetDeviceId: "linux-1", principalId: "mobile-1", scope: "read_only", capabilityIds: ["linux.inspect.network"], revision: 1, status: "active", expiresAt: "2026-11-21T00:05:00.000Z", authority: "owner", changedAt: now });
+  assert.equal(access.authorize({ grantId: "grant-1", principalId: "mobile-1", targetDeviceId: "linux-1", capabilityId: "linux.inspect.network", now }).scope, "read_only");
+  assert.throws(() => access.authorize({ grantId: "grant-1", principalId: "mobile-1", targetDeviceId: "linux-1", capabilityId: "linux.repair.network", now }), /outside/);
+  assert.throws(() => access.authorize({ grantId: "grant-1", principalId: "other", targetDeviceId: "linux-1", capabilityId: "linux.inspect.network", now }), /principal/);
+  access.revoke("grant-1", 2, now);
+  assert.throws(() => access.authorize({ grantId: "grant-1", principalId: "mobile-1", targetDeviceId: "linux-1", capabilityId: "linux.inspect.network", now }), /inactive/);
   store.close();
 });

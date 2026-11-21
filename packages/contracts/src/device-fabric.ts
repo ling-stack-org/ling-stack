@@ -164,6 +164,19 @@ export interface DeviceOwnershipRevisionV1 {
   readonly changedAt: string;
 }
 
+export interface DeviceAccessGrantV1 {
+  readonly grantId: string;
+  readonly targetDeviceId: string;
+  readonly principalId: string;
+  readonly scope: "read_only" | "developer" | "owner";
+  readonly capabilityIds: readonly string[];
+  readonly revision: number;
+  readonly status: "active" | "revoked";
+  readonly expiresAt: string;
+  readonly authority: string;
+  readonly changedAt: string;
+}
+
 export interface DeviceContextPackV1 {
   readonly contextId: string;
   readonly taskId: string;
