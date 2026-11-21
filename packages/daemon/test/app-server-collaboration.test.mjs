@@ -44,7 +44,7 @@ test("App Server persists and replays Work Item collaboration records", { timeou
       expectedWorkItemRevision: item.revision,
       expectedCollaborationRevision: 0,
       actorId: "lead",
-      idempotencyKey: "deliberation-1",
+      idempotencyKey: "d1",
       payload: { decisionPoint: "choose adapter", options: ["a", "b"] },
     });
     const started = await waitFor(messages, message => message.id === 2);
@@ -58,7 +58,7 @@ test("App Server persists and replays Work Item collaboration records", { timeou
       expectedWorkItemRevision: 999,
       expectedCollaborationRevision: 999,
       actorId: "lead",
-      idempotencyKey: "deliberation-1",
+      idempotencyKey: "d1",
       payload: { decisionPoint: "choose adapter", options: ["a", "b"] },
     });
     const replayed = await waitFor(messages, message => message.id === 3);
