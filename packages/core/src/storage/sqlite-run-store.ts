@@ -24,6 +24,7 @@ import { SqliteCodeAssessmentCommentsStore } from "./sqlite/code-assessment-comm
 import type { CodeAssessmentCommentsStore } from "../code-assessment-comments.js";
 import { applyCodeAssessmentCommentsMigration } from "./sqlite/code-assessment-comments-migration.js";
 import { applyCodeAssessmentMigration } from "./sqlite/code-assessment-migration.js";
+import { applyAppServerMigrations } from "./sqlite/app-server-migration.js";
 import type { CodeAssessmentStore } from "../code-assessment-store.js";
 import { applyWorkspacePermissionMigration } from "./sqlite/workspace-permission-migration.js";
 import { applyRunnerIdMigration } from "./sqlite/runner-id-migration.js";
@@ -589,6 +590,7 @@ import {
   type WorkItemClaimBlocker,
   type WorkItemClaimRequest,
   type WorkItemCompleteRequest,
+  type WorkItemControlRequest,
   type WorkItemFailRequest,
   type WorkItemHeartbeatRequest,
   type WorkItemReleaseRequest,
@@ -861,6 +863,8 @@ import { SqliteExternalWorkCiTriageStore } from "./sqlite/external-work-ci-triag
 import { SqliteExternalWorkSchedulerStore } from "./sqlite/external-work-scheduler-store.js";
 import { SqliteExternalWorkWorkflowCoordinator } from "./sqlite/external-work-workflow-coordinator.js";
 import { SqliteWorkItemStore } from "./sqlite/work-item-store.js";
+import { SqliteWorkItemEvidenceStore } from "./sqlite/work-item-evidence-store.js";
+import { SqliteAppServerStateStore } from "./sqlite/app-server-state-store.js";
 import { SqliteWorkspaceProvenanceStore } from "./sqlite/workspace-provenance-store.js";
 import { SqlitePostCompactionUndoStore } from "./sqlite/post-compaction-undo-store.js";
 import { SqliteWorkspaceSnapshotStore } from "./sqlite/workspace-snapshot-store.js";
@@ -1022,6 +1026,8 @@ export class SqliteRunStore implements RunStore {
   private readonly externalWorkScheduler: SqliteExternalWorkSchedulerStore;
   private readonly externalWorkWorkflows: SqliteExternalWorkWorkflowCoordinator;
   private readonly workItems: SqliteWorkItemStore;
+  private readonly workItemEvidence: SqliteWorkItemEvidenceStore;
+  private readonly appServerState: SqliteAppServerStateStore;
   private readonly workspaceProvenance: SqliteWorkspaceProvenanceStore;
   private readonly postCompactionUndo: SqlitePostCompactionUndoStore;
   private readonly workspaceSnapshots: SqliteWorkspaceSnapshotStore;
@@ -1736,6 +1742,8 @@ export class SqliteRunStore implements RunStore {
         hasAiTeammate: (id) => Boolean(this.getAiTeammate(id)),
       },
     );
+    this.workItemEvidence = new SqliteWorkItemEvidenceStore({ database: this.database });
+    this.appServerState = new SqliteAppServerStateStore({ database: this.database });
     this.approvalResumes = new SqliteApprovalResumeStore(
       { database: this.database },
       {
@@ -2168,6 +2176,13 @@ export class SqliteRunStore implements RunStore {
             recordMigration: (version, name) => this.recordMigration(version, name),
           });
         }
+        applyAppServerMigrations({
+          database: this.database,
+          hasMigration: (version) => this.hasMigration(version),
+          hasColumn: (tableName, columnName) => this.hasColumn(tableName, columnName),
+          hasTable: (tableName) => this.hasTable(tableName),
+          recordMigration: (version, name) => this.recordMigration(version, name),
+        });
       });
     } catch (error) {
       this.database.close();
@@ -6087,6 +6102,10 @@ export class SqliteRunStore implements RunStore {
     return this.workItems.routeWorkItem(id, input, now);
   }
 
+  acceptWorkItem(id: string, input: import("../work-item-types.js").WorkItemAcceptanceRequest, now: string): import("../work-item-types.js").WorkItemAcceptanceResult | undefined {
+    return this.workItems.acceptWorkItem(id, input, now, this.appServerState);
+  }
+
   claimWorkItem(
     id: string,
     input: WorkItemClaimRequest,
@@ -6109,6 +6128,50 @@ export class SqliteRunStore implements RunStore {
 
   failWorkItem(id: string, input: WorkItemFailRequest, now: string): WorkItem | undefined {
     return this.workItems.failWorkItem(id, input, now);
+  }
+
+  appendWorkItemEvidence(input: import("../work-item-evidence-types.js").AppendWorkItemEvidenceInput, now: string): import("../work-item-evidence-types.js").AppendWorkItemEvidenceResult | undefined {
+    return this.workItemEvidence.appendWorkItemEvidence(input, now);
+  }
+
+  getWorkItemEvidence(id: string): import("../work-item-evidence-types.js").WorkItemEvidenceEntry | undefined {
+    return this.workItemEvidence.getWorkItemEvidence(id);
+  }
+
+  listWorkItemEvidence(options: import("../work-item-evidence-types.js").ListWorkItemEvidenceOptions): import("../work-item-evidence-types.js").WorkItemEvidenceEntry[] {
+    return this.workItemEvidence.listWorkItemEvidence(options);
+  }
+
+  getAppServerState(kind: import("../app-server-state-types.js").AppServerStateKind, recordId: string, workspaceId?: string): import("../app-server-state-types.js").AppServerStateRecord | undefined {
+    return this.appServerState.get(kind, recordId, workspaceId);
+  }
+
+  findAppServerStateByIdempotencyKey(kind: import("../app-server-state-types.js").AppServerStateKind, idempotencyKey: string, workspaceId?: string): import("../app-server-state-types.js").AppServerStateRecord | undefined {
+    return this.appServerState.findByIdempotencyKey(kind, idempotencyKey, workspaceId);
+  }
+
+  listAppServerState(kind?: import("../app-server-state-types.js").AppServerStateKind, workspaceId?: string): import("../app-server-state-types.js").AppServerStateRecord[] {
+    return this.appServerState.list(kind, workspaceId);
+  }
+
+  putAppServerState(input: import("../app-server-state-types.js").PutAppServerStateInput, now: string): import("../app-server-state-types.js").PutAppServerStateResult | undefined {
+    return this.appServerState.put(input, now);
+  }
+
+  deleteAppServerState(kind: import("../app-server-state-types.js").AppServerStateKind, recordId: string, workspaceId?: string): boolean {
+    return this.appServerState.delete(kind, recordId, workspaceId);
+  }
+
+  pauseWorkItem(id: string, input: WorkItemControlRequest, now: string): WorkItem | undefined {
+    return this.workItems.pauseWorkItem(id, input, now);
+  }
+
+  resumeWorkItem(id: string, input: WorkItemControlRequest, now: string): WorkItem | undefined {
+    return this.workItems.resumeWorkItem(id, input, now);
+  }
+
+  cancelWorkItem(id: string, input: WorkItemControlRequest, now: string): WorkItem | undefined {
+    return this.workItems.cancelWorkItem(id, input, now);
   }
 
   createProviderPreset(input: ProviderPresetInput, now: string): ProviderPreset {

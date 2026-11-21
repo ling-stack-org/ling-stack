@@ -815,6 +815,29 @@ export function createDaemonServer(
       nativeRunDispatcher,
     },
   );
+  const startCodeAssessmentRun = (
+    runRequest: import("./features/runs/schemas.js").RunRequest,
+    afterRunTerminal: (run: import("@ling-stack/core").RunSession) => Promise<void>,
+    onRunReady: (runId: string) => void,
+  ): Promise<string | undefined> => executeRunRequest(
+    runRequest,
+    createDetachedRunExecutionSink(),
+    runnerRegistry,
+    storeRegistry,
+    activeRuns,
+    runtimeSupervisor,
+    secretResolver,
+    mcpBroker,
+    {
+      onRunReady,
+      afterRunTerminal,
+      controlPlaneEvents,
+      startupState,
+      computerUsePreviews,
+      hostCapabilityBridge,
+      nativeRunDispatcher,
+    },
+  );
   const companionReplyService = new CompanionReplyService({
     startRun: startCompanionRun,
     activeRuns,
@@ -1093,6 +1116,7 @@ export function createDaemonServer(
     humanEvaluations,
     companionReplyService,
     companionSchedulers: companionSchedulers!,
+    startCodeAssessmentRun,
   };
   const server = createServer((request, response) => {
     if (harnessShuttingDown || activeRuns.isShuttingDown()) {
@@ -1146,6 +1170,7 @@ export function createDaemonServer(
   const harnessLifecycle = new HarnessLifecycleCoordinator({
     stopExternalAdmission: () => {
       harnessShuttingDown = true;
+      rpcWebSocketServer.beginShutdown();
       learningReviewCoordinator?.beginShutdown();
       for (const service of memorySemanticServices.values()) service.beginShutdown();
       humanEvaluations.close();

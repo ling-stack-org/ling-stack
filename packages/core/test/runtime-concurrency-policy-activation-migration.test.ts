@@ -9,6 +9,7 @@ import { applyRuntimeConcurrencyPolicyMigration } from "../dist/storage/sqlite/r
 import { applyRuntimeConcurrencyPolicyActivationMigration, RUNTIME_CONCURRENCY_POLICY_ACTIVATION_MIGRATION_VERSION,
   RUNTIME_CONCURRENCY_POLICY_ACTIVATION_MIGRATION_NAME } from "../dist/storage/sqlite/runtime-concurrency-policy-activation-migration.js";
 import { dropCodeAssessmentOverlay } from "./support/code-assessment-overlay-fixture.mjs";
+import { rewindAppServerFixture } from "./support/remaining-work-predecessor.ts";
 import { testDatabase } from "./support/sqlite-test-database.ts";
 
 type Store = ReturnType<typeof createSqliteRunStore>;
@@ -60,6 +61,7 @@ function fixture(t: TestContext, { installed = false } = {}) {
     rmSync(root, { recursive: true, force: true });
   });
   store = createSqliteRunStore(cwd, paths);
+  rewindAppServerFixture(testDatabase(store));
   dropCodeAssessmentOverlay(testDatabase(store));
   assert.equal(testDatabase(store).prepare("SELECT name FROM schema_migrations WHERE version=214").get()!.name, table);
   assert.equal(testDatabase(store).prepare("SELECT name FROM schema_migrations WHERE version=215").get()!.name, name);
@@ -91,6 +93,7 @@ function fixture(t: TestContext, { installed = false } = {}) {
     reopen() {
       store.close();
       store = createSqliteRunStore(cwd, paths);
+      rewindAppServerFixture(testDatabase(store));
       dropCodeAssessmentOverlay(testDatabase(store));
       return store;
     } };

@@ -19,6 +19,10 @@ import { type StateEntityType, type StateTransitionActor } from "../../state-mac
 import {
   type WorkItem,
   type WorkItemClaim,
+  type WorkItemControlProjection,
+  type WorkItemControlReceipt,
+  type WorkItemControlState,
+  type WorkItemHold,
   type WorkItemSourceType,
   type WorkItemStatus,
   type WorkItemWaitingReason,
@@ -42,6 +46,7 @@ export function mapWorkItem(row: Record<string, SQLOutputValue>, dependencyIds: 
     channelId: readNullableString(row, "channel_id"),
     sourceType: readString(row, "source_type") as WorkItemSourceType,
     sourceId: readString(row, "source_id"),
+    revision: readNumber(row, "revision"),
     title: readString(row, "title"),
     description: readNullableString(row, "description"),
     status: readString(row, "status") as WorkItemStatus,
@@ -59,6 +64,9 @@ export function mapWorkItem(row: Record<string, SQLOutputValue>, dependencyIds: 
     artifactIds: parseJsonStringArray(readString(row, "artifact_ids_json")),
     proofArtifactIds: parseJsonStringArray(readString(row, "proof_artifact_ids_json")),
     dependencyIds: [...dependencyIds],
+    planRevision: readNullableString(row, "plan_revision"),
+    control: mapWorkItemControl(row),
+    holds: mapWorkItemHolds(readString(row, "holds_json")),
     claim,
     attemptCount: readNumber(row, "attempt_count"),
     retryBudget: readNumber(row, "retry_budget"),
@@ -68,6 +76,65 @@ export function mapWorkItem(row: Record<string, SQLOutputValue>, dependencyIds: 
     failedAt: readNullableString(row, "failed_at"),
     failureReason: readNullableString(row, "failure_reason"),
   });
+}
+
+function mapWorkItemControl(row: Record<string, SQLOutputValue>): WorkItemControlProjection {
+  const receiptJson = readNullableString(row, "control_receipt_json");
+  return {
+    state: readString(row, "control_state") as WorkItemControlState,
+    generation: readNumber(row, "control_generation"),
+    receipt: receiptJson ? parseWorkItemControlReceipt(receiptJson) : undefined,
+    unresolvedEffectIds: parseJsonStringArray(readString(row, "control_unresolved_effect_ids_json")),
+    recoveryOwner: readNullableString(row, "control_recovery_owner"),
+  };
+}
+
+function parseWorkItemControlReceipt(value: string): WorkItemControlReceipt {
+  const parsed = parseJsonObject(value);
+  return {
+    id: readJsonString(parsed, "id"),
+    action: readJsonString(parsed, "action") as WorkItemControlReceipt["action"],
+    generation: readJsonNumber(parsed, "generation"),
+    requestedAt: readJsonString(parsed, "requestedAt"),
+    actorId: readJsonString(parsed, "actorId"),
+    reason: typeof parsed.reason === "string" ? parsed.reason : undefined,
+    idempotencyKey: readJsonString(parsed, "idempotencyKey"),
+    outcome: readJsonString(parsed, "outcome") as WorkItemControlReceipt["outcome"],
+  };
+}
+
+function mapWorkItemHolds(value: string): readonly WorkItemHold[] {
+  const parsed = parseJson(value);
+  if (!Array.isArray(parsed)) throw new Error("Expected Work Item holds array from SQLite");
+  return parsed.map((entry) => {
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
+      throw new Error("Expected Work Item hold object from SQLite");
+    }
+    const record = entry as Record<string, unknown>;
+    if (typeof record.id !== "string" || typeof record.kind !== "string" || typeof record.ownerRef !== "string"
+      || typeof record.reason !== "string" || typeof record.blocksNewAdmission !== "boolean") {
+      throw new Error("Invalid Work Item hold from SQLite");
+    }
+    return {
+      id: record.id,
+      kind: record.kind as WorkItemHold["kind"],
+      ownerRef: record.ownerRef,
+      reason: record.reason,
+      blocksNewAdmission: record.blocksNewAdmission,
+    };
+  });
+}
+
+function readJsonString(record: Record<string, unknown>, key: string): string {
+  const value = record[key];
+  if (typeof value !== "string") throw new Error(`Expected Work Item control ${key} to be a string`);
+  return value;
+}
+
+function readJsonNumber(record: Record<string, unknown>, key: string): number {
+  const value = record[key];
+  if (typeof value !== "number" || !Number.isInteger(value)) throw new Error(`Expected Work Item control ${key} to be an integer`);
+  return value;
 }
 
 export function mapStateTransitionEvent(row: Record<string, SQLOutputValue>): StateTransitionEvent {

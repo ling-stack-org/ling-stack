@@ -5,13 +5,20 @@ import {
   type ListWorkItemsOptions,
   type UpsertWorkItemInput,
   type WorkItem,
+  type WorkItemAcceptanceReceipt,
+  type WorkItemAcceptanceRequest,
+  type WorkItemAcceptanceResult,
   type WorkItemClaimBlocker,
   type WorkItemClaimRequest,
   type WorkItemCompleteRequest,
+  type WorkItemControlAction,
+  type WorkItemControlRequest,
+  type WorkItemControlReceipt,
   type WorkItemFailRequest,
   type WorkItemHeartbeatRequest,
   type WorkItemReleaseRequest,
   type WorkItemRouteRequest,
+  type WorkItemControlState,
   type WorkItemSourceType,
 } from "../../work-item-types.js";
 import { DEFAULT_WORKSPACE_ID } from "../../workspace-types.js";
@@ -19,6 +26,7 @@ import { readString, stringifyJson } from "./helpers.js";
 import { mapWorkItem } from "./runtime-work-mappers.js";
 import { workItemSelectSql } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
+import type { SqliteAppServerStateStore } from "./app-server-state-store.js";
 
 export interface SqliteWorkItemStorePorts {
   readonly assertChannelExists: (channelId: string) => void;
@@ -44,6 +52,7 @@ export class SqliteWorkItemStore {
     const labels = input.labels ?? existing?.labels ?? [];
     const artifactIds = input.artifactIds ?? existing?.artifactIds ?? [];
     const proofArtifactIds = input.proofArtifactIds ?? existing?.proofArtifactIds ?? [];
+    const revision = (existing?.revision ?? 0) + 1;
     this.context.database.exec("BEGIN IMMEDIATE");
     try {
       this.context.database
@@ -54,6 +63,7 @@ export class SqliteWorkItemStore {
             channel_id,
             source_type,
             source_id,
+            revision,
             title,
             description,
             status,
@@ -70,6 +80,13 @@ export class SqliteWorkItemStore {
             approval_id,
             artifact_ids_json,
             proof_artifact_ids_json,
+            plan_revision,
+            control_state,
+            control_generation,
+            control_receipt_json,
+            control_unresolved_effect_ids_json,
+            control_recovery_owner,
+            holds_json,
             claim_owner_id,
             claim_token,
             claimed_at,
@@ -82,7 +99,7 @@ export class SqliteWorkItemStore {
             failure_reason,
             created_at,
             updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(workspace_id, source_type, source_id) DO UPDATE SET
             channel_id = excluded.channel_id,
             title = excluded.title,
@@ -101,6 +118,14 @@ export class SqliteWorkItemStore {
             approval_id = excluded.approval_id,
             artifact_ids_json = excluded.artifact_ids_json,
             proof_artifact_ids_json = excluded.proof_artifact_ids_json,
+            revision = excluded.revision,
+            plan_revision = excluded.plan_revision,
+            control_state = excluded.control_state,
+            control_generation = excluded.control_generation,
+            control_receipt_json = excluded.control_receipt_json,
+            control_unresolved_effect_ids_json = excluded.control_unresolved_effect_ids_json,
+            control_recovery_owner = excluded.control_recovery_owner,
+            holds_json = excluded.holds_json,
             retry_budget = excluded.retry_budget,
             updated_at = excluded.updated_at
         `)
@@ -110,9 +135,10 @@ export class SqliteWorkItemStore {
           input.channelId ?? existing?.channelId ?? null,
           input.sourceType,
           input.sourceId,
+          revision,
           input.title,
           input.description ?? existing?.description ?? null,
-          input.status ?? existing?.status ?? "ready",
+          input.status ?? existing?.status ?? input.initialStatus ?? "ready",
           input.waitingReason ?? existing?.waitingReason ?? null,
           input.priority ?? existing?.priority ?? "normal",
           stringifyJson(labels),
@@ -126,6 +152,13 @@ export class SqliteWorkItemStore {
           input.approvalId ?? existing?.approvalId ?? null,
           stringifyJson(artifactIds),
           stringifyJson(proofArtifactIds),
+          existing?.planRevision ?? null,
+          existing?.control.state ?? "active",
+          existing?.control.generation ?? 0,
+          existing?.control.receipt ? stringifyJson(existing.control.receipt) : null,
+          stringifyJson(existing?.control.unresolvedEffectIds ?? []),
+          existing?.control.recoveryOwner ?? null,
+          stringifyJson(existing?.holds ?? []),
           existing?.claim?.ownerId ?? null,
           existing?.claim?.token ?? null,
           existing?.claim?.claimedAt ?? null,
@@ -201,7 +234,7 @@ export class SqliteWorkItemStore {
     this.context.database
       .prepare(`
         UPDATE work_items
-        SET channel_id = ?, priority = ?, assignee_teammate_id = ?, updated_at = ?
+        SET channel_id = ?, priority = ?, assignee_teammate_id = ?, revision = revision + 1, updated_at = ?
         WHERE id = ?
       `)
       .run(
@@ -212,6 +245,50 @@ export class SqliteWorkItemStore {
         id,
       );
     return this.getWorkItem(id);
+  }
+
+  acceptWorkItem(id: string, input: WorkItemAcceptanceRequest, now: string, state: SqliteAppServerStateStore): WorkItemAcceptanceResult | undefined {
+    const { database } = this.context;
+    database.exec("BEGIN IMMEDIATE");
+    try {
+      const result = this.acceptWithinTransaction(id, input, now, state);
+      database.exec("COMMIT");
+      return result;
+    } catch (error) {
+      if (database.isTransaction) database.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  private acceptWithinTransaction(id: string, input: WorkItemAcceptanceRequest, now: string, state: SqliteAppServerStateStore): WorkItemAcceptanceResult | undefined {
+    const workItem = this.getWorkItem(id);
+    if (!workItem) return undefined;
+    const prior = state.get("work_item_acceptance", id)?.payload as WorkItemAcceptanceReceipt | undefined;
+    if (prior) {
+      if (prior.idempotencyKey !== input.idempotencyKey) {
+        throw new Error("work_item_acceptance_already_committed");
+      }
+      if (prior.actorId !== input.actorId || prior.acceptedRevision !== input.expectedRevision) {
+        throw new Error("work_item_acceptance_idempotency_conflict");
+      }
+      return { workItem, receipt: prior, replayed: true };
+    }
+    if (workItem.revision !== input.expectedRevision || workItem.control.state !== "active"
+      || workItem.holds.some(hold => hold.blocksNewAdmission)
+      || !["intake", "triage", "backlog", "ready"].includes(workItem.status)) return undefined;
+    const receipt: WorkItemAcceptanceReceipt = {
+      id: `work_item_acceptance_${randomUUID()}`,
+      workItemId: id,
+      acceptedRevision: workItem.revision,
+      workItemRevision: workItem.revision + 1,
+      actorId: input.actorId,
+      idempotencyKey: input.idempotencyKey,
+      acceptedAt: now,
+    };
+    this.context.database.prepare("UPDATE work_items SET status='ready', waiting_reason=NULL, revision=revision+1, updated_at=? WHERE workspace_id=? AND id=?")
+      .run(now, workItem.workspaceId, id);
+    state.putWithinTransaction({ kind: "work_item_acceptance", recordId: id, expectedRevision: 0, payload: receipt }, now);
+    return { workItem: this.getWorkItem(id)!, receipt, replayed: false };
   }
 
   claimWorkItem(
@@ -232,7 +309,7 @@ export class SqliteWorkItemStore {
     this.context.database
       .prepare(`
         UPDATE work_items
-        SET status = ?, claim_owner_id = ?, claim_token = ?, claimed_at = ?, heartbeat_at = ?, claim_expires_at = ?, attempt_count = ?, updated_at = ?
+        SET status = ?, claim_owner_id = ?, claim_token = ?, claimed_at = ?, heartbeat_at = ?, claim_expires_at = ?, attempt_count = ?, revision = revision + 1, updated_at = ?
         WHERE id = ?
       `)
       .run("running", input.ownerId, claimToken, now, now, expiresAt, existing.attemptCount + 1, now, id);
@@ -250,7 +327,7 @@ export class SqliteWorkItemStore {
     }
     const expiresAt = new Date(Date.parse(now) + clampWorkItemLeaseMs(input.leaseMs)).toISOString();
     this.context.database
-      .prepare("UPDATE work_items SET heartbeat_at = ?, claim_expires_at = ?, updated_at = ? WHERE id = ?")
+      .prepare("UPDATE work_items SET heartbeat_at = ?, claim_expires_at = ?, revision = revision + 1, updated_at = ? WHERE id = ?")
       .run(now, expiresAt, now, id);
     return this.getWorkItem(id);
   }
@@ -263,7 +340,7 @@ export class SqliteWorkItemStore {
     this.context.database
       .prepare(`
         UPDATE work_items
-        SET status = ?, claim_owner_id = NULL, claim_token = NULL, claimed_at = NULL, heartbeat_at = NULL, claim_expires_at = NULL, updated_at = ?
+        SET status = ?, claim_owner_id = NULL, claim_token = NULL, claimed_at = NULL, heartbeat_at = NULL, claim_expires_at = NULL, revision = revision + 1, updated_at = ?
         WHERE id = ?
       `)
       .run("ready", now, id);
@@ -279,7 +356,7 @@ export class SqliteWorkItemStore {
     this.context.database
       .prepare(`
         UPDATE work_items
-        SET status = ?, proof_artifact_ids_json = ?, claim_owner_id = NULL, claim_token = NULL, claimed_at = NULL, heartbeat_at = NULL, claim_expires_at = NULL, completed_at = ?, failed_at = NULL, failure_reason = NULL, updated_at = ?
+        SET status = ?, proof_artifact_ids_json = ?, claim_owner_id = NULL, claim_token = NULL, claimed_at = NULL, heartbeat_at = NULL, claim_expires_at = NULL, completed_at = ?, failed_at = NULL, failure_reason = NULL, revision = revision + 1, updated_at = ?
         WHERE id = ?
       `)
       .run("done", stringifyJson(proofArtifactIds), now, now, id);
@@ -295,10 +372,66 @@ export class SqliteWorkItemStore {
     this.context.database
       .prepare(`
         UPDATE work_items
-        SET status = ?, waiting_reason = ?, claim_owner_id = NULL, claim_token = NULL, claimed_at = NULL, heartbeat_at = NULL, claim_expires_at = NULL, failed_at = ?, failure_reason = ?, updated_at = ?
+        SET status = ?, waiting_reason = ?, claim_owner_id = NULL, claim_token = NULL, claimed_at = NULL, heartbeat_at = NULL, claim_expires_at = NULL, failed_at = ?, failure_reason = ?, revision = revision + 1, updated_at = ?
         WHERE id = ?
       `)
       .run(canRetry ? "ready" : "blocked", canRetry ? null : "user", now, input.reason, now, id);
+    return this.getWorkItem(id);
+  }
+
+  pauseWorkItem(id: string, input: WorkItemControlRequest, now: string): WorkItem | undefined {
+    return this.controlWorkItem(id, "pause", input, now);
+  }
+
+  resumeWorkItem(id: string, input: WorkItemControlRequest, now: string): WorkItem | undefined {
+    return this.controlWorkItem(id, "resume", input, now);
+  }
+
+  cancelWorkItem(id: string, input: WorkItemControlRequest, now: string): WorkItem | undefined {
+    return this.controlWorkItem(id, "cancel", input, now);
+  }
+
+  private controlWorkItem(id: string, action: WorkItemControlAction, input: WorkItemControlRequest, now: string): WorkItem | undefined {
+    const existing = this.getWorkItem(id);
+    if (!existing) return undefined;
+    const priorReceipt = existing.control.receipt;
+    if (priorReceipt?.idempotencyKey === input.idempotencyKey && priorReceipt.action === action) {
+      return existing;
+    }
+    if (existing.revision !== input.expectedRevision || existing.control.generation !== input.expectedControlGeneration) {
+      return undefined;
+    }
+    const nextState = nextWorkItemControlState(existing.control.state, action, existing.control.unresolvedEffectIds.length);
+    if (!nextState) return existing;
+    const generation = existing.control.generation + 1;
+    const receipt: WorkItemControlReceipt = {
+      id: `work_item_control_${randomUUID().replaceAll("-", "")}`,
+      action,
+      generation,
+      requestedAt: now,
+      actorId: input.actorId,
+      reason: input.reason,
+      idempotencyKey: input.idempotencyKey,
+      outcome: action === "cancel"
+        ? (existing.control.unresolvedEffectIds.length > 0 ? "settling" : "settled")
+        : "accepted",
+    };
+    this.context.database
+      .prepare(`
+        UPDATE work_items
+        SET control_state = ?, control_generation = ?, control_receipt_json = ?,
+            revision = revision + 1, updated_at = ?
+        WHERE id = ? AND revision = ? AND control_generation = ?
+      `)
+      .run(
+        nextState,
+        generation,
+        stringifyJson(receipt),
+        now,
+        id,
+        existing.revision,
+        existing.control.generation,
+      );
     return this.getWorkItem(id);
   }
 
@@ -327,6 +460,9 @@ export class SqliteWorkItemStore {
   }
 
   private workItemClaimBlocker(item: WorkItem, now: string): WorkItemClaimBlocker | undefined {
+    if (item.control.state !== "active") {
+      return { code: "control_blocked", message: `Work item control is ${item.control.state}.` };
+    }
     if (item.status === "done" || item.status === "archived") {
       return { code: "terminal", message: `Work item is terminal: ${item.status}` };
     }
@@ -354,6 +490,17 @@ export class SqliteWorkItemStore {
     }
     return undefined;
   }
+}
+
+function nextWorkItemControlState(state: WorkItemControlState, action: WorkItemControlAction, unresolvedEffectCount: number): WorkItemControlState | undefined {
+  if (action === "pause") {
+    return state === "active" || state === "blocked" ? "paused" : undefined;
+  }
+  if (action === "resume") {
+    return state === "paused" || state === "blocked" ? "active" : undefined;
+  }
+  if (state !== "active" && state !== "paused" && state !== "blocked") return undefined;
+  return unresolvedEffectCount > 0 ? "cancelling" : "cancelled";
 }
 
 function createWorkItemClaimToken(): string {

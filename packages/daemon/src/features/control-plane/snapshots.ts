@@ -19,6 +19,7 @@ import type {
   TeammatesDomainSnapshot,
   WorkUnitsDomainSnapshot,
   WorkUnitSummary,
+  WorkItemsDomainSnapshot,
 } from "@ling-stack/contracts";
 import type {
   ApprovalPolicy,
@@ -53,6 +54,8 @@ export function readControlPlaneDomainSnapshot(
   switch (domain) {
     case "runs":
       return readRunsSnapshot(input.cwd, input.store);
+    case "work_items":
+      return readWorkItemsSnapshot(input.store);
     case "work_units":
       return readWorkUnitsSnapshot(input.store);
     case "skills":
@@ -76,6 +79,7 @@ export function readControlPlaneDomainSnapshot(
 
 type ControlPlaneSnapshotData =
   | RunsDomainSnapshot
+  | WorkItemsDomainSnapshot
   | WorkUnitsDomainSnapshot
   | SkillsDomainSnapshot
   | TeammatesDomainSnapshot
@@ -125,6 +129,27 @@ function toRunSummary(run: RunSession): RunSummary {
     terminalAt: run.endedAt,
     errorCode: run.errorMessage ? "run_error" : undefined,
   }) as RunSummary;
+}
+
+function readWorkItemsSnapshot(store: RunStore): WorkItemsDomainSnapshot {
+  const workItems = store.listWorkItems({ limit: 200 });
+  return {
+    counts: {
+      total: workItems.length,
+      active: workItems.filter((item) => ["running", "waiting", "review", "ready"].includes(item.status)).length,
+      blocked: workItems.filter((item) => item.status === "blocked" || item.control.state === "blocked").length,
+      terminal: workItems.filter((item) => ["done", "cancelled", "superseded", "archived"].includes(item.status)).length,
+    },
+    workItems: workItems.slice(0, 100).map((item) => ({
+      id: item.id,
+      status: item.status,
+      sourceType: item.sourceType,
+      title: item.title,
+      revision: item.revision,
+      controlState: item.control.state,
+      updatedAt: item.updatedAt,
+    })),
+  };
 }
 
 function readWorkUnitsSnapshot(store: RunStore): WorkUnitsDomainSnapshot {
