@@ -37,10 +37,11 @@ are not published here. The relay URL and temporary development checkout are exa
 ## Device Support Platform Checkpoint 2026-11-21
 
 The `codex/device-platform-implementation` branch incorporates `origin/main` at
-`42a16c6f8` through merge commit `93791a2ec`. The merge keeps the complete Remote
-Client TypeScript test entry point and the device-task approval, revoke, reconnect
-and readback tests. D1 and D2 have completed their tracked core checks. D3–D22 remain
-in progress. [Per-slice implementation ledger](../design/ling-device-support-platform-implementation-plan.md#per-slice-evidence-ledger)
+`7bd8cb5fb` through merge commit `8986aad3a`. The earlier merge `93791a2ec` keeps
+the complete Remote Client TypeScript test entry point and the device-task
+approval, revoke, reconnect and readback tests. D1 and D2 have completed their
+tracked core checks. D3–D22 remain in progress.
+[Per-slice implementation ledger](../design/ling-device-support-platform-implementation-plan.md#per-slice-evidence-ledger)
 
 Commit `fdb3b50f7` uses the configured OpenSSH trust-store path and reads the target's
 IPv4 configuration, route lookup and wireless association as separate facts. Gateway
@@ -53,7 +54,7 @@ negative and matching readback with a single restart dispatch.
 
 ### Software verification
 
-The checkpoint passed 234 local tests. The combined run used the package type checks
+The device checkpoint passed 234 local tests. The combined run used the package type checks
 for Contracts, Core, Daemon, Remote Protocol, Remote Client and Mobile, plus the Core
 and Daemon builds. Remote Client's `test` command also built its shared dependencies.
 
@@ -65,6 +66,9 @@ and Daemon builds. Remote Client's `test` command also built its shared dependen
 | Remote Protocol | `corepack pnpm --filter @ling-stack/remote-protocol test:ci` | 42 |
 | Remote Client | `corepack pnpm --filter @ling-stack/remote-client test` | 12 |
 | Mobile | `corepack pnpm --filter @ling-stack/mobile test:ci` | 95 |
+
+The main sync also passed 42 scope-selection tests with
+`node --test scripts/ci/classify-scope.test.ts`.
 
 OpenSSH `ssh -G` resolved the explicit known-hosts file path with spaces. This
 checkpoint exercised device paths through local fixtures and loopback services. Linux
