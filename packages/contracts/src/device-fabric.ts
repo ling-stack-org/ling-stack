@@ -243,6 +243,8 @@ export interface DevicePlannerProposalV1 {
   readonly graph: DeviceTaskGraphV1;
   readonly planningInputRefs: readonly string[];
   readonly createdAt: string;
+  readonly runnerId?: string;
+  readonly runnerCapabilityRevision?: string;
 }
 
 export interface DevicePlannerAcceptanceV1 {
@@ -253,4 +255,6 @@ export interface DevicePlannerAcceptanceV1 {
   readonly contextDigest: string;
   readonly requiredApprovalNodeIds: readonly string[];
   readonly acceptedAt: string;
+  readonly runnerId?: string;
+  readonly runnerCapabilityRevision?: string;
 }
