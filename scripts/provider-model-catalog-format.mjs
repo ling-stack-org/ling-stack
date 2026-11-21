@@ -47,27 +47,41 @@ export function renderProviderModelCatalog({ generatedAt, records, updatedAt, ve
 }
 
 /** Verify the serialized data without importing the candidate TypeScript module. */
-export function isGeneratedProviderModelCatalog(source) {
-  if (!source.startsWith(header) || !source.endsWith(footer)) return false;
+export function isGeneratedProviderModelCatalogRefresh(before, after) {
+  const previous = readGeneratedRecords(before);
+  const current = readGeneratedRecords(after);
+  if (!previous || !current) return false;
+  // The generator leaves some non-chat models without capabilities. Clearing
+  // a model's capabilities or introducing a new empty list needs consumer CI.
+  const baselineEmpty = new Set(previous.filter(record => record.capabilities.length === 0).map(recordKey));
+  return current.every(record => record.capabilities.length > 0 || baselineEmpty.has(recordKey(record)));
+}
+
+function readGeneratedRecords(source) {
+  if (!source.startsWith(header) || !source.endsWith(footer)) return undefined;
   const separatorAt = source.indexOf(separator, header.length);
-  if (separatorAt < 0) return false;
+  if (separatorAt < 0) return undefined;
   try {
     const manifest = JSON.parse(source.slice(header.length, separatorAt));
     const records = JSON.parse(source.slice(separatorAt + separator.length, -footer.length));
     if (typeof manifest?.generatedAt !== "string" || typeof manifest.updatedAt !== "string"
-      || !Array.isArray(records) || records.length === 0 || !records.every(isGeneratedRecord)) return false;
-    const keys = records.map(record => `${record.providerId}\u0000${record.id.toLowerCase()}`);
-    if (new Set(keys).size !== keys.length) return false;
-    return source === renderProviderModelCatalog({
+      || !Array.isArray(records) || records.length === 0 || !records.every(isGeneratedRecord)) return undefined;
+    if (new Set(records.map(recordKey)).size !== records.length) return undefined;
+    const canonical = renderProviderModelCatalog({
       generatedAt: manifest.generatedAt,
       records,
       updatedAt: manifest.updatedAt,
       version: providerModelCatalogVersion(records),
     });
+    return source === canonical ? records : undefined;
   } catch (error) {
-    if (error instanceof SyntaxError) return false;
+    if (error instanceof SyntaxError) return undefined;
     throw error;
   }
+}
+
+function recordKey(record) {
+  return `${record.providerId}\u0000${record.id.toLowerCase()}`;
 }
 
 function isGeneratedRecord(record) {

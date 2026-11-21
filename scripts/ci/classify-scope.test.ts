@@ -523,7 +523,7 @@ test("the real package graph keeps Web's CLI and catalog consumers without build
 test("Git verifies provider catalog data before selecting focused Core validation", t => {
   const repo = repositoryFixture(t);
   const render = (id: string, providerId = "openai", capabilities = ["chat"]) => {
-    const records = [{ providerId, id, capabilities }];
+    const records = [{ providerId: "google", id: "tts", input: ["text"], capabilities: [] }, { providerId, id, capabilities }];
     return renderProviderModelCatalog({ records, version: providerModelCatalogVersion(records),
       generatedAt: "2026-11-21T00:00:00.000Z", updatedAt: "2026-11-21" });
   };
@@ -551,6 +551,8 @@ test("Git verifies provider catalog data before selecting focused Core validatio
     refreshed.replace("export const providerModelCatalogRecords", "void 0;\nexport const providerModelCatalogRecords"),
     render("candidate", "untrusted-provider"),
     render("candidate", "openai", ["chat", "web_search"]),
+    render("candidate", "openai", []),
+    render("baseline", "openai", []),
   ]) {
     repo.write(PROVIDER_MODEL_CATALOG_PATH, candidate);
     repo.commit();
