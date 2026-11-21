@@ -464,6 +464,13 @@ inspector. It can show:
 It should not show workflow ids, context packet ids, selector metadata, token budgets, or
 raw logs. It should not become a second workflow detail surface.
 
+### Desktop Companion
+
+The implemented [floating collaboration surface](companion.md#floating-collaboration)
+brings questions, approvals, handoffs, and result briefs to the user while the
+Companion is open. Each card resolves back to the owning conversation item,
+approval, or report in Ling.
+
 ### Conversation Evidence And Detail
 
 The main conversation remains the smart detail surface. Inline expansion, agent-span

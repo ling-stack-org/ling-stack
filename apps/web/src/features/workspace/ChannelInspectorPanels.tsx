@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { LingDaemonError } from "@ling-stack/api-client";
 import { isSupportedLocale, localeDescriptor } from "@ling-stack/localization";
 import {
@@ -21,6 +21,7 @@ import { InlineFeedback, Select, useLingToast } from "../../shared/ui/index.js";
 import { RuntimeDiagnosticsPanel } from "./RuntimeDiagnosticsPanel.js";
 import { ChannelBriefEditor, type ChannelBriefDraft } from "./ChannelBriefEditor.js";
 import { ChannelProtocolResetDialog } from "./ChannelProtocolResetDialog.js";
+import { revealConversationTarget } from "./conversation-locate-pulse.js";
 import { useChannelProtocolResetController } from "./useChannelProtocolResetController.js";
 import {
   WorkflowQueueCard,
@@ -88,6 +89,8 @@ function ProtocolList<T>({
 
 export function ChannelInspector({
   cwd,
+  sourceTarget,
+  onSourceTargetHandled,
   mode,
   onModeChange,
   channel,
@@ -130,6 +133,8 @@ export function ChannelInspector({
   onReconcileWorkUnit,
 }: {
   readonly cwd: string;
+  readonly sourceTarget?: { readonly id: string; readonly intentId: string; readonly workUnitId?: string };
+  readonly onSourceTargetHandled?: (intentId: string) => void;
   readonly mode: ChannelInspectorMode;
   readonly onModeChange: (mode: ChannelInspectorMode) => void;
   readonly channel: Channel | undefined;
@@ -176,12 +181,23 @@ export function ChannelInspector({
   const taskSummaries = selectedTask ? contextSummaries.filter((summary) => summary.targetType === "task" && summary.targetId === selectedTask.id) : [];
   const activeWorkflows = workflows.filter((workflow) => workflow.status !== "succeeded" && workflow.status !== "cancelled" && workflow.status !== "failed");
   const [openRoutingDecisionId, setOpenRoutingDecisionId] = useState("");
+  const [inspectedWorkUnitId, setInspectedWorkUnitId] = useState<string>();
+  const inspectorRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!sourceTarget) return;
+    const target = inspectorRef.current?.querySelector<HTMLElement>(`[data-channel-inspector-source-id="${CSS.escape(sourceTarget.id)}"]`);
+    if (target) {
+      setInspectedWorkUnitId(sourceTarget.workUnitId);
+      revealConversationTarget(target);
+      onSourceTargetHandled?.(sourceTarget.intentId);
+    }
+  }, [handoffs, mode, onSourceTargetHandled, runtimeDiagnostics, sourceTarget, workflows, workflowSteps, workUnits]);
   const recentRoutingEvidence = useMemo(
     () => buildRecentRoutingEvidence(routeDecisions, intentDecisions),
     [intentDecisions, routeDecisions],
   );
   return (
-    <section className="channel-inspector" aria-label={t("Channel inspector")}>
+    <section ref={inspectorRef} className="channel-inspector" aria-label={t("Channel inspector")}>
       <div className="channel-inspector-tabs" role="tablist" aria-label={t("Channel inspector modes")}>
         {(["protocol", "brief", "routing", "decisions", "handoffs", "runtime"] as const).map((item) => (
           <button key={item} type="button" className={mode === item ? "active" : ""} onClick={() => onModeChange(item)}>
@@ -242,7 +258,7 @@ export function ChannelInspector({
           emptyLabel={t("No handoffs")}
           items={handoffs}
           renderItem={(handoff) => (
-            <div className="protocol-row" key={handoff.id}>
+            <div className="protocol-row" key={handoff.id} data-channel-inspector-source-id={handoff.id}>
               <span>
                 <strong>{handoff.fromParticipantLabel} {"->"} {handoff.toParticipantLabel}</strong>
                 <small>{handoff.status} · {handoff.reason}</small>
@@ -260,6 +276,7 @@ export function ChannelInspector({
           <RuntimeDiagnosticsPanel
             diagnostics={runtimeDiagnostics}
             workUnits={workUnits}
+            targetWorkUnitId={sourceTarget?.workUnitId ?? inspectedWorkUnitId}
             loading={runtimeLoading}
             actionWorkUnitId={runtimeActionWorkUnitId}
             onRefresh={onRefreshRuntime}

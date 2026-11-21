@@ -161,7 +161,7 @@ function WorkflowStepCard({
   const workflowSourceLabel = metadata ? workflowStepSourceLabel(metadata, t) : "";
   const gates = metadata?.gates ?? [];
   return (
-    <article className="workflow-step-card compact">
+    <article className="workflow-step-card compact" data-channel-inspector-source-id={step.id}>
       <div className="workflow-step-head">
         <span>
           <strong>{step.position}. {step.title}</strong>

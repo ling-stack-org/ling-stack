@@ -53,6 +53,11 @@ const capabilities: LingDesktopCapabilities = {
       ipcRenderer.on(DESKTOP_IPC_CHANNELS.companionSettingsRequested, wrapped);
       return () => ipcRenderer.off(DESKTOP_IPC_CHANNELS.companionSettingsRequested, wrapped);
     },
+    onSourceRequested: (listener) => {
+      const wrapped = (_event: Electron.IpcRendererEvent, request: import("../shared/companion-capabilities.js").CompanionNavigationRequest) => listener(request);
+      ipcRenderer.on(DESKTOP_IPC_CHANNELS.companionNavigationRequested, wrapped);
+      return () => ipcRenderer.off(DESKTOP_IPC_CHANNELS.companionNavigationRequested, wrapped);
+    },
   },
   platform,
   ...(productVersion ? { productVersion } : {}),

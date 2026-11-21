@@ -1,4 +1,5 @@
 import type {
+  CompanionAttentionProjectionResponse,
   CompanionEventsResponse,
   CompanionInteractionRequest,
   CompanionInteractionResponse,
@@ -18,6 +19,13 @@ import { daemonClient } from "./client.js";
 
 export function listCompanions(cwd: string): Promise<CompanionListResponse> {
   return daemonClient.listCompanions(cwd);
+}
+
+export function getCompanionAttention(
+  cwd: string,
+  options: { readonly limit?: number } = {},
+): Promise<CompanionAttentionProjectionResponse> {
+  return daemonClient.getCompanionAttention(cwd, options);
 }
 
 export function getCompanion(cwd: string, companionId: string): Promise<CompanionMutationResponse> {

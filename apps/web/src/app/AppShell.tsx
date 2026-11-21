@@ -1,8 +1,9 @@
 import { useChannelSessionsController } from "./use-channel-sessions-controller.js";
-import { channelSessionThreadId, isChannelSessionDraft } from "./channel-session-state.js";
+import { channelSessionSelection, channelSessionThreadId, isChannelSessionDraft } from "./channel-session-state.js";
 import { WorkSummaryProvider } from "../features/workspace/work-summary/WorkSummaryProvider.js";
 import { DaemonObservationProvider, useDaemonObservationState, DaemonObservationDeferredError } from "../shared/conversation/observation/daemon-observation.js";
-import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { CompanionNavigationRequest } from "../../../desktop/shared/companion-capabilities.js";
 import {
   PanelRightClose,
   PanelRightOpen,
@@ -93,6 +94,7 @@ import { deriveChannelRuns } from "../lib/channel-artifacts.js";
 import { deriveSelectedChannelTeammateMemberships } from "../lib/channel-teammates.js";
 import { readDataString } from "../lib/data.js";
 import { getStartupStatus, refreshStartupStatus } from "../api/startup.js";
+import { getApproval } from "../api/approvals.js";
 import { getUserProfile } from "../api/profile.js";
 import {
   clearSavedWorkspaceCwd,
@@ -233,6 +235,8 @@ type SettingsReturnTarget = {
 
 type SettingsWorkspaceToolView = "" | "providers" | "teammates" | "councils";
 
+type CompanionSourceTarget = CompanionNavigationRequest & { readonly intentId: string };
+
 function isSettingsWorkspaceToolView(view: ViewId): view is Exclude<SettingsWorkspaceToolView, ""> {
   return view === "providers" || view === "teammates" || view === "councils";
 }
@@ -298,6 +302,10 @@ export function AppShell(): React.JSX.Element {
   const [teammateConversationRefreshToken, setTeammateConversationRefreshToken] = useState(0);
   const [teammateCreateOpen, setTeammateCreateOpen] = useState(false);
   const [companionMiniOpen, setCompanionMiniOpen] = useState(false);
+  const [companionSourceTarget, setCompanionSourceTarget] = useState<CompanionSourceTarget>();
+  const consumeCompanionSourceTarget = useCallback((intentId: string) => {
+    setCompanionSourceTarget(current => current?.intentId === intentId ? undefined : current);
+  }, []);
   const workspaceTimelineLoadRef = useRef("");
   const channelEditFormSyncKeyRef = useRef("");
   const workspaceDefaultProviderPresetIdRef = useRef<string | undefined>(undefined);
@@ -668,8 +676,11 @@ export function AppShell(): React.JSX.Element {
     setDefaultChannelTeammate,
     resetForCwd: resetTeammatesForCwd,
   } = teammatesDomain.actions;
+  const requestedCompanionApprovalId = activeView === "approvals" && companionSourceTarget?.workspace === form.cwd.trim()
+    ? companionSourceTarget.approvalId : undefined;
   const approvalsDomain = useApprovalsDomain({
     cwd: form.cwd.trim(),
+    retainApprovalId: requestedCompanionApprovalId,
     emitEvent: handleDomainEvent,
   });
   const {
@@ -1653,6 +1664,54 @@ export function AppShell(): React.JSX.Element {
     }));
     openPlainView("work_board");
   }
+
+  function openCompanionSource(request: CompanionNavigationRequest): void {
+    if (request.workspace !== form.cwd.trim()) return;
+    clearSettingsWorkspaceToolView();
+    closeSettingsRunDiagnostics();
+    setCompanionSourceTarget(undefined);
+    if (request.conversationId) {
+      void openConversationThread(request.conversationId);
+    } else if (request.approvalId) {
+      setCompanionSourceTarget({ ...request, intentId: crypto.randomUUID() });
+      openPlainView("approvals");
+      setSelectedApprovalId(request.approvalId);
+    } else if (request.runId && !request.sourceItemId && !request.reportId) {
+      void openRunFromWorkspace(request.runId);
+    } else if (request.channelId) {
+      setCompanionSourceTarget({ ...request, intentId: crypto.randomUUID() });
+      setSelectedTaskId("");
+      if (request.threadId) {
+        selectWorkspaceChannelBranch(request.channelId, channelSessionSelection(request.threadId));
+      } else {
+        selectWorkspaceChannel(request.channelId);
+      }
+    } else if (request.threadId) {
+      setThreadPageTargetId(request.threadId);
+      setActiveView("threads");
+      setActiveSidebarTarget("threads");
+    } else {
+      openWorkBoard("global");
+    }
+  }
+
+  useEffect(() => window.lingDesktop?.companionWindow?.onSourceRequested(openCompanionSource), [openCompanionSource]);
+
+  useEffect(() => {
+    if (!companionSourceTarget) return;
+    const { approvalId, channelId, intentId, workspace } = companionSourceTarget;
+    const isSourceView = approvalId ? activeView === "approvals" : activeView === "workspace" && channelId === selectedChannelId;
+    if (!isSourceView || workspace !== form.cwd.trim()) {
+      consumeCompanionSourceTarget(intentId);
+      return;
+    }
+    if (!approvalId) return;
+    let cancelled = false;
+    void getApproval(workspace, approvalId).then(({ approval }) => {
+      if (!cancelled && approval.id === approvalId) upsertApprovalRecord(approval);
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [activeView, companionSourceTarget, consumeCompanionSourceTarget, form.cwd, selectedChannelId]);
 
   function openTaskInWorkBoard(task: Task): void {
     const terminal = task.status === "done" || task.status === "failed" || task.status === "cancelled";
@@ -2662,6 +2721,7 @@ export function AppShell(): React.JSX.Element {
           setCompanionMiniOpen(false);
           openSettingsSection("companion");
         }}
+        onOpenSource={openCompanionSource}
       />
       <section
         ref={workspaceSurfaceRef}
@@ -2722,6 +2782,9 @@ export function AppShell(): React.JSX.Element {
             userProfile={userProfile}
             channels={channels}
             selectedChannelId={selectedChannelId}
+            companionSourceTarget={companionSourceTarget?.workspace === form.cwd.trim() && companionSourceTarget.channelId === selectedChannelId
+              ? companionSourceTarget : undefined}
+            onCompanionSourceTargetHandled={consumeCompanionSourceTarget}
             selectedChannelBranchRootThreadId={selectedChannelBranchRootThreadId}
             channelUtilityRequest={channelUtilityRequest}
             onChannelUtilityRequestHandled={id => setChannelUtilityRequest(current => current?.id === id ? undefined : current)}
@@ -3559,6 +3622,7 @@ export function AppShell(): React.JSX.Element {
                 repairRunId={approvalRepairRunId}
                 repairRun={approvalRepairRun}
                 selectedApprovalId={selectedApprovalId}
+                requestedApprovalId={requestedCompanionApprovalId}
                 externalActionDetails={externalActionDetails}
                 externalActionBusy={externalActionBusy}
                 isLoading={approvalsLoading}
@@ -3566,7 +3630,10 @@ export function AppShell(): React.JSX.Element {
                 errorMessage={approvalsDomain.error?.message ?? ""}
                 approvalErrors={approvalErrors}
                 onRefresh={() => void refreshApprovals()}
-                onSelectApproval={setSelectedApprovalId}
+                onSelectApproval={approvalId => {
+                  if (companionSourceTarget?.approvalId && approvalId !== companionSourceTarget.approvalId) consumeCompanionSourceTarget(companionSourceTarget.intentId);
+                  setSelectedApprovalId(approvalId);
+                }}
                 onRefreshRepair={(runId) => {
                   void refreshApprovals(form.cwd.trim(), runId);
                   void loadRun(runId, form.cwd.trim());
