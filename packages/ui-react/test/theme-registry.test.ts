@@ -13,6 +13,7 @@ import {
   resolvedThemeToBootstrapSnapshot,
   validateThemeManifest,
   verifyThemeSentinel,
+  type ThemeSelection,
 } from "../dist/index.js";
 
 test("built-in themes are independent complete manifests with fixed and system resolution", () => {
@@ -39,12 +40,12 @@ test("scene themes retain readable secondary text on paper/code and all accent s
   const registry = new ThemeRegistry();
   for (const themeId of ['ling-breeze', 'ling-ocean', 'ling-night']) {
     const { tokens } = registry.resolve({ mode: 'fixed', themeId }, 'light').manifest;
-    for (const foreground of ['strong', 'default', 'muted', 'soft', 'link']) {
-      for (const surface of ['panel', 'code', 'composer']) {
+    for (const foreground of ['strong', 'default', 'muted', 'soft', 'link'] as const) {
+      for (const surface of ['panel', 'code', 'composer'] as const) {
         assert.ok(contrastRatio(tokens.text[foreground], tokens.background[surface]) >= 4.5, `${themeId}/${foreground}/${surface}`);
       }
     }
-    for (const state of ['accent', 'accentHover', 'accentPressed']) {
+    for (const state of ['accent', 'accentHover', 'accentPressed'] as const) {
       assert.ok(contrastRatio(tokens.action.accentForeground, tokens.action[state]) >= 4.5, `${themeId}/${state}`);
     }
   }
@@ -58,7 +59,7 @@ test("registry validates imported themes, protects built-ins, and falls back wit
   assert.equal(result.theme?.manifest.source, "local-import");
   assert.equal(registry.resolve({ mode: "fixed", themeId: "quiet-ocean" }, "dark").themeId, "quiet-ocean");
 
-  const unknownSelection = { mode: "fixed", themeId: "missing-theme" };
+  const unknownSelection: ThemeSelection = { mode: "fixed", themeId: "missing-theme" };
   const fallback = registry.resolve(unknownSelection, "dark");
   assert.equal(fallback.themeId, "ling-dark");
   assert.equal(fallback.source, "fallback");
@@ -128,7 +129,7 @@ test("selection and bootstrap snapshot parsers accept only complete allowlisted 
 test("theme application restores root attributes and variables when verification or persistence fails", async () => {
   const registry = new ThemeRegistry();
   assert.equal(registry.install(importedTheme("quiet-ocean"), "local-import").ok, true);
-  const root = fakeRoot();
+  const root = fakeRoot() as unknown as HTMLElement;
   const light = registry.resolve({ mode: "fixed", themeId: "ling-light" }, "light");
   const imported = registry.resolve({ mode: "fixed", themeId: "quiet-ocean" }, "light");
   applyResolvedTheme(root, light);
@@ -148,26 +149,27 @@ test("theme application restores root attributes and variables when verification
 test("theme sentinel treats equivalent serialized CSS colors as equal", () => {
   const registry = new ThemeRegistry();
   const light = registry.resolve({ mode: "fixed", themeId: "ling-light" }, "light");
-  const root = fakeRoot(fakeColorDocument());
-  const previousGetComputedStyle = globalThis.getComputedStyle;
+  const root = fakeRoot(fakeColorDocument()) as unknown as HTMLElement;
+  const globals = globalThis as { getComputedStyle?: (element: Element) => Pick<CSSStyleDeclaration, "getPropertyValue"> };
+  const previousGetComputedStyle = globals.getComputedStyle;
 
   try {
-    globalThis.getComputedStyle = () => ({
+    globals.getComputedStyle = () => ({
       getPropertyValue: () => "#fff",
     });
     assert.equal(verifyThemeSentinel(root, light), true);
 
-    globalThis.getComputedStyle = () => ({
+    globals.getComputedStyle = () => ({
       getPropertyValue: () => "#000000",
     });
     assert.equal(verifyThemeSentinel(root, light), false);
   } finally {
-    if (previousGetComputedStyle === undefined) delete globalThis.getComputedStyle;
-    else globalThis.getComputedStyle = previousGetComputedStyle;
+    if (previousGetComputedStyle === undefined) delete globals.getComputedStyle;
+    else globals.getComputedStyle = previousGetComputedStyle;
   }
 });
 
-function importedTheme(id, overrides = {}) {
+function importedTheme(id: string, overrides: Record<string, unknown> = {}) {
   return {
     ...structuredClone(lingLightTheme),
     id,
@@ -177,16 +179,16 @@ function importedTheme(id, overrides = {}) {
   };
 }
 
-function fakeRoot(ownerDocument) {
-  const values = new Map();
+function fakeRoot(ownerDocument?: ReturnType<typeof fakeColorDocument>) {
+  const values = new Map<string, string>();
   return {
     dataset: {},
     ownerDocument,
     style: {
       colorScheme: "",
-      getPropertyValue: (name) => values.get(name) ?? "",
-      removeProperty: (name) => values.delete(name),
-      setProperty: (name, value) => values.set(name, value),
+      getPropertyValue: (name: string) => values.get(name) ?? "",
+      removeProperty: (name: string) => values.delete(name),
+      setProperty: (name: string, value: string) => values.set(name, value),
     },
   };
 }

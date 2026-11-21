@@ -9,16 +9,8 @@ import {
 import {
   IMAGE_BYTES,
   importedManifest,
-  themePackageFixture as createThemePackageFixture,
+  themePackageFixture,
 } from "./fixtures/theme-package-fixtures.mjs";
-
-type FixtureImageAsset = { path: string; bytes: Uint8Array };
-
-const themePackageFixture: (options: {
-  manifest: ReturnType<typeof importedManifest>;
-  preview?: FixtureImageAsset;
-  launchAnimation?: FixtureImageAsset;
-}) => Uint8Array = createThemePackageFixture;
 
 const decodeImage = async () => ({ width: 1280, height: 800 });
 

@@ -7,16 +7,16 @@ import test from "node:test";
 const uiRequire = createRequire(new URL("../package.json", import.meta.url));
 
 /** Resolve the installed layer from each actual overlay consumer, not root hoisting. */
-function dismissalIdentity(consumerName, dependencyName) {
+function dismissalIdentity(consumerName: string, dependencyName?: string) {
   let consumerEntry = uiRequire.resolve(consumerName);
   if (dependencyName) {
     consumerEntry = createRequire(consumerEntry).resolve(dependencyName);
   }
   const layerEntry = createRequire(consumerEntry).resolve("@radix-ui/react-dismissable-layer");
   const manifestPath = join(dirname(layerEntry), "../package.json");
-  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { name?: unknown; version?: unknown; module?: unknown };
   assert.equal(manifest.name, "@radix-ui/react-dismissable-layer");
-  assert.equal(typeof manifest.module, "string");
+  assert.ok(typeof manifest.module === "string");
   return {
     consumer: consumerName,
     version: manifest.version,
