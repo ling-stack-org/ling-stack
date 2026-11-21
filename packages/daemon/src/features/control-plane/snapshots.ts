@@ -274,7 +274,7 @@ function countPolicyDecisions(policy: ApprovalPolicy): Record<string, number> {
   return counts;
 }
 
-function toApprovalSummary(approval: ApprovalRequest): ApprovalSummary {
+export function toApprovalSummary(approval: ApprovalRequest): ApprovalSummary {
   const owner = approvalOwner(approval);
   return compact({
     id: approval.id,

@@ -109,7 +109,11 @@ function assessmentFixture(): CodeAssessmentDetail {
     { phase: "synthesizing_findings", enteredAt: "2026-11-16T00:00:05Z" }, { phase: "completed", enteredAt: "2026-11-16T00:01:00Z" },
   ], metrics: { captureDurationMs: 12, snapshotBytes: 512, diffBytes: 96, timeToSummaryMs: 140, timeToFirstFindingMs: 140, timeToFinalMs: 180, reportBytes: 256 },
     validation: { state: "not_run", reason: "Candidate validation requires execution and was not run." },
-    snapshotId: snapshot.id, snapshotDigest: snapshot.digest, target: snapshot.target, branchName: snapshot.branchName, providerPresetId: "provider_review", runId: "run_ui", reportArtifactId: "artifact_ui", summary: "One changed behavior needs review.", findingCount: 1, createdAt: "2026-11-16T00:00:00Z", updatedAt: "2026-11-16T00:01:00Z" };
+    snapshotId: snapshot.id, snapshotDigest: snapshot.digest, target: snapshot.target, branchName: snapshot.branchName, providerPresetId: "provider_review", runId: "run_ui", reportArtifactId: "artifact_ui", summary: "One changed behavior needs review.", findingCount: 1, createdAt: "2026-11-16T00:00:00Z", updatedAt: "2026-11-16T00:01:00Z",
+    reviewRules: { baseSha: snapshot.headSha, sources: [{
+      path: "src/AGENTS.md", scope: "src", digest: "a".repeat(64), guidance: "Check compatibility for existing callers.",
+    }], omitted: [] },
+  };
   const finding = { id: "finding_ui", assessmentId: assessment.id, snapshotDigest: snapshot.digest, fingerprint: "1".repeat(64), title: "Changed exported value", body: "Every caller now observes a different value.", severity: "high" as const, confidence: "high" as const, path: "src/app.ts", side: "new" as const, startLine: 1, endLine: 1, evidence: "export const value = 2;", validation: "unverified" as const, disposition: "open" as const };
   return { assessment, snapshot, findings: [finding] };
 }
@@ -146,7 +150,14 @@ test("Right Dock keeps change previews and opens review/security assessments", a
   const state = createBaseState({ approvalStatus: "expired" }); state.providers = [createChatProvider({ id: "provider_dock" })];
   await mockDaemon(page, state);
   await page.route(/\/notifications(?:\/stream)?(?:\?.*)?$/u, route => route.fulfill({ json: { schemaVersion: 1, notifications: [] } }));
-  await page.route("**/workspace/code-assessments**", route => route.fulfill({ json: { assessments: [] } }));
+  const fixture = assessmentFixture();
+  await assessmentRoutes(page, fixture, { created: false });
+  await page.route("**/workspace/code-assessments?**", async route => {
+    const url = new URL(route.request().url());
+    if (route.request().method() === "GET" && url.searchParams.get("kind") === "security") {
+      await route.fulfill({ json: { assessments: [] } });
+    } else await route.fallback();
+  });
   await page.goto("/"); await openEngineeringChannel(page);
   const toolbar = page.getByRole("toolbar", { name: "Workspace task toolbar" });
   await toolbar.getByRole("button", { name: "Show details" }).click();
@@ -154,7 +165,13 @@ test("Right Dock keeps change previews and opens review/security assessments", a
   await panel.getByRole("button", { name: "Review", exact: true }).click();
   await expect(panel.getByRole("button", { name: "Changed files", exact: true })).toBeVisible();
   await panel.getByRole("button", { name: "Code review", exact: true }).click();
-  await expect(panel.getByRole("button", { name: "Start review", exact: true })).toBeVisible();
+  await panel.getByRole("button", { name: "Start review", exact: true }).click();
+  await expect(panel.getByText("Changed exported value", { exact: true })).toBeVisible();
+  const instructions = panel.locator("details").filter({ has: page.getByText("src/AGENTS.md", { exact: true }) });
+  await instructions.getByText("Review instructions", { exact: true }).click();
+  await expect(instructions.getByText("src/AGENTS.md", { exact: true })).toBeVisible();
+  await expect(instructions.getByText("Check compatibility for existing callers.", { exact: true })).toBeVisible();
+  await expect(instructions.getByText(fixture.snapshot.headSha!, { exact: true })).toBeVisible();
   await panel.getByRole("button", { name: "Back", exact: true }).click();
   await panel.getByRole("button", { name: "Security scan", exact: true }).click();
   await expect(panel.getByRole("button", { name: "Start security scan" })).toBeVisible();

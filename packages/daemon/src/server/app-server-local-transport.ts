@@ -1,7 +1,7 @@
 import { once } from "node:events";
-import { chmod, lstat } from "node:fs/promises";
+import { chmod, link, lstat, mkdtemp, rmdir, unlink } from "node:fs/promises";
 import { createServer, type Socket } from "node:net";
-import { dirname, isAbsolute } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import type { Readable, Writable } from "node:stream";
 import { LingAppServerClient, type LingAppServerSocket } from "@ling-stack/api-client";
 import { LING_PRODUCT_VERSION } from "@ling-stack/contracts";
@@ -118,29 +118,50 @@ export async function listenLingAppServerSocket(
   if (!directory.isDirectory() || directory.uid !== process.getuid?.() || (directory.mode & 0o077) !== 0) {
     throw new Error("The App Server socket directory must be private and owned by the current user.");
   }
+  // The socket server unlinks its bind path on close. Publish a separate
+  // name so that a replacement at the client path survives shutdown.
+  const bindingDirectory = await mkdtemp(join(dirname(socketPath), ".s"));
+  const bindPath = join(bindingDirectory, "s");
   const peers = new Set<Socket>();
+  let socketIdentity: { readonly dev: number; readonly ino: number } | undefined;
+  let stopping: Promise<void> | undefined;
   const server = createServer(peer => {
     peers.add(peer);
     peer.once("close", () => peers.delete(peer));
     void runLingAppServerStdio(options, peer, peer).catch(() => peer.destroy());
   });
-  const stop = () => {
+  const stop = (): Promise<void> => {
+    if (stopping) return stopping;
     for (const peer of peers) peer.destroy();
-    server.close();
+    stopping = new Promise<void>(resolve => {
+      if (!server.listening) resolve();
+      else server.close(() => resolve());
+    });
+    return stopping;
   };
   const closed = once(server, "close");
   void closed.catch(() => undefined);
+  const onAbort = () => { void stop(); };
   try {
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);
-      server.listen(socketPath, resolve);
+      server.listen(bindPath, resolve);
     });
-    await chmod(socketPath, 0o600);
-    signal.addEventListener("abort", stop, { once: true });
-    if (signal.aborted) stop();
+    await chmod(bindPath, 0o600);
+    const stat = await lstat(bindPath);
+    await link(bindPath, socketPath);
+    socketIdentity = { dev: stat.dev, ino: stat.ino };
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) await stop();
     await closed;
   } finally {
-    signal.removeEventListener("abort", stop);
-    if (server.listening) stop();
+    signal.removeEventListener("abort", onAbort);
+    if (server.listening || stopping) await stop();
+    const current = socketIdentity ? await lstat(socketPath).catch(() => undefined) : undefined;
+    if (current?.isSocket() && current.dev === socketIdentity?.dev && current.ino === socketIdentity.ino) {
+      await unlink(socketPath).catch(() => undefined);
+    }
+    await unlink(bindPath).catch(() => undefined);
+    await rmdir(bindingDirectory);
   }
 }

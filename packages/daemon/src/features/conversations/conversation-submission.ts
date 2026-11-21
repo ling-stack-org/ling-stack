@@ -9,6 +9,7 @@ import { materializeInlineConversationAttachments } from "./materialization.js";
 import { prepareNormalConversationInput } from "./normal-conversation-input.js";
 import { saveNormalConversationPreparedRequest } from "./normal-conversation-prepared-request.js";
 import { readConversationSubmission } from "./submission-receipts.js";
+import { withProjectInstructions } from "./project-instructions.js";
 
 export async function prepareConversationSubmission(options: {
   readonly store: RunStore;
@@ -41,14 +42,15 @@ export async function prepareConversationSubmission(options: {
     store, attachments, now, imageVisionSummarizer: options.imageVisionSummarizer,
   });
   const effectiveConfig = await buildEffectiveConfigResponse({ cwd: workspaceCwd, store, runnerRegistry });
-  const runRequest = saveNormalConversationPreparedRequest(store, buildConversationRunRequest({
+  const request = buildConversationRunRequest({
     workspaceCwd, thread, turn,
     input: { ...input, ...(selection ?? resolveConversationExecutionSelection(store, runnerRegistry, input)), idempotencyKey: prepared.idempotencyKey },
     lingConversationTone: effectiveConfig.values.lingConversationTone.value,
     defaultReasoningSummary: effectiveConfig.values.reasoningSummary.value,
     attachments, attachmentMaterializations, normalConversationContext: prepared.context,
     normalConversationAcceptedSnapshotId: prepared.acceptedSnapshotId,
-  }), now);
+  });
+  const runRequest = saveNormalConversationPreparedRequest(store, await withProjectInstructions(workspaceCwd, request), now);
   return { thread, turn, attachments, runRequest, replayed: accepted?.status === "accepted" };
 }
 

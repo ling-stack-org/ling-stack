@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
@@ -42,6 +42,35 @@ test("instructions init discovers scoped project rules and blocks unversioned ap
   const blocked = await service.initInstructions({ cwd, mode: "apply", idempotencyKey: "init-2" });
   assert.equal(blocked.status, "blocked");
   assert.deepEqual(blocked.conflicts, ["apply requires expectedWorkspaceRevision"]);
+});
+
+test("instruction initialization publishes the reviewed draft once and refuses an existing rule or a changed source", async t => {
+  const base = await realpath(await mkdtemp(join(tmpdir(), "ling-instruction-draft-")));
+  t.after(() => rm(base, { recursive: true, force: true }));
+  const cwd = join(base, "workspace");
+  await mkdir(cwd);
+  await writeFile(join(cwd, "README.md"), "# Fixture\n");
+  await writeFile(join(cwd, "package.json"), JSON.stringify({ packageManager: "pnpm@10.0.0", scripts: { test: "node --test" } }));
+  const service = new AppServerDevelopmentService({ context: { config: { defaultWorkspaceCwd: cwd } } as never });
+  const input = { cwd, idempotencyKey: "install-instructions" };
+  const preview = await service.initInstructions(input);
+  assert.equal(preview.status, "draft");
+  assert.match(preview.draft?.content ?? "", /pnpm run test/u);
+  assert.equal(preview.draft?.path, "AGENTS.md");
+  await assert.rejects(readFile(join(cwd, "AGENTS.md")), { code: "ENOENT" });
+
+  const apply = { ...input, mode: "apply" as const, expectedWorkspaceRevision: preview.workspaceRevision };
+  await writeFile(join(cwd, "README.md"), "# Changed inputs\n");
+  assert.equal((await service.initInstructions(apply)).status, "blocked");
+  await writeFile(join(cwd, "README.md"), "# Fixture\n");
+  assert.equal((await service.initInstructions(apply)).status, "applied");
+  assert.equal(await readFile(join(cwd, "AGENTS.md"), "utf8"), preview.draft?.content);
+  assert.equal((await service.initInstructions(apply)).status, "applied");
+  await writeFile(join(cwd, "AGENTS.md"), "# User rules\n");
+  assert.equal((await service.initInstructions(apply)).status, "blocked");
+  assert.equal(await readFile(join(cwd, "AGENTS.md"), "utf8"), "# User rules\n");
+  await symlink(base, join(cwd, "outside"), "dir");
+  await assert.rejects(service.initInstructions({ ...input, taskPath: "outside" }), { code: "invalid_project_path" });
 });
 
 test("verification persists a single start receipt and recovers in its originating workspace", async t => {

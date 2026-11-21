@@ -12,6 +12,7 @@ import { applyRuntimeDelegationCapacityAdmissionMigration, RUNTIME_DELEGATION_CA
 import { createBudgetHarness } from "./support/delegation-budget-fixture.mjs";
 import { dropCodeAssessmentOverlay } from "./support/code-assessment-overlay-fixture.mjs";
 import { rewindRemainingWorkSuccessors } from "./support/remaining-work-predecessor.ts";
+import { createSqliteRunStoreFixture } from "./support/sqlite-run-store-fixture.mjs";
 import { testDatabase } from "./support/sqlite-test-database.ts";
 
 type Store = ReturnType<typeof createSqliteRunStore>;
@@ -48,7 +49,7 @@ const snapshot = (db: Database) => ({ schema: schema(db), markers: markers(db), 
   admissions: db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table) ? rows(db, table) : undefined });
 const migrationError = /runtime_delegation_capacity_admission\.migration_/u;
 
-function fixture(t: TestContext, { installed = false } = {}) {
+function fixture(t: TestContext, { installed = false, fresh = false } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "ling-delegation-capacity-migration-"))), cwd = join(root, "workspace");
   mkdirSync(cwd);
   const paths = resolveStoragePaths(cwd, { homeDir: join(root, "home"), env: {}, workspaceStateLocation: "repo-local" }).workspace;
@@ -59,7 +60,7 @@ function fixture(t: TestContext, { installed = false } = {}) {
     if (store && testDatabase(store).isOpen) store.close();
     rmSync(root, { recursive: true, force: true });
   });
-  store = createSqliteRunStore(cwd, paths);
+  store = fresh ? createSqliteRunStore(cwd, paths) : createSqliteRunStoreFixture(cwd, paths);
   const db = testDatabase(store);
   if (!installed) {
     dropCodeAssessmentOverlay(db);
@@ -175,7 +176,7 @@ function rejectUnchanged(f: Fixture, pattern = migrationError, extra: Partial<Om
 }
 
 test("fresh Core installs216 with exactly the composite identity, safe integers and two foreign keys", t => {
-  const f = fixture(t, { installed: true });
+  const f = fixture(t, { installed: true, fresh: true });
   assert.equal(RUNTIME_DELEGATION_CAPACITY_ADMISSION_MIGRATION_VERSION, 216);
   assert.equal(RUNTIME_DELEGATION_CAPACITY_ADMISSION_MIGRATION_NAME, table);
   assert.deepEqual(f.db.prepare("SELECT version,name FROM schema_migrations WHERE version=216 OR name=?").all(table)

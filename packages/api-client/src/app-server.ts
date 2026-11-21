@@ -3,6 +3,10 @@ import type {
   LingAppServerDoctorRunResult,
   LingAppServerCapability,
   LingAppServerCapabilitiesResult,
+  LingAppServerContextInspectParams,
+  LingAppServerContextInspectResult,
+  LingAppServerThreadSnapshotParams,
+  LingAppServerThreadSnapshotResult,
   ControlPlaneEventsResponse,
   LingAppServerExternalAgentCapabilitiesParams,
   LingAppServerExternalAgentCapabilitiesResult,
@@ -141,6 +145,16 @@ export class LingAppServerClient {
   async readThread(threadId: string): Promise<unknown> {
     await this.connect();
     return await this.request("thread/read", { threadId });
+  }
+
+  async readThreadSnapshot(params: LingAppServerThreadSnapshotParams): Promise<LingAppServerThreadSnapshotResult> {
+    await this.connect();
+    return await this.request("thread/snapshot", params);
+  }
+
+  async inspectTurnContext(params: LingAppServerContextInspectParams): Promise<LingAppServerContextInspectResult> {
+    await this.connect();
+    return await this.request("context/inspect", params);
   }
 
   async readThreadEvents(params: { readonly threadId: string; readonly cursor?: string; readonly limit?: number }): Promise<ControlPlaneEventsResponse> {

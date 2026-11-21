@@ -21,6 +21,8 @@ import {
   LING_PRODUCT_VERSION,
   type ControlPlaneSubscribeResult,
   type ControlPlaneEventsResponse,
+  type LingAppServerContextInspectResult,
+  type LingAppServerThreadSnapshotResult,
 } from "@ling-stack/contracts";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 import type { DaemonContext } from "../context.js";
@@ -34,6 +36,7 @@ import { HttpError } from "../errors.js";
 import { prepareConversationSubmission } from "../features/conversations/conversation-submission.js";
 import { parseConversationStreamRequest } from "../features/conversations/routes.js";
 import { readConversationSubmission } from "../features/conversations/submission-receipts.js";
+import { readNormalConversationPreparedRequest } from "../features/conversations/normal-conversation-prepared-request.js";
 import {
   CONTROL_PLANE_POLL_DEFAULT_LIMIT,
   CONTROL_PLANE_POLL_MAX_LIMIT,
@@ -51,6 +54,7 @@ import {
   parseControlPlaneDomains,
 } from "../features/control-plane/processors.js";
 import { appendControlPlaneEvent } from "../features/control-plane/events.js";
+import { toApprovalSummary } from "../features/control-plane/snapshots.js";
 import { executeRunRequest, type RunExecutionSink } from "../features/runs/orchestrator.js";
 import { parseRunRequest, type RunRequest } from "../features/runs/schemas.js";
 import { projectPublicRunSession } from "../features/runs/public-execution-snapshots.js";
@@ -109,8 +113,8 @@ const APP_SERVER_MAX_REQUESTS = 64;
 const APP_SERVER_MAX_SUBSCRIPTIONS = 32;
 const UNIMPLEMENTED_APP_SERVER_METHODS = new Set([
   "worktree/create", "worktree/refresh", "worktree/cleanup/preview", "worktree/cleanup",
-  "thread/snapshot", "turn/retry", "thread/fork", "thread/compact/start", "thread/revert",
-  "context/inspect", "handoff/create", "handoff/read", "handoff/resume", "changes/read", "simplify/start",
+  "turn/retry", "thread/fork", "thread/compact/start", "thread/revert",
+  "handoff/create", "handoff/read", "handoff/resume", "changes/read", "simplify/start",
   "changes/apply/preview", "changes/apply", "artifact/read", "workItem/delivery/read", "delivery/read",
   "github/subject/read", "github/delivery/reconcile", "model/list", "skill/read", "permissionProfile/list",
 ]);
@@ -391,6 +395,8 @@ class RpcConnection {
         return this.readThread(params);
       case "thread/resume":
         return this.readThread(params);
+      case "thread/snapshot":
+        return this.readThreadSnapshot(params);
       case "thread/list":
         return this.listThreads(params);
       case "thread/name/set":
@@ -476,7 +482,9 @@ class RpcConnection {
       case "doctor/run":
         return await this.development.runDoctor(params as never);
       case "instructions/init":
-        return await this.development.initInstructions(params as never);
+        return await this.development.initInstructions(this.workspaceParams(params, readParamsRecord(params).mode === "apply") as never);
+      case "context/inspect":
+        return this.inspectTurnContext(params);
       case "turn/start":
         return this.startTurn(params);
       case "approval/respond":
@@ -1047,6 +1055,45 @@ class RpcConnection {
       thread: projectPublicLingThread(thread),
       goal: store.getLingThreadGoal(threadId) ?? null,
     };
+  }
+
+  private readThreadSnapshot(params: unknown): LingAppServerThreadSnapshotResult {
+    const { cwd, ...record } = this.workspaceParams(params);
+    const threadId = readStringField(record, "threadId");
+    const store = this.context.storeRegistry.getStore(cwd);
+    return store.readSnapshot(() => {
+      const thread = store.getLingThread(threadId);
+      if (!thread) throw rpcError(-32040, "workspace_binding_invalid", "Thread was not found.");
+      const turn = thread.metadata?.lastTurnId ? store.getLingTurn(thread.metadata.lastTurnId) : undefined;
+      const runId = turn?.activeRunId ?? turn?.lastRunId;
+      const run = runId ? store.getRun(runId) : undefined;
+      const goal = store.getLingThreadGoal(threadId);
+      const pendingApprovals = run ? store.listApprovalRequests({ runId: run.id, status: "pending" }).map(toApprovalSummary) : [];
+      const itemIds = turn ? store.listConversationItemsForTurn({ turnId: turn.id })
+        .filter(item => item.kind === "user_input_request").map(item => item.id) : [];
+      const pendingInputs = itemIds.length ? store.readUserInputTranscript({ threadId, itemIds }).flatMap(item => {
+        if (item.availability !== "available" || item.kind !== "user_input_request" || item.status !== "pending") return [];
+        return [this.authenticated ? item : { ...item, answerAuthority: undefined }];
+      }) : [];
+      return { cwd, thread: projectPublicLingThread(thread), turn: projectPublicLingTurn(turn, thread) ?? null,
+        goal: goal ? { id: goal.id, objective: goal.objective, status: goal.status,
+          tokenBudget: goal.tokenBudget, tokensUsed: goal.tokensUsed, timeUsedSeconds: goal.timeUsedSeconds, updatedAt: goal.updatedAt } : null,
+        run: run ? { id: run.id, status: run.status, startedAt: run.startedAt, endedAt: run.endedAt } : null,
+        pendingApprovals, pendingInputs,
+        cursor: String(store.getLatestControlPlaneEventSeq(DEFAULT_WORKSPACE_ID)) };
+    });
+  }
+
+  private inspectTurnContext(params: unknown): LingAppServerContextInspectResult {
+    const { cwd, ...record } = this.workspaceParams(params);
+    const threadId = readStringField(record, "threadId");
+    const turnId = readStringField(record, "turnId");
+    const store = this.context.storeRegistry.getStore(cwd);
+    const turn = store.getLingTurn(turnId);
+    if (!turn || turn.threadId !== threadId) throw rpcError(-32040, "workspace_binding_invalid", "Turn is outside the supplied Thread.");
+    const request = turn.sourceItemId ? readNormalConversationPreparedRequest(store, turn.sourceItemId) : undefined;
+    return { cwd, threadId, turnId, projectInstructions: request?.projectInstructionManifest ?? null,
+      context: request?.normalConversationContext?.projection ?? null };
   }
 
   private listThreads(params: unknown): unknown {

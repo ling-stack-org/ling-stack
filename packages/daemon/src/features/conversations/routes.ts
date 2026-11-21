@@ -53,6 +53,7 @@ import { createOwnedRunNarrationAccumulator } from "./narration-owner.js";
 import { prepareNormalConversationInput } from "./normal-conversation-input.js";
 import { normalSubmissionThreadId } from "./submission-receipts.js";
 import { saveNormalConversationPreparedRequest } from "./normal-conversation-prepared-request.js";
+import { withProjectInstructions } from "./project-instructions.js";
 import { buildConversationRunRequest, resolveConversationResponseLanguage } from "./conversation-run-request.js";
 import { readNativeResponsePreferences } from "./native-response-preferences.js";
 export { resolveConversationResponseLanguage } from "./conversation-run-request.js";
@@ -150,7 +151,7 @@ export async function startConversationReplacementRun(input: {
     tools: readOptionalStringArray(previousSnapshot, "tools", runTools),
     idempotencyKey: prepared.idempotencyKey,
   };
-  const runRequest = saveNormalConversationPreparedRequest(input.store, {
+  const request = {
     ...buildConversationRunRequest({
       workspaceCwd: input.workspaceCwd,
       thread: input.thread,
@@ -164,7 +165,8 @@ export async function startConversationReplacementRun(input: {
       normalConversationAcceptedSnapshotId: prepared.acceptedSnapshotId,
     }),
     permissionConfirmation: input.permissionConfirmation,
-  }, now);
+  };
+  const runRequest = saveNormalConversationPreparedRequest(input.store, await withProjectInstructions(input.workspaceCwd, request), now);
   const runId = await startRunAndWaitUntilReady(runRequest, input.startRun);
   return { turn, runId };
 }

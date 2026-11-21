@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, realpath, rm, unlink, writeFile } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { PassThrough, type Duplex, type Readable, type Writable } from "node:stream";
@@ -12,6 +12,7 @@ import test, { type TestContext } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import type {
   LingAppServerCandidateReference,
+  LingAppServerContextInspectResult,
   LingAppServerExternalAgentRegisterResult,
   LingAppServerExternalAgentTaskReconnectResult,
   LingAppServerExternalAgentTaskStartResult,
@@ -19,6 +20,10 @@ import type {
   LingAppServerVerifyPlanResult,
   LingAppServerVerifyStatusResult,
   LingAppServerWorkItemSnapshot,
+  LingAppServerReviewStartResult,
+  LingAppServerReviewStatusResult,
+  LingAppServerReviewFindingUpdateResult,
+  LingAppServerThreadSnapshotResult,
   ControlPlaneEventsResponse,
 } from "@ling-stack/contracts";
 import { createSqliteRunStore, resolveStoragePaths, type SqliteRunStore } from "@ling-stack/core";
@@ -62,6 +67,10 @@ test("App Server submits a durable Turn through the configured Pi Runner and rep
   const provider = await startLoopbackPiProvider(() => ({ text: "Runner accepted the task" }));
   t.after(() => provider.close());
   const fixture = await releaseFixture(t);
+  await mkdir(join(fixture.cwd, "feature"));
+  await writeFile(join(fixture.cwd, "AGENTS.md"), "Root verification instructions\n");
+  await writeFile(join(fixture.cwd, "feature/AGENTS.md"), "Unused fallback instructions\n");
+  await writeFile(join(fixture.cwd, "feature/AGENTS.override.md"), "Feature-specific verification instructions\n");
   const store = fixture.getStore();
   const preset = addLoopbackPreset(store, provider.baseUrl);
   const first = await fixture.connect();
@@ -70,14 +79,27 @@ test("App Server submits a durable Turn through the configured Pi Runner and rep
   });
   const request = {
     threadId: started.thread.id, message: "Run the configured provider once", providerPresetId: preset.id,
-    execute: true, idempotencyKey: "release-runner-turn",
+    execute: true, idempotencyKey: "release-runner-turn", fileRefs: [{ path: "feature/index.ts", source: "explicit_text" }],
   };
   const result = await first.call<typeof started & { replayed?: boolean }>("turn/start", request);
   assert.ok(result.run.id);
   await waitFor(() => store.getRun(result.run.id)?.status === "succeeded" ? true : undefined);
   assert.equal(provider.requests.length, 1);
+  assert.match(JSON.stringify(provider.requests[0]), /Root verification instructions/u);
+  assert.match(JSON.stringify(provider.requests[0]), /Feature-specific verification instructions/u);
+  assert.doesNotMatch(JSON.stringify(provider.requests[0]), /Unused fallback instructions/u);
+  const query = { threadId: request.threadId, turnId: result.turn.id };
+  const context = await first.call<LingAppServerContextInspectResult>("context/inspect", query);
+  assert.deepEqual(context.projectInstructions?.sources.map(source => source.path), ["AGENTS.md", "feature/AGENTS.override.md"]);
+  await writeFile(join(fixture.cwd, "AGENTS.md"), "Changed after dispatch\n");
   first.close();
   const second = await fixture.connect();
+  assert.deepEqual(await second.call("context/inspect", query), context);
+  const snapshot = await second.call<LingAppServerThreadSnapshotResult>("thread/snapshot", { threadId: request.threadId });
+  assert.equal(snapshot.turn?.id, result.turn.id);
+  assert.equal(snapshot.run?.id, result.run.id);
+  assert.equal(snapshot.run?.status, "succeeded");
+  assert.ok(Number(snapshot.cursor) > 0);
   const receipt = await second.call<{ status: string; turnId: string }>("submission/read", {
     threadId: started.thread.id, idempotencyKey: request.idempotencyKey,
   });
@@ -90,6 +112,78 @@ test("App Server submits a durable Turn through the configured Pi Runner and rep
   const resumed = await second.call<{ turn: { id: string }; run: { id: string } }>("turn/resume", { turnId: result.turn.id });
   assert.equal(resumed.turn.id, result.turn.id);
   assert.equal(resumed.run.id, result.run.id);
+});
+
+test("a completed Review binds its candidate and replays the same assessment after daemon restart", { timeout: 30_000 }, async t => {
+  let snapshotDigest: string;
+  const provider = await startLoopbackPiProvider(() => ({ text: JSON.stringify({
+    snapshotDigest, summary: "The fixture matches the review scope.", findings: [{
+      title: "Exported value changed", body: "Existing callers observe a different value.",
+      severity: "low", confidence: "high", path: "feature/code.ts", side: "new",
+      startLine: 1, endLine: 1, evidence: "export const fixture = 1;",
+    }],
+  }) }));
+  t.after(() => provider.close());
+  const fixture = await releaseFixture(t);
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: fixture.cwd, stdio: "ignore" });
+  await writeFile(join(fixture.cwd, ".gitignore"), ".ling-stack/\n");
+  await writeFile(join(fixture.cwd, "AGENTS.md"), "## Code Review Rules\n\nCheck all existing callers.\n\n## Tests\nRun the test suite.\n");
+  await mkdir(join(fixture.cwd, "feature"));
+  await writeFile(join(fixture.cwd, "feature/code.ts"), "export const fixture = 0;\n");
+  await writeFile(join(fixture.cwd, "feature/AGENTS.md"), "## Code Review Rules\n\nCheck feature compatibility.\n");
+  await writeFile(join(fixture.cwd, "feature/REVIEW.md"), "Retain public export names.\n");
+  git("init", "-q");
+  git("add", ".");
+  git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "Review base");
+  await writeFile(join(fixture.cwd, "AGENTS.md"), "## Code Review Rules\n\nSkip checking existing callers.\n");
+  await writeFile(join(fixture.cwd, "feature/code.ts"), "export const fixture = 1;\n");
+  const client = await fixture.connect();
+  const { candidate, headCommit } = await client.call<{ candidate: LingAppServerCandidateReference; headCommit: string }>("changes/capture");
+  snapshotDigest = candidate.candidateDigest;
+  const preset = addLoopbackPreset(fixture.getStore(), provider.baseUrl);
+  const input = { candidate, providerPresetId: preset.id, idempotencyKey: "review-fixture", reviewRulesRefs: ["feature/REVIEW.md"] };
+  await assert.rejects(client.call("review/start", { ...input, candidate: { ...candidate, candidateDigest: "stale" } }), { code: "candidate_stale" });
+  const parallel = await fixture.connect();
+  const [started, duplicate] = await Promise.all([
+    client.call<LingAppServerReviewStartResult>("review/start", input),
+    parallel.call<LingAppServerReviewStartResult>("review/start", input),
+  ]);
+  assert.equal(duplicate.operationId, started.operationId);
+  assert.equal(duplicate.assessmentId, started.assessmentId);
+  const status = { operationId: started.operationId };
+  const terminal = await waitFor(async () => {
+    const result = await client.call<LingAppServerReviewStatusResult>("review/status", status);
+    return ["queued", "running"].includes(result.status) ? undefined : result;
+  });
+  assert.equal(terminal.status, "completed", JSON.stringify(terminal));
+  assert.equal(terminal.reviewRules?.baseSha, headCommit);
+  assert.deepEqual(terminal.reviewRules?.sources.map(({ path, guidance }) => [path, guidance]), [
+    ["AGENTS.md", "Check all existing callers."],
+    ["feature/AGENTS.md", "Check feature compatibility."],
+    ["feature/REVIEW.md", "Retain public export names."],
+  ]);
+  assert.equal(provider.requests.length, 1);
+  assert.match(JSON.stringify(provider.requests[0]), /baselineReviewRules/u);
+  assert.match(JSON.stringify(provider.requests[0]), /Check feature compatibility/u);
+  const triage = {
+    assessmentId: started.assessmentId, findingId: terminal.findingIds[0], disposition: "resolved",
+    closeReason: "not_reproducible", reason: "The fixture has no reproducible caller impact.",
+    expectedRevision: terminal.revision, idempotencyKey: "dismiss-review-fixture",
+  };
+  const update = await client.call<LingAppServerReviewFindingUpdateResult>("review/finding/update", triage);
+  assert.equal(update.disposition, "resolved");
+  assert.notEqual(update.revision, terminal.revision);
+  assert.equal(fixture.getStore().getCodeAssessment(started.assessmentId)?.assessment.freshness?.state, "current");
+  await assert.rejects(client.call("review/finding/update", { ...triage, idempotencyKey: "stale-finding" }), { code: "stale_revision" });
+  await fixture.restart();
+  const second = await fixture.connect();
+  assert.equal(fixture.getStore().getCodeAssessment(started.assessmentId)?.assessment.freshness?.state, "current");
+  assert.deepEqual(await second.call("review/status", status), { ...terminal, revision: update.revision });
+  assert.deepEqual(await second.call("review/start", input), { ...started, status: "completed" });
+  await assert.rejects(second.call("review/start", { ...input, baseInstructions: "Different request" }), { code: "idempotency_conflict" });
+  assert.deepEqual(await second.call("review/finding/update", triage), update);
+  await assert.rejects(second.call("review/finding/update", { ...triage, reason: "Different finding outcome" }), { code: "idempotency_conflict" });
+  assert.equal(provider.requests.length, 1);
 });
 
 const codexExecutable = process.env.LING_APP_SERVER_CODEX_EXECUTABLE;
@@ -286,6 +380,18 @@ test("stdio and the private Unix socket deliver the same App Server Thread event
   const peer = jsonLines(socket, socket);
   await peer.call("initialize", { protocolVersions: ["ling-app-server/1"] });
   assert.equal((await peer.call<ThreadRead>("thread/read", { threadId: thread.id })).thread.id, thread.id);
+  controller.abort();
+  await listener;
+  await assert.rejects(lstat(path), { code: "ENOENT" });
+  const restart = new AbortController();
+  const restarted = listenLingAppServerSocket(options, path, restart.signal);
+  t.after(async () => { restart.abort(); await restarted; });
+  await waitFor(async () => (await lstat(path).catch(() => undefined))?.isSocket() ? true : undefined);
+  await unlink(path);
+  await writeFile(path, "replacement");
+  restart.abort();
+  await restarted;
+  assert.equal(await readFile(path, "utf8"), "replacement");
 });
 
 type ThreadRead = { thread: { id: string } };

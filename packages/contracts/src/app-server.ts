@@ -1,3 +1,11 @@
+import type { CodeAssessmentReviewRules, CodeFindingCloseReason } from "./code-assessments.js";
+import type { ApprovalSummary } from "./control-plane.js";
+import type { ConversationContextProjectionMetadata } from "./conversation-continuity.js";
+import type { RunSession } from "./runtime.js";
+import type { LingThread, LingThreadGoal } from "./threads.js";
+import type { LingTurn } from "./turns.js";
+import type { UserInputRequestTranscriptV1 } from "./user-input-transcript.js";
+
 /** Public Ling App Server protocol contract. Transport implementations may add
  * framing, authentication and backpressure, but they must preserve these names
  * and the durable request/notification semantics. */
@@ -682,8 +690,11 @@ export interface LingAppServerReviewStatusResult {
   readonly assessmentId: string;
   readonly candidateDigest: string;
   readonly status: LingAppServerReviewStartResult["status"];
+  readonly revision: string;
   readonly findingIds: readonly string[];
   readonly summary?: string;
+  readonly errorMessage?: string;
+  readonly reviewRules?: CodeAssessmentReviewRules;
 }
 
 export interface LingAppServerReviewFindingUpdateParams {
@@ -691,6 +702,7 @@ export interface LingAppServerReviewFindingUpdateParams {
   readonly assessmentId: string;
   readonly findingId: string;
   readonly disposition: "open" | "acknowledged" | "resolved" | "dismissed";
+  readonly closeReason?: CodeFindingCloseReason;
   readonly reason?: string;
   readonly expectedRevision?: string;
   readonly idempotencyKey: string;
@@ -757,11 +769,45 @@ export interface LingAppServerInstructionSource {
   readonly applicable: boolean;
 }
 
+export interface LingAppServerProjectInstructionManifest {
+  readonly version: 1;
+  readonly digest: string;
+  readonly sources: readonly LingAppServerInstructionSource[];
+  readonly omitted: readonly string[];
+}
+
+export interface LingAppServerThreadSnapshotParams {
+  readonly cwd?: string;
+  readonly threadId: string;
+}
+
+export interface LingAppServerThreadSnapshotResult {
+  readonly cwd: string;
+  readonly cursor: string;
+  readonly thread: LingThread;
+  readonly turn: LingTurn | null;
+  readonly goal: Pick<LingThreadGoal, "id" | "objective" | "status" | "tokenBudget" | "tokensUsed" | "timeUsedSeconds" | "updatedAt"> | null;
+  readonly run: Pick<RunSession, "id" | "status" | "startedAt" | "endedAt"> | null;
+  readonly pendingApprovals: readonly ApprovalSummary[];
+  readonly pendingInputs: readonly UserInputRequestTranscriptV1[];
+}
+
+export interface LingAppServerContextInspectParams extends LingAppServerThreadSnapshotParams {
+  readonly turnId: string;
+}
+
+export interface LingAppServerContextInspectResult extends Omit<LingAppServerContextInspectParams, "cwd"> {
+  readonly cwd: string;
+  readonly projectInstructions: LingAppServerProjectInstructionManifest | null;
+  readonly context: ConversationContextProjectionMetadata | null;
+}
+
 export interface LingAppServerInstructionsInitResult {
   readonly proposalId: string;
   readonly status: "draft" | "applied" | "blocked";
   readonly sources: readonly LingAppServerInstructionSource[];
   readonly patchArtifactId?: string;
+  readonly draft?: { readonly path: string; readonly content: string };
   readonly workspaceRevision?: string;
   readonly conflicts: readonly string[];
 }

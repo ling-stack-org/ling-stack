@@ -29,7 +29,12 @@ const daemonSuite = { packageName: "@ling-stack/daemon", cwd: join(root, "packag
       "test/workflow-isolated-delivery-integration.test.mjs", "test/workflow-repository-fence.test.mjs",
       "test/signal-shutdown.regression-3.test.mjs"] };
 export const testSuites = {
-  core: { packageName: "@ling-stack/core", cwd: join(root, "packages/core"), platform: "linux", shardCount: 8, concurrency: 2, excluded: [], exclusive: [] },
+  core: {
+    packageName: "@ling-stack/core", cwd: join(root, "packages/core"), platform: "linux", shardCount: 8, concurrency: 2, excluded: [],
+    // These migration suites apply SQLite schema changes across many isolated
+    // databases and contend for disk with other workers on hosted Linux.
+    exclusive: ["test/runtime-delegation-capacity-admission-migration.test.ts", "test/runtime-host-capacity-migration.test.ts"],
+  },
   daemon: daemonSuite,
   "daemon-linux": { ...daemonSuite, platform: "linux", shardCount: 8, concurrency: 2 },
 };

@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { access, readFile } from "node:fs/promises";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { resolve } from "node:path";
+import { parseCreateCodeAssessment } from "@ling-stack/contracts";
 import type {
   DiagnosticsCheck,
   LingAppServerCandidateReference,
@@ -8,7 +8,6 @@ import type {
   LingAppServerDoctorRunResult,
   LingAppServerInstructionsInitParams,
   LingAppServerInstructionsInitResult,
-  LingAppServerInstructionSource,
   LingAppServerReviewFindingUpdateParams,
   LingAppServerReviewFindingUpdateResult,
   LingAppServerReviewStartParams,
@@ -31,12 +30,16 @@ import type {
   CodeAssessmentDetail,
 } from "@ling-stack/contracts";
 import type { DaemonContext } from "../context.js";
+import { HttpError } from "../errors.js";
 import type { ActiveRunRegistry } from "../runtime/active-runs.js";
 import type { AppServerStateRecord, RunStore } from "@ling-stack/core";
 import type { RunStoreRegistry } from "../runtime/store-registry.js";
 import { captureCodeAssessmentSnapshot } from "../features/code-assessments/snapshot.js";
-import { startCodeAssessment, type StartCodeAssessmentRun } from "../features/code-assessments/service.js";
+import { reconcileCodeAssessments, startCodeAssessment, type StartCodeAssessmentRun } from "../features/code-assessments/service.js";
+import { parseReviewRuleRefs } from "../features/code-assessments/review-rules.js";
 import { verificationRecipes } from "./app-server-verification-recipes.js";
+import { collectProjectInstructions } from "../features/conversations/project-instructions.js";
+import { initializeProjectInstructions } from "../features/conversations/project-instructions-draft.js";
 
 const DEFAULT_PROVIDER_PRESET = "default";
 type VerifyRecord = {
@@ -61,6 +64,7 @@ export interface AppServerDevelopmentOptions {
 
 /** Coordinates durable verification state and delegates code assessment to its Run owner. */
 export class AppServerDevelopmentService {
+  private readonly pendingReviews = new Map<string, { fingerprint: string; result: Promise<LingAppServerReviewStartResult> }>();
   private readonly activeVerifications = new Map<string, AbortController>();
 
   constructor(private readonly options: AppServerDevelopmentOptions) {}
@@ -173,62 +177,126 @@ export class AppServerDevelopmentService {
   async startReview(input: LingAppServerReviewStartParams): Promise<LingAppServerReviewStartResult> {
     const cwd = requireCwd(input.cwd ?? input.candidate.workspaceId);
     const store = this.storeRegistry().getStore(cwd);
-    const target = assessmentTarget(input.candidate);
-    const request: CreateCodeAssessmentRequest = {
-      kind: "review",
-      target,
-      providerPresetId: input.providerPresetId ?? DEFAULT_PROVIDER_PRESET,
-      ...(input.baseInstructions || input.reviewRulesRefs?.length ? {
-        instructions: [input.baseInstructions, ...(input.reviewRulesRefs ?? []).map(ref => `Review rule: ${ref}`)].filter(Boolean).join("\n"),
-      } : {}),
-    };
+    const key = input.idempotencyKey;
+    if (typeof key !== "string" || !key.trim() || key.length > 200) {
+      throw new HttpError(400, "invalid_params", "A review idempotency key of up to 200 characters is required.");
+    }
+    const rulesRefs = parseReviewRuleRefs(input.reviewRulesRefs);
+    let request: CreateCodeAssessmentRequest;
+    try {
+      request = parseCreateCodeAssessment({
+        kind: "review",
+        target: assessmentTarget(input.candidate),
+        providerPresetId: input.providerPresetId ?? DEFAULT_PROVIDER_PRESET,
+        instructions: input.baseInstructions,
+      });
+    } catch (error) {
+      throw new HttpError(400, "invalid_params", errorMessage(error));
+    }
+    const assessmentId = `assessment_app_${digest(key)}`;
+    const fingerprint = digest(JSON.stringify([input.workItemId, input.candidate.candidateDigest, request, rulesRefs]));
+    const prior = store.getAppServerState("review_submission", assessmentId);
+    if (prior) {
+      assertReviewFingerprint(prior.payload, fingerprint);
+      if (this.options.activeRuns) reconcileCodeAssessments(store, this.options.activeRuns);
+      return reviewStartResult(requireAssessment(store, assessmentId));
+    }
+    const pendingKey = JSON.stringify([cwd, assessmentId]);
+    const pending = this.pendingReviews.get(pendingKey);
+    if (pending) {
+      assertReviewFingerprint(pending.fingerprint, fingerprint);
+      return await pending.result;
+    }
     if (!this.options.startCodeAssessmentRun) throw new Error("Code assessment runner is unavailable.");
-    const detail = await startCodeAssessment(store, request, this.options.startCodeAssessmentRun);
-    return {
-      operationId: detail.assessment.runId ? `review_${detail.assessment.runId}` : `review_${detail.assessment.id}`,
-      assessmentId: detail.assessment.id,
-      candidateDigest: input.candidate.candidateDigest,
-      status: assessmentStatus(detail),
-    };
+    const result = startCodeAssessment(store, request, this.options.startCodeAssessmentRun, {
+      assessmentId, candidateDigest: input.candidate.candidateDigest, idempotencyKey: key, fingerprint, rulesRefs,
+    }).then(reviewStartResult);
+    this.pendingReviews.set(pendingKey, { fingerprint, result });
+    try {
+      return await result;
+    } finally {
+      this.pendingReviews.delete(pendingKey);
+    }
   }
 
   getReviewStatus(input: LingAppServerReviewStatusParams): LingAppServerReviewStatusResult {
-    if (!input.assessmentId) throw new Error("assessmentId is required.");
+    const assessmentId = input.assessmentId ?? (input.operationId?.startsWith("review_assessment_") ? input.operationId.slice("review_".length) : undefined);
+    if (!assessmentId || input.operationId && input.operationId !== `review_${assessmentId}`) {
+      throw new HttpError(400, "invalid_params", "Supply an assessment ID or its matching review operation ID.");
+    }
     const cwd = requireCwd(input.cwd ?? this.options.context.config.defaultWorkspaceCwd);
-    const detail = this.storeRegistry().getStore(cwd).getCodeAssessment(input.assessmentId);
-    if (!detail) throw new Error("Code assessment was not found.");
+    const store = this.storeRegistry().getStore(cwd);
+    if (this.options.activeRuns) reconcileCodeAssessments(store, this.options.activeRuns);
+    const detail = requireAssessment(store, assessmentId);
     return {
-      operationId: input.operationId ?? `review_${detail.assessment.runId ?? detail.assessment.id}`,
-      assessmentId: detail.assessment.id,
-      candidateDigest: detail.snapshot.digest,
-      status: assessmentStatus(detail),
+      ...reviewStartResult(detail),
+      revision: detail.assessment.updatedAt,
       findingIds: detail.findings.map(finding => finding.id),
       ...(detail.assessment.summary ? { summary: detail.assessment.summary } : {}),
+      ...(detail.assessment.errorMessage ? { errorMessage: detail.assessment.errorMessage } : {}),
+      ...(detail.assessment.reviewRules ? { reviewRules: detail.assessment.reviewRules } : {}),
     };
   }
 
   async updateReviewFinding(input: LingAppServerReviewFindingUpdateParams): Promise<LingAppServerReviewFindingUpdateResult> {
-    const store = this.storeRegistry().getStore(requireCwd(input.cwd ?? this.options.context.config.defaultWorkspaceCwd));
+    const store = this.workspaceStore(input.cwd);
+    const key = input.idempotencyKey;
+    const closing = input.disposition === "resolved" || input.disposition === "dismissed";
+    if (typeof key !== "string" || !key.trim() || key.length > 200
+      || !["open", "acknowledged", "resolved", "dismissed"].includes(input.disposition)
+      || input.reason !== undefined && (typeof input.reason !== "string" || input.reason.length > 2000)
+      || closing && (!input.reason?.trim() || !["false_positive", "accepted_risk", "not_reproducible", "duplicate", "out_of_scope"].includes(input.closeReason ?? ""))) {
+      throw new HttpError(400, "invalid_params", "Supply an idempotency key and a valid disposition. Closing a finding requires a typed reason.");
+    }
+    const recordId = digest(key);
+    const fingerprint = digest(JSON.stringify([input.assessmentId, input.findingId, input.disposition, input.closeReason,
+      input.reason?.trim(), input.expectedRevision]));
+    const readReceipt = () => {
+      const record = store.getAppServerState("review_finding_update", recordId);
+      if (!record) return undefined;
+      const payload = record.payload as { fingerprint: string; result: LingAppServerReviewFindingUpdateResult };
+      assertReviewFingerprint(payload.fingerprint, fingerprint);
+      return payload.result;
+    };
+    const prior = readReceipt();
+    if (prior) return prior;
     const detail = requireAssessment(store, input.assessmentId);
-    const finding = detail.findings.find(item => item.id === input.findingId);
-    if (!finding) throw new Error("Code assessment finding was not found.");
-    if (input.expectedRevision && input.expectedRevision !== detail.assessment.updatedAt) throw new Error("Code assessment revision is stale.");
+    if (!detail.findings.some(item => item.id === input.findingId)) {
+      throw new HttpError(404, "finding_not_found", "Code assessment finding was not found.");
+    }
+    assertReviewRevision(detail, input.expectedRevision);
+    let freshness: { readonly state: "current"; readonly checkedAt: string } | undefined;
     if (input.disposition === "resolved") {
       const current = await captureCodeAssessmentSnapshot(store.paths.cwd, detail.snapshot.target);
-      if (current.digest !== detail.snapshot.digest) throw new Error("Resolving a finding requires a current candidate snapshot.");
+      const replay = readReceipt();
+      if (replay) return replay;
+      if (current.digest !== detail.snapshot.digest || current.coverage !== "complete") {
+        throw new HttpError(409, "candidate_stale", "Resolving a finding requires a current candidate with complete coverage.");
+      }
+      assertReviewRevision(requireAssessment(store, input.assessmentId), input.expectedRevision);
+      freshness = { state: "current", checkedAt: current.capturedAt };
     }
-    const updated = store.setCodeFindingDisposition(input.assessmentId, input.findingId, {
-      snapshotDigest: detail.snapshot.digest,
-      disposition: input.disposition,
-      reason: input.reason,
-      now: new Date().toISOString(),
-    });
-    return {
-      assessmentId: input.assessmentId,
-      findingId: input.findingId,
-      revision: updated.dispositionReason ?? new Date().toISOString(),
-      disposition: updated.disposition,
-    };
+    try {
+      store.setCodeFindingDisposition(input.assessmentId, input.findingId, {
+        snapshotDigest: detail.snapshot.digest,
+        disposition: input.disposition,
+        closeReason: input.closeReason,
+        reason: input.reason,
+        expectedRevision: input.expectedRevision,
+        verifiedCurrent: input.disposition === "resolved",
+        freshness,
+        submission: { recordId, idempotencyKey: key, fingerprint },
+        now: new Date().toISOString(),
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message === "app_server_state_idempotency_conflict") {
+        throw Object.assign(new Error("Finding update idempotency key was reused with a different request."), {
+          jsonRpcCode: -32031, code: "idempotency_conflict",
+        });
+      }
+      throw error;
+    }
+    return readReceipt()!;
   }
 
   startSimplify(input: LingAppServerSimplifyStartParams): LingAppServerSimplifyStartResult {
@@ -255,6 +323,12 @@ export class AppServerDevelopmentService {
       checks.push({ id: "startup_phases", category: "startup", status: failed.length ? "warning" : "ok", summary: failed.length ? `Startup phase(s) not ready: ${failed.join(", ")}` : `Startup state: ${startup.state}` });
     }
     checks.push({ id: "feature_flags", category: "config", status: "ok", summary: "Feature configuration loaded", details: `channels.autoRoute: ${this.options.context.config.channels.autoRoute === true}` });
+    if (input.scope === "project") {
+      const { manifest } = await collectProjectInstructions(cwd);
+      checks.push({ id: "project_instructions", category: "instructions", status: manifest.omitted.length ? "warning" : "ok",
+        summary: manifest.sources.length ? "Project instruction sources discovered" : "No project instruction files found",
+        details: JSON.stringify(manifest) });
+    }
     return {
       doctorVersion: 1,
       cwd,
@@ -266,29 +340,7 @@ export class AppServerDevelopmentService {
 
   async initInstructions(input: LingAppServerInstructionsInitParams): Promise<LingAppServerInstructionsInitResult> {
     const cwd = requireCwd(input.cwd ?? this.options.context.config.defaultWorkspaceCwd);
-    const taskPath = input.taskPath ? resolve(cwd, input.taskPath) : cwd;
-    if (!taskPath.startsWith(`${cwd}/`) && taskPath !== cwd) throw new Error("taskPath must stay inside the workspace.");
-    const paths = await instructionPaths(cwd, taskPath);
-    const sources: LingAppServerInstructionSource[] = [];
-    for (const path of paths) {
-      try {
-        const content = await readFile(path, "utf8");
-        sources.push({ path: relative(cwd, path) || basename(path), digest: digest(content), scope: relative(cwd, dirname(path)) || ".", applicable: true });
-      } catch {
-        // Discovery is best effort. Missing optional files are not a conflict.
-      }
-    }
-    const proposalId = `instructions_${randomUUID()}`;
-    const conflicts = input.mode === "apply" && input.expectedWorkspaceRevision === undefined
-      ? ["apply requires expectedWorkspaceRevision"]
-      : [];
-    return {
-      proposalId,
-      status: conflicts.length ? "blocked" : input.mode === "apply" ? "applied" : "draft",
-      sources,
-      ...(input.mode === "apply" && !conflicts.length ? { workspaceRevision: digest(sources.map(source => `${source.path}:${source.digest}`).join("\n")) } : {}),
-      conflicts,
-    };
+    return await initializeProjectInstructions(cwd, input);
   }
 
   private storeRegistry(): RunStoreRegistry {
@@ -384,6 +436,27 @@ function assessmentTarget(candidate: LingAppServerCandidateReference): CreateCod
   return { type: "working_tree" };
 }
 
+function assertReviewFingerprint(stored: unknown, expected: string): void {
+  if (stored !== expected) {
+    throw Object.assign(new Error("Review idempotency key was reused with a different request."), { jsonRpcCode: -32031, code: "idempotency_conflict" });
+  }
+}
+
+function assertReviewRevision(detail: CodeAssessmentDetail, expected: string | undefined): void {
+  if (expected !== undefined && expected !== detail.assessment.updatedAt) {
+    throw Object.assign(new Error("Code assessment revision is stale."), { jsonRpcCode: -32030, code: "stale_revision" });
+  }
+}
+
+function reviewStartResult(detail: CodeAssessmentDetail): LingAppServerReviewStartResult {
+  return {
+    operationId: `review_${detail.assessment.id}`,
+    assessmentId: detail.assessment.id,
+    candidateDigest: detail.snapshot.digest,
+    status: assessmentStatus(detail),
+  };
+}
+
 function assessmentStatus(detail: CodeAssessmentDetail): LingAppServerReviewStartResult["status"] {
   switch (detail.assessment.status) {
     case "queued": return "queued";
@@ -397,7 +470,7 @@ function assessmentStatus(detail: CodeAssessmentDetail): LingAppServerReviewStar
 
 function requireAssessment(store: RunStore, assessmentId: string): CodeAssessmentDetail {
   const detail = store.getCodeAssessment(assessmentId);
-  if (!detail) throw new Error("Code assessment was not found.");
+  if (!detail) throw new HttpError(404, "assessment_not_found", "Code assessment was not found.");
   return detail;
 }
 
@@ -415,21 +488,6 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-
-async function instructionPaths(cwd: string, taskPath: string): Promise<readonly string[]> {
-  const paths: string[] = [];
-  const root = resolve(cwd);
-  let current = resolve(taskPath);
-  while (current === root || current.startsWith(`${root}/`)) {
-    for (const name of ["AGENTS.md", "CLAUDE.md", ".ling/AGENTS.md"]) {
-      const path = join(current, name);
-      try { await access(path); paths.push(path); } catch { /* optional source */ }
-    }
-    if (current === root) break;
-    current = dirname(current);
-  }
-  return paths.reverse();
-}
 
 export function asDiagnosticsCheck(check: LingAppServerDoctorRunResult["checks"][number]): DiagnosticsCheck | undefined {
   if (check.category !== "workspace" && check.category !== "startup" && check.category !== "logs" && check.category !== "config") return undefined;
