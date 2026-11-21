@@ -1,3 +1,5 @@
+import type { ControlPlaneEvent } from "./run-types.js";
+
 export type AppServerStateKind = "verify_plan" | "verify_operation" | "review_submission" | "review_finding_update" | "external_federation" | "work_item_acceptance";
 
 export interface AppServerStateRecord {
@@ -23,4 +25,5 @@ export interface PutAppServerStateInput {
 export interface PutAppServerStateResult {
   readonly status: "created" | "updated" | "replayed";
   readonly record: AppServerStateRecord;
+  readonly event?: ControlPlaneEvent;
 }

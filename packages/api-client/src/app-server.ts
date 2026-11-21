@@ -7,6 +7,8 @@ import type {
   LingAppServerContextInspectResult,
   LingAppServerThreadSnapshotParams,
   LingAppServerThreadSnapshotResult,
+  LingAppServerTurnResumeParams,
+  LingAppServerTurnResumeResult,
   ControlPlaneEventsResponse,
   LingAppServerExternalAgentCapabilitiesParams,
   LingAppServerExternalAgentCapabilitiesResult,
@@ -185,6 +187,11 @@ export class LingAppServerClient {
     return await this.request("thread/start", params);
   }
 
+  async resumeThread(params: LingAppServerThreadSnapshotParams): Promise<LingAppServerThreadSnapshotResult> {
+    await this.connect();
+    return await this.request("thread/resume", params);
+  }
+
   async startTurn(params: Record<string, unknown>): Promise<unknown> {
     await this.connect();
     return await this.request("turn/start", params);
@@ -200,7 +207,7 @@ export class LingAppServerClient {
     return await this.request("turn/interrupt", params);
   }
 
-  async resumeTurn(params: Record<string, unknown>): Promise<unknown> {
+  async resumeTurn(params: LingAppServerTurnResumeParams): Promise<LingAppServerTurnResumeResult> {
     await this.connect();
     return await this.request("turn/resume", params);
   }

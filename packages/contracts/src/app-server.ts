@@ -3,7 +3,7 @@ import type { ApprovalSummary } from "./control-plane.js";
 import type { ConversationContextProjectionMetadata } from "./conversation-continuity.js";
 import type { RunSession } from "./runtime.js";
 import type { LingThread, LingThreadGoal } from "./threads.js";
-import type { LingTurn } from "./turns.js";
+import type { LingTurn, LingTurnRun } from "./turns.js";
 import type { UserInputAnswerAcceptedResponseV1, UserInputAnswerCommandV1 } from "./user-input.js";
 import type { UserInputRequestTranscriptV1 } from "./user-input-transcript.js";
 
@@ -370,6 +370,19 @@ export interface LingAppServerDurableNotice<Payload = unknown> {
   readonly payload: Payload;
 }
 
+export interface LingAppServerTextDelta {
+  readonly subscriptionId: string;
+  readonly workspaceId: string;
+  readonly subject: LingAppServerEventSubject & { readonly kind: "thread"; readonly threadId: string; readonly turnId: string };
+  readonly runId: string;
+  readonly itemId: string;
+  readonly streamEpoch: string;
+  /** Position in this Run's event log, ordered within a stream epoch. */
+  readonly offset: number;
+  readonly text: string;
+  readonly truncated?: true;
+}
+
 export interface LingAppServerSubscriptionParams {
   readonly workspaceId?: string;
   readonly threadId?: string;
@@ -607,6 +620,7 @@ export interface LingAppServerVerificationCheckPlan {
 export interface LingAppServerVerifyPlanParams {
   readonly cwd?: string;
   readonly workItemId?: string;
+  readonly threadId?: string;
   readonly candidate: LingAppServerCandidateReference;
   readonly planRevision?: string;
   readonly requestedChecks?: readonly string[];
@@ -616,6 +630,9 @@ export interface LingAppServerVerifyPlanParams {
 export interface LingAppServerVerifyPlanResult {
   readonly planId: string;
   readonly planRevision: string;
+  readonly threadId?: string;
+  readonly workItemId?: string;
+  readonly acceptedPlanRevision?: string;
   readonly candidate: LingAppServerCandidateReference;
   readonly checks: readonly LingAppServerVerificationCheckPlan[];
   readonly rationale: readonly string[];
@@ -649,6 +666,8 @@ export interface LingAppServerVerifyOperation {
   readonly operationId: string;
   readonly revision?: string;
   readonly planId: string;
+  readonly threadId?: string;
+  readonly workItemId?: string;
   readonly candidateDigest: string;
   readonly status: "queued" | "running" | "passed" | "failed" | "blocked" | "cancelled" | "unknown";
   readonly checks: readonly LingAppServerCheckEvidence[];
@@ -806,6 +825,26 @@ export interface LingAppServerThreadSnapshotResult {
   readonly run: Pick<RunSession, "id" | "status" | "startedAt" | "endedAt"> | null;
   readonly pendingApprovals: readonly ApprovalSummary[];
   readonly pendingInputs: readonly UserInputRequestTranscriptV1[];
+}
+
+export interface LingAppServerTurnResumeParams {
+  readonly cwd?: string;
+  readonly turnId: string;
+  readonly threadId?: string;
+  readonly expectedTurnRevision?: string;
+  readonly sourceRunId?: string;
+  readonly idempotencyKey?: string;
+  readonly instruction?: string;
+}
+
+export interface LingAppServerTurnResumeResult {
+  readonly cwd: string;
+  readonly thread: LingThread;
+  readonly turn: LingTurn;
+  readonly run: RunSession | null;
+  readonly runLinks: readonly LingTurnRun[];
+  readonly disposition: "existing" | "recovered" | "continued";
+  readonly resumedFromTurnId?: string;
 }
 
 export interface LingAppServerContextInspectParams extends LingAppServerThreadSnapshotParams {

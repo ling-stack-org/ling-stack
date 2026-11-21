@@ -133,6 +133,7 @@ export class ExternalAgentFederationService {
   private readonly now: () => string;
   private readonly idFactory: () => string;
   private readonly persistence?: ExternalAgentFederationOptions["persistence"];
+  private committedSnapshot?: ExternalAgentFederationSnapshot;
 
   constructor(options: ExternalAgentFederationOptions = {}) {
     this.allowedCapabilities = options.allowedCapabilities ?? [
@@ -163,6 +164,7 @@ export class ExternalAgentFederationService {
     this.idFactory = options.idFactory ?? randomUUID;
     this.persistence = options.persistence;
     const snapshot = this.persistence?.load();
+    if (this.persistence) this.committedSnapshot = snapshot ?? this.snapshot();
     if (snapshot) {
       this.restore(snapshot);
       for (const { task, hostDispatch } of snapshot.tasks) {
@@ -351,6 +353,8 @@ export class ExternalAgentFederationService {
     }
     const outcome = settle ? await settle(task)
       : task.task.status === "accepted" || task.task.status === "queued" ? "cancelled" : "unknown";
+    const concurrentReceipt = this.replayIdempotency<LingAppServerExternalAgentTaskCancelResult>("cancel", params.idempotencyKey, fingerprint);
+    if (concurrentReceipt) return concurrentReceipt;
     const current = this.requireTask(params.taskId);
     if (current.task.status === "completed" || current.task.status === "failed" || current.task.status === "cancelled") {
       return { taskId: current.task.taskId, status: "already_terminal" };
@@ -392,11 +396,11 @@ export class ExternalAgentFederationService {
     return this.requireTask(taskId).task;
   }
 
-  markCompleted(taskId: string): LingAppServerExternalAgentTaskReceipt {
+  markCompleted(taskId: string, eventCount?: number): LingAppServerExternalAgentTaskReceipt {
     const task = this.requireTask(taskId);
     if (task.task.status !== "running") return task.task;
     this.replaceTask(task, "completed");
-    this.publish(taskId, "task_status", { status: "completed" });
+    this.publish(taskId, "task_status", { status: "completed", ...(eventCount === undefined ? {} : { eventCount }) });
     return this.requireTask(taskId).task;
   }
 
@@ -460,7 +464,15 @@ export class ExternalAgentFederationService {
   }
 
   private persist(): void {
-    this.persistence?.save(this.snapshot());
+    if (!this.persistence) return;
+    const next = this.snapshot();
+    try {
+      this.persistence.save(next);
+      this.committedSnapshot = next;
+    } catch (error) {
+      if (this.committedSnapshot) this.restore(this.committedSnapshot);
+      throw error;
+    }
   }
 
   private registrationResult(record: ExternalAgentFederationRegistrationRecord): LingAppServerExternalAgentRegisterResult {

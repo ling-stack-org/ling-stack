@@ -1,4 +1,5 @@
 import type { SQLOutputValue } from "node:sqlite";
+import type { AppendControlPlaneEventInput } from "../../run-types.js";
 import { DEFAULT_WORKSPACE_ID } from "../../workspace-types.js";
 import type {
   AppServerStateKind,
@@ -8,9 +9,10 @@ import type {
 } from "../../app-server-state-types.js";
 import { parseJson, readNullableString, readNumber, readString, stringifyJson } from "./helpers.js";
 import type { SqliteStoreContext } from "./store-context.js";
+import { SqliteControlPlaneStore } from "./control-plane-store.js";
 
 export class SqliteAppServerStateStore {
-  constructor(private readonly context: SqliteStoreContext) {}
+  constructor(private readonly context: SqliteStoreContext, private readonly events = new SqliteControlPlaneStore(context)) {}
 
   get(kind: AppServerStateKind, recordId: string, workspaceId = DEFAULT_WORKSPACE_ID): AppServerStateRecord | undefined {
     const row = this.context.database.prepare(`
@@ -33,12 +35,14 @@ export class SqliteAppServerStateStore {
     return rows.map((row) => mapRecord(row as Record<string, SQLOutputValue>));
   }
 
-  put(input: PutAppServerStateInput, now: string): PutAppServerStateResult | undefined {
+  put(input: PutAppServerStateInput, now: string, publication?: AppendControlPlaneEventInput): PutAppServerStateResult | undefined {
     this.context.database.exec("BEGIN IMMEDIATE");
     try {
       const result = this.putWithinTransaction(input, now);
+      const event = result && result.status !== "replayed" && publication
+        ? this.events.appendControlPlaneEventWithinTransaction(publication, now) : undefined;
       this.context.database.exec("COMMIT");
-      return result;
+      return result && event ? { ...result, event } : result;
     } catch (error) {
       try { this.context.database.exec("ROLLBACK"); } catch { /* preserve original */ }
       throw error;

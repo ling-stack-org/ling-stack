@@ -32,7 +32,7 @@ import type {
 import type { DaemonContext } from "../context.js";
 import { HttpError } from "../errors.js";
 import type { ActiveRunRegistry } from "../runtime/active-runs.js";
-import type { AppServerStateRecord, RunStore } from "@ling-stack/core";
+import { DEFAULT_WORKSPACE_ID, type AppServerStateRecord, type RunStore } from "@ling-stack/core";
 import type { RunStoreRegistry } from "../runtime/store-registry.js";
 import { captureCodeAssessmentSnapshot } from "../features/code-assessments/snapshot.js";
 import { reconcileCodeAssessments, startCodeAssessment, type StartCodeAssessmentRun } from "../features/code-assessments/service.js";
@@ -40,6 +40,8 @@ import { parseReviewRuleRefs } from "../features/code-assessments/review-rules.j
 import { verificationRecipes } from "./app-server-verification-recipes.js";
 import { collectProjectInstructions } from "../features/conversations/project-instructions.js";
 import { initializeProjectInstructions } from "../features/conversations/project-instructions-draft.js";
+import { trimOversizedEvent } from "../features/control-plane/events.js";
+import { isRecord } from "../shared/validation.js";
 
 const DEFAULT_PROVIDER_PRESET = "default";
 type VerifyRecord = {
@@ -71,8 +73,26 @@ export class AppServerDevelopmentService {
   constructor(private readonly options: AppServerDevelopmentOptions) {}
 
   async planVerification(input: LingAppServerVerifyPlanParams): Promise<LingAppServerVerifyPlanResult> {
+    if (!isRecord(input.candidate) || typeof input.candidate.workspaceId !== "string"
+      || typeof input.candidate.candidateDigest !== "string" || !input.candidate.candidateDigest.trim()
+      || input.candidate.candidateDigest.length > 200
+      || input.requestedChecks !== undefined && (!Array.isArray(input.requestedChecks) || input.requestedChecks.length > 64
+        || input.requestedChecks.some(id => typeof id !== "string" || !/^[A-Za-z0-9_.:-]{1,128}$/u.test(id)))
+      || [input.workItemId, input.threadId, input.planRevision].some(value =>
+        value !== undefined && (typeof value !== "string" || !value.trim() || value.length > 256))) {
+      throw new HttpError(400, "invalid_params", "Supply a candidate and valid verification scope and check IDs.");
+    }
+    if (input.idempotencyKey !== undefined) assertVerificationKey(input.idempotencyKey);
     const cwd = requireCwd(input.cwd ?? input.candidate.workspaceId);
     const store = this.storeRegistry().getStore(cwd);
+    const workItem = input.workItemId ? store.getWorkItem(input.workItemId) : undefined;
+    if (input.workItemId && !workItem || input.threadId && !store.getLingThread(input.threadId)) {
+      throw new HttpError(404, "verification_scope_not_found", "Verification scope is outside this workspace.");
+    }
+    if (workItem?.planRevision && input.planRevision && workItem.planRevision !== input.planRevision) {
+      throw Object.assign(new Error("The accepted Work Item plan changed."), { jsonRpcCode: -32030, code: "stale_revision" });
+    }
+    const acceptedPlanRevision = workItem?.planRevision ?? input.planRevision;
     const candidate = { ...input.candidate, workspaceId: store.paths.cwd };
     const checks = verificationRecipes(input.requestedChecks).map(({ id, kind, label, argv, required }) => {
       return {
@@ -86,7 +106,10 @@ export class AppServerDevelopmentService {
     });
     const plan: LingAppServerVerifyPlanResult = {
       planId: `verify_plan_${randomUUID()}`,
-      planRevision: digest(JSON.stringify({ candidate, checks, acceptedPlanRevision: input.planRevision })),
+      planRevision: digest(JSON.stringify({ candidate, checks, acceptedPlanRevision, threadId: input.threadId, workItemId: input.workItemId })),
+      ...(input.threadId ? { threadId: input.threadId } : {}),
+      ...(input.workItemId ? { workItemId: input.workItemId } : {}),
+      ...(acceptedPlanRevision ? { acceptedPlanRevision } : {}),
       candidate,
       checks,
       rationale: ["Selected deterministic workspace checks for the candidate."],
@@ -115,12 +138,29 @@ export class AppServerDevelopmentService {
       if (value.plan.planId !== plan.planId || value.plan.planRevision !== plan.planRevision) throw verificationConflict();
       return this.readVerification(store, existing).operation;
     }
+    if (plan.workItemId) {
+      const workItem = store.getWorkItem(plan.workItemId);
+      if (!workItem || workItem.control.state !== "active" || workItem.holds.some(hold => hold.blocksNewAdmission)) {
+        throw Object.assign(new Error("The Work Item is not admitting verification."), { jsonRpcCode: -32061, code: "resume_blocked" });
+      }
+      if (workItem.planRevision && workItem.planRevision !== plan.acceptedPlanRevision) {
+        throw Object.assign(new Error("The accepted Work Item plan changed."), { jsonRpcCode: -32030, code: "stale_revision" });
+      }
+    }
+    if (plan.threadId) {
+      const thread = store.getLingThread(plan.threadId);
+      if (!thread || thread.status === "archived") {
+        throw Object.assign(new Error("The Thread is not admitting verification."), { jsonRpcCode: -32061, code: "resume_blocked" });
+      }
+    }
     const operationId = `verify_${randomUUID()}`;
     const queued = Boolean(this.options.executeVerificationCheck);
     const operation: LingAppServerVerifyOperation = {
       operationId,
       revision: "1",
       planId: plan.planId,
+      ...(plan.threadId ? { threadId: plan.threadId } : {}),
+      ...(plan.workItemId ? { workItemId: plan.workItemId } : {}),
       candidateDigest: plan.candidate.candidateDigest,
       status: queued ? "queued" : "blocked",
       ...(queued ? {} : { blocker: "verification_executor_unavailable", completedAt: new Date().toISOString() }),
@@ -137,7 +177,7 @@ export class AppServerDevelopmentService {
       })),
     };
     const payload: VerifyRecord = { operation, plan, cancelRequested: false };
-    store.putAppServerState({ kind: "verify_operation", recordId: operationId, payload, idempotencyKey: input.idempotencyKey }, new Date().toISOString());
+    this.persistVerification(store, 0, payload, input.idempotencyKey);
     if (this.options.executeVerificationCheck) {
       const controller = new AbortController();
       this.activeVerifications.set(operationId, controller);
@@ -373,13 +413,29 @@ export class AppServerDevelopmentService {
     return { ...record, operation: { ...record.operation, revision: String(stored.revision) } };
   }
 
-  private updateVerification(store: RunStore, stored: AppServerStateRecord, record: VerifyRecord): AppServerStateRecord {
-    const next = { ...record, operation: { ...record.operation, revision: String(stored.revision + 1) } };
+  private persistVerification(store: RunStore, expectedRevision: number, record: VerifyRecord, idempotencyKey?: string): AppServerStateRecord {
+    const operation = { ...record.operation, revision: String(expectedRevision + 1) };
     const result = store.putAppServerState({
-      kind: "verify_operation", recordId: stored.recordId, expectedRevision: stored.revision, payload: next,
-    }, new Date().toISOString());
+      kind: "verify_operation", recordId: operation.operationId, expectedRevision,
+      payload: { ...record, operation }, idempotencyKey,
+    }, new Date().toISOString(), {
+      workspaceId: DEFAULT_WORKSPACE_ID, cwd: store.paths.cwd, domain: operation.workItemId ? "work_items" : "runs",
+      entityType: "verify_operation", entityId: operation.operationId, action: "verification.updated",
+      idempotencyKey: "app-server-verify:" + operation.operationId + ":" + operation.revision,
+      data: {
+        operationId: operation.operationId, planId: operation.planId, candidateDigest: operation.candidateDigest,
+        threadId: operation.threadId, workItemId: operation.workItemId, revision: operation.revision,
+        status: operation.status, cancelRequested: record.cancelRequested, blocker: operation.blocker,
+        checks: operation.checks.map(({ checkId, status }) => ({ checkId, status })),
+      },
+    });
     if (!result) throw Object.assign(new Error("Verification operation revision is stale."), { jsonRpcCode: -32030, code: "stale_revision" });
+    if (result.event) this.options.context.controlPlaneEvents?.publish(trimOversizedEvent(result.event));
     return result.record;
+  }
+
+  private updateVerification(store: RunStore, stored: AppServerStateRecord, record: VerifyRecord): AppServerStateRecord {
+    return this.persistVerification(store, stored.revision, record);
   }
 
   private async executeVerification(

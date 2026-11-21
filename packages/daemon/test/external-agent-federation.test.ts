@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   ExternalAgentFederationError,
   ExternalAgentFederationService,
+  type ExternalAgentFederationSnapshot,
 } from "../dist/runtime/external-agent/federation.js";
 
 const registration = {
@@ -124,6 +125,37 @@ test("federation preserves unknown cancellation outcome and rejects conflicting 
   assert.equal(service.getTask(task.taskId)?.task.status, "unknown");
   const secondTask = start(service, registrationId, { idempotencyKey: "submission_2" }).task;
   await assert.rejects(() => service.cancelTask({ registrationId, taskId: secondTask.taskId, idempotencyKey: "cancel_unknown" }), (error: unknown) => error instanceof ExternalAgentFederationError && error.code === "idempotency_conflict");
+});
+
+test("federation retries a failed ledger write without publishing an uncommitted state", () => {
+  let saved: ExternalAgentFederationSnapshot | undefined;
+  let fail = false;
+  const service = new ExternalAgentFederationService({ persistence: {
+    load: () => saved,
+    save: snapshot => {
+      if (fail) throw new Error("ledger write failed");
+      saved = snapshot;
+    },
+  } });
+  const registrationId = register(service);
+  const notices: string[] = [];
+  service.subscribe(event => notices.push(event.type));
+  fail = true;
+  assert.throws(() => start(service, registrationId), /ledger write failed/u);
+  assert.deepEqual(service.snapshot(), saved);
+  assert.deepEqual(notices, []);
+  fail = false;
+  const { task } = start(service, registrationId);
+  assert.equal(task.status, "accepted");
+  assert.deepEqual(notices, ["task_started"]);
+  fail = true;
+  assert.throws(() => service.markRunning(task.taskId), /ledger write failed/u);
+  assert.equal(service.getTask(task.taskId)?.task.status, "accepted");
+  assert.deepEqual(service.snapshot(), saved);
+  assert.deepEqual(notices, ["task_started"]);
+  fail = false;
+  assert.equal(service.markRunning(task.taskId).status, "running");
+  assert.deepEqual(notices, ["task_started", "task_status"]);
 });
 
 test("federation turns a revoked registration into an authorization resync", () => {

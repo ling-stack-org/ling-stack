@@ -1,8 +1,8 @@
 # Ling App Server 与开发工作流实施计划
 
-- **状态** App Server WebSocket、Verify、Work Item、External Agent、stdio/Unix socket、MCP bridge、项目规则、Review 幂等、线程快照、用户提问和失败/取消 Turn 恢复已进入 PR 验收。签名发行、远程 WSS、GitHub CI 证据闭环和真实自研准入仍需环境验收
+- **状态** App Server 本机传输、Turn 控制与恢复、Verify 和 Federation 已通过定向验收。Agent Operating Model 已接入工作项接单、控制和协作记录。下文列出完整实施与发行仍需完成的工作包。
 - **维护者** Contracts、Daemon、Runtime、API Client、CLI 与开发工具维护者
-- **核对基线** 2026-11-22，`origin/main@72066a49a`
+- **核对基线** 2026-11-22，`origin/main@75ad8920f`
 - **类型** 开发准备、依赖顺序和验收计划
 - **合同** [产品与架构设计](ling-app-server.md) · [详细设计](ling-app-server-detailed-design.md)
 - **代码与测试锚点** [Daemon RPC](../../packages/daemon/src/server/rpc.ts) · [控制面往返测试](../../packages/daemon/test/control-plane-api.test.mjs) · [会话受理收据](../../packages/daemon/test/conversation-submission-receipts.test.mjs) · [框架验收](ling-framework-complementary-implementation-plan.md)
@@ -13,17 +13,29 @@
 
 实现分支已经把协议合同、WebSocket 协商、Thread/Turn 生命周期、Work Item 控制与证据、开发工作流入口、协作记录、审议触发策略、外部 Agent 注册与任务受理接入同一个 App Server RPC。协作记录复用 Work Item 证据板的持久 CAS 与幂等边界，外部 Agent 任务在派发前核对 Work Item 当前 revision 和 control state。
 
-已验证的关键回归包括 App Server WebSocket、stdio/Unix socket、MCP bridge、Work Item 控制与证据、协作记录回放、开发工作流服务、外部 Agent federation、配置的 Pi Runner 和 API Client。Verify plan/operation 和 Federation ledger 已接入工作区 SQLite 的 app_server_state，按来源工作区恢复，Daemon 重启后会把无法确认的 queued/running Verify 和外部 running task 标记为 unknown，要求原所有者重新核对。Verify 只接受主机登记的配方，执行前后核对候选 digest，重复 start/cancel 使用同一收据，取消会传递给实际检查进程。Work Item acceptance 通过同一 SQLite 事务写入 receipt、状态和 revision。外部任务在 Work Item revision/control、Runner external boundary、工具 conformance、只读工具范围和 admission fence 通过后调用已配置的真实 Adapter，重复提交不重复派发，Adapter 失败、取消未确认和断线重启均保留 unknown。普通 `turn/start` 通过同一会话受理、准备快照和 Run 入口，`submission/read` 与 `turn/resume` 可在重连后读取原收据，失败或取消的 Turn 会沿既有恢复上下文创建一次受约束的后继 Run。用户提问由 Host 事务产生 `pending` 事件，认证客户端从线程快照取得短期 authority，通过 `input/respond` 复用公共解析、权限和版本 CAS，答复与取消在重启后按同一事件游标回放。项目规则在准备快照时按路径读取并封存 digest，`instructions/init` 只在预览版本仍匹配且目标未被占用时原子写入。Review 先捕获候选两次，再读取基线的 `Code Review Rules` 和显式 `REVIEW.md`，规则与发现项处置由同一候选和幂等收据约束。App Server 的 operator 写操作要求认证凭据，能力与方法表只公布当前连接可用的实现。已用本机安装的 Codex App Server 通过 MCP bridge 创建 Ling Thread、提交配置 Pi Runner Turn，并从 Ling 游标恢复 Turn 事件。跨平台发行矩阵与 hosted CI 仍属于 PR 阶段。
+已验证的关键回归包括 App Server WebSocket、stdio/Unix socket、MCP bridge、Work Item 控制与证据、协作记录回放、开发工作流服务、外部 Agent federation、配置的 Pi Runner 和 API Client。Verify plan/operation 和 Federation ledger 已接入工作区 SQLite 的 app_server_state，按来源工作区恢复，Daemon 重启后会把无法确认的 queued/running Verify 和外部 running task 标记为 unknown，要求原所有者重新核对。Verify 只接受主机登记的配方，执行前后核对候选 digest，重复 start/cancel 使用同一收据，取消会传递给实际检查进程。Work Item acceptance 通过同一 SQLite 事务写入 receipt、状态和 revision。外部任务在 Work Item revision/control、Runner external boundary、工具 conformance、只读工具范围和 admission fence 通过后调用已配置的真实 Adapter，重复提交不重复派发，Adapter 失败、取消未确认和断线重启均保留 unknown。普通 `turn/start` 通过同一会话受理、准备快照和 Run 入口，`submission/read` 与 `turn/resume` 可在重连后读取原收据，已准备但尚未派发的 Turn 通过原请求恢复同一 Turn。停止的 Turn 在实际执行和效果收敛后，可用明确的恢复键受理后继 Turn。用户提问由 Host 事务产生 `pending` 事件，认证客户端从线程快照取得短期 authority，通过 `input/respond` 复用公共解析、权限和版本 CAS，答复事件在重启后按原身份回放，已结束的问题不会再次要求应答。项目规则在准备快照时按路径读取并封存 digest，`instructions/init` 只在预览版本仍匹配且目标未被占用时原子写入。Review 先捕获候选两次，再读取基线的 `Code Review Rules` 和显式 `REVIEW.md`，规则与发现项处置由同一候选和幂等收据约束。App Server 的 operator 写操作要求认证凭据，能力与方法表只公布当前连接可用的实现。已用本机安装的 Codex App Server 通过 MCP bridge 创建 Ling Thread、提交配置 Pi Runner Turn，并从 Ling 游标恢复 Turn 事件。平台和兼容证据随 PR 检查及发行矩阵记录。
 
 | 工作包 | 已验证场景与证据边界 |
 | --- | --- |
+| A2/B1 会话恢复和事件 | `thread/resume` 从读快照取得当前 Turn 和事件游标。两个连接同时恢复已准备的 Turn 只启动一个 Run，并使用原来封存的项目规则。停止的 Turn 以原 Run 效果收敛和请求键为前提续接。订阅者可以接收普通 Pi Turn 的实时增量、结束通知和最终 Item 引用。以旧游标重接会回放最终 Item。 |
+| O2 外部 Runner | 真实 Daemon 使用配置的 Codex Runner Adapter 调用回环模拟后端，核对协商、任务身份、工作区和只读工具范围。完成状态与 Adapter 事件在重启后可重放。未确认的取消保留 `unknown`，存储写入失败时从最后提交状态恢复。 |
 | B2 在途输入 | `turn/queue` 将输入交给持久 Run intervention。前驱已记录执行结束及副作用收敛时，Daemon 可在重启后用同一收据启动后继 Turn。用配置 Pi Runner 核对实际投递一次、重连事件及新旧 Turn 的关联。`turn/interrupt` 可携带明确的重定向输入。`turn/steer` 在当前 Runner 无同 Turn 安全注入能力时返回 `steer_unsupported`。已安装的 Codex 通过 MCP 验证了快照、追加消息和事件读取。 |
 | C2/F2 版本兼容 | 用 `v0.6.1@3fe77440e` 源码构建在 macOS 上创建 Thread、Turn、待决审批和游标，候选 Daemon 接手原 SQLite，旧 SDK 可读取 Thread 和处置后的审批。候选 SDK 向旧 `/rpc/stream` 尝试提交时，在协商阶段返回 `protocol_version_unsupported`。候选 CLI probe 和本机 Codex MCP 已通过。v0.6.1 未提供 App Server 协议。发布安装包、远程连接及回退对账另行验收。 |
-| E1 Verify 与用户输入恢复 | `verify/status` 提供操作版本。取消受理与停止意图一起写入原操作，同键重试可在重启后读取原受理结果。实际退出通过 `verify/status` 查看，结果无法核实时保留 `unknown`。用户提问的 authority、答案 CAS、投递收据和 `pending/answered/cancelled` 事件也在重启后保持同一请求身份。 |
+| E1 Verify 与用户输入恢复 | `verify/status` 提供操作版本。取消受理与停止意图一起写入原操作，同键重试可在重启后读取原受理结果。实际退出通过 `verify/status` 查看，结果无法核实时保留 `unknown`。已绑定工作项的 Verify 状态和 Control Plane 事件同事务提交，两个连接可核对实时状态和重启回放。用户提问的 authority、答案 CAS、投递收据和 `pending/answered/cancelled` 事件也在重启后保持同一请求身份。 |
 | E2 交付前验收 | App Server 与 HTTP 使用同一套 Goal 验收解析和证据检查。实际 Pi Run 通过后，可用同 Thread 证据完成 Goal。缺证据和引用其他 Thread 的 Run 会被拒绝。Review 已验证候选绑定、发现项处置重放及 freshness 持久化。可信验证器来源与 GitHub CI 交付证据仍需接入 Goal。 |
 | O1/O9 接单和协作 | 接单、证据和协作记录各自与对应的 Control Plane 事件同事务提交。两个客户端加 Daemon 重启的场景核对了幂等、冲突错误和游标回放。阶段运行、定时轮次、交接、裁决与恢复的联合验收仍待下方矩阵。 |
 
 源码兼容用例由 `LING_APP_SERVER_PREVIOUS_BUILD` 指向已构建的上一版源码目录。`LING_APP_SERVER_CODEX_EXECUTABLE` 指向已安装的 Codex。两项均使用隔离状态和回环服务，配置 Pi Runner 使用脚本化 Provider。 [发行验收测试](../../packages/daemon/test/app-server-release-acceptance.test.ts)
+
+## 尚待完成的发布条件
+
+| 工作包 | 代码或验收差距 |
+| --- | --- |
+| A1、B1、C1、C2 | 全方法的 Schema 校验、绑定权限和存储代次的游标、按身份授予的控制和审批范围、认证 WSS。现有兼容用例覆盖本机的上一版源码与候选组合。 |
+| D1、D2、E1、E2 | 项目规则的内置 Skill 与完整工作树工作流、验证配方覆盖及运行报告，可信验证器和 GitHub CI 结果进入 Goal 验收。当前仓库命令结果绑定候选摘要，可信验证器来源需要独立证明。 |
+| F1、F2 | 跨会话 Handoff 的执行归属与接手恢复。已有 Codex MCP 联调，双端宿主界面和授权变更后重订阅需要实测。 |
+| O1、O3–O9 | 跨入口任务归并和首次派发、自治策略、GitHub 交付、经验与设备反馈、阶段和定时轮次、在途改计划、交接和审议裁决。现有协作记录的持久化、版本冲突和回放已验证，原 Workflow/Automation 执行与联合验收还要接通。 |
+| G | 自研切换和回退日志对账、签名安装产物、远程 WSS 和三个真实 Provider 自研试点。源码测试证据按其实际环境记录。 |
 
 ## 目标与开工顺序
 
@@ -134,7 +146,7 @@ corepack pnpm --filter @ling-stack/api-client typecheck:ci
 
 | 项目 | 状态 |
 | --- | --- |
-| 隔离开发分支 | `codex/ling-app-server-implementation` 已合入 `origin/main@72066a49a`。 |
+| 隔离开发分支 | `codex/ling-app-server-implementation` 已合入 `origin/main@75ad8920f`。 |
 | 目标态、协议、验收与索引 | 本组设计文档，按上表的真实代码入口接入。 |
 | 重叠工作搜索 | 核对主线的 Ling Server Connectivity、Ling Device Fabric、原生执行引擎和现有 RPC，GitHub 开放 Issue/PR 的 “app server” 搜索均为空。 |
 | 依赖及源码基线 | macOS arm64，Node 24.22.1、pnpm 10.0.0、Rust 1.97.1。完整锁文件安装后，Contracts、API Client、Daemon 和 CLI 的 `build:ci`/`typecheck:ci` 通过。 |

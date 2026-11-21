@@ -2705,7 +2705,7 @@ export interface RunStore extends AutomationEventStore, CodeAssessmentStore, Cod
   getAppServerState(kind: import("./app-server-state-types.js").AppServerStateKind, recordId: string, workspaceId?: string): import("./app-server-state-types.js").AppServerStateRecord | undefined;
   findAppServerStateByIdempotencyKey(kind: import("./app-server-state-types.js").AppServerStateKind, idempotencyKey: string, workspaceId?: string): import("./app-server-state-types.js").AppServerStateRecord | undefined;
   listAppServerState(kind?: import("./app-server-state-types.js").AppServerStateKind, workspaceId?: string): import("./app-server-state-types.js").AppServerStateRecord[];
-  putAppServerState(input: import("./app-server-state-types.js").PutAppServerStateInput, now: string): import("./app-server-state-types.js").PutAppServerStateResult | undefined;
+  putAppServerState(input: import("./app-server-state-types.js").PutAppServerStateInput, now: string, publication?: AppendControlPlaneEventInput): import("./app-server-state-types.js").PutAppServerStateResult | undefined;
   deleteAppServerState(kind: import("./app-server-state-types.js").AppServerStateKind, recordId: string, workspaceId?: string): boolean;
   pauseWorkItem(id: string, input: WorkItemControlRequest, now: string): WorkItem | undefined;
   resumeWorkItem(id: string, input: WorkItemControlRequest, now: string): WorkItem | undefined;

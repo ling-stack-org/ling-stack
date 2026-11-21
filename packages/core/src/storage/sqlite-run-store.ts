@@ -1743,7 +1743,7 @@ export class SqliteRunStore implements RunStore {
       },
     );
     this.workItemEvidence = new SqliteWorkItemEvidenceStore({ database: this.database });
-    this.appServerState = new SqliteAppServerStateStore({ database: this.database });
+    this.appServerState = new SqliteAppServerStateStore({ database: this.database }, this.controlPlane);
     this.approvalResumes = new SqliteApprovalResumeStore(
       { database: this.database },
       {
@@ -6158,8 +6158,8 @@ export class SqliteRunStore implements RunStore {
     return this.appServerState.list(kind, workspaceId);
   }
 
-  putAppServerState(input: import("../app-server-state-types.js").PutAppServerStateInput, now: string): import("../app-server-state-types.js").PutAppServerStateResult | undefined {
-    return this.appServerState.put(input, now);
+  putAppServerState(input: import("../app-server-state-types.js").PutAppServerStateInput, now: string, publication?: AppendControlPlaneEventInput): import("../app-server-state-types.js").PutAppServerStateResult | undefined {
+    return this.appServerState.put(input, now, publication);
   }
 
   deleteAppServerState(kind: import("../app-server-state-types.js").AppServerStateKind, recordId: string, workspaceId?: string): boolean {

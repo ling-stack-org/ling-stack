@@ -1,6 +1,6 @@
 import type { Server } from "node:http";
 import type { Duplex } from "node:stream";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 import {
   DEFAULT_WORKSPACE_ID,
@@ -9,6 +9,8 @@ import {
   type ControlPlaneDomain,
   type ControlPlaneEvent,
   type LingThreadGoal,
+  type LingThread,
+  type LingTurn,
   type RunEventEnvelope,
   type RunSession,
   type RunStore,
@@ -29,6 +31,7 @@ import {
   type LingAppServerInputRespondResult,
   type LingAppServerJsonRpcId,
   type LingAppServerThreadSnapshotResult,
+  type LingAppServerTurnResumeResult,
   type LingAppServerWorkItemResult,
 } from "@ling-stack/contracts";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
@@ -83,6 +86,7 @@ import {
   type ExternalAgentFederationEvent,
 } from "../runtime/external-agent/federation.js";
 import { assertDispatchReady, dispatchExternalAgentTask, ExternalAgentDispatchError } from "../runtime/external-agent/task-dispatcher.js";
+import { continuationSourceReady } from "../runtime/continuation-source-barrier.js";
 import {
   AppServerCollaborationError,
   appendAppServerWorkItemCollaboration,
@@ -106,6 +110,7 @@ interface RpcSubscription {
   readonly entityId?: string;
   readonly filterEvent?: (event: ControlPlaneEvent) => boolean;
   readonly replayReadyMethod?: "thread/replay/ready" | "workItem/replay/ready";
+  readonly threadId?: string;
   readonly closeHub: () => void;
   readonly queue: { readonly event: ControlPlaneEvent; readonly frame: RpcOutboundFrame }[];
   readonly upstreamKey: string;
@@ -303,8 +308,8 @@ class RpcConnection {
         const record = readParamsRecord(params);
         const workItemId = readStringField(record, "workItemId");
         const prepared = this.prepareControlPlaneSubscription({ ...record, domains: ["work_items"] }, {
-          entityType: "work_item",
-          entityId: workItemId,
+          filterEvent: (event) => event.entityType === "work_item" && event.entityId === workItemId
+            || event.entityType === "verify_operation" && event.data.workItemId === workItemId,
           replayReadyMethod: "workItem/replay/ready",
         });
         if (this.send({ jsonrpc: "2.0", id, result: prepared.result })) prepared.activate?.();
@@ -324,13 +329,14 @@ class RpcConnection {
         }, {
           ...(threadId ? { filterEvent: (event: ControlPlaneEvent) => threadEventMatches(event, threadId, store) } : {}),
           replayReadyMethod: "thread/replay/ready",
+          threadId,
         });
         if (this.send({ jsonrpc: "2.0", id, result: prepared.result })) prepared.activate?.();
         return;
       }
       const result = await this.dispatch(request.method, params);
       if (request.id !== undefined && !this.cancelledRequests.has(requestKey!)) {
-        if (this.appServer && this.authenticated && request.method === "thread/snapshot") {
+        if (this.appServer && this.authenticated && (request.method === "thread/snapshot" || request.method === "thread/resume")) {
           this.outbound.sendThreadSnapshot(id as LingAppServerJsonRpcId, result as LingAppServerThreadSnapshotResult);
         } else {
           this.send({ jsonrpc: "2.0", id, result });
@@ -409,7 +415,7 @@ class RpcConnection {
       case "thread/read":
         return this.readThread(params);
       case "thread/resume":
-        return this.readThread(params);
+        return this.appServer ? this.readThreadSnapshot(params) : this.readThread(params);
       case "thread/snapshot":
         return this.readThreadSnapshot(params);
       case "thread/list":
@@ -1071,7 +1077,8 @@ class RpcConnection {
     return store.readSnapshot(() => {
       const thread = store.getLingThread(threadId);
       if (!thread) throw rpcError(-32040, "workspace_binding_invalid", "Thread was not found.");
-      const turn = thread.metadata?.lastTurnId ? store.getLingTurn(thread.metadata.lastTurnId) : undefined;
+      const activeTurn = thread.activeRunId ? store.getLingTurnForRun(thread.activeRunId) : undefined;
+      const turn = activeTurn ?? latestConversationTurn(store, threadId);
       const runId = turn?.activeRunId ?? turn?.lastRunId;
       const run = runId ? store.getRun(runId) : undefined;
       const goal = store.getLingThreadGoal(threadId);
@@ -1395,54 +1402,87 @@ class RpcConnection {
     };
   }
 
-  private async resumeTurn(params: unknown): Promise<unknown> {
-    const record = this.workspaceParams(params);
-    const cwd = record.cwd;
+  private async resumeTurn(params: unknown): Promise<LingAppServerTurnResumeResult> {
+    const { cwd, ...record } = this.workspaceParams(params);
     const turnId = readStringField(record, "turnId");
+    const expectedThreadId = readOptionalStringField(record, "threadId");
+    const expectedRevision = readOptionalStringField(record, "expectedTurnRevision");
+    const expectedRunId = readOptionalStringField(record, "sourceRunId");
     const store = this.context.storeRegistry.getStore(cwd);
     const turn = store.getLingTurn(turnId);
-    if (!turn) throw rpcError(-32040, "workspace_binding_invalid", `Turn was not found: ${turnId}`);
-    const thread = store.getLingThread(turn.threadId);
-    if (!thread) throw rpcError(-32040, "workspace_binding_invalid", `Thread was not found: ${turn.threadId}`);
-    const run = turn.activeRunId ? store.getRun(turn.activeRunId) : turn.lastRunId ? store.getRun(turn.lastRunId) : undefined;
-    if (run && !["failed", "cancelled"].includes(run.status)) {
-      return {
-        cwd,
-        thread: projectPublicLingThread(thread),
-        turn: projectPublicLingTurn(turn, thread),
-        run: projectPublicRunSession(run, store),
-        runLinks: store.listLingTurnRuns(turn.id),
-        replayed: true,
-      };
+    const thread = turn && store.getLingThread(turn.threadId);
+    if (!turn || !thread || expectedThreadId !== undefined && thread.id !== expectedThreadId) {
+      throw rpcError(-32040, "workspace_binding_invalid", "Turn is outside the supplied Thread.");
     }
-    const idempotencyKey = readOptionalStringField(record, "idempotencyKey");
-    if (!idempotencyKey?.trim() || idempotencyKey.length > 200 || idempotencyKey.includes("\n") || idempotencyKey.includes("\r")) {
-      throw rpcError(-32602, "invalid_params", "An idempotency key of up to 200 characters is required to resume a terminal Turn.");
+    const sourceRunId = turn.activeRunId ?? turn.lastRunId;
+    const run = sourceRunId ? store.getRun(sourceRunId) : undefined;
+    if (expectedRunId !== undefined && expectedRunId !== run?.id) {
+      throw rpcError(-32030, "stale_revision", "The source Turn Run has changed.");
     }
-    const resume = buildLingThreadResumeContext({ store, thread, body: record, mode: "execute" });
-    const runId = await new Promise<string>((resolve, reject) => {
-      let settled = false;
-      const finish = (operation: () => void): void => { if (!settled) { settled = true; operation(); } };
-      void this.executeRun(resume.runRequest, (data) => {
-        const ready = readParamsRecord(data).runId;
-        if (typeof ready === "string") finish(() => resolve(ready));
-      }, (statusCode, body) => finish(() => reject(new HttpError(statusCode,
-        typeof body.error === "string" ? body.error : "turn_resume_failed",
-        typeof body.message === "string" ? body.message : "The Turn could not be resumed."))))
-        .then(id => { if (typeof id === "string") finish(() => resolve(id)); else finish(() => reject(rpcError(-32061, "resume_blocked", "The resumed Turn has no Run."))); },
-          error => finish(() => reject(error)));
+    const key = readOptionalStringField(record, "idempotencyKey");
+    if (!this.appServer || run && (key === undefined || run.status !== "failed" && run.status !== "cancelled")) {
+      return projectTurnResume(store, cwd, thread, turn, run, "existing");
+    }
+    this.workspaceParams({ cwd }, true);
+    if (expectedRevision !== turn.updatedAt) {
+      throw rpcError(-32030, "stale_revision", "Read the current Turn revision before requesting recovery.");
+    }
+    if (thread.kind !== "conversation" || thread.channelId || thread.archivedAt || thread.status === "archived") {
+      throw rpcError(-32061, "resume_blocked", "The Turn belongs to a different execution owner.");
+    }
+    const latestTurnId = latestConversationTurn(store, thread.id)?.id;
+    if (!run) {
+      if (sourceRunId || store.listLingTurnRuns(turn.id).length !== 0 || turn.status !== "open"
+        || latestTurnId !== turn.id || thread.activeRunId) {
+        throw rpcError(-32061, "resume_blocked", "The prepared Turn no longer owns admission.");
+      }
+      const prepared = turn.sourceItemId && readNormalConversationPreparedRequest(store, turn.sourceItemId);
+      if (!prepared || prepared.threadId !== thread.id || prepared.turnId !== turn.id || prepared.workspaceCwd !== cwd) {
+        throw rpcError(-32061, "resume_blocked", "The Turn has no saved execution preparation.");
+      }
+      this.publishConversationTurnStarted(store, cwd, turn);
+      const recovered = await this.executeConversationRun(prepared);
+      return projectTurnResume(store, cwd, thread, turn, store.getRun(recovered), "recovered");
+    }
+    if (!key?.trim() || key.length > 200 || /[\r\n]/u.test(key)) {
+      throw rpcError(-32602, "invalid_params", "An idempotency key of up to 200 characters is required to continue a stopped Turn.");
+    }
+    const idempotencyKey = "app-server-resume:" + createHash("sha256").update(JSON.stringify([turn.id, key])).digest("hex");
+    const instruction = readOptionalStringField(record, "instruction")?.trim() || "Resume this Ling thread from durable evidence.";
+    if (instruction.length > 16_384) throw rpcError(-32602, "invalid_params", "Resume instructions must be at most 16384 characters.");
+    const receipt = readConversationSubmission(store, { surface: "normal", threadId: thread.id, idempotencyKey });
+    if (receipt.status === "accepted") {
+      const successor = receipt.turnId ? store.getLingTurn(receipt.turnId) : undefined;
+      if (successor?.sourceTurnId !== turn.id || successor.userInstruction !== instruction) {
+        throw rpcError(-32031, "idempotency_conflict", "The recovery key was reused with different input.");
+      }
+      const priorRunId = successor.activeRunId ?? successor.lastRunId;
+      const priorRun = priorRunId ? store.getRun(priorRunId) : undefined;
+      if (priorRun) return projectTurnResume(store, cwd, thread, successor, priorRun, "continued", turn.id);
+      const prepared = successor.sourceItemId && readNormalConversationPreparedRequest(store, successor.sourceItemId);
+      if (!prepared || prepared.parentRunId !== run.id || latestTurnId !== successor.id || thread.activeRunId) {
+        throw rpcError(-32061, "resume_blocked", "The recovery has no current prepared request.");
+      }
+      this.publishConversationTurnStarted(store, cwd, successor);
+      const recovered = await this.executeConversationRun(prepared);
+      return projectTurnResume(store, cwd, thread, successor, store.getRun(recovered), "continued", turn.id);
+    }
+    if (latestTurnId !== turn.id) {
+      throw rpcError(-32030, "stale_revision", "The Thread has accepted a newer Turn.");
+    }
+    const unit = run.workUnitId && store.getWorkUnit(run.workUnitId);
+    if (!unit || unit.linkedRunId !== run.id
+      || !continuationSourceReady(store, unit, this.context.activeRuns, "app-server-resume", () => undefined)) {
+      throw rpcError(-32061, "resume_blocked", "The source Run has unsettled execution or effects.");
+    }
+    const resume = buildLingThreadResumeContext({
+      store, thread, body: { turnId, sourceRunId: run.id, instruction, idempotencyKey }, mode: "execute",
     });
-    const currentThread = store.getLingThread(thread.id) ?? thread;
-    const currentTurn = store.getLingTurn(resume.runRequest.turnId ?? turn.id) ?? turn;
-    const currentRun = store.getRun(runId);
-    return {
-      cwd,
-      thread: projectPublicLingThread(currentThread),
-      turn: projectPublicLingTurn(currentTurn, currentThread),
-      run: currentRun ? projectPublicRunSession(currentRun, store) : null,
-      runLinks: store.listLingTurnRuns(currentTurn.id),
-      resumedFromTurnId: turn.id,
-    };
+    const successor = resume.runRequest.turnId && store.getLingTurn(resume.runRequest.turnId);
+    if (!successor) throw rpcError(-32061, "resume_blocked", "The recovery has no accepted successor Turn.");
+    this.publishConversationTurnStarted(store, cwd, successor);
+    const recovered = await this.executeConversationRun(resume.runRequest);
+    return projectTurnResume(store, cwd, thread, successor, store.getRun(recovered), "continued", turn.id);
   }
 
   private async startTurn(params: unknown): Promise<unknown> {
@@ -1526,13 +1566,28 @@ class RpcConnection {
       || input.executionBinding && JSON.stringify(input.executionBinding) !== JSON.stringify(runRequest.executionBinding)) {
       throw rpcError(-32031, "idempotency_conflict", "The original submission used a different execution configuration.");
     }
-    appendControlPlaneEvent(store, this.context.controlPlaneEvents, {
-      workspaceId: DEFAULT_WORKSPACE_ID, cwd, domain: "runs", entityType: "turn", entityId: turn.id,
-      action: "turn.started", idempotencyKey: `app-server-turn:${turn.id}`,
-      data: { threadId: thread.id, turnId: turn.id, status: "queued" },
-    });
+    this.publishConversationTurnStarted(store, cwd, turn);
     const receipt = readConversationSubmission(store, { surface: "normal", threadId: thread.id, idempotencyKey: input.idempotencyKey! });
-    const runId = turn.activeRunId ?? turn.lastRunId ?? await new Promise<string>((resolve, reject) => {
+    const runId = turn.activeRunId ?? turn.lastRunId ?? await this.executeConversationRun(runRequest);
+    const currentThread = store.getLingThread(thread.id) ?? thread;
+    return {
+      cwd, thread: projectPublicLingThread(currentThread), turn: projectPublicLingTurn(store.getLingTurn(turn.id) ?? turn, currentThread),
+      run: projectPublicRunSession(store.getRun(runId), store), receipt, replayed,
+    };
+  }
+
+  private publishConversationTurnStarted(store: RunStore, cwd: string, turn: LingTurn): void {
+    const idempotencyKey = `app-server-turn:${turn.id}`;
+    if (store.getControlPlaneEventByIdempotency(turn.workspaceId, idempotencyKey)) return;
+    appendControlPlaneEvent(store, this.context.controlPlaneEvents, {
+      workspaceId: turn.workspaceId, cwd, domain: "runs", entityType: "turn", entityId: turn.id,
+      action: "turn.started", idempotencyKey,
+      data: { threadId: turn.threadId, turnId: turn.id, status: "queued" },
+    });
+  }
+
+  private executeConversationRun(runRequest: RunRequest): Promise<string> {
+    return new Promise<string>((resolve, reject) => {
       void this.executeRun(runRequest, data => {
         if (data && typeof data === "object" && "runId" in data && typeof data.runId === "string") resolve(data.runId);
       }, (statusCode, body) => reject(new HttpError(statusCode,
@@ -1540,11 +1595,6 @@ class RpcConnection {
         typeof body.message === "string" ? body.message : "The accepted Turn could not start.")))
         .then(id => id ? resolve(id) : reject(rpcError(-32061, "resume_blocked", "The accepted Turn has no Run yet.")), reject);
     });
-    const currentThread = store.getLingThread(thread.id) ?? thread;
-    return {
-      cwd, thread: projectPublicLingThread(currentThread), turn: projectPublicLingTurn(store.getLingTurn(turn.id) ?? turn, currentThread),
-      run: projectPublicRunSession(store.getRun(runId), store), receipt, replayed,
-    };
   }
 
   private respondApproval(params: unknown): unknown {
@@ -1829,7 +1879,7 @@ class RpcConnection {
   }
 
   private prepareControlPlaneSubscription(params: unknown,
-    filter?: Pick<RpcSubscription, "entityType" | "entityId" | "filterEvent" | "replayReadyMethod">): {
+    filter?: Pick<RpcSubscription, "entityType" | "entityId" | "filterEvent" | "replayReadyMethod" | "threadId">): {
     readonly result: ControlPlaneSubscribeResult;
     readonly activate?: () => void;
   } {
@@ -1862,6 +1912,12 @@ class RpcConnection {
         cwd: parsed.cwd,
         domains: parsed.domains,
         onEvent: (event) => this.enqueueControlPlaneEvent(subscription, event),
+        ...(this.appServer && subscription.replayReadyMethod === "thread/replay/ready" ? {
+          onRunTextDelta: (delta) => {
+            if (subscription.threadId && delta.subject.threadId !== subscription.threadId) return;
+            this.outbound.send({ jsonrpc: "2.0", method: "item/delta", params: { ...delta, subscriptionId } }, subscriptionId);
+          },
+        } : {}),
         onPendingChange: (bytes, count) => this.outbound.reserve(subscription.upstreamKey,
           bytes + count * controlPlaneEnvelopeBytes(subscription.id), count),
         onOverflow: () => this.outbound.close(1013, "slow_client_disconnect"),
@@ -2149,6 +2205,26 @@ class RpcConnection {
     this.outbound.cancelGroup(subscription.id);
     this.subscriptions.delete(subscription.id);
   }
+}
+
+function latestConversationTurn(store: RunStore, threadId: string): LingTurn | undefined {
+  return store.listLingTurns({ threadId, orderBy: "createdAt", limit: 1 })[0];
+}
+
+function projectTurnResume(
+  store: RunStore, cwd: string, thread: LingThread, turn: LingTurn, run: RunSession | undefined,
+  disposition: LingAppServerTurnResumeResult["disposition"], resumedFromTurnId?: string,
+): LingAppServerTurnResumeResult {
+  const currentThread = store.getLingThread(thread.id) ?? thread;
+  return {
+    cwd,
+    thread: projectPublicLingThread(currentThread),
+    turn: projectPublicLingTurn(store.getLingTurn(turn.id) ?? turn, currentThread),
+    run: projectPublicRunSession(run, store) ?? null,
+    runLinks: store.listLingTurnRuns(turn.id),
+    disposition,
+    ...(resumedFromTurnId ? { resumedFromTurnId } : {}),
+  };
 }
 
 function createRpcRunExecutionSink(input: {
@@ -2483,6 +2559,8 @@ function controlPlaneNotification(subscriptionId: string, event: ControlPlaneEve
 function appServerEventNotification(subscriptionId: string, event: ControlPlaneEvent): unknown | undefined {
   const method = appServerEventMethod(event);
   if (!method) return undefined;
+  const workItemId = event.entityType === "work_item" ? event.entityId
+    : typeof event.data.workItemId === "string" && event.entityType === "verify_operation" ? event.data.workItemId : undefined;
   return {
     jsonrpc: "2.0",
     method,
@@ -2493,11 +2571,14 @@ function appServerEventNotification(subscriptionId: string, event: ControlPlaneE
       workspaceId: event.workspaceId,
       subject: event.entityType === "thread"
         ? { kind: "thread", threadId: event.entityId }
-        : event.entityType === "work_item"
-          ? { kind: "workItem", workItemId: event.entityId }
+        : workItemId
+          ? { kind: "workItem", workItemId, ...(typeof event.data.threadId === "string" ? { threadId: event.data.threadId } : {}) }
           : { kind: "thread", threadId: event.data.threadId as string | undefined,
               ...(typeof event.data.turnId === "string" ? { turnId: event.data.turnId } : {}) },
       revision: String(event.data.revision ?? event.data.statusRevision ?? event.ts),
+      ...(typeof event.data.itemId === "string" ? { itemId: event.data.itemId } : {}),
+      ...(typeof event.data.runId === "string" ? { runId: event.data.runId } : {}),
+      ...(typeof event.data.turnId === "string" ? { turnId: event.data.turnId } : {}),
       event,
       payload: event.data,
     },
@@ -2529,9 +2610,11 @@ function appServerServerRequestForEvent(event: ControlPlaneEvent, readStore: () 
 }
 
 function appServerEventMethod(event: ControlPlaneEvent): string | undefined {
+  if (event.entityType === "verify_operation") return "verification/updated";
+  if (event.entityType === "conversation_item" && event.action === "conversation_narration.published") return "item/completed";
   if (event.action === "thread.goal.updated") return "thread/goal/updated";
-  if (event.entityType === "run" && typeof event.data.turnId === "string" && typeof event.data.interventionId === "string") {
-    if (event.action === "run.created") return "turn/started";
+  if (event.entityType === "run" && typeof event.data.turnId === "string") {
+    if (event.action === "run.created") return typeof event.data.interventionId === "string" ? "turn/started" : "turn/status/changed";
     if (event.action === "run.completed" || event.action === "run.cancelled") return "turn/completed";
   }
   if (event.entityType === "thread") {

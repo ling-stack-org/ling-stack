@@ -70,12 +70,14 @@ export async function dispatchExternalAgentTask(input: ExternalAgentDispatchRequ
       input.federation.markUnknown(input.taskId, "external_dispatch_cancelled_unknown");
       return { taskId: input.taskId, outcome: "unknown", reason: "external_dispatch_cancelled_unknown" };
     }
-    input.federation.markCompleted(input.taskId);
-    input.federation.appendEvent(input.taskId, {
-      type: "dispatch_completed",
-      taskId: input.taskId,
-      eventCount: result.events.length,
-    });
+    if (result.taskId !== input.taskId) {
+      input.federation.markUnknown(input.taskId, "external_result_identity_mismatch");
+      return { taskId: input.taskId, outcome: "unknown", reason: "external_result_identity_mismatch" };
+    }
+    const settled = input.federation.markCompleted(input.taskId, result.events.length);
+    if (settled.status !== "completed") {
+      return { taskId: input.taskId, outcome: "unknown", reason: settled.outcomeReason ?? "external_result_unconfirmed" };
+    }
     return { taskId: input.taskId, outcome: "completed", result };
   } catch {
     const reason = input.options.signal?.aborted ? "external_dispatch_cancelled_unknown" : "external_adapter_failed";

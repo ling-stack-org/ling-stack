@@ -29,17 +29,21 @@ import type {
   LingAppServerReviewStatusResult,
   LingAppServerReviewFindingUpdateResult,
   LingAppServerThreadSnapshotResult,
+  LingAppServerTurnResumeResult,
   ControlPlaneEventsResponse,
 } from "@ling-stack/contracts";
 import { LingAppServerClient, type LingAppServerSocket, type LingDaemonClient } from "@ling-stack/api-client";
-import { createSqliteRunStore, resolveStoragePaths, type LingThreadGoal, type RunIntervention, type SqliteRunStore } from "@ling-stack/core";
+import { createSqliteRunStore, resolveStoragePaths, toRuntimeAttemptFence, type LingThreadGoal, type RunIntervention, type SqliteRunStore } from "@ling-stack/core";
 import { WebSocket } from "ws";
-import { createDaemonServer, listenLingAppServerSocket, probeLingAppServer, runLingAppServerMcp, runLingAppServerStdio, type DaemonConfig } from "../dist/index.js";
+import { createDaemonServer, createDefaultRunnerRegistry, listenLingAppServerSocket, probeLingAppServer, runLingAppServerMcp, runLingAppServerStdio, type DaemonConfig } from "../dist/index.js";
+import { prepareConversationSubmission } from "../dist/features/conversations/conversation-submission.js";
 import { LATEST_PROTOCOL_VERSION } from "@modelcontextprotocol/sdk/types.js";
 import { createRunnerRegistry, type RunnerRegistrationInput } from "../dist/runtime/runners.js";
+import { createCodexAppServerAdapter } from "../dist/runtime/adapters/codex-app-server.js";
 import { startLoopbackPiProvider } from "./support/loopback-pi-provider-fixture.mjs";
+import { startFakeCodexAppServer } from "./test-support/fake-codex-app-server.ts";
 
-test("App Server executes an allowlisted check once and restores its outcome in the project workspace", { timeout: 30_000 }, async t => {
+test("App Server executes an allowlisted check once and restores its outcome and Work Item events", { timeout: 30_000 }, async t => {
   const fixture = await releaseFixture(t);
   const marker = join(fixture.root, "test-executions");
   await writeFile(join(fixture.cwd, ".gitignore"), ".ling-stack/\nnode_modules/\npnpm-lock.yaml\n");
@@ -50,9 +54,16 @@ test("App Server executes an allowlisted check once and restores its outcome in 
   git("add", ".gitignore", "package.json", "check.cjs");
   git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "Verification input");
   const client = await fixture.connect();
+  const peer = await fixture.connect();
+  const { workItem } = await client.call<{ workItem: LingAppServerWorkItemSnapshot }>("workItem/create", {
+    sourceId: "verify-acceptance", title: "Verify the current candidate",
+  });
+  const subscription = await peer.call<{ cursor: string }>("workItem/subscribe", { workItemId: workItem.workItemId });
   const { candidate, coverage } = await client.call<{ candidate: LingAppServerCandidateReference; coverage: string }>("changes/capture");
   assert.equal(coverage, "complete");
-  const plan = await client.call<LingAppServerVerifyPlanResult>("verify/plan", { candidate, requestedChecks: ["test", "browser-missing-recipe"] });
+  const plan = await client.call<LingAppServerVerifyPlanResult>("verify/plan", {
+    candidate, workItemId: workItem.workItemId, requestedChecks: ["test", "browser-missing-recipe"],
+  });
   const input = { planId: plan.planId, planRevision: plan.planRevision, candidateDigest: candidate.candidateDigest, idempotencyKey: "verify-receipt" };
   const first = await client.call<LingAppServerVerifyOperation>("verify/start", input);
   assert.equal((await client.call<LingAppServerVerifyOperation>("verify/start", input)).operationId, first.operationId);
@@ -62,10 +73,21 @@ test("App Server executes an allowlisted check once and restores its outcome in 
   });
   assert.equal(finished.status, "blocked");
   assert.deepEqual(finished.checks.map(check => check.status), ["passed", "blocked"]);
+  const finalEvent = await waitFor(() => peer.notices.find(notice =>
+    notice.method === "verification/updated" && notice.params?.event?.entityId === finished.operationId
+    && notice.params?.revision === finished.revision));
+  assert.equal(finalEvent.params?.subject?.workItemId, workItem.workItemId);
+  const events = peer.notices.filter(notice => notice.method === "verification/updated").map(notice => notice.params?.eventId);
+  assert.ok(events.length >= 3);
+  assert.equal(new Set(events).size, events.length);
   assert.equal(await readFile(marker, "utf8"), "checked\n");
   await fixture.restart();
   const restored = await fixture.connect();
+  await restored.call("workItem/subscribe", { workItemId: workItem.workItemId, cursor: subscription.cursor });
+  await waitFor(() => restored.notices.find(notice => notice.method === "workItem/replay/ready"));
   assert.deepEqual(await restored.call("verify/start", input), finished);
+  assert.deepEqual(restored.notices.filter(notice => notice.method === "verification/updated")
+    .map(notice => notice.params?.eventId), events);
   assert.equal(await readFile(marker, "utf8"), "checked\n");
 });
 
@@ -83,6 +105,8 @@ test("App Server submits a durable Turn through the configured Pi Runner and rep
   const started = await first.call<{ thread: { id: string }; turn: { id: string; status: string }; run: { id: string } }>("thread/start", {
     title: "Runner thread", objective: "Exercise the configured Pi Runner", kind: "conversation", threadId: "release-runner-thread",
   });
+  const observer = await fixture.connect();
+  const subscription = await observer.call<{ cursor: string }>("thread/subscribe", { threadId: started.thread.id });
   const acceptanceCriteria = [{ id: "run", kind: "run_succeeded", description: "The requested Run succeeds" }];
   const goalInput = { threadId: started.thread.id, objective: "Check the accepted Turn", acceptanceCriteria,
     supervisionPolicy: { autoContinue: false } };
@@ -96,6 +120,20 @@ test("App Server submits a durable Turn through the configured Pi Runner and rep
   };
   const result = await first.call<typeof started & { replayed?: boolean }>("turn/start", request);
   assert.ok(result.run.id);
+  const delta = await waitFor(() => observer.notices.find(notice => notice.method === "item/delta"));
+  assert.equal(delta.params?.subject?.turnId, result.turn.id);
+  assert.equal(delta.params?.runId, result.run.id);
+  assert.equal(delta.params?.text, "Runner accepted the task");
+  assert.ok(delta.params?.offset && delta.params.streamEpoch);
+  assert.equal(delta.params?.eventId, undefined);
+  const turnCompleted = await waitFor(() => observer.notices.find(notice => notice.method === "turn/completed"));
+  assert.equal(turnCompleted.params?.subject?.turnId, result.turn.id);
+  const finalItem = await waitFor(() => observer.notices.find(notice => notice.method === "item/completed"));
+  assert.equal(finalItem.params?.itemId, delta.params?.itemId);
+  const { item } = await observer.call<{ item: { payload: { body: string } } }>("item/read", {
+    threadId: started.thread.id, itemId: finalItem.params?.itemId,
+  });
+  assert.equal(item.payload.body, "Runner accepted the task");
   await waitFor(() => store.getRun(result.run.id)?.status === "succeeded" ? true : undefined);
   assert.equal(provider.requests.length, 1);
   assert.match(JSON.stringify(provider.requests[0]), /Root verification instructions/u);
@@ -107,6 +145,10 @@ test("App Server submits a durable Turn through the configured Pi Runner and rep
   await writeFile(join(fixture.cwd, "AGENTS.md"), "Changed after dispatch\n");
   first.close();
   const second = await fixture.connect();
+  await second.call("thread/subscribe", { threadId: started.thread.id, cursor: subscription.cursor });
+  await waitFor(() => second.notices.find(notice => notice.method === "thread/replay/ready"));
+  assert.ok(second.notices.some(notice => notice.method === "item/completed" && notice.params?.eventId === finalItem.params?.eventId));
+  assert.equal(second.notices.some(notice => notice.method === "item/delta"), false);
   assert.deepEqual(await second.call("context/inspect", query), context);
   const snapshot = await second.call<LingAppServerThreadSnapshotResult>("thread/snapshot", { threadId: request.threadId });
   assert.equal(snapshot.turn?.id, result.turn.id);
@@ -147,6 +189,90 @@ test("App Server submits a durable Turn through the configured Pi Runner and rep
   assert.deepEqual(completed.acceptanceEvidence, withEvidence(result.run.id).acceptanceEvidence);
   await waitFor(() => second.notices.find(notice => notice.method === "thread/goal/updated"
     && notice.params?.subject?.threadId === request.threadId));
+});
+
+test("thread resume attaches without dispatch and turn resume recovers a prepared request exactly once after restart", { timeout: 30_000 }, async t => {
+  const provider = await startLoopbackPiProvider(() => ({ text: "Recovered the prepared request." }));
+  t.after(() => provider.close());
+  const fixture = await releaseFixture(t);
+  await writeFile(join(fixture.cwd, "AGENTS.md"), "Use the saved project instructions.\n");
+  const store = fixture.getStore();
+  const preset = addLoopbackPreset(store, provider.baseUrl);
+  const now = new Date().toISOString();
+  const thread = store.createLingThread({ kind: "conversation", title: "Prepared Turn", objective: "Recover after preparation" }, now);
+  const { turn } = await prepareConversationSubmission({
+    store, runnerRegistry: createDefaultRunnerRegistry(), workspaceCwd: fixture.cwd,
+    now, resolveThread: () => thread, input: { threadId: thread.id, message: "Recover my prepared input.",
+      idempotencyKey: "prepared-turn", providerPresetId: preset.id },
+  });
+  await writeFile(join(fixture.cwd, "AGENTS.md"), "These instructions were edited after preparation.\n");
+  await fixture.restart();
+  const client = await fixture.connect();
+  const state = await client.call<LingAppServerThreadSnapshotResult>("thread/resume", { threadId: thread.id });
+  assert.equal(state.turn?.id, turn.id);
+  assert.equal(state.run, null);
+  assert.equal(provider.requests.length, 0);
+  await client.call("thread/subscribe", { threadId: thread.id, cursor: state.cursor });
+  const recovery = { threadId: thread.id, turnId: turn.id, expectedTurnRevision: state.turn!.updatedAt };
+  await assert.rejects(client.call("turn/resume", { ...recovery, expectedTurnRevision: "outdated" }), { code: "stale_revision" });
+  const peer = await fixture.connect();
+  const results = await Promise.all([client.call<LingAppServerTurnResumeResult>("turn/resume", recovery),
+    peer.call<LingAppServerTurnResumeResult>("turn/resume", recovery)]);
+  const runId = results[0].run?.id;
+  assert.ok(runId);
+  assert.equal(results[1].run?.id, runId);
+  await waitFor(() => fixture.getStore().getRun(runId)?.status === "succeeded" ? true : undefined);
+  assert.equal((await client.call<LingAppServerTurnResumeResult>("turn/resume", recovery)).disposition, "existing");
+  await waitFor(() => client.notices.find(notice => notice.method === "turn/started"));
+  assert.equal(client.notices.filter(notice => notice.method === "turn/started").length, 1);
+  assert.equal(provider.requests.length, 1);
+  assert.match(JSON.stringify(provider.requests[0]), /saved project instructions/u);
+  assert.doesNotMatch(JSON.stringify(provider.requests[0]), /edited after preparation/u);
+});
+
+test("a stopped Turn continues with the same recovery receipt across peers and restart", { timeout: 30_000 }, async t => {
+  let releaseFirstResponse: () => void = () => undefined;
+  const firstResponse = new Promise<void>(resolve => { releaseFirstResponse = resolve; });
+  const provider = await startLoopbackPiProvider(async (_body: unknown, count: number) => {
+    if (count === 1) await firstResponse;
+    return { text: "Fixture response." };
+  });
+  t.after(async () => {
+    releaseFirstResponse();
+    await provider.close();
+  });
+  const fixture = await releaseFixture(t, { harness: { toolBroker: { mode: "enforce" } } });
+  const client = await fixture.connect();
+  const { thread } = await client.call<ThreadRead>("thread/start", { title: "Stopped Turn recovery" });
+  const preset = addLoopbackPreset(fixture.getStore(), provider.baseUrl);
+  const started = await client.call<{ turn: { id: string }; run: { id: string } }>("turn/start", {
+    threadId: thread.id, message: "Start the project check.", providerPresetId: preset.id, idempotencyKey: "resume-stopped-source",
+  });
+  await waitFor(() => provider.requests.length === 1 ? true : undefined);
+  await client.call("turn/interrupt", { turnId: started.turn.id });
+  releaseFirstResponse();
+  const store = fixture.getStore();
+  const run = store.getRun(started.run.id)!;
+  const attempt = store.listWorkUnitAttempts(run.workUnitId!)[0]!;
+  await waitFor(() => store.getHostAttemptCompletion({ runId: run.id, ...toRuntimeAttemptFence(attempt) })?.effectCoverage ? true : undefined);
+  const { turn } = await client.call<LingAppServerThreadSnapshotResult>("thread/resume", { threadId: thread.id });
+  assert.equal(turn?.status, "cancelled");
+  const recovery = { threadId: thread.id, turnId: started.turn.id, sourceRunId: run.id, expectedTurnRevision: turn.updatedAt,
+    idempotencyKey: "resume-stopped-target", instruction: "Continue from the saved project check." };
+  assert.equal((await client.call<LingAppServerTurnResumeResult>("turn/resume", { turnId: turn.id })).disposition, "existing");
+  const resumed = await client.call<LingAppServerTurnResumeResult>("turn/resume", recovery);
+  assert.equal(resumed.disposition, "continued");
+  assert.equal(resumed.resumedFromTurnId, turn.id);
+  assert.equal(resumed.turn.sourceTurnId, turn.id);
+  assert.ok(resumed.run && resumed.run.id !== run.id);
+  const peer = await fixture.connect();
+  assert.equal((await peer.call<LingAppServerTurnResumeResult>("turn/resume", recovery)).run?.id, resumed.run.id);
+  await assert.rejects(peer.call("turn/resume", { ...recovery, instruction: "Different input." }), { code: "idempotency_conflict" });
+  await waitFor(() => store.getRun(resumed.run!.id)?.status === "succeeded" ? true : undefined);
+  await fixture.restart();
+  const restored = await fixture.connect();
+  assert.equal((await restored.call<LingAppServerTurnResumeResult>("turn/resume", recovery)).run?.id, resumed.run.id);
+  assert.equal(provider.requests.length, 2);
 });
 
 test("a queued Turn reaches Pi once after the source Run finishes and keeps its receipt", { timeout: 30_000 }, async t => {
@@ -353,7 +479,12 @@ test("installed Codex calls the CLI MCP bridge while a Ling subscription receive
     if (count === 1) await sourceCanFinish;
     return { text: "Codex submission reached Ling" };
   });
-  t.after(async () => { finishSource(); await provider.close(); });
+  let closeCodex: () => Promise<void> = async () => undefined;
+  t.after(async () => {
+    finishSource();
+    await closeCodex();
+    await provider.close();
+  });
   const fixture = await releaseFixture(t);
   const ling = await fixture.connect();
   const { daemonUrl, authToken } = fixture.transportOptions();
@@ -367,7 +498,11 @@ test("installed Codex calls the CLI MCP bridge while a Ling subscription receive
   });
   const closed = once(codex, "close");
   void closed.catch(() => undefined);
-  t.after(async () => { codex.stdin.end(); codex.kill(); await closed; });
+  closeCodex = async () => {
+    codex.stdin.end();
+    const deadline = setTimeout(() => codex.kill("SIGKILL"), 2_000);
+    try { await closed; } finally { clearTimeout(deadline); }
+  };
   codex.stdin.on("error", () => undefined);
   let stderr = "";
   codex.stderr.setEncoding("utf8").on("data", chunk => { stderr = (stderr + chunk).slice(-4096); });
@@ -423,6 +558,57 @@ test("installed Codex calls the CLI MCP bridge while a Ling subscription receive
   }
 });
 
+test("External Agent dispatch calls the configured Codex adapter transport once and restores its completion", { timeout: 30_000 }, async t => {
+  const adapterPeer = await startFakeCodexAppServer();
+  t.after(() => adapterPeer.close());
+  const adapterRevision = "codex-adapter-acceptance/1";
+  const toolExecutionConformance = readOnlyExternalConformance(adapterRevision);
+  const fixture = await releaseFixture(t, { runner: {
+    id: "codex-app-server", displayName: "Configured Codex Adapter", status: "enabled",
+    executionBoundary: "external", adapterRevision, toolExecutionConformance,
+    adapter: createCodexAppServerAdapter({ baseUrl: adapterPeer.baseUrl, adapterRevision, toolExecutionConformance, timeoutMs: 5_000 }),
+  } });
+  const client = await fixture.connect();
+  const created = await client.call<{ workItem: LingAppServerWorkItemSnapshot }>("workItem/create", {
+    sourceId: "codex-adapter-acceptance", title: "Inspect the project",
+  });
+  const { workItem } = await client.call<{ workItem: LingAppServerWorkItemSnapshot }>("workItem/accept", {
+    workItemId: created.workItem.workItemId, expectedWorkItemRevision: Number(created.workItem.revision),
+    idempotencyKey: "codex-adapter-work-item",
+  });
+  const { registrationId } = await client.call<LingAppServerExternalAgentRegisterResult>("externalAgent/register", {
+    idempotencyKey: "codex-adapter-registration",
+    registration: {
+      agentId: "configured-codex-adapter", adapterKind: "codex-app-server", protocolVersion: "ling-codex-app-server/0.1",
+      displayName: "Configured Codex Adapter", capabilities: ["task.start", "task.reconnect"],
+      workspaceScopes: [workItem.workspaceId], toolScopes: ["read"], approvalModes: ["host"], source: "local", version: "1",
+    },
+  });
+  const input = { registrationId, submission: {
+    workItemId: workItem.workItemId, workItemRevision: workItem.revision, workspaceId: workItem.workspaceId,
+    objective: "Read the project contract", acceptanceSnapshot: { provider: { provider: "fixture", model: "fixture" } },
+    instructionManifestDigest: "fixture-manifest", idempotencyKey: "codex-adapter-task",
+  } };
+  const { task } = await client.call<LingAppServerExternalAgentTaskStartResult>("externalAgent/task/start", input);
+  const reconnect = { registrationId, taskId: task.taskId, submissionId: task.submissionId, eventCursor: "external-agent:0" };
+  const completed = await waitFor(async () => {
+    const result = await client.call<LingAppServerExternalAgentTaskReconnectResult>("externalAgent/task/reconnect", reconnect);
+    return result.task.status === "completed" ? result : undefined;
+  });
+  const requests = adapterPeer.requests as { method: string; params: { cwd: string; task: { id: string }; tools: string[] } }[];
+  assert.deepEqual(requests.map(request => request.method), ["initialize", "session/run"]);
+  assert.equal(requests[1]?.params.cwd, fixture.cwd);
+  assert.equal(requests[1]?.params.task.id, task.taskId);
+  assert.deepEqual(requests[1]?.params.tools, ["read"]);
+  assert.ok(completed.events?.some(event => (event.payload as { text?: string } | undefined)?.text === "Codex app-server fake response."));
+  assert.equal(completed.events?.at(-1)?.type, "task_status");
+  await fixture.restart();
+  const restored = await fixture.connect();
+  assert.deepEqual(await restored.call("externalAgent/task/reconnect", reconnect), completed);
+  assert.deepEqual(await restored.call("externalAgent/task/start", input), { task: completed.task, replayed: true });
+  assert.equal(requests.length, 2);
+});
+
 test("a second App Server connection cancels the same external dispatch and recovers its receipt after restart", { timeout: 30_000 }, async t => {
   const starts: string[] = [];
   let signal: AbortSignal | undefined;
@@ -434,13 +620,7 @@ test("a second App Server connection cancels the same external dispatch and reco
     status: "enabled",
     executionBoundary: "external",
     adapterRevision,
-    toolExecutionConformance: {
-      adapterRevision, curatedTools: ["read"], toolSideEffects: { read: "workspace_read" },
-      allowedSideEffects: ["none", "workspace_read"], nativeSideEffectMode: "disabled",
-      toolSurfaceCurated: true, approvalBridgeVerified: true, sandboxBindingVerified: true,
-      evidenceCommitVerified: true, abortPropagationVerified: true, attemptFencingVerified: true,
-      workspaceBoundaryVerified: true, artifactImportVerified: true,
-    },
+    toolExecutionConformance: readOnlyExternalConformance(adapterRevision),
     adapter: {
       async runTask(input) {
         starts.push(input.task.id);
@@ -725,6 +905,16 @@ test("stdio and the private Unix socket deliver the same App Server Thread event
 
 type ThreadRead = { thread: { id: string } };
 
+function readOnlyExternalConformance(adapterRevision: string) {
+  return {
+    adapterRevision, curatedTools: ["read"], toolSideEffects: { read: "workspace_read" },
+    allowedSideEffects: ["none", "workspace_read"], nativeSideEffectMode: "disabled",
+    toolSurfaceCurated: true, approvalBridgeVerified: true, sandboxBindingVerified: true,
+    evidenceCommitVerified: true, abortPropagationVerified: true, attemptFencingVerified: true,
+    workspaceBoundaryVerified: true, artifactImportVerified: true,
+  } as const;
+}
+
 function addLoopbackPreset(store: SqliteRunStore, baseUrl: string) {
   const now = new Date().toISOString();
   const preset = store.createProviderPreset({
@@ -845,7 +1035,8 @@ type JsonLine = {
   method?: string;
   result?: unknown;
   error?: { message: string };
-  params?: { eventId?: string; requestId?: string; event?: { entityId: string; action: string };
+  params?: { eventId?: string; requestId?: string; revision?: string; event?: { entityId: string; action: string };
+    itemId?: string; runId?: string; streamEpoch?: string; offset?: number; text?: string;
     subject?: { threadId?: string; turnId?: string; workItemId?: string } };
 };
 
