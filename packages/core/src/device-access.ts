@@ -25,12 +25,17 @@ export class DeviceAccessManager {
     const grant = this.#store.getAccessGrant(input.grantId);
     if (!grant || grant.status !== "active") throw new DeviceFabricError("safety_denied", "device access grant is inactive");
     if (grant.principalId !== input.principalId || grant.targetDeviceId !== input.targetDeviceId) throw new DeviceFabricError("safety_denied", "device access grant principal or target does not match");
-    if (Date.parse(grant.expiresAt) <= Date.parse(input.now)) throw new DeviceFabricError("safety_denied", "device access grant has expired");
+    if (!(Date.parse(grant.expiresAt) > Date.parse(input.now))) throw new DeviceFabricError("safety_denied", "device access grant has expired");
     if (grant.scope !== "owner" && !grant.capabilityIds.includes(input.capabilityId)) throw new DeviceFabricError("safety_denied", "capability is outside the access grant");
     return grant;
   }
 }
 
 function validateGrant(grant: DeviceAccessGrantV1): void {
-  if (!grant.grantId.trim() || !grant.targetDeviceId.trim() || !grant.principalId.trim() || !grant.authority.trim() || grant.revision < 1 || grant.capabilityIds.some(capabilityId => !capabilityId.trim()) || new Set(grant.capabilityIds).size !== grant.capabilityIds.length || Number.isNaN(Date.parse(grant.expiresAt)) || Number.isNaN(Date.parse(grant.changedAt))) throw new DeviceFabricError("revision_conflict", "device access grant is invalid");
+  if (!grant.grantId.trim() || !grant.targetDeviceId.trim() || !grant.principalId.trim() || !grant.authority.trim()
+    || !Number.isSafeInteger(grant.revision) || grant.revision < 1 || grant.capabilityIds.some(capabilityId => !capabilityId.trim())
+    || new Set(grant.capabilityIds).size !== grant.capabilityIds.length
+    || Number.isNaN(Date.parse(grant.expiresAt)) || Number.isNaN(Date.parse(grant.changedAt))) {
+    throw new DeviceFabricError("revision_conflict", "device access grant is invalid");
+  }
 }

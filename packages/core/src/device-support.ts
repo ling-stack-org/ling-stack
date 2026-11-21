@@ -25,7 +25,8 @@ import {
 } from "@ling-stack/contracts";
 
 import type { SqliteDeviceSupportStore } from "./storage/sqlite/device-support-store.js";
-import { DeviceAccessManager } from "./device-access.js";
+import type { DeviceAccessManager } from "./device-access.js";
+import { DeviceFabricError } from "./device-fabric.js";
 
 export interface DeviceAdapterDiscoveryInput {
   readonly connectionRef: string;
@@ -245,7 +246,7 @@ export class DeviceCapabilityBroker {
       const action = valid ? reported : uncertainActionResult(request.actionId, this.now(), undefined);
       const observations = valid ? result?.observations ?? [] : [];
       const finalize = options.finalizeTask ?? true;
-      const receipt = this.recordActionResult(attempt, request.capabilitySnapshotId, action, observations, finalize, this.shouldVerify(capability, request));
+      const receipt = this.recordActionResult(attempt, request.capabilitySnapshotId, capability, action, observations, finalize, this.shouldVerify(capability, request));
       if (!receipt.verify) return receipt.record;
 
       const evidenceId = `${attempt.actionId}:verification`;
@@ -255,8 +256,9 @@ export class DeviceCapabilityBroker {
       return this.store.withWriteTransaction(() => {
         const now = this.now();
         for (const observation of readback ?? []) this.store.appendObservation(attempt.taskId, observation, now);
-        const record = this.store.updateAttempt(attempt.attemptId, { verification }, now);
-        if (!this.retainDispatchAuthority(attempt, request.capabilitySnapshotId, now)) return record;
+        const current = this.retainDispatchAuthority(attempt, request.capabilitySnapshotId, capability, now);
+        const record = this.store.updateAttempt(attempt.attemptId, { verification, ...(current ? {} : { status: "unknown" }) }, now);
+        if (!current) return record;
         const status = verification.status === "not_evaluable" && capability.sideEffect !== "read_only"
           ? "unknown"
           : verification.status === "verified" ? "succeeded" : "failed";
@@ -288,7 +290,8 @@ export class DeviceCapabilityBroker {
     if (!snapshot) return undefined;
     try {
       const binding = this.resolveCapability({ ...record.request, capabilitySnapshotId: snapshot.snapshotId }, true);
-      this.requireReconciliationReader(binding);
+      const reader = this.requireReconciliationReader(binding);
+      this.taskAccessRevision(task, record.attempt.targetDeviceId, reader);
     } catch (error) {
       if (error instanceof DeviceBrokerError) return undefined;
       throw error;
@@ -303,7 +306,7 @@ export class DeviceCapabilityBroker {
     readonly signal?: AbortSignal;
     readonly refreshExpiredSnapshot?: boolean;
   }): Promise<DeviceTaskReconciliationV1> {
-    const { attempt, request: admittedRequest, binding: admittedBinding, timeoutMs } = this.store.withWriteTransaction(() => {
+    const { attempt, request: admittedRequest, binding: admittedBinding, reader: admittedReader, grantRevision } = this.store.withWriteTransaction(() => {
       const record = this.store.getAttempt(input.taskId, input.attemptId);
       if (!record) throw new DeviceBrokerError("invalid_request", "the device attempt does not belong to this task");
       const task = this.requireTaskTarget(record.request);
@@ -314,31 +317,36 @@ export class DeviceCapabilityBroker {
       const request = { ...record.request, capabilitySnapshotId: input.capabilitySnapshotId };
       const binding = this.resolveCapability(request, input.refreshExpiredSnapshot);
       const reader = this.requireReconciliationReader(binding);
-      this.assertTaskAccess(task, request.targetDeviceId, reader.id);
+      const grantRevision = this.taskAccessRevision(task, request.targetDeviceId, reader);
       input.signal?.throwIfAborted();
       if (this.store.getLeasedAttempt(task.id)
         || !this.store.acquireTargetLease(request.targetDeviceId, task.id, task.ownerId, this.now(), this.leaseMs, record.attempt.attemptId)) {
         throw new DeviceBrokerError("target_busy", "device target is busy");
       }
-      return { attempt: record.attempt, request, binding, timeoutMs: reader.timeoutMs };
+      return { attempt: record.attempt, request, binding, reader, grantRevision };
     });
 
     const controller = new AbortController();
-    const deadline = AbortSignal.timeout(timeoutMs);
+    const deadline = AbortSignal.timeout(admittedReader.timeoutMs);
     const signal = AbortSignal.any(input.signal ? [input.signal, controller.signal, deadline] : [controller.signal, deadline]);
     this.activeDispatches.set(attempt.taskId, controller);
     const reconciliationId = `device_reconciliation_${randomUUID()}`;
     try {
       let request = admittedRequest;
       let binding = admittedBinding;
+      let reader = admittedReader;
       if (Date.parse(binding.snapshot.freshnessUntil) <= Date.parse(this.now())) {
         if (!input.refreshExpiredSnapshot) throw new DeviceBrokerError("stale_snapshot", "capability snapshot has expired");
         const snapshot = await this.refreshCapabilities(attempt.targetDeviceId, binding.snapshot.connectionRevision, signal);
         request = { ...request, capabilitySnapshotId: snapshot.snapshotId };
         binding = this.resolveCapability(request);
-        this.requireReconciliationReader(binding);
+        reader = this.requireReconciliationReader(binding);
       }
       signal.throwIfAborted();
+      const task = this.requireTaskTarget(request);
+      if (!this.taskAccessIsCurrent(task, attempt.targetDeviceId, reader, grantRevision)) {
+        throw new DeviceBrokerError("permission_denied", "device readback access grant changed");
+      }
       const readbackStartedAt = this.now();
       const result = await this.verifyAction({
         ...binding,
@@ -359,6 +367,7 @@ export class DeviceCapabilityBroker {
         const verified = !signal.aborted && observed && result.verification.status === "verified"
           && current?.status === "unknown" && profile !== undefined
           && current.ownerKind === attempt.ownerKind && current.ownerId === attempt.ownerId
+          && this.taskAccessIsCurrent(current, attempt.targetDeviceId, reader, grantRevision)
           && (current.currentActionId === undefined || current.currentActionId === attempt.actionId)
           && profile.device.ownerScope === binding.profile.device.ownerScope
           && !["offline", "revoked", "retired"].includes(profile.device.lifecycleStatus)
@@ -432,7 +441,10 @@ export class DeviceCapabilityBroker {
     signal?.throwIfAborted();
     const binding = this.resolveCapability(request);
     const { profile, snapshot, capability } = binding;
-    this.assertTaskAccess(task, profile.device.id, capability.id);
+    const accessGrantRevision = this.taskAccessRevision(task, profile.device.id, capability);
+    if (accessGrantRevision !== undefined && capability.verificationCapabilityId) {
+      this.taskAccessRevision(task, profile.device.id, this.requireReconciliationReader(binding));
+    }
     if (options.onlyUnattendedReads && (capability.sideEffect !== "read_only" || capability.approvalClass !== "allow")) {
       throw new DeviceBrokerError("permission_denied", "the playbook requires an unattended read capability");
     }
@@ -459,6 +471,7 @@ export class DeviceCapabilityBroker {
       ownerId: task.ownerId,
       targetDeviceId: profile.device.id,
       dispatchIntentAt: now,
+      ...(accessGrantRevision === undefined ? {} : { accessGrantRevision }),
       connectionRevision: snapshot.connectionRevision,
       requestDigest,
       ...(request.approvalId ? { approvalId: request.approvalId } : {}),
@@ -493,24 +506,42 @@ export class DeviceCapabilityBroker {
     return { profile, snapshot, capability, adapter: this.requireAdapter(profile.adapterId) };
   }
 
-  private assertTaskAccess(task: DeviceTaskV1, targetDeviceId: string, capabilityId: string): void {
-    if (!task.accessGrantId || !this.accessManager) return;
+  private taskAccessRevision(task: DeviceTaskV1, targetDeviceId: string, capability: CapabilityDescriptorV1): number | undefined {
+    if (!task.accessGrantId) return undefined;
+    if (!this.accessManager) throw new DeviceBrokerError("permission_denied", "device access grant resolver is unavailable");
     try {
-      this.accessManager.authorize({
+      const grant = this.accessManager.authorize({
         grantId: task.accessGrantId,
         principalId: task.ownerId,
         targetDeviceId,
-        capabilityId,
+        capabilityId: capability.id,
         now: this.now(),
       });
-    } catch {
+      if (grant.scope === "read_only" && capability.sideEffect !== "read_only") {
+        throw new DeviceBrokerError("permission_denied", "read-only access grant cannot dispatch a device write");
+      }
+      return grant.revision;
+    } catch (error) {
+      if (!(error instanceof DeviceFabricError) || error.code !== "safety_denied") throw error;
       throw new DeviceBrokerError("permission_denied", "device access grant denied");
+    }
+  }
+
+  private taskAccessIsCurrent(
+    task: DeviceTaskV1, targetDeviceId: string, capability: CapabilityDescriptorV1, revision: number | undefined,
+  ): boolean {
+    try {
+      return this.taskAccessRevision(task, targetDeviceId, capability) === revision;
+    } catch (error) {
+      if (error instanceof DeviceBrokerError && error.code === "permission_denied") return false;
+      throw error;
     }
   }
 
   private recordActionResult(
     attempt: DeviceTaskAttemptV1,
     snapshotId: string,
+    capability: CapabilityDescriptorV1,
     action: DeviceActionResultV1,
     observations: readonly DeviceObservationV1[],
     finalize: boolean,
@@ -519,7 +550,7 @@ export class DeviceCapabilityBroker {
     return this.store.withWriteTransaction(() => {
       const now = this.now();
       for (const observation of observations) this.store.appendObservation(attempt.taskId, observation, now);
-      if (!this.retainDispatchAuthority(attempt, snapshotId, now)) {
+      if (!this.retainDispatchAuthority(attempt, snapshotId, capability, now)) {
         return { record: this.store.updateAttempt(attempt.attemptId, { status: "unknown", receipt: action }, now), verify: false };
       }
 
@@ -536,7 +567,7 @@ export class DeviceCapabilityBroker {
     });
   }
 
-  private retainDispatchAuthority(attempt: DeviceTaskAttemptV1, snapshotId: string, now: string): boolean {
+  private retainDispatchAuthority(attempt: DeviceTaskAttemptV1, snapshotId: string, capability: CapabilityDescriptorV1, now: string): boolean {
     const task = this.store.getTask(attempt.taskId);
     if ((task?.status !== "executing" && task?.status !== "verifying")
       || task.currentActionId !== attempt.actionId || task.ownerKind !== attempt.ownerKind || task.ownerId !== attempt.ownerId
@@ -544,7 +575,8 @@ export class DeviceCapabilityBroker {
     const profile = this.store.getDevice(attempt.targetDeviceId);
     const snapshot = this.store.getCurrentCapabilitySnapshot(attempt.targetDeviceId);
     if (!profile || ["offline", "retired", "revoked"].includes(profile.device.lifecycleStatus)
-      || snapshot?.snapshotId !== snapshotId || snapshot?.connectionRevision !== attempt.connectionRevision) {
+      || snapshot?.snapshotId !== snapshotId || snapshot?.connectionRevision !== attempt.connectionRevision
+      || !this.taskAccessIsCurrent(task, attempt.targetDeviceId, capability, attempt.accessGrantRevision)) {
       this.store.transitionTask(task.id, "unknown", {}, now);
       return false;
     }

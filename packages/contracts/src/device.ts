@@ -327,6 +327,7 @@ export interface DeviceTaskAttemptV1 {
   readonly ownerId: string;
   readonly targetDeviceId: string;
   readonly dispatchIntentAt: string;
+  readonly accessGrantRevision?: number;
   readonly connectionRevision?: string;
   readonly requestDigest?: string;
   readonly approvalId?: string;
@@ -604,7 +605,7 @@ export function isDeviceTaskV1(value: unknown): value is DeviceTaskV1 {
 export function isDeviceTaskAttemptV1(value: unknown): value is DeviceTaskAttemptV1 {
   if (!isRecord(value) || !hasOnlyKeys(value, [
     "attemptId", "taskId", "actionId", "ownerKind", "ownerId", "targetDeviceId",
-    "dispatchIntentAt", "connectionRevision", "requestDigest", "approvalId", "status", "receipt", "verification",
+    "dispatchIntentAt", "accessGrantRevision", "connectionRevision", "requestDigest", "approvalId", "status", "receipt", "verification",
   ])) return false;
   return isNonEmptyString(value.attemptId)
     && isNonEmptyString(value.taskId)
@@ -613,6 +614,7 @@ export function isDeviceTaskAttemptV1(value: unknown): value is DeviceTaskAttemp
     && isNonEmptyString(value.ownerId)
     && isNonEmptyString(value.targetDeviceId)
     && isIsoTimestamp(value.dispatchIntentAt)
+    && (value.accessGrantRevision === undefined || isPositiveInteger(value.accessGrantRevision))
     && (value.connectionRevision === undefined || isNonEmptyString(value.connectionRevision))
     && (value.requestDigest === undefined || isNonEmptyString(value.requestDigest))
     && (value.approvalId === undefined || isNonEmptyString(value.approvalId))

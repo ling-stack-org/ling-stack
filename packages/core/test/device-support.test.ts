@@ -224,22 +224,77 @@ test("task journal cursors use a task-local sequence when multiple tasks interle
   store.close();
 });
 
-test("broker honors a target-scoped access grant before dispatch", async () => {
+test("broker binds dispatch to a current grant and blocks writes under a read-only grant", async t => {
   const store = new SqliteDeviceSupportStore();
   const fabric = new SqliteDeviceFabricStore();
+  t.after(() => { fabric.close(); store.close(); });
   const broker = new DeviceCapabilityBroker({ store, accessManager: new DeviceAccessManager(fabric), now: () => now });
   broker.registerAdapter(createAdapter());
   broker.registerDevice(manifest.adapterId, profile);
   store.saveCapabilitySnapshot(snapshot(), now);
-  fabric.saveAccessGrant({ grantId: "grant-1", targetDeviceId: profile.device.id, principalId: "daemon-1", scope: "read_only", capabilityIds: [readCapability.id], revision: 1, status: "active", expiresAt: "2026-11-21T00:05:00.000Z", authority: "operator", changedAt: now });
+  fabric.saveAccessGrant({ grantId: "grant-1", targetDeviceId: profile.device.id, principalId: "daemon-1", scope: "read_only", capabilityIds: [readCapability.id, writeCapability.id], revision: 1, status: "active", expiresAt: "2026-11-21T00:05:00.000Z", authority: "operator", changedAt: now });
   store.createTask({ ...task("grant-task"), accessGrantId: "grant-1" }, now);
   const result = await broker.execute(request(readCapability.id, "grant-task"));
   assert.equal(result.attempt.status, "completed");
+  assert.equal(result.attempt.accessGrantRevision, 1);
+  store.createTask({ ...task("grant-write"), accessGrantId: "grant-1" }, now);
+  const write = approveNetworkRepair(request(writeCapability.id, "grant-write"));
+  await assert.rejects(() => broker.execute(write), /read-only access grant/u);
+  assert.deepEqual(store.listAttempts(write.taskId), []);
   fabric.revokeAccessGrant("grant-1", 2, now);
   store.createTask({ ...task("revoked-task"), accessGrantId: "grant-1" }, now);
   await assert.rejects(() => broker.execute(request(readCapability.id, "revoked-task")), /device access grant denied/u);
-  fabric.close();
-  store.close();
+  const noAccessResolver = new DeviceCapabilityBroker({ store, now: () => now });
+  noAccessResolver.registerAdapter(createAdapter());
+  await assert.rejects(() => noAccessResolver.execute(request(readCapability.id, "revoked-task")), /resolver is unavailable/u);
+  assert.deepEqual(store.listAttempts("revoked-task"), []);
+});
+
+test("revoking a developer grant during verification retains evidence and leaves the outcome unknown", { timeout: 5000 }, async t => {
+  const store = new SqliteDeviceSupportStore();
+  const fabric = new SqliteDeviceFabricStore();
+  t.after(() => { fabric.close(); store.close(); });
+  const broker = new DeviceCapabilityBroker({ store, accessManager: new DeviceAccessManager(fabric), now: () => now });
+  const adapter = createAdapter();
+  let enterVerification!: () => void;
+  const verifying = new Promise<void>(resolve => { enterVerification = resolve; });
+  let finishVerification!: () => void;
+  const mayFinish = new Promise<void>(resolve => { finishVerification = resolve; });
+  let dispatches = 0;
+  broker.registerAdapter({
+    ...adapter,
+    async execute(input) { dispatches += 1; return adapter.execute(input); },
+    async verify(input) { enterVerification(); await mayFinish; return adapter.verify!(input); },
+  });
+  broker.registerDevice(manifest.adapterId, profile);
+  store.saveCapabilitySnapshot(snapshot(), now);
+  fabric.saveAccessGrant({
+    grantId: "developer-grant", targetDeviceId: profile.device.id, principalId: "daemon-1",
+    scope: "developer", capabilityIds: [readCapability.id, writeCapability.id], revision: 1,
+    status: "active", expiresAt: "2026-11-21T00:05:00.000Z", authority: "operator", changedAt: now,
+  });
+  const taskId = "revoked-developer-write";
+  broker.createTask({ ...task(taskId), accessGrantId: "developer-grant" });
+  const action = approveNetworkRepair(request(writeCapability.id, taskId));
+  const execution = broker.execute(action);
+  try {
+    await verifying;
+    fabric.revokeAccessGrant("developer-grant", 2, later);
+  } finally {
+    finishVerification();
+  }
+  const result = await execution;
+  assert.equal(result.attempt.accessGrantRevision, 1);
+  assert.equal(result.attempt.receipt?.status, "completed");
+  assert.equal(result.attempt.verification?.status, "verified");
+  assert.equal(result.attempt.status, "unknown");
+  assert.equal(store.getTask(taskId)?.status, "unknown");
+  assert.equal(broker.getReconciliationPreview(taskId), undefined);
+  await assert.rejects(() => broker.reconcileTask({
+    taskId, attemptId: result.attempt.attemptId, capabilitySnapshotId: action.capabilitySnapshotId,
+  }), /device access grant denied/u);
+  assert.deepEqual(await broker.execute(action), result);
+  assert.equal(dispatches, 1);
 });
 
 test("broker distinguishes stale snapshots, target leases, and revoked devices", async () => {
