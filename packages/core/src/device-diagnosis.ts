@@ -60,7 +60,7 @@ export function buildDeviceDiagnosisReport(input: {
         remainingUncertainty.push({ code: "missing_observation", ref: id });
         continue;
       }
-      if (containsUntrustedText(observation.value)) untrustedTextRefs.add(id);
+      untrustedTextRefs.add(id);
       if (!isCurrentObservation(observation, input.generatedAt)) {
         remainingUncertainty.push({ code: "unusable_observation", ref: id });
         continue;
@@ -94,13 +94,6 @@ export function buildDeviceDiagnosisReport(input: {
     remainingUncertainty,
     untrustedTextRefs: [...untrustedTextRefs],
   };
-}
-
-function containsUntrustedText(value: JsonValue): boolean {
-  if (typeof value === "string") return true;
-  if (Array.isArray(value)) return value.some(containsUntrustedText);
-  if (!value || typeof value !== "object") return false;
-  return Object.entries(value).some(([key, item]) => /(?:text|message|stdout|stderr|log|note)/iu.test(key) && containsUntrustedText(item));
 }
 
 function isCurrentObservation(observation: DeviceObservationV1, now: string): boolean {

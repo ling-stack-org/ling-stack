@@ -238,7 +238,7 @@ export class DeviceCapabilityBroker {
       const action = valid ? reported : uncertainActionResult(request.actionId, this.now(), undefined);
       const observations = valid ? result?.observations ?? [] : [];
       const finalize = options.finalizeTask ?? true;
-      const receipt = this.recordActionResult(attempt, action, observations, finalize, this.shouldVerify(capability, request));
+      const receipt = this.recordActionResult(attempt, request.capabilitySnapshotId, action, observations, finalize, this.shouldVerify(capability, request));
       if (!receipt.verify) return receipt.record;
 
       const evidenceId = `${attempt.actionId}:verification`;
@@ -249,7 +249,7 @@ export class DeviceCapabilityBroker {
         const now = this.now();
         for (const observation of readback ?? []) this.store.appendObservation(attempt.taskId, observation, now);
         const record = this.store.updateAttempt(attempt.attemptId, { verification }, now);
-        if (!this.isCurrentDispatch(attempt)) return record;
+        if (!this.retainDispatchAuthority(attempt, request.capabilitySnapshotId, now)) return record;
         const status = verification.status === "not_evaluable" && capability.sideEffect !== "read_only"
           ? "unknown"
           : verification.status === "verified" ? "succeeded" : "failed";
@@ -448,6 +448,7 @@ export class DeviceCapabilityBroker {
 
   private recordActionResult(
     attempt: DeviceTaskAttemptV1,
+    snapshotId: string,
     action: DeviceActionResultV1,
     observations: readonly DeviceObservationV1[],
     finalize: boolean,
@@ -456,8 +457,8 @@ export class DeviceCapabilityBroker {
     return this.store.withWriteTransaction(() => {
       const now = this.now();
       for (const observation of observations) this.store.appendObservation(attempt.taskId, observation, now);
-      if (!this.isCurrentDispatch(attempt)) {
-        return { record: this.store.updateAttempt(attempt.attemptId, { receipt: action }, now), verify: false };
+      if (!this.retainDispatchAuthority(attempt, snapshotId, now)) {
+        return { record: this.store.updateAttempt(attempt.attemptId, { status: "unknown", receipt: action }, now), verify: false };
       }
 
       const status = action.status === "completed" ? "completed" : action.status === "rejected" ? "failed" : "unknown";
@@ -473,13 +474,19 @@ export class DeviceCapabilityBroker {
     });
   }
 
-  private isCurrentDispatch(attempt: DeviceTaskAttemptV1): boolean {
+  private retainDispatchAuthority(attempt: DeviceTaskAttemptV1, snapshotId: string, now: string): boolean {
     const task = this.store.getTask(attempt.taskId);
-    return (task?.status === "executing" || task?.status === "verifying")
-      && task.currentActionId === attempt.actionId
-      && task.ownerKind === attempt.ownerKind
-      && task.ownerId === attempt.ownerId
-      && this.store.getLeasedAttempt(task.id)?.attempt.attemptId === attempt.attemptId;
+    if ((task?.status !== "executing" && task?.status !== "verifying")
+      || task.currentActionId !== attempt.actionId || task.ownerKind !== attempt.ownerKind || task.ownerId !== attempt.ownerId
+      || this.store.getLeasedAttempt(task.id)?.attempt.attemptId !== attempt.attemptId) return false;
+    const profile = this.store.getDevice(attempt.targetDeviceId);
+    const snapshot = this.store.getCurrentCapabilitySnapshot(attempt.targetDeviceId);
+    if (!profile || ["offline", "retired", "revoked"].includes(profile.device.lifecycleStatus)
+      || snapshot?.snapshotId !== snapshotId || snapshot?.connectionRevision !== attempt.connectionRevision) {
+      this.store.transitionTask(task.id, "unknown", {}, now);
+      return false;
+    }
+    return true;
   }
 
   private assertApproval(request: DeviceActionRequestV1, connectionRevision: string, requestDigest: string): void {

@@ -286,7 +286,9 @@ test("signed Gateway sessions reconnect to durable PC tasks and revoke an active
   });
   assert.equal(reconciliation.status, "verified");
   assert.equal(reconciliation.connectionRevision, "reconnected-target-connection");
-  assert.equal(deviceStore.getAttempt(active.taskId, attempt.attemptId)?.attempt.verification?.status, "verified");
+  assert.deepEqual(deviceStore.getAttempt(active.taskId, attempt.attemptId)?.attempt, attempt);
+  const journaledReadback = deviceStore.listEvents(active.taskId).find(event => event.type === "attempt_reconciled");
+  assert.deepEqual(journaledReadback?.body, reconciliation);
   assert.equal(deviceStore.listObservations(active.taskId)[0]?.id, reconciliation.reconciliationId);
   const refreshed = await reconnected.send("device.task.status", {
     commandId: "reconciled-status", workspaceId: DEFAULT_WORKSPACE_ID, taskId: active.taskId,

@@ -340,7 +340,6 @@ export class SqliteDeviceSupportStore {
 
   recordReconciliation(record: DeviceTaskReconciliationV1): void {
     const task = this.requireTask(record.taskId);
-    this.updateAttempt(record.attemptId, { verification: record.verification }, record.recordedAt);
     this.appendEvent(task.id, "attempt_reconciled", { ...record });
     if (task.status === "unknown") {
       this.writeTaskTransition(task, record.status === "verified" ? "succeeded" : "unknown", {
@@ -537,7 +536,7 @@ function isAllowedTransition(from: DeviceTaskStatusV1, to: DeviceTaskStatusV1): 
     partial: ["planning", "executing", "cancelled", "unknown"],
     failed: ["planning", "cancelled"],
     cancelled: [],
-    unknown: ["planning", "executing", "cancelled", "failed", "succeeded"],
+    unknown: ["planning", "executing", "cancelled", "failed"],
   };
   return allowed[from].includes(to);
 }

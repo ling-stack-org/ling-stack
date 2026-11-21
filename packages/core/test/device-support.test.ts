@@ -369,6 +369,30 @@ test("invalid adapter receipts and thrown transport errors retain a redacted unk
   }
 });
 
+test("revoking a registration while a write is dispatched retains its receipt without reporting success", async t => {
+  const { store, broker } = brokerFixture();
+  t.after(() => store.close());
+  const adapter = createAdapter();
+  let verificationCalls = 0;
+  broker.registerAdapter({
+    ...adapter,
+    async execute(input) {
+      store.revokeDevice(input.profile.device.id, now);
+      return adapter.execute(input);
+    },
+    async verify(input) {
+      verificationCalls += 1;
+      return adapter.verify!(input);
+    },
+  });
+  broker.createTask(task("revoked-in-flight"));
+  const result = await broker.execute(approveNetworkRepair(request(writeCapability.id, "revoked-in-flight")));
+  assert.equal(result.attempt.receipt?.status, "completed");
+  assert.equal(result.attempt.status, "unknown");
+  assert.equal(store.getTask(result.attempt.taskId)?.status, "unknown");
+  assert.equal(verificationCalls, 0);
+});
+
 test("reconciliation requires a current capability and fresh readback evidence", async t => {
   const { store, broker } = brokerFixture();
   t.after(() => store.close());
@@ -389,10 +413,9 @@ test("reconciliation requires a current capability and fresh readback evidence",
     error instanceof DeviceBrokerError && error.code === "stale_snapshot");
   const noObservation = await broker.reconcileTask(binding);
   assert.equal(noObservation.status, "unresolved");
+  assert.equal(noObservation.verification.status, "not_evaluable");
   assert.equal(store.getTask(action.taskId)?.status, "unknown");
-  const replay = await broker.execute(action);
-  assert.equal(replay.attempt.attemptId, original.attempt.attemptId);
-  assert.equal(replay.attempt.verification?.status, "not_evaluable");
+  assert.deepEqual(await broker.execute(action), original);
   assert.equal(dispatches, 1);
 });
 
