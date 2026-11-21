@@ -120,6 +120,10 @@ export interface DeviceResourceManifestV1 {
   readonly signature: string;
   readonly supportedDeviceKinds: readonly DeviceKindV1[];
   readonly entrypoint: string;
+  readonly contractMajor?: number;
+  readonly supportedPlatforms?: readonly ("ios" | "android" | "macos" | "windows" | "linux")[];
+  readonly supportedFirmwareRanges?: readonly string[];
+  readonly requiredPermissions?: readonly string[];
 }
 
 export interface DeviceSafetyContextV1 {

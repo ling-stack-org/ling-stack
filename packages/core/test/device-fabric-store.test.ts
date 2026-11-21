@@ -81,7 +81,7 @@ test("fabric store retains bounded event streams and resumes from a durable snap
 });
 
 test("fabric store installs signed resources, preserves the previous revision, and rolls back", () => {
-  const store = new SqliteDeviceFabricStore({ verifyResourceSignature: manifestValue => manifestValue.signature.startsWith("signature-") });
+  const store = new SqliteDeviceFabricStore({ verifyResourceSignature: manifestValue => manifestValue.signature.startsWith("signature-"), allowedResourceLicenses: ["MIT"] });
   const payload = new TextEncoder().encode("adapter-v1");
   const digest = createHash("sha256").update(payload).digest("hex");
   const first = store.installResource(manifest("1.0.0", digest), payload, now);
@@ -93,6 +93,9 @@ test("fabric store installs signed resources, preserves the previous revision, a
   assert.equal(store.getResource("adapter-linux")?.manifest.version, "2.0.0");
   assert.equal(store.rollbackResource("adapter-linux").manifest.version, "1.0.0");
   assert.throws(() => store.installResource(manifest("3.0.0", digest, "untrusted"), payload), (error: unknown) => error instanceof DeviceFabricError && error.code === "resource_conflict");
+  assert.throws(() => store.installResource({ ...manifest("3.0.0", digest), supportedPlatforms: ["android"] }, payload, now, { platform: "ios" }), (error: unknown) => error instanceof DeviceFabricError && error.code === "resource_conflict");
+  assert.equal(store.healthCheckResource("adapter-linux", () => false).status, "disabled");
+  assert.equal(store.healthCheckResource("adapter-linux", () => true).status, "active");
   store.close();
 });
 

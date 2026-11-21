@@ -23,6 +23,8 @@ export interface DeviceFabricStoreOptions {
   readonly databasePath?: string;
   readonly maxEventsPerStream?: number;
   readonly verifyResourceSignature?: (manifest: DeviceResourceManifestV1) => boolean;
+  readonly resourceContractMajor?: number;
+  readonly allowedResourceLicenses?: readonly string[];
 }
 
 export interface DeviceEventReadResult {
@@ -46,12 +48,25 @@ export interface DeviceResourceRecord {
   readonly manifest: DeviceResourceManifestV1;
   readonly payloadDigest: string;
   readonly installedAt: string;
+  readonly status: "active" | "disabled";
+  readonly statusReason?: string;
+}
+
+export interface DeviceResourceCompatibility {
+  readonly platform?: "ios" | "android" | "macos" | "windows" | "linux";
+  readonly deviceKind?: DeviceResourceManifestV1["supportedDeviceKinds"][number];
+  readonly firmwareVersion?: string;
+  readonly availablePermissions?: readonly string[];
+  readonly contractMajor?: number;
+  readonly isFirmwareSupported?: (ranges: readonly string[], firmwareVersion: string) => boolean;
 }
 
 export class SqliteDeviceFabricStore {
   readonly database: DatabaseSync;
   readonly #maxEventsPerStream: number;
   readonly #verifyResourceSignature?: (manifest: DeviceResourceManifestV1) => boolean;
+  readonly #resourceContractMajor: number;
+  readonly #allowedResourceLicenses?: readonly string[];
 
   constructor(options: DeviceFabricStoreOptions = {}) {
     const path = options.databasePath ?? ":memory:";
@@ -63,6 +78,8 @@ export class SqliteDeviceFabricStore {
       throw new Error("maxEventsPerStream must be a positive integer");
     }
     this.#verifyResourceSignature = options.verifyResourceSignature;
+    this.#resourceContractMajor = options.resourceContractMajor ?? 1;
+    this.#allowedResourceLicenses = options.allowedResourceLicenses;
     this.applySchema();
   }
 
@@ -145,37 +162,57 @@ export class SqliteDeviceFabricStore {
     };
   }
 
-  installResource(manifest: DeviceResourceManifestV1, payload: Uint8Array, installedAt = new Date().toISOString()): { readonly record: DeviceResourceRecord; readonly replayed: boolean } {
+  installResource(manifest: DeviceResourceManifestV1, payload: Uint8Array, installedAt = new Date().toISOString(), compatibility: DeviceResourceCompatibility = {}): { readonly record: DeviceResourceRecord; readonly replayed: boolean } {
     validateResourceManifest(manifest);
+    validateResourceCompatibility(manifest, compatibility, this.#resourceContractMajor, this.#allowedResourceLicenses);
     const payloadDigest = createHash("sha256").update(payload).digest("hex");
     if (payloadDigest !== manifest.digest) throw new DeviceFabricError("resource_conflict", "resource digest does not match manifest");
     if (this.#verifyResourceSignature && !this.#verifyResourceSignature(manifest)) throw new DeviceFabricError("resource_conflict", "resource signature is not valid");
+    for (const dependency of manifest.dependencies) if (!this.getResource(dependency) || this.getResource(dependency)?.status !== "active") throw new DeviceFabricError("resource_conflict", `resource dependency is not active: ${dependency}`);
     const current = this.getResource(manifest.resourceId);
     if (current?.manifest.version === manifest.version && current.payloadDigest === payloadDigest) return { record: current, replayed: true };
     if (current) {
       this.database.prepare("INSERT INTO device_resource_history(resource_id,manifest_json,payload_digest,installed_at) VALUES(?,?,?,?)")
         .run(manifest.resourceId, JSON.stringify(current.manifest), current.payloadDigest, current.installedAt);
     }
-    const record = { manifest, payloadDigest, installedAt } satisfies DeviceResourceRecord;
+    const record = { manifest, payloadDigest, installedAt, status: "active" as const } satisfies DeviceResourceRecord;
     this.database.prepare("INSERT INTO device_resource_active(resource_id,manifest_json,payload_digest,installed_at) VALUES(?,?,?,?) ON CONFLICT(resource_id) DO UPDATE SET manifest_json=excluded.manifest_json,payload_digest=excluded.payload_digest,installed_at=excluded.installed_at")
       .run(manifest.resourceId, JSON.stringify(manifest), payloadDigest, installedAt);
+    this.setResourceStatus(manifest.resourceId, "active");
     return { record, replayed: false };
   }
 
   rollbackResource(resourceId: string): DeviceResourceRecord {
     const row = this.database.prepare("SELECT manifest_json,payload_digest,installed_at FROM device_resource_history WHERE resource_id=? ORDER BY revision_id DESC LIMIT 1").get(resourceId) as Row | undefined;
     if (!row) throw new DeviceFabricError("resource_conflict", "resource has no rollback revision");
-    const record = { manifest: parseJson<DeviceResourceManifestV1>(row.manifest_json, "resource manifest"), payloadDigest: readString(row, "payload_digest"), installedAt: readString(row, "installed_at") } satisfies DeviceResourceRecord;
+    const record = { manifest: parseJson<DeviceResourceManifestV1>(row.manifest_json, "resource manifest"), payloadDigest: readString(row, "payload_digest"), installedAt: readString(row, "installed_at"), status: "active" as const } satisfies DeviceResourceRecord;
     this.database.prepare("INSERT INTO device_resource_active(resource_id,manifest_json,payload_digest,installed_at) VALUES(?,?,?,?) ON CONFLICT(resource_id) DO UPDATE SET manifest_json=excluded.manifest_json,payload_digest=excluded.payload_digest,installed_at=excluded.installed_at")
       .run(resourceId, JSON.stringify(record.manifest), record.payloadDigest, record.installedAt);
+    this.setResourceStatus(resourceId, "active");
     this.database.prepare("DELETE FROM device_resource_history WHERE revision_id=(SELECT revision_id FROM device_resource_history WHERE resource_id=? ORDER BY revision_id DESC LIMIT 1)").run(resourceId);
     return record;
   }
 
   getResource(resourceId: string): DeviceResourceRecord | undefined {
-    const row = this.database.prepare("SELECT manifest_json,payload_digest,installed_at FROM device_resource_active WHERE resource_id=?").get(resourceId) as Row | undefined;
+    const row = this.database.prepare("SELECT a.manifest_json,a.payload_digest,a.installed_at,COALESCE(s.status,'active') AS status,s.reason AS status_reason FROM device_resource_active a LEFT JOIN device_resource_state s ON s.resource_id=a.resource_id WHERE a.resource_id=?").get(resourceId) as Row | undefined;
     if (!row) return undefined;
-    return { manifest: parseJson<DeviceResourceManifestV1>(row.manifest_json, "resource manifest"), payloadDigest: readString(row, "payload_digest"), installedAt: readString(row, "installed_at") };
+    const status = readString(row, "status");
+    if (status !== "active" && status !== "disabled") throw new DeviceFabricError("resource_conflict", "stored resource status is invalid");
+    return { manifest: parseJson<DeviceResourceManifestV1>(row.manifest_json, "resource manifest"), payloadDigest: readString(row, "payload_digest"), installedAt: readString(row, "installed_at"), status, ...(typeof row.status_reason === "string" ? { statusReason: row.status_reason } : {}) };
+  }
+
+  setResourceStatus(resourceId: string, status: "active" | "disabled", reason?: string, updatedAt = new Date().toISOString()): void {
+    if (!this.getResource(resourceId)) throw new DeviceFabricError("target_missing", "resource is missing");
+    this.database.prepare("INSERT INTO device_resource_state(resource_id,status,reason,updated_at) VALUES(?,?,?,?) ON CONFLICT(resource_id) DO UPDATE SET status=excluded.status,reason=excluded.reason,updated_at=excluded.updated_at")
+      .run(resourceId, status, reason ?? null, updatedAt);
+  }
+
+  healthCheckResource(resourceId: string, check: () => boolean, checkedAt = new Date().toISOString()): DeviceResourceRecord {
+    const resource = this.getResource(resourceId);
+    if (!resource) throw new DeviceFabricError("target_missing", "resource is missing");
+    const healthy = check();
+    this.setResourceStatus(resourceId, healthy ? "active" : "disabled", healthy ? undefined : "health check failed", checkedAt);
+    return this.getResource(resourceId)!;
   }
 
   upsertGraphNode(node: DeviceGraphNodeV1): DeviceGraphNodeV1 {
@@ -385,6 +422,12 @@ export class SqliteDeviceFabricStore {
         installed_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_device_resource_history_resource ON device_resource_history(resource_id,revision_id);
+      CREATE TABLE IF NOT EXISTS device_resource_state (
+        resource_id TEXT PRIMARY KEY NOT NULL,
+        status TEXT NOT NULL,
+        reason TEXT,
+        updated_at TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS device_fabric_graph_nodes (
         node_id TEXT PRIMARY KEY NOT NULL,
         revision INTEGER NOT NULL,
@@ -456,6 +499,29 @@ function validateResourceManifest(manifest: DeviceResourceManifestV1): void {
   }
   if (manifest.dependencies.includes(manifest.resourceId) || new Set(manifest.dependencies).size !== manifest.dependencies.length) {
     throw new DeviceFabricError("resource_conflict", "resource manifest has invalid dependencies");
+  }
+}
+
+function validateResourceCompatibility(
+  manifest: DeviceResourceManifestV1,
+  compatibility: DeviceResourceCompatibility,
+  expectedContractMajor: number,
+  allowedLicenses: readonly string[] | undefined,
+): void {
+  if (manifest.contractMajor !== undefined && manifest.contractMajor !== expectedContractMajor) throw new DeviceFabricError("resource_conflict", "resource contract major is incompatible");
+  if (compatibility.contractMajor !== undefined && compatibility.contractMajor !== expectedContractMajor) throw new DeviceFabricError("resource_conflict", "runtime contract major is incompatible");
+  if (allowedLicenses && !allowedLicenses.includes(manifest.license)) throw new DeviceFabricError("resource_conflict", "resource license is not allowed");
+  if (compatibility.platform && manifest.supportedPlatforms && !manifest.supportedPlatforms.includes(compatibility.platform)) throw new DeviceFabricError("resource_conflict", "resource platform is not supported");
+  if (compatibility.deviceKind && !manifest.supportedDeviceKinds.includes(compatibility.deviceKind)) throw new DeviceFabricError("resource_conflict", "resource device kind is not supported");
+  if (manifest.requiredPermissions && compatibility.availablePermissions) {
+    const available = new Set(compatibility.availablePermissions);
+    if (manifest.requiredPermissions.some(permission => !available.has(permission))) throw new DeviceFabricError("resource_conflict", "resource permissions are unavailable");
+  }
+  if (manifest.supportedFirmwareRanges && compatibility.firmwareVersion) {
+    const supported = compatibility.isFirmwareSupported
+      ? compatibility.isFirmwareSupported(manifest.supportedFirmwareRanges, compatibility.firmwareVersion)
+      : manifest.supportedFirmwareRanges.includes(compatibility.firmwareVersion);
+    if (!supported) throw new DeviceFabricError("resource_conflict", "resource firmware range is incompatible");
   }
 }
 
