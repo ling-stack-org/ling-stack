@@ -9,6 +9,7 @@ import {
   type DeviceObservationV1,
   type DeviceProfileV1,
   type DeviceTaskAttemptV1,
+  type DeviceTaskReconciliationV1,
   type DeviceTaskStatusV1,
   type DeviceTaskV1,
   type DeviceVerificationResultV1,
@@ -243,6 +244,12 @@ export class SqliteDeviceSupportStore {
     return row ? this.parseAttempt(row) : undefined;
   }
 
+  getAttempt(taskId: string, attemptId: string): DeviceSupportStoreAttemptRecord | undefined {
+    const row = this.database.prepare("SELECT attempt_json, request_json, request_digest FROM device_task_attempts WHERE task_id=? AND attempt_id=?")
+      .get(taskId, attemptId) as Row | undefined;
+    return row ? this.parseAttempt(row) : undefined;
+  }
+
   getActiveAttempt(taskId: string): DeviceSupportStoreAttemptRecord | undefined {
     const row = this.database.prepare(`
       SELECT attempt_json, request_json, request_digest FROM device_task_attempts
@@ -329,6 +336,17 @@ export class SqliteDeviceSupportStore {
       this.appendEvent(taskId, "task_stop_requested", { attemptId: attempt?.attemptId, status });
       return this.writeTaskTransition(task, status, {}, now);
     });
+  }
+
+  recordReconciliation(record: DeviceTaskReconciliationV1): void {
+    const task = this.requireTask(record.taskId);
+    this.updateAttempt(record.attemptId, { verification: record.verification }, record.recordedAt);
+    this.appendEvent(task.id, "attempt_reconciled", { ...record });
+    if (task.status === "unknown") {
+      this.writeTaskTransition(task, record.status === "verified" ? "succeeded" : "unknown", {
+        lastVerificationId: record.reconciliationId,
+      }, record.recordedAt);
+    }
   }
 
   recoverAfterRestart(now: string): readonly string[] {
@@ -519,7 +537,7 @@ function isAllowedTransition(from: DeviceTaskStatusV1, to: DeviceTaskStatusV1): 
     partial: ["planning", "executing", "cancelled", "unknown"],
     failed: ["planning", "cancelled"],
     cancelled: [],
-    unknown: ["planning", "executing", "cancelled", "failed"],
+    unknown: ["planning", "executing", "cancelled", "failed", "succeeded"],
   };
   return allowed[from].includes(to);
 }

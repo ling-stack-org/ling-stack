@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import {
   DEVICE_CONTRACT_MAJOR_V1,
@@ -12,12 +12,14 @@ import {
   type DeviceObservationV1,
   type DeviceProfileV1,
   type DeviceTaskAttemptV1,
+  type DeviceTaskReconciliationV1,
   type DeviceTaskV1,
   type DeviceVerificationResultV1,
   isAdapterManifestV1,
   isDeviceActionRequestV1,
   isDeviceActionResultV1,
   isDeviceCapabilitySnapshotV1,
+  isDeviceObservationV1,
   isDeviceProfileV1,
   isDeviceVerificationResultV1,
 } from "@ling-stack/contracts";
@@ -44,13 +46,21 @@ export interface DeviceAdapter {
     readonly request: DeviceActionRequestV1;
     readonly signal?: AbortSignal;
   }): Promise<DeviceActionResultV1 | DeviceAdapterExecutionResult>;
-  verify?(input: {
-    readonly profile: DeviceProfileV1;
-    readonly capability: CapabilityDescriptorV1;
-    readonly request: DeviceActionRequestV1;
-    readonly action: DeviceActionResultV1;
-    readonly signal?: AbortSignal;
-  }): Promise<DeviceVerificationResultV1>;
+  verify?(input: DeviceAdapterVerificationInput): Promise<DeviceVerificationResultV1 | DeviceAdapterVerificationResult>;
+}
+
+export interface DeviceAdapterVerificationInput {
+  readonly profile: DeviceProfileV1;
+  readonly capability: CapabilityDescriptorV1;
+  readonly request: DeviceActionRequestV1;
+  readonly action: DeviceActionResultV1;
+  readonly evidenceId: string;
+  readonly signal?: AbortSignal;
+}
+
+export interface DeviceAdapterVerificationResult {
+  readonly verification: DeviceVerificationResultV1;
+  readonly observations?: readonly DeviceObservationV1[];
 }
 
 export interface DeviceAdapterExecutionResult {
@@ -79,13 +89,17 @@ export interface DeviceExecuteOptions {
 
 type DeviceDispatchAdmission =
   | { readonly kind: "replay"; readonly record: DeviceSupportStoreAttemptRecord }
-  | {
+  | (DeviceCapabilityBinding & {
       readonly kind: "dispatch";
       readonly attempt: DeviceTaskAttemptV1;
-      readonly adapter: DeviceAdapter;
-      readonly profile: DeviceProfileV1;
-      readonly capability: CapabilityDescriptorV1;
-    };
+    });
+
+interface DeviceCapabilityBinding {
+  readonly adapter: DeviceAdapter;
+  readonly profile: DeviceProfileV1;
+  readonly capability: CapabilityDescriptorV1;
+  readonly snapshot: DeviceCapabilitySnapshotV1;
+}
 
 export class DeviceBrokerError extends Error {
   constructor(
@@ -227,16 +241,20 @@ export class DeviceCapabilityBroker {
       const receipt = this.recordActionResult(attempt, action, observations, finalize, this.shouldVerify(capability, request));
       if (!receipt.verify) return receipt.record;
 
-      const verification = await this.verifyAction(adapter, profile, capability, request, action, operationSignal);
+      const evidenceId = `${attempt.actionId}:verification`;
+      const { verification, observations: readback } = await this.verifyAction({
+        adapter, profile, capability, request, action, evidenceId, signal: operationSignal,
+      });
       return this.store.withWriteTransaction(() => {
         const now = this.now();
+        for (const observation of readback ?? []) this.store.appendObservation(attempt.taskId, observation, now);
         const record = this.store.updateAttempt(attempt.attemptId, { verification }, now);
         if (!this.isCurrentDispatch(attempt)) return record;
         const status = verification.status === "not_evaluable" && capability.sideEffect !== "read_only"
           ? "unknown"
           : verification.status === "verified" ? "succeeded" : "failed";
         if (finalize || status === "unknown") {
-          this.store.transitionTask(attempt.taskId, status, { lastVerificationId: `${attempt.actionId}:verification` }, now);
+          this.store.transitionTask(attempt.taskId, status, { lastVerificationId: evidenceId }, now);
         }
         return record;
       });
@@ -250,6 +268,83 @@ export class DeviceCapabilityBroker {
     const task = this.store.stopDaemonTask(taskId, this.now());
     if (task.status === "unknown") this.activeDispatches.get(taskId)?.abort();
     return task;
+  }
+
+  async reconcileTask(input: {
+    readonly taskId: string;
+    readonly attemptId: string;
+    readonly capabilitySnapshotId: string;
+    readonly signal?: AbortSignal;
+  }): Promise<DeviceTaskReconciliationV1> {
+    const { attempt, request, binding, timeoutMs } = this.store.withWriteTransaction(() => {
+      const record = this.store.getAttempt(input.taskId, input.attemptId);
+      if (!record) throw new DeviceBrokerError("invalid_request", "the device attempt does not belong to this task");
+      const task = this.requireTaskTarget(record.request);
+      const actionId = task.currentActionId ?? this.store.getActiveAttempt(task.id)?.attempt.actionId;
+      if (task.status !== "unknown" || record.attempt.actionId !== actionId || record.attempt.ownerId !== task.ownerId) {
+        throw new DeviceBrokerError("invalid_request", "task has no matching outcome to reconcile");
+      }
+      const request = { ...record.request, capabilitySnapshotId: input.capabilitySnapshotId };
+      const binding = this.resolveCapability(request);
+      const reader = binding.snapshot.capabilities.find(item => item.id === binding.capability.verificationCapabilityId);
+      if (!binding.adapter.verify || !reader || reader.sideEffect !== "read_only" || reader.approvalClass !== "allow") {
+        throw new DeviceBrokerError("unsupported_capability", "device action has no current authorized verification capability");
+      }
+      input.signal?.throwIfAborted();
+      if (this.store.getLeasedAttempt(task.id)
+        || !this.store.acquireTargetLease(request.targetDeviceId, task.id, task.ownerId, this.now(), this.leaseMs, record.attempt.attemptId)) {
+        throw new DeviceBrokerError("target_busy", "device target is busy");
+      }
+      return { attempt: record.attempt, request, binding, timeoutMs: reader.timeoutMs };
+    });
+
+    const controller = new AbortController();
+    const deadline = AbortSignal.timeout(timeoutMs);
+    const signal = AbortSignal.any(input.signal ? [input.signal, controller.signal, deadline] : [controller.signal, deadline]);
+    this.activeDispatches.set(attempt.taskId, controller);
+    const reconciliationId = `device_reconciliation_${randomUUID()}`;
+    try {
+      const readbackStartedAt = this.now();
+      const result = await this.verifyAction({
+        ...binding,
+        request,
+        action: attempt.receipt ?? uncertainActionResult(attempt.actionId, attempt.dispatchIntentAt, undefined),
+        evidenceId: reconciliationId,
+        signal,
+      });
+      return this.store.withWriteTransaction(() => {
+        const now = this.now();
+        const current = this.store.getTask(attempt.taskId);
+        const profile = this.store.getDevice(attempt.targetDeviceId);
+        const observations = result.observations ?? [];
+        const observed = observations.some(observation => observation.id === reconciliationId
+          && observation.redactionClass === "public" && (observation.quality === "good" || observation.quality === "degraded")
+          && Date.parse(observation.observedAt) >= Date.parse(readbackStartedAt)
+          && Date.parse(observation.observedAt) <= Date.parse(now) && Date.parse(observation.freshnessUntil) > Date.parse(now));
+        const verified = !signal.aborted && observed && result.verification.status === "verified"
+          && current?.status === "unknown" && profile !== undefined
+          && !["offline", "revoked", "retired"].includes(profile.device.lifecycleStatus)
+          && Date.parse(binding.snapshot.freshnessUntil) > Date.parse(now)
+          && this.store.getCurrentCapabilitySnapshot(attempt.targetDeviceId)?.snapshotId === binding.snapshot.snapshotId
+          && this.store.getLeasedAttempt(attempt.taskId)?.attempt.attemptId === attempt.attemptId;
+        const record: DeviceTaskReconciliationV1 = {
+          reconciliationId,
+          taskId: attempt.taskId,
+          attemptId: attempt.attemptId,
+          capabilitySnapshotId: binding.snapshot.snapshotId,
+          connectionRevision: binding.snapshot.connectionRevision,
+          verification: result.verification,
+          status: verified ? "verified" : "unresolved",
+          recordedAt: now,
+        };
+        for (const observation of observations) this.store.appendObservation(attempt.taskId, observation, now);
+        this.store.recordReconciliation(record);
+        return record;
+      });
+    } finally {
+      this.activeDispatches.delete(attempt.taskId);
+      this.store.releaseTargetLease(attempt.targetDeviceId, attempt.taskId, attempt.attemptId);
+    }
   }
 
   private admitDispatch(request: DeviceActionRequestV1, signal: AbortSignal | undefined, options: DeviceExecuteOptions): DeviceDispatchAdmission {
@@ -282,26 +377,11 @@ export class DeviceCapabilityBroker {
       throw new DeviceBrokerError("target_busy", "task has an unresolved dispatch attempt");
     }
     signal?.throwIfAborted();
-    const profile = this.requireDevice(request.targetDeviceId);
-    if (["revoked", "retired", "offline"].includes(profile.device.lifecycleStatus)) {
-      throw new DeviceBrokerError("device_offline", `device ${profile.device.id} is unavailable`);
-    }
-    const snapshot = this.store.getCurrentCapabilitySnapshot(profile.device.id);
-    if (!snapshot || snapshot.snapshotId !== request.capabilitySnapshotId
-      || snapshot.adapterId !== profile.adapterId || snapshot.adapterVersion !== profile.adapterVersion) {
-      throw new DeviceBrokerError("stale_snapshot", "capability snapshot is outside the current device registration");
-    }
-    if (Date.parse(snapshot.freshnessUntil) <= Date.parse(this.now())) {
-      throw new DeviceBrokerError("stale_snapshot", "capability snapshot has expired");
-    }
-    const capability = snapshot.capabilities.find(item => item.id === request.capabilityId);
-    if (!capability || capability.schemaVersion !== request.capabilitySchemaVersion) {
-      throw new DeviceBrokerError("unsupported_capability", "requested capability is not in the current snapshot");
-    }
+    const binding = this.resolveCapability(request);
+    const { profile, snapshot, capability } = binding;
     if (options.onlyUnattendedReads && (capability.sideEffect !== "read_only" || capability.approvalClass !== "allow")) {
       throw new DeviceBrokerError("permission_denied", "the playbook requires an unattended read capability");
     }
-    const adapter = this.requireAdapter(profile.adapterId);
     if (options.requireCurrentProposal) {
       const proposal = this.store.getActionProposal(task.id);
       if (task.status !== "awaiting_approval" || capability.sideEffect === "read_only"
@@ -336,7 +416,27 @@ export class DeviceCapabilityBroker {
     this.store.createAttempt({ attempt, request, requestDigest }, now);
     this.store.transitionTask(task.id, "executing", { currentActionId: request.actionId }, now);
     const dispatched = this.store.updateAttempt(attempt.attemptId, { status: "dispatched" }, now);
-    return { kind: "dispatch", attempt: dispatched.attempt, adapter, profile, capability };
+    return { kind: "dispatch", attempt: dispatched.attempt, ...binding };
+  }
+
+  private resolveCapability(request: DeviceActionRequestV1): DeviceCapabilityBinding {
+    const profile = this.requireDevice(request.targetDeviceId);
+    if (["revoked", "retired", "offline"].includes(profile.device.lifecycleStatus)) {
+      throw new DeviceBrokerError("device_offline", `device ${profile.device.id} is unavailable`);
+    }
+    const snapshot = this.store.getCurrentCapabilitySnapshot(profile.device.id);
+    if (!snapshot || snapshot.snapshotId !== request.capabilitySnapshotId
+      || snapshot.adapterId !== profile.adapterId || snapshot.adapterVersion !== profile.adapterVersion) {
+      throw new DeviceBrokerError("stale_snapshot", "capability snapshot is outside the current device registration");
+    }
+    if (Date.parse(snapshot.freshnessUntil) <= Date.parse(this.now())) {
+      throw new DeviceBrokerError("stale_snapshot", "capability snapshot has expired");
+    }
+    const capability = snapshot.capabilities.find(item => item.id === request.capabilityId);
+    if (!capability || capability.schemaVersion !== request.capabilitySchemaVersion) {
+      throw new DeviceBrokerError("unsupported_capability", "requested capability is not in the current snapshot");
+    }
+    return { profile, snapshot, capability, adapter: this.requireAdapter(profile.adapterId) };
   }
 
   private recordActionResult(
@@ -423,32 +523,37 @@ export class DeviceCapabilityBroker {
     return capability.sideEffect !== "read_only" || capability.verificationCapabilityId !== undefined || request.expectedVerification !== undefined;
   }
 
-  private async verifyAction(
-    adapter: DeviceAdapter,
-    profile: DeviceProfileV1,
-    capability: CapabilityDescriptorV1,
-    request: DeviceActionRequestV1,
-    action: DeviceActionResultV1,
-    signal?: AbortSignal,
-  ): Promise<DeviceVerificationResultV1> {
+  private async verifyAction(input: DeviceAdapterVerificationInput & { readonly adapter: DeviceAdapter }): Promise<DeviceAdapterVerificationResult> {
+    const { adapter, ...verificationInput } = input;
+    const { request, action } = verificationInput;
     let reason = "adapter does not expose a verification operation";
     if (adapter.verify) {
       try {
-        const verification = await adapter.verify({ profile, capability, request, action, signal });
-        if (isDeviceVerificationResultV1(verification) && verification.actionId === request.actionId) return verification;
+        const reported = await adapter.verify(verificationInput);
+        const result = reported && typeof reported === "object" && "verification" in reported
+          ? reported
+          : { verification: reported };
+        const { verification, observations } = result;
+        if (isDeviceVerificationResultV1(verification) && verification.actionId === request.actionId
+          && (request.expectedVerification === undefined || canonicalJson(request.expectedVerification) === canonicalJson(verification.rule))
+          && (observations === undefined || (Array.isArray(observations)
+            && observations.every(item => isDeviceObservationV1(item) && verification.observationIds.includes(item.id))
+            && new Set(observations.map(item => item.id)).size === observations.length))) {
+          return result;
+        }
         reason = "adapter verification did not match the dispatched action";
       } catch {
         reason = "adapter verification did not return a result";
       }
     }
-    return {
+    return { verification: {
       actionId: request.actionId,
       status: "not_evaluable",
       rule: request.expectedVerification ?? null,
       observationIds: action.observationIds,
       checkedAt: this.now(),
       reason,
-    };
+    } };
   }
 }
 

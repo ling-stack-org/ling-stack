@@ -276,6 +276,26 @@ test("signed Gateway sessions reconnect to durable PC tasks and revoke an active
   assert.equal((await waitForFrame(reconnected.frames, "device.task.snapshot", replay)).payload.task.status, "unknown");
   assert.equal(repairCalls, 1);
   assert.equal(networkReads, 2);
+
+  const attempt = deviceStore.listAttempts(active.taskId)[0]!.attempt;
+  const readbackSnapshot = await broker.refreshCapabilities(target.device.id, "reconnected-target-connection");
+  const reconciliation = await broker.reconcileTask({
+    taskId: active.taskId,
+    attemptId: attempt.attemptId,
+    capabilitySnapshotId: readbackSnapshot.snapshotId,
+  });
+  assert.equal(reconciliation.status, "verified");
+  assert.equal(reconciliation.connectionRevision, "reconnected-target-connection");
+  assert.equal(deviceStore.getAttempt(active.taskId, attempt.attemptId)?.attempt.verification?.status, "verified");
+  assert.equal(deviceStore.listObservations(active.taskId)[0]?.id, reconciliation.reconciliationId);
+  const refreshed = await reconnected.send("device.task.status", {
+    commandId: "reconciled-status", workspaceId: DEFAULT_WORKSPACE_ID, taskId: active.taskId,
+  });
+  const reconciled = await waitForFrame(reconnected.frames, "device.task.snapshot", refreshed);
+  assert.equal(reconciled.payload.task.status, "succeeded");
+  assert.equal(reconciled.payload.task.lastVerificationId, reconciliation.reconciliationId);
+  assert.equal(repairCalls, 1);
+  assert.equal(networkReads, 3);
 });
 
 async function waitForFrame<T extends RemoteServerFrameV1["type"]>(frames: readonly RemoteServerFrameV1[], type: T, requestId?: string) {

@@ -8,7 +8,13 @@ import type {
   DeviceProfileV1,
   DeviceVerificationResultV1,
 } from "@ling-stack/contracts";
-import type { DeviceAdapter, DeviceAdapterDiscoveryInput, DeviceAdapterExecutionResult } from "@ling-stack/core";
+import type {
+  DeviceAdapter,
+  DeviceAdapterDiscoveryInput,
+  DeviceAdapterExecutionResult,
+  DeviceAdapterVerificationInput,
+  DeviceAdapterVerificationResult,
+} from "@ling-stack/core";
 
 export interface PcNetworkStatus {
   readonly connected: boolean;
@@ -160,7 +166,7 @@ export class PcAdapter implements DeviceAdapter {
     const startedAt = this.#now();
     if (input.capability.id === "pc.inspect.network") {
       const value = await this.#executor.readNetwork(input.signal);
-      return completedObservation(input, startedAt, value as unknown as JsonValue, "pc.network");
+      return completedObservation(input, startedAt, networkObservationValue(value), "pc.network");
     }
     if (input.capability.id === "pc.inspect.services") {
       const value = await this.#executor.readServices(input.signal);
@@ -171,13 +177,28 @@ export class PcAdapter implements DeviceAdapter {
       const result = await this.#executor.repairNetwork({ mode, signal: input.signal });
       if (!result.accepted) return { actionId: input.request.actionId, status: "rejected", errorCode: "permission_denied", startedAt, finishedAt: this.#now(), observationIds: [] };
     } else return { actionId: input.request.actionId, status: "rejected", errorCode: "unsupported_capability", startedAt, finishedAt: this.#now(), observationIds: [] };
-    return { actionId: input.request.actionId, status: "completed", startedAt, finishedAt: this.#now(), observationIds: [`${input.request.actionId}:result`] };
+    return { actionId: input.request.actionId, status: "completed", startedAt, finishedAt: this.#now(), observationIds: [] };
   }
 
-  async verify(input: { readonly profile: DeviceProfileV1; readonly request: DeviceActionRequestV1; readonly action: DeviceActionResultV1 }): Promise<DeviceVerificationResultV1> {
-    const network = await this.#executor.readNetwork();
-    const connected = network.connected && network.gatewayReachable !== false && network.dnsReachable !== false;
-    return { actionId: input.request.actionId, status: connected ? "verified" : "failed", rule: input.request.expectedVerification ?? { connected: true }, observationIds: [`${input.request.actionId}:verification`], checkedAt: this.#now(), reason: connected ? undefined : "network remains unavailable" };
+  async verify(input: DeviceAdapterVerificationInput): Promise<DeviceAdapterVerificationResult> {
+    const { request } = input;
+    const rule = request.expectedVerification ?? { connected: true, gatewayReachable: true, dnsReachable: true };
+    if (request.capabilityId !== "pc.inspect.network" && request.capabilityId !== "pc.repair.network") {
+      return { verification: {
+        actionId: request.actionId, status: "not_evaluable", rule, observationIds: [],
+        checkedAt: this.#now(), reason: "network verification is unavailable for this capability",
+      } };
+    }
+    const network = await this.#executor.readNetwork(input.signal);
+    const checkedAt = this.#now();
+    const observation = pcObservation(input.profile, input.evidenceId, checkedAt, networkObservationValue(network), "pc.network");
+    return {
+      verification: {
+        actionId: request.actionId, status: evaluateNetworkRule(rule, network), rule,
+        observationIds: [observation.id], checkedAt,
+      },
+      observations: [observation],
+    };
   }
 }
 
@@ -188,19 +209,36 @@ function completedObservation(
   source: string,
 ): DeviceAdapterExecutionResult {
   const observationId = `${input.request.actionId}:result`;
-  const observation: DeviceObservationV1 = {
-    id: observationId,
-    subjectId: input.profile.device.id,
+  const observation = pcObservation(input.profile, observationId, startedAt, value, source);
+  return { action: { actionId: input.request.actionId, status: "completed", startedAt, finishedAt: startedAt, observationIds: [observationId] }, observations: [observation] };
+}
+
+function pcObservation(profile: DeviceProfileV1, id: string, observedAt: string, value: JsonValue, source: string): DeviceObservationV1 {
+  return {
+    id,
+    subjectId: profile.device.id,
     source,
     value,
-    observedAt: startedAt,
-    receivedAt: startedAt,
-    freshnessUntil: new Date(Date.parse(startedAt) + 30_000).toISOString(),
+    observedAt,
+    receivedAt: observedAt,
+    freshnessUntil: new Date(Date.parse(observedAt) + 30_000).toISOString(),
     quality: "good",
-    provenance: [source, input.profile.device.id],
+    provenance: [source, profile.device.id],
     redactionClass: "public",
   };
-  return { action: { actionId: input.request.actionId, status: "completed", startedAt, finishedAt: startedAt, observationIds: [observationId] }, observations: [observation] };
+}
+
+function networkObservationValue(network: PcNetworkStatus): JsonValue {
+  return Object.fromEntries(Object.entries(network).filter(([, value]) => value !== undefined));
+}
+
+function evaluateNetworkRule(rule: JsonValue, network: PcNetworkStatus): DeviceVerificationResultV1["status"] {
+  if (!rule || typeof rule !== "object" || Array.isArray(rule)) return "not_evaluable";
+  const fields = Object.entries(rule);
+  const checks = { connected: network.connected, gatewayReachable: network.gatewayReachable, dnsReachable: network.dnsReachable };
+  if (!fields.length || fields.some(([key, expected]) => !Object.hasOwn(checks, key) || typeof expected !== "boolean"
+    || checks[key as keyof typeof checks] === undefined)) return "not_evaluable";
+  return fields.every(([key, expected]) => checks[key as keyof typeof checks] === expected) ? "verified" : "failed";
 }
 
 export function pcAdapterManifest(): AdapterManifestV1 {

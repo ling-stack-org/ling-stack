@@ -369,6 +369,31 @@ test("invalid adapter receipts and thrown transport errors retain a redacted unk
   }
 });
 
+test("reconciliation requires a current capability and fresh readback evidence", async t => {
+  const { store, broker } = brokerFixture();
+  t.after(() => store.close());
+  const adapter = createAdapter();
+  let dispatches = 0;
+  broker.registerAdapter({
+    ...adapter,
+    async execute() {
+      dispatches += 1;
+      throw new Error("connection interrupted");
+    },
+  });
+  broker.createTask(task("reconciliation"));
+  const action = approveNetworkRepair(request(writeCapability.id, "reconciliation"));
+  const original = await broker.execute(action);
+  const binding = { taskId: action.taskId, attemptId: original.attempt.attemptId, capabilitySnapshotId: snapshot().snapshotId };
+  await assert.rejects(() => broker.reconcileTask({ ...binding, capabilitySnapshotId: "old-snapshot" }), (error: unknown) =>
+    error instanceof DeviceBrokerError && error.code === "stale_snapshot");
+  const noObservation = await broker.reconcileTask(binding);
+  assert.equal(noObservation.status, "unresolved");
+  assert.equal(store.getTask(action.taskId)?.status, "unknown");
+  assert.deepEqual(await broker.execute(action), original);
+  assert.equal(dispatches, 1);
+});
+
 test("a legacy target lease migrates without changing its owner or expiration", t => {
   const root = mkdtempSync(join(tmpdir(), "ling-device-lease-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));

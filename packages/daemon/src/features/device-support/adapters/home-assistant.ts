@@ -4,12 +4,18 @@ import type {
   AdapterManifestV1,
   DeviceActionRequestV1,
   DeviceCapabilitySnapshotV1,
+  DeviceObservationV1,
   DeviceObservationQualityV1,
   DeviceProfileV1,
   DeviceActionResultV1,
-  DeviceVerificationResultV1,
 } from "@ling-stack/contracts";
-import type { DeviceAdapter, DeviceAdapterDiscoveryInput, DeviceAdapterExecutionResult } from "@ling-stack/core";
+import type {
+  DeviceAdapter,
+  DeviceAdapterDiscoveryInput,
+  DeviceAdapterExecutionResult,
+  DeviceAdapterVerificationInput,
+  DeviceAdapterVerificationResult,
+} from "@ling-stack/core";
 import type { JsonValue } from "@ling-stack/contracts";
 
 export interface HomeAssistantEntityRead {
@@ -175,18 +181,7 @@ export class HomeAssistantAdapter implements DeviceAdapter {
       };
       return {
         action,
-        observations: [{
-          id: `${input.request.actionId}:entity`,
-          subjectId: entity.entityId,
-          source: "home_assistant",
-          value: { entityId: entity.entityId, state: entity.state ?? null, availability: entity.availability, attributes: entity.attributes as Record<string, JsonValue> },
-          observedAt: entity.observedAt,
-          receivedAt: this.#now(),
-          freshnessUntil: new Date(Date.parse(entity.observedAt) + 30_000).toISOString(),
-          quality: entity.availability === "absent" ? "good" : entity.quality,
-          provenance: [this.#baseUrl, entity.entityId],
-          redactionClass: "public",
-        }],
+        observations: [this.entityObservation(action.observationIds[0]!, entity)],
       };
     }
     if (input.capability.id !== "home_assistant.reload_config_entry") {
@@ -202,15 +197,42 @@ export class HomeAssistantAdapter implements DeviceAdapter {
     return { actionId: input.request.actionId, status: response.ok ? "completed" : "rejected", errorCode: response.ok ? undefined : "service_unavailable", startedAt, finishedAt: this.#now(), observationIds: [] };
   }
 
-  async verify(input: { readonly profile: DeviceProfileV1; readonly capability: { readonly id: string }; readonly request: DeviceActionRequestV1; readonly action: DeviceActionResultV1 }): Promise<DeviceVerificationResultV1> {
-    const args = asObject(input.request.normalizedInput);
-    if (input.capability.id !== "home_assistant.reload_config_entry") {
-      return { actionId: input.request.actionId, status: "not_evaluable", rule: input.request.expectedVerification ?? null, observationIds: input.action.observationIds, checkedAt: this.#now(), reason: "no verification rule for this action" };
-    }
+  async verify(input: DeviceAdapterVerificationInput): Promise<DeviceAdapterVerificationResult> {
+    const { request } = input;
+    const args = asObject(request.normalizedInput);
     const entityId = typeof args.entityId === "string" ? args.entityId : undefined;
-    if (!entityId) return { actionId: input.request.actionId, status: "not_evaluable", rule: input.request.expectedVerification ?? null, observationIds: [], checkedAt: this.#now(), reason: "verification entity was not supplied" };
-    const entity = await this.readEntity(entityId);
-    return { actionId: input.request.actionId, status: entity.availability === "available" ? "verified" : "failed", rule: input.request.expectedVerification ?? { availability: "available" }, observationIds: [`${input.request.actionId}:verification`], checkedAt: this.#now(), reason: entity.availability === "available" ? undefined : entity.availability };
+    const rule = request.expectedVerification ?? { availability: "available" };
+    if (input.capability.id !== "home_assistant.reload_config_entry" || !entityId || !isRecord(rule)
+      || Object.keys(rule).length !== 1 || !["available", "unavailable", "absent"].includes(String(rule.availability))) {
+      return { verification: {
+        actionId: request.actionId, status: "not_evaluable", rule, observationIds: [],
+        checkedAt: this.#now(), reason: "an entity and its expected availability are required",
+      } };
+    }
+    const entity = await this.readEntity(entityId, input.signal);
+    const observation = this.entityObservation(input.evidenceId, entity);
+    return {
+      verification: {
+        actionId: request.actionId, status: entity.availability === rule.availability ? "verified" : "failed",
+        rule, observationIds: [observation.id], checkedAt: this.#now(),
+      },
+      observations: [observation],
+    };
+  }
+
+  private entityObservation(id: string, entity: HomeAssistantEntityRead): DeviceObservationV1 {
+    return {
+      id,
+      subjectId: entity.entityId,
+      source: "home_assistant",
+      value: { entityId: entity.entityId, state: entity.state ?? null, availability: entity.availability, attributes: entity.attributes as Record<string, JsonValue> },
+      observedAt: entity.observedAt,
+      receivedAt: this.#now(),
+      freshnessUntil: new Date(Date.parse(entity.observedAt) + 30_000).toISOString(),
+      quality: entity.availability === "absent" ? "good" : entity.quality,
+      provenance: [this.#baseUrl, entity.entityId],
+      redactionClass: "public",
+    };
   }
 
   private async request(path: string, init: RequestInit & { readonly allowNotFound?: boolean }): Promise<Response> {

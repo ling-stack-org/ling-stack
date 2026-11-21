@@ -293,6 +293,17 @@ export interface DeviceVerificationResultV1 {
   readonly reason?: string;
 }
 
+export interface DeviceTaskReconciliationV1 {
+  readonly reconciliationId: string;
+  readonly taskId: string;
+  readonly attemptId: string;
+  readonly capabilitySnapshotId: string;
+  readonly connectionRevision: string;
+  readonly verification: DeviceVerificationResultV1;
+  readonly status: "verified" | "unresolved";
+  readonly recordedAt: string;
+}
+
 export interface DeviceTaskV1 {
   readonly id: string;
   readonly ownerKind: "daemon" | "mobile" | "edge";
