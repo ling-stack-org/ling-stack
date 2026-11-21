@@ -29,6 +29,7 @@ are not published here. The relay URL and temporary development checkout are exa
 - [Device Support Platform checkpoint, 2026-11-21](#device-support-platform-checkpoint-2026-11-21)
 - [Device Support Platform continuation, 2026-11-22](#device-support-platform-continuation-2026-11-22)
 - [Device Support Platform adapter isolation, 2026-11-22](#device-support-platform-adapter-isolation-2026-11-22)
+- [Device Support Platform Home Assistant and verification, 2026-11-22](#device-support-platform-home-assistant-and-verification-2026-11-22)
 - [Typed transcript handoff](#typed-transcript-handoff)
 - [Office writer verification, 2026-10-04](#office-writer-verification-2026-10-04)
 - [Office no-start checkpoint, 2026-10-05](#office-no-start-checkpoint-2026-10-05)
@@ -167,6 +168,27 @@ acceptance remain separate gates.
 
 The focused run passed 35 tests. The native image-sanitizer build emits existing
 `asmjs` check-cfg warnings and completed successfully.
+
+## Device Support Platform Home Assistant and verification 2026-11-22
+
+Commit `fd2e14c64` adds the configured Home Assistant path to the Daemon. Startup
+configuration accepts an HTTPS origin or a loopback HTTP origin plus an `env:` or
+`keychain:` secret reference. The adapter resolves the credential only for the
+request, binds the target identity to the origin and reported Home Assistant
+version, bounds response bodies, rejects redirects and unexpected entity IDs, and
+records only typed availability facts. `POST /v1/device-support/home-assistant/diagnose`
+creates the normal Daemon-owned task and journal, so the PC flow uses the same
+playbook, Pi planning and evidence projection as other device diagnoses.
+
+Verification now requires fresh public evidence from the selected target and the
+declared evidence ID. A late receipt after cancellation or authority change remains
+unknown. Paired Mobile shows the target, side-effect class and expected verification
+before its confirmation command. The approval journal stores the exact binding and
+paired principal while the public projection omits private principal fields.
+
+The focused run passed 46 tests. A loopback Home Assistant fixture covered startup
+configuration, token resolution, version binding, diagnosis, journal persistence and
+redaction. Physical Home Assistant acceptance remains open.
 
 ## Typed Transcript Handoff
 

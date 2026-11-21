@@ -142,14 +142,16 @@ D0 covers the design and the implementation plan.
 ### Scope
 
 - [x] Add durable device-task transitions from creation through verification.
-- [~] Reuse Ling approval policy. The broker validates exact approval bindings. Existing
-  Ling approval UI integration remains open. The task trace identifies the exact
-  approval and the authenticated paired device that submitted it.
+- [x] Reuse Ling approval policy. The broker validates exact approval bindings. The task
+  trace identifies the exact approval and the authenticated paired device that submitted
+  it. Approval admission is recorded in the same owner journal transaction as the
+  dispatch intent, so a rejected or busy admission does not create an approval fact.
 - [x] Keep the original capability snapshots, policy revision, and applicable access
   grant and operator-stop revisions for task admission and reconciliation reads.
-- [~] Show the target, capability and PC owner before a write and bind confirmation to
-  the exact action and current revisions. Detailed argument, impact, verification and
-  recovery views remain open.
+- [x] Show the target, capability and PC owner before a write and bind confirmation to
+  the exact action and current revisions. Paired Mobile presents the side-effect class,
+  target, capability and expected verification before its approval command. The Daemon
+  rejects stale, foreign-subject, missing or expired verification evidence.
 - [x] Persist dispatch intent and an attempt ID before invoking the adapter. The owning
   daemon checks task scope, current proposal, approval, and lease in the admission
   transaction. A stop before admission cancels the task. A stop after admission
@@ -188,6 +190,11 @@ D0 covers the design and the implementation plan.
   incorrect workspace and attempt bindings, renewal of an expired snapshot, unresolved
   readback followed by verification, and a request repeated after verification. The
   original write count stays at one.
+- Focused broker and Gateway fixtures reject a verification with the wrong target,
+  stale observation window, missing evidence reference or reused action evidence. A
+  paired Mobile UI fixture exposes the target, side-effect class and expected
+  verification before approval. The approval event is public-projected without the
+  paired session's private fields.
 - A SQLite upgrade fixture preserves the retained live snapshot and identifies missing
   earlier evidence. The Linux SSH reconnect fixture changes the configured address,
   restarts the Daemon, and reads the unchanged original task trace. The same device's
@@ -206,9 +213,11 @@ D0 covers the design and the implementation plan.
   health configuration.
 - [x] Discover devices, entities, services, and current availability.
 - [x] Normalize state and service metadata into Ling capabilities.
-- [~] Use a read-only Home Assistant flow to verify discovery, version selection, and
+- [x] Use a read-only Home Assistant flow to verify discovery, version selection, and
   diagnosis for unavailable entities, stale state, integration failure, and automation
-  failure.
+  failure. The Daemon accepts a trusted HTTPS or loopback HTTP origin plus an env/keychain
+  secret reference and runs the same owner-journal diagnosis route without returning the
+  token or untrusted entity text.
 - [x] Add a small set of low-risk, verified actions such as reload integration or
   re-enable a bounded automation where supported.
 - [x] Preserve Home Assistant entity and service identifiers in evidence without exposing
@@ -828,9 +837,9 @@ recorded per slice as they complete. [Detailed design](ling-device-fabric.md)
 | --- | --- | --- | --- | --- | --- |
 | D0 | #730 | Documentation and link checks | [PR #730](https://github.com/ling-stack-org/ling-stack/pull/730), [Runtime contract](ling-device-support-platform-runtime-contract.md) | Architecture and tracking only | All runtime slices |
 | D1 | `66ee1fbdb` | `corepack pnpm --filter @ling-stack/contracts typecheck` and `test` | [contracts/device.ts](../../packages/contracts/src/device.ts) | Core contracts, validators, transport deployment metadata, and fake adapter fixtures are implemented | Adapter package extraction and cross-process conformance remain |
-| D2 | `0bc068955` | `corepack pnpm --filter @ling-stack/core build:ci`; `corepack pnpm --filter @ling-stack/daemon build:ci`; `corepack pnpm --filter @ling-stack/daemon typecheck:ci`; `node --test packages/core/test/device-support.test.ts packages/daemon/test/device-support-adapters.test.ts` (35 passed) | [device-support.ts](../../packages/core/src/device-support.ts), [external-process.ts](../../packages/daemon/src/features/device-support/adapters/external-process.ts), [runtime.ts](../../packages/daemon/src/features/device-support/runtime.ts) | Registry ownership, revocation, lease migration, refresh fencing, current capability snapshots, stable identities, broker dispatch, and crash-isolated external adapter execution are covered by fixtures | External adapter package signing, production resource activation and field acceptance remain |
-| D3 | Durable attempts, capability history and approval trace | Contracts, Core and Daemon builds and typechecks. Focused contract (5), Core (48) and Daemon (19) tests | [Broker admission](../../packages/core/src/device-support.ts), [History store](../../packages/core/src/storage/sqlite/device-support-store.ts), [SQLite migration and stale admission](../../packages/core/test/device-support.test.ts), [Linux reconnect](../../packages/daemon/test/linux-ssh-runtime.test.ts), [Paired approval and readback](../../packages/daemon/test/device-remote-facade.test.ts) | Target leases, restart recovery and Gateway readback keep the original attempt and approval. Historical snapshots retain their profile and capability versions. The trace includes the paired approval principal and the refreshed readback scope. | Approval UI, detailed consequence and recovery presentation, and supported physical recovery acceptance remain. |
-| D4 | `4a83acfb8` | `node --test packages/daemon/test/device-support-adapters.test.ts` | [home-assistant.ts](../../packages/daemon/src/features/device-support/adapters/home-assistant.ts) | Fixture Home Assistant adapter supports discovery, entity available/unavailable/absent classification, evidence observations, bounded response sizes, and a reload action without persisting the token | Real Home Assistant instance and field action acceptance remain |
+| D2 | `b21089541` | `corepack pnpm --filter @ling-stack/contracts build:ci`; `corepack pnpm --filter @ling-stack/core build:ci`; `corepack pnpm --filter @ling-stack/daemon build:ci`; `corepack pnpm --filter @ling-stack/daemon typecheck:ci`; `node --test packages/core/test/device-support.test.ts packages/daemon/test/device-support-adapters.test.ts` (35 passed) | [device-support.ts](../../packages/core/src/device-support.ts), [external-process.ts](../../packages/daemon/src/features/device-support/adapters/external-process.ts), [runtime.ts](../../packages/daemon/src/features/device-support/runtime.ts) | Registry ownership, revocation, lease migration, refresh fencing, current capability snapshots, stable identities, broker dispatch, and crash-isolated external adapter execution are covered by fixtures | External adapter package signing, production resource activation and field acceptance remain |
+| D3 | `b21089541` | Contracts, Core and Daemon builds and typechecks. Focused device suite (47 passed), Remote Protocol (43), Remote Client (19), Mobile (98) | [Broker admission](../../packages/core/src/device-support.ts), [History store](../../packages/core/src/storage/sqlite/device-support-store.ts), [SQLite migration and stale admission](../../packages/core/test/device-support.test.ts), [Linux reconnect](../../packages/daemon/test/linux-ssh-runtime.test.ts), [Paired approval and readback](../../packages/daemon/test/device-remote-facade.test.ts), [Mobile approval view](../../apps/mobile/src/features/device-tasks/PcDeviceTasksScreen.tsx) | Target leases, restart recovery and Gateway readback keep the original attempt and approval. Approval admission is journaled with the paired principal. Verification requires fresh public evidence from the intended target, and the Mobile confirmation includes side-effect and verification details. | Recovery-plan metadata for target timers or alternate routes and supported physical recovery acceptance remain. |
+| D4 | `fd2e14c64` | `corepack pnpm --filter @ling-stack/daemon build:ci`; `corepack pnpm --filter @ling-stack/daemon typecheck:ci`; `node --test packages/daemon/test/device-support-adapters.test.ts packages/daemon/test/device-support-runtime.test.ts` (15 passed) | [home-assistant.ts](../../packages/daemon/src/features/device-support/adapters/home-assistant.ts), [runtime.ts](../../packages/daemon/src/features/device-support/runtime.ts), [routes.ts](../../packages/daemon/src/features/device-support/routes.ts) | Fixture and loopback Daemon flows cover version-bound discovery, entity available/unavailable/absent classification, evidence observations, bounded responses, secret references and a PC-owned diagnosis report without persisting the token or untrusted entity text | Real Home Assistant instance and field action acceptance remain |
 | D5 | `56e112a84` | `corepack pnpm --filter @ling-stack/daemon build:ci`; `corepack pnpm --filter @ling-stack/daemon typecheck:ci`; `node --test packages/daemon/test/device-support-adapters.test.ts packages/daemon/test/local-pc-executor.test.ts packages/daemon/test/device-support-runtime.test.ts` | [pc.ts](../../packages/daemon/src/features/device-support/adapters/pc.ts), [local-pc-executor.ts](../../packages/daemon/src/features/device-support/adapters/local-pc-executor.ts), [routes.ts](../../packages/daemon/src/features/device-support/routes.ts) | Typed PC executor and loopback diagnosis route expose inventory, network/services observations, a reversible repair boundary and a persisted structured report. The route checks local origin and keeps target credentials out of the response | Windows/Linux/macOS clean-machine, target-side executor install/revoke and field acceptance remain |
 | D6 | Paired readback and owner journal | Remote Protocol and Remote Client builds, typechecks and tests (43 and 13 passed). Mobile typecheck, 98 tests and both Expo JS exports passed | [Device facade](../../packages/daemon/src/features/remote-access/device-facade.ts), [Mobile journal](../../apps/mobile/src/features/device-tasks/PcDeviceTaskJournal.tsx), [Client fixtures](../../packages/remote-client/test/client.test.ts) | Paired Mobile can check status, approve, stop, request fresh readback, and page through the PC-owned journal. The client binds journal replies to the authenticated session, workspace, task and cursor | Detailed approval presentation and packaged PC/iPhone/Android acceptance remain |
 | D7 | `56e112a84` | `corepack pnpm --filter @ling-stack/core build:ci`; `corepack pnpm --filter @ling-stack/core typecheck:ci`; `node --test packages/core/test/device-support.test.ts packages/daemon/test/device-support-runtime.test.ts` | [device-playbooks.ts](../../packages/core/src/device-playbooks.ts), [device-diagnosis.ts](../../packages/core/src/device-diagnosis.ts), [routes.ts](../../packages/daemon/src/features/device-support/routes.ts) | PC and Home Assistant templates project current typed facts, hypotheses, journaled outcomes and remaining uncertainty. The local daemon route returns a report after persisting its read-only task and observations | Model task projection and physical target verification remain |
