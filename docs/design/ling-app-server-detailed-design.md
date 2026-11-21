@@ -87,7 +87,7 @@ App Server 作为 Daemon 的会话协议入口，以 `ling-app-server/1` 发布�
 | Agent 交接 | `workItem/handoff/read`、`workItem/handoff/accept`、`workItem/handoff/return` | 使用 `workItem.coordination`。按源材料、目标阶段、候选和授权接手人核对，接受或退回均返回当前交接回执。原 Workflow 核对派发条件。 |
 | 可用能力 | `provider/list`、`model/list`、`skill/list`、`skill/read`、`permissionProfile/list` | 返回可选能力、限制及缺失原因。Provider 凭据绑定在 Daemon 的配置上。 |
 
-服务器声明每个方法的必需范围。基本范围为会话读取、发送/控制、管理 worktree、运行验证、发起审查、应答输入、决策审批。带执行配置的 `turn/start` 需要 operator bearer，避免未认证的回环调用方把 Provider、工具或权限配置变成 Daemon 进程执行。授予读取时只可见授权范围内的历史、产物与事件。审查只读范围可以细化到当前候选。方法发现额外标注副作用和是否要求本机用户确认。
+服务器声明每个方法的必需范围。基本范围为会话读取、发送/控制、管理 worktree、运行验证、发起审查、应答输入、决策审批。带执行配置的 `turn/start` 和直接执行的 `runs.start` 需要 operator bearer，避免未认证的回环调用方把 Provider、工具或权限配置变成 Daemon 进程执行。授予读取时只可见授权范围内的历史、产物与事件。审查只读范围可以细化到当前候选。方法发现额外标注副作用和是否要求本机用户确认。
 
 工作项协作写入携带 `expectedWorkItemRevision`、`idempotencyKey` 和适用的阶段、目标实体或候选修订。Daemon 从已认证主体或当前 Attempt 推导写入者。先校验当前读取和操作权限，再查同一作用域的幂等回执。已授权的相同请求可以取回旧回执，新写入核对当前修订和执行归属。候选变化、问答过期或接手条件缺失时，调用方可沿工作项读取当前阻塞及其负责人。 [工作项方法的输入和效果](ling-agent-operating-model-detailed-design.md#9-events-and-app-server-methods)
 

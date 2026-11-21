@@ -139,7 +139,7 @@ const UNIMPLEMENTED_APP_SERVER_METHODS = new Set([
 const activeExternalDispatches = new WeakMap<DaemonContext, Map<string, AbortController>>();
 const operatorMethods = new Set([
   "approval/respond", "input/respond", "verify/start", "verify/cancel", "review/start", "review/finding/update",
-  "simplify/start", "simplify/status",
+  "simplify/start", "simplify/status", "runs.start",
 ]);
 const IMPLEMENTED_APP_SERVER_METHODS = LING_APP_SERVER_METHODS.filter(method => !UNIMPLEMENTED_APP_SERVER_METHODS.has(method));
 export function attachRpcWebSocketServer(server: Server, context: DaemonContext): RpcWebSocketServerHandle {
@@ -548,6 +548,7 @@ class RpcConnection {
       case "controlPlane.unsubscribe":
         return this.unsubscribeControlPlane(params);
       case "runs.start":
+        if (this.appServer) this.workspaceParams(params, true);
         return this.startRun(this.appServer
           ? { ...readParamsRecord(params), workspaceCwd: this.workspaceParams(params).cwd }
           : params);
