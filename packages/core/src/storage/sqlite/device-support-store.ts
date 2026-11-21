@@ -6,6 +6,8 @@ import { isDeepStrictEqual } from "node:util";
 import {
   type DeviceActionRequestV1,
   type DeviceActionResultV1,
+  type DeviceApprovalBindingV1,
+  type DeviceApprovalPrincipalV1,
   type DeviceCapabilitySnapshotV1,
   type DeviceDispatchStopV1,
   type DeviceObservationV1,
@@ -209,7 +211,7 @@ export class SqliteDeviceSupportStore {
     }
     this.database.prepare("INSERT INTO device_tasks(task_id,revision,status,task_json,created_at,updated_at) VALUES(?,?,?,?,?,?)")
       .run(task.id, 0, task.status, JSON.stringify(task), task.createdAt, now);
-    this.appendEvent(task.id, "task_created", { task });
+    this.appendEvent(task.id, "task_created", { task }, now);
     return task;
   }
 
@@ -240,7 +242,7 @@ export class SqliteDeviceSupportStore {
         if (!isDeepStrictEqual(prior, record)) throw new Error("Device plan proposal id is already bound");
         return;
       }
-      this.appendEvent(task.id, "device_plan_accepted", record);
+      this.appendEvent(task.id, "device_plan_accepted", record, record.acceptedAt);
     });
   }
 
@@ -261,32 +263,13 @@ export class SqliteDeviceSupportStore {
     `).run(request.taskId, request.actionId, request.idempotencyKey, requestDigest, JSON.stringify(request), now, now);
   }
 
-  recordApproval(taskId: string, approval: {
-    readonly approvalId: string;
-    readonly actionId: string;
-    readonly targetDeviceId: string;
-    readonly capabilitySnapshotId: string;
-    readonly connectionRevision: string;
-    readonly policyRevision: string;
-    readonly normalizedInputDigest: string;
-    readonly expiresAt: string;
-    readonly principalDeviceId?: string;
-    readonly principalSessionId?: string;
-  }, now: string): void {
-    const task = this.requireTask(taskId);
-    this.appendEvent(task.id, "approval_recorded", {
-      approvalId: approval.approvalId,
-      actionId: approval.actionId,
-      targetDeviceId: approval.targetDeviceId,
-      capabilitySnapshotId: approval.capabilitySnapshotId,
-      connectionRevision: approval.connectionRevision,
-      policyRevision: approval.policyRevision,
-      normalizedInputDigest: approval.normalizedInputDigest,
-      expiresAt: approval.expiresAt,
-      ...(approval.principalDeviceId ? { principalDeviceId: approval.principalDeviceId } : {}),
-      ...(approval.principalSessionId ? { principalSessionId: approval.principalSessionId } : {}),
+  recordApproval(approval: DeviceApprovalBindingV1, principal: DeviceApprovalPrincipalV1 | undefined, now: string): void {
+    const { taskId, recoveryScope: _recoveryScope, ...binding } = approval;
+    this.appendEvent(taskId, "approval_recorded", {
+      ...binding,
+      ...(principal ? { principal } : {}),
       recordedAt: now,
-    });
+    }, now);
   }
 
   getActionProposal(taskId: string): { readonly request: DeviceActionRequestV1; readonly requestDigest: string } | undefined {
@@ -331,7 +314,7 @@ export class SqliteDeviceSupportStore {
     };
     this.database.prepare("UPDATE device_tasks SET revision=revision+1,status=?,task_json=?,updated_at=? WHERE task_id=?")
       .run(status, JSON.stringify(next), now, current.id);
-    this.appendEvent(current.id, "task_transition", { from: current.status, to: status, task: next });
+    this.appendEvent(current.id, "task_transition", { from: current.status, to: status, task: next }, now);
     return next;
   }
 
@@ -357,7 +340,7 @@ export class SqliteDeviceSupportStore {
       now,
       now,
     );
-    this.appendEvent(record.attempt.taskId, "attempt_prepared", { attemptId: record.attempt.attemptId, actionId: record.attempt.actionId });
+    this.appendEvent(record.attempt.taskId, "attempt_prepared", { attemptId: record.attempt.attemptId, actionId: record.attempt.actionId }, now);
     return { record, replayed: false };
   }
 
@@ -413,7 +396,7 @@ export class SqliteDeviceSupportStore {
       attemptId, status: next.status,
       ...(patch.receipt ? { receiptStatus: patch.receipt.status } : {}),
       ...(patch.verification ? { verificationStatus: patch.verification.status } : {}),
-    });
+    }, now);
     return nextRecord;
   }
 
@@ -422,7 +405,7 @@ export class SqliteDeviceSupportStore {
     this.requireTask(taskId);
     this.database.prepare("INSERT INTO device_observations(observation_id,task_id,body_json,created_at) VALUES(?,?,?,?)")
       .run(observation.id, taskId, JSON.stringify(observation), now);
-    this.appendEvent(taskId, "observation_recorded", { observationId: observation.id });
+    this.appendEvent(taskId, "observation_recorded", { observationId: observation.id }, now);
   }
 
   listObservations(taskId: string): readonly DeviceObservationV1[] {
@@ -503,13 +486,13 @@ export class SqliteDeviceSupportStore {
     const intentRecorded = attempt?.status === "prepared" || attempt?.status === "dispatched";
     const status = leased || intentRecorded || attempt?.status === "unknown" || task.status === "verifying" ? "unknown" : "cancelled";
     if (intentRecorded) this.updateAttempt(attempt.attemptId, { status: "unknown" }, now);
-    this.appendEvent(task.id, "task_stop_requested", { attemptId: attempt?.attemptId, status });
+    this.appendEvent(task.id, "task_stop_requested", { attemptId: attempt?.attemptId, status }, now);
     return this.writeTaskTransition(task, status, {}, now);
   }
 
   recordReconciliation(record: DeviceTaskReconciliationV1): void {
     const task = this.requireTask(record.taskId);
-    this.appendEvent(task.id, "attempt_reconciled", { ...record });
+    this.appendEvent(task.id, "attempt_reconciled", { ...record }, record.recordedAt);
     if (task.status === "unknown") {
       this.writeTaskTransition(task, record.status === "verified" ? "succeeded" : "unknown", {
         lastVerificationId: record.reconciliationId,
@@ -611,9 +594,9 @@ export class SqliteDeviceSupportStore {
     return task;
   }
 
-  private appendEvent(taskId: string, type: string, body: Record<string, unknown>): void {
+  private appendEvent(taskId: string, type: string, body: Record<string, unknown>, createdAt: string): void {
     this.database.prepare("INSERT INTO device_task_events(task_id,type,body_json,created_at) VALUES(?,?,?,?)")
-      .run(taskId, type, JSON.stringify(body), new Date().toISOString());
+      .run(taskId, type, JSON.stringify(body), createdAt);
   }
 
   private applySchema(): void {

@@ -5,10 +5,10 @@ import type {
   DeviceObservationV1,
   DeviceProfileV1,
   DeviceActionResultV1,
-  DeviceVerificationResultV1,
   JsonValue,
 } from "@ling-stack/contracts";
-import type { DeviceAdapter, DeviceAdapterDiscoveryInput, DeviceAdapterExecutionResult } from "@ling-stack/core";
+import type { DeviceAdapter, DeviceAdapterDiscoveryInput, DeviceAdapterExecutionResult, DeviceAdapterVerificationInput,
+  DeviceAdapterVerificationResult } from "@ling-stack/core";
 
 import { createAdapterCapabilitySnapshot } from "./capability-snapshot.js";
 
@@ -101,21 +101,39 @@ export class AndroidAdbAdapter implements DeviceAdapter {
     return { actionId: input.request.actionId, status: "rejected", errorCode: "unsupported_capability", startedAt, finishedAt: this.#now(), observationIds: [] };
   }
 
-  async verify(input: { readonly profile: DeviceProfileV1; readonly request: DeviceActionRequestV1; readonly action: DeviceActionResultV1 }): Promise<DeviceVerificationResultV1> {
-    if (input.request.capabilityId !== "android.install.artifact") return { actionId: input.request.actionId, status: "not_evaluable", rule: input.request.expectedVerification ?? null, observationIds: input.action.observationIds, checkedAt: this.#now(), reason: "no verification rule for this action" };
-    const packages = await this.#executor.readPackages();
-    const args = asObject(input.request.normalizedInput);
-    const packageId = requirePackageId(args.packageId);
-    const found = packages.some(item => item.packageId === packageId);
-    const rule = input.request.expectedVerification ?? { packageId };
-    return { actionId: input.request.actionId, status: found ? "verified" : "failed", rule, observationIds: [], checkedAt: this.#now(), reason: found ? undefined : "installed package was not found" };
+  async verify({ request, profile, evidenceId, signal }: DeviceAdapterVerificationInput): Promise<DeviceAdapterVerificationResult> {
+    if (request.capabilityId !== "android.install.artifact") {
+      return { verification: { actionId: request.actionId, status: "not_evaluable", rule: request.expectedVerification ?? null, observationIds: [],
+        checkedAt: this.#now(), reason: "no verification rule for this action" } };
+    }
+    const packageId = requirePackageId(asObject(request.normalizedInput).packageId);
+    const rule = request.expectedVerification ?? { packageId };
+    const verificationRule = asObject(rule);
+    if (Object.keys(verificationRule).length !== 1 || (verificationRule.packageId !== packageId)) {
+      return { verification: { actionId: request.actionId, status: "not_evaluable", rule, observationIds: [],
+        checkedAt: this.#now(), reason: "readback requires the approved package ID" } };
+    }
+    const installed = (await this.#executor.readPackages(signal)).find(item => item.packageId === packageId);
+    const checkedAt = this.#now();
+    const value = { packageId, present: installed !== undefined };
+    return {
+      verification: { actionId: request.actionId, status: installed ? "verified" : "failed", rule,
+        observationIds: [evidenceId], checkedAt },
+      observations: [androidObservation(profile.device.id, evidenceId, checkedAt, value, "android.packages")],
+    };
   }
 }
 
 function completedObservation(input: { readonly profile: DeviceProfileV1; readonly request: DeviceActionRequestV1 }, startedAt: string, value: JsonValue, source: string): DeviceAdapterExecutionResult {
   const observationId = `${input.request.actionId}:result`;
-  const observation: DeviceObservationV1 = { id: observationId, subjectId: input.profile.device.id, source, value, observedAt: startedAt, receivedAt: startedAt, freshnessUntil: new Date(Date.parse(startedAt) + 30_000).toISOString(), quality: "good", provenance: [source, input.profile.device.id], redactionClass: "public" };
+  const observation = androidObservation(input.profile.device.id, observationId, startedAt, value, source);
   return { action: { actionId: input.request.actionId, status: "completed", startedAt, finishedAt: startedAt, observationIds: [observationId] }, observations: [observation] };
+}
+
+function androidObservation(deviceId: string, id: string, observedAt: string, value: JsonValue, source: string): DeviceObservationV1 {
+  return { id, subjectId: deviceId, source, value, observedAt, receivedAt: observedAt,
+    freshnessUntil: new Date(Date.parse(observedAt) + 30_000).toISOString(), quality: "good",
+    provenance: [source, deviceId], redactionClass: "public" };
 }
 
 function asObject(value: unknown): Record<string, unknown> {

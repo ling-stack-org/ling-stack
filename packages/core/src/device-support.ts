@@ -31,6 +31,7 @@ import {
 
 import type { SqliteDeviceSupportStore } from "./storage/sqlite/device-support-store.js";
 import type { DeviceAccessManager } from "./device-access.js";
+import { isCurrentDeviceObservation } from "./device-diagnosis.js";
 import { DeviceFabricError } from "./device-fabric.js";
 
 export interface DeviceAdapterDiscoveryInput {
@@ -260,14 +261,16 @@ export class DeviceCapabilityBroker {
       const receipt = this.recordActionResult(attempt, request.capabilitySnapshotId, capability, action, observations, finalize, this.shouldVerify(capability, request));
       if (!receipt.verify) return receipt.record;
 
-      const evidenceId = `${attempt.actionId}:verification`;
+      const evidenceId = `${attempt.attemptId}:verification`;
       const { verification, observations: readback } = await this.verifyAction({
         adapter, profile, capability, request, action, evidenceId, signal: operationSignal,
       });
       return this.store.withWriteTransaction(() => {
         const now = this.now();
         for (const observation of readback ?? []) this.store.appendObservation(attempt.taskId, observation, now);
-        const current = this.retainDispatchAuthority(attempt, request.capabilitySnapshotId, capability, now);
+        const retained = this.retainDispatchAuthority(attempt, request.capabilitySnapshotId, capability, now);
+        if (retained && operationSignal.aborted) this.store.transitionTask(attempt.taskId, "unknown", {}, now);
+        const current = retained && !operationSignal.aborted;
         const record = this.store.updateAttempt(attempt.attemptId, { verification, ...(current ? {} : { status: "unknown" }) }, now);
         if (!current) return record;
         const status = verification.status === "not_evaluable" && capability.sideEffect !== "read_only"
@@ -385,9 +388,8 @@ export class DeviceCapabilityBroker {
         const profile = this.store.getDevice(attempt.targetDeviceId);
         const observations = result.observations ?? [];
         const observed = observations.some(observation => observation.id === reconciliationId
-          && observation.redactionClass === "public" && (observation.quality === "good" || observation.quality === "degraded")
           && Date.parse(observation.observedAt) >= Date.parse(readbackStartedAt)
-          && Date.parse(observation.observedAt) <= Date.parse(now) && Date.parse(observation.freshnessUntil) > Date.parse(now));
+          && isCurrentDeviceObservation(observation, now));
         const verified = !signal.aborted && observed && result.verification.status === "verified"
           && current?.status === "unknown" && profile !== undefined
           && current.ownerKind === attempt.ownerKind && current.ownerId === attempt.ownerId
@@ -495,27 +497,15 @@ export class DeviceCapabilityBroker {
         throw new DeviceBrokerError("target_changed", "device action no longer awaits this approval");
       }
     }
-    if (capability.sideEffect !== "read_only") {
+    const now = this.now();
+    const approval = capability.sideEffect !== "read_only"
+      ? this.requireApproval(request, snapshot.connectionRevision, requestDigest, now) : undefined;
+    if (approval) {
       if (task.policyRevision && task.policyRevision !== this.policyRevision) {
         throw new DeviceBrokerError("target_changed", "device task policy has changed");
       }
-      this.assertApproval(request, snapshot.connectionRevision, requestDigest);
-      this.store.recordApproval(request.taskId, {
-        approvalId: request.approval!.approvalId,
-        actionId: request.actionId,
-        targetDeviceId: request.targetDeviceId,
-        capabilitySnapshotId: request.capabilitySnapshotId,
-        connectionRevision: snapshot.connectionRevision,
-        policyRevision: request.approval!.policyRevision,
-        normalizedInputDigest: request.approval!.normalizedInputDigest,
-        expiresAt: request.approval!.expiresAt,
-        ...(options.approvalPrincipal?.deviceId ? { principalDeviceId: options.approvalPrincipal.deviceId } : {}),
-        ...(options.approvalPrincipal?.sessionId ? { principalSessionId: options.approvalPrincipal.sessionId } : {}),
-      }, this.now());
     }
 
-    const now = this.now();
-    const approval = capability.sideEffect !== "read_only" ? request.approval : undefined;
     const approvalPrincipal = approval ? options.approvalPrincipal : undefined;
     const attempt: DeviceTaskAttemptV1 = {
       attemptId: `${request.taskId}:${request.actionId}`,
@@ -540,6 +530,7 @@ export class DeviceCapabilityBroker {
     if (!this.store.acquireTargetLease(profile.device.id, task.id, task.ownerId, now, this.leaseMs, attempt.attemptId)) {
       throw new DeviceBrokerError("target_busy", "device target is leased by another task");
     }
+    if (approval) this.store.recordApproval(approval, approvalPrincipal, now);
     this.store.createAttempt({ attempt, request, requestDigest }, now);
     this.store.transitionTask(task.id, "executing", { currentActionId: request.actionId }, now);
     const dispatched = this.store.updateAttempt(attempt.attemptId, { status: "dispatched" }, now);
@@ -648,12 +639,15 @@ export class DeviceCapabilityBroker {
     return true;
   }
 
-  private assertApproval(request: DeviceActionRequestV1, connectionRevision: string, requestDigest: string): void {
+  private requireApproval(
+    request: DeviceActionRequestV1, connectionRevision: string, requestDigest: string, admittedAt: string,
+  ): DeviceApprovalBindingV1 {
     const approval = request.approval;
     if (!approval || !isApprovalForRequest(approval, request, connectionRevision, this.policyRevision, requestDigest)
-      || Date.parse(approval.expiresAt) <= Date.parse(this.now())) {
+      || Date.parse(approval.expiresAt) <= Date.parse(admittedAt)) {
       throw new DeviceBrokerError("permission_denied", "mutating device action requires a current exact approval");
     }
+    return approval;
   }
 
   private assertProfileSupported(adapter: DeviceAdapter, profile: DeviceProfileV1): void {
@@ -702,20 +696,30 @@ export class DeviceCapabilityBroker {
     let reason = "adapter does not expose a verification operation";
     if (adapter.verify) {
       try {
+        const startedAt = Date.parse(this.now());
         const reported = await adapter.verify(verificationInput);
         const result = reported && typeof reported === "object" && "verification" in reported
           ? reported
           : { verification: reported };
         const { verification, observations } = result;
+        const evaluatedAt = this.now();
+        const checkedAt = Date.parse(verification?.checkedAt);
         if (isDeviceVerificationResultV1(verification) && verification.actionId === request.actionId
           && (request.expectedVerification === undefined || canonicalJson(request.expectedVerification) === canonicalJson(verification.rule))
           && (observations === undefined || (Array.isArray(observations)
-            && observations.every(item => isDeviceObservationV1(item) && verification.observationIds.includes(item.id))
-            && new Set(observations.map(item => item.id)).size === observations.length
-            && (verification.status !== "verified" || observations.length > 0)))) {
-          return result;
+            && observations.every(item => isDeviceObservationV1(item) && item.subjectId === request.targetDeviceId
+              && verification.observationIds.includes(item.id))
+            && new Set(observations.map(item => item.id)).size === observations.length))) {
+          if (verification.status === "not_evaluable" || (checkedAt >= startedAt && checkedAt <= Date.parse(evaluatedAt)
+            && observations?.some(item => item.id === input.evidenceId
+              && Date.parse(item.observedAt) >= startedAt && Date.parse(item.observedAt) <= checkedAt
+              && isCurrentDeviceObservation(item, evaluatedAt)))) {
+            return result;
+          }
+          reason = "adapter verification requires fresh readback from the selected target";
+        } else {
+          reason = "adapter verification did not match the dispatched action";
         }
-        reason = "adapter verification did not match the dispatched action";
       } catch {
         reason = "adapter verification did not return a result";
       }

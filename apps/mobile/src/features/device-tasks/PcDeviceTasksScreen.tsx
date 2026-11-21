@@ -108,7 +108,10 @@ export function PcDeviceTasksScreen() {
   };
 
   const confirmApproval = (taskId: string, preview: RemoteDeviceApprovalPreviewV1) => {
-    Alert.alert("批准设备操作", `${deviceName(preview.targetDeviceId)}\n${preview.capabilityId}\n由 PC 执行，可能更改设备状态。`, [
+    const verification = preview.expectedVerification === undefined
+      ? "执行后由 PC 复测设备状态。"
+      : `复测条件：${compactJson(preview.expectedVerification)}`;
+    Alert.alert("批准设备操作", `${deviceName(preview.targetDeviceId)}\n${preview.capabilityId}\n影响级别：${sideEffectLabel(preview.sideEffect)}\n${verification}`, [
       { text: "返回", style: "cancel" },
       { text: "批准执行", onPress: () => void runTaskAction(taskId, { kind: "approve", preview }) },
     ]);
@@ -187,7 +190,11 @@ export function PcDeviceTasksScreen() {
                             ) : null}
                             {preview || (canRevoke && stoppable) ? (
                               <View style={styles.approval}>
-                                {preview ? <Text style={styles.note}>待确认操作 {preview.capabilityId} · {deviceName(preview.targetDeviceId)}</Text> : null}
+                                {preview ? <View style={styles.approvalSummary}>
+                                  <Text style={styles.note}>待确认操作 {preview.capabilityId} · {deviceName(preview.targetDeviceId)}</Text>
+                                  <Text style={styles.note}>影响级别：{sideEffectLabel(preview.sideEffect)}</Text>
+                                  <Text style={styles.note}>{preview.expectedVerification === undefined ? "执行后由 PC 复测设备状态。" : `复测条件：${compactJson(preview.expectedVerification)}`}</Text>
+                                </View> : null}
                                 <View style={styles.actions}>
                                   {preview && canApprove ? <Pressable
                                     accessibilityRole="button"
@@ -240,6 +247,19 @@ function formatTime(value: string): string {
   return new Date(value).toLocaleString();
 }
 
+function sideEffectLabel(value: RemoteDeviceApprovalPreviewV1["sideEffect"]): string {
+  return { read_only: "只读", reversible: "可恢复变更", mutating: "设备变更", irreversible: "不可逆变更", critical: "关键操作" }[value];
+}
+
+function compactJson(value: unknown): string {
+  try {
+    const text = JSON.stringify(value) ?? "";
+    return text.length > 180 ? `${text.slice(0, 177)}…` : text;
+  } catch {
+    return "已声明复测条件";
+  }
+}
+
 function createStyles(theme: MobileThemeTokens) {
   return StyleSheet.create({
     screen: { flex: 1, backgroundColor: theme.background.app },
@@ -251,6 +271,7 @@ function createStyles(theme: MobileThemeTokens) {
     note: { color: theme.text.muted, fontSize: 13, lineHeight: 19 },
     detail: { paddingTop: 8, gap: 4, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: theme.border.default },
     approval: { paddingTop: 8, gap: 8 },
+    approvalSummary: { gap: 2 },
     actions: { flexDirection: "row", gap: 8 },
     primaryAction: { minHeight: 40, paddingHorizontal: 14, borderRadius: theme.radius.medium, justifyContent: "center", backgroundColor: theme.action.accent },
     primaryActionText: { color: theme.action.foreground, fontSize: 14, fontWeight: "600" },

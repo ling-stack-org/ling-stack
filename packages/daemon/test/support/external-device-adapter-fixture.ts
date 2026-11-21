@@ -7,6 +7,15 @@ for await (const line of input) {
   const payload = request.payload ?? {};
   if (request.method === "discover") {
     if (payload.connectionRef === "fixture:crash") process.exit(17);
+    if (payload.connectionRef === "fixture:hang") continue;
+    if (payload.connectionRef === "fixture:malformed") {
+      process.stdout.write("null\n");
+      continue;
+    }
+    if (payload.connectionRef === "fixture:over-limit") {
+      process.stdout.write("x".repeat(8192));
+      continue;
+    }
     const profile = {
       device: {
         id: "external-fixture-device", ownerScope: payload.ownerId, displayName: "External fixture device",

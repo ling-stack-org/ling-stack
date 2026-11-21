@@ -178,13 +178,17 @@ function createAdapter(): DeviceAdapter {
         observationIds: [],
       };
     },
-    async verify({ request: action }) {
+    async verify({ request: action, evidenceId }) {
       return {
-        actionId: action.actionId,
-        status: "verified",
-        rule: { connected: true },
-        observationIds: [],
-        checkedAt: later,
+        verification: {
+          actionId: action.actionId, status: "verified", rule: { connected: true },
+          observationIds: [evidenceId], checkedAt: now,
+        },
+        observations: [{
+          id: evidenceId, subjectId: action.targetDeviceId, source: "fixture",
+          value: { connected: true }, observedAt: now, receivedAt: now,
+          freshnessUntil: later, quality: "good", provenance: [action.targetDeviceId], redactionClass: "public",
+        }],
       };
     },
   };
@@ -430,19 +434,21 @@ test("mutating capability requires an exact, unexpired approval and records veri
   store.createTask(mutatingTask, now);
   const base = request(writeCapability.id, mutatingTask.id);
   await assert.rejects(() => broker.execute(base), (error: unknown) => error instanceof DeviceBrokerError && error.code === "permission_denied");
-  const result = await broker.execute(approveNetworkRepair(base), undefined, {
-    approvalPrincipal: { kind: "paired_mobile", deviceId: "mobile-1", deviceEpoch: 3, sessionId: "paired-session-1" },
-  });
+  assert.equal(store.listEvents(mutatingTask.id).some(event => event.type === "approval_recorded"), false);
+  const approved = approveNetworkRepair(base);
+  const approvalPrincipal = { kind: "paired_mobile", deviceId: "mobile-1", deviceEpoch: 3, sessionId: "paired-session-1" } as const;
+  const result = await broker.execute(approved, undefined, { approvalPrincipal });
   assert.equal(result.attempt.verification?.status, "verified");
   assert.equal(store.getTask(mutatingTask.id)?.status, "succeeded");
-  const approvalEvent = store.listEvents(mutatingTask.id).find(event => event.type === "approval_recorded");
-  assert.deepEqual(approvalEvent?.body, {
-    approvalId: "approval-1", actionId: base.actionId, targetDeviceId: base.targetDeviceId,
-    capabilitySnapshotId: base.capabilitySnapshotId, connectionRevision: snapshot().connectionRevision,
-    policyRevision: broker.policyRevision, normalizedInputDigest: digestRequest(approveNetworkRepair(base)),
-    expiresAt: "2026-11-21T00:05:00.000Z", principalDeviceId: "mobile-1", principalSessionId: "paired-session-1",
-    recordedAt: now,
-  });
+  assert.deepEqual(await broker.execute(approved, undefined, { approvalPrincipal }), result);
+  const events = store.listEvents(mutatingTask.id);
+  const approvals = events.filter(event => event.type === "approval_recorded");
+  assert.equal(approvals.length, 1);
+  const approvalEvent = approvals[0]!;
+  assert.deepEqual(approvalEvent.body.principal, approvalPrincipal);
+  assert.equal(approvalEvent.body.normalizedInputDigest, result.requestDigest);
+  assert.equal(approvalEvent.createdAt, result.attempt.dispatchIntentAt);
+  assert.ok(approvalEvent.sequence < events.find(event => event.type === "attempt_prepared")!.sequence);
   store.close();
 });
 
@@ -460,7 +466,7 @@ test("dispatch leaves the journal and target lease untouched for an out-of-scope
   assert.equal(store.acquireTargetLease(profile.device.id, "next-task", "daemon-1", now, 1000), true);
 });
 
-test("lost or unrelated verification keeps the write receipt and requires reconciliation", async (t) => {
+test("lost, unrelated or stale verification keeps the write receipt and requires reconciliation", async (t) => {
   const { store, broker } = brokerFixture();
   t.after(() => store.close());
   const adapter = createAdapter();
@@ -470,10 +476,19 @@ test("lost or unrelated verification keeps the write receipt and requires reconc
     async execute(input) { dispatches += 1; return adapter.execute(input); },
     async verify(input) {
       if (input.request.taskId === "lost-readback") throw new Error("verification link closed");
-      return { actionId: "previous-action", status: "verified", rule: null, observationIds: [], checkedAt: now };
+      const report = await adapter.verify!(input);
+      assert.ok("verification" in report);
+      const observation = report.observations![0]!;
+      if (input.request.taskId === "wrong-subject") {
+        return { ...report, observations: [{ ...observation, subjectId: "other-device" }] };
+      }
+      if (input.request.taskId === "stale-observation") {
+        return { ...report, observations: [{ ...observation, observedAt: "2026-11-20T23:59:59.000Z" }] };
+      }
+      return { ...report.verification, observationIds: [] };
     },
   });
-  for (const taskId of ["lost-readback", "unrelated-readback"]) {
+  for (const taskId of ["lost-readback", "wrong-subject", "stale-observation", "missing-observation"]) {
     broker.createTask(task(taskId));
     const approved = approveNetworkRepair(request(writeCapability.id, taskId));
     const result = await broker.execute(approved);
@@ -485,7 +500,7 @@ test("lost or unrelated verification keeps the write receipt and requires reconc
     await assert.rejects(() => broker.execute({ ...approved, idempotencyKey: "new-attempt" }), (error: unknown) =>
       error instanceof DeviceBrokerError && error.code === "unknown_outcome");
   }
-  assert.equal(dispatches, 2);
+  assert.equal(dispatches, 4);
 });
 
 test("stopping during verification preserves late evidence and excludes another task until the adapter settles", { timeout: 5000 }, async (t) => {
@@ -648,6 +663,10 @@ test("reconciliation requires a current capability and fresh readback evidence",
     async execute() {
       dispatches += 1;
       throw new Error("connection interrupted");
+    },
+    async verify(input) {
+      return { actionId: input.request.actionId, status: "verified", rule: input.request.expectedVerification ?? null,
+        observationIds: [], checkedAt: now };
     },
   });
   broker.createTask(task("reconciliation"));

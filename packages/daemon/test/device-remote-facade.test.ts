@@ -227,7 +227,7 @@ test("authenticated Gateway sessions recover PC tasks, reconcile writes and resu
   assert.equal(detail.taskId, "task-1");
   assert.equal(detail.ownerId, "daemon-1");
   assert.deepEqual(detail.attemptIds, [action.attempt.attemptId]);
-  assert.equal(detail.lastVerificationId, "inspect-network:verification");
+  assert.equal(detail.lastVerificationId, `${action.attempt.attemptId}:verification`);
   assert.equal(networkReads, 2);
   assert.equal(deviceStore.listRecentDaemonTasks(DEFAULT_WORKSPACE_ID, 20).length, 1);
 

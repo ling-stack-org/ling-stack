@@ -1,5 +1,7 @@
+import { spawn, type ChildProcessByStdio } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { isAbsolute } from "node:path";
+import type { Readable, Writable } from "node:stream";
 
 import {
   isDeviceActionResultV1,
@@ -8,49 +10,37 @@ import {
   isDeviceProfileV1,
   isDeviceVerificationResultV1,
   type AdapterManifestV1,
-  type DeviceActionRequestV1,
   type DeviceActionResultV1,
   type DeviceCapabilitySnapshotV1,
-  type DeviceObservationV1,
   type DeviceProfileV1,
   type DeviceVerificationResultV1,
-  type JsonValue,
 } from "@ling-stack/contracts";
-import type {
-  DeviceAdapter,
-  DeviceAdapterDiscoveryInput,
-  DeviceAdapterExecutionResult,
-  DeviceAdapterVerificationInput,
-  DeviceAdapterVerificationResult,
+import {
+  DeviceBrokerError,
+  type DeviceAdapter,
+  type DeviceAdapterDiscoveryInput,
+  type DeviceAdapterExecutionResult,
+  type DeviceAdapterVerificationInput,
+  type DeviceAdapterVerificationResult,
 } from "@ling-stack/core";
 
 const PROTOCOL_VERSION = 1;
 const DEFAULT_TIMEOUT_MS = 30_000;
-const DEFAULT_MAX_FRAME_BYTES = 1_048_576;
+const MAX_FRAME_BYTES = 1024 * 1024;
+const MAX_PENDING_REQUESTS = 16;
 
-type AdapterMethod = "discover" | "get_capabilities" | "execute" | "verify";
-
-interface AdapterRequest {
-  readonly protocol: 1;
-  readonly requestId: string;
-  readonly method: AdapterMethod;
-  readonly payload: JsonValue;
-}
-
-interface AdapterResponse {
-  readonly protocol: 1;
-  readonly requestId: string;
-  readonly ok: boolean;
-  readonly result?: unknown;
-  readonly error?: { readonly code?: string };
-}
-
-interface PendingRequest {
+type AdapterChild = ChildProcessByStdio<Writable, Readable, null>;
+type AdapterPayloads = {
+  discover: Omit<DeviceAdapterDiscoveryInput, "signal">;
+  get_capabilities: Omit<Parameters<DeviceAdapter["getCapabilities"]>[0], "signal">;
+  execute: Omit<Parameters<DeviceAdapter["execute"]>[0], "signal">;
+  verify: Omit<DeviceAdapterVerificationInput, "signal">;
+};
+type PendingRequest = {
   readonly resolve: (value: unknown) => void;
   readonly reject: (error: Error) => void;
-  readonly timer: ReturnType<typeof setTimeout>;
-  readonly cleanup: () => void;
-}
+  readonly dispose: () => void;
+};
 
 export interface ExternalAdapterProcessOptions {
   readonly manifest: AdapterManifestV1;
@@ -62,225 +52,177 @@ export interface ExternalAdapterProcessOptions {
   readonly maxFrameBytes?: number;
 }
 
-/**
- * Hosts an adapter behind a newline-delimited JSON process boundary. A failed
- * child is discarded with its pending requests, and the next operation starts
- * a fresh child. The broker remains responsible for recording uncertain writes.
- */
+/** Runs a trusted adapter over a bounded JSON Lines connection. */
 export class ExternalDeviceAdapter implements DeviceAdapter {
   readonly manifest: AdapterManifestV1;
   readonly #options: ExternalAdapterProcessOptions;
+  readonly #timeoutMs: number;
+  readonly #frameLimit: number;
   readonly #pending = new Map<string, PendingRequest>();
-  #child?: ChildProcessWithoutNullStreams;
+  #child?: AdapterChild;
   #stdoutBuffer = "";
   #closed = false;
 
   constructor(options: ExternalAdapterProcessOptions) {
-    if (!options.command.trim()) throw new Error("external adapter command is required");
-    if (!Number.isInteger(options.requestTimeoutMs ?? DEFAULT_TIMEOUT_MS) || (options.requestTimeoutMs ?? DEFAULT_TIMEOUT_MS) < 1) {
-      throw new Error("external adapter timeout is invalid");
-    }
-    if (!Number.isInteger(options.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES) || (options.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES) < 1024) {
-      throw new Error("external adapter frame limit is invalid");
+    this.#timeoutMs = options.requestTimeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.#frameLimit = options.maxFrameBytes ?? MAX_FRAME_BYTES;
+    if (!isAbsolute(options.command) || !Number.isSafeInteger(this.#timeoutMs) || this.#timeoutMs < 1 || this.#timeoutMs > 2_147_483_647
+      || !Number.isSafeInteger(this.#frameLimit) || this.#frameLimit < 1024 || this.#frameLimit > MAX_FRAME_BYTES) {
+      throw new DeviceBrokerError("invalid_request", "external adapter launch options are invalid");
     }
     this.manifest = options.manifest;
     this.#options = options;
   }
 
-  async discover(input: DeviceAdapterDiscoveryInput): Promise<DeviceProfileV1> {
-    const result = await this.request("discover", {
-      connectionRef: input.connectionRef,
-      ownerId: input.ownerId,
-    });
-    if (!isDeviceProfileV1(result)) throw new ExternalAdapterProcessError("invalid_response");
+  async discover({ signal, ...payload }: DeviceAdapterDiscoveryInput): Promise<DeviceProfileV1> {
+    const result = await this.request("discover", payload, signal);
+    if (!isDeviceProfileV1(result)) throw invalidResponse();
     return result;
   }
 
-  async getCapabilities(input: {
-    readonly profile: DeviceProfileV1;
-    readonly connectionRevision: string;
-    readonly signal?: AbortSignal;
-  }): Promise<DeviceCapabilitySnapshotV1> {
-    const result = await this.request("get_capabilities", {
-      profile: input.profile,
-      connectionRevision: input.connectionRevision,
-    } as unknown as JsonValue, input.signal);
-    if (!isDeviceCapabilitySnapshotV1(result)) throw new ExternalAdapterProcessError("invalid_response");
+  async getCapabilities({ signal, ...payload }: Parameters<DeviceAdapter["getCapabilities"]>[0]): Promise<DeviceCapabilitySnapshotV1> {
+    const result = await this.request("get_capabilities", payload, signal);
+    if (!isDeviceCapabilitySnapshotV1(result)) throw invalidResponse();
     return result;
   }
 
-  async execute(input: {
-    readonly profile: DeviceProfileV1;
-    readonly capability: import("@ling-stack/contracts").CapabilityDescriptorV1;
-    readonly request: DeviceActionRequestV1;
-    readonly signal?: AbortSignal;
-  }): Promise<DeviceActionResultV1 | DeviceAdapterExecutionResult> {
-    const result = await this.request("execute", {
-      profile: input.profile,
-      capability: input.capability,
-      request: input.request,
-    } as unknown as JsonValue, input.signal);
-    return readExecutionResult(result, input.request.actionId);
+  async execute({ signal, ...payload }: Parameters<DeviceAdapter["execute"]>[0]): Promise<DeviceActionResultV1 | DeviceAdapterExecutionResult> {
+    const result = await this.request("execute", payload, signal, payload.capability);
+    if (isDeviceActionResultV1(result) && result.actionId === payload.request.actionId) return result;
+    if (!isRecord(result) || !isDeviceActionResultV1(result.action) || result.action.actionId !== payload.request.actionId) throw invalidResponse();
+    return { action: result.action, observations: readObservations(result.observations) };
   }
 
-  readonly verify = async (input: DeviceAdapterVerificationInput): Promise<DeviceVerificationResultV1 | DeviceAdapterVerificationResult> => {
-    const result = await this.request("verify", {
-      profile: input.profile,
-      capability: input.capability,
-      request: input.request,
-      action: input.action,
-      evidenceId: input.evidenceId,
-    } as unknown as JsonValue, input.signal);
-    return readVerificationResult(result, input.request.actionId);
-  };
+  async verify({ signal, ...payload }: DeviceAdapterVerificationInput): Promise<DeviceVerificationResultV1 | DeviceAdapterVerificationResult> {
+    const result = await this.request("verify", payload, signal, payload.capability);
+    if (isDeviceVerificationResultV1(result) && result.actionId === payload.request.actionId) return result;
+    if (!isRecord(result) || !isDeviceVerificationResultV1(result.verification) || result.verification.actionId !== payload.request.actionId) throw invalidResponse();
+    return { verification: result.verification, observations: readObservations(result.observations) };
+  }
 
   close(): void {
     this.#closed = true;
-    this.reset(new ExternalAdapterProcessError("adapter_closed"));
+    if (this.#child) this.reset(this.#child, new DeviceBrokerError("connection_failed", "external adapter is closed"));
   }
 
-  private request(method: AdapterMethod, payload: JsonValue, signal?: AbortSignal): Promise<unknown> {
-    if (this.#closed) return Promise.reject(new ExternalAdapterProcessError("adapter_closed"));
-    const child = this.ensureChild();
+  private async request<M extends keyof AdapterPayloads>(
+    method: M, payload: AdapterPayloads[M], signal?: AbortSignal,
+    limits?: { readonly timeoutMs: number; readonly responseBytesLimit: number },
+  ): Promise<unknown> {
+    signal?.throwIfAborted();
+    if (this.#closed) throw new DeviceBrokerError("connection_failed", "external adapter is closed");
+    if (this.#pending.size >= MAX_PENDING_REQUESTS) throw new DeviceBrokerError("target_busy", "external adapter request queue is full");
     const requestId = randomUUID();
-    const timeoutMs = this.#options.requestTimeoutMs ?? DEFAULT_TIMEOUT_MS;
-    const message: AdapterRequest = { protocol: PROTOCOL_VERSION, requestId, method, payload };
-    return new Promise((resolve, reject) => {
-      let cleanup = () => {};
+    const line = JSON.stringify({ protocol: PROTOCOL_VERSION, requestId, method, payload }) + "\n";
+    if (Buffer.byteLength(line) > this.#frameLimit) throw new DeviceBrokerError("invalid_request", "external adapter request exceeds the frame limit");
+
+    const child = this.#child ?? this.startChild();
+    const failure = new DeviceBrokerError("connection_failed", "external adapter connection ended");
+    return await new Promise((resolve, reject) => {
+      const abort = () => this.reset(child, new DOMException("external adapter request aborted", "AbortError"));
       const timer = setTimeout(() => {
-        this.#pending.delete(requestId);
-        cleanup();
-        this.reset(new ExternalAdapterProcessError("adapter_timeout"));
-        reject(new ExternalAdapterProcessError("adapter_timeout"));
-      }, timeoutMs);
-      const abort = () => {
-        clearTimeout(timer);
-        signal?.removeEventListener("abort", abort);
-        this.#pending.delete(requestId);
-        this.reset(new ExternalAdapterProcessError("adapter_aborted"));
-        reject(new ExternalAdapterProcessError("adapter_aborted"));
-      };
-      cleanup = () => signal?.removeEventListener("abort", abort);
-      this.#pending.set(requestId, { resolve, reject, timer, cleanup });
-      if (signal?.aborted) {
-        abort();
-        return;
-      }
+        this.reset(child, new DeviceBrokerError("timeout", "external adapter request timed out"));
+      }, Math.min(this.#timeoutMs, limits?.timeoutMs ?? this.#timeoutMs));
       signal?.addEventListener("abort", abort, { once: true });
-      const line = `${JSON.stringify(message)}\n`;
-      try {
-        child.stdin.write(line);
-      } catch {
-        clearTimeout(timer);
-        signal?.removeEventListener("abort", abort);
-        this.#pending.delete(requestId);
-        this.reset(new ExternalAdapterProcessError("adapter_write_failed"));
-        reject(new ExternalAdapterProcessError("adapter_write_failed"));
-      }
+      this.#pending.set(requestId, {
+        resolve: result => {
+          if (limits && Buffer.byteLength(JSON.stringify(result) ?? "") > limits.responseBytesLimit) {
+            this.reset(child, invalidResponse());
+            reject(invalidResponse());
+          } else {
+            resolve(result);
+          }
+        },
+        reject,
+        dispose: () => {
+          clearTimeout(timer);
+          signal?.removeEventListener("abort", abort);
+        },
+      });
+      child.stdin.write(line, error => { if (error) this.reset(child, failure); });
     });
   }
 
-  private ensureChild(): ChildProcessWithoutNullStreams {
-    if (this.#child) return this.#child;
-    const env = { ...process.env, ...this.#options.env, LING_DEVICE_ADAPTER_PROTOCOL: String(PROTOCOL_VERSION) };
+  private startChild(): AdapterChild {
     const child = spawn(this.#options.command, [...(this.#options.args ?? [])], {
       cwd: this.#options.cwd,
-      env,
-      shell: false,
-      stdio: ["pipe", "pipe", "pipe"],
+      env: { ...process.env, ...this.#options.env, LING_DEVICE_ADAPTER_PROTOCOL: String(PROTOCOL_VERSION) },
+      stdio: ["pipe", "pipe", "ignore"],
+      windowsHide: true,
     });
     this.#child = child;
+    const connectionEnded = () => this.reset(child, new DeviceBrokerError("connection_failed", "external adapter connection ended"));
+    child.on("error", connectionEnded);
+    child.on("close", connectionEnded);
+    child.stdin.on("error", connectionEnded);
+    child.stdout.on("error", connectionEnded);
     child.stdout.setEncoding("utf8");
-    child.stdout.on("data", chunk => this.readStdout(String(chunk)));
-    child.on("error", () => this.reset(new ExternalAdapterProcessError("adapter_process_error")));
-    child.on("exit", () => this.reset(new ExternalAdapterProcessError("adapter_exited"), child));
+    child.stdout.on("data", (chunk: string) => this.readStdout(child, chunk));
     return child;
   }
 
-  private readStdout(chunk: string): void {
+  private readStdout(child: AdapterChild, chunk: string): void {
+    if (child !== this.#child) return;
     this.#stdoutBuffer += chunk;
-    const limit = this.#options.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES;
-    if (Buffer.byteLength(this.#stdoutBuffer, "utf8") > limit) {
-      this.reset(new ExternalAdapterProcessError("adapter_frame_too_large"));
-      return;
-    }
-    while (true) {
-      const newline = this.#stdoutBuffer.indexOf("\n");
-      if (newline < 0) return;
+    let newline = this.#stdoutBuffer.indexOf("\n");
+    while (newline >= 0 && child === this.#child) {
       const line = this.#stdoutBuffer.slice(0, newline);
       this.#stdoutBuffer = this.#stdoutBuffer.slice(newline + 1);
-      if (!line.trim()) continue;
-      if (Buffer.byteLength(line, "utf8") > limit) {
-        this.reset(new ExternalAdapterProcessError("adapter_frame_too_large"));
+      if (Buffer.byteLength(line) > this.#frameLimit) {
+        this.reset(child, invalidResponse());
         return;
       }
-      let response: AdapterResponse;
+      let response: unknown;
       try {
-        response = JSON.parse(line) as AdapterResponse;
+        response = JSON.parse(line);
       } catch {
-        this.reset(new ExternalAdapterProcessError("adapter_invalid_frame"));
+        this.reset(child, invalidResponse());
         return;
       }
-      if (response.protocol !== PROTOCOL_VERSION || typeof response.requestId !== "string" || typeof response.ok !== "boolean") {
-        this.reset(new ExternalAdapterProcessError("adapter_invalid_frame"));
+      if (!isRecord(response) || response.protocol !== PROTOCOL_VERSION || typeof response.requestId !== "string"
+        || typeof response.ok !== "boolean" || (response.ok && !Object.hasOwn(response, "result"))) {
+        this.reset(child, invalidResponse());
         return;
       }
       const pending = this.#pending.get(response.requestId);
-      if (!pending) continue;
+      if (!pending) {
+        this.reset(child, invalidResponse());
+        return;
+      }
       this.#pending.delete(response.requestId);
-      clearTimeout(pending.timer);
-      pending.cleanup();
-      if (!response.ok) pending.reject(new ExternalAdapterProcessError(response.error?.code ?? "adapter_rejected"));
-      else pending.resolve(response.result);
+      pending.dispose();
+      if (response.ok) pending.resolve(response.result);
+      else pending.reject(new DeviceBrokerError("service_unavailable", "external adapter rejected the operation"));
+      newline = this.#stdoutBuffer.indexOf("\n");
     }
+    if (Buffer.byteLength(this.#stdoutBuffer) > this.#frameLimit) this.reset(child, invalidResponse());
   }
 
-  private reset(error: Error, exitedChild?: ChildProcessWithoutNullStreams): void {
-    const child = this.#child;
-    if (exitedChild && child !== exitedChild) return;
+  private reset(child: AdapterChild, error: Error): void {
+    if (child !== this.#child) return;
     this.#child = undefined;
     this.#stdoutBuffer = "";
-    for (const [requestId, pending] of this.#pending) {
-      clearTimeout(pending.timer);
-      pending.cleanup();
+    for (const pending of this.#pending.values()) {
+      pending.dispose();
       pending.reject(error);
-      this.#pending.delete(requestId);
     }
-    if (child && !child.killed) child.kill();
+    this.#pending.clear();
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    child.stdin.destroy();
+    child.stdout.destroy();
   }
 }
 
-export class ExternalAdapterProcessError extends Error {
-  constructor(readonly code: string) {
-    super(`external adapter process ${code}`);
-    this.name = "ExternalAdapterProcessError";
-  }
+function invalidResponse(): DeviceBrokerError {
+  return new DeviceBrokerError("connection_failed", "external adapter response is invalid or exceeds its size limit");
 }
 
-function readExecutionResult(value: unknown, actionId: string): DeviceActionResultV1 | DeviceAdapterExecutionResult {
-  if (isDeviceActionResultV1(value) && value.actionId === actionId) return value;
-  if (!isRecord(value) || !isDeviceActionResultV1(value.action) || value.action.actionId !== actionId) {
-    throw new ExternalAdapterProcessError("invalid_action_response");
-  }
-  const observations = value.observations;
-  if (observations !== undefined && (!Array.isArray(observations) || !observations.every(isDeviceObservationV1))) {
-    throw new ExternalAdapterProcessError("invalid_action_observations");
-  }
-  return { action: value.action, ...(observations ? { observations } : {}) };
+function readObservations(value: unknown) {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || !value.every(isDeviceObservationV1)) throw invalidResponse();
+  return value;
 }
 
-function readVerificationResult(value: unknown, actionId: string): DeviceVerificationResultV1 | DeviceAdapterVerificationResult {
-  if (isDeviceVerificationResultV1(value) && value.actionId === actionId) return value;
-  if (!isRecord(value) || !isDeviceVerificationResultV1(value.verification) || value.verification.actionId !== actionId) {
-    throw new ExternalAdapterProcessError("invalid_verification_response");
-  }
-  const observations = value.observations;
-  if (observations !== undefined && (!Array.isArray(observations) || !observations.every(isDeviceObservationV1))) {
-    throw new ExternalAdapterProcessError("invalid_verification_observations");
-  }
-  return { verification: value.verification, ...(observations ? { observations } : {}) };
-}
-
-function isRecord(value: unknown): value is Record<string, any> {
+function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }

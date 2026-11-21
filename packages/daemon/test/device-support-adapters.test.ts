@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { dirname } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -17,7 +16,7 @@ import {
 const now = "2026-11-21T00:00:00.000Z";
 
 test("external adapters are isolated behind a bounded JSON process and restart after a child crash", async t => {
-  const fixture = `${dirname(fileURLToPath(import.meta.url))}/support/external-device-adapter-fixture.mjs`;
+  const fixture = fileURLToPath(new URL("./support/external-device-adapter-fixture.ts", import.meta.url));
   const adapter = new ExternalDeviceAdapter({
     command: process.execPath,
     args: [fixture],
@@ -33,7 +32,8 @@ test("external adapters are isolated behind a bounded JSON process and restart a
       }],
       removalBehavior: "revoke_and_disconnect",
     },
-    requestTimeoutMs: 2000,
+    requestTimeoutMs: 1500,
+    maxFrameBytes: 4096,
   });
   t.after(() => adapter.close());
   const profile = await adapter.discover({ connectionRef: "fixture:ok", ownerId: "workspace" });
@@ -50,8 +50,13 @@ test("external adapters are isolated behind a bounded JSON process and restart a
     },
   });
   assert.equal("action" in result ? result.action.status : result.status, "completed");
-  await assert.rejects(() => adapter.discover({ connectionRef: "fixture:crash", ownerId: "workspace" }), /external adapter process adapter_exited|adapter_process_error/);
-  assert.equal((await adapter.discover({ connectionRef: "fixture:restarted", ownerId: "workspace" })).device.id, "external-fixture-device");
+  for (const [failure, code] of [
+    ["crash", "connection_failed"], ["malformed", "connection_failed"],
+    ["over-limit", "connection_failed"], ["hang", "timeout"],
+  ]) {
+    await assert.rejects(() => adapter.discover({ connectionRef: `fixture:${failure}`, ownerId: "workspace" }), { code });
+    assert.equal((await adapter.discover({ connectionRef: "fixture:restarted", ownerId: "workspace" })).device.id, "external-fixture-device");
+  }
 });
 
 test("Home Assistant adapter keeps credentials out of the profile and distinguishes entity states", async t => {
@@ -235,10 +240,22 @@ test("Android ADB adapter exposes fixed head-unit operations and verifies artifa
   });
   const profile = await adapter.discover({ connectionRef: "adb:head-unit-1", ownerId: "pc-1" });
   assert.equal(profile.device.kind, "head_unit");
-  const action = await adapter.execute({ profile, capability: { id: "android.install.artifact" }, request: { actionId: "install-1", taskId: "task-1", targetDeviceId: profile.device.id, capabilityId: "android.install.artifact", capabilitySchemaVersion: "1.0", capabilitySnapshotId: "snapshot-1", normalizedInput: { artifactDigest: "sha256:app", packageId: "com.example.carplay" }, idempotencyKey: "task-1:install-1" } });
+  const capability = adapter.manifest.capabilities.find(item => item.id === "android.install.artifact")!;
+  const request = { actionId: "install-1", taskId: "task-1", targetDeviceId: profile.device.id, capabilityId: capability.id,
+    capabilitySchemaVersion: "1.0", capabilitySnapshotId: "snapshot-1",
+    normalizedInput: { artifactDigest: "sha256:app", packageId: "com.example.carplay" }, idempotencyKey: "task-1:install-1" };
+  const action = await adapter.execute({ profile, capability, request });
   assert.equal("action" in action ? action.action.status : action.status, "completed");
   const actionResult = "action" in action ? action.action : action;
-  assert.equal((await adapter.verify({ profile, request: { actionId: "install-1", taskId: "task-1", targetDeviceId: profile.device.id, capabilityId: "android.install.artifact", capabilitySchemaVersion: "1.0", capabilitySnapshotId: "snapshot-1", normalizedInput: { artifactDigest: "sha256:app", packageId: "com.example.carplay" }, idempotencyKey: "task-1:install-1" }, action: actionResult })).status, "verified");
+  const result = await adapter.verify({ profile, capability, request, action: actionResult, evidenceId: "inspection-1" });
+  assert.equal(result.verification.status, "verified");
+  assert.deepEqual(result.verification.observationIds, ["inspection-1"]);
+  assert.deepEqual(result.observations?.map(item => [item.subjectId, item.value]), [
+    [profile.device.id, { packageId: "com.example.carplay", present: true }],
+  ]);
+  const foreignPackage = await adapter.verify({ profile, capability, action: actionResult, evidenceId: "inspection-2",
+    request: { ...request, expectedVerification: { packageId: "com.example.other" } } });
+  assert.equal(foreignPackage.verification.status, "not_evaluable");
   const mismatch = await adapter.execute({ profile, capability: { id: "android.install.artifact" }, request: { actionId: "install-mismatch", taskId: "task-1", targetDeviceId: profile.device.id, capabilityId: "android.install.artifact", capabilitySchemaVersion: "1.0", capabilitySnapshotId: "snapshot-1", normalizedInput: { artifactDigest: "sha256:app", packageId: "com.example.other" }, idempotencyKey: "task-1:install-mismatch" } });
   assert.equal(("action" in mismatch ? mismatch.action : mismatch).errorCode, "target_changed");
   await assert.rejects(() => adapter.execute({ profile, capability: { id: "android.install.artifact" }, request: { actionId: "install-invalid", taskId: "task-1", targetDeviceId: profile.device.id, capabilityId: "android.install.artifact", capabilitySchemaVersion: "1.0", capabilitySnapshotId: "snapshot-1", normalizedInput: { artifactDigest: "sha256:app" }, idempotencyKey: "task-1:install-invalid" } }), /packageId/u);

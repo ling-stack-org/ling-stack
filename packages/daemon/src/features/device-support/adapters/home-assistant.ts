@@ -202,7 +202,7 @@ export class HomeAssistantAdapter implements DeviceAdapter {
       } };
     }
     const entity = await this.readEntity(entityId, input.signal);
-    const observation = this.entityObservation(input.evidenceId, entity);
+    const observation = this.entityObservation(input.evidenceId, entity, input.profile.device.id);
     return {
       verification: {
         actionId: request.actionId, status: entity.availability === rule.availability ? "verified" : "failed",
@@ -212,17 +212,17 @@ export class HomeAssistantAdapter implements DeviceAdapter {
     };
   }
 
-  private entityObservation(id: string, entity: HomeAssistantEntityRead): DeviceObservationV1 {
+  private entityObservation(id: string, entity: HomeAssistantEntityRead, subjectId = entity.entityId): DeviceObservationV1 {
     return {
       id,
-      subjectId: entity.entityId,
+      subjectId,
       source: "home_assistant",
       value: { entityId: entity.entityId, state: entity.state ?? null, availability: entity.availability, attributes: entity.attributes as Record<string, JsonValue> },
       observedAt: entity.observedAt,
       receivedAt: this.#now(),
       freshnessUntil: new Date(Date.parse(entity.observedAt) + 30_000).toISOString(),
       quality: entity.availability === "absent" ? "good" : entity.quality,
-      provenance: [this.#baseUrl, entity.entityId],
+      provenance: [this.#baseUrl, entity.entityId, ...(subjectId === entity.entityId ? [] : [subjectId])],
       redactionClass: "public",
     };
   }
