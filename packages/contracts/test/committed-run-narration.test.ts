@@ -1,22 +1,29 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isConversationItemV1 } from "../dist/index.js";
+import {
+  isConversationItemV1,
+  type ConversationNarrationSegment,
+  type ConversationNarrationSource,
+} from "../dist/index.js";
 
 const now = "2026-09-08T06:00:00.000Z";
+type Mutable<T> = { -readonly [Key in keyof T]: T[Key] };
+type FixtureSource = Mutable<ConversationNarrationSource> & { extra?: string };
+
 function fixture() {
-  const source = { workspaceId: "workspace", threadId: "thread", turnId: "turn", runId: "run",
+  const source: FixtureSource = { workspaceId: "workspace", threadId: "thread", turnId: "turn", runId: "run",
     workUnitId: "unit", attemptId: "attempt", participantId: "ling_agent" };
   return {
     schemaVersion: 1, id: "narration:run", workspaceId: source.workspaceId, threadId: source.threadId, turnId: source.turnId,
     sequence: 9, revision: 0, kind: "assistant_message", actorType: "ling_agent", actorId: "ling_agent",
-    status: "committed", visibility: "thread_participants", createdAt: now, updatedAt: now, committedAt: now,
+    status: "committed", visibility: "thread_participants", createdAt: now, updatedAt: now, committedAt: now as string | undefined,
     domainRefs: [{ type: "run", id: source.runId }, { type: "conversation_item", id: "user-item" }],
     payload: { body: "Before tool.\n\nAfter tool.", format: "markdown", streaming: false, deliveryStatus: "ready", presentationRole: "narration",
       runNarration: { schemaVersion: 1, messageId: "conversation-assistant:turn", sourceItemId: "user-item", source,
         throughEventSequence: 8, throughEventId: "e8", segments: [
           { content: "Before tool.", firstEventId: "e2", lastEventId: "e3", startEventSequence: 2, endEventSequence: 3, completed: true },
           { content: "After tool.", firstEventId: "e6", lastEventId: "e7", startEventSequence: 6, endEventSequence: 7, completed: true },
-        ] } },
+        ] as Mutable<ConversationNarrationSegment>[] } },
   };
 }
 
@@ -44,7 +51,7 @@ test("committed narration rejects malformed, overlapping, foreign or text-diverg
     (item) => { item.payload.presentationRole = "execution_summary"; },
     (item) => { item.domainRefs[0].id = "foreign-run"; },
     (item) => { item.domainRefs.push({ type: "run", id: "second-run" }); },
-  ]) {
+  ] satisfies ((item: ReturnType<typeof fixture>) => void)[]) {
     const item = fixture(); mutate(item);
     assert.equal(isConversationItemV1(item), false, mutate.toString());
   }
