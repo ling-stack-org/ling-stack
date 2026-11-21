@@ -198,7 +198,10 @@ test("Android ADB adapter exposes fixed head-unit operations and verifies artifa
   assert.equal("action" in action ? action.action.status : action.status, "completed");
   const actionResult = "action" in action ? action.action : action;
   assert.equal((await adapter.verify({ profile, request: { actionId: "install-1", taskId: "task-1", targetDeviceId: profile.device.id, capabilityId: "android.install.artifact", capabilitySchemaVersion: "1.0", capabilitySnapshotId: "snapshot-1", normalizedInput: { artifactDigest: "sha256:app", packageId: "com.example.carplay" }, idempotencyKey: "task-1:install-1" }, action: actionResult })).status, "verified");
-  assert.deepEqual(operations, ["inventory", "install", "packages"]);
+  const mismatch = await adapter.execute({ profile, capability: { id: "android.install.artifact" }, request: { actionId: "install-mismatch", taskId: "task-1", targetDeviceId: profile.device.id, capabilityId: "android.install.artifact", capabilitySchemaVersion: "1.0", capabilitySnapshotId: "snapshot-1", normalizedInput: { artifactDigest: "sha256:app", packageId: "com.example.other" }, idempotencyKey: "task-1:install-mismatch" } });
+  assert.equal(("action" in mismatch ? mismatch.action : mismatch).errorCode, "target_changed");
+  await assert.rejects(() => adapter.execute({ profile, capability: { id: "android.install.artifact" }, request: { actionId: "install-invalid", taskId: "task-1", targetDeviceId: profile.device.id, capabilityId: "android.install.artifact", capabilitySchemaVersion: "1.0", capabilitySnapshotId: "snapshot-1", normalizedInput: { artifactDigest: "sha256:app" }, idempotencyKey: "task-1:install-invalid" } }), /packageId/u);
+  assert.deepEqual(operations, ["inventory", "install", "packages", "install"]);
 });
 
 test("OBD adapter exposes typed vehicle info, PID and DTC reads", async () => {
