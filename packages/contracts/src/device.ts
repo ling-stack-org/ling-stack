@@ -311,6 +311,7 @@ export interface DeviceTaskV1 {
   readonly targetDeviceIds: readonly string[];
   readonly status: DeviceTaskStatusV1;
   readonly capabilitySnapshotIds: readonly string[];
+  readonly accessGrantId?: string;
   readonly policyRevision?: string;
   readonly createdAt: string;
   readonly updatedAt: string;
@@ -581,7 +582,7 @@ export function isDeviceVerificationResultV1(value: unknown): value is DeviceVer
 export function isDeviceTaskV1(value: unknown): value is DeviceTaskV1 {
   if (!isRecord(value) || !hasOnlyKeys(value, [
     "id", "ownerKind", "ownerId", "targetDeviceIds", "status",
-    "capabilitySnapshotIds", "policyRevision", "createdAt", "updatedAt", "currentActionId",
+    "capabilitySnapshotIds", "accessGrantId", "policyRevision", "createdAt", "updatedAt", "currentActionId",
     "lastVerificationId",
   ])) return false;
   return isNonEmptyString(value.id)
@@ -591,6 +592,7 @@ export function isDeviceTaskV1(value: unknown): value is DeviceTaskV1 {
     && value.targetDeviceIds.length > 0
     && isEnum(value.status, DEVICE_TASK_STATUSES_V1)
     && isStringArray(value.capabilitySnapshotIds)
+    && (value.accessGrantId === undefined || isNonEmptyString(value.accessGrantId))
     && (value.policyRevision === undefined || isNonEmptyString(value.policyRevision))
     && isIsoTimestamp(value.createdAt)
     && isIsoTimestamp(value.updatedAt)

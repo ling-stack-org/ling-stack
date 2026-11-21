@@ -25,6 +25,7 @@ import {
 } from "@ling-stack/contracts";
 
 import type { SqliteDeviceSupportStore } from "./storage/sqlite/device-support-store.js";
+import { DeviceAccessManager } from "./device-access.js";
 
 export interface DeviceAdapterDiscoveryInput {
   readonly connectionRef: string;
@@ -76,6 +77,7 @@ export interface DeviceSupportStoreAttemptRecord {
 
 export interface DeviceSupportBrokerOptions {
   readonly store: SqliteDeviceSupportStore;
+  readonly accessManager?: DeviceAccessManager;
   readonly now?: () => string;
   readonly leaseMs?: number;
   readonly policyRevision?: string;
@@ -143,11 +145,13 @@ export class DeviceCapabilityBroker {
   readonly leaseMs: number;
   readonly policyRevision: string;
   readonly now: () => string;
+  readonly accessManager?: DeviceAccessManager;
   private readonly activeDispatches = new Map<string, AbortController>();
 
   constructor(options: DeviceSupportBrokerOptions) {
     this.adapters = new DeviceAdapterRegistry();
     this.store = options.store;
+    this.accessManager = options.accessManager;
     this.leaseMs = options.leaseMs ?? 30_000;
     this.policyRevision = options.policyRevision ?? "device-policy-v1";
     this.now = options.now ?? (() => new Date().toISOString());
@@ -310,6 +314,7 @@ export class DeviceCapabilityBroker {
       const request = { ...record.request, capabilitySnapshotId: input.capabilitySnapshotId };
       const binding = this.resolveCapability(request, input.refreshExpiredSnapshot);
       const reader = this.requireReconciliationReader(binding);
+      this.assertTaskAccess(task, request.targetDeviceId, reader.id);
       input.signal?.throwIfAborted();
       if (this.store.getLeasedAttempt(task.id)
         || !this.store.acquireTargetLease(request.targetDeviceId, task.id, task.ownerId, this.now(), this.leaseMs, record.attempt.attemptId)) {
@@ -427,6 +432,7 @@ export class DeviceCapabilityBroker {
     signal?.throwIfAborted();
     const binding = this.resolveCapability(request);
     const { profile, snapshot, capability } = binding;
+    this.assertTaskAccess(task, profile.device.id, capability.id);
     if (options.onlyUnattendedReads && (capability.sideEffect !== "read_only" || capability.approvalClass !== "allow")) {
       throw new DeviceBrokerError("permission_denied", "the playbook requires an unattended read capability");
     }
@@ -485,6 +491,21 @@ export class DeviceCapabilityBroker {
       throw new DeviceBrokerError("unsupported_capability", "requested capability is not in the current snapshot");
     }
     return { profile, snapshot, capability, adapter: this.requireAdapter(profile.adapterId) };
+  }
+
+  private assertTaskAccess(task: DeviceTaskV1, targetDeviceId: string, capabilityId: string): void {
+    if (!task.accessGrantId || !this.accessManager) return;
+    try {
+      this.accessManager.authorize({
+        grantId: task.accessGrantId,
+        principalId: task.ownerId,
+        targetDeviceId,
+        capabilityId,
+        now: this.now(),
+      });
+    } catch {
+      throw new DeviceBrokerError("permission_denied", "device access grant denied");
+    }
   }
 
   private recordActionResult(

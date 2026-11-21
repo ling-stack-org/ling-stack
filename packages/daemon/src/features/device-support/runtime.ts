@@ -8,6 +8,7 @@ import {
   createPcSoftwareDiagnosisPlaybook,
   DEFAULT_WORKSPACE_ID,
   DeviceBrokerError,
+  DeviceAccessManager,
   DeviceCapabilityBroker,
   DeviceRunnerPlanningBridge,
   DeviceDeveloperSessionCoordinator,
@@ -44,6 +45,7 @@ export interface DeviceSupportRuntime {
   readonly developerSessions: DeviceDeveloperSessionCoordinator;
   readonly collaboration: DeviceCollaborationCoordinator;
   readonly edgeRuntimes: EdgeRuntimeRegistry;
+  readonly access: DeviceAccessManager;
   readonly broker: DeviceCapabilityBroker;
   readonly remoteFacade: RemoteDeviceFacade;
   diagnoseLocalPc(): Promise<DevicePlaybookRunResultV1>;
@@ -71,7 +73,8 @@ export function createDeviceSupportRuntime(options: {
   const developerStore = new SqliteDeviceDeveloperStore({ databasePath: options.databasePath });
   const protocolStore = new SqliteDeviceProtocolStore({ databasePath: options.databasePath });
   const protocolWorkbench = new HardwareProtocolWorkbench();
-  const broker = new DeviceCapabilityBroker({ store, now });
+  const access = new DeviceAccessManager(fabricStore);
+  const broker = new DeviceCapabilityBroker({ store, now, accessManager: access });
   const adapter = new PcAdapter({ executor: new LocalPcTargetExecutor(), now });
   let ssh: ReturnType<typeof bindLinuxSshTargets> | undefined;
   let linuxAdapter: LinuxSshAdapter;
@@ -189,6 +192,7 @@ export function createDeviceSupportRuntime(options: {
     developerSessions,
     collaboration,
     edgeRuntimes,
+    access,
     broker,
     remoteFacade,
     diagnoseLocalPc: () => {

@@ -20,8 +20,10 @@ import {
   type DeviceAdapter,
   digestRequest,
 } from "../dist/device-support.js";
+import { DeviceAccessManager } from "../dist/device-access.js";
 import { createHomeAssistantOfflinePlaybook, createPcSoftwareDiagnosisPlaybook, isDevicePlaybookV1, runDeviceReadOnlyPlaybook } from "../dist/device-playbooks.js";
 import { readOwnedDeviceTaskJournal } from "../dist/device-task-event-projector.js";
+import { SqliteDeviceFabricStore } from "../dist/storage/sqlite/device-fabric-store.js";
 import { SqliteDeviceSupportStore } from "../dist/storage/sqlite/device-support-store.js";
 
 const now = "2026-11-21T00:00:00.000Z";
@@ -219,6 +221,24 @@ test("task journal cursors use a task-local sequence when multiple tasks interle
   const page = readOwnedDeviceTaskJournal({ store, workspaceId: "workspace-1", taskId: "task-1", afterSequence: 1 });
   assert.equal(page.events[0]?.sequence, 2);
   assert.equal(page.latestSequence, 2);
+  store.close();
+});
+
+test("broker honors a target-scoped access grant before dispatch", async () => {
+  const store = new SqliteDeviceSupportStore();
+  const fabric = new SqliteDeviceFabricStore();
+  const broker = new DeviceCapabilityBroker({ store, accessManager: new DeviceAccessManager(fabric), now: () => now });
+  broker.registerAdapter(createAdapter());
+  broker.registerDevice(manifest.adapterId, profile);
+  store.saveCapabilitySnapshot(snapshot(), now);
+  fabric.saveAccessGrant({ grantId: "grant-1", targetDeviceId: profile.device.id, principalId: "daemon-1", scope: "read_only", capabilityIds: [readCapability.id], revision: 1, status: "active", expiresAt: "2026-11-21T00:05:00.000Z", authority: "operator", changedAt: now });
+  store.createTask({ ...task("grant-task"), accessGrantId: "grant-1" }, now);
+  const result = await broker.execute(request(readCapability.id, "grant-task"));
+  assert.equal(result.attempt.status, "completed");
+  fabric.revokeAccessGrant("grant-1", 2, now);
+  store.createTask({ ...task("revoked-task"), accessGrantId: "grant-1" }, now);
+  await assert.rejects(() => broker.execute(request(readCapability.id, "revoked-task")), /device access grant denied/u);
+  fabric.close();
   store.close();
 });
 
