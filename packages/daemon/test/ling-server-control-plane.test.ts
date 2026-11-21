@@ -23,14 +23,22 @@ test("self-hosted Ling Server control plane requires auth and preserves route fa
     assert.equal(route.status, 200);
     const selected = await fetch(`http://${address.host}:${address.port}/v1/routes`, { method: "POST", headers, body: JSON.stringify({ action: "select", routeAttemptId: "route-1", selected: "direct" }) });
     assert.equal(selected.status, 200);
-    const config = await fetch(`http://${address.host}:${address.port}/v1/routes/transport-config`, { method: "POST", headers, body: JSON.stringify({ bindingId: "binding-1", routeAttemptId: "route-1", role: "mobile", localKeyFingerprint: "mobile-fp", remoteKeyFingerprint: "gateway-fp", expiresAt: "2026-11-21T00:04:00.000Z" }) });
+    const configUrl = `http://${address.host}:${address.port}/v1/routes/transport-config`;
+    const configInput = { bindingId: "binding-1", routeAttemptId: "route-1", role: "mobile", localKeyFingerprint: "mobile-fp", remoteKeyFingerprint: "gateway-fp", expiresAt: "2026-11-21T00:04:00.000Z" };
+    const config = await fetch(configUrl, { method: "POST", headers, body: JSON.stringify(configInput) });
     assert.equal(config.status, 200);
     assert.equal((await config.json()).route, "direct");
+    const wrongKey = await fetch(configUrl, { method: "POST", headers, body: JSON.stringify({ ...configInput, localKeyFingerprint: "different-fingerprint" }) });
+    assert.equal(wrongKey.status, 400);
     const diagnostics = await fetch(`http://${address.host}:${address.port}/v1/routes/diagnostics`, { method: "POST", headers, body: JSON.stringify({ bindingId: "binding-1", routeAttemptId: "route-1", diagnosticId: "diag-1", checks: [{ id: "control_reachability", status: "pass", code: "reachable" }] }) });
     assert.equal(diagnostics.status, 200);
     assert.equal((await diagnostics.json()).checks[0].code, "reachable");
     const failover = await fetch(`http://${address.host}:${address.port}/v1/routes`, { method: "POST", headers, body: JSON.stringify({ action: "failover", routeAttemptId: "route-1" }) });
     assert.equal((await failover.json()).preferred, "relay");
+    const revoke = await fetch(`http://${address.host}:${address.port}/v1/bindings/binding-1/revoke`, { method: "POST", headers, body: JSON.stringify({ revision: 2 }) });
+    assert.equal(revoke.status, 200);
+    const oldRoute = await fetch(`http://${address.host}:${address.port}/v1/routes`, { method: "POST", headers, body: JSON.stringify({ action: "select", routeAttemptId: "route-1", selected: "relay" }) });
+    assert.equal(oldRoute.status, 400);
   } finally {
     await control.stop();
   }

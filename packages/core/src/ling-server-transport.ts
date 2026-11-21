@@ -1,13 +1,14 @@
-import type {
-  LingServerInstallationV1,
-  LingServerPeerBindingV1,
-  LingServerPeerRoleV1,
-  LingServerPeerTransportConfigV1,
-  LingServerRelayCredentialV1,
-  LingServerRouteAttemptV1,
-  LingServerTransportDiagnosticCheckV1,
-  LingServerTransportDiagnosticsV1,
-  LingServerTransportRouteV1,
+import {
+  LING_SERVER_PEER_FRAME_DEFAULT_BYTES_V1,
+  LING_SERVER_PEER_FRAME_MAX_BYTES_V1,
+  type LingServerInstallationV1,
+  type LingServerPeerBindingV1,
+  type LingServerPeerRoleV1,
+  type LingServerPeerTransportConfigV1,
+  type LingServerRelayCredentialV1,
+  type LingServerRouteAttemptV1,
+  type LingServerTransportDiagnosticCheckV1,
+  type LingServerTransportDiagnosticsV1,
 } from "@ling-stack/contracts";
 import { DeviceFabricError } from "./device-fabric.js";
 
@@ -63,25 +64,37 @@ export class LingServerTransportPlanner {
     this.#features = [...new Set(options.features ?? [])];
     this.#stunUrls = normalizeServerUrls(options.stunUrls ?? [], "stun");
     this.#turnUrls = normalizeServerUrls(options.turnUrls ?? [], "turn");
-    this.#maxFrameBytes = options.maxFrameBytes ?? 256 * 1024;
+    this.#maxFrameBytes = options.maxFrameBytes ?? LING_SERVER_PEER_FRAME_DEFAULT_BYTES_V1;
     this.#now = options.now ?? (() => new Date().toISOString());
     if (!Number.isInteger(this.#protocolMajor) || this.#protocolMajor < 1) throw new DeviceFabricError("revision_conflict", "transport protocol major is invalid");
-    if (!Number.isInteger(this.#maxFrameBytes) || this.#maxFrameBytes < 1024 || this.#maxFrameBytes > 4 * 1024 * 1024) throw new DeviceFabricError("revision_conflict", "transport frame limit is invalid");
+    if (!Number.isInteger(this.#maxFrameBytes) || this.#maxFrameBytes < 1024 || this.#maxFrameBytes > LING_SERVER_PEER_FRAME_MAX_BYTES_V1) {
+      throw new DeviceFabricError("revision_conflict", "transport frame limit is invalid");
+    }
   }
 
   createConfig(input: LingServerTransportConfigInput): LingServerPeerTransportConfigV1 {
-    validateBinding(input.binding);
+    validateBinding(input.binding, this.#installation);
     validateRoute(input.route, input.binding);
-    if (!input.localKeyFingerprint.trim() || !input.remoteKeyFingerprint.trim()) throw new DeviceFabricError("safety_denied", "peer key fingerprints are required");
-    assertFuture(input.expiresAt, this.#now(), "transport configuration");
+    const gateway = input.role === "gateway";
+    if ((!gateway && input.role !== "mobile")
+      || input.localKeyFingerprint !== (gateway ? input.binding.gatewayKeyFingerprint : input.binding.mobileKeyFingerprint)
+      || input.remoteKeyFingerprint !== (gateway ? input.binding.mobileKeyFingerprint : input.binding.gatewayKeyFingerprint)) {
+      throw new DeviceFabricError("safety_denied", "transport peer keys do not match the requested role");
+    }
+    const now = this.#now();
+    assertFuture(input.expiresAt, now, "transport configuration");
+    assertFuture(input.route.expiresAt, now, "route attempt");
+    if (Date.parse(input.expiresAt) > Date.parse(input.route.expiresAt)) {
+      throw new DeviceFabricError("safety_denied", "transport configuration would outlive the route attempt");
+    }
     if (input.route.selected !== "relay" && input.relayCredential) throw new DeviceFabricError("safety_denied", "relay credentials require a relay route");
     if (input.route.selected === "relay") {
       if (this.#turnUrls.length === 0 || !input.relayCredential) throw new DeviceFabricError("target_missing", "relay route requires TURN configuration and credentials");
-      assertFuture(input.relayCredential.expiresAt, this.#now(), "relay credential");
+      assertFuture(input.relayCredential.expiresAt, now, "relay credential");
       if (Date.parse(input.relayCredential.expiresAt) < Date.parse(input.expiresAt)) throw new DeviceFabricError("safety_denied", "relay credential expires before transport configuration");
-      if (!/^turns?:/u.test(input.relayCredential.url)) throw new DeviceFabricError("revision_conflict", "relay credential URL must use TURN");
+      if (!this.#turnUrls.includes(input.relayCredential.url)) throw new DeviceFabricError("safety_denied", "relay credential URL is outside the configured TURN endpoints");
     }
-    if (input.route.selected !== "relay" && this.#stunUrls.length === 0) throw new DeviceFabricError("target_missing", "direct route requires STUN configuration");
+    if (input.route.selected === "direct" && this.#stunUrls.length === 0) throw new DeviceFabricError("target_missing", "direct route requires STUN configuration");
     return {
       schemaVersion: 1,
       bindingId: input.binding.bindingId,
@@ -104,14 +117,16 @@ export class LingServerTransportPlanner {
   }
 
   createDiagnostics(input: LingServerTransportDiagnosticInput): LingServerTransportDiagnosticsV1 {
-    validateBinding(input.binding);
+    validateBinding(input.binding, this.#installation);
     validateRoute(input.route, input.binding);
     if (!input.diagnosticId.trim()) throw new DeviceFabricError("revision_conflict", "transport diagnostic id is required");
     const checks = input.checks.map(check => {
-      if (!check.id || !check.code.trim()) throw new DeviceFabricError("revision_conflict", "transport diagnostic check is incomplete");
+      if (!diagnosticIds.has(check.id) || !["pass", "fail", "unknown"].includes(check.status)
+        || !/^[a-z0-9_:-]{1,64}$/u.test(check.code)) throw new DeviceFabricError("revision_conflict", "transport diagnostic check is invalid");
       if (check.latencyMs !== undefined && (!Number.isFinite(check.latencyMs) || check.latencyMs < 0)) throw new DeviceFabricError("revision_conflict", "transport diagnostic latency is invalid");
-      return { ...check };
+      return { id: check.id, status: check.status, code: check.code, ...(check.latencyMs === undefined ? {} : { latencyMs: check.latencyMs }) };
     });
+    if (checks.length !== new Set(checks.map(check => check.id)).size) throw new DeviceFabricError("revision_conflict", "transport diagnostic check is repeated");
     return {
       diagnosticId: input.diagnosticId,
       bindingId: input.binding.bindingId,
@@ -130,14 +145,21 @@ export class LingServerTransportPlanner {
   }
 }
 
-function validateBinding(binding: LingServerPeerBindingV1): void {
-  if (!binding.bindingId.trim() || !binding.installationId.trim() || !binding.gatewayId.trim() || !binding.mobileDeviceId.trim() || binding.epoch < 1 || binding.status !== "active") {
+const diagnosticIds = new Set(["control_reachability", "peer_presence", "signaling", "candidate_gathering",
+  "peer_handshake", "cursor_resume", "relay_quota", "revocation"]);
+
+function validateBinding(binding: LingServerPeerBindingV1, installation: LingServerInstallationV1): void {
+  if (binding.installationId !== installation.installationId || installation.status !== "active"
+    || !binding.bindingId.trim() || !binding.gatewayId.trim() || !binding.mobileDeviceId.trim()
+    || !binding.gatewayKeyFingerprint.trim() || !binding.mobileKeyFingerprint.trim()
+    || !Number.isSafeInteger(binding.epoch) || binding.epoch < 1 || binding.status !== "active") {
     throw new DeviceFabricError("safety_denied", "transport requires an active peer binding");
   }
 }
 
 function validateRoute(route: LingServerRouteAttemptV1, binding: LingServerPeerBindingV1): void {
-  if (!route.routeAttemptId.trim() || route.bindingId !== binding.bindingId || route.status !== "connected" || !route.selected) throw new DeviceFabricError("safety_denied", "transport requires a selected connected route");
+  if (!route.routeAttemptId.trim() || route.bindingId !== binding.bindingId || (route.peerEpoch ?? 1) !== binding.epoch
+    || route.status !== "connected" || !route.selected) throw new DeviceFabricError("safety_denied", "transport requires a connected route for the bound epoch");
 }
 
 function normalizeServerUrls(urls: readonly string[], scheme: "stun" | "turn"): readonly string[] {

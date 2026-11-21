@@ -1,5 +1,8 @@
 import type { JsonValue } from "./device.js";
 
+export const LING_SERVER_PEER_FRAME_DEFAULT_BYTES_V1 = 256 * 1024;
+export const LING_SERVER_PEER_FRAME_MAX_BYTES_V1 = 4 * 1024 * 1024;
+
 export interface LingServerInstallationV1 {
   readonly installationId: string;
   readonly serverOrigin: string;
@@ -23,6 +26,7 @@ export interface LingServerPeerBindingV1 {
 export interface LingServerRouteAttemptV1 {
   readonly routeAttemptId: string;
   readonly bindingId: string;
+  readonly peerEpoch?: number;
   readonly preferred: "lan" | "direct" | "relay";
   readonly selected?: "lan" | "direct" | "relay";
   readonly status: "gathering" | "checking" | "connected" | "failed" | "expired";
@@ -33,6 +37,7 @@ export interface LingServerPeerSessionV1 {
   readonly sessionId: string;
   readonly bindingId: string;
   readonly peerEpoch: number;
+  readonly localRole?: LingServerPeerRoleV1;
   readonly routeAttemptId: string;
   readonly route: "lan" | "direct" | "relay";
   readonly transportGeneration: number;
@@ -55,6 +60,12 @@ export interface LingServerPeerFrameV1 {
   readonly commandId?: string;
   readonly payload: JsonValue;
   readonly sentAt: string;
+}
+
+export interface LingServerPeerResumeCursorV1 {
+  readonly transportGeneration: number;
+  readonly direction: LingServerPeerFrameV1["direction"];
+  readonly sequence: number;
 }
 
 export interface LingServerCommandReceiptV1 {

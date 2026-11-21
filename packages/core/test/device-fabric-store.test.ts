@@ -9,7 +9,7 @@ import type { DeviceConformanceReportV1, DeviceEventEnvelopeV1, DeviceGraphNodeV
 import { DeviceFabricError, DeviceTaskGraphCoordinator } from "../dist/device-fabric.js";
 import { DeviceSecretBroker } from "../dist/device-secrets.js";
 import { DeviceEventProjector, DevicePeerEventSynchronizer } from "../dist/device-event-projection.js";
-import { LingServerPeerSessionCoordinator } from "../dist/ling-server.js";
+import { LingServerPeerRegistry, LingServerPeerSessionCoordinator } from "../dist/ling-server.js";
 import { DeviceAccessManager } from "../dist/device-access.js";
 import { SqliteDeviceFabricStore } from "../dist/storage/sqlite/device-fabric-store.js";
 
@@ -83,8 +83,13 @@ test("fabric store retains bounded event streams and resumes from a durable snap
 });
 
 test("peer event synchronization preserves owner stream identity and idempotent replay", () => {
-  const sender = new LingServerPeerSessionCoordinator({ now: () => now });
-  const receiver = new LingServerPeerSessionCoordinator({ now: () => now });
+  const registry = new LingServerPeerRegistry();
+  registry.registerInstallation({ installationId: "install-1", serverOrigin: "https://ling.example", applicationKeyFingerprint: "server-fp", revision: 1, status: "active" });
+  registry.bindPeers({ bindingId: "binding-1", installationId: "install-1", gatewayId: "gateway-1", mobileDeviceId: "mobile-1", gatewayKeyFingerprint: "gateway-fp", mobileKeyFingerprint: "mobile-fp", epoch: 1, revision: 1, status: "active" });
+  registry.beginRoute({ routeAttemptId: "route-1", bindingId: "binding-1", preferred: "direct", status: "checking", expiresAt: "2026-11-21T00:05:00.000Z" });
+  registry.selectRoute("route-1", "direct", now);
+  const sender = new LingServerPeerSessionCoordinator({ registry, now: () => now });
+  const receiver = new LingServerPeerSessionCoordinator({ registry, role: "mobile", now: () => now });
   const session = { sessionId: "session-1", bindingId: "binding-1", peerEpoch: 1, routeAttemptId: "route-1", route: "direct" as const, transportGeneration: 1, sendSequence: 0, receivedSequence: 0, status: "open" as const, openedAt: now, lastSeenAt: now };
   sender.openSession(session);
   receiver.openSession(session);

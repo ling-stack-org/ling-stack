@@ -54,12 +54,27 @@ export class SqliteLingServerStore {
         sequence INTEGER NOT NULL,
         frame_json TEXT NOT NULL
       );
+      CREATE INDEX IF NOT EXISTS idx_ling_server_peer_frame_lane ON ling_server_peer_frames (
+        session_id, json_extract(frame_json,'$.transportGeneration'), json_extract(frame_json,'$.direction'), sequence
+      );
       CREATE TABLE IF NOT EXISTS ling_server_command_receipts (
         command_id TEXT PRIMARY KEY NOT NULL,
         payload_digest TEXT NOT NULL,
         receipt_json TEXT NOT NULL
       );
     `);
+  }
+
+  withWriteTransaction<T>(write: () => T): T {
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const result = write();
+      this.database.exec("COMMIT");
+      return result;
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   getInstallation(installationId: string): LingServerInstallationV1 | undefined {
@@ -117,8 +132,15 @@ export class SqliteLingServerStore {
       .run(frame.frameId, frame.sessionId, frame.sequence, JSON.stringify(frame));
   }
 
-  listFrames(sessionId: string, transportGeneration: number, afterSequence = 0, limit = 100): readonly LingServerPeerFrameV1[] {
-    return (this.database.prepare("SELECT frame_json FROM ling_server_peer_frames WHERE session_id=? AND sequence>? AND json_extract(frame_json,'$.transportGeneration')=? ORDER BY sequence LIMIT ?").all(sessionId, afterSequence, transportGeneration, limit) as Row[])
+  listFrames(
+    sessionId: string, transportGeneration: number, direction: LingServerPeerFrameV1["direction"], afterSequence: number, limit = 100,
+  ): readonly LingServerPeerFrameV1[] {
+    return (this.database.prepare(`
+      SELECT frame_json FROM ling_server_peer_frames
+      WHERE session_id=? AND json_extract(frame_json,'$.transportGeneration')=?
+        AND json_extract(frame_json,'$.direction')=? AND sequence>?
+      ORDER BY sequence LIMIT ?
+    `).all(sessionId, transportGeneration, direction, afterSequence, limit) as Row[])
       .map(row => parseJson<LingServerPeerFrameV1>(row.frame_json, "Ling Server peer frame"));
   }
 

@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { LingServerPeerRegistry, LingServerTransportPlanner, SqliteLingServerStore } from "@ling-stack/core";
 import type { LingServerInstallationV1, LingServerPeerBindingV1, LingServerRouteAttemptV1 } from "@ling-stack/contracts";
@@ -72,7 +73,7 @@ export class LingServerControlPlane {
   }
 
   async handleRequest(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    const url = new URL(request.url ?? "/", `http://${request.headers.host ?? this.#host}`);
+    const url = new URL(request.url ?? "/", "http://localhost");
     if (request.method === "GET" && url.pathname === "/healthz") {
       writeJson(response, 200, { status: "ok", generatedAt: this.#now() });
       return;
@@ -116,8 +117,8 @@ export class LingServerControlPlane {
           readonly relayCredential?: { readonly url: string; readonly username: string; readonly credential: string; readonly expiresAt: string };
         }>(body);
         const binding = this.registry.getBinding(input.bindingId);
-        const route = this.registry.getRoute(input.routeAttemptId);
-        if (!binding || !route) throw new Error("binding or route is missing");
+        const route = this.registry.requireRoute(input.routeAttemptId);
+        if (!binding) throw new Error("binding is missing");
         const installation = this.registry.getInstallation(binding.installationId);
         if (!installation) throw new Error("installation is missing");
         const planner = new LingServerTransportPlanner({ installation, ...this.#transportOptions, now: this.#now });
@@ -139,8 +140,8 @@ export class LingServerControlPlane {
           readonly generatedAt?: string;
         }>(body);
         const binding = this.registry.getBinding(input.bindingId);
-        const route = this.registry.getRoute(input.routeAttemptId);
-        if (!binding || !route) throw new Error("binding or route is missing");
+        const route = this.registry.requireRoute(input.routeAttemptId);
+        if (!binding) throw new Error("binding is missing");
         const installation = this.registry.getInstallation(binding.installationId);
         if (!installation) throw new Error("installation is missing");
         const planner = new LingServerTransportPlanner({ installation, ...this.#transportOptions, now: this.#now });
@@ -167,7 +168,10 @@ export class LingServerControlPlane {
 }
 
 function safeToken(value: string | undefined, expected: string): boolean {
-  return value === `Bearer ${expected}`;
+  if (value === undefined) return false;
+  const provided = Buffer.from(value);
+  const required = Buffer.from(`Bearer ${expected}`);
+  return provided.length === required.length && timingSafeEqual(provided, required);
 }
 
 async function readJson(request: IncomingMessage): Promise<unknown> {

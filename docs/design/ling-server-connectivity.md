@@ -256,6 +256,12 @@ A cold start without the matching snapshot requests a new one. Transport sequenc
 and connection IDs change when a peer session reopens. The owning journal identity and
 accepted command IDs persist.
 
+The peer journal scopes its cursor to the transport generation and direction. It
+returns a snapshot requirement for an old generation or a missing frame. The owner
+commits the frame and its sequence together. On route cutover, each direction starts
+at sequence zero in the new generation. Sending, receiving and resuming check the
+current binding epoch, including when a request repeats a retained frame.
+
 Keep one durable logical command ID for retries within the existing retry horizon.
 The owner returns the recorded receipt for the same command and normalized input and
 reports a conflict if the ID is reused with different input. For device work, keep
