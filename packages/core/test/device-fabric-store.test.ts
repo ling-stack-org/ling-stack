@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { createHash } from "node:crypto";
-import type { DeviceEventEnvelopeV1, DeviceGraphNodeV1, DeviceResourceManifestV1, DeviceTaskGraphV1, DeviceTraceSpanV1, EdgeRuntimeEnrollmentV1 } from "@ling-stack/contracts";
+import type { DeviceConformanceReportV1, DeviceEventEnvelopeV1, DeviceGraphNodeV1, DeviceResourceManifestV1, DeviceTaskGraphV1, DeviceTraceSpanV1, EdgeRuntimeEnrollmentV1 } from "@ling-stack/contracts";
 import { DeviceFabricError, DeviceTaskGraphCoordinator } from "../dist/device-fabric.js";
 import { DeviceSecretBroker } from "../dist/device-secrets.js";
 import { DeviceEventProjector } from "../dist/device-event-projection.js";
@@ -223,5 +223,23 @@ test("fleet ownership transfer advances revisions and keeps the previous owner h
   assert.equal(store.getOwnership("device-1")?.ownerScope, "workspace-b");
   assert.deepEqual(store.listOwnershipHistory("device-1").map(item => item.ownerScope), ["workspace-a"]);
   assert.throws(() => store.transferOwnership({ deviceId: "device-1", ownerScope: "workspace-c", revision: 2, authority: "operator", changedAt: now }), (error: unknown) => error instanceof DeviceFabricError && error.code === "revision_conflict");
+  store.close();
+});
+
+test("conformance reports are validated, persisted, and replayable by report identity", () => {
+  const store = new SqliteDeviceFabricStore();
+  const report: DeviceConformanceReportV1 = {
+    reportId: "report-1",
+    runtimeId: "edge-1",
+    adapterId: "linux-ssh",
+    adapterVersion: "1.0.0",
+    targetProfile: "linux-board",
+    transport: "ssh",
+    checks: [{ id: "network-read", status: "pass", evidenceRef: "trace-1" }, { id: "restart", status: "skip" }],
+    generatedAt: now,
+  };
+  store.saveConformanceReport(report);
+  assert.deepEqual(store.getConformanceReport("report-1"), report);
+  assert.throws(() => store.saveConformanceReport({ ...report, checks: [{ id: "duplicate", status: "pass" }, { id: "duplicate", status: "skip" }] }), (error: unknown) => error instanceof DeviceFabricError && error.code === "revision_conflict");
   store.close();
 });

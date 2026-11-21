@@ -4,6 +4,7 @@ import { dirname } from "node:path";
 import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
 
 import type {
+  DeviceConformanceReportV1,
   DeviceEventEnvelopeV1,
   DeviceGraphNodeV1,
   DeviceGraphRelationshipV1,
@@ -386,6 +387,18 @@ export class SqliteDeviceFabricStore {
       .map(row => parseJson<DeviceOwnershipRevisionV1>(row.record_json, "device ownership revision"));
   }
 
+  saveConformanceReport(report: DeviceConformanceReportV1): DeviceConformanceReportV1 {
+    validateConformanceReport(report);
+    this.database.prepare("INSERT INTO device_conformance_reports(report_id,runtime_id,adapter_id,adapter_version,target_profile,transport,report_json,generated_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(report_id) DO UPDATE SET report_json=excluded.report_json,generated_at=excluded.generated_at")
+      .run(report.reportId, report.runtimeId, report.adapterId, report.adapterVersion, report.targetProfile, report.transport, JSON.stringify(report), report.generatedAt);
+    return report;
+  }
+
+  getConformanceReport(reportId: string): DeviceConformanceReportV1 | undefined {
+    const row = this.database.prepare("SELECT report_json FROM device_conformance_reports WHERE report_id=?").get(reportId) as Row | undefined;
+    return row ? parseJson<DeviceConformanceReportV1>(row.report_json, "device conformance report") : undefined;
+  }
+
   close(): void { this.database.close(); }
 
   private wouldCreateContainmentCycle(fromNodeId: string, toNodeId: string, replacingRelationshipId: string): boolean {
@@ -518,6 +531,16 @@ export class SqliteDeviceFabricStore {
         changed_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_device_ownership_history_device ON device_ownership_history(device_id,revision);
+      CREATE TABLE IF NOT EXISTS device_conformance_reports (
+        report_id TEXT PRIMARY KEY NOT NULL,
+        runtime_id TEXT NOT NULL,
+        adapter_id TEXT NOT NULL,
+        adapter_version TEXT NOT NULL,
+        target_profile TEXT NOT NULL,
+        transport TEXT NOT NULL,
+        report_json TEXT NOT NULL,
+        generated_at TEXT NOT NULL
+      );
     `);
   }
 }
@@ -557,6 +580,17 @@ function validateResourceCompatibility(
       ? compatibility.isFirmwareSupported(manifest.supportedFirmwareRanges, compatibility.firmwareVersion)
       : manifest.supportedFirmwareRanges.includes(compatibility.firmwareVersion);
     if (!supported) throw new DeviceFabricError("resource_conflict", "resource firmware range is incompatible");
+  }
+}
+
+function validateConformanceReport(report: DeviceConformanceReportV1): void {
+  if (!report.reportId.trim() || !report.runtimeId.trim() || !report.adapterId.trim() || !report.adapterVersion.trim() || !report.targetProfile.trim() || !report.transport.trim() || !report.generatedAt.trim() || report.checks.length === 0) {
+    throw new DeviceFabricError("revision_conflict", "device conformance report is incomplete");
+  }
+  const ids = new Set<string>();
+  for (const check of report.checks) {
+    if (!check.id.trim() || ids.has(check.id) || !["pass", "fail", "skip"].includes(check.status)) throw new DeviceFabricError("revision_conflict", "device conformance check is invalid");
+    ids.add(check.id);
   }
 }
 
