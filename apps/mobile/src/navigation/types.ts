@@ -3,4 +3,5 @@ export type MobileStackParamList = {
   ConversationDetail: { readonly conversationId: string };
   My: undefined;
   PcDeviceTasks: undefined;
+  StandaloneDevices: undefined;
 };

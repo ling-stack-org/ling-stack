@@ -2,7 +2,7 @@
 
 Status: tracking plan; D1–D3 core, D4/D5/D7/D8 adapters, D6/D9 execution slices, D10–D22 domain foundations, and the first durable fabric stores landed, field and platform acceptance remain queued
 Owner: Ling platform maintainers
-Last verified: 2026-11-21 (paired Mobile reconciliation, Mobile local execution, diagnostic reports, and D14–D22 domain fixtures)
+Last verified: 2026-11-21 (paired Mobile reconciliation, standalone Home Assistant diagnosis, diagnostic reports, and D14–D22 domain fixtures)
 Document type: staged implementation and acceptance record
 Related design: [Ling Device Support Platform](ling-device-support-platform.md)
 Runtime contract: [Ling Device Support Platform Runtime Contract](ling-device-support-platform-runtime-contract.md)
@@ -341,12 +341,18 @@ only on a successful install or a model response.
   after explicit user confirmation. Verify that the device comes online.
 - [x] Provide a deterministic local read-only playbook runner for diagnosis when the
   model service is unavailable, using the same Mobile journal and attempt rules.
+- [x] Expose phone-owned Home Assistant diagnosis before PC pairing and from the paired
+  app. The Mobile HTTPS adapter reads a user-selected entity using the instance's
+  trusted TLS endpoint and the supplied Home Assistant token. The phone records
+  only the task and its typed availability evidence.
 - [x] Persist approval, action attempts, and redacted verification evidence on the
   phone. Preserve an unknown result after interruption until state can be checked.
-- [~] The execution module aborts foreground-gated writes when authorization ends.
+- [x] The app applies native AppState transitions to the phone execution owner and
+  recovers its journal on foreground entry. The execution module aborts
+  foreground-gated writes when authorization ends.
   It journals late receipts, prevents concurrent dispatch to the same target, checks
-  the live connection before dispatch, and finalizes a read-only playbook after all
-  its steps. Wire foreground state and recovery to the standalone app entry.
+  the live connection before dispatch, and finalizes a read-only playbook after all its
+  steps.
 - [~] Record the tested phone OS, device model and firmware, and transport. Each later
   phone platform or USB integration gets its own acceptance entry.
 
@@ -354,6 +360,11 @@ only on a successful install or a model response.
 
 - Shared contract fixtures for capability checks, approval, and interpretation of
   verified and unknown results.
+- The Mobile runtime fixture runs the Home Assistant playbook with no PC, Gateway or
+  model service. It records unavailable and absent entity results, access denial and
+  bounded response failures. Reopening a journal restores records and leaves an
+  interrupted attempt unknown. iOS and Android production JavaScript bundles export
+  successfully. This run had no available iOS simulator runtime or connected ADB device.
 - A real phone and supported device complete the BLE flow with no PC or Gateway
   available. Exercise a local playbook while the model service is unavailable. The
   phone journal shows the approval, action, and verified result.
@@ -714,7 +725,7 @@ recorded per slice as they complete. [Detailed design](ling-device-fabric.md)
 | D6 | `b8daed28a` and paired readback changes | Remote Protocol and Remote Client `build:ci`, `typecheck:ci`, and `test:ci` (42 and 12 passed). Mobile `typecheck:ci` and `test:ci` (92 passed). Gateway fixture covers v1 compatibility and v2 verification | [device-facade.ts](../../packages/daemon/src/features/remote-access/device-facade.ts), [PcDeviceTasksScreen.tsx](../../apps/mobile/src/features/device-tasks/PcDeviceTasksScreen.tsx), [client.test.ts](../../packages/remote-client/test/client.test.ts) | Paired Mobile can approve, stop, reconnect to, and request PC readback for a task. The client requires a current session and attempt preview before requesting reconciliation | Detailed approval presentation, physical iPhone/Android, and PC/mobile packaged acceptance remain |
 | D7 | `56e112a84` | `corepack pnpm --filter @ling-stack/core build:ci`; `corepack pnpm --filter @ling-stack/core typecheck:ci`; `node --test packages/core/test/device-support.test.ts packages/daemon/test/device-support-runtime.test.ts` | [device-playbooks.ts](../../packages/core/src/device-playbooks.ts), [device-diagnosis.ts](../../packages/core/src/device-diagnosis.ts), [routes.ts](../../packages/daemon/src/features/device-support/routes.ts) | PC and Home Assistant templates project current typed facts, hypotheses, journaled outcomes and remaining uncertainty. The local daemon route returns a report after persisting its read-only task and observations | Model task projection and physical target verification remain |
 | D8 | `89e8ad39f` | `corepack pnpm --filter @ling-stack/daemon build:ci`; `corepack pnpm --filter @ling-stack/daemon typecheck:ci`; `node --test packages/daemon/test/device-support-adapters.test.ts packages/daemon/test/linux-ssh-executor.test.ts` | [linux-ssh.ts](../../packages/daemon/src/features/device-support/adapters/linux-ssh.ts), [android-adb.ts](../../packages/daemon/src/features/device-support/adapters/android-adb.ts), [obd.ts](../../packages/daemon/src/features/device-support/adapters/obd.ts), [linux-ssh-executor.ts](../../packages/daemon/src/features/device-support/adapters/linux-ssh-executor.ts) | Linux/SSH, typed Android/head-unit ADB and typed OBD adapters expose fixed network, Wi-Fi, package, logs, artifact installation, reboot, vehicle info, PID and DTC operations through the shared contract | Real LAN/hotspot, ADB/OBD transport, parked head-unit and vehicle acceptance remain |
-| D9 | `52d415e47` | Mobile `typecheck:ci` and `test:ci` (92 passed) | [execution.ts](../../apps/mobile/src/device/execution.ts), [journal.ts](../../apps/mobile/src/device/journal.ts), [native-transport.ts](../../apps/mobile/src/device/native-transport.ts), [device-execution.test.mjs](../../apps/mobile/test/device-execution.test.mjs) | The phone binds each dispatch to its task and authenticated transport. The journal preserves receipts during suspension and lost readback. Same-target dispatch and exact replay are covered by fixtures | Standalone app entry and AppState wiring, native BLE/USB/LAN modules, smart-home provisioning, and physical iPhone/Android acceptance remain |
+| D9 | `52d415e47` and standalone Home Assistant entry | Mobile `typecheck:ci` and `test:ci` (95 passed). Expo production export for iOS and Android. The fixture verifies foreground start, response bounds, redaction and journal recovery | [Standalone screen](../../apps/mobile/src/features/device-tasks/StandaloneDeviceScreen.tsx), [AppState provider](../../apps/mobile/src/device/StandaloneDeviceProvider.tsx), [Local runtime fixture](../../apps/mobile/test/standalone-device-runtime.test.ts), [Native transport boundary](../../apps/mobile/src/device/native-transport.ts) | The phone owns a standalone HTTPS Home Assistant diagnosis. Its token is in memory for the submitted request. The app recovers task records on foreground entry and records normalized evidence without a Gateway | Physical iPhone/Android, native BLE/USB and discovery, and smart-home Wi-Fi provisioning remain |
 | D10 | `842f18e27` | `corepack pnpm --filter @ling-stack/core build:ci`; `corepack pnpm --filter @ling-stack/core typecheck:ci`; `node --test packages/core/test/device-developer.test.ts` | [device-developer.ts](../../packages/core/src/device-developer.ts), [device-developer-store.ts](../../packages/core/src/storage/sqlite/device-developer-store.ts) | Developer session, artifact binding, typed jobs, reattach state and SQLite recovery are implemented | Real PC/mobile project build, native workbench and packaged target acceptance remain |
 | D11 | `842f18e27` | `node --test packages/core/test/device-developer.test.ts`; `node --test packages/daemon/test/device-support-runtime.test.ts` | [device-developer.ts](../../packages/core/src/device-developer.ts), [device-developer-store.ts](../../packages/core/src/storage/sqlite/device-developer-store.ts), [runtime.ts](../../packages/daemon/src/features/device-support/runtime.ts) | Phone-owned proposals, owner checks, idempotency, chunked artifact transfer and daemon SQLite persistence are implemented | Signed peer transport, live PC assistance and physical head-unit acceptance remain |
 | D12 | `aa8a54cf8` | `corepack pnpm --filter @ling-stack/contracts build:ci`; `corepack pnpm --filter @ling-stack/core build:ci`; `corepack pnpm --filter @ling-stack/core typecheck:ci`; `corepack pnpm --filter @ling-stack/daemon build:ci`; `corepack pnpm --filter @ling-stack/daemon typecheck:ci`; `node --test packages/core/test/ling-server-protocol.test.ts packages/daemon/test/ling-server-control-plane.test.ts` | [control-plane.ts](../../packages/daemon/src/features/ling-server/control-plane.ts), [ling-server.ts](../../packages/core/src/ling-server.ts), [ling-server-transport.ts](../../packages/core/src/ling-server-transport.ts), [ling-server-store.ts](../../packages/core/src/storage/sqlite/ling-server-store.ts), [device-server.ts](../../packages/contracts/src/device-server.ts) | Authenticated self-hosted control endpoints, persisted installation/binding metadata, logical peer sessions, route generations, ordered frames, command receipts, resume cursors, route selection, relay failover, revocation state, ephemeral STUN/TURN transport configuration and redacted route diagnostics survive the contract checks; in-memory frame replay is also idempotent | TLS/WSS deployment, WebRTC/libwebrtc, coturn deployment, encrypted network paths and multi-network acceptance remain |

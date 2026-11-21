@@ -55,6 +55,9 @@ export function createAsyncStorageMobileDeviceJournal(storage: MobileStorageLike
     async listAttempts(taskId) {
       return parseAttemptArray(await storage.getItem(attemptsKey(taskId)));
     },
+    async listObservations(taskId) {
+      return parseObservationArray(await storage.getItem(observationKey(taskId)));
+    },
     saveAttempt(record) {
       return write(async () => {
         if (!isDeviceTaskAttemptV1(record.attempt) || !isDeviceActionRequestV1(record.request)) throw new Error("Invalid mobile device attempt");

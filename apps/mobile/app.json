@@ -23,7 +23,10 @@
     ],
     "ios": {
       "bundleIdentifier": "com.lingstack.mobile",
-      "supportsTablet": false
+      "supportsTablet": false,
+      "infoPlist": {
+        "NSLocalNetworkUsageDescription": "允许 Ling 连接你在局域网选择的设备。"
+      }
     },
     "android": {
       "package": "com.lingstack.mobile"

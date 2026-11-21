@@ -21,6 +21,7 @@ export interface MobileReadOnlyPlaybookInput {
   readonly steps: readonly MobileReadOnlyPlaybookStep[];
   readonly transport: MobileDeviceTransport;
   readonly execution: MobileDeviceExecution;
+  readonly signal?: AbortSignal;
 }
 
 export interface MobileReadOnlyPlaybookResult {
@@ -51,6 +52,7 @@ export async function runMobileReadOnlyPlaybook(input: MobileReadOnlyPlaybookInp
       request,
       capabilitySideEffect: "read_only",
       transport: input.transport,
+      signal: input.signal,
       finalizeTask: false,
     });
     attempts.push(attempt);

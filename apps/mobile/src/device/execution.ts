@@ -40,6 +40,7 @@ export interface MobileDeviceJournal {
   saveTask(task: DeviceTaskV1): Promise<void>;
   getAttemptByIdempotency(taskId: string, idempotencyKey: string): Promise<MobileAttemptRecord | undefined>;
   listAttempts(taskId: string): Promise<readonly MobileAttemptRecord[]>;
+  listObservations(taskId: string): Promise<readonly DeviceObservationV1[]>;
   saveAttempt(record: MobileAttemptRecord): Promise<void>;
   saveObservation(taskId: string, observation: DeviceObservationV1): Promise<void>;
 }
@@ -133,9 +134,11 @@ export class MobileDeviceExecution {
     const abort = () => controller.abort();
     signal?.addEventListener("abort", abort, { once: true });
     if (signal?.aborted) abort();
+    const deadline = setTimeout(abort, capability.timeoutMs);
     try {
       return await this.executeOwned(input, capability, needsApproval, controller.signal);
     } finally {
+      clearTimeout(deadline);
       signal?.removeEventListener("abort", abort);
       this.#active.delete(task.id);
     }

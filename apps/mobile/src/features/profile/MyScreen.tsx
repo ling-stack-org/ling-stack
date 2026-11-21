@@ -156,6 +156,13 @@ export function MyScreen({ navigation }: Props) {
           </Pressable>
         </Section>
 
+        <Section title="本机设备">
+          <Pressable accessibilityRole="button" onPress={() => navigation.navigate("StandaloneDevices")} style={styles.settingsRow}>
+            <Text style={styles.settingsLabel}>手机设备诊断</Text>
+            <Ionicons color={theme.text.muted} name="chevron-forward" size={15} />
+          </Pressable>
+        </Section>
+
         <Section title="已绑定的 PC">
           <View style={styles.settingsRow}>
             <View style={styles.settingsCopy}>
