@@ -215,7 +215,7 @@ test("CI tools' TypeScript tests are discovered and typechecked in the required 
 test("complete PR history scans remain fail-closed for mixed PRs while docs-only PRs are filtered", () => {
   const common = job("common-fast");
   assert.doesNotMatch(common, /^    if:/mu, "the common job must not bypass history scans based on file scope");
-  assert.match(workflow, /paths-ignore:\n      - "\*\*\/\*\.md"/u, "documentation-only PRs should not allocate hosted CI");
+  assert.match(workflow, /paths-ignore:\n      - "README\.md"[\s\S]*      - "docs\/\*\*"/u, "documentation-only PRs should not allocate hosted CI");
   assert.match(common, /^      - name: Scan Git history for secrets\n        if: needs\.scope\.outputs\.execution-tier == 'complete'$/mu);
 });
 

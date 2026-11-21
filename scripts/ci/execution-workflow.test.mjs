@@ -176,8 +176,13 @@ test("workflow transformations require every lane for a bounded full package gra
 
 test("PR transitions and full-ci labels trigger validation while full regression is daily", () => {
   assert.match(workflow, /types: \[opened, synchronize, reopened, ready_for_review, converted_to_draft\]/u);
-  assert.match(workflow, /paths-ignore:\n      - "\*\*\/\*\.md"\n      - "docs\/\*\*"\n      - "LICENSE"\n      - "\.github\/CODEOWNERS"\n      - "\.github\/FUNDING\.yml"/u);
-  assert.match(codeqlWorkflow, /paths-ignore:\n      - "\*\*\/\*\.md"\n      - "docs\/\*\*"\n      - "LICENSE"\n      - "\.github\/CODEOWNERS"\n      - "\.github\/FUNDING\.yml"/u);
+  for (const source of [workflow, codeqlWorkflow]) {
+    assert.match(source, /paths-ignore:\n      - "README\.md"[\s\S]*      - "\*\*\/README\.md"[\s\S]*      - "docs\/\*\*"/u);
+    for (const path of ["README.de-DE.md", "README.es-ES.md", "README.fr-FR.md", "README.ja-JP.md",
+      "README.ko-KR.md", "README.pt-BR.md", "README.zh-CN.md", ".github/ISSUE_TEMPLATE/**"]) {
+      assert.ok(source.includes(`      - "${path}"`), path);
+    }
+  }
   assert.match(labelWorkflow, /pull_request_target:\n    types: \[labeled, synchronize\]/u);
   assert.match(labelWorkflow, /gh workflow run ci\.yml --ref "\$HEAD_REF" --repo "\$GITHUB_REPOSITORY"/u);
   assert.match(workflow, /cron: "17 3 \* \* \*"/u);
