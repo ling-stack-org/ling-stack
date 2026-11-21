@@ -2,7 +2,7 @@
 
 Status: tracking plan; D1–D3 core, D4/D5/D7/D8 adapters, D6/D9 execution slices, D10–D22 domain foundations, and the first durable fabric stores landed, field and platform acceptance remain queued
 Owner: Ling platform maintainers
-Last verified: 2026-11-21 (D1–D13 execution foundations plus D14–D22 fabric, safety, lifecycle, context, resource and conformance fixtures)
+Last verified: 2026-11-21 (task reconciliation, Mobile approval and local execution, diagnostic reports, and D14–D22 domain fixtures)
 Document type: staged implementation and acceptance record
 Related design: [Ling Device Support Platform](ling-device-support-platform.md)
 Runtime contract: [Ling Device Support Platform Runtime Contract](ling-device-support-platform-runtime-contract.md)
@@ -150,9 +150,10 @@ D0 covers the design and the implementation plan.
   preserves the attempt as potentially effective and requests adapter cancellation.
 - [x] Require verification for any action that claims to repair or configure a device.
 - [x] Record action response, device verification, and user outcome independently.
-- [x] Preserve unknown outcomes from interrupted dispatch, missing readback and daemon
-  restart. Exact retries return the prior attempt. A reconciliation read uses a current
-  read-only capability, fresh target evidence and a new connection revision.
+- [x] Preserve unknown outcomes from interrupted dispatch, missing readback, authority
+  changes and daemon restart. Exact retries return the prior attempt. A reconciliation
+  read uses a current read-only capability, fresh target evidence and a new connection
+  revision. Late receipts cannot restore success after revocation.
 - [~] Require a supported recovery plan for writes that can strand a previously
   reachable device on its control path. Verify target rollback timers or a separate
   recovery route before accepting this path.
@@ -210,6 +211,8 @@ D0 covers the design and the implementation plan.
 - [~] Implement inventory, process/service, network, log, and software-version
   observations.
 - [x] Expose typed repair actions instead of arbitrary shell execution.
+- [x] Add a loopback-authenticated local PC diagnosis route that returns the structured
+  read-only report and persists the daemon-owned task and observations.
 - [~] Add least-privilege installation, pairing, update, revoke, and uninstall behavior.
 - [x] Implement one low-risk repair flow with explicit verification.
 - [ ] Establish a reproducible Windows network fault on a test PC or VM. Reproduce the
@@ -278,8 +281,8 @@ D0 covers the design and the implementation plan.
 - [x] Provide a bounded local read-only flow that can collect redacted evidence when the
   model service is unavailable.
 - [x] Add replayable fixtures for successful, failed, partial, and unknown outcomes.
-- [~] Surface the structured report through the normal operator and model task views.
-  The report builder and evidence fixtures are ready for that projection.
+- [x] Surface the structured report through the local daemon operator route. The model
+  task projection remains a separate integration gate.
 
 ### Exit evidence
 
@@ -318,8 +321,9 @@ only on a successful install or a model response.
 - [x] Reuse D1 device contracts and D3 task, approval, and recovery rules in a phone
   execution module that works without Gateway pairing. D6 and D9 have independent
   acceptance gates.
-- [~] Add native BLE connection and capability discovery for one documented device
-  profile, including OS permission and device authorization checks.
+- [x] Add the native transport bridge checks for one documented device profile, including
+  OS permission, target identity, connection revision, capability support and required
+  transport permissions. Physical BLE/USB/LAN discovery remains a platform gate.
 - [x] Define the Mobile native transport bridge boundary for BLE, USB, LAN and
   other platform transports, including discovery, OS permission gating, target
   identity checks, connection revisions and capability snapshots.
@@ -329,8 +333,10 @@ only on a successful install or a model response.
   model service is unavailable, using the same Mobile journal and attempt rules.
 - [x] Persist approval, action attempts, and redacted verification evidence on the
   phone. Preserve an unknown result after interruption until state can be checked.
-- [x] Stop new dispatch after foreground authorization ends or the app is suspended.
-  Recheck the target state and permissions on resume.
+- [~] The execution module aborts foreground-gated writes when authorization ends.
+  It journals late receipts, prevents concurrent dispatch to the same target, checks
+  the live connection before dispatch, and finalizes a read-only playbook after all
+  its steps. Wire foreground state and recovery to the standalone app entry.
 - [~] Record the tested phone OS, device model and firmware, and transport. Each later
   phone platform or USB integration gets its own acceptance entry.
 
@@ -692,13 +698,13 @@ recorded per slice as they complete. [Detailed design](ling-device-fabric.md)
 | D0 | #730 | Documentation and link checks | [PR #730](https://github.com/ling-stack-org/ling-stack/pull/730), [Runtime contract](ling-device-support-platform-runtime-contract.md) | Architecture and tracking only | All runtime slices |
 | D1 | `66ee1fbdb` | `corepack pnpm --filter @ling-stack/contracts typecheck` and `test` | [contracts/device.ts](../../packages/contracts/src/device.ts) | Core contracts, validators, transport deployment metadata, and fake adapter fixtures are implemented | Adapter package extraction and cross-process conformance remain |
 | D2 | `cf0146ff7` | `corepack pnpm --filter @ling-stack/core build:ci`; `corepack pnpm --filter @ling-stack/core typecheck:ci`; `node --test packages/core/test/device-support.test.ts` (14 passed) | [device-support.ts](../../packages/core/src/device-support.ts), [device-support-store.ts](../../packages/core/src/storage/sqlite/device-support-store.ts), [runtime.ts](../../packages/daemon/src/features/device-support/runtime.ts) | Registry ownership, revocation, legacy lease migration, refresh fencing, current capability snapshots, stable identities, and broker dispatch are covered by fixtures | External-adapter process isolation remains |
-| D3 | `71f572f0d` | Contracts, Core and Daemon `build:ci` and `typecheck:ci`. `node --test packages/core/test/device-support.test.ts packages/daemon/test/device-support-runtime.test.ts packages/daemon/test/device-remote-facade.test.ts packages/daemon/test/remote-gateway-security.test.mjs` (37 passed) | [device-support.ts](../../packages/core/src/device-support.ts), [device-support-store.ts](../../packages/core/src/storage/sqlite/device-support-store.ts), [device-remote-facade.test.ts](../../packages/daemon/test/device-remote-facade.test.ts) | Atomic approval admission, scoped target leases, revocation, late receipts, redacted transport failures, daemon restart recovery, and current-snapshot reconciliation preserve the dispatch journal | Approval audit projection, remote reconciliation command and physical recovery acceptance remain |
+| D3 | `007704512` | Contracts, Core and Daemon `build:ci` and `typecheck:ci`. `node --test packages/core/test/device-support.test.ts packages/daemon/test/device-support-runtime.test.ts packages/daemon/test/device-remote-facade.test.ts packages/daemon/test/remote-gateway-security.test.mjs` plus the playbook and adapter fixtures (38 passed) | [device-support.ts](../../packages/core/src/device-support.ts), [device-support-store.ts](../../packages/core/src/storage/sqlite/device-support-store.ts), [device-remote-facade.test.ts](../../packages/daemon/test/device-remote-facade.test.ts) | Atomic approval admission, scoped target leases, revocation before and during dispatch, late receipts, redacted transport failures, daemon restart recovery, and current-snapshot reconciliation preserve the dispatch journal | Approval audit projection, remote reconciliation command and physical recovery acceptance remain |
 | D4 | `4a83acfb8` | `node --test packages/daemon/test/device-support-adapters.test.ts` | [home-assistant.ts](../../packages/daemon/src/features/device-support/adapters/home-assistant.ts) | Fixture Home Assistant adapter supports discovery, entity available/unavailable/absent classification, evidence observations, bounded response sizes, and a reload action without persisting the token | Real Home Assistant instance and field action acceptance remain |
-| D5 | `c6d76f419` | `node --test packages/daemon/test/device-support-adapters.test.ts packages/daemon/test/local-pc-executor.test.ts` | [pc.ts](../../packages/daemon/src/features/device-support/adapters/pc.ts), [local-pc-executor.ts](../../packages/daemon/src/features/device-support/adapters/local-pc-executor.ts) | Typed PC executor contract covers inventory, network/services reads, reversible network repair, post-action verification, redacted observations, and fixed local OS command mappings | Windows/Linux/macOS clean-machine and field acceptance remain |
+| D5 | `56e112a84` | `corepack pnpm --filter @ling-stack/daemon build:ci`; `corepack pnpm --filter @ling-stack/daemon typecheck:ci`; `node --test packages/daemon/test/device-support-adapters.test.ts packages/daemon/test/local-pc-executor.test.ts packages/daemon/test/device-support-runtime.test.ts` | [pc.ts](../../packages/daemon/src/features/device-support/adapters/pc.ts), [local-pc-executor.ts](../../packages/daemon/src/features/device-support/adapters/local-pc-executor.ts), [routes.ts](../../packages/daemon/src/features/device-support/routes.ts) | Typed PC executor and loopback diagnosis route expose inventory, network/services observations, a reversible repair boundary and a persisted structured report. The route checks local origin and keeps target credentials out of the response | Windows/Linux/macOS clean-machine, target-side executor install/revoke and field acceptance remain |
 | D6 | `b8daed28a` | Remote Client `build:ci`, `typecheck:ci`, and `test:ci` (11 passed). Mobile `typecheck:ci`, UI contract tests (5 passed), and Expo production exports for iOS and Android. Signed Gateway fixture covers concurrent approve and revoke | [device-facade.ts](../../packages/daemon/src/features/remote-access/device-facade.ts), [PcDeviceTasksScreen.tsx](../../apps/mobile/src/features/device-tasks/PcDeviceTasksScreen.tsx), [client.test.ts](../../packages/remote-client/test/client.test.ts) | Scoped live approval, explicit confirmation, stop while approval is pending, and durable reconnect to the PC-owned task are implemented | Detailed approval presentation, physical iPhone/Android, and PC/mobile packaged acceptance remain |
-| D7 | `fe0dd897d` | Contracts, Core and Daemon `build:ci` and `typecheck:ci`. Core device support and orchestration fixtures (23 passed). Daemon device and Gateway fixtures (13 passed) | [device-playbooks.ts](../../packages/core/src/device-playbooks.ts), [device-diagnosis.ts](../../packages/core/src/device-diagnosis.ts), [device-support.test.ts](../../packages/core/test/device-support.test.ts), [device-support-adapters.test.ts](../../packages/daemon/test/device-support-adapters.test.ts) | PC and Home Assistant templates project current typed facts, referenced hypotheses, journaled outcomes and remaining uncertainty. Replay keeps the original attempt and reevaluates observation freshness | Operator and model view integration and physical target verification remain |
+| D7 | `56e112a84` | `corepack pnpm --filter @ling-stack/core build:ci`; `corepack pnpm --filter @ling-stack/core typecheck:ci`; `node --test packages/core/test/device-support.test.ts packages/daemon/test/device-support-runtime.test.ts` | [device-playbooks.ts](../../packages/core/src/device-playbooks.ts), [device-diagnosis.ts](../../packages/core/src/device-diagnosis.ts), [routes.ts](../../packages/daemon/src/features/device-support/routes.ts) | PC and Home Assistant templates project current typed facts, hypotheses, journaled outcomes and remaining uncertainty. The local daemon route returns a report after persisting its read-only task and observations | Model task projection and physical target verification remain |
 | D8 | `89e8ad39f` | `corepack pnpm --filter @ling-stack/daemon build:ci`; `corepack pnpm --filter @ling-stack/daemon typecheck:ci`; `node --test packages/daemon/test/device-support-adapters.test.ts packages/daemon/test/linux-ssh-executor.test.ts` | [linux-ssh.ts](../../packages/daemon/src/features/device-support/adapters/linux-ssh.ts), [android-adb.ts](../../packages/daemon/src/features/device-support/adapters/android-adb.ts), [obd.ts](../../packages/daemon/src/features/device-support/adapters/obd.ts), [linux-ssh-executor.ts](../../packages/daemon/src/features/device-support/adapters/linux-ssh-executor.ts) | Linux/SSH, typed Android/head-unit ADB and typed OBD adapters expose fixed network, Wi-Fi, package, logs, artifact installation, reboot, vehicle info, PID and DTC operations through the shared contract | Real LAN/hotspot, ADB/OBD transport, parked head-unit and vehicle acceptance remain |
-| D9 | `0cf5b9388` | `corepack pnpm --filter @ling-stack/mobile typecheck:ci`; `node --experimental-strip-types --test apps/mobile/test/native-transport.test.mjs apps/mobile/test/device-execution.test.mjs` | [execution.ts](../../apps/mobile/src/device/execution.ts), [journal.ts](../../apps/mobile/src/device/journal.ts), [native-transport.ts](../../apps/mobile/src/device/native-transport.ts), [playbook.ts](../../apps/mobile/src/device/playbook.ts) | Phone-owned journal, native transport bridge boundary, OS permission and target checks, deterministic local read-only playbooks, exact approvals, foreground gate, idempotent replay, and interrupted-dispatch recovery are implemented | Platform-specific BLE/USB/LAN modules, smart-home setup wiring, real phone/device acceptance, and physical OS evidence remain |
+| D9 | `52d415e47` | Mobile `typecheck:ci` and `test:ci` (92 passed) | [execution.ts](../../apps/mobile/src/device/execution.ts), [journal.ts](../../apps/mobile/src/device/journal.ts), [native-transport.ts](../../apps/mobile/src/device/native-transport.ts), [device-execution.test.mjs](../../apps/mobile/test/device-execution.test.mjs) | The phone binds each dispatch to its task and authenticated transport. The journal preserves receipts during suspension and lost readback. Same-target dispatch and exact replay are covered by fixtures | Standalone app entry and AppState wiring, native BLE/USB/LAN modules, smart-home provisioning, and physical iPhone/Android acceptance remain |
 | D10 | `842f18e27` | `corepack pnpm --filter @ling-stack/core build:ci`; `corepack pnpm --filter @ling-stack/core typecheck:ci`; `node --test packages/core/test/device-developer.test.ts` | [device-developer.ts](../../packages/core/src/device-developer.ts), [device-developer-store.ts](../../packages/core/src/storage/sqlite/device-developer-store.ts) | Developer session, artifact binding, typed jobs, reattach state and SQLite recovery are implemented | Real PC/mobile project build, native workbench and packaged target acceptance remain |
 | D11 | `842f18e27` | `node --test packages/core/test/device-developer.test.ts`; `node --test packages/daemon/test/device-support-runtime.test.ts` | [device-developer.ts](../../packages/core/src/device-developer.ts), [device-developer-store.ts](../../packages/core/src/storage/sqlite/device-developer-store.ts), [runtime.ts](../../packages/daemon/src/features/device-support/runtime.ts) | Phone-owned proposals, owner checks, idempotency, chunked artifact transfer and daemon SQLite persistence are implemented | Signed peer transport, live PC assistance and physical head-unit acceptance remain |
 | D12 | `aa8a54cf8` | `corepack pnpm --filter @ling-stack/contracts build:ci`; `corepack pnpm --filter @ling-stack/core build:ci`; `corepack pnpm --filter @ling-stack/core typecheck:ci`; `corepack pnpm --filter @ling-stack/daemon build:ci`; `corepack pnpm --filter @ling-stack/daemon typecheck:ci`; `node --test packages/core/test/ling-server-protocol.test.ts packages/daemon/test/ling-server-control-plane.test.ts` | [control-plane.ts](../../packages/daemon/src/features/ling-server/control-plane.ts), [ling-server.ts](../../packages/core/src/ling-server.ts), [ling-server-transport.ts](../../packages/core/src/ling-server-transport.ts), [ling-server-store.ts](../../packages/core/src/storage/sqlite/ling-server-store.ts), [device-server.ts](../../packages/contracts/src/device-server.ts) | Authenticated self-hosted control endpoints, persisted installation/binding metadata, logical peer sessions, route generations, ordered frames, command receipts, resume cursors, route selection, relay failover, revocation state, ephemeral STUN/TURN transport configuration and redacted route diagnostics survive the contract checks; in-memory frame replay is also idempotent | TLS/WSS deployment, WebRTC/libwebrtc, coturn deployment, encrypted network paths and multi-network acceptance remain |
