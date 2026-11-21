@@ -27,7 +27,6 @@ test("native release reviews require only their build dependency and macOS publi
     assert.equal(scope.macosHelper, false);
     assert.equal(scope.daemon, false);
     assert.deepEqual(scope.daemonPlatforms, []);
-    assert.equal(scope.web, false);
     assert.equal(scope.assurance, false);
     assert.equal(scope.dependencyPolicy, false);
     const plan = await createTestPlan(scope.testPackages);
@@ -39,10 +38,9 @@ test("native release reviews require only their build dependency and macOS publi
 test("release metadata cannot hide mixed product inputs, native source or unknown neighbors", () => {
   const web = classifyChangedFiles({ files: [...reviews, "apps/web/src/App.tsx"] });
   assert.equal(web.mode, "affected");
-  assert.equal(web.web, true);
   assert.equal(web.nativeRelease, true);
   assert.equal(web.daemon, false);
-  assert.ok(web.testPackages.includes("@ling-stack/web"));
+  assert.deepEqual(web.testPackages, ["@ling-stack/cli", "@ling-stack/localization"]);
   assert.ok(!web.testPackages.includes("@ling-stack/daemon"));
   const native = classifyChangedFiles({ files: [...reviews, "native/sandbox/src/main.rs"] });
   assert.equal(native.daemon, true);
@@ -77,11 +75,11 @@ test("the aggregate rejects skipped, failed and cancelled release contracts and 
   const scope = classifyChangedFiles({ files: reviews });
   const results: Record<string, string> = { SCOPE: "success", COMMON: "success", BUILD: "success", MACOS_NATIVE: "success",
     DEPENDENCY: "skipped", ASSURANCE: "skipped", TYPECHECK: "skipped", UNIT: "skipped", DAEMON: "skipped",
-    LINUX_CONTRACT: "skipped", WEB_SMOKE: "skipped" };
+    LINUX_CONTRACT: "skipped" };
   const check = (overrides: Record<string, string> = {}) => assertCiResults({ tier: "complete", mode: scope.mode,
     assurance: scope.assurance, build: scope.packages.length > 0, dependency: scope.dependencyPolicy,
     typecheck: scope.typecheckPackages.length > 0, unit: false, daemon: scope.daemon, linuxContract: scope.linuxContract, macosNative: scope.macosNative,
-    web: scope.web, results: { ...results, ...overrides } });
+    results: { ...results, ...overrides } });
   assert.equal(check(), true);
   for (const lane of ["BUILD", "MACOS_NATIVE"]) {
     for (const result of ["skipped", "failure", "cancelled", ""]) {

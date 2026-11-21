@@ -4,9 +4,10 @@ import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { packageValidationScope } from "./package-validation-scope.mjs";
 import { inspectProductVersionChange } from "./product-version-scope.mjs";
-import { planWebSmoke } from "./web-smoke.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const LOCAL_OUTPUT_DIRECTORY = "output/";
+const WEB_PACKAGE = "@ling-stack/web";
 
 const DOCUMENTATION_ROOT_FILES = new Set([
   "README.md",
@@ -66,7 +67,7 @@ const DAEMON_PLATFORMS = ["linux", "darwin"];
 let daemonPlatformManifest;
 // The catalog importer reads Web's AST helper, locale sources and tsconfig
 // without a manifest dependency. Keep that validation consumer in the graph.
-const VALIDATION_CONSUMERS = new Map([["@ling-stack/web", ["@ling-stack/localization"]]]);
+const VALIDATION_CONSUMERS = new Map([[WEB_PACKAGE, ["@ling-stack/localization"]]]);
 // Offline calibration loads the Core grader; the external consumer builds these SDK producers.
 const ASSURANCE_PACKAGES = new Set(["@ling-stack/core", "@ling-stack/localization",
   "@ling-stack/contracts", "@ling-stack/plugin-sdk", "@ling-stack/api-client"]);
@@ -79,9 +80,9 @@ function isAssurancePath(file) {
  * Classify a pull request by the narrowest safe CI scope.
  *
  * The classifier is intentionally conservative: a path that is not recognized
- * as documentation, allowlisted maintenance, or a workspace package escalates
- * to the full CI lane.
- * @param {{files: string[], eventName?: string, forceFull?: boolean, packageEntries?: PackageEntry[], basePackageEntries?: PackageEntry[], versionChange?: ReturnType<typeof inspectProductVersionChange>}} input
+ * as documentation, allowlisted maintenance, verified local output cleanup, or
+ * a workspace package escalates to the full CI lane.
+ * @param {{files: string[], deletedOutputFiles?: string[], eventName?: string, forceFull?: boolean, packageEntries?: PackageEntry[], basePackageEntries?: PackageEntry[], versionChange?: ReturnType<typeof inspectProductVersionChange>}} input
  * @returns {CiScope}
  */
 export function classifyChangedFiles(input) {
@@ -96,22 +97,26 @@ export function classifyChangedFiles(input) {
     return buildScope("full", files, packages, "non-PR event or explicit full CI");
   }
 
-  if (files.some((file) => !isDocumentationPath(file) && !isMaintenancePath(file) && !isAssurancePath(file)
+  // Keep deleted local artifacts in the audit while narrowing product selection.
+  const deletedOutputs = new Set(input.deletedOutputFiles?.filter(file => file.startsWith(LOCAL_OUTPUT_DIRECTORY)));
+  const scopeFiles = deletedOutputs.size === 0 ? files : normalizeFiles(input.files.filter(file => !deletedOutputs.has(file)));
+
+  if (scopeFiles.some((file) => !isDocumentationPath(file) && !isMaintenancePath(file) && !isAssurancePath(file)
     && !versionPaths.has(file)
     && FORCE_FULL_PATTERNS.some((pattern) => pattern.test(file)))) {
     return buildScope("full", files, packages, "root, workflow, dependency, or build configuration change");
   }
 
-  if (files.every((file) => isDocumentationPath(file) || isMaintenancePath(file))) {
-    const reason = files.some(isMaintenancePath)
-      ? "documentation and allowlisted maintenance checks only"
-      : "documentation and documentation assets only";
+  if (scopeFiles.every((file) => isDocumentationPath(file) || isMaintenancePath(file))) {
+    const reason = deletedOutputs.size > 0 ? "verified local output cleanup and common checks only"
+      : scopeFiles.some(isMaintenancePath) ? "documentation and allowlisted maintenance checks only"
+        : "documentation and documentation assets only";
     return buildScope("docs", files, packages, reason);
   }
 
   const validationManifests = new Set();
   const validationConfigs = new Set();
-  for (const file of files.filter((file) => file.endsWith("/package.json"))) {
+  for (const file of scopeFiles.filter((file) => file.endsWith("/package.json"))) {
     const directory = dirname(file);
     const current = packages.find((entry) => entry.directory === directory);
     const previous = input.basePackageEntries?.find((entry) => entry.directory === directory);
@@ -123,7 +128,7 @@ export function classifyChangedFiles(input) {
     if (current.scriptsFingerprint !== previous.scriptsFingerprint) {
       const validation = packageValidationScope({ current: current.manifest, previous: previous.manifest,
         directory, root: repositoryRoot, repositoryFiles: listRepositoryFiles(repositoryRoot),
-        previousFiles: previous.files, changedFiles: files });
+        previousFiles: previous.files, changedFiles: scopeFiles });
       if (!validation || !isSupportedTestPackage(directory) || !isSupportedTypecheckPackage(directory)) {
         return buildScope("full", files, packages, "unverified or changed workspace package identity or validation scripts");
       }
@@ -137,7 +142,7 @@ export function classifyChangedFiles(input) {
   const changedSourceEntries = new Set();
   const unresolvedFiles = [];
 
-  for (const file of files) {
+  for (const file of scopeFiles) {
     if (isDocumentationPath(file) || isMaintenancePath(file) || isAssurancePath(file)) continue;
     if (versionPaths.has(file)) continue;
     if (NATIVE_RELEASE_REVIEW_FILES.has(file)) continue;
@@ -157,11 +162,11 @@ export function classifyChangedFiles(input) {
 
   // The root release number is embedded in the production Web build.
   if (versionPaths.size > 0) {
-    if (!packages.some(entry => entry.name === "@ling-stack/web")) {
+    if (!packages.some(entry => entry.name === WEB_PACKAGE)) {
       return buildScope("full", files, packages, "a product version consumer could not be verified");
     }
-    changedEntries.add("@ling-stack/web");
-    changedSourceEntries.add("@ling-stack/web");
+    changedEntries.add(WEB_PACKAGE);
+    changedSourceEntries.add(WEB_PACKAGE);
   }
 
   // The native helper lives outside a workspace package, but its build and
@@ -195,12 +200,12 @@ export function classifyChangedFiles(input) {
   }
 
   const testSupportImporters = findChangedValidationImporters({
-    files,
+    files: scopeFiles,
     packages,
   });
   for (const name of testSupportImporters) affectedNames.add(name);
 
-  const affectedEntries = packages.filter((entry) => affectedNames.has(entry.name));
+  const affectedEntries = packages.filter((entry) => entry.name !== WEB_PACKAGE && affectedNames.has(entry.name));
   const unsupportedAffected = affectedEntries.filter((entry) => !isSupportedAffectedPackage(entry));
   if (unsupportedAffected.length > 0) {
     return buildScope("full", files, packages, `platform package requires the full supported CI lane: ${unsupportedAffected.map((entry) => entry.name).join(", ")}`);
@@ -215,7 +220,7 @@ export function classifyChangedFiles(input) {
     .map((entry) => entry.name)
     .sort();
   const daemonPlatforms = affectedNames.has("@ling-stack/daemon")
-    ? selectDaemonPlatforms({ files, changedSourceEntries, testSupportImporters })
+    ? selectDaemonPlatforms({ files: scopeFiles, changedSourceEntries, testSupportImporters })
     : [];
   const linuxContract = affectedNames.has("@ling-stack/daemon") && daemonPlatforms.includes("linux");
 
@@ -226,17 +231,14 @@ export function classifyChangedFiles(input) {
       ...(nativeRelease ? ["@ling-stack/daemon"] : [])])].sort(),
     testPackages,
     typecheckPackages,
-    dependencyPolicy: files.some((file) => file.endsWith("/package.json") || DEPENDENCY_CHECK_FILES.has(file)),
-    assurance: files.some(isAssurancePath) || sourceEntries.some(name => ASSURANCE_PACKAGES.has(name)),
+    dependencyPolicy: scopeFiles.some((file) => file.endsWith("/package.json") || DEPENDENCY_CHECK_FILES.has(file)),
+    assurance: scopeFiles.some(isAssurancePath) || sourceEntries.some(name => ASSURANCE_PACKAGES.has(name)),
     daemon: affectedNames.has("@ling-stack/daemon"),
     daemonPlatforms,
     linuxContract,
     macosNative: nativeSurfaceChanged || nativeRelease,
     macosHelper: nativeSurfaceChanged,
     nativeRelease,
-    web: affectedNames.has("@ling-stack/web"),
-    webSmoke: affectedNames.has("@ling-stack/web") ? planWebSmoke({ files: files.filter(file => !isDocumentationPath(file) && !isMaintenancePath(file)
-      && !versionPaths.has(file)) }) : undefined,
     productVersion: versionPaths.size > 0 ? input.versionChange?.version : undefined,
     reason: versionPaths.size > 0 ? "verified product version fields and affected workspace inputs"
       : nativeRelease && changedEntries.size === 0 ? "native release review inputs and build dependencies"
@@ -247,7 +249,7 @@ export function classifyChangedFiles(input) {
 }
 
 /** @typedef {{name: string, directory: string, dependencies: string[], hasTestScript: boolean, hasTypecheckScript: boolean, scriptsFingerprint?: string, manifest?: object, files?: string[]}} PackageEntry */
-/** @typedef {{mode: "docs"|"affected"|"full", files: string[], packages: string[], testPackages: string[], typecheckPackages: string[], dependencyPolicy: boolean, assurance: boolean, daemon: boolean, daemonPlatforms: string[], linuxContract: boolean, macosNative: boolean, macosHelper: boolean, nativeRelease: boolean, web: boolean, webSmoke?: ReturnType<typeof planWebSmoke>, productVersion?: string, reason: string}} CiScope */
+/** @typedef {{mode: "docs"|"affected"|"full", files: string[], packages: string[], testPackages: string[], typecheckPackages: string[], dependencyPolicy: boolean, assurance: boolean, daemon: boolean, daemonPlatforms: string[], linuxContract: boolean, macosNative: boolean, macosHelper: boolean, nativeRelease: boolean, productVersion?: string, reason: string}} CiScope */
 
 /** @param {string} value */
 function normalizePath(value) {
@@ -261,6 +263,7 @@ function normalizeFiles(files) {
 
 /** @param {string} file */
 function isDocumentationPath(file) {
+  if (file.startsWith(LOCAL_OUTPUT_DIRECTORY)) return false;
   if (file.startsWith("docs/")
     || DOCUMENTATION_ROOT_FILES.has(file)
     || /(?:^|\/)README\.md$/iu.test(file)
@@ -495,23 +498,21 @@ function readFileIfText(file) {
 
 /** @param {"docs"|"affected"|"full"} mode @param {string[]} files @param {PackageEntry[]} packages @param {string} reason */
 function buildScope(mode, files, packages, reason) {
-  const names = mode === "full" ? packages.map((entry) => entry.name).sort() : [];
+  const selected = mode === "full" ? packages.filter((entry) => entry.name !== WEB_PACKAGE) : [];
   return {
     mode,
     files,
-    packages: names,
-    testPackages: mode === "full" ? packages.filter((entry) => entry.hasTestScript && isSupportedTestPackage(entry.directory)).map((entry) => entry.name).sort() : [],
-    typecheckPackages: mode === "full" ? packages.filter((entry) => entry.hasTypecheckScript && isSupportedTypecheckPackage(entry.directory)).map((entry) => entry.name).sort() : [],
+    packages: selected.map((entry) => entry.name).sort(),
+    testPackages: selected.filter((entry) => entry.hasTestScript && isSupportedTestPackage(entry.directory)).map((entry) => entry.name).sort(),
+    typecheckPackages: selected.filter((entry) => entry.hasTypecheckScript && isSupportedTypecheckPackage(entry.directory)).map((entry) => entry.name).sort(),
     dependencyPolicy: mode === "full",
     assurance: mode === "full",
-    daemon: mode === "full" || names.includes("@ling-stack/daemon"),
+    daemon: mode === "full",
     daemonPlatforms: mode === "full" ? [...DAEMON_PLATFORMS] : [],
     linuxContract: mode === "full",
     macosNative: mode === "full" || files.some(isMacosNativePath),
     macosHelper: mode === "full" || files.some(isMacosNativePath),
     nativeRelease: files.some(file => NATIVE_RELEASE_REVIEW_FILES.has(file)),
-    web: mode === "full" || names.includes("@ling-stack/web"),
-    webSmoke: mode === "full" ? planWebSmoke({ files, full: true }) : undefined,
     reason,
   };
 }
@@ -531,6 +532,7 @@ const args = parseArgs(process.argv.slice(2));
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const eventName = args.event ?? process.env.GITHUB_EVENT_NAME ?? "pull_request";
   let files;
+  let deletedOutputFiles;
   let basePackageEntries;
   let versionChange;
   if (args.files) {
@@ -539,10 +541,15 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const git = (argv) => execFileSync("git", argv, { cwd: repositoryRoot, encoding: "utf8" });
     const base = git(["merge-base", args.base, args.head]).trim();
     files = git(["diff", "--no-renames", "--name-only", "-z", base, args.head, "--"]).split("\0").filter(Boolean);
+    if (files.some(file => file.startsWith(LOCAL_OUTPUT_DIRECTORY))) {
+      deletedOutputFiles = git(["diff", "--no-renames", "--diff-filter=D", "--name-only", "-z",
+        base, args.head, "--", LOCAL_OUTPUT_DIRECTORY]).split("\0").filter(Boolean);
+    }
     if (files.some((file) => file.endsWith("/package.json"))) basePackageEntries = discoverPackages(repositoryRoot, base);
     versionChange = inspectProductVersionChange({ root: repositoryRoot, base, head: args.head, files });
   } else {
     files = [];
   }
-  console.log(JSON.stringify(classifyChangedFiles({ files, eventName, forceFull: args["force-full"] === "true", basePackageEntries, versionChange })));
+  console.log(JSON.stringify(classifyChangedFiles({ files, deletedOutputFiles, eventName,
+    forceFull: args["force-full"] === "true", basePackageEntries, versionChange })));
 }
