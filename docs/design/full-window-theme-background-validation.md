@@ -51,7 +51,7 @@ App 根部只有一张装饰图片，使用统一 `cover center`；普通工作�
 
 ```sh
 corepack pnpm --filter @ling-stack/ui-react build
-corepack pnpm --filter @ling-stack/ui-react exec node --test test/background-model.test.mjs
+corepack pnpm --filter @ling-stack/ui-react exec node --test test/background-model.test.ts
 corepack pnpm --filter @ling-stack/localization test
 corepack pnpm --filter @ling-stack/web typecheck
 corepack pnpm --filter @ling-stack/web lint

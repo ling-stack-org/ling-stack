@@ -4,7 +4,7 @@ Status: active compatibility contract
 Owner: UI platform maintainers
 Last verified: 2026-10-23
 Code anchors: `packages/ui-react/src/`, `apps/web/src/shared/ui/`, `apps/web/src/styles/`
-Test anchors: `packages/ui-react/test/package-boundary.test.mjs`, `apps/web/e2e/ui2-components-zero-ref-prune.spec.ts`
+Test anchors: `packages/ui-react/test/package-boundary.test.ts`, `apps/web/e2e/ui2-components-zero-ref-prune.spec.ts`
 
 ## Current State
 

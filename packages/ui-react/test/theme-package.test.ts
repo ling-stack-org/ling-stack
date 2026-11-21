@@ -4,6 +4,7 @@ import {
   LING_THEME_PACKAGE_LIMITS,
   normalizeThemePackagePath,
   validateThemePackageIndex,
+  type LingThemePackageIndexEntry,
 } from "../dist/index.js";
 
 test("theme package index accepts one canonical manifest and one preview asset", () => {
@@ -56,7 +57,7 @@ test("theme package path normalization is strict and platform-independent", () =
   }
 });
 
-function entry(path, uncompressedBytes, kind = "file") {
+function entry(path: string, uncompressedBytes: number, kind: LingThemePackageIndexEntry["kind"] = "file"): LingThemePackageIndexEntry {
   return {
     compressedBytes: uncompressedBytes,
     crc32: 0,

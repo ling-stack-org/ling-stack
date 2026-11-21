@@ -4,7 +4,7 @@ import { INITIAL_BACKGROUND, parseBackgroundPreference, parseBackgroundAsset, in
   resolveBackgroundPanelAlpha, resolveBackgroundSidebarAlpha, resolveBackgroundWorkspaceAlpha, PresentationProfileRegistry,
   backgroundOpacityFromStrength, backgroundPayloadDigest, backgroundVideoMimeType, verifyBackgroundCommit,
   backgroundOutputDimensions, backgroundThemeProfile, commitBackgroundPreference, backgroundSurfaceOpacity } from '../dist/theme/index.js';
-const chunk=(type,bytes)=>Buffer.concat([Buffer.from([0,0,0,bytes.length]),Buffer.from(type),bytes,Buffer.alloc(4)]);
+const chunk=(type: string, bytes: Uint8Array)=>Buffer.concat([Buffer.from([0,0,0,bytes.length]),Buffer.from(type),bytes,Buffer.alloc(4)]);
 
 test('component material baselines participate without bypassing contrast protection', async () => {
  const {ThemeRegistry, backgroundRecipe} = await import('../dist/theme/index.js');
@@ -28,7 +28,7 @@ test('component material baselines participate without bypassing contrast protec
  assert.equal(resolveBackgroundSidebarAlpha({...input, minimumAlpha: 2}), 1);
  assert.equal(resolveBackgroundSidebarAlpha({...input, sidebar: 'unknown', minimumAlpha: .8}), 1);
 });
-function png(w=10,h=10,extra=[]) { const ihdr=Buffer.alloc(13); ihdr.writeUInt32BE(w); ihdr.writeUInt32BE(h,4); return Buffer.concat([Buffer.from('89504e470d0a1a0a','hex'),chunk('IHDR',ihdr),...extra,chunk('IDAT',Buffer.from([1])),chunk('IEND',Buffer.alloc(0))]); }
+function png(w=10,h=10,extra: Uint8Array[]=[]) { const ihdr=Buffer.alloc(13); ihdr.writeUInt32BE(w); ihdr.writeUInt32BE(h,4); return Buffer.concat([Buffer.from('89504e470d0a1a0a','hex'),chunk('IHDR',ihdr),...extra,chunk('IDAT',Buffer.from([1])),chunk('IEND',Buffer.alloc(0))]); }
 function jpeg(w=10,h=10) {
  const sof=Buffer.from([0xff,0xc0,0,11,8,(h>>8)&0xff,h&0xff,(w>>8)&0xff,w&0xff,3,1,0x11,0]);
  const scan=Buffer.from([0xff,0xda,0,8,0,0,0,0,0,0,0,0xff,0xd9]);
@@ -49,7 +49,7 @@ test('BG-01/02 strict state, IDs, bounded predecode and animated containers',()=
 test('BG-05/06/07/08 opt-in surface policy and conservative material',()=>{
  const registry=new PresentationProfileRegistry();
  assert.equal(registry.resolveSurface('ling-standard','home',{userBackground:true,viewportWidth:1440}).surfaceRecipe,'translucent');
- for(const surface of ['settings','diagnostics','approvals']) {
+ for(const surface of ['settings','diagnostics','approvals'] as const) {
   const policy=registry.resolveSurface('ling-standard',surface,{userBackground:true,viewportWidth:1440});
   assert.notEqual(policy.surfaceRecipe,'translucent');
   assert.equal(policy.artwork,'off');
@@ -68,7 +68,7 @@ test('BG-05/06/07/08 opt-in surface policy and conservative material',()=>{
  assert.ok(resolveBackgroundPanelAlpha({app:'#ffffff',panel:'#ffffff',opacity:.75,foregrounds:[{color:'#767676',minimum:4.5}]})>=.8);
 });
 test('BG-11/13 canonical payload digest and exact request parser',async()=>{
- const input={expectedRevision:0,selection:{kind:'none'},opacity:.6};
+ const input={expectedRevision:0,selection:{kind:'none' as const},opacity:.6};
  const req={...input,requestId:'test-1',payloadDigest:await backgroundPayloadDigest(input)};
  await verifyBackgroundCommit(req);
  await assert.rejects(()=>verifyBackgroundCommit({...req,opacity:.75}));
@@ -140,8 +140,8 @@ test('BG-06 every theme increases total canvas exposure across the full range an
 });
 
 test('photo storage bounds both raw RGBA size and long edge without upscaling or changing aspect',()=>{
- for(const [input,expected] of [[[4096,2304],[2560,1440]],[[4000,4000],[2000,2000]],[[2304,4096],[1440,2560]],[[8192,1],[2560,1]],[[3,2],[3,2]]]) {
-  assert.deepEqual(backgroundOutputDimensions(...input),{width:expected[0],height:expected[1]});
+ for(const [input,expected] of [[[4096,2304],[2560,1440]],[[4000,4000],[2000,2000]],[[2304,4096],[1440,2560]],[[8192,1],[2560,1]],[[3,2],[3,2]]] as const) {
+  assert.deepEqual(backgroundOutputDimensions(input[0],input[1]),{width:expected[0],height:expected[1]});
  }
  assert.throws(()=>backgroundOutputDimensions(5000,4000));
 });
@@ -149,7 +149,7 @@ test('photo storage bounds both raw RGBA size and long edge without upscaling or
 test('BG-H3 legacy migration and per-theme profiles preserve other themes and canonical receipts',async()=>{
  const old=parseBackgroundPreference({schemaVersion:2,revision:4,selection:{kind:'none'},opacity:.75});
  assert.equal(backgroundThemeProfile(old,'ling-journey').opacity,.75);
- const input={expectedRevision:4,selection:{kind:'none'},opacity:.4,presentation:{themeId:'ling-journey',focusX:85,focusY:20,paused:true}};
+ const input={expectedRevision:4,selection:{kind:'none' as const},opacity:.4,presentation:{themeId:'ling-journey',focusX:85,focusY:20,paused:true}};
  const request={...input,requestId:'profile',payloadDigest:await backgroundPayloadDigest(input)};
  await verifyBackgroundCommit(request);
  for(const presentation of [{...input.presentation,focusX:84},{...input.presentation,paused:false},{...input.presentation,themeId:'ling-dark'}]) {
@@ -167,5 +167,5 @@ test('BG-H3 legacy migration and per-theme profiles preserve other themes and ca
   assert.throws(()=>parseBackgroundPreference({...old,profiles:{'ling-dark':profile}}));
  }
  assert.equal(backgroundSurfaceOpacity(1,'home'),1);
- for(const surface of ['conversation','channel','management']) assert.equal(backgroundSurfaceOpacity(1,surface),.45);
+ for(const surface of ['conversation','channel','management'] as const) assert.equal(backgroundSurfaceOpacity(1,surface),.45);
 });
