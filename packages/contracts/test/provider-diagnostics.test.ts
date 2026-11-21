@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isRunEventData, isRunEventType } from "../dist/index.js";
+import {
+  isRunEventData,
+  isRunEventType,
+  type RunEventDataByType,
+  type RunProviderErrorDiagnostic,
+} from "../dist/index.js";
 
-const errorDiagnostic = { schemaVersion: 1, category: "rate_limited", basis: "sdk_error_marker", httpStatus: 429 };
+const errorDiagnostic = { schemaVersion: 1, category: "rate_limited", basis: "sdk_error_marker", httpStatus: 429 } satisfies RunProviderErrorDiagnostic;
 const retry = { policyVersion: "pi_sdk_retry_v1", scope: "assistant", phase: "scheduled",
-  retryAttempt: 1, maxRetryAttempts: 1, delayMs: 2_000, errorDiagnostic, attemptId: "host-attempt" };
+  retryAttempt: 1, maxRetryAttempts: 1, delayMs: 2_000, errorDiagnostic, attemptId: "host-attempt" } satisfies RunEventDataByType["provider_retry"];
 
 test("durable provider retry facts preserve SDK retry count and Host attempt separately", () => {
   assert.equal(isRunEventType("provider_retry"), true);
@@ -34,7 +39,7 @@ test("public retry diagnostics reject hidden fields, inheritance and accessors w
   let calls = 0;
   const accessor = { ...errorDiagnostic, get code() { calls += 1; return "ETIMEDOUT"; } };
   const hidden = Object.defineProperty({ ...errorDiagnostic }, "privateBody", { value: "PRIVATE", enumerable: false });
-  const inherited = Object.create(errorDiagnostic);
+  const inherited: unknown = Object.create(errorDiagnostic);
   const symbol = { ...errorDiagnostic, [Symbol("privateBody")]: "PRIVATE" };
   for (const malformed of [accessor, hidden, inherited, symbol]) {
     assert.equal(isRunEventData("message_end", { errorDiagnostic: malformed }), false);

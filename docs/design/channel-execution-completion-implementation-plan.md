@@ -1804,7 +1804,7 @@ would reduce file count but recreate duplicate authority.
 | --- | --- | --- |
 | Durable type | `packages/contracts/src/conversation-continuity.ts` | export the policy union; add it to durable operations |
 | Durable validation | `packages/contracts/src/conversation-continuity-validation.ts` | require daemon target refs, require/forbid policy by kind and target, and keep graph validation and strict-key rejection |
-| Contract regression | `packages/contracts/test/conversation-continuity-v2.test.mjs` | valid exact/executable plus malformed, missing, misplaced, and legacy-without-policy cases |
+| Contract regression | `packages/contracts/test/conversation-continuity-v2.test.ts` | valid exact/executable plus malformed, missing, misplaced, and legacy-without-policy cases |
 | Command policy helper | new `packages/daemon/src/features/channels/command-operation-match.ts` | own allowlist, exact/executable materialization, quote-aware simple-command parsing, and policy matching |
 | Model/daemon boundary | `packages/daemon/src/features/channels/channel-intent-selector.ts` | parse a non-authoritative model shape, derive policy from accepted text, clarify when no bounded identity exists |
 | Selector integration | `packages/daemon/test/channel-workspace.test.mjs` | cover Node natural language, explicit exact command, discussion-only Node, and persisted policy |

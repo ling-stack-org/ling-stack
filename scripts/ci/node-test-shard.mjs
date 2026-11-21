@@ -19,9 +19,10 @@ export async function createTestIsolation(label, temporaryDirectory = tmpdir()) 
   const root = await mkdtemp(join(temporaryDirectory, `ling-stack-test-${label}-`));
   const home = join(root, "home");
   const workspace = join(root, "workspace");
-  try { await Promise.all([mkdir(home), mkdir(workspace)]); }
+  const temp = join(root, "tmp");
+  try { await Promise.all([mkdir(home), mkdir(workspace), mkdir(temp)]); }
   catch (error) { await rm(root, { recursive: true, force: true }); throw error; }
-  return { root, home, workspace };
+  return { root, home, workspace, temp };
 }
 
 /** Each file owns an isolated runtime and bounded process cleanup. */
@@ -42,7 +43,7 @@ async function runFile(file, { cwd, shard, worker, suite, temporaryDirectory, st
       durationMs: Math.max(1, performance.now() - started) };
     const token = randomUUID();
     const env = { ...process.env, LING_STACK_HOME: isolation.home, LING_STACK_DEFAULT_WORKSPACE_CWD: isolation.workspace,
-      LING_STACK_CI_TEST_OWNER: token };
+      LING_STACK_CI_TEST_OWNER: token, TMPDIR: isolation.temp, TMP: isolation.temp, TEMP: isolation.temp };
     delete env.NODE_TEST_CONTEXT;
     const child = spawn(process.execPath, ["--test", "--test-concurrency=1", file], {
       cwd, env, detached: true, stdio: ["ignore", "pipe", "pipe"],

@@ -598,7 +598,7 @@ Run 的事件序号、频道的 display position。工具引用的 source item �
 | S-06 | settings/会话覆盖、CLI、Desktop 构建与平台移交 | configured 与 effective 分开；macOS/Windows 各自验收 |
 
 S 表是平台细计划 §10 每一行的分组索引，不能以六个概括用例删减其逐项断言。
-已建立 packages/contracts/test/user-input.test.mjs、packages/core/test/user-input-store.test.mjs。
+已建立 packages/contracts/test/user-input.test.ts、packages/core/test/user-input-store.test.mjs。
 其他建议测试落点（尚未建立）：
 daemon/test/user-input-continuation.test.mjs、runner-pi/test/user-input.test.mjs、
 web/test/user-input-presentation.test.mjs、web/e2e/user-input.spec.ts。
