@@ -4,6 +4,8 @@ import {
   createPcSoftwareDiagnosisPlaybook,
   DEFAULT_WORKSPACE_ID,
   DeviceCapabilityBroker,
+  HardwareProtocolWorkbench,
+  modbusRtuRegisterCodec,
   runDeviceReadOnlyPlaybook,
   SqliteDeviceDeveloperStore,
   SqliteDeviceFabricStore,
@@ -20,6 +22,7 @@ export interface DeviceSupportRuntime {
   readonly fabricStore: SqliteDeviceFabricStore;
   readonly developerStore: SqliteDeviceDeveloperStore;
   readonly protocolStore: SqliteDeviceProtocolStore;
+  readonly protocolWorkbench: HardwareProtocolWorkbench;
   readonly broker: DeviceCapabilityBroker;
   readonly remoteFacade: RemoteDeviceFacade;
   diagnoseLocalPc(): Promise<DevicePlaybookRunResultV1>;
@@ -38,6 +41,17 @@ export function createDeviceSupportRuntime(options: { readonly databasePath: str
   const fabricStore = new SqliteDeviceFabricStore({ databasePath: options.databasePath });
   const developerStore = new SqliteDeviceDeveloperStore({ databasePath: options.databasePath });
   const protocolStore = new SqliteDeviceProtocolStore({ databasePath: options.databasePath });
+  const protocolWorkbench = new HardwareProtocolWorkbench();
+  try {
+    protocolStore.registerCodec(modbusRtuRegisterCodec.manifest);
+    protocolWorkbench.registerCodec(modbusRtuRegisterCodec);
+  } catch (error) {
+    protocolStore.close();
+    developerStore.close();
+    fabricStore.close();
+    store.close();
+    throw error;
+  }
   const broker = new DeviceCapabilityBroker({ store, now });
   const adapter = new PcAdapter({ executor: new LocalPcTargetExecutor(), now });
   broker.registerAdapter(adapter);
@@ -72,6 +86,7 @@ export function createDeviceSupportRuntime(options: { readonly databasePath: str
     fabricStore,
     developerStore,
     protocolStore,
+    protocolWorkbench,
     broker,
     remoteFacade,
     diagnoseLocalPc: () => {

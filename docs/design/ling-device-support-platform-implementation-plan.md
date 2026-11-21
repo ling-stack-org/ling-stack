@@ -55,7 +55,7 @@ validation and the boundary of what remains unverified.
 | D10 | [~] | Developer device sessions | Typed developer sessions bind artifacts to targets and reattach jobs | Core developer-session fixtures |
 | D11 | [~] | PC-assisted Mobile execution | Phone-owned collaboration proposals and chunked artifacts preserve owner and target binding | Core collaboration fixtures |
 | D12 | [~] | Ling Server connectivity | Self-hosted control metadata and durable peer journals enforce route and revocation fences. Native connectivity remains in progress | Core route, peer-journal and HTTP fixtures |
-| D13 | [~] | Hardware protocol development and debugging | Capture, digest, decode, and replay workbench is implemented | Core protocol fixtures |
+| D13 | [~] | Hardware protocol development and debugging | Capture integrity, loss metadata, and offline Modbus RTU decoding are implemented in the Daemon workbench runtime | Core protocol and Daemon restart fixtures |
 | D14 | [~] | Semantic device graph and twin | Graph identity, relationships, merge/split, and freshness-aware twin views are implemented | Core graph/twin fixtures |
 | D15 | [~] | Cross-device task graph | Dependency validation, ready-node placement, owner leases, partial aggregation, and result lineage are implemented | Core task-graph fixtures |
 | D16 | [~] | Edge Runtime and bridge contract | Enrollment and revocation registry foundation is implemented | Core edge registry fixtures |
@@ -386,8 +386,8 @@ only on a successful install or a model response.
 - [ ] Connect the operator's native workbench to supported, authorized SSH, ADB,
   and vendor maintenance tools. Record tool status, relevant evidence selected by
   the user, and readback after native maintenance.
-- [x] Persist job identity and reconnect to running build or test work. Record
-  the runtime and device outcome separately.
+- [~] Persist job identity and typed outcomes. Reattachment to a live build or
+  test worker remains a runtime gate.
 - [x] Persist developer sessions, jobs, artifacts, phone-owned proposals and
   chunked artifact transfers in the shared daemon SQLite database.
 
@@ -406,8 +406,9 @@ only on a successful install or a model response.
 
 ### Scope
 
-- [x] Extend the signed remote protocol for an opted-in phone-owned task
-  projection, PC proposals, scoped artifact transfer, and Mobile receipts.
+- [~] Define the contracts for an opted-in phone-owned task projection, PC proposals,
+  scoped artifact transfer, and Mobile receipts. Signed transport and the Mobile
+  journal integration remain open.
 - [x] Keep project actions bound to the PC workspace and device actions bound to
   the phone's verified target and local authorization.
 - [~] Resume the owner's journal from an acknowledged revision or a refreshed
@@ -472,19 +473,25 @@ only on a successful install or a model response.
 
 ### Scope
 
-- [x] Add a protocol workbench to the developer session, reusing D1–D3 device
-  contracts, ownership, approval, and evidence.
+- [~] The Daemon runtime loads a protocol workbench and a Modbus RTU codec. Connect
+  the workbench to developer sessions and their D1–D3 target binding and evidence.
 - [ ] Keep the hardware transport, protocol codec, and versioned device profile
   independently reusable. Record the verified host, adapter and firmware combination.
 - [x] Capture request and response evidence, support offline decoder replay and
   simulator fixtures, and preserve provenance and capture loss.
 - [x] Persist codec manifests and validated protocol captures so replay evidence
   survives a workbench or daemon restart.
+- [x] Support offline Modbus RTU register request and response decoding, exception
+  replies and CRC diagnostics. Validate all capture frame digests before decoding or
+  invoking any replay callback. Persist capture loss independently of frame integrity.
 - [~] Register the verified profile and operations through the existing device
   adapter catalog. Record supported devices and verified behavior.
 
 ### Exit evidence
 
+- Core and Daemon fixtures decode a captured register response, distinguish an
+  invalid wire checksum from a changed evidence digest, and restore the capture
+  and its loss metadata after reopening the runtime.
 - Test a documented RS-485 Modbus RTU device on supported PC, Android USB, and
   iPhone local-bridge paths. Capture and decode a measurement, verify a documented
   setting, and read back the exact target.
@@ -735,7 +742,7 @@ recorded per slice as they complete. [Detailed design](ling-device-fabric.md)
 | D10 | `842f18e27` | `corepack pnpm --filter @ling-stack/core build:ci`; `corepack pnpm --filter @ling-stack/core typecheck:ci`; `node --test packages/core/test/device-developer.test.ts` | [device-developer.ts](../../packages/core/src/device-developer.ts), [device-developer-store.ts](../../packages/core/src/storage/sqlite/device-developer-store.ts) | Developer session, artifact binding, typed jobs, reattach state and SQLite recovery are implemented | Real PC/mobile project build, native workbench and packaged target acceptance remain |
 | D11 | `842f18e27` | `node --test packages/core/test/device-developer.test.ts`; `node --test packages/daemon/test/device-support-runtime.test.ts` | [device-developer.ts](../../packages/core/src/device-developer.ts), [device-developer-store.ts](../../packages/core/src/storage/sqlite/device-developer-store.ts), [runtime.ts](../../packages/daemon/src/features/device-support/runtime.ts) | Phone-owned proposals, owner checks, idempotency, chunked artifact transfer and daemon SQLite persistence are implemented | Signed peer transport, live PC assistance and physical head-unit acceptance remain |
 | D12 | `aa8a54cf8` and peer journal fencing | Contracts, Core and Daemon `build:ci` and `typecheck:ci`. `node --test packages/core/test/ling-server-protocol.test.ts packages/core/test/device-fabric-store.test.ts packages/daemon/test/ling-server-control-plane.test.ts` (22 passed) | [Control plane](../../packages/daemon/src/features/ling-server/control-plane.ts), [Peer coordinator](../../packages/core/src/ling-server.ts), [Transport configuration](../../packages/core/src/ling-server-transport.ts), [SQLite peer journal](../../packages/core/src/storage/sqlite/ling-server-store.ts) | The local HTTP control plane checks route epochs and peer keys. The logical peer journal atomically stores frames and sequence counters and resumes each lane independently. Revocation blocks replay and old frames are fenced at route cutover | Signed enrollment/signaling, TLS/WSS packaging, WebRTC/ICE, coturn and multi-network acceptance remain |
-| D13 | `616a43432` | `corepack pnpm --filter @ling-stack/core build:ci`; `corepack pnpm --filter @ling-stack/core typecheck:ci`; `node --test packages/core/test/ling-server-protocol.test.ts`; `node --test packages/daemon/test/device-support-runtime.test.ts` | [device-protocol.ts](../../packages/core/src/device-protocol.ts), [device-protocol-store.ts](../../packages/core/src/storage/sqlite/device-protocol-store.ts), [runtime.ts](../../packages/daemon/src/features/device-support/runtime.ts) | Capture provenance, digest validation, codec registration, decode/replay and SQLite persistence of codec/capture evidence are implemented and exposed through the daemon runtime | Physical USB/BLE/CAN capture and adapter registration acceptance remain |
+| D13 | `616a43432` and Modbus RTU offline workbench | Contracts, Core and Daemon `build:ci` and `typecheck:ci`. Protocol, Fabric, Daemon startup, Gateway and Ling Server fixtures (30 passed) | [Workbench](../../packages/core/src/device-protocol.ts), [Modbus RTU codec](../../packages/core/src/modbus-rtu.ts), [Runtime tests](../../packages/daemon/test/device-support-runtime.test.ts) | Daemon startup registers the codec. Captures retain their source and loss evidence through restart. Full capture validation precedes decoder and offline replay callbacks | Developer UI, vendor register-map profile, live physical transport, adapter catalog and bench acceptance remain |
 | D14 | `1c79e5bc5` | `node --test packages/core/test/device-fabric-store.test.ts packages/core/test/device-fabric.test.ts` | [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Semantic graph, identity merge/split, relationships, Twin revisions, freshness projection, and persistent graph/Twin state are implemented | Multi-domain identity evidence and field convergence remain |
 | D15 | `ee7647659` | `corepack pnpm --filter @ling-stack/core build:ci`; `corepack pnpm --filter @ling-stack/core typecheck:ci`; `node --test packages/core/test/device-fabric-store.test.ts packages/core/test/device-fabric.test.ts` | [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Dependency validation, ready nodes, persistent target owner leases, stale graph revision rejection, aggregate node results, and persistent task graph revisions are implemented | Cross-runtime scheduler recovery and full graph cancellation/retry reconciliation remain |
 | D16 | `d58112948` | `node --test packages/core/test/device-fabric-store.test.ts packages/core/test/device-fabric.test.ts` | [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Edge enrollment revisions and trace state are persisted alongside enrollment, revocation, and contiguous bridge sequence rules | Linux edge process, bridge transport, local journal and reconnect acceptance remain |

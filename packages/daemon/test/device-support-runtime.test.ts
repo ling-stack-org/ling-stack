@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import type { DeviceActionRequestV1, DeviceDiagnosisReportV1, DeviceTaskAttemptV1, DeviceTaskStatusV1 } from "@ling-stack/contracts";
-import { createSqliteRunStore, DEFAULT_WORKSPACE_ID, DeviceBrokerError, digestRequest, SqliteDeviceSupportStore } from "@ling-stack/core";
+import { createSqliteRunStore, DEFAULT_WORKSPACE_ID, DeviceBrokerError, digestRequest, modbusRtuRegisterCodec, SqliteDeviceSupportStore } from "@ling-stack/core";
 import { createDeviceSupportRuntime } from "../dist/features/device-support/runtime.js";
 import { createDaemonServer } from "../dist/index.js";
 
@@ -70,6 +70,35 @@ test("daemon startup recovers interrupted dispatch and readback from the owner j
     assert.deepEqual(restarted.store.recoverAfterRestart(restartedAt), []);
   } finally {
     restarted.close();
+  }
+});
+
+test("daemon runtime registers the Modbus codec and restores offline captures with loss evidence", t => {
+  const root = mkdtempSync(join(tmpdir(), "ling-device-protocol-replay-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const databasePath = join(root, "workspace.sqlite");
+  const captureTime = "2026-11-21T00:00:00.000Z";
+  const owner = createDeviceSupportRuntime({ databasePath });
+  try {
+    const capture = owner.protocolWorkbench.capture({
+      captureId: "modbus-temperature-register", targetDeviceId: "fixture-rs485", transport: "rs485", source: "imported",
+      createdAt: captureTime, loss: { reason: "connection_interrupted" },
+      frames: [{ direction: "rx", bytes: Buffer.from("010302000a3843", "hex"), capturedAt: captureTime }],
+    });
+    owner.protocolStore.saveCapture(capture);
+  } finally {
+    owner.close();
+  }
+  const reopened = createDeviceSupportRuntime({ databasePath });
+  try {
+    const codec = reopened.protocolStore.getCodec(modbusRtuRegisterCodec.manifest.codecId);
+    assert.deepEqual(codec, modbusRtuRegisterCodec.manifest);
+    const capture = reopened.protocolStore.getCapture("modbus-temperature-register");
+    assert.ok(capture && codec);
+    assert.deepEqual(capture.loss, { reason: "connection_interrupted" });
+    assert.equal(reopened.protocolWorkbench.decode(capture, codec.codecId)[0]?.fields.register0, 10);
+  } finally {
+    reopened.close();
   }
 });
 

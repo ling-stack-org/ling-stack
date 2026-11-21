@@ -160,4 +160,11 @@ flowchart TD
 
 The evidence ledger records the actual compatible devices, runtime versions, test
 inputs, replay results, and physical acceptance for each combination.
+
+The Daemon workbench can decode captured Modbus RTU holding and input register
+reads. The capture keeps original frame digests and may record overrun, connection
+loss, or capture-limit evidence. Replay validates the complete retained capture
+before delivering any frame. The register map for the selected device determines
+meaning, units and scaling.
+
 [D13 delivery and evidence](ling-device-support-platform-implementation-plan.md#d13-hardware-protocol-development-and-debugging)

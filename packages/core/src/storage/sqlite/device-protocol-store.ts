@@ -1,10 +1,11 @@
-import { createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
+import { isDeepStrictEqual } from "node:util";
 
 import type { HardwareProtocolCaptureV1, HardwareProtocolCodecManifestV1 } from "@ling-stack/contracts";
 import { DeviceFabricError } from "../../device-fabric.js";
+import { assertValidHardwareProtocolCapture } from "../../device-protocol.js";
 
 export interface DeviceProtocolStoreOptions {
   readonly databasePath?: string;
@@ -26,10 +27,11 @@ export class SqliteDeviceProtocolStore {
   }
 
   registerCodec(manifest: HardwareProtocolCodecManifestV1): HardwareProtocolCodecManifestV1 {
-    const current = this.getCodec(manifest.codecId);
-    if (current && JSON.stringify(current) !== JSON.stringify(manifest)) throw new DeviceFabricError("resource_conflict", "protocol codec id is bound to another manifest");
-    this.database.prepare("INSERT INTO device_protocol_codecs(codec_id,manifest_json) VALUES(?,?) ON CONFLICT(codec_id) DO NOTHING").run(manifest.codecId, JSON.stringify(manifest));
-    return current ?? manifest;
+    const serialized = JSON.stringify(manifest);
+    this.database.prepare("INSERT INTO device_protocol_codecs(codec_id,manifest_json) VALUES(?,?) ON CONFLICT(codec_id) DO NOTHING").run(manifest.codecId, serialized);
+    const stored = this.getCodec(manifest.codecId);
+    if (!stored || !isDeepStrictEqual(stored, JSON.parse(serialized))) throw new DeviceFabricError("resource_conflict", "protocol codec id is bound to another manifest");
+    return stored;
   }
 
   getCodec(codecId: string): HardwareProtocolCodecManifestV1 | undefined {
@@ -38,12 +40,13 @@ export class SqliteDeviceProtocolStore {
   }
 
   saveCapture(capture: HardwareProtocolCaptureV1): HardwareProtocolCaptureV1 {
-    validateCapture(capture);
-    const current = this.getCapture(capture.captureId);
-    if (current && JSON.stringify(current) !== JSON.stringify(capture)) throw new DeviceFabricError("revision_conflict", "capture id is bound to different protocol evidence");
+    assertValidHardwareProtocolCapture(capture);
+    const serialized = JSON.stringify(capture);
     this.database.prepare("INSERT INTO device_protocol_captures(capture_id,target_device_id,transport,capture_json,created_at) VALUES(?,?,?,?,?) ON CONFLICT(capture_id) DO NOTHING")
-      .run(capture.captureId, capture.targetDeviceId, capture.transport, JSON.stringify(capture), capture.createdAt);
-    return current ?? capture;
+      .run(capture.captureId, capture.targetDeviceId, capture.transport, serialized, capture.createdAt);
+    const stored = this.getCapture(capture.captureId);
+    if (!stored || !isDeepStrictEqual(stored, JSON.parse(serialized))) throw new DeviceFabricError("revision_conflict", "capture id is bound to different protocol evidence");
+    return stored;
   }
 
   getCapture(captureId: string): HardwareProtocolCaptureV1 | undefined {
@@ -60,15 +63,6 @@ export class SqliteDeviceProtocolStore {
 }
 
 type Row = Record<string, SQLOutputValue>;
-
-function validateCapture(capture: HardwareProtocolCaptureV1): void {
-  if (!capture.captureId.trim() || !capture.targetDeviceId.trim() || !capture.createdAt.trim() || capture.frames.length === 0) throw new DeviceFabricError("revision_conflict", "protocol capture is incomplete");
-  capture.frames.forEach((frame, index) => {
-    if (frame.sequence !== index || !frame.digest.trim()) throw new DeviceFabricError("revision_conflict", "protocol capture sequence is invalid");
-    const bytes = Buffer.from(frame.bytesBase64, "base64");
-    if (createHash("sha256").update(bytes).digest("hex") !== frame.digest) throw new DeviceFabricError("revision_conflict", "protocol frame digest is invalid");
-  });
-}
 
 function parseJson<T>(raw: SQLOutputValue, label: string): T {
   if (typeof raw !== "string") throw new Error(`Stored ${label} is not JSON`);

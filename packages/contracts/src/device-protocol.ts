@@ -12,7 +12,13 @@ export interface HardwareProtocolCaptureV1 {
   readonly targetDeviceId: string;
   readonly frames: readonly HardwareProtocolFrameV1[];
   readonly source: "live" | "imported" | "replay";
+  readonly loss?: HardwareProtocolCaptureLossV1;
   readonly createdAt: string;
+}
+
+export interface HardwareProtocolCaptureLossV1 {
+  readonly reason: "adapter_overrun" | "connection_interrupted" | "capture_limit";
+  readonly droppedFrames?: number;
 }
 
 export interface HardwareProtocolCodecManifestV1 {

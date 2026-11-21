@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { HardwareProtocolWorkbench, LingServerPeerRegistry, LingServerPeerSessionCoordinator, LingServerTransportPlanner, SqliteDeviceProtocolStore, SqliteLingServerStore } from "../dist/index.js";
+import {
+  encodeModbusRtuRegisterRead, HardwareProtocolWorkbench, LingServerPeerRegistry, LingServerPeerSessionCoordinator,
+  LingServerTransportPlanner, modbusRtuRegisterCodec, SqliteDeviceProtocolStore, SqliteLingServerStore,
+} from "../dist/index.js";
 
 const now = "2026-11-21T00:00:00.000Z";
 const expiresAt = "2026-11-21T00:05:00.000Z";
@@ -38,6 +41,37 @@ test("hardware workbench captures, validates, decodes and replays protocol frame
   const replayed: string[] = [];
   workbench.replay(capture, frame => replayed.push(frame.digest));
   assert.deepEqual(replayed, [capture.frames[0].digest]);
+});
+
+test("RS-485 workbench distinguishes Modbus CRC failures from changed capture evidence before replay", () => {
+  const workbench = new HardwareProtocolWorkbench();
+  workbench.registerCodec(modbusRtuRegisterCodec);
+  const request = encodeModbusRtuRegisterRead({ unitAddress: 1, table: "holding", startAddress: 0, quantity: 1 });
+  assert.equal(Buffer.from(request).toString("hex"), "010300000001840a");
+  assert.throws(() => encodeModbusRtuRegisterRead({ unitAddress: 1, table: "input", startAddress: 65_535, quantity: 2 }), /address or quantity/);
+  const capture = workbench.capture({
+    captureId: "modbus-rtu-reads", targetDeviceId: "fixture-rs485", transport: "rs485", source: "imported", createdAt: now,
+    loss: { reason: "adapter_overrun", droppedFrames: 2 },
+    frames: [
+      { direction: "tx", bytes: request, capturedAt: now },
+      { direction: "rx", bytes: Buffer.from("010302000a3843", "hex"), capturedAt: now },
+      { direction: "rx", bytes: Buffer.from("010302000b3843", "hex"), capturedAt: now },
+    ],
+  });
+  const codecId = modbusRtuRegisterCodec.manifest.codecId;
+  const [decodedRequest, decodedResponse, damagedOnWire] = workbench.decode(capture, codecId);
+  assert.deepEqual(decodedRequest?.fields, { unitAddress: 1, functionCode: 3, table: "holding", startAddress: 0, quantity: 1 });
+  assert.deepEqual(decodedResponse?.fields, { unitAddress: 1, functionCode: 3, table: "holding", quantity: 1, register0: 10 });
+  assert.equal(damagedOnWire?.messageType, "invalid_checksum");
+  assert.equal(damagedOnWire?.checksumValid, false);
+  assert.deepEqual(capture.loss, { reason: "adapter_overrun", droppedFrames: 2 });
+  const changed = { ...capture, frames: [...capture.frames.slice(0, -1), { ...capture.frames[2]!, digest: "0".repeat(64) }] };
+  let replayedFrames = 0;
+  assert.throws(() => workbench.replay(changed, () => { replayedFrames += 1; }), /digest or encoding/);
+  assert.equal(replayedFrames, 0);
+  assert.throws(() => workbench.decode(changed, codecId), /digest or encoding/);
+  workbench.replay(capture, () => { replayedFrames += 1; });
+  assert.equal(replayedFrames, 3);
 });
 
 test("Ling Server peer registry restores installation, binding and route state from SQLite", () => {
