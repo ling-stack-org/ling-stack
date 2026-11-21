@@ -18,6 +18,7 @@ import {
   isDeviceActionRequestV1,
   isDeviceCapabilitySnapshotV1,
   isDeviceProfileV1,
+  isDeviceVerificationResultV1,
 } from "@ling-stack/contracts";
 
 import type { SqliteDeviceSupportStore } from "./storage/sqlite/device-support-store.js";
@@ -164,6 +165,7 @@ export class DeviceCapabilityBroker {
 
   proposeAction(request: DeviceActionRequestV1): void {
     if (!isDeviceActionRequestV1(request)) throw new DeviceBrokerError("invalid_request", "device action request is invalid");
+    this.requireTaskTarget(request);
     this.store.saveActionProposal(request, digestRequest(request), this.now());
   }
 
@@ -171,6 +173,7 @@ export class DeviceCapabilityBroker {
     if (!isDeviceActionRequestV1(request)) {
       throw new DeviceBrokerError("invalid_request", "device action request is invalid");
     }
+    const task = this.requireTaskTarget(request);
     const requestDigest = digestRequest(request);
     const replay = this.store.getAttemptByIdempotency(request.taskId, request.idempotencyKey);
     if (replay) {
@@ -180,6 +183,15 @@ export class DeviceCapabilityBroker {
       return replay;
     }
 
+    if (task.status === "unknown") throw new DeviceBrokerError("unknown_outcome", "task outcome requires reconciliation");
+    if (!["planning", "awaiting_approval", "executing", "partial"].includes(task.status)) {
+      throw new DeviceBrokerError("invalid_request", "task is not ready to dispatch");
+    }
+    const pending = this.store.getActiveAttempt(task.id);
+    if (pending && pending.attempt.status !== "unknown") {
+      throw new DeviceBrokerError("target_busy", "task has an unresolved dispatch attempt");
+    }
+    signal?.throwIfAborted();
     const profile = this.requireDevice(request.targetDeviceId);
     if (["revoked", "retired", "offline"].includes(profile.device.lifecycleStatus)) {
       throw new DeviceBrokerError("device_offline", `device ${profile.device.id} is unavailable`);
@@ -195,6 +207,7 @@ export class DeviceCapabilityBroker {
     if (!capability || capability.schemaVersion !== request.capabilitySchemaVersion) {
       throw new DeviceBrokerError("unsupported_capability", "requested capability is not in the current snapshot");
     }
+    const adapter = this.requireAdapter(profile.adapterId);
     if (capability.sideEffect !== "read_only") {
       this.assertApproval(request, snapshot.connectionRevision, requestDigest);
     }
@@ -207,7 +220,7 @@ export class DeviceCapabilityBroker {
       taskId: request.taskId,
       actionId: request.actionId,
       ownerKind: "daemon",
-      ownerId: profile.device.runtimeOwnerId ?? "daemon",
+      ownerId: task.ownerId,
       targetDeviceId: profile.device.id,
       dispatchIntentAt: this.now(),
       connectionRevision: snapshot.connectionRevision,
@@ -215,21 +228,19 @@ export class DeviceCapabilityBroker {
       ...(request.approvalId ? { approvalId: request.approvalId } : {}),
       status: "prepared",
     };
-    const created = this.store.createAttempt({ attempt, request, requestDigest }, this.now());
-    if (created.replayed) {
-      this.store.releaseTargetLease(profile.device.id, request.taskId);
-      if (created.record.requestDigest !== requestDigest) {
-        throw new DeviceBrokerError("invalid_request", "idempotency key is bound to another action");
-      }
-      return created.record;
-    }
-
-    this.store.transitionTask(request.taskId, "executing", { currentActionId: request.actionId }, this.now());
     try {
+      const created = this.store.createAttempt({ attempt, request, requestDigest }, this.now());
+      if (created.replayed) {
+        if (created.record.requestDigest !== requestDigest) {
+          throw new DeviceBrokerError("invalid_request", "idempotency key is bound to another action");
+        }
+        return created.record;
+      }
+      this.store.transitionTask(request.taskId, "executing", { currentActionId: request.actionId }, this.now());
       this.store.updateAttempt(attempt.attemptId, { status: "dispatched" }, this.now());
       let execution: DeviceActionResultV1 | DeviceAdapterExecutionResult;
       try {
-        execution = await adapterExecute(this.requireAdapter(profile.adapterId), profile, capability, request, signal);
+        execution = await adapter.execute({ profile, capability, request, signal });
       } catch (error) {
         execution = uncertainActionResult(request.actionId, this.now(), error);
       }
@@ -248,10 +259,13 @@ export class DeviceCapabilityBroker {
       const finalizeTask = options.finalizeTask ?? true;
       if (action.status === "completed" && this.shouldVerify(capability, request)) {
         if (finalizeTask) this.store.transitionTask(request.taskId, "verifying", {}, this.now());
-        const verification = await this.verifyAction(this.requireAdapter(profile.adapterId), profile, capability, request, action, signal);
+        const verification = await this.verifyAction(adapter, profile, capability, request, action, signal);
         this.store.updateAttempt(attempt.attemptId, { verification }, this.now());
-        if (finalizeTask) {
-          this.store.transitionTask(request.taskId, verification.status === "verified" ? "succeeded" : "failed", {
+        const status = verification.status === "not_evaluable" && capability.sideEffect !== "read_only"
+          ? "unknown"
+          : verification.status === "verified" ? "succeeded" : "failed";
+        if (finalizeTask || status === "unknown") {
+          this.store.transitionTask(request.taskId, status, {
             lastVerificationId: `${request.actionId}:verification`,
           }, this.now());
         }
@@ -303,8 +317,17 @@ export class DeviceCapabilityBroker {
     return profile;
   }
 
+  private requireTaskTarget(request: DeviceActionRequestV1): DeviceTaskV1 {
+    const task = this.store.getTask(request.taskId);
+    if (!task) throw new DeviceBrokerError("missing_target", "device task is missing");
+    if (task.ownerKind !== "daemon" || !task.targetDeviceIds.includes(request.targetDeviceId)) {
+      throw new DeviceBrokerError("permission_denied", "action exceeds the task's execution owner or target scope");
+    }
+    return task;
+  }
+
   private shouldVerify(capability: CapabilityDescriptorV1, request: DeviceActionRequestV1): boolean {
-    return Boolean(capability.verificationCapabilityId || request.expectedVerification);
+    return capability.sideEffect !== "read_only" || capability.verificationCapabilityId !== undefined || request.expectedVerification !== undefined;
   }
 
   private async verifyAction(
@@ -315,28 +338,25 @@ export class DeviceCapabilityBroker {
     action: DeviceActionResultV1,
     signal?: AbortSignal,
   ): Promise<DeviceVerificationResultV1> {
-    if (!adapter.verify) {
-      return {
-        actionId: request.actionId,
-        status: "not_evaluable",
-        rule: request.expectedVerification ?? null,
-        observationIds: action.observationIds,
-        checkedAt: this.now(),
-        reason: "adapter does not expose a verification operation",
-      };
+    let reason = "adapter does not expose a verification operation";
+    if (adapter.verify) {
+      try {
+        const verification = await adapter.verify({ profile, capability, request, action, signal });
+        if (isDeviceVerificationResultV1(verification) && verification.actionId === request.actionId) return verification;
+        reason = "adapter verification did not match the dispatched action";
+      } catch {
+        reason = "adapter verification did not return a result";
+      }
     }
-    return adapter.verify({ profile, capability, request, action, signal });
+    return {
+      actionId: request.actionId,
+      status: "not_evaluable",
+      rule: request.expectedVerification ?? null,
+      observationIds: action.observationIds,
+      checkedAt: this.now(),
+      reason,
+    };
   }
-}
-
-async function adapterExecute(
-  adapter: DeviceAdapter,
-  profile: DeviceProfileV1,
-  capability: CapabilityDescriptorV1,
-  request: DeviceActionRequestV1,
-  signal?: AbortSignal,
-): Promise<DeviceActionResultV1 | DeviceAdapterExecutionResult> {
-  return adapter.execute({ profile, capability, request, signal });
 }
 
 function isApprovalForRequest(

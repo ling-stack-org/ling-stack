@@ -23,6 +23,7 @@ import {
 } from "@ling-stack/contracts";
 
 import type { DeviceSupportStoreAttemptRecord } from "../../device-support.js";
+import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 
 export interface DeviceSupportStoreOptions {
   readonly databasePath?: string;
@@ -175,6 +176,10 @@ export class SqliteDeviceSupportStore {
   transitionTask(taskId: string, status: DeviceTaskStatusV1, patch: DeviceTaskPatch, now: string): DeviceTaskV1 {
     const current = this.requireTask(taskId);
     if (!isAllowedTransition(current.status, status)) throw new Error(`Invalid device task transition: ${current.status} -> ${status}`);
+    return this.writeTaskTransition(current, status, patch, now);
+  }
+
+  private writeTaskTransition(current: DeviceTaskV1, status: DeviceTaskStatusV1, patch: DeviceTaskPatch, now: string): DeviceTaskV1 {
     const next: DeviceTaskV1 = {
       ...current,
       ...patch,
@@ -182,8 +187,8 @@ export class SqliteDeviceSupportStore {
       updatedAt: now,
     };
     this.database.prepare("UPDATE device_tasks SET revision=revision+1,status=?,task_json=?,updated_at=? WHERE task_id=?")
-      .run(status, JSON.stringify(next), now, taskId);
-    this.appendEvent(taskId, "task_transition", { from: current.status, to: status, task: next });
+      .run(status, JSON.stringify(next), now, current.id);
+    this.appendEvent(current.id, "task_transition", { from: current.status, to: status, task: next });
     return next;
   }
 
@@ -278,18 +283,39 @@ export class SqliteDeviceSupportStore {
   }
 
   recoverAfterRestart(now: string): readonly string[] {
-    const rows = this.database.prepare("SELECT attempt_id,task_id,attempt_json FROM device_task_attempts WHERE json_extract(attempt_json,'$.status') IN ('prepared','dispatched')").all() as Row[];
-    const recovered: string[] = [];
-    for (const row of rows) {
-      const attempt = parseJson<DeviceTaskAttemptV1>(row.attempt_json, isDeviceTaskAttemptV1, "device task attempt");
-      this.updateAttempt(readString(row, "attempt_id"), { status: "unknown" }, now);
-      const task = this.requireTask(attempt.taskId);
-      if (task.status !== "unknown" && !["succeeded", "failed", "cancelled"].includes(task.status)) {
-        this.transitionTask(task.id, "unknown", {}, now);
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const pendingAttempts = this.database.prepare(`
+        SELECT attempt.attempt_id, attempt.task_id FROM device_task_attempts AS attempt
+        JOIN device_tasks AS task ON task.task_id = attempt.task_id
+        WHERE json_extract(task.task_json, '$.ownerKind') = 'daemon'
+          AND json_extract(attempt.attempt_json, '$.status') IN ('prepared', 'dispatched')
+        ORDER BY attempt.attempt_id
+      `).all() as Row[];
+      const activeTasks = this.database.prepare(`
+        SELECT task_id FROM device_tasks WHERE status IN ('executing', 'verifying')
+        AND json_extract(task_json, '$.ownerKind') = 'daemon'
+      `).all() as Row[];
+      const interruptedTaskIds = new Set(activeTasks.map(row => readString(row, "task_id")));
+      const recovered: string[] = [];
+      for (const row of pendingAttempts) {
+        const attemptId = readString(row, "attempt_id");
+        this.updateAttempt(attemptId, { status: "unknown" }, now);
+        interruptedTaskIds.add(readString(row, "task_id"));
+        recovered.push(attemptId);
       }
-      recovered.push(attempt.attemptId);
+      for (const taskId of interruptedTaskIds) {
+        const task = this.requireTask(taskId);
+        if (!["unknown", "succeeded", "failed", "cancelled"].includes(task.status)) {
+          this.writeTaskTransition(task, "unknown", {}, now);
+        }
+      }
+      this.database.exec("COMMIT");
+      return recovered;
+    } catch (error) {
+      rollbackOwnedSqliteTransaction(this.database);
+      throw error;
     }
-    return recovered;
   }
 
   listEvents(taskId: string): readonly DeviceTaskEvent[] {

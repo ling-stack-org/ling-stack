@@ -138,6 +138,26 @@ function request(capabilityId: string = readCapability.id, taskId = "task-1"): D
   };
 }
 
+function approveNetworkRepair(request: DeviceActionRequestV1): DeviceActionRequestV1 {
+  const action = { ...request, expectedVerification: { connected: true } };
+  return {
+    ...action,
+    approvalId: "approval-1",
+    approval: {
+      approvalId: "approval-1",
+      taskId: action.taskId,
+      actionId: action.actionId,
+      targetDeviceId: action.targetDeviceId,
+      capabilitySnapshotId: action.capabilitySnapshotId,
+      connectionRevision: "connection-1",
+      policyRevision: "device-policy-v1",
+      normalizedInputDigest: digestRequest(action),
+      expiresAt: "2026-11-21T00:05:00.000Z",
+      recoveryScope: { baseline: "network" },
+    },
+  };
+}
+
 function createAdapter(): DeviceAdapter {
   return {
     manifest,
@@ -201,27 +221,52 @@ test("mutating capability requires an exact, unexpired approval and records veri
   store.createTask(mutatingTask, now);
   const base = request(writeCapability.id, mutatingTask.id);
   await assert.rejects(() => broker.execute(base), (error: unknown) => error instanceof DeviceBrokerError && error.code === "permission_denied");
-  const approved: DeviceActionRequestV1 = {
-    ...base,
-    expectedVerification: { connected: true },
-    approvalId: "approval-1",
-    approval: {
-      approvalId: "approval-1",
-      taskId: base.taskId,
-      actionId: base.actionId,
-      targetDeviceId: base.targetDeviceId,
-      capabilitySnapshotId: base.capabilitySnapshotId,
-      connectionRevision: "connection-1",
-      policyRevision: "device-policy-v1",
-      normalizedInputDigest: digestRequest({ ...base, expectedVerification: { connected: true } }),
-      expiresAt: "2026-11-21T00:05:00.000Z",
-      recoveryScope: { baseline: "network" },
-    },
-  };
-  const result = await broker.execute(approved);
+  const result = await broker.execute(approveNetworkRepair(base));
   assert.equal(result.attempt.verification?.status, "verified");
   assert.equal(store.getTask(mutatingTask.id)?.status, "succeeded");
   store.close();
+});
+
+test("dispatch leaves the journal and target lease untouched for an out-of-scope or closed task", async (t) => {
+  const { store, broker } = brokerFixture();
+  t.after(() => store.close());
+  store.createTask({ ...task("wrong-owner"), ownerKind: "mobile" }, now);
+  store.createTask({ ...task("wrong-target"), targetDeviceIds: ["device-other"] }, now);
+  store.createTask({ ...task("cancelled"), status: "cancelled" }, now);
+  for (const [taskId, code] of [["wrong-owner", "permission_denied"], ["wrong-target", "permission_denied"], ["cancelled", "invalid_request"]]) {
+    await assert.rejects(() => broker.execute(request(readCapability.id, taskId)), (error: unknown) =>
+      error instanceof DeviceBrokerError && error.code === code);
+    assert.deepEqual(store.listAttempts(taskId), []);
+  }
+  assert.equal(store.acquireTargetLease(profile.device.id, "next-task", "daemon-1", now, 1000), true);
+});
+
+test("lost or unrelated verification keeps the write receipt and requires reconciliation", async (t) => {
+  const { store, broker } = brokerFixture();
+  t.after(() => store.close());
+  const adapter = createAdapter();
+  let dispatches = 0;
+  broker.registerAdapter({
+    ...adapter,
+    async execute(input) { dispatches += 1; return adapter.execute(input); },
+    async verify(input) {
+      if (input.request.taskId === "lost-readback") throw new Error("verification link closed");
+      return { actionId: "previous-action", status: "verified", rule: null, observationIds: [], checkedAt: now };
+    },
+  });
+  for (const taskId of ["lost-readback", "unrelated-readback"]) {
+    broker.createTask(task(taskId));
+    const approved = approveNetworkRepair(request(writeCapability.id, taskId));
+    const result = await broker.execute(approved);
+    assert.equal(store.getTask(taskId)?.status, "unknown");
+    assert.equal(result.attempt.receipt?.status, "completed");
+    assert.equal(result.attempt.verification?.status, "not_evaluable");
+    assert.equal(result.attempt.verification?.actionId, approved.actionId);
+    assert.deepEqual(await broker.execute(approved), result);
+    await assert.rejects(() => broker.execute({ ...approved, idempotencyKey: "new-attempt" }), (error: unknown) =>
+      error instanceof DeviceBrokerError && error.code === "unknown_outcome");
+  }
+  assert.equal(dispatches, 2);
 });
 
 test("idempotent retry returns the recorded attempt and a restart preserves an unknown outcome", () => {

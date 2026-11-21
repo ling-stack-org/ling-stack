@@ -19,6 +19,12 @@ export interface DeviceSupportRuntime {
 
 export function createDeviceSupportRuntime(options: { readonly databasePath: string; readonly now?: () => string }): DeviceSupportRuntime {
   const store = new SqliteDeviceSupportStore({ databasePath: options.databasePath });
+  try {
+    store.recoverAfterRestart((options.now ?? (() => new Date().toISOString()))());
+  } catch (error) {
+    store.close();
+    throw error;
+  }
   const fabricStore = new SqliteDeviceFabricStore({ databasePath: options.databasePath });
   const developerStore = new SqliteDeviceDeveloperStore({ databasePath: options.databasePath });
   const protocolStore = new SqliteDeviceProtocolStore({ databasePath: options.databasePath });
