@@ -301,7 +301,7 @@ Goal 使用已接受的验收项。代码工作可以指定候选检查、检查
 | 现成 Codex | 本机 MCP 桥接以受限凭据连接 Ling App Server，转发获准的读取和控制操作。工具返回有限事件页、进度和下一游标。配套 CLI 能执行同一结构化操作。Codex 可通过后续工具调用继续跟踪。 |
 | 可编程控制宿主 | 交付可运行的本机参考宿主，使用 Ling SDK 和官方 Codex App Server。宿主分别握手和授权，登记用户明确选定的 Ling Work Item/Thread 与 Codex thread，保存 Ling 订阅游标。宿主界面用统一任务视图呈现 Ling 的阶段、待审批入口、候选和验收进度，可在同一 Ling 连接中再次下达获权控制。 |
 
-控制宿主消费 Ling 推送时更新观察视图。用户明确选择或已接受的宿主策略允许补充 Codex 当前任务时，宿主可在支持的 Codex 版本上调用 `turn/steer`，使用当前 Codex thread、`expectedTurnId` 和已授权的简短证据引用。若需新 Turn，则走宿主的正常明确输入入口。用 Ling 事件身份和目标 Codex Turn 记录一次投递。收到可验证的应答后记录完成，结果未知时核对目标当前状态并保留待确认原因。候选证据只作为上下文。真正的 Ling 设置、审批和派发始终由 Ling 侧原权限所有者决定。对桥接派发的 Turn 冻结调用链，防止同一任务沿原路径递归回派。重连和工具读取超时后用原游标恢复观察。 [Codex App Server 的 Turn 指导](https://learn.chatgpt.com/docs/app-server#steer-an-active-turn) · [Codex MCP](https://developers.openai.com/codex/mcp)
+控制宿主消费 Ling 推送时更新观察视图。用户明确选择或已接受的宿主策略允许补充 Codex 当前任务时，宿主可在支持的 Codex 版本上调用 `turn/steer`，使用当前 Codex thread、`expectedTurnId` 和已授权的简短证据引用。若需新 Turn，则走宿主的正常明确输入入口。Ling MCP 的 `ling_turn_redirect` 使用带消息和幂等键的 `turn/interrupt` 入口，由 Daemon 记录 interrupt-redirect intervention，并在原 Run 收敛后交付后继 Turn。用 Ling 事件身份和目标 Codex Turn 记录一次投递。收到可验证的应答后记录完成，结果未知时核对目标当前状态并保留待确认原因。候选证据只作为上下文。真正的 Ling 设置、审批和派发始终由 Ling 侧原权限所有者决定。对桥接派发的 Turn 冻结调用链，防止同一任务沿原路径递归回派。重连和工具读取超时后用原游标恢复观察。 [Codex App Server 的 Turn 指导](https://learn.chatgpt.com/docs/app-server#steer-an-active-turn) · [Codex MCP](https://developers.openai.com/codex/mcp)
 
 F2 的实时显示验收使用可编程宿主的任务视图，现成 Codex 跟踪验收使用 MCP/CLI。若另外接入现成 Codex 自身界面的嵌入显示，需要指定当前客户端版本支持的呈现入口并实测。公开协议的 `mcpAppUi` 说明了受信 MCP 应用的调用 Item 如何引用嵌入视图。持续显示还需在该宿主版本验证视图授权、连接存续、断线还原和关闭清理。涉及后续模型输入时，另核对该宿主的受权输入路径。 [Codex App Server](https://learn.chatgpt.com/docs/app-server)
 

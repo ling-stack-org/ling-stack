@@ -211,6 +211,11 @@ export class LingAppServerClient {
     return await this.request("turn/interrupt", params);
   }
 
+  async redirectTurn(params: Record<string, unknown>): Promise<unknown> {
+    await this.connect();
+    return await this.request("turn/interrupt", params);
+  }
+
   async resumeTurn(params: LingAppServerTurnResumeParams): Promise<LingAppServerTurnResumeResult> {
     await this.connect();
     return await this.request("turn/resume", params);

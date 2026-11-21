@@ -74,7 +74,7 @@ export async function runLingAppServerMcp(
       description: "Stop the observed Ling Turn and submit a follow-up after its Run settles. Retry with the same request key.",
       inputSchema: followupInput,
       annotations: { idempotentHint: true, destructiveHint: true },
-    }, async params => describe(await client.interruptTurn(params)));
+    }, async params => describe(await client.redirectTurn(params)));
   }
 
   const transport = new StdioServerTransport(input, output, { maxBufferSize: 1024 * 1024 });
