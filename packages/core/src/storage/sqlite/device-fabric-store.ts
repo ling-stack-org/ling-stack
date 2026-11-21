@@ -430,6 +430,13 @@ export class SqliteDeviceFabricStore {
 
   saveTraceSpan(span: DeviceTraceSpanV1): DeviceTraceSpanV1 {
     if (!span.spanId.trim() || !span.traceId.trim() || !span.sourceId.trim()) throw new DeviceFabricError("revision_conflict", "trace span identity is invalid");
+    if (!Number.isFinite(Date.parse(span.startedAt)) || span.finishedAt !== undefined && (!Number.isFinite(Date.parse(span.finishedAt)) || Date.parse(span.finishedAt) < Date.parse(span.startedAt))) {
+      throw new DeviceFabricError("revision_conflict", "trace span timestamps are invalid");
+    }
+    if (span.parentSpanId) {
+      const parent = this.getTraceSpan(span.parentSpanId);
+      if (!parent || parent.traceId !== span.traceId) throw new DeviceFabricError("target_missing", "trace span parent is unavailable");
+    }
     const current = this.getTraceSpan(span.spanId);
     if (current?.finishedAt && !span.finishedAt) throw new DeviceFabricError("revision_conflict", "finished trace span cannot return to running");
     this.database.prepare("INSERT INTO device_trace_spans(span_id,trace_id,span_json) VALUES(?,?,?) ON CONFLICT(span_id) DO UPDATE SET trace_id=excluded.trace_id,span_json=excluded.span_json")

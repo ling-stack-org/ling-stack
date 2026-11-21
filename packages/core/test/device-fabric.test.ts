@@ -170,8 +170,11 @@ test("context packs and trace reports preserve bounded model input and cross-lay
   assert.deepEqual(safeContext.facts, [{ connected: false }]);
   assert.deepEqual(safeContext.factMetadata?.map(fact => fact.observationId), ["obs-fact"]);
   const trace = new DeviceTraceRecorder();
-  trace.start({ spanId: "span-1", traceId: "trace-1", kind: "model", sourceId: "runner", startedAt: now, status: "running", metadata: { taskId: "task-1" } });
+  trace.start({ spanId: "span-1", traceId: "trace-1", kind: "model", sourceId: "runner", startedAt: now, status: "running", lineage: { taskId: "task-1", modelTurnId: "turn-1" }, metadata: { taskId: "task-1" } });
+  trace.start({ spanId: "span-1-child", traceId: "trace-1", parentSpanId: "span-1", kind: "runtime", sourceId: "daemon", startedAt: now, status: "running", lineage: { taskId: "task-1", runtimeId: "daemon" }, metadata: {} });
   assert.equal(trace.finish("span-1", now, "ok").status, "ok");
+  assert.equal(trace.finish("span-1", now, "ok").status, "ok");
+  assert.throws(() => trace.start({ spanId: "orphan", traceId: "trace-1", parentSpanId: "missing", kind: "runtime", sourceId: "daemon", startedAt: now, status: "running", metadata: {} }), error => error instanceof DeviceFabricError && error.code === "target_missing");
   assert.equal(trace.report({ reportId: "report-1", runtimeId: "mobile-1", adapterId: "ble", adapterVersion: "1.0", targetProfile: "sensor", transport: "ble", checks: [{ id: "replay", status: "pass" }] }).checks[0].status, "pass");
 });
 

@@ -330,7 +330,24 @@ export interface DeviceTraceSpanV1 {
   readonly startedAt: string;
   readonly finishedAt?: string;
   readonly status: "running" | "ok" | "failed" | "unknown";
+  /** Cross-layer lineage is optional for legacy spans but required for new domain spans. */
+  readonly lineage?: DeviceTraceLineageV1;
   readonly metadata: JsonValue;
+}
+
+export interface DeviceTraceLineageV1 {
+  readonly conversationId?: string;
+  readonly graphId?: string;
+  readonly nodeId?: string;
+  readonly taskId?: string;
+  readonly attemptId?: string;
+  readonly deviceId?: string;
+  readonly runtimeId?: string;
+  readonly connectionRevision?: string;
+  readonly adapterId?: string;
+  readonly resourceId?: string;
+  readonly eventId?: string;
+  readonly modelTurnId?: string;
 }
 
 export interface DeviceConformanceReportV1 {

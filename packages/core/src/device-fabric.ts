@@ -558,10 +558,27 @@ export class DeviceContextBuilder {
 export class DeviceTraceRecorder {
   readonly #spans = new Map<string, DeviceTraceSpanV1>();
 
-  start(span: DeviceTraceSpanV1): DeviceTraceSpanV1 { this.#spans.set(span.spanId, span); return span; }
+  start(span: DeviceTraceSpanV1): DeviceTraceSpanV1 {
+    if (!span.spanId.trim() || !span.traceId.trim() || !span.sourceId.trim() || !Number.isFinite(Date.parse(span.startedAt))) {
+      throw new DeviceFabricError("revision_conflict", "trace span identity or start time is invalid");
+    }
+    const existing = this.#spans.get(span.spanId);
+    if (existing && JSON.stringify(existing) !== JSON.stringify(span)) throw new DeviceFabricError("revision_conflict", "trace span id is bound to another span");
+    if (span.parentSpanId) {
+      const parent = this.#spans.get(span.parentSpanId);
+      if (!parent || parent.traceId !== span.traceId) throw new DeviceFabricError("target_missing", "trace span parent is unavailable");
+    }
+    this.#spans.set(span.spanId, span);
+    return span;
+  }
   finish(spanId: string, finishedAt: string, status: DeviceTraceSpanV1["status"]): DeviceTraceSpanV1 {
     const current = this.#spans.get(spanId);
     if (!current) throw new DeviceFabricError("target_missing", "trace span is missing");
+    if (!Number.isFinite(Date.parse(finishedAt)) || Date.parse(finishedAt) < Date.parse(current.startedAt)) throw new DeviceFabricError("revision_conflict", "trace span finish time is invalid");
+    if (current.finishedAt) {
+      if (current.finishedAt !== finishedAt || current.status !== status) throw new DeviceFabricError("revision_conflict", "finished trace span cannot be changed");
+      return current;
+    }
     const finished = { ...current, finishedAt, status };
     this.#spans.set(spanId, finished);
     return finished;

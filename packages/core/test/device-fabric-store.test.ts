@@ -227,6 +227,8 @@ test("fabric store persists edge enrollment and trace spans", () => {
   assert.equal(store.getEdgeRuntime("edge-1")?.status, "revoked");
   const span: DeviceTraceSpanV1 = { spanId: "span-1", traceId: "trace-1", kind: "runtime", sourceId: "edge-1", startedAt: now, status: "running", metadata: { taskId: "task-1" } };
   store.saveTraceSpan(span);
+  store.saveTraceSpan({ spanId: "span-1-child", traceId: "trace-1", parentSpanId: "span-1", kind: "target", sourceId: "device-1", startedAt: now, status: "running", lineage: { taskId: "task-1", deviceId: "device-1", runtimeId: "edge-1" }, metadata: {} });
+  assert.throws(() => store.saveTraceSpan({ spanId: "orphan", traceId: "trace-1", parentSpanId: "missing", kind: "target", sourceId: "device-1", startedAt: now, status: "running", metadata: {} }), (error: unknown) => error instanceof DeviceFabricError && error.code === "target_missing");
   store.saveTraceSpan({ ...span, finishedAt: now, status: "ok" });
   assert.equal(store.listTraceSpans("trace-1")[0]?.status, "ok");
   assert.throws(() => store.saveTraceSpan(span), (error: unknown) => error instanceof DeviceFabricError && error.code === "revision_conflict");
