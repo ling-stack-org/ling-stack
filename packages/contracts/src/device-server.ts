@@ -64,3 +64,70 @@ export interface LingServerCommandReceiptV1 {
   readonly result?: JsonValue;
   readonly recordedAt: string;
 }
+
+export type LingServerPeerRoleV1 = "gateway" | "mobile";
+export type LingServerTransportRouteV1 = "lan" | "direct" | "relay";
+
+export interface LingServerRelayCredentialV1 {
+  readonly url: string;
+  readonly username: string;
+  readonly credential: string;
+  readonly expiresAt: string;
+}
+
+/** Ephemeral configuration handed to a native WebRTC or equivalent transport adapter. */
+export interface LingServerPeerTransportConfigV1 {
+  readonly schemaVersion: 1;
+  readonly bindingId: string;
+  readonly routeAttemptId: string;
+  readonly role: LingServerPeerRoleV1;
+  readonly route: LingServerTransportRouteV1;
+  readonly peerEpoch: number;
+  readonly serverOrigin: string;
+  readonly applicationKeyFingerprint: string;
+  readonly localKeyFingerprint: string;
+  readonly remoteKeyFingerprint: string;
+  readonly protocolMajor: number;
+  readonly features: readonly string[];
+  readonly stunUrls: readonly string[];
+  readonly turnUrls: readonly string[];
+  readonly relayCredential?: LingServerRelayCredentialV1;
+  readonly expiresAt: string;
+  readonly maxFrameBytes: number;
+}
+
+export type LingServerTransportDiagnosticCheckIdV1 =
+  | "control_reachability"
+  | "peer_presence"
+  | "signaling"
+  | "candidate_gathering"
+  | "peer_handshake"
+  | "cursor_resume"
+  | "relay_quota"
+  | "revocation";
+
+export type LingServerTransportDiagnosticStatusV1 = "pass" | "fail" | "unknown";
+
+export interface LingServerTransportDiagnosticCheckV1 {
+  readonly id: LingServerTransportDiagnosticCheckIdV1;
+  readonly status: LingServerTransportDiagnosticStatusV1;
+  readonly code: string;
+  readonly latencyMs?: number;
+}
+
+/** Redacted, persisted route diagnostics. Credentials and candidate payloads never enter this record. */
+export interface LingServerTransportDiagnosticsV1 {
+  readonly diagnosticId: string;
+  readonly bindingId: string;
+  readonly routeAttemptId: string;
+  readonly peerEpoch: number;
+  readonly transportGeneration?: number;
+  readonly selectedRoute?: LingServerTransportRouteV1;
+  readonly checks: readonly LingServerTransportDiagnosticCheckV1[];
+  readonly localCandidateCount?: number;
+  readonly remoteCandidateCount?: number;
+  readonly requestedResumeSequence?: number;
+  readonly replayedFrameCount?: number;
+  readonly requiresSnapshot?: boolean;
+  readonly generatedAt: string;
+}

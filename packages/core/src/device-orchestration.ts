@@ -12,6 +12,8 @@ export interface DevicePlannerAcceptanceInput {
   readonly context: DeviceContextPackV1;
   readonly allowedTargetDeviceIds: readonly string[];
   readonly capabilities: ReadonlyMap<string, CapabilityDescriptorV1>;
+  readonly runnerId?: string;
+  readonly runnerCapabilityRevision?: string;
   readonly now?: string;
 }
 
@@ -24,6 +26,8 @@ export class DeviceModelOrchestrator {
       throw new DeviceFabricError("invalid_graph", "device planner proposal is incomplete");
     }
     if (proposal.taskId !== context.taskId || proposal.contextId !== context.contextId) throw new DeviceFabricError("revision_conflict", "planner proposal is bound to another context");
+    if (input.runnerId !== undefined && proposal.runnerId !== input.runnerId) throw new DeviceFabricError("revision_conflict", "planner proposal is bound to another runner");
+    if (input.runnerCapabilityRevision !== undefined && proposal.runnerCapabilityRevision !== input.runnerCapabilityRevision) throw new DeviceFabricError("revision_conflict", "planner runner capability revision changed");
     if (proposal.graph.graphId !== proposal.taskId || proposal.graph.status !== "planned") throw new DeviceFabricError("invalid_graph", "planner proposal graph is not a planned task graph");
     if (new Set(proposal.planningInputRefs).size !== proposal.planningInputRefs.length) throw new DeviceFabricError("revision_conflict", "planner input references must be unique");
     this.#graph.validateGraph(proposal.graph);
@@ -38,7 +42,17 @@ export class DeviceModelOrchestrator {
       if (node.attemptId || node.resultRef) throw new DeviceFabricError("safety_denied", "planner proposal cannot include execution evidence");
     }
     const contextDigest = createHash("sha256").update(JSON.stringify({ context, proposal: { ...proposal, graph: proposal.graph } })).digest("hex");
-    return { proposalId: proposal.proposalId, taskId: proposal.taskId, contextId: proposal.contextId, graph: proposal.graph, contextDigest, requiredApprovalNodeIds, acceptedAt: input.now ?? new Date().toISOString() };
+    return {
+      proposalId: proposal.proposalId,
+      taskId: proposal.taskId,
+      contextId: proposal.contextId,
+      graph: proposal.graph,
+      contextDigest,
+      requiredApprovalNodeIds,
+      acceptedAt: input.now ?? new Date().toISOString(),
+      ...(proposal.runnerId ? { runnerId: proposal.runnerId } : {}),
+      ...(proposal.runnerCapabilityRevision ? { runnerCapabilityRevision: proposal.runnerCapabilityRevision } : {}),
+    };
   }
 }
 

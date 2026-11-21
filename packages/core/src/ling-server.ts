@@ -17,6 +17,18 @@ export class LingServerPeerRegistry {
     this.#store = options.store;
   }
 
+  getInstallation(installationId: string): LingServerInstallationV1 | undefined {
+    return this.#installations.get(installationId) ?? this.#store?.getInstallation(installationId);
+  }
+
+  getBinding(bindingId: string): LingServerPeerBindingV1 | undefined {
+    return this.#bindings.get(bindingId) ?? this.#store?.getBinding(bindingId);
+  }
+
+  getRoute(routeAttemptId: string): LingServerRouteAttemptV1 | undefined {
+    return this.#routes.get(routeAttemptId) ?? this.#store?.getRoute(routeAttemptId);
+  }
+
   registerInstallation(installation: LingServerInstallationV1): LingServerInstallationV1 {
     const current = this.#installations.get(installation.installationId) ?? this.#store?.getInstallation(installation.installationId);
     if (current && installation.revision <= current.revision) throw new DeviceFabricError("revision_conflict", "Ling Server installation revision must advance");
@@ -82,6 +94,7 @@ export class LingServerPeerRegistry {
 export class LingServerPeerSessionCoordinator {
   readonly #store?: SqliteLingServerStore;
   readonly #sessions = new Map<string, LingServerPeerSessionV1>();
+  readonly #frames = new Map<string, LingServerPeerFrameV1>();
   readonly #now: () => string;
 
   constructor(options: { readonly store?: SqliteLingServerStore; readonly now?: () => string } = {}) {
@@ -110,7 +123,7 @@ export class LingServerPeerSessionCoordinator {
 
   acceptFrame(frame: LingServerPeerFrameV1): { readonly frame: LingServerPeerFrameV1; readonly replayed: boolean } {
     const session = this.requireSession(frame.sessionId);
-    const existing = this.#store?.getFrame(frame.frameId);
+    const existing = this.#frames.get(frame.frameId) ?? this.#store?.getFrame(frame.frameId);
     if (existing) {
       if (JSON.stringify(existing) !== JSON.stringify(frame)) throw new DeviceFabricError("revision_conflict", "peer frame id is bound to another frame");
       return { frame: existing, replayed: true };
@@ -120,6 +133,7 @@ export class LingServerPeerSessionCoordinator {
     }
     if (frame.sequence !== session.receivedSequence + 1) throw new DeviceFabricError("revision_conflict", "peer frame sequence is not contiguous");
     const next = { ...session, receivedSequence: frame.sequence, lastSeenAt: frame.sentAt };
+    this.#frames.set(frame.frameId, frame);
     this.#store?.saveFrame(frame);
     this.#store?.saveSession(next);
     this.#sessions.set(session.sessionId, next);
@@ -128,7 +142,7 @@ export class LingServerPeerSessionCoordinator {
 
   sendFrame(sessionId: string, input: Omit<LingServerPeerFrameV1, "sessionId" | "bindingId" | "peerEpoch" | "transportGeneration" | "sequence">): { readonly frame: LingServerPeerFrameV1; readonly replayed: boolean } {
     const session = this.requireSession(sessionId);
-    const existing = this.#store?.getFrame(input.frameId);
+    const existing = this.#frames.get(input.frameId) ?? this.#store?.getFrame(input.frameId);
     if (existing) {
       if (JSON.stringify(existing) !== JSON.stringify({ ...input, sessionId: session.sessionId, bindingId: session.bindingId, peerEpoch: session.peerEpoch, transportGeneration: session.transportGeneration, sequence: existing.sequence })) throw new DeviceFabricError("revision_conflict", "peer frame id is bound to another frame");
       return { frame: existing, replayed: true };
@@ -136,6 +150,7 @@ export class LingServerPeerSessionCoordinator {
     if (session.status !== "open") throw new DeviceFabricError("safety_denied", "peer session is not open");
     const frame: LingServerPeerFrameV1 = { ...input, sessionId: session.sessionId, bindingId: session.bindingId, peerEpoch: session.peerEpoch, transportGeneration: session.transportGeneration, sequence: session.sendSequence + 1 };
     const next = { ...session, sendSequence: frame.sequence, lastSeenAt: frame.sentAt };
+    this.#frames.set(frame.frameId, frame);
     this.#store?.saveFrame(frame);
     this.#store?.saveSession(next);
     this.#sessions.set(session.sessionId, next);
@@ -156,7 +171,9 @@ export class LingServerPeerSessionCoordinator {
   resume(sessionId: string, lastReceivedSequence: number): { readonly session: LingServerPeerSessionV1; readonly replayFromSequence: number; readonly frames: readonly LingServerPeerFrameV1[]; readonly requiresSnapshot: boolean } {
     if (!Number.isInteger(lastReceivedSequence) || lastReceivedSequence < 0) throw new DeviceFabricError("revision_conflict", "peer resume cursor is invalid");
     const session = this.requireSession(sessionId);
-    const frames = this.#store?.listFrames(sessionId, session.transportGeneration, lastReceivedSequence) ?? [];
+    const frames = this.#store?.listFrames(sessionId, session.transportGeneration, lastReceivedSequence) ?? [...this.#frames.values()]
+      .filter(frame => frame.sessionId === sessionId && frame.transportGeneration === session.transportGeneration && frame.sequence > lastReceivedSequence)
+      .sort((left, right) => left.sequence - right.sequence);
     return { session, replayFromSequence: lastReceivedSequence + 1, frames, requiresSnapshot: lastReceivedSequence > session.receivedSequence || (lastReceivedSequence < session.receivedSequence && frames.length === 0) };
   }
 

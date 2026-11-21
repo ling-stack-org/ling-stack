@@ -8,7 +8,8 @@ import { createHash } from "node:crypto";
 import type { DeviceConformanceReportV1, DeviceEventEnvelopeV1, DeviceGraphNodeV1, DeviceResourceManifestV1, DeviceTaskGraphV1, DeviceTraceSpanV1, EdgeRuntimeEnrollmentV1 } from "@ling-stack/contracts";
 import { DeviceFabricError, DeviceTaskGraphCoordinator } from "../dist/device-fabric.js";
 import { DeviceSecretBroker } from "../dist/device-secrets.js";
-import { DeviceEventProjector } from "../dist/device-event-projection.js";
+import { DeviceEventProjector, DevicePeerEventSynchronizer } from "../dist/device-event-projection.js";
+import { LingServerPeerSessionCoordinator } from "../dist/ling-server.js";
 import { DeviceAccessManager } from "../dist/device-access.js";
 import { SqliteDeviceFabricStore } from "../dist/storage/sqlite/device-fabric-store.js";
 
@@ -79,6 +80,24 @@ test("fabric store retains bounded event streams and resumes from a durable snap
     rmSync(path, { force: true });
     rmSync(path.replace(/\/fabric\.sqlite$/u, ""), { recursive: true, force: true });
   }
+});
+
+test("peer event synchronization preserves owner stream identity and idempotent replay", () => {
+  const sender = new LingServerPeerSessionCoordinator({ now: () => now });
+  const receiver = new LingServerPeerSessionCoordinator({ now: () => now });
+  const session = { sessionId: "session-1", bindingId: "binding-1", peerEpoch: 1, routeAttemptId: "route-1", route: "direct" as const, transportGeneration: 1, sendSequence: 0, receivedSequence: 0, status: "open" as const, openedAt: now, lastSeenAt: now };
+  sender.openSession(session);
+  receiver.openSession(session);
+  const store = new SqliteDeviceFabricStore();
+  const senderStore = new SqliteDeviceFabricStore();
+  const sync = new DevicePeerEventSynchronizer({ sessions: receiver, store, now: () => now });
+  const eventValue = event(1, { eventId: "peer-event-1", streamId: "task:peer", sourceId: "mobile-1" });
+  const outbound = new DevicePeerEventSynchronizer({ sessions: sender, store: senderStore, now: () => now }).publish("session-1", eventValue);
+  assert.equal(sync.receive(outbound.frame).replayed, false);
+  assert.equal(sync.receive(outbound.frame).replayed, true);
+  assert.deepEqual(store.readEvents("task:peer", 1, 0).events.map(item => item.eventId), ["peer-event-1"]);
+  senderStore.close();
+  store.close();
 });
 
 test("fabric store installs signed resources, preserves the previous revision, and rolls back", () => {

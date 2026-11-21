@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { LingServerPeerRegistry, SqliteLingServerStore } from "@ling-stack/core";
+import { LingServerPeerRegistry, LingServerTransportPlanner, SqliteLingServerStore } from "@ling-stack/core";
 import type { LingServerInstallationV1, LingServerPeerBindingV1, LingServerRouteAttemptV1 } from "@ling-stack/contracts";
 
 const MAX_BODY_BYTES = 256 * 1024;
@@ -12,6 +12,13 @@ export interface LingServerControlPlaneOptions {
   readonly registry?: LingServerPeerRegistry;
   readonly databasePath?: string;
   readonly store?: SqliteLingServerStore;
+  readonly transport?: {
+    readonly protocolMajor?: number;
+    readonly features?: readonly string[];
+    readonly stunUrls?: readonly string[];
+    readonly turnUrls?: readonly string[];
+    readonly maxFrameBytes?: number;
+  };
 }
 
 export class LingServerControlPlane {
@@ -22,6 +29,7 @@ export class LingServerControlPlane {
   readonly #now: () => string;
   readonly #store?: SqliteLingServerStore;
   readonly #ownsStore: boolean;
+  readonly #transportOptions: NonNullable<LingServerControlPlaneOptions["transport"]>;
   #storeClosed = false;
   #server?: Server;
 
@@ -34,6 +42,7 @@ export class LingServerControlPlane {
     this.#port = options.port ?? 0;
     this.#authToken = options.authToken;
     this.#now = options.now ?? (() => new Date().toISOString());
+    this.#transportOptions = options.transport ?? {};
   }
 
   async start(): Promise<{ readonly host: string; readonly port: number }> {
@@ -94,6 +103,60 @@ export class LingServerControlPlane {
         else if (input.action === "select" && input.routeAttemptId && input.selected) writeJson(response, 200, this.registry.selectRoute(input.routeAttemptId, input.selected, this.#now()));
         else if (input.action === "failover" && input.routeAttemptId) writeJson(response, 200, this.registry.failoverRoute(input.routeAttemptId, this.#now()));
         else writeJson(response, 400, { error: "invalid_route_request" });
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/v1/routes/transport-config") {
+        const input = requireBody<{
+          readonly bindingId: string;
+          readonly routeAttemptId: string;
+          readonly role: "gateway" | "mobile";
+          readonly localKeyFingerprint: string;
+          readonly remoteKeyFingerprint: string;
+          readonly expiresAt: string;
+          readonly relayCredential?: { readonly url: string; readonly username: string; readonly credential: string; readonly expiresAt: string };
+        }>(body);
+        const binding = this.registry.getBinding(input.bindingId);
+        const route = this.registry.getRoute(input.routeAttemptId);
+        if (!binding || !route) throw new Error("binding or route is missing");
+        const installation = this.registry.getInstallation(binding.installationId);
+        if (!installation) throw new Error("installation is missing");
+        const planner = new LingServerTransportPlanner({ installation, ...this.#transportOptions, now: this.#now });
+        writeJson(response, 200, planner.createConfig({ binding, route, role: input.role, localKeyFingerprint: input.localKeyFingerprint, remoteKeyFingerprint: input.remoteKeyFingerprint, expiresAt: input.expiresAt, relayCredential: input.relayCredential }));
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/v1/routes/diagnostics") {
+        const input = requireBody<{
+          readonly bindingId: string;
+          readonly routeAttemptId: string;
+          readonly diagnosticId: string;
+          readonly checks: readonly { readonly id: "control_reachability" | "peer_presence" | "signaling" | "candidate_gathering" | "peer_handshake" | "cursor_resume" | "relay_quota" | "revocation"; readonly status: "pass" | "fail" | "unknown"; readonly code: string; readonly latencyMs?: number }[];
+          readonly transportGeneration?: number;
+          readonly localCandidateCount?: number;
+          readonly remoteCandidateCount?: number;
+          readonly requestedResumeSequence?: number;
+          readonly replayedFrameCount?: number;
+          readonly requiresSnapshot?: boolean;
+          readonly generatedAt?: string;
+        }>(body);
+        const binding = this.registry.getBinding(input.bindingId);
+        const route = this.registry.getRoute(input.routeAttemptId);
+        if (!binding || !route) throw new Error("binding or route is missing");
+        const installation = this.registry.getInstallation(binding.installationId);
+        if (!installation) throw new Error("installation is missing");
+        const planner = new LingServerTransportPlanner({ installation, ...this.#transportOptions, now: this.#now });
+        writeJson(response, 200, planner.createDiagnostics({
+          binding,
+          route,
+          diagnosticId: input.diagnosticId,
+          checks: input.checks,
+          transportGeneration: input.transportGeneration,
+          localCandidateCount: input.localCandidateCount,
+          remoteCandidateCount: input.remoteCandidateCount,
+          requestedResumeSequence: input.requestedResumeSequence,
+          replayedFrameCount: input.replayedFrameCount,
+          requiresSnapshot: input.requiresSnapshot,
+          generatedAt: input.generatedAt,
+        }));
         return;
       }
       writeJson(response, 404, { error: "not_found" });

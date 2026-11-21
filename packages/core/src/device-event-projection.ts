@@ -1,11 +1,58 @@
-import type { DeviceEventEnvelopeV1, JsonValue } from "@ling-stack/contracts";
+import type { DeviceEventEnvelopeV1, JsonValue, LingServerPeerFrameV1 } from "@ling-stack/contracts";
 import { DeviceFabricError } from "./device-fabric.js";
 import type { DeviceEventReadResult, DeviceSnapshotRecord } from "./storage/sqlite/device-fabric-store.js";
+import type { LingServerPeerSessionCoordinator } from "./ling-server.js";
 
 export interface DeviceEventProjectionStore {
   readEvents(streamId: string, generation: number, afterSequence: number, limit: number): DeviceEventReadResult;
   getSnapshot(streamId: string, generation: number): DeviceSnapshotRecord | undefined;
   saveSnapshot(input: Omit<DeviceSnapshotRecord, "createdAt"> & { readonly createdAt?: string }): DeviceSnapshotRecord;
+}
+
+export interface DeviceEventAppendStore {
+  appendEvent(event: DeviceEventEnvelopeV1, now?: string): { readonly event: DeviceEventEnvelopeV1; readonly replayed: boolean };
+}
+
+export interface DevicePeerEventPublishResult {
+  readonly frame: LingServerPeerFrameV1;
+  readonly replayed: boolean;
+}
+
+export interface DevicePeerEventReceiveResult {
+  readonly frame: LingServerPeerFrameV1;
+  readonly event: DeviceEventEnvelopeV1;
+  readonly replayed: boolean;
+}
+
+/** Binds owner-stream events to the authenticated peer session without exposing transport internals to projections. */
+export class DevicePeerEventSynchronizer {
+  readonly #sessions: LingServerPeerSessionCoordinator;
+  readonly #store: DeviceEventAppendStore;
+  readonly #now: () => string;
+
+  constructor(input: { readonly sessions: LingServerPeerSessionCoordinator; readonly store: DeviceEventAppendStore; readonly now?: () => string }) {
+    this.#sessions = input.sessions;
+    this.#store = input.store;
+    this.#now = input.now ?? (() => new Date().toISOString());
+  }
+
+  publish(sessionId: string, event: DeviceEventEnvelopeV1, direction: LingServerPeerFrameV1["direction"] = "to_mobile"): DevicePeerEventPublishResult {
+    const result = this.#sessions.sendFrame(sessionId, {
+      frameId: `event:${event.eventId}`,
+      direction,
+      kind: "device_task",
+      payload: { type: "device_event", event: event as unknown as JsonValue } as unknown as JsonValue,
+      sentAt: this.#now(),
+    });
+    return result;
+  }
+
+  receive(frame: LingServerPeerFrameV1): DevicePeerEventReceiveResult {
+    const accepted = this.#sessions.acceptFrame(frame);
+    const event = readPeerEvent(frame.payload);
+    const stored = this.#store.appendEvent(event, this.#now());
+    return { frame: accepted.frame, event: stored.event, replayed: accepted.replayed || stored.replayed };
+  }
 }
 
 export interface DeviceEventProjectionSyncResult {
@@ -102,4 +149,17 @@ export class DeviceEventProjector {
       hasMore: result.latestSequence !== undefined && result.latestSequence > sequence,
     };
   }
+}
+
+function readPeerEvent(value: JsonValue): DeviceEventEnvelopeV1 {
+  if (!isRecord(value) || value.type !== "device_event" || !isRecord(value.event)) throw new DeviceFabricError("revision_conflict", "peer frame does not contain a device event");
+  const event = value.event;
+  if (typeof event.eventId !== "string" || typeof event.traceId !== "string" || typeof event.sourceKind !== "string" || typeof event.sourceId !== "string" || typeof event.sequence !== "number" || !Number.isInteger(event.sequence) || event.sequence < 1 || typeof event.kind !== "string" || typeof event.occurredAt !== "string") {
+    throw new DeviceFabricError("revision_conflict", "peer device event is malformed");
+  }
+  return event as unknown as DeviceEventEnvelopeV1;
+}
+
+function isRecord(value: JsonValue): value is { readonly [key: string]: JsonValue } {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

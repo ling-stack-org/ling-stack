@@ -3,6 +3,8 @@ import test from "node:test";
 
 import type { CapabilityDescriptorV1, DeviceContextPackV1, DevicePlannerProposalV1 } from "@ling-stack/contracts";
 import { DeviceModelOrchestrator, capabilityMap } from "../dist/device-orchestration.js";
+import { DeviceRunnerPlanningBridge, createLocalPlaybookProposal } from "../dist/device-runner.js";
+import { createPcSoftwareDiagnosisPlaybook } from "../dist/device-playbooks.js";
 
 const now = "2026-11-21T00:00:00.000Z";
 const readCapability: CapabilityDescriptorV1 = {
@@ -38,4 +40,71 @@ test("typed planner rejects context, target, capability and execution-evidence d
   assert.throws(() => orchestrator.acceptProposal({ ...base, allowedTargetDeviceIds: ["other-device"] }), /unavailable device/);
   assert.throws(() => orchestrator.acceptProposal({ ...base, capabilities: capabilityMap([]) }), /capability is unavailable/);
   assert.throws(() => orchestrator.acceptProposal({ ...base, proposal: { ...base.proposal, graph: { ...base.proposal.graph, nodes: [{ ...base.proposal.graph.nodes[0]!, attemptId: "attempt-1" }] } } }), /execution evidence/);
+});
+
+test("runner planning bridge binds runner identity and falls back to a typed local playbook", async () => {
+  const runner = {
+    runnerId: "pi",
+    capabilityRevision: "pi:device-plan:v1",
+    async plan() {
+      throw new Error("model service unavailable");
+    },
+  };
+  const bridge = new DeviceRunnerPlanningBridge();
+  const result = await bridge.plan({
+    context,
+    allowedTargetDeviceIds: ["linux-1"],
+    capabilities: capabilityMap([readCapability]),
+    planningInputRefs: ["obs-1"],
+    localPlaybook: {
+      playbook: { ...createPcSoftwareDiagnosisPlaybook(), steps: [{ id: "inspect-network", capabilityId: readCapability.id, input: {} }] },
+      targetDeviceId: "linux-1",
+      ownerKind: "edge",
+      ownerId: "edge-1",
+      capabilitySnapshotId: "snapshot-1",
+      now,
+    },
+    now,
+  }, runner);
+  assert.equal(result.source, "local_playbook");
+  assert.equal(result.acceptance.graph.nodes[0]?.capabilityId, readCapability.id);
+  assert.match(result.fallbackReason ?? "", /model service unavailable/);
+
+  const runnerProposal = createLocalPlaybookProposal({
+    context,
+    planningInputRefs: ["obs-1"],
+    playbook: { ...createPcSoftwareDiagnosisPlaybook(), steps: [{ id: "inspect-network", capabilityId: readCapability.id, input: {} }] },
+    targetDeviceId: "linux-1",
+    ownerKind: "edge",
+    ownerId: "edge-1",
+    capabilitySnapshotId: "snapshot-1",
+    now,
+  });
+  const accepted = new DeviceModelOrchestrator().acceptProposal({ proposal: { ...runnerProposal, runnerId: "pi", runnerCapabilityRevision: "pi:device-plan:v1" }, context, allowedTargetDeviceIds: ["linux-1"], capabilities: capabilityMap([readCapability]), runnerId: "pi", runnerCapabilityRevision: "pi:device-plan:v1", now });
+  assert.equal(accepted.runnerId, "pi");
+});
+
+test("runner planning bridge does not hide an invalid typed proposal behind the local fallback", async () => {
+  const bridge = new DeviceRunnerPlanningBridge();
+  await assert.rejects(() => bridge.plan({
+    context,
+    allowedTargetDeviceIds: ["linux-1"],
+    capabilities: capabilityMap([readCapability]),
+    planningInputRefs: ["obs-1"],
+    localPlaybook: {
+      playbook: { ...createPcSoftwareDiagnosisPlaybook(), steps: [{ id: "inspect-network", capabilityId: readCapability.id, input: {} }] },
+      targetDeviceId: "linux-1",
+      ownerKind: "edge",
+      ownerId: "edge-1",
+      capabilitySnapshotId: "snapshot-1",
+      now,
+    },
+    now,
+  }, {
+    runnerId: "pi",
+    capabilityRevision: "pi:device-plan:v1",
+    async plan() {
+      return { proposalId: "invalid", taskId: "task-1", contextId: "context-1", source: "model" as const, graph: { graphId: "task-1", revision: 1, status: "planned" as const, nodes: [], createdAt: now, updatedAt: now }, planningInputRefs: [], createdAt: now, runnerId: "other-runner" };
+    },
+  }), /another runner|incomplete/);
 });

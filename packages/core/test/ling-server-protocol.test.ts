@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { HardwareProtocolWorkbench, LingServerPeerRegistry, LingServerPeerSessionCoordinator, SqliteDeviceProtocolStore, SqliteLingServerStore } from "../dist/index.js";
+import { HardwareProtocolWorkbench, LingServerPeerRegistry, LingServerPeerSessionCoordinator, LingServerTransportPlanner, SqliteDeviceProtocolStore, SqliteLingServerStore } from "../dist/index.js";
 
 const now = "2026-11-21T00:00:00.000Z";
 
@@ -48,6 +48,27 @@ test("Ling Server peer registry restores installation, binding and route state f
   secondStore.close();
 });
 
+test("Ling Server transport planner emits ephemeral direct and relay configuration with redacted diagnostics", () => {
+  const planner = new LingServerTransportPlanner({
+    installation: { installationId: "install-1", serverOrigin: "https://ling.example", applicationKeyFingerprint: "server-fp", revision: 1, status: "active" },
+    stunUrls: ["stun:stun.ling.example:3478"],
+    turnUrls: ["turns:turn.ling.example:443"],
+    features: ["ordered-data-channel", "resume-cursor"],
+    now: () => now,
+  });
+  const binding = { bindingId: "binding-1", installationId: "install-1", gatewayId: "gateway-1", mobileDeviceId: "mobile-1", gatewayKeyFingerprint: "gateway-fp", mobileKeyFingerprint: "mobile-fp", epoch: 2, revision: 2, status: "active" as const };
+  const route = { routeAttemptId: "route-1", bindingId: "binding-1", preferred: "direct" as const, selected: "direct" as const, status: "connected" as const, expiresAt: "2026-11-21T00:05:00.000Z" };
+  const config = planner.createConfig({ binding, route, role: "mobile", localKeyFingerprint: "mobile-fp", remoteKeyFingerprint: "gateway-fp", expiresAt: "2026-11-21T00:04:00.000Z" });
+  assert.equal(config.route, "direct");
+  assert.deepEqual(config.features, ["ordered-data-channel", "resume-cursor"]);
+  assert.equal(config.relayCredential, undefined);
+  const diagnostics = planner.createDiagnostics({ binding, route, diagnosticId: "diag-1", transportGeneration: 3, localCandidateCount: 2, remoteCandidateCount: 2, requestedResumeSequence: 4, replayedFrameCount: 2, checks: [{ id: "control_reachability", status: "pass", code: "reachable", latencyMs: 12 }, { id: "peer_handshake", status: "pass", code: "authenticated" }] });
+  assert.equal(diagnostics.peerEpoch, 2);
+  assert.equal(diagnostics.replayedFrameCount, 2);
+  assert.throws(() => planner.createConfig({ binding, route: { ...route, selected: "relay" }, role: "mobile", localKeyFingerprint: "mobile-fp", remoteKeyFingerprint: "gateway-fp", expiresAt: "2026-11-21T00:04:00.000Z" }), /TURN configuration and credentials/);
+  assert.throws(() => planner.createConfig({ binding, route, role: "mobile", localKeyFingerprint: "mobile-fp", remoteKeyFingerprint: "gateway-fp", expiresAt: "2026-11-21T00:00:00.000Z" }), /expired/);
+});
+
 test("hardware protocol codec manifests and captures survive SQLite reopen", () => {
   const path = join(mkdtempSync(join(tmpdir(), "ling-protocol-store-")), "protocol.sqlite");
   const first = new SqliteDeviceProtocolStore({ databasePath: path });
@@ -89,4 +110,16 @@ test("Ling Server peer session preserves route migration, frame sequencing, rece
   const migrated = second.openSession({ ...second.resume("session-1", 0).session, status: "open" });
   assert.equal(migrated.route, "relay");
   secondStore.close();
+});
+
+test("Ling Server peer session keeps frame replay state without SQLite", () => {
+  const registry = new LingServerPeerRegistry();
+  registry.registerInstallation({ installationId: "install-1", serverOrigin: "https://ling.example", applicationKeyFingerprint: "server-fp", revision: 1, status: "active" });
+  registry.bindPeers({ bindingId: "binding-1", installationId: "install-1", gatewayId: "gateway-1", mobileDeviceId: "mobile-1", gatewayKeyFingerprint: "gateway-fp", mobileKeyFingerprint: "mobile-fp", epoch: 1, revision: 1, status: "active" });
+  const coordinator = new LingServerPeerSessionCoordinator({ now: () => now });
+  coordinator.openSession({ sessionId: "session-1", bindingId: "binding-1", peerEpoch: 1, routeAttemptId: "route-1", route: "lan", transportGeneration: 1, sendSequence: 0, receivedSequence: 0, status: "open", openedAt: now, lastSeenAt: now });
+  const input = { frameId: "frame-1", direction: "to_mobile" as const, kind: "conversation" as const, payload: { text: "hello" }, sentAt: now };
+  assert.equal(coordinator.sendFrame("session-1", input).replayed, false);
+  assert.equal(coordinator.sendFrame("session-1", input).replayed, true);
+  assert.equal(coordinator.resume("session-1", 0).frames.length, 1);
 });
