@@ -29,7 +29,7 @@ App Server 作为 Daemon 的会话协议入口，以 `ling-app-server/1` 发布�
 | 传输 | 运行方式 | 信任边界 |
 | --- | --- | --- |
 | stdio JSONL | `ling-stack app-server` 用 stdin/stdout 收发帧，stderr 记诊断。以本机配置的受信服务地址接入已选 Daemon。 | CLI 配置由本机用户持有，使用授予该客户端的专用凭据。输入侧只接收完整、有限长度的 UTF-8 JSON 行。 |
-| Unix socket | macOS/Linux 上本机连接，使用相同 JSONL framing。运行目录和 socket 限制给拥有者，重启时核对旧 socket 所有者和服务状态。 | 本机 OS 边界结合客户端授权。适用范围以平台报告为准。 |
+| Unix socket | macOS/Linux 上本机连接，使用相同 JSONL framing。运行目录和 socket 限制给拥有者，重启时探测旧 socket 是否仍有监听者，只移除确认无监听者的 stale hard link。 | 本机 OS 边界结合客户端授权。适用范围以平台报告为准。 |
 | 回环 WS / WSS | 一条文本帧对应一个 JSON-RPC 消息。App Server 使用独立的升级路径 `/app-server/rpc`。Windows 也用 stdio 和回环 WS。 | 回环连接同样校验客户端凭据。远程 WSS 显式开启，TLS 和客户端认证在握手前完成。Daemon 通用 HTTP/WS 保持在有权限的管理网络。 |
 
 用户通过本机受信管理入口创建连接配置，选定允许的工作区、操作范围、过期时间及适用的 Thread 或 Work Item 范围。配置名标记操作者与用途。服务端颁发独立、可撤销的凭据，仅返回授权摘要。存放凭据用现有本机秘密管理，运行日志和 URL 只记录公开配置 ID。WSS 客户端在 Upgrade 使用认证头。需要浏览器集成的宿主通过自己的受信后端或 Desktop 桥接保持认证。监听器校验配置的 Host/Origin，认证与 TLS 终止的位置随部署明确。现有移动端配对凭据按其自身用途管理。
