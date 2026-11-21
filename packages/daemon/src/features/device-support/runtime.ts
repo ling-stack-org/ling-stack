@@ -16,6 +16,7 @@ import {
   DeviceFleetProjection,
   EdgeRuntimeRegistry,
   HardwareProtocolWorkbench,
+  HardwareProtocolProfileRegistry,
   modbusRtuRegisterCodec,
   runDeviceReadOnlyPlaybook,
   SqliteDeviceDeveloperStore,
@@ -44,6 +45,7 @@ export interface DeviceSupportRuntime {
   readonly developerStore: SqliteDeviceDeveloperStore;
   readonly protocolStore: SqliteDeviceProtocolStore;
   readonly protocolWorkbench: HardwareProtocolWorkbench;
+  readonly protocolProfiles: HardwareProtocolProfileRegistry;
   readonly developerSessions: DeviceDeveloperSessionCoordinator;
   readonly collaboration: DeviceCollaborationCoordinator;
   readonly edgeRuntimes: EdgeRuntimeRegistry;
@@ -82,6 +84,7 @@ export function createDeviceSupportRuntime(options: {
   const developerStore = new SqliteDeviceDeveloperStore({ databasePath: options.databasePath });
   const protocolStore = new SqliteDeviceProtocolStore({ databasePath: options.databasePath });
   const protocolWorkbench = new HardwareProtocolWorkbench();
+  const protocolProfiles = new HardwareProtocolProfileRegistry(protocolWorkbench);
   const access = new DeviceAccessManager(fabricStore);
   const broker = new DeviceCapabilityBroker({ store, now, accessManager: access });
   const adapter = new PcAdapter({ executor: new LocalPcTargetExecutor(), now });
@@ -91,6 +94,16 @@ export function createDeviceSupportRuntime(options: {
   try {
     protocolStore.registerCodec(modbusRtuRegisterCodec.manifest);
     protocolWorkbench.registerCodec(modbusRtuRegisterCodec);
+    const modbusProfile = protocolProfiles.register({
+      profileId: "modbus-rtu-registers",
+      version: "1.0.0",
+      codecId: modbusRtuRegisterCodec.manifest.codecId,
+      transport: modbusRtuRegisterCodec.manifest.transport,
+      supportedDeviceKinds: ["hardware", "vehicle", "head_unit"],
+      capabilityIds: ["protocol.read_registers"],
+      license: modbusRtuRegisterCodec.manifest.license,
+    });
+    protocolStore.registerProfile(modbusProfile);
     broker.registerAdapter(adapter);
     ssh = bindLinuxSshTargets(options.linuxSshTargets ?? [], options.linuxSshRunner);
     linuxAdapter = new LinuxSshAdapter({ now, connections: ssh.targets });
@@ -199,6 +212,7 @@ export function createDeviceSupportRuntime(options: {
     developerStore,
     protocolStore,
     protocolWorkbench,
+    protocolProfiles,
     developerSessions,
     collaboration,
     edgeRuntimes,

@@ -95,6 +95,8 @@ test("daemon runtime registers the Modbus codec and restores offline captures wi
   const captureTime = "2026-11-21T00:00:00.000Z";
   const owner = createDeviceSupportRuntime({ databasePath });
   try {
+    assert.deepEqual(owner.protocolProfiles.list().map(profile => profile.profileId), ["modbus-rtu-registers"]);
+    assert.equal(owner.protocolStore.getProfile("modbus-rtu-registers")?.codecId, modbusRtuRegisterCodec.manifest.codecId);
     const capture = owner.protocolWorkbench.capture({
       captureId: "modbus-temperature-register", targetDeviceId: "fixture-rs485", transport: "rs485", source: "imported",
       createdAt: captureTime, loss: { reason: "connection_interrupted" },
@@ -107,6 +109,7 @@ test("daemon runtime registers the Modbus codec and restores offline captures wi
   const reopened = createDeviceSupportRuntime({ databasePath });
   try {
     const codec = reopened.protocolStore.getCodec(modbusRtuRegisterCodec.manifest.codecId);
+    assert.equal(reopened.protocolStore.getProfile("modbus-rtu-registers")?.transport, "rs485");
     assert.deepEqual(codec, modbusRtuRegisterCodec.manifest);
     const capture = reopened.protocolStore.getCapture("modbus-temperature-register");
     assert.ok(capture && codec);

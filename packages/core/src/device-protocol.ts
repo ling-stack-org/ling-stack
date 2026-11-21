@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type {
   HardwareProtocolCaptureV1, HardwareProtocolCodecManifestV1, HardwareProtocolDecodedFrameV1, HardwareProtocolFrameV1,
+  HardwareProtocolProfileV1,
 } from "@ling-stack/contracts";
 import { DeviceFabricError } from "./device-fabric.js";
 
@@ -15,6 +16,10 @@ export class HardwareProtocolWorkbench {
   registerCodec(codec: HardwareProtocolCodec): void {
     if (this.#codecs.has(codec.manifest.codecId)) throw new DeviceFabricError("resource_conflict", "protocol codec is already registered");
     this.#codecs.set(codec.manifest.codecId, codec);
+  }
+
+  getCodecManifest(codecId: string): HardwareProtocolCodecManifestV1 | undefined {
+    return this.#codecs.get(codecId)?.manifest;
   }
 
   capture(input: {
@@ -57,6 +62,39 @@ export class HardwareProtocolWorkbench {
   }
 }
 
+/** Maps a verified codec to device models and reusable capability identities. */
+export class HardwareProtocolProfileRegistry {
+  readonly #workbench: HardwareProtocolWorkbench;
+  readonly #profiles = new Map<string, HardwareProtocolProfileV1>();
+
+  constructor(workbench: HardwareProtocolWorkbench) {
+    this.#workbench = workbench;
+  }
+
+  register(profile: HardwareProtocolProfileV1): HardwareProtocolProfileV1 {
+    validateProtocolProfile(profile);
+    const codec = this.#workbench.getCodecManifest(profile.codecId);
+    if (!codec || codec.transport !== profile.transport) throw new DeviceFabricError("target_missing", "protocol profile codec is unavailable or uses another transport");
+    const current = this.#profiles.get(profile.profileId);
+    if (current && JSON.stringify(current) !== JSON.stringify(profile)) throw new DeviceFabricError("resource_conflict", "protocol profile id is bound to another manifest");
+    this.#profiles.set(profile.profileId, profile);
+    return profile;
+  }
+
+  get(profileId: string): HardwareProtocolProfileV1 | undefined { return this.#profiles.get(profileId); }
+
+  list(): readonly HardwareProtocolProfileV1[] { return [...this.#profiles.values()].sort((left, right) => left.profileId.localeCompare(right.profileId)); }
+
+  resolve(input: { readonly profileId?: string; readonly deviceKind?: string; readonly model?: string; readonly firmwareVersion?: string }): HardwareProtocolProfileV1 {
+    const candidates = input.profileId ? [this.#profiles.get(input.profileId)].filter((profile): profile is HardwareProtocolProfileV1 => profile !== undefined) : this.list();
+    const match = candidates.find(profile => (input.deviceKind === undefined || profile.supportedDeviceKinds.includes(input.deviceKind as HardwareProtocolProfileV1["supportedDeviceKinds"][number]))
+      && (input.model === undefined || profile.supportedModels === undefined || profile.supportedModels.includes(input.model))
+      && (input.firmwareVersion === undefined || profile.supportedFirmwareRanges === undefined || profile.supportedFirmwareRanges.includes(input.firmwareVersion)));
+    if (!match) throw new DeviceFabricError("target_missing", "no protocol profile matches the target facts");
+    return match;
+  }
+}
+
 export function assertValidHardwareProtocolCapture(capture: HardwareProtocolCaptureV1): void {
   if (!capture.captureId.trim() || !capture.targetDeviceId.trim() || !Number.isFinite(Date.parse(capture.createdAt))
     || !["usb", "ble", "serial", "rs485", "can", "obd", "vendor"].includes(capture.transport)
@@ -78,6 +116,18 @@ export function assertValidHardwareProtocolCapture(capture: HardwareProtocolCapt
       throw new DeviceFabricError("revision_conflict", "protocol frame digest or encoding is invalid");
     }
   }
+}
+
+function validateProtocolProfile(profile: HardwareProtocolProfileV1): void {
+  if (!profile.profileId.trim() || !profile.version.trim() || !profile.codecId.trim() || !profile.license.trim()
+    || profile.supportedDeviceKinds.length === 0 || profile.capabilityIds.length === 0
+    || new Set(profile.supportedDeviceKinds).size !== profile.supportedDeviceKinds.length
+    || new Set(profile.capabilityIds).size !== profile.capabilityIds.length
+    || profile.supportedDeviceKinds.some(kind => !kind.trim()) || profile.capabilityIds.some(id => !id.trim())) {
+    throw new DeviceFabricError("revision_conflict", "protocol profile manifest is incomplete");
+  }
+  if (profile.supportedModels && new Set(profile.supportedModels).size !== profile.supportedModels.length) throw new DeviceFabricError("revision_conflict", "protocol profile models are repeated");
+  if (profile.supportedFirmwareRanges && new Set(profile.supportedFirmwareRanges).size !== profile.supportedFirmwareRanges.length) throw new DeviceFabricError("revision_conflict", "protocol profile firmware ranges are repeated");
 }
 
 function digest(bytes: Uint8Array): string {

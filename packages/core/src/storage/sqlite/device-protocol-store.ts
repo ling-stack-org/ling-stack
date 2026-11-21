@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
 import { isDeepStrictEqual } from "node:util";
 
-import type { HardwareProtocolCaptureV1, HardwareProtocolCodecManifestV1 } from "@ling-stack/contracts";
+import type { HardwareProtocolCaptureV1, HardwareProtocolCodecManifestV1, HardwareProtocolProfileV1 } from "@ling-stack/contracts";
 import { DeviceFabricError } from "../../device-fabric.js";
 import { assertValidHardwareProtocolCapture } from "../../device-protocol.js";
 
@@ -21,6 +21,7 @@ export class SqliteDeviceProtocolStore {
     this.database.exec("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
     this.database.exec(`
       CREATE TABLE IF NOT EXISTS device_protocol_codecs (codec_id TEXT PRIMARY KEY NOT NULL, manifest_json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS device_protocol_profiles (profile_id TEXT PRIMARY KEY NOT NULL, manifest_json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS device_protocol_captures (capture_id TEXT PRIMARY KEY NOT NULL, target_device_id TEXT NOT NULL, transport TEXT NOT NULL, capture_json TEXT NOT NULL, created_at TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS idx_device_protocol_captures_target ON device_protocol_captures(target_device_id,created_at,capture_id);
     `);
@@ -37,6 +38,24 @@ export class SqliteDeviceProtocolStore {
   getCodec(codecId: string): HardwareProtocolCodecManifestV1 | undefined {
     const row = this.database.prepare("SELECT manifest_json FROM device_protocol_codecs WHERE codec_id=?").get(codecId) as Row | undefined;
     return row ? parseJson<HardwareProtocolCodecManifestV1>(row.manifest_json, "protocol codec manifest") : undefined;
+  }
+
+  registerProfile(profile: HardwareProtocolProfileV1): HardwareProtocolProfileV1 {
+    const serialized = JSON.stringify(profile);
+    this.database.prepare("INSERT INTO device_protocol_profiles(profile_id,manifest_json) VALUES(?,?) ON CONFLICT(profile_id) DO NOTHING").run(profile.profileId, serialized);
+    const stored = this.getProfile(profile.profileId);
+    if (!stored || !isDeepStrictEqual(stored, JSON.parse(serialized))) throw new DeviceFabricError("resource_conflict", "protocol profile id is bound to another manifest");
+    return stored;
+  }
+
+  getProfile(profileId: string): HardwareProtocolProfileV1 | undefined {
+    const row = this.database.prepare("SELECT manifest_json FROM device_protocol_profiles WHERE profile_id=?").get(profileId) as Row | undefined;
+    return row ? parseJson<HardwareProtocolProfileV1>(row.manifest_json, "protocol profile manifest") : undefined;
+  }
+
+  listProfiles(): readonly HardwareProtocolProfileV1[] {
+    return (this.database.prepare("SELECT manifest_json FROM device_protocol_profiles ORDER BY profile_id").all() as Row[])
+      .map(row => parseJson<HardwareProtocolProfileV1>(row.manifest_json, "protocol profile manifest"));
   }
 
   saveCapture(capture: HardwareProtocolCaptureV1): HardwareProtocolCaptureV1 {

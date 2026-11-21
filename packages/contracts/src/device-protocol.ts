@@ -1,3 +1,5 @@
+import type { DeviceKindV1 } from "./device.js";
+
 export interface HardwareProtocolFrameV1 {
   readonly sequence: number;
   readonly direction: "tx" | "rx";
@@ -26,6 +28,18 @@ export interface HardwareProtocolCodecManifestV1 {
   readonly version: string;
   readonly transport: HardwareProtocolCaptureV1["transport"];
   readonly messageTypes: readonly string[];
+  readonly license: string;
+}
+
+export interface HardwareProtocolProfileV1 {
+  readonly profileId: string;
+  readonly version: string;
+  readonly codecId: string;
+  readonly transport: HardwareProtocolCaptureV1["transport"];
+  readonly supportedDeviceKinds: readonly DeviceKindV1[];
+  readonly supportedModels?: readonly string[];
+  readonly supportedFirmwareRanges?: readonly string[];
+  readonly capabilityIds: readonly string[];
   readonly license: string;
 }
 
