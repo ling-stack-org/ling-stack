@@ -3,7 +3,9 @@ import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 
-import { isLinuxSshDnsProbeHostname, isLinuxSshHost, LinuxSshProcessExecutor } from "./adapters/linux-ssh-executor.js";
+import { isLinuxDnsProbeHostname } from "@ling-stack/contracts";
+
+import { isLinuxSshHost, LinuxSshProcessExecutor } from "./adapters/linux-ssh-executor.js";
 import type { LinuxSshConnection } from "./adapters/linux-ssh.js";
 import { localProcessRunner, type LocalProcessRunner } from "./adapters/local-pc-executor.js";
 
@@ -56,7 +58,7 @@ function parseTarget(value: unknown, index: number): ConfiguredLinuxSshTarget {
     || typeof user !== "string" || !/^[a-z0-9_][a-z0-9_.@-]{0,63}$/iu.test(user)
     || typeof identityFile !== "string" || !isAbsolute(identityFile) || identityFile.length > 1024 || /[\u0000-\u001f\u007f]/u.test(identityFile)
     || (credentialRevision !== undefined && (typeof credentialRevision !== "string" || !/^[a-z0-9_.-]{1,64}$/iu.test(credentialRevision)))
-    || (dnsProbeHostname !== undefined && (typeof dnsProbeHostname !== "string" || !isLinuxSshDnsProbeHostname(dnsProbeHostname)))) return fail();
+    || (dnsProbeHostname !== undefined && (typeof dnsProbeHostname !== "string" || !isLinuxDnsProbeHostname(dnsProbeHostname)))) return fail();
   const key = parseHostKey(hostKey);
   if (!key) return fail();
   return { connectionId, host, port, user, identityFile, ...key, credentialRevision, dnsProbeHostname };

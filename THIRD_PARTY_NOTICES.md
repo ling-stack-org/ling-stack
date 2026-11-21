@@ -48,6 +48,16 @@ Repository artwork, screenshots, and font provenance are tracked separately in t
 [asset provenance inventory](docs/maintenance/asset-provenance.md). Passing the dependency
 check does not establish the origin or publication rights of every media asset.
 
+### Android SSH transport
+
+The Android device transport uses JSch 2.28.8 with Bouncy Castle 1.87 for
+portable SSH key exchange and Ed25519 verification. JSch declares Revised BSD
+and ISC terms. Bouncy Castle distributes its provider under its permissive
+Bouncy Castle Licence. Include the licenses from the resolved Maven artifacts
+in the Android binary distribution notice inventory.
+[JSch Maven metadata](https://repo.maven.apache.org/maven2/com/github/mwiede/jsch/2.28.8/jsch-2.28.8.pom)
+[Bouncy Castle license](https://www.bouncycastle.org/licence.html)
+
 ### Scene theme backgrounds
 The locked Cua Driver source-build input carries its own
 [MIT license](apps/desktop/resources/providers/cua-driver/0.8.3-ling.1/LICENSE.md) and

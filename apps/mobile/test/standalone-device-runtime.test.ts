@@ -115,3 +115,112 @@ test("a phone restart marks interrupted work unknown without replaying a device 
   assert.equal(retained?.availability, undefined);
   assert.equal(resumedRequests, 0);
 });
+
+const linuxTarget = {
+  host: "192.0.2.40", port: 22, username: "operator",
+  fingerprint: "SHA256:" + Buffer.alloc(32, 5).toString("base64").replace(/=+$/u, ""),
+  dnsProbeHostname: "checking.example.test",
+};
+const linuxPassword = "authorized-ssh-fixture";
+const unusedFetch: HomeAssistantFetch = async () => { throw new Error("this task owns its SSH connection"); };
+
+test("phone Linux diagnosis retains its pinned identity and redacted evidence across address changes and reopen", async () => {
+  const storage = new MemoryStorage();
+  const reads: string[] = [];
+  let connections = 0;
+  let closed = 0;
+  const phone = await createStandaloneDeviceRuntime({
+    ...options, storage, fetch: unusedFetch,
+    openLinuxSsh: async (target, fingerprint, password) => {
+      connections += 1;
+      assert.equal(target.username, linuxTarget.username);
+      assert.equal(fingerprint, "05".repeat(32));
+      assert.equal(password, linuxPassword);
+      return {
+        async read(operation, argument) {
+          reads.push(argument === undefined ? operation : operation + ":" + argument);
+          const outputs: Record<string, string> = {
+            kernel: "Linux 6.6\n",
+            addresses: '[{"ifname":"wlan0","addr_info":[{"family":"inet","scope":"global","local":"192.0.2.25"}]}]',
+            route: '[{"dev":"wlan0","prefsrc":"192.0.2.25"}]',
+            wifi: "phy#0\n\tInterface wlan0\n",
+            link: "Connected to 00:11:22:33:44:55 (on wlan0)\n\tSSID: Fixture Hotspot\n",
+          };
+          if (operation === "dns") return { stdout: "", stderr: "unsupported tool", exitCode: 127 };
+          const stdout = outputs[operation];
+          assert.ok(stdout);
+          return { stdout, stderr: "", exitCode: 0 };
+        },
+        close() { closed += 1; },
+      };
+    },
+  });
+  await assert.rejects(() => phone.diagnoseLinuxSsh({ target: linuxTarget, password: linuxPassword }), /手机界面/u);
+  await phone.setForeground(true);
+  await assert.rejects(() => phone.diagnoseLinuxSsh({
+    target: { ...linuxTarget, dnsProbeHostname: "192.0.2.1" }, password: linuxPassword,
+  }), /DNS 测试域名/u);
+  const result = await phone.diagnoseLinuxSsh({ target: linuxTarget, password: linuxPassword });
+  assert.equal(result.taskStatus, "succeeded");
+  assert.deepEqual(result.facts, { connected: true, routeAvailable: true, wifiAssociated: true });
+  assert.deepEqual(reads, ["kernel", "addresses", "route", "wifi", "link:wlan0", "dns:checking.example.test"]);
+
+  const moved = { ...linuxTarget, host: "192.0.2.42" };
+  const next = await phone.diagnoseLinuxSsh({ target: moved, password: linuxPassword });
+  assert.equal(next.deviceId, result.deviceId);
+  assert.equal(next.taskStatus, "succeeded");
+  assert.notEqual(next.taskId, result.taskId);
+  assert.equal(closed, 2);
+  assert.deepEqual(await phone.listLinuxSshTargets(), [{ ...moved, deviceId: result.deviceId }]);
+  const persisted = [...storage.values.values()].join("\n");
+  assert.doesNotMatch(persisted, /authorized-ssh-fixture|Fixture Hotspot|192\.0\.2\.25|unsupported tool/u);
+  for (const [key, value] of storage.values) {
+    if (key.startsWith("ling-device-execution:")) assert.doesNotMatch(value, /192\.0\.2\.42|checking\.example\.test/u);
+  }
+
+  const reopened = await createStandaloneDeviceRuntime({
+    ...options, storage, fetch: unusedFetch,
+    openLinuxSsh: async () => { throw new Error("reopen must not contact the device"); },
+  });
+  await reopened.setForeground(true);
+  assert.deepEqual(await reopened.listLinuxSshRuns(), [next, result]);
+  assert.equal(connections, 2);
+});
+
+test("phone SSH denial retains a failed receipt and leaves the target unenrolled", async () => {
+  const storage = new MemoryStorage();
+  const phone = await createStandaloneDeviceRuntime({
+    ...options, storage, fetch: unusedFetch,
+    openLinuxSsh: async () => { throw new Error("ssh_host_key_mismatch untrusted failure detail"); },
+  });
+  await phone.setForeground(true);
+  const result = await phone.diagnoseLinuxSsh({ target: linuxTarget, password: linuxPassword });
+  assert.equal(result.taskStatus, "failed");
+  assert.equal(result.errorCode, "target_changed");
+  assert.equal(result.facts, undefined);
+  assert.deepEqual(await phone.listLinuxSshTargets(), []);
+  assert.doesNotMatch([...storage.values.values()].join("\n"), /untrusted failure detail|authorized-ssh-fixture/u);
+});
+
+test("leaving the foreground stops the phone Linux connection and retains the interrupted attempt", async () => {
+  const storage = new MemoryStorage();
+  const began = Promise.withResolvers<void>();
+  const phone = await createStandaloneDeviceRuntime({
+    ...options, storage, fetch: unusedFetch,
+    openLinuxSsh: async (_target, _pin, _password, signal) => {
+      assert.ok(signal);
+      began.resolve();
+      return await new Promise((_resolve, reject) =>
+        signal.addEventListener("abort", () => reject(new Error("closed")), { once: true }));
+    },
+  });
+  await phone.setForeground(true);
+  const running = phone.diagnoseLinuxSsh({ target: linuxTarget, password: linuxPassword });
+  await began.promise;
+  await phone.setForeground(false);
+  const run = await running;
+  assert.equal(run.taskStatus, "unknown");
+  await phone.setForeground(true);
+  assert.deepEqual(await phone.listLinuxSshRuns(), [run]);
+  assert.deepEqual(await phone.listLinuxSshTargets(), []);
+});

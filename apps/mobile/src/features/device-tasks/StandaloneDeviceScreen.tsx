@@ -3,8 +3,9 @@ import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { HomeAssistantInputError } from "../../device/home-assistant";
+import { LinuxSshInputError, type LinuxSshTarget } from "../../device/linux-ssh";
 import { useStandaloneDeviceRuntime } from "../../device/StandaloneDeviceProvider";
-import type { PhoneHomeAssistantRun } from "../../device/standalone-runtime";
+import type { PhoneHomeAssistantRun, PhoneLinuxSshRun, StandaloneDeviceRuntime } from "../../device/standalone-runtime";
 import type { MobileThemeTokens } from "../../theme/mobile-theme";
 import { useMobileTheme } from "../../theme/mobile-theme-provider";
 
@@ -12,6 +13,7 @@ export function StandaloneDeviceScreen({ onClose }: { readonly onClose?: () => v
   const state = useStandaloneDeviceRuntime();
   const { theme } = useMobileTheme();
   const styles = createStyles(theme);
+  const [selected, setSelected] = useState<"home" | "linux">("home");
   const [origin, setOrigin] = useState("");
   const [entityId, setEntityId] = useState("");
   const [token, setToken] = useState("");
@@ -63,6 +65,19 @@ export function StandaloneDeviceScreen({ onClose }: { readonly onClose?: () => v
         </View>
       ) : null}
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+        {state.status === "ready" && state.runtime.linuxSshAvailable ? (
+          <View style={styles.selector}>
+            {([["home", "Home Assistant"], ["linux", "Linux SSH"]] as const).map(([id, label]) => (
+              <Pressable key={id} accessibilityRole="button" accessibilityState={{ selected: selected === id }}
+                disabled={running} onPress={() => setSelected(id)} style={[styles.option, selected === id && styles.selectedOption]}>
+                <Text style={styles.label}>{label}</Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
+        {selected === "linux" && state.status === "ready" && state.runtime.linuxSshAvailable ? (
+          <LinuxSshPanel runtime={state.runtime} styles={styles} />
+        ) : <>
         <Text accessibilityRole="header" style={styles.heading}>Home Assistant</Text>
         <Text style={styles.note}>手机会连接你填写的 Home Assistant 地址，读取指定实体的状态。</Text>
         <View style={styles.field}>
@@ -101,9 +116,122 @@ export function StandaloneDeviceScreen({ onClose }: { readonly onClose?: () => v
             ))}
           </View>
         ) : null}
+        </>}
       </ScrollView>
     </SafeAreaView>
   );
+}
+
+function LinuxSshPanel({ runtime, styles }: { readonly runtime: StandaloneDeviceRuntime; readonly styles: ReturnType<typeof createStyles> }) {
+  const [host, setHost] = useState("");
+  const [port, setPort] = useState("22");
+  const [username, setUsername] = useState("");
+  const [fingerprint, setFingerprint] = useState("");
+  const [dns, setDns] = useState("");
+  const [password, setPassword] = useState("");
+  const [targets, setTargets] = useState<readonly LinuxSshTarget[]>([]);
+  const [runs, setRuns] = useState<readonly PhoneLinuxSshRun[]>([]);
+  const [error, setError] = useState<string>();
+  const [running, setRunning] = useState(false);
+  const active = useRef<AbortController | undefined>(undefined);
+
+  useEffect(() => {
+    let current = true;
+    void Promise.all([runtime.listLinuxSshTargets(), runtime.listLinuxSshRuns()]).then(([saved, history]) => {
+      if (current) { setTargets(saved); setRuns(history); }
+    }).catch(() => { if (current) setError("无法读取手机上的 Linux 设备记录。"); });
+    return () => { current = false; active.current?.abort(); };
+  }, [runtime]);
+
+  function selectTarget(target: LinuxSshTarget) {
+    setHost(target.host);
+    setPort(String(target.port));
+    setUsername(target.username);
+    setFingerprint(target.fingerprint);
+    setDns(target.dnsProbeHostname ?? "");
+    setPassword("");
+  }
+
+  async function diagnose() {
+    if (active.current) return;
+    const controller = new AbortController();
+    active.current = controller;
+    setRunning(true);
+    setError(undefined);
+    setPassword("");
+    try {
+      const run = await runtime.diagnoseLinuxSsh({
+        target: { host, port: Number(port), username, fingerprint, dnsProbeHostname: dns },
+        password, signal: controller.signal,
+      });
+      const saved = await runtime.listLinuxSshTargets();
+      if (!controller.signal.aborted) {
+        setRuns(previous => [run, ...previous.filter(item => item.taskId !== run.taskId)].slice(0, 8));
+        setTargets(saved);
+      }
+    } catch (cause) {
+      if (!controller.signal.aborted) setError(cause instanceof LinuxSshInputError ? cause.message : "无法运行 Linux SSH 诊断。");
+    } finally {
+      active.current = undefined;
+      if (!controller.signal.aborted) setRunning(false);
+    }
+  }
+
+  const canDiagnose = !running && !!(host.trim() && port.trim() && username.trim() && fingerprint.trim() && password);
+  return <>
+    {targets.map(target => (
+      <Pressable key={target.deviceId} accessibilityRole="button" disabled={running}
+        onPress={() => selectTarget(target)} style={styles.option}>
+        <Text style={styles.label}>{target.host}</Text>
+        <Text style={styles.note}>{target.username + " · " + target.port}</Text>
+      </Pressable>
+    ))}
+    {([
+      ["IP 地址或主机名", host, setHost, 253],
+      ["SSH 端口", port, setPort, 5],
+      ["SSH 用户名", username, setUsername, 64],
+      ["已核验的 SHA256 主机指纹", fingerprint, setFingerprint, 64],
+      ["DNS 测试域名（可选）", dns, setDns, 253],
+    ] as const).map(([label, value, onChangeText, maxLength]) => (
+      <View key={label} style={styles.field}>
+        <Text style={styles.label}>{label}</Text>
+        <TextInput accessibilityLabel={label} autoCapitalize="none" autoCorrect={false} editable={!running}
+          keyboardType={label === "SSH 端口" ? "number-pad" : "default"} maxLength={maxLength}
+          style={styles.input} value={value} onChangeText={onChangeText} />
+      </View>
+    ))}
+    <View style={styles.field}>
+      <Text style={styles.label}>SSH 密码</Text>
+      <TextInput accessibilityLabel="SSH 密码" autoComplete="off" autoCapitalize="none" autoCorrect={false}
+        editable={!running} maxLength={1024} secureTextEntry style={styles.input} value={password} onChangeText={setPassword} />
+    </View>
+    <Pressable accessibilityRole="button" accessibilityState={{ disabled: !canDiagnose, busy: running }}
+      disabled={!canDiagnose} onPress={() => void diagnose()} style={[styles.action, !canDiagnose && styles.disabled]}>
+      <Text style={styles.actionText}>{running ? "正在诊断…" : "连接并诊断"}</Text>
+    </Pressable>
+    {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : null}
+    {runs.map(run => <View key={run.taskId} style={styles.row}>
+      <Text style={styles.label}>{targets.find(target => target.deviceId === run.deviceId)?.host ?? "Linux SSH"}</Text>
+      <Text style={styles.note}>{linuxResultText(run)}</Text>
+      <Text style={styles.note}>{new Date(run.updatedAt).toLocaleString()}</Text>
+    </View>)}
+  </>;
+}
+
+function linuxResultText(run: PhoneLinuxSshRun): string {
+  if (run.taskStatus === "unknown") return "诊断中断，设备状态待确认";
+  if (run.errorCode === "target_changed") return "SSH 主机指纹不匹配";
+  if (run.errorCode === "permission_denied") return "SSH 认证被拒绝";
+  if (run.errorCode === "timeout") return "SSH 诊断超时";
+  if (run.errorCode === "unsupported_capability") return "设备未提供所需的 Linux 诊断能力";
+  if (!run.facts) return "未能读取网络状态";
+  const { connected, routeAvailable, wifiAssociated, dnsNameResolved } = run.facts;
+  return [
+    connected ? "有 IPv4 地址" : "未发现 IPv4 地址",
+    routeAvailable === undefined ? "路由待确认" : routeAvailable ? "已找到 IPv4 路由" : "无 IPv4 路由",
+    wifiAssociated === undefined ? "Wi‑Fi 状态待确认" : wifiAssociated ? "Wi‑Fi 已关联" : "Wi‑Fi 未关联",
+    ...(dnsNameResolved === undefined ? [] : [dnsNameResolved ? "DNS 解析成功" : "DNS 解析未成功"]),
+  ].join(" · ");
 }
 
 function resultText(run: PhoneHomeAssistantRun): string {
@@ -120,6 +248,10 @@ function createStyles(theme: MobileThemeTokens) {
   return StyleSheet.create({
     screen: { flex: 1, backgroundColor: theme.background.app },
     content: { padding: 16, paddingBottom: 24, gap: 12 },
+    selector: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+    option: { minHeight: 44, justifyContent: "center", paddingHorizontal: 10, backgroundColor: theme.background.panel,
+      borderColor: theme.border.default, borderWidth: 1, borderRadius: theme.radius.medium },
+    selectedOption: { borderColor: theme.action.accent },
     header: { flexDirection: "row", alignItems: "center", gap: 16, paddingHorizontal: 16 },
     backButton: { minHeight: 44, justifyContent: "center" },
     backText: { color: theme.text.default, fontSize: 15 },

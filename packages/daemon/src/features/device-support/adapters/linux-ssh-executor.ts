@@ -1,5 +1,6 @@
-import { isIP, isIPv4 } from "node:net";
+import { isIP } from "node:net";
 
+import { isLinuxDnsProbeHostname, readLinuxDnsLookup, readLinuxIpv4Evidence, readLinuxWifiLink, selectLinuxWifiInterface } from "@ling-stack/contracts";
 import { DeviceBrokerError } from "@ling-stack/core";
 
 import type { LinuxNetworkObservation, LinuxSshExecutor } from "./linux-ssh.js";
@@ -23,7 +24,7 @@ export class LinuxSshProcessExecutor implements LinuxSshExecutor {
       || !options.user || /[\u0000-\u0020\u007f]/u.test(options.user)
       || !options.knownHostsFile.trim()
       || /[\u0000-\u001f]/u.test(options.knownHostsFile)
-      || (options.dnsProbeHostname !== undefined && !isLinuxSshDnsProbeHostname(options.dnsProbeHostname))
+      || (options.dnsProbeHostname !== undefined && !isLinuxDnsProbeHostname(options.dnsProbeHostname))
       || (options.port !== undefined && (!Number.isInteger(options.port) || options.port < 1 || options.port > 65_535))) {
       throw new Error("SSH host, user, port and known-hosts file must be valid");
     }
@@ -46,32 +47,12 @@ export class LinuxSshProcessExecutor implements LinuxSshExecutor {
 
   async readNetwork(signal?: AbortSignal): Promise<LinuxNetworkObservation> {
     const addresses = await this.runRemote(["ip", "-j", "addr"], signal);
-    if (addresses.exitCode !== 0) throw new Error("Linux interface addresses are unavailable");
-    const interfaces = readIpRecords(addresses.stdout);
-    const routeResult = await this.runRemote(["env", "LC_ALL=C", "ip", "-j", "route", "get", "1.1.1.1"], signal);
-    const routes = routeResult.exitCode === 0 ? readIpRecords(routeResult.stdout) : undefined;
-    const route = routes?.find(item =>
-      typeof item.dev === "string" && !["unreachable", "prohibit", "blackhole", "throw"].includes(String(item.type)));
-    const noRoute = routeResult.exitCode === 2 && /RTNETLINK answers: Network is unreachable/u.test(routeResult.stderr);
-
-    const configuredAddresses: { interfaceName: string; ipv4: string }[] = [];
-    for (const iface of interfaces) {
-      if (typeof iface.ifname !== "string" || iface.ifname === "lo" || !Array.isArray(iface.addr_info)) continue;
-      for (const address of iface.addr_info.filter(isRecord)) {
-        if (address.family === "inet" && address.scope === "global" && typeof address.local === "string" && isIPv4(address.local)) {
-          configuredAddresses.push({ interfaceName: iface.ifname, ipv4: address.local });
-        }
-      }
-    }
-    const address = route
-      ? configuredAddresses.find(item => item.interfaceName === route.dev && item.ipv4 === route.prefsrc)
-        ?? configuredAddresses.find(item => item.interfaceName === route.dev)
-      : configuredAddresses[0];
+    const network = await readLinuxIpv4Evidence(
+      addresses, () => this.runRemote(["env", "LC_ALL=C", "ip", "-j", "route", "get", "1.1.1.1"], signal),
+    );
     const dnsNameResolved = await this.probeDnsName(signal);
     return {
-      connected: configuredAddresses.length > 0,
-      ...(routes || noRoute ? { routeAvailable: route !== undefined } : {}),
-      ...(address ?? (typeof route?.dev === "string" ? { interfaceName: route.dev } : {})),
+      ...network,
       ...(dnsNameResolved === undefined ? {} : { dnsNameResolved }),
     };
   }
@@ -79,20 +60,11 @@ export class LinuxSshProcessExecutor implements LinuxSshExecutor {
   async readWifi(signal?: AbortSignal): Promise<LinuxNetworkObservation> {
     const wifi = await this.runRemote(["iw", "dev"], signal);
     const network = await this.readNetwork(signal);
-    if (wifi.exitCode !== 0) {
-      return { ...network, linkError: wifi.exitCode === 127 ? "wireless_tools_unavailable" : "wifi_observation_failed" };
-    }
-    const wireless = [...wifi.stdout.matchAll(/^[ \t]*Interface[ \t]+([A-Za-z0-9_][A-Za-z0-9_.-]*)[ \t]*\r?$/gmu)]
-      .map(match => match[1]!);
-    const wifiInterfaceName = network.interfaceName && wireless.includes(network.interfaceName) ? network.interfaceName : wireless[0];
-    if (!wifiInterfaceName) return { ...network, linkError: "wireless_interface_not_found" };
+    const selection = selectLinuxWifiInterface(wifi, network.interfaceName);
+    if ("linkError" in selection) return { ...network, linkError: selection.linkError };
+    const wifiInterfaceName = selection.interfaceName;
     const link = await this.runRemote(["iw", "dev", wifiInterfaceName, "link"], signal);
-    const details = { ...network, wifiInterfaceName };
-    if (link.exitCode !== 0) return { ...details, linkError: "wifi_observation_failed" };
-    if (/^\s*Not connected\.?\s*$/mu.test(link.stdout)) return { ...details, wifiAssociated: false };
-    if (!/^\s*Connected to\s/u.test(link.stdout)) return { ...details, linkError: "wifi_observation_failed" };
-    const ssid = /^\s*SSID:\s*([^\r\n]*)/mu.exec(link.stdout)?.[1]?.trim();
-    return { ...details, wifiAssociated: true, ...(ssid ? { ssid } : {}) };
+    return { ...network, wifiInterfaceName, ...readLinuxWifiLink(link) };
   }
 
   async restartNetwork(input: { readonly signal?: AbortSignal }): Promise<{ readonly accepted: boolean }> {
@@ -108,9 +80,7 @@ export class LinuxSshProcessExecutor implements LinuxSshExecutor {
     const probeSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
     try {
       const result = await this.runRemote(["getent", "-s", "dns", "ahostsv4", name], probeSignal);
-      if (result.exitCode === 2) return false;
-      if (result.exitCode !== 0) return undefined;
-      return result.stdout.split("\n").some(line => isIPv4(line.trim().split(/\s+/u)[0] ?? "")) ? true : undefined;
+      return readLinuxDnsLookup(result);
     } catch (error) {
       if (deadline.aborted && !signal?.aborted) return undefined;
       throw error;
@@ -141,22 +111,4 @@ export class LinuxSshProcessExecutor implements LinuxSshExecutor {
 export function isLinuxSshHost(host: string): boolean {
   return /^[a-z0-9_.:%-]{1,253}$/iu.test(host)
     && (isIP(host) !== 0 || /^[a-z0-9][a-z0-9_.-]*$/iu.test(host));
-}
-
-export function isLinuxSshDnsProbeHostname(name: string): boolean {
-  return name.includes(".") && /^[a-z0-9][a-z0-9.-]{0,252}$/iu.test(name) && isIP(name) === 0;
-}
-
-function readIpRecords(stdout: string): readonly Record<string, unknown>[] {
-  try {
-    const parsed: unknown = JSON.parse(stdout);
-    if (Array.isArray(parsed) && parsed.every(isRecord)) return parsed;
-  } catch {
-    // Parse errors can include device output.
-  }
-  throw new Error("Linux ip command returned invalid JSON");
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

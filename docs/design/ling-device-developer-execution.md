@@ -371,6 +371,31 @@ Each report links its normalized facts to the owned task journal. Network change
 that could drop SSH access require a verified recovery route or target-side restoration.
 [Linux SSH executor](../../packages/daemon/src/features/device-support/adapters/linux-ssh-executor.ts)
 
+### Phone-owned Linux SSH diagnosis
+
+An Android build with the `LingDeviceTransport` module exposes Linux SSH from
+phone device diagnosis. Enter the board address, port, SSH account and verified
+OpenSSH `SHA256:` host-key fingerprint. The fingerprint comes from the target's
+console or trusted inventory. Submit the account password for this connection.
+The transport checks the pin during the handshake before sending authentication.
+
+The phone runs the same IPv4, route, Wi-Fi and optional DNS observations as the
+PC adapter. It saves the enrolled device identity and endpoint metadata after a
+successful diagnosis. The password is scoped to the submitted operation. The
+local task journal retains typed facts and failure codes. When the app loses
+foreground access it closes the live SSH session and preserves an interrupted
+attempt for inspection after resume.
+[Mobile runtime](../../apps/mobile/src/device/standalone-runtime.ts)
+[Android native session](../../apps/mobile/modules/ling-device-transport/android/src/main/java/expo/modules/lingdevicetransport/PinnedSshSession.java)
+
+The Android native client has passed JVM loopback tests, including host-key
+rejection before authentication, fixed command execution and output bounds. The
+generated Gradle project requires Android SDK 37 for compilation and targets SDK
+36. The default build environment has no complete Android SDK/NDK installation,
+so the native Gradle package has not been accepted yet. Physical Android LAN
+and hotspot runs, native iOS SSH, and a recovery path for network changes remain
+on the acceptance ledger.
+
 ## 5. Case flow: install DiPlay on an older head unit
 
 DiPlay v0.2.22 is a public-preview Android APK for a compatible head unit, with
