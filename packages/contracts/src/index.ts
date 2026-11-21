@@ -89,6 +89,7 @@ export * from "./computer-use-validation.js";
 export * from "./remote-access.js";
 export * from "./remote-device.js";
 export * from "./device.js";
+export * from "./device-diagnosis.js";
 export * from "./device-fabric.js";
 export * from "./device-developer.js";
 export * from "./device-server.js";

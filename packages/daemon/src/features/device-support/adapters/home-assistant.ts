@@ -154,7 +154,7 @@ export class HomeAssistantAdapter implements DeviceAdapter {
     const body = await readJson(response);
     const state = typeof body.state === "string" ? body.state : undefined;
     const attributes = isRecord(body.attributes) ? body.attributes : {};
-    if (state === "unavailable") {
+    if (!state || state === "unknown" || state === "unavailable") {
       return { entityId, state, attributes, availability: "unavailable", quality: "degraded", observedAt };
     }
     return { entityId, state, attributes, availability: "available", quality: "good", observedAt };
@@ -173,7 +173,6 @@ export class HomeAssistantAdapter implements DeviceAdapter {
         finishedAt: this.#now(),
         observationIds: [`${input.request.actionId}:entity`],
       };
-      if (entity.availability === "absent") return action;
       return {
         action,
         observations: [{
@@ -184,7 +183,7 @@ export class HomeAssistantAdapter implements DeviceAdapter {
           observedAt: entity.observedAt,
           receivedAt: this.#now(),
           freshnessUntil: new Date(Date.parse(entity.observedAt) + 30_000).toISOString(),
-          quality: entity.quality,
+          quality: entity.availability === "absent" ? "good" : entity.quality,
           provenance: [this.#baseUrl, entity.entityId],
           redactionClass: "public",
         }],

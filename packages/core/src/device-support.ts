@@ -74,6 +74,7 @@ export interface DeviceSupportBrokerOptions {
 export interface DeviceExecuteOptions {
   readonly finalizeTask?: boolean;
   readonly requireCurrentProposal?: boolean;
+  readonly onlyUnattendedReads?: boolean;
 }
 
 type DeviceDispatchAdmission =
@@ -296,6 +297,9 @@ export class DeviceCapabilityBroker {
     const capability = snapshot.capabilities.find(item => item.id === request.capabilityId);
     if (!capability || capability.schemaVersion !== request.capabilitySchemaVersion) {
       throw new DeviceBrokerError("unsupported_capability", "requested capability is not in the current snapshot");
+    }
+    if (options.onlyUnattendedReads && (capability.sideEffect !== "read_only" || capability.approvalClass !== "allow")) {
+      throw new DeviceBrokerError("permission_denied", "the playbook requires an unattended read capability");
     }
     const adapter = this.requireAdapter(profile.adapterId);
     if (options.requireCurrentProposal) {

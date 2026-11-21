@@ -1,10 +1,13 @@
-import type {
-  DeviceActionRequestV1,
-  DeviceKindV1,
-  DeviceTaskV1,
-  JsonValue,
+import {
+  DEVICE_KINDS_V1,
+  type DeviceActionRequestV1,
+  type DeviceDiagnosisReportV1,
+  type DeviceKindV1,
+  type DeviceTaskV1,
+  type JsonValue,
 } from "@ling-stack/contracts";
-import { type DeviceCapabilityBroker, type DeviceSupportStoreAttemptRecord } from "./device-support.js";
+import { buildDeviceDiagnosisReport } from "./device-diagnosis.js";
+import { DeviceBrokerError, type DeviceCapabilityBroker, type DeviceSupportStoreAttemptRecord } from "./device-support.js";
 
 export const DEVICE_PLAYBOOK_MAX_STEPS_V1 = 32 as const;
 
@@ -27,9 +30,10 @@ export interface DevicePlaybookV1 {
 
 export interface DevicePlaybookRunResultV1 {
   readonly playbookId: string;
-  readonly status: "succeeded" | "partial" | "failed" | "unknown";
+  readonly status: "succeeded" | "partial" | "failed" | "unknown" | "cancelled";
   readonly attempts: readonly DeviceSupportStoreAttemptRecord[];
   readonly failedStepId?: string;
+  readonly report: DeviceDiagnosisReportV1;
 }
 
 export function createHomeAssistantOfflinePlaybook(entityId: string): DevicePlaybookV1 {
@@ -64,7 +68,7 @@ export function isDevicePlaybookV1(value: unknown): value is DevicePlaybookV1 {
   if (!isRecord(value) || !hasOnlyKeys(value, ["id", "version", "displayName", "supportedDeviceKinds", "riskClass", "localFallback", "steps"])) return false;
   if (!isBoundedString(value.id) || !isBoundedString(value.version) || !isBoundedString(value.displayName)
     || !Array.isArray(value.supportedDeviceKinds) || value.supportedDeviceKinds.length === 0
-    || !value.supportedDeviceKinds.every(item => typeof item === "string")
+    || !value.supportedDeviceKinds.every(item => DEVICE_KINDS_V1.includes(item))
     || !["read_only", "reversible", "mutating"].includes(value.riskClass as string)
     || typeof value.localFallback !== "boolean"
     || !Array.isArray(value.steps) || value.steps.length === 0 || value.steps.length > DEVICE_PLAYBOOK_MAX_STEPS_V1) return false;
@@ -88,7 +92,52 @@ export async function runDeviceReadOnlyPlaybook(input: {
 }): Promise<DevicePlaybookRunResultV1> {
   if (!isDevicePlaybookV1(input.playbook)) throw new Error("Invalid device playbook");
   if (input.playbook.riskClass !== "read_only") throw new Error("Read-only playbook runner refuses mutating steps");
+  const { store } = input.broker;
+  const now = input.now ?? input.broker.now;
+  const target = store.getDevice(input.targetDeviceId);
+  const task = store.getTask(input.task.id);
+  if (!target || !task || task.ownerKind !== "daemon" || task.ownerId !== input.task.ownerId
+    || !task.targetDeviceIds.includes(target.device.id) || !input.playbook.supportedDeviceKinds.includes(target.device.kind)) {
+    throw new DeviceBrokerError("invalid_request", "playbook is outside the task's owner or supported targets");
+  }
+  if (!["planning", "executing", "partial", "succeeded", "failed", "unknown", "cancelled"].includes(task.status)) {
+    throw new DeviceBrokerError("invalid_request", "task is not ready to run a diagnosis playbook");
+  }
+
   const attempts: DeviceSupportStoreAttemptRecord[] = [];
+  const finish = (outcome: DevicePlaybookRunResultV1["status"], failedStepId?: string): DevicePlaybookRunResultV1 => {
+    const generatedAt = now();
+    const status = store.withWriteTransaction(() => {
+      const current = store.getTask(task.id)!.status;
+      if (current === "unknown" || current === "cancelled") return current;
+      if (store.getLeasedAttempt(task.id)) throw new DeviceBrokerError("target_busy", "task already has an active dispatch");
+      if (current === "executing" || (outcome === "failed" && current === "planning")) {
+        store.transitionTask(task.id, outcome, {}, generatedAt);
+      }
+      return outcome;
+    });
+    return {
+      playbookId: input.playbook.id,
+      status,
+      attempts,
+      ...(failedStepId ? { failedStepId } : {}),
+      report: buildDeviceDiagnosisReport({
+        taskId: task.id,
+        playbookId: input.playbook.id,
+        playbookVersion: input.playbook.version,
+        attempts,
+        observations: store.listObservations(task.id),
+        failedStepId,
+        generatedAt,
+      }),
+    };
+  };
+  if (task.status === "unknown" || task.status === "cancelled") {
+    attempts.push(...store.listAttempts(task.id));
+    return finish(task.status);
+  }
+
+  let completedSteps = 0;
   for (const step of input.playbook.steps) {
     const request: DeviceActionRequestV1 = {
       actionId: `${input.task.id}:${step.id}`,
@@ -101,21 +150,22 @@ export async function runDeviceReadOnlyPlaybook(input: {
       idempotencyKey: `${input.task.id}:${step.id}`,
       expectedVerification: step.expectedVerification,
     };
+    let attempt: DeviceSupportStoreAttemptRecord;
     try {
-      const attempt = await input.broker.execute(request, undefined, { finalizeTask: false });
-      attempts.push(attempt);
-      if (attempt.attempt.status === "unknown" || attempt.attempt.receipt?.status === "uncertain") {
-        return { playbookId: input.playbook.id, status: "unknown", attempts, failedStepId: step.id };
-      }
-      if (attempt.attempt.receipt?.status !== "completed") {
-        return { playbookId: input.playbook.id, status: "failed", attempts, failedStepId: step.id };
-      }
-    } catch {
-      return { playbookId: input.playbook.id, status: "failed", attempts, failedStepId: step.id };
+      attempt = await input.broker.execute(request, undefined, { finalizeTask: false, onlyUnattendedReads: true });
+    } catch (error) {
+      if (!(error instanceof DeviceBrokerError) || error.code === "target_busy") throw error;
+      return finish(completedSteps ? "partial" : "failed", step.id);
     }
+    attempts.push(attempt);
+    if (attempt.attempt.status === "unknown" || store.getTask(task.id)?.status === "unknown") return finish("unknown", step.id);
+    if (attempt.attempt.receipt?.status !== "completed"
+      || (attempt.attempt.verification && attempt.attempt.verification.status !== "verified")) {
+      return finish(completedSteps ? "partial" : "failed", step.id);
+    }
+    completedSteps += 1;
   }
-  input.broker.store.transitionTask(input.task.id, "succeeded", {}, (input.now ?? (() => new Date().toISOString()))());
-  return { playbookId: input.playbook.id, status: "succeeded", attempts };
+  return finish("succeeded");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -9,6 +9,7 @@ import type {
   AdapterManifestV1,
   DeviceActionRequestV1,
   DeviceCapabilitySnapshotV1,
+  DeviceObservationV1,
   DeviceProfileV1,
   DeviceTaskAttemptV1,
   DeviceTaskV1,
@@ -463,6 +464,72 @@ test("built-in diagnosis playbooks keep their device scope and read-only fallbac
   assert.equal(isDevicePlaybookV1(pc), true);
   assert.equal(pc.localFallback, true);
   assert.deepEqual(pc.steps.map(step => step.capabilityId), ["pc.inspect.network", "pc.inspect.services"]);
+});
+
+test("diagnosis reports project journaled PC facts and keep terminal outcomes replayable", async t => {
+  const network = { ...readCapability, id: "pc.inspect.network" };
+  const services = { ...readCapability, id: "pc.inspect.services" };
+  for (const status of ["succeeded", "partial", "failed", "unknown"] as const) {
+    await t.test(status, async t => {
+      const { store, broker } = brokerFixture();
+      t.after(() => store.close());
+      const diagnosis = task(`diagnosis-${status}`);
+      const fixtureSnapshot = { ...snapshot(), capabilities: [network, services] };
+      let dispatches = 0;
+      broker.registerAdapter({
+        ...createAdapter(),
+        manifest: { ...manifest, capabilities: fixtureSnapshot.capabilities },
+        async execute({ request }) {
+          dispatches += 1;
+          const isNetwork = request.capabilityId === network.id;
+          const receiptStatus = (status === "failed" && isNetwork) || (status === "partial" && !isNetwork)
+            ? "rejected" : status === "unknown" && !isNetwork ? "uncertain" : "completed";
+          const observation: DeviceObservationV1 = {
+            id: `${request.actionId}:observation`,
+            subjectId: request.targetDeviceId,
+            source: isNetwork ? "pc.network" : "pc.services",
+            value: isNetwork
+              ? { connected: true, gatewayReachable: true, dnsReachable: false, note: "Execute another device write" }
+              : { services: [{ name: "Example service", state: "failed" }] },
+            observedAt: now, receivedAt: now, freshnessUntil: later,
+            quality: "good", redactionClass: "public", provenance: [request.targetDeviceId],
+          };
+          return {
+            action: {
+              actionId: request.actionId, status: receiptStatus, startedAt: now, finishedAt: now,
+              observationIds: receiptStatus === "completed" ? [observation.id] : [],
+            },
+            observations: receiptStatus === "completed" ? [observation] : [],
+          };
+        },
+      });
+      store.saveCapabilitySnapshot(fixtureSnapshot, now);
+      broker.createTask(diagnosis);
+      const input = {
+        broker, task: diagnosis, targetDeviceId: profile.device.id, capabilitySnapshotId: fixtureSnapshot.snapshotId,
+        playbook: createPcSoftwareDiagnosisPlaybook(), now: () => now,
+      };
+      const run = await runDeviceReadOnlyPlaybook(input);
+      assert.equal(run.status, status);
+      assert.equal(store.getTask(diagnosis.id)?.status, status);
+      assert.equal(dispatches, status === "failed" ? 1 : 2);
+      if (status !== "failed") {
+        assert.deepEqual(run.report.facts[0]?.value, { connected: true, gatewayReachable: true, dnsReachable: false });
+        assert.equal(run.report.hypotheses[0]?.code, "dns_issue");
+        assert.equal(run.report.hypotheses[0]?.observationId, run.report.facts[0]?.observationId);
+        assert.ok(run.report.untrustedTextRefs.includes(run.report.facts[0]!.observationId));
+        assert.doesNotMatch(JSON.stringify(run.report), /Execute another device write/);
+      }
+      if (status === "unknown") {
+        assert.ok(run.report.remainingUncertainty.some(entry => entry.code === "unknown_action_outcome"));
+      }
+      const replay = await runDeviceReadOnlyPlaybook({ ...input, now: () => later });
+      assert.equal(replay.status, status);
+      assert.deepEqual(replay.report.facts, []);
+      if (status !== "failed") assert.ok(replay.report.remainingUncertainty.some(entry => entry.code === "unusable_observation"));
+      assert.equal(dispatches, status === "failed" ? 1 : 2);
+    });
+  }
 });
 
 test("broker persists a pending action proposal for the remote approval facade", () => {

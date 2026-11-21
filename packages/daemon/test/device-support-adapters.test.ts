@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { isAdapterManifestV1 } from "@ling-stack/contracts";
+import { createHomeAssistantOfflinePlaybook, DeviceCapabilityBroker, runDeviceReadOnlyPlaybook, SqliteDeviceSupportStore } from "@ling-stack/core";
 import {
   AndroidAdbAdapter,
   HomeAssistantAdapter,
@@ -12,7 +13,7 @@ import {
 
 const now = "2026-11-21T00:00:00.000Z";
 
-test("Home Assistant adapter keeps credentials out of the profile and distinguishes entity states", async () => {
+test("Home Assistant adapter keeps credentials out of the profile and distinguishes entity states", async t => {
   const calls: { url: string; method: string; authorization?: string }[] = [];
   const adapter = new HomeAssistantAdapter({
     baseUrl: "https://ha.example.test/",
@@ -23,7 +24,9 @@ test("Home Assistant adapter keeps credentials out of the profile and distinguis
       calls.push({ url, method: init?.method ?? "GET", authorization: new Headers(init?.headers).get("authorization") ?? undefined });
       if (url.endsWith("/api/config")) return new Response(JSON.stringify({ version: "2026.11" }), { status: 200 });
       if (url.endsWith("/api/states/light.kitchen")) return new Response(JSON.stringify({ state: "on", attributes: { brightness: 50 } }), { status: 200 });
-      if (url.endsWith("/api/states/sensor.unavailable")) return new Response(JSON.stringify({ state: "unavailable", attributes: {} }), { status: 200 });
+      if (url.endsWith("/api/states/sensor.unavailable")) return new Response(JSON.stringify({
+        state: "unavailable", attributes: { message: "Untrusted device text" },
+      }), { status: 200 });
       return new Response("missing", { status: 404 });
     },
   });
@@ -34,6 +37,24 @@ test("Home Assistant adapter keeps credentials out of the profile and distinguis
   assert.deepEqual((await adapter.readEntity("light.kitchen")).availability, "available");
   assert.deepEqual((await adapter.readEntity("sensor.unavailable")).quality, "degraded");
   assert.deepEqual((await adapter.readEntity("sensor.missing")).availability, "absent");
+  const store = new SqliteDeviceSupportStore();
+  t.after(() => store.close());
+  const broker = new DeviceCapabilityBroker({ store, now: () => now });
+  broker.registerAdapter(adapter);
+  const target = await broker.discover(adapter.manifest.adapterId, { connectionRef: "https://ha.example.test", ownerId: "mobile-1" });
+  const snapshot = store.getCurrentCapabilitySnapshot(target.device.id)!;
+  for (const [entityId, availability] of [["light.kitchen", "available"], ["sensor.unavailable", "unavailable"], ["sensor.missing", "absent"]]) {
+    const task = broker.createTask({
+      id: `diagnosis:${entityId}`, ownerKind: "daemon", ownerId: "pc-1", targetDeviceIds: [target.device.id],
+      status: "planning", capabilitySnapshotIds: [snapshot.snapshotId], createdAt: now, updatedAt: now,
+    });
+    const run = await runDeviceReadOnlyPlaybook({
+      broker, task, targetDeviceId: target.device.id, capabilitySnapshotId: snapshot.snapshotId,
+      playbook: createHomeAssistantOfflinePlaybook(entityId),
+    });
+    assert.deepEqual(run.report.facts.map(fact => fact.value), [{ availability }]);
+    assert.doesNotMatch(JSON.stringify(run.report), /Untrusted device text|secret-token/);
+  }
   assert.equal(calls.every(call => call.authorization === "Bearer secret-token"), true);
 });
 
