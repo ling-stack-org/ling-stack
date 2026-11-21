@@ -162,6 +162,7 @@ function buildExternalCuaDriverSetupView(input: {
   }
 
   const record = input.store.getManagedPlugin(CUA_DRIVER_PLUGIN_ID);
+  const packageRecord = input.store.getManagedPluginPackage(CUA_DRIVER_PLUGIN_ID);
   const contribution = input.store.listManagedPluginContributions(CUA_DRIVER_PLUGIN_ID)
     .find((item) => item.contributionKind === "mcp-server" && item.linkedResourceId === CUA_DRIVER_MCP_SERVER_ID);
   if (!server || !record || !contribution) {
@@ -169,7 +170,7 @@ function buildExternalCuaDriverSetupView(input: {
       kind: "local_binary",
       state: "detected",
       checkedAt: input.now,
-      detectedCommand: command.command,
+      ...(packageRecord?.sourceKind === "official-remote" ? {} : { detectedCommand: command.command }),
     };
   }
 
@@ -177,7 +178,7 @@ function buildExternalCuaDriverSetupView(input: {
     kind: "local_binary",
     state: server.enabled && record.enabled && contribution.enabled ? "ready" : "connected",
     checkedAt: input.now,
-    detectedCommand: command.command,
+    ...(packageRecord?.sourceKind === "official-remote" ? {} : { detectedCommand: command.command }),
   };
 }
 

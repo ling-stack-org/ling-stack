@@ -35,6 +35,7 @@
     "verify:cua-driver-source-build": "node scripts/verify-cua-driver-source-build.mjs",
     "promote:cua-driver-source-build": "node scripts/promote-cua-driver-source-build.mjs",
     "stage:cua-driver-provider": "node scripts/cua-driver-package-staging.mjs",
+    "package:plugins": "node ../../scripts/plugins/package-plugin.mjs --root ../../packages/daemon/src/features/plugins/bundled/cua-driver --output ../../plugins/dist",
     "test:cua-driver-package-staging": "node --test tests/cua-driver-package-staging.test.mjs",
     "test:signing-feasibility": "node --test tests/cua-driver-signing-feasibility.test.mjs",
     "build:locked-control-helper:mac": "node scripts/build-locked-control-native-helper.mjs --platform=darwin",

@@ -1,0 +1,161 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-11-19T01:20:40.293Z",
+  "source": {
+    "repository": "ling-stack-org/ling-stack",
+    "releaseTag": "local-dev",
+    "sourceSha": "local-dev"
+  },
+  "plugins": [
+    {
+      "pluginId": "official:chrome-browser",
+      "displayName": "Ling for Chrome",
+      "trustSummary": "Official browser extension package. Browser actions remain subject to Ling approvals and the extension pairing session.",
+      "latestStableVersion": "0.1.1",
+      "manifest": {
+        "contributions": [
+          {
+            "kind": "mcp-server",
+            "id": "mcp:official-chrome-browser",
+            "path": "./mcp-server.json"
+          }
+        ],
+        "requiredSecrets": [],
+        "defaultApprovals": [
+          {
+            "contributionId": "mcp:official-chrome-browser",
+            "decision": "ask",
+            "reason": "Browser content and interactions may affect signed-in websites."
+          }
+        ],
+        "healthChecks": [
+          {
+            "id": "chrome-extension",
+            "kind": "descriptor",
+            "label": "Chrome extension"
+          },
+          {
+            "id": "chrome-host",
+            "kind": "binary",
+            "label": "Chrome native messaging host"
+          }
+        ]
+      },
+      "artifacts": [
+        {
+          "artifactId": "official:chrome-browser-0.1.1-darwin-arm64",
+          "pluginId": "official:chrome-browser",
+          "version": "0.1.1",
+          "platform": "darwin",
+          "arch": "arm64",
+          "channel": "stable",
+          "url": "https://github.com/ling-stack-org/ling-stack/releases/download/local-dev/official-chrome-browser-0.1.1-darwin-arm64.ling-plugin.zip",
+          "sizeBytes": 1799,
+          "sha256": "692bbc54d2985646152024311a977c78805b588ec7aa31bbf085f474b1b011c0",
+          "rollbackAllowed": true
+        }
+      ],
+      "description": "The signed Ling for Chrome extension and native messaging host."
+    },
+    {
+      "pluginId": "official:cua-driver",
+      "displayName": "Cua Driver",
+      "trustSummary": "Controls native macOS and Windows apps through the permissions and interactive desktop owned by the separately installed Cua Driver. Ling only manages the plugin shell and MCP configuration metadata.",
+      "latestStableVersion": "0.2.0",
+      "manifest": {
+        "contributions": [
+          {
+            "kind": "mcp-server",
+            "id": "mcp:cua-driver",
+            "path": "./mcp-server.json"
+          }
+        ],
+        "requiredSecrets": [],
+        "defaultApprovals": [
+          {
+            "contributionId": "mcp:cua-driver",
+            "decision": "ask",
+            "reason": "GUI automation and screen access require explicit approval."
+          }
+        ],
+        "healthChecks": [
+          {
+            "id": "manifest",
+            "kind": "descriptor",
+            "label": "Bundled plugin manifest"
+          },
+          {
+            "id": "binary",
+            "kind": "binary",
+            "label": "cua-driver binary"
+          },
+          {
+            "id": "mcp",
+            "kind": "mcp",
+            "label": "Cua Driver MCP server"
+          }
+        ]
+      },
+      "artifacts": [
+        {
+          "artifactId": "official:cua-driver-0.2.0-darwin-arm64",
+          "pluginId": "official:cua-driver",
+          "version": "0.2.0",
+          "platform": "darwin",
+          "arch": "arm64",
+          "channel": "stable",
+          "url": "https://github.com/ling-stack-org/ling-stack/releases/download/local-dev/official-cua-driver-0.2.0-darwin-arm64.ling-plugin.zip",
+          "sizeBytes": 2256,
+          "sha256": "b4568d62dfe7ca03b20aeca3b99710db57c53dc97c7c2ba5ea3fa48173f99f17",
+          "rollbackAllowed": true
+        }
+      ],
+      "description": "Connects Ling to an already installed Cua Driver MCP server."
+    },
+    {
+      "pluginId": "official:office-documents",
+      "displayName": "Ling Office Documents",
+      "trustSummary": "Official local Office helper. Document writes remain subject to Ling approvals.",
+      "latestStableVersion": "0.1.0",
+      "manifest": {
+        "contributions": [
+          {
+            "kind": "mcp-server",
+            "id": "mcp:official-office-documents",
+            "path": "./mcp-server.json"
+          }
+        ],
+        "requiredSecrets": [],
+        "defaultApprovals": [
+          {
+            "contributionId": "mcp:official-office-documents",
+            "decision": "ask",
+            "reason": "Office writes can change local documents."
+          }
+        ],
+        "healthChecks": [
+          {
+            "id": "office-helper",
+            "kind": "binary",
+            "label": "Office helper"
+          }
+        ]
+      },
+      "artifacts": [
+        {
+          "artifactId": "official:office-documents-0.1.0-darwin-arm64",
+          "pluginId": "official:office-documents",
+          "version": "0.1.0",
+          "platform": "darwin",
+          "arch": "arm64",
+          "channel": "stable",
+          "url": "https://github.com/ling-stack-org/ling-stack/releases/download/local-dev/official-office-documents-0.1.0-darwin-arm64.ling-plugin.zip",
+          "sizeBytes": 1714,
+          "sha256": "f46fd54e4281f0e72658613a6ed21d72aefa100786209d556ff48578f42a9a49",
+          "rollbackAllowed": true
+        }
+      ],
+      "description": "The signed Office document helper for Ling Desktop."
+    }
+  ]
+}

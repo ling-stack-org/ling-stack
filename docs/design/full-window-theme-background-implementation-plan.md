@@ -32,7 +32,7 @@ Code and test anchors: `packages/ui-react/src/theme/built-ins/`、`packages/ui-r
 | 自定义背景 | 用户显式上传本地图片或视频后覆盖主题默认画面 |
 | 清除背景 | 只移除用户媒体，回到当前主题默认画面；不重置主题 |
 | 可见度 | 连续 `opacity`，20%–100%，默认 60%；旧三档映射为 45% / 60% / 75% |
-| 页面材质边界 | 普通工作区、对话和管理类一级页面允许背景透出；settings、diagnostics、approvals 等密集页面使用实色画布；media-canvas 保留环境背景，但其检查器、卡片和弹层保持实底 |
+| 页面材质边界 | 聊天相关页面允许背景透出；媒体生产、插件管理、自动化等管理类一级页面及其顶栏使用不透明画布；settings、diagnostics、approvals 等密集页面同样使用实色画布 |
 | 设置入口 | 保持“设置 → 界面偏好”内的主题区和背景区，一个目的地 |
 | UI 视觉适配 | 由独立 UI 方案拥有组件层级、材质、状态和截图门槛；本计划只拥有背景层与 route surface policy |
 
@@ -118,7 +118,7 @@ type BackgroundAsset =
 
 `ThemePickerOption` 增加可选 scene。scene 主题卡显示约 84px 的大幅缩略图，经典主题保持 44px 色板。`WorkspaceBackgroundLayer` 优先显示自定义媒体；无自定义且 manifest 有 scene 时显示主题场景；否则保持纯色。
 
-`data-user-background="ready"` 表示共享背景资源可用，`data-ui-background-visible` 表示当前 route 是否展示背景，`data-background-source` 区分 `theme-scene`、`local-image`、`local-video` 和 `theme-solid`。普通工作区、对话和管理类一级页面由 presentation policy 允许背景透出；settings、diagnostics、approvals 等密集页面的画布回退实色，弹窗、卡片、表单和已选详情检查器始终由自身 policy 保持实底。
+`data-user-background="ready"` 表示共享背景资源可用，`data-ui-background-visible` 表示当前 route 是否展示背景，`data-background-source` 区分 `theme-scene`、`local-image`、`local-video` 和 `theme-solid`。只有聊天相关页面由 presentation policy 允许背景透出；媒体生产、插件管理、自动化等管理类一级页面及顶栏固定使用不透明画布，settings、diagnostics、approvals 等密集页面同样使用实底，弹窗、卡片、表单和详情检查器始终由自身 policy 保持实底。
 
 ### 6.2 连续可见度
 

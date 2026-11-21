@@ -59,7 +59,6 @@ export function MediaProductionLoadState({
           />
         ) : null}
         <EmptyState
-          description={t("Split a video into ordered scenes, then generate and choose each clip independently.")}
           icon={<Clapperboard size={30} strokeWidth={1.6} />}
           title={t("Create your first media project")}
           action={(

@@ -6,7 +6,7 @@ import type {
   PluginPrimaryStateView,
 } from "./plugin-manager-types.js";
 
-const OFFICE_PLUGIN_ID = "built-in:office-documents";
+const OFFICE_PLUGIN_ID = "official:office-documents";
 
 export interface OfficePluginView {
   readonly name: string;

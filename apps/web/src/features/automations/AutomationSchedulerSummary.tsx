@@ -19,7 +19,7 @@ export function AutomationSchedulerSummary({
   readonly onStop: () => void;
 }): React.JSX.Element {
   return (
-    <section className="automation-scheduler-strip automation-ui2-scheduler" aria-label={t("Scheduled tasks")}>
+    <section className="automation-scheduler-strip automation-ui2-scheduler" aria-label={t("Automation")}>
       <div className="automation-ui2-scheduler-icon" aria-hidden="true"><CalendarClock size={17} /></div>
       <div className="automation-ui2-scheduler-copy">
         <StatusIndicator compact label={scheduler.statusLabel} tone={scheduler.statusTone} />

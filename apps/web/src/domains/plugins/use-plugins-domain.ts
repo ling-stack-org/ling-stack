@@ -8,10 +8,13 @@ import {
   disableManagedPlugin,
   enableManagedPlugin,
   getManagedPluginRuntimePreview,
+  getOfficialPluginCatalog,
   installManagedPlugin,
+  installManagedPluginRemote,
   listManagedPlugins,
   previewManagedPluginImport,
   refreshManagedPluginPackage,
+  rollbackManagedPlugin,
   repairChromeBrowserHost,
   revokeChromeBrowserAccess,
   uninstallManagedPlugin,
@@ -64,6 +67,11 @@ export interface PluginActionNotice {
 
 export interface PluginsState {
   readonly plugins: readonly ManagedPluginView[];
+  readonly catalog?: import("@ling-stack/contracts").ManagedPluginCatalogResponse;
+  readonly catalogLoading: boolean;
+  readonly catalogLoadingMore: boolean;
+  readonly catalogHasMore: boolean;
+  readonly catalogError: string;
   readonly pluginsLoading: boolean;
   readonly pluginPendingActions: readonly PluginPendingAction[];
   readonly pluginActionErrors: readonly PluginActionError[];
@@ -71,6 +79,8 @@ export interface PluginsState {
 
 export interface PluginsActions {
   readonly refreshPlugins: (cwd?: string) => Promise<void>;
+  readonly refreshCatalog: (cwd?: string) => Promise<void>;
+  readonly loadMoreCatalog: (cwd?: string) => Promise<void>;
   readonly createPlugin: (input: ManagedPluginCreateRequest, request: PluginActionRequest) => Promise<ManagedPluginView | undefined>;
   readonly previewPluginImport: (source: ManagedPluginImportSource) => Promise<ManagedPluginImportPreviewResponse>;
   readonly applyPluginImport: (source: ManagedPluginImportSource, names: readonly string[]) => Promise<ManagedPluginImportApplyResponse>;
@@ -79,6 +89,8 @@ export interface PluginsActions {
   readonly checkPlugin: (pluginId: string, request: PluginActionRequest) => Promise<void>;
   readonly validatePackage: (pluginId: string, request: PluginActionRequest) => Promise<void>;
   readonly installPlugin: (pluginId: string, request: PluginActionRequest) => Promise<void>;
+  readonly installRemotePlugin: (pluginId: string, request: PluginActionRequest, version?: string) => Promise<void>;
+  readonly rollbackPlugin: (pluginId: string, request: PluginActionRequest) => Promise<void>;
   readonly uninstallPlugin: (pluginId: string, request: PluginActionRequest) => Promise<void>;
   readonly refreshPluginPackage: (pluginId: string, request: PluginActionRequest) => Promise<void>;
   readonly previewPluginRuntime: (pluginId: string, request: PluginActionRequest) => Promise<void>;
@@ -98,6 +110,10 @@ export function usePluginsDomain(input: {
   readonly notify: (notice: PluginActionNotice) => void;
 }): PluginsController {
   const [plugins, setPlugins] = useState<readonly ManagedPluginView[]>([]);
+  const [catalog, setCatalog] = useState<PluginsState["catalog"]>();
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [catalogLoadingMore, setCatalogLoadingMore] = useState(false);
+  const [catalogError, setCatalogError] = useState("");
   const [pluginsLoading, setPluginsLoading] = useState(false);
   const [pluginPendingActions, setPluginPendingActions] = useState<readonly PluginPendingAction[]>([]);
   const [pluginActionErrors, setPluginActionErrors] = useState<readonly PluginActionError[]>([]);
@@ -124,7 +140,7 @@ export function usePluginsDomain(input: {
       if (loadRequestIdRef.current !== loadRequestId) return;
       setPlugins(response.plugins);
       const detectedCuaDriver = response.plugins.find((plugin) =>
-        plugin.id === "trusted-local:cua-driver"
+        plugin.id === "official:cua-driver"
         && plugin.setup?.distribution !== "bundled_embedded"
         && plugin.setup?.state === "detected"
       );
@@ -160,6 +176,49 @@ export function usePluginsDomain(input: {
       setError({ scope: "load", message });
     } finally {
       if (loadRequestIdRef.current === loadRequestId) setPluginsLoading(false);
+    }
+  }
+
+  async function refreshCatalog(cwd = input.cwd): Promise<void> {
+    if (!cwd.trim()) {
+      setCatalog(undefined);
+      setCatalogError("");
+      setCatalogLoading(false);
+      setCatalogLoadingMore(false);
+      return;
+    }
+    setCatalogLoading(true);
+    setCatalogError("");
+    try {
+      setCatalog(await getOfficialPluginCatalog(cwd, { limit: 50 }));
+    } catch (caught) {
+      setCatalog(undefined);
+      setCatalogError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setCatalogLoading(false);
+    }
+  }
+
+  async function loadMoreCatalog(cwd = input.cwd): Promise<void> {
+    const cursor = catalog?.nextCursor;
+    if (!cwd.trim() || !cursor || catalogLoading || catalogLoadingMore) return;
+    setCatalogLoadingMore(true);
+    setCatalogError("");
+    try {
+      const next = await getOfficialPluginCatalog(cwd, { cursor, limit: 50 });
+      setCatalog((current) => {
+        if (!current) return next;
+        const entries = new Map(current.catalog.plugins.map((entry) => [entry.pluginId, entry]));
+        for (const entry of next.catalog.plugins) entries.set(entry.pluginId, entry);
+        return {
+          ...next,
+          catalog: { ...next.catalog, plugins: [...entries.values()] },
+        };
+      });
+    } catch (caught) {
+      setCatalogError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setCatalogLoadingMore(false);
     }
   }
 
@@ -227,6 +286,20 @@ export function usePluginsDomain(input: {
   async function installPlugin(pluginId: string, request: PluginActionRequest): Promise<void> {
     await mutatePlugin(pluginId, "install", request, async (cwd) => (await installManagedPlugin(cwd, pluginId)).plugin, () =>
       input.translate("Plugin package installed."));
+  }
+
+  async function installRemotePlugin(pluginId: string, request: PluginActionRequest, version?: string): Promise<void> {
+    await mutatePlugin(pluginId, "install", request, async (cwd) => {
+      const response = await installManagedPluginRemote(cwd, pluginId, version ? { version } : {});
+      return response.plugin;
+    }, () => input.translate("Plugin package installed."));
+  }
+
+  async function rollbackPlugin(pluginId: string, request: PluginActionRequest): Promise<void> {
+    await mutatePlugin(pluginId, "refresh-package", request, async (cwd) => {
+      const response = await rollbackManagedPlugin(cwd, pluginId);
+      return response.plugin;
+    }, () => input.translate("Plugin package rolled back."));
   }
 
   async function uninstallPlugin(pluginId: string, request: PluginActionRequest): Promise<void> {
@@ -367,6 +440,10 @@ export function usePluginsDomain(input: {
 
   function resetForCwd(): void {
     setPlugins([]);
+    setCatalog(undefined);
+    setCatalogLoading(false);
+    setCatalogLoadingMore(false);
+    setCatalogError("");
     setPluginsLoading(false);
     setPluginPendingActions([]);
     setPluginActionErrors([]);
@@ -379,12 +456,19 @@ export function usePluginsDomain(input: {
   return {
     state: {
       plugins,
+      catalog,
+      catalogLoading,
+      catalogLoadingMore,
+      catalogHasMore: Boolean(catalog?.nextCursor),
+      catalogError,
       pluginsLoading,
       pluginPendingActions,
       pluginActionErrors,
     },
     actions: {
       refreshPlugins,
+      refreshCatalog,
+      loadMoreCatalog,
       createPlugin,
       previewPluginImport,
       applyPluginImport,
@@ -393,6 +477,8 @@ export function usePluginsDomain(input: {
       checkPlugin,
       validatePackage,
       installPlugin,
+      installRemotePlugin,
+      rollbackPlugin,
       uninstallPlugin,
       refreshPluginPackage,
       previewPluginRuntime,

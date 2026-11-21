@@ -6,7 +6,7 @@ import type {
   OfficeDriverPlatform,
 } from "@ling-stack/contracts";
 
-export type ManagedPluginSourceKind = "built-in" | "bundled" | "trusted-local-preset";
+export type ManagedPluginSourceKind = "built-in" | "bundled" | "official-remote" | "trusted-local-preset";
 export type ManagedPluginStatus = "available" | "enabled" | "disabled" | "blocked";
 export type ManagedPluginHealthStatus = "unknown" | "ready" | "failed" | "disabled" | "expired";
 export type ManagedPluginPackageStatus = "installed" | "uninstalled";
@@ -226,6 +226,12 @@ export interface ManagedPluginPackageRecord {
   readonly installedAt: string;
   readonly updatedAt: string;
   readonly uninstalledAt?: string;
+  readonly artifactId?: string;
+  readonly platform?: "darwin" | "linux" | "win32";
+  readonly arch?: "arm64" | "x64" | "ia32" | "universal";
+  readonly sourceUrl?: string;
+  readonly catalogVersion?: string;
+  readonly previousVersion?: string;
 }
 
 export interface UpsertManagedPluginPackageInput {
@@ -238,6 +244,12 @@ export interface UpsertManagedPluginPackageInput {
   readonly manifestJson: string;
   readonly installedAt?: string;
   readonly uninstalledAt?: string;
+  readonly artifactId?: string;
+  readonly platform?: "darwin" | "linux" | "win32";
+  readonly arch?: "arm64" | "x64" | "ia32" | "universal";
+  readonly sourceUrl?: string;
+  readonly catalogVersion?: string;
+  readonly previousVersion?: string;
 }
 
 export interface ManagedPluginPolicyOverlayView {
@@ -294,6 +306,12 @@ export interface ManagedPluginPackageView {
   readonly installedAt: string;
   readonly updatedAt: string;
   readonly uninstalledAt?: string;
+  readonly artifactId?: string;
+  readonly platform?: "darwin" | "linux" | "win32";
+  readonly arch?: "arm64" | "x64" | "ia32" | "universal";
+  readonly sourceUrl?: string;
+  readonly catalogVersion?: string;
+  readonly previousVersion?: string;
 }
 
 export interface ManagedPluginEvent {
@@ -386,10 +404,13 @@ export interface ManagedPluginView {
     readonly canEnable: boolean;
     readonly canDisable: boolean;
     readonly canCheck: boolean;
+    readonly canCheckUpdate?: boolean;
     readonly canApplyPreset: boolean;
     readonly canInstall: boolean;
+    readonly canInstallRemote?: boolean;
     readonly canUninstall: boolean;
     readonly canRefreshPackage: boolean;
+    readonly canRollback?: boolean;
     readonly canRuntimePreview: boolean;
   };
 }

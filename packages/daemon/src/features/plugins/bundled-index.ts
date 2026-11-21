@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { dirname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const BUNDLED_CUA_DRIVER_PLUGIN_ID = "bundled:cua-driver";
+export const CUA_DRIVER_PLUGIN_ID = "official:cua-driver";
 export const DESKTOP_BUNDLED_PLUGINS_RESOURCE_DIRECTORY = "bundled";
 
 export interface BundledPluginIndexEntry {
@@ -23,7 +23,7 @@ export interface BundledPackageRootResolutionOptions {
 export function listBundledPluginIndexEntries(): readonly BundledPluginIndexEntry[] {
   return [
     {
-      id: BUNDLED_CUA_DRIVER_PLUGIN_ID,
+      id: CUA_DRIVER_PLUGIN_ID,
       sourceKind: "bundled",
       packageRoot: resolveBundledPackageRoot("cua-driver"),
       pinnedVersion: "0.2.0",

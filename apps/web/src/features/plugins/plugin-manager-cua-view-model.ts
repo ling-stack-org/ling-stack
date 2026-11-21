@@ -14,7 +14,7 @@ export interface CuaHealthView {
 }
 
 export function isCuaDriver(plugin: ManagedPluginView): boolean {
-  return plugin.id === "trusted-local:cua-driver" || plugin.id === "bundled:cua-driver";
+  return plugin.id === "official:cua-driver" || plugin.id === "official:cua-driver";
 }
 
 export function buildCuaHealthView(plugin: ManagedPluginView, t: Translate): CuaHealthView | undefined {

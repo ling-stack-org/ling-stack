@@ -6,7 +6,7 @@
   background: #fff;
   opacity: 1;
   pointer-events: auto;
-  transition: opacity 420ms ease;
+  transition: opacity 220ms ease;
 }
 
 .ling-launch-transition[data-state="exiting"] {

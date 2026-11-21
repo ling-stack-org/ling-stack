@@ -146,7 +146,7 @@ async function openPluginManager(page: Page): Promise<void> {
 test("bundled Computer Control keeps enable intent through navigation, recheck, and disable", async ({ page }) => {
   await installComputerControlBridge(page, {});
   const state = createBaseState({ approvalStatus: "expired" });
-  const index = state.managedPlugins.findIndex((plugin) => plugin.id === "trusted-local:cua-driver");
+  const index = state.managedPlugins.findIndex((plugin) => plugin.id === "official:cua-driver");
   state.managedPlugins[index] = createMockBundledEmbeddedCuaPlugin({
     providerState: "included",
     platform: "darwin",
@@ -184,7 +184,7 @@ test("bundled Computer Control keeps enable intent through navigation, recheck, 
 test("bundled Computer Control recovers macOS permissions without external installation actions", async ({ page }) => {
   await installComputerControlBridge(page, {});
   const state = createBaseState({ approvalStatus: "expired" });
-  const index = state.managedPlugins.findIndex((plugin) => plugin.id === "trusted-local:cua-driver");
+  const index = state.managedPlugins.findIndex((plugin) => plugin.id === "official:cua-driver");
   const plugin = createMockBundledEmbeddedCuaPlugin({
     providerState: "permission_required",
     platform: "darwin",
@@ -212,14 +212,14 @@ test("bundled Computer Control recovers macOS permissions without external insta
 
   await page.getByRole("button", { name: "Back to app" }).click();
   await openPluginManager(page);
-  await expect(page.locator('.plugin-table-row[data-plugin-id="trusted-local:cua-driver"]')).toHaveCount(0);
+  await expect(page.locator(".plugin-marketplace-row").filter({ hasText: "Cua Driver" })).toBeVisible();
 });
 
 test("bundled Windows Computer Control localizes readiness and limitations", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await installComputerControlBridge(page, { locale: "zh-CN", platform: "windows", theme: "dark" });
   const state = createBaseState({ approvalStatus: "expired" });
-  const index = state.managedPlugins.findIndex((plugin) => plugin.id === "trusted-local:cua-driver");
+  const index = state.managedPlugins.findIndex((plugin) => plugin.id === "official:cua-driver");
   const plugin = createMockBundledEmbeddedCuaPlugin({
     providerState: "ready",
     platform: "win32",
@@ -259,7 +259,7 @@ test("bundled Windows Computer Control localizes readiness and limitations", asy
 test("invalid bundled projection fails closed without connect or installation actions", async ({ page }) => {
   await installComputerControlBridge(page, {});
   const state = createBaseState({ approvalStatus: "expired" });
-  const index = state.managedPlugins.findIndex((plugin) => plugin.id === "trusted-local:cua-driver");
+  const index = state.managedPlugins.findIndex((plugin) => plugin.id === "official:cua-driver");
   const malformed = createMockBundledEmbeddedCuaPlugin({
     providerState: "included",
     platform: "darwin",
@@ -304,7 +304,7 @@ test("invalid bundled projection fails closed without connect or installation ac
 async function openReadyLockedControl(page: Page, input: Parameters<typeof installComputerControlBridge>[1] = {}): Promise<void> {
   await installComputerControlBridge(page, { lockedUse: true, ...input });
   const state = createBaseState({ approvalStatus: "expired" });
-  const index = state.managedPlugins.findIndex((plugin) => plugin.id === "trusted-local:cua-driver");
+  const index = state.managedPlugins.findIndex((plugin) => plugin.id === "official:cua-driver");
   state.managedPlugins[index] = createMockBundledEmbeddedCuaPlugin({
     providerState: "ready", platform: "darwin", requestedEnabled: true, effectiveEnabled: true,
   });

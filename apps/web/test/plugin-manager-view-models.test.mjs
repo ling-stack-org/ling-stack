@@ -287,10 +287,10 @@ test("bundled external provider states normalize to invalid and suppress enable"
 function plugin(setupOverrides, actionOverrides) {
   const effectiveEnabled = setupOverrides.effectiveEnabled;
   return {
-    id: "trusted-local:cua-driver",
+    id: "official:cua-driver",
     displayName: "Cua Driver",
     version: "1.0.0",
-    sourceKind: "trusted-local-preset",
+    sourceKind: "official-remote",
     status: effectiveEnabled ? "enabled" : "disabled",
     trustSummary: "Desktop-owned embedded provider.",
     contributions: [],
@@ -320,10 +320,10 @@ function plugin(setupOverrides, actionOverrides) {
 
 function externalPlugin() {
   return {
-    id: "trusted-local:cua-driver",
+    id: "official:cua-driver",
     displayName: "Cua Driver",
     version: "1.0.0",
-    sourceKind: "trusted-local-preset",
+    sourceKind: "official-remote",
     status: "available",
     trustSummary: "External local provider.",
     contributions: [],
@@ -353,7 +353,7 @@ function externalPlugin() {
 
 function chromePlugin(overrides = {}) {
   return {
-    id: "built-in:chrome",
+    id: "official:chrome-browser",
     displayName: "Chrome",
     version: "0.1.0",
     sourceKind: "built-in",
@@ -390,7 +390,7 @@ function chromeSetup(overrides = {}) {
 
 function officePlugin(overrides = {}) {
   return {
-    id: "built-in:office-documents",
+    id: "official:office-documents",
     displayName: "Office Documents",
     version: "0.1.0",
     sourceKind: "built-in",

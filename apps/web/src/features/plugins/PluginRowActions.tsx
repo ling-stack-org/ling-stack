@@ -147,6 +147,7 @@ export function runPluginAction(action: PluginActionId, pluginId: string, handle
   if (action === "install") return handlers.onInstall(pluginId);
   if (action === "uninstall") return handlers.onRequestUninstall(pluginId);
   if (action === "refresh-package") return handlers.onRefreshPackage(pluginId);
+  if (action === "rollback") return handlers.onRollback(pluginId);
   if (action === "runtime-preview") return handlers.onRuntimePreview(pluginId);
   if (action === "enable") return handlers.onEnable(pluginId);
   handlers.onDisable(pluginId);
@@ -163,7 +164,7 @@ function pluginActionIconComponent(action: PluginActionId): LucideIcon {
   if (action === "revoke-chrome") return Unplug;
   if (action === "apply") return Wrench;
   if (action === "guide" || action === "install") return Download;
-  if (action === "check" || action === "refresh-package") return RefreshCw;
+  if (action === "check" || action === "refresh-package" || action === "rollback") return RefreshCw;
   if (action === "enable") return Power;
   if (action === "disable") return PowerOff;
   if (action === "details") return ChevronRight;

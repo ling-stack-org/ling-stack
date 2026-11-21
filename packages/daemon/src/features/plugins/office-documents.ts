@@ -94,14 +94,14 @@ export class OfficeDocumentsPluginService {
 
   enable(cwd: string, now = new Date().toISOString()): ManagedPluginHealthSnapshot {
     const store = this.options.getStore(cwd);
-    store.upsertManagedPlugin({ id: this.descriptor.id, sourceKind: "built-in", version: this.descriptor.version, enabled: true, descriptor: this.descriptor }, now);
+    store.upsertManagedPlugin({ id: this.descriptor.id, sourceKind: this.descriptor.sourceKind, version: this.descriptor.version, enabled: true, descriptor: this.descriptor }, now);
     store.appendManagedPluginEvent({ pluginId: this.descriptor.id, type: "enabled", actor: "local-user", message: "Office Documents enabled." }, now);
     return this.sync(cwd, now);
   }
 
   disable(cwd: string, reason?: string, now = new Date().toISOString()): ManagedPluginHealthSnapshot {
     const store = this.options.getStore(cwd);
-    store.upsertManagedPlugin({ id: this.descriptor.id, sourceKind: "built-in", version: this.descriptor.version, enabled: false, disabledReason: reason, descriptor: this.descriptor }, now);
+    store.upsertManagedPlugin({ id: this.descriptor.id, sourceKind: this.descriptor.sourceKind, version: this.descriptor.version, enabled: false, disabledReason: reason, descriptor: this.descriptor }, now);
     store.appendManagedPluginEvent({ pluginId: this.descriptor.id, type: "disabled", actor: "local-user", message: reason ? `Office Documents disabled: ${reason}` : "Office Documents disabled." }, now);
     return this.sync(cwd, now);
   }

@@ -20,7 +20,7 @@ export interface PluginPackageValidationResult {
 
 export interface LoadedPluginPackage {
   readonly id: string;
-  readonly sourceKind: "bundled" | "trusted-local";
+  readonly sourceKind: "built-in" | "bundled" | "official-remote" | "trusted-local";
   readonly manifest: LingPluginPackageManifest;
   readonly packageRoot: string;
   readonly validation: PluginPackageValidationResult;
@@ -103,7 +103,10 @@ function packageContributionToManagedContribution(
 }
 
 function toManagedSourceKind(sourceKind: LingPluginPackageManifest["sourceKind"]): ManagedPluginSourceKind {
-  return sourceKind === "bundled" ? "bundled" : "trusted-local-preset";
+  if (sourceKind === "built-in") return "built-in";
+  if (sourceKind === "bundled") return "bundled";
+  if (sourceKind === "official-remote") return "official-remote";
+  return "trusted-local-preset";
 }
 
 function validateContributionPaths(

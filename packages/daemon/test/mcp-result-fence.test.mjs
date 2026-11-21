@@ -268,9 +268,9 @@ test("bundled MCP result is discarded after an activation epoch ABA", async () =
         async checkServer() { throw new Error("not used"); },
         async listTools() { throw new Error("not used"); },
         async callTool() {
-          const beforeDisable = fixture.store.getCuaDriverActivationState("trusted-local:cua-driver");
+          const beforeDisable = fixture.store.getCuaDriverActivationState("official:cua-driver");
           const disabled = fixture.store.commitCuaDriverActivation({
-            pluginId: "trusted-local:cua-driver",
+            pluginId: "official:cua-driver",
             mcpServerId: "mcp_cua_driver",
             now: fixture.authorityTime,
             expected: {
@@ -290,7 +290,7 @@ test("bundled MCP result is discarded after an activation epoch ABA", async () =
           });
           assert.equal(disabled.committed, true);
           const reenabled = fixture.store.commitCuaDriverActivation({
-            pluginId: "trusted-local:cua-driver",
+            pluginId: "official:cua-driver",
             mcpServerId: "mcp_cua_driver",
             now: fixture.authorityTime,
             expected: {
@@ -458,7 +458,7 @@ function readyStatus(serverId, now) {
 
 function readyHealth(now) {
   return {
-    pluginId: "trusted-local:cua-driver",
+    pluginId: "official:cua-driver",
     checkedAt: now,
     expiresAt: "2099-01-01T00:00:00.000Z",
     status: "ready",

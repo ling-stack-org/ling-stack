@@ -304,8 +304,14 @@ export class SqliteManagedPluginStore {
           manifest_json,
           installed_at,
           updated_at,
-          uninstalled_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          uninstalled_at,
+          artifact_id,
+          platform,
+          arch,
+          source_url,
+          catalog_version,
+          previous_version
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(plugin_id) DO UPDATE SET
           source_kind = excluded.source_kind,
           version = excluded.version,
@@ -314,7 +320,13 @@ export class SqliteManagedPluginStore {
           package_hash = excluded.package_hash,
           manifest_json = excluded.manifest_json,
           updated_at = excluded.updated_at,
-          uninstalled_at = excluded.uninstalled_at
+          uninstalled_at = excluded.uninstalled_at,
+          artifact_id = excluded.artifact_id,
+          platform = excluded.platform,
+          arch = excluded.arch,
+          source_url = excluded.source_url,
+          catalog_version = excluded.catalog_version,
+          previous_version = excluded.previous_version
       `)
       .run(
         input.pluginId,
@@ -327,6 +339,12 @@ export class SqliteManagedPluginStore {
         installedAt,
         now,
         input.uninstalledAt ?? null,
+        input.artifactId ?? null,
+        input.platform ?? null,
+        input.arch ?? null,
+        input.sourceUrl ?? null,
+        input.catalogVersion ?? null,
+        input.previousVersion ?? null,
       );
     const record = this.getManagedPluginPackage(input.pluginId);
     if (!record) {

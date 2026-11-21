@@ -1,0 +1,5 @@
+{
+  "command": "ling-browser-host",
+  "args": [],
+  "managedBy": "ling-plugin-host"
+}
