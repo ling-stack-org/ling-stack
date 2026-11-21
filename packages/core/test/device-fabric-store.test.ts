@@ -117,11 +117,57 @@ test("fabric store installs signed resources, preserves the previous revision, a
   store.installResource(manifest("2.0.0", secondDigest), secondPayload, "2026-11-21T00:01:00.000Z");
   assert.equal(store.getResource("adapter-linux")?.manifest.version, "2.0.0");
   assert.equal(store.rollbackResource("adapter-linux").manifest.version, "1.0.0");
+  assert.deepEqual(store.readActiveResourcePayload("adapter-linux"), payload);
   assert.throws(() => store.installResource(manifest("3.0.0", digest, "untrusted"), payload), (error: unknown) => error instanceof DeviceFabricError && error.code === "resource_conflict");
   assert.throws(() => store.installResource({ ...manifest("3.0.0", digest), supportedPlatforms: ["android"] }, payload, now, { platform: "ios" }), (error: unknown) => error instanceof DeviceFabricError && error.code === "resource_conflict");
   assert.equal(store.healthCheckResource("adapter-linux", () => false).status, "disabled");
+  assert.equal(store.readActiveResourcePayload("adapter-linux"), undefined);
   assert.equal(store.healthCheckResource("adapter-linux", () => true).status, "active");
   store.close();
+});
+
+test("resource activation retains verified bytes across restart and rolls back partial writes", t => {
+  const root = mkdtempSync(join(tmpdir(), "ling-device-resources-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const databasePath = join(root, "resources.sqlite");
+  const oldPayload = new TextEncoder().encode("resource-original");
+  const oldDigest = createHash("sha256").update(oldPayload).digest("hex");
+  const newPayload = new TextEncoder().encode("resource-replacement");
+  const newDigest = createHash("sha256").update(newPayload).digest("hex");
+  const original = manifest("1.0.0", oldDigest);
+  const replacement = manifest("2.0.0", newDigest);
+  const store = new SqliteDeviceFabricStore({ databasePath });
+  try {
+    store.database.prepare("INSERT INTO device_resource_active(resource_id,manifest_json,payload_digest,installed_at) VALUES(?,?,?,?)")
+      .run(original.resourceId, JSON.stringify(original), oldDigest, now);
+    assert.equal(store.readActiveResourcePayload(original.resourceId), undefined);
+    assert.equal(store.installResource(original, oldPayload, now).replayed, true);
+    assert.deepEqual(store.readActiveResourcePayload(original.resourceId), oldPayload);
+    store.database.exec(`
+      CREATE TEMP TRIGGER reject_resource_pointer_update BEFORE UPDATE ON device_resource_active
+      BEGIN SELECT RAISE(ABORT, 'fixture activation failure'); END;
+    `);
+    assert.throws(() => store.installResource(replacement, newPayload, now), /fixture activation failure/);
+    assert.equal(store.getResource(original.resourceId)?.payloadDigest, oldDigest);
+    assert.equal(store.database.prepare("SELECT 1 FROM device_resource_payloads WHERE payload_digest=?").get(newDigest), undefined);
+    assert.throws(() => store.rollbackResource(original.resourceId), /no rollback revision/);
+    store.database.exec("DROP TRIGGER reject_resource_pointer_update");
+    store.installResource(replacement, newPayload, now);
+  } finally {
+    store.close();
+  }
+  const reopened = new SqliteDeviceFabricStore({ databasePath });
+  try {
+    assert.deepEqual(reopened.readActiveResourcePayload(original.resourceId), newPayload);
+    reopened.database.prepare("UPDATE device_resource_payloads SET payload_bytes=? WHERE payload_digest=?").run(newPayload, oldDigest);
+    assert.throws(() => reopened.rollbackResource(original.resourceId), /digest does not match/);
+    assert.equal(reopened.getResource(original.resourceId)?.payloadDigest, newDigest);
+    reopened.database.prepare("UPDATE device_resource_payloads SET payload_bytes=? WHERE payload_digest=?").run(oldPayload, oldDigest);
+    reopened.rollbackResource(original.resourceId);
+    assert.deepEqual(reopened.readActiveResourcePayload(original.resourceId), oldPayload);
+  } finally {
+    reopened.close();
+  }
 });
 
 test("fabric store persists lifecycle revisions and rejects invalid transitions", () => {

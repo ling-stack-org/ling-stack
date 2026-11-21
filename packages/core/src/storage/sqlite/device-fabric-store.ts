@@ -22,6 +22,8 @@ import type {
 } from "@ling-stack/contracts";
 
 import { DeviceFabricError, isAllowedDeviceLifecycleTransition } from "../../device-fabric.js";
+import { rollbackOwnedSqliteTransaction } from "./helpers.js";
+import { withSqliteSnapshotParentTransaction } from "./read-snapshot.js";
 
 export interface DeviceFabricStoreOptions {
   readonly databasePath?: string;
@@ -169,32 +171,56 @@ export class SqliteDeviceFabricStore {
   installResource(manifest: DeviceResourceManifestV1, payload: Uint8Array, installedAt = new Date().toISOString(), compatibility: DeviceResourceCompatibility = {}): { readonly record: DeviceResourceRecord; readonly replayed: boolean } {
     validateResourceManifest(manifest);
     validateResourceCompatibility(manifest, compatibility, this.#resourceContractMajor, this.#allowedResourceLicenses);
-    const payloadDigest = createHash("sha256").update(payload).digest("hex");
+    const bytes = Buffer.from(payload);
+    const payloadDigest = createHash("sha256").update(bytes).digest("hex");
     if (payloadDigest !== manifest.digest) throw new DeviceFabricError("resource_conflict", "resource digest does not match manifest");
     if (this.#verifyResourceSignature && !this.#verifyResourceSignature(manifest)) throw new DeviceFabricError("resource_conflict", "resource signature is not valid");
-    for (const dependency of manifest.dependencies) if (!this.getResource(dependency) || this.getResource(dependency)?.status !== "active") throw new DeviceFabricError("resource_conflict", `resource dependency is not active: ${dependency}`);
-    const current = this.getResource(manifest.resourceId);
-    if (current?.manifest.version === manifest.version && current.payloadDigest === payloadDigest) return { record: current, replayed: true };
-    if (current) {
-      this.database.prepare("INSERT INTO device_resource_history(resource_id,manifest_json,payload_digest,installed_at) VALUES(?,?,?,?)")
-        .run(manifest.resourceId, JSON.stringify(current.manifest), current.payloadDigest, current.installedAt);
-    }
-    const record = { manifest, payloadDigest, installedAt, status: "active" as const } satisfies DeviceResourceRecord;
-    this.database.prepare("INSERT INTO device_resource_active(resource_id,manifest_json,payload_digest,installed_at) VALUES(?,?,?,?) ON CONFLICT(resource_id) DO UPDATE SET manifest_json=excluded.manifest_json,payload_digest=excluded.payload_digest,installed_at=excluded.installed_at")
-      .run(manifest.resourceId, JSON.stringify(manifest), payloadDigest, installedAt);
-    this.setResourceStatus(manifest.resourceId, "active");
-    return { record, replayed: false };
+    return this.withWriteTransaction(() => {
+      for (const dependency of manifest.dependencies) {
+        if (this.getResource(dependency)?.status !== "active") {
+          throw new DeviceFabricError("resource_conflict", `resource dependency is not active: ${dependency}`);
+        }
+      }
+      const payloadWrite = this.database.prepare(`
+        INSERT INTO device_resource_payloads(resource_id,payload_digest,payload_bytes) VALUES(?,?,?)
+        ON CONFLICT(resource_id,payload_digest) DO NOTHING
+      `).run(manifest.resourceId, payloadDigest, bytes);
+      if (payloadWrite.changes === 0) this.readResourcePayload(manifest.resourceId, payloadDigest);
+      const current = this.getResource(manifest.resourceId);
+      if (current?.manifest.version === manifest.version && current.payloadDigest === payloadDigest) return { record: current, replayed: true };
+      if (current) {
+        this.database.prepare("INSERT INTO device_resource_history(resource_id,manifest_json,payload_digest,installed_at) VALUES(?,?,?,?)")
+          .run(manifest.resourceId, JSON.stringify(current.manifest), current.payloadDigest, current.installedAt);
+      }
+      const record = { manifest, payloadDigest, installedAt, status: "active" as const } satisfies DeviceResourceRecord;
+      this.activateResource(record);
+      return { record, replayed: false };
+    });
   }
 
   rollbackResource(resourceId: string): DeviceResourceRecord {
-    const row = this.database.prepare("SELECT manifest_json,payload_digest,installed_at FROM device_resource_history WHERE resource_id=? ORDER BY revision_id DESC LIMIT 1").get(resourceId) as Row | undefined;
-    if (!row) throw new DeviceFabricError("resource_conflict", "resource has no rollback revision");
-    const record = { manifest: parseJson<DeviceResourceManifestV1>(row.manifest_json, "resource manifest"), payloadDigest: readString(row, "payload_digest"), installedAt: readString(row, "installed_at"), status: "active" as const } satisfies DeviceResourceRecord;
-    this.database.prepare("INSERT INTO device_resource_active(resource_id,manifest_json,payload_digest,installed_at) VALUES(?,?,?,?) ON CONFLICT(resource_id) DO UPDATE SET manifest_json=excluded.manifest_json,payload_digest=excluded.payload_digest,installed_at=excluded.installed_at")
-      .run(resourceId, JSON.stringify(record.manifest), record.payloadDigest, record.installedAt);
-    this.setResourceStatus(resourceId, "active");
-    this.database.prepare("DELETE FROM device_resource_history WHERE revision_id=(SELECT revision_id FROM device_resource_history WHERE resource_id=? ORDER BY revision_id DESC LIMIT 1)").run(resourceId);
-    return record;
+    return this.withWriteTransaction(() => {
+      const row = this.database.prepare(`
+        SELECT revision_id,manifest_json,payload_digest,installed_at FROM device_resource_history
+        WHERE resource_id=? ORDER BY revision_id DESC LIMIT 1
+      `).get(resourceId) as Row | undefined;
+      if (!row) throw new DeviceFabricError("resource_conflict", "resource has no rollback revision");
+      const record = {
+        manifest: parseJson<DeviceResourceManifestV1>(row.manifest_json, "resource manifest"),
+        payloadDigest: readString(row, "payload_digest"),
+        installedAt: readString(row, "installed_at"),
+        status: "active" as const,
+      } satisfies DeviceResourceRecord;
+      if (record.manifest.resourceId !== resourceId || record.manifest.digest !== record.payloadDigest) {
+        throw new DeviceFabricError("resource_conflict", "resource rollback manifest does not match its payload");
+      }
+      if (!this.readResourcePayload(resourceId, record.payloadDigest)) {
+        throw new DeviceFabricError("resource_conflict", "resource rollback payload is missing");
+      }
+      this.activateResource(record);
+      this.database.prepare("DELETE FROM device_resource_history WHERE revision_id=?").run(row.revision_id!);
+      return record;
+    });
   }
 
   getResource(resourceId: string): DeviceResourceRecord | undefined {
@@ -203,6 +229,30 @@ export class SqliteDeviceFabricStore {
     const status = readString(row, "status");
     if (status !== "active" && status !== "disabled") throw new DeviceFabricError("resource_conflict", "stored resource status is invalid");
     return { manifest: parseJson<DeviceResourceManifestV1>(row.manifest_json, "resource manifest"), payloadDigest: readString(row, "payload_digest"), installedAt: readString(row, "installed_at"), status, ...(typeof row.status_reason === "string" ? { statusReason: row.status_reason } : {}) };
+  }
+
+  readActiveResourcePayload(resourceId: string): Uint8Array | undefined {
+    const row = this.database.prepare(`
+      SELECT p.payload_bytes,a.payload_digest FROM device_resource_active a
+      JOIN device_resource_payloads p ON p.resource_id=a.resource_id AND p.payload_digest=a.payload_digest
+      LEFT JOIN device_resource_state s ON s.resource_id=a.resource_id
+      WHERE a.resource_id=? AND COALESCE(s.status,'active')='active'
+    `).get(resourceId) as Row | undefined;
+    return row ? verifyResourcePayload(row.payload_bytes, readString(row, "payload_digest")) : undefined;
+  }
+
+  private readResourcePayload(resourceId: string, digest: string): Uint8Array | undefined {
+    const row = this.database.prepare("SELECT payload_bytes FROM device_resource_payloads WHERE resource_id=? AND payload_digest=?")
+      .get(resourceId, digest) as Row | undefined;
+    return row ? verifyResourcePayload(row.payload_bytes, digest) : undefined;
+  }
+
+  private activateResource(record: DeviceResourceRecord): void {
+    this.database.prepare(`
+      INSERT INTO device_resource_active(resource_id,manifest_json,payload_digest,installed_at) VALUES(?,?,?,?)
+      ON CONFLICT(resource_id) DO UPDATE SET manifest_json=excluded.manifest_json,payload_digest=excluded.payload_digest,installed_at=excluded.installed_at
+    `).run(record.manifest.resourceId, JSON.stringify(record.manifest), record.payloadDigest, record.installedAt);
+    this.setResourceStatus(record.manifest.resourceId, "active");
   }
 
   setResourceStatus(resourceId: string, status: "active" | "disabled", reason?: string, updatedAt = new Date().toISOString()): void {
@@ -444,6 +494,18 @@ export class SqliteDeviceFabricStore {
 
   close(): void { this.database.close(); }
 
+  private withWriteTransaction<T>(write: () => T): T {
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const result = withSqliteSnapshotParentTransaction(this.database, write);
+      this.database.exec("COMMIT");
+      return result;
+    } catch (error) {
+      rollbackOwnedSqliteTransaction(this.database);
+      throw error;
+    }
+  }
+
   private wouldCreateContainmentCycle(fromNodeId: string, toNodeId: string, replacingRelationshipId: string): boolean {
     const children = new Map<string, string[]>();
     for (const relationship of this.listGraphRelationships()) {
@@ -499,6 +561,12 @@ export class SqliteDeviceFabricStore {
         installed_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_device_resource_history_resource ON device_resource_history(resource_id,revision_id);
+      CREATE TABLE IF NOT EXISTS device_resource_payloads (
+        resource_id TEXT NOT NULL,
+        payload_digest TEXT NOT NULL,
+        payload_bytes BLOB NOT NULL,
+        PRIMARY KEY(resource_id,payload_digest)
+      );
       CREATE TABLE IF NOT EXISTS device_resource_state (
         resource_id TEXT PRIMARY KEY NOT NULL,
         status TEXT NOT NULL,
@@ -619,6 +687,13 @@ function validateEvent(event: DeviceEventEnvelopeV1, streamId: string, generatio
   if (!event.eventId.trim() || !event.traceId.trim() || !streamId.trim() || !Number.isInteger(generation) || generation < 1 || !Number.isInteger(event.sequence) || event.sequence < 1 || !event.kind.trim()) {
     throw new DeviceFabricError("revision_conflict", "device event identity or sequence is invalid");
   }
+}
+
+function verifyResourcePayload(bytes: SQLOutputValue | undefined, digest: string): Uint8Array {
+  if (!(bytes instanceof Uint8Array) || createHash("sha256").update(bytes).digest("hex") !== digest) {
+    throw new DeviceFabricError("resource_conflict", "stored resource payload digest does not match");
+  }
+  return bytes;
 }
 
 function validateResourceManifest(manifest: DeviceResourceManifestV1): void {
