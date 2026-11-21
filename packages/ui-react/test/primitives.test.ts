@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { Search } from "lucide-react";
-import { createElement } from "react";
+import { createElement, type ComponentProps, type ReactElement } from "react";
 import { createPortal } from "react-dom";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
@@ -31,6 +31,9 @@ import {
   EmptyState,
   Icon,
   IconButton,
+  type ButtonProps,
+  type IconButtonProps,
+  type IconProps,
   Input,
   InlineFeedback,
   InspectorSection,
@@ -310,10 +313,14 @@ test("icon button normalizes typed Lucide components and marks the legacy ReactN
 });
 
 test("icon button keeps React elements and portals out of the typed Lucide path", () => {
-  const lucideElement = createElement(Search, { "data-test-icon": "element" });
-  const elementButton = IconButton.render({ icon: lucideElement, label: "Element", tooltip: "" }, null);
-  const portal = createPortal(createElement("svg", { "data-test-icon": "portal" }), { nodeType: 1 });
-  const portalButton = IconButton.render({ icon: portal, label: "Portal", tooltip: "" }, null);
+  // Read the forwardRef result directly: the server renderer cannot render portals.
+  const iconButton = IconButton as typeof IconButton & {
+    render(props: IconButtonProps, ref: null): ReactElement<ButtonProps & { "data-ling-icon-button-contract": string }>;
+  };
+  const lucideElement = createElement(Search, { "data-test-icon": "element" } as ComponentProps<typeof Search> & { "data-test-icon": string });
+  const elementButton = iconButton.render({ icon: lucideElement, label: "Element", tooltip: "" }, null);
+  const portal = createPortal(createElement("svg", { "data-test-icon": "portal" }), { nodeType: 1 } as Element);
+  const portalButton = iconButton.render({ icon: portal, label: "Portal", tooltip: "" }, null);
 
   assert.equal(elementButton.props["data-ling-icon-button-contract"], "legacy-react-node");
   assert.equal(elementButton.props.leadingIcon, lucideElement);
@@ -395,8 +402,8 @@ test("icon defaults to decorative semantics and exposes a named semantic mode", 
 });
 
 test("icon publishes only the frozen size and tone mappings", () => {
-  const sizes = ["xs", "sm", "md", "lg", "xl"];
-  const tones = ["default", "muted", "success", "warning", "danger", "info"];
+  const sizes = ["xs", "sm", "md", "lg", "xl"] as const;
+  const tones = ["default", "muted", "success", "warning", "danger", "info"] as const;
 
   for (const size of sizes) {
     const html = renderToStaticMarkup(createElement(Icon, { icon: Search, size }));
@@ -410,19 +417,20 @@ test("icon publishes only the frozen size and tone mappings", () => {
 });
 
 test("icon rejects contradictory or unnamed accessibility modes", () => {
+  // JavaScript callers can pass accessibility props that TypeScript rejects.
   assert.throws(
     () => renderToStaticMarkup(createElement(Icon, {
       decorative: true,
       icon: Search,
       label: "Search",
-    })),
+    } as unknown as IconProps)),
     /cannot combine label with decorative=true/u,
   );
   assert.throws(
     () => renderToStaticMarkup(createElement(Icon, {
       decorative: false,
       icon: Search,
-    })),
+    } as IconProps)),
     /requires a non-empty label when decorative=false/u,
   );
 });
@@ -530,13 +538,13 @@ test("field connects label, description, error, required, and the control with s
   const html = renderToStaticMarkup(createElement(
     Field,
     {
+      children: createElement(Input, { name: "workspaceName" }) as ComponentProps<typeof Field>["children"],
       controlId: "workspace-name",
       description: "Shown in conversation headers.",
       error: "Name is required.",
       label: "Workspace name",
       required: true,
     },
-    createElement(Input, { name: "workspaceName" }),
   ));
 
   assert.match(html, /for="workspace-name"/u);

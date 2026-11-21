@@ -4,6 +4,10 @@ import {
   LING_THEME_PACKAGE_LIMITS,
   LingThemePackageError,
   parseThemePackageBytes,
+  type LingThemeImageDecoder,
+  type LingThemePackageIssueCode,
+  type LingThemeValidationIssueCode,
+  type ParsedLingThemePreview,
 } from "../dist/index.js";
 import {
   IMAGE_BYTES,
@@ -165,7 +169,7 @@ test("shared image validation enforces extension, magic, decode and dimension pa
     ["assets/preview.png", IMAGE_BYTES.png, "image/png"],
     ["assets/preview.jpg", IMAGE_BYTES.jpeg, "image/jpeg"],
     ["assets/preview.webp", IMAGE_BYTES.webp, "image/webp"],
-  ];
+  ] as const;
   for (const [path, bytes, mimeType] of formats) {
     const archive = themePackageFixture({
       manifest: importedManifest({ preview: path }),
@@ -209,7 +213,7 @@ test("shared bytes parser supports bounded data descriptors and rejects descript
   await rejectsCode(tampered, "invalid-archive");
 });
 
-function normalizedPreview(preview) {
+function normalizedPreview(preview: ParsedLingThemePreview | undefined) {
   return preview && {
     byteLength: preview.byteLength,
     checksumSha256: preview.checksumSha256,
@@ -220,11 +224,15 @@ function normalizedPreview(preview) {
   };
 }
 
-async function rejectsCode(bytes, code, decoder = decodeImage) {
+async function rejectsCode(
+  bytes: Uint8Array,
+  code: LingThemePackageIssueCode | LingThemeValidationIssueCode,
+  decoder: LingThemeImageDecoder = decodeImage,
+) {
   await assert.rejects(
     () => parseThemePackageBytes(bytes, { decodeImage: decoder }),
     (error) => {
-      assert.equal(error instanceof LingThemePackageError, true);
+      assert.ok(error instanceof LingThemePackageError);
       assert.equal(error.issues.some((issue) => issue.code === code), true, JSON.stringify(error.issues));
       return true;
     },
