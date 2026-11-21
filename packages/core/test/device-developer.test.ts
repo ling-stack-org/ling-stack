@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import {
@@ -6,6 +9,7 @@ import {
   DeviceDeveloperSessionCoordinator,
   digestCollaborationPayload,
 } from "../dist/device-developer.js";
+import { SqliteDeviceDeveloperStore } from "../dist/storage/sqlite/device-developer-store.js";
 
 const now = "2026-11-21T00:00:00.000Z";
 
@@ -30,4 +34,22 @@ test("phone-owned collaboration proposals are idempotent and chunked transfers a
   const transfer = coordinator.registerTransfer({ transferId: "transfer-1", proposalId: proposal.proposalId, digest: "sha256:artifact", sizeBytes: 10, chunkSizeBytes: 5, totalChunks: 2, receivedChunks: [] });
   assert.deepEqual(coordinator.acceptChunk(transfer.transferId, 1).receivedChunks, [1]);
   assert.throws(() => coordinator.acceptChunk(transfer.transferId, 2), /invalid/);
+});
+
+test("developer sessions, jobs, proposals and artifact transfers survive SQLite reopen", () => {
+  const root = mkdtempSync(join(tmpdir(), "ling-developer-store-"));
+  const path = join(root, "developer.sqlite");
+  const first = new SqliteDeviceDeveloperStore({ databasePath: path });
+  first.saveSession({ sessionId: "session-1", workspaceId: "workspace-1", ownerKind: "mobile", ownerId: "mobile-1", targetDeviceId: "android-1", targetKind: "android", mode: "developer", authorizationRevision: "auth-1", status: "authorized", revision: 1, createdAt: now, updatedAt: now });
+  first.saveArtifact({ artifactId: "artifact-1", workspaceId: "workspace-1", targetDeviceId: "android-1", digest: "sha256:app", sizeBytes: 10, createdAt: now });
+  first.saveJob({ jobId: "job-1", sessionId: "session-1", kind: "deploy", status: "running", artifactDigest: "sha256:app", targetDeviceId: "android-1", taskStatus: "executing", revision: 1, updatedAt: now });
+  const payload = { capabilityId: "adb.install", digest: "sha256:app" };
+  first.saveProposal({ proposalId: "proposal-1", taskId: "task-1", ownerKind: "mobile", ownerId: "mobile-1", proposerKind: "daemon", proposerId: "daemon-1", targetDeviceId: "android-1", kind: "artifact", payload, payloadDigest: digestCollaborationPayload(payload), baseRevision: "rev-1", status: "accepted", createdAt: now, expiresAt: "2026-11-21T00:05:00.000Z" });
+  first.saveTransfer({ transferId: "transfer-1", proposalId: "proposal-1", digest: "sha256:app", sizeBytes: 10, chunkSizeBytes: 5, totalChunks: 2, receivedChunks: [] });
+  first.close();
+  const second = new SqliteDeviceDeveloperStore({ databasePath: path });
+  assert.equal(second.getSession("session-1")?.ownerId, "mobile-1");
+  assert.equal(second.getJob("job-1")?.status, "running");
+  assert.deepEqual(second.acceptChunk("transfer-1", 1).receivedChunks, [1]);
+  second.close();
 });
