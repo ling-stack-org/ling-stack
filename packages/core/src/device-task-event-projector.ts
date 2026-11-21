@@ -30,7 +30,7 @@ export function readOwnedDeviceTaskJournal(input: {
     const latestSequence = store.countEvents(task.id);
     const requiresSnapshot = generation !== 1 || afterSequence > latestSequence;
     const events = requiresSnapshot ? [] : store.listEvents(task.id, { offset: afterSequence, limit })
-      .map((event, index) => projectEvent(store, event, streamId, task.ownerId, afterSequence + index + 1));
+      .map(event => projectEvent(store, event, streamId, task.ownerId, event.sequence));
     return {
       streamId, generation: 1, latestSequence, task, events,
       hasMore: !requiresSnapshot && afterSequence + events.length < latestSequence,

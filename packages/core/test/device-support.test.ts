@@ -207,6 +207,21 @@ test("registry discovers a device and broker executes a fresh read-only capabili
   store.close();
 });
 
+test("task journal cursors use a task-local sequence when multiple tasks interleave", () => {
+  const store = new SqliteDeviceSupportStore();
+  store.registerDevice(profile, now);
+  store.createTask(task("task-1"), now);
+  store.createTask(task("task-2"), now);
+  store.transitionTask("task-1", "executing", {}, later);
+  store.transitionTask("task-2", "executing", {}, later);
+  assert.deepEqual(store.listEvents("task-1").map(event => event.sequence), [1, 2]);
+  assert.deepEqual(store.listEvents("task-2").map(event => event.sequence), [1, 2]);
+  const page = readOwnedDeviceTaskJournal({ store, workspaceId: "workspace-1", taskId: "task-1", afterSequence: 1 });
+  assert.equal(page.events[0]?.sequence, 2);
+  assert.equal(page.latestSequence, 2);
+  store.close();
+});
+
 test("broker distinguishes stale snapshots, target leases, and revoked devices", async () => {
   const { store, broker } = brokerFixture();
   store.createTask(task(), now);
