@@ -5,10 +5,15 @@ import {
   createInitialRemoteClientState,
   reduceRemoteClientState,
 } from "../dist/index.js";
+import type {
+  RemoteConversationMessageV1,
+  RemoteConversationSummaryV1,
+  RemoteWorkspaceSummaryV1,
+} from "@ling-stack/contracts";
 
 const now = "2026-07-31T10:00:00.000Z";
-const workspace = { workspaceId: "default", workspaceBindingId: "binding_1", displayName: "Ling PC", policyVersion: 1 };
-const summary = {
+const workspace: RemoteWorkspaceSummaryV1 = { workspaceId: "default", workspaceBindingId: "binding_1", displayName: "Ling PC", policyVersion: 1 };
+const summary: RemoteConversationSummaryV1 = {
   workspaceId: "default",
   conversationId: "channel_1",
   kind: "channel",
@@ -20,7 +25,7 @@ const summary = {
   mentioned: false,
   updatedAt: now,
 };
-const message = {
+const message: RemoteConversationMessageV1 = {
   messageId: "message_1",
   workspaceId: "default",
   conversationId: "channel_1",

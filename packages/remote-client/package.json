@@ -12,11 +12,11 @@
   },
   "scripts": {
     "build:ci": "tsc -p tsconfig.json",
-    "typecheck:ci": "tsc -p tsconfig.json --noEmit",
-    "test:ci": "node --test test/*.test.mjs",
+    "typecheck:ci": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
+    "test:ci": "node --test test/*.test.ts",
     "build": "corepack pnpm --filter @ling-stack/contracts build && corepack pnpm --filter @ling-stack/remote-protocol build && tsc -p tsconfig.json",
-    "typecheck": "corepack pnpm --filter @ling-stack/contracts build && corepack pnpm --filter @ling-stack/remote-protocol build && tsc -p tsconfig.json --noEmit",
-    "test": "corepack pnpm run build && node --test test/*.test.mjs"
+    "typecheck": "corepack pnpm --filter @ling-stack/contracts build && corepack pnpm --filter @ling-stack/remote-protocol build && corepack pnpm typecheck:ci",
+    "test": "corepack pnpm run build && corepack pnpm test:ci"
   },
   "dependencies": {
     "@ling-stack/contracts": "workspace:*",

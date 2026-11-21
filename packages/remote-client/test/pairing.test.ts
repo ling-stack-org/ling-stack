@@ -1,21 +1,22 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
   RemotePairingClient,
 } from "../dist/index.js";
+import type { RemoteBindingV1, RemoteHttpClient } from "../dist/index.js";
+import type { RemotePairingQrV1 } from "@ling-stack/contracts";
 import {
   encodeBase64Url,
   encodePairingQrV1,
 } from "../../remote-protocol/dist/index.js";
+import { fixture } from "./canonical-signing-fixture.ts";
 
-const fixture = JSON.parse(await readFile(new URL("../../remote-protocol/fixtures/v1/canonical-signing.json", import.meta.url), "utf8"));
 const now = "2026-07-31T10:00:00.000Z";
 const expiresAt = "2026-07-31T10:05:00.000Z";
 
 test("pairing pins the Gateway identity and persists only the accepted device binding", async () => {
-  const qr = {
+  const qr: RemotePairingQrV1 = {
     kind: "ling_remote_pairing",
     version: 1,
     gatewayId: "gateway-fixture-1",
@@ -46,7 +47,7 @@ test("pairing pins the Gateway identity and persists only the accepted device bi
     gatewaySignature: fixture.pairingAccepted.signatureBase64Url,
   };
   let proofSubmissions = 0;
-  let storedBinding;
+  let storedBinding: RemoteBindingV1 | undefined;
   const client = new RemotePairingClient({
     clock: { now: () => now },
     entropy: {
@@ -70,38 +71,40 @@ test("pairing pins the Gateway identity and persists only the accepted device bi
       remove: async () => { storedBinding = undefined; },
     },
     http: {
-      getJson: async (_origin, path) => {
+      getJson: async <T>(_origin: string, path: string) => {
         assert.equal(path, "/v1/health");
-        return { status: 200, body: { gatewayId: qr.gatewayId, gatewayIdentityFingerprint: qr.gatewayIdentityFingerprint } };
+        return { status: 200, body: { gatewayId: qr.gatewayId, gatewayIdentityFingerprint: qr.gatewayIdentityFingerprint } as T };
       },
-      postJson: async (_origin, path, body) => {
+      postJson: async <T>(_origin: string, path: string, body: unknown) => {
         if (path === "/v1/pairing/challenge") {
-          return { status: 200, body: challenge };
+          return { status: 200, body: challenge as T };
         }
         assert.equal(path, "/v1/pairing/proof");
-        assert.equal(body.deviceId, accepted.deviceId);
-        assert.equal(body.pairingSecret, undefined);
-        assert.equal(body.clientNonce, encodeBase64Url(new Uint8Array(32).fill(1)));
+        const proof = body as { deviceId?: string; pairingSecret?: string; clientNonce?: string };
+        assert.equal(proof.deviceId, accepted.deviceId);
+        assert.equal(proof.pairingSecret, undefined);
+        assert.equal(proof.clientNonce, encodeBase64Url(new Uint8Array(32).fill(1)));
         proofSubmissions += 1;
         return proofSubmissions === 1
-          ? { status: 202, body: { status: "confirmation_required" } }
-          : { status: 200, body: { status: "accepted", accepted } };
+          ? { status: 202, body: { status: "confirmation_required" } as T }
+          : { status: 200, body: { status: "accepted", accepted } as T };
       },
-    },
+    } satisfies RemoteHttpClient,
   });
 
   const started = await client.begin(encodePairingQrV1(qr), { displayName: "My iPhone" });
   assert.equal(started.binding, undefined);
   assert.equal(storedBinding, undefined);
   const binding = await client.submit(started.pending);
+  assert.ok(binding);
   assert.equal(binding.status, "active");
   assert.equal(binding.deviceEpoch, 7);
   assert.equal(binding.gatewayIdentityFingerprint, fixture.gatewayIdentity.fingerprint);
-  assert.equal(storedBinding.deviceKeyId, `ling.remote.device.${qr.gatewayId}`);
+  assert.equal((storedBinding as unknown as RemoteBindingV1).deviceKeyId, `ling.remote.device.${qr.gatewayId}`);
 });
 
 test("pairing rejects a health endpoint that does not match the QR pin", async () => {
-  const qr = {
+  const qr: RemotePairingQrV1 = {
     kind: "ling_remote_pairing",
     version: 1,
     gatewayId: "gateway-fixture-1",
@@ -123,9 +126,9 @@ test("pairing rejects a health endpoint that does not match the QR pin", async (
     },
     bindingStore: { read: async () => undefined, write: async () => undefined, remove: async () => undefined },
     http: {
-      getJson: async () => ({ status: 200, body: { gatewayId: qr.gatewayId, gatewayIdentityFingerprint: encodeBase64Url(new Uint8Array(32)) } }),
-      postJson: async () => { throw new Error("must_not_post"); },
-    },
+      getJson: async <T>() => ({ status: 200, body: { gatewayId: qr.gatewayId, gatewayIdentityFingerprint: encodeBase64Url(new Uint8Array(32)) } as T }),
+      postJson: async <T>() => { throw new Error("must_not_post"); },
+    } satisfies RemoteHttpClient,
   });
   await assert.rejects(() => client.begin(encodePairingQrV1(qr), { displayName: "My iPhone" }), /pin_mismatch/u);
 });
