@@ -64,15 +64,17 @@ function runOutputTransform(variable, value) {
   }
 }
 
-async function assertScopeOutputs(scope, { mode, packages, daemon, daemonPlatforms = daemon ? ["linux", "darwin"] : [], daemonSuites = daemon ? ["daemon", "daemon-linux"] : [], macosNative = false, dependency = false, assurance = false, matrix }) {
+async function assertScopeOutputs(scope, { mode, packages, testPackages = packages, documentationOnly = false, providerModelCatalog = false, daemon, daemonPlatforms = daemon ? ["linux", "darwin"] : [], daemonSuites = daemon ? ["daemon", "daemon-linux"] : [], macosNative = false, dependency = false, assurance = false, matrix }) {
   const outputs = runOutputTransform("SCOPE_JSON", JSON.stringify(scope));
   assert.deepEqual(outputs, {
-    mode, packages: JSON.stringify(packages), "test-packages": JSON.stringify(packages),
+    mode, packages: JSON.stringify(packages), "test-packages": JSON.stringify(testPackages),
     "typecheck-packages": JSON.stringify(packages), "dependency-policy": String(dependency),
     "assurance-selected": String(assurance), "build-selected": String(packages.length > 0),
     "typecheck-selected": String(packages.length > 0), daemon: String(daemon), "daemon-platforms": JSON.stringify(daemonPlatforms),
     "linux-contract": String(daemonPlatforms.includes("linux")), "macos-native": String(macosNative),
     "macos-helper": String(macosNative), "native-release": "false",
+    "provider-model-catalog": String(providerModelCatalog),
+    "documentation-only": String(documentationOnly),
   });
   const plan = await createTestPlan(JSON.parse(outputs["test-packages"]), { daemonPlatforms: JSON.parse(outputs["daemon-platforms"]) });
   assert.deepEqual(Object.keys(plan.suites).filter(name => name.startsWith("daemon")), daemonSuites);
@@ -133,6 +135,23 @@ test("workflow transformations select the eight core shards for core test-only w
   });
 });
 
+test("the catalog regression runs within the required Core typecheck job", async () => {
+  const scopeJob = jobSource("scope");
+  assert.match(scopeJob, /pull_request\.user\.login == 'ling-stack-model-catalog\[bot\]'/u);
+  assert.match(scopeJob, /pull_request\.head\.repo\.full_name == github\.repository/u);
+  assert.match(scopeJob, /CATALOG_PROOF: \$\{\{ steps\.catalog-proof\.outputs\.digest \}\}/u);
+  assert.match(scopeJob, /--catalog-proof="\$CATALOG_PROOF"/u);
+  const scope = classifyChangedFiles({
+    files: ["packages/core/src/provider-model-catalog.generated.ts"], generatedProviderCatalog: true,
+  });
+  await assertScopeOutputs(scope, {
+    mode: "affected", packages: ["@ling-stack/core"], testPackages: [], providerModelCatalog: true,
+    daemon: false, matrix: [],
+  });
+  assert.match(jobSource("typecheck"),
+    /if: needs\.scope\.outputs\.provider-model-catalog == 'true'\n        working-directory: packages\/core\n        run: >-\n          node --test test\/provider-check\.test\.\*\n          test\/provider-model-capabilities\.test\.\* test\/provider-thinking-levels\.test\.\*/u);
+});
+
 test("workflow transformations omit Web work and retain its non-Web consumers", { timeout: 90_000 }, async () => {
   for (const [file, packages, matrix] of [
     ["apps/web/test/example.test.ts", [], []],
@@ -165,7 +184,7 @@ test("PR transitions and full-ci labels trigger validation while full regression
   assert.match(labelWorkflow, /pull_request_target:\n    types: \[labeled\]/u);
   assert.match(labelWorkflow, /gh workflow run ci\.yml --ref "\$HEAD_REF" --repo "\$GITHUB_REPOSITORY"/u);
   assert.match(workflow, /cron: "17 3 \* \* \*"/u);
-  assert.doesNotMatch(workflow, /^  (?:push|paths|paths-ignore):/mu);
+  assert.doesNotMatch(workflow, /^  push:|^    paths(?:-ignore)?:/mu);
   assert.match(jobSource("scope"), /--event-file "\$GITHUB_EVENT_PATH"/u);
   assert.match(jobSource("scope"), /--base="\$BASE_SHA"/u);
   assert.match(jobSource("scope"), /execution-tier: \$\{\{ steps\.policy\.outputs\.execution-tier \}\}/u);
@@ -219,7 +238,7 @@ test("long-running jobs respond to cancellation while quality still reports inco
     assert.doesNotMatch(source, /^    if: .*always\(\)/mu, id);
     assert.match(source, /needs\.build\.result == 'success'/u, id);
   }
-  assert.match(jobSource("quality"), /^    if: always\(\)/mu);
+  assert.match(jobSource("quality"), /^    if: \$\{\{ always\(\) && \(needs\.scope\.result != 'success'/mu);
   const cancelled = runQuality({ UNIT_RESULT: "cancelled", DAEMON_RESULT: "cancelled" });
   assert.equal(cancelled.status, 1, cancelled.stderr);
   assert.match(cancelled.stdout, /UNIT=cancelled.*DAEMON=cancelled/u);
@@ -227,7 +246,7 @@ test("long-running jobs respond to cancellation while quality still reports inco
 
 test("workflow gate requires every selected lane and refuses incomplete Draft validation", () => {
   const quality = jobSource("quality");
-  assert.match(quality, /^    if: always\(\)/mu);
+  assert.match(quality, /^    if: \$\{\{ always\(\) && \(needs\.scope\.result != 'success' \|\| needs\.scope\.outputs\.documentation-only != 'true'\) \}\}$/mu);
   assert.match(quality, /EXECUTION_TIER: \$\{\{ needs\.scope\.outputs\.execution-tier \}\}/u);
   assert.match(quality, /SCOPE_MODE: \$\{\{ needs\.scope\.outputs\.mode \}\}/u);
   for (const [selector, output] of Object.entries(selectorOutputs)) {

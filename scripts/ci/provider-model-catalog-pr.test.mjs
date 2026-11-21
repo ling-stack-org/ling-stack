@@ -32,7 +32,7 @@ function executable(directory, name, script) {
   writeFileSync(resolve(directory, name), `#!${process.execPath}\n${script}`, { mode: 0o700 });
 }
 
-const refreshStep = shellStep("Refresh reviewed catalog data");
+const refreshStep = [shellStep("Generate reviewed catalog data"), shellStep("Refresh reviewed catalog data")].join("\n");
 
 function pullRequest(overrides = {}) {
   return {
@@ -58,7 +58,9 @@ APP_SLUG="${appSlug}"
 created=false
 gh() {
   printf 'GH_CALL:%s\\n' "$*" >&2
-  if [ "$1" = "pr" ] && [ "$2" = "list" ]; then
+  if [ "$1" = "api" ]; then
+    printf 'true\\n'
+  elif [ "$1" = "pr" ] && [ "$2" = "list" ]; then
     if [ "$CATALOG_LIST_EXIT_CODE" != "0" ]; then return "$CATALOG_LIST_EXIT_CODE"; fi
     if [ "$created" = "true" ]; then printf '%s' "$CATALOG_CREATED_PR_FIXTURE"; else printf '%s' "$CATALOG_PR_FIXTURE"; fi
   elif [ "$1" = "pr" ] && [ "$2" = "create" ]; then
@@ -70,6 +72,7 @@ ${prStep}
     cwd: repositoryRoot,
     env: {
       ...process.env, CATALOG_PR_FIXTURE: JSON.stringify(records), CATALOG_LIST_EXIT_CODE: String(listExitCode),
+      GITHUB_REPOSITORY: "ling-stack-org/ling-stack",
       CATALOG_CREATED_PR_FIXTURE: JSON.stringify([pullRequest()]),
     },
     encoding: "utf8",
@@ -81,6 +84,8 @@ test("workflow queries exact open head/base and preserves the existing leased pu
   assert.doesNotMatch(workflow, /gh pr view/u);
   assert.match(workflow, /git push --force-with-lease origin "HEAD:\$branch"/u);
   assert.match(workflow, /gh pr edit "\$pull_request"/u);
+  assert.match(workflow, /name: provider-model-catalog-\$\{\{ steps\.candidate\.outputs\.catalog-digest \}\}/u);
+  assert.ok(workflow.indexOf("Record generated catalog before publishing the PR") < workflow.indexOf("git push --force-with-lease"));
 });
 
 test("App credentials stay on main and use a repository-scoped token with read-only built-in permissions", () => {
@@ -102,6 +107,7 @@ test("App credentials stay on main and use a repository-scoped token with read-o
   ]) assert.ok(workflow.includes(binding), `workflow must bind ${binding}`);
   assert.doesNotMatch(workflow, /github\.token|secrets\.GITHUB_TOKEN|skip-token-revoke|--admin/u);
   assert.match(workflow, /gh pr merge "\$pull_request" --auto --squash --match-head-commit "\$head_commit"/u);
+  assert.match(workflow, /allow_auto_merge/u);
 });
 
 test("configuration validation accepts the App RSA key and rejects missing or invalid credentials without echoing them", () => {
@@ -154,7 +160,7 @@ process.stdout.write("username=x-access-token\\npassword=" + process.env.GH_TOKE
   assert.doesNotMatch(result.stdout, /builtin-token/u);
 });
 
-function runRefresh(t, { token = "test-app-installation-token", slug = "catalog-sync", botId = "12345", records = [], unchanged = false } = {}) {
+function runRefresh(t, { token = "test-app-installation-token", slug = "catalog-sync", botId = "12345", records = [], unchanged = false, allowAutoMerge = true } = {}) {
   const directory = temporaryDirectory(t);
   const logFile = resolve(directory, "calls.jsonl");
   const common = `
@@ -168,7 +174,7 @@ if (command === "diff") process.exit(process.env.CATALOG_UNCHANGED === "true" ? 
 if (command === "rev-parse") process.stdout.write("2103d234d64d0bbd2323bc535d284af988fa540a\\n");
 `);
   executable(directory, "gh", `${common}
-if (args[0] === "api") process.stdout.write(process.env.CATALOG_BOT_ID);
+if (args[0] === "api") process.stdout.write(args[1].startsWith("repos/") ? process.env.CATALOG_AUTO_MERGE : process.env.CATALOG_BOT_ID);
 if (args[0] === "pr" && args[1] === "create") require("node:fs").writeFileSync(process.env.CATALOG_CREATE_MARKER, "created");
 if (args[0] === "pr" && args[1] === "list") {
   const created = require("node:fs").existsSync(process.env.CATALOG_CREATE_MARKER);
@@ -188,6 +194,8 @@ ${refreshStep}
       CATALOG_CALL_LOG: logFile, CATALOG_BOT_ID: botId, CATALOG_PR_FIXTURE: JSON.stringify(records),
       CATALOG_CREATED_PR_FIXTURE: JSON.stringify([pullRequest()]),
       CATALOG_CREATE_MARKER: resolve(directory, "created"),
+      GITHUB_OUTPUT: resolve(directory, "github-output"),
+      GITHUB_REPOSITORY: "ling-stack-org/ling-stack", CATALOG_AUTO_MERGE: String(allowAutoMerge),
       CATALOG_UNCHANGED: String(unchanged),
     },
     encoding: "utf8",
@@ -195,7 +203,10 @@ ${refreshStep}
   let calls = [];
   try { calls = readFileSync(logFile, "utf8").trim().split("\n").filter(Boolean).map(line => JSON.parse(line)); }
   catch (error) { if (error.code !== "ENOENT") throw error; }
-  return { ...result, calls };
+  let output = "";
+  try { output = readFileSync(resolve(directory, "github-output"), "utf8"); }
+  catch (error) { if (error.code !== "ENOENT") throw error; }
+  return { ...result, calls, output };
 }
 
 test("refresh fails before git or gh when the App token or identity is missing", (t) => {
@@ -211,6 +222,7 @@ test("refresh pushes the leased automation branch and creates or edits the PR un
   for (const records of [[], [pullRequest()]]) {
     const result = runRefresh(t, { records });
     assert.equal(result.status, 0, result.stderr);
+    assert.match(result.output, /^catalog-digest=[a-f0-9]{64}$/mu);
     assert.ok(result.calls.every(call => call.appToken), "every git and gh child must receive the App token");
     const gitCalls = result.calls.filter(call => call.command === "git").map(call => call.args);
     for (const args of gitCalls) assert.deepEqual(args.slice(0, 4), ["-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential"]);
@@ -229,12 +241,21 @@ test("refresh pushes the leased automation branch and creates or edits the PR un
 test("unchanged catalogs do not push or create PRs, and invalid bot identities never push", (t) => {
   const unchanged = runRefresh(t, { unchanged: true });
   assert.equal(unchanged.status, 0, unchanged.stderr);
+  assert.equal(unchanged.output, "");
   assert.ok(unchanged.calls.every(call => call.command !== "gh" && call.args[4] !== "push"));
   for (const botId of ["", "not-an-id", "12345\nunexpected"]) {
     const result = runRefresh(t, { botId });
     assert.equal(result.status, 1, result.stderr);
     assert.ok(result.calls.every(call => call.command === "git" ? !["commit", "push"].includes(call.args[4]) : call.args[0] !== "pr"));
   }
+});
+
+test("catalog sync publishes an ordinary PR when the repository disables auto-merge", (t) => {
+  const result = runRefresh(t, { allowAutoMerge: false });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Catalog PR #123 is ready for review\./u);
+  assert.ok(result.calls.some(call => call.command === "gh" && call.args[0] === "pr" && call.args[1] === "create"));
+  assert.ok(!result.calls.some(call => call.command === "gh" && call.args[0] === "pr" && call.args[1] === "merge"));
 });
 
 test("selector returns no PR only for an empty successful query", async () => {
