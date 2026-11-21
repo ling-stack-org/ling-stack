@@ -68,6 +68,9 @@ current semantic theme tokens with opaque reading backgrounds. System scheduler 
 are excluded from the rendered transcript. Text input and model execution remain separate
 from the visual asset.
 
+The [floating collaboration design](#floating-collaboration) describes the implemented
+desktop presentation of work requests, handoffs, and results.
+
 ## Character design template
 
 The [Yui character design template](assets/yui-character-design-template.png)
@@ -301,5 +304,191 @@ which records the final source revision, CI gates, review threads and merge stat
   notarization, clean-machine installation and Windows GUI acceptance remain unverified;
   archive and CI results do not establish those acceptance scopes.
 
-Additional characters, speech, articulated Live2D animation, and work-event-driven
-proactive behavior remain separate enhancements.
+Additional characters and work-event delivery are specified in the
+[floating collaboration design](#floating-collaboration). Speech and articulated Live2D
+animation are future enhancements.
+
+## Floating collaboration
+
+**Status** Implemented. The workspace attention projection, transparent Web/Desktop
+surface, role fallback and switching, authoritative question/approval actions, and
+adaptive card placement are implemented. Multi-display native acceptance remains a
+platform-specific verification task.
+
+The desktop Companion brings the next visible work item to the user while they are in
+another application or the main Ling window is hidden. The window serves its bound
+workspace, including eligible items from different channels in that workspace. Each
+card names the source conversation and the teammate or workflow that owns the item.
+The installed window follows the current owner lifecycle. Closing its owning Ling
+window closes the Companion.
+
+### Visible layout and input
+
+- Show one full-body character at a time. Use the existing Yui pose atlas for Yui and
+  an associated character resource for each teammate with its own appearance. The
+  character menu provides manual switching and pinning, conversation, and close.
+- Place the character and cards on a transparent, frameless desktop surface. A visible
+  card supplies its own theme-aware reading background. Idle shows the character, with
+  a single short activity label when there is useful current progress. An active work
+  item expands one card. A compact count can open the other items when the queue is
+  nonempty. A source or environment label appears on the card when it helps identify
+  the work.
+- Open a separate conversation card when the user invokes conversation. Open a
+  question's text field when the user requests a free-text answer and the question
+  allows it. Conversation messages have their own reading surfaces on the transparent
+  canvas. Both entry points focus the editor. Collapse the editor on Escape or when
+  focus leaves its entire input area, including its controls, after text composition
+  or submission settles. An active work card can remain visible on its own.
+- Bind a conversation to its selected teammate when it opens. Keep its draft scoped to
+  that private conversation and a question draft scoped to its request and version.
+  Restore the draft when the corresponding editor reopens. A compact mode presents
+  the active card or editor by itself when the available area cannot fit both.
+- Incoming items can update the card without moving keyboard focus or bringing the
+  main window forward. Keep card actions reachable by keyboard and expose the source,
+  question, and current status as accessible text.
+
+### Event sources and card actions
+
+The workspace projection carries the item's kind, stable source identity, source
+status and revision when available, time, user-visible summary, and actor reference.
+Its source includes the workspace, channel and thread when applicable, plus the
+request, approval, workflow step, or report that the action actually targets.
+The daemon derives visibility and actor attribution from canonical records and
+their lineage. A card shows source labels and a route to the exact item. Summaries
+use conversation-visible facts and source references, with detailed evidence
+available through the owning surface.
+
+| Canonical source | Card content | User action |
+| --- | --- | --- |
+| [Structured user input](../../packages/contracts/src/user-input-transcript.ts) | The source question and its options. Offer free text when allowed and the full conversation when further context is needed. | Use the existing [answer command](../../packages/contracts/src/user-input.ts) for the originating request. |
+| [Approval](../../packages/contracts/src/approvals.ts) | Requesting teammate when attributable, concise action, affected target, and any expiry. | Open the [existing approval detail](../../apps/web/src/features/workspace/WorkspaceClientView.tsx) for review and decision. |
+| Work waiting for user intervention | Where the work is blocked and the next available action. An actionable question or approval represents its own blocker. | Open the owning task or run at its blocked step. |
+| Accepted channel handoff | Sender, receiver, and requested output. Present the receiver's work as running once the run reports that state. | Open the handoff or linked work. |
+| [Published terminal report](../../packages/contracts/src/terminal-reports.ts) | The actual outcome, one useful verification result, and an artifact or follow-up when available. | Open the report in its source thread. |
+| Current run or step progress | One short line associated with the responsible teammate and work. | Open the run or conversation if the user wants detail. |
+
+For a question, preserve the source's option IDs and required fields. A compact
+card can open the existing full question surface when
+its contents need more space. Enable submitting only when the exact request is
+answerable. Use its current answer authority and a stable idempotency key for retries
+of the same submission. A durable acceptance receipt shows **Answer submitted**.
+Confirmed delivery and resumed work are shown from their respective source records.
+Approval decisions are made in the review surface against its current authority.
+
+### Actor selection and pending items
+
+Select the presentation character in this order when the user has not pinned a
+character:
+
+1. Resolve the event's canonical participant to its active `teammateId` and use
+   that teammate's available character resource.
+2. Use the character currently on screen to relay the item when the source has
+   no associated usable character.
+3. Use the workspace's default Companion. Use Yui as the built-in visual fallback
+   when no configured character can be displayed.
+
+Pinning chooses the presentation character for the current window. Manual selection
+is available from the character menu. Each work card carries its own origin
+through both manual and automatic changes. For example, Yui may relay
+`#发布验收 · QA` when QA has no character asset. The answer command uses QA's
+request authority, and a separately opened private chat uses its own bound recipient.
+Use the workflow's source label for a team result with no single attributable sender.
+
+When enough space is available and the user is idle, bring the first eligible item
+forward. Prioritize required answers and pending approvals, then optional questions
+and blockers with a user action, then handoffs and published results. Within a class,
+order by source creation time and stable identity. Progress updates the short status
+line. An active composer, question interaction, card review, or character drag holds
+the current presentation. New items update the pending count. A pending question or
+approval stays selected until the source resolves or the user dismisses or selects
+another item. An idle brief can yield to an actionable item. The next eligible item
+chooses its character when it comes forward.
+
+Track pending items by workspace, source kind, and source ID. A replay or later
+revision updates the same item. When a source is answered, decided, cancelled,
+expired, or superseded, reconcile both desktop and main views with its current state.
+If a user is viewing a card invalidated elsewhere, display the updated state and
+disable submission for that revision. Dismissing a brief records that it was seen on
+the surface. Pending work stays discoverable through its source.
+
+On startup, reopen, or reconnect, reconcile visible pending work and a bounded set of
+recent published results from the daemon before enabling actions. Apply updates in
+source revision order when provided and refresh from the current source after a
+stale submission or missed update. An unavailable source can show a short status
+with an option to open the original conversation. If an answer response is lost,
+look up the canonical request and answer receipt. Retry a still-answerable request
+with the original submission and key.
+
+### Screen placement and native interaction
+
+The character's visible position anchors the layout. The desktop host supplies the
+work area of the display containing that anchor, using logical screen coordinates
+that account for display scale, menu bars, and taskbars. The Web mini panel uses
+the viewport as its available area.
+
+1. Measure the current card or card group. Compute positions to the right, left,
+   above, and below the character, with a gap and a margin inside the work area.
+   Slide candidates along the perpendicular axis so the card fits the available edge.
+2. Keep the existing side while it fits. Otherwise choose a full fit with the most
+   spare room in the direction of placement. Break ties right, left, above, below.
+   For example, a character at the right edge typically opens its card on the left.
+3. If the full surface cannot fit, reflow the card and try a compact summary with
+   its source action. If the summary also cannot fit, expose the pending count and
+   source action in the character menu. Keep the character and usable controls
+   inside the work area.
+
+Measure again after drag, resize, display or work-area changes, zoom, and content
+changes. Keep the character anchored in screen coordinates when a card changes
+sides. Keep the side during answering and typing while it still fits. If the display
+boundary forces a move, carry focus, selection, and draft with the card. Reduced
+motion uses immediate placement and a stable state indicator.
+
+Native hit testing follows the visible character interaction target, cards, and
+menus. Pointer input in the transparent space between and around those regions
+reaches the underlying application. The desktop host owns window input regions
+and verifies transitions at the edges during dragging, card collapse, and display
+changes. Web hit testing is limited to the corresponding visible overlay targets.
+
+### Integration boundary
+
+Reuse the existing [Companion preload](../../apps/desktop/preload/companion-window.ts)
+and [window owner checks](../../apps/desktop/main/companion-window.ts). The current
+preload exposes workspace context and close/settings actions. The implemented work
+surface adds scoped reads, answer submission, and source navigation as bounded
+capabilities tied to the owned top-level Companion window and its workspace. Source
+navigation resolves a typed reference to the correct channel, thread, and item in the
+main window on explicit activation. Routes for consumed items still resolve their source
+and can show the current state. Requests and approvals are revalidated by their existing
+daemon owners at the point of action. The profile's optional character reference
+belongs to presentation and resolves through available character assets and poses.
+
+The UI reads workspace-scoped work facts through a shared projection. The daemon
+reuses the existing request, approval, workflow and report stores. A card's opened,
+seen, and pinned state belongs to presentation; its actionable state follows the
+canonical source. The existing Companion dialogue and its scheduled proactive prompts
+continue to use their private teammate thread and policy.
+
+The projection is exposed at `GET /companion-attention?cwd=...`. It returns
+deduplicated `CompanionAttentionItem` records ordered by actionable priority.
+Question submission uses `POST /user-input-answers`, approval actions use the
+existing approval routes, and source navigation carries the typed channel, thread,
+run, workflow-step, request, approval, or report reference.
+
+### Acceptance
+
+| Scenario | Expected behavior |
+| --- | --- |
+| QA asks while another application is active | QA's character presents the question without taking focus. An explicit action opens the relevant editor or source. |
+| QA has no usable character | The current character relays the item, or the default appears at startup. The card attributes QA and submits to the original QA request. |
+| QA is being answered when another channel gets an approval and Design publishes a result | The question and editor stay in place. The approval comes forward when the current interaction finishes, followed by the brief. |
+| The main window and Companion interact with the same request | Both converge on one accepted answer or approval. An expired or superseded request loses its input actions. The selected answer and execution state follow separate source confirmations. |
+| Companion closes and reopens, or reconnects after a gap | Pending items are reconstructed from current records. Replayed deliveries update an existing item and previously seen briefs stay out of the pending count. |
+| A character approaches any edge or moves across displays | The measured cards choose a fitting side, avoid desktop chrome, and preserve focus during a required reposition. Clicks through the transparent gaps reach the underlying application. |
+| The user opens and leaves an editor, including input method composition | Focus reaches the editor on activation. Leaving the input area collapses it and preserves the correct draft. Keyboard-only operation and reduced motion are usable. |
+| The same teammate works in parallel channel threads | Each action and deep link resolves the exact source. Private and out-of-workspace items are excluded from the projection. |
+
+Exercise projection, actor selection, stale submissions, and queue convergence with
+focused tests. Verify placement, appearance, and input behavior in the browser,
+then run the independent desktop window on each supported platform for native
+focus, multi-display placement, and pointer pass-through. Capture runtime evidence
+for the platforms actually exercised.
