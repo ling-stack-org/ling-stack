@@ -20,7 +20,7 @@
   "scripts": {
     "build": "node scripts/compile-catalogs.mjs && tsc -p tsconfig.json",
     "build:ci": "node scripts/compile-catalogs.mjs && tsc -p tsconfig.json",
-    "typecheck": "corepack pnpm build && tsc -p tsconfig.test.json",
+    "typecheck": "corepack pnpm build && corepack pnpm typecheck:ci",
     "typecheck:ci": "node scripts/compile-catalogs.mjs && tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json",
     "lint": "echo \"lint not configured yet\"",
     "test": "corepack pnpm typecheck && corepack pnpm test:ci",
