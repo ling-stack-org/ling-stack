@@ -3,9 +3,9 @@ import test from "node:test";
 import { LingDaemonClient } from "../dist/index.js";
 
 test("channel session facade keeps canonical identity, filters and idempotency key", async () => {
-  const calls = [];
+  const calls: { url: URL; method: RequestInit["method"]; body: unknown }[] = [];
   const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: async (url, init = {}) => {
-    calls.push({ url: new URL(String(url)), method: init.method ?? "GET", body: init.body ? JSON.parse(init.body) : undefined });
+    calls.push({ url: new URL(String(url)), method: init.method ?? "GET", body: init.body ? JSON.parse(init.body as string) : undefined });
     return new Response(JSON.stringify({ session: { id: "thread/one" } }), { headers: { "Content-Type": "application/json" } });
   } });
   const cwd = "/workspace with spaces", channelId = "channel/owner", threadId = "thread/one";

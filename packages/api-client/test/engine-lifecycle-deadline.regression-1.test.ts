@@ -24,12 +24,14 @@ function fixture(t: TestContext) {
   const requests: PendingRequest[] = [];
   const client = new ExecutionEngineManagementClient({ baseUrl: "http://127.0.0.1:17892", credentials: () => credentials,
     fetch(url, init) {
+      const signal = init?.signal;
+      assert.ok(signal, "expected a request deadline signal");
       const response = Promise.withResolvers<Response>();
-      const abort = () => response.reject(init!.signal!.reason);
-      init!.signal!.addEventListener("abort", abort, { once: true });
-      if (init!.signal!.aborted) abort();
-      requests.push({ url, signal: init!.signal!, complete: body => response.resolve(Response.json(body)) });
-      return response.promise.finally(() => init!.signal!.removeEventListener("abort", abort));
+      const abort = () => response.reject(signal.reason);
+      signal.addEventListener("abort", abort, { once: true });
+      if (signal.aborted) abort();
+      requests.push({ url, signal, complete: body => response.resolve(Response.json(body)) });
+      return response.promise.finally(() => signal.removeEventListener("abort", abort));
     } });
   const observe = (promise: Promise<unknown>): Promise<{ value?: unknown; error?: Error }> => promise.then(value => ({ value }), (error: Error) => ({ error }));
   return { client, requests, observe };
