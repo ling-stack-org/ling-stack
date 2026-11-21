@@ -61,17 +61,20 @@ export function createRemoteDeviceFacade(options: RemoteDeviceFacadeOptions): Re
       } else if (options.broker) {
         const proposal = options.store.getActionProposal(input.taskId);
         if (!proposal) throw new RemoteAccessError("pc_unavailable", "Device task has no pending action proposal.", true);
-        await options.broker.execute({ ...proposal.request, approvalId: input.approval.approvalId, approval: input.approval });
+        await options.broker.execute(
+          { ...proposal.request, approvalId: input.approval.approvalId, approval: input.approval },
+          undefined,
+          { requireCurrentProposal: true },
+        );
       } else {
         throw new RemoteAccessError("pc_unavailable", "Device approval executor is not attached.", true);
       }
       return snapshotForTask(options.store, input.workspaceId, input.taskId, now());
     },
     revokeTask(input) {
-      const task = requireDaemonTask(options.store, input.taskId, input.workspaceId);
-      if (!["succeeded", "failed", "cancelled"].includes(task.status)) {
-        options.store.transitionTask(task.id, "cancelled", {}, now());
-      }
+      requireDaemonTask(options.store, input.taskId, input.workspaceId);
+      if (options.broker) options.broker.cancelTask(input.taskId);
+      else options.store.stopDaemonTask(input.taskId, now());
       return snapshotForTask(options.store, input.workspaceId, input.taskId, now());
     },
   };

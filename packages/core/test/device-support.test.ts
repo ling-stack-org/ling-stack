@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
 import type {
@@ -269,8 +270,99 @@ test("lost or unrelated verification keeps the write receipt and requires reconc
   assert.equal(dispatches, 2);
 });
 
-test("idempotent retry returns the recorded attempt and a restart preserves an unknown outcome", () => {
+test("stopping during verification preserves late evidence and excludes another task until the adapter settles", { timeout: 5000 }, async (t) => {
+  const { store, broker } = brokerFixture();
+  t.after(() => store.close());
+  const adapter = createAdapter();
+  let enteredVerification!: (signal: AbortSignal | undefined) => void;
+  const verificationStarted = new Promise<AbortSignal | undefined>(resolve => { enteredVerification = resolve; });
+  let finishVerification!: () => void;
+  const verificationGate = new Promise<void>(resolve => { finishVerification = resolve; });
+  broker.registerAdapter({
+    ...adapter,
+    async verify(input) {
+      enteredVerification(input.signal);
+      await verificationGate;
+      return adapter.verify!(input);
+    },
+  });
+  broker.createTask(task("active-write"));
+  broker.createTask(task("next-read"));
+  const action = approveNetworkRepair(request(writeCapability.id, "active-write"));
+  const execution = broker.execute(action);
+  try {
+    const signal = await verificationStarted;
+    assert.equal(store.getTask(action.taskId)?.status, "verifying");
+    assert.equal(broker.cancelTask(action.taskId).status, "unknown");
+    assert.equal(signal?.aborted, true);
+    const replay = await broker.execute(action);
+    assert.equal(replay.attempt.receipt?.status, "completed");
+    assert.equal(replay.attempt.verification, undefined);
+    const next = request(readCapability.id, "next-read");
+    await assert.rejects(() => broker.execute(next), (error: unknown) =>
+      error instanceof DeviceBrokerError && error.code === "target_busy");
+    assert.deepEqual(store.listAttempts(next.taskId), []);
+  } finally {
+    finishVerification();
+    await execution;
+  }
+  assert.equal((await execution).attempt.verification?.status, "verified");
+  assert.equal(store.getTask(action.taskId)?.status, "unknown");
+  assert.equal(store.listEvents(action.taskId).filter(event => event.type === "task_stop_requested").length, 1);
+  assert.equal((await broker.execute(request(readCapability.id, "next-read"))).attempt.status, "completed");
+});
+
+test("invalid adapter receipts and thrown transport errors retain a redacted unknown outcome", async (t) => {
+  const { store, broker } = brokerFixture();
+  t.after(() => store.close());
+  const adapter = createAdapter();
+  broker.registerAdapter({
+    ...adapter,
+    async execute(input) {
+      if (input.request.taskId === "transport-error") {
+        throw new DOMException("sensitive-transport-detail", "TimeoutError");
+      }
+      return { actionId: "unrelated-action", status: "completed", startedAt: now, observationIds: [] };
+    },
+  });
+  for (const [taskId, code] of [["transport-error", "timeout"], ["wrong-receipt", "unknown_outcome"]]) {
+    broker.createTask(task(taskId));
+    const action = approveNetworkRepair(request(writeCapability.id, taskId));
+    const result = await broker.execute(action);
+    assert.equal(store.getTask(taskId)?.status, "unknown");
+    assert.equal(result.attempt.receipt?.actionId, action.actionId);
+    assert.equal(result.attempt.receipt?.errorCode, code);
+    assert.doesNotMatch(JSON.stringify(store.listAttempts(taskId)), /sensitive-transport-detail/);
+  }
+});
+
+test("a legacy target lease migrates without changing its owner or expiration", t => {
+  const root = mkdtempSync(join(tmpdir(), "ling-device-lease-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const databasePath = join(root, "device.sqlite");
+  const legacy = new DatabaseSync(databasePath);
+  legacy.exec(`
+    CREATE TABLE device_target_leases (
+      target_device_id TEXT PRIMARY KEY NOT NULL, task_id TEXT NOT NULL, owner_id TEXT NOT NULL,
+      expires_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    )
+  `);
+  legacy.prepare("INSERT INTO device_target_leases VALUES (?,?,?,?,?)").run(profile.device.id, "legacy", "daemon-1", later, now);
+  legacy.close();
+
+  const store = new SqliteDeviceSupportStore({ databasePath });
+  t.after(() => store.close());
+  assert.equal(store.acquireTargetLease(profile.device.id, "next", "daemon-1", now, 1000, "next:action"), false);
+  assert.equal(store.acquireTargetLease(profile.device.id, "next", "daemon-1", later, 1000, "next:action"), true);
+  store.releaseTargetLease(profile.device.id, "next");
+  assert.equal(store.acquireTargetLease(profile.device.id, "other", "daemon-1", later, 1000, "other:action"), false);
+  store.releaseTargetLease(profile.device.id, "next", "next:action");
+  assert.equal(store.acquireTargetLease(profile.device.id, "other", "daemon-1", later, 1000, "other:action"), true);
+});
+
+test("idempotent retry returns the recorded attempt and a restart preserves an unknown outcome", t => {
   const root = mkdtempSync(join(tmpdir(), "ling-device-support-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
   const databasePath = join(root, "device.sqlite");
   const first = new SqliteDeviceSupportStore({ databasePath });
   first.registerDevice(profile, now);

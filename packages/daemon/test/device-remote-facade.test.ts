@@ -11,12 +11,13 @@ import { WebSocket } from "ws";
 
 import {
   REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1,
+  type DeviceActionRequestV1,
   type DeviceTaskV1,
   type RemoteAuthProofV1,
   type RemoteClientCommandPayloadMapV1,
   type RemoteServerFrameV1,
 } from "@ling-stack/contracts";
-import { createSqliteRunStore, DEFAULT_WORKSPACE_ID, DeviceCapabilityBroker, SqliteDeviceSupportStore } from "@ling-stack/core";
+import { createSqliteRunStore, DEFAULT_WORKSPACE_ID, DeviceCapabilityBroker, digestRequest, SqliteDeviceSupportStore } from "@ling-stack/core";
 import {
   authProofSigningBytes,
   authProofSigningInput,
@@ -79,10 +80,11 @@ test("remote device facade projects workspace-scoped devices and task attempts",
   store.close();
 });
 
-test("signed Gateway sessions refresh the same PC task after reconnect and keep legacy sessions compatible", { timeout: 10_000 }, async t => {
+test("signed Gateway sessions reconnect to durable PC tasks and revoke an active approval without blocking", { timeout: 10_000 }, async t => {
   const root = await mkdtemp(join(tmpdir(), "ling-device-gateway-"));
   const store = createSqliteRunStore(root);
   const deviceStore = new SqliteDeviceSupportStore({ databasePath: store.paths.databasePath });
+  const broker = new DeviceCapabilityBroker({ store: deviceStore, now: () => now });
   const listenerPort = await reserveLoopbackPort();
   const stateDir = join(root, "state");
   const state = new RemoteAccessStateStore({ stateDir, listenerPort, createIdentity: createRemoteGatewayIdentity, now: () => now });
@@ -100,7 +102,7 @@ test("signed Gateway sessions refresh the same PC task after reconnect and keep 
   const controller = new RemoteAccessController({
     store, stateDir, listenerPort, workspaceDisplayName: "Test workspace",
     managementCapability: "fixture-management-capability", managementAllowedOrigins: ["http://127.0.0.1"],
-    deviceFacade: createRemoteDeviceFacade({ store: deviceStore, now: () => now }),
+    deviceFacade: createRemoteDeviceFacade({ store: deviceStore, broker, now: () => now }),
     now: () => now,
   });
   const sockets = new Set<WebSocket>();
@@ -111,15 +113,23 @@ test("signed Gateway sessions refresh the same PC task after reconnect and keep 
     store.close();
     await rm(root, { recursive: true, force: true });
   });
-  const broker = new DeviceCapabilityBroker({ store: deviceStore, now: () => now });
   let networkReads = 0;
+  let repairCalls = 0;
+  let repairSignal: AbortSignal | undefined;
+  let finishRepair!: () => void;
+  const repairGate = new Promise<void>(resolve => { finishRepair = resolve; });
   const adapter = new PcAdapter({
     now: () => now,
     executor: {
       async inventory() { return { hostname: "fixture-pc", os: "linux" }; },
       async readNetwork() { networkReads += 1; return { connected: true, gatewayReachable: true, dnsReachable: true }; },
       async readServices() { throw new Error("unexpected service read"); },
-      async repairNetwork() { throw new Error("unexpected repair"); },
+      async repairNetwork({ signal }) {
+        repairCalls += 1;
+        repairSignal = signal;
+        await repairGate;
+        return { accepted: true, changed: true };
+      },
     },
   });
   broker.registerAdapter(adapter);
@@ -152,12 +162,14 @@ test("signed Gateway sessions refresh the same PC task after reconnect and keep 
     let clientSeq = 0;
     return {
       ready: ready.payload,
-      async read<T extends "device.list" | "device.task.status" | "stream.subscribe">(type: T, payload: RemoteClientCommandPayloadMapV1[T]) {
+      async send<T extends "device.list" | "device.task.status" | "device.task.approve" | "device.task.revoke" | "stream.subscribe">(type: T, payload: RemoteClientCommandPayloadMapV1[T]) {
         clientSeq += 1;
+        const messageId = `message-${clientSeq}`;
         socket.send(JSON.stringify({
-          version: 1, type, payload, clientSeq, messageId: `message-${clientSeq}`, gatewayId: challenge.gatewayId,
+          version: 1, type, payload, clientSeq, messageId, gatewayId: challenge.gatewayId,
           sessionId: ready.sessionId, sentAt: now, expiresAt: "2026-11-21T00:00:30.000Z",
         }));
+        return messageId;
       },
       frames,
       async close() {
@@ -170,19 +182,19 @@ test("signed Gateway sessions refresh the same PC task after reconnect and keep 
 
   const legacy = await connect();
   assert.equal(legacy.ready.policy.capabilities.includes("device.read"), false);
-  await legacy.read("stream.subscribe", { commandId: "subscribe-legacy", scope: { kind: "workspace", workspaceId: DEFAULT_WORKSPACE_ID } });
+  await legacy.send("stream.subscribe", { commandId: "subscribe-legacy", scope: { kind: "workspace", workspaceId: DEFAULT_WORKSPACE_ID } });
   await waitForFrame(legacy.frames, "profile.snapshot");
-  await legacy.read("device.list", { commandId: "list-legacy", workspaceId: DEFAULT_WORKSPACE_ID });
+  await legacy.send("device.list", { commandId: "list-legacy", workspaceId: DEFAULT_WORKSPACE_ID });
   assert.equal((await waitForFrame(legacy.frames, "command.failed")).payload.error.code, "capability_not_allowed");
   assert.equal(legacy.frames.some(frame => frame.type === "device.list_snapshot"), false);
   await legacy.close();
 
   const first = await connect(REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1);
   assert.ok(first.ready.policy.capabilities.includes("device.read"));
-  await first.read("stream.subscribe", { commandId: "subscribe-first", scope: { kind: "workspace", workspaceId: DEFAULT_WORKSPACE_ID } });
+  await first.send("stream.subscribe", { commandId: "subscribe-first", scope: { kind: "workspace", workspaceId: DEFAULT_WORKSPACE_ID } });
   const firstList = await waitForFrame(first.frames, "device.list_snapshot");
   assert.deepEqual(firstList.payload.recentTasks?.map(task => [task.taskId, task.status]), [["task-1", "planning"]]);
-  await first.read("device.list", { commandId: "scope-denied", workspaceId: "workspace-2" });
+  await first.send("device.list", { commandId: "scope-denied", workspaceId: "workspace-2" });
   assert.equal((await waitForFrame(first.frames, "command.failed")).payload.error.code, "workspace_not_allowed");
   assert.equal(first.frames.some(frame => frame.type === "command.completed" && frame.payload.commandId === "scope-denied"), false);
   await first.close();
@@ -195,10 +207,10 @@ test("signed Gateway sessions refresh the same PC task after reconnect and keep 
   assert.equal(action.attempt.verification?.status, "verified");
   assert.equal(networkReads, 2);
   const reconnected = await connect(REMOTE_DEVICE_TASKS_SUBPROTOCOL_V1);
-  await reconnected.read("stream.subscribe", { commandId: "subscribe-reconnect", scope: { kind: "workspace", workspaceId: DEFAULT_WORKSPACE_ID } });
+  await reconnected.send("stream.subscribe", { commandId: "subscribe-reconnect", scope: { kind: "workspace", workspaceId: DEFAULT_WORKSPACE_ID } });
   const newList = await waitForFrame(reconnected.frames, "device.list_snapshot");
   assert.deepEqual(newList.payload.recentTasks?.map(task => [task.taskId, task.status]), [["task-1", "succeeded"]]);
-  await reconnected.read("device.task.status", { commandId: "task-reconnect", workspaceId: DEFAULT_WORKSPACE_ID, taskId: "task-1" });
+  await reconnected.send("device.task.status", { commandId: "task-reconnect", workspaceId: DEFAULT_WORKSPACE_ID, taskId: "task-1" });
   const detail = (await waitForFrame(reconnected.frames, "device.task.snapshot")).payload.task;
   assert.equal(detail.taskId, "task-1");
   assert.equal(detail.ownerId, "daemon-1");
@@ -206,12 +218,71 @@ test("signed Gateway sessions refresh the same PC task after reconnect and keep 
   assert.equal(detail.lastVerificationId, "inspect-network:verification");
   assert.equal(networkReads, 2);
   assert.equal(deviceStore.listRecentDaemonTasks(DEFAULT_WORKSPACE_ID, 20).length, 1);
+
+  function proposeRepair(taskId: string) {
+    broker.createTask(deviceTask(taskId, [target.device.id], { capabilitySnapshotIds: [capability.snapshotId] }));
+    const proposed: DeviceActionRequestV1 = {
+      taskId, actionId: `${taskId}:repair`, targetDeviceId: target.device.id,
+      capabilityId: "pc.repair.network", capabilitySchemaVersion: "1.0", capabilitySnapshotId: capability.snapshotId,
+      normalizedInput: { mode: "refresh_dhcp" }, expectedVerification: { connected: true }, idempotencyKey: taskId,
+    };
+    broker.proposeAction(proposed);
+    return {
+      taskId, workspaceId: DEFAULT_WORKSPACE_ID,
+      approval: {
+        taskId, approvalId: `${taskId}:approved`, actionId: proposed.actionId, targetDeviceId: target.device.id,
+        capabilitySnapshotId: capability.snapshotId, connectionRevision: capability.connectionRevision,
+        policyRevision: broker.policyRevision, normalizedInputDigest: digestRequest(proposed),
+        expiresAt: "2026-11-21T00:01:00.000Z",
+      },
+    };
+  }
+
+  const stopped = proposeRepair("stop-before-dispatch");
+  const revokeBefore = await reconnected.send("device.task.revoke", {
+    commandId: "revoke-before", workspaceId: DEFAULT_WORKSPACE_ID, taskId: stopped.taskId,
+  });
+  assert.equal((await waitForFrame(reconnected.frames, "device.task.snapshot", revokeBefore)).payload.task.status, "cancelled");
+  const denied = await reconnected.send("device.task.approve", { commandId: "approve-after-revoke", ...stopped });
+  await waitForFrame(reconnected.frames, "command.failed", denied);
+  assert.deepEqual(deviceStore.listAttempts(stopped.taskId), []);
+  assert.equal(repairCalls, 0);
+
+  const active = proposeRepair("stop-during-dispatch");
+  const stale = await reconnected.send("device.task.approve", {
+    commandId: "approve-stale-repair", ...active,
+    approval: { ...active.approval, normalizedInputDigest: "0".repeat(64) },
+  });
+  await waitForFrame(reconnected.frames, "command.failed", stale);
+  assert.deepEqual(deviceStore.listAttempts(active.taskId), []);
+  const approve = await reconnected.send("device.task.approve", { commandId: "approve-repair", ...active });
+  try {
+    await waitForFrame(reconnected.frames, "command.accepted", approve);
+    assert.equal(repairCalls, 1);
+    const revoke = await reconnected.send("device.task.revoke", {
+      commandId: "revoke-active", workspaceId: DEFAULT_WORKSPACE_ID, taskId: active.taskId,
+    });
+    const snapshot = await waitForFrame(reconnected.frames, "device.task.snapshot", revoke);
+    assert.equal(snapshot.payload.task.status, "unknown");
+    assert.equal(deviceStore.listAttempts(active.taskId)[0]?.attempt.status, "unknown");
+    assert.equal(repairSignal?.aborted, true);
+  } finally {
+    finishRepair();
+    await waitForFrame(reconnected.frames, "command.completed", approve);
+  }
+  assert.equal(deviceStore.listAttempts(active.taskId)[0]?.attempt.receipt?.status, "completed");
+  assert.equal((await waitForFrame(reconnected.frames, "device.task.snapshot", approve)).payload.task.status, "unknown");
+  const replay = await reconnected.send("device.task.approve", { commandId: "replay-repair", ...active });
+  assert.equal((await waitForFrame(reconnected.frames, "device.task.snapshot", replay)).payload.task.status, "unknown");
+  assert.equal(repairCalls, 1);
+  assert.equal(networkReads, 2);
 });
 
-async function waitForFrame<T extends RemoteServerFrameV1["type"]>(frames: readonly RemoteServerFrameV1[], type: T) {
+async function waitForFrame<T extends RemoteServerFrameV1["type"]>(frames: readonly RemoteServerFrameV1[], type: T, requestId?: string) {
   const deadline = Date.now() + 3_000;
   while (Date.now() < deadline) {
-    const frame = frames.find((frame): frame is Extract<RemoteServerFrameV1, { type: T }> => frame.type === type);
+    const frame = frames.find((frame): frame is Extract<RemoteServerFrameV1, { type: T }> =>
+      frame.type === type && (requestId === undefined || frame.requestId === requestId));
     if (frame) return frame;
     await delay(10);
   }

@@ -167,12 +167,22 @@ export class RemoteGatewaySession {
       commandType,
       acceptedAt: this.now(),
     }, this.controlStream, frame.messageId);
+    const command = this.executeAuthorizedCommand(frame);
+    if (frame.type === "device.task.approve") {
+      // Keep consuming ordered frames while the admitted device action waits for its adapter.
+      void command.catch(() => this.closePolicyViolation("Remote command processing failed."));
+      return;
+    }
+    await command;
+  }
+
+  private async executeAuthorizedCommand(frame: Exclude<RemoteClientFrameV1, { readonly type: "stream.ack" }>): Promise<void> {
     try {
       this.assertCapability(frame.type);
-      await this.executeCommand(frame as Exclude<RemoteClientFrameV1, { readonly type: "stream.ack" }>);
+      await this.executeCommand(frame);
     } catch (error) {
       const remoteError = toRemoteError(error);
-      this.sendCommandFailed(commandType, frame.payload.commandId, remoteError, frame.messageId);
+      this.sendCommandFailed(frame.type, frame.payload.commandId, remoteError, frame.messageId);
     }
   }
 

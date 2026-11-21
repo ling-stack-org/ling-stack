@@ -24,6 +24,7 @@ import {
 
 import type { DeviceSupportStoreAttemptRecord } from "../../device-support.js";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
+import { withSqliteSnapshotParentTransaction } from "./read-snapshot.js";
 
 export interface DeviceSupportStoreOptions {
   readonly databasePath?: string;
@@ -57,6 +58,18 @@ export class SqliteDeviceSupportStore {
     this.database = new DatabaseSync(path);
     this.database.exec("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
     this.applySchema();
+  }
+
+  withWriteTransaction<T>(write: () => T): T {
+    this.database.exec("BEGIN IMMEDIATE");
+    try {
+      const result = withSqliteSnapshotParentTransaction(this.database, write);
+      this.database.exec("COMMIT");
+      return result;
+    } catch (error) {
+      rollbackOwnedSqliteTransaction(this.database);
+      throw error;
+    }
   }
 
   registerDevice(profile: DeviceProfileV1, now: string): void {
@@ -225,8 +238,20 @@ export class SqliteDeviceSupportStore {
   }
 
   getActiveAttempt(taskId: string): DeviceSupportStoreAttemptRecord | undefined {
-    const row = this.database.prepare("SELECT attempt_json,request_json,request_digest FROM device_task_attempts WHERE task_id=? AND json_extract(attempt_json,'$.status') IN ('prepared','dispatched','unknown') ORDER BY created_at DESC LIMIT 1")
-      .get(taskId) as Row | undefined;
+    const row = this.database.prepare(`
+      SELECT attempt_json, request_json, request_digest FROM device_task_attempts
+      WHERE task_id=? AND json_extract(attempt_json,'$.status') IN ('prepared','dispatched','unknown')
+      ORDER BY json_extract(attempt_json,'$.status')='unknown', created_at DESC, attempt_id DESC LIMIT 1
+    `).get(taskId) as Row | undefined;
+    return row ? this.parseAttempt(row) : undefined;
+  }
+
+  getLeasedAttempt(taskId: string): DeviceSupportStoreAttemptRecord | undefined {
+    const row = this.database.prepare(`
+      SELECT a.attempt_json, a.request_json, a.request_digest FROM device_target_leases AS l
+      JOIN device_task_attempts AS a ON a.attempt_id=l.attempt_id
+      WHERE l.task_id=?
+    `).get(taskId) as Row | undefined;
     return row ? this.parseAttempt(row) : undefined;
   }
 
@@ -265,26 +290,43 @@ export class SqliteDeviceSupportStore {
       .map(row => parseJson<DeviceObservationV1>(row.body_json, isDeviceObservationV1, "device observation"));
   }
 
-  acquireTargetLease(targetDeviceId: string, taskId: string, ownerId: string, now: string, leaseMs: number): boolean {
+  acquireTargetLease(targetDeviceId: string, taskId: string, ownerId: string, now: string, leaseMs: number, attemptId?: string): boolean {
     const expiresAt = new Date(Date.parse(now) + leaseMs).toISOString();
-    const existing = this.database.prepare("SELECT task_id,expires_at FROM device_target_leases WHERE target_device_id=?").get(targetDeviceId) as Row | undefined;
-    if (existing && readString(existing, "task_id") !== taskId && Date.parse(readString(existing, "expires_at")) > Date.parse(now)) return false;
-    this.database.prepare(`
-      INSERT INTO device_target_leases(target_device_id,task_id,owner_id,expires_at,updated_at)
-      VALUES(?,?,?,?,?)
-      ON CONFLICT(target_device_id) DO UPDATE SET task_id=excluded.task_id,owner_id=excluded.owner_id,expires_at=excluded.expires_at,updated_at=excluded.updated_at
-    `).run(targetDeviceId, taskId, ownerId, expiresAt, now);
-    return true;
+    const result = this.database.prepare(`
+      INSERT INTO device_target_leases(target_device_id,task_id,owner_id,expires_at,updated_at,attempt_id)
+      VALUES(?,?,?,?,?,?)
+      ON CONFLICT(target_device_id) DO UPDATE SET task_id=excluded.task_id,owner_id=excluded.owner_id,
+        expires_at=excluded.expires_at,updated_at=excluded.updated_at,attempt_id=excluded.attempt_id
+      WHERE device_target_leases.attempt_id IS NULL
+        AND (device_target_leases.task_id=excluded.task_id OR device_target_leases.expires_at<=?)
+    `).run(targetDeviceId, taskId, ownerId, expiresAt, now, attemptId ?? null, new Date(Date.parse(now)).toISOString());
+    return result.changes === 1;
   }
 
-  releaseTargetLease(targetDeviceId: string, taskId: string): void {
+  releaseTargetLease(targetDeviceId: string, taskId: string, attemptId?: string): void {
     if (!targetDeviceId) return;
-    this.database.prepare("DELETE FROM device_target_leases WHERE target_device_id=? AND task_id=?").run(targetDeviceId, taskId);
+    this.database.prepare("DELETE FROM device_target_leases WHERE target_device_id=? AND task_id=? AND attempt_id IS ?")
+      .run(targetDeviceId, taskId, attemptId ?? null);
+  }
+
+  stopDaemonTask(taskId: string, now: string): DeviceTaskV1 {
+    return this.withWriteTransaction(() => {
+      const task = this.requireTask(taskId);
+      if (task.ownerKind !== "daemon") throw new Error("Device task belongs to another runtime");
+      if (["succeeded", "failed", "cancelled", "unknown"].includes(task.status)) return task;
+
+      const leased = this.getLeasedAttempt(taskId);
+      const attempt = leased?.attempt ?? this.getActiveAttempt(taskId)?.attempt;
+      const intentRecorded = attempt?.status === "prepared" || attempt?.status === "dispatched";
+      const status = leased || intentRecorded || attempt?.status === "unknown" || task.status === "verifying" ? "unknown" : "cancelled";
+      if (intentRecorded) this.updateAttempt(attempt.attemptId, { status: "unknown" }, now);
+      this.appendEvent(taskId, "task_stop_requested", { attemptId: attempt?.attemptId, status });
+      return this.writeTaskTransition(task, status, {}, now);
+    });
   }
 
   recoverAfterRestart(now: string): readonly string[] {
-    this.database.exec("BEGIN IMMEDIATE");
-    try {
+    return this.withWriteTransaction(() => {
       const pendingAttempts = this.database.prepare(`
         SELECT attempt.attempt_id, attempt.task_id FROM device_task_attempts AS attempt
         JOIN device_tasks AS task ON task.task_id = attempt.task_id
@@ -310,12 +352,14 @@ export class SqliteDeviceSupportStore {
           this.writeTaskTransition(task, "unknown", {}, now);
         }
       }
-      this.database.exec("COMMIT");
+      // Attempt leases are held until the adapter settles or its daemon restarts.
+      this.database.prepare(`
+        DELETE FROM device_target_leases WHERE attempt_id IS NOT NULL AND task_id IN (
+          SELECT task_id FROM device_tasks WHERE json_extract(task_json, '$.ownerKind') = 'daemon'
+        )
+      `).run();
       return recovered;
-    } catch (error) {
-      rollbackOwnedSqliteTransaction(this.database);
-      throw error;
-    }
+    });
   }
 
   listEvents(taskId: string): readonly DeviceTaskEvent[] {
@@ -420,12 +464,19 @@ export class SqliteDeviceSupportStore {
         task_id TEXT NOT NULL,
         owner_id TEXT NOT NULL,
         expires_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
+        updated_at TEXT NOT NULL,
+        attempt_id TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_device_task_attempts_task ON device_task_attempts(task_id,created_at);
       CREATE INDEX IF NOT EXISTS idx_device_task_events_task ON device_task_events(task_id,sequence);
       CREATE INDEX IF NOT EXISTS idx_device_tasks_recent ON device_tasks(updated_at DESC,task_id);
     `);
+    this.withWriteTransaction(() => {
+      if (!this.database.prepare("SELECT 1 FROM pragma_table_info('device_target_leases') WHERE name='attempt_id'").get()) {
+        this.database.exec("ALTER TABLE device_target_leases ADD COLUMN attempt_id TEXT");
+      }
+      this.database.exec("CREATE INDEX IF NOT EXISTS idx_device_target_leases_task ON device_target_leases(task_id)");
+    });
   }
 }
 

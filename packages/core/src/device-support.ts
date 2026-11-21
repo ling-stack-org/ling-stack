@@ -16,6 +16,7 @@ import {
   type DeviceVerificationResultV1,
   isAdapterManifestV1,
   isDeviceActionRequestV1,
+  isDeviceActionResultV1,
   isDeviceCapabilitySnapshotV1,
   isDeviceProfileV1,
   isDeviceVerificationResultV1,
@@ -72,7 +73,18 @@ export interface DeviceSupportBrokerOptions {
 
 export interface DeviceExecuteOptions {
   readonly finalizeTask?: boolean;
+  readonly requireCurrentProposal?: boolean;
 }
+
+type DeviceDispatchAdmission =
+  | { readonly kind: "replay"; readonly record: DeviceSupportStoreAttemptRecord }
+  | {
+      readonly kind: "dispatch";
+      readonly attempt: DeviceTaskAttemptV1;
+      readonly adapter: DeviceAdapter;
+      readonly profile: DeviceProfileV1;
+      readonly capability: CapabilityDescriptorV1;
+    };
 
 export class DeviceBrokerError extends Error {
   constructor(
@@ -116,6 +128,7 @@ export class DeviceCapabilityBroker {
   readonly leaseMs: number;
   readonly policyRevision: string;
   readonly now: () => string;
+  private readonly activeDispatches = new Map<string, AbortController>();
 
   constructor(options: DeviceSupportBrokerOptions) {
     this.adapters = new DeviceAdapterRegistry();
@@ -173,6 +186,55 @@ export class DeviceCapabilityBroker {
     if (!isDeviceActionRequestV1(request)) {
       throw new DeviceBrokerError("invalid_request", "device action request is invalid");
     }
+    const admission = this.store.withWriteTransaction(() => this.admitDispatch(request, signal, options));
+    if (admission.kind === "replay") return admission.record;
+
+    const { attempt, adapter, profile, capability } = admission;
+    const controller = new AbortController();
+    const operationSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+    this.activeDispatches.set(attempt.taskId, controller);
+    try {
+      let execution: DeviceActionResultV1 | DeviceAdapterExecutionResult;
+      try {
+        execution = await adapter.execute({ profile, capability, request, signal: operationSignal });
+      } catch (error) {
+        execution = uncertainActionResult(request.actionId, this.now(), error);
+      }
+      const result = execution && typeof execution === "object" && "action" in execution ? execution : undefined;
+      const reported = result?.action ?? execution;
+      const valid = isDeviceActionResultV1(reported) && reported.actionId === request.actionId;
+      const action = valid ? reported : uncertainActionResult(request.actionId, this.now(), undefined);
+      const observations = valid ? result?.observations ?? [] : [];
+      const finalize = options.finalizeTask ?? true;
+      const receipt = this.recordActionResult(attempt, action, observations, finalize, this.shouldVerify(capability, request));
+      if (!receipt.verify) return receipt.record;
+
+      const verification = await this.verifyAction(adapter, profile, capability, request, action, operationSignal);
+      return this.store.withWriteTransaction(() => {
+        const now = this.now();
+        const record = this.store.updateAttempt(attempt.attemptId, { verification }, now);
+        if (!this.isCurrentDispatch(attempt)) return record;
+        const status = verification.status === "not_evaluable" && capability.sideEffect !== "read_only"
+          ? "unknown"
+          : verification.status === "verified" ? "succeeded" : "failed";
+        if (finalize || status === "unknown") {
+          this.store.transitionTask(attempt.taskId, status, { lastVerificationId: `${attempt.actionId}:verification` }, now);
+        }
+        return record;
+      });
+    } finally {
+      this.activeDispatches.delete(attempt.taskId);
+      this.store.releaseTargetLease(attempt.targetDeviceId, attempt.taskId, attempt.attemptId);
+    }
+  }
+
+  cancelTask(taskId: string): DeviceTaskV1 {
+    const task = this.store.stopDaemonTask(taskId, this.now());
+    if (task.status === "unknown") this.activeDispatches.get(taskId)?.abort();
+    return task;
+  }
+
+  private admitDispatch(request: DeviceActionRequestV1, signal: AbortSignal | undefined, options: DeviceExecuteOptions): DeviceDispatchAdmission {
     const task = this.requireTaskTarget(request);
     const requestDigest = digestRequest(request);
     const replay = this.store.getAttemptByIdempotency(request.taskId, request.idempotencyKey);
@@ -180,7 +242,14 @@ export class DeviceCapabilityBroker {
       if (replay.requestDigest !== requestDigest) {
         throw new DeviceBrokerError("invalid_request", "idempotency key is bound to another action");
       }
-      return replay;
+      if (options.requireCurrentProposal && (!request.approval
+        || request.approvalId !== replay.attempt.approvalId
+        || !replay.attempt.connectionRevision
+        || !isApprovalForRequest(request.approval, request, replay.attempt.connectionRevision,
+          replay.request.approval?.policyRevision ?? this.policyRevision, requestDigest))) {
+        throw new DeviceBrokerError("permission_denied", "approval does not match the recorded device attempt");
+      }
+      return { kind: "replay", record: replay };
     }
 
     if (task.status === "unknown") throw new DeviceBrokerError("unknown_outcome", "task outcome requires reconciliation");
@@ -188,7 +257,10 @@ export class DeviceCapabilityBroker {
       throw new DeviceBrokerError("invalid_request", "task is not ready to dispatch");
     }
     const pending = this.store.getActiveAttempt(task.id);
-    if (pending && pending.attempt.status !== "unknown") {
+    if (pending?.attempt.status === "unknown") {
+      throw new DeviceBrokerError("unknown_outcome", "an earlier device attempt requires reconciliation");
+    }
+    if (this.store.getLeasedAttempt(task.id) || pending) {
       throw new DeviceBrokerError("target_busy", "task has an unresolved dispatch attempt");
     }
     signal?.throwIfAborted();
@@ -208,13 +280,21 @@ export class DeviceCapabilityBroker {
       throw new DeviceBrokerError("unsupported_capability", "requested capability is not in the current snapshot");
     }
     const adapter = this.requireAdapter(profile.adapterId);
+    if (options.requireCurrentProposal) {
+      const proposal = this.store.getActionProposal(task.id);
+      if (task.status !== "awaiting_approval" || capability.sideEffect === "read_only"
+        || proposal?.requestDigest !== requestDigest || proposal.request.idempotencyKey !== request.idempotencyKey) {
+        throw new DeviceBrokerError("target_changed", "device action no longer awaits this approval");
+      }
+    }
     if (capability.sideEffect !== "read_only") {
+      if (task.policyRevision && task.policyRevision !== this.policyRevision) {
+        throw new DeviceBrokerError("target_changed", "device task policy has changed");
+      }
       this.assertApproval(request, snapshot.connectionRevision, requestDigest);
     }
-    if (!this.store.acquireTargetLease(profile.device.id, request.taskId, this.policyRevision, this.now(), this.leaseMs)) {
-      throw new DeviceBrokerError("target_busy", "device target is leased by another task");
-    }
 
+    const now = this.now();
     const attempt: DeviceTaskAttemptV1 = {
       attemptId: `${request.taskId}:${request.actionId}`,
       taskId: request.taskId,
@@ -222,70 +302,55 @@ export class DeviceCapabilityBroker {
       ownerKind: "daemon",
       ownerId: task.ownerId,
       targetDeviceId: profile.device.id,
-      dispatchIntentAt: this.now(),
+      dispatchIntentAt: now,
       connectionRevision: snapshot.connectionRevision,
       requestDigest,
       ...(request.approvalId ? { approvalId: request.approvalId } : {}),
       status: "prepared",
     };
-    try {
-      const created = this.store.createAttempt({ attempt, request, requestDigest }, this.now());
-      if (created.replayed) {
-        if (created.record.requestDigest !== requestDigest) {
-          throw new DeviceBrokerError("invalid_request", "idempotency key is bound to another action");
-        }
-        return created.record;
-      }
-      this.store.transitionTask(request.taskId, "executing", { currentActionId: request.actionId }, this.now());
-      this.store.updateAttempt(attempt.attemptId, { status: "dispatched" }, this.now());
-      let execution: DeviceActionResultV1 | DeviceAdapterExecutionResult;
-      try {
-        execution = await adapter.execute({ profile, capability, request, signal });
-      } catch (error) {
-        execution = uncertainActionResult(request.actionId, this.now(), error);
-      }
-      const action = "action" in execution ? execution.action : execution;
-      if ("action" in execution) {
-        for (const observation of execution.observations ?? []) this.store.appendObservation(request.taskId, observation, this.now());
-      }
-      const attemptStatus = action.status === "completed" ? "completed"
-        : action.status === "uncertain" ? "unknown" : "failed";
-      this.store.updateAttempt(attempt.attemptId, { status: attemptStatus, receipt: action }, this.now());
-      if (action.status === "uncertain") {
-        this.store.transitionTask(request.taskId, "unknown", {}, this.now());
-        return this.store.getAttemptByIdempotency(request.taskId, request.idempotencyKey)!;
-      }
-
-      const finalizeTask = options.finalizeTask ?? true;
-      if (action.status === "completed" && this.shouldVerify(capability, request)) {
-        if (finalizeTask) this.store.transitionTask(request.taskId, "verifying", {}, this.now());
-        const verification = await this.verifyAction(adapter, profile, capability, request, action, signal);
-        this.store.updateAttempt(attempt.attemptId, { verification }, this.now());
-        const status = verification.status === "not_evaluable" && capability.sideEffect !== "read_only"
-          ? "unknown"
-          : verification.status === "verified" ? "succeeded" : "failed";
-        if (finalizeTask || status === "unknown") {
-          this.store.transitionTask(request.taskId, status, {
-            lastVerificationId: `${request.actionId}:verification`,
-          }, this.now());
-        }
-      } else if (finalizeTask) {
-        this.store.transitionTask(request.taskId, action.status === "completed" ? "succeeded" : "failed", {}, this.now());
-      }
-      return this.store.getAttemptByIdempotency(request.taskId, request.idempotencyKey)!;
-    } finally {
-      this.store.releaseTargetLease(profile.device.id, request.taskId);
+    if (!this.store.acquireTargetLease(profile.device.id, task.id, task.ownerId, now, this.leaseMs, attempt.attemptId)) {
+      throw new DeviceBrokerError("target_busy", "device target is leased by another task");
     }
+    this.store.createAttempt({ attempt, request, requestDigest }, now);
+    this.store.transitionTask(task.id, "executing", { currentActionId: request.actionId }, now);
+    const dispatched = this.store.updateAttempt(attempt.attemptId, { status: "dispatched" }, now);
+    return { kind: "dispatch", attempt: dispatched.attempt, adapter, profile, capability };
   }
 
-  cancelTask(taskId: string): DeviceTaskV1 {
-    const attempt = this.store.getActiveAttempt(taskId);
-    if (attempt && (attempt.attempt.status === "dispatched" || attempt.attempt.status === "unknown")) {
-      this.store.updateAttempt(attempt.attempt.attemptId, { status: "unknown" }, this.now());
-      return this.store.transitionTask(taskId, "unknown", {}, this.now());
-    }
-    this.store.releaseTargetLease(attempt?.attempt.targetDeviceId ?? "", taskId);
-    return this.store.transitionTask(taskId, "cancelled", {}, this.now());
+  private recordActionResult(
+    attempt: DeviceTaskAttemptV1,
+    action: DeviceActionResultV1,
+    observations: readonly DeviceObservationV1[],
+    finalize: boolean,
+    requiresVerification: boolean,
+  ): { readonly record: DeviceSupportStoreAttemptRecord; readonly verify: boolean } {
+    return this.store.withWriteTransaction(() => {
+      const now = this.now();
+      for (const observation of observations) this.store.appendObservation(attempt.taskId, observation, now);
+      if (!this.isCurrentDispatch(attempt)) {
+        return { record: this.store.updateAttempt(attempt.attemptId, { receipt: action }, now), verify: false };
+      }
+
+      const status = action.status === "completed" ? "completed" : action.status === "rejected" ? "failed" : "unknown";
+      const record = this.store.updateAttempt(attempt.attemptId, { status, receipt: action }, now);
+      const verify = status === "completed" && requiresVerification;
+      if (status === "unknown") {
+        this.store.transitionTask(attempt.taskId, status, {}, now);
+      } else if (finalize) {
+        const outcome = verify ? "verifying" : status === "completed" ? "succeeded" : "failed";
+        this.store.transitionTask(attempt.taskId, outcome, {}, now);
+      }
+      return { record, verify };
+    });
+  }
+
+  private isCurrentDispatch(attempt: DeviceTaskAttemptV1): boolean {
+    const task = this.store.getTask(attempt.taskId);
+    return (task?.status === "executing" || task?.status === "verifying")
+      && task.currentActionId === attempt.actionId
+      && task.ownerKind === attempt.ownerKind
+      && task.ownerId === attempt.ownerId
+      && this.store.getLeasedAttempt(task.id)?.attempt.attemptId === attempt.attemptId;
   }
 
   private assertApproval(request: DeviceActionRequestV1, connectionRevision: string, requestDigest: string): void {
@@ -377,13 +442,13 @@ function isApprovalForRequest(
 }
 
 function uncertainActionResult(actionId: string, now: string, error: unknown): DeviceActionResultV1 {
-  const detail = error instanceof Error ? error.message : "adapter execution failed";
-  const errorCode: DeviceErrorCodeV1 = /timeout/i.test(detail) ? "timeout" : "unknown_outcome";
+  const timeout = error instanceof Error && (error.name === "TimeoutError"
+    || (error instanceof DeviceBrokerError && error.code === "timeout"));
   return {
     actionId,
     status: "uncertain",
-    errorCode,
-    redactedDetails: detail.slice(0, 512),
+    errorCode: timeout ? "timeout" : "unknown_outcome",
+    redactedDetails: timeout ? "device action timed out" : "adapter did not return a valid action result",
     startedAt: now,
     finishedAt: now,
     observationIds: [],
