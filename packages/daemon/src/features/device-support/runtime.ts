@@ -12,6 +12,7 @@ import {
   DeviceRunnerPlanningBridge,
   DeviceDeveloperSessionCoordinator,
   DeviceCollaborationCoordinator,
+  EdgeRuntimeRegistry,
   HardwareProtocolWorkbench,
   modbusRtuRegisterCodec,
   runDeviceReadOnlyPlaybook,
@@ -42,6 +43,7 @@ export interface DeviceSupportRuntime {
   readonly protocolWorkbench: HardwareProtocolWorkbench;
   readonly developerSessions: DeviceDeveloperSessionCoordinator;
   readonly collaboration: DeviceCollaborationCoordinator;
+  readonly edgeRuntimes: EdgeRuntimeRegistry;
   readonly broker: DeviceCapabilityBroker;
   readonly remoteFacade: RemoteDeviceFacade;
   diagnoseLocalPc(): Promise<DevicePlaybookRunResultV1>;
@@ -100,6 +102,7 @@ export function createDeviceSupportRuntime(options: {
   const planner = new DeviceRunnerPlanningBridge();
   const developerSessions = new DeviceDeveloperSessionCoordinator({ store: developerStore });
   const collaboration = new DeviceCollaborationCoordinator({ store: developerStore });
+  const edgeRuntimes = new EdgeRuntimeRegistry({ persistence: fabricStore });
   let localDiagnosis: Promise<DevicePlaybookRunResultV1> | undefined;
   const diagnosingLinux = new Set<string>();
 
@@ -185,6 +188,7 @@ export function createDeviceSupportRuntime(options: {
     protocolWorkbench,
     developerSessions,
     collaboration,
+    edgeRuntimes,
     broker,
     remoteFacade,
     diagnoseLocalPc: () => {

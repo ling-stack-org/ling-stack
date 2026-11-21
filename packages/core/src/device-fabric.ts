@@ -175,24 +175,38 @@ export interface DeviceTaskGraphPersistence {
 
 export class EdgeRuntimeRegistry {
   readonly #runtimes = new Map<string, EdgeRuntimeEnrollmentV1>();
+  readonly #persistence?: EdgeRuntimePersistence;
+
+  constructor(options: { readonly persistence?: EdgeRuntimePersistence } = {}) {
+    this.#persistence = options.persistence;
+  }
 
   enroll(runtime: EdgeRuntimeEnrollmentV1): EdgeRuntimeEnrollmentV1 {
-    const current = this.#runtimes.get(runtime.runtimeId);
+    const current = this.get(runtime.runtimeId);
     if (current && runtime.revision <= current.revision) throw new DeviceFabricError("revision_conflict", "edge runtime revision must advance");
     const enrolled = { ...runtime, status: "enrolled" as const };
+    this.#persistence?.saveEdgeRuntime(enrolled);
     this.#runtimes.set(runtime.runtimeId, enrolled);
     return enrolled;
   }
 
   revoke(runtimeId: string, revision: number): EdgeRuntimeEnrollmentV1 {
-    const current = this.#runtimes.get(runtimeId);
+    const current = this.get(runtimeId);
     if (!current) throw new DeviceFabricError("target_missing", "edge runtime is missing");
     const revoked = { ...current, status: "revoked" as const, revision };
+    this.#persistence?.saveEdgeRuntime(revoked);
     this.#runtimes.set(runtimeId, revoked);
     return revoked;
   }
 
-  get(runtimeId: string): EdgeRuntimeEnrollmentV1 | undefined { return this.#runtimes.get(runtimeId); }
+  get(runtimeId: string): EdgeRuntimeEnrollmentV1 | undefined {
+    return this.#persistence?.getEdgeRuntime(runtimeId) ?? this.#runtimes.get(runtimeId);
+  }
+}
+
+export interface EdgeRuntimePersistence {
+  getEdgeRuntime(runtimeId: string): EdgeRuntimeEnrollmentV1 | undefined;
+  saveEdgeRuntime(runtime: EdgeRuntimeEnrollmentV1): EdgeRuntimeEnrollmentV1;
 }
 
 export class EdgeBridgeSession {

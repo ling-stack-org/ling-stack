@@ -15,6 +15,7 @@ import {
   DeviceTraceRecorder,
   EdgeRuntimeRegistry,
 } from "../dist/device-fabric.js";
+import { SqliteDeviceFabricStore } from "../dist/storage/sqlite/device-fabric-store.js";
 import type { DeviceTaskGraphV1 } from "@ling-stack/contracts";
 
 const now = "2026-11-21T00:00:00.000Z";
@@ -83,6 +84,19 @@ test("edge enrollment, ordered event recovery, resource rollback, safety and lif
   lifecycle.transition({ deviceId: "device-1", status: "discovered", revision: 1, reason: "found", authority: "adapter", changedAt: now });
   lifecycle.transition({ deviceId: "device-1", status: "identified", revision: 2, reason: "fingerprint", authority: "operator", changedAt: now });
   assert.throws(() => lifecycle.transition({ deviceId: "device-1", status: "healthy", revision: 3, reason: "skip", authority: "adapter", changedAt: now }), error => error instanceof DeviceFabricError && error.code === "lifecycle_invalid");
+});
+
+test("edge runtime registry can resume enrollment and revocation from durable fabric state", () => {
+  const store = new SqliteDeviceFabricStore();
+  const first = new EdgeRuntimeRegistry({ persistence: store });
+  const runtime = { runtimeId: "edge-durable", displayName: "Edge", publicKeyFingerprint: "fp-durable",
+    contractMajor: 1, supportedTransports: ["ssh"], status: "pending", revision: 1 } as const;
+  assert.equal(first.enroll(runtime).status, "enrolled");
+  const second = new EdgeRuntimeRegistry({ persistence: store });
+  assert.equal(second.get(runtime.runtimeId)?.status, "enrolled");
+  assert.equal(second.revoke(runtime.runtimeId, 2).status, "revoked");
+  assert.equal(first.get(runtime.runtimeId)?.status, "revoked");
+  store.close();
 });
 
 test("context packs and trace reports preserve bounded model input and cross-layer identity", () => {
