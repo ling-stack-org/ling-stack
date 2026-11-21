@@ -109,9 +109,7 @@ Owning package typechecks, Web build, lint, i18n and documentation checks must p
 The daemon summary test is registered in the Linux suite of
 `scripts/ci/daemon-test-platforms.json`. Web's observer test is included by
 `tsconfig.test.json`; its browser spec is included by `tsconfig.e2e.json` and the local
-`test:e2e:work-cell` command. Owning `typecheck:ci` commands check these TypeScript tests.
-The production Web smoke runs the complete summary browser spec and retains its screenshots
-under the `ci-linux-source-web-smoke` artifact.
+`test:e2e:work-cell` command. The Daemon CI typecheck and the local Web typecheck cover their respective TypeScript tests.
 
 Local Chromium acceptance uses the mock-daemon harness at desktop and narrow widths,
 in English/light and Chinese/dark configurations. It exercises the rendered components

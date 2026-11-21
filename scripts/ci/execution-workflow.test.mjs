@@ -11,9 +11,9 @@ import { createTestPlan } from "./test-shard-plan.mjs";
 const workflow = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
 const labelWorkflow = readFileSync(new URL("../../.github/workflows/full-ci-label.yml", import.meta.url), "utf8");
 const root = fileURLToPath(new URL("../../", import.meta.url));
-const lanes = ["SCOPE", "COMMON", "DEPENDENCY", "ASSURANCE", "BUILD", "TYPECHECK", "UNIT", "DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE", "WEB_SMOKE"];
+const lanes = ["SCOPE", "COMMON", "DEPENDENCY", "ASSURANCE", "BUILD", "TYPECHECK", "UNIT", "DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE"];
 const platformJobs = { "daemon-tests": "daemon", "daemon-linux-contracts": "linux-contract", "restricted-command-macos": "macos-native" };
-const selectorOutputs = { ASSURANCE: "assurance-selected", BUILD: "build-selected", DEPENDENCY: "dependency-policy", TYPECHECK: "typecheck-selected", UNIT: "unit-selected", DAEMON: "daemon", LINUX_CONTRACT: "linux-contract", MACOS_NATIVE: "macos-native", WEB: "web" };
+const selectorOutputs = { ASSURANCE: "assurance-selected", BUILD: "build-selected", DEPENDENCY: "dependency-policy", TYPECHECK: "typecheck-selected", UNIT: "unit-selected", DAEMON: "daemon", LINUX_CONTRACT: "linux-contract", MACOS_NATIVE: "macos-native" };
 const unselected = Object.fromEntries(Object.keys(selectorOutputs).map((selector) => [`${selector}_SELECTED`, "false"]));
 
 /** Read a top-level job without matching similarly named steps. */
@@ -64,15 +64,14 @@ function runOutputTransform(variable, value) {
   }
 }
 
-async function assertScopeOutputs(scope, { mode, packages, daemon, daemonPlatforms = daemon ? ["linux", "darwin"] : [], daemonSuites = daemon ? ["daemon", "daemon-linux"] : [], macosNative = false, web, dependency = false, assurance = false, matrix }) {
+async function assertScopeOutputs(scope, { mode, packages, daemon, daemonPlatforms = daemon ? ["linux", "darwin"] : [], daemonSuites = daemon ? ["daemon", "daemon-linux"] : [], macosNative = false, dependency = false, assurance = false, matrix }) {
   const outputs = runOutputTransform("SCOPE_JSON", JSON.stringify(scope));
   assert.deepEqual(outputs, {
     mode, packages: JSON.stringify(packages), "test-packages": JSON.stringify(packages),
     "typecheck-packages": JSON.stringify(packages), "dependency-policy": String(dependency),
     "assurance-selected": String(assurance), "build-selected": String(packages.length > 0),
     "typecheck-selected": String(packages.length > 0), daemon: String(daemon), "daemon-platforms": JSON.stringify(daemonPlatforms),
-    "linux-contract": String(daemonPlatforms.includes("linux")), "macos-native": String(macosNative), web: String(web),
-    "web-smoke-plan": JSON.stringify(scope.webSmoke ?? null),
+    "linux-contract": String(daemonPlatforms.includes("linux")), "macos-native": String(macosNative),
     "macos-helper": String(macosNative), "native-release": "false",
   });
   const plan = await createTestPlan(JSON.parse(outputs["test-packages"]), { daemonPlatforms: JSON.parse(outputs["daemon-platforms"]) });
@@ -90,8 +89,7 @@ async function assertScopeOutputs(scope, { mode, packages, daemon, daemonPlatfor
   // must not turn a selected lane's skipped result into a passing quality gate.
   const required = ["SCOPE", "COMMON", ...(assurance ? ["ASSURANCE"] : []), ...(packages.length ? ["BUILD"] : []),
     ...(dependency ? ["DEPENDENCY"] : []), ...(packages.length ? ["TYPECHECK"] : []),
-    ...(matrix.length ? ["UNIT"] : []), ...(daemon ? ["DAEMON"] : []), ...(daemonPlatforms.includes("linux") ? ["LINUX_CONTRACT"] : []), ...(macosNative ? ["MACOS_NATIVE"] : []),
-    ...(web ? ["WEB_SMOKE"] : [])];
+    ...(matrix.length ? ["UNIT"] : []), ...(daemon ? ["DAEMON"] : []), ...(daemonPlatforms.includes("linux") ? ["LINUX_CONTRACT"] : []), ...(macosNative ? ["MACOS_NATIVE"] : [])];
   for (const lane of required) gate[`${lane}_RESULT`] = "success";
   const passed = runQuality(gate);
   assert.equal(passed.status, 0, passed.stdout + passed.stderr);
@@ -107,7 +105,7 @@ async function assertScopeOutputs(scope, { mode, packages, daemon, daemonPlatfor
 // no_claim=hosted GitHub scheduler not executed.
 test("workflow transformations preserve docs empty arrays and deselected lanes", { timeout: 90_000 }, async () => {
   await assertScopeOutputs(classifyChangedFiles({ files: ["README.md"] }), {
-    mode: "docs", packages: [], daemon: false, macosNative: false, web: false, matrix: [],
+    mode: "docs", packages: [], daemon: false, macosNative: false, matrix: [],
   });
 });
 
@@ -116,12 +114,12 @@ test("workflow transformations preserve docs empty arrays and deselected lanes",
 // no_claim=hosted GitHub scheduler not executed.
 test("workflow transformations keep daemon test-only work outside the unit matrix", { timeout: 90_000 }, async () => {
   await assertScopeOutputs(classifyChangedFiles({ files: ["packages/daemon/test/approval-policy-run.test.mjs"] }), {
-    mode: "affected", packages: ["@ling-stack/daemon"], daemon: true, daemonPlatforms: ["linux"], daemonSuites: ["daemon-linux"], macosNative: false, web: false, matrix: [],
+    mode: "affected", packages: ["@ling-stack/daemon"], daemon: true, daemonPlatforms: ["linux"], daemonSuites: ["daemon-linux"], macosNative: false, matrix: [],
   });
 
   await assertScopeOutputs(classifyChangedFiles({ files: ["packages/daemon/test/macos-native-command.test.mjs"] }), {
     mode: "affected", packages: ["@ling-stack/cli", "@ling-stack/daemon"], daemon: true, daemonPlatforms: ["darwin"], daemonSuites: ["daemon"],
-    macosNative: true, web: false, matrix: [{ suite: "packages", shard: 0 }],
+    macosNative: true, matrix: [{ suite: "packages", shard: 0 }],
   });
 });
 
@@ -130,21 +128,18 @@ test("workflow transformations keep daemon test-only work outside the unit matri
 // no_claim=hosted GitHub scheduler not executed.
 test("workflow transformations select the eight core shards for core test-only work", { timeout: 90_000 }, async () => {
   await assertScopeOutputs(classifyChangedFiles({ files: ["packages/core/test/example.test.ts"] }), {
-    mode: "affected", packages: ["@ling-stack/core"], daemon: false, macosNative: false, web: false,
+    mode: "affected", packages: ["@ling-stack/core"], daemon: false, macosNative: false,
     matrix: Array.from({ length: 8 }, (_, shard) => ({ suite: "core", shard, shardCount: 8, concurrency: 2 })),
   });
 });
 
-// protects: web test and source package arrays and package-suite selection; fails_when: web work disappears;
-// why_new: checks both classifier paths through actual workflow JS and quality; seam=none;
-// no_claim=hosted GitHub scheduler not executed.
-test("workflow transformations retain web test and source validation consumers", { timeout: 90_000 }, async () => {
-  for (const [file, packages] of [
-    ["apps/web/test/example.test.ts", ["@ling-stack/web"]],
-    ["apps/web/src/example.ts", ["@ling-stack/cli", "@ling-stack/localization", "@ling-stack/web"]],
+test("workflow transformations omit Web work and retain its non-Web consumers", { timeout: 90_000 }, async () => {
+  for (const [file, packages, matrix] of [
+    ["apps/web/test/example.test.ts", [], []],
+    ["apps/web/src/example.ts", ["@ling-stack/cli", "@ling-stack/localization"], [{ suite: "packages", shard: 0 }]],
   ]) {
     await assertScopeOutputs(classifyChangedFiles({ files: [file] }), {
-      mode: "affected", packages, daemon: false, macosNative: false, web: true, matrix: [{ suite: "packages", shard: 0 }],
+      mode: "affected", packages, daemon: false, macosNative: false, matrix,
     });
   }
 });
@@ -153,13 +148,13 @@ test("workflow transformations retain web test and source validation consumers",
 // why_new: bounded full classifier graph exercises inline outputs end to end; seam=none;
 // no_claim=hosted GitHub scheduler not executed.
 test("workflow transformations require every lane for a bounded full package graph", { timeout: 90_000 }, async () => {
-  const packages = ["@ling-stack/core", "@ling-stack/daemon", "@ling-stack/web"];
-  const packageEntries = packages.map((name) => ({ name,
+  const packages = ["@ling-stack/api-client", "@ling-stack/core", "@ling-stack/daemon"];
+  const packageEntries = [...packages, "@ling-stack/web"].map((name) => ({ name,
     directory: name.endsWith("web") ? "apps/web" : `packages/${name.split("/")[1]}`,
     dependencies: [], hasTestScript: true, hasTypecheckScript: true,
   }));
   await assertScopeOutputs(classifyChangedFiles({ files: ["package.json"], packageEntries }), {
-    mode: "full", packages, dependency: true, assurance: true, daemon: true, daemonPlatforms: ["linux", "darwin"], macosNative: true, web: true,
+    mode: "full", packages, dependency: true, assurance: true, daemon: true, daemonPlatforms: ["linux", "darwin"], macosNative: true,
     matrix: [{ suite: "packages", shard: 0 },
       ...Array.from({ length: 5 }, (_, shard) => ({ suite: "core", shard, shardCount: 5, concurrency: 2 }))],
   });

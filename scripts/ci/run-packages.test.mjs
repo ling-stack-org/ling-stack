@@ -50,9 +50,10 @@ test("valid selected tasks run without if-present, and empty selections do no wo
   assert.doesNotMatch(empty.stdout, /invoked:/u);
 });
 
-test("build closures keep artifact-free dependency workspaces optional", (t) => {
-  const result = fixture(t, {})("--task=build:ci", '--packages=["@ling-stack/probe"]', "--closure=true");
+test("build closures keep artifact-free workspaces optional and exclude named dependencies", (t) => {
+  const result = fixture(t, {})("--task=build:ci", '--packages=["@ling-stack/probe"]', "--closure=true", '--exclude=["@ling-stack/web"]');
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /invoked:@ling-stack\/probe\.\.\./u);
+  assert.match(result.stdout, /invoked:--filter\ninvoked:!@ling-stack\/web/u);
   assert.match(result.stdout, /invoked:--if-present/u);
 });

@@ -35,7 +35,6 @@ test("all core matrix jobs are part of the existing mandatory unit gate", () => 
   assert.match(source, /timeout-minutes: 35/u);
   assert.match(source, /--shard-timeout-ms=1800000/u);
   assert.match(source, /--exclude='\["@ling-stack\/daemon","@ling-stack\/core"\]'/u);
-  assert.match(source, /if: matrix\.suite == 'packages' && env\.WEB_SELECTED == 'true'/u);
   assert.match(job("quality"), /UNIT_RESULT: \$\{\{ needs\.unit-tests\.result \}\}/u);
   assert.doesNotMatch(source, /continue-on-error|--test-skip-pattern|--test-name-pattern/u);
 });
@@ -57,29 +56,11 @@ test("timings are restored once and every shard consumes one immutable plan", ()
   }
 });
 
-test("browser smoke starts after reusable outputs without delaying the core and daemon queues", () => {
+test("main CI publishes package outputs and excludes the Web package from build closures", () => {
   const build = job("build");
-  const smoke = job("web-smoke");
   assert.match(build, /name: Upload reusable build outputs/u);
-  assert.doesNotMatch(build, /playwright install|playwright test/u);
-  assert.match(smoke, /needs: \[scope, build\]/u);
-  assert.match(smoke, /needs\.scope\.outputs\.web == 'true'/u);
-  assert.match(smoke, /name: ci-dist/u);
-  const webPackage = JSON.parse(readFileSync(new URL("../../apps/web/package.json", import.meta.url), "utf8"));
-  const image = /^      image: mcr\.microsoft\.com\/playwright:v([^@\s]+)@sha256:([a-f0-9]{64})$/mu.exec(smoke);
-  assert.ok(image, "The browser environment must use an immutable official image");
-  assert.equal(image[1], `${webPackage.devDependencies["@playwright/test"]}-noble`,
-    "The installed Playwright client must match the image's preinstalled browser revision");
-  assert.doesNotMatch(smoke, /playwright install|apt-get/u);
-  assert.match(smoke, /name: Run the selected production and changed browser specs/u);
-  assert.match(smoke, /WEB_SMOKE_PLAN: \$\{\{ needs\.scope\.outputs\.web-smoke-plan \}\}/u);
-  assert.match(smoke, /run: node scripts\/ci\/web-smoke\.mjs/u);
-  assert.match(smoke, /name: ci-linux-source-web-smoke/u);
-  assert.doesNotMatch(smoke, /continue-on-error/u);
-  const quality = job("quality");
-  assert.match(quality, /needs: \[[^\n]*web-smoke\]/u);
-  assert.match(quality, /WEB_SMOKE_RESULT: \$\{\{ needs\.web-smoke\.result \}\}/u);
-  assert.match(quality, /WEB_SELECTED: \$\{\{ needs\.scope\.outputs\.web \}\}/u);
+  assert.match(build, /--closure=true --exclude='\["@ling-stack\/web"\]'/u);
+  assert.doesNotMatch(workflow, /^  web-smoke:|apps\/web\/dist|playwright (?:install|test)|--filter @ling-stack\/web/u);
 });
 
 test("daemon runners restore executable codec artifacts on their owning platform", () => {

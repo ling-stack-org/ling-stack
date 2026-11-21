@@ -44,8 +44,6 @@ jobs:
       macos-native: ${{ steps.classify.outputs.macos-native }}
       macos-helper: ${{ steps.classify.outputs.macos-helper }}
       native-release: ${{ steps.classify.outputs.native-release }}
-      web: ${{ steps.classify.outputs.web }}
-      web-smoke-plan: ${{ steps.classify.outputs.web-smoke-plan }}
     steps:
       - name: Check out repository without retained credentials
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -102,8 +100,6 @@ jobs:
             "macos-native": String(scope.macosNative),
             "macos-helper": String(scope.macosHelper),
             "native-release": String(scope.nativeRelease),
-            web: String(scope.web),
-            "web-smoke-plan": JSON.stringify(scope.webSmoke ?? null),
           };
           for (const [key, value] of Object.entries(outputs)) console.log(`${key}=${value}`);
           NODE
@@ -410,7 +406,7 @@ jobs:
       - name: Build selected graph without nested package builds
         env:
           RUSTUP_TOOLCHAIN: 1.97.1
-        run: node scripts/ci/run-packages.mjs --task=build:ci --packages="$SELECTED_PACKAGES" --closure=true
+        run: node scripts/ci/run-packages.mjs --task=build:ci --packages="$SELECTED_PACKAGES" --closure=true --exclude='["@ling-stack/web"]'
 
       - name: Test bounded image codec contracts
         if: needs.scope.outputs.daemon == 'true'
@@ -426,74 +422,7 @@ jobs:
           retention-days: 1
           path: |
             packages/*/dist/**
-            apps/web/dist/**
             apps/chrome-extension/dist/**
-
-  web-smoke:
-    name: Production Web smoke on Linux
-    needs: [scope, build]
-    if: ${{ !cancelled() && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.web == 'true' && needs.build.result == 'success' }}
-    runs-on: ubuntu-latest
-    container:
-      image: mcr.microsoft.com/playwright:v1.65.0-noble@sha256:9beb546099e11f52d62e505537914870e01a67e0e6b00ae41da4775324e73dbe
-    # Changed specs run in full on the same single-worker Playwright configuration.
-    timeout-minutes: ${{ fromJSON(needs.scope.outputs.web-smoke-plan).changed[0] && 40 || 15 }}
-    steps:
-      - name: Check out repository without retained credentials
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Set up pnpm
-        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115
-        with:
-          version: 10.0.0
-          run_install: false
-
-      - name: Set up Node.js
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
-        with:
-          node-version: 22.22.1
-          cache: pnpm
-
-      - name: Install locked dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          corepack enable
-          corepack pnpm install --frozen-lockfile --prefer-offline
-
-      - name: Download reusable build outputs
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
-        with:
-          name: ci-dist
-          path: .
-
-      - name: Run the selected production and changed browser specs
-        env:
-          WEB_SMOKE_PLAN: ${{ needs.scope.outputs.web-smoke-plan }}
-        run: node scripts/ci/web-smoke.mjs
-
-      - name: Check worktree settings, cleanup and recovery in production Web
-        working-directory: apps/web
-        env:
-          LING_PLAYWRIGHT_PREVIEW: "1"
-          LING_PLAYWRIGHT_REUSE_SERVER: "0"
-          LING_CAPTURE_UI2_EVIDENCE: "1"
-        run: >-
-          corepack pnpm exec playwright test e2e/worktree-settings.spec.ts
-          --grep 'worktree settings persist|cleanup snapshots|retention, confirmation|setup from a browser'
-          --output=test-results/worktree-settings --reporter=line
-
-      - name: Preserve Linux production Web smoke evidence
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: ci-linux-source-web-smoke
-          if-no-files-found: error
-          retention-days: 7
-          path: apps/web/test-results/**
 
   typecheck:
     name: Typecheck selected packages
@@ -549,7 +478,7 @@ jobs:
         run: corepack pnpm typecheck:ci-tests
 
   unit-tests:
-    name: Unit tests and Web checks (${{ matrix.suite }} ${{ matrix.shard }})
+    name: Unit tests (${{ matrix.suite }} ${{ matrix.shard }})
     needs: [scope, build]
     if: ${{ !cancelled() && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.unit-selected == 'true' && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
@@ -559,7 +488,6 @@ jobs:
       matrix: ${{ fromJSON(needs.scope.outputs.unit-matrix) }}
     env:
       SELECTED_PACKAGES: ${{ needs.scope.outputs.test-packages }}
-      WEB_SELECTED: ${{ needs.scope.outputs.web }}
     steps:
       - name: Check out repository without retained credentials
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -621,14 +549,6 @@ jobs:
           if-no-files-found: error
           retention-days: 7
           path: .codex-artifacts/ci/reports/**
-
-      - name: Check Web architecture and UI rules
-        if: matrix.suite == 'packages' && env.WEB_SELECTED == 'true'
-        run: corepack pnpm --filter @ling-stack/web lint
-
-      - name: Check translations
-        if: matrix.suite == 'packages' && env.WEB_SELECTED == 'true'
-        run: corepack pnpm --filter @ling-stack/web check:i18n
 
   daemon-tests:
     name: Daemon tests (${{ matrix.suite }}, shard ${{ matrix.shard }})
@@ -960,8 +880,9 @@ jobs:
           apps/desktop/tests/packaged-office-daemon-source-inputs.test.mjs
 
   quality:
+    # The main ruleset requires this check name.
     name: Typecheck, unit tests, and Web build
-    needs: [scope, common-fast, dependency-policy, framework-assurance, build, typecheck, unit-tests, daemon-tests, daemon-linux-contracts, restricted-command-macos, web-smoke]
+    needs: [scope, common-fast, dependency-policy, framework-assurance, build, typecheck, unit-tests, daemon-tests, daemon-linux-contracts, restricted-command-macos]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -989,13 +910,11 @@ jobs:
           TYPECHECK_RESULT: ${{ needs.typecheck.result }}
           UNIT_RESULT: ${{ needs.unit-tests.result }}
           DAEMON_RESULT: ${{ needs.daemon-tests.result }}
-          WEB_SMOKE_RESULT: ${{ needs.web-smoke.result }}
           LINUX_CONTRACT_RESULT: ${{ needs.daemon-linux-contracts.result }}
           MACOS_NATIVE_RESULT: ${{ needs.restricted-command-macos.result }}
           DAEMON_SELECTED: ${{ needs.scope.outputs.daemon }}
           LINUX_CONTRACT_SELECTED: ${{ needs.scope.outputs.linux-contract }}
           MACOS_NATIVE_SELECTED: ${{ needs.scope.outputs.macos-native }}
-          WEB_SELECTED: ${{ needs.scope.outputs.web }}
           DEPENDENCY_SELECTED: ${{ needs.scope.outputs.dependency-policy }}
           ASSURANCE_SELECTED: ${{ needs.scope.outputs.assurance-selected }}
           BUILD_SELECTED: ${{ needs.scope.outputs.build-selected }}

@@ -5,6 +5,7 @@ import { isDeepStrictEqual } from "node:util";
 const validationScripts = new Set(["test", "test:ci", "typecheck", "typecheck:ci"]);
 const testCommand = /^node --test(?: --test-concurrency=\d+)? ((?:(?:test|tests)\/\*\.test\.(?:mjs|ts) ?)+)$/u;
 const typecheckCommand = /^tsc -p (tsconfig(?:\.[\w-]+)?\.json)( --noEmit)?$/u;
+const workspacePackageName = /^@ling-stack\/[a-z0-9-]+$/u;
 
 /**
  * Recognize package-local Node/TypeScript validation migrations. Production
@@ -24,6 +25,12 @@ export function packageValidationScope({ current, previous, directory, root, rep
 
   const packageRoot = join(root, directory);
   const production = Object.values(productionScripts(scripts));
+  const workspaceBuilds = new Set(Object.entries({ ...metadata.dependencies, ...metadata.devDependencies })
+    .filter(([name, range]) => workspacePackageName.test(name) && range === "workspace:*")
+    .map(([name]) => `corepack pnpm --filter ${name} build`));
+  if (workspacePackageName.test(metadata.name) && typeof scripts["build:ci"] === "string" && scripts["build:ci"].trim()) {
+    workspaceBuilds.add(`corepack pnpm --filter ${metadata.name}... run build:ci`);
+  }
   const previousPaths = new Set(previousFiles);
   const testConfigs = new Set();
   const typedTestIncludes = new Set();
@@ -63,7 +70,8 @@ export function packageValidationScope({ current, previous, directory, root, rep
     for (const task of ["typecheck", "test"]) {
       const prefixes = task === "test" ? [...buildPrefixes, "corepack pnpm typecheck && "] : buildPrefixes;
       const suffixes = [candidate[`${task}:ci`], `corepack pnpm ${task}:ci`];
-      if (!prefixes.some(prefix => suffixes.some(suffix => candidate[task] === prefix + suffix))) return undefined;
+      if (!prefixes.some(prefix => suffixes.some(suffix =>
+        matchesValidationCommand(candidate[task], prefix + suffix, workspaceBuilds)))) return undefined;
     }
   }
   // A migration cannot narrow discovery by leaving another test language out.
@@ -88,6 +96,13 @@ export function packageValidationScope({ current, previous, directory, root, rep
   if (baselineTests.length === 0 || baselineTests.some(file =>
     !testIdentities.has(file.replace(/\.(?:mjs|ts)$/u, "")))) return undefined;
   return { testConfigs: [...testConfigs] };
+}
+
+function matchesValidationCommand(command, validation, workspaceBuilds) {
+  if (command === validation) return true;
+  const suffix = ` && ${validation}`;
+  return command.endsWith(suffix)
+    && command.slice(0, -suffix.length).split(" && ").every(step => workspaceBuilds.has(step));
 }
 
 function isolatedConfig(packageRoot, name, files) {

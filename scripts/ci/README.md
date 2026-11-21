@@ -14,6 +14,7 @@ Mixed changes union their affected packages and required lanes.
 | --- | --- |
 | Docs, nested READMEs, PR/Issue templates, CODEOWNERS, FUNDING | None; common checks and the required quality gate still run |
 | Allowlisted Markdown-link and public-repository checks | Common fast checks only |
+| Verified deletions under the root `output/` | Common fast checks only for an archive cleanup |
 | Package tests and test support | Owning package; shared test-support importers are included |
 | Offline assurance tooling or fixtures | Assurance and actual package-level validation importers; no unrelated product shards |
 | Package source or local build/typecheck configuration | Owning package and transitive consumers |
@@ -21,7 +22,7 @@ Mixed changes union their affected packages and required lanes.
 | Verified package-local Node/TypeScript validation migration with unchanged production metadata, build scripts and hooks | Complete owner tests/typecheck and dependency policy; shared test-support consumers remain selected |
 | The fixed Office/codesign source-review JSON records | Daemon build closure and macOS publication contracts; no unrelated product tests/typechecks |
 | Dependency-security regression tests | Owning package plus dependency policy |
-| Verified changes to `VERSION` and the root manifest's `version` field | Web build, its consumers, and checks for other changed inputs |
+| Verified changes to `VERSION` and the root manifest's `version` field | Version consistency and applicable consumers outside Web |
 | Root manifest or TypeScript/build configuration, lockfile, workspace configuration, patches, CI workflows/scripts, unknown paths | Full regression |
 | New, deleted, renamed, or unverifiable package identity, or unrecognized script changes | Full regression |
 | `full-ci`, manual dispatch, daily schedule | Full regression |
@@ -101,7 +102,7 @@ The SDK consumer still builds, packs and installs its producers independently;
 an assurance-only change does not require the product build artifact. Mixed
 changes retain the union of required checks, and unknown paths remain full scope.
 
-The aggregate validates explicit assurance/build/dependency/typecheck/unit/daemon/Linux-contract/macOS-native/Web selectors.
+The aggregate validates explicit assurance/build/dependency/typecheck/unit/daemon/Linux-contract/macOS-native selectors.
 Selected checks must succeed; only genuinely unselected checks may be skipped.
 Failure, cancellation, missing or malformed results never pass as a skip. Docs
 must select no product lanes, and full scope must select all lanes. No workflow
@@ -142,7 +143,7 @@ a requested package via `--if-present`.
 - Core: eight Linux shards when selected without Daemon, five when both suites are
   selected, with two serial file workers per shard. These jobs are
   included in the existing `unit-tests` matrix only when core is selected.
-- Other packages and Web checks: one Linux matrix entry only when at least one
+- Other packages: one Linux matrix entry only when at least one
   such package is selected, excluding core and daemon because their complete
   discovery runs in their own entries.
 - Daemon: [the platform manifest](daemon-test-platforms.json) assigns 519 portable
@@ -180,25 +181,14 @@ a requested package via `--if-present`.
   Daemon platforms are selected. A Linux-only Daemon test plan keeps the five Core
   and six Linux shard layout; a Darwin-only plan restores eight Core shards and
   omits the Linux Daemon suite. Full-scope runs add the standalone native smoke,
-  so the complete product wave fits twenty runner slots and five macOS slots.
+  so the complete product wave uses up to nineteen runner slots, including five macOS slots.
   Available capacity is controlled by GitHub and follows its
   [concurrency limits](https://docs.github.com/en/actions/reference/limits#job-concurrency-limits-for-github-hosted-runners).
-  Web smoke starts independently after the build. Other workflows can still consume shared
+  Other workflows can still consume shared
   organization capacity; shard counts do not guarantee immediate runner availability.
-- Production Web smoke: an independent required Linux job consumes the same
-  `ci-dist` output as other tests. It uses the official Playwright Noble container,
-  pinned by version and digest, with browsers and OS dependencies preinstalled.
-  The workflow contract checks its version against Web's Playwright dependency;
-  the job does not run apt or install browsers. Playwright execution
-  does not delay the shared build artifact. Mapped feature changes select the
-  corresponding specs. Shared, unknown, or full-scope inputs retain the common
-  QA, Companion and conversation-summary tests. Added and edited specs run in
-  production when already in the smoke plan, or on Vite dev for spec-only
-  coverage including HTML harnesses. The production QA and smoke groups run
-  serially, alongside the changed-spec group on a separate Vite server port.
-  The changed-spec group exits on its first failure. Specs that require local input are listed
-  separately in the scope report. The aggregate requires the selected Web
-  job to succeed.
+- The main CI excludes the Web package from build closures, typecheck, unit tests,
+  lint, translations, and browser validation for every trigger. Local Web
+  commands and Desktop packaging provide their own Web builds.
 - Framework assurance: selected complete-tier runs add an Ubuntu / Node
   22.22.1 lane for the zero-model offline tests, frozen controls and real external
   SDK consumer. It checks out complete history and owns fresh serial builds and

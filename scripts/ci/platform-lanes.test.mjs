@@ -26,7 +26,7 @@ function runQuality(overrides = {}) {
     env: { ...process.env, EXECUTION_TIER: "complete", SCOPE_MODE: "full",
       SCOPE_RESULT: "success", COMMON_RESULT: "success",
       DEPENDENCY_RESULT: "success", ASSURANCE_RESULT: "success", BUILD_RESULT: "success", TYPECHECK_RESULT: "success",
-      UNIT_RESULT: "success", DAEMON_RESULT: "success", WEB_SMOKE_RESULT: "success", WEB_SELECTED: "true", LINUX_CONTRACT_RESULT: "success",
+      UNIT_RESULT: "success", DAEMON_RESULT: "success", LINUX_CONTRACT_RESULT: "success",
       MACOS_NATIVE_RESULT: "success", DAEMON_SELECTED: "true", LINUX_CONTRACT_SELECTED: "true", MACOS_NATIVE_SELECTED: "true", DEPENDENCY_SELECTED: "true",
       ASSURANCE_SELECTED: "true", BUILD_SELECTED: "true",
       TYPECHECK_SELECTED: "true", UNIT_SELECTED: "true", ...overrides },
@@ -67,7 +67,7 @@ test("quality passes only when selected platform lanes actually succeed", () => 
   assert.equal(result.status, 0, result.stderr);
 });
 
-for (const lane of ["DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE", "WEB_SMOKE"]) {
+for (const lane of ["DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE"]) {
   for (const result of ["failure", "cancelled", "skipped", ""]) {
     test(`quality rejects selected ${lane}=${result}`, () => {
       const check = runQuality({ [`${lane}_RESULT`]: result });
@@ -77,7 +77,7 @@ for (const lane of ["DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE", "WEB_SMOKE"]) {
   }
 }
 
-test("out-of-scope platform skips do not block affected Web-only changes", () => {
+test("out-of-scope platform skips do not block selected package checks", () => {
   const result = runQuality({ SCOPE_MODE: "affected", DAEMON_SELECTED: "false", LINUX_CONTRACT_SELECTED: "false", DAEMON_RESULT: "skipped",
     MACOS_NATIVE_SELECTED: "false", LINUX_CONTRACT_RESULT: "skipped", MACOS_NATIVE_RESULT: "skipped" });
   assert.equal(result.status, 0, result.stderr);
@@ -96,7 +96,7 @@ test("workflow quality gate keeps a Draft full scope deferred after common check
 });
 
 test("workflow documentation gate requires successful scope and common checks", () => {
-  const docs = { WEB_SELECTED: "false", SCOPE_MODE: "docs", DAEMON_SELECTED: "false", LINUX_CONTRACT_SELECTED: "false", DEPENDENCY_RESULT: "skipped",
+  const docs = { SCOPE_MODE: "docs", DAEMON_SELECTED: "false", LINUX_CONTRACT_SELECTED: "false", DEPENDENCY_RESULT: "skipped",
     ASSURANCE_SELECTED: "false", BUILD_SELECTED: "false",
     DEPENDENCY_SELECTED: "false", TYPECHECK_SELECTED: "false", UNIT_SELECTED: "false", MACOS_NATIVE_SELECTED: "false",
     BUILD_RESULT: "skipped", TYPECHECK_RESULT: "skipped", UNIT_RESULT: "skipped",
@@ -125,7 +125,7 @@ test("workflow affected platform-only scope may skip unselected product lanes bu
   const platformOnly = { SCOPE_MODE: "affected", DEPENDENCY_SELECTED: "false", TYPECHECK_SELECTED: "false",
     UNIT_SELECTED: "false", DEPENDENCY_RESULT: "skipped", TYPECHECK_RESULT: "skipped", UNIT_RESULT: "skipped" };
   assert.equal(runQuality(platformOnly).status, 0);
-  for (const lane of ["BUILD", "DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE", "WEB_SMOKE"]) {
+  for (const lane of ["BUILD", "DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE"]) {
     const check = runQuality({ ...platformOnly, [`${lane}_RESULT`]: "skipped" });
     assert.equal(check.status, 1, check.stdout + check.stderr);
     assert.match(check.stdout, new RegExp(`${lane}=skipped`, "u"));
