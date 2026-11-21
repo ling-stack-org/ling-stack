@@ -37,13 +37,16 @@ class FakeSocket implements LingAppServerSocket {
           jsonrpc: "2.0",
           id: request.id,
           result: {
-            workspaceId: "workspace",
-            workItemId: "item",
-            revision: 2,
-            status: "running",
-            control: { state: "active", generation: 0, unresolvedEffectIds: [] },
-            holds: [],
-            currentExecutionRefs: [],
+            cwd: "/fixture",
+            workItem: {
+              workspaceId: "workspace",
+              workItemId: "item",
+              revision: "2",
+              status: "running",
+              control: { state: "active", generation: "0", unresolvedEffectIds: [] },
+              holds: [],
+              currentExecutionRefs: [],
+            },
           },
         }));
       } else if (request.method === "workItem/subscribe" && this.enableSubscriptionResponses) {
@@ -86,7 +89,7 @@ test("Ling App Server client negotiates, pings, reads and receives notifications
   assert.equal(initialized.connectionId, "conn_fixture");
   assert.deepEqual(await client.ping(), { ok: true, connectionId: "conn_fixture", serverTime: "2026-11-21T00:00:00.000Z" });
   const snapshot = await client.readWorkItem("workspace", "item");
-  assert.equal(snapshot.revision, 2);
+  assert.equal(snapshot.revision, "2");
 
   const notifications: string[] = [];
   client.onNotification((notification) => notifications.push(notification.method));

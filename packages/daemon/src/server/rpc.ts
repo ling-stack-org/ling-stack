@@ -24,6 +24,7 @@ import {
   type ControlPlaneEventsResponse,
   type LingAppServerContextInspectResult,
   type LingAppServerThreadSnapshotResult,
+  type LingAppServerWorkItemResult,
 } from "@ling-stack/contracts";
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 import type { DaemonContext } from "../context.js";
@@ -1670,7 +1671,7 @@ class RpcConnection {
     return this.cancelRun({ cwd, runId: turn.activeRunId });
   }
 
-  private readWorkItem(params: unknown): unknown {
+  private readWorkItem(params: unknown): LingAppServerWorkItemResult {
     const record = readParamsRecord(params);
     const cwd = readRpcCwd(record, this.defaultCwd);
     const workItemId = readStringField(record, "workItemId");
@@ -1681,7 +1682,7 @@ class RpcConnection {
     return { cwd, workItem: projectWorkItemSnapshot(workItem) };
   }
 
-  private controlWorkItem(action: "pause" | "resume" | "cancel", params: unknown): unknown {
+  private controlWorkItem(action: "pause" | "resume" | "cancel", params: unknown): LingAppServerWorkItemResult {
     const record = readParamsRecord(params);
     const cwd = readRpcCwd(record, this.defaultCwd);
     const workItemId = readStringField(record, "workItemId");

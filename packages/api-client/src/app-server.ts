@@ -42,6 +42,7 @@ import type {
   LingAppServerVerifyStartParams,
   LingAppServerVerifyStatusParams,
   LingAppServerVerifyStatusResult,
+  LingAppServerWorkItemResult,
   LingAppServerWorkItemSnapshot,
   LingAppServerWorkItemCollaborationAppendParams,
   LingAppServerWorkItemCollaborationAppendResult,
@@ -259,7 +260,8 @@ export class LingAppServerClient {
 
   async readWorkItem(workspaceId: string, workItemId: string): Promise<LingAppServerWorkItemSnapshot> {
     await this.connect();
-    return await this.request("workItem/read", { workspaceId, workItemId });
+    const { workItem } = await this.request<LingAppServerWorkItemResult>("workItem/read", { workspaceId, workItemId });
+    return workItem;
   }
 
   async controlWorkItem(
@@ -275,7 +277,8 @@ export class LingAppServerClient {
     },
   ): Promise<LingAppServerWorkItemSnapshot> {
     await this.connect();
-    return await this.request(`workItem/${action}`, input);
+    const { workItem } = await this.request<LingAppServerWorkItemResult>(`workItem/${action}`, input);
+    return workItem;
   }
 
   async readWorkItemCollaboration(params: LingAppServerWorkItemCollaborationReadParams): Promise<LingAppServerWorkItemCollaborationReadResult> {

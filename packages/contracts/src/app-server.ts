@@ -431,6 +431,11 @@ export interface LingAppServerWorkItemSnapshot {
   readonly eventCursor?: string;
 }
 
+export interface LingAppServerWorkItemResult {
+  readonly cwd: string;
+  readonly workItem: LingAppServerWorkItemSnapshot;
+}
+
 /** Durable collaboration records are append-only facts attached to a Work Item.
  * The payload is owned by the record kind and is intentionally opaque to the
  * transport so older clients can preserve records they do not understand. */

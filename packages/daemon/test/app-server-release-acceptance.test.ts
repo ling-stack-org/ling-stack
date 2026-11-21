@@ -565,6 +565,27 @@ test("Work Item acceptance, evidence and collaboration retries keep one event pe
   await restored.call("workItem/subscribe", { workItemId, cursor: String(persisted.at(-2)!.seq) });
   const restoredNotice = await waitFor(() => restored.notices.find(notice => notice.method === "workItem/collaboration/updated"));
   assert.equal(restoredNotice.params?.eventId, directNotice.params?.eventId);
+
+  const { daemonUrl, authToken } = fixture.transportOptions();
+  const url = new URL("/app-server/rpc", daemonUrl);
+  url.protocol = "ws:";
+  url.searchParams.set("cwd", fixture.cwd);
+  const sdk = new LingAppServerClient({
+    url: url.href, clientInfo: { name: "work-item-acceptance", version: "1" }, autoReconnect: false,
+    createSocket: address => new WebSocket(address, { headers: { Authorization: `Bearer ${authToken}` } }) as unknown as LingAppServerSocket,
+  });
+  t.after(() => sdk.close());
+  const current = await sdk.readWorkItem(workItem.workspaceId, workItemId);
+  assert.equal(current.workItemId, workItemId);
+  assert.equal(current.revision, String(message.workItemRevision));
+  const control = { workspaceId: workItem.workspaceId, workItemId, actorId: "local-user" };
+  const paused = await sdk.controlWorkItem("pause", { ...control, idempotencyKey: "sdk-pause",
+    expectedWorkItemRevision: Number(current.revision), expectedControlGeneration: Number(current.control.generation) });
+  assert.equal(paused.control.state, "paused");
+  const resumed = await sdk.controlWorkItem("resume", { ...control, idempotencyKey: "sdk-resume",
+    expectedWorkItemRevision: Number(paused.revision), expectedControlGeneration: Number(paused.control.generation) });
+  assert.equal(resumed.control.state, "active");
+  assert.equal((await sdk.readWorkItem(workItem.workspaceId, workItemId)).revision, resumed.revision);
 });
 
 test("an authenticated connection can decide its Run approval and rejects a different workspace binding", { timeout: 20_000 }, async t => {
