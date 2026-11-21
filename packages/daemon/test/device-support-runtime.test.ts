@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import type { DeviceActionRequestV1, DeviceDiagnosisReportV1, DeviceTaskAttemptV1, DeviceTaskStatusV1 } from "@ling-stack/contracts";
+import type { DeviceActionRequestV1, DeviceDiagnosisReportV1, DeviceTaskAttemptV1, DeviceTaskJournalPageV1, DeviceTaskStatusV1 } from "@ling-stack/contracts";
 import {
   buildOwnedDevicePlanningInput, createSqliteRunStore, DEFAULT_WORKSPACE_ID, DeviceBrokerError, digestRequest,
   modbusRtuRegisterCodec, SqliteDeviceSupportStore,
@@ -112,10 +112,12 @@ test("daemon runtime registers the Modbus codec and restores offline captures wi
   }
 });
 
-test("the local daemon diagnostic route records the PC-owned report and rejects a foreign Origin", { timeout: 15_000 }, async t => {
+test("the local daemon exposes its PC report and sequenced task journal only on direct loopback", { timeout: 15_000 }, async t => {
   const cwd = mkdtempSync(join(tmpdir(), "ling-device-pc-diagnosis-"));
   const workspace = createSqliteRunStore(cwd);
-  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd }, { storeFactory: () => workspace });
+  const authToken = "fixture-daemon-authority";
+  const headers = { Authorization: `Bearer ${authToken}` };
+  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, authToken, defaultWorkspaceCwd: cwd }, { storeFactory: () => workspace });
   t.after(async () => {
     await daemon.stop();
     rmSync(cwd, { recursive: true, force: true });
@@ -124,9 +126,10 @@ test("the local daemon diagnostic route records the PC-owned report and rejects 
   const address = daemon.server.address();
   assert.ok(address && typeof address === "object");
   const url = `http://127.0.0.1:${address.port}/v1/device-support/pc/diagnose`;
-  assert.equal((await fetch(url, { method: "POST", headers: { Origin: "https://example.invalid" } })).status, 403);
-  assert.equal((await fetch(url)).status, 405);
-  const response = await fetch(url, { method: "POST" });
+  assert.equal((await fetch(url, { method: "POST", headers: { ...headers, Origin: "https://example.invalid" } })).status, 403);
+  assert.equal((await fetch(url, { method: "POST" })).status, 401);
+  assert.equal((await fetch(url, { headers })).status, 405);
+  const response = await fetch(url, { method: "POST", headers });
   assert.equal(response.status, 200);
   assert.match(response.headers.get("cache-control") ?? "", /no-store/u);
   const { status, report } = await response.json() as { status: string; report: DeviceDiagnosisReportV1 };
@@ -137,6 +140,21 @@ test("the local daemon diagnostic route records the PC-owned report and rejects 
   assert.ok(network);
   assert.equal(typeof (network.value as { connected?: unknown }).connected, "boolean");
   assert.doesNotMatch(JSON.stringify(network.value), /gatewayReachable|dnsReachable/u);
+
+  const eventsUrl = `http://127.0.0.1:${address.port}/v1/device-support/tasks/${encodeURIComponent(report.taskId)}/events`;
+  assert.equal((await fetch(eventsUrl, { headers: { ...headers, "X-Forwarded-For": "192.0.2.42" } })).status, 403);
+  assert.equal((await fetch(`${eventsUrl}?limit=101`, { headers })).status, 400);
+  const pageResponse = await fetch(`${eventsUrl}?limit=1`, { headers });
+  assert.equal(pageResponse.status, 200);
+  assert.match(pageResponse.headers.get("cache-control") ?? "", /no-store/u);
+  const firstPage = await pageResponse.json() as DeviceTaskJournalPageV1;
+  assert.equal(firstPage.events[0]?.kind, "task_created");
+  assert.equal(firstPage.events[0]?.sequence, 1);
+  assert.equal(firstPage.hasMore, true);
+  const remainder = await (await fetch(`${eventsUrl}?afterSequence=1`, { headers })).json() as DeviceTaskJournalPageV1;
+  assert.equal(remainder.events[0]?.sequence, 2);
+  assert.equal(remainder.task.status, "succeeded");
+  assert.ok(remainder.events.some(event => event.kind === "device_plan_accepted"));
 
   const journal = new SqliteDeviceSupportStore({ databasePath: workspace.paths.databasePath });
   try {

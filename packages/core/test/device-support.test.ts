@@ -21,6 +21,7 @@ import {
   digestRequest,
 } from "../dist/device-support.js";
 import { createHomeAssistantOfflinePlaybook, createPcSoftwareDiagnosisPlaybook, isDevicePlaybookV1, runDeviceReadOnlyPlaybook } from "../dist/device-playbooks.js";
+import { readOwnedDeviceTaskJournal } from "../dist/device-task-event-projector.js";
 import { SqliteDeviceSupportStore } from "../dist/storage/sqlite/device-support-store.js";
 
 const now = "2026-11-21T00:00:00.000Z";
@@ -589,4 +590,38 @@ test("broker persists a pending action proposal for the remote approval facade",
   broker.proposeAction(proposed);
   assert.equal(store.getActionProposal(proposed.taskId)?.request.actionId, proposed.actionId);
   store.close();
+});
+
+test("owned task event pages keep a contiguous cursor and hide private evidence references", t => {
+  const { store } = brokerFixture();
+  t.after(() => store.close());
+  const owned = task("journal-task");
+  store.createTask(owned, now);
+  store.createTask(task("interleaved-task"), now);
+  store.transitionTask(owned.id, "executing", {}, now);
+  const observation: DeviceObservationV1 = {
+    id: "private-observation-reference", subjectId: profile.device.id, source: "adapter-result",
+    value: { text: "untrusted vendor output" }, observedAt: now, receivedAt: now, freshnessUntil: later,
+    quality: "good", redactionClass: "sensitive", provenance: [profile.device.id],
+  };
+  store.appendObservation(owned.id, observation, now);
+  store.appendObservation(owned.id, { ...observation, id: "public-observation-reference", redactionClass: "public" }, now);
+  store.transitionTask(owned.id, "succeeded", {}, later);
+
+  const scope = { store, workspaceId: profile.device.ownerScope, taskId: owned.id };
+  const first = readOwnedDeviceTaskJournal({ ...scope, limit: 2 });
+  const tail = readOwnedDeviceTaskJournal({ ...scope, afterSequence: first.events.at(-1)!.sequence });
+  assert.equal(first.hasMore, true);
+  assert.deepEqual(first.events.map(event => event.sequence), [1, 2]);
+  assert.deepEqual(tail.events.map(event => event.sequence), [3, 4, 5]);
+  assert.equal(tail.events[0]?.kind, "journal_changed");
+  assert.deepEqual(tail.events[1]?.evidenceRefs, ["public-observation-reference"]);
+  assert.doesNotMatch(JSON.stringify({ first, tail }), /private-observation-reference|untrusted vendor output|interleaved-task/);
+  assert.equal(tail.hasMore, false);
+  assert.equal(tail.task.status, "succeeded");
+  const rebound = readOwnedDeviceTaskJournal({ ...scope, generation: 2 });
+  assert.equal(rebound.requiresSnapshot, true);
+  assert.deepEqual(rebound.events, []);
+  assert.equal(rebound.latestSequence, 5);
+  assert.throws(() => readOwnedDeviceTaskJournal({ ...scope, workspaceId: "other-workspace" }), /unavailable in this workspace/);
 });

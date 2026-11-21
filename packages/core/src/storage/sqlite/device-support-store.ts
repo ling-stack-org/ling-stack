@@ -299,7 +299,11 @@ export class SqliteDeviceSupportStore {
     const nextRecord = { ...current, attempt: next };
     this.database.prepare("UPDATE device_task_attempts SET attempt_json=?,updated_at=? WHERE attempt_id=?")
       .run(JSON.stringify(next), now, attemptId);
-    this.appendEvent(current.attempt.taskId, "attempt_updated", { attemptId, status: next.status });
+    this.appendEvent(current.attempt.taskId, "attempt_updated", {
+      attemptId, status: next.status,
+      ...(patch.receipt ? { receiptStatus: patch.receipt.status } : {}),
+      ...(patch.verification ? { verificationStatus: patch.verification.status } : {}),
+    });
     return nextRecord;
   }
 
@@ -398,8 +402,12 @@ export class SqliteDeviceSupportStore {
     });
   }
 
-  listEvents(taskId: string): readonly DeviceTaskEvent[] {
-    return (this.database.prepare("SELECT sequence,task_id,type,body_json,created_at FROM device_task_events WHERE task_id=? ORDER BY sequence").all(taskId) as Row[])
+  listEvents(taskId: string, page?: { readonly offset: number; readonly limit: number }): readonly DeviceTaskEvent[] {
+    const statement = this.database.prepare(
+      `SELECT sequence,task_id,type,body_json,created_at FROM device_task_events WHERE task_id=? ORDER BY sequence${page ? " LIMIT ? OFFSET ?" : ""}`,
+    );
+    const rows = (page ? statement.all(taskId, page.limit, page.offset) : statement.all(taskId)) as Row[];
+    return rows
       .map(row => ({
         sequence: Number(row.sequence),
         taskId: readString(row, "task_id"),
@@ -407,6 +415,17 @@ export class SqliteDeviceSupportStore {
         body: JSON.parse(readString(row, "body_json")) as Record<string, unknown>,
         createdAt: readString(row, "created_at"),
       }));
+  }
+
+  countEvents(taskId: string): number {
+    return Number(this.database.prepare("SELECT count(*) AS count FROM device_task_events WHERE task_id=?").get(taskId)?.count ?? 0);
+  }
+
+  hasPublicObservation(taskId: string, observationId: string): boolean {
+    return !!this.database.prepare(`
+      SELECT 1 FROM device_observations
+      WHERE task_id=? AND observation_id=? AND json_extract(body_json,'$.redactionClass')='public'
+    `).get(taskId, observationId);
   }
 
   close(): void {

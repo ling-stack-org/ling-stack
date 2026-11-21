@@ -59,7 +59,7 @@ validation and the boundary of what remains unverified.
 | D14 | [~] | Semantic device graph and twin | Graph identity, relationships, merge/split, and freshness-aware twin views are implemented | Core graph/twin fixtures |
 | D15 | [~] | Cross-device task graph | Dependency validation, ready-node placement, owner leases, partial aggregation, and result lineage are implemented | Core task-graph fixtures |
 | D16 | [~] | Edge Runtime and bridge contract | Enrollment and revocation registry foundation is implemented | Core edge registry fixtures |
-| D17 | [~] | Event and telemetry plane | Ordered bounded event bus and stale-cursor rejection are implemented | Core event fixtures |
+| D17 | [~] | Event and telemetry plane | The owning Daemon task journal exposes resumable, redacted event pages | Core journal and Daemon HTTP fixtures |
 | D18 | [~] | Resource and adapter registry | Digest-bound install and rollback registry is implemented | Core resource fixtures |
 | D19 | [~] | Safety, policy, and secrets | Physical preconditions, emergency stop, and secret-reference checks are implemented | Core safety fixtures |
 | D20 | [~] | Fleet and lifecycle | Revisioned lifecycle transitions are implemented | Core lifecycle fixtures |
@@ -592,14 +592,20 @@ only on a successful install or a model response.
 - [x] Add a reusable event projector that resumes from a persisted snapshot,
   applies contiguous deltas, and returns an explicit resync requirement for stale
   cursors or sequence gaps.
-- [ ] Add task, state, health, capability, action, verification, evidence, and
-  resource events. Keep high-rate telemetry separate from durable task events.
+- [~] Project task state, plan, attempt, verification and public evidence from the
+  append-only Daemon task journal. The local event route provides a current task and
+  a bounded page by task sequence. Health, capability, resource and high-rate
+  telemetry producers remain open.
 - [~] Add gap recovery, snapshot projection, backpressure, sampling, and peer
   synchronization. Owner-stream events can now cross an authenticated peer frame
   with idempotent replay; snapshot exchange, backpressure and telemetry policy remain.
 
 ### Exit evidence
 
+- A local daemon serves the report and journal through direct loopback access.
+  Core fixtures interleave other tasks while keeping the queried task's cursor
+  contiguous and hiding private evidence references. An old generation requires
+  the current snapshot.
 - A state gap recovers from a retained range or current snapshot. A duplicate
   event does not change state.
 - High-rate sensor data is sampled or expired according to policy while task and
@@ -764,7 +770,7 @@ recorded per slice as they complete. [Detailed design](ling-device-fabric.md)
 | D14 | `1c79e5bc5` | `node --test packages/core/test/device-fabric-store.test.ts packages/core/test/device-fabric.test.ts` | [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Semantic graph, identity merge/split, relationships, Twin revisions, freshness projection, and persistent graph/Twin state are implemented | Multi-domain identity evidence and field convergence remain |
 | D15 | `ee7647659` | `corepack pnpm --filter @ling-stack/core build:ci`; `corepack pnpm --filter @ling-stack/core typecheck:ci`; `node --test packages/core/test/device-fabric-store.test.ts packages/core/test/device-fabric.test.ts` | [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Dependency validation, ready nodes, persistent target owner leases, stale graph revision rejection, aggregate node results, and persistent task graph revisions are implemented | Cross-runtime scheduler recovery and full graph cancellation/retry reconciliation remain |
 | D16 | `d58112948` | `node --test packages/core/test/device-fabric-store.test.ts packages/core/test/device-fabric.test.ts` | [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [device-fabric.ts](../../packages/core/src/device-fabric.ts) | Edge enrollment revisions and trace state are persisted alongside enrollment, revocation, and contiguous bridge sequence rules | Linux edge process, bridge transport, local journal and reconnect acceptance remain |
-| D17 | `aa8a54cf8` | `corepack pnpm --filter @ling-stack/contracts build:ci`; `corepack pnpm --filter @ling-stack/core build:ci`; `corepack pnpm --filter @ling-stack/core typecheck:ci`; `node --test packages/core/test/device-fabric-store.test.ts` | [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [device-event-projection.ts](../../packages/core/src/device-event-projection.ts), [ling-server.ts](../../packages/core/src/ling-server.ts) | Durable owner streams, replay-by-event-id, bounded retention for telemetry, durable-event retention, resumable snapshot projection, stale-cursor rejection, gap reporting, snapshot cursors and an idempotent owner-event to peer-frame bridge are implemented | Task/state event projections, telemetry sampling, backpressure, snapshot exchange and full peer synchronization remain |
+| D17 | `aa8a54cf8` and daemon journal projection | Contracts, Core and Daemon `build:ci` and `typecheck:ci`. Device journal, Fabric, Daemon runtime and Gateway fixtures (43 passed) | [Task event projection](../../packages/core/src/device-task-event-projector.ts), [Local task route](../../packages/daemon/src/features/device-support/routes.ts), [Runtime fixtures](../../packages/daemon/test/device-support-runtime.test.ts) | Daemon task journals provide bounded, resumable event pages and a current task projection through the direct-loopback route. Public events expose selected evidence references. Retention and peer-frame replay have separate Core fixtures | Mobile/Gateway event subscription, cross-runtime snapshot exchange, telemetry sampling and backpressure remain |
 | D18 | `e25216a21` and atomic resource payload activation | Core `build:ci` and `typecheck:ci`. `node --test packages/core/test/device-fabric-store.test.ts` (14 passed) | [Resource store](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [Activation tests](../../packages/core/test/device-fabric-store.test.ts) | SQLite commits the verified payload with its active revision. Active reads and rollback verify the digest. A missing or corrupted rollback payload leaves the current version active | Signed delivery channels, compatibility policy integration and production adapter installation remain |
 | D19 | `137d06478` | `node --test packages/core/test/device-fabric-store.test.ts packages/core/test/device-fabric.test.ts` | [device-secrets.ts](../../packages/core/src/device-secrets.ts), [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts) | Physical preconditions, emergency stop, target-scoped secret resolution and redacted secret-use records are implemented | Target controllers, policy integration and physical safety acceptance remain |
 | D20 | `f264c06c5` | `corepack pnpm --filter @ling-stack/core build:ci`; `corepack pnpm --filter @ling-stack/core typecheck:ci`; `node --test packages/core/test/device-fabric-store.test.ts packages/core/test/device-fabric.test.ts` | [device-access.ts](../../packages/core/src/device-access.ts), [device-fabric-store.ts](../../packages/core/src/storage/sqlite/device-fabric-store.ts), [device-fabric.ts contracts](../../packages/contracts/src/device-fabric.ts) | Revisioned lifecycle transitions, ownership transfer history, target-scoped shared/developer access grants and credential rotation/revocation metadata are persisted, with capability, expiry, revoke and revision checks | Fleet projections, upgrade, restore, retirement and field transfer acceptance remain |

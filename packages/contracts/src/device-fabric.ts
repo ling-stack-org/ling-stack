@@ -1,6 +1,7 @@
 import type {
   DeviceKindV1,
   DeviceTaskStatusV1,
+  DeviceTaskV1,
   JsonValue,
 } from "./device.js";
 
@@ -108,6 +109,16 @@ export interface DeviceEventEnvelopeV1 {
   readonly redactionClass?: "public" | "sensitive" | "secret_adjacent";
   readonly evidenceRefs?: readonly string[];
   readonly retentionClass?: "durable" | "bounded" | "telemetry";
+}
+
+export interface DeviceTaskJournalPageV1 {
+  readonly streamId: string;
+  readonly generation: number;
+  readonly latestSequence: number;
+  readonly task: DeviceTaskV1;
+  readonly events: readonly DeviceEventEnvelopeV1[];
+  readonly hasMore: boolean;
+  readonly requiresSnapshot: boolean;
 }
 
 export interface DeviceResourceManifestV1 {

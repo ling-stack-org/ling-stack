@@ -487,7 +487,7 @@ export async function routeRequest(
     await handleChromeBrowserPair(request, response, config, context.chromeBrowserSessions);
     return;
   }
-  if (await handleDeviceSupportRoute(url.pathname, request, response, context.deviceSupport)) return;
+  if (await handleDeviceSupportRoute(url, request, response, context.deviceSupport)) return;
 
   const maybeContinueRunInterventions = async (terminalRun: RunSession): Promise<void> => {
     const sourceRunId = terminalRun.parentRunId ?? terminalRun.id;
