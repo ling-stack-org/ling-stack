@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { readFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 
@@ -11,7 +10,6 @@ import {
   type RemoteCapabilityV1,
   type RemoteClientFrameV1,
   type RemoteDeviceListSnapshotV1,
-  type RemoteP256PublicJwkV1,
   type RemoteServerEventPayloadMapV1,
   type RemoteServerEventTypeV1,
 } from "@ling-stack/contracts";
@@ -22,12 +20,8 @@ import {
   type RemoteClientState,
   type RemoteWebSocketLike,
 } from "../dist/index.js";
+import { fixture } from "./canonical-signing-fixture.ts";
 
-const fixture: {
-  gatewayIdentity: { publicKeyJwk: RemoteP256PublicJwkV1; fingerprint: string };
-  authProof: { signatureBase64Url: string };
-  authChallenge: { input: { serverNonce: string }; signatureBase64Url: string };
-} = JSON.parse(await readFile(new URL("../../remote-protocol/fixtures/v1/canonical-signing.json", import.meta.url), "utf8"));
 const now = "2026-07-31T10:00:00.000Z";
 const gatewayId = "gateway-fixture-1";
 const deviceId = "device-fixture-1";
@@ -154,6 +148,9 @@ test("session authentication restores the binding and requests a workspace snaps
   const harness = createHarness();
   const client = harness.createClient();
   const socket = await harness.connect(client);
+  const proof = socket.sent[0];
+  assert.ok(proof && "candidateSessionId" in proof);
+  assert.equal(proof.candidateSessionId, "session-fixture-1");
   assert.equal(client.state.connection, "connected");
   assert.equal(client.state.workspaceBindingId, workspaceBindingId);
   assert.equal(harness.binding?.workspaceBindingId, workspaceBindingId);
