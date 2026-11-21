@@ -55,16 +55,17 @@ test("reports are durable while a file is running, and preserve stdout/stderr af
   assert.deepEqual(await readdir(f.options.temporaryDirectory), []);
 });
 
-test("serial files never reuse a previous file's runtime home or workspace", async t => {
+test("files have independent temporary roots, runtime homes and workspaces", async t => {
   const f = await fixture(t, [0, 1].map(index => `
-    import { writeFileSync } from 'node:fs'; import test from 'node:test';
+    import { writeFileSync } from 'node:fs'; import { tmpdir } from 'node:os'; import test from 'node:test';
     test('home', () => writeFileSync('${index}.json', JSON.stringify({
-      home: process.env.LING_STACK_HOME, workspace: process.env.LING_STACK_DEFAULT_WORKSPACE_CWD })));
+      home: process.env.LING_STACK_HOME, workspace: process.env.LING_STACK_DEFAULT_WORKSPACE_CWD, temp: tmpdir() })));
   `));
-  assert.equal(await runNodeTestFiles(f.files, f.options), 0);
+  assert.equal(await runNodeTestFiles(f.files, { ...f.options, concurrency: 2 }), 0);
   const records = await Promise.all([0, 1].map(async index => JSON.parse(await readFile(join(f.cwd, `${index}.json`), "utf8"))));
   assert.notEqual(records[0].home, records[1].home);
   assert.notEqual(records[0].workspace, records[1].workspace);
+  assert.notEqual(records[0].temp, records[1].temp);
 });
 
 test("an idle worker takes the next weighted file while another worker is still busy", async t => {

@@ -41,7 +41,7 @@ async function runFile(file, { cwd, shard, worker, suite, temporaryDirectory, st
     if (signal.aborted) return { file, worker, status: "cancelled", exitCode: null, signal: null,
       durationMs: Math.max(1, performance.now() - started) };
     const token = randomUUID();
-    const env = { ...process.env, LING_STACK_HOME: isolation.home, LING_STACK_DEFAULT_WORKSPACE_CWD: isolation.workspace,
+    const env = { ...process.env, TMPDIR: isolation.root, LING_STACK_HOME: isolation.home, LING_STACK_DEFAULT_WORKSPACE_CWD: isolation.workspace,
       LING_STACK_CI_TEST_OWNER: token };
     delete env.NODE_TEST_CONTEXT;
     const child = spawn(process.execPath, ["--test", "--test-concurrency=1", file], {
