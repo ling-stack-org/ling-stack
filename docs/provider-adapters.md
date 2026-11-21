@@ -310,7 +310,7 @@ Every adapter should have contract tests for:
 - Rate-limit or provider error normalization.
 - Secret redaction in logs.
 
-Current media contract coverage lives in `packages/providers/test/media-adapter-contract.test.mjs` and covers static success, forced failure, thrown error normalization, unsupported capability rejection, provider-kind registry wiring, vendor request planning, disabled/fake/live transport seams, live transport readiness validation, Seedream `image_generate` mock HTTP success/failure, image URL byte download validation, vendor operation capability boundaries, missing adapter errors, non-media provider rejection, and secret redaction.
+Current media contract coverage lives in `packages/providers/test/media-adapter-contract.test.ts` and covers static success, forced failure, thrown error normalization, unsupported capability rejection, provider-kind registry wiring, vendor request planning, disabled/fake/live transport seams, live transport readiness validation, Seedream `image_generate` mock HTTP success/failure, image URL byte download validation, vendor operation capability boundaries, missing adapter errors, non-media provider rejection, and secret redaction.
 
 ## Error Normalization
 

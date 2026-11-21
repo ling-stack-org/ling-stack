@@ -15,8 +15,22 @@ import {
   resolveMediaAdapter,
   resolveMediaVendorTransportGateConfig,
 } from "../dist/index.js";
+import type {
+  MediaAdapter,
+  MediaAdapterProviderConfig,
+  MediaExecutionVideoImageInput,
+  MediaVendorHttpRequestInit,
+  MediaVendorHttpResponse,
+  MediaVendorRequestPlan,
+  MediaVendorTransport,
+} from "../dist/index.js";
 
-const provider = {
+interface CapturedRequest {
+  url: string;
+  init: MediaVendorHttpRequestInit;
+}
+
+const provider: MediaAdapterProviderConfig = {
   id: "provider_seedream",
   kind: "seedream",
   displayName: "Seedream Image",
@@ -66,7 +80,7 @@ test("static media adapter exposes deterministic failure for contract tests", as
 
   assert.equal(result.status, "failed");
   assert.equal(result.errorCode, "provider_internal_error");
-  assert.match(result.errorMessage, /forced failure/);
+  assert.match(result.errorMessage ?? "", /forced failure/);
   assert.deepEqual(result.artifacts, []);
 });
 
@@ -82,12 +96,12 @@ test("media adapter executor normalizes thrown provider errors", async () => {
 
   assert.equal(result.status, "failed");
   assert.equal(result.errorCode, "rate_limited");
-  assert.match(result.errorMessage, /rate_limited/);
+  assert.match(result.errorMessage ?? "", /rate_limited/);
   assert.deepEqual(result.artifacts, []);
 });
 
 test("media adapter executor rejects unsupported operations before execution", async () => {
-  const adapter = {
+  const adapter: MediaAdapter = {
     id: "image-only",
     displayName: "Image Only",
     capabilities: ["image_generate"],
@@ -110,7 +124,7 @@ test("media adapter executor rejects unsupported operations before execution", a
 
   assert.equal(result.status, "failed");
   assert.equal(result.errorCode, "unsupported_capability");
-  assert.match(result.errorMessage, /does not support video_generate/);
+  assert.match(result.errorMessage ?? "", /does not support video_generate/);
 });
 
 test("media adapter execution errors keep their normalized code", () => {
@@ -335,7 +349,7 @@ test("live media vendor transport validates config before Seedream HTTP", async 
 });
 
 test("live media vendor transport calls Seedream image generation through the OpenAI-compatible images API", async () => {
-  const capturedRequests = [];
+  const capturedRequests: CapturedRequest[] = [];
   const imageBytes = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]);
   const registry = createDefaultMediaAdapterRegistry({
     mediaVendorTransport: createLiveMediaVendorTransport({
@@ -402,7 +416,7 @@ test("live media vendor transport calls Seedream image generation through the Op
 });
 
 test("live media vendor transport calls Seedream image edit with source image URLs", async () => {
-  const capturedRequests = [];
+  const capturedRequests: CapturedRequest[] = [];
   const imageBytes = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]);
   const registry = createDefaultMediaAdapterRegistry({
     mediaVendorTransport: createLiveMediaVendorTransport({
@@ -498,9 +512,9 @@ test("live media vendor transport rejects Seedream image edit without supported 
 });
 
 test("live media vendor transport calls OpenAI Images and stores b64 artifacts", async () => {
-  const capturedRequests = [];
+  const capturedRequests: CapturedRequest[] = [];
   const imageBytes = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]);
-  const openAIImageProvider = {
+  const openAIImageProvider: MediaAdapterProviderConfig = {
     ...provider,
     id: "provider_openai_image",
     kind: "openai-compatible",
@@ -569,7 +583,7 @@ test("live media vendor transport calls OpenAI Images and stores b64 artifacts",
 });
 
 test("OpenAI Images classifies content policy rejection separately from invalid configuration", async () => {
-  const openAIImageProvider = {
+  const openAIImageProvider: MediaAdapterProviderConfig = {
     ...provider,
     id: "provider_openai_image_policy",
     kind: "openai-compatible",
@@ -612,7 +626,7 @@ test("OpenAI Images classifies content policy rejection separately from invalid 
 });
 
 test("OpenAI Images classifies a successful upstream response without image data as unavailable result", async () => {
-  const openAIImageProvider = {
+  const openAIImageProvider: MediaAdapterProviderConfig = {
     ...provider,
     id: "provider_openai_image_empty_result",
     kind: "openai-compatible",
@@ -649,10 +663,10 @@ test("OpenAI Images classifies a successful upstream response without image data
 });
 
 test("live media vendor transport polls Seedance task status and downloads final video", async () => {
-  const capturedRequests = [];
+  const capturedRequests: CapturedRequest[] = [];
   const videoBytes = Uint8Array.from([0, 0, 0, 24, 102, 116, 121, 112, 109, 112, 52, 50]);
   let statusPollCount = 0;
-  const seedanceProvider = {
+  const seedanceProvider: MediaAdapterProviderConfig = {
     ...provider,
     id: "provider_seedance",
     kind: "seedance",
@@ -717,6 +731,7 @@ test("live media vendor transport polls Seedance task status and downloads final
   assert.equal(result.artifacts[0].type, "json");
   assert.match(result.artifacts[0].content ?? "", /live_seedance_video_generate_final/);
   assert.doesNotMatch(result.artifacts[0].content ?? "", /test-key/);
+  assert.ok(result.artifacts[0].content);
   assert.equal(JSON.parse(result.artifacts[0].content).response.id, "task_123");
   assert.equal(result.artifacts[1].type, "video");
   assert.equal(result.artifacts[1].contentType, "video/mp4");
@@ -731,13 +746,15 @@ test("live media vendor transport polls Seedance task status and downloads final
     duration: 5,
     watermark: false,
   });
-  assert.equal(capturedRequests.at(-1).url, "https://media.example.invalid/generated/video-1.mp4");
-  assert.deepEqual(capturedRequests.at(-1).init.headers, {});
+  const download = capturedRequests.at(-1);
+  assert.ok(download);
+  assert.equal(download.url, "https://media.example.invalid/generated/video-1.mp4");
+  assert.deepEqual(download.init.headers, {});
 });
 
 test("Seedance task submission sends role-bearing image inputs without persisting their Data URLs", async () => {
-  const capturedRequests = [];
-  const providerWithModel = {
+  const capturedRequests: CapturedRequest[] = [];
+  const providerWithModel: MediaAdapterProviderConfig = {
     ...provider,
     id: "provider_seedance_2_0",
     kind: "seedance",
@@ -811,10 +828,10 @@ test("Seedance image input validation fails closed for unknown versions and prov
       },
     }),
   });
-  const image = { role: "reference_image", imageUrl: "data:image/png;base64,YQ==" };
+  const image: MediaExecutionVideoImageInput = { role: "reference_image", imageUrl: "data:image/png;base64,YQ==" };
 
-  async function submit(model, videoImageInputs) {
-    const configured = {
+  async function submit(model: string, videoImageInputs: readonly MediaExecutionVideoImageInput[]) {
+    const configured: MediaAdapterProviderConfig = {
       ...provider,
       id: `provider_${model}`,
       kind: "seedance",
@@ -851,7 +868,7 @@ test("Seedance image input validation fails closed for unknown versions and prov
 });
 
 test("live media vendor transport rejects Seedance success without final video", async () => {
-  const seedanceProvider = {
+  const seedanceProvider: MediaAdapterProviderConfig = {
     ...provider,
     id: "provider_seedance",
     kind: "seedance",
@@ -898,7 +915,7 @@ test("live media vendor transport rejects Seedance success without final video",
 });
 
 test("live media vendor transport fails Seedance terminal failure status", async () => {
-  const seedanceProvider = {
+  const seedanceProvider: MediaAdapterProviderConfig = {
     ...provider,
     id: "provider_seedance",
     kind: "seedance",
@@ -1115,11 +1132,11 @@ test("live media vendor transport rejects invalid image downloads", async () => 
 });
 
 test("fake media vendor transport receives redacted request mapping and can add artifacts", async () => {
-  let capturedPlan;
-  const fakeTransport = {
+  const capturedPlans: MediaVendorRequestPlan[] = [];
+  const fakeTransport: MediaVendorTransport = {
     mode: "fake",
     async execute(request) {
-      capturedPlan = request.requestPlan;
+      capturedPlans.push(request.requestPlan);
       return {
         status: "succeeded",
         artifacts: [
@@ -1156,7 +1173,9 @@ test("fake media vendor transport receives redacted request mapping and can add 
   assert.equal(result.artifacts.length, 2);
   assert.equal(result.artifacts[1].type, "json");
   assert.match(result.artifacts[0].content ?? "", /Transport: fake/);
-  assert.deepEqual(capturedPlan?.payload.input, { apiKey: "[REDACTED]" });
+  assert.equal(capturedPlans.length, 1);
+  const [capturedPlan] = capturedPlans;
+  assert.deepEqual(capturedPlan.payload.input, { apiKey: "[REDACTED]" });
   assert.doesNotMatch(JSON.stringify(capturedPlan), /sk-test_123456789/);
 });
 
@@ -1213,7 +1232,11 @@ test("media adapter registry rejects non-media provider presets", () => {
   assert.match(resolution.errorMessage ?? "", /media-job provider preset/);
 });
 
-function jsonResponse(status, body, headers = { "content-type": "application/json" }) {
+function jsonResponse(
+  status: number,
+  body: unknown,
+  headers: Record<string, string> = { "content-type": "application/json" },
+): MediaVendorHttpResponse {
   const text = JSON.stringify(body);
   return {
     ok: status >= 200 && status < 300,
@@ -1232,7 +1255,12 @@ function jsonResponse(status, body, headers = { "content-type": "application/jso
   };
 }
 
-function textResponse(status, statusText, body, headers = { "content-type": "text/plain" }) {
+function textResponse(
+  status: number,
+  statusText: string,
+  body: string,
+  headers: Record<string, string> = { "content-type": "text/plain" },
+): MediaVendorHttpResponse {
   return {
     ok: status >= 200 && status < 300,
     status,
@@ -1250,7 +1278,12 @@ function textResponse(status, statusText, body, headers = { "content-type": "tex
   };
 }
 
-function binaryResponse(status, statusText, bytes, headers) {
+function binaryResponse(
+  status: number,
+  statusText: string,
+  bytes: Uint8Array<ArrayBuffer>,
+  headers: Record<string, string>,
+): MediaVendorHttpResponse {
   return {
     ok: status >= 200 && status < 300,
     status,
@@ -1271,10 +1304,10 @@ function binaryResponse(status, statusText, bytes, headers) {
   };
 }
 
-function headersObject(headers) {
+function headersObject(headers: Record<string, string>) {
   const normalized = new Map(Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value]));
   return {
-    get(name) {
+    get(name: string) {
       return normalized.get(name.toLowerCase()) ?? null;
     },
   };
