@@ -67,6 +67,11 @@ const overlays = [
   { version: 233, name: "code_assessment_history_filters", tables: [],
     indexes: ["code_assessment_target_history", "code_assessment_snapshot_history", "code_assessment_status_history",
       "code_assessment_updated_history", "code_assessment_finding_filters"], triggers: [] },
+  { version: 235, name: "add_work_item_control_projection", tables: [], indexes: [], triggers: [] },
+  { version: 236, name: "create_work_item_evidence", tables: ["work_item_evidence"],
+    indexes: ["idx_work_item_evidence_item_sequence"], triggers: [] },
+  { version: 237, name: "create_app_server_state", tables: ["app_server_state"],
+    indexes: ["idx_app_server_state_kind_updated"], triggers: [] },
 ];
 const schema = db => db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all();
 const markers = db => db.prepare("SELECT * FROM schema_migrations ORDER BY version").all();
