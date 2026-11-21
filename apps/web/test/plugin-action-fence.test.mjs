@@ -32,7 +32,7 @@ test("ordinary Plugin Manager actions retain their action-specific request keys"
 
 function action(actionName, requestId) {
   return {
-    pluginId: "trusted-local:cua-driver",
+    pluginId: "official:cua-driver",
     action: actionName,
     owner: "computer-control",
     requestId,

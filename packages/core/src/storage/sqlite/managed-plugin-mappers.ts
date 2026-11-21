@@ -66,6 +66,12 @@ export function mapManagedPluginPackage(row: Record<string, SQLOutputValue>): Ma
     installedAt: readString(row, "installed_at"),
     updatedAt: readString(row, "updated_at"),
     uninstalledAt: readNullableString(row, "uninstalled_at"),
+    artifactId: readNullableString(row, "artifact_id"),
+    platform: readNullableString(row, "platform") as ManagedPluginPackageRecord["platform"],
+    arch: readNullableString(row, "arch") as ManagedPluginPackageRecord["arch"],
+    sourceUrl: readNullableString(row, "source_url"),
+    catalogVersion: readNullableString(row, "catalog_version"),
+    previousVersion: readNullableString(row, "previous_version"),
   });
 }
 

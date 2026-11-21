@@ -83,7 +83,7 @@ export function parseWindowsBundledProviderActivation(value) {
     : undefined);
   if (
     !isRecord(plugin)
-    || plugin.id !== "trusted-local:cua-driver"
+    || plugin.id !== "official:cua-driver"
     || !isRecord(setup)
     || setup.distribution !== "bundled_embedded"
     || setup.providerState !== "ready"

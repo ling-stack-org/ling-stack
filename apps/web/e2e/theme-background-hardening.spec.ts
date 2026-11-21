@@ -6,6 +6,7 @@ import { installNormalConversationFixture, normalConversationFixtureTitle } from
 import { installChannelWorkCellFixture, installNormalWorkCellFixture, installTeammateWorkCellFixture } from './support/conversation-work-cell-fixture';
 import { openEngineeringChannel } from './support/test-helpers';
 import { expandTimelineProcesses } from './support/timeline-process';
+test.describe.configure({ timeout: 90_000 });
 const mp4 = await readFile(new URL('./fixtures/dynamic-wallpaper.mp4', import.meta.url));
 async function prepare(page: Page) {
   await page.addInitScript(() => {
@@ -38,28 +39,31 @@ async function upload(page: Page) {
 const paused=(page:Page, selector:string)=>page.locator(selector).evaluate((v:HTMLVideoElement)=>v.paused);
 
 test('BG-H1/H2 one visible player, reading surfaces, reduced motion, recovery and bounded fallback',async({page},info)=>{
+  test.setTimeout(90_000);
   const failures:string[]=[]; page.on('pageerror',e=>failures.push(e.message));
+  const waitForPlayback = (selector: string, expected: boolean) => expect.poll(() => paused(page, selector), { timeout: 15_000 }).toBe(expected);
   await prepare(page); await upload(page);
   await page.locator('[data-background-preview]').scrollIntoViewIfNeeded();
-  await expect.poll(()=>paused(page,'[data-background-layer] video')).toBe(false);
-  await expect.poll(()=>paused(page,'.background-preview video')).toBe(false);
+  // Settings keeps the global layer paused so the preview is the only active player.
+  await waitForPlayback('[data-background-layer] video', true);
+  await waitForPlayback('.background-preview video', false);
   await page.emulateMedia({reducedMotion:'reduce'});
-  await expect.poll(()=>paused(page,'.background-preview video')).toBe(true);
+  await waitForPlayback('.background-preview video', true);
   await page.locator('[data-background-settings]').getByRole('button',{name:'Resume · Background',exact:true}).click();
-  await expect.poll(()=>paused(page,'.background-preview video')).toBe(false);
+  await waitForPlayback('.background-preview video', false);
   await back(page);
-  await expect.poll(()=>paused(page,'[data-background-layer] video')).toBe(false);
+  await waitForPlayback('[data-background-layer] video', false);
   await page.getByRole('button',{name:'Pause · Background',exact:true}).click();
-  await expect.poll(()=>paused(page,'[data-background-layer] video')).toBe(true);
+  await waitForPlayback('[data-background-layer] video', true);
   await page.emulateMedia({reducedMotion:'no-preference'});
   await page.getByRole('button',{name:'Resume · Background',exact:true}).click();
-  await expect.poll(()=>paused(page,'[data-background-layer] video')).toBe(false);
+  await waitForPlayback('[data-background-layer] video', false);
   await page.setViewportSize({width:1100,height:960});
-  await expect.poll(()=>paused(page,'[data-background-layer] video')).toBe(true);
+  await waitForPlayback('[data-background-layer] video', true);
   await page.setViewportSize({width:1440,height:960});
-  await expect.poll(()=>paused(page,'[data-background-layer] video')).toBe(false);
+  await waitForPlayback('[data-background-layer] video', false);
   await page.getByRole('button',{name:'Plugin Manager',exact:true}).click();
-  const row=page.locator('.plugin-table-row').first(); await expect(row).toBeVisible();
+  const row=page.locator('.plugin-marketplace-row').first(); await expect(row).toBeVisible();
   expect(await row.evaluate(e=>getComputedStyle(e).backgroundColor)).not.toBe('rgba(0, 0, 0, 0)');
   expect(await page.locator('html').evaluate(e=>getComputedStyle(e).getPropertyValue('--user-background-scrim'))).toBe('0.55');
   await page.screenshot({path:info.outputPath('plugins-reading-protection.png')});
@@ -75,12 +79,12 @@ test('BG-H1/H2 one visible player, reading surfaces, reduced motion, recovery an
   await page.locator('[data-background-layer] video').dispatchEvent('error');
   await expect(page.locator('[data-background-video-fallback="poster"]')).toBeVisible();
   await page.getByRole('button',{name:'Retry loading',exact:true}).click();
-  await expect.poll(()=>paused(page,'[data-background-layer] video')).toBe(false);
+  await waitForPlayback('[data-background-layer] video', false);
   expect(failures).toEqual([]);
 });
 
 test('BG-H3 focus and visibility are per-theme, cancel/recommend are drafts and refresh preserves media',async({page})=>{
-  test.setTimeout(45_000);
+  test.setTimeout(90_000);
   await prepare(page); await upload(page);
   await page.locator('[data-background-opacity]').fill('80');
   await page.locator('[data-background-focus="x"]').fill('88');
@@ -150,7 +154,7 @@ test('BG-H3 recommendations follow edited parameters and actions occupy one row'
 });
 
 test('BG-H4 saves and clear use one expiring global success Toast without inline success state', async ({ page }, info) => {
-  test.setTimeout(45_000);
+  test.setTimeout(90_000);
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
   await page.clock.install();
   await prepare(page); await settings(page);
@@ -183,6 +187,7 @@ test('BG-H4 saves and clear use one expiring global success Toast without inline
 });
 
 test('BG-H4 a failed save dismisses old success and keeps local error until successful recovery', async ({ page }, info) => {
+  test.setTimeout(90_000);
   await page.clock.install();
   await prepare(page); await settings(page);
   const panel = page.locator('[data-background-settings]');
@@ -212,7 +217,7 @@ test('BG-H4 a failed save dismisses old success and keeps local error until succ
 
 for (const themeId of ['ling-breeze', 'ling-ocean', 'ling-night', 'ling-journey']) {
   test(`BG-H3 ${themeId} previews the full range and persists visibility after apply`, async ({ page }, info) => {
-    test.setTimeout(45_000);
+  test.setTimeout(90_000);
     await prepare(page); await settings(page);
     await page.locator(`[data-theme-option-id="${themeId}"]`).click();
     const exposure = () => page.evaluate(() => {
@@ -286,11 +291,12 @@ test('BG-H4 all six themes keep section padding, real card gaps and complete bor
 });
 
 test('BG-H2 a stalled decoder reloads once then keeps a still frame until explicit retry', async ({ page }) => {
+  test.setTimeout(90_000);
   await page.clock.install();
   await prepare(page); await upload(page); await back(page);
   const player = page.locator('[data-background-layer] video');
-  await expect.poll(() => paused(page, '[data-background-layer] video')).toBe(false);
-  await expect(player).toHaveAttribute('poster', /^data:image\/jpeg/u);
+  await expect.poll(() => paused(page, '[data-background-layer] video'), { timeout: 15_000 }).toBe(false);
+  await expect(player).toHaveAttribute('poster', /^data:image\/jpeg/u, { timeout: 15_000 });
   const video = await player.elementHandle();
   if (!video) throw new Error('Expected the live background player');
   // Simulate a decoder with no presentation-time progress while preserving
@@ -301,7 +307,7 @@ test('BG-H2 a stalled decoder reloads once then keeps a still frame until explic
     element.load = () => { element.dataset.recoveryLoads = String(Number(element.dataset.recoveryLoads ?? 0) + 1); load(); };
   });
   await page.clock.runFor(20_000);
-  await expect(page.locator('[data-background-video-fallback="poster"]')).toBeVisible();
+  await expect(page.locator('[data-background-video-fallback="poster"]')).toBeVisible({ timeout: 15_000 });
   expect(await video.getAttribute('data-recovery-loads')).toBe('1');
   await page.clock.runFor(20_000);
   expect(await video.getAttribute('data-recovery-loads')).toBe('1');

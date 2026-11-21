@@ -285,6 +285,8 @@ const WORK_ITEM_EVIDENCE_MIGRATION_VERSION = 236;
 const WORK_ITEM_EVIDENCE_MIGRATION_NAME = "create_work_item_evidence";
 const APP_SERVER_STATE_MIGRATION_VERSION = 237;
 const APP_SERVER_STATE_MIGRATION_NAME = "create_app_server_state";
+const PLUGIN_DISTRIBUTION_FIELDS_MIGRATION_VERSION = 143;
+const PLUGIN_DISTRIBUTION_FIELDS_MIGRATION_NAME = "add_plugin_distribution_fields";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
   database.exec(`
@@ -2457,6 +2459,33 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
 
       if (!hasManagedPluginPackagesMigration) {
         context.recordMigration(MANAGED_PLUGIN_PACKAGES_MIGRATION_VERSION, MANAGED_PLUGIN_PACKAGES_MIGRATION_NAME);
+      }
+    }
+
+    const hasPluginDistributionFieldsMigration = context.hasMigration(PLUGIN_DISTRIBUTION_FIELDS_MIGRATION_VERSION);
+    if (!hasPluginDistributionFieldsMigration || !context.hasTable("managed_plugin_packages")) {
+      if (context.hasTable("managed_plugin_packages")) {
+        if (!context.hasColumn("managed_plugin_packages", "artifact_id")) {
+          database.exec("ALTER TABLE managed_plugin_packages ADD COLUMN artifact_id TEXT;");
+        }
+        if (!context.hasColumn("managed_plugin_packages", "platform")) {
+          database.exec("ALTER TABLE managed_plugin_packages ADD COLUMN platform TEXT;");
+        }
+        if (!context.hasColumn("managed_plugin_packages", "arch")) {
+          database.exec("ALTER TABLE managed_plugin_packages ADD COLUMN arch TEXT;");
+        }
+        if (!context.hasColumn("managed_plugin_packages", "source_url")) {
+          database.exec("ALTER TABLE managed_plugin_packages ADD COLUMN source_url TEXT;");
+        }
+        if (!context.hasColumn("managed_plugin_packages", "catalog_version")) {
+          database.exec("ALTER TABLE managed_plugin_packages ADD COLUMN catalog_version TEXT;");
+        }
+        if (!context.hasColumn("managed_plugin_packages", "previous_version")) {
+          database.exec("ALTER TABLE managed_plugin_packages ADD COLUMN previous_version TEXT;");
+        }
+      }
+      if (!hasPluginDistributionFieldsMigration) {
+        context.recordMigration(PLUGIN_DISTRIBUTION_FIELDS_MIGRATION_VERSION, PLUGIN_DISTRIBUTION_FIELDS_MIGRATION_NAME);
       }
     }
 
@@ -5140,7 +5169,7 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
         )
         SELECT id, enabled, 0, 0, updated_at
         FROM managed_plugins
-        WHERE id = 'trusted-local:cua-driver'
+        WHERE id = 'official:cua-driver'
         ON CONFLICT(plugin_id) DO NOTHING;
       `);
 
@@ -5148,6 +5177,107 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
         context.recordMigration(CUA_DRIVER_ACTIVATION_MIGRATION_VERSION, CUA_DRIVER_ACTIVATION_MIGRATION_NAME);
       }
     }
+
+    // Older releases stored this plugin under trusted-local:cua-driver or
+    // bundled:cua-driver. Move the durable rows to the current canonical id
+    // before the next daemon startup projects the new descriptor. This repair
+    // is intentionally rerun on every startup: it owns no schema objects, and
+    // each statement is idempotent, so it must not add a global migration
+    // marker that would invalidate historical migration inventories.
+    database.exec(`
+        INSERT OR IGNORE INTO managed_plugins (
+          id, source_kind, version, enabled, disabled_reason, descriptor_json, created_at, updated_at
+        )
+        SELECT 'official:cua-driver', source_kind, version, enabled, disabled_reason, descriptor_json, created_at, updated_at
+        FROM managed_plugins
+        WHERE id IN ('trusted-local:cua-driver', 'bundled:cua-driver')
+        ORDER BY CASE id WHEN 'trusted-local:cua-driver' THEN 0 ELSE 1 END, updated_at DESC
+        LIMIT 1;
+
+        UPDATE managed_plugins
+        SET enabled = CASE WHEN enabled = 1 OR EXISTS (
+          SELECT 1 FROM managed_plugins AS legacy
+          WHERE legacy.id IN ('trusted-local:cua-driver', 'bundled:cua-driver') AND legacy.enabled = 1
+        ) THEN 1 ELSE 0 END
+        WHERE id = 'official:cua-driver';
+
+        INSERT OR IGNORE INTO managed_plugin_contributions (
+          plugin_id, contribution_kind, contribution_id, linked_resource_id, enabled, created_at, updated_at
+        )
+        SELECT 'official:cua-driver', contribution_kind, contribution_id, linked_resource_id, enabled, created_at, updated_at
+        FROM managed_plugin_contributions
+        WHERE plugin_id IN ('trusted-local:cua-driver', 'bundled:cua-driver');
+
+        UPDATE managed_plugin_contributions
+        SET enabled = 1
+        WHERE plugin_id = 'official:cua-driver'
+          AND EXISTS (
+            SELECT 1 FROM managed_plugin_contributions AS legacy
+            WHERE legacy.plugin_id IN ('trusted-local:cua-driver', 'bundled:cua-driver')
+              AND legacy.contribution_kind = managed_plugin_contributions.contribution_kind
+              AND legacy.contribution_id = managed_plugin_contributions.contribution_id
+              AND legacy.enabled = 1
+          );
+
+        INSERT OR IGNORE INTO managed_plugin_health_snapshots (
+          plugin_id, status_json, checked_at, expires_at, created_at, updated_at
+        )
+        SELECT 'official:cua-driver', status_json, checked_at, expires_at, created_at, updated_at
+        FROM managed_plugin_health_snapshots
+        WHERE plugin_id IN ('trusted-local:cua-driver', 'bundled:cua-driver')
+        ORDER BY checked_at DESC
+        LIMIT 1;
+
+        INSERT OR IGNORE INTO managed_plugin_packages (
+          plugin_id, source_kind, version, status, cache_ref, package_hash, manifest_json,
+          installed_at, updated_at, uninstalled_at, artifact_id, platform, arch, source_url,
+          catalog_version, previous_version
+        )
+        SELECT 'official:cua-driver', source_kind, version, status, cache_ref, package_hash, manifest_json,
+          installed_at, updated_at, uninstalled_at, artifact_id, platform, arch, source_url,
+          catalog_version, previous_version
+        FROM managed_plugin_packages
+        WHERE plugin_id IN ('trusted-local:cua-driver', 'bundled:cua-driver')
+        ORDER BY updated_at DESC
+        LIMIT 1;
+
+        INSERT OR IGNORE INTO cua_driver_activation_state (
+          plugin_id, requested_enabled, requested_revision, activation_epoch, updated_at
+        )
+        SELECT 'official:cua-driver', requested_enabled, requested_revision, activation_epoch, updated_at
+        FROM cua_driver_activation_state
+        WHERE plugin_id IN ('trusted-local:cua-driver', 'bundled:cua-driver')
+        ORDER BY updated_at DESC
+        LIMIT 1;
+
+        UPDATE cua_driver_activation_state
+        SET requested_enabled = CASE WHEN requested_enabled = 1 OR EXISTS (
+          SELECT 1 FROM cua_driver_activation_state AS legacy
+          WHERE legacy.plugin_id IN ('trusted-local:cua-driver', 'bundled:cua-driver')
+            AND legacy.requested_enabled = 1
+        ) THEN 1 ELSE 0 END
+        WHERE plugin_id = 'official:cua-driver';
+
+        UPDATE managed_plugin_events
+        SET plugin_id = 'official:cua-driver'
+        WHERE plugin_id IN ('trusted-local:cua-driver', 'bundled:cua-driver');
+
+        UPDATE managed_plugin_runtime_snapshots
+        SET plugin_ids_json = replace(replace(plugin_ids_json, 'trusted-local:cua-driver', 'official:cua-driver'), 'bundled:cua-driver', 'official:cua-driver'),
+            capabilities_json = replace(replace(capabilities_json, 'trusted-local:cua-driver', 'official:cua-driver'), 'bundled:cua-driver', 'official:cua-driver'),
+            policy_overlays_json = replace(replace(policy_overlays_json, 'trusted-local:cua-driver', 'official:cua-driver'), 'bundled:cua-driver', 'official:cua-driver');
+
+        DELETE FROM managed_plugin_contributions
+        WHERE plugin_id IN ('trusted-local:cua-driver', 'bundled:cua-driver');
+        DELETE FROM managed_plugin_health_snapshots
+        WHERE plugin_id IN ('trusted-local:cua-driver', 'bundled:cua-driver');
+        DELETE FROM managed_plugin_packages
+        WHERE plugin_id IN ('trusted-local:cua-driver', 'bundled:cua-driver');
+        DELETE FROM cua_driver_activation_state
+        WHERE plugin_id IN ('trusted-local:cua-driver', 'bundled:cua-driver');
+        DELETE FROM managed_plugins
+        WHERE id IN ('trusted-local:cua-driver', 'bundled:cua-driver');
+      `);
 
     const hasMcpAuthorityRevisionsMigration = context.hasMigration(MCP_AUTHORITY_REVISIONS_MIGRATION_VERSION);
     if (!hasMcpAuthorityRevisionsMigration || !context.hasTable("mcp_authority_revisions")) {

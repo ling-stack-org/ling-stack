@@ -1743,7 +1743,13 @@ export function managedPluginPackageSelectSql(whereClause: string): string {
       manifest_json,
       installed_at,
       updated_at,
-      uninstalled_at
+      uninstalled_at,
+      artifact_id,
+      platform,
+      arch,
+      source_url,
+      catalog_version,
+      previous_version
     FROM managed_plugin_packages
     ${whereClause}
   `;

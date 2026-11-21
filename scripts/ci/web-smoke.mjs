@@ -21,7 +21,14 @@ const domains = [
   [/^src\/(?:shared\/conversation\/change-summary\/|styles\/shared\/conversation-change-summary\.css$|api\/workspace-changes\.ts$)/u, [summary]],
   [/^src\/(?:features\/media\/|styles\/features\/(?:media-jobs|media-production)\/)/u, ["e2e/media-jobs.spec.ts", "e2e/media-production.spec.ts"]],
   [/^src\/(?:features\/plugins\/|styles\/plugins\/)/u, ["e2e/plugins.spec.ts", "e2e/ui2-plugin-manager.spec.ts"]],
-  [/^src\/styles\/theme-background\.css$/u, ["e2e/full-window-background.spec.ts", "e2e/theme-full-window-p0.spec.ts"]],
+  [/^src\/styles\/theme-background\.css$/u, ["e2e/theme-full-window-p0.spec.ts"]],
+];
+// These suites exercise browser-only storage code by importing source modules
+// from the Vite dev server. Keep them in the changed/dev lane; production
+// preview serves only the compiled bundle and cannot resolve /src/*.ts URLs.
+const devDomains = [
+  [/^src\/styles\/theme-background\.css$/u, ["e2e/full-window-background.spec.ts"]],
+  [/^src\/shared\/ui\/(?:background\/|theme\/web-theme-database\.ts$)/u, ["e2e/full-window-background.spec.ts"]],
 ];
 
 /** @param {string} file */
@@ -52,11 +59,10 @@ export function planWebSmoke({ files, full = false }) {
       continue;
     }
     const domain = domains.find(([pattern]) => pattern.test(file));
-    if (domain) {
-      for (const spec of domain[1]) smoke.add(spec);
-    } else {
-      useBaseline = true;
-    }
+    const devDomain = devDomains.find(([pattern]) => pattern.test(file));
+    if (domain) for (const spec of domain[1]) smoke.add(spec);
+    if (devDomain) for (const spec of devDomain[1]) changed.add(spec);
+    if (!domain && !devDomain) useBaseline = true;
   }
   if (!useBaseline && smoke.size === 0 && changed.size === 0) useBaseline = true;
   for (const spec of baseline) if (useBaseline || changed.has(spec)) smoke.add(spec);

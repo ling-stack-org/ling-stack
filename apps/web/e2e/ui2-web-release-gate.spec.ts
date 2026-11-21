@@ -188,8 +188,7 @@ test("WEB-REL-01 Shell representative surface", async ({ page }) => {
   const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await expect(navigation.getByRole("button", { name: "Inbox" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Work Board" })).toHaveCount(0);
-  const action = navigation.getByRole("button", { name: "Plugin Manager" });
-  await exerciseKeyboardFocus(action);
+  await expect(navigation.getByRole("button", { name: "Engineering", exact: true })).toBeVisible();
   await finishScenario(page, scenarios.shell, runtime);
 });
 
@@ -279,8 +278,8 @@ test("WEB-REL-07 Plugin Manager representative surface", async ({ page }) => {
   await navigation.getByRole("button", { name: "Engineering", exact: true }).click();
   await navigation.getByRole("button", { name: "Plugin Manager" }).click();
   const surface = page.locator(".plugin-manager-page .settings-plugin-manager");
-  await expect(surface.locator(".plugin-table-row").first()).toBeVisible();
-  await exerciseKeyboardFocus(surface.locator(".plugin-table-row").first().getByRole("button").first());
+  await expect(surface.locator(".plugin-marketplace-row").first()).toBeVisible();
+  await exerciseKeyboardFocus(surface.locator(".plugin-marketplace-row").first().getByRole("button").first());
   await finishScenario(page, scenarios.pluginManager, runtime);
 });
 
@@ -290,7 +289,7 @@ test("WEB-REL-08 Automations representative surface", async ({ page }) => {
   await mockDaemon(page, state);
   await installReleaseAutomationApi(page);
   await page.goto("/");
-  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Scheduled tasks" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Automation" }).click();
   const surface = page.locator("[data-automation-ui2-page]");
   const row = surface.locator('[data-automation-id="automation_release_gate"]');
   await expect(row).toBeVisible();

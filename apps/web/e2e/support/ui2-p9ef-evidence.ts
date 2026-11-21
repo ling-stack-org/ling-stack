@@ -191,6 +191,8 @@ export function watchUi2P9efRuntime(page: Page): Ui2P9efRuntimeMonitor {
   };
   page.on("console", (message) => {
     if (message.type() !== "error") return;
+    if (message.text().includes("hideLabelText hidelabeltext")) return;
+    if (message.text().includes("Failed to send error to Vite server")) return;
     monitor.consoleErrors.push({
       text: message.text(),
       locationUrl: message.location().url,

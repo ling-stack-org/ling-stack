@@ -14,7 +14,7 @@ import {
 import { WebSocket } from "ws";
 import { createDaemonServer } from "../dist/index.js";
 
-test("built-in Chrome plugin pairs an allowlisted extension and exposes six MCP tools", async () => {
+test("official Chrome plugin pairs an allowlisted extension and exposes six MCP tools", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-chrome-api-"));
   const runner = new ChromeToolRunner();
   assert.deepEqual(CHROME_BROWSER_DEFAULT_EXTENSION_IDS, [
@@ -39,6 +39,8 @@ test("built-in Chrome plugin pairs an allowlisted extension and exposes six MCP 
     assert.equal(chrome.status, "disabled");
     assert.equal(chrome.setup.kind, "browser_extension");
     assert.equal(chrome.setup.browserState, "host_missing");
+    assert.equal(chrome.actions.canRuntimePreview, true);
+    assert.equal(chrome.runtimePreview.blockers.includes("Plugin package is not installed."), false);
 
     const enabled = await postJson(`${pluginUrl}/enable?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(enabled.plugin.status, "enabled");

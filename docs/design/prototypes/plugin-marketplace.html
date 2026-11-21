@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ling 插件商店 · 设计稿</title>
+  <style>
+    :root {
+      --bg: #f5f6f8;
+      --panel: #ffffff;
+      --panel-soft: #f8f9fb;
+      --line: #e7e9ee;
+      --line-strong: #d9dde6;
+      --text: #20232a;
+      --muted: #747b88;
+      --faint: #9ca3af;
+      --accent: #4f46e5;
+      --accent-soft: #eef0ff;
+      --success: #25855a;
+      --success-soft: #eaf7ef;
+      --shadow: 0 18px 50px rgba(32, 35, 42, .09);
+      font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; color: var(--text); background: #e9ebf0; }
+    button, input { font: inherit; }
+    button { cursor: pointer; }
+    .canvas { width: 1180px; min-height: 760px; margin: 30px auto; padding: 20px; }
+    .window { display: grid; grid-template-columns: 78px 220px 1fr; min-height: 690px; overflow: hidden; border: 1px solid #dfe2e8; border-radius: 18px; background: var(--panel); box-shadow: var(--shadow); }
+    .rail { display: flex; flex-direction: column; align-items: center; padding: 18px 0; border-right: 1px solid var(--line); background: #252831; color: #c8ccd5; }
+    .brand { display: grid; width: 36px; height: 36px; margin-bottom: 28px; border-radius: 11px; place-items: center; color: #fff; background: linear-gradient(135deg, #818cf8, #4f46e5); font-weight: 800; font-size: 15px; }
+    .rail-item { display: grid; width: 42px; height: 42px; margin: 4px 0; border: 0; border-radius: 11px; place-items: center; color: #aeb4c0; background: transparent; }
+    .rail-item.active { color: #fff; background: #3a3e4b; }
+    .rail-item:hover { background: #333744; color: #fff; }
+    .rail svg, .source-icon svg, .plugin-icon svg, .search svg { width: 18px; height: 18px; }
+    .rail-bottom { margin-top: auto; }
+    .sources { padding: 25px 16px; border-right: 1px solid var(--line); background: #fbfcfd; }
+    .sources h1 { margin: 0 10px 5px; font-size: 17px; letter-spacing: -.02em; }
+    .sources-caption { margin: 0 10px 22px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+    .source-group { display: grid; gap: 4px; }
+    .source-label { padding: 0 10px 8px; color: var(--faint); font-size: 10px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
+    .source { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 38px; padding: 0 10px; border: 0; border-radius: 9px; color: #5d6471; background: transparent; text-align: left; }
+    .source strong { margin-left: auto; color: #a0a6b1; font-size: 11px; font-weight: 500; }
+    .source.active { color: var(--text); background: #eef0f6; font-weight: 650; }
+    .source.active strong { color: #6f7582; }
+    .source:hover { background: #f0f2f6; }
+    .source-icon { display: grid; width: 20px; height: 20px; place-items: center; color: #818895; }
+    .source.active .source-icon { color: var(--accent); }
+    .source-footer { display: flex; align-items: center; gap: 8px; margin: 24px 10px 0; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 3px var(--success-soft); }
+    .content { min-width: 0; padding: 32px 38px 28px; background: var(--panel); }
+    .header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
+    .eyebrow { margin: 0 0 7px; color: var(--accent); font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+    .title { margin: 0; font-size: 28px; letter-spacing: -.035em; }
+    .subtitle { max-width: 530px; margin: 9px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+    .source-state { display: inline-flex; align-items: center; gap: 8px; padding: 8px 11px; border: 1px solid #d9eee0; border-radius: 9px; color: var(--success); background: #f3fbf5; font-size: 11px; white-space: nowrap; }
+    .source-state.unavailable { border-color: #f0dada; color: #a94b4b; background: #fff7f7; }
+    .source-state.loading-state { border-color: #e4e6eb; color: #777f8c; background: #f8f9fb; }
+    .toolbar { display: flex; align-items: center; gap: 9px; margin-top: 28px; }
+    .search { display: flex; align-items: center; flex: 1; gap: 9px; height: 38px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 9px; color: #8c93a1; background: var(--panel); }
+    .search:focus-within { border-color: #a7a9f8; box-shadow: 0 0 0 3px var(--accent-soft); }
+    .search input { width: 100%; border: 0; outline: 0; color: var(--text); background: transparent; font-size: 12px; }
+    .search input::placeholder { color: #a5abb5; }
+    .filter { height: 38px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 9px; color: #646b78; background: #fff; font-size: 12px; }
+    .tabs { display: flex; gap: 22px; margin-top: 26px; border-bottom: 1px solid var(--line); }
+    .tab { position: relative; padding: 0 1px 11px; border: 0; color: var(--muted); background: transparent; font-size: 12px; }
+    .tab.active { color: var(--text); font-weight: 700; }
+    .tab.active::after { position: absolute; right: 0; bottom: -1px; left: 0; height: 2px; border-radius: 2px 2px 0 0; background: var(--accent); content: ""; }
+    .list { margin-top: 4px; }
+    .row { display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; align-items: center; gap: 14px; min-height: 84px; padding: 14px 5px; border-bottom: 1px solid var(--line); }
+    .row:hover { margin: 0 -12px; padding-right: 17px; padding-left: 17px; border-radius: 10px; background: #fafbfc; }
+    .plugin-icon { display: grid; width: 40px; height: 40px; border: 1px solid var(--line); border-radius: 11px; place-items: center; color: #556070; background: linear-gradient(145deg, #fbfcff, #f1f3f7); }
+    .plugin-icon.chrome { color: #3f75e5; }
+    .plugin-icon.office { color: #d86a3a; }
+    .plugin-icon.cua { color: #6b54d9; }
+    .plugin-icon.auto { color: #168460; }
+    .row-copy { min-width: 0; }
+    .row-name { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .row-name strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+    .official { padding: 3px 6px; border-radius: 5px; color: #5c58bf; background: #f0efff; font-size: 10px; white-space: nowrap; }
+    .install-status { padding: 3px 6px; border-radius: 5px; color: #747b88; background: #f3f4f6; font-size: 10px; white-space: nowrap; }
+    .description { margin-top: 4px; overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+    .meta { display: flex; gap: 10px; margin-top: 5px; color: var(--faint); font-size: 10px; }
+    .action { min-width: 68px; height: 30px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: 8px; color: #343944; background: #fff; font-size: 11px; }
+    .action:hover { border-color: #9a9df2; color: var(--accent); background: #fafaff; }
+    .action.primary { border-color: var(--accent); color: #fff; background: var(--accent); }
+    .action.primary:hover { background: #4338ca; }
+    .action.installed { border-color: #d9eee0; color: var(--success); background: var(--success-soft); cursor: default; }
+    .footnote { display: flex; align-items: center; gap: 7px; margin-top: 18px; color: var(--faint); font-size: 10px; }
+    .footnote svg { width: 13px; height: 13px; }
+    .state-switcher { position: fixed; right: 22px; bottom: 18px; display: flex; gap: 6px; padding: 7px; border: 1px solid #dfe2e8; border-radius: 11px; background: rgba(255,255,255,.94); box-shadow: 0 8px 24px rgba(32,35,42,.12); }
+    .state-switcher button { height: 28px; padding: 0 9px; border: 0; border-radius: 7px; color: #737a87; background: transparent; font-size: 10px; }
+    .state-switcher button.active { color: #fff; background: #252831; }
+    .empty { display: grid; min-height: 390px; place-items: center; border-bottom: 1px solid var(--line); }
+    .empty-inner { display: grid; justify-items: center; max-width: 360px; text-align: center; }
+    .empty-icon { display: grid; width: 52px; height: 52px; margin-bottom: 15px; border: 1px solid var(--line); border-radius: 15px; place-items: center; color: #9299a6; background: var(--panel-soft); }
+    .empty h2 { margin: 0; font-size: 17px; }
+    .empty p { margin: 9px 0 18px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+    .empty .action { min-width: 74px; }
+    .loading .skeleton { height: 10px; border-radius: 5px; background: linear-gradient(90deg, #eef0f4, #f8f9fb, #eef0f4); background-size: 200% 100%; animation: shimmer 1.4s infinite; }
+    .loading .row-copy { display: grid; gap: 8px; }
+    .loading .skeleton.short { width: 45%; }
+    .loading .skeleton.long { width: 78%; }
+    @keyframes shimmer { to { background-position: -200% 0; } }
+    @media (max-width: 900px) { .canvas { width: 100%; margin: 0; padding: 0; } .window { min-height: 100vh; border-radius: 0; grid-template-columns: 68px 190px 1fr; } .content { padding: 25px; } }
+  </style>
+</head>
+<body>
+  <main class="canvas">
+    <section class="window" aria-label="Ling 插件商店设计稿">
+      <nav class="rail" aria-label="主导航">
+        <div class="brand">L</div>
+        <button class="rail-item" aria-label="对话"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 5.5h14v10H9l-4 3v-13Z"/></svg></button>
+        <button class="rail-item active" aria-label="插件"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m12 4 2.2 4.7 5.1.7-3.7 3.6.9 5.1-4.5-2.4-4.5 2.4.9-5.1-3.7-3.6 5.1-.7L12 4Z"/></svg></button>
+        <button class="rail-item" aria-label="设置"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 8.1a3.9 3.9 0 1 0 0 7.8 3.9 3.9 0 0 0 0-7.8Z"/><path d="m19.4 13.5 1.1.9-1.8 3-1.4-.5a8 8 0 0 1-1.9 1.1l-.3 1.5h-3.5l-.3-1.5a8 8 0 0 1-1.9-1.1l-1.4.5-1.8-3 1.1-.9a8 8 0 0 1 0-2.2l-1.1-.9 1.8-3 1.4.5a8 8 0 0 1 1.9-1.1l.3-1.5h3.5l.3 1.5a8 8 0 0 1 1.9 1.1l1.4-.5 1.8 3-1.1.9a8 8 0 0 1 0 2.2Z"/></svg></button>
+        <div class="rail-bottom"><button class="rail-item" aria-label="帮助"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8.5"/><path d="M9.8 9.4a2.5 2.5 0 1 1 3.4 2.3c-.9.4-1.2.9-1.2 1.7v.3M12 16.8h.01"/></svg></button></div>
+      </nav>
+      <aside class="sources">
+        <h1>插件</h1>
+        <p class="sources-caption">从官方源选择要安装的能力</p>
+        <div class="source-group">
+          <div class="source-label">插件源</div>
+          <button class="source active"><span class="source-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7.5 12 4l8 3.5v9L12 20l-8-3.5v-9Z"/><path d="m4.4 7.7 7.6 3.4 7.6-3.4M12 11.1V20"/></svg></span><span>官方插件</span><strong>4</strong></button>
+          <button class="source"><span class="source-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 4.5h9l3 3v12H6v-15Z"/><path d="M14.5 4.5v4h3M8.5 12h7M8.5 15.5h5"/></svg></span><span>已安装</span><strong>2</strong></button>
+          <button class="source"><span class="source-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M5 5.5h14v10H9l-4 3v-13Z"/></svg></span><span>本地插件</span><strong>1</strong></button>
+        </div>
+        <div class="source-footer"><span class="dot"></span><span>官方源已验证</span></div>
+      </aside>
+      <section class="content">
+        <div class="header">
+          <div><p class="eyebrow">Marketplace</p><h2 class="title">官方插件</h2><p class="subtitle">安装经过 Ling 验证的浏览器、文档与自动化能力。每个插件都可单独更新和卸载。</p></div>
+          <div class="source-state" id="source-state"><span class="dot"></span>源已连接 · v0.4.0</div>
+        </div>
+        <div class="toolbar"><label class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="10.8" cy="10.8" r="6.3"/><path d="m16 16 4 4"/></svg><input aria-label="搜索插件" placeholder="搜索插件" /></label></div>
+        <div class="list" id="list">
+          <article class="row"><div class="plugin-icon chrome"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.4"/><path d="M12 8.6h8M9.1 14.9 5 8M14.9 14.9 11.5 20"/></svg></div><div class="row-copy"><div class="row-name"><strong>Chrome 浏览器</strong><span class="official">官方</span><span class="install-status">已安装</span></div><div class="description">让 Ling 读取页面、点击控件并执行浏览器自动化。</div><div class="meta"><span>v1.2.0</span><span>macOS · Windows</span><span>18 MB</span></div></div><button class="action installed">已安装</button></article>
+          <article class="row"><div class="plugin-icon office"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M5 5.5h9.5L19 10v8.5H5v-13Z"/><path d="M14.5 5.5V10H19M8 13h8M8 16h5"/></svg></div><div class="row-copy"><div class="row-name"><strong>Office 文档</strong><span class="official">官方</span><span class="install-status">未安装</span></div><div class="description">读取、编辑并生成 Word、Excel 和 PowerPoint 文档。</div><div class="meta"><span>v0.9.4</span><span>macOS · Windows</span><span>26 MB</span></div></div><button class="action primary">安装</button></article>
+          <article class="row"><div class="plugin-icon cua"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 4.5h12v15H6z"/><path d="M9 8.5h6M9 12h6M9 15.5h3"/></svg></div><div class="row-copy"><div class="row-name"><strong>桌面控制</strong><span class="official">官方</span><span class="install-status">未安装</span></div><div class="description">在授权范围内操作桌面窗口和本地应用。</div><div class="meta"><span>v0.6.1</span><span>macOS</span><span>34 MB</span></div></div><button class="action primary">安装</button></article>
+          <article class="row"><div class="plugin-icon auto"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="7.5"/><path d="M12 8v4l2.8 1.8M5.5 5.5 4 4M18.5 5.5 20 4"/></svg></div><div class="row-copy"><div class="row-name"><strong>自动化任务</strong><span class="official">官方</span><span class="install-status">未安装</span></div><div class="description">按计划执行重复任务，并在对话中查看结果。</div><div class="meta"><span>v0.4.0</span><span>全部平台</span><span>8 MB</span></div></div><button class="action primary">安装</button></article>
+        </div>
+        <div class="footnote"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3.5 20 7v5.5c0 4.4-3.4 7.2-8 8-4.6-.8-8-3.6-8-8V7l8-3.5Z"/><path d="m8.5 12 2.2 2.2 4.8-5"/></svg><span>插件来自 Ling 官方 GitHub Release，安装前会校验签名与 SHA-256。</span></div>
+      </section>
+    </section>
+  </main>
+  <div class="state-switcher" aria-label="设计稿状态切换"><button data-state="ready" class="active">有源</button><button data-state="loading">加载中</button><button data-state="empty">无源</button></div>
+  <script>
+    const list = document.querySelector('#list');
+    const readyMarkup = list.innerHTML;
+    const loadingMarkup = '<div class="loading">' + [1,2,3,4].map(() => '<article class="row"><div class="plugin-icon"></div><div class="row-copy"><div class="skeleton short"></div><div class="skeleton long"></div><div class="skeleton" style="width:35%"></div></div><div class="skeleton" style="width:68px"></div></article>').join('') + '</div>';
+    const emptyMarkup = '<div class="empty"><div class="empty-inner"><div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M4 7.5 12 4l8 3.5v9L12 20l-8-3.5v-9Z"/><path d="M4.5 8 12 11.3 19.5 8M12 11.3V20"/></svg></div><h2>官方插件源暂时不可用</h2><p>无法读取插件列表。请检查网络或本地服务，恢复后再试。已有安装的插件仍可继续使用。</p><button class="action" onclick="setState(\'ready\')">重新加载</button></div></div>';
+    function bindInstallButtons() {
+      document.querySelectorAll('.action.primary').forEach(btn => btn.addEventListener('click', () => {
+        btn.className = 'action installed';
+        btn.textContent = '已安装';
+      }));
+    }
+    function updateSourceState(state) {
+      const badge = document.querySelector('#source-state');
+      if (state === 'empty') {
+        badge.className = 'source-state unavailable';
+        badge.innerHTML = '<span class="dot"></span>源不可用';
+      } else if (state === 'loading') {
+        badge.className = 'source-state loading-state';
+        badge.innerHTML = '<span class="dot"></span>正在读取插件';
+      } else {
+        badge.className = 'source-state';
+        badge.innerHTML = '<span class="dot"></span>源已连接 · v0.4.0';
+      }
+    }
+    function setState(state) {
+      const nextState = ['ready', 'loading', 'empty'].includes(state) ? state : 'ready';
+      list.className = 'list ' + nextState;
+      list.innerHTML = nextState === 'loading' ? loadingMarkup : nextState === 'empty' ? emptyMarkup : readyMarkup;
+      updateSourceState(nextState);
+      document.querySelectorAll('[data-state]').forEach(btn => btn.classList.toggle('active', btn.dataset.state === nextState));
+      bindInstallButtons();
+    }
+    document.querySelectorAll('[data-state]').forEach(btn => btn.addEventListener('click', () => setState(btn.dataset.state)));
+    bindInstallButtons();
+    if (new URLSearchParams(location.search).get('state')) setState(new URLSearchParams(location.search).get('state'));
+  </script>
+</body>
+</html>

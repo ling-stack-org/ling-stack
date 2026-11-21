@@ -159,7 +159,7 @@ test("Windows Full acceptance accepts only an immutable cell handoff", async () 
   );
   assert.match(
     providerSmokeSource,
-    /trusted-local:cua-driver/u,
+    /official:cua-driver/u,
   );
   assert.match(
     providerSmokeSource,

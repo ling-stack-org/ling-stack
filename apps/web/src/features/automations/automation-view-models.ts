@@ -184,7 +184,7 @@ export function buildAutomationTabs(input: {
   const attentionDefinitions = input.definitions.filter(isAttentionDefinition);
   const attentionDrafts = input.drafts.filter((draft) => draft.draft.status !== "confirmed" && draft.draft.status !== "discarded");
   return [
-    { id: "scheduled", label: input.t("Scheduled tasks"), count: input.definitions.filter((item) => item.automation.status === "enabled").length },
+    { id: "scheduled", label: input.t("Automation"), count: input.definitions.filter((item) => item.automation.status === "enabled").length },
     { id: "paused", label: input.t("Paused"), count: input.definitions.filter((item) => item.automation.status === "paused" || item.automation.status === "disabled").length },
     { id: "attention", label: input.t("Needs attention"), count: attentionDefinitions.length + attentionDrafts.length },
     { id: "history", label: input.t("Recent history"), count: input.recentRuns.length },

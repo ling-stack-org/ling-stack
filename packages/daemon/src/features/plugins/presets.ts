@@ -12,7 +12,7 @@ import type {
   ReplaceMcpServerToolInput,
 } from "@ling-stack/core";
 
-export const CUA_DRIVER_PLUGIN_ID = "trusted-local:cua-driver";
+export const CUA_DRIVER_PLUGIN_ID = "official:cua-driver";
 export const CUA_DRIVER_MCP_SERVER_ID = "mcp_cua_driver";
 /**
  * Persisted placeholder for the logical MCP contribution in bundled mode.
@@ -136,7 +136,7 @@ export function createCuaDriverDescriptor(): ManagedPluginDescriptor {
     id: CUA_DRIVER_PLUGIN_ID,
     displayName: "Cua Driver",
     version: "1.0.0",
-    sourceKind: "trusted-local-preset",
+    sourceKind: "official-remote",
     description: "Trusted local macOS and Windows computer-use driver exposed through MCP.",
     trustSummary: "Runs a user-installed local binary through MCP. GUI input and screen capture remain approval-gated on both platforms.",
     contributions: [

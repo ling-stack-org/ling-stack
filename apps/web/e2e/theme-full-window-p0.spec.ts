@@ -74,7 +74,7 @@ test("BG-25 ambient pages keep the backdrop while protected settings stay solid"
   }, null, 2));
 });
 
-test("BG-26 generation tasks keeps the ambient scene behind protected panels", async ({ page }, testInfo) => {
+test("BG-26 generation tasks keep the management surface solid over the ambient scene", async ({ page }, testInfo) => {
   test.setTimeout(60_000);
   await page.setViewportSize({ width: 1440, height: 960 });
   await prepare(page);
@@ -101,18 +101,13 @@ test("BG-26 generation tasks keeps the ambient scene behind protected panels", a
       const element = document.querySelector(selector);
       return element ? getComputedStyle(element) : undefined;
     };
-    const probe = document.createElement("div");
-    probe.style.backgroundColor = "color-mix(in srgb, var(--ling-bg-panel) 34%, transparent)";
-    document.body.append(probe);
-    const expectedHeader = getComputedStyle(probe).backgroundColor;
-    probe.remove();
     return {
-      expectedHeader,
       header: style(".media-jobs-header").backgroundColor,
       headerBorder: style(".media-jobs-header").borderBottomColor,
       inspector: optionalStyle(".media-job-inspector")?.backgroundColor ?? null,
       listBorder: style(".media-jobs-list-pane").borderRightColor,
       page: style(".media-jobs-page").backgroundColor,
+      layout: style(".media-jobs-layout").backgroundColor,
       sidebarBorder: style(".left-nav").borderRightColor,
       sidebarBorderWidth: style(".left-nav").borderRightWidth,
       headerBorderWidth: style(".media-jobs-header").borderBottomWidth,
@@ -121,11 +116,12 @@ test("BG-26 generation tasks keeps the ambient scene behind protected panels", a
       workspaceShadow: style(".workspace").boxShadow,
     };
   });
-  expect(isTransparent(material.page)).toBe(true);
-  expect(material.header).toBe(material.expectedHeader);
+  expect(isTransparent(material.page)).toBe(false);
+  expect(isTransparent(material.header)).toBe(false);
   expect(isTransparent(material.headerBorder)).toBe(true);
   expect(material.headerBorderWidth).toBe("0px");
-  expect(material.inspector === null || isTransparent(material.inspector)).toBe(true);
+  expect(isTransparent(material.layout)).toBe(false);
+  if (material.inspector !== null) expect(isTransparent(material.inspector)).toBe(false);
   expect(isTransparent(material.listBorder)).toBe(true);
   expect(material.listBorderWidth).toBe("0px");
   expect(material.sidebarBorderWidth).toBe("0px");

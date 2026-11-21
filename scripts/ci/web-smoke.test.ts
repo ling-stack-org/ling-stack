@@ -19,6 +19,12 @@ test("mapped Web features select their browser suites and changed specs without 
   assert.deepEqual(plan.changed, ["e2e/app-shell-selectors.spec.ts"]);
 });
 
+test("background source-module suites stay in the Vite dev lane while CSS remains production-covered", () => {
+  const plan = planWebSmoke({ files: ["apps/web/src/styles/theme-background.css"] });
+  assert.deepEqual(plan.smoke, ["e2e/theme-full-window-p0.spec.ts"]);
+  assert.deepEqual(plan.changed, ["e2e/full-window-background.spec.ts"]);
+});
+
 test("shared Web inputs, deleted specs, and full CI retain the common QA and baseline tests", () => {
   for (const plan of [
     planWebSmoke({ files: ["apps/web/src/app/AppShell.tsx"] }),

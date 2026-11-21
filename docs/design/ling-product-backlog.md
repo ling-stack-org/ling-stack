@@ -62,6 +62,8 @@
 
 **当前基线**：内部/内置插件管理、MCP preset、插件状态与健康检查已有；设计文档明确第三方插件 API、市场安装与不受信任沙箱尚未完成。
 
+**独立分发进度**：已落地官方远程包 manifest v2、静态 catalog schema、HTTPS/SHA-256/Ed25519 校验、版本化缓存、原子切换、回滚指针、daemon catalog/远程安装/更新检查路由和插件 Release 工作流。Chrome、Office 原生产物及 Release signing secrets 需要在对应平台 CI 配置后，才能完成 Desktop embedded 资源移除。
+
 **待做**：
 
 - 建立由 Ling 官方维护的内置 catalog（版本、平台、来源、许可证、权限、MCP servers/tools、配置字段、健康检查、更新策略）。
