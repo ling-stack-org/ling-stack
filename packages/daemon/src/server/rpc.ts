@@ -139,8 +139,11 @@ const UNIMPLEMENTED_APP_SERVER_METHODS = new Set([
 const activeExternalDispatches = new WeakMap<DaemonContext, Map<string, AbortController>>();
 const operatorMethods = new Set([
   "approval/respond", "input/respond", "verify/start", "verify/cancel", "review/start", "review/finding/update",
-  "simplify/start", "simplify/status", "runs.start",
+  "simplify/start", "simplify/status", "runs.start", "runs.cancel", "turn/queue", "turn/interrupt",
+  "thread/delete", "thread/goal/set", "thread/goal/pause", "thread/goal/resume",
+  "thread/goal/clear", "thread/goal/complete", "plan/accept",
 ]);
+const legacyRunMethods = new Set(["runs.start", "runs.cancel"]);
 const IMPLEMENTED_APP_SERVER_METHODS = LING_APP_SERVER_METHODS.filter(method => !UNIMPLEMENTED_APP_SERVER_METHODS.has(method));
 export function attachRpcWebSocketServer(server: Server, context: DaemonContext): RpcWebSocketServerHandle {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
@@ -298,7 +301,8 @@ class RpcConnection {
         return;
       }
       if (this.appServer && request.method === "initialized" && request.id === undefined) return;
-      const params = this.appServer ? this.workspaceParams(request.params) : request.params;
+      const operator = operatorMethods.has(request.method) && (this.appServer || !legacyRunMethods.has(request.method));
+      const params = this.appServer || operator ? this.workspaceParams(request.params, operator) : request.params;
       if (request.method === "controlPlane.subscribe") {
         if (request.id === undefined) {
           throw rpcError(-32600, "subscription_response_required", "controlPlane.subscribe requires a request id.");
@@ -374,8 +378,8 @@ class RpcConnection {
           protocolVersion: LING_APP_SERVER_PROTOCOL_VERSION,
           serverInfo: { name: "ling-stack-daemon", version: LING_PRODUCT_VERSION },
           connectionId: this.connectionId,
-          effectiveScopes: ["controlPlane.read", "runs.control",
-            ...(this.authenticated ? ["approval.decide", "input.respond", "verification.execute"] : [])],
+          effectiveScopes: ["controlPlane.read",
+            ...(this.authenticated ? ["runs.control", "approval.decide", "input.respond", "verification.execute"] : [])],
           capabilities: this.availableCapabilities(),
           limits: {
             maxInboundFrameBytes: 1024 * 1024,
@@ -495,21 +499,21 @@ class RpcConnection {
         };
       }
       case "verify/start":
-        return await this.development.startVerification(this.workspaceParams(params, true) as never);
+        return await this.development.startVerification(params as never);
       case "verify/status":
         return this.development.getVerification(this.workspaceParams(params) as never);
       case "verify/cancel":
-        return this.development.cancelVerification(this.workspaceParams(params, true) as never);
+        return this.development.cancelVerification(params as never);
       case "review/start":
-        return await this.development.startReview(this.workspaceParams(params, true) as never);
+        return await this.development.startReview(params as never);
       case "review/status":
         return this.development.getReviewStatus(this.workspaceParams(params) as never);
       case "review/finding/update":
-        return await this.development.updateReviewFinding(this.workspaceParams(params, true) as never);
+        return await this.development.updateReviewFinding(params as never);
       case "simplify/start":
-        return await this.development.startSimplify(this.workspaceParams(params, true) as never);
+        return await this.development.startSimplify(params as never);
       case "simplify/status":
-        return this.development.getSimplifyStatus(this.workspaceParams(params, true) as never);
+        return this.development.getSimplifyStatus(params as never);
       case "doctor/run":
         return await this.development.runDoctor(params as never);
       case "instructions/init":
@@ -548,11 +552,11 @@ class RpcConnection {
       }
       case "controlPlane.unsubscribe":
         return this.unsubscribeControlPlane(params);
-      case "runs.start":
-        if (this.appServer) this.workspaceParams(params, true);
-        return this.startRun(this.appServer
-          ? { ...readParamsRecord(params), workspaceCwd: this.workspaceParams(params).cwd }
-          : params);
+      case "runs.start": {
+        if (!this.appServer) return this.startRun(params);
+        const record = readParamsRecord(params);
+        return this.startRun({ ...record, workspaceCwd: record.cwd });
+      }
       case "runs.cancel":
         return this.cancelRun(params);
       case "workItem/list":
@@ -638,7 +642,8 @@ class RpcConnection {
 
   private availableCapabilities(): readonly string[] {
     return LING_APP_SERVER_IMPLEMENTED_CAPABILITIES.filter(capability =>
-      this.authenticated || (capability !== "approval.respond" && capability !== "input.respond" && capability !== "development.simplify"));
+      this.authenticated || (capability !== "turn.control" && capability !== "approval.respond"
+        && capability !== "input.respond" && capability !== "development.simplify"));
   }
 
   private workspaceParams(params: unknown, operator = false): Record<string, unknown> & { readonly cwd: string } {

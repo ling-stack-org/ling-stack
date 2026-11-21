@@ -47,6 +47,8 @@ test("App Server WebSocket negotiates the Ling protocol and supports ping", { ti
     assert.ok(!capabilities.methods.includes("changes/apply"));
     assert.ok(!capabilities.methods.includes("approval/respond"));
     assert.ok(!initialized.result.effectiveScopes.includes("approval.decide"));
+    assert.ok(!initialized.result.effectiveScopes.includes("runs.control"));
+    assert.ok(!capabilities.capabilities.includes("turn.control"));
     socket.send(JSON.stringify({ jsonrpc: "2.0", id: 4, method: "approval/respond", params: { approvalId: "pending-approval", decision: "approve" } }));
     assert.equal((await waitFor(messages, message => message.id === 4)).error.data.code, "authorization_required");
     socket.send(JSON.stringify({ jsonrpc: "2.0", id: 5, method: "thread/start", params: { title: "Unauthenticated turn guard", threadId: "unauthenticated-turn-guard" } }));
@@ -57,6 +59,13 @@ test("App Server WebSocket negotiates the Ling protocol and supports ping", { ti
     assert.equal((await waitFor(messages, message => message.id === 6)).error.data.code, "authorization_required");
     socket.send(JSON.stringify({ jsonrpc: "2.0", id: 7, method: "runs.start", params: {} }));
     assert.equal((await waitFor(messages, message => message.id === 7)).error.data.code, "authorization_required");
+    const controls = ["turn/queue", "turn/interrupt", "runs.cancel", "thread/delete", "thread/goal/set", "plan/accept"];
+    for (const [index, method] of controls.entries()) {
+      assert.ok(!capabilities.methods.includes(method));
+      const id = 8 + index;
+      socket.send(JSON.stringify({ jsonrpc: "2.0", id, method, params: {} }));
+      assert.equal((await waitFor(messages, message => message.id === id)).error.data.code, "authorization_required");
+    }
   } finally {
     socket.terminate();
     await daemon.stop();

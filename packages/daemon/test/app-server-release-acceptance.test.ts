@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFile, execFileSync, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { link, lstat, mkdir, mkdtemp, readFile, realpath, rm, unlink, writeFile } from "node:fs/promises";
+import { chmod, link, lstat, mkdir, mkdtemp, readFile, realpath, rm, unlink, writeFile } from "node:fs/promises";
 import { createConnection, createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { PassThrough, type Duplex, type Readable, type Writable } from "node:stream";
@@ -1038,17 +1038,17 @@ test("private Unix socket listener removes a stale published path before rebindi
   const stale = createServer();
   stale.listen(bindPath);
   await once(stale, "listening");
+  await chmod(bindPath, 0o660);
   await link(bindPath, path);
   await new Promise<void>(resolve => stale.close(() => resolve()));
   assert.equal((await lstat(path)).isSocket(), true);
-  const staleIdentity = await lstat(path);
 
   const controller = new AbortController();
   const listener = listenLingAppServerSocket(fixture.transportOptions(), path, controller.signal);
   t.after(async () => { controller.abort(); await listener; });
   await waitFor(async () => {
     const current = await lstat(path).catch(() => undefined);
-    return current?.isSocket() && current.ino !== staleIdentity.ino ? true : undefined;
+    return current?.isSocket() && (current.mode & 0o777) === 0o600 ? true : undefined;
   });
   const socket = createConnection(path);
   await once(socket, "connect");
