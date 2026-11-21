@@ -38,6 +38,7 @@ export function buildDeviceDiagnosisReport(input: {
       capabilityId: request.capabilityId,
       status: attempt.status,
       ...(receipt ? { receiptStatus: receipt.status } : {}),
+      ...(receipt?.errorCode ? { errorCode: receipt.errorCode } : {}),
     });
     if (attempt.status === "unknown") remainingUncertainty.push({ code: "unknown_action_outcome", ref: attempt.attemptId });
     if (verification) {
@@ -119,18 +120,32 @@ export function projectDeviceDiagnosticEvidence(
     return { value: { availability }, hypotheses: availability === "unavailable" ? ["integration_or_device_issue"] : [] };
   }
   if (observation.subjectId !== request.targetDeviceId) return undefined;
-  if (request.capabilityId === "pc.inspect.network" && observation.source === "pc.network" && typeof fields.connected === "boolean") {
+  const pcNetwork = request.capabilityId === "pc.inspect.network" && observation.source === "pc.network";
+  const linuxNetwork = request.capabilityId === "linux.inspect.network" && observation.source === "linux.network";
+  const linuxWifi = request.capabilityId === "linux.inspect.wifi" && observation.source === "linux.wifi";
+  if ((pcNetwork || linuxNetwork || linuxWifi) && typeof fields.connected === "boolean") {
     const gatewayReachable = typeof fields.gatewayReachable === "boolean" ? fields.gatewayReachable : undefined;
     const dnsReachable = typeof fields.dnsReachable === "boolean" ? fields.dnsReachable : undefined;
+    const routeAvailable = !pcNetwork && typeof fields.routeAvailable === "boolean" ? fields.routeAvailable : undefined;
+    const dnsNameResolved = !pcNetwork && typeof fields.dnsNameResolved === "boolean" ? fields.dnsNameResolved : undefined;
+    const wifiAssociated = linuxWifi && typeof fields.wifiAssociated === "boolean" ? fields.wifiAssociated : undefined;
+    const linkError = linuxWifi && (fields.linkError === "wireless_tools_unavailable"
+      || fields.linkError === "wireless_interface_not_found" || fields.linkError === "wifi_observation_failed")
+      ? fields.linkError : undefined;
     const hypotheses: DeviceDiagnosisHypothesisV1["code"][] = [];
-    if (!fields.connected) hypotheses.push("link_or_address_issue");
+    if (!fields.connected || wifiAssociated === false) hypotheses.push("link_or_address_issue");
+    if (routeAvailable === false) hypotheses.push("route_issue");
     if (gatewayReachable === false) hypotheses.push("gateway_issue");
-    if (dnsReachable === false) hypotheses.push("dns_issue");
+    if (dnsReachable === false || dnsNameResolved === false) hypotheses.push("dns_issue");
     return {
       value: {
         connected: fields.connected,
         ...(gatewayReachable === undefined ? {} : { gatewayReachable }),
         ...(dnsReachable === undefined ? {} : { dnsReachable }),
+        ...(routeAvailable === undefined ? {} : { routeAvailable }),
+        ...(dnsNameResolved === undefined ? {} : { dnsNameResolved }),
+        ...(wifiAssociated === undefined ? {} : { wifiAssociated }),
+        ...(linkError === undefined ? {} : { linkError }),
       },
       hypotheses,
     };

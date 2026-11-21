@@ -9,6 +9,18 @@ export interface LocalProcessRunner {
   run(file: string, args: readonly string[], signal?: AbortSignal): Promise<{ readonly stdout: string; readonly stderr: string; readonly exitCode: number }>;
 }
 
+export const localProcessRunner: LocalProcessRunner = {
+  async run(file, args, signal) {
+    try {
+      const result = await execFile(file, [...args], { signal, maxBuffer: 256 * 1024 });
+      return { stdout: result.stdout, stderr: result.stderr, exitCode: 0 };
+    } catch (error) {
+      const failure = error as { readonly stdout?: string; readonly stderr?: string; readonly code?: number };
+      return { stdout: failure.stdout ?? "", stderr: failure.stderr ?? "", exitCode: typeof failure.code === "number" ? failure.code : 1 };
+    }
+  },
+};
+
 export interface LocalPcTargetExecutorOptions {
   readonly platform?: NodeJS.Platform;
   readonly runner?: LocalProcessRunner;
@@ -23,17 +35,7 @@ export class LocalPcTargetExecutor implements PcTargetExecutor {
   constructor(options: LocalPcTargetExecutorOptions = {}) {
     this.#platform = options.platform ?? process.platform;
     this.#readInterfaces = options.readInterfaces ?? networkInterfaces;
-    this.#runner = options.runner ?? {
-      async run(file, args, signal) {
-        try {
-          const result = await execFile(file, [...args], { signal, maxBuffer: 256 * 1024 });
-          return { stdout: result.stdout, stderr: result.stderr, exitCode: 0 };
-        } catch (error) {
-          const failure = error as { readonly stdout?: string; readonly stderr?: string; readonly code?: number };
-          return { stdout: failure.stdout ?? "", stderr: failure.stderr ?? "", exitCode: typeof failure.code === "number" ? failure.code : 1 };
-        }
-      },
-    };
+    this.#runner = options.runner ?? localProcessRunner;
   }
 
   async inventory(signal?: AbortSignal): Promise<{ readonly hostname: string; readonly os: string; readonly version?: string }> {

@@ -9,7 +9,7 @@ export interface DeviceDiagnosisFactV1 {
 }
 
 export interface DeviceDiagnosisHypothesisV1 {
-  readonly code: "link_or_address_issue" | "gateway_issue" | "dns_issue" | "service_issue" | "integration_or_device_issue";
+  readonly code: "link_or_address_issue" | "route_issue" | "gateway_issue" | "dns_issue" | "service_issue" | "integration_or_device_issue";
   readonly observationId: string;
 }
 
@@ -20,6 +20,7 @@ export interface DeviceDiagnosisActionV1 {
   readonly capabilityId: string;
   readonly status: DeviceTaskAttemptV1["status"];
   readonly receiptStatus?: DeviceActionResultV1["status"];
+  readonly errorCode?: DeviceActionResultV1["errorCode"];
 }
 
 export type DeviceDiagnosisVerificationV1 = Pick<DeviceVerificationResultV1, "actionId" | "status" | "observationIds" | "checkedAt">;

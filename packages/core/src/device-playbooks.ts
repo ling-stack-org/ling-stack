@@ -64,6 +64,18 @@ export function createPcSoftwareDiagnosisPlaybook(): DevicePlaybookV1 {
   };
 }
 
+export function createLinuxWifiDiagnosisPlaybook(): DevicePlaybookV1 {
+  return {
+    id: "linux-wifi-diagnosis",
+    version: "1.0.0",
+    displayName: "Linux Wi-Fi and network diagnosis",
+    supportedDeviceKinds: ["linux"],
+    riskClass: "read_only",
+    localFallback: true,
+    steps: [{ id: "inspect-wifi", capabilityId: "linux.inspect.wifi", input: {} }],
+  };
+}
+
 export function isDevicePlaybookV1(value: unknown): value is DevicePlaybookV1 {
   if (!isRecord(value) || !hasOnlyKeys(value, ["id", "version", "displayName", "supportedDeviceKinds", "riskClass", "localFallback", "steps"])) return false;
   if (!isBoundedString(value.id) || !isBoundedString(value.version) || !isBoundedString(value.displayName)

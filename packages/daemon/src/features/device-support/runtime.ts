@@ -1,9 +1,13 @@
 import { randomUUID } from "node:crypto";
 
+import type { DeviceLifecycleStatusV1, DeviceProfileV1 } from "@ling-stack/contracts";
 import {
+  type DevicePlaybookV1,
   buildOwnedDevicePlanningInput,
+  createLinuxWifiDiagnosisPlaybook,
   createPcSoftwareDiagnosisPlaybook,
   DEFAULT_WORKSPACE_ID,
+  DeviceBrokerError,
   DeviceCapabilityBroker,
   DeviceRunnerPlanningBridge,
   DeviceDeveloperSessionCoordinator,
@@ -17,8 +21,17 @@ import {
   type DevicePlaybookRunResultV1,
 } from "@ling-stack/core";
 import { createRemoteDeviceFacade, type RemoteDeviceFacade } from "../remote-access/device-facade.js";
-import { LocalPcTargetExecutor } from "./adapters/local-pc-executor.js";
+import { LinuxSshAdapter, linuxSshDeviceId } from "./adapters/linux-ssh.js";
+import { LocalPcTargetExecutor, type LocalProcessRunner } from "./adapters/local-pc-executor.js";
 import { PcAdapter } from "./adapters/pc.js";
+import { bindLinuxSshTargets, type BoundLinuxSshTarget, type ConfiguredLinuxSshTarget } from "./linux-ssh-targets.js";
+
+interface LinuxSshTargetSummary {
+  readonly connectionId: string;
+  readonly deviceId: string;
+  readonly status: "candidate" | DeviceLifecycleStatusV1;
+  readonly displayName?: string;
+}
 
 export interface DeviceSupportRuntime {
   readonly store: SqliteDeviceSupportStore;
@@ -30,10 +43,18 @@ export interface DeviceSupportRuntime {
   readonly broker: DeviceCapabilityBroker;
   readonly remoteFacade: RemoteDeviceFacade;
   diagnoseLocalPc(): Promise<DevicePlaybookRunResultV1>;
+  listLinuxSshTargets(): readonly LinuxSshTargetSummary[];
+  enrollLinuxSshTarget(connectionId: string): Promise<DeviceProfileV1>;
+  diagnoseLinuxSshTarget(deviceId: string): Promise<DevicePlaybookRunResultV1>;
   close(): void;
 }
 
-export function createDeviceSupportRuntime(options: { readonly databasePath: string; readonly now?: () => string }): DeviceSupportRuntime {
+export function createDeviceSupportRuntime(options: {
+  readonly databasePath: string;
+  readonly now?: () => string;
+  readonly linuxSshTargets?: readonly ConfiguredLinuxSshTarget[];
+  readonly linuxSshRunner?: LocalProcessRunner;
+}): DeviceSupportRuntime {
   const now = options.now ?? (() => new Date().toISOString());
   const store = new SqliteDeviceSupportStore({ databasePath: options.databasePath });
   try {
@@ -46,28 +67,48 @@ export function createDeviceSupportRuntime(options: { readonly databasePath: str
   const developerStore = new SqliteDeviceDeveloperStore({ databasePath: options.databasePath });
   const protocolStore = new SqliteDeviceProtocolStore({ databasePath: options.databasePath });
   const protocolWorkbench = new HardwareProtocolWorkbench();
+  const broker = new DeviceCapabilityBroker({ store, now });
+  const adapter = new PcAdapter({ executor: new LocalPcTargetExecutor(), now });
+  let ssh: ReturnType<typeof bindLinuxSshTargets> | undefined;
+  let linuxAdapter: LinuxSshAdapter;
+  const linuxTargets = new Map<string, BoundLinuxSshTarget>();
   try {
     protocolStore.registerCodec(modbusRtuRegisterCodec.manifest);
     protocolWorkbench.registerCodec(modbusRtuRegisterCodec);
+    broker.registerAdapter(adapter);
+    ssh = bindLinuxSshTargets(options.linuxSshTargets ?? [], options.linuxSshRunner);
+    linuxAdapter = new LinuxSshAdapter({ now, connections: ssh.targets });
+    broker.registerAdapter(linuxAdapter);
+    for (const target of ssh.targets) linuxTargets.set(linuxSshDeviceId(DEFAULT_WORKSPACE_ID, target.hostKeyFingerprint), target);
+    store.withWriteTransaction(() => {
+      for (const profile of store.listDevices()) {
+        if (profile.adapterId === linuxAdapter.manifest.adapterId && profile.device.ownerScope === DEFAULT_WORKSPACE_ID
+          && !hasCurrentLinuxConnection(profile)) store.markDeviceOffline(profile.device.id, now());
+      }
+    });
   } catch (error) {
+    ssh?.close();
     protocolStore.close();
     developerStore.close();
     fabricStore.close();
     store.close();
     throw error;
   }
-  const broker = new DeviceCapabilityBroker({ store, now });
-  const adapter = new PcAdapter({ executor: new LocalPcTargetExecutor(), now });
-  broker.registerAdapter(adapter);
   const remoteFacade = createRemoteDeviceFacade({ store, broker, now });
   const planner = new DeviceRunnerPlanningBridge();
   const developerSessions = new DeviceDeveloperSessionCoordinator({ store: developerStore });
   let localDiagnosis: Promise<DevicePlaybookRunResultV1> | undefined;
-  const diagnose = async (): Promise<DevicePlaybookRunResultV1> => {
+  const diagnosingLinux = new Set<string>();
+
+  async function diagnosePc(): Promise<DevicePlaybookRunResultV1> {
     const registered = store.listDevices().find(profile => profile.device.ownerScope === DEFAULT_WORKSPACE_ID
       && profile.adapterId === adapter.manifest.adapterId && profile.transports.includes("local_process"));
     const target = registered
       ?? await broker.discover(adapter.manifest.adapterId, { ownerId: DEFAULT_WORKSPACE_ID, connectionRef: "local_process" });
+    return runDiagnosis(target, target.device.id, createPcSoftwareDiagnosisPlaybook());
+  }
+
+  async function runDiagnosis(target: DeviceProfileV1, ownerId: string, playbook: DevicePlaybookV1): Promise<DevicePlaybookRunResultV1> {
     const current = store.getCurrentCapabilitySnapshot(target.device.id);
     const snapshot = current && Date.parse(current.freshnessUntil) > Date.parse(now()) ? current
       : await broker.refreshCapabilities(target.device.id, target.device.profileRevision);
@@ -75,14 +116,13 @@ export function createDeviceSupportRuntime(options: { readonly databasePath: str
     const task = broker.createTask({
       id: `device_task_${randomUUID()}`,
       ownerKind: "daemon",
-      ownerId: target.device.id,
+      ownerId,
       targetDeviceIds: [target.device.id],
       status: "planning",
       capabilitySnapshotIds: [snapshot.snapshotId],
       createdAt: timestamp,
       updatedAt: timestamp,
     });
-    const playbook = createPcSoftwareDiagnosisPlaybook();
     const planningInput = buildOwnedDevicePlanningInput({
       store, taskId: task.id, ownerId: task.ownerId, workspaceId: DEFAULT_WORKSPACE_ID,
       contextId: `device_context_${randomUUID()}`, maxBytes: 32 * 1024, now: timestamp,
@@ -100,7 +140,40 @@ export function createDeviceSupportRuntime(options: { readonly databasePath: str
       broker, task, targetDeviceId: target.device.id, capabilitySnapshotId: snapshot.snapshotId,
       playbook,
     });
-  };
+  }
+
+  function hasCurrentLinuxConnection(profile: DeviceProfileV1): boolean {
+    const target = linuxTargets.get(profile.device.id);
+    return target !== undefined && profile.adapterVersion === linuxAdapter.manifest.adapterVersion
+      && profile.connectionRefs[0] === target.connectionRef;
+  }
+
+  async function withLinuxTarget<T>(deviceId: string, run: () => Promise<T>): Promise<T> {
+    if (diagnosingLinux.has(deviceId)) throw new DeviceBrokerError("target_busy", "Linux device already has an active operation");
+    diagnosingLinux.add(deviceId);
+    try {
+      return await run();
+    } finally {
+      diagnosingLinux.delete(deviceId);
+    }
+  }
+
+  async function enrollLinuxTarget(deviceId: string, target: BoundLinuxSshTarget): Promise<DeviceProfileV1> {
+    const previous = store.getDevice(deviceId);
+    if (previous && (previous.device.lifecycleStatus === "revoked" || previous.device.lifecycleStatus === "retired")) {
+      throw new DeviceBrokerError("permission_denied", "Linux device registration was revoked");
+    }
+    try {
+      return await broker.discover(linuxAdapter.manifest.adapterId, {
+        ownerId: DEFAULT_WORKSPACE_ID, connectionRef: target.connectionRef, signal: AbortSignal.timeout(10_000),
+      });
+    } catch (error) {
+      if (error instanceof DeviceBrokerError && error.code !== "connection_failed") throw error;
+      if (previous) store.markDeviceOffline(deviceId, now());
+      throw new DeviceBrokerError("connection_failed", "Linux SSH enrollment could not verify the target");
+    }
+  }
+
   return {
     store,
     fabricStore,
@@ -111,10 +184,41 @@ export function createDeviceSupportRuntime(options: { readonly databasePath: str
     broker,
     remoteFacade,
     diagnoseLocalPc: () => {
-      localDiagnosis ??= diagnose().finally(() => { localDiagnosis = undefined; });
+      localDiagnosis ??= diagnosePc().finally(() => { localDiagnosis = undefined; });
       return localDiagnosis;
     },
+    listLinuxSshTargets: () => Array.from(linuxTargets, ([deviceId, target]) => {
+      const profile = store.getDevice(deviceId);
+      return {
+        connectionId: target.connectionId, deviceId,
+        status: profile?.device.lifecycleStatus ?? "candidate",
+        ...(profile ? { displayName: profile.device.displayName } : {}),
+      };
+    }),
+    async enrollLinuxSshTarget(connectionId) {
+      for (const [deviceId, target] of linuxTargets) {
+        if (target.connectionId === connectionId) return withLinuxTarget(deviceId, () => enrollLinuxTarget(deviceId, target));
+      }
+      throw new DeviceBrokerError("missing_target", "Linux SSH connection is unavailable");
+    },
+    async diagnoseLinuxSshTarget(deviceId) {
+      const sshTarget = linuxTargets.get(deviceId);
+      const profile = store.getDevice(deviceId);
+      if (!sshTarget || profile?.device.ownerScope !== DEFAULT_WORKSPACE_ID || profile.adapterId !== linuxAdapter.manifest.adapterId) {
+        throw new DeviceBrokerError("missing_target", "Linux SSH target is not enrolled");
+      }
+      return withLinuxTarget(deviceId, async () => {
+        const target = hasCurrentLinuxConnection(profile) && profile.device.lifecycleStatus === "healthy"
+          ? profile : await enrollLinuxTarget(deviceId, sshTarget);
+        const result = await runDiagnosis(target, target.device.runtimeOwnerId!, createLinuxWifiDiagnosisPlaybook());
+        if (result.attempts.some(record => record.attempt.receipt?.errorCode === "connection_failed")) {
+          store.markDeviceOffline(deviceId, now());
+        }
+        return result;
+      });
+    },
     close: () => {
+      ssh?.close();
       fabricStore.close();
       developerStore.close();
       protocolStore.close();

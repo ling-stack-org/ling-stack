@@ -1,5 +1,7 @@
 import { isIP, isIPv4 } from "node:net";
 
+import { DeviceBrokerError } from "@ling-stack/core";
+
 import type { LinuxNetworkObservation, LinuxSshExecutor } from "./linux-ssh.js";
 import type { LocalProcessRunner } from "./local-pc-executor.js";
 
@@ -9,6 +11,7 @@ export interface LinuxSshProcessExecutorOptions {
   readonly port?: number;
   readonly identityFile?: string;
   readonly knownHostsFile: string;
+  readonly dnsProbeHostname?: string;
   readonly runner: LocalProcessRunner;
 }
 
@@ -16,10 +19,11 @@ export class LinuxSshProcessExecutor implements LinuxSshExecutor {
   readonly #options: LinuxSshProcessExecutorOptions;
 
   constructor(options: LinuxSshProcessExecutorOptions) {
-    if ((!isIP(options.host) && !/^[a-z0-9][a-z0-9_.-]{0,252}$/iu.test(options.host))
+    if (!isLinuxSshHost(options.host)
       || !options.user || /[\u0000-\u0020\u007f]/u.test(options.user)
       || !options.knownHostsFile.trim()
       || /[\u0000-\u001f]/u.test(options.knownHostsFile)
+      || (options.dnsProbeHostname !== undefined && !isLinuxSshDnsProbeHostname(options.dnsProbeHostname))
       || (options.port !== undefined && (!Number.isInteger(options.port) || options.port < 1 || options.port > 65_535))) {
       throw new Error("SSH host, user, port and known-hosts file must be valid");
     }
@@ -28,10 +32,16 @@ export class LinuxSshProcessExecutor implements LinuxSshExecutor {
 
   async inventory(signal?: AbortSignal): Promise<{ readonly hostname: string; readonly kernel: string }> {
     const hostname = await this.runRemote(["hostname"], signal);
-    if (hostname.exitCode !== 0 || !hostname.stdout.trim()) throw new Error("Linux host name is unavailable");
+    const name = hostname.stdout.trim();
+    if (hostname.exitCode !== 0 || !name || name.length > 253 || /[\u0000-\u001f\u007f]/u.test(name)) {
+      throw new Error("Linux host name is unavailable");
+    }
     const kernel = await this.runRemote(["uname", "-sr"], signal);
-    if (kernel.exitCode !== 0 || !kernel.stdout.trim()) throw new Error("Linux kernel version is unavailable");
-    return { hostname: hostname.stdout.trim(), kernel: kernel.stdout.trim() };
+    const version = kernel.stdout.trim();
+    if (kernel.exitCode !== 0 || !version.startsWith("Linux ") || version.length > 256 || /[\u0000-\u001f\u007f]/u.test(version)) {
+      throw new Error("Linux kernel version is unavailable");
+    }
+    return { hostname: name, kernel: version };
   }
 
   async readNetwork(signal?: AbortSignal): Promise<LinuxNetworkObservation> {
@@ -57,10 +67,12 @@ export class LinuxSshProcessExecutor implements LinuxSshExecutor {
       ? configuredAddresses.find(item => item.interfaceName === route.dev && item.ipv4 === route.prefsrc)
         ?? configuredAddresses.find(item => item.interfaceName === route.dev)
       : configuredAddresses[0];
+    const dnsNameResolved = await this.probeDnsName(signal);
     return {
       connected: configuredAddresses.length > 0,
       ...(routes || noRoute ? { routeAvailable: route !== undefined } : {}),
       ...(address ?? (typeof route?.dev === "string" ? { interfaceName: route.dev } : {})),
+      ...(dnsNameResolved === undefined ? {} : { dnsNameResolved }),
     };
   }
 
@@ -89,6 +101,22 @@ export class LinuxSshProcessExecutor implements LinuxSshExecutor {
     return { accepted: true };
   }
 
+  private async probeDnsName(signal?: AbortSignal): Promise<boolean | undefined> {
+    const name = this.#options.dnsProbeHostname;
+    if (!name) return undefined;
+    const deadline = AbortSignal.timeout(3_000);
+    const probeSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
+    try {
+      const result = await this.runRemote(["getent", "-s", "dns", "ahostsv4", name], probeSignal);
+      if (result.exitCode === 2) return false;
+      if (result.exitCode !== 0) return undefined;
+      return result.stdout.split("\n").some(line => isIPv4(line.trim().split(/\s+/u)[0] ?? "")) ? true : undefined;
+    } catch (error) {
+      if (deadline.aborted && !signal?.aborted) return undefined;
+      throw error;
+    }
+  }
+
   private async runRemote(command: readonly string[], signal?: AbortSignal) {
     signal?.throwIfAborted();
     const knownHosts = this.#options.knownHostsFile.replace(/["\\]/gu, "\\$&");
@@ -105,9 +133,18 @@ export class LinuxSshProcessExecutor implements LinuxSshExecutor {
     args.push("-l", this.#options.user, "--", this.#options.host, ...command);
     const result = await this.#options.runner.run("ssh", args, signal);
     signal?.throwIfAborted();
-    if (result.exitCode === 255) throw new Error("Linux SSH connection failed or was interrupted");
+    if (result.exitCode === 255) throw new DeviceBrokerError("connection_failed", "Linux SSH connection failed or was interrupted");
     return result;
   }
+}
+
+export function isLinuxSshHost(host: string): boolean {
+  return /^[a-z0-9_.:%-]{1,253}$/iu.test(host)
+    && (isIP(host) !== 0 || /^[a-z0-9][a-z0-9_.-]*$/iu.test(host));
+}
+
+export function isLinuxSshDnsProbeHostname(name: string): boolean {
+  return name.includes(".") && /^[a-z0-9][a-z0-9.-]{0,252}$/iu.test(name) && isIP(name) === 0;
 }
 
 function readIpRecords(stdout: string): readonly Record<string, unknown>[] {

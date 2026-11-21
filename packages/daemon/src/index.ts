@@ -161,6 +161,7 @@ import { WorkspaceFileCapabilityRegistry } from "./features/previews/workspace-f
 import { createCuaDriverDescriptor } from "./features/plugins/presets.js";
 import { RemoteAccessController } from "./features/remote-access/controller.js";
 import { createDeviceSupportRuntime } from "./features/device-support/runtime.js";
+import { readLinuxSshTargets } from "./features/device-support/linux-ssh-targets.js";
 import { EngineManagementFeature } from "./features/execution-engines/feature.js";
 import { DefaultRemoteReplyDispatcher } from "./features/remote-access/default-reply-dispatcher.js";
 import { HostCapabilityBridgeController } from "./features/runs/host-capability-bridge-controller.js";
@@ -298,6 +299,7 @@ export function createDaemonServer(
   dependencies: DaemonDependencies = {},
 ): DaemonServer {
   const resolvedConfig = resolveConfig(config);
+  const linuxSshTargets = readLinuxSshTargets(config.deviceSupport?.linuxSshTargetsFile ?? process.env.LING_STACK_DEVICE_SSH_TARGETS_FILE);
   const runnerRegistry = dependencies.runnerRegistry ?? createDefaultRunnerRegistry(dependencies.runner, resolvedConfig);
   const extensionRegistry = dependencies.extensionRegistry ?? createDefaultLingExtensionRegistry();
   const externalSecretStore = dependencies.externalSecretStore ?? createSystemKeychainSecretStore();
@@ -1003,7 +1005,9 @@ export function createDaemonServer(
     ?? process.env.LING_MOBILE_ACCESS_MANAGEMENT_CAPABILITY
     ?? randomBytes(32).toString("base64url");
   const defaultWorkspaceStore = storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd);
-  const deviceSupport = createDeviceSupportRuntime({ databasePath: defaultWorkspaceStore.paths.databasePath });
+  const deviceSupport = createDeviceSupportRuntime({
+    databasePath: defaultWorkspaceStore.paths.databasePath, linuxSshTargets, linuxSshRunner: dependencies.linuxSshProcessRunner,
+  });
   const remoteReplyDispatcher = dependencies.remoteReplyDispatcher === null
     ? undefined
     : dependencies.remoteReplyDispatcher ?? new DefaultRemoteReplyDispatcher({

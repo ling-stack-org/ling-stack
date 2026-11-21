@@ -128,6 +128,13 @@ export class SqliteDeviceSupportStore {
     return revoked;
   }
 
+  markDeviceOffline(deviceId: string, now: string): void {
+    this.database.prepare(`
+      UPDATE device_registry SET lifecycle_status='offline', capability_snapshot_json=NULL, updated_at=?
+      WHERE device_id=? AND lifecycle_status NOT IN ('revoked', 'retired')
+    `).run(now, deviceId);
+  }
+
   saveCapabilitySnapshot(snapshot: DeviceCapabilitySnapshotV1, now: string): void {
     assertValid(isDeviceCapabilitySnapshotV1(snapshot), "capability snapshot");
     const result = this.database.prepare(`

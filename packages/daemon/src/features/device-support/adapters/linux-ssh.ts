@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import type {
   AdapterManifestV1,
   DeviceActionRequestV1,
@@ -7,8 +9,10 @@ import type {
   DeviceObservationV1,
   JsonValue,
 } from "@ling-stack/contracts";
-import type {
-  DeviceAdapter, DeviceAdapterDiscoveryInput, DeviceAdapterExecutionResult, DeviceAdapterVerificationInput, DeviceAdapterVerificationResult,
+import {
+  DeviceBrokerError,
+  type DeviceAdapter, type DeviceAdapterDiscoveryInput, type DeviceAdapterExecutionResult,
+  type DeviceAdapterVerificationInput, type DeviceAdapterVerificationResult,
 } from "@ling-stack/core";
 
 export interface LinuxNetworkObservation {
@@ -18,6 +22,7 @@ export interface LinuxNetworkObservation {
   readonly routeAvailable?: boolean;
   readonly gatewayReachable?: boolean;
   readonly dnsReachable?: boolean;
+  readonly dnsNameResolved?: boolean;
   readonly ssid?: string;
   readonly wifiInterfaceName?: string;
   readonly wifiAssociated?: boolean;
@@ -31,10 +36,16 @@ export interface LinuxSshExecutor {
   restartNetwork(input: { readonly signal?: AbortSignal }): Promise<{ readonly accepted: boolean }>;
 }
 
-export interface LinuxSshAdapterOptions {
+export interface LinuxSshConnection {
+  readonly connectionRef: string;
+  readonly hostKeyFingerprint: string;
   readonly executor: LinuxSshExecutor;
-  readonly now?: () => string;
 }
+
+export type LinuxSshAdapterOptions = { readonly now?: () => string } & (
+  | { readonly executor: LinuxSshExecutor; readonly connections?: never }
+  | { readonly connections: readonly LinuxSshConnection[]; readonly executor?: never }
+);
 
 const linuxManifest: AdapterManifestV1 = {
   adapterId: "linux-ssh",
@@ -104,41 +115,59 @@ const linuxManifest: AdapterManifestV1 = {
 };
 
 export class LinuxSshAdapter implements DeviceAdapter {
-  readonly manifest = linuxManifest;
-  readonly #executor: LinuxSshExecutor;
+  readonly manifest: AdapterManifestV1;
+  readonly #executor?: LinuxSshExecutor;
+  readonly #connections: ReadonlyMap<string, LinuxSshConnection>;
   readonly #now: () => string;
 
   constructor(options: LinuxSshAdapterOptions) {
     this.#executor = options.executor;
+    this.#connections = new Map(options.connections?.map(connection => [connection.connectionRef, connection]));
+    this.manifest = options.connections ? {
+      ...linuxManifest,
+      adapterVersion: "1.1.0",
+      supportedDeviceKinds: ["linux"],
+      authenticationMethods: ["ssh_key"],
+      capabilities: linuxManifest.capabilities
+        .filter(capability => capability.sideEffect === "read_only")
+        .map(capability => ({ ...capability, supportedDeviceKinds: ["linux"] })),
+    } : linuxManifest;
     this.#now = options.now ?? (() => new Date().toISOString());
   }
 
   async discover(input: DeviceAdapterDiscoveryInput): Promise<DeviceProfileV1> {
-    const inventory = await this.#executor.inventory(input.signal);
+    const connection = this.#connections.get(input.connectionRef);
+    const executor = connection?.executor ?? this.#executor;
+    if (!executor) throw new DeviceBrokerError("missing_target", "Linux SSH connection is unavailable");
+    const inventory = await executor.inventory(input.signal);
+    const profileRevision = connection
+      ? createHash("sha256").update(JSON.stringify([connection.connectionRef, inventory.hostname, inventory.kernel])).digest("hex")
+      : `${inventory.hostname}:${inventory.kernel}`;
     return {
       device: {
-        id: `linux:${input.ownerId}:${inventory.hostname}`,
+        id: linuxSshDeviceId(input.ownerId, connection?.hostKeyFingerprint ?? inventory.hostname),
         ownerScope: input.ownerId,
         displayName: inventory.hostname,
         kind: "linux",
         model: "Linux",
         firmwareVersion: inventory.kernel,
         lifecycleStatus: "healthy",
-        profileRevision: `${inventory.hostname}:${inventory.kernel}`,
-        runtimeOwnerId: input.ownerId,
+        profileRevision,
+        runtimeOwnerId: connection ? `daemon:${input.ownerId}` : input.ownerId,
         lastSeenAt: this.#now(),
       },
       adapterId: this.manifest.adapterId,
       adapterVersion: this.manifest.adapterVersion,
       transports: ["ssh"],
-      connectionRefs: [`ssh:${inventory.hostname}`],
+      connectionRefs: [connection?.connectionRef ?? `ssh:${inventory.hostname}`],
       transportDeployments: this.manifest.transportDeployments,
-      profileRevision: `${inventory.hostname}:${inventory.kernel}`,
+      profileRevision,
       source: "adapter",
     };
   }
 
   async getCapabilities(input: { readonly profile: DeviceProfileV1; readonly connectionRevision: string }): Promise<DeviceCapabilitySnapshotV1> {
+    this.executorForProfile(input.profile);
     return {
       snapshotId: `${input.profile.device.id}:${input.connectionRevision}:${this.#now()}`,
       deviceId: input.profile.device.id,
@@ -154,9 +183,22 @@ export class LinuxSshAdapter implements DeviceAdapter {
 
   async execute(input: { readonly profile: DeviceProfileV1; readonly capability: { readonly id: string }; readonly request: DeviceActionRequestV1; readonly signal?: AbortSignal }): Promise<DeviceActionResultV1 | DeviceAdapterExecutionResult> {
     const startedAt = this.#now();
+    const capability = this.manifest.capabilities.find(candidate => candidate.id === input.capability.id);
+    if (!capability) {
+      return { actionId: input.request.actionId, status: "rejected", errorCode: "unsupported_capability", startedAt, finishedAt: startedAt, observationIds: [] };
+    }
+    const executor = this.executorForProfile(input.profile);
+    const deadline = AbortSignal.timeout(capability.timeoutMs);
+    const signal = input.signal ? AbortSignal.any([input.signal, deadline]) : deadline;
     if (input.capability.id === "linux.inspect.network" || input.capability.id === "linux.inspect.wifi") {
       const wifi = input.capability.id === "linux.inspect.wifi";
-      const reading = wifi ? await this.#executor.readWifi(input.signal) : await this.#executor.readNetwork(input.signal);
+      let reading: LinuxNetworkObservation;
+      try {
+        reading = wifi ? await executor.readWifi(signal) : await executor.readNetwork(signal);
+      } catch (error) {
+        if (!(error instanceof DeviceBrokerError) || error.code !== "connection_failed") throw error;
+        return { actionId: input.request.actionId, status: "rejected", errorCode: error.code, startedAt, finishedAt: this.#now(), observationIds: [] };
+      }
       const finishedAt = this.#now();
       const observation = makeObservation(
         input.profile, `${input.request.actionId}:result`, finishedAt, reading, wifi ? "linux.wifi" : "linux.network",
@@ -167,7 +209,7 @@ export class LinuxSshAdapter implements DeviceAdapter {
       };
     }
     if (input.capability.id === "linux.repair.network") {
-      const result = await this.#executor.restartNetwork({ signal: input.signal });
+      const result = await executor.restartNetwork({ signal });
       if (!result.accepted) return { actionId: input.request.actionId, status: "rejected", errorCode: "permission_denied", startedAt, finishedAt: this.#now(), observationIds: [] };
     } else return { actionId: input.request.actionId, status: "rejected", errorCode: "unsupported_capability", startedAt, finishedAt: this.#now(), observationIds: [] };
     return { actionId: input.request.actionId, status: "completed", startedAt, finishedAt: this.#now(), observationIds: [] };
@@ -176,7 +218,10 @@ export class LinuxSshAdapter implements DeviceAdapter {
   async verify(input: DeviceAdapterVerificationInput): Promise<DeviceAdapterVerificationResult> {
     const wifi = input.capability.id === "linux.inspect.wifi";
     const rule = input.request.expectedVerification ?? (wifi ? { wifiAssociated: true } : { connected: true, routeAvailable: true });
-    const network = wifi ? await this.#executor.readWifi(input.signal) : await this.#executor.readNetwork(input.signal);
+    const executor = this.executorForProfile(input.profile);
+    const deadline = AbortSignal.timeout(10_000);
+    const signal = input.signal ? AbortSignal.any([input.signal, deadline]) : deadline;
+    const network = wifi ? await executor.readWifi(signal) : await executor.readNetwork(signal);
     const checkedAt = this.#now();
     const status = evaluateNetworkRule(rule, network);
     const observation = makeObservation(input.profile, input.evidenceId, checkedAt, network, wifi ? "linux.wifi" : "linux.network");
@@ -188,6 +233,20 @@ export class LinuxSshAdapter implements DeviceAdapter {
       observations: [observation],
     };
   }
+
+  private executorForProfile(profile: DeviceProfileV1): LinuxSshExecutor {
+    if (this.#executor) return this.#executor;
+    const connection = this.#connections.get(profile.connectionRefs[0] ?? "");
+    if (!connection || profile.adapterVersion !== this.manifest.adapterVersion
+      || profile.device.id !== linuxSshDeviceId(profile.device.ownerScope, connection.hostKeyFingerprint)) {
+      throw new DeviceBrokerError("target_changed", "Linux SSH registration no longer matches the connection");
+    }
+    return connection.executor;
+  }
+}
+
+export function linuxSshDeviceId(ownerId: string, identity: string): string {
+  return `linux:${ownerId}:${identity}`;
 }
 
 function makeObservation(profile: DeviceProfileV1, id: string, timestamp: string, reading: LinuxNetworkObservation, source: string): DeviceObservationV1 {
@@ -212,6 +271,7 @@ function evaluateNetworkRule(rule: JsonValue, current: LinuxNetworkObservation):
     routeAvailable: current.routeAvailable,
     gatewayReachable: current.gatewayReachable,
     dnsReachable: current.dnsReachable,
+    dnsNameResolved: current.dnsNameResolved,
     wifiAssociated: current.wifiAssociated,
   };
   const expected = Object.entries(rule);
