@@ -19,6 +19,7 @@ import {
   EdgeRuntimeJournal,
   EdgeRuntimeRegistry,
   HardwareProtocolWorkbench,
+  HardwareProtocolTransportRegistry,
   HardwareProtocolProfileRegistry,
   modbusRtuRegisterCodec,
   runDeviceReadOnlyPlaybook,
@@ -51,6 +52,7 @@ export interface DeviceSupportRuntime {
   readonly developerStore: SqliteDeviceDeveloperStore;
   readonly protocolStore: SqliteDeviceProtocolStore;
   readonly protocolWorkbench: HardwareProtocolWorkbench;
+  readonly protocolTransports: HardwareProtocolTransportRegistry;
   readonly protocolProfiles: HardwareProtocolProfileRegistry;
   readonly developerSessions: DeviceDeveloperSessionCoordinator;
   readonly collaboration: DeviceCollaborationCoordinator;
@@ -95,6 +97,7 @@ export function createDeviceSupportRuntime(options: {
   const developerStore = new SqliteDeviceDeveloperStore({ databasePath: options.databasePath });
   const protocolStore = new SqliteDeviceProtocolStore({ databasePath: options.databasePath });
   const protocolWorkbench = new HardwareProtocolWorkbench();
+  const protocolTransports = new HardwareProtocolTransportRegistry(protocolWorkbench);
   const protocolProfiles = new HardwareProtocolProfileRegistry(protocolWorkbench);
   const access = new DeviceAccessManager(fabricStore);
   const broker = new DeviceCapabilityBroker({ store, now, accessManager: access });
@@ -265,6 +268,7 @@ export function createDeviceSupportRuntime(options: {
     developerStore,
     protocolStore,
     protocolWorkbench,
+    protocolTransports,
     protocolProfiles,
     developerSessions,
     collaboration,
@@ -342,6 +346,7 @@ export function createDeviceSupportRuntime(options: {
     close: () => {
       for (const externalAdapter of options.externalAdapters ?? []) externalAdapter.close();
       ssh?.close();
+      void protocolTransports.close();
       fabricStore.close();
       developerStore.close();
       protocolStore.close();

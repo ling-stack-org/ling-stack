@@ -261,6 +261,7 @@ export * from "./device-developer.js";
 export * from "./ling-server.js";
 export * from "./ling-server-transport.js";
 export * from "./device-protocol.js";
+export * from "./device-protocol-transport.js";
 export * from "./modbus-rtu.js";
 export * from "./storage/sqlite/device-support-store.js";
 export * from "./storage/sqlite/device-fabric-store.js";
