@@ -155,6 +155,15 @@ export interface DeviceLifecycleRecordV1 {
   readonly changedAt: string;
 }
 
+export interface DeviceOwnershipRevisionV1 {
+  readonly deviceId: string;
+  readonly ownerScope: string;
+  readonly runtimeOwnerId?: string;
+  readonly revision: number;
+  readonly authority: string;
+  readonly changedAt: string;
+}
+
 export interface DeviceContextPackV1 {
   readonly contextId: string;
   readonly taskId: string;

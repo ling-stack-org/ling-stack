@@ -8,6 +8,7 @@ import type {
   DeviceGraphNodeV1,
   DeviceGraphRelationshipV1,
   DeviceLifecycleRecordV1,
+  DeviceOwnershipRevisionV1,
   DeviceResourceManifestV1,
   DeviceSecretUseV1,
   DeviceTaskGraphV1,
@@ -365,6 +366,26 @@ export class SqliteDeviceFabricStore {
     return row ? parseJson<DeviceLifecycleRecordV1>(row.record_json, "device lifecycle record") : undefined;
   }
 
+  transferOwnership(input: DeviceOwnershipRevisionV1): DeviceOwnershipRevisionV1 {
+    if (!input.deviceId.trim() || !input.ownerScope.trim() || !input.authority.trim() || input.revision < 1) throw new DeviceFabricError("lifecycle_invalid", "device ownership revision is invalid");
+    const current = this.getOwnership(input.deviceId);
+    if (current && input.revision <= current.revision) throw new DeviceFabricError("revision_conflict", "device ownership revision must advance");
+    if (current) this.database.prepare("INSERT INTO device_ownership_history(device_id,revision,record_json,changed_at) VALUES(?,?,?,?)").run(current.deviceId, current.revision, JSON.stringify(current), current.changedAt);
+    this.database.prepare("INSERT INTO device_ownership_current(device_id,revision,record_json,changed_at) VALUES(?,?,?,?) ON CONFLICT(device_id) DO UPDATE SET revision=excluded.revision,record_json=excluded.record_json,changed_at=excluded.changed_at")
+      .run(input.deviceId, input.revision, JSON.stringify(input), input.changedAt);
+    return input;
+  }
+
+  getOwnership(deviceId: string): DeviceOwnershipRevisionV1 | undefined {
+    const row = this.database.prepare("SELECT record_json FROM device_ownership_current WHERE device_id=?").get(deviceId) as Row | undefined;
+    return row ? parseJson<DeviceOwnershipRevisionV1>(row.record_json, "device ownership revision") : undefined;
+  }
+
+  listOwnershipHistory(deviceId: string): readonly DeviceOwnershipRevisionV1[] {
+    return (this.database.prepare("SELECT record_json FROM device_ownership_history WHERE device_id=? ORDER BY revision").all(deviceId) as Row[])
+      .map(row => parseJson<DeviceOwnershipRevisionV1>(row.record_json, "device ownership revision"));
+  }
+
   close(): void { this.database.close(); }
 
   private wouldCreateContainmentCycle(fromNodeId: string, toNodeId: string, replacingRelationshipId: string): boolean {
@@ -483,6 +504,20 @@ export class SqliteDeviceFabricStore {
         record_json TEXT NOT NULL,
         changed_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS device_ownership_current (
+        device_id TEXT PRIMARY KEY NOT NULL,
+        revision INTEGER NOT NULL,
+        record_json TEXT NOT NULL,
+        changed_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS device_ownership_history (
+        history_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        device_id TEXT NOT NULL,
+        revision INTEGER NOT NULL,
+        record_json TEXT NOT NULL,
+        changed_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_device_ownership_history_device ON device_ownership_history(device_id,revision);
     `);
   }
 }

@@ -215,3 +215,13 @@ test("event projector resumes from a snapshot and requests resync for a stale cu
   assert.equal(staleResult.reason, "snapshot_missing");
   store.close();
 });
+
+test("fleet ownership transfer advances revisions and keeps the previous owner history", () => {
+  const store = new SqliteDeviceFabricStore();
+  store.transferOwnership({ deviceId: "device-1", ownerScope: "workspace-a", runtimeOwnerId: "pc-a", revision: 1, authority: "pairing", changedAt: now });
+  store.transferOwnership({ deviceId: "device-1", ownerScope: "workspace-b", runtimeOwnerId: "mobile-b", revision: 2, authority: "operator", changedAt: "2026-11-21T00:01:00.000Z" });
+  assert.equal(store.getOwnership("device-1")?.ownerScope, "workspace-b");
+  assert.deepEqual(store.listOwnershipHistory("device-1").map(item => item.ownerScope), ["workspace-a"]);
+  assert.throws(() => store.transferOwnership({ deviceId: "device-1", ownerScope: "workspace-c", revision: 2, authority: "operator", changedAt: now }), (error: unknown) => error instanceof DeviceFabricError && error.code === "revision_conflict");
+  store.close();
+});
