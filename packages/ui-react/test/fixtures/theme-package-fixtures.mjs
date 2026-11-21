@@ -1,5 +1,29 @@
+// @ts-check
 import { deflateRawSync } from "node:zlib";
 import { lingLightTheme } from "../../dist/index.js";
+
+// Desktop's standalone Node smoke scripts also import this JavaScript fixture directly.
+/** @typedef {Uint8Array | string | readonly number[]} FixtureBytes */
+/** @typedef {{
+ *   name: string,
+ *   bytes?: FixtureBytes,
+ *   compression?: "deflate",
+ *   flags?: number,
+ *   localExtra?: Uint8Array,
+ *   centralExtra?: Uint8Array,
+ *   dataDescriptor?: boolean,
+ *   mode?: number,
+ *   externalAttributes?: number,
+ *   madeBy?: number,
+ * }} ZipEntry */
+/** @typedef {{ path: string, bytes: FixtureBytes, compression?: "deflate" }} FixtureAsset */
+/** @typedef {{
+ *   extraEntries?: readonly ZipEntry[],
+ *   license?: string,
+ *   launchAnimation?: FixtureAsset,
+ *   manifest?: unknown,
+ *   preview?: FixtureAsset,
+ * }} ThemePackageFixtureOptions */
 
 const textEncoder = new TextEncoder();
 
@@ -9,6 +33,7 @@ export const IMAGE_BYTES = Object.freeze({
   webp: Uint8Array.from([0x52, 0x49, 0x46, 0x46, 0x04, 0x00, 0x00, 0x00, 0x57, 0x45, 0x42, 0x50]),
 });
 
+/** @param {Record<string, unknown>} overrides */
 export function importedManifest(overrides = {}) {
   return {
     ...structuredClone(lingLightTheme),
@@ -19,6 +44,7 @@ export function importedManifest(overrides = {}) {
   };
 }
 
+/** @param {ThemePackageFixtureOptions} options */
 export function themePackageFixture({
   extraEntries = [],
   license,
@@ -26,6 +52,7 @@ export function themePackageFixture({
   manifest = importedManifest(),
   preview,
 } = {}) {
+  /** @type {ZipEntry[]} */
   const entries = [
     { name: "theme.json", bytes: textEncoder.encode(JSON.stringify(manifest)), compression: "deflate" },
   ];
@@ -36,6 +63,10 @@ export function themePackageFixture({
   return createZip(entries);
 }
 
+/**
+ * @param {readonly ZipEntry[]} entries
+ * @param {{ comment?: FixtureBytes }} options
+ */
 export function createZip(entries, options = {}) {
   const localParts = [];
   const centralParts = [];
@@ -120,10 +151,12 @@ export function createZip(entries, options = {}) {
   return concatBytes([...localParts, centralDirectory, eocd]);
 }
 
+/** @param {Uint8Array} bytes */
 export function cloneBytes(bytes) {
   return bytes.slice();
 }
 
+/** @param {Uint8Array} bytes */
 export function zipOffsets(bytes) {
   const view = dataView(bytes);
   const eocd = findSignature(view, 0x06054b50, true);
@@ -133,20 +166,24 @@ export function zipOffsets(bytes) {
   return { central, eocd, local };
 }
 
+/** @param {Uint8Array} bytes @param {number} offset @param {number} value */
 export function set16(bytes, offset, value) {
   dataView(bytes).setUint16(offset, value, true);
   return bytes;
 }
 
+/** @param {Uint8Array} bytes @param {number} offset @param {number} value */
 export function set32(bytes, offset, value) {
   dataView(bytes).setUint32(offset, value >>> 0, true);
   return bytes;
 }
 
+/** @param {Uint8Array} bytes @param {FixtureBytes} suffix */
 export function appendBytes(bytes, suffix) {
   return concatBytes([bytes, toBytes(suffix)]);
 }
 
+/** @param {readonly Uint8Array[]} parts */
 function concatBytes(parts) {
   const output = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
   let offset = 0;
@@ -157,16 +194,19 @@ function concatBytes(parts) {
   return output;
 }
 
+/** @param {FixtureBytes} value */
 function toBytes(value) {
   if (value instanceof Uint8Array) return value;
   if (typeof value === "string") return textEncoder.encode(value);
   return Uint8Array.from(value);
 }
 
+/** @param {Uint8Array} bytes */
 function dataView(bytes) {
   return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 }
 
+/** @param {DataView} view @param {number} signature */
 function findSignature(view, signature, reverse = false) {
   if (reverse) {
     for (let offset = view.byteLength - 4; offset >= 0; offset -= 1) {
@@ -180,14 +220,17 @@ function findSignature(view, signature, reverse = false) {
   return -1;
 }
 
+/** @param {DataView} view @param {number} offset @param {number} value */
 function write16(view, offset, value) {
   view.setUint16(offset, value, true);
 }
 
+/** @param {DataView} view @param {number} offset @param {number} value */
 function write32(view, offset, value) {
   view.setUint32(offset, value >>> 0, true);
 }
 
+/** @param {Uint8Array} bytes */
 function crc32(bytes) {
   let value = 0xffffffff;
   for (const byte of bytes) {

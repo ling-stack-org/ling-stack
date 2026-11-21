@@ -7,6 +7,7 @@ import {
   ThemeStudioPreviewFixture,
   lingLightTheme,
   themeTokensToCssVariables,
+  type ThemeStudioPreviewFixtureProps,
 } from "../dist/index.js";
 
 const copy = {
@@ -70,7 +71,7 @@ const copy = {
   },
 };
 
-const policy = {
+const policy: ThemeStudioPreviewFixtureProps["presentationPolicy"] = {
   artwork: "ambient",
   decorations: true,
   surfaceRecipe: "translucent",
@@ -159,7 +160,12 @@ test("preview drops non-allowlisted style keys and non-blob artwork URLs", () =>
   assert.match(html, /--ling-bg-app:#ffffff/u);
 });
 
-function render(surface, viewport, scale, artworkUrl) {
+function render(
+  surface: ThemeStudioPreviewFixtureProps["surface"],
+  viewport: ThemeStudioPreviewFixtureProps["viewport"],
+  scale: number,
+  artworkUrl?: string,
+) {
   return renderToStaticMarkup(createElement(ThemeStudioPreviewFixture, {
     artworkUrl,
     copy,

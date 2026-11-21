@@ -82,7 +82,7 @@ test("theme studio preview declaration stays controlled, synthetic, and viewport
   assert.doesNotMatch(preview, /apiClient|daemon|router|workspaceId/u);
 });
 
-async function collectFiles(rootUrl) {
+async function collectFiles(rootUrl: URL): Promise<string[]> {
   const rootPath = rootUrl.pathname;
   const entries = await readdir(rootPath, { withFileTypes: true });
   const files = [];
@@ -94,6 +94,6 @@ async function collectFiles(rootUrl) {
   return files;
 }
 
-function escapeRegExp(value) {
+function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
