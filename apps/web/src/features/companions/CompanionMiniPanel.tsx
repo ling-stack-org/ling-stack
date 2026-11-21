@@ -827,8 +827,8 @@ function filterSeenAttentionItems(cwd: string, items: readonly CompanionAttentio
     if (item.priority !== "result") return true;
     try {
       const value = window.localStorage.getItem("companion-seen:" + cwd + ":" + item.source.kind + ":" + item.source.id);
-      if (value === "1") return false;
-      const seenRevision = value === null ? 0 : Number(value);
+      if (value === null) return true;
+      const seenRevision = Number(value);
       return !Number.isFinite(seenRevision) || seenRevision < item.revision;
     } catch {
       return true;

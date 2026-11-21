@@ -151,7 +151,7 @@ async function openPanel(page: Page) {
   return panel;
 }
 
-async function mockAttentionCard(page: Page, card: Pick<CompanionAttentionItem, "source" | "priority" | "status" | "payload" | "summary">) {
+async function mockAttentionCard(page: Page, card: Pick<CompanionAttentionItem, "source" | "priority" | "status" | "payload" | "summary">, revision = 1) {
   const now = new Date().toISOString();
   const item: CompanionAttentionItem = {
     ...card,
@@ -159,7 +159,7 @@ async function mockAttentionCard(page: Page, card: Pick<CompanionAttentionItem, 
     id: `${card.source.kind}:${card.source.id}`,
     actor: { kind: "system", label: "Ling" },
     title: card.summary,
-    revision: 1,
+    revision,
     createdAt: now,
     updatedAt: now,
     action: { kind: "open_source", enabled: true, source: card.source },
@@ -230,6 +230,34 @@ test("opens and locates a result in its own channel conversation", async ({ page
     const timeline = page.locator(`[data-conversation-timeline][data-conversation-thread-id="${threadId}"]`);
     const reportRow = timeline.locator('.conversation-timeline-locate-pulse').filter({ has: page.locator(`[data-conversation-timeline-item-id="terminal-report:${report.id}"]`) });
     await expect(reportRow).toBeVisible();
+  } finally { await f.close(); }
+});
+
+test("a dismissed first result revision stays seen and the next revision appears", async ({ page }) => {
+  const f = await fixture(page);
+  const source = { workspaceId: "workspace_default", cwd, kind: "terminal_report", id: "report_revision" } as const;
+  const card = {
+    source,
+    priority: "result",
+    status: "resolved",
+    payload: { kind: "terminal_report", reportId: source.id, outcomeStatus: "succeeded" },
+  } as const;
+  try {
+    await mockAttentionCard(page, { ...card, summary: "First result revision" });
+    await page.goto("/");
+    await page.locator(".companion-config-button").click();
+    const panel = page.getByRole("dialog", { name: "Intelligent companion" });
+    const dismiss = panel.getByRole("button", { name: "Dismiss", exact: true });
+    await dismiss.click({ timeout: 5000 });
+    await expect(dismiss).toBeHidden();
+    const refresh = panel.getByRole("button", { name: "Refresh", exact: true });
+    await refresh.click();
+    await expect(refresh).toBeEnabled();
+    await expect(dismiss).toBeHidden();
+
+    await mockAttentionCard(page, { ...card, summary: "Revised result summary" }, 2);
+    await refresh.click();
+    await expect(panel.locator(".companion-attention-card")).toContainText("Revised result summary");
   } finally { await f.close(); }
 });
 
