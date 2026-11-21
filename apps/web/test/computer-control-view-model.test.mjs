@@ -83,7 +83,7 @@ test("malformed bundled projection fails closed and never falls back to external
 
 function plugin(setupOverrides = {}, healthCheckedAt) {
   return {
-    id: "trusted-local:cua-driver",
+    id: "official:cua-driver",
     displayName: "Cua Driver",
     version: "1",
     sourceKind: "trusted-local-preset",
@@ -93,7 +93,7 @@ function plugin(setupOverrides = {}, healthCheckedAt) {
     linkedResources: [],
     ...(healthCheckedAt ? {
       health: {
-        pluginId: "trusted-local:cua-driver",
+        pluginId: "official:cua-driver",
         checkedAt: healthCheckedAt,
         expiresAt: "2026-07-30T02:08:04.000Z",
         status: "failed",

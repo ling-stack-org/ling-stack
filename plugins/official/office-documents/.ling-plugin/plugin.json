@@ -1,0 +1,21 @@
+{
+  "id": "official:office-documents",
+  "displayName": "Ling Office Documents",
+  "version": "0.1.0",
+  "manifestVersion": 2,
+  "lingInterfaceVersion": "2",
+  "sourceKind": "official-remote",
+  "trustLevel": "official",
+  "description": "The signed Office document helper for Ling Desktop.",
+  "trustSummary": "Official local Office helper. Document writes remain subject to Ling approvals.",
+  "platforms": ["darwin", "win32"],
+  "contributions": [
+    { "kind": "mcp-server", "id": "mcp:official-office-documents", "path": "./mcp-server.json" }
+  ],
+  "healthChecks": [
+    { "id": "office-helper", "kind": "binary", "label": "Office helper" }
+  ],
+  "defaultApprovals": [
+    { "contributionId": "mcp:official-office-documents", "decision": "ask", "reason": "Office writes can change local documents." }
+  ]
+}

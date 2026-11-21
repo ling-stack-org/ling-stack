@@ -6,6 +6,7 @@ import type {
   PublicMcpServer,
   SecretResolver,
 } from "@ling-stack/core";
+import { LING_PRODUCT_VERSION } from "@ling-stack/contracts";
 import type { LingExtensionRegistry } from "@ling-stack/plugin-sdk";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { ExternalSecretStore, McpBroker } from "../../context.js";
@@ -37,6 +38,7 @@ import {
   parseManagedPluginCreateRequest,
   parseManagedPluginDisableRequest,
   parseManagedPluginInstallRequest,
+  parseManagedPluginRemoteInstallRequest,
   parseManagedPluginUninstallRequest,
   parseManagedPluginValidatePackageRequest,
   parsePluginImportApplyRequest,
@@ -59,12 +61,15 @@ import {
   listPluginSourceViews,
   toPluginPackageView,
 } from "./source-index.js";
+import { comparePluginVersions, fetchOfficialPluginCatalog, selectOfficialPluginArtifact } from "./remote-catalog.js";
+import { installRemotePluginArtifact, rollbackRemotePluginArtifact } from "./remote-package.js";
 import {
   checkInstalledPluginRuntimeDependencies,
   assertExclusiveBundledCuaMcpServerOwnership,
   installBundledPluginPackage,
   refreshManagedPluginPackage,
   uninstallManagedPluginPackage,
+  linkVerifiedPluginContributions,
 } from "./install.js";
 import { buildManagedPluginRuntimePreview } from "./runtime-injection.js";
 import { createTrustedLocalMcpPlugin } from "./create-local-plugin.js";
@@ -77,7 +82,7 @@ import type { OfficeDocumentsPluginService } from "./office-documents.js";
 export type ManagedPluginRoute =
   | {
       readonly pluginId: string;
-      readonly action?: "enable" | "disable" | "check" | "connect" | "pairing" | "revoke" | "repair-browser-host" | "apply-preset" | "validate-package" | "install" | "uninstall" | "refresh-package" | "runtime-preview";
+      readonly action?: "enable" | "disable" | "check" | "check-update" | "connect" | "pairing" | "revoke" | "repair-browser-host" | "apply-preset" | "validate-package" | "install" | "install-remote" | "uninstall" | "refresh-package" | "rollback" | "runtime-preview";
     };
 
 const bundledCanonicalCuaDriverActions = new Set<NonNullable<ManagedPluginRoute["action"]>>([
@@ -160,6 +165,55 @@ export async function handlePluginSourcesCollection(
     return;
   }
   writeJson(response, 200, { cwd, sources: listPluginSourceViews() });
+}
+
+export async function handleOfficialPluginCatalog(
+  request: IncomingMessage,
+  response: ServerResponse,
+  config: ResolvedDaemonConfig,
+): Promise<void> {
+  const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
+  const cwd = url.searchParams.get("cwd");
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
+    return;
+  }
+  if (request.method !== "GET") {
+    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /plugins/catalog` });
+    return;
+  }
+  try {
+    const result = await fetchOfficialPluginCatalog();
+    const requestedLimit = Number.parseInt(url.searchParams.get("limit") ?? "50", 10);
+    const limit = Number.isFinite(requestedLimit) ? Math.min(Math.max(requestedLimit, 1), 50) : 50;
+    const requestedCursor = Number.parseInt(url.searchParams.get("cursor") ?? "0", 10);
+    const cursor = Number.isFinite(requestedCursor) ? Math.max(requestedCursor, 0) : 0;
+    const query = (url.searchParams.get("query") ?? "").trim().toLocaleLowerCase();
+    const filtered = query
+      ? result.catalog.plugins.filter((plugin) => `${plugin.displayName}\n${plugin.description ?? ""}\n${plugin.trustSummary}`.toLocaleLowerCase().includes(query))
+      : result.catalog.plugins;
+    const page = filtered.slice(cursor, cursor + limit).map((plugin) => ({
+      ...plugin,
+      artifacts: plugin.artifacts.filter((artifact) => {
+        try {
+          return artifact.platform === toPluginArtifactPlatform(process.platform)
+            && artifact.arch === toPluginArtifactArchitecture(process.arch);
+        } catch {
+          return false;
+        }
+      }),
+    }));
+    writeJson(response, 200, {
+      cwd,
+      catalog: { ...result.catalog, plugins: page },
+      catalogUrl: result.url,
+      signatureVerified: result.signatureVerified,
+      nextCursor: cursor + page.length < filtered.length ? String(cursor + page.length) : undefined,
+      pageSize: limit,
+    });
+  } catch (error) {
+    writeRouteError(response, error);
+  }
 }
 
 export async function handlePluginsImport(
@@ -400,22 +454,133 @@ export async function handlePluginItem(
       return;
     }
 
+    if (request.method === "POST" && route.action === "install-remote") {
+      const body = await readJsonBody(request, config.maxBodyBytes);
+      const input = parseManagedPluginRemoteInstallRequest(body);
+      const now = new Date().toISOString();
+      const catalogResult = await fetchOfficialPluginCatalog();
+      const artifact = selectOfficialPluginArtifact({
+        catalog: catalogResult.catalog,
+        pluginId: route.pluginId,
+        platform: toPluginArtifactPlatform(process.platform),
+        arch: toPluginArtifactArchitecture(process.arch),
+        channel: input.channel,
+        version: input.version,
+      });
+      const installed = await installRemotePluginArtifact({
+        paths: store.paths,
+        artifact,
+        catalogVersion: catalogResult.catalog.generatedAt,
+        lingVersion: LING_PRODUCT_VERSION,
+        now,
+      });
+      const descriptor = installed.plugin.validation.compiledDescriptor;
+      if (!descriptor) throw new HttpError(400, "plugin_package_invalid", "Remote plugin package did not produce a valid descriptor.");
+      const packageRecord = store.upsertManagedPluginPackage({
+        pluginId: descriptor.id,
+        sourceKind: "official-remote",
+        version: descriptor.version,
+        status: "installed",
+        cacheRef: installed.cacheRef,
+        packageHash: installed.packageHash,
+        manifestJson: JSON.stringify(installed.plugin.manifest),
+        artifactId: artifact.artifactId,
+        platform: artifact.platform,
+        arch: artifact.arch,
+        sourceUrl: installed.sourceUrl,
+        catalogVersion: catalogResult.catalog.generatedAt,
+        previousVersion: installed.previousVersion,
+      }, now);
+      ensureManagedPluginRecord({ store, descriptor, enabled: store.getManagedPlugin(descriptor.id)?.enabled ?? false, now });
+      await linkVerifiedPluginContributions({
+        store,
+        pluginPackage: installed.plugin,
+        enabled: store.getManagedPlugin(descriptor.id)?.enabled === true,
+        now,
+      });
+      store.appendManagedPluginEvent({
+        pluginId: descriptor.id,
+        type: "installed",
+        actor: "local-user",
+        message: `Official plugin ${descriptor.version} installed.`,
+        data: { artifactId: artifact.artifactId, packageHash: installed.packageHash, catalogVersion: catalogResult.catalog.generatedAt },
+      }, now);
+      writeJson(response, 200, {
+        plugin: getRequiredPluginView({ cwd, extensionRegistry, store, pluginId: descriptor.id, includeEvents: true, cuaDriverRuntimeAuthority: mcpBroker.cuaDriverRuntimeAuthority, cuaDriverFeatureFlags: config.cuaDriver }),
+        package: publicPluginPackage(packageRecord),
+      });
+      return;
+    }
+
+    if (request.method === "POST" && route.action === "check-update") {
+      const catalogResult = await fetchOfficialPluginCatalog();
+      const current = store.getManagedPluginPackage(route.pluginId)?.version
+        ?? store.getManagedPlugin(route.pluginId)?.version;
+      const artifact = selectOfficialPluginArtifact({
+        catalog: catalogResult.catalog,
+        pluginId: route.pluginId,
+        platform: toPluginArtifactPlatform(process.platform),
+        arch: toPluginArtifactArchitecture(process.arch),
+        channel: "stable",
+      });
+      writeJson(response, 200, {
+        cwd,
+        pluginId: route.pluginId,
+        currentVersion: current,
+        latestVersion: artifact.version,
+        updateAvailable: !current || comparePluginVersions(artifact.version, current) > 0,
+        catalogUrl: catalogResult.url,
+        signatureVerified: catalogResult.signatureVerified,
+        artifact,
+      });
+      return;
+    }
+
+    if (request.method === "POST" && route.action === "rollback") {
+      const now = new Date().toISOString();
+      const rolledBack = await rollbackRemotePluginArtifact({ paths: store.paths, pluginId: route.pluginId, now });
+      const descriptor = rolledBack.plugin.validation.compiledDescriptor;
+      if (!descriptor) throw new HttpError(400, "plugin_package_invalid", "Previous plugin package did not produce a valid descriptor.");
+      const packageRecord = store.upsertManagedPluginPackage({
+        pluginId: descriptor.id,
+        sourceKind: "official-remote",
+        version: descriptor.version,
+        status: "installed",
+        cacheRef: rolledBack.pointer.cacheRef ?? "",
+        packageHash: rolledBack.pointer.packageHash,
+        manifestJson: JSON.stringify(rolledBack.plugin.manifest),
+        artifactId: rolledBack.pointer.artifactId,
+        platform: rolledBack.pointer.platform,
+        arch: rolledBack.pointer.arch,
+        sourceUrl: rolledBack.pointer.sourceUrl,
+        catalogVersion: rolledBack.pointer.catalogVersion,
+        previousVersion: store.getManagedPluginPackage(descriptor.id)?.version,
+      }, now);
+      ensureManagedPluginRecord({ store, descriptor, enabled: store.getManagedPlugin(descriptor.id)?.enabled ?? false, now });
+      await linkVerifiedPluginContributions({
+        store,
+        pluginPackage: rolledBack.plugin,
+        enabled: store.getManagedPlugin(descriptor.id)?.enabled === true,
+        now,
+      });
+      store.appendManagedPluginEvent({
+        pluginId: descriptor.id,
+        type: "package_refreshed",
+        actor: "local-user",
+        message: `Official plugin rolled back to ${descriptor.version}.`,
+        data: { cacheRef: rolledBack.pointer.cacheRef, packageHash: rolledBack.pointer.packageHash },
+      }, now);
+      writeJson(response, 200, {
+        plugin: getRequiredPluginView({ cwd, extensionRegistry, store, pluginId: descriptor.id, includeEvents: true, cuaDriverRuntimeAuthority: mcpBroker.cuaDriverRuntimeAuthority, cuaDriverFeatureFlags: config.cuaDriver }),
+        package: publicPluginPackage(packageRecord),
+      });
+      return;
+    }
+
     const descriptor = getManagedPluginDescriptor(extensionRegistry, store, route.pluginId);
     if (!descriptor) {
       throw new HttpError(404, "plugin_not_found", `Plugin not found: ${route.pluginId}`);
     }
-    if (
-      bundledEmbeddedCuaDriverGateEnabled(config, process.platform)
-      && route.pluginId === "bundled:cua-driver"
-      && route.action
-    ) {
-      throw new HttpError(
-        409,
-        "cua_driver_compatibility_record_hidden",
-        "The hidden bundled compatibility record is not a second Cua Driver runtime surface.",
-      );
-    }
-
     if (request.method === "GET" && !route.action) {
       writeJson(response, 200, {
         plugin: getRequiredPluginView({ cwd, extensionRegistry, store, pluginId: route.pluginId, includeEvents: true, cuaDriverRuntimeAuthority: mcpBroker.cuaDriverRuntimeAuthority, cuaDriverFeatureFlags: config.cuaDriver }),
@@ -519,7 +684,7 @@ export async function handlePluginItem(
         return;
       }
       const now = new Date().toISOString();
-      if (route.pluginId === "bundled:cua-driver") {
+      if (route.pluginId === "official:cua-driver") {
         assertExclusiveBundledCuaMcpServerOwnership({ store, descriptor, now });
       }
       ensureManagedPluginRecord({ store, descriptor, enabled: true, now });
@@ -815,13 +980,64 @@ async function handlePluginCheck(input: {
     secretResolver: input.secretResolver,
     now,
   });
-  const storedHealth = input.store.upsertManagedPluginHealthSnapshot(health, now);
+  let storedHealth = input.store.upsertManagedPluginHealthSnapshot(health, now);
+  let automaticRollback: { readonly version: string } | undefined;
+  if (storedHealth.status === "failed" && input.descriptor.sourceKind === "official-remote") {
+    try {
+      const rolledBack = await rollbackRemotePluginArtifact({ paths: input.store.paths, pluginId: input.pluginId, now });
+      const rolledBackDescriptor = rolledBack.plugin.validation.compiledDescriptor;
+      if (rolledBackDescriptor) {
+        const enabled = input.store.getManagedPlugin(input.pluginId)?.enabled === true;
+        const previousPackage = input.store.getManagedPluginPackage(input.pluginId);
+        input.store.upsertManagedPluginPackage({
+          pluginId: rolledBackDescriptor.id,
+          sourceKind: "official-remote",
+          version: rolledBackDescriptor.version,
+          status: "installed",
+          cacheRef: rolledBack.pointer.cacheRef ?? "",
+          packageHash: rolledBack.pointer.packageHash ?? "",
+          manifestJson: JSON.stringify(rolledBack.plugin.manifest),
+          artifactId: rolledBack.pointer.artifactId,
+          platform: rolledBack.pointer.platform,
+          arch: rolledBack.pointer.arch,
+          sourceUrl: rolledBack.pointer.sourceUrl,
+          catalogVersion: rolledBack.pointer.catalogVersion,
+          previousVersion: previousPackage?.version,
+        }, now);
+        ensureManagedPluginRecord({ store: input.store, descriptor: rolledBackDescriptor, enabled, now });
+        await linkVerifiedPluginContributions({
+          store: input.store,
+          pluginPackage: rolledBack.plugin,
+          enabled,
+          now,
+        });
+        automaticRollback = { version: rolledBackDescriptor.version };
+        const recoveredHealth = await checkPluginHealth({
+          descriptor: rolledBackDescriptor,
+          store: input.store,
+          mcpBroker: input.mcpBroker,
+          secretResolver: input.secretResolver,
+          now,
+        });
+        storedHealth = input.store.upsertManagedPluginHealthSnapshot(recoveredHealth, now);
+        input.store.appendManagedPluginEvent({
+          pluginId: input.pluginId,
+          type: "package_refreshed",
+          actor: "system",
+          message: `Plugin health check failed; rolled back to ${rolledBackDescriptor.version}.`,
+          data: { version: rolledBackDescriptor.version },
+        }, now);
+      }
+    } catch {
+      // Keep the original failed health result when no valid rollback exists.
+    }
+  }
   input.store.appendManagedPluginEvent({
     pluginId: input.pluginId,
     type: "checked",
     actor: "local-user",
     message: storedHealth.message,
-    data: { status: storedHealth.status },
+    data: { status: storedHealth.status, ...(automaticRollback ? { automaticRollback } : {}) },
   }, now);
   const plugin = getRequiredPluginView({
     cwd: input.cwd,
@@ -901,7 +1117,7 @@ async function checkPluginHealth(input: {
   readonly secretResolver: SecretResolver;
   readonly now: string;
 }): Promise<ManagedPluginHealthSnapshot> {
-  if (input.descriptor.id === CUA_DRIVER_PLUGIN_ID || input.descriptor.id === "bundled:cua-driver") {
+  if (input.descriptor.id === CUA_DRIVER_PLUGIN_ID || input.descriptor.id === "official:cua-driver") {
     if (!isCuaDriverPlatformSupported()) {
       return createPluginHealthSnapshot({
         pluginId: input.descriptor.id,
@@ -911,7 +1127,7 @@ async function checkPluginHealth(input: {
         details: { errorCode: "plugin_platform_blocked" },
       });
     }
-    if (input.descriptor.id === "bundled:cua-driver") {
+    if (input.descriptor.id === "official:cua-driver") {
       assertExclusiveBundledCuaMcpServerOwnership({
         store: input.store,
         descriptor: input.descriptor,
@@ -1075,7 +1291,23 @@ function publicPluginPackage(record: ManagedPluginPackageRecord) {
     installedAt: record.installedAt,
     updatedAt: record.updatedAt,
     uninstalledAt: record.uninstalledAt,
+    artifactId: record.artifactId,
+    platform: record.platform,
+    arch: record.arch,
+    sourceUrl: record.sourceUrl,
+    catalogVersion: record.catalogVersion,
+    previousVersion: record.previousVersion,
   };
+}
+
+function toPluginArtifactPlatform(platform: NodeJS.Platform): "darwin" | "linux" | "win32" {
+  if (platform === "darwin" || platform === "linux" || platform === "win32") return platform;
+  throw new HttpError(409, "plugin_platform_unsupported", `Official plugins are not supported on ${platform}.`);
+}
+
+function toPluginArtifactArchitecture(arch: string): "arm64" | "x64" | "ia32" | "universal" {
+  if (arch === "arm64" || arch === "x64" || arch === "ia32") return arch;
+  throw new HttpError(409, "plugin_architecture_unsupported", `Official plugins are not supported on ${arch}.`);
 }
 
 function writeRouteError(response: ServerResponse, error: unknown): void {

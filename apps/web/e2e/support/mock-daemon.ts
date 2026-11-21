@@ -4141,8 +4141,71 @@ export function createMockManagedPlugins(): MockManagedPlugin[] {
       },
     },
     createMockCuaPlugin(),
-    createMockBundledCuaPlugin(),
   ];
+}
+
+function createMockOfficialCatalogEntries(): Array<Record<string, unknown>> {
+  return [
+    createMockOfficialCatalogEntry({
+      pluginId: "official:chrome-browser",
+      displayName: "Ling for Chrome",
+      description: "The signed Ling for Chrome extension and native messaging host.",
+      trustSummary: "Official browser extension package.",
+      version: "0.1.1",
+      sizeBytes: 1799,
+    }),
+    createMockOfficialCatalogEntry({
+      pluginId: "official:cua-driver",
+      displayName: "Cua Driver",
+      description: "Connects Ling to an already installed Cua Driver MCP server.",
+      trustSummary: "Official desktop automation plugin.",
+      version: "0.2.0",
+      sizeBytes: 2256,
+    }),
+    createMockOfficialCatalogEntry({
+      pluginId: "official:office-documents",
+      displayName: "Ling Office Documents",
+      description: "The official local Office helper.",
+      trustSummary: "Official Office helper package.",
+      version: "0.1.0",
+      sizeBytes: 2048,
+    }),
+  ];
+}
+
+function createMockOfficialCatalogEntry(input: {
+  readonly pluginId: string;
+  readonly displayName: string;
+  readonly description: string;
+  readonly trustSummary: string;
+  readonly version: string;
+  readonly sizeBytes: number;
+}): Record<string, unknown> {
+  const platforms = [
+    ["darwin", "arm64"],
+    ["darwin", "x64"],
+    ["linux", "x64"],
+    ["win32", "x64"],
+  ] as const;
+  return {
+    pluginId: input.pluginId,
+    displayName: input.displayName,
+    description: input.description,
+    trustSummary: input.trustSummary,
+    latestStableVersion: input.version,
+    manifest: { contributions: [], requiredSecrets: [], defaultApprovals: [], healthChecks: [] },
+    artifacts: platforms.map(([platform, arch]) => ({
+      artifactId: `${input.pluginId}-${input.version}-${platform}-${arch}`,
+      pluginId: input.pluginId,
+      version: input.version,
+      platform,
+      arch,
+      channel: "stable",
+      url: `https://example.com/${encodeURIComponent(input.pluginId)}-${input.version}-${platform}-${arch}.ling-plugin.zip`,
+      sizeBytes: input.sizeBytes,
+      sha256: "a".repeat(64),
+    })),
+  };
 }
 
 export function createMockChromePlugin(overrides: Partial<MockManagedPlugin> = {}): MockManagedPlugin {
@@ -4160,7 +4223,7 @@ export function createMockChromePlugin(overrides: Partial<MockManagedPlugin> = {
   };
   const status = overrides.status ?? "disabled";
   return {
-    id: "built-in:chrome",
+    id: "official:chrome-browser",
     displayName: "Chrome",
     version: "0.1.1",
     sourceKind: "built-in",
@@ -4179,7 +4242,7 @@ export function createMockChromePlugin(overrides: Partial<MockManagedPlugin> = {
       enabled: setup.connected === true,
     }],
     health: overrides.health ?? createMockPluginHealth(
-      "built-in:chrome",
+      "official:chrome-browser",
       status === "enabled" && setup.connected ? "ready" : status === "enabled" ? "failed" : "disabled",
       setup.connected ? "Chrome extension is connected." : "Install or open Ling for Chrome. Connection is automatic.",
     ),
@@ -4222,7 +4285,7 @@ export function createMockCuaPlugin(overrides: Partial<MockManagedPlugin> = {}):
   const status = overrides.status ?? (setup.state === "ready" ? "enabled" : setup.state === "connected" ? "disabled" : "available");
   const enabled = status === "enabled";
   return {
-    id: "trusted-local:cua-driver",
+    id: "official:cua-driver",
     displayName: "Cua Driver",
     version: "1.0.0",
     sourceKind: "trusted-local-preset",
@@ -4290,7 +4353,7 @@ export function createMockBundledEmbeddedCuaPlugin(input: {
       limitations: input.limitations ?? [],
     },
     health: input.effectiveEnabled
-      ? createMockPluginHealth("trusted-local:cua-driver", "ready", "Bundled Cua Driver is ready.")
+      ? createMockPluginHealth("official:cua-driver", "ready", "Bundled Cua Driver is ready.")
       : undefined,
     actions: {
       canEnable: input.providerState === "included",
@@ -4310,7 +4373,7 @@ export function createMockBundledCuaPlugin(overrides: Partial<MockManagedPlugin>
   const linkedResources = overrides.linkedResources ?? [];
   const status = overrides.status ?? (packageRecord?.status === "installed" ? "disabled" : "available");
   return {
-    id: "bundled:cua-driver",
+    id: "official:cua-driver",
     displayName: "Cua Driver",
     version: "0.2.0",
     sourceKind: "bundled",
@@ -4330,7 +4393,7 @@ export function createMockBundledCuaPlugin(overrides: Partial<MockManagedPlugin>
         enabled: status === "enabled",
       },
     ],
-    health: createMockPluginHealth("bundled:cua-driver", "ready", "Bundled plugin package manifest is valid."),
+    health: createMockPluginHealth("official:cua-driver", "ready", "Bundled plugin package manifest is valid."),
     linkedResources,
     package: packageRecord,
     runtimePreview: overrides.runtimePreview ?? createMockBundledRuntimePreview({
@@ -4355,7 +4418,7 @@ export function createMockBundledCuaPlugin(overrides: Partial<MockManagedPlugin>
 
 export function createMockBundledCuaPackageRecord(): MockManagedPluginPackage {
   return {
-    pluginId: "bundled:cua-driver",
+    pluginId: "official:cua-driver",
     sourceKind: "bundled",
     version: "0.2.0",
     status: "installed",
@@ -4380,7 +4443,7 @@ export function createMockBundledRuntimePreview(input: {
         ]
       : ["Linked MCP server is missing for mcp:cua-driver."];
   return {
-    pluginId: "bundled:cua-driver",
+    pluginId: "official:cua-driver",
     status: input.status,
     package: input.packageRecord,
     mcpServers: input.linkedResources ?? [],
@@ -4390,8 +4453,8 @@ export function createMockBundledRuntimePreview(input: {
     policyOverlays: input.status === "injectable"
       ? [
           {
-            id: "bundled:cua-driver:mcp_cua_driver:list_windows",
-            pluginId: "bundled:cua-driver",
+            id: "official:cua-driver:mcp_cua_driver:list_windows",
+            pluginId: "official:cua-driver",
             contributionId: "mcp_cua_driver",
             targetKind: "mcp-tool",
             targetId: "mcp_cua_driver:list_windows",
@@ -4400,8 +4463,8 @@ export function createMockBundledRuntimePreview(input: {
             reason: "Read-only Cua Driver inspection tool.",
           },
           {
-            id: "bundled:cua-driver:mcp_cua_driver:click",
-            pluginId: "bundled:cua-driver",
+            id: "official:cua-driver:mcp_cua_driver:click",
+            pluginId: "official:cua-driver",
             contributionId: "mcp_cua_driver",
             targetKind: "mcp-tool",
             targetId: "mcp_cua_driver:click",
@@ -4417,9 +4480,9 @@ export function createMockBundledRuntimePreview(input: {
 
 export function createMockBundledCuaPackage(): Record<string, unknown> {
   return {
-    id: "bundled:cua-driver",
+    id: "official:cua-driver",
     manifest: {
-      id: "bundled:cua-driver",
+      id: "official:cua-driver",
       displayName: "Cua Driver",
       version: "0.2.0",
       lingInterfaceVersion: "1",
@@ -4435,7 +4498,7 @@ export function createMockBundledCuaPackage(): Record<string, unknown> {
       errors: [],
       warnings: [],
       compiledDescriptor: {
-        id: "bundled:cua-driver",
+        id: "official:cua-driver",
         displayName: "Cua Driver",
         version: "0.2.0",
         sourceKind: "bundled",
@@ -4487,7 +4550,7 @@ export function updateMockPlugin(
 
 export function updateMockCuaPlugin(state: MockState, patch: Partial<MockManagedPlugin>): MockManagedPlugin {
   const linkedResource = patch.linkedResources?.[0];
-  const current = state.managedPlugins.find((plugin) => plugin.id === "trusted-local:cua-driver");
+  const current = state.managedPlugins.find((plugin) => plugin.id === "official:cua-driver");
   const nextStatus = patch.status ?? current?.status ?? "available";
   const merged = createMockCuaPlugin({
     ...current,
@@ -4514,7 +4577,7 @@ export function updateMockCuaPlugin(state: MockState, patch: Partial<MockManaged
       canRuntimePreview: false,
     },
   });
-  return updateMockPlugin(state, "trusted-local:cua-driver", merged);
+  return updateMockPlugin(state, "official:cua-driver", merged);
 }
 
 export function createMockPluginHealth(
@@ -9016,9 +9079,7 @@ export async function handleDaemonRoute(
     await route.fulfill({
       json: {
         cwd,
-        plugins: state.managedPlugins.filter((plugin) =>
-          plugin.id !== "bundled:cua-driver" && plugin.id !== "runner:pi"
-        ),
+        plugins: state.managedPlugins.filter((plugin) => plugin.id !== "runner:pi"),
       },
     });
     return;
@@ -9081,9 +9142,35 @@ export async function handleDaemonRoute(
             sourceKind: "bundled",
             displayName: "Bundled plugins",
             pluginCount: 1,
-            pluginIds: ["bundled:cua-driver"],
+            pluginIds: ["official:cua-driver"],
           },
         ],
+      },
+    });
+    return;
+  }
+  if (request.method() === "GET" && path === "/plugins/catalog") {
+    const allEntries = createMockOfficialCatalogEntries();
+    const query = (url.searchParams.get("query") ?? "").trim().toLocaleLowerCase();
+    const filtered = query
+      ? allEntries.filter((entry) => `${entry.displayName}\n${entry.description}\n${entry.trustSummary}`.toLocaleLowerCase().includes(query))
+      : allEntries;
+    const cursor = Math.max(Number.parseInt(url.searchParams.get("cursor") ?? "0", 10) || 0, 0);
+    const limit = Math.min(Math.max(Number.parseInt(url.searchParams.get("limit") ?? "50", 10) || 50, 1), 50);
+    const plugins = filtered.slice(cursor, cursor + limit);
+    await route.fulfill({
+      json: {
+        cwd,
+        catalog: {
+          schemaVersion: 1,
+          generatedAt: "2026-11-19T00:00:00.000Z",
+          source: { repository: "ling-stack-org/ling-stack", releaseTag: "mock-catalog", sourceSha: "mock" },
+          plugins,
+        },
+        catalogUrl: "https://example.com/plugins/catalog.json",
+        signatureVerified: true,
+        ...(cursor + plugins.length < filtered.length ? { nextCursor: String(cursor + plugins.length) } : {}),
+        pageSize: limit,
       },
     });
     return;
@@ -9091,7 +9178,7 @@ export async function handleDaemonRoute(
   const pluginPackageMatch = /^\/plugins\/packages\/([^/]+)$/.exec(path);
   if (pluginPackageMatch && request.method() === "GET") {
     const packageId = decodeURIComponent(pluginPackageMatch[1]);
-    if (packageId !== "bundled:cua-driver") {
+    if (packageId !== "official:cua-driver") {
       await route.fulfill({ status: 404, json: { error: "plugin_package_not_found" } });
       return;
     }
@@ -9102,7 +9189,35 @@ export async function handleDaemonRoute(
   if (pluginMatch) {
     const pluginId = decodeURIComponent(pluginMatch[1]);
     const action = pluginMatch[2];
-    const pluginIndex = state.managedPlugins.findIndex((plugin) => plugin.id === pluginId);
+    let pluginIndex = state.managedPlugins.findIndex((plugin) => plugin.id === pluginId);
+    if (pluginIndex < 0 && action === "install-remote") {
+      const entry = createMockOfficialCatalogEntries().find((candidate) => candidate.pluginId === pluginId);
+      if (entry) {
+        state.managedPlugins.push({
+          id: pluginId,
+          displayName: typeof entry.displayName === "string" ? entry.displayName : pluginId,
+          version: typeof entry.latestStableVersion === "string" ? entry.latestStableVersion : "0.1.0",
+          sourceKind: "official-remote",
+          status: "disabled",
+          description: typeof entry.description === "string" ? entry.description : undefined,
+          trustSummary: typeof entry.trustSummary === "string" ? entry.trustSummary : "Official plugin.",
+          contributions: [],
+          linkedResources: [],
+          events: [],
+          actions: {
+            canEnable: true,
+            canDisable: false,
+            canCheck: true,
+            canApplyPreset: false,
+            canInstall: true,
+            canUninstall: false,
+            canRefreshPackage: false,
+            canRuntimePreview: false,
+          },
+        });
+        pluginIndex = state.managedPlugins.length - 1;
+      }
+    }
     if (pluginIndex < 0) {
       await route.fulfill({ status: 404, json: { error: "plugin_not_found", message: `Plugin not found: ${pluginId}` } });
       return;
@@ -9113,7 +9228,7 @@ export async function handleDaemonRoute(
       return;
     }
     if (action === "connect" && request.method() === "POST") {
-      if (plugin.id !== "trusted-local:cua-driver") {
+      if (plugin.id !== "official:cua-driver") {
         await route.fulfill({ status: 400, json: { error: "plugin_connect_not_supported" } });
         return;
       }
@@ -9140,7 +9255,33 @@ export async function handleDaemonRoute(
       await route.fulfill({ json: { plugin: updated, linkedMcpServer: toPublicMockMcpServer(server, state) } });
       return;
     }
-    if (action === "pairing" && request.method() === "POST" && plugin.id === "built-in:chrome") {
+    if (action === "install-remote" && request.method() === "POST") {
+      const entry = createMockOfficialCatalogEntries().find((candidate) => candidate.pluginId === plugin.id);
+      if (!entry) {
+        await route.fulfill({ status: 404, json: { error: "plugin_not_in_catalog" } });
+        return;
+      }
+      const version = typeof entry.latestStableVersion === "string" ? entry.latestStableVersion : plugin.version;
+      const packageRecord = {
+        pluginId: plugin.id,
+        sourceKind: "official-remote",
+        version,
+        status: "installed",
+        cacheRef: `remote/${plugin.id}/${version}/mock`,
+        packageHash: "a".repeat(64),
+        installedAt: "2026-11-19T00:00:00.000Z",
+        updatedAt: "2026-11-19T00:00:00.000Z",
+      };
+      const updated = updateMockPlugin(state, plugin.id, {
+        package: packageRecord,
+        version,
+        status: "disabled",
+        actions: { ...plugin.actions, canEnable: true, canDisable: false, canInstall: false, canUninstall: true, canRefreshPackage: true },
+      });
+      await route.fulfill({ json: { plugin: updated, package: packageRecord } });
+      return;
+    }
+    if (action === "pairing" && request.method() === "POST" && plugin.id === "official:chrome-browser") {
       await route.fulfill({ json: {
         pluginId: plugin.id,
         pairingCode: "LING-CHROME-PAIR",
@@ -9148,7 +9289,7 @@ export async function handleDaemonRoute(
       } });
       return;
     }
-    if (action === "repair-browser-host" && request.method() === "POST" && plugin.id === "built-in:chrome") {
+    if (action === "repair-browser-host" && request.method() === "POST" && plugin.id === "official:chrome-browser") {
       const updated = updateMockPlugin(state, plugin.id, createMockChromePlugin({
         ...plugin,
         status: "enabled",
@@ -9168,7 +9309,7 @@ export async function handleDaemonRoute(
       await route.fulfill({ json: { plugin: updated, health: updated.health } });
       return;
     }
-    if (action === "revoke" && request.method() === "POST" && plugin.id === "built-in:chrome") {
+    if (action === "revoke" && request.method() === "POST" && plugin.id === "official:chrome-browser") {
       const updated = updateMockPlugin(state, plugin.id, createMockChromePlugin({
         ...plugin,
         status: "enabled",
@@ -9186,7 +9327,7 @@ export async function handleDaemonRoute(
       return;
     }
     if (action === "validate-package" && request.method() === "POST") {
-      if (plugin.id !== "bundled:cua-driver") {
+      if (plugin.id !== "official:cua-driver") {
         await route.fulfill({ status: 404, json: { error: "plugin_package_not_found" } });
         return;
       }
@@ -9194,7 +9335,7 @@ export async function handleDaemonRoute(
       return;
     }
     if (action === "install" && request.method() === "POST") {
-      if (plugin.id !== "bundled:cua-driver") {
+      if (plugin.id !== "official:cua-driver") {
         await route.fulfill({ status: 400, json: { error: "plugin_package_not_installable" } });
         return;
       }
@@ -9213,7 +9354,7 @@ export async function handleDaemonRoute(
       return;
     }
     if (action === "refresh-package" && request.method() === "POST") {
-      if (plugin.id !== "bundled:cua-driver" || plugin.package?.status !== "installed") {
+      if (plugin.id !== "official:cua-driver" || plugin.package?.status !== "installed") {
         await route.fulfill({ status: 400, json: { error: "plugin_package_not_installed" } });
         return;
       }
@@ -9245,7 +9386,7 @@ export async function handleDaemonRoute(
       return;
     }
     if (action === "uninstall" && request.method() === "POST") {
-      if (plugin.id !== "bundled:cua-driver") {
+      if (plugin.id !== "official:cua-driver") {
         await route.fulfill({ status: 400, json: { error: "plugin_package_not_installed" } });
         return;
       }
@@ -9272,7 +9413,7 @@ export async function handleDaemonRoute(
       return;
     }
     if (action === "apply-preset" && request.method() === "POST") {
-      if (plugin.id !== "trusted-local:cua-driver") {
+      if (plugin.id !== "official:cua-driver") {
         await route.fulfill({ status: 400, json: { error: "plugin_preset_not_applicable", message: "Plugin does not support apply-preset." } });
         return;
       }
@@ -9287,7 +9428,7 @@ export async function handleDaemonRoute(
           detectedCommand: server.command,
         },
         linkedResources: [{ kind: "mcp-server", id: server.id, present: true, enabled: true, displayName: server.displayName }],
-        health: createMockPluginHealth("trusted-local:cua-driver", "ready", "3 tools discovered"),
+        health: createMockPluginHealth("official:cua-driver", "ready", "3 tools discovered"),
         events: appendMockPluginEvent(plugin, "preset_applied", "Preset applied. 3 MCP tool(s) synced.", { status: "ready", mcpServerId: server.id, toolCount: 3 }),
       });
       await route.fulfill({
@@ -9301,7 +9442,7 @@ export async function handleDaemonRoute(
       return;
     }
     if (action === "check" && request.method() === "POST") {
-      if (plugin.id === "trusted-local:cua-driver" && plugin.setup?.distribution === "bundled_embedded") {
+      if (plugin.id === "official:cua-driver" && plugin.setup?.distribution === "bundled_embedded") {
         const requestedEnabled = plugin.setup.requestedEnabled === true;
         const providerState = requestedEnabled ? "ready" as const : "included" as const;
         const effectiveEnabled = requestedEnabled;
@@ -9334,9 +9475,9 @@ export async function handleDaemonRoute(
       const server = state.mcpServers.find((item) => item.id === linkedServerId);
       const health = server
         ? createMockPluginHealth(plugin.id, server.enabled ? "ready" : "disabled", server.enabled ? "MCP server is reachable." : "MCP server is disabled.")
-        : createMockPluginHealth(plugin.id, "ready", plugin.id === "trusted-local:cua-driver"
+        : createMockPluginHealth(plugin.id, "ready", plugin.id === "official:cua-driver"
           ? "cua-driver binary found."
-          : plugin.id === "bundled:cua-driver"
+          : plugin.id === "official:cua-driver"
             ? "Bundled plugin package manifest is valid."
             : "Built-in plugin metadata is available.");
       const updated = updateMockPlugin(state, plugin.id, {
@@ -9348,7 +9489,7 @@ export async function handleDaemonRoute(
     }
     if (action === "disable" && request.method() === "POST") {
       const reason = safePostDataJson(request).reason;
-      if (plugin.id === "trusted-local:cua-driver" && plugin.setup?.distribution === "bundled_embedded") {
+      if (plugin.id === "official:cua-driver" && plugin.setup?.distribution === "bundled_embedded") {
         const updated = updateMockPlugin(state, plugin.id, {
           status: "disabled",
           setup: {
@@ -9381,7 +9522,7 @@ export async function handleDaemonRoute(
       }
       const patch = {
         status: "disabled",
-        ...(plugin.id === "trusted-local:cua-driver" ? {
+        ...(plugin.id === "official:cua-driver" ? {
           setup: {
             kind: "local_binary" as const,
             state: "connected" as const,
@@ -9397,7 +9538,7 @@ export async function handleDaemonRoute(
         actions: { ...plugin.actions, canEnable: true, canDisable: false },
         events: appendMockPluginEvent(plugin, "disabled", "Plugin disabled.", {}),
       };
-      const updated = updateMockPlugin(state, plugin.id, plugin.id === "bundled:cua-driver"
+      const updated = updateMockPlugin(state, plugin.id, plugin.id === "official:cua-driver"
         ? createMockBundledCuaPlugin({
             ...plugin,
             ...patch,
@@ -9408,7 +9549,7 @@ export async function handleDaemonRoute(
       return;
     }
     if (action === "enable" && request.method() === "POST") {
-      if (plugin.id === "trusted-local:cua-driver" && plugin.setup?.distribution === "bundled_embedded") {
+      if (plugin.id === "official:cua-driver" && plugin.setup?.distribution === "bundled_embedded") {
         const updated = updateMockPlugin(state, plugin.id, {
           status: "disabled",
           setup: {
@@ -9449,7 +9590,7 @@ export async function handleDaemonRoute(
         server.status = "ready";
         server.updatedAt = "2026-06-06T00:32:00.000Z";
       }
-      if (plugin.id === "trusted-local:cua-driver" && server) {
+      if (plugin.id === "official:cua-driver" && server) {
         syncMockCuaTools(state, server);
       }
       const linkedResources = plugin.linkedResources.map((resource) =>
@@ -9457,7 +9598,7 @@ export async function handleDaemonRoute(
       );
       const patch = {
         status: "enabled",
-        ...(plugin.id === "trusted-local:cua-driver" ? {
+        ...(plugin.id === "official:cua-driver" ? {
           setup: {
             kind: "local_binary" as const,
             state: "ready" as const,
@@ -9471,7 +9612,7 @@ export async function handleDaemonRoute(
         actions: { ...plugin.actions, canEnable: false, canDisable: true },
         events: appendMockPluginEvent(plugin, "enabled", "Plugin enabled.", {}),
       };
-      const updated = updateMockPlugin(state, plugin.id, plugin.id === "bundled:cua-driver"
+      const updated = updateMockPlugin(state, plugin.id, plugin.id === "official:cua-driver"
         ? createMockBundledCuaPlugin({
             ...plugin,
             ...patch,

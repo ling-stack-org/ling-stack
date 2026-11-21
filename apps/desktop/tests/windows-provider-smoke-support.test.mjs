@@ -25,7 +25,7 @@ test("Windows provider smoke selects one exact PID/HWND pair without title or z-
 test("Windows smoke accepts only a daemon-ready bundled lease/child projection", () => {
   const activation = parseWindowsBundledProviderActivation({
     plugin: {
-      id: "trusted-local:cua-driver",
+      id: "official:cua-driver",
       setup: {
         distribution: "bundled_embedded",
         providerState: "ready",
@@ -65,7 +65,7 @@ test("Windows smoke accepts only a daemon-ready bundled lease/child projection",
 test("Windows smoke rejects fake, external, or incomplete bundled activation evidence", () => {
   const ready = {
     plugin: {
-      id: "trusted-local:cua-driver",
+      id: "official:cua-driver",
       setup: {
         distribution: "bundled_embedded",
         providerState: "ready",

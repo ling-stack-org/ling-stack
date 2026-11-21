@@ -18,7 +18,6 @@ import {
   isBundledEmbeddedCuaDriverRuntime,
   isBundledEmbeddedCuaDriverSelected,
 } from "./cua-driver-runtime-mode.js";
-import { BUNDLED_CUA_DRIVER_PLUGIN_ID } from "./bundled-index.js";
 import { CUA_DRIVER_PLUGIN_ID } from "./presets.js";
 
 type ManagedPluginRuntimeStore =
@@ -52,14 +51,15 @@ export function buildManagedPluginRuntimePreview(input: {
   if (!record?.enabled) {
     blockers.push("Plugin is disabled.");
   }
-  if (input.descriptor.sourceKind !== "built-in" && !bundledEmbedded && (!packageRecord || packageRecord.status !== "installed")) {
+  const runtimeProvidedByLing = isRuntimeProvidedByLing(input.descriptor.id);
+  if (input.descriptor.sourceKind !== "built-in" && !runtimeProvidedByLing && !bundledEmbedded && (!packageRecord || packageRecord.status !== "installed")) {
     blockers.push("Plugin package is not installed.");
-  } else if (input.descriptor.sourceKind !== "built-in" && !bundledEmbedded && packageRecord && !cacheRefExists(input.store.paths, packageRecord.cacheRef)) {
+  } else if (input.descriptor.sourceKind !== "built-in" && !runtimeProvidedByLing && !bundledEmbedded && packageRecord && !cacheRefExists(input.store.paths, packageRecord.cacheRef)) {
     blockers.push("Installed plugin package cache is missing.");
   }
   const health = input.store.getManagedPluginHealthSnapshot(input.descriptor.id, input.now);
   if (
-    (input.descriptor.id === "bundled:cua-driver" || bundledEmbedded)
+    (input.descriptor.id === "official:cua-driver" || bundledEmbedded)
     && health?.status !== "ready"
   ) {
     blockers.push(
@@ -102,6 +102,12 @@ export function buildManagedPluginRuntimePreview(input: {
   };
 }
 
+function isRuntimeProvidedByLing(pluginId: string): boolean {
+  return pluginId === "official:chrome-browser"
+    || pluginId === "official:office-documents"
+    || pluginId === "official:desktop-browser";
+}
+
 export function createManagedPluginRuntimeSnapshot(input: {
   readonly cwd: string;
   readonly runId?: string;
@@ -134,12 +140,12 @@ export function createManagedPluginRuntimeSnapshot(input: {
       input.cuaDriverRuntimeAuthority,
       input.store.paths.cwd,
     )
-    && input.descriptors.some((descriptor) => descriptor.id === BUNDLED_CUA_DRIVER_PLUGIN_ID)
+    && input.descriptors.some((descriptor) => descriptor.id === CUA_DRIVER_PLUGIN_ID)
   ) {
     // Preserve package selection in the run snapshot even when the current
     // Desktop lease blocks injection. Do not mark every disabled descriptor
     // as selected merely because it exists in the bundled source index.
-    selectedPluginIds.add(BUNDLED_CUA_DRIVER_PLUGIN_ID);
+    selectedPluginIds.add(CUA_DRIVER_PLUGIN_ID);
   }
   const pluginIds = [...new Set(
     input.descriptors
@@ -168,6 +174,12 @@ export function toManagedPluginPackageView(packageRecord: ManagedPluginPackageRe
     installedAt: packageRecord.installedAt,
     updatedAt: packageRecord.updatedAt,
     uninstalledAt: packageRecord.uninstalledAt,
+    artifactId: packageRecord.artifactId,
+    platform: packageRecord.platform,
+    arch: packageRecord.arch,
+    sourceUrl: packageRecord.sourceUrl,
+    catalogVersion: packageRecord.catalogVersion,
+    previousVersion: packageRecord.previousVersion,
   };
 }
 

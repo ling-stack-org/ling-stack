@@ -1,4 +1,4 @@
-export const CHROME_BROWSER_PLUGIN_ID = "built-in:chrome";
+export const CHROME_BROWSER_PLUGIN_ID = "official:chrome-browser";
 export const CHROME_BROWSER_MCP_SERVER_ID = "mcp_chrome_browser";
 export const CHROME_BROWSER_PROTOCOL = "ling.chrome.v1";
 export const CHROME_BROWSER_NATIVE_PROTOCOL = "ling.chrome.native.v1";

@@ -35,7 +35,7 @@ export interface BundledCuaDriverView {
 }
 
 export function isBundledCuaDriver(plugin: ManagedPluginView): boolean {
-  return plugin.id === "trusted-local:cua-driver"
+  return plugin.id === "official:cua-driver"
     && plugin.setup?.schemaVersion === 2
     && plugin.setup.distribution === "bundled_embedded";
 }

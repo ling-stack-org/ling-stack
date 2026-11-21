@@ -7,7 +7,6 @@ import type {
   McpServer,
   RunStore,
 } from "@ling-stack/core";
-import { BUNDLED_CUA_DRIVER_PLUGIN_ID } from "../plugins/bundled-index.js";
 import {
   createCuaDriverDescriptor,
   CUA_DRIVER_BUNDLED_LOGICAL_ENDPOINT,
@@ -112,9 +111,9 @@ export function resolveManagedCuaDriverProvider(input: {
   }
 
   const descriptor = input.descriptors.find(
-    (candidate) => candidate.id === BUNDLED_CUA_DRIVER_PLUGIN_ID,
+    (candidate) => candidate.id === CUA_DRIVER_PLUGIN_ID,
   );
-  if (!descriptor || descriptor.sourceKind !== "bundled") {
+  if (!descriptor || descriptor.sourceKind !== "official-remote") {
     return undefined;
   }
   const contributionDescriptors = descriptor.contributions.filter(

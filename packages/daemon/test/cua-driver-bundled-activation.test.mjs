@@ -14,7 +14,7 @@ import {
   deriveCuaDriverLeaseProxyToken,
 } from "../dist/index.js";
 
-const pluginId = "trusted-local:cua-driver";
+const pluginId = "official:cua-driver";
 const serverId = "mcp_cua_driver";
 const bridgeToken = "bridge-token-golden-0123456789";
 const digest = "a".repeat(64);

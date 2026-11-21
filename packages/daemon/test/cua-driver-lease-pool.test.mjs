@@ -404,7 +404,7 @@ test("activation finalizer rechecks the current lease and durable fence before c
   const firstLease = lease();
   assert.equal(registry.publish(firstLease).accepted, true);
   let state = {
-    pluginId: "trusted-local:cua-driver",
+    pluginId: "official:cua-driver",
     requestedEnabled: true,
     requestedRevision: 4,
     activationEpoch: 7,

@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   validateLingPluginPackageManifest,
+  validateLingPluginArtifactDescriptor,
+  validateLingPluginCatalog,
 } from "../dist/index.js";
 
 function validManifest(overrides = {}) {
@@ -73,4 +75,34 @@ test("package manifest validator rejects secret values in manifest metadata", ()
       })),
     /secret value/i,
   );
+});
+
+test("distribution validators accept official platform artifacts and catalogs", () => {
+  const artifact = {
+    artifactId: "bundled:cua-driver-0.2.0-darwin-arm64",
+    pluginId: "bundled:cua-driver",
+    version: "0.2.0",
+    platform: "darwin",
+    arch: "arm64",
+    channel: "stable",
+    url: "https://github.com/ling-stack-org/ling-stack/releases/download/plugin-0.2.0/cua.ling-plugin.zip",
+    sizeBytes: 1234,
+    sha256: "a".repeat(64),
+  };
+  assert.doesNotThrow(() => validateLingPluginArtifactDescriptor(artifact));
+  assert.doesNotThrow(() => validateLingPluginCatalog({
+    schemaVersion: 1,
+    generatedAt: "2026-11-18T00:00:00.000Z",
+    source: { repository: "ling-stack-org/ling-stack", releaseTag: "plugin-0.2.0" },
+    plugins: [{
+      pluginId: artifact.pluginId,
+      displayName: "Cua Driver",
+      trustSummary: "Official plugin.",
+      latestStableVersion: artifact.version,
+      manifest: { contributions: [], requiredSecrets: [], defaultApprovals: [], healthChecks: [] },
+      artifacts: [artifact],
+    }],
+  }));
+  assert.throws(() => validateLingPluginArtifactDescriptor({ ...artifact, url: "http://example.test/plugin.zip" }), /HTTPS/);
+  assert.throws(() => validateLingPluginArtifactDescriptor({ ...artifact, sha256: "not-a-hash" }), /SHA-256/);
 });

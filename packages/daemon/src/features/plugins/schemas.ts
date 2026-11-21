@@ -87,6 +87,26 @@ export function parseManagedPluginInstallRequest(value: unknown): { readonly opt
   };
 }
 
+export function parseManagedPluginRemoteInstallRequest(value: unknown): {
+  readonly version?: string;
+  readonly channel?: "stable" | "beta" | "dev";
+} {
+  if (value === undefined || value === null) return {};
+  if (!isRecord(value)) throw new Error("Remote plugin install request body must be an object.");
+  const version = readOptionalString(value, "version")?.trim();
+  if (version && !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/u.test(version)) {
+    throw new Error("Remote plugin version must be semver-compatible.");
+  }
+  const channel = readOptionalString(value, "channel")?.trim();
+  if (channel && !["stable", "beta", "dev"].includes(channel)) {
+    throw new Error("Remote plugin channel must be stable, beta, or dev.");
+  }
+  return {
+    ...(version ? { version } : {}),
+    ...(channel ? { channel: channel as "stable" | "beta" | "dev" } : {}),
+  };
+}
+
 export function parseManagedPluginUninstallRequest(value: unknown): { readonly reason?: string } {
   if (value === undefined || value === null) {
     return {};

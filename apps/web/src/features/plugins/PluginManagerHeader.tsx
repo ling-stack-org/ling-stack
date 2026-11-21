@@ -1,5 +1,5 @@
-import { ArrowRightLeft, Plus, Search, X } from "lucide-react";
-import { Button, Field, Input, Select } from "../../shared/ui/index.js";
+import { Search, X } from "lucide-react";
+import { Field, Input, Select } from "../../shared/ui/index.js";
 import type { PluginManagerCopy } from "./plugin-manager-copy.js";
 import type { PluginManagerController } from "./usePluginManagerController.js";
 import type { Translate } from "../../i18n.js";
@@ -10,17 +10,15 @@ export function PluginManagerHeader({
   controller,
   copy,
   isLoading,
-  busyCreating,
   onRefresh,
-  onOpenImport,
+  showFilters = true,
   t,
 }: {
   readonly controller: PluginManagerController;
   readonly copy: PluginManagerCopy;
   readonly isLoading: boolean;
-  readonly busyCreating: boolean;
   readonly onRefresh: () => void;
-  readonly onOpenImport: () => void;
+  readonly showFilters?: boolean;
   readonly t: Translate;
 }): React.JSX.Element {
   return (
@@ -30,29 +28,10 @@ export function PluginManagerHeader({
         className="plugin-manager-header settings-plugin-manager-head"
         data-desktop-window-drag-region="true"
       >
-        <h2 id="plugin-manager-title">{t("Plugin Manager")}</h2>
-        <Button
-          className="plugin-add-button"
-          disabled={busyCreating}
-          leadingIcon={<Plus aria-hidden="true" />}
-          onClick={controller.openCreate}
-          size="md"
-          variant="primary"
-        >
-          {t("Add plugin")}
-        </Button>
-        <Button
-          className="plugin-import-button"
-          leadingIcon={<ArrowRightLeft aria-hidden="true" />}
-          onClick={onOpenImport}
-          size="md"
-          variant="secondary"
-        >
-          {t("Import")}
-        </Button>
+        <h2 id="plugin-manager-title">{t("Plugins")}</h2>
       </header>
       </DesktopTitlebarSurface>
-      <div className="plugin-manager-toolbar" aria-label={t("Plugin Manager")}>
+      {showFilters ? <div className="plugin-manager-toolbar" aria-label={t("Plugin Manager")}>
         <Field className="plugin-toolbar-field plugin-toolbar-search" label={copy.searchPlugins}>
           <Input
             aria-label={copy.searchPlugins}
@@ -104,7 +83,7 @@ export function PluginManagerHeader({
             <option value="unavailable">{t("Unavailable")}</option>
           </Select>
         </Field>
-      </div>
+      </div> : null}
       {controller.retainedRefreshError ? (
         <PluginManagerRefreshFeedback
           count={controller.rows.length}

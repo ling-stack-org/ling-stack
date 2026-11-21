@@ -33,6 +33,8 @@ export function BackgroundVideo({ url, enabled, paused, onFailure, fallback }: {
     const update = () => {
       if (!allowed.current || document.hidden) { video.pause(); return; }
       void video.play().then(() => {
+        captureAttempts = 0;
+        retryCapture();
         // A late play promise must not restart a now-hidden player.
         if (disposed || !allowed.current || document.hidden) video.pause();
       }).catch(error => {
@@ -41,16 +43,23 @@ export function BackgroundVideo({ url, enabled, paused, onFailure, fallback }: {
     };
     let captured = false;
     const capture = () => {
-      if (captured || video.readyState < 2 || !video.videoWidth) return;
+      if (captured || video.readyState < 2 || !video.videoWidth) return false;
       try {
         const canvas = document.createElement("canvas");
         const scale = Math.min(1, 1280 / video.videoWidth);
         canvas.width = Math.round(video.videoWidth * scale); canvas.height = Math.round(video.videoHeight * scale);
         canvas.getContext("2d")?.drawImage(video, 0, 0, canvas.width, canvas.height);
-        setPoster(canvas.toDataURL("image/jpeg", 0.85)); captured = true;
-      } catch { /* Local media normally permits a poster; theme fallback remains available. */ }
+        setPoster(canvas.toDataURL("image/jpeg", 0.85)); captured = true; return true;
+      } catch { /* Local media normally permits a poster; theme fallback remains available. */ return false; }
     };
-    const ready = () => { capture(); update(); };
+    let captureAttempts = 0;
+    let captureTimer: number | undefined;
+    const retryCapture = () => {
+      if (disposed || captured || capture()) return;
+      if (++captureAttempts >= 20) return;
+      captureTimer = window.setTimeout(retryCapture, 250);
+    };
+    const ready = () => { retryCapture(); update(); };
     const restore = () => {
       lastProgress = performance.now();
       if (video.readyState >= 2 && Number.isFinite(video.duration)) {
@@ -74,7 +83,7 @@ export function BackgroundVideo({ url, enabled, paused, onFailure, fallback }: {
     document.addEventListener("visibilitychange", update);
     ready();
     return () => {
-      disposed = true; window.clearInterval(timer); video.pause();
+      disposed = true; window.clearInterval(timer); if (captureTimer !== undefined) window.clearTimeout(captureTimer); video.pause();
       video.removeEventListener("loadeddata", ready); video.removeEventListener("canplay", update); video.removeEventListener("error", fail);
       window.removeEventListener("pageshow", restore); window.removeEventListener("focus", restore); document.removeEventListener("visibilitychange", update);
     };
