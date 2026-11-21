@@ -256,3 +256,13 @@ test("device access grants enforce target, principal, capability scope, expiry a
   assert.throws(() => access.authorize({ grantId: "grant-1", principalId: "mobile-1", targetDeviceId: "linux-1", capabilityId: "linux.inspect.network", now }), /inactive/);
   store.close();
 });
+
+test("credential revisions rotate and revoke without persisting secret contents", () => {
+  const store = new SqliteDeviceFabricStore();
+  store.saveCredentialRevision({ credentialId: "credential-1", targetDeviceId: "linux-1", secretRef: "keychain:linux-1", kind: "ssh_key", fingerprint: "fp-1", revision: 1, status: "active", authority: "pairing", changedAt: now });
+  store.saveCredentialRevision({ credentialId: "credential-1", targetDeviceId: "linux-1", secretRef: "keychain:linux-1-v2", kind: "ssh_key", fingerprint: "fp-2", revision: 2, status: "active", authority: "operator", changedAt: "2026-11-21T00:01:00.000Z" });
+  assert.equal(store.getCredentialRevision("credential-1")?.fingerprint, "fp-2");
+  assert.equal(store.revokeCredentialRevision("credential-1", 3, "operator", "2026-11-21T00:02:00.000Z").status, "revoked");
+  assert.throws(() => store.saveCredentialRevision({ credentialId: "credential-1", targetDeviceId: "linux-1", secretRef: "raw-secret-must-not-be-stored", kind: "ssh_key", fingerprint: "fp-3", revision: 3, status: "active", authority: "operator", changedAt: now }), /advance/);
+  store.close();
+});

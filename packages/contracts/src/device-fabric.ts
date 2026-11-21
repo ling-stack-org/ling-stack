@@ -177,6 +177,18 @@ export interface DeviceAccessGrantV1 {
   readonly changedAt: string;
 }
 
+export interface DeviceCredentialRevisionV1 {
+  readonly credentialId: string;
+  readonly targetDeviceId: string;
+  readonly secretRef: string;
+  readonly kind: "ssh_key" | "password" | "token" | "certificate" | "vendor_key";
+  readonly fingerprint: string;
+  readonly revision: number;
+  readonly status: "active" | "rotated" | "revoked";
+  readonly authority: string;
+  readonly changedAt: string;
+}
+
 export interface DeviceContextPackV1 {
   readonly contextId: string;
   readonly taskId: string;

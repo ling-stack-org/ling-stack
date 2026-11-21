@@ -5,6 +5,7 @@ import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
 
 import type {
   DeviceConformanceReportV1,
+  DeviceCredentialRevisionV1,
   DeviceAccessGrantV1,
   DeviceEventEnvelopeV1,
   DeviceGraphNodeV1,
@@ -420,6 +421,27 @@ export class SqliteDeviceFabricStore {
     return this.saveAccessGrant({ ...current, status: "revoked", revision, changedAt });
   }
 
+  saveCredentialRevision(credential: DeviceCredentialRevisionV1): DeviceCredentialRevisionV1 {
+    if (!credential.credentialId.trim() || !credential.targetDeviceId.trim() || !credential.secretRef.trim() || !credential.fingerprint.trim() || !credential.authority.trim() || credential.revision < 1) throw new DeviceFabricError("safety_denied", "device credential revision is invalid");
+    const current = this.getCredentialRevision(credential.credentialId);
+    if (current && credential.revision <= current.revision) throw new DeviceFabricError("revision_conflict", "device credential revision must advance");
+    if (current) this.database.prepare("INSERT INTO device_credential_history(credential_id,revision,credential_json,changed_at) VALUES(?,?,?,?)").run(current.credentialId, current.revision, JSON.stringify(current), current.changedAt);
+    this.database.prepare("INSERT INTO device_credentials(credential_id,target_device_id,revision,credential_json) VALUES(?,?,?,?) ON CONFLICT(credential_id) DO UPDATE SET target_device_id=excluded.target_device_id,revision=excluded.revision,credential_json=excluded.credential_json")
+      .run(credential.credentialId, credential.targetDeviceId, credential.revision, JSON.stringify(credential));
+    return credential;
+  }
+
+  getCredentialRevision(credentialId: string): DeviceCredentialRevisionV1 | undefined {
+    const row = this.database.prepare("SELECT credential_json FROM device_credentials WHERE credential_id=?").get(credentialId) as Row | undefined;
+    return row ? parseJson<DeviceCredentialRevisionV1>(row.credential_json, "device credential revision") : undefined;
+  }
+
+  revokeCredentialRevision(credentialId: string, revision: number, authority: string, changedAt: string): DeviceCredentialRevisionV1 {
+    const current = this.getCredentialRevision(credentialId);
+    if (!current) throw new DeviceFabricError("target_missing", "device credential revision is missing");
+    return this.saveCredentialRevision({ ...current, revision, status: "revoked", authority, changedAt });
+  }
+
   close(): void { this.database.close(); }
 
   private wouldCreateContainmentCycle(fromNodeId: string, toNodeId: string, replacingRelationshipId: string): boolean {
@@ -574,6 +596,19 @@ export class SqliteDeviceFabricStore {
         grant_id TEXT NOT NULL,
         revision INTEGER NOT NULL,
         grant_json TEXT NOT NULL,
+        changed_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS device_credentials (
+        credential_id TEXT PRIMARY KEY NOT NULL,
+        target_device_id TEXT NOT NULL,
+        revision INTEGER NOT NULL,
+        credential_json TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS device_credential_history (
+        history_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        credential_id TEXT NOT NULL,
+        revision INTEGER NOT NULL,
+        credential_json TEXT NOT NULL,
         changed_at TEXT NOT NULL
       );
     `);
